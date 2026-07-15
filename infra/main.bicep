@@ -17,6 +17,24 @@ param location string
 @description('Your Azure OpenAI endpoint URL.')
 param azureOpenAiEndpoint string = ''
 
+@description('Full resource ID of the Azure OpenAI account for managed-identity RBAC.')
+param azureOpenAiResourceId string = ''
+
+@description('Azure Communication Services endpoint used to deliver feedback email.')
+param feedbackEmailEndpoint string = ''
+
+@description('Verified Azure Communication Services sender address.')
+param feedbackEmailSender string = ''
+
+@description('Recipient address for feedback submissions.')
+param feedbackEmailRecipient string = ''
+
+@description('Optional Azure Table Storage endpoint for a queryable feedback archive.')
+param azureTablesEndpoint string = ''
+
+@description('Azure Table Storage table name for feedback.')
+param azureTablesFeedbackTable string = 'feedback'
+
 @secure()
 @description('Your Azure OpenAI API key.')
 param azureOpenAiApiKey string = ''
@@ -88,14 +106,21 @@ module resources './resources.bicep' = {
     mcpAuthToken: mcpAuthToken
     azureOpenAiEndpoint: azureOpenAiEndpoint
     azureOpenAiApiKey: azureOpenAiApiKey
-    openAiDeploymentGpt51: openAiDeploymentGpt51
-    openAiDeploymentGpt52: openAiDeploymentGpt52
-    openAiDeploymentGpt52Codex: openAiDeploymentGpt52Codex
-    openAiDeploymentGpt53Codex: openAiDeploymentGpt53Codex
-    openAiDeploymentGpt54: openAiDeploymentGpt54
-    openAiDeploymentGpt54Mini: openAiDeploymentGpt54Mini
-    openAiDeploymentDeepSeek: openAiDeploymentDeepSeek
-    openAiDeploymentGrokFast: openAiDeploymentGrokFast
+    feedbackEmailEndpoint: feedbackEmailEndpoint
+    feedbackEmailSender: feedbackEmailSender
+    feedbackEmailRecipient: feedbackEmailRecipient
+    azureTablesEndpoint: azureTablesEndpoint
+    azureTablesFeedbackTable: azureTablesFeedbackTable
+  }
+}
+
+var openAiResourceParts = split(azureOpenAiResourceId, '/')
+module openAiRole './openai-role.bicep' = if (!empty(azureOpenAiResourceId)) {
+  name: 'openai-role'
+  scope: resourceGroup(openAiResourceParts[2], openAiResourceParts[4])
+  params: {
+    accountName: openAiResourceParts[8]
+    principalId: resources.outputs.appIdentityPrincipalId
   }
 }
 
@@ -123,7 +148,6 @@ output MCP_ENDPOINT string = 'https://${resources.outputs.mcpAppFqdn}/mcp'
 
 // Azure OpenAI — passed through to build-time Vite variables by the pre-package hook
 output AZURE_OPENAI_ENDPOINT string = azureOpenAiEndpoint
-output AZURE_OPENAI_API_KEY string = azureOpenAiApiKey
 output AZURE_OPENAI_DEPLOYMENT_NAME string = openAiDeploymentGpt51
 output AZURE_OPENAI_DEPLOYMENT_GPT52 string = openAiDeploymentGpt52
 output AZURE_OPENAI_DEPLOYMENT_GPT52CODEX string = openAiDeploymentGpt52Codex
@@ -141,6 +165,7 @@ output AZURE_SPEECH_RESOURCE_ID string = resources.outputs.speechResourceId
 output AZURE_COSMOS_ENDPOINT string = resources.outputs.cosmosEndpoint
 output COSMOS_DATABASE_ID string = resources.outputs.cosmosDatabaseId
 output COSMOS_CONTAINER_ID string = resources.outputs.cosmosContainerId
+output COSMOS_FEEDBACK_CONTAINER_ID string = resources.outputs.cosmosFeedbackContainerId
 
 // App Insights — used by the pre-package hook to write .env.appinsights
 output APPLICATIONINSIGHTS_CONNECTION_STRING string = resources.outputs.appInsightsConnectionString

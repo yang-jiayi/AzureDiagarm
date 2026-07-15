@@ -159,3 +159,25 @@
   height: 100%;
   z-index: 999;
 }
+
+@media (max-width: 640px) {
+  .region-selector-button {
+    gap: 4px;
+    padding: 5px 8px;
+    font-size: 12px;
+  }
+
+  .region-flag {
+    font-size: 15px;
+  }
+
+  .region-dropdown {
+    position: fixed;
+    top: 76px;
+    right: 10px;
+    left: 10px;
+    min-width: 0;
+    max-height: calc(100vh - 92px);
+    overflow-y: auto;
+  }
+}

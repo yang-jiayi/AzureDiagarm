@@ -20,8 +20,8 @@
 #   IMAGE_NAME        - Docker image name (e.g. azure-diagram-builder)
 #
 #   VITE_AZURE_OPENAI_ENDPOINT       - Azure OpenAI endpoint URL
-#   VITE_AZURE_OPENAI_API_KEY        - Azure OpenAI API key
 #   VITE_AZURE_OPENAI_DEPLOYMENT_*   - Model deployment names (at least one)
+#   AZURE_OPENAI_API_KEY             - Optional server-side fallback key
 #
 # Usage:
 #   chmod +x scripts/deploy_aca.sh
@@ -38,12 +38,14 @@ if [[ ! -f "$ENV_FILE" ]]; then
     exit 1
 fi
 
-export $(cat "$ENV_FILE" | grep -v '^#' | grep -v '^\s*$' | xargs)
+set -a
+source "$ENV_FILE"
+set +a
 
 # ─── Validate required variables ────────────────────────────────────
 MISSING=()
 for var in ACR_NAME ACA_APP_NAME RESOURCE_GROUP IMAGE_NAME \
-           VITE_AZURE_OPENAI_ENDPOINT VITE_AZURE_OPENAI_API_KEY; do
+           VITE_AZURE_OPENAI_ENDPOINT; do
     if [[ -z "${!var:-}" ]]; then
         MISSING+=("$var")
     fi
@@ -62,9 +64,13 @@ MODEL_COUNT=0
 for var in VITE_AZURE_OPENAI_DEPLOYMENT_GPT51 VITE_AZURE_OPENAI_DEPLOYMENT_GPT52 \
            VITE_AZURE_OPENAI_DEPLOYMENT_GPT52CODEX VITE_AZURE_OPENAI_DEPLOYMENT_GPT53CODEX \
            VITE_AZURE_OPENAI_DEPLOYMENT_GPT54 VITE_AZURE_OPENAI_DEPLOYMENT_GPT54MINI \
-           VITE_AZURE_OPENAI_DEPLOYMENT_DEEPSEEK VITE_AZURE_OPENAI_DEPLOYMENT_GROK4FAST; do
+           VITE_AZURE_OPENAI_DEPLOYMENT_GPT56SOL VITE_AZURE_OPENAI_DEPLOYMENT_GPT56TERRA \
+           VITE_AZURE_OPENAI_DEPLOYMENT_GPT56LUNA VITE_AZURE_OPENAI_DEPLOYMENT_DEEPSEEK \
+           VITE_AZURE_OPENAI_DEPLOYMENT_DEEPSEEK_V4_PRO VITE_AZURE_OPENAI_DEPLOYMENT_GROK4FAST \
+           VITE_AZURE_OPENAI_DEPLOYMENT_GROK43 VITE_AZURE_OPENAI_DEPLOYMENT_MISTRALLARGE3 \
+           VITE_AZURE_OPENAI_DEPLOYMENT_KIMIK25 VITE_AZURE_OPENAI_DEPLOYMENT_KIMIK27CODE; do
     if [[ -n "${!var:-}" ]]; then
-        ((MODEL_COUNT++))
+        MODEL_COUNT=$((MODEL_COUNT + 1))
     fi
 done
 
@@ -89,6 +95,7 @@ fi
 SOURCE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 APPINSIGHTS_FILE="$SOURCE_DIR/.env.appinsights"
 : > "$APPINSIGHTS_FILE"
+trap 'rm -f "$APPINSIGHTS_FILE"' EXIT
 
 BUILD_ARGS=()
 while IFS='=' read -r key value; do
@@ -107,10 +114,11 @@ while IFS='=' read -r key value; do
     fi
 done < <(grep -v '^#' "$ENV_FILE" | grep -v '^\s*$')
 
-ACR_IMAGE="$ACR_NAME.azurecr.io/$IMAGE_NAME:latest"
+IMAGE_TAG="${IMAGE_TAG:-$(date -u +%Y%m%d%H%M%S)-$(git -C "$SOURCE_DIR" rev-parse --short HEAD 2>/dev/null || echo local)}"
+ACR_IMAGE="$ACR_NAME.azurecr.io/$IMAGE_NAME:$IMAGE_TAG"
 
 echo "🔨 Building image in ACR: $ACR_NAME"
-echo "   Image: $IMAGE_NAME:latest"
+echo "   Image: $IMAGE_NAME:$IMAGE_TAG"
 echo "   Models configured: $MODEL_COUNT"
 echo "   Source: $SOURCE_DIR"
 echo "   Build args: ${#BUILD_ARGS[@]} VITE_* values via --build-arg"
@@ -122,7 +130,7 @@ echo ""
 # ─── Build in ACR ────────────────────────────────────────────────────
 az acr build \
     --registry "$ACR_NAME" \
-    --image "$IMAGE_NAME:latest" \
+    --image "$IMAGE_NAME:$IMAGE_TAG" \
     "${BUILD_ARGS[@]}" \
     "$SOURCE_DIR"
 
@@ -136,14 +144,48 @@ FQDN=$(az containerapp show \
 echo ""
 echo "🚀 Updating Container App: $ACA_APP_NAME"
 
-SET_ENV_VARS="PUBLIC_URL=https://$FQDN"
+PUBLIC_URL="${PUBLIC_URL:-https://$FQDN}"
+RUNTIME_ENV_VARS=(
+    "PUBLIC_URL=$PUBLIC_URL"
+    "AZURE_OPENAI_ENDPOINT=${AZURE_OPENAI_ENDPOINT:-$VITE_AZURE_OPENAI_ENDPOINT}"
+)
+REMOVE_ENV_VARS=()
 
-az containerapp update \
+for var in AZURE_CLIENT_ID FEEDBACK_EMAIL_ENDPOINT FEEDBACK_EMAIL_SENDER \
+           FEEDBACK_EMAIL_RECIPIENT AZURE_TABLES_ENDPOINT AZURE_TABLES_FEEDBACK_TABLE \
+           AZURE_COSMOS_ENDPOINT COSMOS_DATABASE_ID COSMOS_CONTAINER_ID \
+           COSMOS_FEEDBACK_CONTAINER_ID AZURE_SPEECH_REGION AZURE_SPEECH_RESOURCE_ID; do
+    if [[ -n "${!var:-}" ]]; then
+        RUNTIME_ENV_VARS+=("$var=${!var}")
+    else
+        REMOVE_ENV_VARS+=("$var")
+    fi
+done
+
+OPENAI_KEY="${AZURE_OPENAI_API_KEY:-${VITE_AZURE_OPENAI_API_KEY:-}}"
+if [[ -n "$OPENAI_KEY" ]]; then
+    az containerapp secret set \
+        --name "$ACA_APP_NAME" \
+        --resource-group "$RESOURCE_GROUP" \
+        --secrets "azure-openai-api-key=$OPENAI_KEY" \
+        --output none
+    RUNTIME_ENV_VARS+=("AZURE_OPENAI_API_KEY=secretref:azure-openai-api-key")
+else
+    REMOVE_ENV_VARS+=("AZURE_OPENAI_API_KEY")
+fi
+
+UPDATE_ARGS=(
     --name "$ACA_APP_NAME" \
     --resource-group "$RESOURCE_GROUP" \
     --image "$ACR_IMAGE" \
-    --set-env-vars $SET_ENV_VARS \
-    --revision-suffix "v$(date +%s)"
+    --set-env-vars "${RUNTIME_ENV_VARS[@]}" \
+    --revision-suffix "v$(date -u +%s)"
+)
+if [[ ${#REMOVE_ENV_VARS[@]} -gt 0 ]]; then
+    UPDATE_ARGS+=(--remove-env-vars "${REMOVE_ENV_VARS[@]}")
+fi
+
+az containerapp update "${UPDATE_ARGS[@]}"
 
 echo ""
 echo "✅ Deployment complete!"

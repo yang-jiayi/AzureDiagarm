@@ -11,8 +11,26 @@
     "azureOpenAiEndpoint": {
       "value": "${AZURE_OPENAI_ENDPOINT}"
     },
+    "azureOpenAiResourceId": {
+      "value": "${AZURE_OPENAI_RESOURCE_ID}"
+    },
     "azureOpenAiApiKey": {
       "value": "${AZURE_OPENAI_API_KEY}"
+    },
+    "feedbackEmailEndpoint": {
+      "value": "${FEEDBACK_EMAIL_ENDPOINT}"
+    },
+    "feedbackEmailSender": {
+      "value": "${FEEDBACK_EMAIL_SENDER}"
+    },
+    "feedbackEmailRecipient": {
+      "value": "${FEEDBACK_EMAIL_RECIPIENT}"
+    },
+    "azureTablesEndpoint": {
+      "value": "${AZURE_TABLES_ENDPOINT}"
+    },
+    "azureTablesFeedbackTable": {
+      "value": "${AZURE_TABLES_FEEDBACK_TABLE}"
     },
     "openAiDeploymentGpt51": {
       "value": "${AZURE_OPENAI_DEPLOYMENT_NAME}"
@@ -28,6 +46,9 @@
     },
     "openAiDeploymentGpt54": {
       "value": "${AZURE_OPENAI_DEPLOYMENT_GPT54}"
+    },
+    "openAiDeploymentGpt54Mini": {
+      "value": "${AZURE_OPENAI_DEPLOYMENT_GPT54MINI}"
     },
     "openAiDeploymentDeepSeek": {
       "value": "${AZURE_OPENAI_DEPLOYMENT_DEEPSEEK}"

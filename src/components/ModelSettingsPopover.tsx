@@ -110,6 +110,8 @@ const ModelSettingsPopover = forwardRef<HTMLDivElement, ModelSettingsPopoverProp
           return <Zap size={14} />;
         case 'gpt-5.4-mini':
           return <Sparkles size={14} />;
+        default:
+          return <Cpu size={14} />;
       }
     };
 

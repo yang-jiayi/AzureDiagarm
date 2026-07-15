@@ -26,13 +26,22 @@ const RATINGS: { value: number; emoji: string; label: string }[] = [
 const FeedbackToast: React.FC<FeedbackToastProps> = ({ isOpen, onClose, onAddComment, context }) => {
   const { t, translate } = useLanguage();
   const [rated, setRated] = useState<number | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const handleRate = (rating: number) => {
-    setRated(rating);
-    // Fire-and-forget; the rating is captured immediately.
-    void submitFeedback({ rating, category: 'Quick rating', comment: '', context });
-    // Auto-dismiss the thank-you after a few seconds.
-    window.setTimeout(() => onClose(), 4500);
+  const handleRate = async (rating: number) => {
+    setError(null);
+    setIsSubmitting(true);
+    try {
+      await submitFeedback({ rating, category: 'Quick rating', comment: '', context });
+      setRated(rating);
+      window.setTimeout(() => onClose(), 4500);
+    } catch (submitError) {
+      console.error('[feedback] quick rating failed:', submitError);
+      setError(translate('Feedback could not be sent. Please try again.'));
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   if (!isOpen) return null;
@@ -64,12 +73,14 @@ const FeedbackToast: React.FC<FeedbackToastProps> = ({ isOpen, onClose, onAddCom
                 aria-label={translate(r.label)}
                 title={translate(r.label)}
                 className="feedback-toast-rating"
-                onClick={() => handleRate(r.value)}
+                onClick={() => void handleRate(r.value)}
+                disabled={isSubmitting}
               >
                 {r.emoji}
               </button>
             ))}
           </div>
+          {error && <div className="feedback-toast-error">{error}</div>}
         </>
       )}
     </div>

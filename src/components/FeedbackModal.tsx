@@ -71,12 +71,15 @@ const FeedbackModal: React.FC<FeedbackModalProps> = ({ isOpen, onClose, context,
     setError(null);
     setIsSubmitting(true);
 
-    // Shared helper: records sentiment in App Insights, then best-effort
-    // durable storage via /api/feedback. Never throws.
-    await submitFeedback({ rating, category, comment, context });
-
-    setSubmitted(true);
-    setIsSubmitting(false);
+    try {
+      await submitFeedback({ rating, category, comment, context });
+      setSubmitted(true);
+    } catch (submitError) {
+      console.error('[feedback] submit failed:', submitError);
+      setError(translate('Feedback could not be sent. Please try again.'));
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   if (!isOpen) return null;

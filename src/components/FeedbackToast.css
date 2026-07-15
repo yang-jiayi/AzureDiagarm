@@ -70,6 +70,19 @@
   transform: translateY(-2px) scale(1.05);
 }
 
+.feedback-toast-rating:disabled {
+  cursor: wait;
+  opacity: 0.6;
+  transform: none;
+}
+
+.feedback-toast-error {
+  margin-top: 9px;
+  color: #b91c1c;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
 /* Thank-you state */
 .feedback-toast-thanks {
   display: flex;
@@ -142,4 +155,8 @@ body.dark-mode .feedback-toast-close:hover {
 
 body.dark-mode .feedback-toast-link {
   color: #60a5fa;
+}
+
+body.dark-mode .feedback-toast-error {
+  color: #fca5a5;
 }

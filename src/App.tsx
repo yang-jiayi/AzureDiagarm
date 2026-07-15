@@ -109,10 +109,6 @@ const EXPORT_HISTORY_STORAGE_KEY = 'azure-diagram-builder.exportHistory.v1';
 const EDGE_STYLE_STORAGE_KEY = 'azure-diagram-builder.edgeStyle.v1';
 const CANVAS_HINT_STORAGE_KEY = 'azure-diagram-builder.canvasHintDismissed.v1';
 const HEADER_COLLAPSED_STORAGE_KEY = 'azure-diagram-builder.headerCollapsed.v1';
-// First-visit nudge: auto-open the Architecture Chat once so it acts as the
-// primary starting point. Dismissal is implicit — we set the flag as soon as
-// we auto-open, so it never re-opens on its own again.
-const CHAT_AUTO_OPEN_STORAGE_KEY = 'azure-diagram-builder.chatAutoOpened.v1';
 
 // Derive a short, human-friendly architecture title from a free-form prompt
 // (used as a fallback when no manifest title is available). Strips common
@@ -203,7 +199,11 @@ function App() {
   // Collapses the top toolbar rows to maximize canvas height. Independent of
   // the "Focus" button (which collapses the side panels). Persisted so the
   // user's preference sticks across sessions.
-  const [isHeaderCollapsed, setIsHeaderCollapsed] = useState<boolean>(() => localStorage.getItem(HEADER_COLLAPSED_STORAGE_KEY) === '1');
+  const [isHeaderCollapsed, setIsHeaderCollapsed] = useState<boolean>(() => {
+    const stored = localStorage.getItem(HEADER_COLLAPSED_STORAGE_KEY);
+    if (stored !== null) return stored === '1';
+    return window.matchMedia('(max-width: 1440px)').matches;
+  });
   const [isCompareValidationOpen, setIsCompareValidationOpen] = useState(false);
   const [isFeedbackModalOpen, setIsFeedbackModalOpen] = useState(false);
   const [isFeedbackToastOpen, setIsFeedbackToastOpen] = useState(false);
@@ -217,16 +217,6 @@ function App() {
   const [lastBlueprintArchitecture, setLastBlueprintArchitecture] = useState<BlueprintArchitecture | null>(null);
   const [panelsCollapsedSignal, setPanelsCollapsedSignal] = useState(0);
 
-  // First-visit nudge: open the Architecture Chat once so new users have an
-  // obvious starting point. We set the flag immediately so it only ever
-  // auto-opens on the very first load.
-  useEffect(() => {
-    if (localStorage.getItem(CHAT_AUTO_OPEN_STORAGE_KEY) !== '1') {
-      setIsChatOpen(true);
-      try { localStorage.setItem(CHAT_AUTO_OPEN_STORAGE_KEY, '1'); } catch { /* ignore */ }
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
   // Focus mode: hides canvas chrome (side panels via the signal above, plus the
   // "Generated from" prompt banner and the "Generated with" model badge) so only
   // the diagram itself remains. Toggled by the Focus button.
@@ -486,16 +476,6 @@ function App() {
     };
     setNodes((nds) => nds.concat(newNode));
   }, [setNodes]);
-
-  // Apply dark mode class to body and persist preference
-  useEffect(() => {
-    if (isDarkMode) {
-      document.body.classList.add('dark-mode');
-    } else {
-      document.body.classList.remove('dark-mode');
-    }
-    localStorage.setItem('darkMode', JSON.stringify(isDarkMode));
-  }, [isDarkMode]);
 
   // Apply dark mode class to body and persist preference
   useEffect(() => {
@@ -881,41 +861,6 @@ function App() {
   const onDragOver = useCallback((event: React.DragEvent) => {
     event.preventDefault();
     event.dataTransfer.dropEffect = 'move';
-  }, []);
-
-// Remove node from its parent group
-  // @ts-ignore - Reserved for future use in context menu
-  const _ungroupNode = useCallback((nodeId: string) => {
-    setNodes((nds) => nds.map((node) => {
-      if (node.id === nodeId && node.parentNode) {
-        // Find the parent group to get its absolute position
-        const parentGroup = nds.find(n => n.id === node.parentNode);
-        
-        if (parentGroup) {
-          // Convert from parent-relative to absolute canvas coordinates
-          const absolutePosition = {
-            x: parentGroup.position.x + node.position.x,
-            y: parentGroup.position.y + node.position.y,
-          };
-          
-          return {
-            ...node,
-            parentNode: undefined,
-            position: absolutePosition,
-            // Remove extent constraint when ungrouping
-            extent: undefined,
-          };
-        }
-        
-        // Fallback: just remove parent if parent not found
-        return {
-          ...node,
-          parentNode: undefined,
-          extent: undefined,
-        };
-      }
-      return node;
-    }));
   }, []);
 
   // Handle node deletion - convert child nodes to absolute positions when parent group is deleted

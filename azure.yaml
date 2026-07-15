@@ -13,7 +13,7 @@ hooks:
     shell: sh
     run: scripts/azd-prepackage.sh
     interactive: false
-    continueOnError: true
+    continueOnError: false
 
 services:
   app:

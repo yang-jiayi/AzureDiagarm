@@ -17,7 +17,7 @@
   },
   "dependencies": {
     "@azure/openai": "^2.0.0",
-    "@microsoft/applicationinsights-web": "^3.3.11",
+    "@microsoft/applicationinsights-web": "^3.4.3",
     "@types/dagre": "^0.7.53",
     "dagre": "^0.8.5",
     "elkjs": "^0.11.0",
@@ -25,7 +25,7 @@
     "html2canvas": "^1.4.1",
     "jszip": "^3.10.1",
     "lucide-react": "^0.294.0",
-    "microsoft-cognitiveservices-speech-sdk": "^1.48.0",
+    "microsoft-cognitiveservices-speech-sdk": "^1.50.0",
     "pptxgenjs": "^4.0.1",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
@@ -46,5 +46,8 @@
     "playwright": "^1.58.2",
     "typescript": "^5.2.2",
     "vite": "^5.0.8"
+  },
+  "overrides": {
+    "uuid": "^11.1.1"
   }
 }

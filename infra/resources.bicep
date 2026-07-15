@@ -19,14 +19,11 @@ param mcpAuthToken string = ''
 param azureOpenAiEndpoint string
 @secure()
 param azureOpenAiApiKey string
-param openAiDeploymentGpt51 string
-param openAiDeploymentGpt52 string
-param openAiDeploymentGpt52Codex string
-param openAiDeploymentGpt53Codex string
-param openAiDeploymentGpt54 string
-param openAiDeploymentGpt54Mini string
-param openAiDeploymentDeepSeek string
-param openAiDeploymentGrokFast string
+param feedbackEmailEndpoint string = ''
+param feedbackEmailSender string = ''
+param feedbackEmailRecipient string = ''
+param azureTablesEndpoint string = ''
+param azureTablesFeedbackTable string = 'feedback'
 
 // ── Log Analytics ──────────────────────────────────────────────────────────────
 resource logAnalytics 'Microsoft.OperationalInsights/workspaces@2022-10-01' = {
@@ -187,7 +184,7 @@ resource cosmosRole 'Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments@20
   properties: {
     roleDefinitionId: '${deployCosmos ? cosmos.id : ''}/sqlRoleDefinitions/00000000-0000-0000-0000-000000000002'
     principalId: appIdentity.properties.principalId
-    scope: deployCosmos ? cosmos.id : ''
+    scope: deployCosmos ? '${cosmos.id}/dbs/${cosmosDatabaseId}/colls/${cosmosFeedbackContainerId}' : ''
   }
 }
 
@@ -205,6 +202,11 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
   properties: {
     managedEnvironmentId: caEnv.id
     configuration: {
+      secrets: empty(azureOpenAiApiKey)
+        ? []
+        : [
+            { name: 'azure-openai-api-key', value: azureOpenAiApiKey }
+          ]
       ingress: {
         external: true
         targetPort: 80
@@ -224,14 +226,20 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
           // Placeholder image replaced by 'azd deploy'
           image: 'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest'
           resources: { cpu: json('0.5'), memory: '1.0Gi' }
-          env: [
+          env: concat([
             // Identity — lets DefaultAzureCredential pick up the managed identity
             { name: 'AZURE_CLIENT_ID', value: appIdentity.properties.clientId }
+            { name: 'AZURE_OPENAI_ENDPOINT', value: azureOpenAiEndpoint }
+            { name: 'FEEDBACK_EMAIL_ENDPOINT', value: feedbackEmailEndpoint }
+            { name: 'FEEDBACK_EMAIL_SENDER', value: feedbackEmailSender }
+            { name: 'FEEDBACK_EMAIL_RECIPIENT', value: feedbackEmailRecipient }
+            { name: 'AZURE_TABLES_ENDPOINT', value: azureTablesEndpoint }
+            { name: 'AZURE_TABLES_FEEDBACK_TABLE', value: azureTablesFeedbackTable }
             // Speech
-            { name: 'AZURE_SPEECH_REGION', value: deploySpeech ? speech.location : '' }
-            { name: 'AZURE_SPEECH_RESOURCE_ID', value: deploySpeech ? speech.id : '' }
+            { name: 'AZURE_SPEECH_REGION', value: deploySpeech ? speech!.location : '' }
+            { name: 'AZURE_SPEECH_RESOURCE_ID', value: deploySpeech ? speech!.id : '' }
             // Cosmos DB
-            { name: 'AZURE_COSMOS_ENDPOINT', value: deployCosmos ? cosmos.properties.documentEndpoint : '' }
+            { name: 'AZURE_COSMOS_ENDPOINT', value: deployCosmos ? cosmos!.properties.documentEndpoint : '' }
             { name: 'COSMOS_DATABASE_ID', value: deployCosmos ? cosmosDatabaseId : '' }
             { name: 'COSMOS_CONTAINER_ID', value: deployCosmos ? cosmosContainerId : '' }
             { name: 'COSMOS_FEEDBACK_CONTAINER_ID', value: deployCosmos ? cosmosFeedbackContainerId : '' }
@@ -240,11 +248,15 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
               name: 'PUBLIC_URL'
               value: 'https://${abbrs.appContainerApps}diagram-builder-${resourceToken}.${caEnv.properties.defaultDomain}'
             }
-          ]
+          ], empty(azureOpenAiApiKey)
+            ? []
+            : [
+                { name: 'AZURE_OPENAI_API_KEY', secretRef: 'azure-openai-api-key' }
+              ])
         }
       ]
       scale: {
-        minReplicas: 1
+        minReplicas: 0
         maxReplicas: 3
       }
     }
@@ -303,7 +315,7 @@ resource mcpApp 'Microsoft.App/containerApps@2024-03-01' = {
         }
       ]
       scale: {
-        minReplicas: 1
+        minReplicas: 0
         maxReplicas: 5
       }
     }
@@ -318,9 +330,9 @@ output containerAppName string = containerApp.name
 output containerAppFqdn string = containerApp.properties.configuration.ingress.fqdn
 output mcpAppName string = mcpApp.name
 output mcpAppFqdn string = mcpApp.properties.configuration.ingress.fqdn
-output speechRegionOut string = deploySpeech ? speech.location : ''
-output speechResourceId string = deploySpeech ? speech.id : ''
-output cosmosEndpoint string = deployCosmos ? cosmos.properties.documentEndpoint : ''
+output speechRegionOut string = deploySpeech ? speech!.location : ''
+output speechResourceId string = deploySpeech ? speech!.id : ''
+output cosmosEndpoint string = deployCosmos ? cosmos!.properties.documentEndpoint : ''
 output cosmosDatabaseId string = deployCosmos ? cosmosDatabaseId : ''
 output cosmosContainerId string = deployCosmos ? cosmosContainerId : ''
 output cosmosFeedbackContainerId string = deployCosmos ? cosmosFeedbackContainerId : ''

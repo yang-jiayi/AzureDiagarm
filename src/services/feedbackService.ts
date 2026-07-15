@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-import { trackFeedback, trackFeedbackPersistFailed } from './telemetryService';
+import { trackFeedback } from './telemetryService';
 
 export interface FeedbackContext {
   diagramName?: string;
@@ -24,8 +24,8 @@ export const FEEDBACK_DONE_KEY = 'aqdb_feedback_done';
  * /api/feedback endpoint (Cosmos). Shared by the modal and the quick toast so
  * the telemetry shape and storage payload stay identical.
  *
- * Never throws — a storage hiccup must not block the user. The rating is always
- * captured in telemetry first.
+ * Throws when durable storage fails so the UI can tell the user that the
+ * feedback was not saved instead of showing a false success message.
  */
 export async function submitFeedback(input: FeedbackInput): Promise<void> {
   const comment = (input.comment || '').trim();
@@ -51,44 +51,19 @@ export async function submitFeedback(input: FeedbackInput): Promise<void> {
     },
   };
 
+  const res = await fetch('/api/feedback', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+
+  if (!res.ok) {
+    throw new Error(`Feedback storage returned HTTP ${res.status}`);
+  }
+
   try {
-    const res = await fetch('/api/feedback', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-    // A non-2xx means the durable write did not happen (503 = storage not
-    // configured, 500 = Cosmos unreachable, e.g. a network policy disabled
-    // public access). In that case capture the comment text in telemetry so
-    // it is never silently lost.
-    if (!res.ok && comment.length > 0) {
-      trackFeedbackPersistFailed({
-        rating: input.rating,
-        category: input.category,
-        comment,
-        diagramName: input.context?.diagramName,
-        model: input.context?.model,
-        reason: `http_${res.status}`,
-      });
-    }
-  } catch (err) {
-    console.error('[feedback] submit failed:', err);
-    // Network error reaching the proxy/Cosmos — preserve the comment in telemetry.
-    if (comment.length > 0) {
-      trackFeedbackPersistFailed({
-        rating: input.rating,
-        category: input.category,
-        comment,
-        diagramName: input.context?.diagramName,
-        model: input.context?.model,
-        reason: 'network_error',
-      });
-    }
-  } finally {
-    try {
-      sessionStorage.setItem(FEEDBACK_DONE_KEY, '1');
-    } catch {
-      /* sessionStorage unavailable — ignore */
-    }
+    sessionStorage.setItem(FEEDBACK_DONE_KEY, '1');
+  } catch {
+    /* sessionStorage unavailable — ignore */
   }
 }

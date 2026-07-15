@@ -117,7 +117,8 @@ export const MODEL_CONFIG: Record<ModelType, {
     deploymentEnvVar: 'VITE_AZURE_OPENAI_DEPLOYMENT_GPT54MINI',
     isReasoning: true,
     maxCompletionTokens: 32000,
-    description: 'Compact frontier model - fast and cost-efficient with strong reasoning'
+    description: 'Compact frontier model - fast and cost-efficient with strong reasoning',
+    defaultReasoningEffort: 'low'
   },
   'gpt-5.6-sol': {
     displayName: 'GPT-5.6 Sol',

@@ -310,6 +310,7 @@ export const translationKeys = [
   "Fastest",
   "Feature Tour",
   "Feedback",
+  "Feedback could not be sent. Please try again.",
   "Fewer ideas",
   "file",
   "Finding tailored suggestions…",

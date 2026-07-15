@@ -350,34 +350,6 @@ export function trackFeedback(params: {
 }
 
 /**
- * Fallback when durable feedback storage (Cosmos) is unreachable — capture the
- * comment text in App Insights so the feedback isn't silently lost (e.g. when a
- * nightly network policy disables Cosmos public access). Fires a DISTINCT event
- * so a workbook can both surface persistence outages and recover the text. Only
- * the app owner views this telemetry.
- */
-export function trackFeedbackPersistFailed(params: {
-  rating: number;
-  category: string;
-  comment: string;
-  diagramName?: string;
-  model?: string;
-  reason?: string;
-}): void {
-  trackEvent('Feedback_Persist_Failed', {
-    category: params.category,
-    rating: String(params.rating),
-    comment: (params.comment || '').slice(0, 2000),
-    diagramName: (params.diagramName || '').slice(0, 200),
-    model: (params.model || '').slice(0, 100),
-    reason: (params.reason || '').slice(0, 200),
-  }, {
-    rating: params.rating,
-    commentLength: (params.comment || '').length,
-  });
-}
-
-/**
  * Track AI model usage — fires on every Azure OpenAI call with full
  * model identity and token breakdown. This is the central telemetry
  * event for model/token analytics.

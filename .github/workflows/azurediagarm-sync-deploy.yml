@@ -64,7 +64,20 @@ jobs:
           fork_before="$(git rev-parse HEAD)"
           git fetch upstream main
           upstream_commit="$(git rev-parse upstream/main)"
-          git merge --no-edit upstream/main
+          if ! git merge --no-edit upstream/main; then
+            {
+              echo "Upstream merge conflict detected."
+              echo
+              echo "Upstream commit: $upstream_commit"
+              echo "Customization commit: $fork_before"
+              echo
+              echo "Conflicting files:"
+              git diff --name-only --diff-filter=U
+            } > update-details.txt
+            git merge --abort
+            echo "::error::Upstream changes conflict with AzureDiagarm customizations. See update-details.txt."
+            exit 1
+          fi
           fork_commit="$(git rev-parse HEAD)"
 
           if [[ "$fork_before" != "$fork_commit" ]]; then
@@ -181,6 +194,15 @@ jobs:
               "PUBLIC_URL=${{ vars.AZURE_APP_URL }}" \
               "AZURE_CLIENT_ID=${{ vars.AZURE_RUNTIME_CLIENT_ID }}" \
               "AZURE_OPENAI_ENDPOINT=${{ vars.AZURE_OPENAI_ENDPOINT }}" \
+              "FEEDBACK_EMAIL_ENDPOINT=${{ vars.FEEDBACK_EMAIL_ENDPOINT }}" \
+              "FEEDBACK_EMAIL_SENDER=${{ vars.AZURE_EMAIL_SENDER }}" \
+              "FEEDBACK_EMAIL_RECIPIENT=${{ vars.AZURE_EMAIL_RECIPIENT }}" \
+              "AZURE_TABLES_ENDPOINT=${{ vars.AZURE_TABLES_ENDPOINT }}" \
+              "AZURE_TABLES_FEEDBACK_TABLE=${{ vars.AZURE_TABLES_FEEDBACK_TABLE }}" \
+              "AZURE_COSMOS_ENDPOINT=${{ vars.AZURE_COSMOS_ENDPOINT }}" \
+              "COSMOS_DATABASE_ID=${{ vars.COSMOS_DATABASE_ID }}" \
+              "COSMOS_CONTAINER_ID=${{ vars.COSMOS_CONTAINER_ID }}" \
+              "COSMOS_FEEDBACK_CONTAINER_ID=${{ vars.COSMOS_FEEDBACK_CONTAINER_ID }}" \
               "UPSTREAM_COMMIT=${{ steps.source.outputs.upstream_commit }}" \
               "CUSTOMIZATION_COMMIT=${{ steps.source.outputs.fork_commit }}" \
               "DEPLOYED_AT=$deployed_at" \
@@ -280,11 +302,20 @@ jobs:
         env:
           AZURE_COMMUNICATION_CONNECTION_STRING: ${{ secrets.AZURE_COMMUNICATION_CONNECTION_STRING }}
         run: |
+          details="No additional failure details were generated."
+          if [[ -s update-details.txt ]]; then
+            details="$(cat update-details.txt)"
+          fi
+          failure_body="$(
+            printf 'The AzureDiagarm sync or deployment failed.\n\n%s\n\nWorkflow: %s\n' \
+              "$details" \
+              "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          )"
           az extension add --name communication --yes --only-show-errors
           az communication email send \
             --sender "${{ vars.AZURE_EMAIL_SENDER }}" \
             --to "${{ vars.AZURE_EMAIL_RECIPIENT }}" \
             --subject "AzureDiagarm update failed" \
-            --text "The AzureDiagarm sync or deployment failed. Review ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }} for details." \
+            --text "$failure_body" \
             --wait-until completed \
             --output none

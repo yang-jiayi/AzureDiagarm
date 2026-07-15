@@ -314,7 +314,10 @@ function esc(s: string): string {
 }
 
 function generateHtml(layout: LayoutResult, title: string): string {
-  const layoutJson = JSON.stringify(layout);
+  const layoutJson = JSON.stringify(layout)
+    .replace(/</g, '\\u003c')
+    .replace(/\u2028/g, '\\u2028')
+    .replace(/\u2029/g, '\\u2029');
 
   return `<!DOCTYPE html>
 <html lang="en">

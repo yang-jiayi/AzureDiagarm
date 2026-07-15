@@ -71,7 +71,7 @@ RUN if [ -f .env.build ]; then \
       export $(grep -v '^#' .env.build | grep -v '^\s*$' | xargs); \
     fi && \
     if [ -f .env.appinsights ]; then \
-      export $(cat .env.appinsights) && echo "App Insights: $VITE_APPINSIGHTS_CONNECTION_STRING" | cut -c1-60; \
+      export $(cat .env.appinsights); \
     fi && npm run build
 
 # Build MCP server (TypeScript -> dist/) so it can ship in the runtime image.
