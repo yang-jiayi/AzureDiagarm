@@ -270,7 +270,7 @@
     font-size: 0.75rem;
   }
 
-  .toolbar-dropdown-menu {
+  .app-header .toolbar-dropdown-menu {
     position: fixed;
     top: 78px;
     right: 10px;
