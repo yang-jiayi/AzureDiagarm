@@ -21,6 +21,8 @@ import { getServiceIconMapping } from '../data/serviceIconMapping';
 import { MODEL_CONFIG, getModelSettings } from '../stores/modelSettingsStore';
 import type { ComponentManifest } from './componentManifestAI';
 import { renderManifestForPrompt } from './componentManifestAI';
+import type { Language } from '../i18n/LanguageContext';
+import { getPromptLanguageInstruction } from '../i18n/localization';
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Schema
@@ -144,11 +146,14 @@ export async function generateBlueprintArchitectureWithAI(
   description: string,
   modelOverride?: ModelOverride,
   manifest?: ComponentManifest,
+  language: Language = 'en',
 ): Promise<BlueprintArchitecture> {
   const manifestBlock = manifest ? '\n\n' + renderManifestForPrompt(manifest) : '';
   const systemPrompt = `You are an expert Azure cloud architect who creates whiteboard-style BLUEPRINT architecture diagrams — the kind a senior architect sketches on a whiteboard when explaining a system end-to-end.${manifestBlock}
 
 Blueprint diagrams are NOT swim lanes. They use free positioning: services live inside nested "zones" (Azure subscription, VNet, on-prem network, resource groups), and flow is shown with numbered arrows carrying short labels ("POST /batch", "Trigger worker", "Persist result").
+
+${getPromptLanguageInstruction(language)}
 
 Return ONLY a valid JSON object (no markdown fences, no commentary) matching this TypeScript shape:
 

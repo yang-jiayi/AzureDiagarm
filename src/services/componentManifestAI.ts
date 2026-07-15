@@ -18,6 +18,8 @@
  */
 
 import { callAzureOpenAI, ModelOverride, AIMetrics } from './azureOpenAI';
+import type { Language } from '../i18n/LanguageContext';
+import { getPromptLanguageInstruction } from '../i18n/localization';
 
 export interface ManifestZone {
   id: string;
@@ -112,9 +114,10 @@ Now extract the manifest for the user's request. Return JSON only.`;
 export async function generateComponentManifest(
   description: string,
   modelOverride?: ModelOverride,
+  language: Language = 'en',
 ): Promise<ComponentManifest> {
   const messages = [
-    { role: 'system', content: SYSTEM_PROMPT },
+    { role: 'system', content: `${SYSTEM_PROMPT}\n\n${getPromptLanguageInstruction(language)}` },
     { role: 'user', content: description },
   ];
 

@@ -10,6 +10,7 @@ import {
 import { trackHelpOpened } from '../services/telemetryService';
 import './HelpLearnPanel.css';
 import { useLanguage } from '../i18n/LanguageContext';
+import { localize, type LocalizedText } from '../i18n/localization';
 
 interface HelpLearnPanelProps {
   isOpen: boolean;
@@ -26,12 +27,27 @@ const SECTIONS: { id: SectionId; label: string; icon: React.ReactNode }[] = [
   { id: 'resources', label: 'Resources', icon: <FileText size={16} /> },
 ];
 
-const EXAMPLE_PROMPTS = [
-  'A web application with a React frontend, Node.js backend API, PostgreSQL database, and blob storage for images',
-  'A microservices architecture with Container Apps, API gateway, message queue, and Redis cache',
-  'A zero trust enterprise network with Azure Firewall, Application Gateway with WAF, Private Link for PaaS, Bastion for VM access, and Microsoft Entra ID with Conditional Access',
-  'A HIPAA-compliant healthcare platform with FHIR APIs, de-identification pipeline, and audit logging',
-  'An event-driven order processing system handling 50K orders/hour with Event Hubs, Functions, and Cosmos DB',
+const EXAMPLE_PROMPTS: LocalizedText[] = [
+  {
+    en: 'A web application with a React frontend, Node.js backend API, PostgreSQL database, and blob storage for images',
+    ja: 'Reactフロントエンド、Node.jsバックエンドAPI、PostgreSQLデータベース、画像用Blob Storageを使用するWebアプリケーション',
+  },
+  {
+    en: 'A microservices architecture with Container Apps, API gateway, message queue, and Redis cache',
+    ja: 'Container Apps、API Gateway、メッセージ キュー、Redis Cacheを使用するマイクロサービス アーキテクチャ',
+  },
+  {
+    en: 'A zero trust enterprise network with Azure Firewall, Application Gateway with WAF, Private Link for PaaS, Bastion for VM access, and Microsoft Entra ID with Conditional Access',
+    ja: 'Azure Firewall、WAF付きApplication Gateway、PaaS向けPrivate Link、VMアクセス向けBastion、Conditional Access付きMicrosoft Entra IDを使用するZero Trustエンタープライズ ネットワーク',
+  },
+  {
+    en: 'A HIPAA-compliant healthcare platform with FHIR APIs, de-identification pipeline, and audit logging',
+    ja: 'FHIR APIs、匿名化パイプライン、監査ログを備えたHIPAA準拠の医療プラットフォーム',
+  },
+  {
+    en: 'An event-driven order processing system handling 50K orders/hour with Event Hubs, Functions, and Cosmos DB',
+    ja: 'Event Hubs、Azure Functions、Cosmos DBを使用し、1時間あたり5万件の注文を処理するイベント駆動型の注文処理システム',
+  },
 ];
 
 const FEATURES: { icon: React.ReactNode; title: string; body: string }[] = [
@@ -41,7 +57,7 @@ const FEATURES: { icon: React.ReactNode; title: string; body: string }[] = [
   { icon: <PenTool size={18} />, title: 'Blueprint Diagrams', body: 'Generate a hand‑drawn, whiteboard‑style blueprint PNG with numbered, labeled flows — great for presentations. Use Topology, Blueprint, or Both.' },
   { icon: <ShieldCheck size={18} />, title: 'Well‑Architected Validation', body: 'Score your design across the five WAF pillars, review findings, and regenerate an improved architecture from selected recommendations.' },
   { icon: <GitCompare size={18} />, title: 'Multi‑Model Comparison', body: 'Run the same prompt across models and compare service counts, tokens, latency, and WAF scores side‑by‑side, then apply the winner.' },
-  { icon: <DollarSign size={18} />, title: 'Cost Estimation', body: 'See estimated monthly cost across 8 Azure regions with per‑service breakdowns, and export CSV / multi‑format cost reports.' },
+  { icon: <DollarSign size={18} />, title: 'Cost Estimation', body: 'See estimated monthly cost across 9 Azure regions with per‑service breakdowns, and export CSV / multi‑format cost reports.' },
   { icon: <FileText size={18} />, title: 'Deployment Guides', body: 'Generate step‑by‑step deployment docs with Bicep templates — now grounded in official Microsoft Learn docs with citations.' },
   { icon: <Download size={18} />, title: 'Export Anywhere', body: 'Export to PNG, SVG, Visio (VSDX), Draw.io, PowerPoint, interactive HTML, a Markdown workflow narrative, or a re‑importable JSON manifest — plus CSV/ZIP cost reports.' },
   { icon: <Map size={18} />, title: 'Navigate Large Diagrams', body: 'Drag or scroll the mini‑map (bottom‑right) to move around, click Fit‑to‑view to frame everything, or use Focus mode / Hide Toolbar to maximize canvas space for demos.' },
@@ -50,7 +66,7 @@ const FEATURES: { icon: React.ReactNode; title: string; body: string }[] = [
 ];
 
 const HelpLearnPanel: React.FC<HelpLearnPanelProps> = ({ isOpen, onClose }) => {
-  const { t, translate } = useLanguage();
+  const { t, translate, language } = useLanguage();
   const [section, setSection] = useState<SectionId>('quick-start');
   const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
 
@@ -117,15 +133,31 @@ const HelpLearnPanel: React.FC<HelpLearnPanelProps> = ({ isOpen, onClose }) => {
                 <h3>{t("Get your first diagram in 3 steps")}</h3>
                 <ol className="help-steps">
                   <li>
-                    <strong>{t("Start it.")}</strong> {' '}{t("Describe your architecture in the")}{' '}<em>{t("Chat")}</em>
-                    {' '}{t("panel (it opens automatically) — or click")}{' '}<em>{t("Generate with AI")}</em> {' '}{t("to type a prompt or upload a diagram image — then pick a model.")}{' '}</li>
+                    {localize(language, {
+                      en: 'Start it. Describe your architecture in the Chat panel (it opens automatically), or open Generate with AI to enter a prompt or upload a diagram image, then select a model.',
+                      ja: '開始します。自動的に開くChatパネルにアーキテクチャを入力するか、AIで生成を開いてプロンプトまたは図の画像を指定し、モデルを選択します。',
+                    })}
+                  </li>
                   <li>
-                    <strong>{t("Refine it.")}</strong> {' '}{t("Keep chatting to ask for changes — e.g. “add a load balancer in front of the VMs”. The canvas updates and each change is saved to version history.")}{' '}</li>
+                    {localize(language, {
+                      en: 'Refine it. Keep chatting to request changes, such as “add a load balancer in front of the VMs.” The canvas updates, and every change is saved to Version History.',
+                      ja: '調整します。Chatで「VMの前にLoad Balancerを追加」などの変更を依頼します。キャンバスが更新され、各変更はVersion Historyに保存されます。',
+                    })}
+                  </li>
                   <li>
-                    <strong>{t("Use it.")}</strong> <em>{t("Validate")}</em> {' '}{t("against the Well‑Architected Framework, estimate")}{' '}<em>{t("Cost")}</em>{t(", generate a")}{' '}<em>{t("Deployment Guide")}</em>{t(", or export to PNG / Visio / Draw.io / PowerPoint.")}{' '}</li>
+                    {localize(language, {
+                      en: 'Use it. Validate the design against the Well-Architected Framework, estimate costs, generate a Deployment Guide, or export to PNG, Visio, Draw.io, or PowerPoint.',
+                      ja: '活用します。Well-Architected Frameworkに照らして設計を検証し、コストを見積もり、Deployment Guideを生成するか、PNG、Visio、Draw.io、PowerPointへエクスポートします。',
+                    })}
+                  </li>
                 </ol>
                 <p className="help-callout">
-                  {' '}{t("💡 New here? Skim the")}{' '}<button className="help-link" onClick={() => goToSection('features')}>{t("Feature Tour")}</button> {' '}{t("and try an")}{' '}<button className="help-link" onClick={() => goToSection('prompts')}>{t("Example Prompt")}</button>{t(".")}{' '}</p>
+                  {localize(language, { en: '💡 New here? Review the', ja: '💡 初めての方は、' })}{' '}
+                  <button className="help-link" onClick={() => goToSection('features')}>{t("Feature Tour")}</button>
+                  {' '}{localize(language, { en: 'and try an', ja: 'を確認して、' })}{' '}
+                  <button className="help-link" onClick={() => goToSection('prompts')}>{t("Example Prompt")}</button>
+                  {localize(language, { en: '.', ja: 'もお試しください。' })}
+                </p>
               </div>
             )}
 
@@ -149,14 +181,22 @@ const HelpLearnPanel: React.FC<HelpLearnPanelProps> = ({ isOpen, onClose }) => {
             {section === 'prompts' && (
               <div className="help-section">
                 <h3>{t("Example prompts")}</h3>
-                <p className="help-muted">{t("Click to copy, then paste into")}{' '}<em>{t("Generate with AI")}</em>{t(".")}</p>
+                <p className="help-muted">
+                  {localize(language, {
+                    en: 'Select a prompt to copy it, then paste it into Generate with AI.',
+                    ja: 'プロンプトを選択してコピーし、AIで生成に貼り付けます。',
+                  })}
+                </p>
                 <div className="help-prompts">
-                  {EXAMPLE_PROMPTS.map((p, i) => (
-                    <button key={i} className="help-prompt" onClick={() => copyPrompt(p, i)} title={t("Copy prompt")}>
-                      <span>{p}</span>
+                  {EXAMPLE_PROMPTS.map((p, i) => {
+                    const prompt = localize(language, p);
+                    return (
+                    <button key={i} className="help-prompt" onClick={() => copyPrompt(prompt, i)} title={t("Copy prompt")}>
+                      <span>{prompt}</span>
                       {copiedIndex === i ? <Check size={16} className="help-prompt-icon copied" /> : <Copy size={16} className="help-prompt-icon" />}
                     </button>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             )}
@@ -167,15 +207,25 @@ const HelpLearnPanel: React.FC<HelpLearnPanelProps> = ({ isOpen, onClose }) => {
                 <div className="help-faq">
                   <div className="help-faq-item">
                     <div className="help-faq-q">{t("Which model should I use?")}</div>
-                    <div className="help-faq-a">{t("Start with the recommended default (GPT‑5.2) for balanced quality. Use higher reasoning effort for complex enterprise architectures; lighter models are faster and cheaper for quick drafts.")}</div>
+                    <div className="help-faq-a">{t("Start with GPT-5.6 Sol at Low reasoning for balanced quality. Increase reasoning effort for complex enterprise architectures; lower levels are faster and cheaper for quick drafts.")}</div>
                   </div>
                   <div className="help-faq-item">
                     <div className="help-faq-q">{t("My diagram isn’t quite right — what now?")}</div>
-                    <div className="help-faq-a">{t("Use")}{' '}<em>{t("Chat")}</em> {' '}{t("to make targeted edits instead of regenerating from scratch. You can also drag nodes, edit connections, and resize groups directly on the canvas.")}</div>
+                    <div className="help-faq-a">
+                      {localize(language, {
+                        en: 'Use Chat to make targeted edits instead of regenerating from scratch. You can also drag nodes, edit connections, and resize groups directly on the canvas.',
+                        ja: 'Chatを使うと、最初から再生成せず対象を絞って編集できます。キャンバス上でノードの移動、接続の編集、グループのサイズ変更もできます。',
+                      })}
+                    </div>
                   </div>
                   <div className="help-faq-item">
                     <div className="help-faq-q">{t("I can’t see my whole diagram — how do I navigate?")}</div>
-                    <div className="help-faq-a">{t("Scroll to zoom and right‑click‑drag to pan, or drag the mini‑map (bottom‑right) to move around. Click")}{' '}<em>{t("Fit‑to‑view")}</em> {' '}{t("to frame the whole diagram, and use")}{' '}<em>{t("Focus")}</em> {' '}{t("/")}{' '}<em>{t("Hide Toolbar")}</em> {' '}{t("for more space.")}</div>
+                    <div className="help-faq-a">
+                      {localize(language, {
+                        en: 'Scroll to zoom, right-click and drag to pan, or drag the mini-map in the lower-right. Use Fit-to-view to frame the whole diagram, and Focus or Hide Toolbar for more space.',
+                        ja: 'スクロールで拡大・縮小し、右クリック ドラッグまたは右下のミニマップで移動します。「全体を表示」で図全体を収め、「フォーカス」または「ツールバーを非表示」で表示領域を広げられます。',
+                      })}
+                    </div>
                   </div>
                   <div className="help-faq-item">
                     <div className="help-faq-q">{t("Can I import existing infrastructure?")}</div>
@@ -183,7 +233,12 @@ const HelpLearnPanel: React.FC<HelpLearnPanelProps> = ({ isOpen, onClose }) => {
                   </div>
                   <div className="help-faq-item">
                     <div className="help-faq-q">{t("How do I undo an AI change?")}</div>
-                    <div className="help-faq-a">{t("Open")}{' '}<em>{t("Version History")}</em> {' '}{t("— a snapshot is saved automatically before each AI regeneration, so you can restore any prior state.")}</div>
+                    <div className="help-faq-a">
+                      {localize(language, {
+                        en: 'Open Version History. A snapshot is saved automatically before every AI regeneration, so you can restore any prior state.',
+                        ja: 'Version Historyを開きます。AIで再生成する前にスナップショットが自動保存されるため、以前の状態を復元できます。',
+                      })}
+                    </div>
                   </div>
                   <div className="help-faq-item">
                     <div className="help-faq-q">{t("Are deployment guides accurate?")}</div>
@@ -201,7 +256,12 @@ const HelpLearnPanel: React.FC<HelpLearnPanelProps> = ({ isOpen, onClose }) => {
                     <a href="https://techcommunity.microsoft.com/blog/azurearchitectureblog/from-prompt-to-production-building-azure-architecture-diagrams-with-ai/4520336" target="_blank" rel="noopener noreferrer">
                       {' '}{t("From Prompt to Production — blog post")}{' '}</a>
                   </li>
-                  <li>{t("Share feedback any time via the")}{' '}<em>{t("Feedback")}</em> {' '}{t("button (bottom‑right).")}</li>
+                  <li>
+                    {localize(language, {
+                      en: 'Send feedback at any time with the Feedback button in the lower-right.',
+                      ja: '右下の「フィードバック」ボタンから、いつでもご意見を送信できます。',
+                    })}
+                  </li>
                 </ul>
                 <p className="help-muted">{t("More guided content is on the way — see the Help & Learn plan in the repo docs.")}</p>
               </div>

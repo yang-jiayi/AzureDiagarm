@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-07-15T10:49:31.838Z",
+  "generatedAt": "2026-07-01T00:00:00.000Z",
   "source": "src/data/pricing/regions (Azure Retail Prices snapshot)",
   "hoursPerMonth": 730,
   "currency": "USD",
@@ -381,6 +381,104 @@
         "sampleSku": "D2s v4",
         "expectedBasis": "default-sku:d2s v4",
         "tierCount": 936,
+        "pricesAsOf": "2026-07-01"
+      }
+    },
+    "japaneast": {
+      "api_management": {
+        "low": 0,
+        "expected": 147.17,
+        "high": 1397.59,
+        "reservedExpected": null,
+        "reservedRatio": null,
+        "currency": "USD",
+        "sampleSku": "Basic",
+        "expectedBasis": "default-sku:basic",
+        "tierCount": 13,
+        "pricesAsOf": "2024-12-01"
+      },
+      "azure_app_service": {
+        "low": 0,
+        "expected": 137.24,
+        "high": 58400,
+        "reservedExpected": 107.05,
+        "reservedRatio": 0.78,
+        "currency": "USD",
+        "sampleSku": "P1 v3",
+        "expectedBasis": "default-sku:p1 v3",
+        "tierCount": 72,
+        "pricesAsOf": "2026-06-01"
+      },
+      "azure_cognitive_search": {
+        "low": 0,
+        "expected": 324.12,
+        "high": 6164.63,
+        "reservedExpected": null,
+        "reservedRatio": null,
+        "currency": "USD",
+        "sampleSku": "Standard S1",
+        "expectedBasis": "default-sku:standard s1",
+        "tierCount": 22,
+        "pricesAsOf": "2026-05-01"
+      },
+      "azure_kubernetes_service": {
+        "low": 7.74,
+        "expected": 73,
+        "high": 73,
+        "reservedExpected": null,
+        "reservedRatio": null,
+        "currency": "USD",
+        "sampleSku": "Standard",
+        "expectedBasis": "default-sku:standard",
+        "tierCount": 2,
+        "pricesAsOf": "2025-11-01"
+      },
+      "microsoft_fabric": {
+        "low": 306.6,
+        "expected": 1226.4,
+        "high": 9811.2,
+        "reservedExpected": null,
+        "reservedRatio": null,
+        "currency": "USD",
+        "sampleSku": "F8 (8 CU)",
+        "expectedBasis": "fabric-capacity:F8",
+        "tierCount": 3,
+        "pricesAsOf": "2026-07-01"
+      },
+      "redis_cache": {
+        "low": 11.39,
+        "expected": 40.15,
+        "high": 25833.97,
+        "reservedExpected": null,
+        "reservedRatio": null,
+        "currency": "USD",
+        "sampleSku": "C1",
+        "expectedBasis": "default-sku:c1",
+        "tierCount": 70,
+        "pricesAsOf": "2025-06-01"
+      },
+      "sql_database": {
+        "low": 0,
+        "expected": 164.31,
+        "high": 17526.24,
+        "reservedExpected": 21.91,
+        "reservedRatio": 0.13,
+        "currency": "USD",
+        "sampleSku": "S3",
+        "expectedBasis": "default-sku:s3",
+        "tierCount": 117,
+        "pricesAsOf": "2025-10-01"
+      },
+      "virtual_machines": {
+        "low": 6.31,
+        "expected": 18.83,
+        "high": 107295.4,
+        "reservedExpected": 13.01,
+        "reservedRatio": 0.69,
+        "currency": "USD",
+        "sampleSku": "D2 v3 Low Priority",
+        "expectedBasis": "default-sku:d2 v3",
+        "tierCount": 932,
         "pricesAsOf": "2026-07-01"
       }
     },

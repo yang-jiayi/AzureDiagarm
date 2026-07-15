@@ -31,6 +31,7 @@
 # --- MCP server (separate workspace, built in stage 1) ---
 !mcp-server/package.json
 !mcp-server/package-lock.json
+!mcp-server/Dockerfile
 !mcp-server/tsconfig.json
 !mcp-server/src/**
 !mcp-server/scripts/**

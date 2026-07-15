@@ -11,7 +11,19 @@
 import { useState, useEffect, useCallback } from 'react';
 
 export type ModelType = 'gpt-5.1' | 'gpt-5.2' | 'gpt-5.4' | 'gpt-5.4-mini' | 'gpt-5.6-sol' | 'gpt-5.6-terra' | 'gpt-5.6-luna' | 'deepseek-v3.2-speciale' | 'deepseek-v4-pro' | 'grok-4.1-fast' | 'grok-4.3' | 'mistral-large-3' | 'kimi-k2-5' | 'kimi-k2-7-code';
-export type ReasoningEffort = 'none' | 'low' | 'medium' | 'high';
+export const REASONING_EFFORT_OPTIONS = [
+  { value: 'none', label: 'None' },
+  { value: 'low', label: 'Low' },
+  { value: 'medium', label: 'Medium' },
+  { value: 'high', label: 'High' },
+  { value: 'xhigh', label: 'Extra High' },
+  { value: 'max', label: 'Max' },
+] as const;
+export type ReasoningEffort = (typeof REASONING_EFFORT_OPTIONS)[number]['value'];
+
+const STANDARD_REASONING_EFFORTS = ['none', 'low', 'medium', 'high'] as const;
+const EXTENDED_REASONING_EFFORTS = [...STANDARD_REASONING_EFFORTS, 'xhigh'] as const;
+const GPT_56_REASONING_EFFORTS = [...EXTENDED_REASONING_EFFORTS, 'max'] as const;
 
 /**
  * Feature types that can have independent model settings
@@ -37,7 +49,7 @@ export interface ModelSettings {
 const STORAGE_KEY = 'azure-diagrams-model-settings';
 
 const DEFAULT_SETTINGS: ModelSettings = {
-  model: 'gpt-5.4-mini',
+  model: 'gpt-5.6-sol',
   reasoningEffort: 'low',
   featureOverrides: {}
 };
@@ -54,25 +66,25 @@ export const FEATURE_CONFIG: Record<FeatureType, {
   architectureGeneration: {
     displayName: 'Architecture Generation',
     description: 'Creating Azure architecture diagrams',
-    recommendedModel: 'gpt-5.4-mini',
+    recommendedModel: 'gpt-5.6-sol',
     recommendedReasoning: 'low'
   },
   validation: {
     displayName: 'Architecture Validation',
     description: 'WAF validation and security analysis',
-    recommendedModel: 'gpt-5.4-mini',
+    recommendedModel: 'gpt-5.6-sol',
     recommendedReasoning: 'low'
   },
   deploymentGuide: {
     displayName: 'Deployment Guide & Bicep',
     description: 'Generating deployment guides and IaC templates',
-    recommendedModel: 'gpt-5.4-mini',
+    recommendedModel: 'gpt-5.6-sol',
     recommendedReasoning: 'low'
   },
   blueprint: {
     displayName: 'Blueprint Diagrams',
     description: 'Whiteboard-style blueprint sketches (fast, cost-efficient)',
-    recommendedModel: 'gpt-5.4-mini',
+    recommendedModel: 'gpt-5.6-sol',
     recommendedReasoning: 'low'
   }
 };
@@ -87,6 +99,7 @@ export const MODEL_CONFIG: Record<ModelType, {
   maxCompletionTokens: number;
   description: string;
   defaultReasoningEffort?: ReasoningEffort;
+  supportedReasoningEfforts?: readonly ReasoningEffort[];
   apiFormat?: 'responses' | 'chat-completions'; // defaults to 'responses'
   supportsVision?: boolean; // defaults to true
 }> = {
@@ -96,21 +109,24 @@ export const MODEL_CONFIG: Record<ModelType, {
     isReasoning: true,
     maxCompletionTokens: 32000,
     description: 'Versatile model - fast by default, optional reasoning when needed',
-    defaultReasoningEffort: 'none'
+    defaultReasoningEffort: 'none',
+    supportedReasoningEfforts: STANDARD_REASONING_EFFORTS,
   },
   'gpt-5.2': {
     displayName: 'GPT-5.2',
     deploymentEnvVar: 'VITE_AZURE_OPENAI_DEPLOYMENT_GPT52',
     isReasoning: true,
     maxCompletionTokens: 32000,
-    description: 'Most capable reasoning model - best for complex architectures'
+    description: 'Most capable reasoning model - best for complex architectures',
+    supportedReasoningEfforts: EXTENDED_REASONING_EFFORTS,
   },
   'gpt-5.4': {
     displayName: 'GPT-5.4',
     deploymentEnvVar: 'VITE_AZURE_OPENAI_DEPLOYMENT_GPT54',
     isReasoning: true,
     maxCompletionTokens: 32000,
-    description: 'Most capable frontier model - best knowledge work, coding, and tool use'
+    description: 'Most capable frontier model - best knowledge work, coding, and tool use',
+    supportedReasoningEfforts: EXTENDED_REASONING_EFFORTS,
   },
   'gpt-5.4-mini': {
     displayName: 'GPT-5.4 Mini',
@@ -118,28 +134,33 @@ export const MODEL_CONFIG: Record<ModelType, {
     isReasoning: true,
     maxCompletionTokens: 32000,
     description: 'Compact frontier model - fast and cost-efficient with strong reasoning',
-    defaultReasoningEffort: 'low'
+    defaultReasoningEffort: 'low',
+    supportedReasoningEfforts: EXTENDED_REASONING_EFFORTS,
   },
   'gpt-5.6-sol': {
     displayName: 'GPT-5.6 Sol',
     deploymentEnvVar: 'VITE_AZURE_OPENAI_DEPLOYMENT_GPT56SOL',
     isReasoning: true,
     maxCompletionTokens: 32000,
-    description: 'Newest frontier reasoning model - top-tier quality for complex architectures'
+    description: 'Newest frontier reasoning model - top-tier quality for complex architectures',
+    defaultReasoningEffort: 'low',
+    supportedReasoningEfforts: GPT_56_REASONING_EFFORTS,
   },
   'gpt-5.6-terra': {
     displayName: 'GPT-5.6 Terra',
     deploymentEnvVar: 'VITE_AZURE_OPENAI_DEPLOYMENT_GPT56TERRA',
     isReasoning: true,
     maxCompletionTokens: 32000,
-    description: 'Frontier reasoning model - grounded, thorough analysis for complex architectures'
+    description: 'Frontier reasoning model - grounded, thorough analysis for complex architectures',
+    supportedReasoningEfforts: GPT_56_REASONING_EFFORTS,
   },
   'gpt-5.6-luna': {
     displayName: 'GPT-5.6 Luna',
     deploymentEnvVar: 'VITE_AZURE_OPENAI_DEPLOYMENT_GPT56LUNA',
     isReasoning: true,
     maxCompletionTokens: 32000,
-    description: 'Frontier reasoning model - fast, creative reasoning for architecture design'
+    description: 'Frontier reasoning model - fast, creative reasoning for architecture design',
+    supportedReasoningEfforts: GPT_56_REASONING_EFFORTS,
   },
   'deepseek-v3.2-speciale': {
     displayName: 'DeepSeek V3.2 Speciale',
@@ -211,6 +232,65 @@ export const MODEL_CONFIG: Record<ModelType, {
   },
 };
 
+export function isReasoningEffort(value: unknown): value is ReasoningEffort {
+  return REASONING_EFFORT_OPTIONS.some(option => option.value === value);
+}
+
+export function getSupportedReasoningEfforts(model: ModelType): readonly ReasoningEffort[] {
+  const config = MODEL_CONFIG[model];
+  return config.isReasoning
+    ? (config.supportedReasoningEfforts ?? STANDARD_REASONING_EFFORTS)
+    : [];
+}
+
+export function getCommonSupportedReasoningEfforts(models: Iterable<ModelType>): ReasoningEffort[] {
+  const reasoningModels = [...models].filter(model => MODEL_CONFIG[model].isReasoning);
+  if (reasoningModels.length === 0) return [];
+  return REASONING_EFFORT_OPTIONS
+    .map(option => option.value)
+    .filter(effort => reasoningModels.every(model => getSupportedReasoningEfforts(model).includes(effort)));
+}
+
+export function getReasoningEffortLabel(effort: ReasoningEffort): (typeof REASONING_EFFORT_OPTIONS)[number]['label'] {
+  return REASONING_EFFORT_OPTIONS.find(option => option.value === effort)?.label ?? 'Medium';
+}
+
+export function normalizeReasoningEffort(model: ModelType, effort: unknown): ReasoningEffort {
+  const config = MODEL_CONFIG[model];
+  if (!config.isReasoning) {
+    return isReasoningEffort(effort) ? effort : DEFAULT_SETTINGS.reasoningEffort;
+  }
+
+  const supported = getSupportedReasoningEfforts(model);
+  if (isReasoningEffort(effort) && supported.includes(effort)) return effort;
+  if (config.defaultReasoningEffort && supported.includes(config.defaultReasoningEffort)) {
+    return config.defaultReasoningEffort;
+  }
+  return supported.includes('medium') ? 'medium' : supported[0];
+}
+
+function normalizeFeatureOverrides(
+  value: unknown,
+): Partial<Record<FeatureType, FeatureModelOverride>> {
+  if (!value || typeof value !== 'object') return {};
+
+  const normalized: Partial<Record<FeatureType, FeatureModelOverride>> = {};
+  for (const [feature, rawOverride] of Object.entries(value)) {
+    if (!rawOverride || typeof rawOverride !== 'object' || !('model' in rawOverride)) continue;
+    const model = (rawOverride as FeatureModelOverride).model;
+    if (!MODEL_CONFIG[model] || !isModelAvailable(model)) continue;
+
+    const rawEffort = (rawOverride as FeatureModelOverride).reasoningEffort;
+    normalized[feature as FeatureType] = {
+      model,
+      reasoningEffort: rawEffort === undefined
+        ? undefined
+        : normalizeReasoningEffort(model, rawEffort),
+    };
+  }
+  return normalized;
+}
+
 /**
  * Static map of deployment names per model.
  *
@@ -270,19 +350,12 @@ function loadSettings(): ModelSettings {
       // Validate model type
       if (parsed.model && MODEL_CONFIG[parsed.model as ModelType]) {
         const storedModel = parsed.model as ModelType;
-        const featureOverrides = Object.fromEntries(
-          Object.entries(parsed.featureOverrides || {}).filter(([, override]) => {
-            if (!override || typeof override !== 'object' || !('model' in override)) return false;
-            return isModelAvailable((override as FeatureModelOverride).model);
-          }),
-        ) as Partial<Record<FeatureType, FeatureModelOverride>>;
+        const selectedModel = isModelAvailable(storedModel) ? storedModel : fallbackModel;
 
         return {
-          model: isModelAvailable(storedModel) ? storedModel : fallbackModel,
-          reasoningEffort: ['none', 'low', 'medium', 'high'].includes(parsed.reasoningEffort) 
-            ? parsed.reasoningEffort 
-            : DEFAULT_SETTINGS.reasoningEffort,
-          featureOverrides,
+          model: selectedModel,
+          reasoningEffort: normalizeReasoningEffort(selectedModel, parsed.reasoningEffort),
+          featureOverrides: normalizeFeatureOverrides(parsed.featureOverrides),
         };
       }
     }
@@ -333,7 +406,7 @@ export function getModelSettingsForFeature(feature: FeatureType): { model: Model
       // For reasoning models, use override reasoning or fall back to default
       // For non-reasoning models, reasoning effort doesn't matter but include it for consistency
       reasoningEffort: config.isReasoning 
-        ? (override.reasoningEffort || settings.reasoningEffort)
+        ? normalizeReasoningEffort(override.model, override.reasoningEffort || settings.reasoningEffort)
         : settings.reasoningEffort
     };
   }
@@ -354,7 +427,12 @@ export function updateFeatureOverride(feature: FeatureType, override: FeatureMod
   if (override === null) {
     delete newOverrides[feature];
   } else {
-    newOverrides[feature] = override;
+    newOverrides[feature] = {
+      ...override,
+      reasoningEffort: override.reasoningEffort === undefined
+        ? undefined
+        : normalizeReasoningEffort(override.model, override.reasoningEffort),
+    };
   }
   
   updateModelSettings({ featureOverrides: newOverrides });
@@ -371,7 +449,12 @@ export function hasFeatureOverride(feature: FeatureType): boolean {
  * Update model settings (non-hook version for services)
  */
 export function updateModelSettings(updates: Partial<ModelSettings>): void {
-  currentSettings = { ...currentSettings, ...updates };
+  const nextSettings = { ...currentSettings, ...updates };
+  currentSettings = {
+    ...nextSettings,
+    reasoningEffort: normalizeReasoningEffort(nextSettings.model, nextSettings.reasoningEffort),
+    featureOverrides: normalizeFeatureOverrides(nextSettings.featureOverrides),
+  };
   saveSettings(currentSettings);
   notifyListeners();
 }

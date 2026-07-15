@@ -17,6 +17,7 @@
  */
 
 import type { ValidationFinding } from './architectureValidator';
+import type { Language } from '../i18n/LanguageContext';
 
 export type MaturityBand = 'strong' | 'adequate' | 'developing' | 'early';
 
@@ -105,15 +106,16 @@ export function summarizeGaps(findings: ValidationFinding[] = []): GapsSummary {
  *   "No gaps identified"
  * Only non-zero severities are listed, in priority order.
  */
-export function formatGapsSummary(summary: GapsSummary): string {
-  if (summary.total === 0) return 'No gaps identified';
+export function formatGapsSummary(summary: GapsSummary, language: Language = 'en'): string {
+  if (summary.total === 0) return language === 'ja' ? 'ギャップはありません' : 'No gaps identified';
 
   const parts: string[] = [];
-  if (summary.critical) parts.push(`${summary.critical} critical`);
-  if (summary.high) parts.push(`${summary.high} high`);
-  if (summary.medium) parts.push(`${summary.medium} medium`);
-  if (summary.low) parts.push(`${summary.low} low`);
+  if (summary.critical) parts.push(language === 'ja' ? `重大 ${summary.critical}` : `${summary.critical} critical`);
+  if (summary.high) parts.push(language === 'ja' ? `高 ${summary.high}` : `${summary.high} high`);
+  if (summary.medium) parts.push(language === 'ja' ? `中 ${summary.medium}` : `${summary.medium} medium`);
+  if (summary.low) parts.push(language === 'ja' ? `低 ${summary.low}` : `${summary.low} low`);
 
+  if (language === 'ja') return `${summary.total}件のギャップ（${parts.join('、')}）`;
   const noun = summary.total === 1 ? 'gap' : 'gaps';
   return `${summary.total} ${noun} identified (${parts.join(', ')})`;
 }
@@ -123,15 +125,16 @@ export function formatGapsSummary(summary: GapsSummary): string {
  *   "2 high · 1 medium gap"
  *   "No gaps"
  */
-export function formatPillarGaps(summary: GapsSummary): string {
-  if (summary.total === 0) return 'No gaps';
+export function formatPillarGaps(summary: GapsSummary, language: Language = 'en'): string {
+  if (summary.total === 0) return language === 'ja' ? 'ギャップなし' : 'No gaps';
 
   const parts: string[] = [];
-  if (summary.critical) parts.push(`${summary.critical} critical`);
-  if (summary.high) parts.push(`${summary.high} high`);
-  if (summary.medium) parts.push(`${summary.medium} medium`);
-  if (summary.low) parts.push(`${summary.low} low`);
+  if (summary.critical) parts.push(language === 'ja' ? `重大 ${summary.critical}` : `${summary.critical} critical`);
+  if (summary.high) parts.push(language === 'ja' ? `高 ${summary.high}` : `${summary.high} high`);
+  if (summary.medium) parts.push(language === 'ja' ? `中 ${summary.medium}` : `${summary.medium} medium`);
+  if (summary.low) parts.push(language === 'ja' ? `低 ${summary.low}` : `${summary.low} low`);
 
+  if (language === 'ja') return `${parts.join(' · ')}のギャップ`;
   const noun = summary.total === 1 ? 'gap' : 'gaps';
   return `${parts.join(' · ')} ${noun}`;
 }

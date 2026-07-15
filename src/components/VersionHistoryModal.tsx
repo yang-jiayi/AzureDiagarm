@@ -6,6 +6,8 @@ import { X, Clock, ExternalLink, Trash2, Copy } from 'lucide-react';
 import { DiagramVersion, getAllVersions, deleteVersion, getVersion } from '../services/versionStorageService';
 import './VersionHistoryModal.css';
 import { useLanguage } from '../i18n/LanguageContext';
+import { localize } from '../i18n/localization';
+import { encodeUtf8Base64 } from '../utils/base64Utf8';
 
 interface VersionHistoryModalProps {
   isOpen: boolean;
@@ -20,7 +22,7 @@ const VersionHistoryModal: React.FC<VersionHistoryModalProps> = ({
   onRestoreVersion,
   currentDiagramName: _currentDiagramName
 }) => {
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
   const [versions, setVersions] = useState<DiagramVersion[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [selectedVersion, setSelectedVersion] = useState<string | null>(null);
@@ -80,13 +82,15 @@ const VersionHistoryModal: React.FC<VersionHistoryModalProps> = ({
       };
 
       // Encode diagram data as base64
-      const encodedData = btoa(JSON.stringify(diagramData));
+      const encodedData = encodeUtf8Base64(JSON.stringify(diagramData));
       
       // Open in new tab with diagram data in URL hash
       const newTab = window.open(window.location.origin + window.location.pathname + '#version-' + encodedData, '_blank');
       
       if (!newTab) {
         alert(t("Please allow pop-ups to open versions in new tabs"));
+      } else {
+        newTab.opener = null;
       }
     } catch (error) {
       console.error('Failed to open version:', error);
@@ -102,7 +106,11 @@ const VersionHistoryModal: React.FC<VersionHistoryModalProps> = ({
         return;
       }
 
-      if (confirm(`Restore this version? Your current diagram will be replaced.\n\nVersion: ${version.diagramName}\nCreated: ${formatDate(version.timestamp)}`)) {
+      const confirmation = localize(language, {
+        en: `Restore this version? Your current diagram will be replaced.\n\nVersion: ${version.diagramName}\nCreated: ${formatDate(version.timestamp)}`,
+        ja: `このバージョンを復元しますか？ 現在の図は置き換えられます。\n\nバージョン: ${version.diagramName}\n作成日時: ${formatDate(version.timestamp)}`,
+      });
+      if (confirm(confirmation)) {
         onRestoreVersion(version);
         onClose();
       }
@@ -114,7 +122,7 @@ const VersionHistoryModal: React.FC<VersionHistoryModalProps> = ({
 
   const formatDate = (timestamp: number): string => {
     const date = new Date(timestamp);
-    return date.toLocaleString('en-US', {
+    return date.toLocaleString(language === 'ja' ? 'ja-JP' : 'en-US', {
       month: 'short',
       day: 'numeric',
       year: 'numeric',
@@ -126,10 +134,19 @@ const VersionHistoryModal: React.FC<VersionHistoryModalProps> = ({
   const formatTimeAgo = (timestamp: number): string => {
     const seconds = Math.floor((Date.now() - timestamp) / 1000);
     
-    if (seconds < 60) return 'just now';
-    if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
-    if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
-    if (seconds < 604800) return `${Math.floor(seconds / 86400)}d ago`;
+    if (seconds < 60) return localize(language, { en: 'just now', ja: 'たった今' });
+    if (seconds < 3600) {
+      const minutes = Math.floor(seconds / 60);
+      return localize(language, { en: `${minutes}m ago`, ja: `${minutes}分前` });
+    }
+    if (seconds < 86400) {
+      const hours = Math.floor(seconds / 3600);
+      return localize(language, { en: `${hours}h ago`, ja: `${hours}時間前` });
+    }
+    if (seconds < 604800) {
+      const days = Math.floor(seconds / 86400);
+      return localize(language, { en: `${days}d ago`, ja: `${days}日前` });
+    }
     return formatDate(timestamp);
   };
 
@@ -170,7 +187,7 @@ const VersionHistoryModal: React.FC<VersionHistoryModalProps> = ({
                 >
                   <div className="version-header">
                     <div className="version-title">
-                      <h4>{version.diagramName || 'Untitled Diagram'}</h4>
+                      <h4>{version.diagramName || t("Untitled Diagram")}</h4>
                       {index === 0 && <span className="version-badge latest">{t("Latest")}</span>}
                       {version.validationScore !== undefined && (
                         <span className="version-badge score" title={t("Validation Score")}>
@@ -253,7 +270,11 @@ const VersionHistoryModal: React.FC<VersionHistoryModalProps> = ({
 
         <div className="modal-actions">
           <div className="version-count">
-            {versions.length} {versions.length === 1 ? 'version' : 'versions'} {' '}{t("saved")}{' '}</div>
+            {localize(language, {
+              en: `${versions.length} ${versions.length === 1 ? 'version' : 'versions'} saved`,
+              ja: `${versions.length}件のバージョンを保存済み`,
+            })}
+          </div>
           <button className="btn-secondary" onClick={onClose}>
             {' '}{t("Close")}{' '}</button>
         </div>

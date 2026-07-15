@@ -4,10 +4,15 @@
 # Downloads pricing data for specified services across 5 regions
 # Last updated: March 2026
 
-# Target regions - 8 regions for the Azure Architecture Diagram Builder
-# HERO: primary showcase regions (East US 2, Australia East)
+# Target regions - 9 regions for the Azure Architecture Diagram Builder
+# HERO: primary showcase regions (East US 2, Australia East, Japan East)
 # HUB:  regional coverage regions
-REGIONS=("eastus2" "swedencentral" "westeurope" "canadacentral" "brazilsouth" "australiaeast" "southeastasia" "mexicocentral")
+DEFAULT_REGIONS=("eastus2" "swedencentral" "westeurope" "canadacentral" "brazilsouth" "australiaeast" "southeastasia" "mexicocentral" "japaneast")
+if [ "$#" -gt 0 ]; then
+  REGIONS=("$@")
+else
+  REGIONS=("${DEFAULT_REGIONS[@]}")
+fi
 
 # =============================================================================
 # COMPREHENSIVE SERVICE LIST - 62+ Services
@@ -17,6 +22,7 @@ SERVICES=(
   "Azure App Service"
   "Virtual Machines"
   "Azure Kubernetes Service"
+  "Azure Container Apps"
   "Container Instances"
   "Container Registry"
   "Functions"
@@ -57,6 +63,8 @@ SERVICES=(
   "Azure AI Speech"
   "Azure AI Vision"
   "Azure AI Translator"
+  "Azure Cognitive Search"
+  "Azure API for FHIR"
   "Computer Vision"
   "Form Recognizer"
   "Speech Services"
@@ -82,13 +90,18 @@ SERVICES=(
   # IoT
   "Azure IoT Hub"
   "Azure IoT Central"
+  "IoT Hub"
+  "IoT Central"
+  "Digital Twins"
   
   # Security
   "Microsoft Defender for Cloud"
+  "Microsoft Purview"
   "Azure Sentinel"
   
   # Integration
   "Azure SignalR Service"
+  "SignalR"
   "Notification Hubs"
   "Event Grid"
   "Azure Event Grid"

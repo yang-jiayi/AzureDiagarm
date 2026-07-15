@@ -46,6 +46,17 @@ https://github.com/lucide-icons/lucide
 Copyright (c) 2023 Microsoft
 https://github.com/Azure/azure-sdk-for-js
 
+Microsoft Fabric product and item icons
+Source package: @fabric-msft/svg-icons 8.2.0 (MIT License)
+https://www.npmjs.com/package/@fabric-msft/svg-icons
+Usage guidance: https://learn.microsoft.com/fabric/fundamentals/icons
+
+Microsoft Entra architecture icons
+Copyright (c) Microsoft Corporation. All rights reserved.
+https://learn.microsoft.com/entra/architecture/architecture-icons
+Used only in architectural diagrams, training materials, and documentation
+under the terms published with the official icon package.
+
 =========================================================================
 
 MIT License

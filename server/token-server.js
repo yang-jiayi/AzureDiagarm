@@ -19,6 +19,7 @@ const crypto = require('crypto');
 const app = express();
 app.use((_req, res, next) => {
   res.set('X-Robots-Tag', 'noindex, nofollow, noarchive, nosnippet, noimageindex, noai, noimageai');
+  res.set('Cache-Control', 'no-store');
   next();
 });
 // The Azure OpenAI proxy forwards vision requests that embed base64 images, so
@@ -38,10 +39,54 @@ const RESOURCE_ID = process.env.AZURE_SPEECH_RESOURCE_ID;
 const OPENAI_ENDPOINT = process.env.AZURE_OPENAI_ENDPOINT;
 const OPENAI_API_KEY = process.env.AZURE_OPENAI_API_KEY; // optional fallback
 const OPENAI_API_VERSION = process.env.AZURE_OPENAI_API_VERSION || '2024-05-01-preview';
+const OPENAI_ALLOWED_DEPLOYMENTS = new Set(
+  (process.env.AZURE_OPENAI_ALLOWED_DEPLOYMENTS || '')
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean),
+);
 
 // Deployment names are user-selected on the client; constrain them so they
 // cannot be used to inject a different upstream path (SSRF / path traversal).
 const DEPLOYMENT_NAME_RE = /^[A-Za-z0-9._-]{1,64}$/;
+
+function getClientKey(req) {
+  const forwarded = req.get('x-forwarded-for') || '';
+  return (
+    req.get('x-azure-clientip')
+    || forwarded.split(',')[0]
+    || req.ip
+    || 'unknown'
+  ).trim().slice(0, 128);
+}
+
+function createFixedWindowRateLimiter(windowMs, maxRequests) {
+  const clients = new Map();
+  return (req) => {
+    const now = Date.now();
+    for (const [key, value] of clients) {
+      if (value.resetAt <= now) clients.delete(key);
+    }
+
+    const key = getClientKey(req);
+    const current = clients.get(key);
+    if (!current || current.resetAt <= now) {
+      clients.set(key, { count: 1, resetAt: now + windowMs });
+      return 0;
+    }
+    if (current.count >= maxRequests) {
+      return Math.max(1, Math.ceil((current.resetAt - now) / 1000));
+    }
+    current.count += 1;
+    return 0;
+  };
+}
+
+const consumeOpenAiRateLimit = createFixedWindowRateLimiter(
+  60 * 60 * 1000,
+  Math.max(1, Number(process.env.OPENAI_RATE_LIMIT_PER_HOUR) || 120),
+);
+const consumeUtilityApiRateLimit = createFixedWindowRateLimiter(60 * 60 * 1000, 120);
 
 function buildOpenAIUrl(deployment, apiFormat) {
   const base = OPENAI_ENDPOINT.endsWith('/') ? OPENAI_ENDPOINT : `${OPENAI_ENDPOINT}/`;
@@ -53,6 +98,9 @@ function buildOpenAIUrl(deployment, apiFormat) {
 
 if (!OPENAI_ENDPOINT) {
   console.warn('[openai-proxy] AZURE_OPENAI_ENDPOINT is not set. /api/openai will return 503.');
+}
+if (OPENAI_ALLOWED_DEPLOYMENTS.size === 0) {
+  console.warn('[openai-proxy] AZURE_OPENAI_ALLOWED_DEPLOYMENTS is empty. Any valid deployment name is accepted.');
 }
 
 // ── Durable feedback storage ───────────────────────────────────────────────
@@ -264,7 +312,12 @@ if (!RESOURCE_ID) {
   console.warn('[speech-token] AZURE_SPEECH_RESOURCE_ID is not set. Requests will fail.');
 }
 
-app.get('/api/speech-token', async (_req, res) => {
+app.get('/api/speech-token', async (req, res) => {
+  const retryAfter = consumeUtilityApiRateLimit(req);
+  if (retryAfter > 0) {
+    res.set('Retry-After', String(retryAfter));
+    return res.status(429).json({ error: 'Request limit exceeded. Please try again later.' });
+  }
   if (!REGION || !RESOURCE_ID) {
     return res.status(503).json({ error: 'AZURE_SPEECH_REGION and AZURE_SPEECH_RESOURCE_ID must be configured' });
   }
@@ -292,8 +345,31 @@ app.post('/api/openai', async (req, res) => {
   if (typeof deployment !== 'string' || !DEPLOYMENT_NAME_RE.test(deployment)) {
     return res.status(400).json({ error: 'invalid deployment name' });
   }
+  if (OPENAI_ALLOWED_DEPLOYMENTS.size > 0 && !OPENAI_ALLOWED_DEPLOYMENTS.has(deployment)) {
+    return res.status(403).json({ error: 'deployment is not allowed' });
+  }
   if (!body || typeof body !== 'object') {
     return res.status(400).json({ error: 'missing request body' });
+  }
+  const retryAfter = consumeOpenAiRateLimit(req);
+  if (retryAfter > 0) {
+    res.set('Retry-After', String(retryAfter));
+    return res.status(429).json({ error: 'OpenAI request limit exceeded. Please try again later.' });
+  }
+
+  const upstreamBody = { ...body };
+  if (apiFormat === 'responses') {
+    upstreamBody.model = deployment;
+    upstreamBody.store = false;
+    upstreamBody.max_output_tokens = Math.min(
+      Math.max(Number(upstreamBody.max_output_tokens) || 1, 1),
+      32768,
+    );
+  } else {
+    upstreamBody.max_tokens = Math.min(
+      Math.max(Number(upstreamBody.max_tokens) || 1, 1),
+      32768,
+    );
   }
 
   try {
@@ -309,7 +385,8 @@ app.post('/api/openai', async (req, res) => {
     const upstream = await fetch(buildOpenAIUrl(deployment, apiFormat), {
       method: 'POST',
       headers,
-      body: JSON.stringify(body),
+      body: JSON.stringify(upstreamBody),
+      signal: AbortSignal.timeout(295_000),
     });
 
     const text = await upstream.text();
@@ -342,6 +419,7 @@ async function searchLearnDocs(query, top) {
       method: 'tools/call',
       params: { name: 'microsoft_docs_search', arguments: { query } },
     }),
+    signal: AbortSignal.timeout(15_000),
   });
 
   if (!upstream.ok) {
@@ -382,6 +460,11 @@ async function searchLearnDocs(query, top) {
 }
 
 app.post('/api/docs-search', async (req, res) => {
+  const retryAfter = consumeUtilityApiRateLimit(req);
+  if (retryAfter > 0) {
+    res.set('Retry-After', String(retryAfter));
+    return res.status(429).json({ error: 'Request limit exceeded. Please try again later.' });
+  }
   const { query, top } = req.body || {};
   if (typeof query !== 'string' || query.trim().length === 0) {
     return res.status(400).json({ error: 'query is required' });
@@ -397,7 +480,12 @@ app.post('/api/docs-search', async (req, res) => {
   }
 });
 
-app.get('/api/ice-token', async (_req, res) => {
+app.get('/api/ice-token', async (req, res) => {
+  const retryAfter = consumeUtilityApiRateLimit(req);
+  if (retryAfter > 0) {
+    res.set('Retry-After', String(retryAfter));
+    return res.status(429).json({ error: 'Request limit exceeded. Please try again later.' });
+  }
   if (!REGION || !RESOURCE_ID) {
     return res.status(503).json({ error: 'AZURE_SPEECH_REGION and AZURE_SPEECH_RESOURCE_ID must be configured' });
   }
@@ -409,6 +497,7 @@ app.get('/api/ice-token', async (_req, res) => {
     const authToken = `aad#${RESOURCE_ID}#${aadToken}`;
     const iceUrl = `https://${REGION}.tts.speech.microsoft.com/cognitiveservices/avatar/relay/token/v1`;
     const iceRes = await fetch(iceUrl, {
+      signal: AbortSignal.timeout(15_000),
       headers: { Authorization: `Bearer ${authToken}` },
     });
     if (!iceRes.ok) {

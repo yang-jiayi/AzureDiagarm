@@ -11,13 +11,29 @@ interface IconPaletteProps {
   forceCollapsed?: number;
 }
 
+function iconMatchesSearch(icon: AzureIcon, term: string): boolean {
+  return [icon.name, icon.category, ...icon.searchTerms]
+    .some(value => value.toLowerCase().includes(term));
+}
+
 const IconPalette: React.FC<IconPaletteProps> = ({ forceCollapsed }) => {
-  const { t } = useLanguage();
-  const [isCollapsed, setIsCollapsed] = useState(false);
+  const { t, translate } = useLanguage();
+  const [isCollapsed, setIsCollapsed] = useState(
+    () => typeof window !== 'undefined' && window.matchMedia('(max-width: 640px)').matches
+  );
 
   useEffect(() => {
     if (forceCollapsed) setIsCollapsed(true);
   }, [forceCollapsed]);
+
+  useEffect(() => {
+    const mobileViewport = window.matchMedia('(max-width: 640px)');
+    const collapseForMobile = (event: MediaQueryListEvent) => {
+      if (event.matches) setIsCollapsed(true);
+    };
+    mobileViewport.addEventListener('change', collapseForMobile);
+    return () => mobileViewport.removeEventListener('change', collapseForMobile);
+  }, []);
   const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set(['ai + machine learning']));
   const [searchTerm, setSearchTerm] = useState('');
   const [categoryIcons, setCategoryIcons] = useState<Map<string, AzureIcon[]>>(new Map());
@@ -77,7 +93,7 @@ const IconPalette: React.FC<IconPaletteProps> = ({ forceCollapsed }) => {
     if (cat.toLowerCase().includes(term)) return true;
     // Also show category if any of its icons match the search
     const icons = categoryIcons.get(cat) || [];
-    return icons.some(icon => icon.name.toLowerCase().includes(term));
+    return icons.some(icon => iconMatchesSearch(icon, term));
   });
 
   // Auto-expand categories with matching icons when searching, load their icon URLs
@@ -87,13 +103,13 @@ const IconPalette: React.FC<IconPaletteProps> = ({ forceCollapsed }) => {
     const categoriesToExpand: string[] = [];
     filteredCategories.forEach(cat => {
       const icons = categoryIcons.get(cat) || [];
-      if (icons.some(icon => icon.name.toLowerCase().includes(term))) {
+      if (icons.some(icon => iconMatchesSearch(icon, term))) {
         if (!expandedCategories.has(cat)) {
           categoriesToExpand.push(cat);
         }
         // Load icon URLs for visible matched icons
         icons.forEach(async (icon) => {
-          if (icon.name.toLowerCase().includes(term) && !iconUrls.has(icon.path)) {
+          if (iconMatchesSearch(icon, term) && !iconUrls.has(icon.path)) {
             const url = await loadIcon(icon.path);
             setIconUrls(prev => new Map(prev).set(icon.path, url));
           }
@@ -145,7 +161,7 @@ const IconPalette: React.FC<IconPaletteProps> = ({ forceCollapsed }) => {
           const isExpanded = expandedCategories.has(category);
           const icons = categoryIcons.get(category) || [];
           const filteredIcons = icons.filter(icon =>
-            searchTerm === '' || icon.name.toLowerCase().includes(searchTerm.toLowerCase())
+            searchTerm === '' || iconMatchesSearch(icon, searchTerm.toLowerCase())
           );
 
           return (
@@ -155,7 +171,7 @@ const IconPalette: React.FC<IconPaletteProps> = ({ forceCollapsed }) => {
                 onClick={() => toggleCategory(category)}
               >
                 {isExpanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-                <span className="category-title">{category}</span>
+                <span className="category-title">{translate(category)}</span>
                 {isExpanded && <span className="icon-count">{t("(")}{filteredIcons.length}{t(")")}</span>}
               </div>
               

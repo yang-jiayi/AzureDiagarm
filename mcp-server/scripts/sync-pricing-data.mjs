@@ -253,7 +253,7 @@ function main() {
     .map((d) => d.name);
 
   const out = {
-    generatedAt: new Date().toISOString(),
+    generatedAt: null,
     source: 'src/data/pricing/regions (Azure Retail Prices snapshot)',
     hoursPerMonth: HOURS_PER_MONTH,
     currency: 'USD',
@@ -261,6 +261,7 @@ function main() {
   };
 
   let totalEntries = 0;
+  let newestPriceDate = '';
   for (const region of regions) {
     const dir = resolve(regionsRoot, region);
     const files = readdirSync(dir).filter((f) => f.endsWith('.json'));
@@ -273,11 +274,17 @@ function main() {
         : distillFile(resolve(dir, file), stem);
       if (distilled) {
         regionMap[stem] = distilled;
+        if (distilled.pricesAsOf && distilled.pricesAsOf > newestPriceDate) {
+          newestPriceDate = distilled.pricesAsOf;
+        }
         totalEntries++;
       }
     }
     out.regions[region] = regionMap;
   }
+  out.generatedAt = newestPriceDate
+    ? `${newestPriceDate}T00:00:00.000Z`
+    : '1970-01-01T00:00:00.000Z';
 
   writeFileSync(outPath, JSON.stringify(out, null, 2) + '\n', 'utf8');
   console.log(

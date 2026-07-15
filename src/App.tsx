@@ -86,6 +86,8 @@ import { FEEDBACK_DONE_KEY } from './services/feedbackService';
 import microsoftLogoWhite from './assets/microsoft-logo-white.avif';
 import './App.css';
 import { useLanguage } from './i18n/LanguageContext';
+import { localize } from './i18n/localization';
+import { decodeUtf8Base64 } from './utils/base64Utf8';
 
 const nodeTypes = {
   azureNode: AzureNode,
@@ -139,7 +141,7 @@ function deriveTitleFromPrompt(prompt: string | undefined | null): string | unde
 }
 
 function App() {
-  const { t, translate } = useLanguage();
+  const { t, translate, language } = useLanguage();
   const [nodes, setNodes, onNodesChangeBase] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
   const [architecturePrompt, setArchitecturePrompt] = useState<string>('');
@@ -169,6 +171,44 @@ function App() {
     version: '1.0',
     date: new Date().toLocaleDateString(),
   });
+
+  useEffect(() => {
+    setTitleBlockData((current) => {
+      const architectureName = current.architectureName === 'Untitled Architecture'
+        || current.architectureName === '無題のアーキテクチャ'
+        ? translate('Untitled Architecture')
+        : current.architectureName;
+      const author = current.author === 'Azure Architect'
+        || current.author === 'Azure アーキテクト'
+        ? translate('Azure Architect')
+        : current.author;
+      if (architectureName === current.architectureName && author === current.author) return current;
+      return { ...current, architectureName, author };
+    });
+  }, [language, translate]);
+
+  useEffect(() => {
+    const labels = [
+      ['.react-flow__controls-zoomin', translate('Zoom in')],
+      ['.react-flow__controls-zoomout', translate('Zoom out')],
+      ['.react-flow__controls-fitview', translate('Fit diagram to view')],
+      ['.react-flow__controls-interactive', translate('Toggle interactivity')],
+    ] as const;
+
+    const updateControlLabels = () => {
+      for (const [selector, label] of labels) {
+        document.querySelectorAll<HTMLButtonElement>(selector).forEach(control => {
+          control.title = label;
+          control.setAttribute('aria-label', label);
+        });
+      }
+    };
+
+    updateControlLabels();
+    const observer = new MutationObserver(updateControlLabels);
+    observer.observe(document.body, { childList: true, subtree: true });
+    return () => observer.disconnect();
+  }, [language, translate]);
   
   // Theme State
   const [isDarkMode, setIsDarkMode] = useState<boolean>(() => {
@@ -324,15 +364,15 @@ function App() {
   const formatTimeAgo = useCallback((ts: number) => {
     const diffMs = Date.now() - ts;
     const diffSec = Math.max(0, Math.floor(diffMs / 1000));
-    if (diffSec < 10) return 'just now';
-    if (diffSec < 60) return `${diffSec}s ago`;
+    if (diffSec < 10) return localize(language, { en: 'just now', ja: 'たった今' });
+    if (diffSec < 60) return localize(language, { en: `${diffSec}s ago`, ja: `${diffSec}秒前` });
     const diffMin = Math.floor(diffSec / 60);
-    if (diffMin < 60) return `${diffMin}m ago`;
+    if (diffMin < 60) return localize(language, { en: `${diffMin}m ago`, ja: `${diffMin}分前` });
     const diffHr = Math.floor(diffMin / 60);
-    if (diffHr < 24) return `${diffHr}h ago`;
+    if (diffHr < 24) return localize(language, { en: `${diffHr}h ago`, ja: `${diffHr}時間前` });
     const diffDay = Math.floor(diffHr / 24);
-    return `${diffDay}d ago`;
-  }, []);
+    return localize(language, { en: `${diffDay}d ago`, ja: `${diffDay}日前` });
+  }, [language]);
 
   useEffect(() => {
     const handlePointerDown = (e: PointerEvent) => {
@@ -1599,8 +1639,16 @@ function App() {
       if (!flow || typeof flow !== 'object') {
         throw new Error('Invalid diagram payload');
       }
+      if (!Array.isArray(flow.nodes) || !Array.isArray(flow.edges)) {
+        throw new Error('Diagram payload must contain node and edge arrays');
+      }
+      if (flow.nodes.length > 2000 || flow.edges.length > 5000) {
+        throw new Error('Diagram payload is too large');
+      }
+      if (flow.nodes.some((node: unknown) => !node || typeof node !== 'object' || Array.isArray(node))) {
+        throw new Error('Invalid node in diagram payload');
+      }
 
-      if (flow.nodes) setNodes(flow.nodes || []);
       // Normalize edge handle ids. Some scenes (e.g. exported by the MCP server
       // or hand-authored) use bare position names for handles, but AzureNode's
       // handles are asymmetric: valid sources are top-source/left-source/right/
@@ -1608,21 +1656,23 @@ function App() {
       // sourceHandle "top"/"left" or targetHandle "bottom"/"right" points at a
       // non-existent handle, so the edge silently fails to render. Remap the
       // invalid bare names to the correct handle id (valid ids pass through).
-      if (flow.edges) {
-        const SRC_FIX: Record<string, string> = { top: 'top-source', left: 'left-source' };
-        const TGT_FIX: Record<string, string> = { bottom: 'bottom-target', right: 'right-target' };
-        const fixedEdges = (flow.edges || []).map((edge: any) => {
-          const next = { ...edge };
-          if (typeof next.sourceHandle === 'string' && SRC_FIX[next.sourceHandle]) {
-            next.sourceHandle = SRC_FIX[next.sourceHandle];
-          }
-          if (typeof next.targetHandle === 'string' && TGT_FIX[next.targetHandle]) {
-            next.targetHandle = TGT_FIX[next.targetHandle];
-          }
-          return next;
-        });
-        setEdges(fixedEdges);
-      }
+      const SRC_FIX: Record<string, string> = { top: 'top-source', left: 'left-source' };
+      const TGT_FIX: Record<string, string> = { bottom: 'bottom-target', right: 'right-target' };
+      const fixedEdges = flow.edges.map((edge: any) => {
+        if (!edge || typeof edge !== 'object' || Array.isArray(edge)) {
+          throw new Error('Invalid edge in diagram payload');
+        }
+        const next = { ...edge };
+        if (typeof next.sourceHandle === 'string' && SRC_FIX[next.sourceHandle]) {
+          next.sourceHandle = SRC_FIX[next.sourceHandle];
+        }
+        if (typeof next.targetHandle === 'string' && TGT_FIX[next.targetHandle]) {
+          next.targetHandle = TGT_FIX[next.targetHandle];
+        }
+        return next;
+      });
+      setNodes(flow.nodes);
+      setEdges(fixedEdges);
 
       if (flow.viewport && reactFlowInstance?.setViewport) {
         reactFlowInstance.setViewport(flow.viewport);
@@ -1661,7 +1711,7 @@ function App() {
     if (hash.startsWith('#version-')) {
       try {
         const encodedData = hash.substring(9); // Remove '#version-'
-        const decodedData = atob(encodedData);
+        const decodedData = decodeUtf8Base64(encodedData);
         const diagramData = JSON.parse(decodedData);
         
         // Apply the diagram data
@@ -1680,6 +1730,14 @@ function App() {
   const loadDiagram = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
+    if (file.size > 10 * 1024 * 1024) {
+      alert(localize(language, {
+        en: 'The diagram file is too large. The maximum size is 10 MB.',
+        ja: '図のファイルが大きすぎます。最大サイズは10 MBです。',
+      }));
+      event.target.value = '';
+      return;
+    }
 
     const reader = new FileReader();
     reader.onload = (e) => {
@@ -1692,7 +1750,7 @@ function App() {
       }
     };
     reader.readAsText(file);
-  }, [applyFlowObject, t]);
+  }, [applyFlowObject, t, language]);
 
   // Restore a version from history
   const restoreVersion = useCallback((version: DiagramVersion) => {
@@ -2279,7 +2337,10 @@ function App() {
       if (/\b(resource|module)\b/.test(text)) {
         return { format: 'bicep', label: 'Bicep' };
       }
-      alert(`Invalid Bicep file: "${filename}" does not contain resource or module declarations.`);
+      alert(localize(language, {
+        en: `Invalid Bicep file: "${filename}" does not contain resource or module declarations.`,
+        ja: `無効なBicepファイルです: "${filename}" にresourceまたはmodule宣言がありません。`,
+      }));
       return null;
     }
 
@@ -2287,7 +2348,10 @@ function App() {
       if (/\b(resource|provider|module|data)\b/.test(text)) {
         return { format: 'terraform-hcl', label: 'Terraform' };
       }
-      alert(`Invalid Terraform file: "${filename}" does not contain resource or provider blocks.`);
+      alert(localize(language, {
+        en: `Invalid Terraform file: "${filename}" does not contain resource or provider blocks.`,
+        ja: `無効なTerraformファイルです: "${filename}" にresourceまたはprovider blockがありません。`,
+      }));
       return null;
     }
 
@@ -2302,28 +2366,47 @@ function App() {
         if (json.$schema && json.resources) {
           return { format: 'arm', label: 'ARM' };
         }
-        alert(`Unrecognized JSON file: "${filename}". Expected an ARM template ($schema + resources) or Terraform state file.`);
+        alert(localize(language, {
+          en: `Unrecognized JSON file: "${filename}". Expected an ARM template ($schema + resources) or Terraform state file.`,
+          ja: `認識できないJSONファイルです: "${filename}"。ARM template（$schema + resources）またはTerraform state fileが必要です。`,
+        }));
         return null;
       } catch {
-        alert(`Invalid JSON in "${filename}".`);
+        alert(localize(language, {
+          en: `Invalid JSON in "${filename}".`,
+          ja: `"${filename}" のJSONが無効です。`,
+        }));
         return null;
       }
     }
 
-    alert(`Unsupported file type: .${ext}. Supported formats: .bicep, .tf, .json`);
+    alert(localize(language, {
+      en: `Unsupported file type: .${ext}. Supported formats: .bicep, .tf, .json`,
+      ja: `未対応のファイル形式です: .${ext}。対応形式: .bicep、.tf、.json`,
+    }));
     return null;
-  }, []);
+  }, [language]);
 
   const uploadTemplate = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = event.target.files;
     if (!files || files.length === 0) return;
+    const selectedFiles = Array.from(files);
+    const totalBytes = selectedFiles.reduce((sum, file) => sum + file.size, 0);
+    if (selectedFiles.length > 20 || totalBytes > 10 * 1024 * 1024) {
+      alert(localize(language, {
+        en: 'Select no more than 20 template files with a combined size of 10 MB or less.',
+        ja: 'templateファイルは20個以下、合計10 MB以下で選択してください。',
+      }));
+      event.target.value = '';
+      return;
+    }
 
     setIsImportingTemplate(true);
 
     try {
       // Read all selected files
       const fileContents: { name: string; text: string }[] = [];
-      for (const file of Array.from(files)) {
+      for (const file of selectedFiles) {
         const text = await file.text();
         fileContents.push({ name: file.name, text });
       }
@@ -2356,25 +2439,31 @@ function App() {
         format: detection.format,
         content,
         filenames,
-      });
+      }, language);
 
       clearSourceModel();
 
       // Build descriptive prompt label
       const extraCount = filenames.length > 1 ? ` (+${filenames.length - 1} files)` : '';
-      const promptLabel = `${detection.label} Template: ${filenames[0]}${extraCount}`;
+      const promptLabel = localize(language, {
+        en: `${detection.label} Template: ${filenames[0]}${extraCount}`,
+        ja: `${detection.label}テンプレート: ${filenames[0]}${extraCount}`,
+      });
 
       trackTemplateImport(detection.format, filenames[0], filenames.length);
       handleAIGenerate(result, promptLabel);
     } catch (error: any) {
       console.error('Template import error:', error);
-      alert(`Failed to import template: ${error.message}`);
+      alert(localize(language, {
+        en: `Failed to import template: ${error.message}`,
+        ja: `テンプレートのインポートに失敗しました: ${error.message}`,
+      }));
     } finally {
       setIsImportingTemplate(false);
       setImportFormatLabel('Template');
       event.target.value = '';
     }
-  }, [handleAIGenerate, detectIaCFormat]);
+  }, [handleAIGenerate, detectIaCFormat, language]);
 
   const handleAlign = useCallback((type: string) => {
     const selectedNodes = nodes.filter(n => n.selected);
@@ -2527,7 +2616,9 @@ function App() {
         services,
         connections,
         groups,
-        architecturePrompt || titleBlockData.architectureName
+        architecturePrompt || titleBlockData.architectureName,
+        undefined,
+        language,
       );
 
       // Attach diagram snapshot to results
@@ -2553,12 +2644,15 @@ function App() {
       setPanelsCollapsedSignal(prev => prev + 1);
     } catch (error: any) {
       console.error('Validation error:', error);
-      alert(`Failed to validate architecture: ${error.message}`);
+      alert(localize(language, {
+        en: `Failed to validate architecture: ${error.message}`,
+        ja: `アーキテクチャの検証に失敗しました: ${error.message}`,
+      }));
       setIsValidationModalOpen(false);
     } finally {
       setIsValidating(false);
     }
-  }, [nodes, edges, architecturePrompt, titleBlockData.architectureName, reactFlowInstance, t]);
+  }, [nodes, edges, architecturePrompt, titleBlockData.architectureName, reactFlowInstance, t, language]);
 
   const handleGenerateDeploymentGuide = useCallback(async () => {
     if (nodes.length === 0) {
@@ -2601,7 +2695,8 @@ function App() {
         connections,
         groups,
         architecturePrompt || titleBlockData.architectureName,
-        totalMonthlyCost
+        totalMonthlyCost,
+        language,
       );
 
       setDeploymentGuide(guide);
@@ -2618,7 +2713,7 @@ function App() {
     } finally {
       setIsGeneratingGuide(false);
     }
-  }, [nodes, edges, architecturePrompt, titleBlockData.architectureName, totalMonthlyCost, t]);
+  }, [nodes, edges, architecturePrompt, titleBlockData.architectureName, totalMonthlyCost, t, language]);
 
   return (
     <div className="app">
@@ -2658,7 +2753,7 @@ function App() {
                         {' '}{t("Savings 1yr")}{' '}</button>
                     </div>
                     {(() => {
-                      const f = getPricingFreshness(PRICING_DATA_AS_OF);
+                      const f = getPricingFreshness(PRICING_DATA_AS_OF, new Date(), language);
                       return (
                         <div
                           className={`pricing-freshness pricing-freshness--${f.level}`}
@@ -2745,7 +2840,7 @@ function App() {
                   {' '}{t("Compare Models")}{' '}</button>
                 <label className={`btn btn-secondary${isImportingTemplate ? ' btn-parsing' : ''}`} title={t("Import Bicep, Terraform, or ARM template to generate diagram")}>
                   {isImportingTemplate ? <Loader size={18} className="spin-icon" /> : <FileCode size={18} />}
-                  {isImportingTemplate ? 'Parsing...' : 'Import Template'}
+                  {isImportingTemplate ? t("Parsing...") : t("Import Template")}
                   <input
                     type="file"
                     accept=".json,.bicep,.tf"
@@ -3129,8 +3224,8 @@ function App() {
                         {' '}{t("Emphasize primary path")}{' '}</label>
 
                       <div className="toolbar-dropdown-hint">
-                        {' '}{t("Current:")}{' '}{layoutPresetLabel[layoutPreset]} {' '}{t("• Engine:")}{' '}{layoutEngine === 'elk' ? 'ELK' : 'Dagre'}
-                        {layoutPreset === 'radial' ? ' (centers on selected node when possible)' : ''}
+                        {' '}{t("Current:")}{' '}{translate(layoutPresetLabel[layoutPreset])} {' '}{t("• Engine:")}{' '}{layoutEngine === 'elk' ? 'ELK' : 'Dagre'}
+                        {layoutPreset === 'radial' ? t(" (centers on selected node when possible)") : ''}
                       </div>
 
                       <div className="toolbar-dropdown-separator" role="separator" />
@@ -3255,8 +3350,8 @@ function App() {
                         {' '}{t("Presentation (Professional)")}{' '}</button>
                       <div className="toolbar-dropdown-separator" role="separator" />
                       <div className="toolbar-dropdown-hint">
-                        {stylePreset === 'detailed' && 'Shows all labels, pricing, and details'}
-                        {stylePreset === 'presentation' && 'Professional look with bold connections'}
+                        {stylePreset === 'detailed' && t("Shows all labels, pricing, and details")}
+                        {stylePreset === 'presentation' && t("Professional look with bold connections")}
                       </div>
                     </div>
                   )}
@@ -3277,7 +3372,7 @@ function App() {
                   aria-pressed={focusMode}
                 >
                   <PanelLeftClose size={18} />
-                  {focusMode ? 'Exit Focus' : 'Focus'}
+                  {focusMode ? t("Exit Focus") : t("Focus")}
                 </button>
 
                 <button
@@ -3287,7 +3382,7 @@ function App() {
                   disabled={nodes.filter(n => n.type === 'groupNode').length === 0}
                 >
                   {allGroupsCollapsed ? <Maximize2 size={18} /> : <Minimize2 size={18} />}
-                  {allGroupsCollapsed ? 'Expand Groups' : 'Collapse Groups'}
+                  {allGroupsCollapsed ? t("Expand Groups") : t("Collapse Groups")}
                 </button>
               </div>
 
@@ -3752,7 +3847,12 @@ Return the IMPROVED architecture in the same JSON format as before with proper g
           
           // Call Azure OpenAI to regenerate
           try {
-            const improvedArchitecture = await generateArchitectureWithAI(regenerationPrompt);
+            const improvedArchitecture = await generateArchitectureWithAI(
+              regenerationPrompt,
+              undefined,
+              undefined,
+              language,
+            );
             
             if (improvedArchitecture) {
               // Detect newly added services
@@ -3762,9 +3862,15 @@ Return the IMPROVED architecture in the same JSON format as before with proper g
                 .map((s: any) => s.name);
               
               // Build descriptive banner text
-              let bannerText = `Original architecture improved with ${selectedFindings.length} WAF recommendation${selectedFindings.length > 1 ? 's' : ''}`;
+              let bannerText = localize(language, {
+                en: `Original architecture improved with ${selectedFindings.length} WAF recommendation${selectedFindings.length > 1 ? 's' : ''}`,
+                ja: `元のアーキテクチャへ${selectedFindings.length}件のWAF推奨事項を適用`,
+              });
               if (newServices.length > 0) {
-                bannerText += `. Added: ${newServices.join(', ')}`;
+                bannerText += localize(language, {
+                  en: `. Added: ${newServices.join(', ')}`,
+                  ja: `。追加: ${newServices.join('、')}`,
+                });
               }
               
               // Apply the improved architecture
@@ -3772,7 +3878,10 @@ Return the IMPROVED architecture in the same JSON format as before with proper g
               trackRecommendationsApplied(selectedFindings.length);
               
               setIsApplyingRecommendations(false);
-              alert(`✅ Architecture regenerated successfully!\n\nApplied ${selectedFindings.length} recommendations.\n${newServices.length > 0 ? `\nAdded ${newServices.length} new services: ${newServices.join(', ')}` : ''}`);
+              alert(localize(language, {
+                en: `✅ Architecture regenerated successfully!\n\nApplied ${selectedFindings.length} recommendations.\n${newServices.length > 0 ? `\nAdded ${newServices.length} new services: ${newServices.join(', ')}` : ''}`,
+                ja: `✅ アーキテクチャを再生成しました。\n\n${selectedFindings.length}件の推奨事項を適用しました。\n${newServices.length > 0 ? `\n${newServices.length}件の新しいサービスを追加: ${newServices.join('、')}` : ''}`,
+              }));
             }
           } catch (error) {
             console.error('❌ Failed to regenerate architecture:', error);

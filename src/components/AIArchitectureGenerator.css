@@ -598,6 +598,30 @@ body.dark-mode .ai-architecture-modal .modal-col-left .image-uploader-header {
   gap: 12px;
 }
 
+.ai-architecture-modal .modal-footer-actions .btn-secondary {
+  color: #334155;
+  background: #ffffff;
+  border: 1px solid #cbd5e1;
+}
+
+.ai-architecture-modal .modal-footer-actions .btn-secondary:hover:not(:disabled) {
+  color: #1e293b;
+  background: #f8fafc;
+  border-color: #94a3b8;
+}
+
+body.dark-mode .ai-architecture-modal .modal-footer-actions .btn-secondary {
+  color: #f1f5f9;
+  background: #334155;
+  border-color: #64748b;
+}
+
+body.dark-mode .ai-architecture-modal .modal-footer-actions .btn-secondary:hover:not(:disabled) {
+  color: #ffffff;
+  background: #475569;
+  border-color: #94a3b8;
+}
+
 /* Dark mode support */
 body.dark-mode .modal-content {
   background: #1e1e1e;
@@ -770,4 +794,110 @@ body.dark-mode .mode-toggle-btn .mode-sub {
 
 body.dark-mode .mode-toggle-btn.active .mode-sub {
   color: #94a3b8;
+}
+
+@media (max-width: 640px) {
+  .modal-content.ai-architecture-modal {
+    width: 100%;
+    max-height: calc(100dvh - 24px);
+  }
+
+  .ai-architecture-modal .modal-header {
+    padding: 0.75rem 1rem;
+  }
+
+  .ai-architecture-modal .modal-title h2 {
+    font-size: 1.05rem;
+  }
+
+  .ai-architecture-modal .modal-body {
+    padding: 1rem;
+  }
+
+  .ai-architecture-modal .modal-col-left .modal-description {
+    margin-bottom: 1rem;
+    font-size: 0.9rem;
+    line-height: 1.55;
+  }
+
+  .ai-architecture-modal .form-group {
+    margin-bottom: 1rem;
+  }
+
+  .ai-architecture-modal .mode-toggle {
+    grid-template-columns: 1fr;
+    gap: 0.5rem;
+    margin-bottom: 1rem;
+  }
+
+  .ai-architecture-modal .modal-footer {
+    gap: 0.65rem;
+    padding: 0.75rem;
+  }
+
+  .ai-architecture-modal .ai-modal-active-model {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 0.5rem;
+    padding: 0.65rem 0.75rem;
+  }
+
+  .ai-architecture-modal .ai-modal-active-model > svg {
+    display: none;
+  }
+
+  .ai-architecture-modal .ai-modal-active-model .ai-modal-model-label {
+    align-self: center;
+    white-space: nowrap;
+  }
+
+  .ai-architecture-modal .ai-modal-active-model .ai-modal-model-select {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .ai-architecture-modal .ai-modal-active-model .model-change-hint {
+    grid-column: 1 / -1;
+    margin-left: 0;
+    font-size: 10px;
+    line-height: 1.3;
+  }
+
+  .ai-architecture-modal .auto-snapshot-option {
+    margin-right: 0;
+  }
+
+  .ai-architecture-modal .modal-footer-actions {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 0.5rem;
+  }
+
+  .ai-architecture-modal .modal-footer-actions .btn {
+    min-width: 0;
+    justify-content: center;
+  }
+
+  .ai-architecture-modal .modal-footer-actions .btn-generate-ai {
+    padding: 0.65rem 0.75rem !important;
+    font-size: 0.95rem !important;
+  }
+}
+
+@media (min-width: 481px) and (max-width: 640px) {
+  .ai-architecture-modal .mode-toggle {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .ai-architecture-modal .mode-toggle-btn {
+    padding: 0.6rem;
+  }
+
+  .ai-architecture-modal .mode-toggle-btn .mode-sub {
+    display: none;
+  }
+
+  .ai-architecture-modal .ai-modal-active-model {
+    grid-template-columns: auto minmax(110px, 1fr) auto minmax(72px, 0.65fr);
+  }
 }

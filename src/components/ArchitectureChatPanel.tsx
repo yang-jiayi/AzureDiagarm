@@ -12,6 +12,7 @@ import {
 } from '../services/modificationPrompt';
 import './ArchitectureChatPanel.css';
 import { useLanguage } from '../i18n/LanguageContext';
+import { localize, type LocalizedText } from '../i18n/localization';
 
 interface ChatMessage {
   id: string;
@@ -30,38 +31,77 @@ interface ArchitectureChatPanelProps {
 
 // Cold start: when the canvas is empty, offer complete starter architectures
 // so Chat works as a first-class entry point (not just a refinement tool).
-const STARTER_SUGGESTIONS = [
-  'Three-tier web app with App Service, SQL Database, and Redis cache',
-  'Event-driven order processing with Service Bus and Azure Functions',
-  'Secure AI chat app with Azure OpenAI and private endpoints',
-  'Serverless REST API with Functions, Cosmos DB, and a Storage queue',
+const STARTER_SUGGESTIONS: LocalizedText[] = [
+  {
+    en: 'Three-tier web app with App Service, SQL Database, and Redis cache',
+    ja: 'App Service、SQL Database、Redis Cacheを使用する3層Webアプリ',
+  },
+  {
+    en: 'Event-driven order processing with Service Bus and Azure Functions',
+    ja: 'Service BusとAzure Functionsを使用するイベント駆動型の注文処理',
+  },
+  {
+    en: 'Secure AI chat app with Azure OpenAI and private endpoints',
+    ja: 'Azure OpenAIとPrivate Endpointを使用する安全なAIチャット アプリ',
+  },
+  {
+    en: 'Serverless REST API with Functions, Cosmos DB, and a Storage queue',
+    ja: 'Azure Functions、Cosmos DB、Storage Queueを使用するサーバーレスREST API',
+  },
 ];
 
 // Cold start (advanced): richer, enterprise-grade patterns revealed behind a
 // "More ideas" toggle so first-timers aren't overwhelmed but power users can
 // see the tool's ceiling.
-const ADVANCED_STARTER_SUGGESTIONS = [
-  'Hub-and-spoke landing zone with Azure Firewall and private DNS',
-  'Multi-region active-active web app with Front Door and geo-replicated SQL',
-  'RAG chat app: Azure OpenAI + AI Search + Cosmos DB, all behind private endpoints',
-  'Event-driven microservices on AKS with Service Bus, KEDA autoscaling, and Key Vault',
+const ADVANCED_STARTER_SUGGESTIONS: LocalizedText[] = [
+  {
+    en: 'Hub-and-spoke landing zone with Azure Firewall and private DNS',
+    ja: 'Azure FirewallとPrivate DNSを使用するHub-and-Spoke構成のLanding Zone',
+  },
+  {
+    en: 'Multi-region active-active web app with Front Door and geo-replicated SQL',
+    ja: 'Azure Front Doorとgeo-replicationされたSQLを使用するマルチリージョンactive-active Webアプリ',
+  },
+  {
+    en: 'RAG chat app: Azure OpenAI + AI Search + Cosmos DB, all behind private endpoints',
+    ja: 'Azure OpenAI、Azure AI Search、Cosmos DBをPrivate Endpointで保護するRAGチャット アプリ',
+  },
+  {
+    en: 'Event-driven microservices on AKS with Service Bus, KEDA autoscaling, and Key Vault',
+    ja: 'AKS、Service Bus、KEDA自動スケーリング、Key Vaultを使用するイベント駆動型マイクロサービス',
+  },
 ];
 
 // Warm start: once a diagram exists, offer incremental refinements. Used as a
 // fallback when no context-aware "what's missing" suggestions apply.
-const REFINE_SUGGESTIONS = [
-  'Add Azure Front Door with WAF in front of the web tier',
-  'Make it zone-redundant for high availability',
-  'Add a Redis cache between the API and the database',
-  'Add monitoring with Application Insights and Log Analytics',
-  'Put private endpoints on the data services',
+const REFINE_SUGGESTIONS: LocalizedText[] = [
+  {
+    en: 'Add Azure Front Door with WAF in front of the web tier',
+    ja: 'Web層の前段にWAF付きAzure Front Doorを追加する',
+  },
+  {
+    en: 'Make it zone-redundant for high availability',
+    ja: '高可用性のためにゾーン冗長構成にする',
+  },
+  {
+    en: 'Add a Redis cache between the API and the database',
+    ja: 'APIとデータベースの間にRedis Cacheを追加する',
+  },
+  {
+    en: 'Add monitoring with Application Insights and Log Analytics',
+    ja: 'Application InsightsとLog Analyticsで監視を追加する',
+  },
+  {
+    en: 'Put private endpoints on the data services',
+    ja: 'データ サービスにPrivate Endpointを追加する',
+  },
 ];
 
 // Context-aware refinement suggestions: inspect the services already on the
 // canvas and propose the most valuable *missing* Well-Architected additions
 // (security, reliability, observability). Falls back to the static list when
 // nothing obvious is missing so the panel is never empty.
-function computeRefineSuggestions(nodes: any[]): string[] {
+function computeRefineSuggestions(nodes: any[], language: 'en' | 'ja'): string[] {
   const labels = nodes
     .filter((n) => n?.type === 'azureNode')
     .map((n) => String(n?.data?.label || '').toLowerCase());
@@ -72,28 +112,37 @@ function computeRefineSuggestions(nodes: any[]): string[] {
 
   // Security / identity
   if (!has('key vault')) {
-    suggestions.push('Add Key Vault and use managed identities for secrets');
+    suggestions.push(localize(language, {
+      en: 'Add Key Vault and use managed identities for secrets',
+      ja: 'Key Vaultを追加し、シークレットへのアクセスにはManaged Identityを使用する',
+    }));
   }
   if (!has('private endpoint', 'private link')) {
-    suggestions.push('Put private endpoints on the data services');
+    suggestions.push(localize(language, REFINE_SUGGESTIONS[4]));
   }
   if (!has('front door', 'application gateway', 'firewall', 'waf')) {
-    suggestions.push('Add Azure Front Door with a WAF in front of the web tier');
+    suggestions.push(localize(language, {
+      en: 'Add Azure Front Door with a WAF in front of the web tier',
+      ja: 'Web層の前段にWAF付きAzure Front Doorを追加する',
+    }));
   }
   // Observability
   if (!has('application insights', 'monitor', 'log analytics')) {
-    suggestions.push('Add monitoring with Application Insights and Log Analytics');
+    suggestions.push(localize(language, REFINE_SUGGESTIONS[3]));
   }
   // Reliability
-  suggestions.push('Make it zone-redundant for high availability');
+  suggestions.push(localize(language, REFINE_SUGGESTIONS[1]));
   if (!has('redis', 'cache')) {
-    suggestions.push('Add a Redis cache between the API and the database');
+    suggestions.push(localize(language, REFINE_SUGGESTIONS[2]));
   }
 
   const deduped = Array.from(new Set(suggestions));
   if (deduped.length >= 3) return deduped.slice(0, 5);
   // Pad with static defaults if the diagram already covers most pillars.
-  return Array.from(new Set([...deduped, ...REFINE_SUGGESTIONS])).slice(0, 5);
+  return Array.from(new Set([
+    ...deduped,
+    ...REFINE_SUGGESTIONS.map(suggestion => localize(language, suggestion)),
+  ])).slice(0, 5);
 }
 
 const uid = () => `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -101,12 +150,12 @@ const uid = () => `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 // Well-Architected pillar tagging for suggestion chips (Tier 4). Heuristic
 // keyword match maps each suggestion to a pillar so chips carry a small icon.
 type Pillar = 'security' | 'reliability' | 'cost' | 'operations' | 'performance';
-const PILLAR_META: Record<Pillar, { label: string; Icon: LucideIcon; className: string }> = {
-  security: { label: 'Security', Icon: Shield, className: 'pillar-security' },
-  reliability: { label: 'Reliability', Icon: Activity, className: 'pillar-reliability' },
-  cost: { label: 'Cost', Icon: DollarSign, className: 'pillar-cost' },
-  operations: { label: 'Operations', Icon: Wrench, className: 'pillar-operations' },
-  performance: { label: 'Performance', Icon: Zap, className: 'pillar-performance' },
+const PILLAR_META: Record<Pillar, { label: LocalizedText; Icon: LucideIcon; className: string }> = {
+  security: { label: { en: 'Security', ja: 'セキュリティ' }, Icon: Shield, className: 'pillar-security' },
+  reliability: { label: { en: 'Reliability', ja: '信頼性' }, Icon: Activity, className: 'pillar-reliability' },
+  cost: { label: { en: 'Cost', ja: 'コスト' }, Icon: DollarSign, className: 'pillar-cost' },
+  operations: { label: { en: 'Operations', ja: '運用' }, Icon: Wrench, className: 'pillar-operations' },
+  performance: { label: { en: 'Performance', ja: 'パフォーマンス' }, Icon: Zap, className: 'pillar-performance' },
 };
 function pillarFor(text: string): Pillar {
   const t = text.toLowerCase();
@@ -123,7 +172,7 @@ const ArchitectureChatPanel: React.FC<ArchitectureChatPanelProps> = ({
   currentArchitecture,
   onApply,
 }) => {
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [isSending, setIsSending] = useState(false);
@@ -154,7 +203,7 @@ const ArchitectureChatPanel: React.FC<ArchitectureChatPanelProps> = ({
   // chat. Recomputed from the current (post-change) canvas, so they evolve as the
   // diagram grows; already-picked ideas are filtered out.
   const staticFollowUps = hasDiagram
-    ? computeRefineSuggestions(currentArchitecture.nodes)
+    ? computeRefineSuggestions(currentArchitecture.nodes, language)
         .filter((s) => !usedSuggestions.has(s))
         .slice(0, 3)
     : [];
@@ -204,12 +253,12 @@ const ArchitectureChatPanel: React.FC<ArchitectureChatPanelProps> = ({
         .map((m) => m.text);
 
       try {
-        const prompt = buildModificationPrompt(before, text, recentRequests.slice(0, -1));
-        const result = await generateArchitectureWithAI(prompt);
+        const prompt = buildModificationPrompt(before, text, recentRequests.slice(0, -1), language);
+        const result = await generateArchitectureWithAI(prompt, undefined, undefined, language);
 
         await onApply(result, text, true);
 
-        const summary = summarizeArchitectureChange(before, result);
+        const summary = summarizeArchitectureChange(before, result, language);
         const asstId = uid();
         setMessages((prev) => [
           ...prev,
@@ -226,7 +275,7 @@ const ArchitectureChatPanel: React.FC<ArchitectureChatPanelProps> = ({
           : [];
         setModelFollowUps(null);
         setFollowUpsLoading(true);
-        void generateFollowUpSuggestions({ services: nextServices, lastChange: summary, recentRequests })
+        void generateFollowUpSuggestions({ services: nextServices, lastChange: summary, recentRequests, language })
           .then((items) => {
             if (items.length) setModelFollowUps({ forMsgId: asstId, items });
           })
@@ -238,7 +287,10 @@ const ArchitectureChatPanel: React.FC<ArchitectureChatPanelProps> = ({
           {
             id: uid(),
             role: 'error',
-            text: err?.message || 'Something went wrong updating the diagram. Please try again.',
+            text: err?.message || localize(language, {
+              en: 'Something went wrong updating the diagram. Please try again.',
+              ja: '図の更新中に問題が発生しました。もう一度お試しください。',
+            }),
             ts: Date.now(),
           },
         ]);
@@ -246,7 +298,7 @@ const ArchitectureChatPanel: React.FC<ArchitectureChatPanelProps> = ({
         setIsSending(false);
       }
     },
-    [isSending, messages, currentArchitecture, onApply],
+    [isSending, messages, currentArchitecture, onApply, language],
   );
 
   // Tier 4: "What would you add?" — ask the model for the single highest-impact
@@ -265,6 +317,7 @@ const ArchitectureChatPanel: React.FC<ArchitectureChatPanelProps> = ({
         lastChange: '',
         recentRequests: recent,
         count: 1,
+        language,
       });
       if (best[0]) {
         markUsed(best[0]);
@@ -300,8 +353,8 @@ const ArchitectureChatPanel: React.FC<ArchitectureChatPanelProps> = ({
         <Sparkles size={13} />
         <span>
           {hasDiagram
-            ? <>{t("Refine your diagram in plain English ·")}{' '}<strong>{modelName}</strong></>
-            : <>{t("Describe it, I’ll draw it — then refine in plain English ·")}{' '}<strong>{modelName}</strong></>}
+            ? <>{localize(language, { en: 'Refine your diagram in natural language ·', ja: '自然言語で図を調整 ·' })}{' '}<strong>{modelName}</strong></>
+            : <>{localize(language, { en: 'Describe it, I’ll draw it — then refine in natural language ·', ja: '要件を説明すると図を作成し、そのまま自然言語で調整できます ·' })}{' '}<strong>{modelName}</strong></>}
         </span>
       </div>
 
@@ -310,16 +363,19 @@ const ArchitectureChatPanel: React.FC<ArchitectureChatPanelProps> = ({
           <div className="arch-chat-empty">
             <p className="arch-chat-empty-title">
               {hasDiagram
-                ? 'Describe a change and I’ll update the diagram.'
-                : 'Start by describing what you want to build — I’ll draw the first version, then we refine it together.'}
+                ? localize(language, { en: 'Describe a change and I’ll update the diagram.', ja: '変更内容を入力すると図を更新します。' })
+                : localize(language, { en: 'Start by describing what you want to build — I’ll draw the first version, then we refine it together.', ja: '作成したい内容を入力してください。最初の図を作成し、その後一緒に調整できます。' })}
             </p>
             <p className="arch-chat-empty-sub">
               {hasDiagram
-                ? 'Every change is saved to version history, so you can experiment freely.'
-                : 'Pick a starter below or type your own. Every step is saved to version history.'}
+                ? localize(language, { en: 'Every change is saved to version history, so you can experiment freely.', ja: '各変更はバージョン履歴に保存されるため、自由に試せます。' })
+                : localize(language, { en: 'Pick a starter below or type your own. Every step is saved to version history.', ja: '下の例を選ぶか、要件を入力してください。各手順はバージョン履歴に保存されます。' })}
             </p>
             <div className="arch-chat-suggestions">
-              {(hasDiagram ? computeRefineSuggestions(currentArchitecture.nodes) : STARTER_SUGGESTIONS).map((s) => (
+              {(hasDiagram
+                ? computeRefineSuggestions(currentArchitecture.nodes, language)
+                : STARTER_SUGGESTIONS.map(suggestion => localize(language, suggestion))
+              ).map((s) => (
                 <button
                   key={s}
                   className="arch-chat-chip"
@@ -330,7 +386,9 @@ const ArchitectureChatPanel: React.FC<ArchitectureChatPanelProps> = ({
                 </button>
               ))}
 
-              {!hasDiagram && showAdvanced && ADVANCED_STARTER_SUGGESTIONS.map((s) => (
+              {!hasDiagram && showAdvanced && ADVANCED_STARTER_SUGGESTIONS.map(item => {
+                const s = localize(language, item);
+                return (
                 <button
                   key={s}
                   className="arch-chat-chip arch-chat-chip-advanced"
@@ -339,7 +397,8 @@ const ArchitectureChatPanel: React.FC<ArchitectureChatPanelProps> = ({
                 >
                   {s}
                 </button>
-              ))}
+                );
+              })}
 
               {!hasDiagram && (
                 <button
@@ -387,7 +446,10 @@ const ArchitectureChatPanel: React.FC<ArchitectureChatPanelProps> = ({
               role="group"
               aria-label={hasDiagram ? t("Suggested follow-ups") : t("Starter architectures")}
             >
-              {(hasDiagram ? followUps : STARTER_SUGGESTIONS).map((s) => {
+              {(hasDiagram
+                ? followUps
+                : STARTER_SUGGESTIONS.map(suggestion => localize(language, suggestion))
+              ).map((s) => {
                 const meta = hasDiagram ? PILLAR_META[pillarFor(s)] : null;
                 const Icon = meta?.Icon;
                 return (
@@ -395,7 +457,12 @@ const ArchitectureChatPanel: React.FC<ArchitectureChatPanelProps> = ({
                     key={s}
                     className={`arch-chat-chip arch-chat-chip-followup${meta ? ` ${meta.className}` : ''}`}
                     disabled={isSending || !configured}
-                    title={meta ? `${meta.label} improvement` : undefined}
+                    title={meta
+                      ? localize(language, {
+                          en: `${localize(language, meta.label)} improvement`,
+                          ja: `${localize(language, meta.label)}の改善`,
+                        })
+                      : undefined}
                     onClick={() => { markUsed(s); send(s); }}
                   >
                     {Icon && <Icon size={12} className="arch-chat-chip-icon" />}

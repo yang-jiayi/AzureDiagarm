@@ -12,6 +12,8 @@ import { generateModelFilename } from '../utils/modelNaming';
 import { getModelSettingsForFeature, getDeploymentName, MODEL_CONFIG } from '../stores/modelSettingsStore';
 import { trackAIModelUsage } from './telemetryService';
 import { buildRequestBody, parseApiResponse, callAzureOpenAIProxy } from './apiHelper';
+import type { Language } from '../i18n/LanguageContext';
+import { getPromptLanguageInstruction } from '../i18n/localization';
 import { searchMicrosoftDocs, renderGroundingBlock, DocSource } from './docsGroundingService';
 
 // Non-secret flag indicating the AI backend is wired up. Credentials live
@@ -40,7 +42,7 @@ async function callAzureOpenAI(messages: any[], maxTokens: number = 10000): Prom
   let deployment: string;
   try {
     deployment = getDeploymentName(settings.model);
-  } catch (e) {
+  } catch {
     throw new Error(`No deployment configured for ${settings.model}. Please check your .env file.`);
   }
 
@@ -156,7 +158,8 @@ export async function generateDeploymentGuide(
   connections: Array<{ from: string; to: string; label: string; type?: string }>,
   _groups?: Array<{ name: string; services?: string[] }>,
   architectureDescription?: string,
-  estimatedCost?: number
+  estimatedCost?: number,
+  language: Language = 'en',
 ): Promise<DeploymentGuide> {
   
   if (!endpoint) {
@@ -200,6 +203,8 @@ Generate deployment documentation with:
 4. Post-Deployment - Validation, monitoring
 5. Troubleshooting - Common issues and solutions
 6. Bicep Templates - Infrastructure as Code files
+
+${getPromptLanguageInstruction(language)}
 
 **Bicep Guidelines:**
 - Create main.bicep + module files for each service

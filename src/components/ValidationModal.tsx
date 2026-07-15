@@ -9,6 +9,7 @@ import { scoreToBand, summarizeGaps, formatGapsSummary, formatPillarGaps } from 
 import { useValidationDisplayPrefs } from '../stores/validationDisplayStore';
 import './ValidationModal.css';
 import { useLanguage } from '../i18n/LanguageContext';
+import { localize } from '../i18n/localization';
 
 /**
  * Props for ValidationModal component
@@ -28,7 +29,7 @@ interface ValidationModalProps {
  * Includes download functionality for markdown report.
  */
 const ValidationModal: React.FC<ValidationModalProps> = ({ validation, isOpen, onClose, isLoading, onApplyRecommendations, onRevalidate }) => {
-  const { t, translate } = useLanguage();
+  const { t, translate, language } = useLanguage();
   // Track selected findings for applying recommendations
   const [selectedFindings, setSelectedFindings] = useState<Set<string>>(new Set());
   // Display preference: show the raw 0-100 score alongside the maturity band
@@ -213,7 +214,7 @@ const ValidationModal: React.FC<ValidationModalProps> = ({ validation, isOpen, o
                     </>
                   ) : (
                     <span className="score-band-mark" style={{ color: overall.color }}>
-                      {overall.short}
+                      {translate(overall.short)}
                     </span>
                   )}
                 </div>
@@ -224,7 +225,7 @@ const ValidationModal: React.FC<ValidationModalProps> = ({ validation, isOpen, o
                   <span className="maturity-band-pill" style={{ borderColor: overall.color, color: overall.color }}>
                     {translate(overall.label)}
                   </span>
-                  <span className="gaps-summary">{formatGapsSummary(gaps)}</span>
+                  <span className="gaps-summary">{formatGapsSummary(gaps, language)}</span>
                   {displayPrefs.showNumericScore && (
                     <span className="numeric-score-aside">{validation.overallScore}{t("/100")}</span>
                   )}
@@ -259,7 +260,7 @@ const ValidationModal: React.FC<ValidationModalProps> = ({ validation, isOpen, o
                 return (
                 <div key={index} className="pillar-card">
                   <div className="pillar-header">
-                    <h4>{pillar.pillar}</h4>
+                    <h4>{translate(pillar.pillar)}</h4>
                     <div className="pillar-assessment">
                       <span
                         className="maturity-band-pill small"
@@ -267,7 +268,7 @@ const ValidationModal: React.FC<ValidationModalProps> = ({ validation, isOpen, o
                       >
                         {translate(pillarBand.label)}
                       </span>
-                      <span className="pillar-gaps">{formatPillarGaps(pillarGaps)}</span>
+                      <span className="pillar-gaps">{formatPillarGaps(pillarGaps, language)}</span>
                       {displayPrefs.showNumericScore && (
                         <span 
                           className="pillar-score"
@@ -296,12 +297,14 @@ const ValidationModal: React.FC<ValidationModalProps> = ({ validation, isOpen, o
                               {getSeverityIcon(finding.severity)}
                               <span className="finding-category">{finding.category}</span>
                               <span className={`severity-badge ${finding.severity}`}>
-                                {finding.severity}
+                                {translate(finding.severity)}
                               </span>
                               {(finding as any).source && (
                                 <span className={`source-badge ${(finding as any).source}`}>
                                   {(finding as any).source === 'rule-based' ? <Database size={12} /> : <Cpu size={12} />}
-                                  {(finding as any).source === 'rule-based' ? 'Rule' : 'AI'}
+                                  {(finding as any).source === 'rule-based'
+                                    ? localize(language, { en: 'Rule', ja: 'ルール' })
+                                    : 'AI'}
                                 </span>
                               )}
                             </div>
@@ -359,7 +362,10 @@ const ValidationModal: React.FC<ValidationModalProps> = ({ validation, isOpen, o
             {selectedFindings.size > 0 && onApplyRecommendations && (
               <button className="btn-success" onClick={handleApplyRecommendations}>
                 <RefreshCw size={18} />
-                {' '}{t("Apply")}{' '}{selectedFindings.size} {' '}{t("Recommendation")}{selectedFindings.size > 1 ? 's' : ''}
+                {localize(language, {
+                  en: `Apply ${selectedFindings.size} recommendation${selectedFindings.size > 1 ? 's' : ''}`,
+                  ja: `${selectedFindings.size}件の推奨事項を適用`,
+                })}
               </button>
             )}
             <button className="btn-primary" onClick={onClose}>

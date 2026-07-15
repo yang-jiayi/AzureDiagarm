@@ -17,6 +17,8 @@ import {
   FeatureType,
   FEATURE_CONFIG,
   getAvailableModels,
+  getReasoningEffortLabel,
+  getSupportedReasoningEfforts,
   updateFeatureOverride,
   hasFeatureOverride
 } from '../stores/modelSettingsStore';
@@ -28,18 +30,23 @@ interface ModelSelectorProps {
 }
 
 const ModelSelector: React.FC<ModelSelectorProps> = ({ compact = false }) => {
-  const { t } = useLanguage();
+  const { t, translate } = useLanguage();
   const [settings, updateSettings] = useModelSettings();
   const [showAdvanced, setShowAdvanced] = useState(false);
   const availableModels = getAvailableModels();
   
   const currentConfig = MODEL_CONFIG[settings.model];
+  const supportedReasoningEfforts = getSupportedReasoningEfforts(settings.model);
   
   // Check if any feature has overrides
   const hasAnyOverride = (Object.keys(FEATURE_CONFIG) as FeatureType[]).some(hasFeatureOverride);
   
   const handleModelChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    updateSettings({ model: e.target.value as ModelType });
+    const model = e.target.value as ModelType;
+    updateSettings({
+      model,
+      reasoningEffort: MODEL_CONFIG[model].defaultReasoningEffort ?? settings.reasoningEffort,
+    });
   };
   
   const handleReasoningChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
@@ -118,7 +125,7 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({ compact = false }) => {
                 value={settings.model} 
                 onChange={handleModelChange}
                 className="model-select"
-                title={currentConfig.description}
+                title={translate(currentConfig.description)}
               >
                 {availableModels.map(model => (
                   <option key={model} value={model}>
@@ -134,9 +141,11 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({ compact = false }) => {
                   className="reasoning-select"
                   title={t("Reasoning effort level")}
                 >
-                  <option value="low">{t("Low")}</option>
-                  <option value="medium">{t("Med")}</option>
-                  <option value="high">{t("High")}</option>
+                  {supportedReasoningEfforts.map(level => (
+                    <option key={level} value={level}>
+                      {t(getReasoningEffortLabel(level))}
+                    </option>
+                  ))}
                 </select>
               )}
               
@@ -170,7 +179,7 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({ compact = false }) => {
                   
                   return (
                     <div key={feature} className={`compact-feature-row ${isOverridden ? 'overridden' : ''}`}>
-                      <span className="compact-feature-label">{featureConfig.displayName}</span>
+                      <span className="compact-feature-label">{translate(featureConfig.displayName)}</span>
                       <div className="compact-feature-controls">
                         <select
                           value={currentModel}
@@ -191,9 +200,11 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({ compact = false }) => {
                             onChange={(e) => handleFeatureReasoningChange(feature, e.target.value as ReasoningEffort)}
                             className="compact-reasoning-select"
                           >
-                            <option value="low">{t("Low")}</option>
-                            <option value="medium">{t("Med")}</option>
-                            <option value="high">{t("High")}</option>
+                            {getSupportedReasoningEfforts(currentModel as ModelType).map(level => (
+                              <option key={level} value={level}>
+                                {t(getReasoningEffortLabel(level))}
+                              </option>
+                            ))}
                           </select>
                         )}
                       </div>
@@ -211,7 +222,7 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({ compact = false }) => {
           <div className="model-help-panel">
             <div className="help-item">
               <span className="help-label">{t("Reasoning:")}</span>
-              <span className="help-text">{t("Low = faster, Med = balanced, High = thorough")}</span>
+              <span className="help-text">{t("None = fastest; Low to Max increases reasoning depth")}</span>
             </div>
             <div className="help-item">
               <span className="help-icon"><Settings size={10} /></span>
@@ -220,9 +231,9 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({ compact = false }) => {
             <div className="help-divider" />
             <div className="help-subtitle">{t("Recommended settings (from testing):")}</div>
             <div className="help-defaults">
-              <span>{t("• Architecture: GPT-5.2 (medium)")}</span>
-              <span>{t("• Validation: GPT-5.2 (low)")}</span>
-              <span>{t("• Deployment: GPT-5.2 (medium)")}</span>
+              <span>{t("• Architecture: GPT-5.6 Sol (low)")}</span>
+              <span>{t("• Validation: GPT-5.6 Sol (low)")}</span>
+              <span>{t("• Deployment: GPT-5.6 Sol (low)")}</span>
             </div>
           </div>
         </div>
@@ -246,35 +257,37 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({ compact = false }) => {
                 key={model}
                 className={`model-button ${settings.model === model ? 'active' : ''}`}
                 onClick={() => updateSettings({ model })}
-                title={MODEL_CONFIG[model].description}
+                title={translate(MODEL_CONFIG[model].description)}
               >
                 {getModelIcon(model)}
                 <span>{MODEL_CONFIG[model].displayName}</span>
               </button>
             ))}
           </div>
-          <p className="model-description">{currentConfig.description}</p>
+          <p className="model-description">{translate(currentConfig.description)}</p>
         </div>
         
         {currentConfig.isReasoning && (
           <div className="model-selector-group">
             <label className="model-label">{t("Default Reasoning Effort")}</label>
             <div className="reasoning-buttons">
-              {(['none', 'low', 'medium', 'high'] as ReasoningEffort[]).map(level => (
+              {supportedReasoningEfforts.map(level => (
                 <button
                   key={level}
                   className={`reasoning-button ${settings.reasoningEffort === level ? 'active' : ''}`}
                   onClick={() => updateSettings({ reasoningEffort: level })}
                 >
-                  {level.charAt(0).toUpperCase() + level.slice(1)}
+                  {t(getReasoningEffortLabel(level))}
                 </button>
               ))}
             </div>
             <p className="reasoning-hint">
-              {settings.reasoningEffort === 'none' && 'No reasoning - fastest response, lowest cost'}
-              {settings.reasoningEffort === 'low' && 'Faster responses, less detailed analysis'}
-              {settings.reasoningEffort === 'medium' && 'Balanced speed and depth'}
-              {settings.reasoningEffort === 'high' && 'Thorough analysis, may take longer'}
+              {settings.reasoningEffort === 'none' && t("No reasoning - fastest response, lowest cost")}
+              {settings.reasoningEffort === 'low' && t("Faster responses, less detailed analysis")}
+              {settings.reasoningEffort === 'medium' && t("Balanced speed and depth")}
+              {settings.reasoningEffort === 'high' && t("Thorough analysis, may take longer")}
+              {settings.reasoningEffort === 'xhigh' && t("Extra-thorough analysis with higher latency and token use")}
+              {settings.reasoningEffort === 'max' && t("Maximum reasoning depth with the longest latency and highest token use")}
             </p>
           </div>
         )}
@@ -305,8 +318,8 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({ compact = false }) => {
                 return (
                   <div key={feature} className={`feature-override ${isOverridden ? 'active' : ''}`}>
                     <div className="feature-header">
-                      <span className="feature-name">{featureConfig.displayName}</span>
-                      <span className="feature-desc">{featureConfig.description}</span>
+                      <span className="feature-name">{translate(featureConfig.displayName)}</span>
+                      <span className="feature-desc">{translate(featureConfig.description)}</span>
                     </div>
                     <div className="feature-controls">
                       <select
@@ -328,10 +341,11 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({ compact = false }) => {
                           onChange={(e) => handleFeatureReasoningChange(feature, e.target.value as ReasoningEffort)}
                           className="feature-reasoning-select"
                         >
-                          <option value="none">{t("None")}</option>
-                          <option value="low">{t("Low")}</option>
-                          <option value="medium">{t("Med")}</option>
-                          <option value="high">{t("High")}</option>
+                          {getSupportedReasoningEfforts(currentModel as ModelType).map(level => (
+                            <option key={level} value={level}>
+                              {t(getReasoningEffortLabel(level))}
+                            </option>
+                          ))}
                         </select>
                       )}
                     </div>

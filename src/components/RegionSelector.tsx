@@ -12,7 +12,7 @@ interface RegionSelectorProps {
 }
 
 const RegionSelector: React.FC<RegionSelectorProps> = ({ onRegionChange }) => {
-  const { t } = useLanguage();
+  const { t, translate } = useLanguage();
   const [selectedRegion, setSelectedRegion] = useState<AzureRegion>(getActiveRegion());
   const [isOpen, setIsOpen] = useState(false);
 
@@ -54,10 +54,10 @@ const RegionSelector: React.FC<RegionSelectorProps> = ({ onRegionChange }) => {
                 <div className="region-display-name">
                   {region.displayName}
                   <span className={`region-type-badge region-type-${region.regionType.toLowerCase()}`}>
-                    {region.regionType}
+                    {translate(region.regionType)}
                   </span>
                 </div>
-                <div className="region-location">{region.location}{t(",")}{' '}{region.geography}</div>
+                <div className="region-location">{translate(region.location)}{t(",")}{' '}{translate(region.geography)}</div>
               </div>
               {selectedRegion === region.id && <span className="checkmark">{t("✓")}</span>}
             </button>

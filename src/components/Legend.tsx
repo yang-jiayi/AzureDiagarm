@@ -12,11 +12,22 @@ interface LegendProps {
 
 const Legend: React.FC<LegendProps> = ({ forceCollapsed }) => {
   const { t } = useLanguage();
-  const [isCollapsed, setIsCollapsed] = useState(false);
+  const [isCollapsed, setIsCollapsed] = useState(
+    () => typeof window !== 'undefined' && window.matchMedia('(max-width: 640px)').matches
+  );
 
   useEffect(() => {
     if (forceCollapsed) setIsCollapsed(true);
   }, [forceCollapsed]);
+
+  useEffect(() => {
+    const mobileViewport = window.matchMedia('(max-width: 640px)');
+    const collapseForMobile = (event: MediaQueryListEvent) => {
+      if (event.matches) setIsCollapsed(true);
+    };
+    mobileViewport.addEventListener('change', collapseForMobile);
+    return () => mobileViewport.removeEventListener('change', collapseForMobile);
+  }, []);
 
   return (
     <div className={`legend ${isCollapsed ? 'collapsed' : ''}`}>

@@ -57,6 +57,9 @@ param openAiDeploymentGpt54 string = ''
 @description('GPT-5.4 Mini deployment name.')
 param openAiDeploymentGpt54Mini string = ''
 
+@description('GPT-5.6 Sol deployment name.')
+param openAiDeploymentGpt56Sol string = ''
+
 @description('DeepSeek deployment name.')
 param openAiDeploymentDeepSeek string = ''
 
@@ -76,13 +79,24 @@ param deployCosmos bool = false
 
 // ── MCP server (decoupled Container App) ──────────────────────────────────────
 @secure()
-@description('Optional bearer token required on the MCP /mcp endpoint. Empty = open.')
+@description('Optional bearer token required on the MCP /mcp endpoint. Empty keeps MCP external ingress disabled.')
 param mcpAuthToken string = ''
 
 // ── Internals ──────────────────────────────────────────────────────────────────
 var abbrs = loadJsonContent('./abbreviations.json')
 var resourceToken = toLower(uniqueString(subscription().id, environmentName, location))
 var tags = { 'azd-env-name': environmentName }
+var openAiAllowedDeployments = join([
+  openAiDeploymentGpt51
+  openAiDeploymentGpt52
+  openAiDeploymentGpt52Codex
+  openAiDeploymentGpt53Codex
+  openAiDeploymentGpt54
+  openAiDeploymentGpt54Mini
+  openAiDeploymentGpt56Sol
+  openAiDeploymentDeepSeek
+  openAiDeploymentGrokFast
+], ',')
 
 // ── Resource group ─────────────────────────────────────────────────────────────
 resource rg 'Microsoft.Resources/resourceGroups@2022-09-01' = {
@@ -105,6 +119,7 @@ module resources './resources.bicep' = {
     deployCosmos: deployCosmos
     mcpAuthToken: mcpAuthToken
     azureOpenAiEndpoint: azureOpenAiEndpoint
+    azureOpenAiAllowedDeployments: openAiAllowedDeployments
     azureOpenAiApiKey: azureOpenAiApiKey
     feedbackEmailEndpoint: feedbackEmailEndpoint
     feedbackEmailSender: feedbackEmailSender
@@ -154,6 +169,7 @@ output AZURE_OPENAI_DEPLOYMENT_GPT52CODEX string = openAiDeploymentGpt52Codex
 output AZURE_OPENAI_DEPLOYMENT_GPT53CODEX string = openAiDeploymentGpt53Codex
 output AZURE_OPENAI_DEPLOYMENT_GPT54 string = openAiDeploymentGpt54
 output AZURE_OPENAI_DEPLOYMENT_GPT54MINI string = openAiDeploymentGpt54Mini
+output AZURE_OPENAI_DEPLOYMENT_GPT56SOL string = openAiDeploymentGpt56Sol
 output AZURE_OPENAI_DEPLOYMENT_DEEPSEEK string = openAiDeploymentDeepSeek
 output AZURE_OPENAI_DEPLOYMENT_GROK4FAST string = openAiDeploymentGrokFast
 

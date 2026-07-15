@@ -208,3 +208,27 @@ body.dark-mode .legend-description span {
   color: #a0bfdf;
   font-weight: 500;
 }
+
+@media (max-width: 640px) {
+  .legend {
+    bottom: 8px;
+    width: calc(100% - 16px);
+    max-width: none;
+  }
+
+  .legend-content {
+    max-height: min(55vh, 360px);
+    overflow-y: auto;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .legend-section {
+    width: 100%;
+  }
+
+  .legend-description strong,
+  .legend-description span {
+    white-space: normal;
+  }
+}

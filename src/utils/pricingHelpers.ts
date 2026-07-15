@@ -86,7 +86,8 @@ export interface PricingFreshness {
  */
 export function getPricingFreshness(
   asOf: string,
-  now: Date = new Date()
+  now: Date = new Date(),
+  language: 'en' | 'ja' = 'en',
 ): PricingFreshness {
   const asOfDate = new Date(`${asOf}T00:00:00Z`);
   const valid = !Number.isNaN(asOfDate.getTime());
@@ -99,13 +100,18 @@ export function getPricingFreshness(
     ageDays > 90 ? 'stale' : ageDays > 30 ? 'aging' : 'fresh';
 
   let ageLabel: string;
-  if (ageDays < 1) ageLabel = 'today';
+  if (language === 'ja') {
+    if (ageDays < 1) ageLabel = '本日';
+    else if (ageDays === 1) ageLabel = '1日前';
+    else if (ageDays < 60) ageLabel = `${ageDays}日前`;
+    else ageLabel = `${Math.round(ageDays / 30)}か月前`;
+  } else if (ageDays < 1) ageLabel = 'today';
   else if (ageDays === 1) ageLabel = '1 day old';
   else if (ageDays < 60) ageLabel = `${ageDays} days old`;
   else ageLabel = `${Math.round(ageDays / 30)} months old`;
 
   const dateLabel = valid
-    ? asOfDate.toLocaleDateString('en-US', {
+    ? asOfDate.toLocaleDateString(language === 'ja' ? 'ja-JP' : 'en-US', {
         year: 'numeric',
         month: 'short',
         day: 'numeric',

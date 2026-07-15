@@ -13,6 +13,8 @@ import { getKnowledgeBaseStats } from '../data/wafRules';
 import { scoreToBand } from './wafMaturity';
 import { trackAIModelUsage } from './telemetryService';
 import { buildRequestBody, parseApiResponse, callAzureOpenAIProxy } from './apiHelper';
+import type { Language } from '../i18n/LanguageContext';
+import { getPromptLanguageInstruction } from '../i18n/localization';
 
 export interface ValidationModelOverride {
   model: ModelType;
@@ -53,7 +55,7 @@ async function callAzureOpenAI(messages: any[], maxTokens: number = 8000, modelO
   let deployment: string;
   try {
     deployment = getDeploymentName(settings.model);
-  } catch (e) {
+  } catch {
     throw new Error(`No deployment configured for ${settings.model}. Please check your .env file.`);
   }
 
@@ -167,7 +169,8 @@ export async function validateArchitecture(
   connections: Array<{ from: string; to: string; label: string }>,
   groups?: Array<{ name: string; services?: string[] }>,
   architectureDescription?: string,
-  modelOverride?: ValidationModelOverride
+  modelOverride?: ValidationModelOverride,
+  language: Language = 'en',
 ): Promise<ArchitectureValidation> {
   
   if (!endpoint) {
@@ -221,6 +224,8 @@ ${patternsNote}
 ${patternFindingsSummary}
 
 Use these patterns as hints — validate whether they apply in context, dismiss any that don't, and add your own architecture-specific findings.
+
+${getPromptLanguageInstruction(language)}
 
 SCORING GUIDANCE:
 - Score the architecture based on what IS present, not what COULD be added

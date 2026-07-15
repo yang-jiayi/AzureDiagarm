@@ -1,5 +1,6 @@
 {
   "Azure OpenAI": {
+    "displayName": "Azure OpenAI",
     "iconFile": "azure-openai",
     "category": "ai + machine learning",
     "aliases": [
@@ -10,6 +11,7 @@
     ]
   },
   "Cognitive Services": {
+    "displayName": "Cognitive Services",
     "iconFile": "cognitive-services",
     "category": "ai + machine learning",
     "aliases": [
@@ -18,6 +20,7 @@
     ]
   },
   "Computer Vision": {
+    "displayName": "Computer Vision",
     "iconFile": "computer-vision",
     "category": "ai + machine learning",
     "aliases": [
@@ -28,6 +31,7 @@
     ]
   },
   "Custom Vision": {
+    "displayName": "Custom Vision",
     "iconFile": "custom-vision",
     "category": "ai + machine learning",
     "aliases": [
@@ -36,6 +40,7 @@
     ]
   },
   "Speech Services": {
+    "displayName": "Speech Services",
     "iconFile": "azure-speech",
     "category": "ai + machine learning",
     "aliases": [
@@ -47,6 +52,7 @@
     ]
   },
   "Translator": {
+    "displayName": "Translator",
     "iconFile": "translator",
     "category": "ai + machine learning",
     "aliases": [
@@ -57,6 +63,7 @@
     ]
   },
   "Language": {
+    "displayName": "Language",
     "iconFile": "language",
     "category": "ai + machine learning",
     "aliases": [
@@ -67,6 +74,7 @@
     ]
   },
   "Document Intelligence": {
+    "displayName": "Document Intelligence",
     "iconFile": "document-intelligence",
     "category": "ai + machine learning",
     "aliases": [
@@ -77,6 +85,7 @@
     ]
   },
   "Azure Machine Learning": {
+    "displayName": "Azure Machine Learning",
     "iconFile": "azure-machine-learning",
     "category": "ai + machine learning",
     "aliases": [
@@ -95,6 +104,7 @@
     ]
   },
   "AML Online Endpoint": {
+    "displayName": "AML Online Endpoint",
     "iconFile": "azure-machine-learning",
     "category": "ai + machine learning",
     "aliases": [
@@ -105,6 +115,7 @@
     ]
   },
   "AML Batch Endpoint": {
+    "displayName": "AML Batch Endpoint",
     "iconFile": "azure-machine-learning",
     "category": "ai + machine learning",
     "aliases": [
@@ -114,6 +125,7 @@
     ]
   },
   "AML Deployment": {
+    "displayName": "AML Deployment",
     "iconFile": "azure-machine-learning",
     "category": "ai + machine learning",
     "aliases": [
@@ -126,6 +138,7 @@
     ]
   },
   "AML Managed Compute": {
+    "displayName": "AML Managed Compute",
     "iconFile": "virtual-machines",
     "category": "compute",
     "aliases": [
@@ -139,6 +152,7 @@
     ]
   },
   "Batch Compute Pool": {
+    "displayName": "Batch Compute Pool",
     "iconFile": "10031-icon-service-Batch-Accounts",
     "category": "compute",
     "aliases": [
@@ -150,15 +164,18 @@
     ]
   },
   "Azure Cognitive Search": {
+    "displayName": "Azure Cognitive Search",
     "iconFile": "azure-cognitive-search",
     "category": "ai + machine learning",
     "aliases": [
       "Cognitive Search",
       "Azure Search",
-      "AI Search"
+      "AI Search",
+      "Azure AI Search"
     ]
   },
   "Virtual Machines": {
+    "displayName": "Virtual Machines",
     "iconFile": "virtual-machines",
     "category": "compute",
     "aliases": [
@@ -169,6 +186,7 @@
     ]
   },
   "App Service": {
+    "displayName": "App Service",
     "iconFile": "app-service",
     "category": "app services",
     "aliases": [
@@ -178,15 +196,18 @@
     ]
   },
   "Functions": {
+    "displayName": "Azure Functions",
     "iconFile": "azure-functions",
     "category": "compute",
     "aliases": [
       "Function App",
+      "Function Apps",
       "Functions",
       "Serverless Functions"
     ]
   },
   "Container Instances": {
+    "displayName": "Container Instances",
     "iconFile": "container-instances",
     "category": "containers",
     "aliases": [
@@ -196,23 +217,28 @@
     ]
   },
   "Kubernetes Service": {
+    "displayName": "Azure Kubernetes Service",
     "iconFile": "azure-kubernetes-service",
     "category": "containers",
     "aliases": [
       "AKS",
       "Kubernetes",
-      "K8s"
+      "K8s",
+      "Kubernetes Services"
     ]
   },
   "Container Registry": {
+    "displayName": "Container Registry",
     "iconFile": "container-registry",
     "category": "containers",
     "aliases": [
       "ACR",
-      "Azure Container Registry"
+      "Azure Container Registry",
+      "Container Registries"
     ]
   },
   "Azure Cosmos DB": {
+    "displayName": "Azure Cosmos DB",
     "iconFile": "azure-cosmos-db",
     "category": "databases",
     "aliases": [
@@ -222,6 +248,7 @@
     ]
   },
   "SQL Database": {
+    "displayName": "SQL Database",
     "iconFile": "sql-database",
     "category": "databases",
     "aliases": [
@@ -231,6 +258,7 @@
     ]
   },
   "PostgreSQL": {
+    "displayName": "Azure Database for PostgreSQL",
     "iconFile": "02827-icon-service-Azure-Database-PostgreSQL-Server-Group",
     "category": "databases",
     "aliases": [
@@ -245,6 +273,7 @@
     ]
   },
   "MySQL": {
+    "displayName": "Azure Database for MySQL",
     "iconFile": "azure-database-mysql",
     "category": "databases",
     "aliases": [
@@ -254,6 +283,7 @@
     ]
   },
   "Redis Cache": {
+    "displayName": "Azure Cache for Redis",
     "iconFile": "redis-cache",
     "category": "databases",
     "aliases": [
@@ -263,32 +293,40 @@
     ]
   },
   "Storage Account": {
+    "displayName": "Storage Account",
     "iconFile": "storage-account",
     "category": "storage",
     "aliases": [
       "Storage",
       "Blob Storage",
+      "Azure Blob Storage",
       "Azure Storage",
-      "Storage Accounts"
+      "Storage Accounts",
+      "Storage Accounts (Classic)"
     ]
   },
   "Application Gateway": {
+    "displayName": "Application Gateway",
     "iconFile": "application-gateway",
     "category": "networking",
     "aliases": [
       "App Gateway",
-      "Azure Application Gateway"
+      "Azure Application Gateway",
+      "Application Gateways"
     ]
   },
   "Azure Front Door": {
+    "displayName": "Azure Front Door",
     "iconFile": "azure-front-door",
     "category": "networking",
     "aliases": [
       "Front Door",
-      "AFD"
+      "AFD",
+      "Azure Front Door Service"
     ]
   },
   "CDN": {
+    "displayName": "Content Delivery Network",
     "iconFile": "00056-icon-service-CDN-Profiles",
     "category": "networking",
     "aliases": [
@@ -298,6 +336,7 @@
     ]
   },
   "Data Factory": {
+    "displayName": "Azure Data Factory",
     "iconFile": "data-factory",
     "category": "analytics",
     "aliases": [
@@ -306,6 +345,7 @@
     ]
   },
   "Azure Synapse Analytics": {
+    "displayName": "Azure Synapse Analytics",
     "iconFile": "azure-synapse-analytics",
     "category": "analytics",
     "aliases": [
@@ -315,6 +355,7 @@
     ]
   },
   "Stream Analytics": {
+    "displayName": "Azure Stream Analytics",
     "iconFile": "stream-analytics",
     "category": "analytics",
     "aliases": [
@@ -324,6 +365,7 @@
     ]
   },
   "Event Hubs": {
+    "displayName": "Event Hubs",
     "iconFile": "event-hubs",
     "category": "analytics",
     "aliases": [
@@ -332,6 +374,7 @@
     ]
   },
   "Service Bus": {
+    "displayName": "Service Bus",
     "iconFile": "service-bus",
     "category": "integration",
     "aliases": [
@@ -340,6 +383,7 @@
     ]
   },
   "Logic Apps": {
+    "displayName": "Logic Apps",
     "iconFile": "logic-apps",
     "category": "integration",
     "aliases": [
@@ -348,6 +392,7 @@
     ]
   },
   "Key Vault": {
+    "displayName": "Key Vault",
     "iconFile": "key-vault",
     "category": "security",
     "aliases": [
@@ -356,6 +401,7 @@
     ]
   },
   "Application Insights": {
+    "displayName": "Application Insights",
     "iconFile": "application-insights",
     "category": "monitor",
     "aliases": [
@@ -365,6 +411,7 @@
     ]
   },
   "Log Analytics": {
+    "displayName": "Log Analytics",
     "iconFile": "log-analytics",
     "category": "monitor",
     "aliases": [
@@ -374,15 +421,18 @@
     ]
   },
   "API Management": {
+    "displayName": "API Management",
     "iconFile": "api-management",
     "category": "integration",
     "aliases": [
       "APIM",
       "Azure API Management",
-      "API Gateway"
+      "API Gateway",
+      "API Management Services"
     ]
   },
   "Azure Managed Grafana": {
+    "displayName": "Azure Managed Grafana",
     "iconFile": "02905-icon-service-Azure-Managed-Grafana",
     "category": "other",
     "aliases": [
@@ -392,6 +442,7 @@
     ]
   },
   "Power BI Embedded": {
+    "displayName": "Power BI Embedded",
     "iconFile": "03332-icon-service-Power-BI-Embedded",
     "category": "analytics",
     "aliases": [
@@ -402,6 +453,7 @@
     ]
   },
   "Azure Dashboard": {
+    "displayName": "Azure Dashboard",
     "iconFile": "02488-icon-service-Azure-Monitor-Dashboard",
     "category": "other",
     "aliases": [
@@ -411,6 +463,7 @@
     ]
   },
   "Azure Workbooks": {
+    "displayName": "Azure Workbooks",
     "iconFile": "02189-icon-service-Azure-Workbooks",
     "category": "analytics",
     "aliases": [
@@ -420,6 +473,7 @@
     ]
   },
   "IoT Hub": {
+    "displayName": "Azure IoT Hub",
     "iconFile": "10182-icon-service-IoT-Hub",
     "category": "iot",
     "aliases": [
@@ -429,6 +483,7 @@
     ]
   },
   "IoT Central": {
+    "displayName": "Azure IoT Central",
     "iconFile": "10184-icon-service-IoT-Central-Applications",
     "category": "iot",
     "aliases": [
@@ -437,6 +492,7 @@
     ]
   },
   "Digital Twins": {
+    "displayName": "Azure Digital Twins",
     "iconFile": "01030-icon-service-Digital-Twins",
     "category": "iot",
     "aliases": [
@@ -445,8 +501,9 @@
     ]
   },
   "Container Apps": {
+    "displayName": "Azure Container Apps",
     "iconFile": "02989-icon-service-Container-Apps-Environments",
-    "category": "other",
+    "category": "containers",
     "aliases": [
       "Azure Container Apps",
       "Container App",
@@ -454,6 +511,7 @@
     ]
   },
   "Virtual Network": {
+    "displayName": "Virtual Network",
     "iconFile": "10061-icon-service-Virtual-Networks",
     "category": "networking",
     "aliases": [
@@ -463,14 +521,17 @@
     ]
   },
   "Load Balancer": {
+    "displayName": "Azure Load Balancer",
     "iconFile": "10062-icon-service-Load-Balancers",
     "category": "networking",
     "aliases": [
       "Azure Load Balancer",
+      "Load Balancers",
       "LB"
     ]
   },
   "Azure Firewall": {
+    "displayName": "Azure Firewall",
     "iconFile": "10084-icon-service-Firewalls",
     "category": "networking",
     "aliases": [
@@ -478,6 +539,7 @@
     ]
   },
   "VPN Gateway": {
+    "displayName": "VPN Gateway",
     "iconFile": "10063-icon-service-Virtual-Network-Gateways",
     "category": "networking",
     "aliases": [
@@ -487,6 +549,7 @@
     ]
   },
   "ExpressRoute": {
+    "displayName": "ExpressRoute",
     "iconFile": "10079-icon-service-ExpressRoute-Circuits",
     "category": "networking",
     "aliases": [
@@ -495,6 +558,7 @@
     ]
   },
   "Traffic Manager": {
+    "displayName": "Azure Traffic Manager",
     "iconFile": "10065-icon-service-Traffic-Manager-Profiles",
     "category": "networking",
     "aliases": [
@@ -502,6 +566,7 @@
     ]
   },
   "Event Grid": {
+    "displayName": "Azure Event Grid",
     "iconFile": "10206-icon-service-Event-Grid-Topics",
     "category": "integration",
     "aliases": [
@@ -509,6 +574,7 @@
     ]
   },
   "SignalR Service": {
+    "displayName": "Azure SignalR Service",
     "iconFile": "10052-icon-service-SignalR",
     "category": "web",
     "aliases": [
@@ -518,6 +584,7 @@
     ]
   },
   "Notification Hubs": {
+    "displayName": "Azure Notification Hubs",
     "iconFile": "10045-icon-service-Notification-Hubs",
     "category": "iot",
     "aliases": [
@@ -527,6 +594,7 @@
     ]
   },
   "Static Web Apps": {
+    "displayName": "Azure Static Web Apps",
     "iconFile": "01007-icon-service-Static-Apps",
     "category": "web",
     "aliases": [
@@ -537,6 +605,7 @@
     ]
   },
   "Azure Monitor": {
+    "displayName": "Azure Monitor",
     "iconFile": "00001-icon-service-Monitor",
     "category": "monitor",
     "aliases": [
@@ -544,6 +613,7 @@
     ]
   },
   "Microsoft Defender for Cloud": {
+    "displayName": "Microsoft Defender for Cloud",
     "iconFile": "10241-icon-service-Microsoft-Defender-for-Cloud",
     "category": "security",
     "aliases": [
@@ -553,7 +623,8 @@
     ]
   },
   "Microsoft Entra ID": {
-    "iconFile": "10340-icon-service-Entra-Identity-Roles-and-Administrators",
+    "displayName": "Microsoft Entra ID",
+    "iconFile": "microsoft-entra-id",
     "category": "identity",
     "aliases": [
       "Entra ID",
@@ -563,6 +634,7 @@
     ]
   },
   "Backup": {
+    "displayName": "Azure Backup",
     "iconFile": "00017-icon-service-Recovery-Services-Vaults",
     "category": "management + governance",
     "aliases": [
@@ -572,6 +644,7 @@
     ]
   },
   "Network Watcher": {
+    "displayName": "Network Watcher",
     "iconFile": "10066-icon-service-Network-Watcher",
     "category": "networking",
     "aliases": [
@@ -579,6 +652,7 @@
     ]
   },
   "Azure Bastion": {
+    "displayName": "Azure Bastion",
     "iconFile": "02422-icon-service-Bastions",
     "category": "networking",
     "aliases": [
@@ -587,6 +661,7 @@
     ]
   },
   "Azure DDoS Protection": {
+    "displayName": "Azure DDoS Protection",
     "iconFile": "10072-icon-service-DDoS-Protection-Plans",
     "category": "networking",
     "aliases": [
@@ -596,6 +671,7 @@
     ]
   },
   "Azure Policy": {
+    "displayName": "Azure Policy",
     "iconFile": "10316-icon-service-Policy",
     "category": "management + governance",
     "aliases": [
@@ -605,6 +681,7 @@
     ]
   },
   "Microsoft Sentinel": {
+    "displayName": "Microsoft Sentinel",
     "iconFile": "10248-icon-service-Azure-Sentinel",
     "category": "security",
     "aliases": [
@@ -615,6 +692,7 @@
     ]
   },
   "Web Application Firewall": {
+    "displayName": "Web Application Firewall",
     "iconFile": "10362-icon-service-Web-Application-Firewall-Policies(WAF)",
     "category": "networking",
     "aliases": [
@@ -624,6 +702,7 @@
     ]
   },
   "Private Link": {
+    "displayName": "Azure Private Link",
     "iconFile": "00427-icon-service-Private-Link",
     "category": "networking",
     "aliases": [
@@ -634,6 +713,7 @@
     ]
   },
   "Azure DNS": {
+    "displayName": "Azure DNS",
     "iconFile": "10064-icon-service-DNS-Zones",
     "category": "networking",
     "aliases": [
@@ -644,16 +724,15 @@
     ]
   },
   "Azure API for FHIR": {
+    "displayName": "Azure API for FHIR",
     "iconFile": "10212-icon-service-Azure-API-for-FHIR",
     "category": "integration",
     "aliases": [
-      "FHIR",
-      "Azure Health Data Services",
-      "Health Data Services",
-      "FHIR Service"
+      "Legacy FHIR API"
     ]
   },
   "Microsoft Purview": {
+    "displayName": "Microsoft Purview",
     "iconFile": "10314-icon-service-Azure-Purview-Accounts",
     "category": "management + governance",
     "aliases": [
@@ -664,7 +743,8 @@
     ]
   },
   "Data Lake Storage": {
-    "iconFile": "10090-icon-service-Data-Lake-Storage-Gen1",
+    "displayName": "Azure Data Lake Storage",
+    "iconFile": "storage-account",
     "category": "storage",
     "aliases": [
       "Data Lake",
@@ -674,7 +754,124 @@
       "Azure Data Lake Storage Gen2"
     ]
   },
+  "App Service Certificates": {
+    "displayName": "App Service Certificates",
+    "iconFile": "00049-icon-service-App-Service-Certificates",
+    "category": "app services",
+    "aliases": [
+      "App Service Certificate",
+      "Azure App Service Certificates"
+    ]
+  },
+  "Virtual Machine Scale Sets": {
+    "displayName": "Virtual Machine Scale Sets",
+    "iconFile": "10034-icon-service-VM-Scale-Sets",
+    "category": "compute",
+    "aliases": [
+      "VM Scale Sets",
+      "VMSS",
+      "Azure Virtual Machine Scale Sets"
+    ]
+  },
+  "Azure Batch": {
+    "displayName": "Azure Batch",
+    "iconFile": "10031-icon-service-Batch-Accounts",
+    "category": "compute",
+    "aliases": [
+      "Batch",
+      "Batch Accounts",
+      "Azure Batch Account"
+    ]
+  },
+  "Azure Bot Service": {
+    "displayName": "Azure Bot Service",
+    "iconFile": "10165-icon-service-Bot-Services",
+    "category": "ai + machine learning",
+    "aliases": [
+      "Bot Service",
+      "Bot Services",
+      "Azure AI Bot Service"
+    ]
+  },
+  "Face API": {
+    "displayName": "Face API",
+    "iconFile": "00794-icon-service-Face-APIs",
+    "category": "ai + machine learning",
+    "aliases": [
+      "Azure Face API",
+      "Face APIs",
+      "Azure AI Face"
+    ]
+  },
+  "Azure AI Content Safety": {
+    "displayName": "Azure AI Content Safety",
+    "iconFile": "03390-icon-service-Content-Safety",
+    "category": "ai + machine learning",
+    "aliases": [
+      "Content Safety",
+      "Azure Content Safety"
+    ]
+  },
+  "Managed Identity": {
+    "displayName": "Managed Identity",
+    "iconFile": "10227-icon-service-Entra-Managed-Identities",
+    "category": "identity",
+    "aliases": [
+      "Managed Identities",
+      "Azure Managed Identity",
+      "Microsoft Entra Managed Identity"
+    ]
+  },
+  "Application Gateway for Containers": {
+    "displayName": "Application Gateway for Containers",
+    "iconFile": "03328-icon-service-Application-Gateway-Containers",
+    "category": "networking",
+    "aliases": [
+      "AGC",
+      "Application Gateway Containers"
+    ]
+  },
+  "Azure Files": {
+    "displayName": "Azure Files",
+    "iconFile": "10400-icon-service-Azure-Fileshares",
+    "category": "storage",
+    "aliases": [
+      "Azure File Shares",
+      "File Shares",
+      "Azure Fileshares"
+    ]
+  },
+  "Queue Storage": {
+    "displayName": "Queue Storage",
+    "iconFile": "10840-icon-service-Storage-Queue",
+    "category": "storage",
+    "aliases": [
+      "Azure Queue Storage",
+      "Storage Queue"
+    ]
+  },
+  "Table Storage": {
+    "displayName": "Table Storage",
+    "iconFile": "10841-icon-service-Table",
+    "category": "storage",
+    "aliases": [
+      "Azure Table Storage",
+      "Storage Table"
+    ]
+  },
+  "Azure Health Data Services": {
+    "displayName": "Azure Health Data Services",
+    "iconFile": "02658-icon-service-FHIR-Service",
+    "category": "other",
+    "aliases": [
+      "Health Data Services",
+      "FHIR",
+      "FHIR Service",
+      "Azure FHIR Service"
+    ]
+  },
   "Microsoft Fabric": {
+    "displayName": "Microsoft Fabric",
     "iconFile": "microsoft-fabric",
     "category": "fabric",
     "aliases": [
@@ -684,6 +881,7 @@
     ]
   },
   "Microsoft Fabric Capacity": {
+    "displayName": "Microsoft Fabric Capacity",
     "iconFile": "fabric-capacity",
     "category": "fabric",
     "aliases": [
@@ -696,6 +894,7 @@
     ]
   },
   "OneLake": {
+    "displayName": "OneLake",
     "iconFile": "onelake",
     "category": "fabric",
     "aliases": [
@@ -704,7 +903,203 @@
       "OneLake Storage"
     ]
   },
+  "Fabric Copilot": {
+    "displayName": "Copilot",
+    "iconFile": "fabric-workload-copilot",
+    "category": "fabric",
+    "aliases": [
+      "Copilot",
+      "Microsoft Fabric Copilot",
+      "Copilot in Fabric"
+    ]
+  },
+  "Fabric Data Engineering": {
+    "displayName": "Data Engineering",
+    "iconFile": "fabric-workload-data-engineering",
+    "category": "fabric",
+    "aliases": [
+      "Data Engineering",
+      "Microsoft Fabric Data Engineering",
+      "Data Engineering (Fabric)"
+    ]
+  },
+  "Fabric Data Factory Workload": {
+    "displayName": "Data Factory",
+    "iconFile": "fabric-workload-data-factory",
+    "category": "fabric",
+    "aliases": [
+      "Data Factory",
+      "Microsoft Fabric Data Factory",
+      "Data Factory Workload"
+    ]
+  },
+  "Fabric Data Science": {
+    "displayName": "Data Science",
+    "iconFile": "fabric-workload-data-science",
+    "category": "fabric",
+    "aliases": [
+      "Data Science",
+      "Microsoft Fabric Data Science",
+      "Data Science (Fabric)"
+    ]
+  },
+  "Fabric Data Warehouse Workload": {
+    "displayName": "Data Warehouse",
+    "iconFile": "fabric-workload-data-warehouse",
+    "category": "fabric",
+    "aliases": [
+      "Data Warehouse",
+      "Microsoft Fabric Data Warehouse",
+      "Data Warehouse Workload"
+    ]
+  },
+  "Fabric Databases Workload": {
+    "displayName": "Databases",
+    "iconFile": "fabric-workload-databases",
+    "category": "fabric",
+    "aliases": [
+      "Databases",
+      "Microsoft Fabric Databases",
+      "Databases (Fabric)"
+    ]
+  },
+  "Fabric Graph Intelligence": {
+    "displayName": "Graph Intelligence",
+    "iconFile": "fabric-workload-graph-intelligence",
+    "category": "fabric",
+    "aliases": [
+      "Graph Intelligence",
+      "Microsoft Fabric Graph Intelligence",
+      "Graph Intelligence (Fabric)"
+    ]
+  },
+  "Fabric Industry Solutions": {
+    "displayName": "Industry Solutions",
+    "iconFile": "fabric-workload-industry-solutions",
+    "category": "fabric",
+    "aliases": [
+      "Industry Solutions",
+      "Microsoft Fabric Industry Solutions"
+    ]
+  },
+  "Fabric Power BI Workload": {
+    "displayName": "Power BI",
+    "iconFile": "fabric-workload-power-bi",
+    "category": "fabric",
+    "aliases": [
+      "Power BI",
+      "Power BI (Fabric)",
+      "Microsoft Fabric Power BI"
+    ]
+  },
+  "Fabric Purview Workload": {
+    "displayName": "Purview",
+    "iconFile": "fabric-workload-purview",
+    "category": "fabric",
+    "aliases": [
+      "Purview",
+      "Purview (Fabric)",
+      "Microsoft Purview in Fabric"
+    ]
+  },
+  "Fabric Real-Time Intelligence": {
+    "displayName": "Real-Time Intelligence",
+    "iconFile": "fabric-workload-real-time-intelligence",
+    "category": "fabric",
+    "aliases": [
+      "Real-Time Intelligence",
+      "RTI",
+      "Real Time Intelligence",
+      "Microsoft Fabric Real-Time Intelligence"
+    ]
+  },
+  "Fabric Data Agent": {
+    "displayName": "Fabric Data Agent",
+    "iconFile": "fabric-data-agent",
+    "category": "fabric",
+    "aliases": [
+      "Data Agent (Fabric)",
+      "Fabric AI Skill"
+    ]
+  },
+  "Fabric Data Factory": {
+    "displayName": "Fabric Data Factory",
+    "iconFile": "fabric-data-factory",
+    "category": "fabric",
+    "aliases": [
+      "Data Factory (Fabric)",
+      "Fabric Data Factory Item"
+    ]
+  },
+  "Fabric Data Pipeline": {
+    "displayName": "Fabric Data Pipeline",
+    "iconFile": "fabric-data-pipeline",
+    "category": "fabric",
+    "aliases": [
+      "Fabric Pipeline",
+      "Data Pipeline (Fabric)",
+      "Pipeline"
+    ]
+  },
+  "Dataflow Gen2": {
+    "displayName": "Dataflow Gen2",
+    "iconFile": "fabric-dataflow-gen2",
+    "category": "fabric",
+    "aliases": [
+      "Fabric Dataflow Gen2",
+      "Dataflow Gen 2"
+    ]
+  },
+  "Datamart": {
+    "displayName": "Datamart",
+    "iconFile": "fabric-datamart",
+    "category": "fabric",
+    "aliases": [
+      "Fabric Datamart"
+    ]
+  },
+  "Warehouse": {
+    "displayName": "Warehouse",
+    "iconFile": "fabric-warehouse",
+    "category": "fabric",
+    "aliases": [
+      "Fabric Warehouse",
+      "Data Warehouse (Fabric)",
+      "Warehouse (Gold)"
+    ]
+  },
+  "Eventhouse": {
+    "displayName": "Eventhouse",
+    "iconFile": "fabric-eventhouse",
+    "category": "fabric",
+    "aliases": [
+      "Fabric Eventhouse",
+      "Event House"
+    ]
+  },
+  "Eventstream": {
+    "displayName": "Eventstream",
+    "iconFile": "fabric-eventstream",
+    "category": "fabric",
+    "aliases": [
+      "Fabric Eventstream",
+      "Event Stream"
+    ]
+  },
+  "KQL Database": {
+    "displayName": "KQL Database",
+    "iconFile": "fabric-kql-database",
+    "category": "fabric",
+    "aliases": [
+      "Fabric KQL Database",
+      "KQL DB",
+      "Kusto Database",
+      "Kusto Database (Fabric)",
+      "Eventhouse Database"
+    ]
+  },
   "Lakehouse": {
+    "displayName": "Lakehouse",
     "iconFile": "fabric-lakehouse",
     "category": "fabric",
     "aliases": [
@@ -715,77 +1110,47 @@
       "Lakehouse (Gold)"
     ]
   },
-  "Warehouse": {
-    "iconFile": "fabric-warehouse",
+  "Mirrored Database": {
+    "displayName": "Mirrored Database",
+    "iconFile": "fabric-mirrored-database",
     "category": "fabric",
     "aliases": [
-      "Fabric Warehouse",
-      "Data Warehouse (Fabric)",
-      "Warehouse (Gold)"
-    ]
-  },
-  "Eventhouse": {
-    "iconFile": "fabric-eventhouse",
-    "category": "fabric",
-    "aliases": [
-      "Fabric Eventhouse",
-      "Event House"
-    ]
-  },
-  "Eventstream": {
-    "iconFile": "fabric-eventstream",
-    "category": "fabric",
-    "aliases": [
-      "Fabric Eventstream",
-      "Event Stream"
-    ]
-  },
-  "KQL Database": {
-    "iconFile": "fabric-kql-database",
-    "category": "fabric",
-    "aliases": [
-      "Fabric KQL Database",
-      "Kusto Database (Fabric)"
+      "Fabric Mirroring",
+      "Database Mirroring (Fabric)",
+      "Mirrored Generic Database",
+      "Mirrored DB"
     ]
   },
   "Fabric Notebook": {
+    "displayName": "Fabric Notebook",
     "iconFile": "fabric-notebook",
     "category": "fabric",
     "aliases": [
-      "Fabric Spark Notebook"
+      "Fabric Spark Notebook",
+      "Microsoft Fabric Notebook",
+      "Notebook"
     ]
   },
-  "Fabric Data Pipeline": {
-    "iconFile": "fabric-data-pipeline",
+  "Power BI Report": {
+    "displayName": "Power BI Report",
+    "iconFile": "fabric-power-bi-report",
     "category": "fabric",
     "aliases": [
-      "Fabric Pipeline",
-      "Data Pipeline (Fabric)"
+      "Fabric Report",
+      "Report"
     ]
   },
-  "Fabric Data Factory": {
-    "iconFile": "fabric-data-factory",
+  "Real-Time Dashboard": {
+    "displayName": "Real-Time Dashboard",
+    "iconFile": "fabric-real-time-dashboard",
     "category": "fabric",
     "aliases": [
-      "Data Factory (Fabric)"
-    ]
-  },
-  "Dataflow Gen2": {
-    "iconFile": "fabric-dataflow-gen2",
-    "category": "fabric",
-    "aliases": [
-      "Fabric Dataflow",
-      "Dataflow Gen 2"
-    ]
-  },
-  "Datamart": {
-    "iconFile": "fabric-datamart",
-    "category": "fabric",
-    "aliases": [
-      "Fabric Datamart"
+      "Fabric Real-Time Dashboard",
+      "Real Time Dashboard"
     ]
   },
   "Semantic Model": {
+    "displayName": "Semantic Model",
     "iconFile": "fabric-semantic-model",
     "category": "fabric",
     "aliases": [
@@ -794,16 +1159,18 @@
       "Direct Lake Semantic Model"
     ]
   },
-  "Power BI Report": {
-    "iconFile": "fabric-power-bi-report",
+  "Fabric Spark Job": {
+    "displayName": "Fabric Spark Job",
+    "iconFile": "fabric-spark-job",
     "category": "fabric",
     "aliases": [
-      "Fabric Report",
-      "Power BI Dashboard",
-      "Power BI"
+      "Fabric Spark",
+      "Spark Job Definition",
+      "Spark Job Direction"
     ]
   },
   "Fabric SQL Database": {
+    "displayName": "Fabric SQL Database",
     "iconFile": "fabric-sql-database",
     "category": "fabric",
     "aliases": [
@@ -811,38 +1178,401 @@
       "Fabric SQL DB"
     ]
   },
-  "Mirrored Database": {
-    "iconFile": "fabric-mirrored-database",
+  "Fabric Copy Job": {
+    "displayName": "Copy Job",
+    "iconFile": "fabric-item-copy-job",
     "category": "fabric",
     "aliases": [
-      "Fabric Mirroring",
-      "Database Mirroring (Fabric)",
-      "Mirrored DB"
+      "Copy Job",
+      "Copy Job (Fabric)"
     ]
   },
-  "Real-Time Dashboard": {
-    "iconFile": "fabric-real-time-dashboard",
+  "Fabric Custom Streaming Connector": {
+    "displayName": "Custom Streaming Connector",
+    "iconFile": "fabric-item-custom-streaming-connector",
     "category": "fabric",
     "aliases": [
-      "Fabric Real-Time Dashboard",
-      "Real Time Dashboard",
-      "Real-Time Intelligence"
+      "Custom Streaming Connector",
+      "Streaming Connector (Fabric)"
     ]
   },
-  "Fabric Spark Job": {
-    "iconFile": "fabric-spark-job",
+  "Fabric Dataflow": {
+    "displayName": "Dataflow",
+    "iconFile": "fabric-item-dataflow",
     "category": "fabric",
     "aliases": [
-      "Spark Job Definition",
-      "Fabric Spark"
+      "Dataflow",
+      "Dataflow (Fabric)",
+      "Power BI Dataflow"
     ]
   },
-  "Fabric Data Agent": {
-    "iconFile": "fabric-data-agent",
+  "Fabric External Dataflow": {
+    "displayName": "External Dataflow",
+    "iconFile": "fabric-item-external-dataflow",
     "category": "fabric",
     "aliases": [
-      "Data Agent (Fabric)",
-      "Fabric AI Skill"
+      "External Dataflow",
+      "External Dataflow (Fabric)"
+    ]
+  },
+  "Fabric Function Set": {
+    "displayName": "Function Set",
+    "iconFile": "fabric-item-function-set",
+    "category": "fabric",
+    "aliases": [
+      "Function Set",
+      "Function Set (Fabric)"
+    ]
+  },
+  "Fabric Streaming Dataflow": {
+    "displayName": "Streaming Dataflow",
+    "iconFile": "fabric-item-streaming-dataflow",
+    "category": "fabric",
+    "aliases": [
+      "Streaming Dataflow",
+      "Streaming Dataflow (Fabric)"
+    ]
+  },
+  "Fabric Environment": {
+    "displayName": "Environment",
+    "iconFile": "fabric-item-environment",
+    "category": "fabric",
+    "aliases": [
+      "Environment",
+      "Environment (Fabric)"
+    ]
+  },
+  "Fabric Experiments": {
+    "displayName": "Experiments",
+    "iconFile": "fabric-item-experiments",
+    "category": "fabric",
+    "aliases": [
+      "Experiments",
+      "Machine Learning Experiments",
+      "Fabric Experiments"
+    ]
+  },
+  "Fabric Exploration": {
+    "displayName": "Exploration",
+    "iconFile": "fabric-item-exploration",
+    "category": "fabric",
+    "aliases": [
+      "Exploration",
+      "Exploration (Fabric)"
+    ]
+  },
+  "Fabric External Datamart": {
+    "displayName": "External Datamart",
+    "iconFile": "fabric-item-external-datamart",
+    "category": "fabric",
+    "aliases": [
+      "External Datamart",
+      "External Datamart (Fabric)"
+    ]
+  },
+  "Fabric External Semantic Model": {
+    "displayName": "External Semantic Model",
+    "iconFile": "fabric-item-external-semantic-model",
+    "category": "fabric",
+    "aliases": [
+      "External Semantic Model",
+      "External Semantic Model (Fabric)"
+    ]
+  },
+  "Fabric Generic Placeholder": {
+    "displayName": "Generic Placeholder",
+    "iconFile": "fabric-item-generic-placeholder",
+    "category": "fabric",
+    "aliases": [
+      "Generic Placeholder",
+      "Fabric Placeholder"
+    ]
+  },
+  "Fabric Mirrored Catalog": {
+    "displayName": "Mirrored Catalog",
+    "iconFile": "fabric-item-mirrored-catalog",
+    "category": "fabric",
+    "aliases": [
+      "Mirrored Catalog",
+      "Mirrored Catalog (Fabric)"
+    ]
+  },
+  "Fabric Mirrored Generic Storage": {
+    "displayName": "Mirrored Generic Storage",
+    "iconFile": "fabric-item-mirrored-generic-storage",
+    "category": "fabric",
+    "aliases": [
+      "Mirrored Generic Storage",
+      "Mirrored Storage (Fabric)"
+    ]
+  },
+  "Fabric Model": {
+    "displayName": "Model",
+    "iconFile": "fabric-item-model",
+    "category": "fabric",
+    "aliases": [
+      "Model",
+      "Machine Learning Model (Fabric)"
+    ]
+  },
+  "Fabric Runtime Lineage": {
+    "displayName": "Runtime Lineage",
+    "iconFile": "fabric-item-runtime-lineage",
+    "category": "fabric",
+    "aliases": [
+      "Runtime Lineage",
+      "Runtime Lineage (Fabric)"
+    ]
+  },
+  "Fabric Schema Model": {
+    "displayName": "Schema Model",
+    "iconFile": "fabric-item-schema-model",
+    "category": "fabric",
+    "aliases": [
+      "Schema Model",
+      "Schema Model (Fabric)"
+    ]
+  },
+  "Fabric User Data Function": {
+    "displayName": "User Data Function",
+    "iconFile": "fabric-item-user-data-function",
+    "category": "fabric",
+    "aliases": [
+      "User Data Function",
+      "User Data Functions",
+      "UDF (Fabric)"
+    ]
+  },
+  "Fabric Variable Library": {
+    "displayName": "Variable Library",
+    "iconFile": "fabric-item-variable-library",
+    "category": "fabric",
+    "aliases": [
+      "Variable Library",
+      "Variable Library (Fabric)"
+    ]
+  },
+  "KQL Queryset": {
+    "displayName": "KQL Queryset",
+    "iconFile": "fabric-item-kql-queryset",
+    "category": "fabric",
+    "aliases": [
+      "Kusto Queryset",
+      "KQL Query Set"
+    ]
+  },
+  "KQL Script": {
+    "displayName": "KQL Script",
+    "iconFile": "fabric-item-kql-script",
+    "category": "fabric",
+    "aliases": [
+      "Kusto Script"
+    ]
+  },
+  "Fabric Operations Agent": {
+    "displayName": "Operations Agent",
+    "iconFile": "fabric-item-operations-agent",
+    "category": "fabric",
+    "aliases": [
+      "Operations Agent",
+      "Operations Agent (Fabric)"
+    ]
+  },
+  "Streaming Semantic Model": {
+    "displayName": "Streaming Semantic Model",
+    "iconFile": "fabric-item-streaming-semantic-model",
+    "category": "fabric",
+    "aliases": [
+      "Real-Time Semantic Model"
+    ]
+  },
+  "Power BI App": {
+    "displayName": "Apps",
+    "iconFile": "fabric-item-apps",
+    "category": "fabric",
+    "aliases": [
+      "Apps",
+      "Power BI Apps",
+      "Fabric Apps"
+    ]
+  },
+  "Power BI Dashboard": {
+    "displayName": "Dashboard",
+    "iconFile": "fabric-item-dashboard",
+    "category": "fabric",
+    "aliases": [
+      "Dashboard",
+      "Fabric Dashboard"
+    ]
+  },
+  "Power BI Metric Sets": {
+    "displayName": "Metric Sets",
+    "iconFile": "fabric-item-metric-sets",
+    "category": "fabric",
+    "aliases": [
+      "Metric Sets",
+      "Metric Set",
+      "Power BI Metrics"
+    ]
+  },
+  "Power BI Mobile Report": {
+    "displayName": "Mobile Report",
+    "iconFile": "fabric-item-mobile-report",
+    "category": "fabric",
+    "aliases": [
+      "Mobile Report",
+      "Mobile Report (Power BI)"
+    ]
+  },
+  "No Access Semantic Model": {
+    "displayName": "No Access Semantic Model",
+    "iconFile": "fabric-item-no-access-semantic-model",
+    "category": "fabric",
+    "aliases": [
+      "Restricted Semantic Model"
+    ]
+  },
+  "Power BI Paginated Report": {
+    "displayName": "Paginated Report",
+    "iconFile": "fabric-item-paginated-report",
+    "category": "fabric",
+    "aliases": [
+      "Paginated Report",
+      "Fabric Paginated Report"
+    ]
+  },
+  "Fabric Planning": {
+    "displayName": "Planning",
+    "iconFile": "fabric-item-planning",
+    "category": "fabric",
+    "aliases": [
+      "Planning",
+      "Plan",
+      "Planning (Fabric)"
+    ]
+  },
+  "Power BI RDL Report": {
+    "displayName": "RDL Report",
+    "iconFile": "fabric-item-rdl-report",
+    "category": "fabric",
+    "aliases": [
+      "RDL Report",
+      "Report Definition Language Report"
+    ]
+  },
+  "Restricted Power BI Report": {
+    "displayName": "Restricted Report",
+    "iconFile": "fabric-item-restricted-report",
+    "category": "fabric",
+    "aliases": [
+      "Restricted Report",
+      "Restricted Fabric Report"
+    ]
+  },
+  "Restricted Scorecard": {
+    "displayName": "Restricted Scorecard",
+    "iconFile": "fabric-item-restricted-scorecard",
+    "category": "fabric",
+    "aliases": [
+      "Restricted Power BI Scorecard"
+    ]
+  },
+  "Power BI Scorecard": {
+    "displayName": "Scorecard",
+    "iconFile": "fabric-item-scorecard",
+    "category": "fabric",
+    "aliases": [
+      "Scorecard",
+      "Fabric Scorecard"
+    ]
+  },
+  "Shared Semantic Model": {
+    "displayName": "Shared Semantic Model",
+    "iconFile": "fabric-item-shared-semantic-model",
+    "category": "fabric",
+    "aliases": [
+      "Shared Power BI Semantic Model"
+    ]
+  },
+  "Fabric Cohort": {
+    "displayName": "Cohort",
+    "iconFile": "fabric-item-cohort",
+    "category": "fabric",
+    "aliases": [
+      "Cohort",
+      "Cohort (Fabric)"
+    ]
+  },
+  "Fabric Data Quality": {
+    "displayName": "Data Quality",
+    "iconFile": "fabric-item-data-quality",
+    "category": "fabric",
+    "aliases": [
+      "Data Quality",
+      "Data Quality (Fabric)"
+    ]
+  },
+  "Fabric Healthcare": {
+    "displayName": "Healthcare",
+    "iconFile": "fabric-item-healthcare",
+    "category": "fabric",
+    "aliases": [
+      "Healthcare",
+      "Healthcare (Fabric)"
+    ]
+  },
+  "Fabric Links": {
+    "displayName": "Links",
+    "iconFile": "fabric-item-links",
+    "category": "fabric",
+    "aliases": [
+      "Links",
+      "Graph Links"
+    ]
+  },
+  "Fabric Ontology": {
+    "displayName": "Ontology",
+    "iconFile": "fabric-item-ontology",
+    "category": "fabric",
+    "aliases": [
+      "Ontology",
+      "Ontology (Fabric)"
+    ]
+  },
+  "Fabric Retail": {
+    "displayName": "Retail",
+    "iconFile": "fabric-item-retail",
+    "category": "fabric",
+    "aliases": [
+      "Retail",
+      "Retail (Fabric)"
+    ]
+  },
+  "Fabric Sustainability": {
+    "displayName": "Sustainability",
+    "iconFile": "fabric-item-sustainability",
+    "category": "fabric",
+    "aliases": [
+      "Sustainability",
+      "Sustainability (Fabric)"
+    ]
+  },
+  "Fabric Graph Model": {
+    "displayName": "Graph Model",
+    "iconFile": "fabric-item-graph-model",
+    "category": "fabric",
+    "aliases": [
+      "Graph Model",
+      "Graph Model (Fabric)"
+    ]
+  },
+  "Fabric Graph Queryset": {
+    "displayName": "Graph Queryset",
+    "iconFile": "fabric-item-graph-queryset",
+    "category": "fabric",
+    "aliases": [
+      "Graph Queryset",
+      "Graph Query Set"
     ]
   }
 }

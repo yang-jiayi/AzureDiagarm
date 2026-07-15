@@ -31,6 +31,7 @@ const REGIONS = [
   { id: 'eastus2', armName: 'eastus2' },
   { id: 'swedencentral', armName: 'swedencentral' },
   { id: 'westeurope', armName: 'westeurope' },
+  { id: 'japaneast', armName: 'japaneast' },
 ];
 
 const BASE_URL = 'https://prices.azure.com/api/retail/prices';

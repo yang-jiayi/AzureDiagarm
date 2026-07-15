@@ -5,6 +5,8 @@ import { getModelSettingsForFeature, getModelSettings, getDeploymentName, getAva
 import { getServiceIconMapping, SERVICE_ICON_MAP } from '../data/serviceIconMapping';
 import { trackAIModelUsage } from './telemetryService';
 import { buildRequestBody, parseApiResponse, callAzureOpenAIProxy } from './apiHelper';
+import type { Language } from '../i18n/LanguageContext';
+import { getPromptLanguageInstruction } from '../i18n/localization';
 
 // Non-secret flag indicating the AI backend is wired up. The actual Azure OpenAI
 // endpoint and credentials live server-side in the token server; the browser
@@ -44,7 +46,7 @@ export async function callAzureOpenAI(messages: any[], modelOverride?: ModelOver
   let deployment: string;
   try {
     deployment = getDeploymentName(settings.model);
-  } catch (e) {
+  } catch {
     throw new Error(`No deployment configured for ${settings.model}. Please check your .env file.`);
   }
 
@@ -164,8 +166,10 @@ export async function generateFollowUpSuggestions(input: {
   lastChange: string;
   recentRequests: string[];
   count?: number;
+  language?: Language;
 }): Promise<string[]> {
   const count = Math.min(Math.max(input.count ?? 3, 1), 5);
+  const language = input.language ?? 'en';
   try {
     const systemPrompt = `You are an Azure solutions architect helping a user iteratively refine an architecture diagram.
 Given the CURRENT services and the MOST RECENT change, propose exactly ${count} concise, high-value NEXT refinement${count === 1 ? '' : 's'}.
@@ -174,6 +178,7 @@ Rules:
 - Prefer Azure Well-Architected improvements (security, reliability, cost, operations, performance) that are NOT already present.
 - Be specific to this architecture; no duplicates; no trailing punctuation; no numbering.
 ${count === 1 ? 'Return the single HIGHEST-IMPACT improvement.' : ''}
+${getPromptLanguageInstruction(language)}
 Return ONLY JSON: {"suggestions":["..."]}`;
 
     const userPrompt = JSON.stringify({
@@ -203,7 +208,12 @@ Return ONLY JSON: {"suggestions":["..."]}`;
   }
 }
 
-export async function generateArchitectureWithAI(description: string, modelOverride?: ModelOverride, manifest?: import('./componentManifestAI').ComponentManifest) {
+export async function generateArchitectureWithAI(
+  description: string,
+  modelOverride?: ModelOverride,
+  manifest?: import('./componentManifestAI').ComponentManifest,
+  language: Language = 'en',
+) {
   // Build a compact list of known service display names for the prompt
   const knownServices = Object.entries(SERVICE_ICON_MAP)
     .map(([, m]) => `${m.displayName} (${m.category})`)
@@ -216,6 +226,8 @@ export async function generateArchitectureWithAI(description: string, modelOverr
   const systemPrompt = `You are an expert Azure cloud architect. Analyze architecture requirements and return a JSON specification for an Azure architecture diagram with logical groupings.${manifestBlock}
 
 **IMPORTANT: DO NOT include position, x, y, width, or height in your response. The layout engine will calculate optimal positions automatically.**
+
+${getPromptLanguageInstruction(language)}
 
 Return ONLY a valid JSON object (no markdown, no explanations) with this structure:
 {
@@ -374,11 +386,14 @@ LAYOUT READABILITY — CRITICAL:
 export async function generateCritique(
   summaryText: string,
   originalPrompt: string,
-  modelOverride: ModelOverride
+  modelOverride: ModelOverride,
+  language: Language = 'en',
 ): Promise<{ content: string; metrics: AIMetrics }> {
   const systemPrompt = `You are an expert Azure cloud architect and impartial technical reviewer. \
 You will evaluate multiple AI-generated Azure architecture proposals for the same requirements \
 and produce a structured critique.
+
+${getPromptLanguageInstruction(language)}
 
 Your critique MUST use these exact markdown headings in order:
 
@@ -419,13 +434,16 @@ Verify findings independently.*`;
 export async function generateValidationCritique(
   summaryText: string,
   architectureDescription: string,
-  modelOverride: ModelOverride
+  modelOverride: ModelOverride,
+  language: Language = 'en',
 ): Promise<{ content: string; metrics: AIMetrics }> {
   const systemPrompt = `You are a senior Azure cloud architect and impartial reviewer of \
 Well-Architected Framework (WAF) assessments. Multiple AI models have validated the SAME \
 Azure architecture against the five WAF pillars (Cost Optimization, Operational Excellence, \
 Performance Efficiency, Reliability, Security). Your job is to evaluate the QUALITY of each \
 model's validation — not the architecture itself.
+
+${getPromptLanguageInstruction(language)}
 
 Your critique MUST use these exact markdown headings in order:
 
@@ -471,7 +489,11 @@ export function isAzureOpenAIConfigured(): boolean {
  * 
  * Phase 1 implementation: Image → Text Description → Existing Generation Pipeline
  */
-export async function analyzeArchitectureDiagramImage(imageBase64: string, mimeType: string = 'image/png'): Promise<{ description: string; metrics: AIMetrics }> {
+export async function analyzeArchitectureDiagramImage(
+  imageBase64: string,
+  mimeType: string = 'image/png',
+  language: Language = 'en',
+): Promise<{ description: string; metrics: AIMetrics }> {
   const settings = getModelSettingsForFeature('architectureGeneration');
   const modelConfig = MODEL_CONFIG[settings.model];
   
@@ -483,7 +505,7 @@ export async function analyzeArchitectureDiagramImage(imageBase64: string, mimeT
   let deployment: string;
   try {
     deployment = getDeploymentName(settings.model);
-  } catch (e) {
+  } catch {
     throw new Error(`No deployment configured for ${settings.model}. Please check your .env file.`);
   }
 
@@ -494,6 +516,8 @@ export async function analyzeArchitectureDiagramImage(imageBase64: string, mimeT
   const systemPrompt = `You are an expert Azure cloud architect specializing in analyzing architecture diagrams.
 
 Your task is to analyze the provided architecture diagram image and create a detailed, comprehensive text description that can be used to recreate this architecture.
+
+${getPromptLanguageInstruction(language)}
 
 IMPORTANT: Extract and describe:
 1. **All services/components visible** - Identify each Azure service, third-party service, or component shown
@@ -561,8 +585,9 @@ If the image is not an architecture diagram or is unclear, describe what you can
     store: false,
   };
   
-  // Add reasoning config for reasoning models (skip when effort is 'none')
-  if (modelConfig.isReasoning && settings.reasoningEffort !== 'none') {
+  // Send the explicit selection, including "none", so the model does not fall
+  // back to a deployment-specific default reasoning level.
+  if (modelConfig.isReasoning) {
     requestBody.reasoning = { effort: settings.reasoningEffort };
   }
 
@@ -589,7 +614,7 @@ If the image is not an architecture diagram or is unclear, describe what you can
         throw new Error('Deployment not found. Please check your model deployment name.');
       }
       if (status === 400 && (errorText || '').includes('image')) {
-        throw new Error('The selected model may not support image analysis. Try using GPT-4o or GPT-5.2.');
+        throw new Error('The selected model may not support image analysis. Try using GPT-5.6 Sol.');
       }
       throw new Error(`Azure OpenAI API error (${status}): ${errorText}`);
     }
@@ -1004,7 +1029,7 @@ const FORMAT_LABELS: Record<IaCFormat, string> = {
  * Unified IaC template import: generates an architecture diagram from
  * Bicep, Terraform HCL, Terraform state, or ARM template files.
  */
-export async function generateArchitectureFromIaC(input: IaCImportInput) {
+export async function generateArchitectureFromIaC(input: IaCImportInput, language: Language = 'en') {
   const label = FORMAT_LABELS[input.format];
   console.log(`📄 Parsing ${label} template (${input.filenames.length} file(s))...`);
 
@@ -1031,6 +1056,7 @@ export async function generateArchitectureFromIaC(input: IaCImportInput) {
     default:
       throw new Error(`Unsupported IaC format: ${input.format}`);
   }
+  systemPrompt = `${systemPrompt}\n\n${getPromptLanguageInstruction(language)}`;
 
   try {
     const messages = [
@@ -1058,10 +1084,10 @@ export async function generateArchitectureFromIaC(input: IaCImportInput) {
  * Legacy wrapper — kept for backward compatibility.
  * Delegates to the unified generateArchitectureFromIaC().
  */
-export async function generateArchitectureFromARM(armTemplate: any) {
+export async function generateArchitectureFromARM(armTemplate: any, language: Language = 'en') {
   return generateArchitectureFromIaC({
     format: 'arm',
     content: armTemplate,
     filenames: ['template.json'],
-  });
+  }, language);
 }

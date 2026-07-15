@@ -95,8 +95,8 @@ RUN apk add --no-cache nodejs npm
 
 # Set up the speech token server
 WORKDIR /srv/token-server
-COPY server/package.json ./
-RUN npm install --omit=dev
+COPY server/package*.json ./
+RUN npm ci --omit=dev && npm cache clean --force
 COPY server/token-server.js ./
 
 # Set up the MCP HTTP server (streamable HTTP transport on port 3030).

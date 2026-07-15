@@ -1505,11 +1505,12 @@ server.registerPrompt(
 // MCP_TRANSPORT=stdio   (default) — local clients
 // MCP_TRANSPORT=http    — remote clients via streamable HTTP + SSE
 //   MCP_HTTP_PORT=3030  (default)
-//   MCP_HTTP_HOST=0.0.0.0 (default)
+//   MCP_HTTP_HOST=127.0.0.1 (default; set 0.0.0.0 only with authentication)
 //   MCP_HTTP_PATH=/mcp  (default)
 //   MCP_AUTH_TOKEN      — when set, requires `Authorization: Bearer <token>`
-//                         on the MCP path (health probe stays open). When unset,
-//                         the endpoint is open (local/dev/stdio behavior).
+//                         on the MCP path (health probe stays open). Without a
+//                         token, HTTP mode is limited to loopback unless
+//                         MCP_ALLOW_UNAUTHENTICATED=true is explicitly set.
 //
 // CLI flags --http / --stdio override the env var.
 
@@ -1529,28 +1530,44 @@ async function startStdio(): Promise<void> {
   // stdio transport drives lifecycle; nothing else to do
 }
 
+const MAX_HTTP_BODY_BYTES = 1024 * 1024;
+
+class HttpRequestError extends Error {
+  constructor(
+    readonly status: number,
+    readonly code: string,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
 async function readJsonBody(req: IncomingMessage): Promise<unknown | undefined> {
-  return new Promise((resolve, reject) => {
-    const chunks: Buffer[] = [];
-    req.on('data', (chunk: Buffer) => chunks.push(chunk));
-    req.on('error', reject);
-    req.on('end', () => {
-      if (chunks.length === 0) {
-        resolve(undefined);
-        return;
-      }
-      const raw = Buffer.concat(chunks).toString('utf8');
-      if (!raw.trim()) {
-        resolve(undefined);
-        return;
-      }
-      try {
-        resolve(JSON.parse(raw));
-      } catch (err) {
-        reject(err);
-      }
-    });
-  });
+  const declaredLength = Number.parseInt(req.headers['content-length'] ?? '', 10);
+  if (Number.isFinite(declaredLength) && declaredLength > MAX_HTTP_BODY_BYTES) {
+    throw new HttpRequestError(413, 'request_too_large', 'Request body exceeds 1 MiB.');
+  }
+
+  const chunks: Buffer[] = [];
+  let totalBytes = 0;
+  for await (const chunk of req) {
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    totalBytes += buffer.length;
+    if (totalBytes > MAX_HTTP_BODY_BYTES) {
+      throw new HttpRequestError(413, 'request_too_large', 'Request body exceeds 1 MiB.');
+    }
+    chunks.push(buffer);
+  }
+
+  if (chunks.length === 0) return undefined;
+  const raw = Buffer.concat(chunks).toString('utf8');
+  if (!raw.trim()) return undefined;
+
+  try {
+    return JSON.parse(raw);
+  } catch {
+    throw new HttpRequestError(400, 'invalid_json', 'Request body must be valid JSON.');
+  }
 }
 
 function writeJson(res: ServerResponse, status: number, body: unknown): void {
@@ -1569,13 +1586,20 @@ function safeEqual(a: string, b: string): boolean {
 
 async function startHttp(): Promise<void> {
   const port = Number.parseInt(process.env.MCP_HTTP_PORT ?? '3030', 10);
-  const host = process.env.MCP_HTTP_HOST ?? '0.0.0.0';
+  const host = process.env.MCP_HTTP_HOST ?? '127.0.0.1';
   const mcpPath = process.env.MCP_HTTP_PATH ?? '/mcp';
   const authToken = process.env.MCP_AUTH_TOKEN?.trim();
+  const allowUnauthenticated = process.env.MCP_ALLOW_UNAUTHENTICATED === 'true';
+  const isLoopback = host === '127.0.0.1' || host === '::1' || host === 'localhost';
+  if (!authToken && !isLoopback && !allowUnauthenticated) {
+    throw new Error(
+      'MCP_AUTH_TOKEN is required when MCP HTTP listens on a non-loopback interface.',
+    );
+  }
   if (authToken) {
     console.error('[mcp-http] Bearer-token auth ENABLED on', mcpPath);
   } else {
-    console.error('[mcp-http] WARNING: no MCP_AUTH_TOKEN set — endpoint is OPEN (no auth)');
+    console.error('[mcp-http] unauthenticated HTTP is limited to an explicitly allowed interface');
   }
 
   // Stateful sessions: one transport per MCP session id.
@@ -1677,7 +1701,11 @@ async function startHttp(): Promise<void> {
     } catch (err) {
       console.error('[mcp-http] request error:', err);
       if (!res.headersSent) {
-        writeJson(res, 500, { error: 'internal_error', message: (err as Error).message });
+        if (err instanceof HttpRequestError) {
+          writeJson(res, err.status, { error: err.code, message: err.message });
+        } else {
+          writeJson(res, 500, { error: 'internal_error', message: 'Internal server error.' });
+        }
       } else {
         try { res.end(); } catch { /* ignore */ }
       }

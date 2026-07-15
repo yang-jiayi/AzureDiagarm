@@ -5,6 +5,7 @@ import React, { useState, useCallback, useRef } from 'react';
 import { Upload, Image, X, Loader2 } from 'lucide-react';
 import './ImageUploader.css';
 import { useLanguage } from '../i18n/LanguageContext';
+import { localize } from '../i18n/localization';
 
 interface ImageUploaderProps {
   onImageAnalyzed: (description: string) => void;
@@ -15,7 +16,8 @@ interface ImageUploaderProps {
   analyzeImage: (base64: string, mimeType: string) => Promise<{ description: string }>;
 }
 
-const MAX_FILE_SIZE = 20 * 1024 * 1024; // 20MB
+// Base64 adds roughly 33% overhead; 8 MB stays below the 12 MB API body limit.
+const MAX_FILE_SIZE = 8 * 1024 * 1024;
 const SUPPORTED_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
 
 const ImageUploader: React.FC<ImageUploaderProps> = ({
@@ -26,7 +28,7 @@ const ImageUploader: React.FC<ImageUploaderProps> = ({
   disabled = false,
   analyzeImage
 }) => {
-  const { t } = useLanguage();
+  const { t, translate, language } = useLanguage();
   const [isDragging, setIsDragging] = useState(false);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
@@ -36,13 +38,19 @@ const ImageUploader: React.FC<ImageUploaderProps> = ({
   const processFile = useCallback(async (file: File) => {
     // Validate file type
     if (!SUPPORTED_TYPES.includes(file.type)) {
-      onError(`Unsupported file type. Please upload: ${SUPPORTED_TYPES.map(t => t.split('/')[1]).join(', ')}`);
+      onError(localize(language, {
+        en: `Unsupported file type. Please upload: ${SUPPORTED_TYPES.map(type => type.split('/')[1]).join(', ')}`,
+        ja: `未対応のファイル形式です。次の形式をアップロードしてください: ${SUPPORTED_TYPES.map(type => type.split('/')[1]).join('、')}`,
+      }));
       return;
     }
 
     // Validate file size
     if (file.size > MAX_FILE_SIZE) {
-      onError(`File too large. Maximum size is ${MAX_FILE_SIZE / 1024 / 1024}MB.`);
+      onError(localize(language, {
+        en: `File too large. Maximum size is ${MAX_FILE_SIZE / 1024 / 1024}MB.`,
+        ja: `ファイルが大きすぎます。最大サイズは${MAX_FILE_SIZE / 1024 / 1024}MBです。`,
+      }));
       return;
     }
 
@@ -65,7 +73,12 @@ const ImageUploader: React.FC<ImageUploaderProps> = ({
         const { description } = await analyzeImage(base64Data, file.type);
         onImageAnalyzed(description);
       } catch (err: any) {
-        onError(err.message || 'Failed to analyze the image. Please try again.');
+        onError(err.message
+          ? translate(err.message)
+          : localize(language, {
+              en: 'Failed to analyze the image. Please try again.',
+              ja: '画像の分析に失敗しました。もう一度お試しください。',
+            }));
         clearImage();
       } finally {
         setIsAnalyzing(false);
@@ -73,7 +86,7 @@ const ImageUploader: React.FC<ImageUploaderProps> = ({
       }
     };
     reader.readAsDataURL(file);
-  }, [analyzeImage, onImageAnalyzed, onAnalyzing, onError]);
+  }, [analyzeImage, language, onImageAnalyzed, onImageDataUrl, onAnalyzing, onError, translate]);
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -171,7 +184,7 @@ const ImageUploader: React.FC<ImageUploaderProps> = ({
           <div className="upload-prompt">
             <Upload size={28} className="upload-icon" />
             <p>{t("Drop an architecture diagram here or click to browse")}</p>
-            <span className="upload-hint">{t("PNG, JPG, GIF, WebP up to 20MB")}</span>
+            <span className="upload-hint">{t("PNG, JPG, GIF, WebP up to 8MB")}</span>
           </div>
         )}
       </div>

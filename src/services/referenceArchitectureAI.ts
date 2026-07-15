@@ -17,6 +17,8 @@
 import { callAzureOpenAI, ModelOverride, AIMetrics } from './azureOpenAI';
 import { getServiceIconMapping } from '../data/serviceIconMapping';
 import { MODEL_CONFIG, getModelSettings } from '../stores/modelSettingsStore';
+import type { Language } from '../i18n/LanguageContext';
+import { getPromptLanguageInstruction } from '../i18n/localization';
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Schema
@@ -291,11 +293,14 @@ EXAMPLE 3 — Event-driven IoT analytics (hot + cool paths):
 
 export async function generateReferenceArchitectureWithAI(
   description: string,
-  modelOverride?: ModelOverride
+  modelOverride?: ModelOverride,
+  language: Language = 'en',
 ): Promise<ReferenceArchitecture> {
   const systemPrompt = `You are an expert Azure cloud architect who creates publication-ready REFERENCE ARCHITECTURE diagrams in the editorial style of the Microsoft Azure Architecture Center.
 
 Reference architectures differ from topology diagrams: they show a NARRATIVE — how data and control flow through clearly named STAGES (swim lanes), left to right, with platform wrappers, optional hot/cool path bands, a foundation strip, and a cross-cutting governance strip.
+
+${getPromptLanguageInstruction(language)}
 
 Return ONLY a valid JSON object (no markdown fences, no commentary) matching this TypeScript shape:
 

@@ -17,28 +17,22 @@ import {
   FeatureType,
   FEATURE_CONFIG,
   getAvailableModels,
+  getReasoningEffortLabel,
+  getSupportedReasoningEfforts,
   updateFeatureOverride,
   hasFeatureOverride,
 } from '../stores/modelSettingsStore';
 import './ModelSettingsPopover.css';
 import { useLanguage } from '../i18n/LanguageContext';
-import type { TranslationKey } from '../i18n/LanguageContext';
 
 interface ModelSettingsPopoverProps {
   isOpen: boolean;
   onToggle: () => void;
 }
 
-const REASONING_LABEL_KEYS: Record<ReasoningEffort, TranslationKey> = {
-  none: 'None',
-  low: 'Low',
-  medium: 'Medium',
-  high: 'High',
-};
-
 const ModelSettingsPopover = forwardRef<HTMLDivElement, ModelSettingsPopoverProps>(
   ({ isOpen, onToggle }, ref) => {
-    const { t } = useLanguage();
+    const { t, translate } = useLanguage();
     const [settings, updateSettings] = useModelSettings();
     const availableModels = getAvailableModels();
     const currentConfig = MODEL_CONFIG[settings.model];
@@ -150,7 +144,7 @@ const ModelSettingsPopover = forwardRef<HTMLDivElement, ModelSettingsPopoverProp
           {getModelIcon(settings.model)}
           <span className="model-popover-label">{currentConfig.displayName}</span>
           {currentConfig.isReasoning && (
-            <span className="model-popover-reasoning">{t(REASONING_LABEL_KEYS[settings.reasoningEffort])}</span>
+            <span className="model-popover-reasoning">{t(getReasoningEffortLabel(settings.reasoningEffort))}</span>
           )}
           {hasAnyOverride && <span className="model-popover-override-dot" />}
           <ChevronDown size={14} style={{ marginLeft: 2 }} />
@@ -170,7 +164,7 @@ const ModelSettingsPopover = forwardRef<HTMLDivElement, ModelSettingsPopoverProp
                   key={model}
                   className={`msp-model-btn ${settings.model === model ? 'active' : ''}`}
                   onClick={() => handleModelChange(model)}
-                  title={MODEL_CONFIG[model].description}
+                  title={translate(MODEL_CONFIG[model].description)}
                 >
                   {getModelIcon(model)}
                   <span>{MODEL_CONFIG[model].displayName}</span>
@@ -184,14 +178,14 @@ const ModelSettingsPopover = forwardRef<HTMLDivElement, ModelSettingsPopoverProp
                 <div className="msp-reasoning-row">
                   <span className="msp-reasoning-label">{t("Reasoning")}</span>
                   <div className="msp-reasoning-buttons">
-                    {(['none', 'low', 'medium', 'high'] as ReasoningEffort[]).map((level) => (
+                    {getSupportedReasoningEfforts(settings.model).map((level) => (
                       <button
                         key={level}
                         className={`msp-reasoning-btn ${settings.reasoningEffort === level ? 'active' : ''}`}
                         onClick={() => handleReasoningChange(level)}
                         title={level === 'none' ? t("No reasoning - fastest response") : undefined}
                       >
-                        {t(REASONING_LABEL_KEYS[level])}
+                        {t(getReasoningEffortLabel(level))}
                       </button>
                     ))}
                   </div>
@@ -223,10 +217,10 @@ const ModelSettingsPopover = forwardRef<HTMLDivElement, ModelSettingsPopoverProp
                 return (
                   <div key={feature} className={`msp-feature-row ${isOverridden ? 'overridden' : ''}`}>
                     <div className="msp-feature-info">
-                      <span className="msp-feature-name">{featureConfig.displayName}</span>
+                      <span className="msp-feature-name">{translate(featureConfig.displayName)}</span>
                       <span className="msp-feature-effective">
                         {MODEL_CONFIG[effectiveModel].displayName}
-                        {effectiveReasoning && ` (${t(REASONING_LABEL_KEYS[effectiveReasoning])})`}
+                        {effectiveReasoning && ` (${t(getReasoningEffortLabel(effectiveReasoning))})`}
                       </span>
                     </div>
                     <div className="msp-feature-controls">
@@ -251,10 +245,11 @@ const ModelSettingsPopover = forwardRef<HTMLDivElement, ModelSettingsPopoverProp
                           }
                           className="msp-reasoning-select"
                         >
-                          <option value="none">{t("None")}</option>
-                          <option value="low">{t("Low")}</option>
-                          <option value="medium">{t("Med")}</option>
-                          <option value="high">{t("High")}</option>
+                          {getSupportedReasoningEfforts(currentModel as ModelType).map(level => (
+                            <option key={level} value={level}>
+                              {t(getReasoningEffortLabel(level))}
+                            </option>
+                          ))}
                         </select>
                       )}
                     </div>
@@ -266,7 +261,7 @@ const ModelSettingsPopover = forwardRef<HTMLDivElement, ModelSettingsPopoverProp
             <div className="toolbar-dropdown-separator" role="separator" />
 
             <div className="toolbar-dropdown-hint">
-              {' '}{t("Recommended: GPT-5.4 Mini (low) for cost-efficient generation and validation")}{' '}</div>
+              {' '}{t("Recommended: GPT-5.6 Sol (low) for architecture generation and validation")}{' '}</div>
           </div>
         )}
       </div>

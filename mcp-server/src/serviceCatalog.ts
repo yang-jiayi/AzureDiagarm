@@ -1,13 +1,17 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+import { readFileSync } from 'node:fs';
+import { dirname, resolve as resolvePath } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
 /**
  * Azure Service Catalog for MCP Server
  *
  * Standalone extraction of the service icon mapping from the Diagram Builder.
- * Provides the full catalog of 68+ Azure services with categories, aliases,
- * and pricing availability so MCP clients can browse, filter, and select
- * services without needing the browser-based Diagram Builder running.
+ * Provides Azure and Microsoft Fabric services with categories, aliases, and
+ * pricing availability so MCP clients can browse, filter, and select services
+ * without needing the browser-based Diagram Builder running.
  */
 
 export interface ServiceInfo {
@@ -116,6 +120,37 @@ export const SERVICE_CATALOG: Record<string, ServiceInfo> = {
   'Digital Twins':          { displayName: 'Azure Digital Twins',     aliases: ['Azure Digital Twins', 'Digital Twin'],                         category: 'iot', hasPricingData: false, isUsageBased: true, costRange: '$0-1000/mo' },
   'Notification Hubs':      { displayName: 'Azure Notification Hubs', aliases: ['Notification Hub', 'Azure Notification Hubs', 'Push Notifications'], category: 'iot', hasPricingData: true, pricingServiceName: 'Notification Hubs', isUsageBased: true, costRange: '$0-200/mo' },
 };
+
+interface GeneratedIconInfo {
+  displayName: string;
+  iconFile: string;
+  category: string;
+  aliases: string[];
+}
+
+const thisDirectory = dirname(fileURLToPath(import.meta.url));
+const generatedIconMap = JSON.parse(
+  readFileSync(resolvePath(thisDirectory, 'iconMap.generated.json'), 'utf8'),
+) as Record<string, GeneratedIconInfo>;
+
+for (const [key, icon] of Object.entries(generatedIconMap)) {
+  if (icon.category !== 'fabric') continue;
+
+  const existing = SERVICE_CATALOG[key];
+  if (existing) {
+    existing.aliases = [...new Set([...existing.aliases, icon.displayName, ...icon.aliases])]
+      .filter(alias => alias !== key);
+    existing.category = 'fabric';
+    continue;
+  }
+
+  SERVICE_CATALOG[key] = {
+    displayName: icon.displayName,
+    aliases: [...new Set(icon.aliases)].filter(alias => alias !== key),
+    category: 'fabric',
+    hasPricingData: false,
+  };
+}
 
 /**
  * Resolve a service name to its canonical key (case-insensitive, alias-aware).

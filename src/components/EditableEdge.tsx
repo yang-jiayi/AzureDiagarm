@@ -11,6 +11,7 @@ import {
   BaseEdge,
 } from 'reactflow';
 import { useLanguage } from '../i18n/LanguageContext';
+import { localize } from '../i18n/localization';
 
 const EditableEdge: React.FC<EdgeProps> = ({
   id,
@@ -26,7 +27,7 @@ const EditableEdge: React.FC<EdgeProps> = ({
   data,
   label,
 }) => {
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
   const [isEditing, setIsEditing] = useState(false);
   const [editLabel, setEditLabel] = useState(label?.toString() || '');
   const [isDragging, setIsDragging] = useState(false);
@@ -216,9 +217,15 @@ const EditableEdge: React.FC<EdgeProps> = ({
                 textOverflow: 'ellipsis',
                 userSelect: 'none',
               }}
-              title={`${editLabel || t("Double-click to edit label")}\n(Drag to reposition)`}
+              title={`${editLabel || t("Double-click to edit label")}\n${localize(language, {
+                en: '(Drag to reposition)',
+                ja: '（ドラッグして位置を変更）',
+              })}`}
             >
-              {editLabel || '(click to add label)'}
+              {editLabel || localize(language, {
+                en: '(click to add label)',
+                ja: '（クリックしてラベルを追加）',
+              })}
             </div>
           )}
         </div>

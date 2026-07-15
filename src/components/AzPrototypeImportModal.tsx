@@ -6,6 +6,7 @@ import { Terminal, Upload, X, AlertCircle, Check } from 'lucide-react';
 import { importFromAzPrototype, type ImportResult } from '../services/azPrototypeService';
 import './AzPrototypeImportModal.css';
 import { useLanguage } from '../i18n/LanguageContext';
+import { localize } from '../i18n/localization';
 
 export interface AzPrototypeImportModalProps {
   isOpen: boolean;
@@ -21,7 +22,7 @@ export default function AzPrototypeImportModal({
   onClose,
   onImport,
 }: AzPrototypeImportModalProps) {
-  const { t } = useLanguage();
+  const { t, translate, language } = useLanguage();
   const [stage, setStage] = useState<ImportStage>('select');
   const [importResult, setImportResult] = useState<ImportResult | null>(null);
   const [errorMessage, setErrorMessage] = useState('');
@@ -42,6 +43,15 @@ export default function AzPrototypeImportModal({
   const handleFileSelect = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
+    if (file.size > 10 * 1024 * 1024) {
+      setErrorMessage(localize(language, {
+        en: 'The manifest file is too large. The maximum size is 10 MB.',
+        ja: 'マニフェスト ファイルが大きすぎます。最大サイズは10 MBです。',
+      }));
+      setStage('error');
+      event.target.value = '';
+      return;
+    }
     setFileName(file.name);
 
     const reader = new FileReader();
@@ -52,14 +62,17 @@ export default function AzPrototypeImportModal({
         setImportResult(result);
         setStage('preview');
       } catch (err: any) {
-        setErrorMessage(err.message || 'Failed to parse the file.');
+        setErrorMessage(err.message ? translate(err.message) : localize(language, {
+          en: 'Failed to parse the file.',
+          ja: 'ファイルの解析に失敗しました。',
+        }));
         setStage('error');
       }
     };
     reader.readAsText(file);
     // Reset the input so the same file can be re-selected
     event.target.value = '';
-  }, []);
+  }, [language, translate]);
 
   const handleConfirmImport = useCallback(() => {
     if (importResult) {

@@ -10,10 +10,14 @@ import {
   MODEL_CONFIG,
   ModelType,
   ReasoningEffort,
+  getCommonSupportedReasoningEfforts,
   getAvailableModels,
   getModelSettings,
+  getReasoningEffortLabel,
+  normalizeReasoningEffort,
 } from '../stores/modelSettingsStore';
 import { useLanguage } from '../i18n/LanguageContext';
+import { localize, type LocalizedText } from '../i18n/localization';
 
 /** Abbreviate model name for filenames */
 function abbreviateModelForFile(model: ModelType): string {
@@ -56,6 +60,41 @@ function promptToSlug(prompt: string): string {
       .join('') || 'Architecture'
   );
 }
+
+const COMPARISON_SAMPLE_PROMPTS: LocalizedText[] = [
+  { en: 'E-commerce platform with payments and search', ja: '決済と検索を備えたEコマース プラットフォーム' },
+  { en: 'Real-time IoT telemetry pipeline with dashboards', ja: 'ダッシュボードを備えたリアルタイムIoTテレメトリ パイプライン' },
+  { en: 'Microservices app with API gateway and auth', ja: 'API Gatewayと認証を備えたマイクロサービス アプリ' },
+  { en: 'RAG chatbot with vector search and AI', ja: 'ベクトル検索とAIを使用するRAGチャットボット' },
+  {
+    en: 'A zero trust enterprise network with Azure Firewall, Application Gateway with WAF, Private Link for PaaS, Bastion for VM access, and Microsoft Entra ID with Conditional Access',
+    ja: 'Azure Firewall、WAF付きApplication Gateway、PaaSサービス向けPrivate Link、VMアクセス向けBastion、Conditional Access付きMicrosoft Entra IDを使用するZero Trustエンタープライズ ネットワーク',
+  },
+  {
+    en: 'An industrial IoT platform with 5,000+ sensors, real-time anomaly detection, IoT Hub for ingestion, Stream Analytics for processing, and Azure ML for predictive models',
+    ja: '5,000台以上のセンサー、リアルタイム異常検知、取り込み用IoT Hub、処理用Stream Analytics、予測モデル用Azure MLを使用する産業IoTプラットフォーム',
+  },
+  {
+    en: 'A healthcare data platform with FHIR API, HIPAA-compliant storage, real-time patient monitoring, Azure Health Data Services, and Power BI for clinical dashboards',
+    ja: 'FHIR API、HIPAA準拠ストレージ、リアルタイム患者監視、Azure Health Data Services、臨床ダッシュボード用Power BIを使用する医療データ プラットフォーム',
+  },
+  {
+    en: 'A multi-region e-commerce system with Cosmos DB for global product catalog, Azure Front Door for traffic routing, Redis Cache for sessions, and Event Grid for order processing',
+    ja: 'グローバル商品カタログ用Cosmos DB、トラフィック ルーティング用Azure Front Door、セッション用Redis Cache、注文処理用Event Gridを使用するマルチリージョンEコマース システム',
+  },
+  {
+    en: 'An intelligent document processing pipeline with Azure AI Document Intelligence for OCR, Azure OpenAI for summarization, Cognitive Search for indexing, Cosmos DB for metadata, and Blob Storage for document retention',
+    ja: 'OCR用Azure AI Document Intelligence、要約用Azure OpenAI、インデックス作成用Cognitive Search、メタデータ用Cosmos DB、ドキュメント保持用Blob Storageを使用するインテリジェント ドキュメント処理パイプライン',
+  },
+  {
+    en: 'An enterprise RAG application with Azure AI Foundry for orchestration, Azure AI Search with hybrid vector and keyword retrieval, Azure OpenAI GPT-5 for generation, Azure Cache for Redis for semantic caching, and App Service with Entra ID authentication',
+    ja: 'オーケストレーション用Azure AI Foundry、ハイブリッドなベクトル・キーワード検索用Azure AI Search、生成用Azure OpenAI GPT-5、セマンティック キャッシュ用Azure Cache for Redis、Entra ID認証付きApp Serviceを使用するエンタープライズRAGアプリケーション',
+  },
+  {
+    en: 'A multi-modal AI platform with Azure OpenAI for text and vision, Azure AI Speech for real-time transcription, Azure AI Translator for multilingual support, Event Hubs for streaming ingest, and Application Insights for model observability',
+    ja: 'テキストと画像用Azure OpenAI、リアルタイム文字起こし用Azure AI Speech、多言語対応用Azure AI Translator、ストリーミング取り込み用Event Hubs、モデル可観測性用Application Insightsを使用するマルチモーダルAIプラットフォーム',
+  },
+];
 import './CompareModelsModal.css';
 
 interface ComparisonResult {
@@ -85,7 +124,7 @@ interface CompareModelsModalProps {
 }
 
 const CompareModelsModal: React.FC<CompareModelsModalProps> = ({ isOpen, onClose, onApply, onCaptureBatch }) => {
-  const { t } = useLanguage();
+  const { t, translate, language } = useLanguage();
   const availableModels = getAvailableModels();
   const currentSettings = getModelSettings();
   
@@ -95,12 +134,16 @@ const CompareModelsModal: React.FC<CompareModelsModalProps> = ({ isOpen, onClose
     return initial;
   });
   const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort>(currentSettings.reasoningEffort);
+  const commonReasoningEfforts = getCommonSupportedReasoningEfforts(selectedModels);
+  const effectiveReasoningEffort = commonReasoningEfforts.includes(reasoningEffort)
+    ? reasoningEffort
+    : (commonReasoningEfforts[commonReasoningEfforts.length - 1] ?? reasoningEffort);
   const [prompt, setPrompt] = useState('');
   const [isRunning, setIsRunning] = useState(false);
   const [results, setResults] = useState<ComparisonResult[]>([]);
   const [criticModel, setCriticModel] = useState<ModelType>(() => {
     const avail = getAvailableModels();
-    return (avail.includes('gpt-5.4' as ModelType) ? 'gpt-5.4' : avail[avail.length - 1]) as ModelType;
+    return avail.includes('gpt-5.6-sol') ? 'gpt-5.6-sol' : (avail[0] ?? currentSettings.model);
   });
   const [critiqueText, setCritiqueText] = useState<string | null>(null);
   const [critiqueByModel, setCritiqueByModel] = useState<ModelType | null>(null);
@@ -221,7 +264,9 @@ const CompareModelsModal: React.FC<CompareModelsModalProps> = ({ isOpen, onClose
     // Initialize results
     const initial: ComparisonResult[] = models.map(m => ({
       model: m,
-      reasoningEffort: MODEL_CONFIG[m].isReasoning ? reasoningEffort : 'medium',
+      reasoningEffort: MODEL_CONFIG[m].isReasoning
+        ? normalizeReasoningEffort(m, effectiveReasoningEffort)
+        : 'none',
       status: 'pending',
     }));
     setResults(initial);
@@ -233,11 +278,13 @@ const CompareModelsModal: React.FC<CompareModelsModalProps> = ({ isOpen, onClose
 
       const override: ModelOverride = {
         model,
-        reasoningEffort: MODEL_CONFIG[model].isReasoning ? reasoningEffort : 'medium',
+        reasoningEffort: MODEL_CONFIG[model].isReasoning
+          ? normalizeReasoningEffort(model, effectiveReasoningEffort)
+          : 'none',
       };
 
       try {
-        const result = await generateArchitectureWithAI(prompt, override);
+        const result = await generateArchitectureWithAI(prompt, override, undefined, language);
         const arch = result;
         const metrics: AIMetrics = result.metrics;
 
@@ -307,9 +354,11 @@ const CompareModelsModal: React.FC<CompareModelsModalProps> = ({ isOpen, onClose
       const summary = buildCritiqueSummary();
       const override: ModelOverride = {
         model: chosenModel,
-        reasoningEffort: MODEL_CONFIG[chosenModel].isReasoning ? reasoningEffort : 'medium',
+        reasoningEffort: MODEL_CONFIG[chosenModel].isReasoning
+          ? normalizeReasoningEffort(chosenModel, effectiveReasoningEffort)
+          : 'none',
       };
-      const { content } = await generateCritique(summary, prompt, override);
+      const { content } = await generateCritique(summary, prompt, override, language);
       setCritiqueText(content);
       setCritiqueByModel(chosenModel);
     } catch (err: any) {
@@ -645,7 +694,7 @@ const CompareModelsModal: React.FC<CompareModelsModalProps> = ({ isOpen, onClose
                     className={`compare-model-chip ${isSelected ? 'selected' : ''}`}
                     onClick={() => toggleModel(model)}
                     disabled={isRunning}
-                    title={config.description}
+                    title={translate(config.description)}
                   >
                     <span className="compare-model-chip-name">{config.displayName}</span>
                     {config.isReasoning && <span className="compare-model-chip-tag">{t("reasoning")}</span>}
@@ -659,14 +708,14 @@ const CompareModelsModal: React.FC<CompareModelsModalProps> = ({ isOpen, onClose
               <div className="compare-reasoning-row">
                 <span>{t("Reasoning Effort (for reasoning models):")}</span>
                 <div className="compare-reasoning-buttons">
-                  {(['none', 'low', 'medium', 'high'] as ReasoningEffort[]).map(level => (
+                  {commonReasoningEfforts.map(level => (
                     <button
                       key={level}
-                      className={`compare-reasoning-btn ${reasoningEffort === level ? 'active' : ''}`}
+                      className={`compare-reasoning-btn ${effectiveReasoningEffort === level ? 'active' : ''}`}
                       onClick={() => setReasoningEffort(level)}
                       disabled={isRunning}
                     >
-                      {level.charAt(0).toUpperCase() + level.slice(1)}
+                      {t(getReasoningEffortLabel(level))}
                     </button>
                   ))}
                 </div>
@@ -678,12 +727,9 @@ const CompareModelsModal: React.FC<CompareModelsModalProps> = ({ isOpen, onClose
           <div className="compare-section">
             <h3 className="compare-section-title">{t("Architecture Prompt")}</h3>
             <div className="compare-sample-prompts">
-              {[
-                'E-commerce platform with payments and search',
-                'Real-time IoT telemetry pipeline with dashboards',
-                'Microservices app with API gateway and auth',
-                'RAG chatbot with vector search and AI'
-              ].map((sample) => (
+              {COMPARISON_SAMPLE_PROMPTS.map((localizedSample) => {
+                const sample = localize(language, localizedSample);
+                return (
                 <button
                   key={sample}
                   className="compare-sample-chip"
@@ -692,40 +738,8 @@ const CompareModelsModal: React.FC<CompareModelsModalProps> = ({ isOpen, onClose
                 >
                   {sample}
                 </button>
-              ))}
-            </div>
-            <div className="compare-sample-prompts">
-              {[
-                'A zero trust enterprise network with Azure Firewall, Application Gateway with WAF, Private Link for PaaS, Bastion for VM access, and Microsoft Entra ID with Conditional Access',
-                'An industrial IoT platform with 5,000+ sensors, real-time anomaly detection, IoT Hub for ingestion, Stream Analytics for processing, and Azure ML for predictive models',
-                'A healthcare data platform with FHIR API, HIPAA-compliant storage, real-time patient monitoring, Azure Health Data Services, and Power BI for clinical dashboards',
-                'A multi-region e-commerce system with Cosmos DB for global product catalog, Azure Front Door for traffic routing, Redis Cache for sessions, and Event Grid for order processing'
-              ].map((sample) => (
-                <button
-                  key={sample}
-                  className="compare-sample-chip"
-                  onClick={() => setPrompt(sample)}
-                  disabled={isRunning}
-                >
-                  {sample}
-                </button>
-              ))}
-            </div>
-            <div className="compare-sample-prompts">
-              {[
-                'An intelligent document processing pipeline with Azure AI Document Intelligence for OCR, Azure OpenAI for summarization, Cognitive Search for indexing, Cosmos DB for metadata, and Blob Storage for document retention',
-                'An enterprise RAG application with Azure AI Foundry for orchestration, Azure AI Search with hybrid vector and keyword retrieval, Azure OpenAI GPT-5 for generation, Azure Cache for Redis for semantic caching, and App Service with Entra ID authentication',
-                'A multi-modal AI platform with Azure OpenAI for text and vision, Azure AI Speech for real-time transcription, Azure AI Translator for multilingual support, Event Hubs for streaming ingest, and Application Insights for model observability'
-              ].map((sample) => (
-                <button
-                  key={sample}
-                  className="compare-sample-chip"
-                  onClick={() => setPrompt(sample)}
-                  disabled={isRunning}
-                >
-                  {sample}
-                </button>
-              ))}
+                );
+              })}
             </div>
             <textarea
               className="compare-prompt"

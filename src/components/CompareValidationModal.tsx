@@ -24,8 +24,11 @@ import {
   MODEL_CONFIG,
   ModelType,
   ReasoningEffort,
+  getCommonSupportedReasoningEfforts,
   getAvailableModels,
   getModelSettings,
+  getReasoningEffortLabel,
+  normalizeReasoningEffort,
 } from '../stores/modelSettingsStore';
 import './CompareValidationModal.css';
 // Critique + avatar panel styles live in CompareModelsModal.css (shared compare-* classes).
@@ -80,7 +83,7 @@ interface CompareValidationModalProps {
 const CompareValidationModal: React.FC<CompareValidationModalProps> = ({
   isOpen, onClose, onApply, services, connections, groups, architectureDescription,
 }) => {
-  const { t } = useLanguage();
+  const { t, translate, language } = useLanguage();
   const availableModels = getAvailableModels();
   const currentSettings = getModelSettings();
 
@@ -90,6 +93,10 @@ const CompareValidationModal: React.FC<CompareValidationModalProps> = ({
     return initial;
   });
   const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort>(currentSettings.reasoningEffort);
+  const commonReasoningEfforts = getCommonSupportedReasoningEfforts(selectedModels);
+  const effectiveReasoningEffort = commonReasoningEfforts.includes(reasoningEffort)
+    ? reasoningEffort
+    : (commonReasoningEfforts[commonReasoningEfforts.length - 1] ?? reasoningEffort);
   const [isRunning, setIsRunning] = useState(false);
   const [results, setResults] = useState<ValidationComparisonResult[]>([]);
 
@@ -102,7 +109,7 @@ const CompareValidationModal: React.FC<CompareValidationModalProps> = ({
   // --- AI Critique state ---
   const [criticModel, setCriticModel] = useState<ModelType>(() => {
     const avail = getAvailableModels();
-    return (avail.includes('gpt-5.4' as ModelType) ? 'gpt-5.4' : avail[avail.length - 1]) as ModelType;
+    return avail.includes('gpt-5.6-sol') ? 'gpt-5.6-sol' : (avail[0] ?? currentSettings.model);
   });
   const [critiqueText, setCritiqueText] = useState<string | null>(null);
   const [critiqueByModel, setCritiqueByModel] = useState<ModelType | null>(null);
@@ -216,7 +223,9 @@ const CompareValidationModal: React.FC<CompareValidationModalProps> = ({
 
     const initial: ValidationComparisonResult[] = models.map(m => ({
       model: m,
-      reasoningEffort: MODEL_CONFIG[m].isReasoning ? reasoningEffort : 'medium',
+      reasoningEffort: MODEL_CONFIG[m].isReasoning
+        ? normalizeReasoningEffort(m, effectiveReasoningEffort)
+        : 'none',
       status: 'pending',
     }));
     setResults(initial);
@@ -227,12 +236,19 @@ const CompareValidationModal: React.FC<CompareValidationModalProps> = ({
 
       const override: ValidationModelOverride = {
         model,
-        reasoningEffort: MODEL_CONFIG[model].isReasoning ? reasoningEffort : 'medium',
+        reasoningEffort: MODEL_CONFIG[model].isReasoning
+          ? normalizeReasoningEffort(model, effectiveReasoningEffort)
+          : 'none',
       };
 
       try {
         const result = await validateArchitecture(
-          services, connections, groups, architectureDescription, override
+          services,
+          connections,
+          groups,
+          architectureDescription,
+          override,
+          language,
         );
 
         // Count findings by severity
@@ -293,7 +309,7 @@ const CompareValidationModal: React.FC<CompareValidationModalProps> = ({
           modelCount: ok.length,
           serviceCount: services.length,
           connectionCount: connections.length,
-          reasoningEffort,
+          reasoningEffort: effectiveReasoningEffort,
           perModel: ok.map(r => ({
             model: MODEL_CONFIG[r.model].displayName,
             score: r.overallScore ?? 0,
@@ -389,12 +405,15 @@ const CompareValidationModal: React.FC<CompareValidationModalProps> = ({
       const summary = buildCritiqueSummary();
       const override: ModelOverride = {
         model: chosenModel,
-        reasoningEffort: MODEL_CONFIG[chosenModel].isReasoning ? reasoningEffort : 'medium',
+        reasoningEffort: MODEL_CONFIG[chosenModel].isReasoning
+          ? normalizeReasoningEffort(chosenModel, effectiveReasoningEffort)
+          : 'none',
       };
       const { content } = await generateValidationCritique(
         summary,
         architectureDescription || '',
-        override
+        override,
+        language,
       );
       setCritiqueText(content);
       setCritiqueByModel(chosenModel);
@@ -722,7 +741,7 @@ const CompareValidationModal: React.FC<CompareValidationModalProps> = ({
                     className={`compare-model-chip ${isSelected ? 'selected' : ''}`}
                     onClick={() => toggleModel(model)}
                     disabled={isRunning}
-                    title={config.description}
+                    title={translate(config.description)}
                   >
                     <span className="compare-model-chip-name">{config.displayName}</span>
                     {config.isReasoning && <span className="compare-model-chip-tag">{t("reasoning")}</span>}
@@ -735,14 +754,14 @@ const CompareValidationModal: React.FC<CompareValidationModalProps> = ({
               <div className="compare-reasoning-row">
                 <span>{t("Reasoning Effort (for reasoning models):")}</span>
                 <div className="compare-reasoning-buttons">
-                  {(['none', 'low', 'medium', 'high'] as ReasoningEffort[]).map(level => (
+                  {commonReasoningEfforts.map(level => (
                     <button
                       key={level}
-                      className={`compare-reasoning-btn ${reasoningEffort === level ? 'active' : ''}`}
+                      className={`compare-reasoning-btn ${effectiveReasoningEffort === level ? 'active' : ''}`}
                       onClick={() => setReasoningEffort(level)}
                       disabled={isRunning}
                     >
-                      {level.charAt(0).toUpperCase() + level.slice(1)}
+                      {t(getReasoningEffortLabel(level))}
                     </button>
                   ))}
                 </div>
@@ -844,7 +863,7 @@ const CompareValidationModal: React.FC<CompareValidationModalProps> = ({
                                 className="cv-score-band-mark"
                                 style={{ color: scoreColor(result.overallScore || 0) }}
                               >
-                                {scoreToBand(result.overallScore || 0).short}
+                                {translate(scoreToBand(result.overallScore || 0).short)}
                               </span>
                             )}
                           </div>
@@ -863,7 +882,7 @@ const CompareValidationModal: React.FC<CompareValidationModalProps> = ({
                               <span className="cv-pillar-score" style={{ color: scoreColor(p.score) }}>
                                 {displayPrefs.showNumericScore
                                   ? `${scoreLabel(p.score)} ${p.score}`
-                                  : `${scoreLabel(p.score)} ${scoreToBand(p.score).short}`}
+                                  : `${scoreLabel(p.score)} ${translate(scoreToBand(p.score).short)}`}
                               </span>
                               <span className="cv-pillar-name">{p.pillar}</span>
                             </div>

@@ -555,7 +555,7 @@ function render() {
   const legendEl = document.getElementById('legend');
   legendEl.innerHTML = cats.map(c => {
     const cc = CATEGORY_COLORS[c] || CATEGORY_COLORS.other;
-    return '<div class="legend-item"><div class="legend-dot" style="background:' + cc.border + '"></div>' + (CATEGORY_ICONS[c] || '') + ' ' + c + '</div>';
+    return '<div class="legend-item"><div class="legend-dot" style="background:' + cc.border + '"></div>' + (CATEGORY_ICONS[c] || '') + ' ' + esc(c) + '</div>';
   }).join('');
 
   applyTransform();

@@ -50,6 +50,9 @@
     "openAiDeploymentGpt54Mini": {
       "value": "${AZURE_OPENAI_DEPLOYMENT_GPT54MINI}"
     },
+    "openAiDeploymentGpt56Sol": {
+      "value": "${AZURE_OPENAI_DEPLOYMENT_GPT56SOL}"
+    },
     "openAiDeploymentDeepSeek": {
       "value": "${AZURE_OPENAI_DEPLOYMENT_DEEPSEEK}"
     },

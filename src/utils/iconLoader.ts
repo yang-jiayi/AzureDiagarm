@@ -1,11 +1,14 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+import { getFabricIconByFileName } from '../data/fabricIconCatalog';
+
 export interface AzureIcon {
   id: string;
   name: string;
   category: string;
   path: string;
+  searchTerms: string[];
 }
 
 export const iconCategories = [
@@ -41,6 +44,15 @@ export const iconCategories = [
   'web',
 ];
 
+// Keep legacy paths loadable for saved diagrams while exposing each service only
+// in its canonical category in the left palette.
+const HIDDEN_LEGACY_PALETTE_PATHS = new Set([
+  '/Azure_Public_Service_Icons/Icons/general/10840-icon-service-Storage-Queue.svg',
+  '/Azure_Public_Service_Icons/Icons/general/10841-icon-service-Table.svg',
+  '/Azure_Public_Service_Icons/Icons/other/02989-icon-service-Container-Apps-Environments.svg',
+  '/Azure_Public_Service_Icons/Icons/web/00049-icon-service-App-Service-Certificates.svg',
+]);
+
 // This function will dynamically load icons from the file system
 export async function loadIconsFromCategory(category: string): Promise<AzureIcon[]> {
   try {
@@ -54,19 +66,23 @@ export async function loadIconsFromCategory(category: string): Promise<AzureIcon
     });
     
     for (const path in iconModules) {
+      if (HIDDEN_LEGACY_PALETTE_PATHS.has(path)) continue;
       if (path.includes(`/${category}/`)) {
         const fileName = path.split('/').pop() || '';
+        const fileNameWithoutExtension = fileName.replace('.svg', '');
+        const fabricDefinition = category === 'fabric'
+          ? getFabricIconByFileName(fileNameWithoutExtension)
+          : undefined;
         // Simplified: convert kebab-case filename to Title Case
         // Special handling for common acronyms: AI, CDN, SQL, IoT, API, etc.
-        const iconName = fileName
-          .replace('.svg', '')
+        const iconName = fabricDefinition?.displayName ?? fileNameWithoutExtension
           .replace(/^\d+-icon-service-/, '')  // Keep for backwards compatibility
           .replace(/-/g, ' ')
           .split(' ')
           .map(word => {
             const upper = word.toUpperCase();
             // Preserve common Azure acronyms
-            if (['AI', 'ML', 'CDN', 'SQL', 'IOT', 'API', 'VM', 'VMS', 'AKS', 'ACR', 'ACI', 'DB'].includes(upper)) {
+            if (['AI', 'ML', 'BI', 'CDN', 'SQL', 'IOT', 'API', 'VM', 'VMS', 'AKS', 'ACR', 'ACI', 'DB', 'KQL', 'RDL', 'RTI', 'FHIR'].includes(upper)) {
               return upper;
             }
             // For compound words like "openai", check if it should be "OpenAI"
@@ -81,10 +97,18 @@ export async function loadIconsFromCategory(category: string): Promise<AzureIcon
           .join(' ');
         
         icons.push({
-          id: fileName.replace('.svg', ''),
+          id: fileNameWithoutExtension,
           name: iconName,
           category,
           path,
+          searchTerms: fabricDefinition
+            ? [
+                fabricDefinition.serviceName,
+                fabricDefinition.group,
+                fabricDefinition.kind,
+                ...fabricDefinition.aliases,
+              ]
+            : [],
         });
       }
     }

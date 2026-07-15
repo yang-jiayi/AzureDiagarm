@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { Sparkles, X, Loader2, Clock, Zap, Brain, Network, PenTool, Layers } from 'lucide-react';
 import { generateArchitectureWithAI, isAzureOpenAIConfigured, AIMetrics, analyzeArchitectureDiagramImage, ModelOverride } from '../services/azureOpenAI';import { generateReferenceArchitectureWithAI } from '../services/referenceArchitectureAI';
 import { generateBlueprintArchitectureWithAI } from '../services/blueprintArchitectureAI';
@@ -9,11 +10,22 @@ import { generateComponentManifest, ComponentManifest } from '../services/compon
 import { exportReferenceArchitectureAsPng } from '../utils/exportReferencePng';
 import { exportBlueprintArchitectureAsPng } from '../utils/exportBlueprintPng';
 import ImageUploader from './ImageUploader';
-import { useModelSettings, MODEL_CONFIG, getAvailableModels, ModelType, ReasoningEffort, FEATURE_CONFIG, isModelAvailable } from '../stores/modelSettingsStore';
+import {
+  useModelSettings,
+  MODEL_CONFIG,
+  getAvailableModels,
+  ModelType,
+  ReasoningEffort,
+  FEATURE_CONFIG,
+  getReasoningEffortLabel,
+  getSupportedReasoningEfforts,
+  isModelAvailable,
+} from '../stores/modelSettingsStore';
 import { trackImageImport } from '../services/telemetryService';
 import { buildModificationPrompt } from '../services/modificationPrompt';
 import './AIArchitectureGenerator.css';
 import { useLanguage } from '../i18n/LanguageContext';
+import { localize, type LocalizedText } from '../i18n/localization';
 
 type GenerationMode = 'topology' | 'reference' | 'blueprint' | 'both';
 
@@ -29,6 +41,135 @@ const isBlueprintCapableModel = (m: ModelType): boolean =>
   MODEL_CONFIG[m].apiFormat !== 'chat-completions' && !m.includes('codex');
 const modeRequiresOpenAI = (m: GenerationMode): boolean =>
   m === 'blueprint' || m === 'both';
+
+interface PromptCategory {
+  category: LocalizedText;
+  color: string;
+  prompts: LocalizedText[];
+}
+
+const CATEGORIZED_PROMPTS: PromptCategory[] = [
+  {
+    category: { en: 'Web & Microservices', ja: 'Webとマイクロサービス' },
+    color: '#3b82f6',
+    prompts: [
+      {
+        en: 'A web application with a React frontend, Node.js backend API, PostgreSQL database, and blob storage for images',
+        ja: 'Reactフロントエンド、Node.jsバックエンドAPI、PostgreSQLデータベース、画像用Blob Storageを使用するWebアプリ',
+      },
+      {
+        en: 'A microservices architecture with container apps, API gateway, message queue, and Redis cache',
+        ja: 'Container Apps、API Gateway、メッセージ キュー、Redis Cacheを使用するマイクロサービス アーキテクチャ',
+      },
+    ],
+  },
+  {
+    category: { en: 'Security & Networking', ja: 'セキュリティとネットワーク' },
+    color: '#ef4444',
+    prompts: [
+      {
+        en: 'A zero trust enterprise network with Azure Firewall, Application Gateway with WAF, Private Link for PaaS services, Bastion for VM access, Microsoft Entra ID with Conditional Access, and Microsoft Defender for Cloud — segmented into DMZ, application, and data tiers',
+        ja: 'Azure Firewall、WAF付きApplication Gateway、PaaSサービス向けPrivate Link、VMアクセス向けBastion、Conditional Access付きMicrosoft Entra ID、Microsoft Defender for Cloudを使用し、DMZ、アプリケーション、データの各層に分離したZero Trustエンタープライズ ネットワーク',
+      },
+      {
+        en: 'A security operations center architecture with Microsoft Sentinel for SIEM, Log Analytics, Microsoft Defender for Cloud, Azure Key Vault, Azure Monitor, automation playbooks with Logic Apps, and integration with Microsoft Entra ID for identity threat detection',
+        ja: 'SIEMとしてMicrosoft Sentinelを使用し、Log Analytics、Microsoft Defender for Cloud、Azure Key Vault、Azure Monitor、Logic Appsによる自動化プレイブック、ID脅威検出向けMicrosoft Entra ID連携を備えたセキュリティ運用センター（SOC）アーキテクチャ',
+      },
+    ],
+  },
+  {
+    category: { en: 'AI & Cognitive', ja: 'AIとCognitive Services' },
+    color: '#8b5cf6',
+    prompts: [
+      {
+        en: 'A machine learning pipeline with data ingestion, training, and inference endpoints',
+        ja: 'データ取り込み、学習、推論エンドポイントを含む機械学習パイプライン',
+      },
+      {
+        en: 'An intelligent customer service chatbot using Azure OpenAI for conversations, Language for sentiment analysis, Speech Services for voice input/output, and Translator for multi-language support, with chat history in Cosmos DB and API Management for external access',
+        ja: '会話にAzure OpenAI、感情分析にLanguage、音声入出力にSpeech Services、多言語対応にTranslatorを使用するインテリジェントなカスタマーサービス チャットボット。チャット履歴をCosmos DBに保存し、API Managementで外部公開する',
+      },
+      {
+        en: 'A smart document processing platform that uses Computer Vision to analyze uploaded images, Document Intelligence to extract form data, Language to classify and summarize content, all coordinated through Azure Functions with results stored in Cosmos DB and searchable via Cognitive Search',
+        ja: 'Computer Visionで画像を分析し、Document Intelligenceでフォーム データを抽出し、Languageで分類と要約を行うドキュメント処理プラットフォーム。Azure Functionsで処理を連携し、結果をCosmos DBに保存してCognitive Searchで検索可能にする',
+      },
+      {
+        en: 'A content moderation system for social media using Computer Vision to scan images, Language for text analysis and content safety checks, Azure OpenAI for context understanding, with real-time processing via Event Hubs and results stored in SQL Database with API Management exposing moderation APIs',
+        ja: 'Computer Visionによる画像スキャン、Languageによるテキスト分析とContent Safetyチェック、Azure OpenAIによる文脈理解を行うソーシャル メディア向けコンテンツ モデレーション システム。Event Hubsでリアルタイム処理し、結果をSQL Databaseへ保存してAPI ManagementでモデレーションAPIを公開する',
+      },
+    ],
+  },
+  {
+    category: { en: 'E-commerce', ja: 'Eコマース' },
+    color: '#f59e0b',
+    prompts: [
+      {
+        en: 'A Black Friday-ready e-commerce platform handling 50,000 orders/hour peak with real-time inventory sync across 12 regional warehouses, ML-powered fraud detection scoring each transaction in under 200ms, personalized recommendations engine, multi-currency payment processing with PCI-DSS compliance, abandoned cart recovery workflows, using Azure Kubernetes Service for microservices, Cosmos DB for product catalog with global distribution, Redis Cache for session and cart state, Service Bus for order orchestration, Azure Functions for inventory webhooks, Cognitive Search for faceted product search, and CDN with dynamic site acceleration',
+        ja: 'Black Fridayのピーク時に毎時50,000件の注文を処理し、12地域の倉庫間でリアルタイム在庫同期、200ms未満のML不正検知、パーソナライズ推薦、PCI-DSS準拠の多通貨決済、カート放棄回復を実行するEコマース プラットフォーム。マイクロサービスにAzure Kubernetes Service、グローバル商品カタログにCosmos DB、セッションとカート状態にRedis Cache、注文オーケストレーションにService Bus、在庫WebhookにAzure Functions、ファセット商品検索にCognitive Search、動的サイト高速化にCDNを使用する',
+      },
+    ],
+  },
+  {
+    category: { en: 'Healthcare', ja: '医療' },
+    color: '#22c55e',
+    prompts: [
+      {
+        en: 'A HIPAA-compliant healthcare data platform integrating EHR systems via HL7 FHIR R4 APIs, medical imaging PACS with DICOM support storing 500TB of radiology images, real-time clinical decision support, patient portal with secure messaging, audit logging for all PHI access, disaster recovery with 15-minute RPO, using Azure API for FHIR, Azure Health Data Services for DICOM, Blob Storage with immutable retention for images, Cosmos DB for patient timelines, Azure Functions for HL7v2 to FHIR transformation, Logic Apps for clinical workflows, Key Vault for encryption key management, and Microsoft Defender for Cloud for continuous compliance monitoring',
+        ja: 'HL7 FHIR R4 APIによるEHR連携、DICOM対応PACSへの500TBの放射線画像保存、リアルタイム臨床意思決定支援、安全なメッセージ機能付き患者ポータル、全PHIアクセスの監査ログ、RPO 15分の災害復旧を備えたHIPAA準拠の医療データ プラットフォーム。Azure API for FHIR、Azure Health Data Services for DICOM、イミュータブル保持付きBlob Storage、患者タイムライン用Cosmos DB、HL7v2からFHIRへの変換用Azure Functions、臨床ワークフロー用Logic Apps、暗号鍵管理用Key Vault、継続的なコンプライアンス監視用Microsoft Defender for Cloudを使用する',
+      },
+      {
+        en: 'An eventing architecture for healthcare imaging with high throughput (50,000-75,000 events/sec), large payloads up to 10MB, strict message ordering, cloud-to-on-prem bridging via VPN Gateway, managed services only (no self-managed Kafka), 99.99% availability SLO, supporting 250M studies, 2.5M daily volume, 5M daily notifications, with Event Hubs for ingestion, Service Bus for routing, Azure Functions for processing, Cosmos DB for metadata, Blob Storage for images, and Log Analytics for monitoring',
+        ja: '毎秒50,000～75,000件のイベント、最大10MBのペイロード、厳密なメッセージ順序、VPN Gatewayによるクラウドとオンプレミスの接続、マネージド サービスのみの構成、99.99%の可用性SLOに対応し、2.5億件の検査、日次250万件の処理、日次500万件の通知を扱う医療画像イベント アーキテクチャ。取り込みにEvent Hubs、ルーティングにService Bus、処理にAzure Functions、メタデータにCosmos DB、画像にBlob Storage、監視にLog Analyticsを使用する',
+      },
+    ],
+  },
+  {
+    category: { en: 'Data & Analytics', ja: 'データと分析' },
+    color: '#06b6d4',
+    prompts: [
+      {
+        en: 'A data lakehouse with Azure Data Lake Storage, Synapse Analytics for SQL and Spark queries, Data Factory for ETL pipelines, and Power BI for dashboards',
+        ja: 'Azure Data Lake Storage、SQLとSparkクエリ用Synapse Analytics、ETLパイプライン用Data Factory、ダッシュボード用Power BIを使用するデータ レイクハウス',
+      },
+      {
+        en: 'A real-time analytics pipeline using Event Hubs for ingestion, Stream Analytics for windowed aggregations, Cosmos DB for serving layer, and Azure Monitor for pipeline health',
+        ja: '取り込みにEvent Hubs、ウィンドウ集計にStream Analytics、配信層にCosmos DB、パイプラインの正常性監視にAzure Monitorを使用するリアルタイム分析パイプライン',
+      },
+      {
+        en: 'A data warehouse with Azure SQL Database, Data Factory for scheduled imports from multiple sources, Purview for data governance and cataloging, and Power BI embedded reports',
+        ja: 'Azure SQL Database、複数のデータ ソースからの定期取り込み用Data Factory、データ ガバナンスとカタログ用Purview、Power BI Embeddedレポートを使用するデータ ウェアハウス',
+      },
+    ],
+  },
+  {
+    category: { en: 'Microsoft Fabric', ja: 'Microsoft Fabric' },
+    color: '#0d9488',
+    prompts: [
+      {
+        en: 'A Microsoft Fabric medallion lakehouse: Data Factory ingestion into OneLake, Bronze/Silver/Gold Lakehouses processed with Fabric Notebooks and Dataflow Gen2, a Warehouse for curated marts, and a Power BI Report via a Direct Lake Semantic Model, running on a Fabric Capacity F2',
+        ja: 'Microsoft FabricのメダリオンLakehouse。Data FactoryでOneLakeへ取り込み、Fabric NotebookとDataflow Gen2でBronze、Silver、Gold Lakehouseを処理し、整備済みデータ マートにWarehouseを使用する。Direct Lake Semantic Model経由でPower BI Reportを提供し、Fabric Capacity F2で実行する',
+      },
+      {
+        en: 'An end-to-end Microsoft Fabric analytics platform: ingest on-prem SQL via a Fabric Data Pipeline and Mirrored Database, stream IoT telemetry through an Eventstream into an Eventhouse with a KQL Database, land data in OneLake, build Bronze/Silver/Gold Lakehouses, expose a Semantic Model to a Power BI Report and a Real-Time Dashboard, and add a Fabric Data Agent for natural-language Q&A — on a Fabric Capacity F64',
+        ja: 'エンドツーエンドのMicrosoft Fabric分析プラットフォーム。Fabric Data PipelineとMirrored DatabaseでオンプレミスSQLを取り込み、IoTテレメトリをEventstreamからKQL Databaseを持つEventhouseへストリーミングし、OneLakeへ保存する。Bronze、Silver、Gold Lakehouseを構築し、Semantic ModelをPower BI ReportとReal-Time Dashboardへ公開し、自然言語Q&A用Fabric Data Agentを追加してFabric Capacity F64で実行する',
+      },
+      {
+        en: 'A real-time intelligence solution in Microsoft Fabric: Eventstream ingestion into an Eventhouse and KQL Database, a Real-Time Dashboard for live KPIs, and a Lakehouse plus Power BI Report for historical analysis, on a Fabric Capacity',
+        ja: 'Microsoft FabricのReal-Time Intelligenceソリューション。EventstreamからEventhouseとKQL Databaseへ取り込み、ライブKPI用Real-Time Dashboard、履歴分析用LakehouseとPower BI ReportをFabric Capacity上で実行する',
+      },
+    ],
+  },
+  {
+    category: { en: 'IoT', ja: 'IoT' },
+    color: '#14b8a6',
+    prompts: [
+      {
+        en: 'An industrial IoT predictive maintenance platform for a manufacturing facility with 5,000+ sensors generating telemetry every 5 seconds, requiring real-time anomaly detection with sub-second latency, batch analytics for trend analysis, secure device provisioning and management, OT/IT network segregation with Private Link, 99.9% uptime SLA, 6-month hot storage and 7-year cold retention, using IoT Hub for ingestion, Stream Analytics for real-time processing, Azure ML for predictive models, Data Lake for raw storage, Synapse Analytics for reporting, Time Series Insights for dashboards, and Digital Twins for facility modeling',
+        ja: '5,000台以上のセンサーが5秒ごとにテレメトリを生成する製造施設向け産業IoT予知保全プラットフォーム。1秒未満のリアルタイム異常検知、傾向分析用のバッチ分析、安全なデバイス プロビジョニングと管理、Private LinkによるOT/ITネットワーク分離、99.9%の稼働率SLA、6か月のホット ストレージと7年のコールド保持を実現する。取り込みにIoT Hub、リアルタイム処理にStream Analytics、予測モデルにAzure ML、生データ保存にData Lake、レポートにSynapse Analytics、ダッシュボードにTime Series Insights、施設モデルにDigital Twinsを使用する',
+      },
+    ],
+  },
+];
 
 interface AIArchitectureGeneratorProps {
   onGenerate: (architecture: any, prompt: string, autoSnapshot: boolean, referenceImageUrl?: string) => void;
@@ -53,7 +194,7 @@ interface AIArchitectureGeneratorProps {
 }
 
 const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({ onGenerate, onReferenceArchitecture, onBlueprintArchitecture, currentArchitecture }) => {
-  const { t, translate } = useLanguage();
+  const { t, translate, language } = useLanguage();
   const [isOpen, setIsOpen] = useState(false);
   const [description, setDescription] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
@@ -134,7 +275,10 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({ onGen
   // Handle image analysis result
   const handleImageAnalyzed = (analyzedDescription: string) => {
     // Prepend or replace the description with the analyzed content
-    const prefix = '🖼️ [Analyzed from uploaded diagram]\n\n';
+    const prefix = localize(language, {
+      en: '🖼️ [Analyzed from uploaded diagram]\n\n',
+      ja: '🖼️ [アップロードした図から分析]\n\n',
+    });
     setDescription(prefix + analyzedDescription);
     setImageAnalyzed(true);
     trackImageImport();
@@ -142,78 +286,15 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({ onGen
 
   // Wrapper to pass to ImageUploader
   const handleAnalyzeImage = async (base64: string, mimeType: string) => {
-    const result = await analyzeArchitectureDiagramImage(base64, mimeType);
+    const result = await analyzeArchitectureDiagramImage(base64, mimeType, language);
     return { description: result.description };
   };
 
-  const categorizedPrompts = [
-    {
-      category: 'Web & Microservices',
-      color: '#3b82f6',
-      prompts: [
-        "A web application with a React frontend, Node.js backend API, PostgreSQL database, and blob storage for images",
-        "A microservices architecture with container apps, API gateway, message queue, and Redis cache",
-      ],
-    },
-    {
-      category: 'Security & Networking',
-      color: '#ef4444',
-      prompts: [
-        "A zero trust enterprise network with Azure Firewall, Application Gateway with WAF, Private Link for PaaS services, Bastion for VM access, Microsoft Entra ID with Conditional Access, and Microsoft Defender for Cloud — segmented into DMZ, application, and data tiers",
-        "A security operations center architecture with Microsoft Sentinel for SIEM, Log Analytics, Microsoft Defender for Cloud, Azure Key Vault, Azure Monitor, automation playbooks with Logic Apps, and integration with Microsoft Entra ID for identity threat detection",
-      ],
-    },
-    {
-      category: 'AI & Cognitive',
-      color: '#8b5cf6',
-      prompts: [
-        "A machine learning pipeline with data ingestion, training, and inference endpoints",
-        "An intelligent customer service chatbot using Azure OpenAI for conversations, Language for sentiment analysis, Speech Services for voice input/output, and Translator for multi-language support, with chat history in Cosmos DB and API Management for external access",
-        "A smart document processing platform that uses Computer Vision to analyze uploaded images, Document Intelligence to extract form data, Language to classify and summarize content, all coordinated through Azure Functions with results stored in Cosmos DB and searchable via Cognitive Search",
-        "A content moderation system for social media using Computer Vision to scan images, Language for text analysis and content safety checks, Azure OpenAI for context understanding, with real-time processing via Event Hubs and results stored in SQL Database with API Management exposing moderation APIs",
-      ],
-    },
-    {
-      category: 'E-commerce',
-      color: '#f59e0b',
-      prompts: [
-        "A Black Friday-ready e-commerce platform handling 50,000 orders/hour peak with real-time inventory sync across 12 regional warehouses, ML-powered fraud detection scoring each transaction in under 200ms, personalized recommendations engine, multi-currency payment processing with PCI-DSS compliance, abandoned cart recovery workflows, using Azure Kubernetes Service for microservices, Cosmos DB for product catalog with global distribution, Redis Cache for session and cart state, Service Bus for order orchestration, Azure Functions for inventory webhooks, Cognitive Search for faceted product search, and CDN with dynamic site acceleration",
-      ],
-    },
-    {
-      category: 'Healthcare',
-      color: '#22c55e',
-      prompts: [
-        "A HIPAA-compliant healthcare data platform integrating EHR systems via HL7 FHIR R4 APIs, medical imaging PACS with DICOM support storing 500TB of radiology images, real-time clinical decision support, patient portal with secure messaging, audit logging for all PHI access, disaster recovery with 15-minute RPO, using Azure API for FHIR, Azure Health Data Services for DICOM, Blob Storage with immutable retention for images, Cosmos DB for patient timelines, Azure Functions for HL7v2 to FHIR transformation, Logic Apps for clinical workflows, Key Vault for encryption key management, and Microsoft Defender for Cloud for continuous compliance monitoring",
-        "An eventing architecture for healthcare imaging with high throughput (50,000-75,000 events/sec), large payloads up to 10MB, strict message ordering, cloud-to-on-prem bridging via VPN Gateway, managed services only (no self-managed Kafka), 99.99% availability SLO, supporting 250M studies, 2.5M daily volume, 5M daily notifications, with Event Hubs for ingestion, Service Bus for routing, Azure Functions for processing, Cosmos DB for metadata, Blob Storage for images, and Log Analytics for monitoring",
-      ],
-    },
-    {
-      category: 'Data & Analytics',
-      color: '#06b6d4',
-      prompts: [
-        "A data lakehouse with Azure Data Lake Storage, Synapse Analytics for SQL and Spark queries, Data Factory for ETL pipelines, and Power BI for dashboards",
-        "A real-time analytics pipeline using Event Hubs for ingestion, Stream Analytics for windowed aggregations, Cosmos DB for serving layer, and Azure Monitor for pipeline health",
-        "A data warehouse with Azure SQL Database, Data Factory for scheduled imports from multiple sources, Purview for data governance and cataloging, and Power BI embedded reports",
-      ],
-    },
-    {
-      category: 'Microsoft Fabric',
-      color: '#0d9488',
-      prompts: [
-        "A Microsoft Fabric medallion lakehouse: Data Factory ingestion into OneLake, Bronze/Silver/Gold Lakehouses processed with Fabric Notebooks and Dataflow Gen2, a Warehouse for curated marts, and a Power BI Report via a Direct Lake Semantic Model, running on a Fabric Capacity F2",
-        "An end-to-end Microsoft Fabric analytics platform: ingest on-prem SQL via a Fabric Data Pipeline and Mirrored Database, stream IoT telemetry through an Eventstream into an Eventhouse with a KQL Database, land data in OneLake, build Bronze/Silver/Gold Lakehouses, expose a Semantic Model to a Power BI Report and a Real-Time Dashboard, and add a Fabric Data Agent for natural-language Q&A — on a Fabric Capacity F64",
-        "A real-time intelligence solution in Microsoft Fabric: Eventstream ingestion into an Eventhouse and KQL Database, a Real-Time Dashboard for live KPIs, and a Lakehouse plus Power BI Report for historical analysis, on a Fabric Capacity",
-      ],
-    },
-    {
-      category: 'IoT',
-      color: '#14b8a6',
-      prompts: [
-        "An industrial IoT predictive maintenance platform for a manufacturing facility with 5,000+ sensors generating telemetry every 5 seconds, requiring real-time anomaly detection with sub-second latency, batch analytics for trend analysis, secure device provisioning and management, OT/IT network segregation with Private Link, 99.9% uptime SLA, 6-month hot storage and 7-year cold retention, using IoT Hub for ingestion, Stream Analytics for real-time processing, Azure ML for predictive models, Data Lake for raw storage, Synapse Analytics for reporting, Time Series Insights for dashboards, and Digital Twins for facility modeling",
-      ],
-    },
-  ];
+  const categorizedPrompts = CATEGORIZED_PROMPTS.map(group => ({
+    category: localize(language, group.category),
+    color: group.color,
+    prompts: group.prompts.map(prompt => localize(language, prompt)),
+  }));
 
   const handleGenerate = async () => {
     if (!description.trim()) {
@@ -239,7 +320,7 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({ onGen
     console.log(`🎯 Generate clicked: dropdown model=${modelSettings.model}, reasoning=${modelSettings.reasoningEffort}, overrides=${JSON.stringify(modelSettings.featureOverrides)}`);
 
     // Blueprint diagrams default to the fast, cost-efficient model recommended
-    // for the feature (GPT-5.4 Mini) unless the user set an explicit blueprint
+    // for the feature (GPT-5.6 Sol) unless the user set an explicit blueprint
     // override in Model Settings. Topology and other features keep the
     // toolbar-selected model. Falls back to the toolbar model if the
     // recommended one isn't deployed/available.
@@ -275,7 +356,7 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({ onGen
       // and confuses users. Instead we notify App so it can enable the
       // toolbar “Export Editorial PNG” action, then render + download.
       if (mode === 'reference') {
-        const ref = await generateReferenceArchitectureWithAI(description, currentModelSettings);
+        const ref = await generateReferenceArchitectureWithAI(description, currentModelSettings, language);
         if (ref.metrics) setAiMetrics(ref.metrics);
 
         // Stash the ref for the toolbar re-export button (if App provided it).
@@ -302,7 +383,12 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({ onGen
       // Hand-drawn / sketchnote-style nested zones with numbered, labeled
       // arrows. Like reference mode, we do not touch the ReactFlow canvas.
       if (mode === 'blueprint') {
-        const bp = await generateBlueprintArchitectureWithAI(description, blueprintModelSettings);
+        const bp = await generateBlueprintArchitectureWithAI(
+          description,
+          blueprintModelSettings,
+          undefined,
+          language,
+        );
         if (bp.metrics) setAiMetrics(bp.metrics);
 
         onBlueprintArchitecture?.(bp);
@@ -350,15 +436,17 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({ onGen
           bothContextPrompt = `MODIFY EXISTING ARCHITECTURE: "${currentArchitecture.architectureName}"\nServices: ${servicesList}\n${groups.length > 0 ? `Groups: ${groups.map((g) => g.name).join(', ')}` : ''}\n${connections.length > 0 ? `Connections: ${connections.join('; ')}` : ''}\n\nCHANGE REQUESTED: ${description}\n\nIMPORTANT: Return the COMPLETE architecture JSON (all services, groups, connections, workflow). Keep everything unchanged EXCEPT what the user requested. Only add, modify, or remove what was asked.`;
         }
 
-        const topoCall = (m?: ComponentManifest) => generateArchitectureWithAI(bothContextPrompt, currentModelSettings, m);
-        const bpCall = (m?: ComponentManifest) => generateBlueprintArchitectureWithAI(description, blueprintModelSettings, m);
+        const topoCall = (m?: ComponentManifest) =>
+          generateArchitectureWithAI(bothContextPrompt, currentModelSettings, m, language);
+        const bpCall = (m?: ComponentManifest) =>
+          generateBlueprintArchitectureWithAI(description, blueprintModelSettings, m, language);
 
         const t0 = performance.now();
         // Pre-pass: extract a canonical component manifest so topology and
         // blueprint agree on the set of services, zones, and on-prem actors.
         let manifest: ComponentManifest | undefined;
         try {
-          manifest = await generateComponentManifest(description, currentModelSettings);
+          manifest = await generateComponentManifest(description, currentModelSettings, language);
           console.log(
             `📋 Manifest: ${manifest.components.length} components across ${manifest.zones.length} zones (${manifest.metrics?.totalTokens ?? '?'} tokens, ${Math.round((manifest.metrics?.elapsedTimeMs ?? 0) / 100) / 10}s)`,
           );
@@ -428,11 +516,16 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({ onGen
       let contextPrompt = description;
       
       if (currentArchitecture && currentArchitecture.nodes.length > 0) {
-        contextPrompt = buildModificationPrompt(currentArchitecture, description);
+        contextPrompt = buildModificationPrompt(currentArchitecture, description, [], language);
       }
       
       // Call Azure OpenAI to generate architecture
-      const result = await generateArchitectureWithAI(contextPrompt, currentModelSettings);
+      const result = await generateArchitectureWithAI(
+        contextPrompt,
+        currentModelSettings,
+        undefined,
+        language,
+      );
       
       // Store AI metrics if available
       if (result.metrics) {
@@ -449,7 +542,7 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({ onGen
         setUploadedImageUrl(null);
       }, 45000); // Give user 45 seconds to review results or type a modification
     } catch (err: any) {
-      setError(err.message || translate('Failed to generate architecture. Please try again.'));
+      setError(err.message ? translate(err.message) : translate('Failed to generate architecture. Please try again.'));
     } finally {
       setIsGenerating(false);
     }
@@ -474,7 +567,7 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({ onGen
         <Sparkles size={18} />
         {' '}{t("Generate with AI")}{' '}</button>
 
-      {isOpen && (
+      {isOpen && createPortal(
         <div className="modal-overlay" onClick={() => setIsOpen(false)}>
           <div className="modal-content ai-architecture-modal" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
@@ -482,7 +575,12 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({ onGen
                 <Sparkles size={20} />
                 <h2>{t("AI Architecture Generator")}</h2>
               </div>
-              <button className="modal-close" onClick={() => setIsOpen(false)}>
+              <button
+                className="modal-close"
+                onClick={() => setIsOpen(false)}
+                title={t("Close")}
+                aria-label={t("Close")}
+              >
                 <X size={20} />
               </button>
             </div>
@@ -492,13 +590,25 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({ onGen
               <div className="modal-col modal-col-left">
               <p className="modal-description">
                 {mode === 'reference' ? (
-                  <>{t("Describe the workload in plain English and AI will generate a")}{' '}<strong>{t("publication-style reference architecture")}</strong> {' '}{t("with stages (Ingest → Process → Serve), a foundation strip, and cross-cutting governance rails — in the style of the Azure Architecture Center.")}</>
+                  localize(language, {
+                    en: 'Describe the workload in natural language, and AI will generate a publication-style Reference Architecture with Ingest, Process, and Serve stages, a foundation strip, and cross-cutting governance rails in the style of the Azure Architecture Center.',
+                    ja: 'ワークロードを自然な言葉で説明すると、AIが取り込み、処理、提供の各ステージ、基盤領域、横断的なガバナンス領域を備えたAzure Architecture Center形式のReference Architectureを生成します。',
+                  })
                 ) : mode === 'blueprint' ? (
-                  <>{t("Describe the workload and AI will sketch a")}{' '}<strong>{t("whiteboard-style blueprint")}</strong> {' '}{t("with nested zones (Azure / VNet / On-prem) and numbered, labeled arrows showing the end-to-end flow — like an architect explaining a system at a whiteboard.")}</>
+                  localize(language, {
+                    en: 'Describe the workload, and AI will sketch a whiteboard-style Blueprint with nested Azure, VNet, and on-premises zones plus numbered, labeled arrows that show the end-to-end flow.',
+                    ja: 'ワークロードを説明すると、AIがAzure、VNet、オンプレミスのネストされた領域と、エンドツーエンドのフローを示す番号・ラベル付き矢印を備えたホワイトボード形式のBlueprintを作成します。',
+                  })
                 ) : mode === 'both' ? (
-                  <>{t("Generate")}{' '}<strong>{t("both")}</strong> {' '}{t("a deployable topology (on the canvas) and a whiteboard-style blueprint (PNG) from the same prompt. Useful when you want a working diagram to edit and a polished visual to share.")}</>
+                  localize(language, {
+                    en: 'Generate both an editable, deployable topology on the canvas and a polished whiteboard-style Blueprint PNG from the same prompt.',
+                    ja: '同じプロンプトから、キャンバス上で編集できるデプロイ可能なトポロジと、共有用に整えたホワイトボード形式のBlueprint PNGを両方生成します。',
+                  })
                 ) : (
-                  <>{t("Describe your Azure architecture in plain English, and AI will automatically generate a diagram with the appropriate services and connections. You can also")}{' '}<strong>{t("upload an existing diagram")}</strong> {' '}{t("(screenshot, whiteboard photo, or export from other tools) and AI will analyze it to create your architecture.")}</>
+                  localize(language, {
+                    en: 'Describe your Azure architecture in natural language, and AI will generate a diagram with the appropriate services and connections. You can also upload a screenshot, whiteboard photo, or diagram exported from another tool and rebuild it as an editable architecture.',
+                    ja: 'Azureアーキテクチャを自然な言葉で説明すると、AIが適切なサービスと接続を含む図を生成します。スクリーンショット、ホワイトボード写真、または他のツールからエクスポートした図をアップロードし、編集可能なアーキテクチャとして再構築することもできます。',
+                  })
                 )}
               </p>
 
@@ -564,7 +674,7 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({ onGen
                 >
                   <Network size={16} />
                   <span className="mode-label">{t("Topology")}</span>
-                  <span className="mode-sub">{t("Deployable network diagram")}</span>
+                  <span className="mode-sub">{localize(language, { en: 'Deployable network diagram', ja: 'デプロイ可能なネットワーク図' })}</span>
                 </button>
                 {/* Reference (swim-lane) mode hidden — Blueprint replaces it. Code path kept for now in case we want to restore. */}
                 <button
@@ -577,7 +687,7 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({ onGen
                 >
                   <PenTool size={16} />
                   <span className="mode-label">{t("Blueprint")}{' '}<span className="mode-badge-beta">{t("BETA")}</span></span>
-                  <span className="mode-sub">{t("Hand-drawn whiteboard diagram")}</span>
+                  <span className="mode-sub">{localize(language, { en: 'Hand-drawn whiteboard diagram', ja: '手描きホワイトボード図' })}</span>
                 </button>
                 <button
                   role="tab"
@@ -597,7 +707,14 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({ onGen
                 <div className="example-list">
                   {categorizedPrompts.map((group) => (
                     <div key={group.category} className="example-category">
-                      <div className="example-category-label" style={{ color: group.color }}>
+                      <div
+                        className="example-category-label"
+                        style={{
+                          color: group.color,
+                          textTransform: language === 'ja' ? 'none' : undefined,
+                          letterSpacing: language === 'ja' ? 'normal' : undefined,
+                        }}
+                      >
                         <span className="example-category-dot" style={{ backgroundColor: group.color }} />
                         {group.category}
                       </div>
@@ -660,17 +777,18 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({ onGen
                       disabled={isGenerating}
                       aria-label={t("Select reasoning effort")}
                     >
-                      <option value="none">{t("none")}</option>
-                      <option value="low">{t("low")}</option>
-                      <option value="medium">{t("medium")}</option>
-                      <option value="high">{t("high")}</option>
+                      {getSupportedReasoningEfforts(modelSettings.model).map(level => (
+                        <option key={level} value={level}>
+                          {t(getReasoningEffortLabel(level))}
+                        </option>
+                      ))}
                     </select>
                   </>
                 )}
                 <span className="model-change-hint">
                   {modeRequiresOpenAI(mode)
-                    ? 'Blueprint mode supports general-purpose OpenAI models only (partner and Codex models are filtered out).'
-                    : 'Also configurable in toolbar → AI Model'}
+                    ? t("Blueprint mode supports general-purpose OpenAI models only (partner and Codex models are filtered out).")
+                    : t("Also configurable in toolbar → AI Model")}
                 </span>
               </div>
               {currentArchitecture && currentArchitecture.nodes.length > 0 && (
@@ -729,7 +847,7 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({ onGen
                   onClick={() => setIsOpen(false)}
                   disabled={isGenerating}
                 >
-                  {aiMetrics ? 'Close' : 'Cancel'}
+                  {aiMetrics ? t("Close") : t("Cancel")}
                 </button>
                 <button
                   className="btn btn-primary btn-generate-ai"
@@ -750,7 +868,8 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({ onGen
               </div>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </>
   );

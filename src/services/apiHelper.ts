@@ -1,6 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+import type { ReasoningEffort } from '../stores/modelSettingsStore';
+
 /**
  * API Format Helper
  * Abstracts the difference between Azure OpenAI Responses API and Chat Completions API.
@@ -32,7 +34,7 @@ export function buildRequestBody(params: {
   maxTokens: number;
   apiFormat: ApiFormat;
   isReasoning: boolean;
-  reasoningEffort: string;
+  reasoningEffort: ReasoningEffort;
   jsonOutput?: boolean;
 }): any {
   const { deployment, messages, maxTokens, apiFormat, isReasoning, reasoningEffort, jsonOutput = true } = params;
@@ -55,7 +57,7 @@ export function buildRequestBody(params: {
     store: false,
   };
 
-  if (isReasoning && reasoningEffort !== 'none') {
+  if (isReasoning) {
     body.reasoning = { effort: reasoningEffort };
   }
 

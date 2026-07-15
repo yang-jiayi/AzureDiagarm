@@ -8,7 +8,7 @@
 
 import { AzureRetailPrice, ServicePricing, PricingTier } from '../types/pricing';
 
-export type AzureRegion = 'eastus2' | 'swedencentral' | 'westeurope' | 'canadacentral' | 'brazilsouth' | 'australiaeast' | 'southeastasia' | 'mexicocentral';
+export type AzureRegion = 'eastus2' | 'swedencentral' | 'westeurope' | 'canadacentral' | 'brazilsouth' | 'australiaeast' | 'southeastasia' | 'mexicocentral' | 'japaneast';
 
 export type RegionType = 'HERO' | 'HUB' | 'SATELLITE' | 'MICRO';
 
@@ -30,6 +30,7 @@ export const AVAILABLE_REGIONS: RegionInfo[] = [
   { id: 'westeurope',    displayName: 'West Europe',      location: 'Netherlands', flag: '🇳🇱', regionType: 'HUB',  geography: 'Europe' },
   { id: 'swedencentral', displayName: 'Sweden Central',   location: 'Gävle',       flag: '🇸🇪', regionType: 'HUB',  geography: 'Europe' },
   { id: 'southeastasia', displayName: 'Southeast Asia',   location: 'Singapore',   flag: '🇸🇬', regionType: 'HUB',  geography: 'Asia Pacific' },
+  { id: 'japaneast',     displayName: 'Japan East',       location: 'Tokyo',       flag: '🇯🇵', regionType: 'HERO', geography: 'Japan' },
 ];
 
 interface RegionalPricingData {

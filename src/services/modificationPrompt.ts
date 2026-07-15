@@ -1,6 +1,9 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+import type { Language } from '../i18n/LanguageContext';
+import { getPromptLanguageInstruction } from '../i18n/localization';
+
 /**
  * Shared helper that turns the live canvas state + a natural-language request
  * into a "MODIFY EXISTING ARCHITECTURE" prompt for the architecture generator.
@@ -35,6 +38,7 @@ export function buildModificationPrompt(
   current: CurrentArchitecture | undefined,
   request: string,
   recentRequests: string[] = [],
+  language: Language = 'en',
 ): string {
   if (!current || current.nodes.length === 0) {
     return request;
@@ -70,7 +74,7 @@ export function buildModificationPrompt(
     ? `\nRecent requests (oldest to newest): ${recentRequests.map((r) => `"${r}"`).join('; ')}`
     : '';
 
-  return `MODIFY EXISTING ARCHITECTURE: "${current.architectureName}"
+  const prompt = `MODIFY EXISTING ARCHITECTURE: "${current.architectureName}"
 Services: ${servicesList}
 ${groups.length > 0 ? `Groups: ${groups.map((g) => g.name).join(', ')}` : ''}
 ${connections.length > 0 ? `Connections: ${connections.join('; ')}` : ''}${recentBlock}
@@ -78,6 +82,9 @@ ${connections.length > 0 ? `Connections: ${connections.join('; ')}` : ''}${recen
 CHANGE REQUESTED: ${request}
 
 IMPORTANT: Return the COMPLETE architecture JSON (all services, groups, connections, workflow). Keep everything unchanged EXCEPT what the user requested. Only add, modify, or remove what was asked.`;
+  return `${prompt}
+
+${getPromptLanguageInstruction(language)}`;
 }
 
 /**
@@ -88,6 +95,7 @@ IMPORTANT: Return the COMPLETE architecture JSON (all services, groups, connecti
 export function summarizeArchitectureChange(
   previous: CurrentArchitecture | undefined,
   nextArchitecture: any,
+  language: Language = 'en',
 ): string {
   const prevNames = new Set(
     (previous?.nodes || [])
@@ -108,15 +116,23 @@ export function summarizeArchitectureChange(
 
   const parts: string[] = [];
   if (added.length > 0) {
-    parts.push(`added ${added.slice(0, 8).join(', ')}${added.length > 8 ? `, +${added.length - 8} more` : ''}`);
+    parts.push(language === 'ja'
+      ? `${added.slice(0, 8).join('、')}${added.length > 8 ? `、ほか${added.length - 8}件` : ''}を追加`
+      : `added ${added.slice(0, 8).join(', ')}${added.length > 8 ? `, +${added.length - 8} more` : ''}`);
   }
   if (removed.length > 0) {
-    parts.push(`removed ${removed.slice(0, 8).join(', ')}${removed.length > 8 ? `, +${removed.length - 8} more` : ''}`);
+    parts.push(language === 'ja'
+      ? `${removed.slice(0, 8).join('、')}${removed.length > 8 ? `、ほか${removed.length - 8}件` : ''}を削除`
+      : `removed ${removed.slice(0, 8).join(', ')}${removed.length > 8 ? `, +${removed.length - 8} more` : ''}`);
   }
 
   if (parts.length === 0) {
-    return `Updated the diagram (${nextSet.size} service${nextSet.size === 1 ? '' : 's'}). Reconnections or labels may have changed.`;
+    return language === 'ja'
+      ? `図を更新しました（${nextSet.size}サービス）。接続またはラベルが変更されている場合があります。`
+      : `Updated the diagram (${nextSet.size} service${nextSet.size === 1 ? '' : 's'}). Reconnections or labels may have changed.`;
   }
+
+  if (language === 'ja') return `${parts.join('、')}しました。`;
 
   // Capitalize first word.
   const sentence = parts.join('; ');

@@ -14,7 +14,7 @@ export const SERVICE_NAME_MAPPING: Record<string, string> = {
   // App Services (handle both singular and plural)
   'App Service': 'Azure App Service',
   'App Services': 'Azure App Service',
-  'App Service Certificates': 'Azure Functions',
+  'App Service Certificates': 'App Service Certificates',
   'Static Web Apps': 'Static Web Apps',
   'Azure Static Web Apps': 'Static Web Apps',
   'Azure Static Web App': 'Static Web Apps',
@@ -1280,7 +1280,7 @@ export function getReserved1yrDiscount(serviceType: string): number {
  * The `npm run pricing:refresh` script bumps this automatically after a
  * successful fetch so cost exports can show an accurate "Prices as of" stamp.
  */
-export const PRICING_DATA_AS_OF = '2026-07-14';
+export const PRICING_DATA_AS_OF = '2026-07-15';
 
 /**
  * Check if service has pricing data available

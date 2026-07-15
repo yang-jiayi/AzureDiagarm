@@ -16,6 +16,7 @@ import { dirname, resolve } from 'node:path';
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..', '..');
 const sourcePath = resolve(repoRoot, 'src', 'data', 'serviceIconMapping.ts');
+const fabricCatalogPath = resolve(repoRoot, 'src', 'data', 'fabricIconCatalog.ts');
 const outPath = resolve(here, '..', 'src', 'iconMap.generated.json');
 
 const text = readFileSync(sourcePath, 'utf8');
@@ -37,6 +38,7 @@ while ((match = entryRe.exec(text)) !== null) {
     i++;
   }
   const block = text.slice(match.index, i);
+  const displayNameMatch = block.match(/displayName:\s*'([^']+)'/);
   const iconFileMatch = block.match(/iconFile:\s*'([^']+)'/);
   const categoryMatch = block.match(/category:\s*'([^']+)'/);
   if (iconFileMatch && categoryMatch) {
@@ -47,11 +49,28 @@ while ((match = entryRe.exec(text)) !== null) {
       ? [...aliasesMatch[1].matchAll(/'([^']+)'/g)].map(m => m[1])
       : [];
     map[key] = {
+      displayName: displayNameMatch?.[1] ?? key,
       iconFile: iconFileMatch[1],
       category: categoryMatch[1],
       aliases,
     };
   }
+}
+
+// Fabric icons are defined through a typed catalog and spread into the runtime
+// mapping, so merge those entries explicitly for the standalone MCP renderer.
+const fabricText = readFileSync(fabricCatalogPath, 'utf8');
+const fabricEntryRe = /^\s*defineFabricIcon\('([^']+)',\s*'([^']+)',\s*'([^']+)',\s*(?:null|'[^']+'),\s*'[^']+',\s*'[^']+',\s*\[([^\]]*)\]/gm;
+while ((match = fabricEntryRe.exec(fabricText)) !== null) {
+  const [, key, displayName, iconFile, aliasSource] = match;
+  const aliases = [...aliasSource.matchAll(/'([^']+)'/g)].map(alias => alias[1]);
+  if (displayName !== key && !aliases.includes(displayName)) aliases.unshift(displayName);
+  map[key] = {
+    displayName,
+    iconFile,
+    category: 'fabric',
+    aliases,
+  };
 }
 
 const count = Object.keys(map).length;
@@ -95,4 +114,3 @@ for (const entry of Object.values(map)) {
 
 writeFileSync(svgOutPath, JSON.stringify(svgs) + '\n', 'utf8');
 console.log(`[sync-icon-map] embedded ${embedded} icon SVGs (${missing} missing) to ${svgOutPath}`);
-

@@ -12,11 +12,12 @@ param speechRegion string
 param deployCosmos bool
 
 @secure()
-@description('Optional bearer token required on the decoupled MCP server /mcp endpoint. Empty = open (not recommended for public ingress).')
+@description('Optional bearer token required on the decoupled MCP server /mcp endpoint. Empty keeps external ingress disabled.')
 param mcpAuthToken string = ''
 
 // Azure OpenAI (passed through to container app env; not provisioned here)
 param azureOpenAiEndpoint string
+param azureOpenAiAllowedDeployments string = ''
 @secure()
 param azureOpenAiApiKey string
 param feedbackEmailEndpoint string = ''
@@ -230,6 +231,8 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
             // Identity — lets DefaultAzureCredential pick up the managed identity
             { name: 'AZURE_CLIENT_ID', value: appIdentity.properties.clientId }
             { name: 'AZURE_OPENAI_ENDPOINT', value: azureOpenAiEndpoint }
+            { name: 'AZURE_OPENAI_ALLOWED_DEPLOYMENTS', value: azureOpenAiAllowedDeployments }
+            { name: 'OPENAI_RATE_LIMIT_PER_HOUR', value: '120' }
             { name: 'FEEDBACK_EMAIL_ENDPOINT', value: feedbackEmailEndpoint }
             { name: 'FEEDBACK_EMAIL_SENDER', value: feedbackEmailSender }
             { name: 'FEEDBACK_EMAIL_RECIPIENT', value: feedbackEmailRecipient }
@@ -267,9 +270,10 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
 // The Azure Architecture Diagram Builder MCP server as its own Container App,
 // so agent traffic scales, releases, and fails independently of the web UI.
 // azd locates it by the 'azd-service-name: mcp' tag (matches azure.yaml).
+var mcpExternalEnabled = !empty(mcpAuthToken)
 var mcpBaseEnv = [
   { name: 'AZURE_CLIENT_ID', value: appIdentity.properties.clientId }
-  { name: 'MCP_HTTP_HOST', value: '0.0.0.0' }
+  { name: 'MCP_HTTP_HOST', value: mcpExternalEnabled ? '0.0.0.0' : '127.0.0.1' }
   { name: 'MCP_HTTP_PORT', value: '3030' }
   { name: 'MCP_HTTP_PATH', value: '/mcp' }
 ]
@@ -293,7 +297,7 @@ resource mcpApp 'Microsoft.App/containerApps@2024-03-01' = {
     configuration: {
       secrets: mcpSecrets
       ingress: {
-        external: true
+        external: mcpExternalEnabled
         targetPort: 3030
         transport: 'auto'
       }

@@ -1,6 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+import { FABRIC_ICON_CATALOG } from './fabricIconCatalog';
+
 /**
  * Service to Icon Mapping
  * Maps Azure service names to their icon files and indicates pricing data availability
@@ -25,6 +27,22 @@ export interface ServiceIconMapping {
   /** Typical monthly cost range (for reference) */
   costRange?: string;
 }
+
+const FABRIC_SERVICE_ICON_MAP = Object.fromEntries(
+  FABRIC_ICON_CATALOG.map(definition => [
+    definition.serviceName,
+    {
+      displayName: definition.displayName,
+      aliases: definition.aliases,
+      iconFile: definition.fileName,
+      category: 'fabric',
+      hasPricingData: definition.hasPricingData,
+      pricingServiceName: definition.pricingServiceName,
+      isUsageBased: definition.isUsageBased,
+      costRange: definition.costRange,
+    } satisfies ServiceIconMapping,
+  ]),
+) as Record<string, ServiceIconMapping>;
 
 /**
  * Comprehensive service-to-icon mapping with pricing data availability
@@ -203,7 +221,7 @@ export const SERVICE_ICON_MAP: Record<string, ServiceIconMapping> = {
   
   'Azure Cognitive Search': {
     displayName: 'Azure Cognitive Search',
-    aliases: ['Cognitive Search', 'Azure Search', 'AI Search'],
+    aliases: ['Cognitive Search', 'Azure Search', 'AI Search', 'Azure AI Search'],
     iconFile: 'azure-cognitive-search',
     category: 'ai + machine learning',
     hasPricingData: false,
@@ -238,7 +256,7 @@ export const SERVICE_ICON_MAP: Record<string, ServiceIconMapping> = {
   
   'Functions': {
     displayName: 'Azure Functions',
-    aliases: ['Function App', 'Functions', 'Serverless Functions'],
+    aliases: ['Function App', 'Function Apps', 'Functions', 'Serverless Functions'],
     iconFile: 'azure-functions',
     category: 'compute',
     hasPricingData: true,
@@ -260,7 +278,7 @@ export const SERVICE_ICON_MAP: Record<string, ServiceIconMapping> = {
   
   'Kubernetes Service': {
     displayName: 'Azure Kubernetes Service',
-    aliases: ['AKS', 'Kubernetes', 'K8s'],
+    aliases: ['AKS', 'Kubernetes', 'K8s', 'Kubernetes Services'],
     iconFile: 'azure-kubernetes-service',
     category: 'containers',
     hasPricingData: true,
@@ -271,7 +289,7 @@ export const SERVICE_ICON_MAP: Record<string, ServiceIconMapping> = {
   
   'Container Registry': {
     displayName: 'Container Registry',
-    aliases: ['ACR', 'Azure Container Registry'],
+    aliases: ['ACR', 'Azure Container Registry', 'Container Registries'],
     iconFile: 'container-registry',
     category: 'containers',
     hasPricingData: true,
@@ -343,7 +361,7 @@ export const SERVICE_ICON_MAP: Record<string, ServiceIconMapping> = {
   // ========================================
   'Storage Account': {
     displayName: 'Storage Account',
-    aliases: ['Storage', 'Blob Storage', 'Azure Storage', 'Storage Accounts'],
+    aliases: ['Storage', 'Blob Storage', 'Azure Blob Storage', 'Azure Storage', 'Storage Accounts', 'Storage Accounts (Classic)'],
     iconFile: 'storage-account',
     category: 'storage',
     hasPricingData: true,
@@ -357,7 +375,7 @@ export const SERVICE_ICON_MAP: Record<string, ServiceIconMapping> = {
   // ========================================
   'Application Gateway': {
     displayName: 'Application Gateway',
-    aliases: ['App Gateway', 'Azure Application Gateway'],
+    aliases: ['App Gateway', 'Azure Application Gateway', 'Application Gateways'],
     iconFile: 'application-gateway',
     category: 'networking',
     hasPricingData: true,
@@ -368,7 +386,7 @@ export const SERVICE_ICON_MAP: Record<string, ServiceIconMapping> = {
   
   'Azure Front Door': {
     displayName: 'Azure Front Door',
-    aliases: ['Front Door', 'AFD'],
+    aliases: ['Front Door', 'AFD', 'Azure Front Door Service'],
     iconFile: 'azure-front-door',
     category: 'networking',
     hasPricingData: true,
@@ -494,9 +512,9 @@ export const SERVICE_ICON_MAP: Record<string, ServiceIconMapping> = {
     isUsageBased: true,
     costRange: '$2.76 per GB ingested'
   },
-    'API Management': {
+  'API Management': {
     displayName: 'API Management',
-    aliases: ['APIM', 'Azure API Management', 'API Gateway'],
+    aliases: ['APIM', 'Azure API Management', 'API Gateway', 'API Management Services'],
     iconFile: 'api-management',
     category: 'integration',
     hasPricingData: true,
@@ -590,7 +608,7 @@ export const SERVICE_ICON_MAP: Record<string, ServiceIconMapping> = {
     displayName: 'Azure Container Apps',
     aliases: ['Azure Container Apps', 'Container App', 'ACA'],
     iconFile: '02989-icon-service-Container-Apps-Environments',
-    category: 'other',
+    category: 'containers',
     hasPricingData: true,
     pricingServiceName: 'Azure Container Apps',
     isUsageBased: true,
@@ -613,7 +631,7 @@ export const SERVICE_ICON_MAP: Record<string, ServiceIconMapping> = {
   
   'Load Balancer': {
     displayName: 'Azure Load Balancer',
-    aliases: ['Azure Load Balancer', 'LB'],
+    aliases: ['Azure Load Balancer', 'Load Balancers', 'LB'],
     iconFile: '10062-icon-service-Load-Balancers',
     category: 'networking',
     hasPricingData: true,
@@ -743,7 +761,7 @@ export const SERVICE_ICON_MAP: Record<string, ServiceIconMapping> = {
   'Microsoft Entra ID': {
     displayName: 'Microsoft Entra ID',
     aliases: ['Entra ID', 'Azure AD', 'Azure Active Directory', 'Active Directory'],
-    iconFile: '10340-icon-service-Entra-Identity-Roles-and-Administrators',
+    iconFile: 'microsoft-entra-id',
     category: 'identity',
     hasPricingData: false,
     isUsageBased: false,
@@ -850,7 +868,7 @@ export const SERVICE_ICON_MAP: Record<string, ServiceIconMapping> = {
   // ========================================
   'Azure API for FHIR': {
     displayName: 'Azure API for FHIR',
-    aliases: ['FHIR', 'Azure Health Data Services', 'Health Data Services', 'FHIR Service'],
+    aliases: ['Legacy FHIR API'],
     iconFile: '10212-icon-service-Azure-API-for-FHIR',
     category: 'integration',
     hasPricingData: false,
@@ -877,7 +895,7 @@ export const SERVICE_ICON_MAP: Record<string, ServiceIconMapping> = {
   'Data Lake Storage': {
     displayName: 'Azure Data Lake Storage',
     aliases: ['Data Lake', 'Azure Data Lake', 'Data Lake Storage Gen2', 'ADLS', 'Azure Data Lake Storage Gen2'],
-    iconFile: '10090-icon-service-Data-Lake-Storage-Gen1',
+    iconFile: 'storage-account',
     category: 'storage',
     hasPricingData: false,
     isUsageBased: true,
@@ -885,177 +903,126 @@ export const SERVICE_ICON_MAP: Record<string, ServiceIconMapping> = {
   },
 
   // ========================================
-  // Microsoft Fabric
-  // ----------------------------------------
-  // Fabric's cost model: a provisioned CAPACITY (F SKU) carries the fixed cost;
-  // OneLake storage is usage-based (per GB); all other Fabric items consume the
-  // shared capacity, so they are modeled as $0 (like AML endpoints rolling up to
-  // compute). Icons are the official v6.1.0 Fabric product icons.
+  // Canonical services with dedicated icons
   // ========================================
-  'Microsoft Fabric': {
-    displayName: 'Microsoft Fabric',
-    aliases: ['Fabric', 'MS Fabric', 'Fabric Platform'],
-    iconFile: 'microsoft-fabric',
-    category: 'fabric',
+  'App Service Certificates': {
+    displayName: 'App Service Certificates',
+    aliases: ['App Service Certificate', 'Azure App Service Certificates'],
+    iconFile: '00049-icon-service-App-Service-Certificates',
+    category: 'app services',
     hasPricingData: false,
-    costRange: 'Platform (see Fabric Capacity)'
-  },
-  'Microsoft Fabric Capacity': {
-    displayName: 'Microsoft Fabric Capacity',
-    aliases: ['Fabric Capacity', 'Fabric F SKU', 'Fabric F64', 'Fabric F2', 'Capacity Unit', 'F SKU'],
-    iconFile: 'fabric-capacity',
-    category: 'fabric',
-    hasPricingData: true,
-    pricingServiceName: 'Microsoft Fabric Capacity',
     isUsageBased: false,
-    costRange: '$263-8,410/mo (F2-F64, PAYG)'
+    costRange: 'Certificate purchase and renewal'
   },
-  'OneLake': {
-    displayName: 'OneLake',
-    aliases: ['One Lake', 'Fabric OneLake', 'OneLake Storage'],
-    iconFile: 'onelake',
-    category: 'fabric',
+  'Virtual Machine Scale Sets': {
+    displayName: 'Virtual Machine Scale Sets',
+    aliases: ['VM Scale Sets', 'VMSS', 'Azure Virtual Machine Scale Sets'],
+    iconFile: '10034-icon-service-VM-Scale-Sets',
+    category: 'compute',
     hasPricingData: true,
-    pricingServiceName: 'OneLake Storage',
+    pricingServiceName: 'Virtual Machines',
+    isUsageBased: false,
+    costRange: 'Based on member VM instances'
+  },
+  'Azure Batch': {
+    displayName: 'Azure Batch',
+    aliases: ['Batch', 'Batch Accounts', 'Azure Batch Account'],
+    iconFile: '10031-icon-service-Batch-Accounts',
+    category: 'compute',
+    hasPricingData: true,
+    pricingServiceName: 'Virtual Machines',
     isUsageBased: true,
-    costRange: '~$0.023–0.041 per GB/mo (Hot, region-dependent)'
+    costRange: 'Based on pool VM usage'
   },
-  'Lakehouse': {
-    displayName: 'Lakehouse',
-    aliases: ['Fabric Lakehouse', 'Lake House', 'Lakehouse (Bronze)', 'Lakehouse (Silver)', 'Lakehouse (Gold)'],
-    iconFile: 'fabric-lakehouse',
-    category: 'fabric',
+  'Azure Bot Service': {
+    displayName: 'Azure Bot Service',
+    aliases: ['Bot Service', 'Bot Services', 'Azure AI Bot Service'],
+    iconFile: '10165-icon-service-Bot-Services',
+    category: 'ai + machine learning',
     hasPricingData: false,
-    costRange: '$0 (consumes Fabric capacity)'
+    isUsageBased: true,
+    costRange: 'Channel and hosting dependent'
   },
-  'Warehouse': {
-    displayName: 'Warehouse',
-    aliases: ['Fabric Warehouse', 'Data Warehouse (Fabric)', 'Warehouse (Gold)'],
-    iconFile: 'fabric-warehouse',
-    category: 'fabric',
+  'Face API': {
+    displayName: 'Face API',
+    aliases: ['Azure Face API', 'Face APIs', 'Azure AI Face'],
+    iconFile: '00794-icon-service-Face-APIs',
+    category: 'ai + machine learning',
     hasPricingData: false,
-    costRange: '$0 (consumes Fabric capacity)'
+    isUsageBased: true,
+    costRange: 'Transaction based'
   },
-  'Eventhouse': {
-    displayName: 'Eventhouse',
-    aliases: ['Fabric Eventhouse', 'Event House'],
-    iconFile: 'fabric-eventhouse',
-    category: 'fabric',
+  'Azure AI Content Safety': {
+    displayName: 'Azure AI Content Safety',
+    aliases: ['Content Safety', 'Azure Content Safety'],
+    iconFile: '03390-icon-service-Content-Safety',
+    category: 'ai + machine learning',
     hasPricingData: false,
-    costRange: '$0 (consumes Fabric capacity)'
+    isUsageBased: true,
+    costRange: 'Transaction based'
   },
-  'Eventstream': {
-    displayName: 'Eventstream',
-    aliases: ['Fabric Eventstream', 'Event Stream'],
-    iconFile: 'fabric-eventstream',
-    category: 'fabric',
+  'Managed Identity': {
+    displayName: 'Managed Identity',
+    aliases: ['Managed Identities', 'Azure Managed Identity', 'Microsoft Entra Managed Identity'],
+    iconFile: '10227-icon-service-Entra-Managed-Identities',
+    category: 'identity',
     hasPricingData: false,
-    costRange: '$0 (consumes Fabric capacity)'
+    isUsageBased: false,
+    costRange: '$0'
   },
-  'KQL Database': {
-    displayName: 'KQL Database',
-    aliases: ['Fabric KQL Database', 'Kusto Database (Fabric)'],
-    iconFile: 'fabric-kql-database',
-    category: 'fabric',
-    hasPricingData: false,
-    costRange: '$0 (consumes Fabric capacity)'
+  'Application Gateway for Containers': {
+    displayName: 'Application Gateway for Containers',
+    aliases: ['AGC', 'Application Gateway Containers'],
+    iconFile: '03328-icon-service-Application-Gateway-Containers',
+    category: 'networking',
+    hasPricingData: true,
+    pricingServiceName: 'Application Gateway',
+    isUsageBased: true,
+    costRange: 'Gateway and capacity-unit based'
   },
-  'Fabric Notebook': {
-    displayName: 'Fabric Notebook',
-    aliases: ['Fabric Spark Notebook'],
-    iconFile: 'fabric-notebook',
-    category: 'fabric',
-    hasPricingData: false,
-    costRange: '$0 (consumes Fabric capacity)'
+  'Azure Files': {
+    displayName: 'Azure Files',
+    aliases: ['Azure File Shares', 'File Shares', 'Azure Fileshares'],
+    iconFile: '10400-icon-service-Azure-Fileshares',
+    category: 'storage',
+    hasPricingData: true,
+    pricingServiceName: 'Storage',
+    isUsageBased: true,
+    costRange: 'Capacity and transaction based'
   },
-  'Fabric Data Pipeline': {
-    displayName: 'Fabric Data Pipeline',
-    aliases: ['Fabric Pipeline', 'Data Pipeline (Fabric)'],
-    iconFile: 'fabric-data-pipeline',
-    category: 'fabric',
-    hasPricingData: false,
-    costRange: '$0 (consumes Fabric capacity)'
+  'Queue Storage': {
+    displayName: 'Queue Storage',
+    aliases: ['Azure Queue Storage', 'Storage Queue'],
+    iconFile: '10840-icon-service-Storage-Queue',
+    category: 'storage',
+    hasPricingData: true,
+    pricingServiceName: 'Storage',
+    isUsageBased: true,
+    costRange: 'Capacity and transaction based'
   },
-  'Fabric Data Factory': {
-    displayName: 'Fabric Data Factory',
-    aliases: ['Data Factory (Fabric)'],
-    iconFile: 'fabric-data-factory',
-    category: 'fabric',
-    hasPricingData: false,
-    costRange: '$0 (consumes Fabric capacity)'
+  'Table Storage': {
+    displayName: 'Table Storage',
+    aliases: ['Azure Table Storage', 'Storage Table'],
+    iconFile: '10841-icon-service-Table',
+    category: 'storage',
+    hasPricingData: true,
+    pricingServiceName: 'Storage',
+    isUsageBased: true,
+    costRange: 'Capacity and transaction based'
   },
-  'Dataflow Gen2': {
-    displayName: 'Dataflow Gen2',
-    aliases: ['Fabric Dataflow', 'Dataflow Gen 2'],
-    iconFile: 'fabric-dataflow-gen2',
-    category: 'fabric',
-    hasPricingData: false,
-    costRange: '$0 (consumes Fabric capacity)'
+  'Azure Health Data Services': {
+    displayName: 'Azure Health Data Services',
+    aliases: ['Health Data Services', 'FHIR', 'FHIR Service', 'Azure FHIR Service'],
+    iconFile: '02658-icon-service-FHIR-Service',
+    category: 'other',
+    hasPricingData: true,
+    pricingServiceName: 'Azure API for FHIR',
+    isUsageBased: true,
+    costRange: 'Service and storage based'
   },
-  'Datamart': {
-    displayName: 'Datamart',
-    aliases: ['Fabric Datamart'],
-    iconFile: 'fabric-datamart',
-    category: 'fabric',
-    hasPricingData: false,
-    costRange: '$0 (consumes Fabric capacity)'
-  },
-  'Semantic Model': {
-    displayName: 'Semantic Model',
-    aliases: ['Power BI Semantic Model', 'Power BI Dataset', 'Direct Lake Semantic Model'],
-    iconFile: 'fabric-semantic-model',
-    category: 'fabric',
-    hasPricingData: false,
-    costRange: '$0 (consumes Fabric capacity)'
-  },
-  'Power BI Report': {
-    displayName: 'Power BI Report',
-    aliases: ['Fabric Report', 'Power BI Dashboard', 'Power BI'],
-    iconFile: 'fabric-power-bi-report',
-    category: 'fabric',
-    hasPricingData: false,
-    costRange: '$0 (consumes Fabric capacity)'
-  },
-  'Fabric SQL Database': {
-    displayName: 'Fabric SQL Database',
-    aliases: ['SQL Database (Fabric)', 'Fabric SQL DB'],
-    iconFile: 'fabric-sql-database',
-    category: 'fabric',
-    hasPricingData: false,
-    costRange: '$0 (consumes Fabric capacity)'
-  },
-  'Mirrored Database': {
-    displayName: 'Mirrored Database',
-    aliases: ['Fabric Mirroring', 'Database Mirroring (Fabric)', 'Mirrored DB'],
-    iconFile: 'fabric-mirrored-database',
-    category: 'fabric',
-    hasPricingData: false,
-    costRange: '$0 (free mirroring up to capacity size)'
-  },
-  'Real-Time Dashboard': {
-    displayName: 'Real-Time Dashboard',
-    aliases: ['Fabric Real-Time Dashboard', 'Real Time Dashboard', 'Real-Time Intelligence'],
-    iconFile: 'fabric-real-time-dashboard',
-    category: 'fabric',
-    hasPricingData: false,
-    costRange: '$0 (consumes Fabric capacity)'
-  },
-  'Fabric Spark Job': {
-    displayName: 'Fabric Spark Job',
-    aliases: ['Spark Job Definition', 'Fabric Spark'],
-    iconFile: 'fabric-spark-job',
-    category: 'fabric',
-    hasPricingData: false,
-    costRange: '$0 (consumes Fabric capacity)'
-  },
-  'Fabric Data Agent': {
-    displayName: 'Fabric Data Agent',
-    aliases: ['Data Agent (Fabric)', 'Fabric AI Skill'],
-    iconFile: 'fabric-data-agent',
-    category: 'fabric',
-    hasPricingData: false,
-    costRange: '$0 (consumes Fabric capacity)'
-  },
+
+  // Microsoft Fabric: 74 official package families plus Fabric Capacity.
+  ...FABRIC_SERVICE_ICON_MAP,
 };
 
 /**
@@ -1069,10 +1036,13 @@ export function getServiceIconMapping(serviceName: string): ServiceIconMapping |
     return SERVICE_ICON_MAP[normalizedName];
   }
   
-  // Search by alias (case-insensitive)
+  // Search by display name or alias (case-insensitive)
   const lowerName = normalizedName.toLowerCase();
   for (const mapping of Object.values(SERVICE_ICON_MAP)) {
-    if (mapping.aliases.some(alias => alias.toLowerCase() === lowerName)) {
+    if (
+      mapping.displayName.toLowerCase() === lowerName
+      || mapping.aliases.some(alias => alias.toLowerCase() === lowerName)
+    ) {
       return mapping;
     }
   }
