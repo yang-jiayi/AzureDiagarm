@@ -64,9 +64,21 @@ if ([string]::IsNullOrWhiteSpace($location) -or [string]::IsNullOrWhiteSpace($ap
     throw 'Unable to resolve the Container App location or resource ID.'
 }
 
+$azureLocations = (
+    Invoke-AzCli @('account', 'list-locations', '--output', 'json')
+) | ConvertFrom-Json
+$locationRecord = $azureLocations |
+    Where-Object { $_.name -eq $location -or $_.displayName -eq $location } |
+    Select-Object -First 1
+$serviceTagLocation = [string]$locationRecord.name
+
+if ([string]::IsNullOrWhiteSpace($serviceTagLocation)) {
+    throw "Unable to resolve the canonical Azure location name for $location."
+}
+
 $serviceTagsJson = Invoke-AzCli @(
     'network', 'list-service-tags',
-    '--location', $location,
+    '--location', $serviceTagLocation,
     '--output', 'json'
 )
 $serviceTags = $serviceTagsJson | ConvertFrom-Json
@@ -75,7 +87,7 @@ $frontDoorTag = $serviceTags.values |
     Select-Object -First 1
 
 if ($null -eq $frontDoorTag) {
-    throw "AzureFrontDoor.Backend was not present in the $location service tag response."
+    throw "AzureFrontDoor.Backend was not present in the $serviceTagLocation service tag response."
 }
 
 $frontDoorIpv4Ranges = @(
