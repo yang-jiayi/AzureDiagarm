@@ -76,10 +76,15 @@ if ([string]::IsNullOrWhiteSpace($serviceTagLocation)) {
     throw "Unable to resolve the canonical Azure location name for $location."
 }
 
+$serviceTagsUrl = (
+    "https://management.azure.com/subscriptions/$SubscriptionId" +
+    "/providers/Microsoft.Network/locations/$serviceTagLocation/serviceTags" +
+    '?api-version=2024-05-01'
+)
 $serviceTagsJson = Invoke-AzCli @(
-    'network', 'list-service-tags',
-    '--location', $serviceTagLocation,
-    '--output', 'json'
+    'rest',
+    '--method', 'get',
+    '--url', $serviceTagsUrl
 )
 $serviceTags = $serviceTagsJson | ConvertFrom-Json
 $frontDoorTag = $serviceTags.values |
