@@ -15,6 +15,7 @@
 | Application (client) ID | `5cd8361b-e235-493b-95a2-c2e8f444c3a2` |
 | Permanent administrator | `yangjiayi@msft.jp` |
 | Access store | `azurediagarm-access-kv` |
+| Speech resource | `azurediagarmspeech` (`westus2`, S0) |
 | Easy Auth action | `RedirectToLoginPage` |
 | Whitelist enforcement | Enabled |
 
@@ -72,6 +73,10 @@ The managed identity has the custom role
 
 It does not grant access to secret values in the Key Vault data plane, other
 vaults, or other Azure resources.
+
+The Avatar Presenter uses keyless authentication to the dedicated Speech
+resource. The Container Apps managed identity has only the **Cognitive Services
+Speech User** role on that resource, and local key authentication is disabled.
 
 ## Administrator workflow
 

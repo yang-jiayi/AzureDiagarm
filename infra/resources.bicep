@@ -108,6 +108,7 @@ resource speech 'Microsoft.CognitiveServices/accounts@2023-05-01' = if (deploySp
   sku: { name: 'S0' }
   properties: {
     customSubDomainName: '${abbrs.cognitiveServicesSpeech}${resourceToken}'
+    disableLocalAuth: true
     publicNetworkAccess: 'Enabled'
   }
 }

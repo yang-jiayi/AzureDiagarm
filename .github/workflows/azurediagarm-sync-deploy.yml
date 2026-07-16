@@ -374,6 +374,7 @@ jobs:
             FRONT_DOOR_ID=${{ steps.frontdoor.outputs.id }}
             VITE_AZURE_OPENAI_ENDPOINT=${{ vars.AZURE_OPENAI_ENDPOINT }}
             VITE_AZURE_OPENAI_DEPLOYMENT_GPT56SOL=${{ vars.AZURE_OPENAI_DEPLOYMENT_GPT56SOL }}
+            VITE_SPEECH_REGION=${{ vars.AZURE_SPEECH_REGION }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -392,6 +393,8 @@ jobs:
             "AZURE_OPENAI_ENDPOINT=${{ vars.AZURE_OPENAI_ENDPOINT }}"
             "AZURE_OPENAI_ALLOWED_DEPLOYMENTS=${{ vars.AZURE_OPENAI_DEPLOYMENT_GPT56SOL }}"
             "OPENAI_RATE_LIMIT_PER_HOUR=120"
+            "AZURE_SPEECH_REGION=${{ vars.AZURE_SPEECH_REGION }}"
+            "AZURE_SPEECH_RESOURCE_ID=${{ vars.AZURE_SPEECH_RESOURCE_ID }}"
             "FEEDBACK_EMAIL_ENDPOINT=${{ vars.FEEDBACK_EMAIL_ENDPOINT }}"
             "FEEDBACK_EMAIL_SENDER=${{ vars.FEEDBACK_EMAIL_SENDER }}"
             "FEEDBACK_EMAIL_RECIPIENT=${{ vars.FEEDBACK_EMAIL_RECIPIENT }}"
