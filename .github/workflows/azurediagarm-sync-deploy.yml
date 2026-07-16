@@ -67,10 +67,32 @@ jobs:
           fork_before="$(git rev-parse HEAD)"
           git fetch upstream main
           upstream_commit="$(git rev-parse upstream/main)"
+          merge_base="$(git merge-base HEAD upstream/main)"
+
+          # A customization push must be deployable even when a separate,
+          # unreviewed upstream change touches protected files. Scheduled and
+          # manual runs continue through the guarded upstream-sync path below.
+          if [[ "$GITHUB_EVENT_NAME" == "push" ]]; then
+            fork_commit="$fork_before"
+            {
+              echo "source_changed=false"
+              echo "upstream_commit=$merge_base"
+              echo "fork_commit=$fork_commit"
+              echo "upstream_short=${merge_base:0:12}"
+              echo "fork_short=${fork_commit:0:12}"
+            } >> "$GITHUB_OUTPUT"
+            {
+              echo "- Deploying customization commit ${fork_commit:0:12}."
+              echo "- Deployed upstream baseline: ${merge_base:0:12}."
+              echo "- Latest upstream commit awaiting scheduled review: ${upstream_commit:0:12}."
+              echo "- Upstream synchronization remains scheduled and protected by manual review."
+            } > update-details.txt
+            echo "update_details_b64=$(base64 -w 0 update-details.txt)" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
 
           # Never auto-merge upstream changes that can alter GitHub credentials,
           # Azure deployment behavior, origin protection, or server-side controls.
-          merge_base="$(git merge-base HEAD upstream/main)"
           mapfile -t protected_changes < <(
             git diff --name-only "$merge_base..upstream/main" -- \
               .github \
