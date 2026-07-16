@@ -15,15 +15,18 @@ node /srv/token-server/token-server.js &
 TOKEN_SERVER_PID=$!
 
 MCP_SERVER_PID=''
-if [ -n "${MCP_AUTH_TOKEN:-}" ]; then
+if [ "${MCP_ENABLED:-false}" = "true" ] || [ -n "${MCP_AUTH_TOKEN:-}" ]; then
   MCP_HTTP_HOST=127.0.0.1 \
   MCP_HTTP_PORT="${MCP_HTTP_PORT:-3030}" \
   MCP_HTTP_PATH="${MCP_HTTP_PATH:-/mcp}" \
-  MCP_AUTH_TOKEN="$MCP_AUTH_TOKEN" \
+  MCP_AUTH_TOKEN="${MCP_AUTH_TOKEN:-}" \
     node /srv/mcp-server/dist/index.js --http &
   MCP_SERVER_PID=$!
+  if [ -z "${MCP_AUTH_TOKEN:-}" ]; then
+    echo "MCP is enabled without an internal token; the reverse proxy must enforce authentication." >&2
+  fi
 else
-  echo "MCP_AUTH_TOKEN is not configured; the public /mcp endpoint is disabled." >&2
+  echo "MCP is disabled. Set MCP_ENABLED=true behind an authenticated reverse proxy or configure MCP_AUTH_TOKEN." >&2
 fi
 
 nginx -g "daemon off;" &

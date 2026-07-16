@@ -36,6 +36,11 @@
 External requests cannot set the `X-MS-CLIENT-PRINCIPAL-*` headers. Container
 Apps removes external values and injects the authenticated principal headers.
 
+The MCP HTTP server listens only on `127.0.0.1:3030` inside the container and is
+enabled with `MCP_ENABLED=true`. It does not use a separate public bearer token
+in production; Nginx exposes `/mcp` only after the same Easy Auth and whitelist
+checks used by the application and APIs.
+
 ## Front Door requirements
 
 - `forwardProxy.convention` is `Standard`, so Easy Auth uses the
