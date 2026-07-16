@@ -15,6 +15,8 @@
 | Application (client) ID | `5cd8361b-e235-493b-95a2-c2e8f444c3a2` |
 | Permanent administrator | `yangjiayi@msft.jp` |
 | Access store | `azurediagarm-access-kv` |
+| Easy Auth action | `RedirectToLoginPage` |
+| Whitelist enforcement | Enabled |
 
 ## Security model
 
@@ -23,8 +25,8 @@
 3. The Entra application is single-tenant (`AzureADMyOrg`).
 4. Nginx sends an internal authorization subrequest for every page, static asset,
    API, and MCP request.
-5. The Node server reads the trusted `X-MS-CLIENT-PRINCIPAL-NAME` and
-   `X-MS-CLIENT-PRINCIPAL-ID` headers injected by Container Apps.
+5. The Node server reads the trusted individual principal headers injected by
+   Container Apps, with `X-MS-CLIENT-PRINCIPAL` claim parsing as a fallback.
 6. `yangjiayi@msft.jp` is always allowed and is the only account that receives
    access-list management APIs and UI.
 7. Other users are allowed only when their normalized email address is active in
