@@ -15,6 +15,7 @@ const { CosmosClient } = require('@azure/cosmos');
 const { TableClient } = require('@azure/data-tables');
 const { EmailClient, KnownEmailSendStatus } = require('@azure/communication-email');
 const { createAccessControlRouter } = require('./access-control');
+const { ArmKeyVaultAccessStore } = require('./arm-key-vault-access-store');
 const crypto = require('crypto');
 
 const app = express();
@@ -40,15 +41,18 @@ const ACCESS_CONTROL_ENABLED = process.env.ACCESS_CONTROL_ENABLED === 'true';
 const ACCESS_ADMIN_EMAIL = process.env.ACCESS_ADMIN_EMAIL;
 const ACCESS_TABLES_ENDPOINT = process.env.AZURE_TABLES_ACCESS_ENDPOINT;
 const ACCESS_TABLE_NAME = process.env.AZURE_TABLES_ACCESS_TABLE || 'accesswhitelist';
+const ACCESS_KEY_VAULT_RESOURCE_ID = process.env.AZURE_ACCESS_KEY_VAULT_RESOURCE_ID;
 const PUBLIC_APP_URL = process.env.PUBLIC_URL;
 
 let accessTable = null;
-if (ACCESS_TABLES_ENDPOINT) {
+if (ACCESS_KEY_VAULT_RESOURCE_ID) {
+  accessTable = new ArmKeyVaultAccessStore(ACCESS_KEY_VAULT_RESOURCE_ID, credential);
+} else if (ACCESS_TABLES_ENDPOINT) {
   accessTable = new TableClient(ACCESS_TABLES_ENDPOINT, ACCESS_TABLE_NAME, credential);
 }
 
-if (ACCESS_CONTROL_ENABLED && (!ACCESS_ADMIN_EMAIL || !ACCESS_TABLES_ENDPOINT || !PUBLIC_APP_URL)) {
-  console.error('[access] Access control is enabled but its administrator, Table endpoint, or public URL is missing.');
+if (ACCESS_CONTROL_ENABLED && (!ACCESS_ADMIN_EMAIL || !accessTable || !PUBLIC_APP_URL)) {
+  console.error('[access] Access control is enabled but its administrator, store, or public URL is missing.');
 }
 
 app.use('/api/access', createAccessControlRouter({

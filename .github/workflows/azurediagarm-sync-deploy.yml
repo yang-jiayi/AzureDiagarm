@@ -156,6 +156,7 @@ jobs:
           npm run lint
           node --check server/token-server.js
           node --check server/access-control.js
+          node --check server/arm-key-vault-access-store.js
           npm --prefix server ci --ignore-scripts
           npm --prefix server test
           npm --prefix mcp-server ci --ignore-scripts
@@ -386,6 +387,7 @@ jobs:
             "PUBLIC_URL=${{ vars.AZURE_APP_URL }}"
             "ACCESS_CONTROL_ENABLED=${{ vars.ACCESS_CONTROL_ENABLED || 'false' }}"
             "ACCESS_ADMIN_EMAIL=${{ vars.ACCESS_ADMIN_EMAIL }}"
+            "AZURE_ACCESS_KEY_VAULT_RESOURCE_ID=${{ vars.AZURE_ACCESS_KEY_VAULT_RESOURCE_ID }}"
             "AZURE_CLIENT_ID=${{ vars.AZURE_RUNTIME_CLIENT_ID }}"
             "AZURE_OPENAI_ENDPOINT=${{ vars.AZURE_OPENAI_ENDPOINT }}"
             "AZURE_OPENAI_ALLOWED_DEPLOYMENTS=${{ vars.AZURE_OPENAI_DEPLOYMENT_GPT56SOL }}"
@@ -402,12 +404,6 @@ jobs:
             env_vars+=(
               "AZURE_TABLES_ENDPOINT=${{ vars.AZURE_TABLES_ENDPOINT }}"
               "AZURE_TABLES_FEEDBACK_TABLE=${{ vars.AZURE_TABLES_FEEDBACK_TABLE }}"
-            )
-          fi
-          if [[ -n "${{ vars.AZURE_TABLES_ACCESS_ENDPOINT }}" ]]; then
-            env_vars+=(
-              "AZURE_TABLES_ACCESS_ENDPOINT=${{ vars.AZURE_TABLES_ACCESS_ENDPOINT }}"
-              "AZURE_TABLES_ACCESS_TABLE=${{ vars.AZURE_TABLES_ACCESS_TABLE }}"
             )
           fi
           if [[ -n "${{ vars.AZURE_COSMOS_ENDPOINT }}" ]]; then
