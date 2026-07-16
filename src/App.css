@@ -11,7 +11,7 @@
   color: white;
   padding: 0.5rem 1.5rem;
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-  z-index: 10;
+  z-index: 1400;
   flex-shrink: 0;
 }
 
@@ -45,9 +45,33 @@
 }
 
 .microsoft-logo {
-  height: 80px;
-  width: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
   flex-shrink: 0;
+}
+
+.microsoft-symbol {
+  width: 20px;
+  height: 20px;
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  grid-template-rows: repeat(2, 1fr);
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.microsoft-square-red { background: #f25022; }
+.microsoft-square-green { background: #7fba00; }
+.microsoft-square-blue { background: #00a4ef; }
+.microsoft-square-yellow { background: #ffb900; }
+
+.microsoft-wordmark {
+  color: #ffffff;
+  font-size: 0.78rem;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
 }
 
 .header-actions-wrapper {
@@ -186,8 +210,9 @@
   display: none;
 }
 
-.app-header.header-collapsed .microsoft-logo {
-  height: 40px;
+.app-header.header-collapsed .microsoft-symbol {
+  width: 16px;
+  height: 16px;
 }
 
 .app-header.header-collapsed .app-header h1,
@@ -227,8 +252,9 @@
     padding: 0.4rem 0.75rem;
   }
 
-  .microsoft-logo {
-    height: 44px;
+  .microsoft-symbol {
+    width: 18px;
+    height: 18px;
   }
 
   .app-header h1 {
@@ -260,10 +286,16 @@
   }
 
   .microsoft-logo {
-    width: 28px;
-    height: 28px;
-    object-fit: cover;
-    object-position: left center;
+    gap: 0;
+  }
+
+  .microsoft-symbol {
+    width: 15px;
+    height: 15px;
+  }
+
+  .microsoft-wordmark {
+    display: none;
   }
 
   .app-header h1 {
@@ -309,17 +341,53 @@
     gap: 0.35rem;
   }
 
+  .app-header:not(.header-collapsed) .header-actions-wrapper {
+    position: fixed;
+    top: 58px;
+    left: 8px;
+    right: 8px;
+    width: auto;
+    max-height: min(62dvh, 420px);
+    padding: 0.65rem;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    border: 1px solid rgba(255, 255, 255, 0.35);
+    border-radius: 12px;
+    background: linear-gradient(145deg, rgba(0, 90, 158, 0.98), rgba(0, 71, 125, 0.98));
+    box-shadow: 0 16px 36px rgba(2, 32, 57, 0.42);
+  }
+
+  .app-header:not(.header-collapsed) .header-actions {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0.45rem;
+  }
+
   .toolbar-group {
     width: 100%;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.4rem;
+    margin: 0 !important;
     padding: 0 !important;
     border-left: 0 !important;
   }
 
+  .toolbar-group > * {
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+  }
+
   .app-header .btn,
   .app-header label.btn {
+    width: 100%;
     min-height: 34px;
     padding: 0.4rem 0.55rem;
     font-size: 0.75rem;
+    justify-content: center;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .app-header .toolbar-dropdown-menu {
@@ -791,6 +859,7 @@ body.dark-mode .toolbar-dropdown-separator {
   display: flex;
   flex: 1;
   overflow: hidden;
+  position: relative;
 }
 
 .canvas-container {
@@ -843,7 +912,7 @@ body.dark-mode .toolbar-dropdown-separator {
   animation: canvas-nav-hint-in 0.4s ease-out;
 }
 .canvas-empty-cta-inner {
-  max-width: 440px;
+  width: min(440px, calc(100% - 32px));
   text-align: center;
   padding: 2rem 2.25rem;
   background: rgba(15, 23, 42, 0.9);
@@ -896,6 +965,60 @@ body.dark-mode .toolbar-dropdown-separator {
 }
 .canvas-empty-cta-alt strong { color: #c4b5fd; font-weight: 600; }
 
+@media (max-width: 640px) {
+  .canvas-empty-cta-inner {
+    padding: 1.4rem 1.25rem;
+    border-radius: 14px;
+  }
+
+  .canvas-empty-cta-title {
+    font-size: 1.25rem;
+  }
+
+  .canvas-empty-cta-desc {
+    margin-bottom: 1rem;
+    font-size: 0.9rem;
+  }
+}
+
+@media (max-height: 480px) {
+  .canvas-empty-cta {
+    align-items: flex-start;
+    padding-top: 12px;
+  }
+
+  .canvas-empty-cta-inner {
+    width: min(430px, calc(100% - 120px));
+    padding: 0.75rem 1rem;
+  }
+
+  .canvas-empty-cta-icon {
+    width: 24px;
+    height: 24px;
+    margin-bottom: 0.2rem;
+  }
+
+  .canvas-empty-cta-title {
+    margin-bottom: 0.25rem;
+    font-size: 1.05rem;
+  }
+
+  .canvas-empty-cta-desc {
+    margin-bottom: 0.55rem;
+    font-size: 0.76rem;
+    line-height: 1.35;
+  }
+
+  .canvas-empty-cta-btn {
+    padding: 0.55rem 0.9rem;
+    font-size: 0.85rem;
+  }
+
+  .canvas-empty-cta-alt {
+    display: none;
+  }
+}
+
 .canvas-nav-hint-tips {
   display: flex;
   align-items: center;
@@ -913,6 +1036,10 @@ body.dark-mode .toolbar-dropdown-separator {
 .canvas-nav-hint-tip svg {
   color: #60a5fa;
   flex-shrink: 0;
+}
+
+.canvas-nav-hint-mobile {
+  display: none;
 }
 
 .canvas-nav-hint-sep {
@@ -1029,12 +1156,12 @@ body.dark-mode .toolbar-dropdown-separator {
 .react-flow__minimap.nav-minimap:active {
   cursor: grabbing;
 }
-/* "Drag to navigate" caption floating just above the mini-map. */
-.react-flow__minimap.nav-minimap::before {
-  content: 'Drag / scroll to navigate';
+
+.nav-minimap-caption {
   position: absolute;
-  top: -22px;
-  right: 0;
+  right: 10px;
+  bottom: 242px;
+  z-index: 6;
   padding: 2px 8px;
   font-size: 0.68rem;
   font-weight: 600;
@@ -1045,6 +1172,67 @@ body.dark-mode .toolbar-dropdown-separator {
   border-radius: 999px;
   white-space: nowrap;
   pointer-events: none;
+}
+
+@media (max-width: 640px) {
+  .canvas-nav-hint {
+    top: 12px;
+    right: 8px;
+    left: 144px;
+    max-width: none;
+    padding: 6px 7px 6px 9px;
+    gap: 4px;
+  }
+
+  .canvas-nav-hint-desktop {
+    display: none;
+  }
+
+  .canvas-nav-hint-mobile {
+    display: inline-flex;
+  }
+
+  .canvas-nav-hint-tips {
+    flex-wrap: nowrap;
+    gap: 4px;
+    min-width: 0;
+  }
+
+  .canvas-nav-hint-tip {
+    min-width: 0;
+    white-space: normal;
+    font-size: 0.7rem;
+    line-height: 1.2;
+  }
+
+  .canvas-nav-hint-fit {
+    padding: 4px 7px;
+    font-size: 0.7rem;
+  }
+  .react-flow__minimap.nav-minimap {
+    width: 140px !important;
+    height: 100px !important;
+  }
+
+  .nav-minimap-caption {
+    bottom: 190px;
+    font-size: 0.62rem;
+  }
+}
+
+@media (max-height: 480px) {
+  .canvas-nav-hint {
+    top: 8px;
+  }
+
+  .react-flow__minimap.nav-minimap {
+    width: 112px !important;
+    height: 72px !important;
+  }
+
+  .nav-minimap-caption {
+    display: none;
+  }
 }
 
 .info-panel {

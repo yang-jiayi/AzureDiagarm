@@ -5,6 +5,7 @@ import React, { useState } from 'react';
 import { X, Camera } from 'lucide-react';
 import './SaveSnapshotModal.css';
 import { useLanguage } from '../i18n/LanguageContext';
+import { useEscapeKey } from '../hooks/useEscapeKey';
 
 interface SaveSnapshotModalProps {
   isOpen: boolean;
@@ -22,6 +23,7 @@ const SaveSnapshotModal: React.FC<SaveSnapshotModalProps> = ({
   serviceCount
 }) => {
   const { t } = useLanguage();
+  useEscapeKey(isOpen, onClose);
   const [notes, setNotes] = useState('');
   const [isSaving, setIsSaving] = useState(false);
 
@@ -43,12 +45,23 @@ const SaveSnapshotModal: React.FC<SaveSnapshotModalProps> = ({
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal-content save-snapshot-modal" onClick={(e) => e.stopPropagation()}>
+      <div
+        className="modal-content save-snapshot-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-label={t("Save Snapshot")}
+        tabIndex={-1}
+        autoFocus
+        onClick={(e) => e.stopPropagation()}
+        onKeyDown={(event) => {
+          if (event.key === 'Escape') onClose();
+        }}
+      >
         <div className="modal-header">
           <h2>
             <Camera size={24} />
             {' '}{t("Save Snapshot")}{' '}</h2>
-          <button className="modal-close" onClick={onClose} title={t("Close")}>
+          <button className="modal-close" onClick={onClose} title={t("Close")} aria-label={t("Close")}>
             <X size={24} />
           </button>
         </div>

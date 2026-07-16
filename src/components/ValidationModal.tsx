@@ -10,6 +10,7 @@ import { useValidationDisplayPrefs } from '../stores/validationDisplayStore';
 import './ValidationModal.css';
 import { useLanguage } from '../i18n/LanguageContext';
 import { localize } from '../i18n/localization';
+import { useEscapeKey } from '../hooks/useEscapeKey';
 
 /**
  * Props for ValidationModal component
@@ -34,6 +35,7 @@ const ValidationModal: React.FC<ValidationModalProps> = ({ validation, isOpen, o
   const [selectedFindings, setSelectedFindings] = useState<Set<string>>(new Set());
   // Display preference: show the raw 0-100 score alongside the maturity band
   const [displayPrefs, setDisplayPrefs] = useValidationDisplayPrefs();
+  useEscapeKey(isOpen, onClose);
   
   if (!isOpen) return null;
 
@@ -140,7 +142,18 @@ const ValidationModal: React.FC<ValidationModalProps> = ({ validation, isOpen, o
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal-content validation-modal" onClick={(e) => e.stopPropagation()}>
+      <div
+        className="modal-content validation-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-label={t("🔍 Architecture Validation")}
+        tabIndex={-1}
+        autoFocus
+        onClick={(e) => e.stopPropagation()}
+        onKeyDown={(event) => {
+          if (event.key === 'Escape') onClose();
+        }}
+      >
         <div className="modal-header">
           <h2>{t("🔍 Architecture Validation")}</h2>
           <div className="modal-header-actions">
@@ -154,7 +167,7 @@ const ValidationModal: React.FC<ValidationModalProps> = ({ validation, isOpen, o
                 <span>{t("Show numeric score")}</span>
               </label>
             )}
-            <button className="modal-close" onClick={onClose} title={t("Hide")}>
+            <button className="modal-close" onClick={onClose} title={t("Close")} aria-label={t("Close")}>
               <X size={24} />
             </button>
           </div>

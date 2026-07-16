@@ -46,7 +46,7 @@ import SaveSnapshotModal from './components/SaveSnapshotModal';
 import ModelSettingsPopover from './components/ModelSettingsPopover';
 import CompareModelsModal from './components/CompareModelsModal';
 import CompareValidationModal from './components/CompareValidationModal';
-import { loadIconsFromCategory } from './utils/iconLoader';
+import { loadIconsFromCategory, type AzureIcon } from './utils/iconLoader';
 import { getServiceIconMapping } from './data/serviceIconMapping';
 import { layoutArchitecture } from './utils/layoutEngine';
 import { layoutArchitecture as elkLayoutArchitecture } from './utils/elkLayoutEngine';
@@ -85,7 +85,6 @@ import AccessManagementModal from './components/AccessManagementModal';
 import LanguageSwitch from './components/LanguageSwitch';
 import { FEEDBACK_DONE_KEY } from './services/feedbackService';
 import { getAccessIdentity, type AccessIdentity } from './services/accessControlService';
-import microsoftLogoWhite from './assets/microsoft-logo-white.avif';
 import './App.css';
 import { useLanguage } from './i18n/LanguageContext';
 import { localize } from './i18n/localization';
@@ -947,6 +946,81 @@ function App() {
     event.dataTransfer.dropEffect = 'move';
   }, []);
 
+  const addServiceNodeAtPosition = useCallback((
+    service: { iconPath: string; iconName: string },
+    position: Node['position'],
+  ) => {
+    if (!reactFlowInstance) return;
+
+    let parentGroup: Node | undefined;
+    for (const node of reactFlowInstance.getNodes()) {
+      if (node.type !== 'groupNode') continue;
+      const groupWidth = (node.style?.width as number) || node.width || 400;
+      const groupHeight = (node.style?.height as number) || node.height || 300;
+      if (
+        position.x >= node.position.x
+        && position.x <= node.position.x + groupWidth
+        && position.y >= node.position.y
+        && position.y <= node.position.y + groupHeight
+      ) {
+        parentGroup = node;
+        break;
+      }
+    }
+
+    const newNode: Node = {
+      id: `service-${globalThis.crypto.randomUUID()}`,
+      type: 'azureNode',
+      position: parentGroup
+        ? {
+            x: position.x - parentGroup.position.x,
+            y: position.y - parentGroup.position.y,
+          }
+        : position,
+      data: {
+        label: service.iconName,
+        iconPath: service.iconPath,
+      },
+      parentNode: parentGroup?.id,
+      extent: parentGroup ? 'parent' : undefined,
+    };
+
+    setNodes((current) => current.concat(newNode));
+
+    const currentRegion = getActiveRegion();
+    void initializeNodePricing(service.iconName, currentRegion)
+      .then((pricing) => {
+        if (!pricing) return;
+        setNodes((current) => current.map((node) => (
+          node.id === newNode.id
+            ? { ...node, data: { ...node.data, pricing } }
+            : node
+        )));
+      })
+      .catch((error) => console.warn('Failed to initialize pricing:', error));
+  }, [reactFlowInstance, setNodes]);
+
+  const handleAddService = useCallback((icon: AzureIcon) => {
+    if (!reactFlowInstance || !reactFlowWrapper.current) return;
+
+    const bounds = reactFlowWrapper.current.getBoundingClientRect();
+    const serviceCount = reactFlowInstance.getNodes().filter((node: Node) => node.type === 'azureNode').length;
+    const slot = serviceCount % 9;
+    const column = (slot % 3) - 1;
+    const row = Math.floor(slot / 3) - 1;
+    const spacingX = Math.min(180, bounds.width / 4);
+    const spacingY = Math.min(140, bounds.height / 4);
+    const position = reactFlowInstance.screenToFlowPosition({
+      x: bounds.left + (bounds.width / 2) + (column * spacingX),
+      y: bounds.top + (bounds.height / 2) + (row * spacingY),
+    });
+
+    addServiceNodeAtPosition({
+      iconPath: icon.path,
+      iconName: icon.name,
+    }, position);
+  }, [addServiceNodeAtPosition, reactFlowInstance]);
+
   // Handle node deletion - convert child nodes to absolute positions when parent group is deleted
   const onNodesDelete = useCallback((deleted: any[]) => {
     const deletedGroupIds = deleted.filter(n => n.type === 'groupNode').map(n => n.id);
@@ -993,73 +1067,16 @@ function App() {
       const iconPath = event.dataTransfer.getData('iconPath');
       const iconName = event.dataTransfer.getData('iconName');
 
-      if (typeof type === 'undefined' || !type) {
-        return;
-      }
+      if (type !== 'azureNode' || !iconPath || !iconName) return;
 
       const position = reactFlowInstance.screenToFlowPosition({
         x: event.clientX,
         y: event.clientY,
       });
 
-      // Check if dropped inside a group
-      let parentGroup: Node | undefined = undefined;
-      const currentNodes = reactFlowInstance.getNodes();
-      
-      for (const node of currentNodes) {
-        if (node.type === 'groupNode') {
-          // Check if position is within group bounds
-          const groupX = node.position.x;
-          const groupY = node.position.y;
-          // Get dimensions from style first, then measured width/height, then defaults
-          const groupWidth = (node.style?.width as number) || node.width || 400;
-          const groupHeight = (node.style?.height as number) || node.height || 300;
-          
-          if (
-            position.x >= groupX &&
-            position.x <= groupX + groupWidth &&
-            position.y >= groupY &&
-            position.y <= groupY + groupHeight
-          ) {
-            parentGroup = node;
-            break; // Use first matching group
-          }
-        }
-      }
-
-      const newNode: Node = {
-        id: `${Date.now()}`,
-        type,
-        position: parentGroup ? {
-          // If inside group, position relative to group
-          x: position.x - parentGroup.position.x,
-          y: position.y - parentGroup.position.y,
-        } : position,
-        data: { 
-          label: iconName,
-          iconPath: iconPath,
-        },
-        parentNode: parentGroup?.id,
-        extent: parentGroup ? 'parent' : undefined,
-      };
-
-      setNodes((nds) => nds.concat(newNode));
-
-      // Initialize pricing asynchronously with current region
-      const currentRegion = getActiveRegion();
-      initializeNodePricing(iconName, currentRegion).then(pricing => {
-        if (pricing) {
-          setNodes((nds) => 
-            nds.map(n => 
-              n.id === newNode.id 
-                ? { ...n, data: { ...n.data, pricing } }
-                : n
-            )
-          );
-        }
-      }).catch(err => console.warn('Failed to initialize pricing:', err));
+      addServiceNodeAtPosition({ iconPath, iconName }, position);
     },
-    [reactFlowInstance, setNodes]
+    [addServiceNodeAtPosition, reactFlowInstance]
   );
 
   const exportDiagram = useCallback(async () => {
@@ -2760,10 +2777,23 @@ function App() {
       <header className={`app-header${isHeaderCollapsed ? ' header-collapsed' : ''}`}>
         <div className="header-content">
           <div className="header-brand">
-            <img src={microsoftLogoWhite} alt={t("Microsoft")} className="microsoft-logo" />
+            <div className="microsoft-logo" role="img" aria-label={t("Microsoft")}>
+              <span className="microsoft-symbol" aria-hidden="true">
+                <span className="microsoft-square microsoft-square-red" />
+                <span className="microsoft-square microsoft-square-green" />
+                <span className="microsoft-square microsoft-square-blue" />
+                <span className="microsoft-square microsoft-square-yellow" />
+              </span>
+              <span className="microsoft-wordmark" aria-hidden="true">Microsoft</span>
+            </div>
             <h1>{t("Azure Architecture Diagram Builder")}</h1>
           </div>
-          <div className="header-actions-wrapper">
+          <div
+            className="header-actions-wrapper"
+            id="application-toolbar"
+            role="region"
+            aria-label={t('toolbar.label')}
+          >
             {/* Row 1: Project-level actions */}
             <div className="header-actions">
               <div className="toolbar-group">
@@ -3505,7 +3535,8 @@ function App() {
             }}
             title={isHeaderCollapsed ? t('header.showToolbar') : t('header.hideToolbarTitle')}
             aria-label={isHeaderCollapsed ? t('header.showToolbar') : t('header.hideToolbar')}
-            aria-pressed={isHeaderCollapsed}
+            aria-controls="application-toolbar"
+            aria-expanded={!isHeaderCollapsed}
           >
             {isHeaderCollapsed ? <PanelTopOpen size={18} /> : <PanelTopClose size={18} />}
             <span>{isHeaderCollapsed ? t('header.showToolbar') : t('header.hideToolbar')}</span>
@@ -3514,7 +3545,10 @@ function App() {
       </header>
       
       <div className="workspace">
-        <IconPalette forceCollapsed={panelsCollapsedSignal > 0 ? panelsCollapsedSignal : undefined} />
+        <IconPalette
+          forceCollapsed={panelsCollapsedSignal > 0 ? panelsCollapsedSignal : undefined}
+          onAddIcon={handleAddService}
+        />
         
         <div className="canvas-container" ref={reactFlowWrapper}>
           <ReactFlow
@@ -3541,17 +3575,22 @@ function App() {
             attributionPosition="bottom-left"
           >
             <Controls />
-            <MiniMap
-              pannable
-              zoomable
-              position="bottom-right"
-              className="nav-minimap"
-              style={{ bottom: 84 }}
-              ariaLabel={t('canvas.miniMap')}
-              nodeColor="#60a5fa"
-              nodeStrokeColor="#3b82f6"
-              maskColor="rgba(30, 41, 59, 0.45)"
-            />
+            {nodes.length > 0 && (
+              <>
+                <div className="nav-minimap-caption">{t('canvas.miniMapCaption')}</div>
+                <MiniMap
+                  pannable
+                  zoomable
+                  position="bottom-right"
+                  className="nav-minimap"
+                  style={{ bottom: 84 }}
+                  ariaLabel={t('canvas.miniMap')}
+                  nodeColor="#60a5fa"
+                  nodeStrokeColor="#3b82f6"
+                  maskColor="rgba(30, 41, 59, 0.45)"
+                />
+              </>
+            )}
             <Background 
               variant={BackgroundVariant.Dots} 
               gap={20} 
@@ -3565,10 +3604,11 @@ function App() {
             {showCanvasHint && nodes.length > 0 && (
               <div className="canvas-nav-hint" role="note" aria-label={t("Canvas navigation tips")}>
                 <div className="canvas-nav-hint-tips">
-                  <span className="canvas-nav-hint-tip"><ZoomIn size={15} /> {' '}{t("Scroll to zoom in / out")}</span>
-                  <span className="canvas-nav-hint-sep" aria-hidden="true">{t("·")}</span>
-                  <span className="canvas-nav-hint-tip"><Hand size={15} /> {' '}{t("Right-click + drag to pan")}</span>
-                  <span className="canvas-nav-hint-sep" aria-hidden="true">{t("·")}</span>
+                  <span className="canvas-nav-hint-tip canvas-nav-hint-desktop"><ZoomIn size={15} /> {' '}{t("Scroll to zoom in / out")}</span>
+                  <span className="canvas-nav-hint-sep canvas-nav-hint-desktop" aria-hidden="true">{t("·")}</span>
+                  <span className="canvas-nav-hint-tip canvas-nav-hint-desktop"><Hand size={15} /> {' '}{t("Right-click + drag to pan")}</span>
+                  <span className="canvas-nav-hint-sep canvas-nav-hint-desktop" aria-hidden="true">{t("·")}</span>
+                  <span className="canvas-nav-hint-tip canvas-nav-hint-mobile"><Hand size={15} /> {' '}{t('canvas.touchNavigation')}</span>
                   <button
                     type="button"
                     className="canvas-nav-hint-fit"
@@ -3611,7 +3651,7 @@ function App() {
                   >
                     <MessagesSquare size={18} /> {' '}{t("Start with a conversation")}{' '}</button>
                   <span className="canvas-empty-cta-alt">
-                    {' '}{t("or use")}{' '}<strong>{t("Generate with AI")}</strong> {' '}{t("· or drag services from the left")}{' '}</span>
+                    {' '}{t("or use")}{' '}<strong>{t("Generate with AI")}</strong> {' '}{t("· or add services from the left panel")}{' '}</span>
                 </div>
               </div>
             )}
@@ -3719,13 +3759,15 @@ function App() {
               </div>
             )}
 
-            <TitleBlock
-              architectureName={titleBlockData.architectureName}
-              author={titleBlockData.author}
-              version={titleBlockData.version}
-              date={titleBlockData.date}
-              onUpdate={(data) => setTitleBlockData({ ...titleBlockData, ...data })}
-            />
+            {nodes.length > 0 && (
+              <TitleBlock
+                architectureName={titleBlockData.architectureName}
+                author={titleBlockData.author}
+                version={titleBlockData.version}
+                date={titleBlockData.date}
+                onUpdate={(data) => setTitleBlockData({ ...titleBlockData, ...data })}
+              />
+            )}
             {generatedWithModel && !focusMode && (
               <ModelBadge
                 modelName={generatedWithModel.name}

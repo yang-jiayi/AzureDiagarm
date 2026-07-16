@@ -8,16 +8,20 @@
   border-radius: 4px;
   font-family: 'Yu Gothic UI', 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
   box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
-  z-index: 1000;
+  z-index: 1250;
   transition: all 0.3s ease;
-  max-width: 95vw;
+  max-width: calc(100% - 24px);
 }
 
 .legend.collapsed {
+  left: 12px;
+  transform: none;
+  width: max-content;
   min-width: auto;
 }
 
 .legend-header {
+  width: 100%;
   background: #333;
   color: white;
   padding: 6px 12px;
@@ -29,10 +33,19 @@
   align-items: center;
   cursor: pointer;
   user-select: none;
+  border: 0;
+  border-radius: 0;
+  font: inherit;
+  text-align: left;
 }
 
 .legend-header:hover {
   background: #444;
+}
+
+.legend-header:focus-visible {
+  outline: 3px solid rgba(96, 165, 250, 0.65);
+  outline-offset: 2px;
 }
 
 .legend-title {
@@ -40,16 +53,19 @@
 }
 
 .legend-toggle {
-  font-size: 0.65rem;
   margin-left: 8px;
+  display: inline-flex;
 }
 
 .legend-content {
   padding: 10px 14px;
   display: flex;
   flex-direction: row;
+  flex-wrap: wrap;
   gap: 20px;
   align-items: flex-start;
+  max-height: min(55vh, 420px);
+  overflow: auto;
 }
 
 .legend-section {
@@ -221,6 +237,12 @@ body.dark-mode .legend-description span {
     overflow-y: auto;
     flex-direction: column;
     gap: 12px;
+  }
+
+  .legend.collapsed {
+    left: 8px;
+    width: max-content;
+    max-width: calc(100% - 168px);
   }
 
   .legend-section {

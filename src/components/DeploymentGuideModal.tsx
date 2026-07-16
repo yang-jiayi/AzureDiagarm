@@ -6,6 +6,7 @@ import { X, Download, Copy, Check, ChevronDown, ChevronUp, FileCode, Package, Cl
 import { DeploymentGuide, downloadDeploymentGuide, downloadBicepTemplate, downloadAllBicepTemplates, BicepModule } from '../services/deploymentGuideGenerator';
 import './DeploymentGuideModal.css';
 import { useLanguage } from '../i18n/LanguageContext';
+import { useEscapeKey } from '../hooks/useEscapeKey';
 
 interface DeploymentGuideModalProps {
   guide: DeploymentGuide | null;
@@ -19,6 +20,7 @@ const DeploymentGuideModal: React.FC<DeploymentGuideModalProps> = ({ guide, isOp
   const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
   const [expandedSections, setExpandedSections] = useState<Set<number>>(new Set([0]));
   const [expandedBicep, setExpandedBicep] = useState<Set<number>>(new Set([0]));
+  useEscapeKey(isOpen, onClose);
 
   if (!isOpen) return null;
 
@@ -64,10 +66,21 @@ const DeploymentGuideModal: React.FC<DeploymentGuideModalProps> = ({ guide, isOp
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal-content deployment-modal" onClick={(e) => e.stopPropagation()}>
+      <div
+        className="modal-content deployment-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-label={t("Deployment Guide")}
+        tabIndex={-1}
+        autoFocus
+        onClick={(e) => e.stopPropagation()}
+        onKeyDown={(event) => {
+          if (event.key === 'Escape') onClose();
+        }}
+      >
         <div className="modal-header">
           <h2>{t("📋 Deployment Guide")}</h2>
-          <button className="modal-close" onClick={onClose}>
+          <button className="modal-close" onClick={onClose} title={t("Close")} aria-label={t("Close")}>
             <X size={24} />
           </button>
         </div>

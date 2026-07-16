@@ -30,6 +30,7 @@ import { buildModificationPrompt } from '../services/modificationPrompt';
 import './AIArchitectureGenerator.css';
 import { useLanguage } from '../i18n/LanguageContext';
 import { localize, type LocalizedText } from '../i18n/localization';
+import { useEscapeKey } from '../hooks/useEscapeKey';
 import { readBooleanPreference, readLocalStorage, writeLocalStorage } from '../utils/safeStorage';
 
 type GenerationMode = 'topology' | 'reference' | 'blueprint' | 'both';
@@ -287,6 +288,7 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({ onGen
     cancelScheduledClose();
     setIsOpen(false);
   }, [cancelScheduledClose]);
+  useEscapeKey(isOpen, closeModal);
   const scheduleClose = useCallback(() => {
     cancelScheduledClose();
     closeTimerRef.current = window.setTimeout(() => {
@@ -663,7 +665,18 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({ onGen
 
       {isOpen && createPortal(
         <div className="modal-overlay" onClick={closeModal}>
-          <div className="modal-content ai-architecture-modal" onClick={(e) => e.stopPropagation()}>
+          <div
+            className="modal-content ai-architecture-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-label={t("AI Architecture Generator")}
+            tabIndex={-1}
+            autoFocus
+            onClick={(e) => e.stopPropagation()}
+            onKeyDown={(event) => {
+              if (event.key === 'Escape') closeModal();
+            }}
+          >
             <div className="modal-header">
               <div className="modal-title">
                 <Sparkles size={20} />

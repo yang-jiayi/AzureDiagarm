@@ -141,7 +141,8 @@ export function hardenArchitecture(
   // Front Door provides both a global load-balancer (clears single-region) and
   // an entry point for WAF (clears no-waf). We add a WAF Policy alongside it.
   const needFrontDoor = patterns.has('no-waf') || patterns.has('single-region');
-  if (needFrontDoor && !firstOf(FRONTEND_TYPES)) {
+  const hasFrontDoor = services.some(s => norm(s.type) === 'azure front door');
+  if (needFrontDoor && !hasFrontDoor) {
     const entry = firstOf(GATEWAY_TYPES) ?? firstOf(COMPUTE_TYPES);
     const addedFd = addService(
       { name: 'Front Door', type: 'Azure Front Door', description: 'Global HTTP entry + failover' },

@@ -11,10 +11,22 @@ type ExtraTranslationKey =
   | 'header.showToolbar'
   | 'header.hideToolbar'
   | 'header.hideToolbarTitle'
+  | 'toolbar.label'
+  | 'palette.searchLabel'
+  | 'palette.addService'
+  | 'palette.addServiceHint'
+  | 'palette.interactionHint'
+  | 'legend.showDetails'
+  | 'legend.hideDetails'
+  | 'title.showDetails'
+  | 'title.hideDetails'
+  | 'title.editDetails'
   | 'pricing.totalMonthly'
   | 'pricing.stale'
   | 'pricing.current'
   | 'canvas.miniMap'
+  | 'canvas.miniMapCaption'
+  | 'canvas.touchNavigation'
   | 'error.deploymentGuide';
 
 export type TranslationKey = StaticTranslationKey | ExtraTranslationKey;
@@ -28,10 +40,22 @@ const extraEnglish: Record<ExtraTranslationKey, string> = {
   'header.showToolbar': 'Show the toolbar',
   'header.hideToolbar': 'Hide the toolbar',
   'header.hideToolbarTitle': 'Hide the toolbar for more canvas space',
+  'toolbar.label': 'Application toolbar',
+  'palette.searchLabel': 'Search Azure services',
+  'palette.addService': 'Add {service} to the canvas',
+  'palette.addServiceHint': 'Add {service}; drag to choose an exact position',
+  'palette.interactionHint': 'Click or tap to add a service. Drag to place it precisely.',
+  'legend.showDetails': 'Show legend details',
+  'legend.hideDetails': 'Hide legend details',
+  'title.showDetails': 'Show diagram details',
+  'title.hideDetails': 'Hide diagram details',
+  'title.editDetails': 'Edit diagram details',
   'pricing.totalMonthly': 'Total estimated monthly cost for all services ({term})',
   'pricing.stale': 'Azure pricing data is {age} (as of {date}). Refresh with "npm run pricing:refresh" so estimates stay accurate.',
   'pricing.current': 'Azure pricing data as of {date} ({age}).',
   'canvas.miniMap': 'Mini-map — drag or scroll to navigate the canvas',
+  'canvas.miniMapCaption': 'Drag or scroll to navigate',
+  'canvas.touchNavigation': 'Drag to pan and pinch to zoom',
   'error.deploymentGuide': 'Failed to generate deployment guide: {message}',
 };
 
@@ -42,10 +66,22 @@ const extraJapanese: Record<ExtraTranslationKey, string> = {
   'header.showToolbar': 'ツールバーを表示',
   'header.hideToolbar': 'ツールバーを非表示',
   'header.hideToolbarTitle': 'キャンバスを広げるためツールバーを非表示',
+  'toolbar.label': 'アプリケーション ツールバー',
+  'palette.searchLabel': 'Azure サービスを検索',
+  'palette.addService': '{service} をキャンバスに追加',
+  'palette.addServiceHint': '{service} を追加します。ドラッグすると位置を指定できます',
+  'palette.interactionHint': 'クリックまたはタップで追加できます。ドラッグすると正確な位置に配置できます。',
+  'legend.showDetails': '凡例の詳細を表示',
+  'legend.hideDetails': '凡例の詳細を非表示',
+  'title.showDetails': '図の詳細を表示',
+  'title.hideDetails': '図の詳細を非表示',
+  'title.editDetails': '図の詳細を編集',
   'pricing.totalMonthly': '全サービスの月額見積もり合計（{term}）',
   'pricing.stale': 'Azure の価格データは {age} 時点（{date} 現在）です。見積もりの精度を保つには "npm run pricing:refresh" で更新してください。',
   'pricing.current': 'Azure の価格データ: {date} 現在（{age}）。',
   'canvas.miniMap': 'Mini-map — ドラッグまたはスクロールしてキャンバスを移動',
+  'canvas.miniMapCaption': 'ドラッグまたはスクロールして移動',
+  'canvas.touchNavigation': 'ドラッグで移動・ピンチで拡大縮小',
   'error.deploymentGuide': 'Deployment Guide の生成に失敗しました: {message}',
 };
 
@@ -77,6 +113,25 @@ const exactJapanese: Readonly<Record<string, string>> = {
   'Architecture Prompt': 'アーキテクチャのプロンプト',
   'Architecture Workflow': 'アーキテクチャのワークフロー',
   'Azure Services': 'Azure サービス',
+  '· or add services from the left panel': '・左側のパネルからサービスを追加',
+  '⏳ Applying recommendations...': '⏳ 推奨事項を適用中...',
+  'Analyzing architecture against Azure Well-Architected Framework...': 'Azure Well-Architected Framework の基準でアーキテクチャを分析中...',
+  'Apply selected layout preset': '選択したレイアウト プリセットを適用',
+  'Custom pricing': 'カスタム価格',
+  'Export as SVG (vector format)': 'SVG（ベクター形式）としてエクスポート',
+  'Export for Draw.io / diagrams.net (editable diagram format)': 'Draw.io / diagrams.net 向けにエクスポート（編集可能な図の形式）',
+  'Failed to delete version': 'バージョンの削除に失敗しました',
+  'Failed to regenerate architecture. Please try again.': 'アーキテクチャの再生成に失敗しました。もう一度お試しください。',
+  'Failed to restore version': 'バージョンの復元に失敗しました',
+  'New Comparison': '新規比較',
+  'Reference architecture diagram': '参照アーキテクチャ図',
+  'Save Critique': '批評を保存',
+  'Save JSON': 'JSON を保存',
+  'Save Markdown': 'Markdown を保存',
+  'Save Snapshot': 'スナップショットを保存',
+  'Starting avatar session…': 'アバター セッションを開始中…',
+  'Stop narration': 'ナレーションを停止',
+  'Successfully parsed': '解析が完了しました',
   'Azure region': 'Azure リージョン',
   'Azure Well-Architected Framework': 'Azure Well-Architected Framework',
   'Blueprint Architecture': 'Blueprint Architecture',
@@ -956,6 +1011,36 @@ const phraseJapanese: ReadonlyArray<readonly [string, string]> = [
   ['Close', '閉じる'],
 ];
 
+function replacePhraseAtBoundaries(input: string, english: string, japanese: string): string {
+  const startsWithWord = /^[A-Za-z0-9]/.test(english);
+  const endsWithWord = /[A-Za-z0-9]$/.test(english);
+  let cursor = 0;
+  let output = '';
+
+  while (cursor < input.length) {
+    const index = input.indexOf(english, cursor);
+    if (index === -1) {
+      output += input.slice(cursor);
+      break;
+    }
+
+    const before = index > 0 ? input[index - 1] : '';
+    const after = input[index + english.length] ?? '';
+    const hasStartBoundary = !startsWithWord || !/[A-Za-z0-9]/.test(before);
+    const hasEndBoundary = !endsWithWord || !/[A-Za-z0-9]/.test(after);
+
+    if (hasStartBoundary && hasEndBoundary) {
+      output += input.slice(cursor, index) + japanese;
+      cursor = index + english.length;
+    } else {
+      output += input.slice(cursor, index + 1);
+      cursor = index + 1;
+    }
+  }
+
+  return output;
+}
+
 function translateJapanese(key: StaticTranslationKey): string {
   const exact = exactJapanese[key];
   if (exact !== undefined) return exact;
@@ -968,7 +1053,7 @@ function translateJapanese(key: StaticTranslationKey): string {
   }
   let result: string = key;
   for (const [english, japanese] of phraseJapanese) {
-    if (result.includes(english)) result = result.split(english).join(japanese);
+    result = replacePhraseAtBoundaries(result, english, japanese);
   }
   return result;
 }

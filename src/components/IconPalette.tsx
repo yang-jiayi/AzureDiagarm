@@ -2,13 +2,14 @@
 // Licensed under the MIT License.
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Search, ChevronDown, ChevronRight, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
+import { Search, ChevronDown, ChevronRight, PanelLeftClose, PanelLeftOpen, Plus } from 'lucide-react';
 import { iconCategories, loadIconsFromCategory, AzureIcon, loadIcon } from '../utils/iconLoader';
 import './IconPalette.css';
 import { useLanguage } from '../i18n/LanguageContext';
 
 interface IconPaletteProps {
   forceCollapsed?: number;
+  onAddIcon?: (icon: AzureIcon) => void;
 }
 
 function iconMatchesSearch(icon: AzureIcon, term: string): boolean {
@@ -16,7 +17,7 @@ function iconMatchesSearch(icon: AzureIcon, term: string): boolean {
     .some(value => value.toLowerCase().includes(term));
 }
 
-const IconPalette: React.FC<IconPaletteProps> = ({ forceCollapsed }) => {
+const IconPalette: React.FC<IconPaletteProps> = ({ forceCollapsed, onAddIcon }) => {
   const { t, translate } = useLanguage();
   const [isCollapsed, setIsCollapsed] = useState(
     () => typeof window !== 'undefined' && window.matchMedia('(max-width: 640px)').matches
@@ -106,6 +107,13 @@ const IconPalette: React.FC<IconPaletteProps> = ({ forceCollapsed }) => {
     event.dataTransfer.effectAllowed = 'move';
   };
 
+  const addIconToCanvas = (icon: AzureIcon) => {
+    onAddIcon?.(icon);
+    if (window.matchMedia('(max-width: 640px)').matches) {
+      setIsCollapsed(true);
+    }
+  };
+
   const filteredCategories = useMemo(() => iconCategories.filter(cat => {
     if (searchTerm === '') return true;
     const term = searchTerm.toLowerCase();
@@ -177,14 +185,16 @@ const IconPalette: React.FC<IconPaletteProps> = ({ forceCollapsed }) => {
               </button>
             </div>
             <div className="search-box">
-              <Search size={16} />
+              <Search size={16} aria-hidden="true" />
               <input
                 type="text"
                 placeholder={t("Search services...")}
+                aria-label={t('palette.searchLabel')}
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
               />
             </div>
+            <p className="palette-help">{t('palette.interactionHint')}</p>
           </div>
 
           <div className="palette-content" id="azure-services-palette-content">
@@ -219,13 +229,19 @@ const IconPalette: React.FC<IconPaletteProps> = ({ forceCollapsed }) => {
                         filteredIcons.map((icon) => {
                           const iconUrl = iconUrls.get(icon.path);
                           return (
-                            <div
+                            <button
+                              type="button"
                               key={icon.id}
                               className="icon-item"
                               draggable
                               onDragStart={(e) => onDragStart(e, icon)}
-                              title={icon.name}
+                              onClick={() => addIconToCanvas(icon)}
+                              aria-label={t('palette.addService', { service: icon.name })}
+                              title={t('palette.addServiceHint', { service: icon.name })}
                             >
+                              <span className="icon-add-indicator" aria-hidden="true">
+                                <Plus size={12} />
+                              </span>
                               {iconUrl ? (
                                 <img
                                   src={iconUrl}
@@ -240,7 +256,7 @@ const IconPalette: React.FC<IconPaletteProps> = ({ forceCollapsed }) => {
                                 </div>
                               )}
                               <span className="icon-label">{icon.name}</span>
-                            </div>
+                            </button>
                           );
                         })
                       ) : (

@@ -8,6 +8,7 @@ import './VersionHistoryModal.css';
 import { useLanguage } from '../i18n/LanguageContext';
 import { localize } from '../i18n/localization';
 import { encodeUtf8Base64 } from '../utils/base64Utf8';
+import { useEscapeKey } from '../hooks/useEscapeKey';
 
 interface VersionHistoryModalProps {
   isOpen: boolean;
@@ -150,16 +151,28 @@ const VersionHistoryModal: React.FC<VersionHistoryModalProps> = ({
     return formatDate(timestamp);
   };
 
+  useEscapeKey(isOpen, onClose);
   if (!isOpen) return null;
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal-content version-history-modal" onClick={(e) => e.stopPropagation()}>
+      <div
+        className="modal-content version-history-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-label={t("Version History")}
+        tabIndex={-1}
+        autoFocus
+        onClick={(e) => e.stopPropagation()}
+        onKeyDown={(event) => {
+          if (event.key === 'Escape') onClose();
+        }}
+      >
         <div className="modal-header">
           <h2>
             <Clock size={24} />
             {' '}{t("Version History")}{' '}</h2>
-          <button className="modal-close" onClick={onClose} title={t("Close")}>
+          <button className="modal-close" onClick={onClose} title={t("Close")} aria-label={t("Close")}>
             <X size={24} />
           </button>
         </div>

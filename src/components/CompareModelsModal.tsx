@@ -18,6 +18,7 @@ import {
 } from '../stores/modelSettingsStore';
 import { useLanguage } from '../i18n/LanguageContext';
 import { localize, type LocalizedText } from '../i18n/localization';
+import { useEscapeKey } from '../hooks/useEscapeKey';
 
 /** Abbreviate model name for filenames */
 function abbreviateModelForFile(model: ModelType): string {
@@ -675,17 +676,29 @@ const CompareModelsModal: React.FC<CompareModelsModalProps> = ({ isOpen, onClose
     ? Math.max(...successResults.map(r => (r.serviceCount || 0) + (r.connectionCount || 0) + (r.workflowSteps || 0)))
     : 0;
 
+  useEscapeKey(isOpen, onClose);
   if (!isOpen) return null;
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="compare-modal" onClick={e => e.stopPropagation()}>
+      <div
+        className="compare-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-label={t("Compare Models")}
+        tabIndex={-1}
+        autoFocus
+        onClick={e => e.stopPropagation()}
+        onKeyDown={(event) => {
+          if (event.key === 'Escape') onClose();
+        }}
+      >
         <div className="modal-header">
           <div className="modal-title">
             <GitCompare size={20} />
             <h2>{t("Compare Models")}</h2>
           </div>
-          <button className="modal-close" onClick={onClose}>
+          <button className="modal-close" onClick={onClose} title={t("Close")} aria-label={t("Close")}>
             <X size={20} />
           </button>
         </div>

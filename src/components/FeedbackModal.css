@@ -216,6 +216,20 @@
   transform: translateY(0);
 }
 
+.feedback-fab:focus-visible {
+  outline: 3px solid rgba(96, 165, 250, 0.75);
+  outline-offset: 3px;
+}
+
+@media (max-width: 640px) {
+  .feedback-fab {
+    right: 12px;
+    bottom: 12px;
+    padding: 9px 13px;
+    font-size: 13px;
+  }
+}
+
 /* One-time attention pulse (triggered ~15s after load, then settles).
    Runs a couple of gentle bounces — never loops. */
 .feedback-fab.pulse-once {

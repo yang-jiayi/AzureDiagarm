@@ -1,23 +1,28 @@
 .title-block {
   position: absolute;
-  bottom: 20px;
-  left: 380px;
+  top: 64px;
+  right: 16px;
   background: white;
   border: 2px solid #333;
   border-radius: 4px;
   font-family: 'Yu Gothic UI', 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
   box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
-  z-index: 1002;
+  z-index: 7;
   min-width: 320px;
+  max-width: min(360px, calc(100% - 32px));
   user-select: none;
-  cursor: grab;
   transition: box-shadow 0.2s;
+}
+
+.title-block.collapsed {
+  min-width: 210px;
+  width: max-content;
 }
 
 .title-block.dragging {
   box-shadow: 0 8px 16px rgba(0, 0, 0, 0.3);
   cursor: grabbing;
-  z-index: 1003;
+  z-index: 8;
 }
 
 .title-block-header {
@@ -27,12 +32,47 @@
   font-size: 0.75rem;
   font-weight: 700;
   letter-spacing: 0.5px;
-  text-align: center;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  text-align: left;
   border-bottom: 2px solid #333;
+  cursor: grab;
+  touch-action: none;
 }
 
 .title-block-label {
   display: block;
+  flex: 1;
+}
+
+.title-block-toggle {
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.12);
+  color: #ffffff;
+  cursor: pointer;
+}
+
+.title-block-toggle:hover {
+  background: rgba(255, 255, 255, 0.24);
+}
+
+.title-block-toggle:focus-visible,
+.title-block-display:focus-visible {
+  outline: 3px solid rgba(0, 120, 212, 0.4);
+  outline-offset: 2px;
+}
+
+.title-block.dragging .title-block-header {
+  cursor: grabbing;
 }
 
 .title-block-content {
@@ -59,6 +99,7 @@
   flex: 1;
   color: #333;
   font-weight: 400;
+  overflow-wrap: anywhere;
 }
 
 .title-block-hint {
@@ -200,4 +241,30 @@ body.dark-mode .btn-cancel {
 
 body.dark-mode .btn-cancel:hover {
   background: #243a57;
+}
+
+@media (max-width: 640px) {
+  .title-block {
+    top: 58px;
+    right: 8px;
+    min-width: 0;
+    width: min(300px, calc(100% - 16px));
+    max-width: calc(100% - 16px);
+  }
+
+  .title-block.collapsed {
+    width: max-content;
+    max-width: calc(100% - 16px);
+  }
+
+  .title-block-content {
+    padding: 10px;
+    gap: 6px;
+  }
+}
+
+@media (max-height: 480px) {
+  .title-block {
+    top: 56px;
+  }
 }

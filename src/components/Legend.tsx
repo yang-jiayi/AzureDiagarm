@@ -2,9 +2,12 @@
 // Licensed under the MIT License.
 
 import React, { useState, useEffect } from 'react';
-import { Zap, DollarSign } from 'lucide-react';
+import { Zap, DollarSign, ChevronDown, ChevronUp } from 'lucide-react';
 import './Legend.css';
 import { useLanguage } from '../i18n/LanguageContext';
+import { readLocalStorage, writeLocalStorage } from '../utils/safeStorage';
+
+const LEGEND_COLLAPSED_STORAGE_KEY = 'azure-diagram-builder.legendCollapsed.v1';
 
 interface LegendProps {
   forceCollapsed?: number;
@@ -12,16 +15,17 @@ interface LegendProps {
 
 const Legend: React.FC<LegendProps> = ({ forceCollapsed }) => {
   const { t } = useLanguage();
-  const [isCollapsed, setIsCollapsed] = useState(
-    () => typeof window !== 'undefined' && window.matchMedia('(max-width: 640px)').matches
-  );
+  const [isCollapsed, setIsCollapsed] = useState(() => {
+    const stored = readLocalStorage(LEGEND_COLLAPSED_STORAGE_KEY);
+    return stored === null ? true : stored === '1';
+  });
 
   useEffect(() => {
     if (forceCollapsed) setIsCollapsed(true);
   }, [forceCollapsed]);
 
   useEffect(() => {
-    const mobileViewport = window.matchMedia('(max-width: 640px)');
+    const mobileViewport = window.matchMedia('(max-width: 640px), (max-height: 480px)');
     const collapseForMobile = (event: MediaQueryListEvent) => {
       if (event.matches) setIsCollapsed(true);
     };
@@ -29,15 +33,32 @@ const Legend: React.FC<LegendProps> = ({ forceCollapsed }) => {
     return () => mobileViewport.removeEventListener('change', collapseForMobile);
   }, []);
 
+  const toggleLegend = () => {
+    setIsCollapsed((current) => {
+      const next = !current;
+      writeLocalStorage(LEGEND_COLLAPSED_STORAGE_KEY, next ? '1' : '0');
+      return next;
+    });
+  };
+
   return (
-    <div className={`legend ${isCollapsed ? 'collapsed' : ''}`}>
-      <div className="legend-header" onClick={() => setIsCollapsed(!isCollapsed)}>
+    <section className={`legend ${isCollapsed ? 'collapsed' : ''}`} aria-label={t("LEGEND")}>
+      <button
+        type="button"
+        className="legend-header"
+        onClick={toggleLegend}
+        aria-expanded={!isCollapsed}
+        aria-controls="diagram-legend-content"
+        title={isCollapsed ? t('legend.showDetails') : t('legend.hideDetails')}
+      >
         <span className="legend-title">{t("LEGEND")}</span>
-        <span className="legend-toggle">{isCollapsed ? '▲' : '▼'}</span>
-      </div>
+        <span className="legend-toggle" aria-hidden="true">
+          {isCollapsed ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
+        </span>
+      </button>
       
       {!isCollapsed && (
-        <div className="legend-content">
+        <div className="legend-content" id="diagram-legend-content">
           <div className="legend-section">
             <div className="legend-section-title">{t("Connection Types")}</div>
             
@@ -201,7 +222,7 @@ const Legend: React.FC<LegendProps> = ({ forceCollapsed }) => {
           </div>
         </div>
       )}
-    </div>
+    </section>
   );
 };
 

@@ -96,6 +96,13 @@
   background: #fafafa;
 }
 
+.palette-help {
+  margin: 0.55rem 0 0;
+  color: #5f6b76;
+  font-size: 0.7rem;
+  line-height: 1.4;
+}
+
 .palette-header h2 {
   font-size: 1.125rem;
   font-weight: 600;
@@ -206,6 +213,10 @@ body.dark-mode .search-box input::placeholder {
   color: #a0a0a0;
 }
 
+body.dark-mode .palette-help {
+  color: #a0bfdf;
+}
+
 .icons-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(70px, 1fr));
@@ -214,14 +225,21 @@ body.dark-mode .search-box input::placeholder {
 }
 
 .icon-item {
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
+  width: 100%;
+  min-width: 0;
   gap: 0.25rem;
   padding: 0.5rem;
   border: 1px solid #e0e0e0;
   border-radius: 4px;
   cursor: grab;
+  appearance: none;
+  font: inherit;
+  text-align: center;
+  color: inherit;
   transition: all 0.15s;
   background: white;
 }
@@ -234,6 +252,36 @@ body.dark-mode .search-box input::placeholder {
 
 .icon-item:active {
   cursor: grabbing;
+}
+
+.icon-item:focus-visible {
+  outline: 3px solid rgba(0, 120, 212, 0.35);
+  outline-offset: 2px;
+  border-color: #0078d4;
+}
+
+.icon-add-indicator {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: #0078d4;
+  color: #ffffff;
+  box-shadow: 0 2px 5px rgba(0, 90, 158, 0.3);
+  opacity: 0;
+  transform: scale(0.85);
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+
+.icon-item:hover .icon-add-indicator,
+.icon-item:focus-visible .icon-add-indicator {
+  opacity: 1;
+  transform: scale(1);
 }
 
 .icon-image {
@@ -302,11 +350,26 @@ body.dark-mode .icon-placeholder {
 }
 
 @media (max-width: 640px) {
+  .icon-palette:not(.collapsed) {
+    position: absolute;
+    inset: 0 auto 0 0;
+    width: min(88vw, 320px);
+    min-width: min(88vw, 320px);
+    flex-basis: min(88vw, 320px);
+    z-index: 1100;
+    box-shadow: 10px 0 28px rgba(15, 23, 42, 0.28);
+  }
+
   .palette-open-toggle {
     top: 10px;
     min-height: 40px;
     padding: 0.5rem 0.75rem 0.5rem 0.6rem;
     font-size: 0.75rem;
+  }
+
+  .icon-add-indicator {
+    opacity: 1;
+    transform: scale(1);
   }
 }
 

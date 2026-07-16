@@ -13,6 +13,7 @@ export const translationKeys = [
   ".",
   "·",
   "· or drag services from the left",
+  "· or add services from the left panel",
   "(",
   "(no pricing data on diagram)",
   "(screenshot, whiteboard photo, or export from other tools) and AI will analyze it to create your architecture.",

@@ -12,6 +12,7 @@
     "sync:pricing": "node scripts/sync-pricing-data.mjs",
     "prebuild": "npm run sync:icons && npm run sync:pricing",
     "build": "tsc && node scripts/copy-build-assets.mjs",
+    "test": "node --test test/*.test.js",
     "start": "node dist/index.js",
     "start:http": "node dist/index.js --http",
     "dev": "tsc --watch"
