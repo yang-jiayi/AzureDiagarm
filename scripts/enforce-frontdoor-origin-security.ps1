@@ -81,14 +81,23 @@ $serviceTagsUrl = (
     "/providers/Microsoft.Network/locations/$serviceTagLocation/serviceTags" +
     '?api-version=2024-05-01'
 )
-$frontDoorTagJson = Invoke-AzCli @(
-    'rest',
-    '--method', 'get',
-    '--url', $serviceTagsUrl,
-    '--query', "values[?name == 'AzureFrontDoor.Backend'] | [0]",
-    '--output', 'json'
+$armToken = Invoke-AzCli @(
+    'account', 'get-access-token',
+    '--resource', 'https://management.azure.com/',
+    '--query', 'accessToken',
+    '--output', 'tsv'
 )
-$frontDoorTag = $frontDoorTagJson | ConvertFrom-Json
+
+if ([string]::IsNullOrWhiteSpace($armToken)) {
+    throw 'Unable to acquire an Azure Resource Manager token for service-tag discovery.'
+}
+
+$serviceTags = Invoke-RestMethod -Method Get -Uri $serviceTagsUrl -Headers @{
+    Authorization = "Bearer $($armToken.Trim())"
+}
+$frontDoorTag = $serviceTags.values |
+    Where-Object { $_.name -eq 'AzureFrontDoor.Backend' } |
+    Select-Object -First 1
 
 if ($null -eq $frontDoorTag) {
     throw "AzureFrontDoor.Backend was not present in the $serviceTagLocation service tag response."
