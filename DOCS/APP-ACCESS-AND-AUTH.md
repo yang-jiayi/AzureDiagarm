@@ -53,6 +53,11 @@ Apps removes external values and injects the authenticated principal headers.
   Front Door profile cannot use the shared backend address space to bypass WAF.
 - The deployment workflow refreshes the origin allowlist from Azure service
   tags and verifies that direct origin access still returns HTTP 403.
+- The GitHub OIDC service principal `azurediagarm-github-deploy` has the custom
+  `AzureDiagarm Service Tag Reader` role at the target subscription. That role
+  grants only `Microsoft.Resources/subscriptions/locations/read` and
+  `Microsoft.Network/locations/serviceTags/read`, which are required to refresh
+  the allowlist without granting subscription-wide Reader access.
 - Front Door access, health-probe, WAF, and metric diagnostics are sent to the
   `azurediagarm-logs` Log Analytics workspace.
 
@@ -144,6 +149,13 @@ az role assignment list `
 Inspect origin isolation and Front Door diagnostics:
 
 ```powershell
+az role assignment list `
+  --subscription f2c0fe9a-0171-42ed-803d-3e78322545a1 `
+  --assignee-object-id 5ef2bf3e-436a-46c4-929a-b31c50ef2881 `
+  --role "AzureDiagarm Service Tag Reader" `
+  --scope /subscriptions/f2c0fe9a-0171-42ed-803d-3e78322545a1 `
+  --output table
+
 az containerapp ingress access-restriction list `
   --subscription f2c0fe9a-0171-42ed-803d-3e78322545a1 `
   --resource-group AzureDiagarm_rg `

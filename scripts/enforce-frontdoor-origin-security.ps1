@@ -100,7 +100,11 @@ $frontDoorTag = $serviceTags.values |
     Select-Object -First 1
 
 if ($null -eq $frontDoorTag) {
-    throw "AzureFrontDoor.Backend was not present in the $serviceTagLocation service tag response."
+    throw (
+        "AzureFrontDoor.Backend was not present in the $serviceTagLocation service tag response. " +
+        'Verify that the deployment identity has Microsoft.Network/locations/serviceTags/read ' +
+        'at subscription scope.'
+    )
 }
 
 $frontDoorIpv4Ranges = @(
