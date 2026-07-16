@@ -1,0 +1,438 @@
+.access-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2600;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(7, 20, 37, 0.62);
+  backdrop-filter: blur(5px);
+}
+
+.access-modal {
+  width: min(680px, 100%);
+  max-height: min(760px, calc(100vh - 40px));
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid #d7e2ee;
+  border-radius: 18px;
+  background: #fff;
+  color: #172033;
+  box-shadow: 0 26px 80px rgba(7, 36, 68, 0.3);
+}
+
+.access-modal-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 24px 26px 18px;
+  border-bottom: 1px solid #e4ebf3;
+  background: linear-gradient(145deg, #f8fbff, #eef6ff);
+}
+
+.access-modal-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: #0067b8;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.access-modal-header h2 {
+  margin: 8px 0 5px;
+  color: #12365d;
+  font-size: 24px;
+}
+
+.access-modal-header p {
+  margin: 0;
+  color: #52657a;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.access-icon-button,
+.access-refresh-button,
+.access-remove-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  cursor: pointer;
+}
+
+.access-icon-button {
+  width: 36px;
+  height: 36px;
+  flex: 0 0 36px;
+  border-radius: 9px;
+  background: transparent;
+  color: #52657a;
+}
+
+.access-icon-button:hover:not(:disabled) {
+  background: #deebf8;
+  color: #12365d;
+}
+
+.access-admin-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 20px 26px 0;
+  padding: 13px 15px;
+  border: 1px solid #cfe1f4;
+  border-radius: 11px;
+  background: #f5faff;
+}
+
+.access-admin-summary > div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.access-admin-summary span {
+  color: #63758a;
+  font-size: 11px;
+}
+
+.access-admin-summary strong {
+  overflow: hidden;
+  color: #173b63;
+  font-size: 14px;
+  text-overflow: ellipsis;
+}
+
+.access-admin-summary a {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  color: #0067b8;
+  font-size: 12px;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.access-add-form {
+  padding: 20px 26px 14px;
+}
+
+.access-add-form label {
+  display: block;
+  margin-bottom: 7px;
+  color: #243b55;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.access-add-form > div {
+  display: flex;
+  gap: 9px;
+}
+
+.access-add-form input {
+  min-width: 0;
+  min-height: 42px;
+  flex: 1;
+  padding: 9px 12px;
+  border: 1px solid #b9c8d8;
+  border-radius: 8px;
+  font: inherit;
+  font-size: 14px;
+}
+
+.access-add-form input:focus {
+  outline: 2px solid #79b8ef;
+  outline-offset: 1px;
+  border-color: #0078d4;
+}
+
+.access-add-form button {
+  min-height: 42px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 9px 16px;
+  border: 0;
+  border-radius: 8px;
+  background: #0078d4;
+  color: #fff;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.access-add-form button:hover:not(:disabled) {
+  background: #005a9e;
+}
+
+.access-add-form button:disabled,
+.access-icon-button:disabled,
+.access-refresh-button:disabled,
+.access-remove-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.access-message {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0 26px 14px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.access-message.error {
+  border: 1px solid #f0b7b7;
+  background: #fff1f1;
+  color: #9b1c1c;
+}
+
+.access-message.success {
+  border: 1px solid #9fd7af;
+  background: #effbf2;
+  color: #176b32;
+}
+
+.access-list-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 26px 10px;
+}
+
+.access-list-heading > div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.access-list-heading h3 {
+  margin: 0;
+  color: #243b55;
+  font-size: 15px;
+}
+
+.access-list-heading span {
+  min-width: 24px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: #e7f2fc;
+  color: #0067b8;
+  font-size: 11px;
+  font-weight: 700;
+  text-align: center;
+}
+
+.access-refresh-button {
+  gap: 6px;
+  padding: 6px 9px;
+  border-radius: 7px;
+  background: transparent;
+  color: #52657a;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.access-refresh-button:hover:not(:disabled) {
+  background: #eef4fa;
+  color: #173b63;
+}
+
+.access-user-list {
+  min-height: 130px;
+  overflow-y: auto;
+  margin: 0 26px 24px;
+  border: 1px solid #dce5ef;
+  border-radius: 11px;
+}
+
+.access-user-row {
+  min-height: 62px;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 10px 12px;
+  border-bottom: 1px solid #e7edf4;
+}
+
+.access-user-row:last-child {
+  border-bottom: 0;
+}
+
+.access-user-avatar {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  flex: 0 0 34px;
+  border-radius: 50%;
+  background: #ddecfa;
+  color: #005a9e;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.access-user-details {
+  min-width: 0;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.access-user-details strong {
+  overflow: hidden;
+  color: #243b55;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.access-user-details span {
+  color: #718096;
+  font-size: 11px;
+}
+
+.access-admin-badge {
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: #e5f3ff;
+  color: #0067b8;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.access-remove-button {
+  width: 34px;
+  height: 34px;
+  flex: 0 0 34px;
+  border-radius: 8px;
+  background: transparent;
+  color: #a52a2a;
+}
+
+.access-remove-button:hover:not(:disabled) {
+  background: #fff0f0;
+}
+
+.access-empty {
+  display: grid;
+  min-height: 130px;
+  place-items: center;
+  padding: 20px;
+  color: #718096;
+  font-size: 13px;
+}
+
+.spinning {
+  animation: access-spin 0.9s linear infinite;
+}
+
+@keyframes access-spin {
+  to { transform: rotate(360deg); }
+}
+
+body.dark-mode .access-modal {
+  border-color: #334963;
+  background: #172536;
+  color: #e6edf6;
+}
+
+body.dark-mode .access-modal-header {
+  border-color: #334963;
+  background: linear-gradient(145deg, #1d3046, #172536);
+}
+
+body.dark-mode .access-modal-header h2,
+body.dark-mode .access-user-details strong,
+body.dark-mode .access-list-heading h3,
+body.dark-mode .access-add-form label {
+  color: #f1f6fb;
+}
+
+body.dark-mode .access-modal-header p,
+body.dark-mode .access-user-details span {
+  color: #aebed0;
+}
+
+body.dark-mode .access-admin-summary {
+  border-color: #3a5878;
+  background: #1b3047;
+}
+
+body.dark-mode .access-admin-summary strong {
+  color: #e8f3ff;
+}
+
+body.dark-mode .access-add-form input {
+  border-color: #4c6076;
+  background: #101c2a;
+  color: #f1f6fb;
+}
+
+body.dark-mode .access-user-list {
+  border-color: #3b4f65;
+}
+
+body.dark-mode .access-user-row {
+  border-color: #33475d;
+}
+
+@media (max-width: 600px) {
+  .access-modal-overlay {
+    align-items: end;
+    padding: 0;
+  }
+
+  .access-modal {
+    max-height: 92vh;
+    border-radius: 18px 18px 0 0;
+  }
+
+  .access-modal-header,
+  .access-add-form {
+    padding-right: 18px;
+    padding-left: 18px;
+  }
+
+  .access-admin-summary,
+  .access-message,
+  .access-user-list {
+    margin-right: 18px;
+    margin-left: 18px;
+  }
+
+  .access-list-heading {
+    padding-right: 18px;
+    padding-left: 18px;
+  }
+
+  .access-add-form > div {
+    flex-direction: column;
+  }
+
+  .access-add-form button {
+    justify-content: center;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spinning {
+    animation: none;
+  }
+}

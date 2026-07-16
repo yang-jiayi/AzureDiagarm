@@ -1,5 +1,7 @@
 .icon-palette {
   width: 300px;
+  min-width: 300px;
+  flex: 0 0 300px;
   background: white;
   border-right: 1px solid #e0e0e0;
   display: flex;
@@ -7,53 +9,85 @@
   height: 100%;
   overflow: hidden;
   position: relative;
-  transition: width 0.3s ease;
+  transition: width 0.18s ease-out, min-width 0.18s ease-out, flex-basis 0.18s ease-out;
 }
 
 .icon-palette.collapsed {
-  width: 40px;
+  width: 0;
+  min-width: 0;
+  flex-basis: 0;
   overflow: visible;
+  border-right: 0;
 }
 
-.collapse-toggle {
+.palette-open-toggle {
   position: absolute;
-  top: 50%;
-  right: -18px;
-  transform: translateY(-50%);
-  width: 36px;
-  height: 60px;
+  top: 16px;
+  left: 0;
+  width: max-content;
+  min-height: 42px;
+  padding: 0.55rem 0.85rem 0.55rem 0.65rem;
   background: #0078d4;
-  border: none;
-  border-radius: 0 6px 6px 0;
+  border: 1px solid #006cbe;
+  border-left: 0;
+  border-radius: 0 999px 999px 0;
   color: white;
   cursor: pointer;
   display: flex;
-  flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 0.5rem;
-  z-index: 10;
-  transition: all 0.3s ease;
-  box-shadow: 2px 0 4px rgba(0, 0, 0, 0.1);
-}
-
-.icon-palette.collapsed .collapse-toggle {
-  height: 200px;
-  padding: 1rem 0.6rem;
-  width: 40px;
-}
-
-.collapse-toggle:hover {
-  background: #005a9e;
-}
-
-.collapse-label {
-  writing-mode: vertical-rl;
-  text-orientation: mixed;
-  font-size: 0.875rem;
-  font-weight: 600;
-  letter-spacing: 0.05em;
+  gap: 0.45rem;
+  z-index: 20;
+  font: inherit;
+  font-size: 0.8125rem;
+  font-weight: 700;
   white-space: nowrap;
+  box-shadow: 0 4px 14px rgba(0, 78, 140, 0.22);
+  transition: background-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
+}
+
+.palette-open-toggle:hover {
+  background: #005a9e;
+  box-shadow: 0 6px 18px rgba(0, 78, 140, 0.3);
+  transform: translateX(2px);
+}
+
+.palette-open-toggle:focus-visible,
+.palette-close-toggle:focus-visible,
+.category-header:focus-visible {
+  outline: 3px solid rgba(0, 120, 212, 0.35);
+  outline-offset: 2px;
+}
+
+.palette-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.palette-close-toggle {
+  min-height: 32px;
+  padding: 0.35rem 0.5rem;
+  border: 1px solid #b8d7ee;
+  border-radius: 6px;
+  background: #f3f9fd;
+  color: #005a9e;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.3rem;
+  font: inherit;
+  font-size: 0.75rem;
+  font-weight: 700;
+  white-space: nowrap;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+.palette-close-toggle:hover {
+  background: #e6f3fb;
+  border-color: #78b7e2;
 }
 
 .palette-header {
@@ -65,7 +99,7 @@
 .palette-header h2 {
   font-size: 1.125rem;
   font-weight: 600;
-  margin-bottom: 0.75rem;
+  margin: 0;
   color: #0078d4;
 }
 
@@ -77,6 +111,7 @@
   background: white;
   border: 1px solid #d0d0d0;
   border-radius: 4px;
+  margin-top: 0.75rem;
 }
 
 .search-box input {
@@ -100,8 +135,14 @@
   display: flex;
   align-items: center;
   gap: 0.5rem;
+  width: 100%;
   padding: 0.75rem 1rem;
+  border: 0;
+  background: transparent;
+  color: inherit;
   cursor: pointer;
+  font: inherit;
+  text-align: left;
   user-select: none;
   transition: background-color 0.15s;
 }
@@ -208,8 +249,11 @@ body.dark-mode .search-box input::placeholder {
   align-items: center;
   justify-content: center;
   font-size: 0.625rem;
-  color: #999;
+  color: transparent;
   text-align: center;
+  border: 1px dashed #b8c8d8;
+  border-radius: 8px;
+  background: #f3f6f9;
 }
 
 .icon-label {
@@ -230,4 +274,45 @@ body.dark-mode .search-box input::placeholder {
   text-align: center;
   color: #999;
   font-size: 0.875rem;
+}
+
+body.dark-mode .palette-open-toggle {
+  background: #1688dc;
+  border-color: #49a8eb;
+}
+
+body.dark-mode .palette-open-toggle:hover {
+  background: #2b96e2;
+}
+
+body.dark-mode .palette-close-toggle {
+  background: #23394a;
+  border-color: #45657d;
+  color: #8dcef7;
+}
+
+body.dark-mode .palette-close-toggle:hover {
+  background: #2d495e;
+  border-color: #5d86a5;
+}
+
+body.dark-mode .icon-placeholder {
+  background: #34404a;
+  border-color: #566673;
+}
+
+@media (max-width: 640px) {
+  .palette-open-toggle {
+    top: 10px;
+    min-height: 40px;
+    padding: 0.5rem 0.75rem 0.5rem 0.6rem;
+    font-size: 0.75rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .icon-palette,
+  .palette-open-toggle {
+    transition: none;
+  }
 }

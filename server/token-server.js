@@ -14,6 +14,7 @@ const { DefaultAzureCredential } = require('@azure/identity');
 const { CosmosClient } = require('@azure/cosmos');
 const { TableClient } = require('@azure/data-tables');
 const { EmailClient, KnownEmailSendStatus } = require('@azure/communication-email');
+const { createAccessControlRouter } = require('./access-control');
 const crypto = require('crypto');
 
 const app = express();
@@ -31,6 +32,31 @@ const credential = new DefaultAzureCredential();
 
 const REGION = process.env.AZURE_SPEECH_REGION;
 const RESOURCE_ID = process.env.AZURE_SPEECH_RESOURCE_ID;
+
+// ── Microsoft Entra ID email whitelist ─────────────────────────────────────
+// Azure Container Apps Easy Auth injects trusted X-MS-CLIENT-PRINCIPAL-*
+// headers. Nginx asks this router to authorize every protected request.
+const ACCESS_CONTROL_ENABLED = process.env.ACCESS_CONTROL_ENABLED === 'true';
+const ACCESS_ADMIN_EMAIL = process.env.ACCESS_ADMIN_EMAIL;
+const ACCESS_TABLES_ENDPOINT = process.env.AZURE_TABLES_ACCESS_ENDPOINT;
+const ACCESS_TABLE_NAME = process.env.AZURE_TABLES_ACCESS_TABLE || 'accesswhitelist';
+const PUBLIC_APP_URL = process.env.PUBLIC_URL;
+
+let accessTable = null;
+if (ACCESS_TABLES_ENDPOINT) {
+  accessTable = new TableClient(ACCESS_TABLES_ENDPOINT, ACCESS_TABLE_NAME, credential);
+}
+
+if (ACCESS_CONTROL_ENABLED && (!ACCESS_ADMIN_EMAIL || !ACCESS_TABLES_ENDPOINT || !PUBLIC_APP_URL)) {
+  console.error('[access] Access control is enabled but its administrator, Table endpoint, or public URL is missing.');
+}
+
+app.use('/api/access', createAccessControlRouter({
+  enabled: ACCESS_CONTROL_ENABLED,
+  adminEmail: ACCESS_ADMIN_EMAIL,
+  publicAppUrl: PUBLIC_APP_URL,
+  table: accessTable,
+}));
 
 // ── Azure OpenAI proxy ─────────────────────────────────────────────────────
 // Keeps Azure OpenAI credentials server-side so they are never shipped to the

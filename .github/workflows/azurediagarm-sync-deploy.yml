@@ -51,6 +51,7 @@ jobs:
           cache: npm
           cache-dependency-path: |
             package-lock.json
+            server/package-lock.json
             mcp-server/package-lock.json
 
       - name: Merge approved upstream source
@@ -154,6 +155,9 @@ jobs:
           npm run build
           npm run lint
           node --check server/token-server.js
+          node --check server/access-control.js
+          npm --prefix server ci --ignore-scripts
+          npm --prefix server test
           npm --prefix mcp-server ci --ignore-scripts
           npm --prefix mcp-server run build
           git diff --exit-code
@@ -230,6 +234,72 @@ jobs:
           az config set extension.use_dynamic_install=yes_without_prompt
           az extension add --name containerapp --upgrade --only-show-errors
           az extension add --name cdn --upgrade --only-show-errors
+
+      - name: Enforce Front Door timeout and authentication-safe routing
+        env:
+          ACCESS_CONTROL_ENABLED: ${{ vars.ACCESS_CONTROL_ENABLED || 'false' }}
+        run: |
+          set -Eeuo pipefail
+          az afd profile update \
+            --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
+            --profile-name "${{ vars.AZURE_FRONT_DOOR_PROFILE }}" \
+            --origin-response-timeout-seconds 240 \
+            --output none
+
+          timeout="$(
+            az afd profile show \
+              --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
+              --profile-name "${{ vars.AZURE_FRONT_DOOR_PROFILE }}" \
+              --query originResponseTimeoutSeconds \
+              --output tsv
+          )"
+          [[ "$timeout" == "240" ]] || {
+            echo "Front Door origin timeout drifted from 240 seconds." >&2
+            exit 1
+          }
+
+          if [[ "$ACCESS_CONTROL_ENABLED" == "true" ]]; then
+            mapfile -t routes < <(
+              az afd route list \
+                --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
+                --profile-name "${{ vars.AZURE_FRONT_DOOR_PROFILE }}" \
+                --endpoint-name "${{ vars.AZURE_FRONT_DOOR_ENDPOINT }}" \
+                --query '[].name' \
+                --output tsv
+            )
+            for route in "${routes[@]}"; do
+              az afd route update \
+                --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
+                --profile-name "${{ vars.AZURE_FRONT_DOOR_PROFILE }}" \
+                --endpoint-name "${{ vars.AZURE_FRONT_DOOR_ENDPOINT }}" \
+                --route-name "$route" \
+                --enable-caching false \
+                --output none
+            done
+
+            az afd origin-group update \
+              --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
+              --profile-name "${{ vars.AZURE_FRONT_DOOR_PROFILE }}" \
+              --origin-group-name "${{ vars.AZURE_FRONT_DOOR_ORIGIN_GROUP }}" \
+              --probe-path /healthz \
+              --probe-protocol Https \
+              --probe-request-type GET \
+              --probe-interval-in-seconds 120 \
+              --output none
+
+            cached_routes="$(
+              az afd route list \
+                --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
+                --profile-name "${{ vars.AZURE_FRONT_DOOR_PROFILE }}" \
+                --endpoint-name "${{ vars.AZURE_FRONT_DOOR_ENDPOINT }}" \
+                --query '[?cacheConfiguration!=null].name' \
+                --output tsv
+            )"
+            [[ -z "$cached_routes" ]] || {
+              echo "Front Door caching must stay disabled while authentication is enabled." >&2
+              exit 1
+            }
+          fi
 
       - name: Determine whether to deploy
         id: deployment
@@ -314,6 +384,8 @@ jobs:
           revision_suffix="g${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           env_vars=(
             "PUBLIC_URL=${{ vars.AZURE_APP_URL }}"
+            "ACCESS_CONTROL_ENABLED=${{ vars.ACCESS_CONTROL_ENABLED || 'false' }}"
+            "ACCESS_ADMIN_EMAIL=${{ vars.ACCESS_ADMIN_EMAIL }}"
             "AZURE_CLIENT_ID=${{ vars.AZURE_RUNTIME_CLIENT_ID }}"
             "AZURE_OPENAI_ENDPOINT=${{ vars.AZURE_OPENAI_ENDPOINT }}"
             "AZURE_OPENAI_ALLOWED_DEPLOYMENTS=${{ vars.AZURE_OPENAI_DEPLOYMENT_GPT56SOL }}"
@@ -330,6 +402,12 @@ jobs:
             env_vars+=(
               "AZURE_TABLES_ENDPOINT=${{ vars.AZURE_TABLES_ENDPOINT }}"
               "AZURE_TABLES_FEEDBACK_TABLE=${{ vars.AZURE_TABLES_FEEDBACK_TABLE }}"
+            )
+          fi
+          if [[ -n "${{ vars.AZURE_TABLES_ACCESS_ENDPOINT }}" ]]; then
+            env_vars+=(
+              "AZURE_TABLES_ACCESS_ENDPOINT=${{ vars.AZURE_TABLES_ACCESS_ENDPOINT }}"
+              "AZURE_TABLES_ACCESS_TABLE=${{ vars.AZURE_TABLES_ACCESS_TABLE }}"
             )
           fi
           if [[ -n "${{ vars.AZURE_COSMOS_ENDPOINT }}" ]]; then
@@ -384,11 +462,48 @@ jobs:
 
       - name: Verify the production endpoint
         if: steps.deployment.outputs.should_deploy == 'true'
+        env:
+          ACCESS_CONTROL_ENABLED: ${{ vars.ACCESS_CONTROL_ENABLED || 'false' }}
         run: |
           set -Eeuo pipefail
           for attempt in $(seq 1 30); do
             headers="$(mktemp)"
-            if curl \
+            checks_ok=true
+
+            if [[ "$ACCESS_CONTROL_ENABLED" == "true" ]]; then
+              if curl \
+                --fail \
+                --silent \
+                --show-error \
+                --connect-timeout 15 \
+                --max-time 45 \
+                --user-agent 'AzureDiagarm-GitHub-Updater/1.0' \
+                --dump-header "$headers" \
+                --output /tmp/azurediagarm-health.txt \
+                "${{ vars.AZURE_APP_URL }}/healthz"; then
+                grep -qx 'ok' /tmp/azurediagarm-health.txt || checks_ok=false
+                grep -qi '^x-robots-tag:.*noindex' "$headers" || checks_ok=false
+                grep -qi '^referrer-policy:.*no-referrer' "$headers" || checks_ok=false
+
+                root_status="$(
+                  curl \
+                    --silent \
+                    --output /dev/null \
+                    --dump-header /tmp/azurediagarm-auth-headers.txt \
+                    --write-out '%{http_code}' \
+                    --max-redirs 0 \
+                    --connect-timeout 15 \
+                    --max-time 45 \
+                    "${{ vars.AZURE_APP_URL }}/" || true
+                )"
+                [[ "$root_status" == "302" || "$root_status" == "401" ]] || checks_ok=false
+                if [[ "$root_status" == "302" ]]; then
+                  grep -qi '^location:.*\.auth/login/aad' /tmp/azurediagarm-auth-headers.txt || checks_ok=false
+                fi
+              else
+                checks_ok=false
+              fi
+            elif curl \
               --fail \
               --silent \
               --show-error \
@@ -399,11 +514,15 @@ jobs:
               --dump-header "$headers" \
               --output /tmp/azurediagarm.html \
               "${{ vars.AZURE_APP_URL }}/"; then
-              checks_ok=true
               grep -qi '^x-robots-tag:.*noindex' "$headers" || checks_ok=false
               grep -qi '^referrer-policy:.*no-referrer' "$headers" || checks_ok=false
               grep -qi '^permissions-policy:' "$headers" || checks_ok=false
               grep -q 'Azure Architecture Diagram Builder' /tmp/azurediagarm.html || checks_ok=false
+            else
+              checks_ok=false
+            fi
+
+            if [[ "$checks_ok" == "true" ]]; then
               invalid_deployment_status="$(
                 curl \
                   --silent \
@@ -414,7 +533,11 @@ jobs:
                   --data '{"apiFormat":"responses","deployment":"not-allowed","body":{"model":"not-allowed","input":[],"max_output_tokens":1}}' \
                   "${{ vars.AZURE_APP_URL }}/api/openai" || true
               )"
-              [[ "$invalid_deployment_status" == "403" ]] || checks_ok=false
+              if [[ "$ACCESS_CONTROL_ENABLED" == "true" ]]; then
+                [[ "$invalid_deployment_status" == "302" || "$invalid_deployment_status" == "401" || "$invalid_deployment_status" == "403" ]] || checks_ok=false
+              else
+                [[ "$invalid_deployment_status" == "403" ]] || checks_ok=false
+              fi
 
               origin_fqdn="$(
                 az containerapp show \
@@ -431,7 +554,11 @@ jobs:
                   --max-time 30 \
                   "https://${origin_fqdn}/" || true
               )"
-              [[ "$origin_status" == "403" ]] || checks_ok=false
+              if [[ "$ACCESS_CONTROL_ENABLED" == "true" ]]; then
+                [[ "$origin_status" == "302" || "$origin_status" == "401" || "$origin_status" == "403" ]] || checks_ok=false
+              else
+                [[ "$origin_status" == "403" ]] || checks_ok=false
+              fi
 
               mcp_status="$(
                 curl \
@@ -443,7 +570,11 @@ jobs:
                   --data '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"deployment-check","version":"1.0"}}}' \
                   "${{ vars.AZURE_APP_URL }}/mcp" || true
               )"
-              [[ "$mcp_status" == "401" || "$mcp_status" == "404" ]] || checks_ok=false
+              if [[ "$ACCESS_CONTROL_ENABLED" == "true" ]]; then
+                [[ "$mcp_status" == "302" || "$mcp_status" == "401" || "$mcp_status" == "403" ]] || checks_ok=false
+              else
+                [[ "$mcp_status" == "401" || "$mcp_status" == "404" ]] || checks_ok=false
+              fi
 
               if [[ "$checks_ok" == "true" ]]; then
                 rm -f "$headers"

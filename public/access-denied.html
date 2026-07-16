@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="robots" content="noindex,nofollow,noarchive,nosnippet,noimageindex" />
+    <title>Access denied | Azure Architecture Diagram Builder</title>
+    <style>
+      :root {
+        font-family: "Yu Gothic UI", "Yu Gothic", "Hiragino Sans", "Hiragino Kaku Gothic ProN",
+          "Noto Sans JP", "Segoe UI", sans-serif;
+        color: #172033;
+        background: #eef4fb;
+      }
+      * { box-sizing: border-box; }
+      body {
+        min-height: 100vh;
+        margin: 0;
+        display: grid;
+        place-items: center;
+        padding: 24px;
+        background:
+          radial-gradient(circle at top left, rgba(0, 120, 212, 0.2), transparent 34rem),
+          linear-gradient(145deg, #f7fbff, #e8f0fa);
+      }
+      main {
+        width: min(620px, 100%);
+        padding: clamp(28px, 6vw, 48px);
+        border: 1px solid rgba(0, 90, 158, 0.18);
+        border-radius: 20px;
+        background: rgba(255, 255, 255, 0.96);
+        box-shadow: 0 24px 60px rgba(24, 54, 86, 0.16);
+      }
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 7px 12px;
+        border-radius: 999px;
+        background: #e7f3ff;
+        color: #005a9e;
+        font-weight: 700;
+        font-size: 13px;
+      }
+      h1 {
+        margin: 22px 0 12px;
+        color: #0f2f55;
+        font-size: clamp(26px, 5vw, 38px);
+        line-height: 1.2;
+      }
+      p { margin: 10px 0; line-height: 1.75; }
+      .en { color: #52637a; font-size: 14px; }
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        margin-top: 28px;
+      }
+      a {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 44px;
+        padding: 10px 16px;
+        border-radius: 9px;
+        background: #0078d4;
+        color: #fff;
+        text-decoration: none;
+        font-weight: 700;
+      }
+      a:hover { background: #005a9e; }
+      .contact {
+        margin-top: 24px;
+        padding-top: 20px;
+        border-top: 1px solid #dce6f1;
+        color: #45566c;
+        font-size: 13px;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="badge">Microsoft Entra ID · Protected application</div>
+      <h1>このアカウントにはアクセス権がありません</h1>
+      <p>サインインは完了していますが、このアプリの許可リストにメールアドレスが登録されていません。</p>
+      <p class="en">You are signed in, but this email address is not on the application's access list.</p>
+      <div class="actions">
+        <a href="/.auth/logout?post_logout_redirect_uri=%2F">別のアカウントでサインイン / Sign in with another account</a>
+      </div>
+      <p class="contact">
+        アクセスが必要な場合は管理者（yangjiayi@msft.jp）に連絡してください。<br />
+        Contact the administrator at yangjiayi@msft.jp if you need access.
+      </p>
+    </main>
+  </body>
+</html>

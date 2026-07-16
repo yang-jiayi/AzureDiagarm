@@ -53,89 +53,100 @@ const HIDDEN_LEGACY_PALETTE_PATHS = new Set([
   '/Azure_Public_Service_Icons/Icons/web/00049-icon-service-App-Service-Certificates.svg',
 ]);
 
-// This function will dynamically load icons from the file system
-export async function loadIconsFromCategory(category: string): Promise<AzureIcon[]> {
-  try {
-    const icons: AzureIcon[] = [];
-    
-    // Use Vite's import.meta.glob to load SVG files
-    const iconModules = import.meta.glob('/Azure_Public_Service_Icons/Icons/**/*.svg', { 
-      eager: false,
-      query: '?url',
-      import: 'default'
-    });
-    
-    for (const path in iconModules) {
-      if (HIDDEN_LEGACY_PALETTE_PATHS.has(path)) continue;
-      if (path.includes(`/${category}/`)) {
-        const fileName = path.split('/').pop() || '';
-        const fileNameWithoutExtension = fileName.replace('.svg', '');
-        const fabricDefinition = category === 'fabric'
-          ? getFabricIconByFileName(fileNameWithoutExtension)
-          : undefined;
-        // Simplified: convert kebab-case filename to Title Case
-        // Special handling for common acronyms: AI, CDN, SQL, IoT, API, etc.
-        const iconName = fabricDefinition?.displayName ?? fileNameWithoutExtension
-          .replace(/^\d+-icon-service-/, '')  // Keep for backwards compatibility
-          .replace(/-/g, ' ')
-          .split(' ')
-          .map(word => {
-            const upper = word.toUpperCase();
-            // Preserve common Azure acronyms
-            if (['AI', 'ML', 'BI', 'CDN', 'SQL', 'IOT', 'API', 'VM', 'VMS', 'AKS', 'ACR', 'ACI', 'DB', 'KQL', 'RDL', 'RTI', 'FHIR'].includes(upper)) {
-              return upper;
-            }
-            // For compound words like "openai", check if it should be "OpenAI"
-            if (word.toLowerCase() === 'openai') return 'OpenAI';
-            if (word.toLowerCase() === 'postgresql') return 'PostgreSQL';
-            if (word.toLowerCase() === 'mysql') return 'MySQL';
-            if (word.toLowerCase() === 'redis') return 'Redis';
-            if (word.toLowerCase() === 'cosmos') return 'Cosmos';
-            // Default: Title Case
-            return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
-          })
-          .join(' ');
-        
-        icons.push({
-          id: fileNameWithoutExtension,
-          name: iconName,
-          category,
-          path,
-          searchTerms: fabricDefinition
-            ? [
-                fabricDefinition.serviceName,
-                fabricDefinition.group,
-                fabricDefinition.kind,
-                ...fabricDefinition.aliases,
-              ]
-            : [],
-        });
+const ICON_ROOT = '/Azure_Public_Service_Icons/Icons/';
+const iconModules = import.meta.glob('/Azure_Public_Service_Icons/Icons/**/*.svg', {
+  eager: false,
+  query: '?url',
+  import: 'default',
+}) as Record<string, () => Promise<string>>;
+
+let iconMetadataCache: Map<string, AzureIcon[]> | undefined;
+const iconUrlCache = new Map<string, Promise<string>>();
+
+function formatIconName(fileNameWithoutExtension: string): string {
+  return fileNameWithoutExtension
+    .replace(/^\d+-icon-service-/, '')
+    .replace(/-/g, ' ')
+    .split(' ')
+    .map(word => {
+      const upper = word.toUpperCase();
+      if (['AI', 'ML', 'BI', 'CDN', 'SQL', 'IOT', 'API', 'VM', 'VMS', 'AKS', 'ACR', 'ACI', 'DB', 'KQL', 'RDL', 'RTI', 'FHIR'].includes(upper)) {
+        return upper;
       }
-    }
-    
-    return icons.sort((a, b) => a.name.localeCompare(b.name));
-  } catch (error) {
-    console.error(`Error loading icons from category ${category}:`, error);
-    return [];
+      if (word.toLowerCase() === 'openai') return 'OpenAI';
+      if (word.toLowerCase() === 'postgresql') return 'PostgreSQL';
+      if (word.toLowerCase() === 'mysql') return 'MySQL';
+      if (word.toLowerCase() === 'redis') return 'Redis';
+      if (word.toLowerCase() === 'cosmos') return 'Cosmos';
+      return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
+    })
+    .join(' ');
+}
+
+function getIconMetadataCache(): Map<string, AzureIcon[]> {
+  if (iconMetadataCache) return iconMetadataCache;
+
+  const cache = new Map<string, AzureIcon[]>(
+    iconCategories.map(category => [category, []]),
+  );
+
+  for (const path of Object.keys(iconModules)) {
+    if (HIDDEN_LEGACY_PALETTE_PATHS.has(path) || !path.startsWith(ICON_ROOT)) continue;
+
+    const relativePath = path.slice(ICON_ROOT.length);
+    const separatorIndex = relativePath.indexOf('/');
+    if (separatorIndex < 1) continue;
+
+    const category = relativePath.slice(0, separatorIndex);
+    const icons = cache.get(category);
+    if (!icons) continue;
+
+    const fileName = relativePath.slice(separatorIndex + 1);
+    const fileNameWithoutExtension = fileName.replace(/\.svg$/i, '');
+    const fabricDefinition = category === 'fabric'
+      ? getFabricIconByFileName(fileNameWithoutExtension)
+      : undefined;
+
+    icons.push({
+      id: fileNameWithoutExtension,
+      name: fabricDefinition?.displayName ?? formatIconName(fileNameWithoutExtension),
+      category,
+      path,
+      searchTerms: fabricDefinition
+        ? [
+            fabricDefinition.serviceName,
+            fabricDefinition.group,
+            fabricDefinition.kind,
+            ...fabricDefinition.aliases,
+          ]
+        : [],
+    });
   }
+
+  for (const icons of cache.values()) {
+    icons.sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  iconMetadataCache = cache;
+  return cache;
+}
+
+export async function loadIconsFromCategory(category: string): Promise<AzureIcon[]> {
+  return getIconMetadataCache().get(category) ?? [];
 }
 
 export async function loadIcon(path: string): Promise<string> {
-  try {
-    const iconModules = import.meta.glob('/Azure_Public_Service_Icons/Icons/**/*.svg', { 
-      eager: false,
-      query: '?url',
-      import: 'default'
-    });
-    
-    if (iconModules[path]) {
-      const url = await iconModules[path]();
-      return url as string;
-    }
-    
-    return '';
-  } catch (error) {
+  const iconModule = iconModules[path];
+  if (!iconModule) return '';
+
+  const cached = iconUrlCache.get(path);
+  if (cached) return cached;
+
+  const pending = iconModule().catch(error => {
+    iconUrlCache.delete(path);
     console.error('Error loading icon:', error);
     return '';
-  }
+  });
+  iconUrlCache.set(path, pending);
+  return pending;
 }

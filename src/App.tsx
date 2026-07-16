@@ -20,7 +20,7 @@ import { captureDiagramAsPng, captureDiagramAsSvg } from './utils/captureCanvas'
 import { animateEdgeFlow } from './utils/animateEdges';
 import { sequenceWorkflowSvg } from './utils/sequenceWorkflow';
 import { buildWorkflowMarkdown } from './services/workflowNarrativeExporter';
-import { Download, Save, Upload, DollarSign, Shield, FileText, FileCode, ChevronDown, Clock, Camera, Loader, GitCompare, RefreshCw, PanelLeftClose, Minimize2, Maximize2, Presentation, MessageSquare, MessagesSquare, HelpCircle, Hand, ZoomIn, Frame, X, PanelTopClose, PanelTopOpen } from 'lucide-react';
+import { Download, Save, Upload, DollarSign, Shield, ShieldCheck, FileText, FileCode, ChevronDown, Clock, Camera, Loader, GitCompare, RefreshCw, PanelLeftClose, Minimize2, Maximize2, Presentation, MessageSquare, MessagesSquare, HelpCircle, Hand, ZoomIn, Frame, X, PanelTopClose, PanelTopOpen } from 'lucide-react';
 import IconPalette from './components/IconPalette';
 import AzureNode from './components/AzureNode';
 import GroupNode from './components/GroupNode';
@@ -81,8 +81,10 @@ import { classifyValidationTopics } from './services/validationConsensus';
 import type { IaCFormat } from './services/azureOpenAI';
 import FeedbackModal from './components/FeedbackModal';
 import FeedbackToast from './components/FeedbackToast';
+import AccessManagementModal from './components/AccessManagementModal';
 import LanguageSwitch from './components/LanguageSwitch';
 import { FEEDBACK_DONE_KEY } from './services/feedbackService';
+import { getAccessIdentity, type AccessIdentity } from './services/accessControlService';
 import microsoftLogoWhite from './assets/microsoft-logo-white.avif';
 import './App.css';
 import { useLanguage } from './i18n/LanguageContext';
@@ -249,6 +251,8 @@ function App() {
   const [isFeedbackToastOpen, setIsFeedbackToastOpen] = useState(false);
   const [feedbackPreselectedRating, setFeedbackPreselectedRating] = useState<number | undefined>(undefined);
   const [feedbackFabPulse, setFeedbackFabPulse] = useState(false);
+  const [accessIdentity, setAccessIdentity] = useState<AccessIdentity | null>(null);
+  const [isAccessManagementOpen, setIsAccessManagementOpen] = useState(false);
   // Counts successful AI generations this session so we can ask for feedback
   // after a "success moment" (the 2nd diagram) rather than nagging up front.
   const generationCountRef = useRef(0);
@@ -352,6 +356,20 @@ function App() {
     return () => {
       window.clearTimeout(startT);
       window.clearTimeout(stopT);
+    };
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    getAccessIdentity()
+      .then((identity) => {
+        if (active) setAccessIdentity(identity);
+      })
+      .catch((error) => {
+        console.error('[access] failed to read current identity:', error);
+      });
+    return () => {
+      active = false;
     };
   }, []);
 
@@ -3433,7 +3451,23 @@ function App() {
               </div>
             </div>
           </div>
-          <LanguageSwitch />
+          <div className="header-identity-actions">
+            {accessIdentity?.enabled && accessIdentity.isAdmin && (
+              <button
+                type="button"
+                className="access-admin-button"
+                onClick={() => setIsAccessManagementOpen(true)}
+                title={localize(language, {
+                  en: `Manage application access (${accessIdentity.email})`,
+                  ja: `アプリのアクセスを管理 (${accessIdentity.email})`,
+                })}
+              >
+                <ShieldCheck size={17} />
+                <span>{localize(language, { en: 'Access', ja: 'アクセス管理' })}</span>
+              </button>
+            )}
+            <LanguageSwitch />
+          </div>
           <button
             className="header-collapse-toggle"
             onClick={() => {
@@ -4030,6 +4064,13 @@ Return the IMPROVED architecture in the same JSON format as before with proper g
           model: generatedWithModel?.name,
         }}
       />
+      {accessIdentity?.enabled && accessIdentity.isAdmin && (
+        <AccessManagementModal
+          isOpen={isAccessManagementOpen}
+          identity={accessIdentity}
+          onClose={() => setIsAccessManagementOpen(false)}
+        />
+      )}
     </div>
   );
 }

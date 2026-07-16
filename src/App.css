@@ -104,6 +104,43 @@
   background: rgba(0, 0, 0, 0.12);
 }
 
+.header-identity-actions {
+  grid-area: language;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.header-identity-actions .language-switch {
+  grid-area: auto;
+}
+
+.access-admin-button {
+  min-height: 36px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.42);
+  border-radius: 7px;
+  background: rgba(0, 0, 0, 0.14);
+  color: #fff;
+  font: inherit;
+  font-size: 0.75rem;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.access-admin-button:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.access-admin-button:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 2px;
+}
+
 .language-switch button {
   min-height: 30px;
   padding: 4px 8px;
@@ -239,6 +276,21 @@
     min-height: 28px;
     padding: 3px 5px;
     font-size: 0.7rem;
+  }
+
+  .header-identity-actions {
+    gap: 5px;
+  }
+
+  .access-admin-button {
+    min-width: 32px;
+    min-height: 32px;
+    justify-content: center;
+    padding: 5px;
+  }
+
+  .access-admin-button span {
+    display: none;
   }
 
   .header-collapse-toggle {
