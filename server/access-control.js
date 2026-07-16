@@ -29,9 +29,58 @@ function rowKeyForEmail(email) {
   return crypto.createHash('sha256').update(email).digest('hex');
 }
 
+function decodeClientPrincipal(value) {
+  if (typeof value !== 'string' || value.length === 0 || value.length > 32_768) {
+    return null;
+  }
+  try {
+    const decoded = JSON.parse(Buffer.from(value, 'base64').toString('utf8'));
+    if (!decoded || !Array.isArray(decoded.claims)) return null;
+    const claims = new Map();
+    for (const claim of decoded.claims) {
+      if (typeof claim?.typ !== 'string' || typeof claim?.val !== 'string') continue;
+      claims.set(claim.typ.toLowerCase(), claim.val);
+    }
+    return { decoded, claims };
+  } catch {
+    return null;
+  }
+}
+
+function firstClaim(claims, types) {
+  for (const type of types) {
+    const value = claims.get(type.toLowerCase());
+    if (value) return value;
+  }
+  return '';
+}
+
 function getPrincipal(req) {
-  const email = normalizeEmail(req.get('x-ms-client-principal-name'));
-  const id = (req.get('x-ms-client-principal-id') || '').trim();
+  const clientPrincipal = decodeClientPrincipal(req.get('x-ms-client-principal'));
+  const claims = clientPrincipal?.claims || new Map();
+  const email = normalizeEmail(req.get('x-ms-client-principal-name')) || normalizeEmail(firstClaim(claims, [
+    'preferred_username',
+    'email',
+    'emails',
+    'upn',
+    'http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress',
+    'http://schemas.xmlsoap.org/ws/2005/05/identity/claims/upn',
+    'name',
+  ]));
+  const decodedUserId = typeof clientPrincipal?.decoded?.userId === 'string'
+    ? clientPrincipal.decoded.userId
+    : '';
+  const id = (
+    req.get('x-ms-client-principal-id')
+    || firstClaim(claims, [
+      'oid',
+      'http://schemas.microsoft.com/identity/claims/objectidentifier',
+      'http://schemas.xmlsoap.org/ws/2005/05/identity/claims/nameidentifier',
+      'sub',
+    ])
+    || decodedUserId
+    || ''
+  ).trim();
   if (!email || id.length === 0 || id.length > 128) return null;
   return { email, id };
 }
@@ -273,6 +322,7 @@ function createAccessControlRouter(options = {}) {
 
 module.exports = {
   createAccessControlRouter,
+  decodeClientPrincipal,
   normalizeEmail,
   rowKeyForEmail,
 };

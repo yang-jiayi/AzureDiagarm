@@ -182,3 +182,36 @@ test('disabled access control remains transparent', async (t) => {
     allowed: true,
   });
 });
+
+test('access control accepts the aggregate Easy Auth client principal header', async (t) => {
+  const table = new FakeTable();
+  const server = await startServer({
+    enabled: true,
+    adminEmail: 'yangjiayi@msft.jp',
+    publicAppUrl: APP_ORIGIN,
+    table,
+    logger: { info() {}, error() {} },
+  });
+  t.after(server.close);
+
+  const encodedPrincipal = Buffer.from(JSON.stringify({
+    auth_typ: 'aad',
+    claims: [
+      { typ: 'preferred_username', val: 'yangjiayi@msft.jp' },
+      {
+        typ: 'http://schemas.microsoft.com/identity/claims/objectidentifier',
+        val: '33333333-3333-3333-3333-333333333333',
+      },
+    ],
+  })).toString('base64');
+
+  let response = await fetch(`${server.baseUrl}/api/access/check`, {
+    headers: { 'X-MS-CLIENT-PRINCIPAL': encodedPrincipal },
+  });
+  assert.equal(response.status, 204);
+
+  response = await fetch(`${server.baseUrl}/api/access/check`, {
+    headers: { 'X-MS-CLIENT-PRINCIPAL': 'not-base64-json' },
+  });
+  assert.equal(response.status, 401);
+});
