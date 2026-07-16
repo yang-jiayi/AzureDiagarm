@@ -404,6 +404,7 @@ body.dark-mode .ai-architecture-modal .modal-col-left .image-uploader-header {
 .ai-modal-active-model {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 10px;
   padding: 12px 16px;
   background: linear-gradient(135deg, #1e3a5f, #0c4a6e);
@@ -413,6 +414,20 @@ body.dark-mode .ai-architecture-modal .modal-col-left .image-uploader-header {
   font-weight: 600;
   color: #e0f2fe;
   box-shadow: 0 2px 8px rgba(14, 165, 233, 0.25);
+}
+
+.ai-modal-model-controls {
+  display: flex;
+  align-items: center;
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.ai-modal-model-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .ai-modal-active-model .model-badge {
@@ -837,13 +852,27 @@ body.dark-mode .mode-toggle-btn.active .mode-sub {
 
   .ai-architecture-modal .ai-modal-active-model {
     display: grid;
-    grid-template-columns: auto minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr);
     gap: 0.5rem;
     padding: 0.65rem 0.75rem;
   }
 
   .ai-architecture-modal .ai-modal-active-model > svg {
     display: none;
+  }
+
+  .ai-architecture-modal .ai-modal-model-controls {
+    display: flex;
+    grid-column: 1 / -1;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.6rem;
+  }
+
+  .ai-architecture-modal .ai-modal-model-group {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 0.5rem;
   }
 
   .ai-architecture-modal .ai-modal-active-model .ai-modal-model-label {
@@ -897,7 +926,7 @@ body.dark-mode .mode-toggle-btn.active .mode-sub {
     display: none;
   }
 
-  .ai-architecture-modal .ai-modal-active-model {
+  .ai-architecture-modal .ai-modal-model-group {
     grid-template-columns: auto minmax(110px, 1fr) auto minmax(72px, 0.65fr);
   }
 }

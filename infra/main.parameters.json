@@ -53,6 +53,12 @@
     "openAiDeploymentGpt56Sol": {
       "value": "${AZURE_OPENAI_DEPLOYMENT_GPT56SOL}"
     },
+    "openAiDeploymentGpt56Terra": {
+      "value": "${AZURE_OPENAI_DEPLOYMENT_GPT56TERRA}"
+    },
+    "openAiDeploymentGpt56Luna": {
+      "value": "${AZURE_OPENAI_DEPLOYMENT_GPT56LUNA}"
+    },
     "openAiDeploymentDeepSeek": {
       "value": "${AZURE_OPENAI_DEPLOYMENT_DEEPSEEK}"
     },

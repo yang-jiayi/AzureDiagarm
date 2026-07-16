@@ -4,7 +4,8 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Sparkles, X, Loader2, Clock, Zap, Brain, Network, PenTool, Layers } from 'lucide-react';
-import { generateArchitectureWithAI, isAzureOpenAIConfigured, AIMetrics, analyzeArchitectureDiagramImage, ModelOverride } from '../services/azureOpenAI';import { generateReferenceArchitectureWithAI } from '../services/referenceArchitectureAI';
+import { generateArchitectureWithAI, isAzureOpenAIConfigured, AIMetrics, analyzeArchitectureDiagramImage, ModelOverride } from '../services/azureOpenAI';
+import { generateReferenceArchitectureWithAI } from '../services/referenceArchitectureAI';
 import { generateBlueprintArchitectureWithAI } from '../services/blueprintArchitectureAI';
 import { generateComponentManifest, ComponentManifest } from '../services/componentManifestAI';
 import { exportReferenceArchitectureAsPng } from '../utils/exportReferencePng';
@@ -13,13 +14,16 @@ import ImageUploader from './ImageUploader';
 import {
   useModelSettings,
   MODEL_CONFIG,
+  FeatureType,
   getAvailableModels,
+  getModelSettingsForFeature,
   ModelType,
   ReasoningEffort,
   FEATURE_CONFIG,
   getReasoningEffortLabel,
   getSupportedReasoningEfforts,
   isModelAvailable,
+  updateFeatureOverride,
 } from '../stores/modelSettingsStore';
 import { trackImageImport } from '../services/telemetryService';
 import { buildModificationPrompt } from '../services/modificationPrompt';
@@ -230,23 +234,24 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({ onGen
 
   // Opt-in: also download an editorial PNG when generating in reference mode.
   // Model settings from reactive hook (stays in sync with dropdown)
-  const [modelSettings, updateModelSettings] = useModelSettings();
+  const [modelSettings] = useModelSettings();
 
-  // When mode requires OpenAI (blueprint/both) and the current model is a
-  // non-OpenAI partner deployment, auto-switch to the first OpenAI model.
+  // Blueprint generation requires a general-purpose OpenAI deployment.
+  // Keep the architecture model untouched and correct only the blueprint override.
   useEffect(() => {
     if (!modeRequiresOpenAI(mode)) return;
-    if (isBlueprintCapableModel(modelSettings.model)) return;
+    const blueprintSettings = getModelSettingsForFeature('blueprint');
+    if (isBlueprintCapableModel(blueprintSettings.model)) return;
     const fallback = getAvailableModels().find(isBlueprintCapableModel);
     if (!fallback) return;
     const cfg = MODEL_CONFIG[fallback];
-    updateModelSettings({
+    updateFeatureOverride('blueprint', {
       model: fallback,
       reasoningEffort: cfg.isReasoning
-        ? (cfg.defaultReasoningEffort ?? modelSettings.reasoningEffort)
-        : modelSettings.reasoningEffort,
+        ? (cfg.defaultReasoningEffort ?? blueprintSettings.reasoningEffort)
+        : undefined,
     });
-  }, [mode, modelSettings.model, updateModelSettings]);
+  }, [mode, modelSettings.featureOverrides, modelSettings.model, modelSettings.reasoningEffort]);
   
   // Auto-snapshot preference (stored in localStorage)
   const [autoSnapshot, setAutoSnapshot] = useState<boolean>(() => {
@@ -333,28 +338,18 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({ onGen
     setError('');
     setAiMetrics(null); // Clear previous metrics
     
-    // Use the dropdown-selected model directly from the reactive hook state
-    // (bypasses per-feature overrides which can silently override the dropdown)
-    const currentModelSettings: ModelOverride = {
-      model: modelSettings.model,
-      reasoningEffort: modelSettings.reasoningEffort
-    };
-    console.log(`🎯 Generate clicked: dropdown model=${modelSettings.model}, reasoning=${modelSettings.reasoningEffort}, overrides=${JSON.stringify(modelSettings.featureOverrides)}`);
+    const currentModelSettings: ModelOverride = getModelSettingsForFeature('architectureGeneration');
+    console.log(`🎯 Generate clicked: default model=${modelSettings.model}, effective model=${currentModelSettings.model}, reasoning=${currentModelSettings.reasoningEffort}, overrides=${JSON.stringify(modelSettings.featureOverrides)}`);
 
-    // Blueprint diagrams default to the fast, cost-efficient model recommended
-    // for the feature (GPT-5.6 Sol) unless the user set an explicit blueprint
-    // override in Model Settings. Topology and other features keep the
-    // toolbar-selected model. Falls back to the toolbar model if the
-    // recommended one isn't deployed/available.
+    // Use the same effective feature setting shown in the modal. If a stale
+    // setting points to an incompatible model, fall back to the deployed
+    // recommendation so blueprint generation still succeeds.
     const blueprintModelSettings: ModelOverride = (() => {
-      const override = modelSettings.featureOverrides?.blueprint;
-      if (override && isBlueprintCapableModel(override.model)) {
-        const cfg = MODEL_CONFIG[override.model];
+      const configured = getModelSettingsForFeature('blueprint');
+      if (isBlueprintCapableModel(configured.model)) {
         return {
-          model: override.model,
-          reasoningEffort: cfg.isReasoning
-            ? (override.reasoningEffort || modelSettings.reasoningEffort)
-            : modelSettings.reasoningEffort,
+          model: configured.model,
+          reasoningEffort: configured.reasoningEffort,
         };
       }
       const rec = FEATURE_CONFIG.blueprint.recommendedModel;
@@ -589,6 +584,67 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({ onGen
     setDescription(example);
   };
 
+  const renderFeatureModelControls = (feature: FeatureType, openAiOnly: boolean) => {
+    const featureSettings = getModelSettingsForFeature(feature);
+    const config = MODEL_CONFIG[featureSettings.model];
+    const label = mode === 'both'
+      ? translate(FEATURE_CONFIG[feature].displayName)
+      : t("Model:");
+
+    return (
+      <div className="ai-modal-model-group" key={feature}>
+        <span className="ai-modal-model-label">{label}</span>
+        <select
+          className="ai-modal-model-select"
+          value={featureSettings.model}
+          onChange={(e) => {
+            const next = e.target.value as ModelType;
+            const nextConfig = MODEL_CONFIG[next];
+            updateFeatureOverride(feature, {
+              model: next,
+              reasoningEffort: nextConfig.isReasoning
+                ? (nextConfig.defaultReasoningEffort ?? featureSettings.reasoningEffort)
+                : undefined,
+            });
+          }}
+          disabled={isGenerating}
+          aria-label={`${translate(FEATURE_CONFIG[feature].displayName)} - ${t("Select AI model")}`}
+        >
+          {getAvailableModels()
+            .filter((model) => !openAiOnly || isBlueprintCapableModel(model))
+            .map((model) => (
+              <option key={model} value={model}>
+                {MODEL_CONFIG[model].displayName}
+              </option>
+            ))}
+        </select>
+        {config.isReasoning && (
+          <>
+            <span className="ai-modal-model-label">{t("Reasoning:")}</span>
+            <select
+              className="ai-modal-model-select"
+              value={featureSettings.reasoningEffort}
+              onChange={(e) =>
+                updateFeatureOverride(feature, {
+                  model: featureSettings.model,
+                  reasoningEffort: e.target.value as ReasoningEffort,
+                })
+              }
+              disabled={isGenerating}
+              aria-label={`${translate(FEATURE_CONFIG[feature].displayName)} - ${t("Select reasoning effort")}`}
+            >
+              {getSupportedReasoningEfforts(featureSettings.model).map(level => (
+                <option key={level} value={level}>
+                  {t(getReasoningEffortLabel(level))}
+                </option>
+              ))}
+            </select>
+          </>
+        )}
+      </div>
+    );
+  };
+
   return (
     <>
       <button
@@ -778,55 +834,23 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({ onGen
             <div className="modal-footer">
               <div className="ai-modal-active-model">
                 <Brain size={20} />
-                <span className="ai-modal-model-label">{t("Model:")}</span>
-                <select
-                  className="ai-modal-model-select"
-                  value={modelSettings.model}
-                  onChange={(e) => {
-                    const next = e.target.value as ModelType;
-                    const cfg = MODEL_CONFIG[next];
-                    updateModelSettings({
-                      model: next,
-                      reasoningEffort: cfg.isReasoning
-                        ? (cfg.defaultReasoningEffort ?? modelSettings.reasoningEffort)
-                        : modelSettings.reasoningEffort,
-                    });
-                  }}
-                  disabled={isGenerating}
-                  aria-label={t("Select AI model")}
-                >
-                  {getAvailableModels()
-                    .filter((m) => !modeRequiresOpenAI(mode) || isBlueprintCapableModel(m))
-                    .map((m) => (
-                    <option key={m} value={m}>
-                      {MODEL_CONFIG[m].displayName}
-                    </option>
-                  ))}
-                </select>
-                {MODEL_CONFIG[modelSettings.model].isReasoning && (
-                  <>
-                    <span className="ai-modal-model-label">{t("Reasoning:")}</span>
-                    <select
-                      className="ai-modal-model-select"
-                      value={modelSettings.reasoningEffort}
-                      onChange={(e) =>
-                        updateModelSettings({ reasoningEffort: e.target.value as ReasoningEffort })
-                      }
-                      disabled={isGenerating}
-                      aria-label={t("Select reasoning effort")}
-                    >
-                      {getSupportedReasoningEfforts(modelSettings.model).map(level => (
-                        <option key={level} value={level}>
-                          {t(getReasoningEffortLabel(level))}
-                        </option>
-                      ))}
-                    </select>
-                  </>
-                )}
+                <div className="ai-modal-model-controls">
+                  {mode === 'both' ? (
+                    <>
+                      {renderFeatureModelControls('architectureGeneration', false)}
+                      {renderFeatureModelControls('blueprint', true)}
+                    </>
+                  ) : renderFeatureModelControls(
+                    mode === 'blueprint' ? 'blueprint' : 'architectureGeneration',
+                    mode === 'blueprint',
+                  )}
+                </div>
                 <span className="model-change-hint">
-                  {modeRequiresOpenAI(mode)
-                    ? t("Blueprint mode supports general-purpose OpenAI models only (partner and Codex models are filtered out).")
-                    : t("Also configurable in toolbar → AI Model")}
+                  {mode === 'both'
+                    ? t("Each output uses its feature-specific model.")
+                    : mode === 'blueprint'
+                      ? t("Blueprint mode supports general-purpose OpenAI models only (partner and Codex models are filtered out).")
+                      : t("Also configurable in toolbar → AI Model")}
                 </span>
               </div>
               {currentArchitecture && currentArchitecture.nodes.length > 0 && (

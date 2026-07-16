@@ -52,6 +52,10 @@
   gap: 6px;
 }
 
+.model-buttons {
+  flex-wrap: wrap;
+}
+
 .model-button,
 .reasoning-button {
   display: flex;
@@ -66,6 +70,20 @@
   font-weight: 500;
   cursor: pointer;
   transition: all 0.15s ease;
+}
+
+.model-button-copy {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  line-height: 1.15;
+}
+
+.model-button-copy small {
+  margin-top: 2px;
+  font-size: 9px;
+  font-weight: 600;
+  opacity: 0.72;
 }
 
 .model-button:hover,
@@ -215,6 +233,39 @@
   font-size: 11px;
   font-weight: 600;
   color: #475569;
+}
+
+.recommended-portfolio-compact,
+.recommended-portfolio {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  border: 1px solid rgba(0, 120, 212, 0.35);
+  border-radius: 5px;
+  background: rgba(0, 120, 212, 0.08);
+  color: #0067b8;
+  font-weight: 650;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.recommended-portfolio-compact {
+  width: 100%;
+  margin-bottom: 8px;
+  padding: 6px 8px;
+  font-size: 10px;
+}
+
+.recommended-portfolio {
+  padding: 8px;
+  font-size: 11px;
+}
+
+.recommended-portfolio-compact:hover,
+.recommended-portfolio:hover {
+  border-color: #0078d4;
+  background: rgba(0, 120, 212, 0.14);
 }
 
 .reset-overrides-compact {
@@ -578,6 +629,13 @@
   .model-description,
   .reasoning-hint {
     color: #94a3b8;
+  }
+
+  .recommended-portfolio,
+  .recommended-portfolio-compact {
+    border-color: rgba(96, 165, 250, 0.35);
+    background: rgba(96, 165, 250, 0.1);
+    color: #93c5fd;
   }
 
   .model-selector.compact .model-select,

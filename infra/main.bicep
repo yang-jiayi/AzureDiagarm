@@ -60,6 +60,12 @@ param openAiDeploymentGpt54Mini string = ''
 @description('GPT-5.6 Sol deployment name.')
 param openAiDeploymentGpt56Sol string = ''
 
+@description('GPT-5.6 Terra deployment name.')
+param openAiDeploymentGpt56Terra string = ''
+
+@description('GPT-5.6 Luna deployment name.')
+param openAiDeploymentGpt56Luna string = ''
+
 @description('DeepSeek deployment name.')
 param openAiDeploymentDeepSeek string = ''
 
@@ -94,6 +100,8 @@ var openAiAllowedDeployments = join([
   openAiDeploymentGpt54
   openAiDeploymentGpt54Mini
   openAiDeploymentGpt56Sol
+  openAiDeploymentGpt56Terra
+  openAiDeploymentGpt56Luna
   openAiDeploymentDeepSeek
   openAiDeploymentGrokFast
 ], ',')
@@ -170,6 +178,8 @@ output AZURE_OPENAI_DEPLOYMENT_GPT53CODEX string = openAiDeploymentGpt53Codex
 output AZURE_OPENAI_DEPLOYMENT_GPT54 string = openAiDeploymentGpt54
 output AZURE_OPENAI_DEPLOYMENT_GPT54MINI string = openAiDeploymentGpt54Mini
 output AZURE_OPENAI_DEPLOYMENT_GPT56SOL string = openAiDeploymentGpt56Sol
+output AZURE_OPENAI_DEPLOYMENT_GPT56TERRA string = openAiDeploymentGpt56Terra
+output AZURE_OPENAI_DEPLOYMENT_GPT56LUNA string = openAiDeploymentGpt56Luna
 output AZURE_OPENAI_DEPLOYMENT_DEEPSEEK string = openAiDeploymentDeepSeek
 output AZURE_OPENAI_DEPLOYMENT_GROK4FAST string = openAiDeploymentGrokFast
 

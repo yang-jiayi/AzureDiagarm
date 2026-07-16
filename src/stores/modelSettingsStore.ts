@@ -47,6 +47,7 @@ export interface ModelSettings {
 }
 
 const STORAGE_KEY = 'azure-diagrams-model-settings';
+const STORAGE_VERSION = 2;
 
 const DEFAULT_SETTINGS: ModelSettings = {
   model: 'gpt-5.6-sol',
@@ -72,19 +73,19 @@ export const FEATURE_CONFIG: Record<FeatureType, {
   validation: {
     displayName: 'Architecture Validation',
     description: 'WAF validation and security analysis',
-    recommendedModel: 'gpt-5.6-sol',
+    recommendedModel: 'gpt-5.6-terra',
     recommendedReasoning: 'low'
   },
   deploymentGuide: {
     displayName: 'Deployment Guide & Bicep',
     description: 'Generating deployment guides and IaC templates',
-    recommendedModel: 'gpt-5.6-sol',
+    recommendedModel: 'gpt-5.6-terra',
     recommendedReasoning: 'low'
   },
   blueprint: {
     displayName: 'Blueprint Diagrams',
     description: 'Whiteboard-style blueprint sketches (fast, cost-efficient)',
-    recommendedModel: 'gpt-5.6-sol',
+    recommendedModel: 'gpt-5.6-luna',
     recommendedReasoning: 'low'
   }
 };
@@ -98,6 +99,7 @@ export const MODEL_CONFIG: Record<ModelType, {
   isReasoning: boolean;
   maxCompletionTokens: number;
   description: string;
+  recommendedUse?: string;
   defaultReasoningEffort?: ReasoningEffort;
   supportedReasoningEfforts?: readonly ReasoningEffort[];
   apiFormat?: 'responses' | 'chat-completions'; // defaults to 'responses'
@@ -143,6 +145,7 @@ export const MODEL_CONFIG: Record<ModelType, {
     isReasoning: true,
     maxCompletionTokens: 32000,
     description: 'Newest frontier reasoning model - top-tier quality for complex architectures',
+    recommendedUse: 'Highest quality',
     defaultReasoningEffort: 'low',
     supportedReasoningEfforts: GPT_56_REASONING_EFFORTS,
   },
@@ -152,6 +155,8 @@ export const MODEL_CONFIG: Record<ModelType, {
     isReasoning: true,
     maxCompletionTokens: 32000,
     description: 'Frontier reasoning model - grounded, thorough analysis for complex architectures',
+    recommendedUse: 'Validation + deployment',
+    defaultReasoningEffort: 'low',
     supportedReasoningEfforts: GPT_56_REASONING_EFFORTS,
   },
   'gpt-5.6-luna': {
@@ -160,6 +165,8 @@ export const MODEL_CONFIG: Record<ModelType, {
     isReasoning: true,
     maxCompletionTokens: 32000,
     description: 'Frontier reasoning model - fast, creative reasoning for architecture design',
+    recommendedUse: 'Fast blueprints',
+    defaultReasoningEffort: 'low',
     supportedReasoningEfforts: GPT_56_REASONING_EFFORTS,
   },
   'deepseek-v3.2-speciale': {
@@ -335,6 +342,53 @@ export function getDeploymentName(model: ModelType): string {
 }
 
 /**
+ * Build the recommended application portfolio from models that are actually deployed.
+ * Sol remains the default, while Terra and Luna are assigned to their strongest features.
+ */
+export function getRecommendedModelSettings(): ModelSettings {
+  const availableModels = getAvailableModels();
+  const architectureRecommendation = FEATURE_CONFIG.architectureGeneration;
+  const defaultModel = availableModels.includes(architectureRecommendation.recommendedModel)
+    ? architectureRecommendation.recommendedModel
+    : (availableModels[0] || DEFAULT_SETTINGS.model);
+  const defaultReasoning = normalizeReasoningEffort(
+    defaultModel,
+    architectureRecommendation.recommendedReasoning
+      || MODEL_CONFIG[defaultModel].defaultReasoningEffort
+      || DEFAULT_SETTINGS.reasoningEffort,
+  );
+  const featureOverrides: Partial<Record<FeatureType, FeatureModelOverride>> = {};
+
+  (Object.keys(FEATURE_CONFIG) as FeatureType[]).forEach((feature) => {
+    const recommendation = FEATURE_CONFIG[feature];
+    if (!availableModels.includes(recommendation.recommendedModel)) return;
+
+    const reasoningEffort = normalizeReasoningEffort(
+      recommendation.recommendedModel,
+      recommendation.recommendedReasoning
+        || MODEL_CONFIG[recommendation.recommendedModel].defaultReasoningEffort
+        || defaultReasoning,
+    );
+
+    if (
+      recommendation.recommendedModel !== defaultModel
+      || reasoningEffort !== defaultReasoning
+    ) {
+      featureOverrides[feature] = {
+        model: recommendation.recommendedModel,
+        reasoningEffort,
+      };
+    }
+  });
+
+  return {
+    model: defaultModel,
+    reasoningEffort: defaultReasoning,
+    featureOverrides,
+  };
+}
+
+/**
  * Load settings from localStorage
  */
 function loadSettings(): ModelSettings {
@@ -351,18 +405,30 @@ function loadSettings(): ModelSettings {
       if (parsed.model && MODEL_CONFIG[parsed.model as ModelType]) {
         const storedModel = parsed.model as ModelType;
         const selectedModel = isModelAvailable(storedModel) ? storedModel : fallbackModel;
+        const reasoningEffort = normalizeReasoningEffort(selectedModel, parsed.reasoningEffort);
+        const featureOverrides = normalizeFeatureOverrides(parsed.featureOverrides);
+        const storedVersion = Number.isInteger(parsed.version) ? parsed.version : 1;
+
+        if (
+          storedVersion < STORAGE_VERSION
+          && selectedModel === DEFAULT_SETTINGS.model
+          && reasoningEffort === DEFAULT_SETTINGS.reasoningEffort
+          && Object.keys(featureOverrides).length === 0
+        ) {
+          return getRecommendedModelSettings();
+        }
 
         return {
           model: selectedModel,
-          reasoningEffort: normalizeReasoningEffort(selectedModel, parsed.reasoningEffort),
-          featureOverrides: normalizeFeatureOverrides(parsed.featureOverrides),
+          reasoningEffort,
+          featureOverrides,
         };
       }
     }
   } catch (e) {
     console.warn('Failed to load model settings:', e);
   }
-  return { ...DEFAULT_SETTINGS, model: fallbackModel };
+  return getRecommendedModelSettings();
 }
 
 /**
@@ -370,7 +436,10 @@ function loadSettings(): ModelSettings {
  */
 function saveSettings(settings: ModelSettings): void {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      version: STORAGE_VERSION,
+      ...settings,
+    }));
   } catch (e) {
     console.warn('Failed to save model settings:', e);
   }

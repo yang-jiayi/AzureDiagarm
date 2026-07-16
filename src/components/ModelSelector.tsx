@@ -8,7 +8,7 @@
  */
 
 import React, { useState } from 'react';
-import { Settings, Brain, ChevronDown, ChevronRight, RotateCcw, Cpu, Layers, Sparkles, Zap } from 'lucide-react';
+import { Settings, Brain, ChevronDown, ChevronRight, RotateCcw, Cpu, Layers, Sparkles, Zap, Sun, Globe2, Moon } from 'lucide-react';
 import { 
   useModelSettings, 
   MODEL_CONFIG, 
@@ -17,6 +17,7 @@ import {
   FeatureType,
   FEATURE_CONFIG,
   getAvailableModels,
+  getRecommendedModelSettings,
   getReasoningEffortLabel,
   getSupportedReasoningEfforts,
   updateFeatureOverride,
@@ -80,6 +81,10 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({ compact = false }) => {
     updateSettings({ featureOverrides: {} });
   };
 
+  const applyRecommendedPortfolio = () => {
+    updateSettings(getRecommendedModelSettings());
+  };
+
   const getModelIcon = (model: ModelType) => {
     switch (model) {
       case 'gpt-5.1':
@@ -87,11 +92,11 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({ compact = false }) => {
       case 'gpt-5.2':
         return <Brain size={16} />;
       case 'gpt-5.6-sol':
-        return <Brain size={16} />;
+        return <Sun size={16} />;
       case 'gpt-5.6-terra':
-        return <Brain size={16} />;
+        return <Globe2 size={16} />;
       case 'gpt-5.6-luna':
-        return <Brain size={16} />;
+        return <Moon size={16} />;
       case 'deepseek-v3.2-speciale':
         return <Layers size={16} />;
       case 'grok-4.1-fast':
@@ -169,7 +174,12 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({ compact = false }) => {
                     </button>
                   )}
                 </div>
-                
+
+                <button className="recommended-portfolio-compact" onClick={applyRecommendedPortfolio}>
+                  <Sparkles size={12} />
+                  {t("Use recommended portfolio")}
+                </button>
+
                 {(Object.keys(FEATURE_CONFIG) as FeatureType[]).map(feature => {
                   const featureConfig = FEATURE_CONFIG[feature];
                   const currentModel = getFeatureCurrentModel(feature);
@@ -213,7 +223,9 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({ compact = false }) => {
                 })}
                 
                 <div className="compact-advanced-footer">
-                  <span className="compact-hint">{t("Rec:")}{' '}{FEATURE_CONFIG.architectureGeneration.recommendedModel} {' '}{t("for generation")}</span>
+                  <span className="compact-hint">
+                    {t("Sol for architecture • Terra for validation and deployment • Luna for blueprints")}
+                  </span>
                 </div>
               </div>
             )}
@@ -232,8 +244,9 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({ compact = false }) => {
             <div className="help-subtitle">{t("Recommended settings (from testing):")}</div>
             <div className="help-defaults">
               <span>{t("• Architecture: GPT-5.6 Sol (low)")}</span>
-              <span>{t("• Validation: GPT-5.6 Sol (low)")}</span>
-              <span>{t("• Deployment: GPT-5.6 Sol (low)")}</span>
+              <span>{t("• Validation: GPT-5.6 Terra (low)")}</span>
+              <span>{t("• Deployment: GPT-5.6 Terra (low)")}</span>
+              <span>{t("• Blueprint: GPT-5.6 Luna (low)")}</span>
             </div>
           </div>
         </div>
@@ -260,7 +273,12 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({ compact = false }) => {
                 title={translate(MODEL_CONFIG[model].description)}
               >
                 {getModelIcon(model)}
-                <span>{MODEL_CONFIG[model].displayName}</span>
+                <span className="model-button-copy">
+                  <span>{MODEL_CONFIG[model].displayName}</span>
+                  {MODEL_CONFIG[model].recommendedUse && (
+                    <small>{translate(MODEL_CONFIG[model].recommendedUse)}</small>
+                  )}
+                </span>
               </button>
             ))}
           </div>
@@ -307,7 +325,12 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({ compact = false }) => {
             <div className="advanced-content">
               <p className="advanced-hint">
                 {' '}{t("Override the default model for specific features. Leave as \"Use default\" to use the settings above.")}{' '}</p>
-              
+
+              <button className="recommended-portfolio" onClick={applyRecommendedPortfolio}>
+                <Sparkles size={12} />
+                {t("Use recommended portfolio")}
+              </button>
+
               {(Object.keys(FEATURE_CONFIG) as FeatureType[]).map(feature => {
                 const featureConfig = FEATURE_CONFIG[feature];
                 const currentModel = getFeatureCurrentModel(feature);
@@ -351,7 +374,7 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({ compact = false }) => {
                     </div>
                     <div className="feature-recommended">
                       {' '}{t("Recommended:")}{' '}{MODEL_CONFIG[featureConfig.recommendedModel].displayName}
-                      {featureConfig.recommendedReasoning && ` (${featureConfig.recommendedReasoning})`}
+                      {featureConfig.recommendedReasoning && ` (${t(getReasoningEffortLabel(featureConfig.recommendedReasoning))})`}
                     </div>
                   </div>
                 );

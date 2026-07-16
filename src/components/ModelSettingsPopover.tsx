@@ -8,7 +8,7 @@
  */
 
 import { forwardRef } from 'react';
-import { Brain, RotateCcw, ChevronDown, Cpu, Layers, Sparkles, Zap } from 'lucide-react';
+import { Brain, RotateCcw, ChevronDown, Cpu, Layers, Sparkles, Zap, Sun, Globe2, Moon, X } from 'lucide-react';
 import {
   useModelSettings,
   MODEL_CONFIG,
@@ -18,6 +18,7 @@ import {
   FEATURE_CONFIG,
   getAvailableModels,
   getReasoningEffortLabel,
+  getRecommendedModelSettings,
   getSupportedReasoningEfforts,
   updateFeatureOverride,
   hasFeatureOverride,
@@ -86,6 +87,10 @@ const ModelSettingsPopover = forwardRef<HTMLDivElement, ModelSettingsPopoverProp
       updateSettings({ featureOverrides: {} });
     };
 
+    const applyRecommendedPortfolio = () => {
+      updateSettings(getRecommendedModelSettings());
+    };
+
     const getModelIcon = (model: ModelType) => {
       switch (model) {
         case 'gpt-5.1':
@@ -93,11 +98,11 @@ const ModelSettingsPopover = forwardRef<HTMLDivElement, ModelSettingsPopoverProp
         case 'gpt-5.2':
           return <Brain size={14} />;
         case 'gpt-5.6-sol':
-          return <Brain size={14} />;
+          return <Sun size={14} />;
         case 'gpt-5.6-terra':
-          return <Brain size={14} />;
+          return <Globe2 size={14} />;
         case 'gpt-5.6-luna':
-          return <Brain size={14} />;
+          return <Moon size={14} />;
         case 'deepseek-v3.2-speciale':
           return <Layers size={14} />;
         case 'grok-4.1-fast':
@@ -157,7 +162,17 @@ const ModelSettingsPopover = forwardRef<HTMLDivElement, ModelSettingsPopoverProp
             aria-label={t("AI model settings")}
           >
             {/* Default Model */}
-            <div className="toolbar-dropdown-heading">{t("Default Model")}</div>
+            <div className="toolbar-dropdown-heading">
+              <span>{t("Default Model")}</span>
+              <button
+                className="msp-close-btn"
+                onClick={onToggle}
+                title={t("Close")}
+                aria-label={t("Close")}
+              >
+                <X size={13} />
+              </button>
+            </div>
             <div className="msp-model-buttons">
               {availableModels.map((model) => (
                 <button
@@ -166,8 +181,15 @@ const ModelSettingsPopover = forwardRef<HTMLDivElement, ModelSettingsPopoverProp
                   onClick={() => handleModelChange(model)}
                   title={translate(MODEL_CONFIG[model].description)}
                 >
-                  {getModelIcon(model)}
-                  <span>{MODEL_CONFIG[model].displayName}</span>
+                  <span className="msp-model-btn-main">
+                    {getModelIcon(model)}
+                    <span>{MODEL_CONFIG[model].displayName}</span>
+                  </span>
+                  {MODEL_CONFIG[model].recommendedUse && (
+                    <span className="msp-model-role">
+                      {translate(MODEL_CONFIG[model].recommendedUse)}
+                    </span>
+                  )}
                 </button>
               ))}
             </div>
@@ -194,6 +216,21 @@ const ModelSettingsPopover = forwardRef<HTMLDivElement, ModelSettingsPopoverProp
             )}
 
             <div className="toolbar-dropdown-separator" role="separator" />
+
+            <div className="msp-portfolio">
+              <div className="msp-portfolio-copy">
+                <strong>{t("Recommended portfolio")}</strong>
+                <span>{t("Sol for architecture • Terra for validation and deployment • Luna for blueprints")}</span>
+              </div>
+              <button
+                className="msp-portfolio-btn"
+                onClick={applyRecommendedPortfolio}
+                title={t("Use recommended portfolio")}
+              >
+                <Sparkles size={12} />
+                {t("Apply")}
+              </button>
+            </div>
 
             {/* Per-Feature Overrides */}
             <div className="toolbar-dropdown-heading">
@@ -257,11 +294,6 @@ const ModelSettingsPopover = forwardRef<HTMLDivElement, ModelSettingsPopoverProp
                 );
               })}
             </div>
-
-            <div className="toolbar-dropdown-separator" role="separator" />
-
-            <div className="toolbar-dropdown-hint">
-              {' '}{t("Recommended: GPT-5.6 Sol (low) for architecture generation and validation")}{' '}</div>
           </div>
         )}
       </div>
