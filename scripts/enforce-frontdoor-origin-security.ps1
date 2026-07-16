@@ -81,15 +81,14 @@ $serviceTagsUrl = (
     "/providers/Microsoft.Network/locations/$serviceTagLocation/serviceTags" +
     '?api-version=2024-05-01'
 )
-$serviceTagsJson = Invoke-AzCli @(
+$frontDoorTagJson = Invoke-AzCli @(
     'rest',
     '--method', 'get',
-    '--url', $serviceTagsUrl
+    '--url', $serviceTagsUrl,
+    '--query', "values[?name == 'AzureFrontDoor.Backend'] | [0]",
+    '--output', 'json'
 )
-$serviceTags = $serviceTagsJson | ConvertFrom-Json
-$frontDoorTag = $serviceTags.values |
-    Where-Object { $_.name -eq 'AzureFrontDoor.Backend' } |
-    Select-Object -First 1
+$frontDoorTag = $frontDoorTagJson | ConvertFrom-Json
 
 if ($null -eq $frontDoorTag) {
     throw "AzureFrontDoor.Backend was not present in the $serviceTagLocation service tag response."
