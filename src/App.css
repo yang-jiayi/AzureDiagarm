@@ -410,6 +410,7 @@
   top: calc(100% + 10px);
   left: 0;
   min-width: 180px;
+  max-width: calc(100vw - 24px);
   background: rgba(255, 255, 255, 0.98);
   color: #111827;
   border: 1px solid rgba(17, 24, 39, 0.12);

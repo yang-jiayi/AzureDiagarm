@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-import React, { useState, useCallback, useRef, useEffect } from 'react';
+import React, { useState, useCallback, useRef, useEffect, useLayoutEffect } from 'react';
 import ReactFlow, {
   MiniMap,
   Controls,
@@ -113,6 +113,93 @@ const EXPORT_HISTORY_STORAGE_KEY = 'azure-diagram-builder.exportHistory.v1';
 const EDGE_STYLE_STORAGE_KEY = 'azure-diagram-builder.edgeStyle.v1';
 const CANVAS_HINT_STORAGE_KEY = 'azure-diagram-builder.canvasHintDismissed.v1';
 const HEADER_COLLAPSED_STORAGE_KEY = 'azure-diagram-builder.headerCollapsed.v1';
+
+function fitToolbarMenuToViewport(menu: HTMLElement) {
+  const edgeGap = 12;
+  const triggerGap = 10;
+
+  menu.style.position = '';
+  menu.style.top = '';
+  menu.style.bottom = '';
+  menu.style.left = '';
+  menu.style.right = '';
+  menu.style.width = '';
+  menu.style.minWidth = '';
+  menu.style.maxWidth = '';
+  menu.style.maxHeight = '';
+  menu.style.overflowX = '';
+  menu.style.overflowY = '';
+  menu.style.transform = '';
+
+  const visualViewport = window.visualViewport;
+  const viewportLeft = visualViewport?.offsetLeft ?? 0;
+  const viewportTop = visualViewport?.offsetTop ?? 0;
+  const viewportWidth = visualViewport?.width ?? window.innerWidth;
+  const viewportHeight = visualViewport?.height ?? window.innerHeight;
+  const viewportRight = viewportLeft + viewportWidth;
+  const viewportBottom = viewportTop + viewportHeight;
+  const menuMaxWidth = Math.max(0, viewportWidth - edgeGap * 2);
+  menu.style.maxWidth = `${menuMaxWidth}px`;
+  const configuredMinWidth = Number.parseFloat(window.getComputedStyle(menu).minWidth);
+  if (Number.isFinite(configuredMinWidth) && configuredMinWidth > menuMaxWidth) {
+    menu.style.minWidth = `${menuMaxWidth}px`;
+  }
+  menu.style.overflowX = 'auto';
+
+  if (window.matchMedia('(max-width: 640px)').matches) {
+    let top = Math.max(viewportTop + edgeGap, 78);
+    if (viewportBottom - top - edgeGap < 80) {
+      top = viewportTop + edgeGap;
+    }
+    menu.style.position = 'fixed';
+    menu.style.top = `${top}px`;
+    menu.style.left = `${viewportLeft + edgeGap}px`;
+    menu.style.right = 'auto';
+    menu.style.width = `${menuMaxWidth}px`;
+    menu.style.maxHeight = `${Math.max(0, viewportBottom - top - edgeGap)}px`;
+    menu.style.overflowY = 'auto';
+    return;
+  }
+
+  const trigger = menu.parentElement?.getBoundingClientRect();
+  if (!trigger) return;
+
+  const availableBelow = viewportBottom - trigger.bottom - triggerGap - edgeGap;
+  const availableAbove = trigger.top - viewportTop - triggerGap - edgeGap;
+  const naturalHeight = menu.scrollHeight;
+  const placeAbove = naturalHeight > availableBelow && availableAbove > availableBelow;
+  const availableHeight = placeAbove ? availableAbove : availableBelow;
+  const triggerOutsideViewport = trigger.bottom <= viewportTop + edgeGap
+    || trigger.top >= viewportBottom - edgeGap;
+
+  if (triggerOutsideViewport || availableHeight < 80) {
+    const menuWidth = menu.getBoundingClientRect().width;
+    const left = Math.min(
+      Math.max(trigger.left, viewportLeft + edgeGap),
+      Math.max(viewportLeft + edgeGap, viewportRight - menuWidth - edgeGap),
+    );
+    menu.style.position = 'fixed';
+    menu.style.top = `${viewportTop + edgeGap}px`;
+    menu.style.left = `${left}px`;
+    menu.style.right = 'auto';
+    menu.style.maxHeight = `${Math.max(0, viewportHeight - edgeGap * 2)}px`;
+  } else {
+    menu.style.top = placeAbove ? 'auto' : `calc(100% + ${triggerGap}px)`;
+    menu.style.bottom = placeAbove ? `calc(100% + ${triggerGap}px)` : 'auto';
+    menu.style.maxHeight = `${availableHeight}px`;
+  }
+  menu.style.overflowY = 'auto';
+
+  const rect = menu.getBoundingClientRect();
+  const horizontalShift = rect.left < viewportLeft + edgeGap
+    ? viewportLeft + edgeGap - rect.left
+    : rect.right > viewportRight - edgeGap
+      ? viewportRight - edgeGap - rect.right
+      : 0;
+  if (horizontalShift !== 0) {
+    menu.style.transform = `translateX(${horizontalShift}px)`;
+  }
+}
 
 // Derive a short, human-friendly architecture title from a free-form prompt
 // (used as a fallback when no manifest title is available). Strips common
@@ -433,6 +520,44 @@ function App() {
     return () => {
       document.removeEventListener('pointerdown', handlePointerDown);
       document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isExportMenuOpen, isLayoutMenuOpen, isBulkSelectMenuOpen, isStylePresetMenuOpen, isModelSettingsOpen]);
+
+  useLayoutEffect(() => {
+    if (!isExportMenuOpen && !isLayoutMenuOpen && !isBulkSelectMenuOpen && !isStylePresetMenuOpen && !isModelSettingsOpen) {
+      return;
+    }
+
+    let frame = 0;
+    let settleTimer = 0;
+    const fitOpenMenus = () => {
+      document
+        .querySelectorAll<HTMLElement>('.app-header .toolbar-dropdown-menu')
+        .forEach(fitToolbarMenuToViewport);
+    };
+    const scheduleFitOpenMenus = () => {
+      window.cancelAnimationFrame(frame);
+      window.clearTimeout(settleTimer);
+      frame = window.requestAnimationFrame(fitOpenMenus);
+      settleTimer = window.setTimeout(fitOpenMenus, 250);
+    };
+
+    fitOpenMenus();
+    window.addEventListener('resize', scheduleFitOpenMenus);
+    window.visualViewport?.addEventListener('resize', scheduleFitOpenMenus);
+    window.visualViewport?.addEventListener('scroll', scheduleFitOpenMenus);
+    const header = document.querySelector('.app-header');
+    const resizeObserver = header && typeof ResizeObserver !== 'undefined'
+      ? new ResizeObserver(scheduleFitOpenMenus)
+      : null;
+    if (header && resizeObserver) resizeObserver.observe(header);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.clearTimeout(settleTimer);
+      window.removeEventListener('resize', scheduleFitOpenMenus);
+      window.visualViewport?.removeEventListener('resize', scheduleFitOpenMenus);
+      window.visualViewport?.removeEventListener('scroll', scheduleFitOpenMenus);
+      resizeObserver?.disconnect();
     };
   }, [isExportMenuOpen, isLayoutMenuOpen, isBulkSelectMenuOpen, isStylePresetMenuOpen, isModelSettingsOpen]);
 
