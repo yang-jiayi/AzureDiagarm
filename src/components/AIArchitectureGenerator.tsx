@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-import React, { useState, useEffect } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Sparkles, X, Loader2, Clock, Zap, Brain, Network, PenTool, Layers } from 'lucide-react';
 import { generateArchitectureWithAI, isAzureOpenAIConfigured, AIMetrics, analyzeArchitectureDiagramImage, ModelOverride } from '../services/azureOpenAI';import { generateReferenceArchitectureWithAI } from '../services/referenceArchitectureAI';
@@ -26,6 +26,7 @@ import { buildModificationPrompt } from '../services/modificationPrompt';
 import './AIArchitectureGenerator.css';
 import { useLanguage } from '../i18n/LanguageContext';
 import { localize, type LocalizedText } from '../i18n/localization';
+import { readBooleanPreference, readLocalStorage, writeLocalStorage } from '../utils/safeStorage';
 
 type GenerationMode = 'topology' | 'reference' | 'blueprint' | 'both';
 
@@ -172,7 +173,7 @@ const CATEGORIZED_PROMPTS: PromptCategory[] = [
 ];
 
 interface AIArchitectureGeneratorProps {
-  onGenerate: (architecture: any, prompt: string, autoSnapshot: boolean, referenceImageUrl?: string) => void;
+  onGenerate: (architecture: any, prompt: string, autoSnapshot: boolean, referenceImageUrl?: string) => void | Promise<void>;
   /**
    * Called when a Reference Architecture has been generated. Reference mode
    * intentionally does NOT push a topology onto the canvas (the transformed
@@ -204,7 +205,7 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({ onGen
   const [imageAnalyzed, setImageAnalyzed] = useState(false);
   const [uploadedImageUrl, setUploadedImageUrl] = useState<string | null>(null);
   const [mode, setMode] = useState<GenerationMode>(() => {
-    const saved = localStorage.getItem('aiGenerator.mode');
+    const saved = readLocalStorage('aiGenerator.mode');
     if (saved === 'blueprint' || saved === 'both') return saved;
     // Reference mode is hidden in the UI; migrate any stale persisted value.
     if (saved === 'reference') return 'blueprint';
@@ -214,17 +215,16 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({ onGen
   // When mode === 'both', run topology + blueprint generations in parallel
   // (default) or sequentially. Persisted.
   const [bothInParallel, setBothInParallel] = useState<boolean>(() => {
-    const saved = localStorage.getItem('aiGenerator.bothInParallel');
-    return saved === null ? true : JSON.parse(saved);
+    return readBooleanPreference('aiGenerator.bothInParallel', true);
   });
   const handleBothInParallelChange = (checked: boolean) => {
     setBothInParallel(checked);
-    localStorage.setItem('aiGenerator.bothInParallel', JSON.stringify(checked));
+    writeLocalStorage('aiGenerator.bothInParallel', JSON.stringify(checked));
   };
 
   const handleModeChange = (m: GenerationMode) => {
     setMode(m);
-    localStorage.setItem('aiGenerator.mode', m);
+    writeLocalStorage('aiGenerator.mode', m);
   };
 
 
@@ -250,27 +250,49 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({ onGen
   
   // Auto-snapshot preference (stored in localStorage)
   const [autoSnapshot, setAutoSnapshot] = useState<boolean>(() => {
-    const saved = localStorage.getItem('aiGenerator.autoSnapshot');
-    return saved === null ? true : JSON.parse(saved); // Default to true
+    return readBooleanPreference('aiGenerator.autoSnapshot', true);
   });
 
   // Blueprint legend position preference (stored in localStorage). 'auto'
   // picks bottom vs right based on aspect ratio.
   const [legendPosition, setLegendPosition] = useState<'auto' | 'bottom' | 'right'>(() => {
-    const saved = localStorage.getItem('aiGenerator.blueprintLegendPosition');
+    const saved = readLocalStorage('aiGenerator.blueprintLegendPosition');
     if (saved === 'bottom' || saved === 'right' || saved === 'auto') return saved;
     return 'auto';
   });
   const handleLegendPositionChange = (v: 'auto' | 'bottom' | 'right') => {
     setLegendPosition(v);
-    localStorage.setItem('aiGenerator.blueprintLegendPosition', v);
+    writeLocalStorage('aiGenerator.blueprintLegendPosition', v);
   };
 
   // Save preference to localStorage when it changes
   const handleAutoSnapshotChange = (checked: boolean) => {
     setAutoSnapshot(checked);
-    localStorage.setItem('aiGenerator.autoSnapshot', JSON.stringify(checked));
+    writeLocalStorage('aiGenerator.autoSnapshot', JSON.stringify(checked));
   };
+
+  const closeTimerRef = useRef<number | null>(null);
+  const cancelScheduledClose = useCallback(() => {
+    if (closeTimerRef.current !== null) {
+      window.clearTimeout(closeTimerRef.current);
+      closeTimerRef.current = null;
+    }
+  }, []);
+  const closeModal = useCallback(() => {
+    cancelScheduledClose();
+    setIsOpen(false);
+  }, [cancelScheduledClose]);
+  const scheduleClose = useCallback(() => {
+    cancelScheduledClose();
+    closeTimerRef.current = window.setTimeout(() => {
+      closeTimerRef.current = null;
+      setIsOpen(false);
+      setAiMetrics(null);
+      setUploadedImageUrl(null);
+    }, 45_000);
+  }, [cancelScheduledClose]);
+
+  useEffect(() => cancelScheduledClose, [cancelScheduledClose]);
 
   // Handle image analysis result
   const handleImageAnalyzed = (analyzedDescription: string) => {
@@ -371,11 +393,7 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({ onGen
         }
 
         setDescription('');
-        setTimeout(() => {
-          setIsOpen(false);
-          setAiMetrics(null);
-          setUploadedImageUrl(null);
-        }, 45000);
+        scheduleClose();
         return;
       }
 
@@ -401,11 +419,7 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({ onGen
         }
 
         setDescription('');
-        setTimeout(() => {
-          setIsOpen(false);
-          setAiMetrics(null);
-          setUploadedImageUrl(null);
-        }, 45000);
+        scheduleClose();
         return;
       }
 
@@ -439,14 +453,14 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({ onGen
         const topoCall = (m?: ComponentManifest) =>
           generateArchitectureWithAI(bothContextPrompt, currentModelSettings, m, language);
         const bpCall = (m?: ComponentManifest) =>
-          generateBlueprintArchitectureWithAI(description, blueprintModelSettings, m, language);
+          generateBlueprintArchitectureWithAI(bothContextPrompt, blueprintModelSettings, m, language);
 
         const t0 = performance.now();
         // Pre-pass: extract a canonical component manifest so topology and
         // blueprint agree on the set of services, zones, and on-prem actors.
         let manifest: ComponentManifest | undefined;
         try {
-          manifest = await generateComponentManifest(description, currentModelSettings, language);
+          manifest = await generateComponentManifest(bothContextPrompt, currentModelSettings, language);
           console.log(
             `📋 Manifest: ${manifest.components.length} components across ${manifest.zones.length} zones (${manifest.metrics?.totalTokens ?? '?'} tokens, ${Math.round((manifest.metrics?.elapsedTimeMs ?? 0) / 100) / 10}s)`,
           );
@@ -455,21 +469,41 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({ onGen
           manifest = undefined;
         }
 
-        let topoResult: any;
-        let bpResult: any;
+        let topoResult: any = null;
+        let bpResult: any = null;
+        let topoFailure: unknown = null;
+        let bpFailure: unknown = null;
         if (bothInParallel) {
-          [topoResult, bpResult] = await Promise.all([topoCall(manifest), bpCall(manifest)]);
+          const [topologyOutcome, blueprintOutcome] = await Promise.allSettled([
+            topoCall(manifest),
+            bpCall(manifest),
+          ]);
+          if (topologyOutcome.status === 'fulfilled') topoResult = topologyOutcome.value;
+          else topoFailure = topologyOutcome.reason;
+          if (blueprintOutcome.status === 'fulfilled') bpResult = blueprintOutcome.value;
+          else bpFailure = blueprintOutcome.reason;
         } else {
-          topoResult = await topoCall(manifest);
-          bpResult = await bpCall(manifest);
+          try {
+            topoResult = await topoCall(manifest);
+          } catch (error) {
+            topoFailure = error;
+          }
+          try {
+            bpResult = await bpCall(manifest);
+          } catch (error) {
+            bpFailure = error;
+          }
+        }
+        if (!topoResult && !bpResult) {
+          throw topoFailure || bpFailure || new Error('Topology and Blueprint generation failed.');
         }
         const wallElapsed = performance.now() - t0;
 
         // Combined metrics: sum tokens (including manifest); wall-clock
         // elapsed reflects actual perceived time (manifest + max(topo, bp)
         // for parallel; manifest + topo + bp for sequential).
-        const tm = topoResult.metrics;
-        const bm = bpResult.metrics;
+        const tm = topoResult?.metrics;
+        const bm = bpResult?.metrics;
         const mm = manifest?.metrics;
         if (tm || bm || mm) {
           setAiMetrics({
@@ -488,13 +522,17 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({ onGen
             topoResult.architectureName = manifest.title;
           }
         }
-        onGenerate(topoResult, description, autoSnapshot, uploadedImageUrl || undefined);
-        // Stash blueprint for the toolbar re-export button.
-        onBlueprintArchitecture?.(bpResult);
+        if (topoResult) {
+          await onGenerate(topoResult, description, autoSnapshot, uploadedImageUrl || undefined);
+        }
+        if (bpResult) {
+          // Stash blueprint for the toolbar re-export button.
+          onBlueprintArchitecture?.(bpResult);
+        }
 
         // Auto-download the blueprint PNG when the user has autoSnapshot on
         // (matches the existing "auto" behavior they're already used to).
-        if (autoSnapshot) {
+        if (autoSnapshot && bpResult) {
           try {
             await exportBlueprintArchitectureAsPng(bpResult, { legendPosition });
           } catch (err) {
@@ -503,12 +541,15 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({ onGen
           }
         }
 
+        if (topoFailure || bpFailure) {
+          const failedOutput = topoFailure ? 'Topology' : 'Blueprint';
+          const cause = topoFailure || bpFailure;
+          const detail = cause instanceof Error ? cause.message : String(cause);
+          throw new Error(`${failedOutput} generation failed, but the other output was created successfully: ${detail}`);
+        }
+
         setDescription('');
-        setTimeout(() => {
-          setIsOpen(false);
-          setAiMetrics(null);
-          setUploadedImageUrl(null);
-        }, 45000);
+        scheduleClose();
         return;
       }
 
@@ -532,15 +573,11 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({ onGen
         setAiMetrics(result.metrics);
       }
       
-      onGenerate(result, description, autoSnapshot, uploadedImageUrl || undefined);
+      await onGenerate(result, description, autoSnapshot, uploadedImageUrl || undefined);
       setDescription('');
       
       // Close modal shortly after successful generation
-      setTimeout(() => {
-        setIsOpen(false);
-        setAiMetrics(null);
-        setUploadedImageUrl(null);
-      }, 45000); // Give user 45 seconds to review results or type a modification
+      scheduleClose(); // Give user 45 seconds to review results or type a modification
     } catch (err: any) {
       setError(err.message ? translate(err.message) : translate('Failed to generate architecture. Please try again.'));
     } finally {
@@ -557,6 +594,7 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({ onGen
       <button
         className="btn btn-ai btn-generate-ai"
         onClick={() => {
+          cancelScheduledClose();
           setIsOpen(true);
           // Reset state when opening modal
           setError('');
@@ -568,7 +606,7 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({ onGen
         {' '}{t("Generate with AI")}{' '}</button>
 
       {isOpen && createPortal(
-        <div className="modal-overlay" onClick={() => setIsOpen(false)}>
+        <div className="modal-overlay" onClick={closeModal}>
           <div className="modal-content ai-architecture-modal" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <div className="modal-title">
@@ -577,7 +615,7 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({ onGen
               </div>
               <button
                 className="modal-close"
-                onClick={() => setIsOpen(false)}
+                onClick={closeModal}
                 title={t("Close")}
                 aria-label={t("Close")}
               >
@@ -844,7 +882,7 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({ onGen
               <div className="modal-footer-actions">
                 <button
                   className="btn btn-secondary"
-                  onClick={() => setIsOpen(false)}
+                  onClick={closeModal}
                   disabled={isGenerating}
                 >
                   {aiMetrics ? t("Close") : t("Cancel")}

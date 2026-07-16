@@ -33,6 +33,12 @@ const EditableEdge: React.FC<EdgeProps> = ({
   const [isDragging, setIsDragging] = useState(false);
   const dragStartRef = useRef<{ x: number; y: number; offsetX: number; offsetY: number } | null>(null);
 
+  React.useEffect(() => {
+    if (!isEditing) {
+      setEditLabel(label?.toString() || '');
+    }
+  }, [label, isEditing]);
+
   const pathStyle = (data as any)?.pathStyle as 'straight' | 'smooth' | 'orthogonal' | undefined;
 
   const pathFn =
@@ -197,6 +203,14 @@ const EditableEdge: React.FC<EdgeProps> = ({
             <div
               onMouseDown={handleMouseDown}
               onDoubleClick={handleLabelDoubleClick}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' || event.key === ' ' || event.key === 'F2') {
+                  event.preventDefault();
+                  setIsEditing(true);
+                }
+              }}
+              role="button"
+              tabIndex={0}
               style={{
                 padding: '4px 8px',
                 backgroundColor: '#ffe4a3',

@@ -172,7 +172,7 @@ const ArchitectureChatPanel: React.FC<ArchitectureChatPanelProps> = ({
   currentArchitecture,
   onApply,
 }) => {
-  const { t, language } = useLanguage();
+  const { t, translate, language } = useLanguage();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [isSending, setIsSending] = useState(false);
@@ -191,6 +191,7 @@ const ArchitectureChatPanel: React.FC<ArchitectureChatPanelProps> = ({
 
   const threadRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const latestFollowUpRequestRef = useRef<string | null>(null);
 
   const configured = isAzureOpenAIConfigured();
   const hasDiagram = currentArchitecture.nodes.some((n) => n.type === 'azureNode');
@@ -235,6 +236,9 @@ const ArchitectureChatPanel: React.FC<ArchitectureChatPanelProps> = ({
       if (!text || isSending) return;
 
       setInput('');
+      latestFollowUpRequestRef.current = null;
+      setModelFollowUps(null);
+      setFollowUpsLoading(false);
       const userMsg: ChatMessage = { id: uid(), role: 'user', text, ts: Date.now() };
       setMessages((prev) => [...prev, userMsg]);
       setIsSending(true);
@@ -275,22 +279,31 @@ const ArchitectureChatPanel: React.FC<ArchitectureChatPanelProps> = ({
           : [];
         setModelFollowUps(null);
         setFollowUpsLoading(true);
+        latestFollowUpRequestRef.current = asstId;
         void generateFollowUpSuggestions({ services: nextServices, lastChange: summary, recentRequests, language })
           .then((items) => {
-            if (items.length) setModelFollowUps({ forMsgId: asstId, items });
+            if (latestFollowUpRequestRef.current === asstId && items.length) {
+              setModelFollowUps({ forMsgId: asstId, items });
+            }
           })
           .catch(() => { /* fall back to static chips */ })
-          .finally(() => setFollowUpsLoading(false));
+          .finally(() => {
+            if (latestFollowUpRequestRef.current === asstId) {
+              setFollowUpsLoading(false);
+            }
+          });
       } catch (err: any) {
         setMessages((prev) => [
           ...prev,
           {
             id: uid(),
             role: 'error',
-            text: err?.message || localize(language, {
-              en: 'Something went wrong updating the diagram. Please try again.',
-              ja: '図の更新中に問題が発生しました。もう一度お試しください。',
-            }),
+            text: err?.message
+              ? translate(err.message)
+              : localize(language, {
+                  en: 'Something went wrong updating the diagram. Please try again.',
+                  ja: '図の更新中に問題が発生しました。もう一度お試しください。',
+                }),
             ts: Date.now(),
           },
         ]);
@@ -298,7 +311,7 @@ const ArchitectureChatPanel: React.FC<ArchitectureChatPanelProps> = ({
         setIsSending(false);
       }
     },
-    [isSending, messages, currentArchitecture, onApply, language],
+    [isSending, messages, currentArchitecture, onApply, language, translate],
   );
 
   // Tier 4: "What would you add?" — ask the model for the single highest-impact

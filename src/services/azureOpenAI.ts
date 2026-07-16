@@ -4,7 +4,13 @@
 import { getModelSettingsForFeature, getModelSettings, getDeploymentName, getAvailableModels, MODEL_CONFIG, ModelType, ReasoningEffort } from '../stores/modelSettingsStore';
 import { getServiceIconMapping, SERVICE_ICON_MAP } from '../data/serviceIconMapping';
 import { trackAIModelUsage } from './telemetryService';
-import { buildRequestBody, parseApiResponse, callAzureOpenAIProxy } from './apiHelper';
+import {
+  buildRequestBody,
+  parseApiResponse,
+  callAzureOpenAIProxy,
+  createOpenAIProxyError,
+  OpenAIProxyError,
+} from './apiHelper';
 import type { Language } from '../i18n/LanguageContext';
 import { getPromptLanguageInstruction } from '../i18n/localization';
 
@@ -78,7 +84,7 @@ export async function callAzureOpenAI(messages: any[], modelOverride?: ModelOver
   console.log(`🤖 Using ${modelConfig.displayName} [deployment: ${deployment}]${modelConfig.isReasoning ? ` (reasoning: ${settings.reasoningEffort})` : ''} | max_tokens: ${modelConfig.maxCompletionTokens} | API: ${apiFormat === 'chat-completions' ? 'Chat Completions' : 'Responses'}`);
 
   try {
-    const { ok, status, data, errorText } = await callAzureOpenAIProxy({
+    const proxyResult = await callAzureOpenAIProxy({
       apiFormat,
       deployment,
       body: requestBody,
@@ -90,26 +96,26 @@ export async function callAzureOpenAI(messages: any[], modelOverride?: ModelOver
     // Calculate elapsed time
     const elapsedTimeMs = Math.round(performance.now() - startTime);
 
-    if (!ok) {
-      console.error('Azure OpenAI API error:', status, errorText);
-      if (status === 401 || status === 403) {
-        throw new Error('Azure OpenAI authentication failed on the server. Check the managed identity role assignment.');
-      }
-      if (status === 404) {
-        throw new Error('Deployment not found. Please check your model deployment name.');
-      }
-      throw new Error(`Azure OpenAI API error (${status}): ${errorText}`);
+    if (!proxyResult.ok) {
+      console.error('Azure OpenAI API error:', {
+        status: proxyResult.status,
+        code: proxyResult.error?.code,
+        source: proxyResult.error?.source,
+        requestId: proxyResult.error?.requestId,
+        upstreamRequestId: proxyResult.error?.upstreamRequestId,
+      });
+      throw createOpenAIProxyError(proxyResult);
     }
 
     // Parse response using the appropriate API format
-    const parsed = parseApiResponse(data, apiFormat);
+    const parsed = parseApiResponse(proxyResult.data, apiFormat);
     const content = parsed.content;
     const metrics: AIMetrics = {
       promptTokens: parsed.promptTokens,
       completionTokens: parsed.completionTokens,
       totalTokens: parsed.totalTokens,
       elapsedTimeMs,
-      model: data.model || modelConfig.displayName,
+      model: proxyResult.data.model || modelConfig.displayName,
       reasoningEffort: modelConfig.isReasoning ? settings.reasoningEffort : 'none',
     };
     
@@ -361,17 +367,13 @@ LAYOUT READABILITY — CRITICAL:
     return architecture;
   } catch (error: any) {
     console.error('Azure OpenAI Error:', error);
+
+    if (error instanceof OpenAIProxyError) {
+      throw error;
+    }
     
     if (error.message?.includes('credentials not configured')) {
       throw new Error('Azure OpenAI is not configured. Please check your environment variables.');
-    }
-    
-    if (error.status === 401) {
-      throw new Error('Invalid API key. Please check your Azure OpenAI credentials.');
-    }
-    
-    if (error.status === 404) {
-      throw new Error('Deployment not found. Please check your model deployment name.');
     }
     
     throw new Error(`Failed to generate architecture: ${error.message || 'Unknown error'}`);
@@ -594,7 +596,7 @@ If the image is not an architecture diagram or is unclear, describe what you can
   console.log(`🖼️ Analyzing architecture diagram with ${modelConfig.displayName}... | API: Responses`);
 
   try {
-    const { ok, status, data, errorText } = await callAzureOpenAIProxy({
+    const proxyResult = await callAzureOpenAIProxy({
       apiFormat: 'responses',
       deployment,
       body: requestBody,
@@ -604,25 +606,21 @@ If the image is not an architecture diagram or is unclear, describe what you can
     clearTimeout(timeoutId);
     const elapsedTimeMs = Math.round(performance.now() - startTime);
 
-    if (!ok) {
-      console.error('Azure OpenAI Vision API error:', status, errorText);
-      
-      if (status === 401 || status === 403) {
-        throw new Error('Azure OpenAI authentication failed on the server. Check the managed identity role assignment.');
-      }
-      if (status === 404) {
-        throw new Error('Deployment not found. Please check your model deployment name.');
-      }
-      if (status === 400 && (errorText || '').includes('image')) {
-        throw new Error('The selected model may not support image analysis. Try using GPT-5.6 Sol.');
-      }
-      throw new Error(`Azure OpenAI API error (${status}): ${errorText}`);
+    if (!proxyResult.ok) {
+      console.error('Azure OpenAI Vision API error:', {
+        status: proxyResult.status,
+        code: proxyResult.error?.code,
+        source: proxyResult.error?.source,
+        requestId: proxyResult.error?.requestId,
+        upstreamRequestId: proxyResult.error?.upstreamRequestId,
+      });
+      throw createOpenAIProxyError(proxyResult, { vision: true });
     }
     
     // Responses API: extract text from output
-    let content = data.output_text || '';
-    if (!content && data.output) {
-      for (const item of data.output) {
+    let content = proxyResult.data.output_text || '';
+    if (!content && proxyResult.data.output) {
+      for (const item of proxyResult.data.output) {
         if (item.type === 'message' && item.content) {
           for (const part of item.content) {
             if (part.type === 'output_text') {
@@ -634,13 +632,13 @@ If the image is not an architecture diagram or is unclear, describe what you can
     }
     
     // Responses API uses input_tokens/output_tokens
-    const usage = data.usage || {};
+    const usage = proxyResult.data.usage || {};
     const metrics: AIMetrics = {
       promptTokens: usage.input_tokens || 0,
       completionTokens: usage.output_tokens || 0,
       totalTokens: usage.total_tokens || 0,
       elapsedTimeMs,
-      model: data.model
+      model: proxyResult.data.model
     };
     
     if (!content || content.trim().length === 0) {

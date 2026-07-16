@@ -113,7 +113,7 @@ interface ComparisonResult {
 interface CompareModelsModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onApply: (architecture: any, prompt: string, sourceModel?: ModelType, sourceReasoningEffort?: ReasoningEffort) => void;
+  onApply: (architecture: any, prompt: string, sourceModel?: ModelType, sourceReasoningEffort?: ReasoningEffort) => void | Promise<void>;
   /**
    * Optional parent-provided batch PNG capture.
    * Modal supplies one item per successful result with the desired filename;
@@ -316,10 +316,18 @@ const CompareModelsModal: React.FC<CompareModelsModalProps> = ({ isOpen, onClose
     setIsRunning(false);
   };
 
-  const handleApply = (result: ComparisonResult) => {
+  const handleApply = async (result: ComparisonResult) => {
     if (result.architecture) {
-      onApply(result.architecture, prompt, result.model, result.reasoningEffort);
-      onClose();
+      try {
+        await onApply(result.architecture, prompt, result.model, result.reasoningEffort);
+        onClose();
+      } catch (error) {
+        console.error('Failed to apply compared architecture:', error);
+        alert(localize(language, {
+          en: 'The architecture could not be applied to the canvas.',
+          ja: 'アーキテクチャをキャンバスに適用できませんでした。',
+        }));
+      }
     }
   };
 
@@ -387,6 +395,8 @@ const CompareModelsModal: React.FC<CompareModelsModalProps> = ({ isOpen, onClose
       const suffix = modelSuffix(r.model, r.reasoningEffort);
       const filename = `azure-diagram-${ts}-${suffix}.json`;
       const diagramData = {
+        format: 'azurediagarm-ai-architecture',
+        schemaVersion: 1,
         ...r.architecture,
         metadata: {
           prompt,
@@ -419,10 +429,10 @@ const CompareModelsModal: React.FC<CompareModelsModalProps> = ({ isOpen, onClose
     }
     const successful = results.filter(r => r.status === 'success' && r.architecture);
     if (successful.length === 0) return;
-    const confirmed = window.confirm(
-      `This will render all ${successful.length} model diagram(s) on the canvas one at a time to save them as PNG. ` +
-      `Your current canvas content will be replaced with the last rendered diagram. Continue?`,
-    );
+    const confirmed = window.confirm(localize(language, {
+      en: `This will render all ${successful.length} model diagram(s) on the canvas one at a time to save them as PNG. Your current canvas content will be replaced with the last rendered diagram. Continue?`,
+      ja: `${successful.length}件のモデル図を1件ずつキャンバスに表示してPNGとして保存します。現在のキャンバスは最後に表示した図で置き換えられます。続行しますか？`,
+    }));
     if (!confirmed) return;
     const ts = Date.now();
     const items = successful.map(r => ({
@@ -897,7 +907,7 @@ const CompareModelsModal: React.FC<CompareModelsModalProps> = ({ isOpen, onClose
                         {/* Apply button */}
                         <button
                           className="btn btn-primary compare-apply-btn"
-                          onClick={() => handleApply(result)}
+                          onClick={() => void handleApply(result)}
                         >
                           <Sparkles size={14} />
                           {' '}{t("Use This Architecture")}{' '}</button>

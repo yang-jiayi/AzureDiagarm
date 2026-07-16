@@ -7,6 +7,7 @@ import { AvatarPresenter, AvatarStatus } from '../services/avatarPresenter';
 import { useDraggableResizable } from '../hooks/useDraggableResizable';
 import './WorkflowPanel.css';
 import { useLanguage } from '../i18n/LanguageContext';
+import { localize } from '../i18n/localization';
 
 interface WorkflowStep {
   step: number;
@@ -27,7 +28,7 @@ const WorkflowPanel: React.FC<WorkflowPanelProps> = ({
   onServiceLeave,
   forceCollapsed 
 }) => {
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
   const [isExpanded, setIsExpanded] = useState(true);
   // Click-to-pin: a clicked step keeps its services highlighted until clicked
   // again. Hover still previews; pinned highlight is re-asserted on mouse-leave.
@@ -99,7 +100,10 @@ const WorkflowPanel: React.FC<WorkflowPanelProps> = ({
         activeStepRef.current = step.step;
         setActiveStepNum(step.step);
         onServiceHover?.(step.services ?? []);
-        const segText = `Step ${step.step}. ${step.description}`;
+        const segText = localize(language, {
+          en: `Step ${step.step}. ${step.description}`,
+          ja: `ステップ ${step.step}。${step.description}`,
+        });
         setCaptionWords(segText.split(/\s+/).filter(Boolean));
         setCaptionWordIdx(-1);
         try {
@@ -144,6 +148,19 @@ const WorkflowPanel: React.FC<WorkflowPanelProps> = ({
     resetAvatarGeom();
   };
 
+  const togglePinnedStep = (step: WorkflowStep) => {
+    setPinnedStep((previous) => {
+      const next = previous === step.step ? null : step.step;
+      if (next == null) onServiceLeave?.();
+      else onServiceHover?.(step.services);
+      return next;
+    });
+  };
+  const workflowToggleLabel = localize(language, {
+    en: isExpanded ? 'Collapse workflow' : 'Expand workflow',
+    ja: isExpanded ? 'Workflowを折りたたむ' : 'Workflowを展開',
+  });
+
   if (!workflow || workflow.length === 0) return null;
 
   return (
@@ -171,7 +188,11 @@ const WorkflowPanel: React.FC<WorkflowPanelProps> = ({
                 {avatarStatus === 'connecting' ? t('Connecting…') : avatarStatus === 'speaking' ? t('Stop') : t('Narrate')}
               </button>
             )}
-            <button className="workflow-toggle">
+            <button
+              className="workflow-toggle"
+              aria-label={workflowToggleLabel}
+              title={workflowToggleLabel}
+            >
               {isExpanded ? <ChevronRight size={20} /> : <ChevronLeft size={20} />}
             </button>
           </div>
@@ -185,14 +206,16 @@ const WorkflowPanel: React.FC<WorkflowPanelProps> = ({
                   key={step.step}
                   ref={(el) => { stepElRefs.current[step.step] = el; }}
                   className={`workflow-step${step.step === activeStepNum ? ' is-narrating' : ''}${step.step === pinnedStep ? ' is-pinned' : ''}`}
-                  onClick={() => {
-                    setPinnedStep((prev) => {
-                      const next = prev === step.step ? null : step.step;
-                      if (next == null) onServiceLeave?.();
-                      else onServiceHover?.(step.services);
-                      return next;
-                    });
+                  onClick={() => togglePinnedStep(step)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault();
+                      togglePinnedStep(step);
+                    }
                   }}
+                  role="button"
+                  tabIndex={0}
+                  aria-pressed={step.step === pinnedStep}
                   onMouseEnter={() => onServiceHover?.(step.services)}
                   onMouseLeave={() => {
                     if (pinnedStep != null) {
@@ -210,7 +233,12 @@ const WorkflowPanel: React.FC<WorkflowPanelProps> = ({
                     {step.services && step.services.length > 0 && (
                       <div className="step-services">
                         <span className="services-label">{t("Services:")}</span>
-                        <span className="services-count">{step.services.length} {' '}{t("service")}{step.services.length > 1 ? 's' : ''}</span>
+                        <span className="services-count">
+                          {localize(language, {
+                            en: `${step.services.length} ${step.services.length === 1 ? 'service' : 'services'}`,
+                            ja: `${step.services.length} サービス`,
+                          })}
+                        </span>
                       </div>
                     )}
                   </div>

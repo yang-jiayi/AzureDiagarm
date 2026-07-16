@@ -7,7 +7,7 @@
   border-radius: 4px;
   font-family: 'Yu Gothic UI', 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
   box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
-  z-index: 1000;
+  z-index: 1002;
   min-width: 320px;
   user-select: none;
   cursor: grab;
@@ -17,7 +17,7 @@
 .title-block.dragging {
   box-shadow: 0 8px 16px rgba(0, 0, 0, 0.3);
   cursor: grabbing;
-  z-index: 1001;
+  z-index: 1003;
 }
 
 .title-block-header {

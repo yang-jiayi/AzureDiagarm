@@ -69,6 +69,12 @@ const AzureNode: React.FC<NodeProps> = memo(({ data, selected, id }) => {
     }
   }, [data.iconPath]);
 
+  useEffect(() => {
+    if (!isEditingLabel) {
+      setLabel(data.label || 'Azure Service');
+    }
+  }, [data.label, isEditingLabel]);
+
   const handleLabelDoubleClick = () => {
     setIsEditingLabel(true);
   };
@@ -222,6 +228,14 @@ const AzureNode: React.FC<NodeProps> = memo(({ data, selected, id }) => {
               <div
                 className="node-label"
                 onDoubleClick={handleLabelDoubleClick}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' || event.key === ' ' || event.key === 'F2') {
+                    event.preventDefault();
+                    handleLabelDoubleClick();
+                  }
+                }}
+                role="button"
+                tabIndex={0}
                 title={t("Double-click to edit")}
               >
                 {label}

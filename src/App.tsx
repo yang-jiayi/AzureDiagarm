@@ -90,6 +90,7 @@ import './App.css';
 import { useLanguage } from './i18n/LanguageContext';
 import { localize } from './i18n/localization';
 import { decodeUtf8Base64 } from './utils/base64Utf8';
+import { readBooleanPreference, readLocalStorage, writeLocalStorage } from './utils/safeStorage';
 
 const nodeTypes = {
   azureNode: AzureNode,
@@ -213,10 +214,7 @@ function App() {
   }, [language, translate]);
   
   // Theme State
-  const [isDarkMode, setIsDarkMode] = useState<boolean>(() => {
-    const saved = localStorage.getItem('darkMode');
-    return saved ? JSON.parse(saved) : false;
-  });
+  const [isDarkMode, setIsDarkMode] = useState<boolean>(() => readBooleanPreference('darkMode', false));
   
   // Premium Features State
   const [validationResult, setValidationResult] = useState<ArchitectureValidation | null>(null);
@@ -234,15 +232,15 @@ function App() {
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [isHelpOpen, setIsHelpOpen] = useState(false);
   // First-run nudge: pulse the Help button until it has been opened once.
-  const [helpSeen, setHelpSeen] = useState<boolean>(() => localStorage.getItem('help.seen') === '1');
+  const [helpSeen, setHelpSeen] = useState<boolean>(() => readLocalStorage('help.seen') === '1');
   // Canvas navigation hint: teaches scroll-to-zoom / drag-to-pan / fit-view.
   // Dismissed permanently once the user closes it (persisted in localStorage).
-  const [showCanvasHint, setShowCanvasHint] = useState<boolean>(() => localStorage.getItem(CANVAS_HINT_STORAGE_KEY) !== '1');
+  const [showCanvasHint, setShowCanvasHint] = useState<boolean>(() => readLocalStorage(CANVAS_HINT_STORAGE_KEY) !== '1');
   // Collapses the top toolbar rows to maximize canvas height. Independent of
   // the "Focus" button (which collapses the side panels). Persisted so the
   // user's preference sticks across sessions.
   const [isHeaderCollapsed, setIsHeaderCollapsed] = useState<boolean>(() => {
-    const stored = localStorage.getItem(HEADER_COLLAPSED_STORAGE_KEY);
+    const stored = readLocalStorage(HEADER_COLLAPSED_STORAGE_KEY);
     if (stored !== null) return stored === '1';
     return window.matchMedia('(max-width: 1440px)').matches;
   });
@@ -256,6 +254,7 @@ function App() {
   // Counts successful AI generations this session so we can ask for feedback
   // after a "success moment" (the 2nd diagram) rather than nagging up front.
   const generationCountRef = useRef(0);
+  const handleAIGenerateRef = useRef<((architecture: any, prompt: string, autoSnapshot?: boolean) => Promise<void>) | null>(null);
   const [referenceImageUrl, setReferenceImageUrl] = useState<string | null>(null);
   const [lastReferenceArchitecture, setLastReferenceArchitecture] = useState<ReferenceArchitecture | null>(null);
   const [lastBlueprintArchitecture, setLastBlueprintArchitecture] = useState<BlueprintArchitecture | null>(null);
@@ -542,7 +541,7 @@ function App() {
     } else {
       document.body.classList.remove('dark-mode');
     }
-    localStorage.setItem('darkMode', JSON.stringify(isDarkMode));
+    writeLocalStorage('darkMode', JSON.stringify(isDarkMode));
   }, [isDarkMode]);
 
   // Preload pricing data on mount
@@ -613,7 +612,11 @@ function App() {
           return {
             ...edge,
             label: newLabel,
-            data: { ...edge.data, onLabelChange: handleEdgeLabelChange },
+            data: {
+              ...edge.data,
+              label: newLabel,
+              onLabelChange: handleEdgeLabelChange,
+            },
           };
         }
         return edge;
@@ -640,6 +643,29 @@ function App() {
       })
     );
   }, [setEdges, handleEdgeLabelChange]);
+
+  const normalizeRestoredEdges = useCallback((restoredEdges: unknown[]): Edge[] => {
+    const SRC_FIX: Record<string, string> = { top: 'top-source', left: 'left-source' };
+    const TGT_FIX: Record<string, string> = { bottom: 'bottom-target', right: 'right-target' };
+    return restoredEdges.map((edge) => {
+      if (!edge || typeof edge !== 'object' || Array.isArray(edge)) {
+        throw new Error('Invalid edge in diagram payload');
+      }
+      const next = { ...(edge as Edge) };
+      if (typeof next.sourceHandle === 'string' && SRC_FIX[next.sourceHandle]) {
+        next.sourceHandle = SRC_FIX[next.sourceHandle];
+      }
+      if (typeof next.targetHandle === 'string' && TGT_FIX[next.targetHandle]) {
+        next.targetHandle = TGT_FIX[next.targetHandle];
+      }
+      next.data = {
+        ...next.data,
+        onLabelChange: handleEdgeLabelChange,
+        onLabelOffsetChange: handleEdgeLabelOffsetChange,
+      };
+      return next;
+    });
+  }, [handleEdgeLabelChange, handleEdgeLabelOffsetChange]);
 
   const onConnect = useCallback(
     (params: Connection | Edge) => setEdges((eds) => addEdge({ 
@@ -1674,21 +1700,7 @@ function App() {
       // sourceHandle "top"/"left" or targetHandle "bottom"/"right" points at a
       // non-existent handle, so the edge silently fails to render. Remap the
       // invalid bare names to the correct handle id (valid ids pass through).
-      const SRC_FIX: Record<string, string> = { top: 'top-source', left: 'left-source' };
-      const TGT_FIX: Record<string, string> = { bottom: 'bottom-target', right: 'right-target' };
-      const fixedEdges = flow.edges.map((edge: any) => {
-        if (!edge || typeof edge !== 'object' || Array.isArray(edge)) {
-          throw new Error('Invalid edge in diagram payload');
-        }
-        const next = { ...edge };
-        if (typeof next.sourceHandle === 'string' && SRC_FIX[next.sourceHandle]) {
-          next.sourceHandle = SRC_FIX[next.sourceHandle];
-        }
-        if (typeof next.targetHandle === 'string' && TGT_FIX[next.targetHandle]) {
-          next.targetHandle = TGT_FIX[next.targetHandle];
-        }
-        return next;
-      });
+      const fixedEdges = normalizeRestoredEdges(flow.edges);
       setNodes(flow.nodes);
       setEdges(fixedEdges);
 
@@ -1697,12 +1709,22 @@ function App() {
       }
 
       // Restore metadata if present
-      if (flow.metadata && typeof flow.metadata === 'object') {
+      const restoredTitle = flow.titleBlockData && typeof flow.titleBlockData === 'object'
+        ? flow.titleBlockData
+        : flow.metadata;
+      if (restoredTitle && typeof restoredTitle === 'object') {
         setTitleBlockData({
-          architectureName: flow.metadata.architectureName || 'Untitled Architecture',
-          author: flow.metadata.author || 'Azure Architect',
-          version: flow.metadata.version || '1.0',
-          date: flow.metadata.date || new Date().toLocaleDateString(),
+          architectureName: restoredTitle.architectureName || 'Untitled Architecture',
+          author: restoredTitle.author || 'Azure Architect',
+          version: restoredTitle.version || '1.0',
+          date: restoredTitle.date || new Date().toLocaleDateString(),
+        });
+      } else {
+        setTitleBlockData({
+          architectureName: 'Untitled Architecture',
+          author: 'Azure Architect',
+          version: '1.0',
+          date: new Date().toLocaleDateString(),
         });
       }
 
@@ -1714,11 +1736,12 @@ function App() {
       }
 
       // Restore architecture prompt if present
-      if (flow.architecturePrompt) {
-        setArchitecturePrompt(flow.architecturePrompt);
-      }
+      setArchitecturePrompt(typeof flow.architecturePrompt === 'string' ? flow.architecturePrompt : '');
+      setReferenceImageUrl(null);
+      setLastReferenceArchitecture(null);
+      setLastBlueprintArchitecture(null);
     },
-    [setNodes, setEdges, reactFlowInstance]
+    [setNodes, setEdges, reactFlowInstance, normalizeRestoredEdges]
   );
 
 
@@ -1758,10 +1781,25 @@ function App() {
     }
 
     const reader = new FileReader();
-    reader.onload = (e) => {
+    reader.onload = async (e) => {
       try {
         const flow = JSON.parse(e.target?.result as string);
-        applyFlowObject(flow);
+        if (
+          flow?.format === 'azurediagarm-ai-architecture'
+          && Array.isArray(flow.services)
+          && Array.isArray(flow.connections)
+        ) {
+          if (!handleAIGenerateRef.current) {
+            throw new Error('The architecture renderer is not ready');
+          }
+          await handleAIGenerateRef.current(
+            flow,
+            typeof flow.metadata?.prompt === 'string' ? flow.metadata.prompt : file.name,
+            false,
+          );
+        } else {
+          applyFlowObject(flow);
+        }
       } catch (error) {
         console.error('Error loading diagram:', error);
         alert(t("Error loading diagram file"));
@@ -1773,20 +1811,13 @@ function App() {
   // Restore a version from history
   const restoreVersion = useCallback((version: DiagramVersion) => {
     try {
-      setNodes(version.nodes);
-      setEdges(version.edges);
-      
-      if (version.titleBlockData) {
-        setTitleBlockData(version.titleBlockData);
-      }
-      
-      if (version.workflow) {
-        setWorkflow(version.workflow);
-      }
-      
-      if (version.architecturePrompt) {
-        setArchitecturePrompt(version.architecturePrompt);
-      }
+      applyFlowObject({
+        nodes: version.nodes,
+        edges: version.edges,
+        titleBlockData: version.titleBlockData || version.metadata,
+        workflow: version.workflow || [],
+        architecturePrompt: version.architecturePrompt || '',
+      });
       
       console.log('✅ Version restored successfully');
       trackVersionOperation('restore');
@@ -1794,7 +1825,7 @@ function App() {
       console.error('Failed to restore version:', error);
       alert(t("Failed to restore version"));
     }
-  }, [t]);
+  }, [applyFlowObject, t]);
 
   // Manual snapshot save handler
   const handleSaveSnapshot = useCallback(async (notes: string) => {
@@ -1807,7 +1838,7 @@ function App() {
           architecturePrompt,
           validationScore: validationResult?.overallScore,
           notes: notes || 'Manual snapshot',
-          metadata: titleBlockData,
+          titleBlockData,
           workflow,
         }
       );
@@ -1822,15 +1853,17 @@ function App() {
   const handleAIGenerate = useCallback(async (architecture: any, prompt: string, autoSnapshot: boolean = true) => {
     try {
       console.log('Generating architecture from:', architecture);
-      // Capture (or clear) the editorial reference-architecture payload so the
-      // Export menu can re-emit the publication-style PNG on demand.
-      setLastReferenceArchitecture(architecture?.__referenceArchitecture ?? null);
       const { services, connections, workflow: workflowSteps } = architecture;
       let { groups } = architecture;
       
-      if (!services || services.length === 0) {
-        alert(t("No services were identified in your description. Please try a more detailed description."));
-        return;
+      if (!Array.isArray(services) || services.length === 0) {
+        throw new Error(t("No services were identified in your description. Please try a more detailed description."));
+      }
+      if (!Array.isArray(connections)) {
+        throw new Error('Generated architecture is missing its connections array.');
+      }
+      if (groups != null && !Array.isArray(groups)) {
+        throw new Error('Generated architecture contains an invalid groups value.');
       }
 
       // ── Guard: remove empty groups & reassign orphaned services ──
@@ -1869,7 +1902,7 @@ function App() {
               architecturePrompt: architecturePrompt || 'Previous version',
               validationScore: validationResult?.overallScore,
               notes: 'Auto-saved before AI regeneration',
-              metadata: titleBlockData,
+              titleBlockData,
               workflow,
             }
           );
@@ -1881,32 +1914,11 @@ function App() {
         console.log('ℹ️ No existing nodes to snapshot');
       }
 
-      // Clear existing diagram when generating new architecture
-      setNodes([]);
-      setEdges([]);
-      setArchitecturePrompt('');
-      setWorkflow([]);
-      setGeneratedWithModel(null);
-      // setShowWorkflow(false);
-
-      // Store the prompt and workflow for display
-      setArchitecturePrompt(prompt);
-
       // Pick up an architecture name from the AI payload (manifest.title in
       // Both mode) or derive a short title from the prompt so the banner
       // doesn't read "Untitled Architecture" after every generation.
       const incomingName: string | undefined = (architecture?.architectureName && String(architecture.architectureName).trim())
         || deriveTitleFromPrompt(prompt);
-      if (incomingName && incomingName !== 'Untitled Architecture') {
-        setTitleBlockData((prev) => ({ ...prev, architectureName: incomingName }));
-      }
-
-      if (workflowSteps && workflowSteps.length > 0) {
-        setWorkflow(workflowSteps);
-        // setShowWorkflow(true); // Automatically show workflow panel for new generations
-      } else {
-        setWorkflow([]);
-      }
 
       const newNodes: Node[] = [];
       const serviceMap = new Map();
@@ -2254,8 +2266,14 @@ function App() {
 
     // Add the new nodes and edges
     console.log(`Setting ${newNodes.length} nodes and ${newEdges.length} edges`);
+    setLastReferenceArchitecture(architecture?.__referenceArchitecture ?? null);
     setNodes(newNodes);
     setEdges(newEdges);
+    setArchitecturePrompt(prompt);
+    setWorkflow(Array.isArray(workflowSteps) ? workflowSteps : []);
+    if (incomingName && incomingName !== 'Untitled Architecture') {
+      setTitleBlockData((prev) => ({ ...prev, architectureName: incomingName }));
+    }
 
     // Set the model badge from metrics
     if (architecture.metrics) {
@@ -2266,6 +2284,8 @@ function App() {
         ? MODEL_CONFIG[modelKey as keyof typeof MODEL_CONFIG].displayName
         : architecture.metrics.model || 'AI';
       setGeneratedWithModel({ name: displayName, timeMs: architecture.metrics.elapsedTimeMs });
+    } else {
+      setGeneratedWithModel(null);
     }
 
     // Initialize pricing for all service nodes asynchronously (uses active region)
@@ -2341,8 +2361,10 @@ function App() {
     } catch (error) {
       console.error('Error in handleAIGenerate:', error);
       alert(t("Failed to generate diagram. Check console for details."));
+      throw error;
     }
   }, [setNodes, setEdges, reactFlowInstance, nodes, edges, titleBlockData, architecturePrompt, validationResult, workflow, isFeedbackModalOpen, layoutEdgeStyle, t]);
+  handleAIGenerateRef.current = handleAIGenerate;
 
   // ── az prototype import ──────────────────────────────────────────────
   // (Import az prototype UI removed — feature unused.)
@@ -2469,7 +2491,7 @@ function App() {
       });
 
       trackTemplateImport(detection.format, filenames[0], filenames.length);
-      handleAIGenerate(result, promptLabel);
+      await handleAIGenerate(result, promptLabel);
     } catch (error: any) {
       console.error('Template import error:', error);
       alert(localize(language, {
@@ -2801,10 +2823,11 @@ function App() {
                   </svg>
                   {' '}{t("Add Group")}{' '}</button>
                 <AIArchitectureGenerator 
-                  onGenerate={(arch, prompt, autoSnap, refImageUrl) => {
+                  onGenerate={async (arch, prompt, autoSnap, refImageUrl) => {
+                    await handleAIGenerate(arch, prompt, autoSnap);
                     clearSourceModel();
-                    if (refImageUrl) setReferenceImageUrl(refImageUrl);
-                    handleAIGenerate(arch, prompt, autoSnap);
+                    setReferenceImageUrl(refImageUrl ?? null);
+                    setLastBlueprintArchitecture(null);
                   }}
                   onReferenceArchitecture={(ref) => {
                     // Reference mode does not push a topology onto the canvas;
@@ -2842,7 +2865,7 @@ function App() {
                     setIsHelpOpen(true);
                     if (!helpSeen) {
                       setHelpSeen(true);
-                      localStorage.setItem('help.seen', '1');
+                      writeLocalStorage('help.seen', '1');
                     }
                   }}
                   title={t("How to use the tool & learn the features")}
@@ -2939,7 +2962,7 @@ function App() {
                         onClick={() => {
                           setIsExportMenuOpen(false);
                           if (!lastBlueprintArchitecture) return;
-                          const savedLegend = localStorage.getItem('aiGenerator.blueprintLegendPosition');
+                          const savedLegend = readLocalStorage('aiGenerator.blueprintLegendPosition');
                           const legendPosition =
                             savedLegend === 'bottom' || savedLegend === 'right' || savedLegend === 'auto'
                               ? (savedLegend as 'bottom' | 'right' | 'auto')
@@ -3112,7 +3135,7 @@ function App() {
                 </button>
                 <button
                   onClick={() => {
-                    if (window.confirm('Start a fresh session? This will clear the current diagram and all unsaved changes.')) {
+                    if (window.confirm(translate('Start a fresh session? This will clear the current diagram and all unsaved changes.'))) {
                       trackStartFresh();
                       setNodes([]);
                       setEdges([]);
@@ -3121,6 +3144,9 @@ function App() {
                       setGeneratedWithModel(null);
                       setValidationResult(null);
                       setDeploymentGuide(null);
+                      setReferenceImageUrl(null);
+                      setLastReferenceArchitecture(null);
+                      setLastBlueprintArchitecture(null);
                       setTitleBlockData({ architectureName: 'Untitled Architecture', author: 'Azure Architect', date: new Date().toISOString().split('T')[0], version: '1.0' });
                     }
                   }}
@@ -3473,7 +3499,7 @@ function App() {
             onClick={() => {
               setIsHeaderCollapsed(v => {
                 const next = !v;
-                try { localStorage.setItem(HEADER_COLLAPSED_STORAGE_KEY, next ? '1' : '0'); } catch { /* ignore */ }
+                writeLocalStorage(HEADER_COLLAPSED_STORAGE_KEY, next ? '1' : '0');
                 return next;
               });
             }}
@@ -3556,7 +3582,7 @@ function App() {
                   className="canvas-nav-hint-close"
                   onClick={() => {
                     setShowCanvasHint(false);
-                    try { localStorage.setItem(CANVAS_HINT_STORAGE_KEY, '1'); } catch { /* ignore */ }
+                    writeLocalStorage(CANVAS_HINT_STORAGE_KEY, '1');
                   }}
                   title={t("Dismiss (won't show again)")}
                   aria-label={t("Dismiss navigation tips")}
@@ -3946,12 +3972,12 @@ Return the IMPROVED architecture in the same JSON format as before with proper g
       <CompareModelsModal
         isOpen={isCompareModelsOpen}
         onClose={() => setIsCompareModelsOpen(false)}
-        onApply={(architecture, prompt, sourceModel, sourceReasoningEffort) => {
+        onApply={async (architecture, prompt, sourceModel, sourceReasoningEffort) => {
           trackModelComparison({ selectedModel: sourceModel });
           if (sourceModel && sourceReasoningEffort) {
             setSourceModel(sourceModel, sourceReasoningEffort);
           }
-          handleAIGenerate(architecture, prompt, true);
+          await handleAIGenerate(architecture, prompt, true);
         }}
         onCaptureBatch={async (items) => {
           // Render each architecture on the main canvas in turn, capture as PNG,

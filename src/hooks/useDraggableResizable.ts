@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-import { useRef, useState, useCallback } from 'react';
+import { useRef, useState, useCallback, useEffect } from 'react';
 
 export interface PanelGeometry {
   x: number;   // left offset from viewport left (px)
@@ -17,6 +17,8 @@ interface Options {
   maxW?: number;
   maxH?: number;
 }
+
+const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 
 /**
  * useDraggableResizable
@@ -35,11 +37,36 @@ export function useDraggableResizable({
   maxW = 700,
   maxH = 700,
 }: Options) {
-  const [geom, setGeom] = useState<PanelGeometry>(initial);
-  // Keep a mutable ref so event callbacks always read the latest value
-  const geomRef = useRef<PanelGeometry>(initial);
+  const fitToViewport = useCallback((value: PanelGeometry): PanelGeometry => {
+    const vw = Math.max(1, window.innerWidth);
+    const vh = Math.max(1, window.innerHeight);
+    const allowedMaxW = Math.max(1, Math.min(maxW, vw));
+    const allowedMaxH = Math.max(1, Math.min(maxH, vh));
+    const allowedMinW = Math.min(minW, allowedMaxW);
+    const allowedMinH = Math.min(minH, allowedMaxH);
+    const w = clamp(value.w, allowedMinW, allowedMaxW);
+    const h = clamp(value.h, allowedMinH, allowedMaxH);
+    return {
+      x: clamp(value.x, 0, Math.max(0, vw - w)),
+      y: clamp(value.y, 0, Math.max(0, vh - h)),
+      w,
+      h,
+    };
+  }, [maxH, maxW, minH, minW]);
 
-  const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
+  const [geom, setGeom] = useState<PanelGeometry>(() => fitToViewport(initial));
+  // Keep a mutable ref so event callbacks always read the latest value
+  const geomRef = useRef<PanelGeometry>(fitToViewport(initial));
+
+  useEffect(() => {
+    const handleViewportResize = () => {
+      const next = fitToViewport(geomRef.current);
+      geomRef.current = next;
+      setGeom(next);
+    };
+    window.addEventListener('resize', handleViewportResize);
+    return () => window.removeEventListener('resize', handleViewportResize);
+  }, [fitToViewport]);
 
   // ── Drag to move ──────────────────────────────────────────────────────────
   const onDragStart = useCallback((e: React.PointerEvent<HTMLElement>) => {
@@ -59,8 +86,8 @@ export function useDraggableResizable({
       const vh = window.innerHeight;
       const next: PanelGeometry = {
         ...startGeom,
-        x: clamp(startGeom.x + dx, 0, vw - startGeom.w),
-        y: clamp(startGeom.y + dy, 0, vh - startGeom.h),
+        x: clamp(startGeom.x + dx, 0, Math.max(0, vw - startGeom.w)),
+        y: clamp(startGeom.y + dy, 0, Math.max(0, vh - startGeom.h)),
       };
       geomRef.current = next;
       setGeom(next);
@@ -93,8 +120,10 @@ export function useDraggableResizable({
       const dh = ev.clientY - startY;
       const vw = window.innerWidth;
       const vh = window.innerHeight;
-      const newW = clamp(startGeom.w + dw, minW, Math.min(maxW, vw - startGeom.x));
-      const newH = clamp(startGeom.h + dh, minH, Math.min(maxH, vh - startGeom.y));
+      const allowedMaxW = Math.max(1, Math.min(maxW, vw - startGeom.x));
+      const allowedMaxH = Math.max(1, Math.min(maxH, vh - startGeom.y));
+      const newW = clamp(startGeom.w + dw, Math.min(minW, allowedMaxW), allowedMaxW);
+      const newH = clamp(startGeom.h + dh, Math.min(minH, allowedMaxH), allowedMaxH);
       const next: PanelGeometry = { ...startGeom, w: newW, h: newH };
       geomRef.current = next;
       setGeom(next);
@@ -113,9 +142,10 @@ export function useDraggableResizable({
 
   /** Call this when you want to reset back to default position/size */
   const reset = useCallback(() => {
-    geomRef.current = initial;
-    setGeom(initial);
-  }, [initial]);
+    const next = fitToViewport(initial);
+    geomRef.current = next;
+    setGeom(next);
+  }, [fitToViewport, initial]);
 
   return { geom, onDragStart, onResizeStart, reset };
 }

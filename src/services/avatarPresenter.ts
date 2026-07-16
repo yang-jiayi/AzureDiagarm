@@ -41,6 +41,7 @@ export class AvatarPresenter {
   private options: Required<AvatarPresenterOptions>;
   // Resolver for the most recent speak() call, fired by TurnEnd avatar event.
   private pendingTurnEnd: (() => void) | null = null;
+  private wordTimer: number | null = null;
 
   constructor(options: AvatarPresenterOptions = {}) {
     this.options = {
@@ -217,6 +218,20 @@ export class AvatarPresenter {
     const turnEndPromise = new Promise<void>((resolve) => {
       this.pendingTurnEnd = resolve;
     });
+    this.clearWordTimer();
+    const wordCount = text.trim().split(/\s+/).filter(Boolean).length;
+    if (wordCount > 0) {
+      let wordIndex = 0;
+      this.options.onWord(wordIndex);
+      this.wordTimer = window.setInterval(() => {
+        wordIndex += 1;
+        if (wordIndex >= wordCount) {
+          this.clearWordTimer();
+          return;
+        }
+        this.options.onWord(wordIndex);
+      }, 360);
+    }
 
     try {
       const result = await this.synthesizer.speakTextAsync(text);
@@ -228,10 +243,12 @@ export class AvatarPresenter {
       }
       // Wait for the avatar to actually finish playing.
       await turnEndPromise;
+      this.clearWordTimer();
       this.options.onWord(-1);
       this.options.onStatus('ready');
     } catch (err) {
       this.pendingTurnEnd = null;
+      this.clearWordTimer();
       this.options.onStatus('error');
       throw err;
     }
@@ -239,6 +256,7 @@ export class AvatarPresenter {
 
   /** Interrupt current speech mid-sentence. */
   async stopSpeaking(): Promise<void> {
+    this.clearWordTimer();
     this.options.onWord(-1);
     // Release any waiter so the loop doesn't hang on a TurnEnd that may not fire.
     const resolver = this.pendingTurnEnd;
@@ -259,8 +277,17 @@ export class AvatarPresenter {
     return res.json();
   }
 
+  private clearWordTimer(): void {
+    if (this.wordTimer !== null) {
+      window.clearInterval(this.wordTimer);
+      this.wordTimer = null;
+    }
+  }
+
   /** Close the WebRTC session and release all resources. */
   disconnect(): void {
+    this.clearWordTimer();
+    this.options.onWord(-1);
     if (this.peerConnection) {
       this.peerConnection.close();
       this.peerConnection = null;

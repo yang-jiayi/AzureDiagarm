@@ -12,7 +12,12 @@ import { detectWafPatterns, calculatePreliminaryScore } from './wafPatternDetect
 import { getKnowledgeBaseStats } from '../data/wafRules';
 import { scoreToBand } from './wafMaturity';
 import { trackAIModelUsage } from './telemetryService';
-import { buildRequestBody, parseApiResponse, callAzureOpenAIProxy } from './apiHelper';
+import {
+  buildRequestBody,
+  parseApiResponse,
+  callAzureOpenAIProxy,
+  createOpenAIProxyError,
+} from './apiHelper';
 import type { Language } from '../i18n/LanguageContext';
 import { getPromptLanguageInstruction } from '../i18n/localization';
 
@@ -84,7 +89,7 @@ async function callAzureOpenAI(messages: any[], maxTokens: number = 8000, modelO
   
   console.log(`🤖 Using ${modelConfig.displayName}${modelConfig.isReasoning ? ` (reasoning: ${settings.reasoningEffort})` : ''} | max_tokens: ${effectiveMaxTokens} | API: ${apiFormat === 'chat-completions' ? 'Chat Completions' : 'Responses'}`);
 
-  const { ok, status, data, errorText } = await callAzureOpenAIProxy({
+  const proxyResult = await callAzureOpenAIProxy({
     apiFormat,
     deployment,
     body: requestBody,
@@ -93,19 +98,25 @@ async function callAzureOpenAI(messages: any[], maxTokens: number = 8000, modelO
   // Calculate elapsed time
   const elapsedTimeMs = Math.round(performance.now() - startTime);
 
-  if (!ok) {
-    console.error('❌ Azure OpenAI API error:', status, errorText);
-    throw new Error(`Azure OpenAI API error (${status}): ${errorText}`);
+  if (!proxyResult.ok) {
+    console.error('❌ Azure OpenAI API error:', {
+      status: proxyResult.status,
+      code: proxyResult.error?.code,
+      source: proxyResult.error?.source,
+      requestId: proxyResult.error?.requestId,
+      upstreamRequestId: proxyResult.error?.upstreamRequestId,
+    });
+    throw createOpenAIProxyError(proxyResult);
   }
   
   // Parse response using the appropriate API format
-  const parsed = parseApiResponse(data, apiFormat);
+  const parsed = parseApiResponse(proxyResult.data, apiFormat);
   const metrics: AIMetrics = {
     promptTokens: parsed.promptTokens,
     completionTokens: parsed.completionTokens,
     totalTokens: parsed.totalTokens,
     elapsedTimeMs,
-    model: data.model
+    model: proxyResult.data.model
   };
   
   const content = parsed.content;

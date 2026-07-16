@@ -472,3 +472,33 @@ body:not(.dark-mode) .workflow-avatar-caption-word.active {
 .workflow-avatar-panel .spinner {
   animation: spin 0.8s linear infinite;
 }
+
+@media (max-width: 480px) {
+  .workflow-panel {
+    top: 88px;
+    width: 100vw;
+  }
+
+  .workflow-panel.collapsed {
+    right: -100vw;
+  }
+
+  .workflow-header {
+    padding: 0.65rem 0.85rem;
+  }
+
+  .workflow-title {
+    gap: 0.45rem;
+    min-width: 0;
+  }
+
+  .workflow-title h3 {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .workflow-content {
+    padding: 0.85rem;
+  }
+}

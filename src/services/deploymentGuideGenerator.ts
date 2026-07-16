@@ -11,7 +11,12 @@ import JSZip from 'jszip';
 import { generateModelFilename } from '../utils/modelNaming';
 import { getModelSettingsForFeature, getDeploymentName, MODEL_CONFIG } from '../stores/modelSettingsStore';
 import { trackAIModelUsage } from './telemetryService';
-import { buildRequestBody, parseApiResponse, callAzureOpenAIProxy } from './apiHelper';
+import {
+  buildRequestBody,
+  parseApiResponse,
+  callAzureOpenAIProxy,
+  createOpenAIProxyError,
+} from './apiHelper';
 import type { Language } from '../i18n/LanguageContext';
 import { getPromptLanguageInstruction } from '../i18n/localization';
 import { searchMicrosoftDocs, renderGroundingBlock, DocSource } from './docsGroundingService';
@@ -71,7 +76,7 @@ async function callAzureOpenAI(messages: any[], maxTokens: number = 10000): Prom
   
   console.log(`🤖 Using ${modelConfig.displayName}${modelConfig.isReasoning ? ` (reasoning: ${settings.reasoningEffort})` : ''} | max_tokens: ${effectiveMaxTokens} | API: ${apiFormat === 'chat-completions' ? 'Chat Completions' : 'Responses'}`);
 
-  const { ok, status, data, errorText } = await callAzureOpenAIProxy({
+  const proxyResult = await callAzureOpenAIProxy({
     apiFormat,
     deployment,
     body: requestBody,
@@ -80,20 +85,26 @@ async function callAzureOpenAI(messages: any[], maxTokens: number = 10000): Prom
   // Calculate elapsed time
   const elapsedTimeMs = Math.round(performance.now() - startTime);
 
-  if (!ok) {
-    console.error('❌ Azure OpenAI API error:', status, errorText);
-    throw new Error(`Azure OpenAI API error (${status}): ${errorText}`);
+  if (!proxyResult.ok) {
+    console.error('❌ Azure OpenAI API error:', {
+      status: proxyResult.status,
+      code: proxyResult.error?.code,
+      source: proxyResult.error?.source,
+      requestId: proxyResult.error?.requestId,
+      upstreamRequestId: proxyResult.error?.upstreamRequestId,
+    });
+    throw createOpenAIProxyError(proxyResult);
   }
   
   // Parse response using the appropriate API format
-  const parsed = parseApiResponse(data, apiFormat);
+  const parsed = parseApiResponse(proxyResult.data, apiFormat);
   let content = parsed.content;
   const metrics: AIMetrics = {
     promptTokens: parsed.promptTokens,
     completionTokens: parsed.completionTokens,
     totalTokens: parsed.totalTokens,
     elapsedTimeMs,
-    model: data.model
+    model: proxyResult.data.model
   };
   
   console.log('📦 API Response:', content.length, 'chars |',

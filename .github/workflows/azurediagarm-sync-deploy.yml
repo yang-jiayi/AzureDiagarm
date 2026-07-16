@@ -155,6 +155,7 @@ jobs:
           npm run build
           npm run lint
           node --check server/token-server.js
+          node --check server/openai-proxy.js
           node --check server/access-control.js
           node --check server/arm-key-vault-access-store.js
           npm --prefix server ci --ignore-scripts
@@ -302,6 +303,144 @@ jobs:
             }
           fi
 
+      - name: Enforce origin isolation and Front Door diagnostics
+        shell: pwsh
+        run: |
+          ./scripts/enforce-frontdoor-origin-security.ps1 `
+            -SubscriptionId '${{ vars.AZURE_SUBSCRIPTION_ID }}' `
+            -ResourceGroup '${{ vars.AZURE_RESOURCE_GROUP }}' `
+            -ContainerApp '${{ vars.AZURE_CONTAINER_APP }}' `
+            -FrontDoorProfile '${{ vars.AZURE_FRONT_DOOR_PROFILE }}'
+
+      - name: Verify isolated Front Door route
+        run: |
+          set -Eeuo pipefail
+          origin_fqdn="$(
+            az containerapp show \
+              --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
+              --name "${{ vars.AZURE_CONTAINER_APP }}" \
+              --query properties.configuration.ingress.fqdn \
+              --output tsv
+          )"
+          front_door_id="$(
+            az afd profile show \
+              --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
+              --profile-name "${{ vars.AZURE_FRONT_DOOR_PROFILE }}" \
+              --query frontDoorId \
+              --output tsv
+          )"
+
+          health_status=000
+          for attempt in $(seq 1 18); do
+            health_status="$(
+              curl \
+                --silent \
+                --output /tmp/azurediagarm-security-health.txt \
+                --write-out '%{http_code}' \
+                --connect-timeout 15 \
+                --max-time 45 \
+                "${{ vars.AZURE_APP_URL }}/healthz" || true
+            )"
+            if [[ "$health_status" == "200" ]] && grep -qx 'ok' /tmp/azurediagarm-security-health.txt; then
+              break
+            fi
+            [[ "$attempt" -lt 18 ]] && sleep 10
+          done
+          [[ "$health_status" == "200" ]]
+          grep -qx 'ok' /tmp/azurediagarm-security-health.txt
+
+          spoofed_origin_status="$(
+            curl \
+              --silent \
+              --output /dev/null \
+              --write-out '%{http_code}' \
+              --connect-timeout 15 \
+              --max-time 30 \
+              --header "X-Azure-FDID: $front_door_id" \
+              "https://${origin_fqdn}/healthz" || true
+          )"
+          [[ "$spoofed_origin_status" == "403" ]]
+
+      - name: Verify authentication, WAF, and TLS security baseline
+        env:
+          APP_URL: ${{ vars.AZURE_APP_URL }}
+          ENTRA_CLIENT_ID: ${{ vars.AZURE_ENTRA_CLIENT_ID }}
+          TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+        run: |
+          set -Eeuo pipefail
+          expected_issuer="https://login.microsoftonline.com/${TENANT_ID}/v2.0"
+
+          az containerapp auth show \
+            --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
+            --name "${{ vars.AZURE_CONTAINER_APP }}" \
+            --output json > /tmp/azurediagarm-auth.json
+
+          jq -e \
+            --arg client "$ENTRA_CLIENT_ID" \
+            --arg issuer "$expected_issuer" \
+            '
+              .platform.enabled == true and
+              .httpSettings.requireHttps == true and
+              .globalValidation.unauthenticatedClientAction == "RedirectToLoginPage" and
+              .globalValidation.redirectToProvider == "azureactivedirectory" and
+              (.globalValidation.excludedPaths | index("/healthz") != null) and
+              .identityProviders.azureActiveDirectory.registration.clientId == $client and
+              .identityProviders.azureActiveDirectory.registration.openIdIssuer == $issuer and
+              (.identityProviders.azureActiveDirectory.validation.allowedAudiences | index($client) != null) and
+              (.identityProviders.azureActiveDirectory.validation.allowedAudiences | index("api://" + $client) != null)
+            ' /tmp/azurediagarm-auth.json > /dev/null
+
+          app_host="${APP_URL#https://}"
+          az afd custom-domain list \
+            --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
+            --profile-name "${{ vars.AZURE_FRONT_DOOR_PROFILE }}" \
+            --output json > /tmp/azurediagarm-custom-domain.json
+          custom_domain_id="$(
+            jq -er \
+              --arg host "$app_host" \
+              '
+                map(select(
+                  .hostName == $host and
+                  .domainValidationState == "Approved" and
+                  .provisioningState == "Succeeded" and
+                  .tlsSettings.minimumTlsVersion == "TLS12" and
+                  .tlsSettings.certificateType == "CustomerCertificate"
+                )) |
+                first |
+                .id
+              ' /tmp/azurediagarm-custom-domain.json
+          )"
+
+          az afd security-policy list \
+            --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
+            --profile-name "${{ vars.AZURE_FRONT_DOOR_PROFILE }}" \
+            --output json > /tmp/azurediagarm-security-policy.json
+          waf_policy_id="$(
+            jq -er \
+              --arg domain "$custom_domain_id" \
+              '
+                map(select(
+                  .provisioningState == "Succeeded" and
+                  .parameters.type == "WebApplicationFirewall" and
+                  any(.parameters.associations[]?.domains[]?;
+                    .isActive == true and
+                    (.id | ascii_downcase) == ($domain | ascii_downcase)
+                  )
+                )) |
+                first |
+                .parameters.wafPolicy.id
+              ' /tmp/azurediagarm-security-policy.json
+          )"
+
+          az resource show \
+            --ids "$waf_policy_id" \
+            --output json > /tmp/azurediagarm-waf-policy.json
+          jq -e '
+            .properties.policySettings.enabledState == "Enabled" and
+            .properties.policySettings.mode == "Prevention" and
+            .properties.provisioningState == "Succeeded"
+          ' /tmp/azurediagarm-waf-policy.json > /dev/null
+
       - name: Determine whether to deploy
         id: deployment
         env:
@@ -418,13 +557,39 @@ jobs:
             )
           fi
 
-          az containerapp update \
-            --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
-            --name "${{ vars.AZURE_CONTAINER_APP }}" \
-            --image "${{ steps.image.outputs.image }}" \
-            --revision-suffix "$revision_suffix" \
-            --set-env-vars "${env_vars[@]}" \
+          current_env_names="$(
+            az containerapp show \
+              --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
+              --name "${{ vars.AZURE_CONTAINER_APP }}" \
+              --query 'properties.template.containers[0].env[].name' \
+              --output tsv
+          )"
+          remove_env_vars=()
+          if [[ -z "${{ vars.AZURE_TABLES_ENDPOINT }}" ]]; then
+            for name in AZURE_TABLES_ENDPOINT AZURE_TABLES_FEEDBACK_TABLE; do
+              grep -qx "$name" <<< "$current_env_names" && remove_env_vars+=("$name")
+            done
+          fi
+          if [[ -z "${{ vars.AZURE_COSMOS_ENDPOINT }}" ]]; then
+            for name in AZURE_COSMOS_ENDPOINT COSMOS_DATABASE_ID COSMOS_CONTAINER_ID COSMOS_FEEDBACK_CONTAINER_ID; do
+              grep -qx "$name" <<< "$current_env_names" && remove_env_vars+=("$name")
+            done
+          fi
+
+          update_args=(
+            --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}"
+            --name "${{ vars.AZURE_CONTAINER_APP }}"
+            --image "${{ steps.image.outputs.image }}"
+            --revision-suffix "$revision_suffix"
+            --set-env-vars "${env_vars[@]}"
             --output none
+          )
+          if (( ${#remove_env_vars[@]} > 0 )); then
+            update_args+=(--remove-env-vars "${remove_env_vars[@]}")
+          fi
+          az containerapp update "${update_args[@]}"
+
+          expected_revision="${{ vars.AZURE_CONTAINER_APP }}--${revision_suffix}"
 
           for attempt in $(seq 1 60); do
             latest="$(
@@ -441,13 +606,52 @@ jobs:
                 --query properties.latestReadyRevisionName \
                 --output tsv
             )"
-            [[ -n "$latest" && "$latest" == "$ready" ]] && break
+            revision_state="$(
+              az containerapp revision show \
+                --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
+                --name "${{ vars.AZURE_CONTAINER_APP }}" \
+                --revision "$expected_revision" \
+                --query '[properties.provisioningState,properties.healthState,properties.runningState] | join(`|`, @)' \
+                --output tsv 2>/dev/null || true
+            )"
+            if [[ "$latest" == "$expected_revision" && "$ready" == "$expected_revision" ]]; then
+              [[ "$revision_state" == "Provisioned|Healthy|Running" || "$revision_state" == "Provisioned|Healthy|RunningAtMaxScale" ]] && break
+            fi
             [[ "$attempt" -eq 60 ]] && {
-              echo "The new Container Apps revision did not become ready." >&2
+              echo "Expected revision $expected_revision did not become ready (latest=$latest, ready=$ready, state=$revision_state)." >&2
               exit 1
             }
             sleep 10
           done
+
+          actual_image="$(
+            az containerapp revision show \
+              --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
+              --name "${{ vars.AZURE_CONTAINER_APP }}" \
+              --revision "$expected_revision" \
+              --query properties.template.containers[0].image \
+              --output tsv
+          )"
+          actual_upstream="$(
+            az containerapp revision show \
+              --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
+              --name "${{ vars.AZURE_CONTAINER_APP }}" \
+              --revision "$expected_revision" \
+              --query "properties.template.containers[0].env[?name=='UPSTREAM_COMMIT'].value | [0]" \
+              --output tsv
+          )"
+          actual_customization="$(
+            az containerapp revision show \
+              --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
+              --name "${{ vars.AZURE_CONTAINER_APP }}" \
+              --revision "$expected_revision" \
+              --query "properties.template.containers[0].env[?name=='CUSTOMIZATION_COMMIT'].value | [0]" \
+              --output tsv
+          )"
+
+          [[ "$actual_image" == "${{ steps.image.outputs.image }}" ]]
+          [[ "$actual_upstream" == "${{ needs.merge_validate.outputs.upstream_commit }}" ]]
+          [[ "$actual_customization" == "${{ needs.merge_validate.outputs.fork_commit }}" ]]
 
       - name: Purge Front Door cache
         if: steps.deployment.outputs.should_deploy == 'true'
@@ -482,7 +686,7 @@ jobs:
                 "${{ vars.AZURE_APP_URL }}/healthz"; then
                 grep -qx 'ok' /tmp/azurediagarm-health.txt || checks_ok=false
                 grep -qi '^x-robots-tag:.*noindex' "$headers" || checks_ok=false
-                grep -qi '^referrer-policy:.*no-referrer' "$headers" || checks_ok=false
+                grep -qi '^referrer-policy:.*same-origin' "$headers" || checks_ok=false
 
                 root_status="$(
                   curl \
@@ -514,7 +718,7 @@ jobs:
               --output /tmp/azurediagarm.html \
               "${{ vars.AZURE_APP_URL }}/"; then
               grep -qi '^x-robots-tag:.*noindex' "$headers" || checks_ok=false
-              grep -qi '^referrer-policy:.*no-referrer' "$headers" || checks_ok=false
+              grep -qi '^referrer-policy:.*same-origin' "$headers" || checks_ok=false
               grep -qi '^permissions-policy:' "$headers" || checks_ok=false
               grep -q 'Azure Architecture Diagram Builder' /tmp/azurediagarm.html || checks_ok=false
             else
@@ -554,10 +758,27 @@ jobs:
                   "https://${origin_fqdn}/" || true
               )"
               if [[ "$ACCESS_CONTROL_ENABLED" == "true" ]]; then
-                [[ "$origin_status" == "302" || "$origin_status" == "401" || "$origin_status" == "403" ]] || checks_ok=false
+                [[ "$origin_status" == "403" ]] || checks_ok=false
               else
                 [[ "$origin_status" == "403" ]] || checks_ok=false
               fi
+
+              spoofed_origin_status="$(
+                curl \
+                  --silent \
+                  --output /dev/null \
+                  --write-out '%{http_code}' \
+                  --max-time 30 \
+                  --header "X-Azure-FDID: $(
+                    az afd profile show \
+                      --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
+                      --profile-name "${{ vars.AZURE_FRONT_DOOR_PROFILE }}" \
+                      --query frontDoorId \
+                      --output tsv
+                  )" \
+                  "https://${origin_fqdn}/healthz" || true
+              )"
+              [[ "$spoofed_origin_status" == "403" ]] || checks_ok=false
 
               mcp_status="$(
                 curl \

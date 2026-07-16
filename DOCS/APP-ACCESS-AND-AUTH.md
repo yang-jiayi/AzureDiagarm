@@ -47,6 +47,28 @@ Apps removes external values and injects the authenticated principal headers.
 - The origin response timeout is 240 seconds for GPT-5.6 Sol generation.
 - `/healthz` is the only unauthenticated application path and is used by the
   Front Door origin health probe.
+- Container Apps ingress allows only the current IPv4 ranges from the
+  `AzureFrontDoor.Backend` service tag and Azure platform infrastructure
+  addresses. Nginx also requires this profile's `X-Azure-FDID`, so another
+  Front Door profile cannot use the shared backend address space to bypass WAF.
+- The deployment workflow refreshes the origin allowlist from Azure service
+  tags and verifies that direct origin access still returns HTTP 403.
+- Front Door access, health-probe, WAF, and metric diagnostics are sent to the
+  `azurediagarm-logs` Log Analytics workspace.
+
+## Easy Auth CSRF and referrer policy
+
+Keep the response header `Referrer-Policy: same-origin`.
+
+Container Apps Easy Auth performs CSRF validation for unsafe,
+cookie-authenticated requests such as `POST /api/openai`. A stricter
+`no-referrer` policy removes the same-origin `Referer` header and causes Easy
+Auth to reject the request before it reaches Nginx or the OpenAI proxy. The
+corresponding platform log contains HTTP 403, substatus 60, and
+`Cross-site request forgery detected`.
+
+`same-origin` preserves the referrer required for same-origin API calls while
+still withholding it from external sites.
 
 ## Whitelist persistence
 
@@ -118,6 +140,73 @@ az role assignment list `
   --scope /subscriptions/f2c0fe9a-0171-42ed-803d-3e78322545a1/resourceGroups/AzureDiagarm_rg/providers/Microsoft.KeyVault/vaults/azurediagarm-access-kv `
   --output table
 ```
+
+Inspect origin isolation and Front Door diagnostics:
+
+```powershell
+az containerapp ingress access-restriction list `
+  --subscription f2c0fe9a-0171-42ed-803d-3e78322545a1 `
+  --resource-group AzureDiagarm_rg `
+  --name azurediagarm-app `
+  --output table
+
+$frontDoorId = az afd profile show `
+  --subscription f2c0fe9a-0171-42ed-803d-3e78322545a1 `
+  --resource-group AzureDiagarm_rg `
+  --profile-name azurediagarm-fd `
+  --query id `
+  --output tsv
+
+az monitor diagnostic-settings show `
+  --name azurediagarm-local-logs `
+  --resource $frontDoorId
+```
+
+Useful Log Analytics queries:
+
+```kusto
+AzureDiagnostics
+| where TimeGenerated > ago(24h)
+| where ResourceProvider == "MICROSOFT.CDN"
+| where Category in ("FrontDoorAccessLog", "FrontDoorWebApplicationFirewallLog")
+| extend RequestUri = tostring(column_ifexists("requestUri_s", "")),
+         Status = tostring(column_ifexists("httpStatusCode_s", "")),
+         Action = tostring(column_ifexists("action_s", "")),
+         Details = tostring(column_ifexists("details_msg_s", ""))
+| project TimeGenerated, Category, RequestUri, Status, Action, Details
+| order by TimeGenerated desc
+```
+
+```kusto
+union isfuzzy=true ContainerAppSystemLogs_CL, ContainerAppConsoleLogs_CL
+| where TimeGenerated > ago(24h)
+| where Log_s has "Cross-site request forgery" or Log_s has "SubStatus: 60"
+| project TimeGenerated, ContainerAppName_s, RevisionName_s, Log_s
+| order by TimeGenerated desc
+```
+
+## OpenAI proxy diagnostics
+
+`/api/openai` returns a structured error envelope with a safe `code`,
+`requestId`, and, when available, `upstreamStatus`, `upstreamCode`, and
+`upstreamRequestId`. The proxy logs request identifiers and status metadata,
+but never logs prompts, access tokens, or upstream response bodies.
+
+Common codes include:
+
+- `credential_acquisition_failed`
+- `azure_openai_authentication_failed`
+- `azure_openai_rate_limited`
+- `azure_openai_timeout`
+- `azure_openai_unavailable`
+- `application_authentication_required`
+- `application_request_rejected`
+- `edge_request_blocked`
+
+Use the displayed request ID to correlate browser errors with Container Apps
+logs. Do not treat every HTTP 401 or 403 as a managed identity failure: Easy
+Auth, the application whitelist, WAF, and Azure OpenAI RBAC are separate
+enforcement layers.
 
 ## Credential rotation
 

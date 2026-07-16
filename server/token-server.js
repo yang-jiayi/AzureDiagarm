@@ -16,6 +16,7 @@ const { TableClient } = require('@azure/data-tables');
 const { EmailClient, KnownEmailSendStatus } = require('@azure/communication-email');
 const { createAccessControlRouter } = require('./access-control');
 const { ArmKeyVaultAccessStore } = require('./arm-key-vault-access-store');
+const { createOpenAIProxyRouter } = require('./openai-proxy');
 const crypto = require('crypto');
 
 const app = express();
@@ -76,10 +77,6 @@ const OPENAI_ALLOWED_DEPLOYMENTS = new Set(
     .filter(Boolean),
 );
 
-// Deployment names are user-selected on the client; constrain them so they
-// cannot be used to inject a different upstream path (SSRF / path traversal).
-const DEPLOYMENT_NAME_RE = /^[A-Za-z0-9._-]{1,64}$/;
-
 function getClientKey(req) {
   const forwarded = req.get('x-forwarded-for') || '';
   return (
@@ -117,14 +114,6 @@ const consumeOpenAiRateLimit = createFixedWindowRateLimiter(
   Math.max(1, Number(process.env.OPENAI_RATE_LIMIT_PER_HOUR) || 120),
 );
 const consumeUtilityApiRateLimit = createFixedWindowRateLimiter(60 * 60 * 1000, 120);
-
-function buildOpenAIUrl(deployment, apiFormat) {
-  const base = OPENAI_ENDPOINT.endsWith('/') ? OPENAI_ENDPOINT : `${OPENAI_ENDPOINT}/`;
-  if (apiFormat === 'chat-completions') {
-    return `${base}openai/deployments/${encodeURIComponent(deployment)}/chat/completions?api-version=${OPENAI_API_VERSION}`;
-  }
-  return `${base}openai/v1/responses`;
-}
 
 if (!OPENAI_ENDPOINT) {
   console.warn('[openai-proxy] AZURE_OPENAI_ENDPOINT is not set. /api/openai will return 503.');
@@ -363,71 +352,14 @@ app.get('/api/speech-token', async (req, res) => {
   }
 });
 
-app.post('/api/openai', async (req, res) => {
-  if (!OPENAI_ENDPOINT) {
-    return res.status(503).json({ error: 'AZURE_OPENAI_ENDPOINT is not configured on the server' });
-  }
-
-  const { apiFormat, deployment, body } = req.body || {};
-  if (apiFormat !== 'responses' && apiFormat !== 'chat-completions') {
-    return res.status(400).json({ error: "apiFormat must be 'responses' or 'chat-completions'" });
-  }
-  if (typeof deployment !== 'string' || !DEPLOYMENT_NAME_RE.test(deployment)) {
-    return res.status(400).json({ error: 'invalid deployment name' });
-  }
-  if (OPENAI_ALLOWED_DEPLOYMENTS.size > 0 && !OPENAI_ALLOWED_DEPLOYMENTS.has(deployment)) {
-    return res.status(403).json({ error: 'deployment is not allowed' });
-  }
-  if (!body || typeof body !== 'object') {
-    return res.status(400).json({ error: 'missing request body' });
-  }
-  const retryAfter = consumeOpenAiRateLimit(req);
-  if (retryAfter > 0) {
-    res.set('Retry-After', String(retryAfter));
-    return res.status(429).json({ error: 'OpenAI request limit exceeded. Please try again later.' });
-  }
-
-  const upstreamBody = { ...body };
-  if (apiFormat === 'responses') {
-    upstreamBody.model = deployment;
-    upstreamBody.store = false;
-    upstreamBody.max_output_tokens = Math.min(
-      Math.max(Number(upstreamBody.max_output_tokens) || 1, 1),
-      32768,
-    );
-  } else {
-    upstreamBody.max_tokens = Math.min(
-      Math.max(Number(upstreamBody.max_tokens) || 1, 1),
-      32768,
-    );
-  }
-
-  try {
-    const headers = { 'Content-Type': 'application/json' };
-    if (OPENAI_API_KEY) {
-      headers['api-key'] = OPENAI_API_KEY;
-    } else {
-      // Keyless: data-plane scope for Azure OpenAI / Cognitive Services.
-      const { token } = await credential.getToken('https://cognitiveservices.azure.com/.default');
-      headers['Authorization'] = `Bearer ${token}`;
-    }
-
-    const upstream = await fetch(buildOpenAIUrl(deployment, apiFormat), {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(upstreamBody),
-      signal: AbortSignal.timeout(295_000),
-    });
-
-    const text = await upstream.text();
-    res.status(upstream.status);
-    res.set('Content-Type', upstream.headers.get('content-type') || 'application/json');
-    res.send(text);
-  } catch (err) {
-    console.error('[openai-proxy] error:', err.message);
-    res.status(502).json({ error: 'Azure OpenAI proxy request failed' });
-  }
-});
+app.use('/api/openai', createOpenAIProxyRouter({
+  endpoint: OPENAI_ENDPOINT,
+  credential,
+  apiKey: OPENAI_API_KEY,
+  apiVersion: OPENAI_API_VERSION,
+  allowedDeployments: OPENAI_ALLOWED_DEPLOYMENTS,
+  consumeRateLimit: consumeOpenAiRateLimit,
+}));
 
 // ── Microsoft Learn docs grounding ─────────────────────────────────────────
 // Server-side search of official Microsoft Learn docs via the public Learn MCP

@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-import React, { memo, useState } from 'react';
+import React, { memo, useEffect, useState } from 'react';
 import { NodeProps, NodeResizer, useReactFlow } from 'reactflow';
 import { Palette, Minimize2 } from 'lucide-react';
 import { fitGroupToContent } from '../utils/groupUtils';
@@ -83,6 +83,16 @@ const GroupNode: React.FC<NodeProps> = memo(({ id, data, selected }) => {
   const [customColor, setCustomColor] = useState(data.customColor || null);
   const { getNodes, setNodes } = useReactFlow();
 
+  useEffect(() => {
+    if (!isEditingLabel) {
+      setLabel(data.label || 'Group');
+    }
+  }, [data.label, isEditingLabel]);
+
+  useEffect(() => {
+    setCustomColor(data.customColor || null);
+  }, [data.customColor]);
+
   const handleFitToContent = () => {
     const allNodes = getNodes();
     const updated = fitGroupToContent(allNodes, id);
@@ -151,6 +161,14 @@ const GroupNode: React.FC<NodeProps> = memo(({ id, data, selected }) => {
             <div
               className="group-label"
               onDoubleClick={handleLabelDoubleClick}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' || event.key === ' ' || event.key === 'F2') {
+                  event.preventDefault();
+                  handleLabelDoubleClick();
+                }
+              }}
+              role="button"
+              tabIndex={0}
               title={t("Double-click to edit")}
               style={labelStyle}
             >

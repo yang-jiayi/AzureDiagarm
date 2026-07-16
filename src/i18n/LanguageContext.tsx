@@ -177,6 +177,23 @@ const exactJapanese: Readonly<Record<string, string>> = {
   'Fastest': '最速',
   'Feedback': 'フィードバック',
   'Feedback could not be sent. Please try again.': 'フィードバックを送信できませんでした。もう一度お試しください。',
+  'Your application session is no longer valid. Refresh the page and sign in again.': 'アプリケーションのセッションが無効です。ページを更新して、もう一度サインインしてください。',
+  'Your account is not allowed to use this application.': 'このアカウントにはアプリケーションの利用が許可されていません。',
+  'The application authentication layer rejected the request. Refresh the page and try again.': 'アプリケーションの認証レイヤーによってリクエストが拒否されました。ページを更新して、もう一度お試しください。',
+  'The request was blocked before it reached Azure OpenAI. Reduce the request size or contact the administrator.': 'リクエストは Azure OpenAI に到達する前にブロックされました。リクエスト サイズを小さくするか、管理者に連絡してください。',
+  'The selected model deployment is not allowed by the server configuration.': '選択したモデル デプロイはサーバー構成で許可されていません。',
+  'The server could not acquire an Azure OpenAI credential. Contact the administrator.': 'サーバーが Azure OpenAI の資格情報を取得できませんでした。管理者に連絡してください。',
+  'Azure OpenAI rejected the server credential. Check the managed identity role assignment.': 'Azure OpenAI がサーバーの資格情報を拒否しました。Managed Identity のロール割り当てを確認してください。',
+  'Deployment not found. Please check your model deployment name.': 'Deployment が見つかりません。モデル デプロイ名を確認してください。',
+  'The application request limit was reached. Wait a moment and try again.': 'アプリケーションのリクエスト上限に達しました。しばらく待ってから、もう一度お試しください。',
+  'Azure OpenAI is rate-limiting requests. Wait a moment and try again.': 'Azure OpenAI がリクエストを制限しています。しばらく待ってから、もう一度お試しください。',
+  'Azure OpenAI is taking too long to respond. Please try again.': 'Azure OpenAI の応答に時間がかかっています。もう一度お試しください。',
+  'Azure OpenAI is temporarily unavailable. Please try again.': 'Azure OpenAI は一時的に利用できません。もう一度お試しください。',
+  'The request is too large. Reduce the diagram or image size and try again.': 'リクエストが大きすぎます。図または画像のサイズを小さくして、もう一度お試しください。',
+  'Azure OpenAI content filtering rejected the request. Revise the prompt and try again.': 'Azure OpenAI のContent Filteringによってリクエストが拒否されました。プロンプトを修正して、もう一度お試しください。',
+  'Azure OpenAI returned an unexpected response. Please try again.': 'Azure OpenAI から予期しない応答が返されました。もう一度お試しください。',
+  'The application could not reach the Azure OpenAI proxy. Check your connection and try again.': 'アプリケーションから Azure OpenAI proxy に接続できませんでした。接続を確認して、もう一度お試しください。',
+  'Azure OpenAI rejected the request format. Please try again or simplify the request.': 'Azure OpenAI がリクエスト形式を拒否しました。もう一度試すか、リクエストを簡略化してください。',
   'Fit to content': '内容に合わせる',
   'Fit‑to‑view': '全体を表示',
   'Fixed Pricing': '固定料金',
@@ -799,6 +816,9 @@ const exactJapanese: Readonly<Record<string, string>> = {
 };
 
 const phraseJapanese: ReadonlyArray<readonly [string, string]> = [
+  ['Request ID:', 'リクエスト ID:'],
+  ['Azure OpenAI request failed (', 'Azure OpenAI のリクエストに失敗しました（'],
+  ['). Please try again.', '）。もう一度お試しください。'],
   ['Please try again.', 'もう一度お試しください。'],
   ['Failed to ', '次の処理に失敗しました: '],
   ['Error loading ', '読み込みエラー: '],
@@ -932,6 +952,13 @@ const phraseJapanese: ReadonlyArray<readonly [string, string]> = [
 function translateJapanese(key: StaticTranslationKey): string {
   const exact = exactJapanese[key];
   if (exact !== undefined) return exact;
+  const requestIdMatch = String(key).match(/^(.*) Request ID: (.+)$/s);
+  if (requestIdMatch) {
+    const translatedMessage = exactJapanese[requestIdMatch[1] as StaticTranslationKey];
+    if (translatedMessage !== undefined) {
+      return `${translatedMessage} リクエスト ID: ${requestIdMatch[2]}`;
+    }
+  }
   let result: string = key;
   for (const [english, japanese] of phraseJapanese) {
     if (result.includes(english)) result = result.split(english).join(japanese);

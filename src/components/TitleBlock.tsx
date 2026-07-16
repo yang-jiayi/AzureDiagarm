@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-import React, { useState, useRef, useCallback } from 'react';
+import React, { useState, useRef, useCallback, useEffect } from 'react';
 import './TitleBlock.css';
 import { useLanguage } from '../i18n/LanguageContext';
 
@@ -32,7 +32,14 @@ const TitleBlock: React.FC<TitleBlockProps> = ({
   const dragOffsetRef = useRef({ x: 0, y: 0 });
   const blockRef = useRef<HTMLDivElement>(null);
 
+  useEffect(() => {
+    if (!isEditing) {
+      setEditData({ architectureName, author, version });
+    }
+  }, [architectureName, author, version, isEditing]);
+
   const handleEdit = () => {
+    setEditData({ architectureName, author, version });
     setIsEditing(true);
   };
 
@@ -126,7 +133,18 @@ const TitleBlock: React.FC<TitleBlockProps> = ({
           </div>
         </div>
       ) : (
-        <div className="title-block-display" onDoubleClick={handleEdit}>
+        <div
+          className="title-block-display"
+          onDoubleClick={handleEdit}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter' || event.key === ' ' || event.key === 'F2') {
+              event.preventDefault();
+              handleEdit();
+            }
+          }}
+          role="button"
+          tabIndex={0}
+        >
           <div className="title-block-header">
             <span className="title-block-label">{t("ARCHITECTURE DIAGRAM")}</span>
           </div>
