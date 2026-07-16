@@ -4042,13 +4042,16 @@ Return the IMPROVED architecture in the same JSON format as before with proper g
         architectureDescription={architecturePrompt || titleBlockData.architectureName}
       />
 
-      <button
-        className={`feedback-fab${feedbackFabPulse ? ' pulse-once' : ''}`}
-        onClick={() => setIsFeedbackModalOpen(true)}
-        title={t("Share feedback")}
-      >
-        <MessageSquare size={18} />
-        {' '}{t("Feedback")}{' '}</button>
+      {!isChatOpen && (
+        <button
+          className={`feedback-fab${feedbackFabPulse ? ' pulse-once' : ''}`}
+          onClick={() => setIsFeedbackModalOpen(true)}
+          title={t("Share feedback")}
+        >
+          <MessageSquare size={18} />
+          {' '}{t("Feedback")}{' '}
+        </button>
+      )}
       <ArchitectureChatPanel
         isOpen={isChatOpen}
         onClose={() => setIsChatOpen(false)}
