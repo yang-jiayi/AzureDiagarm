@@ -76,6 +76,23 @@
         color: #45566c;
         font-size: 13px;
       }
+      .contact-link {
+        display: inline;
+        min-height: 0;
+        padding: 0;
+        border-radius: 0;
+        background: transparent;
+        color: #0067b8;
+        text-decoration: underline;
+      }
+      .contact-link:hover {
+        background: transparent;
+        color: #004578;
+      }
+      .contact-link:focus-visible {
+        outline: 2px solid #0078d4;
+        outline-offset: 3px;
+      }
     </style>
   </head>
   <body>
@@ -88,8 +105,11 @@
         <a href="/.auth/logout?post_logout_redirect_uri=%2F">別のアカウントでサインイン / Sign in with another account</a>
       </div>
       <p class="contact">
-        アクセスが必要な場合は管理者（yangjiayi@msft.jp）に連絡してください。<br />
-        Contact the administrator at yangjiayi@msft.jp if you need access.
+        アクセスが必要な場合は、LinkedInで
+        <a class="contact-link" href="https://www.linkedin.com/in/yangjiayi/" target="_blank" rel="noopener noreferrer">Jiayi Yang</a>
+        に連絡してください。<br />
+        If you need access, contact
+        <a class="contact-link" href="https://www.linkedin.com/in/yangjiayi/" target="_blank" rel="noopener noreferrer">Jiayi Yang on LinkedIn</a>.
       </p>
     </main>
   </body>
