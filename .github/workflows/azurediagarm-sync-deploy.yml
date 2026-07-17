@@ -176,6 +176,7 @@ jobs:
           npm ci --ignore-scripts
           npm run build
           npm run lint
+          npm run test:arm
           node --check server/token-server.js
           node --check server/openai-proxy.js
           node --check server/access-control.js
@@ -184,6 +185,7 @@ jobs:
           npm --prefix server test
           npm --prefix mcp-server ci --ignore-scripts
           npm --prefix mcp-server run build
+          npm --prefix mcp-server test
           git diff --exit-code
 
       - name: Publish validated upstream merge
