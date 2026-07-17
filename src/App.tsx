@@ -62,7 +62,7 @@ import { bandLabel } from './services/wafMaturity';
 import { generateDeploymentGuide, DeploymentGuide } from './services/deploymentGuideGenerator';
 import { generateArchitectureWithAI } from './services/azureOpenAI';
 import { MODEL_CONFIG, DEPLOYMENT_NAMES, type ModelType } from './stores/modelSettingsStore';
-import { createSnapshot, DiagramVersion } from './services/versionStorageService';
+import { createSnapshot, DiagramVersion, getVersion } from './services/versionStorageService';
 import { exportAndDownloadDrawio } from './services/drawioExporter';
 import { buildVsdxBlob } from './services/visioVsdxExporter';
 import { exportDiagramAsPptx } from './services/pptxExporter';
@@ -113,6 +113,141 @@ const EXPORT_HISTORY_STORAGE_KEY = 'azure-diagram-builder.exportHistory.v1';
 const EDGE_STYLE_STORAGE_KEY = 'azure-diagram-builder.edgeStyle.v1';
 const CANVAS_HINT_STORAGE_KEY = 'azure-diagram-builder.canvasHintDismissed.v1';
 const HEADER_COLLAPSED_STORAGE_KEY = 'azure-diagram-builder.headerCollapsed.v1';
+
+type RestoredWorkflowStep = Record<string, unknown> & {
+  step: number;
+  description: string;
+  services: string[];
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function validateRestoredNodes(restoredNodes: unknown[]): Node[] {
+  const nodeIds = new Set<string>();
+  const nodes = restoredNodes.map((value, index) => {
+    if (!isRecord(value)) {
+      throw new Error(`Invalid node at index ${index}`);
+    }
+    if (typeof value.id !== 'string' || value.id.trim() === '') {
+      throw new Error(`Node at index ${index} must have an id`);
+    }
+    if (nodeIds.has(value.id)) {
+      throw new Error(`Duplicate node id: ${value.id}`);
+    }
+    if (
+      !isRecord(value.position)
+      || !Number.isFinite(value.position.x)
+      || !Number.isFinite(value.position.y)
+    ) {
+      throw new Error(`Node ${value.id} must have a finite position`);
+    }
+    if (!isRecord(value.data)) {
+      throw new Error(`Node ${value.id} must have a data object`);
+    }
+    if (value.type !== undefined && typeof value.type !== 'string') {
+      throw new Error(`Node ${value.id} has an invalid type`);
+    }
+    if (value.parentNode !== undefined && typeof value.parentNode !== 'string') {
+      throw new Error(`Node ${value.id} has an invalid parent`);
+    }
+
+    const data = value.data;
+    const stringDataFields = ['label', 'serviceName', 'category', 'iconPath', 'description', 'stylePreset'];
+    for (const field of stringDataFields) {
+      if (data[field] !== undefined && typeof data[field] !== 'string') {
+        throw new Error(`Node ${value.id} has an invalid ${field}`);
+      }
+    }
+    if (data.pricing !== undefined && data.pricing !== null) {
+      if (!isRecord(data.pricing)) {
+        throw new Error(`Node ${value.id} has invalid pricing data`);
+      }
+      for (const field of ['estimatedCost', 'quantity', 'reserved1yrCost']) {
+        const amount = data.pricing[field];
+        if (amount !== undefined && amount !== null && !Number.isFinite(amount)) {
+          throw new Error(`Node ${value.id} has invalid pricing ${field}`);
+        }
+      }
+    }
+    if (data.customColor !== undefined && data.customColor !== null) {
+      if (
+        !isRecord(data.customColor)
+        || typeof data.customColor.bg !== 'string'
+        || typeof data.customColor.border !== 'string'
+        || typeof data.customColor.header !== 'string'
+      ) {
+        throw new Error(`Node ${value.id} has invalid custom colors`);
+      }
+    }
+
+    nodeIds.add(value.id);
+    return value as unknown as Node;
+  });
+
+  for (const node of nodes) {
+    if (node.parentNode !== undefined && (!nodeIds.has(node.parentNode) || node.parentNode === node.id)) {
+      throw new Error(`Node ${node.id} references an invalid parent`);
+    }
+  }
+  return nodes;
+}
+
+function validateRestoredEdges(restoredEdges: unknown[], nodeIds: Set<string>): unknown[] {
+  const edgeIds = new Set<string>();
+  return restoredEdges.map((value, index) => {
+    if (!isRecord(value)) {
+      throw new Error(`Invalid edge at index ${index}`);
+    }
+    if (typeof value.id !== 'string' || value.id.trim() === '') {
+      throw new Error(`Edge at index ${index} must have an id`);
+    }
+    if (edgeIds.has(value.id)) {
+      throw new Error(`Duplicate edge id: ${value.id}`);
+    }
+    if (
+      typeof value.source !== 'string'
+      || typeof value.target !== 'string'
+      || !nodeIds.has(value.source)
+      || !nodeIds.has(value.target)
+    ) {
+      throw new Error(`Edge ${value.id} references an unknown node`);
+    }
+    if (value.data !== undefined && value.data !== null && !isRecord(value.data)) {
+      throw new Error(`Edge ${value.id} has invalid data`);
+    }
+    if (value.type !== undefined && typeof value.type !== 'string') {
+      throw new Error(`Edge ${value.id} has an invalid type`);
+    }
+    for (const field of ['sourceHandle', 'targetHandle']) {
+      if (value[field] !== undefined && value[field] !== null && typeof value[field] !== 'string') {
+        throw new Error(`Edge ${value.id} has an invalid ${field}`);
+      }
+    }
+    edgeIds.add(value.id);
+    return value;
+  });
+}
+
+function validateRestoredWorkflow(value: unknown): RestoredWorkflowStep[] {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value) || value.length > 2000) {
+    throw new Error('Invalid workflow in diagram payload');
+  }
+  return value.map((step, index) => {
+    if (
+      !isRecord(step)
+      || !Number.isFinite(step.step)
+      || typeof step.description !== 'string'
+      || !Array.isArray(step.services)
+      || step.services.some((service: unknown) => typeof service !== 'string')
+    ) {
+      throw new Error(`Invalid workflow step at index ${index}`);
+    }
+    return step as RestoredWorkflowStep;
+  });
+}
 
 function fitToolbarMenuToViewport(menu: HTMLElement) {
   const edgeGap = 12;
@@ -1821,8 +1956,8 @@ function App() {
   }, [nodes, recordExport, pricingMode, t]);
 
   const applyFlowObject = useCallback(
-    (flow: any) => {
-      if (!flow || typeof flow !== 'object') {
+    (flow: unknown) => {
+      if (!isRecord(flow)) {
         throw new Error('Invalid diagram payload');
       }
       if (!Array.isArray(flow.nodes) || !Array.isArray(flow.edges)) {
@@ -1831,8 +1966,30 @@ function App() {
       if (flow.nodes.length > 2000 || flow.edges.length > 5000) {
         throw new Error('Diagram payload is too large');
       }
-      if (flow.nodes.some((node: unknown) => !node || typeof node !== 'object' || Array.isArray(node))) {
-        throw new Error('Invalid node in diagram payload');
+      const restoredNodes = validateRestoredNodes(flow.nodes);
+      const nodeIds = new Set(restoredNodes.map((node) => node.id));
+      const restoredEdges = validateRestoredEdges(flow.edges, nodeIds);
+      const restoredWorkflow = validateRestoredWorkflow(flow.workflow);
+      let restoredViewport: { x: number; y: number; zoom: number } | undefined;
+      if (flow.viewport !== undefined && flow.viewport !== null) {
+        const viewport = flow.viewport;
+        if (
+          !isRecord(viewport)
+          || typeof viewport.x !== 'number'
+          || !Number.isFinite(viewport.x)
+          || typeof viewport.y !== 'number'
+          || !Number.isFinite(viewport.y)
+          || typeof viewport.zoom !== 'number'
+          || !Number.isFinite(viewport.zoom)
+          || viewport.zoom <= 0
+        ) {
+          throw new Error('Invalid viewport in diagram payload');
+        }
+        restoredViewport = {
+          x: viewport.x,
+          y: viewport.y,
+          zoom: viewport.zoom,
+        };
       }
 
       // Normalize edge handle ids. Some scenes (e.g. exported by the MCP server
@@ -1842,24 +1999,28 @@ function App() {
       // sourceHandle "top"/"left" or targetHandle "bottom"/"right" points at a
       // non-existent handle, so the edge silently fails to render. Remap the
       // invalid bare names to the correct handle id (valid ids pass through).
-      const fixedEdges = normalizeRestoredEdges(flow.edges);
-      setNodes(flow.nodes);
+      const fixedEdges = normalizeRestoredEdges(restoredEdges);
+      setNodes(restoredNodes);
       setEdges(fixedEdges);
 
-      if (flow.viewport && reactFlowInstance?.setViewport) {
-        reactFlowInstance.setViewport(flow.viewport);
+      if (restoredViewport && reactFlowInstance?.setViewport) {
+        reactFlowInstance.setViewport(restoredViewport);
       }
 
       // Restore metadata if present
-      const restoredTitle = flow.titleBlockData && typeof flow.titleBlockData === 'object'
+      const restoredTitle = isRecord(flow.titleBlockData)
         ? flow.titleBlockData
         : flow.metadata;
-      if (restoredTitle && typeof restoredTitle === 'object') {
+      if (isRecord(restoredTitle)) {
         setTitleBlockData({
-          architectureName: restoredTitle.architectureName || 'Untitled Architecture',
-          author: restoredTitle.author || 'Azure Architect',
-          version: restoredTitle.version || '1.0',
-          date: restoredTitle.date || new Date().toLocaleDateString(),
+          architectureName: typeof restoredTitle.architectureName === 'string'
+            ? restoredTitle.architectureName
+            : 'Untitled Architecture',
+          author: typeof restoredTitle.author === 'string' ? restoredTitle.author : 'Azure Architect',
+          version: typeof restoredTitle.version === 'string' ? restoredTitle.version : '1.0',
+          date: typeof restoredTitle.date === 'string'
+            ? restoredTitle.date
+            : new Date().toLocaleDateString(),
         });
       } else {
         setTitleBlockData({
@@ -1871,11 +2032,7 @@ function App() {
       }
 
       // Restore workflow if present
-      if (flow.workflow && Array.isArray(flow.workflow)) {
-        setWorkflow(flow.workflow);
-      } else {
-        setWorkflow([]);
-      }
+      setWorkflow(restoredWorkflow);
 
       // Restore architecture prompt if present
       setArchitecturePrompt(typeof flow.architecturePrompt === 'string' ? flow.architecturePrompt : '');
@@ -1891,7 +2048,35 @@ function App() {
   // Load version from URL hash (for "Open in New Tab" feature)
   useEffect(() => {
     const hash = window.location.hash;
-    if (hash.startsWith('#version-')) {
+    const clearVersionHash = () => {
+      window.history.replaceState(null, '', window.location.pathname + window.location.search);
+    };
+    if (hash.startsWith('#version-id-')) {
+      try {
+        const versionId = decodeURIComponent(hash.substring(12));
+        if (!versionId) throw new Error('Version id is missing');
+        getVersion(versionId)
+          .then((version) => {
+            if (!version) throw new Error('Version not found');
+            applyFlowObject({
+              nodes: version.nodes,
+              edges: version.edges,
+              metadata: version.metadata,
+              workflow: version.workflow,
+              architecturePrompt: version.architecturePrompt,
+              titleBlockData: version.titleBlockData,
+            });
+            clearVersionHash();
+          })
+          .catch((error) => {
+            console.error('Failed to load version from storage:', error);
+            clearVersionHash();
+          });
+      } catch (error) {
+        console.error('Failed to read version id from URL:', error);
+        clearVersionHash();
+      }
+    } else if (hash.startsWith('#version-')) {
       try {
         const encodedData = hash.substring(9); // Remove '#version-'
         const decodedData = decodeUtf8Base64(encodedData);
@@ -1901,9 +2086,10 @@ function App() {
         applyFlowObject(diagramData);
         
         // Clear the hash
-        window.history.replaceState(null, '', window.location.pathname + window.location.search);
+        clearVersionHash();
       } catch (error) {
         console.error('Failed to load version from URL:', error);
+        clearVersionHash();
       }
     }
   }, [applyFlowObject]);
@@ -1911,6 +2097,7 @@ function App() {
 
 
   const loadDiagram = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
+    const input = event.currentTarget;
     const file = event.target.files?.[0];
     if (!file) return;
     if (file.size > 10 * 1024 * 1024) {
@@ -1918,7 +2105,7 @@ function App() {
         en: 'The diagram file is too large. The maximum size is 10 MB.',
         ja: '図のファイルが大きすぎます。最大サイズは10 MBです。',
       }));
-      event.target.value = '';
+      input.value = '';
       return;
     }
 
@@ -1945,7 +2132,14 @@ function App() {
       } catch (error) {
         console.error('Error loading diagram:', error);
         alert(t("Error loading diagram file"));
+      } finally {
+        input.value = '';
       }
+    };
+    reader.onerror = () => {
+      console.error('Error reading diagram file:', reader.error);
+      alert(t("Error loading diagram file"));
+      input.value = '';
     };
     reader.readAsText(file);
   }, [applyFlowObject, t, language]);

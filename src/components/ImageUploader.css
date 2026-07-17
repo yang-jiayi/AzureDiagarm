@@ -42,6 +42,11 @@
   background: #f5f3ff;
 }
 
+.image-drop-zone:focus-visible {
+  outline: 3px solid #2563eb;
+  outline-offset: 3px;
+}
+
 .image-drop-zone.dragging {
   border-color: #8B5CF6;
   background: #f5f3ff;

@@ -7,7 +7,6 @@ import { DiagramVersion, getAllVersions, deleteVersion, getVersion } from '../se
 import './VersionHistoryModal.css';
 import { useLanguage } from '../i18n/LanguageContext';
 import { localize } from '../i18n/localization';
-import { encodeUtf8Base64 } from '../utils/base64Utf8';
 import { useEscapeKey } from '../hooks/useEscapeKey';
 
 interface VersionHistoryModalProps {
@@ -72,21 +71,10 @@ const VersionHistoryModal: React.FC<VersionHistoryModalProps> = ({
         return;
       }
 
-      // Create a temporary diagram data object
-      const diagramData = {
-        nodes: version.nodes,
-        edges: version.edges,
-        metadata: version.metadata,
-        workflow: version.workflow,
-        architecturePrompt: version.architecturePrompt,
-        titleBlockData: version.titleBlockData
-      };
-
-      // Encode diagram data as base64
-      const encodedData = encodeUtf8Base64(JSON.stringify(diagramData));
-      
-      // Open in new tab with diagram data in URL hash
-      const newTab = window.open(window.location.origin + window.location.pathname + '#version-' + encodedData, '_blank');
+      // The version payload remains in IndexedDB, which is shared across
+      // same-origin tabs. Passing only the id avoids browser URL-size limits.
+      const versionUrl = `${window.location.origin}${window.location.pathname}${window.location.search}#version-id-${encodeURIComponent(version.versionId)}`;
+      const newTab = window.open(versionUrl, '_blank');
       
       if (!newTab) {
         alert(t("Please allow pop-ups to open versions in new tabs"));

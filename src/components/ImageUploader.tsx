@@ -136,6 +136,13 @@ const ImageUploader: React.FC<ImageUploaderProps> = ({
     }
   };
 
+  const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if ((event.key === 'Enter' || event.key === ' ') && !previewUrl && !isAnalyzing) {
+      event.preventDefault();
+      handleClick();
+    }
+  };
+
   return (
     <div className="image-uploader">
       <div className="image-uploader-header">
@@ -150,6 +157,13 @@ const ImageUploader: React.FC<ImageUploaderProps> = ({
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
         onClick={handleClick}
+        onKeyDown={handleKeyDown}
+        role={!previewUrl && !isAnalyzing ? 'button' : undefined}
+        tabIndex={!previewUrl && !isAnalyzing && !disabled ? 0 : undefined}
+        aria-disabled={!previewUrl && !isAnalyzing ? disabled : undefined}
+        aria-label={!previewUrl && !isAnalyzing
+          ? t("Drop an architecture diagram here or click to browse")
+          : undefined}
       >
         <input
           ref={fileInputRef}
@@ -161,7 +175,7 @@ const ImageUploader: React.FC<ImageUploaderProps> = ({
         />
         
         {isAnalyzing ? (
-          <div className="analyzing-state">
+          <div className="analyzing-state" role="status" aria-live="polite">
             <Loader2 size={32} className="spinner" />
             <p>{t("Analyzing diagram with AI...")}</p>
             <span className="analyzing-hint">{t("Extracting services, connections, and data flows")}</span>
@@ -172,9 +186,11 @@ const ImageUploader: React.FC<ImageUploaderProps> = ({
             <div className="preview-overlay">
               <span className="file-name">{fileName}</span>
               <button 
+                type="button"
                 className="clear-button" 
                 onClick={(e) => { e.stopPropagation(); clearImage(); }}
                 title={t("Remove image")}
+                aria-label={t("Remove image")}
               >
                 <X size={16} />
               </button>
@@ -190,7 +206,7 @@ const ImageUploader: React.FC<ImageUploaderProps> = ({
       </div>
       
       {previewUrl && !isAnalyzing && (
-        <p className="image-success-hint">
+        <p className="image-success-hint" role="status">
           {' '}{t("✓ Image analyzed! The description has been added to the prompt above. Review and generate when ready.")}{' '}</p>
       )}
     </div>
