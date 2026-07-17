@@ -1,34 +1,60 @@
+# Standalone MCP server image — decoupled from the web app (own Container App / FQDN).
+#
+# IMPORTANT: the build context MUST be the repository root, because the MCP
+# build's sync scripts read the web app's data as the single source of truth:
+#   - src/data/serviceIconMapping.ts        (icon map + categories)
+#   - src/data/pricing/regions/**           (distilled to a pricing sidecar)
+#   - Azure_Public_Service_Icons/Icons/**   (official glyphs, embedded as data URIs)
+#
+# Build locally:
+#   docker build -f mcp-server/Dockerfile -t aadb-mcp .
+# (azd builds it via the 'mcp' service in azure.yaml with docker.context: ".")
+
+# ── Build stage ──────────────────────────────────────────────────────────────
 FROM node:20-alpine AS build
+WORKDIR /app/mcp-server
 
-WORKDIR /app
+# Install deps first for better layer caching.
+COPY mcp-server/package*.json ./
+RUN npm ci
 
-COPY mcp-server/package*.json ./mcp-server/
-RUN cd mcp-server && npm ci
+# MCP server sources.
+COPY mcp-server/tsconfig.json ./
+COPY mcp-server/src ./src
+COPY mcp-server/scripts ./scripts
 
-COPY mcp-server/tsconfig.json ./mcp-server/
-COPY mcp-server/src ./mcp-server/src
-COPY mcp-server/scripts ./mcp-server/scripts
-COPY src/data/serviceIconMapping.ts src/data/fabricIconCatalog.ts ./src/data/
-COPY src/data/pricing/regions ./src/data/pricing/regions
-COPY Azure_Public_Service_Icons ./Azure_Public_Service_Icons
+# Web-app data the prebuild sync scripts read (resolved as <repoRoot>/src/data
+# and <repoRoot>/Azure_Public_Service_Icons — i.e. /app/... here).
+COPY src/data /app/src/data
+COPY Azure_Public_Service_Icons /app/Azure_Public_Service_Icons
 
-RUN cd mcp-server && npm run build
+# Runs prebuild (sync:icons + sync:pricing) then tsc, and copies the generated
+# sidecars into dist/.
+RUN npm run build
 
-FROM node:20-alpine
+# ── Runtime stage ────────────────────────────────────────────────────────────
+FROM node:20-alpine AS runtime
+WORKDIR /srv/mcp-server
 
 ENV NODE_ENV=production \
-    MCP_TRANSPORT=http \
     MCP_HTTP_HOST=127.0.0.1 \
     MCP_HTTP_PORT=3030 \
     MCP_HTTP_PATH=/mcp
 
-WORKDIR /app
-
+# Production dependencies only.
 COPY mcp-server/package*.json ./
 RUN npm ci --omit=dev && npm cache clean --force
+
+# Compiled server + generated icon/pricing sidecars.
 COPY --from=build /app/mcp-server/dist ./dist
 
-USER node
 EXPOSE 3030
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD wget -qO- "http://127.0.0.1:3030/healthz" >/dev/null 2>&1 || exit 1
+
+# Loopback is the safe default. Set MCP_HTTP_HOST=0.0.0.0 together with
+# MCP_AUTH_TOKEN when the container must accept remote MCP connections.
+USER node
 
 CMD ["node", "dist/index.js", "--http"]
