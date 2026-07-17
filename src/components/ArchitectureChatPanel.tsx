@@ -33,20 +33,24 @@ interface ArchitectureChatPanelProps {
 // so Chat works as a first-class entry point (not just a refinement tool).
 const STARTER_SUGGESTIONS: LocalizedText[] = [
   {
-    en: 'Three-tier web app with App Service, SQL Database, and Redis cache',
-    ja: 'App Service、SQL Database、Redis Cacheを使用する3層Webアプリ',
+    en: 'Customer-facing web app on App Service with Azure SQL and Azure Cache for Redis, fronted by Azure Front Door with WAF and Application Insights',
+    ja: 'Azure Front Door（WAF）とApplication Insightsを備えた、App Service、Azure SQL、Azure Cache for Redisによる顧客向けWebアプリ',
   },
   {
-    en: 'Event-driven order processing with Service Bus and Azure Functions',
-    ja: 'Service BusとAzure Functionsを使用するイベント駆動型の注文処理',
+    en: 'Order-processing pipeline: Service Bus queue to Azure Functions to Cosmos DB, with dead-lettering and secrets in Key Vault',
+    ja: 'Service Bus QueueからAzure Functions、Cosmos DBへ連携し、Dead-letter QueueとKey Vaultを備えた注文処理パイプライン',
   },
   {
-    en: 'Secure AI chat app with Azure OpenAI and private endpoints',
-    ja: 'Azure OpenAIとPrivate Endpointを使用する安全なAIチャット アプリ',
+    en: 'Internal REST API on Container Apps backed by Azure SQL, secured with Microsoft Entra ID and API Management',
+    ja: 'Azure SQLをバックエンドに使用し、Microsoft Entra IDとAPI Managementで保護するContainer Apps上の社内REST API',
   },
   {
-    en: 'Serverless REST API with Functions, Cosmos DB, and a Storage queue',
-    ja: 'Azure Functions、Cosmos DB、Storage Queueを使用するサーバーレスREST API',
+    en: 'Document-processing workflow: Blob Storage triggers Azure Functions to run Azure AI Document Intelligence, with results in Cosmos DB',
+    ja: 'Blob StorageをトリガーにAzure FunctionsでAzure AI Document Intelligenceを実行し、結果をCosmos DBに保存するドキュメント処理',
+  },
+  {
+    en: 'Secure AI assistant: Azure OpenAI behind private endpoints, exposed through API Management with managed identity',
+    ja: 'Private Endpoint配下のAzure OpenAIをAPI ManagementとManaged Identityで公開する安全なAIアシスタント',
   },
 ];
 
@@ -55,20 +59,28 @@ const STARTER_SUGGESTIONS: LocalizedText[] = [
 // see the tool's ceiling.
 const ADVANCED_STARTER_SUGGESTIONS: LocalizedText[] = [
   {
-    en: 'Hub-and-spoke landing zone with Azure Firewall and private DNS',
-    ja: 'Azure FirewallとPrivate DNSを使用するHub-and-Spoke構成のLanding Zone',
+    en: 'Multi-region active-active e-commerce platform: Azure Front Door, AKS in paired regions, geo-replicated Cosmos DB, and Service Bus for order events',
+    ja: 'Azure Front Door、ペアリージョンのAKS、geo-replicationされたCosmos DB、注文イベント用Service Busによるマルチリージョンactive-active EC基盤',
   },
   {
-    en: 'Multi-region active-active web app with Front Door and geo-replicated SQL',
-    ja: 'Azure Front Doorとgeo-replicationされたSQLを使用するマルチリージョンactive-active Webアプリ',
+    en: 'HIPAA-compliant healthcare data platform: private-endpoint ingestion, AKS clinical workloads, Azure API for FHIR, and Microsoft Purview governance',
+    ja: 'Private Endpoint経由の取り込み、AKS医療ワークロード、Azure API for FHIR、Microsoft PurviewガバナンスによるHIPAA準拠医療データ基盤',
   },
   {
-    en: 'RAG chat app: Azure OpenAI + AI Search + Cosmos DB, all behind private endpoints',
-    ja: 'Azure OpenAI、Azure AI Search、Cosmos DBをPrivate Endpointで保護するRAGチャット アプリ',
+    en: 'Enterprise landing zone: hub-and-spoke with Azure Firewall, Bastion, Private DNS zones, and centralized Log Analytics',
+    ja: 'Azure Firewall、Bastion、Private DNS Zone、集中管理されたLog AnalyticsによるHub-and-Spoke構成のEnterprise Landing Zone',
   },
   {
-    en: 'Event-driven microservices on AKS with Service Bus, KEDA autoscaling, and Key Vault',
-    ja: 'AKS、Service Bus、KEDA自動スケーリング、Key Vaultを使用するイベント駆動型マイクロサービス',
+    en: 'Real-time fraud detection: Event Hubs to Stream Analytics to Azure Machine Learning scoring to Cosmos DB, with Event Grid alerting',
+    ja: 'Event Hubs、Stream Analytics、Azure Machine Learningスコアリング、Cosmos DB、Event Grid通知によるリアルタイム不正検知',
+  },
+  {
+    en: 'RAG knowledge platform: Azure OpenAI, Azure AI Search, and Cosmos DB, with Azure Functions ingestion and private endpoints',
+    ja: 'Azure OpenAI、Azure AI Search、Cosmos DB、Azure Functions取り込みをすべてPrivate Endpointで保護するRAGナレッジ基盤',
+  },
+  {
+    en: 'Event-driven microservices on AKS with KEDA autoscaling from Service Bus, Key Vault CSI Driver, and private-link Azure Container Registry',
+    ja: 'Service Bus連動KEDA自動スケーリング、Key Vault CSI Driver、Private Link対応Azure Container Registryを備えたAKS上のイベント駆動型マイクロサービス',
   },
 ];
 

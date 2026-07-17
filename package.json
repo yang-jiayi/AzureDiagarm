@@ -12,10 +12,12 @@
     "dev:avatar": "concurrently --names \"token,vite\" --prefix-colors \"cyan,blue\" \"bash scripts/start-token-server.sh\" \"vite --port 3002 --strictPort\"",
     "demo:record": "node scripts/demo-recording.mjs",
     "pricing:refresh": "cd scripts && bash fetch-multi-region-pricing.sh",
+    "test:arm": "node scripts/test-arm-extractor.mjs",
     "mcp:build": "cd mcp-server && npm run build",
     "mcp:start": "node mcp-server/dist/index.js"
   },
   "dependencies": {
+    "@azure/msal-browser": "^5.17.0",
     "@azure/openai": "^2.0.0",
     "@microsoft/applicationinsights-web": "^3.4.3",
     "@types/dagre": "^0.7.53",
@@ -40,6 +42,7 @@
     "@typescript-eslint/parser": "^8.64.0",
     "@vitejs/plugin-react": "^4.2.1",
     "concurrently": "^9.2.1",
+    "esbuild": "^0.25.12",
     "eslint": "^8.55.0",
     "eslint-plugin-react-hooks": "^4.6.0",
     "eslint-plugin-react-refresh": "^0.4.5",

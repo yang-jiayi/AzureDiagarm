@@ -35,6 +35,11 @@ import { readBooleanPreference, readLocalStorage, writeLocalStorage } from '../u
 
 type GenerationMode = 'topology' | 'reference' | 'blueprint' | 'both';
 
+// After a successful generation the modal stays open this long so the user can
+// review metrics or type a follow-up modification, then auto-closes. Typing a
+// modification or regenerating cancels the pending close (see scheduleClose).
+const AUTO_CLOSE_MS = 45000;
+
 // Blueprint diagrams require general-purpose OpenAI models.
 // - Non-OpenAI partner deployments (DeepSeek, Grok, Mistral, Kimi, etc. —
 //   identified by apiFormat: 'chat-completions') run under stricter Azure AI
@@ -232,7 +237,6 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({ onGen
     writeLocalStorage('aiGenerator.mode', m);
   };
 
-
   // Opt-in: also download an editorial PNG when generating in reference mode.
   // Model settings from reactive hook (stays in sync with dropdown)
   const [modelSettings] = useModelSettings();
@@ -296,7 +300,7 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({ onGen
       setIsOpen(false);
       setAiMetrics(null);
       setUploadedImageUrl(null);
-    }, 45_000);
+    }, AUTO_CLOSE_MS);
   }, [cancelScheduledClose]);
 
   useEffect(() => cancelScheduledClose, [cancelScheduledClose]);
@@ -336,6 +340,9 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({ onGen
       return;
     }
 
+    // Regenerating cancels any pending auto-close so a stale timer from the
+    // previous run can't close the modal mid-generation or stack up.
+    cancelScheduledClose();
     setIsGenerating(true);
     setError('');
     setAiMetrics(null); // Clear previous metrics
@@ -730,6 +737,9 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({ onGen
                   value={description}
                   onChange={(e) => {
                     setDescription(e.target.value);
+                    // Typing a modification cancels the pending auto-close so
+                    // the modal doesn't disappear mid-edit.
+                    cancelScheduledClose();
                     // Clear imageAnalyzed flag if user clears the text
                     if (!e.target.value.includes('[Analyzed from uploaded diagram]')) {
                       setImageAnalyzed(false);
