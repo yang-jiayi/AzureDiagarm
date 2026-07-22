@@ -24,6 +24,10 @@ concurrency:
 env:
   UPSTREAM_REPOSITORY: https://github.com/Arturo-Quiroga-MSFT/azure-architecture-diagram-builder.git
   IMAGE_REPOSITORY: azurediagarm/app
+  # Generated extension command surfaces can change between beta releases.
+  AZURE_CONTAINERAPP_EXTENSION_VERSION: 1.3.0b4
+  AZURE_CDN_EXTENSION_VERSION: 1.0.0b2
+  AZURE_COMMUNICATION_EXTENSION_VERSION: 1.14.0
 
 jobs:
   merge_validate:
@@ -165,7 +169,7 @@ jobs:
             "${merge_base}..${upstream_commit}" > update-details.txt
 
           if [[ ! -s update-details.txt ]]; then
-            printf '%s\n' "- No new upstream commits; deploying customization commit ${fork_commit:0:12}." > update-details.txt
+            printf '%s\n' "- No new upstream commits; checking deployment state for customization commit ${fork_commit:0:12}." > update-details.txt
           fi
           echo "update_details_b64=$(base64 -w 0 update-details.txt)" >> "$GITHUB_OUTPUT"
 
@@ -220,7 +224,11 @@ jobs:
             printf 'The AzureDiagarm upstream merge or validation failed.\n\nWorkflow: %s\n' \
               "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           )"
-          az extension add --name communication --yes --only-show-errors
+          az extension add \
+            --name communication \
+            --version "$AZURE_COMMUNICATION_EXTENSION_VERSION" \
+            --yes \
+            --only-show-errors
           az communication email send \
             --sender "${{ vars.AZURE_EMAIL_SENDER }}" \
             --to "${{ vars.AZURE_EMAIL_RECIPIENT }}" \
@@ -257,9 +265,44 @@ jobs:
 
       - name: Install Azure CLI extensions
         run: |
-          az config set extension.use_dynamic_install=yes_without_prompt
-          az extension add --name containerapp --upgrade --only-show-errors
-          az extension add --name cdn --upgrade --only-show-errors
+          set -Eeuo pipefail
+
+          install_extension() {
+            local name="$1"
+            local version="$2"
+            local installed
+
+            installed="$(
+              az extension show \
+                --name "$name" \
+                --query version \
+                --output tsv 2>/dev/null || true
+            )"
+            if [[ -n "$installed" && "$installed" != "$version" ]]; then
+              az extension remove --name "$name" --only-show-errors
+              installed=
+            fi
+            if [[ -z "$installed" ]]; then
+              az extension add \
+                --name "$name" \
+                --version "$version" \
+                --only-show-errors
+            fi
+
+            installed="$(
+              az extension show \
+                --name "$name" \
+                --query version \
+                --output tsv
+            )"
+            [[ "$installed" == "$version" ]] || {
+              echo "::error::Azure CLI extension $name version $installed does not match required version $version."
+              exit 1
+            }
+          }
+
+          install_extension containerapp "$AZURE_CONTAINERAPP_EXTENSION_VERSION"
+          install_extension cdn "$AZURE_CDN_EXTENSION_VERSION"
 
       - name: Enforce Front Door timeout and authentication-safe routing
         env:
@@ -285,7 +328,7 @@ jobs:
           }
 
           if [[ "$ACCESS_CONTROL_ENABLED" == "true" ]]; then
-            mapfile -t routes < <(
+            routes_output="$(
               az afd route list \
                 --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
                 --profile-name "${{ vars.AZURE_FRONT_DOOR_PROFILE }}" \
@@ -293,13 +336,19 @@ jobs:
                 --query '[].name' \
                 --output tsv
             )
+            [[ -n "$routes_output" ]] || {
+              echo "::error::No Front Door routes were found for the configured endpoint."
+              exit 1
+            }
+            mapfile -t routes <<< "$routes_output"
+
             for route in "${routes[@]}"; do
               az afd route update \
                 --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
                 --profile-name "${{ vars.AZURE_FRONT_DOOR_PROFILE }}" \
                 --endpoint-name "${{ vars.AZURE_FRONT_DOOR_ENDPOINT }}" \
                 --route-name "$route" \
-                --enable-caching false \
+                --remove cacheConfiguration \
                 --output none
             done
 
@@ -839,12 +888,18 @@ jobs:
           exit 1
 
       - name: Send detailed update email
+        id: success_notification
         if: steps.deployment.outputs.should_deploy == 'true'
+        continue-on-error: true
         env:
           AZURE_COMMUNICATION_CONNECTION_STRING: ${{ secrets.AZURE_COMMUNICATION_CONNECTION_STRING }}
         run: |
           set -Eeuo pipefail
-          az extension add --name communication --yes --only-show-errors
+          az extension add \
+            --name communication \
+            --version "$AZURE_COMMUNICATION_EXTENSION_VERSION" \
+            --yes \
+            --only-show-errors
 
           {
             echo "Azure Architecture Diagram Builder was updated successfully."
@@ -867,6 +922,16 @@ jobs:
             --wait-until completed \
             --output none
 
+      - name: Report update email failure
+        if: steps.success_notification.outcome == 'failure'
+        run: |
+          echo "::warning::Deployment succeeded, but the success email notification failed."
+          {
+            echo "### Deployment notification warning"
+            echo
+            echo "The deployment succeeded, but the success email notification failed."
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Send failure email
         if: failure()
         continue-on-error: true
@@ -882,7 +947,11 @@ jobs:
               "$details" \
               "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           )"
-          az extension add --name communication --yes --only-show-errors
+          az extension add \
+            --name communication \
+            --version "$AZURE_COMMUNICATION_EXTENSION_VERSION" \
+            --yes \
+            --only-show-errors
           az communication email send \
             --sender "${{ vars.AZURE_EMAIL_SENDER }}" \
             --to "${{ vars.AZURE_EMAIL_RECIPIENT }}" \
