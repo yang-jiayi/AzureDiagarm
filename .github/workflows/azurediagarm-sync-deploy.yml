@@ -335,7 +335,7 @@ jobs:
                 --endpoint-name "${{ vars.AZURE_FRONT_DOOR_ENDPOINT }}" \
                 --query '[].name' \
                 --output tsv
-            )
+            )"
             [[ -n "$routes_output" ]] || {
               echo "::error::No Front Door routes were found for the configured endpoint."
               exit 1
