@@ -81,6 +81,11 @@ import {
 } from './utils/layoutPresets';
 import { generateModelFilename, setSourceModel, clearSourceModel } from './utils/modelNaming';
 import { fitAllGroupsToContent } from './utils/groupUtils';
+import {
+  buildAbsolutePositionMap,
+  preserveManualLayout,
+  selectHorizontalConnectionHandles,
+} from './utils/preserveManualLayout';
 import { trackArchitectureGeneration, trackValidation, trackDeploymentGuide, trackExport, trackTemplateImport, trackModelComparison, trackRecommendationsApplied, trackVersionOperation, trackStartFresh, trackValidationFindings } from './services/telemetryService';
 import { classifyValidationTopics } from './services/validationConsensus';
 import type { IaCFormat } from './services/azureOpenAI';
@@ -498,7 +503,14 @@ function App() {
   // Counts successful AI generations this session so we can ask for feedback
   // after a "success moment" (the 2nd diagram) rather than nagging up front.
   const generationCountRef = useRef(0);
-  const handleAIGenerateRef = useRef<((architecture: any, prompt: string, autoSnapshot?: boolean) => Promise<void>) | null>(null);
+  const handleAIGenerateRef = useRef<(
+    (
+      architecture: any,
+      prompt: string,
+      autoSnapshot?: boolean,
+      preserveExistingLayout?: boolean,
+    ) => Promise<void>
+  ) | null>(null);
   const [referenceImageUrl, setReferenceImageUrl] = useState<string | null>(null);
   const [lastReferenceArchitecture, setLastReferenceArchitecture] = useState<ReferenceArchitecture | null>(null);
   const [lastBlueprintArchitecture, setLastBlueprintArchitecture] = useState<BlueprintArchitecture | null>(null);
@@ -2362,13 +2374,15 @@ function App() {
     }
   }, [nodes, edges, titleBlockData, architecturePrompt, originalPrompt, validationResult, workflow]);
 
-  const handleAIGenerate = useCallback(async (architecture: any, prompt: string, autoSnapshot: boolean = true) => {
+  const handleAIGenerate = useCallback(async (
+    architecture: any,
+    prompt: string,
+    autoSnapshot: boolean = true,
+    preserveExistingLayout: boolean = false,
+  ) => {
     try {
       console.log('Generating architecture from:', architecture);
-      // A generation while a diagram already exists is a refinement (the modal
-      // builds a modification prompt); only the first, from-empty generation
-      // establishes the original brief.
-      const isRefinement = nodes.length > 0;
+      const isRefinement = preserveExistingLayout && nodes.length > 0;
       const { services, connections, workflow: workflowSteps } = architecture;
       let { groups } = architecture;
       
@@ -2639,45 +2653,20 @@ function App() {
       serviceMap.set(service.id, node);
     });
 
-    // Build absolute position map for smart edge routing
-    // Services inside groups have relative positions, so we add the group's position
-    const absolutePositions = new Map<string, { x: number; y: number }>();
-    const groupPositionMap = new Map<string, { x: number; y: number }>();
-    positionedGroups.forEach((g: any) => groupPositionMap.set(g.id, g.position));
+    // Existing services/groups retain their manually edited geometry during a
+    // refinement. New elements use the generated layout positions.
+    const finalNodes = isRefinement
+      ? preserveManualLayout(nodes, newNodes)
+      : newNodes;
 
-    positionedServices.forEach((service: any) => {
-      if (service.groupId && groupPositionMap.has(service.groupId)) {
-        const gp = groupPositionMap.get(service.groupId)!;
-        absolutePositions.set(service.id, {
-          x: gp.x + service.position.x,
-          y: gp.y + service.position.y,
-        });
-      } else {
-        absolutePositions.set(service.id, service.position);
-      }
-    });
+    // Build absolute position map for smart edge routing
+    // after manual positions have been restored.
+    const absolutePositions = buildAbsolutePositionMap(finalNodes);
 
     // Smart handle selection based on relative node positions
     // Picks handles that create the shortest, least-crossing edge paths
     const getConnectionPositions = (sourceId: string, targetId: string, _conn: any) => {
-      const srcPos = absolutePositions.get(sourceId);
-      const tgtPos = absolutePositions.get(targetId);
-
-      if (!srcPos || !tgtPos) {
-        return { sourceHandle: 'right', targetHandle: 'left' };
-      }
-
-      const dx = tgtPos.x - srcPos.x;
-
-      // Azure architecture convention: LEFT = input, RIGHT = output
-      // Always exit from the right side and enter from the left side
-      if (dx >= 0) {
-        // Target is to the right → standard flow
-        return { sourceHandle: 'right', targetHandle: 'left' };
-      } else {
-        // Target is to the left → reverse flow
-        return { sourceHandle: 'left-source', targetHandle: 'right-target' };
-      }
+      return selectHorizontalConnectionHandles(absolutePositions, sourceId, targetId);
     };
 
     // Function to determine arrow direction based on edge label
@@ -2782,9 +2771,9 @@ function App() {
     });
 
     // Add the new nodes and edges
-    console.log(`Setting ${newNodes.length} nodes and ${newEdges.length} edges`);
+    console.log(`Setting ${finalNodes.length} nodes and ${newEdges.length} edges`);
     setLastReferenceArchitecture(architecture?.__referenceArchitecture ?? null);
-    setNodes(newNodes);
+    setNodes(finalNodes);
     setEdges(newEdges);
     setArchitecturePrompt(prompt);
     if (!isRefinement) setOriginalPrompt(prompt);
@@ -2852,7 +2841,7 @@ function App() {
       workflowStepCount: workflowSteps?.length,
       elapsedTimeMs: aiMetrics.elapsedTimeMs,
       totalTokens: aiMetrics.totalTokens,
-      isModification: nodes.length > 0,
+      isModification: isRefinement,
     });
 
     // ── Success-moment feedback ask ──────────────────────────────────────
@@ -2870,12 +2859,13 @@ function App() {
       setIsFeedbackToastOpen(true);
     }
 
-    // Fit view after a short delay to allow nodes to render
-    setTimeout(() => {
-      if (reactFlowInstance) {
-        reactFlowInstance.fitView({ padding: 0.2 });
-      }
-    }, 100);
+    // A refinement keeps the user's pan/zoom. Only frame a newly generated
+    // diagram, where no prior editorial viewport exists.
+    if (!isRefinement) {
+      setTimeout(() => {
+        reactFlowInstance?.fitView({ padding: 0.2 });
+      }, 100);
+    }
     } catch (error) {
       console.error('Error in handleAIGenerate:', error);
       alert(t("Failed to generate diagram. Check console for details."));
@@ -3394,7 +3384,7 @@ function App() {
                   {' '}{t("Add Group")}{' '}</button>
                 <AIArchitectureGenerator 
                   onGenerate={async (arch, prompt, autoSnap, refImageUrl) => {
-                    await handleAIGenerate(arch, prompt, autoSnap);
+                    await handleAIGenerate(arch, prompt, autoSnap, nodes.length > 0);
                     clearSourceModel();
                     setReferenceImageUrl(refImageUrl ?? null);
                     setLastBlueprintArchitecture(null);
@@ -4544,7 +4534,7 @@ Return the IMPROVED architecture in the same JSON format as before with proper g
               }
               
               // Apply the improved architecture
-              await handleAIGenerate(improvedArchitecture, bannerText);
+              await handleAIGenerate(improvedArchitecture, bannerText, true, true);
               trackRecommendationsApplied(selectedFindings.length);
               
               setIsApplyingRecommendations(false);
@@ -4592,7 +4582,7 @@ Return the IMPROVED architecture in the same JSON format as before with proper g
           if (sourceModel && sourceReasoningEffort) {
             setSourceModel(sourceModel, sourceReasoningEffort);
           }
-          await handleAIGenerate(architecture, prompt, true);
+          await handleAIGenerate(architecture, prompt, true, false);
         }}
         onCaptureBatch={async (items) => {
           // Render each architecture on the main canvas in turn, capture as PNG,
@@ -4603,7 +4593,7 @@ Return the IMPROVED architecture in the same JSON format as before with proper g
             try {
               // Apply this architecture to the canvas (no auto-snapshot to
               // avoid spamming the snapshot history with N intermediate states).
-              await handleAIGenerate(item.architecture, item.prompt, false);
+              await handleAIGenerate(item.architecture, item.prompt, false, false);
               // Give icons, layout, and the post-generate fitView a moment to settle.
               await new Promise(res => setTimeout(res, 1500));
               if (reactFlowInstance) {
@@ -4675,7 +4665,9 @@ Return the IMPROVED architecture in the same JSON format as before with proper g
           edges,
           architectureName: titleBlockData.architectureName,
         }}
-        onApply={handleAIGenerate}
+        onApply={(architecture, prompt, autoSnapshot) => (
+          handleAIGenerate(architecture, prompt, autoSnapshot, nodes.length > 0)
+        )}
       />
       <HelpLearnPanel
         isOpen={isHelpOpen}
