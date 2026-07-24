@@ -26,7 +26,7 @@ import AzureNode from './components/AzureNode';
 import GroupNode from './components/GroupNode';
 import AIArchitectureGenerator from './components/AIArchitectureGenerator';
 import ArchitectureChatPanel from './components/ArchitectureChatPanel';
-import HelpLearnPanel from './components/HelpLearnPanel';
+import HelpLearnPanel from './components/GuidedHelpPanel';
 import { exportReferenceArchitectureAsPng } from './utils/exportReferencePng';
 import type { ReferenceArchitecture } from './services/referenceArchitectureAI';
 import { exportBlueprintArchitectureAsPng } from './utils/exportBlueprintPng';
@@ -86,13 +86,14 @@ import {
   preserveManualLayout,
   selectHorizontalConnectionHandles,
 } from './utils/preserveManualLayout';
-import { trackArchitectureGeneration, trackValidation, trackDeploymentGuide, trackExport, trackTemplateImport, trackModelComparison, trackRecommendationsApplied, trackVersionOperation, trackStartFresh, trackValidationFindings } from './services/telemetryService';
+import { trackArchitectureGeneration, trackValidation, trackValidationHandoff, trackDeploymentGuide, trackExport, trackTemplateImport, trackModelComparison, trackRecommendationsApplied, trackVersionOperation, trackStartFresh, trackValidationFindings } from './services/telemetryService';
 import { classifyValidationTopics } from './services/validationConsensus';
 import type { IaCFormat } from './services/azureOpenAI';
 import FeedbackModal from './components/FeedbackModal';
 import FeedbackToast from './components/FeedbackToast';
 import AccessManagementModal from './components/AccessManagementModal';
 import LanguageSwitch from './components/LanguageSwitch';
+import ValidationHandoffToast from './components/ValidationHandoffToast';
 import { FEEDBACK_DONE_KEY } from './services/feedbackService';
 import { getAccessIdentity, type AccessIdentity } from './services/accessControlService';
 import './App.css';
@@ -496,6 +497,11 @@ function App() {
   const [isCompareValidationOpen, setIsCompareValidationOpen] = useState(false);
   const [isFeedbackModalOpen, setIsFeedbackModalOpen] = useState(false);
   const [isFeedbackToastOpen, setIsFeedbackToastOpen] = useState(false);
+  const [validationHandoff, setValidationHandoff] = useState<{
+    source: 'generation' | 'modification';
+    serviceCount: number;
+  } | null>(null);
+  const validationHandoffShownRef = useRef<typeof validationHandoff>(null);
   const [feedbackPreselectedRating, setFeedbackPreselectedRating] = useState<number | undefined>(undefined);
   const [feedbackFabPulse, setFeedbackFabPulse] = useState(false);
   const [accessIdentity, setAccessIdentity] = useState<AccessIdentity | null>(null);
@@ -511,15 +517,28 @@ function App() {
       preserveExistingLayout?: boolean,
     ) => Promise<void>
   ) | null>(null);
+  const feedbackAfterValidationRef = useRef(false);
   const [referenceImageUrl, setReferenceImageUrl] = useState<string | null>(null);
   const [lastReferenceArchitecture, setLastReferenceArchitecture] = useState<ReferenceArchitecture | null>(null);
   const [lastBlueprintArchitecture, setLastBlueprintArchitecture] = useState<BlueprintArchitecture | null>(null);
   const [panelsCollapsedSignal, setPanelsCollapsedSignal] = useState(0);
 
+  useEffect(() => {
+    if (nodes.length === 0) {
+      setValidationHandoff(null);
+      feedbackAfterValidationRef.current = false;
+    }
+  }, [nodes.length]);
   // Focus mode: hides canvas chrome (side panels via the signal above, plus the
   // "Generated from" prompt banner and the "Generated with" model badge) so only
   // the diagram itself remains. Toggled by the Focus button.
   const [focusMode, setFocusMode] = useState(false);
+
+  useEffect(() => {
+    if (!validationHandoff || focusMode || validationHandoffShownRef.current === validationHandoff) return;
+    validationHandoffShownRef.current = validationHandoff;
+    trackValidationHandoff({ action: 'shown', ...validationHandoff });
+  }, [focusMode, validationHandoff]);
 
   const [isExportMenuOpen, setIsExportMenuOpen] = useState(false);
   const exportMenuRef = useRef<HTMLDivElement | null>(null);
@@ -2772,6 +2791,9 @@ function App() {
 
     // Add the new nodes and edges
     console.log(`Setting ${finalNodes.length} nodes and ${newEdges.length} edges`);
+    setValidationResult(null);
+    setValidationHandoff(null);
+    feedbackAfterValidationRef.current = false;
     setLastReferenceArchitecture(architecture?.__referenceArchitecture ?? null);
     setNodes(finalNodes);
     setEdges(newEdges);
@@ -2844,6 +2866,12 @@ function App() {
       isModification: isRefinement,
     });
 
+    const handoffContext = {
+      source: isRefinement ? 'modification' as const : 'generation' as const,
+      serviceCount: services.length,
+    };
+    setValidationHandoff(handoffContext);
+
     // ── Success-moment feedback ask ──────────────────────────────────────
     // After the 2nd successful generation this session, surface the one-click
     // toast — the user now has a real opinion. Fires once and only if they
@@ -2856,7 +2884,7 @@ function App() {
       /* sessionStorage unavailable — ignore */
     }
     if (!feedbackAlreadyDone && generationCountRef.current === 2 && !isFeedbackModalOpen) {
-      setIsFeedbackToastOpen(true);
+      feedbackAfterValidationRef.current = true;
     }
 
     // A refinement keeps the user's pan/zoom. Only frame a newly generated
@@ -3151,6 +3179,8 @@ function App() {
       return;
     }
 
+    setValidationHandoff(null);
+
     // Capture diagram snapshot BEFORE opening the modal overlay
     let diagramImageDataUrl: string | undefined;
     if (reactFlowWrapper.current && reactFlowInstance) {
@@ -3227,6 +3257,10 @@ function App() {
         serviceCount: services.length,
         topics: classifyValidationTopics(result).map(t => ({ id: t.id, label: t.label, pillar: t.pillar, severity: t.severity })),
       });
+      if (feedbackAfterValidationRef.current && !isFeedbackModalOpen) {
+        feedbackAfterValidationRef.current = false;
+        setIsFeedbackToastOpen(true);
+      }
       // Collapse panels to maximize diagram view
       setPanelsCollapsedSignal(prev => prev + 1);
     } catch (error: any) {
@@ -3239,7 +3273,25 @@ function App() {
     } finally {
       setIsValidating(false);
     }
-  }, [nodes, edges, architecturePrompt, titleBlockData.architectureName, reactFlowInstance, t, language]);
+  }, [nodes, edges, architecturePrompt, titleBlockData.architectureName, reactFlowInstance, isFeedbackModalOpen, t, language]);
+
+  const handleValidationHandoffStart = useCallback(() => {
+    if (!validationHandoff) return;
+    trackValidationHandoff({ action: 'started', ...validationHandoff });
+    setValidationHandoff(null);
+    setIsFeedbackToastOpen(false);
+    void handleValidateArchitecture();
+  }, [handleValidateArchitecture, validationHandoff]);
+
+  const handleValidationHandoffDismiss = useCallback(() => {
+    if (!validationHandoff) return;
+    trackValidationHandoff({ action: 'dismissed', ...validationHandoff });
+    setValidationHandoff(null);
+    if (feedbackAfterValidationRef.current && !isFeedbackModalOpen) {
+      feedbackAfterValidationRef.current = false;
+      setIsFeedbackToastOpen(true);
+    }
+  }, [isFeedbackModalOpen, validationHandoff]);
 
   const handleGenerateDeploymentGuide = useCallback(async () => {
     if (nodes.length === 0) {
@@ -4645,6 +4697,14 @@ Return the IMPROVED architecture in the same JSON format as before with proper g
               .map(child => child.data.label || child.data.serviceName || 'Unknown'),
           }))}
         architectureDescription={architecturePrompt || titleBlockData.architectureName}
+      />
+
+      <ValidationHandoffToast
+        isOpen={validationHandoff !== null && !focusMode}
+        isModification={validationHandoff?.source === 'modification'}
+        isChatOpen={isChatOpen}
+        onValidate={handleValidationHandoffStart}
+        onDismiss={handleValidationHandoffDismiss}
       />
 
       {!isChatOpen && (

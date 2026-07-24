@@ -4,7 +4,7 @@ import { AADB_EVENTS } from './events.js';
 export type QueryName =
   | 'overviewMetrics' | 'activityTrend' | 'featureUsage' | 'journeyFunnel'
   | 'modelEfficiency' | 'validationFindings' | 'reliability' | 'retention'
-  | 'releaseImpact' | 'cityUsage';
+  | 'releaseImpact' | 'cityUsage' | 'validationHandoff';
 
 const eventList = AADB_EVENTS.map((name) => `"${name}"`).join(', ');
 const base = `AppEvents | where Name in (${eventList})`;
@@ -18,10 +18,30 @@ export const queries: Record<QueryName, string> = {
   featureUsage: `${base}
 | summarize Count=count(), Users=dcount(UserId) by Name
 | top 12 by Count desc`,
-  journeyFunnel: `${base}
+  journeyFunnel: `let InitialGenerationSessions = ${base}
+| where Name == "Architecture_Generated"
+| where tolower(tostring(Properties.isModification)) != "true"
+| where isnotempty(SessionId)
+| distinct SessionId;
+${base}
 | where Name in ("Architecture_Generated", "Architecture_Validated", "Recommendations_Applied", "Diagram_Exported", "DeploymentGuide_Generated")
+| where isnotempty(SessionId)
+| join kind=inner InitialGenerationSessions on SessionId
 | summarize Sessions=dcount(SessionId) by Name
 | order by Sessions desc`,
+  validationHandoff: `let InitialGenerationSessions = ${base}
+| where Name == "Architecture_Generated"
+| where tolower(tostring(Properties.isModification)) != "true"
+| where isnotempty(SessionId)
+| distinct SessionId;
+${base}
+| where Name == "Validation_Handoff"
+| extend Action=tolower(tostring(Properties.action)), Source=tolower(tostring(Properties.source))
+| where Source == "generation"
+| where isnotempty(SessionId)
+| join kind=inner InitialGenerationSessions on SessionId
+| summarize Count=dcount(SessionId) by Action
+| project Action, Count`,
   modelEfficiency: `${base}
 | where Name == "AI_Model_Usage"
 | extend Model=tolower(tostring(Properties.model)), Tokens=todouble(Measurements.totalTokens), Latency=todouble(Measurements.elapsedTimeMs)
