@@ -314,11 +314,32 @@ Provide a comprehensive Well-Architected Framework assessment with actionable re
       throw new Error('Invalid response format from validation agent. Please try again.');
     }
     
-    // Validate response structure
-    if (!validation.overallScore || !validation.pillars || !validation.summary) {
+    // Validate response structure. A score of 0 is a legitimate result, so the
+    // checks must be type-based rather than truthiness-based.
+    if (
+      typeof validation.overallScore !== 'number'
+      || !Number.isFinite(validation.overallScore)
+      || !Array.isArray(validation.pillars)
+      || typeof validation.summary !== 'string'
+    ) {
       console.error('❌ Invalid response structure:', validation);
       throw new Error('Response missing required fields');
     }
+
+    // quickWins is optional in practice: models sometimes omit it when there is
+    // nothing to suggest, and a pillar can arrive without its findings array.
+    // Normalize so downstream consumers can always iterate without crashing the
+    // render.
+    if (!Array.isArray(validation.quickWins)) {
+      validation.quickWins = [];
+    }
+
+    validation.pillars = validation.pillars
+      .filter((pillar: unknown) => !!pillar && typeof pillar === 'object')
+      .map((pillar: any) => ({
+        ...pillar,
+        findings: Array.isArray(pillar.findings) ? pillar.findings : [],
+      }));
     
     validation.timestamp = new Date().toISOString();
     validation.metrics = metrics;

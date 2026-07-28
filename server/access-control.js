@@ -3,6 +3,7 @@
 
 const crypto = require('crypto');
 const express = require('express');
+const { asyncHandler } = require('./async-handler');
 
 const ACCESS_PARTITION_KEY = 'allowed';
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -181,7 +182,7 @@ function createAccessControlRouter(options = {}) {
     next();
   }
 
-  router.get('/check', async (req, res) => {
+  router.get('/check', asyncHandler(async (req, res) => {
     if (!enabled) return res.status(204).end();
     if (!configured) return configurationUnavailable(res);
 
@@ -195,9 +196,9 @@ function createAccessControlRouter(options = {}) {
       logger.error('[access/check] error:', error.message);
       return res.status(503).end();
     }
-  });
+  }));
 
-  router.get('/me', async (req, res) => {
+  router.get('/me', asyncHandler(async (req, res) => {
     if (!enabled) {
       return res.json({
         enabled: false,
@@ -229,9 +230,9 @@ function createAccessControlRouter(options = {}) {
       logger.error('[access/me] error:', error.message);
       return res.status(503).json({ error: 'Access control is temporarily unavailable.' });
     }
-  });
+  }));
 
-  router.get('/users', requireAdmin, async (_req, res) => {
+  router.get('/users', asyncHandler(requireAdmin), asyncHandler(async (_req, res) => {
     try {
       const current = await readUsers(true);
       return res.json({
@@ -250,9 +251,9 @@ function createAccessControlRouter(options = {}) {
       logger.error('[access/users] list error:', error.message);
       return res.status(503).json({ error: 'Failed to read the access list.' });
     }
-  });
+  }));
 
-  router.post('/users', requireAdmin, requireSameOrigin, async (req, res) => {
+  router.post('/users', asyncHandler(requireAdmin), requireSameOrigin, asyncHandler(async (req, res) => {
     const email = normalizeEmail(req.body?.email);
     if (!email) return res.status(400).json({ error: 'A valid email address is required.' });
     if (email === adminEmail) {
@@ -294,9 +295,9 @@ function createAccessControlRouter(options = {}) {
       logger.error('[access/users] add error:', error.message);
       return res.status(503).json({ error: 'Failed to update the access list.' });
     }
-  });
+  }));
 
-  router.delete('/users', requireAdmin, requireSameOrigin, async (req, res) => {
+  router.delete('/users', asyncHandler(requireAdmin), requireSameOrigin, asyncHandler(async (req, res) => {
     const email = normalizeEmail(req.body?.email);
     if (!email) return res.status(400).json({ error: 'A valid email address is required.' });
     if (email === adminEmail) {
@@ -315,7 +316,7 @@ function createAccessControlRouter(options = {}) {
       logger.error('[access/users] delete error:', error.message);
       return res.status(503).json({ error: 'Failed to update the access list.' });
     }
-  });
+  }));
 
   return router;
 }

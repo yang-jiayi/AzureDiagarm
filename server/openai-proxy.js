@@ -3,6 +3,7 @@
 
 const crypto = require('crypto');
 const express = require('express');
+const { asyncHandler } = require('./async-handler');
 
 const DEPLOYMENT_NAME_RE = /^[A-Za-z0-9._-]{1,64}$/;
 const DEFAULT_API_VERSION = '2024-05-01-preview';
@@ -154,7 +155,7 @@ function createOpenAIProxyRouter(options) {
   }
 
   const router = express.Router();
-  router.post('/', async (req, res) => {
+  router.post('/', asyncHandler(async (req, res) => {
     const requestId = crypto.randomUUID();
     const startedAt = Date.now();
     res.set('X-AzureDiagarm-Request-Id', requestId);
@@ -293,7 +294,32 @@ function createOpenAIProxyRouter(options) {
       res.set('Retry-After', retryAfterHeader);
     }
 
-    const text = await upstream.text();
+    // Reading the upstream body can still fail after the response headers
+    // arrive (connection reset mid-stream, upstream timeout). Left unhandled
+    // this rejects the request promise and terminates the process.
+    let text;
+    try {
+      text = await upstream.text();
+    } catch (error) {
+      logEvent(logger, 'error', {
+        event: 'upstream_body_read_failed',
+        requestId,
+        deployment,
+        apiFormat,
+        upstreamStatus: upstream.status,
+        upstreamRequestId,
+        durationMs: Date.now() - startedAt,
+        errorName: error?.name || 'Error',
+        errorCode: error?.code || null,
+      });
+      return sendError(res, 502, requestId, {
+        source: 'proxy_transport',
+        code: 'azure_openai_connection_failed',
+        message: 'The server could not read the Azure OpenAI response.',
+        upstreamStatus: upstream.status,
+        upstreamRequestId,
+      });
+    }
     if (!upstream.ok) {
       const { code: upstreamCode, message: upstreamMessage } = parseUpstreamError(text);
       const classified = classifyUpstreamError(
@@ -355,7 +381,7 @@ function createOpenAIProxyRouter(options) {
     res.status(upstream.status);
     res.set('Content-Type', contentType);
     return res.send(text);
-  });
+  }));
 
   return router;
 }

@@ -280,6 +280,19 @@ ${groundingBlock ? `${groundingBlock}
     }
     guide.timestamp = new Date().toISOString();
     guide.metrics = metrics;
+
+    // Models occasionally omit optional sections. Normalize the collections the
+    // guide viewer and exporters iterate over so a partial response degrades
+    // into a shorter guide instead of throwing on `.length`/`.map`.
+    if (!Array.isArray(guide.deploymentSteps)) guide.deploymentSteps = [];
+    if (!Array.isArray(guide.configuration)) guide.configuration = [];
+    if (!Array.isArray(guide.troubleshooting)) guide.troubleshooting = [];
+    if (!Array.isArray(guide.prerequisites)) guide.prerequisites = [];
+    if (!Array.isArray(guide.postDeployment)) guide.postDeployment = [];
+    if (guide.deploymentSteps.length === 0) {
+      throw new Error('The deployment guide response contained no deployment steps. Please try again.');
+    }
+
     if (groundingSources.length > 0) {
       guide.groundingSources = groundingSources.map((s) => ({ title: s.title, url: s.url }));
     }

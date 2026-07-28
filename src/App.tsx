@@ -874,23 +874,40 @@ function App() {
   }, [nodes, pricingMode]);
 
   // Handle region change
+  //
+  // Pricing lookups are async, so the node list can change while they are in
+  // flight (drags, additions, deletions, or another region change). Replacing
+  // the whole array with a pre-await snapshot would silently discard those
+  // edits, so the results are merged into the current nodes by id and stale
+  // runs are dropped.
+  const regionPricingRunRef = useRef(0);
   const handleRegionChange = useCallback(async (region: AzureRegion) => {
     console.log(`🌍 Region changed to ${region}, updating all node pricing...`);
-    
-    // Update all nodes with new regional pricing
-    const updatedNodes = await Promise.all(
+    const runId = ++regionPricingRunRef.current;
+
+    const pricingEntries = await Promise.all(
       nodes.map(async (node) => {
         if (node.type === 'azureNode' && node.data.label) {
           const newPricing = await initializeNodePricing(node.data.label, region);
           if (newPricing) {
-            return { ...node, data: { ...node.data, pricing: newPricing } };
+            return [node.id, newPricing] as const;
           }
         }
-        return node;
+        return null;
       })
     );
-    
-    setNodes(updatedNodes);
+
+    if (runId !== regionPricingRunRef.current) return;
+
+    const pricingByNodeId = new Map(
+      pricingEntries.filter((entry): entry is NonNullable<typeof entry> => entry !== null)
+    );
+    if (pricingByNodeId.size === 0) return;
+
+    setNodes((currentNodes) => currentNodes.map((node) => {
+      const pricing = pricingByNodeId.get(node.id);
+      return pricing ? { ...node, data: { ...node.data, pricing } } : node;
+    }));
   }, [nodes, setNodes]);
 
   useEffect(() => {
@@ -1654,7 +1671,7 @@ function App() {
 
     const azureNodes = nodes.filter(n => n.type === 'azureNode');
     if (azureNodes.length === 0) {
-      alert('Add or generate an architecture first, then export a customer deck.');
+      alert(t('Add or generate an architecture first, then export a customer deck.'));
       return;
     }
 
@@ -1792,10 +1809,10 @@ function App() {
         trackExport('pptx-deck', azureNodes.length);
       } catch (err) {
         console.error('Error exporting customer deck:', err);
-        alert('Failed to export the customer deck. Please try again.');
+        alert(t('Failed to export the customer deck. Please try again.'));
       }
     }, 800);
-  }, [reactFlowInstance, recordExport, nodes, isDarkMode, titleBlockData, validationResult, pricingMode, architecturePrompt, originalPrompt, generatedWithModel]);
+  }, [reactFlowInstance, recordExport, nodes, isDarkMode, titleBlockData, validationResult, pricingMode, architecturePrompt, originalPrompt, generatedWithModel, t]);
 
   // ── az prototype export removed (feature unused) ───────────────────────
 
@@ -3174,7 +3191,9 @@ function App() {
 
   // Premium Feature Handlers
   const handleValidateArchitecture = useCallback(async () => {
-    if (nodes.length === 0) {
+    // Group boxes are nodes too, but the validator only reasons about Azure
+    // services — running it on a canvas that has none wastes an AI call.
+    if (nodes.filter(n => n.type === 'azureNode').length === 0) {
       alert(t("Please create an architecture diagram first."));
       return;
     }
@@ -3184,6 +3203,7 @@ function App() {
     // Capture diagram snapshot BEFORE opening the modal overlay
     let diagramImageDataUrl: string | undefined;
     if (reactFlowWrapper.current && reactFlowInstance) {
+      const previousViewport = reactFlowInstance.getViewport();
       try {
         reactFlowInstance.fitView({ padding: 0.2, duration: 0 });
         // Brief delay for fitView to settle before capture
@@ -3195,6 +3215,10 @@ function App() {
         console.log('\uD83D\uDCF8 Diagram snapshot captured for validation report');
       } catch (err) {
         console.warn('Could not capture diagram snapshot:', err);
+      } finally {
+        // fitView only exists to frame the capture, so put the canvas back
+        // where the user left it instead of silently zooming their view.
+        reactFlowInstance.setViewport(previousViewport, { duration: 0 });
       }
     }
 
@@ -3294,7 +3318,8 @@ function App() {
   }, [isFeedbackModalOpen, validationHandoff]);
 
   const handleGenerateDeploymentGuide = useCallback(async () => {
-    if (nodes.length === 0) {
+    // Same as validation: a canvas of group boxes alone has nothing to deploy.
+    if (nodes.filter(n => n.type === 'azureNode').length === 0) {
       alert(t("Please create an architecture diagram first."));
       return;
     }
@@ -3675,10 +3700,10 @@ function App() {
                           setIsExportMenuOpen(false);
                           exportCustomerDeck();
                         }}
-                        title="Export a customer-ready PowerPoint deck: title, diagram, services, plus WAF review and cost estimate when available"
+                        title={t("Export a customer-ready PowerPoint deck: title, diagram, services, plus WAF review and cost estimate when available")}
                       >
                         <Presentation size={18} />
-                        Export Customer Deck (PPTX)
+                        {t("Export Customer Deck (PPTX)")}
                       </button>
                       <button
                         className="toolbar-dropdown-item"

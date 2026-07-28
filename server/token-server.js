@@ -17,6 +17,7 @@ const { EmailClient, KnownEmailSendStatus } = require('@azure/communication-emai
 const { createAccessControlRouter } = require('./access-control');
 const { ArmKeyVaultAccessStore } = require('./arm-key-vault-access-store');
 const { createOpenAIProxyRouter } = require('./openai-proxy');
+const { asyncHandler, createErrorHandler } = require('./async-handler');
 const crypto = require('crypto');
 
 const app = express();
@@ -77,14 +78,32 @@ const OPENAI_ALLOWED_DEPLOYMENTS = new Set(
     .filter(Boolean),
 );
 
+// Derive a rate-limit bucket that a caller cannot rotate at will.
+//
+// nginx forwards X-Forwarded-For as `$proxy_add_x_forwarded_for`, so the
+// *first* entry is whatever the caller sent — using it would let anyone reset
+// their own quota (and spoof another caller's) by varying the header. Azure
+// Front Door owns X-Azure-ClientIP / X-Azure-SocketIP and overwrites any
+// client-supplied value, and nginx rejects requests that do not carry this
+// deployment's X-Azure-FDID, so those headers are trustworthy here. When they
+// are absent the last X-Forwarded-For entry is used, because that one is
+// appended by the nearest trusted proxy rather than by the caller.
+const IP_LIKE = /^[0-9a-fA-F.:[\]]{3,45}$/;
+
+function trustedIp(value) {
+  const candidate = String(value || '').trim();
+  return IP_LIKE.test(candidate) ? candidate : '';
+}
+
 function getClientKey(req) {
-  const forwarded = req.get('x-forwarded-for') || '';
+  const forwarded = String(req.get('x-forwarded-for') || '').split(',');
   return (
-    req.get('x-azure-clientip')
-    || forwarded.split(',')[0]
-    || req.ip
+    trustedIp(req.get('x-azure-clientip'))
+    || trustedIp(req.get('x-azure-socketip'))
+    || trustedIp(forwarded[forwarded.length - 1])
+    || trustedIp(req.ip)
     || 'unknown'
-  ).trim().slice(0, 128);
+  ).slice(0, 128);
 }
 
 function createFixedWindowRateLimiter(windowMs, maxRequests) {
@@ -114,6 +133,9 @@ const consumeOpenAiRateLimit = createFixedWindowRateLimiter(
   Math.max(1, Number(process.env.OPENAI_RATE_LIMIT_PER_HOUR) || 120),
 );
 const consumeUtilityApiRateLimit = createFixedWindowRateLimiter(60 * 60 * 1000, 120);
+// Deliberately tight: the only client is an operator reading the feedback
+// archive, so a low ceiling keeps the shared admin token from being brute-forced.
+const consumeAdminApiRateLimit = createFixedWindowRateLimiter(60 * 60 * 1000, 30);
 
 if (!OPENAI_ENDPOINT) {
   console.warn('[openai-proxy] AZURE_OPENAI_ENDPOINT is not set. /api/openai will return 503.');
@@ -253,36 +275,10 @@ async function persistFeedback(item) {
 
 const FEEDBACK_RATE_LIMIT_WINDOW_MS = 60 * 60 * 1000;
 const FEEDBACK_RATE_LIMIT_MAX = 10;
-const feedbackRateLimits = new Map();
-
-function getFeedbackClientKey(req) {
-  const forwarded = req.get('x-forwarded-for') || '';
-  return (
-    req.get('x-azure-clientip')
-    || forwarded.split(',')[0]
-    || req.ip
-    || 'unknown'
-  ).trim().slice(0, 128);
-}
-
-function consumeFeedbackRateLimit(req) {
-  const now = Date.now();
-  for (const [key, value] of feedbackRateLimits) {
-    if (value.resetAt <= now) feedbackRateLimits.delete(key);
-  }
-
-  const key = getFeedbackClientKey(req);
-  const current = feedbackRateLimits.get(key);
-  if (!current || current.resetAt <= now) {
-    feedbackRateLimits.set(key, { count: 1, resetAt: now + FEEDBACK_RATE_LIMIT_WINDOW_MS });
-    return 0;
-  }
-  if (current.count >= FEEDBACK_RATE_LIMIT_MAX) {
-    return Math.max(1, Math.ceil((current.resetAt - now) / 1000));
-  }
-  current.count += 1;
-  return 0;
-}
+const consumeFeedbackRateLimit = createFixedWindowRateLimiter(
+  FEEDBACK_RATE_LIMIT_WINDOW_MS,
+  FEEDBACK_RATE_LIMIT_MAX,
+);
 
 async function readFeedback(limit) {
   const table = getFeedbackTable();
@@ -331,7 +327,7 @@ if (!RESOURCE_ID) {
   console.warn('[speech-token] AZURE_SPEECH_RESOURCE_ID is not set. Requests will fail.');
 }
 
-app.get('/api/speech-token', async (req, res) => {
+app.get('/api/speech-token', asyncHandler(async (req, res) => {
   const retryAfter = consumeUtilityApiRateLimit(req);
   if (retryAfter > 0) {
     res.set('Retry-After', String(retryAfter));
@@ -350,7 +346,7 @@ app.get('/api/speech-token', async (req, res) => {
     console.error('[speech-token] error:', err.message);
     res.status(500).json({ error: 'Failed to acquire speech token' });
   }
-});
+}));
 
 app.use('/api/openai', createOpenAIProxyRouter({
   endpoint: OPENAI_ENDPOINT,
@@ -421,7 +417,7 @@ async function searchLearnDocs(query, top) {
   }));
 }
 
-app.post('/api/docs-search', async (req, res) => {
+app.post('/api/docs-search', asyncHandler(async (req, res) => {
   const retryAfter = consumeUtilityApiRateLimit(req);
   if (retryAfter > 0) {
     res.set('Retry-After', String(retryAfter));
@@ -440,9 +436,9 @@ app.post('/api/docs-search', async (req, res) => {
     // Soft-fail: grounding is best-effort.
     res.json({ results: [], error: 'docs search failed' });
   }
-});
+}));
 
-app.get('/api/ice-token', async (req, res) => {
+app.get('/api/ice-token', asyncHandler(async (req, res) => {
   const retryAfter = consumeUtilityApiRateLimit(req);
   if (retryAfter > 0) {
     res.set('Retry-After', String(retryAfter));
@@ -473,7 +469,7 @@ app.get('/api/ice-token', async (req, res) => {
     console.error('[ice-token] error:', err.message);
     res.status(500).json({ error: 'Failed to acquire ICE token' });
   }
-});
+}));
 
 // ── Feedback (Cosmos DB) ──────────────────────────────────────────────────────
 // ── Azure resource import (Resource Graph) ────────────────────────────────
@@ -506,7 +502,7 @@ function requireAzureImport(_req, res, next) {
   next();
 }
 
-app.get('/api/azure/subscriptions', requireAzureImport, async (_req, res) => {
+app.get('/api/azure/subscriptions', requireAzureImport, asyncHandler(async (_req, res) => {
   try {
     const token = await armToken();
     const r = await fetch(`${ARM_BASE}/subscriptions?api-version=2022-12-01`, {
@@ -524,9 +520,9 @@ app.get('/api/azure/subscriptions', requireAzureImport, async (_req, res) => {
     console.error('[azure-import] subscriptions error:', err.message);
     res.status(500).json({ error: 'Failed to list subscriptions' });
   }
-});
+}));
 
-app.get('/api/azure/resource-groups', requireAzureImport, async (req, res) => {
+app.get('/api/azure/resource-groups', requireAzureImport, asyncHandler(async (req, res) => {
   const subscriptionId = String(req.query.subscriptionId || '');
   if (!GUID_RE.test(subscriptionId)) {
     return res.status(400).json({ error: 'invalid subscriptionId' });
@@ -548,9 +544,9 @@ app.get('/api/azure/resource-groups', requireAzureImport, async (req, res) => {
     console.error('[azure-import] resource-groups error:', err.message);
     res.status(500).json({ error: 'Failed to list resource groups' });
   }
-});
+}));
 
-app.post('/api/azure/resource-graph', requireAzureImport, async (req, res) => {
+app.post('/api/azure/resource-graph', requireAzureImport, asyncHandler(async (req, res) => {
   const { subscriptionId, resourceGroup } = req.body || {};
   if (!GUID_RE.test(String(subscriptionId || ''))) {
     return res.status(400).json({ error: 'invalid subscriptionId' });
@@ -581,9 +577,9 @@ app.post('/api/azure/resource-graph', requireAzureImport, async (req, res) => {
     console.error('[azure-import] resource-graph error:', err.message);
     res.status(500).json({ error: 'Resource Graph query failed' });
   }
-});
+}));
 
-app.post('/api/feedback', async (req, res) => {
+app.post('/api/feedback', asyncHandler(async (req, res) => {
   if (!getFeedbackEmailClient() && !getFeedbackTable() && !getFeedbackContainer()) {
     return res.status(503).json({ error: 'Feedback storage is not configured' });
   }
@@ -627,22 +623,35 @@ app.post('/api/feedback', async (req, res) => {
     console.error('[feedback] error:', err.message);
     res.status(500).json({ error: 'Failed to store feedback' });
   }
-});
+}));
 
 // ── Admin: read persisted feedback (protected) ──────────────────────────────
 // Lets an operator read verbatim comments from the configured archive. The
 // route is disabled unless a dedicated token is configured and remains behind
 // the application whitelist enforced by nginx.
 const FEEDBACK_ADMIN_TOKEN = process.env.FEEDBACK_ADMIN_TOKEN || '';
+const FEEDBACK_ADMIN_TOKEN_BYTES = Buffer.from(FEEDBACK_ADMIN_TOKEN, 'utf8');
 
+// Compare raw bytes, not string lengths: two strings of equal character length
+// can encode to buffers of different byte lengths (any non-ASCII input), and
+// crypto.timingSafeEqual throws a RangeError in that case. Inside an async
+// Express 4 handler that RangeError would surface as an unhandled rejection and
+// take the whole container down, so the guard has to be byte-accurate.
 function adminTokenMatches(presented) {
-  if (!presented || presented.length !== FEEDBACK_ADMIN_TOKEN.length) return false;
-  return crypto.timingSafeEqual(Buffer.from(presented), Buffer.from(FEEDBACK_ADMIN_TOKEN));
+  if (typeof presented !== 'string' || presented.length === 0) return false;
+  const presentedBytes = Buffer.from(presented, 'utf8');
+  if (presentedBytes.length !== FEEDBACK_ADMIN_TOKEN_BYTES.length) return false;
+  return crypto.timingSafeEqual(presentedBytes, FEEDBACK_ADMIN_TOKEN_BYTES);
 }
 
-app.get('/api/feedback/list', async (req, res) => {
+app.get('/api/feedback/list', asyncHandler(async (req, res) => {
   if (!FEEDBACK_ADMIN_TOKEN) {
     return res.status(503).json({ error: 'Feedback admin endpoint is not configured' });
+  }
+  const retryAfter = consumeAdminApiRateLimit(req);
+  if (retryAfter > 0) {
+    res.set('Retry-After', String(retryAfter));
+    return res.status(429).json({ error: 'Request limit exceeded. Please try again later.' });
   }
   const auth = req.get('authorization') || '';
   const presented = auth.startsWith('Bearer ') ? auth.slice(7) : (req.get('x-admin-token') || '');
@@ -662,7 +671,12 @@ app.get('/api/feedback/list', async (req, res) => {
     console.error('[feedback/list] error:', err.message);
     res.status(500).json({ error: 'Failed to read feedback' });
   }
-});
+}));
+
+// Final safety net: any error forwarded by asyncHandler is logged and answered
+// with a generic 500 instead of escaping to the process and killing the
+// container (start.sh stops the container when this server exits).
+app.use(createErrorHandler(console));
 
 const PORT = parseInt(process.env.TOKEN_SERVER_PORT || '3001', 10);
 app.listen(PORT, '127.0.0.1', () => {

@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { X, AlertTriangle, CheckCircle, Info, Download, RefreshCw, Clock, Zap, Database, Cpu } from 'lucide-react';
 import { ArchitectureValidation, ValidationFinding, formatValidationReport } from '../services/architectureValidator';
 import { generateModelFilename } from '../utils/modelNaming';
@@ -36,7 +36,14 @@ const ValidationModal: React.FC<ValidationModalProps> = ({ validation, isOpen, o
   // Display preference: show the raw 0-100 score alongside the maturity band
   const [displayPrefs, setDisplayPrefs] = useValidationDisplayPrefs();
   useEscapeKey(isOpen, onClose);
-  
+
+  // Finding keys are positional (`pillar-0-0`), so a selection made against an
+  // earlier result would silently carry over to a different finding in the next
+  // run. Reset whenever a new validation is shown or the modal is reopened.
+  useEffect(() => {
+    setSelectedFindings(new Set());
+  }, [validation?.timestamp, isOpen]);
+
   if (!isOpen) return null;
 
   /**
