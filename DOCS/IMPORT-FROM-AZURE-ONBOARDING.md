@@ -7,7 +7,7 @@
 - **Read-only delegated access.** The browser requests the Azure Service Management `user_impersonation` scope. Azure RBAC still determines which subscriptions and Resource Groups the user can read.
 - **No production server identity exposure.** `AZURE_IMPORT_ENABLED` remains unset in the hosted application, so the Container App managed identity cannot be used through the import API.
 - **Browser-session token cache.** MSAL stores tokens in `sessionStorage`; tokens are sent directly to `management.azure.com`, not to the AzureDiagarm server.
-- **Private application access.** Container Apps Easy Auth and the Key Vault-backed application whitelist continue to protect the complete site.
+- **Private application access.** Container Apps Easy Auth, required Enterprise Application assignment, and the `Azure Diagarm Apps` security group protect the complete site.
 - **No imported Azure inventory is persisted by the server.** Resource data is held in browser memory while the diagram is built.
 
 ## Production registration

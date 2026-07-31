@@ -1,6 +1,6 @@
 # AzureDiagarm application access and authentication
 
-> Last updated: July 16, 2026
+> Last updated: July 31, 2026
 
 ## Production configuration
 
@@ -14,32 +14,39 @@
 | Entra application | `AzureDiagarm-Production` |
 | Application (client) ID | `5cd8361b-e235-493b-95a2-c2e8f444c3a2` |
 | Permanent administrator | `yangjiayi@msft.jp` |
-| Access store | `azurediagarm-access-kv` |
+| Access group | `Azure Diagarm Apps` (`f78f42aa-6319-4248-8be2-64cb68dc5bd2`) |
+| Enterprise application assignment | Required |
+| Conditional Access | `Azure Diagarm Apps - Block all other cloud apps` |
+| Legacy access store | `azurediagarm-access-kv` (retained, disabled) |
 | Speech resource | `azurediagarmspeech` (`westus2`, S0) |
 | Easy Auth action | `RedirectToLoginPage` |
-| Whitelist enforcement | Enabled |
+| Email whitelist enforcement | Disabled (`ACCESS_CONTROL_ENABLED=false`) |
 
 ## Security model
 
 1. Azure Front Door and WAF are the public entry point.
 2. Azure Container Apps Easy Auth requires Microsoft Entra ID authentication.
 3. The Entra application is single-tenant (`AzureADMyOrg`).
-4. Nginx sends an internal authorization subrequest for every page, static asset,
-   API, and MCP request.
-5. The Node server reads the trusted individual principal headers injected by
-   Container Apps, with `X-MS-CLIENT-PRINCIPAL` claim parsing as a fallback.
-6. `yangjiayi@msft.jp` is always allowed and is the only account that receives
-   access-list management APIs and UI.
-7. Other users are allowed only when their normalized email address is active in
-   the application whitelist.
+4. The `AzureDiagarm-Production` Enterprise Application requires assignment.
+   The `Azure Diagarm Apps` security group is assigned with Default Access.
+5. A Conditional Access policy targets that group and blocks all cloud
+   applications except AzureDiagarm and the Microsoft Invitation Acceptance
+   Portal. Group members therefore cannot use Azure Portal, Azure Resource
+   Manager, Microsoft Fabric, Power BI, or other tenant applications.
+6. Nginx sends an internal authorization subrequest for every page, static asset,
+   API, and MCP request. The legacy email-list check is disabled, so successful
+   Entra assignment is the authoritative application authorization decision.
+7. The Node server still reads trusted individual principal headers injected by
+   Container Apps for identity and audit data, with
+   `X-MS-CLIENT-PRINCIPAL` claim parsing as a fallback.
 
 External requests cannot set the `X-MS-CLIENT-PRINCIPAL-*` headers. Container
 Apps removes external values and injects the authenticated principal headers.
 
 The MCP HTTP server listens only on `127.0.0.1:3030` inside the container and is
 enabled with `MCP_ENABLED=true`. It does not use a separate public bearer token
-in production; Nginx exposes `/mcp` only after the same Easy Auth and whitelist
-checks used by the application and APIs.
+in production; Nginx exposes `/mcp` only after the same Easy Auth and Enterprise
+Application assignment used by the application and APIs.
 
 ## Front Door requirements
 
@@ -80,10 +87,38 @@ corresponding platform log contains HTTP 403, substatus 60, and
 `same-origin` preserves the referrer required for same-origin API calls while
 still withholding it from external sites.
 
-## Whitelist persistence
+## Entra security-group access
 
-The whitelist uses Azure Resource Manager child resources under the dedicated
-Key Vault:
+Manage production access in Microsoft Entra admin center:
+
+1. Invite an external person under **Identity > Users > New user > Invite
+   external user**. Set the redirect URL to
+   `https://azurediagarm.mssql.biz`.
+2. Add the guest to **Identity > Groups > Azure Diagarm Apps > Members**.
+3. Confirm **Enterprise applications > AzureDiagarm-Production > Users and
+   groups** contains `Azure Diagarm Apps`.
+4. To revoke application access, remove the guest from the group. Do not assign
+   Azure RBAC roles, Fabric workspaces, licenses, or other enterprise
+   applications to this group.
+
+The Enterprise Application has **Assignment required? = Yes**. Group membership
+therefore grants AzureDiagarm access without maintaining a second email list.
+The Conditional Access policy
+`Azure Diagarm Apps - Block all other cloud apps` includes this group, targets
+all resources, and excludes only:
+
+- AzureDiagarm: `5cd8361b-e235-493b-95a2-c2e8f444c3a2`
+- Microsoft Invitation Acceptance Portal:
+  `4660504c-45b3-4674-a709-71951a6b0763`
+
+The invitation portal exclusion lets new guests redeem their invitation. The
+AzureDiagarm exclusion lets them use this application. Every other cloud
+application is blocked.
+
+## Legacy whitelist store
+
+The previous email whitelist remains stored as Azure Resource Manager child
+resources under the dedicated Key Vault:
 
 ```text
 /subscriptions/f2c0fe9a-0171-42ed-803d-3e78322545a1
@@ -104,22 +139,12 @@ The managed identity has the custom role
 - `Microsoft.KeyVault/vaults/secrets/write`
 
 It does not grant access to secret values in the Key Vault data plane, other
-vaults, or other Azure resources.
+vaults, or other Azure resources. The store is currently inactive because
+`ACCESS_CONTROL_ENABLED=false`; it is retained only as a rollback option.
 
 The Avatar Presenter uses keyless authentication to the dedicated Speech
 resource. The Container Apps managed identity has only the **Cognitive Services
 Speech User** role on that resource, and local key authentication is disabled.
-
-## Administrator workflow
-
-1. Sign in to `https://azurediagarm.mssql.biz` as `yangjiayi@msft.jp`.
-2. Select **Access** / **アクセス管理** in the header.
-3. Enter an email address and select **Add** / **追加**.
-4. To revoke access, select the delete button next to the email address.
-
-The permanent administrator cannot be removed. The management button is not
-rendered for other users, and the server independently rejects non-admin API
-requests with HTTP 403.
 
 ## Sign out
 
@@ -222,7 +247,8 @@ Common codes include:
 
 Use the displayed request ID to correlate browser errors with Container Apps
 logs. Do not treat every HTTP 401 or 403 as a managed identity failure: Easy
-Auth, the application whitelist, WAF, and Azure OpenAI RBAC are separate
+Auth, Enterprise Application assignment, Conditional Access, WAF, and Azure
+OpenAI RBAC are separate
 enforcement layers.
 
 ## Credential rotation
@@ -260,5 +286,5 @@ az containerapp update `
   --output none
 ```
 
-Restore `RedirectToLoginPage` and `ACCESS_CONTROL_ENABLED=true` immediately
-after correcting the configuration.
+Restore `RedirectToLoginPage` immediately after correcting the configuration.
+Keep `ACCESS_CONTROL_ENABLED=false` for the Entra group-based access model.
