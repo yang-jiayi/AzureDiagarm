@@ -425,6 +425,12 @@
   min-width: 260px;
 }
 
+.toolbar-dropdown-menu--export {
+  min-width: 280px;
+  max-height: min(72vh, 680px);
+  overflow-y: auto;
+}
+
 .toolbar-dropdown-heading {
   font-size: 0.8rem;
   font-weight: 700;
@@ -1623,63 +1629,100 @@ body.dark-mode .react-flow__handle.valid {
   box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.5);
 }
 
-/* ── Toolbar UX quick-wins (prototype — branch ux/toolbar-quick-wins) ─────────
-   Reduce top-bar visual noise: neutralize the rainbow of gradient/pulsing accent
-   buttons (Chat, Help, Compare Models, Validate, Deployment Guide, Compare
-   Validation) so the single primary action — "Generate with AI" — plus "Export"
-   clearly stand out. Buttons keep their labels, icons and hover affordance; only
-   the loud colors and attention-grabbing pulse animations are removed.
-   To revert the experiment, delete this block. */
-.btn-compare-models,
-.btn-ai-chat,
-.btn-help,
-.btn-premium,
-body.dark-mode .btn-compare-models,
-body.dark-mode .btn-ai-chat,
-body.dark-mode .btn-help,
-body.dark-mode .btn-premium {
-  background: rgba(255, 255, 255, 0.2);
-  color: white;
-  border: 1px solid rgba(255, 255, 255, 0.3);
+/* Unified, categorized application toolbar. Every persistent action uses the
+   same neutral treatment; state is communicated without pulsing or glow. */
+.toolbar-group.toolbar-group--labeled {
+  position: relative;
+  align-self: stretch;
+  padding: 1.25rem 0.45rem 0.42rem;
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  border-radius: 9px;
+  background: rgba(0, 45, 80, 0.14);
+}
+
+.toolbar-group.toolbar-group--labeled + .toolbar-group.toolbar-group--labeled {
+  margin-left: 0;
+  padding-left: 0.45rem;
+  border-left: 1px solid rgba(255, 255, 255, 0.24);
+}
+
+.toolbar-group--labeled::before {
+  content: attr(data-label);
+  position: absolute;
+  top: 0.25rem;
+  left: 0.5rem;
+  color: rgba(255, 255, 255, 0.76);
+  font-size: 0.62rem;
+  font-weight: 750;
+  letter-spacing: 0.075em;
+  line-height: 1;
+  text-transform: uppercase;
+  pointer-events: none;
+}
+
+.app-header .toolbar-group--labeled .btn,
+.app-header .toolbar-group--labeled label.btn {
+  min-height: 34px;
+  padding: 0.42rem 0.72rem;
+  border-radius: 7px;
+  font-size: 0.8rem;
+  font-weight: 600;
   box-shadow: none;
   animation: none;
 }
 
-.btn-compare-models:hover,
-.btn-ai-chat:hover,
-.btn-help:hover,
-.btn-premium:hover,
-body.dark-mode .btn-compare-models:hover,
-body.dark-mode .btn-premium:hover {
-  background: rgba(255, 255, 255, 0.3);
-  border-color: rgba(255, 255, 255, 0.45);
+.app-header .toolbar-group--labeled .btn-secondary,
+.app-header .toolbar-group--labeled label.btn-secondary,
+body.dark-mode .app-header .toolbar-group--labeled .btn-secondary,
+body.dark-mode .app-header .toolbar-group--labeled label.btn-secondary {
+  background: rgba(255, 255, 255, 0.14);
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+}
+
+.app-header .toolbar-group--labeled .btn-secondary:hover:not(:disabled),
+.app-header .toolbar-group--labeled label.btn-secondary:hover,
+body.dark-mode .app-header .toolbar-group--labeled .btn-secondary:hover:not(:disabled),
+body.dark-mode .app-header .toolbar-group--labeled label.btn-secondary:hover {
+  background: rgba(255, 255, 255, 0.24);
+  border-color: rgba(255, 255, 255, 0.46);
+  box-shadow: none;
   transform: translateY(-1px);
-  box-shadow: none;
-  animation: none;
 }
 
-/* Clear "on" state for the Chat toggle: a purple AI accent so it's obvious the
-   panel is open (and that clicking again closes it), without turning the
-   resting button into a loud gradient. The dark-mode selector is repeated so
-   it out-specifies the flat `body.dark-mode .btn-ai-chat` reset above. */
-.btn-ai-chat.active,
-body.dark-mode .btn-ai-chat.active {
-  background: linear-gradient(135deg, #7C3AED 0%, #4F46E5 100%);
-  border-color: rgba(196, 181, 253, 0.95);
-  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.35), 0 0 0 1px rgba(139, 92, 246, 0.55);
+.app-header .toolbar-group--labeled .btn.btn-active,
+.app-header .toolbar-group--labeled .btn[aria-pressed='true'],
+.app-header .toolbar-group--labeled .btn[aria-expanded='true'],
+body.dark-mode .app-header .toolbar-group--labeled .btn.btn-active,
+body.dark-mode .app-header .toolbar-group--labeled .btn[aria-pressed='true'],
+body.dark-mode .app-header .toolbar-group--labeled .btn[aria-expanded='true'] {
+  background: rgba(255, 255, 255, 0.3);
+  border-color: rgba(255, 255, 255, 0.62);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12);
   color: #fff;
 }
-.btn-ai-chat.active:hover,
-body.dark-mode .btn-ai-chat.active:hover {
-  background: linear-gradient(135deg, #6D28D9 0%, #4338CA 100%);
-  border-color: rgba(196, 181, 253, 1);
+
+.app-header .toolbar-group--labeled .btn:focus-visible,
+.app-header .toolbar-group--labeled label.btn:focus-within {
+  outline: 2px solid #fff;
+  outline-offset: 2px;
 }
 
-/* drop the first-run Help pulse and the premium shimmer overlay */
-.btn-help.nudge { animation: none; }
-.btn-premium::before { display: none; }
+.app-header .toolbar-group--labeled .btn:disabled {
+  opacity: 0.48;
+  transform: none;
+}
 
-/* slightly stronger group dividers for clearer grouping */
-.toolbar-group + .toolbar-group {
-  border-left-color: rgba(255, 255, 255, 0.35);
+@media (max-width: 640px) {
+  .toolbar-group.toolbar-group--labeled,
+  .toolbar-group.toolbar-group--labeled + .toolbar-group.toolbar-group--labeled {
+    padding: 1.5rem 0.45rem 0.5rem !important;
+    border: 1px solid rgba(255, 255, 255, 0.24) !important;
+    border-radius: 10px;
+  }
+
+  .toolbar-group--labeled::before {
+    top: 0.38rem;
+    left: 0.55rem;
+  }
 }

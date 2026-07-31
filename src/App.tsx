@@ -20,7 +20,7 @@ import { captureDiagramAsPng, captureDiagramAsSvg } from './utils/captureCanvas'
 import { animateEdgeFlow } from './utils/animateEdges';
 import { sequenceWorkflowSvg } from './utils/sequenceWorkflow';
 import { buildWorkflowMarkdown } from './services/workflowNarrativeExporter';
-import { Download, Save, Upload, DollarSign, Shield, ShieldCheck, FileText, FileCode, ChevronDown, Clock, Camera, Loader, GitCompare, RefreshCw, PanelLeftClose, Minimize2, Maximize2, Presentation, MessageSquare, MessagesSquare, HelpCircle, Hand, ZoomIn, Frame, X, PanelTopClose, PanelTopOpen, DownloadCloud } from 'lucide-react';
+import { Download, Save, Upload, DollarSign, Shield, ShieldCheck, FileText, FileCode, ChevronDown, Clock, Camera, Loader, GitCompare, RefreshCw, PanelLeftClose, Minimize2, Maximize2, Presentation, MessageSquare, MessagesSquare, HelpCircle, Hand, ZoomIn, Frame, X, PanelTopClose, PanelTopOpen, DownloadCloud, Sun, Moon } from 'lucide-react';
 import IconPalette from './components/IconPalette';
 import AzureNode from './components/AzureNode';
 import GroupNode from './components/GroupNode';
@@ -3401,9 +3401,13 @@ function App() {
             role="region"
             aria-label={t('toolbar.label')}
           >
-            {/* Row 1: Project-level actions */}
+            {/* Row 1: Context, creation, import, file, and workspace actions */}
             <div className="header-actions">
-              <div className="toolbar-group">
+              <div
+                className="toolbar-group toolbar-group--labeled"
+                data-label={localize(language, { en: 'Context', ja: 'コンテキスト' })}
+                aria-label={localize(language, { en: 'Context and pricing', ja: 'コンテキストと料金' })}
+              >
                 <RegionSelector onRegionChange={handleRegionChange} />
                 {totalMonthlyCost > 0 && (
                   <>
@@ -3453,7 +3457,11 @@ function App() {
                 )}
               </div>
 
-              <div className="toolbar-group">
+              <div
+                className="toolbar-group toolbar-group--labeled"
+                data-label={localize(language, { en: 'Create & AI', ja: '作成・AI' })}
+                aria-label={localize(language, { en: 'Create and AI tools', ja: '作成とAIツール' })}
+              >
                 <button onClick={addGroupBox} className="btn btn-secondary" title={t("Add grouping box")}>
                   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                     <rect x="3" y="3" width="18" height="18" rx="2" strokeDasharray="4 4" />
@@ -3487,7 +3495,7 @@ function App() {
                   onToggle={() => setIsModelSettingsOpen(v => !v)}
                 />
                 <button
-                  className={`btn btn-ai-chat${isChatOpen ? ' active' : ''}`}
+                  className={`btn btn-secondary${isChatOpen ? ' btn-active' : ''}`}
                   onClick={() => setIsChatOpen((v) => !v)}
                   aria-pressed={isChatOpen}
                   title={isChatOpen
@@ -3497,25 +3505,19 @@ function App() {
                   <MessagesSquare size={18} />
                   {' '}{t("Chat")}{' '}</button>
                 <button
-                  className={`btn btn-help${helpSeen ? '' : ' nudge'}`}
-                  onClick={() => {
-                    setIsHelpOpen(true);
-                    if (!helpSeen) {
-                      setHelpSeen(true);
-                      writeLocalStorage('help.seen', '1');
-                    }
-                  }}
-                  title={t("How to use the tool & learn the features")}
-                >
-                  <HelpCircle size={18} />
-                  {' '}{t("Help")}{' '}</button>
-                <button
-                  className="btn btn-compare-models"
+                  className="btn btn-secondary"
                   onClick={() => setIsCompareModelsOpen(true)}
                   title={t("Compare architecture output across multiple AI models")}
                 >
                   <GitCompare size={18} />
                   {' '}{t("Compare Models")}{' '}</button>
+              </div>
+
+              <div
+                className="toolbar-group toolbar-group--labeled"
+                data-label={localize(language, { en: 'Import', ja: 'インポート' })}
+                aria-label={localize(language, { en: 'Import architecture', ja: 'アーキテクチャのインポート' })}
+              >
                 <label className={`btn btn-secondary${isImportingTemplate ? ' btn-parsing' : ''}`} title={t("Import Bicep, Terraform, or ARM template to generate diagram")}>
                   {isImportingTemplate ? <Loader size={18} className="spin-icon" /> : <FileCode size={18} />}
                   {isImportingTemplate ? t("Parsing...") : t("Import Template")}
@@ -3544,7 +3546,11 @@ function App() {
                 </button>
               </div>
 
-              <div className="toolbar-group">
+              <div
+                className="toolbar-group toolbar-group--labeled"
+                data-label={localize(language, { en: 'File & export', ja: 'ファイル・出力' })}
+                aria-label={localize(language, { en: 'File and export actions', ja: 'ファイルと出力操作' })}
+              >
                 <button onClick={saveDiagram} className="btn btn-secondary" title={t("Save diagram")}>
                   <Save size={18} />
                   {' '}{t("Save")}{' '}</button>
@@ -3558,13 +3564,10 @@ function App() {
                     style={{ display: 'none' }}
                   />
                 </label>
-              </div>
-
-              <div className="toolbar-group">
                 <div className="toolbar-dropdown" ref={exportMenuRef}>
                   <button
                     onClick={() => setIsExportMenuOpen((v) => !v)}
-                    className="btn btn-primary"
+                    className="btn btn-secondary"
                     title={t("Export")}
                     aria-haspopup="menu"
                     aria-expanded={isExportMenuOpen}
@@ -3574,7 +3577,10 @@ function App() {
                   </button>
 
                   {isExportMenuOpen && (
-                    <div className="toolbar-dropdown-menu" role="menu" aria-label={t("Export options")}>
+                    <div className="toolbar-dropdown-menu toolbar-dropdown-menu--export" role="menu" aria-label={t("Export options")}>
+                      <div className="toolbar-dropdown-heading">
+                        {localize(language, { en: 'Images & animation', ja: '画像・アニメーション' })}
+                      </div>
                       <button
                         className="toolbar-dropdown-item"
                         role="menuitem"
@@ -3669,6 +3675,10 @@ function App() {
                       >
                         <Download size={18} />
                         {' '}{t("Export Workflow Animation")}{' '}</button>
+                      <div className="toolbar-dropdown-separator" role="separator" />
+                      <div className="toolbar-dropdown-heading">
+                        {localize(language, { en: 'Documents & editable formats', ja: 'ドキュメント・編集形式' })}
+                      </div>
                       <button
                         className="toolbar-dropdown-item"
                         role="menuitem"
@@ -3741,6 +3751,9 @@ function App() {
                         <FileCode size={18} />
                         {' '}{t("Export Interactive HTML")}{' '}</button>
                       <div className="toolbar-dropdown-separator" role="separator" />
+                      <div className="toolbar-dropdown-heading">
+                        {localize(language, { en: 'Cost reports', ja: 'コストレポート' })}
+                      </div>
                       <button
                         className="toolbar-dropdown-item"
                         role="menuitem"
@@ -3788,14 +3801,35 @@ function App() {
                 </div>
               </div>
 
-              <div className="toolbar-group">
+              <div
+                className="toolbar-group toolbar-group--labeled"
+                data-label={localize(language, { en: 'Workspace', ja: '表示・操作' })}
+                aria-label={localize(language, { en: 'Workspace and help actions', ja: '表示・操作とヘルプ' })}
+              >
+                <button
+                  className="btn btn-secondary"
+                  onClick={() => {
+                    setIsHelpOpen(true);
+                    if (!helpSeen) {
+                      setHelpSeen(true);
+                      writeLocalStorage('help.seen', '1');
+                    }
+                  }}
+                  title={t("How to use the tool & learn the features")}
+                >
+                  <HelpCircle size={18} />
+                  {' '}{t("Help")}{' '}</button>
                 <button 
                   onClick={() => setIsDarkMode(!isDarkMode)} 
                   className="btn btn-secondary" 
                   title={isDarkMode ? t("Switch to Light Mode") : t("Switch to Dark Mode")}
-                  style={{ fontSize: '20px', padding: '0.5rem 1rem' }}
+                  aria-label={isDarkMode ? t("Switch to Light Mode") : t("Switch to Dark Mode")}
                 >
-                  {isDarkMode ? '☀️' : '🌙'}
+                  {isDarkMode ? <Sun size={18} /> : <Moon size={18} />}
+                  {localize(language, {
+                    en: isDarkMode ? 'Light' : 'Dark',
+                    ja: isDarkMode ? 'ライト' : 'ダーク',
+                  })}
                 </button>
                 <button
                   onClick={() => {
@@ -3819,13 +3853,18 @@ function App() {
                   title={t("Clear diagram and start fresh")}
                 >
                   <RefreshCw size={18} />
+                  {localize(language, { en: 'New', ja: '新規' })}
                 </button>
               </div>
             </div>
 
-            {/* Row 2: Canvas tools & AI settings */}
+            {/* Row 2: History, arrangement, and review actions */}
             <div className="header-actions">
-              <div className="toolbar-group">
+              <div
+                className="toolbar-group toolbar-group--labeled"
+                data-label={localize(language, { en: 'History', ja: '履歴' })}
+                aria-label={localize(language, { en: 'History and snapshots', ja: '履歴とスナップショット' })}
+              >
                 <button 
                   onClick={() => setIsVersionHistoryModalOpen(true)} 
                   className="btn btn-secondary" 
@@ -3843,7 +3882,11 @@ function App() {
                   {' '}{t("Snapshot")}{' '}</button>
               </div>
 
-              <div className="toolbar-group">
+              <div
+                className="toolbar-group toolbar-group--labeled"
+                data-label={localize(language, { en: 'Arrange', ja: '配置・選択' })}
+                aria-label={localize(language, { en: 'Arrange, select, and style', ja: '配置、選択、スタイル' })}
+              >
                 <div className="toolbar-dropdown" ref={layoutMenuRef}>
                   <button
                     onClick={() => setIsLayoutMenuOpen((v) => !v)}
@@ -4095,17 +4138,21 @@ function App() {
                 </button>
               </div>
 
-              <div className="toolbar-group">
-                <button 
-                  onClick={handleValidateArchitecture} 
-                  className="btn btn-premium" 
+              <div
+                className="toolbar-group toolbar-group--labeled"
+                data-label={localize(language, { en: 'Review', ja: 'レビュー・ガイド' })}
+                aria-label={localize(language, { en: 'Architecture review and guides', ja: 'アーキテクチャのレビューとガイド' })}
+              >
+                <button
+                  onClick={handleValidateArchitecture}
+                  className="btn btn-secondary"
                   title={t("Validate architecture against Azure Well-Architected Framework")}
                   disabled={nodes.length === 0}
                 >
                   <Shield size={18} />
                   {' '}{t("Validate Architecture")}{' '}</button>
                 <button
-                  className="btn btn-compare-models"
+                  className="btn btn-secondary"
                   onClick={() => setIsCompareValidationOpen(true)}
                   title={t("Compare WAF validation results across multiple AI models")}
                   disabled={nodes.length === 0}
@@ -4122,9 +4169,9 @@ function App() {
                     {' '}{t("Validation:")}{' '}{translate(bandLabel(validationResult.overallScore))}
                   </button>
                 )}
-                <button 
-                  onClick={handleGenerateDeploymentGuide} 
-                  className="btn btn-premium" 
+                <button
+                  onClick={handleGenerateDeploymentGuide}
+                  className="btn btn-secondary"
                   title={t("Generate comprehensive deployment guide")}
                   disabled={nodes.length === 0}
                 >

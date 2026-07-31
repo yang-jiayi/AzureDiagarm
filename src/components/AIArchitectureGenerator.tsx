@@ -657,7 +657,7 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({ onGen
   return (
     <>
       <button
-        className="btn btn-ai btn-generate-ai"
+        className="btn btn-secondary"
         onClick={() => {
           cancelScheduledClose();
           setIsOpen(true);
