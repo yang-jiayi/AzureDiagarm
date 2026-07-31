@@ -4,8 +4,6 @@ on:
   push:
     branches:
       - main
-  schedule:
-    - cron: '17 */2 * * *'
   workflow_dispatch:
     inputs:
       force_deploy:
@@ -74,8 +72,8 @@ jobs:
           merge_base="$(git merge-base HEAD upstream/main)"
 
           # A customization push must be deployable even when a separate,
-          # unreviewed upstream change touches protected files. Scheduled and
-          # manual runs continue through the guarded upstream-sync path below.
+          # unreviewed upstream change touches protected files. Manual runs
+          # continue through the guarded upstream-sync path below.
           if [[ "$GITHUB_EVENT_NAME" == "push" ]]; then
             fork_commit="$fork_before"
             {
@@ -88,8 +86,8 @@ jobs:
             {
               echo "- Deploying customization commit ${fork_commit:0:12}."
               echo "- Deployed upstream baseline: ${merge_base:0:12}."
-              echo "- Latest upstream commit awaiting scheduled review: ${upstream_commit:0:12}."
-              echo "- Upstream synchronization remains scheduled and protected by manual review."
+              echo "- Latest upstream commit awaiting manual review: ${upstream_commit:0:12}."
+              echo "- Upstream synchronization requires a manual workflow dispatch."
             } > update-details.txt
             echo "update_details_b64=$(base64 -w 0 update-details.txt)" >> "$GITHUB_OUTPUT"
             exit 0

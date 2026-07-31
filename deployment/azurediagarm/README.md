@@ -8,12 +8,12 @@ The production site is deployed to Azure Container Apps and exposed only through
 - The Container App uses the Consumption workload profile and can scale to zero.
 - Images use the existing `sqlserverevoacr` Basic registry instead of creating another paid registry.
 - AI generation uses a single pay-as-you-go `gpt-5.4-mini` GlobalStandard deployment with low reasoning effort by default.
-- Upstream checks and deployments run in public-repository GitHub Actions every two hours, so no continuously allocated updater compute is required.
+- Upstream checks run only when manually dispatched; deployments still run automatically for validated changes pushed to `main`.
 - Azure Communication Services sends mail only after a deployment succeeds or fails.
 
 ## Update flow
 
-`.github/workflows/azurediagarm-sync-deploy.yml` runs every two hours. It merges `Arturo-Quiroga-MSFT/azure-architecture-diagram-builder` into this fork, pushes the merge to `main`, builds a unique image tag, deploys a new Container Apps revision, purges Front Door, verifies the production URL, and emails the update details.
+`.github/workflows/azurediagarm-sync-deploy.yml` deploys validated changes pushed to `main`. Upstream synchronization with `Arturo-Quiroga-MSFT/azure-architecture-diagram-builder` now starts only through manual workflow dispatch; after validation it pushes the merge, builds a unique image tag, deploys a new Container Apps revision, purges Front Door, verifies the production URL, and emails the update details.
 
 ## Security layers
 
