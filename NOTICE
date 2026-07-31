@@ -46,6 +46,16 @@ https://github.com/lucide-icons/lucide
 Copyright (c) 2023 Microsoft
 https://github.com/Azure/azure-sdk-for-js
 
+Microsoft Azure Public Service Icons V24 (July 2026)
+Copyright (c) Microsoft Corporation. All rights reserved.
+Source package:
+https://arch-center.azureedge.net/icons/Azure_Public_Service_Icons_V24.zip
+Usage guidance and terms:
+https://learn.microsoft.com/azure/architecture/icons/
+Microsoft permits these icons only for architectural diagrams, training
+materials, or documentation unless Microsoft grants explicit permission.
+These icon assets are not licensed under this repository's MIT License.
+
 Microsoft Fabric product and item icons
 Source package: @fabric-msft/svg-icons 8.2.0 (MIT License)
 https://www.npmjs.com/package/@fabric-msft/svg-icons

@@ -6,6 +6,8 @@
   "scripts": {
     "dev": "vite",
     "dev:full": "./scripts/dev-all.sh",
+    "icons:sync": "node scripts/sync-azure-icons.mjs",
+    "test:icons": "node scripts/test-icon-library.mjs",
     "build": "tsc && vite build",
     "preview": "vite preview",
     "lint": "eslint . --report-unused-disable-directives --max-warnings 0",

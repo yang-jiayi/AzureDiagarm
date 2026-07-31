@@ -15,6 +15,15 @@ browser):
 Both are in the **Export** menu. "Export Workflow Animation" is disabled when the diagram has
 no workflow steps.
 
+The live canvas also supports connection motion independently of export:
+
+- **Arrange > Flow motion** pauses or resumes supported connection animations and stores the
+  default for new connections.
+- Right-click a connection to enable or pause motion for that edge.
+- A static base path remains visible beneath the moving overlay so topology is readable at every
+  animation frame.
+- The moving overlay is hidden when `prefers-reduced-motion: reduce` is active.
+
 Product decision: the app ships **only the looping SVG** (client-side, no infra). GIF/WebP —
 needed for GitHub/Teams/Slack, which strip SVG animation — are produced with the **offline
 CLI** (below), not a backend, to keep the container lean.

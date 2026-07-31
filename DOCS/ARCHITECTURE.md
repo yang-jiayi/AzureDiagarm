@@ -37,7 +37,7 @@ graph TB
 
     subgraph "Data Layer"
         PricingData[(Pricing JSON Files<br/>49-71 services × 8 regions)]
-        IconData[(SVG Icons<br/>714 files in 29 categories)]
+        IconData[(SVG Icons<br/>714 official V24 files in 29 source folders<br/>+ Fabric icons)]
         Mappings[Service & Icon Mappings<br/>incl. Microsoft Fabric]
     end
 
@@ -275,7 +275,7 @@ azure-diagrams/
 │   │   ├── DeploymentGuideModal.tsx   # Deployment guide & Bicep output (341 lines)
 │   │   ├── EditableEdge.tsx           # Connection lines with labels (228 lines)
 │   │   ├── GroupNode.tsx              # Container groups with color picker (210 lines)
-│   │   ├── IconPalette.tsx            # Drag-and-drop icon palette (198 lines)
+│   │   ├── IconPalette.tsx            # Semantic, searchable drag-and-drop icon palette
 │   │   ├── ImageUploader.tsx          # Image upload & vision analysis (186 lines)
 │   │   ├── Legend.tsx                 # Diagram legend, collapsible (197 lines)
 │   │   ├── ModelBadge.tsx             # AI model attribution overlay (71 lines)
@@ -315,10 +315,11 @@ azure-diagrams/
 │   │   │       ├── brazilsouth/       # 49 JSON files
 │   │   │       └── canadacentral/     # 49 JSON files
 │   │   ├── azurePricing.ts            # Service mappings & fallback pricing (1,163 lines)
+│   │   ├── iconCatalog.ts              # 21 bilingual semantic icon categories
 │   │   └── serviceIconMapping.ts      # AI name → icon path mapping (945 lines)
 │   │
 │   ├── utils/
-│   │   ├── iconLoader.ts              # Icon matching & loading (116 lines)
+│   │   ├── iconLoader.ts              # Icon discovery, classification, search, and loading
 │   │   ├── layoutEngine.ts            # Auto-layout algorithm (384 lines)
 │   │   ├── layoutPresets.ts           # Layout preset configurations (477 lines)
 │   │   ├── modelNaming.ts             # Model display name utilities (111 lines)
@@ -334,7 +335,8 @@ azure-diagrams/
 ├── mcp-server/                         # MCP server (8 tools, stdio + Streamable-HTTP, Bearer auth)
 │   └── src/                            # serviceCatalog, wafDetector, layoutEngine, svgRenderer, htmlRenderer
 │
-├── Azure_Public_Service_Icons/        # 714 SVG files in 29 categories
+├── Azure_Public_Service_Icons/        # Azure V24 icons, compatibility assets, and hash manifest
+│   └── manifest.json                  # Official 714-file inventory and SHA-256 hashes
 ├── infra/                             # Bicep infrastructure (azd template)
 │   ├── main.bicep                     # Subscription-scoped entry; creates RG, emits outputs
 │   ├── resources.bicep                # All Azure resources (ACR, ACA, Log Analytics, Speech, Cosmos)
@@ -349,7 +351,9 @@ azure-diagrams/
 │   ├── azd-prepackage.sh              # azd hook: writes .env.build + .env.appinsights before docker build
 │   ├── fetch-multi-region-pricing.sh  # Download pricing data
 │   ├── download-pricing.js            # Node.js pricing fetcher
-│   ├── rename-icons.sh                # Icon file management
+│   ├── sync-azure-icons.mjs           # Overlay the latest official package safely
+│   ├── test-icon-library.mjs          # Verify the complete official icon inventory
+│   ├── rename-icons.sh                # Legacy icon file management
 │   ├── deploy.sh                      # Local deployment
 │   ├── deploy_aca.sh                  # ACA initial deployment (manual)
 │   └── update_aca.sh                  # ACA build & update (ACR + Container App, manual)
@@ -401,9 +405,9 @@ azure-diagrams/
 
 ### Data Management
 - **JSON files** - cached regional pricing per region (49-71 services × 8 regions), including Microsoft Fabric capacity & OneLake meters; refresh with `npm run pricing:refresh`
-- **SVG files** - Azure service icons (714 files) plus the Microsoft Fabric icon set
+- **SVG files** - all 714 official Azure V24 icons across 29 source folders, compatibility assets, and the Microsoft Fabric icon set
 - **In-memory caching** - Performance optimization
-- **localStorage** - Model settings, per-feature overrides, version history, export history
+- **localStorage** - Model settings, per-feature overrides, version history, export history, toolbar-section state, and connection-animation preference
 
 ### Deployment
 - **Azure Container Apps** - Production hosting (min 1, max 3 replicas)
@@ -425,10 +429,14 @@ azure-diagrams/
 - **Model Override**: Settings captured at click time from `useModelSettings()` hook and passed explicitly to API
 
 ### 2. Icon Matching System
-- **Challenge**: Map AI-generated service names to 714 icon files
-- **Solution**: Two-path resolution system
-  - **Path 1 (Direct)**: `getServiceIconMapping()` matches service name or aliases against 68 mapped services with exact icon file paths and categories
+- **Challenge**: Map AI-generated service names to the complete official package while keeping old saved diagrams and mappings loadable
+- **Solution**: Compatibility-preserving resolution plus a semantic presentation layer
+  - **Path 1 (Direct)**: `getServiceIconMapping()` matches service names and aliases against curated mappings with exact icon file paths and categories
   - **Path 2 (Fuzzy fallback)**: Loads all icons from a category and applies multi-stage matching: exact → multi-word → primary word → first icon in category
+  - **Palette classification**: `iconCatalog.ts` presents icons in 21 bilingual, purpose-based categories without moving their physical files
+  - **Semantic search**: requires every query token to match against product names, filenames, acronyms, aliases, category descriptions, purposes, or Japanese terms
+  - **Compatibility**: legacy friendly filenames remain loadable but obsolete duplicates are hidden from the palette
+  - **Completeness**: `manifest.json` records the official V24 package SHA-256 and every official file hash; `npm run test:icons` verifies all 714 files
   - Service icon mapping file (945 lines) maps AI names directly to icon paths, pricing flags, and display names
   - Service name normalization mappings (1,163 lines)
   - Title Case conversion with acronym preservation (AI, SQL, CDN, API, etc.)
@@ -522,7 +530,7 @@ The app uses a three-layer mapping system to handle service name variations:
 
 ## Performance Optimizations
 
-1. **Icon Preloading**: Loads all 714 icons on app mount (async)
+1. **Icon Metadata Cache**: Classifies the full icon library once; SVG URLs load only for expanded or searched categories
 2. **Pricing Cache**: Two-level cache (raw JSON + parsed tiers)
 3. **Lazy Loading**: Pricing data fetched only for used services
 4. **Parallel Processing**: Icons and pricing load simultaneously
@@ -632,7 +640,7 @@ COSMOS_CONTAINER_ID=<Cosmos DB container ID>
 
 ## Known Limitations
 
-1. **Icon Coverage**: Not all Azure services have custom icons (fallbacks used for less common services)
+1. **AI Name Resolution**: The full official V24 catalog is present, but uncommon AI-generated aliases can still require a category fallback when no direct mapping exists
 2. **Pricing Accuracy**: Estimates based on default tiers and typical usage
 3. **Usage-Based Services**: Fixed fallback estimates (e.g., Storage, Monitor)
 4. **Region Coverage**: 8 regions (can expand to 60+ Azure regions)

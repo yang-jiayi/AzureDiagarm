@@ -110,6 +110,14 @@
   color: #0078d4;
 }
 
+.palette-library-meta {
+  margin-top: 0.15rem;
+  color: #667788;
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
 .search-box {
   display: flex;
   align-items: center;
@@ -123,9 +131,42 @@
 
 .search-box input {
   flex: 1;
+  min-width: 0;
   border: none;
   outline: none;
   font-size: 0.875rem;
+}
+
+.search-clear {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 26px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: #52677b;
+  cursor: pointer;
+}
+
+.search-clear:hover {
+  background: #e9f3fa;
+  color: #005a9e;
+}
+
+.search-clear:focus-visible {
+  outline: 2px solid rgba(0, 120, 212, 0.45);
+  outline-offset: 1px;
+}
+
+.palette-search-summary {
+  margin-top: 0.45rem;
+  color: #466178;
+  font-size: 0.7rem;
+  font-weight: 650;
 }
 
 .palette-content {
@@ -167,8 +208,33 @@
 }
 
 .icon-count {
-  font-size: 0.75rem;
-  color: #666;
+  min-width: 28px;
+  padding: 0.08rem 0.35rem;
+  border-radius: 999px;
+  background: #e9f3fa;
+  color: #31566f;
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-align: center;
+}
+
+.category-description {
+  margin: -0.35rem 1rem 0.35rem 2.5rem;
+  color: #667788;
+  font-size: 0.68rem;
+  line-height: 1.35;
+}
+
+.palette-empty-search {
+  margin: 1rem;
+  padding: 1rem;
+  border: 1px dashed #b8c8d8;
+  border-radius: 8px;
+  color: #667788;
+  font-size: 0.8rem;
+  line-height: 1.45;
+  text-align: center;
+  background: #f8fafc;
 }
 
 /* Dark mode styles */
@@ -186,7 +252,8 @@ body.dark-mode .category-title {
 }
 
 body.dark-mode .icon-count {
-  color: #a0a0a0;
+  background: #29465b;
+  color: #b9ddf5;
 }
 
 body.dark-mode .palette-header {
@@ -197,6 +264,12 @@ body.dark-mode .palette-header {
 body.dark-mode .palette-header h2 {
   color: #ffffff;
   font-weight: 700;
+}
+
+body.dark-mode .palette-library-meta,
+body.dark-mode .palette-search-summary,
+body.dark-mode .category-description {
+  color: #a0bfdf;
 }
 
 body.dark-mode .search-box {
@@ -213,8 +286,23 @@ body.dark-mode .search-box input::placeholder {
   color: #a0a0a0;
 }
 
+body.dark-mode .search-clear {
+  color: #b8d4e8;
+}
+
+body.dark-mode .search-clear:hover {
+  background: #29465b;
+  color: #ffffff;
+}
+
 body.dark-mode .palette-help {
   color: #a0bfdf;
+}
+
+body.dark-mode .palette-empty-search {
+  border-color: #566673;
+  background: #27333d;
+  color: #b8d4e8;
 }
 
 .icons-grid {

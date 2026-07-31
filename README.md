@@ -131,7 +131,9 @@ Toggle button to collapse or expand all groups at once for a bird's-eye view of 
 Visualize how data flows through your architecture step-by-step:
 - Interactive step-by-step walkthrough of the architecture
 - Service highlighting — each step highlights the involved services on the canvas
-- Animated connections showing data flow direction
+- Animated connections use a static base line plus a moving flow overlay so direction stays readable
+- Pause or resume supported connection motion from the toolbar, or control one connection from its right-click menu
+- Respects the operating system's reduced-motion preference
 - AI-generated descriptions for each workflow step
 - **Narrate** button (when Speech is configured) — avatar speaks all steps aloud with live closed captions in a draggable, resizable panel
 
@@ -191,14 +193,16 @@ A built-in feedback widget captures a rating, category, and free-text comment. S
 - Cloud sync with shareable URLs
 
 ### 🎨 Professional Diagramming
-- **714 Official Azure Icons + Microsoft Fabric icon set** — complete service library across 29 categories, now including Microsoft Fabric
+- **Complete official Azure V24 icon package** — all 714 SVGs from Microsoft's July 2026 package, hash-verified from a committed manifest, plus the Microsoft Fabric icon set
+- **Purpose-based icon catalog** — 21 bilingual categories organize services by meaning while preserving all 29 official source folders for compatibility
+- **Semantic icon search** — search names, acronyms, aliases, categories, purposes, and Japanese keywords
 - **89+ AI-mapped services** — with pricing, categories, and icon resolution (including ~21 Microsoft Fabric items)
 - **Smart Grouping** — Logical organization (Frontend, Backend, Data, Security)
-- **Editable Connections** — Labels, animations, custom styling
+- **Editable Connections** — Labels, direction, per-edge animation, and custom styling
 - **Alignment Tools** — Professional layout assistance
 - **Title Block & Legend** — Document-ready diagrams
 - **Canvas navigation hint** — a dismissable pill teaches scroll-to-zoom, right-click-drag to pan, and one-click **Fit to view** (so large diagrams are never "stuck")
-- **Maximize the canvas** — a **Hide/Show Toolbar** toggle collapses the top toolbar, and **Focus** mode hides the side panels plus the generation banner/model badge for a clean, diagram-only view (both persist across sessions)
+- **Maximize the canvas** — collapse any of the eight toolbar sections independently, hide the complete toolbar, or use **Focus** mode to hide side panels and canvas chrome; preferences persist across sessions
 
 ### 📤 Export Options
 | Format | Use Case |
@@ -633,6 +637,18 @@ npm run dev:full                    # alias for ./scripts/dev-all.sh
 # With avatar presenter on an alternate port (Vite :3002 + token server):
 npm run dev:avatar
 ```
+
+### Official Icon Library Maintenance
+
+```bash
+npm run icons:sync   # discover and overlay the current official Microsoft package
+npm run test:icons   # verify all manifest files and SHA-256 hashes
+```
+
+The sync is additive: it preserves legacy paths used by saved diagrams and service mappings.
+Official Azure icon assets remain subject to Microsoft's
+[Azure icon terms](https://learn.microsoft.com/azure/architecture/icons/), not this
+repository's MIT License.
 
 #### Avatar narrator troubleshooting
 

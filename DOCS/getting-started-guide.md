@@ -24,7 +24,7 @@ estimated_reading_time: 12
 
 ## What Is It?
 
-The Azure Architecture Diagram Builder is a web application that lets you design, validate, and deploy Azure cloud architectures. You describe what you need in plain English, and any of **twelve** AI models generates a professional diagram with official Azure icons, logical groupings, data-flow connections, real-time cost estimates, and Infrastructure as Code templates.
+The Azure Architecture Diagram Builder is a web application that lets you design, validate, and deploy Azure cloud architectures. You describe what you need in plain English, and any of **fourteen** AI models generates a professional diagram with official Azure icons, logical groupings, data-flow connections, real-time cost estimates, and Infrastructure as Code templates.
 
 You can produce two kinds of visuals from the same prompt: an interactive, editable **topology** diagram on the canvas, and a polished **Blueprint** (whiteboard-style) PNG for sharing. The app also validates against the Well-Architected Framework, estimates costs across regions, and generates deployment guides with Bicep.
 
@@ -38,8 +38,8 @@ Navigate to [https://aka.ms/diagram-builder](https://aka.ms/diagram-builder). Yo
 
 | Area | Location | Purpose |
 |------|----------|---------|
-| Toolbar | Top (two rows) | All primary actions: generate, validate, export, model selection, region, layout |
-| Icon Palette | Left sidebar | 714 official Azure service icons organized by category, with search and drag-and-drop |
+| Toolbar | Top (two rows) | Eight independently collapsible sections for generation, validation, export, model selection, region, layout, and other primary actions |
+| Icon Palette | Left sidebar | All 714 official Azure V24 icons plus Fabric icons, organized into 21 purpose-based categories with bilingual semantic search |
 | Canvas | Center | Your working diagram area with grid snapping, minimap, and zoom controls |
 
 > [!TIP]
@@ -153,8 +153,9 @@ Your diagram is fully interactive. Here are the key actions:
 
 - Double-click an edge label to edit it.
 - Drag edge labels to reposition them along the path.
-- Right-click an edge to change direction (one-way forward, reverse, or bidirectional).
-- Connections animate with flow dots showing data direction.
+- Right-click an edge to change direction (one-way forward, reverse, or bidirectional) or control animation for that connection.
+- Use **Flow motion** in the **Arrange** toolbar section to pause or resume supported connection animations.
+- Animated edges keep a static base line under the moving overlay, and motion is disabled automatically when the operating system requests reduced motion.
 
 ### Alignment Tools
 
@@ -236,7 +237,7 @@ Two comparison modes let you evaluate which model produces the best results for 
 ### Architecture Comparison
 
 1. Click **"Compare Models"** in the toolbar.
-2. Select two or more models from the twelve available options.
+2. Select two or more models from the fourteen available options.
 3. Enter your architecture prompt and click **Compare**.
 4. All selected models run in parallel. Results appear side by side showing:
    - Service count, connection count, group count, workflow steps
@@ -272,14 +273,15 @@ After the comparison completes, a **"Present"** button appears in the results pa
 
 Click the **AI Model** dropdown in the toolbar to open the settings popover.
 
-- Choose a global model from twelve options:
-  - **OpenAI (GPT-5.x):** GPT-5.1, GPT-5.2, GPT-5.2 Codex, GPT-5.3 Codex, GPT-5.4, GPT-5.4 Mini
-  - **Partner models:** DeepSeek V3.2 Speciale, DeepSeek V4 Pro, Grok 4.1 Fast, Grok 4.3, Mistral Large 3, Kimi K2.5
+- Choose a global model from fourteen options:
+  - **OpenAI (GPT-5.x):** GPT-5.1, GPT-5.2, GPT-5.4, GPT-5.4 Mini, GPT-5.6 Sol, GPT-5.6 Terra, GPT-5.6 Luna
+  - **Partner models:** DeepSeek V3.2 Speciale, DeepSeek V4 Pro, Grok 4.1 Fast, Grok 4.3, Mistral Large 3, Kimi K2.5, Kimi K2.7 Code
 - Set reasoning effort (none, low, medium, high) for models that support it (the GPT-5.x family).
-- Override the model independently for three features:
+- Override the model independently for four features:
   - Architecture Generation
   - Architecture Validation
   - Deployment Guide & Bicep
+  - Blueprint Diagrams
 - Reset all overrides with a single button.
 
 > [!NOTE]
@@ -297,7 +299,7 @@ When the AI generates an architecture, a **Workflow Panel** appears on the right
 - Use this to walk stakeholders through the architecture during presentations.
 
 > [!TIP]
-> Click the **Focus** button in the toolbar to hide the side panels, legend, generation banner, and model badge — leaving just the diagram for demos and screen sharing. A separate **Hide Toolbar** toggle collapses the top toolbar for even more canvas space (both preferences persist). A dismissable hint on the canvas also reminds you that you can scroll to zoom, right-click-drag to pan, and click **Fit to view**.
+> Click any toolbar section heading to collapse just that section. Use **Focus** to hide side panels, legend, generation banner, and model badge, or **Hide Toolbar** to collapse the entire top toolbar. These preferences persist. A dismissable hint on the canvas also reminds you that you can scroll to zoom, right-click-drag to pan, and click **Fit to view**.
 
 ---
 
@@ -365,9 +367,9 @@ Click **Apply Layout** to recalculate all node positions. The current settings s
 
 ## Step 14: Use the Icon Palette for Manual Design
 
-The left sidebar contains 714 official Azure service icons across 29 categories (AI + Machine Learning, Compute, Databases, Networking, Security, Storage, and more).
+The left sidebar contains every icon in Microsoft's Azure V24 package: 714 official SVGs from 29 source folders. The palette presents them in 21 bilingual, purpose-based categories and keeps the Microsoft Fabric icon set alongside them.
 
-1. Expand a category or use the search box to find a service.
+1. Expand a category or search by product name, acronym, alias, purpose, or Japanese keyword.
 2. Drag an icon from the palette onto the canvas.
 3. The node appears with its official icon, category color, and real-time pricing.
 4. Drop it inside an existing group to auto-parent it.

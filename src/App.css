@@ -1118,13 +1118,13 @@ body.dark-mode .toolbar-dropdown-separator {
 /* Edge flow animation (custom, supports reverse) */
 @keyframes edge-dash-forward {
   to {
-    stroke-dashoffset: -16;
+    stroke-dashoffset: -12;
   }
 }
 
 @keyframes edge-dash-reverse {
   to {
-    stroke-dashoffset: 16;
+    stroke-dashoffset: 12;
   }
 }
 
@@ -1140,6 +1140,25 @@ body.dark-mode .toolbar-dropdown-separator {
   100% {
     stroke-opacity: 0.65;
     filter: drop-shadow(0 0 0 rgba(0, 120, 212, 0));
+  }
+}
+
+.editable-edge-flow-path {
+  stroke: #38bdf8;
+  opacity: 0.95;
+  vector-effect: non-scaling-stroke;
+  filter: drop-shadow(0 0 2px rgba(0, 120, 212, 0.5));
+}
+
+body.dark-mode .editable-edge-flow-path {
+  stroke: #7dd3fc;
+  filter: drop-shadow(0 0 3px rgba(125, 211, 252, 0.55));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .editable-edge-flow-path {
+    display: none;
+    animation: none !important;
   }
 }
 
@@ -1339,6 +1358,16 @@ body.dark-mode .toolbar-dropdown-separator {
   text-align: center;
 }
 
+.context-menu-item .menu-icon svg {
+  display: block;
+  margin: 0 auto;
+}
+
+.context-menu-separator {
+  height: 1px;
+  background: #e0e0e0;
+}
+
 /* Loading banner animation */
 @keyframes pulse {
   0%, 100% {
@@ -1514,9 +1543,16 @@ body.dark-mode .prompt-text strong {
 
 
 /* Context menu in dark mode */
-body.dark-mode .context-menu {
+body.dark-mode .context-menu,
+body.dark-mode .edge-context-menu {
   background: #2d2d2d;
   border: 1px solid #404040;
+}
+
+body.dark-mode .context-menu-header {
+  background: #252525;
+  color: #b8c4cf;
+  border-color: #404040;
 }
 
 body.dark-mode .context-menu-item {
@@ -1527,6 +1563,10 @@ body.dark-mode .context-menu-item {
 body.dark-mode .context-menu-item:hover {
   background: #3d3d3d;
   color: #60a5fa;
+}
+
+body.dark-mode .context-menu-separator {
+  background: #404040;
 }
 
 /* Icon palette in dark mode */
@@ -1634,10 +1674,11 @@ body.dark-mode .react-flow__handle.valid {
 .toolbar-group.toolbar-group--labeled {
   position: relative;
   align-self: stretch;
-  padding: 1.25rem 0.45rem 0.42rem;
+  padding: 0.3rem 0.45rem 0.42rem;
   border: 1px solid rgba(255, 255, 255, 0.24);
   border-radius: 9px;
   background: rgba(0, 45, 80, 0.14);
+  transition: background-color 160ms ease, border-color 160ms ease;
 }
 
 .toolbar-group.toolbar-group--labeled + .toolbar-group.toolbar-group--labeled {
@@ -1647,17 +1688,55 @@ body.dark-mode .react-flow__handle.valid {
 }
 
 .toolbar-group--labeled::before {
-  content: attr(data-label);
-  position: absolute;
-  top: 0.25rem;
-  left: 0.5rem;
+  content: none;
+}
+
+.toolbar-group-label {
+  flex: 0 0 100%;
+  min-width: 0;
+  min-height: 19px;
+  margin: 0;
+  padding: 0.05rem 0.1rem 0.15rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.22rem;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
   color: rgba(255, 255, 255, 0.76);
   font-size: 0.62rem;
   font-weight: 750;
+  font-family: inherit;
   letter-spacing: 0.075em;
   line-height: 1;
   text-transform: uppercase;
-  pointer-events: none;
+  text-align: left;
+  cursor: pointer;
+}
+
+.toolbar-group-label:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+}
+
+.toolbar-group-label:focus-visible {
+  outline: 2px solid rgba(255, 255, 255, 0.9);
+  outline-offset: 1px;
+}
+
+.toolbar-group.toolbar-group-collapsed {
+  align-self: flex-start;
+  padding-bottom: 0.3rem;
+  background: rgba(0, 45, 80, 0.08);
+}
+
+.toolbar-group.toolbar-group-collapsed > :not(.toolbar-group-label) {
+  display: none !important;
+}
+
+.toolbar-group.toolbar-group-collapsed .toolbar-group-label {
+  flex-basis: auto;
+  padding-bottom: 0.05rem;
 }
 
 .app-header .toolbar-group--labeled .btn,
@@ -1669,6 +1748,53 @@ body.dark-mode .react-flow__handle.valid {
   font-weight: 600;
   box-shadow: none;
   animation: none;
+}
+
+.app-header {
+  --toolbar-control-font-size: 0.8rem;
+}
+
+.app-header .toolbar-group--labeled .btn,
+.app-header .toolbar-group--labeled label.btn,
+.app-header .toolbar-group--labeled .model-popover-trigger,
+.app-header .toolbar-group--labeled .region-selector-button,
+.app-header .toolbar-group--labeled .pricing-mode-btn,
+.app-header .toolbar-group--labeled .toolbar-dropdown-item,
+.app-header .toolbar-group--labeled .toolbar-dropdown-select {
+  font-family: inherit;
+  font-size: var(--toolbar-control-font-size) !important;
+  line-height: 1.2;
+}
+
+.app-header .toolbar-group--labeled .model-popover-label,
+.app-header .toolbar-group--labeled .model-popover-reasoning {
+  font-size: var(--toolbar-control-font-size) !important;
+}
+
+.app-header .toolbar-group--labeled .model-popover-trigger,
+.app-header .toolbar-group--labeled .region-selector-button {
+  min-height: 34px;
+  padding: 0.42rem 0.72rem !important;
+  border: 1px solid rgba(255, 255, 255, 0.28) !important;
+  border-radius: 7px !important;
+  background: rgba(255, 255, 255, 0.14) !important;
+  color: #fff !important;
+  box-shadow: none !important;
+  animation: none !important;
+}
+
+.app-header .toolbar-group--labeled .model-popover-trigger:hover,
+.app-header .toolbar-group--labeled .region-selector-button:hover {
+  border-color: rgba(255, 255, 255, 0.46) !important;
+  background: rgba(255, 255, 255, 0.24) !important;
+  box-shadow: none !important;
+}
+
+.app-header .toolbar-group--labeled .model-popover-label,
+.app-header .toolbar-group--labeled .model-popover-reasoning,
+.app-header .toolbar-group--labeled .region-name,
+.app-header .toolbar-group--labeled .region-arrow {
+  color: #fff !important;
 }
 
 .app-header .toolbar-group--labeled .btn-secondary,
@@ -1716,13 +1842,17 @@ body.dark-mode .app-header .toolbar-group--labeled .btn[aria-expanded='true'] {
 @media (max-width: 640px) {
   .toolbar-group.toolbar-group--labeled,
   .toolbar-group.toolbar-group--labeled + .toolbar-group.toolbar-group--labeled {
-    padding: 1.5rem 0.45rem 0.5rem !important;
+    padding: 0.42rem 0.45rem 0.5rem !important;
     border: 1px solid rgba(255, 255, 255, 0.24) !important;
     border-radius: 10px;
   }
 
-  .toolbar-group--labeled::before {
-    top: 0.38rem;
-    left: 0.55rem;
+  .toolbar-group-label {
+    grid-column: 1 / -1;
+  }
+
+  .toolbar-group.toolbar-group-collapsed {
+    display: flex;
+    width: auto;
   }
 }

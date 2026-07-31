@@ -20,7 +20,7 @@ import { captureDiagramAsPng, captureDiagramAsSvg } from './utils/captureCanvas'
 import { animateEdgeFlow } from './utils/animateEdges';
 import { sequenceWorkflowSvg } from './utils/sequenceWorkflow';
 import { buildWorkflowMarkdown } from './services/workflowNarrativeExporter';
-import { Download, Save, Upload, DollarSign, Shield, ShieldCheck, FileText, FileCode, ChevronDown, Clock, Camera, Loader, GitCompare, RefreshCw, PanelLeftClose, Minimize2, Maximize2, Presentation, MessageSquare, MessagesSquare, HelpCircle, Hand, ZoomIn, Frame, X, PanelTopClose, PanelTopOpen, DownloadCloud, Sun, Moon } from 'lucide-react';
+import { Download, Save, Upload, DollarSign, Shield, ShieldCheck, FileText, FileCode, ChevronDown, ChevronRight, Clock, Camera, Loader, GitCompare, RefreshCw, PanelLeftClose, Minimize2, Maximize2, Presentation, MessageSquare, MessagesSquare, HelpCircle, Hand, ZoomIn, Frame, X, PanelTopClose, PanelTopOpen, DownloadCloud, Sun, Moon, Play, Pause } from 'lucide-react';
 import IconPalette from './components/IconPalette';
 import AzureNode from './components/AzureNode';
 import GroupNode from './components/GroupNode';
@@ -122,8 +122,28 @@ type ExportHistoryItem = {
 
 const EXPORT_HISTORY_STORAGE_KEY = 'azure-diagram-builder.exportHistory.v1';
 const EDGE_STYLE_STORAGE_KEY = 'azure-diagram-builder.edgeStyle.v1';
+const EDGE_ANIMATION_STORAGE_KEY = 'azure-diagram-builder.edgeAnimation.v1';
 const CANVAS_HINT_STORAGE_KEY = 'azure-diagram-builder.canvasHintDismissed.v1';
 const HEADER_COLLAPSED_STORAGE_KEY = 'azure-diagram-builder.headerCollapsed.v1';
+const TOOLBAR_SECTIONS_STORAGE_KEY = 'azure-diagram-builder.toolbarSections.v1';
+
+const TOOLBAR_SECTION_IDS = [
+  'context',
+  'create',
+  'import',
+  'file',
+  'workspace',
+  'history',
+  'arrange',
+  'review',
+] as const;
+type ToolbarSectionId = typeof TOOLBAR_SECTION_IDS[number];
+const TOOLBAR_SECTION_ID_SET = new Set<string>(TOOLBAR_SECTION_IDS);
+
+const normalizeLayoutEdgeStyle = (value: unknown): LayoutEdgeStyle =>
+  value === 'straight' || value === 'smooth' || value === 'orthogonal'
+    ? value
+    : 'orthogonal';
 
 type RestoredWorkflowStep = Record<string, unknown> & {
   step: number;
@@ -494,6 +514,22 @@ function App() {
     if (stored !== null) return stored === '1';
     return window.matchMedia('(max-width: 1440px)').matches;
   });
+  const [collapsedToolbarSections, setCollapsedToolbarSections] = useState<Set<ToolbarSectionId>>(() => {
+    const stored = readLocalStorage(TOOLBAR_SECTIONS_STORAGE_KEY);
+    if (!stored) return new Set();
+    try {
+      const parsed = JSON.parse(stored);
+      if (!Array.isArray(parsed)) return new Set();
+      return new Set(
+        parsed.filter(
+          (sectionId): sectionId is ToolbarSectionId =>
+            typeof sectionId === 'string' && TOOLBAR_SECTION_ID_SET.has(sectionId)
+        )
+      );
+    } catch {
+      return new Set();
+    }
+  });
   const [isCompareValidationOpen, setIsCompareValidationOpen] = useState(false);
   const [isFeedbackModalOpen, setIsFeedbackModalOpen] = useState(false);
   const [isFeedbackToastOpen, setIsFeedbackToastOpen] = useState(false);
@@ -562,6 +598,9 @@ function App() {
     }
     return 'orthogonal';
   });
+  const [animateConnections, setAnimateConnections] = useState(() =>
+    readBooleanPreference(EDGE_ANIMATION_STORAGE_KEY, true)
+  );
   const [layoutEmphasizePrimaryPath, setLayoutEmphasizePrimaryPath] = useState(false);
   const [layoutEngine, setLayoutEngine] = useState<LayoutEngineType>('dagre');
   
@@ -614,6 +653,17 @@ function App() {
       // ignore
     }
   }, [layoutEdgeStyle]);
+
+  useEffect(() => {
+    writeLocalStorage(EDGE_ANIMATION_STORAGE_KEY, animateConnections ? '1' : '0');
+  }, [animateConnections]);
+
+  useEffect(() => {
+    writeLocalStorage(
+      TOOLBAR_SECTIONS_STORAGE_KEY,
+      JSON.stringify([...collapsedToolbarSections])
+    );
+  }, [collapsedToolbarSections]);
 
   // One-time gentle pulse on the feedback button ~15s after load so it earns a
   // glance without looping/nagging. Suppressed once feedback has been given.
@@ -988,14 +1038,21 @@ function App() {
       if (typeof next.targetHandle === 'string' && TGT_FIX[next.targetHandle]) {
         next.targetHandle = TGT_FIX[next.targetHandle];
       }
+      const baseFlowAnimated = Boolean(next.data?.baseFlowAnimated ?? next.data?.flowAnimated ?? true);
+      const edgeAnimationPreference = typeof next.data?.flowAnimated === 'boolean'
+        ? next.data.flowAnimated
+        : baseFlowAnimated;
       next.data = {
         ...next.data,
+        baseFlowAnimated,
+        flowAnimated: animateConnections && edgeAnimationPreference,
+        pathStyle: normalizeLayoutEdgeStyle(next.data?.pathStyle ?? layoutEdgeStyle),
         onLabelChange: handleEdgeLabelChange,
         onLabelOffsetChange: handleEdgeLabelOffsetChange,
       };
       return next;
     });
-  }, [handleEdgeLabelChange, handleEdgeLabelOffsetChange]);
+  }, [handleEdgeLabelChange, handleEdgeLabelOffsetChange, animateConnections, layoutEdgeStyle]);
 
   const onConnect = useCallback(
     (params: Connection | Edge) => setEdges((eds) => addEdge({ 
@@ -1012,14 +1069,14 @@ function App() {
         connectionType: 'sync',
         direction: 'forward',
         baseFlowAnimated: true,
-        flowAnimated: true,
+        flowAnimated: animateConnections,
         flowMode: 'directional',
         pathStyle: layoutEdgeStyle,
         labelOffsetX: 0,
         labelOffsetY: 0,
       },
     }, eds)),
-    [setEdges, handleEdgeLabelChange, handleEdgeLabelOffsetChange, layoutEdgeStyle]
+    [setEdges, handleEdgeLabelChange, handleEdgeLabelOffsetChange, animateConnections, layoutEdgeStyle]
   );
 
   // Bulk select operations
@@ -1229,13 +1286,52 @@ function App() {
     setEdgeContextMenu(null);
   }, []);
 
+  const setConnectionAnimations = useCallback((enabled: boolean) => {
+    setAnimateConnections(enabled);
+    setEdges((currentEdges) => currentEdges.map((edge) => {
+      const baseFlowAnimated = Boolean(edge.data?.baseFlowAnimated ?? edge.data?.flowAnimated ?? true);
+      return {
+        ...edge,
+        animated: false,
+        data: {
+          ...edge.data,
+          baseFlowAnimated,
+          flowAnimated: enabled && baseFlowAnimated,
+          onLabelChange: handleEdgeLabelChange,
+          onLabelOffsetChange: handleEdgeLabelOffsetChange,
+        },
+      };
+    }));
+  }, [handleEdgeLabelChange, handleEdgeLabelOffsetChange, setEdges]);
+
+  const toggleEdgeAnimation = useCallback((edgeId: string) => {
+    setEdges((currentEdges) => currentEdges.map((edge) => {
+      if (edge.id !== edgeId) return edge;
+      const flowAnimated = !Boolean(edge.data?.flowAnimated);
+      return {
+        ...edge,
+        animated: false,
+        data: {
+          ...edge.data,
+          baseFlowAnimated: flowAnimated
+            ? true
+            : Boolean(edge.data?.baseFlowAnimated ?? true),
+          flowAnimated,
+          onLabelChange: handleEdgeLabelChange,
+          onLabelOffsetChange: handleEdgeLabelOffsetChange,
+        },
+      };
+    }));
+    closeEdgeContextMenu();
+  }, [closeEdgeContextMenu, handleEdgeLabelChange, handleEdgeLabelOffsetChange, setEdges]);
+
   const setEdgeDirection = useCallback((edgeId: string, direction: 'forward' | 'reverse' | 'bidirectional') => {
     setEdges((eds) => eds.map((edge) => {
       if (edge.id === edgeId) {
         let markerEnd: any = undefined;
         let markerStart: any = undefined;
         const baseFlowAnimated = Boolean(edge.data?.baseFlowAnimated ?? edge.data?.flowAnimated ?? true);
-        const flowAnimated = baseFlowAnimated;
+        const flowAnimated = animateConnections && baseFlowAnimated;
         const flowMode = direction === 'bidirectional' ? 'pulse' : 'directional';
         
         switch (direction) {
@@ -1270,7 +1366,7 @@ function App() {
       return edge;
     }));
     closeEdgeContextMenu();
-  }, [setEdges, closeEdgeContextMenu]);
+  }, [animateConnections, setEdges, closeEdgeContextMenu]);
 
   const onDragOver = useCallback((event: React.DragEvent) => {
     event.preventDefault();
@@ -2775,7 +2871,7 @@ function App() {
           break;
       }
 
-      const flowAnimated = baseFlowAnimated;
+      const flowAnimated = animateConnections && baseFlowAnimated;
       
       return {
         id: `edge-${index}`,
@@ -2916,7 +3012,7 @@ function App() {
       alert(t("Failed to generate diagram. Check console for details."));
       throw error;
     }
-  }, [setNodes, setEdges, reactFlowInstance, nodes, edges, titleBlockData, architecturePrompt, originalPrompt, validationResult, workflow, isFeedbackModalOpen, layoutEdgeStyle, t]);
+  }, [setNodes, setEdges, reactFlowInstance, nodes, edges, titleBlockData, architecturePrompt, originalPrompt, validationResult, workflow, isFeedbackModalOpen, animateConnections, layoutEdgeStyle, t]);
   handleAIGenerateRef.current = handleAIGenerate;
 
   // ── az prototype import ──────────────────────────────────────────────
@@ -3379,6 +3475,46 @@ function App() {
     }
   }, [nodes, edges, architecturePrompt, titleBlockData.architectureName, totalMonthlyCost, t, language]);
 
+  const toggleToolbarSection = useCallback((sectionId: ToolbarSectionId) => {
+    if (sectionId === 'create') setIsModelSettingsOpen(false);
+    if (sectionId === 'file') setIsExportMenuOpen(false);
+    if (sectionId === 'arrange') {
+      setIsLayoutMenuOpen(false);
+      setIsBulkSelectMenuOpen(false);
+      setIsStylePresetMenuOpen(false);
+    }
+
+    setCollapsedToolbarSections((current) => {
+      const next = new Set(current);
+      if (next.has(sectionId)) next.delete(sectionId);
+      else next.add(sectionId);
+      return next;
+    });
+  }, []);
+
+  const toolbarSectionHeading = (sectionId: ToolbarSectionId, label: string) => {
+    const isCollapsed = collapsedToolbarSections.has(sectionId);
+    return (
+      <button
+        type="button"
+        className="toolbar-group-label"
+        aria-expanded={!isCollapsed}
+        onClick={() => toggleToolbarSection(sectionId)}
+        title={localize(language, {
+          en: isCollapsed ? 'Expand section' : 'Collapse section',
+          ja: isCollapsed ? 'セクションを展開' : 'セクションを折りたたむ',
+        })}
+      >
+        {isCollapsed ? <ChevronRight size={12} aria-hidden="true" /> : <ChevronDown size={12} aria-hidden="true" />}
+        <span>{label}</span>
+      </button>
+    );
+  };
+
+  const contextMenuEdge = edgeContextMenu
+    ? edges.find((edge) => edge.id === edgeContextMenu.edgeId)
+    : undefined;
+
   return (
     <div className="app">
       <header className={`app-header${isHeaderCollapsed ? ' header-collapsed' : ''}`}>
@@ -3404,10 +3540,11 @@ function App() {
             {/* Row 1: Context, creation, import, file, and workspace actions */}
             <div className="header-actions">
               <div
-                className="toolbar-group toolbar-group--labeled"
+                className={`toolbar-group toolbar-group--labeled${collapsedToolbarSections.has('context') ? ' toolbar-group-collapsed' : ''}`}
                 data-label={localize(language, { en: 'Context', ja: 'コンテキスト' })}
                 aria-label={localize(language, { en: 'Context and pricing', ja: 'コンテキストと料金' })}
               >
+                {toolbarSectionHeading('context', localize(language, { en: 'Context', ja: 'コンテキスト' }))}
                 <RegionSelector onRegionChange={handleRegionChange} />
                 {totalMonthlyCost > 0 && (
                   <>
@@ -3458,10 +3595,11 @@ function App() {
               </div>
 
               <div
-                className="toolbar-group toolbar-group--labeled"
+                className={`toolbar-group toolbar-group--labeled${collapsedToolbarSections.has('create') ? ' toolbar-group-collapsed' : ''}`}
                 data-label={localize(language, { en: 'Create & AI', ja: '作成・AI' })}
                 aria-label={localize(language, { en: 'Create and AI tools', ja: '作成とAIツール' })}
               >
+                {toolbarSectionHeading('create', localize(language, { en: 'Create & AI', ja: '作成・AI' }))}
                 <button onClick={addGroupBox} className="btn btn-secondary" title={t("Add grouping box")}>
                   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                     <rect x="3" y="3" width="18" height="18" rx="2" strokeDasharray="4 4" />
@@ -3514,10 +3652,11 @@ function App() {
               </div>
 
               <div
-                className="toolbar-group toolbar-group--labeled"
+                className={`toolbar-group toolbar-group--labeled${collapsedToolbarSections.has('import') ? ' toolbar-group-collapsed' : ''}`}
                 data-label={localize(language, { en: 'Import', ja: 'インポート' })}
                 aria-label={localize(language, { en: 'Import architecture', ja: 'アーキテクチャのインポート' })}
               >
+                {toolbarSectionHeading('import', localize(language, { en: 'Import', ja: 'インポート' }))}
                 <label className={`btn btn-secondary${isImportingTemplate ? ' btn-parsing' : ''}`} title={t("Import Bicep, Terraform, or ARM template to generate diagram")}>
                   {isImportingTemplate ? <Loader size={18} className="spin-icon" /> : <FileCode size={18} />}
                   {isImportingTemplate ? t("Parsing...") : t("Import Template")}
@@ -3547,10 +3686,11 @@ function App() {
               </div>
 
               <div
-                className="toolbar-group toolbar-group--labeled"
+                className={`toolbar-group toolbar-group--labeled${collapsedToolbarSections.has('file') ? ' toolbar-group-collapsed' : ''}`}
                 data-label={localize(language, { en: 'File & export', ja: 'ファイル・出力' })}
                 aria-label={localize(language, { en: 'File and export actions', ja: 'ファイルと出力操作' })}
               >
+                {toolbarSectionHeading('file', localize(language, { en: 'File & export', ja: 'ファイル・出力' }))}
                 <button onClick={saveDiagram} className="btn btn-secondary" title={t("Save diagram")}>
                   <Save size={18} />
                   {' '}{t("Save")}{' '}</button>
@@ -3802,10 +3942,11 @@ function App() {
               </div>
 
               <div
-                className="toolbar-group toolbar-group--labeled"
+                className={`toolbar-group toolbar-group--labeled${collapsedToolbarSections.has('workspace') ? ' toolbar-group-collapsed' : ''}`}
                 data-label={localize(language, { en: 'Workspace', ja: '表示・操作' })}
                 aria-label={localize(language, { en: 'Workspace and help actions', ja: '表示・操作とヘルプ' })}
               >
+                {toolbarSectionHeading('workspace', localize(language, { en: 'Workspace', ja: '表示・操作' }))}
                 <button
                   className="btn btn-secondary"
                   onClick={() => {
@@ -3861,10 +4002,11 @@ function App() {
             {/* Row 2: History, arrangement, and review actions */}
             <div className="header-actions">
               <div
-                className="toolbar-group toolbar-group--labeled"
+                className={`toolbar-group toolbar-group--labeled${collapsedToolbarSections.has('history') ? ' toolbar-group-collapsed' : ''}`}
                 data-label={localize(language, { en: 'History', ja: '履歴' })}
                 aria-label={localize(language, { en: 'History and snapshots', ja: '履歴とスナップショット' })}
               >
+                {toolbarSectionHeading('history', localize(language, { en: 'History', ja: '履歴' }))}
                 <button 
                   onClick={() => setIsVersionHistoryModalOpen(true)} 
                   className="btn btn-secondary" 
@@ -3883,10 +4025,11 @@ function App() {
               </div>
 
               <div
-                className="toolbar-group toolbar-group--labeled"
+                className={`toolbar-group toolbar-group--labeled${collapsedToolbarSections.has('arrange') ? ' toolbar-group-collapsed' : ''}`}
                 data-label={localize(language, { en: 'Arrange', ja: '配置・選択' })}
                 aria-label={localize(language, { en: 'Arrange, select, and style', ja: '配置、選択、スタイル' })}
               >
+                {toolbarSectionHeading('arrange', localize(language, { en: 'Arrange', ja: '配置・選択' }))}
                 <div className="toolbar-dropdown" ref={layoutMenuRef}>
                   <button
                     onClick={() => setIsLayoutMenuOpen((v) => !v)}
@@ -4000,6 +4143,24 @@ function App() {
                     </div>
                   )}
                 </div>
+
+                <button
+                  type="button"
+                  className={`btn btn-secondary${animateConnections ? ' btn-active' : ''}`}
+                  onClick={() => setConnectionAnimations(!animateConnections)}
+                  aria-pressed={animateConnections}
+                  title={localize(language, {
+                    en: animateConnections
+                      ? 'Pause animated connection flow'
+                      : 'Animate supported connection flow',
+                    ja: animateConnections
+                      ? '接続線のアニメーションを停止'
+                      : '対応する接続線をアニメーション表示',
+                  })}
+                >
+                  {animateConnections ? <Pause size={18} /> : <Play size={18} />}
+                  {localize(language, { en: 'Flow motion', ja: '線アニメ' })}
+                </button>
 
                 <div className="toolbar-dropdown" ref={bulkSelectMenuRef}>
                   <button
@@ -4139,10 +4300,11 @@ function App() {
               </div>
 
               <div
-                className="toolbar-group toolbar-group--labeled"
+                className={`toolbar-group toolbar-group--labeled${collapsedToolbarSections.has('review') ? ' toolbar-group-collapsed' : ''}`}
                 data-label={localize(language, { en: 'Review', ja: 'レビュー・ガイド' })}
                 aria-label={localize(language, { en: 'Architecture review and guides', ja: 'アーキテクチャのレビューとガイド' })}
               >
+                {toolbarSectionHeading('review', localize(language, { en: 'Review', ja: 'レビュー・ガイド' }))}
                 <button
                   onClick={handleValidateArchitecture}
                   className="btn btn-secondary"
@@ -4528,6 +4690,25 @@ function App() {
               >
                 <span className="menu-icon">{t("↔")}</span>
                 <span>{t("Bidirectional")}</span>
+              </button>
+              <div className="context-menu-separator" role="separator" />
+              <div className="context-menu-header">
+                {localize(language, { en: 'Flow animation', ja: 'フローアニメーション' })}
+              </div>
+              <button
+                className="context-menu-item"
+                onClick={() => toggleEdgeAnimation(edgeContextMenu.edgeId)}
+                aria-pressed={Boolean(contextMenuEdge?.data?.flowAnimated)}
+              >
+                <span className="menu-icon">
+                  {contextMenuEdge?.data?.flowAnimated ? <Pause size={16} /> : <Play size={16} />}
+                </span>
+                <span>
+                  {localize(language, {
+                    en: contextMenuEdge?.data?.flowAnimated ? 'Pause this connection' : 'Animate this connection',
+                    ja: contextMenuEdge?.data?.flowAnimated ? 'この接続線を停止' : 'この接続線をアニメーション',
+                  })}
+                </span>
               </button>
             </div>
           </>

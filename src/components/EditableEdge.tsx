@@ -141,7 +141,8 @@ const EditableEdge: React.FC<EdgeProps> = ({
   const flowAnimated = Boolean(data?.flowAnimated);
   const shouldDirectionalFlow = flowAnimated && flowMode === 'directional' && (direction === 'forward' || direction === 'reverse');
   const shouldPulseFlow = flowAnimated && flowMode === 'pulse' && direction === 'bidirectional';
-  const dashArray = (style as any)?.strokeDasharray;
+  const edgeStroke = (style as any)?.stroke ?? '#0078d4';
+  const edgeStrokeWidth = Number((style as any)?.strokeWidth) || 2;
 
   return (
     <>
@@ -151,23 +152,31 @@ const EditableEdge: React.FC<EdgeProps> = ({
         markerStart={markerStart}
         style={{
           ...style,
-          ...(shouldPulseFlow
-            ? {
-                animation: 'edge-pulse 1.4s ease-in-out infinite',
-              }
-            : shouldDirectionalFlow
-              ? {
-                  strokeDasharray: dashArray ?? '6 6',
-                  animation:
-                    direction === 'reverse'
-                      ? 'edge-dash-reverse 1s linear infinite'
-                      : 'edge-dash-forward 1s linear infinite',
-                }
-              : {
-                  animation: undefined,
-                }),
+          animation: undefined,
         }}
       />
+      {flowAnimated && (
+        <path
+          d={edgePath}
+          fill="none"
+          stroke={edgeStroke}
+          strokeWidth={Math.max(2, edgeStrokeWidth)}
+          strokeLinecap="round"
+          pointerEvents="none"
+          className="editable-edge-flow-path"
+          style={{
+            strokeDasharray: shouldPulseFlow ? '2 10' : '3 9',
+            animation: shouldPulseFlow
+              ? 'edge-pulse 1.4s ease-in-out infinite'
+              : shouldDirectionalFlow
+                ? direction === 'reverse'
+                  ? 'edge-dash-reverse 0.9s linear infinite'
+                  : 'edge-dash-forward 0.9s linear infinite'
+                : undefined,
+          }}
+          aria-hidden="true"
+        />
+      )}
       <EdgeLabelRenderer>
         <div
           style={{

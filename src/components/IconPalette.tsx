@@ -2,26 +2,48 @@
 // Licensed under the MIT License.
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Search, ChevronDown, ChevronRight, PanelLeftClose, PanelLeftOpen, Plus } from 'lucide-react';
-import { iconCategories, loadIconsFromCategory, AzureIcon, loadIcon } from '../utils/iconLoader';
+import {
+  ChevronDown,
+  ChevronRight,
+  PanelLeftClose,
+  PanelLeftOpen,
+  Plus,
+  Search,
+  X,
+} from 'lucide-react';
+import {
+  getIconLibraryStats,
+  iconMatchesSearch,
+  loadIcon,
+  loadIconsFromPaletteCategory,
+  paletteCategories,
+  type AzureIcon,
+} from '../utils/iconLoader';
 import './IconPalette.css';
 import { useLanguage } from '../i18n/LanguageContext';
+import { localize } from '../i18n/localization';
+import type { IconPaletteCategoryId } from '../data/iconCatalog';
 
 interface IconPaletteProps {
   forceCollapsed?: number;
   onAddIcon?: (icon: AzureIcon) => void;
 }
 
-function iconMatchesSearch(icon: AzureIcon, term: string): boolean {
-  return [icon.name, icon.category, ...icon.searchTerms]
-    .some(value => value.toLowerCase().includes(term));
-}
+const libraryStats = getIconLibraryStats();
 
 const IconPalette: React.FC<IconPaletteProps> = ({ forceCollapsed, onAddIcon }) => {
-  const { t, translate } = useLanguage();
+  const { t, language } = useLanguage();
   const [isCollapsed, setIsCollapsed] = useState(
-    () => typeof window !== 'undefined' && window.matchMedia('(max-width: 640px)').matches
+    () => typeof window !== 'undefined' && window.matchMedia('(max-width: 640px)').matches,
   );
+  const [expandedCategories, setExpandedCategories] = useState<Set<IconPaletteCategoryId>>(
+    new Set(['ai']),
+  );
+  const [searchTerm, setSearchTerm] = useState('');
+  const [categoryIcons, setCategoryIcons] = useState<Map<IconPaletteCategoryId, AzureIcon[]>>(
+    new Map(),
+  );
+  const [iconUrls, setIconUrls] = useState<Map<string, string>>(new Map());
 
   useEffect(() => {
     if (forceCollapsed) setIsCollapsed(true);
@@ -35,10 +57,6 @@ const IconPalette: React.FC<IconPaletteProps> = ({ forceCollapsed, onAddIcon }) 
     mobileViewport.addEventListener('change', collapseForMobile);
     return () => mobileViewport.removeEventListener('change', collapseForMobile);
   }, []);
-  const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set(['ai + machine learning']));
-  const [searchTerm, setSearchTerm] = useState('');
-  const [categoryIcons, setCategoryIcons] = useState<Map<string, AzureIcon[]>>(new Map());
-  const [iconUrls, setIconUrls] = useState<Map<string, string>>(new Map());
 
   const loadIconUrls = useCallback(async (icons: AzureIcon[]) => {
     if (icons.length === 0) return;
@@ -60,7 +78,7 @@ const IconPalette: React.FC<IconPaletteProps> = ({ forceCollapsed, onAddIcon }) 
     });
   }, []);
 
-  const toggleCategory = (category: string) => {
+  const toggleCategory = (category: IconPaletteCategoryId) => {
     const isExpanding = !expandedCategories.has(category);
     setExpandedCategories(previous => {
       const next = new Set(previous);
@@ -74,23 +92,20 @@ const IconPalette: React.FC<IconPaletteProps> = ({ forceCollapsed, onAddIcon }) 
     }
   };
 
-  // Load all icon metadata on mount so search works across all categories
   useEffect(() => {
     let cancelled = false;
 
     const loadAllIconMetadata = async () => {
       const entries = await Promise.all(
-        iconCategories.map(async category => (
-          [category, await loadIconsFromCategory(category)] as const
+        paletteCategories.map(async category => (
+          [category.id, await loadIconsFromPaletteCategory(category.id)] as const
         )),
       );
       if (cancelled) return;
 
-      const newCategoryIcons = new Map<string, AzureIcon[]>(entries);
-      setCategoryIcons(newCategoryIcons);
-
-      const initialIcons = newCategoryIcons.get('ai + machine learning') || [];
-      void loadIconUrls(initialIcons);
+      const nextCategoryIcons = new Map<IconPaletteCategoryId, AzureIcon[]>(entries);
+      setCategoryIcons(nextCategoryIcons);
+      void loadIconUrls(nextCategoryIcons.get('ai') || []);
     };
 
     void loadAllIconMetadata();
@@ -114,42 +129,45 @@ const IconPalette: React.FC<IconPaletteProps> = ({ forceCollapsed, onAddIcon }) 
     }
   };
 
-  const filteredCategories = useMemo(() => iconCategories.filter(cat => {
-    if (searchTerm === '') return true;
-    const term = searchTerm.toLowerCase();
-    if (cat.toLowerCase().includes(term)) return true;
-    const icons = categoryIcons.get(cat) || [];
-    return icons.some(icon => iconMatchesSearch(icon, term));
-  }), [categoryIcons, searchTerm]);
+  const matchingIconsByCategory = useMemo(() => {
+    const next = new Map<IconPaletteCategoryId, AzureIcon[]>();
+    for (const category of paletteCategories) {
+      const icons = categoryIcons.get(category.id) || [];
+      next.set(
+        category.id,
+        searchTerm.trim() === ''
+          ? icons
+          : icons.filter(icon => iconMatchesSearch(icon, searchTerm)),
+      );
+    }
+    return next;
+  }, [categoryIcons, searchTerm]);
+
+  const filteredCategories = useMemo(() => paletteCategories.filter(category => (
+    (matchingIconsByCategory.get(category.id) || []).length > 0
+  )), [matchingIconsByCategory]);
+
+  const resultCount = useMemo(() => (
+    filteredCategories.reduce(
+      (total, category) => total + (matchingIconsByCategory.get(category.id)?.length ?? 0),
+      0,
+    )
+  ), [filteredCategories, matchingIconsByCategory]);
 
   useEffect(() => {
-    if (searchTerm === '') return;
+    if (searchTerm.trim() === '') return;
 
-    const term = searchTerm.toLowerCase();
-    const categoriesToExpand: string[] = [];
-    const matchingIcons: AzureIcon[] = [];
-
-    iconCategories.forEach(cat => {
-      const icons = categoryIcons.get(cat) || [];
-      const matches = icons.filter(icon => iconMatchesSearch(icon, term));
-      if (matches.length > 0) {
-        if (!expandedCategories.has(cat)) {
-          categoriesToExpand.push(cat);
-        }
-        matchingIcons.push(...matches);
-      }
+    const matchingCategories = filteredCategories.map(category => category.id);
+    setExpandedCategories(previous => {
+      const next = new Set(previous);
+      matchingCategories.forEach(category => next.add(category));
+      return next;
     });
 
-    if (categoriesToExpand.length > 0) {
-      setExpandedCategories(prev => {
-        const next = new Set(prev);
-        categoriesToExpand.forEach(c => next.add(c));
-        return next;
-      });
-    }
-
-    void loadIconUrls(matchingIcons);
-  }, [categoryIcons, expandedCategories, loadIconUrls, searchTerm]);
+    void loadIconUrls(
+      matchingCategories.flatMap(category => matchingIconsByCategory.get(category) || []),
+    );
+  }, [filteredCategories, loadIconUrls, matchingIconsByCategory, searchTerm]);
 
   return (
     <div className={`icon-palette ${isCollapsed ? 'collapsed' : ''}`} aria-label={t("Azure Services")}>
@@ -170,7 +188,13 @@ const IconPalette: React.FC<IconPaletteProps> = ({ forceCollapsed, onAddIcon }) 
         <>
           <div className="palette-header">
             <div className="palette-title-row">
-              <h2>{t("Azure Services")}</h2>
+              <div>
+                <h2>{t("Azure Services")}</h2>
+                <div className="palette-library-meta">
+                  {libraryStats.azureVersion} · {libraryStats.officialAzureIcons} Azure ·{' '}
+                  {libraryStats.fabricIcons} Fabric
+                </div>
+              </div>
               <button
                 type="button"
                 className="palette-close-toggle"
@@ -187,30 +211,60 @@ const IconPalette: React.FC<IconPaletteProps> = ({ forceCollapsed, onAddIcon }) 
             <div className="search-box">
               <Search size={16} aria-hidden="true" />
               <input
-                type="text"
-                placeholder={t("Search services...")}
+                type="search"
+                placeholder={localize(language, {
+                  en: 'Search name, acronym, or purpose...',
+                  ja: '名前・略称・用途で検索...',
+                })}
                 aria-label={t('palette.searchLabel')}
                 value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
+                onChange={(event) => setSearchTerm(event.target.value)}
               />
+              {searchTerm && (
+                <button
+                  type="button"
+                  className="search-clear"
+                  onClick={() => setSearchTerm('')}
+                  aria-label={localize(language, { en: 'Clear icon search', ja: 'アイコン検索をクリア' })}
+                  title={localize(language, { en: 'Clear search', ja: '検索をクリア' })}
+                >
+                  <X size={14} />
+                </button>
+              )}
+            </div>
+            <div className="palette-search-summary" role="status" aria-live="polite">
+              {searchTerm.trim()
+                ? localize(language, {
+                    en: `${resultCount} matching icons`,
+                    ja: `${resultCount} 件のアイコン`,
+                  })
+                : localize(language, {
+                    en: `${libraryStats.searchableIcons} organized icons`,
+                    ja: `${libraryStats.searchableIcons} 件を用途別に分類`,
+                  })}
             </div>
             <p className="palette-help">{t('palette.interactionHint')}</p>
           </div>
 
           <div className="palette-content" id="azure-services-palette-content">
-            {filteredCategories.map((category) => {
-              const isExpanded = expandedCategories.has(category);
-              const icons = categoryIcons.get(category) || [];
-              const filteredIcons = icons.filter(icon =>
-                searchTerm === '' || iconMatchesSearch(icon, searchTerm.toLowerCase())
-              );
+            {filteredCategories.length === 0 && (
+              <div className="palette-empty-search">
+                {localize(language, {
+                  en: 'No icons match every search keyword.',
+                  ja: 'すべての検索キーワードに一致するアイコンはありません。',
+                })}
+              </div>
+            )}
+            {filteredCategories.map(category => {
+              const isExpanded = expandedCategories.has(category.id);
+              const icons = matchingIconsByCategory.get(category.id) || [];
 
               return (
-                <div key={category} className="category-section">
+                <section key={category.id} className="category-section">
                   <button
                     type="button"
                     className="category-header"
-                    onClick={() => toggleCategory(category)}
+                    onClick={() => toggleCategory(category.id)}
                     onPointerEnter={() => {
                       if (!isExpanded) void loadIconUrls(icons);
                     }}
@@ -218,15 +272,21 @@ const IconPalette: React.FC<IconPaletteProps> = ({ forceCollapsed, onAddIcon }) 
                       if (!isExpanded) void loadIconUrls(icons);
                     }}
                     aria-expanded={isExpanded}
+                    title={localize(language, category.description)}
                   >
                     {isExpanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-                    <span className="category-title">{translate(category)}</span>
-                    {isExpanded && <span className="icon-count">{t("(")}{filteredIcons.length}{t(")")}</span>}
+                    <span className="category-title">
+                      {localize(language, category.label)}
+                    </span>
+                    <span className="icon-count">{icons.length}</span>
                   </button>
                   {isExpanded && (
-                    <div className="icons-grid">
-                      {filteredIcons.length > 0 ? (
-                        filteredIcons.map((icon) => {
+                    <>
+                      <p className="category-description">
+                        {localize(language, category.description)}
+                      </p>
+                      <div className="icons-grid">
+                        {icons.map(icon => {
                           const iconUrl = iconUrls.get(icon.path);
                           return (
                             <button
@@ -234,7 +294,7 @@ const IconPalette: React.FC<IconPaletteProps> = ({ forceCollapsed, onAddIcon }) 
                               key={icon.id}
                               className="icon-item"
                               draggable
-                              onDragStart={(e) => onDragStart(e, icon)}
+                              onDragStart={event => onDragStart(event, icon)}
                               onClick={() => addIconToCanvas(icon)}
                               aria-label={t('palette.addService', { service: icon.name })}
                               title={t('palette.addServiceHint', { service: icon.name })}
@@ -245,7 +305,7 @@ const IconPalette: React.FC<IconPaletteProps> = ({ forceCollapsed, onAddIcon }) 
                               {iconUrl ? (
                                 <img
                                   src={iconUrl}
-                                  alt={icon.name}
+                                  alt=""
                                   className="icon-image"
                                   loading="lazy"
                                   decoding="async"
@@ -258,13 +318,11 @@ const IconPalette: React.FC<IconPaletteProps> = ({ forceCollapsed, onAddIcon }) 
                               <span className="icon-label">{icon.name}</span>
                             </button>
                           );
-                        })
-                      ) : (
-                        <div className="no-icons">{t("Loading icons...")}</div>
-                      )}
-                    </div>
+                        })}
+                      </div>
+                    </>
                   )}
-                </div>
+                </section>
               );
             })}
           </div>
