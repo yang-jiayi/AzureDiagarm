@@ -215,3 +215,62 @@ test('access control accepts the aggregate Easy Auth client principal header', a
   });
   assert.equal(response.status, 401);
 });
+
+test('access control maps Entra B2B guest UPNs back to their invited email', async (t) => {
+  const table = new FakeTable();
+  const server = await startServer({
+    enabled: true,
+    adminEmail: 'yangjiayi@msft.jp',
+    publicAppUrl: APP_ORIGIN,
+    table,
+    logger: { info() {}, error() {} },
+  });
+  t.after(server.close);
+
+  let response = await fetch(`${server.baseUrl}/api/access/users`, {
+    method: 'POST',
+    headers: {
+      ...ADMIN_HEADERS,
+      Origin: APP_ORIGIN,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ email: 'maaya_ishida@microsoft.com' }),
+  });
+  assert.equal(response.status, 201);
+
+  response = await fetch(`${server.baseUrl}/api/access/check`, {
+    headers: {
+      'X-MS-CLIENT-PRINCIPAL-NAME':
+        'maaya_ishida_microsoft.com#EXT#@exampletenant.onmicrosoft.com',
+      'X-MS-CLIENT-PRINCIPAL-ID': '44444444-4444-4444-4444-444444444444',
+    },
+  });
+  assert.equal(response.status, 204);
+
+  const encodedPrincipal = Buffer.from(JSON.stringify({
+    auth_typ: 'aad',
+    claims: [
+      {
+        typ: 'preferred_username',
+        val: 'maaya_ishida_microsoft.com#EXT#@exampletenant.onmicrosoft.com',
+      },
+      { typ: 'email', val: 'maaya_ishida@microsoft.com' },
+      {
+        typ: 'http://schemas.microsoft.com/identity/claims/objectidentifier',
+        val: '44444444-4444-4444-4444-444444444444',
+      },
+    ],
+  })).toString('base64');
+
+  response = await fetch(`${server.baseUrl}/api/access/me`, {
+    headers: { 'X-MS-CLIENT-PRINCIPAL': encodedPrincipal },
+  });
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), {
+    enabled: true,
+    authenticated: true,
+    email: 'maaya_ishida@microsoft.com',
+    isAdmin: false,
+    allowed: true,
+  });
+});

@@ -17,6 +17,23 @@ function normalizeEmail(value) {
   return email;
 }
 
+function normalizePrincipalEmail(value) {
+  if (typeof value !== 'string') return '';
+  const email = value.trim().toLowerCase();
+  const markerIndex = email.indexOf('#ext#@');
+  if (markerIndex > 0) {
+    const encodedEmail = email.slice(0, markerIndex);
+    const separatorIndex = encodedEmail.lastIndexOf('_');
+    if (separatorIndex > 0) {
+      const guestEmail = normalizeEmail(
+        `${encodedEmail.slice(0, separatorIndex)}@${encodedEmail.slice(separatorIndex + 1)}`,
+      );
+      if (guestEmail) return guestEmail;
+    }
+  }
+  return normalizeEmail(email);
+}
+
 function normalizeOrigin(value) {
   if (typeof value !== 'string' || value.trim().length === 0) return '';
   try {
@@ -59,15 +76,16 @@ function firstClaim(claims, types) {
 function getPrincipal(req) {
   const clientPrincipal = decodeClientPrincipal(req.get('x-ms-client-principal'));
   const claims = clientPrincipal?.claims || new Map();
-  const email = normalizeEmail(req.get('x-ms-client-principal-name')) || normalizeEmail(firstClaim(claims, [
-    'preferred_username',
-    'email',
-    'emails',
-    'upn',
-    'http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress',
-    'http://schemas.xmlsoap.org/ws/2005/05/identity/claims/upn',
-    'name',
-  ]));
+  const email = normalizePrincipalEmail(req.get('x-ms-client-principal-name'))
+    || normalizePrincipalEmail(firstClaim(claims, [
+      'email',
+      'emails',
+      'preferred_username',
+      'upn',
+      'http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress',
+      'http://schemas.xmlsoap.org/ws/2005/05/identity/claims/upn',
+      'name',
+    ]));
   const decodedUserId = typeof clientPrincipal?.decoded?.userId === 'string'
     ? clientPrincipal.decoded.userId
     : '';
@@ -325,5 +343,6 @@ module.exports = {
   createAccessControlRouter,
   decodeClientPrincipal,
   normalizeEmail,
+  normalizePrincipalEmail,
   rowKeyForEmail,
 };

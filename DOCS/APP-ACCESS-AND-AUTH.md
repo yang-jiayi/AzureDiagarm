@@ -16,7 +16,7 @@
 | Permanent administrator | `yangjiayi@msft.jp` |
 | Access group | `Azure Diagarm Apps` (`f78f42aa-6319-4248-8be2-64cb68dc5bd2`) |
 | Enterprise application assignment | Required |
-| Conditional Access | `Azure Diagarm Apps - Block all other cloud apps` |
+| Conditional Access | `Azure Diagarm Apps - Block Azure management and Fabric` |
 | Legacy access store | `azurediagarm-access-kv` (retained, disabled) |
 | Speech resource | `azurediagarmspeech` (`westus2`, S0) |
 | Easy Auth action | `RedirectToLoginPage` |
@@ -29,14 +29,15 @@
 3. The Entra application is single-tenant (`AzureADMyOrg`).
 4. The `AzureDiagarm-Production` Enterprise Application requires assignment.
    The `Azure Diagarm Apps` security group is assigned with Default Access.
-5. A Conditional Access policy targets that group and blocks all cloud
-   applications except AzureDiagarm and the Microsoft Invitation Acceptance
-   Portal. Group members therefore cannot use Azure Portal, Azure Resource
-   Manager, Microsoft Fabric, Power BI, or other tenant applications.
-6. Nginx sends an internal authorization subrequest for every page, static asset,
+5. A Conditional Access policy targets that group and blocks Azure management
+   and Power BI/Fabric resources. Group members therefore cannot use Azure
+   Portal, Azure Resource Manager, Microsoft Fabric, or Power BI.
+6. The guests have no licenses, Azure RBAC assignments, Fabric workspace
+   permissions, or assignments to other enterprise applications.
+7. Nginx sends an internal authorization subrequest for every page, static asset,
    API, and MCP request. The legacy email-list check is disabled, so successful
    Entra assignment is the authoritative application authorization decision.
-7. The Node server still reads trusted individual principal headers injected by
+8. The Node server still reads trusted individual principal headers injected by
    Container Apps for identity and audit data, with
    `X-MS-CLIENT-PRINCIPAL` claim parsing as a fallback.
 
@@ -104,16 +105,24 @@ Manage production access in Microsoft Entra admin center:
 The Enterprise Application has **Assignment required? = Yes**. Group membership
 therefore grants AzureDiagarm access without maintaining a second email list.
 The Conditional Access policy
-`Azure Diagarm Apps - Block all other cloud apps` includes this group, targets
-all resources, and excludes only:
+`Azure Diagarm Apps - Block Azure management and Fabric` includes this group
+and blocks these resources:
 
-- AzureDiagarm: `5cd8361b-e235-493b-95a2-c2e8f444c3a2`
-- Microsoft Invitation Acceptance Portal:
-  `4660504c-45b3-4674-a709-71951a6b0763`
+- Microsoft Azure Management:
+  `797f4846-ba00-4fd7-ba43-dac1f8f63013`
+- Power BI Service, including Microsoft Fabric:
+  `00000009-0000-0000-c000-000000000000`
 
-The invitation portal exclusion lets new guests redeem their invitation. The
-AzureDiagarm exclusion lets them use this application. Every other cloud
-application is blocked.
+Do not replace this with an all-cloud-apps block that excludes only
+AzureDiagarm. Container Apps Easy Auth requests the standard OpenID Connect
+scopes from Microsoft Graph during sign-in, so blocking Microsoft Graph also
+blocks guest authentication before the request reaches AzureDiagarm.
+
+Microsoft Graph and the Microsoft Invitation Acceptance Portal remain
+available for authentication and invitation redemption. AzureDiagarm remains
+protected by required Enterprise Application assignment. The guests' lack of
+licenses, Azure RBAC roles, Fabric permissions, and unrelated application
+assignments provides the remaining least-privilege boundaries.
 
 ## Legacy whitelist store
 
