@@ -136,7 +136,7 @@ function distillFabric(filePath) {
     reservedExpected: null,
     reservedRatio: null,
     currency,
-    sampleSku: 'F8 (8 CU)',
+    sampleSku: 'F8',
     expectedBasis: 'fabric-capacity:F8',
     tierCount: 3,
     pricesAsOf: newestDate ? newestDate.slice(0, 10) : null,

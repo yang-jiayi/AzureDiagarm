@@ -151,6 +151,8 @@ Get instant cost estimates across **8 Azure regions**:
 - 🇺🇸 East US 2 · 🇦🇺 Australia East · 🇨🇦 Canada Central · 🇧🇷 Brazil South · 🇲🇽 Mexico Central · 🇳🇱 West Europe · 🇸🇪 Sweden Central · 🇸🇬 Southeast Asia
 
 Features include:
+- **Show/hide estimates** — keep detailed diagram styling while suppressing indicative cost figures
+- **Per-node cost editor** — click a service cost badge to change its Tier/SKU, quantity, or enter a custom monthly unit price
 - **PAYG ↔ Savings Plan (1-year) toggle** — flip the entire estimate between pay-as-you-go and 1-year commitment pricing. Each meter's **real 1-year Savings Plan rate** (from the Azure Retail Prices API) is used per-SKU when available; services without a savings-plan meter fall back to a representative discount, and Microsoft Fabric Capacity is **exact**. Usage-based services stay at PAYG.
 - **“Prices as of” stamp** — every cost export records the pricing-data refresh date and the selected billing term.
 - **True per-region meters** — pricing is pre-fetched per region from the Azure Retail Prices API (refresh anytime with `npm run pricing:refresh`), including per-region **Microsoft Fabric** capacity (CU) and OneLake storage rates.

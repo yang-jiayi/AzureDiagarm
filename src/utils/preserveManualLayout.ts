@@ -1,6 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+import { resolveServiceIconMapping } from '../data/serviceIconMapping';
+
 export interface Point {
   x: number;
   y: number;
@@ -61,6 +63,39 @@ function countServiceContexts(nodes: LayoutNode[]): Map<string, number> {
 
 function objectValue(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' ? value as Record<string, unknown> : {};
+}
+
+function serviceIdentity(data: Record<string, unknown>): string {
+  const rawIdentity = String(data.serviceName ?? data.label ?? '').trim();
+  return normalizeLabel(
+    resolveServiceIconMapping(rawIdentity)?.serviceName ?? rawIdentity,
+  );
+}
+
+function nodeServiceIdentity(node: LayoutNode): string {
+  return serviceIdentity(objectValue(node.data));
+}
+
+function serviceIdentityContextKey(node: LayoutNode): string {
+  return `${nodeServiceIdentity(node)}\0${node.parentNode ?? ''}`;
+}
+
+function countByServiceIdentity(nodes: LayoutNode[]): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const node of nodes) {
+    const identity = nodeServiceIdentity(node);
+    if (identity) counts.set(identity, (counts.get(identity) ?? 0) + 1);
+  }
+  return counts;
+}
+
+function countServiceIdentityContexts(nodes: LayoutNode[]): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const node of nodes) {
+    const key = serviceIdentityContextKey(node);
+    if (!key.startsWith('\0')) counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  return counts;
 }
 
 function numericValue(value: unknown): number | undefined {
@@ -144,6 +179,56 @@ function parentsMatch(
   return generatedGroupIdByPreviousId.get(previous.parentNode) === generated.parentNode;
 }
 
+function findServiceMatch(
+  generated: LayoutNode,
+  candidates: LayoutNode[],
+  consumed: Set<string>,
+  generatedIdentityCount: number,
+  generatedIdentityContextCount: number,
+  generatedLabelCount: number,
+  generatedLabelContextCount: number,
+  generatedGroupIdByPreviousId: Map<string, string>,
+): LayoutNode | undefined {
+  const byId = candidates.find(
+    candidate => candidate.id === generated.id && !consumed.has(candidate.id),
+  );
+  if (byId) return byId;
+
+  const identity = nodeServiceIdentity(generated);
+  if (identity) {
+    const identityMatches = candidates.filter(
+      candidate => (
+        nodeServiceIdentity(candidate) === identity
+        && !consumed.has(candidate.id)
+      ),
+    );
+    const parentIdentityMatches = identityMatches.filter(
+      candidate => parentsMatch(candidate, generated, generatedGroupIdByPreviousId),
+    );
+    if (parentIdentityMatches.length === 1 && generatedIdentityContextCount === 1) {
+      return parentIdentityMatches[0];
+    }
+    if (identityMatches.length === 1 && generatedIdentityCount === 1) {
+      return identityMatches[0];
+    }
+  }
+
+  return findMatch(
+    generated,
+    candidates,
+    consumed,
+    generatedLabelCount,
+    {
+      candidate: candidate => parentsMatch(
+        candidate,
+        generated,
+        generatedGroupIdByPreviousId,
+      ),
+      generatedLabelCount: generatedLabelContextCount,
+    },
+  );
+}
+
 export function buildAbsolutePositionMap(nodes: LayoutNode[]): Map<string, Point> {
   const nodesById = new Map(nodes.map((node) => [node.id, node]));
   return new Map(nodes.map((node) => [node.id, absolutePosition(node, nodesById)]));
@@ -185,6 +270,12 @@ export function preserveManualLayout<T extends LayoutNode>(
   const generatedServiceContextCounts = countServiceContexts(
     generatedNodes.filter((node) => node.type !== 'groupNode'),
   );
+  const generatedServiceIdentityCounts = countByServiceIdentity(
+    generatedNodes.filter((node) => node.type !== 'groupNode'),
+  );
+  const generatedServiceIdentityContextCounts = countServiceIdentityContexts(
+    generatedNodes.filter((node) => node.type !== 'groupNode'),
+  );
   const consumed = new Set<string>();
   const preservedPositionIds = new Set<string>();
   const preservedGroups = new Map<string, T>();
@@ -219,15 +310,15 @@ export function preserveManualLayout<T extends LayoutNode>(
   const merged = generatedNodes.map((generated) => {
     if (generated.type === 'groupNode') return preservedGroups.get(generated.id) ?? generated;
 
-    const previous = findMatch(
+    const previous = findServiceMatch(
       generated,
       previousServices,
       consumed,
+      generatedServiceIdentityCounts.get(nodeServiceIdentity(generated)) ?? 0,
+      generatedServiceIdentityContextCounts.get(serviceIdentityContextKey(generated)) ?? 0,
       generatedServiceLabelCounts.get(nodeLabel(generated)) ?? 0,
-      {
-        candidate: (candidate) => parentsMatch(candidate, generated, generatedGroupIdByPreviousId),
-        generatedLabelCount: generatedServiceContextCounts.get(serviceContextKey(generated)) ?? 0,
-      },
+      generatedServiceContextCounts.get(serviceContextKey(generated)) ?? 0,
+      generatedGroupIdByPreviousId,
     ) as T | undefined;
     if (!previous) return generated;
 
@@ -248,10 +339,24 @@ export function preserveManualLayout<T extends LayoutNode>(
       };
     }
 
+    const previousData = objectValue(previous.data);
+    const generatedData = objectValue(generated.data);
+    const data = { ...previousData, ...generatedData };
+    const previousIdentity = serviceIdentity(previousData);
+    const generatedIdentity = serviceIdentity(generatedData);
+    if (
+      previousData.pricing
+      && previousIdentity
+      && generatedIdentity
+      && previousIdentity !== generatedIdentity
+    ) {
+      delete data.pricing;
+    }
+
     return {
       ...generated,
       position,
-      data: { ...objectValue(previous.data), ...objectValue(generated.data) },
+      data,
       style: { ...objectValue(generated.style), ...objectValue(previous.style) },
       width: previous.width ?? generated.width,
       height: previous.height ?? generated.height,

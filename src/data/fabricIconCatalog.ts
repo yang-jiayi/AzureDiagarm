@@ -64,7 +64,7 @@ function defineFabricIcon(
 export const FABRIC_ICON_CATALOG: FabricIconDefinition[] = [
   // Platform and capacity
   defineFabricIcon('Microsoft Fabric', 'Microsoft Fabric', 'microsoft-fabric', 'fabric_32_color.svg', 'Platform', 'platform', ['Fabric', 'MS Fabric', 'Fabric Platform'], { consumesCapacity: false, costRange: 'Platform (see Microsoft Fabric Capacity)' }),
-  defineFabricIcon('Microsoft Fabric Capacity', 'Microsoft Fabric Capacity', 'fabric-capacity', null, 'Platform', 'capacity', ['Fabric Capacity', 'Fabric F SKU', 'Fabric F64', 'Fabric F2', 'Capacity Unit', 'F SKU'], { consumesCapacity: false, hasPricingData: true, pricingServiceName: 'Microsoft Fabric Capacity', isUsageBased: false, costRange: '$263-8,410/mo (F2-F64, PAYG)' }),
+  defineFabricIcon('Microsoft Fabric Capacity', 'Microsoft Fabric Capacity', 'fabric-capacity', null, 'Platform', 'capacity', ['Fabric Capacity', 'Fabric F SKU', 'Fabric F64', 'Fabric F2', 'Capacity Unit', 'F SKU'], { consumesCapacity: false, hasPricingData: true, pricingServiceName: 'Microsoft Fabric', isUsageBased: false, costRange: '$263-8,410/mo (F2-F64, PAYG)' }),
   defineFabricIcon('OneLake', 'OneLake', 'onelake', 'one_lake_32_color.svg', 'Platform', 'platform', ['One Lake', 'Fabric OneLake', 'OneLake Storage'], { consumesCapacity: false, hasPricingData: true, pricingServiceName: 'OneLake Storage', isUsageBased: true, costRange: 'Region-dependent storage pricing' }),
 
   // Workloads and experiences

@@ -9,11 +9,12 @@
 import { Node } from 'reactflow';
 import { 
   NodePricingConfig, 
-  CostBreakdown
+  CostBreakdown,
+  PricingTier,
+  ServicePricing,
 } from '../types/pricing';
 import { 
-  getServicePricing, 
-  calculateMonthlyCost 
+  getServicePricing
 } from './azurePricingService';
 import { 
   getActiveRegion
@@ -33,6 +34,7 @@ import {
   applyRegionalPricing,
   getPricingFreshness
 } from '../utils/pricingHelpers';
+import { csvTextCell } from '../utils/csv';
 
 /**
  * Initialize pricing for a new node
@@ -64,7 +66,9 @@ export async function initializeNodePricing(
     
     if (pricing && pricing.tiers.length > 0) {
       // Use API data
-      const tier = pricing.tiers.find(t => t.name === defaultTier) || pricing.tiers[0];
+      const tier = pricing.tiers.find(t =>
+        t.id === defaultTier || t.skuName === defaultTier || t.name === defaultTier
+      ) || pricing.tiers[0];
       console.log('  ✅ Found tier:', tier.name, 'Price:', tier.monthlyPrice, '/mo (hourly:', tier.hourlyPrice, ')');
       
       // If pricing is $0 (usage-based services like Storage), use fallback pricing
@@ -77,6 +81,7 @@ export async function initializeNodePricing(
           return {
             estimatedCost: basePrice,
             tier: tier.name,
+            tierId: tier.id,
             skuName: tier.skuName,
             quantity: 1,
             region: targetRegion,
@@ -91,6 +96,7 @@ export async function initializeNodePricing(
       return {
         estimatedCost: tier.monthlyPrice,
         tier: tier.name,
+        tierId: tier.id,
         skuName: tier.skuName,
         quantity: 1,
         region: targetRegion,
@@ -146,6 +152,59 @@ export async function initializeNodePricing(
 /**
  * Update pricing when tier or quantity changes
  */
+function pricesMatch(left: number, right: number): boolean {
+  return Math.abs(left - right) <= Math.max(0.01, Math.abs(right) * 0.001);
+}
+
+function findTierCandidates(pricing: ServicePricing, selector: string): PricingTier[] {
+  const exactIdMatch = pricing.tiers.find(candidate => candidate.id === selector);
+  if (exactIdMatch) return [exactIdMatch];
+
+  const exactNameMatches = pricing.tiers.filter(candidate => candidate.name === selector);
+  if (exactNameMatches.length > 0) return exactNameMatches;
+
+  return pricing.tiers.filter(candidate => candidate.skuName === selector);
+}
+
+async function resolvePricingTier(
+  serviceType: string,
+  serviceName: string,
+  currentConfig: NodePricingConfig,
+  selector: string,
+  region: string,
+  pricing: ServicePricing,
+): Promise<PricingTier> {
+  const matchingTiers = findTierCandidates(pricing, selector);
+  if (matchingTiers.length === 0) {
+    throw new Error(`Tier ${selector} is not available for ${serviceType} in ${region}`);
+  }
+  if (matchingTiers.length === 1) return matchingTiers[0];
+
+  // New App Service tiers have platform-specific ids, but older saved diagrams
+  // only stored a shared SKU such as "S1". Recover the original platform from
+  // its source-region unit price, then select that same product in the target
+  // region. If the old estimate cannot identify one platform uniquely, keep
+  // treating it as ambiguous instead of silently changing the workload.
+  const namedTier = matchingTiers.filter(candidate => candidate.name === currentConfig.tier);
+  if (namedTier.length === 1) return namedTier[0];
+
+  const sourcePricing = currentConfig.region === region
+    ? pricing
+    : await getServicePricing(serviceType, serviceName, currentConfig.region);
+  if (sourcePricing) {
+    const sourceCandidates = findTierCandidates(sourcePricing, selector);
+    const sourcePriceMatches = sourceCandidates.filter(candidate =>
+      pricesMatch(candidate.monthlyPrice, currentConfig.estimatedCost)
+    );
+    if (sourcePriceMatches.length === 1 && sourcePriceMatches[0].id) {
+      const targetTier = pricing.tiers.find(candidate => candidate.id === sourcePriceMatches[0].id);
+      if (targetTier) return targetTier;
+    }
+  }
+
+  throw new Error(`Tier ${selector} is ambiguous for ${serviceType}; select a platform-specific SKU`);
+}
+
 export async function updateNodePricing(
   serviceType: string,
   currentConfig: NodePricingConfig,
@@ -153,8 +212,8 @@ export async function updateNodePricing(
   newQuantity?: number,
   newRegion?: string
 ): Promise<NodePricingConfig> {
-  const tier = newTier || currentConfig.tier;
-  const quantity = newQuantity || currentConfig.quantity;
+  const tier = newTier || currentConfig.tierId || currentConfig.skuName || currentConfig.tier;
+  const quantity = newQuantity ?? currentConfig.quantity;
   const region = newRegion || currentConfig.region;
   
   try {
@@ -162,41 +221,49 @@ export async function updateNodePricing(
     const pricing = await getServicePricing(serviceType, serviceName, region);
     
     if (pricing) {
-      const cost = calculateMonthlyCost(pricing, tier, quantity);
-      // Refresh the real 1-year Savings Plan rate for the (possibly new) tier.
-      const selectedTier = pricing.tiers.find(t => t.skuName === tier || t.name === tier);
+      const selectedTier = await resolvePricingTier(
+        serviceType,
+        serviceName,
+        currentConfig,
+        tier,
+        region,
+        pricing,
+      );
+      const isUsageBased = currentConfig.isUsageBased === true
+        || USAGE_BASED_SERVICES.includes(serviceType);
+      let estimatedCost = selectedTier.monthlyPrice;
+      if (isUsageBased && estimatedCost <= 0) {
+        const fallbackPrice = getFallbackPricing(serviceType, 'standard');
+        estimatedCost = fallbackPrice > 0
+          ? applyRegionalPricing(fallbackPrice, region)
+          : currentConfig.estimatedCost;
+      }
 
+      // `estimatedCost` is PER UNIT everywhere else in the system —
+      // calculateCostBreakdown and AzureNode both multiply it by quantity
+      // themselves. Storing a quantity-multiplied total here would be counted
+      // twice (quantity squared). Price one unit and let the callers scale it.
       return {
         ...currentConfig,
-        estimatedCost: cost,
-        tier,
+        estimatedCost,
+        tier: selectedTier.name,
+        tierId: selectedTier.id,
+        skuName: selectedTier.skuName,
         quantity,
         region,
         lastUpdated: new Date().toISOString(),
         isCustom: false,
-        reserved1yrCost: selectedTier?.reserved1yrMonthly,
-        reservedIsSavingsPlan: selectedTier?.reserved1yrMonthly != null
+        customPrice: undefined,
+        isUsageBased,
+        reserved1yrCost: isUsageBased ? undefined : selectedTier.reserved1yrMonthly,
+        reservedIsSavingsPlan: !isUsageBased && selectedTier.reserved1yrMonthly != null
       };
     } else {
-      // Fallback calculation
-      const tierLevel = tier.toLowerCase().includes('premium') ? 'premium' :
-                       tier.toLowerCase().includes('basic') ? 'basic' : 'standard';
-      const fallbackPrice = getFallbackPricing(serviceType, tierLevel);
-      const basePrice = applyRegionalPricing(fallbackPrice, region);
-      
-      return {
-        ...currentConfig,
-        estimatedCost: basePrice * quantity,
-        tier,
-        quantity,
-        region,
-        lastUpdated: new Date().toISOString(),
-        isCustom: false
-      };
+      throw new Error(`Pricing data is unavailable for ${serviceType} in ${region}`);
     }
   } catch (error) {
     console.error(`Error updating pricing for ${serviceType}:`, error);
-    return currentConfig;
+    throw error;
   }
 }
 
@@ -207,13 +274,42 @@ export function setCustomPricing(
   currentConfig: NodePricingConfig,
   customPrice: number
 ): NodePricingConfig {
+  if (!Number.isFinite(customPrice) || customPrice < 0) {
+    throw new Error('Custom pricing must be a finite number of zero or more');
+  }
   return {
     ...currentConfig,
     estimatedCost: customPrice,
     customPrice: customPrice,
     isCustom: true,
+    reserved1yrCost: undefined,
+    reservedIsSavingsPlan: false,
     lastUpdated: new Date().toISOString()
   };
+}
+
+/**
+ * Tiers/SKUs a service can be switched to, for the per-node cost editor.
+ *
+ * Estimates otherwise sit on two fixed assumptions — the catalog default tier
+ * and quantity 1 — which users pushed back on. Returns [] when the service has
+ * no catalog pricing (usage-based services, or anything with hasPricingData
+ * false), in which case only a custom override is meaningful.
+ */
+export async function getAvailableTiers(
+  serviceType: string,
+  region?: string
+): Promise<PricingTier[]> {
+  const targetRegion = region || getActiveRegion();
+  if (!hasPricingData(serviceType)) return [];
+  try {
+    const serviceName = getAzureServiceName(serviceType);
+    const pricing = await getServicePricing(serviceType, serviceName, targetRegion);
+    return pricing?.tiers ?? [];
+  } catch (error) {
+    console.error(`Error loading tiers for ${serviceType}:`, error);
+    return [];
+  }
 }
 
 /**
@@ -251,23 +347,26 @@ export function calculateCostBreakdown(
   // Track costs by group and category
   const groupCosts = new Map<string, { label: string; cost: number; count: number }>();
   const categoryCosts = new Map<string, number>();
+  const pricingRegions = new Set<string>();
 
   // Calculate per-service costs
   nodes.forEach(node => {
     const pricing = node.data.pricing as NodePricingConfig | undefined;
     
     if (!pricing) return;
+    const pricingRegion = typeof pricing.region === 'string' ? pricing.region.trim() : '';
+    pricingRegions.add(pricingRegion || 'Unknown');
 
     let cost = pricing.estimatedCost * pricing.quantity;
     // Apply the 1-year commitment to reservation-eligible, non-usage-based
-    // services. Prefer the meter's REAL 1-year Savings Plan rate; only fall
-    // back to the representative discount table when no savings-plan rate is
-    // known (or the price was manually overridden). Usage-based services stay PAYG.
-    if (pricingMode === 'reserved1yr' && !pricing.isUsageBased) {
-      if (!pricing.isCustom && pricing.reserved1yrCost != null && pricing.reserved1yrCost > 0) {
+    // catalog prices. Custom prices are user-provided final monthly amounts,
+    // so applying another generic discount would understate the estimate.
+    if (pricingMode === 'reserved1yr' && !pricing.isUsageBased && !pricing.isCustom) {
+      if (pricing.reserved1yrCost != null && pricing.reserved1yrCost > 0) {
         cost = pricing.reserved1yrCost * pricing.quantity;
       } else {
-        const discount = getReserved1yrDiscount(node.data.label || '');
+        const serviceType = String(node.data.serviceName || node.data.label || '');
+        const discount = getReserved1yrDiscount(serviceType);
         if (discount > 0) cost = cost * (1 - discount);
       }
     }
@@ -300,6 +399,12 @@ export function calculateCostBreakdown(
     const category = node.data.category || 'Other';
     categoryCosts.set(category, (categoryCosts.get(category) || 0) + cost);
   });
+
+  if (pricingRegions.size === 1) {
+    breakdown.region = [...pricingRegions][0];
+  } else if (pricingRegions.size > 1) {
+    breakdown.region = `Mixed (${[...pricingRegions].sort().join(', ')})`;
+  }
 
   // Convert group costs to array
   breakdown.byGroup = Array.from(groupCosts.entries()).map(([groupId, data]) => ({
@@ -335,14 +440,21 @@ export async function refreshAllNodePricing(
 
   for (const node of nodes) {
     if (node.data.pricing) {
-      const serviceType = node.data.label || 'Unknown';
-      const updatedPricing = await updateNodePricing(
-        serviceType,
-        node.data.pricing,
-        node.data.pricing.tier,
-        node.data.pricing.quantity,
-        newRegion
-      );
+      const serviceType = String(node.data.serviceName || node.data.label || 'Unknown');
+      const currentPricing = node.data.pricing as NodePricingConfig;
+      const updatedPricing = currentPricing.isCustom
+        ? {
+            ...currentPricing,
+            region: newRegion,
+            lastUpdated: new Date().toISOString(),
+          }
+        : await updateNodePricing(
+            serviceType,
+            currentPricing,
+            currentPricing.tierId || currentPricing.skuName || currentPricing.tier,
+            currentPricing.quantity,
+            newRegion
+          );
 
       updatedNodes.push({
         ...node,
@@ -467,10 +579,10 @@ export function exportCostBreakdownCSV(breakdown: CostBreakdown, nodes?: Node[])
   // Header
   lines.push('Azure Architecture Cost Breakdown');
   lines.push(`Total Monthly Cost,$${breakdown.totalMonthlyCost.toFixed(2)}`);
-  lines.push(`Region,${breakdown.region}`);
-  if (breakdown.pricingTerm) lines.push(`Pricing Term,${breakdown.pricingTerm}`);
-  if (breakdown.pricesAsOf) lines.push(`Prices As Of,${breakdown.pricesAsOf}`);
-  lines.push(`Date,${new Date(breakdown.lastCalculated).toLocaleDateString()}`);
+  lines.push(`Region,${csvTextCell(breakdown.region)}`);
+  if (breakdown.pricingTerm) lines.push(`Pricing Term,${csvTextCell(breakdown.pricingTerm)}`);
+  if (breakdown.pricesAsOf) lines.push(`Prices As Of,${csvTextCell(breakdown.pricesAsOf)}`);
+  lines.push(`Date,${csvTextCell(new Date(breakdown.lastCalculated).toLocaleDateString())}`);
   lines.push('');
   
   // By Service
@@ -481,21 +593,21 @@ export function exportCostBreakdownCSV(breakdown: CostBreakdown, nodes?: Node[])
     const pricing = node?.data?.pricing as NodePricingConfig | undefined;
     const pricingType = pricing?.isUsageBased ? 'Usage-based (estimate)' : 'Fixed';
     
-    lines.push(`"${svc.serviceName}",${svc.serviceType},${svc.tier},${svc.quantity},$${svc.cost.toFixed(2)},${pricingType}`);
+    lines.push(`${csvTextCell(svc.serviceName, true)},${csvTextCell(svc.serviceType)},${csvTextCell(svc.tier)},${svc.quantity},$${svc.cost.toFixed(2)},${csvTextCell(pricingType)}`);
   });
   lines.push('');
   
   // By Group
   lines.push('Group Name,Service Count,Monthly Cost');
   breakdown.byGroup.forEach(grp => {
-    lines.push(`"${grp.groupLabel}",${grp.serviceCount},$${grp.cost.toFixed(2)}`);
+    lines.push(`${csvTextCell(grp.groupLabel, true)},${grp.serviceCount},$${grp.cost.toFixed(2)}`);
   });
   lines.push('');
   
   // By Category
   lines.push('Category,Monthly Cost,Percentage');
   breakdown.byCategory.forEach(cat => {
-    lines.push(`${cat.category},$${cat.cost.toFixed(2)},${cat.percentage.toFixed(1)}%`);
+    lines.push(`${csvTextCell(cat.category)},$${cat.cost.toFixed(2)},${cat.percentage.toFixed(1)}%`);
   });
   
   return lines.join('\n');

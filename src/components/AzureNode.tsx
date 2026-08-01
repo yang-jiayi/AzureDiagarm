@@ -8,8 +8,11 @@ import { loadIcon } from '../utils/iconLoader';
 import { NodePricingConfig } from '../types/pricing';
 import { formatMonthlyCost, getCostColor } from '../utils/pricingHelpers';
 import { isCapacityConsumed } from '../data/serviceIconMapping';
+import { usePricingDisplayPrefs } from '../stores/pricingDisplayStore';
+import { openNodePricingEditor } from '../stores/nodePricingEditorStore';
 import './AzureNode.css';
 import { useLanguage } from '../i18n/LanguageContext';
+import { localize } from '../i18n/localization';
 
 // Map categories to colors
 const getCategoryColor = (category: string): string => {
@@ -37,7 +40,7 @@ const getCategoryColor = (category: string): string => {
 };
 
 const AzureNode: React.FC<NodeProps> = memo(({ data, selected, id }) => {
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
   const [iconUrl, setIconUrl] = useState<string>('');
   const [isEditingLabel, setIsEditingLabel] = useState(false);
   const [label, setLabel] = useState(data.label || 'Azure Service');
@@ -48,7 +51,9 @@ const AzureNode: React.FC<NodeProps> = memo(({ data, selected, id }) => {
 
   // Extract pricing data
   const pricing = data.pricing as NodePricingConfig | undefined;
-  const hasPricing = !!pricing && pricing.estimatedCost > 0;
+  const hasPricing = !!pricing
+    && Number.isFinite(pricing.estimatedCost)
+    && pricing.estimatedCost >= 0;
   const totalCost = pricing ? pricing.estimatedCost * pricing.quantity : 0;
 
   // Fabric workload items consume Capacity Units from the shared Fabric
@@ -59,7 +64,11 @@ const AzureNode: React.FC<NodeProps> = memo(({ data, selected, id }) => {
   // Extract style preset
   const stylePreset = (data as any).stylePreset || 'detailed';
   const showLabels = true; // Always show labels
-  const showPricing = stylePreset === 'detailed';
+  // Cost badges are suppressed by presentation styling OR by the standalone
+  // cost-visibility preference, so a user can drop the figures without
+  // restyling the whole diagram.
+  const [pricingPrefs] = usePricingDisplayPrefs();
+  const showPricing = stylePreset === 'detailed' && pricingPrefs.showCostBadges;
 
   useEffect(() => {
     if (data.iconPath) {
@@ -178,12 +187,20 @@ const AzureNode: React.FC<NodeProps> = memo(({ data, selected, id }) => {
       
       <div className="node-content">
         {hasPricing && showPricing && (
-          <div 
-            className="cost-badge" 
+          <button
+            type="button"
+            className="cost-badge cost-badge--editable"
+            onClick={(e) => { e.stopPropagation(); openNodePricingEditor(id); }}
             title={
               pricing.isUsageBased
-                ? `Usage-based pricing estimate\n~${formatMonthlyCost(totalCost)}/month\nBased on typical usage patterns\nActual cost varies with consumption\n\nTier: ${pricing.tier}\nRegion: ${pricing.region}`
-                : `Estimated monthly cost\nTier: ${pricing.tier}\nQuantity: ${pricing.quantity}\nRegion: ${pricing.region}\n${pricing.isCustom ? t("Custom pricing") : t("Auto-calculated")}`
+                ? localize(language, {
+                    en: `Usage-based pricing estimate\n~${formatMonthlyCost(totalCost)}\nBased on typical usage patterns\nActual cost varies with consumption\n\nTier: ${pricing.tier}\nRegion: ${pricing.region}\n\nClick to change tier, quantity, or set your own price`,
+                    ja: `従量課金の参考見積もり\n約${formatMonthlyCost(totalCost)}\n一般的な使用量に基づく参考値です\n実際の料金は使用量により変動します\n\nTier: ${pricing.tier}\nRegion: ${pricing.region}\n\nクリックしてTier、数量、独自価格を変更`,
+                  })
+                : localize(language, {
+                    en: `Estimated monthly cost\nTier: ${pricing.tier}\nQuantity: ${pricing.quantity}\nRegion: ${pricing.region}\n${pricing.isCustom ? 'Custom pricing' : 'Auto-calculated'}\n\nClick to change tier, quantity, or set your own price`,
+                    ja: `月額参考見積もり\nTier: ${pricing.tier}\n数量: ${pricing.quantity}\nRegion: ${pricing.region}\n${pricing.isCustom ? '独自価格' : '自動計算'}\n\nクリックしてTier、数量、独自価格を変更`,
+                  })
             }
             style={{ 
               background: pricing.isUsageBased
@@ -193,8 +210,7 @@ const AzureNode: React.FC<NodeProps> = memo(({ data, selected, id }) => {
           >
             {pricing.isUsageBased && <Zap size={12} style={{ marginRight: '2px', display: 'inline-block', verticalAlign: 'middle' }} />}
             {pricing.isUsageBased && '~'}{formatMonthlyCost(totalCost)}
-            {pricing.quantity > 1 && <span className="cost-quantity"> {' '}{t("x")}{pricing.quantity}</span>}
-          </div>
+          </button>
         )}
         {capacityConsumed && showPricing && (
           <div

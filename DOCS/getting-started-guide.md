@@ -178,6 +178,12 @@ Every service node shows a cost badge with the estimated monthly price. Costs ar
 
 A usage-based pricing indicator (⚡) appears on consumption services like Azure Functions or Logic Apps.
 
+### Adjust or Hide Cost Estimates
+
+- Click a service's cost badge to change its Tier/SKU, instance quantity, or custom monthly unit price.
+- Use the **Cost** button in the **Context** toolbar section to hide or restore all indicative cost figures without changing the diagram style.
+- Custom values remain diagram estimates; confirm commercial pricing before deployment.
+
 ### Change the Pricing Region
 
 Use the **Region Selector** dropdown in the toolbar to switch between eight Azure regions:

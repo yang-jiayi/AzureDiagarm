@@ -133,11 +133,17 @@ export function calculateMonthlyCost(
   tier: string,
   quantity: number = 1
 ): number {
-  const selectedTier = pricing.tiers.find(t => t.skuName === tier || t.name === tier);
+  const selectedTier = pricing.tiers.find(t =>
+    t.id === tier || t.skuName === tier || t.name === tier
+  );
   
   if (!selectedTier) {
     console.warn(`Tier ${tier} not found for ${pricing.serviceType}, using default`);
-    const defaultTier = pricing.tiers.find(t => t.name === pricing.defaultTier);
+    const defaultTier = pricing.tiers.find(t =>
+      t.id === pricing.defaultTier
+      || t.skuName === pricing.defaultTier
+      || t.name === pricing.defaultTier
+    );
     return (defaultTier?.monthlyPrice || 0) * quantity;
   }
   

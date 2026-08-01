@@ -20,7 +20,7 @@ import { captureDiagramAsPng, captureDiagramAsSvg } from './utils/captureCanvas'
 import { animateEdgeFlow } from './utils/animateEdges';
 import { sequenceWorkflowSvg } from './utils/sequenceWorkflow';
 import { buildWorkflowMarkdown } from './services/workflowNarrativeExporter';
-import { Download, Save, Upload, DollarSign, Shield, ShieldCheck, FileText, FileCode, ChevronDown, ChevronRight, Clock, Camera, Loader, GitCompare, RefreshCw, PanelLeftClose, Minimize2, Maximize2, Presentation, MessageSquare, MessagesSquare, HelpCircle, Hand, ZoomIn, Frame, X, PanelTopClose, PanelTopOpen, DownloadCloud, Sun, Moon, Play, Pause } from 'lucide-react';
+import { Download, Save, Upload, DollarSign, Shield, ShieldCheck, FileText, FileCode, ChevronDown, ChevronRight, Clock, Camera, Loader, GitCompare, RefreshCw, PanelLeftClose, Minimize2, Maximize2, Presentation, MessageSquare, MessagesSquare, HelpCircle, Hand, ZoomIn, Frame, X, PanelTopClose, PanelTopOpen, DownloadCloud, Sun, Moon, Play, Pause, Eye, EyeOff } from 'lucide-react';
 import IconPalette from './components/IconPalette';
 import AzureNode from './components/AzureNode';
 import GroupNode from './components/GroupNode';
@@ -48,10 +48,10 @@ import ModelSettingsPopover from './components/ModelSettingsPopover';
 import CompareModelsModal from './components/CompareModelsModal';
 import CompareValidationModal from './components/CompareValidationModal';
 import { loadIconsFromCategory, type AzureIcon } from './utils/iconLoader';
-import { getServiceIconMapping } from './data/serviceIconMapping';
+import { getServiceIconMapping, isCapacityConsumed } from './data/serviceIconMapping';
 import { layoutArchitecture } from './utils/layoutEngine';
 import { layoutArchitecture as elkLayoutArchitecture } from './utils/elkLayoutEngine';
-import { initializeNodePricing, calculateCostBreakdown, exportCostBreakdownCSV, exportCostBreakdownJSON, getCostSummaryMarkdown, refreshAllNodePricing, type PricingMode } from './services/costEstimationService';
+import { initializeNodePricing, updateNodePricing, calculateCostBreakdown, exportCostBreakdownCSV, exportCostBreakdownJSON, getCostSummaryMarkdown, refreshAllNodePricing, type PricingMode } from './services/costEstimationService';
 import { prefetchCommonServices } from './services/azurePricingService';
 import { preloadCommonServices, getActiveRegion, AzureRegion, AVAILABLE_REGIONS, RegionInfo } from './services/regionalPricingService';
 import JSZip from 'jszip';
@@ -63,6 +63,10 @@ import { bandLabel } from './services/wafMaturity';
 import { generateDeploymentGuide, DeploymentGuide } from './services/deploymentGuideGenerator';
 import { generateArchitectureWithAI } from './services/azureOpenAI';
 import { MODEL_CONFIG, DEPLOYMENT_NAMES, type ModelType } from './stores/modelSettingsStore';
+import { usePricingDisplayPrefs } from './stores/pricingDisplayStore';
+import { useNodePricingEditor, closeNodePricingEditor } from './stores/nodePricingEditorStore';
+import NodePricingEditor from './components/NodePricingEditor';
+import type { NodePricingConfig } from './types/pricing';
 import { createSnapshot, DiagramVersion, getVersion } from './services/versionStorageService';
 import { exportAndDownloadDrawio } from './services/drawioExporter';
 import { buildVsdxBlob } from './services/visioVsdxExporter';
@@ -100,6 +104,8 @@ import './App.css';
 import { useLanguage } from './i18n/LanguageContext';
 import { localize } from './i18n/localization';
 import { decodeUtf8Base64 } from './utils/base64Utf8';
+import { csvTextCell } from './utils/csv';
+import { toFileNameSegment } from './utils/fileName';
 import { readBooleanPreference, readLocalStorage, writeLocalStorage } from './utils/safeStorage';
 
 const nodeTypes = {
@@ -126,6 +132,80 @@ const EDGE_ANIMATION_STORAGE_KEY = 'azure-diagram-builder.edgeAnimation.v1';
 const CANVAS_HINT_STORAGE_KEY = 'azure-diagram-builder.canvasHintDismissed.v1';
 const HEADER_COLLAPSED_STORAGE_KEY = 'azure-diagram-builder.headerCollapsed.v1';
 const TOOLBAR_SECTIONS_STORAGE_KEY = 'azure-diagram-builder.toolbarSections.v1';
+const EDGE_CONTEXT_MENU_WIDTH = 220;
+const EDGE_CONTEXT_MENU_HEIGHT = 280;
+const EDGE_CONTEXT_MENU_MARGIN = 8;
+
+function pricingFingerprint(pricing: NodePricingConfig | undefined): string {
+  if (!pricing) return 'none';
+  return JSON.stringify([
+    pricing.estimatedCost,
+    pricing.customPrice ?? null,
+    pricing.tier,
+    pricing.tierId ?? null,
+    pricing.skuName,
+    pricing.quantity,
+    pricing.region,
+    pricing.unit,
+    pricing.lastUpdated,
+    pricing.isCustom,
+    pricing.isUsageBased ?? false,
+    pricing.reserved1yrCost ?? null,
+    pricing.reservedIsSavingsPlan ?? false,
+    pricing.usageEstimate?.type ?? null,
+    pricing.usageEstimate?.description ?? null,
+  ]);
+}
+
+function nodePricingFingerprint(node: Node): string {
+  return JSON.stringify([
+    node.type,
+    node.data?.label ?? null,
+    node.data?.serviceName ?? null,
+    pricingFingerprint(node.data?.pricing as NodePricingConfig | undefined),
+  ]);
+}
+
+type RegionalCostResult = {
+  info: RegionInfo;
+  total: number;
+  annual: number;
+  breakdown: ReturnType<typeof calculateCostBreakdown>;
+};
+
+type RegionalCostFailure = {
+  info: RegionInfo;
+  reason: string;
+};
+
+async function calculateRegionalCostComparison(
+  nodes: Node[],
+  pricingMode: PricingMode,
+): Promise<{ results: RegionalCostResult[]; failures: RegionalCostFailure[] }> {
+  const results: RegionalCostResult[] = [];
+  const failures: RegionalCostFailure[] = [];
+
+  for (const info of AVAILABLE_REGIONS) {
+    try {
+      const repricedNodes = await refreshAllNodePricing(nodes, info.id);
+      const breakdown = calculateCostBreakdown(repricedNodes, info.id, pricingMode);
+      results.push({
+        info,
+        total: breakdown.totalMonthlyCost,
+        annual: breakdown.totalMonthlyCost * 12,
+        breakdown,
+      });
+    } catch (error) {
+      const reason = error instanceof Error
+        ? error.message.replace(/\s+/g, ' ').slice(0, 240)
+        : 'Pricing data is unavailable for at least one selected SKU.';
+      failures.push({ info, reason });
+    }
+  }
+
+  results.sort((left, right) => left.total - right.total);
+  return { results, failures };
+}
 
 const TOOLBAR_SECTION_IDS = [
   'context',
@@ -185,7 +265,16 @@ function validateRestoredNodes(restoredNodes: unknown[]): Node[] {
     }
 
     const data = value.data;
-    const stringDataFields = ['label', 'serviceName', 'category', 'iconPath', 'description', 'stylePreset'];
+    const stringDataFields = [
+      'label',
+      'serviceName',
+      'category',
+      'iconPath',
+      'description',
+      'stylePreset',
+      'groupId',
+      'groupLabel',
+    ];
     for (const field of stringDataFields) {
       if (data[field] !== undefined && typeof data[field] !== 'string') {
         throw new Error(`Node ${value.id} has an invalid ${field}`);
@@ -195,11 +284,69 @@ function validateRestoredNodes(restoredNodes: unknown[]): Node[] {
       if (!isRecord(data.pricing)) {
         throw new Error(`Node ${value.id} has invalid pricing data`);
       }
-      for (const field of ['estimatedCost', 'quantity', 'reserved1yrCost']) {
-        const amount = data.pricing[field];
-        if (amount !== undefined && amount !== null && !Number.isFinite(amount)) {
+      const pricing = data.pricing;
+      for (const field of ['estimatedCost', 'customPrice', 'reserved1yrCost']) {
+        const amount = pricing[field];
+        if (
+          amount !== undefined
+          && amount !== null
+          && (typeof amount !== 'number' || !Number.isFinite(amount) || amount < 0)
+        ) {
           throw new Error(`Node ${value.id} has invalid pricing ${field}`);
         }
+      }
+      const estimatedCost = pricing.estimatedCost;
+      if (
+        typeof estimatedCost !== 'number'
+        || !Number.isFinite(estimatedCost)
+        || estimatedCost < 0
+      ) {
+        throw new Error(`Node ${value.id} has invalid pricing estimatedCost`);
+      }
+      const importedQuantity = pricing.quantity;
+      let quantity = 1;
+      if (importedQuantity === undefined || importedQuantity === null) {
+        pricing.quantity = quantity;
+      } else if (
+        typeof importedQuantity !== 'number'
+        || !Number.isInteger(importedQuantity)
+        || importedQuantity < 1
+        || importedQuantity > 100_000
+      ) {
+        throw new Error(`Node ${value.id} has invalid pricing quantity`);
+      } else {
+        quantity = importedQuantity;
+      }
+      if (!Number.isFinite(estimatedCost * quantity)) {
+        throw new Error(`Node ${value.id} has an invalid total price`);
+      }
+      for (const field of ['isCustom', 'isUsageBased', 'reservedIsSavingsPlan']) {
+        const flag = pricing[field];
+        if (flag !== undefined && flag !== null && typeof flag !== 'boolean') {
+          throw new Error(`Node ${value.id} has invalid pricing ${field}`);
+        }
+      }
+      for (const field of ['tier', 'tierId', 'skuName', 'unit', 'lastUpdated']) {
+        const text = pricing[field];
+        if (text !== undefined && text !== null && typeof text !== 'string') {
+          throw new Error(`Node ${value.id} has invalid pricing ${field}`);
+        }
+      }
+      if (
+        pricing.region === undefined
+        || pricing.region === null
+        || (typeof pricing.region === 'string' && pricing.region.trim() === '')
+      ) {
+        pricing.region = 'Unknown';
+      } else {
+        if (typeof pricing.region !== 'string') {
+          throw new Error(`Node ${value.id} has invalid pricing region`);
+        }
+        const region = pricing.region.trim();
+        if (!/^[A-Za-z0-9][A-Za-z0-9 ._()-]{0,127}$/.test(region)) {
+          throw new Error(`Node ${value.id} has invalid pricing region`);
+        }
+        pricing.region = region;
       }
     }
     if (data.customColor !== undefined && data.customColor !== null) {
@@ -398,6 +545,8 @@ function deriveTitleFromPrompt(prompt: string | undefined | null): string | unde
 function App() {
   const { t, translate, language } = useLanguage();
   const [nodes, setNodes, onNodesChangeBase] = useNodesState([]);
+  const latestNodesRef = useRef<Node[]>(nodes);
+  latestNodesRef.current = nodes;
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
   const [architecturePrompt, setArchitecturePrompt] = useState<string>('');
   // The FIRST prompt of the current diagram lineage. Unlike architecturePrompt
@@ -438,6 +587,18 @@ function App() {
   const [edgeContextMenu, setEdgeContextMenu] = useState<{ x: number; y: number; edgeId: string } | null>(null);
   const [totalMonthlyCost, setTotalMonthlyCost] = useState(0);
   const [pricingMode, setPricingMode] = useState<PricingMode>('payg');
+  const hasCostReportData = nodes.some(
+    (node) => node.type === 'azureNode' && Boolean(node.data?.pricing),
+  );
+  const hasCostDisplayData = nodes.some((node) => {
+    if (node.type !== 'azureNode') return false;
+    const serviceName = String(node.data?.serviceName || node.data?.label || '');
+    return Boolean(node.data?.pricing) || isCapacityConsumed(serviceName);
+  });
+  // Whether cost estimates are shown at all (persisted, independent of stylePreset).
+  const [pricingPrefs, setPricingPrefs] = usePricingDisplayPrefs();
+  // Node whose per-node cost editor is open (opened from its cost badge).
+  const pricingEditorNodeId = useNodePricingEditor();
   const [titleBlockData, setTitleBlockData] = useState({
     architectureName: 'Untitled Architecture',
     author: 'Azure Architect',
@@ -545,6 +706,7 @@ function App() {
   // Counts successful AI generations this session so we can ask for feedback
   // after a "success moment" (the 2nd diagram) rather than nagging up front.
   const generationCountRef = useRef(0);
+  const aiPricingRunRef = useRef(0);
   const handleAIGenerateRef = useRef<(
     (
       architecture: any,
@@ -935,30 +1097,111 @@ function App() {
     console.log(`🌍 Region changed to ${region}, updating all node pricing...`);
     const runId = ++regionPricingRunRef.current;
 
-    const pricingEntries = await Promise.all(
-      nodes.map(async (node) => {
-        if (node.type === 'azureNode' && node.data.label) {
-          const newPricing = await initializeNodePricing(node.data.label, region);
-          if (newPricing) {
-            return [node.id, newPricing] as const;
-          }
-        }
-        return null;
-      })
-    );
+    type RegionPricingResult = {
+      nodeId: string;
+      expectedFingerprint: string;
+      pricing: NodePricingConfig | null;
+      failed: boolean;
+    };
+
+    const refreshNodePricing = async (node: Node): Promise<RegionPricingResult | null> => {
+      if (node.type !== 'azureNode') return null;
+
+      const currentPricing = node.data.pricing as NodePricingConfig | undefined;
+      const serviceType = String(node.data.serviceName || node.data.label || '');
+      if (!serviceType) return null;
+      const expectedFingerprint = nodePricingFingerprint(node);
+      try {
+        const newPricing = currentPricing
+          ? currentPricing.isCustom
+            ? {
+                ...currentPricing,
+                region,
+                lastUpdated: new Date().toISOString(),
+              }
+            : await updateNodePricing(
+                serviceType,
+                currentPricing,
+                currentPricing.tierId || currentPricing.skuName || currentPricing.tier,
+                currentPricing.quantity,
+                region,
+              )
+          : await initializeNodePricing(serviceType, region);
+
+        return {
+          nodeId: node.id,
+          expectedFingerprint,
+          pricing: newPricing,
+          failed: false,
+        };
+      } catch (error) {
+        console.error(`Failed to refresh pricing for ${serviceType}:`, error);
+        return {
+          nodeId: node.id,
+          expectedFingerprint,
+          pricing: null,
+          failed: true,
+        };
+      }
+    };
+
+    const initialResults = (await Promise.all(nodes.map(refreshNodePricing)))
+      .filter((result): result is RegionPricingResult => result !== null);
 
     if (runId !== regionPricingRunRef.current) return;
 
-    const pricingByNodeId = new Map(
-      pricingEntries.filter((entry): entry is NonNullable<typeof entry> => entry !== null)
-    );
-    if (pricingByNodeId.size === 0) return;
+    // If a user edited a node while regional prices were loading, reprice the
+    // latest configuration once instead of overwriting it with the stale
+    // result calculated from the original snapshot.
+    const resultsByNodeId = new Map(initialResults.map(result => [result.nodeId, result]));
+    const retryNodes = latestNodesRef.current.filter((node) => {
+      const result = resultsByNodeId.get(node.id);
+      return result && nodePricingFingerprint(node) !== result.expectedFingerprint;
+    });
+    if (retryNodes.length > 0) {
+      const retryResults = (await Promise.all(retryNodes.map(refreshNodePricing)))
+        .filter((result): result is RegionPricingResult => result !== null);
+      retryResults.forEach(result => resultsByNodeId.set(result.nodeId, result));
+    }
+
+    if (runId !== regionPricingRunRef.current) return;
+
+    const results = [...resultsByNodeId.values()];
+    const currentNodesById = new Map(latestNodesRef.current.map(node => [node.id, node]));
+    const skippedForConcurrentEdits = results.filter((result) => {
+      const currentNode = currentNodesById.get(result.nodeId);
+      return currentNode
+        && nodePricingFingerprint(currentNode) !== result.expectedFingerprint;
+    }).length;
 
     setNodes((currentNodes) => currentNodes.map((node) => {
-      const pricing = pricingByNodeId.get(node.id);
-      return pricing ? { ...node, data: { ...node.data, pricing } } : node;
+      const result = resultsByNodeId.get(node.id);
+      if (
+        !result?.pricing
+        || nodePricingFingerprint(node) !== result.expectedFingerprint
+      ) {
+        return node;
+      }
+      return { ...node, data: { ...node.data, pricing: result.pricing } };
     }));
-  }, [nodes, setNodes]);
+
+    const failedCount = results.filter(result => result.failed).length;
+    if (failedCount > 0 || skippedForConcurrentEdits > 0) {
+      const failedMessage = failedCount > 0
+        ? localize(language, {
+            en: `${failedCount} service price${failedCount === 1 ? '' : 's'} could not be matched in the selected region. Existing estimates keep their original region.`,
+            ja: `${failedCount} 件のサービス価格を選択したリージョンで特定できなかったため、既存の見積もりと元のリージョンを保持しました。`,
+          })
+        : '';
+      const skippedMessage = skippedForConcurrentEdits > 0
+        ? localize(language, {
+            en: `${skippedForConcurrentEdits} concurrent pricing edit${skippedForConcurrentEdits === 1 ? ' was' : 's were'} preserved.`,
+            ja: `更新中に行われた ${skippedForConcurrentEdits} 件の価格編集を保持しました。`,
+          })
+        : '';
+      alert([failedMessage, skippedMessage].filter(Boolean).join('\n'));
+    }
+  }, [language, nodes, setNodes]);
 
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
@@ -1275,9 +1518,17 @@ function App() {
 
   const onEdgeContextMenu = useCallback((event: React.MouseEvent, edge: Edge) => {
     event.preventDefault();
+    const maxX = Math.max(
+      EDGE_CONTEXT_MENU_MARGIN,
+      window.innerWidth - EDGE_CONTEXT_MENU_WIDTH - EDGE_CONTEXT_MENU_MARGIN,
+    );
+    const maxY = Math.max(
+      EDGE_CONTEXT_MENU_MARGIN,
+      window.innerHeight - EDGE_CONTEXT_MENU_HEIGHT - EDGE_CONTEXT_MENU_MARGIN,
+    );
     setEdgeContextMenu({
-      x: event.clientX,
-      y: event.clientY,
+      x: Math.min(Math.max(EDGE_CONTEXT_MENU_MARGIN, event.clientX), maxX),
+      y: Math.min(Math.max(EDGE_CONTEXT_MENU_MARGIN, event.clientY), maxY),
       edgeId: edge.id,
     });
   }, []);
@@ -1374,7 +1625,7 @@ function App() {
   }, []);
 
   const addServiceNodeAtPosition = useCallback((
-    service: { iconPath: string; iconName: string },
+    service: { iconPath: string; iconName: string; serviceName: string; category?: string },
     position: Node['position'],
   ) => {
     if (!reactFlowInstance) return;
@@ -1406,6 +1657,8 @@ function App() {
         : position,
       data: {
         label: service.iconName,
+        serviceName: service.serviceName,
+        category: service.category,
         iconPath: service.iconPath,
       },
       parentNode: parentGroup?.id,
@@ -1415,7 +1668,7 @@ function App() {
     setNodes((current) => current.concat(newNode));
 
     const currentRegion = getActiveRegion();
-    void initializeNodePricing(service.iconName, currentRegion)
+    void initializeNodePricing(service.serviceName, currentRegion)
       .then((pricing) => {
         if (!pricing) return;
         setNodes((current) => current.map((node) => (
@@ -1445,6 +1698,8 @@ function App() {
     addServiceNodeAtPosition({
       iconPath: icon.path,
       iconName: icon.name,
+      serviceName: icon.serviceName,
+      category: icon.category,
     }, position);
   }, [addServiceNodeAtPosition, reactFlowInstance]);
 
@@ -1493,6 +1748,8 @@ function App() {
       const type = event.dataTransfer.getData('application/reactflow');
       const iconPath = event.dataTransfer.getData('iconPath');
       const iconName = event.dataTransfer.getData('iconName');
+      const serviceName = event.dataTransfer.getData('iconServiceName') || iconName;
+      const category = event.dataTransfer.getData('iconCategory') || undefined;
 
       if (type !== 'azureNode' || !iconPath || !iconName) return;
 
@@ -1501,7 +1758,7 @@ function App() {
         y: event.clientY,
       });
 
-      addServiceNodeAtPosition({ iconPath, iconName }, position);
+      addServiceNodeAtPosition({ iconPath, iconName, serviceName, category }, position);
     },
     [addServiceNodeAtPosition, reactFlowInstance]
   );
@@ -1582,6 +1839,7 @@ function App() {
       return;
     }
     try {
+      const pricingBreakdown = calculateCostBreakdown(nodes, undefined, pricingMode);
       const md = buildWorkflowMarkdown({
         title: titleBlockData,
         prompt: architecturePrompt,
@@ -1590,9 +1848,9 @@ function App() {
         edges,
         workflow,
         validationScore: validationResult ? validationResult.overallScore : null,
-        totalMonthlyCost,
+        totalMonthlyCost: pricingBreakdown.totalMonthlyCost,
         pricingMode,
-        region: getActiveRegion(),
+        region: pricingBreakdown.region,
       });
       const blob = new Blob([md], { type: 'text/markdown;charset=utf-8' });
       const url = URL.createObjectURL(blob);
@@ -1608,7 +1866,7 @@ function App() {
       console.error('Error exporting workflow markdown:', err);
       alert(t("Failed to export workflow narrative. Please try again."));
     }
-  }, [nodes, edges, workflow, titleBlockData, architecturePrompt, generatedWithModel, validationResult, totalMonthlyCost, pricingMode, recordExport, t]);
+  }, [nodes, edges, workflow, titleBlockData, architecturePrompt, generatedWithModel, validationResult, pricingMode, recordExport, t]);
 
   // Export as an Animated SVG: same vector capture as exportAsSvg, but with
   // flowing data-flow circles injected onto each edge. Pure client-side — the
@@ -1827,34 +2085,31 @@ function App() {
         // report (annual projection, fixed vs usage split, top drivers %, and
         // an optional multi-region comparison).
         const breakdown = calculateCostBreakdown(nodes, undefined, pricingMode);
-        const hasCost = breakdown.totalMonthlyCost > 0;
+        const hasCost = breakdown.byService.length > 0;
 
         // Multi-region comparison (best-effort; reprices over local pricing data)
         let regions: Array<{ name: string; flag?: string; monthly: number; annual: number; isCurrent: boolean; isCheapest: boolean }> | undefined;
+        let unavailableRegions: string[] | undefined;
         if (hasCost) {
-          try {
-            const results: { info: RegionInfo; total: number }[] = [];
-            for (const rInfo of AVAILABLE_REGIONS) {
-              try {
-                const repriced = await refreshAllNodePricing(nodes, rInfo.id);
-                const rb = calculateCostBreakdown(repriced, rInfo.id, pricingMode);
-                results.push({ info: rInfo, total: rb.totalMonthlyCost });
-              } catch { /* skip a region that fails to reprice */ }
-            }
-            results.sort((a, b) => a.total - b.total);
-            if (results.length > 1) {
-              const min = results[0].total;
-              const activeRegion = getActiveRegion();
-              regions = results.map(r => ({
-                name: r.info.displayName,
-                flag: r.info.flag,
-                monthly: r.total,
-                annual: r.total * 12,
-                isCurrent: r.info.id === activeRegion,
-                isCheapest: r.total === min,
-              }));
-            }
-          } catch { /* multi-region is optional */ }
+          const comparison = await calculateRegionalCostComparison(nodes, pricingMode);
+          const comparisonComplete = comparison.failures.length === 0;
+          unavailableRegions = comparison.failures.map(
+            failure => `${failure.info.displayName}: ${failure.reason}`,
+          );
+          if (comparison.results.length > 1) {
+            const min = comparison.results[0].total;
+            const activeRegion = AVAILABLE_REGIONS.some(r => r.id === breakdown.region)
+              ? breakdown.region
+              : undefined;
+            regions = comparison.results.map(r => ({
+              name: r.info.displayName,
+              flag: r.info.flag,
+              monthly: r.total,
+              annual: r.annual,
+              isCurrent: activeRegion !== undefined && r.info.id === activeRegion,
+              isCheapest: comparisonComplete && r.total === min,
+            }));
+          }
         }
 
         const azureServiceNodes = nodes.filter(n => n.type === 'azureNode');
@@ -1887,6 +2142,8 @@ function App() {
               percentage: breakdown.totalMonthlyCost > 0 ? (s.cost / breakdown.totalMonthlyCost) * 100 : 0,
             })),
           regions,
+          regionComparisonIncomplete: Boolean(unavailableRegions?.length),
+          unavailableRegions,
         } : null;
 
         const fileName = await exportArchitectureDeck(imageDataUrl, {
@@ -1941,7 +2198,7 @@ function App() {
     const breakdown = calculateCostBreakdown(nodes, undefined, pricingMode);
     
     // Check if there's any cost data
-    if (breakdown.byService.length === 0 || breakdown.totalMonthlyCost === 0) {
+    if (breakdown.byService.length === 0) {
       alert(t("No costing information available. Please ensure your diagram contains Azure services with pricing data."));
       return;
     }
@@ -1954,8 +2211,10 @@ function App() {
     link.href = url;
     const baseName = generateModelFilename('azure-cost-breakdown', 'csv');
     // Insert region before the extension for cost exports
-    const region = getActiveRegion();
-    const fileName = baseName.replace('.csv', `-${region}.csv`);
+    const fileName = baseName.replace(
+      '.csv',
+      `-${toFileNameSegment(breakdown.region)}.csv`,
+    );
     link.download = fileName;
     link.click();
     URL.revokeObjectURL(url);
@@ -1965,30 +2224,28 @@ function App() {
 
   const exportCostBreakdownZip = useCallback(async () => {
     const breakdown = calculateCostBreakdown(nodes, undefined, pricingMode);
-    if (breakdown.byService.length === 0 || breakdown.totalMonthlyCost === 0) {
+    if (breakdown.byService.length === 0) {
       alert(t("No costing information available. Please ensure your diagram contains Azure services with pricing data."));
       return;
     }
 
     // ── Multi-region comparison ──────────────────────────────────────────────
-    type RegionResult = { info: RegionInfo; total: number; annual: number; breakdown: ReturnType<typeof calculateCostBreakdown> };
-    const regionResults: RegionResult[] = [];
-    for (const rInfo of AVAILABLE_REGIONS) {
-      try {
-        const repricedNodes = await refreshAllNodePricing(nodes, rInfo.id);
-        const rb = calculateCostBreakdown(repricedNodes, rInfo.id, pricingMode);
-        regionResults.push({ info: rInfo, total: rb.totalMonthlyCost, annual: rb.totalMonthlyCost * 12, breakdown: rb });
-      } catch {
-        // If a region fails to reprice (e.g. missing data), skip it gracefully
-      }
-    }
-    regionResults.sort((a, b) => a.total - b.total);
-    const cheapest = regionResults[0];
-    const mostExpensive = regionResults[regionResults.length - 1];
+    const comparison = await calculateRegionalCostComparison(nodes, pricingMode);
+    const regionResults = comparison.results;
+    const regionFailures = comparison.failures;
+    const regionalComparisonComplete = regionFailures.length === 0;
+    const lowestComparable = regionResults[0];
+    const highestComparable = regionResults[regionResults.length - 1];
+    const cheapest = regionalComparisonComplete ? lowestComparable : undefined;
+    const mostExpensive = regionalComparisonComplete ? highestComparable : undefined;
 
     // Build intelligent analysis text
-    const region = getActiveRegion();
-    const regionInfo = AVAILABLE_REGIONS.find(r => r.id === region);
+    const reportRegion = breakdown.region;
+    const regionInfo = AVAILABLE_REGIONS.find(r => r.id === reportRegion);
+    const currentRegionId = regionInfo?.id;
+    const reportRegionLabel = regionInfo
+      ? `${regionInfo.displayName} (${regionInfo.id})`
+      : reportRegion;
     const annual = breakdown.totalMonthlyCost * 12;
     const sortedServices = [...breakdown.byService].sort((a, b) => b.cost - a.cost);
     const topDrivers = sortedServices.slice(0, 5);
@@ -2012,7 +2269,7 @@ function App() {
     const analysisLines: string[] = [
       '# Azure Architecture — Cost Intelligence Report',
       '',
-      `_Generated ${new Date().toLocaleString()} · Region: \`${regionInfo ? `${regionInfo.displayName} (${regionInfo.id})` : region}\` · ${azureServiceNodes.length} service(s) on diagram_`,
+      `_Generated ${new Date().toLocaleString()} · Region: \`${reportRegionLabel}\` · ${azureServiceNodes.length} service(s) on diagram_`,
       '',
     ];
 
@@ -2021,9 +2278,13 @@ function App() {
     analysisLines.push(`> Estimated **$${breakdown.totalMonthlyCost.toFixed(2)}/mo** (**$${annual.toFixed(2)}/yr**).`);
     if (cheapest) {
       analysisLines.push(`> Cheapest region: **${cheapest.info.flag} ${cheapest.info.displayName}** at $${cheapest.total.toFixed(2)}/mo.`);
+    } else if (regionFailures.length > 0) {
+      analysisLines.push(`> Regional comparison is partial: ${regionResults.length} of ${AVAILABLE_REGIONS.length} regions are comparable. No cheapest-region recommendation is made.`);
     }
     {
-      const currentResult = regionResults.find(r => r.info.id === region);
+      const currentResult = currentRegionId
+        ? regionResults.find(r => r.info.id === currentRegionId)
+        : undefined;
       if (currentResult && cheapest && currentResult.info.id !== cheapest.info.id) {
         const savingsMonthly = currentResult.total - cheapest.total;
         analysisLines.push(`> Potential saving by switching region: ~$${savingsMonthly.toFixed(2)}/mo ($${(savingsMonthly * 12).toFixed(2)}/yr).`);
@@ -2104,38 +2365,60 @@ function App() {
     analysisLines.push('## Multi-region cost comparison');
     analysisLines.push('');
     if (regionResults.length === 0) {
-      analysisLines.push('_Regional pricing data unavailable for comparison._');
+      analysisLines.push('_No region could preserve every selected SKU, so a like-for-like comparison is unavailable._');
+      if (regionFailures.length > 0) {
+        analysisLines.push('');
+        analysisLines.push('**Unavailable regions**');
+        regionFailures.forEach(failure => {
+          analysisLines.push(`- ${failure.info.flag} ${failure.info.displayName} (\`${failure.info.id}\`): ${failure.reason}`);
+        });
+      }
       analysisLines.push('');
     } else {
-      analysisLines.push('| Rank | Region | Monthly | Annual | vs Cheapest | vs Current |');
+      analysisLines.push(`| Rank | Region | Monthly | Annual | ${regionalComparisonComplete ? 'vs Cheapest' : 'vs Lowest shown'} | ${currentRegionId ? 'vs Current' : 'vs Diagram estimate'} |`);
       analysisLines.push('| ---: | --- | ---: | ---: | ---: | ---: |');
       const currentTotal = breakdown.totalMonthlyCost;
       regionResults.forEach((r, idx) => {
-        const isCurrent = r.info.id === region;
-        const isCheapestRegion = idx === 0;
-        const vsCheapest = isCheapestRegion ? 'baseline' : `+${(((r.total - cheapest.total) / cheapest.total) * 100).toFixed(1)}%`;
+        const isCurrent = currentRegionId !== undefined && r.info.id === currentRegionId;
+        const isLowestShown = idx === 0;
+        const vsLowest = isLowestShown
+          ? 'baseline'
+          : lowestComparable && lowestComparable.total > 0
+            ? `+${(((r.total - lowestComparable.total) / lowestComparable.total) * 100).toFixed(1)}%`
+            : '—';
         const vsCurrent = isCurrent
           ? 'current'
           : r.total < currentTotal
             ? `−${(((currentTotal - r.total) / currentTotal) * 100).toFixed(1)}% 💰`
             : `+${(((r.total - currentTotal) / currentTotal) * 100).toFixed(1)}%`;
-        const marker = isCheapestRegion ? ' ★' : isCurrent ? ' ◀' : '';
-        analysisLines.push(`| ${idx + 1}${marker} | ${r.info.flag} ${r.info.displayName} (\`${r.info.id}\`) | $${r.total.toFixed(2)} | $${r.annual.toFixed(2)} | ${vsCheapest} | ${vsCurrent} |`);
+        const marker = regionalComparisonComplete && isLowestShown ? ' ★' : isCurrent ? ' ◀' : '';
+        analysisLines.push(`| ${idx + 1}${marker} | ${r.info.flag} ${r.info.displayName} (\`${r.info.id}\`) | $${r.total.toFixed(2)} | $${r.annual.toFixed(2)} | ${vsLowest} | ${vsCurrent} |`);
       });
       analysisLines.push('');
-      if (cheapest) {
+      if (!regionalComparisonComplete) {
+        analysisLines.push(`- ⚠️ **Partial comparison:** ${regionResults.length} of ${AVAILABLE_REGIONS.length} regions preserve every selected SKU. No global cheapest or savings recommendation is shown.`);
+        if (lowestComparable) {
+          analysisLines.push(`- **Lowest shown:** ${lowestComparable.info.flag} ${lowestComparable.info.displayName} — $${lowestComparable.total.toFixed(2)}/mo. This is not a global cheapest-region claim.`);
+        }
+        analysisLines.push('- **Unavailable regions:**');
+        regionFailures.forEach(failure => {
+          analysisLines.push(`  - ${failure.info.flag} ${failure.info.displayName} (\`${failure.info.id}\`): ${failure.reason}`);
+        });
+      } else if (cheapest) {
         analysisLines.push(`- ★ **Cheapest:** ${cheapest.info.flag} ${cheapest.info.displayName} — $${cheapest.total.toFixed(2)}/mo ($${cheapest.annual.toFixed(2)}/yr)`);
-      }
-      if (mostExpensive) {
-        const premiumPct = cheapest && cheapest.total > 0 ? (((mostExpensive.total - cheapest.total) / cheapest.total) * 100).toFixed(1) : '0.0';
-        analysisLines.push(`- 🔥 **Priciest:** ${mostExpensive.info.flag} ${mostExpensive.info.displayName} — $${mostExpensive.total.toFixed(2)}/mo (+${premiumPct}% above cheapest)`);
-      }
-      const currentResult = regionResults.find(r => r.info.id === region);
-      if (currentResult && cheapest && currentResult.info.id !== cheapest.info.id) {
-        const savingsMonthly = currentResult.total - cheapest.total;
-        analysisLines.push(`- 💡 **Potential savings:** switching ${currentResult.info.displayName} → ${cheapest.info.displayName} saves ~$${savingsMonthly.toFixed(2)}/mo ($${(savingsMonthly * 12).toFixed(2)}/yr) — verify service availability before migrating.`);
-      } else if (currentResult && cheapest && currentResult.info.id === cheapest.info.id) {
-        analysisLines.push('- ✅ You are already on the cheapest available region for this architecture.');
+        if (mostExpensive) {
+          const premiumPct = cheapest.total > 0 ? (((mostExpensive.total - cheapest.total) / cheapest.total) * 100).toFixed(1) : '0.0';
+          analysisLines.push(`- 🔥 **Priciest:** ${mostExpensive.info.flag} ${mostExpensive.info.displayName} — $${mostExpensive.total.toFixed(2)}/mo (+${premiumPct}% above cheapest)`);
+        }
+        const currentResult = currentRegionId
+          ? regionResults.find(r => r.info.id === currentRegionId)
+          : undefined;
+        if (currentResult && currentResult.info.id !== cheapest.info.id) {
+          const savingsMonthly = currentResult.total - cheapest.total;
+          analysisLines.push(`- 💡 **Potential savings:** switching ${currentResult.info.displayName} → ${cheapest.info.displayName} saves ~$${savingsMonthly.toFixed(2)}/mo ($${(savingsMonthly * 12).toFixed(2)}/yr) — verify service availability before migrating.`);
+        } else if (currentResult && currentResult.info.id === cheapest.info.id) {
+          analysisLines.push('- ✅ You are already on the cheapest available region for this architecture.');
+        }
       }
       analysisLines.push('');
 
@@ -2190,7 +2473,7 @@ function App() {
     // Build ZIP
     const zip = new JSZip();
     const baseName = generateModelFilename('azure-cost', 'zip').replace('.zip', '');
-    const fileBase = `${baseName}-${region}`;
+    const fileBase = `${baseName}-${toFileNameSegment(reportRegion)}`;
 
     const summaryMd = getCostSummaryMarkdown(breakdown);
     const analysisMd = analysisLines.join('\n');
@@ -2214,8 +2497,11 @@ function App() {
     zip.file('README.md', [
       '# Azure Architecture Cost Export',
       '',
-      `Generated ${new Date().toLocaleString()} for region \`${region}\` by Azure Architecture Diagram Builder.`,
+      `Generated ${new Date().toLocaleString()} for region \`${reportRegionLabel}\` by Azure Architecture Diagram Builder.`,
       '',
+      ...(regionFailures.length > 0
+        ? [`> Regional comparison is partial: ${regionResults.length} of ${AVAILABLE_REGIONS.length} regions preserve every selected SKU. Unavailable regions are listed in the analysis and comparison CSV.`, '']
+        : []),
       'This bundle contains the same cost estimate in several formats — open whichever suits your tooling:',
       '',
       '| File | Format | Best for |',
@@ -2226,36 +2512,43 @@ function App() {
       `| \`${fileBase}-analysis.md\` | Markdown | Detailed intelligence report (drivers, flags, multi-region comparison) |`,
       `| \`${fileBase}.csv\` | CSV | Per-service breakdown for Excel / spreadsheets |`,
       `| \`${fileBase}.json\` | JSON | Structured data for programmatic use / automation |`,
-      `| \`${fileBase}-multiregion-comparison.csv\` | CSV | Per-service pricing across all regions, side by side |`,
+      `| \`${fileBase}-multiregion-comparison.csv\` | CSV | Per-service pricing and SKU availability across all regions |`,
       '',
       '> Estimates are indicative and exclude taxes, bandwidth egress, and support plans unless modeled explicitly.',
       '> Usage-based services (e.g. Functions, OpenAI) may vary with actual consumption.',
     ].join('\n'));
 
     // Multi-region comparison CSV
-    if (regionResults.length > 0) {
+    if (regionResults.length > 0 || regionFailures.length > 0) {
       const mrLines: string[] = [
-        'Region,Region ID,Geography,Flag,Type,Monthly Cost (USD),Annual Cost (USD),vs Cheapest (%),vs Current Region (%)',
+        `Region,Region ID,Geography,Flag,Type,Monthly Cost (USD),Annual Cost (USD),${regionalComparisonComplete ? 'vs Cheapest (%)' : 'vs Lowest Shown (%)'},${currentRegionId ? 'vs Current Region (%)' : 'vs Diagram Estimate (%)'},Status,Error`,
       ];
       const currentTotal = breakdown.totalMonthlyCost;
       regionResults.forEach(r => {
-        const vsCheapest = cheapest && cheapest.total > 0
-          ? r.info.id === cheapest.info.id ? '0.00' : (((r.total - cheapest.total) / cheapest.total) * 100).toFixed(2)
+        const vsLowest = lowestComparable && lowestComparable.total > 0
+          ? r.info.id === lowestComparable.info.id ? '0.00' : (((r.total - lowestComparable.total) / lowestComparable.total) * 100).toFixed(2)
           : '';
         const vsCurrent = currentTotal > 0
-          ? r.info.id === region ? '0.00' : (((r.total - currentTotal) / currentTotal) * 100).toFixed(2)
+          ? currentRegionId && r.info.id === currentRegionId
+            ? '0.00'
+            : (((r.total - currentTotal) / currentTotal) * 100).toFixed(2)
           : '';
-        mrLines.push(`"${r.info.displayName}",${r.info.id},"${r.info.geography}",${r.info.flag},${r.info.regionType},${r.total.toFixed(2)},${r.annual.toFixed(2)},${vsCheapest},${vsCurrent}`);
+        mrLines.push(`${csvTextCell(r.info.displayName, true)},${csvTextCell(r.info.id)},${csvTextCell(r.info.geography, true)},${csvTextCell(r.info.flag)},${csvTextCell(r.info.regionType)},${r.total.toFixed(2)},${r.annual.toFixed(2)},${vsLowest},${vsCurrent},Comparable,`);
+      });
+      regionFailures.forEach(failure => {
+        mrLines.push(`${csvTextCell(failure.info.displayName, true)},${csvTextCell(failure.info.id)},${csvTextCell(failure.info.geography, true)},${csvTextCell(failure.info.flag)},${csvTextCell(failure.info.regionType)},,,,,Unavailable,${csvTextCell(failure.reason, true)}`);
       });
       // Per-service per-region detail sheet
       mrLines.push('');
-      mrLines.push('Service,Node ID,' + regionResults.map(r => r.info.displayName).join(','));
+      mrLines.push('Service,Node ID,' + AVAILABLE_REGIONS.map(r => r.displayName).join(','));
+      const resultsByRegionId = new Map(regionResults.map(result => [result.info.id, result]));
       breakdown.byService.forEach(svc => {
-        const prices = regionResults.map(r => {
-          const match = r.breakdown.byService.find(s => s.nodeId === svc.nodeId);
+        const prices = AVAILABLE_REGIONS.map(region => {
+          const result = resultsByRegionId.get(region.id);
+          const match = result?.breakdown.byService.find(s => s.nodeId === svc.nodeId);
           return match ? match.cost.toFixed(2) : '';
         });
-        mrLines.push(`"${svc.serviceName}",${svc.nodeId},${prices.join(',')}`);
+        mrLines.push(`${csvTextCell(svc.serviceName, true)},${csvTextCell(svc.nodeId)},${prices.join(',')}`);
       });
       zip.file(`${fileBase}-multiregion-comparison.csv`, mrLines.join('\n'));
     }
@@ -2607,12 +2900,10 @@ function App() {
     console.log(`⏳ Loading icons for ${services.length} services...`);
     const iconLoadingPromises = services.map(async (service: any) => {
       try {
-        // FIRST: Try using serviceIconMapping for exact matches
-        // Try service.name first (preferred), then service.type
-        let mapping = getServiceIconMapping(service.name);
-        if (!mapping) {
-          mapping = getServiceIconMapping(service.type);
-        }
+        // Prefer the canonical service type; display names can be ambiguous
+        // across Azure and Microsoft Fabric.
+        let mapping = getServiceIconMapping(service.type);
+        if (!mapping) mapping = getServiceIconMapping(service.name);
         if (mapping) {
           console.log(`  🎯 Found mapping for "${service.name}" (type: ${service.type}): ${mapping.iconFile}`);
           const iconPath = `/Azure_Public_Service_Icons/Icons/${mapping.category}/${mapping.iconFile}.svg`;
@@ -2775,6 +3066,8 @@ function App() {
         position: service.position,  // ✅ Use position from layout engine
         data: {
           label: service.name,
+          serviceName: service.type || service.name,
+          category: icon?.category || service.category,
           iconPath: icon?.path || '',
         },
         parentNode: service.groupId || undefined,  // Link to group if exists
@@ -2904,6 +3197,7 @@ function App() {
 
     // Add the new nodes and edges
     console.log(`Setting ${finalNodes.length} nodes and ${newEdges.length} edges`);
+    const pricingRunId = ++aiPricingRunRef.current;
     setValidationResult(null);
     setValidationHandoff(null);
     feedbackAfterValidationRef.current = false;
@@ -2930,19 +3224,25 @@ function App() {
       setGeneratedWithModel(null);
     }
 
-    // Initialize pricing for all service nodes asynchronously (uses active region)
+    // Initialize only nodes that do not already carry editor-owned pricing.
     const currentRegion = getActiveRegion();
-    console.log(`💰 Initializing pricing for ${services.length} services in region: ${currentRegion}`);
-    
-    const pricingPromises = services.map(async (service: any) => {
+    const finalNodesById = new Map(finalNodes.map(node => [node.id, node]));
+    const pricingTargets = services.filter(
+      (service: any) => !finalNodesById.get(service.id)?.data?.pricing,
+    );
+    console.log(`💰 Initializing pricing for ${pricingTargets.length} services in region: ${currentRegion}`);
+
+    const pricingPromises = pricingTargets.map(async (service: any) => {
+      const serviceType = String(service.type || service.name);
       console.log(`  → Fetching pricing for: ${service.name} (type: ${service.type}, ID: ${service.id})`);
-      const pricing = await initializeNodePricing(service.name, currentRegion);
+      const pricing = await initializeNodePricing(serviceType, currentRegion);
       console.log(`  ${pricing ? '✅' : '❌'} Pricing result for ${service.name}:`, pricing ? 'Found' : 'Not found');
-      return { id: service.id, pricing };
+      return { id: service.id, serviceType, pricing };
     });
     
     Promise.all(pricingPromises)
       .then(pricingResults => {
+        if (pricingRunId !== aiPricingRunRef.current) return;
         console.log(`📊 Pricing results ready, updating ${pricingResults.length} nodes`);
         const resultsWithPricing = pricingResults.filter(r => r.pricing);
         console.log(`  → ${resultsWithPricing.length}/${pricingResults.length} nodes have pricing data`);
@@ -2950,7 +3250,12 @@ function App() {
         setNodes((nds) => 
           nds.map(node => {
             const result = pricingResults.find(r => r.id === node.id);
-            if (result?.pricing) {
+            const currentServiceType = String(node.data.serviceName || node.data.label || '');
+            if (
+              result?.pricing
+              && !node.data.pricing
+              && currentServiceType === result.serviceType
+            ) {
               console.log(`  💵 Adding pricing to node ${node.id}:`, result.pricing.estimatedCost);
               return { ...node, data: { ...node.data, pricing: result.pricing } };
             }
@@ -2966,6 +3271,7 @@ function App() {
 
     // Track architecture generation telemetry
     const aiMetrics = (architecture as any)?.metrics || {};
+    const aiIntegrity = (architecture as any)?.integrity || {};
     trackArchitectureGeneration({
       model: aiMetrics.model,
       reasoningEffort: aiMetrics.reasoningEffort,
@@ -2977,6 +3283,9 @@ function App() {
       elapsedTimeMs: aiMetrics.elapsedTimeMs,
       totalTokens: aiMetrics.totalTokens,
       isModification: isRefinement,
+      orphanCount: aiIntegrity.orphanCount,
+      repairedEdges: aiIntegrity.repairedEdges,
+      droppedEdges: aiIntegrity.droppedEdges,
     });
 
     const handoffContext = {
@@ -3546,7 +3855,28 @@ function App() {
               >
                 {toolbarSectionHeading('context', localize(language, { en: 'Context', ja: 'コンテキスト' }))}
                 <RegionSelector onRegionChange={handleRegionChange} />
-                {totalMonthlyCost > 0 && (
+                {hasCostDisplayData && (
+                  <button
+                    className={`cost-visibility-toggle${pricingPrefs.showCostBadges ? '' : ' is-off'}`}
+                    onClick={() => setPricingPrefs({ showCostBadges: !pricingPrefs.showCostBadges })}
+                    aria-pressed={pricingPrefs.showCostBadges}
+                    title={localize(language, {
+                      en: pricingPrefs.showCostBadges
+                        ? 'Hide indicative cost estimates without changing the diagram style'
+                        : 'Show indicative cost estimates',
+                      ja: pricingPrefs.showCostBadges
+                        ? '図のスタイルを変えずに参考コストを非表示'
+                        : '参考コストを表示',
+                    })}
+                  >
+                    {pricingPrefs.showCostBadges ? <Eye size={14} /> : <EyeOff size={14} />}
+                    {localize(language, {
+                      en: pricingPrefs.showCostBadges ? 'Cost' : 'Cost hidden',
+                      ja: pricingPrefs.showCostBadges ? 'コスト' : 'コスト非表示',
+                    })}
+                  </button>
+                )}
+                {hasCostReportData && pricingPrefs.showCostBadges && (
                   <>
                     <div
                       className="cost-indicator"
@@ -3554,7 +3884,8 @@ function App() {
                         term: pricingMode === 'reserved1yr' ? t('1-year savings plan') : t('pay-as-you-go'),
                       })}
                     >
-                      {' '}{t("💰")}{' '}{formatMonthlyCost(totalMonthlyCost)}
+                      {' '}{t("💰")}{' '}
+                      {totalMonthlyCost === 0 ? '$0.00/mo' : formatMonthlyCost(totalMonthlyCost)}
                     </div>
                     <div className="pricing-mode-toggle" role="group" aria-label={t("Pricing term")}>
                       <button
@@ -3897,24 +4228,24 @@ function App() {
                       <button
                         className="toolbar-dropdown-item"
                         role="menuitem"
-                        disabled={totalMonthlyCost === 0}
+                        disabled={!hasCostReportData}
                         onClick={() => {
                           setIsExportMenuOpen(false);
                           exportCostBreakdown();
                         }}
-                        title={totalMonthlyCost === 0 ? t("Add services to estimate costs first") : t("Export cost breakdown as CSV")}
+                        title={!hasCostReportData ? t("Add services to estimate costs first") : t("Export cost breakdown as CSV")}
                       >
                         <DollarSign size={18} />
                         {' '}{t("Export Costs (CSV)")}{' '}</button>
                       <button
                         className="toolbar-dropdown-item"
                         role="menuitem"
-                        disabled={totalMonthlyCost === 0}
+                        disabled={!hasCostReportData}
                         onClick={() => {
                           setIsExportMenuOpen(false);
                           exportCostBreakdownZip();
                         }}
-                        title={totalMonthlyCost === 0 ? t("Add services to estimate costs first") : t("Export CSV, JSON, summary and intelligent analysis as a ZIP")}
+                        title={!hasCostReportData ? t("Add services to estimate costs first") : t("Export CSV, JSON, summary and intelligent analysis as a ZIP")}
                       >
                         <DollarSign size={18} />
                         {' '}{t("Export Costs (All Formats)")}{' '}</button>
@@ -5020,6 +5351,29 @@ Return the IMPROVED architecture in the same JSON format as before with proper g
           onClose={() => setIsAccessManagementOpen(false)}
         />
       )}
+      {(() => {
+        if (!pricingEditorNodeId) return null;
+        const node = nodes.find(n => n.id === pricingEditorNodeId);
+        const nodePricing = node?.data?.pricing as NodePricingConfig | undefined;
+        if (!node || !nodePricing) return null;
+        return (
+          <NodePricingEditor
+            serviceType={String(node.data.serviceName || node.data.label || 'Unknown')}
+            pricing={nodePricing}
+            onClose={closeNodePricingEditor}
+            onApply={(updated) => {
+              // Total cost recalculates from `nodes` via the existing effect.
+              setNodes(nds =>
+                nds.map(n =>
+                  n.id === pricingEditorNodeId
+                    ? { ...n, data: { ...n.data, pricing: updated } }
+                    : n,
+                ),
+              );
+            }}
+          />
+        );
+      })()}
     </div>
   );
 }

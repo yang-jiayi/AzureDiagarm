@@ -126,6 +126,10 @@ interface GeneratedIconInfo {
   iconFile: string;
   category: string;
   aliases: string[];
+  hasPricingData: boolean;
+  pricingServiceName?: string;
+  isUsageBased?: boolean;
+  costRange?: string;
 }
 
 const thisDirectory = dirname(fileURLToPath(import.meta.url));
@@ -133,41 +137,116 @@ const generatedIconMap = JSON.parse(
   readFileSync(resolvePath(thisDirectory, 'iconMap.generated.json'), 'utf8'),
 ) as Record<string, GeneratedIconInfo>;
 
-for (const [key, icon] of Object.entries(generatedIconMap)) {
-  if (icon.category !== 'fabric') continue;
+function generatedAliases(key: string, icon: GeneratedIconInfo): string[] {
+  return uniqueAliases(key, [icon.displayName, ...icon.aliases]);
+}
 
+function uniqueAliases(key: string, aliases: string[]): string[] {
+  const seen = new Set([key.toLowerCase()]);
+  return aliases.filter(alias => {
+    const normalized = alias.trim().toLowerCase();
+    if (!normalized || seen.has(normalized)) return false;
+    seen.add(normalized);
+    return true;
+  });
+}
+
+const generatedCanonicalOwners = new Map<string, string>();
+for (const key of Object.keys(generatedIconMap)) {
+  generatedCanonicalOwners.set(key.toLowerCase(), key);
+}
+
+const generatedAliasOwners = new Map<string, string>();
+for (const [key, icon] of Object.entries(generatedIconMap)) {
+  for (const alias of generatedAliases(key, icon)) {
+    const normalized = alias.toLowerCase();
+    if (
+      !generatedCanonicalOwners.has(normalized)
+      && !generatedAliasOwners.has(normalized)
+    ) {
+      generatedAliasOwners.set(normalized, key);
+    }
+  }
+}
+
+for (const [key, icon] of Object.entries(generatedIconMap)) {
   const existing = SERVICE_CATALOG[key];
   if (existing) {
-    existing.aliases = [...new Set([...existing.aliases, icon.displayName, ...icon.aliases])]
-      .filter(alias => alias !== key);
-    existing.category = 'fabric';
+    const legacyAliases = [existing.displayName, ...existing.aliases].filter(alias => {
+      const normalized = alias.trim().toLowerCase();
+      const generatedOwner = generatedCanonicalOwners.get(normalized)
+        ?? generatedAliasOwners.get(normalized);
+      return !generatedOwner || generatedOwner === key;
+    });
+    existing.displayName = icon.displayName;
+    existing.aliases = uniqueAliases(key, [
+      ...generatedAliases(key, icon),
+      ...legacyAliases,
+    ]);
+    existing.category = icon.category;
+    existing.hasPricingData = icon.hasPricingData;
+    existing.pricingServiceName = icon.pricingServiceName;
+    existing.isUsageBased = icon.isUsageBased;
+    existing.costRange = icon.costRange;
     continue;
   }
 
   SERVICE_CATALOG[key] = {
     displayName: icon.displayName,
-    aliases: [...new Set(icon.aliases)].filter(alias => alias !== key),
-    category: 'fabric',
-    hasPricingData: false,
+    aliases: generatedAliases(key, icon),
+    category: icon.category,
+    hasPricingData: icon.hasPricingData,
+    pricingServiceName: icon.pricingServiceName,
+    isUsageBased: icon.isUsageBased,
+    costRange: icon.costRange,
   };
+}
+
+const canonicalNameIndex = new Map<string, string>();
+for (const key of Object.keys(SERVICE_CATALOG)) {
+  canonicalNameIndex.set(key.toLowerCase(), key);
+}
+
+const aliasIndex = new Map<string, string>();
+const indexAliases = (key: string, aliases: string[]) => {
+  for (const alias of aliases) {
+    const normalized = alias.trim().toLowerCase();
+    if (
+      normalized
+      && !canonicalNameIndex.has(normalized)
+      && !aliasIndex.has(normalized)
+    ) {
+      aliasIndex.set(normalized, key);
+    }
+  }
+};
+
+// Generated aliases use the same source order as the web application, so
+// collisions resolve consistently across the browser and MCP experiences.
+for (const [key, icon] of Object.entries(generatedIconMap)) {
+  indexAliases(key, generatedAliases(key, icon));
+}
+for (const [key, info] of Object.entries(SERVICE_CATALOG)) {
+  indexAliases(key, info.aliases);
 }
 
 /**
  * Resolve a service name to its canonical key (case-insensitive, alias-aware).
  */
 export function resolveServiceName(name: string): string | null {
-  const trimmed = name.trim();
+  const normalized = name.trim().toLowerCase();
+  return canonicalNameIndex.get(normalized) ?? aliasIndex.get(normalized) ?? null;
+}
 
-  // Direct match
-  if (SERVICE_CATALOG[trimmed]) return trimmed;
-
-  // Alias search
-  const lower = trimmed.toLowerCase();
-  for (const [key, info] of Object.entries(SERVICE_CATALOG)) {
-    if (info.aliases.some(a => a.toLowerCase() === lower)) return key;
-  }
-
-  return null;
+/**
+ * Resolve the pricing sidecar key for a catalog service. Explicitly unpriced
+ * catalog entries must not inherit a coincidentally matching sidecar key.
+ */
+export function resolvePricingServiceName(name: string): string | null {
+  const resolved = resolveServiceName(name);
+  const info = resolved ? SERVICE_CATALOG[resolved] : undefined;
+  if (info && !info.hasPricingData) return null;
+  return info?.pricingServiceName ?? resolved ?? name;
 }
 
 /**

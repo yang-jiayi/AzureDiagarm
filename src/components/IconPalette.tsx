@@ -118,6 +118,7 @@ const IconPalette: React.FC<IconPaletteProps> = ({ forceCollapsed, onAddIcon }) 
     event.dataTransfer.setData('application/reactflow', 'azureNode');
     event.dataTransfer.setData('iconPath', icon.path);
     event.dataTransfer.setData('iconName', icon.name);
+    event.dataTransfer.setData('iconServiceName', icon.serviceName);
     event.dataTransfer.setData('iconCategory', icon.category);
     event.dataTransfer.effectAllowed = 'move';
   };

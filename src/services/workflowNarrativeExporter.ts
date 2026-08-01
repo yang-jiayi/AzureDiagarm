@@ -168,7 +168,11 @@ export function buildWorkflowMarkdown(input: WorkflowNarrativeInput): string {
     lines.push(`**Score:** ${validationScore}/100`);
     lines.push('');
   }
-  if (typeof totalMonthlyCost === 'number' && totalMonthlyCost > 0) {
+  if (
+    typeof totalMonthlyCost === 'number'
+    && totalMonthlyCost >= 0
+    && serviceNodes.some(node => Boolean(node.data?.pricing))
+  ) {
     lines.push('## Estimated Monthly Cost');
     lines.push('');
     const term = pricingMode === 'reserved1yr' ? '1-year savings plan' : 'pay-as-you-go';

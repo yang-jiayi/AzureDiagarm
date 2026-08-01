@@ -314,6 +314,16 @@ function filterPricingItems(
     
     // Only consumption pricing (not reservations or spot)
     if (consumptionOnly && item.type !== 'Consumption') return false;
+
+    // The Retail Prices API groups Static Web Apps, domains, and SSL add-ons
+    // under the Azure App Service service name. They are separate products,
+    // not hosting-plan SKUs, and must not appear in the App Service tier picker.
+    if (
+      serviceName.toLowerCase() === 'azure app service'
+      && !/^Azure App Service (Free|Shared|Basic|Standard|Premium|Isolated)\b/i.test(item.productName)
+    ) {
+      return false;
+    }
     
     return true;
   });
@@ -325,20 +335,29 @@ function filterPricingItems(
 /**
  * Parse pricing items into tiers
  */
-function parsePricingTiers(items: AzureRetailPrice[]): PricingTier[] {
+function parsePricingTiers(items: AzureRetailPrice[], serviceName: string): PricingTier[] {
   const tierMap = new Map<string, PricingTier>();
+  const isAppService = serviceName.toLowerCase() === 'azure app service';
 
   // Convert a per-unit rate into a monthly cost given the meter's unit-of-measure.
   const toMonthly = (rate: number, unitOfMeasure: string): number => {
-    if (unitOfMeasure.includes('/Month') || unitOfMeasure.includes('1/Month')) return rate;
-    if (unitOfMeasure.includes('/Day') || unitOfMeasure.includes('1/Day')) return rate * 30;
-    if (unitOfMeasure === '1K' || unitOfMeasure.includes('1000')) return rate * 100;
+    const normalizedUnit = unitOfMeasure.toLowerCase();
+    if (normalizedUnit.includes('/month')) return rate;
+    if (normalizedUnit.includes('/year')) return rate / 12;
+    if (normalizedUnit.includes('/day')) return rate * 30;
+    if (normalizedUnit === '1k' || normalizedUnit.includes('1000')) return rate * 100;
     return rate * 730; // default: hourly × 730 hours/month
   };
 
   items.forEach(item => {
     const skuName = item.skuName || item.armSkuName;
     if (!skuName) return;
+    const tierId = isAppService
+      ? `${item.productName}::${skuName}`
+      : skuName;
+    const displayName = isAppService
+      ? `${skuName} (${/- Linux$/i.test(item.productName) ? 'Linux' : 'Windows'})`
+      : skuName;
     
     // Handle different billing units for AI services
     const unitOfMeasure = (item as any).unitOfMeasure || '1 Hour';
@@ -356,9 +375,10 @@ function parsePricingTiers(items: AzureRetailPrice[]): PricingTier[] {
     }
 
     // Only add if we don't have this SKU yet, or if this is cheaper
-    if (!tierMap.has(skuName) || tierMap.get(skuName)!.monthlyPrice > monthlyPrice) {
-      tierMap.set(skuName, {
-        name: skuName,
+    if (!tierMap.has(tierId) || tierMap.get(tierId)!.monthlyPrice > monthlyPrice) {
+      tierMap.set(tierId, {
+        id: tierId,
+        name: displayName,
         skuName: skuName,
         monthlyPrice: monthlyPrice,
         hourlyPrice: hourlyPrice,
@@ -419,7 +439,7 @@ export async function getRegionalServicePricing(
     return null;
   }
   
-  const tiers = parsePricingTiers(filteredItems);
+  const tiers = parsePricingTiers(filteredItems, serviceName);
   
   if (tiers.length === 0) {
     console.warn(`⚠️ No pricing tiers parsed for ${serviceName} in ${targetRegion}`);

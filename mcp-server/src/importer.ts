@@ -9,7 +9,7 @@
  *
  *   - `generate_manifest`  → az prototype interchange manifest (clean, lossless)
  *   - `export_reactflow_scene` → React Flow scene (nodes/edges); service type is
- *     reversed from data.azureServiceType when present, else from the icon path.
+ *     read from data.serviceName/data.azureServiceType, else from the icon path.
  *
  * Tolerant by design: it accepts web-app-native scenes and manifests too, and
  * collects warnings rather than throwing on partially-recognized input.
@@ -55,10 +55,29 @@ function asObject(input: unknown): AnyObj {
   throw new Error('Input must be a JSON string or object.');
 }
 
+export function buildIconFileToTypeMap(
+  iconMap: Record<string, { iconFile?: string }>,
+): Record<string, string> {
+  const candidates = new Map<string, string[]>();
+  for (const [serviceName, entry] of Object.entries(iconMap)) {
+    if (!entry.iconFile) continue;
+    const names = candidates.get(entry.iconFile) ?? [];
+    names.push(serviceName);
+    candidates.set(entry.iconFile, names);
+  }
+
+  return Object.fromEntries(
+    [...candidates.entries()]
+      .filter(([, serviceNames]) => serviceNames.length === 1)
+      .map(([iconFile, [serviceName]]) => [iconFile, serviceName]),
+  );
+}
+
 /** Reverse a React Flow node's Azure service type. */
 function typeFromNode(node: AnyObj, iconFileToType?: Record<string, string>): string | null {
   const d = (node.data ?? {}) as AnyObj;
   const explicit =
+    (d.serviceName as string) ??
     (d.azureServiceType as string) ??
     (d.serviceType as string) ??
     (d.azureType as string) ??

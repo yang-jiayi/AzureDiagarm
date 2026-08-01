@@ -619,6 +619,34 @@ body.dark-mode .toolbar-dropdown-separator {
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
 }
 
+/* Show / hide cost estimates. Stays visible when costs are hidden so the
+   control can be reversed. */
+.cost-visibility-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  background: rgba(255, 255, 255, 0.12);
+  color: white;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 6px;
+  padding: 0.5rem 0.7rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s ease, opacity 0.15s ease;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.cost-visibility-toggle:hover {
+  background: rgba(255, 255, 255, 0.22);
+}
+
+.cost-visibility-toggle.is-off {
+  opacity: 0.75;
+  background: rgba(255, 255, 255, 0.06);
+}
+
 .pricing-mode-btn {
   background: rgba(255, 255, 255, 0.12);
   color: white;
@@ -1315,7 +1343,8 @@ body.dark-mode .editable-edge-flow-path {
   border-radius: 6px;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
   min-width: 200px;
-  overflow: hidden;
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
   z-index: 10000;
 }
 
@@ -1758,6 +1787,7 @@ body.dark-mode .react-flow__handle.valid {
 .app-header .toolbar-group--labeled label.btn,
 .app-header .toolbar-group--labeled .model-popover-trigger,
 .app-header .toolbar-group--labeled .region-selector-button,
+.app-header .toolbar-group--labeled .cost-visibility-toggle,
 .app-header .toolbar-group--labeled .pricing-mode-btn,
 .app-header .toolbar-group--labeled .toolbar-dropdown-item,
 .app-header .toolbar-group--labeled .toolbar-dropdown-select {
@@ -1772,7 +1802,8 @@ body.dark-mode .react-flow__handle.valid {
 }
 
 .app-header .toolbar-group--labeled .model-popover-trigger,
-.app-header .toolbar-group--labeled .region-selector-button {
+.app-header .toolbar-group--labeled .region-selector-button,
+.app-header .toolbar-group--labeled .cost-visibility-toggle {
   min-height: 34px;
   padding: 0.42rem 0.72rem !important;
   border: 1px solid rgba(255, 255, 255, 0.28) !important;
@@ -1784,7 +1815,8 @@ body.dark-mode .react-flow__handle.valid {
 }
 
 .app-header .toolbar-group--labeled .model-popover-trigger:hover,
-.app-header .toolbar-group--labeled .region-selector-button:hover {
+.app-header .toolbar-group--labeled .region-selector-button:hover,
+.app-header .toolbar-group--labeled .cost-visibility-toggle:hover {
   border-color: rgba(255, 255, 255, 0.46) !important;
   background: rgba(255, 255, 255, 0.24) !important;
   box-shadow: none !important;

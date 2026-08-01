@@ -2,7 +2,7 @@
 // Licensed under the MIT License.
 
 import { getModelSettingsForFeature, getModelSettings, getDeploymentName, getAvailableModels, MODEL_CONFIG, ModelType, ReasoningEffort } from '../stores/modelSettingsStore';
-import { getServiceIconMapping, SERVICE_ICON_MAP } from '../data/serviceIconMapping';
+import { resolveServiceIconMapping, SERVICE_ICON_MAP } from '../data/serviceIconMapping';
 import { trackAIModelUsage } from './telemetryService';
 import {
   buildRequestBody,
@@ -222,7 +222,9 @@ export async function generateArchitectureWithAI(
 ) {
   // Build a compact list of known service display names for the prompt
   const knownServices = Object.entries(SERVICE_ICON_MAP)
-    .map(([, m]) => `${m.displayName} (${m.category})`)
+    .map(([serviceName, mapping]) => (
+      `${serviceName} [display: ${mapping.displayName}; category: ${mapping.category}]`
+    ))
     .join(', ');
 
   const manifestBlock = manifest
@@ -243,7 +245,7 @@ Return ONLY a valid JSON object (no markdown, no explanations) with this structu
   "workflow": [{ "step": 1, "description": "What happens in this step", "services": ["service-id-1", "service-id-2"] }]
 }
 
-KNOWN SERVICES (use these exact names for "name" and "type" fields):
+KNOWN SERVICES (canonical type, display name, and icon category):
 ${knownServices}
 
 Icon categories (use for "category" field):
@@ -251,7 +253,7 @@ Icon categories (use for "category" field):
 
 Rules:
 1. Create 2-5 logical groups. Max 6 services per group.
-2. Use EXACT service names from the KNOWN SERVICES list above for both "name" and "type". If a required service is NOT in the list, use its official Azure service name and set category to the closest match.
+2. Set "type" to the EXACT canonical service key from the KNOWN SERVICES list. Set "name" to that entry's display value. If a required service is NOT in the list, use its official service name for both fields and set category to the closest match.
 3. For identity/auth, use "Microsoft Entra ID" (never "Azure Active Directory" or "AAD").
 4. Connection labels MUST be specific and action-oriented (e.g., "Submit batch job per tenant"), NOT generic ("Request", "Data").
 5. MICROSOFT FABRIC: When the solution uses Microsoft Fabric, put Fabric items (Lakehouse, Warehouse, Eventhouse, Eventstream, KQL Database, Fabric Notebook, Fabric Data Pipeline, Dataflow Gen2, Semantic Model, Power BI Report, Mirrored Database, Real-Time Dashboard) in a group named "Microsoft Fabric" and set their category to "fabric". Include "Microsoft Fabric Capacity" (the billed F SKU) and "OneLake" (storage) in that group — individual Fabric items consume the shared capacity, so the capacity carries the cost.
@@ -265,7 +267,8 @@ LAYOUT READABILITY — CRITICAL:
 10. **Limit total connections to 12-18.** Only include connections that represent the PRIMARY data or control flow. Omit obvious implicit relationships (e.g., every service using Key Vault — show only 1 representative Key Vault edge). Omit diagnostic/telemetry edges except the hub-and-spoke pattern in rule 9.
 11. **Minimize cross-group edges.** Place tightly-coupled services in the SAME group. If two services exchange data frequently, they belong together. Cross-group connections cause visual clutter — aim for no more than 1-2 outgoing edges per group to other groups.
 12. **Total service count: 8-12 max** unless the user's description explicitly names more services. Include every service the user mentions. Only add EXTRA security/identity services (Key Vault, Entra ID, DDoS, WAF) beyond what the user asked for when the architecture critically depends on them.
-13. **Dashboard & visualization services.** When the user mentions dashboards, reporting, visualization, or analytics UIs, include a dedicated visualization service such as Azure Managed Grafana, Power BI Embedded, Azure Dashboard, or Azure Workbooks — do NOT substitute a generic compute/web service for the dashboard role.`;
+13. **Dashboard & visualization services.** When the user mentions dashboards, reporting, visualization, or analytics UIs, include a dedicated visualization service such as Azure Managed Grafana, Power BI Embedded, Azure Dashboard, or Azure Workbooks — do NOT substitute a generic compute/web service for the dashboard role.
+14. **No floating services — every service MUST be connected.** Each entry in "services" has to appear as the "from" or "to" of at least ONE connection. A service with no connection renders as a box sitting by itself with no stated purpose. "from" and "to" MUST use the service's exact "id" value — never its display name. If a service genuinely has no data or control flow to any other service, leave it out entirely rather than emitting it unconnected.`;
 
   try {
     const messages = [
@@ -293,14 +296,15 @@ LAYOUT READABILITY — CRITICAL:
     // Post-process: normalize service names and categories against SERVICE_ICON_MAP
     if (architecture.services && Array.isArray(architecture.services)) {
       architecture.services = architecture.services.map((service: any) => {
-        // Try to match against known service mappings
-        let mapping = getServiceIconMapping(service.name) || getServiceIconMapping(service.type);
-        if (mapping) {
-          console.log(`  🔧 Normalized "${service.name}" → "${mapping.displayName}" (${mapping.category})`);
+        const resolved = resolveServiceIconMapping(service.type)
+          || resolveServiceIconMapping(service.name);
+        if (resolved) {
+          const { serviceName, mapping } = resolved;
+          console.log(`  🔧 Normalized "${service.name}" → "${mapping.displayName}" [${serviceName}] (${mapping.category})`);
           return {
             ...service,
             name: mapping.displayName,
-            type: mapping.displayName,
+            type: serviceName,
             category: mapping.category,
           };
         }
@@ -363,6 +367,78 @@ LAYOUT READABILITY — CRITICAL:
         s.groupId = null;
       }
     });
+
+    // ── Connection integrity ────────────────────────────────────────────────
+    // An edge whose endpoint doesn't match a service id is dropped by the
+    // renderer, which strands the service on the canvas as an unconnected
+    // "floating box" — reported by users as boxes "hanging off by themselves
+    // with no link to design". Models routinely emit the service *name* (or a
+    // slugged variant) instead of its id, so try to resolve an endpoint before
+    // discarding the edge.
+    const slug = (v: unknown) =>
+      String(v ?? '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+
+    const serviceIdSet = new Set<string>(architecture.services.map((s: any) => String(s.id)));
+    const aliasToId = new Map<string, string>();
+    const ambiguousAliases = new Set<string>();
+    for (const s of architecture.services) {
+      for (const alias of [s.id, s.name, s.type]) {
+        const key = slug(alias);
+        if (!key || ambiguousAliases.has(key)) continue;
+        const serviceId = String(s.id);
+        const existingId = aliasToId.get(key);
+        if (existingId && existingId !== serviceId) {
+          aliasToId.delete(key);
+          ambiguousAliases.add(key);
+        } else if (!existingId) {
+          aliasToId.set(key, serviceId);
+        }
+      }
+    }
+    const resolveEndpoint = (ref: unknown): string | null => {
+      const raw = String(ref ?? '');
+      if (serviceIdSet.has(raw)) return raw;
+      return aliasToId.get(slug(raw)) ?? null;
+    };
+
+    let repairedEdges = 0;
+    let droppedEdges = 0;
+    architecture.connections = architecture.connections.filter((c: any) => {
+      const from = resolveEndpoint(c.from);
+      const to = resolveEndpoint(c.to);
+      if (!from || !to || from === to) {
+        console.warn(`⚠️ Dropping connection "${c.from}" → "${c.to}" (unresolvable or self-referencing endpoint)`);
+        droppedEdges++;
+        return false;
+      }
+      if (from !== c.from || to !== c.to) {
+        console.warn(`🔧 Repaired connection endpoint "${c.from}" → "${from}", "${c.to}" → "${to}"`);
+        repairedEdges++;
+        c.from = from;
+        c.to = to;
+      }
+      return true;
+    });
+
+    // Surface any service that still has no edge at all.
+    const connectedIds = new Set<string>();
+    architecture.connections.forEach((c: any) => {
+      connectedIds.add(String(c.from));
+      connectedIds.add(String(c.to));
+    });
+    const orphans = architecture.services.filter((s: any) => !connectedIds.has(String(s.id)));
+    if (orphans.length > 0) {
+      console.warn(
+        `⚠️ ${orphans.length} service(s) have no connections: ${orphans.map((s: any) => s.name || s.id).join(', ')}`,
+      );
+    }
+
+    architecture.integrity = {
+      repairedEdges,
+      droppedEdges,
+      orphanCount: orphans.length,
+      orphanServices: orphans.map((s: any) => String(s.name || s.id)),
+    };
 
     return architecture;
   } catch (error: any) {

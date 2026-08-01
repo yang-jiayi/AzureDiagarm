@@ -70,6 +70,11 @@ assert.deepEqual(app?.position, { x: 40, y: 60 }, 'service absolute position sho
 assert.equal(app?.parentNode, 'new-group-id', 'generated topology should own the current parent ID');
 assert.equal((app?.data as Record<string, unknown>).iconPath, '/new-app-service.svg', 'generated icon should be accepted');
 assert.equal((app?.data as Record<string, unknown>).stylePreset, 'presentation', 'editor display data should survive');
+assert.deepEqual(
+  (app?.data as Record<string, unknown>).pricing,
+  { estimatedCost: 125 },
+  'pricing edits should survive a refinement of the same service',
+);
 
 assert.deepEqual(monitor?.position, { x: 300, y: 60 }, 'new services should move only when their generated position overlaps');
 assert.equal((group?.style as Record<string, unknown>).width, 528, 'parent groups should expand only enough to contain additions');
@@ -80,6 +85,91 @@ const stableIdResult = preserveManualLayout(
   [{ id: 'sql', type: 'azureNode', position: { x: 900, y: 800 }, data: { label: 'Renamed SQL Database' } }],
 );
 assert.deepEqual(stableIdResult[0].position, { x: 20, y: 40 }, 'stable IDs should take precedence over labels');
+
+const changedIdentityResult = preserveManualLayout(
+  [{
+    id: 'workload',
+    type: 'azureNode',
+    position: { x: 20, y: 40 },
+    data: {
+      label: 'production',
+      serviceName: 'App Service',
+      pricing: { estimatedCost: 42, quantity: 3, isCustom: true },
+    },
+  }],
+  [{
+    id: 'workload',
+    type: 'azureNode',
+    position: { x: 900, y: 800 },
+    data: { label: 'production', serviceName: 'SQL Database' },
+  }],
+);
+assert.equal(
+  (changedIdentityResult[0].data as Record<string, unknown>).pricing,
+  undefined,
+  'pricing should be cleared when a refinement changes the canonical service',
+);
+
+const aliasIdentityResult = preserveManualLayout(
+  [{
+    id: 'alias-workload',
+    type: 'azureNode',
+    position: { x: 20, y: 40 },
+    data: {
+      label: 'Azure App Service',
+      pricing: { estimatedCost: 50, quantity: 2, isCustom: false },
+    },
+  }],
+  [{
+    id: 'alias-workload',
+    type: 'azureNode',
+    position: { x: 900, y: 800 },
+    data: { label: 'App Service', serviceName: 'App Service' },
+  }],
+);
+const aliasPricing = (
+  aliasIdentityResult[0].data as Record<string, unknown>
+).pricing as Record<string, unknown>;
+assert.equal(
+  aliasPricing.quantity,
+  2,
+  'pricing should survive equivalent canonical service aliases',
+);
+
+const renamedServiceResult = preserveManualLayout(
+  [{
+    id: 'old-orders-api',
+    type: 'azureNode',
+    position: { x: 30, y: 50 },
+    data: {
+      label: 'orders-api',
+      serviceName: 'App Service',
+      pricing: { estimatedCost: 75, quantity: 4, isCustom: true },
+    },
+  }],
+  [{
+    id: 'new-app-service',
+    type: 'azureNode',
+    position: { x: 700, y: 500 },
+    data: {
+      label: 'App Service',
+      serviceName: 'App Service',
+    },
+  }],
+);
+assert.deepEqual(
+  renamedServiceResult[0].position,
+  { x: 30, y: 50 },
+  'canonical identity should match a user-renamed service after regenerated IDs',
+);
+const renamedPricing = (
+  renamedServiceResult[0].data as Record<string, unknown>
+).pricing as Record<string, unknown>;
+assert.equal(
+  renamedPricing.quantity,
+  4,
+  'user-renamed services should retain pricing through AI refinement',
+);
 
 const unchangedGroupResult = preserveManualLayout(
   previous.slice(0, 2),

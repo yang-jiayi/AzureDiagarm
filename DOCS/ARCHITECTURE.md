@@ -278,6 +278,7 @@ azure-diagrams/
 │   │   ├── IconPalette.tsx            # Semantic, searchable drag-and-drop icon palette
 │   │   ├── ImageUploader.tsx          # Image upload & vision analysis (186 lines)
 │   │   ├── Legend.tsx                 # Diagram legend, collapsible (197 lines)
+│   │   ├── NodePricingEditor.tsx       # Per-node SKU, quantity, and custom cost editor
 │   │   ├── ModelBadge.tsx             # AI model attribution overlay (71 lines)
 │   │   ├── ModelSelector.tsx          # Model/reasoning dropdown (351 lines)
 │   │   ├── ModelSettingsPopover.tsx   # Per-feature model overrides (264 lines)
@@ -304,7 +305,9 @@ azure-diagrams/
 │   │   └── wafPatternDetector.ts      # Rule-based WAF pattern checks (394 lines)
 │   │
 │   ├── stores/                        # State management
-│   │   └── modelSettingsStore.ts      # Multi-model settings with localStorage (303 lines)
+│   │   ├── modelSettingsStore.ts      # Multi-model settings with localStorage (303 lines)
+│   │   ├── nodePricingEditorStore.ts  # Active per-node pricing editor
+│   │   └── pricingDisplayStore.ts     # Persisted cost visibility preference
 │   │
 │   ├── data/
 │   │   ├── pricing/

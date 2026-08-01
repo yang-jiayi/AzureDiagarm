@@ -62,6 +62,8 @@ export interface AzureRetailPrice {
  * Simplified pricing tier for our application
  */
 export interface PricingTier {
+  /** Stable selector when the same Azure SKU name exists in multiple products or platforms. */
+  id?: string;
   name: string;           // e.g., "B1 (Basic)", "S1 (Standard)", "P1V2 (Premium)"
   skuName: string;        // e.g., "B1", "S1", "P1V2"
   monthlyPrice: number;   // Estimated monthly cost in USD
@@ -96,6 +98,7 @@ export interface ServicePricing {
 export interface NodePricingConfig {
   estimatedCost: number;      // Monthly cost in USD
   tier: string;               // Selected tier name
+  tierId?: string;            // Stable catalog selector for otherwise ambiguous SKU names
   skuName: string;            // SKU identifier
   quantity: number;           // Number of instances/units
   region: string;             // Azure region

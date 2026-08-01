@@ -14,6 +14,8 @@ import { SERVICE_ICON_MAP } from '../data/serviceIconMapping';
 export interface AzureIcon {
   id: string;
   name: string;
+  /** Stable service key used for pricing and semantic classification. */
+  serviceName: string;
   /** Physical icon folder retained for saved-diagram and pricing compatibility. */
   category: string;
   /** Curated, meaning-based category shown in the service palette. */
@@ -224,6 +226,7 @@ function getIconMetadataCache(): IconMetadataCache {
     const icon: AzureIcon = {
       id: `${sourceCategory}/${fileNameWithoutExtension}`,
       name,
+      serviceName: fabricDefinition?.serviceName ?? name,
       category: sourceCategory,
       paletteCategory,
       path,

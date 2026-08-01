@@ -38,6 +38,7 @@ import { z } from 'zod';
 import {
   SERVICE_CATALOG,
   resolveServiceName,
+  resolvePricingServiceName,
   getCategories,
   getServicesByCategory,
 } from './serviceCatalog.js';
@@ -56,7 +57,7 @@ import { generateBicep } from './bicepGenerator.js';
 import { generateTerraform } from './terraformGenerator.js';
 import { generateDeploymentGuide } from './deploymentGuide.js';
 import { hardenArchitecture } from './hardener.js';
-import { importArchitecture } from './importer.js';
+import { buildIconFileToTypeMap, importArchitecture } from './importer.js';
 
 // Web app icon mapping (generated from src/data/serviceIconMapping.ts via
 // scripts/sync-icon-map.mjs). Used by export_reactflow_scene to emit icon
@@ -82,11 +83,7 @@ const CONN_LABEL_DESC =
 // recover a service type from a React Flow node's iconPath when the scene has no
 // explicit type field.
 const ICON_FILE_TO_TYPE: Record<string, string> = (() => {
-  const out: Record<string, string> = {};
-  for (const [name, entry] of Object.entries(ICON_MAP)) {
-    if (entry?.iconFile && !out[entry.iconFile]) out[entry.iconFile] = name;
-  }
-  return out;
+  return buildIconFileToTypeMap(ICON_MAP);
 })();
 
 function resolveIconPath(serviceType: string): { iconPath: string; category: string } {
@@ -377,18 +374,18 @@ server.registerTool(
       catEntry.count += qty;
       catEntry.services.push(svc.name);
 
-      // Prefer the explicit pricingServiceName from the catalog; fall back to
-      // the resolved catalog key or the raw type.
-      const pricingName = info?.pricingServiceName ?? resolved ?? svc.type;
-      const est = estimateServiceCost({
-        pricingServiceName: pricingName,
-        region: targetRegion,
-        term: targetTerm,
-        tier,
-        quantity: qty,
-      });
+      const pricingName = resolvePricingServiceName(svc.type);
+      const est = pricingName
+        ? estimateServiceCost({
+            pricingServiceName: pricingName,
+            region: targetRegion,
+            term: targetTerm,
+            tier,
+            quantity: qty,
+          })
+        : null;
 
-      if (est.hasPricingData && est.monthlyCost) {
+      if (est?.hasPricingData && est.monthlyCost) {
         anyPricingData = true;
         currency = est.currency ?? currency;
         if (est.pricesAsOf && (!pricesAsOf || est.pricesAsOf > pricesAsOf)) {
@@ -831,7 +828,7 @@ server.registerTool(
   'import_architecture',
   {
     description:
-      'Import an existing architecture back into the canonical { services, connections, groups } shape — the inverse of generate_manifest and export_reactflow_scene. Accepts an az prototype interchange manifest (clean round-trip) OR a React Flow scene JSON (from this server or the web app; service types are recovered from data.azureServiceType, or reversed from the icon path). Returns the normalized architecture ready to feed straight into validate_architecture, harden_architecture, estimate_costs, render_diagram, or generate_bicep. Tolerant: collects warnings instead of failing on partially-recognized input.',
+      'Import an existing architecture back into the canonical { services, connections, groups } shape — the inverse of generate_manifest and export_reactflow_scene. Accepts an az prototype interchange manifest (clean round-trip) OR a React Flow scene JSON (from this server or the web app; service types are recovered from data.serviceName/data.azureServiceType, or reversed from the icon path). Returns the normalized architecture ready to feed straight into validate_architecture, harden_architecture, estimate_costs, render_diagram, or generate_bicep. Tolerant: collects warnings instead of failing on partially-recognized input.',
     inputSchema: {
       content: z
         .string()
@@ -1055,9 +1052,11 @@ server.tool(
       for (const node of layout.nodes) {
         const resolved = resolveServiceName(node.type);
         const info = resolved ? SERVICE_CATALOG[resolved] : null;
-        const pricingName = info?.pricingServiceName ?? resolved ?? node.type;
-        const est = estimateServiceCost({ pricingServiceName: pricingName, region: targetRegion });
-        if (est.hasPricingData && est.totalMonthlyCost != null && est.totalMonthlyCost > 0) {
+        const pricingName = resolvePricingServiceName(node.type);
+        const est = pricingName
+          ? estimateServiceCost({ pricingServiceName: pricingName, region: targetRegion })
+          : null;
+        if (est?.hasPricingData && est.totalMonthlyCost != null && est.totalMonthlyCost > 0) {
           node.estimatedCost = est.totalMonthlyCost;
           node.costCurrency = est.currency ?? 'USD';
         } else if (info?.costRange) {
@@ -1226,26 +1225,32 @@ server.tool(
       absoluteByNodeId.set(id, { x: n.x, y: n.y, width: n.width, height: n.height });
 
       // Best-effort pricing object (matches the web app's node.data.pricing
-      // shape so imported scenes show cost badges). Numeric estimatedCost is
-      // only present for services with distilled pricing data; usage-based
-      // services carry the flag with a null estimate.
+      // shape so imported scenes show cost badges).
+      const resolved = resolveServiceName(n.type);
+      const info = resolved ? SERVICE_CATALOG[resolved] : null;
+      const serviceName = resolved ?? n.type;
       let pricing: Record<string, unknown> | undefined;
       if (pricingRegion) {
-        const resolved = resolveServiceName(n.type);
-        const info = resolved ? SERVICE_CATALOG[resolved] : null;
-        const pricingName = info?.pricingServiceName ?? resolved ?? n.type;
-        const est = estimateServiceCost({ pricingServiceName: pricingName, region: pricingRegion });
-        pricing = {
-          estimatedCost: est.hasPricingData ? est.totalMonthlyCost ?? null : null,
-          tier: est.selectedTier ? est.selectedTier.charAt(0).toUpperCase() + est.selectedTier.slice(1) : 'Standard',
-          skuName: est.sampleSku ?? 'Standard',
-          quantity: 1,
-          region: pricingRegion,
-          unit: est.hasPricingData ? 'per instance/month' : 'usage-based',
-          lastUpdated: new Date().toISOString(),
-          isCustom: false,
-          isUsageBased: info?.isUsageBased ?? false,
-        };
+        const pricingName = resolvePricingServiceName(n.type);
+        const est = pricingName
+          ? estimateServiceCost({ pricingServiceName: pricingName, region: pricingRegion })
+          : null;
+        if (est?.hasPricingData && est.totalMonthlyCost != null) {
+          pricing = {
+            estimatedCost: est.totalMonthlyCost,
+            tier: est.sampleSku
+              ?? (est.selectedTier
+                ? est.selectedTier.charAt(0).toUpperCase() + est.selectedTier.slice(1)
+                : 'Standard'),
+            skuName: est.sampleSku ?? 'Standard',
+            quantity: 1,
+            region: pricingRegion,
+            unit: 'per instance/month',
+            lastUpdated: new Date().toISOString(),
+            isCustom: false,
+            isUsageBased: info?.isUsageBased ?? false,
+          };
+        }
       }
 
       const node: Record<string, unknown> = {
@@ -1255,6 +1260,8 @@ server.tool(
         positionAbsolute,
         data: {
           label: n.name,
+          serviceName,
+          category: info?.category ?? 'other',
           iconPath,
           stylePreset: 'presentation',
           ...(pricing ? { pricing } : {}),

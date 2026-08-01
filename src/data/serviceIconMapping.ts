@@ -28,6 +28,11 @@ export interface ServiceIconMapping {
   costRange?: string;
 }
 
+export interface ResolvedServiceIconMapping {
+  serviceName: string;
+  mapping: ServiceIconMapping;
+}
+
 const FABRIC_SERVICE_ICON_MAP = Object.fromEntries(
   FABRIC_ICON_CATALOG.map(definition => [
     definition.serviceName,
@@ -60,6 +65,37 @@ export const SERVICE_ICON_MAP: Record<string, ServiceIconMapping> = {
     pricingServiceName: 'Azure OpenAI',
     isUsageBased: true,
     costRange: '$1-200/mo (token-based)'
+  },
+
+  // Microsoft Foundry — the agent/model platform formerly branded Azure AI
+  // Foundry and, before that, Azure AI Studio. Listed immediately after Azure
+  // OpenAI so its aliases win over any later entry. Reported missing by a user:
+  // without an entry here it is absent from the KNOWN SERVICES list in the
+  // generation prompt, so the model never emits it and any hand-placed node
+  // renders without an icon.
+  'Microsoft Foundry': {
+    displayName: 'Microsoft Foundry',
+    aliases: [
+      'Foundry',
+      'AI Foundry',
+      'Azure Foundry',
+      'Azure AI Foundry',
+      'Microsoft AI Foundry',
+      'Foundry Project',
+      'Azure AI Foundry Project',
+      'Foundry Agent Service',
+      'Azure AI Foundry Agent Service',
+      'Microsoft Foundry Agent Service',
+      'Azure AI Studio',
+      'AI Studio',
+      'Azure AI Hub',
+      'AI Hub'
+    ],
+    iconFile: '035746832-icon-service-AI-Foundry',
+    category: 'ai + machine learning',
+    hasPricingData: false,
+    isUsageBased: true,
+    costRange: 'Usage-based (model, agent and tool consumption)'
   },
   
   'Cognitive Services': {
@@ -631,7 +667,7 @@ export const SERVICE_ICON_MAP: Record<string, ServiceIconMapping> = {
   
   'Load Balancer': {
     displayName: 'Azure Load Balancer',
-    aliases: ['Azure Load Balancer', 'Load Balancers', 'LB'],
+    aliases: ['Azure Load Balancer', 'Load Balancers', 'LB', 'ロードバランサー', '負荷分散'],
     iconFile: '10062-icon-service-Load-Balancers',
     category: 'networking',
     hasPricingData: true,
@@ -1028,26 +1064,34 @@ export const SERVICE_ICON_MAP: Record<string, ServiceIconMapping> = {
 /**
  * Get icon mapping for a service by name (case-insensitive, checks aliases)
  */
-export function getServiceIconMapping(serviceName: string): ServiceIconMapping | null {
+export function resolveServiceIconMapping(serviceName: string): ResolvedServiceIconMapping | null {
   const normalizedName = serviceName.trim();
   
   // Direct match
   if (SERVICE_ICON_MAP[normalizedName]) {
-    return SERVICE_ICON_MAP[normalizedName];
+    return {
+      serviceName: normalizedName,
+      mapping: SERVICE_ICON_MAP[normalizedName],
+    };
   }
   
-  // Search by display name or alias (case-insensitive)
+  // Search by canonical key, display name, or alias (case-insensitive).
   const lowerName = normalizedName.toLowerCase();
-  for (const mapping of Object.values(SERVICE_ICON_MAP)) {
+  for (const [canonicalName, mapping] of Object.entries(SERVICE_ICON_MAP)) {
     if (
-      mapping.displayName.toLowerCase() === lowerName
+      canonicalName.toLowerCase() === lowerName
+      || mapping.displayName.toLowerCase() === lowerName
       || mapping.aliases.some(alias => alias.toLowerCase() === lowerName)
     ) {
-      return mapping;
+      return { serviceName: canonicalName, mapping };
     }
   }
   
   return null;
+}
+
+export function getServiceIconMapping(serviceName: string): ServiceIconMapping | null {
+  return resolveServiceIconMapping(serviceName)?.mapping ?? null;
 }
 
 /**

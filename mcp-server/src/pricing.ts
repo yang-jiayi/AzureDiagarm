@@ -104,7 +104,7 @@ export function estimateServiceCost(params: EstimateParams): ServiceCostEstimate
   const quantity = params.quantity && params.quantity > 0 ? params.quantity : 1;
 
   const data = loadData();
-  const regionMap = data.regions[region] ?? data.regions[DEFAULT_REGION];
+  const regionMap = data.regions[region];
   const entry = regionMap?.[stemFor(pricingServiceName)];
 
   if (!entry) {

@@ -3,9 +3,9 @@
 // Licensed under the MIT License.
 
 /**
- * Build-time helper: extract iconFile + category from the web app's
- * src/data/serviceIconMapping.ts and emit a JSON sidecar consumable by the
- * MCP server (avoids duplicating ~945 lines of mapping data).
+ * Build-time helper: extract icons, aliases, and pricing metadata from the web
+ * app's src/data/serviceIconMapping.ts and emit a JSON sidecar consumable by
+ * the MCP server (avoids duplicating the application catalog).
  *
  * Run: node mcp-server/scripts/sync-icon-map.mjs
  */
@@ -41,6 +41,10 @@ while ((match = entryRe.exec(text)) !== null) {
   const displayNameMatch = block.match(/displayName:\s*'([^']+)'/);
   const iconFileMatch = block.match(/iconFile:\s*'([^']+)'/);
   const categoryMatch = block.match(/category:\s*'([^']+)'/);
+  const hasPricingDataMatch = block.match(/hasPricingData:\s*(true|false)/);
+  const pricingServiceNameMatch = block.match(/pricingServiceName:\s*'([^']+)'/);
+  const isUsageBasedMatch = block.match(/isUsageBased:\s*(true|false)/);
+  const costRangeMatch = block.match(/costRange:\s*'([^']+)'/);
   if (iconFileMatch && categoryMatch) {
     // Capture aliases so the MCP renderer can resolve real-world type variants
     // (e.g. "Blob Storage", "Azure Cache for Redis") to the right icon.
@@ -53,6 +57,10 @@ while ((match = entryRe.exec(text)) !== null) {
       iconFile: iconFileMatch[1],
       category: categoryMatch[1],
       aliases,
+      hasPricingData: hasPricingDataMatch?.[1] === 'true',
+      ...(pricingServiceNameMatch ? { pricingServiceName: pricingServiceNameMatch[1] } : {}),
+      ...(isUsageBasedMatch ? { isUsageBased: isUsageBasedMatch[1] === 'true' } : {}),
+      ...(costRangeMatch ? { costRange: costRangeMatch[1] } : {}),
     };
   }
 }
@@ -60,16 +68,29 @@ while ((match = entryRe.exec(text)) !== null) {
 // Fabric icons are defined through a typed catalog and spread into the runtime
 // mapping, so merge those entries explicitly for the standalone MCP renderer.
 const fabricText = readFileSync(fabricCatalogPath, 'utf8');
-const fabricEntryRe = /^\s*defineFabricIcon\('([^']+)',\s*'([^']+)',\s*'([^']+)',\s*(?:null|'[^']+'),\s*'[^']+',\s*'[^']+',\s*\[([^\]]*)\]/gm;
+const fabricEntryRe = /^\s*defineFabricIcon\('([^']+)',\s*'([^']+)',\s*'([^']+)',\s*(?:null|'[^']+'),\s*'[^']+',\s*'([^']+)',\s*\[([^\]]*)\]\s*(?:,\s*\{([^}]*)\})?\s*\)/gm;
 while ((match = fabricEntryRe.exec(fabricText)) !== null) {
-  const [, key, displayName, iconFile, aliasSource] = match;
+  const [, key, displayName, iconFile, kind, aliasSource, optionsSource = ''] = match;
   const aliases = [...aliasSource.matchAll(/'([^']+)'/g)].map(alias => alias[1]);
+  const hasPricingDataMatch = optionsSource.match(/hasPricingData:\s*(true|false)/);
+  const pricingServiceNameMatch = optionsSource.match(/pricingServiceName:\s*'([^']+)'/);
+  const isUsageBasedMatch = optionsSource.match(/isUsageBased:\s*(true|false)/);
+  const costRangeMatch = optionsSource.match(/costRange:\s*'([^']+)'/);
+  const consumesCapacity = kind === 'workload' || kind === 'item' || kind === 'state';
   if (displayName !== key && !aliases.includes(displayName)) aliases.unshift(displayName);
   map[key] = {
     displayName,
     iconFile,
     category: 'fabric',
     aliases,
+    hasPricingData: hasPricingDataMatch?.[1] === 'true',
+    ...(pricingServiceNameMatch ? { pricingServiceName: pricingServiceNameMatch[1] } : {}),
+    ...(isUsageBasedMatch ? { isUsageBased: isUsageBasedMatch[1] === 'true' } : {}),
+    ...(costRangeMatch
+      ? { costRange: costRangeMatch[1] }
+      : consumesCapacity
+        ? { costRange: '$0 (consumes Fabric capacity)' }
+        : {}),
   };
 }
 

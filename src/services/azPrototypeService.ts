@@ -14,7 +14,7 @@
  */
 
 import { Node, Edge } from 'reactflow';
-import { getServiceIconMapping } from '../data/serviceIconMapping';
+import { resolveServiceIconMapping } from '../data/serviceIconMapping';
 import { calculateCostBreakdown } from './costEstimationService';
 import type { NodePricingConfig } from '../types/pricing';
 
@@ -119,12 +119,13 @@ export function exportToAzPrototype(
   const services: AzPrototypeService[] = nodes
     .filter((n) => n.type === 'azureNode')
     .map((n) => {
-      const mapping = getServiceIconMapping(n.data.label);
+      const serviceIdentity = String(n.data.serviceName || n.data.label || '').trim();
+      const resolved = resolveServiceIconMapping(serviceIdentity);
       return {
         id: n.id,
         name: n.data.label || 'Unknown Service',
-        type: mapping?.displayName || n.data.label || 'Unknown',
-        category: mapping?.category || n.data.category || 'other',
+        type: resolved?.serviceName || serviceIdentity || 'Unknown',
+        category: resolved?.mapping.category || n.data.category || 'other',
         description: n.data.description || '',
         groupId: n.parentNode || null,
       };
@@ -150,7 +151,7 @@ export function exportToAzPrototype(
   let costEstimates: AzPrototypeCostEstimate[] | undefined;
   if (options.includeCosts) {
     const breakdown = calculateCostBreakdown(nodes);
-    if (breakdown.totalMonthlyCost > 0) {
+    if (breakdown.byService.length > 0) {
       costEstimates = breakdown.byService.map((svc) => {
         const node = nodes.find((n) => n.id === svc.nodeId);
         const pricing = node?.data?.pricing as NodePricingConfig | undefined;
@@ -160,7 +161,7 @@ export function exportToAzPrototype(
           monthlyEstimate: svc.cost,
           tier: pricing?.tier || 'default',
           sku: pricing?.skuName || '',
-          region: pricing?.region || 'eastus',
+          region: pricing?.region || 'Unknown',
         };
       });
     }
@@ -271,12 +272,12 @@ export function importFromAzPrototype(input: string | Record<string, unknown>): 
   }
 
   const services = ((arch.services as any[]) || []).map((s: any) => {
-    const mapping = getServiceIconMapping(s.name) || getServiceIconMapping(s.type);
+    const resolved = resolveServiceIconMapping(s.type) || resolveServiceIconMapping(s.name);
     return {
       id: s.id || `svc-${Math.random().toString(36).slice(2, 8)}`,
-      name: mapping?.displayName || s.name || s.type || 'Unknown',
-      type: mapping?.displayName || s.type || s.name || 'Unknown',
-      category: mapping?.category || s.category || 'other',
+      name: s.name || resolved?.mapping.displayName || s.type || 'Unknown',
+      type: resolved?.serviceName || s.type || s.name || 'Unknown',
+      category: resolved?.mapping.category || s.category || 'other',
       description: s.description || '',
       groupId: s.groupId || null,
     };

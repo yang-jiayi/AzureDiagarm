@@ -216,6 +216,10 @@ export interface DeckCost {
   topServices: { serviceName: string; cost: number; tier?: string; percentage?: number }[];
   /** Multi-region comparison (sorted cheapest-first), when computed. */
   regions?: DeckRegionCost[];
+  /** True when one or more regions could not preserve every selected SKU. */
+  regionComparisonIncomplete?: boolean;
+  /** Regions omitted from the like-for-like comparison, with the reason. */
+  unavailableRegions?: string[];
 }
 
 export interface ArchitectureDeckOptions extends PptxExportOptions {
@@ -423,6 +427,14 @@ function addCostOverviewSlide(pptx: PptxGenJS, t: SlideTheme, o: ArchitectureDec
     ], { x: 0.37, y: barY + 0.68, w: 5.2, h: 0.35, fontSize: 10, fontFace: 'Yu Gothic UI' });
   }
 
+  if (c.regionComparisonIncomplete) {
+    const unavailable = c.unavailableRegions?.map(item => item.split(':', 1)[0]).join(', ') || 'one or more regions';
+    slide.addText(
+      `Regional comparison is partial because selected SKUs are unavailable in: ${truncate(unavailable, 120)}. No cheapest-region recommendation is made.`,
+      { x: 0.37, y: BODY_TOP + 3.15, w: 5.2, h: 0.75, fontSize: 10, bold: true, color: 'b45309', fontFace: 'Yu Gothic UI', wrap: true, valign: 'top' },
+    );
+  }
+
   slide.addText('Estimate only — not a quote. Excludes taxes, egress, support plans and reservations unless modeled.', { x: 0.37, y: FOOTER_Y - 0.5, w: 5.2, h: 0.45, fontSize: 9, italic: true, color: t.footerText, fontFace: 'Yu Gothic UI', wrap: true });
 
   // Top cost drivers table (right)
@@ -456,9 +468,19 @@ function addCostRegionsSlide(pptx: PptxGenJS, t: SlideTheme, o: ArchitectureDeck
   const slide = pptx.addSlide();
   addChrome(pptx, slide, t, 'Regional cost comparison', c.term || undefined);
 
-  const cheapest = c.regions.find(r => r.isCheapest) || c.regions[0];
+  const comparisonComplete = !c.regionComparisonIncomplete;
+  const lowestShown = c.regions[0];
+  const cheapest = comparisonComplete
+    ? c.regions.find(r => r.isCheapest) || lowestShown
+    : undefined;
   const current = c.regions.find(r => r.isCurrent);
-  if (cheapest) {
+  if (!comparisonComplete) {
+    const unavailable = c.unavailableRegions?.map(item => item.split(':', 1)[0]).join(', ') || 'one or more regions';
+    slide.addText(
+      `Partial comparison — unavailable: ${truncate(unavailable, 150)}. Values below cover comparable regions only; no global cheapest or savings claim is shown.`,
+      { x: 0.35, y: BODY_TOP, w: W - 0.7, h: 0.55, fontSize: 12, bold: true, color: 'b45309', fontFace: 'Yu Gothic UI', valign: 'middle', wrap: true },
+    );
+  } else if (cheapest) {
     const onCheapest = current && current.name === cheapest.name;
     const msg = onCheapest
       ? `Already on the cheapest region — ${cheapest.flag || ''} ${cheapest.name} at ${money(cheapest.monthly, c.currency)}/mo.`
@@ -468,22 +490,22 @@ function addCostRegionsSlide(pptx: PptxGenJS, t: SlideTheme, o: ArchitectureDeck
   }
 
   const rows = c.regions.slice(0, 8).map((r) => {
-    const tag = r.isCheapest ? '  ★' : r.isCurrent ? '  (current)' : '';
-    const vsCheapest = cheapest && cheapest.monthly > 0
-      ? (r.monthly === cheapest.monthly ? 'baseline' : `+${(((r.monthly - cheapest.monthly) / cheapest.monthly) * 100).toFixed(1)}%`)
+    const tag = comparisonComplete && r.isCheapest ? '  ★' : r.isCurrent ? '  (current)' : '';
+    const vsBaseline = lowestShown && lowestShown.monthly > 0
+      ? (r.monthly === lowestShown.monthly ? 'baseline' : `+${(((r.monthly - lowestShown.monthly) / lowestShown.monthly) * 100).toFixed(1)}%`)
       : '—';
     return [
       { text: `${r.flag || ''} ${r.name}${tag}`, options: { color: t.titleText, bold: !!r.isCheapest } },
       { text: money(r.monthly, c.currency), options: { color: t.metaText, align: 'right' as const } },
       { text: money(r.annual, c.currency), options: { color: t.metaText, align: 'right' as const } },
-      { text: vsCheapest, options: { color: t.metaText, align: 'right' as const } },
+      { text: vsBaseline, options: { color: t.metaText, align: 'right' as const } },
     ];
   });
   const header = [
     { text: 'Region', options: { bold: true, color: 'ffffff', fill: { color: t.accent } } },
     { text: 'Monthly', options: { bold: true, color: 'ffffff', fill: { color: t.accent }, align: 'right' as const } },
     { text: 'Annual', options: { bold: true, color: 'ffffff', fill: { color: t.accent }, align: 'right' as const } },
-    { text: 'vs cheapest', options: { bold: true, color: 'ffffff', fill: { color: t.accent }, align: 'right' as const } },
+    { text: comparisonComplete ? 'vs cheapest' : 'vs lowest shown', options: { bold: true, color: 'ffffff', fill: { color: t.accent }, align: 'right' as const } },
   ];
   slide.addTable([header, ...rows], {
     x: 0.35, y: BODY_TOP + 0.6, w: W - 0.7,
