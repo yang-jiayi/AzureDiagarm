@@ -326,7 +326,19 @@ jobs:
             exit 1
           }
 
-          if [[ "$ACCESS_CONTROL_ENABLED" == "true" ]]; then
+          easy_auth_enabled="$(
+            az containerapp auth show \
+              --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
+              --name "${{ vars.AZURE_CONTAINER_APP }}" \
+              --query platform.enabled \
+              --output tsv
+          )"
+          [[ "$easy_auth_enabled" == "true" || "$easy_auth_enabled" == "false" ]] || {
+            echo "::error::Could not determine whether Container Apps authentication is enabled."
+            exit 1
+          }
+
+          if [[ "$ACCESS_CONTROL_ENABLED" == "true" || "$easy_auth_enabled" == "true" ]]; then
             routes_output="$(
               az afd route list \
                 --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
@@ -747,11 +759,27 @@ jobs:
           ACCESS_CONTROL_ENABLED: ${{ vars.ACCESS_CONTROL_ENABLED || 'false' }}
         run: |
           set -Eeuo pipefail
+          easy_auth_enabled="$(
+            az containerapp auth show \
+              --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
+              --name "${{ vars.AZURE_CONTAINER_APP }}" \
+              --query platform.enabled \
+              --output tsv
+          )"
+          [[ "$easy_auth_enabled" == "true" || "$easy_auth_enabled" == "false" ]] || {
+            echo "::error::Could not determine whether Container Apps authentication is enabled."
+            exit 1
+          }
+          authentication_required=false
+          if [[ "$ACCESS_CONTROL_ENABLED" == "true" || "$easy_auth_enabled" == "true" ]]; then
+            authentication_required=true
+          fi
+
           for attempt in $(seq 1 30); do
             headers="$(mktemp)"
             checks_ok=true
 
-            if [[ "$ACCESS_CONTROL_ENABLED" == "true" ]]; then
+            if [[ "$authentication_required" == "true" ]]; then
               if curl \
                 --fail \
                 --silent \
@@ -814,7 +842,7 @@ jobs:
                   --data '{"apiFormat":"responses","deployment":"not-allowed","body":{"model":"not-allowed","input":[],"max_output_tokens":1}}' \
                   "${{ vars.AZURE_APP_URL }}/api/openai" || true
               )"
-              if [[ "$ACCESS_CONTROL_ENABLED" == "true" ]]; then
+              if [[ "$authentication_required" == "true" ]]; then
                 [[ "$invalid_deployment_status" == "302" || "$invalid_deployment_status" == "401" || "$invalid_deployment_status" == "403" ]] || checks_ok=false
               else
                 [[ "$invalid_deployment_status" == "403" ]] || checks_ok=false
@@ -835,11 +863,7 @@ jobs:
                   --max-time 30 \
                   "https://${origin_fqdn}/" || true
               )"
-              if [[ "$ACCESS_CONTROL_ENABLED" == "true" ]]; then
-                [[ "$origin_status" == "403" ]] || checks_ok=false
-              else
-                [[ "$origin_status" == "403" ]] || checks_ok=false
-              fi
+              [[ "$origin_status" == "403" ]] || checks_ok=false
 
               spoofed_origin_status="$(
                 curl \
@@ -868,7 +892,7 @@ jobs:
                   --data '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"deployment-check","version":"1.0"}}}' \
                   "${{ vars.AZURE_APP_URL }}/mcp" || true
               )"
-              if [[ "$ACCESS_CONTROL_ENABLED" == "true" ]]; then
+              if [[ "$authentication_required" == "true" ]]; then
                 [[ "$mcp_status" == "302" || "$mcp_status" == "401" || "$mcp_status" == "403" ]] || checks_ok=false
               else
                 [[ "$mcp_status" == "401" || "$mcp_status" == "404" ]] || checks_ok=false
