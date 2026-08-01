@@ -76,6 +76,8 @@ while ((match = fabricEntryRe.exec(fabricText)) !== null) {
   const pricingServiceNameMatch = optionsSource.match(/pricingServiceName:\s*'([^']+)'/);
   const isUsageBasedMatch = optionsSource.match(/isUsageBased:\s*(true|false)/);
   const costRangeMatch = optionsSource.match(/costRange:\s*'([^']+)'/);
+  const includeInServiceMapMatch = optionsSource.match(/includeInServiceMap:\s*(true|false)/);
+  if (includeInServiceMapMatch?.[1] === 'false') continue;
   const consumesCapacity = kind === 'workload' || kind === 'item' || kind === 'state';
   if (displayName !== key && !aliases.includes(displayName)) aliases.unshift(displayName);
   map[key] = {

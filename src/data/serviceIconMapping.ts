@@ -34,7 +34,7 @@ export interface ResolvedServiceIconMapping {
 }
 
 const FABRIC_SERVICE_ICON_MAP = Object.fromEntries(
-  FABRIC_ICON_CATALOG.map(definition => [
+  FABRIC_ICON_CATALOG.filter(definition => definition.includeInServiceMap).map(definition => [
     definition.serviceName,
     {
       displayName: definition.displayName,
@@ -1057,7 +1057,8 @@ export const SERVICE_ICON_MAP: Record<string, ServiceIconMapping> = {
     costRange: 'Service and storage based'
   },
 
-  // Microsoft Fabric: 74 official package families plus Fabric Capacity.
+  // Microsoft Fabric service components. Navigation and sample-only symbols
+  // remain available in the icon palette but are not advertised to AI/MCP as services.
   ...FABRIC_SERVICE_ICON_MAP,
 };
 

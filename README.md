@@ -171,7 +171,7 @@ Features include:
 
 ### 🟦 Microsoft Fabric Support
 Design **Microsoft Fabric** data platforms alongside core Azure services:
-- **~21 Fabric items** with official Fabric icons — Fabric Capacity, OneLake, Lakehouse, Warehouse, Eventhouse, Eventstream, KQL Database, Fabric Notebook, Dataflow Gen2, Semantic Model, Power BI Report, Mirrored Database, and more
+- **83 Fabric icons** — all 82 architecture-oriented families from the official `@fabric-msft/svg-icons` 8.2.0 package, plus the app's Fabric Capacity symbol. Includes workloads, items, workspace/navigation symbols, and developer samples.
 - **Capacity-aware costing** — Fabric Capacity (F-SKU) carries the cost; compute items show an **“incl. capacity”** badge instead of double-counting, and OneLake is billed as usage-based storage. The full F2→F2048 ladder (PAYG + 1-yr reserved) is built in.
 - **Fabric example prompts** — medallion lakehouse, real-time intelligence, and Direct Lake Power BI scenarios
 
@@ -937,7 +937,7 @@ Two-line wrapped edge labels with collision-avoided placement, opaque label chip
 The Diagram Builder is now an **MCP server** (8 tools: list / validate / estimate / **generate_bicep** / render / export / manifest / WAF) with stdio + Streamable-HTTP transports and Bearer auth, registerable as a remote extension in **Microsoft Scout**. `estimate_costs` returns numeric live-derived pricing, `generate_bicep` emits WAF-hardened IaC, and three tools now return typed `structuredContent`. SVG rendering gained **real Azure icons** (embedded glyphs, emoji fallback), smooth bezier edges, tighter layout, and far fewer edge crossings.
 
 #### 🟦 Microsoft Fabric support
-~21 Fabric items with official icons, capacity-aware costing (F2→F2048 ladder, “incl. capacity” badges), per-region Fabric/OneLake meters, and Fabric example prompts.
+83 Fabric icons with complete official 8.2.0 architecture-family coverage, capacity-aware costing (F2→F2048 ladder, “incl. capacity” badges), per-region Fabric/OneLake meters, and Fabric example prompts.
 
 #### 💰 Pricing upgrades
 PAYG ↔ Reserved (1-year) toggle, a “Prices as of” stamp on exports, true per-region meters refreshable with `npm run pricing:refresh`, and corrected OneLake/Fabric rates.

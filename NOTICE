@@ -60,6 +60,9 @@ Microsoft Fabric product and item icons
 Source package: @fabric-msft/svg-icons 8.2.0 (MIT License)
 https://www.npmjs.com/package/@fabric-msft/svg-icons
 Usage guidance: https://learn.microsoft.com/fabric/fundamentals/icons
+The palette includes all 82 product, workload, item, workspace/navigation,
+and sample icon families from the package. General Fluent UI glyphs bundled
+for extension development are not treated as Fabric architecture services.
 
 Microsoft Entra architecture icons
 Copyright (c) Microsoft Corporation. All rights reserved.

@@ -1,7 +1,14 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-export type FabricIconKind = 'platform' | 'capacity' | 'workload' | 'item' | 'state';
+export type FabricIconKind =
+  | 'platform'
+  | 'capacity'
+  | 'workload'
+  | 'item'
+  | 'state'
+  | 'navigation'
+  | 'sample';
 
 export interface FabricIconDefinition {
   serviceName: string;
@@ -12,6 +19,7 @@ export interface FabricIconDefinition {
   kind: FabricIconKind;
   sourceAsset: string | null;
   sourceVersion: string;
+  includeInServiceMap: boolean;
   consumesCapacity: boolean;
   hasPricingData: boolean;
   pricingServiceName?: string;
@@ -22,9 +30,17 @@ export interface FabricIconDefinition {
 type FabricIconOptions = Partial<
   Pick<
     FabricIconDefinition,
-    'consumesCapacity' | 'hasPricingData' | 'pricingServiceName' | 'isUsageBased' | 'costRange' | 'sourceVersion'
+    | 'consumesCapacity'
+    | 'hasPricingData'
+    | 'pricingServiceName'
+    | 'isUsageBased'
+    | 'costRange'
+    | 'sourceVersion'
+    | 'includeInServiceMap'
   >
 >;
+
+export const FABRIC_ICON_PACKAGE_VERSION = '8.2.0';
 
 function defineFabricIcon(
   serviceName: string,
@@ -45,7 +61,8 @@ function defineFabricIcon(
     group,
     kind,
     sourceAsset,
-    sourceVersion: options.sourceVersion ?? (sourceAsset ? '8.2.0' : 'local'),
+    sourceVersion: options.sourceVersion ?? (sourceAsset ? FABRIC_ICON_PACKAGE_VERSION : 'local'),
+    includeInServiceMap: options.includeInServiceMap ?? (kind !== 'navigation' && kind !== 'sample'),
     consumesCapacity: options.consumesCapacity ?? consumesCapacity,
     hasPricingData: options.hasPricingData ?? false,
     pricingServiceName: options.pricingServiceName,
@@ -57,9 +74,12 @@ function defineFabricIcon(
 /**
  * Complete Microsoft Fabric architecture icon inventory.
  *
- * The 74 official families are pinned to @fabric-msft/svg-icons 8.2.0.
+ * The 82 official architecture families are pinned to
+ * @fabric-msft/svg-icons 8.2.0. General Fluent UI glyphs bundled for extension
+ * development are intentionally excluded because they are not Fabric product,
+ * workload, item, workspace, or sample icons.
  * Microsoft Fabric Capacity is retained as the app's additional billable F-SKU
- * concept, producing 75 Fabric icons in the left palette.
+ * concept, producing 83 Fabric icons in the left palette.
  */
 export const FABRIC_ICON_CATALOG: FabricIconDefinition[] = [
   // Platform and capacity
@@ -79,6 +99,16 @@ export const FABRIC_ICON_CATALOG: FabricIconDefinition[] = [
   defineFabricIcon('Fabric Power BI Workload', 'Power BI', 'fabric-workload-power-bi', 'power_bi_32_color.svg', 'Workloads', 'workload', ['Power BI (Fabric)', 'Microsoft Fabric Power BI']),
   defineFabricIcon('Fabric Purview Workload', 'Purview', 'fabric-workload-purview', 'purview_32_color.svg', 'Workloads', 'workload', ['Purview (Fabric)', 'Microsoft Purview in Fabric']),
   defineFabricIcon('Fabric Real-Time Intelligence', 'Real-Time Intelligence', 'fabric-workload-real-time-intelligence', 'real_time_intelligence_32_color.svg', 'Workloads', 'workload', ['RTI', 'Real Time Intelligence', 'Microsoft Fabric Real-Time Intelligence']),
+  defineFabricIcon('Fabric Sample Workload', 'Sample Workload', 'fabric-sample-workload', 'sample_workload_32_color.svg', 'Development and Samples', 'sample', ['Fabric Workload Sample', 'Sample Fabric Workload', 'サンプル ワークロード'], { consumesCapacity: false, includeInServiceMap: false, costRange: 'Development sample symbol' }),
+
+  // Workspace, navigation, and developer sample symbols
+  defineFabricIcon('Fabric Add Pipeline', 'Add Pipeline', 'fabric-navigation-add-pipeline', 'add_pipeline_32_non-item.svg', 'Workspace and Navigation', 'navigation', ['Create Pipeline', 'New Pipeline', 'パイプラインを追加'], { consumesCapacity: false, includeInServiceMap: false, costRange: 'Workspace and navigation symbol' }),
+  defineFabricIcon('Fabric Eventhouse Navigation', 'Eventhouse (Navigation)', 'fabric-navigation-eventhouse', 'event_house_32_non-item.svg', 'Workspace and Navigation', 'navigation', ['Event House Navigation', 'Eventhouse Workspace', 'イベントハウス ナビゲーション'], { consumesCapacity: false, includeInServiceMap: false, costRange: 'Workspace and navigation symbol' }),
+  defineFabricIcon('Fabric Folder', 'Folder', 'fabric-navigation-folder', 'folder_32_non-item.svg', 'Workspace and Navigation', 'navigation', ['Fabric Folder', 'Workspace Folder', 'フォルダー'], { consumesCapacity: false, includeInServiceMap: false, costRange: 'Workspace and navigation symbol' }),
+  defineFabricIcon('Fabric Group Workspace', 'Group Workspace', 'fabric-navigation-group-workspace', 'group_workspace_32_non-item.svg', 'Workspace and Navigation', 'navigation', ['Workspace Group', 'Fabric Workspace Group', 'グループ ワークスペース'], { consumesCapacity: false, includeInServiceMap: false, costRange: 'Workspace and navigation symbol' }),
+  defineFabricIcon('Fabric Import Notebook', 'Import Notebook', 'fabric-navigation-import-notebook', 'import_notebook_32_non-item.svg', 'Workspace and Navigation', 'navigation', ['Notebook Import', 'Import Fabric Notebook', 'ノートブックをインポート'], { consumesCapacity: false, includeInServiceMap: false, costRange: 'Workspace and navigation symbol' }),
+  defineFabricIcon('Fabric My Workspace', 'My Workspace', 'fabric-navigation-my-workspace', 'my_workspace_32_non-item.svg', 'Workspace and Navigation', 'navigation', ['Personal Workspace', 'Fabric My Workspace', 'マイ ワークスペース'], { consumesCapacity: false, includeInServiceMap: false, costRange: 'Workspace and navigation symbol' }),
+  defineFabricIcon('Fabric Sample Item', 'Sample Item', 'fabric-sample-item', 'sample_32_non-item.svg', 'Development and Samples', 'sample', ['Fabric Item Sample', 'Sample Fabric Item', 'サンプル項目'], { consumesCapacity: false, includeInServiceMap: false, costRange: 'Development sample symbol' }),
 
   // Existing item families
   defineFabricIcon('Fabric Data Agent', 'Fabric Data Agent', 'fabric-data-agent', 'data_agent_32_item.svg', 'AI and Data Science', 'item', ['Data Agent (Fabric)', 'Fabric AI Skill']),

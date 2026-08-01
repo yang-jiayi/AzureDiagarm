@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "vite",
     "dev:full": "./scripts/dev-all.sh",
-    "icons:sync": "node scripts/sync-azure-icons.mjs",
+    "icons:sync": "node scripts/sync-azure-icons.mjs && node scripts/sync-fabric-icons.mjs",
+    "icons:sync:azure": "node scripts/sync-azure-icons.mjs",
+    "icons:sync:fabric": "node scripts/sync-fabric-icons.mjs",
     "test:icons": "node scripts/test-icon-library.mjs",
     "build": "tsc && vite build",
     "preview": "vite preview",
