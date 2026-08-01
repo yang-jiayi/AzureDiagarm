@@ -29,12 +29,15 @@ interface IconPaletteProps {
   onAddIcon?: (icon: AzureIcon) => void;
 }
 
+const COMPACT_PALETTE_MEDIA_QUERY =
+  '(max-width: 640px), (max-width: 1180px) and (max-height: 600px)';
+
 const libraryStats = getIconLibraryStats();
 
 const IconPalette: React.FC<IconPaletteProps> = ({ forceCollapsed, onAddIcon }) => {
   const { t, language } = useLanguage();
   const [isCollapsed, setIsCollapsed] = useState(
-    () => typeof window !== 'undefined' && window.matchMedia('(max-width: 640px)').matches,
+    () => typeof window !== 'undefined' && window.matchMedia(COMPACT_PALETTE_MEDIA_QUERY).matches,
   );
   const [expandedCategories, setExpandedCategories] = useState<Set<IconPaletteCategoryId>>(
     new Set(['ai']),
@@ -50,12 +53,12 @@ const IconPalette: React.FC<IconPaletteProps> = ({ forceCollapsed, onAddIcon }) 
   }, [forceCollapsed]);
 
   useEffect(() => {
-    const mobileViewport = window.matchMedia('(max-width: 640px)');
-    const collapseForMobile = (event: MediaQueryListEvent) => {
+    const compactViewport = window.matchMedia(COMPACT_PALETTE_MEDIA_QUERY);
+    const collapseForCompactViewport = (event: MediaQueryListEvent) => {
       if (event.matches) setIsCollapsed(true);
     };
-    mobileViewport.addEventListener('change', collapseForMobile);
-    return () => mobileViewport.removeEventListener('change', collapseForMobile);
+    compactViewport.addEventListener('change', collapseForCompactViewport);
+    return () => compactViewport.removeEventListener('change', collapseForCompactViewport);
   }, []);
 
   const loadIconUrls = useCallback(async (icons: AzureIcon[]) => {
@@ -125,7 +128,7 @@ const IconPalette: React.FC<IconPaletteProps> = ({ forceCollapsed, onAddIcon }) 
 
   const addIconToCanvas = (icon: AzureIcon) => {
     onAddIcon?.(icon);
-    if (window.matchMedia('(max-width: 640px)').matches) {
+    if (window.matchMedia(COMPACT_PALETTE_MEDIA_QUERY).matches) {
       setIsCollapsed(true);
     }
   };

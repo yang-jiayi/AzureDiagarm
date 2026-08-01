@@ -464,7 +464,7 @@ function fitToolbarMenuToViewport(menu: HTMLElement) {
   menu.style.overflowX = 'auto';
   const trigger = menu.parentElement?.getBoundingClientRect();
 
-  if (window.matchMedia('(max-width: 640px)').matches) {
+  if (window.matchMedia('(max-width: 640px), (max-width: 1180px) and (max-height: 600px)').matches) {
     const ribbonTabsBottom = document.querySelector('.ribbon-tabs')?.getBoundingClientRect().bottom;
     const minimumTop = Math.max(viewportTop + edgeGap, (ribbonTabsBottom ?? 78) + 4);
     let top = Math.max(minimumTop, (trigger?.bottom ?? minimumTop) + triggerGap);
@@ -3866,7 +3866,9 @@ function App() {
     const nextTab = ribbonTabs[nextIndex];
     activateRibbonTab(nextTab.id);
     window.requestAnimationFrame(() => {
-      document.getElementById(`ribbon-tab-${nextTab.id}`)?.focus();
+      const nextTabElement = document.getElementById(`ribbon-tab-${nextTab.id}`);
+      nextTabElement?.focus();
+      nextTabElement?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
     });
   };
 
