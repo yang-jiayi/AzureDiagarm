@@ -132,6 +132,7 @@ const EDGE_ANIMATION_STORAGE_KEY = 'azure-diagram-builder.edgeAnimation.v1';
 const CANVAS_HINT_STORAGE_KEY = 'azure-diagram-builder.canvasHintDismissed.v1';
 const HEADER_COLLAPSED_STORAGE_KEY = 'azure-diagram-builder.headerCollapsed.v1';
 const TOOLBAR_SECTIONS_STORAGE_KEY = 'azure-diagram-builder.toolbarSections.v1';
+const RIBBON_TAB_STORAGE_KEY = 'azure-diagram-builder.ribbonTab.v1';
 const EDGE_CONTEXT_MENU_WIDTH = 220;
 const EDGE_CONTEXT_MENU_HEIGHT = 280;
 const EDGE_CONTEXT_MENU_MARGIN = 8;
@@ -219,6 +220,9 @@ const TOOLBAR_SECTION_IDS = [
 ] as const;
 type ToolbarSectionId = typeof TOOLBAR_SECTION_IDS[number];
 const TOOLBAR_SECTION_ID_SET = new Set<string>(TOOLBAR_SECTION_IDS);
+const RIBBON_TAB_IDS = ['home', 'create', 'design', 'review'] as const;
+type RibbonTabId = typeof RIBBON_TAB_IDS[number];
+const RIBBON_TAB_ID_SET = new Set<string>(RIBBON_TAB_IDS);
 
 const normalizeLayoutEdgeStyle = (value: unknown): LayoutEdgeStyle =>
   value === 'straight' || value === 'smooth' || value === 'orthogonal'
@@ -458,11 +462,14 @@ function fitToolbarMenuToViewport(menu: HTMLElement) {
     menu.style.minWidth = `${menuMaxWidth}px`;
   }
   menu.style.overflowX = 'auto';
+  const trigger = menu.parentElement?.getBoundingClientRect();
 
   if (window.matchMedia('(max-width: 640px)').matches) {
-    let top = Math.max(viewportTop + edgeGap, 78);
+    const ribbonTabsBottom = document.querySelector('.ribbon-tabs')?.getBoundingClientRect().bottom;
+    const minimumTop = Math.max(viewportTop + edgeGap, (ribbonTabsBottom ?? 78) + 4);
+    let top = Math.max(minimumTop, (trigger?.bottom ?? minimumTop) + triggerGap);
     if (viewportBottom - top - edgeGap < 80) {
-      top = viewportTop + edgeGap;
+      top = minimumTop;
     }
     menu.style.position = 'fixed';
     menu.style.top = `${top}px`;
@@ -474,7 +481,6 @@ function fitToolbarMenuToViewport(menu: HTMLElement) {
     return;
   }
 
-  const trigger = menu.parentElement?.getBoundingClientRect();
   if (!trigger) return;
 
   const availableBelow = viewportBottom - trigger.bottom - triggerGap - edgeGap;
@@ -674,6 +680,12 @@ function App() {
     const stored = readLocalStorage(HEADER_COLLAPSED_STORAGE_KEY);
     if (stored !== null) return stored === '1';
     return window.matchMedia('(max-width: 1440px)').matches;
+  });
+  const [activeRibbonTab, setActiveRibbonTab] = useState<RibbonTabId>(() => {
+    const stored = readLocalStorage(RIBBON_TAB_STORAGE_KEY);
+    return stored && RIBBON_TAB_ID_SET.has(stored)
+      ? stored as RibbonTabId
+      : 'home';
   });
   const [collapsedToolbarSections, setCollapsedToolbarSections] = useState<Set<ToolbarSectionId>>(() => {
     const stored = readLocalStorage(TOOLBAR_SECTIONS_STORAGE_KEY);
@@ -3801,6 +3813,16 @@ function App() {
     });
   }, []);
 
+  const activateRibbonTab = useCallback((tabId: RibbonTabId) => {
+    setActiveRibbonTab(tabId);
+    writeLocalStorage(RIBBON_TAB_STORAGE_KEY, tabId);
+    setIsExportMenuOpen(false);
+    setIsLayoutMenuOpen(false);
+    setIsBulkSelectMenuOpen(false);
+    setIsStylePresetMenuOpen(false);
+    setIsModelSettingsOpen(false);
+  }, []);
+
   const toolbarSectionHeading = (sectionId: ToolbarSectionId, label: string) => {
     const isCollapsed = collapsedToolbarSections.has(sectionId);
     return (
@@ -3823,6 +3845,30 @@ function App() {
   const contextMenuEdge = edgeContextMenu
     ? edges.find((edge) => edge.id === edgeContextMenu.edgeId)
     : undefined;
+  const ribbonTabs: Array<{ id: RibbonTabId; label: string }> = [
+    { id: 'home', label: localize(language, { en: 'Home', ja: 'ホーム' }) },
+    { id: 'create', label: localize(language, { en: 'Create', ja: '作成' }) },
+    { id: 'design', label: localize(language, { en: 'Design', ja: 'デザイン' }) },
+    { id: 'review', label: localize(language, { en: 'Review', ja: 'レビュー' }) },
+  ];
+  const handleRibbonTabKeyDown = (
+    event: React.KeyboardEvent<HTMLButtonElement>,
+    tabIndex: number,
+  ) => {
+    let nextIndex: number | null = null;
+    if (event.key === 'ArrowRight') nextIndex = (tabIndex + 1) % ribbonTabs.length;
+    if (event.key === 'ArrowLeft') nextIndex = (tabIndex - 1 + ribbonTabs.length) % ribbonTabs.length;
+    if (event.key === 'Home') nextIndex = 0;
+    if (event.key === 'End') nextIndex = ribbonTabs.length - 1;
+    if (nextIndex === null) return;
+
+    event.preventDefault();
+    const nextTab = ribbonTabs[nextIndex];
+    activateRibbonTab(nextTab.id);
+    window.requestAnimationFrame(() => {
+      document.getElementById(`ribbon-tab-${nextTab.id}`)?.focus();
+    });
+  };
 
   return (
     <div className="app">
@@ -3846,15 +3892,51 @@ function App() {
             role="region"
             aria-label={t('toolbar.label')}
           >
+            <div
+              className="ribbon-tabs"
+              role="tablist"
+              aria-label={localize(language, { en: 'Ribbon tabs', ja: 'リボンタブ' })}
+            >
+              {ribbonTabs.map((tab, tabIndex) => (
+                <button
+                  key={tab.id}
+                  id={`ribbon-tab-${tab.id}`}
+                  type="button"
+                  role="tab"
+                  className={`ribbon-tab${activeRibbonTab === tab.id ? ' active' : ''}`}
+                  aria-selected={activeRibbonTab === tab.id}
+                  aria-controls="ribbon-command-strip"
+                  tabIndex={activeRibbonTab === tab.id ? 0 : -1}
+                  onClick={() => activateRibbonTab(tab.id)}
+                  onKeyDown={(event) => handleRibbonTabKeyDown(event, tabIndex)}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+            <div
+              id="ribbon-command-strip"
+              className="ribbon-command-strip"
+              role="tabpanel"
+              aria-labelledby={`ribbon-tab-${activeRibbonTab}`}
+            >
             {/* Row 1: Context, creation, import, file, and workspace actions */}
             <div className="header-actions">
               <div
+                hidden={activeRibbonTab !== 'home'}
                 className={`toolbar-group toolbar-group--labeled${collapsedToolbarSections.has('context') ? ' toolbar-group-collapsed' : ''}`}
                 data-label={localize(language, { en: 'Context', ja: 'コンテキスト' })}
                 aria-label={localize(language, { en: 'Context and pricing', ja: 'コンテキストと料金' })}
               >
                 {toolbarSectionHeading('context', localize(language, { en: 'Context', ja: 'コンテキスト' }))}
-                <RegionSelector onRegionChange={handleRegionChange} />
+                <RegionSelector
+                  isActive={
+                    activeRibbonTab === 'home'
+                    && !isHeaderCollapsed
+                    && !collapsedToolbarSections.has('context')
+                  }
+                  onRegionChange={handleRegionChange}
+                />
                 {hasCostDisplayData && (
                   <button
                     className={`cost-visibility-toggle${pricingPrefs.showCostBadges ? '' : ' is-off'}`}
@@ -3926,6 +4008,7 @@ function App() {
               </div>
 
               <div
+                hidden={activeRibbonTab !== 'create'}
                 className={`toolbar-group toolbar-group--labeled${collapsedToolbarSections.has('create') ? ' toolbar-group-collapsed' : ''}`}
                 data-label={localize(language, { en: 'Create & AI', ja: '作成・AI' })}
                 aria-label={localize(language, { en: 'Create and AI tools', ja: '作成とAIツール' })}
@@ -3983,6 +4066,7 @@ function App() {
               </div>
 
               <div
+                hidden={activeRibbonTab !== 'create'}
                 className={`toolbar-group toolbar-group--labeled${collapsedToolbarSections.has('import') ? ' toolbar-group-collapsed' : ''}`}
                 data-label={localize(language, { en: 'Import', ja: 'インポート' })}
                 aria-label={localize(language, { en: 'Import architecture', ja: 'アーキテクチャのインポート' })}
@@ -4017,6 +4101,7 @@ function App() {
               </div>
 
               <div
+                hidden={activeRibbonTab !== 'home'}
                 className={`toolbar-group toolbar-group--labeled${collapsedToolbarSections.has('file') ? ' toolbar-group-collapsed' : ''}`}
                 data-label={localize(language, { en: 'File & export', ja: 'ファイル・出力' })}
                 aria-label={localize(language, { en: 'File and export actions', ja: 'ファイルと出力操作' })}
@@ -4273,6 +4358,7 @@ function App() {
               </div>
 
               <div
+                hidden={activeRibbonTab !== 'home'}
                 className={`toolbar-group toolbar-group--labeled${collapsedToolbarSections.has('workspace') ? ' toolbar-group-collapsed' : ''}`}
                 data-label={localize(language, { en: 'Workspace', ja: '表示・操作' })}
                 aria-label={localize(language, { en: 'Workspace and help actions', ja: '表示・操作とヘルプ' })}
@@ -4333,6 +4419,7 @@ function App() {
             {/* Row 2: History, arrangement, and review actions */}
             <div className="header-actions">
               <div
+                hidden={activeRibbonTab !== 'review'}
                 className={`toolbar-group toolbar-group--labeled${collapsedToolbarSections.has('history') ? ' toolbar-group-collapsed' : ''}`}
                 data-label={localize(language, { en: 'History', ja: '履歴' })}
                 aria-label={localize(language, { en: 'History and snapshots', ja: '履歴とスナップショット' })}
@@ -4356,6 +4443,7 @@ function App() {
               </div>
 
               <div
+                hidden={activeRibbonTab !== 'design'}
                 className={`toolbar-group toolbar-group--labeled${collapsedToolbarSections.has('arrange') ? ' toolbar-group-collapsed' : ''}`}
                 data-label={localize(language, { en: 'Arrange', ja: '配置・選択' })}
                 aria-label={localize(language, { en: 'Arrange, select, and style', ja: '配置、選択、スタイル' })}
@@ -4631,6 +4719,7 @@ function App() {
               </div>
 
               <div
+                hidden={activeRibbonTab !== 'review'}
                 className={`toolbar-group toolbar-group--labeled${collapsedToolbarSections.has('review') ? ' toolbar-group-collapsed' : ''}`}
                 data-label={localize(language, { en: 'Review', ja: 'レビュー・ガイド' })}
                 aria-label={localize(language, { en: 'Architecture review and guides', ja: 'アーキテクチャのレビューとガイド' })}
@@ -4680,6 +4769,7 @@ function App() {
                     {' '}{t("View Guide")}{' '}</button>
                 )}
               </div>
+            </div>
             </div>
           </div>
           <div className="header-identity-actions">

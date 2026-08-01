@@ -1,20 +1,25 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { setActiveRegion, getActiveRegion, AVAILABLE_REGIONS, AzureRegion, RegionInfo } from '../services/regionalPricingService';
 import { trackRegionChange } from '../services/telemetryService';
 import './RegionSelector.css';
 import { useLanguage } from '../i18n/LanguageContext';
 
 interface RegionSelectorProps {
+  isActive?: boolean;
   onRegionChange?: (region: AzureRegion) => void;
 }
 
-const RegionSelector: React.FC<RegionSelectorProps> = ({ onRegionChange }) => {
+const RegionSelector: React.FC<RegionSelectorProps> = ({ isActive = true, onRegionChange }) => {
   const { t, translate } = useLanguage();
   const [selectedRegion, setSelectedRegion] = useState<AzureRegion>(getActiveRegion());
   const [isOpen, setIsOpen] = useState(false);
+
+  useEffect(() => {
+    if (!isActive) setIsOpen(false);
+  }, [isActive]);
 
   const handleRegionSelect = (region: AzureRegion) => {
     setSelectedRegion(region);
