@@ -54,7 +54,7 @@ const regionalDataCache = new Map<AzureRegion, Map<string, RegionalPricingData>>
 const parsedPricingCache = new Map<string, ServicePricing>();
 
 // Current active region
-let currentRegion: AzureRegion = 'eastus2';
+let currentRegion: AzureRegion = 'japaneast';
 
 /**
  * Map AI service display names to Foundry productNames

@@ -1120,7 +1120,7 @@ function App() {
     preloadCommonServices().catch(err => 
       console.warn('Failed to preload regional pricing:', err)
     );
-    prefetchCommonServices('eastus2').catch(err => 
+    prefetchCommonServices(getActiveRegion()).catch(err =>
       console.warn('Failed to prefetch API pricing:', err)
     );
   }, []);
