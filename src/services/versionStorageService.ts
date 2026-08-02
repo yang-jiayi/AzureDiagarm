@@ -1,6 +1,9 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+import type { PricingScenario } from '../types/pricing';
+import type { IaCBaseline } from './iacRoundTrip';
+
 /**
  * Version Storage Service
  * Manages diagram version history using IndexedDB for local persistence
@@ -22,6 +25,8 @@ export interface DiagramVersion {
   metadata?: any;
   workflow?: any[];
   titleBlockData?: any;
+  pricingScenarios?: PricingScenario[];
+  iacBaseline?: IaCBaseline | null;
 }
 
 const DB_NAME = 'AzureDiagramVersions';
@@ -159,6 +164,8 @@ export const createSnapshot = async (
     metadata?: any;
     workflow?: any[];
     titleBlockData?: any;
+    pricingScenarios?: PricingScenario[];
+    iacBaseline?: IaCBaseline | null;
   }
 ): Promise<DiagramVersion> => {
   const version: DiagramVersion = {

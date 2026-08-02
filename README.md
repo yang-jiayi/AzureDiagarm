@@ -87,8 +87,8 @@ Generate a hand-drawn, **whiteboard-style blueprint** of your architecture — n
 
 > Blueprint and Both modes require a general-purpose OpenAI model (GPT-5.x). The app auto-switches if a third-party model is selected. A configurable legend position keeps the output presentation-ready.
 
-### 📋 ARM Template Import
-Import existing ARM templates and automatically visualize your current infrastructure. The AI parses resource dependencies and creates meaningful diagrams. A **glowing purple banner** provides visual feedback during parsing.
+### 📋 IaC Import, Export & Drift Review
+Import ARM JSON, Bicep, Terraform HCL, or Terraform state and turn the declared resources into an editable diagram. The round-trip workspace preserves the source baseline, compares it with the current canvas, exports Bicep or Terraform starter templates, and summarizes Azure what-if or Terraform plan JSON without ever running an apply operation.
 
 ### 🎯 Well-Architected Framework Validation
 Validate your architecture against all five WAF pillars:
@@ -155,6 +155,7 @@ Features include:
 - **Per-node cost editor** — click a service cost badge to change its Tier/SKU, quantity, or enter a custom monthly unit price
 - **PAYG ↔ Savings Plan (1-year) toggle** — flip the entire estimate between pay-as-you-go and 1-year commitment pricing. Each meter's **real 1-year Savings Plan rate** (from the Azure Retail Prices API) is used per-SKU when available; services without a savings-plan meter fall back to a representative discount, and Microsoft Fabric Capacity is **exact**. Usage-based services stay at PAYG.
 - **“Prices as of” stamp** — every cost export records the pricing-data refresh date and the selected billing term.
+- **Development vs production scenarios** — compare editable capacity, usage, commitment, negotiated-discount, support, currency, and planning-FX assumptions without changing the diagram.
 - **True per-region meters** — pricing is pre-fetched per region from the Azure Retail Prices API (refresh anytime with `npm run pricing:refresh`), including per-region **Microsoft Fabric** capacity (CU) and OneLake storage rates.
 - Color-coded legend (green/yellow/red based on cost thresholds)
 - SKU and tier information for each service
@@ -192,12 +193,14 @@ A built-in feedback widget captures a rating, category, and free-text comment. S
 - Save named snapshots with descriptions
 - Browse and restore previous versions
 - Track architecture evolution over time
-- Cloud sync with shareable URLs
+- Entra-authenticated cloud autosave with immutable snapshots, comments, optimistic concurrency, and revocable viewer/editor links
 
 ### 🎨 Professional Diagramming
 - **Complete official Azure V24 icon package** — all 714 SVGs from Microsoft's July 2026 package, hash-verified from a committed manifest, plus the Microsoft Fabric icon set
 - **Purpose-based icon catalog** — 21 bilingual categories organize services by meaning while preserving all 29 official source folders for compatibility
 - **Semantic icon search** — search names, acronyms, aliases, categories, purposes, and Japanese keywords
+- **Personal icon workspace** — favorites, recently used services, and custom collections persist locally
+- **Virtualized catalog rendering** — only visible rows are mounted, keeping the complete 807-icon catalog responsive
 - **89+ AI-mapped services** — with pricing, categories, and icon resolution (including ~21 Microsoft Fabric items)
 - **Smart Grouping** — Logical organization (Frontend, Backend, Data, Security)
 - **Editable Connections** — Labels, direction, per-edge animation, and custom styling

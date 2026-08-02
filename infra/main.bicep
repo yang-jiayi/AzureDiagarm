@@ -83,6 +83,12 @@ param speechRegion string = 'westus2'
 @description('Provision an Azure Cosmos DB account for saving diagrams across sessions.')
 param deployCosmos bool = false
 
+@description('Provision low-cost Azure Blob Storage for authenticated diagram autosave, versions, comments, and share links.')
+param deployDiagramStorage bool = true
+
+@description('Azure region for zone-redundant diagram storage. This may differ from the app region when ZRS is unavailable there.')
+param diagramStorageLocation string = 'westus2'
+
 // ── MCP server (decoupled Container App) ──────────────────────────────────────
 @secure()
 @description('Optional bearer token required on the MCP /mcp endpoint. Empty keeps MCP external ingress disabled.')
@@ -125,6 +131,8 @@ module resources './resources.bicep' = {
     deploySpeech: deploySpeech
     speechRegion: speechRegion
     deployCosmos: deployCosmos
+    deployDiagramStorage: deployDiagramStorage
+    diagramStorageLocation: diagramStorageLocation
     mcpAuthToken: mcpAuthToken
     azureOpenAiEndpoint: azureOpenAiEndpoint
     azureOpenAiAllowedDeployments: openAiAllowedDeployments
@@ -192,6 +200,10 @@ output AZURE_COSMOS_ENDPOINT string = resources.outputs.cosmosEndpoint
 output COSMOS_DATABASE_ID string = resources.outputs.cosmosDatabaseId
 output COSMOS_CONTAINER_ID string = resources.outputs.cosmosContainerId
 output COSMOS_FEEDBACK_CONTAINER_ID string = resources.outputs.cosmosFeedbackContainerId
+
+// Authenticated diagram persistence (empty strings when deployDiagramStorage = false)
+output AZURE_BLOB_ENDPOINT string = resources.outputs.diagramStorageEndpoint
+output AZURE_BLOB_DIAGRAMS_CONTAINER string = resources.outputs.diagramStorageContainer
 
 // App Insights — used by the pre-package hook to write .env.appinsights
 output APPLICATIONINSIGHTS_CONNECTION_STRING string = resources.outputs.appInsightsConnectionString

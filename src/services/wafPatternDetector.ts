@@ -16,6 +16,7 @@ import {
   WafRule,
   ARCHITECTURE_PATTERN_RULES,
   SERVICE_SPECIFIC_RULES,
+  WAF_RULE_ENRICHMENTS,
   type WafPillar,
   type Severity,
 } from '../data/wafRules';
@@ -47,6 +48,50 @@ interface PatternDetectionResult {
   serviceRulesApplied: number;
   patternRulesApplied: number;
   elapsedMs: number;
+}
+
+function remediationSteps(recommendation: string): string[] {
+  return recommendation
+    .split(/(?<=[.!?])\s+/)
+    .map((step) => step.trim())
+    .filter(Boolean);
+}
+
+function pillarReference(pillar: WafPillar): string {
+  const slug: Record<WafPillar, string> = {
+    Reliability: 'reliability',
+    Security: 'security',
+    'Cost Optimization': 'cost-optimization',
+    'Operational Excellence': 'operational-excellence',
+    'Performance Efficiency': 'performance-efficiency',
+  };
+  return `https://learn.microsoft.com/azure/well-architected/${slug[pillar]}/`;
+}
+
+function findingFromRule(
+  rule: WafRule,
+  resources: string[],
+  evidence: string[],
+): ValidationFinding {
+  const enrichment = WAF_RULE_ENRICHMENTS[rule.id];
+  return {
+    severity: rule.severity,
+    category: rule.category,
+    issue: rule.issue,
+    recommendation: rule.recommendation,
+    resources,
+    ruleId: rule.id,
+    source: 'rule-based',
+    evidence: enrichment?.evidence || evidence,
+    remediation: enrichment?.remediation || remediationSteps(rule.recommendation),
+    referenceUrl: enrichment?.referenceUrl || pillarReference(rule.pillar),
+    applyAction: enrichment?.applyAction || {
+      type: rule.appliesTo[0] === '*' ? 'regenerate' : 'configure',
+      label: rule.appliesTo[0] === '*'
+        ? 'Apply this architecture change'
+        : `Review ${rule.category} configuration`,
+    },
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -238,15 +283,14 @@ export function detectWafPatterns(
   for (const rule of ARCHITECTURE_PATTERN_RULES) {
     if (rule.pattern && patterns.includes(rule.pattern)) {
       patternRulesApplied++;
-      patternFindings.push({
-        severity: rule.severity,
-        category: rule.category,
-        issue: rule.issue,
-        recommendation: rule.recommendation,
-        resources: rule.appliesTo[0] === '*'
-          ? getAffectedResources(rule, services, patterns)
-          : rule.appliesTo,
-      });
+      const resources = rule.appliesTo[0] === '*'
+        ? getAffectedResources(rule, services, patterns)
+        : rule.appliesTo;
+      patternFindings.push(findingFromRule(
+        rule,
+        resources,
+        [`Detected topology pattern "${rule.pattern}" affecting ${resources.join(', ') || 'the architecture'}.`],
+      ));
     }
   }
 
@@ -259,13 +303,13 @@ export function detectWafPatterns(
 
     for (const rule of applicableRules) {
       serviceRulesApplied++;
-      serviceFindings.push({
-        severity: rule.severity,
-        category: rule.category,
-        issue: rule.issue,
-        recommendation: rule.recommendation,
-        resources: [service.name],
-      });
+      serviceFindings.push(findingFromRule(
+        rule,
+        [service.name],
+        [
+          `${service.name} (${service.type}) is present, but a diagram cannot verify whether the ${rule.category.toLowerCase()} configuration is enabled.`,
+        ],
+      ));
     }
   }
 

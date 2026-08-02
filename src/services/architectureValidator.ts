@@ -151,6 +151,16 @@ export interface ValidationFinding {
   issue: string;
   recommendation: string;
   resources?: string[];
+  ruleId?: string;
+  source?: 'rule-based' | 'ai-analysis';
+  evidence?: string[];
+  remediation?: string[];
+  referenceUrl?: string;
+  applyAction?: {
+    type: 'add-service' | 'regenerate' | 'configure';
+    label: string;
+    serviceType?: string;
+  };
 }
 
 export interface ArchitectureValidation {
@@ -162,6 +172,107 @@ export interface ArchitectureValidation {
   metrics?: AIMetrics;
   modelUsed?: string;
   diagramImageDataUrl?: string;
+}
+
+const FINDING_SEVERITIES = new Set<ValidationFinding['severity']>([
+  'critical',
+  'high',
+  'medium',
+  'low',
+]);
+const APPLY_ACTION_TYPES = new Set<NonNullable<ValidationFinding['applyAction']>['type']>([
+  'add-service',
+  'regenerate',
+  'configure',
+]);
+
+function boundedString(value: unknown, maxLength: number): string {
+  return typeof value === 'string' ? value.trim().slice(0, maxLength) : '';
+}
+
+function boundedStringArray(value: unknown, maxItems: number, maxLength: number): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => boundedString(item, maxLength))
+    .filter(Boolean)
+    .slice(0, maxItems);
+}
+
+function recommendationSteps(recommendation: string): string[] {
+  return recommendation
+    .split(/(?<=[.!?。！？])\s*/)
+    .map((step) => step.trim())
+    .filter(Boolean)
+    .slice(0, 8);
+}
+
+function normalizeFinding(
+  value: unknown,
+  localByRuleId: Map<string, ValidationFinding>,
+  serviceNames: Set<string>,
+): ValidationFinding | null {
+  if (!value || typeof value !== 'object') return null;
+  const raw = value as Record<string, unknown>;
+  const ruleId = boundedString(raw.ruleId, 100);
+  const local = ruleId ? localByRuleId.get(ruleId) : undefined;
+  const severity = FINDING_SEVERITIES.has(raw.severity as ValidationFinding['severity'])
+    ? raw.severity as ValidationFinding['severity']
+    : local?.severity || 'medium';
+  const category = boundedString(raw.category, 160) || local?.category || 'Architecture';
+  const issue = boundedString(raw.issue, 1200) || local?.issue || '';
+  const recommendation = boundedString(raw.recommendation, 2400)
+    || local?.recommendation
+    || '';
+  if (!issue || !recommendation) return null;
+
+  const resources = boundedStringArray(raw.resources, 50, 200)
+    .filter((resource) => serviceNames.has(resource));
+  const evidence = boundedStringArray(raw.evidence, 8, 800);
+  const remediation = boundedStringArray(raw.remediation, 8, 800);
+  const source = raw.source === 'rule-based' || raw.source === 'ai-analysis'
+    ? raw.source
+    : local
+      ? 'rule-based'
+      : 'ai-analysis';
+  const rawAction = raw.applyAction && typeof raw.applyAction === 'object'
+    ? raw.applyAction as Record<string, unknown>
+    : null;
+  const actionType = rawAction && APPLY_ACTION_TYPES.has(
+    rawAction.type as NonNullable<ValidationFinding['applyAction']>['type'],
+  )
+    ? rawAction.type as NonNullable<ValidationFinding['applyAction']>['type']
+    : local?.applyAction?.type || 'regenerate';
+  const actionLabel = boundedString(rawAction?.label, 160)
+    || local?.applyAction?.label
+    || 'Apply through AI refinement';
+  const serviceType = boundedString(rawAction?.serviceType, 160)
+    || local?.applyAction?.serviceType;
+  const rawReference = boundedString(raw.referenceUrl, 500);
+  const referenceUrl = rawReference.startsWith('https://learn.microsoft.com/')
+    ? rawReference
+    : local?.referenceUrl;
+
+  return {
+    severity,
+    category,
+    issue,
+    recommendation,
+    resources: resources.length > 0 ? resources : local?.resources,
+    ruleId: ruleId || local?.ruleId,
+    source,
+    evidence: evidence.length > 0
+      ? evidence
+      : local?.evidence || [issue],
+    remediation: remediation.length > 0
+      ? remediation
+      : local?.remediation || recommendationSteps(recommendation),
+    referenceUrl,
+    applyAction: {
+      type: actionType,
+      label: actionLabel,
+      ...(serviceType ? { serviceType } : {}),
+    },
+  };
 }
 
 /**
@@ -196,7 +307,10 @@ export async function validateArchitecture(
 
   // ── Phase 1: Instant local rule-based analysis ──────────────────────
   const localResult = detectWafPatterns(services, connections, groups);
-  const preliminaryScore = calculatePreliminaryScore(localResult.findings);
+  // Service-specific checks describe configuration that a topology diagram
+  // cannot prove. Score only observed topology gaps so adding a service does
+  // not incorrectly lower the architecture score for invisible settings.
+  const preliminaryScore = calculatePreliminaryScore(localResult.patternFindings);
   const kbStats = getKnowledgeBaseStats();
   
   console.log(`⚡ Phase 1 (local): ${localResult.findings.length} findings, preliminary score ${preliminaryScore}/100 (${localResult.elapsedMs}ms)`);
@@ -213,8 +327,12 @@ export async function validateArchitecture(
   // best-practice rules, which are generic and would overwhelm the prompt)
   const patternFindingsSummary = localResult.patternFindings.length > 0
     ? localResult.patternFindings.map(f =>
-        `- [${f.severity.toUpperCase()}] ${f.category}: ${f.issue}` +
-        (f.resources?.length ? ` (affects: ${f.resources.join(', ')})` : '')
+        [
+          `- Rule ${f.ruleId || 'local'} [${f.severity.toUpperCase()}] ${f.category}: ${f.issue}`,
+          f.resources?.length ? `  Affects: ${f.resources.join(', ')}` : '',
+          f.evidence?.length ? `  Evidence: ${f.evidence.join(' | ')}` : '',
+          f.remediation?.length ? `  Remediation: ${f.remediation.join(' | ')}` : '',
+        ].filter(Boolean).join('\n')
       ).join('\n')
     : 'No architecture-level anti-patterns detected.';
 
@@ -243,7 +361,10 @@ SCORING GUIDANCE:
 - A well-connected architecture with appropriate services should score 60-80
 - Only score below 50 for architectures with critical gaps (no auth, no monitoring, single points of failure)
 - Findings are improvement suggestions, not reasons to penalize the score severely
-- Each finding should include a "source" field: "rule-based" (from pre-scan) or "ai-analysis" (your addition)
+- Each finding must include concrete "evidence" from the diagram, ordered "remediation" steps, and a "source" field: "rule-based" (from pre-scan) or "ai-analysis" (your addition)
+- Preserve the "ruleId" for pre-scan findings. For AI findings, omit ruleId.
+- Use "applyAction" to describe how the diagram can be improved: type is "add-service", "regenerate", or "configure"; include a concise label and optional exact Azure serviceType.
+- Do not claim a runtime setting is disabled when the diagram cannot show it. State that the setting is unverified and requires deployment review.
 
 Return ONLY valid JSON (no markdown) with this structure:
 {
@@ -260,7 +381,16 @@ Return ONLY valid JSON (no markdown) with this structure:
           "issue": "...",
           "recommendation": "...",
           "resources": ["service-name-1"],
-          "source": "rule-based"
+          "ruleId": "arch-no-monitoring",
+          "source": "rule-based",
+          "evidence": ["No Azure Monitor or Log Analytics service is shown."],
+          "remediation": ["Add Azure Monitor.", "Connect the application telemetry.", "Create health alerts."],
+          "referenceUrl": "https://learn.microsoft.com/azure/well-architected/",
+          "applyAction": {
+            "type": "add-service",
+            "label": "Add observability services",
+            "serviceType": "Azure Monitor"
+          }
         }
       ]
     }
@@ -272,7 +402,13 @@ Return ONLY valid JSON (no markdown) with this structure:
       "issue": "...",
       "recommendation": "...",
       "resources": ["Azure Functions"],
-      "source": "ai-analysis"
+      "source": "ai-analysis",
+      "evidence": ["The diagram shows ..."],
+      "remediation": ["First action", "Second action"],
+      "applyAction": {
+        "type": "regenerate",
+        "label": "Apply through AI refinement"
+      }
     }
   ]
 }`;
@@ -326,20 +462,35 @@ Provide a comprehensive Well-Architected Framework assessment with actionable re
       throw new Error('Response missing required fields');
     }
 
-    // quickWins is optional in practice: models sometimes omit it when there is
-    // nothing to suggest, and a pillar can arrive without its findings array.
-    // Normalize so downstream consumers can always iterate without crashing the
-    // render.
-    if (!Array.isArray(validation.quickWins)) {
-      validation.quickWins = [];
-    }
-
+    const localByRuleId = new Map(
+      localResult.findings
+        .filter((finding) => finding.ruleId)
+        .map((finding) => [finding.ruleId as string, finding]),
+    );
+    const exactServiceNames = new Set(serviceNamesList);
+    validation.overallScore = Math.max(0, Math.min(100, Math.round(validation.overallScore)));
     validation.pillars = validation.pillars
       .filter((pillar: unknown) => !!pillar && typeof pillar === 'object')
       .map((pillar: any) => ({
         ...pillar,
-        findings: Array.isArray(pillar.findings) ? pillar.findings : [],
+        score: Number.isFinite(Number(pillar.score))
+          ? Math.max(0, Math.min(100, Math.round(Number(pillar.score))))
+          : 0,
+        findings: (Array.isArray(pillar.findings) ? pillar.findings : [])
+          .map((finding: unknown) => normalizeFinding(
+            finding,
+            localByRuleId,
+            exactServiceNames,
+          ))
+          .filter((finding: ValidationFinding | null): finding is ValidationFinding => Boolean(finding)),
       }));
+    validation.quickWins = (Array.isArray(validation.quickWins) ? validation.quickWins : [])
+      .map((finding: unknown) => normalizeFinding(
+        finding,
+        localByRuleId,
+        exactServiceNames,
+      ))
+      .filter((finding: ValidationFinding | null): finding is ValidationFinding => Boolean(finding));
     
     validation.timestamp = new Date().toISOString();
     validation.metrics = metrics;
@@ -427,6 +578,20 @@ export function formatValidationReport(validation: ArchitectureValidation): stri
       report += `${emoji} **${finding.category}** [${finding.severity.toUpperCase()}]\n\n`;
       report += `**Issue:**  \n${finding.issue}\n\n`;
       report += `**Recommendation:**  \n${finding.recommendation}\n\n`;
+      if (finding.evidence && finding.evidence.length > 0) {
+        report += `**Diagram Evidence:**\n`;
+        finding.evidence.forEach(item => {
+          report += `- ${item}\n`;
+        });
+        report += `\n`;
+      }
+      if (finding.remediation && finding.remediation.length > 0) {
+        report += `**Remediation Steps:**\n`;
+        finding.remediation.forEach((step, stepIndex) => {
+          report += `${stepIndex + 1}. ${step}\n`;
+        });
+        report += `\n`;
+      }
       if (finding.resources && finding.resources.length > 0) {
         report += `**Affected Resources:**\n`;
         finding.resources.forEach(resource => {
@@ -434,6 +599,10 @@ export function formatValidationReport(validation: ArchitectureValidation): stri
         });
         report += `\n`;
       }
+      if (finding.referenceUrl) {
+        report += `**Reference:** ${finding.referenceUrl}\n\n`;
+      }
+      report += `**Source:** ${finding.source === 'rule-based' ? `Deterministic rule${finding.ruleId ? ` (${finding.ruleId})` : ''}` : 'AI contextual analysis'}\n\n`;
       report += `---\n\n`;
     });
   });
@@ -446,6 +615,12 @@ export function formatValidationReport(validation: ArchitectureValidation): stri
     validation.quickWins.forEach((win, index) => {
       report += `### ${index + 1}. ${win.category}\n\n`;
       report += `${win.recommendation}\n\n`;
+      if (win.remediation && win.remediation.length > 0) {
+        win.remediation.forEach((step, stepIndex) => {
+          report += `${stepIndex + 1}. ${step}\n`;
+        });
+        report += `\n`;
+      }
     });
   }
   

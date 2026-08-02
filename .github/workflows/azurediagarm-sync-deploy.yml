@@ -646,6 +646,12 @@ jobs:
               "COSMOS_FEEDBACK_CONTAINER_ID=${{ vars.COSMOS_FEEDBACK_CONTAINER_ID }}"
             )
           fi
+          if [[ -n "${{ vars.AZURE_BLOB_ENDPOINT }}" ]]; then
+            env_vars+=(
+              "AZURE_BLOB_ENDPOINT=${{ vars.AZURE_BLOB_ENDPOINT }}"
+              "AZURE_BLOB_DIAGRAMS_CONTAINER=${{ vars.AZURE_BLOB_DIAGRAMS_CONTAINER || 'diagrams' }}"
+            )
+          fi
 
           current_env_names="$(
             az containerapp show \
@@ -662,6 +668,11 @@ jobs:
           fi
           if [[ -z "${{ vars.AZURE_COSMOS_ENDPOINT }}" ]]; then
             for name in AZURE_COSMOS_ENDPOINT COSMOS_DATABASE_ID COSMOS_CONTAINER_ID COSMOS_FEEDBACK_CONTAINER_ID; do
+              grep -qx "$name" <<< "$current_env_names" && remove_env_vars+=("$name")
+            done
+          fi
+          if [[ -z "${{ vars.AZURE_BLOB_ENDPOINT }}" ]]; then
+            for name in AZURE_BLOB_ENDPOINT AZURE_BLOB_DIAGRAMS_CONTAINER; do
               grep -qx "$name" <<< "$current_env_names" && remove_env_vars+=("$name")
             done
           fi

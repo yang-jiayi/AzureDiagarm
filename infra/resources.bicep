@@ -10,6 +10,8 @@ param resourceToken string
 param deploySpeech bool
 param speechRegion string
 param deployCosmos bool
+param deployDiagramStorage bool
+param diagramStorageLocation string
 
 @secure()
 @description('Optional bearer token required on the decoupled MCP server /mcp endpoint. Empty keeps external ingress disabled.')
@@ -190,6 +192,111 @@ resource cosmosRole 'Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments@20
   }
 }
 
+// ── Authenticated diagram persistence (Blob Storage) ──────────────────────────
+var diagramStorageContainerName = 'diagrams'
+var diagramStoragePerimeterName = 'azurediagarm-storage-perimeter'
+var diagramStoragePerimeterProfileName = 'diagram-storage-profile'
+
+// The tenant governance policy disables ordinary public storage endpoints.
+// NSP keeps the HTTPS endpoint usable by authenticated resources in this
+// subscription while enforcing a network boundary ahead of Storage RBAC.
+resource diagramStoragePerimeter 'Microsoft.Network/networkSecurityPerimeters@2024-07-01' = if (deployDiagramStorage) {
+  name: diagramStoragePerimeterName
+  location: diagramStorageLocation
+  tags: tags
+  properties: {}
+}
+
+resource diagramStoragePerimeterProfile 'Microsoft.Network/networkSecurityPerimeters/profiles@2024-07-01' = if (deployDiagramStorage) {
+  parent: diagramStoragePerimeter
+  name: diagramStoragePerimeterProfileName
+  properties: {}
+}
+
+resource diagramStorageSubscriptionRule 'Microsoft.Network/networkSecurityPerimeters/profiles/accessRules@2024-07-01' = if (deployDiagramStorage) {
+  parent: diagramStoragePerimeterProfile
+  name: 'allow-azurediagarm-subscription'
+  properties: {
+    direction: 'Inbound'
+    subscriptions: [
+      {
+        id: subscription().id
+      }
+    ]
+  }
+}
+
+resource diagramStorage 'Microsoft.Storage/storageAccounts@2025-06-01' = if (deployDiagramStorage) {
+  name: take('stg${resourceToken}', 24)
+  location: diagramStorageLocation
+  tags: tags
+  kind: 'StorageV2'
+  sku: {
+    name: 'Standard_ZRS'
+  }
+  properties: {
+    accessTier: 'Hot'
+    allowBlobPublicAccess: false
+    allowCrossTenantReplication: false
+    allowSharedKeyAccess: false
+    defaultToOAuthAuthentication: true
+    minimumTlsVersion: 'TLS1_2'
+    publicNetworkAccess: 'SecuredByPerimeter'
+    supportsHttpsTrafficOnly: true
+  }
+}
+
+resource diagramBlobService 'Microsoft.Storage/storageAccounts/blobServices@2023-05-01' = if (deployDiagramStorage) {
+  parent: diagramStorage
+  name: 'default'
+  properties: {
+    isVersioningEnabled: true
+    deleteRetentionPolicy: {
+      enabled: true
+      days: 30
+    }
+    containerDeleteRetentionPolicy: {
+      enabled: true
+      days: 30
+    }
+  }
+}
+
+resource diagramBlobContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-05-01' = if (deployDiagramStorage) {
+  parent: diagramBlobService
+  name: diagramStorageContainerName
+  properties: {
+    publicAccess: 'None'
+  }
+}
+
+resource diagramStorageRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (deployDiagramStorage) {
+  name: guid(deployDiagramStorage ? diagramStorage.id : resourceToken, appIdentity.id, 'diagram-blob-contributor')
+  scope: diagramStorage
+  properties: {
+    roleDefinitionId: subscriptionResourceId(
+      'Microsoft.Authorization/roleDefinitions',
+      'ba92f5b4-2d11-453d-a403-e96b0029c9fe'
+    )
+    principalId: appIdentity.properties.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+resource diagramStoragePerimeterAssociation 'Microsoft.Network/networkSecurityPerimeters/resourceAssociations@2024-07-01' = if (deployDiagramStorage) {
+  parent: diagramStoragePerimeter
+  name: 'diagram-storage-association'
+  properties: {
+    accessMode: 'Enforced'
+    privateLinkResource: {
+      id: diagramStorage.id
+    }
+    profile: {
+      id: diagramStoragePerimeterProfile.id
+    }
+  }
+}
+
 // ── Container App ─────────────────────────────────────────────────────────────
 // azd locates the service by the 'azd-service-name' tag value matching
 // the service key in azure.yaml ('app').
@@ -247,6 +354,9 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
             { name: 'COSMOS_DATABASE_ID', value: deployCosmos ? cosmosDatabaseId : '' }
             { name: 'COSMOS_CONTAINER_ID', value: deployCosmos ? cosmosContainerId : '' }
             { name: 'COSMOS_FEEDBACK_CONTAINER_ID', value: deployCosmos ? cosmosFeedbackContainerId : '' }
+            // Authenticated cloud diagram persistence
+            { name: 'AZURE_BLOB_ENDPOINT', value: deployDiagramStorage ? diagramStorage!.properties.primaryEndpoints.blob : '' }
+            { name: 'AZURE_BLOB_DIAGRAMS_CONTAINER', value: deployDiagramStorage ? diagramStorageContainerName : '' }
             // Public URL (self-referential — set after first deploy if needed)
             {
               name: 'PUBLIC_URL'
@@ -341,4 +451,6 @@ output cosmosEndpoint string = deployCosmos ? cosmos!.properties.documentEndpoin
 output cosmosDatabaseId string = deployCosmos ? cosmosDatabaseId : ''
 output cosmosContainerId string = deployCosmos ? cosmosContainerId : ''
 output cosmosFeedbackContainerId string = deployCosmos ? cosmosFeedbackContainerId : ''
+output diagramStorageEndpoint string = deployDiagramStorage ? diagramStorage!.properties.primaryEndpoints.blob : ''
+output diagramStorageContainer string = deployDiagramStorage ? diagramStorageContainerName : ''
 output appInsightsConnectionString string = appInsights.properties.ConnectionString

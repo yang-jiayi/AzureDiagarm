@@ -2,7 +2,7 @@
 // Licensed under the MIT License.
 
 import React, { useEffect, useState } from 'react';
-import { X, AlertTriangle, CheckCircle, Info, Download, RefreshCw, Clock, Zap, Database, Cpu } from 'lucide-react';
+import { X, AlertTriangle, CheckCircle, Info, Download, RefreshCw, Clock, Zap, Database, Cpu, Search, Wrench, ExternalLink, Play } from 'lucide-react';
 import { ArchitectureValidation, ValidationFinding, formatValidationReport } from '../services/architectureValidator';
 import { generateModelFilename } from '../utils/modelNaming';
 import { scoreToBand, summarizeGaps, formatGapsSummary, formatPillarGaps } from '../services/wafMaturity';
@@ -116,6 +116,65 @@ const ValidationModal: React.FC<ValidationModalProps> = ({ validation, isOpen, o
       case 'low': return <CheckCircle className="severity-icon low" />;
     }
   };
+
+  const renderFindingDetails = (finding: ValidationFinding) => (
+    <div className="finding-content">
+      <p className="finding-issue"><strong>{t("Issue:")}</strong> {finding.issue}</p>
+      <p className="finding-recommendation">
+        <strong>{t("Recommendation:")}</strong> {finding.recommendation}
+      </p>
+      {finding.evidence && finding.evidence.length > 0 && (
+        <div className="finding-evidence">
+          <strong>
+            <Search size={14} />
+            {localize(language, { en: 'Diagram evidence', ja: '図面上の根拠' })}
+          </strong>
+          <ul>
+            {finding.evidence.map((item, index) => <li key={index}>{item}</li>)}
+          </ul>
+        </div>
+      )}
+      {finding.remediation && finding.remediation.length > 0 && (
+        <div className="finding-remediation">
+          <strong>
+            <Wrench size={14} />
+            {localize(language, { en: 'Remediation steps', ja: '修正手順' })}
+          </strong>
+          <ol>
+            {finding.remediation.map((step, index) => <li key={index}>{step}</li>)}
+          </ol>
+        </div>
+      )}
+      {finding.resources && finding.resources.length > 0 && (
+        <p className="finding-resources">
+          <strong>{t("Affected:")}</strong> {finding.resources.join(', ')}
+        </p>
+      )}
+      <div className="finding-action-row">
+        {finding.referenceUrl && (
+          <a href={finding.referenceUrl} target="_blank" rel="noopener noreferrer">
+            <ExternalLink size={13} />
+            {localize(language, { en: 'Microsoft Learn', ja: 'Microsoft Learn' })}
+          </a>
+        )}
+        {onApplyRecommendations && finding.applyAction && (
+          <button
+            type="button"
+            onClick={() => onApplyRecommendations([finding])}
+            title={finding.applyAction.serviceType
+              ? localize(language, {
+                  en: `Apply by adding or configuring ${finding.applyAction.serviceType}`,
+                  ja: `${finding.applyAction.serviceType}を追加または構成して適用`,
+                })
+              : finding.applyAction.label}
+          >
+            <Play size={13} />
+            {finding.applyAction.label}
+          </button>
+        )}
+      </div>
+    </div>
+  );
 
   /**
    * Downloads validation results as markdown file with timestamp
@@ -319,26 +378,16 @@ const ValidationModal: React.FC<ValidationModalProps> = ({ validation, isOpen, o
                               <span className={`severity-badge ${finding.severity}`}>
                                 {translate(finding.severity)}
                               </span>
-                              {(finding as any).source && (
-                                <span className={`source-badge ${(finding as any).source}`}>
-                                  {(finding as any).source === 'rule-based' ? <Database size={12} /> : <Cpu size={12} />}
-                                  {(finding as any).source === 'rule-based'
+                              {finding.source && (
+                                <span className={`source-badge ${finding.source}`}>
+                                  {finding.source === 'rule-based' ? <Database size={12} /> : <Cpu size={12} />}
+                                  {finding.source === 'rule-based'
                                     ? localize(language, { en: 'Rule', ja: 'ルール' })
                                     : 'AI'}
                                 </span>
                               )}
                             </div>
-                            <div className="finding-content">
-                              <p className="finding-issue"><strong>{t("Issue:")}</strong> {finding.issue}</p>
-                              <p className="finding-recommendation">
-                                <strong>{t("Recommendation:")}</strong> {finding.recommendation}
-                              </p>
-                              {finding.resources && finding.resources.length > 0 && (
-                                <p className="finding-resources">
-                                  <strong>{t("Affected:")}</strong> {finding.resources.join(', ')}
-                                </p>
-                              )}
-                            </div>
+                            {renderFindingDetails(finding)}
                           </div>
                         );
                       })}
@@ -360,7 +409,7 @@ const ValidationModal: React.FC<ValidationModalProps> = ({ validation, isOpen, o
                         <CheckCircle className="quickwin-icon" />
                         <span className="quickwin-category">{win.category}</span>
                       </div>
-                      <p className="quickwin-recommendation">{win.recommendation}</p>
+                      {renderFindingDetails(win)}
                     </div>
                   ))}
                 </div>

@@ -474,6 +474,85 @@ body.dark-mode .validation-scope-note strong {
   color: #4b5563;
 }
 
+.finding-evidence,
+.finding-remediation {
+  margin-top: 9px;
+  border-radius: 7px;
+  padding: 9px 11px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.finding-evidence {
+  border: 1px solid #bae6fd;
+  background: #f0f9ff;
+  color: #0c4a6e;
+}
+
+.finding-remediation {
+  border: 1px solid #bbf7d0;
+  background: #f0fdf4;
+  color: #14532d;
+}
+
+.finding-evidence > strong,
+.finding-remediation > strong {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 5px;
+  font-weight: 700;
+}
+
+.finding-evidence ul,
+.finding-remediation ol {
+  margin: 0;
+  padding-left: 21px;
+}
+
+.finding-evidence li,
+.finding-remediation li {
+  margin: 3px 0;
+}
+
+.finding-action-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 9px;
+}
+
+.finding-action-row a,
+.finding-action-row button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid #bfdbfe;
+  border-radius: 6px;
+  background: #fff;
+  color: #1d4ed8;
+  padding: 5px 8px;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 650;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.finding-action-row button {
+  border-color: #a7f3d0;
+  background: #ecfdf5;
+  color: #047857;
+}
+
+.finding-action-row a:hover,
+.finding-action-row button:hover {
+  filter: brightness(0.97);
+  transform: translateY(-1px);
+}
+
 .finding-resources {
   margin-top: 8px;
   padding-top: 8px;
@@ -708,6 +787,30 @@ body.dark-mode .finding-item.selected .finding-header {
   background-color: rgba(59, 130, 246, 0.15);
 }
 
+body.dark-mode .finding-evidence {
+  border-color: #075985;
+  background: #082f49;
+  color: #bae6fd;
+}
+
+body.dark-mode .finding-remediation {
+  border-color: #166534;
+  background: #052e16;
+  color: #bbf7d0;
+}
+
+body.dark-mode .finding-action-row a {
+  border-color: #1d4ed8;
+  background: #172554;
+  color: #bfdbfe;
+}
+
+body.dark-mode .finding-action-row button {
+  border-color: #047857;
+  background: #022c22;
+  color: #a7f3d0;
+}
+
 /* --------------------------------------------------------------------------
    Maturity view - band pills, gaps summary, numeric-score toggle
    -------------------------------------------------------------------------- */
@@ -812,4 +915,3 @@ body.dark-mode .score-band-mark {
   /* color is set inline from the band descriptor */
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
 }
-

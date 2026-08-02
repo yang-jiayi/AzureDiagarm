@@ -1,0 +1,300 @@
+.iac-roundtrip-modal {
+  width: min(1200px, 96vw);
+  max-height: 88vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.iac-roundtrip-modal .modal-body {
+  overflow: auto;
+}
+
+.iac-roundtrip-title p {
+  margin: 0.35rem 0 0;
+  color: #4b5563;
+  font-size: 0.95rem;
+}
+
+.iac-roundtrip-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.iac-summary-card,
+.iac-command-card,
+.iac-starter-card,
+.iac-resource-item,
+.iac-callout,
+.iac-empty-state {
+  border: 1px solid #d6e4f2;
+  border-radius: 12px;
+  background: #fff;
+}
+
+.iac-summary-card {
+  padding: 14px;
+}
+
+.iac-summary-label {
+  color: #4b5563;
+  font-size: 0.82rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.iac-summary-value {
+  margin-top: 6px;
+  color: #0f172a;
+  font-size: 1.9rem;
+  font-weight: 700;
+}
+
+.iac-summary-note {
+  margin-top: 6px;
+  color: #475569;
+  font-size: 0.9rem;
+}
+
+.iac-section + .iac-section {
+  margin-top: 20px;
+}
+
+.iac-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.iac-section-header h3,
+.iac-command-header h4 {
+  margin: 0;
+}
+
+.iac-header-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.iac-inline-list {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: #475569;
+  flex-wrap: wrap;
+}
+
+.iac-file-list,
+.iac-resource-list {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+}
+
+.iac-file-list li {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.iac-file-list li:last-child {
+  border-bottom: 0;
+}
+
+.iac-comparison-grid,
+.iac-command-grid,
+.iac-starter-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 14px;
+}
+
+.iac-column h4 {
+  margin: 0 0 8px;
+}
+
+.iac-resource-item,
+.iac-command-card,
+.iac-starter-card,
+.iac-callout,
+.iac-empty-state {
+  padding: 12px 14px;
+}
+
+.iac-resource-item + .iac-resource-item {
+  margin-top: 10px;
+}
+
+.iac-resource-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.iac-resource-meta {
+  margin-top: 6px;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  color: #475569;
+  font-size: 0.88rem;
+}
+
+.iac-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 24px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.iac-badge-exact,
+.iac-badge-normalized {
+  background: #d1fae5;
+  color: #065f46;
+}
+
+.iac-badge-approximate,
+.iac-badge-other {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.iac-badge-unmapped {
+  background: #e0e7ff;
+  color: #3730a3;
+}
+
+.iac-badge-create {
+  background: #d1fae5;
+  color: #065f46;
+}
+
+.iac-badge-update {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
+.iac-badge-delete {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.iac-badge-replace {
+  background: #fce7f3;
+  color: #9d174d;
+}
+
+.iac-badge-noop {
+  background: #e2e8f0;
+  color: #475569;
+}
+
+.iac-drift-badges {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+
+.iac-command-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.iac-command-card pre {
+  margin: 0;
+  overflow: auto;
+  padding: 10px;
+  border-radius: 10px;
+  background: #0f172a;
+  color: #e2e8f0;
+  font-size: 0.84rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.iac-callout {
+  color: #334155;
+  font-size: 0.92rem;
+}
+
+.iac-callout-warning {
+  border-color: #fbbf24;
+  background: #fffbeb;
+}
+
+.iac-empty-state {
+  color: #475569;
+  font-size: 0.92rem;
+}
+
+.iac-starter-card p {
+  margin: 10px 0;
+  color: #475569;
+}
+
+body.dark-mode .iac-roundtrip-title p,
+body.dark-mode .iac-summary-label,
+body.dark-mode .iac-summary-note,
+body.dark-mode .iac-inline-list,
+body.dark-mode .iac-resource-meta,
+body.dark-mode .iac-empty-state,
+body.dark-mode .iac-callout,
+body.dark-mode .iac-starter-card p {
+  color: #cbd5e1;
+}
+
+body.dark-mode .iac-summary-card,
+body.dark-mode .iac-command-card,
+body.dark-mode .iac-starter-card,
+body.dark-mode .iac-resource-item,
+body.dark-mode .iac-callout,
+body.dark-mode .iac-empty-state {
+  background: #111827;
+  border-color: #334155;
+}
+
+body.dark-mode .iac-summary-value,
+body.dark-mode .iac-roundtrip-modal .modal-header h2,
+body.dark-mode .iac-roundtrip-modal .iac-section h3,
+body.dark-mode .iac-roundtrip-modal .iac-column h4,
+body.dark-mode .iac-roundtrip-modal .iac-command-header h4,
+body.dark-mode .iac-roundtrip-modal .iac-resource-item strong,
+body.dark-mode .iac-roundtrip-modal .iac-file-list strong {
+  color: #f8fafc;
+}
+
+body.dark-mode .iac-file-list li {
+  border-bottom-color: #334155;
+}
+
+@media (max-width: 760px) {
+  .iac-roundtrip-modal {
+    width: 96vw;
+  }
+
+  .iac-section-header,
+  .iac-resource-top {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .iac-summary-value {
+    font-size: 1.6rem;
+  }
+}

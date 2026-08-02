@@ -14,7 +14,8 @@
 | Entra application | `AzureDiagarm-Production` |
 | Application (client) ID | `5cd8361b-e235-493b-95a2-c2e8f444c3a2` |
 | Permanent administrators | `yangjiayi@msft.jp`, `jiayiyang@microsoft.com` |
-| Access group | `Azure Diagarm Apps` (`f78f42aa-6319-4248-8be2-64cb68dc5bd2`) |
+| Guest access group | `Azure Diagarm Apps` (`f78f42aa-6319-4248-8be2-64cb68dc5bd2`) |
+| Administrator access group | `Azure Diagarm Apps Administrators` (`3d6b642f-e777-415f-8bcd-01892b482fdc`) |
 | Enterprise application assignment | Required |
 | Conditional Access | `Azure Diagarm Apps - Block Azure management and Fabric` |
 | Legacy access store | `azurediagarm-access-kv` (retained, disabled) |
@@ -28,11 +29,13 @@
 2. Azure Container Apps Easy Auth requires Microsoft Entra ID authentication.
 3. The Entra application is single-tenant (`AzureADMyOrg`).
 4. The `AzureDiagarm-Production` Enterprise Application requires assignment.
-   The `Azure Diagarm Apps` security group is the only assigned principal and
-   has Default Access. No users are assigned directly.
-5. A Conditional Access policy targets that group and blocks Azure management
-   and Power BI/Fabric resources. Group members therefore cannot use Azure
-   Portal, Azure Resource Manager, Microsoft Fabric, or Power BI.
+   The guest group `Azure Diagarm Apps` and the separate administrator group
+   `Azure Diagarm Apps Administrators` have Default Access. No users are
+   assigned directly.
+5. A Conditional Access policy targets only the guest group and blocks Azure
+   management and Power BI/Fabric resources. Guest group members therefore
+   cannot use Azure Portal, Azure Resource Manager, Microsoft Fabric, or Power
+   BI through that policy.
 6. The guests have no licenses, Azure RBAC assignments, Fabric workspace
    permissions, or assignments to other enterprise applications.
 7. Nginx sends an internal authorization subrequest for every page, static asset,
@@ -41,9 +44,11 @@
 8. The Node server still reads trusted individual principal headers injected by
    Container Apps for identity and audit data, with
    `X-MS-CLIENT-PRINCIPAL` claim parsing as a fallback.
-9. Both administrator accounts are members of `Azure Diagarm Apps`, so direct
-   Enterprise Application assignments are unnecessary and access remains
-   group-controlled without risking administrator lockout.
+9. Both administrator accounts are members only of
+   `Azure Diagarm Apps Administrators`, not the restricted guest group. The
+   Conditional Access policy also explicitly excludes that administrator group
+   and `yangjiayi@msft.jp`, preventing an accidental guest-policy change from
+   restricting the primary administrator.
 
 External requests cannot set the `X-MS-CLIENT-PRINCIPAL-*` headers. Container
 Apps removes external values and injects the authenticated principal headers.
@@ -101,17 +106,18 @@ Manage production access in Microsoft Entra admin center:
    `https://azurediagarm.mssql.biz`.
 2. Add the guest to **Identity > Groups > Azure Diagarm Apps > Members**.
 3. Confirm **Enterprise applications > AzureDiagarm-Production > Users and
-   groups** contains only `Azure Diagarm Apps`. Do not assign individual users
-   directly.
+   groups** contains only `Azure Diagarm Apps` and
+   `Azure Diagarm Apps Administrators`. Do not assign individual users directly.
 4. To revoke application access, remove the guest from the group. Do not assign
    Azure RBAC roles, Fabric workspaces, licenses, or other enterprise
    applications to this group.
 
 The Enterprise Application has **Assignment required? = Yes**. Group membership
 therefore grants AzureDiagarm access without maintaining a second email list.
-As of August 2, 2026, the group contains the two administrator accounts and the
-three invited guests; the Enterprise Application has no direct user
-assignments.
+As of August 2, 2026, `Azure Diagarm Apps` contains only the three invited
+guests, while `Azure Diagarm Apps Administrators` contains only
+`yangjiayi@msft.jp` and `jiayiyang@microsoft.com`. The Enterprise Application
+has no direct user assignments.
 The Conditional Access policy
 `Azure Diagarm Apps - Block Azure management and Fabric` includes this group
 and blocks these resources:
@@ -120,6 +126,17 @@ and blocks these resources:
   `797f4846-ba00-4fd7-ba43-dac1f8f63013`
 - Power BI Service, including Microsoft Fabric:
   `00000009-0000-0000-c000-000000000000`
+
+The policy explicitly excludes:
+
+- `Azure Diagarm Apps Administrators`
+  (`3d6b642f-e777-415f-8bcd-01892b482fdc`)
+- `yangjiayi@msft.jp`
+  (`0b5454aa-2b15-4167-b72c-5734bb5d04b9`)
+
+Do not add an administrator to the restricted guest group. Keep both the group
+exclusion and the explicit primary-administrator exclusion when changing the
+policy.
 
 Do not replace this with an all-cloud-apps block that excludes only
 AzureDiagarm. Container Apps Easy Auth requests the standard OpenID Connect

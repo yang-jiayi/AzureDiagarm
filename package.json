@@ -10,6 +10,7 @@
     "icons:sync:azure": "node scripts/sync-azure-icons.mjs",
     "icons:sync:fabric": "node scripts/sync-fabric-icons.mjs",
     "test:icons": "node scripts/test-icon-library.mjs",
+    "test:icon-workspace": "tsx scripts/test-icon-workspace.ts",
     "build": "tsc && vite build",
     "preview": "vite preview",
     "lint": "eslint . --report-unused-disable-directives --max-warnings 0",

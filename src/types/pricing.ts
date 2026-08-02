@@ -164,6 +164,41 @@ export interface CostBreakdown {
   pricingTerm?: string;
 }
 
+export type PricingCurrency = 'USD' | 'JPY' | 'EUR' | 'GBP';
+export type PricingScenarioKind = 'development' | 'production' | 'custom';
+
+export interface PricingScenario {
+  id: string;
+  name: string;
+  kind: PricingScenarioKind;
+  pricingMode: 'payg' | 'reserved1yr';
+  /** Multiplier applied to fixed/capacity-based services. */
+  capacityMultiplier: number;
+  /** Multiplier applied to consumption/usage-based services. */
+  usageMultiplier: number;
+  /** Additional negotiated discount applied after the Azure pricing term. */
+  discountPercent: number;
+  /** Optional support/operations allowance added after discounts. */
+  supportPercent: number;
+  currency: PricingCurrency;
+  /** Planning conversion rate expressed as units of currency per USD. */
+  exchangeRate: number;
+}
+
+export interface PricingScenarioResult {
+  scenario: PricingScenario;
+  baseMonthlyUsd: number;
+  discountedMonthlyUsd: number;
+  supportMonthlyUsd: number;
+  totalMonthlyUsd: number;
+  totalAnnualUsd: number;
+  totalMonthly: number;
+  totalAnnual: number;
+  serviceCount: number;
+  usageBasedCount: number;
+  pricesAsOf: string;
+}
+
 /**
  * Cached pricing data
  */

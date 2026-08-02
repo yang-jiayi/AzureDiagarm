@@ -14,9 +14,10 @@ const { DefaultAzureCredential } = require('@azure/identity');
 const { CosmosClient } = require('@azure/cosmos');
 const { TableClient } = require('@azure/data-tables');
 const { EmailClient, KnownEmailSendStatus } = require('@azure/communication-email');
-const { createAccessControlRouter } = require('./access-control');
+const { createAccessControlRouter, getPrincipal } = require('./access-control');
 const { ArmKeyVaultAccessStore } = require('./arm-key-vault-access-store');
 const { createOpenAIProxyRouter } = require('./openai-proxy');
+const { createDiagramsRouter, createAzureBlobBackend } = require('./diagram-api');
 const { asyncHandler, createErrorHandler } = require('./async-handler');
 const crypto = require('crypto');
 
@@ -30,6 +31,10 @@ app.use((_req, res, next) => {
 // it needs a larger body limit. This route-scoped parser runs before the small
 // global parser below; the global parser then skips bodies already parsed here.
 app.use('/api/openai', express.json({ limit: '12mb' }));
+// Diagram documents embed entire node/edge graphs (up to ~10MB), so the
+// persistence API also needs a larger route-scoped parser ahead of the global
+// small parser.
+app.use('/api/diagrams', express.json({ limit: '12mb' }));
 app.use(express.json({ limit: '16kb' }));
 const credential = new DefaultAzureCredential();
 
@@ -62,6 +67,32 @@ app.use('/api/access', createAccessControlRouter({
   adminEmail: ACCESS_ADMIN_EMAIL,
   publicAppUrl: PUBLIC_APP_URL,
   table: accessTable,
+}));
+
+// ── Authenticated diagram persistence ───────────────────────────────────────
+// Stores diagram documents, immutable versions, comments and share tokens in
+// Azure Blob Storage using DefaultAzureCredential (no account keys / SAS). When
+// AZURE_BLOB_ENDPOINT is unset the router mounts but returns 503 so the feature
+// degrades cleanly rather than crashing the container.
+const DIAGRAMS_BLOB_ENDPOINT = process.env.AZURE_BLOB_ENDPOINT;
+const DIAGRAMS_CONTAINER = process.env.AZURE_BLOB_DIAGRAMS_CONTAINER || 'diagrams';
+
+let diagramsBackend = null;
+if (DIAGRAMS_BLOB_ENDPOINT) {
+  diagramsBackend = createAzureBlobBackend({
+    endpoint: DIAGRAMS_BLOB_ENDPOINT,
+    containerName: DIAGRAMS_CONTAINER,
+    credential,
+  });
+} else {
+  console.warn('[diagrams] AZURE_BLOB_ENDPOINT is not set. /api/diagrams will return 503.');
+}
+
+app.use('/api/diagrams', createDiagramsRouter({
+  backend: diagramsBackend,
+  getPrincipal,
+  publicUrl: PUBLIC_APP_URL,
+  logger: console,
 }));
 
 // ── Azure OpenAI proxy ─────────────────────────────────────────────────────

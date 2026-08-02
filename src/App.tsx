@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-import React, { useState, useCallback, useRef, useEffect, useLayoutEffect } from 'react';
+import React, { useState, useCallback, useRef, useEffect, useLayoutEffect, useMemo } from 'react';
 import ReactFlow, {
   MiniMap,
   Controls,
@@ -20,7 +20,7 @@ import { captureDiagramAsPng, captureDiagramAsSvg } from './utils/captureCanvas'
 import { animateEdgeFlow } from './utils/animateEdges';
 import { sequenceWorkflowSvg } from './utils/sequenceWorkflow';
 import { buildWorkflowMarkdown } from './services/workflowNarrativeExporter';
-import { Download, Save, Upload, DollarSign, Shield, ShieldCheck, FileText, FileCode, ChevronDown, ChevronRight, Clock, Camera, Loader, GitCompare, RefreshCw, PanelLeftClose, Minimize2, Maximize2, Presentation, MessageSquare, MessagesSquare, HelpCircle, Hand, ZoomIn, Frame, X, PanelTopClose, PanelTopOpen, DownloadCloud, Sun, Moon, Play, Pause, Eye, EyeOff } from 'lucide-react';
+import { Download, Save, Upload, DollarSign, Shield, ShieldCheck, FileText, FileCode, ChevronDown, ChevronRight, Clock, Camera, Loader, GitCompare, RefreshCw, PanelLeftClose, Minimize2, Maximize2, Presentation, MessageSquare, MessagesSquare, HelpCircle, Hand, ZoomIn, Frame, X, PanelTopClose, PanelTopOpen, DownloadCloud, Sun, Moon, Play, Pause, Eye, EyeOff, Cloud } from 'lucide-react';
 import IconPalette from './components/IconPalette';
 import AzureNode from './components/AzureNode';
 import GroupNode from './components/GroupNode';
@@ -41,8 +41,11 @@ import WorkflowPanel from './components/WorkflowPanel';
 import RegionSelector from './components/RegionSelector';
 import ValidationModal from './components/ValidationModal';
 import DeploymentGuideModal from './components/DeploymentGuideModal';
+import IaCRoundTripModal from './components/IaCRoundTripModal';
 import VersionHistoryModal from './components/VersionHistoryModal';
 import SaveSnapshotModal from './components/SaveSnapshotModal';
+import CloudWorkspaceModal from './components/CloudWorkspaceModal';
+import PricingScenarioModal from './components/PricingScenarioModal';
 import AzureImportModal from './components/AzureImportModal';
 import ModelSettingsPopover from './components/ModelSettingsPopover';
 import CompareModelsModal from './components/CompareModelsModal';
@@ -66,12 +69,28 @@ import { MODEL_CONFIG, DEPLOYMENT_NAMES, type ModelType } from './stores/modelSe
 import { usePricingDisplayPrefs } from './stores/pricingDisplayStore';
 import { useNodePricingEditor, closeNodePricingEditor } from './stores/nodePricingEditorStore';
 import NodePricingEditor from './components/NodePricingEditor';
-import type { NodePricingConfig } from './types/pricing';
+import type { NodePricingConfig, PricingScenario } from './types/pricing';
+import {
+  loadPricingScenarios,
+  normalizePricingScenarios,
+  savePricingScenarios,
+} from './services/pricingScenarioService';
 import { createSnapshot, DiagramVersion, getVersion } from './services/versionStorageService';
+import { useCloudDiagramSync } from './hooks/useCloudDiagramSync';
 import { exportAndDownloadDrawio } from './services/drawioExporter';
 import { buildVsdxBlob } from './services/visioVsdxExporter';
 import { exportDiagramAsPptx, exportArchitectureDeck, type DeckService } from './services/pptxExporter';
 import { extractArchitectureFromArm, summarizeCoverage } from './services/armExtractor';
+import {
+  buildIaCBaseline,
+  buildStarterTemplate,
+  compareDiagramToBaseline,
+  parseDeploymentPlan,
+  restoreIaCBaseline,
+  type DriftPlanSummary,
+  type IaCBaseline,
+  type StarterTemplateFormat,
+} from './services/iacRoundTrip';
 import { buildArchitectureFromResources } from './services/resourceGraphAdapter';
 import { getResources as getAzureResources } from './services/azureImportProvider';
 import { isDelegatedAuthConfigured, getSignedInName, consumeReopenFlag } from './services/msalAuth';
@@ -593,6 +612,12 @@ function App() {
   const [edgeContextMenu, setEdgeContextMenu] = useState<{ x: number; y: number; edgeId: string } | null>(null);
   const [totalMonthlyCost, setTotalMonthlyCost] = useState(0);
   const [pricingMode, setPricingMode] = useState<PricingMode>('payg');
+  const [pricingScenarios, setPricingScenarios] = useState<PricingScenario[]>(
+    () => loadPricingScenarios(),
+  );
+  useEffect(() => {
+    savePricingScenarios(pricingScenarios);
+  }, [pricingScenarios]);
   const hasCostReportData = nodes.some(
     (node) => node.type === 'azureNode' && Boolean(node.data?.pricing),
   );
@@ -661,10 +686,15 @@ function App() {
   const [isDeploymentGuideModalOpen, setIsDeploymentGuideModalOpen] = useState(false);
   const [isGeneratingGuide, setIsGeneratingGuide] = useState(false);
   const [generatedWithModel, setGeneratedWithModel] = useState<{ name: string; timeMs?: number } | null>(null);
+  const [iacBaseline, setIaCBaseline] = useState<IaCBaseline | null>(null);
+  const [isIaCRoundTripModalOpen, setIsIaCRoundTripModalOpen] = useState(false);
+  const [driftPlanSummary, setDriftPlanSummary] = useState<DriftPlanSummary | null>(null);
 
   // Version History State
   const [isVersionHistoryModalOpen, setIsVersionHistoryModalOpen] = useState(false);
   const [isSaveSnapshotModalOpen, setIsSaveSnapshotModalOpen] = useState(false);
+  const [isCloudWorkspaceOpen, setIsCloudWorkspaceOpen] = useState(false);
+  const [isPricingScenarioModalOpen, setIsPricingScenarioModalOpen] = useState(false);
   const [isCompareModelsOpen, setIsCompareModelsOpen] = useState(false);
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [isHelpOpen, setIsHelpOpen] = useState(false);
@@ -2190,8 +2220,10 @@ function App() {
         savedAt: new Date().toISOString(),
       },
       workflow: workflow.length > 0 ? workflow : undefined,
+      pricingScenarios,
       architecturePrompt: architecturePrompt || undefined,
       originalPrompt: originalPrompt || architecturePrompt || undefined,
+      iacBaseline,
     };
     const dataStr = JSON.stringify(diagramData, null, 2);
     const dataUri = 'data:application/json;charset=utf-8,' + encodeURIComponent(dataStr);
@@ -2203,7 +2235,7 @@ function App() {
     link.click();
     recordExport('json', fileName);
     trackExport('json', nodes.filter(n => n.type === 'azureNode').length);
-  }, [reactFlowInstance, recordExport, titleBlockData, workflow, architecturePrompt, originalPrompt, nodes]);
+  }, [reactFlowInstance, recordExport, titleBlockData, workflow, pricingScenarios, architecturePrompt, originalPrompt, nodes, iacBaseline]);
 
   const exportCostBreakdown = useCallback(() => {
     // Calculate the cost breakdown
@@ -2654,6 +2686,11 @@ function App() {
 
       // Restore workflow if present
       setWorkflow(restoredWorkflow);
+      if (Array.isArray(flow.pricingScenarios)) {
+        setPricingScenarios(normalizePricingScenarios(flow.pricingScenarios));
+      }
+      setIaCBaseline(restoreIaCBaseline(flow.iacBaseline));
+      setDriftPlanSummary(null);
 
       // Restore architecture prompt if present
       const restoredPrompt = typeof flow.architecturePrompt === 'string' ? flow.architecturePrompt : '';
@@ -2666,7 +2703,102 @@ function App() {
     [setNodes, setEdges, reactFlowInstance, normalizeRestoredEdges]
   );
 
+  const cloudDiagramPayload = useMemo(() => ({
+    nodes,
+    edges,
+    architecturePrompt,
+    originalPrompt: originalPrompt || architecturePrompt || undefined,
+    validationScore: validationResult?.overallScore,
+    titleBlockData,
+    workflow,
+    pricingScenarios,
+    iacBaseline,
+  }), [
+    nodes,
+    edges,
+    architecturePrompt,
+    originalPrompt,
+    validationResult?.overallScore,
+    titleBlockData,
+    workflow,
+    pricingScenarios,
+    iacBaseline,
+  ]);
 
+  const cloudSync = useCloudDiagramSync({
+    diagramName: titleBlockData.architectureName,
+    payload: cloudDiagramPayload,
+    enabled: nodes.length > 0,
+    onLoad: applyFlowObject,
+  });
+
+  const iacComparison = useMemo(
+    () => compareDiagramToBaseline(nodes, iacBaseline),
+    [nodes, iacBaseline],
+  );
+  const bicepStarterTemplate = useMemo(
+    () => buildStarterTemplate(nodes, 'bicep'),
+    [nodes],
+  );
+  const terraformStarterTemplate = useMemo(
+    () => buildStarterTemplate(nodes, 'terraform'),
+    [nodes],
+  );
+
+  const downloadStarterTemplate = useCallback((format: StarterTemplateFormat) => {
+    const template = format === 'bicep' ? bicepStarterTemplate : terraformStarterTemplate;
+    const blob = new Blob([template.content], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = template.fileName;
+    link.click();
+    URL.revokeObjectURL(url);
+  }, [bicepStarterTemplate, terraformStarterTemplate]);
+
+  const importDriftPlan = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = event.target.files;
+    if (!files || files.length === 0) return;
+    if (files.length > 1) {
+      alert(localize(language, {
+        en: 'Import a single Azure what-if or Terraform plan JSON file at a time.',
+        ja: 'Azure what-if または Terraform plan の JSON は一度に1ファイルだけ取り込んでください。',
+      }));
+      event.target.value = '';
+      return;
+    }
+
+    const file = files[0];
+    if (!file.name.toLowerCase().endsWith('.json')) {
+      alert(localize(language, {
+        en: 'Only JSON deployment-plan files are supported.',
+        ja: '対応しているのは JSON のデプロイ プラン ファイルのみです。',
+      }));
+      event.target.value = '';
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      alert(localize(language, {
+        en: 'Deployment-plan files must be 5 MB or smaller.',
+        ja: 'デプロイ プラン ファイルは 5 MB 以下にしてください。',
+      }));
+      event.target.value = '';
+      return;
+    }
+
+    try {
+      const summary = parseDeploymentPlan(file.name, await file.text(), new Date().toISOString());
+      setDriftPlanSummary(summary);
+    } catch (error: any) {
+      console.error('Deployment plan import failed:', error);
+      alert(localize(language, {
+        en: `Failed to import deployment plan: ${error.message}`,
+        ja: `デプロイ プランの取り込みに失敗しました: ${error.message}`,
+      }));
+    } finally {
+      event.target.value = '';
+    }
+  }, [language]);
 
   // Load version from URL hash (for "Open in New Tab" feature)
   useEffect(() => {
@@ -2688,6 +2820,8 @@ function App() {
               workflow: version.workflow,
               architecturePrompt: version.architecturePrompt,
               titleBlockData: version.titleBlockData,
+              pricingScenarios: version.pricingScenarios,
+              iacBaseline: version.iacBaseline,
             });
             clearVersionHash();
           })
@@ -2744,12 +2878,14 @@ function App() {
           if (!handleAIGenerateRef.current) {
             throw new Error('The architecture renderer is not ready');
           }
+          cloudSync.reset();
           await handleAIGenerateRef.current(
             flow,
             typeof flow.metadata?.prompt === 'string' ? flow.metadata.prompt : file.name,
             false,
           );
         } else {
+          cloudSync.reset();
           applyFlowObject(flow);
         }
       } catch (error) {
@@ -2765,7 +2901,7 @@ function App() {
       input.value = '';
     };
     reader.readAsText(file);
-  }, [applyFlowObject, t, language]);
+  }, [applyFlowObject, cloudSync, t, language]);
 
   // Restore a version from history
   const restoreVersion = useCallback((version: DiagramVersion) => {
@@ -2775,8 +2911,10 @@ function App() {
         edges: version.edges,
         titleBlockData: version.titleBlockData || version.metadata,
         workflow: version.workflow || [],
+        pricingScenarios: version.pricingScenarios,
         architecturePrompt: version.architecturePrompt || '',
         originalPrompt: version.originalPrompt || version.architecturePrompt || '',
+        iacBaseline: version.iacBaseline,
       });
       
       console.log('✅ Version restored successfully');
@@ -2801,15 +2939,22 @@ function App() {
           notes: notes || 'Manual snapshot',
           titleBlockData,
           workflow,
+          pricingScenarios,
+          iacBaseline,
         }
       );
+      try {
+        await cloudSync.saveSnapshot(notes || 'Manual snapshot');
+      } catch (cloudError) {
+        console.warn('Cloud snapshot was unavailable; the local snapshot was preserved:', cloudError);
+      }
       console.log('✅ Manual snapshot saved successfully');
       trackVersionOperation('save');
     } catch (error) {
       console.error('Failed to save manual snapshot:', error);
       throw error;
     }
-  }, [nodes, edges, titleBlockData, architecturePrompt, originalPrompt, validationResult, workflow]);
+  }, [nodes, edges, titleBlockData, architecturePrompt, originalPrompt, validationResult, workflow, pricingScenarios, cloudSync, iacBaseline]);
 
   const handleAIGenerate = useCallback(async (
     architecture: any,
@@ -2872,8 +3017,15 @@ function App() {
               notes: 'Auto-saved before AI regeneration',
               titleBlockData,
               workflow,
+              pricingScenarios,
+              iacBaseline,
             }
           );
+          try {
+            await cloudSync.saveSnapshot('Auto-saved before AI regeneration');
+          } catch (cloudError) {
+            console.warn('Cloud snapshot was unavailable; the local snapshot was preserved:', cloudError);
+          }
           console.log('✅ Snapshot saved successfully!');
         } catch (err) {
           console.error('❌ Failed to save snapshot:', err);
@@ -3333,7 +3485,7 @@ function App() {
       alert(t("Failed to generate diagram. Check console for details."));
       throw error;
     }
-  }, [setNodes, setEdges, reactFlowInstance, nodes, edges, titleBlockData, architecturePrompt, originalPrompt, validationResult, workflow, isFeedbackModalOpen, animateConnections, layoutEdgeStyle, t]);
+  }, [setNodes, setEdges, reactFlowInstance, nodes, edges, titleBlockData, architecturePrompt, originalPrompt, validationResult, workflow, pricingScenarios, isFeedbackModalOpen, animateConnections, layoutEdgeStyle, t, cloudSync, iacBaseline]);
   handleAIGenerateRef.current = handleAIGenerate;
 
   // ── az prototype import ──────────────────────────────────────────────
@@ -3432,6 +3584,16 @@ function App() {
       setImportFormatLabel(detection.label);
       const filenames = fileContents.map(f => f.name);
       const extraCount = filenames.length > 1 ? ` (+${filenames.length - 1} files)` : '';
+      const importedAt = new Date().toISOString();
+      const baseline = buildIaCBaseline({
+        format: detection.format,
+        files: fileContents.map((file, index) => ({
+          name: file.name,
+          text: file.text,
+          size: selectedFiles[index]?.size,
+        })),
+        importedAt,
+      });
 
       // ── ARM: deterministic extraction (faithful mirror of the template) ──
       // Parse resources + real dependsOn/resourceId edges directly instead of
@@ -3445,6 +3607,8 @@ function App() {
           const promptLabel = `ARM Template: ${filenames[0]}${extraCount} — ${summarizeCoverage(coverage)}`;
           trackTemplateImport('arm', filenames[0], filenames.length);
           await handleAIGenerate(architecture, promptLabel);
+          setIaCBaseline(baseline);
+          setDriftPlanSummary(null);
           return;
         }
         console.warn('Deterministic ARM extraction found no mappable resources; falling back to LLM.');
@@ -3479,6 +3643,8 @@ function App() {
 
       trackTemplateImport(detection.format, filenames[0], filenames.length);
       await handleAIGenerate(result, promptLabel);
+      setIaCBaseline(baseline);
+      setDriftPlanSummary(null);
     } catch (error: any) {
       console.error('Template import error:', error);
       alert(localize(language, {
@@ -3512,6 +3678,8 @@ function App() {
     });
     trackTemplateImport('arm', `rg:${resourceGroup}`, 1);
     await handleAIGenerate(architecture, promptLabel);
+    setIaCBaseline(null);
+    setDriftPlanSummary(null);
   }, [handleAIGenerate, language]);
 
   const handleAlign = useCallback((type: string) => {
@@ -3871,6 +4039,24 @@ function App() {
       nextTabElement?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
     });
   };
+  const cloudSyncLabel = (() => {
+    switch (cloudSync.status) {
+      case 'saving':
+        return localize(language, { en: 'Saving...', ja: '保存中...' });
+      case 'saved':
+        return localize(language, { en: 'Cloud saved', ja: 'クラウド保存済み' });
+      case 'readonly':
+        return localize(language, { en: 'Cloud read-only', ja: 'クラウド閲覧のみ' });
+      case 'conflict':
+        return localize(language, { en: 'Sync conflict', ja: '同期競合' });
+      case 'offline':
+      case 'unavailable':
+      case 'error':
+        return localize(language, { en: 'Local only', ja: 'ローカルのみ' });
+      default:
+        return localize(language, { en: 'Cloud', ja: 'クラウド' });
+    }
+  })();
 
   return (
     <div className="app">
@@ -3985,6 +4171,17 @@ function App() {
                       >
                         {' '}{t("Savings 1yr")}{' '}</button>
                     </div>
+                    <button
+                      className="pricing-scenario-launch"
+                      onClick={() => setIsPricingScenarioModalOpen(true)}
+                      title={localize(language, {
+                        en: 'Compare development, production, and custom pricing scenarios',
+                        ja: '開発、運用、カスタムの料金シナリオを比較',
+                      })}
+                    >
+                      <GitCompare size={14} />
+                      <span>{localize(language, { en: 'Scenarios', ja: 'シナリオ' })}</span>
+                    </button>
                     {(() => {
                       const f = getPricingFreshness(PRICING_DATA_AS_OF, new Date(), language);
                       return (
@@ -4395,6 +4592,7 @@ function App() {
                   onClick={() => {
                     if (window.confirm(translate('Start a fresh session? This will clear the current diagram and all unsaved changes.'))) {
                       trackStartFresh();
+                      cloudSync.reset();
                       setNodes([]);
                       setEdges([]);
                       setArchitecturePrompt('');
@@ -4403,6 +4601,8 @@ function App() {
                       setGeneratedWithModel(null);
                       setValidationResult(null);
                       setDeploymentGuide(null);
+                      setIaCBaseline(null);
+                      setDriftPlanSummary(null);
                       setReferenceImageUrl(null);
                       setLastReferenceArchitecture(null);
                       setLastBlueprintArchitecture(null);
@@ -4427,6 +4627,23 @@ function App() {
                 aria-label={localize(language, { en: 'History and snapshots', ja: '履歴とスナップショット' })}
               >
                 {toolbarSectionHeading('history', localize(language, { en: 'History', ja: '履歴' }))}
+                <button
+                  onClick={() => setIsCloudWorkspaceOpen(true)}
+                  className={`btn btn-secondary${cloudSync.document ? ' btn-active' : ''}`}
+                  title={cloudSync.errorMessage || localize(language, {
+                    en: 'Open cloud autosave, sharing, comments, and snapshots',
+                    ja: 'クラウド自動保存、共有、コメント、スナップショットを開く',
+                  })}
+                  aria-label={localize(language, {
+                    en: `Cloud workspace: ${cloudSyncLabel}`,
+                    ja: `クラウド ワークスペース: ${cloudSyncLabel}`,
+                  })}
+                >
+                  {cloudSync.status === 'saving'
+                    ? <Loader size={18} className="ribbon-cloud-saving" />
+                    : <Cloud size={18} />}
+                  {cloudSyncLabel}
+                </button>
                 <button 
                   onClick={() => setIsVersionHistoryModalOpen(true)} 
                   className="btn btn-secondary" 
@@ -4761,6 +4978,21 @@ function App() {
                 >
                   <FileText size={18} />
                   {' '}{t("Deployment Guide")}{' '}</button>
+                <button
+                  onClick={() => setIsIaCRoundTripModalOpen(true)}
+                  className={`btn btn-secondary${isIaCRoundTripModalOpen ? ' btn-active' : ''}`}
+                  title={localize(language, {
+                    en: 'Open deterministic IaC round-trip comparison, drift import, and starter export',
+                    ja: '決定論的な IaC ラウンドトリップ比較、ドリフト取り込み、スターター出力を開く',
+                  })}
+                  disabled={!iacBaseline && nodes.filter(n => n.type === 'azureNode').length === 0}
+                >
+                  <GitCompare size={18} />
+                  {localize(language, {
+                    en: 'IaC Round-trip',
+                    ja: 'IaC ラウンドトリップ',
+                  })}
+                </button>
                 {deploymentGuide && (
                   <button
                     onClick={() => setIsDeploymentGuideModalOpen(true)}
@@ -5179,7 +5411,16 @@ function App() {
           
           // Format recommendations for the prompt
           const recommendationsText = selectedFindings
-            .map((f, i) => `${i + 1}. [${f.severity.toUpperCase()}] ${f.category}: ${f.recommendation}`)
+            .map((f, i) => [
+              `${i + 1}. [${f.severity.toUpperCase()}] ${f.category}`,
+              `   Issue: ${f.issue}`,
+              `   Recommendation: ${f.recommendation}`,
+              ...(f.evidence || []).map((item) => `   Evidence: ${item}`),
+              ...(f.remediation || []).map((step, stepIndex) => `   Step ${stepIndex + 1}: ${step}`),
+              f.applyAction
+                ? `   Intended diagram action: ${f.applyAction.label}${f.applyAction.serviceType ? ` (${f.applyAction.serviceType})` : ''}`
+                : '',
+            ].filter(Boolean).join('\n'))
             .join('\n');
           
           // Build regeneration prompt
@@ -5284,11 +5525,46 @@ Return the IMPROVED architecture in the same JSON format as before with proper g
         onClose={() => setIsDeploymentGuideModalOpen(false)}
         isLoading={isGeneratingGuide}
       />
+      <IaCRoundTripModal
+        isOpen={isIaCRoundTripModalOpen}
+        onClose={() => setIsIaCRoundTripModalOpen(false)}
+        baseline={iacBaseline}
+        comparison={iacComparison}
+        driftPlan={driftPlanSummary}
+        onImportDriftPlan={importDriftPlan}
+        onClearDriftPlan={() => setDriftPlanSummary(null)}
+        onDownloadStarter={downloadStarterTemplate}
+        bicepStarter={bicepStarterTemplate}
+        terraformStarter={terraformStarterTemplate}
+        diagramServiceCount={nodes.filter(n => n.type === 'azureNode').length}
+      />
       <VersionHistoryModal
         isOpen={isVersionHistoryModalOpen}
         onClose={() => setIsVersionHistoryModalOpen(false)}
         onRestoreVersion={restoreVersion}
         currentDiagramName={titleBlockData.architectureName}
+      />
+      <CloudWorkspaceModal
+        isOpen={isCloudWorkspaceOpen}
+        onClose={() => setIsCloudWorkspaceOpen(false)}
+        currentDocument={cloudSync.document}
+        currentContext={cloudSync.context}
+        syncStatus={cloudSync.status}
+        syncError={cloudSync.errorMessage}
+        lastSavedAt={cloudSync.lastSavedAt}
+        onOpenDocument={cloudSync.openDocument}
+        onRestoreVersion={cloudSync.restoreVersion}
+        onDocumentUpdated={cloudSync.replaceCurrentDocument}
+        onResetCurrent={cloudSync.reset}
+        onReloadRemote={cloudSync.reloadRemote}
+        onSaveAsCopy={cloudSync.saveAsCopy}
+      />
+      <PricingScenarioModal
+        isOpen={isPricingScenarioModalOpen}
+        onClose={() => setIsPricingScenarioModalOpen(false)}
+        nodes={nodes}
+        scenarios={pricingScenarios}
+        onChange={setPricingScenarios}
       />
       <SaveSnapshotModal
         isOpen={isSaveSnapshotModalOpen}

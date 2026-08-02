@@ -22,7 +22,7 @@ const SaveSnapshotModal: React.FC<SaveSnapshotModalProps> = ({
   diagramName,
   serviceCount
 }) => {
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
   useEscapeKey(isOpen, onClose);
   const [notes, setNotes] = useState('');
   const [isSaving, setIsSaving] = useState(false);
@@ -95,7 +95,10 @@ const SaveSnapshotModal: React.FC<SaveSnapshotModalProps> = ({
           </div>
 
           <div className="snapshot-hint">
-            {' '}{t("💡 Snapshots are saved locally and can be restored from Version History")}{' '}</div>
+            {language === 'ja'
+              ? '💡 スナップショットはこのブラウザーに保存され、利用可能な場合はクラウドにも安全に保存されます。'
+              : '💡 Snapshots are saved in this browser and securely copied to the cloud when available.'}
+          </div>
         </div>
 
         <div className="modal-actions">

@@ -107,7 +107,7 @@ RUN apk add --no-cache nodejs npm
 WORKDIR /srv/token-server
 COPY server/package*.json ./
 RUN npm ci --omit=dev && npm cache clean --force
-COPY server/token-server.js server/openai-proxy.js server/access-control.js server/arm-key-vault-access-store.js server/async-handler.js ./
+COPY server/token-server.js server/openai-proxy.js server/access-control.js server/arm-key-vault-access-store.js server/async-handler.js server/diagram-api.js ./
 
 # Set up the MCP HTTP server (streamable HTTP transport on port 3030).
 WORKDIR /srv/mcp-server

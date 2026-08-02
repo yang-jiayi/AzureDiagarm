@@ -28,6 +28,19 @@ export type WafPillar =
 
 export type Severity = 'critical' | 'high' | 'medium' | 'low';
 
+export interface WafApplyAction {
+  type: 'add-service' | 'regenerate' | 'configure';
+  label: string;
+  serviceType?: string;
+}
+
+export interface WafRuleEnrichment {
+  evidence: string[];
+  remediation: string[];
+  applyAction: WafApplyAction;
+  referenceUrl: string;
+}
+
 export interface WafRule {
   id: string;
   pillar: WafPillar;
@@ -156,6 +169,167 @@ export const ARCHITECTURE_PATTERN_RULES: WafRule[] = [
     pattern: 'no-api-gateway',
   },
 ];
+
+export const WAF_RULE_ENRICHMENTS: Record<string, WafRuleEnrichment> = {
+  'arch-no-redundancy': {
+    evidence: [
+      'The diagram does not show a secondary-region deployment, availability-zone duplication, or a global failover route.',
+    ],
+    remediation: [
+      'Define workload RTO and RPO targets.',
+      'Duplicate region-scoped services in a secondary Azure region or across availability zones.',
+      'Add Azure Front Door or Traffic Manager health probes and failover routing.',
+    ],
+    applyAction: {
+      type: 'regenerate',
+      label: 'Add a secondary region and failover path',
+    },
+    referenceUrl: 'https://learn.microsoft.com/azure/well-architected/reliability/design-patterns',
+  },
+  'arch-single-database': {
+    evidence: [
+      'Only one database service is shown and no replica, failover group, or replication connection is present.',
+    ],
+    remediation: [
+      'Choose zone redundancy, geo-replication, or active-active writes based on the database service.',
+      'Add a secondary data service and show the replication relationship.',
+      'Document and test database failover.',
+    ],
+    applyAction: {
+      type: 'regenerate',
+      label: 'Add data replication',
+    },
+    referenceUrl: 'https://learn.microsoft.com/azure/well-architected/reliability/data-management',
+  },
+  'arch-no-caching': {
+    evidence: [
+      'Compute services connect to data services without an intervening cache or edge-cache service.',
+    ],
+    remediation: [
+      'Identify read-heavy or repeatable requests.',
+      'Add Azure Managed Redis or Azure Front Door/CDN caching at the appropriate tier.',
+      'Define cache expiration, invalidation, and fallback behavior.',
+    ],
+    applyAction: {
+      type: 'add-service',
+      label: 'Add a caching tier',
+      serviceType: 'Azure Managed Redis',
+    },
+    referenceUrl: 'https://learn.microsoft.com/azure/architecture/best-practices/caching',
+  },
+  'arch-no-monitoring': {
+    evidence: [
+      'No Azure Monitor, Application Insights, Log Analytics, or equivalent observability service is present.',
+    ],
+    remediation: [
+      'Add Azure Monitor and a Log Analytics workspace.',
+      'Connect the primary application service to Application Insights.',
+      'Define health, latency, error-rate, and dependency alerts with action groups.',
+    ],
+    applyAction: {
+      type: 'add-service',
+      label: 'Add observability services',
+      serviceType: 'Azure Monitor',
+    },
+    referenceUrl: 'https://learn.microsoft.com/azure/well-architected/operational-excellence/observability',
+  },
+  'arch-no-identity': {
+    evidence: [
+      'No Microsoft Entra ID, managed identity, or other identity provider is shown in the trust path.',
+    ],
+    remediation: [
+      'Add Microsoft Entra ID at the user authentication boundary.',
+      'Use managed identities for service-to-service access.',
+      'Show authorization boundaries and least-privilege resource access.',
+    ],
+    applyAction: {
+      type: 'add-service',
+      label: 'Add identity controls',
+      serviceType: 'Microsoft Entra ID',
+    },
+    referenceUrl: 'https://learn.microsoft.com/azure/well-architected/security/identity-access',
+  },
+  'arch-no-waf': {
+    evidence: [
+      'A public entry point is present, but no Azure Front Door WAF, Application Gateway WAF, or Web Application Firewall node protects it.',
+    ],
+    remediation: [
+      'Place Azure Front Door or Application Gateway WAF in front of the public application.',
+      'Enable managed OWASP rules and bot protection.',
+      'Add rate-limit rules and diagnostic logging.',
+    ],
+    applyAction: {
+      type: 'add-service',
+      label: 'Add WAF protection',
+      serviceType: 'Azure Front Door',
+    },
+    referenceUrl: 'https://learn.microsoft.com/azure/web-application-firewall/overview',
+  },
+  'arch-direct-db-access': {
+    evidence: [
+      'A frontend node has a direct connection to a database node without an API or application-service boundary.',
+    ],
+    remediation: [
+      'Insert an API or application service between the frontend and database.',
+      'Move authentication, authorization, validation, and throttling to that boundary.',
+      'Remove the direct frontend-to-database connection.',
+    ],
+    applyAction: {
+      type: 'add-service',
+      label: 'Insert a protected API layer',
+      serviceType: 'API Management',
+    },
+    referenceUrl: 'https://learn.microsoft.com/azure/architecture/guide/architecture-styles/web-queue-worker',
+  },
+  'arch-no-secrets-management': {
+    evidence: [
+      'Compute services are present, but no Azure Key Vault or equivalent secret-management boundary is shown.',
+    ],
+    remediation: [
+      'Add Azure Key Vault in the security boundary.',
+      'Use managed identities and Key Vault references instead of embedded credentials.',
+      'Enable soft delete, purge protection, rotation, and access logging.',
+    ],
+    applyAction: {
+      type: 'add-service',
+      label: 'Add Key Vault',
+      serviceType: 'Key Vault',
+    },
+    referenceUrl: 'https://learn.microsoft.com/azure/well-architected/security/application-secrets',
+  },
+  'arch-no-backup': {
+    evidence: [
+      'Persistent data services are present, but no backup, recovery vault, replica, or restore path is shown.',
+    ],
+    remediation: [
+      'Define backup retention from the workload RPO.',
+      'Add Azure Backup or the data service point-in-time restore capability.',
+      'Document and regularly test the restore path.',
+    ],
+    applyAction: {
+      type: 'add-service',
+      label: 'Add backup and recovery',
+      serviceType: 'Azure Backup Center',
+    },
+    referenceUrl: 'https://learn.microsoft.com/azure/well-architected/reliability/backup-and-recovery',
+  },
+  'arch-no-api-gateway': {
+    evidence: [
+      'Multiple backend services are exposed without a single API policy and governance boundary.',
+    ],
+    remediation: [
+      'Add Azure API Management as the controlled API entry point.',
+      'Configure OAuth/JWT validation, quotas, rate limits, and request validation.',
+      'Route external API traffic through the gateway instead of directly to backends.',
+    ],
+    applyAction: {
+      type: 'add-service',
+      label: 'Add API Management',
+      serviceType: 'API Management',
+    },
+    referenceUrl: 'https://learn.microsoft.com/azure/api-management/api-management-key-concepts',
+  },
+};
 
 // ---------------------------------------------------------------------------
 // Per-service WAF rules

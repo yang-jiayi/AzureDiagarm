@@ -403,6 +403,16 @@
   }
 }
 
+.ribbon-cloud-saving {
+  animation: ribbon-cloud-spin 0.9s linear infinite;
+}
+
+@keyframes ribbon-cloud-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 @media (max-width: 340px) {
   .app-header h1 {
     white-space: nowrap;

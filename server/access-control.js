@@ -342,6 +342,7 @@ function createAccessControlRouter(options = {}) {
 module.exports = {
   createAccessControlRouter,
   decodeClientPrincipal,
+  getPrincipal,
   normalizeEmail,
   normalizePrincipalEmail,
   rowKeyForEmail,
