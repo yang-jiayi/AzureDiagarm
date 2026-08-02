@@ -102,8 +102,16 @@ app.use('/api/diagrams', createDiagramsRouter({
 const OPENAI_ENDPOINT = process.env.AZURE_OPENAI_ENDPOINT;
 const OPENAI_API_KEY = process.env.AZURE_OPENAI_API_KEY; // optional fallback
 const OPENAI_API_VERSION = process.env.AZURE_OPENAI_API_VERSION || '2024-05-01-preview';
+const FOUNDRY_ENDPOINT = process.env.AZURE_FOUNDRY_ENDPOINT;
+const FOUNDRY_API_KEY = process.env.AZURE_FOUNDRY_API_KEY; // optional fallback
 const OPENAI_ALLOWED_DEPLOYMENTS = new Set(
   (process.env.AZURE_OPENAI_ALLOWED_DEPLOYMENTS || '')
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean),
+);
+const FOUNDRY_ALLOWED_DEPLOYMENTS = new Set(
+  (process.env.AZURE_FOUNDRY_ALLOWED_DEPLOYMENTS || '')
     .split(',')
     .map((value) => value.trim())
     .filter(Boolean),
@@ -171,8 +179,14 @@ const consumeAdminApiRateLimit = createFixedWindowRateLimiter(60 * 60 * 1000, 30
 if (!OPENAI_ENDPOINT) {
   console.warn('[openai-proxy] AZURE_OPENAI_ENDPOINT is not set. /api/openai will return 503.');
 }
+if (!FOUNDRY_ENDPOINT) {
+  console.warn('[openai-proxy] AZURE_FOUNDRY_ENDPOINT is not set. Anthropic requests will return 503.');
+}
 if (OPENAI_ALLOWED_DEPLOYMENTS.size === 0) {
   console.warn('[openai-proxy] AZURE_OPENAI_ALLOWED_DEPLOYMENTS is empty. Any valid deployment name is accepted.');
+}
+if (FOUNDRY_ALLOWED_DEPLOYMENTS.size === 0) {
+  console.warn('[openai-proxy] AZURE_FOUNDRY_ALLOWED_DEPLOYMENTS is empty. Anthropic requests will be rejected.');
 }
 
 // ── Durable feedback storage ───────────────────────────────────────────────
@@ -381,10 +395,13 @@ app.get('/api/speech-token', asyncHandler(async (req, res) => {
 
 app.use('/api/openai', createOpenAIProxyRouter({
   endpoint: OPENAI_ENDPOINT,
+  foundryEndpoint: FOUNDRY_ENDPOINT,
   credential,
   apiKey: OPENAI_API_KEY,
+  foundryApiKey: FOUNDRY_API_KEY,
   apiVersion: OPENAI_API_VERSION,
   allowedDeployments: OPENAI_ALLOWED_DEPLOYMENTS,
+  allowedFoundryDeployments: FOUNDRY_ALLOWED_DEPLOYMENTS,
   consumeRateLimit: consumeOpenAiRateLimit,
 }));
 

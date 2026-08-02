@@ -7,10 +7,14 @@ const { asyncHandler } = require('./async-handler');
 
 const DEPLOYMENT_NAME_RE = /^[A-Za-z0-9._-]{1,64}$/;
 const DEFAULT_API_VERSION = '2024-05-01-preview';
+const DEFAULT_ANTHROPIC_VERSION = '2023-06-01';
 const DEFAULT_TIMEOUT_MS = 295_000;
 
 function buildOpenAIUrl(endpoint, deployment, apiFormat, apiVersion) {
   const base = endpoint.endsWith('/') ? endpoint : `${endpoint}/`;
+  if (apiFormat === 'anthropic-messages') {
+    return `${base}anthropic/v1/messages`;
+  }
   if (apiFormat === 'chat-completions') {
     return `${base}openai/deployments/${encodeURIComponent(deployment)}/chat/completions?api-version=${apiVersion}`;
   }
@@ -38,37 +42,37 @@ function classifyUpstreamError(status, contentType, upstreamCode, upstreamMessag
   if (status === 401 || status === 403) {
     return {
       code: 'azure_openai_authentication_failed',
-      message: 'Azure OpenAI rejected the server credential.',
+      message: 'The upstream AI model service rejected the server credential.',
     };
   }
   if (status === 404 || normalizedCode.includes('deploymentnotfound')) {
     return {
       code: 'deployment_not_found',
-      message: 'The Azure OpenAI deployment was not found.',
+      message: 'The selected model deployment was not found.',
     };
   }
   if (status === 429) {
     return {
       code: 'azure_openai_rate_limited',
-      message: 'Azure OpenAI rate-limited the request.',
+      message: 'The upstream AI model service rate-limited the request.',
     };
   }
   if (status === 408 || status === 504) {
     return {
       code: 'azure_openai_timeout',
-      message: 'Azure OpenAI timed out while processing the request.',
+      message: 'The upstream AI model service timed out while processing the request.',
     };
   }
   if (status === 500 || status === 502 || status === 503) {
     return {
       code: 'azure_openai_unavailable',
-      message: 'Azure OpenAI is temporarily unavailable.',
+      message: 'The upstream AI model service is temporarily unavailable.',
     };
   }
   if (status === 413) {
     return {
       code: 'request_too_large',
-      message: 'The Azure OpenAI request is too large.',
+      message: 'The AI model request is too large.',
     };
   }
   if (
@@ -78,7 +82,7 @@ function classifyUpstreamError(status, contentType, upstreamCode, upstreamMessag
   ) {
     return {
       code: 'content_filtered',
-      message: 'Azure OpenAI content filtering rejected the request.',
+      message: 'The upstream content filter rejected the request.',
     };
   }
   if (
@@ -87,24 +91,24 @@ function classifyUpstreamError(status, contentType, upstreamCode, upstreamMessag
   ) {
     return {
       code: 'image_not_supported',
-      message: 'The selected Azure OpenAI deployment rejected the image input.',
+      message: 'The selected model deployment rejected the image input.',
     };
   }
   if (status === 400 || status === 422) {
     return {
       code: 'invalid_upstream_request',
-      message: 'Azure OpenAI rejected the request format.',
+      message: 'The upstream AI model service rejected the request format.',
     };
   }
   if (String(contentType || '').toLowerCase().includes('text/html')) {
     return {
       code: 'azure_openai_non_json_error',
-      message: 'Azure OpenAI returned an unexpected non-JSON error.',
+      message: 'The upstream AI model service returned an unexpected non-JSON error.',
     };
   }
   return {
     code: 'azure_openai_request_failed',
-    message: 'Azure OpenAI rejected the request.',
+    message: 'The upstream AI model service rejected the request.',
   };
 }
 
@@ -140,10 +144,14 @@ function logEvent(logger, level, event) {
 function createOpenAIProxyRouter(options) {
   const {
     endpoint,
+    foundryEndpoint,
     credential,
     apiKey,
+    foundryApiKey,
     apiVersion = DEFAULT_API_VERSION,
+    anthropicVersion = DEFAULT_ANTHROPIC_VERSION,
     allowedDeployments = new Set(),
+    allowedFoundryDeployments = new Set(),
     fetchImpl = globalThis.fetch,
     timeoutMs = DEFAULT_TIMEOUT_MS,
     consumeRateLimit = () => 0,
@@ -160,20 +168,29 @@ function createOpenAIProxyRouter(options) {
     const startedAt = Date.now();
     res.set('X-AzureDiagarm-Request-Id', requestId);
 
-    if (!endpoint) {
-      return sendError(res, 503, requestId, {
-        source: 'proxy',
-        code: 'proxy_not_configured',
-        message: 'Azure OpenAI is not configured on the server.',
-      });
-    }
-
     const { apiFormat, deployment, body } = req.body || {};
-    if (apiFormat !== 'responses' && apiFormat !== 'chat-completions') {
+    if (
+      apiFormat !== 'responses'
+      && apiFormat !== 'chat-completions'
+      && apiFormat !== 'anthropic-messages'
+    ) {
       return sendError(res, 400, requestId, {
         source: 'proxy',
         code: 'invalid_api_format',
-        message: "apiFormat must be 'responses' or 'chat-completions'.",
+        message: "apiFormat must be 'responses', 'chat-completions', or 'anthropic-messages'.",
+      });
+    }
+    const isAnthropic = apiFormat === 'anthropic-messages';
+    const upstreamEndpoint = isAnthropic ? foundryEndpoint : endpoint;
+    const upstreamSource = isAnthropic ? 'azure_foundry' : 'azure_openai';
+    const provider = isAnthropic ? 'foundry_anthropic' : 'azure_openai';
+    if (!upstreamEndpoint) {
+      return sendError(res, 503, requestId, {
+        source: 'proxy',
+        code: 'proxy_not_configured',
+        message: isAnthropic
+          ? 'Microsoft Foundry is not configured on the server.'
+          : 'Azure OpenAI is not configured on the server.',
       });
     }
     if (typeof deployment !== 'string' || !DEPLOYMENT_NAME_RE.test(deployment)) {
@@ -183,7 +200,17 @@ function createOpenAIProxyRouter(options) {
         message: 'The deployment name is invalid.',
       });
     }
-    if (allowedDeployments.size > 0 && !allowedDeployments.has(deployment)) {
+    const deploymentAllowlist = isAnthropic
+      ? allowedFoundryDeployments
+      : allowedDeployments;
+    if (isAnthropic && deploymentAllowlist.size === 0) {
+      return sendError(res, 503, requestId, {
+        source: 'proxy',
+        code: 'deployment_allowlist_not_configured',
+        message: 'Microsoft Foundry deployment access is not configured on the server.',
+      });
+    }
+    if (deploymentAllowlist.size > 0 && !deploymentAllowlist.has(deployment)) {
       return sendError(res, 403, requestId, {
         source: 'proxy',
         code: 'deployment_not_allowed',
@@ -216,19 +243,43 @@ function createOpenAIProxyRouter(options) {
         Math.max(Number(upstreamBody.max_output_tokens) || 1, 1),
         32768,
       );
-    } else {
+    } else if (apiFormat === 'chat-completions') {
       upstreamBody.max_tokens = Math.min(
         Math.max(Number(upstreamBody.max_tokens) || 1, 1),
         32768,
       );
+    } else {
+      if (!Array.isArray(upstreamBody.messages) || upstreamBody.messages.length === 0) {
+        return sendError(res, 400, requestId, {
+          source: 'proxy',
+          code: 'invalid_upstream_request',
+          message: 'Anthropic Messages requests require a non-empty messages array.',
+        });
+      }
+      const requestedEffort = upstreamBody.output_config?.effort;
+      const effort = ['low', 'medium', 'high', 'max'].includes(requestedEffort)
+        ? requestedEffort
+        : 'low';
+      upstreamBody.model = deployment;
+      upstreamBody.max_tokens = Math.min(
+        Math.max(Number(upstreamBody.max_tokens) || 1, 1),
+        32768,
+      );
+      upstreamBody.thinking = { type: 'adaptive' };
+      upstreamBody.output_config = { effort };
+      upstreamBody.stream = false;
     }
 
     const headers = { 'Content-Type': 'application/json' };
-    if (apiKey) {
-      headers['api-key'] = apiKey;
+    const selectedApiKey = isAnthropic ? foundryApiKey : apiKey;
+    if (selectedApiKey) {
+      headers[isAnthropic ? 'x-api-key' : 'api-key'] = selectedApiKey;
     } else {
       try {
-        const tokenResult = await credential?.getToken('https://cognitiveservices.azure.com/.default');
+        const tokenScope = isAnthropic
+          ? 'https://ai.azure.com/.default'
+          : 'https://cognitiveservices.azure.com/.default';
+        const tokenResult = await credential?.getToken(tokenScope);
         if (!tokenResult?.token) throw new Error('Credential returned no token');
         headers.Authorization = `Bearer ${tokenResult.token}`;
       } catch (error) {
@@ -237,6 +288,7 @@ function createOpenAIProxyRouter(options) {
           requestId,
           deployment,
           apiFormat,
+          provider,
           errorName: error?.name || 'Error',
           errorCode: error?.code || null,
         });
@@ -247,10 +299,13 @@ function createOpenAIProxyRouter(options) {
         });
       }
     }
+    if (isAnthropic) {
+      headers['anthropic-version'] = anthropicVersion;
+    }
 
     let upstream;
     try {
-      upstream = await fetchImpl(buildOpenAIUrl(endpoint, deployment, apiFormat, apiVersion), {
+      upstream = await fetchImpl(buildOpenAIUrl(upstreamEndpoint, deployment, apiFormat, apiVersion), {
         method: 'POST',
         headers,
         body: JSON.stringify(upstreamBody),
@@ -265,6 +320,7 @@ function createOpenAIProxyRouter(options) {
         requestId,
         deployment,
         apiFormat,
+        provider,
         durationMs: Date.now() - startedAt,
         errorName: error?.name || 'Error',
         errorCode: error?.code || null,
@@ -306,6 +362,7 @@ function createOpenAIProxyRouter(options) {
         requestId,
         deployment,
         apiFormat,
+        provider,
         upstreamStatus: upstream.status,
         upstreamRequestId,
         durationMs: Date.now() - startedAt,
@@ -333,6 +390,7 @@ function createOpenAIProxyRouter(options) {
         requestId,
         deployment,
         apiFormat,
+        provider,
         upstreamStatus: upstream.status,
         upstreamCode,
         upstreamRequestId,
@@ -340,7 +398,7 @@ function createOpenAIProxyRouter(options) {
         durationMs: Date.now() - startedAt,
       });
       return sendError(res, upstream.status, requestId, {
-        source: 'azure_openai',
+        source: upstreamSource,
         code: classified.code,
         message: classified.message,
         upstreamStatus: upstream.status,
@@ -355,13 +413,14 @@ function createOpenAIProxyRouter(options) {
         requestId,
         deployment,
         apiFormat,
+        provider,
         upstreamStatus: upstream.status,
         upstreamRequestId,
         contentType: contentType.slice(0, 128),
         durationMs: Date.now() - startedAt,
       });
       return sendError(res, 502, requestId, {
-        source: 'azure_openai',
+        source: upstreamSource,
         code: 'invalid_upstream_response',
         message: 'Azure OpenAI returned an unexpected response format.',
         upstreamStatus: upstream.status,
@@ -374,6 +433,7 @@ function createOpenAIProxyRouter(options) {
       requestId,
       deployment,
       apiFormat,
+      provider,
       upstreamStatus: upstream.status,
       upstreamRequestId,
       durationMs: Date.now() - startedAt,

@@ -97,6 +97,8 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({ compact = false }) => {
         return <Globe2 size={16} />;
       case 'gpt-5.6-luna':
         return <Moon size={16} />;
+      case 'claude-opus-5':
+        return <Brain size={16} />;
       case 'deepseek-v3.2-speciale':
         return <Layers size={16} />;
       case 'grok-4.1-fast':

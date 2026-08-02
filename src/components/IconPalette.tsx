@@ -18,7 +18,6 @@ import {
   X,
 } from 'lucide-react';
 import {
-  getIconLibraryStats,
   iconMatchesSearch,
   loadIcon,
   loadIconsFromPaletteCategory,
@@ -49,8 +48,6 @@ type PaletteView = 'catalog' | 'favorites' | 'recent' | 'collections';
 
 const COMPACT_PALETTE_MEDIA_QUERY =
   '(max-width: 640px), (max-width: 1180px) and (max-height: 600px)';
-
-const libraryStats = getIconLibraryStats();
 
 const IconPalette: React.FC<IconPaletteProps> = ({ forceCollapsed, onAddIcon }) => {
   const { t, language } = useLanguage();
@@ -352,10 +349,6 @@ const IconPalette: React.FC<IconPaletteProps> = ({ forceCollapsed, onAddIcon }) 
             <div className="palette-title-row">
               <div>
                 <h2>{t('Azure Services')}</h2>
-                <div className="palette-library-meta">
-                  {libraryStats.azureVersion} · {libraryStats.officialAzureIcons} Azure ·{' '}
-                  {libraryStats.fabricIcons} Fabric
-                </div>
               </div>
               <button
                 type="button"

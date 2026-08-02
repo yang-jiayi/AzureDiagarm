@@ -935,7 +935,7 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({ onGen
                   {aiMetrics ? t("Close") : t("Cancel")}
                 </button>
                 <button
-                  className="btn btn-primary btn-generate-ai"
+                  className="btn btn-primary"
                   onClick={handleGenerate}
                   disabled={isGenerating || isAnalyzingImage || !description.trim()}
                   style={{ display: aiMetrics ? 'none' : 'flex' }}

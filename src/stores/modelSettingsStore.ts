@@ -10,7 +10,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 
-export type ModelType = 'gpt-5.1' | 'gpt-5.2' | 'gpt-5.4' | 'gpt-5.4-mini' | 'gpt-5.6-sol' | 'gpt-5.6-terra' | 'gpt-5.6-luna' | 'deepseek-v3.2-speciale' | 'deepseek-v4-pro' | 'grok-4.1-fast' | 'grok-4.3' | 'mistral-large-3' | 'kimi-k2-5' | 'kimi-k2-7-code';
+export type ModelType = 'gpt-5.1' | 'gpt-5.2' | 'gpt-5.4' | 'gpt-5.4-mini' | 'gpt-5.6-sol' | 'gpt-5.6-terra' | 'gpt-5.6-luna' | 'claude-opus-5' | 'deepseek-v3.2-speciale' | 'deepseek-v4-pro' | 'grok-4.1-fast' | 'grok-4.3' | 'mistral-large-3' | 'kimi-k2-5' | 'kimi-k2-7-code';
 export const REASONING_EFFORT_OPTIONS = [
   { value: 'none', label: 'None' },
   { value: 'low', label: 'Low' },
@@ -24,6 +24,7 @@ export type ReasoningEffort = (typeof REASONING_EFFORT_OPTIONS)[number]['value']
 const STANDARD_REASONING_EFFORTS = ['none', 'low', 'medium', 'high'] as const;
 const EXTENDED_REASONING_EFFORTS = [...STANDARD_REASONING_EFFORTS, 'xhigh'] as const;
 const GPT_56_REASONING_EFFORTS = [...EXTENDED_REASONING_EFFORTS, 'max'] as const;
+const CLAUDE_REASONING_EFFORTS = ['low', 'medium', 'high', 'max'] as const;
 
 /**
  * Feature types that can have independent model settings
@@ -102,7 +103,7 @@ export const MODEL_CONFIG: Record<ModelType, {
   recommendedUse?: string;
   defaultReasoningEffort?: ReasoningEffort;
   supportedReasoningEfforts?: readonly ReasoningEffort[];
-  apiFormat?: 'responses' | 'chat-completions'; // defaults to 'responses'
+  apiFormat?: 'responses' | 'chat-completions' | 'anthropic-messages'; // defaults to 'responses'
   supportsVision?: boolean; // defaults to true
 }> = {
   'gpt-5.1': {
@@ -168,6 +169,18 @@ export const MODEL_CONFIG: Record<ModelType, {
     recommendedUse: 'Fast blueprints',
     defaultReasoningEffort: 'low',
     supportedReasoningEfforts: GPT_56_REASONING_EFFORTS,
+  },
+  'claude-opus-5': {
+    displayName: 'Claude Opus 5',
+    deploymentEnvVar: 'VITE_AZURE_FOUNDRY_DEPLOYMENT_CLAUDE_OPUS5',
+    isReasoning: true,
+    maxCompletionTokens: 32000,
+    description: 'Anthropic frontier model hosted in Microsoft Foundry - deep analysis and strong structured output',
+    recommendedUse: 'Alternative frontier',
+    defaultReasoningEffort: 'low',
+    supportedReasoningEfforts: CLAUDE_REASONING_EFFORTS,
+    apiFormat: 'anthropic-messages',
+    supportsVision: true,
   },
   'deepseek-v3.2-speciale': {
     displayName: 'DeepSeek V3.2 Speciale',
@@ -315,6 +328,7 @@ export const DEPLOYMENT_NAMES: Record<ModelType, string | undefined> = {
   'gpt-5.6-sol': import.meta.env.VITE_AZURE_OPENAI_DEPLOYMENT_GPT56SOL,
   'gpt-5.6-terra': import.meta.env.VITE_AZURE_OPENAI_DEPLOYMENT_GPT56TERRA,
   'gpt-5.6-luna': import.meta.env.VITE_AZURE_OPENAI_DEPLOYMENT_GPT56LUNA,
+  'claude-opus-5': import.meta.env.VITE_AZURE_FOUNDRY_DEPLOYMENT_CLAUDE_OPUS5,
   'deepseek-v3.2-speciale': import.meta.env.VITE_AZURE_OPENAI_DEPLOYMENT_DEEPSEEK,
   'deepseek-v4-pro': import.meta.env.VITE_AZURE_OPENAI_DEPLOYMENT_DEEPSEEK_V4_PRO,
   'grok-4.1-fast': import.meta.env.VITE_AZURE_OPENAI_DEPLOYMENT_GROK4FAST,
@@ -558,6 +572,12 @@ export function useModelSettings(): [ModelSettings, (updates: Partial<ModelSetti
 export function isModelAvailable(model: ModelType): boolean {
   try {
     getDeploymentName(model);
+    if (
+      MODEL_CONFIG[model].apiFormat === 'anthropic-messages'
+      && !import.meta.env.VITE_AZURE_FOUNDRY_ENDPOINT
+    ) {
+      return false;
+    }
     return true;
   } catch {
     return false;

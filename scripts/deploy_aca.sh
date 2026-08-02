@@ -19,8 +19,9 @@
 #   RESOURCE_GROUP    - Resource group containing the ACA app
 #   IMAGE_NAME        - Docker image name (e.g. azure-diagram-builder)
 #
-#   VITE_AZURE_OPENAI_ENDPOINT       - Azure OpenAI endpoint URL
-#   VITE_AZURE_OPENAI_DEPLOYMENT_*   - Model deployment names (at least one)
+#   VITE_AZURE_OPENAI_ENDPOINT       - Azure OpenAI endpoint URL (when using GPT/partner models)
+#   VITE_AZURE_FOUNDRY_ENDPOINT      - Microsoft Foundry endpoint URL (when using Claude)
+#   VITE_*_DEPLOYMENT_*              - Model deployment names (at least one)
 #   AZURE_OPENAI_API_KEY             - Optional server-side fallback key
 #
 # Usage:
@@ -44,8 +45,7 @@ set +a
 
 # ─── Validate required variables ────────────────────────────────────
 MISSING=()
-for var in ACR_NAME ACA_APP_NAME RESOURCE_GROUP IMAGE_NAME \
-           VITE_AZURE_OPENAI_ENDPOINT; do
+for var in ACR_NAME ACA_APP_NAME RESOURCE_GROUP IMAGE_NAME; do
     if [[ -z "${!var:-}" ]]; then
         MISSING+=("$var")
     fi
@@ -61,6 +61,7 @@ fi
 
 # Check that at least one model deployment is configured
 MODEL_COUNT=0
+OPENAI_DEPLOYMENTS=()
 for var in VITE_AZURE_OPENAI_DEPLOYMENT_GPT51 VITE_AZURE_OPENAI_DEPLOYMENT_GPT52 \
            VITE_AZURE_OPENAI_DEPLOYMENT_GPT52CODEX VITE_AZURE_OPENAI_DEPLOYMENT_GPT53CODEX \
            VITE_AZURE_OPENAI_DEPLOYMENT_GPT54 VITE_AZURE_OPENAI_DEPLOYMENT_GPT54MINI \
@@ -71,11 +72,25 @@ for var in VITE_AZURE_OPENAI_DEPLOYMENT_GPT51 VITE_AZURE_OPENAI_DEPLOYMENT_GPT52
            VITE_AZURE_OPENAI_DEPLOYMENT_KIMIK25 VITE_AZURE_OPENAI_DEPLOYMENT_KIMIK27CODE; do
     if [[ -n "${!var:-}" ]]; then
         MODEL_COUNT=$((MODEL_COUNT + 1))
+        OPENAI_DEPLOYMENTS+=("${!var}")
     fi
 done
+FOUNDRY_DEPLOYMENTS=()
+if [[ -n "${VITE_AZURE_FOUNDRY_DEPLOYMENT_CLAUDE_OPUS5:-}" ]]; then
+    MODEL_COUNT=$((MODEL_COUNT + 1))
+    FOUNDRY_DEPLOYMENTS+=("$VITE_AZURE_FOUNDRY_DEPLOYMENT_CLAUDE_OPUS5")
+fi
 
 if [[ $MODEL_COUNT -eq 0 ]]; then
-    echo "❌ No model deployments configured. Set at least one VITE_AZURE_OPENAI_DEPLOYMENT_* in .env"
+    echo "❌ No model deployments configured. Set at least one VITE_*_DEPLOYMENT_* in .env"
+    exit 1
+fi
+if [[ ${#OPENAI_DEPLOYMENTS[@]} -gt 0 && -z "${VITE_AZURE_OPENAI_ENDPOINT:-}" ]]; then
+    echo "❌ VITE_AZURE_OPENAI_ENDPOINT is required for configured Azure OpenAI deployments"
+    exit 1
+fi
+if [[ ${#FOUNDRY_DEPLOYMENTS[@]} -gt 0 && -z "${VITE_AZURE_FOUNDRY_ENDPOINT:-}" ]]; then
+    echo "❌ VITE_AZURE_FOUNDRY_ENDPOINT is required for configured Foundry deployments"
     exit 1
 fi
 
@@ -94,6 +109,10 @@ fi
 #   same RUN layer as `npm run build` so Vite embeds it via import.meta.env.
 SOURCE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 APPINSIGHTS_FILE="$SOURCE_DIR/.env.appinsights"
+# azd writes .env.build and the Dockerfile sources it after explicit build
+# arguments. Remove a stale copy so this manual path is controlled only by
+# the current .env values collected below.
+rm -f "$SOURCE_DIR/.env.build"
 : > "$APPINSIGHTS_FILE"
 trap 'rm -f "$APPINSIGHTS_FILE"' EXIT
 
@@ -147,9 +166,21 @@ echo "🚀 Updating Container App: $ACA_APP_NAME"
 PUBLIC_URL="${PUBLIC_URL:-https://$FQDN}"
 RUNTIME_ENV_VARS=(
     "PUBLIC_URL=$PUBLIC_URL"
-    "AZURE_OPENAI_ENDPOINT=${AZURE_OPENAI_ENDPOINT:-$VITE_AZURE_OPENAI_ENDPOINT}"
 )
 REMOVE_ENV_VARS=()
+
+if [[ ${#OPENAI_DEPLOYMENTS[@]} -gt 0 ]]; then
+    RUNTIME_ENV_VARS+=("AZURE_OPENAI_ENDPOINT=${AZURE_OPENAI_ENDPOINT:-$VITE_AZURE_OPENAI_ENDPOINT}")
+    RUNTIME_ENV_VARS+=("AZURE_OPENAI_ALLOWED_DEPLOYMENTS=$(IFS=,; echo "${OPENAI_DEPLOYMENTS[*]}")")
+else
+    REMOVE_ENV_VARS+=("AZURE_OPENAI_ENDPOINT" "AZURE_OPENAI_ALLOWED_DEPLOYMENTS")
+fi
+if [[ ${#FOUNDRY_DEPLOYMENTS[@]} -gt 0 ]]; then
+    RUNTIME_ENV_VARS+=("AZURE_FOUNDRY_ENDPOINT=${AZURE_FOUNDRY_ENDPOINT:-$VITE_AZURE_FOUNDRY_ENDPOINT}")
+    RUNTIME_ENV_VARS+=("AZURE_FOUNDRY_ALLOWED_DEPLOYMENTS=$(IFS=,; echo "${FOUNDRY_DEPLOYMENTS[*]}")")
+else
+    REMOVE_ENV_VARS+=("AZURE_FOUNDRY_ENDPOINT" "AZURE_FOUNDRY_ALLOWED_DEPLOYMENTS")
+fi
 
 for var in AZURE_CLIENT_ID FEEDBACK_EMAIL_ENDPOINT FEEDBACK_EMAIL_SENDER \
            FEEDBACK_EMAIL_RECIPIENT AZURE_TABLES_ENDPOINT AZURE_TABLES_FEEDBACK_TABLE \
@@ -173,6 +204,18 @@ if [[ -n "$OPENAI_KEY" ]]; then
     RUNTIME_ENV_VARS+=("AZURE_OPENAI_API_KEY=secretref:azure-openai-api-key")
 else
     REMOVE_ENV_VARS+=("AZURE_OPENAI_API_KEY")
+fi
+
+FOUNDRY_KEY="${AZURE_FOUNDRY_API_KEY:-${VITE_AZURE_FOUNDRY_API_KEY:-}}"
+if [[ -n "$FOUNDRY_KEY" ]]; then
+    az containerapp secret set \
+        --name "$ACA_APP_NAME" \
+        --resource-group "$RESOURCE_GROUP" \
+        --secrets "azure-foundry-api-key=$FOUNDRY_KEY" \
+        --output none
+    RUNTIME_ENV_VARS+=("AZURE_FOUNDRY_API_KEY=secretref:azure-foundry-api-key")
+else
+    REMOVE_ENV_VARS+=("AZURE_FOUNDRY_API_KEY")
 fi
 
 UPDATE_ARGS=(

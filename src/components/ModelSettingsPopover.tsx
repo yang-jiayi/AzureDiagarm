@@ -103,6 +103,8 @@ const ModelSettingsPopover = forwardRef<HTMLDivElement, ModelSettingsPopoverProp
           return <Globe2 size={14} />;
         case 'gpt-5.6-luna':
           return <Moon size={14} />;
+        case 'claude-opus-5':
+          return <Brain size={14} />;
         case 'deepseek-v3.2-speciale':
           return <Layers size={14} />;
         case 'grok-4.1-fast':

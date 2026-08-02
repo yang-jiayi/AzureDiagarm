@@ -28,7 +28,10 @@ fi
 # used when AZURE_OPENAI_API_KEY is empty.
 export AZURE_OPENAI_ENDPOINT="${AZURE_OPENAI_ENDPOINT:-${VITE_AZURE_OPENAI_ENDPOINT:-}}"
 export AZURE_OPENAI_API_KEY="${AZURE_OPENAI_API_KEY:-${VITE_AZURE_OPENAI_API_KEY:-}}"
+export AZURE_FOUNDRY_ENDPOINT="${AZURE_FOUNDRY_ENDPOINT:-${VITE_AZURE_FOUNDRY_ENDPOINT:-}}"
+export AZURE_FOUNDRY_API_KEY="${AZURE_FOUNDRY_API_KEY:-${VITE_AZURE_FOUNDRY_API_KEY:-}}"
 
 echo "[token-server] Starting on 127.0.0.1:3001 (region=$AZURE_SPEECH_REGION)"
 echo "[token-server] OpenAI proxy endpoint: ${AZURE_OPENAI_ENDPOINT:-<unset>} (key auth: $([ -n "${AZURE_OPENAI_API_KEY:-}" ] && echo yes || echo 'no — using managed identity')))"
+echo "[token-server] Foundry Anthropic endpoint: ${AZURE_FOUNDRY_ENDPOINT:-<unset>} (key auth: $([ -n "${AZURE_FOUNDRY_API_KEY:-}" ] && echo yes || echo 'no — using managed identity')))"
 exec node "$ROOT/server/token-server.js"

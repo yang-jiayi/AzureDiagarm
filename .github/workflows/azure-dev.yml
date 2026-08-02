@@ -3,8 +3,10 @@ name: Azure Diagram Builder — provision & deploy (azd)
 # Manual-only. This workflow deploys via `azd` using OIDC federated login and
 # requires the following to be configured in the repo before it will run:
 #   Secrets:   AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID,
-#              AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_API_KEY
-#   Variables: AZURE_ENV_NAME, AZURE_LOCATION, AZURE_OPENAI_DEPLOYMENT_* , AZURE_SPEECH_REGION
+#              AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_API_KEY,
+#              AZURE_FOUNDRY_API_KEY (optional; managed identity preferred)
+#   Variables: AZURE_ENV_NAME, AZURE_LOCATION, AZURE_OPENAI_DEPLOYMENT_*,
+#              AZURE_FOUNDRY_*, AZURE_SPEECH_REGION
 # Until those exist, run deployments locally with scripts/update_aca.sh.
 # To re-enable automatic deploys on push, restore the `push:` trigger below.
 on:
@@ -52,6 +54,10 @@ jobs:
           azd env set AZURE_OPENAI_DEPLOYMENT_GPT56SOL     "${{ vars.AZURE_OPENAI_DEPLOYMENT_GPT56SOL }}"
           azd env set AZURE_OPENAI_DEPLOYMENT_GPT56TERRA   "${{ vars.AZURE_OPENAI_DEPLOYMENT_GPT56TERRA }}"
           azd env set AZURE_OPENAI_DEPLOYMENT_GPT56LUNA    "${{ vars.AZURE_OPENAI_DEPLOYMENT_GPT56LUNA }}"
+          azd env set AZURE_FOUNDRY_ENDPOINT                "${{ vars.AZURE_FOUNDRY_ENDPOINT }}"
+          azd env set AZURE_FOUNDRY_RESOURCE_ID             "${{ vars.AZURE_FOUNDRY_RESOURCE_ID }}"
+          azd env set AZURE_FOUNDRY_API_KEY                 "${{ secrets.AZURE_FOUNDRY_API_KEY }}"
+          azd env set AZURE_FOUNDRY_DEPLOYMENT_CLAUDE_OPUS5 "${{ vars.AZURE_FOUNDRY_DEPLOYMENT_CLAUDE_OPUS5 }}"
           azd env set AZURE_OPENAI_DEPLOYMENT_DEEPSEEK     "${{ vars.AZURE_OPENAI_DEPLOYMENT_DEEPSEEK }}"
           azd env set AZURE_OPENAI_DEPLOYMENT_GROK4FAST    "${{ vars.AZURE_OPENAI_DEPLOYMENT_GROK4FAST }}"
           # Speech region (for avatar presenter)

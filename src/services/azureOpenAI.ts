@@ -9,15 +9,12 @@ import {
   parseApiResponse,
   callAzureOpenAIProxy,
   createOpenAIProxyError,
+  getApiFormatLabel,
+  isAiBackendConfigured,
   OpenAIProxyError,
 } from './apiHelper';
 import type { Language } from '../i18n/LanguageContext';
 import { getPromptLanguageInstruction } from '../i18n/localization';
-
-// Non-secret flag indicating the AI backend is wired up. The actual Azure OpenAI
-// endpoint and credentials live server-side in the token server; the browser
-// never sees the API key — all calls go through the /api/openai proxy.
-const endpoint = import.meta.env.VITE_AZURE_OPENAI_ENDPOINT;
 
 // Token usage metrics returned from Azure OpenAI API
 export interface AIMetrics {
@@ -56,12 +53,15 @@ export async function callAzureOpenAI(messages: any[], modelOverride?: ModelOver
     throw new Error(`No deployment configured for ${settings.model}. Please check your .env file.`);
   }
 
-  if (!endpoint) {
-    throw new Error('Azure OpenAI is not configured. Please check your .env file.');
-  }
-
-  // Determine API format (Responses for OpenAI models, Chat Completions for third-party)
+  // Determine API format and verify the matching backend is configured.
   const apiFormat = modelConfig.apiFormat || 'responses';
+  if (!isAiBackendConfigured(apiFormat)) {
+    throw new Error(
+      apiFormat === 'anthropic-messages'
+        ? 'Microsoft Foundry is not configured. Please check your .env file.'
+        : 'Azure OpenAI is not configured. Please check your .env file.',
+    );
+  }
 
   // Add timeout for large requests (5 minutes for regenerations)
   const controller = new AbortController();
@@ -81,7 +81,7 @@ export async function callAzureOpenAI(messages: any[], modelOverride?: ModelOver
     jsonOutput,
   });
   
-  console.log(`🤖 Using ${modelConfig.displayName} [deployment: ${deployment}]${modelConfig.isReasoning ? ` (reasoning: ${settings.reasoningEffort})` : ''} | max_tokens: ${modelConfig.maxCompletionTokens} | API: ${apiFormat === 'chat-completions' ? 'Chat Completions' : 'Responses'}`);
+  console.log(`🤖 Using ${modelConfig.displayName} [deployment: ${deployment}]${modelConfig.isReasoning ? ` (reasoning: ${settings.reasoningEffort})` : ''} | max_tokens: ${modelConfig.maxCompletionTokens} | API: ${getApiFormatLabel(apiFormat)}`);
 
   try {
     const proxyResult = await callAzureOpenAIProxy({
@@ -558,7 +558,9 @@ Verify findings independently.*`;
 }
 
 export function isAzureOpenAIConfigured(): boolean {
-  return !!endpoint && getAvailableModels().length > 0;
+  return getAvailableModels().some(model => (
+    isAiBackendConfigured(MODEL_CONFIG[model].apiFormat || 'responses')
+  ));
 }
 
 /**
@@ -575,9 +577,8 @@ export async function analyzeArchitectureDiagramImage(
   const settings = getModelSettingsForFeature('architectureGeneration');
   const modelConfig = MODEL_CONFIG[settings.model];
   
-  // Vision is only supported by OpenAI models (Responses API)
   if (modelConfig.supportsVision === false) {
-    throw new Error(`${modelConfig.displayName} does not support image analysis. Please select an OpenAI model (GPT-5.x) for diagram-to-architecture conversion.`);
+    throw new Error(`${modelConfig.displayName} does not support image analysis. Please select a vision-capable model for diagram-to-architecture conversion.`);
   }
 
   let deployment: string;
@@ -587,8 +588,13 @@ export async function analyzeArchitectureDiagramImage(
     throw new Error(`No deployment configured for ${settings.model}. Please check your .env file.`);
   }
 
-  if (!endpoint) {
-    throw new Error('Azure OpenAI is not configured. Please check your .env file.');
+  const apiFormat = modelConfig.apiFormat || 'responses';
+  if (!isAiBackendConfigured(apiFormat)) {
+    throw new Error(
+      apiFormat === 'anthropic-messages'
+        ? 'Microsoft Foundry is not configured. Please check your .env file.'
+        : 'Azure OpenAI is not configured. Please check your .env file.',
+    );
   }
 
   const systemPrompt = `You are an expert Azure cloud architect specializing in analyzing architecture diagrams.
@@ -640,40 +646,36 @@ If the image is not an architecture diagram or is unclear, describe what you can
   
   const startTime = performance.now();
 
-  // Responses API request body with image input
-  const requestBody: any = {
-    model: deployment,
-    instructions: systemPrompt,
-    input: [
+  const requestBody = buildRequestBody({
+    deployment,
+    messages: [
+      { role: 'system', content: systemPrompt },
       {
         role: 'user',
         content: [
           {
             type: 'input_text',
-            text: 'Analyze this architecture diagram and provide a detailed description that captures all services, connections, groupings, and data flows shown. Be specific and thorough.'
+            text: 'Analyze this architecture diagram and provide a detailed description that captures all services, connections, groupings, and data flows shown. Be specific and thorough.',
           },
           {
             type: 'input_image',
             image_url: `data:${mimeType};base64,${imageBase64}`,
-          }
-        ]
-      }
+          },
+        ],
+      },
     ],
-    max_output_tokens: 4000,
-    store: false,
-  };
-  
-  // Send the explicit selection, including "none", so the model does not fall
-  // back to a deployment-specific default reasoning level.
-  if (modelConfig.isReasoning) {
-    requestBody.reasoning = { effort: settings.reasoningEffort };
-  }
+    maxTokens: 4000,
+    apiFormat,
+    isReasoning: modelConfig.isReasoning,
+    reasoningEffort: settings.reasoningEffort,
+    jsonOutput: false,
+  });
 
-  console.log(`🖼️ Analyzing architecture diagram with ${modelConfig.displayName}... | API: Responses`);
+  console.log(`🖼️ Analyzing architecture diagram with ${modelConfig.displayName}... | API: ${getApiFormatLabel(apiFormat)}`);
 
   try {
     const proxyResult = await callAzureOpenAIProxy({
-      apiFormat: 'responses',
+      apiFormat,
       deployment,
       body: requestBody,
       signal: controller.signal,
@@ -693,26 +695,12 @@ If the image is not an architecture diagram or is unclear, describe what you can
       throw createOpenAIProxyError(proxyResult, { vision: true });
     }
     
-    // Responses API: extract text from output
-    let content = proxyResult.data.output_text || '';
-    if (!content && proxyResult.data.output) {
-      for (const item of proxyResult.data.output) {
-        if (item.type === 'message' && item.content) {
-          for (const part of item.content) {
-            if (part.type === 'output_text') {
-              content += part.text;
-            }
-          }
-        }
-      }
-    }
-    
-    // Responses API uses input_tokens/output_tokens
-    const usage = proxyResult.data.usage || {};
+    const parsed = parseApiResponse(proxyResult.data, apiFormat);
+    const content = parsed.content;
     const metrics: AIMetrics = {
-      promptTokens: usage.input_tokens || 0,
-      completionTokens: usage.output_tokens || 0,
-      totalTokens: usage.total_tokens || 0,
+      promptTokens: parsed.promptTokens,
+      completionTokens: parsed.completionTokens,
+      totalTokens: parsed.totalTokens,
       elapsedTimeMs,
       model: proxyResult.data.model
     };

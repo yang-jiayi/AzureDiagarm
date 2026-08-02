@@ -44,6 +44,8 @@ function abbreviateModel(model: ModelType): string {
       return 'gpt56terra';
     case 'gpt-5.6-luna':
       return 'gpt56luna';
+    case 'claude-opus-5':
+      return 'claudeopus5';
     case 'deepseek-v3.2-speciale':
       return 'deepseek';
     case 'deepseek-v4-pro':

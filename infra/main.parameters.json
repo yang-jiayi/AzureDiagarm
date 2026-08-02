@@ -17,6 +17,15 @@
     "azureOpenAiApiKey": {
       "value": "${AZURE_OPENAI_API_KEY}"
     },
+    "azureFoundryEndpoint": {
+      "value": "${AZURE_FOUNDRY_ENDPOINT}"
+    },
+    "azureFoundryResourceId": {
+      "value": "${AZURE_FOUNDRY_RESOURCE_ID}"
+    },
+    "azureFoundryApiKey": {
+      "value": "${AZURE_FOUNDRY_API_KEY}"
+    },
     "feedbackEmailEndpoint": {
       "value": "${FEEDBACK_EMAIL_ENDPOINT}"
     },
@@ -58,6 +67,9 @@
     },
     "openAiDeploymentGpt56Luna": {
       "value": "${AZURE_OPENAI_DEPLOYMENT_GPT56LUNA}"
+    },
+    "foundryDeploymentClaudeOpus5": {
+      "value": "${AZURE_FOUNDRY_DEPLOYMENT_CLAUDE_OPUS5}"
     },
     "openAiDeploymentDeepSeek": {
       "value": "${AZURE_OPENAI_DEPLOYMENT_DEEPSEEK}"

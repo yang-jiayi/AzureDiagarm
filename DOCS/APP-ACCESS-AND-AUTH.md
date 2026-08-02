@@ -47,8 +47,8 @@
 9. Both administrator accounts are members only of
    `Azure Diagarm Apps Administrators`, not the restricted guest group. The
    Conditional Access policy also explicitly excludes that administrator group
-   and `yangjiayi@msft.jp`, preventing an accidental guest-policy change from
-   restricting the primary administrator.
+   and both administrator user objects, preventing an accidental guest-policy
+   change from restricting either owner account.
 
 External requests cannot set the `X-MS-CLIENT-PRINCIPAL-*` headers. Container
 Apps removes external values and injects the authenticated principal headers.
@@ -133,10 +133,12 @@ The policy explicitly excludes:
   (`3d6b642f-e777-415f-8bcd-01892b482fdc`)
 - `yangjiayi@msft.jp`
   (`0b5454aa-2b15-4167-b72c-5734bb5d04b9`)
+- `jiayiyang@microsoft.com`
+  (`b313d9db-92ed-492e-928f-4fab16509544`; guest UPN
+  `jiayiyang_microsoft.com#EXT#@MngEnvMCAP136118.onmicrosoft.com`)
 
 Do not add an administrator to the restricted guest group. Keep both the group
-exclusion and the explicit primary-administrator exclusion when changing the
-policy.
+exclusion and both explicit owner exclusions when changing the policy.
 
 Do not replace this with an all-cloud-apps block that excludes only
 AzureDiagarm. Container Apps Easy Auth requests the standard OpenID Connect

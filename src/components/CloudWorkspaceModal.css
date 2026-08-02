@@ -130,6 +130,29 @@
   color: #0f172a;
 }
 
+.cloud-new-diagram-button {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  margin-bottom: 10px;
+  border: 1px solid #93c5fd;
+  border-radius: 8px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  padding: 9px 10px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.cloud-new-diagram-button:hover {
+  border-color: #60a5fa;
+  background: #dbeafe;
+}
+
 .cloud-document-list {
   display: flex;
   flex-direction: column;
@@ -540,6 +563,16 @@ body.dark-mode .cloud-document-sidebar,
 body.dark-mode .cloud-version-row,
 body.dark-mode .cloud-comment-list article {
   background: #0f172a;
+}
+
+body.dark-mode .cloud-new-diagram-button {
+  border-color: #1d4ed8;
+  background: #172554;
+  color: #bfdbfe;
+}
+
+body.dark-mode .cloud-new-diagram-button:hover {
+  background: #1e3a8a;
 }
 
 body.dark-mode .cloud-document-list > button.selected {

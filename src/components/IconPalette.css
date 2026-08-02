@@ -131,14 +131,6 @@ body:has([role='dialog'][aria-modal='true']) .icon-palette.collapsed .palette-op
   white-space: nowrap;
 }
 
-.palette-library-meta {
-  margin-top: 0.2rem;
-  color: #667788;
-  font-size: 0.78rem;
-  font-weight: 650;
-  letter-spacing: 0.02em;
-}
-
 .search-box {
   display: flex;
   align-items: center;
@@ -374,7 +366,6 @@ body.dark-mode .palette-header h2 {
   font-weight: 700;
 }
 
-body.dark-mode .palette-library-meta,
 body.dark-mode .palette-search-summary,
 body.dark-mode .category-description {
   color: #a0bfdf;

@@ -6,22 +6,129 @@ import type { ReasoningEffort } from '../stores/modelSettingsStore';
 /**
  * API Format Helper
  * Abstracts the difference between Azure OpenAI Responses API and Chat Completions API.
- * OpenAI models (GPT-5.x) use the Responses API; third-party models
- * (DeepSeek, Grok) use the Chat Completions API via Azure AI model inference.
+ * OpenAI models (GPT-5.x) use the Responses API, partner models use Chat
+ * Completions, and Anthropic models use the Messages API in Microsoft Foundry.
  */
 
-export type ApiFormat = 'responses' | 'chat-completions';
+export type ApiFormat = 'responses' | 'chat-completions' | 'anthropic-messages';
+
+export function isAiBackendConfigured(apiFormat: ApiFormat): boolean {
+  return apiFormat === 'anthropic-messages'
+    ? Boolean(import.meta.env.VITE_AZURE_FOUNDRY_ENDPOINT)
+    : Boolean(import.meta.env.VITE_AZURE_OPENAI_ENDPOINT);
+}
+
+export function getApiFormatLabel(apiFormat: ApiFormat): string {
+  if (apiFormat === 'anthropic-messages') return 'Anthropic Messages';
+  if (apiFormat === 'chat-completions') return 'Chat Completions';
+  return 'Responses';
+}
 
 /**
  * Build the correct API URL for the given format.
  * - Responses API:       {endpoint}openai/v1/responses
  * - Chat Completions:    {endpoint}openai/deployments/{deployment}/chat/completions?api-version=2024-12-01-preview
+ * - Anthropic Messages:   {endpoint}anthropic/v1/messages
  */
 export function buildApiUrl(endpoint: string, deployment: string, apiFormat: ApiFormat): string {
-  if (apiFormat === 'chat-completions') {
-    return `${endpoint}openai/deployments/${deployment}/chat/completions?api-version=2024-05-01-preview`;
+  const base = endpoint.endsWith('/') ? endpoint : `${endpoint}/`;
+  if (apiFormat === 'anthropic-messages') {
+    return `${base}anthropic/v1/messages`;
   }
-  return `${endpoint}openai/v1/responses`;
+  if (apiFormat === 'chat-completions') {
+    return `${base}openai/deployments/${deployment}/chat/completions?api-version=2024-05-01-preview`;
+  }
+  return `${base}openai/v1/responses`;
+}
+
+function convertAnthropicContent(content: unknown): Array<Record<string, unknown>> {
+  if (typeof content === 'string') {
+    return [{ type: 'text', text: content }];
+  }
+  if (!Array.isArray(content)) {
+    throw new TypeError('Anthropic message content must be text or an array of content blocks.');
+  }
+
+  return content.map((part) => {
+    if (!part || typeof part !== 'object') {
+      throw new TypeError('Anthropic content blocks must be objects.');
+    }
+    const value = part as Record<string, unknown>;
+    if (value.type === 'input_text' || value.type === 'text') {
+      if (typeof value.text !== 'string') {
+        throw new TypeError('Anthropic text blocks require a text value.');
+      }
+      return { type: 'text', text: value.text };
+    }
+    if (value.type === 'input_image' || value.type === 'image_url') {
+      const imageUrl = typeof value.image_url === 'string'
+        ? value.image_url
+        : value.image_url && typeof value.image_url === 'object'
+          ? (value.image_url as Record<string, unknown>).url
+          : undefined;
+      if (typeof imageUrl !== 'string') {
+        throw new TypeError('Anthropic image blocks require an image URL.');
+      }
+      const match = /^data:([^;,]+);base64,([A-Za-z0-9+/=\r\n]+)$/.exec(imageUrl);
+      if (!match) {
+        throw new TypeError('Anthropic image input must be a base64 data URL.');
+      }
+      return {
+        type: 'image',
+        source: {
+          type: 'base64',
+          media_type: match[1],
+          data: match[2].replace(/\s+/g, ''),
+        },
+      };
+    }
+    throw new TypeError(`Unsupported Anthropic content block type: ${String(value.type)}`);
+  });
+}
+
+function buildAnthropicRequestBody(params: {
+  deployment: string;
+  messages: any[];
+  maxTokens: number;
+  reasoningEffort: ReasoningEffort;
+}): Record<string, unknown> {
+  const systemBlocks: Array<Record<string, unknown>> = [];
+  const conversation: Array<Record<string, unknown>> = [];
+
+  for (const message of params.messages) {
+    if (!message || typeof message !== 'object') {
+      throw new TypeError('Anthropic messages must be objects.');
+    }
+    const role = message.role;
+    const blocks = convertAnthropicContent(message.content);
+    if (role === 'system') {
+      if (blocks.some(block => block.type !== 'text')) {
+        throw new TypeError('Anthropic system messages only support text content.');
+      }
+      systemBlocks.push(...blocks);
+      continue;
+    }
+    if (role !== 'user' && role !== 'assistant') {
+      throw new TypeError(`Unsupported Anthropic message role: ${String(role)}`);
+    }
+    conversation.push({ role, content: blocks });
+  }
+
+  if (conversation.length === 0) {
+    throw new TypeError('Anthropic requests require at least one user or assistant message.');
+  }
+
+  const effort = ['low', 'medium', 'high', 'max'].includes(params.reasoningEffort)
+    ? params.reasoningEffort
+    : 'low';
+  return {
+    model: params.deployment,
+    max_tokens: params.maxTokens,
+    ...(systemBlocks.length > 0 ? { system: systemBlocks } : {}),
+    messages: conversation,
+    thinking: { type: 'adaptive' },
+    output_config: { effort },
+  };
 }
 
 /**
@@ -38,6 +145,15 @@ export function buildRequestBody(params: {
   jsonOutput?: boolean;
 }): any {
   const { deployment, messages, maxTokens, apiFormat, isReasoning, reasoningEffort, jsonOutput = true } = params;
+
+  if (apiFormat === 'anthropic-messages') {
+    return buildAnthropicRequestBody({
+      deployment,
+      messages,
+      maxTokens,
+      reasoningEffort,
+    });
+  }
 
   if (apiFormat === 'chat-completions') {
     return {
@@ -71,6 +187,23 @@ export function parseApiResponse(
   data: any,
   apiFormat: ApiFormat,
 ): { content: string; promptTokens: number; completionTokens: number; totalTokens: number } {
+  if (apiFormat === 'anthropic-messages') {
+    const usage = data.usage || {};
+    const promptTokens = usage.input_tokens || 0;
+    const completionTokens = usage.output_tokens || 0;
+    return {
+      content: Array.isArray(data.content)
+        ? data.content
+          .filter((part: any) => part?.type === 'text' && typeof part.text === 'string')
+          .map((part: any) => part.text)
+          .join('')
+        : '',
+      promptTokens,
+      completionTokens,
+      totalTokens: usage.total_tokens || promptTokens + completionTokens,
+    };
+  }
+
   if (apiFormat === 'chat-completions') {
     const usage = data.usage || {};
     return {

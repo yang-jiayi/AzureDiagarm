@@ -695,6 +695,8 @@ export const translationKeys = [
   "Fast blueprints",
   "Faster responses, less detailed analysis",
   "Highest quality",
+  "Alternative frontier",
+  "Anthropic frontier model hosted in Microsoft Foundry - deep analysis and strong structured output",
   "Import Template",
   "Max",
   "Maximum reasoning depth with the longest latency and highest token use",

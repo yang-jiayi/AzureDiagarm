@@ -417,6 +417,7 @@ export function useCloudDiagramSync({
     }
     pendingSaveRef.current = latestRef.current;
     await drainPendingSave();
+    if (lastSaveErrorRef.current) throw lastSaveErrorRef.current;
     return documentRef.current;
   }, [drainPendingSave, enabled]);
 
@@ -435,11 +436,35 @@ export function useCloudDiagramSync({
   }, [loadContext]);
 
   const saveAsCopy = useCallback(async () => {
-    clearDocument();
-    pendingSaveRef.current = latestRef.current;
-    await drainPendingSave();
-    return documentRef.current;
-  }, [clearDocument, drainPendingSave]);
+    clearTimers();
+    pendingSaveRef.current = null;
+    const candidate = latestRef.current;
+    setStatus('saving');
+    setErrorMessage('');
+    lastSaveErrorRef.current = null;
+
+    try {
+      const saved = await createCloudDiagram(candidate.diagramName, candidate.payload);
+      const savedContext: CloudDocumentContext = {
+        documentId: saved.id,
+        access: 'owner',
+        role: 'owner',
+      };
+      const normalized = storeDocument(saved, savedContext);
+      lastSavedSerializedRef.current = candidate.serialized;
+      setLastSavedAt(normalized.updatedAt || new Date().toISOString());
+      setStatus('saved');
+      return normalized;
+    } catch (error) {
+      const apiError = error instanceof CloudDiagramApiError ? error : null;
+      lastSaveErrorRef.current = error instanceof Error
+        ? error
+        : new Error('Cloud copy failed.');
+      setErrorMessage(lastSaveErrorRef.current.message);
+      setStatus(apiError?.status === 503 ? 'unavailable' : 'offline');
+      throw lastSaveErrorRef.current;
+    }
+  }, [clearTimers, storeDocument]);
 
   const openDocument = useCallback((
     nextDocument: CloudDiagramDocument,

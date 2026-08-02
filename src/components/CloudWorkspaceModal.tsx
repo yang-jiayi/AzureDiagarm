@@ -14,6 +14,7 @@ import {
   Link2,
   Loader,
   MessageSquare,
+  Plus,
   RefreshCw,
   Trash2,
   X,
@@ -61,6 +62,7 @@ interface CloudWorkspaceModalProps {
   onResetCurrent: () => void;
   onReloadRemote: () => Promise<CloudDiagramDocument | null>;
   onSaveAsCopy: () => Promise<CloudDiagramDocument | null>;
+  onCreateNew: () => Promise<boolean>;
 }
 
 function ownerContext(documentId: string): CloudDocumentContext {
@@ -85,6 +87,7 @@ const CloudWorkspaceModal: React.FC<CloudWorkspaceModalProps> = ({
   onResetCurrent,
   onReloadRemote,
   onSaveAsCopy,
+  onCreateNew,
 }) => {
   const { language, t } = useLanguage();
   const text = useCallback(
@@ -420,6 +423,10 @@ const CloudWorkspaceModal: React.FC<CloudWorkspaceModalProps> = ({
     }
   };
 
+  const handleCreateNew = async () => {
+    if (await onCreateNew()) onClose();
+  };
+
   if (!isOpen) return null;
 
   return (
@@ -485,6 +492,15 @@ const CloudWorkspaceModal: React.FC<CloudWorkspaceModalProps> = ({
                 <RefreshCw size={16} className={isLoading ? 'spin' : ''} />
               </button>
             </div>
+
+            <button
+              type="button"
+              className="cloud-new-diagram-button"
+              onClick={() => void handleCreateNew()}
+            >
+              <Plus size={16} />
+              {text('New diagram', '新しい図面')}
+            </button>
 
             {isLoading && documents.length === 0 ? (
               <div className="cloud-empty-state"><Loader size={24} className="spin" /></div>

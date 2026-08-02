@@ -20,6 +20,12 @@ param azureOpenAiEndpoint string = ''
 @description('Full resource ID of the Azure OpenAI account for managed-identity RBAC.')
 param azureOpenAiResourceId string = ''
 
+@description('Microsoft Foundry AIServices endpoint URL for Anthropic models.')
+param azureFoundryEndpoint string = ''
+
+@description('Full resource ID of the Microsoft Foundry AIServices account for managed-identity RBAC.')
+param azureFoundryResourceId string = ''
+
 @description('Azure Communication Services endpoint used to deliver feedback email.')
 param feedbackEmailEndpoint string = ''
 
@@ -38,6 +44,10 @@ param azureTablesFeedbackTable string = 'feedback'
 @secure()
 @description('Your Azure OpenAI API key.')
 param azureOpenAiApiKey string = ''
+
+@secure()
+@description('Optional Microsoft Foundry API key. Managed identity is preferred.')
+param azureFoundryApiKey string = ''
 
 @description('GPT-5.1 deployment name.')
 param openAiDeploymentGpt51 string = ''
@@ -65,6 +75,9 @@ param openAiDeploymentGpt56Terra string = ''
 
 @description('GPT-5.6 Luna deployment name.')
 param openAiDeploymentGpt56Luna string = ''
+
+@description('Claude Opus 5 deployment name in Microsoft Foundry.')
+param foundryDeploymentClaudeOpus5 string = ''
 
 @description('DeepSeek deployment name.')
 param openAiDeploymentDeepSeek string = ''
@@ -111,6 +124,7 @@ var openAiAllowedDeployments = join([
   openAiDeploymentDeepSeek
   openAiDeploymentGrokFast
 ], ',')
+var foundryAllowedDeployments = foundryDeploymentClaudeOpus5
 
 // ── Resource group ─────────────────────────────────────────────────────────────
 resource rg 'Microsoft.Resources/resourceGroups@2022-09-01' = {
@@ -137,6 +151,9 @@ module resources './resources.bicep' = {
     azureOpenAiEndpoint: azureOpenAiEndpoint
     azureOpenAiAllowedDeployments: openAiAllowedDeployments
     azureOpenAiApiKey: azureOpenAiApiKey
+    azureFoundryEndpoint: azureFoundryEndpoint
+    azureFoundryAllowedDeployments: foundryAllowedDeployments
+    azureFoundryApiKey: azureFoundryApiKey
     feedbackEmailEndpoint: feedbackEmailEndpoint
     feedbackEmailSender: feedbackEmailSender
     feedbackEmailRecipient: feedbackEmailRecipient
@@ -151,6 +168,16 @@ module openAiRole './openai-role.bicep' = if (!empty(azureOpenAiResourceId)) {
   scope: resourceGroup(openAiResourceParts[2], openAiResourceParts[4])
   params: {
     accountName: openAiResourceParts[8]
+    principalId: resources.outputs.appIdentityPrincipalId
+  }
+}
+
+var foundryResourceParts = split(azureFoundryResourceId, '/')
+module foundryRole './foundry-role.bicep' = if (!empty(azureFoundryResourceId)) {
+  name: 'foundry-role'
+  scope: resourceGroup(foundryResourceParts[2], foundryResourceParts[4])
+  params: {
+    accountName: foundryResourceParts[8]
     principalId: resources.outputs.appIdentityPrincipalId
   }
 }
@@ -188,6 +215,9 @@ output AZURE_OPENAI_DEPLOYMENT_GPT54MINI string = openAiDeploymentGpt54Mini
 output AZURE_OPENAI_DEPLOYMENT_GPT56SOL string = openAiDeploymentGpt56Sol
 output AZURE_OPENAI_DEPLOYMENT_GPT56TERRA string = openAiDeploymentGpt56Terra
 output AZURE_OPENAI_DEPLOYMENT_GPT56LUNA string = openAiDeploymentGpt56Luna
+output AZURE_FOUNDRY_ENDPOINT string = azureFoundryEndpoint
+output AZURE_FOUNDRY_RESOURCE_ID string = azureFoundryResourceId
+output AZURE_FOUNDRY_DEPLOYMENT_CLAUDE_OPUS5 string = foundryDeploymentClaudeOpus5
 output AZURE_OPENAI_DEPLOYMENT_DEEPSEEK string = openAiDeploymentDeepSeek
 output AZURE_OPENAI_DEPLOYMENT_GROK4FAST string = openAiDeploymentGrokFast
 

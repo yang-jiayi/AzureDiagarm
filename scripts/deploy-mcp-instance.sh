@@ -52,6 +52,9 @@ fi
 
 # ── App Insights glob workaround (keeps the Dockerfile COPY happy) ───────
 # The Dockerfile COPYs .env.build* .env.appinsights*; at least one must exist.
+# Remove any azd-generated build file so this isolated app cannot inherit
+# Foundry models that have no matching runtime proxy configuration here.
+rm -f .env.build
 grep '^VITE_APPINSIGHTS_CONNECTION_STRING' .env | tr -d '"' > .env.appinsights 2>/dev/null || true
 [ -s .env.appinsights ] || echo "# none" > .env.appinsights
 
@@ -66,6 +69,9 @@ az acr build --registry "$ACR" --image "$IMAGE_TAG" \
   --build-arg "VITE_AZURE_OPENAI_DEPLOYMENT_GPT53CODEX=$VITE_AZURE_OPENAI_DEPLOYMENT_GPT53CODEX" \
   --build-arg "VITE_AZURE_OPENAI_DEPLOYMENT_GPT54=$VITE_AZURE_OPENAI_DEPLOYMENT_GPT54" \
   --build-arg "VITE_AZURE_OPENAI_DEPLOYMENT_GPT54MINI=$VITE_AZURE_OPENAI_DEPLOYMENT_GPT54MINI" \
+  --build-arg "VITE_AZURE_OPENAI_DEPLOYMENT_GPT56SOL=${VITE_AZURE_OPENAI_DEPLOYMENT_GPT56SOL:-}" \
+  --build-arg "VITE_AZURE_OPENAI_DEPLOYMENT_GPT56TERRA=${VITE_AZURE_OPENAI_DEPLOYMENT_GPT56TERRA:-}" \
+  --build-arg "VITE_AZURE_OPENAI_DEPLOYMENT_GPT56LUNA=${VITE_AZURE_OPENAI_DEPLOYMENT_GPT56LUNA:-}" \
   --build-arg "VITE_AZURE_OPENAI_DEPLOYMENT_DEEPSEEK=$VITE_AZURE_OPENAI_DEPLOYMENT_DEEPSEEK" \
   --build-arg "VITE_AZURE_OPENAI_DEPLOYMENT_DEEPSEEK_V4_PRO=$VITE_AZURE_OPENAI_DEPLOYMENT_DEEPSEEK_V4_PRO" \
   --build-arg "VITE_AZURE_OPENAI_DEPLOYMENT_GROK4FAST=$VITE_AZURE_OPENAI_DEPLOYMENT_GROK4FAST" \

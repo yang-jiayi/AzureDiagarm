@@ -28,7 +28,7 @@
 
 ## 📖 Overview
 
-Azure Architecture Diagram Builder is an enterprise-grade web application that empowers cloud architects to design, visualize, validate, and deploy Azure solutions. Leveraging **14 AI models** across multiple providers — **GPT-5.1, GPT-5.2, GPT-5.4, GPT-5.4 Mini, GPT-5.6 Sol, GPT-5.6 Terra, GPT-5.6 Luna, DeepSeek V3.2 Speciale, DeepSeek V4 Pro, Grok 4.1 Fast, Grok 4.3, Mistral Large 3, Kimi K2.5, and Kimi K2.7 Code** (via Azure OpenAI and Azure AI model deployments) — it transforms natural language descriptions into professional architecture diagrams while providing real-time cost estimates, Well-Architected Framework validation, multi-model comparison, and Infrastructure as Code generation.
+Azure Architecture Diagram Builder is an enterprise-grade web application that empowers cloud architects to design, visualize, validate, and deploy Azure solutions. Leveraging **15 AI models** across multiple providers — **GPT-5.1, GPT-5.2, GPT-5.4, GPT-5.4 Mini, GPT-5.6 Sol, GPT-5.6 Terra, GPT-5.6 Luna, Claude Opus 5, DeepSeek V3.2 Speciale, DeepSeek V4 Pro, Grok 4.1 Fast, Grok 4.3, Mistral Large 3, Kimi K2.5, and Kimi K2.7 Code** (via Azure OpenAI and Microsoft Foundry model deployments) — it transforms natural language descriptions into professional architecture diagrams while providing real-time cost estimates, Well-Architected Framework validation, multi-model comparison, and Infrastructure as Code generation.
 
 Beyond editable **topology** diagrams, the app can also produce polished, whiteboard-style **Blueprint** diagrams (BETA) as shareable PNGs — ideal for presentations and design reviews.
 
@@ -55,7 +55,7 @@ architect.
 ## ✨ Key Features
 
 ### 🤖 AI-Powered Architecture Generation
-Describe your architecture in plain English and let any of **14 AI models** (GPT-5.1, GPT-5.2, GPT-5.4, GPT-5.4 Mini, GPT-5.6 Sol, GPT-5.6 Terra, GPT-5.6 Luna, DeepSeek V3.2 Speciale, DeepSeek V4 Pro, Grok 4.1 Fast, Grok 4.3, Mistral Large 3, Kimi K2.5, or Kimi K2.7 Code) automatically create a complete, professionally organized diagram with logical service groupings.
+Describe your architecture in plain English and let any of **15 AI models** (GPT-5.1, GPT-5.2, GPT-5.4, GPT-5.4 Mini, GPT-5.6 Sol, GPT-5.6 Terra, GPT-5.6 Luna, Claude Opus 5, DeepSeek V3.2 Speciale, DeepSeek V4 Pro, Grok 4.1 Fast, Grok 4.3, Mistral Large 3, Kimi K2.5, or Kimi K2.7 Code) automatically create a complete, professionally organized diagram with logical service groupings.
 
 **13 curated example prompts** included — from simple web apps to complex enterprise scenarios:
 - Zero Trust enterprise networks with security segmentation
@@ -101,7 +101,7 @@ Validate your architecture against all five WAF pillars:
 Select specific recommendations and automatically regenerate an improved architecture. During analysis, a dismiss hint lets you close the panel and return later via the **Validation Score** button in the toolbar.
 
 ### 🔀 Multi-Model Comparison
-Compare AI output side-by-side across all 14 models:
+Compare AI output side-by-side across all 15 models:
 
 - **Architecture Comparison** — Run the same prompt through multiple models and compare service counts, connection counts, groups, workflow steps, token usage, and latency
 - **Validation Comparison** — Run WAF validation across models and compare overall scores, pillar-level scores, severity breakdowns, finding counts, and quick wins. An inline WAF info box explains the five pillars being assessed
@@ -387,7 +387,7 @@ graph TB
     end
 
     subgraph External["External APIs"]
-        OpenAI[Azure OpenAI<br/>14 models]
+        OpenAI[Azure OpenAI + Microsoft Foundry<br/>15 models]
         LearnMCP[Microsoft Learn MCP]
         PricingAPI[Azure Retail Prices API]
         Cosmos[(Azure Cosmos DB)]
@@ -581,7 +581,7 @@ VITE_AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com/
 VITE_AZURE_OPENAI_API_KEY=your-api-key-here   # optional fallback; bridged to the server only, never bundled
 VITE_AZURE_OPENAI_DEPLOYMENT=your-default-deployment
 
-# Multi-model deployments (14 models)
+# Multi-model deployments (15 models)
 # OpenAI GPT-5.x family
 VITE_AZURE_OPENAI_DEPLOYMENT_GPT51=your-gpt51-deployment
 VITE_AZURE_OPENAI_DEPLOYMENT_GPT52=your-gpt52-deployment
@@ -590,6 +590,11 @@ VITE_AZURE_OPENAI_DEPLOYMENT_GPT54MINI=your-gpt54-mini-deployment
 VITE_AZURE_OPENAI_DEPLOYMENT_GPT56SOL=your-gpt56-sol-deployment
 VITE_AZURE_OPENAI_DEPLOYMENT_GPT56TERRA=your-gpt56-terra-deployment
 VITE_AZURE_OPENAI_DEPLOYMENT_GPT56LUNA=your-gpt56-luna-deployment
+# Anthropic Messages API in Microsoft Foundry
+VITE_AZURE_FOUNDRY_ENDPOINT=https://your-resource.services.ai.azure.com/
+VITE_AZURE_FOUNDRY_DEPLOYMENT_CLAUDE_OPUS5=your-claude-opus-5-deployment
+AZURE_FOUNDRY_ENDPOINT=https://your-resource.services.ai.azure.com/
+AZURE_FOUNDRY_ALLOWED_DEPLOYMENTS=your-claude-opus-5-deployment
 # Partner models (Chat Completions API)
 VITE_AZURE_OPENAI_DEPLOYMENT_DEEPSEEK=your-deepseek-v32-speciale-deployment
 VITE_AZURE_OPENAI_DEPLOYMENT_DEEPSEEK_V4_PRO=your-deepseek-v4-pro-deployment
@@ -689,6 +694,8 @@ docker build -t azure-diagram-builder \
   --build-arg VITE_AZURE_OPENAI_DEPLOYMENT_GPT56SOL="..." \
   --build-arg VITE_AZURE_OPENAI_DEPLOYMENT_GPT56TERRA="..." \
   --build-arg VITE_AZURE_OPENAI_DEPLOYMENT_GPT56LUNA="..." \
+  --build-arg VITE_AZURE_FOUNDRY_ENDPOINT="https://your-resource.services.ai.azure.com/" \
+  --build-arg VITE_AZURE_FOUNDRY_DEPLOYMENT_CLAUDE_OPUS5="..." \
   --build-arg VITE_AZURE_OPENAI_DEPLOYMENT_DEEPSEEK="..." \
   --build-arg VITE_AZURE_OPENAI_DEPLOYMENT_DEEPSEEK_V4_PRO="..." \
   --build-arg VITE_AZURE_OPENAI_DEPLOYMENT_GROK4FAST="..." \
@@ -707,6 +714,8 @@ docker build -t azure-diagram-builder \
 #   served by the co-located token server behind nginx.
 docker run -p 80:80 \
   -e AZURE_OPENAI_ENDPOINT="https://your-resource.openai.azure.com/" \
+  -e AZURE_FOUNDRY_ENDPOINT="https://your-resource.services.ai.azure.com/" \
+  -e AZURE_FOUNDRY_ALLOWED_DEPLOYMENTS="your-claude-opus-5-deployment" \
   azure-diagram-builder
 ```
 
@@ -831,7 +840,7 @@ az ad sp update --id <SP_OBJECT_ID> --set appRoleAssignmentRequired=true
 | Category | Technologies |
 |----------|-------------|
 | **Frontend** | React 18, TypeScript, React Flow, Vite |
-| **AI** | Azure OpenAI (GPT-5.1, GPT-5.2, GPT-5.4, GPT-5.4 Mini, GPT-5.6 Sol, GPT-5.6 Terra, GPT-5.6 Luna) + partner models (DeepSeek V3.2 Speciale, DeepSeek V4 Pro, Grok 4.1 Fast, Grok 4.3, Mistral Large 3, Kimi K2.5, Kimi K2.7 Code), Dual API (Responses + Chat Completions) |
+| **AI** | Azure OpenAI + Microsoft Foundry: GPT-5.x, Claude Opus 5, and partner models; Responses, Chat Completions, and Anthropic Messages APIs |
 | **Styling** | CSS3, html-to-image |
 | **Serving** | nginx:alpine (Docker), Vite dev server (local) |
 | **APIs** | Azure Retail Prices API |
@@ -879,7 +888,7 @@ azure-diagrams/
 │   │   ├── avatarPresenter.ts   # Talking avatar: Speech SDK, ICE relay, word-boundary captions
 │   │   └── telemetryService.ts  # Application Insights telemetry
 │   ├── stores/               # State management
-│   │   └── modelSettingsStore.ts  # Multi-model settings (14 models)
+│   │   └── modelSettingsStore.ts  # Multi-model settings (15 models)
 │   ├── hooks/                # Shared React hooks
 │   │   └── useDraggableResizable.ts  # Pointer-capture drag-to-move + drag-to-resize hook
 │   ├── data/                 # Static data
@@ -1002,9 +1011,9 @@ Compare AI model critiques, then click **"Present"** to have a photorealistic **
 - **Build-time feature flag** — the "Present" button is only rendered when `VITE_SPEECH_REGION` is set at image build time
 
 #### 🔒 Server-side AI proxy
-The same token server also brokers Azure OpenAI so credentials never reach the browser:
+The same token server also brokers Azure OpenAI and Microsoft Foundry so credentials never reach the browser:
 
-- **`/api/openai`** — proxies architecture generation, chat refinement, validation, and deployment-guide calls to Azure OpenAI. Prefers managed identity (`DefaultAzureCredential`) and falls back to `AZURE_OPENAI_API_KEY` when set. Requires `AZURE_OPENAI_ENDPOINT` at runtime. The client only sends the request body, deployment name, and API format — the key is never bundled.
+- **`/api/openai`** — proxies architecture generation, chat refinement, validation, and deployment-guide calls. Azure OpenAI uses `AZURE_OPENAI_ENDPOINT`; Claude Opus 5 uses the Microsoft Foundry Anthropic Messages endpoint configured by `AZURE_FOUNDRY_ENDPOINT` and the fail-closed `AZURE_FOUNDRY_ALLOWED_DEPLOYMENTS` allowlist. Both prefer managed identity (`DefaultAzureCredential`) with optional server-side API-key fallback. The client only sends the request body, deployment name, and API format — keys are never bundled.
 - **`/api/docs-search`** — grounds deployment guides in official Microsoft Learn documentation by calling the Microsoft Learn MCP endpoint server-side and returning citable `{title, url, excerpt}` results. Best-effort (soft-fails to empty).
 
 #### 🔧 Infrastructure

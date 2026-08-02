@@ -74,3 +74,62 @@ export function fitAllGroupsToContent(nodes: Node[]): Node[] {
   }
   return result;
 }
+
+function buildAbsolutePositions(nodes: Node[]): Map<string, { x: number; y: number }> {
+  const nodesById = new Map(nodes.map(node => [node.id, node]));
+  const positions = new Map<string, { x: number; y: number }>();
+
+  const resolve = (node: Node, visiting = new Set<string>()): { x: number; y: number } => {
+    const cached = positions.get(node.id);
+    if (cached) return cached;
+    if (visiting.has(node.id)) return node.position;
+
+    const nextVisiting = new Set(visiting);
+    nextVisiting.add(node.id);
+    const parent = node.parentNode ? nodesById.get(node.parentNode) : undefined;
+    const position = parent
+      ? {
+          x: resolve(parent, nextVisiting).x + node.position.x,
+          y: resolve(parent, nextVisiting).y + node.position.y,
+        }
+      : node.position;
+    positions.set(node.id, position);
+    return position;
+  };
+
+  nodes.forEach(node => resolve(node));
+  return positions;
+}
+
+/**
+ * Detach direct children from groups that are being deleted while preserving
+ * each child's absolute canvas position.
+ */
+export function detachChildrenFromGroups(nodes: Node[], groupIds: Iterable<string>): Node[] {
+  const deletedGroups = new Set(groupIds);
+  if (deletedGroups.size === 0) return nodes;
+  const absolutePositions = buildAbsolutePositions(nodes);
+
+  return nodes.map(node => {
+    if (!node.parentNode || !deletedGroups.has(node.parentNode)) return node;
+    return {
+      ...node,
+      parentNode: undefined,
+      extent: undefined,
+      position: absolutePositions.get(node.id) || node.position,
+    };
+  });
+}
+
+/**
+ * Remove selected nodes without implicitly removing or hiding the contents of
+ * a selected group.
+ */
+export function deleteNodesPreservingGroupChildren(nodes: Node[], nodeIds: Iterable<string>): Node[] {
+  const deletedIds = new Set(nodeIds);
+  const deletedGroupIds = nodes
+    .filter(node => deletedIds.has(node.id) && node.type === 'groupNode')
+    .map(node => node.id);
+  return detachChildrenFromGroups(nodes, deletedGroupIds)
+    .filter(node => !deletedIds.has(node.id));
+}

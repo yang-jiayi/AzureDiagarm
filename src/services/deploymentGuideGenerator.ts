@@ -16,14 +16,12 @@ import {
   parseApiResponse,
   callAzureOpenAIProxy,
   createOpenAIProxyError,
+  getApiFormatLabel,
+  isAiBackendConfigured,
 } from './apiHelper';
 import type { Language } from '../i18n/LanguageContext';
 import { getPromptLanguageInstruction } from '../i18n/localization';
 import { searchMicrosoftDocs, renderGroundingBlock, DocSource } from './docsGroundingService';
-
-// Non-secret flag indicating the AI backend is wired up. Credentials live
-// server-side; all calls go through the /api/openai proxy.
-const endpoint = import.meta.env.VITE_AZURE_OPENAI_ENDPOINT;
 
 // Token usage metrics returned from Azure OpenAI API
 export interface AIMetrics {
@@ -51,14 +49,15 @@ async function callAzureOpenAI(messages: any[], maxTokens: number = 10000): Prom
     throw new Error(`No deployment configured for ${settings.model}. Please check your .env file.`);
   }
 
-  if (!endpoint) {
-    throw new Error('Azure OpenAI is not configured');
-  }
-
   // Determine API format
   const apiFormat = modelConfig.apiFormat || 'responses';
+  if (!isAiBackendConfigured(apiFormat)) {
+    throw new Error(apiFormat === 'anthropic-messages'
+      ? 'Microsoft Foundry is not configured'
+      : 'Azure OpenAI is not configured');
+  }
 
-  console.log(`🌐 Calling Azure OpenAI with ${modelConfig.displayName} | API: ${apiFormat === 'chat-completions' ? 'Chat Completions' : 'Responses'}`);
+  console.log(`🌐 Calling AI model service with ${modelConfig.displayName} | API: ${getApiFormatLabel(apiFormat)}`);
   
   // Start timing
   const startTime = performance.now();
@@ -74,7 +73,7 @@ async function callAzureOpenAI(messages: any[], maxTokens: number = 10000): Prom
     reasoningEffort: settings.reasoningEffort,
   });
   
-  console.log(`🤖 Using ${modelConfig.displayName}${modelConfig.isReasoning ? ` (reasoning: ${settings.reasoningEffort})` : ''} | max_tokens: ${effectiveMaxTokens} | API: ${apiFormat === 'chat-completions' ? 'Chat Completions' : 'Responses'}`);
+  console.log(`🤖 Using ${modelConfig.displayName}${modelConfig.isReasoning ? ` (reasoning: ${settings.reasoningEffort})` : ''} | max_tokens: ${effectiveMaxTokens} | API: ${getApiFormatLabel(apiFormat)}`);
 
   const proxyResult = await callAzureOpenAIProxy({
     apiFormat,
@@ -172,11 +171,6 @@ export async function generateDeploymentGuide(
   estimatedCost?: number,
   language: Language = 'en',
 ): Promise<DeploymentGuide> {
-  
-  if (!endpoint) {
-    throw new Error('Azure OpenAI configuration missing. Please check your .env file.');
-  }
-  
   const settings = getModelSettingsForFeature('deploymentGuide');
   const modelConfig = MODEL_CONFIG[settings.model];
 

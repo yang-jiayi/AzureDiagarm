@@ -71,10 +71,17 @@ fi
 # DefaultAzureCredential) is used when AZURE_OPENAI_API_KEY is empty.
 export AZURE_OPENAI_ENDPOINT="${AZURE_OPENAI_ENDPOINT:-${VITE_AZURE_OPENAI_ENDPOINT:-}}"
 export AZURE_OPENAI_API_KEY="${AZURE_OPENAI_API_KEY:-${VITE_AZURE_OPENAI_API_KEY:-}}"
+export AZURE_FOUNDRY_ENDPOINT="${AZURE_FOUNDRY_ENDPOINT:-${VITE_AZURE_FOUNDRY_ENDPOINT:-}}"
+export AZURE_FOUNDRY_API_KEY="${AZURE_FOUNDRY_API_KEY:-${VITE_AZURE_FOUNDRY_API_KEY:-}}"
 if [ -n "${AZURE_OPENAI_ENDPOINT:-}" ]; then
   ok "OpenAI proxy endpoint: $AZURE_OPENAI_ENDPOINT (key auth: $([ -n "${AZURE_OPENAI_API_KEY:-}" ] && echo yes || echo 'no — managed identity'))"
 else
-  warn "AZURE_OPENAI_ENDPOINT / VITE_AZURE_OPENAI_ENDPOINT not set — /api/openai will return 503 (AI generation/chat disabled)"
+  warn "AZURE_OPENAI_ENDPOINT / VITE_AZURE_OPENAI_ENDPOINT not set — Azure OpenAI models are disabled"
+fi
+if [ -n "${AZURE_FOUNDRY_ENDPOINT:-}" ]; then
+  ok "Foundry Anthropic endpoint: $AZURE_FOUNDRY_ENDPOINT (key auth: $([ -n "${AZURE_FOUNDRY_API_KEY:-}" ] && echo yes || echo 'no — managed identity'))"
+else
+  warn "AZURE_FOUNDRY_ENDPOINT / VITE_AZURE_FOUNDRY_ENDPOINT not set — Claude models are disabled"
 fi
 
 # -- Speech vars (optional) -----------------------------------------------------

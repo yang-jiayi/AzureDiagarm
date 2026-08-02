@@ -22,6 +22,10 @@ param azureOpenAiEndpoint string
 param azureOpenAiAllowedDeployments string = ''
 @secure()
 param azureOpenAiApiKey string
+param azureFoundryEndpoint string = ''
+param azureFoundryAllowedDeployments string = ''
+@secure()
+param azureFoundryApiKey string = ''
 param feedbackEmailEndpoint string = ''
 param feedbackEmailSender string = ''
 param feedbackEmailRecipient string = ''
@@ -311,11 +315,18 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
   properties: {
     managedEnvironmentId: caEnv.id
     configuration: {
-      secrets: empty(azureOpenAiApiKey)
-        ? []
-        : [
-            { name: 'azure-openai-api-key', value: azureOpenAiApiKey }
-          ]
+      secrets: concat(
+        empty(azureOpenAiApiKey)
+          ? []
+          : [
+              { name: 'azure-openai-api-key', value: azureOpenAiApiKey }
+            ],
+        empty(azureFoundryApiKey)
+          ? []
+          : [
+              { name: 'azure-foundry-api-key', value: azureFoundryApiKey }
+            ]
+      )
       ingress: {
         external: true
         targetPort: 80
@@ -340,6 +351,8 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
             { name: 'AZURE_CLIENT_ID', value: appIdentity.properties.clientId }
             { name: 'AZURE_OPENAI_ENDPOINT', value: azureOpenAiEndpoint }
             { name: 'AZURE_OPENAI_ALLOWED_DEPLOYMENTS', value: azureOpenAiAllowedDeployments }
+            { name: 'AZURE_FOUNDRY_ENDPOINT', value: azureFoundryEndpoint }
+            { name: 'AZURE_FOUNDRY_ALLOWED_DEPLOYMENTS', value: azureFoundryAllowedDeployments }
             { name: 'OPENAI_RATE_LIMIT_PER_HOUR', value: '120' }
             { name: 'FEEDBACK_EMAIL_ENDPOINT', value: feedbackEmailEndpoint }
             { name: 'FEEDBACK_EMAIL_SENDER', value: feedbackEmailSender }
@@ -362,11 +375,19 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
               name: 'PUBLIC_URL'
               value: 'https://${abbrs.appContainerApps}diagram-builder-${resourceToken}.${caEnv.properties.defaultDomain}'
             }
-          ], empty(azureOpenAiApiKey)
-            ? []
-            : [
-                { name: 'AZURE_OPENAI_API_KEY', secretRef: 'azure-openai-api-key' }
-              ])
+          ],
+          concat(
+            empty(azureOpenAiApiKey)
+              ? []
+              : [
+                  { name: 'AZURE_OPENAI_API_KEY', secretRef: 'azure-openai-api-key' }
+                ],
+            empty(azureFoundryApiKey)
+              ? []
+              : [
+                  { name: 'AZURE_FOUNDRY_API_KEY', secretRef: 'azure-foundry-api-key' }
+                ]
+          ))
         }
       ]
       scale: {

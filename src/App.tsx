@@ -103,7 +103,11 @@ import {
   type LayoutEngineType,
 } from './utils/layoutPresets';
 import { generateModelFilename, setSourceModel, clearSourceModel } from './utils/modelNaming';
-import { fitAllGroupsToContent } from './utils/groupUtils';
+import {
+  deleteNodesPreservingGroupChildren,
+  detachChildrenFromGroups,
+  fitAllGroupsToContent,
+} from './utils/groupUtils';
 import {
   buildAbsolutePositionMap,
   preserveManualLayout,
@@ -1024,7 +1028,7 @@ function App() {
           // Remove selected nodes
           if (selectedNodes.length > 0) {
             const nodeIdsToRemove = selectedNodes.map(n => n.id);
-            setNodes(nds => nds.filter(n => !nodeIdsToRemove.includes(n.id)));
+            setNodes(nds => deleteNodesPreservingGroupChildren(nds, nodeIdsToRemove));
             
             // Also remove edges connected to deleted nodes
             setEdges(eds => eds.filter(edge => 
@@ -1750,34 +1754,7 @@ function App() {
     const deletedGroupIds = deleted.filter(n => n.type === 'groupNode').map(n => n.id);
     
     if (deletedGroupIds.length > 0) {
-      setNodes((nds) => nds.map((node) => {
-        // If this node's parent is being deleted, convert to absolute position
-        if (node.parentNode && deletedGroupIds.includes(node.parentNode)) {
-          const parentGroup = deleted.find(n => n.id === node.parentNode);
-          
-          if (parentGroup) {
-            // Convert from parent-relative to absolute canvas coordinates
-            const absolutePosition = {
-              x: parentGroup.position.x + node.position.x,
-              y: parentGroup.position.y + node.position.y,
-            };
-            
-            return {
-              ...node,
-              parentNode: undefined,
-              position: absolutePosition,
-              extent: undefined,
-            };
-          }
-
-          return {
-            ...node,
-            parentNode: undefined,
-            extent: undefined,
-          };
-        }
-        return node;
-      }));
+      setNodes((nds) => detachChildrenFromGroups(nds, deletedGroupIds));
     }
   }, [setNodes]);
 
@@ -2731,6 +2708,64 @@ function App() {
     enabled: nodes.length > 0,
     onLoad: applyFlowObject,
   });
+
+  const startFreshDiagram = useCallback(async (): Promise<boolean> => {
+    const preserveAsCopy = cloudSync.context?.role === 'viewer';
+    const confirmed = window.confirm(localize(language, {
+      en: preserveAsCopy
+        ? 'Start a new diagram? Your current view will first be saved as a personal copy, then the canvas will be cleared.'
+        : 'Start a new diagram? The current cloud diagram will remain saved, and the canvas will be cleared.',
+      ja: preserveAsCopy
+        ? '新しい図面を作成しますか？現在の内容を先に個人用コピーとして保存してから、キャンバスをクリアします。'
+        : '新しい図面を作成しますか？現在のクラウド図面は保存されたまま残り、キャンバスがクリアされます。',
+    }));
+    if (!confirmed) return false;
+
+    try {
+      if (preserveAsCopy) {
+        await cloudSync.saveAsCopy();
+      } else {
+        await cloudSync.saveNow();
+      }
+    } catch {
+      const discardUnsavedChanges = window.confirm(localize(language, {
+        en: 'The current diagram could not be saved to the cloud. Start a new diagram anyway and discard these unsaved changes?',
+        ja: '現在の図面をクラウドに保存できませんでした。未保存の変更を破棄して、新しい図面を開始しますか？',
+      }));
+      if (!discardUnsavedChanges) return false;
+    }
+    trackStartFresh();
+    cloudSync.reset();
+    setNodes([]);
+    setEdges([]);
+    setArchitecturePrompt('');
+    setOriginalPrompt('');
+    setWorkflow([]);
+    setHighlightedServices([]);
+    setEdgeContextMenu(null);
+    setGeneratedWithModel(null);
+    setValidationResult(null);
+    setDeploymentGuide(null);
+    setIaCBaseline(null);
+    setDriftPlanSummary(null);
+    setReferenceImageUrl(null);
+    setLastReferenceArchitecture(null);
+    setLastBlueprintArchitecture(null);
+    setPricingScenarios([]);
+    setTitleBlockData({
+      architectureName: translate('Untitled Architecture'),
+      author: translate('Azure Architect'),
+      date: new Date().toISOString().split('T')[0],
+      version: '1.0',
+    });
+    return true;
+  }, [
+    cloudSync,
+    language,
+    setEdges,
+    setNodes,
+    translate,
+  ]);
 
   const iacComparison = useMemo(
     () => compareDiagramToBaseline(nodes, iacBaseline),
@@ -4589,26 +4624,7 @@ function App() {
                   })}
                 </button>
                 <button
-                  onClick={() => {
-                    if (window.confirm(translate('Start a fresh session? This will clear the current diagram and all unsaved changes.'))) {
-                      trackStartFresh();
-                      cloudSync.reset();
-                      setNodes([]);
-                      setEdges([]);
-                      setArchitecturePrompt('');
-                      setOriginalPrompt('');
-                      setWorkflow([]);
-                      setGeneratedWithModel(null);
-                      setValidationResult(null);
-                      setDeploymentGuide(null);
-                      setIaCBaseline(null);
-                      setDriftPlanSummary(null);
-                      setReferenceImageUrl(null);
-                      setLastReferenceArchitecture(null);
-                      setLastBlueprintArchitecture(null);
-                      setTitleBlockData({ architectureName: 'Untitled Architecture', author: 'Azure Architect', date: new Date().toISOString().split('T')[0], version: '1.0' });
-                    }
-                  }}
+                  onClick={() => void startFreshDiagram()}
                   className="btn btn-secondary"
                   title={t("Clear diagram and start fresh")}
                 >
@@ -5064,6 +5080,7 @@ function App() {
             onDragOver={onDragOver}
             nodeTypes={nodeTypes}
             edgeTypes={edgeTypes}
+            deleteKeyCode={null}
             fitView
             snapToGrid={true}
             snapGrid={[20, 20]}
@@ -5558,6 +5575,7 @@ Return the IMPROVED architecture in the same JSON format as before with proper g
         onResetCurrent={cloudSync.reset}
         onReloadRemote={cloudSync.reloadRemote}
         onSaveAsCopy={cloudSync.saveAsCopy}
+        onCreateNew={startFreshDiagram}
       />
       <PricingScenarioModal
         isOpen={isPricingScenarioModalOpen}
