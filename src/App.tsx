@@ -81,7 +81,10 @@ import {
   savePricingScenarios,
 } from './services/pricingScenarioService';
 import { createSnapshot, DiagramVersion, getVersion } from './services/versionStorageService';
-import { useCloudDiagramSync } from './hooks/useCloudDiagramSync';
+import {
+  CloudDiagramOperationCancelledError,
+  useCloudDiagramSync,
+} from './hooks/useCloudDiagramSync';
 import { exportAndDownloadDrawio } from './services/drawioExporter';
 import { buildVsdxBlob } from './services/visioVsdxExporter';
 import { exportDiagramAsPptx, exportArchitectureDeck, type DeckService } from './services/pptxExporter';
@@ -3004,14 +3007,12 @@ function App() {
         : '新しい図面を作成しますか？現在のクラウド図面は保存されたまま残り、キャンバスがクリアされます。',
     }));
     if (!confirmed) return false;
-
     try {
-      if (preserveAsCopy) {
-        await cloudSync.saveAsCopy();
-      } else {
-        await cloudSync.saveNow();
-      }
-    } catch {
+      preserveAsCopy
+        ? await cloudSync.saveAsCopy()
+        : await cloudSync.saveNow();
+    } catch (error) {
+      if (error instanceof CloudDiagramOperationCancelledError) return false;
       const discardUnsavedChanges = window.confirm(localize(language, {
         en: 'The current diagram could not be saved to the cloud. Start a new diagram anyway and discard these unsaved changes?',
         ja: '現在の図面をクラウドに保存できませんでした。未保存の変更を破棄して、新しい図面を開始しますか？',

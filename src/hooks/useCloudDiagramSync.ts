@@ -15,6 +15,7 @@ import {
   updateCloudDiagram,
   updateSharedCloudDiagram,
 } from '../services/cloudDiagramService';
+import { OperationGeneration } from '../utils/operationGeneration';
 
 const CONTEXT_KEY = 'azurediagarm.cloud-document.v1';
 const SHARE_HASH_PREFIX = '#share-';
@@ -30,6 +31,13 @@ export type CloudSyncStatus =
   | 'unavailable'
   | 'conflict'
   | 'error';
+
+export class CloudDiagramOperationCancelledError extends Error {
+  constructor() {
+    super('The cloud diagram operation was superseded by a newer document action.');
+    this.name = 'CloudDiagramOperationCancelledError';
+  }
+}
 
 interface PendingSave {
   diagramName: string;
@@ -131,6 +139,7 @@ export function useCloudDiagramSync({
   const retryTimerRef = useRef<number | null>(null);
   const lastSaveErrorRef = useRef<Error | null>(null);
   const mountedRef = useRef(true);
+  const documentGenerationRef = useRef(new OperationGeneration());
   const serializedPayload = JSON.stringify(payload);
 
   latestRef.current = {
@@ -151,9 +160,23 @@ export function useCloudDiagramSync({
   }, []);
 
   useEffect(() => () => {
+    documentGenerationRef.current.advance();
     mountedRef.current = false;
     clearTimers();
   }, [clearTimers]);
+
+  const beginDocumentGeneration = useCallback(
+    () => documentGenerationRef.current.advance(),
+    [],
+  );
+
+  const isCurrentDocumentGeneration = useCallback(
+    (generation: number) => (
+      mountedRef.current
+      && documentGenerationRef.current.isCurrent(generation)
+    ),
+    [],
+  );
 
   const storeDocument = useCallback((
     nextDocument: CloudDiagramDocument,
@@ -169,6 +192,7 @@ export function useCloudDiagramSync({
   }, []);
 
   const clearDocument = useCallback(() => {
+    beginDocumentGeneration();
     clearTimers();
     documentRef.current = null;
     contextRef.current = null;
@@ -181,14 +205,18 @@ export function useCloudDiagramSync({
     setErrorMessage('');
     setStatus('idle');
     writeStoredContext(null);
-  }, [clearTimers]);
+  }, [beginDocumentGeneration, clearTimers]);
 
   const activateDocument = useCallback((
     nextDocument: CloudDiagramDocument,
     nextContext?: CloudDocumentContext,
     applyPayload = true,
+    expectedGeneration?: number,
   ) => {
+    const generation = expectedGeneration ?? beginDocumentGeneration();
+    if (!isCurrentDocumentGeneration(generation)) return null;
     clearTimers();
+    pendingSaveRef.current = null;
     const resolvedContext = nextContext || contextForDocument(nextDocument);
     const normalized = storeDocument(nextDocument, resolvedContext);
     lastSavedSerializedRef.current = JSON.stringify(normalized.payload);
@@ -197,25 +225,36 @@ export function useCloudDiagramSync({
     setLastSavedAt(normalized.updatedAt || new Date().toISOString());
     setStatus(resolvedContext.role === 'viewer' ? 'readonly' : 'saved');
     if (applyPayload) onLoad(normalized.payload);
-  }, [clearTimers, onLoad, storeDocument]);
+    return normalized;
+  }, [
+    beginDocumentGeneration,
+    clearTimers,
+    isCurrentDocumentGeneration,
+    onLoad,
+    storeDocument,
+  ]);
 
   const loadContext = useCallback(async (
     nextContext: CloudDocumentContext,
     applyPayload = true,
   ) => {
+    const generation = beginDocumentGeneration();
+    clearTimers();
+    pendingSaveRef.current = null;
     setStatus('loading');
     setErrorMessage('');
     try {
       const nextDocument = nextContext.access === 'shared' && nextContext.shareToken
         ? await getSharedCloudDiagram(nextContext.shareToken)
         : await getCloudDiagram(nextContext.documentId);
-      activateDocument(nextDocument, {
+      if (!isCurrentDocumentGeneration(generation)) return null;
+      return activateDocument(nextDocument, {
         ...nextContext,
         documentId: nextDocument.id,
         role: nextDocument.role || nextContext.role,
-      }, applyPayload);
-      return nextDocument;
+      }, applyPayload, generation);
     } catch (error) {
+      if (!isCurrentDocumentGeneration(generation)) return null;
       const apiError = error instanceof CloudDiagramApiError ? error : null;
       if (apiError?.status === 404 || apiError?.status === 403) {
         clearDocument();
@@ -225,18 +264,21 @@ export function useCloudDiagramSync({
       }
       return null;
     }
-  }, [activateDocument, clearDocument]);
+  }, [
+    activateDocument,
+    beginDocumentGeneration,
+    clearDocument,
+    clearTimers,
+    isCurrentDocumentGeneration,
+  ]);
 
   useEffect(() => {
     let cancelled = false;
     const initialize = async () => {
       const hash = window.location.hash;
       if (hash.startsWith('#version-')) {
-        writeStoredContext(null);
+        clearDocument();
         if (!cancelled) {
-          setContext(null);
-          contextRef.current = null;
-          setStatus('idle');
           setInitialized(true);
         }
         return;
@@ -283,7 +325,7 @@ export function useCloudDiagramSync({
     return () => {
       cancelled = true;
     };
-  }, [loadContext]);
+  }, [clearDocument, loadContext]);
 
   const drainPendingSave = useCallback(async (): Promise<void> => {
     if (saveInFlightRef.current) return saveInFlightRef.current;
@@ -294,6 +336,7 @@ export function useCloudDiagramSync({
         pendingSaveRef.current = null;
         if (candidate.serialized === lastSavedSerializedRef.current) continue;
 
+        const generation = documentGenerationRef.current.current();
         const currentContext = contextRef.current;
         const currentDocument = documentRef.current;
         if (currentContext?.role === 'viewer') {
@@ -332,11 +375,13 @@ export function useCloudDiagramSync({
             savedContext = currentContext;
           }
 
+          if (!isCurrentDocumentGeneration(generation)) continue;
           const normalized = storeDocument(saved, savedContext);
           lastSavedSerializedRef.current = candidate.serialized;
           setLastSavedAt(normalized.updatedAt || new Date().toISOString());
           setStatus(savedContext.role === 'viewer' ? 'readonly' : 'saved');
         } catch (error) {
+          if (!isCurrentDocumentGeneration(generation)) continue;
           const apiError = error instanceof CloudDiagramApiError ? error : null;
           lastSaveErrorRef.current = error instanceof Error
             ? error
@@ -375,7 +420,7 @@ export function useCloudDiagramSync({
 
     saveInFlightRef.current = operation;
     return operation;
-  }, [storeDocument]);
+  }, [isCurrentDocumentGeneration, storeDocument]);
 
   useEffect(() => {
     if (!initialized || !enabled) return;
@@ -411,15 +456,19 @@ export function useCloudDiagramSync({
 
   const saveNow = useCallback(async (): Promise<CloudDiagramDocument | null> => {
     if (!enabled && !documentRef.current) return null;
+    const generation = documentGenerationRef.current.current();
     if (debounceTimerRef.current !== null) {
       window.clearTimeout(debounceTimerRef.current);
       debounceTimerRef.current = null;
     }
     pendingSaveRef.current = latestRef.current;
     await drainPendingSave();
+    if (!isCurrentDocumentGeneration(generation)) {
+      throw new CloudDiagramOperationCancelledError();
+    }
     if (lastSaveErrorRef.current) throw lastSaveErrorRef.current;
     return documentRef.current;
-  }, [drainPendingSave, enabled]);
+  }, [drainPendingSave, enabled, isCurrentDocumentGeneration]);
 
   const saveSnapshot = useCallback(async (notes: string): Promise<CloudDiagramVersion | null> => {
     const currentDocument = await saveNow();
@@ -431,11 +480,11 @@ export function useCloudDiagramSync({
   const reloadRemote = useCallback(async () => {
     const currentContext = contextRef.current;
     if (!currentContext) return null;
-    pendingSaveRef.current = null;
     return loadContext(currentContext, true);
   }, [loadContext]);
 
   const saveAsCopy = useCallback(async () => {
+    let operationGeneration = beginDocumentGeneration();
     clearTimers();
     pendingSaveRef.current = null;
     const candidate = latestRef.current;
@@ -445,17 +494,37 @@ export function useCloudDiagramSync({
 
     try {
       const saved = await createCloudDiagram(candidate.diagramName, candidate.payload);
+      if (!isCurrentDocumentGeneration(operationGeneration)) {
+        throw new CloudDiagramOperationCancelledError();
+      }
       const savedContext: CloudDocumentContext = {
         documentId: saved.id,
         access: 'owner',
         role: 'owner',
       };
-      const normalized = storeDocument(saved, savedContext);
+      const normalized = activateDocument(saved, savedContext, false);
+      if (!normalized) throw new CloudDiagramOperationCancelledError();
       lastSavedSerializedRef.current = candidate.serialized;
       setLastSavedAt(normalized.updatedAt || new Date().toISOString());
       setStatus('saved');
-      return normalized;
+
+      const activationGeneration = documentGenerationRef.current.current();
+      operationGeneration = activationGeneration;
+      const latestAfterCopy = latestRef.current;
+      if (latestAfterCopy.serialized !== candidate.serialized) {
+        pendingSaveRef.current = latestAfterCopy;
+        await drainPendingSave();
+        if (!isCurrentDocumentGeneration(activationGeneration)) {
+          throw new CloudDiagramOperationCancelledError();
+        }
+        if (lastSaveErrorRef.current) throw lastSaveErrorRef.current;
+      }
+      return documentRef.current;
     } catch (error) {
+      if (error instanceof CloudDiagramOperationCancelledError) throw error;
+      if (!isCurrentDocumentGeneration(operationGeneration)) {
+        throw new CloudDiagramOperationCancelledError();
+      }
       const apiError = error instanceof CloudDiagramApiError ? error : null;
       lastSaveErrorRef.current = error instanceof Error
         ? error
@@ -464,7 +533,13 @@ export function useCloudDiagramSync({
       setStatus(apiError?.status === 503 ? 'unavailable' : 'offline');
       throw lastSaveErrorRef.current;
     }
-  }, [clearTimers, storeDocument]);
+  }, [
+    activateDocument,
+    beginDocumentGeneration,
+    clearTimers,
+    drainPendingSave,
+    isCurrentDocumentGeneration,
+  ]);
 
   const openDocument = useCallback((
     nextDocument: CloudDiagramDocument,
@@ -482,14 +557,16 @@ export function useCloudDiagramSync({
     baseDocument: CloudDiagramDocument,
     baseContext: CloudDocumentContext,
   ) => {
+    beginDocumentGeneration();
     clearTimers();
     const normalized = storeDocument(baseDocument, baseContext);
     lastSavedSerializedRef.current = JSON.stringify(normalized.payload);
     pendingSaveRef.current = null;
+    lastSaveErrorRef.current = null;
     setErrorMessage('');
     setStatus(baseContext.role === 'viewer' ? 'readonly' : 'saved');
     onLoad(version.payload);
-  }, [clearTimers, onLoad, storeDocument]);
+  }, [beginDocumentGeneration, clearTimers, onLoad, storeDocument]);
 
   const replaceCurrentDocument = useCallback((nextDocument: CloudDiagramDocument) => {
     const currentContext = contextRef.current;
