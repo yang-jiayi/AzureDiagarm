@@ -1343,7 +1343,7 @@ function App() {
         : '';
       alert([failedMessage, skippedMessage].filter(Boolean).join('\n'));
     }
-  }, [language, nodes, setNodes]);
+  }, [cancelPendingPricingEditorOpen, language, nodes, setNodes]);
 
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
@@ -1934,7 +1934,13 @@ function App() {
       return edge;
     }));
     closeEdgeContextMenu();
-  }, [animateConnections, setEdges, closeEdgeContextMenu]);
+  }, [
+    animateConnections,
+    closeEdgeContextMenu,
+    handleEdgeLabelChange,
+    handleEdgeLabelOffsetChange,
+    setEdges,
+  ]);
 
   const onDragOver = useCallback((event: React.DragEvent) => {
     event.preventDefault();
@@ -3791,7 +3797,28 @@ function App() {
       alert(t("Failed to generate diagram. Check console for details."));
       throw error;
     }
-  }, [setNodes, setEdges, reactFlowInstance, nodes, edges, titleBlockData, architecturePrompt, originalPrompt, validationResult, workflow, pricingScenarios, isFeedbackModalOpen, animateConnections, layoutEdgeStyle, t, cloudSync, iacBaseline]);
+  }, [
+    animateConnections,
+    architecturePrompt,
+    cloudSync,
+    edges,
+    handleEdgeLabelChange,
+    handleEdgeLabelOffsetChange,
+    iacBaseline,
+    isFeedbackModalOpen,
+    layoutEdgeStyle,
+    layoutEngine,
+    nodes,
+    originalPrompt,
+    pricingScenarios,
+    reactFlowInstance,
+    setEdges,
+    setNodes,
+    t,
+    titleBlockData,
+    validationResult,
+    workflow,
+  ]);
   handleAIGenerateRef.current = handleAIGenerate;
 
   // ── az prototype import ──────────────────────────────────────────────
@@ -4078,7 +4105,7 @@ function App() {
     }
 
     setNodes(updatedNodes);
-  }, [cancelPendingPricingEditorOpen, nodes, setNodes]);
+  }, [nodes, setNodes]);
 
   // Premium Feature Handlers
   const handleValidateArchitecture = useCallback(async () => {

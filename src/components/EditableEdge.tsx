@@ -101,37 +101,30 @@ const EditableEdge: React.FC<EdgeProps> = ({
     };
   };
 
-  const handleMouseMove = (e: MouseEvent) => {
-    if (!isDragging || !dragStartRef.current) return;
-    
-    const dx = e.clientX - dragStartRef.current.x;
-    const dy = e.clientY - dragStartRef.current.y;
-    
-    const newOffsetX = dragStartRef.current.offsetX + dx;
-    const newOffsetY = dragStartRef.current.offsetY + dy;
-    
-    // Update edge data with new offset
-    if (data?.onLabelOffsetChange) {
-      data.onLabelOffsetChange(id, newOffsetX, newOffsetY);
-    }
-  };
-
-  const handleMouseUp = () => {
-    setIsDragging(false);
-    dragStartRef.current = null;
-  };
-
   // Add/remove global mouse event listeners
   React.useEffect(() => {
-    if (isDragging) {
-      document.addEventListener('mousemove', handleMouseMove);
-      document.addEventListener('mouseup', handleMouseUp);
-      return () => {
-        document.removeEventListener('mousemove', handleMouseMove);
-        document.removeEventListener('mouseup', handleMouseUp);
-      };
-    }
-  }, [isDragging, offsetX, offsetY]);
+    if (!isDragging) return;
+    const handleMouseMove = (event: MouseEvent) => {
+      if (!dragStartRef.current) return;
+      const dx = event.clientX - dragStartRef.current.x;
+      const dy = event.clientY - dragStartRef.current.y;
+      data?.onLabelOffsetChange?.(
+        id,
+        dragStartRef.current.offsetX + dx,
+        dragStartRef.current.offsetY + dy,
+      );
+    };
+    const handleMouseUp = () => {
+      setIsDragging(false);
+      dragStartRef.current = null;
+    };
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [data, id, isDragging]);
 
   const direction = (data?.direction ?? 'forward') as 'forward' | 'reverse' | 'bidirectional';
   const flowMode = (data?.flowMode ?? (direction === 'bidirectional' ? 'pulse' : 'directional')) as

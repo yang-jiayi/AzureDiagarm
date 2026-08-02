@@ -1,8 +1,8 @@
 
-import { useAzureMonitor } from '@azure/monitor-opentelemetry';
+import { useAzureMonitor as configureAzureMonitor } from '@azure/monitor-opentelemetry';
 
 if (process.env.APPLICATIONINSIGHTS_CONNECTION_STRING) {
-  useAzureMonitor({
+  configureAzureMonitor({
     azureMonitorExporterOptions: {
       connectionString: process.env.APPLICATIONINSIGHTS_CONNECTION_STRING,
     },

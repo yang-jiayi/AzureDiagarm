@@ -23,14 +23,13 @@ export default [
       'react-refresh': reactRefresh,
     },
     rules: {
-      // Keep lint lightweight; this codebase currently contains many `any` and
-      // hook-pattern deviations that are better handled as a separate cleanup.
+      // Keep lint lightweight while enforcing React hook correctness.
       'no-unused-vars': 'off',
       '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_', ignoreRestSiblings: true }],
 
       '@typescript-eslint/no-explicit-any': 'off',
-      'react-hooks/rules-of-hooks': 'off',
-      'react-hooks/exhaustive-deps': 'off',
+      'react-hooks/rules-of-hooks': 'error',
+      'react-hooks/exhaustive-deps': 'error',
       'react-refresh/only-export-components': 'off',
     },
   },

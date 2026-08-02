@@ -589,7 +589,7 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({ onGen
     }
   };
 
-  const useExample = (example: string) => {
+  const applyExample = (example: string) => {
     setDescription(example);
   };
 
@@ -840,7 +840,7 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({ onGen
                           key={idx}
                           className="example-button"
                           style={{ borderLeftColor: group.color }}
-                          onClick={() => useExample(prompt)}
+                          onClick={() => applyExample(prompt)}
                           disabled={isGenerating}
                         >
                           {prompt}

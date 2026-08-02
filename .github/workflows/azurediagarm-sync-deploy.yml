@@ -178,8 +178,9 @@ jobs:
           npm ci --ignore-scripts
           npm run build
           npm run lint
-          npm run test:arm
-          npm run test:layout-preservation
+          npm test
+          npx playwright install --with-deps chromium
+          npm run test:e2e
           node --check server/token-server.js
           node --check server/openai-proxy.js
           node --check server/access-control.js

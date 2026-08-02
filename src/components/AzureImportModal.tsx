@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { X, DownloadCloud, RefreshCw, AlertTriangle, LogIn } from 'lucide-react';
 import { AzureImportDisabledError } from '../services/azureImport';
 import {
@@ -25,9 +25,16 @@ interface AzureImportModalProps {
   onImport: (subscriptionId: string, resourceGroup: string) => Promise<void>;
 }
 
+function errorMessage(value: unknown, fallback: string): string {
+  return value instanceof Error && value.message ? value.message : fallback;
+}
+
 const AzureImportModal: React.FC<AzureImportModalProps> = ({ isOpen, onClose, onImport }) => {
   const { language } = useLanguage();
-  const text = (en: string, ja: string) => localize(language, { en, ja });
+  const text = useCallback(
+    (en: string, ja: string) => localize(language, { en, ja }),
+    [language],
+  );
   const delegated = isDelegatedMode();
   const [account, setAccount] = useState<string | undefined>(undefined);
   const [needsSignIn, setNeedsSignIn] = useState(delegated);
@@ -41,11 +48,9 @@ const AzureImportModal: React.FC<AzureImportModalProps> = ({ isOpen, onClose, on
   const [importing, setImporting] = useState(false);
   const [disabled, setDisabled] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const errorMessage = (value: unknown, fallback: string) =>
-    value instanceof Error && value.message ? value.message : fallback;
   useEscapeKey(isOpen && !importing, onClose);
 
-  const loadSubs = () => {
+  const loadSubs = useCallback(() => {
     setLoadingSubs(true);
     setError(null);
     getSubscriptions()
@@ -58,7 +63,7 @@ const AzureImportModal: React.FC<AzureImportModalProps> = ({ isOpen, onClose, on
         else setError(errorMessage(e, text('Failed to list subscriptions', 'Subscriptionの一覧取得に失敗しました')));
       })
       .finally(() => setLoadingSubs(false));
-  };
+  }, [text]);
 
   // On open: server mode loads subs immediately; delegated mode loads subs only
   // once the user is signed in (otherwise show the sign-in gate).
@@ -73,7 +78,7 @@ const AzureImportModal: React.FC<AzureImportModalProps> = ({ isOpen, onClose, on
         else { setNeedsSignIn(true); }
       })
       .catch((e) => setError(errorMessage(e, text('Failed to initialize Azure sign-in', 'Azureサインインの初期化に失敗しました'))));
-  }, [isOpen]);
+  }, [delegated, isOpen, loadSubs, text]);
 
   // Load resource groups when a subscription is chosen.
   useEffect(() => {
@@ -85,7 +90,7 @@ const AzureImportModal: React.FC<AzureImportModalProps> = ({ isOpen, onClose, on
       .then(setGroups)
       .catch((e) => setError(errorMessage(e, text('Failed to list resource groups', 'Resource Groupの一覧取得に失敗しました'))))
       .finally(() => setLoadingGroups(false));
-  }, [subId]);
+  }, [subId, text]);
 
   if (!isOpen) return null;
 

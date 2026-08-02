@@ -116,14 +116,7 @@ export default function NodePricingEditor({
     return () => {
       cancelled = true;
     };
-  }, [
-    serviceType,
-    pricing.estimatedCost,
-    pricing.region,
-    pricing.skuName,
-    pricing.tier,
-    pricing.tierId,
-  ]);
+  }, [pricing, serviceType]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
