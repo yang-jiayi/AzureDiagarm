@@ -35,11 +35,14 @@ param feedbackEmailSender string = ''
 @description('Recipient address for feedback submissions.')
 param feedbackEmailRecipient string = ''
 
-@description('Optional Azure Table Storage endpoint for a queryable feedback archive.')
+@description('Optional Azure Table Storage endpoint for feedback and shared rate limiting. Diagram Storage is used when this is empty.')
 param azureTablesEndpoint string = ''
 
 @description('Azure Table Storage table name for feedback.')
 param azureTablesFeedbackTable string = 'feedback'
+
+@description('Optional Azure Front Door ID embedded in the image origin guard and sent by Container Apps health probes.')
+param frontDoorId string = ''
 
 @secure()
 @description('Your Azure OpenAI API key.')
@@ -159,6 +162,7 @@ module resources './resources.bicep' = {
     feedbackEmailRecipient: feedbackEmailRecipient
     azureTablesEndpoint: azureTablesEndpoint
     azureTablesFeedbackTable: azureTablesFeedbackTable
+    frontDoorId: frontDoorId
   }
 }
 
@@ -234,6 +238,7 @@ output COSMOS_FEEDBACK_CONTAINER_ID string = resources.outputs.cosmosFeedbackCon
 // Authenticated diagram persistence (empty strings when deployDiagramStorage = false)
 output AZURE_BLOB_ENDPOINT string = resources.outputs.diagramStorageEndpoint
 output AZURE_BLOB_DIAGRAMS_CONTAINER string = resources.outputs.diagramStorageContainer
+output AZURE_TABLES_ENDPOINT string = resources.outputs.tableStorageEndpoint
 
 // App Insights — used by the pre-package hook to write .env.appinsights
 output APPLICATIONINSIGHTS_CONNECTION_STRING string = resources.outputs.appInsightsConnectionString

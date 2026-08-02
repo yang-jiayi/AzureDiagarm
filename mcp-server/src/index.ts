@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+﻿#!/usr/bin/env node
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
@@ -34,6 +34,8 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
+
+import { SessionStore } from './sessionManager.js';
 
 import {
   SERVICE_CATALOG,
@@ -1526,6 +1528,15 @@ server.registerPrompt(
 //                         on the MCP path (health probe stays open). Without a
 //                         token, HTTP mode is limited to loopback unless
 //                         MCP_ALLOW_UNAUTHENTICATED=true is explicitly set.
+//   MCP_HTTP_STATELESS=true     — opt-in stateless mode: each POST creates a fresh
+//                                 McpServer + StreamableHTTPServerTransport, handles the
+//                                 request, then tears down immediately. No session ID is
+//                                 assigned and no server-side state is kept, making the
+//                                 server safe behind a load-balancer without sticky sessions
+//                                 (e.g. Azure Container Apps with 2+ replicas at max scale).
+//                                 GET and DELETE on the MCP path return 405 in this mode.
+//                                 Default: false (bounded stateful mode with SessionStore,
+//                                 suitable for single-replica / local use).
 //
 // CLI flags --http / --stdio override the env var.
 
@@ -1617,9 +1628,22 @@ async function startHttp(): Promise<void> {
     console.error('[mcp-http] unauthenticated HTTP is limited to an explicitly allowed interface');
   }
 
-  // Stateful sessions: one transport per MCP session id.
-  const transports = new Map<string, StreamableHTTPServerTransport>();
+  const isStateless = process.env.MCP_HTTP_STATELESS === 'true';
 
+  // In stateful mode, the SessionStore tracks live sessions with TTL, idle-expiry,
+  // and a hard cap on concurrent sessions. See src/sessionManager.ts for tuning env vars.
+  // In stateless mode (MCP_HTTP_STATELESS=true) no store is created — each POST is
+  // self-contained and suitable for multi-replica / load-balanced deployments.
+  let store: SessionStore | undefined;
+  if (isStateless) {
+    console.error('[mcp-http] stateless mode ENABLED — each POST is independent; no session state kept');
+  } else {
+    store = new SessionStore();
+    store.startGc();
+    console.error(
+      `[mcp-http] session limits: max=${store.maxSessions} idle=${store.idleTtlMs / 1000}s abs=${store.absTtlMs / 1000}s gc=${store.gcIntervalMs / 1000}s`,
+    );
+  }
   const httpServer = createHttpServer(async (req, res) => {
     try {
       const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
@@ -1627,7 +1651,9 @@ async function startHttp(): Promise<void> {
       // Health probe — handy for ACA / container probes. Always open (no auth)
       // so liveness/readiness checks don't need to carry the Bearer token.
       if (req.method === 'GET' && url.pathname === '/healthz') {
-        writeJson(res, 200, { status: 'ok', transport: 'streamable-http', sessions: transports.size });
+        writeJson(res, 200, isStateless
+          ? { status: 'ok', transport: 'streamable-http', mode: 'stateless' }
+          : { status: 'ok', transport: 'streamable-http', mode: 'stateful', sessions: store!.size, pendingReservations: store!.pendingReservations });
         return;
       }
 
@@ -1636,24 +1662,25 @@ async function startHttp(): Promise<void> {
         return;
       }
 
-      // Liveness probe for connector wizards (e.g. Azure SRE Agent) that send a
-      // bare GET/HEAD to /mcp (no session id) to confirm the endpoint speaks MCP
-      // before initializing. Answered BEFORE the auth gate so the probe succeeds
-      // whether or not it carries the Bearer token. Returns no MCP data — every
-      // real operation still requires POST + (when configured) a valid token.
-      if ((req.method === 'GET' || req.method === 'HEAD') && !req.headers['mcp-session-id']) {
+      // Liveness probe (stateful mode only) — connector wizards such as Azure SRE
+      // Agent send a bare GET/HEAD to /mcp without a session-id to confirm the endpoint
+      // speaks MCP before issuing an initialize POST. Answered before the auth gate so
+      // the probe works without a token. In stateless mode ALL non-POST methods including
+      // bare GET/HEAD return 405; this block is skipped and control falls through to the
+      // method gate in the stateless dispatch section below.
+      if (!isStateless && (req.method === 'GET' || req.method === 'HEAD') && !req.headers['mcp-session-id']) {
         res.writeHead(200, { 'Content-Type': 'text/plain' });
         res.end(req.method === 'HEAD'
           ? undefined
           : 'Azure Diagram Builder MCP — Streamable-HTTP endpoint. POST an initialize request to begin.');
         return;
       }
-
       // CORS preflight — some clients preflight before the initialize POST.
       if (req.method === 'OPTIONS') {
+        const allowedMethods = isStateless ? 'POST, OPTIONS' : 'GET, POST, DELETE, OPTIONS';
         res.writeHead(204, {
-          'Allow': 'GET, POST, DELETE, OPTIONS',
-          'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
+          Allow: allowedMethods,
+          'Access-Control-Allow-Methods': allowedMethods,
           'Access-Control-Allow-Headers': 'Authorization, Content-Type, mcp-session-id, Accept',
         });
         res.end();
@@ -1676,11 +1703,49 @@ async function startHttp(): Promise<void> {
         }
       }
 
+      // ── Stateless mode dispatch ──────────────────────────────────────────
+      // Each POST gets a brand-new McpServer + transport that is torn down once
+      // the response is complete. No session ID is issued and no state is kept,
+      // so any replica can handle any request without sticky-session routing.
+      if (isStateless) {
+        if (req.method !== 'POST') {
+          res.setHeader('Allow', 'POST, OPTIONS');
+          writeJson(res, 405, {
+            error: 'method_not_allowed',
+            message: 'Stateless mode only supports POST requests.',
+            allow: 'POST, OPTIONS',
+          });
+          return;
+        }
+        const statelessBody = await readJsonBody(req);
+        const statelessTransport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+        const statelessServer = createServer();
+        await statelessServer.connect(statelessTransport);
+        try {
+          await statelessTransport.handleRequest(req, res, statelessBody);
+        } finally {
+          // Await full teardown so McpServer and transport are fully closed before
+          // the request handler exits. server.close() shuts down the protocol layer
+          // and triggers transport close internally; transport.close() is idempotent.
+          // Errors are logged rather than re-thrown so they cannot mask an already-
+          // written HTTP response.
+          await statelessServer.close().catch((err) =>
+            console.error('[mcp-http] stateless server close error:', err),
+          );
+          await statelessTransport.close().catch((err) =>
+            console.error('[mcp-http] stateless transport close error:', err),
+          );
+        }
+        return;
+      }
+
+      // ── Stateful mode dispatch (below) ────────────────────────────────────
       const sessionId = req.headers['mcp-session-id'];
       const sid = Array.isArray(sessionId) ? sessionId[0] : sessionId;
 
-      let transport: StreamableHTTPServerTransport | undefined = sid ? transports.get(sid) : undefined;
+      let transport: StreamableHTTPServerTransport | undefined = sid ? store!.get(sid) : undefined;
       let body: unknown | undefined;
+      let cleanupUncommittedTransport: (() => Promise<void>) | undefined;
 
       if (req.method === 'POST') {
         body = await readJsonBody(req);
@@ -1697,22 +1762,92 @@ async function startHttp(): Promise<void> {
           return;
         }
 
-        transport = new StreamableHTTPServerTransport({
+        // Phase 1: claim a slot BEFORE creating the transport.
+        // reserve() runs evictExpired() internally and checks live + pending
+        // reservations against maxSessions, so concurrent initialize requests
+        // cannot race past the cap.
+        if (!store!.reserve()) {
+          writeJson(res, 503, {
+            jsonrpc: '2.0',
+            error: {
+              code: -32000,
+              message: `Server at capacity (${store!.maxSessions} concurrent sessions). Retry after an existing session expires.`,
+            },
+            id: null,
+          });
+          return;
+        }
+
+        // Track whether onsessioninitialized fired so onclose/error-path know
+        // which cleanup to perform.
+        let reservationCommitted = false;
+        // releaseReservationOnce() is called by onclose (normal path) OR by the
+        // connect/handleRequest error catch (abnormal path). The idempotency
+        // guard prevents double-release if both paths somehow fire.
+        let reservationReleased = false;
+        const releaseReservationOnce = () => {
+          if (!reservationCommitted && !reservationReleased) {
+            reservationReleased = true;
+            store!.releaseReservation();
+          }
+        };
+
+        const newTransport = new StreamableHTTPServerTransport({
           sessionIdGenerator: () => randomUUID(),
+          // Phase 2a: SDK calls this inside handleRequest() once it has
+          // assigned the session ID. Bind the slot to the real ID + transport.
           onsessioninitialized: (newSid: string) => {
-            transports.set(newSid, transport!);
+            reservationCommitted = true;
+            store!.commitReservation(newSid, newTransport);
           },
         });
-        transport.onclose = () => {
-          if (transport && transport.sessionId) {
-            transports.delete(transport.sessionId);
+        transport = newTransport;
+        newTransport.onclose = () => {
+          if (reservationCommitted) {
+            // Normal lifecycle close — remove the committed session.
+            if (newTransport.sessionId) store!.delete(newTransport.sessionId);
+          } else {
+            // Transport closed before onsessioninitialized fired (init failed,
+            // client disconnected, etc.) — release the pending reservation.
+            releaseReservationOnce();
           }
         };
         const server = createServer();
-        await server.connect(transport);
+        cleanupUncommittedTransport = async () => {
+          if (reservationCommitted) return;
+          releaseReservationOnce();
+          await server.close().catch((err) =>
+            console.error('[mcp-http] uncommitted server close error:', err),
+          );
+          await newTransport.close().catch((err) =>
+            console.error('[mcp-http] uncommitted transport close error:', err),
+          );
+        };
+        try {
+          await server.connect(newTransport);
+        } catch (connectErr) {
+          // server.connect() failed — onclose may never fire, so release immediately.
+          await cleanupUncommittedTransport();
+          throw connectErr;
+        }
       }
 
-      await transport.handleRequest(req, res, body);
+      // Refresh idle timer on every request for this session.
+      if (transport.sessionId) {
+        store!.touch(transport.sessionId);
+      }
+
+      try {
+        await transport.handleRequest(req, res, body);
+      } finally {
+        // The SDK can reject an initialize request by writing a 4xx response
+        // without throwing or closing the transport. Release the pre-commit
+        // reservation in that case so malformed requests cannot exhaust the
+        // stateful session cap permanently.
+        if (cleanupUncommittedTransport) {
+          await cleanupUncommittedTransport();
+        }
+      }
     } catch (err) {
       console.error('[mcp-http] request error:', err);
       if (!res.headersSent) {
@@ -1732,13 +1867,16 @@ async function startHttp(): Promise<void> {
     console.error(`[mcp-http] health: http://${host}:${port}/healthz`);
   });
 
-  const shutdown = (signal: string) => {
+  const shutdown = async (signal: string) => {
     console.error(`[mcp-http] received ${signal}, shutting down`);
+    // In stateful mode: close all active sessions before stopping the HTTP server
+    // so in-flight SSE streams are terminated cleanly.
+    if (store) await store.closeAll();
     httpServer.close(() => process.exit(0));
     setTimeout(() => process.exit(1), 5000).unref();
   };
-  process.on('SIGINT', () => shutdown('SIGINT'));
-  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => void shutdown('SIGINT'));
+  process.on('SIGTERM', () => void shutdown('SIGTERM'));
 }
 
 async function main(): Promise<void> {

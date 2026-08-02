@@ -45,7 +45,7 @@ get_val() {
 echo "Subscription: $(az account show --query name -o tsv)"
 
 # ── Runtime secret/env values sourced from .env ─────────────────────────────
-# azd-prepackage.sh maps VITE_AZURE_OPENAI_API_KEY <- AZURE_OPENAI_API_KEY (same value).
+# The runtime proxy key and Vite endpoint/deployment values are sourced directly.
 OPENAI_KEY="$(get_val AZURE_OPENAI_API_KEY)"
 VITE_ENDPOINT="$(get_val VITE_AZURE_OPENAI_ENDPOINT)"
 VITE_DEPLOY52="$(get_val VITE_AZURE_OPENAI_DEPLOYMENT_GPT52)"

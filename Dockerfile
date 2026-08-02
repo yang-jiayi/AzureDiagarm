@@ -72,8 +72,7 @@ ENV VITE_ARM_SCOPE=$VITE_ARM_SCOPE
 # as shell command separators. Instead, the deploy script (scripts/update_aca.sh) extracts
 # the value into .env.appinsights, which is COPY'd here and sourced at build time.
 # The glob pattern (appinsights*) ensures the build doesn't fail if the file is absent.
-# .env.build  — written by scripts/azd-prepackage.sh before 'azd package';
-#               contains all VITE_* vars as KEY=VALUE lines.
+# .env.build  — optional legacy/local build input containing VITE_* values.
 # .env.appinsights — App Insights connection string workaround (see below).
 # Both globs are optional so the build doesn't fail in environments that
 # don't create them (e.g. direct docker build with --build-arg).
@@ -102,6 +101,7 @@ RUN npm run build
 FROM nginx:alpine
 
 ARG FRONT_DOOR_ID
+ENV FRONT_DOOR_ID=$FRONT_DOOR_ID
 
 # Install Node.js for the speech token server and the MCP HTTP server
 # (both use DefaultAzureCredential / managed identity where applicable).
@@ -111,7 +111,7 @@ RUN apk add --no-cache nodejs npm
 WORKDIR /srv/token-server
 COPY server/package*.json ./
 RUN npm ci --omit=dev && npm cache clean --force
-COPY server/token-server.js server/openai-proxy.js server/access-control.js server/arm-key-vault-access-store.js server/async-handler.js server/diagram-api.js ./
+COPY server/token-server.js server/openai-proxy.js server/rate-limiter.js server/access-control.js server/arm-key-vault-access-store.js server/async-handler.js server/diagram-api.js ./
 
 # Set up the MCP HTTP server (streamable HTTP transport on port 3030).
 WORKDIR /srv/mcp-server
@@ -135,5 +135,12 @@ COPY start.sh /start.sh
 RUN sed -i 's/\r$//' /start.sh && chmod +x /start.sh
 
 EXPOSE 80
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+  CMD if [ -n "$FRONT_DOOR_ID" ]; then \
+        wget -qO- --header="X-Azure-FDID: $FRONT_DOOR_ID" "http://127.0.0.1/healthz" >/dev/null 2>&1; \
+      else \
+        wget -qO- "http://127.0.0.1/healthz" >/dev/null 2>&1; \
+      fi || exit 1
 
 CMD ["/start.sh"]

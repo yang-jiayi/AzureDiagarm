@@ -203,14 +203,16 @@ function createOpenAIProxyRouter(options) {
     const deploymentAllowlist = isAnthropic
       ? allowedFoundryDeployments
       : allowedDeployments;
-    if (isAnthropic && deploymentAllowlist.size === 0) {
+    if (deploymentAllowlist.size === 0) {
       return sendError(res, 503, requestId, {
         source: 'proxy',
         code: 'deployment_allowlist_not_configured',
-        message: 'Microsoft Foundry deployment access is not configured on the server.',
+        message: isAnthropic
+          ? 'Microsoft Foundry deployment access is not configured on the server.'
+          : 'Azure OpenAI deployment access is not configured on the server.',
       });
     }
-    if (deploymentAllowlist.size > 0 && !deploymentAllowlist.has(deployment)) {
+    if (!deploymentAllowlist.has(deployment)) {
       return sendError(res, 403, requestId, {
         source: 'proxy',
         code: 'deployment_not_allowed',
@@ -225,7 +227,7 @@ function createOpenAIProxyRouter(options) {
       });
     }
 
-    const retryAfter = consumeRateLimit(req);
+    const retryAfter = await consumeRateLimit(req);
     if (retryAfter > 0) {
       res.set('Retry-After', String(retryAfter));
       return sendError(res, 429, requestId, {

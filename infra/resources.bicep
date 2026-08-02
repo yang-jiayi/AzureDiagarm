@@ -31,6 +31,7 @@ param feedbackEmailSender string = ''
 param feedbackEmailRecipient string = ''
 param azureTablesEndpoint string = ''
 param azureTablesFeedbackTable string = 'feedback'
+param frontDoorId string = ''
 
 // ── Log Analytics ──────────────────────────────────────────────────────────────
 resource logAnalytics 'Microsoft.OperationalInsights/workspaces@2022-10-01' = {
@@ -196,8 +197,9 @@ resource cosmosRole 'Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments@20
   }
 }
 
-// ── Authenticated diagram persistence (Blob Storage) ──────────────────────────
+// ── Authenticated persistence and shared counters (Blob/Table Storage) ────────
 var diagramStorageContainerName = 'diagrams'
+var diagramRateLimitTableName = 'ratelimit'
 var diagramStoragePerimeterName = 'azurediagarm-storage-perimeter'
 var diagramStoragePerimeterProfileName = 'diagram-storage-profile'
 
@@ -274,6 +276,21 @@ resource diagramBlobContainer 'Microsoft.Storage/storageAccounts/blobServices/co
   }
 }
 
+resource diagramTableService 'Microsoft.Storage/storageAccounts/tableServices@2023-05-01' = if (deployDiagramStorage) {
+  parent: diagramStorage
+  name: 'default'
+}
+
+resource diagramRateLimitTable 'Microsoft.Storage/storageAccounts/tableServices/tables@2023-05-01' = if (deployDiagramStorage) {
+  parent: diagramTableService
+  name: diagramRateLimitTableName
+}
+
+resource diagramFeedbackTable 'Microsoft.Storage/storageAccounts/tableServices/tables@2023-05-01' = if (deployDiagramStorage && azureTablesFeedbackTable != diagramRateLimitTableName) {
+  parent: diagramTableService
+  name: azureTablesFeedbackTable
+}
+
 resource diagramStorageRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (deployDiagramStorage) {
   name: guid(deployDiagramStorage ? diagramStorage.id : resourceToken, appIdentity.id, 'diagram-blob-contributor')
   scope: diagramStorage
@@ -281,6 +298,19 @@ resource diagramStorageRole 'Microsoft.Authorization/roleAssignments@2022-04-01'
     roleDefinitionId: subscriptionResourceId(
       'Microsoft.Authorization/roleDefinitions',
       'ba92f5b4-2d11-453d-a403-e96b0029c9fe'
+    )
+    principalId: appIdentity.properties.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+resource diagramTableStorageRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (deployDiagramStorage) {
+  name: guid(deployDiagramStorage ? diagramStorage.id : resourceToken, appIdentity.id, 'diagram-table-contributor')
+  scope: diagramStorage
+  properties: {
+    roleDefinitionId: subscriptionResourceId(
+      'Microsoft.Authorization/roleDefinitions',
+      '0a9a7e1f-b9d0-4cc4-a60d-0319b160aaa3'
     )
     principalId: appIdentity.properties.principalId
     principalType: 'ServicePrincipal'
@@ -300,6 +330,27 @@ resource diagramStoragePerimeterAssociation 'Microsoft.Network/networkSecurityPe
     }
   }
 }
+
+var effectiveAzureTablesEndpoint = !empty(azureTablesEndpoint)
+  ? azureTablesEndpoint
+  : (deployDiagramStorage ? diagramStorage!.properties.primaryEndpoints.table : '')
+var appHealthProbeHttpGet = union(
+  {
+    path: '/healthz'
+    port: 80
+    scheme: 'HTTP'
+  },
+  empty(frontDoorId)
+    ? {}
+    : {
+        httpHeaders: [
+          {
+            name: 'X-Azure-FDID'
+            value: frontDoorId
+          }
+        ]
+      }
+)
 
 // ── Container App ─────────────────────────────────────────────────────────────
 // azd locates the service by the 'azd-service-name' tag value matching
@@ -346,6 +397,33 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
           // Placeholder image replaced by 'azd deploy'
           image: 'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest'
           resources: { cpu: json('0.5'), memory: '1.0Gi' }
+          probes: [
+            {
+              type: 'Startup'
+              httpGet: appHealthProbeHttpGet
+              initialDelaySeconds: 1
+              periodSeconds: 5
+              timeoutSeconds: 3
+              failureThreshold: 30
+            }
+            {
+              type: 'Liveness'
+              httpGet: appHealthProbeHttpGet
+              initialDelaySeconds: 15
+              periodSeconds: 15
+              timeoutSeconds: 5
+              failureThreshold: 3
+            }
+            {
+              type: 'Readiness'
+              httpGet: appHealthProbeHttpGet
+              initialDelaySeconds: 3
+              periodSeconds: 5
+              timeoutSeconds: 3
+              failureThreshold: 3
+              successThreshold: 1
+            }
+          ]
           env: concat([
             // Identity — lets DefaultAzureCredential pick up the managed identity
             { name: 'AZURE_CLIENT_ID', value: appIdentity.properties.clientId }
@@ -357,8 +435,9 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
             { name: 'FEEDBACK_EMAIL_ENDPOINT', value: feedbackEmailEndpoint }
             { name: 'FEEDBACK_EMAIL_SENDER', value: feedbackEmailSender }
             { name: 'FEEDBACK_EMAIL_RECIPIENT', value: feedbackEmailRecipient }
-            { name: 'AZURE_TABLES_ENDPOINT', value: azureTablesEndpoint }
+            { name: 'AZURE_TABLES_ENDPOINT', value: effectiveAzureTablesEndpoint }
             { name: 'AZURE_TABLES_FEEDBACK_TABLE', value: azureTablesFeedbackTable }
+            { name: 'AZURE_TABLES_RATE_LIMIT_TABLE', value: diagramRateLimitTableName }
             // Speech
             { name: 'AZURE_SPEECH_REGION', value: deploySpeech ? speech!.location : '' }
             { name: 'AZURE_SPEECH_RESOURCE_ID', value: deploySpeech ? speech!.id : '' }
@@ -370,6 +449,8 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
             // Authenticated cloud diagram persistence
             { name: 'AZURE_BLOB_ENDPOINT', value: deployDiagramStorage ? diagramStorage!.properties.primaryEndpoints.blob : '' }
             { name: 'AZURE_BLOB_DIAGRAMS_CONTAINER', value: deployDiagramStorage ? diagramStorageContainerName : '' }
+            { name: 'MCP_ENABLED', value: 'true' }
+            { name: 'MCP_HTTP_STATELESS', value: 'true' }
             // Public URL (self-referential — set after first deploy if needed)
             {
               name: 'PUBLIC_URL'
@@ -408,6 +489,10 @@ var mcpBaseEnv = [
   { name: 'MCP_HTTP_HOST', value: mcpExternalEnabled ? '0.0.0.0' : '127.0.0.1' }
   { name: 'MCP_HTTP_PORT', value: '3030' }
   { name: 'MCP_HTTP_PATH', value: '/mcp' }
+  { name: 'MCP_SESSION_MAX', value: '100' }
+  { name: 'MCP_SESSION_IDLE_SECONDS', value: '1800' }
+  { name: 'MCP_SESSION_TTL_SECONDS', value: '7200' }
+  { name: 'MCP_SESSION_GC_SECONDS', value: '60' }
 ]
 var mcpAuthEnv = empty(mcpAuthToken)
   ? []
@@ -447,12 +532,41 @@ resource mcpApp 'Microsoft.App/containerApps@2024-03-01' = {
           // Placeholder image replaced by 'azd deploy mcp'.
           image: 'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest'
           resources: { cpu: json('0.5'), memory: '1.0Gi' }
+          probes: [
+            {
+              type: 'Startup'
+              httpGet: { path: '/healthz', port: 3030, scheme: 'HTTP' }
+              initialDelaySeconds: 1
+              periodSeconds: 5
+              timeoutSeconds: 3
+              failureThreshold: 30
+            }
+            {
+              type: 'Liveness'
+              httpGet: { path: '/healthz', port: 3030, scheme: 'HTTP' }
+              initialDelaySeconds: 10
+              periodSeconds: 15
+              timeoutSeconds: 5
+              failureThreshold: 3
+            }
+            {
+              type: 'Readiness'
+              httpGet: { path: '/healthz', port: 3030, scheme: 'HTTP' }
+              initialDelaySeconds: 2
+              periodSeconds: 5
+              timeoutSeconds: 3
+              failureThreshold: 3
+              successThreshold: 1
+            }
+          ]
           env: concat(mcpBaseEnv, mcpAuthEnv)
         }
       ]
       scale: {
         minReplicas: 0
-        maxReplicas: 5
+        // Streamable HTTP sessions are process-local, so a single replica is
+        // required until the transport has a shared session backend.
+        maxReplicas: 1
       }
     }
   }
@@ -474,4 +588,5 @@ output cosmosContainerId string = deployCosmos ? cosmosContainerId : ''
 output cosmosFeedbackContainerId string = deployCosmos ? cosmosFeedbackContainerId : ''
 output diagramStorageEndpoint string = deployDiagramStorage ? diagramStorage!.properties.primaryEndpoints.blob : ''
 output diagramStorageContainer string = deployDiagramStorage ? diagramStorageContainerName : ''
+output tableStorageEndpoint string = effectiveAzureTablesEndpoint
 output appInsightsConnectionString string = appInsights.properties.ConnectionString

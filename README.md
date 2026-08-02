@@ -451,7 +451,7 @@ The Diagram Builder ships a **Model Context Protocol (MCP) server** (`mcp-server
 ### Transport & auth
 - **Dual transport** — stdio (local clients) and **Streamable-HTTP** (remote clients). Launch HTTP with `npm run start:http` (or `MCP_TRANSPORT=http`).
 - **Bearer-token auth** — set `MCP_AUTH_TOKEN`; the server enforces `Authorization: Bearer <token>` with a constant-time comparison. A `/healthz` probe and a pre-auth liveness response on `/mcp` keep connector wizards happy.
-- **Ops-ready** — stateful sessions (one transport per `mcp-session-id`), CORS preflight, graceful shutdown.
+- **Ops-ready** — stateless HTTP mode for multi-replica deployments, bounded stateful sessions for single-replica/local use, CORS preflight, and graceful shutdown.
 
 ### Use it from Scout
 Register the deployed MCP endpoint (`https://<your-mcp-host>/mcp`) as a **custom remote MCP server** in Scout's Extensions panel with your Bearer token (stored encrypted). See [`SCOUT/README.md`](SCOUT/README.md) for the walkthrough, and deploy an isolated MCP instance with [`scripts/deploy-mcp-instance.sh`](scripts/deploy-mcp-instance.sh).
@@ -478,66 +478,33 @@ Reload the MCP servers (**MCP: List Servers**), paste your token when prompted (
 
 ---
 
-## ⚡ One-command deploy with Azure Developer CLI (azd)
+## 🔐 Production deployment
 
-The fastest way to provision all Azure resources and deploy the app is with [`azd`](https://aka.ms/azd):
+The generic Azure Developer CLI (`azd`) path is intentionally retired in this
+secured fork. It did not configure the required Azure Front Door route, Easy
+Auth enterprise-application assignment, Conditional Access boundaries, or
+direct-origin isolation. The retained `azure.yaml` exits before provisioning,
+packaging, or deployment so it cannot accidentally create a weaker public
+environment.
 
-```bash
-# 1. Install azd (once)
-winget install microsoft.azd   # Windows
-brew tap azure/azd && brew install azd   # macOS
+Production updates run only through
+[`AzureDiagarm sync and deploy`](.github/workflows/azurediagarm-sync-deploy.yml).
+That workflow validates the application and servers, builds in ACR, creates a
+Container Apps revision with health probes, preserves authentication and origin
+controls, purges Front Door, and verifies the deployed security boundary.
 
-# 2. Clone and enter the repo
-git clone https://github.com/Arturo-Quiroga-MSFT/azure-architecture-diagram-builder
-cd azure-architecture-diagram-builder
-
-# 3. Log in
-azd auth login
-
-# 4. Set your Azure OpenAI details (bring-your-own resource)
-azd env set AZURE_OPENAI_ENDPOINT       "https://your-resource.openai.azure.com/"
-azd env set AZURE_OPENAI_API_KEY        "your-key"
-azd env set AZURE_OPENAI_DEPLOYMENT_NAME "gpt-5.1"         # adjust to your deployments
-azd env set AZURE_SPEECH_REGION        "westus2"
-
-# 5. Provision infrastructure + build + deploy  (≈ 8 min first run)
-azd up
-```
-
-`azd up` provisions (via Bicep in `infra/`):
-
-| Resource | Purpose |
-|---|---|
-| Azure Container Registry | Stores the Docker image |
-| Azure Container Apps | Runs the app (nginx + token server) |
-| Log Analytics + App Insights | Monitoring and telemetry |
-| Azure Speech (S0) | Avatar Presenter feature (keyless auth via managed identity) |
-| Cosmos DB *(optional)* | Diagram persistence — set `deployCosmos=true` in `infra/main.parameters.json` |
-
-After `azd up` completes, the app URL is printed and captured in `SERVICE_APP_URL`.
-
-> **Keyless Azure OpenAI (optional).** `azd up` passes your OpenAI key to the
-> container as a runtime value used by the `/api/openai` proxy, so it works out
-> of the box. To drop the key entirely, grant the app's managed identity the
-> **Cognitive Services OpenAI User** role on your Azure OpenAI resource and clear
-> `AZURE_OPENAI_API_KEY` from the Container App. (The Bicep already assigns the
-> *Cognitive Services Speech User* and *Cosmos DB Data Contributor* roles, but
-> not OpenAI, because the OpenAI resource is bring-your-own / external.)
-
-### GitHub Actions CI/CD
-
-[`.github/workflows/azure-dev.yml`](.github/workflows/azure-dev.yml) re-deploys on every push to `main`.
-Required GitHub secrets/variables:
-
-| Secret | Value |
-|---|---|
-| `AZURE_CLIENT_ID` | Service principal / federated credential client ID |
-| `AZURE_TENANT_ID` | Entra ID tenant ID |
-| `AZURE_SUBSCRIPTION_ID` | Subscription ID |
-| `AZURE_OPENAI_ENDPOINT` | Azure OpenAI endpoint |
-| `AZURE_OPENAI_API_KEY` | Azure OpenAI API key |
-
-Set `AZURE_ENV_NAME` and `AZURE_LOCATION` as **variables** (not secrets).
+OpenAI proxy quotas use an atomic Azure Table Storage counter when
+`AZURE_TABLES_ENDPOINT` is configured; the production workflow requires this
+shared backend so all Container Apps replicas enforce one per-client limit.
+Storage failures fail closed with a short retry interval. For an externally
+managed Storage account, grant the runtime identity `Storage Table Data
+Contributor`; the application ensures the configured `feedback` and
+`ratelimit` tables exist. The workflow also rejects broad `Owner`,
+`Contributor`, or `User Access Administrator` assignments on the runtime
+identity. Production MCP HTTP requests use stateless mode so they can move
+safely across replicas. Stateful mode remains bounded to 100 sessions by
+default, expires sessions after 30 minutes idle or two hours absolute, and
+closes them during graceful shutdown.
 
 ---
 
@@ -1110,7 +1077,7 @@ All edge types now render correctly: solid sync edges, dashed async edges, dotte
 - **Export Costs (All Formats)** — One-click ZIP: CSV + JSON + Markdown summary + intelligent Markdown analysis report (with Mermaid pie chart)
 - **Multi-Region Cost Comparison** — Ranked table across all 8 regions in the analysis report, with cheapest/priciest callouts, potential savings estimate, and per-service regional variance
 - **Draggable & Resizable Reference Image** — Reference sketch panel can now be dragged anywhere and resized via a corner handle
-- **azd Template** — `azure.yaml` + Bicep infra for one-command `azd up` deployment (Azure-Samples ready)
+- **Legacy azd template retired in secured fork** — production deployment now uses the protected Front Door and Easy Auth workflow only
 
 ### January 2026
 - **WAF Validation** — Well-Architected Framework checks across all 5 pillars

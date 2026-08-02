@@ -37,7 +37,7 @@ The application must use Microsoft Entra ID authentication, assignment-required 
 
 **Selected:** Script-driven Bicep and Azure CLI
 
-**Rationale:** The analytics application must not use azd or project templates. Explicit shell scripts will build the image with ACR Tasks, provision resources with resource-group-scoped Bicep, update the Container App, and verify health. The existing root `azure.yaml` remains unchanged. The application reuses the existing Container Apps environment, ACR, and source Log Analytics workspace.
+**Rationale:** The analytics application must not use azd or project templates. Explicit shell scripts build the image with ACR Tasks, provision resources with resource-group-scoped Bicep, update the Container App, and verify health. The root `azure.yaml` is now an explicit guard that blocks the retired generic azd deployment path. The application reuses the existing Container Apps environment, ACR, and source Log Analytics workspace.
 
 ## 5. Architecture
 

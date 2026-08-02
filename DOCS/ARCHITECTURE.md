@@ -347,11 +347,12 @@ azure-diagrams/
 │   └── abbreviations.json             # Azure resource naming conventions
 ├── .github/
 │   └── workflows/
-│       ├── azure-dev.yml              # azd CI/CD: provision + deploy on push to main
-│       └── validate-azd.yml           # Gallery standard validation (Azure-Samples submission)
-├── azure.yaml                         # azd config: service declaration + prepackage hook
+│       ├── ci.yml                     # Build, lint, unit, server, MCP, and browser regression gates
+│       └── azurediagarm-sync-deploy.yml # Protected production deployment through Front Door
+├── azure.yaml                         # Explicit guard that blocks the retired generic azd path
 ├── scripts/                           # Utility & deployment scripts
-│   ├── azd-prepackage.sh              # azd hook: writes .env.build + .env.appinsights before docker build
+│   ├── retired-azd-deployment.sh       # Stops unsafe generic azd deployments
+│   ├── ensure-containerapp-probes.sh   # Enforces ACA startup/readiness/liveness probes
 │   ├── fetch-multi-region-pricing.sh  # Download pricing data
 │   ├── download-pricing.js            # Node.js pricing fetcher
 │   ├── sync-azure-icons.mjs           # Overlay the latest official package safely
@@ -415,8 +416,8 @@ azure-diagrams/
 ### Deployment
 - **Azure Container Apps** - Production hosting (min 1, max 3 replicas)
 - **Azure Container Registry** - Image storage; built by azd or `az acr build`
-- **Azure Developer CLI (azd)** - One-command provision + deploy via `infra/` Bicep
-- **GitHub Actions** - CI/CD pipeline (`.github/workflows/azure-dev.yml`) on push to `main`
+- **Protected GitHub Actions deployment** - ACR build, Container Apps revision, Front Door purge, auth/origin verification
+- **Retired generic azd path** - Explicitly blocked because it lacks the production Front Door and identity boundary
 - **nginx** - Static file serving in production container
 - **Dockerfile** - Multi-stage build (Node 20 Alpine + nginx)
 
@@ -659,80 +660,30 @@ COSMOS_CONTAINER_ID=<Cosmos DB container ID>
 5. **Collaborative Editing**: Multi-user diagram editing
 6. **Template Library**: Pre-built reference architectures
 
-## Azure Developer CLI (azd) Template
+## Production deployment boundary
 
-The repo is structured as a fully compliant `azd` template, enabling one-command provisioning and deployment and qualifying it for the [Azure-Samples](https://github.com/Azure-Samples) gallery.
+The upstream generic Azure Developer CLI (`azd`) template is retained only as
+historical infrastructure reference. In this secured fork, `azure.yaml` runs a
+failing guard before provision, package, or deploy. The generic path did not
+configure the production Azure Front Door route, Easy Auth enterprise
+application assignment, Conditional Access boundaries, or direct-origin
+isolation.
 
-### How `azd up` works
+Production releases use
+`.github/workflows/azurediagarm-sync-deploy.yml`. The workflow validates all
+application, server, MCP, icon, and browser tests; builds the image in ACR;
+enforces Container Apps health probes; deploys an immutable revision; purges
+Front Door; and verifies authentication, WAF, TLS, and origin isolation.
 
-```mermaid
-sequenceDiagram
-    participant Dev as Developer
-    participant azd as azd CLI
-    participant Bicep as infra/main.bicep
-    participant ACR as Azure Container Registry
-    participant ACA as Azure Container Apps
-    participant Hook as scripts/azd-prepackage.sh
-
-    Dev->>azd: azd up
-    azd->>Bicep: provision (ARM deployment)
-    Bicep-->>azd: outputs (ACR endpoint, ACA name, Speech ID, App Insights conn string …)
-    azd->>Hook: prepackage hook
-    Hook->>Hook: write .env.build + .env.appinsights
-    azd->>ACR: docker build (sources .env.build inside RUN layer)
-    ACR-->>azd: image digest
-    azd->>ACA: update container image
-    ACA-->>Dev: SERVICE_APP_URL
-```
-
-### Provisioned resources
-
-| Resource | SKU | Purpose |
-|---|---|---|
-| Azure Container Registry | Basic | Stores Docker image |
-| Container Apps Environment | Consumption | Hosts the app |
-| Azure Container App | 0.5 vCPU / 1 GiB | Runs nginx + token server |
-| Log Analytics Workspace | PerGB2018, 30d | Container & app logs |
-| Application Insights | workspace-based | Usage telemetry |
-| Azure Speech (optional) | S0 | Avatar Presenter (keyless via RBAC) |
-| Cosmos DB (optional) | Free tier | Diagram persistence |
-
-### Managed Identity & RBAC
-
-A **user-assigned managed identity** is created at provision time and assigned:
-
-- `AcrPull` on the Container Registry — lets ACA pull images without admin credentials
-- `Cognitive Services Speech User` on the Speech resource — keyless avatar auth via `DefaultAzureCredential`
-- `Cosmos DB Built-in Data Contributor` on the Cosmos account — keyless diagram reads/writes (when enabled)
-
-### Build-time vs runtime environment variables
-
-Vite bakes `VITE_*` variables into the JS bundle at **build time**; they cannot be injected at runtime. Two files are written by the pre-package hook and sourced inside the Dockerfile `RUN` layer:
-
-| File | Contents | Written by |
-|---|---|---|
-| `.env.build` | All `VITE_AZURE_OPENAI_*`, `VITE_SPEECH_REGION` | `scripts/azd-prepackage.sh` |
-| `.env.appinsights` | `VITE_APPINSIGHTS_CONNECTION_STRING` | `scripts/azd-prepackage.sh` |
-
-Both files are gitignored and never committed.
-
-Runtime variables (`AZURE_SPEECH_REGION`, `AZURE_SPEECH_RESOURCE_ID`, `AZURE_COSMOS_ENDPOINT`, etc.) are set as Container App environment variables by Bicep.
-
-### CI/CD (GitHub Actions)
-
-`.github/workflows/azure-dev.yml` provisions and deploys on every push to `main`. Required GitHub secrets and variables:
-
-| Name | Kind | Value |
-|---|---|---|
-| `AZURE_CLIENT_ID` | Secret | Federated credential client ID |
-| `AZURE_TENANT_ID` | Secret | Entra ID tenant ID |
-| `AZURE_SUBSCRIPTION_ID` | Secret | Azure subscription ID |
-| `AZURE_OPENAI_ENDPOINT` | Secret | Azure OpenAI endpoint URL |
-| `AZURE_OPENAI_API_KEY` | Secret | Azure OpenAI API key |
-| `AZURE_ENV_NAME` | Variable | azd environment name (e.g. `prod`) |
-| `AZURE_LOCATION` | Variable | Azure region (e.g. `eastus2`) |
-| `AZURE_SPEECH_REGION` | Variable | Speech region (e.g. `westus2`) |
-| `AZURE_OPENAI_DEPLOYMENT_NAME` | Variable | GPT-5.1 deployment name |
+The OpenAI proxy uses Azure Table Storage ETag updates for an atomic,
+cross-replica per-client rate limit and rejects requests if the shared counter
+cannot be updated safely. The production workflow requires the shared Table
+Storage endpoint and verifies the runtime identity's data role. Production MCP
+HTTP is stateless so requests remain valid across replicas; the optional
+stateful mode has a hard capacity, idle and absolute expiration, periodic
+garbage collection, and graceful shutdown cleanup. The deployment gate also
+rejects production server-side ARM import and broad management-plane roles on
+the runtime identity.
 
 ---
 

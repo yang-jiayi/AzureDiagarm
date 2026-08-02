@@ -320,3 +320,63 @@ test('OpenAI proxy fails closed when the Foundry allowlist is missing', async (t
   assert.equal(response.status, 503);
   assert.equal((await response.json()).error.code, 'deployment_allowlist_not_configured');
 });
+
+test('OpenAI proxy fails closed when the Azure OpenAI allowlist is missing', async (t) => {
+  const server = await startServer({
+    endpoint: 'https://example.openai.azure.com/',
+    apiKey: 'test-key',
+    // allowedDeployments omitted — defaults to empty Set
+    logger: silentLogger,
+  });
+  t.after(server.close);
+
+  const response = await fetch(`${server.baseUrl}/api/openai`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(requestBody()),
+  });
+
+  assert.equal(response.status, 503);
+  const payload = await response.json();
+  assert.equal(payload.error.code, 'deployment_allowlist_not_configured');
+});
+
+test('OpenAI proxy enforces Azure OpenAI rate limit per client key', async (t) => {
+  let callCount = 0;
+  const server = await startServer({
+    endpoint: 'https://example.openai.azure.com/',
+    apiKey: 'test-key',
+    allowedDeployments: new Set(['gpt-5.6-sol']),
+    fetchImpl: async () => {
+      callCount += 1;
+      return jsonResponse(200, { model: 'gpt-5.6-sol', output_text: '{}', usage: {} });
+    },
+    consumeRateLimit: (() => {
+      let calls = 0;
+      return () => {
+        calls += 1;
+        return calls > 2 ? 60 : 0;
+      };
+    })(),
+    logger: silentLogger,
+  });
+  t.after(server.close);
+
+  const makeRequest = () => fetch(`${server.baseUrl}/api/openai`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(requestBody()),
+  });
+
+  const r1 = await makeRequest();
+  assert.equal(r1.status, 200);
+  const r2 = await makeRequest();
+  assert.equal(r2.status, 200);
+  const r3 = await makeRequest();
+  assert.equal(r3.status, 429);
+  const payload = await r3.json();
+  assert.equal(payload.error.code, 'proxy_rate_limit_exceeded');
+  assert.equal(r3.headers.get('retry-after'), '60');
+  // The rate-limited request must not reach the upstream
+  assert.equal(callCount, 2);
+});

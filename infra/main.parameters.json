@@ -41,6 +41,9 @@
     "azureTablesFeedbackTable": {
       "value": "${AZURE_TABLES_FEEDBACK_TABLE}"
     },
+    "frontDoorId": {
+      "value": "${FRONT_DOOR_ID}"
+    },
     "openAiDeploymentGpt51": {
       "value": "${AZURE_OPENAI_DEPLOYMENT_NAME}"
     },

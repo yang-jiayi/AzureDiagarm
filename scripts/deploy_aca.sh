@@ -109,9 +109,8 @@ fi
 #   same RUN layer as `npm run build` so Vite embeds it via import.meta.env.
 SOURCE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 APPINSIGHTS_FILE="$SOURCE_DIR/.env.appinsights"
-# azd writes .env.build and the Dockerfile sources it after explicit build
-# arguments. Remove a stale copy so this manual path is controlled only by
-# the current .env values collected below.
+# Remove a stale legacy .env.build copy so this manual path is controlled only
+# by the current .env values collected below.
 rm -f "$SOURCE_DIR/.env.build"
 : > "$APPINSIGHTS_FILE"
 trap 'rm -f "$APPINSIGHTS_FILE"' EXIT
@@ -132,6 +131,10 @@ while IFS='=' read -r key value; do
         BUILD_ARGS+=(--build-arg "$key=$value")
     fi
 done < <(grep -v '^#' "$ENV_FILE" | grep -v '^\s*$')
+
+if [[ -n "${FRONT_DOOR_ID:-}" ]]; then
+    BUILD_ARGS+=(--build-arg "FRONT_DOOR_ID=$FRONT_DOOR_ID")
+fi
 
 IMAGE_TAG="${IMAGE_TAG:-$(date -u +%Y%m%d%H%M%S)-$(git -C "$SOURCE_DIR" rev-parse --short HEAD 2>/dev/null || echo local)}"
 ACR_IMAGE="$ACR_NAME.azurecr.io/$IMAGE_NAME:$IMAGE_TAG"
@@ -163,9 +166,20 @@ FQDN=$(az containerapp show \
 echo ""
 echo "🚀 Updating Container App: $ACA_APP_NAME"
 
+bash "$SOURCE_DIR/scripts/ensure-containerapp-probes.sh" \
+    "$RESOURCE_GROUP" \
+    "$ACA_APP_NAME" \
+    "${FRONT_DOOR_ID:-}"
+
 PUBLIC_URL="${PUBLIC_URL:-https://$FQDN}"
 RUNTIME_ENV_VARS=(
     "PUBLIC_URL=$PUBLIC_URL"
+    "MCP_ENABLED=${MCP_ENABLED:-true}"
+    "MCP_HTTP_STATELESS=${MCP_HTTP_STATELESS:-true}"
+    "MCP_SESSION_MAX=${MCP_SESSION_MAX:-100}"
+    "MCP_SESSION_IDLE_SECONDS=${MCP_SESSION_IDLE_SECONDS:-1800}"
+    "MCP_SESSION_TTL_SECONDS=${MCP_SESSION_TTL_SECONDS:-7200}"
+    "MCP_SESSION_GC_SECONDS=${MCP_SESSION_GC_SECONDS:-60}"
 )
 REMOVE_ENV_VARS=()
 
@@ -184,6 +198,7 @@ fi
 
 for var in AZURE_CLIENT_ID FEEDBACK_EMAIL_ENDPOINT FEEDBACK_EMAIL_SENDER \
            FEEDBACK_EMAIL_RECIPIENT AZURE_TABLES_ENDPOINT AZURE_TABLES_FEEDBACK_TABLE \
+           AZURE_TABLES_RATE_LIMIT_TABLE \
            AZURE_COSMOS_ENDPOINT COSMOS_DATABASE_ID COSMOS_CONTAINER_ID \
            COSMOS_FEEDBACK_CONTAINER_ID AZURE_BLOB_ENDPOINT \
            AZURE_BLOB_DIAGRAMS_CONTAINER AZURE_SPEECH_REGION AZURE_SPEECH_RESOURCE_ID; do
@@ -193,6 +208,15 @@ for var in AZURE_CLIENT_ID FEEDBACK_EMAIL_ENDPOINT FEEDBACK_EMAIL_SENDER \
         REMOVE_ENV_VARS+=("$var")
     fi
 done
+
+if [[ -n "${AZURE_TABLES_ENDPOINT:-}" && -z "${AZURE_TABLES_RATE_LIMIT_TABLE:-}" ]]; then
+    RUNTIME_ENV_VARS+=("AZURE_TABLES_RATE_LIMIT_TABLE=ratelimit")
+    FILTERED_REMOVE_ENV_VARS=()
+    for var in "${REMOVE_ENV_VARS[@]}"; do
+        [[ "$var" == "AZURE_TABLES_RATE_LIMIT_TABLE" ]] || FILTERED_REMOVE_ENV_VARS+=("$var")
+    done
+    REMOVE_ENV_VARS=("${FILTERED_REMOVE_ENV_VARS[@]}")
+fi
 
 OPENAI_KEY="${AZURE_OPENAI_API_KEY:-${VITE_AZURE_OPENAI_API_KEY:-}}"
 if [[ -n "$OPENAI_KEY" ]]; then
@@ -223,7 +247,11 @@ UPDATE_ARGS=(
     --resource-group "$RESOURCE_GROUP" \
     --image "$ACR_IMAGE" \
     --set-env-vars "${RUNTIME_ENV_VARS[@]}" \
-    --revision-suffix "v$(date -u +%s)"
+    --revision-suffix "v$(date -u +%s)" \
+    --min-replicas "${MIN_REPLICAS:-1}" \
+    --max-replicas "${MAX_REPLICAS:-2}" \
+    --scale-rule-name http \
+    --scale-rule-http-concurrency "${HTTP_SCALE_CONCURRENCY:-50}"
 )
 if [[ ${#REMOVE_ENV_VARS[@]} -gt 0 ]]; then
     UPDATE_ARGS+=(--remove-env-vars "${REMOVE_ENV_VARS[@]}")

@@ -17,11 +17,13 @@ const { EmailClient, KnownEmailSendStatus } = require('@azure/communication-emai
 const { createAccessControlRouter, getPrincipal } = require('./access-control');
 const { ArmKeyVaultAccessStore } = require('./arm-key-vault-access-store');
 const { createOpenAIProxyRouter } = require('./openai-proxy');
+const { createFixedWindowRateLimiter, createTableRateLimiter } = require('./rate-limiter');
 const { createDiagramsRouter, createAzureBlobBackend } = require('./diagram-api');
 const { asyncHandler, createErrorHandler } = require('./async-handler');
 const crypto = require('crypto');
 
 const app = express();
+app.disable('x-powered-by');
 app.use((_req, res, next) => {
   res.set('X-Robots-Tag', 'noindex, nofollow, noarchive, nosnippet, noimageindex, noai, noimageai');
   res.set('Cache-Control', 'no-store');
@@ -37,6 +39,13 @@ app.use('/api/openai', express.json({ limit: '12mb' }));
 app.use('/api/diagrams', express.json({ limit: '12mb' }));
 app.use(express.json({ limit: '16kb' }));
 const credential = new DefaultAzureCredential();
+
+// Nginx, Azure Front Door, Docker, and Container Apps all probe this route.
+// Keeping it on the Node process ensures a wedged or unavailable API process
+// is not masked by nginx continuing to serve a static "ok" response.
+app.get('/healthz', (_req, res) => {
+  res.type('text/plain').send('ok\n');
+});
 
 const REGION = process.env.AZURE_SPEECH_REGION;
 const RESOURCE_ID = process.env.AZURE_SPEECH_RESOURCE_ID;
@@ -117,60 +126,87 @@ const FOUNDRY_ALLOWED_DEPLOYMENTS = new Set(
     .filter(Boolean),
 );
 
-// Derive a rate-limit bucket that a caller cannot rotate at will.
-//
-// nginx forwards X-Forwarded-For as `$proxy_add_x_forwarded_for`, so the
-// *first* entry is whatever the caller sent — using it would let anyone reset
-// their own quota (and spoof another caller's) by varying the header. Azure
-// Front Door owns X-Azure-ClientIP / X-Azure-SocketIP and overwrites any
-// client-supplied value, and nginx rejects requests that do not carry this
-// deployment's X-Azure-FDID, so those headers are trustworthy here. When they
-// are absent the last X-Forwarded-For entry is used, because that one is
-// appended by the nearest trusted proxy rather than by the caller.
-const IP_LIKE = /^[0-9a-fA-F.:[\]]{3,45}$/;
-
-function trustedIp(value) {
-  const candidate = String(value || '').trim();
-  return IP_LIKE.test(candidate) ? candidate : '';
-}
-
-function getClientKey(req) {
-  const forwarded = String(req.get('x-forwarded-for') || '').split(',');
-  return (
-    trustedIp(req.get('x-azure-clientip'))
-    || trustedIp(req.get('x-azure-socketip'))
-    || trustedIp(forwarded[forwarded.length - 1])
-    || trustedIp(req.ip)
-    || 'unknown'
-  ).slice(0, 128);
-}
-
-function createFixedWindowRateLimiter(windowMs, maxRequests) {
-  const clients = new Map();
-  return (req) => {
-    const now = Date.now();
-    for (const [key, value] of clients) {
-      if (value.resetAt <= now) clients.delete(key);
-    }
-
-    const key = getClientKey(req);
-    const current = clients.get(key);
-    if (!current || current.resetAt <= now) {
-      clients.set(key, { count: 1, resetAt: now + windowMs });
-      return 0;
-    }
-    if (current.count >= maxRequests) {
-      return Math.max(1, Math.ceil((current.resetAt - now) / 1000));
-    }
-    current.count += 1;
-    return 0;
-  };
-}
-
-const consumeOpenAiRateLimit = createFixedWindowRateLimiter(
-  60 * 60 * 1000,
-  Math.max(1, Number(process.env.OPENAI_RATE_LIMIT_PER_HOUR) || 120),
+// ── Per-client rate limiting ───────────────────────────────────────────────
+// The table-backed limiter shares counters across all Container Apps replicas
+// via optimistic-concurrency writes to Azure Table Storage, giving an honest
+// global limit.  When AZURE_TABLES_ENDPOINT is not configured the in-process
+// limiter is used instead; rate limiting is then per-replica only, and the
+// effective limit is maxRequests × <replica count>.
+const OPENAI_RATE_LIMIT_PER_HOUR = Math.max(
+  1, Number(process.env.OPENAI_RATE_LIMIT_PER_HOUR) || 120,
 );
+const RATE_LIMIT_TABLE_NAME = process.env.AZURE_TABLES_RATE_LIMIT_TABLE || 'ratelimit';
+// AZURE_TABLES_ENDPOINT is read early here so we can decide which limiter to
+// create; the same constant is re-declared (same value) later for the feedback
+// table client.
+const _RATE_LIMIT_TABLES_ENDPOINT = process.env.AZURE_TABLES_ENDPOINT;
+
+let consumeOpenAiRateLimit;
+if (_RATE_LIMIT_TABLES_ENDPOINT) {
+  const rateLimitTableClient = new TableClient(
+    _RATE_LIMIT_TABLES_ENDPOINT,
+    RATE_LIMIT_TABLE_NAME,
+    credential,
+  );
+  let rateLimitTableReady = null;
+  const ensureRateLimitTable = () => {
+    if (!rateLimitTableReady) {
+      rateLimitTableReady = rateLimitTableClient.createTable()
+        .catch((error) => {
+          if (error.statusCode === 409) return;
+          rateLimitTableReady = null;
+          throw error;
+        });
+    }
+    return rateLimitTableReady;
+  };
+  const consumeSharedOpenAiRateLimit = createTableRateLimiter(
+    rateLimitTableClient,
+    60 * 60 * 1000,
+    OPENAI_RATE_LIMIT_PER_HOUR,
+    {
+      storageErrorRetryAfterSeconds: 5,
+      onStorageError: (operation, error) => {
+        console.error(
+          `[openai-proxy] Shared rate-limit storage ${operation} failed; request rejected:`,
+          error.message,
+        );
+      },
+    },
+  );
+  consumeOpenAiRateLimit = async (req) => {
+    try {
+      await ensureRateLimitTable();
+    } catch (error) {
+      console.error('[openai-proxy] Unable to ensure the shared rate-limit table:', error.message);
+      return 5;
+    }
+    return consumeSharedOpenAiRateLimit(req);
+  };
+  // Probe at startup, but reset the cached promise after a failure so a
+  // transient outage can recover on a later request.
+  ensureRateLimitTable().catch((error) => {
+    console.error('[openai-proxy] Shared rate-limit table startup probe failed:', error.message);
+  });
+  console.info(
+    `[openai-proxy] Using shared Table Storage rate limiter (table: ${RATE_LIMIT_TABLE_NAME}). `
+    + 'Rate limit is globally enforced across all replicas.',
+  );
+} else {
+  consumeOpenAiRateLimit = createFixedWindowRateLimiter(
+    60 * 60 * 1000,
+    OPENAI_RATE_LIMIT_PER_HOUR,
+  );
+  if (OPENAI_ENDPOINT) {
+    console.warn(
+      '[openai-proxy] AZURE_TABLES_ENDPOINT is not set. '
+      + 'The OpenAI rate limiter is in-process only — with multiple Container Apps replicas '
+      + `the effective per-IP limit is ${OPENAI_RATE_LIMIT_PER_HOUR} × <replica count>. `
+      + 'Set AZURE_TABLES_ENDPOINT (and optionally AZURE_TABLES_RATE_LIMIT_TABLE) to enforce '
+      + 'a global limit.',
+    );
+  }
+}
 const consumeUtilityApiRateLimit = createFixedWindowRateLimiter(60 * 60 * 1000, 120);
 // Deliberately tight: the only client is an operator reading the feedback
 // archive, so a low ceiling keeps the shared admin token from being brute-forced.
@@ -183,7 +219,7 @@ if (!FOUNDRY_ENDPOINT) {
   console.warn('[openai-proxy] AZURE_FOUNDRY_ENDPOINT is not set. Anthropic requests will return 503.');
 }
 if (OPENAI_ALLOWED_DEPLOYMENTS.size === 0) {
-  console.warn('[openai-proxy] AZURE_OPENAI_ALLOWED_DEPLOYMENTS is empty. Any valid deployment name is accepted.');
+  console.warn('[openai-proxy] AZURE_OPENAI_ALLOWED_DEPLOYMENTS is empty. All Azure OpenAI requests will be rejected (503) until the allowlist is configured.');
 }
 if (FOUNDRY_ALLOWED_DEPLOYMENTS.size === 0) {
   console.warn('[openai-proxy] AZURE_FOUNDRY_ALLOWED_DEPLOYMENTS is empty. Anthropic requests will be rejected.');
@@ -213,11 +249,20 @@ function getFeedbackEmailClient() {
 }
 
 let feedbackTable = null;
-function getFeedbackTable() {
+let feedbackTableReady = null;
+async function getFeedbackTable() {
   if (!TABLES_ENDPOINT) return null;
   if (!feedbackTable) {
     feedbackTable = new TableClient(TABLES_ENDPOINT, TABLES_FEEDBACK_TABLE, credential);
   }
+  if (!feedbackTableReady) {
+    feedbackTableReady = feedbackTable.createTable().catch((error) => {
+      if (error.statusCode === 409) return;
+      feedbackTableReady = null;
+      throw error;
+    });
+  }
+  await feedbackTableReady;
   return feedbackTable;
 }
 
@@ -237,7 +282,8 @@ function getFeedbackContainer() {
 
 async function persistFeedback(item) {
   const emailClient = getFeedbackEmailClient();
-  let emailError = null;
+  const deliveryErrors = [];
+  let emailDelivered = false;
   if (emailClient) {
     try {
       const safeCategory = item.category.replace(/[\r\n]+/g, ' ').slice(0, 100);
@@ -268,14 +314,15 @@ async function persistFeedback(item) {
       if (result.status !== KnownEmailSendStatus.Succeeded) {
         throw new Error(`Feedback email delivery failed with status ${result.status}`);
       }
+      emailDelivered = true;
     } catch (error) {
-      emailError = error;
+      deliveryErrors.push(error);
     }
   }
 
-  const table = getFeedbackTable();
-  if (table) {
+  if (TABLES_ENDPOINT) {
     try {
+      const table = await getFeedbackTable();
       const reverseTimestamp = String(253402300799999 - Date.now()).padStart(15, '0');
       await table.createEntity({
         partitionKey: 'feedback',
@@ -289,12 +336,11 @@ async function persistFeedback(item) {
       });
       return;
     } catch (error) {
-      if (emailError) {
-        throw new AggregateError([emailError, error], 'Feedback email and Table Storage delivery failed');
+      deliveryErrors.push(error);
+      if (emailDelivered) {
+        console.error('[feedback] Table Storage archive error:', error.message);
+        return;
       }
-      if (!emailClient) throw error;
-      console.error('[feedback] archive error:', error.message);
-      return;
     }
   }
 
@@ -304,17 +350,19 @@ async function persistFeedback(item) {
       await container.items.create(item);
       return;
     } catch (error) {
-      if (emailError) {
-        throw new AggregateError([emailError, error], 'Feedback email and Cosmos DB delivery failed');
+      deliveryErrors.push(error);
+      if (emailDelivered) {
+        console.error('[feedback] Cosmos DB archive error:', error.message);
+        return;
       }
-      if (!emailClient) throw error;
-      console.error('[feedback] archive error:', error.message);
-      return;
     }
   }
 
-  if (emailClient && !emailError) return;
-  if (emailError) throw emailError;
+  if (emailDelivered) return;
+  if (deliveryErrors.length === 1) throw deliveryErrors[0];
+  if (deliveryErrors.length > 1) {
+    throw new AggregateError(deliveryErrors, 'Feedback delivery failed in all configured channels');
+  }
   throw new Error('Feedback storage is not configured');
 }
 
@@ -326,43 +374,59 @@ const consumeFeedbackRateLimit = createFixedWindowRateLimiter(
 );
 
 async function readFeedback(limit) {
-  const table = getFeedbackTable();
-  if (table) {
-    const items = [];
-    const entities = table.listEntities({
-      queryOptions: {
-        filter: "PartitionKey eq 'feedback'",
-        select: ['id', 'rating', 'category', 'comment', 'contextJson', 'createdAt'],
-      },
-    });
-
-    for await (const entity of entities) {
-      items.push({
-        id: entity.id,
-        rating: entity.rating,
-        category: entity.category,
-        comment: entity.comment,
-        context: JSON.parse(entity.contextJson || '{}'),
-        createdAt: entity.createdAt,
+  let tableError = null;
+  if (TABLES_ENDPOINT) {
+    try {
+      const table = await getFeedbackTable();
+      const items = [];
+      const entities = table.listEntities({
+        queryOptions: {
+          filter: "PartitionKey eq 'feedback'",
+          select: ['id', 'rating', 'category', 'comment', 'contextJson', 'createdAt'],
+        },
       });
-      if (items.length >= limit) break;
+
+      for await (const entity of entities) {
+        items.push({
+          id: entity.id,
+          rating: entity.rating,
+          category: entity.category,
+          comment: entity.comment,
+          context: JSON.parse(entity.contextJson || '{}'),
+          createdAt: entity.createdAt,
+        });
+        if (items.length >= limit) break;
+      }
+      return items;
+    } catch (error) {
+      tableError = error;
+      console.error('[feedback] Table Storage read failed; trying Cosmos DB fallback:', error.message);
     }
-    return items;
   }
 
   const container = getFeedbackContainer();
-  if (!container) return null;
+  if (!container) {
+    if (tableError) throw tableError;
+    return null;
+  }
 
-  const { resources } = await container.items
-    .query({
-      query: 'SELECT TOP @limit c.id, c.rating, c.category, c.comment, c.context, c.createdAt FROM c WHERE c.type = @type ORDER BY c.createdAt DESC',
-      parameters: [
-        { name: '@limit', value: limit },
-        { name: '@type', value: 'feedback' },
-      ],
-    })
-    .fetchAll();
-  return resources;
+  try {
+    const { resources } = await container.items
+      .query({
+        query: 'SELECT TOP @limit c.id, c.rating, c.category, c.comment, c.context, c.createdAt FROM c WHERE c.type = @type ORDER BY c.createdAt DESC',
+        parameters: [
+          { name: '@limit', value: limit },
+          { name: '@type', value: 'feedback' },
+        ],
+      })
+      .fetchAll();
+    return resources;
+  } catch (error) {
+    if (tableError) {
+      throw new AggregateError([tableError, error], 'Feedback reads failed in Table Storage and Cosmos DB');
+    }
+    throw error;
+  }
 }
 
 if (!REGION) {

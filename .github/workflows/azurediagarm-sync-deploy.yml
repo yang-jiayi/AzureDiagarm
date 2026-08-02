@@ -526,6 +526,98 @@ jobs:
             .properties.provisioningState == "Succeeded"
           ' /tmp/azurediagarm-waf-policy.json > /dev/null
 
+      - name: Verify runtime least privilege and shared rate-limit storage
+        env:
+          AZURE_TABLES_ENDPOINT: ${{ vars.AZURE_TABLES_ENDPOINT }}
+        run: |
+          set -Eeuo pipefail
+          if [[ -z "$AZURE_TABLES_ENDPOINT" ]]; then
+            echo "::error::AZURE_TABLES_ENDPOINT is required so rate limits are shared across Container Apps replicas."
+            exit 1
+          fi
+
+          normalized_endpoint="${AZURE_TABLES_ENDPOINT%/}/"
+          az storage account list --output json > /tmp/azurediagarm-storage-accounts.json
+          storage_id="$(
+            jq -er \
+              --arg endpoint "${normalized_endpoint,,}" \
+              '
+                map(select(
+                  ((.primaryEndpoints.table // "") | ascii_downcase) == $endpoint
+                )) |
+                first |
+                .id
+              ' /tmp/azurediagarm-storage-accounts.json
+          )"
+          az containerapp show \
+            --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
+            --name "${{ vars.AZURE_CONTAINER_APP }}" \
+            --output json > /tmp/azurediagarm-runtime-app.json
+          principal_id="$(
+            jq -er '
+              .identity.userAssignedIdentities |
+              to_entries |
+              first |
+              .value.principalId
+            ' /tmp/azurediagarm-runtime-app.json
+          )"
+          [[ -n "$principal_id" ]]
+
+          jq -e '
+            all(
+              .properties.template.containers[].env[]?;
+              .name != "AZURE_IMPORT_ENABLED" or
+              (((.value // "") | ascii_downcase) != "true")
+            )
+          ' /tmp/azurediagarm-runtime-app.json > /dev/null || {
+            echo "::error::AZURE_IMPORT_ENABLED must remain disabled in production."
+            exit 1
+          }
+
+          az role assignment list \
+            --assignee-object-id "$principal_id" \
+            --all \
+            --output json > /tmp/azurediagarm-runtime-roles.json
+          jq -e --arg storage "$storage_id" '
+            any(
+              .[];
+              .roleDefinitionName == "Storage Table Data Contributor" and
+              (
+                (.scope | ascii_downcase) as $scope |
+                (($storage | ascii_downcase) | startswith($scope))
+              )
+            )
+          ' /tmp/azurediagarm-runtime-roles.json > /dev/null || {
+            echo "::error::The Container App identity requires Storage Table Data Contributor on $storage_id."
+            exit 1
+          }
+          jq -e '
+            any(
+              .[];
+              .roleDefinitionName == "Owner" or
+              .roleDefinitionName == "Contributor" or
+              .roleDefinitionName == "User Access Administrator"
+            ) |
+            not
+          ' /tmp/azurediagarm-runtime-roles.json > /dev/null || {
+            echo "::error::The runtime identity has a broad management-plane role. Assign only resource-specific runtime roles."
+            exit 1
+          }
+
+      - name: Enforce Container Apps health probes
+        run: |
+          front_door_id="$(
+            az afd profile show \
+              --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
+              --profile-name "${{ vars.AZURE_FRONT_DOOR_PROFILE }}" \
+              --query frontDoorId \
+              --output tsv
+          )"
+          bash scripts/ensure-containerapp-probes.sh \
+            "${{ vars.AZURE_RESOURCE_GROUP }}" \
+            "${{ vars.AZURE_CONTAINER_APP }}" \
+            "$front_door_id"
+
       - name: Determine whether to deploy
         id: deployment
         env:
@@ -629,6 +721,11 @@ jobs:
             "AZURE_SPEECH_REGION=${{ vars.AZURE_SPEECH_REGION }}"
             "AZURE_SPEECH_RESOURCE_ID=${{ vars.AZURE_SPEECH_RESOURCE_ID }}"
             "MCP_ENABLED=true"
+            "MCP_HTTP_STATELESS=true"
+            "MCP_SESSION_MAX=100"
+            "MCP_SESSION_IDLE_SECONDS=1800"
+            "MCP_SESSION_TTL_SECONDS=7200"
+            "MCP_SESSION_GC_SECONDS=60"
             "FEEDBACK_EMAIL_ENDPOINT=${{ vars.FEEDBACK_EMAIL_ENDPOINT }}"
             "FEEDBACK_EMAIL_SENDER=${{ vars.FEEDBACK_EMAIL_SENDER }}"
             "FEEDBACK_EMAIL_RECIPIENT=${{ vars.FEEDBACK_EMAIL_RECIPIENT }}"
@@ -640,7 +737,8 @@ jobs:
           if [[ -n "${{ vars.AZURE_TABLES_ENDPOINT }}" ]]; then
             env_vars+=(
               "AZURE_TABLES_ENDPOINT=${{ vars.AZURE_TABLES_ENDPOINT }}"
-              "AZURE_TABLES_FEEDBACK_TABLE=${{ vars.AZURE_TABLES_FEEDBACK_TABLE }}"
+              "AZURE_TABLES_FEEDBACK_TABLE=${{ vars.AZURE_TABLES_FEEDBACK_TABLE || 'feedback' }}"
+              "AZURE_TABLES_RATE_LIMIT_TABLE=${{ vars.AZURE_TABLES_RATE_LIMIT_TABLE || 'ratelimit' }}"
             )
           fi
           if [[ -n "${{ vars.AZURE_COSMOS_ENDPOINT }}" ]]; then
@@ -667,7 +765,7 @@ jobs:
           )"
           remove_env_vars=()
           if [[ -z "${{ vars.AZURE_TABLES_ENDPOINT }}" ]]; then
-            for name in AZURE_TABLES_ENDPOINT AZURE_TABLES_FEEDBACK_TABLE; do
+            for name in AZURE_TABLES_ENDPOINT AZURE_TABLES_FEEDBACK_TABLE AZURE_TABLES_RATE_LIMIT_TABLE; do
               grep -qx "$name" <<< "$current_env_names" && remove_env_vars+=("$name")
             done
           fi
@@ -688,6 +786,10 @@ jobs:
             --image "${{ steps.image.outputs.image }}"
             --revision-suffix "$revision_suffix"
             --set-env-vars "${env_vars[@]}"
+            --min-replicas 1
+            --max-replicas 2
+            --scale-rule-name http
+            --scale-rule-http-concurrency 50
             --output none
           )
           if (( ${#remove_env_vars[@]} > 0 )); then
@@ -754,10 +856,37 @@ jobs:
               --query "properties.template.containers[0].env[?name=='CUSTOMIZATION_COMMIT'].value | [0]" \
               --output tsv
           )"
+          az containerapp revision show \
+            --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
+            --name "${{ vars.AZURE_CONTAINER_APP }}" \
+            --revision "$expected_revision" \
+            --query properties.template.containers[0].probes \
+            --output json > /tmp/azurediagarm-probes.json
 
           [[ "$actual_image" == "${{ steps.image.outputs.image }}" ]]
           [[ "$actual_upstream" == "${{ needs.merge_validate.outputs.upstream_commit }}" ]]
           [[ "$actual_customization" == "${{ needs.merge_validate.outputs.fork_commit }}" ]]
+          jq -e --arg frontDoorId "${{ steps.frontdoor.outputs.id }}" '
+            length == 3 and
+            any(.[];
+              .type == "Startup" and
+              .httpGet.path == "/healthz" and
+              .httpGet.port == 80 and
+              any(.httpGet.httpHeaders[]?; .name == "X-Azure-FDID" and .value == $frontDoorId)
+            ) and
+            any(.[];
+              .type == "Liveness" and
+              .httpGet.path == "/healthz" and
+              .httpGet.port == 80 and
+              any(.httpGet.httpHeaders[]?; .name == "X-Azure-FDID" and .value == $frontDoorId)
+            ) and
+            any(.[];
+              .type == "Readiness" and
+              .httpGet.path == "/healthz" and
+              .httpGet.port == 80 and
+              any(.httpGet.httpHeaders[]?; .name == "X-Azure-FDID" and .value == $frontDoorId)
+            )
+          ' /tmp/azurediagarm-probes.json > /dev/null
 
       - name: Purge Front Door cache
         if: steps.deployment.outputs.should_deploy == 'true'
