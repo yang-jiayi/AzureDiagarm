@@ -7,6 +7,10 @@
  */
 
 import dagre from 'dagre';
+import {
+  buildNestedHierarchyLayout,
+  layoutNodeDimensions,
+} from './layoutHierarchy';
 
 export interface LayoutOptions {
   direction: 'LR' | 'TB' | 'RL' | 'BT'; // Left-Right, Top-Bottom, etc.
@@ -19,6 +23,8 @@ interface LayoutService {
   id: string;
   name: string;
   groupId?: string;
+  width?: number;
+  height?: number;
   [key: string]: any;
 }
 
@@ -194,10 +200,12 @@ export function layoutArchitecture(
   
   // Add service nodes to graph
   services.forEach(service => {
+    const width = service.width ?? NODE_WIDTH;
+    const height = service.height ?? NODE_HEIGHT;
     g.setNode(service.id, {
       label: service.name,
-      width: NODE_WIDTH,
-      height: NODE_HEIGHT
+      width,
+      height
     });
     
     // Link service to its parent group (if any)
@@ -223,6 +231,8 @@ export function layoutArchitecture(
   // Extract positions from graph
   const positionedServices: PositionedService[] = services.map(service => {
     const node = g.node(service.id);
+    const width = service.width ?? NODE_WIDTH;
+    const height = service.height ?? NODE_HEIGHT;
     // Guard against NaN (can happen if a service references a removed/unknown group)
     const sx = isNaN(node?.x) ? 0 : node.x;
     const sy = isNaN(node?.y) ? 0 : node.y;
@@ -232,8 +242,8 @@ export function layoutArchitecture(
     return {
       ...service,
       position: {
-        x: sx - (NODE_WIDTH / 2),  // Center the node
-        y: sy - (NODE_HEIGHT / 2)
+        x: sx - (width / 2),
+        y: sy - (height / 2)
       }
     };
   });
@@ -276,13 +286,12 @@ export function layoutArchitecture(
     })
     .filter((g): g is PositionedGroup => g !== null);
   
-  // Post-process: resolve any overlapping groups
-  const { groups: finalGroups } = resolveGroupOverlaps(positionedGroups, positionedServices);
-
-  // Convert grouped service positions to be relative to their parent group
-  const finalServices = positionedServices.map(service => {
+  // Convert grouped services against the original group positions first.
+  // Any later group overlap adjustment then moves the complete hierarchy as a
+  // unit instead of sliding only the container around fixed child positions.
+  const relativeServices = positionedServices.map(service => {
     if (service.groupId) {
-      const parentGroup = finalGroups.find(g => g.id === service.groupId);
+      const parentGroup = positionedGroups.find(g => g.id === service.groupId);
       if (parentGroup) {
         return {
           ...service,
@@ -295,6 +304,12 @@ export function layoutArchitecture(
     }
     return service;
   });
+
+  // Post-process: resolve any overlapping groups.
+  const { groups: finalGroups, services: finalServices } = resolveGroupOverlaps(
+    positionedGroups,
+    relativeServices,
+  );
   
   console.log('  ✅ Groups positioned, overlaps resolved, positions made relative');
   console.log('📐 Layout complete!');
@@ -314,21 +329,42 @@ export function relayoutDiagram(
   edges: any[],
   options: Partial<LayoutOptions> = {}
 ): any[] {
+  const {
+    protectedNodeIds,
+    units,
+    unitByNodeId,
+  } = buildNestedHierarchyLayout(nodes);
+  const layoutNodes = nodes.filter(node => !protectedNodeIds.has(node.id));
+
   // Extract services and connections from React Flow nodes/edges
-  const services = nodes
-    .filter(n => n.type === 'azureNode')
-    .map(n => ({
+  const services: LayoutService[] = [
+    ...layoutNodes.filter(n => n.type === 'azureNode').map(n => ({
       id: n.id,
       name: n.data.label,
-      groupId: n.parentNode
-    }));
+      groupId: n.parentNode,
+      ...layoutNodeDimensions(n),
+    })),
+    ...units.map(unit => ({
+      id: unit.surrogateId,
+      name: unit.rootId,
+      width: unit.width,
+      height: unit.height,
+    })),
+  ];
+  const serviceIds = new Set(services.map(service => service.id));
   
-  const connections = edges.map(e => ({
-    from: e.source,
-    to: e.target
-  }));
+  const connections = edges
+    .map(edge => ({
+      from: unitByNodeId.get(edge.source)?.surrogateId ?? edge.source,
+      to: unitByNodeId.get(edge.target)?.surrogateId ?? edge.target,
+    }))
+    .filter(connection => (
+      connection.from !== connection.to
+      && serviceIds.has(connection.from)
+      && serviceIds.has(connection.to)
+    ));
   
-  const groups = nodes
+  const groups = layoutNodes
     .filter(n => n.type === 'groupNode')
     .map(n => ({
       id: n.id,
@@ -344,6 +380,20 @@ export function relayoutDiagram(
   
   // Map back to React Flow nodes
   const updatedNodes = nodes.map(node => {
+    const hierarchyUnit = units.find(unit => unit.rootId === node.id);
+    if (hierarchyUnit) {
+      const pos = positioned.find(service => service.id === hierarchyUnit.surrogateId);
+      return pos
+        ? {
+            ...node,
+            position: {
+              x: pos.position.x - hierarchyUnit.offsetX,
+              y: pos.position.y - hierarchyUnit.offsetY,
+            },
+          }
+        : node;
+    }
+    if (protectedNodeIds.has(node.id)) return node;
     if (node.type === 'azureNode') {
       const pos = positioned.find(s => s.id === node.id);
       if (pos) {

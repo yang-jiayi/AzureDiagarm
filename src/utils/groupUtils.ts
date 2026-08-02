@@ -9,10 +9,87 @@ import { Node } from 'reactflow';
 export const GROUP_PADDING = 40;
 export const GROUP_HEADER_HEIGHT = 50;
 
+export type GroupLayoutSnapshot = Map<string, {
+  position: { x: number; y: number };
+  width?: number;
+  height?: number;
+}>;
+
+function numericDimension(value: unknown): number | undefined {
+  if (typeof value === 'number' && Number.isFinite(value) && value > 0) return value;
+  if (typeof value === 'string') {
+    const parsed = Number.parseFloat(value);
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  }
+  return undefined;
+}
+
+function nodeDimensions(node: Node): { width: number; height: number } {
+  const style = node.style as Record<string, unknown> | undefined;
+  return {
+    width: numericDimension(node.width)
+      ?? numericDimension(style?.width)
+      ?? (node.type === 'groupNode' ? 400 : 160),
+    height: numericDimension(node.height)
+      ?? numericDimension(style?.height)
+      ?? (node.type === 'groupNode' ? 300 : 100),
+  };
+}
+
+function nodeDepth(node: Node, nodesById: Map<string, Node>): number {
+  let depth = 0;
+  let current = node;
+  const visiting = new Set<string>();
+  while (current.parentNode && !visiting.has(current.id)) {
+    visiting.add(current.id);
+    const parent = nodesById.get(current.parentNode);
+    if (!parent) break;
+    depth += 1;
+    current = parent;
+  }
+  return depth;
+}
+
+export function captureGroupLayout(nodes: Node[]): GroupLayoutSnapshot {
+  return new Map(nodes.map(node => {
+    const dimensions = node.type === 'groupNode' ? nodeDimensions(node) : {};
+    return [
+      node.id,
+      {
+        position: { ...node.position },
+        ...dimensions,
+      },
+    ];
+  }));
+}
+
+export function restoreGroupLayout(
+  nodes: Node[],
+  snapshot: GroupLayoutSnapshot,
+): Node[] {
+  return nodes.map(node => {
+    const saved = snapshot.get(node.id);
+    if (!saved) return node;
+    return {
+      ...node,
+      position: { ...saved.position },
+      positionAbsolute: undefined,
+      style: node.type === 'groupNode'
+        ? {
+            ...node.style,
+            width: saved.width,
+            height: saved.height,
+          }
+        : node.style,
+    };
+  });
+}
+
 /**
  * Compute the bounding box of a group's children and return
  * the updated node array with the group tightly fitted and
- * children repositioned relative to the new origin.
+ * children repositioned relative to the new origin without
+ * changing their absolute canvas positions.
  *
  * Returns null if the group has no children (no-op).
  */
@@ -31,8 +108,7 @@ export function fitGroupToContent(
   children.forEach(child => {
     const x = child.position.x;
     const y = child.position.y;
-    const w = (child.width as number) || 160;
-    const h = (child.height as number) || 100;
+    const { width: w, height: h } = nodeDimensions(child);
     minX = Math.min(minX, x);
     minY = Math.min(minY, y);
     maxX = Math.max(maxX, x + w);
@@ -46,7 +122,14 @@ export function fitGroupToContent(
 
   return allNodes.map(n => {
     if (n.id === groupId) {
-      return { ...n, style: { ...n.style, width: newWidth, height: newHeight } };
+      return {
+        ...n,
+        position: {
+          x: n.position.x + offsetX,
+          y: n.position.y + offsetY,
+        },
+        style: { ...n.style, width: newWidth, height: newHeight },
+      };
     }
     if (n.parentNode === groupId) {
       return {
@@ -63,9 +146,11 @@ export function fitGroupToContent(
  * Returns the modified node array.
  */
 export function fitAllGroupsToContent(nodes: Node[]): Node[] {
+  const nodesById = new Map(nodes.map(node => [node.id, node]));
   const groupIds = nodes
-    .filter(n => n.type === 'groupNode')
-    .map(n => n.id);
+    .filter(node => node.type === 'groupNode')
+    .sort((left, right) => nodeDepth(right, nodesById) - nodeDepth(left, nodesById))
+    .map(node => node.id);
 
   let result = [...nodes];
   for (const gid of groupIds) {

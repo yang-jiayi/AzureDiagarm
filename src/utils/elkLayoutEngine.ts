@@ -10,6 +10,10 @@
  */
 
 import ELK, { ElkNode, ElkExtendedEdge } from 'elkjs/lib/elk.bundled.js';
+import {
+  buildNestedHierarchyLayout,
+  layoutNodeDimensions,
+} from './layoutHierarchy';
 
 export interface LayoutOptions {
   direction: 'LR' | 'TB' | 'RL' | 'BT';
@@ -22,6 +26,8 @@ interface LayoutService {
   id: string;
   name: string;
   groupId?: string;
+  width?: number;
+  height?: number;
   [key: string]: any;
 }
 
@@ -167,13 +173,22 @@ export async function layoutArchitecture(
     }
   }
 
+  const usedElkIds = new Set(services.map(service => service.id));
+  const groupIdMap = new Map<string, string>();
+  for (const group of groups) {
+    let elkId = group.id;
+    while (usedElkIds.has(elkId)) elkId = `__group__${elkId}`;
+    usedElkIds.add(elkId);
+    groupIdMap.set(group.id, elkId);
+  }
+
   // Build ELK children: groups become compound nodes containing their members.
   // Use generous padding and internal spacing so groups are roomy like Dagre's.
   const groupElkNodes: ElkNode[] = groups.map(group => {
     const members = groupMembers.get(group.id) || [];
     const pad = opts.groupPadding;
     return {
-      id: group.id,
+      id: groupIdMap.get(group.id) ?? group.id,
       layoutOptions: {
         'elk.padding': `[top=${pad + 40}, left=${pad + 20}, bottom=${pad + 20}, right=${pad + 20}]`,
         'elk.spacing.nodeNode': String(Math.max(opts.nodeSpacing * 0.6, 80)),
@@ -181,8 +196,8 @@ export async function layoutArchitecture(
       },
       children: members.map(m => ({
         id: m.id,
-        width: NODE_WIDTH,
-        height: NODE_HEIGHT,
+        width: m.width ?? NODE_WIDTH,
+        height: m.height ?? NODE_HEIGHT,
       })),
       edges: connections
         .filter(c => {
@@ -200,8 +215,8 @@ export async function layoutArchitecture(
 
   const ungroupedElkNodes: ElkNode[] = ungrouped.map(s => ({
     id: s.id,
-    width: NODE_WIDTH,
-    height: NODE_HEIGHT,
+    width: s.width ?? NODE_WIDTH,
+    height: s.height ?? NODE_HEIGHT,
   }));
 
   // Build top-level edges (cross-group + from/to ungrouped)
@@ -255,7 +270,7 @@ export async function layoutArchitecture(
 
   // Groups
   for (const group of groups) {
-    const elkNode = findElkNode(layoutResult, group.id);
+    const elkNode = findElkNode(layoutResult, groupIdMap.get(group.id) ?? group.id);
     if (!elkNode) {
       console.warn(`  ⚠️ [ELK] Group ${group.id} not found in layout result`);
       continue;
@@ -319,20 +334,41 @@ export async function relayoutDiagram(
   edges: any[],
   options: Partial<LayoutOptions> = {}
 ): Promise<any[]> {
-  const services = nodes
-    .filter(n => n.type === 'azureNode')
-    .map(n => ({
+  const {
+    protectedNodeIds,
+    units,
+    unitByNodeId,
+  } = buildNestedHierarchyLayout(nodes);
+  const layoutNodes = nodes.filter(node => !protectedNodeIds.has(node.id));
+
+  const services: LayoutService[] = [
+    ...layoutNodes.filter(n => n.type === 'azureNode').map(n => ({
       id: n.id,
       name: n.data.label,
       groupId: n.parentNode,
-    }));
+      ...layoutNodeDimensions(n),
+    })),
+    ...units.map(unit => ({
+      id: unit.surrogateId,
+      name: unit.rootId,
+      width: unit.width,
+      height: unit.height,
+    })),
+  ];
+  const serviceIds = new Set(services.map(service => service.id));
 
-  const connections = edges.map(e => ({
-    from: e.source,
-    to: e.target,
-  }));
+  const connections = edges
+    .map(edge => ({
+      from: unitByNodeId.get(edge.source)?.surrogateId ?? edge.source,
+      to: unitByNodeId.get(edge.target)?.surrogateId ?? edge.target,
+    }))
+    .filter(connection => (
+      connection.from !== connection.to
+      && serviceIds.has(connection.from)
+      && serviceIds.has(connection.to)
+    ));
 
-  const groups = nodes
+  const groups = layoutNodes
     .filter(n => n.type === 'groupNode')
     .map(n => ({
       id: n.id,
@@ -347,6 +383,20 @@ export async function relayoutDiagram(
   );
 
   const updatedNodes = nodes.map(node => {
+    const hierarchyUnit = units.find(unit => unit.rootId === node.id);
+    if (hierarchyUnit) {
+      const pos = positioned.find(service => service.id === hierarchyUnit.surrogateId);
+      return pos
+        ? {
+            ...node,
+            position: {
+              x: pos.position.x - hierarchyUnit.offsetX,
+              y: pos.position.y - hierarchyUnit.offsetY,
+            },
+          }
+        : node;
+    }
+    if (protectedNodeIds.has(node.id)) return node;
     if (node.type === 'azureNode') {
       const pos = positioned.find(s => s.id === node.id);
       if (pos) {

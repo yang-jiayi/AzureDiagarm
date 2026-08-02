@@ -4,6 +4,8 @@
 import type { Edge, Node } from 'reactflow';
 import { relayoutDiagram } from './layoutEngine';
 import { relayoutDiagram as elkRelayoutDiagram } from './elkLayoutEngine';
+import { collectNestedHierarchyNodeIds } from './layoutHierarchy';
+import { buildAbsolutePositionMap } from './preserveManualLayout';
 
 export type LayoutEngineType = 'dagre' | 'elk';
 
@@ -22,6 +24,27 @@ export interface ApplyLayoutOptions {
 
 const NODE_WIDTH = 180;
 const NODE_HEIGHT = 100;
+
+function numericDimension(value: unknown): number | undefined {
+  if (typeof value === 'number' && Number.isFinite(value) && value > 0) return value;
+  if (typeof value === 'string') {
+    const parsed = Number.parseFloat(value);
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  }
+  return undefined;
+}
+
+function nodeDimensions(node: Node): { width: number; height: number } {
+  const style = node.style as Record<string, unknown> | undefined;
+  return {
+    width: numericDimension(node.width)
+      ?? numericDimension(style?.width)
+      ?? (node.type === 'groupNode' ? 420 : NODE_WIDTH),
+    height: numericDimension(node.height)
+      ?? numericDimension(style?.height)
+      ?? (node.type === 'groupNode' ? 260 : NODE_HEIGHT),
+  };
+}
 
 function getSpacing(spacing: LayoutSpacing) {
   if (spacing === 'compact') {
@@ -93,18 +116,6 @@ function normalizeDirectedAdjacency(nodes: Node[], edges: Edge[]) {
   return { azureIds, out, indeg, outdeg };
 }
 
-function pickMostConnectedNode(nodes: Node[], edges: Edge[]): string | undefined {
-  const { azureIds, indeg, outdeg } = normalizeDirectedAdjacency(nodes, edges);
-
-  let best: { id: string; score: number } | undefined;
-  for (const id of azureIds) {
-    const score = (indeg.get(id) ?? 0) + (outdeg.get(id) ?? 0);
-    if (!best || score > best.score) best = { id, score };
-  }
-
-  return best?.id;
-}
-
 function computePrimaryChain(nodes: Node[], edges: Edge[]): string[] {
   const { azureIds, out, indeg, outdeg } = normalizeDirectedAdjacency(nodes, edges);
 
@@ -147,7 +158,7 @@ function clamp(v: number, min: number, max: number) {
   return Math.max(min, Math.min(max, v));
 }
 
-function straightenPrimaryPath(nodes: Node[], edges: Edge[], direction: 'LR' | 'TB') {
+export function straightenPrimaryPath(nodes: Node[], edges: Edge[], direction: 'LR' | 'TB') {
   const chain = computePrimaryChain(nodes, edges);
   if (chain.length < 3) return { nodes, edges };
 
@@ -157,8 +168,9 @@ function straightenPrimaryPath(nodes: Node[], edges: Edge[], direction: 'LR' | '
   if (chainNodes.length < 3) return { nodes, edges };
 
   const axis = direction === 'LR' ? 'y' : 'x';
+  const absolutePositions = buildAbsolutePositionMap(nodes);
   const values = chainNodes
-    .map((n) => (n.position as any)[axis] as number)
+    .map((node) => absolutePositions.get(node.id)?.[axis] ?? node.position[axis])
     .slice()
     .sort((a, b) => a - b);
 
@@ -176,15 +188,18 @@ function straightenPrimaryPath(nodes: Node[], edges: Edge[], direction: 'LR' | '
     const parentId = (n as any).parentNode as string | undefined;
     if (parentId) {
       const parent = parentById.get(parentId);
-      const width = (parent?.style as any)?.width as number | undefined;
-      const height = (parent?.style as any)?.height as number | undefined;
+      const parentPosition = absolutePositions.get(parentId);
+      const { width, height } = parent ? nodeDimensions(parent) : { width: 0, height: 0 };
+      if (!parentPosition) return n;
 
-      if (axis === 'y' && typeof height === 'number') {
-        const newY = clamp(median, 0, Math.max(0, height - NODE_HEIGHT));
+      if (axis === 'y') {
+        const relativeMedian = median - parentPosition.y;
+        const newY = clamp(relativeMedian, 0, Math.max(0, height - NODE_HEIGHT));
         return { ...n, position: { ...n.position, y: newY } };
       }
-      if (axis === 'x' && typeof width === 'number') {
-        const newX = clamp(median, 0, Math.max(0, width - NODE_WIDTH));
+      if (axis === 'x') {
+        const relativeMedian = median - parentPosition.x;
+        const newX = clamp(relativeMedian, 0, Math.max(0, width - NODE_WIDTH));
         return { ...n, position: { ...n.position, x: newX } };
       }
     }
@@ -215,6 +230,7 @@ function straightenPrimaryPath(nodes: Node[], edges: Edge[], direction: 'LR' | '
 async function applySwimlanesByGroup(nodes: Node[], edges: Edge[], spacing: ReturnType<typeof getSpacing>, doRelayout: RelayoutFn) {
   const groupNodes = nodes.filter((n) => n.type === 'groupNode');
   const serviceNodes = nodes.filter((n) => n.type === 'azureNode');
+  const protectedNestedNodeIds = collectNestedHierarchyNodeIds(nodes);
 
   // Map groupId -> members
   const membersByGroup = new Map<string, Node[]>();
@@ -230,7 +246,7 @@ async function applySwimlanesByGroup(nodes: Node[], edges: Edge[], spacing: Retu
     }
   }
 
-  const groupOrder = [...groupNodes].sort((a, b) => {
+  const groupOrder = groupNodes.filter(group => !group.parentNode).sort((a, b) => {
     const la = String((a.data as any)?.label ?? a.id);
     const lb = String((b.data as any)?.label ?? b.id);
     return la.localeCompare(lb);
@@ -245,11 +261,20 @@ async function applySwimlanesByGroup(nodes: Node[], edges: Edge[], spacing: Retu
   // Layout each group internally (L→R) and stack groups vertically.
   for (const g of groupOrder) {
     const members = membersByGroup.get(g.id) ?? [];
+    if (protectedNestedNodeIds.has(g.id)) {
+      const { width, height } = nodeDimensions(g);
+      updatedNodes.set(g.id, {
+        ...g,
+        position: { x: 80, y: yCursor },
+        style: { ...(g.style ?? {}), width, height },
+      });
+      yCursor += height + spacing.laneGap;
+      continue;
+    }
 
     if (members.length === 0) {
       // Keep size but position lane.
-      const width = (g.style as any)?.width ?? 420;
-      const height = (g.style as any)?.height ?? 260;
+      const { width, height } = nodeDimensions(g);
       updatedNodes.set(g.id, { ...g, position: { x: 80, y: yCursor }, style: { ...(g.style ?? {}), width, height } });
       yCursor += height + spacing.laneGap;
       continue;
@@ -356,21 +381,58 @@ function applyRadial(
   const serviceNodes = nodes.filter((n) => n.type === 'azureNode');
   if (serviceNodes.length === 0) return { nodes, edges };
 
-  const centerId =
-    selectedNodeId && serviceNodes.some((n) => n.id === selectedNodeId)
-      ? selectedNodeId
-      : pickMostConnectedNode(nodes, edges) ?? serviceNodes[0].id;
+  const nodesById = new Map(nodes.map(node => [node.id, node]));
+  const serviceEntityIds = new Map<string, string>();
+  const entityNodes = new Map<string, Node>();
 
-  // Undirected adjacency for ring assignment.
-  const adj = new Map<string, Set<string>>();
-  for (const n of serviceNodes) adj.set(n.id, new Set());
-  for (const e of edges) {
-    if (!adj.has(e.source) || !adj.has(e.target)) continue;
-    adj.get(e.source)!.add(e.target);
-    adj.get(e.target)!.add(e.source);
+  const topLevelEntity = (node: Node): Node => {
+    let current = node;
+    let entity = node;
+    const visiting = new Set<string>();
+    while (current.parentNode && !visiting.has(current.id)) {
+      visiting.add(current.id);
+      const parent = nodesById.get(current.parentNode);
+      if (!parent) break;
+      if (parent.type === 'groupNode') entity = parent;
+      current = parent;
+    }
+    return entity;
+  };
+
+  for (const service of serviceNodes) {
+    const entity = topLevelEntity(service);
+    serviceEntityIds.set(service.id, entity.id);
+    entityNodes.set(entity.id, entity);
   }
 
-  // BFS layers.
+  const adj = new Map<string, Set<string>>();
+  for (const entityId of entityNodes.keys()) adj.set(entityId, new Set());
+  for (const edge of edges) {
+    const sourceEntity = serviceEntityIds.get(edge.source);
+    const targetEntity = serviceEntityIds.get(edge.target);
+    if (!sourceEntity || !targetEntity || sourceEntity === targetEntity) continue;
+    adj.get(sourceEntity)?.add(targetEntity);
+    adj.get(targetEntity)?.add(sourceEntity);
+  }
+
+  let centerId: string | undefined;
+  if (selectedNodeId) {
+    const selectedNode = nodesById.get(selectedNodeId);
+    if (selectedNode) {
+      const selectedEntity = topLevelEntity(selectedNode);
+      if (entityNodes.has(selectedEntity.id)) centerId = selectedEntity.id;
+    }
+  }
+  if (!centerId) {
+    for (const [entityId, neighbors] of adj) {
+      if (!centerId || neighbors.size > (adj.get(centerId)?.size ?? -1)) {
+        centerId = entityId;
+      }
+    }
+  }
+  centerId ??= entityNodes.keys().next().value;
+  if (!centerId) return { nodes, edges };
+
   const layer = new Map<string, number>();
   const q: string[] = [centerId];
   layer.set(centerId, 0);
@@ -385,10 +447,9 @@ function applyRadial(
     }
   }
 
-  // Any disconnected nodes go to outermost ring.
   const maxLayer = Math.max(...[...layer.values()], 0);
-  for (const n of serviceNodes) {
-    if (!layer.has(n.id)) layer.set(n.id, maxLayer + 1);
+  for (const entityId of entityNodes.keys()) {
+    if (!layer.has(entityId)) layer.set(entityId, maxLayer + 1);
   }
 
   const rings = new Map<number, string[]>();
@@ -397,27 +458,60 @@ function applyRadial(
   }
 
   const center = { x: 520, y: 360 };
+  const entityExtents = new Map(
+    [...entityNodes].map(([entityId, entity]) => {
+      const { width, height } = nodeDimensions(entity);
+      return [entityId, Math.hypot(width, height) / 2] as const;
+    }),
+  );
+  const ringRadii = new Map<number, number>();
+  let previousRadius = 0;
+  let previousExtent = entityExtents.get(centerId) ?? 0;
+  const ringGap = spacing.nodeSpacing;
+  const ringIndexes = [...rings.keys()].filter(index => index > 0).sort((a, b) => a - b);
+  for (const ringIndex of ringIndexes) {
+    const ids = rings.get(ringIndex) ?? [];
+    const maxExtent = Math.max(...ids.map(id => entityExtents.get(id) ?? 0), 0);
+    const requiredCenterDistance = (maxExtent * 2) + ringGap;
+    const chordRadius = ids.length > 1
+      ? requiredCenterDistance / (2 * Math.sin(Math.PI / ids.length))
+      : 0;
+    const configuredRadius = spacing.radialBaseRadius
+      + (ringIndex - 1) * spacing.radialRingStep;
+    const separatedRadius = previousRadius + previousExtent + maxExtent + ringGap;
+    const radius = Math.max(configuredRadius, chordRadius, separatedRadius);
+    ringRadii.set(ringIndex, radius);
+    previousRadius = radius;
+    previousExtent = maxExtent;
+  }
 
-  const updatedNodes = nodes.map((n) => {
-    if (n.type !== 'azureNode') return n;
-    if (n.id === centerId) {
-      return { ...n, parentNode: undefined, extent: undefined, position: { x: center.x, y: center.y } } as any;
+  const positions = new Map<string, { x: number; y: number }>();
+
+  for (const [entityId, entity] of entityNodes) {
+    let x = center.x;
+    let y = center.y;
+    if (entityId !== centerId) {
+      const d = layer.get(entityId) ?? 1;
+      const ids = rings.get(d) ?? [];
+      const idx = ids.indexOf(entityId);
+      const radius = ringRadii.get(d) ?? spacing.radialBaseRadius;
+      const angle = (idx / Math.max(1, ids.length)) * Math.PI * 2;
+      x += radius * Math.cos(angle);
+      y += radius * Math.sin(angle);
     }
 
-    const d = layer.get(n.id) ?? 1;
-    const ids = rings.get(d) ?? [];
-    const idx = ids.indexOf(n.id);
+    const { width, height } = nodeDimensions(entity);
+    positions.set(entityId, {
+      x: x - (width / 2),
+      y: y - (height / 2),
+    });
+  }
 
-    const radius = spacing.radialBaseRadius + (d - 1) * spacing.radialRingStep;
-    const angle = (idx / Math.max(1, ids.length)) * Math.PI * 2;
-
-    const x = center.x + radius * Math.cos(angle);
-    const y = center.y + radius * Math.sin(angle);
-
-    return { ...n, parentNode: undefined, extent: undefined, position: { x, y } } as any;
+  const updatedNodes = nodes.map((node) => {
+    const position = positions.get(node.id);
+    return position ? { ...node, position } : node;
   });
 
-  // Keep group nodes where they are (radial focuses on services).
   return { nodes: updatedNodes, edges };
 }
 

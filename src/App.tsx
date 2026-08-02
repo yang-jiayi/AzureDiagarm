@@ -117,6 +117,9 @@ import {
   detachChildrenFromGroups,
   fitGroupToContent,
   fitAllGroupsToContent,
+  captureGroupLayout,
+  restoreGroupLayout,
+  type GroupLayoutSnapshot,
 } from './utils/groupUtils';
 import {
   buildAbsolutePositionMap,
@@ -904,7 +907,7 @@ function App() {
 
   // Collapse / expand all groups
   const [allGroupsCollapsed, setAllGroupsCollapsed] = useState(false);
-  const preCollapseGroupSizes = useRef<Map<string, { width: number; height: number }>>(new Map());
+  const preCollapseGroupLayout = useRef<GroupLayoutSnapshot>(new Map());
 
 
 
@@ -1486,17 +1489,7 @@ function App() {
   // Toggle collapse / expand all group nodes
   const toggleCollapseAllGroups = useCallback(() => {
     if (!allGroupsCollapsed) {
-      // Save current sizes before collapsing
-      const sizeMap = new Map<string, { width: number; height: number }>();
-      nodes.forEach(n => {
-        if (n.type === 'groupNode') {
-          sizeMap.set(n.id, {
-            width: (n.style?.width as number) || (n.width as number) || 400,
-            height: (n.style?.height as number) || (n.height as number) || 300,
-          });
-        }
-      });
-      preCollapseGroupSizes.current = sizeMap;
+      preCollapseGroupLayout.current = captureGroupLayout(nodes);
 
       // Collapse all groups to fit content
       const collapsed = fitAllGroupsToContent(nodes);
@@ -1508,19 +1501,10 @@ function App() {
         reactFlowInstance?.fitView?.({ padding: 0.3, duration: 300 });
       }, 50);
     } else {
-      // Restore saved sizes
-      const sizeMap = preCollapseGroupSizes.current;
-      setNodes(nds =>
-        nds.map(n => {
-          if (n.type === 'groupNode' && sizeMap.has(n.id)) {
-            const { width, height } = sizeMap.get(n.id)!;
-            return { ...n, style: { ...n.style, width, height } };
-          }
-          return n;
-        })
-      );
+      const snapshot = preCollapseGroupLayout.current;
+      setNodes(nds => restoreGroupLayout(nds, snapshot));
       setAllGroupsCollapsed(false);
-      preCollapseGroupSizes.current = new Map();
+      preCollapseGroupLayout.current = new Map();
 
       setTimeout(() => {
         reactFlowInstance?.fitView?.({ padding: 0.2, duration: 300 });
