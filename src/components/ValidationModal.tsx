@@ -11,6 +11,7 @@ import './ValidationModal.css';
 import { useLanguage } from '../i18n/LanguageContext';
 import { localize } from '../i18n/localization';
 import { useEscapeKey } from '../hooks/useEscapeKey';
+import { useModalFocus } from '../hooks/useModalFocus';
 
 /**
  * Props for ValidationModal component
@@ -35,6 +36,7 @@ const ValidationModal: React.FC<ValidationModalProps> = ({ validation, isOpen, o
   const [selectedFindings, setSelectedFindings] = useState<Set<string>>(new Set());
   // Display preference: show the raw 0-100 score alongside the maturity band
   const [displayPrefs, setDisplayPrefs] = useValidationDisplayPrefs();
+  const dialogRef = useModalFocus<HTMLDivElement>(isOpen);
   useEscapeKey(isOpen, onClose);
 
   // Finding keys are positional (`pillar-0-0`), so a selection made against an
@@ -209,16 +211,13 @@ const ValidationModal: React.FC<ValidationModalProps> = ({ validation, isOpen, o
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div
+        ref={dialogRef}
         className="modal-content validation-modal"
         role="dialog"
         aria-modal="true"
         aria-label={t("🔍 Architecture Validation")}
         tabIndex={-1}
-        autoFocus
         onClick={(e) => e.stopPropagation()}
-        onKeyDown={(event) => {
-          if (event.key === 'Escape') onClose();
-        }}
       >
         <div className="modal-header">
           <h2>{t("🔍 Architecture Validation")}</h2>

@@ -20,6 +20,7 @@ import { bandLabel, scoreToBand } from '../services/wafMaturity';
 import { useValidationDisplayPrefs } from '../stores/validationDisplayStore';
 import { useDraggableResizable } from '../hooks/useDraggableResizable';
 import { useEscapeKey } from '../hooks/useEscapeKey';
+import { useModalFocus } from '../hooks/useModalFocus';
 import { AvatarPresenter, AvatarStatus } from '../services/avatarPresenter';
 import {
   MODEL_CONFIG,
@@ -664,6 +665,7 @@ const CompareValidationModal: React.FC<CompareValidationModalProps> = ({
     return inputs.length >= 2 ? buildValidationConsensus(inputs) : null;
   }, [results]);
 
+  const dialogRef = useModalFocus<HTMLDivElement>(isOpen);
   useEscapeKey(isOpen, onClose);
   if (!isOpen) return null;
 
@@ -682,16 +684,13 @@ const CompareValidationModal: React.FC<CompareValidationModalProps> = ({
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div
+        ref={dialogRef}
         className="compare-modal cv-modal"
         role="dialog"
         aria-modal="true"
         aria-label={t("Compare Validation")}
         tabIndex={-1}
-        autoFocus
         onClick={e => e.stopPropagation()}
-        onKeyDown={(event) => {
-          if (event.key === 'Escape') onClose();
-        }}
       >
         <div className="modal-header cv-header">
           <div className="modal-title">

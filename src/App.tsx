@@ -20,7 +20,7 @@ import type { CaptureOptions } from './utils/captureCanvas';
 import { animateEdgeFlow } from './utils/animateEdges';
 import { sequenceWorkflowSvg } from './utils/sequenceWorkflow';
 import { buildWorkflowMarkdown } from './services/workflowNarrativeExporter';
-import { Download, Save, Upload, DollarSign, Shield, ShieldCheck, FileText, FileCode, ChevronDown, ChevronRight, Clock, Camera, Loader, GitCompare, RefreshCw, PanelLeftClose, Minimize2, Maximize2, Presentation, MessageSquare, MessagesSquare, HelpCircle, Hand, ZoomIn, Frame, X, PanelTopClose, PanelTopOpen, DownloadCloud, Sun, Moon, Play, Pause, Eye, EyeOff, Cloud, Copy, Trash2, Ungroup, Boxes } from 'lucide-react';
+import { Download, Save, Upload, DollarSign, Shield, ShieldCheck, FileText, FileCode, ChevronDown, ChevronRight, Clock, Camera, Loader, GitCompare, RefreshCw, PanelLeftClose, Minimize2, Maximize2, Presentation, MessageSquare, MessagesSquare, HelpCircle, Hand, ZoomIn, Frame, X, PanelTopClose, PanelTopOpen, DownloadCloud, Sun, Moon, Play, Pause, Eye, EyeOff, Cloud, Copy, Trash2, Ungroup, Boxes, CheckSquare } from 'lucide-react';
 import IconPalette from './components/IconPalette';
 import AzureNode from './components/AzureNode';
 import GroupNode from './components/GroupNode';
@@ -283,15 +283,29 @@ const HEADER_COLLAPSED_STORAGE_KEY = 'azure-diagram-builder.headerCollapsed.v1';
 const TOOLBAR_SECTIONS_STORAGE_KEY = 'azure-diagram-builder.toolbarSections.v1';
 const RIBBON_TAB_STORAGE_KEY = 'azure-diagram-builder.ribbonTab.v1';
 const EDGE_CONTEXT_MENU_WIDTH = 220;
-const EDGE_CONTEXT_MENU_HEIGHT = 280;
+const EDGE_CONTEXT_MENU_HEIGHT = 360;
 const EDGE_CONTEXT_MENU_MARGIN = 8;
 const NODE_CONTEXT_MENU_WIDTH = 280;
 const NODE_CONTEXT_MENU_HEIGHT = 360;
+const PANE_CONTEXT_MENU_WIDTH = 220;
+const PANE_CONTEXT_MENU_HEIGHT = 190;
 
 type NodeContextMenuState = {
   x: number;
   y: number;
   nodeId: string;
+};
+
+type EdgeContextMenuState = {
+  x: number;
+  y: number;
+  edgeId: string;
+};
+
+type PaneContextMenuState = {
+  x: number;
+  y: number;
+  flowPosition: Node['position'];
 };
 
 function clampContextMenuPosition(
@@ -312,6 +326,52 @@ function clampContextMenuPosition(
     x: Math.min(Math.max(EDGE_CONTEXT_MENU_MARGIN, clientX), maxX),
     y: Math.min(Math.max(EDGE_CONTEXT_MENU_MARGIN, clientY), maxY),
   };
+}
+
+function getContextMenuAnchor(
+  event: React.MouseEvent,
+  target: HTMLElement | null,
+): { x: number; y: number } {
+  if (event.clientX !== 0 || event.clientY !== 0) {
+    return { x: event.clientX, y: event.clientY };
+  }
+  const bounds = target?.getBoundingClientRect();
+  return bounds
+    ? { x: bounds.left + bounds.width / 2, y: bounds.top + bounds.height / 2 }
+    : { x: window.innerWidth / 2, y: window.innerHeight / 2 };
+}
+
+function handleContextMenuNavigation(
+  event: React.KeyboardEvent<HTMLDivElement>,
+  closeMenu: () => void,
+) {
+  const items = Array.from(
+    event.currentTarget.querySelectorAll<HTMLButtonElement>('[role^="menuitem"]:not(:disabled)'),
+  );
+  if (items.length === 0) return;
+  const currentIndex = items.indexOf(document.activeElement as HTMLButtonElement);
+
+  let nextIndex: number | null = null;
+  if (event.key === 'ArrowDown' || (event.key === 'Tab' && !event.shiftKey)) {
+    nextIndex = currentIndex < 0 ? 0 : (currentIndex + 1) % items.length;
+  } else if (event.key === 'ArrowUp' || (event.key === 'Tab' && event.shiftKey)) {
+    nextIndex = currentIndex <= 0 ? items.length - 1 : currentIndex - 1;
+  } else if (event.key === 'Home') {
+    nextIndex = 0;
+  } else if (event.key === 'End') {
+    nextIndex = items.length - 1;
+  } else if (event.key === 'Escape') {
+    event.preventDefault();
+    event.stopPropagation();
+    closeMenu();
+    return;
+  }
+
+  if (nextIndex !== null) {
+    event.preventDefault();
+    event.stopPropagation();
+    items[nextIndex].focus();
+  }
 }
 
 function pricingFingerprint(pricing: NodePricingConfig | undefined): string {
@@ -784,7 +844,12 @@ function App() {
   const [nodeContextMenu, setNodeContextMenu] = useState<NodeContextMenuState | null>(null);
   const nodeContextMenuRef = useRef<HTMLDivElement>(null);
   const nodeContextMenuReturnFocusRef = useRef<HTMLElement | null>(null);
-  const [edgeContextMenu, setEdgeContextMenu] = useState<{ x: number; y: number; edgeId: string } | null>(null);
+  const [edgeContextMenu, setEdgeContextMenu] = useState<EdgeContextMenuState | null>(null);
+  const edgeContextMenuRef = useRef<HTMLDivElement>(null);
+  const edgeContextMenuReturnFocusRef = useRef<HTMLElement | null>(null);
+  const [paneContextMenu, setPaneContextMenu] = useState<PaneContextMenuState | null>(null);
+  const paneContextMenuRef = useRef<HTMLDivElement>(null);
+  const paneContextMenuReturnFocusRef = useRef<HTMLElement | null>(null);
   const [totalMonthlyCost, setTotalMonthlyCost] = useState(0);
   const [pricingMode, setPricingMode] = useState<PricingMode>('payg');
   const [pricingScenarios, setPricingScenarios] = useState<PricingScenario[]>(
@@ -809,9 +874,15 @@ function App() {
     nodeId: string;
     pricing: NodePricingConfig;
   } | null>(null);
+  const pricingEditorReturnFocusRef = useRef<{
+    runId: number;
+    nodeId: string;
+    element: HTMLElement | null;
+  } | null>(null);
   const pricingEditorOpenRunRef = useRef(0);
   const cancelPendingPricingEditorOpen = useCallback(() => {
     pricingEditorOpenRunRef.current += 1;
+    pricingEditorReturnFocusRef.current = null;
   }, []);
 
   const deleteCanvasNodes = useCallback((
@@ -1209,15 +1280,18 @@ function App() {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') cancelPendingPricingEditorOpen();
 
-      const target = e.target as HTMLElement;
+      const target = e.target;
       if (
-        pricingEditorNodeId
+        !(target instanceof Element)
+        || e.defaultPrevented
+        || pricingEditorNodeId
         || target.tagName === 'INPUT'
         || target.tagName === 'TEXTAREA'
         || target.tagName === 'SELECT'
         || target.tagName === 'BUTTON'
-        || target.isContentEditable
+        || (target instanceof HTMLElement && target.isContentEditable)
         || target.closest('[role="dialog"], [role="menu"]')
+        || document.querySelector('[role="dialog"], [role="menu"]')
       ) {
         return;
       }
@@ -1241,6 +1315,10 @@ function App() {
             const edgeIdsToRemove = selectedEdges.map(e => e.id);
             setEdges(eds => eds.filter(e => !edgeIdsToRemove.includes(e.id)));
           }
+
+          window.requestAnimationFrame(() => {
+            reactFlowWrapper.current?.focus();
+          });
         }
       }
 
@@ -1297,11 +1375,11 @@ function App() {
     );
   }, [layoutEdgeStyle, setEdges]);
 
-  const addGroupBox = useCallback(() => {
+  const addGroupBoxAtPosition = useCallback((position: Node['position']) => {
     const newNode: Node = {
       id: `group-${Date.now()}`,
       type: 'groupNode',
-      position: { x: 250, y: 150 },
+      position,
       data: { 
         label: 'Group Label',
       },
@@ -1312,6 +1390,10 @@ function App() {
     };
     setNodes((nds) => nds.concat(newNode));
   }, [setNodes]);
+
+  const addGroupBox = useCallback(() => {
+    addGroupBoxAtPosition({ x: 250, y: 150 });
+  }, [addGroupBoxAtPosition]);
 
   // Apply dark mode class to body and persist preference
   useEffect(() => {
@@ -1757,7 +1839,8 @@ function App() {
     const returnFocus = nodeContextMenuReturnFocusRef.current;
     nodeContextMenuReturnFocusRef.current = null;
     window.requestAnimationFrame(() => {
-      if (returnFocus?.isConnected) returnFocus.focus();
+      const focusTarget = returnFocus?.isConnected ? returnFocus : reactFlowWrapper.current;
+      focusTarget?.focus();
     });
   }, []);
 
@@ -1768,56 +1851,196 @@ function App() {
 
   const closeEdgeContextMenu = useCallback(() => {
     setEdgeContextMenu(null);
+    const returnFocus = edgeContextMenuReturnFocusRef.current;
+    edgeContextMenuReturnFocusRef.current = null;
+    window.requestAnimationFrame(() => {
+      const focusTarget = returnFocus?.isConnected ? returnFocus : reactFlowWrapper.current;
+      focusTarget?.focus();
+    });
+  }, []);
+
+  const dismissEdgeContextMenu = useCallback(() => {
+    edgeContextMenuReturnFocusRef.current = null;
+    setEdgeContextMenu(null);
+  }, []);
+
+  const closePaneContextMenu = useCallback(() => {
+    setPaneContextMenu(null);
+    const returnFocus = paneContextMenuReturnFocusRef.current;
+    paneContextMenuReturnFocusRef.current = null;
+    window.requestAnimationFrame(() => {
+      const focusTarget = returnFocus?.isConnected ? returnFocus : reactFlowWrapper.current;
+      focusTarget?.focus();
+    });
+  }, []);
+
+  const dismissPaneContextMenu = useCallback(() => {
+    paneContextMenuReturnFocusRef.current = null;
+    setPaneContextMenu(null);
   }, []);
 
   const closeCanvasContextMenus = useCallback(() => {
     cancelPendingPricingEditorOpen();
-    closeNodeContextMenu();
-    closeEdgeContextMenu();
-  }, [cancelPendingPricingEditorOpen, closeEdgeContextMenu, closeNodeContextMenu]);
+    if (nodeContextMenu) {
+      closeNodeContextMenu();
+    } else if (edgeContextMenu) {
+      closeEdgeContextMenu();
+    } else if (paneContextMenu) {
+      closePaneContextMenu();
+    }
+  }, [
+    cancelPendingPricingEditorOpen,
+    closeEdgeContextMenu,
+    closeNodeContextMenu,
+    closePaneContextMenu,
+    edgeContextMenu,
+    nodeContextMenu,
+    paneContextMenu,
+  ]);
 
   const dismissCanvasContextMenus = useCallback(() => {
     cancelPendingPricingEditorOpen();
     dismissNodeContextMenu();
-    closeEdgeContextMenu();
-  }, [cancelPendingPricingEditorOpen, closeEdgeContextMenu, dismissNodeContextMenu]);
+    dismissEdgeContextMenu();
+    dismissPaneContextMenu();
+  }, [
+    cancelPendingPricingEditorOpen,
+    dismissEdgeContextMenu,
+    dismissNodeContextMenu,
+    dismissPaneContextMenu,
+  ]);
 
   const onNodeContextMenu = useCallback((event: React.MouseEvent, node: Node) => {
     cancelPendingPricingEditorOpen();
     event.preventDefault();
     event.stopPropagation();
+    const eventTarget = event.target as HTMLElement;
+    const focusTarget = eventTarget.closest<HTMLElement>('.react-flow__node');
+    const anchor = getContextMenuAnchor(event, focusTarget);
     const position = clampContextMenuPosition(
-      event.clientX,
-      event.clientY,
+      anchor.x,
+      anchor.y,
       NODE_CONTEXT_MENU_WIDTH,
       NODE_CONTEXT_MENU_HEIGHT,
     );
-    if (!node.selected) {
-      setNodes((currentNodes) => currentNodes.map(currentNode => ({
-        ...currentNode,
-        selected: currentNode.id === node.id,
-      })));
-      setEdges((currentEdges) => currentEdges.map(edge => ({ ...edge, selected: false })));
-    }
-    const eventTarget = event.target as HTMLElement;
-    nodeContextMenuReturnFocusRef.current = eventTarget.closest<HTMLElement>('.react-flow__node')
+    // Context-menu commands always target the clicked item, never a hidden
+    // multi-selection that the menu does not describe.
+    setNodes((currentNodes) => currentNodes.map(currentNode => ({
+      ...currentNode,
+      selected: currentNode.id === node.id,
+    })));
+    setEdges((currentEdges) => currentEdges.map(edge => ({ ...edge, selected: false })));
+    nodeContextMenuReturnFocusRef.current = focusTarget
       || (document.activeElement instanceof HTMLElement ? document.activeElement : null);
-    setEdgeContextMenu(null);
+    dismissEdgeContextMenu();
+    dismissPaneContextMenu();
     setNodeContextMenu({ ...position, nodeId: node.id });
-  }, [cancelPendingPricingEditorOpen, setEdges, setNodes]);
+  }, [
+    cancelPendingPricingEditorOpen,
+    dismissEdgeContextMenu,
+    dismissPaneContextMenu,
+    setEdges,
+    setNodes,
+  ]);
 
   const onEdgeContextMenu = useCallback((event: React.MouseEvent, edge: Edge) => {
     cancelPendingPricingEditorOpen();
     event.preventDefault();
+    event.stopPropagation();
+    const eventTarget = event.target as HTMLElement;
+    const focusTarget = eventTarget.closest<HTMLElement>(
+      '.react-flow__edge, [data-edge-label-id]',
+    );
+    const anchor = getContextMenuAnchor(event, focusTarget);
     const position = clampContextMenuPosition(
-      event.clientX,
-      event.clientY,
+      anchor.x,
+      anchor.y,
       EDGE_CONTEXT_MENU_WIDTH,
       EDGE_CONTEXT_MENU_HEIGHT,
     );
     dismissNodeContextMenu();
+    dismissPaneContextMenu();
+    setNodes((currentNodes) => currentNodes.map(node => ({ ...node, selected: false })));
+    setEdges((currentEdges) => currentEdges.map(currentEdge => ({
+      ...currentEdge,
+      selected: currentEdge.id === edge.id,
+    })));
+    edgeContextMenuReturnFocusRef.current = focusTarget
+      || (document.activeElement instanceof HTMLElement ? document.activeElement : null);
     setEdgeContextMenu({ ...position, edgeId: edge.id });
-  }, [cancelPendingPricingEditorOpen, dismissNodeContextMenu]);
+  }, [
+    cancelPendingPricingEditorOpen,
+    dismissNodeContextMenu,
+    dismissPaneContextMenu,
+    setEdges,
+    setNodes,
+  ]);
+
+  const handleCanvasContextMenuCapture = useCallback((
+    event: React.MouseEvent<HTMLDivElement>,
+  ) => {
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+    const edgeLabel = target.closest<HTMLElement>('[data-edge-label-id]');
+    const edgeId = edgeLabel?.dataset.edgeLabelId;
+    const edge = edgeId ? edges.find(candidate => candidate.id === edgeId) : undefined;
+    if (edge) onEdgeContextMenu(event, edge);
+  }, [edges, onEdgeContextMenu]);
+
+  const openPaneContextMenu = useCallback((
+    clientX: number,
+    clientY: number,
+    returnFocus: HTMLElement | null,
+  ) => {
+    cancelPendingPricingEditorOpen();
+    const position = clampContextMenuPosition(
+      clientX,
+      clientY,
+      PANE_CONTEXT_MENU_WIDTH,
+      PANE_CONTEXT_MENU_HEIGHT,
+    );
+    const flowPosition = reactFlowInstance?.screenToFlowPosition?.({
+      x: clientX,
+      y: clientY,
+    }) ?? { x: 250, y: 150 };
+    dismissNodeContextMenu();
+    dismissEdgeContextMenu();
+    setNodes((currentNodes) => currentNodes.map(node => ({ ...node, selected: false })));
+    setEdges((currentEdges) => currentEdges.map(edge => ({ ...edge, selected: false })));
+    paneContextMenuReturnFocusRef.current = returnFocus;
+    setPaneContextMenu({ ...position, flowPosition });
+  }, [
+    cancelPendingPricingEditorOpen,
+    dismissEdgeContextMenu,
+    dismissNodeContextMenu,
+    reactFlowInstance,
+    setEdges,
+    setNodes,
+  ]);
+
+  const onPaneContextMenu = useCallback((event: React.MouseEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const anchor = getContextMenuAnchor(event, reactFlowWrapper.current);
+    openPaneContextMenu(anchor.x, anchor.y, reactFlowWrapper.current);
+  }, [openPaneContextMenu]);
+
+  const handleCanvasKeyDown = useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (!((event.shiftKey && event.key === 'F10') || event.key === 'ContextMenu')) return;
+    const target = event.target as HTMLElement;
+    if (target.closest(
+      '.react-flow__node, .react-flow__edge, [data-edge-label-id], button, input, textarea, select, [contenteditable="true"]',
+    )) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+    const bounds = reactFlowWrapper.current?.getBoundingClientRect();
+    openPaneContextMenu(
+      bounds ? bounds.left + bounds.width / 2 : window.innerWidth / 2,
+      bounds ? bounds.top + bounds.height / 2 : window.innerHeight / 2,
+      reactFlowWrapper.current,
+    );
+  }, [openPaneContextMenu]);
 
   const duplicateServiceNode = useCallback((nodeId: string) => {
     setNodes((currentNodes) => {
@@ -1849,8 +2072,16 @@ function App() {
     const runId = ++pricingEditorOpenRunRef.current;
     const editorStateVersion = getNodePricingEditorStateVersion();
     const node = latestNodesRef.current.find(candidate => candidate.id === nodeId);
-    dismissNodeContextMenu();
-    if (!node || node.type !== 'azureNode') return;
+    if (!node || node.type !== 'azureNode') {
+      closeNodeContextMenu();
+      return;
+    }
+    pricingEditorReturnFocusRef.current = {
+      runId,
+      nodeId,
+      element: nodeContextMenuReturnFocusRef.current,
+    };
+    closeNodeContextMenu();
 
     const storedPricing = node.data?.pricing as NodePricingConfig | undefined;
     if (storedPricing) {
@@ -1868,13 +2099,23 @@ function App() {
       runId !== pricingEditorOpenRunRef.current
       || editorStateVersion !== getNodePricingEditorStateVersion()
       || getActiveRegion() !== region
-    ) return;
+    ) {
+      if (pricingEditorReturnFocusRef.current?.runId === runId) {
+        pricingEditorReturnFocusRef.current = null;
+      }
+      return;
+    }
 
     const latestNode = latestNodesRef.current.find(candidate => candidate.id === nodeId);
     const latestServiceType = String(
       latestNode?.data?.serviceName || latestNode?.data?.label || '',
     );
-    if (!latestNode || latestNode.type !== 'azureNode' || latestServiceType !== serviceType) return;
+    if (!latestNode || latestNode.type !== 'azureNode' || latestServiceType !== serviceType) {
+      if (pricingEditorReturnFocusRef.current?.runId === runId) {
+        pricingEditorReturnFocusRef.current = null;
+      }
+      return;
+    }
 
     const latestPricing = latestNode.data?.pricing as NodePricingConfig | undefined;
     setPricingEditorDraft(latestPricing
@@ -1884,12 +2125,13 @@ function App() {
           pricing: initializedPricing ?? createCustomPricingDraft(region),
         });
     openNodePricingEditor(nodeId);
-  }, [dismissNodeContextMenu]);
+  }, [closeNodeContextMenu]);
 
   const closePricingEditor = useCallback(() => {
     cancelPendingPricingEditorOpen();
     setPricingEditorDraft(null);
     closeNodePricingEditor();
+    pricingEditorReturnFocusRef.current = null;
   }, [cancelPendingPricingEditorOpen]);
 
   const fitContextGroupToContent = useCallback((groupId: string) => {
@@ -1914,47 +2156,43 @@ function App() {
     closeNodeContextMenu();
   }, [closeNodeContextMenu, deleteCanvasNodes, language, nodes]);
 
+  const deleteContextEdge = useCallback((edgeId: string) => {
+    setEdges((currentEdges) => currentEdges.filter(edge => edge.id !== edgeId));
+    closeEdgeContextMenu();
+  }, [closeEdgeContextMenu, setEdges]);
+
+  const addContextGroup = useCallback(() => {
+    if (!paneContextMenu) return;
+    addGroupBoxAtPosition(paneContextMenu.flowPosition);
+    closePaneContextMenu();
+  }, [addGroupBoxAtPosition, closePaneContextMenu, paneContextMenu]);
+
+  const fitContextDiagram = useCallback(() => {
+    reactFlowInstance?.fitView?.({ padding: 0.2, duration: 300 });
+    closePaneContextMenu();
+  }, [closePaneContextMenu, reactFlowInstance]);
+
+  const selectAllContextItems = useCallback(() => {
+    setNodes((currentNodes) => currentNodes.map(node => ({ ...node, selected: true })));
+    setEdges((currentEdges) => currentEdges.map(edge => ({ ...edge, selected: true })));
+    closePaneContextMenu();
+  }, [closePaneContextMenu, setEdges, setNodes]);
+
   useLayoutEffect(() => {
-    if (!nodeContextMenu) return;
-    nodeContextMenuRef.current
-      ?.querySelector<HTMLButtonElement>('[role="menuitem"]:not(:disabled)')
+    const menu = nodeContextMenu
+      ? nodeContextMenuRef.current
+      : edgeContextMenu
+        ? edgeContextMenuRef.current
+        : paneContextMenu
+          ? paneContextMenuRef.current
+          : null;
+    menu
+      ?.querySelector<HTMLButtonElement>('[role^="menuitem"]:not(:disabled)')
       ?.focus();
-  }, [nodeContextMenu]);
-
-  const handleNodeContextMenuKeyDown = useCallback((
-    event: React.KeyboardEvent<HTMLDivElement>,
-  ) => {
-    const items = Array.from(
-      event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)'),
-    );
-    if (items.length === 0) return;
-    const currentIndex = items.indexOf(document.activeElement as HTMLButtonElement);
-
-    let nextIndex: number | null = null;
-    if (event.key === 'ArrowDown' || (event.key === 'Tab' && !event.shiftKey)) {
-      nextIndex = currentIndex < 0 ? 0 : (currentIndex + 1) % items.length;
-    } else if (event.key === 'ArrowUp' || (event.key === 'Tab' && event.shiftKey)) {
-      nextIndex = currentIndex <= 0 ? items.length - 1 : currentIndex - 1;
-    } else if (event.key === 'Home') {
-      nextIndex = 0;
-    } else if (event.key === 'End') {
-      nextIndex = items.length - 1;
-    } else if (event.key === 'Escape') {
-      event.preventDefault();
-      event.stopPropagation();
-      closeNodeContextMenu();
-      return;
-    }
-
-    if (nextIndex !== null) {
-      event.preventDefault();
-      event.stopPropagation();
-      items[nextIndex].focus();
-    }
-  }, [closeNodeContextMenu]);
+  }, [edgeContextMenu, nodeContextMenu, paneContextMenu]);
 
   useEffect(() => {
-    if (!nodeContextMenu && !edgeContextMenu) return;
+    if (!nodeContextMenu && !edgeContextMenu && !paneContextMenu) return;
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') closeCanvasContextMenus();
     };
@@ -1965,7 +2203,7 @@ function App() {
       document.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('resize', handleResize);
     };
-  }, [closeCanvasContextMenus, edgeContextMenu, nodeContextMenu]);
+  }, [closeCanvasContextMenus, edgeContextMenu, nodeContextMenu, paneContextMenu]);
 
   const setConnectionAnimations = useCallback((enabled: boolean) => {
     setAnimateConnections(enabled);
@@ -5500,7 +5738,19 @@ function App() {
           onAddIcon={handleAddService}
         />
         
-        <div className="canvas-container" ref={reactFlowWrapper}>
+        <div
+          className="canvas-container"
+          ref={reactFlowWrapper}
+          role="region"
+          aria-label={localize(language, {
+            en: 'Architecture canvas',
+            ja: 'アーキテクチャ キャンバス',
+          })}
+          data-modal-focus-fallback
+          tabIndex={0}
+          onKeyDown={handleCanvasKeyDown}
+          onContextMenuCapture={handleCanvasContextMenuCapture}
+        >
           <ReactFlow
             nodes={nodes}
             edges={edges}
@@ -5511,6 +5761,7 @@ function App() {
             onReconnect={onReconnect}
             onNodeContextMenu={onNodeContextMenu}
             onEdgeContextMenu={onEdgeContextMenu}
+            onPaneContextMenu={onPaneContextMenu}
             onPaneClick={dismissCanvasContextMenus}
             onInit={setReactFlowInstance}
             onDrop={onDrop}
@@ -5777,7 +6028,7 @@ function App() {
               ref={nodeContextMenuRef}
               className="node-context-menu"
               role="menu"
-              onKeyDown={handleNodeContextMenuKeyDown}
+              onKeyDown={(event) => handleContextMenuNavigation(event, closeNodeContextMenu)}
               aria-label={localize(language, {
                 en: `${contextMenuNodeIsGroup ? 'Layer' : 'Service'} actions`,
                 ja: `${contextMenuNodeIsGroup ? 'レイヤー' : 'サービス'}の操作`,
@@ -5893,14 +6144,21 @@ function App() {
           <>
             <div
               className="edge-context-menu-overlay"
-              onClick={closeEdgeContextMenu}
+              onClick={dismissEdgeContextMenu}
               onContextMenu={(event) => {
                 event.preventDefault();
-                closeEdgeContextMenu();
+                dismissEdgeContextMenu();
               }}
             />
-            <div 
+            <div
+              ref={edgeContextMenuRef}
               className="edge-context-menu"
+              role="menu"
+              aria-label={localize(language, {
+                en: 'Connection actions',
+                ja: '接続線の操作',
+              })}
+              onKeyDown={(event) => handleContextMenuNavigation(event, closeEdgeContextMenu)}
               style={{
                 position: 'fixed',
                 top: edgeContextMenu.y,
@@ -5910,21 +6168,27 @@ function App() {
             >
               <div className="context-menu-header">{t("Edge Direction")}</div>
               <button
+                type="button"
                 className="context-menu-item"
+                role="menuitem"
                 onClick={() => setEdgeDirection(edgeContextMenu.edgeId, 'forward')}
               >
                 <span className="menu-icon">{t("→")}</span>
                 <span>{t("One-way (Forward)")}</span>
               </button>
               <button
+                type="button"
                 className="context-menu-item"
+                role="menuitem"
                 onClick={() => setEdgeDirection(edgeContextMenu.edgeId, 'reverse')}
               >
                 <span className="menu-icon">{t("←")}</span>
                 <span>{t("One-way (Reverse)")}</span>
               </button>
               <button
+                type="button"
                 className="context-menu-item"
+                role="menuitem"
                 onClick={() => setEdgeDirection(edgeContextMenu.edgeId, 'bidirectional')}
               >
                 <span className="menu-icon">{t("↔")}</span>
@@ -5935,9 +6199,11 @@ function App() {
                 {localize(language, { en: 'Flow animation', ja: 'フローアニメーション' })}
               </div>
               <button
+                type="button"
                 className="context-menu-item"
+                role="menuitemcheckbox"
                 onClick={() => toggleEdgeAnimation(edgeContextMenu.edgeId)}
-                aria-pressed={Boolean(contextMenuEdge?.data?.flowAnimated)}
+                aria-checked={Boolean(contextMenuEdge?.data?.flowAnimated)}
               >
                 <span className="menu-icon">
                   {contextMenuEdge?.data?.flowAnimated ? <Pause size={16} /> : <Play size={16} />}
@@ -5948,6 +6214,84 @@ function App() {
                     ja: contextMenuEdge?.data?.flowAnimated ? 'この接続線を停止' : 'この接続線をアニメーション',
                   })}
                 </span>
+              </button>
+              <div className="context-menu-separator" role="separator" />
+              <button
+                type="button"
+                className="context-menu-item danger"
+                role="menuitem"
+                onClick={() => deleteContextEdge(edgeContextMenu.edgeId)}
+              >
+                <span className="menu-icon"><Trash2 size={16} /></span>
+                <span>
+                  {localize(language, {
+                    en: 'Delete connection',
+                    ja: '接続線を削除',
+                  })}
+                </span>
+              </button>
+            </div>
+          </>
+        )}
+
+        {/* Canvas Context Menu */}
+        {paneContextMenu && (
+          <>
+            <div
+              className="edge-context-menu-overlay"
+              onClick={dismissPaneContextMenu}
+              onContextMenu={(event) => {
+                event.preventDefault();
+                dismissPaneContextMenu();
+              }}
+            />
+            <div
+              ref={paneContextMenuRef}
+              className="edge-context-menu pane-context-menu"
+              role="menu"
+              aria-label={localize(language, {
+                en: 'Canvas actions',
+                ja: 'キャンバスの操作',
+              })}
+              onKeyDown={(event) => handleContextMenuNavigation(event, closePaneContextMenu)}
+              style={{
+                position: 'fixed',
+                top: paneContextMenu.y,
+                left: paneContextMenu.x,
+                zIndex: 10000,
+              }}
+            >
+              <div className="context-menu-header">
+                {localize(language, { en: 'Canvas', ja: 'キャンバス' })}
+              </div>
+              <button
+                type="button"
+                className="context-menu-item"
+                role="menuitem"
+                onClick={addContextGroup}
+              >
+                <span className="menu-icon"><Boxes size={16} /></span>
+                <span>{localize(language, { en: 'Add layer here', ja: 'ここにレイヤーを追加' })}</span>
+              </button>
+              <button
+                type="button"
+                className="context-menu-item"
+                role="menuitem"
+                disabled={nodes.length === 0}
+                onClick={fitContextDiagram}
+              >
+                <span className="menu-icon"><Frame size={16} /></span>
+                <span>{localize(language, { en: 'Fit diagram to view', ja: '図全体を表示' })}</span>
+              </button>
+              <button
+                type="button"
+                className="context-menu-item"
+                role="menuitem"
+                disabled={nodes.length === 0 && edges.length === 0}
+                onClick={selectAllContextItems}
+              >
+                <span className="menu-icon"><CheckSquare size={16} /></span>
+                <span>{localize(language, { en: 'Select all items', ja: 'すべての項目を選択' })}</span>
               </button>
             </div>
           </>
@@ -6316,6 +6660,11 @@ Return the IMPROVED architecture in the same JSON format as before with proper g
           <NodePricingEditor
             serviceType={String(node.data.serviceName || node.data.label || 'Unknown')}
             pricing={nodePricing}
+            returnFocusTarget={
+              pricingEditorReturnFocusRef.current?.nodeId === pricingEditorNodeId
+                ? pricingEditorReturnFocusRef.current.element
+                : null
+            }
             onClose={closePricingEditor}
             onApply={(updated) => {
               // Total cost recalculates from `nodes` via the existing effect.

@@ -19,6 +19,7 @@ import {
 import { useLanguage } from '../i18n/LanguageContext';
 import { localize, type LocalizedText } from '../i18n/localization';
 import { useEscapeKey } from '../hooks/useEscapeKey';
+import { useModalFocus } from '../hooks/useModalFocus';
 
 /** Abbreviate model name for filenames */
 function abbreviateModelForFile(model: ModelType): string {
@@ -682,22 +683,20 @@ const CompareModelsModal: React.FC<CompareModelsModalProps> = ({ isOpen, onClose
     ? Math.max(...successResults.map(r => (r.serviceCount || 0) + (r.connectionCount || 0) + (r.workflowSteps || 0)))
     : 0;
 
+  const dialogRef = useModalFocus<HTMLDivElement>(isOpen);
   useEscapeKey(isOpen, onClose);
   if (!isOpen) return null;
 
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div
+        ref={dialogRef}
         className="compare-modal"
         role="dialog"
         aria-modal="true"
         aria-label={t("Compare Models")}
         tabIndex={-1}
-        autoFocus
         onClick={e => e.stopPropagation()}
-        onKeyDown={(event) => {
-          if (event.key === 'Escape') onClose();
-        }}
       >
         <div className="modal-header">
           <div className="modal-title">

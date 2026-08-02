@@ -203,6 +203,7 @@ const EditableEdge: React.FC<EdgeProps> = ({
             />
           ) : (
             <div
+              data-edge-label-id={id}
               onMouseDown={handleMouseDown}
               onDoubleClick={handleLabelDoubleClick}
               onKeyDown={(event) => {

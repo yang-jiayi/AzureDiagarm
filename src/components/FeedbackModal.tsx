@@ -7,6 +7,7 @@ import { submitFeedback, FeedbackContext } from '../services/feedbackService';
 import './FeedbackModal.css';
 import { useLanguage } from '../i18n/LanguageContext';
 import { useEscapeKey } from '../hooks/useEscapeKey';
+import { useModalFocus } from '../hooks/useModalFocus';
 
 interface FeedbackModalProps {
   isOpen: boolean;
@@ -35,7 +36,7 @@ const CATEGORIES = [
 
 const FeedbackModal: React.FC<FeedbackModalProps> = ({ isOpen, onClose, context, preselectedRating }) => {
   const { t, translate } = useLanguage();
-  useEscapeKey(isOpen, onClose);
+  const dialogRef = useModalFocus<HTMLDivElement>(isOpen);
   const [rating, setRating] = useState<number | null>(null);
   const [category, setCategory] = useState(CATEGORIES[0]);
   const [comment, setComment] = useState('');
@@ -64,6 +65,7 @@ const FeedbackModal: React.FC<FeedbackModalProps> = ({ isOpen, onClose, context,
     reset();
     onClose();
   };
+  useEscapeKey(isOpen, handleClose);
 
   const handleSubmit = async () => {
     if (rating === null) {
@@ -89,16 +91,13 @@ const FeedbackModal: React.FC<FeedbackModalProps> = ({ isOpen, onClose, context,
   return (
     <div className="modal-overlay" onClick={handleClose}>
       <div
+        ref={dialogRef}
         className="modal-content feedback-modal"
         role="dialog"
         aria-modal="true"
         aria-label={t("Share Feedback")}
         tabIndex={-1}
-        autoFocus
         onClick={(e) => e.stopPropagation()}
-        onKeyDown={(event) => {
-          if (event.key === 'Escape') handleClose();
-        }}
       >
         <div className="modal-header">
           <h2>

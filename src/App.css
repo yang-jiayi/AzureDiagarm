@@ -1438,9 +1438,21 @@ body.dark-mode .editable-edge-flow-path {
   color: #0078d4;
 }
 
+.context-menu-item:focus-visible {
+  background: #f0f9ff;
+  color: #0078d4;
+  outline: 2px solid #0078d4;
+  outline-offset: -2px;
+}
+
 .context-menu-item:disabled:hover {
   background: white;
   color: #9ca3af;
+}
+
+.canvas-container:focus-visible {
+  outline: 3px solid #0078d4;
+  outline-offset: -3px;
 }
 
 .context-menu-item.danger {
@@ -1681,7 +1693,8 @@ body.dark-mode .context-menu-item {
   color: #e0e0e0;
 }
 
-body.dark-mode .context-menu-item:hover {
+body.dark-mode .context-menu-item:hover,
+body.dark-mode .context-menu-item:focus-visible {
   background: #3d3d3d;
   color: #60a5fa;
 }

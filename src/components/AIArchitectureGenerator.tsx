@@ -29,6 +29,7 @@ import './AIArchitectureGenerator.css';
 import { useLanguage } from '../i18n/LanguageContext';
 import { localize, type LocalizedText } from '../i18n/localization';
 import { useEscapeKey } from '../hooks/useEscapeKey';
+import { useModalFocus } from '../hooks/useModalFocus';
 import { readBooleanPreference, readLocalStorage, writeLocalStorage } from '../utils/safeStorage';
 
 type GenerationMode = 'topology' | 'reference' | 'blueprint' | 'both';
@@ -290,6 +291,7 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({ onGen
     cancelScheduledClose();
     setIsOpen(false);
   }, [cancelScheduledClose]);
+  const dialogRef = useModalFocus<HTMLDivElement>(isOpen);
   useEscapeKey(isOpen, closeModal);
   const scheduleClose = useCallback(() => {
     cancelScheduledClose();
@@ -674,16 +676,13 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({ onGen
       {isOpen && createPortal(
         <div className="modal-overlay" onClick={closeModal}>
           <div
+            ref={dialogRef}
             className="modal-content ai-architecture-modal"
             role="dialog"
             aria-modal="true"
             aria-label={t("AI Architecture Generator")}
             tabIndex={-1}
-            autoFocus
             onClick={(e) => e.stopPropagation()}
-            onKeyDown={(event) => {
-              if (event.key === 'Escape') closeModal();
-            }}
           >
             <div className="modal-header">
               <div className="modal-title">

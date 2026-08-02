@@ -9,6 +9,8 @@ import {
   type AccessIdentity,
   type AllowedUser,
 } from '../services/accessControlService';
+import { useEscapeKey } from '../hooks/useEscapeKey';
+import { useModalFocus } from '../hooks/useModalFocus';
 import { OperationGeneration } from '../utils/operationGeneration';
 import './AccessManagementModal.css';
 
@@ -37,8 +39,10 @@ const AccessManagementModal: React.FC<AccessManagementModalProps> = ({
   const isOpenRef = useRef(isOpen);
   const loadGenerationRef = useRef(new OperationGeneration());
   const mutationGenerationRef = useRef(new OperationGeneration());
+  const dialogRef = useModalFocus<HTMLElement>(isOpen);
 
   isOpenRef.current = isOpen;
+  useEscapeKey(isOpen && !saving, onClose);
 
   const loadUsers = useCallback(async () => {
     const generation = loadGenerationRef.current.advance();
@@ -71,15 +75,6 @@ const AccessManagementModal: React.FC<AccessManagementModalProps> = ({
     setNotice('');
     void loadUsers();
   }, [isOpen, loadUsers]);
-
-  useEffect(() => {
-    if (!isOpen) return;
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && !saving) onClose();
-    };
-    document.addEventListener('keydown', handleKeyDown);
-    return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen, onClose, saving]);
 
   const handleAdd = async (event: FormEvent) => {
     event.preventDefault();
@@ -145,10 +140,12 @@ const AccessManagementModal: React.FC<AccessManagementModalProps> = ({
   return (
     <div className="access-modal-overlay" onClick={() => !saving && onClose()}>
       <section
+        ref={dialogRef}
         className="access-modal"
         role="dialog"
         aria-modal="true"
         aria-labelledby="access-modal-title"
+        tabIndex={-1}
         onClick={(event) => event.stopPropagation()}
       >
         <header className="access-modal-header">

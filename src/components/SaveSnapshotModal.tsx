@@ -6,6 +6,7 @@ import { X, Camera } from 'lucide-react';
 import './SaveSnapshotModal.css';
 import { useLanguage } from '../i18n/LanguageContext';
 import { useEscapeKey } from '../hooks/useEscapeKey';
+import { useModalFocus } from '../hooks/useModalFocus';
 import { OperationGeneration } from '../utils/operationGeneration';
 
 interface SaveSnapshotModalProps {
@@ -29,6 +30,7 @@ const SaveSnapshotModal: React.FC<SaveSnapshotModalProps> = ({
   const isOpenRef = useRef(isOpen);
   const savingRef = useRef(false);
   const saveGenerationRef = useRef(new OperationGeneration());
+  const dialogRef = useModalFocus<HTMLDivElement>(isOpen);
 
   isOpenRef.current = isOpen;
 
@@ -70,12 +72,12 @@ const SaveSnapshotModal: React.FC<SaveSnapshotModalProps> = ({
       if (!savingRef.current) onClose();
     }}>
       <div
+        ref={dialogRef}
         className="modal-content save-snapshot-modal"
         role="dialog"
         aria-modal="true"
         aria-label={t("Save Snapshot")}
         tabIndex={-1}
-        autoFocus
         onClick={(e) => e.stopPropagation()}
         onKeyDown={(event) => {
           if (event.key === 'Escape' && !savingRef.current) onClose();

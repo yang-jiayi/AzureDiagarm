@@ -37,6 +37,7 @@ import {
 } from '../services/cloudDiagramService';
 import type { CloudSyncStatus } from '../hooks/useCloudDiagramSync';
 import { useEscapeKey } from '../hooks/useEscapeKey';
+import { useModalFocus } from '../hooks/useModalFocus';
 import { useLanguage } from '../i18n/LanguageContext';
 import { localize } from '../i18n/localization';
 import { OperationGeneration } from '../utils/operationGeneration';
@@ -125,6 +126,7 @@ const CloudWorkspaceModal: React.FC<CloudWorkspaceModalProps> = ({
     onClose();
   }, [onClose]);
 
+  const dialogRef = useModalFocus<HTMLDivElement>(isOpen);
   useEscapeKey(isOpen, closeModal);
 
   const isCurrentLoad = useCallback((generation: number) => (
@@ -641,12 +643,12 @@ const CloudWorkspaceModal: React.FC<CloudWorkspaceModalProps> = ({
   return (
     <div className="modal-overlay" onClick={closeModal}>
       <div
+        ref={dialogRef}
         className="modal-content cloud-workspace-modal"
         role="dialog"
         aria-modal="true"
         aria-label={text('Cloud workspace', 'クラウド ワークスペース')}
         tabIndex={-1}
-        autoFocus
         onClick={(event) => event.stopPropagation()}
       >
         <div className="modal-header">

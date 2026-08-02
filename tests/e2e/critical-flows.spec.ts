@@ -52,6 +52,39 @@ function cloudVersion(diagramId: string, versionId: string, notes: string) {
   };
 }
 
+function interactionCloudDocument() {
+  return {
+    ...cloudDocument('A', 'Interaction diagram'),
+    serviceCount: 2,
+    connectionCount: 1,
+    payload: {
+      nodes: [
+        {
+          id: 'node-a',
+          type: 'azureNode',
+          position: { x: 160, y: 220 },
+          data: { label: 'App Service', serviceName: 'App Service' },
+        },
+        {
+          id: 'node-b',
+          type: 'azureNode',
+          position: { x: 560, y: 220 },
+          data: { label: 'Azure SQL Database', serviceName: 'Azure SQL Database' },
+        },
+      ],
+      edges: [{
+        id: 'edge-ab',
+        source: 'node-a',
+        target: 'node-b',
+        sourceHandle: 'right',
+        targetHandle: 'left',
+        type: 'editableEdge',
+      }],
+      titleBlockData: { architectureName: 'Interaction diagram' },
+    },
+  };
+}
+
 async function fulfillJson(
   route: Route,
   body: unknown,
@@ -82,6 +115,153 @@ async function initializePage(
     }
   }, cloudContext);
 }
+
+async function openInteractionDiagram(page: Page) {
+  await initializePage(page, {
+    documentId: 'A',
+    access: 'owner',
+    role: 'owner',
+  });
+  const document = interactionCloudDocument();
+
+  await page.route('**/api/**', async (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    const method = request.method();
+    if (path === '/api/access/me') {
+      await fulfillJson(route, {
+        enabled: true,
+        authenticated: true,
+        email: 'owner@example.com',
+        isAdmin: true,
+        allowed: true,
+      });
+      return;
+    }
+    if (path === '/api/access/users' && method === 'GET') {
+      await fulfillJson(route, { users: [] });
+      return;
+    }
+    if (path === '/api/diagrams/A' && method === 'GET') {
+      await fulfillJson(route, document, 200, { etag: '"A-1"' });
+      return;
+    }
+    if (path === '/api/diagrams/A' && method === 'PUT') {
+      const body = JSON.parse(request.postData() || '{}');
+      await fulfillJson(route, {
+        ...document,
+        diagramName: body.diagramName || document.diagramName,
+        payload: body.payload || document.payload,
+        revision: 2,
+        etag: '"A-2"',
+      }, 200, { etag: '"A-2"' });
+      return;
+    }
+    await fulfillJson(route, { error: `Unhandled test endpoint: ${method} ${path}` }, 404);
+  });
+
+  await page.goto('/');
+  await expect(page.locator('[data-testid="rf__node-node-a"]')).toBeVisible();
+}
+
+test('canvas context menus and modal focus are keyboard safe', async ({ page }) => {
+  await openInteractionDiagram(page);
+  const nodeA = page.locator('[data-testid="rf__node-node-a"]');
+  const nodeB = page.locator('[data-testid="rf__node-node-b"]');
+  const edge = page.locator('[data-testid="rf__edge-edge-ab"]');
+
+  await nodeA.click();
+  await nodeB.click({ modifiers: ['Control'] });
+  await expect(nodeA).toHaveClass(/selected/);
+  await expect(nodeB).toHaveClass(/selected/);
+
+  await nodeA.click({ button: 'right' });
+  const nodeMenu = page.getByRole('menu', { name: 'Service actions' });
+  await expect(nodeMenu.getByRole('menuitem', { name: 'Duplicate service' })).toBeFocused();
+  await expect(page.locator('.react-flow__node.selected')).toHaveCount(1);
+  await expect(nodeA).toHaveClass(/selected/);
+  await page.keyboard.press('End');
+  await expect(nodeMenu.getByRole('menuitem', { name: 'Delete service' })).toBeFocused();
+  await page.keyboard.press('Home');
+  await expect(nodeMenu.getByRole('menuitem', { name: 'Duplicate service' })).toBeFocused();
+  await page.keyboard.press('ArrowDown');
+  await nodeMenu.getByRole('menuitem', { name: 'Set cost estimate' }).press('Enter');
+  const pricingEditor = page.locator('.npe-modal');
+  await expect(pricingEditor).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(pricingEditor).toBeHidden();
+  await expect(nodeA).toBeFocused();
+
+  await page.keyboard.press('Shift+F10');
+  await expect(nodeMenu).toBeVisible();
+  await page.setViewportSize({ width: 1500, height: 900 });
+  await expect(nodeMenu).toBeHidden();
+  await expect(nodeA).toBeFocused();
+
+  const edgeLabel = page.locator('[data-edge-label-id="edge-ab"]');
+  await edgeLabel.focus();
+  await page.keyboard.press('Shift+F10');
+  const edgeMenu = page.getByRole('menu', { name: 'Connection actions' });
+  await expect(edgeMenu.getByRole('menuitem', { name: 'One-way (Forward)' })).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(edgeMenu).toBeHidden();
+  await expect(edgeLabel).toBeFocused();
+
+  await edge.focus();
+  await page.keyboard.press('Shift+F10');
+  await expect(edgeMenu.getByRole('menuitem', { name: 'One-way (Forward)' })).toBeFocused();
+  await page.keyboard.press('End');
+  await expect(edgeMenu.getByRole('menuitem', { name: 'Delete connection' })).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(edgeMenu).toBeHidden();
+  await expect(edge).toBeFocused();
+  await page.keyboard.press('Delete');
+  await expect(edge).toBeHidden();
+
+  const canvas = page.getByRole('region', { name: 'Architecture canvas' });
+  await expect(canvas).toBeFocused();
+  await canvas.focus();
+  await page.keyboard.press('Shift+F10');
+  const canvasMenu = page.getByRole('menu', { name: 'Canvas actions' });
+  await expect(canvasMenu.getByRole('menuitem', { name: 'Add layer here' })).toBeFocused();
+  await page.keyboard.press('ArrowDown');
+  await expect(canvasMenu.getByRole('menuitem', { name: 'Fit diagram to view' })).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(canvasMenu).toBeHidden();
+  await expect(canvas).toBeFocused();
+
+  await nodeA.click();
+  await page.evaluate(() => {
+    const dialog = document.createElement('div');
+    dialog.dataset.testNonModalDialog = 'true';
+    dialog.setAttribute('role', 'dialog');
+    dialog.textContent = 'Non-modal notice';
+    document.body.appendChild(dialog);
+  });
+  await page.keyboard.press('Delete');
+  await expect(nodeA).toBeVisible();
+  await page.evaluate(() => {
+    document.querySelector('[data-test-non-modal-dialog]')?.remove();
+  });
+
+  const accessButton = page.getByRole('button', { name: 'Access', exact: true });
+  await accessButton.click();
+  const accessModal = page.locator('.access-modal');
+  await expect(accessModal).toBeFocused();
+  await page.keyboard.press('Shift+Tab');
+  await expect(accessModal.locator(':focus')).toHaveCount(1);
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+  await page.keyboard.press('Delete');
+  await expect(nodeA).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(accessModal).toBeHidden();
+  await expect(accessButton).toBeFocused();
+
+  await nodeB.click({ button: 'right' });
+  await nodeMenu.getByRole('menuitem', { name: 'Delete service' }).click();
+  await expect(nodeB).toBeHidden();
+  await expect(canvas).toBeFocused();
+});
 
 test('cloud workspace ignores stale details and destructive completions', async ({ page }) => {
   await initializePage(page);
@@ -234,11 +414,11 @@ test('access management ignores a stale load from a previous open cycle', async 
   });
 
   await page.goto('/');
-  await page.getByRole('button', { name: /Access$/ }).click();
+  await page.getByRole('button', { name: 'Access', exact: true }).click();
   const modal = page.locator('.access-modal');
   await expect(modal).toBeVisible();
   await modal.getByRole('button', { name: 'Close' }).click();
-  await page.getByRole('button', { name: /Access$/ }).click();
+  await page.getByRole('button', { name: 'Access', exact: true }).click();
   await expect(modal.getByText('new@example.com')).toBeVisible();
   await page.waitForTimeout(650);
   await expect(modal.getByText('new@example.com')).toBeVisible();

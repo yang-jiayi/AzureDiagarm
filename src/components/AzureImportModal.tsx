@@ -16,6 +16,7 @@ import { getSignedInName } from '../services/msalAuth';
 import { useLanguage } from '../i18n/LanguageContext';
 import { localize } from '../i18n/localization';
 import { useEscapeKey } from '../hooks/useEscapeKey';
+import { useModalFocus } from '../hooks/useModalFocus';
 import './AzureImportModal.css';
 
 interface AzureImportModalProps {
@@ -48,6 +49,7 @@ const AzureImportModal: React.FC<AzureImportModalProps> = ({ isOpen, onClose, on
   const [importing, setImporting] = useState(false);
   const [disabled, setDisabled] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const dialogRef = useModalFocus<HTMLDivElement>(isOpen);
   useEscapeKey(isOpen && !importing, onClose);
 
   const loadSubs = useCallback(() => {
@@ -126,10 +128,12 @@ const AzureImportModal: React.FC<AzureImportModalProps> = ({ isOpen, onClose, on
   return (
     <div className="modal-overlay" onClick={importing ? undefined : onClose}>
       <div
+        ref={dialogRef}
         className="modal-content azure-import-modal"
         role="dialog"
         aria-modal="true"
         aria-labelledby="azure-import-title"
+        tabIndex={-1}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="modal-header">

@@ -26,6 +26,7 @@ import {
 } from '../services/pricingScenarioService';
 import { getPricingFreshness } from '../utils/pricingHelpers';
 import { useEscapeKey } from '../hooks/useEscapeKey';
+import { useModalFocus } from '../hooks/useModalFocus';
 import { useLanguage } from '../i18n/LanguageContext';
 import { localize } from '../i18n/localization';
 import './PricingScenarioModal.css';
@@ -50,6 +51,7 @@ const PricingScenarioModal: React.FC<PricingScenarioModalProps> = ({
   const { language, t } = useLanguage();
   const [selectedId, setSelectedId] = useState(scenarios[0]?.id || '');
   const [period, setPeriod] = useState<'monthly' | 'annual'>('monthly');
+  const dialogRef = useModalFocus<HTMLDivElement>(isOpen);
   useEscapeKey(isOpen, onClose);
 
   useEffect(() => {
@@ -120,12 +122,12 @@ const PricingScenarioModal: React.FC<PricingScenarioModalProps> = ({
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div
+        ref={dialogRef}
         className="modal-content pricing-scenario-modal"
         role="dialog"
         aria-modal="true"
         aria-label={text('Pricing scenario comparison', '料金シナリオ比較')}
         tabIndex={-1}
-        autoFocus
         onClick={(event) => event.stopPropagation()}
       >
         <div className="modal-header">

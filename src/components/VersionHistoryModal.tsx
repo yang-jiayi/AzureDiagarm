@@ -8,6 +8,7 @@ import './VersionHistoryModal.css';
 import { useLanguage } from '../i18n/LanguageContext';
 import { localize } from '../i18n/localization';
 import { useEscapeKey } from '../hooks/useEscapeKey';
+import { useModalFocus } from '../hooks/useModalFocus';
 import { OperationGeneration } from '../utils/operationGeneration';
 
 interface VersionHistoryModalProps {
@@ -31,6 +32,7 @@ const VersionHistoryModal: React.FC<VersionHistoryModalProps> = ({
   const isOpenRef = useRef(isOpen);
   const loadGenerationRef = useRef(new OperationGeneration());
   const operationGenerationRef = useRef(new OperationGeneration());
+  const dialogRef = useModalFocus<HTMLDivElement>(isOpen);
 
   isOpenRef.current = isOpen;
 
@@ -191,16 +193,13 @@ const VersionHistoryModal: React.FC<VersionHistoryModalProps> = ({
   return (
     <div className="modal-overlay" onClick={closeModal}>
       <div
+        ref={dialogRef}
         className="modal-content version-history-modal"
         role="dialog"
         aria-modal="true"
         aria-label={t("Version History")}
         tabIndex={-1}
-        autoFocus
         onClick={(e) => e.stopPropagation()}
-        onKeyDown={(event) => {
-          if (event.key === 'Escape') closeModal();
-        }}
       >
         <div className="modal-header">
           <h2>

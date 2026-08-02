@@ -26,6 +26,7 @@ import {
 import { formatMonthlyCost } from '../utils/pricingHelpers';
 import { useLanguage } from '../i18n/LanguageContext';
 import { localize } from '../i18n/localization';
+import { useModalFocus } from '../hooks/useModalFocus';
 import './NodePricingEditor.css';
 
 const MAX_QUANTITY = 100_000;
@@ -69,6 +70,7 @@ interface NodePricingEditorProps {
   pricing: NodePricingConfig;
   onApply: (updated: NodePricingConfig) => void;
   onClose: () => void;
+  returnFocusTarget?: HTMLElement | null;
 }
 
 export default function NodePricingEditor({
@@ -76,6 +78,7 @@ export default function NodePricingEditor({
   pricing,
   onApply,
   onClose,
+  returnFocusTarget = null,
 }: NodePricingEditorProps) {
   const { language } = useLanguage();
   const [tiers, setTiers] = useState<PricingTier[]>([]);
@@ -89,6 +92,7 @@ export default function NodePricingEditor({
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState('');
   const activeRef = useRef(true);
+  const dialogRef = useModalFocus<HTMLDivElement>(true, returnFocusTarget);
 
   useEffect(() => {
     activeRef.current = true;
@@ -205,11 +209,13 @@ export default function NodePricingEditor({
   return (
     <div className="npe-modal-overlay" onClick={handleClose}>
       <div
+        ref={dialogRef}
         className="npe-modal"
         onClick={e => e.stopPropagation()}
         role="dialog"
         aria-modal="true"
         aria-labelledby="node-pricing-editor-title"
+        tabIndex={-1}
       >
         <div className="npe-modal-header">
           <div className="npe-modal-title" id="node-pricing-editor-title">
@@ -226,7 +232,6 @@ export default function NodePricingEditor({
             className="npe-modal-close"
             onClick={handleClose}
             disabled={saving}
-            autoFocus
             aria-label={localize(language, { en: 'Close', ja: '閉じる' })}
           >
             <X size={18} />

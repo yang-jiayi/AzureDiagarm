@@ -5,6 +5,7 @@ import React, { useMemo, useRef, useState } from 'react';
 import { Check, Copy, Download, FileCode, GitCompare, Upload, X } from 'lucide-react';
 import './IaCRoundTripModal.css';
 import { useEscapeKey } from '../hooks/useEscapeKey';
+import { useModalFocus } from '../hooks/useModalFocus';
 import { useLanguage } from '../i18n/LanguageContext';
 import { localize } from '../i18n/localization';
 import type {
@@ -54,6 +55,7 @@ const IaCRoundTripModal: React.FC<IaCRoundTripModalProps> = ({
   const { language, t } = useLanguage();
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const planInputRef = useRef<HTMLInputElement | null>(null);
+  const dialogRef = useModalFocus<HTMLDivElement>(isOpen);
 
   useEscapeKey(isOpen, onClose);
 
@@ -131,12 +133,12 @@ const IaCRoundTripModal: React.FC<IaCRoundTripModalProps> = ({
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div
+        ref={dialogRef}
         className="modal-content iac-roundtrip-modal"
         role="dialog"
         aria-modal="true"
         aria-label={l('IaC round-trip and drift', 'IaC ラウンドトリップとドリフト')}
         tabIndex={-1}
-        autoFocus
         onClick={(event) => event.stopPropagation()}
       >
         <div className="modal-header">
