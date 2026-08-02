@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-import React, { useState, useCallback, useRef, useEffect, useLayoutEffect, useMemo } from 'react';
+import React, { lazy, Suspense, useState, useCallback, useRef, useEffect, useLayoutEffect, useMemo } from 'react';
 import ReactFlow, {
   MiniMap,
   Controls,
@@ -16,7 +16,7 @@ import ReactFlow, {
   MarkerType,
 } from 'reactflow';
 import 'reactflow/dist/style.css';
-import { captureDiagramAsPng, captureDiagramAsSvg } from './utils/captureCanvas';
+import type { CaptureOptions } from './utils/captureCanvas';
 import { animateEdgeFlow } from './utils/animateEdges';
 import { sequenceWorkflowSvg } from './utils/sequenceWorkflow';
 import { buildWorkflowMarkdown } from './services/workflowNarrativeExporter';
@@ -27,9 +27,7 @@ import GroupNode from './components/GroupNode';
 import AIArchitectureGenerator from './components/AIArchitectureGenerator';
 import ArchitectureChatPanel from './components/ArchitectureChatPanel';
 import HelpLearnPanel from './components/GuidedHelpPanel';
-import { exportReferenceArchitectureAsPng } from './utils/exportReferencePng';
 import type { ReferenceArchitecture } from './services/referenceArchitectureAI';
-import { exportBlueprintArchitectureAsPng } from './utils/exportBlueprintPng';
 import type { BlueprintArchitecture } from './services/blueprintArchitectureAI';
 import ReferenceImageViewer from './components/ReferenceImageViewer';
 import TitleBlock from './components/TitleBlock';
@@ -39,31 +37,18 @@ import EditableEdge from './components/EditableEdge';
 import AlignmentToolbar from './components/AlignmentToolbar';
 import WorkflowPanel from './components/WorkflowPanel';
 import RegionSelector from './components/RegionSelector';
-import ValidationModal from './components/ValidationModal';
-import DeploymentGuideModal from './components/DeploymentGuideModal';
-import IaCRoundTripModal from './components/IaCRoundTripModal';
-import VersionHistoryModal from './components/VersionHistoryModal';
-import SaveSnapshotModal from './components/SaveSnapshotModal';
-import CloudWorkspaceModal from './components/CloudWorkspaceModal';
-import PricingScenarioModal from './components/PricingScenarioModal';
-import AzureImportModal from './components/AzureImportModal';
 import ModelSettingsPopover from './components/ModelSettingsPopover';
-import CompareModelsModal from './components/CompareModelsModal';
-import CompareValidationModal from './components/CompareValidationModal';
 import { loadIconsFromCategory, type AzureIcon } from './utils/iconLoader';
 import { getServiceIconMapping, isCapacityConsumed } from './data/serviceIconMapping';
-import { layoutArchitecture } from './utils/layoutEngine';
-import { layoutArchitecture as elkLayoutArchitecture } from './utils/elkLayoutEngine';
 import { initializeNodePricing, updateNodePricing, calculateCostBreakdown, exportCostBreakdownCSV, exportCostBreakdownJSON, getCostSummaryMarkdown, refreshAllNodePricing, type PricingMode } from './services/costEstimationService';
 import { prefetchCommonServices } from './services/azurePricingService';
 import { preloadCommonServices, getActiveRegion, AzureRegion, AVAILABLE_REGIONS, RegionInfo } from './services/regionalPricingService';
-import JSZip from 'jszip';
 import { formatMonthlyCost, getPricingFreshness } from './utils/pricingHelpers';
 import { hasPricingData, PRICING_DATA_AS_OF } from './data/azurePricing';
 import { costReportToHtml } from './utils/costReportHtml';
 import { validateArchitecture, ArchitectureValidation } from './services/architectureValidator';
 import { bandLabel } from './services/wafMaturity';
-import { generateDeploymentGuide, DeploymentGuide } from './services/deploymentGuideGenerator';
+import type { DeploymentGuide } from './services/deploymentGuideGenerator';
 import { generateArchitectureWithAI } from './services/azureOpenAI';
 import { MODEL_CONFIG, DEPLOYMENT_NAMES, type ModelType } from './stores/modelSettingsStore';
 import { usePricingDisplayPrefs } from './stores/pricingDisplayStore';
@@ -85,9 +70,7 @@ import {
   CloudDiagramOperationCancelledError,
   useCloudDiagramSync,
 } from './hooks/useCloudDiagramSync';
-import { exportAndDownloadDrawio } from './services/drawioExporter';
-import { buildVsdxBlob } from './services/visioVsdxExporter';
-import { exportDiagramAsPptx, exportArchitectureDeck, type DeckService } from './services/pptxExporter';
+import type { DeckService } from './services/pptxExporter';
 import { extractArchitectureFromArm, summarizeCoverage } from './services/armExtractor';
 import {
   buildIaCBaseline,
@@ -102,7 +85,6 @@ import {
 import { buildArchitectureFromResources } from './services/resourceGraphAdapter';
 import { getResources as getAzureResources } from './services/azureImportProvider';
 import { isDelegatedAuthConfigured, getSignedInName, consumeReopenFlag } from './services/msalAuth';
-import { exportDiagramAsHtml } from './services/htmlDiagramExporter';
 import {
   applyLayoutPreset,
   type LayoutPreset,
@@ -129,9 +111,7 @@ import {
 import { trackArchitectureGeneration, trackValidation, trackValidationHandoff, trackDeploymentGuide, trackExport, trackTemplateImport, trackModelComparison, trackRecommendationsApplied, trackVersionOperation, trackStartFresh, trackValidationFindings } from './services/telemetryService';
 import { classifyValidationTopics } from './services/validationConsensus';
 import type { IaCFormat } from './services/azureOpenAI';
-import FeedbackModal from './components/FeedbackModal';
 import FeedbackToast from './components/FeedbackToast';
-import AccessManagementModal from './components/AccessManagementModal';
 import LanguageSwitch from './components/LanguageSwitch';
 import ValidationHandoffToast from './components/ValidationHandoffToast';
 import { FEEDBACK_DONE_KEY } from './services/feedbackService';
@@ -143,6 +123,139 @@ import { decodeUtf8Base64 } from './utils/base64Utf8';
 import { csvTextCell } from './utils/csv';
 import { toFileNameSegment } from './utils/fileName';
 import { readBooleanPreference, readLocalStorage, writeLocalStorage } from './utils/safeStorage';
+
+type LazyFeatureBoundaryProps = {
+  active: boolean;
+  children: React.ReactNode;
+  onClose?: () => void;
+};
+
+class LazyFeatureBoundary extends React.Component<
+  LazyFeatureBoundaryProps,
+  { error: Error | null }
+> {
+  state = { error: null };
+
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+
+  componentDidCatch(error: Error) {
+    console.error('Failed to load an optional feature chunk:', error);
+  }
+
+  render() {
+    if (this.state.error) {
+      if (!this.props.active) return null;
+      return (
+        <div className="modal-overlay" role="alert">
+          <div className="modal-content" style={{ maxWidth: 480, padding: 24 }}>
+            <h2>Feature unavailable / 機能を読み込めません</h2>
+            <p>
+              Refresh the page and try again. Your current diagram remains open until you choose to reload.
+              {' / '}
+              ページを再読み込みして、もう一度お試しください。
+            </p>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+              {this.props.onClose && (
+                <button className="btn btn-secondary" onClick={this.props.onClose}>
+                  Close / 閉じる
+                </button>
+              )}
+              <button className="btn btn-primary" onClick={() => window.location.reload()}>
+                Reload / 再読み込み
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+function renderLazyFeature<T extends React.ComponentType<any>>(
+  LazyComponent: React.LazyExoticComponent<T>,
+  props: React.ComponentProps<T>,
+) {
+  const modalProps = props as { isOpen?: boolean; onClose?: () => void };
+  return (
+    <LazyFeatureBoundary active={Boolean(modalProps.isOpen)} onClose={modalProps.onClose}>
+      <Suspense fallback={null}>
+        <LazyComponent {...props} />
+      </Suspense>
+    </LazyFeatureBoundary>
+  );
+}
+
+function lazyWhenOpen<T extends React.ComponentType<any>>(
+  loader: () => Promise<{ default: T }>,
+) {
+  const LazyComponent = lazy(loader);
+  return (props: React.ComponentProps<T>) => {
+    if (!(props as { isOpen?: boolean }).isOpen) return null;
+    return renderLazyFeature(LazyComponent, props);
+  };
+}
+
+function lazyOnceOpened<T extends React.ComponentType<any>>(
+  loader: () => Promise<{ default: T }>,
+) {
+  const LazyComponent = lazy(loader);
+  return (props: React.ComponentProps<T>) => {
+    const isOpen = Boolean((props as { isOpen?: boolean }).isOpen);
+    const [wasOpened, setWasOpened] = useState(isOpen);
+    useEffect(() => {
+      if (isOpen) setWasOpened(true);
+    }, [isOpen]);
+    if (!wasOpened && !isOpen) return null;
+    return renderLazyFeature(LazyComponent, props);
+  };
+}
+
+const ValidationModal = lazyWhenOpen(() => import('./components/ValidationModal'));
+const DeploymentGuideModal = lazyWhenOpen(() => import('./components/DeploymentGuideModal'));
+const IaCRoundTripModal = lazyWhenOpen(() => import('./components/IaCRoundTripModal'));
+const VersionHistoryModal = lazyWhenOpen(() => import('./components/VersionHistoryModal'));
+const SaveSnapshotModal = lazyWhenOpen(() => import('./components/SaveSnapshotModal'));
+const CloudWorkspaceModal = lazyWhenOpen(() => import('./components/CloudWorkspaceModal'));
+const PricingScenarioModal = lazyWhenOpen(() => import('./components/PricingScenarioModal'));
+const AzureImportModal = lazyWhenOpen(() => import('./components/AzureImportModal'));
+const CompareModelsModal = lazyOnceOpened(() => import('./components/CompareModelsModal'));
+const CompareValidationModal = lazyOnceOpened(() => import('./components/CompareValidationModal'));
+const FeedbackModal = lazyWhenOpen(() => import('./components/FeedbackModal'));
+const AccessManagementModal = lazyWhenOpen(() => import('./components/AccessManagementModal'));
+
+async function captureDiagramAsPng(
+  element: HTMLElement,
+  options: CaptureOptions,
+): Promise<string> {
+  const capture = await import('./utils/captureCanvas');
+  return capture.captureDiagramAsPng(element, options);
+}
+
+async function captureDiagramAsSvg(
+  element: HTMLElement,
+  options: CaptureOptions,
+): Promise<string> {
+  const capture = await import('./utils/captureCanvas');
+  return capture.captureDiagramAsSvg(element, options);
+}
+
+async function exportReferenceArchitectureAsPng(
+  architecture: ReferenceArchitecture,
+): Promise<void> {
+  const exporter = await import('./utils/exportReferencePng');
+  await exporter.exportReferenceArchitectureAsPng(architecture);
+}
+
+async function exportBlueprintArchitectureAsPng(
+  architecture: BlueprintArchitecture,
+  options: { legendPosition?: 'bottom' | 'right' | 'auto' } = {},
+): Promise<void> {
+  const exporter = await import('./utils/exportBlueprintPng');
+  await exporter.exportBlueprintArchitectureAsPng(architecture, options);
+}
 
 const nodeTypes = {
   azureNode: AzureNode,
@@ -2242,6 +2355,7 @@ function App() {
 
   const exportAsDrawio = useCallback(async () => {
     try {
+      const { exportAndDownloadDrawio } = await import('./services/drawioExporter');
       const diagramName = titleBlockData.architectureName || 'Azure Architecture';
       const fileName = await exportAndDownloadDrawio(nodes, edges, diagramName);
       recordExport('drawio', fileName);
@@ -2258,6 +2372,7 @@ function App() {
       return;
     }
     try {
+      const { buildVsdxBlob } = await import('./services/visioVsdxExporter');
       const diagramName = titleBlockData.architectureName || 'Azure Architecture';
       const blob = await buildVsdxBlob(nodes, edges, diagramName);
       const url = URL.createObjectURL(blob);
@@ -2275,8 +2390,9 @@ function App() {
     }
   }, [nodes, edges, titleBlockData.architectureName, recordExport, t]);
 
-  const exportAsHtml = useCallback(() => {
+  const exportAsHtml = useCallback(async () => {
     try {
+      const { exportDiagramAsHtml } = await import('./services/htmlDiagramExporter');
       const diagramName = titleBlockData.architectureName || 'Azure Architecture';
       exportDiagramAsHtml(nodes, edges, diagramName);
       const fileName = `${diagramName.replace(/[^a-zA-Z0-9-_ ]/g, '').replace(/\s+/g, '-').toLowerCase()}.html`;
@@ -2295,6 +2411,7 @@ function App() {
 
     setTimeout(async () => {
       try {
+        const { exportDiagramAsPptx } = await import('./services/pptxExporter');
         const imageDataUrl = await captureDiagramAsPng(reactFlowWrapper.current as HTMLElement, {
           backgroundColor: isDarkMode ? '#1e293b' : '#f8fafc',
           excludePanels: true,
@@ -2329,6 +2446,7 @@ function App() {
 
     setTimeout(async () => {
       try {
+        const { exportArchitectureDeck } = await import('./services/pptxExporter');
         const imageDataUrl = await captureDiagramAsPng(reactFlowWrapper.current as HTMLElement, {
           backgroundColor: isDarkMode ? '#1e293b' : '#f8fafc',
           excludePanels: true,
@@ -2769,6 +2887,7 @@ function App() {
 
 
     // Build ZIP
+    const { default: JSZip } = await import('jszip');
     const zip = new JSZip();
     const baseName = generateModelFilename('azure-cost', 'zip').replace('.zip', '');
     const fileBase = `${baseName}-${toFileNameSegment(reportRegion)}`;
@@ -3493,6 +3612,7 @@ function App() {
     let positionedGroups: any[];
 
     if (layoutEngine === 'elk') {
+      const { layoutArchitecture: elkLayoutArchitecture } = await import('./utils/elkLayoutEngine');
       const result = await elkLayoutArchitecture(
         services,
         connections,
@@ -3502,6 +3622,7 @@ function App() {
       positionedServices = result.services;
       positionedGroups = result.groups;
     } else {
+      const { layoutArchitecture } = await import('./utils/layoutEngine');
       const result = layoutArchitecture(
         services,
         connections,
@@ -4272,6 +4393,7 @@ function App() {
             .map(child => child.data.label || child.data.serviceName || 'Unknown'),
         }));
 
+      const { generateDeploymentGuide } = await import('./services/deploymentGuideGenerator');
       const guide = await generateDeploymentGuide(
         services,
         connections,

@@ -2,8 +2,6 @@
 // Licensed under the MIT License.
 
 import type { Edge, Node } from 'reactflow';
-import { relayoutDiagram } from './layoutEngine';
-import { relayoutDiagram as elkRelayoutDiagram } from './elkLayoutEngine';
 import { collectNestedHierarchyNodeIds } from './layoutHierarchy';
 import { buildAbsolutePositionMap } from './preserveManualLayout';
 
@@ -520,13 +518,18 @@ function applyRadial(
  */
 type RelayoutFn = (nodes: any[], edges: any[], options?: any) => any[] | Promise<any[]>;
 
-function getRelayoutFn(engine: LayoutEngineType = 'dagre'): RelayoutFn {
-  return engine === 'elk' ? elkRelayoutDiagram : relayoutDiagram;
+async function getRelayoutFn(engine: LayoutEngineType = 'dagre'): Promise<RelayoutFn> {
+  if (engine === 'elk') {
+    const { relayoutDiagram } = await import('./elkLayoutEngine');
+    return relayoutDiagram;
+  }
+  const { relayoutDiagram } = await import('./layoutEngine');
+  return relayoutDiagram;
 }
 
 export async function applyLayoutPreset(nodes: Node[], edges: Edge[], opts: ApplyLayoutOptions): Promise<{ nodes: Node[]; edges: Edge[] }> {
   const spacing = getSpacing(opts.spacing);
-  const doRelayout = getRelayoutFn(opts.layoutEngine);
+  const doRelayout = await getRelayoutFn(opts.layoutEngine);
 
   // Always apply edge path style.
   const styledEdges = withEdgeStyle(edges, opts.edgeStyle);

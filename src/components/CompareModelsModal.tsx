@@ -182,6 +182,11 @@ const CompareModelsModal: React.FC<CompareModelsModalProps> = ({ isOpen, onClose
     };
   }, [isOpen]);
 
+  useEffect(() => () => {
+    presenterRef.current?.disconnect();
+    presenterRef.current = null;
+  }, []);
+
   /** Strip markdown syntax so TTS reads cleanly */
   const stripMd = (s: string) =>
     s.replace(/\*\*([^*]+)\*\*/g, '$1')

@@ -8,8 +8,6 @@ import { generateArchitectureWithAI, isAzureOpenAIConfigured, AIMetrics, analyze
 import { generateReferenceArchitectureWithAI } from '../services/referenceArchitectureAI';
 import { generateBlueprintArchitectureWithAI } from '../services/blueprintArchitectureAI';
 import { generateComponentManifest, ComponentManifest } from '../services/componentManifestAI';
-import { exportReferenceArchitectureAsPng } from '../utils/exportReferencePng';
-import { exportBlueprintArchitectureAsPng } from '../utils/exportBlueprintPng';
 import ImageUploader from './ImageUploader';
 import {
   useModelSettings,
@@ -390,6 +388,7 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({ onGen
 
         // Always export the PNG — it is the only artifact produced in this mode.
         try {
+          const { exportReferenceArchitectureAsPng } = await import('../utils/exportReferencePng');
           await exportReferenceArchitectureAsPng(ref);
         } catch (err) {
           console.warn('Reference architecture PNG export failed:', err);
@@ -416,6 +415,7 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({ onGen
         onBlueprintArchitecture?.(bp);
 
         try {
+          const { exportBlueprintArchitectureAsPng } = await import('../utils/exportBlueprintPng');
           await exportBlueprintArchitectureAsPng(bp, { legendPosition });
         } catch (err) {
           console.warn('Blueprint architecture PNG export failed:', err);
@@ -538,6 +538,7 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({ onGen
         // (matches the existing "auto" behavior they're already used to).
         if (autoSnapshot && bpResult) {
           try {
+            const { exportBlueprintArchitectureAsPng } = await import('../utils/exportBlueprintPng');
             await exportBlueprintArchitectureAsPng(bpResult, { legendPosition });
           } catch (err) {
             console.warn('Blueprint architecture PNG export failed:', err);
