@@ -22,6 +22,13 @@ function sha256(value) {
   return createHash('sha256').update(value).digest('hex');
 }
 
+function sha256NormalizedSvg(value) {
+  // Git normalizes tracked SVG text to LF, while an older Windows worktree may
+  // still contain CRLF bytes. Line endings do not alter the SVG, so hash the
+  // canonical LF representation to keep integrity checks cross-platform.
+  return sha256(Buffer.from(value.toString('utf8').replace(/\r\n/g, '\n')));
+}
+
 function resolveManifestIconPath(relativePath) {
   if (typeof relativePath !== 'string') {
     throw new Error('Icon manifest contains a non-string path');
@@ -67,7 +74,7 @@ async function main() {
     const path = resolveManifestIconPath(entry.path);
     try {
       const content = await readFile(path);
-      if (sha256(content) !== entry.sha256) changed.push(entry.path);
+      if (sha256NormalizedSvg(content) !== entry.sha256) changed.push(entry.path);
     } catch {
       missing.push(entry.path);
     }

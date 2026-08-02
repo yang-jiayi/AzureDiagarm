@@ -159,10 +159,17 @@ export function useCloudDiagramSync({
     }
   }, []);
 
-  useEffect(() => () => {
-    documentGenerationRef.current.advance();
-    mountedRef.current = false;
-    clearTimers();
+  useEffect(() => {
+    // React StrictMode intentionally mounts, cleans up, and remounts effects in
+    // development. Restore the flag on every effect setup so the simulated
+    // cleanup cannot permanently invalidate all cloud operations in CI/dev.
+    const documentGeneration = documentGenerationRef.current;
+    mountedRef.current = true;
+    return () => {
+      documentGeneration.advance();
+      mountedRef.current = false;
+      clearTimers();
+    };
   }, [clearTimers]);
 
   const beginDocumentGeneration = useCallback(
