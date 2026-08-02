@@ -3233,6 +3233,12 @@ function App() {
   // Manual snapshot save handler
   const handleSaveSnapshot = useCallback(async (notes: string) => {
     try {
+      const snapshotNotes = notes || 'Manual snapshot';
+      try {
+        await cloudSync.saveSnapshot(snapshotNotes);
+      } catch (cloudError) {
+        console.warn('Cloud snapshot was unavailable; the local snapshot will still be preserved:', cloudError);
+      }
       await createSnapshot(
         nodes,
         edges,
@@ -3241,18 +3247,13 @@ function App() {
           architecturePrompt,
           originalPrompt: originalPrompt || architecturePrompt || undefined,
           validationScore: validationResult?.overallScore,
-          notes: notes || 'Manual snapshot',
+          notes: snapshotNotes,
           titleBlockData,
           workflow,
           pricingScenarios,
           iacBaseline,
         }
       );
-      try {
-        await cloudSync.saveSnapshot(notes || 'Manual snapshot');
-      } catch (cloudError) {
-        console.warn('Cloud snapshot was unavailable; the local snapshot was preserved:', cloudError);
-      }
       console.log('✅ Manual snapshot saved successfully');
       trackVersionOperation('save');
     } catch (error) {

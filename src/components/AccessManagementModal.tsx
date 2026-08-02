@@ -1,4 +1,4 @@
-import React, { FormEvent, useCallback, useEffect, useState } from 'react';
+import React, { FormEvent, useCallback, useEffect, useRef, useState } from 'react';
 import { AlertCircle, LogOut, RefreshCw, ShieldCheck, Trash2, UserPlus, X } from 'lucide-react';
 import { useLanguage } from '../i18n/LanguageContext';
 import { localize } from '../i18n/localization';
@@ -9,6 +9,7 @@ import {
   type AccessIdentity,
   type AllowedUser,
 } from '../services/accessControlService';
+import { OperationGeneration } from '../utils/operationGeneration';
 import './AccessManagementModal.css';
 
 interface AccessManagementModalProps {
@@ -33,22 +34,39 @@ const AccessManagementModal: React.FC<AccessManagementModalProps> = ({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const isOpenRef = useRef(isOpen);
+  const loadGenerationRef = useRef(new OperationGeneration());
+  const mutationGenerationRef = useRef(new OperationGeneration());
+
+  isOpenRef.current = isOpen;
 
   const loadUsers = useCallback(async () => {
+    const generation = loadGenerationRef.current.advance();
     setLoading(true);
     setError('');
     try {
-      setUsers(await listAllowedUsers());
+      const nextUsers = await listAllowedUsers();
+      if (!isOpenRef.current || !loadGenerationRef.current.isCurrent(generation)) return;
+      setUsers(nextUsers);
     } catch (loadError) {
+      if (!isOpenRef.current || !loadGenerationRef.current.isCurrent(generation)) return;
       console.error('[access] failed to load users:', loadError);
       setError(text('The access list could not be loaded.', 'アクセス許可リストを読み込めませんでした。'));
     } finally {
-      setLoading(false);
+      if (isOpenRef.current && loadGenerationRef.current.isCurrent(generation)) {
+        setLoading(false);
+      }
     }
   }, [text]);
 
   useEffect(() => {
-    if (!isOpen) return;
+    if (!isOpen) {
+      loadGenerationRef.current.advance();
+      mutationGenerationRef.current.advance();
+      setLoading(false);
+      setSaving(false);
+      return;
+    }
     setEmail('');
     setNotice('');
     void loadUsers();
@@ -74,19 +92,24 @@ const AccessManagementModal: React.FC<AccessManagementModalProps> = ({
     setSaving(true);
     setError('');
     setNotice('');
+    const generation = mutationGenerationRef.current.advance();
     try {
       await addAllowedUser(normalized);
+      if (!isOpenRef.current || !mutationGenerationRef.current.isCurrent(generation)) return;
       setEmail('');
       setNotice(text('Access was granted.', 'アクセスを許可しました。'));
       await loadUsers();
     } catch (saveError) {
+      if (!isOpenRef.current || !mutationGenerationRef.current.isCurrent(generation)) return;
       console.error('[access] failed to add user:', saveError);
       setError(text(
         'Access could not be granted. The address may already be listed.',
         'アクセスを許可できませんでした。このメールアドレスは既に登録されている可能性があります。',
       ));
     } finally {
-      setSaving(false);
+      if (isOpenRef.current && mutationGenerationRef.current.isCurrent(generation)) {
+        setSaving(false);
+      }
     }
   };
 
@@ -100,15 +123,20 @@ const AccessManagementModal: React.FC<AccessManagementModalProps> = ({
     setSaving(true);
     setError('');
     setNotice('');
+    const generation = mutationGenerationRef.current.advance();
     try {
       await removeAllowedUser(user.email);
+      if (!isOpenRef.current || !mutationGenerationRef.current.isCurrent(generation)) return;
       setNotice(text('Access was removed.', 'アクセス許可を削除しました。'));
       await loadUsers();
     } catch (removeError) {
+      if (!isOpenRef.current || !mutationGenerationRef.current.isCurrent(generation)) return;
       console.error('[access] failed to remove user:', removeError);
       setError(text('Access could not be removed.', 'アクセス許可を削除できませんでした。'));
     } finally {
-      setSaving(false);
+      if (isOpenRef.current && mutationGenerationRef.current.isCurrent(generation)) {
+        setSaving(false);
+      }
     }
   };
 

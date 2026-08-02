@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
   Check,
@@ -39,6 +39,7 @@ import type { CloudSyncStatus } from '../hooks/useCloudDiagramSync';
 import { useEscapeKey } from '../hooks/useEscapeKey';
 import { useLanguage } from '../i18n/LanguageContext';
 import { localize } from '../i18n/localization';
+import { OperationGeneration } from '../utils/operationGeneration';
 import './CloudWorkspaceModal.css';
 
 interface CloudWorkspaceModalProps {
@@ -59,7 +60,7 @@ interface CloudWorkspaceModalProps {
     context: CloudDocumentContext,
   ) => void;
   onDocumentUpdated: (document: CloudDiagramDocument) => void;
-  onResetCurrent: () => void;
+  onResetCurrent: (documentId: string) => void;
   onReloadRemote: () => Promise<CloudDiagramDocument | null>;
   onSaveAsCopy: () => Promise<CloudDiagramDocument | null>;
   onCreateNew: () => Promise<boolean>;
@@ -105,8 +106,51 @@ const CloudWorkspaceModal: React.FC<CloudWorkspaceModalProps> = ({
   const [comment, setComment] = useState('');
   const [shareRole, setShareRole] = useState<'viewer' | 'editor'>('viewer');
   const [newShareUrl, setNewShareUrl] = useState('');
+  const isOpenRef = useRef(isOpen);
+  const currentDocumentIdRef = useRef(currentDocument?.id ?? null);
+  const selectedDocumentIdRef = useRef<string | null>(null);
+  const loadGenerationRef = useRef(new OperationGeneration());
+  const operationGenerationRef = useRef(new OperationGeneration());
 
-  useEscapeKey(isOpen, onClose);
+  isOpenRef.current = isOpen;
+  currentDocumentIdRef.current = currentDocument?.id ?? null;
+
+  const closeModal = useCallback(() => {
+    loadGenerationRef.current.advance();
+    operationGenerationRef.current.advance();
+    selectedDocumentIdRef.current = null;
+    setOperation('');
+    setIsLoading(false);
+    setIsDetailsLoading(false);
+    onClose();
+  }, [onClose]);
+
+  useEscapeKey(isOpen, closeModal);
+
+  const isCurrentLoad = useCallback((generation: number) => (
+    isOpenRef.current && loadGenerationRef.current.isCurrent(generation)
+  ), []);
+
+  const isCurrentOperation = useCallback((
+    generation: number,
+    documentId?: string,
+  ) => (
+    isOpenRef.current
+    && operationGenerationRef.current.isCurrent(generation)
+    && (!documentId || selectedDocumentIdRef.current === documentId)
+  ), []);
+
+  const selectDocument = useCallback((document: CloudDiagramDocument | null) => {
+    selectedDocumentIdRef.current = document?.id ?? null;
+    setSelectedDocument(document);
+  }, []);
+
+  const beginOperation = useCallback((name: string) => {
+    const generation = operationGenerationRef.current.advance();
+    setOperation(name);
+    setError('');
+    return generation;
+  }, []);
 
   const selectedContext = useMemo<CloudDocumentContext | null>(() => {
     if (!selectedDocument) return null;
@@ -162,18 +206,26 @@ const CloudWorkspaceModal: React.FC<CloudWorkspaceModalProps> = ({
   const loadDetails = useCallback(async (
     document: CloudDiagramDocument,
     context: CloudDocumentContext,
+    generation: number,
   ) => {
-    setSelectedDocument(document);
+    if (!isCurrentLoad(generation)) return;
+    selectDocument(document);
     setIsDetailsLoading(true);
     setError('');
+    setVersions([]);
+    setShares([]);
+    setComment('');
+    setNewShareUrl('');
     try {
       const [nextVersions, nextShares] = await Promise.all([
         listCloudVersions(context),
         context.access === 'owner' ? listCloudShares(document.id) : Promise.resolve([]),
       ]);
+      if (!isCurrentLoad(generation)) return;
       setVersions(nextVersions);
       setShares(nextShares);
     } catch (loadError) {
+      if (!isCurrentLoad(generation)) return;
       setVersions([]);
       setShares([]);
       setError(loadError instanceof Error ? loadError.message : text(
@@ -181,15 +233,18 @@ const CloudWorkspaceModal: React.FC<CloudWorkspaceModalProps> = ({
         'クラウドの詳細を読み込めませんでした。',
       ));
     } finally {
-      setIsDetailsLoading(false);
+      if (isCurrentLoad(generation)) setIsDetailsLoading(false);
     }
-  }, [text]);
+  }, [isCurrentLoad, selectDocument, text]);
 
   const refreshDocuments = useCallback(async (preferredId?: string) => {
+    const generation = loadGenerationRef.current.advance();
+    let documentListLoaded = false;
     setIsLoading(true);
     setError('');
     try {
       const owned = await listCloudDiagrams();
+      if (!isCurrentLoad(generation)) return;
       const merged = [...owned];
       if (
         currentDocument
@@ -212,10 +267,17 @@ const CloudWorkspaceModal: React.FC<CloudWorkspaceModalProps> = ({
         });
       }
       setDocuments(merged);
+      documentListLoaded = true;
 
-      const targetId = preferredId || currentDocument?.id || merged[0]?.id;
+      const requestedTargetId = preferredId
+        || selectedDocumentIdRef.current
+        || currentDocumentIdRef.current;
+      const targetId = requestedTargetId
+        && merged.some((item) => item.id === requestedTargetId)
+        ? requestedTargetId
+        : merged[0]?.id;
       if (!targetId) {
-        setSelectedDocument(null);
+        selectDocument(null);
         setVersions([]);
         setShares([]);
         return;
@@ -225,129 +287,214 @@ const CloudWorkspaceModal: React.FC<CloudWorkspaceModalProps> = ({
         await loadDetails(
           currentDocument,
           currentContext || ownerContext(currentDocument.id),
+          generation,
         );
       } else {
         const nextDocument = await getCloudDiagram(targetId);
-        await loadDetails(nextDocument, ownerContext(targetId));
+        if (!isCurrentLoad(generation)) return;
+        await loadDetails(nextDocument, ownerContext(targetId), generation);
       }
     } catch (loadError) {
-      setDocuments([]);
-      setSelectedDocument(currentDocument);
+      if (!isCurrentLoad(generation)) return;
+      if (!documentListLoaded) {
+        setDocuments([]);
+        selectDocument(currentDocument);
+      } else {
+        selectDocument(null);
+        setVersions([]);
+        setShares([]);
+      }
       setError(loadError instanceof Error ? loadError.message : text(
         'Failed to load cloud diagrams.',
         'クラウド図面を読み込めませんでした。',
       ));
     } finally {
-      setIsLoading(false);
+      if (isCurrentLoad(generation)) setIsLoading(false);
     }
-  }, [currentContext, currentDocument, loadDetails, text]);
+  }, [
+    currentContext,
+    currentDocument,
+    isCurrentLoad,
+    loadDetails,
+    selectDocument,
+    text,
+  ]);
 
   useEffect(() => {
     if (isOpen) void refreshDocuments();
   }, [isOpen, refreshDocuments]);
 
+  useEffect(() => {
+    if (isOpen) return;
+    loadGenerationRef.current.advance();
+    operationGenerationRef.current.advance();
+    selectedDocumentIdRef.current = null;
+    setOperation('');
+    setIsLoading(false);
+    setIsDetailsLoading(false);
+  }, [isOpen]);
+
   const handleSelect = async (summary: CloudDiagramSummary) => {
-    if (selectedDocument?.id === summary.id) return;
+    if (selectedDocumentIdRef.current === summary.id) return;
+    const generation = loadGenerationRef.current.advance();
+    operationGenerationRef.current.advance();
+    setOperation('');
+    selectedDocumentIdRef.current = summary.id;
+    setSelectedDocument(null);
     setIsDetailsLoading(true);
     setError('');
+    setVersions([]);
+    setShares([]);
+    setComment('');
+    setNewShareUrl('');
     try {
       if (currentDocument?.id === summary.id) {
         await loadDetails(
           currentDocument,
           currentContext || ownerContext(currentDocument.id),
+          generation,
         );
       } else {
         const nextDocument = await getCloudDiagram(summary.id);
-        await loadDetails(nextDocument, ownerContext(summary.id));
+        if (!isCurrentLoad(generation)) return;
+        await loadDetails(nextDocument, ownerContext(summary.id), generation);
       }
     } catch (loadError) {
+      if (!isCurrentLoad(generation)) return;
       setError(loadError instanceof Error ? loadError.message : text(
         'Failed to open the cloud diagram.',
         'クラウド図面を開けませんでした。',
       ));
     } finally {
-      setIsDetailsLoading(false);
+      if (isCurrentLoad(generation)) setIsDetailsLoading(false);
     }
   };
 
   const handleDelete = async () => {
     if (!selectedDocument || selectedContext?.access !== 'owner') return;
+    const targetDocument = selectedDocument;
     if (!window.confirm(text(
-      `Delete "${selectedDocument.diagramName}" and all of its cloud snapshots?`,
-      `「${selectedDocument.diagramName}」とクラウドスナップショットをすべて削除しますか？`,
+      `Delete "${targetDocument.diagramName}" and all of its cloud snapshots?`,
+      `「${targetDocument.diagramName}」とクラウドスナップショットをすべて削除しますか？`,
     ))) return;
 
-    setOperation('delete');
-    setError('');
+    const generation = beginOperation('delete');
     try {
-      await deleteCloudDiagram(selectedDocument.id, selectedDocument.etag);
-      if (currentDocument?.id === selectedDocument.id) onResetCurrent();
-      setSelectedDocument(null);
-      await refreshDocuments();
+      await deleteCloudDiagram(targetDocument.id, targetDocument.etag);
+      onResetCurrent(targetDocument.id);
+      if (isOpenRef.current) {
+        setDocuments((items) => items.filter((item) => item.id !== targetDocument.id));
+      }
+      if (isCurrentOperation(generation, targetDocument.id)) {
+        selectDocument(null);
+        setVersions([]);
+        setShares([]);
+        await refreshDocuments();
+      }
     } catch (deleteError) {
-      setError(deleteError instanceof Error ? deleteError.message : text(
-        'Failed to delete the cloud diagram.',
-        'クラウド図面を削除できませんでした。',
-      ));
+      if (isCurrentOperation(generation)) {
+        setError(deleteError instanceof Error ? deleteError.message : text(
+          'Failed to delete the cloud diagram.',
+          'クラウド図面を削除できませんでした。',
+        ));
+      }
     } finally {
-      setOperation('');
+      if (isCurrentOperation(generation)) setOperation('');
     }
   };
 
   const handleAddComment = async () => {
     const message = comment.trim();
     if (!selectedDocument || !selectedContext || !message) return;
-    setOperation('comment');
-    setError('');
+    const targetDocument = selectedDocument;
+    const targetContext = selectedContext;
+    const generation = beginOperation('comment');
     try {
-      const updated = await addCloudComment(selectedContext, message);
-      setSelectedDocument(updated);
-      setComment('');
-      if (currentDocument?.id === updated.id) onDocumentUpdated(updated);
-      setDocuments((items) => items.map((item) => (
-        item.id === updated.id
-          ? {
-              ...item,
-              updatedAt: updated.updatedAt,
-              revision: updated.revision,
-              commentCount: updated.comments.length,
-            }
-          : item
-      )));
+      const updated = await addCloudComment(targetContext, message);
+      onDocumentUpdated(updated);
+      if (isOpenRef.current) {
+        setDocuments((items) => items.map((item) => (
+          item.id === updated.id
+            ? {
+                ...item,
+                updatedAt: updated.updatedAt,
+                revision: updated.revision,
+                commentCount: updated.comments.length,
+              }
+            : item
+        )));
+      }
+      if (isCurrentOperation(generation, targetDocument.id)) {
+        selectDocument(updated);
+        setComment('');
+      }
     } catch (commentError) {
-      setError(commentError instanceof Error ? commentError.message : text(
-        'Failed to add the comment.',
-        'コメントを追加できませんでした。',
-      ));
+      if (isCurrentOperation(generation)) {
+        setError(commentError instanceof Error ? commentError.message : text(
+          'Failed to add the comment.',
+          'コメントを追加できませんでした。',
+        ));
+      }
     } finally {
-      setOperation('');
+      if (isCurrentOperation(generation)) setOperation('');
     }
   };
 
   const handleCreateShare = async () => {
     if (!selectedDocument || selectedContext?.access !== 'owner') return;
-    setOperation('share');
-    setError('');
+    const targetDocument = selectedDocument;
+    const targetRole = shareRole;
+    const generation = beginOperation('share');
     setNewShareUrl('');
     try {
-      const result = await createCloudShare(selectedDocument.id, shareRole);
-      setNewShareUrl(result.url);
-      setShares((items) => [result.share, ...items]);
-      const refreshed = await getCloudDiagram(selectedDocument.id);
-      setSelectedDocument(refreshed);
-      if (currentDocument?.id === refreshed.id) onDocumentUpdated(refreshed);
+      const result = await createCloudShare(targetDocument.id, targetRole);
+      if (isCurrentOperation(generation, targetDocument.id)) {
+        setNewShareUrl(result.url);
+        setShares((items) => [result.share, ...items]);
+      }
       try {
         await navigator.clipboard.writeText(result.url);
       } catch {
         // The URL remains visible for manual copying when clipboard access is denied.
       }
+
+      try {
+        const refreshed = await getCloudDiagram(targetDocument.id);
+        onDocumentUpdated(refreshed);
+        if (isCurrentOperation(generation, targetDocument.id)) {
+          selectDocument(refreshed);
+        }
+        if (isOpenRef.current) {
+          setDocuments((items) => items.map((item) => (
+            item.id === refreshed.id
+              ? {
+                  ...item,
+                  updatedAt: refreshed.updatedAt,
+                  revision: refreshed.revision,
+                  shareCount: refreshed.shares?.length ?? item.shareCount + 1,
+                  etag: refreshed.etag,
+                }
+              : item
+          )));
+        }
+      } catch (refreshError) {
+        console.error('[cloud] share created but document refresh failed:', refreshError);
+        if (isCurrentOperation(generation, targetDocument.id)) {
+          setError(text(
+            'The share link was created, but the diagram metadata could not be refreshed.',
+            '共有リンクは作成されましたが、図面のメタデータを更新できませんでした。',
+          ));
+        }
+      }
     } catch (shareError) {
-      setError(shareError instanceof Error ? shareError.message : text(
-        'Failed to create the share link.',
-        '共有リンクを作成できませんでした。',
-      ));
+      if (isCurrentOperation(generation)) {
+        setError(shareError instanceof Error ? shareError.message : text(
+          'Failed to create the share link.',
+          '共有リンクを作成できませんでした。',
+        ));
+      }
     } finally {
-      setOperation('');
+      if (isCurrentOperation(generation)) setOperation('');
     }
   };
 
@@ -365,72 +512,134 @@ const CloudWorkspaceModal: React.FC<CloudWorkspaceModalProps> = ({
 
   const handleRevokeShare = async (shareId: string) => {
     if (!selectedDocument || selectedContext?.access !== 'owner') return;
-    setOperation(`revoke-${shareId}`);
-    setError('');
+    const targetDocument = selectedDocument;
+    const generation = beginOperation(`revoke-${shareId}`);
     try {
-      await revokeCloudShare(selectedDocument.id, shareId);
-      setShares((items) => items.filter((share) => share.shareId !== shareId));
-      const refreshed = await getCloudDiagram(selectedDocument.id);
-      setSelectedDocument(refreshed);
-      if (currentDocument?.id === refreshed.id) onDocumentUpdated(refreshed);
+      await revokeCloudShare(targetDocument.id, shareId);
+      if (isCurrentOperation(generation, targetDocument.id)) {
+        setShares((items) => items.filter((share) => share.shareId !== shareId));
+      }
+      if (isOpenRef.current) {
+        setDocuments((items) => items.map((item) => (
+          item.id === targetDocument.id
+            ? { ...item, shareCount: Math.max(0, item.shareCount - 1) }
+            : item
+        )));
+      }
+
+      try {
+        const refreshed = await getCloudDiagram(targetDocument.id);
+        onDocumentUpdated(refreshed);
+        if (isCurrentOperation(generation, targetDocument.id)) {
+          selectDocument(refreshed);
+        }
+        if (isOpenRef.current) {
+          setDocuments((items) => items.map((item) => (
+            item.id === refreshed.id
+              ? {
+                  ...item,
+                  updatedAt: refreshed.updatedAt,
+                  revision: refreshed.revision,
+                  shareCount: refreshed.shares?.length ?? item.shareCount,
+                  etag: refreshed.etag,
+                }
+              : item
+          )));
+        }
+      } catch (refreshError) {
+        console.error('[cloud] share revoked but document refresh failed:', refreshError);
+        if (isCurrentOperation(generation, targetDocument.id)) {
+          setError(text(
+            'The share link was revoked, but the diagram metadata could not be refreshed.',
+            '共有リンクは無効化されましたが、図面のメタデータを更新できませんでした。',
+          ));
+        }
+      }
     } catch (revokeError) {
-      setError(revokeError instanceof Error ? revokeError.message : text(
-        'Failed to revoke the share link.',
-        '共有リンクを無効化できませんでした。',
-      ));
+      if (isCurrentOperation(generation)) {
+        setError(revokeError instanceof Error ? revokeError.message : text(
+          'Failed to revoke the share link.',
+          '共有リンクを無効化できませんでした。',
+        ));
+      }
     } finally {
-      setOperation('');
+      if (isCurrentOperation(generation)) setOperation('');
     }
   };
 
   const handleRestoreVersion = async (versionId: string) => {
     if (!selectedDocument || !selectedContext) return;
+    const targetDocument = selectedDocument;
+    const targetContext = selectedContext;
     if (!window.confirm(text(
       'Restore this cloud snapshot to the canvas?',
       'このクラウドスナップショットをキャンバスへ復元しますか？',
     ))) return;
-    setOperation(`version-${versionId}`);
-    setError('');
+    const generation = beginOperation(`version-${versionId}`);
     try {
-      const version = await getCloudVersion(selectedContext, versionId);
-      onRestoreVersion(version, selectedDocument, selectedContext);
-      onClose();
+      const version = await getCloudVersion(targetContext, versionId);
+      if (!isCurrentOperation(generation, targetDocument.id)) return;
+      if (version.diagramId !== targetDocument.id) {
+        throw new Error(text(
+          'The selected snapshot does not belong to this diagram.',
+          '選択したスナップショットはこの図面のものではありません。',
+        ));
+      }
+      onRestoreVersion(version, targetDocument, targetContext);
+      closeModal();
     } catch (versionError) {
-      setError(versionError instanceof Error ? versionError.message : text(
-        'Failed to restore the cloud snapshot.',
-        'クラウドスナップショットを復元できませんでした。',
-      ));
+      if (isCurrentOperation(generation)) {
+        setError(versionError instanceof Error ? versionError.message : text(
+          'Failed to restore the cloud snapshot.',
+          'クラウドスナップショットを復元できませんでした。',
+        ));
+      }
     } finally {
-      setOperation('');
+      if (isCurrentOperation(generation)) setOperation('');
     }
   };
 
   const handleConflictAction = async (action: 'reload' | 'copy') => {
-    setOperation(action);
-    setError('');
+    const generation = beginOperation(action);
     try {
       const updated = action === 'reload'
         ? await onReloadRemote()
         : await onSaveAsCopy();
-      if (updated) await refreshDocuments(updated.id);
+      if (updated && isCurrentOperation(generation)) {
+        await refreshDocuments(updated.id);
+      }
     } catch (actionError) {
-      setError(actionError instanceof Error ? actionError.message : text(
-        'The synchronization action failed.',
-        '同期処理に失敗しました。',
-      ));
+      if (isCurrentOperation(generation)) {
+        setError(actionError instanceof Error ? actionError.message : text(
+          'The synchronization action failed.',
+          '同期処理に失敗しました。',
+        ));
+      }
     } finally {
-      setOperation('');
+      if (isCurrentOperation(generation)) setOperation('');
     }
   };
 
   const handleCreateNew = async () => {
-    if (await onCreateNew()) onClose();
+    const generation = beginOperation('new');
+    try {
+      if (await onCreateNew() && isCurrentOperation(generation)) closeModal();
+    } catch (createError) {
+      if (isCurrentOperation(generation)) {
+        setError(createError instanceof Error ? createError.message : text(
+          'The new diagram could not be created.',
+          '新しい図面を作成できませんでした。',
+        ));
+      }
+    } finally {
+      if (isCurrentOperation(generation)) setOperation('');
+    }
   };
 
   if (!isOpen) return null;
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
+    <div className="modal-overlay" onClick={closeModal}>
       <div
         className="modal-content cloud-workspace-modal"
         role="dialog"
@@ -445,7 +654,7 @@ const CloudWorkspaceModal: React.FC<CloudWorkspaceModalProps> = ({
             <Cloud size={24} />
             {text('Cloud workspace', 'クラウド ワークスペース')}
           </h2>
-          <button className="modal-close" onClick={onClose} title={t('Close')} aria-label={t('Close')}>
+          <button className="modal-close" onClick={closeModal} title={t('Close')} aria-label={t('Close')}>
             <X size={24} />
           </button>
         </div>
@@ -484,10 +693,10 @@ const CloudWorkspaceModal: React.FC<CloudWorkspaceModalProps> = ({
             <div className="cloud-section-heading">
               <span>{text('Cloud diagrams', 'クラウド図面')}</span>
               <button
-                onClick={() => void refreshDocuments(selectedDocument?.id)}
+                onClick={() => void refreshDocuments(selectedDocumentIdRef.current ?? undefined)}
                 title={text('Refresh cloud diagrams', 'クラウド図面を更新')}
                 aria-label={text('Refresh cloud diagrams', 'クラウド図面を更新')}
-                disabled={isLoading}
+                disabled={isLoading || Boolean(operation)}
               >
                 <RefreshCw size={16} className={isLoading ? 'spin' : ''} />
               </button>
@@ -497,6 +706,7 @@ const CloudWorkspaceModal: React.FC<CloudWorkspaceModalProps> = ({
               type="button"
               className="cloud-new-diagram-button"
               onClick={() => void handleCreateNew()}
+              disabled={Boolean(operation)}
             >
               <Plus size={16} />
               {text('New diagram', '新しい図面')}
@@ -539,10 +749,14 @@ const CloudWorkspaceModal: React.FC<CloudWorkspaceModalProps> = ({
 
           <main className="cloud-document-details">
             {!selectedDocument ? (
+              isDetailsLoading ? (
+                <div className="cloud-empty-state large"><Loader size={28} className="spin" /></div>
+              ) : (
               <div className="cloud-empty-state large">
                 <FolderOpen size={42} />
                 <p>{text('Select a cloud diagram to view its details.', '詳細を表示するクラウド図面を選択してください。')}</p>
               </div>
+              )
             ) : (
               <>
                 <div className="cloud-document-toolbar">
@@ -562,9 +776,10 @@ const CloudWorkspaceModal: React.FC<CloudWorkspaceModalProps> = ({
                   <div className="cloud-document-toolbar-actions">
                     <button
                       className="btn-secondary"
+                      disabled={Boolean(operation)}
                       onClick={() => {
                         if (selectedContext) onOpenDocument(selectedDocument, selectedContext);
-                        onClose();
+                        closeModal();
                       }}
                     >
                       <FolderOpen size={16} />
@@ -574,7 +789,7 @@ const CloudWorkspaceModal: React.FC<CloudWorkspaceModalProps> = ({
                       <button
                         className="btn-secondary danger"
                         onClick={() => void handleDelete()}
-                        disabled={operation === 'delete'}
+                        disabled={Boolean(operation)}
                       >
                         <Trash2 size={16} />
                         {text('Delete', '削除')}
@@ -612,7 +827,7 @@ const CloudWorkspaceModal: React.FC<CloudWorkspaceModalProps> = ({
                               </div>
                               <button
                                 onClick={() => void handleRestoreVersion(version.versionId)}
-                                disabled={operation === `version-${version.versionId}`}
+                                disabled={Boolean(operation)}
                               >
                                 {text('Restore', '復元')}
                               </button>
@@ -651,7 +866,7 @@ const CloudWorkspaceModal: React.FC<CloudWorkspaceModalProps> = ({
                         />
                         <button
                           onClick={() => void handleAddComment()}
-                          disabled={!comment.trim() || operation === 'comment'}
+                          disabled={!comment.trim() || Boolean(operation)}
                         >
                           {text('Comment', 'コメント')}
                         </button>
@@ -677,12 +892,13 @@ const CloudWorkspaceModal: React.FC<CloudWorkspaceModalProps> = ({
                             <select
                               value={shareRole}
                               onChange={(event) => setShareRole(event.target.value as 'viewer' | 'editor')}
+                              disabled={Boolean(operation)}
                             >
                               <option value="viewer">{text('Viewer', '閲覧者')}</option>
                               <option value="editor">{text('Editor', '編集者')}</option>
                             </select>
                           </label>
-                          <button onClick={() => void handleCreateShare()} disabled={operation === 'share'}>
+                          <button onClick={() => void handleCreateShare()} disabled={Boolean(operation)}>
                             <Link2 size={16} />
                             {text('Create link', 'リンクを作成')}
                           </button>
@@ -705,7 +921,7 @@ const CloudWorkspaceModal: React.FC<CloudWorkspaceModalProps> = ({
                               <span>{formatDate(share.createdAt)}</span>
                               <button
                                 onClick={() => void handleRevokeShare(share.shareId)}
-                                disabled={operation === `revoke-${share.shareId}`}
+                                disabled={Boolean(operation)}
                               >
                                 {text('Revoke', '無効化')}
                               </button>
@@ -728,7 +944,7 @@ const CloudWorkspaceModal: React.FC<CloudWorkspaceModalProps> = ({
               'Azure Storageで暗号化され、Easy Authとリンク権限でアクセスを制御します。',
             )}
           </span>
-          <button className="btn-secondary" onClick={onClose}>{t('Close')}</button>
+          <button className="btn-secondary" onClick={closeModal}>{t('Close')}</button>
         </div>
       </div>
     </div>

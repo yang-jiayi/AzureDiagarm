@@ -1,16 +1,17 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { X, Camera } from 'lucide-react';
 import './SaveSnapshotModal.css';
 import { useLanguage } from '../i18n/LanguageContext';
 import { useEscapeKey } from '../hooks/useEscapeKey';
+import { OperationGeneration } from '../utils/operationGeneration';
 
 interface SaveSnapshotModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSave: (notes: string) => void;
+  onSave: (notes: string) => Promise<void>;
   diagramName: string;
   serviceCount: number;
 }
@@ -23,28 +24,51 @@ const SaveSnapshotModal: React.FC<SaveSnapshotModalProps> = ({
   serviceCount
 }) => {
   const { t, language } = useLanguage();
-  useEscapeKey(isOpen, onClose);
   const [notes, setNotes] = useState('');
   const [isSaving, setIsSaving] = useState(false);
+  const isOpenRef = useRef(isOpen);
+  const savingRef = useRef(false);
+  const saveGenerationRef = useRef(new OperationGeneration());
+
+  isOpenRef.current = isOpen;
+
+  useEffect(() => {
+    if (isOpen) return;
+    saveGenerationRef.current.advance();
+    savingRef.current = false;
+    setIsSaving(false);
+  }, [isOpen]);
+
+  useEscapeKey(isOpen && !isSaving, onClose);
 
   const handleSave = async () => {
+    if (savingRef.current) return;
+    const generation = saveGenerationRef.current.advance();
+    savingRef.current = true;
     setIsSaving(true);
     try {
       await onSave(notes);
+      if (!isOpenRef.current || !saveGenerationRef.current.isCurrent(generation)) return;
       setNotes('');
       onClose();
     } catch (error) {
+      if (!isOpenRef.current || !saveGenerationRef.current.isCurrent(generation)) return;
       console.error('Failed to save snapshot:', error);
       alert(t("Failed to save snapshot"));
     } finally {
-      setIsSaving(false);
+      if (saveGenerationRef.current.isCurrent(generation)) {
+        savingRef.current = false;
+        setIsSaving(false);
+      }
     }
   };
 
   if (!isOpen) return null;
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
+    <div className="modal-overlay" onClick={() => {
+      if (!savingRef.current) onClose();
+    }}>
       <div
         className="modal-content save-snapshot-modal"
         role="dialog"
@@ -54,14 +78,20 @@ const SaveSnapshotModal: React.FC<SaveSnapshotModalProps> = ({
         autoFocus
         onClick={(e) => e.stopPropagation()}
         onKeyDown={(event) => {
-          if (event.key === 'Escape') onClose();
+          if (event.key === 'Escape' && !savingRef.current) onClose();
         }}
       >
         <div className="modal-header">
           <h2>
             <Camera size={24} />
             {' '}{t("Save Snapshot")}{' '}</h2>
-          <button className="modal-close" onClick={onClose} title={t("Close")} aria-label={t("Close")}>
+          <button
+            className="modal-close"
+            onClick={onClose}
+            title={t("Close")}
+            aria-label={t("Close")}
+            disabled={isSaving}
+          >
             <X size={24} />
           </button>
         </div>

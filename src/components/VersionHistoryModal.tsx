@@ -1,13 +1,14 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-import React, { useState, useEffect } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { X, Clock, ExternalLink, Trash2, Copy } from 'lucide-react';
 import { DiagramVersion, getAllVersions, deleteVersion, getVersion } from '../services/versionStorageService';
 import './VersionHistoryModal.css';
 import { useLanguage } from '../i18n/LanguageContext';
 import { localize } from '../i18n/localization';
 import { useEscapeKey } from '../hooks/useEscapeKey';
+import { OperationGeneration } from '../utils/operationGeneration';
 
 interface VersionHistoryModalProps {
   isOpen: boolean;
@@ -26,24 +27,51 @@ const VersionHistoryModal: React.FC<VersionHistoryModalProps> = ({
   const [versions, setVersions] = useState<DiagramVersion[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [selectedVersion, setSelectedVersion] = useState<string | null>(null);
+  const [operation, setOperation] = useState('');
+  const isOpenRef = useRef(isOpen);
+  const loadGenerationRef = useRef(new OperationGeneration());
+  const operationGenerationRef = useRef(new OperationGeneration());
 
-  useEffect(() => {
-    if (isOpen) {
-      loadVersions();
-    }
-  }, [isOpen]);
+  isOpenRef.current = isOpen;
 
-  const loadVersions = async () => {
+  const closeModal = useCallback(() => {
+    loadGenerationRef.current.advance();
+    operationGenerationRef.current.advance();
+    setOperation('');
+    onClose();
+  }, [onClose]);
+
+  const isCurrentOperation = useCallback((generation: number) => (
+    isOpenRef.current && operationGenerationRef.current.isCurrent(generation)
+  ), []);
+
+  const loadVersions = useCallback(async () => {
+    const generation = loadGenerationRef.current.advance();
     setIsLoading(true);
     try {
       const allVersions = await getAllVersions();
+      if (!isOpenRef.current || !loadGenerationRef.current.isCurrent(generation)) return;
       setVersions(allVersions);
     } catch (error) {
+      if (!isOpenRef.current || !loadGenerationRef.current.isCurrent(generation)) return;
       console.error('Failed to load versions:', error);
     } finally {
-      setIsLoading(false);
+      if (isOpenRef.current && loadGenerationRef.current.isCurrent(generation)) {
+        setIsLoading(false);
+      }
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    if (isOpen) {
+      void loadVersions();
+      return;
+    }
+    loadGenerationRef.current.advance();
+    operationGenerationRef.current.advance();
+    setOperation('');
+    setIsLoading(false);
+  }, [isOpen, loadVersions]);
 
   const handleDelete = async (versionId: string, event: React.MouseEvent) => {
     event.stopPropagation();
@@ -52,20 +80,29 @@ const VersionHistoryModal: React.FC<VersionHistoryModalProps> = ({
       return;
     }
 
+    const generation = operationGenerationRef.current.advance();
+    setOperation(`delete-${versionId}`);
     try {
       await deleteVersion(versionId);
+      if (!isCurrentOperation(generation)) return;
       await loadVersions();
     } catch (error) {
+      if (!isCurrentOperation(generation)) return;
       console.error('Failed to delete version:', error);
       alert(t("Failed to delete version"));
+    } finally {
+      if (isCurrentOperation(generation)) setOperation('');
     }
   };
 
   const handleOpenInNewTab = async (versionId: string, event: React.MouseEvent) => {
     event.stopPropagation();
     
+    const generation = operationGenerationRef.current.advance();
+    setOperation(`open-${versionId}`);
     try {
       const version = await getVersion(versionId);
+      if (!isCurrentOperation(generation)) return;
       if (!version) {
         alert(t("Version not found"));
         return;
@@ -82,14 +119,20 @@ const VersionHistoryModal: React.FC<VersionHistoryModalProps> = ({
         newTab.opener = null;
       }
     } catch (error) {
+      if (!isCurrentOperation(generation)) return;
       console.error('Failed to open version:', error);
       alert(t("Failed to open version in new tab"));
+    } finally {
+      if (isCurrentOperation(generation)) setOperation('');
     }
   };
 
   const handleRestore = async (versionId: string) => {
+    const generation = operationGenerationRef.current.advance();
+    setOperation(`restore-${versionId}`);
     try {
       const version = await getVersion(versionId);
+      if (!isCurrentOperation(generation)) return;
       if (!version) {
         alert(t("Version not found"));
         return;
@@ -101,11 +144,14 @@ const VersionHistoryModal: React.FC<VersionHistoryModalProps> = ({
       });
       if (confirm(confirmation)) {
         onRestoreVersion(version);
-        onClose();
+        closeModal();
       }
     } catch (error) {
+      if (!isCurrentOperation(generation)) return;
       console.error('Failed to restore version:', error);
       alert(t("Failed to restore version"));
+    } finally {
+      if (isCurrentOperation(generation)) setOperation('');
     }
   };
 
@@ -139,11 +185,11 @@ const VersionHistoryModal: React.FC<VersionHistoryModalProps> = ({
     return formatDate(timestamp);
   };
 
-  useEscapeKey(isOpen, onClose);
+  useEscapeKey(isOpen, closeModal);
   if (!isOpen) return null;
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
+    <div className="modal-overlay" onClick={closeModal}>
       <div
         className="modal-content version-history-modal"
         role="dialog"
@@ -153,14 +199,14 @@ const VersionHistoryModal: React.FC<VersionHistoryModalProps> = ({
         autoFocus
         onClick={(e) => e.stopPropagation()}
         onKeyDown={(event) => {
-          if (event.key === 'Escape') onClose();
+          if (event.key === 'Escape') closeModal();
         }}
       >
         <div className="modal-header">
           <h2>
             <Clock size={24} />
             {' '}{t("Version History")}{' '}</h2>
-          <button className="modal-close" onClick={onClose} title={t("Close")} aria-label={t("Close")}>
+          <button className="modal-close" onClick={closeModal} title={t("Close")} aria-label={t("Close")}>
             <X size={24} />
           </button>
         </div>
@@ -200,6 +246,7 @@ const VersionHistoryModal: React.FC<VersionHistoryModalProps> = ({
                         className="version-action-btn"
                         onClick={(e) => handleOpenInNewTab(version.versionId, e)}
                         title={t("Open in new tab for comparison")}
+                        disabled={Boolean(operation)}
                       >
                         <ExternalLink size={16} />
                       </button>
@@ -207,6 +254,7 @@ const VersionHistoryModal: React.FC<VersionHistoryModalProps> = ({
                         className="version-action-btn delete"
                         onClick={(e) => handleDelete(version.versionId, e)}
                         title={t("Delete this version")}
+                        disabled={Boolean(operation)}
                       >
                         <Trash2 size={16} />
                       </button>
@@ -259,6 +307,7 @@ const VersionHistoryModal: React.FC<VersionHistoryModalProps> = ({
                     <button
                       className="btn-restore"
                       onClick={() => handleRestore(version.versionId)}
+                      disabled={Boolean(operation)}
                     >
                       <Copy size={16} />
                       {' '}{t("Restore This Version")}{' '}</button>
@@ -276,7 +325,7 @@ const VersionHistoryModal: React.FC<VersionHistoryModalProps> = ({
               ja: `${versions.length}件のバージョンを保存済み`,
             })}
           </div>
-          <button className="btn-secondary" onClick={onClose}>
+          <button className="btn-secondary" onClick={closeModal}>
             {' '}{t("Close")}{' '}</button>
         </div>
       </div>

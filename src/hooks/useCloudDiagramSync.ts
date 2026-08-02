@@ -191,7 +191,13 @@ export function useCloudDiagramSync({
     return normalized;
   }, []);
 
-  const clearDocument = useCallback(() => {
+  const clearDocument = useCallback((expectedDocumentId?: string) => {
+    if (
+      expectedDocumentId
+      && contextRef.current?.documentId !== expectedDocumentId
+    ) {
+      return false;
+    }
     beginDocumentGeneration();
     clearTimers();
     documentRef.current = null;
@@ -205,6 +211,7 @@ export function useCloudDiagramSync({
     setErrorMessage('');
     setStatus('idle');
     writeStoredContext(null);
+    return true;
   }, [beginDocumentGeneration, clearTimers]);
 
   const activateDocument = useCallback((
