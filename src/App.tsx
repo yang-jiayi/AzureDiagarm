@@ -3927,10 +3927,10 @@ function App() {
               <div
                 hidden={activeRibbonTab !== 'home'}
                 className={`toolbar-group toolbar-group--labeled${collapsedToolbarSections.has('context') ? ' toolbar-group-collapsed' : ''}`}
-                data-label={localize(language, { en: 'Context', ja: 'コンテキスト' })}
-                aria-label={localize(language, { en: 'Context and pricing', ja: 'コンテキストと料金' })}
+                data-label={localize(language, { en: 'Pricing estimate region', ja: '料金見積リージョン' })}
+                aria-label={localize(language, { en: 'Pricing estimate settings', ja: '料金見積の設定' })}
               >
-                {toolbarSectionHeading('context', localize(language, { en: 'Context', ja: 'コンテキスト' }))}
+                {toolbarSectionHeading('context', t('pricing.regionLabel'))}
                 <RegionSelector
                   isActive={
                     activeRibbonTab === 'home'

@@ -22,6 +22,9 @@ type ExtraTranslationKey =
   | 'title.hideDetails'
   | 'title.editDetails'
   | 'pricing.totalMonthly'
+  | 'pricing.regionLabel'
+  | 'pricing.regionDescription'
+  | 'pricing.regionAriaLabel'
   | 'pricing.stale'
   | 'pricing.current'
   | 'canvas.miniMap'
@@ -51,6 +54,9 @@ const extraEnglish: Record<ExtraTranslationKey, string> = {
   'title.hideDetails': 'Hide diagram details',
   'title.editDetails': 'Edit diagram details',
   'pricing.totalMonthly': 'Total estimated monthly cost for all services ({term})',
+  'pricing.regionLabel': 'Pricing estimate region',
+  'pricing.regionDescription': 'Used only to calculate estimates. It does not change deployment locations, data residency, tenants, or subscriptions.',
+  'pricing.regionAriaLabel': 'Pricing estimate region: {region}',
   'pricing.stale': 'Azure pricing data is {age} (as of {date}). Refresh with "npm run pricing:refresh" so estimates stay accurate.',
   'pricing.current': 'Azure pricing data as of {date} ({age}).',
   'canvas.miniMap': 'Mini-map — drag or scroll to navigate the canvas',
@@ -77,6 +83,9 @@ const extraJapanese: Record<ExtraTranslationKey, string> = {
   'title.hideDetails': '図の詳細を非表示',
   'title.editDetails': '図の詳細を編集',
   'pricing.totalMonthly': '全サービスの月額見積もり合計（{term}）',
+  'pricing.regionLabel': '料金見積リージョン',
+  'pricing.regionDescription': '料金の見積もり計算だけに使用します。デプロイ先、データ所在地、テナント、サブスクリプションは変更しません。',
+  'pricing.regionAriaLabel': '料金見積リージョン: {region}',
   'pricing.stale': 'Azure の価格データは {age} 時点（{date} 現在）です。見積もりの精度を保つには "npm run pricing:refresh" で更新してください。',
   'pricing.current': 'Azure の価格データ: {date} 現在（{age}）。',
   'canvas.miniMap': 'Mini-map — ドラッグまたはスクロールしてキャンバスを移動',

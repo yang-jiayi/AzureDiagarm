@@ -37,9 +37,15 @@ const RegionSelector: React.FC<RegionSelectorProps> = ({ isActive = true, onRegi
   return (
     <div className="region-selector">
       <button 
+        type="button"
         className="region-selector-button"
         onClick={() => setIsOpen(!isOpen)}
-        title={t("Select pricing region")}
+        title={t('pricing.regionDescription')}
+        aria-label={t('pricing.regionAriaLabel', {
+          region: currentRegionInfo?.displayName ?? selectedRegion,
+        })}
+        aria-haspopup="listbox"
+        aria-expanded={isOpen}
       >
         <span className="region-flag">{currentRegionInfo?.flag}</span>
         <span className="region-name">{currentRegionInfo?.displayName}</span>
@@ -47,12 +53,19 @@ const RegionSelector: React.FC<RegionSelectorProps> = ({ isActive = true, onRegi
       </button>
       
       {isOpen && (
-        <div className="region-dropdown">
+        <div className="region-dropdown" role="listbox" aria-label={t('pricing.regionLabel')}>
+          <div className="region-dropdown-header">
+            <strong>{t('pricing.regionLabel')}</strong>
+            <span>{t('pricing.regionDescription')}</span>
+          </div>
           {AVAILABLE_REGIONS.map((region: RegionInfo) => (
             <button
+              type="button"
               key={region.id}
               className={`region-option ${selectedRegion === region.id ? 'selected' : ''}`}
               onClick={() => handleRegionSelect(region.id)}
+              role="option"
+              aria-selected={selectedRegion === region.id}
             >
               <span className="region-flag">{region.flag}</span>
               <div className="region-info">

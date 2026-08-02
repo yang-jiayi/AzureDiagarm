@@ -57,6 +57,31 @@
   animation: slideDown 0.2s ease;
 }
 
+.region-dropdown-header {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 14px;
+  border-bottom: 1px solid #dce6ef;
+  background: #f6faff;
+  color: #183b56;
+}
+
+.region-dropdown-header strong {
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+.region-dropdown-header span {
+  color: #52677d;
+  font-size: 0.76rem;
+  font-weight: 500;
+  line-height: 1.45;
+}
+
 @keyframes slideDown {
   from {
     opacity: 0;
@@ -151,6 +176,41 @@
   color: #0078d4;
   font-size: 16px;
   font-weight: bold;
+}
+
+body.dark-mode .region-dropdown {
+  border-color: #40546a;
+  background: #182333;
+  color: #e5edf7;
+}
+
+body.dark-mode .region-dropdown-header {
+  border-bottom-color: #40546a;
+  background: #1d2b3d;
+  color: #e5edf7;
+}
+
+body.dark-mode .region-dropdown-header span,
+body.dark-mode .region-location {
+  color: #b8c8da;
+}
+
+body.dark-mode .region-option {
+  border-bottom-color: #344256;
+  background: #182333;
+}
+
+body.dark-mode .region-option:hover {
+  background: #233c58;
+}
+
+body.dark-mode .region-option.selected {
+  border-left-color: #7dd3fc;
+  background: #1d4262;
+}
+
+body.dark-mode .region-display-name {
+  color: #f1f5f9;
 }
 
 /* Click outside to close */
