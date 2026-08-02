@@ -133,3 +133,30 @@ export function deleteNodesPreservingGroupChildren(nodes: Node[], nodeIds: Itera
   return detachChildrenFromGroups(nodes, deletedGroupIds)
     .filter(node => !deletedIds.has(node.id));
 }
+
+/**
+ * Return the requested nodes plus every nested descendant they contain.
+ */
+export function collectNodeAndDescendantIds(
+  nodes: Node[],
+  rootIds: Iterable<string>,
+): Set<string> {
+  const collected = new Set(rootIds);
+  let added = true;
+
+  while (added) {
+    added = false;
+    for (const node of nodes) {
+      if (
+        node.parentNode
+        && collected.has(node.parentNode)
+        && !collected.has(node.id)
+      ) {
+        collected.add(node.id);
+        added = true;
+      }
+    }
+  }
+
+  return collected;
+}

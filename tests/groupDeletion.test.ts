@@ -1,7 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import type { Node } from 'reactflow';
-import { deleteNodesPreservingGroupChildren } from '../src/utils/groupUtils.ts';
+import {
+  collectNodeAndDescendantIds,
+  deleteNodesPreservingGroupChildren,
+} from '../src/utils/groupUtils.ts';
 
 function node(
   id: string,
@@ -57,4 +60,15 @@ test('nested groups retain their descendants when the outer group is deleted', (
   assert.equal(inner?.parentNode, undefined);
   assert.equal(service?.parentNode, 'inner');
   assert.deepEqual(service?.position, { x: 5, y: 6 });
+});
+
+test('collectNodeAndDescendantIds includes nested group contents only', () => {
+  const ids = collectNodeAndDescendantIds([
+    node('outer', 'groupNode', 100, 100),
+    node('inner', 'groupNode', 30, 40, 'outer'),
+    node('service', 'azureNode', 5, 6, 'inner'),
+    node('outside', 'azureNode', 700, 100),
+  ], ['outer']);
+
+  assert.deepEqual([...ids].sort(), ['inner', 'outer', 'service']);
 });

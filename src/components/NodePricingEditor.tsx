@@ -233,6 +233,7 @@ export default function NodePricingEditor({
             className="npe-modal-close"
             onClick={handleClose}
             disabled={saving}
+            autoFocus
             aria-label={localize(language, { en: 'Close', ja: '閉じる' })}
           >
             <X size={18} />

@@ -16,6 +16,7 @@
 import { useState, useEffect } from 'react';
 
 let openNodeId: string | null = null;
+let stateVersion = 0;
 const listeners: Set<(nodeId: string | null) => void> = new Set();
 
 function notifyListeners() {
@@ -24,14 +25,21 @@ function notifyListeners() {
 
 /** Open the cost editor for a node. */
 export function openNodePricingEditor(nodeId: string): void {
+  stateVersion += 1;
   openNodeId = nodeId;
   notifyListeners();
 }
 
 /** Close the cost editor. */
 export function closeNodePricingEditor(): void {
+  stateVersion += 1;
   openNodeId = null;
   notifyListeners();
+}
+
+/** Monotonic version used to invalidate pending asynchronous open requests. */
+export function getNodePricingEditorStateVersion(): number {
+  return stateVersion;
 }
 
 /** React hook returning the node id whose editor is open, or null. */

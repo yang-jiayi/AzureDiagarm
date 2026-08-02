@@ -20,7 +20,7 @@ import { captureDiagramAsPng, captureDiagramAsSvg } from './utils/captureCanvas'
 import { animateEdgeFlow } from './utils/animateEdges';
 import { sequenceWorkflowSvg } from './utils/sequenceWorkflow';
 import { buildWorkflowMarkdown } from './services/workflowNarrativeExporter';
-import { Download, Save, Upload, DollarSign, Shield, ShieldCheck, FileText, FileCode, ChevronDown, ChevronRight, Clock, Camera, Loader, GitCompare, RefreshCw, PanelLeftClose, Minimize2, Maximize2, Presentation, MessageSquare, MessagesSquare, HelpCircle, Hand, ZoomIn, Frame, X, PanelTopClose, PanelTopOpen, DownloadCloud, Sun, Moon, Play, Pause, Eye, EyeOff, Cloud } from 'lucide-react';
+import { Download, Save, Upload, DollarSign, Shield, ShieldCheck, FileText, FileCode, ChevronDown, ChevronRight, Clock, Camera, Loader, GitCompare, RefreshCw, PanelLeftClose, Minimize2, Maximize2, Presentation, MessageSquare, MessagesSquare, HelpCircle, Hand, ZoomIn, Frame, X, PanelTopClose, PanelTopOpen, DownloadCloud, Sun, Moon, Play, Pause, Eye, EyeOff, Cloud, Copy, Trash2, Ungroup, Boxes } from 'lucide-react';
 import IconPalette from './components/IconPalette';
 import AzureNode from './components/AzureNode';
 import GroupNode from './components/GroupNode';
@@ -59,7 +59,7 @@ import { prefetchCommonServices } from './services/azurePricingService';
 import { preloadCommonServices, getActiveRegion, AzureRegion, AVAILABLE_REGIONS, RegionInfo } from './services/regionalPricingService';
 import JSZip from 'jszip';
 import { formatMonthlyCost, getPricingFreshness } from './utils/pricingHelpers';
-import { PRICING_DATA_AS_OF } from './data/azurePricing';
+import { hasPricingData, PRICING_DATA_AS_OF } from './data/azurePricing';
 import { costReportToHtml } from './utils/costReportHtml';
 import { validateArchitecture, ArchitectureValidation } from './services/architectureValidator';
 import { bandLabel } from './services/wafMaturity';
@@ -67,7 +67,12 @@ import { generateDeploymentGuide, DeploymentGuide } from './services/deploymentG
 import { generateArchitectureWithAI } from './services/azureOpenAI';
 import { MODEL_CONFIG, DEPLOYMENT_NAMES, type ModelType } from './stores/modelSettingsStore';
 import { usePricingDisplayPrefs } from './stores/pricingDisplayStore';
-import { useNodePricingEditor, closeNodePricingEditor } from './stores/nodePricingEditorStore';
+import {
+  useNodePricingEditor,
+  closeNodePricingEditor,
+  getNodePricingEditorStateVersion,
+  openNodePricingEditor,
+} from './stores/nodePricingEditorStore';
 import NodePricingEditor from './components/NodePricingEditor';
 import type { NodePricingConfig, PricingScenario } from './types/pricing';
 import {
@@ -104,8 +109,10 @@ import {
 } from './utils/layoutPresets';
 import { generateModelFilename, setSourceModel, clearSourceModel } from './utils/modelNaming';
 import {
+  collectNodeAndDescendantIds,
   deleteNodesPreservingGroupChildren,
   detachChildrenFromGroups,
+  fitGroupToContent,
   fitAllGroupsToContent,
 } from './utils/groupUtils';
 import {
@@ -159,6 +166,34 @@ const RIBBON_TAB_STORAGE_KEY = 'azure-diagram-builder.ribbonTab.v1';
 const EDGE_CONTEXT_MENU_WIDTH = 220;
 const EDGE_CONTEXT_MENU_HEIGHT = 280;
 const EDGE_CONTEXT_MENU_MARGIN = 8;
+const NODE_CONTEXT_MENU_WIDTH = 280;
+const NODE_CONTEXT_MENU_HEIGHT = 360;
+
+type NodeContextMenuState = {
+  x: number;
+  y: number;
+  nodeId: string;
+};
+
+function clampContextMenuPosition(
+  clientX: number,
+  clientY: number,
+  width: number,
+  height: number,
+): { x: number; y: number } {
+  const maxX = Math.max(
+    EDGE_CONTEXT_MENU_MARGIN,
+    window.innerWidth - width - EDGE_CONTEXT_MENU_MARGIN,
+  );
+  const maxY = Math.max(
+    EDGE_CONTEXT_MENU_MARGIN,
+    window.innerHeight - height - EDGE_CONTEXT_MENU_MARGIN,
+  );
+  return {
+    x: Math.min(Math.max(EDGE_CONTEXT_MENU_MARGIN, clientX), maxX),
+    y: Math.min(Math.max(EDGE_CONTEXT_MENU_MARGIN, clientY), maxY),
+  };
+}
 
 function pricingFingerprint(pricing: NodePricingConfig | undefined): string {
   if (!pricing) return 'none';
@@ -188,6 +223,20 @@ function nodePricingFingerprint(node: Node): string {
     node.data?.serviceName ?? null,
     pricingFingerprint(node.data?.pricing as NodePricingConfig | undefined),
   ]);
+}
+
+function createCustomPricingDraft(region: AzureRegion): NodePricingConfig {
+  return {
+    estimatedCost: 0,
+    tier: 'Custom',
+    skuName: 'Custom',
+    quantity: 1,
+    region,
+    unit: 'per month',
+    lastUpdated: new Date().toISOString(),
+    isCustom: true,
+    customPrice: 0,
+  };
 }
 
 type RegionalCostResult = {
@@ -613,6 +662,9 @@ function App() {
   const [workflow, setWorkflow] = useState<any[]>([]);
   // const [showWorkflow, setShowWorkflow] = useState(false);
   const [highlightedServices, setHighlightedServices] = useState<string[]>([]);
+  const [nodeContextMenu, setNodeContextMenu] = useState<NodeContextMenuState | null>(null);
+  const nodeContextMenuRef = useRef<HTMLDivElement>(null);
+  const nodeContextMenuReturnFocusRef = useRef<HTMLElement | null>(null);
   const [edgeContextMenu, setEdgeContextMenu] = useState<{ x: number; y: number; edgeId: string } | null>(null);
   const [totalMonthlyCost, setTotalMonthlyCost] = useState(0);
   const [pricingMode, setPricingMode] = useState<PricingMode>('payg');
@@ -634,6 +686,31 @@ function App() {
   const [pricingPrefs, setPricingPrefs] = usePricingDisplayPrefs();
   // Node whose per-node cost editor is open (opened from its cost badge).
   const pricingEditorNodeId = useNodePricingEditor();
+  const [pricingEditorDraft, setPricingEditorDraft] = useState<{
+    nodeId: string;
+    pricing: NodePricingConfig;
+  } | null>(null);
+  const pricingEditorOpenRunRef = useRef(0);
+  const cancelPendingPricingEditorOpen = useCallback(() => {
+    pricingEditorOpenRunRef.current += 1;
+  }, []);
+
+  const deleteCanvasNodes = useCallback((
+    nodeIds: Iterable<string>,
+    preserveGroupChildren = true,
+  ) => {
+    const deletedIds = new Set(nodeIds);
+    if (deletedIds.size === 0) return;
+    setNodes((currentNodes) => (
+      preserveGroupChildren
+        ? deleteNodesPreservingGroupChildren(currentNodes, deletedIds)
+        : currentNodes.filter(node => !deletedIds.has(node.id))
+    ));
+    setEdges((currentEdges) => currentEdges.filter(edge => (
+      !deletedIds.has(edge.source) && !deletedIds.has(edge.target)
+    )));
+  }, [setEdges, setNodes]);
+
   const [titleBlockData, setTitleBlockData] = useState({
     architectureName: 'Untitled Architecture',
     author: 'Azure Architect',
@@ -1011,9 +1088,18 @@ function App() {
   // Keyboard shortcuts: Delete and Ctrl+D (duplicate)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Ignore if user is typing in an input/textarea
+      if (e.key === 'Escape') cancelPendingPricingEditorOpen();
+
       const target = e.target as HTMLElement;
-      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) {
+      if (
+        pricingEditorNodeId
+        || target.tagName === 'INPUT'
+        || target.tagName === 'TEXTAREA'
+        || target.tagName === 'SELECT'
+        || target.tagName === 'BUTTON'
+        || target.isContentEditable
+        || target.closest('[role="dialog"], [role="menu"]')
+      ) {
         return;
       }
 
@@ -1028,12 +1114,7 @@ function App() {
           // Remove selected nodes
           if (selectedNodes.length > 0) {
             const nodeIdsToRemove = selectedNodes.map(n => n.id);
-            setNodes(nds => deleteNodesPreservingGroupChildren(nds, nodeIdsToRemove));
-            
-            // Also remove edges connected to deleted nodes
-            setEdges(eds => eds.filter(edge => 
-              !nodeIdsToRemove.includes(edge.source) && !nodeIdsToRemove.includes(edge.target)
-            ));
+            deleteCanvasNodes(nodeIdsToRemove);
           }
           
           // Remove selected edges
@@ -1077,7 +1158,15 @@ function App() {
     return () => {
       document.removeEventListener('keydown', handleKeyDown);
     };
-  }, [nodes, edges, setNodes, setEdges]);
+  }, [
+    nodes,
+    edges,
+    setNodes,
+    setEdges,
+    deleteCanvasNodes,
+    pricingEditorNodeId,
+    cancelPendingPricingEditorOpen,
+  ]);
 
   // Keep edge rendering style in sync even without re-layout.
   useEffect(() => {
@@ -1140,6 +1229,7 @@ function App() {
   // runs are dropped.
   const regionPricingRunRef = useRef(0);
   const handleRegionChange = useCallback(async (region: AzureRegion) => {
+    cancelPendingPricingEditorOpen();
     console.log(`🌍 Region changed to ${region}, updating all node pricing...`);
     const runId = ++regionPricingRunRef.current;
 
@@ -1562,26 +1652,220 @@ function App() {
     [setEdges]
   );
 
-  const onEdgeContextMenu = useCallback((event: React.MouseEvent, edge: Edge) => {
-    event.preventDefault();
-    const maxX = Math.max(
-      EDGE_CONTEXT_MENU_MARGIN,
-      window.innerWidth - EDGE_CONTEXT_MENU_WIDTH - EDGE_CONTEXT_MENU_MARGIN,
-    );
-    const maxY = Math.max(
-      EDGE_CONTEXT_MENU_MARGIN,
-      window.innerHeight - EDGE_CONTEXT_MENU_HEIGHT - EDGE_CONTEXT_MENU_MARGIN,
-    );
-    setEdgeContextMenu({
-      x: Math.min(Math.max(EDGE_CONTEXT_MENU_MARGIN, event.clientX), maxX),
-      y: Math.min(Math.max(EDGE_CONTEXT_MENU_MARGIN, event.clientY), maxY),
-      edgeId: edge.id,
+  const closeNodeContextMenu = useCallback(() => {
+    setNodeContextMenu(null);
+    const returnFocus = nodeContextMenuReturnFocusRef.current;
+    nodeContextMenuReturnFocusRef.current = null;
+    window.requestAnimationFrame(() => {
+      if (returnFocus?.isConnected) returnFocus.focus();
     });
+  }, []);
+
+  const dismissNodeContextMenu = useCallback(() => {
+    nodeContextMenuReturnFocusRef.current = null;
+    setNodeContextMenu(null);
   }, []);
 
   const closeEdgeContextMenu = useCallback(() => {
     setEdgeContextMenu(null);
   }, []);
+
+  const closeCanvasContextMenus = useCallback(() => {
+    cancelPendingPricingEditorOpen();
+    closeNodeContextMenu();
+    closeEdgeContextMenu();
+  }, [cancelPendingPricingEditorOpen, closeEdgeContextMenu, closeNodeContextMenu]);
+
+  const dismissCanvasContextMenus = useCallback(() => {
+    cancelPendingPricingEditorOpen();
+    dismissNodeContextMenu();
+    closeEdgeContextMenu();
+  }, [cancelPendingPricingEditorOpen, closeEdgeContextMenu, dismissNodeContextMenu]);
+
+  const onNodeContextMenu = useCallback((event: React.MouseEvent, node: Node) => {
+    cancelPendingPricingEditorOpen();
+    event.preventDefault();
+    event.stopPropagation();
+    const position = clampContextMenuPosition(
+      event.clientX,
+      event.clientY,
+      NODE_CONTEXT_MENU_WIDTH,
+      NODE_CONTEXT_MENU_HEIGHT,
+    );
+    if (!node.selected) {
+      setNodes((currentNodes) => currentNodes.map(currentNode => ({
+        ...currentNode,
+        selected: currentNode.id === node.id,
+      })));
+      setEdges((currentEdges) => currentEdges.map(edge => ({ ...edge, selected: false })));
+    }
+    const eventTarget = event.target as HTMLElement;
+    nodeContextMenuReturnFocusRef.current = eventTarget.closest<HTMLElement>('.react-flow__node')
+      || (document.activeElement instanceof HTMLElement ? document.activeElement : null);
+    setEdgeContextMenu(null);
+    setNodeContextMenu({ ...position, nodeId: node.id });
+  }, [cancelPendingPricingEditorOpen, setEdges, setNodes]);
+
+  const onEdgeContextMenu = useCallback((event: React.MouseEvent, edge: Edge) => {
+    cancelPendingPricingEditorOpen();
+    event.preventDefault();
+    const position = clampContextMenuPosition(
+      event.clientX,
+      event.clientY,
+      EDGE_CONTEXT_MENU_WIDTH,
+      EDGE_CONTEXT_MENU_HEIGHT,
+    );
+    dismissNodeContextMenu();
+    setEdgeContextMenu({ ...position, edgeId: edge.id });
+  }, [cancelPendingPricingEditorOpen, dismissNodeContextMenu]);
+
+  const duplicateServiceNode = useCallback((nodeId: string) => {
+    setNodes((currentNodes) => {
+      const source = currentNodes.find(node => node.id === nodeId);
+      if (!source || source.type !== 'azureNode') return currentNodes;
+      const duplicateId = `${source.id}-copy-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const duplicate: Node = {
+        ...source,
+        id: duplicateId,
+        position: {
+          x: source.position.x + 40,
+          y: source.position.y + 40,
+        },
+        positionAbsolute: undefined,
+        selected: true,
+        dragging: false,
+        data: { ...source.data },
+      };
+      return [
+        ...currentNodes.map(node => ({ ...node, selected: false })),
+        duplicate,
+      ];
+    });
+    setEdges((currentEdges) => currentEdges.map(edge => ({ ...edge, selected: false })));
+    closeNodeContextMenu();
+  }, [closeNodeContextMenu, setEdges, setNodes]);
+
+  const editContextNodePricing = useCallback(async (nodeId: string) => {
+    const runId = ++pricingEditorOpenRunRef.current;
+    const editorStateVersion = getNodePricingEditorStateVersion();
+    const node = latestNodesRef.current.find(candidate => candidate.id === nodeId);
+    dismissNodeContextMenu();
+    if (!node || node.type !== 'azureNode') return;
+
+    const storedPricing = node.data?.pricing as NodePricingConfig | undefined;
+    if (storedPricing) {
+      setPricingEditorDraft(null);
+      openNodePricingEditor(nodeId);
+      return;
+    }
+
+    const serviceType = String(node.data?.serviceName || node.data?.label || '');
+    const region = getActiveRegion();
+    const initializedPricing = serviceType && hasPricingData(serviceType)
+      ? await initializeNodePricing(serviceType, region)
+      : null;
+    if (
+      runId !== pricingEditorOpenRunRef.current
+      || editorStateVersion !== getNodePricingEditorStateVersion()
+      || getActiveRegion() !== region
+    ) return;
+
+    const latestNode = latestNodesRef.current.find(candidate => candidate.id === nodeId);
+    const latestServiceType = String(
+      latestNode?.data?.serviceName || latestNode?.data?.label || '',
+    );
+    if (!latestNode || latestNode.type !== 'azureNode' || latestServiceType !== serviceType) return;
+
+    const latestPricing = latestNode.data?.pricing as NodePricingConfig | undefined;
+    setPricingEditorDraft(latestPricing
+      ? null
+      : {
+          nodeId,
+          pricing: initializedPricing ?? createCustomPricingDraft(region),
+        });
+    openNodePricingEditor(nodeId);
+  }, [dismissNodeContextMenu]);
+
+  const closePricingEditor = useCallback(() => {
+    cancelPendingPricingEditorOpen();
+    setPricingEditorDraft(null);
+    closeNodePricingEditor();
+  }, [cancelPendingPricingEditorOpen]);
+
+  const fitContextGroupToContent = useCallback((groupId: string) => {
+    setNodes((currentNodes) => fitGroupToContent(currentNodes, groupId) ?? currentNodes);
+    closeNodeContextMenu();
+  }, [closeNodeContextMenu, setNodes]);
+
+  const deleteContextNode = useCallback((nodeId: string) => {
+    deleteCanvasNodes([nodeId]);
+    closeNodeContextMenu();
+  }, [closeNodeContextMenu, deleteCanvasNodes]);
+
+  const deleteContextGroupWithContents = useCallback((groupId: string) => {
+    const deletedIds = collectNodeAndDescendantIds(nodes, [groupId]);
+    const containedCount = Math.max(0, deletedIds.size - 1);
+    const confirmed = window.confirm(localize(language, {
+      en: `Delete this layer and ${containedCount} contained item${containedCount === 1 ? '' : 's'}? This cannot be undone.`,
+      ja: `このレイヤーと、その中の${containedCount}件の項目を削除しますか？この操作は元に戻せません。`,
+    }));
+    if (!confirmed) return;
+    deleteCanvasNodes(deletedIds, false);
+    closeNodeContextMenu();
+  }, [closeNodeContextMenu, deleteCanvasNodes, language, nodes]);
+
+  useLayoutEffect(() => {
+    if (!nodeContextMenu) return;
+    nodeContextMenuRef.current
+      ?.querySelector<HTMLButtonElement>('[role="menuitem"]:not(:disabled)')
+      ?.focus();
+  }, [nodeContextMenu]);
+
+  const handleNodeContextMenuKeyDown = useCallback((
+    event: React.KeyboardEvent<HTMLDivElement>,
+  ) => {
+    const items = Array.from(
+      event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)'),
+    );
+    if (items.length === 0) return;
+    const currentIndex = items.indexOf(document.activeElement as HTMLButtonElement);
+
+    let nextIndex: number | null = null;
+    if (event.key === 'ArrowDown' || (event.key === 'Tab' && !event.shiftKey)) {
+      nextIndex = currentIndex < 0 ? 0 : (currentIndex + 1) % items.length;
+    } else if (event.key === 'ArrowUp' || (event.key === 'Tab' && event.shiftKey)) {
+      nextIndex = currentIndex <= 0 ? items.length - 1 : currentIndex - 1;
+    } else if (event.key === 'Home') {
+      nextIndex = 0;
+    } else if (event.key === 'End') {
+      nextIndex = items.length - 1;
+    } else if (event.key === 'Escape') {
+      event.preventDefault();
+      event.stopPropagation();
+      closeNodeContextMenu();
+      return;
+    }
+
+    if (nextIndex !== null) {
+      event.preventDefault();
+      event.stopPropagation();
+      items[nextIndex].focus();
+    }
+  }, [closeNodeContextMenu]);
+
+  useEffect(() => {
+    if (!nodeContextMenu && !edgeContextMenu) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') closeCanvasContextMenus();
+    };
+    const handleResize = () => closeCanvasContextMenus();
+    document.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('resize', handleResize);
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('resize', handleResize);
+    };
+  }, [closeCanvasContextMenus, edgeContextMenu, nodeContextMenu]);
 
   const setConnectionAnimations = useCallback((enabled: boolean) => {
     setAnimateConnections(enabled);
@@ -1718,7 +2002,7 @@ function App() {
       .then((pricing) => {
         if (!pricing) return;
         setNodes((current) => current.map((node) => (
-          node.id === newNode.id
+          node.id === newNode.id && !node.data.pricing
             ? { ...node, data: { ...node.data, pricing } }
             : node
         )));
@@ -2742,6 +3026,7 @@ function App() {
     setOriginalPrompt('');
     setWorkflow([]);
     setHighlightedServices([]);
+    setNodeContextMenu(null);
     setEdgeContextMenu(null);
     setGeneratedWithModel(null);
     setValidationResult(null);
@@ -3807,7 +4092,7 @@ function App() {
     }
 
     setNodes(updatedNodes);
-  }, [nodes, setNodes]);
+  }, [cancelPendingPricingEditorOpen, nodes, setNodes]);
 
   // Premium Feature Handlers
   const handleValidateArchitecture = useCallback(async () => {
@@ -4048,6 +4333,21 @@ function App() {
   const contextMenuEdge = edgeContextMenu
     ? edges.find((edge) => edge.id === edgeContextMenu.edgeId)
     : undefined;
+  const contextMenuNode = nodeContextMenu
+    ? nodes.find((node) => node.id === nodeContextMenu.nodeId)
+    : undefined;
+  const contextMenuNodeIsGroup = contextMenuNode?.type === 'groupNode';
+  const contextMenuNodeLabel = String(
+    contextMenuNode?.data?.serviceName
+      || contextMenuNode?.data?.label
+      || localize(language, { en: 'Selected item', ja: '選択した項目' }),
+  );
+  const contextMenuContainedCount = contextMenuNodeIsGroup && contextMenuNode
+    ? Math.max(
+        0,
+        collectNodeAndDescendantIds(nodes, [contextMenuNode.id]).size - 1,
+      )
+    : 0;
   const ribbonTabs: Array<{ id: RibbonTabId; label: string }> = [
     { id: 'home', label: localize(language, { en: 'Home', ja: 'ホーム' }) },
     { id: 'create', label: localize(language, { en: 'Create', ja: '作成' }) },
@@ -5074,7 +5374,9 @@ function App() {
             onNodesDelete={onNodesDelete}
             onConnect={onConnect}
             onReconnect={onReconnect}
+            onNodeContextMenu={onNodeContextMenu}
             onEdgeContextMenu={onEdgeContextMenu}
+            onPaneClick={dismissCanvasContextMenus}
             onInit={setReactFlowInstance}
             onDrop={onDrop}
             onDragOver={onDragOver}
@@ -5325,12 +5627,142 @@ function App() {
           />
         )}
         
+        {/* Service / Layer Context Menu */}
+        {nodeContextMenu && contextMenuNode && (
+          <>
+            <div
+              className="edge-context-menu-overlay"
+              onClick={dismissNodeContextMenu}
+              onContextMenu={(event) => {
+                event.preventDefault();
+                dismissNodeContextMenu();
+              }}
+            />
+            <div
+              ref={nodeContextMenuRef}
+              className="node-context-menu"
+              role="menu"
+              onKeyDown={handleNodeContextMenuKeyDown}
+              aria-label={localize(language, {
+                en: `${contextMenuNodeIsGroup ? 'Layer' : 'Service'} actions`,
+                ja: `${contextMenuNodeIsGroup ? 'レイヤー' : 'サービス'}の操作`,
+              })}
+              style={{
+                position: 'fixed',
+                top: nodeContextMenu.y,
+                left: nodeContextMenu.x,
+                zIndex: 10000,
+              }}
+            >
+              <div className="context-menu-header node-context-menu-header">
+                <span>
+                  {localize(language, {
+                    en: contextMenuNodeIsGroup ? 'Layer' : 'Service',
+                    ja: contextMenuNodeIsGroup ? 'レイヤー' : 'サービス',
+                  })}
+                </span>
+                <strong title={contextMenuNodeLabel}>{contextMenuNodeLabel}</strong>
+              </div>
+
+              {contextMenuNodeIsGroup ? (
+                <>
+                  <button
+                    className="context-menu-item"
+                    role="menuitem"
+                    disabled={contextMenuContainedCount === 0}
+                    onClick={() => fitContextGroupToContent(contextMenuNode.id)}
+                  >
+                    <span className="menu-icon"><Minimize2 size={16} /></span>
+                    <span className="context-menu-item-copy">
+                      <span>{localize(language, { en: 'Fit layer to contents', ja: '内容に合わせてレイヤーを調整' })}</span>
+                      <small>{localize(language, { en: 'Resize around contained items', ja: '内部の項目に合わせてサイズを変更' })}</small>
+                    </span>
+                  </button>
+                  <div className="context-menu-separator" role="separator" />
+                  <button
+                    className="context-menu-item danger"
+                    role="menuitem"
+                    onClick={() => deleteContextNode(contextMenuNode.id)}
+                  >
+                    <span className="menu-icon"><Ungroup size={16} /></span>
+                    <span className="context-menu-item-copy">
+                      <span>
+                        {localize(language, {
+                          en: contextMenuContainedCount > 0 ? 'Delete layer only' : 'Delete layer',
+                          ja: contextMenuContainedCount > 0 ? 'レイヤーだけを削除' : 'レイヤーを削除',
+                        })}
+                      </span>
+                      {contextMenuContainedCount > 0 && (
+                        <small>{localize(language, { en: 'Keep all contained items', ja: '内部の項目はすべて保持' })}</small>
+                      )}
+                    </span>
+                  </button>
+                  {contextMenuContainedCount > 0 && (
+                    <button
+                      className="context-menu-item danger"
+                      role="menuitem"
+                      onClick={() => deleteContextGroupWithContents(contextMenuNode.id)}
+                    >
+                      <span className="menu-icon"><Boxes size={16} /></span>
+                      <span className="context-menu-item-copy">
+                        <span>
+                          {localize(language, {
+                            en: `Delete layer and ${contextMenuContainedCount} item${contextMenuContainedCount === 1 ? '' : 's'}`,
+                            ja: `レイヤーと内部の${contextMenuContainedCount}件を削除`,
+                          })}
+                        </span>
+                        <small>{localize(language, { en: 'Requires confirmation', ja: '確認後に削除' })}</small>
+                      </span>
+                    </button>
+                  )}
+                </>
+              ) : (
+                <>
+                  <button
+                    className="context-menu-item"
+                    role="menuitem"
+                    onClick={() => duplicateServiceNode(contextMenuNode.id)}
+                  >
+                    <span className="menu-icon"><Copy size={16} /></span>
+                    <span>{localize(language, { en: 'Duplicate service', ja: 'サービスを複製' })}</span>
+                  </button>
+                  <button
+                    className="context-menu-item"
+                    role="menuitem"
+                    onClick={() => editContextNodePricing(contextMenuNode.id)}
+                  >
+                    <span className="menu-icon"><DollarSign size={16} /></span>
+                    <span>
+                      {contextMenuNode.data?.pricing
+                        ? localize(language, { en: 'Edit cost estimate', ja: 'コスト見積を編集' })
+                        : localize(language, { en: 'Set cost estimate', ja: 'コスト見積を設定' })}
+                    </span>
+                  </button>
+                  <div className="context-menu-separator" role="separator" />
+                  <button
+                    className="context-menu-item danger"
+                    role="menuitem"
+                    onClick={() => deleteContextNode(contextMenuNode.id)}
+                  >
+                    <span className="menu-icon"><Trash2 size={16} /></span>
+                    <span>{localize(language, { en: 'Delete service', ja: 'サービスを削除' })}</span>
+                  </button>
+                </>
+              )}
+            </div>
+          </>
+        )}
+
         {/* Edge Context Menu */}
         {edgeContextMenu && (
           <>
-            <div 
+            <div
               className="edge-context-menu-overlay"
               onClick={closeEdgeContextMenu}
+              onContextMenu={(event) => {
+                event.preventDefault();
+                closeEdgeContextMenu();
+              }}
             />
             <div 
               className="edge-context-menu"
@@ -5740,13 +6172,16 @@ Return the IMPROVED architecture in the same JSON format as before with proper g
       {(() => {
         if (!pricingEditorNodeId) return null;
         const node = nodes.find(n => n.id === pricingEditorNodeId);
-        const nodePricing = node?.data?.pricing as NodePricingConfig | undefined;
+        const storedPricing = node?.data?.pricing as NodePricingConfig | undefined;
+        const nodePricing = pricingEditorDraft?.nodeId === pricingEditorNodeId
+          ? pricingEditorDraft.pricing
+          : storedPricing;
         if (!node || !nodePricing) return null;
         return (
           <NodePricingEditor
             serviceType={String(node.data.serviceName || node.data.label || 'Unknown')}
             pricing={nodePricing}
-            onClose={closeNodePricingEditor}
+            onClose={closePricingEditor}
             onApply={(updated) => {
               // Total cost recalculates from `nodes` via the existing effect.
               setNodes(nds =>
