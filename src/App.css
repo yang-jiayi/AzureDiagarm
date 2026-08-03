@@ -1435,12 +1435,12 @@ body.dark-mode .editable-edge-flow-path {
 
 .context-menu-item:hover {
   background: #f0f9ff;
-  color: #0078d4;
+  color: #0067b8;
 }
 
 .context-menu-item:focus-visible {
   background: #f0f9ff;
-  color: #0078d4;
+  color: #0067b8;
   outline: 2px solid #0078d4;
   outline-offset: -2px;
 }

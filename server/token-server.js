@@ -14,12 +14,22 @@ const { DefaultAzureCredential } = require('@azure/identity');
 const { CosmosClient } = require('@azure/cosmos');
 const { TableClient } = require('@azure/data-tables');
 const { EmailClient, KnownEmailSendStatus } = require('@azure/communication-email');
-const { createAccessControlRouter, getPrincipal } = require('./access-control');
+const {
+  createAccessControlRouter,
+  getAccessControlConfiguration,
+  getPrincipal,
+} = require('./access-control');
 const { ArmKeyVaultAccessStore } = require('./arm-key-vault-access-store');
 const { createOpenAIProxyRouter } = require('./openai-proxy');
 const { createFixedWindowRateLimiter, createTableRateLimiter } = require('./rate-limiter');
 const { createDiagramsRouter, createAzureBlobBackend } = require('./diagram-api');
 const { asyncHandler, createErrorHandler } = require('./async-handler');
+const {
+  hasFeedbackArchiveConfiguration,
+  hasFeedbackDeliveryConfiguration,
+} = require('./feedback-configuration');
+const { createGracefulShutdown } = require('./graceful-shutdown');
+const { createReadinessHandler } = require('./readiness');
 const crypto = require('crypto');
 
 const app = express();
@@ -39,6 +49,7 @@ app.use('/api/openai', express.json({ limit: '12mb' }));
 app.use('/api/diagrams', express.json({ limit: '12mb' }));
 app.use(express.json({ limit: '16kb' }));
 const credential = new DefaultAzureCredential();
+let shuttingDown = false;
 
 // Nginx, Azure Front Door, Docker, and Container Apps all probe this route.
 // Keeping it on the Node process ensures a wedged or unavailable API process
@@ -67,9 +78,22 @@ if (ACCESS_KEY_VAULT_RESOURCE_ID) {
   accessTable = new TableClient(ACCESS_TABLES_ENDPOINT, ACCESS_TABLE_NAME, credential);
 }
 
-if (ACCESS_CONTROL_ENABLED && (!ACCESS_ADMIN_EMAIL || !accessTable || !PUBLIC_APP_URL)) {
-  console.error('[access] Access control is enabled but its administrator, store, or public URL is missing.');
+const accessControlConfiguration = getAccessControlConfiguration({
+  enabled: ACCESS_CONTROL_ENABLED,
+  adminEmail: ACCESS_ADMIN_EMAIL,
+  publicAppUrl: PUBLIC_APP_URL,
+  table: accessTable,
+});
+if (!accessControlConfiguration.configured) {
+  console.error(
+    `[access] Readiness blocked by missing access-control configuration: ${accessControlConfiguration.missing.join(', ')}.`,
+  );
 }
+
+app.get('/readyz', createReadinessHandler({
+  isShuttingDown: () => shuttingDown,
+  isConfigured: () => accessControlConfiguration.configured,
+}));
 
 app.use('/api/access', createAccessControlRouter({
   enabled: ACCESS_CONTROL_ENABLED,
@@ -236,6 +260,13 @@ const TABLES_FEEDBACK_TABLE = process.env.AZURE_TABLES_FEEDBACK_TABLE || 'feedba
 const COSMOS_ENDPOINT = process.env.AZURE_COSMOS_ENDPOINT;
 const COSMOS_DATABASE_ID = process.env.COSMOS_DATABASE_ID || 'diagrams';
 const COSMOS_FEEDBACK_CONTAINER_ID = process.env.COSMOS_FEEDBACK_CONTAINER_ID || 'feedback';
+const feedbackConfiguration = {
+  emailEndpoint: FEEDBACK_EMAIL_ENDPOINT,
+  emailSender: FEEDBACK_EMAIL_SENDER,
+  emailRecipient: FEEDBACK_EMAIL_RECIPIENT,
+  tablesEndpoint: TABLES_ENDPOINT,
+  cosmosEndpoint: COSMOS_ENDPOINT,
+};
 
 let feedbackEmailClient = null;
 function getFeedbackEmailClient() {
@@ -692,7 +723,7 @@ app.post('/api/azure/resource-graph', requireAzureImport, asyncHandler(async (re
 }));
 
 app.post('/api/feedback', asyncHandler(async (req, res) => {
-  if (!getFeedbackEmailClient() && !getFeedbackTable() && !getFeedbackContainer()) {
+  if (!hasFeedbackDeliveryConfiguration(feedbackConfiguration)) {
     return res.status(503).json({ error: 'Feedback storage is not configured' });
   }
 
@@ -771,7 +802,7 @@ app.get('/api/feedback/list', asyncHandler(async (req, res) => {
     return res.status(401).json({ error: 'unauthorized' });
   }
 
-  if (!getFeedbackTable() && !getFeedbackContainer()) {
+  if (!hasFeedbackArchiveConfiguration(feedbackConfiguration)) {
     return res.status(503).json({ error: 'Feedback archive is not configured' });
   }
 
@@ -791,6 +822,13 @@ app.get('/api/feedback/list', asyncHandler(async (req, res) => {
 app.use(createErrorHandler(console));
 
 const PORT = parseInt(process.env.TOKEN_SERVER_PORT || '3001', 10);
-app.listen(PORT, '127.0.0.1', () => {
+const server = app.listen(PORT, '127.0.0.1', () => {
   console.log(`[speech-token] Listening on 127.0.0.1:${PORT}`);
 });
+const shutdown = createGracefulShutdown(server, { logger: console, timeoutMs: 25_000 });
+for (const signal of ['SIGTERM', 'SIGINT']) {
+  process.once(signal, () => {
+    shuttingDown = true;
+    shutdown(signal);
+  });
+}

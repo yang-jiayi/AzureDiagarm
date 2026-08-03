@@ -37,7 +37,9 @@ function normalizePrincipalEmail(value) {
 function normalizeOrigin(value) {
   if (typeof value !== 'string' || value.trim().length === 0) return '';
   try {
-    return new URL(value).origin;
+    const url = new URL(value);
+    if (url.protocol !== 'https:' && url.protocol !== 'http:') return '';
+    return url.origin;
   } catch {
     return '';
   }
@@ -104,16 +106,38 @@ function getPrincipal(req) {
   return { email, id };
 }
 
-function createAccessControlRouter(options = {}) {
-  const router = express.Router();
+function getAccessControlConfiguration(options = {}) {
   const enabled = options.enabled === true;
   const adminEmail = normalizeEmail(options.adminEmail);
   const publicOrigin = normalizeOrigin(options.publicAppUrl);
   const table = options.table || null;
+  const missing = [];
+  if (enabled && !adminEmail) missing.push('administrator');
+  if (enabled && !publicOrigin) missing.push('public URL');
+  if (enabled && !table) missing.push('access store');
+  return {
+    enabled,
+    adminEmail,
+    publicOrigin,
+    table,
+    configured: !enabled || missing.length === 0,
+    missing,
+  };
+}
+
+function createAccessControlRouter(options = {}) {
+  const router = express.Router();
+  const configuration = getAccessControlConfiguration(options);
+  const {
+    enabled,
+    adminEmail,
+    publicOrigin,
+    table,
+    configured,
+  } = configuration;
   const logger = options.logger || console;
   const cacheTtlMs = Math.max(1_000, Number(options.cacheTtlMs) || 60_000);
   const maxUsers = Math.max(1, Number(options.maxUsers) || 500);
-  const configured = !enabled || Boolean(adminEmail && publicOrigin && table);
 
   let cache = {
     expiresAt: 0,
@@ -342,6 +366,7 @@ function createAccessControlRouter(options = {}) {
 module.exports = {
   createAccessControlRouter,
   decodeClientPrincipal,
+  getAccessControlConfiguration,
   getPrincipal,
   normalizeEmail,
   normalizePrincipalEmail,

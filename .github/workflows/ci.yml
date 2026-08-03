@@ -38,6 +38,11 @@ jobs:
       - name: Install token server dependencies
         run: npm --prefix server ci
 
+      - name: Audit production dependencies
+        run: |
+          npm audit --omit=dev --audit-level=high
+          npm --prefix server audit --omit=dev --audit-level=high
+
       - name: Build (tsc + vite)
         run: npm run build
 
@@ -89,6 +94,10 @@ jobs:
       - name: Install dependencies
         working-directory: mcp-server
         run: npm ci
+
+      - name: Audit production dependencies
+        working-directory: mcp-server
+        run: npm audit --omit=dev --audit-level=high
 
       - name: Build
         working-directory: mcp-server

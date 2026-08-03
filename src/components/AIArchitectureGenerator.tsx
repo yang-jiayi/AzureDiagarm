@@ -287,12 +287,18 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({ onGen
       closeTimerRef.current = null;
     }
   }, []);
+  const isBusy = isGenerating || isAnalyzingImage;
   const closeModal = useCallback(() => {
+    if (isBusy) return;
     cancelScheduledClose();
     setIsOpen(false);
-  }, [cancelScheduledClose]);
+  }, [cancelScheduledClose, isBusy]);
   const dialogRef = useModalFocus<HTMLDivElement>(isOpen);
-  useEscapeKey(isOpen, closeModal);
+  useEscapeKey(isOpen && !isBusy, closeModal);
+  const handleAnalyzingChange = useCallback((analyzing: boolean) => {
+    if (analyzing) cancelScheduledClose();
+    setIsAnalyzingImage(analyzing);
+  }, [cancelScheduledClose]);
   const scheduleClose = useCallback(() => {
     cancelScheduledClose();
     closeTimerRef.current = window.setTimeout(() => {
@@ -660,6 +666,7 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({ onGen
   return (
     <>
       <button
+        type="button"
         className="btn btn-secondary"
         onClick={() => {
           cancelScheduledClose();
@@ -681,6 +688,7 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({ onGen
             role="dialog"
             aria-modal="true"
             aria-label={t("AI Architecture Generator")}
+            aria-busy={isBusy}
             tabIndex={-1}
             onClick={(e) => e.stopPropagation()}
           >
@@ -690,10 +698,12 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({ onGen
                 <h2>{t("AI Architecture Generator")}</h2>
               </div>
               <button
+                type="button"
                 className="modal-close"
                 onClick={closeModal}
                 title={t("Close")}
                 aria-label={t("Close")}
+                disabled={isBusy}
               >
                 <X size={20} />
               </button>
@@ -753,7 +763,7 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({ onGen
               <ImageUploader
                 onImageAnalyzed={handleImageAnalyzed}
                 onImageDataUrl={setUploadedImageUrl}
-                onAnalyzing={setIsAnalyzingImage}
+                onAnalyzing={handleAnalyzingChange}
                 onError={setError}
                 disabled={isGenerating}
                 analyzeImage={handleAnalyzeImage}
@@ -827,7 +837,6 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({ onGen
                       <div
                         className="example-category-label"
                         style={{
-                          color: group.color,
                           textTransform: language === 'ja' ? 'none' : undefined,
                           letterSpacing: language === 'ja' ? 'normal' : undefined,
                         }}
@@ -837,6 +846,7 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({ onGen
                       </div>
                       {group.prompts.map((prompt, idx) => (
                         <button
+                          type="button"
                           key={idx}
                           className="example-button"
                           style={{ borderLeftColor: group.color }}
@@ -928,13 +938,15 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({ onGen
               )}
               <div className="modal-footer-actions">
                 <button
+                  type="button"
                   className="btn btn-secondary"
                   onClick={closeModal}
-                  disabled={isGenerating}
+                  disabled={isBusy}
                 >
                   {aiMetrics ? t("Close") : t("Cancel")}
                 </button>
                 <button
+                  type="button"
                   className="btn btn-primary"
                   onClick={handleGenerate}
                   disabled={isGenerating || isAnalyzingImage || !description.trim()}

@@ -97,6 +97,7 @@ import {
   collectNodeAndDescendantIds,
   deleteNodesPreservingGroupChildren,
   detachChildrenFromGroups,
+  duplicateSelectedSubgraph,
   fitGroupToContent,
   fitAllGroupsToContent,
   captureGroupLayout,
@@ -108,6 +109,8 @@ import {
   preserveManualLayout,
   selectHorizontalConnectionHandles,
 } from './utils/preserveManualLayout';
+import { mergeLayoutEdges, mergeLayoutNodes } from './utils/layoutResultMerge';
+import { OperationGeneration } from './utils/operationGeneration';
 import { trackArchitectureGeneration, trackValidation, trackValidationHandoff, trackDeploymentGuide, trackExport, trackTemplateImport, trackModelComparison, trackRecommendationsApplied, trackVersionOperation, trackStartFresh, trackValidationFindings } from './services/telemetryService';
 import { classifyValidationTopics } from './services/validationConsensus';
 import type { IaCFormat } from './services/azureOpenAI';
@@ -805,6 +808,9 @@ function App() {
   const latestNodesRef = useRef<Node[]>(nodes);
   latestNodesRef.current = nodes;
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
+  const latestEdgesRef = useRef<Edge[]>(edges);
+  latestEdgesRef.current = edges;
+  const layoutGenerationRef = useRef(new OperationGeneration());
   const [architecturePrompt, setArchitecturePrompt] = useState<string>('');
   // The FIRST prompt of the current diagram lineage. Unlike architecturePrompt
   // (which each chat refinement overwrites), this is captured once when the
@@ -1328,25 +1334,19 @@ function App() {
         
         if (selectedNodes.length > 0) {
           e.preventDefault();
-          
-          const duplicatedNodes = selectedNodes.map(node => {
-            const newId = `${Date.now()}-${Math.random()}`;
-            return {
-              ...node,
-              id: newId,
-              position: {
-                x: node.position.x + 50, // Offset by 50px
-                y: node.position.y + 50,
-              },
-              selected: true, // Select the new nodes
-            };
-          });
-          
-          // Deselect original nodes
-          setNodes(nds => [
-            ...nds.map(n => ({ ...n, selected: false })),
-            ...duplicatedNodes
-          ]);
+
+          const duplicateRunId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+          let duplicateSequence = 0;
+          const result = duplicateSelectedSubgraph(
+            nodes,
+            edges,
+            selectedNodes.map(node => node.id),
+            (kind, sourceId) => (
+              `${sourceId}-copy-${kind}-${duplicateRunId}-${duplicateSequence++}`
+            ),
+          );
+          setNodes(result.nodes);
+          setEdges(result.edges);
         }
       }
     };
@@ -1774,28 +1774,41 @@ function App() {
   }, [setEdges, setNodes]);
 
   const applyLayout = useCallback(async () => {
-    const selectedAzureNodeId = nodes.find((n) => n.type === 'azureNode' && (n as any).selected)?.id;
+    const sourceNodes = latestNodesRef.current;
+    const sourceEdges = latestEdgesRef.current;
+    const generation = layoutGenerationRef.current.advance();
+    const selectedAzureNodeId = sourceNodes.find(
+      (node) => node.type === 'azureNode' && node.selected,
+    )?.id;
     const shouldEmphasize =
       layoutEmphasizePrimaryPath && (layoutPreset === 'flow-lr' || layoutPreset === 'flow-tb');
 
-    const result = await applyLayoutPreset(nodes as any, edges as any, {
-      preset: layoutPreset,
-      spacing: layoutSpacing,
-      edgeStyle: layoutEdgeStyle,
-      emphasizePrimaryPath: shouldEmphasize,
-      selectedNodeId: selectedAzureNodeId,
-      layoutEngine,
-    });
+    try {
+      const result = await applyLayoutPreset(sourceNodes, sourceEdges, {
+        preset: layoutPreset,
+        spacing: layoutSpacing,
+        edgeStyle: layoutEdgeStyle,
+        emphasizePrimaryPath: shouldEmphasize,
+        selectedNodeId: selectedAzureNodeId,
+        layoutEngine,
+      });
+      if (!layoutGenerationRef.current.isCurrent(generation)) return;
 
-    setNodes(result.nodes as any);
-    setEdges(result.edges as any);
+      setNodes(currentNodes => mergeLayoutNodes(currentNodes, sourceNodes, result.nodes));
+      setEdges(currentEdges => mergeLayoutEdges(currentEdges, sourceEdges, result.edges));
 
-    requestAnimationFrame(() => {
-      reactFlowInstance?.fitView?.({ padding: 0.2, duration: 250 });
-    });
+      requestAnimationFrame(() => {
+        reactFlowInstance?.fitView?.({ padding: 0.2, duration: 250 });
+      });
+    } catch (error) {
+      if (!layoutGenerationRef.current.isCurrent(generation)) return;
+      console.error('Failed to apply diagram layout:', error);
+      alert(localize(language, {
+        en: 'Failed to arrange the diagram. Please try again.',
+        ja: '図を再配置できませんでした。もう一度お試しください。',
+      }));
+    }
   }, [
-    nodes,
-    edges,
     layoutPreset,
     layoutSpacing,
     layoutEdgeStyle,
@@ -1804,6 +1817,7 @@ function App() {
     reactFlowInstance,
     setNodes,
     setEdges,
+    language,
   ]);
 
   const layoutPresetLabel: Record<LayoutPreset, string> = {
@@ -1915,7 +1929,10 @@ function App() {
     event.preventDefault();
     event.stopPropagation();
     const eventTarget = event.target as HTMLElement;
-    const focusTarget = eventTarget.closest<HTMLElement>('.react-flow__node');
+    const nodeElement = eventTarget.closest<HTMLElement>('.react-flow__node');
+    const focusTarget = eventTarget.closest<HTMLElement>(
+      '[data-node-keyboard-target], button, input, textarea, select',
+    ) || nodeElement?.querySelector<HTMLElement>('[data-node-keyboard-target]') || null;
     const anchor = getContextMenuAnchor(event, focusTarget);
     const position = clampContextMenuPosition(
       anchor.x,
@@ -5768,6 +5785,7 @@ function App() {
             onDragOver={onDragOver}
             nodeTypes={nodeTypes}
             edgeTypes={edgeTypes}
+            nodesFocusable={false}
             deleteKeyCode={null}
             fitView
             snapToGrid={true}

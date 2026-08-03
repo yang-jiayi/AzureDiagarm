@@ -1,15 +1,16 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-import React, { useState, useCallback, useRef } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { Upload, Image, X, Loader2 } from 'lucide-react';
 import './ImageUploader.css';
 import { useLanguage } from '../i18n/LanguageContext';
 import { localize } from '../i18n/localization';
+import { OperationGeneration } from '../utils/operationGeneration';
 
 interface ImageUploaderProps {
   onImageAnalyzed: (description: string) => void;
-  onImageDataUrl?: (dataUrl: string) => void;
+  onImageDataUrl?: (dataUrl: string | null) => void;
   onAnalyzing: (analyzing: boolean) => void;
   onError: (error: string) => void;
   disabled?: boolean;
@@ -34,14 +35,42 @@ const ImageUploader: React.FC<ImageUploaderProps> = ({
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [fileName, setFileName] = useState<string>('');
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const analysisGenerationRef = useRef(new OperationGeneration());
+  const isAnalyzingRef = useRef(false);
+
+  const resetImageState = useCallback(() => {
+    setPreviewUrl(null);
+    setFileName('');
+    onImageDataUrl?.(null);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  }, [onImageDataUrl]);
+
+  const clearImage = useCallback(() => {
+    analysisGenerationRef.current.advance();
+    isAnalyzingRef.current = false;
+    setIsAnalyzing(false);
+    onAnalyzing(false);
+    resetImageState();
+  }, [onAnalyzing, resetImageState]);
+
+  useEffect(() => () => {
+    analysisGenerationRef.current.advance();
+    isAnalyzingRef.current = false;
+    onAnalyzing(false);
+  }, [onAnalyzing]);
 
   const processFile = useCallback(async (file: File) => {
+    if (disabled || isAnalyzingRef.current) return;
+
     // Validate file type
     if (!SUPPORTED_TYPES.includes(file.type)) {
       onError(localize(language, {
         en: `Unsupported file type. Please upload: ${SUPPORTED_TYPES.map(type => type.split('/')[1]).join(', ')}`,
         ja: `未対応のファイル形式です。次の形式をアップロードしてください: ${SUPPORTED_TYPES.map(type => type.split('/')[1]).join('、')}`,
       }));
+      if (fileInputRef.current) fileInputRef.current.value = '';
       return;
     }
 
@@ -51,47 +80,71 @@ const ImageUploader: React.FC<ImageUploaderProps> = ({
         en: `File too large. Maximum size is ${MAX_FILE_SIZE / 1024 / 1024}MB.`,
         ja: `ファイルが大きすぎます。最大サイズは${MAX_FILE_SIZE / 1024 / 1024}MBです。`,
       }));
+      if (fileInputRef.current) fileInputRef.current.value = '';
       return;
     }
 
+    const generation = analysisGenerationRef.current.advance();
+    isAnalyzingRef.current = true;
+    setIsAnalyzing(true);
+    onAnalyzing(true);
     setFileName(file.name);
 
-    // Create preview
-    const reader = new FileReader();
-    reader.onload = async (e) => {
-      const result = e.target?.result as string;
+    try {
+      const result = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => (
+          typeof reader.result === 'string'
+            ? resolve(reader.result)
+            : reject(new Error('The selected image could not be read.'))
+        );
+        reader.onerror = () => reject(reader.error || new Error('The selected image could not be read.'));
+        reader.readAsDataURL(file);
+      });
+      if (!analysisGenerationRef.current.isCurrent(generation)) return;
+
       setPreviewUrl(result);
       onImageDataUrl?.(result);
 
       // Extract base64 data (remove the data:image/...;base64, prefix)
       const base64Data = result.split(',')[1];
-      
-      setIsAnalyzing(true);
-      onAnalyzing(true);
+      if (!base64Data) throw new Error('The selected image could not be read.');
 
-      try {
-        const { description } = await analyzeImage(base64Data, file.type);
-        onImageAnalyzed(description);
-      } catch (err: any) {
-        onError(err.message
-          ? translate(err.message)
-          : localize(language, {
-              en: 'Failed to analyze the image. Please try again.',
-              ja: '画像の分析に失敗しました。もう一度お試しください。',
-            }));
-        clearImage();
-      } finally {
+      const { description } = await analyzeImage(base64Data, file.type);
+      if (!analysisGenerationRef.current.isCurrent(generation)) return;
+      onImageAnalyzed(description);
+    } catch (error: unknown) {
+      if (!analysisGenerationRef.current.isCurrent(generation)) return;
+      onError(error instanceof Error && error.message
+        ? translate(error.message)
+        : localize(language, {
+            en: 'Failed to analyze the image. Please try again.',
+            ja: '画像の分析に失敗しました。もう一度お試しください。',
+          }));
+      resetImageState();
+    } finally {
+      if (analysisGenerationRef.current.isCurrent(generation)) {
+        isAnalyzingRef.current = false;
         setIsAnalyzing(false);
         onAnalyzing(false);
       }
-    };
-    reader.readAsDataURL(file);
-  }, [analyzeImage, language, onImageAnalyzed, onImageDataUrl, onAnalyzing, onError, translate]);
+    }
+  }, [
+    analyzeImage,
+    disabled,
+    language,
+    onImageAnalyzed,
+    onImageDataUrl,
+    onAnalyzing,
+    onError,
+    resetImageState,
+    translate,
+  ]);
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    if (!disabled) {
+    if (!disabled && !isAnalyzingRef.current) {
       setIsDragging(true);
     }
   }, [disabled]);
@@ -107,7 +160,7 @@ const ImageUploader: React.FC<ImageUploaderProps> = ({
     e.stopPropagation();
     setIsDragging(false);
 
-    if (disabled) return;
+    if (disabled || isAnalyzingRef.current) return;
 
     const files = e.dataTransfer.files;
     if (files.length > 0) {
@@ -116,19 +169,12 @@ const ImageUploader: React.FC<ImageUploaderProps> = ({
   }, [disabled, processFile]);
 
   const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    if (disabled || isAnalyzingRef.current) return;
     const files = e.target.files;
     if (files && files.length > 0) {
       processFile(files[0]);
     }
-  }, [processFile]);
-
-  const clearImage = () => {
-    setPreviewUrl(null);
-    setFileName('');
-    if (fileInputRef.current) {
-      fileInputRef.current.value = '';
-    }
-  };
+  }, [disabled, processFile]);
 
   const handleClick = () => {
     if (!disabled && !isAnalyzing && fileInputRef.current) {

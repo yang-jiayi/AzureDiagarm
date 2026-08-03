@@ -32,14 +32,51 @@ fi
 nginx -g "daemon off;" &
 NGINX_PID=$!
 
+cleanup_started=0
 cleanup() {
+  if [ "$cleanup_started" -eq 1 ]; then return; fi
+  cleanup_started=1
   trap - INT TERM
-  PIDS="$TOKEN_SERVER_PID $NGINX_PID"
-  if [ -n "$MCP_SERVER_PID" ]; then PIDS="$PIDS $MCP_SERVER_PID"; fi
-  kill $PIDS 2>/dev/null || true
-  wait $PIDS 2>/dev/null || true
+
+  # Stop accepting new public requests first, then let each backend drain
+  # in-flight work within the Container Apps termination window.
+  kill -QUIT "$NGINX_PID" 2>/dev/null || true
+  kill -TERM "$TOKEN_SERVER_PID" 2>/dev/null || true
+  if [ -n "$MCP_SERVER_PID" ]; then
+    kill -TERM "$MCP_SERVER_PID" 2>/dev/null || true
+  fi
+
+  remaining=25
+  while [ "$remaining" -gt 0 ]; do
+    alive=0
+    kill -0 "$TOKEN_SERVER_PID" 2>/dev/null && alive=1
+    kill -0 "$NGINX_PID" 2>/dev/null && alive=1
+    if [ -n "$MCP_SERVER_PID" ]; then
+      kill -0 "$MCP_SERVER_PID" 2>/dev/null && alive=1
+    fi
+    if [ "$alive" -eq 0 ]; then break; fi
+    sleep 1
+    remaining=$((remaining - 1))
+  done
+
+  for pid in "$TOKEN_SERVER_PID" "$NGINX_PID" ${MCP_SERVER_PID:+"$MCP_SERVER_PID"}; do
+    if kill -0 "$pid" 2>/dev/null; then
+      echo "Process $pid exceeded the graceful shutdown window; forcing exit." >&2
+      kill -KILL "$pid" 2>/dev/null || true
+    fi
+  done
+  wait "$TOKEN_SERVER_PID" 2>/dev/null || true
+  wait "$NGINX_PID" 2>/dev/null || true
+  if [ -n "$MCP_SERVER_PID" ]; then
+    wait "$MCP_SERVER_PID" 2>/dev/null || true
+  fi
 }
-trap cleanup INT TERM
+
+handle_shutdown_signal() {
+  cleanup
+  exit 0
+}
+trap handle_shutdown_signal INT TERM
 
 is_mcp_alive() {
   [ -z "$MCP_SERVER_PID" ] || kill -0 "$MCP_SERVER_PID" 2>/dev/null

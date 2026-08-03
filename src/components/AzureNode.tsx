@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-import React, { memo, useEffect, useState } from 'react';
+import React, { memo, useEffect, useRef, useState } from 'react';
 import { Handle, Position, NodeProps, useReactFlow } from 'reactflow';
 import { Zap, Unlink, Layers } from 'lucide-react';
 import { loadIcon } from '../utils/iconLoader';
@@ -13,6 +13,7 @@ import { openNodePricingEditor } from '../stores/nodePricingEditorStore';
 import './AzureNode.css';
 import { useLanguage } from '../i18n/LanguageContext';
 import { localize } from '../i18n/localization';
+import { useNodeKeyboardInteraction } from '../hooks/useNodeKeyboardInteraction';
 
 // Map categories to colors
 const getCategoryColor = (category: string): string => {
@@ -44,6 +45,8 @@ const AzureNode: React.FC<NodeProps> = memo(({ data, selected, id }) => {
   const [iconUrl, setIconUrl] = useState<string>('');
   const [isEditingLabel, setIsEditingLabel] = useState(false);
   const [label, setLabel] = useState(data.label || 'Azure Service');
+  const cancelLabelEditRef = useRef(false);
+  const labelRef = useRef<HTMLDivElement>(null);
   const { setNodes } = useReactFlow();
   
   // Access parentNode from data (React Flow stores it there)
@@ -85,21 +88,44 @@ const AzureNode: React.FC<NodeProps> = memo(({ data, selected, id }) => {
   }, [data.label, isEditingLabel]);
 
   const handleLabelDoubleClick = () => {
+    cancelLabelEditRef.current = false;
     setIsEditingLabel(true);
   };
+  const {
+    handleFocus: handleNodeFocus,
+    handleKeyDown: handleNodeKeyDown,
+  } = useNodeKeyboardInteraction(id, handleLabelDoubleClick);
 
   const handleLabelChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setLabel(e.target.value);
-    data.label = e.target.value;
   };
 
-  const handleLabelBlur = () => {
+  const restoreLabelFocus = () => {
+    window.requestAnimationFrame(() => labelRef.current?.focus());
+  };
+
+  const commitLabel = (restoreFocus = false) => {
+    if (cancelLabelEditRef.current) {
+      cancelLabelEditRef.current = false;
+      return;
+    }
+    setNodes(nodes => nodes.map(node => (
+      node.id === id
+        ? { ...node, data: { ...node.data, label } }
+        : node
+    )));
     setIsEditingLabel(false);
+    if (restoreFocus) restoreLabelFocus();
   };
 
   const handleLabelKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter') {
+      commitLabel(true);
+    } else if (e.key === 'Escape') {
+      cancelLabelEditRef.current = true;
+      setLabel(data.label || 'Azure Service');
       setIsEditingLabel(false);
+      restoreLabelFocus();
     }
   };
 
@@ -146,7 +172,11 @@ const AzureNode: React.FC<NodeProps> = memo(({ data, selected, id }) => {
   };
 
   return (
-    <div className={`azure-node ${selected ? 'selected' : ''} style-${stylePreset}`} style={borderStyle}>
+    <div
+      className={`azure-node ${selected ? 'selected' : ''} style-${stylePreset}`}
+      style={borderStyle}
+      onFocus={handleNodeFocus}
+    >
       {parentNode && selected && (
         <button
           className="ungroup-button"
@@ -235,23 +265,21 @@ const AzureNode: React.FC<NodeProps> = memo(({ data, selected, id }) => {
                 type="text"
                 value={label}
                 onChange={handleLabelChange}
-                onBlur={handleLabelBlur}
+                onBlur={() => commitLabel()}
                 onKeyDown={handleLabelKeyDown}
                 autoFocus
                 className="node-label-input"
               />
             ) : (
               <div
+                ref={labelRef}
+                data-node-keyboard-target
                 className="node-label"
                 onDoubleClick={handleLabelDoubleClick}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter' || event.key === ' ' || event.key === 'F2') {
-                    event.preventDefault();
-                    handleLabelDoubleClick();
-                  }
-                }}
+                onKeyDown={handleNodeKeyDown}
                 role="button"
                 tabIndex={0}
+                aria-keyshortcuts="F2"
                 title={t("Double-click to edit")}
               >
                 {label}

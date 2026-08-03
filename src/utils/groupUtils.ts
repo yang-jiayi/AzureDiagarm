@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-import { Node } from 'reactflow';
+import type { Edge, Node } from 'reactflow';
 
 /**
  * Constants shared by GroupNode and App-level group operations.
@@ -244,4 +244,88 @@ export function collectNodeAndDescendantIds(
   }
 
   return collected;
+}
+
+export interface DuplicateSubgraphResult {
+  nodes: Node[];
+  edges: Edge[];
+  duplicatedNodeIds: Set<string>;
+}
+
+/**
+ * Duplicate selected nodes as a coherent subgraph. Selecting a group includes
+ * every nested descendant, while internal edges and parent references are
+ * remapped to the duplicated nodes.
+ */
+export function duplicateSelectedSubgraph(
+  nodes: Node[],
+  edges: Edge[],
+  selectedNodeIds: Iterable<string>,
+  createId: (kind: 'node' | 'edge', sourceId: string) => string,
+  offset = { x: 50, y: 50 },
+): DuplicateSubgraphResult {
+  const explicitlySelectedIds = new Set(selectedNodeIds);
+  if (explicitlySelectedIds.size === 0) {
+    return { nodes, edges, duplicatedNodeIds: new Set() };
+  }
+
+  const duplicatedSourceIds = collectNodeAndDescendantIds(nodes, explicitlySelectedIds);
+  const nodeIdMap = new Map<string, string>();
+  for (const node of nodes) {
+    if (duplicatedSourceIds.has(node.id)) {
+      nodeIdMap.set(node.id, createId('node', node.id));
+    }
+  }
+  if (nodeIdMap.size === 0) {
+    return { nodes, edges, duplicatedNodeIds: new Set() };
+  }
+
+  const duplicatedNodes = nodes
+    .filter(node => duplicatedSourceIds.has(node.id))
+    .map((node): Node => {
+      const duplicatedParentId = node.parentNode
+        ? nodeIdMap.get(node.parentNode)
+        : undefined;
+      const parentIsDuplicated = Boolean(duplicatedParentId);
+      return {
+        ...node,
+        id: nodeIdMap.get(node.id)!,
+        parentNode: duplicatedParentId || node.parentNode,
+        position: parentIsDuplicated
+          ? { ...node.position }
+          : {
+              x: node.position.x + offset.x,
+              y: node.position.y + offset.y,
+            },
+        positionAbsolute: undefined,
+        selected: explicitlySelectedIds.has(node.id),
+        dragging: false,
+        data: { ...node.data },
+        style: node.style ? { ...node.style } : node.style,
+      };
+    });
+
+  const duplicatedEdges = edges
+    .filter(edge => duplicatedSourceIds.has(edge.source) && duplicatedSourceIds.has(edge.target))
+    .map((edge): Edge => ({
+      ...edge,
+      id: createId('edge', edge.id),
+      source: nodeIdMap.get(edge.source)!,
+      target: nodeIdMap.get(edge.target)!,
+      selected: false,
+      data: edge.data ? { ...edge.data } : edge.data,
+      style: edge.style ? { ...edge.style } : edge.style,
+    }));
+
+  return {
+    nodes: [
+      ...nodes.map(node => ({ ...node, selected: false })),
+      ...duplicatedNodes,
+    ],
+    edges: [
+      ...edges.map(edge => ({ ...edge, selected: false })),
+      ...duplicatedEdges,
+    ],
+    duplicatedNodeIds: new Set(nodeIdMap.values()),
+  };
 }

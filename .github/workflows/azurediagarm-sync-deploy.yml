@@ -176,6 +176,7 @@ jobs:
           set -Eeuo pipefail
           git diff --check
           npm ci --ignore-scripts
+          npm audit --omit=dev --audit-level=high
           npm run build
           npm run lint
           npm test
@@ -186,8 +187,10 @@ jobs:
           node --check server/access-control.js
           node --check server/arm-key-vault-access-store.js
           npm --prefix server ci --ignore-scripts
+          npm --prefix server audit --omit=dev --audit-level=high
           npm --prefix server test
           npm --prefix mcp-server ci --ignore-scripts
+          npm --prefix mcp-server audit --omit=dev --audit-level=high
           npm --prefix mcp-server run build
           npm --prefix mcp-server test
           git diff --exit-code
@@ -604,8 +607,10 @@ jobs:
             exit 1
           }
 
-      - name: Enforce Container Apps health probes
+      - name: Read Front Door identifier
+        id: frontdoor
         run: |
+          set -Eeuo pipefail
           front_door_id="$(
             az afd profile show \
               --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
@@ -613,15 +618,111 @@ jobs:
               --query frontDoorId \
               --output tsv
           )"
-          bash scripts/ensure-containerapp-probes.sh \
-            "${{ vars.AZURE_RESOURCE_GROUP }}" \
-            "${{ vars.AZURE_CONTAINER_APP }}" \
-            "$front_door_id"
+          echo "id=$front_door_id" >> "$GITHUB_OUTPUT"
+
+      - name: Validate mandatory runtime configuration
+        env:
+          ACCESS_CONTROL_ENABLED: ${{ vars.ACCESS_CONTROL_ENABLED || 'false' }}
+          ACCESS_ADMIN_EMAIL: ${{ vars.ACCESS_ADMIN_EMAIL }}
+          AZURE_ACCESS_KEY_VAULT_RESOURCE_ID: ${{ vars.AZURE_ACCESS_KEY_VAULT_RESOURCE_ID }}
+          PUBLIC_URL: ${{ vars.AZURE_APP_URL }}
+        run: |
+          set -Eeuo pipefail
+          shopt -s nocasematch
+          if [[ "$ACCESS_CONTROL_ENABLED" != "true" ]]; then
+            exit 0
+          fi
+          [[ "$ACCESS_ADMIN_EMAIL" =~ ^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:]@]+$ ]] || {
+            echo "::error::ACCESS_ADMIN_EMAIL must be a valid email when access control is enabled."
+            exit 1
+          }
+          [[ "$PUBLIC_URL" =~ ^https://[^/[:space:]]+/?$ ]] || {
+            echo "::error::AZURE_APP_URL must be an HTTPS origin when access control is enabled."
+            exit 1
+          }
+          [[ "$AZURE_ACCESS_KEY_VAULT_RESOURCE_ID" =~ ^/subscriptions/[^/]+/resourceGroups/[^/]+/providers/Microsoft\.KeyVault/vaults/[^/]+$ ]] || {
+            echo "::error::AZURE_ACCESS_KEY_VAULT_RESOURCE_ID must identify the production Key Vault."
+            exit 1
+          }
+
+      - name: Compute desired deployment configuration
+        id: desired_config
+        env:
+          CONFIG_SCHEMA: '2'
+          FRONT_DOOR_ID: ${{ steps.frontdoor.outputs.id }}
+          AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+          AZURE_CONTAINER_APP: ${{ vars.AZURE_CONTAINER_APP }}
+          AZURE_CONTAINER_REGISTRY: ${{ vars.AZURE_CONTAINER_REGISTRY }}
+          PUBLIC_URL: ${{ vars.AZURE_APP_URL }}
+          ACCESS_CONTROL_ENABLED: ${{ vars.ACCESS_CONTROL_ENABLED || 'false' }}
+          ACCESS_ADMIN_EMAIL: ${{ vars.ACCESS_ADMIN_EMAIL }}
+          AZURE_ACCESS_KEY_VAULT_RESOURCE_ID: ${{ vars.AZURE_ACCESS_KEY_VAULT_RESOURCE_ID }}
+          AZURE_RUNTIME_CLIENT_ID: ${{ vars.AZURE_RUNTIME_CLIENT_ID }}
+          AZURE_OPENAI_ENDPOINT: ${{ vars.AZURE_OPENAI_ENDPOINT }}
+          AZURE_OPENAI_DEPLOYMENT_GPT56SOL: ${{ vars.AZURE_OPENAI_DEPLOYMENT_GPT56SOL }}
+          AZURE_OPENAI_DEPLOYMENT_GPT56TERRA: ${{ vars.AZURE_OPENAI_DEPLOYMENT_GPT56TERRA }}
+          AZURE_OPENAI_DEPLOYMENT_GPT56LUNA: ${{ vars.AZURE_OPENAI_DEPLOYMENT_GPT56LUNA }}
+          AZURE_FOUNDRY_ENDPOINT: ${{ vars.AZURE_FOUNDRY_ENDPOINT }}
+          AZURE_FOUNDRY_DEPLOYMENT_CLAUDE_OPUS5: ${{ vars.AZURE_FOUNDRY_DEPLOYMENT_CLAUDE_OPUS5 }}
+          AZURE_SPEECH_REGION: ${{ vars.AZURE_SPEECH_REGION }}
+          AZURE_SPEECH_RESOURCE_ID: ${{ vars.AZURE_SPEECH_RESOURCE_ID }}
+          AZURE_AD_CLIENT_ID: ${{ vars.AZURE_AD_CLIENT_ID }}
+          AZURE_AD_AUTHORITY: ${{ vars.AZURE_AD_AUTHORITY }}
+          ARM_SCOPE: ${{ vars.ARM_SCOPE }}
+          FEEDBACK_EMAIL_ENDPOINT: ${{ vars.FEEDBACK_EMAIL_ENDPOINT }}
+          FEEDBACK_EMAIL_SENDER: ${{ vars.FEEDBACK_EMAIL_SENDER }}
+          FEEDBACK_EMAIL_RECIPIENT: ${{ vars.FEEDBACK_EMAIL_RECIPIENT }}
+          AZURE_TABLES_ENDPOINT: ${{ vars.AZURE_TABLES_ENDPOINT }}
+          AZURE_TABLES_FEEDBACK_TABLE: ${{ vars.AZURE_TABLES_FEEDBACK_TABLE || 'feedback' }}
+          AZURE_TABLES_RATE_LIMIT_TABLE: ${{ vars.AZURE_TABLES_RATE_LIMIT_TABLE || 'ratelimit' }}
+          AZURE_COSMOS_ENDPOINT: ${{ vars.AZURE_COSMOS_ENDPOINT }}
+          COSMOS_DATABASE_ID: ${{ vars.COSMOS_DATABASE_ID }}
+          COSMOS_CONTAINER_ID: ${{ vars.COSMOS_CONTAINER_ID }}
+          COSMOS_FEEDBACK_CONTAINER_ID: ${{ vars.COSMOS_FEEDBACK_CONTAINER_ID }}
+          AZURE_BLOB_ENDPOINT: ${{ vars.AZURE_BLOB_ENDPOINT }}
+          AZURE_BLOB_DIAGRAMS_CONTAINER: ${{ vars.AZURE_BLOB_DIAGRAMS_CONTAINER || 'diagrams' }}
+          OPENAI_RATE_LIMIT_PER_HOUR: '120'
+          MCP_ENABLED: 'true'
+          MCP_HTTP_STATELESS: 'true'
+          MCP_SESSION_MAX: '100'
+          MCP_SESSION_IDLE_SECONDS: '1800'
+          MCP_SESSION_TTL_SECONDS: '7200'
+          MCP_SESSION_GC_SECONDS: '60'
+          MIN_REPLICAS: '1'
+          MAX_REPLICAS: '2'
+          HTTP_SCALE_CONCURRENCY: '50'
+          PROBE_PROFILE: 'startup-readyz,liveness-healthz,readiness-readyz'
+        run: |
+          set -Eeuo pipefail
+          keys=(
+            CONFIG_SCHEMA FRONT_DOOR_ID AZURE_RESOURCE_GROUP AZURE_CONTAINER_APP
+            AZURE_CONTAINER_REGISTRY PUBLIC_URL ACCESS_CONTROL_ENABLED ACCESS_ADMIN_EMAIL
+            AZURE_ACCESS_KEY_VAULT_RESOURCE_ID AZURE_RUNTIME_CLIENT_ID
+            AZURE_OPENAI_ENDPOINT AZURE_OPENAI_DEPLOYMENT_GPT56SOL
+            AZURE_OPENAI_DEPLOYMENT_GPT56TERRA AZURE_OPENAI_DEPLOYMENT_GPT56LUNA
+            AZURE_FOUNDRY_ENDPOINT AZURE_FOUNDRY_DEPLOYMENT_CLAUDE_OPUS5
+            AZURE_SPEECH_REGION AZURE_SPEECH_RESOURCE_ID AZURE_AD_CLIENT_ID
+            AZURE_AD_AUTHORITY ARM_SCOPE FEEDBACK_EMAIL_ENDPOINT FEEDBACK_EMAIL_SENDER
+            FEEDBACK_EMAIL_RECIPIENT AZURE_TABLES_ENDPOINT AZURE_TABLES_FEEDBACK_TABLE
+            AZURE_TABLES_RATE_LIMIT_TABLE AZURE_COSMOS_ENDPOINT COSMOS_DATABASE_ID
+            COSMOS_CONTAINER_ID COSMOS_FEEDBACK_CONTAINER_ID AZURE_BLOB_ENDPOINT
+            AZURE_BLOB_DIAGRAMS_CONTAINER OPENAI_RATE_LIMIT_PER_HOUR MCP_ENABLED
+            MCP_HTTP_STATELESS MCP_SESSION_MAX MCP_SESSION_IDLE_SECONDS
+            MCP_SESSION_TTL_SECONDS MCP_SESSION_GC_SECONDS MIN_REPLICAS MAX_REPLICAS
+            HTTP_SCALE_CONCURRENCY PROBE_PROFILE
+          )
+          desired_hash="$(
+            for key in "${keys[@]}"; do
+              printf '%s=%s\0' "$key" "${!key-}"
+            done | sha256sum | cut -d' ' -f1
+          )"
+          echo "hash=$desired_hash" >> "$GITHUB_OUTPUT"
 
       - name: Determine whether to deploy
         id: deployment
         env:
           FORCE_DEPLOY: ${{ inputs.force_deploy || 'false' }}
+          DESIRED_CONFIG_HASH: ${{ steps.desired_config.outputs.hash }}
         run: |
           set -Eeuo pipefail
           current_upstream="$(
@@ -638,28 +739,75 @@ jobs:
               --query "properties.template.containers[0].env[?name=='CUSTOMIZATION_COMMIT'].value | [0]" \
               --output tsv 2>/dev/null || true
           )"
+          current_config_hash="$(
+            az containerapp show \
+              --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
+              --name "${{ vars.AZURE_CONTAINER_APP }}" \
+              --query "properties.template.containers[0].env[?name=='DESIRED_CONFIG_HASH'].value | [0]" \
+              --output tsv 2>/dev/null || true
+          )"
+          az containerapp show \
+            --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
+            --name "${{ vars.AZURE_CONTAINER_APP }}" \
+            --query properties.template.containers[0].probes \
+            --output json > /tmp/azurediagarm-current-probes.json
+          probes_match=false
+          if jq -e --arg frontDoorId "${{ steps.frontdoor.outputs.id }}" '
+            length == 3 and
+            any(.[];
+              .type == "Startup" and
+              .httpGet.path == "/readyz" and
+              .httpGet.port == 80 and
+              any(.httpGet.httpHeaders[]?; .name == "X-Azure-FDID" and .value == $frontDoorId)
+            ) and
+            any(.[];
+              .type == "Liveness" and
+              .httpGet.path == "/healthz" and
+              .httpGet.port == 80 and
+              any(.httpGet.httpHeaders[]?; .name == "X-Azure-FDID" and .value == $frontDoorId)
+            ) and
+            any(.[];
+              .type == "Readiness" and
+              .httpGet.path == "/readyz" and
+              .httpGet.port == 80 and
+              any(.httpGet.httpHeaders[]?; .name == "X-Azure-FDID" and .value == $frontDoorId)
+            )
+          ' /tmp/azurediagarm-current-probes.json > /dev/null; then
+            probes_match=true
+          fi
+          current_env_names="$(
+            az containerapp show \
+              --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
+              --name "${{ vars.AZURE_CONTAINER_APP }}" \
+              --query 'properties.template.containers[0].env[].name' \
+              --output tsv
+          )"
+          current_secret_names="$(
+            az containerapp secret list \
+              --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
+              --name "${{ vars.AZURE_CONTAINER_APP }}" \
+              --query '[].name' \
+              --output tsv
+          )"
+          stale_ai_credentials=false
+          for name in AZURE_OPENAI_API_KEY AZURE_FOUNDRY_API_KEY; do
+            if grep -qx "$name" <<< "$current_env_names"; then
+              stale_ai_credentials=true
+            fi
+          done
+          for name in azure-openai-api-key azure-foundry-api-key; do
+            if grep -qx "$name" <<< "$current_secret_names"; then
+              stale_ai_credentials=true
+            fi
+          done
 
           should_deploy=false
           if [[ "$FORCE_DEPLOY" == "true" ]]; then
             should_deploy=true
-          elif [[ "$current_upstream" != "${{ needs.merge_validate.outputs.upstream_commit }}" || "$current_fork" != "${{ needs.merge_validate.outputs.fork_commit }}" ]]; then
+          elif [[ "$current_upstream" != "${{ needs.merge_validate.outputs.upstream_commit }}" || "$current_fork" != "${{ needs.merge_validate.outputs.fork_commit }}" || "$current_config_hash" != "$DESIRED_CONFIG_HASH" || "$probes_match" != "true" || "$stale_ai_credentials" == "true" ]]; then
             should_deploy=true
           fi
           echo "should_deploy=$should_deploy" >> "$GITHUB_OUTPUT"
-
-      - name: Read Front Door identifier
-        if: steps.deployment.outputs.should_deploy == 'true'
-        id: frontdoor
-        run: |
-          set -Eeuo pipefail
-          front_door_id="$(
-            az afd profile show \
-              --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
-              --profile-name "${{ vars.AZURE_FRONT_DOOR_PROFILE }}" \
-              --query frontDoorId \
-              --output tsv
-          )"
-          echo "id=$front_door_id" >> "$GITHUB_OUTPUT"
 
       - name: Sign in to the shared container registry
         if: steps.deployment.outputs.should_deploy == 'true'
@@ -731,6 +879,7 @@ jobs:
             "FEEDBACK_EMAIL_RECIPIENT=${{ vars.FEEDBACK_EMAIL_RECIPIENT }}"
             "UPSTREAM_COMMIT=${{ needs.merge_validate.outputs.upstream_commit }}"
             "CUSTOMIZATION_COMMIT=${{ needs.merge_validate.outputs.fork_commit }}"
+            "DESIRED_CONFIG_HASH=${{ steps.desired_config.outputs.hash }}"
             "DEPLOYED_AT=$deployed_at"
           )
 
@@ -764,6 +913,9 @@ jobs:
               --output tsv
           )"
           remove_env_vars=()
+          for name in AZURE_OPENAI_API_KEY AZURE_FOUNDRY_API_KEY; do
+            grep -qx "$name" <<< "$current_env_names" && remove_env_vars+=("$name")
+          done
           if [[ -z "${{ vars.AZURE_TABLES_ENDPOINT }}" ]]; then
             for name in AZURE_TABLES_ENDPOINT AZURE_TABLES_FEEDBACK_TABLE AZURE_TABLES_RATE_LIMIT_TABLE; do
               grep -qx "$name" <<< "$current_env_names" && remove_env_vars+=("$name")
@@ -779,6 +931,17 @@ jobs:
               grep -qx "$name" <<< "$current_env_names" && remove_env_vars+=("$name")
             done
           fi
+          current_secret_names="$(
+            az containerapp secret list \
+              --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
+              --name "${{ vars.AZURE_CONTAINER_APP }}" \
+              --query '[].name' \
+              --output tsv
+          )"
+          stale_api_key_secrets=()
+          for name in azure-openai-api-key azure-foundry-api-key; do
+            grep -qx "$name" <<< "$current_secret_names" && stale_api_key_secrets+=("$name")
+          done
 
           update_args=(
             --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}"
@@ -832,11 +995,34 @@ jobs:
             sleep 10
           done
 
+          # The first readiness migration must happen only after the new image
+          # (which serves /readyz) is healthy under the previous probes.
+          bash scripts/ensure-containerapp-probes.sh \
+            "${{ vars.AZURE_RESOURCE_GROUP }}" \
+            "${{ vars.AZURE_CONTAINER_APP }}" \
+            "${{ steps.frontdoor.outputs.id }}"
+          deployed_revision="$(
+            az containerapp show \
+              --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
+              --name "${{ vars.AZURE_CONTAINER_APP }}" \
+              --query properties.latestReadyRevisionName \
+              --output tsv
+          )"
+          [[ -n "$deployed_revision" ]]
+
+          if (( ${#stale_api_key_secrets[@]} > 0 )); then
+            az containerapp secret remove \
+              --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
+              --name "${{ vars.AZURE_CONTAINER_APP }}" \
+              --secret-names "${stale_api_key_secrets[@]}" \
+              --output none
+          fi
+
           actual_image="$(
             az containerapp revision show \
               --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
               --name "${{ vars.AZURE_CONTAINER_APP }}" \
-              --revision "$expected_revision" \
+              --revision "$deployed_revision" \
               --query properties.template.containers[0].image \
               --output tsv
           )"
@@ -844,7 +1030,7 @@ jobs:
             az containerapp revision show \
               --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
               --name "${{ vars.AZURE_CONTAINER_APP }}" \
-              --revision "$expected_revision" \
+              --revision "$deployed_revision" \
               --query "properties.template.containers[0].env[?name=='UPSTREAM_COMMIT'].value | [0]" \
               --output tsv
           )"
@@ -852,25 +1038,54 @@ jobs:
             az containerapp revision show \
               --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
               --name "${{ vars.AZURE_CONTAINER_APP }}" \
-              --revision "$expected_revision" \
+              --revision "$deployed_revision" \
               --query "properties.template.containers[0].env[?name=='CUSTOMIZATION_COMMIT'].value | [0]" \
               --output tsv
           )"
+          actual_config_hash="$(
+            az containerapp revision show \
+              --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
+              --name "${{ vars.AZURE_CONTAINER_APP }}" \
+              --revision "$deployed_revision" \
+              --query "properties.template.containers[0].env[?name=='DESIRED_CONFIG_HASH'].value | [0]" \
+              --output tsv
+          )"
+          az containerapp show \
+            --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
+            --name "${{ vars.AZURE_CONTAINER_APP }}" \
+            --output json > /tmp/azurediagarm-deployed-app.json
+          jq -e '
+            all(
+              .properties.template.containers[0].env[]?;
+              .name != "AZURE_OPENAI_API_KEY" and .name != "AZURE_FOUNDRY_API_KEY"
+            )
+          ' /tmp/azurediagarm-deployed-app.json > /dev/null
+          az containerapp secret list \
+            --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
+            --name "${{ vars.AZURE_CONTAINER_APP }}" \
+            --query '[].name' \
+            --output json > /tmp/azurediagarm-deployed-secrets.json
+          jq -e '
+            all(.[];
+              . != "azure-openai-api-key" and . != "azure-foundry-api-key"
+            )
+          ' /tmp/azurediagarm-deployed-secrets.json > /dev/null
           az containerapp revision show \
             --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
             --name "${{ vars.AZURE_CONTAINER_APP }}" \
-            --revision "$expected_revision" \
+            --revision "$deployed_revision" \
             --query properties.template.containers[0].probes \
             --output json > /tmp/azurediagarm-probes.json
 
           [[ "$actual_image" == "${{ steps.image.outputs.image }}" ]]
           [[ "$actual_upstream" == "${{ needs.merge_validate.outputs.upstream_commit }}" ]]
           [[ "$actual_customization" == "${{ needs.merge_validate.outputs.fork_commit }}" ]]
+          [[ "$actual_config_hash" == "${{ steps.desired_config.outputs.hash }}" ]]
           jq -e --arg frontDoorId "${{ steps.frontdoor.outputs.id }}" '
             length == 3 and
             any(.[];
               .type == "Startup" and
-              .httpGet.path == "/healthz" and
+              .httpGet.path == "/readyz" and
               .httpGet.port == 80 and
               any(.httpGet.httpHeaders[]?; .name == "X-Azure-FDID" and .value == $frontDoorId)
             ) and
@@ -882,7 +1097,7 @@ jobs:
             ) and
             any(.[];
               .type == "Readiness" and
-              .httpGet.path == "/healthz" and
+              .httpGet.path == "/readyz" and
               .httpGet.port == 80 and
               any(.httpGet.httpHeaders[]?; .name == "X-Azure-FDID" and .value == $frontDoorId)
             )

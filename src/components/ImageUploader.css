@@ -14,7 +14,7 @@
 
 .optional-badge {
   background: #e5e7eb;
-  color: #6b7280;
+  color: #4b5563;
   font-size: 0.6875rem;
   font-weight: 500;
   padding: 0.125rem 0.5rem;
@@ -85,13 +85,13 @@
 }
 
 .upload-prompt .upload-icon {
-  color: #9ca3af;
+  color: #64748b;
   margin-bottom: 0.25rem;
 }
 
 .upload-hint {
   font-size: 0.75rem;
-  color: #9ca3af;
+  color: #475569;
 }
 
 .preview-container {
@@ -170,7 +170,7 @@
 
 .analyzing-hint {
   font-size: 0.75rem;
-  color: #9ca3af;
+  color: #475569;
 }
 
 .image-success-hint {

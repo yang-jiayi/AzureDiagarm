@@ -18,7 +18,12 @@ export default defineConfig({
   webServer: {
     command: 'npm run dev -- --host 127.0.0.1 --port 4175 --strictPort',
     url: 'http://127.0.0.1:4175',
-    reuseExistingServer: !process.env.CI,
+    reuseExistingServer: false,
     timeout: 120_000,
+    env: {
+      ...process.env,
+      VITE_AZURE_OPENAI_ENDPOINT: 'https://playwright.openai.azure.com/',
+      VITE_AZURE_OPENAI_DEPLOYMENT_GPT56SOL: 'playwright-gpt-5-6-sol',
+    },
   },
 });

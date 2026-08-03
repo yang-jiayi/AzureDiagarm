@@ -20,12 +20,8 @@ param mcpAuthToken string = ''
 // Azure OpenAI (passed through to container app env; not provisioned here)
 param azureOpenAiEndpoint string
 param azureOpenAiAllowedDeployments string = ''
-@secure()
-param azureOpenAiApiKey string
 param azureFoundryEndpoint string = ''
 param azureFoundryAllowedDeployments string = ''
-@secure()
-param azureFoundryApiKey string = ''
 param feedbackEmailEndpoint string = ''
 param feedbackEmailSender string = ''
 param feedbackEmailRecipient string = ''
@@ -334,9 +330,26 @@ resource diagramStoragePerimeterAssociation 'Microsoft.Network/networkSecurityPe
 var effectiveAzureTablesEndpoint = !empty(azureTablesEndpoint)
   ? azureTablesEndpoint
   : (deployDiagramStorage ? diagramStorage!.properties.primaryEndpoints.table : '')
-var appHealthProbeHttpGet = union(
+var appLivenessProbeHttpGet = union(
   {
     path: '/healthz'
+    port: 80
+    scheme: 'HTTP'
+  },
+  empty(frontDoorId)
+    ? {}
+    : {
+        httpHeaders: [
+          {
+            name: 'X-Azure-FDID'
+            value: frontDoorId
+          }
+        ]
+      }
+)
+var appReadinessProbeHttpGet = union(
+  {
+    path: '/readyz'
     port: 80
     scheme: 'HTTP'
   },
@@ -366,18 +379,7 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
   properties: {
     managedEnvironmentId: caEnv.id
     configuration: {
-      secrets: concat(
-        empty(azureOpenAiApiKey)
-          ? []
-          : [
-              { name: 'azure-openai-api-key', value: azureOpenAiApiKey }
-            ],
-        empty(azureFoundryApiKey)
-          ? []
-          : [
-              { name: 'azure-foundry-api-key', value: azureFoundryApiKey }
-            ]
-      )
+      secrets: []
       ingress: {
         external: true
         targetPort: 80
@@ -400,7 +402,7 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
           probes: [
             {
               type: 'Startup'
-              httpGet: appHealthProbeHttpGet
+              httpGet: appReadinessProbeHttpGet
               initialDelaySeconds: 1
               periodSeconds: 5
               timeoutSeconds: 3
@@ -408,7 +410,7 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
             }
             {
               type: 'Liveness'
-              httpGet: appHealthProbeHttpGet
+              httpGet: appLivenessProbeHttpGet
               initialDelaySeconds: 15
               periodSeconds: 15
               timeoutSeconds: 5
@@ -416,7 +418,7 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
             }
             {
               type: 'Readiness'
-              httpGet: appHealthProbeHttpGet
+              httpGet: appReadinessProbeHttpGet
               initialDelaySeconds: 3
               periodSeconds: 5
               timeoutSeconds: 3
@@ -424,7 +426,7 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
               successThreshold: 1
             }
           ]
-          env: concat([
+          env: [
             // Identity — lets DefaultAzureCredential pick up the managed identity
             { name: 'AZURE_CLIENT_ID', value: appIdentity.properties.clientId }
             { name: 'AZURE_OPENAI_ENDPOINT', value: azureOpenAiEndpoint }
@@ -456,19 +458,7 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
               name: 'PUBLIC_URL'
               value: 'https://${abbrs.appContainerApps}diagram-builder-${resourceToken}.${caEnv.properties.defaultDomain}'
             }
-          ],
-          concat(
-            empty(azureOpenAiApiKey)
-              ? []
-              : [
-                  { name: 'AZURE_OPENAI_API_KEY', secretRef: 'azure-openai-api-key' }
-                ],
-            empty(azureFoundryApiKey)
-              ? []
-              : [
-                  { name: 'AZURE_FOUNDRY_API_KEY', secretRef: 'azure-foundry-api-key' }
-                ]
-          ))
+          ]
         }
       ]
       scale: {

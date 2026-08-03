@@ -1,10 +1,13 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-import React, { useState, useRef } from 'react';
+import React, { useCallback, useState, useRef } from 'react';
 import { Image, X, Maximize2, Minimize2 } from 'lucide-react';
 import './ReferenceImageViewer.css';
 import { useLanguage } from '../i18n/LanguageContext';
+import { useEscapeKey } from '../hooks/useEscapeKey';
+import { useModalFocus } from '../hooks/useModalFocus';
+import { localize } from '../i18n/localization';
 
 interface ReferenceImageViewerProps {
   imageUrl: string;
@@ -17,7 +20,7 @@ const MAX_W = 700;
 const MAX_H = 700;
 
 const ReferenceImageViewer: React.FC<ReferenceImageViewerProps> = ({ imageUrl, onDismiss }) => {
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
   const [isExpanded, setIsExpanded] = useState(false);
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [pos, setPos] = useState(() => ({
@@ -28,6 +31,9 @@ const ReferenceImageViewer: React.FC<ReferenceImageViewerProps> = ({ imageUrl, o
 
   const dragState = useRef<{ startX: number; startY: number; origX: number; origY: number } | null>(null);
   const resizeState = useRef<{ startX: number; startY: number; origW: number; origH: number } | null>(null);
+  const closeExpanded = useCallback(() => setIsExpanded(false), []);
+  const expandedDialogRef = useModalFocus<HTMLDivElement>(isExpanded);
+  useEscapeKey(isExpanded, closeExpanded);
 
   const onHeaderPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     e.preventDefault();
@@ -70,14 +76,19 @@ const ReferenceImageViewer: React.FC<ReferenceImageViewerProps> = ({ imageUrl, o
 
   if (isCollapsed) {
     return (
-      <div
+      <button
+        type="button"
         className="ref-image-viewer ref-image-collapsed"
         style={{ position: 'fixed', left: pos.x, top: pos.y }}
         onClick={() => setIsCollapsed(false)}
+        aria-label={localize(language, {
+          en: 'Show reference image',
+          ja: '参照画像を表示',
+        })}
       >
         <Image size={16} />
         <span>{t("Reference")}</span>
-      </div>
+      </button>
     );
   }
 
@@ -85,11 +96,27 @@ const ReferenceImageViewer: React.FC<ReferenceImageViewerProps> = ({ imageUrl, o
     <>
       {/* Expanded overlay */}
       {isExpanded && (
-        <div className="ref-image-overlay" onClick={() => setIsExpanded(false)}>
-          <div className="ref-image-overlay-content" onClick={(e) => e.stopPropagation()}>
+        <div className="ref-image-overlay" onClick={closeExpanded}>
+          <div
+            ref={expandedDialogRef}
+            className="ref-image-overlay-content"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="reference-image-dialog-title"
+            tabIndex={-1}
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="ref-image-overlay-header">
-              <span><Image size={16} /> {' '}{t("Reference Diagram")}</span>
-              <button onClick={() => setIsExpanded(false)} className="ref-image-close-btn" title={t("Close")}>
+              <span id="reference-image-dialog-title">
+                <Image size={16} /> {' '}{t("Reference Diagram")}
+              </span>
+              <button
+                type="button"
+                onClick={closeExpanded}
+                className="ref-image-close-btn"
+                title={t("Close")}
+                aria-label={t("Close")}
+              >
                 <X size={18} />
               </button>
             </div>
@@ -102,6 +129,7 @@ const ReferenceImageViewer: React.FC<ReferenceImageViewerProps> = ({ imageUrl, o
       <div
         className="ref-image-viewer ref-image-thumbnail"
         style={{ position: 'fixed', left: pos.x, top: pos.y, width: size.w }}
+        aria-hidden={isExpanded}
       >
         <div
           className="ref-image-header ref-image-drag-handle"
@@ -113,24 +141,58 @@ const ReferenceImageViewer: React.FC<ReferenceImageViewerProps> = ({ imageUrl, o
             <Image size={12} />
             {' '}{t("Reference")}{' '}</span>
           <div className="ref-image-actions">
-            <button onPointerDown={e => e.stopPropagation()} onClick={() => setIsExpanded(true)} title={t("Expand")} className="ref-image-btn">
+            <button
+              type="button"
+              onPointerDown={e => e.stopPropagation()}
+              onClick={() => setIsExpanded(true)}
+              title={t("Expand")}
+              aria-label={t("Expand")}
+              className="ref-image-btn"
+              tabIndex={isExpanded ? -1 : 0}
+            >
               <Maximize2 size={12} />
             </button>
-            <button onPointerDown={e => e.stopPropagation()} onClick={() => setIsCollapsed(true)} title={t("Minimize")} className="ref-image-btn">
+            <button
+              type="button"
+              onPointerDown={e => e.stopPropagation()}
+              onClick={() => setIsCollapsed(true)}
+              title={t("Minimize")}
+              aria-label={t("Minimize")}
+              className="ref-image-btn"
+              tabIndex={isExpanded ? -1 : 0}
+            >
               <Minimize2 size={12} />
             </button>
-            <button onPointerDown={e => e.stopPropagation()} onClick={onDismiss} title={t("Dismiss")} className="ref-image-btn ref-image-btn-dismiss">
+            <button
+              type="button"
+              onPointerDown={e => e.stopPropagation()}
+              onClick={onDismiss}
+              title={t("Dismiss")}
+              aria-label={t("Dismiss")}
+              className="ref-image-btn ref-image-btn-dismiss"
+              tabIndex={isExpanded ? -1 : 0}
+            >
               <X size={12} />
             </button>
           </div>
         </div>
-        <img
-          src={imageUrl}
-          alt={t("Reference architecture diagram")}
-          className="ref-image-thumb"
-          style={{ height: imageHeight }}
+        <button
+          type="button"
+          className="ref-image-preview-button"
           onClick={() => setIsExpanded(true)}
-        />
+          aria-label={localize(language, {
+            en: 'Expand reference image',
+            ja: '参照画像を拡大',
+          })}
+          tabIndex={isExpanded ? -1 : 0}
+        >
+          <img
+            src={imageUrl}
+            alt={t("Reference architecture diagram")}
+            className="ref-image-thumb"
+            style={{ height: imageHeight }}
+          />
+        </button>
         {/* Resize handle — bottom-right corner */}
         <div
           className="ref-image-resize-handle"

@@ -18,7 +18,7 @@ read -r -d '' probes_json <<'JSON' || true
 [
   {
     "type": "Startup",
-    "httpGet": { "path": "/healthz", "port": 80, "scheme": "HTTP" },
+    "httpGet": { "path": "/readyz", "port": 80, "scheme": "HTTP" },
     "initialDelaySeconds": 1,
     "periodSeconds": 5,
     "timeoutSeconds": 3,
@@ -34,7 +34,7 @@ read -r -d '' probes_json <<'JSON' || true
   },
   {
     "type": "Readiness",
-    "httpGet": { "path": "/healthz", "port": 80, "scheme": "HTTP" },
+    "httpGet": { "path": "/readyz", "port": 80, "scheme": "HTTP" },
     "initialDelaySeconds": 3,
     "periodSeconds": 5,
     "timeoutSeconds": 3,
@@ -65,7 +65,7 @@ has_required_probes() {
     ($probes | length) == 3 and
     any($probes[];
       .type == "Startup" and
-      .httpGet.path == "/healthz" and
+      .httpGet.path == "/readyz" and
       .httpGet.port == 80 and
       (
         $frontDoorId == "" or
@@ -83,7 +83,7 @@ has_required_probes() {
     ) and
     any($probes[];
       .type == "Readiness" and
-      .httpGet.path == "/healthz" and
+      .httpGet.path == "/readyz" and
       .httpGet.port == 80 and
       (
         $frontDoorId == "" or

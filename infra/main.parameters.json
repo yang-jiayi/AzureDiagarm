@@ -14,17 +14,11 @@
     "azureOpenAiResourceId": {
       "value": "${AZURE_OPENAI_RESOURCE_ID}"
     },
-    "azureOpenAiApiKey": {
-      "value": "${AZURE_OPENAI_API_KEY}"
-    },
     "azureFoundryEndpoint": {
       "value": "${AZURE_FOUNDRY_ENDPOINT}"
     },
     "azureFoundryResourceId": {
       "value": "${AZURE_FOUNDRY_RESOURCE_ID}"
-    },
-    "azureFoundryApiKey": {
-      "value": "${AZURE_FOUNDRY_API_KEY}"
     },
     "feedbackEmailEndpoint": {
       "value": "${FEEDBACK_EMAIL_ENDPOINT}"

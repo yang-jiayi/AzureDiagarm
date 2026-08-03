@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ChevronDown,
   ChevronRight,
@@ -45,6 +45,7 @@ interface IconPaletteProps {
 }
 
 type PaletteView = 'catalog' | 'favorites' | 'recent' | 'collections';
+const PALETTE_VIEW_ORDER: PaletteView[] = ['catalog', 'favorites', 'recent', 'collections'];
 
 const COMPACT_PALETTE_MEDIA_QUERY =
   '(max-width: 640px), (max-width: 1180px) and (max-height: 600px)';
@@ -68,6 +69,30 @@ const IconPalette: React.FC<IconPaletteProps> = ({ forceCollapsed, onAddIcon }) 
     () => workspace.collections[0]?.id || '',
   );
   const [collectionTargetId, setCollectionTargetId] = useState<string | null>(null);
+  const viewTabRefs = useRef<Partial<Record<PaletteView, HTMLButtonElement>>>({});
+
+  const handleViewTabKeyDown = useCallback((
+    event: React.KeyboardEvent<HTMLButtonElement>,
+    currentView: PaletteView,
+  ) => {
+    const currentIndex = PALETTE_VIEW_ORDER.indexOf(currentView);
+    let nextIndex: number | null = null;
+    if (event.key === 'ArrowRight') {
+      nextIndex = (currentIndex + 1) % PALETTE_VIEW_ORDER.length;
+    } else if (event.key === 'ArrowLeft') {
+      nextIndex = (currentIndex - 1 + PALETTE_VIEW_ORDER.length) % PALETTE_VIEW_ORDER.length;
+    } else if (event.key === 'Home') {
+      nextIndex = 0;
+    } else if (event.key === 'End') {
+      nextIndex = PALETTE_VIEW_ORDER.length - 1;
+    }
+    if (nextIndex === null) return;
+
+    event.preventDefault();
+    const nextView = PALETTE_VIEW_ORDER[nextIndex];
+    setActiveView(nextView);
+    window.requestAnimationFrame(() => viewTabRefs.current[nextView]?.focus());
+  }, []);
 
   useEffect(() => {
     saveIconWorkspace(workspace);
@@ -329,7 +354,11 @@ const IconPalette: React.FC<IconPaletteProps> = ({ forceCollapsed, onAddIcon }) 
   const collectionTarget = collectionTargetId ? iconsById.get(collectionTargetId) : undefined;
 
   return (
-    <div className={`icon-palette ${isCollapsed ? 'collapsed' : ''}`} aria-label={t('Azure Services')}>
+    <div
+      className={`icon-palette ${isCollapsed ? 'collapsed' : ''}`}
+      role="region"
+      aria-label={t('Azure Services')}
+    >
       {isCollapsed ? (
         <button
           type="button"
@@ -337,7 +366,7 @@ const IconPalette: React.FC<IconPaletteProps> = ({ forceCollapsed, onAddIcon }) 
           onClick={() => setIsCollapsed(false)}
           title={t('Open services panel')}
           aria-label={t('Open services panel')}
-          aria-controls="azure-services-palette-content"
+          aria-controls="palette-view-panel"
           aria-expanded="false"
         >
           <PanelLeftOpen size={18} aria-hidden="true" />
@@ -356,7 +385,7 @@ const IconPalette: React.FC<IconPaletteProps> = ({ forceCollapsed, onAddIcon }) 
                 onClick={() => setIsCollapsed(true)}
                 title={t('Close services panel')}
                 aria-label={t('Close services panel')}
-                aria-controls="azure-services-palette-content"
+                aria-controls="palette-view-panel"
                 aria-expanded="true"
               >
                 <PanelLeftClose size={16} aria-hidden="true" />
@@ -400,13 +429,24 @@ const IconPalette: React.FC<IconPaletteProps> = ({ forceCollapsed, onAddIcon }) 
                 <button
                   type="button"
                   key={id}
+                  id={`palette-view-tab-${id}`}
                   role="tab"
                   className={activeView === id ? 'active' : ''}
                   aria-selected={activeView === id}
+                  aria-controls="palette-view-panel"
+                  tabIndex={activeView === id ? 0 : -1}
+                  ref={(element) => {
+                    viewTabRefs.current[id] = element || undefined;
+                  }}
                   onClick={() => setActiveView(id)}
+                  onKeyDown={(event) => handleViewTabKeyDown(event, id)}
                   title={`${label} (${count})`}
                 >
-                  <Icon size={14} fill={id === 'favorites' && activeView === id ? 'currentColor' : 'none'} />
+                  <Icon
+                    size={14}
+                    fill={id === 'favorites' && activeView === id ? 'currentColor' : 'none'}
+                    aria-hidden="true"
+                  />
                   <span>{label}</span>
                   <b>{count}</b>
                 </button>
@@ -426,7 +466,12 @@ const IconPalette: React.FC<IconPaletteProps> = ({ forceCollapsed, onAddIcon }) 
             <p className="palette-help">{t('palette.interactionHint')}</p>
           </div>
 
-          <div className="palette-content" id="azure-services-palette-content">
+          <div
+            className="palette-content"
+            id="palette-view-panel"
+            role="tabpanel"
+            aria-labelledby={`palette-view-tab-${activeView}`}
+          >
             {activeView === 'catalog' && searchTerm.trim() === '' && paletteCategories.map((category) => {
               const isExpanded = expandedCategories.has(category.id);
               const icons = categoryIcons.get(category.id) || [];

@@ -313,7 +313,7 @@ body:has([role='dialog'][aria-modal='true']) .icon-palette.collapsed .palette-op
 
 .category-description {
   margin: 0.1rem 0.8rem 0.45rem 2.15rem;
-  color: #667788;
+  color: #5f6f7f;
   font-size: 0.78rem;
   line-height: 1.45;
 }

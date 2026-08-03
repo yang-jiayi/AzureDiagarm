@@ -44,14 +44,6 @@ param azureTablesFeedbackTable string = 'feedback'
 @description('Optional Azure Front Door ID embedded in the image origin guard and sent by Container Apps health probes.')
 param frontDoorId string = ''
 
-@secure()
-@description('Your Azure OpenAI API key.')
-param azureOpenAiApiKey string = ''
-
-@secure()
-@description('Optional Microsoft Foundry API key. Managed identity is preferred.')
-param azureFoundryApiKey string = ''
-
 @description('GPT-5.1 deployment name.')
 param openAiDeploymentGpt51 string = ''
 
@@ -153,10 +145,8 @@ module resources './resources.bicep' = {
     mcpAuthToken: mcpAuthToken
     azureOpenAiEndpoint: azureOpenAiEndpoint
     azureOpenAiAllowedDeployments: openAiAllowedDeployments
-    azureOpenAiApiKey: azureOpenAiApiKey
     azureFoundryEndpoint: azureFoundryEndpoint
     azureFoundryAllowedDeployments: foundryAllowedDeployments
-    azureFoundryApiKey: azureFoundryApiKey
     feedbackEmailEndpoint: feedbackEmailEndpoint
     feedbackEmailSender: feedbackEmailSender
     feedbackEmailRecipient: feedbackEmailRecipient

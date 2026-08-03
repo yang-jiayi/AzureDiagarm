@@ -4,7 +4,10 @@
 const assert = require('node:assert/strict');
 const { test } = require('node:test');
 const express = require('express');
-const { createAccessControlRouter } = require('./access-control');
+const {
+  createAccessControlRouter,
+  getAccessControlConfiguration,
+} = require('./access-control');
 
 class FakeTable {
   constructor() {
@@ -65,6 +68,30 @@ const MEMBER_HEADERS = {
   'X-MS-CLIENT-PRINCIPAL-ID': '22222222-2222-2222-2222-222222222222',
 };
 const APP_ORIGIN = 'https://azurediagarm.mssql.biz';
+
+test('access-control configuration reports mandatory readiness dependencies', () => {
+  assert.deepEqual(
+    getAccessControlConfiguration({ enabled: false }).missing,
+    [],
+  );
+
+  const incomplete = getAccessControlConfiguration({
+    enabled: true,
+    adminEmail: 'not-an-email',
+    publicAppUrl: 'ftp://not-an-http-origin.example',
+  });
+  assert.equal(incomplete.configured, false);
+  assert.deepEqual(incomplete.missing, ['administrator', 'public URL', 'access store']);
+
+  const complete = getAccessControlConfiguration({
+    enabled: true,
+    adminEmail: 'yangjiayi@msft.jp',
+    publicAppUrl: APP_ORIGIN,
+    table: new FakeTable(),
+  });
+  assert.equal(complete.configured, true);
+  assert.deepEqual(complete.missing, []);
+});
 
 test('access control enforces whitelist and administrator-only management', async (t) => {
   const table = new FakeTable();

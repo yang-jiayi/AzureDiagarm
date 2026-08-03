@@ -9,6 +9,7 @@
 
 /* ─── Collapsed pill ──────────────────────────────────────────────── */
 .ref-image-collapsed {
+  appearance: none;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -21,6 +22,7 @@
   font-size: 11px;
   cursor: pointer;
   transition: all 0.2s ease;
+  font-family: inherit;
 }
 
 .ref-image-collapsed:hover {
@@ -108,6 +110,22 @@
   cursor: pointer;
   display: block;
   transition: opacity 0.15s ease;
+}
+
+.ref-image-preview-button {
+  appearance: none;
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.ref-image-preview-button:focus-visible,
+.ref-image-collapsed:focus-visible {
+  outline: 2px solid #4da3ff;
+  outline-offset: 2px;
 }
 
 /* ─── Resize handle ───────────────────────────────────────────────── */

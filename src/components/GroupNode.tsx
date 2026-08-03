@@ -1,12 +1,13 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-import React, { memo, useEffect, useState } from 'react';
+import React, { memo, useEffect, useRef, useState } from 'react';
 import { NodeProps, NodeResizer, useReactFlow } from 'reactflow';
 import { Palette, Minimize2 } from 'lucide-react';
 import { fitGroupToContent } from '../utils/groupUtils';
 import './GroupNode.css';
 import { useLanguage } from '../i18n/LanguageContext';
+import { useNodeKeyboardInteraction } from '../hooks/useNodeKeyboardInteraction';
 
 // Predefined color palette for groups
 const COLOR_PALETTE = [
@@ -79,6 +80,8 @@ const GroupNode: React.FC<NodeProps> = memo(({ id, data, selected }) => {
   const { t } = useLanguage();
   const [isEditingLabel, setIsEditingLabel] = useState(false);
   const [label, setLabel] = useState(data.label || 'Group');
+  const cancelLabelEditRef = useRef(false);
+  const labelRef = useRef<HTMLDivElement>(null);
   const [showColorPicker, setShowColorPicker] = useState(false);
   const [customColor, setCustomColor] = useState(data.customColor || null);
   const { getNodes, setNodes } = useReactFlow();
@@ -100,27 +103,54 @@ const GroupNode: React.FC<NodeProps> = memo(({ id, data, selected }) => {
   };
 
   const handleLabelDoubleClick = () => {
+    cancelLabelEditRef.current = false;
     setIsEditingLabel(true);
   };
+  const {
+    handleFocus: handleNodeFocus,
+    handleKeyDown: handleNodeKeyDown,
+  } = useNodeKeyboardInteraction(id, handleLabelDoubleClick);
 
   const handleLabelChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setLabel(e.target.value);
-    data.label = e.target.value;
   };
 
-  const handleLabelBlur = () => {
+  const restoreLabelFocus = () => {
+    window.requestAnimationFrame(() => labelRef.current?.focus());
+  };
+
+  const commitLabel = (restoreFocus = false) => {
+    if (cancelLabelEditRef.current) {
+      cancelLabelEditRef.current = false;
+      return;
+    }
+    setNodes(nodes => nodes.map(node => (
+      node.id === id
+        ? { ...node, data: { ...node.data, label } }
+        : node
+    )));
     setIsEditingLabel(false);
+    if (restoreFocus) restoreLabelFocus();
   };
 
   const handleLabelKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter') {
+      commitLabel(true);
+    } else if (e.key === 'Escape') {
+      cancelLabelEditRef.current = true;
+      setLabel(data.label || 'Group');
       setIsEditingLabel(false);
+      restoreLabelFocus();
     }
   };
 
   const handleColorSelect = (colorScheme: typeof COLOR_PALETTE[0]) => {
     setCustomColor(colorScheme);
-    data.customColor = colorScheme;
+    setNodes(nodes => nodes.map(node => (
+      node.id === id
+        ? { ...node, data: { ...node.data, customColor: { ...colorScheme } } }
+        : node
+    )));
     setShowColorPicker(false);
   };
 
@@ -138,7 +168,11 @@ const GroupNode: React.FC<NodeProps> = memo(({ id, data, selected }) => {
   };
 
   return (
-    <div className={`group-node ${selected ? 'selected' : ''}`} style={groupStyle}>
+    <div
+      className={`group-node ${selected ? 'selected' : ''}`}
+      style={groupStyle}
+      onFocus={handleNodeFocus}
+    >
       <NodeResizer
         color="#0078d4"
         isVisible={selected}
@@ -152,23 +186,21 @@ const GroupNode: React.FC<NodeProps> = memo(({ id, data, selected }) => {
               type="text"
               value={label}
               onChange={handleLabelChange}
-              onBlur={handleLabelBlur}
+              onBlur={() => commitLabel()}
               onKeyDown={handleLabelKeyDown}
               autoFocus
               className="group-label-input"
             />
           ) : (
             <div
+              ref={labelRef}
+              data-node-keyboard-target
               className="group-label"
               onDoubleClick={handleLabelDoubleClick}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter' || event.key === ' ' || event.key === 'F2') {
-                  event.preventDefault();
-                  handleLabelDoubleClick();
-                }
-              }}
+              onKeyDown={handleNodeKeyDown}
               role="button"
               tabIndex={0}
+              aria-keyshortcuts="F2"
               title={t("Double-click to edit")}
               style={labelStyle}
             >
