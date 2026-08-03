@@ -559,6 +559,7 @@ function createDiagramsRouter(options = {}) {
     }
     doc.comments.push(buildComment(principal, text));
     doc.updatedAt = new Date().toISOString();
+    doc.revision = (Number(doc.revision) || 0) + 1;
     const { etag } = await backend.replace(currentPath(ownerKey, documentId), doc, record.etag);
     setEtag(res, etag);
     return res.status(201).json({ document: sanitizeDocument(doc, access, role) });
@@ -616,6 +617,7 @@ function createDiagramsRouter(options = {}) {
       });
       doc.shares.push(shareEntry);
       doc.updatedAt = createdAt;
+      doc.revision = (Number(doc.revision) || 0) + 1;
       try {
         const { etag } = await backend.replace(
           currentPath(req.diagramOwnerKey, req.params.id), doc, record.etag,
@@ -660,6 +662,7 @@ function createDiagramsRouter(options = {}) {
       if (share.tokenHash) await backend.remove(sharePath(share.tokenHash));
       doc.shares = doc.shares.filter((entry) => entry.id !== req.params.shareId);
       doc.updatedAt = new Date().toISOString();
+      doc.revision = (Number(doc.revision) || 0) + 1;
       await backend.replace(currentPath(req.diagramOwnerKey, req.params.id), doc, record.etag);
       res.status(204).end();
     } catch (err) {

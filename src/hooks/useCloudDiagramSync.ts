@@ -20,6 +20,23 @@ import { OperationGeneration } from '../utils/operationGeneration';
 const CONTEXT_KEY = 'azurediagarm.cloud-document.v1';
 const SHARE_HASH_PREFIX = '#share-';
 const SHARE_TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$/;
+const MAX_DIAGRAM_NAME_LENGTH = 200;
+
+function normalizeDiagramName(value: string): string {
+  return (value.trim() || 'Untitled Architecture').slice(0, MAX_DIAGRAM_NAME_LENGTH);
+}
+
+function isNonRetryableClientError(error: CloudDiagramApiError | null): boolean {
+  return Boolean(
+    error
+    && error.status >= 400
+    && error.status < 500
+    && error.status !== 408
+    && error.status !== 409
+    && error.status !== 412
+    && error.status !== 429,
+  );
+}
 
 export type CloudSyncStatus =
   | 'idle'
@@ -43,6 +60,7 @@ interface PendingSave {
   diagramName: string;
   payload: CloudDiagramPayload;
   serialized: string;
+  force?: boolean;
 }
 
 interface UseCloudDiagramSyncOptions {
@@ -131,22 +149,36 @@ export function useCloudDiagramSync({
 
   const documentRef = useRef<CloudDiagramDocument | null>(null);
   const contextRef = useRef<CloudDocumentContext | null>(null);
-  const latestRef = useRef({ diagramName, payload, serialized: JSON.stringify(payload) });
+  const latestRef = useRef({
+    diagramName: normalizeDiagramName(diagramName),
+    payload,
+    serialized: JSON.stringify(payload),
+  });
+  const lastSavedDiagramNameRef = useRef('');
   const lastSavedSerializedRef = useRef('');
   const pendingSaveRef = useRef<PendingSave | null>(null);
   const saveInFlightRef = useRef<Promise<void> | null>(null);
+  const restoreWriteInFlightRef = useRef<Promise<void> | null>(null);
   const debounceTimerRef = useRef<number | null>(null);
   const retryTimerRef = useRef<number | null>(null);
   const lastSaveErrorRef = useRef<Error | null>(null);
+  const conflictRef = useRef(false);
+  const conflictEpochRef = useRef(0);
+  const enabledRef = useRef(enabled);
+  const autosaveBlockedRef = useRef(false);
+  const viewerBaselineDocumentIdRef = useRef<string | null>(null);
+  const invalidShareLinkRef = useRef(false);
+  const autosaveSuspendedGenerationRef = useRef<number | null>(null);
   const mountedRef = useRef(true);
   const documentGenerationRef = useRef(new OperationGeneration());
   const serializedPayload = JSON.stringify(payload);
 
   latestRef.current = {
-    diagramName,
+    diagramName: normalizeDiagramName(diagramName),
     payload,
     serialized: serializedPayload,
   };
+  enabledRef.current = enabled;
 
   const clearTimers = useCallback(() => {
     if (debounceTimerRef.current !== null) {
@@ -158,6 +190,45 @@ export function useCloudDiagramSync({
       retryTimerRef.current = null;
     }
   }, []);
+
+  const enterConflict = useCallback((error?: unknown) => {
+    const conflictError = error instanceof Error
+      ? error
+      : new Error(
+          'The cloud diagram changed in another session. Reload it or save your work as a copy.',
+        );
+    clearTimers();
+    pendingSaveRef.current = null;
+    lastSaveErrorRef.current = conflictError;
+    conflictRef.current = true;
+    conflictEpochRef.current += 1;
+    setErrorMessage(conflictError.message);
+    setStatus('conflict');
+  }, [clearTimers]);
+
+  const reportConflict = useCallback((
+    documentId: string,
+    error?: unknown,
+    expectedRevision?: number,
+    expectedEtag?: string,
+  ) => {
+    if (contextRef.current?.documentId !== documentId) return false;
+    const currentDocument = documentRef.current;
+    if (
+      currentDocument
+      && expectedRevision !== undefined
+      && (
+        currentDocument.revision > expectedRevision
+        || (
+          currentDocument.revision === expectedRevision
+          && Boolean(expectedEtag)
+          && currentDocument.etag !== expectedEtag
+        )
+      )
+    ) return false;
+    enterConflict(error);
+    return true;
+  }, [enterConflict]);
 
   useEffect(() => {
     // React StrictMode intentionally mounts, cleans up, and remounts effects in
@@ -190,6 +261,8 @@ export function useCloudDiagramSync({
     nextContext: CloudDocumentContext,
   ) => {
     const normalized = normalizeDocument(nextDocument, nextContext);
+    autosaveBlockedRef.current = false;
+    invalidShareLinkRef.current = false;
     documentRef.current = normalized;
     contextRef.current = nextContext;
     setDocument(normalized);
@@ -210,8 +283,13 @@ export function useCloudDiagramSync({
     documentRef.current = null;
     contextRef.current = null;
     pendingSaveRef.current = null;
+    lastSavedDiagramNameRef.current = '';
     lastSavedSerializedRef.current = '';
     lastSaveErrorRef.current = null;
+    conflictRef.current = false;
+    autosaveBlockedRef.current = false;
+    viewerBaselineDocumentIdRef.current = null;
+    invalidShareLinkRef.current = false;
     setDocument(null);
     setContext(null);
     setLastSavedAt(null);
@@ -233,8 +311,14 @@ export function useCloudDiagramSync({
     pendingSaveRef.current = null;
     const resolvedContext = nextContext || contextForDocument(nextDocument);
     const normalized = storeDocument(nextDocument, resolvedContext);
+    autosaveBlockedRef.current = false;
+    viewerBaselineDocumentIdRef.current = applyPayload && resolvedContext.role === 'viewer'
+      ? normalized.id
+      : null;
+    lastSavedDiagramNameRef.current = normalized.diagramName;
     lastSavedSerializedRef.current = JSON.stringify(normalized.payload);
     lastSaveErrorRef.current = null;
+    conflictRef.current = false;
     setErrorMessage('');
     setLastSavedAt(normalized.updatedAt || new Date().toISOString());
     setStatus(resolvedContext.role === 'viewer' ? 'readonly' : 'saved');
@@ -252,7 +336,9 @@ export function useCloudDiagramSync({
     nextContext: CloudDocumentContext,
     applyPayload = true,
   ) => {
+    const hadDocument = Boolean(documentRef.current);
     const generation = beginDocumentGeneration();
+    const conflictEpoch = conflictEpochRef.current;
     clearTimers();
     pendingSaveRef.current = null;
     setStatus('loading');
@@ -261,18 +347,34 @@ export function useCloudDiagramSync({
       const nextDocument = nextContext.access === 'shared' && nextContext.shareToken
         ? await getSharedCloudDiagram(nextContext.shareToken)
         : await getCloudDiagram(nextContext.documentId);
-      if (!isCurrentDocumentGeneration(generation)) return null;
+      if (
+        !isCurrentDocumentGeneration(generation)
+        || conflictEpoch !== conflictEpochRef.current
+      ) return null;
       return activateDocument(nextDocument, {
         ...nextContext,
         documentId: nextDocument.id,
         role: nextDocument.role || nextContext.role,
       }, applyPayload, generation);
     } catch (error) {
-      if (!isCurrentDocumentGeneration(generation)) return null;
+      if (
+        !isCurrentDocumentGeneration(generation)
+        || conflictEpoch !== conflictEpochRef.current
+      ) return null;
       const apiError = error instanceof CloudDiagramApiError ? error : null;
-      if (apiError?.status === 404 || apiError?.status === 403) {
-        clearDocument();
+      if (conflictRef.current) {
+        setStatus('conflict');
+        setErrorMessage(error instanceof Error ? error.message : 'Cloud storage is unavailable.');
+      } else if (apiError?.status === 404 || apiError?.status === 403) {
+        if (nextContext.access === 'shared') {
+          autosaveBlockedRef.current = true;
+          setStatus('error');
+          setErrorMessage(error instanceof Error ? error.message : 'The shared diagram is unavailable.');
+        } else {
+          clearDocument();
+        }
       } else {
+        if (!hadDocument) autosaveBlockedRef.current = true;
         setStatus(apiError?.status === 503 ? 'unavailable' : 'offline');
         setErrorMessage(error instanceof Error ? error.message : 'Cloud storage is unavailable.');
       }
@@ -289,6 +391,14 @@ export function useCloudDiagramSync({
   useEffect(() => {
     let cancelled = false;
     const initialize = async () => {
+      if (invalidShareLinkRef.current) {
+        if (!cancelled) {
+          setStatus('error');
+          setErrorMessage('The shared diagram link is invalid.');
+          setInitialized(true);
+        }
+        return;
+      }
       const hash = window.location.hash;
       if (hash.startsWith('#version-')) {
         clearDocument();
@@ -313,6 +423,9 @@ export function useCloudDiagramSync({
         );
         if (!SHARE_TOKEN_PATTERN.test(token)) {
           if (!cancelled) {
+            invalidShareLinkRef.current = true;
+            autosaveBlockedRef.current = true;
+            writeStoredContext(null);
             setStatus('error');
             setErrorMessage('The shared diagram link is invalid.');
             setInitialized(true);
@@ -325,6 +438,7 @@ export function useCloudDiagramSync({
           role: 'viewer',
           shareToken: token,
         };
+        writeStoredContext(initialContext);
       }
 
       if (initialContext) {
@@ -342,15 +456,30 @@ export function useCloudDiagramSync({
   }, [clearDocument, loadContext]);
 
   const drainPendingSave = useCallback(async (): Promise<void> => {
-    if (saveInFlightRef.current) return saveInFlightRef.current;
+    while (restoreWriteInFlightRef.current || saveInFlightRef.current) {
+      const activeWrite = restoreWriteInFlightRef.current || saveInFlightRef.current;
+      if (activeWrite) await activeWrite;
+    }
+    if (!pendingSaveRef.current || !mountedRef.current) return;
 
     const operation = (async () => {
       while (pendingSaveRef.current && mountedRef.current) {
         const candidate = pendingSaveRef.current;
         pendingSaveRef.current = null;
-        if (candidate.serialized === lastSavedSerializedRef.current) continue;
+        if (!documentRef.current && !enabledRef.current) {
+          lastSaveErrorRef.current = null;
+          setErrorMessage('');
+          setStatus('idle');
+          break;
+        }
+        if (
+          !candidate.force
+          && candidate.diagramName === lastSavedDiagramNameRef.current
+          && candidate.serialized === lastSavedSerializedRef.current
+        ) continue;
 
         const generation = documentGenerationRef.current.current();
+        const conflictEpoch = conflictEpochRef.current;
         const currentContext = contextRef.current;
         const currentDocument = documentRef.current;
         if (currentContext?.role === 'viewer') {
@@ -389,13 +518,21 @@ export function useCloudDiagramSync({
             savedContext = currentContext;
           }
 
-          if (!isCurrentDocumentGeneration(generation)) continue;
+          if (
+            !isCurrentDocumentGeneration(generation)
+            || conflictEpoch !== conflictEpochRef.current
+          ) continue;
           const normalized = storeDocument(saved, savedContext);
+          lastSavedDiagramNameRef.current = candidate.diagramName;
           lastSavedSerializedRef.current = candidate.serialized;
+          conflictRef.current = false;
           setLastSavedAt(normalized.updatedAt || new Date().toISOString());
           setStatus(savedContext.role === 'viewer' ? 'readonly' : 'saved');
         } catch (error) {
-          if (!isCurrentDocumentGeneration(generation)) continue;
+          if (
+            !isCurrentDocumentGeneration(generation)
+            || conflictEpoch !== conflictEpochRef.current
+          ) continue;
           const apiError = error instanceof CloudDiagramApiError ? error : null;
           lastSaveErrorRef.current = error instanceof Error
             ? error
@@ -403,18 +540,45 @@ export function useCloudDiagramSync({
           setErrorMessage(lastSaveErrorRef.current.message);
 
           if (apiError?.status === 412 || apiError?.status === 409) {
-            setStatus('conflict');
-            pendingSaveRef.current = null;
+            enterConflict(lastSaveErrorRef.current);
             break;
           }
-          if (apiError?.status === 404 && currentContext?.access === 'owner') {
+          if (apiError?.status === 404 && currentContext) {
+            const latestCandidate = latestRef.current;
+            pendingSaveRef.current = null;
+            if (
+              currentContext.access === 'shared'
+              || (latestCandidate.payload.nodes.length === 0 && enabledRef.current)
+            ) {
+              enterConflict(new Error(
+                'The cloud diagram was deleted in another session. Save your work as a copy or discard it.',
+              ));
+              break;
+            }
             documentRef.current = null;
             contextRef.current = null;
             setDocument(null);
             setContext(null);
             writeStoredContext(null);
-            pendingSaveRef.current = candidate;
+            if (latestCandidate.payload.nodes.length === 0) {
+              lastSavedDiagramNameRef.current = latestCandidate.diagramName;
+              lastSavedSerializedRef.current = latestCandidate.serialized;
+              lastSaveErrorRef.current = null;
+              conflictRef.current = false;
+              setLastSavedAt(null);
+              setErrorMessage('');
+              setStatus('idle');
+              break;
+            }
+            lastSavedDiagramNameRef.current = '';
+            lastSavedSerializedRef.current = '';
+            pendingSaveRef.current = latestCandidate;
             continue;
+          }
+          if (isNonRetryableClientError(apiError)) {
+            pendingSaveRef.current = null;
+            setStatus('error');
+            break;
           }
 
           setStatus(apiError?.status === 503 ? 'unavailable' : 'offline');
@@ -434,16 +598,54 @@ export function useCloudDiagramSync({
 
     saveInFlightRef.current = operation;
     return operation;
-  }, [isCurrentDocumentGeneration, storeDocument]);
+  }, [enterConflict, isCurrentDocumentGeneration, storeDocument]);
 
   useEffect(() => {
-    if (!initialized || !enabled) return;
+    if (
+      !initialized
+      || conflictRef.current
+      || autosaveBlockedRef.current
+      || autosaveSuspendedGenerationRef.current !== null
+    ) return;
+    if (!enabled && !documentRef.current && !saveInFlightRef.current) {
+      pendingSaveRef.current = null;
+      if (retryTimerRef.current !== null) {
+        window.clearTimeout(retryTimerRef.current);
+        retryTimerRef.current = null;
+      }
+      lastSaveErrorRef.current = null;
+      setErrorMessage('');
+      setStatus('idle');
+      return;
+    }
     if (contextRef.current?.role === 'viewer') {
+      if (viewerBaselineDocumentIdRef.current === contextRef.current.documentId) {
+        lastSavedDiagramNameRef.current = latestRef.current.diagramName;
+        lastSavedSerializedRef.current = latestRef.current.serialized;
+        viewerBaselineDocumentIdRef.current = null;
+      }
       setStatus('readonly');
       return;
     }
     const latest = latestRef.current;
-    if (latest.serialized === lastSavedSerializedRef.current) return;
+    if (
+      latest.diagramName === lastSavedDiagramNameRef.current
+      && latest.serialized === lastSavedSerializedRef.current
+    ) {
+      if (saveInFlightRef.current) {
+        pendingSaveRef.current = { ...latest, force: true };
+      } else {
+        pendingSaveRef.current = null;
+        if (retryTimerRef.current !== null) {
+          window.clearTimeout(retryTimerRef.current);
+          retryTimerRef.current = null;
+        }
+        lastSaveErrorRef.current = null;
+        setErrorMessage('');
+        setStatus(documentRef.current ? 'saved' : 'idle');
+      }
+      return;
+    }
 
     pendingSaveRef.current = latest;
     if (debounceTimerRef.current !== null) {
@@ -468,14 +670,24 @@ export function useCloudDiagramSync({
     serializedPayload,
   ]);
 
-  const saveNow = useCallback(async (): Promise<CloudDiagramDocument | null> => {
-    if (!enabled && !documentRef.current) return null;
+  const saveNow = useCallback(async (
+    options?: { force?: boolean },
+  ): Promise<CloudDiagramDocument | null> => {
+    if (!enabled && !documentRef.current && !saveInFlightRef.current) return null;
+    if (conflictRef.current) {
+      throw lastSaveErrorRef.current || new Error(
+        'The cloud diagram changed in another session. Reload it or save your work as a copy.',
+      );
+    }
     const generation = documentGenerationRef.current.current();
     if (debounceTimerRef.current !== null) {
       window.clearTimeout(debounceTimerRef.current);
       debounceTimerRef.current = null;
     }
-    pendingSaveRef.current = latestRef.current;
+    pendingSaveRef.current = {
+      ...latestRef.current,
+      force: options?.force === true,
+    };
     await drainPendingSave();
     if (!isCurrentDocumentGeneration(generation)) {
       throw new CloudDiagramOperationCancelledError();
@@ -485,11 +697,17 @@ export function useCloudDiagramSync({
   }, [drainPendingSave, enabled, isCurrentDocumentGeneration]);
 
   const saveSnapshot = useCallback(async (notes: string): Promise<CloudDiagramVersion | null> => {
-    const currentDocument = await saveNow();
+    const currentDocument = await saveNow({ force: true });
     const currentContext = contextRef.current;
     if (!currentDocument || !currentContext || currentContext.role === 'viewer') return null;
     return createCloudVersion(currentContext, notes);
   }, [saveNow]);
+
+  const discardPendingSave = useCallback(() => {
+    beginDocumentGeneration();
+    clearTimers();
+    pendingSaveRef.current = null;
+  }, [beginDocumentGeneration, clearTimers]);
 
   const reloadRemote = useCallback(async () => {
     const currentContext = contextRef.current;
@@ -518,6 +736,7 @@ export function useCloudDiagramSync({
       };
       const normalized = activateDocument(saved, savedContext, false);
       if (!normalized) throw new CloudDiagramOperationCancelledError();
+      lastSavedDiagramNameRef.current = candidate.diagramName;
       lastSavedSerializedRef.current = candidate.serialized;
       setLastSavedAt(normalized.updatedAt || new Date().toISOString());
       setStatus('saved');
@@ -544,7 +763,11 @@ export function useCloudDiagramSync({
         ? error
         : new Error('Cloud copy failed.');
       setErrorMessage(lastSaveErrorRef.current.message);
-      setStatus(apiError?.status === 503 ? 'unavailable' : 'offline');
+      setStatus(conflictRef.current
+        ? 'conflict'
+        : apiError?.status === 503
+          ? 'unavailable'
+          : 'offline');
       throw lastSaveErrorRef.current;
     }
   }, [
@@ -554,6 +777,56 @@ export function useCloudDiagramSync({
     drainPendingSave,
     isCurrentDocumentGeneration,
   ]);
+
+  const saveAsDetachedCopy = useCallback(async () => {
+    const generation = documentGenerationRef.current.current();
+    const conflictEpoch = conflictEpochRef.current;
+    let candidate = latestRef.current;
+    setStatus('saving');
+    setErrorMessage('');
+    lastSaveErrorRef.current = null;
+
+    try {
+      let saved = await createCloudDiagram(candidate.diagramName, candidate.payload);
+      while (
+        isCurrentDocumentGeneration(generation)
+        && conflictEpoch === conflictEpochRef.current
+      ) {
+        const latest = latestRef.current;
+        if (latest.serialized === candidate.serialized) {
+          setStatus(contextRef.current?.role === 'viewer' ? 'readonly' : 'saved');
+          return normalizeDocument(saved, {
+            documentId: saved.id,
+            access: 'owner',
+            role: 'owner',
+          });
+        }
+        candidate = latest;
+        saved = await updateCloudDiagram(
+          saved.id,
+          saved.etag,
+          candidate.diagramName,
+          candidate.payload,
+        );
+      }
+      throw new CloudDiagramOperationCancelledError();
+    } catch (error) {
+      if (error instanceof CloudDiagramOperationCancelledError) throw error;
+      if (
+        !isCurrentDocumentGeneration(generation)
+        || conflictEpoch !== conflictEpochRef.current
+      ) {
+        throw new CloudDiagramOperationCancelledError();
+      }
+      const apiError = error instanceof CloudDiagramApiError ? error : null;
+      lastSaveErrorRef.current = error instanceof Error
+        ? error
+        : new Error('Cloud copy failed.');
+      setErrorMessage(lastSaveErrorRef.current.message);
+      setStatus(apiError?.status === 503 ? 'unavailable' : 'offline');
+      throw lastSaveErrorRef.current;
+    }
+  }, [isCurrentDocumentGeneration]);
 
   const openDocument = useCallback((
     nextDocument: CloudDiagramDocument,
@@ -566,30 +839,235 @@ export function useCloudDiagramSync({
     }, true);
   }, [activateDocument]);
 
-  const restoreVersion = useCallback((
+  const resumeSuspendedAutosave = useCallback(async (
+    generation: number,
+    options: { mode: 'debounce' | 'retry' | 'none'; force?: boolean },
+  ) => {
+    if (autosaveSuspendedGenerationRef.current !== generation) return;
+    autosaveSuspendedGenerationRef.current = null;
+    const generationIsCurrent = isCurrentDocumentGeneration(generation);
+    if (
+      conflictRef.current
+      || autosaveBlockedRef.current
+      || contextRef.current?.role === 'viewer'
+      || (!enabledRef.current && !documentRef.current)
+    ) return;
+
+    if (generationIsCurrent && options.mode === 'none') return;
+    const latest = latestRef.current;
+    const force = generationIsCurrent && options.force === true;
+    if (
+      !force
+      && latest.diagramName === lastSavedDiagramNameRef.current
+      && latest.serialized === lastSavedSerializedRef.current
+    ) return;
+    pendingSaveRef.current = {
+      ...latest,
+      force,
+    };
+    if (!generationIsCurrent || options.mode === 'debounce') {
+      if (debounceTimerRef.current !== null) {
+        window.clearTimeout(debounceTimerRef.current);
+      }
+      debounceTimerRef.current = window.setTimeout(() => {
+        debounceTimerRef.current = null;
+        void drainPendingSave();
+      }, 2_000);
+      return;
+    }
+    if (retryTimerRef.current === null) {
+      retryTimerRef.current = window.setTimeout(() => {
+        retryTimerRef.current = null;
+        void drainPendingSave();
+      }, 15_000);
+    }
+  }, [drainPendingSave, isCurrentDocumentGeneration]);
+
+  const restoreVersion = useCallback(async (
     version: CloudDiagramVersion,
     baseDocument: CloudDiagramDocument,
     baseContext: CloudDocumentContext,
-  ) => {
-    beginDocumentGeneration();
+  ): Promise<boolean> => {
+    const startingGeneration = documentGenerationRef.current.current();
+    while (restoreWriteInFlightRef.current || saveInFlightRef.current) {
+      const activeWrite = restoreWriteInFlightRef.current || saveInFlightRef.current;
+      if (activeWrite) await activeWrite;
+    }
+    if (!isCurrentDocumentGeneration(startingGeneration)) {
+      throw new CloudDiagramOperationCancelledError();
+    }
+    if (conflictRef.current) return false;
+    const generation = beginDocumentGeneration();
+    const conflictEpoch = conflictEpochRef.current;
+    autosaveSuspendedGenerationRef.current = generation;
     clearTimers();
     const normalized = storeDocument(baseDocument, baseContext);
+    lastSavedDiagramNameRef.current = normalized.diagramName;
     lastSavedSerializedRef.current = JSON.stringify(normalized.payload);
     pendingSaveRef.current = null;
     lastSaveErrorRef.current = null;
+    conflictRef.current = false;
     setErrorMessage('');
-    setStatus(baseContext.role === 'viewer' ? 'readonly' : 'saved');
-    onLoad(version.payload);
-  }, [beginDocumentGeneration, clearTimers, onLoad, storeDocument]);
+    setStatus(baseContext.role === 'viewer' ? 'readonly' : 'saving');
+    const restoredDiagramName = normalizeDiagramName(version.diagramName);
+    latestRef.current = {
+      diagramName: restoredDiagramName,
+      payload: version.payload,
+      serialized: JSON.stringify(version.payload),
+    };
+    let restoreWriteBlocker: Promise<void> | null = null;
+    let releaseRestoreWrite: (() => void) | null = null;
+    const finishRestoreWrite = () => {
+      if (!restoreWriteBlocker) return;
+      if (restoreWriteInFlightRef.current === restoreWriteBlocker) {
+        restoreWriteInFlightRef.current = null;
+      }
+      releaseRestoreWrite?.();
+      restoreWriteBlocker = null;
+      releaseRestoreWrite = null;
+    };
+    try {
+      onLoad(version.payload);
+      if (baseContext.role === 'viewer') {
+        await resumeSuspendedAutosave(generation, { mode: 'debounce' });
+        if (!isCurrentDocumentGeneration(generation)) {
+          throw new CloudDiagramOperationCancelledError();
+        }
+        return true;
+      }
+
+      restoreWriteBlocker = new Promise<void>((resolve) => {
+        releaseRestoreWrite = resolve;
+      });
+      restoreWriteInFlightRef.current = restoreWriteBlocker;
+      const verified = baseContext.access === 'shared' && baseContext.shareToken
+        ? await updateSharedCloudDiagram(
+            baseContext.shareToken,
+            baseDocument.etag,
+            restoredDiagramName,
+            version.payload,
+          )
+        : await updateCloudDiagram(
+            baseDocument.id,
+            baseDocument.etag,
+            restoredDiagramName,
+            version.payload,
+          );
+      if (
+        !isCurrentDocumentGeneration(generation)
+        || conflictEpoch !== conflictEpochRef.current
+      ) {
+        throw new CloudDiagramOperationCancelledError();
+      }
+      const verifiedDocument = storeDocument(verified, baseContext);
+      lastSavedDiagramNameRef.current = verifiedDocument.diagramName;
+      lastSavedSerializedRef.current = JSON.stringify(verifiedDocument.payload);
+      lastSaveErrorRef.current = null;
+      setLastSavedAt(verifiedDocument.updatedAt || new Date().toISOString());
+      setStatus('saved');
+      finishRestoreWrite();
+    } catch (error) {
+      finishRestoreWrite();
+      if (
+        error instanceof CloudDiagramOperationCancelledError
+        || !isCurrentDocumentGeneration(generation)
+        || conflictEpoch !== conflictEpochRef.current
+      ) {
+        await resumeSuspendedAutosave(generation, { mode: 'retry' });
+        throw new CloudDiagramOperationCancelledError();
+      }
+      const apiError = error instanceof CloudDiagramApiError ? error : null;
+      const terminalClientError = isNonRetryableClientError(apiError);
+      lastSaveErrorRef.current = error instanceof Error
+        ? error
+        : new Error('Cloud snapshot restore failed.');
+      setErrorMessage(lastSaveErrorRef.current.message);
+      if (apiError?.status === 412 || apiError?.status === 409) {
+        enterConflict(lastSaveErrorRef.current);
+      } else {
+        setStatus(terminalClientError
+          ? 'error'
+          : apiError?.status === 503
+            ? 'unavailable'
+            : 'offline');
+      }
+      await resumeSuspendedAutosave(generation, {
+        mode: terminalClientError ? 'none' : 'retry',
+        force: !terminalClientError && !conflictRef.current,
+      });
+      throw lastSaveErrorRef.current;
+    }
+    await resumeSuspendedAutosave(generation, { mode: 'debounce' });
+    if (
+      !isCurrentDocumentGeneration(generation)
+      || conflictEpoch !== conflictEpochRef.current
+    ) {
+      throw new CloudDiagramOperationCancelledError();
+    }
+    return true;
+  }, [
+    beginDocumentGeneration,
+    clearTimers,
+    enterConflict,
+    isCurrentDocumentGeneration,
+    onLoad,
+    resumeSuspendedAutosave,
+    storeDocument,
+  ]);
 
   const replaceCurrentDocument = useCallback((nextDocument: CloudDiagramDocument) => {
     const currentContext = contextRef.current;
     if (!currentContext || nextDocument.id !== currentContext.documentId) return;
-    const normalized = storeDocument(nextDocument, currentContext);
-    lastSavedSerializedRef.current = JSON.stringify(normalized.payload);
+    if (conflictRef.current) return;
+    const normalized = normalizeDocument(nextDocument, currentContext);
+    const remoteSerialized = JSON.stringify(normalized.payload);
+    const currentDocument = documentRef.current;
+    if (
+      currentDocument
+      && (
+        normalized.revision < currentDocument.revision
+        || (
+          normalized.revision === currentDocument.revision
+          && Boolean(currentDocument.etag)
+          && normalized.etag !== currentDocument.etag
+        )
+      )
+    ) return;
+    const knownRemoteSerialized = currentDocument
+      ? JSON.stringify(currentDocument.payload)
+      : '';
+    if (
+      remoteSerialized !== latestRef.current.serialized
+      && remoteSerialized !== knownRemoteSerialized
+    ) {
+      if (currentDocument) {
+        const metadataOnlyDocument = {
+          ...currentDocument,
+          comments: normalized.comments,
+          shares: normalized.shares,
+        };
+        documentRef.current = metadataOnlyDocument;
+        setDocument(metadataOnlyDocument);
+      }
+      const conflictError = new Error(
+        'The cloud diagram changed in another session. Reload it or save your work as a copy.',
+      );
+      enterConflict(conflictError);
+      return;
+    }
+    storeDocument(normalized, currentContext);
+    if (
+      normalized.diagramName === latestRef.current.diagramName
+      && remoteSerialized === latestRef.current.serialized
+    ) {
+      lastSavedDiagramNameRef.current = normalized.diagramName;
+      lastSavedSerializedRef.current = remoteSerialized;
+    }
+    lastSaveErrorRef.current = null;
+    setErrorMessage('');
     setLastSavedAt(normalized.updatedAt || new Date().toISOString());
     setStatus(currentContext.role === 'viewer' ? 'readonly' : 'saved');
-  }, [storeDocument]);
+  }, [enterConflict, storeDocument]);
 
   return {
     document,
@@ -602,8 +1080,11 @@ export function useCloudDiagramSync({
     reset: clearDocument,
     reloadRemote,
     saveAsCopy,
+    saveAsDetachedCopy,
     openDocument,
     restoreVersion,
     replaceCurrentDocument,
+    reportConflict,
+    discardPendingSave,
   };
 }

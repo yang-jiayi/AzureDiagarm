@@ -61,6 +61,7 @@ import {
 import NodePricingEditor from './components/NodePricingEditor';
 import type { NodePricingConfig, PricingScenario } from './types/pricing';
 import {
+  DEFAULT_PRICING_SCENARIOS,
   loadPricingScenarios,
   normalizePricingScenarios,
   savePricingScenarios,
@@ -957,6 +958,7 @@ function App() {
   
   // Premium Features State
   const [validationResult, setValidationResult] = useState<ArchitectureValidation | null>(null);
+  const [persistedValidationScore, setPersistedValidationScore] = useState<number | undefined>();
   const [isValidationModalOpen, setIsValidationModalOpen] = useState(false);
   const [isValidating, setIsValidating] = useState(false);
   const [deploymentGuide, setDeploymentGuide] = useState<DeploymentGuide | null>(null);
@@ -2511,7 +2513,7 @@ function App() {
         nodes,
         edges,
         workflow,
-        validationScore: validationResult ? validationResult.overallScore : null,
+        validationScore: validationResult?.overallScore ?? persistedValidationScore ?? null,
         totalMonthlyCost: pricingBreakdown.totalMonthlyCost,
         pricingMode,
         region: pricingBreakdown.region,
@@ -2530,7 +2532,7 @@ function App() {
       console.error('Error exporting workflow markdown:', err);
       alert(t("Failed to export workflow narrative. Please try again."));
     }
-  }, [nodes, edges, workflow, titleBlockData, architecturePrompt, generatedWithModel, validationResult, pricingMode, recordExport, t]);
+  }, [nodes, edges, workflow, titleBlockData, architecturePrompt, generatedWithModel, validationResult, persistedValidationScore, pricingMode, recordExport, t]);
 
   // Export as an Animated SVG: same vector capture as exportAsSvg, but with
   // flowing data-flow circles injected onto each edge. Pure client-side — the
@@ -3314,11 +3316,18 @@ function App() {
 
       // Restore workflow if present
       setWorkflow(restoredWorkflow);
-      if (Array.isArray(flow.pricingScenarios)) {
-        setPricingScenarios(normalizePricingScenarios(flow.pricingScenarios));
-      }
+      setPricingScenarios(normalizePricingScenarios(flow.pricingScenarios));
       setIaCBaseline(restoreIaCBaseline(flow.iacBaseline));
       setDriftPlanSummary(null);
+      setValidationResult(null);
+      setPersistedValidationScore(
+        typeof flow.validationScore === 'number' && Number.isFinite(flow.validationScore)
+          ? flow.validationScore
+          : undefined,
+      );
+      setValidationHandoff(null);
+      feedbackAfterValidationRef.current = false;
+      setDeploymentGuide(null);
 
       // Restore architecture prompt if present
       const restoredPrompt = typeof flow.architecturePrompt === 'string' ? flow.architecturePrompt : '';
@@ -3331,12 +3340,18 @@ function App() {
     [setNodes, setEdges, reactFlowInstance, normalizeRestoredEdges]
   );
 
+  const cloudValidationScore = validationResult?.overallScore ?? persistedValidationScore;
+  const hasCustomizedPricingScenarios = useMemo(
+    () => JSON.stringify(pricingScenarios) !== JSON.stringify(DEFAULT_PRICING_SCENARIOS),
+    [pricingScenarios],
+  );
+
   const cloudDiagramPayload = useMemo(() => ({
     nodes,
     edges,
     architecturePrompt,
     originalPrompt: originalPrompt || architecturePrompt || undefined,
-    validationScore: validationResult?.overallScore,
+    validationScore: cloudValidationScore,
     titleBlockData,
     workflow,
     pricingScenarios,
@@ -3346,17 +3361,59 @@ function App() {
     edges,
     architecturePrompt,
     originalPrompt,
-    validationResult?.overallScore,
+    cloudValidationScore,
     titleBlockData,
     workflow,
     pricingScenarios,
     iacBaseline,
   ]);
 
+  const cloudDraftHasContent = useMemo(() => {
+    const architectureName = titleBlockData.architectureName.trim();
+    const author = titleBlockData.author.trim();
+    const version = titleBlockData.version.trim();
+    const date = titleBlockData.date.trim();
+    const defaultDates = new Set([
+      new Date().toLocaleDateString(),
+      new Date().toISOString().split('T')[0],
+    ]);
+    const hasCustomizedTitle = (
+      (
+        architectureName.length > 0
+        && !['Untitled Architecture', '無題のアーキテクチャ'].includes(architectureName)
+      )
+      || !['Azure Architect', 'Azure アーキテクト'].includes(author)
+      || version !== '1.0'
+      || !defaultDates.has(date)
+    );
+
+    return (
+      nodes.length > 0
+      || edges.length > 0
+      || architecturePrompt.trim().length > 0
+      || originalPrompt.trim().length > 0
+      || workflow.length > 0
+      || cloudValidationScore !== undefined
+      || hasCustomizedPricingScenarios
+      || iacBaseline !== null
+      || hasCustomizedTitle
+    );
+  }, [
+    architecturePrompt,
+    edges.length,
+    iacBaseline,
+    nodes.length,
+    originalPrompt,
+    titleBlockData,
+    cloudValidationScore,
+    hasCustomizedPricingScenarios,
+    workflow.length,
+  ]);
+
   const cloudSync = useCloudDiagramSync({
     diagramName: titleBlockData.architectureName,
     payload: cloudDiagramPayload,
-    enabled: nodes.length > 0,
+    enabled: cloudDraftHasContent,
     onLoad: applyFlowObject,
   });
 
@@ -3372,9 +3429,15 @@ function App() {
     }));
     if (!confirmed) return false;
     try {
-      preserveAsCopy
+      const savedDocument = preserveAsCopy
         ? await cloudSync.saveAsCopy()
-        : await cloudSync.saveNow();
+        : await cloudSync.saveNow({ force: true });
+      if (!savedDocument && cloudDraftHasContent) {
+        throw new Error(localize(language, {
+          en: 'The current diagram has not been saved to the cloud.',
+          ja: '現在の図面はクラウドに保存されていません。',
+        }));
+      }
     } catch (error) {
       if (error instanceof CloudDiagramOperationCancelledError) return false;
       const discardUnsavedChanges = window.confirm(localize(language, {
@@ -3395,13 +3458,14 @@ function App() {
     setEdgeContextMenu(null);
     setGeneratedWithModel(null);
     setValidationResult(null);
+    setPersistedValidationScore(undefined);
     setDeploymentGuide(null);
     setIaCBaseline(null);
     setDriftPlanSummary(null);
     setReferenceImageUrl(null);
     setLastReferenceArchitecture(null);
     setLastBlueprintArchitecture(null);
-    setPricingScenarios([]);
+    setPricingScenarios(DEFAULT_PRICING_SCENARIOS.map((scenario) => ({ ...scenario })));
     setTitleBlockData({
       architectureName: translate('Untitled Architecture'),
       author: translate('Azure Architect'),
@@ -3411,6 +3475,7 @@ function App() {
     return true;
   }, [
     cloudSync,
+    cloudDraftHasContent,
     language,
     setEdges,
     setNodes,
@@ -3504,6 +3569,8 @@ function App() {
               metadata: version.metadata,
               workflow: version.workflow,
               architecturePrompt: version.architecturePrompt,
+              originalPrompt: version.originalPrompt,
+              validationScore: version.validationScore,
               titleBlockData: version.titleBlockData,
               pricingScenarios: version.pricingScenarios,
               iacBaseline: version.iacBaseline,
@@ -3599,6 +3666,7 @@ function App() {
         pricingScenarios: version.pricingScenarios,
         architecturePrompt: version.architecturePrompt || '',
         originalPrompt: version.originalPrompt || version.architecturePrompt || '',
+        validationScore: version.validationScore,
         iacBaseline: version.iacBaseline,
       });
       
@@ -3626,7 +3694,7 @@ function App() {
         {
           architecturePrompt,
           originalPrompt: originalPrompt || architecturePrompt || undefined,
-          validationScore: validationResult?.overallScore,
+          validationScore: cloudValidationScore,
           notes: snapshotNotes,
           titleBlockData,
           workflow,
@@ -3640,7 +3708,7 @@ function App() {
       console.error('Failed to save manual snapshot:', error);
       throw error;
     }
-  }, [nodes, edges, titleBlockData, architecturePrompt, originalPrompt, validationResult, workflow, pricingScenarios, cloudSync, iacBaseline]);
+  }, [nodes, edges, titleBlockData, architecturePrompt, originalPrompt, cloudValidationScore, workflow, pricingScenarios, cloudSync, iacBaseline]);
 
   const handleAIGenerate = useCallback(async (
     architecture: any,
@@ -3699,7 +3767,7 @@ function App() {
             {
               architecturePrompt: architecturePrompt || 'Previous version',
               originalPrompt: originalPrompt || architecturePrompt || undefined,
-              validationScore: validationResult?.overallScore,
+              validationScore: cloudValidationScore,
               notes: 'Auto-saved before AI regeneration',
               titleBlockData,
               workflow,
@@ -4051,6 +4119,7 @@ function App() {
     console.log(`Setting ${finalNodes.length} nodes and ${newEdges.length} edges`);
     const pricingRunId = ++aiPricingRunRef.current;
     setValidationResult(null);
+    setPersistedValidationScore(undefined);
     setValidationHandoff(null);
     feedbackAfterValidationRef.current = false;
     setLastReferenceArchitecture(architecture?.__referenceArchitecture ?? null);
@@ -4192,7 +4261,7 @@ function App() {
     setNodes,
     t,
     titleBlockData,
-    validationResult,
+    cloudValidationScore,
     workflow,
   ]);
   handleAIGenerateRef.current = handleAIGenerate;
@@ -4561,6 +4630,7 @@ function App() {
         result.diagramImageDataUrl = diagramImageDataUrl;
       }
       setValidationResult(result);
+      setPersistedValidationScore(result.overallScore);
       trackValidation({
         model: result.metrics?.model,
         overallScore: result.overallScore,
@@ -6498,12 +6568,17 @@ Return the IMPROVED architecture in the same JSON format as before with proper g
         syncStatus={cloudSync.status}
         syncError={cloudSync.errorMessage}
         lastSavedAt={cloudSync.lastSavedAt}
+        hasLocalDraft={cloudDraftHasContent}
         onOpenDocument={cloudSync.openDocument}
         onRestoreVersion={cloudSync.restoreVersion}
         onDocumentUpdated={cloudSync.replaceCurrentDocument}
         onResetCurrent={cloudSync.reset}
+        onSaveCurrent={cloudSync.saveNow}
         onReloadRemote={cloudSync.reloadRemote}
         onSaveAsCopy={cloudSync.saveAsCopy}
+        onSaveAsDetachedCopy={cloudSync.saveAsDetachedCopy}
+        onCloudConflict={cloudSync.reportConflict}
+        onDiscardPendingSave={cloudSync.discardPendingSave}
         onCreateNew={startFreshDiagram}
       />
       <PricingScenarioModal
@@ -6572,6 +6647,7 @@ Return the IMPROVED architecture in the same JSON format as before with proper g
         onClose={() => setIsCompareValidationOpen(false)}
         onApply={(validation) => {
           setValidationResult(validation);
+          setPersistedValidationScore(validation.overallScore);
           setIsValidationModalOpen(true);
           setPanelsCollapsedSignal(prev => prev + 1);
         }}

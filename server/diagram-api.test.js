@@ -341,6 +341,7 @@ test('comments are added and bounded to the document', async (t) => {
   assert.equal(added.json.document.comments.length, 1);
   assert.equal(added.json.document.comments[0].authorEmail, 'alice@example.com');
   assert.equal(added.json.document.comments[0].message, 'looks good');
+  assert.equal(added.json.document.revision, 2);
   assert.ok(added.etag);
 
   const empty = await call(server.baseUrl, 'POST', `/api/diagrams/${id}/comments`, {
@@ -373,6 +374,7 @@ test('sharing: viewer can read but not edit, editor can edit', async (t) => {
   assert.equal(sharedGet.status, 200);
   assert.equal(sharedGet.json.document.access, 'shared');
   assert.equal(sharedGet.json.document.role, 'viewer');
+  assert.equal(sharedGet.json.document.revision, 2);
   assert.ok(sharedGet.etag);
 
   // Viewer cannot modify.
@@ -387,6 +389,7 @@ test('sharing: viewer can read but not edit, editor can edit', async (t) => {
   });
   assert.equal(viewerComment.status, 201);
   assert.equal(viewerComment.json.document.comments.at(-1).authorEmail, 'bob@example.com');
+  assert.equal(viewerComment.json.document.revision, 3);
 
   // Create an editor share and confirm edit access.
   const editorShare = await call(server.baseUrl, 'POST', `/api/diagrams/${id}/shares`, {
@@ -395,6 +398,7 @@ test('sharing: viewer can read but not edit, editor can edit', async (t) => {
   const editorToken = editorShare.json.token;
   const editorGet = await call(server.baseUrl, 'GET', `/api/diagrams/shared/${editorToken}`, { headers: USER_B });
   assert.equal(editorGet.json.document.role, 'editor');
+  assert.equal(editorGet.json.document.revision, 4);
   const editorPut = await call(server.baseUrl, 'PUT', `/api/diagrams/shared/${editorToken}`, {
     headers: USER_B, ifMatch: editorGet.etag, body: { diagramName: 'edited by editor', payload: samplePayload() },
   });
@@ -466,6 +470,8 @@ test('revoking a share stops the token from resolving', async (t) => {
 
   const revoke = await call(server.baseUrl, 'DELETE', `/api/diagrams/${id}/shares/${shareId}`, { headers: USER_A });
   assert.equal(revoke.status, 204);
+  const current = await call(server.baseUrl, 'GET', `/api/diagrams/${id}`, { headers: USER_A });
+  assert.equal(current.json.document.revision, 3);
 
   const after = await call(server.baseUrl, 'GET', `/api/diagrams/shared/${token}`, { headers: USER_B });
   assert.equal(after.status, 404);

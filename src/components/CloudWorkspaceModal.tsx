@@ -20,6 +20,7 @@ import {
   X,
 } from 'lucide-react';
 import {
+  CloudDiagramApiError,
   CloudDiagramDocument,
   CloudDiagramShare,
   CloudDiagramSummary,
@@ -27,8 +28,10 @@ import {
   CloudDocumentContext,
   addCloudComment,
   createCloudShare,
+  createCloudVersion,
   deleteCloudDiagram,
   getCloudDiagram,
+  getSharedCloudDiagram,
   getCloudVersion,
   listCloudDiagrams,
   listCloudShares,
@@ -51,6 +54,7 @@ interface CloudWorkspaceModalProps {
   syncStatus: CloudSyncStatus;
   syncError: string;
   lastSavedAt: string | null;
+  hasLocalDraft: boolean;
   onOpenDocument: (
     document: CloudDiagramDocument,
     context: CloudDocumentContext,
@@ -59,11 +63,20 @@ interface CloudWorkspaceModalProps {
     version: CloudDiagramVersion,
     document: CloudDiagramDocument,
     context: CloudDocumentContext,
-  ) => void;
+  ) => Promise<boolean>;
   onDocumentUpdated: (document: CloudDiagramDocument) => void;
   onResetCurrent: (documentId: string) => void;
+  onSaveCurrent: (options?: { force?: boolean }) => Promise<CloudDiagramDocument | null>;
   onReloadRemote: () => Promise<CloudDiagramDocument | null>;
   onSaveAsCopy: () => Promise<CloudDiagramDocument | null>;
+  onSaveAsDetachedCopy: () => Promise<CloudDiagramDocument | null>;
+  onCloudConflict: (
+    documentId: string,
+    error: Error,
+    expectedRevision?: number,
+    expectedEtag?: string,
+  ) => void;
+  onDiscardPendingSave: () => void;
   onCreateNew: () => Promise<boolean>;
 }
 
@@ -83,12 +96,17 @@ const CloudWorkspaceModal: React.FC<CloudWorkspaceModalProps> = ({
   syncStatus,
   syncError,
   lastSavedAt,
+  hasLocalDraft,
   onOpenDocument,
   onRestoreVersion,
   onDocumentUpdated,
   onResetCurrent,
+  onSaveCurrent,
   onReloadRemote,
   onSaveAsCopy,
+  onSaveAsDetachedCopy,
+  onCloudConflict,
+  onDiscardPendingSave,
   onCreateNew,
 }) => {
   const { language, t } = useLanguage();
@@ -110,6 +128,7 @@ const CloudWorkspaceModal: React.FC<CloudWorkspaceModalProps> = ({
   const isOpenRef = useRef(isOpen);
   const currentDocumentIdRef = useRef(currentDocument?.id ?? null);
   const selectedDocumentIdRef = useRef<string | null>(null);
+  const replacementNoticeRef = useRef('');
   const loadGenerationRef = useRef(new OperationGeneration());
   const operationGenerationRef = useRef(new OperationGeneration());
 
@@ -120,6 +139,7 @@ const CloudWorkspaceModal: React.FC<CloudWorkspaceModalProps> = ({
     loadGenerationRef.current.advance();
     operationGenerationRef.current.advance();
     selectedDocumentIdRef.current = null;
+    replacementNoticeRef.current = '';
     setOperation('');
     setIsLoading(false);
     setIsDetailsLoading(false);
@@ -149,10 +169,58 @@ const CloudWorkspaceModal: React.FC<CloudWorkspaceModalProps> = ({
 
   const beginOperation = useCallback((name: string) => {
     const generation = operationGenerationRef.current.advance();
+    replacementNoticeRef.current = '';
     setOperation(name);
     setError('');
     return generation;
   }, []);
+
+  const saveCurrentBeforeMetadata = useCallback(async (documentId: string) => {
+    if (
+      currentDocument?.id !== documentId
+      || currentContext?.role === 'viewer'
+    ) return null;
+    return onSaveCurrent();
+  }, [currentContext?.role, currentDocument?.id, onSaveCurrent]);
+
+  const reportCurrentConflict = useCallback((
+    operationError: unknown,
+    targetDocument: CloudDiagramDocument,
+  ) => {
+    if (
+      operationError instanceof CloudDiagramApiError
+      && (operationError.status === 404 || operationError.status === 412)
+    ) {
+      onCloudConflict(
+        targetDocument.id,
+        operationError,
+        targetDocument.revision,
+        targetDocument.etag,
+      );
+    }
+  }, [onCloudConflict]);
+
+  const preserveCurrentDraft = useCallback(async () => {
+    const savedDocument = await (
+      currentDocument && currentContext?.role === 'viewer'
+      ? onSaveAsDetachedCopy()
+      : onSaveCurrent({ force: true })
+    );
+    if (!savedDocument && hasLocalDraft) {
+      throw new Error(text(
+        'The current draft has not been saved to the cloud.',
+        '現在の下書きはクラウドに保存されていません。',
+      ));
+    }
+    return savedDocument;
+  }, [
+    currentContext?.role,
+    currentDocument,
+    hasLocalDraft,
+    onSaveAsDetachedCopy,
+    onSaveCurrent,
+    text,
+  ]);
 
   const selectedContext = useMemo<CloudDocumentContext | null>(() => {
     if (!selectedDocument) return null;
@@ -213,7 +281,7 @@ const CloudWorkspaceModal: React.FC<CloudWorkspaceModalProps> = ({
     if (!isCurrentLoad(generation)) return;
     selectDocument(document);
     setIsDetailsLoading(true);
-    setError('');
+    setError(replacementNoticeRef.current);
     setVersions([]);
     setShares([]);
     setComment('');
@@ -228,6 +296,7 @@ const CloudWorkspaceModal: React.FC<CloudWorkspaceModalProps> = ({
       setShares(nextShares);
     } catch (loadError) {
       if (!isCurrentLoad(generation)) return;
+      reportCurrentConflict(loadError, document);
       setVersions([]);
       setShares([]);
       setError(loadError instanceof Error ? loadError.message : text(
@@ -237,36 +306,51 @@ const CloudWorkspaceModal: React.FC<CloudWorkspaceModalProps> = ({
     } finally {
       if (isCurrentLoad(generation)) setIsDetailsLoading(false);
     }
-  }, [isCurrentLoad, selectDocument, text]);
+  }, [isCurrentLoad, reportCurrentConflict, selectDocument, text]);
 
-  const refreshDocuments = useCallback(async (preferredId?: string) => {
+  const refreshDocuments = useCallback(async (
+    preferredId?: string,
+    preferredDocument?: CloudDiagramDocument,
+  ) => {
     const generation = loadGenerationRef.current.advance();
     let documentListLoaded = false;
     setIsLoading(true);
-    setError('');
+    setError(replacementNoticeRef.current);
     try {
       const owned = await listCloudDiagrams();
       if (!isCurrentLoad(generation)) return;
       const merged = [...owned];
-      if (
-        currentDocument
-        && currentContext?.access === 'shared'
-        && !merged.some((item) => item.id === currentDocument.id)
-      ) {
+      const mergeLocalDocument = (
+        document: CloudDiagramDocument | null | undefined,
+        context?: CloudDocumentContext | null,
+      ) => {
+        if (!document || merged.some((item) => item.id === document.id)) return;
         merged.unshift({
-          id: currentDocument.id,
-          diagramName: currentDocument.diagramName,
-          createdAt: currentDocument.createdAt,
-          updatedAt: currentDocument.updatedAt,
-          revision: currentDocument.revision,
-          serviceCount: currentDocument.payload.nodes.length,
-          connectionCount: currentDocument.payload.edges.length,
-          commentCount: currentDocument.comments.length,
-          shareCount: 0,
-          access: 'shared',
-          role: currentContext.role,
-          etag: currentDocument.etag,
+          id: document.id,
+          diagramName: document.diagramName,
+          createdAt: document.createdAt,
+          updatedAt: document.updatedAt,
+          revision: document.revision,
+          serviceCount: document.payload.nodes.length,
+          connectionCount: document.payload.edges.length,
+          commentCount: document.comments.length,
+          shareCount: document.shares?.length || 0,
+          access: context?.access || document.access,
+          role: context?.role || document.role,
+          etag: document.etag,
         });
+      };
+      mergeLocalDocument(currentDocument, currentContext);
+      mergeLocalDocument(
+        preferredDocument,
+        preferredDocument ? ownerContext(preferredDocument.id) : null,
+      );
+      if (preferredDocument) {
+        const preferredIndex = merged.findIndex((item) => item.id === preferredDocument.id);
+        if (preferredIndex > 0) {
+          const [preferredSummary] = merged.splice(preferredIndex, 1);
+          merged.unshift(preferredSummary);
+        }
       }
       setDocuments(merged);
       documentListLoaded = true;
@@ -285,7 +369,13 @@ const CloudWorkspaceModal: React.FC<CloudWorkspaceModalProps> = ({
         return;
       }
 
-      if (currentDocument?.id === targetId) {
+      if (preferredDocument?.id === targetId) {
+        await loadDetails(
+          preferredDocument,
+          ownerContext(preferredDocument.id),
+          generation,
+        );
+      } else if (currentDocument?.id === targetId) {
         await loadDetails(
           currentDocument,
           currentContext || ownerContext(currentDocument.id),
@@ -331,6 +421,7 @@ const CloudWorkspaceModal: React.FC<CloudWorkspaceModalProps> = ({
     loadGenerationRef.current.advance();
     operationGenerationRef.current.advance();
     selectedDocumentIdRef.current = null;
+    replacementNoticeRef.current = '';
     setOperation('');
     setIsLoading(false);
     setIsDetailsLoading(false);
@@ -340,6 +431,7 @@ const CloudWorkspaceModal: React.FC<CloudWorkspaceModalProps> = ({
     if (selectedDocumentIdRef.current === summary.id) return;
     const generation = loadGenerationRef.current.advance();
     operationGenerationRef.current.advance();
+    replacementNoticeRef.current = '';
     setOperation('');
     selectedDocumentIdRef.current = summary.id;
     setSelectedDocument(null);
@@ -372,6 +464,82 @@ const CloudWorkspaceModal: React.FC<CloudWorkspaceModalProps> = ({
     }
   };
 
+  const handleReplacementDocument = useCallback(async (
+    savedDocument: CloudDiagramDocument | null,
+    targetDocumentId: string,
+    generation: number,
+  ) => {
+    if (!savedDocument || savedDocument.id === targetDocumentId) return false;
+    const notice = text(
+      'The original cloud diagram was deleted. Your work was saved as a replacement; retry the action on the selected replacement.',
+      '元のクラウド図面は削除されました。作業は置換図面として保存されています。選択された置換図面で操作を再実行してください。',
+    );
+    replacementNoticeRef.current = notice;
+    selectedDocumentIdRef.current = savedDocument.id;
+    selectDocument(savedDocument);
+    setVersions([]);
+    setShares(savedDocument.shares || []);
+    setError(notice);
+    await refreshDocuments(savedDocument.id, savedDocument);
+    if (isCurrentOperation(generation)) {
+      setError(notice);
+    }
+    return true;
+  }, [isCurrentOperation, refreshDocuments, selectDocument, text]);
+
+  const handleOpenSelected = async () => {
+    if (!selectedDocument || !selectedContext || syncStatus === 'conflict') return;
+    const targetDocument = selectedDocument;
+    const targetContext = selectedContext;
+    const targetWasCurrent = currentDocument?.id === targetDocument.id;
+    const currentWasViewer = currentContext?.role === 'viewer';
+    const generation = beginOperation('open');
+    let discardUnsavedChanges = false;
+
+    try {
+      try {
+        await preserveCurrentDraft();
+      } catch (saveError) {
+        if (!isCurrentOperation(generation, targetDocument.id)) return;
+        discardUnsavedChanges = window.confirm(text(
+          'The current work could not be saved. Open the selected cloud diagram anyway and discard the unsaved changes?',
+          '現在の作業を保存できませんでした。未保存の変更を破棄して、選択したクラウド図面を開きますか？',
+        ));
+        if (!discardUnsavedChanges) {
+          setError(saveError instanceof Error ? saveError.message : text(
+            'The current work could not be saved.',
+            '現在の作業を保存できませんでした。',
+          ));
+          return;
+        }
+        onDiscardPendingSave();
+      }
+
+      if (!isCurrentOperation(generation, targetDocument.id)) return;
+      if (targetWasCurrent && discardUnsavedChanges) {
+        const reloaded = await onReloadRemote();
+        if (!isCurrentOperation(generation, targetDocument.id)) return;
+        if (!reloaded) {
+          setError(text(
+            'The latest cloud copy could not be loaded. Your local work is still preserved.',
+            '最新のクラウド版を読み込めませんでした。ローカルの作業は保持されています。',
+          ));
+          return;
+        }
+        closeModal();
+        return;
+      }
+      if (targetWasCurrent && !currentWasViewer && !discardUnsavedChanges) {
+        closeModal();
+        return;
+      }
+      onOpenDocument(targetDocument, targetContext);
+      closeModal();
+    } finally {
+      if (isCurrentOperation(generation)) setOperation('');
+    }
+  };
+
   const handleDelete = async () => {
     if (!selectedDocument || selectedContext?.access !== 'owner') return;
     const targetDocument = selectedDocument;
@@ -381,9 +549,15 @@ const CloudWorkspaceModal: React.FC<CloudWorkspaceModalProps> = ({
     ))) return;
 
     const generation = beginOperation('delete');
+    let conflictBaseline = targetDocument;
     try {
-      await deleteCloudDiagram(targetDocument.id, targetDocument.etag);
-      onResetCurrent(targetDocument.id);
+      const savedDocument = await saveCurrentBeforeMetadata(targetDocument.id);
+      if (!isCurrentOperation(generation, targetDocument.id)) return;
+      if (await handleReplacementDocument(savedDocument, targetDocument.id, generation)) return;
+      const documentToDelete = savedDocument || targetDocument;
+      conflictBaseline = documentToDelete;
+      await deleteCloudDiagram(documentToDelete.id, documentToDelete.etag);
+      onResetCurrent(documentToDelete.id);
       if (isOpenRef.current) {
         setDocuments((items) => items.filter((item) => item.id !== targetDocument.id));
       }
@@ -394,7 +568,8 @@ const CloudWorkspaceModal: React.FC<CloudWorkspaceModalProps> = ({
         await refreshDocuments();
       }
     } catch (deleteError) {
-      if (isCurrentOperation(generation)) {
+      reportCurrentConflict(deleteError, conflictBaseline);
+      if (isCurrentOperation(generation, targetDocument.id)) {
         setError(deleteError instanceof Error ? deleteError.message : text(
           'Failed to delete the cloud diagram.',
           'クラウド図面を削除できませんでした。',
@@ -411,9 +586,15 @@ const CloudWorkspaceModal: React.FC<CloudWorkspaceModalProps> = ({
     const targetDocument = selectedDocument;
     const targetContext = selectedContext;
     const generation = beginOperation('comment');
+    let conflictBaseline = targetDocument;
     try {
+      const savedDocument = await saveCurrentBeforeMetadata(targetDocument.id);
+      if (!isCurrentOperation(generation, targetDocument.id)) return;
+      if (await handleReplacementDocument(savedDocument, targetDocument.id, generation)) return;
+      if (savedDocument) conflictBaseline = savedDocument;
       const updated = await addCloudComment(targetContext, message);
       onDocumentUpdated(updated);
+      if (!isCurrentOperation(generation, targetDocument.id)) return;
       if (isOpenRef.current) {
         setDocuments((items) => items.map((item) => (
           item.id === updated.id
@@ -431,7 +612,8 @@ const CloudWorkspaceModal: React.FC<CloudWorkspaceModalProps> = ({
         setComment('');
       }
     } catch (commentError) {
-      if (isCurrentOperation(generation)) {
+      reportCurrentConflict(commentError, conflictBaseline);
+      if (isCurrentOperation(generation, targetDocument.id)) {
         setError(commentError instanceof Error ? commentError.message : text(
           'Failed to add the comment.',
           'コメントを追加できませんでした。',
@@ -447,8 +629,13 @@ const CloudWorkspaceModal: React.FC<CloudWorkspaceModalProps> = ({
     const targetDocument = selectedDocument;
     const targetRole = shareRole;
     const generation = beginOperation('share');
+    let conflictBaseline = targetDocument;
     setNewShareUrl('');
     try {
+      const savedDocument = await saveCurrentBeforeMetadata(targetDocument.id);
+      if (!isCurrentOperation(generation, targetDocument.id)) return;
+      if (await handleReplacementDocument(savedDocument, targetDocument.id, generation)) return;
+      if (savedDocument) conflictBaseline = savedDocument;
       const result = await createCloudShare(targetDocument.id, targetRole);
       if (isCurrentOperation(generation, targetDocument.id)) {
         setNewShareUrl(result.url);
@@ -463,9 +650,8 @@ const CloudWorkspaceModal: React.FC<CloudWorkspaceModalProps> = ({
       try {
         const refreshed = await getCloudDiagram(targetDocument.id);
         onDocumentUpdated(refreshed);
-        if (isCurrentOperation(generation, targetDocument.id)) {
-          selectDocument(refreshed);
-        }
+        if (!isCurrentOperation(generation, targetDocument.id)) return;
+        selectDocument(refreshed);
         if (isOpenRef.current) {
           setDocuments((items) => items.map((item) => (
             item.id === refreshed.id
@@ -481,6 +667,14 @@ const CloudWorkspaceModal: React.FC<CloudWorkspaceModalProps> = ({
         }
       } catch (refreshError) {
         console.error('[cloud] share created but document refresh failed:', refreshError);
+        onCloudConflict(
+          targetDocument.id,
+          refreshError instanceof Error
+            ? refreshError
+            : new Error('The updated cloud revision could not be loaded.'),
+          conflictBaseline.revision,
+          conflictBaseline.etag,
+        );
         if (isCurrentOperation(generation, targetDocument.id)) {
           setError(text(
             'The share link was created, but the diagram metadata could not be refreshed.',
@@ -489,7 +683,8 @@ const CloudWorkspaceModal: React.FC<CloudWorkspaceModalProps> = ({
         }
       }
     } catch (shareError) {
-      if (isCurrentOperation(generation)) {
+      reportCurrentConflict(shareError, conflictBaseline);
+      if (isCurrentOperation(generation, targetDocument.id)) {
         setError(shareError instanceof Error ? shareError.message : text(
           'Failed to create the share link.',
           '共有リンクを作成できませんでした。',
@@ -516,7 +711,12 @@ const CloudWorkspaceModal: React.FC<CloudWorkspaceModalProps> = ({
     if (!selectedDocument || selectedContext?.access !== 'owner') return;
     const targetDocument = selectedDocument;
     const generation = beginOperation(`revoke-${shareId}`);
+    let conflictBaseline = targetDocument;
     try {
+      const savedDocument = await saveCurrentBeforeMetadata(targetDocument.id);
+      if (!isCurrentOperation(generation, targetDocument.id)) return;
+      if (await handleReplacementDocument(savedDocument, targetDocument.id, generation)) return;
+      if (savedDocument) conflictBaseline = savedDocument;
       await revokeCloudShare(targetDocument.id, shareId);
       if (isCurrentOperation(generation, targetDocument.id)) {
         setShares((items) => items.filter((share) => share.shareId !== shareId));
@@ -532,9 +732,8 @@ const CloudWorkspaceModal: React.FC<CloudWorkspaceModalProps> = ({
       try {
         const refreshed = await getCloudDiagram(targetDocument.id);
         onDocumentUpdated(refreshed);
-        if (isCurrentOperation(generation, targetDocument.id)) {
-          selectDocument(refreshed);
-        }
+        if (!isCurrentOperation(generation, targetDocument.id)) return;
+        selectDocument(refreshed);
         if (isOpenRef.current) {
           setDocuments((items) => items.map((item) => (
             item.id === refreshed.id
@@ -550,6 +749,14 @@ const CloudWorkspaceModal: React.FC<CloudWorkspaceModalProps> = ({
         }
       } catch (refreshError) {
         console.error('[cloud] share revoked but document refresh failed:', refreshError);
+        onCloudConflict(
+          targetDocument.id,
+          refreshError instanceof Error
+            ? refreshError
+            : new Error('The updated cloud revision could not be loaded.'),
+          conflictBaseline.revision,
+          conflictBaseline.etag,
+        );
         if (isCurrentOperation(generation, targetDocument.id)) {
           setError(text(
             'The share link was revoked, but the diagram metadata could not be refreshed.',
@@ -558,7 +765,8 @@ const CloudWorkspaceModal: React.FC<CloudWorkspaceModalProps> = ({
         }
       }
     } catch (revokeError) {
-      if (isCurrentOperation(generation)) {
+      reportCurrentConflict(revokeError, conflictBaseline);
+      if (isCurrentOperation(generation, targetDocument.id)) {
         setError(revokeError instanceof Error ? revokeError.message : text(
           'Failed to revoke the share link.',
           '共有リンクを無効化できませんでした。',
@@ -570,15 +778,48 @@ const CloudWorkspaceModal: React.FC<CloudWorkspaceModalProps> = ({
   };
 
   const handleRestoreVersion = async (versionId: string) => {
-    if (!selectedDocument || !selectedContext) return;
+    if (!selectedDocument || !selectedContext || syncStatus === 'conflict') return;
     const targetDocument = selectedDocument;
     const targetContext = selectedContext;
+    const currentDocumentIdBeforePreserve = currentDocument?.id;
     if (!window.confirm(text(
       'Restore this cloud snapshot to the canvas?',
       'このクラウドスナップショットをキャンバスへ復元しますか？',
     ))) return;
     const generation = beginOperation(`version-${versionId}`);
+    let conflictBaseline = targetDocument;
     try {
+      let savedCurrentDocument: CloudDiagramDocument | null = null;
+      try {
+        savedCurrentDocument = await preserveCurrentDraft();
+        if (
+          currentContext?.role !== 'viewer'
+          && currentDocumentIdBeforePreserve
+          && await handleReplacementDocument(
+            savedCurrentDocument,
+            currentDocumentIdBeforePreserve,
+            generation,
+          )
+        ) return;
+        if (savedCurrentDocument?.id === targetDocument.id) {
+          conflictBaseline = savedCurrentDocument;
+        }
+      } catch (saveError) {
+        if (!isCurrentOperation(generation, targetDocument.id)) return;
+        const discardUnsavedChanges = window.confirm(text(
+          'The current work could not be saved. Restore the snapshot anyway and discard the unsaved changes?',
+          '現在の作業を保存できませんでした。未保存の変更を破棄して、スナップショットを復元しますか？',
+        ));
+        if (!discardUnsavedChanges) {
+          setError(saveError instanceof Error ? saveError.message : text(
+            'The current work could not be saved.',
+            '現在の作業を保存できませんでした。',
+          ));
+          return;
+        }
+        onDiscardPendingSave();
+      }
+      if (!isCurrentOperation(generation, targetDocument.id)) return;
       const version = await getCloudVersion(targetContext, versionId);
       if (!isCurrentOperation(generation, targetDocument.id)) return;
       if (version.diagramId !== targetDocument.id) {
@@ -587,10 +828,46 @@ const CloudWorkspaceModal: React.FC<CloudWorkspaceModalProps> = ({
           '選択したスナップショットはこの図面のものではありません。',
         ));
       }
-      onRestoreVersion(version, targetDocument, targetContext);
+      if (targetContext.role !== 'viewer') {
+        await createCloudVersion(targetContext, text(
+          'Automatic backup before restoring a snapshot',
+          'スナップショット復元前の自動バックアップ',
+        ));
+        if (!isCurrentOperation(generation, targetDocument.id)) return;
+      }
+      const baseDocument = (
+        savedCurrentDocument?.id === targetDocument.id
+          ? savedCurrentDocument
+          : targetDocument
+      );
+      const restored = await onRestoreVersion(version, baseDocument, targetContext);
+      if (!isCurrentOperation(generation, targetDocument.id)) return;
+      if (!restored) {
+        setError(text(
+          'The cloud diagram changed while the snapshot was loading. Resolve the synchronization conflict first.',
+          'スナップショットの読み込み中にクラウド図面が変更されました。先に同期競合を解決してください。',
+        ));
+        return;
+      }
       closeModal();
     } catch (versionError) {
-      if (isCurrentOperation(generation)) {
+      if (isCurrentOperation(generation, targetDocument.id)) {
+        if (versionError instanceof CloudDiagramApiError && versionError.status === 404) {
+          try {
+            if (targetContext.access === 'shared' && targetContext.shareToken) {
+              await getSharedCloudDiagram(targetContext.shareToken);
+            } else {
+              await getCloudDiagram(targetDocument.id);
+            }
+          } catch (verificationError) {
+            if (isCurrentOperation(generation, targetDocument.id)) {
+              reportCurrentConflict(verificationError, conflictBaseline);
+            }
+          }
+        } else {
+          reportCurrentConflict(versionError, conflictBaseline);
+        }
+        if (!isCurrentOperation(generation, targetDocument.id)) return;
         setError(versionError instanceof Error ? versionError.message : text(
           'Failed to restore the cloud snapshot.',
           'クラウドスナップショットを復元できませんでした。',
@@ -641,7 +918,7 @@ const CloudWorkspaceModal: React.FC<CloudWorkspaceModalProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div className="modal-overlay" onClick={closeModal}>
+    <div className="modal-overlay cloud-workspace-overlay" onClick={closeModal}>
       <div
         ref={dialogRef}
         className="modal-content cloud-workspace-modal"
@@ -778,11 +1055,14 @@ const CloudWorkspaceModal: React.FC<CloudWorkspaceModalProps> = ({
                   <div className="cloud-document-toolbar-actions">
                     <button
                       className="btn-secondary"
-                      disabled={Boolean(operation)}
-                      onClick={() => {
-                        if (selectedContext) onOpenDocument(selectedDocument, selectedContext);
-                        closeModal();
-                      }}
+                      disabled={Boolean(operation) || syncStatus === 'conflict'}
+                      onClick={() => void handleOpenSelected()}
+                      title={syncStatus === 'conflict'
+                        ? text(
+                            'Resolve the synchronization conflict before opening a cloud diagram.',
+                            'クラウド図面を開く前に同期競合を解決してください。',
+                          )
+                        : undefined}
                     >
                       <FolderOpen size={16} />
                       {text('Open', '開く')}
@@ -829,7 +1109,13 @@ const CloudWorkspaceModal: React.FC<CloudWorkspaceModalProps> = ({
                               </div>
                               <button
                                 onClick={() => void handleRestoreVersion(version.versionId)}
-                                disabled={Boolean(operation)}
+                                disabled={Boolean(operation) || syncStatus === 'conflict'}
+                                title={syncStatus === 'conflict'
+                                  ? text(
+                                      'Resolve the synchronization conflict before restoring a snapshot.',
+                                      'スナップショットを復元する前に同期競合を解決してください。',
+                                    )
+                                  : undefined}
                               >
                                 {text('Restore', '復元')}
                               </button>

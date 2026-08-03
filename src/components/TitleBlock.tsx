@@ -61,8 +61,13 @@ const TitleBlock: React.FC<TitleBlockProps> = ({
   };
 
   const handleSave = () => {
+    const normalizedName = editData.architectureName.trim().slice(0, 200)
+      || 'Untitled Architecture';
     setIsEditing(false);
-    onUpdate?.(editData);
+    onUpdate?.({
+      ...editData,
+      architectureName: normalizedName,
+    });
   };
 
   const handleCancel = () => {
@@ -152,6 +157,7 @@ const TitleBlock: React.FC<TitleBlockProps> = ({
               value={editData.architectureName}
               onChange={(e) => setEditData({ ...editData, architectureName: e.target.value })}
               placeholder={t("Architecture name")}
+              maxLength={200}
             />
           </div>
           <div className="title-block-row">
