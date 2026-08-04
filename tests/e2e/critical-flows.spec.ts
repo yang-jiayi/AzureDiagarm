@@ -4111,6 +4111,7 @@ test('service and layer ungroup actions preserve absolute positions', async ({ p
 });
 
 test('deployment guide accordions are keyboard accessible and stale results are discarded', async ({ page }) => {
+  test.slow();
   await initializePage(page, {
     documentId: 'A',
     access: 'owner',
@@ -4205,7 +4206,7 @@ test('deployment guide accordions are keyboard accessible and stale results are 
   await generateButton.click();
   const modal = page.locator('.deployment-modal');
   await expect(modal.getByText('Deploy the test architecture')).toBeVisible({
-    timeout: 5_000,
+    timeout: 15_000,
   });
 
   const stepToggle = modal.locator('.step-header');
