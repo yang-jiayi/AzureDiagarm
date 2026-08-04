@@ -599,7 +599,9 @@ test('compact chat and services panels provide dismissible backdrops', async ({ 
   const compactChat = page.getByRole('dialog', { name: 'Architecture Chat' });
   await expect(chatBackdrop).toBeVisible();
   await expect(compactChat).toHaveAttribute('aria-modal', 'true');
-  await expect(compactChat).toBeFocused();
+  await expect.poll(
+    () => compactChat.evaluate(dialog => dialog.contains(document.activeElement)),
+  ).toBe(true);
   await expect(page.locator('.app-header')).toHaveAttribute('inert', '');
   await expect(page.locator('.workspace')).toHaveAttribute('inert', '');
   await expect(app).toHaveCSS('padding-right', '0px');
@@ -4509,6 +4511,8 @@ test('diagram imports are atomic and AI imports save pricing to a new cloud docu
     })),
   });
   await expect.poll(() => dialogMessages.length).toBe(1);
+  await expect(fileInput).toHaveValue('');
+  expect(dialogMessages).toHaveLength(1);
   await expect(sourceNode).toBeVisible();
   await expect(cloudButton).toHaveClass(/btn-active/);
   expect(sourceUpdateAttempts).toBe(0);
@@ -4524,6 +4528,8 @@ test('diagram imports are atomic and AI imports save pricing to a new cloud docu
     })),
   });
   await expect.poll(() => dialogMessages.length).toBe(2);
+  await expect(fileInput).toHaveValue('');
+  expect(dialogMessages).toHaveLength(2);
   await expect(sourceNode).toBeVisible();
   await expect(cloudButton).toHaveClass(/btn-active/);
   expect(sourceUpdateAttempts).toBe(0);

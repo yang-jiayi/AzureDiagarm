@@ -1052,6 +1052,7 @@ function App() {
       autoSnapshot?: boolean,
       preserveExistingLayout?: boolean,
       beforeApply?: () => string | void,
+      reportErrors?: boolean,
     ) => Promise<void>
   ) | null>(null);
   const feedbackAfterValidationRef = useRef(false);
@@ -3700,6 +3701,7 @@ function App() {
               setLocalDiagramLineageId(lineageId);
               return lineageId;
             },
+            false,
           );
         } else {
           const preparedFlow = prepareFlowObject(flow);
@@ -3708,6 +3710,7 @@ function App() {
           applyPreparedFlowObject(preparedFlow);
         }
       } catch (error) {
+        if (error instanceof CloudDiagramOperationCancelledError) return;
         console.error('Error loading diagram:', error);
         alert(t("Error loading diagram file"));
       } finally {
@@ -3802,6 +3805,7 @@ function App() {
     autoSnapshot: boolean = true,
     preserveExistingLayout: boolean = false,
     beforeApply?: () => string | void,
+    reportErrors: boolean = true,
   ) => {
     const operationGeneration = aiGenerationRef.current.advance();
     const sourceLineageId = activeDiagramLineageIdRef.current;
@@ -4369,7 +4373,9 @@ function App() {
     } catch (error) {
       if (error instanceof CloudDiagramOperationCancelledError) throw error;
       console.error('Error in handleAIGenerate:', error);
-      alert(t("Failed to generate diagram. Check console for details."));
+      if (reportErrors) {
+        alert(t("Failed to generate diagram. Check console for details."));
+      }
       throw error;
     }
   }, [
