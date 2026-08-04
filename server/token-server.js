@@ -20,7 +20,7 @@ const {
   getPrincipal,
 } = require('./access-control');
 const { ArmKeyVaultAccessStore } = require('./arm-key-vault-access-store');
-const { createOpenAIProxyRouter } = require('./openai-proxy');
+const { createOpenAIProxyRouter, logFoundryConfiguration } = require('./openai-proxy');
 const { createFixedWindowRateLimiter, createTableRateLimiter } = require('./rate-limiter');
 const { createDiagramsRouter, createAzureBlobBackend } = require('./diagram-api');
 const { asyncHandler, createErrorHandler } = require('./async-handler');
@@ -239,15 +239,10 @@ const consumeAdminApiRateLimit = createFixedWindowRateLimiter(60 * 60 * 1000, 30
 if (!OPENAI_ENDPOINT) {
   console.warn('[openai-proxy] AZURE_OPENAI_ENDPOINT is not set. /api/openai will return 503.');
 }
-if (!FOUNDRY_ENDPOINT) {
-  console.warn('[openai-proxy] AZURE_FOUNDRY_ENDPOINT is not set. Anthropic requests will return 503.');
-}
 if (OPENAI_ALLOWED_DEPLOYMENTS.size === 0) {
   console.warn('[openai-proxy] AZURE_OPENAI_ALLOWED_DEPLOYMENTS is empty. All Azure OpenAI requests will be rejected (503) until the allowlist is configured.');
 }
-if (FOUNDRY_ALLOWED_DEPLOYMENTS.size === 0) {
-  console.warn('[openai-proxy] AZURE_FOUNDRY_ALLOWED_DEPLOYMENTS is empty. Anthropic requests will be rejected.');
-}
+logFoundryConfiguration(FOUNDRY_ENDPOINT, FOUNDRY_ALLOWED_DEPLOYMENTS, console);
 
 // ── Durable feedback storage ───────────────────────────────────────────────
 // Direct email delivery is preferred for low-cost deployments. Azure Table

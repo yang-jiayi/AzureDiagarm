@@ -529,17 +529,23 @@ jobs:
             .properties.provisioningState == "Succeeded"
           ' /tmp/azurediagarm-waf-policy.json > /dev/null
 
-      - name: Verify runtime least privilege and shared rate-limit storage
+      - name: Enforce storage security and verify runtime least privilege
         env:
+          AZURE_BLOB_ENDPOINT: ${{ vars.AZURE_BLOB_ENDPOINT }}
           AZURE_TABLES_ENDPOINT: ${{ vars.AZURE_TABLES_ENDPOINT }}
         run: |
           set -Eeuo pipefail
+          if [[ -z "$AZURE_BLOB_ENDPOINT" ]]; then
+            echo "::error::AZURE_BLOB_ENDPOINT is required for durable diagram storage."
+            exit 1
+          fi
           if [[ -z "$AZURE_TABLES_ENDPOINT" ]]; then
             echo "::error::AZURE_TABLES_ENDPOINT is required so rate limits are shared across Container Apps replicas."
             exit 1
           fi
 
           normalized_endpoint="${AZURE_TABLES_ENDPOINT%/}/"
+          normalized_blob_endpoint="${AZURE_BLOB_ENDPOINT%/}/"
           az storage account list --output json > /tmp/azurediagarm-storage-accounts.json
           storage_id="$(
             jq -er \
@@ -552,6 +558,114 @@ jobs:
                 .id
               ' /tmp/azurediagarm-storage-accounts.json
           )"
+          jq -e \
+            --arg storage "$storage_id" \
+            --arg endpoint "${normalized_blob_endpoint,,}" \
+            '
+              any(
+                .[];
+                (.id | ascii_downcase) == ($storage | ascii_downcase) and
+                ((.primaryEndpoints.blob // "") | ascii_downcase) == $endpoint
+              )
+            ' /tmp/azurediagarm-storage-accounts.json > /dev/null || {
+            echo "::error::AZURE_BLOB_ENDPOINT and AZURE_TABLES_ENDPOINT must use the same hardened storage account."
+            exit 1
+          }
+
+          az storage account show \
+            --ids "$storage_id" \
+            --output json > /tmp/azurediagarm-storage-security.json
+          jq -e '
+            .publicNetworkAccess == "SecuredByPerimeter" and
+            .allowSharedKeyAccess == false and
+            .allowBlobPublicAccess == false and
+            .enableHttpsTrafficOnly == true and
+            .minimumTlsVersion == "TLS1_2"
+          ' /tmp/azurediagarm-storage-security.json > /dev/null || {
+            echo "::error::Diagram storage must remain secured by its Network Security Perimeter with keyless HTTPS-only access."
+            exit 1
+          }
+
+          # The storage account uses a Network Security Perimeter instead of a
+          # Private Endpoint. Explicitly override the subscription Defender
+          # setting so inherited on-upload malware scanning cannot repeatedly
+          # attempt an Event Grid subscription that the perimeter blocks.
+          defender_url="https://management.azure.com${storage_id}/providers/Microsoft.Security/defenderForStorageSettings/current?api-version=2022-12-01-preview"
+          az rest \
+            --method get \
+            --url "$defender_url" \
+            --output json > /tmp/azurediagarm-defender-storage.json
+          if ! jq -e '
+            .properties.isEnabled == true and
+            .properties.overrideSubscriptionLevelSettings == true and
+            .properties.malwareScanning.onUpload.isEnabled == false and
+            .properties.malwareScanning.onUpload.capGBPerMonth == -1 and
+            .properties.sensitiveDataDiscovery.isEnabled == true
+          ' /tmp/azurediagarm-defender-storage.json > /dev/null; then
+            jq -n '{
+              properties: {
+                isEnabled: true,
+                overrideSubscriptionLevelSettings: true,
+                malwareScanning: {
+                  onUpload: {
+                    isEnabled: false,
+                    capGBPerMonth: -1
+                  }
+                },
+                sensitiveDataDiscovery: {
+                  isEnabled: true
+                }
+              }
+            }' > /tmp/azurediagarm-defender-storage-desired.json
+            az rest \
+              --method put \
+              --url "$defender_url" \
+              --headers Content-Type=application/json \
+              --body @/tmp/azurediagarm-defender-storage-desired.json \
+              --output json > /tmp/azurediagarm-defender-storage.json
+          fi
+          jq -e '
+            .properties.isEnabled == true and
+            .properties.overrideSubscriptionLevelSettings == true and
+            .properties.malwareScanning.onUpload.isEnabled == false and
+            .properties.sensitiveDataDiscovery.isEnabled == true
+          ' /tmp/azurediagarm-defender-storage.json > /dev/null
+
+          # Security Center's built-in Private Link and VNet-rule audits do not
+          # recognize Network Security Perimeters. Keep the resource-scoped,
+          # time-bound mitigated exemption explicit and fail when it expires.
+          az policy exemption show \
+            --name AzureDiagarm-Storage-NSP \
+            --scope "$storage_id" \
+            --output json > /tmp/azurediagarm-storage-policy-exemption.json
+          jq -e '
+            .exemptionCategory == "Mitigated" and
+            (.expiresOn // "") != ""
+          ' /tmp/azurediagarm-storage-policy-exemption.json > /dev/null
+          exemption_expires="$(
+            jq -er '.expiresOn' /tmp/azurediagarm-storage-policy-exemption.json
+          )"
+          if (( $(date -u -d "$exemption_expires" +%s) <= $(date -u +%s) )); then
+            echo "::error::AzureDiagarm-Storage-NSP has expired and requires a security review."
+            exit 1
+          fi
+          required_policy_references=(
+            storageaccountsshouldrestrictnetworkaccessusingvirtualnetworkrulesexdatabricksmonitoringeffect
+            storageaccountsshouldrestrictnetworkaccessusingvirtualnetworkrulesexaromonitoringeffect
+            storageaccountsshouldrestrictnetworkaccessusingvirtualnetworkrulesmonitoringeffect
+            storageaccountshoulduseaprivatelinkconnectionexdatabricksmonitoringeffect
+            storageaccountshoulduseaprivatelinkconnectionmonitoringeffect
+            storageaccountshoulduseaprivatelinkconnectionexaromonitoringeffect
+          )
+          for reference_id in "${required_policy_references[@]}"; do
+            jq -e --arg reference "$reference_id" '
+              (.policyDefinitionReferenceIds // []) | index($reference) != null
+            ' /tmp/azurediagarm-storage-policy-exemption.json > /dev/null || {
+              echo "::error::AzureDiagarm-Storage-NSP is missing policy reference $reference_id."
+              exit 1
+            }
+          done
+
           az containerapp show \
             --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
             --name "${{ vars.AZURE_CONTAINER_APP }}" \

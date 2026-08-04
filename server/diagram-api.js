@@ -241,6 +241,13 @@ function storageErrorStatus(err) {
 }
 
 function respondStorageError(res, logger, context, err) {
+  if (res.headersSent || res.writableEnded) {
+    logger.error(
+      `[diagrams] ${context} storage error after the response was sent:`,
+      err?.message || err,
+    );
+    return undefined;
+  }
   const status = storageErrorStatus(err);
   if (status === 412) {
     return res.status(412).json({ error: 'The document was modified by another request. Reload and retry.' });
@@ -497,16 +504,22 @@ function createDiagramsRouter(options = {}) {
     if (!ifMatch) return res.status(428).json({ error: 'If-Match header is required' });
 
     try {
-      return await withDocumentLock(req.diagramOwnerKey, req.params.id, async () => {
+      const outcome = await withDocumentLock(req.diagramOwnerKey, req.params.id, async () => {
         const currentName = currentPath(req.diagramOwnerKey, req.params.id);
         const record = await backend.read(currentName);
-        if (!record) return res.status(404).json({ error: 'Not found' });
+        if (!record) return { status: 404, error: 'Not found' };
         if (isDeletionMarker(record.value)) {
           if (record.value.sourceEtag !== ifMatch && record.etag !== ifMatch) {
-            return res.status(412).json({ error: 'The document was modified by another request. Reload and retry.' });
+            return {
+              status: 412,
+              error: 'The document was modified by another request. Reload and retry.',
+            };
           }
         } else if (record.etag !== ifMatch) {
-          return res.status(412).json({ error: 'The document was modified by another request. Reload and retry.' });
+          return {
+            status: 412,
+            error: 'The document was modified by another request. Reload and retry.',
+          };
         }
 
         const marker = isDeletionMarker(record.value)
@@ -528,8 +541,10 @@ function createDiagramsRouter(options = {}) {
         }
         for (const name of names) await backend.remove(name);
         await backend.remove(currentName, markerEtag);
-        return res.status(204).end();
+        return { status: 204 };
       });
+      if (outcome.error) return res.status(outcome.status).json({ error: outcome.error });
+      return res.status(outcome.status).end();
     } catch (err) {
       return respondStorageError(res, logger, 'delete', err);
     }
@@ -548,13 +563,15 @@ function createDiagramsRouter(options = {}) {
     const notes = typeof notesRaw === 'string' ? notesRaw : '';
 
     try {
-      return await withDocumentLock(req.diagramOwnerKey, req.params.id, async () => {
+      const outcome = await withDocumentLock(req.diagramOwnerKey, req.params.id, async () => {
         const record = await loadCurrent(req.diagramOwnerKey, req.params.id);
-        if (!record) return res.status(404).json({ error: 'Not found' });
+        if (!record) return { status: 404, error: 'Not found' };
         const version = buildVersion(record.value, req.diagramPrincipal, notes);
         await backend.put(versionPath(req.diagramOwnerKey, req.params.id, version.versionId), version);
-        return res.status(201).json({ version });
+        return { status: 201, version };
       });
+      if (outcome.error) return res.status(outcome.status).json({ error: outcome.error });
+      return res.status(outcome.status).json({ version: outcome.version });
     } catch (err) {
       return respondStorageError(res, logger, 'version-create', err);
     }
@@ -833,16 +850,21 @@ function createDiagramsRouter(options = {}) {
       if (resolved.share.role !== 'editor') {
         return res.status(403).json({ error: 'Editor access is required to snapshot this document.' });
       }
-      return await withDocumentLock(resolved.ownerKey, resolved.documentId, async () => {
+      const outcome = await withDocumentLock(resolved.ownerKey, resolved.documentId, async () => {
         const current = await resolveShare(token);
-        if (current.status) return res.status(current.status).json({ error: 'Not found' });
+        if (current.status) return { status: current.status, error: 'Not found' };
         if (current.share.role !== 'editor') {
-          return res.status(403).json({ error: 'Editor access is required to snapshot this document.' });
+          return {
+            status: 403,
+            error: 'Editor access is required to snapshot this document.',
+          };
         }
         const version = buildVersion(current.doc, req.diagramPrincipal, notes);
         await backend.put(versionPath(current.ownerKey, current.documentId, version.versionId), version);
-        return res.status(201).json({ version });
+        return { status: 201, version };
       });
+      if (outcome.error) return res.status(outcome.status).json({ error: outcome.error });
+      return res.status(outcome.status).json({ version: outcome.version });
     } catch (err) {
       return respondStorageError(res, logger, 'shared-version-create', err);
     }
@@ -903,6 +925,8 @@ function createAzureBlobBackend(options = {}) {
     containerName = 'diagrams',
     credential,
     containerClient,
+    leaseRenewalIntervalMs = 30_000,
+    logger = console,
   } = options;
   let container = containerClient;
   if (!container) {
@@ -969,19 +993,76 @@ function createAzureBlobBackend(options = {}) {
     }
 
     let renewalError = null;
+    let renewalPromise = null;
     const renewalTimer = setInterval(() => {
-      leaseClient.renewLease().catch((error) => {
-        renewalError = error;
-      });
-    }, 30_000);
+      if (renewalPromise) return;
+      renewalPromise = leaseClient.renewLease()
+        .then(() => {
+          // A later successful renewal confirms that a transient failure did
+          // not cause the lease to be lost.
+          renewalError = null;
+        })
+        .catch((error) => {
+          renewalError = error;
+        })
+        .finally(() => {
+          renewalPromise = null;
+        });
+    }, leaseRenewalIntervalMs);
+
+    let result;
+    let operationError = null;
     try {
-      const result = await operation();
-      if (renewalError) throw renewalError;
-      return result;
+      result = await operation();
+    } catch (error) {
+      operationError = error;
     } finally {
       clearInterval(renewalTimer);
-      await leaseClient.releaseLease();
     }
+
+    if (renewalPromise) await renewalPromise;
+
+    let releaseError = null;
+    try {
+      await leaseClient.releaseLease();
+    } catch (error) {
+      releaseError = error;
+    }
+
+    if (operationError) {
+      if (releaseError) {
+        logger.warn(
+          '[diagrams] Document lock release failed while handling an operation error:',
+          releaseError?.message || releaseError,
+        );
+      }
+      throw operationError;
+    }
+
+    if (renewalError && releaseError) {
+      logger.error(
+        '[diagrams] Document lock ownership could not be confirmed after the operation:',
+        renewalError?.message || renewalError,
+      );
+      const lockError = new Error('Document lock ownership could not be confirmed');
+      lockError.statusCode = 503;
+      lockError.cause = renewalError;
+      throw lockError;
+    }
+
+    if (renewalError) {
+      logger.warn(
+        '[diagrams] Document lock renewal failed, but the lease was released successfully:',
+        renewalError?.message || renewalError,
+      );
+    }
+    if (releaseError) {
+      logger.warn(
+        '[diagrams] Document lock release failed after a successful operation:',
+        releaseError?.message || releaseError,
+      );
+    }
+    return result;
   }
 
   return {

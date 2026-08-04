@@ -4,7 +4,7 @@
 const assert = require('node:assert/strict');
 const { test } = require('node:test');
 const express = require('express');
-const { createOpenAIProxyRouter } = require('./openai-proxy');
+const { createOpenAIProxyRouter, logFoundryConfiguration } = require('./openai-proxy');
 
 async function startServer(options) {
   const app = express();
@@ -60,6 +60,46 @@ function jsonResponse(status, body, headers = {}) {
 }
 
 const silentLogger = { info() {}, error() {} };
+
+test('Foundry logging treats an intentionally disabled optional provider as informational', () => {
+  const messages = { info: [], warn: [] };
+  const logger = {
+    info(message) {
+      messages.info.push(message);
+    },
+    warn(message) {
+      messages.warn.push(message);
+    },
+  };
+
+  logFoundryConfiguration(undefined, new Set(), logger);
+
+  assert.equal(messages.info.length, 1);
+  assert.match(messages.info[0], /optional Microsoft Foundry provider is disabled/i);
+  assert.deepEqual(messages.warn, []);
+});
+
+test('Foundry logging warns only about partial configuration', () => {
+  const messages = { info: [], warn: [] };
+  const logger = {
+    info(message) {
+      messages.info.push(message);
+    },
+    warn(message) {
+      messages.warn.push(message);
+    },
+  };
+
+  logFoundryConfiguration('https://example.services.ai.azure.com', new Set(), logger);
+  assert.deepEqual(messages.info, []);
+  assert.equal(messages.warn.length, 1);
+  assert.match(messages.warn[0], /AZURE_FOUNDRY_ALLOWED_DEPLOYMENTS is empty/);
+
+  messages.warn.length = 0;
+  logFoundryConfiguration(undefined, new Set(['claude-opus-5']), logger);
+  assert.equal(messages.warn.length, 1);
+  assert.match(messages.warn[0], /AZURE_FOUNDRY_ENDPOINT is not set/);
+});
 
 test('OpenAI proxy rejects deployments outside the server allowlist', async (t) => {
   const server = await startServer({

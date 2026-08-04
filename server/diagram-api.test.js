@@ -13,10 +13,11 @@ const { createErrorHandler } = require('./async-handler');
 // 412 on an ETag mismatch, and reads return a fresh deep copy so router-side
 // mutations never leak into stored state before an explicit write.
 class FakeBackend {
-  constructor() {
+  constructor(options = {}) {
     this.map = new Map();
     this.counter = 0;
     this.locks = new Map();
+    this.afterLockOperation = options.afterLockOperation || null;
   }
 
   nextEtag() {
@@ -91,7 +92,9 @@ class FakeBackend {
     this.locks.set(name, queued);
     await previous;
     try {
-      return await operation();
+      const result = await operation();
+      if (this.afterLockOperation) await this.afterLockOperation(name, result);
+      return result;
     } finally {
       release();
       if (this.locks.get(name) === queued) this.locks.delete(name);
@@ -411,6 +414,28 @@ test('immutable versions can be created, listed and fetched', async (t) => {
   assert.ok(Array.isArray(one.json.version.payload.nodes));
 });
 
+test('version creation waits for lock completion before sending success', async (t) => {
+  const backend = new FakeBackend({
+    afterLockOperation() {
+      const error = new Error('Lock ownership could not be confirmed');
+      error.statusCode = 503;
+      throw error;
+    },
+  });
+  const server = await startServer({ backend });
+  t.after(server.close);
+
+  const created = await createDoc(server.baseUrl, USER_A);
+  const res = await call(
+    server.baseUrl,
+    'POST',
+    `/api/diagrams/${created.json.document.id}/versions`,
+    { headers: USER_A, body: { notes: 'late lock failure' } },
+  );
+  assert.equal(res.status, 503);
+  assert.deepEqual(res.json, { error: 'Diagram storage is temporarily unavailable' });
+});
+
 test('comments are added and bounded to the document', async (t) => {
   const server = await startServer({ backend: new FakeBackend() });
   t.after(server.close);
@@ -512,6 +537,34 @@ test('sharing: viewer can read but not edit, editor can edit', async (t) => {
   assert.equal(viewerSnap.status, 403);
 });
 
+test('shared version creation waits for lock completion before sending success', async (t) => {
+  const backend = new FakeBackend();
+  const server = await startServer({ backend });
+  t.after(server.close);
+
+  const created = await createDoc(server.baseUrl, USER_A);
+  const share = await call(
+    server.baseUrl,
+    'POST',
+    `/api/diagrams/${created.json.document.id}/shares`,
+    { headers: USER_A, body: { role: 'editor' } },
+  );
+  backend.afterLockOperation = () => {
+    const error = new Error('Lock ownership could not be confirmed');
+    error.statusCode = 503;
+    throw error;
+  };
+
+  const res = await call(
+    server.baseUrl,
+    'POST',
+    `/api/diagrams/shared/${share.json.token}/versions`,
+    { headers: USER_B, body: { notes: 'late lock failure' } },
+  );
+  assert.equal(res.status, 503);
+  assert.deepEqual(res.json, { error: 'Diagram storage is temporarily unavailable' });
+});
+
 test('shared routes require an authenticated app user', async (t) => {
   const server = await startServer({ backend: new FakeBackend() });
   t.after(server.close);
@@ -603,6 +656,26 @@ test('deleting a document requires If-Match and cleans up shares and versions', 
 
   const resolve = await call(server.baseUrl, 'GET', `/api/diagrams/shared/${token}`, { headers: USER_B });
   assert.equal(resolve.status, 404);
+});
+
+test('delete waits for lock completion before sending success', async (t) => {
+  const backend = new FakeBackend({
+    afterLockOperation() {
+      const error = new Error('Lock ownership could not be confirmed');
+      error.statusCode = 503;
+      throw error;
+    },
+  });
+  const server = await startServer({ backend });
+  t.after(server.close);
+
+  const created = await createDoc(server.baseUrl, USER_A);
+  const res = await call(server.baseUrl, 'DELETE', `/api/diagrams/${created.json.document.id}`, {
+    headers: USER_A,
+    ifMatch: created.etag,
+  });
+  assert.equal(res.status, 503);
+  assert.deepEqual(res.json, { error: 'Diagram storage is temporarily unavailable' });
 });
 
 test('delete cannot discard an update that wins after the initial read', async (t) => {
@@ -720,6 +793,87 @@ test('Azure Blob backend retries container creation after a transient failure', 
   assert.equal(result.etag, '"etag-upload"');
   assert.equal(createAttempts, 2);
   assert.equal(uploads, 1);
+});
+
+test('Azure Blob backend does not turn a successful operation into a retry after release failure', async () => {
+  const warnings = [];
+  const leaseClient = {
+    async acquireLease() {},
+    async renewLease() {},
+    async releaseLease() {
+      throw new Error('Release failed');
+    },
+  };
+  const containerClient = {
+    async createIfNotExists() {},
+    getBlockBlobClient() {
+      return {
+        async upload() {
+          return { etag: '"etag-upload"' };
+        },
+        getBlobLeaseClient() {
+          return leaseClient;
+        },
+      };
+    },
+  };
+  const backend = createAzureBlobBackend({
+    containerClient,
+    logger: {
+      error() {},
+      warn(...args) {
+        warnings.push(args.join(' '));
+      },
+    },
+  });
+
+  const result = await backend.withLock('locks/document.lock', async () => 'saved');
+  assert.equal(result, 'saved');
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /release failed after a successful operation/i);
+});
+
+test('Azure Blob backend returns a transient failure when renewal and release both fail', async () => {
+  let signalRenewalAttempt;
+  const renewalAttempted = new Promise((resolve) => {
+    signalRenewalAttempt = resolve;
+  });
+  const leaseClient = {
+    async acquireLease() {},
+    async renewLease() {
+      signalRenewalAttempt();
+      throw new Error('Renewal failed');
+    },
+    async releaseLease() {
+      throw new Error('Release failed');
+    },
+  };
+  const containerClient = {
+    async createIfNotExists() {},
+    getBlockBlobClient() {
+      return {
+        async upload() {
+          return { etag: '"etag-upload"' };
+        },
+        getBlobLeaseClient() {
+          return leaseClient;
+        },
+      };
+    },
+  };
+  const backend = createAzureBlobBackend({
+    containerClient,
+    leaseRenewalIntervalMs: 1,
+    logger: { error() {}, warn() {} },
+  });
+
+  await assert.rejects(
+    backend.withLock('locks/document.lock', async () => {
+      await renewalAttempted;
+      return 'saved';
+    }),
+    (error) => error.statusCode === 503 && /ownership could not be confirmed/i.test(error.message),
+  );
 });
 
 test('malformed share tokens are rejected as not found', async (t) => {

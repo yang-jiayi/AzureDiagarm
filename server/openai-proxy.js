@@ -10,6 +10,30 @@ const DEFAULT_API_VERSION = '2024-05-01-preview';
 const DEFAULT_ANTHROPIC_VERSION = '2023-06-01';
 const DEFAULT_TIMEOUT_MS = 210_000;
 
+function logFoundryConfiguration(endpoint, allowedDeployments, logger = console) {
+  const hasEndpoint = typeof endpoint === 'string' && endpoint.trim().length > 0;
+  const hasDeployments = allowedDeployments instanceof Set && allowedDeployments.size > 0;
+  if (!hasEndpoint && !hasDeployments) {
+    logger.info(
+      '[openai-proxy] Optional Microsoft Foundry provider is disabled; '
+      + 'Anthropic models will not be offered.',
+    );
+    return;
+  }
+  if (!hasEndpoint) {
+    logger.warn(
+      '[openai-proxy] AZURE_FOUNDRY_ENDPOINT is not set. '
+      + 'Anthropic requests will return 503.',
+    );
+  }
+  if (!hasDeployments) {
+    logger.warn(
+      '[openai-proxy] AZURE_FOUNDRY_ALLOWED_DEPLOYMENTS is empty. '
+      + 'Anthropic requests will be rejected.',
+    );
+  }
+}
+
 function buildOpenAIUrl(endpoint, deployment, apiFormat, apiVersion) {
   const base = endpoint.endsWith('/') ? endpoint : `${endpoint}/`;
   if (apiFormat === 'anthropic-messages') {
@@ -452,5 +476,6 @@ module.exports = {
   buildOpenAIUrl,
   classifyUpstreamError,
   createOpenAIProxyRouter,
+  logFoundryConfiguration,
   parseUpstreamError,
 };
