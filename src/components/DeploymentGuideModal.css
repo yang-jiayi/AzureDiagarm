@@ -132,14 +132,27 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
+  width: 100%;
   padding: 16px;
+  border: 0;
   cursor: pointer;
   user-select: none;
   background: white;
+  color: inherit;
+  font: inherit;
+  text-align: left;
 }
 
 .step-header:hover {
   background: #f9fafb;
+}
+
+.step-header:focus-visible,
+.bicep-template-toggle:focus-visible,
+.btn-download-bicep:focus-visible,
+.copy-button:focus-visible {
+  outline: 3px solid #2563eb;
+  outline-offset: 2px;
 }
 
 .step-title {
@@ -429,13 +442,13 @@
 }
 
 .deployment-modal .modal-actions .btn-primary {
-  background: #3b82f6;
+  background: #2563eb;
   color: white;
   border: none;
 }
 
 .deployment-modal .modal-actions .btn-primary:hover {
-  background: #2563eb;
+  background: #1d4ed8;
 }
 
 .deployment-modal .modal-actions .btn-secondary {
@@ -531,13 +544,28 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 14px 16px;
-  cursor: pointer;
+  gap: 8px;
+  padding: 0 16px 0 0;
   background: #f8fafc;
 }
 
 .bicep-template-header:hover {
   background: #f0f9ff;
+}
+
+.bicep-template-toggle {
+  display: flex;
+  flex: 1;
+  justify-content: space-between;
+  align-items: center;
+  min-width: 0;
+  padding: 14px 16px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
 }
 
 .bicep-template-info {

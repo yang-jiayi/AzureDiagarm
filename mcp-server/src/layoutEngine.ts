@@ -164,6 +164,9 @@ function assignGroupColors(labels: string[]): { bg: string; border: string }[] {
 const NODE_WIDTH = 200;
 const NODE_HEIGHT = 70;
 const PADDING = 40;
+const MAX_LAYOUT_SERVICES = 250;
+const MAX_LAYOUT_CONNECTIONS = 1_000;
+const MAX_LAYOUT_GROUPS = 100;
 
 function computeFlatLayout(
   services: DiagramService[],
@@ -547,6 +550,15 @@ export function computeLayout(
   groups: DiagramGroup[],
   direction: 'TB' | 'LR' = 'TB',
 ): LayoutResult {
+  if (services.length > MAX_LAYOUT_SERVICES) {
+    throw new RangeError(`Layout supports at most ${MAX_LAYOUT_SERVICES} services.`);
+  }
+  if (connections.length > MAX_LAYOUT_CONNECTIONS) {
+    throw new RangeError(`Layout supports at most ${MAX_LAYOUT_CONNECTIONS} connections.`);
+  }
+  if (groups.length > MAX_LAYOUT_GROUPS) {
+    throw new RangeError(`Layout supports at most ${MAX_LAYOUT_GROUPS} groups.`);
+  }
   if (groups && groups.length > 0) {
     try {
       const grouped = computeGroupedLayout(services, connections, groups, direction);

@@ -98,6 +98,7 @@ import {
   collectNodeAndDescendantIds,
   deleteNodesPreservingGroupChildren,
   detachChildrenFromGroups,
+  detachNodeFromGroup,
   duplicateSelectedSubgraph,
   fitGroupToContent,
   fitAllGroupsToContent,
@@ -293,6 +294,13 @@ const NODE_CONTEXT_MENU_WIDTH = 280;
 const NODE_CONTEXT_MENU_HEIGHT = 360;
 const PANE_CONTEXT_MENU_WIDTH = 220;
 const PANE_CONTEXT_MENU_HEIGHT = 190;
+
+function createLocalDiagramLineageId(prefix = 'local'): string {
+  const id = typeof crypto.randomUUID === 'function'
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  return `${prefix}:${id}`;
+}
 
 type NodeContextMenuState = {
   x: number;
@@ -812,6 +820,15 @@ function App() {
   const latestEdgesRef = useRef<Edge[]>(edges);
   latestEdgesRef.current = edges;
   const layoutGenerationRef = useRef(new OperationGeneration());
+  const diagramRevisionGenerationRef = useRef(new OperationGeneration());
+  const aiGenerationRef = useRef(new OperationGeneration());
+  const validationGenerationRef = useRef(new OperationGeneration());
+  const deploymentGuideGenerationRef = useRef(new OperationGeneration());
+  const intentionalLineageTransitionRef = useRef<string | null>(null);
+  const [localDiagramLineageId, setLocalDiagramLineageId] = useState(
+    () => createLocalDiagramLineageId(),
+  );
+  const activeDiagramLineageIdRef = useRef(localDiagramLineageId);
   const [architecturePrompt, setArchitecturePrompt] = useState<string>('');
   // The FIRST prompt of the current diagram lineage. Unlike architecturePrompt
   // (which each chat refinement overwrites), this is captured once when the
@@ -914,6 +931,10 @@ function App() {
     version: '1.0',
     date: new Date().toLocaleDateString(),
   });
+
+  useEffect(() => {
+    diagramRevisionGenerationRef.current.advance();
+  }, [architecturePrompt, edges, nodes, titleBlockData.architectureName]);
 
   useEffect(() => {
     setTitleBlockData((current) => {
@@ -1034,6 +1055,7 @@ function App() {
       prompt: string,
       autoSnapshot?: boolean,
       preserveExistingLayout?: boolean,
+      beforeApply?: () => string | void,
     ) => Promise<void>
   ) | null>(null);
   const feedbackAfterValidationRef = useRef(false);
@@ -2158,6 +2180,11 @@ function App() {
     closeNodeContextMenu();
   }, [closeNodeContextMenu, setNodes]);
 
+  const detachContextNodeFromGroup = useCallback((nodeId: string) => {
+    setNodes((currentNodes) => detachNodeFromGroup(currentNodes, nodeId));
+    closeNodeContextMenu();
+  }, [closeNodeContextMenu, setNodes]);
+
   const deleteContextNode = useCallback((nodeId: string) => {
     deleteCanvasNodes([nodeId]);
     closeNodeContextMenu();
@@ -2853,6 +2880,7 @@ function App() {
       architecturePrompt: architecturePrompt || undefined,
       originalPrompt: originalPrompt || architecturePrompt || undefined,
       iacBaseline,
+      validationScore: validationResult?.overallScore ?? persistedValidationScore,
     };
     const dataStr = JSON.stringify(diagramData, null, 2);
     const dataUri = 'data:application/json;charset=utf-8,' + encodeURIComponent(dataStr);
@@ -2864,7 +2892,7 @@ function App() {
     link.click();
     recordExport('json', fileName);
     trackExport('json', nodes.filter(n => n.type === 'azureNode').length);
-  }, [reactFlowInstance, recordExport, titleBlockData, workflow, pricingScenarios, architecturePrompt, originalPrompt, nodes, iacBaseline]);
+  }, [reactFlowInstance, recordExport, titleBlockData, workflow, pricingScenarios, architecturePrompt, originalPrompt, nodes, iacBaseline, validationResult, persistedValidationScore]);
 
   const exportCostBreakdown = useCallback(() => {
     // Calculate the cost breakdown
@@ -3238,7 +3266,7 @@ function App() {
     trackExport('csv', azureServiceNodes.length);
   }, [nodes, recordExport, pricingMode, t]);
 
-  const applyFlowObject = useCallback(
+  const prepareFlowObject = useCallback(
     (flow: unknown) => {
       if (!isRecord(flow)) {
         throw new Error('Invalid diagram payload');
@@ -3283,19 +3311,13 @@ function App() {
       // non-existent handle, so the edge silently fails to render. Remap the
       // invalid bare names to the correct handle id (valid ids pass through).
       const fixedEdges = normalizeRestoredEdges(restoredEdges);
-      setNodes(restoredNodes);
-      setEdges(fixedEdges);
-
-      if (restoredViewport && reactFlowInstance?.setViewport) {
-        reactFlowInstance.setViewport(restoredViewport);
-      }
 
       // Restore metadata if present
       const restoredTitle = isRecord(flow.titleBlockData)
         ? flow.titleBlockData
         : flow.metadata;
-      if (isRecord(restoredTitle)) {
-        setTitleBlockData({
+      const titleBlock = isRecord(restoredTitle)
+        ? {
           architectureName: typeof restoredTitle.architectureName === 'string'
             ? restoredTitle.architectureName
             : 'Untitled Architecture',
@@ -3304,40 +3326,78 @@ function App() {
           date: typeof restoredTitle.date === 'string'
             ? restoredTitle.date
             : new Date().toLocaleDateString(),
-        });
-      } else {
-        setTitleBlockData({
+        }
+        : {
           architectureName: 'Untitled Architecture',
           author: 'Azure Architect',
           version: '1.0',
           date: new Date().toLocaleDateString(),
-        });
+        };
+      const pricing = normalizePricingScenarios(flow.pricingScenarios);
+      const restoredIaCBaseline = restoreIaCBaseline(flow.iacBaseline);
+      const validationScore = (
+        typeof flow.validationScore === 'number' && Number.isFinite(flow.validationScore)
+      )
+        ? flow.validationScore
+        : undefined;
+      const restoredPrompt = typeof flow.architecturePrompt === 'string' ? flow.architecturePrompt : '';
+      const restoredOriginalPrompt = typeof flow.originalPrompt === 'string'
+        ? flow.originalPrompt
+        : restoredPrompt;
+
+      return {
+        nodes: restoredNodes,
+        edges: fixedEdges,
+        viewport: restoredViewport,
+        titleBlockData: titleBlock,
+        workflow: restoredWorkflow,
+        pricingScenarios: pricing,
+        iacBaseline: restoredIaCBaseline,
+        validationScore,
+        architecturePrompt: restoredPrompt,
+        originalPrompt: restoredOriginalPrompt,
+      };
+    },
+    [normalizeRestoredEdges],
+  );
+
+  const applyPreparedFlowObject = useCallback(
+    (restored: ReturnType<typeof prepareFlowObject>) => {
+      setNodes(restored.nodes);
+      setEdges(restored.edges);
+
+      if (restored.viewport && reactFlowInstance?.setViewport) {
+        reactFlowInstance.setViewport(restored.viewport);
       }
 
+      setTitleBlockData(restored.titleBlockData);
+
       // Restore workflow if present
-      setWorkflow(restoredWorkflow);
-      setPricingScenarios(normalizePricingScenarios(flow.pricingScenarios));
-      setIaCBaseline(restoreIaCBaseline(flow.iacBaseline));
+      setWorkflow(restored.workflow);
+      setPricingScenarios(restored.pricingScenarios);
+      setIaCBaseline(restored.iacBaseline);
       setDriftPlanSummary(null);
       setValidationResult(null);
-      setPersistedValidationScore(
-        typeof flow.validationScore === 'number' && Number.isFinite(flow.validationScore)
-          ? flow.validationScore
-          : undefined,
-      );
+      setPersistedValidationScore(restored.validationScore);
       setValidationHandoff(null);
       feedbackAfterValidationRef.current = false;
       setDeploymentGuide(null);
 
       // Restore architecture prompt if present
-      const restoredPrompt = typeof flow.architecturePrompt === 'string' ? flow.architecturePrompt : '';
-      setArchitecturePrompt(restoredPrompt);
-      setOriginalPrompt(typeof flow.originalPrompt === 'string' ? flow.originalPrompt : restoredPrompt);
+      setArchitecturePrompt(restored.architecturePrompt);
+      setOriginalPrompt(restored.originalPrompt);
       setReferenceImageUrl(null);
       setLastReferenceArchitecture(null);
       setLastBlueprintArchitecture(null);
     },
-    [setNodes, setEdges, reactFlowInstance, normalizeRestoredEdges]
+    [reactFlowInstance, setEdges, setNodes],
+  );
+
+  const applyFlowObject = useCallback(
+    (flow: unknown) => {
+      applyPreparedFlowObject(prepareFlowObject(flow));
+    },
+    [applyPreparedFlowObject, prepareFlowObject],
   );
 
   const cloudValidationScore = validationResult?.overallScore ?? persistedValidationScore;
@@ -3416,6 +3476,24 @@ function App() {
     enabled: cloudDraftHasContent,
     onLoad: applyFlowObject,
   });
+  const activeDiagramLineageId = cloudSync.context?.documentId
+    ? `cloud:${cloudSync.context.documentId}`
+    : localDiagramLineageId;
+  activeDiagramLineageIdRef.current = activeDiagramLineageId;
+
+  useEffect(() => {
+    if (intentionalLineageTransitionRef.current === activeDiagramLineageId) {
+      intentionalLineageTransitionRef.current = null;
+    } else {
+      aiGenerationRef.current.advance();
+    }
+    validationGenerationRef.current.advance();
+    deploymentGuideGenerationRef.current.advance();
+    setIsValidating(false);
+    setIsGeneratingGuide(false);
+    setIsValidationModalOpen(false);
+    setIsDeploymentGuideModalOpen(false);
+  }, [activeDiagramLineageId]);
 
   const startFreshDiagram = useCallback(async (): Promise<boolean> => {
     const preserveAsCopy = cloudSync.context?.role === 'viewer';
@@ -3448,6 +3526,7 @@ function App() {
     }
     trackStartFresh();
     cloudSync.reset();
+    setLocalDiagramLineageId(createLocalDiagramLineageId());
     setNodes([]);
     setEdges([]);
     setArchitecturePrompt('');
@@ -3563,6 +3642,9 @@ function App() {
         getVersion(versionId)
           .then((version) => {
             if (!version) throw new Error('Version not found');
+            setLocalDiagramLineageId(createLocalDiagramLineageId(
+              `restored-${version.lineageId || version.versionId}`,
+            ));
             applyFlowObject({
               nodes: version.nodes,
               edges: version.edges,
@@ -3592,6 +3674,7 @@ function App() {
         const diagramData = JSON.parse(decodedData);
         
         // Apply the diagram data
+        setLocalDiagramLineageId(createLocalDiagramLineageId('restored-legacy'));
         applyFlowObject(diagramData);
         
         // Clear the hash
@@ -3630,15 +3713,23 @@ function App() {
           if (!handleAIGenerateRef.current) {
             throw new Error('The architecture renderer is not ready');
           }
-          cloudSync.reset();
           await handleAIGenerateRef.current(
             flow,
             typeof flow.metadata?.prompt === 'string' ? flow.metadata.prompt : file.name,
             false,
+            false,
+            () => {
+              const lineageId = createLocalDiagramLineageId('loaded');
+              cloudSync.reset();
+              setLocalDiagramLineageId(lineageId);
+              return lineageId;
+            },
           );
         } else {
+          const preparedFlow = prepareFlowObject(flow);
           cloudSync.reset();
-          applyFlowObject(flow);
+          setLocalDiagramLineageId(createLocalDiagramLineageId('loaded'));
+          applyPreparedFlowObject(preparedFlow);
         }
       } catch (error) {
         console.error('Error loading diagram:', error);
@@ -3653,11 +3744,17 @@ function App() {
       input.value = '';
     };
     reader.readAsText(file);
-  }, [applyFlowObject, cloudSync, t, language]);
+  }, [applyPreparedFlowObject, cloudSync, language, prepareFlowObject, t]);
 
   // Restore a version from history
-  const restoreVersion = useCallback((version: DiagramVersion) => {
+  const restoreVersion = useCallback((version: DiagramVersion, restoreAsCopy: boolean) => {
     try {
+      if (restoreAsCopy) {
+        cloudSync.reset();
+        setLocalDiagramLineageId(createLocalDiagramLineageId(
+          `restored-${version.lineageId || version.versionId}`,
+        ));
+      }
       applyFlowObject({
         nodes: version.nodes,
         edges: version.edges,
@@ -3676,7 +3773,7 @@ function App() {
       console.error('Failed to restore version:', error);
       alert(t("Failed to restore version"));
     }
-  }, [applyFlowObject, t]);
+  }, [applyFlowObject, cloudSync, t]);
 
   // Manual snapshot save handler
   const handleSaveSnapshot = useCallback(async (notes: string) => {
@@ -3692,6 +3789,7 @@ function App() {
         edges,
         titleBlockData.architectureName,
         {
+          lineageId: activeDiagramLineageId,
           architecturePrompt,
           originalPrompt: originalPrompt || architecturePrompt || undefined,
           validationScore: cloudValidationScore,
@@ -3708,15 +3806,46 @@ function App() {
       console.error('Failed to save manual snapshot:', error);
       throw error;
     }
-  }, [nodes, edges, titleBlockData, architecturePrompt, originalPrompt, cloudValidationScore, workflow, pricingScenarios, cloudSync, iacBaseline]);
+  }, [
+    activeDiagramLineageId,
+    nodes,
+    edges,
+    titleBlockData,
+    architecturePrompt,
+    originalPrompt,
+    cloudValidationScore,
+    workflow,
+    pricingScenarios,
+    cloudSync,
+    iacBaseline,
+  ]);
 
   const handleAIGenerate = useCallback(async (
     architecture: any,
     prompt: string,
     autoSnapshot: boolean = true,
     preserveExistingLayout: boolean = false,
+    beforeApply?: () => string | void,
   ) => {
+    const operationGeneration = aiGenerationRef.current.advance();
+    const sourceLineageId = activeDiagramLineageIdRef.current;
+    const sourceDiagramRevision = diagramRevisionGenerationRef.current.current();
+    const assertIntentCurrent = () => {
+      if (
+        !aiGenerationRef.current.isCurrent(operationGeneration)
+        || activeDiagramLineageIdRef.current !== sourceLineageId
+      ) {
+        throw new CloudDiagramOperationCancelledError();
+      }
+    };
+    const assertSourceCurrent = () => {
+      assertIntentCurrent();
+      if (!diagramRevisionGenerationRef.current.isCurrent(sourceDiagramRevision)) {
+        throw new CloudDiagramOperationCancelledError();
+      }
+    };
     try {
+      assertSourceCurrent();
       console.log('Generating architecture from:', architecture);
       const isRefinement = preserveExistingLayout && nodes.length > 0;
       const { services, connections, workflow: workflowSteps } = architecture;
@@ -3765,6 +3894,7 @@ function App() {
             edges,
             titleBlockData.architectureName,
             {
+              lineageId: activeDiagramLineageId,
               architecturePrompt: architecturePrompt || 'Previous version',
               originalPrompt: originalPrompt || architecturePrompt || undefined,
               validationScore: cloudValidationScore,
@@ -3775,13 +3905,17 @@ function App() {
               iacBaseline,
             }
           );
+          assertSourceCurrent();
           try {
             await cloudSync.saveSnapshot('Auto-saved before AI regeneration');
+            assertSourceCurrent();
           } catch (cloudError) {
+            if (cloudError instanceof CloudDiagramOperationCancelledError) throw cloudError;
             console.warn('Cloud snapshot was unavailable; the local snapshot was preserved:', cloudError);
           }
           console.log('✅ Snapshot saved successfully!');
         } catch (err) {
+          if (err instanceof CloudDiagramOperationCancelledError) throw err;
           console.error('❌ Failed to save snapshot:', err);
         }
       } else {
@@ -3914,6 +4048,7 @@ function App() {
       console.error('Icon loading failed:', error);
       return services.map((s: any) => ({ serviceId: s.id, icon: null }));
     });
+    assertSourceCurrent();
     
     // Build icon cache from results
     iconResults.forEach((result: any) => {
@@ -3942,6 +4077,7 @@ function App() {
         groups || [],
         { direction: 'LR' }
       );
+      assertSourceCurrent();
       positionedServices = result.services;
       positionedGroups = result.groups;
     } else {
@@ -3955,6 +4091,7 @@ function App() {
       positionedServices = result.services;
       positionedGroups = result.groups;
     }
+    assertSourceCurrent();
     console.log('📦 Positioned groups after layout:', positionedGroups);
 
     // Create group nodes with calculated positions and sizes
@@ -4117,6 +4254,13 @@ function App() {
 
     // Add the new nodes and edges
     console.log(`Setting ${finalNodes.length} nodes and ${newEdges.length} edges`);
+    assertSourceCurrent();
+    const transitionedLineageId = beforeApply?.();
+    const appliedLineageId = transitionedLineageId || sourceLineageId;
+    if (transitionedLineageId && transitionedLineageId !== sourceLineageId) {
+      intentionalLineageTransitionRef.current = transitionedLineageId;
+      activeDiagramLineageIdRef.current = transitionedLineageId;
+    }
     const pricingRunId = ++aiPricingRunRef.current;
     setValidationResult(null);
     setPersistedValidationScore(undefined);
@@ -4163,7 +4307,11 @@ function App() {
     
     Promise.all(pricingPromises)
       .then(pricingResults => {
-        if (pricingRunId !== aiPricingRunRef.current) return;
+        if (
+          pricingRunId !== aiPricingRunRef.current
+          || !aiGenerationRef.current.isCurrent(operationGeneration)
+          || activeDiagramLineageIdRef.current !== appliedLineageId
+        ) return;
         console.log(`📊 Pricing results ready, updating ${pricingResults.length} nodes`);
         const resultsWithPricing = pricingResults.filter(r => r.pricing);
         console.log(`  → ${resultsWithPricing.length}/${pricingResults.length} nodes have pricing data`);
@@ -4234,15 +4382,22 @@ function App() {
     // diagram, where no prior editorial viewport exists.
     if (!isRefinement) {
       setTimeout(() => {
-        reactFlowInstance?.fitView({ padding: 0.2 });
+        if (
+          aiGenerationRef.current.isCurrent(operationGeneration)
+          && activeDiagramLineageIdRef.current === appliedLineageId
+        ) {
+          reactFlowInstance?.fitView({ padding: 0.2 });
+        }
       }, 100);
     }
     } catch (error) {
+      if (error instanceof CloudDiagramOperationCancelledError) throw error;
       console.error('Error in handleAIGenerate:', error);
       alert(t("Failed to generate diagram. Check console for details."));
       throw error;
     }
   }, [
+    activeDiagramLineageId,
     animateConnections,
     architecturePrompt,
     cloudSync,
@@ -4561,6 +4716,14 @@ function App() {
       return;
     }
 
+    const requestGeneration = validationGenerationRef.current.advance();
+    const diagramGeneration = diagramRevisionGenerationRef.current.current();
+    const lineageId = activeDiagramLineageIdRef.current;
+    const isCurrentValidation = () => (
+      validationGenerationRef.current.isCurrent(requestGeneration)
+      && diagramRevisionGenerationRef.current.isCurrent(diagramGeneration)
+      && activeDiagramLineageIdRef.current === lineageId
+    );
     setValidationHandoff(null);
 
     // Capture diagram snapshot BEFORE opening the modal overlay
@@ -4571,21 +4734,27 @@ function App() {
         reactFlowInstance.fitView({ padding: 0.2, duration: 0 });
         // Brief delay for fitView to settle before capture
         await new Promise(resolve => setTimeout(resolve, 400));
+        if (!isCurrentValidation()) return;
         const isDark = document.body.classList.contains('dark-mode');
         diagramImageDataUrl = await captureDiagramAsPng(reactFlowWrapper.current, {
           backgroundColor: isDark ? '#1a1a2e' : '#f8fafc',
         });
+        if (!isCurrentValidation()) return;
         console.log('\uD83D\uDCF8 Diagram snapshot captured for validation report');
       } catch (err) {
         console.warn('Could not capture diagram snapshot:', err);
       } finally {
         // fitView only exists to frame the capture, so put the canvas back
         // where the user left it instead of silently zooming their view.
-        reactFlowInstance.setViewport(previousViewport, { duration: 0 });
+        if (isCurrentValidation()) {
+          reactFlowInstance.setViewport(previousViewport, { duration: 0 });
+        }
       }
     }
+    if (!isCurrentValidation()) return;
 
     // Now show the modal and start validation
+    setValidationResult(null);
     setIsValidating(true);
     setIsValidationModalOpen(true);
 
@@ -4624,6 +4793,7 @@ function App() {
         undefined,
         language,
       );
+      if (!isCurrentValidation()) return;
 
       // Attach diagram snapshot to results
       if (diagramImageDataUrl) {
@@ -4652,6 +4822,7 @@ function App() {
       // Collapse panels to maximize diagram view
       setPanelsCollapsedSignal(prev => prev + 1);
     } catch (error: any) {
+      if (!isCurrentValidation()) return;
       console.error('Validation error:', error);
       alert(localize(language, {
         en: `Failed to validate architecture: ${error.message}`,
@@ -4659,7 +4830,10 @@ function App() {
       }));
       setIsValidationModalOpen(false);
     } finally {
-      setIsValidating(false);
+      if (validationGenerationRef.current.isCurrent(requestGeneration)) {
+        setIsValidating(false);
+        if (!isCurrentValidation()) setIsValidationModalOpen(false);
+      }
     }
   }, [nodes, edges, architecturePrompt, titleBlockData.architectureName, reactFlowInstance, isFeedbackModalOpen, t, language]);
 
@@ -4688,6 +4862,15 @@ function App() {
       return;
     }
 
+    const requestGeneration = deploymentGuideGenerationRef.current.advance();
+    const diagramGeneration = diagramRevisionGenerationRef.current.current();
+    const lineageId = activeDiagramLineageIdRef.current;
+    const isCurrentGuide = () => (
+      deploymentGuideGenerationRef.current.isCurrent(requestGeneration)
+      && diagramRevisionGenerationRef.current.isCurrent(diagramGeneration)
+      && activeDiagramLineageIdRef.current === lineageId
+    );
+    setDeploymentGuide(null);
     setIsGeneratingGuide(true);
     setIsDeploymentGuideModalOpen(true);
 
@@ -4727,6 +4910,7 @@ function App() {
         totalMonthlyCost,
         language,
       );
+      if (!isCurrentGuide()) return;
 
       setDeploymentGuide(guide);
       trackDeploymentGuide({
@@ -4736,11 +4920,15 @@ function App() {
         elapsedTimeMs: guide.metrics?.elapsedTimeMs,
       });
     } catch (error: any) {
+      if (!isCurrentGuide()) return;
       console.error('Guide generation error:', error);
       alert(t('error.deploymentGuide', { message: error.message }));
       setIsDeploymentGuideModalOpen(false);
     } finally {
-      setIsGeneratingGuide(false);
+      if (deploymentGuideGenerationRef.current.isCurrent(requestGeneration)) {
+        setIsGeneratingGuide(false);
+        if (!isCurrentGuide()) setIsDeploymentGuideModalOpen(false);
+      }
     }
   }, [nodes, edges, architecturePrompt, titleBlockData.architectureName, totalMonthlyCost, t, language]);
 
@@ -6154,7 +6342,7 @@ function App() {
                   </button>
                   <div className="context-menu-separator" role="separator" />
                   <button
-                    className="context-menu-item danger"
+                    className={`context-menu-item${contextMenuContainedCount === 0 ? ' danger' : ''}`}
                     role="menuitem"
                     onClick={() => deleteContextNode(contextMenuNode.id)}
                   >
@@ -6162,8 +6350,8 @@ function App() {
                     <span className="context-menu-item-copy">
                       <span>
                         {localize(language, {
-                          en: contextMenuContainedCount > 0 ? 'Delete layer only' : 'Delete layer',
-                          ja: contextMenuContainedCount > 0 ? 'レイヤーだけを削除' : 'レイヤーを削除',
+                          en: contextMenuContainedCount > 0 ? 'Ungroup layer' : 'Delete empty layer',
+                          ja: contextMenuContainedCount > 0 ? 'レイヤーをグループ解除' : '空のレイヤーを削除',
                         })}
                       </span>
                       {contextMenuContainedCount > 0 && (
@@ -6212,6 +6400,16 @@ function App() {
                         : localize(language, { en: 'Set cost estimate', ja: 'コスト見積を設定' })}
                     </span>
                   </button>
+                  {contextMenuNode.parentNode && (
+                    <button
+                      className="context-menu-item"
+                      role="menuitem"
+                      onClick={() => detachContextNodeFromGroup(contextMenuNode.id)}
+                    >
+                      <span className="menu-icon"><Ungroup size={16} /></span>
+                      <span>{localize(language, { en: 'Remove from layer', ja: 'レイヤーから外す' })}</span>
+                    </button>
+                  )}
                   <div className="context-menu-separator" role="separator" />
                   <button
                     className="context-menu-item danger"
@@ -6558,7 +6756,7 @@ Return the IMPROVED architecture in the same JSON format as before with proper g
         isOpen={isVersionHistoryModalOpen}
         onClose={() => setIsVersionHistoryModalOpen(false)}
         onRestoreVersion={restoreVersion}
-        currentDiagramName={titleBlockData.architectureName}
+        currentLineageId={activeDiagramLineageId}
       />
       <CloudWorkspaceModal
         isOpen={isCloudWorkspaceOpen}
@@ -6695,6 +6893,7 @@ Return the IMPROVED architecture in the same JSON format as before with proper g
       <ArchitectureChatPanel
         isOpen={isChatOpen}
         onClose={() => setIsChatOpen(false)}
+        diagramKey={activeDiagramLineageId}
         currentArchitecture={{
           nodes,
           edges,

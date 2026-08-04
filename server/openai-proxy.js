@@ -8,7 +8,7 @@ const { asyncHandler } = require('./async-handler');
 const DEPLOYMENT_NAME_RE = /^[A-Za-z0-9._-]{1,64}$/;
 const DEFAULT_API_VERSION = '2024-05-01-preview';
 const DEFAULT_ANTHROPIC_VERSION = '2023-06-01';
-const DEFAULT_TIMEOUT_MS = 295_000;
+const DEFAULT_TIMEOUT_MS = 210_000;
 
 function buildOpenAIUrl(endpoint, deployment, apiFormat, apiVersion) {
   const base = endpoint.endsWith('/') ? endpoint : `${endpoint}/`;

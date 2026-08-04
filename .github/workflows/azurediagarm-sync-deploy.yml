@@ -49,7 +49,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
-          node-version: 24
+          node-version: 22
           cache: npm
           cache-dependency-path: |
             package-lock.json
@@ -682,8 +682,9 @@ jobs:
           AZURE_BLOB_ENDPOINT: ${{ vars.AZURE_BLOB_ENDPOINT }}
           AZURE_BLOB_DIAGRAMS_CONTAINER: ${{ vars.AZURE_BLOB_DIAGRAMS_CONTAINER || 'diagrams' }}
           OPENAI_RATE_LIMIT_PER_HOUR: '120'
-          MCP_ENABLED: 'true'
+          MCP_ENABLED: ${{ vars.MCP_ENABLED || 'false' }}
           MCP_HTTP_STATELESS: 'true'
+          MCP_HTTP_MAX_IN_FLIGHT: '20'
           MCP_SESSION_MAX: '100'
           MCP_SESSION_IDLE_SECONDS: '1800'
           MCP_SESSION_TTL_SECONDS: '7200'
@@ -707,7 +708,7 @@ jobs:
             AZURE_TABLES_RATE_LIMIT_TABLE AZURE_COSMOS_ENDPOINT COSMOS_DATABASE_ID
             COSMOS_CONTAINER_ID COSMOS_FEEDBACK_CONTAINER_ID AZURE_BLOB_ENDPOINT
             AZURE_BLOB_DIAGRAMS_CONTAINER OPENAI_RATE_LIMIT_PER_HOUR MCP_ENABLED
-            MCP_HTTP_STATELESS MCP_SESSION_MAX MCP_SESSION_IDLE_SECONDS
+            MCP_HTTP_STATELESS MCP_HTTP_MAX_IN_FLIGHT MCP_SESSION_MAX MCP_SESSION_IDLE_SECONDS
             MCP_SESSION_TTL_SECONDS MCP_SESSION_GC_SECONDS MIN_REPLICAS MAX_REPLICAS
             HTTP_SCALE_CONCURRENCY PROBE_PROFILE
           )
@@ -717,6 +718,61 @@ jobs:
             done | sha256sum | cut -d' ' -f1
           )"
           echo "hash=$desired_hash" >> "$GITHUB_OUTPUT"
+
+          runtime_env=(
+            "PUBLIC_URL=$PUBLIC_URL"
+            "ACCESS_CONTROL_ENABLED=$ACCESS_CONTROL_ENABLED"
+            "ACCESS_ADMIN_EMAIL=$ACCESS_ADMIN_EMAIL"
+            "AZURE_ACCESS_KEY_VAULT_RESOURCE_ID=$AZURE_ACCESS_KEY_VAULT_RESOURCE_ID"
+            "AZURE_CLIENT_ID=$AZURE_RUNTIME_CLIENT_ID"
+            "AZURE_OPENAI_ENDPOINT=$AZURE_OPENAI_ENDPOINT"
+            "AZURE_OPENAI_ALLOWED_DEPLOYMENTS=$AZURE_OPENAI_DEPLOYMENT_GPT56SOL,$AZURE_OPENAI_DEPLOYMENT_GPT56TERRA,$AZURE_OPENAI_DEPLOYMENT_GPT56LUNA"
+            "AZURE_FOUNDRY_ENDPOINT=$AZURE_FOUNDRY_ENDPOINT"
+            "AZURE_FOUNDRY_ALLOWED_DEPLOYMENTS=$AZURE_FOUNDRY_DEPLOYMENT_CLAUDE_OPUS5"
+            "OPENAI_RATE_LIMIT_PER_HOUR=$OPENAI_RATE_LIMIT_PER_HOUR"
+            "AZURE_SPEECH_REGION=$AZURE_SPEECH_REGION"
+            "AZURE_SPEECH_RESOURCE_ID=$AZURE_SPEECH_RESOURCE_ID"
+            "MCP_ENABLED=$MCP_ENABLED"
+            "MCP_HTTP_STATELESS=$MCP_HTTP_STATELESS"
+            "MCP_HTTP_MAX_IN_FLIGHT=$MCP_HTTP_MAX_IN_FLIGHT"
+            "MCP_SESSION_MAX=$MCP_SESSION_MAX"
+            "MCP_SESSION_IDLE_SECONDS=$MCP_SESSION_IDLE_SECONDS"
+            "MCP_SESSION_TTL_SECONDS=$MCP_SESSION_TTL_SECONDS"
+            "MCP_SESSION_GC_SECONDS=$MCP_SESSION_GC_SECONDS"
+            "FEEDBACK_EMAIL_ENDPOINT=$FEEDBACK_EMAIL_ENDPOINT"
+            "FEEDBACK_EMAIL_SENDER=$FEEDBACK_EMAIL_SENDER"
+            "FEEDBACK_EMAIL_RECIPIENT=$FEEDBACK_EMAIL_RECIPIENT"
+          )
+          absent_env=(AZURE_OPENAI_API_KEY AZURE_FOUNDRY_API_KEY)
+          if [[ -n "$AZURE_TABLES_ENDPOINT" ]]; then
+            runtime_env+=(
+              "AZURE_TABLES_ENDPOINT=$AZURE_TABLES_ENDPOINT"
+              "AZURE_TABLES_FEEDBACK_TABLE=$AZURE_TABLES_FEEDBACK_TABLE"
+              "AZURE_TABLES_RATE_LIMIT_TABLE=$AZURE_TABLES_RATE_LIMIT_TABLE"
+            )
+          else
+            absent_env+=(AZURE_TABLES_ENDPOINT AZURE_TABLES_FEEDBACK_TABLE AZURE_TABLES_RATE_LIMIT_TABLE)
+          fi
+          if [[ -n "$AZURE_COSMOS_ENDPOINT" ]]; then
+            runtime_env+=(
+              "AZURE_COSMOS_ENDPOINT=$AZURE_COSMOS_ENDPOINT"
+              "COSMOS_DATABASE_ID=$COSMOS_DATABASE_ID"
+              "COSMOS_CONTAINER_ID=$COSMOS_CONTAINER_ID"
+              "COSMOS_FEEDBACK_CONTAINER_ID=$COSMOS_FEEDBACK_CONTAINER_ID"
+            )
+          else
+            absent_env+=(AZURE_COSMOS_ENDPOINT COSMOS_DATABASE_ID COSMOS_CONTAINER_ID COSMOS_FEEDBACK_CONTAINER_ID)
+          fi
+          if [[ -n "$AZURE_BLOB_ENDPOINT" ]]; then
+            runtime_env+=(
+              "AZURE_BLOB_ENDPOINT=$AZURE_BLOB_ENDPOINT"
+              "AZURE_BLOB_DIAGRAMS_CONTAINER=$AZURE_BLOB_DIAGRAMS_CONTAINER"
+            )
+          else
+            absent_env+=(AZURE_BLOB_ENDPOINT AZURE_BLOB_DIAGRAMS_CONTAINER)
+          fi
+          echo "runtime_env_b64=$(printf '%s\0' "${runtime_env[@]}" | base64 -w 0)" >> "$GITHUB_OUTPUT"
+          echo "absent_env_b64=$(printf '%s\0' "${absent_env[@]}" | base64 -w 0)" >> "$GITHUB_OUTPUT"
 
       - name: Determine whether to deploy
         id: deployment
@@ -749,6 +805,67 @@ jobs:
           az containerapp show \
             --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
             --name "${{ vars.AZURE_CONTAINER_APP }}" \
+            --query properties.template.containers[0].env \
+            --output json > /tmp/azurediagarm-current-env.json
+          mapfile -d '' desired_runtime_env < <(
+            printf '%s' "${{ steps.desired_config.outputs.runtime_env_b64 }}" | base64 --decode
+          )
+          mapfile -d '' absent_runtime_env < <(
+            printf '%s' "${{ steps.desired_config.outputs.absent_env_b64 }}" | base64 --decode
+          )
+          runtime_env_matches=true
+          for entry in "${desired_runtime_env[@]}"; do
+            name="${entry%%=*}"
+            expected="${entry#*=}"
+            actual="$(
+              jq -r --arg name "$name" '
+                [.[] | select(.name == $name)][0]
+                | if . == null then "__MISSING__"
+                  elif .secretRef then "secretref:" + .secretRef
+                  else (.value // "")
+                  end
+              ' /tmp/azurediagarm-current-env.json
+            )"
+            if [[ "$actual" != "$expected" ]]; then
+              echo "Runtime environment drift: $name does not match the desired value." >&2
+              runtime_env_matches=false
+            fi
+          done
+          for name in "${absent_runtime_env[@]}"; do
+            if jq -e --arg name "$name" 'any(.[]; .name == $name)' \
+              /tmp/azurediagarm-current-env.json > /dev/null; then
+              echo "Runtime environment drift: stale $name is still configured." >&2
+              runtime_env_matches=false
+            fi
+          done
+          current_min_replicas="$(
+            az containerapp show \
+              --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
+              --name "${{ vars.AZURE_CONTAINER_APP }}" \
+              --query properties.template.scale.minReplicas \
+              --output tsv
+          )"
+          current_max_replicas="$(
+            az containerapp show \
+              --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
+              --name "${{ vars.AZURE_CONTAINER_APP }}" \
+              --query properties.template.scale.maxReplicas \
+              --output tsv
+          )"
+          current_http_concurrency="$(
+            az containerapp show \
+              --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
+              --name "${{ vars.AZURE_CONTAINER_APP }}" \
+              --query "properties.template.scale.rules[?name=='http'].http.metadata.concurrentRequests | [0]" \
+              --output tsv
+          )"
+          scale_matches=false
+          if [[ "$current_min_replicas" == "1" && "$current_max_replicas" == "2" && "$current_http_concurrency" == "50" ]]; then
+            scale_matches=true
+          fi
+          az containerapp show \
+            --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
+            --name "${{ vars.AZURE_CONTAINER_APP }}" \
             --query properties.template.containers[0].probes \
             --output json > /tmp/azurediagarm-current-probes.json
           probes_match=false
@@ -775,13 +892,6 @@ jobs:
           ' /tmp/azurediagarm-current-probes.json > /dev/null; then
             probes_match=true
           fi
-          current_env_names="$(
-            az containerapp show \
-              --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
-              --name "${{ vars.AZURE_CONTAINER_APP }}" \
-              --query 'properties.template.containers[0].env[].name' \
-              --output tsv
-          )"
           current_secret_names="$(
             az containerapp secret list \
               --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
@@ -790,11 +900,6 @@ jobs:
               --output tsv
           )"
           stale_ai_credentials=false
-          for name in AZURE_OPENAI_API_KEY AZURE_FOUNDRY_API_KEY; do
-            if grep -qx "$name" <<< "$current_env_names"; then
-              stale_ai_credentials=true
-            fi
-          done
           for name in azure-openai-api-key azure-foundry-api-key; do
             if grep -qx "$name" <<< "$current_secret_names"; then
               stale_ai_credentials=true
@@ -804,7 +909,7 @@ jobs:
           should_deploy=false
           if [[ "$FORCE_DEPLOY" == "true" ]]; then
             should_deploy=true
-          elif [[ "$current_upstream" != "${{ needs.merge_validate.outputs.upstream_commit }}" || "$current_fork" != "${{ needs.merge_validate.outputs.fork_commit }}" || "$current_config_hash" != "$DESIRED_CONFIG_HASH" || "$probes_match" != "true" || "$stale_ai_credentials" == "true" ]]; then
+          elif [[ "$current_upstream" != "${{ needs.merge_validate.outputs.upstream_commit }}" || "$current_fork" != "${{ needs.merge_validate.outputs.fork_commit }}" || "$current_config_hash" != "$DESIRED_CONFIG_HASH" || "$runtime_env_matches" != "true" || "$scale_matches" != "true" || "$probes_match" != "true" || "$stale_ai_credentials" == "true" ]]; then
             should_deploy=true
           fi
           echo "should_deploy=$should_deploy" >> "$GITHUB_OUTPUT"
@@ -849,6 +954,20 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      - name: Capture rollback baseline
+        if: steps.deployment.outputs.should_deploy == 'true'
+        id: rollback_baseline
+        run: |
+          set -Eeuo pipefail
+          previous_revision="$(
+            az containerapp show \
+              --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
+              --name "${{ vars.AZURE_CONTAINER_APP }}" \
+              --query properties.latestReadyRevisionName \
+              --output tsv
+          )"
+          echo "revision=$previous_revision" >> "$GITHUB_OUTPUT"
+
       - name: Deploy the new Container Apps revision
         if: steps.deployment.outputs.should_deploy == 'true'
         run: |
@@ -868,8 +987,9 @@ jobs:
             "OPENAI_RATE_LIMIT_PER_HOUR=120"
             "AZURE_SPEECH_REGION=${{ vars.AZURE_SPEECH_REGION }}"
             "AZURE_SPEECH_RESOURCE_ID=${{ vars.AZURE_SPEECH_RESOURCE_ID }}"
-            "MCP_ENABLED=true"
+            "MCP_ENABLED=${{ vars.MCP_ENABLED || 'false' }}"
             "MCP_HTTP_STATELESS=true"
+            "MCP_HTTP_MAX_IN_FLIGHT=20"
             "MCP_SESSION_MAX=100"
             "MCP_SESSION_IDLE_SECONDS=1800"
             "MCP_SESSION_TTL_SECONDS=7200"
@@ -958,6 +1078,7 @@ jobs:
           if (( ${#remove_env_vars[@]} > 0 )); then
             update_args+=(--remove-env-vars "${remove_env_vars[@]}")
           fi
+          touch /tmp/azurediagarm-deployment-started
           az containerapp update "${update_args[@]}"
 
           expected_revision="${{ vars.AZURE_CONTAINER_APP }}--${revision_suffix}"
@@ -1269,6 +1390,65 @@ jobs:
           done
           echo "Production verification failed." >&2
           exit 1
+
+      - name: Roll back a failed production revision
+        if: ${{ failure() && steps.deployment.outputs.should_deploy == 'true' }}
+        run: |
+          set -Eeuo pipefail
+          if [[ ! -f /tmp/azurediagarm-deployment-started ]]; then
+            echo "Deployment did not start; no production rollback is required."
+            exit 0
+          fi
+          previous_revision="${{ steps.rollback_baseline.outputs.revision }}"
+          if [[ -z "$previous_revision" ]]; then
+            echo "::error::No previously ready revision is available for rollback."
+            exit 1
+          fi
+
+          rollback_suffix="rb${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          rollback_revision="${{ vars.AZURE_CONTAINER_APP }}--${rollback_suffix}"
+          echo "Rolling back to $previous_revision via $rollback_revision."
+          az containerapp revision copy \
+            --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
+            --name "${{ vars.AZURE_CONTAINER_APP }}" \
+            --from-revision "$previous_revision" \
+            --revision-suffix "$rollback_suffix" \
+            --output none
+
+          for attempt in $(seq 1 60); do
+            ready="$(
+              az containerapp show \
+                --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
+                --name "${{ vars.AZURE_CONTAINER_APP }}" \
+                --query properties.latestReadyRevisionName \
+                --output tsv
+            )"
+            state="$(
+              az containerapp revision show \
+                --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
+                --name "${{ vars.AZURE_CONTAINER_APP }}" \
+                --revision "$rollback_revision" \
+                --query '[properties.provisioningState,properties.healthState,properties.runningState] | join(`|`, @)' \
+                --output tsv 2>/dev/null || true
+            )"
+            if [[ "$ready" == "$rollback_revision" && ( "$state" == "Provisioned|Healthy|Running" || "$state" == "Provisioned|Healthy|RunningAtMaxScale" ) ]]; then
+              break
+            fi
+            [[ "$attempt" -eq 60 ]] && {
+              echo "::error::Rollback revision $rollback_revision did not become healthy (ready=$ready, state=$state)."
+              exit 1
+            }
+            sleep 10
+          done
+
+          az afd endpoint purge \
+            --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
+            --profile-name "${{ vars.AZURE_FRONT_DOOR_PROFILE }}" \
+            --endpoint-name "${{ vars.AZURE_FRONT_DOOR_ENDPOINT }}" \
+            --content-paths '/*' \
+            --output none
+          printf '\n- Automatic rollback restored revision %s as %s.\n' \
+            "$previous_revision" "$rollback_revision" >> update-details.txt
 
       - name: Send detailed update email
         id: success_notification

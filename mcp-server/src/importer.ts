@@ -42,6 +42,25 @@ export interface ImportResult {
 }
 
 type AnyObj = Record<string, unknown>;
+const MAX_IMPORTED_SERVICES = 250;
+const MAX_IMPORTED_CONNECTIONS = 1_000;
+const MAX_IMPORTED_GROUPS = 100;
+
+function assertImportBounds(
+  serviceCount: number,
+  connectionCount: number,
+  groupCount: number,
+): void {
+  if (serviceCount > MAX_IMPORTED_SERVICES) {
+    throw new RangeError(`Architecture imports support at most ${MAX_IMPORTED_SERVICES} services.`);
+  }
+  if (connectionCount > MAX_IMPORTED_CONNECTIONS) {
+    throw new RangeError(`Architecture imports support at most ${MAX_IMPORTED_CONNECTIONS} connections.`);
+  }
+  if (groupCount > MAX_IMPORTED_GROUPS) {
+    throw new RangeError(`Architecture imports support at most ${MAX_IMPORTED_GROUPS} groups.`);
+  }
+}
 
 function asObject(input: unknown): AnyObj {
   if (typeof input === 'string') {
@@ -119,6 +138,7 @@ export function importArchitecture(
     const rawServices = Array.isArray(arch.services) ? (arch.services as AnyObj[]) : [];
     const rawConns = Array.isArray(arch.connections) ? (arch.connections as AnyObj[]) : [];
     const rawGroups = Array.isArray(arch.groups) ? (arch.groups as AnyObj[]) : [];
+    assertImportBounds(rawServices.length, rawConns.length, rawGroups.length);
 
     const services: ImportedService[] = rawServices.map(s => ({
       name: String(s.name ?? s.id ?? 'Unnamed'),
@@ -153,6 +173,12 @@ export function importArchitecture(
   if (Array.isArray(obj.nodes)) {
     const nodes = obj.nodes as AnyObj[];
     const edges = Array.isArray(obj.edges) ? (obj.edges as AnyObj[]) : [];
+    const serviceNodeCount = nodes.reduce(
+      (count, node) => count + (isGroupNode(node) ? 0 : 1),
+      0,
+    );
+    const groupNodeCount = nodes.length - serviceNodeCount;
+    assertImportBounds(serviceNodeCount, edges.length, groupNodeCount);
 
     const groups: ImportedGroup[] = [];
     const services: ImportedService[] = [];

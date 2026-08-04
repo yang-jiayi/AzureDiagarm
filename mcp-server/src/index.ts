@@ -81,6 +81,12 @@ const CONN_LABEL_DESC =
   'Good: "Submit FHIR bundle for ingestion", "Publish order-placed events", "Query product catalog", "Cache session tokens", "Replicate writes to secondary region", "Authenticate via OAuth token". ' +
   'Avoid vague one-word labels like "data", "sync", "cache", "traffic", or "secrets" — say what moves and why.';
 
+const MAX_ARCHITECTURE_SERVICES = 250;
+const MAX_ARCHITECTURE_CONNECTIONS = 1_000;
+const MAX_ARCHITECTURE_GROUPS = 100;
+const MAX_WORKFLOW_STEPS = 500;
+const MAX_IMPORT_JSON_CHARS = 1_000_000;
+
 // Reverse map: icon file stem → canonical service name. Lets import_architecture
 // recover a service type from a React Flow node's iconPath when the scene has no
 // explicit type field.
@@ -187,6 +193,7 @@ server.registerTool(
             type: z.string().describe('Azure service type (e.g. "App Service", "SQL Database")'),
           }),
         )
+        .max(MAX_ARCHITECTURE_SERVICES)
         .describe('List of Azure services in the architecture'),
       connections: z
         .array(
@@ -196,6 +203,7 @@ server.registerTool(
             label: z.string().optional().describe('Connection label'),
           }),
         )
+        .max(MAX_ARCHITECTURE_CONNECTIONS)
         .optional()
         .describe('Connections between services'),
     },
@@ -287,9 +295,10 @@ server.registerTool(
               .string()
               .optional()
               .describe('Pricing tier. Allowed values: basic, standard, premium. Default: standard. Maps to low/expected/high SKU band.'),
-            quantity: z.number().optional().describe('Number of instances (default: 1)'),
+            quantity: z.number().min(0).max(10_000).optional().describe('Number of instances (default: 1)'),
           }),
         )
+        .max(MAX_ARCHITECTURE_SERVICES)
         .describe('List of Azure services to estimate costs for'),
       region: z
         .string()
@@ -497,6 +506,7 @@ server.tool(
           groupId: z.string().optional().describe('Group ID this service belongs to'),
         }),
       )
+      .max(MAX_ARCHITECTURE_SERVICES)
       .describe('List of Azure services'),
     connections: z
       .array(
@@ -510,6 +520,7 @@ server.tool(
             .describe('Connection type. Allowed values: sync, async, optional'),
         }),
       )
+      .max(MAX_ARCHITECTURE_CONNECTIONS)
       .optional()
       .describe('Connections between services'),
     groups: z
@@ -519,6 +530,7 @@ server.tool(
           label: z.string().describe('Display label'),
         }),
       )
+      .max(MAX_ARCHITECTURE_GROUPS)
       .optional()
       .describe('Logical service groups'),
   },
@@ -593,6 +605,7 @@ server.tool(
           groupId: z.string().optional().describe('Group ID this service belongs to'),
         }),
       )
+      .max(MAX_ARCHITECTURE_SERVICES)
       .describe('List of Azure services to generate Bicep for'),
     connections: z
       .array(
@@ -602,6 +615,7 @@ server.tool(
           label: z.string().optional().describe('Connection label'),
         }),
       )
+      .max(MAX_ARCHITECTURE_CONNECTIONS)
       .optional()
       .describe('Connections between services'),
   },
@@ -654,6 +668,7 @@ server.tool(
           groupId: z.string().optional().describe('Group ID this service belongs to'),
         }),
       )
+      .max(MAX_ARCHITECTURE_SERVICES)
       .describe('List of Azure services to generate Terraform for'),
     connections: z
       .array(
@@ -663,6 +678,7 @@ server.tool(
           label: z.string().optional().describe('Connection label'),
         }),
       )
+      .max(MAX_ARCHITECTURE_CONNECTIONS)
       .optional()
       .describe('Connections between services'),
   },
@@ -712,6 +728,7 @@ server.tool(
           groupId: z.string().optional().describe('Group ID this service belongs to'),
         }),
       )
+      .max(MAX_ARCHITECTURE_SERVICES)
       .describe('List of Azure services in the architecture'),
     connections: z
       .array(
@@ -721,6 +738,7 @@ server.tool(
           label: z.string().optional().describe('Connection label'),
         }),
       )
+      .max(MAX_ARCHITECTURE_CONNECTIONS)
       .optional()
       .describe('Connections between services'),
   },
@@ -764,6 +782,7 @@ server.registerTool(
             groupId: z.string().optional().describe('Group ID this service belongs to'),
           }),
         )
+        .max(MAX_ARCHITECTURE_SERVICES)
         .describe('List of Azure services in the current architecture'),
       connections: z
         .array(
@@ -774,6 +793,7 @@ server.registerTool(
             type: z.string().optional().describe('Connection type. Allowed values: sync, async, optional'),
           }),
         )
+        .max(MAX_ARCHITECTURE_CONNECTIONS)
         .optional()
         .describe('Connections between services'),
       groups: z
@@ -783,6 +803,7 @@ server.registerTool(
             label: z.string().describe('Display label'),
           }),
         )
+        .max(MAX_ARCHITECTURE_GROUPS)
         .optional()
         .describe('Existing logical service groups (new groups are appended as needed)'),
     },
@@ -834,6 +855,7 @@ server.registerTool(
     inputSchema: {
       content: z
         .string()
+        .max(MAX_IMPORT_JSON_CHARS)
         .describe('The architecture document as a JSON string — either an az prototype manifest or a React Flow scene.'),
       format: z
         .string()
@@ -1010,6 +1032,7 @@ server.tool(
           groupId: z.string().optional().describe('Group ID this service belongs to'),
         }),
       )
+      .max(MAX_ARCHITECTURE_SERVICES)
       .describe('List of Azure services in the architecture'),
     connections: z
       .array(
@@ -1023,6 +1046,7 @@ server.tool(
             .describe('Connection type. Allowed values: sync (solid), async (dashed purple), optional (dotted gray)'),
         }),
       )
+      .max(MAX_ARCHITECTURE_CONNECTIONS)
       .optional()
       .describe('Connections between services. Label each one descriptively so a reader understands the data flow.'),
     groups: z
@@ -1032,6 +1056,7 @@ server.tool(
           label: z.string().describe('Display label for the group'),
         }),
       )
+      .max(MAX_ARCHITECTURE_GROUPS)
       .optional()
       .describe('Logical service groups (rendered as dashed containers)'),
   },
@@ -1109,22 +1134,22 @@ server.tool(
       type: z.string().describe('Azure service type (e.g. "App Service", "SQL Database")'),
       description: z.string().optional().describe('Optional description'),
       groupId: z.string().optional().describe('Optional group ID this service belongs to'),
-    })).describe('List of Azure services in the architecture'),
+    })).max(MAX_ARCHITECTURE_SERVICES).describe('List of Azure services in the architecture'),
     connections: z.array(z.object({
       from: z.string().describe('Source service name'),
       to: z.string().describe('Target service name'),
       label: z.string().optional().describe('Edge label'),
       type: z.string().optional().describe('Connection type. Allowed values: sync, async, optional'),
-    })).optional().describe('Connections between services'),
+    })).max(MAX_ARCHITECTURE_CONNECTIONS).optional().describe('Connections between services'),
     groups: z.array(z.object({
       id: z.string().describe('Group identifier (referenced by services\' groupId)'),
       label: z.string().describe('Display label for the group'),
-    })).optional().describe('Logical service groups (rendered as group containers)'),
+    })).max(MAX_ARCHITECTURE_GROUPS).optional().describe('Logical service groups (rendered as group containers)'),
     workflow: z.array(z.object({
       step: z.number().describe('1-based step number'),
       description: z.string().describe('Human-readable description of this step'),
-      services: z.array(z.string()).describe('Service names involved in this step'),
-    })).optional().describe('Optional ordered workflow narrative shown in the web app'),
+      services: z.array(z.string()).max(MAX_ARCHITECTURE_SERVICES).describe('Service names involved in this step'),
+    })).max(MAX_WORKFLOW_STEPS).optional().describe('Optional ordered workflow narrative shown in the web app'),
   },
   async ({ architectureName, architecturePrompt, author, direction, services, connections, groups, workflow, region }) => {
     // ── Auto direction heuristic ────────────────────────────────────────
@@ -1557,6 +1582,13 @@ async function startStdio(): Promise<void> {
 }
 
 const MAX_HTTP_BODY_BYTES = 1024 * 1024;
+const DEFAULT_MAX_HTTP_IN_FLIGHT = 20;
+
+function boundedInteger(value: string | undefined, fallback: number, min: number, max: number): number {
+  const parsed = Number.parseInt(value ?? '', 10);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(max, Math.max(min, parsed));
+}
 
 class HttpRequestError extends Error {
   constructor(
@@ -1616,6 +1648,12 @@ async function startHttp(): Promise<void> {
   const mcpPath = process.env.MCP_HTTP_PATH ?? '/mcp';
   const authToken = process.env.MCP_AUTH_TOKEN?.trim();
   const allowUnauthenticated = process.env.MCP_ALLOW_UNAUTHENTICATED === 'true';
+  const maxInFlight = boundedInteger(
+    process.env.MCP_HTTP_MAX_IN_FLIGHT,
+    DEFAULT_MAX_HTTP_IN_FLIGHT,
+    1,
+    100,
+  );
   const isLoopback = host === '127.0.0.1' || host === '::1' || host === 'localhost';
   if (!authToken && !isLoopback && !allowUnauthenticated) {
     throw new Error(
@@ -1644,7 +1682,9 @@ async function startHttp(): Promise<void> {
       `[mcp-http] session limits: max=${store.maxSessions} idle=${store.idleTtlMs / 1000}s abs=${store.absTtlMs / 1000}s gc=${store.gcIntervalMs / 1000}s`,
     );
   }
+  let inFlight = 0;
   const httpServer = createHttpServer(async (req, res) => {
+    let countedInFlight = false;
     try {
       const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
 
@@ -1702,6 +1742,17 @@ async function startHttp(): Promise<void> {
           return;
         }
       }
+
+      if (inFlight >= maxInFlight) {
+        res.setHeader('Retry-After', '1');
+        writeJson(res, 503, {
+          error: 'server_busy',
+          message: `MCP request capacity is limited to ${maxInFlight} concurrent requests.`,
+        });
+        return;
+      }
+      inFlight += 1;
+      countedInFlight = true;
 
       // ── Stateless mode dispatch ──────────────────────────────────────────
       // Each POST gets a brand-new McpServer + transport that is torn down once
@@ -1859,8 +1910,13 @@ async function startHttp(): Promise<void> {
       } else {
         try { res.end(); } catch { /* ignore */ }
       }
+    } finally {
+      if (countedInFlight) inFlight -= 1;
     }
   });
+  httpServer.headersTimeout = 10_000;
+  httpServer.requestTimeout = 15_000;
+  httpServer.keepAliveTimeout = 5_000;
 
   httpServer.listen(port, host, () => {
     console.error(`[mcp-http] azure-diagram-builder listening on http://${host}:${port}${mcpPath}`);

@@ -16,6 +16,7 @@ class FakeBackend {
   constructor() {
     this.map = new Map();
     this.counter = 0;
+    this.locks = new Map();
   }
 
   nextEtag() {
@@ -79,6 +80,23 @@ class FakeBackend {
       if (key.startsWith(prefix)) yield key;
     }
   }
+
+  async withLock(name, operation) {
+    const previous = this.locks.get(name) || Promise.resolve();
+    let release;
+    const gate = new Promise((resolve) => {
+      release = resolve;
+    });
+    const queued = previous.then(() => gate);
+    this.locks.set(name, queued);
+    await previous;
+    try {
+      return await operation();
+    } finally {
+      release();
+      if (this.locks.get(name) === queued) this.locks.delete(name);
+    }
+  }
 }
 
 class ConcurrentUpdateBeforeDeleteBackend extends FakeBackend {
@@ -116,6 +134,27 @@ class FailVersionCleanupOnceBackend extends FakeBackend {
       throw error;
     }
     return super.remove(name, etag);
+  }
+}
+
+class BlockingVersionWriteBackend extends FakeBackend {
+  constructor() {
+    super();
+    this.versionWriteStarted = new Promise((resolve) => {
+      this.signalVersionWriteStarted = resolve;
+    });
+    this.releaseVersionWrite = null;
+    this.versionWriteGate = new Promise((resolve) => {
+      this.releaseVersionWrite = resolve;
+    });
+  }
+
+  async put(name, value) {
+    if (name.includes('/versions/')) {
+      this.signalVersionWriteStarted();
+      await this.versionWriteGate;
+    }
+    return super.put(name, value);
   }
 }
 
@@ -232,6 +271,51 @@ test('create rejects invalid payloads', async (t) => {
     headers: USER_A, body: { diagramName: '   ', payload: samplePayload() },
   });
   assert.equal(noName.status, 400);
+});
+
+test('create replays an idempotent request without duplicating the document', async (t) => {
+  const server = await startServer({ backend: new FakeBackend() });
+  t.after(server.close);
+  const headers = {
+    ...USER_A,
+    'Idempotency-Key': 'create-request-1234567890',
+  };
+  const body = { diagramName: 'Idempotent', payload: samplePayload() };
+
+  const first = await call(server.baseUrl, 'POST', '/api/diagrams', { headers, body });
+  assert.equal(first.status, 201);
+
+  const replay = await call(server.baseUrl, 'POST', '/api/diagrams', { headers, body });
+  assert.equal(replay.status, 200);
+  assert.equal(replay.json.document.id, first.json.document.id);
+
+  const list = await call(server.baseUrl, 'GET', '/api/diagrams', { headers: USER_A });
+  assert.equal(list.status, 200);
+  assert.equal(list.json.documents.length, 1);
+});
+
+test('create rejects reusing an idempotency key with different content', async (t) => {
+  const server = await startServer({ backend: new FakeBackend() });
+  t.after(server.close);
+  const headers = {
+    ...USER_A,
+    'Idempotency-Key': 'create-request-abcdefghij',
+  };
+
+  const first = await call(server.baseUrl, 'POST', '/api/diagrams', {
+    headers,
+    body: { diagramName: 'First', payload: samplePayload() },
+  });
+  assert.equal(first.status, 201);
+
+  const mismatch = await call(server.baseUrl, 'POST', '/api/diagrams', {
+    headers,
+    body: {
+      diagramName: 'Second',
+      payload: samplePayload({ nodes: [{ id: 'different' }], edges: [] }),
+    },
+  });
+  assert.equal(mismatch.status, 409);
 });
 
 test('owner isolation: another user cannot access a document by id', async (t) => {
@@ -376,6 +460,18 @@ test('sharing: viewer can read but not edit, editor can edit', async (t) => {
   assert.equal(sharedGet.json.document.role, 'viewer');
   assert.equal(sharedGet.json.document.revision, 2);
   assert.ok(sharedGet.etag);
+
+  const ownerGetThroughShare = await call(
+    server.baseUrl,
+    'GET',
+    `/api/diagrams/shared/${viewerToken}`,
+    { headers: USER_A },
+  );
+  assert.equal(ownerGetThroughShare.status, 200);
+  assert.equal(ownerGetThroughShare.json.document.access, 'owner');
+  assert.equal(ownerGetThroughShare.json.document.role, 'owner');
+  assert.equal(ownerGetThroughShare.json.document.owner.id, USER_A['X-MS-CLIENT-PRINCIPAL-ID']);
+  assert.equal(ownerGetThroughShare.json.document.shares.length, 1);
 
   // Viewer cannot modify.
   const viewerPut = await call(server.baseUrl, 'PUT', `/api/diagrams/shared/${viewerToken}`, {
@@ -562,6 +658,37 @@ test('failed delete cleanup is inaccessible and can be retried', async (t) => {
     ifMatch: created.etag,
   });
   assert.equal(retry.status, 204);
+  assert.equal(backend.map.size, 0);
+});
+
+test('delete waits for an in-flight snapshot and removes it without leaving orphaned blobs', async (t) => {
+  const backend = new BlockingVersionWriteBackend();
+  const server = await startServer({ backend });
+  t.after(server.close);
+
+  const created = await createDoc(server.baseUrl, USER_A);
+  const id = created.json.document.id;
+  const snapshotPromise = call(server.baseUrl, 'POST', `/api/diagrams/${id}/versions`, {
+    headers: USER_A,
+    body: { notes: 'concurrent snapshot' },
+  });
+  await backend.versionWriteStarted;
+
+  const deletePromise = call(server.baseUrl, 'DELETE', `/api/diagrams/${id}`, {
+    headers: USER_A,
+    ifMatch: created.etag,
+  });
+  let deleteSettled = false;
+  void deletePromise.finally(() => {
+    deleteSettled = true;
+  });
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.equal(deleteSettled, false, 'delete must wait for the snapshot lock');
+  backend.releaseVersionWrite();
+
+  const [snapshot, deleted] = await Promise.all([snapshotPromise, deletePromise]);
+  assert.equal(snapshot.status, 201);
+  assert.equal(deleted.status, 204);
   assert.equal(backend.map.size, 0);
 });
 

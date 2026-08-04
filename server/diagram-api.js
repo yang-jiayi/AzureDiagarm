@@ -38,6 +38,7 @@ const MAX_EDGES = 40_000;
 const SHARE_TOKEN_BYTES = 32; // 256-bit
 // crypto.randomBytes(32).toString('base64url') is always 43 base64url chars.
 const SHARE_TOKEN_RE = /^[A-Za-z0-9_-]{43}$/;
+const IDEMPOTENCY_KEY_RE = /^[A-Za-z0-9._~-]{16,128}$/;
 const VALID_ROLES = new Set(['viewer', 'editor']);
 const DELETION_MARKER_KIND = 'diagram-deletion-marker-v1';
 
@@ -49,6 +50,24 @@ function deriveOwnerKey(principalId) {
 
 function hashToken(token) {
   return crypto.createHash('sha256').update(String(token)).digest('hex');
+}
+
+function hashCreateRequest(diagramName, payload) {
+  return crypto
+    .createHash('sha256')
+    .update(JSON.stringify({ diagramName, payload }))
+    .digest('hex');
+}
+
+function documentIdForIdempotencyKey(key) {
+  const hex = crypto.createHash('sha256').update(String(key)).digest('hex');
+  return [
+    hex.slice(0, 8),
+    hex.slice(8, 12),
+    `5${hex.slice(13, 16)}`,
+    `a${hex.slice(17, 20)}`,
+    hex.slice(20, 32),
+  ].join('-');
 }
 
 // ── Blob path helpers ──────────────────────────────────────────────────────
@@ -71,6 +90,10 @@ function versionPath(ownerKey, documentId, versionId) {
 
 function sharePath(tokenHash) {
   return `shares/${tokenHash}.json`;
+}
+
+function documentLockPath(ownerKey, documentId) {
+  return `owners/${ownerKey}/document-locks/${documentId}.lock`;
 }
 
 function isDeletionMarker(value) {
@@ -276,10 +299,15 @@ function createDiagramsRouter(options = {}) {
     return record && !isDeletionMarker(record.value) ? record : null;
   }
 
-  function buildNewDocument(principal, name, payload) {
+  function withDocumentLock(ownerKey, documentId, operation) {
+    if (typeof backend.withLock !== 'function') return operation();
+    return backend.withLock(documentLockPath(ownerKey, documentId), operation);
+  }
+
+  function buildNewDocument(principal, name, payload, createRequest) {
     const now = new Date().toISOString();
     return {
-      id: crypto.randomUUID(),
+      id: createRequest?.documentId || crypto.randomUUID(),
       diagramName: name,
       owner: { id: principal.id, email: principal.email },
       payload,
@@ -288,6 +316,7 @@ function createDiagramsRouter(options = {}) {
       createdAt: now,
       updatedAt: now,
       revision: 1,
+      ...(createRequest ? { createRequest } : {}),
     };
   }
 
@@ -380,12 +409,46 @@ function createDiagramsRouter(options = {}) {
     const payload = validatePayload(body.payload);
     if (payload.error) return res.status(400).json({ error: payload.error });
 
-    const doc = buildNewDocument(req.diagramPrincipal, name.value, payload.value);
+    const idempotencyKey = req.get('idempotency-key');
+    if (idempotencyKey && !IDEMPOTENCY_KEY_RE.test(idempotencyKey)) {
+      return res.status(400).json({ error: 'Idempotency-Key must be 16 to 128 URL-safe characters.' });
+    }
+    const createRequest = idempotencyKey
+      ? {
+          keyHash: hashToken(idempotencyKey),
+          requestHash: hashCreateRequest(name.value, payload.value),
+          documentId: documentIdForIdempotencyKey(idempotencyKey),
+        }
+      : null;
+    const doc = buildNewDocument(req.diagramPrincipal, name.value, payload.value, createRequest);
+    const path = currentPath(req.diagramOwnerKey, doc.id);
     try {
-      const { etag } = await backend.create(currentPath(req.diagramOwnerKey, doc.id), doc);
+      const { etag } = await backend.create(path, doc);
       setEtag(res, etag);
       res.status(201).json({ document: sanitizeDocument(doc, 'owner', 'owner') });
     } catch (err) {
+      if (createRequest && storageErrorStatus(err) === 409) {
+        try {
+          const existing = await backend.read(path);
+          if (
+            existing
+            && !isDeletionMarker(existing.value)
+            && existing.value?.createRequest?.keyHash === createRequest.keyHash
+            && existing.value?.createRequest?.requestHash === createRequest.requestHash
+          ) {
+            setEtag(res, existing.etag);
+            res.set('Idempotency-Replayed', 'true');
+            return res.status(200).json({
+              document: sanitizeDocument(existing.value, 'owner', 'owner'),
+            });
+          }
+          return res.status(409).json({
+            error: 'The Idempotency-Key was already used for a different create request.',
+          });
+        } catch (readError) {
+          return respondStorageError(res, logger, 'create replay', readError);
+        }
+      }
       return respondStorageError(res, logger, 'create', err);
     }
   }));
@@ -434,37 +497,39 @@ function createDiagramsRouter(options = {}) {
     if (!ifMatch) return res.status(428).json({ error: 'If-Match header is required' });
 
     try {
-      const currentName = currentPath(req.diagramOwnerKey, req.params.id);
-      const record = await backend.read(currentName);
-      if (!record) return res.status(404).json({ error: 'Not found' });
-      if (isDeletionMarker(record.value)) {
-        if (record.value.sourceEtag !== ifMatch && record.etag !== ifMatch) {
+      return await withDocumentLock(req.diagramOwnerKey, req.params.id, async () => {
+        const currentName = currentPath(req.diagramOwnerKey, req.params.id);
+        const record = await backend.read(currentName);
+        if (!record) return res.status(404).json({ error: 'Not found' });
+        if (isDeletionMarker(record.value)) {
+          if (record.value.sourceEtag !== ifMatch && record.etag !== ifMatch) {
+            return res.status(412).json({ error: 'The document was modified by another request. Reload and retry.' });
+          }
+        } else if (record.etag !== ifMatch) {
           return res.status(412).json({ error: 'The document was modified by another request. Reload and retry.' });
         }
-      } else if (record.etag !== ifMatch) {
-        return res.status(412).json({ error: 'The document was modified by another request. Reload and retry.' });
-      }
 
-      const marker = isDeletionMarker(record.value)
-        ? record.value
-        : buildDeletionMarker(record.value, ifMatch);
-      const markerEtag = isDeletionMarker(record.value)
-        ? record.etag
-        : (await backend.replace(currentName, marker, ifMatch)).etag;
+        const marker = isDeletionMarker(record.value)
+          ? record.value
+          : buildDeletionMarker(record.value, ifMatch);
+        const markerEtag = isDeletionMarker(record.value)
+          ? record.etag
+          : (await backend.replace(currentName, marker, ifMatch)).etag;
 
-      // A marker makes the document immediately inaccessible while preserving
-      // enough state to retry cleanup after any transient storage failure.
-      for (const tokenHash of marker.shareTokenHashes || []) {
-        await backend.remove(sharePath(tokenHash));
-      }
-      const prefix = documentPrefix(req.diagramOwnerKey, req.params.id);
-      const names = [];
-      for await (const name of backend.list(prefix)) {
-        if (name !== currentName) names.push(name);
-      }
-      for (const name of names) await backend.remove(name);
-      await backend.remove(currentName, markerEtag);
-      res.status(204).end();
+        // A marker makes the document immediately inaccessible while preserving
+        // enough state to retry cleanup after any transient storage failure.
+        for (const tokenHash of marker.shareTokenHashes || []) {
+          await backend.remove(sharePath(tokenHash));
+        }
+        const prefix = documentPrefix(req.diagramOwnerKey, req.params.id);
+        const names = [];
+        for await (const name of backend.list(prefix)) {
+          if (name !== currentName) names.push(name);
+        }
+        for (const name of names) await backend.remove(name);
+        await backend.remove(currentName, markerEtag);
+        return res.status(204).end();
+      });
     } catch (err) {
       return respondStorageError(res, logger, 'delete', err);
     }
@@ -483,11 +548,13 @@ function createDiagramsRouter(options = {}) {
     const notes = typeof notesRaw === 'string' ? notesRaw : '';
 
     try {
-      const record = await loadCurrent(req.diagramOwnerKey, req.params.id);
-      if (!record) return res.status(404).json({ error: 'Not found' });
-      const version = buildVersion(record.value, req.diagramPrincipal, notes);
-      await backend.put(versionPath(req.diagramOwnerKey, req.params.id, version.versionId), version);
-      res.status(201).json({ version });
+      return await withDocumentLock(req.diagramOwnerKey, req.params.id, async () => {
+        const record = await loadCurrent(req.diagramOwnerKey, req.params.id);
+        if (!record) return res.status(404).json({ error: 'Not found' });
+        const version = buildVersion(record.value, req.diagramPrincipal, notes);
+        await backend.put(versionPath(req.diagramOwnerKey, req.params.id, version.versionId), version);
+        return res.status(201).json({ version });
+      });
     } catch (err) {
       return respondStorageError(res, logger, 'version-create', err);
     }
@@ -688,7 +755,14 @@ function createDiagramsRouter(options = {}) {
       const resolved = await resolveShare(token);
       if (resolved.status) return res.status(resolved.status).json({ error: 'Not found' });
       setEtag(res, resolved.etag);
-      res.json({ document: sanitizeDocument(resolved.doc, 'shared', resolved.share.role) });
+      const isOwner = resolved.doc.owner?.id === req.diagramPrincipal.id;
+      res.json({
+        document: sanitizeDocument(
+          resolved.doc,
+          isOwner ? 'owner' : 'shared',
+          isOwner ? 'owner' : resolved.share.role,
+        ),
+      });
     } catch (err) {
       return respondStorageError(res, logger, 'shared-get', err);
     }
@@ -759,9 +833,16 @@ function createDiagramsRouter(options = {}) {
       if (resolved.share.role !== 'editor') {
         return res.status(403).json({ error: 'Editor access is required to snapshot this document.' });
       }
-      const version = buildVersion(resolved.doc, req.diagramPrincipal, notes);
-      await backend.put(versionPath(resolved.ownerKey, resolved.documentId, version.versionId), version);
-      res.status(201).json({ version });
+      return await withDocumentLock(resolved.ownerKey, resolved.documentId, async () => {
+        const current = await resolveShare(token);
+        if (current.status) return res.status(current.status).json({ error: 'Not found' });
+        if (current.share.role !== 'editor') {
+          return res.status(403).json({ error: 'Editor access is required to snapshot this document.' });
+        }
+        const version = buildVersion(current.doc, req.diagramPrincipal, notes);
+        await backend.put(versionPath(current.ownerKey, current.documentId, version.versionId), version);
+        return res.status(201).json({ version });
+      });
     } catch (err) {
       return respondStorageError(res, logger, 'shared-version-create', err);
     }
@@ -858,6 +939,51 @@ function createAzureBlobBackend(options = {}) {
     return { etag: resp.etag };
   }
 
+  async function ensureLockBlob(name) {
+    try {
+      await upload(name, { kind: 'diagram-document-lock-v1' }, { ifNoneMatch: '*' });
+    } catch (error) {
+      if (storageErrorStatus(error) !== 409) throw error;
+    }
+  }
+
+  async function withLock(name, operation) {
+    await ensureLockBlob(name);
+    const leaseClient = blob(name).getBlobLeaseClient();
+    const deadline = Date.now() + 15_000;
+    while (true) {
+      try {
+        await leaseClient.acquireLease(60);
+        break;
+      } catch (error) {
+        if (storageErrorStatus(error) !== 409 || Date.now() >= deadline) {
+          if (storageErrorStatus(error) === 409) {
+            const timeoutError = new Error('Timed out waiting for the document lock');
+            timeoutError.statusCode = 503;
+            throw timeoutError;
+          }
+          throw error;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 100 + Math.floor(Math.random() * 150)));
+      }
+    }
+
+    let renewalError = null;
+    const renewalTimer = setInterval(() => {
+      leaseClient.renewLease().catch((error) => {
+        renewalError = error;
+      });
+    }, 30_000);
+    try {
+      const result = await operation();
+      if (renewalError) throw renewalError;
+      return result;
+    } finally {
+      clearInterval(renewalTimer);
+      await leaseClient.releaseLease();
+    }
+  }
+
   return {
     async read(name) {
       try {
@@ -889,6 +1015,7 @@ function createAzureBlobBackend(options = {}) {
         yield item.name;
       }
     },
+    withLock,
   };
 }
 

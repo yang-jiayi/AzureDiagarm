@@ -94,6 +94,23 @@ test('React Flow imports do not guess a service from an ambiguous icon', () => {
   assert.equal(result.services[0].type, 'Virtual Machines');
 });
 
+test('architecture imports reject oversized workloads before normalization', () => {
+  const services = Array.from({ length: 251 }, (_, index) => ({
+    name: `Service ${index}`,
+    type: 'App Service',
+  }));
+  assert.throws(
+    () => importArchitecture({
+      architecture: {
+        services,
+        connections: [],
+        groups: [],
+      },
+    }),
+    /at most 250 services/,
+  );
+});
+
 test('generated canonical names and aliases resolve without legacy conflicts', () => {
   assert.equal(resolveServiceName('Azure API for FHIR'), 'Azure API for FHIR');
   assert.equal(resolveServiceName('Legacy FHIR API'), 'Azure API for FHIR');

@@ -187,6 +187,27 @@ function buildAbsolutePositions(nodes: Node[]): Map<string, { x: number; y: numb
 }
 
 /**
+ * Remove one node from its current group while preserving its absolute canvas
+ * position, including when the group itself is nested.
+ */
+export function detachNodeFromGroup(nodes: Node[], nodeId: string): Node[] {
+  const node = nodes.find(candidate => candidate.id === nodeId);
+  if (!node?.parentNode) return nodes;
+  const absolutePositions = buildAbsolutePositions(nodes);
+
+  return nodes.map(candidate => (
+    candidate.id === nodeId
+      ? {
+          ...candidate,
+          parentNode: undefined,
+          extent: undefined,
+          position: absolutePositions.get(nodeId) || candidate.position,
+        }
+      : candidate
+  ));
+}
+
+/**
  * Detach direct children from groups that are being deleted while preserving
  * each child's absolute canvas position.
  */

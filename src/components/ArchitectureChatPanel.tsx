@@ -13,6 +13,7 @@ import {
 import './ArchitectureChatPanel.css';
 import { useLanguage } from '../i18n/LanguageContext';
 import { localize, type LocalizedText } from '../i18n/localization';
+import { OperationGeneration } from '../utils/operationGeneration';
 
 interface ChatMessage {
   id: string;
@@ -25,6 +26,7 @@ interface ArchitectureChatPanelProps {
   isOpen: boolean;
   onClose: () => void;
   currentArchitecture: CurrentArchitecture;
+  diagramKey: string;
   /** Applies a generated architecture to the canvas (App's handleAIGenerate). */
   onApply: (architecture: any, prompt: string, autoSnapshot?: boolean) => void | Promise<void>;
 }
@@ -182,6 +184,7 @@ const ArchitectureChatPanel: React.FC<ArchitectureChatPanelProps> = ({
   isOpen,
   onClose,
   currentArchitecture,
+  diagramKey,
   onApply,
 }) => {
   const { t, translate, language } = useLanguage();
@@ -204,6 +207,11 @@ const ArchitectureChatPanel: React.FC<ArchitectureChatPanelProps> = ({
   const threadRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const latestFollowUpRequestRef = useRef<string | null>(null);
+  const diagramKeyRef = useRef(diagramKey);
+  const sendGenerationRef = useRef(new OperationGeneration());
+  const bestSuggestionGenerationRef = useRef(new OperationGeneration());
+
+  diagramKeyRef.current = diagramKey;
 
   const configured = isAzureOpenAIConfigured();
   const hasDiagram = currentArchitecture.nodes.some((n) => n.type === 'azureNode');
@@ -234,6 +242,20 @@ const ArchitectureChatPanel: React.FC<ArchitectureChatPanelProps> = ({
     }
   }, [messages, isSending]);
 
+  useEffect(() => {
+    sendGenerationRef.current.advance();
+    bestSuggestionGenerationRef.current.advance();
+    latestFollowUpRequestRef.current = null;
+    setMessages([]);
+    setInput('');
+    setIsSending(false);
+    setShowAdvanced(false);
+    setUsedSuggestions(new Set());
+    setModelFollowUps(null);
+    setFollowUpsLoading(false);
+    setAskingBest(false);
+  }, [diagramKey]);
+
   // Focus the composer when the panel opens.
   useEffect(() => {
     if (isOpen) {
@@ -247,6 +269,8 @@ const ArchitectureChatPanel: React.FC<ArchitectureChatPanelProps> = ({
       const text = raw.trim();
       if (!text || isSending) return;
 
+      const requestGeneration = sendGenerationRef.current.advance();
+      const requestDiagramKey = diagramKey;
       setInput('');
       latestFollowUpRequestRef.current = null;
       setModelFollowUps(null);
@@ -271,8 +295,16 @@ const ArchitectureChatPanel: React.FC<ArchitectureChatPanelProps> = ({
       try {
         const prompt = buildModificationPrompt(before, text, recentRequests.slice(0, -1), language);
         const result = await generateArchitectureWithAI(prompt, undefined, undefined, language);
+        if (
+          diagramKeyRef.current !== requestDiagramKey
+          || !sendGenerationRef.current.isCurrent(requestGeneration)
+        ) return;
 
         await onApply(result, text, true);
+        if (
+          diagramKeyRef.current !== requestDiagramKey
+          || !sendGenerationRef.current.isCurrent(requestGeneration)
+        ) return;
 
         const summary = summarizeArchitectureChange(before, result, language);
         const asstId = uid();
@@ -294,17 +326,31 @@ const ArchitectureChatPanel: React.FC<ArchitectureChatPanelProps> = ({
         latestFollowUpRequestRef.current = asstId;
         void generateFollowUpSuggestions({ services: nextServices, lastChange: summary, recentRequests, language })
           .then((items) => {
-            if (latestFollowUpRequestRef.current === asstId && items.length) {
+            if (
+              diagramKeyRef.current === requestDiagramKey
+              && sendGenerationRef.current.isCurrent(requestGeneration)
+              && latestFollowUpRequestRef.current === asstId
+              && items.length
+            ) {
               setModelFollowUps({ forMsgId: asstId, items });
             }
           })
           .catch(() => { /* fall back to static chips */ })
           .finally(() => {
-            if (latestFollowUpRequestRef.current === asstId) {
+            if (
+              diagramKeyRef.current === requestDiagramKey
+              && sendGenerationRef.current.isCurrent(requestGeneration)
+              && latestFollowUpRequestRef.current === asstId
+            ) {
               setFollowUpsLoading(false);
             }
           });
       } catch (err: any) {
+        if (
+          diagramKeyRef.current !== requestDiagramKey
+          || !sendGenerationRef.current.isCurrent(requestGeneration)
+          || err?.name === 'CloudDiagramOperationCancelledError'
+        ) return;
         setMessages((prev) => [
           ...prev,
           {
@@ -320,16 +366,23 @@ const ArchitectureChatPanel: React.FC<ArchitectureChatPanelProps> = ({
           },
         ]);
       } finally {
-        setIsSending(false);
+        if (
+          diagramKeyRef.current === requestDiagramKey
+          && sendGenerationRef.current.isCurrent(requestGeneration)
+        ) {
+          setIsSending(false);
+        }
       }
     },
-    [isSending, messages, currentArchitecture, onApply, language, translate],
+    [diagramKey, isSending, messages, currentArchitecture, onApply, language, translate],
   );
 
   // Tier 4: "What would you add?" — ask the model for the single highest-impact
   // next step (from the current canvas) and apply it like a chip click.
   const handleAskBest = async () => {
     if (isSending || askingBest || !configured) return;
+    const requestGeneration = bestSuggestionGenerationRef.current.advance();
+    const requestDiagramKey = diagramKey;
     setAskingBest(true);
     try {
       const services = currentArchitecture.nodes
@@ -344,12 +397,21 @@ const ArchitectureChatPanel: React.FC<ArchitectureChatPanelProps> = ({
         count: 1,
         language,
       });
+      if (
+        diagramKeyRef.current !== requestDiagramKey
+        || !bestSuggestionGenerationRef.current.isCurrent(requestGeneration)
+      ) return;
       if (best[0]) {
         markUsed(best[0]);
         await send(best[0]);
       }
     } finally {
-      setAskingBest(false);
+      if (
+        diagramKeyRef.current === requestDiagramKey
+        && bestSuggestionGenerationRef.current.isCurrent(requestGeneration)
+      ) {
+        setAskingBest(false);
+      }
     }
   };
 

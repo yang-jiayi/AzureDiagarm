@@ -14,15 +14,15 @@ import { OperationGeneration } from '../utils/operationGeneration';
 interface VersionHistoryModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onRestoreVersion: (version: DiagramVersion) => void;
-  currentDiagramName?: string; // For future filtering feature
+  onRestoreVersion: (version: DiagramVersion, restoreAsCopy: boolean) => void;
+  currentLineageId: string;
 }
 
 const VersionHistoryModal: React.FC<VersionHistoryModalProps> = ({
   isOpen,
   onClose,
   onRestoreVersion,
-  currentDiagramName: _currentDiagramName
+  currentLineageId,
 }) => {
   const { t, language } = useLanguage();
   const [versions, setVersions] = useState<DiagramVersion[]>([]);
@@ -140,12 +140,17 @@ const VersionHistoryModal: React.FC<VersionHistoryModalProps> = ({
         return;
       }
 
+      const restoreAsCopy = version.lineageId !== currentLineageId;
       const confirmation = localize(language, {
-        en: `Restore this version? Your current diagram will be replaced.\n\nVersion: ${version.diagramName}\nCreated: ${formatDate(version.timestamp)}`,
-        ja: `このバージョンを復元しますか？ 現在の図は置き換えられます。\n\nバージョン: ${version.diagramName}\n作成日時: ${formatDate(version.timestamp)}`,
+        en: restoreAsCopy
+          ? `Restore this version as a local copy? The current cloud diagram will remain saved.\n\nVersion: ${version.diagramName}\nCreated: ${formatDate(version.timestamp)}`
+          : `Restore this version? Your current diagram will be replaced.\n\nVersion: ${version.diagramName}\nCreated: ${formatDate(version.timestamp)}`,
+        ja: restoreAsCopy
+          ? `このバージョンをローカルコピーとして復元しますか？ 現在のクラウド図面は保存されたまま残ります。\n\nバージョン: ${version.diagramName}\n作成日時: ${formatDate(version.timestamp)}`
+          : `このバージョンを復元しますか？ 現在の図は置き換えられます。\n\nバージョン: ${version.diagramName}\n作成日時: ${formatDate(version.timestamp)}`,
       });
       if (confirm(confirmation)) {
-        onRestoreVersion(version);
+        onRestoreVersion(version, restoreAsCopy);
         closeModal();
       }
     } catch (error) {
@@ -225,8 +230,10 @@ const VersionHistoryModal: React.FC<VersionHistoryModalProps> = ({
             </div>
           ) : (
             <div className="version-list">
-              {versions.map((version, index) => (
-                <div
+              {versions.map((version, index) => {
+                const currentLineage = version.lineageId === currentLineageId;
+                return (
+                  <div
                   key={version.versionId}
                   className={`version-item ${selectedVersion === version.versionId ? 'selected' : ''}`}
                   onClick={() => setSelectedVersion(version.versionId)}
@@ -235,6 +242,12 @@ const VersionHistoryModal: React.FC<VersionHistoryModalProps> = ({
                     <div className="version-title">
                       <h4>{version.diagramName || t("Untitled Diagram")}</h4>
                       {index === 0 && <span className="version-badge latest">{t("Latest")}</span>}
+                      <span className={`version-badge ${currentLineage ? 'current' : 'copy'}`}>
+                        {localize(language, {
+                          en: currentLineage ? 'Current diagram' : 'Restore as copy',
+                          ja: currentLineage ? '現在の図面' : 'コピーとして復元',
+                        })}
+                      </span>
                       {version.validationScore !== undefined && (
                         <span className="version-badge score" title={t("Validation Score")}>
                           {version.validationScore}{t("/100")}{' '}</span>
@@ -309,10 +322,16 @@ const VersionHistoryModal: React.FC<VersionHistoryModalProps> = ({
                       disabled={Boolean(operation)}
                     >
                       <Copy size={16} />
-                      {' '}{t("Restore This Version")}{' '}</button>
+                      {' '}
+                      {currentLineage
+                        ? t("Restore This Version")
+                        : localize(language, { en: 'Restore as Copy', ja: 'コピーとして復元' })}
+                      {' '}
+                    </button>
                   </div>
-                </div>
-              ))}
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>

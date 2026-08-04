@@ -563,6 +563,7 @@ test('cloud workspace ignores stale details and destructive completions', async 
   await initializePage(page);
   let aVersionListCalls = 0;
   let bVersionListCalls = 0;
+  let bRevision = 1;
 
   await page.route('**/api/**', async (route) => {
     const request = route.request();
@@ -598,6 +599,18 @@ test('cloud workspace ignores stale details and destructive completions', async 
     if (path === '/api/diagrams/B' && method === 'GET') {
       await wait(20);
       await fulfillJson(route, cloudDocument('B', 'Diagram B'), 200, { etag: '"B-1"' });
+      return;
+    }
+    if (path === '/api/diagrams/B' && method === 'PUT') {
+      const body = JSON.parse(request.postData() || '{}');
+      bRevision += 1;
+      await fulfillJson(route, {
+        ...cloudDocument('B', body.diagramName || 'Diagram B'),
+        diagramName: body.diagramName || 'Diagram B',
+        payload: body.payload,
+        revision: bRevision,
+        etag: `"B-${bRevision}"`,
+      }, 200, { etag: `"B-${bRevision}"` });
       return;
     }
     if (path === '/api/diagrams/A/versions' && method === 'GET') {
@@ -3854,4 +3867,390 @@ test('snapshot modal cannot close while its cloud target is being saved', async 
   await expect(modal.getByRole('button', { name: 'Close' })).toBeDisabled();
   await expect(modal).toBeHidden({ timeout: 5_000 });
   expect(snapshotNotes).toBe('Before change');
+});
+
+test('diagram imports are atomic and AI imports save pricing to a new cloud document', async ({ page }) => {
+  await initializePage(page, {
+    documentId: 'A',
+    access: 'owner',
+    role: 'owner',
+  });
+  const dialogMessages: string[] = [];
+  const importedPayloads: Record<string, any>[] = [];
+  let sourceUpdateAttempts = 0;
+  let importedRevision = 1;
+
+  page.on('dialog', async (dialog) => {
+    dialogMessages.push(dialog.message());
+    await dialog.accept();
+  });
+
+  await page.route('**/api/**', async (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    const method = request.method();
+    if (path === '/api/access/me') {
+      await fulfillJson(route, {
+        enabled: false,
+        authenticated: true,
+        email: 'owner@example.com',
+        isAdmin: false,
+        allowed: true,
+      });
+      return;
+    }
+    if (path === '/api/diagrams/A' && method === 'GET') {
+      await fulfillJson(route, cloudDocument('A', 'Source diagram'), 200, { etag: '"A-1"' });
+      return;
+    }
+    if (path === '/api/diagrams/A' && method === 'PUT') {
+      sourceUpdateAttempts += 1;
+      await fulfillJson(route, { error: 'The source diagram must not be updated.' }, 500);
+      return;
+    }
+    if (path === '/api/diagrams' && method === 'POST') {
+      const body = JSON.parse(request.postData() || '{}');
+      importedPayloads.push(body.payload || {});
+      await fulfillJson(route, {
+        ...cloudDocument('IMPORTED', body.diagramName || 'Imported AI diagram'),
+        diagramName: body.diagramName || 'Imported AI diagram',
+        payload: body.payload,
+        revision: importedRevision,
+        etag: `"IMPORTED-${importedRevision}"`,
+      }, 201, { etag: `"IMPORTED-${importedRevision}"` });
+      return;
+    }
+    if (path === '/api/diagrams/IMPORTED' && method === 'PUT') {
+      const body = JSON.parse(request.postData() || '{}');
+      importedRevision += 1;
+      importedPayloads.push(body.payload || {});
+      await fulfillJson(route, {
+        ...cloudDocument('IMPORTED', body.diagramName || 'Imported AI diagram'),
+        diagramName: body.diagramName || 'Imported AI diagram',
+        payload: body.payload,
+        revision: importedRevision,
+        etag: `"IMPORTED-${importedRevision}"`,
+      }, 200, { etag: `"IMPORTED-${importedRevision}"` });
+      return;
+    }
+    await fulfillJson(route, { error: `Unhandled test endpoint: ${method} ${path}` }, 404);
+  });
+
+  await page.goto('/');
+  const sourceNode = page.locator('[data-testid="rf__node-A-node"]');
+  const cloudButton = page.getByRole('button', { name: /^Cloud workspace:/ });
+  const fileInput = page.locator('input[accept=".json"]');
+  await expect(sourceNode).toBeVisible();
+  await expect(cloudButton).toHaveClass(/btn-active/);
+
+  await fileInput.setInputFiles({
+    name: 'invalid-diagram.json',
+    mimeType: 'application/json',
+    buffer: Buffer.from(JSON.stringify({
+      nodes: [],
+      edges: 'invalid',
+    })),
+  });
+  await expect.poll(() => dialogMessages.length).toBe(1);
+  await expect(sourceNode).toBeVisible();
+  await expect(cloudButton).toHaveClass(/btn-active/);
+  expect(sourceUpdateAttempts).toBe(0);
+
+  await fileInput.setInputFiles({
+    name: 'invalid-ai-diagram.json',
+    mimeType: 'application/json',
+    buffer: Buffer.from(JSON.stringify({
+      format: 'azurediagarm-ai-architecture',
+      services: [],
+      connections: [],
+      groups: [],
+    })),
+  });
+  await expect.poll(() => dialogMessages.length).toBe(2);
+  await expect(sourceNode).toBeVisible();
+  await expect(cloudButton).toHaveClass(/btn-active/);
+  expect(sourceUpdateAttempts).toBe(0);
+
+  await fileInput.setInputFiles({
+    name: 'valid-ai-diagram.json',
+    mimeType: 'application/json',
+    buffer: Buffer.from(JSON.stringify({
+      format: 'azurediagarm-ai-architecture',
+      architectureName: 'Imported AI diagram',
+      metadata: { prompt: 'Import an App Service architecture' },
+      services: [{
+        id: 'imported-app',
+        name: 'App Service',
+        type: 'App Service',
+        category: 'app services',
+      }],
+      connections: [],
+      groups: [],
+      workflow: [],
+    })),
+  });
+
+  await expect(page.locator('[data-testid="rf__node-imported-app"]')).toBeVisible({
+    timeout: 10_000,
+  });
+  await expect(sourceNode).toHaveCount(0);
+  await expect.poll(() => importedPayloads.length, { timeout: 5_000 }).toBeGreaterThan(0);
+  await expect.poll(
+    () => importedPayloads.some(payload => payload.nodes?.some(
+      (node: any) => node.id === 'imported-app'
+        && typeof node.data?.pricing?.estimatedCost === 'number'
+        && node.data?.pricing?.region === 'japaneast',
+    )),
+    { timeout: 10_000 },
+  ).toBe(true);
+  expect(sourceUpdateAttempts).toBe(0);
+});
+
+test('service and layer ungroup actions preserve absolute positions', async ({ page }) => {
+  await initializePage(page, {
+    documentId: 'A',
+    access: 'owner',
+    role: 'owner',
+  });
+  const document = interactionCloudDocument();
+  document.payload.nodes = [
+    {
+      id: 'group-a',
+      type: 'groupNode',
+      position: { x: 320, y: 80 },
+      style: { width: 420, height: 260 },
+      data: { label: 'Application layer', color: '#0078d4' },
+    },
+    {
+      id: 'node-a',
+      type: 'azureNode',
+      position: { x: 20, y: 60 },
+      parentNode: 'group-a',
+      extent: 'parent',
+      data: { label: 'App Service', serviceName: 'App Service' },
+    },
+    {
+      id: 'node-b',
+      type: 'azureNode',
+      position: { x: 220, y: 60 },
+      parentNode: 'group-a',
+      extent: 'parent',
+      data: { label: 'Azure SQL Database', serviceName: 'Azure SQL Database' },
+    },
+  ];
+  document.payload.edges = [];
+  const savedPayloads: Record<string, any>[] = [];
+  let revision = 1;
+
+  await page.route('**/api/**', async (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    const method = request.method();
+    if (path === '/api/access/me') {
+      await fulfillJson(route, {
+        enabled: false,
+        authenticated: true,
+        email: 'owner@example.com',
+        isAdmin: false,
+        allowed: true,
+      });
+      return;
+    }
+    if (path === '/api/diagrams/A' && method === 'GET') {
+      await fulfillJson(route, document, 200, { etag: '"A-1"' });
+      return;
+    }
+    if (path === '/api/diagrams/A' && method === 'PUT') {
+      const body = JSON.parse(request.postData() || '{}');
+      revision += 1;
+      savedPayloads.push(body.payload || {});
+      await fulfillJson(route, {
+        ...document,
+        diagramName: body.diagramName || document.diagramName,
+        payload: body.payload,
+        revision,
+        etag: `"A-${revision}"`,
+      }, 200, { etag: `"A-${revision}"` });
+      return;
+    }
+    await fulfillJson(route, { error: `Unhandled test endpoint: ${method} ${path}` }, 404);
+  });
+
+  await page.goto('/');
+  const nodeA = page.locator('[data-testid="rf__node-node-a"]');
+  const nodeB = page.locator('[data-testid="rf__node-node-b"]');
+  const group = page.locator('[data-testid="rf__node-group-a"]');
+  await expect(nodeA).toBeVisible();
+  await expect(nodeB).toBeVisible();
+  await expect(group).toBeVisible();
+
+  await nodeA.click({ button: 'right' });
+  await page.getByRole('menu', { name: 'Service actions' })
+    .getByRole('menuitem', { name: 'Remove from layer' })
+    .click();
+  await expect.poll(() => savedPayloads.length, { timeout: 5_000 }).toBe(1);
+  const detachedNode = savedPayloads[0].nodes.find((node: any) => node.id === 'node-a');
+  expect(detachedNode.parentNode).toBeUndefined();
+  expect(detachedNode.extent).toBeUndefined();
+  expect(detachedNode.position).toEqual({ x: 340, y: 140 });
+
+  await group.locator('.group-node-header').click({ button: 'right' });
+  await page.getByRole('menu', { name: 'Layer actions' })
+    .getByRole('menuitem', { name: /Ungroup layer/ })
+    .click();
+  await expect(group).toHaveCount(0);
+  await expect(nodeA).toBeVisible();
+  await expect(nodeB).toBeVisible();
+  await expect.poll(() => savedPayloads.length, { timeout: 5_000 }).toBe(2);
+  const finalPayload = savedPayloads[1];
+  expect(finalPayload.nodes.some((node: any) => node.id === 'group-a')).toBe(false);
+  const ungroupedNode = finalPayload.nodes.find((node: any) => node.id === 'node-b');
+  expect(ungroupedNode.parentNode).toBeUndefined();
+  expect(ungroupedNode.extent).toBeUndefined();
+  expect(ungroupedNode.position).toEqual({ x: 540, y: 140 });
+});
+
+test('deployment guide accordions are keyboard accessible and stale results are discarded', async ({ page }) => {
+  await initializePage(page, {
+    documentId: 'A',
+    access: 'owner',
+    role: 'owner',
+  });
+  let guideRequests = 0;
+  let importedRevision = 1;
+  const guide = {
+    title: 'Deploy the test architecture',
+    overview: 'Deploy one App Service.',
+    prerequisites: ['Azure CLI'],
+    estimatedTime: '10 minutes',
+    deploymentSteps: [{
+      step: 1,
+      title: 'Prepare resources',
+      description: 'Select the subscription and resource group.',
+      commands: ['az account show'],
+      notes: ['Use the intended subscription.'],
+    }],
+    configuration: [],
+    postDeployment: ['Verify the application endpoint'],
+    troubleshooting: [],
+    estimatedCost: '$10/month',
+    bicepTemplates: [{
+      name: 'Main',
+      description: 'Deploys the application.',
+      filename: 'main.bicep',
+      content: 'param location string',
+    }],
+  };
+
+  await page.route('**/api/**', async (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    const method = request.method();
+    if (path === '/api/access/me') {
+      await fulfillJson(route, {
+        enabled: false,
+        authenticated: true,
+        email: 'owner@example.com',
+        isAdmin: false,
+        allowed: true,
+      });
+      return;
+    }
+    if (path === '/api/diagrams/A' && method === 'GET') {
+      await fulfillJson(route, cloudDocument('A', 'Guide source'), 200, { etag: '"A-1"' });
+      return;
+    }
+    if (path === '/api/docs-search' && method === 'POST') {
+      await fulfillJson(route, { results: [] });
+      return;
+    }
+    if (path === '/api/openai' && method === 'POST') {
+      guideRequests += 1;
+      if (guideRequests === 2) await wait(700);
+      await fulfillJson(route, {
+        model: 'playwright-gpt-5-6-sol',
+        output_text: JSON.stringify(guide),
+        usage: { input_tokens: 30, output_tokens: 20, total_tokens: 50 },
+      });
+      return;
+    }
+    if (path === '/api/diagrams' && method === 'POST') {
+      const body = JSON.parse(request.postData() || '{}');
+      await fulfillJson(route, {
+        ...cloudDocument('IMPORTED', body.diagramName || 'Replacement diagram'),
+        diagramName: body.diagramName || 'Replacement diagram',
+        payload: body.payload,
+        revision: importedRevision,
+        etag: `"IMPORTED-${importedRevision}"`,
+      }, 201, { etag: `"IMPORTED-${importedRevision}"` });
+      return;
+    }
+    if (path === '/api/diagrams/IMPORTED' && method === 'PUT') {
+      const body = JSON.parse(request.postData() || '{}');
+      importedRevision += 1;
+      await fulfillJson(route, {
+        ...cloudDocument('IMPORTED', body.diagramName || 'Replacement diagram'),
+        diagramName: body.diagramName || 'Replacement diagram',
+        payload: body.payload,
+        revision: importedRevision,
+        etag: `"IMPORTED-${importedRevision}"`,
+      }, 200, { etag: `"IMPORTED-${importedRevision}"` });
+      return;
+    }
+    await fulfillJson(route, { error: `Unhandled test endpoint: ${method} ${path}` }, 404);
+  });
+
+  await page.goto('/');
+  const generateButton = page.getByTitle('Generate comprehensive deployment guide');
+  await generateButton.click();
+  const modal = page.locator('.deployment-modal');
+  await expect(modal.getByText('Deploy the test architecture')).toBeVisible({
+    timeout: 5_000,
+  });
+
+  const stepToggle = modal.locator('.step-header');
+  await expect(stepToggle).toHaveAttribute('aria-expanded', 'true');
+  await stepToggle.focus();
+  await page.keyboard.press('Enter');
+  await expect(stepToggle).toHaveAttribute('aria-expanded', 'false');
+  await expect(modal.locator('#deployment-step-0')).toHaveCount(0);
+  await stepToggle.press('Enter');
+  await expect(stepToggle).toHaveAttribute('aria-expanded', 'true');
+  await expect(modal.locator('#deployment-step-0')).toBeVisible();
+
+  const bicepToggle = modal.locator('.bicep-template-toggle');
+  await expect(bicepToggle).toHaveAttribute('aria-expanded', 'true');
+  await bicepToggle.focus();
+  await page.keyboard.press('Enter');
+  await expect(bicepToggle).toHaveAttribute('aria-expanded', 'false');
+  await bicepToggle.press('Enter');
+  await expect(bicepToggle).toHaveAttribute('aria-expanded', 'true');
+  await expect(modal.getByRole('button', { name: 'Download main.bicep' })).toBeVisible();
+  await expect(modal.getByRole('button', { name: 'Copy to clipboard' })).toHaveCount(2);
+  await expectNoWcagViolations(page, '.deployment-modal');
+
+  await modal.getByRole('button', { name: 'Close' }).last().click();
+  await generateButton.click();
+  await expect(modal.getByText('Generating comprehensive deployment guide...')).toBeVisible();
+  await page.locator('input[accept=".json"]').setInputFiles({
+    name: 'replacement-diagram.json',
+    mimeType: 'application/json',
+    buffer: Buffer.from(JSON.stringify({
+      nodes: [{
+        id: 'replacement-node',
+        type: 'azureNode',
+        position: { x: 200, y: 180 },
+        data: {
+          label: 'Azure SQL Database',
+          serviceName: 'Azure SQL Database',
+        },
+      }],
+      edges: [],
+      titleBlockData: { architectureName: 'Replacement diagram' },
+    })),
+  });
+  await expect(page.locator('[data-testid="rf__node-replacement-node"]')).toBeVisible();
+  await expect(modal).toBeHidden();
+  await page.waitForTimeout(900);
+  await expect(page.getByTitle('Open last deployment guide')).toHaveCount(0);
 });

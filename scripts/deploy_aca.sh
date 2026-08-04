@@ -109,9 +109,6 @@ fi
 #   same RUN layer as `npm run build` so Vite embeds it via import.meta.env.
 SOURCE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 APPINSIGHTS_FILE="$SOURCE_DIR/.env.appinsights"
-# Remove a stale legacy .env.build copy so this manual path is controlled only
-# by the current .env values collected below.
-rm -f "$SOURCE_DIR/.env.build"
 : > "$APPINSIGHTS_FILE"
 trap 'rm -f "$APPINSIGHTS_FILE"' EXIT
 
@@ -126,6 +123,10 @@ while IFS='=' read -r key value; do
         # Route App Insights conn string through file workaround
         if [[ "$key" == "VITE_APPINSIGHTS_CONNECTION_STRING" ]]; then
             echo "$key=$value" > "$APPINSIGHTS_FILE"
+            continue
+        fi
+        if [[ "$key" =~ (_API_KEY|_SECRET|_TOKEN|_PASSWORD|_CONNECTION_STRING)$ ]]; then
+            echo "⚠️  Skipping sensitive build variable: $key" >&2
             continue
         fi
         BUILD_ARGS+=(--build-arg "$key=$value")
@@ -174,8 +175,9 @@ bash "$SOURCE_DIR/scripts/ensure-containerapp-probes.sh" \
 PUBLIC_URL="${PUBLIC_URL:-https://$FQDN}"
 RUNTIME_ENV_VARS=(
     "PUBLIC_URL=$PUBLIC_URL"
-    "MCP_ENABLED=${MCP_ENABLED:-true}"
+    "MCP_ENABLED=${MCP_ENABLED:-false}"
     "MCP_HTTP_STATELESS=${MCP_HTTP_STATELESS:-true}"
+    "MCP_HTTP_MAX_IN_FLIGHT=${MCP_HTTP_MAX_IN_FLIGHT:-20}"
     "MCP_SESSION_MAX=${MCP_SESSION_MAX:-100}"
     "MCP_SESSION_IDLE_SECONDS=${MCP_SESSION_IDLE_SECONDS:-1800}"
     "MCP_SESSION_TTL_SECONDS=${MCP_SESSION_TTL_SECONDS:-7200}"

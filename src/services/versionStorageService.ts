@@ -11,6 +11,7 @@ import type { IaCBaseline } from './iacRoundTrip';
 
 export interface DiagramVersion {
   versionId: string;
+  lineageId?: string;
   timestamp: number;
   diagramName: string;
   architecturePrompt?: string;
@@ -155,6 +156,7 @@ export const createSnapshot = async (
   edges: any[],
   diagramName: string,
   options?: {
+    lineageId?: string;
     architecturePrompt?: string;
     originalPrompt?: string;
     validationScore?: number;

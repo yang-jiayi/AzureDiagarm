@@ -14,6 +14,7 @@ import './AzureNode.css';
 import { useLanguage } from '../i18n/LanguageContext';
 import { localize } from '../i18n/localization';
 import { useNodeKeyboardInteraction } from '../hooks/useNodeKeyboardInteraction';
+import { detachNodeFromGroup } from '../utils/groupUtils';
 
 // Map categories to colors
 const getCategoryColor = (category: string): string => {
@@ -47,10 +48,8 @@ const AzureNode: React.FC<NodeProps> = memo(({ data, selected, id }) => {
   const [label, setLabel] = useState(data.label || 'Azure Service');
   const cancelLabelEditRef = useRef(false);
   const labelRef = useRef<HTMLDivElement>(null);
-  const { setNodes } = useReactFlow();
-  
-  // Access parentNode from data (React Flow stores it there)
-  const parentNode = data.parentNode;
+  const { getNode, setNodes } = useReactFlow();
+  const parentNode = getNode(id)?.parentNode;
 
   // Extract pricing data
   const pricing = data.pricing as NodePricingConfig | undefined;
@@ -131,36 +130,7 @@ const AzureNode: React.FC<NodeProps> = memo(({ data, selected, id }) => {
 
   const handleUngroup = (e: React.MouseEvent) => {
     e.stopPropagation();
-    
-    setNodes((nds) => nds.map((node) => {
-      if (node.id === id && node.parentNode) {
-        // Find the parent group to get its absolute position
-        const parentGroup = nds.find(n => n.id === node.parentNode);
-        
-        if (parentGroup) {
-          // Convert from parent-relative to absolute canvas coordinates
-          const absolutePosition = {
-            x: parentGroup.position.x + node.position.x,
-            y: parentGroup.position.y + node.position.y,
-          };
-          
-          return {
-            ...node,
-            parentNode: undefined,
-            position: absolutePosition,
-            extent: undefined,
-          };
-        }
-        
-        // Fallback: just remove parent if parent not found
-        return {
-          ...node,
-          parentNode: undefined,
-          extent: undefined,
-        };
-      }
-      return node;
-    }));
+    setNodes((nodes) => detachNodeFromGroup(nodes, id));
   };
 
   const categoryColor = getCategoryColor(data.category);
@@ -179,11 +149,13 @@ const AzureNode: React.FC<NodeProps> = memo(({ data, selected, id }) => {
     >
       {parentNode && selected && (
         <button
+          type="button"
           className="ungroup-button"
           onClick={handleUngroup}
           title={t("Remove from group (you can then drag into another group)")}
+          aria-label={t("Remove from group (you can then drag into another group)")}
         >
-          <Unlink size={14} />
+          <Unlink size={14} aria-hidden="true" />
         </button>
       )}
       <Handle

@@ -4,6 +4,7 @@ import type { Node } from 'reactflow';
 import {
   collectNodeAndDescendantIds,
   deleteNodesPreservingGroupChildren,
+  detachNodeFromGroup,
 } from '../src/utils/groupUtils.ts';
 
 function node(
@@ -71,4 +72,17 @@ test('collectNodeAndDescendantIds includes nested group contents only', () => {
   ], ['outer']);
 
   assert.deepEqual([...ids].sort(), ['inner', 'outer', 'service']);
+});
+
+test('ungrouping a service preserves its absolute position through nested groups', () => {
+  const result = detachNodeFromGroup([
+    node('outer', 'groupNode', 100, 100),
+    node('inner', 'groupNode', 30, 40, 'outer'),
+    node('service', 'azureNode', 5, 6, 'inner'),
+  ], 'service');
+
+  const service = result.find(item => item.id === 'service');
+  assert.deepEqual(service?.position, { x: 135, y: 146 });
+  assert.equal(service?.parentNode, undefined);
+  assert.equal(service?.extent, undefined);
 });

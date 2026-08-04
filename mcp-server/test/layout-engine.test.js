@@ -105,3 +105,14 @@ test('grouped TB layout distributes shared edge ports in endpoint order', () => 
 test('grouped LR layout distributes shared edge ports in endpoint order', () => {
   verifyDistributedPorts('LR');
 });
+
+test('layout rejects architectures above the defensive service limit', () => {
+  const oversized = Array.from({ length: 251 }, (_, index) => ({
+    name: `Service ${index}`,
+    type: 'App Service',
+  }));
+  assert.throws(
+    () => computeLayout(oversized, [], [], 'TB'),
+    /at most 250 services/,
+  );
+});

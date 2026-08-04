@@ -16,6 +16,7 @@ import type { Node, Edge } from 'reactflow';
 // ── Types ──────────────────────────────────────────────────────────────
 
 interface DiagramService {
+  id: string;
   name: string;
   type: string;
   description: string;
@@ -23,8 +24,9 @@ interface DiagramService {
 }
 
 interface DiagramConnection {
-  from: string;
-  to: string;
+  id: string;
+  fromId: string;
+  toId: string;
   label: string;
   type: 'sync' | 'async' | 'optional';
 }
@@ -35,6 +37,7 @@ interface DiagramGroup {
 }
 
 interface PositionedNode {
+  id: string;
   name: string;
   type: string;
   description: string;
@@ -49,8 +52,9 @@ interface PositionedNode {
 }
 
 interface PositionedEdge {
-  from: string;
-  to: string;
+  id: string;
+  fromId: string;
+  toId: string;
   label: string;
   type: string;
   points: Array<{ x: number; y: number }>;
@@ -158,24 +162,21 @@ function extractDiagramData(nodes: Node[], edges: Edge[]): {
   const services: DiagramService[] = nodes
     .filter(n => n.type === 'azureNode')
     .map(n => ({
+      id: n.id,
       name: (n.data.label as string) || 'Unknown Service',
       type: (n.data.serviceName as string) || (n.data.label as string) || 'Unknown',
       description: (n.data.description as string) || '',
       groupId: n.parentNode ?? null,
     }));
 
-  const nodeNameById = new Map<string, string>();
-  for (const n of nodes) {
-    if (n.type === 'azureNode') {
-      nodeNameById.set(n.id, (n.data.label as string) || 'Unknown');
-    }
-  }
+  const serviceIds = new Set(services.map(service => service.id));
 
   const connections: DiagramConnection[] = edges
-    .filter(e => nodeNameById.has(e.source) && nodeNameById.has(e.target))
+    .filter(e => serviceIds.has(e.source) && serviceIds.has(e.target))
     .map(e => ({
-      from: nodeNameById.get(e.source)!,
-      to: nodeNameById.get(e.target)!,
+      id: e.id,
+      fromId: e.source,
+      toId: e.target,
       label: typeof e.label === 'string' ? e.label : '',
       type: (e.data?.connectionType as 'sync' | 'async' | 'optional') ?? 'sync',
     }));
@@ -201,7 +202,9 @@ function computeLayout(
   connections: DiagramConnection[],
   groups: DiagramGroup[],
 ): LayoutResult {
-  const g = new dagre.graphlib.Graph({ compound: true });
+  const g = new dagre.graphlib.Graph({ compound: true, multigraph: true });
+  const serviceGraphId = (id: string) => `service:${id}`;
+  const groupGraphId = (id: string) => `group:${id}`;
 
   g.setGraph({
     rankdir: 'TB',
@@ -216,7 +219,7 @@ function computeLayout(
 
   const groupMap = new Map(groups.map(gr => [gr.id, gr]));
   for (const group of groups) {
-    g.setNode(`group-${group.id}`, {
+    g.setNode(groupGraphId(group.id), {
       label: group.label,
       clusterLabelPos: 'top',
       style: 'fill: transparent',
@@ -226,36 +229,37 @@ function computeLayout(
   const serviceCategories = new Map<string, string>();
   for (const svc of services) {
     const category = resolveCategory(svc.type);
-    serviceCategories.set(svc.name, category);
+    serviceCategories.set(svc.id, category);
 
-    g.setNode(svc.name, {
+    g.setNode(serviceGraphId(svc.id), {
       width: NODE_WIDTH,
       height: NODE_HEIGHT,
       label: svc.name,
     });
 
     if (svc.groupId && groupMap.has(svc.groupId)) {
-      g.setParent(svc.name, `group-${svc.groupId}`);
+      g.setParent(serviceGraphId(svc.id), groupGraphId(svc.groupId));
     }
   }
 
-  const serviceNames = new Set(services.map(s => s.name));
+  const serviceIds = new Set(services.map(s => s.id));
   for (const conn of connections) {
-    if (serviceNames.has(conn.from) && serviceNames.has(conn.to)) {
-      g.setEdge(conn.from, conn.to, {
+    if (serviceIds.has(conn.fromId) && serviceIds.has(conn.toId)) {
+      g.setEdge(serviceGraphId(conn.fromId), serviceGraphId(conn.toId), {
         label: conn.label ?? '',
         minlen: 1,
-      });
+      }, conn.id);
     }
   }
 
   dagre.layout(g);
 
   const positionedNodes: PositionedNode[] = services.map(svc => {
-    const node = g.node(svc.name);
-    const category = serviceCategories.get(svc.name) ?? 'other';
+    const node = g.node(serviceGraphId(svc.id));
+    const category = serviceCategories.get(svc.id) ?? 'other';
     const colors = getCategoryColor(category);
     return {
+      id: svc.id,
       name: svc.name,
       type: svc.type,
       description: svc.description ?? '',
@@ -271,12 +275,17 @@ function computeLayout(
   });
 
   const positionedEdges: PositionedEdge[] = connections
-    .filter(c => serviceNames.has(c.from) && serviceNames.has(c.to))
+    .filter(c => serviceIds.has(c.fromId) && serviceIds.has(c.toId))
     .map(conn => {
-      const edge = g.edge(conn.from, conn.to);
+      const edge = g.edge({
+        v: serviceGraphId(conn.fromId),
+        w: serviceGraphId(conn.toId),
+        name: conn.id,
+      });
       return {
-        from: conn.from,
-        to: conn.to,
+        id: conn.id,
+        fromId: conn.fromId,
+        toId: conn.toId,
         label: conn.label ?? '',
         type: conn.type ?? 'sync',
         points: edge?.points ?? [],
@@ -284,7 +293,7 @@ function computeLayout(
     });
 
   const positionedGroups: PositionedGroup[] = groups.map((group, idx) => {
-    const gNode = g.node(`group-${group.id}`);
+    const gNode = g.node(groupGraphId(group.id));
     const groupColor = GROUP_COLORS[idx % GROUP_COLORS.length];
     if (!gNode) {
       return { id: group.id, label: group.label, x: 0, y: 0, width: 0, height: 0, color: groupColor.border };
@@ -629,15 +638,12 @@ export function exportDiagramAsHtml(
   title?: string,
 ): void {
   const diagramTitle = title || 'Azure Architecture Diagram';
-  const { services, connections, groups } = extractDiagramData(nodes, edges);
+  const html = buildInteractiveDiagramHtml(nodes, edges, diagramTitle);
 
-  if (services.length === 0) {
+  if (!html) {
     alert('No services to export. Add Azure services to the diagram first.');
     return;
   }
-
-  const layout = computeLayout(services, connections, groups);
-  const html = generateHtml(layout, diagramTitle);
 
   // Trigger download
   const blob = new Blob([html], { type: 'text/html' });
@@ -649,4 +655,20 @@ export function exportDiagramAsHtml(
   a.click();
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
+}
+
+export function buildInteractiveDiagramHtml(
+  nodes: Node[],
+  edges: Edge[],
+  title?: string,
+): string | null {
+  const diagramTitle = title || 'Azure Architecture Diagram';
+  const { services, connections, groups } = extractDiagramData(nodes, edges);
+
+  if (services.length === 0) {
+    return null;
+  }
+
+  const layout = computeLayout(services, connections, groups);
+  return generateHtml(layout, diagramTitle);
 }

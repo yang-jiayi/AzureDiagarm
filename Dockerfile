@@ -1,5 +1,5 @@
 # Build stage
-FROM node:20-alpine AS build
+FROM node:22-alpine AS build
 
 WORKDIR /app
 
@@ -72,18 +72,14 @@ ENV VITE_ARM_SCOPE=$VITE_ARM_SCOPE
 # as shell command separators. Instead, the deploy script (scripts/update_aca.sh) extracts
 # the value into .env.appinsights, which is COPY'd here and sourced at build time.
 # The glob pattern (appinsights*) ensures the build doesn't fail if the file is absent.
-# .env.build  — optional legacy/local build input containing VITE_* values.
 # .env.appinsights — App Insights connection string workaround (see below).
-# Both globs are optional so the build doesn't fail in environments that
+# The glob is optional so the build doesn't fail in environments that
 # don't create them (e.g. direct docker build with --build-arg).
-COPY .env.build* .env.appinsights* ./
+COPY .env.appinsights* ./
 
-# Build the app — source the optional env files first so their values are
-# available to Vite, then fall back to the ARG/ENV values set above.
-RUN if [ -f .env.build ]; then \
-      export $(grep -v '^#' .env.build | grep -v '^\s*$' | xargs); \
-    fi && \
-    if [ -f .env.appinsights ]; then \
+# Build the app — source the optional App Insights value first, then fall
+# back to the explicit public ARG/ENV values set above.
+RUN if [ -f .env.appinsights ]; then \
       export $(cat .env.appinsights); \
     fi && npm run build
 
@@ -98,14 +94,13 @@ COPY mcp-server/scripts ./scripts
 RUN npm run build
 
 # Production stage
-FROM nginx:alpine
+FROM node:22-alpine
 
 ARG FRONT_DOOR_ID
 ENV FRONT_DOOR_ID=$FRONT_DOOR_ID
 
-# Install Node.js for the speech token server and the MCP HTTP server
-# (both use DefaultAzureCredential / managed identity where applicable).
-RUN apk add --no-cache nodejs npm
+# Install nginx while keeping the runtime Node version aligned with CI/build.
+RUN apk add --no-cache nginx
 
 # Set up the speech token server
 WORKDIR /srv/token-server
@@ -122,10 +117,10 @@ COPY --from=build /app/mcp-server/dist ./dist
 # Copy static build output
 COPY --from=build /app/dist /usr/share/nginx/html
 COPY --from=build /app/Azure_Public_Service_Icons /usr/share/nginx/html/Azure_Public_Service_Icons
-COPY nginx.conf /etc/nginx/conf.d/default.conf
+COPY nginx.conf /etc/nginx/http.d/default.conf
 RUN if [ -n "$FRONT_DOOR_ID" ]; then \
-      sed -i "s|#FDID_CHECK#|if (\$http_x_azure_fdid != \"$FRONT_DOOR_ID\") { return 403; }|" /etc/nginx/conf.d/default.conf \
-      && grep -q "return 403" /etc/nginx/conf.d/default.conf; \
+      sed -i "s|#FDID_CHECK#|if (\$http_x_azure_fdid != \"$FRONT_DOOR_ID\") { return 403; }|" /etc/nginx/http.d/default.conf \
+      && grep -q "return 403" /etc/nginx/http.d/default.conf; \
     fi
 
 # Startup: token server + MCP HTTP server in background, nginx in foreground.

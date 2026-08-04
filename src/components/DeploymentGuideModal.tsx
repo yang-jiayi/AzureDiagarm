@@ -6,6 +6,7 @@ import { X, Download, Copy, Check, ChevronDown, ChevronUp, FileCode, Package, Cl
 import { DeploymentGuide, downloadDeploymentGuide, downloadBicepTemplate, downloadAllBicepTemplates, BicepModule } from '../services/deploymentGuideGenerator';
 import './DeploymentGuideModal.css';
 import { useLanguage } from '../i18n/LanguageContext';
+import { localize } from '../i18n/localization';
 import { useEscapeKey } from '../hooks/useEscapeKey';
 import { useModalFocus } from '../hooks/useModalFocus';
 
@@ -17,7 +18,7 @@ interface DeploymentGuideModalProps {
 }
 
 const DeploymentGuideModal: React.FC<DeploymentGuideModalProps> = ({ guide, isOpen, onClose, isLoading }) => {
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
   const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
   const [expandedSections, setExpandedSections] = useState<Set<number>>(new Set([0]));
   const [expandedBicep, setExpandedBicep] = useState<Set<number>>(new Set([0]));
@@ -125,23 +126,32 @@ const DeploymentGuideModal: React.FC<DeploymentGuideModalProps> = ({ guide, isOp
               <div className="steps-list">
                 {guide.deploymentSteps.map((step, index) => (
                   <div key={index} className="step-card">
-                    <div 
+                    <button
+                      type="button"
                       className="step-header"
                       onClick={() => toggleSection(index)}
+                      aria-expanded={expandedSections.has(index)}
+                      aria-controls={`deployment-step-${index}`}
+                      id={`deployment-step-toggle-${index}`}
                     >
-                      <div className="step-title">
+                      <span className="step-title">
                         <span className="step-number">{index + 1}</span>
                         <span>{step.title}</span>
-                      </div>
+                      </span>
                       {expandedSections.has(index) ? (
                         <ChevronUp size={20} />
                       ) : (
                         <ChevronDown size={20} />
                       )}
-                    </div>
+                    </button>
 
                     {expandedSections.has(index) && (
-                      <div className="step-content">
+                      <div
+                        className="step-content"
+                        id={`deployment-step-${index}`}
+                        role="region"
+                        aria-labelledby={`deployment-step-toggle-${index}`}
+                      >
                         <p className="step-description">{step.description}</p>
                         
                         {step.commands && step.commands.length > 0 && (
@@ -153,9 +163,11 @@ const DeploymentGuideModal: React.FC<DeploymentGuideModalProps> = ({ guide, isOp
                               <div key={cmdIndex} className="command-block">
                                 <pre>{cmd}</pre>
                                 <button
+                                  type="button"
                                   className="copy-button"
                                   onClick={() => handleCopy(cmd, index * 100 + cmdIndex)}
                                   title={t("Copy to clipboard")}
+                                  aria-label={t("Copy to clipboard")}
                                 >
                                   {copiedIndex === index * 100 + cmdIndex ? (
                                     <Check size={16} />
@@ -264,46 +276,67 @@ const DeploymentGuideModal: React.FC<DeploymentGuideModalProps> = ({ guide, isOp
                 <div className="bicep-templates-list">
                   {guide.bicepTemplates.map((template, index) => (
                     <div key={index} className="bicep-template-card">
-                      <div 
-                        className="bicep-template-header"
-                        onClick={() => toggleBicep(index)}
-                      >
-                        <div className="bicep-template-info">
-                          <FileCode size={18} className="bicep-icon" />
-                          <div className="bicep-template-meta">
-                            <span className="bicep-template-name">{template.name}</span>
-                            <span className="bicep-template-filename">{template.filename}</span>
-                          </div>
-                        </div>
-                        <div className="bicep-template-actions">
-                          <button
-                            className="btn-download-bicep"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleDownloadBicep(template);
-                            }}
-                            title={`Download ${template.filename}`}
-                          >
-                            <Download size={14} />
-                          </button>
+                      <div className="bicep-template-header">
+                        <button
+                          type="button"
+                          className="bicep-template-toggle"
+                          onClick={() => toggleBicep(index)}
+                          aria-expanded={expandedBicep.has(index)}
+                          aria-controls={`bicep-template-${index}`}
+                          id={`bicep-template-toggle-${index}`}
+                        >
+                          <span className="bicep-template-info">
+                            <FileCode size={18} className="bicep-icon" />
+                            <span className="bicep-template-meta">
+                              <span className="bicep-template-name">{template.name}</span>
+                              <span className="bicep-template-filename">{template.filename}</span>
+                            </span>
+                          </span>
                           {expandedBicep.has(index) ? (
                             <ChevronUp size={20} />
                           ) : (
                             <ChevronDown size={20} />
                           )}
+                        </button>
+                        <div className="bicep-template-actions">
+                          <button
+                            type="button"
+                            className="btn-download-bicep"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleDownloadBicep(template);
+                            }}
+                            title={localize(language, {
+                              en: `Download ${template.filename}`,
+                              ja: `${template.filename} をダウンロード`,
+                            })}
+                            aria-label={localize(language, {
+                              en: `Download ${template.filename}`,
+                              ja: `${template.filename} をダウンロード`,
+                            })}
+                          >
+                            <Download size={14} />
+                          </button>
                         </div>
                       </div>
 
                       {expandedBicep.has(index) && (
-                        <div className="bicep-template-content">
+                        <div
+                          className="bicep-template-content"
+                          id={`bicep-template-${index}`}
+                          role="region"
+                          aria-labelledby={`bicep-template-toggle-${index}`}
+                        >
                           <p className="bicep-template-description">{template.description}</p>
                           <div className="bicep-code-block">
                             <div className="bicep-code-header">
                               <span>{template.filename}</span>
                               <button
+                                type="button"
                                 className="copy-button"
                                 onClick={() => handleCopy(template.content, 1000 + index)}
                                 title={t("Copy to clipboard")}
+                                aria-label={t("Copy to clipboard")}
                               >
                                 {copiedIndex === 1000 + index ? (
                                   <Check size={14} />

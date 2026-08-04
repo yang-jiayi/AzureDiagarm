@@ -63,9 +63,10 @@ export async function callAzureOpenAI(messages: any[], modelOverride?: ModelOver
     );
   }
 
-  // Add timeout for large requests (5 minutes for regenerations)
+  // Stay below the 240-second Front Door origin limit so the client receives
+  // a controlled timeout instead of an edge-generated 504.
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 300000);
+  const timeoutId = setTimeout(() => controller.abort(), 225000);
   
   // Start timing
   const startTime = performance.now();
@@ -141,7 +142,7 @@ export async function callAzureOpenAI(messages: any[], modelOverride?: ModelOver
     clearTimeout(timeoutId);
     
     if (error.name === 'AbortError') {
-      throw new Error('Request timed out after 5 minutes. The request may be too complex. Consider simplifying the architecture or reducing the number of recommendations.');
+      throw new Error('Request timed out after 225 seconds. The request may be too complex. Consider simplifying the architecture or reducing the number of recommendations.');
     }
     
     throw error;
