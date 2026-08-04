@@ -208,7 +208,7 @@
 .cost-badge--editable {
   cursor: pointer;
   border: none;
-  font: inherit;
+  font-family: inherit;
 }
 
 .cost-badge--editable:hover {

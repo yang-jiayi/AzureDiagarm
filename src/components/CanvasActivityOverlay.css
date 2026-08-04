@@ -1,0 +1,130 @@
+/* Copyright (c) Microsoft Corporation. Licensed under the MIT License. */
+
+.canvas-activity-stack {
+  position: absolute;
+  top: var(--azd-canvas-chrome-edge);
+  right: 0;
+  left: 0;
+  z-index: 1001;
+  display: grid;
+  width: min(700px, calc(100% - 32px));
+  gap: 8px;
+  margin-inline: auto;
+  pointer-events: none;
+}
+
+.canvas-activity-banner,
+.canvas-prompt-banner {
+  pointer-events: auto;
+  border-radius: var(--azd-radius-lg);
+  box-shadow: var(--azd-shadow-floating);
+}
+
+.canvas-activity-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: center;
+  gap: 0.3rem 0.55rem;
+  max-width: 700px;
+  padding: 1rem 1.5rem;
+  border: 2px solid;
+  color: var(--azd-color-text-inverse);
+  text-align: center;
+  animation: canvas-activity-pulse 2s ease-in-out infinite;
+}
+
+.canvas-activity-banner strong {
+  font-size: 1.08rem;
+}
+
+.canvas-activity-banner span {
+  font-size: 0.95rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.canvas-activity-banner--recommendations {
+  border-color: #60a5fa;
+  background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 50%, #1e40af 100%);
+  box-shadow: 0 0 20px rgba(59, 130, 246, 0.5), 0 0 60px rgba(59, 130, 246, 0.2);
+}
+
+.canvas-activity-banner--import {
+  border-color: #a78bfa;
+  background: linear-gradient(135deg, #7c3aed 0%, #6d28d9 50%, #5b21b6 100%);
+  box-shadow: 0 0 20px rgba(139, 92, 246, 0.5), 0 0 60px rgba(139, 92, 246, 0.2);
+}
+
+.canvas-prompt-banner {
+  justify-self: center;
+  max-width: min(600px, 100%);
+  padding: 0.75rem 1.5rem;
+  border: 1px solid var(--azd-color-brand);
+  background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);
+  color: #1e293b;
+  font-size: 0.875rem;
+  line-height: 1.5;
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+}
+
+.canvas-prompt-banner strong {
+  color: var(--azd-color-brand);
+  font-weight: 700;
+}
+
+.canvas-prompt-banner:hover {
+  box-shadow: 0 4px 12px rgba(0, 120, 212, 0.3);
+}
+
+.canvas-prompt-banner.is-dragging {
+  z-index: 1002;
+  cursor: grabbing;
+  box-shadow: 0 8px 20px rgba(0, 120, 212, 0.38);
+}
+
+body.dark-mode .canvas-prompt-banner {
+  border-color: #60a5fa;
+  background: rgba(31, 41, 55, 0.98);
+  color: #e5edf7;
+}
+
+body.dark-mode .canvas-prompt-banner strong {
+  color: #93c5fd;
+}
+
+@keyframes canvas-activity-pulse {
+  0%, 100% { filter: brightness(1); }
+  50% { filter: brightness(1.08); }
+}
+
+@media (max-width: 640px) {
+  .canvas-activity-stack {
+    width: calc(100% - 16px);
+  }
+
+  .canvas-activity-banner {
+    padding: 0.75rem 0.9rem;
+  }
+
+  .canvas-activity-banner strong {
+    font-size: 0.95rem;
+  }
+
+  .canvas-activity-banner span {
+    font-size: 0.8rem;
+  }
+
+  .canvas-prompt-banner {
+    padding: 0.65rem 0.85rem;
+    font-size: 0.78rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .canvas-activity-banner {
+    animation: none;
+  }
+}

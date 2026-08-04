@@ -9,10 +9,12 @@ import {
   FolderPlus,
   Grid3X3,
   History,
+  List,
   PanelLeftClose,
   PanelLeftOpen,
   Plus,
   Search,
+  Sparkles,
   Star,
   Trash2,
   X,
@@ -33,6 +35,12 @@ import {
   toggleFavoriteIcon,
   toggleIconInCollection,
 } from '../services/iconWorkspaceService';
+import {
+  deduplicatePaletteIcons,
+  normalizeIconDiscoveryText,
+  splitIconSearchHighlight,
+} from '../utils/iconDiscovery';
+import { readLocalStorage, writeLocalStorage } from '../utils/safeStorage';
 import VirtualizedIconGrid from './VirtualizedIconGrid';
 import './IconPalette.css';
 import { useLanguage } from '../i18n/LanguageContext';
@@ -44,8 +52,35 @@ interface IconPaletteProps {
   onAddIcon?: (icon: AzureIcon) => void;
 }
 
-type PaletteView = 'catalog' | 'favorites' | 'recent' | 'collections';
-const PALETTE_VIEW_ORDER: PaletteView[] = ['catalog', 'favorites', 'recent', 'collections'];
+type PaletteView = 'catalog' | 'favorites' | 'recent' | 'recommended' | 'collections';
+type PaletteLayout = 'grid' | 'list';
+const PALETTE_VIEW_ORDER: PaletteView[] = [
+  'catalog',
+  'favorites',
+  'recent',
+  'recommended',
+  'collections',
+];
+const PALETTE_LAYOUT_STORAGE_KEY = 'azure-diagram-builder.paletteLayout.v1';
+const RECOMMENDED_SERVICE_NAMES = [
+  ['App Services'],
+  ['Function Apps'],
+  ['Virtual Machine'],
+  ['Kubernetes Services'],
+  ['SQL Database'],
+  ['Azure Cosmos DB'],
+  ['Storage Accounts'],
+  ['Key Vaults'],
+  ['API Management Services'],
+  ['Azure Service Bus'],
+  ['Front Door And CDN Profiles'],
+  ['Application Insights'],
+  ['Log Analytics Workspaces'],
+  ['Virtual Networks'],
+  ['Load Balancers'],
+  ['Azure OpenAI'],
+  ['Cognitive Search'],
+] as const;
 
 const COMPACT_PALETTE_MEDIA_QUERY =
   '(max-width: 640px), (max-width: 1180px) and (max-height: 600px)';
@@ -59,10 +94,14 @@ const IconPalette: React.FC<IconPaletteProps> = ({ forceCollapsed, onAddIcon }) 
     new Set(['ai']),
   );
   const [searchTerm, setSearchTerm] = useState('');
-  const [activeView, setActiveView] = useState<PaletteView>('catalog');
+  const [activeView, setActiveView] = useState<PaletteView>('recommended');
+  const [layout, setLayout] = useState<PaletteLayout>(() => (
+    readLocalStorage(PALETTE_LAYOUT_STORAGE_KEY) === 'list' ? 'list' : 'grid'
+  ));
   const [categoryIcons, setCategoryIcons] = useState<Map<IconPaletteCategoryId, AzureIcon[]>>(
     new Map(),
   );
+  const [canonicalIconIds, setCanonicalIconIds] = useState<Map<string, string>>(new Map());
   const [iconUrls, setIconUrls] = useState<Map<string, string>>(new Map());
   const [workspace, setWorkspace] = useState(loadIconWorkspace);
   const [selectedCollectionId, setSelectedCollectionId] = useState(
@@ -97,6 +136,10 @@ const IconPalette: React.FC<IconPaletteProps> = ({ forceCollapsed, onAddIcon }) 
   useEffect(() => {
     saveIconWorkspace(workspace);
   }, [workspace]);
+
+  useEffect(() => {
+    writeLocalStorage(PALETTE_LAYOUT_STORAGE_KEY, layout);
+  }, [layout]);
 
   useEffect(() => {
     if (forceCollapsed) setIsCollapsed(true);
@@ -151,7 +194,19 @@ const IconPalette: React.FC<IconPaletteProps> = ({ forceCollapsed, onAddIcon }) 
           [category.id, await loadIconsFromPaletteCategory(category.id)] as const
         )),
       );
-      if (!cancelled) setCategoryIcons(new Map<IconPaletteCategoryId, AzureIcon[]>(entries));
+      if (cancelled) return;
+
+      const { icons, canonicalIdById } = deduplicatePaletteIcons(
+        entries.flatMap(([, categoryItems]) => categoryItems),
+      );
+      const deduplicatedCategories = new Map<IconPaletteCategoryId, AzureIcon[]>(
+        paletteCategories.map(category => [category.id, []]),
+      );
+      for (const icon of icons) {
+        deduplicatedCategories.get(icon.paletteCategory)?.push(icon);
+      }
+      setCategoryIcons(deduplicatedCategories);
+      setCanonicalIconIds(canonicalIdById);
     };
 
     void loadAllIconMetadata();
@@ -159,6 +214,25 @@ const IconPalette: React.FC<IconPaletteProps> = ({ forceCollapsed, onAddIcon }) 
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    if (canonicalIconIds.size === 0) return;
+    setWorkspace((previous) => {
+      const canonicalizeIds = (ids: string[]) => [...new Set(
+        ids.map(id => canonicalIconIds.get(id) || id),
+      )];
+      const next = {
+        ...previous,
+        favoriteIds: canonicalizeIds(previous.favoriteIds),
+        recentIds: canonicalizeIds(previous.recentIds),
+        collections: previous.collections.map(collection => ({
+          ...collection,
+          iconIds: canonicalizeIds(collection.iconIds),
+        })),
+      };
+      return JSON.stringify(next) === JSON.stringify(previous) ? previous : next;
+    });
+  }, [canonicalIconIds]);
 
   const allIcons = useMemo(
     () => paletteCategories.flatMap((category) => categoryIcons.get(category.id) || []),
@@ -179,6 +253,19 @@ const IconPalette: React.FC<IconPaletteProps> = ({ forceCollapsed, onAddIcon }) 
     () => iconsForIds(workspace.recentIds),
     [iconsForIds, workspace.recentIds],
   );
+  const recommendedIcons = useMemo(() => {
+    const iconsByName = new Map(
+      allIcons.map(icon => [normalizeIconDiscoveryText(icon.name), icon]),
+    );
+    const selected = RECOMMENDED_SERVICE_NAMES.flatMap((candidateNames) => {
+      for (const candidate of candidateNames) {
+        const match = iconsByName.get(normalizeIconDiscoveryText(candidate));
+        if (match) return [match];
+      }
+      return [];
+    });
+    return [...new Map(selected.map(icon => [icon.id, icon])).values()];
+  }, [allIcons]);
   const selectedCollection = workspace.collections.find(
     (collection) => collection.id === selectedCollectionId,
   );
@@ -199,6 +286,7 @@ const IconPalette: React.FC<IconPaletteProps> = ({ forceCollapsed, onAddIcon }) 
   const activeViewIcons = useMemo(() => {
     if (activeView === 'favorites') return searchIcons(favoriteIcons);
     if (activeView === 'recent') return searchIcons(recentIcons);
+    if (activeView === 'recommended') return searchIcons(recommendedIcons);
     if (activeView === 'collections') return searchIcons(collectionIcons);
     return catalogSearchResults;
   }, [
@@ -207,6 +295,7 @@ const IconPalette: React.FC<IconPaletteProps> = ({ forceCollapsed, onAddIcon }) 
     collectionIcons,
     favoriteIcons,
     recentIcons,
+    recommendedIcons,
     searchIcons,
   ]);
 
@@ -305,7 +394,13 @@ const IconPalette: React.FC<IconPaletteProps> = ({ forceCollapsed, onAddIcon }) 
               {t('Loading...')}
             </div>
           )}
-          <span className="icon-label">{icon.name}</span>
+          <span className="icon-label">
+            {splitIconSearchHighlight(icon.name, searchTerm).map((segment, index) => (
+              segment.matched
+                ? <mark key={`${segment.text}-${index}`}>{segment.text}</mark>
+                : <React.Fragment key={`${segment.text}-${index}`}>{segment.text}</React.Fragment>
+            ))}
+          </span>
         </button>
         <div className="icon-item-actions">
           <button
@@ -339,6 +434,7 @@ const IconPalette: React.FC<IconPaletteProps> = ({ forceCollapsed, onAddIcon }) 
     iconUrls,
     language,
     onDragStart,
+    searchTerm,
     t,
     workspace.collections,
     workspace.favoriteIds,
@@ -350,15 +446,26 @@ const IconPalette: React.FC<IconPaletteProps> = ({ forceCollapsed, onAddIcon }) 
       ? favoriteIcons.length
       : activeView === 'recent'
         ? recentIcons.length
-        : collectionIcons.length;
+        : activeView === 'recommended'
+          ? recommendedIcons.length
+          : collectionIcons.length;
   const collectionTarget = collectionTargetId ? iconsById.get(collectionTargetId) : undefined;
 
   return (
-    <div
-      className={`icon-palette ${isCollapsed ? 'collapsed' : ''}`}
-      role="region"
-      aria-label={t('Azure Services')}
-    >
+    <>
+      {!isCollapsed && (
+        <button
+          type="button"
+          className="palette-backdrop"
+          onClick={() => setIsCollapsed(true)}
+          aria-label={t('Close services panel')}
+        />
+      )}
+      <div
+        className={`icon-palette palette-layout-${layout} ${isCollapsed ? 'collapsed' : ''}`}
+        role="region"
+        aria-label={t('Azure Services')}
+      >
       {isCollapsed ? (
         <button
           type="button"
@@ -424,6 +531,7 @@ const IconPalette: React.FC<IconPaletteProps> = ({ forceCollapsed, onAddIcon }) 
                 ['catalog', Grid3X3, localize(language, { en: 'All', ja: 'すべて' }), allIcons.length],
                 ['favorites', Star, localize(language, { en: 'Favorites', ja: 'お気に入り' }), favoriteIcons.length],
                 ['recent', History, localize(language, { en: 'Recent', ja: '最近' }), recentIcons.length],
+                ['recommended', Sparkles, localize(language, { en: 'Recommended', ja: '推奨' }), recommendedIcons.length],
                 ['collections', Folder, localize(language, { en: 'Collections', ja: 'コレクション' }), workspace.collections.length],
               ] as const).map(([id, Icon, label, count]) => (
                 <button
@@ -452,16 +560,47 @@ const IconPalette: React.FC<IconPaletteProps> = ({ forceCollapsed, onAddIcon }) 
                 </button>
               ))}
             </div>
-            <div className="palette-search-summary" role="status" aria-live="polite">
-              {searchTerm.trim()
-                ? localize(language, {
-                    en: `${activeViewIcons.length} matching icons`,
-                    ja: `${activeViewIcons.length} 件のアイコン`,
-                  })
-                : localize(language, {
-                    en: `${viewCount} icons in this view`,
-                    ja: `この表示に ${viewCount} 件`,
-                  })}
+            <div className="palette-view-meta">
+              <div className="palette-search-summary" role="status" aria-live="polite">
+                {searchTerm.trim()
+                  ? localize(language, {
+                      en: `${activeViewIcons.length} matching icons`,
+                      ja: `${activeViewIcons.length} 件のアイコン`,
+                    })
+                  : localize(language, {
+                      en: `${viewCount} icons in this view`,
+                      ja: `この表示に ${viewCount} 件`,
+                    })}
+              </div>
+              <div
+                className="palette-layout-switch"
+                role="group"
+                aria-label={localize(language, {
+                  en: 'Service display layout',
+                  ja: 'サービス表示レイアウト',
+                })}
+              >
+                <button
+                  type="button"
+                  className={layout === 'grid' ? 'active' : ''}
+                  aria-pressed={layout === 'grid'}
+                  onClick={() => setLayout('grid')}
+                  title={localize(language, { en: 'Grid view', ja: 'グリッド表示' })}
+                  aria-label={localize(language, { en: 'Grid view', ja: 'グリッド表示' })}
+                >
+                  <Grid3X3 size={14} />
+                </button>
+                <button
+                  type="button"
+                  className={layout === 'list' ? 'active' : ''}
+                  aria-pressed={layout === 'list'}
+                  onClick={() => setLayout('list')}
+                  title={localize(language, { en: 'List view', ja: 'リスト表示' })}
+                  aria-label={localize(language, { en: 'List view', ja: 'リスト表示' })}
+                >
+                  <List size={15} />
+                </button>
+              </div>
             </div>
             <p className="palette-help">{t('palette.interactionHint')}</p>
           </div>
@@ -472,6 +611,16 @@ const IconPalette: React.FC<IconPaletteProps> = ({ forceCollapsed, onAddIcon }) 
             role="tabpanel"
             aria-labelledby={`palette-view-tab-${activeView}`}
           >
+            {activeView === 'recommended' && searchTerm.trim() === '' && (
+              <div className="palette-recommended-intro">
+                <Sparkles size={16} aria-hidden="true" />
+                <span>{localize(language, {
+                  en: 'Common building blocks for starting an Azure architecture.',
+                  ja: 'Azure アーキテクチャを始めるための代表的な構成要素です。',
+                })}</span>
+              </div>
+            )}
+
             {activeView === 'catalog' && searchTerm.trim() === '' && paletteCategories.map((category) => {
               const isExpanded = expandedCategories.has(category.id);
               const icons = categoryIcons.get(category.id) || [];
@@ -498,6 +647,7 @@ const IconPalette: React.FC<IconPaletteProps> = ({ forceCollapsed, onAddIcon }) 
                         renderIcon={renderIcon}
                         onVisibleIconsChange={loadIconUrls}
                         ariaLabel={localize(language, category.label)}
+                        layout={layout}
                       />
                     </>
                   )}
@@ -512,18 +662,25 @@ const IconPalette: React.FC<IconPaletteProps> = ({ forceCollapsed, onAddIcon }) 
                 onVisibleIconsChange={loadIconUrls}
                 ariaLabel={localize(language, { en: 'Icon search results', ja: 'アイコン検索結果' })}
                 maxHeight={640}
+                layout={layout}
               />
             )}
 
-            {(activeView === 'favorites' || activeView === 'recent') && activeViewIcons.length > 0 && (
+            {(activeView === 'favorites'
+              || activeView === 'recent'
+              || activeView === 'recommended')
+              && activeViewIcons.length > 0 && (
               <VirtualizedIconGrid
                 icons={activeViewIcons}
                 renderIcon={renderIcon}
                 onVisibleIconsChange={loadIconUrls}
                 ariaLabel={activeView === 'favorites'
                   ? localize(language, { en: 'Favorite icons', ja: 'お気に入りアイコン' })
-                  : localize(language, { en: 'Recently used icons', ja: '最近使用したアイコン' })}
+                  : activeView === 'recent'
+                    ? localize(language, { en: 'Recently used icons', ja: '最近使用したアイコン' })
+                    : localize(language, { en: 'Recommended services', ja: '推奨サービス' })}
                 maxHeight={640}
+                layout={layout}
               />
             )}
 
@@ -569,6 +726,7 @@ const IconPalette: React.FC<IconPaletteProps> = ({ forceCollapsed, onAddIcon }) 
                       ja: 'アイコン コレクション',
                     })}
                     maxHeight={580}
+                    layout={layout}
                   />
                 )}
               </>
@@ -591,6 +749,11 @@ const IconPalette: React.FC<IconPaletteProps> = ({ forceCollapsed, onAddIcon }) 
                           en: 'Icons appear here after you add or drag them.',
                           ja: 'アイコンを追加またはドラッグすると、ここに表示されます。',
                         })
+                      : activeView === 'recommended'
+                        ? localize(language, {
+                            en: 'Recommended services are still loading.',
+                            ja: '推奨サービスを読み込んでいます。',
+                          })
                       : activeView === 'collections'
                         ? localize(language, {
                             en: 'Create a collection, then use the folder button on any icon to organize it.',
@@ -657,7 +820,8 @@ const IconPalette: React.FC<IconPaletteProps> = ({ forceCollapsed, onAddIcon }) 
           )}
         </>
       )}
-    </div>
+      </div>
+    </>
   );
 };
 

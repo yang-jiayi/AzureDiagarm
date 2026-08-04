@@ -10,9 +10,11 @@ interface VirtualizedIconGridProps {
   onVisibleIconsChange?: (icons: AzureIcon[]) => void;
   ariaLabel: string;
   maxHeight?: number;
+  layout?: 'grid' | 'list';
 }
 
-const ROW_HEIGHT = 112;
+const GRID_ROW_HEIGHT = 112;
+const LIST_ROW_HEIGHT = 72;
 const OVERSCAN_ROWS = 2;
 
 const VirtualizedIconGrid: React.FC<VirtualizedIconGridProps> = ({
@@ -21,6 +23,7 @@ const VirtualizedIconGrid: React.FC<VirtualizedIconGridProps> = ({
   onVisibleIconsChange,
   ariaLabel,
   maxHeight = 420,
+  layout = 'grid',
 }) => {
   const viewportRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(260);
@@ -40,14 +43,15 @@ const VirtualizedIconGrid: React.FC<VirtualizedIconGridProps> = ({
   useEffect(() => {
     setScrollTop(0);
     if (viewportRef.current) viewportRef.current.scrollTop = 0;
-  }, [icons]);
+  }, [icons, layout]);
 
-  const columns = width >= 230 ? 3 : 2;
+  const rowHeight = layout === 'list' ? LIST_ROW_HEIGHT : GRID_ROW_HEIGHT;
+  const columns = layout === 'list' ? 1 : width >= 230 ? 3 : 2;
   const rowCount = Math.ceil(icons.length / columns);
-  const totalHeight = rowCount * ROW_HEIGHT;
-  const viewportHeight = Math.min(Math.max(ROW_HEIGHT, totalHeight), maxHeight);
-  const startRow = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - OVERSCAN_ROWS);
-  const visibleRows = Math.ceil(viewportHeight / ROW_HEIGHT) + (OVERSCAN_ROWS * 2);
+  const totalHeight = rowCount * rowHeight;
+  const viewportHeight = Math.min(Math.max(rowHeight, totalHeight), maxHeight);
+  const startRow = Math.max(0, Math.floor(scrollTop / rowHeight) - OVERSCAN_ROWS);
+  const visibleRows = Math.ceil(viewportHeight / rowHeight) + (OVERSCAN_ROWS * 2);
   const endRow = Math.min(rowCount, startRow + visibleRows);
   const visibleIcons = useMemo(
     () => icons.slice(startRow * columns, endRow * columns),
@@ -63,7 +67,7 @@ const VirtualizedIconGrid: React.FC<VirtualizedIconGridProps> = ({
   return (
     <div
       ref={viewportRef}
-      className="virtualized-icons-viewport"
+      className={`virtualized-icons-viewport virtualized-icons-viewport--${layout}`}
       style={{ height: viewportHeight }}
       onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}
       role="region"
@@ -74,7 +78,7 @@ const VirtualizedIconGrid: React.FC<VirtualizedIconGridProps> = ({
         <div
           className="virtualized-icons-window"
           style={{
-            top: startRow * ROW_HEIGHT,
+            top: startRow * rowHeight,
             gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`,
           }}
         >

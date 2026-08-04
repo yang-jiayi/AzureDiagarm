@@ -110,18 +110,23 @@ async function fulfillJson(
 async function initializePage(
   page: Page,
   cloudContext?: Record<string, unknown>,
+  options?: { showCanvasHint?: boolean },
 ) {
-  await page.addInitScript((context) => {
+  await page.addInitScript(({ context, showCanvasHint }) => {
     localStorage.setItem('azure-diagram-builder.language.v1', 'en');
     localStorage.setItem('azure-diagram-builder.ribbonTab.v1', 'review');
     localStorage.setItem('azure-diagram-builder.headerCollapsed.v1', '0');
-    localStorage.setItem('azure-diagram-builder.canvasHintDismissed.v1', '1');
+    if (showCanvasHint) {
+      localStorage.removeItem('azure-diagram-builder.canvasHintDismissed.v1');
+    } else {
+      localStorage.setItem('azure-diagram-builder.canvasHintDismissed.v1', '1');
+    }
     if (context) {
       sessionStorage.setItem('azurediagarm.cloud-document.v1', JSON.stringify(context));
     } else {
       sessionStorage.removeItem('azurediagarm.cloud-document.v1');
     }
-  }, cloudContext);
+  }, { context: cloudContext, showCanvasHint: options?.showCanvasHint === true });
 }
 
 async function expectNoWcagViolations(page: Page, include?: string) {
@@ -233,15 +238,30 @@ async function expectSelectedMenuState(locator: Locator) {
   await expectReadableContrast(locator);
 }
 
+async function expectNotToOverlap(first: Locator, second: Locator) {
+  await expect(first).toBeVisible();
+  await expect(second).toBeVisible();
+  await expect.poll(async () => {
+    const [firstBox, secondBox] = await Promise.all([first.boundingBox(), second.boundingBox()]);
+    if (!firstBox || !secondBox) return true;
+
+    return firstBox.x < secondBox.x + secondBox.width
+      && firstBox.x + firstBox.width > secondBox.x
+      && firstBox.y < secondBox.y + secondBox.height
+      && firstBox.y + firstBox.height > secondBox.y;
+  }).toBe(false);
+}
+
 async function openInteractionDiagram(
   page: Page,
   onSave?: (payload: Record<string, unknown>) => void,
+  showCanvasHint = false,
 ) {
   await initializePage(page, {
     documentId: 'A',
     access: 'owner',
     role: 'owner',
-  });
+  }, { showCanvasHint });
   const document = interactionCloudDocument();
 
   await page.route('**/api/**', async (route) => {
@@ -329,6 +349,306 @@ test('primary application shell meets WCAG A and AA checks', async ({ page }) =>
   await page.keyboard.press('Home');
   await expect(allTab).toBeFocused();
   await expectNoWcagViolations(page);
+});
+
+test('feedback launcher is styled before the lazy modal chunk is opened', async ({ page }) => {
+  await initializePage(page);
+  await page.route('**/api/**', async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (path === '/api/access/me') {
+      await fulfillJson(route, {
+        enabled: false,
+        authenticated: true,
+        email: 'owner@example.com',
+        isAdmin: false,
+        allowed: true,
+      });
+      return;
+    }
+    await fulfillJson(route, { error: 'Not found' }, 404);
+  });
+
+  await page.goto('/');
+  const launcher = page.getByRole('button', { name: 'Feedback' });
+  await expect(launcher).toBeVisible();
+  await expect(launcher).toHaveCSS('position', 'absolute');
+  await expect(launcher).toHaveCSS('border-radius', '999px');
+  expect((await launcher.boundingBox())?.width).toBeLessThan(180);
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(launcher).toHaveCSS('width', '44px');
+  await expect(launcher).toHaveCSS('height', '44px');
+});
+
+test('manual service insertion stays readable and avoids overlapping nodes', async ({ page }) => {
+  await initializePage(page, undefined, { showCanvasHint: true });
+  await page.route('**/api/**', async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (path === '/api/access/me') {
+      await fulfillJson(route, {
+        enabled: false,
+        authenticated: true,
+        email: 'owner@example.com',
+        isAdmin: false,
+        allowed: true,
+      });
+      return;
+    }
+    await fulfillJson(route, { error: 'Not found' }, 404);
+  });
+
+  await page.goto('/');
+  const search = page.locator('.search-box input');
+  await search.fill('Azure OpenAI');
+  await page.getByRole('button', { name: /Add Azure OpenAI to the canvas/i }).click();
+  await expect(page.locator('.react-flow__node')).toHaveCount(1);
+  await page.getByRole('note', { name: 'Canvas navigation tips' })
+    .getByRole('button', { name: 'Fit to view' })
+    .click();
+  await page.waitForTimeout(450);
+  const singleNodeScale = await page.locator('.react-flow__viewport').evaluate((element) => {
+    const transform = new DOMMatrixReadOnly(getComputedStyle(element).transform);
+    return transform.a;
+  });
+  expect(singleNodeScale).toBeLessThanOrEqual(1.21);
+  await page.getByRole('button', { name: 'Fit diagram to view' }).click();
+  await page.waitForTimeout(300);
+  const controlFitScale = await page.locator('.react-flow__viewport').evaluate((element) => {
+    const transform = new DOMMatrixReadOnly(getComputedStyle(element).transform);
+    return transform.a;
+  });
+  expect(controlFitScale).toBeLessThanOrEqual(1.21);
+
+  await search.fill('App Services');
+  const appServices = page.getByRole('button', { name: /Add App Services to the canvas/i });
+  await expect(appServices).toHaveCount(1);
+  await appServices.click();
+  await expect(page.locator('.react-flow__node')).toHaveCount(2);
+
+  const scale = await page.locator('.react-flow__viewport').evaluate((element) => {
+    const transform = new DOMMatrixReadOnly(getComputedStyle(element).transform);
+    return transform.a;
+  });
+  expect(scale).toBeLessThanOrEqual(1.21);
+
+  const nodeBoxes = await page.locator('.react-flow__node').evaluateAll((elements) => (
+    elements.map((element) => {
+      const rect = element.getBoundingClientRect();
+      return { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom };
+    })
+  ));
+  const [first, second] = nodeBoxes;
+  const overlaps = first.left < second.right
+    && first.right > second.left
+    && first.top < second.bottom
+    && first.bottom > second.top;
+  expect(overlaps).toBe(false);
+
+  const costBadge = page.locator('.cost-badge').first();
+  await expect(costBadge).toBeVisible();
+  const badgeFontSize = await costBadge.evaluate((element) => (
+    Number.parseFloat(getComputedStyle(element).fontSize)
+  ));
+  expect(badgeFontSize).toBeLessThan(12);
+});
+
+test('service discovery recommends common services and persists a deduplicated layout', async ({ page }) => {
+  await initializePage(page);
+  await page.route('**/api/**', async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (path === '/api/access/me') {
+      await fulfillJson(route, {
+        enabled: false,
+        authenticated: true,
+        email: 'owner@example.com',
+        isAdmin: false,
+        allowed: true,
+      });
+      return;
+    }
+    await fulfillJson(route, { error: 'Not found' }, 404);
+  });
+
+  await page.goto('/');
+  const recommendedTab = page.getByRole('tab', { name: /^Recommended/ });
+  await expect(recommendedTab).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByText('Common building blocks for starting an Azure architecture.'))
+    .toBeVisible();
+
+  await page.getByRole('tab', { name: /^All/ }).click();
+  const search = page.locator('.search-box input');
+  await search.fill('App Services');
+  const appServices = page.getByRole('button', { name: /Add App Services to the canvas/i });
+  await expect(appServices).toHaveCount(1);
+  await expect(appServices.locator('.icon-label mark')).toHaveText(['App', 'Services']);
+
+  await page.getByRole('button', { name: 'List view' }).click();
+  await expect(page.locator('.icon-palette')).toHaveClass(/palette-layout-list/);
+  await expect.poll(() => page.evaluate(() => (
+    localStorage.getItem('azure-diagram-builder.paletteLayout.v1')
+  ))).toBe('list');
+
+  await page.reload();
+  await expect(page.getByRole('region', { name: 'Architecture canvas' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'List view' })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  );
+
+  await page.getByRole('button', { name: 'Grid view' }).click();
+  await page.getByRole('tab', { name: /^All/ }).click();
+  await page.locator('.search-box input').fill('Front Door CDN');
+  const longLabel = page
+    .getByRole('button', { name: /Add Front Door And CDN Profiles to the canvas/i })
+    .locator('.icon-label');
+  await expect(longLabel).toBeVisible();
+  expect(await longLabel.evaluate(element => (
+    getComputedStyle(element).getPropertyValue('-webkit-line-clamp')
+  ))).toBe('2');
+});
+
+test('architecture chat docks without covering the canvas and persists keyboard resizing', async ({ page }) => {
+  await initializePage(page);
+  await page.route('**/api/**', async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (path === '/api/access/me') {
+      await fulfillJson(route, {
+        enabled: false,
+        authenticated: true,
+        email: 'owner@example.com',
+        isAdmin: false,
+        allowed: true,
+      });
+      return;
+    }
+    await fulfillJson(route, { error: 'Not found' }, 404);
+  });
+
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Start with a conversation' }).click();
+
+  const app = page.locator('.app');
+  const workspace = page.locator('.workspace');
+  const chat = page.getByRole('complementary', { name: 'Architecture Chat' });
+  const resizer = page.getByRole('separator', { name: 'Resize Architecture Chat' });
+  await expect(app).toHaveClass(/chat-open/);
+  await expect(chat).toBeVisible();
+  await expect(app).toHaveCSS('padding-right', '460px');
+  await expect(chat).toHaveCSS('transform', 'none');
+  await expect(page.getByRole('button', { name: 'Open services panel' })).toBeVisible();
+
+  const dockedBounds = await Promise.all([workspace, chat].map(locator => locator.boundingBox()));
+  expect(dockedBounds[0]).not.toBeNull();
+  expect(dockedBounds[1]).not.toBeNull();
+  expect((dockedBounds[0]?.x || 0) + (dockedBounds[0]?.width || 0))
+    .toBeLessThanOrEqual((dockedBounds[1]?.x || 0) + 1);
+
+  await resizer.focus();
+  await page.keyboard.press('ArrowLeft');
+  await expect(resizer).toHaveAttribute('aria-valuenow', '484');
+  await expect.poll(() => page.evaluate(() => (
+    localStorage.getItem('azure-diagram-builder.chatPanelWidth.v1')
+  ))).toBe('484');
+
+  await page.reload();
+  await expect(page.getByRole('region', { name: 'Architecture canvas' })).toBeVisible();
+  await page.getByRole('button', { name: 'Start with a conversation' }).click();
+  await expect(page.getByRole('separator', { name: 'Resize Architecture Chat' }))
+    .toHaveAttribute('aria-valuenow', '484');
+
+  await page.evaluate(() => {
+    localStorage.setItem('azure-diagram-builder.chatPanelWidth.v1', '720');
+  });
+  await page.setViewportSize({ width: 1200, height: 800 });
+  await page.reload();
+  await page.getByRole('button', { name: 'Start with a conversation' }).click();
+  const clampedChat = page.getByRole('complementary', { name: 'Architecture Chat' });
+  await expect(page.locator('.app')).toHaveCSS('padding-right', '680px');
+  await expect(clampedChat).toHaveCSS('width', '680px');
+  await expect(clampedChat).toHaveCSS('transform', 'none');
+  const clampedBounds = await Promise.all([workspace, clampedChat].map(
+    locator => locator.boundingBox(),
+  ));
+  expect((clampedBounds[0]?.x || 0) + (clampedBounds[0]?.width || 0))
+    .toBeLessThanOrEqual((clampedBounds[1]?.x || 0) + 1);
+});
+
+test('compact chat and services panels provide dismissible backdrops', async ({ page }) => {
+  await initializePage(page);
+  await page.route('**/api/**', async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (path === '/api/access/me') {
+      await fulfillJson(route, {
+        enabled: false,
+        authenticated: true,
+        email: 'owner@example.com',
+        isAdmin: false,
+        allowed: true,
+      });
+      return;
+    }
+    await fulfillJson(route, { error: 'Not found' }, 404);
+  });
+
+  await page.setViewportSize({ width: 900, height: 800 });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Start with a conversation' }).click();
+
+  const app = page.locator('.app');
+  const chatBackdrop = page.locator('.arch-chat-backdrop');
+  const compactChat = page.getByRole('dialog', { name: 'Architecture Chat' });
+  await expect(chatBackdrop).toBeVisible();
+  await expect(compactChat).toHaveAttribute('aria-modal', 'true');
+  await expect(compactChat).toBeFocused();
+  await expect(page.locator('.app-header')).toHaveAttribute('inert', '');
+  await expect(page.locator('.workspace')).toHaveAttribute('inert', '');
+  await expect(app).toHaveCSS('padding-right', '0px');
+  await expect(page.getByRole('separator', { name: 'Resize Architecture Chat' })).toBeHidden();
+  await page.keyboard.press('Tab');
+  expect(await compactChat.evaluate((dialog) => dialog.contains(document.activeElement))).toBe(true);
+  await chatBackdrop.click({ position: { x: 40, y: 400 } });
+  await expect(compactChat).toBeHidden();
+  await expect(page.locator('.workspace')).not.toHaveAttribute('inert', '');
+  await expect(page.getByRole('region', { name: 'Architecture canvas' })).toBeFocused();
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  const openServices = page.getByRole('button', { name: 'Open services panel' });
+  await expect(openServices).toBeVisible();
+  await openServices.click();
+
+  const paletteBackdrop = page.locator('.palette-backdrop');
+  await expect(paletteBackdrop).toBeVisible();
+  const backdropBounds = await paletteBackdrop.boundingBox();
+  expect(backdropBounds).not.toBeNull();
+  await paletteBackdrop.click({
+    position: {
+      x: Math.max(1, (backdropBounds?.width || 1) - 5),
+      y: Math.max(1, (backdropBounds?.height || 1) / 2),
+    },
+  });
+  await expect(openServices).toBeVisible();
+});
+
+test('canvas chrome keeps navigation, metadata, controls, and feedback in separate zones', async ({ page }) => {
+  await openInteractionDiagram(page, undefined, true);
+
+  const controls = page.locator('.react-flow__controls');
+  const legend = page.locator('.legend.collapsed');
+  const miniMap = page.locator('.nav-minimap');
+  const feedback = page.getByRole('button', { name: 'Feedback' });
+  const navigationHint = page.getByRole('note', { name: 'Canvas navigation tips' });
+  const titleBlock = page.locator('.title-block');
+
+  await expect(navigationHint).toHaveCSS('transform', 'none');
+  await expectNotToOverlap(controls, legend);
+  await expectNotToOverlap(miniMap, feedback);
+  await expectNotToOverlap(navigationHint, titleBlock);
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.getByRole('button', { name: 'Open services panel' })).toBeVisible();
+  await expectNotToOverlap(controls, legend);
+  await expectNotToOverlap(miniMap, feedback);
+  await expectNotToOverlap(navigationHint, titleBlock);
 });
 
 test('menu states keep readable contrast in light and dark themes', async ({ page }) => {
@@ -4230,6 +4550,35 @@ test('diagram imports are atomic and AI imports save pricing to a new cloud docu
   await expect(page.locator('[data-testid="rf__node-imported-app"]')).toBeVisible({
     timeout: 10_000,
   });
+  const promptBanner = page.locator('.canvas-prompt-banner');
+  await expect(promptBanner).toContainText('Import an App Service architecture');
+  await expect(page.locator('.icon-palette')).toHaveCSS('width', '0px');
+  const [initialPromptBox, canvasBox] = await Promise.all([
+    promptBanner.boundingBox(),
+    page.getByRole('region', { name: 'Architecture canvas' }).boundingBox(),
+  ]);
+  expect(initialPromptBox).not.toBeNull();
+  expect(canvasBox).not.toBeNull();
+  if (initialPromptBox && canvasBox) {
+    await page.mouse.move(initialPromptBox.x + 24, initialPromptBox.y + 16);
+    await page.mouse.down();
+    await page.mouse.move(initialPromptBox.x + 84, initialPromptBox.y + 56, { steps: 4 });
+    await page.mouse.up();
+    const movedPromptBox = await promptBanner.boundingBox();
+    expect(movedPromptBox).not.toBeNull();
+    if (movedPromptBox) {
+      expect(Math.abs(movedPromptBox.x - initialPromptBox.x - 60)).toBeLessThan(8);
+      expect(Math.abs(movedPromptBox.y - initialPromptBox.y - 40)).toBeLessThan(8);
+      expect(movedPromptBox.x).toBeGreaterThanOrEqual(canvasBox.x + 7);
+      expect(movedPromptBox.y).toBeGreaterThanOrEqual(canvasBox.y + 7);
+      expect(movedPromptBox.x + movedPromptBox.width).toBeLessThanOrEqual(
+        canvasBox.x + canvasBox.width - 7,
+      );
+      expect(movedPromptBox.y + movedPromptBox.height).toBeLessThanOrEqual(
+        canvasBox.y + canvasBox.height - 7,
+      );
+    }
+  }
   await expect(sourceNode).toHaveCount(0);
   await expect.poll(() => importedPayloads.length, { timeout: 5_000 }).toBeGreaterThan(0);
   await expect.poll(

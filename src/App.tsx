@@ -3,7 +3,6 @@
 
 import React, { lazy, Suspense, useState, useCallback, useRef, useEffect, useLayoutEffect, useMemo } from 'react';
 import ReactFlow, {
-  MiniMap,
   Controls,
   Background,
   useNodesState,
@@ -20,19 +19,18 @@ import type { CaptureOptions } from './utils/captureCanvas';
 import { animateEdgeFlow } from './utils/animateEdges';
 import { sequenceWorkflowSvg } from './utils/sequenceWorkflow';
 import { buildWorkflowMarkdown } from './services/workflowNarrativeExporter';
-import { Download, Save, Upload, DollarSign, Shield, ShieldCheck, FileText, FileCode, ChevronDown, ChevronRight, Clock, Camera, Loader, GitCompare, RefreshCw, PanelLeftClose, Minimize2, Maximize2, Presentation, MessageSquare, MessagesSquare, HelpCircle, Hand, ZoomIn, Frame, X, PanelTopClose, PanelTopOpen, DownloadCloud, Sun, Moon, Play, Pause, Eye, EyeOff, Cloud, Copy, Trash2, Ungroup, Boxes, CheckSquare } from 'lucide-react';
+import { Download, Save, Upload, DollarSign, Shield, ShieldCheck, FileText, FileCode, ChevronDown, ChevronRight, Clock, Camera, Loader, GitCompare, RefreshCw, PanelLeftClose, Minimize2, Maximize2, Presentation, MessagesSquare, HelpCircle, Frame, PanelTopClose, PanelTopOpen, DownloadCloud, Sun, Moon, Play, Pause, Eye, EyeOff, Cloud, Copy, Trash2, Ungroup, Boxes, CheckSquare } from 'lucide-react';
 import IconPalette from './components/IconPalette';
 import AzureNode from './components/AzureNode';
 import GroupNode from './components/GroupNode';
 import AIArchitectureGenerator from './components/AIArchitectureGenerator';
 import ArchitectureChatPanel from './components/ArchitectureChatPanel';
+import CanvasActivityOverlay from './components/CanvasActivityOverlay';
+import CanvasChrome from './components/CanvasChrome';
 import HelpLearnPanel from './components/GuidedHelpPanel';
 import type { ReferenceArchitecture } from './services/referenceArchitectureAI';
 import type { BlueprintArchitecture } from './services/blueprintArchitectureAI';
 import ReferenceImageViewer from './components/ReferenceImageViewer';
-import TitleBlock from './components/TitleBlock';
-import ModelBadge from './components/ModelBadge';
-import Legend from './components/Legend';
 import EditableEdge from './components/EditableEdge';
 import AlignmentToolbar from './components/AlignmentToolbar';
 import WorkflowPanel from './components/WorkflowPanel';
@@ -128,6 +126,7 @@ import { decodeUtf8Base64 } from './utils/base64Utf8';
 import { csvTextCell } from './utils/csv';
 import { toFileNameSegment } from './utils/fileName';
 import { readBooleanPreference, readLocalStorage, writeLocalStorage } from './utils/safeStorage';
+import { findAvailableServicePosition } from './utils/serviceNodePlacement';
 
 type LazyFeatureBoundaryProps = {
   active: boolean;
@@ -834,9 +833,6 @@ function App() {
   // (which each chat refinement overwrites), this is captured once when the
   // canvas is empty so the customer deck's "brief" reflects the original ask.
   const [originalPrompt, setOriginalPrompt] = useState<string>('');
-  const [promptBannerPosition, setPromptBannerPosition] = useState({ x: 0, y: 0 });
-  const [isDraggingBanner, setIsDraggingBanner] = useState(false);
-  const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
 
   const [isImportingTemplate, setIsImportingTemplate] = useState(false);
   const [isAzureImportOpen, setIsAzureImportOpen] = useState(false);
@@ -1063,6 +1059,9 @@ function App() {
   const [lastReferenceArchitecture, setLastReferenceArchitecture] = useState<ReferenceArchitecture | null>(null);
   const [lastBlueprintArchitecture, setLastBlueprintArchitecture] = useState<BlueprintArchitecture | null>(null);
   const [panelsCollapsedSignal, setPanelsCollapsedSignal] = useState(0);
+  useEffect(() => {
+    if (isChatOpen) setPanelsCollapsedSignal((previous) => previous + 1);
+  }, [isChatOpen]);
 
   useEffect(() => {
     if (nodes.length === 0) {
@@ -1564,31 +1563,6 @@ function App() {
     }
   }, [cancelPendingPricingEditorOpen, language, nodes, setNodes]);
 
-  useEffect(() => {
-    const handleMouseMove = (e: MouseEvent) => {
-      if (isDraggingBanner) {
-        setPromptBannerPosition({
-          x: e.clientX - dragOffset.x,
-          y: e.clientY - dragOffset.y,
-        });
-      }
-    };
-
-    const handleMouseUp = () => {
-      setIsDraggingBanner(false);
-    };
-
-    if (isDraggingBanner) {
-      document.addEventListener('mousemove', handleMouseMove);
-      document.addEventListener('mouseup', handleMouseUp);
-    }
-
-    return () => {
-      document.removeEventListener('mousemove', handleMouseMove);
-      document.removeEventListener('mouseup', handleMouseUp);
-    };
-  }, [isDraggingBanner, dragOffset]);
-
   const handleEdgeLabelChange = useCallback((edgeId: string, newLabel: string) => {
     setEdges((eds) =>
       eds.map((edge) => {
@@ -1717,7 +1691,7 @@ function App() {
 
       // Zoom out to show the full picture
       setTimeout(() => {
-        reactFlowInstance?.fitView?.({ padding: 0.3, duration: 300 });
+        reactFlowInstance?.fitView?.({ padding: 0.3, duration: 300, maxZoom: 1.2 });
       }, 50);
     } else {
       const snapshot = preCollapseGroupLayout.current;
@@ -1726,7 +1700,7 @@ function App() {
       preCollapseGroupLayout.current = new Map();
 
       setTimeout(() => {
-        reactFlowInstance?.fitView?.({ padding: 0.2, duration: 300 });
+        reactFlowInstance?.fitView?.({ padding: 0.2, duration: 300, maxZoom: 1.2 });
       }, 50);
     }
   }, [allGroupsCollapsed, nodes, setNodes, reactFlowInstance]);
@@ -1822,7 +1796,7 @@ function App() {
       setEdges(currentEdges => mergeLayoutEdges(currentEdges, sourceEdges, result.edges));
 
       requestAnimationFrame(() => {
-        reactFlowInstance?.fitView?.({ padding: 0.2, duration: 250 });
+        reactFlowInstance?.fitView?.({ padding: 0.2, duration: 250, maxZoom: 1.2 });
       });
     } catch (error) {
       if (!layoutGenerationRef.current.isCurrent(generation)) return;
@@ -2214,7 +2188,7 @@ function App() {
   }, [addGroupBoxAtPosition, closePaneContextMenu, paneContextMenu]);
 
   const fitContextDiagram = useCallback(() => {
-    reactFlowInstance?.fitView?.({ padding: 0.2, duration: 300 });
+    reactFlowInstance?.fitView?.({ padding: 0.2, duration: 300, maxZoom: 1.2 });
     closePaneContextMenu();
   }, [closePaneContextMenu, reactFlowInstance]);
 
@@ -2347,52 +2321,60 @@ function App() {
   const addServiceNodeAtPosition = useCallback((
     service: { iconPath: string; iconName: string; serviceName: string; category?: string },
     position: Node['position'],
+    options: { avoidCollisions?: boolean } = {},
   ) => {
     if (!reactFlowInstance) return;
 
-    let parentGroup: Node | undefined;
-    for (const node of reactFlowInstance.getNodes()) {
-      if (node.type !== 'groupNode') continue;
-      const groupWidth = (node.style?.width as number) || node.width || 400;
-      const groupHeight = (node.style?.height as number) || node.height || 300;
-      if (
-        position.x >= node.position.x
-        && position.x <= node.position.x + groupWidth
-        && position.y >= node.position.y
-        && position.y <= node.position.y + groupHeight
-      ) {
-        parentGroup = node;
-        break;
-      }
-    }
-
+    const nodeId = `service-${globalThis.crypto.randomUUID()}`;
     const newNode: Node = {
-      id: `service-${globalThis.crypto.randomUUID()}`,
+      id: nodeId,
       type: 'azureNode',
-      position: parentGroup
-        ? {
-            x: position.x - parentGroup.position.x,
-            y: position.y - parentGroup.position.y,
-          }
-        : position,
+      position,
       data: {
         label: service.iconName,
         serviceName: service.serviceName,
         category: service.category,
         iconPath: service.iconPath,
       },
-      parentNode: parentGroup?.id,
-      extent: parentGroup ? 'parent' : undefined,
     };
 
-    setNodes((current) => current.concat(newNode));
+    setNodes((current) => {
+      const parentGroup = current.find((node) => {
+        if (node.type !== 'groupNode') return false;
+        const groupWidth = (node.style?.width as number) || node.width || 400;
+        const groupHeight = (node.style?.height as number) || node.height || 300;
+        return position.x >= node.position.x
+          && position.x <= node.position.x + groupWidth
+          && position.y >= node.position.y
+          && position.y <= node.position.y + groupHeight;
+      });
+      const relativePosition = parentGroup
+        ? {
+            x: position.x - parentGroup.position.x,
+            y: position.y - parentGroup.position.y,
+          }
+        : position;
+      const siblings = current.filter((node) => (
+        node.type === 'azureNode'
+        && node.parentNode === parentGroup?.id
+      ));
+      const resolvedPosition = options.avoidCollisions
+        ? findAvailableServicePosition(relativePosition, siblings)
+        : relativePosition;
+      return current.concat({
+        ...newNode,
+        position: resolvedPosition,
+        parentNode: parentGroup?.id,
+        extent: parentGroup ? 'parent' : undefined,
+      });
+    });
 
     const currentRegion = getActiveRegion();
     void initializeNodePricing(service.serviceName, currentRegion)
       .then((pricing) => {
         if (!pricing) return;
         setNodes((current) => current.map((node) => (
-          node.id === newNode.id && !node.data.pricing
+          node.id === nodeId && !node.data.pricing
             ? { ...node, data: { ...node.data, pricing } }
             : node
         )));
@@ -2404,15 +2386,9 @@ function App() {
     if (!reactFlowInstance || !reactFlowWrapper.current) return;
 
     const bounds = reactFlowWrapper.current.getBoundingClientRect();
-    const serviceCount = reactFlowInstance.getNodes().filter((node: Node) => node.type === 'azureNode').length;
-    const slot = serviceCount % 9;
-    const column = (slot % 3) - 1;
-    const row = Math.floor(slot / 3) - 1;
-    const spacingX = Math.min(180, bounds.width / 4);
-    const spacingY = Math.min(140, bounds.height / 4);
     const position = reactFlowInstance.screenToFlowPosition({
-      x: bounds.left + (bounds.width / 2) + (column * spacingX),
-      y: bounds.top + (bounds.height / 2) + (row * spacingY),
+      x: bounds.left + (bounds.width / 2),
+      y: bounds.top + (bounds.height / 2),
     });
 
     addServiceNodeAtPosition({
@@ -2420,7 +2396,7 @@ function App() {
       iconName: icon.name,
       serviceName: icon.serviceName,
       category: icon.category,
-    }, position);
+    }, position, { avoidCollisions: true });
   }, [addServiceNodeAtPosition, reactFlowInstance]);
 
   // Handle node deletion - convert child nodes to absolute positions when parent group is deleted
@@ -4386,7 +4362,7 @@ function App() {
           aiGenerationRef.current.isCurrent(operationGeneration)
           && activeDiagramLineageIdRef.current === appliedLineageId
         ) {
-          reactFlowInstance?.fitView({ padding: 0.2 });
+          reactFlowInstance?.fitView({ padding: 0.2, maxZoom: 1.2 });
         }
       }, 100);
     }
@@ -5042,7 +5018,7 @@ function App() {
   })();
 
   return (
-    <div className="app">
+    <div className={`app${isChatOpen ? ' chat-open' : ''}`}>
       <header className={`app-header${isHeaderCollapsed ? ' header-collapsed' : ''}`}>
         <div className="header-content">
           <div className="header-brand">
@@ -6046,6 +6022,7 @@ function App() {
             nodesFocusable={false}
             deleteKeyCode={null}
             fitView
+            fitViewOptions={{ padding: 0.2, maxZoom: 1.2 }}
             snapToGrid={true}
             snapGrid={[20, 20]}
             selectionOnDrag={true}
@@ -6054,23 +6031,7 @@ function App() {
             reconnectRadius={20}
             attributionPosition="bottom-left"
           >
-            <Controls />
-            {nodes.length > 0 && (
-              <>
-                <div className="nav-minimap-caption">{t('canvas.miniMapCaption')}</div>
-                <MiniMap
-                  pannable
-                  zoomable
-                  position="bottom-right"
-                  className="nav-minimap"
-                  style={{ bottom: 84 }}
-                  ariaLabel={t('canvas.miniMap')}
-                  nodeColor="#60a5fa"
-                  nodeStrokeColor="#3b82f6"
-                  maskColor="rgba(30, 41, 59, 0.45)"
-                />
-              </>
-            )}
+            <Controls fitViewOptions={{ padding: 0.2, maxZoom: 1.2 }} />
             <Background 
               variant={BackgroundVariant.Dots} 
               gap={20} 
@@ -6078,63 +6039,30 @@ function App() {
               color="#60a5fa"
               style={{ backgroundColor: '#f8fafc' }}
             />
-            {/* Canvas navigation hint — teaches pan/zoom so large diagrams
-                aren't perceived as "stuck" or too big to view. Shown only when
-                a diagram exists and until the user dismisses it. */}
-            {showCanvasHint && nodes.length > 0 && (
-              <div className="canvas-nav-hint" role="note" aria-label={t("Canvas navigation tips")}>
-                <div className="canvas-nav-hint-tips">
-                  <span className="canvas-nav-hint-tip canvas-nav-hint-desktop"><ZoomIn size={15} /> {' '}{t("Scroll to zoom in / out")}</span>
-                  <span className="canvas-nav-hint-sep canvas-nav-hint-desktop" aria-hidden="true">{t("·")}</span>
-                  <span className="canvas-nav-hint-tip canvas-nav-hint-desktop"><Hand size={15} /> {' '}{t("Right-click + drag to pan")}</span>
-                  <span className="canvas-nav-hint-sep canvas-nav-hint-desktop" aria-hidden="true">{t("·")}</span>
-                  <span className="canvas-nav-hint-tip canvas-nav-hint-mobile"><Hand size={15} /> {' '}{t('canvas.touchNavigation')}</span>
-                  <button
-                    type="button"
-                    className="canvas-nav-hint-fit"
-                    onClick={() => reactFlowInstance?.fitView?.({ padding: 0.2, duration: 400 })}
-                    title={t("Zoom to fit the whole diagram in view")}
-                  >
-                    <Frame size={15} /> {' '}{t("Fit to view")}{' '}</button>
-                </div>
-                <button
-                  type="button"
-                  className="canvas-nav-hint-close"
-                  onClick={() => {
-                    setShowCanvasHint(false);
-                    writeLocalStorage(CANVAS_HINT_STORAGE_KEY, '1');
-                  }}
-                  title={t("Dismiss (won't show again)")}
-                  aria-label={t("Dismiss navigation tips")}
-                >
-                  <X size={14} />
-                </button>
-              </div>
-            )}
-            {/* Empty-canvas call-to-action — turns the blank grid into an
-                obvious starting point that opens the Architecture Chat. Hidden
-                once a diagram exists or while the chat panel is already open.
-                pointer-events are disabled on the wrapper so drag-and-drop of
-                services onto the canvas still works; only the button is
-                clickable. */}
-            {nodes.length === 0 && !isChatOpen && (
-              <div className="canvas-empty-cta" role="note" aria-label={t("Get started")}>
-                <div className="canvas-empty-cta-inner">
-                  <MessagesSquare size={34} className="canvas-empty-cta-icon" />
-                  <h2 className="canvas-empty-cta-title">{t("Start with a conversation")}</h2>
-                  <p className="canvas-empty-cta-desc">
-                    {' '}{t("Describe what you want to build in plain English — I’ll draw the first version, then you refine it step by step.")}{' '}</p>
-                  <button
-                    type="button"
-                    className="canvas-empty-cta-btn"
-                    onClick={() => setIsChatOpen(true)}
-                  >
-                    <MessagesSquare size={18} /> {' '}{t("Start with a conversation")}{' '}</button>
-                  <span className="canvas-empty-cta-alt">
-                    {' '}{t("or use")}{' '}<strong>{t("Generate with AI")}</strong> {' '}{t("· or add services from the left panel")}{' '}</span>
-                </div>
-              </div>
-            )}
+            <CanvasChrome
+              hasNodes={nodes.length > 0}
+              showNavigationHint={showCanvasHint}
+              showEmptyState={!isChatOpen}
+              showFeedback={!isChatOpen}
+              titleBlockData={titleBlockData}
+              generatedWithModel={focusMode ? null : generatedWithModel}
+              forceCollapsed={panelsCollapsedSignal > 0 ? panelsCollapsedSignal : undefined}
+              feedbackPulse={feedbackFabPulse}
+              onDismissNavigationHint={() => {
+                setShowCanvasHint(false);
+                writeLocalStorage(CANVAS_HINT_STORAGE_KEY, '1');
+              }}
+              onFitView={() => reactFlowInstance?.fitView?.({
+                padding: 0.2,
+                duration: 400,
+                maxZoom: 1.2,
+              })}
+              onOpenChat={() => setIsChatOpen(true)}
+              onTitleBlockUpdate={(data) => {
+                setTitleBlockData((current) => ({ ...current, ...data }));
+              }}
+              onFeedback={() => setIsFeedbackModalOpen(true)}
+            />
             <style>
               {highlightedServices.map(id => 
                 `.react-flow__node[data-id="${id}"] {
@@ -6156,105 +6084,14 @@ function App() {
                 }`
               ).join('\n')}
             </style>
-            {/* Loading banner for applying recommendations */}
-            {isApplyingRecommendations && (
-              <div
-                className="prompt-banner loading-banner"
-                style={{
-                  position: 'absolute',
-                  left: '50%',
-                  top: '10px',
-                  transform: 'translateX(-50%)',
-                  zIndex: 1001,
-                  background: 'linear-gradient(135deg, #2563eb 0%, #1d4ed8 50%, #1e40af 100%)',
-                  border: '2px solid #60a5fa',
-                  padding: '1rem 2.5rem',
-                  borderRadius: '12px',
-                  boxShadow: '0 0 20px rgba(59, 130, 246, 0.5), 0 0 60px rgba(59, 130, 246, 0.2)',
-                  maxWidth: '700px',
-                  animation: 'pulse 2s ease-in-out infinite',
-                }}
-              >
-                <div className="prompt-text" style={{ fontSize: '1.1rem', fontWeight: 600, letterSpacing: '0.3px' }}>
-                  <strong style={{ fontSize: '1.2rem' }}>{t("⏳ Applying recommendations...")}</strong> {' '}{t("Regenerating architecture with improvements")}{' '}</div>
-              </div>
-            )}
+            <CanvasActivityOverlay
+              isApplyingRecommendations={isApplyingRecommendations}
+              isImportingTemplate={isImportingTemplate}
+              importFormatLabel={importFormatLabel}
+              architecturePrompt={architecturePrompt}
+              showArchitecturePrompt={!focusMode}
+            />
 
-            {/* Loading banner for template parsing */}
-            {isImportingTemplate && (
-              <div
-                className="prompt-banner loading-banner"
-                style={{
-                  position: 'absolute',
-                  left: '50%',
-                  top: '10px',
-                  transform: 'translateX(-50%)',
-                  zIndex: 1001,
-                  background: 'linear-gradient(135deg, #7c3aed 0%, #6d28d9 50%, #5b21b6 100%)',
-                  border: '2px solid #a78bfa',
-                  padding: '1rem 2.5rem',
-                  borderRadius: '12px',
-                  boxShadow: '0 0 20px rgba(139, 92, 246, 0.5), 0 0 60px rgba(139, 92, 246, 0.2)',
-                  maxWidth: '700px',
-                  animation: 'pulse 2s ease-in-out infinite',
-                }}
-              >
-                <div className="prompt-text" style={{ fontSize: '1.1rem', fontWeight: 600, letterSpacing: '0.3px' }}>
-                  <strong style={{ fontSize: '1.2rem' }}>{t("📄 Parsing")}{' '}{importFormatLabel} {' '}{t("Template...")}</strong> {' '}{t("Analyzing resources and generating architecture diagram")}{' '}</div>
-              </div>
-            )}
-
-            {/* Architecture generation prompt banner */}
-            {architecturePrompt && !focusMode && (
-              <div
-                className="prompt-banner draggable"
-                style={{
-                  position: 'absolute',
-                  left: promptBannerPosition.x === 0 ? '50%' : `${promptBannerPosition.x}px`,
-                  top: promptBannerPosition.y === 0 ? '10px' : `${promptBannerPosition.y}px`,
-                  transform: promptBannerPosition.x === 0 ? 'translateX(-50%)' : 'none',
-                  cursor: isDraggingBanner ? 'grabbing' : 'grab',
-                  zIndex: 1000,
-                }}
-                onMouseDown={(e) => {
-                  e.preventDefault();
-                  const rect = e.currentTarget.getBoundingClientRect();
-                  // Calculate offset from mouse position to element's top-left corner
-                  setDragOffset({
-                    x: e.clientX - rect.left,
-                    y: e.clientY - rect.top,
-                  });
-                  // Store the current absolute position
-                  if (promptBannerPosition.x === 0) {
-                    // First time dragging - calculate initial center position
-                    const initialX = window.innerWidth / 2 - rect.width / 2;
-                    setPromptBannerPosition({ x: initialX, y: 10 });
-                  }
-                  setIsDraggingBanner(true);
-                }}
-              >
-                <div className="prompt-text">
-                  <strong>{t("Generated from:")}</strong> {architecturePrompt}
-                </div>
-              </div>
-            )}
-
-            {nodes.length > 0 && (
-              <TitleBlock
-                architectureName={titleBlockData.architectureName}
-                author={titleBlockData.author}
-                version={titleBlockData.version}
-                date={titleBlockData.date}
-                onUpdate={(data) => setTitleBlockData({ ...titleBlockData, ...data })}
-              />
-            )}
-            {generatedWithModel && !focusMode && (
-              <ModelBadge
-                modelName={generatedWithModel.name}
-                elapsedTimeMs={generatedWithModel.timeMs}
-              />
-            )}
-            <Legend forceCollapsed={panelsCollapsedSignal > 0 ? panelsCollapsedSignal : undefined} />
             {referenceImageUrl && (
               <ReferenceImageViewer
                 imageUrl={referenceImageUrl}
@@ -6880,16 +6717,6 @@ Return the IMPROVED architecture in the same JSON format as before with proper g
         onDismiss={handleValidationHandoffDismiss}
       />
 
-      {!isChatOpen && (
-        <button
-          className={`feedback-fab${feedbackFabPulse ? ' pulse-once' : ''}`}
-          onClick={() => setIsFeedbackModalOpen(true)}
-          title={t("Share feedback")}
-        >
-          <MessageSquare size={18} />
-          {' '}{t("Feedback")}{' '}
-        </button>
-      )}
       <ArchitectureChatPanel
         isOpen={isChatOpen}
         onClose={() => setIsChatOpen(false)}

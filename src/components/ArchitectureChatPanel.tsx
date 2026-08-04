@@ -11,9 +11,12 @@ import {
   CurrentArchitecture,
 } from '../services/modificationPrompt';
 import './ArchitectureChatPanel.css';
+import { useEscapeKey } from '../hooks/useEscapeKey';
+import { useModalFocus } from '../hooks/useModalFocus';
 import { useLanguage } from '../i18n/LanguageContext';
 import { localize, type LocalizedText } from '../i18n/localization';
 import { OperationGeneration } from '../utils/operationGeneration';
+import { readLocalStorage, writeLocalStorage } from '../utils/safeStorage';
 
 interface ChatMessage {
   id: string;
@@ -29,6 +32,16 @@ interface ArchitectureChatPanelProps {
   diagramKey: string;
   /** Applies a generated architecture to the canvas (App's handleAIGenerate). */
   onApply: (architecture: any, prompt: string, autoSnapshot?: boolean) => void | Promise<void>;
+}
+
+const CHAT_PANEL_WIDTH_KEY = 'azure-diagram-builder.chatPanelWidth.v1';
+const DEFAULT_CHAT_PANEL_WIDTH = 460;
+const MIN_CHAT_PANEL_WIDTH = 360;
+const MAX_CHAT_PANEL_WIDTH = 720;
+const COMPACT_CHAT_MEDIA_QUERY = '(max-width: 1180px)';
+
+function clampChatPanelWidth(width: number): number {
+  return Math.min(MAX_CHAT_PANEL_WIDTH, Math.max(MIN_CHAT_PANEL_WIDTH, width));
 }
 
 // Cold start: when the canvas is empty, offer complete starter architectures
@@ -188,6 +201,91 @@ const ArchitectureChatPanel: React.FC<ArchitectureChatPanelProps> = ({
   onApply,
 }) => {
   const { t, translate, language } = useLanguage();
+  const [isCompactChat, setIsCompactChat] = useState(
+    () => typeof window !== 'undefined' && window.matchMedia(COMPACT_CHAT_MEDIA_QUERY).matches,
+  );
+  const panelRef = useModalFocus<HTMLDivElement>(isOpen && isCompactChat);
+  useEscapeKey(isOpen && isCompactChat, onClose);
+  const [panelWidth, setPanelWidth] = useState(() => {
+    const stored = readLocalStorage(CHAT_PANEL_WIDTH_KEY);
+    const parsed = stored === null ? Number.NaN : Number(stored);
+    return Number.isFinite(parsed)
+      ? clampChatPanelWidth(parsed)
+      : DEFAULT_CHAT_PANEL_WIDTH;
+  });
+  const resizeStateRef = useRef<{ startX: number; startWidth: number } | null>(null);
+
+  useEffect(() => {
+    const compactViewport = window.matchMedia(COMPACT_CHAT_MEDIA_QUERY);
+    const updateCompactState = (event: MediaQueryListEvent) => {
+      setIsCompactChat(event.matches);
+    };
+    compactViewport.addEventListener('change', updateCompactState);
+    return () => compactViewport.removeEventListener('change', updateCompactState);
+  }, []);
+
+  useEffect(() => {
+    if (!isOpen || !isCompactChat) return;
+    const app = document.querySelector<HTMLElement>('.app');
+    const backgroundElements = [
+      app?.querySelector<HTMLElement>(':scope > .app-header'),
+      app?.querySelector<HTMLElement>(':scope > .workspace'),
+    ].filter((element): element is HTMLElement => Boolean(element));
+    const previousState = backgroundElements.map(element => ({
+      element,
+      inert: element.inert,
+      ariaHidden: element.getAttribute('aria-hidden'),
+    }));
+
+    for (const element of backgroundElements) {
+      element.inert = true;
+      element.setAttribute('aria-hidden', 'true');
+    }
+
+    return () => {
+      for (const { element, inert, ariaHidden } of previousState) {
+        element.inert = inert;
+        if (ariaHidden === null) element.removeAttribute('aria-hidden');
+        else element.setAttribute('aria-hidden', ariaHidden);
+      }
+    };
+  }, [isCompactChat, isOpen]);
+
+  useEffect(() => {
+    document.documentElement.style.setProperty('--arch-chat-width', `${panelWidth}px`);
+  }, [panelWidth]);
+
+  const updatePanelWidth = useCallback((width: number) => {
+    const next = clampChatPanelWidth(width);
+    setPanelWidth(next);
+    writeLocalStorage(CHAT_PANEL_WIDTH_KEY, String(next));
+  }, []);
+
+  const handleResizePointerDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    resizeStateRef.current = { startX: event.clientX, startWidth: panelWidth };
+  }, [panelWidth]);
+
+  const handleResizePointerMove = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    const state = resizeStateRef.current;
+    if (!state) return;
+    updatePanelWidth(state.startWidth + (state.startX - event.clientX));
+  }, [updatePanelWidth]);
+
+  const handleResizePointerUp = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    if (resizeStateRef.current) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+      resizeStateRef.current = null;
+    }
+  }, []);
+
+  const handleResizeKeyDown = useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+    event.preventDefault();
+    updatePanelWidth(panelWidth + (event.key === 'ArrowLeft' ? 24 : -24));
+  }, [panelWidth, updatePanelWidth]);
+
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [isSending, setIsSending] = useState(false);
@@ -425,7 +523,41 @@ const ArchitectureChatPanel: React.FC<ArchitectureChatPanelProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div className="arch-chat-panel" role="complementary" aria-label={t("Architecture chat")}>
+    <>
+      <button
+        type="button"
+        className="arch-chat-backdrop"
+        onClick={onClose}
+        tabIndex={-1}
+        aria-hidden="true"
+      />
+      <div
+        ref={panelRef}
+        className="arch-chat-panel"
+        role={isCompactChat ? 'dialog' : 'complementary'}
+        aria-modal={isCompactChat ? 'true' : undefined}
+        aria-label={t("Architecture chat")}
+        tabIndex={isCompactChat ? -1 : undefined}
+        style={{ '--arch-chat-width': `${panelWidth}px` } as React.CSSProperties}
+      >
+        <div
+          className="arch-chat-resizer"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label={localize(language, {
+            en: 'Resize Architecture Chat',
+            ja: 'Architecture Chat の幅を変更',
+          })}
+          aria-valuemin={MIN_CHAT_PANEL_WIDTH}
+          aria-valuemax={MAX_CHAT_PANEL_WIDTH}
+          aria-valuenow={panelWidth}
+          tabIndex={0}
+          onPointerDown={handleResizePointerDown}
+          onPointerMove={handleResizePointerMove}
+          onPointerUp={handleResizePointerUp}
+          onPointerCancel={handleResizePointerUp}
+          onKeyDown={handleResizeKeyDown}
+        />
       <div className="arch-chat-header">
         <div className="arch-chat-title">
           <MessageSquare size={18} />
@@ -604,7 +736,8 @@ const ArchitectureChatPanel: React.FC<ArchitectureChatPanelProps> = ({
         </div>
         <div className="arch-chat-hint">{t("Enter to send · Shift+Enter for a new line · each change is auto-saved to version history")}</div>
       </div>
-    </div>
+      </div>
+    </>
   );
 };
 

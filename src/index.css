@@ -33,7 +33,8 @@ optgroup {
 body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  background-color: #f5f5f5;
+  background-color: var(--azd-color-surface-app);
+  color: var(--azd-color-text);
   color-scheme: light;
 }
 

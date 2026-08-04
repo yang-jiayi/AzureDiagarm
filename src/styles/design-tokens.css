@@ -1,0 +1,47 @@
+/* Copyright (c) Microsoft Corporation. Licensed under the MIT License. */
+
+:root {
+  --azd-color-brand: #0f6cbd;
+  --azd-color-brand-strong: #075a9c;
+  --azd-color-accent-ai: #7c3aed;
+  --azd-color-accent-ai-strong: #5b21b6;
+  --azd-color-surface-app: #f5f5f5;
+  --azd-color-surface-canvas: #ffffff;
+  --azd-color-surface-panel: #f8fafc;
+  --azd-color-surface-elevated: #ffffff;
+  --azd-color-surface-inverse: #0f172a;
+  --azd-color-text: #1f2937;
+  --azd-color-text-muted: #52677b;
+  --azd-color-text-inverse: #f8fafc;
+  --azd-color-border: #d7e0ea;
+  --azd-color-focus: #0f6cbd;
+  --azd-radius-sm: 7px;
+  --azd-radius-md: 10px;
+  --azd-radius-lg: 14px;
+  --azd-radius-pill: 999px;
+  --azd-shadow-panel: 0 10px 30px rgba(15, 23, 42, 0.18);
+  --azd-shadow-dock: -8px 0 30px rgba(0, 0, 0, 0.35);
+  --azd-shadow-floating: 0 6px 18px rgba(15, 23, 42, 0.24);
+  --azd-panel-palette-width: 300px;
+  --azd-panel-chat-default-width: 460px;
+  --azd-canvas-chrome-edge: 12px;
+  --azd-motion-fast: 0.15s ease;
+  --azd-motion-panel: 0.18s ease-out;
+  --azd-z-header: 1400;
+  --azd-z-panel-backdrop: 1499;
+  --azd-z-panel: 1500;
+}
+
+body.dark-mode {
+  --azd-color-surface-app: #111827;
+  --azd-color-surface-canvas: #182333;
+  --azd-color-surface-panel: #1f2937;
+  --azd-color-surface-elevated: #27333d;
+  --azd-color-text: #e5edf7;
+  --azd-color-text-muted: #b8c8da;
+  --azd-color-border: #43536a;
+  --azd-color-focus: #7dd3fc;
+  --azd-shadow-panel: 0 12px 34px rgba(0, 0, 0, 0.38);
+  --azd-shadow-dock: -8px 0 32px rgba(0, 0, 0, 0.5);
+  --azd-shadow-floating: 0 8px 22px rgba(0, 0, 0, 0.4);
+}
