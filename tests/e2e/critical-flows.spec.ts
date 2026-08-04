@@ -1306,6 +1306,11 @@ test('reload cannot clear a newer conflict raised while it is in flight', async 
   let delayedFailureCompleted = 0;
   let delayReload = false;
   let reloadLoads = 0;
+  let reloadCompleted = 0;
+  let releaseDelayedFailure = () => {};
+  const delayedFailureGate = new Promise<void>((resolve) => {
+    releaseDelayedFailure = resolve;
+  });
 
   const revisionTwoDocument = {
     ...cloudDocument('A', 'Diagram A'),
@@ -1331,6 +1336,7 @@ test('reload cannot clear a newer conflict raised while it is in flight', async 
       if (delayReload) {
         reloadLoads += 1;
         await wait(1_500);
+        reloadCompleted += 1;
       }
       await fulfillJson(route, revisionTwoDocument, 200, { etag: '"A-2"' });
       return;
@@ -1359,7 +1365,7 @@ test('reload cannot clear a newer conflict raised while it is in flight', async 
     if (path === '/api/diagrams/A/comments' && method === 'POST') {
       commentAttempts += 1;
       if (commentAttempts === 1) {
-        await wait(800);
+        await delayedFailureGate;
         delayedFailureCompleted += 1;
       }
       await fulfillJson(route, {
@@ -1385,9 +1391,10 @@ test('reload cannot clear a newer conflict raised while it is in flight', async 
   await expect(modal.getByText('A newer cloud revision exists')).toBeVisible();
   delayReload = true;
   await modal.getByRole('button', { name: 'Load cloud copy' }).click();
-  await expect.poll(() => delayedFailureCompleted).toBe(1);
   await expect.poll(() => reloadLoads).toBe(1);
-  await page.waitForTimeout(1_600);
+  releaseDelayedFailure();
+  await expect.poll(() => delayedFailureCompleted).toBe(1);
+  await expect.poll(() => reloadCompleted, { timeout: 5_000 }).toBe(1);
   await expect(cloudButton).toHaveAccessibleName('Cloud workspace: Sync conflict');
   await expect(modal.getByText('A newer cloud revision exists')).toBeVisible();
 });
@@ -4118,6 +4125,7 @@ test('deployment guide accordions are keyboard accessible and stale results are 
     role: 'owner',
   });
   let guideRequests = 0;
+  let sourceRevision = 1;
   let importedRevision = 1;
   const guide = {
     title: 'Deploy the test architecture',
@@ -4159,6 +4167,18 @@ test('deployment guide accordions are keyboard accessible and stale results are 
     }
     if (path === '/api/diagrams/A' && method === 'GET') {
       await fulfillJson(route, cloudDocument('A', 'Guide source'), 200, { etag: '"A-1"' });
+      return;
+    }
+    if (path === '/api/diagrams/A' && method === 'PUT') {
+      const body = JSON.parse(request.postData() || '{}');
+      sourceRevision += 1;
+      await fulfillJson(route, {
+        ...cloudDocument('A', body.diagramName || 'Guide source'),
+        diagramName: body.diagramName || 'Guide source',
+        payload: body.payload,
+        revision: sourceRevision,
+        etag: `"A-${sourceRevision}"`,
+      }, 200, { etag: `"A-${sourceRevision}"` });
       return;
     }
     if (path === '/api/docs-search' && method === 'POST') {
