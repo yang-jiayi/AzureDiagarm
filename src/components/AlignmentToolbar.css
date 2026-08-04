@@ -60,6 +60,11 @@
   transform: translateY(-2px);
 }
 
+.toolbar-btn:focus-visible {
+  outline: 2px solid #0078d4;
+  outline-offset: 2px;
+}
+
 .toolbar-btn:active {
   transform: translateY(0);
   background: #e8f4fd;
@@ -78,4 +83,44 @@
   margin-left: 0.5rem;
   padding-left: 1rem;
   border-left: 1px solid #e0e0e0;
+}
+
+body.dark-mode .alignment-toolbar {
+  background: #182333;
+  border-color: #43536a;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.38);
+}
+
+body.dark-mode .toolbar-label {
+  color: #b8c8da;
+}
+
+body.dark-mode .toolbar-btn {
+  background: #1b2738;
+  border-color: #43536a;
+  color: #e5edf7;
+}
+
+body.dark-mode .toolbar-btn:hover {
+  background: #233c58;
+  border-color: #7dd3fc;
+  color: #e6f4ff;
+}
+
+body.dark-mode .toolbar-btn:focus-visible {
+  outline-color: #7dd3fc;
+}
+
+body.dark-mode .toolbar-btn:active {
+  background: #0f6cbd;
+  color: #ffffff;
+}
+
+body.dark-mode .toolbar-separator {
+  background: #43536a;
+}
+
+body.dark-mode .toolbar-info {
+  color: #b8ddff;
+  border-left-color: #43536a;
 }

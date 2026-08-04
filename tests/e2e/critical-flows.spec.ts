@@ -1,4 +1,4 @@
-import { expect, test, type Page, type Route } from '@playwright/test';
+import { expect, test, type Locator, type Page, type Route } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 
 const now = '2026-08-02T00:00:00.000Z';
@@ -137,6 +137,102 @@ async function expectNoWcagViolations(page: Page, include?: string) {
   ).toEqual([]);
 }
 
+async function expectReadableContrast(locator: Locator, minimumRatio = 4.5) {
+  await expect(locator).toBeVisible();
+  const readContrast = () => locator.evaluate((element) => {
+    type Rgba = [number, number, number, number];
+
+    const parseColor = (value: string): Rgba | null => {
+      const match = value.match(
+        /rgba?\((\d+(?:\.\d+)?)[, ]+(\d+(?:\.\d+)?)[, ]+(\d+(?:\.\d+)?)(?:[, /]+(\d+(?:\.\d+)?))?\)/,
+      );
+      if (!match) return null;
+      return [
+        Number(match[1]),
+        Number(match[2]),
+        Number(match[3]),
+        match[4] === undefined ? 1 : Number(match[4]),
+      ];
+    };
+
+    const blend = (foreground: Rgba, background: Rgba): Rgba => {
+      const alpha = foreground[3] + background[3] * (1 - foreground[3]);
+      if (alpha === 0) return [0, 0, 0, 0];
+      return [
+        (foreground[0] * foreground[3]
+          + background[0] * background[3] * (1 - foreground[3])) / alpha,
+        (foreground[1] * foreground[3]
+          + background[1] * background[3] * (1 - foreground[3])) / alpha,
+        (foreground[2] * foreground[3]
+          + background[2] * background[3] * (1 - foreground[3])) / alpha,
+        alpha,
+      ];
+    };
+
+    const luminance = ([red, green, blue]: Rgba) => {
+      const channels = [red, green, blue].map((value) => {
+        const channel = value / 255;
+        return channel <= 0.03928
+          ? channel / 12.92
+          : ((channel + 0.055) / 1.055) ** 2.4;
+      });
+      return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2];
+    };
+
+    const surfaces: Rgba[] = [];
+    for (let current: Element | null = element; current; current = current.parentElement) {
+      const background = parseColor(getComputedStyle(current).backgroundColor);
+      if (background && background[3] > 0) surfaces.push(background);
+    }
+
+    let background: Rgba = [255, 255, 255, 1];
+    surfaces.reverse().forEach((surface) => {
+      background = blend(surface, background);
+    });
+
+    const style = getComputedStyle(element);
+    const parsedForeground = parseColor(style.color);
+    if (!parsedForeground) {
+      return {
+        ratio: 0,
+        color: style.color,
+        background: style.backgroundColor,
+        opacity: style.opacity,
+        label: element.textContent?.trim() || element.getAttribute('aria-label') || element.tagName,
+      };
+    }
+
+    const foreground = blend(parsedForeground, background);
+    const foregroundLuminance = luminance(foreground);
+    const backgroundLuminance = luminance(background);
+    const ratio = (Math.max(foregroundLuminance, backgroundLuminance) + 0.05)
+      / (Math.min(foregroundLuminance, backgroundLuminance) + 0.05);
+
+    return {
+      ratio,
+      color: style.color,
+      background: style.backgroundColor,
+      opacity: style.opacity,
+      label: element.textContent?.trim() || element.getAttribute('aria-label') || element.tagName,
+    };
+  });
+
+  let result = await readContrast();
+  await expect.poll(async () => {
+    result = await readContrast();
+    return result.ratio;
+  }, {
+    message: `${result.label}: ${result.color} on ${result.background} (opacity ${result.opacity})`,
+    timeout: 1_000,
+  }).toBeGreaterThanOrEqual(minimumRatio);
+}
+
+async function expectSelectedMenuState(locator: Locator) {
+  await expect(locator).toHaveCSS('background-color', 'rgb(15, 108, 189)');
+  await expect(locator).toHaveCSS('color', 'rgb(255, 255, 255)');
+  await expectReadableContrast(locator);
+}
+
 async function openInteractionDiagram(
   page: Page,
   onSave?: (payload: Record<string, unknown>) => void,
@@ -233,6 +329,140 @@ test('primary application shell meets WCAG A and AA checks', async ({ page }) =>
   await page.keyboard.press('Home');
   await expect(allTab).toBeFocused();
   await expectNoWcagViolations(page);
+});
+
+test('menu states keep readable contrast in light and dark themes', async ({ page }) => {
+  await initializePage(page);
+  await page.route('**/api/**', async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (path === '/api/access/me') {
+      await fulfillJson(route, {
+        enabled: false,
+        authenticated: true,
+        email: 'owner@example.com',
+        isAdmin: false,
+        allowed: true,
+      });
+      return;
+    }
+    await fulfillJson(route, { error: 'Not found' }, 404);
+  });
+
+  await page.setViewportSize({ width: 1502, height: 768 });
+  await page.goto('/');
+
+  const checkMenuStates = async (expectedColorScheme: 'light' | 'dark') => {
+    await page.getByRole('tab', { name: 'Home' }).click();
+    const regionButton = page.locator('.region-selector-button');
+    await regionButton.click();
+    await expect(regionButton).toHaveAttribute('aria-expanded', 'true');
+    await expectSelectedMenuState(regionButton);
+    const selectedRegion = page.locator('.region-option.selected');
+    await expectReadableContrast(selectedRegion.locator('.region-display-name'));
+    await expectReadableContrast(selectedRegion.locator('.region-location'));
+    await regionButton.click();
+
+    await page.getByRole('tab', { name: 'Create' }).click();
+    const modelButton = page.locator('.model-popover-trigger');
+    await modelButton.click();
+    await expect(modelButton).toHaveAttribute('aria-expanded', 'true');
+    await expectSelectedMenuState(modelButton);
+    const modelMenu = page.locator('.toolbar-dropdown-menu--model-settings');
+    await expectReadableContrast(modelMenu.locator('.toolbar-dropdown-heading').first());
+    for (const selectedControl of [
+      modelMenu.locator('.msp-model-btn.active'),
+      modelMenu.locator('.msp-reasoning-btn.active'),
+    ]) {
+      await expect(selectedControl).toHaveCSS('color', 'rgb(255, 255, 255)');
+      await expectReadableContrast(selectedControl);
+    }
+    await modelMenu.locator('.msp-close-btn').click();
+
+    await page.getByRole('tab', { name: 'Design' }).click();
+    await expect(page.locator('body')).toHaveCSS('color-scheme', expectedColorScheme);
+
+    const designTab = page.getByRole('tab', { name: 'Design' });
+    const flowMotion = page.getByRole('button', { name: 'Flow motion' });
+    const selectButton = page.getByRole('button', { name: 'Select', exact: true });
+    const collapseGroups = page.getByRole('button', { name: 'Collapse Groups' });
+
+    await expectReadableContrast(designTab);
+    await expectSelectedMenuState(flowMotion);
+    await flowMotion.hover();
+    await expectSelectedMenuState(flowMotion);
+
+    for (const disabledControl of [selectButton, collapseGroups]) {
+      await expect(disabledControl).toBeDisabled();
+      await expect(disabledControl).toHaveCSS('opacity', '1');
+      await expectReadableContrast(disabledControl);
+    }
+
+    const layoutButton = page.getByRole('button', { name: 'Layout', exact: true });
+    await layoutButton.click();
+    await expect(layoutButton).toHaveAttribute('aria-expanded', 'true');
+    await expectSelectedMenuState(layoutButton);
+
+    const layoutMenu = page.getByRole('menu', { name: 'Layout options' });
+    for (const select of await layoutMenu.locator('select').all()) {
+      await expectReadableContrast(select);
+    }
+    await expectReadableContrast(layoutMenu.locator('.toolbar-dropdown-heading'));
+    await expectReadableContrast(layoutMenu.locator('.toolbar-dropdown-hint'));
+    const applyLayout = layoutMenu.getByRole('menuitem', { name: 'Apply Layout' });
+    await expect(applyLayout).toBeDisabled();
+    await expect(applyLayout).toHaveCSS('opacity', '1');
+    await expectReadableContrast(applyLayout);
+    await page.keyboard.press('Escape');
+
+    const styleButton = page.getByRole('button', { name: 'Style', exact: true });
+    await styleButton.click();
+    await expectSelectedMenuState(styleButton);
+    const styleMenu = page.getByRole('menu', { name: 'Style preset options' });
+    const selectedStyle = styleMenu.getByRole('menuitem', { name: 'Detailed (Default)' });
+    await selectedStyle.hover();
+    await expectSelectedMenuState(selectedStyle);
+    await expectReadableContrast(
+      styleMenu.getByRole('menuitem', { name: 'Presentation (Professional)' }),
+    );
+    await page.keyboard.press('Escape');
+  };
+
+  await checkMenuStates('light');
+  await page.getByRole('tab', { name: 'Home' }).click();
+  await page.getByRole('button', { name: 'Switch to Dark Mode' }).click();
+  await checkMenuStates('dark');
+  await expectNoWcagViolations(page, '.app-header');
+});
+
+test('dark context and alignment menus remain readable', async ({ page }) => {
+  await openInteractionDiagram(page);
+  await page.getByRole('tab', { name: 'Home' }).click();
+  await page.getByRole('button', { name: 'Switch to Dark Mode' }).click();
+
+  const nodeA = page.locator('[data-testid="rf__node-node-a"]');
+  const nodeB = page.locator('[data-testid="rf__node-node-b"]');
+  await nodeA.click();
+  await nodeB.click({ modifiers: ['Control'] });
+
+  const alignmentToolbar = page.locator('.alignment-toolbar');
+  await expect(alignmentToolbar).toBeVisible();
+  await expectReadableContrast(alignmentToolbar.locator('.toolbar-label').first());
+  await expectReadableContrast(alignmentToolbar.locator('.toolbar-info'));
+  const alignLeft = alignmentToolbar.getByRole('button', { name: 'Align Left' });
+  await expectReadableContrast(alignLeft);
+  await alignLeft.hover();
+  await expectReadableContrast(alignLeft);
+
+  await nodeA.click({ button: 'right' });
+  const nodeMenu = page.getByRole('menu', { name: 'Service actions' });
+  await expectReadableContrast(nodeMenu.locator('.context-menu-header'));
+  const duplicate = nodeMenu.getByRole('menuitem', { name: 'Duplicate service' });
+  await expect(duplicate).toBeFocused();
+  await expectReadableContrast(duplicate);
+  const deleteService = nodeMenu.getByRole('menuitem', { name: 'Delete service' });
+  await deleteService.hover();
+  await expectReadableContrast(deleteService);
+  await expectNoWcagViolations(page, '.node-context-menu');
 });
 
 test('canvas context menus and modal focus are keyboard safe', async ({ page }) => {
