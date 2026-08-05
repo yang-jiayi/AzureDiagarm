@@ -27,7 +27,10 @@ import AIArchitectureGenerator from './components/AIArchitectureGenerator';
 import ArchitectureChatPanel from './components/ArchitectureChatPanel';
 import CanvasActivityOverlay from './components/CanvasActivityOverlay';
 import CanvasChrome from './components/CanvasChrome';
+import CommandPalette, { type CommandPaletteAction } from './components/CommandPalette';
 import HelpLearnPanel from './components/GuidedHelpPanel';
+import MobileCommandBar from './components/MobileCommandBar';
+import ResponsiveRibbonSurface from './components/ResponsiveRibbonSurface';
 import type { ReferenceArchitecture } from './services/referenceArchitectureAI';
 import type { BlueprintArchitecture } from './services/blueprintArchitectureAI';
 import ReferenceImageViewer from './components/ReferenceImageViewer';
@@ -284,8 +287,10 @@ const EDGE_STYLE_STORAGE_KEY = 'azure-diagram-builder.edgeStyle.v1';
 const EDGE_ANIMATION_STORAGE_KEY = 'azure-diagram-builder.edgeAnimation.v1';
 const CANVAS_HINT_STORAGE_KEY = 'azure-diagram-builder.canvasHintDismissed.v1';
 const HEADER_COLLAPSED_STORAGE_KEY = 'azure-diagram-builder.headerCollapsed.v1';
+const FOCUS_MODE_STORAGE_KEY = 'azure-diagram-builder.focusMode.v1';
 const TOOLBAR_SECTIONS_STORAGE_KEY = 'azure-diagram-builder.toolbarSections.v1';
 const RIBBON_TAB_STORAGE_KEY = 'azure-diagram-builder.ribbonTab.v1';
+const DEFAULT_EDGE_COLOR = '#64748b';
 const EDGE_CONTEXT_MENU_WIDTH = 220;
 const EDGE_CONTEXT_MENU_HEIGHT = 360;
 const EDGE_CONTEXT_MENU_MARGIN = 8;
@@ -994,6 +999,9 @@ function App() {
   const [isCompareModelsOpen, setIsCompareModelsOpen] = useState(false);
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [isHelpOpen, setIsHelpOpen] = useState(false);
+  const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
+  const [isMobileRibbonOpen, setIsMobileRibbonOpen] = useState(false);
+  const [paletteOpenSignal, setPaletteOpenSignal] = useState(0);
   // First-run nudge: pulse the Help button until it has been opened once.
   const [helpSeen, setHelpSeen] = useState<boolean>(() => readLocalStorage('help.seen') === '1');
   // Canvas navigation hint: teaches scroll-to-zoom / drag-to-pan / fit-view.
@@ -1070,10 +1078,92 @@ function App() {
       feedbackAfterValidationRef.current = false;
     }
   }, [nodes.length]);
-  // Focus mode: hides canvas chrome (side panels via the signal above, plus the
-  // "Generated from" prompt banner and the "Generated with" model badge) so only
-  // the diagram itself remains. Toggled by the Focus button.
-  const [focusMode, setFocusMode] = useState(false);
+  const [focusMode, setFocusMode] = useState<boolean>(() => (
+    readBooleanPreference(FOCUS_MODE_STORAGE_KEY, false)
+  ));
+  const focusModeReturnTargetRef = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    writeLocalStorage(FOCUS_MODE_STORAGE_KEY, focusMode ? '1' : '0');
+    if (!focusMode) return;
+    setIsMobileRibbonOpen(false);
+    setIsCommandPaletteOpen(false);
+    setIsChatOpen(false);
+    setIsHelpOpen(false);
+    setIsCloudWorkspaceOpen(false);
+    setPanelsCollapsedSignal((previous) => previous + 1);
+  }, [focusMode]);
+
+  const openCommandPalette = useCallback(() => {
+    setIsMobileRibbonOpen(false);
+    setIsChatOpen(false);
+    setIsHelpOpen(false);
+    setIsCloudWorkspaceOpen(false);
+    setPanelsCollapsedSignal((previous) => previous + 1);
+    setIsCommandPaletteOpen(true);
+  }, []);
+
+  const openServicesPanel = useCallback(() => {
+    setFocusMode(false);
+    setIsMobileRibbonOpen(false);
+    setIsCommandPaletteOpen(false);
+    setIsChatOpen(false);
+    setIsHelpOpen(false);
+    setIsCloudWorkspaceOpen(false);
+    setPanelsCollapsedSignal((previous) => previous + 1);
+    setPaletteOpenSignal((previous) => previous + 1);
+  }, []);
+
+  const toggleChatPanel = useCallback(() => {
+    setFocusMode(false);
+    setIsMobileRibbonOpen(false);
+    setIsCommandPaletteOpen(false);
+    setIsHelpOpen(false);
+    setIsCloudWorkspaceOpen(false);
+    setIsChatOpen((current) => !current);
+  }, []);
+
+  const openCloudWorkspace = useCallback(() => {
+    setFocusMode(false);
+    setIsMobileRibbonOpen(false);
+    setIsCommandPaletteOpen(false);
+    setIsChatOpen(false);
+    setIsHelpOpen(false);
+    setPanelsCollapsedSignal((previous) => previous + 1);
+    setIsCloudWorkspaceOpen(true);
+  }, []);
+
+  const enterFocusMode = useCallback(() => {
+    const activeElement = document.activeElement;
+    focusModeReturnTargetRef.current = activeElement instanceof HTMLElement
+      && activeElement !== document.body
+      ? activeElement
+      : null;
+    setFocusMode(true);
+  }, []);
+
+  const exitFocusMode = useCallback(() => {
+    setFocusMode(false);
+    window.requestAnimationFrame(() => {
+      const returnTarget = focusModeReturnTargetRef.current;
+      focusModeReturnTargetRef.current = null;
+      if (
+        returnTarget
+        && returnTarget.isConnected
+        && returnTarget.getClientRects().length > 0
+        && !returnTarget.closest('[inert], [aria-hidden="true"]')
+      ) {
+        returnTarget.focus();
+        if (document.activeElement === returnTarget) return;
+      }
+      reactFlowWrapper.current?.focus();
+    });
+  }, []);
+
+  const toggleFocusMode = useCallback(() => {
+    if (focusMode) exitFocusMode();
+    else enterFocusMode();
+  }, [enterFocusMode, exitFocusMode, focusMode]);
 
   useEffect(() => {
     if (!validationHandoff || focusMode || validationHandoffShownRef.current === validationHandoff) return;
@@ -1314,15 +1404,33 @@ function App() {
       if (
         !(target instanceof Element)
         || e.defaultPrevented
+        || e.isComposing
+        || e.keyCode === 229
         || pricingEditorNodeId
         || target.tagName === 'INPUT'
         || target.tagName === 'TEXTAREA'
         || target.tagName === 'SELECT'
-        || target.tagName === 'BUTTON'
+        || (target.tagName === 'BUTTON' && !(focusMode && e.key === 'Escape'))
         || (target instanceof HTMLElement && target.isContentEditable)
         || target.closest('[role="dialog"], [role="menu"]')
         || document.querySelector('[role="dialog"], [role="menu"]')
       ) {
+        return;
+      }
+
+      if (e.key === 'Escape' && focusMode) {
+        e.preventDefault();
+        exitFocusMode();
+        return;
+      }
+
+      if (
+        (e.ctrlKey || e.metaKey)
+        && !e.altKey
+        && e.key.toLowerCase() === 'k'
+      ) {
+        e.preventDefault();
+        openCommandPalette();
         return;
       }
 
@@ -1387,6 +1495,9 @@ function App() {
     deleteCanvasNodes,
     pricingEditorNodeId,
     cancelPendingPricingEditorOpen,
+    exitFocusMode,
+    focusMode,
+    openCommandPalette,
   ]);
 
   // Keep edge rendering style in sync even without re-layout.
@@ -1617,6 +1728,15 @@ function App() {
       if (typeof next.targetHandle === 'string' && TGT_FIX[next.targetHandle]) {
         next.targetHandle = TGT_FIX[next.targetHandle];
       }
+      if (next.style?.stroke === '#0078d4') {
+        next.style = { ...next.style, stroke: DEFAULT_EDGE_COLOR };
+      }
+      if (next.markerEnd && typeof next.markerEnd === 'object') {
+        next.markerEnd = { ...next.markerEnd, color: DEFAULT_EDGE_COLOR };
+      }
+      if (next.markerStart && typeof next.markerStart === 'object') {
+        next.markerStart = { ...next.markerStart, color: DEFAULT_EDGE_COLOR };
+      }
       const baseFlowAnimated = Boolean(next.data?.baseFlowAnimated ?? next.data?.flowAnimated ?? true);
       const edgeAnimationPreference = typeof next.data?.flowAnimated === 'boolean'
         ? next.data.flowAnimated
@@ -1639,9 +1759,9 @@ function App() {
       animated: false,
       type: 'editableEdge',
       label: '',
-      markerEnd: { type: MarkerType.ArrowClosed, color: '#0078d4' },
-      labelStyle: { fontSize: 14, fill: '#333', fontWeight: 'bold' },
-      labelBgStyle: { fill: 'white', fillOpacity: 0.9, stroke: '#000', strokeWidth: 1.5 },
+      markerEnd: { type: MarkerType.ArrowClosed, color: DEFAULT_EDGE_COLOR },
+      labelStyle: { fontSize: 13, fill: '#334155', fontWeight: 600 },
+      labelBgStyle: { fill: 'white', fillOpacity: 0.94, stroke: '#cbd5e1', strokeWidth: 1 },
       data: {
         onLabelChange: handleEdgeLabelChange,
         onLabelOffsetChange: handleEdgeLabelOffsetChange,
@@ -2276,14 +2396,14 @@ function App() {
         
         switch (direction) {
           case 'forward':
-            markerEnd = { type: MarkerType.ArrowClosed, color: '#0078d4' };
+            markerEnd = { type: MarkerType.ArrowClosed, color: DEFAULT_EDGE_COLOR };
             break;
           case 'reverse':
-            markerStart = { type: MarkerType.ArrowClosed, color: '#0078d4' };
+            markerStart = { type: MarkerType.ArrowClosed, color: DEFAULT_EDGE_COLOR };
             break;
           case 'bidirectional':
-            markerEnd = { type: MarkerType.ArrowClosed, color: '#0078d4' };
-            markerStart = { type: MarkerType.ArrowClosed, color: '#0078d4' };
+            markerEnd = { type: MarkerType.ArrowClosed, color: DEFAULT_EDGE_COLOR };
+            markerStart = { type: MarkerType.ArrowClosed, color: DEFAULT_EDGE_COLOR };
             break;
         }
         
@@ -4145,8 +4265,8 @@ function App() {
       if (bidirectionalKeywords.some(keyword => lowerLabel.includes(keyword))) {
         return {
           direction: 'bidirectional',
-          markerEnd: { type: MarkerType.ArrowClosed, color: '#0078d4' },
-          markerStart: { type: MarkerType.ArrowClosed, color: '#0078d4' },
+          markerEnd: { type: MarkerType.ArrowClosed, color: DEFAULT_EDGE_COLOR },
+          markerStart: { type: MarkerType.ArrowClosed, color: DEFAULT_EDGE_COLOR },
           flowMode: 'pulse',
         };
       }
@@ -4155,7 +4275,7 @@ function App() {
       if (reverseKeywords.some(keyword => lowerLabel.includes(keyword))) {
         return {
           direction: 'reverse',
-          markerStart: { type: MarkerType.ArrowClosed, color: '#0078d4' },
+          markerStart: { type: MarkerType.ArrowClosed, color: DEFAULT_EDGE_COLOR },
           markerEnd: undefined,
           flowMode: 'directional',
         };
@@ -4164,7 +4284,7 @@ function App() {
       // Default to forward
       return {
         direction: 'forward',
-        markerEnd: { type: MarkerType.ArrowClosed, color: '#0078d4' },
+        markerEnd: { type: MarkerType.ArrowClosed, color: DEFAULT_EDGE_COLOR },
         markerStart: undefined,
         flowMode: 'directional',
       };
@@ -4214,8 +4334,8 @@ function App() {
         label: conn.label || '',
         markerEnd: edgeDirection.markerEnd,
         markerStart: edgeDirection.markerStart,
-        labelStyle: { fontSize: 14, fill: '#333', fontWeight: 'bold' },
-        labelBgStyle: { fill: 'white', fillOpacity: 0.9, stroke: '#000', strokeWidth: 1.5 },
+        labelStyle: { fontSize: 13, fill: '#334155', fontWeight: 600 },
+        labelBgStyle: { fill: 'white', fillOpacity: 0.94, stroke: '#cbd5e1', strokeWidth: 1 },
         style: edgeStyle,
         data: {
           connectionType,
@@ -5022,10 +5142,166 @@ function App() {
         return localize(language, { en: 'Cloud', ja: 'クラウド' });
     }
   })();
+  const commandPaletteCommands: CommandPaletteAction[] = [
+    {
+      id: 'open-services',
+      label: localize(language, { en: 'Open Azure services', ja: 'Azure サービスを開く' }),
+      description: localize(language, {
+        en: 'Browse the complete service catalog',
+        ja: 'サービス カタログ全体を参照します',
+      }),
+      keywords: ['icons', 'catalog', 'palette', 'services'],
+      group: localize(language, { en: 'Navigate', ja: '移動' }),
+      icon: <Boxes size={17} aria-hidden="true" />,
+      run: openServicesPanel,
+    },
+    {
+      id: 'open-chat',
+      label: localize(language, { en: 'Open Architecture Chat', ja: 'Architecture Chat を開く' }),
+      description: localize(language, {
+        en: 'Create or refine the diagram conversationally',
+        ja: '会話形式で図を作成または改善します',
+      }),
+      keywords: ['ai', 'assistant', 'prompt', 'conversation'],
+      group: localize(language, { en: 'Create', ja: '作成' }),
+      icon: <MessagesSquare size={17} aria-hidden="true" />,
+      run: toggleChatPanel,
+    },
+    {
+      id: 'save-diagram',
+      label: localize(language, { en: 'Save diagram file', ja: '図ファイルを保存' }),
+      description: localize(language, {
+        en: 'Download the editable JSON diagram',
+        ja: '編集可能な JSON 図をダウンロードします',
+      }),
+      keywords: ['download', 'json', 'file'],
+      group: localize(language, { en: 'File', ja: 'ファイル' }),
+      icon: <Save size={17} aria-hidden="true" />,
+      run: saveDiagram,
+    },
+    {
+      id: 'export-png',
+      label: localize(language, { en: 'Export PNG', ja: 'PNG を出力' }),
+      description: localize(language, {
+        en: 'Capture the current architecture as an image',
+        ja: '現在のアーキテクチャを画像として保存します',
+      }),
+      keywords: ['image', 'download', 'capture'],
+      group: localize(language, { en: 'Export', ja: '出力' }),
+      icon: <Download size={17} aria-hidden="true" />,
+      disabled: nodes.length === 0,
+      run: exportDiagram,
+    },
+    {
+      id: 'fit-view',
+      label: localize(language, { en: 'Fit diagram to view', ja: '図全体を表示' }),
+      description: localize(language, {
+        en: 'Center and scale all diagram elements',
+        ja: '図の全要素を中央に収めます',
+      }),
+      keywords: ['zoom', 'center', 'canvas'],
+      group: localize(language, { en: 'Canvas', ja: 'キャンバス' }),
+      icon: <Frame size={17} aria-hidden="true" />,
+      disabled: nodes.length === 0,
+      run: () => {
+        void reactFlowInstance?.fitView({
+          padding: 0.2,
+          duration: 400,
+          maxZoom: 1.2,
+        });
+      },
+    },
+    {
+      id: 'validate-architecture',
+      label: localize(language, { en: 'Validate architecture', ja: 'アーキテクチャを検証' }),
+      description: localize(language, {
+        en: 'Run the Azure Well-Architected review',
+        ja: 'Azure Well-Architected レビューを実行します',
+      }),
+      keywords: ['waf', 'review', 'reliability', 'security'],
+      group: localize(language, { en: 'Review', ja: 'レビュー' }),
+      icon: <Shield size={17} aria-hidden="true" />,
+      disabled: nodes.length === 0 || isValidating,
+      run: handleValidateArchitecture,
+    },
+    {
+      id: 'cloud-workspace',
+      label: localize(language, { en: 'Open cloud workspace', ja: 'クラウド ワークスペースを開く' }),
+      description: localize(language, {
+        en: 'Manage saved diagrams, versions, and sharing',
+        ja: '保存済み図、バージョン、共有を管理します',
+      }),
+      keywords: ['sync', 'versions', 'share', 'collaboration'],
+      group: localize(language, { en: 'Workspace', ja: 'ワークスペース' }),
+      icon: <Cloud size={17} aria-hidden="true" />,
+      run: openCloudWorkspace,
+    },
+    {
+      id: 'toggle-focus',
+      label: localize(language, {
+        en: focusMode ? 'Exit focus mode' : 'Enter focus mode',
+        ja: focusMode ? '集中モードを終了' : '集中モードを開始',
+      }),
+      description: localize(language, {
+        en: 'Show only the architecture canvas',
+        ja: 'アーキテクチャ キャンバスだけを表示します',
+      }),
+      keywords: ['presentation', 'fullscreen', 'canvas'],
+      group: localize(language, { en: 'View', ja: '表示' }),
+      icon: <PanelLeftClose size={17} aria-hidden="true" />,
+      run: toggleFocusMode,
+    },
+    {
+      id: 'toggle-theme',
+      label: localize(language, {
+        en: isDarkMode ? 'Use light theme' : 'Use dark theme',
+        ja: isDarkMode ? 'ライト テーマに切り替え' : 'ダーク テーマに切り替え',
+      }),
+      description: localize(language, {
+        en: 'Switch the application color theme',
+        ja: 'アプリケーションの配色を切り替えます',
+      }),
+      keywords: ['dark', 'light', 'appearance'],
+      group: localize(language, { en: 'View', ja: '表示' }),
+      icon: isDarkMode
+        ? <Sun size={17} aria-hidden="true" />
+        : <Moon size={17} aria-hidden="true" />,
+      run: () => setIsDarkMode((current) => !current),
+    },
+    {
+      id: 'start-fresh',
+      label: localize(language, { en: 'Start a new diagram', ja: '新しい図を開始' }),
+      description: localize(language, {
+        en: 'Clear the workspace after preserving cloud changes',
+        ja: 'クラウド変更を保持してワークスペースをクリアします',
+      }),
+      keywords: ['new', 'clear', 'reset'],
+      group: localize(language, { en: 'File', ja: 'ファイル' }),
+      icon: <Trash2 size={17} aria-hidden="true" />,
+      run: async () => {
+        await startFreshDiagram();
+      },
+    },
+    {
+      id: 'open-help',
+      label: localize(language, { en: 'Open help and learning', ja: 'ヘルプと学習を開く' }),
+      description: localize(language, {
+        en: 'Learn canvas controls and architecture workflows',
+        ja: 'キャンバス操作とアーキテクチャ手順を確認します',
+      }),
+      keywords: ['guide', 'learn', 'shortcuts'],
+      group: localize(language, { en: 'Help', ja: 'ヘルプ' }),
+      icon: <HelpCircle size={17} aria-hidden="true" />,
+      run: () => {
+        setFocusMode(false);
+        setIsHelpOpen(true);
+      },
+    },
+  ];
 
   return (
-    <div className={`app${isChatOpen ? ' chat-open' : ''}`}>
-      <header className={`app-header${isHeaderCollapsed ? ' header-collapsed' : ''}`}>
+    <div className={`app${isChatOpen ? ' chat-open' : ''}${focusMode ? ' focus-mode' : ''}`}>
+      <header className={`app-header${isHeaderCollapsed ? ' header-collapsed' : ''}${isMobileRibbonOpen ? ' mobile-ribbon-open' : ''}`}>
         <div className="header-content">
           <div className="header-brand">
             <div className="microsoft-logo" role="img" aria-label={t("Microsoft")}>
@@ -5039,6 +5315,10 @@ function App() {
             </div>
             <h1>{t("Azure Architecture Diagram Builder")}</h1>
           </div>
+          <ResponsiveRibbonSurface
+            isOpen={isMobileRibbonOpen}
+            onClose={() => setIsMobileRibbonOpen(false)}
+          >
           <div
             className="header-actions-wrapper"
             id="application-toolbar"
@@ -5212,7 +5492,7 @@ function App() {
                 />
                 <button
                   className={`btn btn-secondary${isChatOpen ? ' btn-active' : ''}`}
-                  onClick={() => setIsChatOpen((v) => !v)}
+                  onClick={toggleChatPanel}
                   aria-pressed={isChatOpen}
                   title={isChatOpen
                     ? t("Close Architecture Chat")
@@ -5574,7 +5854,7 @@ function App() {
               >
                 {toolbarSectionHeading('history', localize(language, { en: 'History', ja: '履歴' }))}
                 <button
-                  onClick={() => setIsCloudWorkspaceOpen(true)}
+                  onClick={openCloudWorkspace}
                   className={`btn btn-secondary${cloudSync.document ? ' btn-active' : ''}`}
                   title={cloudSync.errorMessage || localize(language, {
                     en: 'Open cloud autosave, sharing, comments, and snapshots',
@@ -5855,15 +6135,7 @@ function App() {
                 </div>
 
                 <button
-                  onClick={() => {
-                    setFocusMode(prev => {
-                      const next = !prev;
-                      // Entering focus also collapses the side panels & legend
-                      // (their existing one-way signal behavior).
-                      if (next) setPanelsCollapsedSignal(p => p + 1);
-                      return next;
-                    });
-                  }}
+                  onClick={toggleFocusMode}
                   className={`btn btn-secondary${focusMode ? ' btn-active' : ''}`}
                   title={focusMode ? t("Show panels and diagram info") : t("Hide panels and diagram info for maximum diagram space")}
                   aria-pressed={focusMode}
@@ -5952,6 +6224,7 @@ function App() {
             </div>
             </div>
           </div>
+          </ResponsiveRibbonSurface>
           <div className="header-identity-actions">
             {accessIdentity?.enabled && accessIdentity.isAdmin && (
               <button
@@ -5969,6 +6242,17 @@ function App() {
             )}
             <LanguageSwitch />
           </div>
+          <MobileCommandBar
+            activeSection={ribbonTabs.find((tab) => tab.id === activeRibbonTab)?.label || ''}
+            commandSheetOpen={isMobileRibbonOpen}
+            focusMode={focusMode}
+            chatOpen={isChatOpen}
+            onOpenCommands={() => setIsMobileRibbonOpen((current) => !current)}
+            onOpenCommandPalette={openCommandPalette}
+            onOpenServices={openServicesPanel}
+            onToggleChat={toggleChatPanel}
+            onToggleFocus={toggleFocusMode}
+          />
           <button
             className="header-collapse-toggle"
             onClick={() => {
@@ -5992,6 +6276,7 @@ function App() {
       <div className="workspace">
         <IconPalette
           forceCollapsed={panelsCollapsedSignal > 0 ? panelsCollapsedSignal : undefined}
+          openSignal={paletteOpenSignal > 0 ? paletteOpenSignal : undefined}
           onAddIcon={handleAddService}
         />
         
@@ -6041,12 +6326,13 @@ function App() {
             <Background 
               variant={BackgroundVariant.Dots} 
               gap={20} 
-              size={2.5} 
-              color="#60a5fa"
-              style={{ backgroundColor: '#f8fafc' }}
+              size={1.5}
+              color={isDarkMode ? '#334155' : '#cbd5e1'}
+              style={{ backgroundColor: isDarkMode ? '#0f172a' : '#f8fafc' }}
             />
             <CanvasChrome
               hasNodes={nodes.length > 0}
+              focusMode={focusMode}
               showNavigationHint={showCanvasHint}
               showEmptyState={!isChatOpen}
               showFeedback={!isChatOpen}
@@ -6063,11 +6349,12 @@ function App() {
                 duration: 400,
                 maxZoom: 1.2,
               })}
-              onOpenChat={() => setIsChatOpen(true)}
+              onOpenChat={toggleChatPanel}
               onTitleBlockUpdate={(data) => {
                 setTitleBlockData((current) => ({ ...current, ...data }));
               }}
               onFeedback={() => setIsFeedbackModalOpen(true)}
+              onExitFocus={exitFocusMode}
             />
             <style>
               {highlightedServices.map(id => 
@@ -6721,6 +7008,13 @@ Return the IMPROVED architecture in the same JSON format as before with proper g
         isChatOpen={isChatOpen}
         onValidate={handleValidationHandoffStart}
         onDismiss={handleValidationHandoffDismiss}
+      />
+
+      <CommandPalette
+        isOpen={isCommandPaletteOpen}
+        onClose={() => setIsCommandPaletteOpen(false)}
+        commands={commandPaletteCommands}
+        onAddService={handleAddService}
       />
 
       <ArchitectureChatPanel

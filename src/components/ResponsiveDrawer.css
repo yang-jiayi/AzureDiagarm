@@ -1,0 +1,64 @@
+/* Copyright (c) Microsoft Corporation. Licensed under the MIT License. */
+
+.responsive-drawer-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: var(--azd-z-panel-backdrop);
+  display: block;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: rgba(15, 23, 42, 0.52);
+  backdrop-filter: blur(2px);
+}
+
+.responsive-drawer-panel {
+  z-index: var(--azd-z-panel);
+  min-width: 0;
+  outline: none;
+}
+
+.responsive-drawer-panel--left,
+.responsive-drawer-panel--right {
+  position: fixed;
+  top: 0;
+  bottom: 0;
+}
+
+.responsive-drawer-panel--left {
+  left: 0;
+}
+
+.responsive-drawer-panel--right {
+  right: 0;
+}
+
+.responsive-drawer-panel--bottom {
+  position: fixed;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  max-height: min(88dvh, 760px);
+  border-radius: 18px 18px 0 0;
+  box-shadow: 0 -16px 42px rgba(15, 23, 42, 0.3);
+}
+
+.responsive-drawer-panel--center {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+}
+
+.responsive-drawer-panel--docked {
+  position: relative;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .responsive-drawer-backdrop,
+  .responsive-drawer-panel {
+    animation: none !important;
+    transition: none !important;
+  }
+}

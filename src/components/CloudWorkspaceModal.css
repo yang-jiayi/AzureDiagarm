@@ -1,6 +1,9 @@
 .cloud-workspace-overlay {
+  z-index: 2590;
+}
+
+.responsive-drawer-panel.cloud-workspace-modal {
   z-index: 2600;
-  padding: 24px;
 }
 
 .cloud-workspace-modal {
@@ -633,10 +636,11 @@ body.dark-mode .cloud-workspace-error {
 }
 
 @media (max-width: 900px) {
-  .cloud-workspace-modal {
-    width: calc(100vw - 20px);
-    height: calc(100vh - 20px);
-    max-height: none;
+  .responsive-drawer-panel.cloud-workspace-modal {
+    width: 100vw;
+    height: min(92dvh, 820px);
+    max-height: 92dvh;
+    border-radius: 18px 18px 0 0;
   }
 
   .cloud-workspace-body {

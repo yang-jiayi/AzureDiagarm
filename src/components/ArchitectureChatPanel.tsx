@@ -11,12 +11,12 @@ import {
   CurrentArchitecture,
 } from '../services/modificationPrompt';
 import './ArchitectureChatPanel.css';
-import { useEscapeKey } from '../hooks/useEscapeKey';
-import { useModalFocus } from '../hooks/useModalFocus';
+import { useMediaQuery } from '../hooks/useMediaQuery';
 import { useLanguage } from '../i18n/LanguageContext';
 import { localize, type LocalizedText } from '../i18n/localization';
 import { OperationGeneration } from '../utils/operationGeneration';
 import { readLocalStorage, writeLocalStorage } from '../utils/safeStorage';
+import ResponsiveDrawer from './ResponsiveDrawer';
 
 interface ChatMessage {
   id: string;
@@ -201,11 +201,7 @@ const ArchitectureChatPanel: React.FC<ArchitectureChatPanelProps> = ({
   onApply,
 }) => {
   const { t, translate, language } = useLanguage();
-  const [isCompactChat, setIsCompactChat] = useState(
-    () => typeof window !== 'undefined' && window.matchMedia(COMPACT_CHAT_MEDIA_QUERY).matches,
-  );
-  const panelRef = useModalFocus<HTMLDivElement>(isOpen && isCompactChat);
-  useEscapeKey(isOpen && isCompactChat, onClose);
+  const isCompactChat = useMediaQuery(COMPACT_CHAT_MEDIA_QUERY);
   const [panelWidth, setPanelWidth] = useState(() => {
     const stored = readLocalStorage(CHAT_PANEL_WIDTH_KEY);
     const parsed = stored === null ? Number.NaN : Number(stored);
@@ -214,42 +210,6 @@ const ArchitectureChatPanel: React.FC<ArchitectureChatPanelProps> = ({
       : DEFAULT_CHAT_PANEL_WIDTH;
   });
   const resizeStateRef = useRef<{ startX: number; startWidth: number } | null>(null);
-
-  useEffect(() => {
-    const compactViewport = window.matchMedia(COMPACT_CHAT_MEDIA_QUERY);
-    const updateCompactState = (event: MediaQueryListEvent) => {
-      setIsCompactChat(event.matches);
-    };
-    compactViewport.addEventListener('change', updateCompactState);
-    return () => compactViewport.removeEventListener('change', updateCompactState);
-  }, []);
-
-  useEffect(() => {
-    if (!isOpen || !isCompactChat) return;
-    const app = document.querySelector<HTMLElement>('.app');
-    const backgroundElements = [
-      app?.querySelector<HTMLElement>(':scope > .app-header'),
-      app?.querySelector<HTMLElement>(':scope > .workspace'),
-    ].filter((element): element is HTMLElement => Boolean(element));
-    const previousState = backgroundElements.map(element => ({
-      element,
-      inert: element.inert,
-      ariaHidden: element.getAttribute('aria-hidden'),
-    }));
-
-    for (const element of backgroundElements) {
-      element.inert = true;
-      element.setAttribute('aria-hidden', 'true');
-    }
-
-    return () => {
-      for (const { element, inert, ariaHidden } of previousState) {
-        element.inert = inert;
-        if (ariaHidden === null) element.removeAttribute('aria-hidden');
-        else element.setAttribute('aria-hidden', ariaHidden);
-      }
-    };
-  }, [isCompactChat, isOpen]);
 
   useEffect(() => {
     document.documentElement.style.setProperty('--arch-chat-width', `${panelWidth}px`);
@@ -520,24 +480,20 @@ const ArchitectureChatPanel: React.FC<ArchitectureChatPanelProps> = ({
     }
   };
 
-  if (!isOpen) return null;
-
   return (
-    <>
-      <button
-        type="button"
-        className="arch-chat-backdrop"
-        onClick={onClose}
-        tabIndex={-1}
-        aria-hidden="true"
-      />
-      <div
-        ref={panelRef}
+    <ResponsiveDrawer
+        isOpen={isOpen}
+        modal={isCompactChat}
+        placement="right"
         className="arch-chat-panel"
-        role={isCompactChat ? 'dialog' : 'complementary'}
-        aria-modal={isCompactChat ? 'true' : undefined}
-        aria-label={t("Architecture chat")}
-        tabIndex={isCompactChat ? -1 : undefined}
+        role="complementary"
+        backdropClassName="arch-chat-backdrop"
+        ariaLabel={t("Architecture chat")}
+        onClose={onClose}
+        backgroundSelectors={[
+          '.app > .app-header',
+          '.app > .workspace',
+        ]}
         style={{ '--arch-chat-width': `${panelWidth}px` } as React.CSSProperties}
       >
         <div
@@ -736,8 +692,7 @@ const ArchitectureChatPanel: React.FC<ArchitectureChatPanelProps> = ({
         </div>
         <div className="arch-chat-hint">{t("Enter to send · Shift+Enter for a new line · each change is auto-saved to version history")}</div>
       </div>
-      </div>
-    </>
+    </ResponsiveDrawer>
   );
 };
 

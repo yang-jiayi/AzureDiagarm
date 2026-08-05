@@ -15,6 +15,17 @@
   padding-right: var(--arch-chat-effective-width);
 }
 
+.app.focus-mode {
+  padding-right: 0;
+}
+
+.app.focus-mode .app-header,
+.app.focus-mode .workspace > .icon-palette,
+.app.focus-mode .workspace > .workflow-panel,
+.app.focus-mode .alignment-toolbar {
+  display: none;
+}
+
 .app-header {
   background: linear-gradient(135deg, var(--azd-color-brand) 0%, var(--azd-color-brand-strong) 100%);
   color: var(--azd-color-text-inverse);
@@ -287,7 +298,10 @@
   }
 
   .header-content {
-    grid-template-columns: minmax(0, 1fr) auto auto;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      'brand language'
+      'mobilebar mobilebar';
     gap: 0.35rem 0.45rem;
   }
 
@@ -337,13 +351,6 @@
   }
 
   .header-collapse-toggle {
-    min-width: 32px;
-    min-height: 32px;
-    justify-content: center;
-    padding: 5px;
-  }
-
-  .header-collapse-toggle span {
     display: none;
   }
 
@@ -997,17 +1004,17 @@ body.dark-mode .toolbar-dropdown-separator {
 }
 
 .react-flow__node.selected {
-  box-shadow: 0 0 0 2px #0078d4;
+  box-shadow: none;
 }
 
 .react-flow__edge-path {
-  stroke: #0078d4;
-  stroke-width: 2;
+  stroke: #64748b;
+  stroke-width: 1.75;
 }
 
 .react-flow__edge.selected .react-flow__edge-path {
-  stroke: #005a9e;
-  stroke-width: 3;
+  stroke: #0f6cbd;
+  stroke-width: 2.5;
 }
 
 /* Edge flow animation (custom, supports reverse) */
@@ -2318,5 +2325,20 @@ body.dark-mode .ribbon-command-strip .pricing-mode-btn.active {
   body.dark-mode .ribbon-command-strip .toolbar-group.toolbar-group--labeled + .toolbar-group.toolbar-group--labeled {
     border-color: #344256 !important;
     background: #182333;
+  }
+
+  .app-header:not(.header-collapsed) .mobile-ribbon-drawer .header-actions-wrapper,
+  .app-header.header-collapsed .mobile-ribbon-drawer .header-actions-wrapper {
+    position: static;
+    inset: auto;
+    width: 100%;
+    max-height: calc(min(82dvh, 720px) - 48px);
+    display: flex;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+    overflow: hidden;
   }
 }

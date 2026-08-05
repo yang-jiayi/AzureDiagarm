@@ -135,10 +135,10 @@ const AzureNode: React.FC<NodeProps> = memo(({ data, selected, id }) => {
 
   const categoryColor = getCategoryColor(data.category);
   const borderStyle = {
-    borderLeft: `6px solid ${categoryColor}`,
-    borderTop: '2px solid #e0e0e0',
-    borderRight: '2px solid #e0e0e0',
-    borderBottom: '2px solid #e0e0e0',
+    borderLeft: `4px solid ${categoryColor}`,
+    borderTop: '1px solid #d8e1ea',
+    borderRight: '1px solid #d8e1ea',
+    borderBottom: '1px solid #d8e1ea',
   };
 
   return (
@@ -204,11 +204,9 @@ const AzureNode: React.FC<NodeProps> = memo(({ data, selected, id }) => {
                     ja: `月額参考見積もり\nTier: ${pricing.tier}\n数量: ${pricing.quantity}\nRegion: ${pricing.region}\n${pricing.isCustom ? '独自価格' : '自動計算'}\n\nクリックしてTier、数量、独自価格を変更`,
                   })
             }
-            style={{ 
-              background: pricing.isUsageBased
-                ? `linear-gradient(135deg, #3b82f6 0%, #2563eb 100%)`
-                : `linear-gradient(135deg, ${getCostColor(totalCost)} 0%, ${getCostColor(totalCost)}dd 100%)` 
-            }}
+            style={{
+              '--cost-accent': pricing.isUsageBased ? '#2563eb' : getCostColor(totalCost),
+            } as React.CSSProperties}
           >
             {pricing.isUsageBased && <Zap size={12} style={{ marginRight: '2px', display: 'inline-block', verticalAlign: 'middle' }} />}
             {pricing.isUsageBased && '~'}{formatMonthlyCost(totalCost)}

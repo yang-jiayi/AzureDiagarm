@@ -1,7 +1,7 @@
 .group-node {
   background: rgba(255, 255, 255, 0.05);
-  border: 2px dashed;
-  border-radius: 8px;
+  border: 1.5px dashed;
+  border-radius: 10px;
   min-width: 200px;
   min-height: 150px;
   width: 100%;
@@ -9,14 +9,14 @@
   padding: 0;
   display: flex;
   flex-direction: column;
-  transition: all 0.2s;
+  transition: border-color 0.16s ease, box-shadow 0.16s ease;
   pointer-events: none;
 }
 
 .group-node.selected {
-  border-color: #0078d4 !important;
-  border-width: 3px;
-  box-shadow: 0 0 0 3px rgba(0, 120, 212, 0.2);
+  border-color: #0f6cbd !important;
+  border-width: 2px;
+  box-shadow: 0 0 0 3px rgba(15, 108, 189, 0.16);
 }
 
 .group-node .react-flow__resize-control {
@@ -25,7 +25,7 @@
 
 .group-node-header {
   background: rgba(0, 0, 0, 0.03);
-  padding: 8px 12px;
+  padding: 7px 10px;
   border-bottom: 1px dashed;
   border-radius: 6px 6px 0 0;
   position: relative;
@@ -79,8 +79,8 @@
   right: 0;
   margin-top: 4px;
   background: white;
-  border: 2px solid #e0e0e0;
-  border-radius: 6px;
+  border: 1px solid #d8e1ea;
+  border-radius: 8px;
   padding: 12px;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
   z-index: 1000;
@@ -137,8 +137,8 @@
 }
 
 .group-label {
-  font-size: 1.5rem;
-  font-weight: 700;
+  font-size: 1.05rem;
+  font-weight: 750;
   cursor: text;
   padding: 2px 4px;
   border-radius: 3px;
@@ -151,12 +151,12 @@
 }
 
 .group-label-input {
-  font-size: 1.5rem;
-  font-weight: 700;
-  color: #000000;
-  border: 1px solid #000000;
-  border-radius: 3px;
-  padding: 2px 4px;
+  font-size: 1.05rem;
+  font-weight: 750;
+  color: #1e293b;
+  border: 1px solid #0f6cbd;
+  border-radius: 6px;
+  padding: 4px 6px;
   outline: none;
   background: white;
   width: 100%;
@@ -177,4 +177,19 @@
 /* Ensure regular nodes appear on top */
 .react-flow__node-azureNode {
   z-index: 10 !important;
+}
+
+body.dark-mode .color-picker-panel {
+  border-color: #475569;
+  background: #1e293b;
+}
+
+body.dark-mode .color-picker-title {
+  color: #cbd5e1;
+}
+
+body.dark-mode .group-label-input {
+  border-color: #60a5fa;
+  background: #0f172a;
+  color: #f8fafc;
 }

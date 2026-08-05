@@ -110,12 +110,16 @@ async function fulfillJson(
 async function initializePage(
   page: Page,
   cloudContext?: Record<string, unknown>,
-  options?: { showCanvasHint?: boolean },
+  options?: { showCanvasHint?: boolean; focusMode?: boolean },
 ) {
-  await page.addInitScript(({ context, showCanvasHint }) => {
+  await page.addInitScript(({ context, showCanvasHint, focusMode }) => {
     localStorage.setItem('azure-diagram-builder.language.v1', 'en');
     localStorage.setItem('azure-diagram-builder.ribbonTab.v1', 'review');
     localStorage.setItem('azure-diagram-builder.headerCollapsed.v1', '0');
+    if (!sessionStorage.getItem('playwright.focus-mode-seeded')) {
+      localStorage.setItem('azure-diagram-builder.focusMode.v1', focusMode ? '1' : '0');
+      sessionStorage.setItem('playwright.focus-mode-seeded', '1');
+    }
     if (showCanvasHint) {
       localStorage.removeItem('azure-diagram-builder.canvasHintDismissed.v1');
     } else {
@@ -126,7 +130,11 @@ async function initializePage(
     } else {
       sessionStorage.removeItem('azurediagarm.cloud-document.v1');
     }
-  }, { context: cloudContext, showCanvasHint: options?.showCanvasHint === true });
+  }, {
+    context: cloudContext,
+    showCanvasHint: options?.showCanvasHint === true,
+    focusMode: options?.focusMode === true,
+  });
 }
 
 async function expectNoWcagViolations(page: Page, include?: string) {
@@ -311,6 +319,13 @@ async function openAiGenerator(page: Page) {
   const modal = page.locator('.ai-architecture-modal');
   await expect(modal).toBeFocused();
   return modal;
+}
+
+function getCloudWorkspaceButton(page: Page) {
+  return page.getByRole('button', {
+    name: /^Cloud workspace:/,
+    includeHidden: true,
+  });
 }
 
 test('primary application shell meets WCAG A and AA checks', async ({ page }) => {
@@ -614,12 +629,16 @@ test('compact chat and services panels provide dismissible backdrops', async ({ 
   await expect(page.getByRole('region', { name: 'Architecture canvas' })).toBeFocused();
 
   await page.setViewportSize({ width: 390, height: 844 });
-  const openServices = page.getByRole('button', { name: 'Open services panel' });
-  await expect(openServices).toBeVisible();
-  await openServices.click();
+  const mobileBar = page.getByRole('navigation', { name: 'Mobile command bar' });
+  const servicesButton = mobileBar.getByRole('button', { name: 'Services' });
+  await expect(servicesButton).toBeVisible();
+  await servicesButton.click();
 
   const paletteBackdrop = page.locator('.palette-backdrop');
   await expect(paletteBackdrop).toBeVisible();
+  await expect(page.getByRole('dialog', { name: 'Azure Services' })).toBeVisible();
+  await expect(page.locator('.app-header')).toHaveAttribute('inert', '');
+  await expect(page.locator('.canvas-container')).toHaveAttribute('inert', '');
   const backdropBounds = await paletteBackdrop.boundingBox();
   expect(backdropBounds).not.toBeNull();
   await paletteBackdrop.click({
@@ -628,7 +647,168 @@ test('compact chat and services panels provide dismissible backdrops', async ({ 
       y: Math.max(1, (backdropBounds?.height || 1) / 2),
     },
   });
-  await expect(openServices).toBeVisible();
+  await expect(page.getByRole('dialog', { name: 'Azure Services' })).toBeHidden();
+  await expect(servicesButton).toBeFocused();
+
+  await mobileBar.getByRole('button', { name: 'Search' }).click();
+  const commandPalette = page.getByTestId('command-palette');
+  await commandPalette.getByRole('option', { name: /Open cloud workspace/ }).click();
+  const cloudDrawer = page.getByRole('dialog', { name: 'Cloud workspace' });
+  await expect(cloudDrawer).toBeVisible();
+  await expect(cloudDrawer).toHaveAttribute('data-placement', 'bottom');
+  await expect(page.locator('.cloud-workspace-overlay')).toBeVisible();
+  await expect.poll(async () => {
+    const bounds = await cloudDrawer.boundingBox();
+    return bounds ? Math.round(844 - (bounds.y + bounds.height)) : -1;
+  }).toBe(0);
+  await page.keyboard.press('Escape');
+  await expect(cloudDrawer).toBeHidden();
+  await expect(mobileBar.getByRole('button', { name: 'Search' })).toBeFocused();
+});
+
+test('mobile command bar opens one keyboard-safe ribbon bottom sheet', async ({ page }) => {
+  await initializePage(page);
+  await page.route('**/api/**', async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (path === '/api/access/me') {
+      await fulfillJson(route, {
+        enabled: false,
+        authenticated: true,
+        email: 'owner@example.com',
+        isAdmin: false,
+        allowed: true,
+      });
+      return;
+    }
+    await fulfillJson(route, { error: 'Not found' }, 404);
+  });
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/');
+
+  const mobileBar = page.getByRole('navigation', { name: 'Mobile command bar' });
+  const commandButton = mobileBar.getByRole('button').first();
+  await expect(mobileBar).toBeVisible();
+  await commandButton.click();
+
+  const ribbonSheet = page.getByRole('dialog', { name: 'Ribbon commands' });
+  await expect(ribbonSheet).toBeVisible();
+  await expect(page.locator('#application-toolbar')).toHaveCount(1);
+  await expect(page.locator('.mobile-command-bar')).toHaveAttribute('inert', '');
+  await expect(page.locator('.workspace')).toHaveAttribute('inert', '');
+  await expect.poll(async () => {
+    const bounds = await ribbonSheet.boundingBox();
+    return bounds ? Math.round(844 - (bounds.y + bounds.height)) : -1;
+  }).toBe(0);
+
+  await ribbonSheet.getByRole('tab', { name: 'Create' }).click();
+  await expect(ribbonSheet).toBeVisible();
+  await ribbonSheet.getByRole('button', { name: 'Add Group' }).click();
+  await expect(ribbonSheet).toBeHidden();
+  await expect(page.locator('.react-flow__node-groupNode')).toHaveCount(1);
+  await expect(commandButton).toBeFocused();
+
+  await commandButton.click();
+  await expect(ribbonSheet).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(ribbonSheet).toBeHidden();
+  await expect(commandButton).toBeFocused();
+  await expect(page.locator('.workspace')).not.toHaveAttribute('inert', '');
+
+  const mobileFocus = mobileBar.getByRole('button', { name: 'Focus' });
+  await mobileFocus.click();
+  const exitFocus = page.getByRole('button', { name: 'Exit Focus' });
+  await expect(exitFocus).toBeFocused();
+  await exitFocus.click();
+  await expect(mobileFocus).toBeFocused();
+});
+
+test('command palette adds services and focus mode persists until Escape', async ({ page }) => {
+  await initializePage(page);
+  await page.route('**/api/**', async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (path === '/api/access/me') {
+      await fulfillJson(route, {
+        enabled: false,
+        authenticated: true,
+        email: 'owner@example.com',
+        isAdmin: false,
+        allowed: true,
+      });
+      return;
+    }
+    await fulfillJson(route, { error: 'Not found' }, 404);
+  });
+
+  await page.goto('/');
+  const canvas = page.getByRole('region', { name: 'Architecture canvas' });
+  await canvas.focus();
+  await page.keyboard.press('Control+K');
+
+  const palette = page.getByTestId('command-palette');
+  const search = palette.getByRole('combobox', { name: 'Search commands and services' });
+  await expect(palette).toBeVisible();
+  await expect(search).toBeFocused();
+  await expect(page.locator('.app-header')).toHaveAttribute('inert', '');
+  await expect(page.locator('.workspace')).toHaveAttribute('inert', '');
+  await expectNoWcagViolations(page, '[data-testid="command-palette"]');
+
+  await search.fill('App Services');
+  await palette.getByRole('option', { name: /App Services/ }).click();
+  await expect(palette).toBeHidden();
+  await expect(page.locator('.react-flow__node-azureNode')).toHaveCount(1);
+
+  await canvas.focus();
+  await page.keyboard.press('Control+K');
+  await palette.getByRole('combobox', { name: 'Search commands and services' })
+    .fill('focus mode');
+  await palette.getByRole('option', { name: /^Enter focus mode/ }).click();
+
+  await expect(page.locator('.app')).toHaveClass(/focus-mode/);
+  await expect(page.locator('.app-header')).toBeHidden();
+  await expect(page.getByRole('button', { name: 'Exit Focus' })).toBeFocused();
+  await expect(page.locator('.nav-minimap')).toBeHidden();
+  await expect(page.locator('.title-block')).toBeHidden();
+  await expect(page.locator('.legend')).toBeHidden();
+  await expect.poll(() => page.evaluate(() => (
+    localStorage.getItem('azure-diagram-builder.focusMode.v1')
+  ))).toBe('1');
+
+  await page.reload();
+  await expect(page.locator('.app')).toHaveClass(/focus-mode/);
+  const exitFocus = page.getByRole('button', { name: 'Exit Focus' });
+  await expect(exitFocus).toBeVisible();
+  await exitFocus.focus();
+  await page.keyboard.press('Escape');
+  await expect(page.locator('.app')).not.toHaveClass(/focus-mode/);
+  await expect(page.locator('.app-header')).toBeVisible();
+  await expect(canvas).toBeFocused();
+  await expect.poll(() => page.evaluate(() => (
+    localStorage.getItem('azure-diagram-builder.focusMode.v1')
+  ))).toBe('0');
+});
+
+test('canvas uses neutral defaults and brand emphasis only for selection and flow', async ({ page }) => {
+  await openInteractionDiagram(page);
+
+  const node = page.locator('[data-testid="rf__node-node-a"]');
+  const nodeCard = node.locator('.azure-node');
+  const group = page.locator('[data-testid="rf__node-group-a"] .group-node');
+  const edge = page.locator('[data-testid="rf__edge-edge-ab"]');
+  const edgePath = edge.locator('.react-flow__edge-path');
+  const edgeLabel = page.locator('[data-edge-label-id="edge-ab"]');
+
+  await expect(edgePath).toHaveCSS('stroke', 'rgb(100, 116, 139)');
+  await expect(edgeLabel).toHaveCSS('background-color', 'rgba(255, 255, 255, 0.94)');
+  await expect(group).toHaveCSS('background-color', 'rgba(107, 114, 128, 0.08)');
+
+  await node.click();
+  await expect(nodeCard).toHaveCSS('outline-color', 'rgba(15, 108, 189, 0.3)');
+  await expect(node).toHaveCSS('box-shadow', 'none');
+
+  await edge.locator('.react-flow__edge-interaction').click({ force: true });
+  await expect(edge).toHaveClass(/selected/);
+  await expect(edgePath).toHaveCSS('stroke', 'rgb(15, 108, 189)');
 });
 
 test('canvas chrome keeps navigation, metadata, controls, and feedback in separate zones', async ({ page }) => {
@@ -647,7 +827,7 @@ test('canvas chrome keeps navigation, metadata, controls, and feedback in separa
   await expectNotToOverlap(navigationHint, titleBlock);
 
   await page.setViewportSize({ width: 390, height: 844 });
-  await expect(page.getByRole('button', { name: 'Open services panel' })).toBeVisible();
+  await expect(page.getByRole('navigation', { name: 'Mobile command bar' })).toBeVisible();
   await expectNotToOverlap(controls, legend);
   await expectNotToOverlap(miniMap, feedback);
   await expectNotToOverlap(navigationHint, titleBlock);
@@ -1197,7 +1377,7 @@ test('cloud workspace ignores stale details and destructive completions', async 
   });
 
   await page.goto('/');
-  const cloudButton = page.getByRole('button', { name: /^Cloud workspace:/ });
+  const cloudButton = getCloudWorkspaceButton(page);
   await cloudButton.click();
   const modal = page.locator('.cloud-workspace-modal');
   const diagramA = modal.locator('.cloud-document-list button').filter({ hasText: 'Diagram A' });
@@ -1285,8 +1465,8 @@ test('failed shared startup load blocks autosave of persisted local settings', a
 
   await page.goto(`/#share-${shareToken}`);
   await expect.poll(() => sharedLoads).toBeGreaterThan(0);
-  const cloudButton = page.getByRole('button', { name: /^Cloud workspace:/ });
-  await expect(cloudButton).toHaveAccessibleName('Cloud workspace: Local only');
+  const cloudButton = getCloudWorkspaceButton(page);
+  await expect(cloudButton).toHaveAttribute('aria-label', 'Cloud workspace: Local only');
   await expect(cloudButton).toHaveAttribute('title', 'Temporary storage outage');
   await page.clock.fastForward(5_000);
   await page.waitForTimeout(100);
@@ -1333,8 +1513,8 @@ test('invalid share link remains an error across StrictMode initialization', asy
   });
 
   await page.goto('/#share-bad');
-  const cloudButton = page.getByRole('button', { name: /^Cloud workspace:/ });
-  await expect(cloudButton).toHaveAccessibleName('Cloud workspace: Local only');
+  const cloudButton = getCloudWorkspaceButton(page);
+  await expect(cloudButton).toHaveAttribute('aria-label', 'Cloud workspace: Local only');
   await expect(cloudButton).toHaveAttribute('title', 'The shared diagram link is invalid.');
   await page.clock.fastForward(5_000);
   await page.waitForTimeout(100);
@@ -1467,8 +1647,8 @@ test('a stale collaboration session cannot resurrect remotely deleted content', 
   await page.goto('/');
   const staleNode = page.locator('[data-testid="rf__node-node-a"]');
   await expect(staleNode).toBeVisible();
-  const cloudButton = page.getByRole('button', { name: /^Cloud workspace:/ });
-  await expect(cloudButton).toHaveAccessibleName(/Cloud saved/, { timeout: 5_000 });
+  const cloudButton = getCloudWorkspaceButton(page);
+  await expect(cloudButton).toHaveAttribute('aria-label', /Cloud saved/, { timeout: 5_000 });
   await cloudButton.click();
   const modal = page.locator('.cloud-workspace-modal');
   await modal.getByPlaceholder('Add a review comment...').fill('Delayed review');
@@ -1592,7 +1772,7 @@ test('metadata success reconciles the current ETag after the modal closes', asyn
 
   await page.goto('/');
   await expect.poll(() => updateAttempts, { timeout: 5_000 }).toBe(1);
-  const cloudButton = page.getByRole('button', { name: /^Cloud workspace:/ });
+  const cloudButton = getCloudWorkspaceButton(page);
   await cloudButton.click();
   const modal = page.locator('.cloud-workspace-modal');
   await modal.getByPlaceholder('Add a review comment...').fill('Closed modal review');
@@ -1606,7 +1786,7 @@ test('metadata success reconciles the current ETag after the modal closes', asyn
   await page.keyboard.press('ArrowRight');
   await expect.poll(() => updateAttempts, { timeout: 5_000 }).toBe(2);
   expect(postCommentSaveEtag).toBe('"A-3"');
-  await expect(cloudButton).toHaveAccessibleName(/Cloud saved/);
+  await expect(cloudButton).toHaveAttribute('aria-label', /Cloud saved/);
 });
 
 test('out-of-order metadata responses cannot roll back the current ETag', async ({ page }) => {
@@ -1711,7 +1891,7 @@ test('out-of-order metadata responses cannot roll back the current ETag', async 
 
   await page.goto('/');
   await expect.poll(() => updateAttempts, { timeout: 5_000 }).toBe(1);
-  const cloudButton = page.getByRole('button', { name: /^Cloud workspace:/ });
+  const cloudButton = getCloudWorkspaceButton(page);
   await cloudButton.click();
   const modal = page.locator('.cloud-workspace-modal');
   await modal.getByPlaceholder('Add a review comment...').fill('Review 1');
@@ -1728,7 +1908,7 @@ test('out-of-order metadata responses cannot roll back the current ETag', async 
   await page.keyboard.press('ArrowRight');
   await expect.poll(() => updateAttempts, { timeout: 5_000 }).toBe(2);
   expect(postCommentSaveEtag).toBe('"A-4"');
-  await expect(cloudButton).toHaveAccessibleName(/Cloud saved/);
+  await expect(cloudButton).toHaveAttribute('aria-label', /Cloud saved/);
 });
 
 test('a stale metadata failure cannot conflict a newer success on the same document', async ({ page }) => {
@@ -1825,7 +2005,7 @@ test('a stale metadata failure cannot conflict a newer success on the same docum
 
   await page.goto('/');
   await expect.poll(() => updateAttempts, { timeout: 5_000 }).toBe(1);
-  const cloudButton = page.getByRole('button', { name: /^Cloud workspace:/ });
+  const cloudButton = getCloudWorkspaceButton(page);
   await cloudButton.click();
   const modal = page.locator('.cloud-workspace-modal');
   await modal.getByPlaceholder('Add a review comment...').fill('Older failure');
@@ -1844,7 +2024,7 @@ test('a stale metadata failure cannot conflict a newer success on the same docum
   await page.keyboard.press('ArrowRight');
   await expect.poll(() => updateAttempts, { timeout: 5_000 }).toBe(2);
   expect(postCommentSaveEtag).toBe('"A-3"');
-  await expect(cloudButton).toHaveAccessibleName(/Cloud saved/);
+  await expect(cloudButton).toHaveAttribute('aria-label', /Cloud saved/);
 });
 
 test('reload cannot clear a newer conflict raised while it is in flight', async ({ page }) => {
@@ -1930,7 +2110,7 @@ test('reload cannot clear a newer conflict raised while it is in flight', async 
 
   await page.goto('/');
   await expect.poll(() => updateAttempts, { timeout: 5_000 }).toBe(1);
-  const cloudButton = page.getByRole('button', { name: /^Cloud workspace:/ });
+  const cloudButton = getCloudWorkspaceButton(page);
   await cloudButton.click();
   const modal = page.locator('.cloud-workspace-modal');
   await modal.getByPlaceholder('Add a review comment...').fill('Delayed conflict');
@@ -1947,7 +2127,7 @@ test('reload cannot clear a newer conflict raised while it is in flight', async 
   releaseDelayedFailure();
   await expect.poll(() => delayedFailureCompleted).toBe(1);
   await expect.poll(() => reloadCompleted, { timeout: 5_000 }).toBe(1);
-  await expect(cloudButton).toHaveAccessibleName('Cloud workspace: Sync conflict');
+  await expect(cloudButton).toHaveAttribute('aria-label', 'Cloud workspace: Sync conflict');
   await expect(modal.getByText('A newer cloud revision exists')).toBeVisible();
 });
 
@@ -2012,15 +2192,15 @@ test('normalized shared viewer metadata does not create a false conflict', async
   });
 
   await page.goto('/');
-  const cloudButton = page.getByRole('button', { name: /^Cloud workspace:/ });
-  await expect(cloudButton).toHaveAccessibleName('Cloud workspace: Cloud read-only');
+  const cloudButton = getCloudWorkspaceButton(page);
+  await expect(cloudButton).toHaveAttribute('aria-label', 'Cloud workspace: Cloud read-only');
   await cloudButton.click();
   const modal = page.locator('.cloud-workspace-modal');
   await modal.getByPlaceholder('Add a review comment...').fill('Viewer review');
   await modal.getByRole('button', { name: 'Comment', exact: true }).click();
   await expect.poll(() => commentAttempts).toBe(1);
   await expect(modal.getByText('A newer cloud revision exists')).toHaveCount(0);
-  await expect(cloudButton).toHaveAccessibleName('Cloud workspace: Cloud read-only');
+  await expect(cloudButton).toHaveAttribute('aria-label', 'Cloud workspace: Cloud read-only');
   await expect(modal.getByText('Viewer review')).toBeVisible();
 });
 
@@ -2089,7 +2269,7 @@ test('metadata write conflicts enter the sticky cloud conflict state', async ({ 
   });
 
   await page.goto('/');
-  const cloudButton = page.getByRole('button', { name: /^Cloud workspace:/ });
+  const cloudButton = getCloudWorkspaceButton(page);
   await cloudButton.click();
   const modal = page.locator('.cloud-workspace-modal');
   await modal.getByPlaceholder('Add a review comment...').fill('Concurrent review');
@@ -2181,7 +2361,7 @@ test('metadata conflict after a prerequisite save uses the saved revision', asyn
   const nodeTarget = page.locator('[data-testid="rf__node-A-node"] [data-node-keyboard-target]');
   await nodeTarget.focus();
   await page.keyboard.press('ArrowRight');
-  const cloudButton = page.getByRole('button', { name: /^Cloud workspace:/ });
+  const cloudButton = getCloudWorkspaceButton(page);
   await cloudButton.click();
   const modal = page.locator('.cloud-workspace-modal');
   await modal.getByPlaceholder('Add a review comment...').fill('Conflict after save');
@@ -2189,7 +2369,7 @@ test('metadata conflict after a prerequisite save uses the saved revision', asyn
   await expect.poll(() => updateAttempts, { timeout: 5_000 }).toBe(2);
   await expect.poll(() => commentAttempts).toBe(1);
   await expect(modal.getByText('A newer cloud revision exists')).toBeVisible();
-  await expect(cloudButton).toHaveAccessibleName('Cloud workspace: Sync conflict');
+  await expect(cloudButton).toHaveAttribute('aria-label', 'Cloud workspace: Sync conflict');
 });
 
 test('metadata action stops when save replaces a remotely deleted document', async ({ page }) => {
@@ -2273,7 +2453,7 @@ test('metadata action stops when save replaces a remotely deleted document', asy
   const nodeTarget = page.locator('[data-testid="rf__node-A-node"] [data-node-keyboard-target]');
   await nodeTarget.focus();
   await page.keyboard.press('ArrowRight');
-  const cloudButton = page.getByRole('button', { name: /^Cloud workspace:/ });
+  const cloudButton = getCloudWorkspaceButton(page);
   await cloudButton.click();
   const modal = page.locator('.cloud-workspace-modal');
   await modal.getByPlaceholder('Add a review comment...').fill('Do not send to deleted A');
@@ -2286,7 +2466,7 @@ test('metadata action stops when save replaces a remotely deleted document', asy
     ))).documentId
   )).toBe('B');
   await expect(modal).toBeVisible();
-  await expect(cloudButton).toHaveAccessibleName(/Cloud saved/);
+  await expect(cloudButton).toHaveAttribute('aria-label', /Cloud saved/);
 });
 
 test('share refresh failure blocks saves until the ETag is reconciled', async ({ page }) => {
@@ -2362,12 +2542,12 @@ test('share refresh failure blocks saves until the ETag is reconciled', async ({
 
   await page.goto('/');
   await expect.poll(() => initialUpdates, { timeout: 5_000 }).toBe(1);
-  const cloudButton = page.getByRole('button', { name: /^Cloud workspace:/ });
+  const cloudButton = getCloudWorkspaceButton(page);
   await cloudButton.click();
   const modal = page.locator('.cloud-workspace-modal');
   await modal.getByRole('button', { name: 'Create link' }).click();
   await expect(modal.getByText('A newer cloud revision exists')).toBeVisible();
-  await expect(cloudButton).toHaveAccessibleName('Cloud workspace: Sync conflict');
+  await expect(cloudButton).toHaveAttribute('aria-label', 'Cloud workspace: Sync conflict');
   await expect(modal.getByRole('button', { name: 'Open', exact: true })).toBeDisabled();
 });
 
@@ -2437,7 +2617,7 @@ test('a stale metadata failure cannot conflict a newly opened diagram', async ({
   });
 
   await page.goto('/');
-  const cloudButton = page.getByRole('button', { name: /^Cloud workspace:/ });
+  const cloudButton = getCloudWorkspaceButton(page);
   await cloudButton.click();
   const modal = page.locator('.cloud-workspace-modal');
   await modal.getByPlaceholder('Add a review comment...').fill('Delayed concurrent review');
@@ -2449,7 +2629,7 @@ test('a stale metadata failure cannot conflict a newly opened diagram', async ({
   await expect(modal).toBeHidden();
   await expect(page.locator('[data-testid="rf__node-B-node"]')).toBeVisible();
   await page.waitForTimeout(1_400);
-  await expect(cloudButton).toHaveAccessibleName(/Cloud saved/, { timeout: 5_000 });
+  await expect(cloudButton).toHaveAttribute('aria-label', /Cloud saved/, { timeout: 5_000 });
 });
 
 test('a metadata 404 preserves the current local draft as a conflict', async ({ page }) => {
@@ -2509,13 +2689,13 @@ test('a metadata 404 preserves the current local draft as a conflict', async ({ 
   });
 
   await page.goto('/');
-  const cloudButton = page.getByRole('button', { name: /^Cloud workspace:/ });
+  const cloudButton = getCloudWorkspaceButton(page);
   await cloudButton.click();
   const modal = page.locator('.cloud-workspace-modal');
   await modal.getByPlaceholder('Add a review comment...').fill('Review after remote deletion');
   await modal.getByRole('button', { name: 'Comment', exact: true }).click();
   await expect.poll(() => commentAttempts).toBe(1);
-  await expect(cloudButton).toHaveAccessibleName('Cloud workspace: Sync conflict');
+  await expect(cloudButton).toHaveAttribute('aria-label', 'Cloud workspace: Sync conflict');
   await expect(modal.getByText('A newer cloud revision exists')).toBeVisible();
   await expect(modal.getByRole('button', { name: 'Save as copy' })).toBeEnabled();
 });
@@ -2579,14 +2759,14 @@ test('current diagram detail 404 enters conflict before navigation', async ({ pa
   await nodeTarget.focus();
   await page.keyboard.press('ArrowRight');
   await expect.poll(() => updateAttempts, { timeout: 5_000 }).toBe(2);
-  const cloudButton = page.getByRole('button', { name: /^Cloud workspace:/ });
+  const cloudButton = getCloudWorkspaceButton(page);
   await cloudButton.click();
   const modal = page.locator('.cloud-workspace-modal');
-  await expect(cloudButton).toHaveAccessibleName('Cloud workspace: Sync conflict');
+  await expect(cloudButton).toHaveAttribute('aria-label', 'Cloud workspace: Sync conflict');
   await expect(modal.getByText('A newer cloud revision exists')).toBeVisible();
   await expect(modal.getByRole('button', { name: 'Open', exact: true })).toBeDisabled();
   await page.waitForTimeout(1_300);
-  await expect(cloudButton).toHaveAccessibleName('Cloud workspace: Sync conflict');
+  await expect(cloudButton).toHaveAttribute('aria-label', 'Cloud workspace: Sync conflict');
   await expect(modal.getByText('A newer cloud revision exists')).toBeVisible();
 });
 
@@ -2653,12 +2833,12 @@ test('an in-flight save failure cannot hide a newer detail conflict', async ({ p
   await nodeTarget.focus();
   await page.keyboard.press('ArrowRight');
   await expect.poll(() => updateAttempts, { timeout: 5_000 }).toBe(2);
-  const cloudButton = page.getByRole('button', { name: /^Cloud workspace:/ });
+  const cloudButton = getCloudWorkspaceButton(page);
   await cloudButton.click();
   const modal = page.locator('.cloud-workspace-modal');
   await expect(modal.getByText('A newer cloud revision exists')).toBeVisible();
   await page.waitForTimeout(1_300);
-  await expect(cloudButton).toHaveAccessibleName('Cloud workspace: Sync conflict');
+  await expect(cloudButton).toHaveAttribute('aria-label', 'Cloud workspace: Sync conflict');
   await expect(modal.getByText('A newer cloud revision exists')).toBeVisible();
   await expect(modal.getByText('Temporary storage outage')).toHaveCount(0);
 });
@@ -2731,8 +2911,8 @@ test('an empty save cannot recreate a document deleted remotely', async ({ page 
   await expect.poll(() => emptySaveAttempts, { timeout: 5_000 }).toBe(1);
   await page.waitForTimeout(500);
   expect(createAttempts).toBe(0);
-  const cloudButton = page.getByRole('button', { name: /^Cloud workspace:/ });
-  await expect(cloudButton).toHaveAccessibleName('Cloud workspace: Sync conflict');
+  const cloudButton = getCloudWorkspaceButton(page);
+  await expect(cloudButton).toHaveAttribute('aria-label', 'Cloud workspace: Sync conflict');
   await cloudButton.click();
   const modal = page.locator('.cloud-workspace-modal');
   await expect(modal.getByText('A newer cloud revision exists')).toBeVisible();
@@ -3036,7 +3216,7 @@ test('clearing a failed new draft cancels its cloud retry', async ({ page }) => 
   await group.locator('[data-node-keyboard-target]').focus();
   await page.keyboard.press('Delete');
   await expect(page.locator('.react-flow__node')).toHaveCount(0);
-  await expect(page.getByRole('button', { name: /^Cloud workspace:/ }))
+  await expect(getCloudWorkspaceButton(page))
     .toHaveAccessibleName('Cloud workspace: Cloud');
   await page.clock.fastForward(16_000);
   await page.waitForTimeout(100);
@@ -3077,7 +3257,7 @@ test('non-retryable client save errors are not retried', async ({ page }) => {
     .getByRole('menuitem', { name: 'Add layer here' })
     .click();
   await expect.poll(() => createAttempts, { timeout: 5_000 }).toBe(1);
-  await expect(page.getByRole('button', { name: /^Cloud workspace:/ }))
+  await expect(getCloudWorkspaceButton(page))
     .toHaveAccessibleName('Cloud workspace: Local only');
   await page.clock.fastForward(16_000);
   await page.waitForTimeout(100);
@@ -3284,7 +3464,7 @@ test('snapshot restore cannot overtake a newly detected cloud conflict', async (
   await page.keyboard.press('ArrowRight');
   await expect.poll(() => conflictingSaveStarted, { timeout: 5_000 }).toBe(1);
 
-  const cloudButton = page.getByRole('button', { name: /^Cloud workspace:/ });
+  const cloudButton = getCloudWorkspaceButton(page);
   await cloudButton.click();
   const modal = page.locator('.cloud-workspace-modal');
   let confirmationCount = 0;
@@ -3390,7 +3570,7 @@ test('snapshot restore backs up the current cloud revision before replacement', 
   });
 
   await page.goto('/');
-  const cloudButton = page.getByRole('button', { name: /^Cloud workspace:/ });
+  const cloudButton = getCloudWorkspaceButton(page);
   await cloudButton.click();
   const modal = page.locator('.cloud-workspace-modal');
   page.once('dialog', dialog => dialog.accept());
@@ -3502,7 +3682,7 @@ test('edits made while snapshot restore verifies are queued', async ({ page }) =
 
   await page.goto('/');
   await expect.poll(() => revision, { timeout: 5_000 }).toBeGreaterThan(1);
-  await page.getByRole('button', { name: /^Cloud workspace:/ }).click();
+  await getCloudWorkspaceButton(page).click();
   const modal = page.locator('.cloud-workspace-modal');
   page.once('dialog', dialog => dialog.accept());
   await modal.getByRole('button', { name: 'Restore' }).click();
@@ -3635,7 +3815,7 @@ test('snapshot restore can switch from the current diagram to another diagram', 
 
   await page.goto('/');
   await expect.poll(() => diagramAUpdates, { timeout: 5_000 }).toBe(1);
-  const cloudButton = page.getByRole('button', { name: /^Cloud workspace:/ });
+  const cloudButton = getCloudWorkspaceButton(page);
   await cloudButton.click();
   const modal = page.locator('.cloud-workspace-modal');
   await modal.locator('.cloud-document-list button').filter({ hasText: 'Diagram B' }).click();
@@ -3734,7 +3914,7 @@ test('identical cross-document snapshot restore still verifies the target ETag',
 
   await page.goto('/');
   await expect.poll(() => diagramAUpdates, { timeout: 5_000 }).toBe(1);
-  await page.getByRole('button', { name: /^Cloud workspace:/ }).click();
+  await getCloudWorkspaceButton(page).click();
   const modal = page.locator('.cloud-workspace-modal');
   await modal.locator('.cloud-document-list button').filter({ hasText: 'Diagram B' }).click();
   page.once('dialog', dialog => dialog.accept());
@@ -3842,7 +4022,7 @@ test('snapshot restore keeps a replacement current diagram selected', async ({ p
 
   await page.goto('/');
   await expect.poll(() => diagramAUpdates, { timeout: 5_000 }).toBe(1);
-  await page.getByRole('button', { name: /^Cloud workspace:/ }).click();
+  await getCloudWorkspaceButton(page).click();
   const modal = page.locator('.cloud-workspace-modal');
   await modal.locator('.cloud-document-list button').filter({ hasText: 'Diagram B' }).click();
   await expect(modal.getByRole('heading', { name: 'Diagram B' })).toBeVisible();
@@ -3939,7 +4119,7 @@ test('viewer snapshot restore uses a detached safety copy', async ({ page }) => 
   });
 
   await page.goto('/');
-  const cloudButton = page.getByRole('button', { name: /^Cloud workspace:/ });
+  const cloudButton = getCloudWorkspaceButton(page);
   await cloudButton.click();
   const modal = page.locator('.cloud-workspace-modal');
   page.once('dialog', dialog => dialog.accept());
@@ -3948,7 +4128,7 @@ test('viewer snapshot restore uses a detached safety copy', async ({ page }) => 
   await expect.poll(() => snapshotFetches).toBe(1);
   await expect(modal).toBeHidden();
   await expect(page.locator('[data-testid="rf__node-viewer-snapshot-node"]')).toBeVisible();
-  await expect(cloudButton).toHaveAccessibleName('Cloud workspace: Cloud read-only');
+  await expect(cloudButton).toHaveAttribute('aria-label', 'Cloud workspace: Cloud read-only');
 });
 
 test('discarding before snapshot restore cancels the failed save retry', async ({ page }) => {
@@ -4027,7 +4207,7 @@ test('discarding before snapshot restore cancels the failed save retry', async (
 
   await page.goto('/');
   await expect.poll(() => updateAttempts, { timeout: 5_000 }).toBe(1);
-  const cloudButton = page.getByRole('button', { name: /^Cloud workspace:/ });
+  const cloudButton = getCloudWorkspaceButton(page);
   await cloudButton.click();
   const modal = page.locator('.cloud-workspace-modal');
   page.on('dialog', dialog => dialog.accept());
@@ -4101,7 +4281,7 @@ test('opening another cloud diagram requires saving or explicit discard', async 
   await page.keyboard.press('ArrowRight');
   await expect.poll(() => failedSaves, { timeout: 5_000 }).toBeGreaterThan(0);
 
-  const cloudButton = page.getByRole('button', { name: /^Cloud workspace:/ });
+  const cloudButton = getCloudWorkspaceButton(page);
   await cloudButton.click();
   const modal = page.locator('.cloud-workspace-modal');
   await modal.locator('.cloud-document-list button').filter({ hasText: 'Diagram B' }).click();
@@ -4211,7 +4391,7 @@ test('opening another diagram verifies unchanged cloud state before discard', as
 
   await page.goto('/');
   await expect.poll(() => diagramAUpdates, { timeout: 5_000 }).toBe(1);
-  const cloudButton = page.getByRole('button', { name: /^Cloud workspace:/ });
+  const cloudButton = getCloudWorkspaceButton(page);
   await cloudButton.click();
   const modal = page.locator('.cloud-workspace-modal');
   await modal.locator('.cloud-document-list button').filter({ hasText: 'Diagram B' }).click();
@@ -4305,7 +4485,7 @@ test('discarding a current conflict reloads remote instead of cached content', a
 
   await page.goto('/');
   await expect.poll(() => updateAttempts, { timeout: 5_000 }).toBe(1);
-  const cloudButton = page.getByRole('button', { name: /^Cloud workspace:/ });
+  const cloudButton = getCloudWorkspaceButton(page);
   await cloudButton.click();
   const modal = page.locator('.cloud-workspace-modal');
   page.once('dialog', dialog => dialog.accept());
@@ -4416,7 +4596,7 @@ test('snapshot modal cannot close while its cloud target is being saved', async 
   });
 
   await page.goto('/');
-  await expect(page.getByRole('button', { name: /^Cloud workspace:/ })).toHaveClass(/btn-active/);
+  await expect(getCloudWorkspaceButton(page)).toHaveClass(/btn-active/);
   await page.getByRole('button', { name: 'Snapshot' }).click();
   const modal = page.locator('.save-snapshot-modal');
   await modal.getByLabel('Notes (optional) Describe what makes this version special').fill('Before change');
@@ -4497,7 +4677,7 @@ test('diagram imports are atomic and AI imports save pricing to a new cloud docu
 
   await page.goto('/');
   const sourceNode = page.locator('[data-testid="rf__node-A-node"]');
-  const cloudButton = page.getByRole('button', { name: /^Cloud workspace:/ });
+  const cloudButton = getCloudWorkspaceButton(page);
   const fileInput = page.locator('input[accept=".json"]');
   await expect(sourceNode).toBeVisible();
   await expect(cloudButton).toHaveClass(/btn-active/);
@@ -4807,6 +4987,8 @@ test('deployment guide accordions are keyboard accessible and stale results are 
   });
 
   await page.goto('/');
+  await expect(page.locator('[data-testid="rf__node-A-node"]')).toBeVisible();
+  await expect(page.locator('.title-block')).toContainText('Guide source');
   const generateButton = page.getByTitle('Generate comprehensive deployment guide');
   await generateButton.click();
   const modal = page.locator('.deployment-modal');

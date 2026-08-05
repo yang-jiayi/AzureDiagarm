@@ -41,7 +41,9 @@ import {
   splitIconSearchHighlight,
 } from '../utils/iconDiscovery';
 import { readLocalStorage, writeLocalStorage } from '../utils/safeStorage';
+import { useMediaQuery } from '../hooks/useMediaQuery';
 import VirtualizedIconGrid from './VirtualizedIconGrid';
+import ResponsiveDrawer from './ResponsiveDrawer';
 import './IconPalette.css';
 import { useLanguage } from '../i18n/LanguageContext';
 import { localize } from '../i18n/localization';
@@ -49,6 +51,7 @@ import type { IconPaletteCategoryId } from '../data/iconCatalog';
 
 interface IconPaletteProps {
   forceCollapsed?: number;
+  openSignal?: number;
   onAddIcon?: (icon: AzureIcon) => void;
 }
 
@@ -85,8 +88,9 @@ const RECOMMENDED_SERVICE_NAMES = [
 const COMPACT_PALETTE_MEDIA_QUERY =
   '(max-width: 640px), (max-width: 1180px) and (max-height: 600px)';
 
-const IconPalette: React.FC<IconPaletteProps> = ({ forceCollapsed, onAddIcon }) => {
+const IconPalette: React.FC<IconPaletteProps> = ({ forceCollapsed, openSignal, onAddIcon }) => {
   const { t, language } = useLanguage();
+  const isCompactPalette = useMediaQuery(COMPACT_PALETTE_MEDIA_QUERY);
   const [isCollapsed, setIsCollapsed] = useState(
     () => typeof window !== 'undefined' && window.matchMedia(COMPACT_PALETTE_MEDIA_QUERY).matches,
   );
@@ -144,6 +148,10 @@ const IconPalette: React.FC<IconPaletteProps> = ({ forceCollapsed, onAddIcon }) 
   useEffect(() => {
     if (forceCollapsed) setIsCollapsed(true);
   }, [forceCollapsed]);
+
+  useEffect(() => {
+    if (openSignal) setIsCollapsed(false);
+  }, [openSignal]);
 
   useEffect(() => {
     const compactViewport = window.matchMedia(COMPACT_PALETTE_MEDIA_QUERY);
@@ -451,16 +459,7 @@ const IconPalette: React.FC<IconPaletteProps> = ({ forceCollapsed, onAddIcon }) 
           : collectionIcons.length;
   const collectionTarget = collectionTargetId ? iconsById.get(collectionTargetId) : undefined;
 
-  return (
-    <>
-      {!isCollapsed && (
-        <button
-          type="button"
-          className="palette-backdrop"
-          onClick={() => setIsCollapsed(true)}
-          aria-label={t('Close services panel')}
-        />
-      )}
+  const palettePanel = (
       <div
         className={`icon-palette palette-layout-${layout} ${isCollapsed ? 'collapsed' : ''}`}
         role="region"
@@ -821,8 +820,30 @@ const IconPalette: React.FC<IconPaletteProps> = ({ forceCollapsed, onAddIcon }) 
         </>
       )}
       </div>
-    </>
   );
+
+  if (!isCollapsed && isCompactPalette) {
+    return (
+      <ResponsiveDrawer
+        isOpen
+        modal
+        placement="left"
+        className="palette-drawer-shell"
+        backdropClassName="palette-backdrop"
+        ariaLabel={t('Azure Services')}
+        onClose={() => setIsCollapsed(true)}
+        backgroundSelectors={[
+          '.app > .app-header',
+          '.workspace > .canvas-container',
+          '.workspace > .workflow-panel',
+        ]}
+      >
+        {palettePanel}
+      </ResponsiveDrawer>
+    );
+  }
+
+  return palettePanel;
 };
 
 export default React.memo(IconPalette);

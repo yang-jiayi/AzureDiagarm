@@ -12,6 +12,7 @@ import {
 } from 'reactflow';
 import { useLanguage } from '../i18n/LanguageContext';
 import { localize } from '../i18n/localization';
+import './EditableEdge.css';
 
 const EditableEdge: React.FC<EdgeProps> = ({
   id,
@@ -26,6 +27,7 @@ const EditableEdge: React.FC<EdgeProps> = ({
   markerStart,
   data,
   label,
+  selected,
 }) => {
   const { t, language } = useLanguage();
   const [isEditing, setIsEditing] = useState(false);
@@ -134,8 +136,8 @@ const EditableEdge: React.FC<EdgeProps> = ({
   const flowAnimated = Boolean(data?.flowAnimated);
   const shouldDirectionalFlow = flowAnimated && flowMode === 'directional' && (direction === 'forward' || direction === 'reverse');
   const shouldPulseFlow = flowAnimated && flowMode === 'pulse' && direction === 'bidirectional';
-  const edgeStroke = (style as any)?.stroke ?? '#0078d4';
-  const edgeStrokeWidth = Number((style as any)?.strokeWidth) || 2;
+  const edgeStroke = selected ? '#0f6cbd' : ((style as any)?.stroke ?? '#64748b');
+  const edgeStrokeWidth = Number((style as any)?.strokeWidth) || 1.75;
 
   return (
     <>
@@ -145,6 +147,8 @@ const EditableEdge: React.FC<EdgeProps> = ({
         markerStart={markerStart}
         style={{
           ...style,
+          stroke: edgeStroke,
+          strokeWidth: selected ? Math.max(2.5, edgeStrokeWidth) : edgeStrokeWidth,
           animation: undefined,
         }}
       />
@@ -156,7 +160,7 @@ const EditableEdge: React.FC<EdgeProps> = ({
           strokeWidth={Math.max(2, edgeStrokeWidth)}
           strokeLinecap="round"
           pointerEvents="none"
-          className="editable-edge-flow-path"
+          className={`editable-edge-flow-path${selected ? ' is-selected' : ''}`}
           style={{
             strokeDasharray: shouldPulseFlow ? '2 10' : '3 9',
             animation: shouldPulseFlow
@@ -175,11 +179,9 @@ const EditableEdge: React.FC<EdgeProps> = ({
           style={{
             position: 'absolute',
             transform: `translate(-50%, -50%) translate(${labelX + offsetX}px,${labelY + offsetY}px)`,
-            fontSize: 14,
-            fontWeight: 'bold',
             pointerEvents: 'all',
           }}
-          className="nodrag nopan"
+          className={`nodrag nopan editable-edge-label-shell${selected ? ' is-selected' : ''}`}
         >
           {isEditing ? (
             <input
@@ -189,17 +191,7 @@ const EditableEdge: React.FC<EdgeProps> = ({
               onBlur={handleLabelBlur}
               onKeyDown={handleKeyDown}
               autoFocus
-              style={{
-                fontSize: 14,
-                fontWeight: 'bold',
-                padding: '4px 8px',
-                border: '1px solid #0078d4',
-                borderRadius: '3px',
-                backgroundColor: '#ffe4a3',
-                minWidth: '100px',
-                maxWidth: '300px',
-                textAlign: 'center',
-              }}
+              className="editable-edge-label-input"
             />
           ) : (
             <div
@@ -214,26 +206,7 @@ const EditableEdge: React.FC<EdgeProps> = ({
               }}
               role="button"
               tabIndex={0}
-              style={{
-                padding: '4px 8px',
-                backgroundColor: '#ffe4a3',
-                borderRadius: '3px',
-                border: '2px solid #000',
-                cursor: isDragging ? 'grabbing' : 'grab',
-                minWidth: '40px',
-                maxWidth: '180px',
-                textAlign: 'center',
-                color: '#333',
-                whiteSpace: 'normal',
-                wordWrap: 'break-word',
-                lineHeight: '1.3',
-                display: '-webkit-box',
-                WebkitLineClamp: 3,
-                WebkitBoxOrient: 'vertical',
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                userSelect: 'none',
-              }}
+              className={`editable-edge-label${isDragging ? ' is-dragging' : ''}${editLabel ? '' : ' is-empty'}`}
               title={`${editLabel || t("Double-click to edit label")}\n${localize(language, {
                 en: '(Drag to reposition)',
                 ja: '（ドラッグして位置を変更）',

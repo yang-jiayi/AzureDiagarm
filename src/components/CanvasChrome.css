@@ -9,6 +9,44 @@
   --canvas-title-top: 64px;
 }
 
+.canvas-focus-exit {
+  position: absolute;
+  top: var(--canvas-chrome-edge);
+  right: var(--canvas-chrome-edge);
+  z-index: 8;
+  min-height: 40px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 13px;
+  border: 1px solid rgba(15, 108, 189, 0.42);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.92);
+  color: var(--azd-color-brand-strong);
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.16);
+  backdrop-filter: blur(8px);
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.canvas-focus-exit:hover {
+  border-color: var(--azd-color-brand);
+  background: #fff;
+}
+
+.canvas-focus-exit:focus-visible {
+  outline: 3px solid rgba(15, 108, 189, 0.28);
+  outline-offset: 2px;
+}
+
+body.dark-mode .canvas-focus-exit {
+  border-color: #42657e;
+  background: rgba(19, 29, 43, 0.94);
+  color: #b9ddf7;
+}
+
 .canvas-container .react-flow__controls {
   bottom: var(--canvas-chrome-edge);
   left: var(--canvas-chrome-edge);

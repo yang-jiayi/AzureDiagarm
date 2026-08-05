@@ -39,11 +39,11 @@ import {
   revokeCloudShare,
 } from '../services/cloudDiagramService';
 import type { CloudSyncStatus } from '../hooks/useCloudDiagramSync';
-import { useEscapeKey } from '../hooks/useEscapeKey';
-import { useModalFocus } from '../hooks/useModalFocus';
+import { useMediaQuery } from '../hooks/useMediaQuery';
 import { useLanguage } from '../i18n/LanguageContext';
 import { localize } from '../i18n/localization';
 import { OperationGeneration } from '../utils/operationGeneration';
+import ResponsiveDrawer from './ResponsiveDrawer';
 import './CloudWorkspaceModal.css';
 
 interface CloudWorkspaceModalProps {
@@ -131,6 +131,7 @@ const CloudWorkspaceModal: React.FC<CloudWorkspaceModalProps> = ({
   const replacementNoticeRef = useRef('');
   const loadGenerationRef = useRef(new OperationGeneration());
   const operationGenerationRef = useRef(new OperationGeneration());
+  const useCompactDrawer = useMediaQuery('(max-width: 900px)');
 
   isOpenRef.current = isOpen;
   currentDocumentIdRef.current = currentDocument?.id ?? null;
@@ -145,9 +146,6 @@ const CloudWorkspaceModal: React.FC<CloudWorkspaceModalProps> = ({
     setIsDetailsLoading(false);
     onClose();
   }, [onClose]);
-
-  const dialogRef = useModalFocus<HTMLDivElement>(isOpen);
-  useEscapeKey(isOpen, closeModal);
 
   const isCurrentLoad = useCallback((generation: number) => (
     isOpenRef.current && loadGenerationRef.current.isCurrent(generation)
@@ -915,18 +913,20 @@ const CloudWorkspaceModal: React.FC<CloudWorkspaceModalProps> = ({
     }
   };
 
-  if (!isOpen) return null;
-
   return (
-    <div className="modal-overlay cloud-workspace-overlay" onClick={closeModal}>
-      <div
-        ref={dialogRef}
+    <ResponsiveDrawer
+        isOpen={isOpen}
+        modal
+        placement={useCompactDrawer ? 'bottom' : 'center'}
         className="modal-content cloud-workspace-modal"
-        role="dialog"
-        aria-modal="true"
-        aria-label={text('Cloud workspace', 'クラウド ワークスペース')}
-        tabIndex={-1}
-        onClick={(event) => event.stopPropagation()}
+        backdropClassName="cloud-workspace-overlay"
+        ariaLabel={text('Cloud workspace', 'クラウド ワークスペース')}
+        onClose={closeModal}
+        backgroundSelectors={[
+          '.app > .app-header',
+          '.app > .workspace',
+          '.app > .arch-chat-panel',
+        ]}
       >
         <div className="modal-header">
           <h2>
@@ -1234,8 +1234,7 @@ const CloudWorkspaceModal: React.FC<CloudWorkspaceModalProps> = ({
           </span>
           <button className="btn-secondary" onClick={closeModal}>{t('Close')}</button>
         </div>
-      </div>
-    </div>
+    </ResponsiveDrawer>
   );
 };
 

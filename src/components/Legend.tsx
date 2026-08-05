@@ -64,7 +64,7 @@ const Legend: React.FC<LegendProps> = ({ forceCollapsed }) => {
             
             <div className="legend-item">
               <svg width="40" height="16" className="legend-line">
-                <line x1="4" y1="8" x2="36" y2="8" stroke="#0078d4" strokeWidth="2" />
+                <line x1="4" y1="8" x2="36" y2="8" stroke="#64748b" strokeWidth="2" />
               </svg>
               <div className="legend-description">
                 <strong>{t("Synchronous")}</strong>
@@ -74,7 +74,7 @@ const Legend: React.FC<LegendProps> = ({ forceCollapsed }) => {
             
             <div className="legend-item">
               <svg width="40" height="16" className="legend-line">
-                <line x1="4" y1="8" x2="36" y2="8" stroke="#0078d4" strokeWidth="2" strokeDasharray="5, 5" />
+                <line x1="4" y1="8" x2="36" y2="8" stroke="#64748b" strokeWidth="2" strokeDasharray="5, 5" />
               </svg>
               <div className="legend-description">
                 <strong>{t("Asynchronous")}</strong>
@@ -84,7 +84,7 @@ const Legend: React.FC<LegendProps> = ({ forceCollapsed }) => {
             
             <div className="legend-item">
               <svg width="40" height="16" className="legend-line">
-                <line x1="4" y1="8" x2="36" y2="8" stroke="#0078d4" strokeWidth="2" strokeDasharray="2, 4" opacity="0.6" />
+                <line x1="4" y1="8" x2="36" y2="8" stroke="#64748b" strokeWidth="2" strokeDasharray="2, 4" opacity="0.6" />
               </svg>
               <div className="legend-description">
                 <strong>{t("Optional")}</strong>

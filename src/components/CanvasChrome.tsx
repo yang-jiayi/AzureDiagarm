@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-import { Frame, Hand, MessagesSquare, X, ZoomIn } from 'lucide-react';
+import { Frame, Hand, Maximize2, MessagesSquare, X, ZoomIn } from 'lucide-react';
 import { MiniMap } from 'reactflow';
 import { useLanguage } from '../i18n/LanguageContext';
 import FeedbackFab from './FeedbackFab';
@@ -19,6 +19,7 @@ interface CanvasTitleBlockData {
 
 interface CanvasChromeProps {
   hasNodes: boolean;
+  focusMode: boolean;
   showNavigationHint: boolean;
   showEmptyState: boolean;
   showFeedback: boolean;
@@ -33,10 +34,12 @@ interface CanvasChromeProps {
     data: { architectureName?: string; author?: string; version?: string },
   ) => void;
   onFeedback: () => void;
+  onExitFocus: () => void;
 }
 
 export default function CanvasChrome({
   hasNodes,
+  focusMode,
   showNavigationHint,
   showEmptyState,
   showFeedback,
@@ -49,12 +52,26 @@ export default function CanvasChrome({
   onOpenChat,
   onTitleBlockUpdate,
   onFeedback,
+  onExitFocus,
 }: CanvasChromeProps) {
   const { t } = useLanguage();
 
   return (
     <>
-      {hasNodes && (
+      {focusMode && (
+        <button
+          type="button"
+          className="canvas-focus-exit"
+          onClick={onExitFocus}
+          aria-keyshortcuts="Escape"
+          autoFocus
+        >
+          <Maximize2 size={17} aria-hidden="true" />
+          {t('Exit Focus')}
+        </button>
+      )}
+
+      {!focusMode && hasNodes && (
         <>
           <div className="nav-minimap-caption">{t('canvas.miniMapCaption')}</div>
           <MiniMap
@@ -70,7 +87,7 @@ export default function CanvasChrome({
         </>
       )}
 
-      {showNavigationHint && hasNodes && (
+      {!focusMode && showNavigationHint && hasNodes && (
         <div className="canvas-nav-hint" role="note" aria-label={t('Canvas navigation tips')}>
           <div className="canvas-nav-hint-tips">
             <span className="canvas-nav-hint-tip canvas-nav-hint-desktop">
@@ -109,7 +126,7 @@ export default function CanvasChrome({
         </div>
       )}
 
-      {showEmptyState && !hasNodes && (
+      {!focusMode && showEmptyState && !hasNodes && (
         <div className="canvas-empty-cta" role="note" aria-label={t('Get started')}>
           <div className="canvas-empty-cta-inner">
             <MessagesSquare size={34} className="canvas-empty-cta-icon" />
@@ -130,7 +147,7 @@ export default function CanvasChrome({
         </div>
       )}
 
-      {hasNodes && (
+      {!focusMode && hasNodes && (
         <TitleBlock
           architectureName={titleBlockData.architectureName}
           author={titleBlockData.author}
@@ -139,14 +156,14 @@ export default function CanvasChrome({
           onUpdate={onTitleBlockUpdate}
         />
       )}
-      {generatedWithModel && (
+      {!focusMode && generatedWithModel && (
         <ModelBadge
           modelName={generatedWithModel.name}
           elapsedTimeMs={generatedWithModel.timeMs}
         />
       )}
-      <Legend forceCollapsed={forceCollapsed} />
-      {showFeedback && <FeedbackFab pulse={feedbackPulse} onClick={onFeedback} />}
+      {!focusMode && <Legend forceCollapsed={forceCollapsed} />}
+      {!focusMode && showFeedback && <FeedbackFab pulse={feedbackPulse} onClick={onFeedback} />}
     </>
   );
 }

@@ -1,26 +1,29 @@
 .azure-node {
-  background: white;
-  border-radius: 8px;
+  background: #ffffff;
+  border-radius: 10px;
   padding: 12px;
   min-width: 120px;
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 8px;
-  transition: all 0.2s;
-  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1), 0 2px 4px rgba(0, 0, 0, 0.06);
+  transition:
+    border-color 0.16s ease,
+    box-shadow 0.16s ease,
+    transform 0.16s ease;
+  box-shadow: 0 2px 7px rgba(15, 23, 42, 0.1);
   position: relative;
 }
 
 .azure-node.selected {
-  border-color: #0078d4;
-  box-shadow: 0 10px 15px rgba(0, 120, 212, 0.3), 0 4px 6px rgba(0, 120, 212, 0.2);
+  outline: 3px solid rgba(15, 108, 189, 0.3);
+  outline-offset: 2px;
+  box-shadow: 0 5px 16px rgba(15, 108, 189, 0.18);
 }
 
 .azure-node:hover {
-  border-color: #0078d4;
-  box-shadow: 0 8px 12px rgba(0, 0, 0, 0.15), 0 4px 6px rgba(0, 0, 0, 0.1);
-  transform: translateY(-2px);
+  box-shadow: 0 5px 14px rgba(15, 23, 42, 0.14);
+  transform: translateY(-1px);
 }
 
 .node-content {
@@ -37,16 +40,16 @@
   position: absolute;
   top: -8px;
   right: -8px;
-  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
-  color: white;
+  background: rgba(255, 255, 255, 0.96);
+  color: #334155;
   font-size: 0.65rem;
   font-weight: 700;
   padding: 3px 7px;
   border-radius: 10px;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25);
+  box-shadow: 0 2px 7px rgba(15, 23, 42, 0.14);
   white-space: nowrap;
   z-index: 10;
-  border: 1.5px solid rgba(255, 255, 255, 0.4);
+  border: 1px solid var(--cost-accent, #10b981);
   cursor: pointer;
   transition: all 0.2s ease;
   display: flex;
@@ -55,13 +58,15 @@
 }
 
 .cost-badge:hover {
-  transform: scale(1.05);
-  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.3);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 10px rgba(15, 23, 42, 0.18);
 }
 
 /* Fabric workload items whose cost is included in the Fabric Capacity */
 .cost-badge--capacity {
-  background: linear-gradient(135deg, #14b8a6 0%, #0f766e 100%);
+  --cost-accent: #0f766e;
+  background: rgba(255, 255, 255, 0.96);
+  color: #0f766e;
   font-weight: 600;
   text-transform: none;
   opacity: 0.92;
@@ -313,15 +318,23 @@ body.dark-mode .node-badge-input {
 }
 
 .node-handle {
-  width: 10px;
-  height: 10px;
-  background: #0078d4;
+  width: 8px;
+  height: 8px;
+  background: #64748b;
   border: 2px solid white;
-  box-shadow: 0 0 0 1px #0078d4;
+  box-shadow: 0 0 0 1px #64748b;
+  opacity: 0.38;
+  transition: opacity 0.15s ease, transform 0.15s ease, background-color 0.15s ease;
+}
+
+.azure-node:hover .node-handle,
+.azure-node.selected .node-handle,
+.node-handle:hover {
+  opacity: 1;
 }
 
 .node-handle:hover {
-  background: #005a9e;
+  background: #0f6cbd;
   transform: scale(1.2);
 }
 
@@ -404,7 +417,7 @@ body.dark-mode .ungroup-button:hover svg {
   padding: 16px 20px;
   min-width: 150px;
   border-radius: 12px;
-  border-left-width: 6px !important;
+  border-left-width: 5px !important;
   border-top: none !important;
   border-right: none !important;
   border-bottom: none !important;
@@ -440,4 +453,22 @@ body.dark-mode .azure-node.style-presentation {
 
 body.dark-mode .azure-node.style-presentation .node-label {
   color: #1a1a2e;
+}
+
+body.dark-mode .azure-node:not(.style-presentation) {
+  background: #1e293b;
+  border-top-color: #475569 !important;
+  border-right-color: #475569 !important;
+  border-bottom-color: #475569 !important;
+  box-shadow: 0 3px 10px rgba(2, 6, 23, 0.42);
+}
+
+body.dark-mode .azure-node:not(.style-presentation) .node-label {
+  color: #e2e8f0;
+}
+
+body.dark-mode .cost-badge,
+body.dark-mode .cost-badge--capacity {
+  background: rgba(15, 23, 42, 0.96);
+  color: #e2e8f0;
 }
