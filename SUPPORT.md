@@ -8,6 +8,8 @@ feature request as a new Issue.
 
 For help and questions about using this project, please open a GitHub issue with the `question` label.
 
-## Microsoft Support Policy
+## Support policy
 
-Support for this project is limited to the resources listed above.
+This community project is provided without a support SLA and is not covered by
+Microsoft commercial support. Maintainers and contributors respond on a
+best-effort basis through GitHub Issues.

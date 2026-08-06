@@ -6,7 +6,7 @@ const { test } = require('node:test');
 const { ArmKeyVaultAccessStore } = require('./arm-key-vault-access-store');
 
 const RESOURCE_ID =
-  '/subscriptions/f2c0fe9a-0171-42ed-803d-3e78322545a1/resourceGroups/AzureDiagarm_rg/providers/Microsoft.KeyVault/vaults/azurediagarm-access-kv';
+  '/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/example-rg/providers/Microsoft.KeyVault/vaults/example-access-kv';
 const ROW_KEY = 'a'.repeat(64);
 
 function jsonResponse(status, body) {
@@ -35,7 +35,7 @@ test('ARM Key Vault store lists only enabled access entries', async () => {
           kind: 'azurediagarm-access-v1',
           email: 'member@example.com',
           addedAt: '2026-01-01T00:00:00.000Z',
-          addedBy: 'yangjiayi@msft.jp',
+          addedBy: 'admin@example.com',
         },
         properties: {
           contentType: 'application/vnd.azurediagarm.access',
@@ -67,7 +67,7 @@ test('ARM Key Vault store lists only enabled access entries', async () => {
   assert.deepEqual(entities, [{
     email: 'member@example.com',
     addedAt: '2026-01-01T00:00:00.000Z',
-    addedBy: 'yangjiayi@msft.jp',
+    addedBy: 'admin@example.com',
   }]);
   assert.deepEqual(scopes, ['https://management.azure.com/.default']);
 });
@@ -87,7 +87,7 @@ test('ARM Key Vault store writes and revokes deterministic secret resources', as
           kind: 'azurediagarm-access-v1',
           email: 'member@example.com',
           addedAt: '2026-01-01T00:00:00.000Z',
-          addedBy: 'yangjiayi@msft.jp',
+          addedBy: 'admin@example.com',
         },
         properties: {
           contentType: 'application/vnd.azurediagarm.access',
@@ -102,7 +102,7 @@ test('ARM Key Vault store writes and revokes deterministic secret resources', as
     rowKey: ROW_KEY,
     email: 'member@example.com',
     addedAt: '2026-01-01T00:00:00.000Z',
-    addedBy: 'yangjiayi@msft.jp',
+    addedBy: 'admin@example.com',
   });
   await store.deleteEntity('allowed', ROW_KEY);
 

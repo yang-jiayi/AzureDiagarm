@@ -14,11 +14,14 @@
 const { CosmosClient } = require('@azure/cosmos');
 const { DefaultAzureCredential } = require('@azure/identity');
 
-const ENDPOINT = process.env.AZURE_COSMOS_ENDPOINT || 'https://aqcosmosdb007.documents.azure.com:443/';
+const ENDPOINT = process.env.AZURE_COSMOS_ENDPOINT;
 const DATABASE_ID = process.env.COSMOS_DATABASE_ID || 'diagrams-db';
 const CONTAINER_ID = process.env.COSMOS_FEEDBACK_CONTAINER_ID || 'feedback';
 
 async function main() {
+  if (!ENDPOINT) {
+    throw new Error('AZURE_COSMOS_ENDPOINT is required.');
+  }
   const asJson = process.argv.includes('--json');
   const client = new CosmosClient({ endpoint: ENDPOINT, aadCredentials: new DefaultAzureCredential() });
   const container = client.database(DATABASE_ID).container(CONTAINER_ID);

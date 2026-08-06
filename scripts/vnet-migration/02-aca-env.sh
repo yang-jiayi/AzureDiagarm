@@ -14,11 +14,11 @@
 # ============================================================================
 set -euo pipefail
 
-RG="azure-diagrams-rg"
-LOC="eastus2"
-VNET="vnet-azure-diagrams"
-ACA_SUBNET="snet-aca-infra"
-NEW_ENV="aca-env-azure-diagrams-vnet"
+RG="${AZURE_RESOURCE_GROUP:?Set AZURE_RESOURCE_GROUP}"
+LOC="${AZURE_LOCATION:-eastus2}"
+VNET="${AZURE_VNET_NAME:-vnet-azure-diagrams}"
+ACA_SUBNET="${AZURE_ACA_SUBNET_NAME:-snet-aca-infra}"
+NEW_ENV="${AZURE_CONTAINERAPPS_ENVIRONMENT:?Set AZURE_CONTAINERAPPS_ENVIRONMENT}"
 
 echo "Subscription: $(az account show --query name -o tsv)"
 

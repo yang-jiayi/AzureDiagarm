@@ -1,326 +1,209 @@
 # AzureDiagarm application access and authentication
 
-> Last updated: August 2, 2026
+This public runbook documents the production security model without publishing
+tenant IDs, subscription IDs, object IDs, administrator addresses, or private
+resource names. Keep environment-specific values in GitHub configuration and
+the approved operational inventory.
 
-## Production configuration
+## Production security model
 
-| Item | Value |
+1. Azure Front Door and WAF are the only public entry point.
+2. Azure Container Apps ingress rejects direct-origin requests.
+3. Container Apps Easy Auth requires Microsoft Entra ID authentication when
+   access control is enabled.
+4. Enterprise Application assignment limits access to approved security groups.
+5. Guest accounts receive no Azure RBAC roles, Microsoft Fabric permissions, or
+   unrelated Enterprise Application assignments.
+6. Nginx authorizes page, static asset, API, and MCP requests consistently.
+7. The Node server trusts only Easy Auth principal headers injected by the
+   platform and parses the aggregate principal claim as a fallback.
+8. Production workloads use managed identity instead of committed credentials.
+
+The public source repository does not grant access to the Azure subscription or
+the deployed application.
+
+## Configuration inventory
+
+Store the following values outside source control:
+
+| Item | Example placeholder |
 |---|---|
-| Application URL | `https://azurediagarm.mssql.biz` |
-| Azure subscription | `f2c0fe9a-0171-42ed-803d-3e78322545a1` |
-| Resource group | `AzureDiagarm_rg` |
-| Container App | `azurediagarm-app` |
-| Microsoft Entra tenant | `376417b8-4dea-4ba0-b980-ac5323856cbd` |
-| Entra application | `AzureDiagarm-Production` |
-| Application (client) ID | `5cd8361b-e235-493b-95a2-c2e8f444c3a2` |
-| Permanent administrators | `yangjiayi@msft.jp`, `jiayiyang@microsoft.com` |
-| Guest access group | `Azure Diagarm Apps` (`f78f42aa-6319-4248-8be2-64cb68dc5bd2`) |
-| Administrator access group | `Azure Diagarm Apps Administrators` (`3d6b642f-e777-415f-8bcd-01892b482fdc`) |
-| Enterprise application assignment | Required |
-| Conditional Access | `Azure Diagarm Apps - Block Azure management and Fabric` |
-| Legacy access store | `azurediagarm-access-kv` (retained, disabled) |
-| Speech resource | `azurediagarmspeech` (`westus2`, S0) |
-| Easy Auth action | `RedirectToLoginPage` |
-| Email whitelist enforcement | Disabled (`ACCESS_CONTROL_ENABLED=false`) |
+| Azure subscription | `<subscription-id>` |
+| Resource group | `<resource-group>` |
+| Container App | `<container-app-name>` |
+| Microsoft Entra tenant | `<tenant-id>` |
+| Entra application client ID | `<application-client-id>` |
+| Guest access group object ID | `<guest-group-object-id>` |
+| Administrator group object ID | `<administrator-group-object-id>` |
+| Deployment managed identity object ID | `<deployment-principal-object-id>` |
+| Runtime managed identity object ID | `<runtime-principal-object-id>` |
+| Access Key Vault resource ID | `<access-key-vault-resource-id>` |
+| Front Door profile | `<front-door-profile>` |
+| Log Analytics workspace | `<log-analytics-workspace>` |
 
-## Security model
-
-1. Azure Front Door and WAF are the public entry point.
-2. Azure Container Apps Easy Auth requires Microsoft Entra ID authentication.
-3. The Entra application is single-tenant (`AzureADMyOrg`).
-4. The `AzureDiagarm-Production` Enterprise Application requires assignment.
-   The guest group `Azure Diagarm Apps` and the separate administrator group
-   `Azure Diagarm Apps Administrators` have Default Access. No users are
-   assigned directly.
-5. A Conditional Access policy targets only the guest group and blocks Azure
-   management and Power BI/Fabric resources. Guest group members therefore
-   cannot use Azure Portal, Azure Resource Manager, Microsoft Fabric, or Power
-   BI through that policy.
-6. The guests have no licenses, Azure RBAC assignments, Fabric workspace
-   permissions, or assignments to other enterprise applications.
-7. Nginx sends an internal authorization subrequest for every page, static asset,
-   API, and MCP request. The legacy email-list check is disabled, so successful
-   Entra assignment is the authoritative application authorization decision.
-8. The Node server still reads trusted individual principal headers injected by
-   Container Apps for identity and audit data, with
-   `X-MS-CLIENT-PRINCIPAL` claim parsing as a fallback.
-9. Both administrator accounts are members only of
-   `Azure Diagarm Apps Administrators`, not the restricted guest group. The
-   Conditional Access policy also explicitly excludes that administrator group
-   and both administrator user objects, preventing an accidental guest-policy
-   change from restricting either owner account.
-
-External requests cannot set the `X-MS-CLIENT-PRINCIPAL-*` headers. Container
-Apps removes external values and injects the authenticated principal headers.
-
-The MCP HTTP server listens only on `127.0.0.1:3030` inside the container and is
-enabled with `MCP_ENABLED=true`. It does not use a separate public bearer token
-in production; Nginx exposes `/mcp` only after the same Easy Auth and Enterprise
-Application assignment used by the application and APIs.
+Non-secret deployment values belong in GitHub Actions variables. Credentials,
+tokens, certificates, and private keys belong in GitHub Actions secrets or an
+Azure-managed identity flow.
 
 ## Front Door requirements
 
-- `forwardProxy.convention` is `Standard`, so Easy Auth uses the
-  `X-Forwarded-Host` value and returns users to `azurediagarm.mssql.biz`.
-- The registered callback is:
-  `https://azurediagarm.mssql.biz/.auth/login/aad/callback`.
-- Front Door caching is disabled on every route. Authentication responses and
-  protected static assets must never be stored in a shared cache.
-- The origin response timeout is 240 seconds for GPT-5.6 Sol generation.
-- `/healthz` is the only unauthenticated application path and is used by the
-  Front Door origin health probe.
-- Container Apps ingress allows only the current IPv4 ranges from the
-  `AzureFrontDoor.Backend` service tag and Azure platform infrastructure
-  addresses. Nginx also requires this profile's `X-Azure-FDID`, so another
-  Front Door profile cannot use the shared backend address space to bypass WAF.
-- The deployment workflow refreshes the origin allowlist from Azure service
-  tags and verifies that direct origin access still returns HTTP 403.
-- The GitHub OIDC service principal `azurediagarm-github-deploy` has the custom
-  `AzureDiagarm Service Tag Reader` role at the target subscription. That role
-  grants only `Microsoft.Resources/subscriptions/locations/read` and
-  `Microsoft.Network/locations/serviceTags/read`, which are required to refresh
-  the allowlist without granting subscription-wide Reader access.
-- Front Door access, health-probe, WAF, and metric diagnostics are sent to the
-  `azurediagarm-logs` Log Analytics workspace.
+- Use `forwardProxy.convention=Standard` so Easy Auth honors
+  `X-Forwarded-Host`.
+- Register the custom-domain Easy Auth callback.
+- Disable Front Door caching for authenticated pages, static assets, and APIs.
+- Permit Container Apps ingress only from the current
+  `AzureFrontDoor.Backend` service-tag ranges and Azure platform probes.
+- Require the expected `X-Azure-FDID` value at Nginx.
+- Keep `/healthz` limited to health checks and return no sensitive data.
+- Send Front Door access, WAF, health, and metric diagnostics to Log Analytics.
+- Verify that direct and spoofed-origin requests return HTTP 403 after every
+  deployment.
 
-## Easy Auth CSRF and referrer policy
+The deployment workflow refreshes the origin allowlist, verifies TLS and WAF
+settings, deploys a new revision, checks its probes, and rolls back on failure.
 
-Keep the response header `Referrer-Policy: same-origin`.
+## Easy Auth and browser security
 
-Container Apps Easy Auth performs CSRF validation for unsafe,
-cookie-authenticated requests such as `POST /api/openai`. A stricter
-`no-referrer` policy removes the same-origin `Referer` header and causes Easy
-Auth to reject the request before it reaches Nginx or the OpenAI proxy. The
-corresponding platform log contains HTTP 403, substatus 60, and
-`Cross-site request forgery detected`.
+Keep `Referrer-Policy: same-origin`. Easy Auth performs CSRF validation for
+unsafe cookie-authenticated requests, and a stricter `no-referrer` policy can
+remove the same-origin `Referer` header required by the platform.
 
-`same-origin` preserves the referrer required for same-origin API calls while
-still withholding it from external sites.
+Also retain:
 
-## Entra security-group access
+- a restrictive Content Security Policy;
+- `X-Content-Type-Options: nosniff`;
+- a least-privilege Permissions Policy;
+- HTTPS-only redirects and HSTS; and
+- private/no-store caching for authenticated responses.
 
-Manage production access in Microsoft Entra admin center:
+## Entra group access
 
-1. Invite an external person under **Identity > Users > New user > Invite
-   external user**. Set the redirect URL to
-   `https://azurediagarm.mssql.biz`.
-2. Add the guest to **Identity > Groups > Azure Diagarm Apps > Members**.
-3. Confirm **Enterprise applications > AzureDiagarm-Production > Users and
-   groups** contains only `Azure Diagarm Apps` and
-   `Azure Diagarm Apps Administrators`. Do not assign individual users directly.
-4. To revoke application access, remove the guest from the group. Do not assign
-   Azure RBAC roles, Fabric workspaces, licenses, or other enterprise
-   applications to this group.
+Use separate security groups for application users and administrators.
 
-The Enterprise Application has **Assignment required? = Yes**. Group membership
-therefore grants AzureDiagarm access without maintaining a second email list.
-As of August 2, 2026, `Azure Diagarm Apps` contains only the three invited
-guests, while `Azure Diagarm Apps Administrators` contains only
-`yangjiayi@msft.jp` and `jiayiyang@microsoft.com`. The Enterprise Application
-has no direct user assignments.
-The Conditional Access policy
-`Azure Diagarm Apps - Block Azure management and Fabric` includes this group
-and blocks these resources:
+1. Invite an external user through Microsoft Entra ID.
+2. Add the user to the application access group.
+3. Assign the access and administrator groups to the Enterprise Application.
+4. Keep **Assignment required** enabled.
+5. Do not assign users directly unless an approved exception requires it.
+6. Remove group membership to revoke access.
+7. Do not grant the application access group Azure RBAC, Fabric workspace,
+   licenses, or unrelated application assignments.
 
-- Microsoft Azure Management:
-  `797f4846-ba00-4fd7-ba43-dac1f8f63013`
-- Power BI Service, including Microsoft Fabric:
-  `00000009-0000-0000-c000-000000000000`
+If Conditional Access limits guest access to Azure management or Fabric, exclude
+the administrator group through the approved identity-governance process. Keep
+the actual group and user object IDs in the restricted operational inventory.
 
-The policy explicitly excludes:
+The following Microsoft application IDs are public platform identifiers, not
+tenant credentials:
 
-- `Azure Diagarm Apps Administrators`
-  (`3d6b642f-e777-415f-8bcd-01892b482fdc`)
-- `yangjiayi@msft.jp`
-  (`0b5454aa-2b15-4167-b72c-5734bb5d04b9`)
-- `jiayiyang@microsoft.com`
-  (`b313d9db-92ed-492e-928f-4fab16509544`; guest UPN
-  `jiayiyang_microsoft.com#EXT#@MngEnvMCAP136118.onmicrosoft.com`)
+- Microsoft Azure Management: `797f4846-ba00-4fd7-ba43-dac1f8f63013`
+- Power BI Service: `00000009-0000-0000-c000-000000000000`
 
-Do not add an administrator to the restricted guest group. Keep both the group
-exclusion and both explicit owner exclusions when changing the policy.
+## Legacy access store
 
-Do not replace this with an all-cloud-apps block that excludes only
-AzureDiagarm. Container Apps Easy Auth requests the standard OpenID Connect
-scopes from Microsoft Graph during sign-in, so blocking Microsoft Graph also
-blocks guest authentication before the request reaches AzureDiagarm.
-
-Microsoft Graph and the Microsoft Invitation Acceptance Portal remain
-available for authentication and invitation redemption. AzureDiagarm remains
-protected by required Enterprise Application assignment. The guests' lack of
-licenses, Azure RBAC roles, Fabric permissions, and unrelated application
-assignments provides the remaining least-privilege boundaries.
-
-## Legacy whitelist store
-
-The previous email whitelist remains stored as Azure Resource Manager child
-resources under the dedicated Key Vault:
+The optional legacy email access store uses Azure Resource Manager metadata
+under a dedicated Key Vault:
 
 ```text
-/subscriptions/f2c0fe9a-0171-42ed-803d-3e78322545a1
-  /resourceGroups/AzureDiagarm_rg
-  /providers/Microsoft.KeyVault/vaults/azurediagarm-access-kv/secrets/<email-hash>
+/subscriptions/<subscription-id>
+  /resourceGroups/<resource-group>
+  /providers/Microsoft.KeyVault/vaults/<access-key-vault>/secrets/<email-hash>
 ```
 
-The Key Vault has Public Network access disabled. The app does not use the Key
-Vault data endpoint. It reads and writes only the secret resource metadata
-through `management.azure.com`, which remains available through the Azure
-control plane.
+The runtime identity should receive only the custom metadata permissions needed
+to read and update application-owned secret resources. It must not receive Key
+Vault data-plane access to secret values or broad subscription roles.
 
-The managed identity has the custom role
-`AzureDiagarm Access Whitelist Manager` at this vault only. The role grants:
-
-- `Microsoft.KeyVault/vaults/read`
-- `Microsoft.KeyVault/vaults/secrets/read`
-- `Microsoft.KeyVault/vaults/secrets/write`
-
-It does not grant access to secret values in the Key Vault data plane, other
-vaults, or other Azure resources. The store is currently inactive because
-`ACCESS_CONTROL_ENABLED=false`; it is retained only as a rollback option.
-
-The Avatar Presenter uses keyless authentication to the dedicated Speech
-resource. The Container Apps managed identity has only the **Cognitive Services
-Speech User** role on that resource, and local key authentication is disabled.
-
-## Sign out
-
-Use:
-
-```text
-https://azurediagarm.mssql.biz/.auth/logout?post_logout_redirect_uri=%2F
-```
+Disable the store with `ACCESS_CONTROL_ENABLED=false` when Entra assignment is
+the authoritative access model.
 
 ## Operational checks
 
-Inspect the authentication policy without exposing credentials:
+Set local shell variables from the restricted inventory before running checks:
+
+```powershell
+$subscriptionId = "<subscription-id>"
+$resourceGroup = "<resource-group>"
+$containerApp = "<container-app-name>"
+$accessVaultScope = "<access-key-vault-resource-id>"
+$runtimePrincipalId = "<runtime-principal-object-id>"
+$deploymentPrincipalId = "<deployment-principal-object-id>"
+$frontDoorProfile = "<front-door-profile>"
+```
+
+Inspect authentication without exposing credential values:
 
 ```powershell
 az containerapp auth show `
-  --subscription f2c0fe9a-0171-42ed-803d-3e78322545a1 `
-  --resource-group AzureDiagarm_rg `
-  --name azurediagarm-app `
+  --subscription $subscriptionId `
+  --resource-group $resourceGroup `
+  --name $containerApp `
   --query "{platform:platform,globalValidation:globalValidation,httpSettings:httpSettings,aad:identityProviders.azureActiveDirectory}"
 ```
 
-Inspect the access-store role:
+Inspect least-privilege role assignments:
 
 ```powershell
 az role assignment list `
-  --subscription f2c0fe9a-0171-42ed-803d-3e78322545a1 `
-  --assignee-object-id 5ca2361f-57c4-4840-82c6-8d71fb41c00f `
-  --scope /subscriptions/f2c0fe9a-0171-42ed-803d-3e78322545a1/resourceGroups/AzureDiagarm_rg/providers/Microsoft.KeyVault/vaults/azurediagarm-access-kv `
+  --subscription $subscriptionId `
+  --assignee-object-id $runtimePrincipalId `
+  --scope $accessVaultScope `
+  --output table
+
+az role assignment list `
+  --subscription $subscriptionId `
+  --assignee-object-id $deploymentPrincipalId `
+  --scope "/subscriptions/$subscriptionId" `
   --output table
 ```
 
-Inspect origin isolation and Front Door diagnostics:
+Inspect origin isolation:
 
 ```powershell
-az role assignment list `
-  --subscription f2c0fe9a-0171-42ed-803d-3e78322545a1 `
-  --assignee-object-id 5ef2bf3e-436a-46c4-929a-b31c50ef2881 `
-  --role "AzureDiagarm Service Tag Reader" `
-  --scope /subscriptions/f2c0fe9a-0171-42ed-803d-3e78322545a1 `
-  --output table
-
 az containerapp ingress access-restriction list `
-  --subscription f2c0fe9a-0171-42ed-803d-3e78322545a1 `
-  --resource-group AzureDiagarm_rg `
-  --name azurediagarm-app `
+  --subscription $subscriptionId `
+  --resource-group $resourceGroup `
+  --name $containerApp `
   --output table
-
-$frontDoorId = az afd profile show `
-  --subscription f2c0fe9a-0171-42ed-803d-3e78322545a1 `
-  --resource-group AzureDiagarm_rg `
-  --profile-name azurediagarm-fd `
-  --query id `
-  --output tsv
-
-az monitor diagnostic-settings show `
-  --name azurediagarm-local-logs `
-  --resource $frontDoorId
 ```
 
-Useful Log Analytics queries:
-
-```kusto
-AzureDiagnostics
-| where TimeGenerated > ago(24h)
-| where ResourceProvider == "MICROSOFT.CDN"
-| where Category in ("FrontDoorAccessLog", "FrontDoorWebApplicationFirewallLog")
-| extend RequestUri = tostring(column_ifexists("requestUri_s", "")),
-         Status = tostring(column_ifexists("httpStatusCode_s", "")),
-         Action = tostring(column_ifexists("action_s", "")),
-         Details = tostring(column_ifexists("details_msg_s", ""))
-| project TimeGenerated, Category, RequestUri, Status, Action, Details
-| order by TimeGenerated desc
-```
-
-```kusto
-union isfuzzy=true ContainerAppSystemLogs_CL, ContainerAppConsoleLogs_CL
-| where TimeGenerated > ago(24h)
-| where Log_s has "Cross-site request forgery" or Log_s has "SubStatus: 60"
-| project TimeGenerated, ContainerAppName_s, RevisionName_s, Log_s
-| order by TimeGenerated desc
-```
-
-## OpenAI proxy diagnostics
-
-`/api/openai` returns a structured error envelope with a safe `code`,
-`requestId`, and, when available, `upstreamStatus`, `upstreamCode`, and
-`upstreamRequestId`. The proxy logs request identifiers and status metadata,
-but never logs prompts, access tokens, or upstream response bodies.
-
-Common codes include:
-
-- `credential_acquisition_failed`
-- `azure_openai_authentication_failed`
-- `azure_openai_rate_limited`
-- `azure_openai_timeout`
-- `azure_openai_unavailable`
-- `application_authentication_required`
-- `application_request_rejected`
-- `edge_request_blocked`
-
-Use the displayed request ID to correlate browser errors with Container Apps
-logs. Do not treat every HTTP 401 or 403 as a managed identity failure: Easy
-Auth, Enterprise Application assignment, Conditional Access, WAF, and Azure
-OpenAI RBAC are separate
-enforcement layers.
+Never print secret values, access tokens, Easy Auth client credentials, or
+private feedback content while collecting diagnostics.
 
 ## Credential rotation
 
-The Easy Auth client credential named
-`AzureDiagarm Container Apps Easy Auth` expires on July 16, 2028.
+Track Easy Auth and other credential expiration dates in the restricted
+operational inventory. Rotate before expiry:
 
-Rotate it before expiry:
-
-1. Append a new Entra application credential.
-2. Immediately pass the new value to
-   `az containerapp auth microsoft update --client-secret`.
+1. Create the replacement credential.
+2. Update the Container App authentication configuration.
 3. Confirm sign-in through the custom domain.
-4. Delete the old credential by key ID.
+4. Delete the previous credential.
 
-Never print, email, or commit the credential value.
+Prefer workload identity federation and managed identity wherever the platform
+supports them.
 
 ## Emergency recovery
 
-If an authentication configuration error prevents administrator access:
+If an authentication configuration error blocks administrators, use an
+authenticated Azure operator session and the placeholders above:
 
 ```powershell
 az containerapp auth update `
-  --subscription f2c0fe9a-0171-42ed-803d-3e78322545a1 `
-  --resource-group AzureDiagarm_rg `
-  --name azurediagarm-app `
+  --subscription $subscriptionId `
+  --resource-group $resourceGroup `
+  --name $containerApp `
   --action AllowAnonymous `
   --yes
 
 az containerapp update `
-  --subscription f2c0fe9a-0171-42ed-803d-3e78322545a1 `
-  --resource-group AzureDiagarm_rg `
-  --name azurediagarm-app `
+  --subscription $subscriptionId `
+  --resource-group $resourceGroup `
+  --name $containerApp `
   --set-env-vars ACCESS_CONTROL_ENABLED=false `
   --output none
 ```
 
-Restore `RedirectToLoginPage` immediately after correcting the configuration.
-Keep `ACCESS_CONTROL_ENABLED=false` for the Entra group-based access model.
+Restrict network access before using this break-glass path. Restore
+`RedirectToLoginPage` immediately after correcting the configuration, then
+re-run the production security verification workflow.

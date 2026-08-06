@@ -15,9 +15,9 @@
 | Setting | Value |
 |---|---|
 | Application | `AzureDiagarm-Production` |
-| Client ID | `5cd8361b-e235-493b-95a2-c2e8f444c3a2` |
-| Tenant ID | `376417b8-4dea-4ba0-b980-ac5323856cbd` |
-| Authority | `https://login.microsoftonline.com/376417b8-4dea-4ba0-b980-ac5323856cbd` |
+| Client ID | `<application-client-id>` |
+| Tenant ID | `<tenant-id>` |
+| Authority | `https://login.microsoftonline.com/<tenant-id>` |
 | SPA redirect URI | `https://azurediagarm.mssql.biz` |
 | ARM scope | `https://management.azure.com/user_impersonation` |
 

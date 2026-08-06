@@ -60,7 +60,7 @@ async function startServer(options) {
 }
 
 const ADMIN_HEADERS = {
-  'X-MS-CLIENT-PRINCIPAL-NAME': 'yangjiayi@msft.jp',
+  'X-MS-CLIENT-PRINCIPAL-NAME': 'admin@example.com',
   'X-MS-CLIENT-PRINCIPAL-ID': '11111111-1111-1111-1111-111111111111',
 };
 const MEMBER_HEADERS = {
@@ -85,7 +85,7 @@ test('access-control configuration reports mandatory readiness dependencies', ()
 
   const complete = getAccessControlConfiguration({
     enabled: true,
-    adminEmail: 'yangjiayi@msft.jp',
+    adminEmail: 'admin@example.com',
     publicAppUrl: APP_ORIGIN,
     table: new FakeTable(),
   });
@@ -97,7 +97,7 @@ test('access control enforces whitelist and administrator-only management', asyn
   const table = new FakeTable();
   const server = await startServer({
     enabled: true,
-    adminEmail: 'yangjiayi@msft.jp',
+    adminEmail: 'admin@example.com',
     publicAppUrl: APP_ORIGIN,
     table,
     cacheTtlMs: 1_000,
@@ -109,7 +109,7 @@ test('access control enforces whitelist and administrator-only management', asyn
   assert.equal(response.status, 401);
 
   response = await fetch(`${server.baseUrl}/api/access/check`, {
-    headers: { 'X-MS-CLIENT-PRINCIPAL-NAME': 'yangjiayi@msft.jp' },
+    headers: { 'X-MS-CLIENT-PRINCIPAL-NAME': 'admin@example.com' },
   });
   assert.equal(response.status, 401);
 
@@ -124,7 +124,7 @@ test('access control enforces whitelist and administrator-only management', asyn
   assert.deepEqual(await response.json(), {
     enabled: true,
     authenticated: true,
-    email: 'yangjiayi@msft.jp',
+    email: 'admin@example.com',
     isAdmin: true,
     allowed: true,
   });
@@ -161,7 +161,7 @@ test('access control enforces whitelist and administrator-only management', asyn
   assert.equal(response.status, 200);
   const list = await response.json();
   assert.deepEqual(list.users.map((user) => user.email), [
-    'yangjiayi@msft.jp',
+    'admin@example.com',
     'member@example.com',
   ]);
   assert.equal(list.users[0].immutable, true);
@@ -187,7 +187,7 @@ test('access control enforces whitelist and administrator-only management', asyn
       Origin: APP_ORIGIN,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ email: 'yangjiayi@msft.jp' }),
+    body: JSON.stringify({ email: 'admin@example.com' }),
   });
   assert.equal(response.status, 400);
 });
@@ -214,7 +214,7 @@ test('access control accepts the aggregate Easy Auth client principal header', a
   const table = new FakeTable();
   const server = await startServer({
     enabled: true,
-    adminEmail: 'yangjiayi@msft.jp',
+    adminEmail: 'admin@example.com',
     publicAppUrl: APP_ORIGIN,
     table,
     logger: { info() {}, error() {} },
@@ -224,7 +224,7 @@ test('access control accepts the aggregate Easy Auth client principal header', a
   const encodedPrincipal = Buffer.from(JSON.stringify({
     auth_typ: 'aad',
     claims: [
-      { typ: 'preferred_username', val: 'yangjiayi@msft.jp' },
+      { typ: 'preferred_username', val: 'admin@example.com' },
       {
         typ: 'http://schemas.microsoft.com/identity/claims/objectidentifier',
         val: '33333333-3333-3333-3333-333333333333',
@@ -247,7 +247,7 @@ test('access control maps Entra B2B guest UPNs back to their invited email', asy
   const table = new FakeTable();
   const server = await startServer({
     enabled: true,
-    adminEmail: 'yangjiayi@msft.jp',
+    adminEmail: 'admin@example.com',
     publicAppUrl: APP_ORIGIN,
     table,
     logger: { info() {}, error() {} },
@@ -261,14 +261,14 @@ test('access control maps Entra B2B guest UPNs back to their invited email', asy
       Origin: APP_ORIGIN,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ email: 'maaya_ishida@microsoft.com' }),
+    body: JSON.stringify({ email: 'guest@example.com' }),
   });
   assert.equal(response.status, 201);
 
   response = await fetch(`${server.baseUrl}/api/access/check`, {
     headers: {
       'X-MS-CLIENT-PRINCIPAL-NAME':
-        'maaya_ishida_microsoft.com#EXT#@exampletenant.onmicrosoft.com',
+        'guest_example.com#EXT#@exampletenant.onmicrosoft.com',
       'X-MS-CLIENT-PRINCIPAL-ID': '44444444-4444-4444-4444-444444444444',
     },
   });
@@ -279,9 +279,9 @@ test('access control maps Entra B2B guest UPNs back to their invited email', asy
     claims: [
       {
         typ: 'preferred_username',
-        val: 'maaya_ishida_microsoft.com#EXT#@exampletenant.onmicrosoft.com',
+        val: 'guest_example.com#EXT#@exampletenant.onmicrosoft.com',
       },
-      { typ: 'email', val: 'maaya_ishida@microsoft.com' },
+      { typ: 'email', val: 'guest@example.com' },
       {
         typ: 'http://schemas.microsoft.com/identity/claims/objectidentifier',
         val: '44444444-4444-4444-4444-444444444444',
@@ -296,7 +296,7 @@ test('access control maps Entra B2B guest UPNs back to their invited email', asy
   assert.deepEqual(await response.json(), {
     enabled: true,
     authenticated: true,
-    email: 'maaya_ishida@microsoft.com',
+    email: 'guest@example.com',
     isAdmin: false,
     allowed: true,
   });

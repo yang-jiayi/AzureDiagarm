@@ -13,16 +13,22 @@
 
 **A professional AI-powered tool for designing, validating, and deploying Azure cloud architectures**
 
-[Live Demo](https://azure-diagram-builder.yellowmushroom-f11e57c2.eastus2.azurecontainerapps.io) • [Short Link](https://aka.ms/diagram-builder) • [Documentation](DOCS/ARCHITECTURE.md) • [Report Bug](../../issues)
+[Live Demo](https://azurediagarm.mssql.biz) • [Upstream Project](https://github.com/Arturo-Quiroga-MSFT/azure-architecture-diagram-builder) • [Documentation](DOCS/ARCHITECTURE.md) • [Report Bug](../../issues)
 
 </div>
 
 ---
 
-## 👤 Author
+> [!NOTE]
+> This repository is a production-hardened deployment fork of the
+> [Azure Architecture Diagram Builder](https://github.com/Arturo-Quiroga-MSFT/azure-architecture-diagram-builder).
+> It retains the upstream project and license while adding secure Azure hosting,
+> cloud collaboration safeguards, deployment automation, and responsive workspace improvements.
 
-**Arturo Quiroga**  
-*Senior Partner Solutions Architect (PSA) - Microsoft*
+## 👤 Maintainers and attribution
+
+This fork is maintained at [`yang-jiayi/AzureDiagarm`](https://github.com/yang-jiayi/AzureDiagarm).
+The original project was created by **Arturo Quiroga**.
 
 ---
 
@@ -512,7 +518,7 @@ closes them during graceful shutdown.
 
 ### Prerequisites
 
-- **Node.js 20+** (LTS recommended)
+- **Node.js 22**
 - **npm** or **yarn**
 - **Azure OpenAI** resource with GPT model deployment
 
@@ -520,13 +526,13 @@ closes them during graceful shutdown.
 
 1. **Clone the repository**
 ```bash
-git clone https://github.com/your-org/azure-diagrams.git
-cd azure-diagrams
+git clone https://github.com/yang-jiayi/AzureDiagarm.git
+cd AzureDiagarm
 ```
 
 2. **Install dependencies**
 ```bash
-npm install
+npm ci
 ```
 
 3. **Configure environment variables**
@@ -545,7 +551,7 @@ Create a `.env` file in the project root:
 # UI that AI is configured. In dev, scripts/start-token-server.sh bridges the
 # VITE_ values to the server-side names (AZURE_OPENAI_ENDPOINT / _API_KEY).
 VITE_AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com/
-VITE_AZURE_OPENAI_API_KEY=your-api-key-here   # optional fallback; bridged to the server only, never bundled
+AZURE_OPENAI_API_KEY=your-api-key-here   # optional server-side fallback; prefer managed identity
 VITE_AZURE_OPENAI_DEPLOYMENT=your-default-deployment
 
 # Multi-model deployments (15 models)

@@ -2,7 +2,7 @@
 #
 # 01-network.sh — VNet + Cosmos private endpoint for the AADB web app migration.
 # ============================================================================
-# Public network access on Cosmos (aqcosmosdb007) is policy-locked to Disabled
+# Public network access on the target Cosmos account is policy-locked to Disabled
 # (MCAPS), so the ONLY compliant way for the Container App to reach Cosmos is a
 # PRIVATE ENDPOINT. This script builds the network foundation:
 #   1. A VNet with an ACA infrastructure subnet + a private-endpoint subnet.
@@ -17,14 +17,14 @@
 # ============================================================================
 set -euo pipefail
 
-RG="azure-diagrams-rg"
-LOC="eastus2"
-VNET="vnet-azure-diagrams"
-ACA_SUBNET="snet-aca-infra"          # delegated to Microsoft.App/environments
-PE_SUBNET="snet-private-endpoints"
-COSMOS="aqcosmosdb007"
-PE_NAME="pe-cosmos-aqcosmosdb007"
-PE_CONN="pe-conn-cosmos"
+RG="${AZURE_RESOURCE_GROUP:?Set AZURE_RESOURCE_GROUP}"
+LOC="${AZURE_LOCATION:-eastus2}"
+VNET="${AZURE_VNET_NAME:-vnet-azure-diagrams}"
+ACA_SUBNET="${AZURE_ACA_SUBNET_NAME:-snet-aca-infra}"          # delegated to Microsoft.App/environments
+PE_SUBNET="${AZURE_PRIVATE_ENDPOINT_SUBNET_NAME:-snet-private-endpoints}"
+COSMOS="${AZURE_COSMOS_ACCOUNT_NAME:?Set AZURE_COSMOS_ACCOUNT_NAME}"
+PE_NAME="${AZURE_COSMOS_PRIVATE_ENDPOINT_NAME:-pe-cosmos}"
+PE_CONN="${AZURE_COSMOS_PRIVATE_CONNECTION_NAME:-pe-conn-cosmos}"
 DNS_ZONE="privatelink.documents.azure.com"
 
 # Address plan (VNet 10.60.0.0/22):

@@ -32,24 +32,40 @@ contact [opencode@microsoft.com](mailto:opencode@microsoft.com) with any additio
 
 ```bash
 # Clone your fork
-git clone https://github.com/<your-username>/azure-architecture-diagram-builder.git
-cd azure-architecture-diagram-builder
+git clone https://github.com/<your-username>/AzureDiagarm.git
+cd AzureDiagarm
 
 # Install dependencies
-npm install
+npm ci
+npm --prefix server ci
+npm --prefix mcp-server ci
 
 # Configure environment variables
 cp .env.example .env
-# Edit .env with your Azure OpenAI credentials
+# Edit .env with your local configuration. Never commit credentials.
 
 # Start development server
 npm run dev
 ```
 
+### Validation
+
+Run the checks that cover the area you changed. Before opening a pull request,
+the complete validation set is:
+
+```bash
+npm run lint
+npm run build
+npm test
+npm --prefix server test
+npm --prefix mcp-server test
+npm run test:e2e
+```
+
 ### Coding Guidelines
 
 - **Language**: TypeScript with React 18
-- **Styling**: CSS modules (component-level `.css` files)
+- **Styling**: Component-level `.css` files
 - **State Management**: React hooks and custom stores
 - **Formatting**: Follow existing code patterns and indentation
 - **Naming**: Use descriptive names; PascalCase for components, camelCase for functions/variables
@@ -66,3 +82,9 @@ npm run dev
 ## Code of Conduct
 
 This project follows the [Microsoft Open Source Code of Conduct](https://opensource.microsoft.com/codeofconduct/).
+
+## Security
+
+Do not include credentials, access tokens, customer data, or private architecture
+content in issues or pull requests. Report vulnerabilities privately according
+to [SECURITY.md](SECURITY.md).

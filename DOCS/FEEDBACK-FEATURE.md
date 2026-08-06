@@ -23,9 +23,9 @@ Failed writes remain retryable and are not copied into telemetry.
 
 | Setting | Value |
 |---|---|
-| Recipient | `yangjiayi@mail.kofia.info` |
-| Communication resource | `azurediagarm-comm` |
-| Sender | `donotreply@368efacf-003f-4728-baad-469ac6526f49.azurecomm.net` |
+| Recipient | Configured through `FEEDBACK_EMAIL_RECIPIENT` |
+| Communication resource | Configured through `FEEDBACK_EMAIL_ENDPOINT` |
+| Sender | Configured through `FEEDBACK_EMAIL_SENDER` |
 | Authentication | Container App user-assigned managed identity |
 
 This avoids a database, private endpoint, or VNet solely for low-volume feedback.

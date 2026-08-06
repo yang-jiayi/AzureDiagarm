@@ -18,20 +18,20 @@
 # ============================================================================
 set -euo pipefail
 
-RG="azure-diagrams-rg"
-LOC="eastus2"
-SUB="7a28b21e-0d3e-4435-a686-d92889d4ee96"
-NEW_ENV="aca-env-azure-diagrams-vnet"
-NEW_APP="azure-diagram-builder-vnet"
-ACR="acrazurediagrams1767583743"
-IMAGE="azure-diagram-builder"
-TAG="vnet"
+RG="${AZURE_RESOURCE_GROUP:?Set AZURE_RESOURCE_GROUP}"
+LOC="${AZURE_LOCATION:-eastus2}"
+SUB="${AZURE_SUBSCRIPTION_ID:?Set AZURE_SUBSCRIPTION_ID}"
+NEW_ENV="${AZURE_CONTAINERAPPS_ENVIRONMENT:?Set AZURE_CONTAINERAPPS_ENVIRONMENT}"
+NEW_APP="${AZURE_CONTAINER_APP_NAME:-azure-diagram-builder-vnet}"
+ACR="${AZURE_CONTAINER_REGISTRY:?Set AZURE_CONTAINER_REGISTRY}"
+IMAGE="${AZURE_CONTAINER_IMAGE_NAME:-azure-diagram-builder}"
+TAG="${AZURE_CONTAINER_IMAGE_TAG:-vnet}"
 ACR_IMAGE="$ACR.azurecr.io/$IMAGE:$TAG"
 
-COSMOS_ACCOUNT="aqcosmosdb007"
+COSMOS_ACCOUNT="${AZURE_COSMOS_ACCOUNT_NAME:?Set AZURE_COSMOS_ACCOUNT_NAME}"
 COSMOS_DATA_CONTRIBUTOR="00000000-0000-0000-0000-000000000002"  # Cosmos DB Built-in Data Contributor
-SPEECH_RG="AQ-FOUNDRY-RG"
-SPEECH_ACCOUNT="aq-speech-008"
+SPEECH_RG="${AZURE_SPEECH_RESOURCE_GROUP:?Set AZURE_SPEECH_RESOURCE_GROUP}"
+SPEECH_ACCOUNT="${AZURE_SPEECH_ACCOUNT_NAME:?Set AZURE_SPEECH_ACCOUNT_NAME}"
 
 SOURCE_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 ENV_FILE="$SOURCE_DIR/.env"
@@ -66,7 +66,7 @@ APPINSIGHTS_FILE="$SOURCE_DIR/.env.appinsights"
 : > "$APPINSIGHTS_FILE"
 BUILD_ARGS=()
 while IFS='=' read -r key value; do
-  if [[ "$key" == VITE_* && -n "$value" ]]; then
+  if [[ "$key" == VITE_* && "$key" != *KEY* && "$key" != *SECRET* && "$key" != *TOKEN* && -n "$value" ]]; then
     value="${value%\"}"; value="${value#\"}"; value="${value%\'}"; value="${value#\'}"
     if [[ "$key" == "VITE_APPINSIGHTS_CONNECTION_STRING" ]]; then
       echo "$key=$value" > "$APPINSIGHTS_FILE"; continue
@@ -106,21 +106,20 @@ else
     --min-replicas 1 --max-replicas 1 \
     --cpu 0.5 --memory 1Gi \
     --secrets \
-        vite-azure-openai-api-key="$OPENAI_KEY" \
+        azure-openai-api-key="$OPENAI_KEY" \
         vite-azure-openai-endpoint="$VITE_ENDPOINT" \
         vite-azure-openai-deployment-gpt52="$VITE_DEPLOY52" \
         feedback-admin-token="$FEEDBACK_TOKEN" \
     --env-vars \
-        AZURE_COSMOS_ENDPOINT="https://aqcosmosdb007.documents.azure.com:443/" \
+        AZURE_COSMOS_ENDPOINT="https://$COSMOS_ACCOUNT.documents.azure.com:443/" \
         COSMOS_DATABASE_ID="diagrams-db" \
         COSMOS_CONTAINER_ID="diagrams" \
         COSMOS_FEEDBACK_CONTAINER_ID="feedback" \
         AZURE_SPEECH_REGION="westus2" \
         AZURE_SPEECH_RESOURCE_ID="/subscriptions/$SUB/resourceGroups/$SPEECH_RG/providers/Microsoft.CognitiveServices/accounts/$SPEECH_ACCOUNT" \
         AZURE_OPENAI_ENDPOINT="https://r2d2-foundry-001.openai.azure.com/" \
-        AZURE_OPENAI_API_KEY="$OPENAI_KEY" \
+        AZURE_OPENAI_API_KEY=secretref:azure-openai-api-key \
         VITE_AZURE_OPENAI_ENDPOINT=secretref:vite-azure-openai-endpoint \
-        VITE_AZURE_OPENAI_API_KEY=secretref:vite-azure-openai-api-key \
         VITE_AZURE_OPENAI_DEPLOYMENT_GPT52=secretref:vite-azure-openai-deployment-gpt52 \
         FEEDBACK_ADMIN_TOKEN=secretref:feedback-admin-token \
         PUBLIC_URL="https://pending.invalid" \
