@@ -29,6 +29,7 @@
 
 This fork is maintained at [`yang-jiayi/AzureDiagarm`](https://github.com/yang-jiayi/AzureDiagarm).
 The original project was created by **Arturo Quiroga**.
+The latest customization and production hardening were created by **Swarm Data SE, Jiayi Yang**.
 
 ---
 
