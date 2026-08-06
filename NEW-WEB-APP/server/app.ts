@@ -1,6 +1,7 @@
 
 import compression from 'compression';
 import express from 'express';
+import { rateLimit } from 'express-rate-limit';
 import helmet from 'helmet';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -15,9 +16,32 @@ const querySchema = z.object({ range: z.enum(RANGE_VALUES).default('30d') });
 export function createApp() {
   const app = express();
   app.disable('x-powered-by');
-  app.use(helmet({ contentSecurityPolicy: false }));
+  app.set('trust proxy', 1);
+  app.use(helmet({
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: ["'self'"],
+        styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
+        fontSrc: ["'self'", 'data:', 'https://fonts.gstatic.com'],
+        imgSrc: ["'self'", 'data:'],
+        connectSrc: ["'self'"],
+        objectSrc: ["'none'"],
+        frameAncestors: ["'none'"],
+        baseUri: ["'self'"],
+        formAction: ["'self'"],
+      },
+    },
+  }));
   app.use(compression());
   app.use(express.json({ limit: '32kb' }));
+  app.use(rateLimit({
+    windowMs: 60_000,
+    limit: 300,
+    standardHeaders: 'draft-8',
+    legacyHeaders: false,
+    skip: (request) => request.path === '/api/health',
+  }));
 
   app.get('/api/health', (_request, response) => {
     response.json({ status: 'healthy', sourceConfigured: Boolean(process.env.LOG_ANALYTICS_WORKSPACE_ID) });

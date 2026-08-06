@@ -5,6 +5,17 @@ import { createApp } from './app.js';
 import { AADB_EVENTS } from './analytics/events.js';
 
 describe('analytics API', () => {
+  it('applies browser security and request-rate headers', async () => {
+    const response = await request(createApp()).get('/api/analytics/overview?range=30d');
+    expect(response.headers['content-security-policy']).toContain("default-src 'self'");
+    expect(response.headers['content-security-policy']).toContain('https://fonts.googleapis.com');
+    expect(response.headers.ratelimit).toBeTruthy();
+    expect(response.headers['ratelimit-policy']).toBeTruthy();
+
+    const health = await request(createApp()).get('/api/health');
+    expect(health.headers.ratelimit).toBeUndefined();
+  });
+
   it('returns a typed overview using demo data when no workspace is configured', async () => {
     const response = await request(createApp()).get('/api/analytics/overview?range=30d');
     expect(response.status).toBe(200);
