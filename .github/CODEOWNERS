@@ -1,0 +1,28 @@
+# Default ownership for all public contributions.
+* @yang-jiayi
+
+# Production deployment and repository trust boundary.
+/.github/ @yang-jiayi
+/Dockerfile @yang-jiayi
+/nginx.conf @yang-jiayi
+/start.sh @yang-jiayi
+/azure.yaml @yang-jiayi
+/infra/ @yang-jiayi
+/deployment/ @yang-jiayi
+/scripts/ @yang-jiayi
+
+# Runtime, persistence, and public protocol surfaces.
+/server/ @yang-jiayi
+/mcp-server/ @yang-jiayi
+/src/services/ @yang-jiayi
+/src/hooks/useCloudDiagramSync.ts @yang-jiayi
+
+# Dependency and container supply chain.
+/package.json @yang-jiayi
+/package-lock.json @yang-jiayi
+/server/package.json @yang-jiayi
+/server/package-lock.json @yang-jiayi
+/mcp-server/package.json @yang-jiayi
+/mcp-server/package-lock.json @yang-jiayi
+/NEW-WEB-APP/package.json @yang-jiayi
+/NEW-WEB-APP/package-lock.json @yang-jiayi

@@ -1,7 +1,11 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-import { ApplicationInsights, ICustomProperties } from '@microsoft/applicationinsights-web';
+import {
+  ApplicationInsights,
+  ICustomProperties,
+  ITelemetryItem,
+} from '@microsoft/applicationinsights-web';
 
 /**
  * Application Insights Telemetry Service
@@ -27,6 +31,27 @@ import { ApplicationInsights, ICustomProperties } from '@microsoft/applicationin
 let appInsights: ApplicationInsights | null = null;
 const TELEMETRY_SCHEMA_VERSION = '2.0.0';
 const WORKFLOW_ID_KEY = 'aadb.telemetry.workflowId';
+const SHARED_DIAGRAM_PATH_PATTERN = /\/api\/diagrams\/shared\/[^/?#\s]+/gi;
+const SHARED_DIAGRAM_HASH_PATTERN = /#share-[^/?#\s]+/gi;
+const REDACTED_SHARED_DIAGRAM_PATH = '/api/diagrams/shared/[redacted]';
+const REDACTED_SHARED_DIAGRAM_HASH = '#share-[redacted]';
+
+export function redactSensitiveTelemetryValue(value: string): string {
+  return value
+    .replace(SHARED_DIAGRAM_PATH_PATTERN, REDACTED_SHARED_DIAGRAM_PATH)
+    .replace(SHARED_DIAGRAM_HASH_PATTERN, REDACTED_SHARED_DIAGRAM_HASH);
+}
+
+export function redactSensitiveTelemetry(item: ITelemetryItem): void {
+  const baseData = item.baseData;
+  if (!baseData) return;
+
+  for (const field of ['name', 'data', 'target', 'uri', 'url']) {
+    if (typeof baseData[field] === 'string') {
+      baseData[field] = redactSensitiveTelemetryValue(baseData[field]);
+    }
+  }
+}
 
 function getWorkflowId(): string {
   const existing = sessionStorage.getItem(WORKFLOW_ID_KEY);
@@ -59,8 +84,8 @@ export function initTelemetry(): void {
         enableAutoRouteTracking: true,       // Track SPA page views
         disableFetchTracking: false,         // Track fetch/XHR requests
         enableCorsCorrelation: true,         // Correlate cross-origin requests
-        enableRequestHeaderTracking: true,
-        enableResponseHeaderTracking: true,
+        enableRequestHeaderTracking: false,
+        enableResponseHeaderTracking: false,
         autoTrackPageVisitTime: true,        // Track how long users spend on page
         disableAjaxTracking: false,
         maxBatchInterval: 5000,              // Send telemetry every 5 seconds
@@ -68,6 +93,9 @@ export function initTelemetry(): void {
     });
 
     appInsights.loadAppInsights();
+    appInsights.addTelemetryInitializer((item) => {
+      redactSensitiveTelemetry(item);
+    });
     appInsights.trackPageView({ name: 'Azure Architecture Diagram Builder' });
     console.log('✅ Application Insights initialized');
   } catch (error) {

@@ -4,9 +4,10 @@
   right: 0;
   bottom: 0;
   width: 400px;
-  background: white;
-  border-left: 2px solid #0078d4;
-  box-shadow: -4px 0 12px rgba(0, 0, 0, 0.1);
+  background: var(--azd-color-surface-elevated);
+  color: var(--azd-color-text);
+  border-left: 2px solid var(--azd-color-action);
+  box-shadow: var(--azd-shadow-dock);
   z-index: 999;
   transition: all 0.3s ease;
   display: flex;
@@ -32,15 +33,23 @@
   align-items: center;
   justify-content: space-between;
   padding: 0.75rem 1.5rem;
-  background: linear-gradient(135deg, #0078d4 0%, #005a9e 100%);
-  color: white;
+  background: linear-gradient(
+    135deg,
+    var(--azd-color-header-start) 0%,
+    var(--azd-color-header-end) 100%
+  );
+  color: var(--azd-color-on-brand);
   cursor: pointer;
   user-select: none;
   transition: background 0.2s;
 }
 
 .workflow-header:hover {
-  background: linear-gradient(135deg, #005a9e 0%, #004578 100%);
+  background: linear-gradient(
+    135deg,
+    var(--azd-color-brand-hover) 0%,
+    var(--azd-color-brand-pressed) 100%
+  );
 }
 
 /* Right-side cluster: narrate button + collapse toggle */
@@ -59,21 +68,21 @@
   padding: 4px 10px;
   font-size: 0.75rem;
   font-weight: 600;
-  border: 1px solid rgba(255, 255, 255, 0.35);
-  border-radius: 6px;
-  background: rgba(255, 255, 255, 0.12);
-  color: #fff;
+  border: 1px solid var(--azd-color-inverse-border);
+  border-radius: var(--azd-radius-sm);
+  background: var(--azd-color-inverse-control);
+  color: var(--azd-color-on-brand);
   cursor: pointer;
   transition: background 0.15s, border-color 0.15s;
   white-space: nowrap;
 }
 .workflow-narrate-btn:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.22);
-  border-color: rgba(255, 255, 255, 0.6);
+  background: var(--azd-color-inverse-control-hover);
+  border-color: var(--azd-color-on-brand);
 }
 .workflow-narrate-btn.active {
-  background: rgba(239, 68, 68, 0.25);
-  border-color: rgba(239, 68, 68, 0.6);
+  background: color-mix(in srgb, var(--azd-color-danger) 25%, transparent);
+  border-color: var(--azd-color-danger);
 }
 .workflow-narrate-btn:disabled {
   opacity: 0.6;
@@ -95,7 +104,7 @@
 
 .workflow-count {
   font-size: 0.75rem;
-  background: rgba(255, 255, 255, 0.2);
+  background: var(--azd-color-inverse-control-hover);
   padding: 0.25rem 0.5rem;
   border-radius: 12px;
   font-weight: 500;
@@ -104,7 +113,7 @@
 .workflow-toggle {
   background: none;
   border: none;
-  color: white;
+  color: var(--azd-color-on-brand);
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -120,7 +129,7 @@
   flex: 1;
   overflow-y: auto;
   padding: 1.5rem;
-  background: #f8fafc;
+  background: var(--azd-color-surface-panel);
 }
 
 .workflow-steps {
@@ -134,57 +143,54 @@
 .workflow-step {
   display: flex;
   gap: 1rem;
-  background: white;
+  background: var(--azd-color-surface-elevated);
   padding: 1rem;
   border-radius: 8px;
-  border-left: 4px solid #0078d4;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+  border-left: 4px solid var(--azd-color-action);
+  box-shadow: var(--azd-shadow-control);
   transition: all 0.2s;
   cursor: pointer;
 }
 
 .workflow-step:hover {
-  background: #fef9c3;
-  box-shadow: 0 4px 12px rgba(0, 120, 212, 0.15);
+  background: var(--azd-color-warning-soft);
+  box-shadow: var(--azd-shadow-md);
   transform: translateX(4px);
-  border-left-color: #eab308;
-}
-
-body.dark-mode .workflow-step:hover {
-  background: #fef9c3;
-  border-left-color: #eab308;
+  border-left-color: var(--azd-color-warning-emphasis);
 }
 
 .workflow-step.is-narrating {
-  background: #fef9c3;
-  border-left-color: #eab308;
+  background: var(--azd-color-warning-soft);
+  border-left-color: var(--azd-color-warning-emphasis);
   border-left-width: 6px;
-  box-shadow: 0 0 0 2px rgba(234, 179, 8, 0.35), 0 6px 18px rgba(234, 179, 8, 0.25);
+  box-shadow:
+    0 0 0 2px color-mix(in srgb, var(--azd-color-warning-emphasis) 35%, transparent),
+    0 6px 18px color-mix(in srgb, var(--azd-color-warning-emphasis) 25%, transparent);
   transform: translateX(4px);
-}
-
-body.dark-mode .workflow-step.is-narrating {
-  background: #fef9c3;
-  border-left-color: #eab308;
 }
 
 /* Click-to-pin: a clicked step stays highlighted (and pins the canvas glow). */
 .workflow-step.is-pinned {
-  background: #dbeafe;
-  border-left-color: #0078d4;
+  background: var(--azd-color-surface-selected);
+  border-left-color: var(--azd-color-action);
   border-left-width: 6px;
-  box-shadow: 0 0 0 2px rgba(0, 120, 212, 0.35), 0 6px 18px rgba(0, 120, 212, 0.25);
+  box-shadow:
+    0 0 0 2px color-mix(in srgb, var(--azd-color-action) 35%, transparent),
+    0 6px 18px color-mix(in srgb, var(--azd-color-action) 25%, transparent);
   transform: translateX(4px);
 }
 
-body.dark-mode .workflow-step.is-pinned {
-  background: #1e3a5f;
-  border-left-color: #4da4ff;
-}
-
 @keyframes workflow-narrating-pulse {
-  0%, 100% { box-shadow: 0 0 0 2px rgba(234, 179, 8, 0.35), 0 6px 18px rgba(234, 179, 8, 0.25); }
-  50%      { box-shadow: 0 0 0 3px rgba(234, 179, 8, 0.55), 0 8px 22px rgba(234, 179, 8, 0.40); }
+  0%, 100% {
+    box-shadow:
+      0 0 0 2px color-mix(in srgb, var(--azd-color-warning-emphasis) 35%, transparent),
+      0 6px 18px color-mix(in srgb, var(--azd-color-warning-emphasis) 25%, transparent);
+  }
+  50% {
+    box-shadow:
+      0 0 0 3px color-mix(in srgb, var(--azd-color-warning-emphasis) 55%, transparent),
+      0 8px 22px color-mix(in srgb, var(--azd-color-warning-emphasis) 40%, transparent);
+  }
 }
 
 .workflow-step.is-narrating {
@@ -195,15 +201,19 @@ body.dark-mode .workflow-step.is-pinned {
   flex-shrink: 0;
   width: 36px;
   height: 36px;
-  background: linear-gradient(135deg, #0078d4 0%, #005a9e 100%);
-  color: white;
+  background: linear-gradient(
+    135deg,
+    var(--azd-color-brand) 0%,
+    var(--azd-color-brand-hover) 100%
+  );
+  color: var(--azd-color-on-brand);
   border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
   font-weight: 700;
   font-size: 1rem;
-  box-shadow: 0 2px 4px rgba(0, 120, 212, 0.3);
+  box-shadow: 0 2px 4px color-mix(in srgb, var(--azd-color-action) 30%, transparent);
 }
 
 .step-description {
@@ -212,7 +222,7 @@ body.dark-mode .workflow-step.is-pinned {
 
 .step-description p {
   margin: 0 0 0.5rem 0;
-  color: #333;
+  color: var(--azd-color-text);
   line-height: 1.6;
   font-size: 0.875rem;
 }
@@ -223,19 +233,19 @@ body.dark-mode .workflow-step.is-pinned {
   gap: 0.5rem;
   margin-top: 0.5rem;
   padding-top: 0.5rem;
-  border-top: 1px solid #e0e0e0;
+  border-top: 1px solid var(--azd-color-border);
 }
 
 .services-label {
   font-size: 0.75rem;
-  color: #666;
+  color: var(--azd-color-text-muted);
   font-weight: 500;
 }
 
 .services-count {
   font-size: 0.75rem;
-  background: #e0f2fe;
-  color: #0078d4;
+  background: var(--azd-color-info-soft);
+  color: var(--azd-color-info);
   padding: 0.125rem 0.5rem;
   border-radius: 12px;
   font-weight: 600;
@@ -247,16 +257,16 @@ body.dark-mode .workflow-step.is-pinned {
 }
 
 .workflow-content::-webkit-scrollbar-track {
-  background: #f1f1f1;
+  background: var(--azd-color-surface-subtle);
 }
 
 .workflow-content::-webkit-scrollbar-thumb {
-  background: #0078d4;
+  background: var(--azd-color-action);
   border-radius: 4px;
 }
 
 .workflow-content::-webkit-scrollbar-thumb:hover {
-  background: #005a9e;
+  background: var(--azd-color-action-hover);
 }
 
 /* ── Workflow Avatar Panel ─────────────────────────────────────────────────── */
@@ -265,10 +275,10 @@ body.dark-mode .workflow-step.is-pinned {
 .workflow-avatar-panel {
   position: fixed;
   /* left / top / width / height set via inline style from useDraggableResizable */
-  background: #1e1e2e;
-  border: 1px solid #334155;
-  border-radius: 12px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  background: var(--azd-color-surface-inverse);
+  border: 1px solid var(--azd-color-text-secondary);
+  border-radius: var(--azd-radius-lg);
+  box-shadow: var(--azd-shadow-lg);
   z-index: 1000;
   overflow: hidden;
   display: flex;
@@ -282,8 +292,8 @@ body.dark-mode .workflow-step.is-pinned {
   align-items: center;
   justify-content: space-between;
   padding: 8px 12px;
-  background: #0f172a;
-  border-bottom: 1px solid #334155;
+  background: var(--azd-color-surface-inverse);
+  border-bottom: 1px solid var(--azd-color-text-secondary);
   cursor: grab;
   user-select: none;
 }
@@ -295,7 +305,7 @@ body.dark-mode .workflow-step.is-pinned {
   gap: 6px;
   font-size: 0.75rem;
   font-weight: 600;
-  color: #94a3b8;
+  color: var(--azd-color-text-disabled);
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
@@ -305,22 +315,22 @@ body.dark-mode .workflow-step.is-pinned {
   border: none;
   padding: 2px;
   cursor: pointer;
-  color: #64748b;
+  color: var(--azd-color-text-subtle);
   display: flex;
   align-items: center;
   border-radius: 4px;
   transition: color 0.15s, background 0.15s;
 }
 .workflow-avatar-dismiss:hover {
-  color: #f87171;
-  background: rgba(248, 113, 113, 0.1);
+  color: var(--azd-color-danger-strong);
+  background: color-mix(in srgb, var(--azd-color-danger-strong) 10%, transparent);
 }
 
 .workflow-avatar-video-wrap {
   position: relative;
   flex: 1;          /* fill remaining height */
   min-height: 0;
-  background: #0a0a0f;
+  background: var(--azd-color-surface-inverse);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -342,14 +352,14 @@ body.dark-mode .workflow-step.is-pinned {
   flex-direction: column;
   align-items: center;
   gap: 10px;
-  color: #94a3b8;
+  color: var(--azd-color-text-disabled);
   font-size: 0.8rem;
   text-align: center;
   padding: 12px;
 }
 
 .workflow-avatar-error-display {
-  color: #f87171;
+  color: var(--azd-color-danger-strong);
   font-size: 0.75rem;
 }
 
@@ -358,8 +368,8 @@ body.dark-mode .workflow-step.is-pinned {
   justify-content: center;
   padding: 8px;
   gap: 8px;
-  background: #0f172a;
-  border-top: 1px solid #1e293b;
+  background: var(--azd-color-surface-inverse);
+  border-top: 1px solid var(--azd-color-text-secondary);
 }
 
 .workflow-avatar-action-btn {
@@ -372,23 +382,23 @@ body.dark-mode .workflow-step.is-pinned {
   border: none;
   border-radius: 6px;
   cursor: pointer;
-  background: #1d4ed8;
-  color: #fff;
+  background: var(--azd-color-brand);
+  color: var(--azd-color-on-brand);
   transition: background 0.15s;
 }
-.workflow-avatar-action-btn:hover { background: #2563eb; }
-.workflow-avatar-action-btn.stop { background: #b91c1c; }
-.workflow-avatar-action-btn.stop:hover { background: #dc2626; }
+.workflow-avatar-action-btn:hover { background: var(--azd-color-brand-hover); }
+.workflow-avatar-action-btn.stop { background: var(--azd-color-danger-strong); }
+.workflow-avatar-action-btn.stop:hover { background: var(--azd-color-danger); }
 
 /* ── Closed captions ── */
 .workflow-avatar-captions {
   padding: 10px 14px 4px;
   font-size: 0.82rem;
   line-height: 1.55;
-  color: #94a3b8;
+  color: var(--azd-color-text-disabled);
   max-height: 90px;
   overflow-y: auto;
-  border-top: 1px solid #334155;
+  border-top: 1px solid var(--azd-color-text-secondary);
   scrollbar-width: none;
 }
 .workflow-avatar-captions::-webkit-scrollbar { display: none; }
@@ -400,31 +410,31 @@ body.dark-mode .workflow-step.is-pinned {
   padding: 0 1px;
 }
 .workflow-avatar-caption-word.active {
-  color: #ffffff;
-  background: rgba(99, 102, 241, 0.45);
+  color: var(--azd-color-on-brand);
+  background: color-mix(in srgb, var(--azd-color-accent-ai) 45%, transparent);
 }
 
 /* Light-mode adjustments — panel is dark-first */
 body:not(.dark-mode) .workflow-avatar-panel {
-  background: #f8fafc;
-  border-color: #cbd5e1;
+  background: var(--azd-color-surface-panel);
+  border-color: var(--azd-color-control-border);
 }
 body:not(.dark-mode) .workflow-avatar-panel-header,
 body:not(.dark-mode) .workflow-avatar-panel-controls {
-  background: #f1f5f9;
-  border-color: #e2e8f0;
+  background: var(--azd-color-surface-subtle);
+  border-color: var(--azd-color-border-subtle);
 }
-body:not(.dark-mode) .workflow-avatar-panel-title { color: #475569; }
-body:not(.dark-mode) .workflow-avatar-dismiss { color: #94a3b8; }
-body:not(.dark-mode) .workflow-avatar-video-wrap { background: #e2e8f0; }
-body:not(.dark-mode) .workflow-avatar-connecting { color: #64748b; }
+body:not(.dark-mode) .workflow-avatar-panel-title { color: var(--azd-color-text-muted); }
+body:not(.dark-mode) .workflow-avatar-dismiss { color: var(--azd-color-text-disabled); }
+body:not(.dark-mode) .workflow-avatar-video-wrap { background: var(--azd-color-surface-sunken); }
+body:not(.dark-mode) .workflow-avatar-connecting { color: var(--azd-color-text-subtle); }
 body:not(.dark-mode) .workflow-avatar-captions {
-  border-color: #e2e8f0;
-  color: #475569;
+  border-color: var(--azd-color-border-subtle);
+  color: var(--azd-color-text-muted);
 }
 body:not(.dark-mode) .workflow-avatar-caption-word.active {
-  color: #1e293b;
-  background: rgba(99, 102, 241, 0.2);
+  color: var(--azd-color-text-secondary);
+  background: color-mix(in srgb, var(--azd-color-accent-ai) 20%, transparent);
 }
 
 /* ── Shared resize handle (used by both avatar panels) ── */
@@ -439,12 +449,12 @@ body:not(.dark-mode) .workflow-avatar-caption-word.active {
   background: linear-gradient(
     135deg,
     transparent 30%,
-    rgba(148, 163, 184, 0.35) 30%,
-    rgba(148, 163, 184, 0.35) 45%,
+    color-mix(in srgb, var(--azd-color-text-disabled) 35%, transparent) 30%,
+    color-mix(in srgb, var(--azd-color-text-disabled) 35%, transparent) 45%,
     transparent 45%,
     transparent 60%,
-    rgba(148, 163, 184, 0.35) 60%,
-    rgba(148, 163, 184, 0.35) 75%,
+    color-mix(in srgb, var(--azd-color-text-disabled) 35%, transparent) 60%,
+    color-mix(in srgb, var(--azd-color-text-disabled) 35%, transparent) 75%,
     transparent 75%
   );
   border-bottom-right-radius: 12px;
@@ -454,12 +464,12 @@ body:not(.dark-mode) .workflow-avatar-caption-word.active {
   background: linear-gradient(
     135deg,
     transparent 30%,
-    rgba(99, 102, 241, 0.55) 30%,
-    rgba(99, 102, 241, 0.55) 45%,
+    color-mix(in srgb, var(--azd-color-accent-ai) 55%, transparent) 30%,
+    color-mix(in srgb, var(--azd-color-accent-ai) 55%, transparent) 45%,
     transparent 45%,
     transparent 60%,
-    rgba(99, 102, 241, 0.55) 60%,
-    rgba(99, 102, 241, 0.55) 75%,
+    color-mix(in srgb, var(--azd-color-accent-ai) 55%, transparent) 60%,
+    color-mix(in srgb, var(--azd-color-accent-ai) 55%, transparent) 75%,
     transparent 75%
   );
 }
@@ -473,7 +483,7 @@ body:not(.dark-mode) .workflow-avatar-caption-word.active {
   animation: spin 0.8s linear infinite;
 }
 
-@media (max-width: 480px) {
+@media (max-width: 640px) {
   .workflow-panel {
     top: 88px;
     width: 100vw;

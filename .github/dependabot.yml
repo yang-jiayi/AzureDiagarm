@@ -1,0 +1,168 @@
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "03:00"
+      timezone: Asia/Tokyo
+    groups:
+      npm-minor-patch:
+        update-types:
+          - minor
+          - patch
+    open-pull-requests-limit: 5
+    reviewers:
+      - yang-jiayi
+    commit-message:
+      prefix: deps
+      include: scope
+
+  - package-ecosystem: npm
+    directory: /server
+    schedule:
+      interval: weekly
+      day: monday
+      time: "03:00"
+      timezone: Asia/Tokyo
+    groups:
+      npm-minor-patch:
+        update-types:
+          - minor
+          - patch
+    open-pull-requests-limit: 5
+    reviewers:
+      - yang-jiayi
+    commit-message:
+      prefix: deps
+      include: scope
+
+  - package-ecosystem: npm
+    directory: /mcp-server
+    schedule:
+      interval: weekly
+      day: monday
+      time: "03:00"
+      timezone: Asia/Tokyo
+    groups:
+      npm-minor-patch:
+        update-types:
+          - minor
+          - patch
+    open-pull-requests-limit: 5
+    reviewers:
+      - yang-jiayi
+    commit-message:
+      prefix: deps
+      include: scope
+
+  - package-ecosystem: npm
+    directory: /NEW-WEB-APP
+    schedule:
+      interval: weekly
+      day: monday
+      time: "03:00"
+      timezone: Asia/Tokyo
+    groups:
+      npm-minor-patch:
+        update-types:
+          - minor
+          - patch
+    open-pull-requests-limit: 5
+    reviewers:
+      - yang-jiayi
+    commit-message:
+      prefix: deps
+      include: scope
+
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "03:00"
+      timezone: Asia/Tokyo
+    groups:
+      python-minor-patch:
+        update-types:
+          - minor
+          - patch
+    open-pull-requests-limit: 5
+    reviewers:
+      - yang-jiayi
+    commit-message:
+      prefix: deps
+      include: scope
+
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "03:30"
+      timezone: Asia/Tokyo
+    groups:
+      docker-base-images:
+        patterns:
+          - "*"
+    open-pull-requests-limit: 3
+    reviewers:
+      - yang-jiayi
+    commit-message:
+      prefix: deps
+      include: scope
+
+  - package-ecosystem: docker
+    directory: /mcp-server
+    schedule:
+      interval: weekly
+      day: monday
+      time: "03:30"
+      timezone: Asia/Tokyo
+    groups:
+      docker-base-images:
+        patterns:
+          - "*"
+    open-pull-requests-limit: 3
+    reviewers:
+      - yang-jiayi
+    commit-message:
+      prefix: deps
+      include: scope
+
+  - package-ecosystem: docker
+    directory: /NEW-WEB-APP
+    schedule:
+      interval: weekly
+      day: monday
+      time: "03:30"
+      timezone: Asia/Tokyo
+    groups:
+      docker-base-images:
+        patterns:
+          - "*"
+    open-pull-requests-limit: 3
+    reviewers:
+      - yang-jiayi
+    commit-message:
+      prefix: deps
+      include: scope
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "04:00"
+      timezone: Asia/Tokyo
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+    open-pull-requests-limit: 3
+    reviewers:
+      - yang-jiayi
+    commit-message:
+      prefix: deps
+      include: scope

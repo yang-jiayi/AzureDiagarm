@@ -6,6 +6,7 @@ import { Zap, DollarSign, ChevronDown, ChevronUp } from 'lucide-react';
 import './Legend.css';
 import { useLanguage } from '../i18n/LanguageContext';
 import { readLocalStorage, writeLocalStorage } from '../utils/safeStorage';
+import { MEDIA_QUERIES } from '../styles/breakpoints';
 
 const LEGEND_COLLAPSED_STORAGE_KEY = 'azure-diagram-builder.legendCollapsed.v1';
 
@@ -25,7 +26,7 @@ const Legend: React.FC<LegendProps> = ({ forceCollapsed }) => {
   }, [forceCollapsed]);
 
   useEffect(() => {
-    const mobileViewport = window.matchMedia('(max-width: 640px), (max-height: 480px)');
+    const mobileViewport = window.matchMedia(MEDIA_QUERIES.compactOrLowHeight);
     const collapseForMobile = (event: MediaQueryListEvent) => {
       if (event.matches) setIsCollapsed(true);
     };

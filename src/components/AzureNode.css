@@ -1,6 +1,7 @@
 .azure-node {
-  background: #ffffff;
-  border-radius: 10px;
+  background: var(--azd-color-surface-elevated);
+  color: var(--azd-color-text);
+  border-radius: var(--azd-radius-md);
   padding: 12px;
   min-width: 120px;
   display: flex;
@@ -11,18 +12,18 @@
     border-color 0.16s ease,
     box-shadow 0.16s ease,
     transform 0.16s ease;
-  box-shadow: 0 2px 7px rgba(15, 23, 42, 0.1);
+  box-shadow: var(--azd-shadow-control);
   position: relative;
 }
 
 .azure-node.selected {
-  outline: 3px solid rgba(15, 108, 189, 0.3);
+  outline: 3px solid var(--azd-color-focus-soft);
   outline-offset: 2px;
-  box-shadow: 0 5px 16px rgba(15, 108, 189, 0.18);
+  box-shadow: var(--azd-shadow-md);
 }
 
 .azure-node:hover {
-  box-shadow: 0 5px 14px rgba(15, 23, 42, 0.14);
+  box-shadow: var(--azd-shadow-md);
   transform: translateY(-1px);
 }
 
@@ -40,16 +41,16 @@
   position: absolute;
   top: -8px;
   right: -8px;
-  background: rgba(255, 255, 255, 0.96);
-  color: #334155;
+  background: var(--azd-color-surface-glass);
+  color: var(--azd-color-text-secondary);
   font-size: 0.65rem;
   font-weight: 700;
   padding: 3px 7px;
   border-radius: 10px;
-  box-shadow: 0 2px 7px rgba(15, 23, 42, 0.14);
+  box-shadow: var(--azd-shadow-sm);
   white-space: nowrap;
   z-index: 10;
-  border: 1px solid var(--cost-accent, #10b981);
+  border: 1px solid var(--cost-accent, var(--azd-color-success-emphasis));
   cursor: pointer;
   transition: all 0.2s ease;
   display: flex;
@@ -59,14 +60,14 @@
 
 .cost-badge:hover {
   transform: translateY(-1px);
-  box-shadow: 0 4px 10px rgba(15, 23, 42, 0.18);
+  box-shadow: var(--azd-shadow-md);
 }
 
 /* Fabric workload items whose cost is included in the Fabric Capacity */
 .cost-badge--capacity {
-  --cost-accent: #0f766e;
-  background: rgba(255, 255, 255, 0.96);
-  color: #0f766e;
+  --cost-accent: var(--azd-color-success);
+  background: var(--azd-color-surface-glass);
+  color: var(--azd-color-success);
   font-weight: 600;
   text-transform: none;
   opacity: 0.92;
@@ -90,15 +91,15 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  background: #f5f5f5;
+  background: var(--azd-color-surface-app);
   border-radius: 4px;
 }
 
 .loading-spinner {
   width: 20px;
   height: 20px;
-  border: 2px solid #e0e0e0;
-  border-top-color: #0078d4;
+  border: 2px solid var(--azd-color-border);
+  border-top-color: var(--azd-color-action);
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
 }
@@ -111,7 +112,7 @@
 
 .node-label {
   font-size: 1rem;
-  color: #333;
+  color: var(--azd-color-text);
   text-align: center;
   font-weight: 500;
   line-height: 1.3;
@@ -141,39 +142,39 @@
   border-radius: 999px;
   font-size: 0.72rem;
   font-weight: 700;
-  border: 1px solid rgba(17, 24, 39, 0.15);
-  background: rgba(107, 114, 128, 0.10);
-  color: #111827;
+  border: 1px solid color-mix(in srgb, var(--azd-color-text-strong) 15%, transparent);
+  background: color-mix(in srgb, var(--azd-color-text-subtle) 10%, transparent);
+  color: var(--azd-color-text-strong);
   user-select: none;
 }
 
 .node-badge--neutral {
-  background: rgba(107, 114, 128, 0.10);
+  background: color-mix(in srgb, var(--azd-color-text-subtle) 10%, transparent);
 }
 
 .node-badge--info {
-  background: rgba(59, 130, 246, 0.14);
-  border-color: rgba(59, 130, 246, 0.35);
+  background: color-mix(in srgb, var(--azd-color-info) 14%, transparent);
+  border-color: color-mix(in srgb, var(--azd-color-info) 35%, transparent);
 }
 
 .node-badge--warning {
-  background: rgba(245, 158, 11, 0.16);
-  border-color: rgba(245, 158, 11, 0.35);
+  background: color-mix(in srgb, var(--azd-color-warning) 16%, transparent);
+  border-color: color-mix(in srgb, var(--azd-color-warning) 35%, transparent);
 }
 
 .node-badge--danger {
-  background: rgba(239, 68, 68, 0.14);
-  border-color: rgba(239, 68, 68, 0.35);
+  background: color-mix(in srgb, var(--azd-color-danger) 14%, transparent);
+  border-color: color-mix(in srgb, var(--azd-color-danger) 35%, transparent);
 }
 
 .node-badge--purple {
-  background: rgba(139, 92, 246, 0.14);
-  border-color: rgba(139, 92, 246, 0.35);
+  background: color-mix(in srgb, var(--azd-color-accent-ai) 14%, transparent);
+  border-color: color-mix(in srgb, var(--azd-color-accent-ai) 35%, transparent);
 }
 
 .node-badge--teal {
-  background: rgba(20, 184, 166, 0.14);
-  border-color: rgba(20, 184, 166, 0.35);
+  background: color-mix(in srgb, var(--azd-color-success-emphasis) 14%, transparent);
+  border-color: color-mix(in srgb, var(--azd-color-success-emphasis) 35%, transparent);
 }
 
 .node-badge-text {
@@ -188,11 +189,11 @@
   cursor: pointer;
   display: inline-flex;
   align-items: center;
-  color: rgba(17, 24, 39, 0.6);
+  color: color-mix(in srgb, var(--azd-color-text-strong) 60%, transparent);
 }
 
 .node-badge-remove:hover {
-  color: rgba(17, 24, 39, 0.9);
+  color: color-mix(in srgb, var(--azd-color-text-strong) 90%, transparent);
 }
 
 .node-badge-add {
@@ -201,9 +202,9 @@
   gap: 0.25rem;
   padding: 0.18rem 0.45rem;
   border-radius: 999px;
-  border: 1px dashed rgba(17, 24, 39, 0.25);
-  background: rgba(255, 255, 255, 0.7);
-  color: rgba(17, 24, 39, 0.8);
+  border: 1px dashed color-mix(in srgb, var(--azd-color-text-strong) 25%, transparent);
+  background: color-mix(in srgb, var(--azd-color-surface-elevated) 70%, transparent);
+  color: color-mix(in srgb, var(--azd-color-text-strong) 80%, transparent);
   font-size: 0.72rem;
   font-weight: 800;
   cursor: pointer;
@@ -211,8 +212,8 @@
 }
 
 .node-badge-add:hover {
-  background: rgba(255, 255, 255, 0.95);
-  border-color: rgba(17, 24, 39, 0.35);
+  background: var(--azd-color-surface-glass);
+  border-color: color-mix(in srgb, var(--azd-color-text-strong) 35%, transparent);
 }
 
 .node-badge-add:active {
@@ -220,7 +221,7 @@
 }
 
 .node-badge-add:focus-visible {
-  outline: 2px solid rgba(0, 120, 212, 0.55);
+  outline: 2px solid var(--azd-color-focus);
   outline-offset: 2px;
 }
 
@@ -228,7 +229,7 @@
   width: 160px;
   max-width: 220px;
   border-radius: 999px;
-  border: 1px solid rgba(0, 120, 212, 0.55);
+  border: 1px solid var(--azd-color-action);
   padding: 0.25rem 0.55rem;
   font-size: 0.75rem;
   font-weight: 700;
@@ -239,90 +240,36 @@
   width: 200px;
 }
 
-body.dark-mode .node-badge {
-  border-color: rgba(255, 255, 255, 0.18);
-  color: #f9fafb;
-}
-
-body.dark-mode .node-badge--neutral {
-  background: rgba(255, 255, 255, 0.08);
-}
-
-body.dark-mode .node-badge--info {
-  background: rgba(59, 130, 246, 0.22);
-  border-color: rgba(59, 130, 246, 0.45);
-}
-
-body.dark-mode .node-badge--warning {
-  background: rgba(245, 158, 11, 0.22);
-  border-color: rgba(245, 158, 11, 0.45);
-}
-
-body.dark-mode .node-badge--danger {
-  background: rgba(239, 68, 68, 0.22);
-  border-color: rgba(239, 68, 68, 0.45);
-}
-
-body.dark-mode .node-badge--purple {
-  background: rgba(139, 92, 246, 0.22);
-  border-color: rgba(139, 92, 246, 0.45);
-}
-
-body.dark-mode .node-badge--teal {
-  background: rgba(20, 184, 166, 0.22);
-  border-color: rgba(20, 184, 166, 0.45);
-}
-
-body.dark-mode .node-badge-add {
-  /* Outline-only action style in dark mode */
-  background: transparent;
-  color: rgba(255, 255, 255, 0.88);
-  border-color: rgba(255, 255, 255, 0.26);
-}
-
-body.dark-mode .node-badge-add:hover {
-  background: rgba(255, 255, 255, 0.06);
-  border-color: rgba(255, 255, 255, 0.36);
-}
-
-body.dark-mode .node-badge-remove {
-  color: rgba(255, 255, 255, 0.7);
-}
-
-body.dark-mode .node-badge-remove:hover {
-  color: rgba(255, 255, 255, 0.95);
-}
-
 body.dark-mode .node-badge-input {
-  background: rgba(17, 24, 39, 0.85);
-  color: #f9fafb;
-  border-color: rgba(96, 165, 250, 0.65);
+  background: var(--azd-color-control-background);
+  color: var(--azd-color-text);
+  border-color: var(--azd-color-action);
 }
 
 .node-label:hover {
-  background-color: #f5f5f5;
+  background-color: var(--azd-color-surface-app);
 }
 
 .node-label-input {
   font-size: 1rem;
-  color: #333;
+  color: var(--azd-color-text);
   text-align: center;
   font-weight: 500;
   line-height: 1.3;
   max-width: 140px;
-  border: 1px solid #0078d4;
+  border: 1px solid var(--azd-color-action);
   border-radius: 3px;
   padding: 4px;
   outline: none;
-  background: white;
+  background: var(--azd-color-control-background);
 }
 
 .node-handle {
   width: 8px;
   height: 8px;
-  background: #64748b;
-  border: 2px solid white;
-  box-shadow: 0 0 0 1px #64748b;
+  background: var(--azd-color-text-subtle);
+  border: 2px solid var(--azd-color-surface-elevated);
+  box-shadow: 0 0 0 1px var(--azd-color-text-subtle);
   opacity: 0.38;
   transition: opacity 0.15s ease, transform 0.15s ease, background-color 0.15s ease;
 }
@@ -334,7 +281,7 @@ body.dark-mode .node-badge-input {
 }
 
 .node-handle:hover {
-  background: #0f6cbd;
+  background: var(--azd-color-action);
   transform: scale(1.2);
 }
 
@@ -360,8 +307,8 @@ body.dark-mode .node-badge-input {
   position: absolute;
   top: 4px;
   left: 4px;
-  background: white;
-  border: 1.5px solid #0078d4;
+  background: var(--azd-color-control-background);
+  border: 1.5px solid var(--azd-color-action);
   border-radius: 50%;
   width: 24px;
   height: 24px;
@@ -369,43 +316,26 @@ body.dark-mode .node-badge-input {
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+  box-shadow: var(--azd-shadow-sm);
   transition: all 0.2s ease;
   z-index: 10;
 }
 
 .ungroup-button:hover {
-  background: #0078d4;
+  background: var(--azd-color-action);
   transform: scale(1.1);
-  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.3);
+  box-shadow: var(--azd-shadow-md);
 }
 
 .ungroup-button:hover svg {
-  color: white;
+  color: var(--azd-color-on-brand);
 }
 
 .ungroup-button svg {
   width: 14px;
   height: 14px;
-  color: #0078d4;
+  color: var(--azd-color-action);
   transition: color 0.2s ease;
-}
-
-body.dark-mode .ungroup-button {
-  background: rgba(17, 24, 39, 0.95);
-  border-color: #60a5fa;
-}
-
-body.dark-mode .ungroup-button:hover {
-  background: #60a5fa;
-}
-
-body.dark-mode .ungroup-button svg {
-  color: #60a5fa;
-}
-
-body.dark-mode .ungroup-button:hover svg {
-  color: #111827;
 }
 
 /* ==============================
@@ -421,7 +351,7 @@ body.dark-mode .ungroup-button:hover svg {
   border-top: none !important;
   border-right: none !important;
   border-bottom: none !important;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12), 0 2px 8px rgba(0, 0, 0, 0.08);
+  box-shadow: var(--azd-shadow-lg);
 }
 
 .azure-node.style-presentation .node-icon,
@@ -434,7 +364,7 @@ body.dark-mode .ungroup-button:hover svg {
   font-size: 1.05rem;
   font-weight: 600;
   max-width: 180px;
-  color: #1a1a2e;
+  color: var(--azd-color-presentation-text);
 }
 
 .azure-node.style-presentation .node-content {
@@ -443,32 +373,14 @@ body.dark-mode .ungroup-button:hover svg {
 
 .azure-node.style-presentation:hover {
   transform: translateY(-3px);
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.18), 0 4px 12px rgba(0, 0, 0, 0.1);
+  box-shadow: var(--azd-shadow-overlay);
 }
 
 /* Dark mode overrides for presets */
 body.dark-mode .azure-node.style-presentation {
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4), 0 2px 8px rgba(0, 0, 0, 0.3);
+  box-shadow: var(--azd-shadow-lg);
 }
 
 body.dark-mode .azure-node.style-presentation .node-label {
-  color: #1a1a2e;
-}
-
-body.dark-mode .azure-node:not(.style-presentation) {
-  background: #1e293b;
-  border-top-color: #475569 !important;
-  border-right-color: #475569 !important;
-  border-bottom-color: #475569 !important;
-  box-shadow: 0 3px 10px rgba(2, 6, 23, 0.42);
-}
-
-body.dark-mode .azure-node:not(.style-presentation) .node-label {
-  color: #e2e8f0;
-}
-
-body.dark-mode .cost-badge,
-body.dark-mode .cost-badge--capacity {
-  background: rgba(15, 23, 42, 0.96);
-  color: #e2e8f0;
+  color: var(--azd-color-presentation-text);
 }

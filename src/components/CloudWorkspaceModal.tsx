@@ -43,6 +43,7 @@ import { useMediaQuery } from '../hooks/useMediaQuery';
 import { useLanguage } from '../i18n/LanguageContext';
 import { localize } from '../i18n/localization';
 import { OperationGeneration } from '../utils/operationGeneration';
+import { MEDIA_QUERIES } from '../styles/breakpoints';
 import ResponsiveDrawer from './ResponsiveDrawer';
 import './CloudWorkspaceModal.css';
 
@@ -131,7 +132,7 @@ const CloudWorkspaceModal: React.FC<CloudWorkspaceModalProps> = ({
   const replacementNoticeRef = useRef('');
   const loadGenerationRef = useRef(new OperationGeneration());
   const operationGenerationRef = useRef(new OperationGeneration());
-  const useCompactDrawer = useMediaQuery('(max-width: 900px)');
+  const useCompactDrawer = useMediaQuery(MEDIA_QUERIES.narrow);
 
   isOpenRef.current = isOpen;
   currentDocumentIdRef.current = currentDocument?.id ?? null;

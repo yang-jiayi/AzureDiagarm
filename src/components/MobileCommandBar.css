@@ -12,9 +12,9 @@
     gap: 3px;
     width: 100%;
     padding: 3px;
-    border: 1px solid rgba(255, 255, 255, 0.28);
-    border-radius: 10px;
-    background: rgba(3, 48, 87, 0.42);
+    border: 1px solid var(--azd-color-inverse-border);
+    border-radius: var(--azd-radius-md);
+    background: color-mix(in srgb, var(--azd-color-brand-strong) 72%, transparent);
   }
 
   .mobile-command-bar button {
@@ -27,9 +27,9 @@
     gap: 1px;
     padding: 3px 2px;
     border: 1px solid transparent;
-    border-radius: 7px;
+    border-radius: var(--azd-radius-sm);
     background: transparent;
-    color: #f8fafc;
+    color: var(--azd-color-text-inverse);
     font: inherit;
     font-size: 0.64rem;
     font-weight: 700;
@@ -39,12 +39,12 @@
   .mobile-command-bar button:hover,
   .mobile-command-bar button[aria-expanded='true'],
   .mobile-command-bar button[aria-pressed='true'] {
-    border-color: rgba(255, 255, 255, 0.32);
-    background: rgba(255, 255, 255, 0.18);
+    border-color: var(--azd-color-inverse-border);
+    background: var(--azd-color-inverse-control-hover);
   }
 
   .mobile-command-bar button:focus-visible {
-    outline: 2px solid #fff;
+    outline: 2px solid var(--azd-color-on-brand);
     outline-offset: 1px;
   }
 

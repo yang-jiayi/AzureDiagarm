@@ -1,8 +1,10 @@
 import { expect, test, type Locator, type Page, type Route } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
+import { fileURLToPath } from 'node:url';
 
 const now = '2026-08-02T00:00:00.000Z';
 const wait = (milliseconds: number) => new Promise(resolve => setTimeout(resolve, milliseconds));
+const visualSnapshotStylePath = fileURLToPath(new URL('./visual-snapshot.css', import.meta.url));
 
 function summary(id: string, name: string) {
   return {
@@ -364,6 +366,76 @@ test('primary application shell meets WCAG A and AA checks', async ({ page }) =>
   await page.keyboard.press('Home');
   await expect(allTab).toBeFocused();
   await expectNoWcagViolations(page);
+});
+
+test('workflow stepper has stable light, dark, mobile, and forced-colors visuals', async ({ page }) => {
+  await initializePage(page);
+  await page.route('**/api/**', async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (path === '/api/access/me') {
+      await fulfillJson(route, {
+        enabled: false,
+        authenticated: true,
+        email: 'owner@example.com',
+        isAdmin: false,
+        allowed: true,
+      });
+      return;
+    }
+    await fulfillJson(route, { error: 'Not found' }, 404);
+  });
+
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.goto('/');
+  await page.evaluate(() => document.fonts.ready);
+
+  const stepper = page.getByRole('navigation', { name: 'Architecture delivery workflow' });
+  const steps = stepper.getByRole('button');
+  await expect(stepper).toBeVisible();
+  await expect(steps).toHaveCount(4);
+  await expect(steps.nth(0)).toHaveAttribute('aria-current', 'step');
+  await expect(steps.nth(1)).toBeDisabled();
+  await expect(stepper).toHaveScreenshot('workflow-stepper-light.png', {
+    animations: 'disabled',
+    caret: 'hide',
+    maxDiffPixelRatio: 0.01,
+    scale: 'css',
+    stylePath: visualSnapshotStylePath,
+  });
+
+  await page.getByRole('tab', { name: 'Home' }).click();
+  await page.getByRole('button', { name: 'Switch to Dark Mode' }).click();
+  await expect(page.locator('body')).toHaveClass(/dark-mode/);
+  await expect(stepper).toHaveScreenshot('workflow-stepper-dark.png', {
+    animations: 'disabled',
+    caret: 'hide',
+    maxDiffPixelRatio: 0.01,
+    scale: 'css',
+    stylePath: visualSnapshotStylePath,
+  });
+
+  await page.getByRole('button', { name: 'Switch to Light Mode' }).click();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(stepper).toHaveCSS('overflow-x', 'auto');
+  await expect(stepper).toHaveScreenshot('workflow-stepper-mobile.png', {
+    animations: 'disabled',
+    caret: 'hide',
+    maxDiffPixelRatio: 0.01,
+    scale: 'css',
+    stylePath: visualSnapshotStylePath,
+  });
+
+  await page.setViewportSize({ width: 1600, height: 1000 });
+  await page.emulateMedia({ forcedColors: 'active', reducedMotion: 'reduce' });
+  expect(await page.evaluate(() => matchMedia('(forced-colors: active)').matches)).toBe(true);
+  await expect(steps.nth(0)).toHaveCSS('box-shadow', 'none');
+  await expect(stepper).toHaveScreenshot('workflow-stepper-forced-colors.png', {
+    animations: 'disabled',
+    caret: 'hide',
+    maxDiffPixelRatio: 0.01,
+    scale: 'css',
+    stylePath: visualSnapshotStylePath,
+  });
 });
 
 test('feedback launcher is styled before the lazy modal chunk is opened', async ({ page }) => {

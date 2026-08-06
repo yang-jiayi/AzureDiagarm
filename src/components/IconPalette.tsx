@@ -42,6 +42,7 @@ import {
 } from '../utils/iconDiscovery';
 import { readLocalStorage, writeLocalStorage } from '../utils/safeStorage';
 import { useMediaQuery } from '../hooks/useMediaQuery';
+import { MEDIA_QUERIES } from '../styles/breakpoints';
 import VirtualizedIconGrid from './VirtualizedIconGrid';
 import ResponsiveDrawer from './ResponsiveDrawer';
 import './IconPalette.css';
@@ -85,14 +86,14 @@ const RECOMMENDED_SERVICE_NAMES = [
   ['Cognitive Search'],
 ] as const;
 
-const COMPACT_PALETTE_MEDIA_QUERY =
-  '(max-width: 640px), (max-width: 1180px) and (max-height: 600px)';
-
 const IconPalette: React.FC<IconPaletteProps> = ({ forceCollapsed, openSignal, onAddIcon }) => {
   const { t, language } = useLanguage();
-  const isCompactPalette = useMediaQuery(COMPACT_PALETTE_MEDIA_QUERY);
+  const isCompactPalette = useMediaQuery(MEDIA_QUERIES.compactOrShortWorkspace);
   const [isCollapsed, setIsCollapsed] = useState(
-    () => typeof window !== 'undefined' && window.matchMedia(COMPACT_PALETTE_MEDIA_QUERY).matches,
+    () => (
+      typeof window !== 'undefined'
+      && window.matchMedia(MEDIA_QUERIES.compactOrShortWorkspace).matches
+    ),
   );
   const [expandedCategories, setExpandedCategories] = useState<Set<IconPaletteCategoryId>>(
     new Set(['ai']),
@@ -154,7 +155,7 @@ const IconPalette: React.FC<IconPaletteProps> = ({ forceCollapsed, openSignal, o
   }, [openSignal]);
 
   useEffect(() => {
-    const compactViewport = window.matchMedia(COMPACT_PALETTE_MEDIA_QUERY);
+    const compactViewport = window.matchMedia(MEDIA_QUERIES.compactOrShortWorkspace);
     const collapseForCompactViewport = (event: MediaQueryListEvent) => {
       if (event.matches) setIsCollapsed(true);
     };
@@ -333,7 +334,7 @@ const IconPalette: React.FC<IconPaletteProps> = ({ forceCollapsed, openSignal, o
   const addIconToCanvas = useCallback((icon: AzureIcon) => {
     markRecent(icon.id);
     onAddIcon?.(icon);
-    if (window.matchMedia(COMPACT_PALETTE_MEDIA_QUERY).matches) {
+    if (window.matchMedia(MEDIA_QUERIES.compactOrShortWorkspace).matches) {
       setIsCollapsed(true);
     }
   }, [markRecent, onAddIcon]);

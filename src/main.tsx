@@ -8,6 +8,7 @@ import { initTelemetry } from './services/telemetryService'
 import { LanguageProvider } from './i18n/LanguageContext'
 import './styles/design-tokens.css'
 import './index.css'
+import './styles/high-contrast.css'
 
 // Initialize Application Insights telemetry (no-ops if not configured)
 initTelemetry()

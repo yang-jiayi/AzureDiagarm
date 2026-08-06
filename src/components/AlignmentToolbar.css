@@ -3,11 +3,12 @@
   bottom: 20px;
   left: 50%;
   transform: translateX(-50%);
-  background: white;
-  border: 1px solid #e0e0e0;
-  border-radius: 8px;
+  background: var(--azd-color-surface-elevated);
+  color: var(--azd-color-text);
+  border: 1px solid var(--azd-color-border);
+  border-radius: var(--azd-radius-md);
   padding: 0.75rem 1rem;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  box-shadow: var(--azd-shadow-floating);
   display: flex;
   align-items: center;
   gap: 1rem;
@@ -34,7 +35,7 @@
 
 .toolbar-label {
   font-size: 0.75rem;
-  color: #666;
+  color: var(--azd-color-text-muted);
   margin-right: 0.5rem;
   font-weight: 500;
 }
@@ -45,82 +46,42 @@
   justify-content: center;
   width: 36px;
   height: 36px;
-  background: white;
-  border: 1px solid #d0d0d0;
-  border-radius: 4px;
+  background: var(--azd-color-control-background);
+  border: 1px solid var(--azd-color-control-border);
+  border-radius: var(--azd-radius-sm);
   cursor: pointer;
   transition: all 0.15s;
-  color: #333;
+  color: var(--azd-color-text);
 }
 
 .toolbar-btn:hover {
-  background: #f5f5f5;
-  border-color: #0078d4;
-  color: #0078d4;
+  background: var(--azd-color-control-background-hover);
+  border-color: var(--azd-color-control-border-hover);
+  color: var(--azd-color-action);
   transform: translateY(-2px);
 }
 
 .toolbar-btn:focus-visible {
-  outline: 2px solid #0078d4;
+  outline: 2px solid var(--azd-color-focus);
   outline-offset: 2px;
 }
 
 .toolbar-btn:active {
   transform: translateY(0);
-  background: #e8f4fd;
+  background: var(--azd-color-control-background-active);
 }
 
 .toolbar-separator {
   width: 1px;
   height: 32px;
-  background: #e0e0e0;
+  background: var(--azd-color-border);
 }
 
 .toolbar-info {
   font-size: 0.75rem;
-  color: #0078d4;
+  color: var(--azd-color-action);
   font-weight: 500;
   margin-left: 0.5rem;
   padding-left: 1rem;
-  border-left: 1px solid #e0e0e0;
-}
-
-body.dark-mode .alignment-toolbar {
-  background: #182333;
-  border-color: #43536a;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.38);
-}
-
-body.dark-mode .toolbar-label {
-  color: #b8c8da;
-}
-
-body.dark-mode .toolbar-btn {
-  background: #1b2738;
-  border-color: #43536a;
-  color: #e5edf7;
-}
-
-body.dark-mode .toolbar-btn:hover {
-  background: #233c58;
-  border-color: #7dd3fc;
-  color: #e6f4ff;
-}
-
-body.dark-mode .toolbar-btn:focus-visible {
-  outline-color: #7dd3fc;
-}
-
-body.dark-mode .toolbar-btn:active {
-  background: #0f6cbd;
-  color: #ffffff;
-}
-
-body.dark-mode .toolbar-separator {
-  background: #43536a;
-}
-
-body.dark-mode .toolbar-info {
-  color: #b8ddff;
-  border-left-color: #43536a;
+  border-left: 1px solid var(--azd-color-border);
 }

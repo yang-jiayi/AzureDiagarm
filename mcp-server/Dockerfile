@@ -11,7 +11,7 @@
 # (azd builds it via the 'mcp' service in azure.yaml with docker.context: ".")
 
 # ── Build stage ──────────────────────────────────────────────────────────────
-FROM node:22-alpine AS build
+FROM node:22-alpine@sha256:c610fcdfb1d5b4740dd70c284ed3cb16bb857e0f7166196e36a5501df7a3aa32 AS build
 WORKDIR /app/mcp-server
 
 # Install deps first for better layer caching.
@@ -33,7 +33,7 @@ COPY Azure_Public_Service_Icons /app/Azure_Public_Service_Icons
 RUN npm run build
 
 # ── Runtime stage ────────────────────────────────────────────────────────────
-FROM node:22-alpine AS runtime
+FROM node:22-alpine@sha256:c610fcdfb1d5b4740dd70c284ed3cb16bb857e0f7166196e36a5501df7a3aa32 AS runtime
 WORKDIR /srv/mcp-server
 
 ENV NODE_ENV=production \

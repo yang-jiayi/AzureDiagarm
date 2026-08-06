@@ -283,7 +283,7 @@ body.dark-mode .iac-file-list li {
   border-bottom-color: #334155;
 }
 
-@media (max-width: 760px) {
+@media (max-width: 900px) {
   .iac-roundtrip-modal {
     width: 96vw;
   }

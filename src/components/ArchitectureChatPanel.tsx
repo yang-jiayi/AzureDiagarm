@@ -16,6 +16,7 @@ import { useLanguage } from '../i18n/LanguageContext';
 import { localize, type LocalizedText } from '../i18n/localization';
 import { OperationGeneration } from '../utils/operationGeneration';
 import { readLocalStorage, writeLocalStorage } from '../utils/safeStorage';
+import { MEDIA_QUERIES } from '../styles/breakpoints';
 import ResponsiveDrawer from './ResponsiveDrawer';
 
 interface ChatMessage {
@@ -38,8 +39,6 @@ const CHAT_PANEL_WIDTH_KEY = 'azure-diagram-builder.chatPanelWidth.v1';
 const DEFAULT_CHAT_PANEL_WIDTH = 460;
 const MIN_CHAT_PANEL_WIDTH = 360;
 const MAX_CHAT_PANEL_WIDTH = 720;
-const COMPACT_CHAT_MEDIA_QUERY = '(max-width: 1180px)';
-
 function clampChatPanelWidth(width: number): number {
   return Math.min(MAX_CHAT_PANEL_WIDTH, Math.max(MIN_CHAT_PANEL_WIDTH, width));
 }
@@ -201,7 +200,7 @@ const ArchitectureChatPanel: React.FC<ArchitectureChatPanelProps> = ({
   onApply,
 }) => {
   const { t, translate, language } = useLanguage();
-  const isCompactChat = useMediaQuery(COMPACT_CHAT_MEDIA_QUERY);
+  const isCompactChat = useMediaQuery(MEDIA_QUERIES.workspace);
   const [panelWidth, setPanelWidth] = useState(() => {
     const stored = readLocalStorage(CHAT_PANEL_WIDTH_KEY);
     const parsed = stored === null ? Number.NaN : Number(stored);

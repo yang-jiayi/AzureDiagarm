@@ -1,0 +1,435 @@
+/* Copyright (c) Microsoft Corporation. Licensed under the MIT License. */
+
+@media (prefers-contrast: more) and (forced-colors: none) {
+  :root {
+    --azd-color-brand: #005a9e;
+    --azd-color-brand-strong: #004578;
+    --azd-color-text: #111827;
+    --azd-color-text-muted: #334155;
+    --azd-color-border: #64748b;
+    --azd-color-focus: #004e8c;
+  }
+
+  body.dark-mode {
+    --azd-color-brand: #4db3ff;
+    --azd-color-brand-strong: #8ad1ff;
+    --azd-color-text: #ffffff;
+    --azd-color-text-muted: #d7e3f1;
+    --azd-color-border: #8da2ba;
+    --azd-color-focus: #8ad1ff;
+  }
+
+  :where(button, [role='button'], a, input, select, textarea):focus-visible {
+    outline: 3px solid var(--azd-color-focus) !important;
+    outline-offset: 3px !important;
+  }
+
+  :where(
+    .toolbar-dropdown-menu,
+    .context-menu,
+    .edge-context-menu,
+    .node-context-menu,
+    .command-palette,
+    .responsive-drawer-panel,
+    [role='dialog']
+  ) {
+    border-width: 2px !important;
+  }
+
+  :where(.azure-node, .group-node) {
+    border-width: 2px;
+  }
+}
+
+@media (forced-colors: active) {
+  :root,
+  body.dark-mode {
+    color-scheme: light dark;
+    --azd-color-brand: Highlight;
+    --azd-color-brand-strong: Highlight;
+    --azd-color-brand-hover: Highlight;
+    --azd-color-brand-pressed: Highlight;
+    --azd-color-header-start: Canvas;
+    --azd-color-header-end: Canvas;
+    --azd-color-brand-soft: Canvas;
+    --azd-color-brand-subtle: Canvas;
+    --azd-color-brand-border: CanvasText;
+    --azd-color-action: Highlight;
+    --azd-color-action-hover: Highlight;
+    --azd-color-on-brand: HighlightText;
+    --azd-color-accent-ai: Highlight;
+    --azd-color-accent-ai-strong: Highlight;
+    --azd-color-accent-ai-secondary: Highlight;
+    --azd-color-accent-ai-soft: Canvas;
+    --azd-color-accent-ai-border: CanvasText;
+    --azd-color-surface-app: Canvas;
+    --azd-color-surface-canvas: Canvas;
+    --azd-color-surface-panel: Canvas;
+    --azd-color-surface-elevated: Canvas;
+    --azd-color-surface-subtle: Canvas;
+    --azd-color-surface-hover: Canvas;
+    --azd-color-surface-selected: Canvas;
+    --azd-color-surface-sunken: Canvas;
+    --azd-color-surface-glass: Canvas;
+    --azd-color-surface-inverse: CanvasText;
+    --azd-color-surface-inverse-glass: Canvas;
+    --azd-color-text-strong: CanvasText;
+    --azd-color-text: CanvasText;
+    --azd-color-text-secondary: CanvasText;
+    --azd-color-text-muted: GrayText;
+    --azd-color-text-subtle: GrayText;
+    --azd-color-text-disabled: GrayText;
+    --azd-color-text-inverse: HighlightText;
+    --azd-color-text-inverse-muted: HighlightText;
+    --azd-color-border-subtle: CanvasText;
+    --azd-color-border: CanvasText;
+    --azd-color-border-strong: CanvasText;
+    --azd-color-control-background: ButtonFace;
+    --azd-color-control-background-hover: ButtonFace;
+    --azd-color-control-background-active: Highlight;
+    --azd-color-control-border: ButtonText;
+    --azd-color-control-border-hover: Highlight;
+    --azd-color-focus: Highlight;
+    --azd-color-focus-soft: Highlight;
+    --azd-color-success: CanvasText;
+    --azd-color-success-emphasis: CanvasText;
+    --azd-color-success-soft: Canvas;
+    --azd-color-warning: CanvasText;
+    --azd-color-warning-emphasis: CanvasText;
+    --azd-color-warning-soft: Canvas;
+    --azd-color-danger: CanvasText;
+    --azd-color-danger-strong: CanvasText;
+    --azd-color-danger-soft: Canvas;
+    --azd-color-info: CanvasText;
+    --azd-color-info-soft: Canvas;
+    --azd-color-mark: Mark;
+    --azd-color-mark-text: MarkText;
+    --azd-color-presentation-text: CanvasText;
+    --azd-color-overlay-backdrop: Canvas;
+    --azd-color-overlay-scrim: Canvas;
+    --azd-color-inverse-control: ButtonFace;
+    --azd-color-inverse-control-hover: Highlight;
+    --azd-color-inverse-control-active: Highlight;
+    --azd-color-inverse-border: ButtonText;
+    --azd-shadow-control: none;
+    --azd-shadow-sm: none;
+    --azd-shadow-md: none;
+    --azd-shadow-lg: none;
+    --azd-shadow-overlay: none;
+    --azd-shadow-panel: none;
+    --azd-shadow-dock: none;
+    --azd-shadow-floating: none;
+  }
+
+  body,
+  .app,
+  .workspace,
+  .canvas-container,
+  .react-flow,
+  .react-flow__background {
+    background: Canvas !important;
+    color: CanvasText !important;
+  }
+
+  :where(
+    .app-header,
+    .ribbon-tabs,
+    .ribbon-command-strip,
+    .header-actions-wrapper,
+    .toolbar-group--labeled,
+    .icon-palette,
+    .palette-header,
+    .workflow-panel,
+    .workflow-stepper,
+    .alignment-toolbar,
+    .responsive-drawer-panel,
+    .command-palette,
+    .toolbar-dropdown-menu,
+    .context-menu,
+    .edge-context-menu,
+    .node-context-menu,
+    .color-picker-panel,
+    .modal-content,
+    .compare-modal,
+    .access-modal,
+    [role='dialog'],
+    [role='menu'],
+    [role='listbox']
+  ) {
+    background: Canvas !important;
+    background-image: none !important;
+    color: CanvasText !important;
+    border-color: CanvasText !important;
+    box-shadow: none !important;
+    backdrop-filter: none !important;
+  }
+
+  :where(
+    .app-header,
+    .ribbon-tabs,
+    .icon-palette,
+    .workflow-panel,
+    .alignment-toolbar,
+    .responsive-drawer-panel,
+    .command-palette,
+    [role='dialog']
+  ) {
+    border-style: solid !important;
+    border-width: 2px !important;
+  }
+
+  .app-header {
+    border-width: 0 0 2px !important;
+  }
+
+  .responsive-drawer-backdrop,
+  .command-palette-backdrop,
+  .modal-overlay,
+  .access-modal-overlay,
+  .cloud-workspace-overlay {
+    forced-color-adjust: none;
+    background: Canvas !important;
+    opacity: 0.82;
+    backdrop-filter: none !important;
+  }
+
+  .microsoft-square-red,
+  .microsoft-square-green,
+  .microsoft-square-blue,
+  .microsoft-square-yellow {
+    forced-color-adjust: none;
+    background: CanvasText !important;
+  }
+
+  :where(
+    button,
+    [role='button']
+  ):not(.responsive-drawer-backdrop):not(.edge-context-menu-overlay):not(.palette-backdrop) {
+    background: ButtonFace !important;
+    background-image: none !important;
+    color: ButtonText !important;
+    border: 1px solid ButtonText !important;
+    box-shadow: none !important;
+    text-shadow: none !important;
+  }
+
+  :where(input, textarea, select) {
+    background: Field !important;
+    color: FieldText !important;
+    border: 1px solid FieldText !important;
+    box-shadow: none !important;
+  }
+
+  :where(input, textarea)::placeholder {
+    color: GrayText !important;
+    opacity: 1;
+  }
+
+  :where(button, [role='button'], input, textarea, select):disabled,
+  [aria-disabled='true'] {
+    color: GrayText !important;
+    border-color: GrayText !important;
+    opacity: 1 !important;
+  }
+
+  a,
+  a:visited {
+    color: LinkText !important;
+    text-decoration: underline;
+  }
+
+  :where(button, [role='button'], a, input, select, textarea, [tabindex]):focus-visible {
+    outline: 3px solid Highlight !important;
+    outline-offset: 3px !important;
+  }
+
+  :where(
+    button[aria-pressed='true'],
+    button[aria-expanded='true'],
+    [role='option'][aria-selected='true'],
+    [role='tab'][aria-selected='true'],
+    button[aria-current='step'],
+    .language-switch button.active,
+    .ribbon-tab.active,
+    .command-palette-results > button.active,
+    .cloud-document-list > button.selected,
+    .compare-model-chip.selected,
+    .compare-reasoning-btn.active,
+    .pricing-mode-btn.active
+  ) {
+    forced-color-adjust: none;
+    background: Highlight !important;
+    color: HighlightText !important;
+    border-color: Highlight !important;
+  }
+
+  :where(
+    .toolbar-dropdown-item,
+    .context-menu-item,
+    .command-palette-results > button
+  ):hover {
+    forced-color-adjust: none;
+    background: Highlight !important;
+    color: HighlightText !important;
+  }
+
+  :where(
+    .toolbar-dropdown-heading,
+    .toolbar-dropdown-hint,
+    .context-menu-header,
+    .command-palette-copy small,
+    .command-palette-group,
+    .palette-help,
+    .toolbar-label
+  ) {
+    color: CanvasText !important;
+  }
+
+  :where(
+    .toolbar-dropdown-separator,
+    .context-menu-separator,
+    .toolbar-separator,
+    .command-palette-header,
+    .command-palette-footer,
+    .palette-header
+  ) {
+    border-color: CanvasText !important;
+    background: Canvas !important;
+  }
+
+  mark,
+  .command-palette-copy mark {
+    forced-color-adjust: none;
+    background: Mark !important;
+    color: MarkText !important;
+  }
+
+  :where(
+    .azure-node,
+    .group-node,
+    .cost-badge,
+    .node-icon-placeholder,
+    .canvas-activity-banner,
+    .canvas-prompt-banner,
+    .canvas-empty-cta-inner,
+    .canvas-nav-hint,
+    .legend,
+    .title-block
+  ) {
+    forced-color-adjust: none;
+    background: Canvas !important;
+    background-image: none !important;
+    color: CanvasText !important;
+    border-color: CanvasText !important;
+    box-shadow: none !important;
+    text-shadow: none !important;
+  }
+
+  .azure-node {
+    border: 2px solid CanvasText !important;
+  }
+
+  .group-node {
+    border: 2px dashed CanvasText !important;
+  }
+
+  .group-node-header {
+    background: Canvas !important;
+    border-color: CanvasText !important;
+  }
+
+  :where(.azure-node.selected, .group-node.selected) {
+    outline: 4px solid Highlight !important;
+    outline-offset: 3px !important;
+  }
+
+  :where(
+    .node-label,
+    .group-label,
+    .cost-badge,
+    .canvas-empty-cta-title,
+    .canvas-empty-cta-desc,
+    .canvas-nav-hint
+  ) {
+    color: CanvasText !important;
+  }
+
+  .react-flow__edge-path,
+  .editable-edge-flow-path {
+    stroke: CanvasText !important;
+    filter: none !important;
+  }
+
+  .react-flow__edge.selected .react-flow__edge-path,
+  .editable-edge-flow-path.is-selected,
+  .react-flow__edge.reconnecting .react-flow__edge-path {
+    stroke: Highlight !important;
+    stroke-width: 3 !important;
+  }
+
+  .react-flow__edge-text {
+    fill: CanvasText !important;
+  }
+
+  .react-flow__handle,
+  .node-handle,
+  .react-flow__handle.connecting,
+  .react-flow__handle.valid {
+    forced-color-adjust: none;
+    background: Canvas !important;
+    border: 2px solid CanvasText !important;
+    box-shadow: none !important;
+  }
+
+  .react-flow__handle.connecting,
+  .react-flow__handle.valid {
+    background: Highlight !important;
+    border-color: HighlightText !important;
+  }
+
+  .react-flow__selection,
+  .react-flow__nodesselection-rect {
+    forced-color-adjust: none;
+    background: transparent !important;
+    border: 2px dashed Highlight !important;
+  }
+
+  .react-flow__controls,
+  .react-flow__minimap {
+    forced-color-adjust: none;
+    background: Canvas !important;
+    border: 2px solid CanvasText !important;
+    box-shadow: none !important;
+  }
+
+  .react-flow__controls-button {
+    background: ButtonFace !important;
+    color: ButtonText !important;
+    border-color: ButtonText !important;
+    fill: ButtonText !important;
+  }
+
+  .react-flow__minimap-mask {
+    fill: Canvas !important;
+    fill-opacity: 0.7 !important;
+  }
+
+  .react-flow__minimap-node {
+    fill: CanvasText !important;
+  }
+
+  :where(
+    .error-message,
+    .cloud-workspace-error,
+    [role='alert']
+  ) {
+    forced-color-adjust: none;
+    background: Canvas !important;
+    color: CanvasText !important;
+    border: 2px solid CanvasText !important;
+  }
+
+  * {
+    scrollbar-color: ButtonText Canvas;
+  }
+}

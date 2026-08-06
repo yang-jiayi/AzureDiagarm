@@ -439,7 +439,7 @@ body.dark-mode .ai-modal-active-model .model-change-hint {
   color: #64748b;
 }
 
-@media (max-width: 560px) {
+@media (max-width: 640px) {
   .toolbar-dropdown-menu--model-settings {
     width: min(480px, calc(100vw - 16px));
   }

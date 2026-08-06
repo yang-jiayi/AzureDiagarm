@@ -673,7 +673,7 @@ body.dark-mode .cloud-workspace-error {
   }
 }
 
-@media (max-width: 600px) {
+@media (max-width: 640px) {
   .cloud-sync-banner,
   .cloud-document-toolbar,
   .cloud-workspace-modal .modal-actions {

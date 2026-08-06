@@ -5,6 +5,7 @@ import React, { useState, useRef, useCallback, useEffect, useId } from 'react';
 import { ChevronDown, ChevronUp } from 'lucide-react';
 import './TitleBlock.css';
 import { useLanguage } from '../i18n/LanguageContext';
+import { MEDIA_QUERIES } from '../styles/breakpoints';
 
 interface TitleBlockProps {
   architectureName?: string;
@@ -24,7 +25,7 @@ const TitleBlock: React.FC<TitleBlockProps> = ({
   const { t } = useLanguage();
   const [isEditing, setIsEditing] = useState(false);
   const [isCollapsed, setIsCollapsed] = useState(
-    () => typeof window !== 'undefined' && window.matchMedia('(max-width: 1024px)').matches,
+    () => typeof window !== 'undefined' && window.matchMedia(MEDIA_QUERIES.narrow).matches,
   );
   const [editData, setEditData] = useState({
     architectureName,
@@ -47,7 +48,7 @@ const TitleBlock: React.FC<TitleBlockProps> = ({
   }, [architectureName, author, version, isEditing]);
 
   useEffect(() => {
-    const compactViewport = window.matchMedia('(max-width: 1024px)');
+    const compactViewport = window.matchMedia(MEDIA_QUERIES.narrow);
     const collapseForCompactViewport = (event: MediaQueryListEvent) => {
       if (event.matches) setIsCollapsed(true);
     };

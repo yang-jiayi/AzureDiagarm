@@ -393,7 +393,7 @@ body.dark-mode .access-user-row {
   border-color: #33475d;
 }
 
-@media (max-width: 600px) {
+@media (max-width: 640px) {
   .access-modal-overlay {
     align-items: end;
     padding: 0;

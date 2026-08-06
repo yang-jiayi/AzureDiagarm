@@ -31,6 +31,7 @@ import CommandPalette, { type CommandPaletteAction } from './components/CommandP
 import HelpLearnPanel from './components/GuidedHelpPanel';
 import MobileCommandBar from './components/MobileCommandBar';
 import ResponsiveRibbonSurface from './components/ResponsiveRibbonSurface';
+import WorkflowStepper from './components/WorkflowStepper';
 import type { ReferenceArchitecture } from './services/referenceArchitectureAI';
 import type { BlueprintArchitecture } from './services/blueprintArchitectureAI';
 import ReferenceImageViewer from './components/ReferenceImageViewer';
@@ -130,6 +131,7 @@ import { csvTextCell } from './utils/csv';
 import { toFileNameSegment } from './utils/fileName';
 import { readBooleanPreference, readLocalStorage, writeLocalStorage } from './utils/safeStorage';
 import { findAvailableServicePosition } from './utils/serviceNodePlacement';
+import { MEDIA_QUERIES } from './styles/breakpoints';
 
 type LazyFeatureBoundaryProps = {
   active: boolean;
@@ -731,7 +733,7 @@ function fitToolbarMenuToViewport(menu: HTMLElement) {
   menu.style.overflowX = 'auto';
   const trigger = menu.parentElement?.getBoundingClientRect();
 
-  if (window.matchMedia('(max-width: 640px), (max-width: 1180px) and (max-height: 600px)').matches) {
+  if (window.matchMedia(MEDIA_QUERIES.compactOrShortWorkspace).matches) {
     const ribbonTabsBottom = document.querySelector('.ribbon-tabs')?.getBoundingClientRect().bottom;
     const minimumTop = Math.max(viewportTop + edgeGap, (ribbonTabsBottom ?? 78) + 4);
     let top = Math.max(minimumTop, (trigger?.bottom ?? minimumTop) + triggerGap);
@@ -1013,7 +1015,7 @@ function App() {
   const [isHeaderCollapsed, setIsHeaderCollapsed] = useState<boolean>(() => {
     const stored = readLocalStorage(HEADER_COLLAPSED_STORAGE_KEY);
     if (stored !== null) return stored === '1';
-    return window.matchMedia('(max-width: 1440px)').matches;
+    return window.matchMedia(MEDIA_QUERIES.wide).matches;
   });
   const [activeRibbonTab, setActiveRibbonTab] = useState<RibbonTabId>(() => {
     const stored = readLocalStorage(RIBBON_TAB_STORAGE_KEY);
@@ -5061,6 +5063,32 @@ function App() {
     setIsModelSettingsOpen(false);
   }, []);
 
+  const openWorkflowGenerator = useCallback(() => {
+    if (!isChatOpen) toggleChatPanel();
+  }, [isChatOpen, toggleChatPanel]);
+
+  const openWorkflowValidation = useCallback(() => {
+    if (validationResult) {
+      setIsValidationModalOpen(true);
+      return;
+    }
+    void handleValidateArchitecture();
+  }, [handleValidateArchitecture, validationResult]);
+
+  const openWorkflowCostReview = useCallback(() => {
+    activateRibbonTab('home');
+    setPricingPrefs({ showCostBadges: true });
+    setIsPricingScenarioModalOpen(true);
+  }, [activateRibbonTab, setPricingPrefs]);
+
+  const openWorkflowDeployment = useCallback(() => {
+    if (deploymentGuide) {
+      setIsDeploymentGuideModalOpen(true);
+      return;
+    }
+    void handleGenerateDeploymentGuide();
+  }, [deploymentGuide, handleGenerateDeploymentGuide]);
+
   const toolbarSectionHeading = (sectionId: ToolbarSectionId, label: string) => {
     const isCollapsed = collapsedToolbarSections.has(sectionId);
     return (
@@ -6272,6 +6300,24 @@ function App() {
           </button>
         </div>
       </header>
+
+      {!focusMode && (
+        <WorkflowStepper
+          serviceCount={nodes.filter((node) => node.type === 'azureNode').length}
+          validationScore={validationResult?.overallScore ?? persistedValidationScore ?? null}
+          hasCostData={hasCostReportData}
+          monthlyCostLabel={
+            totalMonthlyCost === 0 ? '$0.00/mo' : formatMonthlyCost(totalMonthlyCost)
+          }
+          hasDeploymentGuide={deploymentGuide !== null}
+          isValidating={isValidating}
+          isGeneratingGuide={isGeneratingGuide}
+          onGenerate={openWorkflowGenerator}
+          onValidate={openWorkflowValidation}
+          onReviewCost={openWorkflowCostReview}
+          onDeploy={openWorkflowDeployment}
+        />
+      )}
       
       <div className="workspace">
         <IconPalette

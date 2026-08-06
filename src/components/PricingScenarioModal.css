@@ -387,7 +387,7 @@ body.dark-mode .pricing-scenario-freshness.stale {
   }
 }
 
-@media (max-width: 600px) {
+@media (max-width: 640px) {
   .pricing-scenario-freshness {
     align-items: flex-start;
     flex-direction: column;

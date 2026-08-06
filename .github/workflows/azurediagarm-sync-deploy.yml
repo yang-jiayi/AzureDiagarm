@@ -28,7 +28,6 @@ env:
   # Generated extension command surfaces can change between beta releases.
   AZURE_CONTAINERAPP_EXTENSION_VERSION: 1.3.0b4
   AZURE_CDN_EXTENSION_VERSION: 1.0.0b2
-  AZURE_COMMUNICATION_EXTENSION_VERSION: 1.14.0
 
 jobs:
   merge_validate:
@@ -215,6 +214,11 @@ jobs:
       contents: read
       id-token: write
     steps:
+      - name: Check out notification helper
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          persist-credentials: false
+
       - name: Sign in to Azure with OIDC
         uses: azure/login@532459ea530d8321f2fb9bb10d1e0bcf23869a43 # v3.0.0
         with:
@@ -224,24 +228,16 @@ jobs:
 
       - name: Send validation failure email
         env:
-          AZURE_COMMUNICATION_CONNECTION_STRING: ${{ secrets.AZURE_COMMUNICATION_CONNECTION_STRING }}
+          AZURE_COMMUNICATION_ENDPOINT: ${{ vars.FEEDBACK_EMAIL_ENDPOINT }}
+          AZURE_EMAIL_SENDER: ${{ vars.AZURE_EMAIL_SENDER }}
+          AZURE_EMAIL_RECIPIENT: ${{ vars.AZURE_EMAIL_RECIPIENT }}
+          AZURE_EMAIL_SUBJECT: AzureDiagarm update validation failed
         run: |
-          failure_body="$(
-            printf 'The AzureDiagarm upstream merge or validation failed.\n\nWorkflow: %s\n' \
-              "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          )"
-          az extension add \
-            --name communication \
-            --version "$AZURE_COMMUNICATION_EXTENSION_VERSION" \
-            --yes \
-            --only-show-errors
-          az communication email send \
-            --sender "${{ vars.AZURE_EMAIL_SENDER }}" \
-            --to "${{ vars.AZURE_EMAIL_RECIPIENT }}" \
-            --subject "AzureDiagarm update validation failed" \
-            --text "$failure_body" \
-            --wait-until completed \
-            --output none
+          set -Eeuo pipefail
+          printf 'The AzureDiagarm upstream merge or validation failed.\n\nWorkflow: %s\n' \
+            "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            > email-body.txt
+          bash scripts/send-acs-email.sh email-body.txt
 
   deploy:
     name: Deploy validated revision
@@ -1572,14 +1568,12 @@ jobs:
         if: steps.deployment.outputs.should_deploy == 'true'
         continue-on-error: true
         env:
-          AZURE_COMMUNICATION_CONNECTION_STRING: ${{ secrets.AZURE_COMMUNICATION_CONNECTION_STRING }}
+          AZURE_COMMUNICATION_ENDPOINT: ${{ vars.FEEDBACK_EMAIL_ENDPOINT }}
+          AZURE_EMAIL_SENDER: ${{ vars.AZURE_EMAIL_SENDER }}
+          AZURE_EMAIL_RECIPIENT: ${{ vars.AZURE_EMAIL_RECIPIENT }}
+          AZURE_EMAIL_SUBJECT: AzureDiagarm update completed - ${{ needs.merge_validate.outputs.upstream_short }}
         run: |
           set -Eeuo pipefail
-          az extension add \
-            --name communication \
-            --version "$AZURE_COMMUNICATION_EXTENSION_VERSION" \
-            --yes \
-            --only-show-errors
 
           {
             echo "Azure Architecture Diagram Builder was updated successfully."
@@ -1594,13 +1588,7 @@ jobs:
             cat update-details.txt
           } > email-body.txt
 
-          az communication email send \
-            --sender "${{ vars.AZURE_EMAIL_SENDER }}" \
-            --to "${{ vars.AZURE_EMAIL_RECIPIENT }}" \
-            --subject "AzureDiagarm update completed: ${{ needs.merge_validate.outputs.upstream_short }}" \
-            --text "$(cat email-body.txt)" \
-            --wait-until completed \
-            --output none
+          bash scripts/send-acs-email.sh email-body.txt
 
       - name: Report update email failure
         if: steps.success_notification.outcome == 'failure'
@@ -1616,26 +1604,21 @@ jobs:
         if: failure()
         continue-on-error: true
         env:
-          AZURE_COMMUNICATION_CONNECTION_STRING: ${{ secrets.AZURE_COMMUNICATION_CONNECTION_STRING }}
+          AZURE_COMMUNICATION_ENDPOINT: ${{ vars.FEEDBACK_EMAIL_ENDPOINT }}
+          AZURE_EMAIL_SENDER: ${{ vars.AZURE_EMAIL_SENDER }}
+          AZURE_EMAIL_RECIPIENT: ${{ vars.AZURE_EMAIL_RECIPIENT }}
+          AZURE_EMAIL_SUBJECT: AzureDiagarm update failed
         run: |
-          details="No additional failure details were generated."
-          if [[ -s update-details.txt ]]; then
-            details="$(cat update-details.txt)"
-          fi
-          failure_body="$(
+          set -Eeuo pipefail
+          {
             printf 'The AzureDiagarm sync or deployment failed.\n\n%s\n\nWorkflow: %s\n' \
-              "$details" \
+              "$(
+                if [[ -s update-details.txt ]]; then
+                  cat update-details.txt
+                else
+                  printf 'No additional failure details were generated.'
+                fi
+              )" \
               "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          )"
-          az extension add \
-            --name communication \
-            --version "$AZURE_COMMUNICATION_EXTENSION_VERSION" \
-            --yes \
-            --only-show-errors
-          az communication email send \
-            --sender "${{ vars.AZURE_EMAIL_SENDER }}" \
-            --to "${{ vars.AZURE_EMAIL_RECIPIENT }}" \
-            --subject "AzureDiagarm update failed" \
-            --text "$failure_body" \
-            --wait-until completed \
-            --output none
+          } > email-body.txt
+          bash scripts/send-acs-email.sh email-body.txt

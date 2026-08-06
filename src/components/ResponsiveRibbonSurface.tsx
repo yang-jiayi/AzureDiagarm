@@ -6,6 +6,7 @@ import { X } from 'lucide-react';
 import { useMediaQuery } from '../hooks/useMediaQuery';
 import { useLanguage } from '../i18n/LanguageContext';
 import { localize } from '../i18n/localization';
+import { MEDIA_QUERIES } from '../styles/breakpoints';
 import ResponsiveDrawer from './ResponsiveDrawer';
 import './ResponsiveRibbonSurface.css';
 
@@ -15,15 +16,13 @@ interface ResponsiveRibbonSurfaceProps {
   children: React.ReactNode;
 }
 
-const MOBILE_RIBBON_QUERY = '(max-width: 640px)';
-
 export default function ResponsiveRibbonSurface({
   isOpen,
   onClose,
   children,
 }: ResponsiveRibbonSurfaceProps) {
   const { language } = useLanguage();
-  const isMobile = useMediaQuery(MOBILE_RIBBON_QUERY);
+  const isMobile = useMediaQuery(MEDIA_QUERIES.compact);
 
   useEffect(() => {
     if (!isMobile && isOpen) onClose();

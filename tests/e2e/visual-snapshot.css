@@ -1,0 +1,8 @@
+/* Keep visual baselines independent of host font rendering. */
+.workflow-stepper-copy {
+  visibility: hidden !important;
+}
+
+.workflow-stepper-index {
+  font-size: 0 !important;
+}

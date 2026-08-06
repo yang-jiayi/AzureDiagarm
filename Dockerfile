@@ -1,5 +1,5 @@
 # Build stage
-FROM node:22-alpine AS build
+FROM node:22-alpine@sha256:c610fcdfb1d5b4740dd70c284ed3cb16bb857e0f7166196e36a5501df7a3aa32 AS build
 
 WORKDIR /app
 
@@ -94,7 +94,7 @@ COPY mcp-server/scripts ./scripts
 RUN npm run build
 
 # Production stage
-FROM node:22-alpine
+FROM node:22-alpine@sha256:c610fcdfb1d5b4740dd70c284ed3cb16bb857e0f7166196e36a5501df7a3aa32
 
 ARG FRONT_DOOR_ID
 ENV FRONT_DOOR_ID=$FRONT_DOOR_ID
