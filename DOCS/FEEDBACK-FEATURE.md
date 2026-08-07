@@ -1,7 +1,7 @@
 # User Feedback Feature
 
-The Feedback modal and quick-rating toast send ratings, categories, optional
-comments, and limited diagram context to `POST /api/feedback`.
+The feedback modal sends ratings, categories, optional comments, and limited
+diagram context to `POST /api/feedback`.
 
 ## Data flow
 
@@ -14,22 +14,8 @@ Browser
                                     `-- Cosmos DB (compatibility fallback)
 ```
 
-The UI reports success only after durable storage returns a successful response.
-Failed writes remain retryable and are not copied into telemetry.
-
-## Production storage
-
-`azurediagarm.mssql.biz` sends each accepted submission directly to:
-
-| Setting | Value |
-|---|---|
-| Recipient | Configured through `FEEDBACK_EMAIL_RECIPIENT` |
-| Communication resource | Configured through `FEEDBACK_EMAIL_ENDPOINT` |
-| Sender | Configured through `FEEDBACK_EMAIL_SENDER` |
-| Authentication | Container App user-assigned managed identity |
-
-This avoids a database, private endpoint, or VNet solely for low-volume feedback.
-The API limits each client address to ten submissions per hour.
+The UI reports success only after the server confirms delivery. Failed writes
+remain retryable and are not copied into telemetry.
 
 ## Runtime configuration
 
@@ -58,26 +44,57 @@ also written to Azure Table Storage or Cosmos DB. A successful archive acts as
 the fallback when email delivery is temporarily unavailable. When no backend is
 configured, the API returns HTTP 503.
 
-## Reading comments
+The API limits each client address to ten submissions per hour.
 
-Email-delivered feedback is read in the recipient mailbox. If a Table Storage
-or Cosmos archive is configured, `GET /api/feedback/list?limit=50` reads the
-newest archived records. It is disabled
-unless `FEEDBACK_ADMIN_TOKEN` is configured on the server. Supply the token as
-either:
+## Optional follow-up contact
+
+Follow-up contact is disabled by default. It is shown and accepted only when
+both of these settings are explicitly enabled:
+
+```text
+VITE_FEEDBACK_CONTACT_ENABLED=true
+FEEDBACK_CONTACT_ENABLED=true
+```
+
+The server also requires all direct-email settings above. Contact consent is
+unchecked by default, the email field is rendered only after opt-in, and a
+valid address is required only when consent is enabled.
+
+The address is included in the one-time feedback notification email. It is not
+written to Application Insights, Azure Table Storage, or Cosmos DB. Archives
+retain only consent timestamps, the 180-day consent boundary, and follow-up
+status metadata. Operators must apply the same 180-day retention policy to the
+recipient mailbox.
+
+## Reading archived feedback
+
+If a Table Storage or Cosmos archive is configured,
+`GET /api/feedback/list?limit=50` reads the newest records. The endpoint is
+disabled unless `FEEDBACK_ADMIN_TOKEN` is configured. Supply the token as:
 
 ```text
 Authorization: Bearer <token>
 X-Admin-Token: <token>
 ```
 
-The endpoint returns HTTP 503 when the admin token is unset and HTTP 401 when
-the presented token does not match.
+The endpoint returns HTTP 503 when the admin token is unset, HTTP 401 for an
+invalid token, and applies a separate admin rate limit.
+
+`server/read-feedback.js` provides a keyless Cosmos CLI for environments that
+can reach the account:
+
+```text
+cd server
+node read-feedback.js
+node read-feedback.js --json
+```
 
 ## Privacy
 
-Application Insights receives rating metadata only. Verbatim comments stay in
-the durable feedback store and are never used as a telemetry fallback.
+- Application Insights receives rating metadata only.
+- Verbatim comments stay in the configured delivery or archive backend.
+- Contact addresses are delivered only to the configured feedback recipient.
+- Failed persistence never sends comments or contact details to telemetry.
 
 ## Files
 
@@ -86,4 +103,5 @@ the durable feedback store and are never used as a telemetry fallback.
 | `src/components/FeedbackModal.tsx` | Full feedback form and retryable error UI |
 | `src/components/FeedbackToast.tsx` | Quick rating and persistence status |
 | `src/services/feedbackService.ts` | Client submission and telemetry metadata |
-| `server/token-server.js` | Durable write and token-protected admin read |
+| `server/token-server.js` | Delivery, archive, validation, and protected admin read |
+| `server/read-feedback.js` | Keyless Cosmos read utility |

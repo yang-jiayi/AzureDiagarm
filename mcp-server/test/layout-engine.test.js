@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { computeLayout } from '../dist/layoutEngine.js';
+import { computeLayout, reflowLayoutForPresentation } from '../dist/layoutEngine.js';
 
 const groups = [
   { id: 'ingress', label: 'Ingress' },
@@ -115,4 +115,43 @@ test('layout rejects architectures above the defensive service limit', () => {
     () => computeLayout(oversized, [], [], 'TB'),
     /at most 250 services/,
   );
+});
+
+test('multi-region presentation keeps overflow data nodes clear of fixed slots', () => {
+  const regionalGroups = [
+    { id: 'global', label: 'Global Edge' },
+    { id: 'primary', label: 'Primary Region' },
+    { id: 'secondary', label: 'Secondary Region' },
+  ];
+  const regionalServices = [
+    { name: 'Global Front Door', type: 'Azure Front Door', groupId: 'global' },
+    { name: 'Global WAF', type: 'Web Application Firewall', groupId: 'global' },
+    { name: 'Global API Management', type: 'API Management', groupId: 'global' },
+    ...['primary', 'secondary'].flatMap((groupId) => [
+      { name: `${groupId} SQL`, type: 'SQL Database', groupId },
+      { name: `${groupId} Redis`, type: 'Redis Cache', groupId },
+      { name: `${groupId} Storage`, type: 'Storage Account', groupId },
+      { name: `${groupId} Key Vault`, type: 'Key Vault', groupId },
+    ]),
+  ];
+  const layout = reflowLayoutForPresentation(
+    computeLayout(regionalServices, [], regionalGroups, 'LR'),
+  );
+
+  for (let left = 0; left < layout.nodes.length; left += 1) {
+    for (let right = left + 1; right < layout.nodes.length; right += 1) {
+      const a = layout.nodes[left];
+      const b = layout.nodes[right];
+      assert.equal(
+        !(
+          a.x + a.width <= b.x
+          || b.x + b.width <= a.x
+          || a.y + a.height <= b.y
+          || b.y + b.height <= a.y
+        ),
+        false,
+        `${a.name} overlaps ${b.name}`,
+      );
+    }
+  }
 });

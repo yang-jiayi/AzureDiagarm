@@ -470,7 +470,10 @@
 }
 
 .toolbar-dropdown-menu--export {
-  min-width: 280px;
+  left: auto;
+  right: 0;
+  min-width: 400px;
+  max-width: min(440px, calc(100vw - 32px));
   max-height: min(72vh, 680px);
   overflow-y: auto;
 }
@@ -555,6 +558,10 @@
 
 .toolbar-dropdown-row .toolbar-dropdown-select {
   width: 150px;
+}
+
+.toolbar-dropdown-menu--export .toolbar-dropdown-select {
+  width: 220px;
 }
 
 .toolbar-dropdown-checkbox {
@@ -1533,6 +1540,68 @@ body.dark-mode .react-flow__handle.valid {
 .toolbar-group-label:focus-visible {
   outline: 2px solid rgba(255, 255, 255, 0.9);
   outline-offset: 1px;
+}
+
+/* Keep supporting toolbar actions neutral so the two creation paths remain
+  distinct without competing animations or oversized typography. */
+.btn-compare-models,
+.btn-help,
+.btn-premium,
+body.dark-mode .btn-compare-models,
+body.dark-mode .btn-help,
+body.dark-mode .btn-premium {
+  background: var(--azd-color-inverse-control);
+  color: var(--azd-color-on-brand);
+  border: 1px solid var(--azd-color-inverse-border);
+  box-shadow: none;
+  animation: none;
+}
+
+.btn-compare-models:hover,
+.btn-help:hover,
+.btn-premium:hover,
+body.dark-mode .btn-compare-models:hover,
+body.dark-mode .btn-premium:hover {
+  background: var(--azd-color-inverse-control-hover);
+  border-color: color-mix(in srgb, var(--azd-color-on-brand) 45%, transparent);
+  transform: translateY(-1px);
+  box-shadow: none;
+  animation: none;
+}
+
+.btn-ai-chat,
+body.dark-mode .btn-ai-chat {
+  background: var(--azd-color-brand);
+  color: var(--azd-color-on-brand);
+  border: 1px solid color-mix(in srgb, var(--azd-color-brand) 55%, var(--azd-color-on-brand));
+  box-shadow: none;
+  animation: none;
+  font-size: 0.875rem;
+  font-weight: 500;
+  padding: 0.5rem 1rem;
+}
+
+.btn-ai-chat:hover,
+body.dark-mode .btn-ai-chat:hover {
+  background: var(--azd-color-brand-hover);
+  border-color: color-mix(in srgb, var(--azd-color-brand) 42%, var(--azd-color-on-brand));
+  transform: translateY(-1px);
+  box-shadow: none;
+}
+
+.btn-ai-chat.active,
+body.dark-mode .btn-ai-chat.active {
+  background: var(--azd-color-brand-hover);
+  border-color: color-mix(in srgb, var(--azd-color-brand) 35%, var(--azd-color-on-brand));
+  box-shadow:
+    inset 0 1px 3px color-mix(in srgb, var(--azd-color-surface-inverse) 35%, transparent),
+    0 0 0 2px color-mix(in srgb, var(--azd-color-action) 45%, transparent);
+  color: var(--azd-color-on-brand);
+}
+.btn-ai-chat.active:hover,
+body.dark-mode .btn-ai-chat.active:hover {
+  background: var(--azd-color-brand-pressed);
+  border-color: color-mix(in srgb, var(--azd-color-brand) 25%, var(--azd-color-on-brand));
 }
 
 .toolbar-group.toolbar-group-collapsed {

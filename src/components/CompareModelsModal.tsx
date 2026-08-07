@@ -86,8 +86,8 @@ const COMPARISON_SAMPLE_PROMPTS: LocalizedText[] = [
     ja: 'グローバル商品カタログ用Cosmos DB、トラフィック ルーティング用Azure Front Door、セッション用Redis Cache、注文処理用Event Gridを使用するマルチリージョンEコマース システム',
   },
   {
-    en: 'An intelligent document processing pipeline with Azure AI Document Intelligence for OCR, Azure OpenAI for summarization, Cognitive Search for indexing, Cosmos DB for metadata, and Blob Storage for document retention',
-    ja: 'OCR用Azure AI Document Intelligence、要約用Azure OpenAI、インデックス作成用Cognitive Search、メタデータ用Cosmos DB、ドキュメント保持用Blob Storageを使用するインテリジェント ドキュメント処理パイプライン',
+    en: 'An intelligent document processing pipeline with Azure AI Document Intelligence for OCR, Azure OpenAI for summarization, Azure AI Search for indexing, Cosmos DB for metadata, and Blob Storage for document retention',
+    ja: 'OCR用Azure AI Document Intelligence、要約用Azure OpenAI、インデックス作成用Azure AI Search、メタデータ用Cosmos DB、ドキュメント保持用Blob Storageを使用するインテリジェント ドキュメント処理パイプライン',
   },
   {
     en: 'An enterprise RAG application with Azure AI Foundry for orchestration, Azure AI Search with hybrid vector and keyword retrieval, Azure OpenAI GPT-5 for generation, Azure Cache for Redis for semantic caching, and App Service with Entra ID authentication',

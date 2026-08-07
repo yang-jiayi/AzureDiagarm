@@ -570,6 +570,366 @@ export function computeLayout(
   return computeFlatLayout(services, connections, groups, direction);
 }
 
+function presentationGroupRank(label: string): number {
+  const value = label.toLowerCase();
+  if (/edge|ingress|front|perimeter|cdn|waf/.test(value)) return 0;
+  if (/app|compute|api|integration|service|processing/.test(value)) return 1;
+  if (/data|database|storage|cache|sql|cosmos/.test(value)) return 2;
+  if (/network|private|connectivity|dns/.test(value)) return 3;
+  if (/identity|security|entra|governance|key vault/.test(value)) return 4;
+  if (/monitor|observ|operations|backup|management/.test(value)) return 5;
+  return 6;
+}
+
+type PresentationNodeRole =
+  | 'edge'
+  | 'policy'
+  | 'identity'
+  | 'network'
+  | 'private-link'
+  | 'dns'
+  | 'ingress'
+  | 'compute'
+  | 'registry'
+  | 'data'
+  | 'secrets'
+  | 'recovery'
+  | 'monitor'
+  | 'telemetry'
+  | 'logs'
+  | 'other';
+
+function presentationNodeRole(node: PositionedNode): PresentationNodeRole {
+  const type = node.type.toLowerCase();
+  const name = node.name.toLowerCase();
+  if (/web application firewall|\bwaf\b/.test(type) || /\bwaf\b/.test(name)) return 'policy';
+  if (/front door|traffic manager|\bcdn\b/.test(type)) return 'edge';
+  if (/entra|identity/.test(type)) return 'identity';
+  if (/private link/.test(type)) return 'private-link';
+  if (/azure dns|private dns/.test(type) || /private dns/.test(name)) return 'dns';
+  if (/virtual network|\bvnet\b/.test(type)) return 'network';
+  if (/api management|application gateway/.test(type)) return 'ingress';
+  if (/container registry/.test(type)) return 'registry';
+  if (/container apps|kubernetes|app service|functions|virtual machines/.test(type)) return 'compute';
+  if (/sql|redis|cosmos|database|storage/.test(type)) return 'data';
+  if (/key vault/.test(type)) return 'secrets';
+  if (/backup|recovery/.test(type) || /recovery/.test(name)) return 'recovery';
+  if (/application insights/.test(type)) return 'telemetry';
+  if (/log analytics/.test(type)) return 'logs';
+  if (/monitor/.test(type)) return 'monitor';
+  return 'other';
+}
+
+function reflowMultiRegionPresentation(layout: LayoutResult): LayoutResult | null {
+  if (layout.groups.length !== 3 || layout.nodes.some(node => !node.groupId)) return null;
+
+  const globalGroup = layout.groups.find(group => /global|edge|perimeter/.test(`${group.id} ${group.label}`.toLowerCase()));
+  const primaryGroup = layout.groups.find(group => /primary|active|production/.test(`${group.id} ${group.label}`.toLowerCase()));
+  const secondaryGroup = layout.groups.find(group => /secondary|\bdr\b|failover|standby/.test(`${group.id} ${group.label}`.toLowerCase()));
+  if (!globalGroup || !primaryGroup || !secondaryGroup) return null;
+
+  const nodes = layout.nodes.map(node => ({ ...node }));
+  const groups = layout.groups.map(group => ({ ...group }));
+  const groupById = new Map(groups.map(group => [group.id, group]));
+  const nodesByGroup = new Map<string, PositionedNode[]>();
+  for (const node of nodes) {
+    const bucket = nodesByGroup.get(node.groupId!);
+    if (bucket) bucket.push(node);
+    else nodesByGroup.set(node.groupId!, [node]);
+  }
+
+  const regionSlots: Record<PresentationNodeRole, { x: number; y: number }> = {
+    edge: { x: 0, y: 0 },
+    policy: { x: 0, y: 0 },
+    identity: { x: 0, y: 0 },
+    network: { x: 0, y: 110 },
+    dns: { x: 0, y: 240 },
+    ingress: { x: 235, y: 0 },
+    'private-link': { x: 235, y: 165 },
+    monitor: { x: 235, y: 350 },
+    compute: { x: 470, y: 0 },
+    registry: { x: 470, y: 110 },
+    recovery: { x: 470, y: 240 },
+    telemetry: { x: 470, y: 350 },
+    data: { x: 705, y: 0 },
+    secrets: { x: 705, y: 220 },
+    logs: { x: 705, y: 350 },
+    other: { x: 0, y: 350 },
+  };
+  const dataOffsets = [0, 110];
+  type OccupiedRect = { x: number; y: number; width: number; height: number };
+  const overlapsOccupied = (
+    slot: { x: number; y: number },
+    node: PositionedNode,
+    occupied: OccupiedRect[],
+  ) => occupied.some(existing => !(
+    slot.x + node.width + 12 <= existing.x
+    || existing.x + existing.width + 12 <= slot.x
+    || slot.y + node.height + 12 <= existing.y
+    || existing.y + existing.height + 12 <= slot.y
+  ));
+
+  const arrangeRegion = (groupId: string) => {
+    const members = nodesByGroup.get(groupId) ?? [];
+    const orderedMembers = [...members].sort((left, right) => {
+      const leftIsData = presentationNodeRole(left) === 'data' ? 1 : 0;
+      const rightIsData = presentationNodeRole(right) === 'data' ? 1 : 0;
+      return leftIsData - rightIsData;
+    });
+    const occupied: OccupiedRect[] = [];
+    let dataIndex = 0;
+    let fallbackIndex = 0;
+    for (const node of orderedMembers) {
+      const role = presentationNodeRole(node);
+      let slot = { ...regionSlots[role] };
+      if (role === 'data') {
+        slot = { x: regionSlots.data.x, y: dataOffsets[Math.min(dataIndex, dataOffsets.length - 1)] + Math.max(0, dataIndex - 1) * 80 };
+        dataIndex++;
+      }
+      while (overlapsOccupied(slot, node, occupied)) {
+        slot = { x: (fallbackIndex % 4) * 235, y: 460 + Math.floor(fallbackIndex / 4) * 110 };
+        fallbackIndex++;
+      }
+      occupied.push({ ...slot, width: node.width, height: node.height });
+      node.x = slot.x;
+      node.y = slot.y;
+    }
+    const group = groupById.get(groupId)!;
+    group.width = Math.max(905, ...members.map(node => node.x + node.width));
+    group.height = Math.max(420, ...members.map(node => node.y + node.height));
+  };
+
+  arrangeRegion(primaryGroup.id);
+  arrangeRegion(secondaryGroup.id);
+
+  const globalMembers = nodesByGroup.get(globalGroup.id) ?? [];
+  const globalSlots: Record<PresentationNodeRole, { x: number; y: number }> = {
+    ...regionSlots,
+    policy: { x: 245, y: 0 },
+    edge: { x: 245, y: 110 },
+    identity: { x: 0, y: 110 },
+  };
+  const globalOccupied: OccupiedRect[] = [];
+  let globalFallbackIndex = 0;
+  globalMembers.forEach((node) => {
+    let slot = { ...globalSlots[presentationNodeRole(node)] };
+    while (overlapsOccupied(slot, node, globalOccupied)) {
+      slot = {
+        x: (globalFallbackIndex % 4) * 235,
+        y: 240 + Math.floor(globalFallbackIndex / 4) * 110,
+      };
+      globalFallbackIndex++;
+    }
+    globalOccupied.push({ ...slot, width: node.width, height: node.height });
+    node.x = slot.x;
+    node.y = slot.y;
+  });
+  const positionedGlobalGroup = groupById.get(globalGroup.id)!;
+  positionedGlobalGroup.width = Math.max(445, ...globalMembers.map(node => node.x + node.width));
+  positionedGlobalGroup.height = Math.max(180, ...globalMembers.map(node => node.y + node.height));
+
+  const primary = groupById.get(primaryGroup.id)!;
+  const secondary = groupById.get(secondaryGroup.id)!;
+  const groupOuterWidth = (group: PositionedGroup) => group.width + 24;
+  const groupOuterHeight = (group: PositionedGroup) => group.height + 48;
+  const columnGap = 72;
+  const rowGap = 88;
+  const regionsOuterWidth = groupOuterWidth(primary) + columnGap + groupOuterWidth(secondary);
+  const regionsOuterX = PADDING;
+  const globalOuterX = regionsOuterX + (regionsOuterWidth - groupOuterWidth(positionedGlobalGroup)) / 2;
+  const globalOuterY = PADDING;
+  const regionsOuterY = globalOuterY + groupOuterHeight(positionedGlobalGroup) + rowGap;
+
+  const placeGroup = (group: PositionedGroup, outerX: number, outerY: number) => {
+    const dx = outerX + 12;
+    const dy = outerY + 36;
+    group.x = dx;
+    group.y = dy;
+    for (const node of nodesByGroup.get(group.id) ?? []) {
+      node.x += dx;
+      node.y += dy;
+    }
+  };
+  placeGroup(positionedGlobalGroup, globalOuterX, globalOuterY);
+  placeGroup(primary, regionsOuterX, regionsOuterY);
+  placeGroup(secondary, regionsOuterX + groupOuterWidth(primary) + columnGap, regionsOuterY);
+
+  const width = regionsOuterX + regionsOuterWidth + PADDING;
+  const height = regionsOuterY + Math.max(groupOuterHeight(primary), groupOuterHeight(secondary)) + PADDING;
+  return {
+    nodes,
+    groups: [positionedGlobalGroup, primary, secondary],
+    edges: reanchorPresentationEdges(nodes, layout.edges.map(edge => ({ ...edge, points: [...edge.points] }))),
+    width,
+    height,
+    direction: 'LR',
+  };
+}
+
+type PortSide = 'L' | 'R' | 'T' | 'B';
+
+function reanchorPresentationEdges(nodes: PositionedNode[], edges: PositionedEdge[]): PositionedEdge[] {
+  const rects = new Map(nodes.map(node => [node.name, {
+    x: node.x,
+    y: node.y,
+    width: node.width,
+    height: node.height,
+  }]));
+  const sides = edges.map(edge => {
+    const source = rects.get(edge.from);
+    const target = rects.get(edge.to);
+    if (!source || !target) return { source: 'R' as PortSide, target: 'L' as PortSide };
+    const sx = source.x + source.width / 2;
+    const sy = source.y + source.height / 2;
+    const tx = target.x + target.width / 2;
+    const ty = target.y + target.height / 2;
+    if (Math.abs(tx - sx) >= Math.abs(ty - sy)) {
+      return tx >= sx
+        ? { source: 'R' as PortSide, target: 'L' as PortSide }
+        : { source: 'L' as PortSide, target: 'R' as PortSide };
+    }
+    return ty >= sy
+      ? { source: 'B' as PortSide, target: 'T' as PortSide }
+      : { source: 'T' as PortSide, target: 'B' as PortSide };
+  });
+
+  interface EndRef { edgeIndex: number; endpoint: 'source' | 'target'; sortKey: number }
+  const buckets = new Map<string, EndRef[]>();
+  const add = (node: string, side: PortSide, ref: EndRef) => {
+    const key = `${node}\u0000${side}`;
+    const bucket = buckets.get(key);
+    if (bucket) bucket.push(ref);
+    else buckets.set(key, [ref]);
+  };
+  const perpendicularCenter = (side: PortSide, rect: Rect) =>
+    side === 'L' || side === 'R' ? rect.y + rect.height / 2 : rect.x + rect.width / 2;
+
+  edges.forEach((edge, edgeIndex) => {
+    const source = rects.get(edge.from);
+    const target = rects.get(edge.to);
+    if (!source || !target) return;
+    add(edge.from, sides[edgeIndex].source, {
+      edgeIndex,
+      endpoint: 'source',
+      sortKey: perpendicularCenter(sides[edgeIndex].source, target),
+    });
+    add(edge.to, sides[edgeIndex].target, {
+      edgeIndex,
+      endpoint: 'target',
+      sortKey: perpendicularCenter(sides[edgeIndex].target, source),
+    });
+  });
+
+  const anchors: Array<{ source?: { x: number; y: number }; target?: { x: number; y: number } }> =
+    edges.map(() => ({}));
+  const portMargin = 14;
+  for (const [key, bucket] of buckets) {
+    const separator = key.indexOf('\u0000');
+    const nodeName = key.slice(0, separator);
+    const side = key.slice(separator + 1) as PortSide;
+    const rect = rects.get(nodeName)!;
+    bucket.sort((left, right) => left.sortKey - right.sortKey);
+    const vertical = side === 'L' || side === 'R';
+    const start = vertical ? rect.y + portMargin : rect.x + portMargin;
+    const span = (vertical ? rect.height : rect.width) - portMargin * 2;
+    const fixed = side === 'R'
+      ? rect.x + rect.width
+      : side === 'L'
+        ? rect.x
+        : side === 'B'
+          ? rect.y + rect.height
+          : rect.y;
+    bucket.forEach((ref, index) => {
+      const variable = start + span * (index + 1) / (bucket.length + 1);
+      const point = vertical ? { x: fixed, y: variable } : { x: variable, y: fixed };
+      anchors[ref.edgeIndex][ref.endpoint] = point;
+    });
+  }
+
+  return edges.map((edge, index) => ({
+    ...edge,
+    points: anchors[index].source && anchors[index].target
+      ? [anchors[index].source!, anchors[index].target!]
+      : edge.points,
+  }));
+}
+
+/**
+ * Reflow a fully grouped, ultra-wide layout into semantic presentation rows.
+ * The primary request path occupies the first row; supporting network,
+ * identity/security, and observability groups occupy the second row.
+ */
+export function reflowLayoutForPresentation(layout: LayoutResult): LayoutResult {
+  const multiRegion = reflowMultiRegionPresentation(layout);
+  if (multiRegion) return multiRegion;
+  if (layout.groups.length < 4 || layout.nodes.some(node => !node.groupId)) return layout;
+  if (layout.width / Math.max(layout.height, 1) < 2.4) return layout;
+
+  const nodes = layout.nodes.map(node => ({ ...node }));
+  const groups = layout.groups
+    .map(group => ({ ...group }))
+    .sort((left, right) => {
+      const rank = presentationGroupRank(left.label) - presentationGroupRank(right.label);
+      return rank || left.x - right.x || left.y - right.y;
+    });
+  const columns = Math.min(3, Math.ceil(groups.length / 2));
+  const rows = Math.ceil(groups.length / columns);
+  const columnGap = 72;
+  const rowGap = 88;
+  const outerWidth = (group: PositionedGroup) => group.width + 24;
+  const outerHeight = (group: PositionedGroup) => group.height + 48;
+  const columnWidths = Array.from({ length: columns }, (_, column) =>
+    Math.max(...groups.filter((_, index) => index % columns === column).map(outerWidth)));
+  const rowHeights = Array.from({ length: rows }, (_, row) =>
+    Math.max(...groups.slice(row * columns, (row + 1) * columns).map(outerHeight)));
+  const columnStarts: number[] = [];
+  const rowStarts: number[] = [];
+  let cursor = PADDING;
+  for (const width of columnWidths) {
+    columnStarts.push(cursor);
+    cursor += width + columnGap;
+  }
+  cursor = PADDING;
+  for (const height of rowHeights) {
+    rowStarts.push(cursor);
+    cursor += height + rowGap;
+  }
+
+  const nodeByGroup = new Map<string, PositionedNode[]>();
+  for (const node of nodes) {
+    const bucket = nodeByGroup.get(node.groupId!);
+    if (bucket) bucket.push(node);
+    else nodeByGroup.set(node.groupId!, [node]);
+  }
+  groups.forEach((group, index) => {
+    const column = index % columns;
+    const row = Math.floor(index / columns);
+    const outerX = columnStarts[column] + (columnWidths[column] - outerWidth(group)) / 2;
+    const outerY = rowStarts[row] + (rowHeights[row] - outerHeight(group)) / 2;
+    const nextX = outerX + 12;
+    const nextY = outerY + 36;
+    const dx = nextX - group.x;
+    const dy = nextY - group.y;
+    group.x = nextX;
+    group.y = nextY;
+    for (const node of nodeByGroup.get(group.id) ?? []) {
+      node.x += dx;
+      node.y += dy;
+    }
+  });
+
+  const width = Math.max(...groups.map(group => group.x + group.width + 12)) + PADDING;
+  const height = Math.max(...groups.map(group => group.y + group.height + 12)) + PADDING;
+  return {
+    nodes,
+    groups,
+    edges: reanchorPresentationEdges(nodes, layout.edges.map(edge => ({ ...edge, points: [...edge.points] }))),
+    width,
+    height,
+    direction: layout.direction,
+  };
+}
+
 // ── Category resolver ──────────────────────────────────────────────────
 
 const TYPE_TO_CATEGORY: Record<string, string> = {
@@ -577,7 +937,8 @@ const TYPE_TO_CATEGORY: Record<string, string> = {
   'computer vision': 'ai + machine learning', 'custom vision': 'ai + machine learning',
   'speech services': 'ai + machine learning', 'translator': 'ai + machine learning',
   'language': 'ai + machine learning', 'document intelligence': 'ai + machine learning',
-  'azure machine learning': 'ai + machine learning', 'azure cognitive search': 'ai + machine learning',
+  'azure machine learning': 'ai + machine learning', 'azure ai search': 'ai + machine learning',
+  'azure cognitive search': 'ai + machine learning',
   'virtual machines': 'compute', 'functions': 'compute',
   'app service': 'app services',
   'container instances': 'containers', 'kubernetes service': 'containers',
@@ -596,7 +957,7 @@ const TYPE_TO_CATEGORY: Record<string, string> = {
   'power bi embedded': 'analytics', 'azure workbooks': 'analytics',
   'service bus': 'integration', 'logic apps': 'integration',
   'api management': 'integration', 'event grid': 'integration',
-  'azure api for fhir': 'integration',
+  'azure health data services fhir service': 'integration', 'azure api for fhir': 'integration',
   'signalr service': 'web', 'static web apps': 'web',
   'azure monitor': 'monitor', 'application insights': 'monitor', 'log analytics': 'monitor',
   'azure managed grafana': 'monitor',

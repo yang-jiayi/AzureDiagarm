@@ -21,6 +21,7 @@ interface ValidationModalProps {
   isOpen: boolean; // Controls modal visibility
   onClose: () => void; // Handler for closing modal
   isLoading?: boolean; // Shows loading state during validation
+  isStale?: boolean; // Previous result no longer matches the modified architecture
   onApplyRecommendations?: (selectedFindings: ValidationFinding[]) => void; // Handler for applying selected recommendations
   onRevalidate?: () => void; // Optional handler to rerun validation
 }
@@ -30,7 +31,7 @@ interface ValidationModalProps {
  * Shows overall score, pillar-specific assessments, findings, and quick wins.
  * Includes download functionality for markdown report.
  */
-const ValidationModal: React.FC<ValidationModalProps> = ({ validation, isOpen, onClose, isLoading, onApplyRecommendations, onRevalidate }) => {
+const ValidationModal: React.FC<ValidationModalProps> = ({ validation, isOpen, onClose, isLoading, isStale, onApplyRecommendations, onRevalidate }) => {
   const { t, translate, language } = useLanguage();
   // Track selected findings for applying recommendations
   const [selectedFindings, setSelectedFindings] = useState<Set<string>>(new Set());
@@ -100,6 +101,7 @@ const ValidationModal: React.FC<ValidationModalProps> = ({ validation, isOpen, o
     const selected = allFindings.filter(f => selectedFindings.has(f.key));
     
     if (onApplyRecommendations && selected.length > 0) {
+      setSelectedFindings(new Set());
       onApplyRecommendations(selected);
     }
   };
@@ -267,6 +269,14 @@ const ValidationModal: React.FC<ValidationModalProps> = ({ validation, isOpen, o
         ) : validation ? (
           <>
             <div className="modal-body">
+            {isStale && (
+              <div className="validation-stale-notice" role="status">
+                <AlertTriangle size={18} />
+                <span>
+                  <strong>{translate('Architecture changed.')}</strong> {translate('These results describe the version before recommendations were applied. Revalidate to assess the updated diagram.')}
+                </span>
+              </div>
+            )}
             {/* Scope note - sets expectations for workshop facilitators and users */}
             <p className="validation-scope-note">
               <strong>{t("Scope:")}</strong> {' '}{t("Designed for")}{' '}<strong>{t("greenfield Azure")}</strong> {' '}{t("designs. This is a diagram-only, design-time signal to guide new architectures — not an audit of a deployed environment, and not for direct deployment into existing, complex environments without further review.")}{' '}</p>

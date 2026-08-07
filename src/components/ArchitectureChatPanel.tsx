@@ -77,8 +77,8 @@ const ADVANCED_STARTER_SUGGESTIONS: LocalizedText[] = [
     ja: 'Azure Front Door、ペアリージョンのAKS、geo-replicationされたCosmos DB、注文イベント用Service Busによるマルチリージョンactive-active EC基盤',
   },
   {
-    en: 'HIPAA-compliant healthcare data platform: private-endpoint ingestion, AKS clinical workloads, Azure API for FHIR, and Microsoft Purview governance',
-    ja: 'Private Endpoint経由の取り込み、AKS医療ワークロード、Azure API for FHIR、Microsoft PurviewガバナンスによるHIPAA準拠医療データ基盤',
+    en: 'HIPAA-compliant healthcare data platform: private-endpoint ingestion, AKS clinical workloads, Azure Health Data Services FHIR service, and Microsoft Purview governance',
+    ja: 'Private Endpoint経由の取り込み、AKS医療ワークロード、Azure Health Data Services FHIR service、Microsoft PurviewガバナンスによるHIPAA準拠医療データ基盤',
   },
   {
     en: 'Enterprise landing zone: hub-and-spoke with Azure Firewall, Bastion, Private DNS zones, and centralized Log Analytics',

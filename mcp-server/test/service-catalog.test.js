@@ -112,12 +112,12 @@ test('architecture imports reject oversized workloads before normalization', () 
 });
 
 test('generated canonical names and aliases resolve without legacy conflicts', () => {
-  assert.equal(resolveServiceName('Azure API for FHIR'), 'Azure API for FHIR');
-  assert.equal(resolveServiceName('Legacy FHIR API'), 'Azure API for FHIR');
+  assert.equal(resolveServiceName('Azure API for FHIR'), 'Azure Health Data Services FHIR service');
+  assert.equal(resolveServiceName('Azure FHIR service'), 'Azure Health Data Services FHIR service');
   assert.equal(resolveServiceName('Azure Health Data Services'), 'Azure Health Data Services');
   assert.equal(resolveServiceName('Health Data Services'), 'Azure Health Data Services');
-  assert.equal(resolveServiceName('FHIR'), 'Azure Health Data Services');
-  assert.equal(resolveServiceName('FHIR Service'), 'Azure Health Data Services');
+  assert.equal(resolveServiceName('FHIR'), 'Azure Health Data Services FHIR service');
+  assert.equal(resolveServiceName('FHIR Service'), 'Azure Health Data Services FHIR service');
 });
 
 test('generated alias collisions follow the web catalog source order', () => {

@@ -34,12 +34,20 @@ const CATEGORIES = [
   'Other',
 ];
 
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+// The follow-up contact option is disabled by default. It only renders,
+// validates, and submits when explicitly enabled — the backend gates it too.
+const FEEDBACK_CONTACT_ENABLED = import.meta.env.VITE_FEEDBACK_CONTACT_ENABLED === 'true';
+
 const FeedbackModal: React.FC<FeedbackModalProps> = ({ isOpen, onClose, context, preselectedRating }) => {
   const { t, translate } = useLanguage();
   const dialogRef = useModalFocus<HTMLDivElement>(isOpen);
   const [rating, setRating] = useState<number | null>(null);
   const [category, setCategory] = useState(CATEGORIES[0]);
   const [comment, setComment] = useState('');
+  const [contactConsent, setContactConsent] = useState(false);
+  const [contactEmail, setContactEmail] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -56,6 +64,8 @@ const FeedbackModal: React.FC<FeedbackModalProps> = ({ isOpen, onClose, context,
     setRating(null);
     setCategory(CATEGORIES[0]);
     setComment('');
+    setContactConsent(false);
+    setContactEmail('');
     setIsSubmitting(false);
     setSubmitted(false);
     setError(null);
@@ -72,11 +82,24 @@ const FeedbackModal: React.FC<FeedbackModalProps> = ({ isOpen, onClose, context,
       setError(translate('Please pick a rating so we know how you feel.'));
       return;
     }
+    const normalizedEmail = contactEmail.trim();
+    if (FEEDBACK_CONTACT_ENABLED && contactConsent && (!EMAIL_PATTERN.test(normalizedEmail) || normalizedEmail.length > 254)) {
+      setError(translate('Enter a valid email address so we can follow up.'));
+      return;
+    }
     setError(null);
     setIsSubmitting(true);
 
     try {
-      await submitFeedback({ rating, category, comment, context });
+      await submitFeedback({
+        rating,
+        category,
+        comment,
+        context,
+        contact: FEEDBACK_CONTACT_ENABLED
+          ? { consent: contactConsent, email: normalizedEmail }
+          : undefined,
+      });
       setSubmitted(true);
     } catch (submitError) {
       console.error('[feedback] submit failed:', submitError);
@@ -112,7 +135,11 @@ const FeedbackModal: React.FC<FeedbackModalProps> = ({ isOpen, onClose, context,
           <div className="modal-body feedback-thanks">
             <CheckCircle2 size={48} className="feedback-thanks-icon" />
             <h3>{t("Thank you!")}</h3>
-            <p>{t("Your feedback helps us improve the Azure Architecture Diagram Builder.")}</p>
+            <p>
+              {FEEDBACK_CONTACT_ENABLED && contactConsent
+                ? translate('Your feedback was saved. The maintainer may contact you about this submission.')
+                : t("Your feedback helps us improve the Azure Architecture Diagram Builder.")}
+            </p>
             <button className="btn-primary" onClick={handleClose}>{t("Done")}</button>
           </div>
         ) : (
@@ -174,10 +201,52 @@ const FeedbackModal: React.FC<FeedbackModalProps> = ({ isOpen, onClose, context,
                 <div className="character-count">{comment.length}{t("/1000")}</div>
               </div>
 
+              {FEEDBACK_CONTACT_ENABLED && (
+                <div className="feedback-contact">
+                  <div className="feedback-contact-heading">{translate('Open to a follow-up?')}</div>
+                  <label className="feedback-contact-consent" htmlFor="feedback-contact-consent">
+                    <input
+                      id="feedback-contact-consent"
+                      type="checkbox"
+                      checked={contactConsent}
+                      onChange={(event) => {
+                        setContactConsent(event.target.checked);
+                        setError(null);
+                      }}
+                      disabled={isSubmitting}
+                    />
+                    <span>{translate('You may contact me about this feedback')}</span>
+                  </label>
+                  {contactConsent && (
+                    <label className="feedback-contact-email" htmlFor="feedback-contact-email">
+                      {translate('Email address')}
+                      <input
+                        id="feedback-contact-email"
+                        type="email"
+                        value={contactEmail}
+                        onChange={(event) => {
+                          setContactEmail(event.target.value);
+                          setError(null);
+                        }}
+                        autoComplete="email"
+                        maxLength={254}
+                        required
+                        aria-describedby="feedback-contact-email-hint"
+                        placeholder="name@company.com"
+                        disabled={isSubmitting}
+                      />
+                      <span id="feedback-contact-email-hint">{translate('Required when follow-up is enabled. Used only to contact you about this feedback.')}</span>
+                    </label>
+                  )}
+                </div>
+              )}
+
               {error && <div className="feedback-error">{error}</div>}
 
               <div className="feedback-hint">
-                {' '}{t("🔒 We collect your rating and comment to improve the app. Don't include sensitive information.")}{' '}</div>
+                {' '}{FEEDBACK_CONTACT_ENABLED
+                  ? translate("🔒 Rating and comments help improve the app. If you opt in, your email is stored only with this feedback in Cosmos DB and is not sent to analytics. Don't include other sensitive information.")
+                  : t("🔒 We collect your rating and comment to improve the app. Don't include sensitive information.")}{' '}</div>
             </div>
 
             <div className="modal-actions">

@@ -10,6 +10,16 @@ import {
 } from '../data/iconCatalog';
 import { getFabricIconByFileName } from '../data/fabricIconCatalog';
 import { SERVICE_ICON_MAP } from '../data/serviceIconMapping';
+import {
+  getCurrentIconDisplayName,
+  isSupersededIconFile,
+} from './iconNaming';
+
+export {
+  getCurrentIconDisplayName,
+  isSupersededIconFile,
+  matchesIconSearch,
+} from './iconNaming';
 
 export interface AzureIcon {
   id: string;
@@ -160,6 +170,7 @@ function isHiddenFromPalette(relativePath: string, fileName: string): boolean {
   if (
     LEGACY_FRIENDLY_PATHS.has(relativePath)
     || HIDDEN_LEGACY_PALETTE_PATHS.has(relativePath)
+    || isSupersededIconFile(fileName.replace(/\.svg$/i, ''))
   ) {
     return true;
   }
@@ -196,7 +207,10 @@ function getIconMetadataCache(): IconMetadataCache {
     const fabricDefinition = sourceCategory === 'fabric'
       ? getFabricIconByFileName(fileNameWithoutExtension)
       : undefined;
-    const name = fabricDefinition?.displayName ?? formatIconName(fileNameWithoutExtension);
+    const name = getCurrentIconDisplayName(
+      fileNameWithoutExtension,
+      fabricDefinition?.displayName ?? formatIconName(fileNameWithoutExtension),
+    );
     const paletteCategory = classifyIconPaletteCategory(
       sourceCategory,
       name,

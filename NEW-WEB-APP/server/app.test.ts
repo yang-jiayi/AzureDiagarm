@@ -45,8 +45,9 @@ describe('analytics API', () => {
     expect(response.body.source).toBe('unavailable');
   });
 
-  it('keeps validation handoff telemetry in the product event catalog', () => {
+  it('keeps journey telemetry in the product event catalog', () => {
     expect(AADB_EVENTS).toContain('Validation_Handoff');
+    expect(AADB_EVENTS).toContain('Guided_Journey');
   });
 
   it('limits validation handoff conversion to initial generations', async () => {

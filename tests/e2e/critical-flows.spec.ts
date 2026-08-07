@@ -317,7 +317,7 @@ async function openInteractionDiagram(
 
 async function openAiGenerator(page: Page) {
   await page.getByRole('tab', { name: 'Create' }).click();
-  await page.getByRole('button', { name: 'Generate with AI' }).click();
+  await page.getByRole('button', { name: 'Generate Diagram', exact: true }).click();
   const modal = page.locator('.ai-architecture-modal');
   await expect(modal).toBeFocused();
   return modal;
@@ -612,7 +612,7 @@ test('architecture chat docks without covering the canvas and persists keyboard 
   });
 
   await page.goto('/');
-  await page.getByRole('button', { name: 'Start with a conversation' }).click();
+  await page.getByRole('button', { name: 'Guided Chat' }).click();
 
   const app = page.locator('.app');
   const workspace = page.locator('.workspace');
@@ -639,7 +639,7 @@ test('architecture chat docks without covering the canvas and persists keyboard 
 
   await page.reload();
   await expect(page.getByRole('region', { name: 'Architecture canvas' })).toBeVisible();
-  await page.getByRole('button', { name: 'Start with a conversation' }).click();
+  await page.getByRole('button', { name: 'Guided Chat' }).click();
   await expect(page.getByRole('separator', { name: 'Resize Architecture Chat' }))
     .toHaveAttribute('aria-valuenow', '484');
 
@@ -648,7 +648,7 @@ test('architecture chat docks without covering the canvas and persists keyboard 
   });
   await page.setViewportSize({ width: 1200, height: 800 });
   await page.reload();
-  await page.getByRole('button', { name: 'Start with a conversation' }).click();
+  await page.getByRole('button', { name: 'Guided Chat' }).click();
   const clampedChat = page.getByRole('complementary', { name: 'Architecture Chat' });
   await expect(page.locator('.app')).toHaveCSS('padding-right', '680px');
   await expect(clampedChat).toHaveCSS('width', '680px');
@@ -679,7 +679,7 @@ test('compact chat and services panels provide dismissible backdrops', async ({ 
 
   await page.setViewportSize({ width: 900, height: 800 });
   await page.goto('/');
-  await page.getByRole('button', { name: 'Start with a conversation' }).click();
+  await page.getByRole('button', { name: 'Guided Chat' }).click();
 
   const app = page.locator('.app');
   const chatBackdrop = page.locator('.arch-chat-backdrop');

@@ -16,6 +16,7 @@ import ReactFlow, {
 } from 'reactflow';
 import 'reactflow/dist/style.css';
 import type { CaptureOptions } from './utils/captureCanvas';
+import { type ExportBackground } from './utils/captureCanvas';
 import { animateEdgeFlow } from './utils/animateEdges';
 import { sequenceWorkflowSvg } from './utils/sequenceWorkflow';
 import { buildWorkflowMarkdown } from './services/workflowNarrativeExporter';
@@ -28,6 +29,7 @@ import ArchitectureChatPanel from './components/ArchitectureChatPanel';
 import CanvasActivityOverlay from './components/CanvasActivityOverlay';
 import CanvasChrome from './components/CanvasChrome';
 import CommandPalette, { type CommandPaletteAction } from './components/CommandPalette';
+import { DeliverChooser } from './components/GuidedJourney';
 import HelpLearnPanel from './components/GuidedHelpPanel';
 import MobileCommandBar from './components/MobileCommandBar';
 import ResponsiveRibbonSurface from './components/ResponsiveRibbonSurface';
@@ -115,7 +117,11 @@ import {
 } from './utils/preserveManualLayout';
 import { mergeLayoutEdges, mergeLayoutNodes } from './utils/layoutResultMerge';
 import { OperationGeneration } from './utils/operationGeneration';
-import { trackArchitectureGeneration, trackValidation, trackValidationHandoff, trackDeploymentGuide, trackExport, trackTemplateImport, trackModelComparison, trackRecommendationsApplied, trackVersionOperation, trackStartFresh, trackValidationFindings } from './services/telemetryService';
+import {
+  getCurrentValidationScore,
+  resolveValidationFreshness,
+} from './utils/validationFreshness';
+import { trackArchitectureGeneration, trackValidation, trackValidationHandoff, trackDeploymentGuide, trackExport, trackTemplateImport, trackModelComparison, trackRecommendationsApplied, trackVersionOperation, trackStartFresh, trackValidationFindings, trackGuidedJourney } from './services/telemetryService';
 import { classifyValidationTopics } from './services/validationConsensus';
 import type { IaCFormat } from './services/azureOpenAI';
 import FeedbackToast from './components/FeedbackToast';
@@ -285,6 +291,7 @@ type ExportHistoryItem = {
 };
 
 const EXPORT_HISTORY_STORAGE_KEY = 'azure-diagram-builder.exportHistory.v1';
+const EXPORT_BACKGROUND_STORAGE_KEY = 'azure-diagram-builder.exportBackground.v1';
 const EDGE_STYLE_STORAGE_KEY = 'azure-diagram-builder.edgeStyle.v1';
 const EDGE_ANIMATION_STORAGE_KEY = 'azure-diagram-builder.edgeAnimation.v1';
 const CANVAS_HINT_STORAGE_KEY = 'azure-diagram-builder.canvasHintDismissed.v1';
@@ -842,6 +849,7 @@ function App() {
   const [originalPrompt, setOriginalPrompt] = useState<string>('');
 
   const [isImportingTemplate, setIsImportingTemplate] = useState(false);
+  const templateInputRef = useRef<HTMLInputElement>(null);
   const [isAzureImportOpen, setIsAzureImportOpen] = useState(false);
   // After a delegated sign-in redirect returns, re-open the "Import from Azure"
   // modal so the user lands back where they left off (now signed in).
@@ -979,10 +987,17 @@ function App() {
   
   // Theme State
   const [isDarkMode, setIsDarkMode] = useState<boolean>(() => readBooleanPreference('darkMode', false));
-  
+  const exportCanvasBackground = isDarkMode ? '#1a1a1a' : '#f8fafc';
+
   // Premium Features State
   const [validationResult, setValidationResult] = useState<ArchitectureValidation | null>(null);
   const [persistedValidationScore, setPersistedValidationScore] = useState<number | undefined>();
+  const [validationNeedsRefresh, setValidationNeedsRefresh] = useState(false);
+  const currentValidationScore = getCurrentValidationScore(
+    validationResult?.overallScore ?? persistedValidationScore,
+    validationNeedsRefresh,
+  );
+  const currentValidationResult = validationNeedsRefresh ? null : validationResult;
   const [isValidationModalOpen, setIsValidationModalOpen] = useState(false);
   const [isValidating, setIsValidating] = useState(false);
   const [deploymentGuide, setDeploymentGuide] = useState<DeploymentGuide | null>(null);
@@ -1000,6 +1015,9 @@ function App() {
   const [isPricingScenarioModalOpen, setIsPricingScenarioModalOpen] = useState(false);
   const [isCompareModelsOpen, setIsCompareModelsOpen] = useState(false);
   const [isChatOpen, setIsChatOpen] = useState(false);
+  const [isDeliverChooserOpen, setIsDeliverChooserOpen] = useState(false);
+  const [generatorOpenSignal, setGeneratorOpenSignal] = useState(0);
+  const generatorOpenSourceRef = useRef<'first-start' | 'journey-strip' | 'toolbar'>('toolbar');
   const [isHelpOpen, setIsHelpOpen] = useState(false);
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
   const [isMobileRibbonOpen, setIsMobileRibbonOpen] = useState(false);
@@ -1063,6 +1081,7 @@ function App() {
       preserveExistingLayout?: boolean,
       beforeApply?: () => string | void,
       reportErrors?: boolean,
+      preserveValidationForRecheck?: boolean,
     ) => Promise<void>
   ) | null>(null);
   const feedbackAfterValidationRef = useRef(false);
@@ -1174,6 +1193,10 @@ function App() {
   }, [focusMode, validationHandoff]);
 
   const [isExportMenuOpen, setIsExportMenuOpen] = useState(false);
+  const [exportBackground, setExportBackground] = useState<ExportBackground>(() => {
+    const saved = localStorage.getItem(EXPORT_BACKGROUND_STORAGE_KEY);
+    return saved === 'dots' || saved === 'grid' ? saved : 'plain';
+  });
   const exportMenuRef = useRef<HTMLDivElement | null>(null);
 
   const [isLayoutMenuOpen, setIsLayoutMenuOpen] = useState(false);
@@ -2567,7 +2590,8 @@ function App() {
     setTimeout(async () => {
       try {
         const dataUrl = await captureDiagramAsPng(reactFlowWrapper.current as HTMLElement, {
-          backgroundColor: '#ffffff',
+          backgroundColor: exportCanvasBackground,
+          exportBackground,
         });
 
         const res = await fetch(dataUrl);
@@ -2580,13 +2604,13 @@ function App() {
         link.click();
         URL.revokeObjectURL(url);
         recordExport('png', fileName);
-        trackExport('png', nodes.filter(n => n.type === 'azureNode').length);
+        trackExport('png', nodes.filter(n => n.type === 'azureNode').length, exportBackground);
       } catch (err) {
         console.error('Error exporting diagram:', err);
         alert(t("Failed to export diagram. Please try again."));
       }
     }, 800);
-  }, [reactFlowInstance, recordExport, nodes, t]);
+  }, [reactFlowInstance, recordExport, nodes, t, exportBackground, exportCanvasBackground]);
 
   const exportAsSvg = useCallback(async () => {
     if (!reactFlowWrapper.current || !reactFlowInstance) {
@@ -2602,8 +2626,9 @@ function App() {
         // captureDiagramAsSvg serialises the DOM natively — SVG edge paths
         // (curves, dashes, orthogonal bends) are preserved as vector data.
         const svgText = await captureDiagramAsSvg(reactFlowWrapper.current as HTMLElement, {
-          backgroundColor: '#f8fafc',
+          backgroundColor: exportCanvasBackground,
           excludePanels: true,
+          exportBackground,
         });
 
         const blob = new Blob([svgText], { type: 'image/svg+xml;charset=utf-8' });
@@ -2615,13 +2640,13 @@ function App() {
         link.click();
         URL.revokeObjectURL(url);
         recordExport('svg', fileName);
-        trackExport('svg', nodes.filter(n => n.type === 'azureNode').length);
+        trackExport('svg', nodes.filter(n => n.type === 'azureNode').length, exportBackground);
       } catch (err) {
         console.error('Error exporting SVG:', err);
         alert(t("Failed to export SVG. Please try again."));
       }
     }, 800);
-  }, [reactFlowInstance, recordExport, nodes, t]);
+  }, [reactFlowInstance, recordExport, nodes, t, exportBackground, exportCanvasBackground]);
 
   // Export the workflow narrative (title, prompt, services, step-by-step flow,
   // connections, optional validation/cost) as a Markdown document.
@@ -2639,7 +2664,7 @@ function App() {
         nodes,
         edges,
         workflow,
-        validationScore: validationResult?.overallScore ?? persistedValidationScore ?? null,
+        validationScore: currentValidationScore ?? null,
         totalMonthlyCost: pricingBreakdown.totalMonthlyCost,
         pricingMode,
         region: pricingBreakdown.region,
@@ -2658,7 +2683,7 @@ function App() {
       console.error('Error exporting workflow markdown:', err);
       alert(t("Failed to export workflow narrative. Please try again."));
     }
-  }, [nodes, edges, workflow, titleBlockData, architecturePrompt, generatedWithModel, validationResult, persistedValidationScore, pricingMode, recordExport, t]);
+  }, [nodes, edges, workflow, titleBlockData, architecturePrompt, generatedWithModel, currentValidationScore, pricingMode, recordExport, t]);
 
   // Export as an Animated SVG: same vector capture as exportAsSvg, but with
   // flowing data-flow circles injected onto each edge. Pure client-side — the
@@ -2674,8 +2699,9 @@ function App() {
     setTimeout(async () => {
       try {
         const svgText = await captureDiagramAsSvg(reactFlowWrapper.current as HTMLElement, {
-          backgroundColor: '#f8fafc',
+          backgroundColor: exportCanvasBackground,
           excludePanels: true,
+          exportBackground,
         });
         const animatedSvg = animateEdgeFlow(svgText);
 
@@ -2688,13 +2714,13 @@ function App() {
         link.click();
         URL.revokeObjectURL(url);
         recordExport('animated-svg', fileName);
-        trackExport('animated-svg', nodes.filter(n => n.type === 'azureNode').length);
+        trackExport('animated-svg', nodes.filter(n => n.type === 'azureNode').length, exportBackground);
       } catch (err) {
         console.error('Error exporting animated SVG:', err);
         alert(t("Failed to export animated SVG. Please try again."));
       }
     }, 800);
-  }, [reactFlowInstance, recordExport, nodes, t]);
+  }, [reactFlowInstance, recordExport, nodes, t, exportBackground, exportCanvasBackground]);
 
   // Export a SEQUENCED "workflow animation" SVG: plays the diagram's workflow
   // steps chronologically (one edge flows at a time) with a caption per step and
@@ -2714,8 +2740,9 @@ function App() {
     setTimeout(async () => {
       try {
         const svgText = await captureDiagramAsSvg(reactFlowWrapper.current as HTMLElement, {
-          backgroundColor: '#f8fafc',
+          backgroundColor: exportCanvasBackground,
           excludePanels: true,
+          exportBackground,
         });
         const sequenced = sequenceWorkflowSvg(svgText, { nodes, edges, workflow, stepDurSec: 3 });
 
@@ -2728,13 +2755,13 @@ function App() {
         link.click();
         URL.revokeObjectURL(url);
         recordExport('workflow-animation', fileName);
-        trackExport('workflow-animation', nodes.filter(n => n.type === 'azureNode').length);
+        trackExport('workflow-animation', nodes.filter(n => n.type === 'azureNode').length, exportBackground);
       } catch (err) {
         console.error('Error exporting workflow animation:', err);
         alert(t("Failed to export workflow animation. Please try again."));
       }
     }, 800);
-  }, [reactFlowInstance, recordExport, nodes, edges, workflow, t]);
+  }, [reactFlowInstance, recordExport, nodes, edges, workflow, t, exportBackground, exportCanvasBackground]);
 
   const exportAsDrawio = useCallback(async () => {
     try {
@@ -2796,8 +2823,9 @@ function App() {
       try {
         const { exportDiagramAsPptx } = await import('./services/pptxExporter');
         const imageDataUrl = await captureDiagramAsPng(reactFlowWrapper.current as HTMLElement, {
-          backgroundColor: isDarkMode ? '#1e293b' : '#f8fafc',
+          backgroundColor: exportCanvasBackground,
           excludePanels: true,
+          exportBackground,
         });
 
         const fileName = await exportDiagramAsPptx(imageDataUrl, {
@@ -2808,13 +2836,13 @@ function App() {
         });
 
         recordExport('pptx', fileName);
-        trackExport('pptx', nodes.filter(n => n.type === 'azureNode').length);
+        trackExport('pptx', nodes.filter(n => n.type === 'azureNode').length, exportBackground);
       } catch (err) {
         console.error('Error exporting PPTX:', err);
         alert(t("Failed to export PowerPoint slide. Please try again."));
       }
     }, 800);
-  }, [reactFlowInstance, recordExport, nodes, isDarkMode, titleBlockData, t]);
+  }, [reactFlowInstance, recordExport, nodes, isDarkMode, titleBlockData, t, exportBackground, exportCanvasBackground]);
 
   const exportCustomerDeck = useCallback(async () => {
     if (!reactFlowWrapper.current || !reactFlowInstance) return;
@@ -2831,8 +2859,9 @@ function App() {
       try {
         const { exportArchitectureDeck } = await import('./services/pptxExporter');
         const imageDataUrl = await captureDiagramAsPng(reactFlowWrapper.current as HTMLElement, {
-          backgroundColor: isDarkMode ? '#1e293b' : '#f8fafc',
+          backgroundColor: exportCanvasBackground,
           excludePanels: true,
+          exportBackground,
         });
 
         // Service inventory from the diagram nodes. Group membership is via
@@ -2859,14 +2888,14 @@ function App() {
         });
 
         // Optional WAF review
-        const validation = validationResult ? {
-          overallScore: validationResult.overallScore,
-          overallLabel: bandLabel(validationResult.overallScore),
-          summary: validationResult.summary,
-          pillars: validationResult.pillars.map(p => ({ pillar: p.pillar, score: p.score, maturity: bandLabel(p.score) })),
-          findings: (validationResult.quickWins.length > 0
-            ? validationResult.quickWins
-            : validationResult.pillars.flatMap(p => p.findings)
+        const validation = currentValidationResult ? {
+          overallScore: currentValidationResult.overallScore,
+          overallLabel: bandLabel(currentValidationResult.overallScore),
+          summary: currentValidationResult.summary,
+          pillars: currentValidationResult.pillars.map(p => ({ pillar: p.pillar, score: p.score, maturity: bandLabel(p.score) })),
+          findings: (currentValidationResult.quickWins.length > 0
+            ? currentValidationResult.quickWins
+            : currentValidationResult.pillars.flatMap(p => p.findings)
           )
             .slice()
             .sort((a, b) => {
@@ -2875,7 +2904,7 @@ function App() {
             })
             .slice(0, 6)
             .map(f => ({ severity: f.severity, category: f.category, issue: f.issue, recommendation: f.recommendation })),
-          modelUsed: validationResult.modelUsed,
+          modelUsed: currentValidationResult.modelUsed,
         } : null;
 
         // Optional cost estimate — enriched to mirror the Cost Intelligence
@@ -2956,13 +2985,13 @@ function App() {
         });
 
         recordExport('pptx', fileName);
-        trackExport('pptx-deck', azureNodes.length);
+        trackExport('pptx-deck', azureNodes.length, exportBackground);
       } catch (err) {
         console.error('Error exporting customer deck:', err);
         alert(t('Failed to export the customer deck. Please try again.'));
       }
     }, 800);
-  }, [reactFlowInstance, recordExport, nodes, isDarkMode, titleBlockData, validationResult, pricingMode, architecturePrompt, originalPrompt, generatedWithModel, t]);
+  }, [reactFlowInstance, recordExport, nodes, isDarkMode, titleBlockData, currentValidationResult, pricingMode, architecturePrompt, originalPrompt, generatedWithModel, t, exportBackground, exportCanvasBackground]);
 
   // ── az prototype export removed (feature unused) ───────────────────────
 
@@ -2979,7 +3008,7 @@ function App() {
       architecturePrompt: architecturePrompt || undefined,
       originalPrompt: originalPrompt || architecturePrompt || undefined,
       iacBaseline,
-      validationScore: validationResult?.overallScore ?? persistedValidationScore,
+      validationScore: currentValidationScore,
     };
     const dataStr = JSON.stringify(diagramData, null, 2);
     const dataUri = 'data:application/json;charset=utf-8,' + encodeURIComponent(dataStr);
@@ -2991,7 +3020,7 @@ function App() {
     link.click();
     recordExport('json', fileName);
     trackExport('json', nodes.filter(n => n.type === 'azureNode').length);
-  }, [reactFlowInstance, recordExport, titleBlockData, workflow, pricingScenarios, architecturePrompt, originalPrompt, nodes, iacBaseline, validationResult, persistedValidationScore]);
+  }, [reactFlowInstance, recordExport, titleBlockData, workflow, pricingScenarios, architecturePrompt, originalPrompt, nodes, iacBaseline, currentValidationScore]);
 
   const exportCostBreakdown = useCallback(() => {
     // Calculate the cost breakdown
@@ -3478,6 +3507,7 @@ function App() {
       setDriftPlanSummary(null);
       setValidationResult(null);
       setPersistedValidationScore(restored.validationScore);
+      setValidationNeedsRefresh(false);
       setValidationHandoff(null);
       feedbackAfterValidationRef.current = false;
       setDeploymentGuide(null);
@@ -3499,7 +3529,7 @@ function App() {
     [applyPreparedFlowObject, prepareFlowObject],
   );
 
-  const cloudValidationScore = validationResult?.overallScore ?? persistedValidationScore;
+  const cloudValidationScore = currentValidationScore;
   const hasCustomizedPricingScenarios = useMemo(
     () => JSON.stringify(pricingScenarios) !== JSON.stringify(DEFAULT_PRICING_SCENARIOS),
     [pricingScenarios],
@@ -3637,6 +3667,7 @@ function App() {
     setGeneratedWithModel(null);
     setValidationResult(null);
     setPersistedValidationScore(undefined);
+    setValidationNeedsRefresh(false);
     setDeploymentGuide(null);
     setIaCBaseline(null);
     setDriftPlanSummary(null);
@@ -3928,6 +3959,7 @@ function App() {
     preserveExistingLayout: boolean = false,
     beforeApply?: () => string | void,
     reportErrors: boolean = true,
+    preserveValidationForRecheck: boolean = false,
   ) => {
     const operationGeneration = aiGenerationRef.current.advance();
     const sourceLineageId = activeDiagramLineageIdRef.current;
@@ -4364,8 +4396,15 @@ function App() {
       activeDiagramLineageIdRef.current = transitionedLineageId;
     }
     const pricingRunId = ++aiPricingRunRef.current;
-    setValidationResult(null);
-    setPersistedValidationScore(undefined);
+    const validationTransition = resolveValidationFreshness(
+      validationResult !== null,
+      preserveValidationForRecheck,
+    );
+    if (!validationTransition.keepResult) {
+      setValidationResult(null);
+      setPersistedValidationScore(undefined);
+    }
+    setValidationNeedsRefresh(validationTransition.needsRefresh);
     setValidationHandoff(null);
     feedbackAfterValidationRef.current = false;
     setLastReferenceArchitecture(architecture?.__referenceArchitecture ?? null);
@@ -4477,7 +4516,7 @@ function App() {
       /* sessionStorage unavailable — ignore */
     }
     if (!feedbackAlreadyDone && generationCountRef.current === 2 && !isFeedbackModalOpen) {
-      feedbackAfterValidationRef.current = true;
+      setIsFeedbackToastOpen(true);
     }
 
     // A refinement keeps the user's pan/zoom. Only frame a newly generated
@@ -4521,6 +4560,7 @@ function App() {
     t,
     titleBlockData,
     cloudValidationScore,
+    validationResult,
     workflow,
   ]);
   handleAIGenerateRef.current = handleAIGenerate;
@@ -4905,6 +4945,7 @@ function App() {
       }
       setValidationResult(result);
       setPersistedValidationScore(result.overallScore);
+      setValidationNeedsRefresh(false);
       trackValidation({
         model: result.metrics?.model,
         overallScore: result.overallScore,
@@ -4919,10 +4960,6 @@ function App() {
         serviceCount: services.length,
         topics: classifyValidationTopics(result).map(t => ({ id: t.id, label: t.label, pillar: t.pillar, severity: t.severity })),
       });
-      if (feedbackAfterValidationRef.current && !isFeedbackModalOpen) {
-        feedbackAfterValidationRef.current = false;
-        setIsFeedbackToastOpen(true);
-      }
       // Collapse panels to maximize diagram view
       setPanelsCollapsedSignal(prev => prev + 1);
     } catch (error: any) {
@@ -4939,7 +4976,7 @@ function App() {
         if (!isCurrentValidation()) setIsValidationModalOpen(false);
       }
     }
-  }, [nodes, edges, architecturePrompt, titleBlockData.architectureName, reactFlowInstance, isFeedbackModalOpen, t, language]);
+  }, [nodes, edges, architecturePrompt, titleBlockData.architectureName, reactFlowInstance, t, language]);
 
   const handleValidationHandoffStart = useCallback(() => {
     if (!validationHandoff) return;
@@ -5064,16 +5101,28 @@ function App() {
   }, []);
 
   const openWorkflowGenerator = useCallback(() => {
+    trackGuidedJourney({
+      action: 'step-selected',
+      step: 'create',
+      source: 'journey-strip',
+      hasDiagram: nodes.some(node => node.type === 'azureNode'),
+    });
     if (!isChatOpen) toggleChatPanel();
-  }, [isChatOpen, toggleChatPanel]);
+  }, [isChatOpen, nodes, toggleChatPanel]);
 
   const openWorkflowValidation = useCallback(() => {
+    trackGuidedJourney({
+      action: 'step-selected',
+      step: 'validate',
+      source: 'journey-strip',
+      hasDiagram: nodes.some(node => node.type === 'azureNode'),
+    });
     if (validationResult) {
       setIsValidationModalOpen(true);
       return;
     }
     void handleValidateArchitecture();
-  }, [handleValidateArchitecture, validationResult]);
+  }, [handleValidateArchitecture, nodes, validationResult]);
 
   const openWorkflowCostReview = useCallback(() => {
     activateRibbonTab('home');
@@ -5082,12 +5131,27 @@ function App() {
   }, [activateRibbonTab, setPricingPrefs]);
 
   const openWorkflowDeployment = useCallback(() => {
+    const hasDiagram = nodes.some(node => node.type === 'azureNode');
+    trackGuidedJourney({
+      action: 'step-selected',
+      step: 'deliver',
+      path: deploymentGuide ? 'deployment-guide' : 'export',
+      source: 'journey-strip',
+      hasDiagram,
+    });
+    if (!hasDiagram) {
+      alert(localize(language, {
+        en: 'Create or import a diagram before sharing or building artifacts.',
+        ja: '共有またはビルドの前に、図を作成またはインポートしてください。',
+      }));
+      return;
+    }
     if (deploymentGuide) {
       setIsDeploymentGuideModalOpen(true);
       return;
     }
-    void handleGenerateDeploymentGuide();
-  }, [deploymentGuide, handleGenerateDeploymentGuide]);
+    setIsDeliverChooserOpen(true);
+  }, [deploymentGuide, language, nodes]);
 
   const toolbarSectionHeading = (sectionId: ToolbarSectionId, label: string) => {
     const isCollapsed = collapsedToolbarSections.has(sectionId);
@@ -5327,6 +5391,23 @@ function App() {
     },
   ];
 
+  const openGeneratorFrom = (source: 'first-start' | 'journey-strip' | 'toolbar') => {
+    generatorOpenSourceRef.current = source;
+    setGeneratorOpenSignal(value => value + 1);
+  };
+
+  const openGuidedChat = (source: 'first-start' | 'journey-strip' | 'toolbar') => {
+    trackGuidedJourney({
+      action: source === 'journey-strip' ? 'step-selected' : 'path-selected',
+      step: nodes.length > 0 ? 'refine' : 'create',
+      path: 'guided-chat',
+      source,
+      hasDiagram: nodes.length > 0,
+    });
+    setIsChatOpen(true);
+  };
+
+
   return (
     <div className={`app${isChatOpen ? ' chat-open' : ''}${focusMode ? ' focus-mode' : ''}`}>
       <header className={`app-header${isHeaderCollapsed ? ' header-collapsed' : ''}${isMobileRibbonOpen ? ' mobile-ribbon-open' : ''}`}>
@@ -5492,6 +5573,18 @@ function App() {
                   </svg>
                   {' '}{t("Add Group")}{' '}</button>
                 <AIArchitectureGenerator 
+                  openSignal={generatorOpenSignal}
+                  onOpen={() => {
+                    const source = generatorOpenSourceRef.current;
+                    trackGuidedJourney({
+                      action: 'path-selected',
+                      step: nodes.length > 0 ? 'refine' : 'create',
+                      path: 'brief-image',
+                      source,
+                      hasDiagram: nodes.length > 0,
+                    });
+                    generatorOpenSourceRef.current = 'toolbar';
+                  }}
                   onGenerate={async (arch, prompt, autoSnap, refImageUrl) => {
                     await handleAIGenerate(arch, prompt, autoSnap, nodes.length > 0);
                     clearSourceModel();
@@ -5512,6 +5605,18 @@ function App() {
                     edges,
                     architectureName: titleBlockData.architectureName
                   }}
+                  onContinueInChat={() => {
+                    trackGuidedJourney({ action: 'post-generation-action', step: 'refine', path: 'guided-chat', source: 'generator-success', hasDiagram: true });
+                    setIsChatOpen(true);
+                  }}
+                  onReview={() => {
+                    trackGuidedJourney({ action: 'post-generation-action', step: 'refine', path: 'canvas', source: 'generator-success', hasDiagram: true });
+                    window.setTimeout(() => reactFlowInstance?.fitView({ padding: 0.2, duration: 300 }), 100);
+                  }}
+                  onValidate={() => {
+                    trackGuidedJourney({ action: 'post-generation-action', step: 'validate', source: 'generator-success', hasDiagram: true });
+                    void handleValidateArchitecture();
+                  }}
                 />
                 <ModelSettingsPopover
                   ref={modelSettingsRef}
@@ -5520,7 +5625,18 @@ function App() {
                 />
                 <button
                   className={`btn btn-secondary${isChatOpen ? ' btn-active' : ''}`}
-                  onClick={toggleChatPanel}
+                  onClick={() => {
+                    if (!isChatOpen) {
+                      trackGuidedJourney({
+                        action: 'path-selected',
+                        step: nodes.length > 0 ? 'refine' : 'create',
+                        path: 'guided-chat',
+                        source: 'toolbar',
+                        hasDiagram: nodes.length > 0,
+                      });
+                    }
+                    toggleChatPanel();
+                  }}
                   aria-pressed={isChatOpen}
                   title={isChatOpen
                     ? t("Close Architecture Chat")
@@ -5548,6 +5664,7 @@ function App() {
                   {isImportingTemplate ? <Loader size={18} className="spin-icon" /> : <FileCode size={18} />}
                   {isImportingTemplate ? t("Parsing...") : t("Import Template")}
                   <input
+                    ref={templateInputRef}
                     type="file"
                     accept=".json,.bicep,.tf"
                     multiple
@@ -5606,6 +5723,36 @@ function App() {
 
                   {isExportMenuOpen && (
                     <div className="toolbar-dropdown-menu toolbar-dropdown-menu--export" role="menu" aria-label={t("Export options")}>
+                      <div className="toolbar-dropdown-heading">
+                        {localize(language, { en: 'Presentation', ja: 'プレゼンテーション' })}
+                      </div>
+                      <div className="toolbar-dropdown-row">
+                        <label className="toolbar-dropdown-label" htmlFor="export-background">
+                          {localize(language, { en: 'Export background', ja: '出力背景' })}
+                        </label>
+                        <select
+                          id="export-background"
+                          className="toolbar-dropdown-select"
+                          value={exportBackground}
+                          onChange={(event) => {
+                            const next = event.target.value as ExportBackground;
+                            setExportBackground(next);
+                            try { localStorage.setItem(EXPORT_BACKGROUND_STORAGE_KEY, next); } catch { /* ignore */ }
+                          }}
+                          aria-label={localize(language, { en: 'Export background', ja: '出力背景' })}
+                        >
+                          <option value="plain">{localize(language, { en: 'Plain (recommended)', ja: 'プレーン（推奨）' })}</option>
+                          <option value="dots">{localize(language, { en: 'Dots', ja: 'ドット' })}</option>
+                          <option value="grid">{localize(language, { en: 'Grid', ja: 'グリッド' })}</option>
+                        </select>
+                      </div>
+                      <div className="toolbar-dropdown-hint toolbar-dropdown-hint--muted">
+                        {localize(language, {
+                          en: 'Affects PNG, SVG, animated SVG, and PowerPoint captures. The editing canvas stays dotted.',
+                          ja: 'PNG、SVG、アニメーションSVG、PowerPointの出力に反映されます。編集キャンバスはドット表示のままです。',
+                        })}
+                      </div>
+                      <div className="toolbar-dropdown-separator" />
                       <div className="toolbar-dropdown-heading">
                         {localize(language, { en: 'Images & animation', ja: '画像・アニメーション' })}
                       </div>
@@ -6210,10 +6357,17 @@ function App() {
                   <button
                     onClick={() => setIsValidationModalOpen(true)}
                     className="btn btn-secondary"
-                    title={t("Open last validation results")}
+                    title={validationNeedsRefresh
+                      ? localize(language, {
+                          en: 'Architecture changed after recommendations. Open the previous results and revalidate.',
+                          ja: '推奨事項の適用後にアーキテクチャが変更されました。以前の結果を開いて再検証してください。',
+                        })
+                      : t("Open last validation results")}
                   >
-                    <Shield size={18} />
-                    {' '}{t("Validation:")}{' '}{translate(bandLabel(validationResult.overallScore))}
+                    {validationNeedsRefresh ? <RefreshCw size={18} /> : <Shield size={18} />}
+                    {validationNeedsRefresh
+                      ? localize(language, { en: 'Revalidate Needed', ja: '再検証が必要' })
+                      : (<>{' '}{t("Validation:")}{' '}{translate(bandLabel(validationResult.overallScore))}</>)}
                   </button>
                 )}
                 <button
@@ -6301,10 +6455,11 @@ function App() {
         </div>
       </header>
 
+
       {!focusMode && (
         <WorkflowStepper
           serviceCount={nodes.filter((node) => node.type === 'azureNode').length}
-          validationScore={validationResult?.overallScore ?? persistedValidationScore ?? null}
+          validationScore={currentValidationScore ?? null}
           hasCostData={hasCostReportData}
           monthlyCostLabel={
             totalMonthlyCost === 0 ? '$0.00/mo' : formatMonthlyCost(totalMonthlyCost)
@@ -6395,7 +6550,16 @@ function App() {
                 duration: 400,
                 maxZoom: 1.2,
               })}
-              onOpenChat={toggleChatPanel}
+              onGuidedChat={() => openGuidedChat('first-start')}
+              onGenerateDiagram={() => openGeneratorFrom('first-start')}
+              onImportTemplate={() => {
+                trackGuidedJourney({ action: 'path-selected', step: 'create', path: 'template-import', source: 'first-start', hasDiagram: false });
+                templateInputRef.current?.click();
+              }}
+              onImportAzure={() => {
+                trackGuidedJourney({ action: 'path-selected', step: 'create', path: 'azure-import', source: 'first-start', hasDiagram: false });
+                setIsAzureImportOpen(true);
+              }}
               onTitleBlockUpdate={(data) => {
                 setTitleBlockData((current) => ({ ...current, ...data }));
               }}
@@ -6766,6 +6930,7 @@ function App() {
         isOpen={isValidationModalOpen}
         onClose={() => setIsValidationModalOpen(false)}
         isLoading={isValidating}
+        isStale={validationNeedsRefresh}
         onRevalidate={handleValidateArchitecture}
         onApplyRecommendations={async (selectedFindings) => {
           console.log('📝 User selected recommendations to apply:', selectedFindings);
@@ -6893,7 +7058,15 @@ Return the IMPROVED architecture in the same JSON format as before with proper g
               }
               
               // Apply the improved architecture
-              await handleAIGenerate(improvedArchitecture, bannerText, true, true);
+              await handleAIGenerate(
+                improvedArchitecture,
+                bannerText,
+                true,
+                true,
+                undefined,
+                true,
+                true,
+              );
               trackRecommendationsApplied(selectedFindings.length);
               
               setIsApplyingRecommendations(false);
@@ -7002,7 +7175,8 @@ Return the IMPROVED architecture in the same JSON format as before with proper g
               }
               if (!reactFlowWrapper.current) continue;
               const dataUrl = await captureDiagramAsPng(reactFlowWrapper.current, {
-                backgroundColor: '#ffffff',
+                backgroundColor: exportCanvasBackground,
+                exportBackground,
               });
               const a = document.createElement('a');
               a.href = dataUrl;
@@ -7022,6 +7196,7 @@ Return the IMPROVED architecture in the same JSON format as before with proper g
         onApply={(validation) => {
           setValidationResult(validation);
           setPersistedValidationScore(validation.overallScore);
+          setValidationNeedsRefresh(false);
           setIsValidationModalOpen(true);
           setPanelsCollapsedSignal(prev => prev + 1);
         }}
@@ -7112,6 +7287,37 @@ Return the IMPROVED architecture in the same JSON format as before with proper g
           isOpen={isAccessManagementOpen}
           identity={accessIdentity}
           onClose={() => setIsAccessManagementOpen(false)}
+        />
+      )}
+      {isDeliverChooserOpen && (
+        <DeliverChooser
+          isBuilding={isGeneratingGuide}
+          onClose={() => setIsDeliverChooserOpen(false)}
+          onShare={() => {
+            trackGuidedJourney({ action: 'path-selected', step: 'deliver', path: 'export', source: 'journey-strip', hasDiagram: true });
+            setIsDeliverChooserOpen(false);
+            activateRibbonTab('home');
+            setIsHeaderCollapsed(false);
+            writeLocalStorage(HEADER_COLLAPSED_STORAGE_KEY, '0');
+            setCollapsedToolbarSections((current) => {
+              if (!current.has('file')) return current;
+              const next = new Set(current);
+              next.delete('file');
+              return next;
+            });
+            if (window.matchMedia(MEDIA_QUERIES.compactOrShortWorkspace).matches) {
+              setIsMobileRibbonOpen(true);
+            }
+            setIsExportMenuOpen(true);
+            window.requestAnimationFrame(() => {
+              exportMenuRef.current?.querySelector<HTMLButtonElement>('button')?.focus();
+            });
+          }}
+          onBuild={() => {
+            trackGuidedJourney({ action: 'path-selected', step: 'deliver', path: 'deployment-guide', source: 'journey-strip', hasDiagram: true });
+            setIsDeliverChooserOpen(false);
+            void handleGenerateDeploymentGuide();
+          }}
         />
       )}
       {(() => {

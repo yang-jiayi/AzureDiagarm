@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { computeLayout } from '../dist/layoutEngine.js';
+import { renderHtml } from '../dist/htmlRenderer.js';
 import { renderSvg } from '../dist/svgRenderer.js';
 import {
   connections,
@@ -59,4 +60,23 @@ test('SVG renderer wraps long titles away from metadata', () => {
 
   assert.ok(title);
   assert.ok((title.match(/<tspan /g) ?? []).length >= 2);
+});
+
+test('HTML renderer script-escapes diagram data', () => {
+  const injectedName = '</script><img src=x onerror=globalThis.pwned=true>\u2028\u2029';
+  const layout = computeLayout(
+    [
+      { name: injectedName, type: 'App Service' },
+      { name: 'Target service', type: 'SQL Database' },
+    ],
+    [{ from: injectedName, to: 'Target service', label: injectedName }],
+    [],
+    'TB',
+  );
+  const html = renderHtml(layout, 'Safe diagram');
+
+  assert.equal((html.match(/<\/script>/g) ?? []).length, 1);
+  assert.doesNotMatch(html, /<\/script><img/);
+  assert.match(html, /\\u003c\/script>/);
+  assert.match(html, /\\u2028\\u2029/);
 });

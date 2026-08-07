@@ -98,10 +98,10 @@ export const SERVICE_ICON_MAP: Record<string, ServiceIconMapping> = {
     costRange: 'Usage-based (model, agent and tool consumption)'
   },
   
-  'Cognitive Services': {
-    displayName: 'Cognitive Services',
-    aliases: ['Azure Cognitive Services', 'Cognitive Service'],
-    iconFile: 'cognitive-services',
+  'Foundry Tools': {
+    displayName: 'Foundry Tools',
+    aliases: ['Azure AI Services', 'Azure Cognitive Services', 'Cognitive Services', 'Cognitive Service'],
+    iconFile: '10162-icon-service-Cognitive-Services',
     category: 'ai + machine learning',
     hasPricingData: true,
     pricingServiceName: 'Cognitive Services',
@@ -164,10 +164,10 @@ export const SERVICE_ICON_MAP: Record<string, ServiceIconMapping> = {
     costRange: '$25-250/mo'
   },
   
-  'Document Intelligence': {
-    displayName: 'Document Intelligence',
-    aliases: ['Form Recognizer', 'Azure Document Intelligence', 'Azure AI Document Intelligence', 'Form Processing'],
-    iconFile: 'document-intelligence',
+  'Azure AI Document Intelligence': {
+    displayName: 'Azure AI Document Intelligence',
+    aliases: ['Document Intelligence', 'Form Recognizer', 'Azure Form Recognizer', 'Azure Document Intelligence', 'Form Processing'],
+    iconFile: '00819-icon-service-Form-Recognizers',
     category: 'ai + machine learning',
     hasPricingData: true,
     pricingServiceName: 'Document Intelligence',
@@ -255,10 +255,10 @@ export const SERVICE_ICON_MAP: Record<string, ServiceIconMapping> = {
     costRange: '$0-2000/mo (scale-to-zero capable)'
   },
   
-  'Azure Cognitive Search': {
-    displayName: 'Azure Cognitive Search',
-    aliases: ['Cognitive Search', 'Azure Search', 'AI Search', 'Azure AI Search'],
-    iconFile: 'azure-cognitive-search',
+  'Azure AI Search': {
+    displayName: 'Azure AI Search',
+    aliases: ['Azure Cognitive Search', 'Cognitive Search', 'Azure Search', 'AI Search'],
+    iconFile: '10044-icon-service-Cognitive-Search',
     category: 'ai + machine learning',
     hasPricingData: false,
     isUsageBased: false,
@@ -902,11 +902,11 @@ export const SERVICE_ICON_MAP: Record<string, ServiceIconMapping> = {
   // ========================================
   // Healthcare
   // ========================================
-  'Azure API for FHIR': {
-    displayName: 'Azure API for FHIR',
-    aliases: ['Legacy FHIR API'],
-    iconFile: '10212-icon-service-Azure-API-for-FHIR',
-    category: 'integration',
+  'Azure Health Data Services FHIR service': {
+    displayName: 'Azure Health Data Services FHIR service',
+    aliases: ['Azure API for FHIR', 'FHIR', 'FHIR Service', 'Azure Health Data Services FHIR', 'Azure FHIR service'],
+    iconFile: '02658-icon-service-FHIR-Service',
+    category: 'other',
     hasPricingData: false,
     isUsageBased: true,
     costRange: '$0-3000/mo'

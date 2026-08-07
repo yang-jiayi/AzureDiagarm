@@ -30,9 +30,8 @@ import { useLanguage } from '../i18n/LanguageContext';
 import { localize, type LocalizedText } from '../i18n/localization';
 import { useEscapeKey } from '../hooks/useEscapeKey';
 import { useModalFocus } from '../hooks/useModalFocus';
+import type { GenerationMode } from '../utils/generationResult';
 import { readBooleanPreference, readLocalStorage, writeLocalStorage } from '../utils/safeStorage';
-
-type GenerationMode = 'topology' | 'reference' | 'blueprint' | 'both';
 
 // After a successful generation the modal stays open this long so the user can
 // review metrics or type a follow-up modification, then auto-closes. Typing a
@@ -100,8 +99,8 @@ const CATEGORIZED_PROMPTS: PromptCategory[] = [
         ja: '会話にAzure OpenAI、感情分析にLanguage、音声入出力にSpeech Services、多言語対応にTranslatorを使用するインテリジェントなカスタマーサービス チャットボット。チャット履歴をCosmos DBに保存し、API Managementで外部公開する',
       },
       {
-        en: 'A smart document processing platform that uses Computer Vision to analyze uploaded images, Document Intelligence to extract form data, Language to classify and summarize content, all coordinated through Azure Functions with results stored in Cosmos DB and searchable via Cognitive Search',
-        ja: 'Computer Visionで画像を分析し、Document Intelligenceでフォーム データを抽出し、Languageで分類と要約を行うドキュメント処理プラットフォーム。Azure Functionsで処理を連携し、結果をCosmos DBに保存してCognitive Searchで検索可能にする',
+        en: 'A smart document processing platform that uses Computer Vision to analyze uploaded images, Document Intelligence to extract form data, Language to classify and summarize content, all coordinated through Azure Functions with results stored in Cosmos DB and searchable via Azure AI Search',
+        ja: 'Computer Visionで画像を分析し、Document Intelligenceでフォーム データを抽出し、Languageで分類と要約を行うドキュメント処理プラットフォーム。Azure Functionsで処理を連携し、結果をCosmos DBに保存してAzure AI Searchで検索可能にする',
       },
       {
         en: 'A content moderation system for social media using Computer Vision to scan images, Language for text analysis and content safety checks, Azure OpenAI for context understanding, with real-time processing via Event Hubs and results stored in SQL Database with API Management exposing moderation APIs',
@@ -114,8 +113,8 @@ const CATEGORIZED_PROMPTS: PromptCategory[] = [
     color: '#f59e0b',
     prompts: [
       {
-        en: 'A Black Friday-ready e-commerce platform handling 50,000 orders/hour peak with real-time inventory sync across 12 regional warehouses, ML-powered fraud detection scoring each transaction in under 200ms, personalized recommendations engine, multi-currency payment processing with PCI-DSS compliance, abandoned cart recovery workflows, using Azure Kubernetes Service for microservices, Cosmos DB for product catalog with global distribution, Redis Cache for session and cart state, Service Bus for order orchestration, Azure Functions for inventory webhooks, Cognitive Search for faceted product search, and CDN with dynamic site acceleration',
-        ja: 'Black Fridayのピーク時に毎時50,000件の注文を処理し、12地域の倉庫間でリアルタイム在庫同期、200ms未満のML不正検知、パーソナライズ推薦、PCI-DSS準拠の多通貨決済、カート放棄回復を実行するEコマース プラットフォーム。マイクロサービスにAzure Kubernetes Service、グローバル商品カタログにCosmos DB、セッションとカート状態にRedis Cache、注文オーケストレーションにService Bus、在庫WebhookにAzure Functions、ファセット商品検索にCognitive Search、動的サイト高速化にCDNを使用する',
+        en: 'A Black Friday-ready e-commerce platform handling 50,000 orders/hour peak with real-time inventory sync across 12 regional warehouses, ML-powered fraud detection scoring each transaction in under 200ms, personalized recommendations engine, multi-currency payment processing with PCI-DSS compliance, abandoned cart recovery workflows, using Azure Kubernetes Service for microservices, Cosmos DB for product catalog with global distribution, Redis Cache for session and cart state, Service Bus for order orchestration, Azure Functions for inventory webhooks, Azure AI Search for faceted product search, and CDN with dynamic site acceleration',
+        ja: 'Black Fridayのピーク時に毎時50,000件の注文を処理し、12地域の倉庫間でリアルタイム在庫同期、200ms未満のML不正検知、パーソナライズ推薦、PCI-DSS準拠の多通貨決済、カート放棄回復を実行するEコマース プラットフォーム。マイクロサービスにAzure Kubernetes Service、グローバル商品カタログにCosmos DB、セッションとカート状態にRedis Cache、注文オーケストレーションにService Bus、在庫WebhookにAzure Functions、ファセット商品検索にAzure AI Search、動的サイト高速化にCDNを使用する',
       },
     ],
   },
@@ -124,8 +123,8 @@ const CATEGORIZED_PROMPTS: PromptCategory[] = [
     color: '#22c55e',
     prompts: [
       {
-        en: 'A HIPAA-compliant healthcare data platform integrating EHR systems via HL7 FHIR R4 APIs, medical imaging PACS with DICOM support storing 500TB of radiology images, real-time clinical decision support, patient portal with secure messaging, audit logging for all PHI access, disaster recovery with 15-minute RPO, using Azure API for FHIR, Azure Health Data Services for DICOM, Blob Storage with immutable retention for images, Cosmos DB for patient timelines, Azure Functions for HL7v2 to FHIR transformation, Logic Apps for clinical workflows, Key Vault for encryption key management, and Microsoft Defender for Cloud for continuous compliance monitoring',
-        ja: 'HL7 FHIR R4 APIによるEHR連携、DICOM対応PACSへの500TBの放射線画像保存、リアルタイム臨床意思決定支援、安全なメッセージ機能付き患者ポータル、全PHIアクセスの監査ログ、RPO 15分の災害復旧を備えたHIPAA準拠の医療データ プラットフォーム。Azure API for FHIR、Azure Health Data Services for DICOM、イミュータブル保持付きBlob Storage、患者タイムライン用Cosmos DB、HL7v2からFHIRへの変換用Azure Functions、臨床ワークフロー用Logic Apps、暗号鍵管理用Key Vault、継続的なコンプライアンス監視用Microsoft Defender for Cloudを使用する',
+        en: 'A HIPAA-compliant healthcare data platform integrating EHR systems via HL7 FHIR R4 APIs, medical imaging PACS with DICOM support storing 500TB of radiology images, real-time clinical decision support, patient portal with secure messaging, audit logging for all PHI access, disaster recovery with 15-minute RPO, using Azure Health Data Services FHIR service and DICOM service, Blob Storage with immutable retention for images, Cosmos DB for patient timelines, Azure Functions for HL7v2 to FHIR transformation, Logic Apps for clinical workflows, Key Vault for encryption key management, and Microsoft Defender for Cloud for continuous compliance monitoring',
+        ja: 'HL7 FHIR R4 APIによるEHR連携、DICOM対応PACSへの500TBの放射線画像保存、リアルタイム臨床意思決定支援、安全なメッセージ機能付き患者ポータル、全PHIアクセスの監査ログ、RPO 15分の災害復旧を備えたHIPAA準拠の医療データ プラットフォーム。Azure Health Data Services FHIR serviceおよびDICOM service、イミュータブル保持付きBlob Storage、患者タイムライン用Cosmos DB、HL7v2からFHIRへの変換用Azure Functions、臨床ワークフロー用Logic Apps、暗号鍵管理用Key Vault、継続的なコンプライアンス監視用Microsoft Defender for Cloudを使用する',
       },
       {
         en: 'An eventing architecture for healthcare imaging with high throughput (50,000-75,000 events/sec), large payloads up to 10MB, strict message ordering, cloud-to-on-prem bridging via VPN Gateway, managed services only (no self-managed Kafka), 99.99% availability SLO, supporting 250M studies, 2.5M daily volume, 5M daily notifications, with Event Hubs for ingestion, Service Bus for routing, Azure Functions for processing, Cosmos DB for metadata, Blob Storage for images, and Log Analytics for monitoring',
@@ -183,6 +182,12 @@ const CATEGORIZED_PROMPTS: PromptCategory[] = [
 
 interface AIArchitectureGeneratorProps {
   onGenerate: (architecture: any, prompt: string, autoSnapshot: boolean, referenceImageUrl?: string) => void | Promise<void>;
+  /** Increment to open the modal from another in-product journey control. */
+  openSignal?: number;
+  onOpen?: () => void;
+  onContinueInChat?: () => void;
+  onReview?: () => void;
+  onValidate?: () => void;
   /**
    * Called when a Reference Architecture has been generated. Reference mode
    * intentionally does NOT push a topology onto the canvas (the transformed
@@ -203,13 +208,24 @@ interface AIArchitectureGeneratorProps {
   };
 }
 
-const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({ onGenerate, onReferenceArchitecture, onBlueprintArchitecture, currentArchitecture }) => {
+const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
+  onGenerate,
+  openSignal,
+  onOpen,
+  onContinueInChat,
+  onReview,
+  onValidate,
+  onReferenceArchitecture,
+  onBlueprintArchitecture,
+  currentArchitecture,
+}) => {
   const { t, translate, language } = useLanguage();
   const [isOpen, setIsOpen] = useState(false);
   const [description, setDescription] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
   const [error, setError] = useState('');
   const [aiMetrics, setAiMetrics] = useState<AIMetrics | null>(null);
+  const [canvasGenerationCompleted, setCanvasGenerationCompleted] = useState(false);
   const [isAnalyzingImage, setIsAnalyzingImage] = useState(false);
   const [imageAnalyzed, setImageAnalyzed] = useState(false);
   const [uploadedImageUrl, setUploadedImageUrl] = useState<string | null>(null);
@@ -220,7 +236,6 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({ onGen
     if (saved === 'reference') return 'blueprint';
     return 'topology';
   });
-
   // When mode === 'both', run topology + blueprint generations in parallel
   // (default) or sequentially. Persisted.
   const [bothInParallel, setBothInParallel] = useState<boolean>(() => {
@@ -229,11 +244,6 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({ onGen
   const handleBothInParallelChange = (checked: boolean) => {
     setBothInParallel(checked);
     writeLocalStorage('aiGenerator.bothInParallel', JSON.stringify(checked));
-  };
-
-  const handleModeChange = (m: GenerationMode) => {
-    setMode(m);
-    writeLocalStorage('aiGenerator.mode', m);
   };
 
   // Opt-in: also download an editorial PNG when generating in reference mode.
@@ -287,12 +297,23 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({ onGen
       closeTimerRef.current = null;
     }
   }, []);
+  const clearGenerationResult = useCallback(() => {
+    setAiMetrics(null);
+    setCanvasGenerationCompleted(false);
+  }, []);
+  const handleModeChange = useCallback((nextMode: GenerationMode) => {
+    cancelScheduledClose();
+    clearGenerationResult();
+    setMode(nextMode);
+    writeLocalStorage('aiGenerator.mode', nextMode);
+  }, [cancelScheduledClose, clearGenerationResult]);
   const isBusy = isGenerating || isAnalyzingImage;
   const closeModal = useCallback(() => {
     if (isBusy) return;
     cancelScheduledClose();
+    clearGenerationResult();
     setIsOpen(false);
-  }, [cancelScheduledClose, isBusy]);
+  }, [cancelScheduledClose, clearGenerationResult, isBusy]);
   const dialogRef = useModalFocus<HTMLDivElement>(isOpen);
   useEscapeKey(isOpen && !isBusy, closeModal);
   const handleAnalyzingChange = useCallback((analyzing: boolean) => {
@@ -304,10 +325,26 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({ onGen
     closeTimerRef.current = window.setTimeout(() => {
       closeTimerRef.current = null;
       setIsOpen(false);
-      setAiMetrics(null);
+      clearGenerationResult();
       setUploadedImageUrl(null);
     }, AUTO_CLOSE_MS);
-  }, [cancelScheduledClose]);
+  }, [cancelScheduledClose, clearGenerationResult]);
+
+  const openGenerator = useCallback(() => {
+    cancelScheduledClose();
+    clearGenerationResult();
+    setIsOpen(true);
+    setError('');
+    setImageAnalyzed(false);
+    onOpen?.();
+  }, [onOpen, cancelScheduledClose, clearGenerationResult]);
+
+  useEffect(() => {
+    if (openSignal && openSignal > 0) openGenerator();
+    // `openSignal` is intentionally the only trigger; callbacks/state should
+    // not reopen the modal by themselves.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openSignal]);
 
   useEffect(() => cancelScheduledClose, [cancelScheduledClose]);
 
@@ -351,7 +388,7 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({ onGen
     cancelScheduledClose();
     setIsGenerating(true);
     setError('');
-    setAiMetrics(null); // Clear previous metrics
+    clearGenerationResult();
     
     const currentModelSettings: ModelOverride = getModelSettingsForFeature('architectureGeneration');
     console.log(`🎯 Generate clicked: default model=${modelSettings.model}, effective model=${currentModelSettings.model}, reasoning=${currentModelSettings.reasoningEffort}, overrides=${JSON.stringify(modelSettings.featureOverrides)}`);
@@ -389,7 +426,6 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({ onGen
       // toolbar “Export Editorial PNG” action, then render + download.
       if (mode === 'reference') {
         const ref = await generateReferenceArchitectureWithAI(description, currentModelSettings, language);
-        if (ref.metrics) setAiMetrics(ref.metrics);
 
         // Stash the ref for the toolbar re-export button (if App provided it).
         onReferenceArchitecture?.(ref);
@@ -403,6 +439,8 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({ onGen
           setError(translate('PNG export failed. See console for details.'));
         }
 
+        if (ref.metrics) setAiMetrics(ref.metrics);
+        setCanvasGenerationCompleted(false);
         setDescription('');
         scheduleClose();
         return;
@@ -418,7 +456,6 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({ onGen
           undefined,
           language,
         );
-        if (bp.metrics) setAiMetrics(bp.metrics);
 
         onBlueprintArchitecture?.(bp);
 
@@ -430,6 +467,8 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({ onGen
           setError(translate('PNG export failed. See console for details.'));
         }
 
+        if (bp.metrics) setAiMetrics(bp.metrics);
+        setCanvasGenerationCompleted(false);
         setDescription('');
         scheduleClose();
         return;
@@ -517,14 +556,14 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({ onGen
         const tm = topoResult?.metrics;
         const bm = bpResult?.metrics;
         const mm = manifest?.metrics;
-        if (tm || bm || mm) {
-          setAiMetrics({
+        const combinedMetrics = tm || bm || mm
+          ? {
             elapsedTimeMs: Math.round(wallElapsed),
             promptTokens: (tm?.promptTokens || 0) + (bm?.promptTokens || 0) + (mm?.promptTokens || 0),
             completionTokens: (tm?.completionTokens || 0) + (bm?.completionTokens || 0) + (mm?.completionTokens || 0),
             totalTokens: (tm?.totalTokens || 0) + (bm?.totalTokens || 0) + (mm?.totalTokens || 0),
-          } as AIMetrics);
-        }
+          } as AIMetrics
+          : null;
 
         // Push topology to canvas first.
         // Inject the manifest title (when available) so the canvas banner /
@@ -534,8 +573,10 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({ onGen
             topoResult.architectureName = manifest.title;
           }
         }
+        let canvasApplied = false;
         if (topoResult) {
           await onGenerate(topoResult, description, autoSnapshot, uploadedImageUrl || undefined);
+          canvasApplied = true;
         }
         if (bpResult) {
           // Stash blueprint for the toolbar re-export button.
@@ -553,6 +594,9 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({ onGen
             setError(translate('Blueprint PNG export failed. See console for details.'));
           }
         }
+
+        if (combinedMetrics) setAiMetrics(combinedMetrics);
+        setCanvasGenerationCompleted(canvasApplied);
 
         if (topoFailure || bpFailure) {
           const failedOutput = topoFailure ? 'Topology' : 'Blueprint';
@@ -581,12 +625,9 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({ onGen
         language,
       );
       
-      // Store AI metrics if available
-      if (result.metrics) {
-        setAiMetrics(result.metrics);
-      }
-      
       await onGenerate(result, description, autoSnapshot, uploadedImageUrl || undefined);
+      if (result.metrics) setAiMetrics(result.metrics);
+      setCanvasGenerationCompleted(true);
       setDescription('');
       
       // Close modal shortly after successful generation
@@ -667,18 +708,13 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({ onGen
     <>
       <button
         type="button"
-        className="btn btn-secondary"
-        onClick={() => {
-          cancelScheduledClose();
-          setIsOpen(true);
-          // Reset state when opening modal
-          setError('');
-          setImageAnalyzed(false);
-        }}
-        title={t("Generate architecture with AI")}
+        className="btn btn-ai btn-generate-ai"
+        onClick={openGenerator}
+        title={translate('Generate a diagram from detailed requirements or an uploaded image')}
       >
         <Sparkles size={18} />
-        {' '}{t("Generate with AI")}{' '}</button>
+        {' '}{translate('Generate Diagram')}{' '}
+      </button>
 
       {isOpen && createPortal(
         <div className="modal-overlay" onClick={closeModal}>
@@ -695,7 +731,7 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({ onGen
             <div className="modal-header">
               <div className="modal-title">
                 <Sparkles size={20} />
-                <h2>{t("AI Architecture Generator")}</h2>
+                <h2>{translate('Generate Diagram')}</h2>
               </div>
               <button
                 type="button"
@@ -730,8 +766,8 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({ onGen
                   })
                 ) : (
                   localize(language, {
-                    en: 'Describe your Azure architecture in natural language, and AI will generate a diagram with the appropriate services and connections. You can also upload a screenshot, whiteboard photo, or diagram exported from another tool and rebuild it as an editable architecture.',
-                    ja: 'Azureアーキテクチャを自然な言葉で説明すると、AIが適切なサービスと接続を含む図を生成します。スクリーンショット、ホワイトボード写真、または他のツールからエクスポートした図をアップロードし、編集可能なアーキテクチャとして再構築することもできます。',
+                    en: 'Use this path when you have a detailed brief, want to upload a diagram, or need explicit Topology or Blueprint controls. Describe your Azure architecture in natural language, and AI will generate a diagram with the appropriate services and connections. You can also upload a screenshot, whiteboard photo, or diagram exported from another tool and AI will analyze it to rebuild an editable architecture. After generation, continue refining in Guided Chat or on the canvas.',
+                    ja: '詳細な要件がある場合、図をアップロードしたい場合、またはトポロジ／ブループリントを明示的に指定したい場合はこちらを使用してください。Azureアーキテクチャを自然な言葉で説明すると、AIが適切なサービスと接続を含む図を生成します。スクリーンショット、ホワイトボード写真、または他のツールからエクスポートした図をアップロードすることもでき、AIがそれを分析して編集可能なアーキテクチャとして再構築します。生成後は、ガイド付きチャットまたはキャンバス上で引き続き調整できます。',
                   })
                 )}
               </p>
@@ -747,6 +783,10 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({ onGen
                   value={description}
                   onChange={(e) => {
                     setDescription(e.target.value);
+                    // If the user chooses to edit the brief after a successful
+                    // run, restore the Generate action instead of leaving the
+                    // modal in its success-only state.
+                    if (aiMetrics || canvasGenerationCompleted) clearGenerationResult();
                     // Typing a modification cancels the pending auto-close so
                     // the modal doesn't disappear mid-edit.
                     cancelScheduledClose();
@@ -776,15 +816,47 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({ onGen
               )}
 
               {aiMetrics && (
-                <div className="similar-architectures">
-                  <h3>{t("✓ Architecture generated successfully!")}</h3>
-                  <div className="ai-metrics">
-                    <span className="metric">
-                      <Clock size={14} />
-                      {(aiMetrics.elapsedTimeMs / 1000).toFixed(1)}{t("s")}{' '}</span>
-                    <span className="metric">
-                      <Zap size={14} />
-                      {aiMetrics.promptTokens.toLocaleString()} {' '}{t("in →")}{' '}{aiMetrics.completionTokens.toLocaleString()} {' '}{t("out (")}{aiMetrics.totalTokens.toLocaleString()} {' '}{t("total)")}{' '}</span>
+                <div className="generator-success-panel">
+                  <div className="similar-architectures">
+                    <h3>
+                      {canvasGenerationCompleted
+                        ? translate('✓ Diagram created — review it before validation')
+                        : localize(language, {
+                            en: mode === 'blueprint' || mode === 'both' ? '✓ Blueprint PNG created' : '✓ Reference PNG created',
+                            ja: mode === 'blueprint' || mode === 'both' ? '✓ Blueprint PNGを作成しました' : '✓ Reference PNGを作成しました',
+                          })}
+                    </h3>
+                    <div className="ai-metrics">
+                      <span className="metric">
+                        <Clock size={14} />
+                        {(aiMetrics.elapsedTimeMs / 1000).toFixed(1)}{t("s")}{' '}</span>
+                      <span className="metric">
+                        <Zap size={14} />
+                        {aiMetrics.promptTokens.toLocaleString()} {' '}{t("in →")}{' '}{aiMetrics.completionTokens.toLocaleString()} {' '}{t("out (")}{aiMetrics.totalTokens.toLocaleString()} {' '}{t("total)")}{' '}</span>
+                    </div>
+                  </div>
+                  <p>
+                    {canvasGenerationCompleted
+                      ? translate('Recommended next: correct the diagram in Guided Chat or on the canvas, then validate it.')
+                      : localize(language, {
+                          en: 'The PNG was downloaded. Generate a topology before reviewing or validating on the canvas.',
+                          ja: 'PNGをダウンロードしました。キャンバスでの確認や検証を行う前に、トポロジーを生成してください。',
+                        })}
+                  </p>
+                  <div className="generator-success-actions">
+                    <button type="button" className="btn btn-primary" disabled={isBusy} onClick={() => { cancelScheduledClose(); setIsOpen(false); onContinueInChat?.(); }}>
+                      {translate('Continue in Guided Chat')}
+                    </button>
+                    {canvasGenerationCompleted && (
+                      <>
+                        <button type="button" className="btn btn-secondary" disabled={isBusy} onClick={() => { cancelScheduledClose(); setIsOpen(false); onReview?.(); }}>
+                          {translate('Review on Canvas')}
+                        </button>
+                        <button type="button" className="btn btn-secondary" disabled={isBusy} onClick={() => { cancelScheduledClose(); setIsOpen(false); onValidate?.(); }}>
+                          {translate('Validate Now')}
+                        </button>
+                      </>
+                    )}
                   </div>
                 </div>
               )}

@@ -18,8 +18,25 @@ function hasFeedbackDeliveryConfiguration(configuration) {
     || hasFeedbackArchiveConfiguration(configuration);
 }
 
+function hasFeedbackContactConfiguration(configuration) {
+  return configuration.contactEnabled === true
+    && hasFeedbackEmailConfiguration(configuration);
+}
+
+function createArchivedFeedbackContact(contact) {
+  if (!contact?.consent) return { consent: false };
+  return {
+    consent: true,
+    consentAt: contact.consentAt,
+    expiresAt: contact.expiresAt,
+    followUpStatus: contact.followUpStatus,
+  };
+}
+
 module.exports = {
+  createArchivedFeedbackContact,
   hasFeedbackArchiveConfiguration,
+  hasFeedbackContactConfiguration,
   hasFeedbackDeliveryConfiguration,
   hasFeedbackEmailConfiguration,
 };

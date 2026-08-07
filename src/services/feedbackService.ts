@@ -14,6 +14,14 @@ export interface FeedbackInput {
   category: string;
   comment: string;
   context?: FeedbackContext;
+  contact?: {
+    consent: boolean;
+    email?: string;
+  };
+}
+
+export interface FeedbackSubmitResult {
+  persisted: boolean;
 }
 
 /** sessionStorage key set once feedback has been given, to suppress re-prompting. */
@@ -27,8 +35,9 @@ export const FEEDBACK_DONE_KEY = 'aqdb_feedback_done';
  * Throws when durable storage fails so the UI can tell the user that the
  * feedback was not saved instead of showing a false success message.
  */
-export async function submitFeedback(input: FeedbackInput): Promise<void> {
+export async function submitFeedback(input: FeedbackInput): Promise<FeedbackSubmitResult> {
   const comment = (input.comment || '').trim();
+  const contactEmail = input.contact?.consent ? (input.contact.email || '').trim() : '';
 
   // Always record sentiment in App Insights, independent of durable storage.
   trackFeedback({
@@ -42,6 +51,10 @@ export async function submitFeedback(input: FeedbackInput): Promise<void> {
     rating: input.rating,
     category: input.category,
     comment,
+    contact: {
+      consent: input.contact?.consent === true,
+      email: contactEmail,
+    },
     context: {
       diagramName: input.context?.diagramName ?? '',
       serviceCount: input.context?.serviceCount ?? 0,
@@ -66,4 +79,6 @@ export async function submitFeedback(input: FeedbackInput): Promise<void> {
   } catch {
     /* sessionStorage unavailable — ignore */
   }
+
+  return { persisted: true };
 }

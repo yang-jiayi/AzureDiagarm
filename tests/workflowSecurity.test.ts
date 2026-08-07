@@ -13,6 +13,11 @@ const emailHelper = readFileSync(
   new URL('../scripts/send-acs-email.sh', import.meta.url),
   'utf8',
 );
+const dockerfile = readFileSync(new URL('../Dockerfile', import.meta.url), 'utf8');
+const feedbackServer = readFileSync(
+  new URL('../server/token-server.js', import.meta.url),
+  'utf8',
+);
 
 test('deployment notifications use OIDC instead of a Communication Services secret', () => {
   assert.doesNotMatch(workflow, /AZURE_COMMUNICATION_CONNECTION_STRING/);
@@ -41,4 +46,21 @@ test('the notification helper acquires a scoped token and waits for delivery', (
   );
   assert.match(emailHelper, /Operation-Location/);
   assert.match(emailHelper, /Succeeded\)/);
+});
+
+test('follow-up contact stays disabled unless client and server opt in together', () => {
+  assert.match(dockerfile, /ARG VITE_FEEDBACK_CONTACT_ENABLED=false/);
+  assert.match(
+    workflow,
+    /VITE_FEEDBACK_CONTACT_ENABLED=\$\{\{ vars\.FEEDBACK_CONTACT_ENABLED \|\| 'false' \}\}/,
+  );
+  assert.match(
+    workflow,
+    /"FEEDBACK_CONTACT_ENABLED=\$\{\{ vars\.FEEDBACK_CONTACT_ENABLED \|\| 'false' \}\}"/,
+  );
+  assert.match(
+    feedbackServer,
+    /process\.env\.FEEDBACK_CONTACT_ENABLED === 'true'/,
+  );
+  assert.match(feedbackServer, /createArchivedFeedbackContact\(item\.contact\)/);
 });

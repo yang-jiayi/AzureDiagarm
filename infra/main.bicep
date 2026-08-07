@@ -35,6 +35,9 @@ param feedbackEmailSender string = ''
 @description('Recipient address for feedback submissions.')
 param feedbackEmailRecipient string = ''
 
+@description('Allow explicitly consented follow-up contact through feedback email delivery.')
+param feedbackContactEnabled bool = false
+
 @description('Optional Azure Table Storage endpoint for feedback and shared rate limiting. Diagram Storage is used when this is empty.')
 param azureTablesEndpoint string = ''
 
@@ -150,6 +153,7 @@ module resources './resources.bicep' = {
     feedbackEmailEndpoint: feedbackEmailEndpoint
     feedbackEmailSender: feedbackEmailSender
     feedbackEmailRecipient: feedbackEmailRecipient
+    feedbackContactEnabled: feedbackContactEnabled
     azureTablesEndpoint: azureTablesEndpoint
     azureTablesFeedbackTable: azureTablesFeedbackTable
     frontDoorId: frontDoorId

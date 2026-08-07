@@ -25,7 +25,9 @@ const { createFixedWindowRateLimiter, createTableRateLimiter } = require('./rate
 const { createDiagramsRouter, createAzureBlobBackend } = require('./diagram-api');
 const { asyncHandler, createErrorHandler } = require('./async-handler');
 const {
+  createArchivedFeedbackContact,
   hasFeedbackArchiveConfiguration,
+  hasFeedbackContactConfiguration,
   hasFeedbackDeliveryConfiguration,
 } = require('./feedback-configuration');
 const { createGracefulShutdown } = require('./graceful-shutdown');
@@ -250,6 +252,7 @@ logFoundryConfiguration(FOUNDRY_ENDPOINT, FOUNDRY_ALLOWED_DEPLOYMENTS, console);
 const FEEDBACK_EMAIL_ENDPOINT = process.env.FEEDBACK_EMAIL_ENDPOINT;
 const FEEDBACK_EMAIL_SENDER = process.env.FEEDBACK_EMAIL_SENDER;
 const FEEDBACK_EMAIL_RECIPIENT = process.env.FEEDBACK_EMAIL_RECIPIENT;
+const FEEDBACK_CONTACT_ENABLED = process.env.FEEDBACK_CONTACT_ENABLED === 'true';
 const TABLES_ENDPOINT = process.env.AZURE_TABLES_ENDPOINT;
 const TABLES_FEEDBACK_TABLE = process.env.AZURE_TABLES_FEEDBACK_TABLE || 'feedback';
 const COSMOS_ENDPOINT = process.env.AZURE_COSMOS_ENDPOINT;
@@ -259,6 +262,7 @@ const feedbackConfiguration = {
   emailEndpoint: FEEDBACK_EMAIL_ENDPOINT,
   emailSender: FEEDBACK_EMAIL_SENDER,
   emailRecipient: FEEDBACK_EMAIL_RECIPIENT,
+  contactEnabled: FEEDBACK_CONTACT_ENABLED,
   tablesEndpoint: TABLES_ENDPOINT,
   cosmosEndpoint: COSMOS_ENDPOINT,
 };
@@ -321,6 +325,10 @@ async function persistFeedback(item) {
             `Rating: ${item.rating}/5`,
             `Category: ${item.category}`,
             `Submitted: ${item.createdAt}`,
+            ...(item.contact?.consent ? [
+              `Follow-up contact: ${item.contact.email}`,
+              `Contact consent expires: ${item.contact.expiresAt}`,
+            ] : []),
             '',
             'Comment:',
             item.comment || '(none)',
@@ -346,6 +354,17 @@ async function persistFeedback(item) {
     }
   }
 
+  // Contact addresses are delivered only through the configured email channel.
+  // Archives retain consent metadata but never the address itself.
+  if (item.contact?.consent && !emailDelivered) {
+    throw deliveryErrors[0] || new Error('Follow-up contact delivery is unavailable');
+  }
+
+  const archiveItem = {
+    ...item,
+    contact: createArchivedFeedbackContact(item.contact),
+  };
+
   if (TABLES_ENDPOINT) {
     try {
       const table = await getFeedbackTable();
@@ -353,12 +372,13 @@ async function persistFeedback(item) {
       await table.createEntity({
         partitionKey: 'feedback',
         rowKey: `${reverseTimestamp}-${item.id}`,
-        id: item.id,
-        rating: item.rating,
-        category: item.category,
-        comment: item.comment,
-        contextJson: JSON.stringify(item.context),
-        createdAt: item.createdAt,
+        id: archiveItem.id,
+        rating: archiveItem.rating,
+        category: archiveItem.category,
+        comment: archiveItem.comment,
+        contactJson: JSON.stringify(archiveItem.contact),
+        contextJson: JSON.stringify(archiveItem.context),
+        createdAt: archiveItem.createdAt,
       });
       return;
     } catch (error) {
@@ -373,7 +393,7 @@ async function persistFeedback(item) {
   const container = getFeedbackContainer();
   if (container) {
     try {
-      await container.items.create(item);
+      await container.items.create(archiveItem);
       return;
     } catch (error) {
       deliveryErrors.push(error);
@@ -408,7 +428,7 @@ async function readFeedback(limit) {
       const entities = table.listEntities({
         queryOptions: {
           filter: "PartitionKey eq 'feedback'",
-          select: ['id', 'rating', 'category', 'comment', 'contextJson', 'createdAt'],
+          select: ['id', 'rating', 'category', 'comment', 'contactJson', 'contextJson', 'createdAt'],
         },
       });
 
@@ -418,6 +438,7 @@ async function readFeedback(limit) {
           rating: entity.rating,
           category: entity.category,
           comment: entity.comment,
+          contact: JSON.parse(entity.contactJson || '{"consent":false}'),
           context: JSON.parse(entity.contextJson || '{}'),
           createdAt: entity.createdAt,
         });
@@ -439,7 +460,7 @@ async function readFeedback(limit) {
   try {
     const { resources } = await container.items
       .query({
-        query: 'SELECT TOP @limit c.id, c.rating, c.category, c.comment, c.context, c.createdAt FROM c WHERE c.type = @type ORDER BY c.createdAt DESC',
+        query: 'SELECT TOP @limit c.id, c.rating, c.category, c.comment, c.contact, c.context, c.createdAt FROM c WHERE c.type = @type ORDER BY c.createdAt DESC',
         parameters: [
           { name: '@limit', value: limit },
           { name: '@type', value: 'feedback' },
@@ -736,7 +757,22 @@ app.post('/api/feedback', asyncHandler(async (req, res) => {
 
   const category = typeof body.category === 'string' ? body.category.slice(0, 100) : 'General';
   const comment = typeof body.comment === 'string' ? body.comment.slice(0, 1000) : '';
+  const contactConsent = body.contact?.consent === true;
+  if (contactConsent && !FEEDBACK_CONTACT_ENABLED) {
+    return res.status(400).json({ error: 'follow-up contact is not enabled' });
+  }
+  if (contactConsent && !hasFeedbackContactConfiguration(feedbackConfiguration)) {
+    return res.status(503).json({ error: 'follow-up contact delivery is not configured' });
+  }
+  const rawContactEmail = typeof body.contact?.email === 'string' ? body.contact.email.trim() : '';
+  const validContactEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(rawContactEmail);
+  if (contactConsent && (rawContactEmail.length > 254 || !validContactEmail)) {
+    return res.status(400).json({ error: 'a valid email address is required when contact consent is enabled' });
+  }
   const ctx = body.context && typeof body.context === 'object' ? body.context : {};
+  const createdAt = new Date();
+  const contactExpiresAt = new Date(createdAt);
+  contactExpiresAt.setUTCDate(contactExpiresAt.getUTCDate() + 180);
 
   const item = {
     id: crypto.randomUUID(),
@@ -744,6 +780,15 @@ app.post('/api/feedback', asyncHandler(async (req, res) => {
     rating,
     category,
     comment,
+    contact: contactConsent ? {
+      consent: true,
+      email: rawContactEmail.toLowerCase(),
+      consentAt: createdAt.toISOString(),
+      expiresAt: contactExpiresAt.toISOString(),
+      followUpStatus: 'new',
+    } : {
+      consent: false,
+    },
     context: {
       diagramName: typeof ctx.diagramName === 'string' ? ctx.diagramName.slice(0, 200) : '',
       serviceCount: Number.isFinite(Number(ctx.serviceCount)) ? Number(ctx.serviceCount) : 0,
@@ -751,7 +796,7 @@ app.post('/api/feedback', asyncHandler(async (req, res) => {
       url: typeof ctx.url === 'string' ? ctx.url.slice(0, 500) : '',
       userAgent: typeof ctx.userAgent === 'string' ? ctx.userAgent.slice(0, 500) : '',
     },
-    createdAt: new Date().toISOString(),
+    createdAt: createdAt.toISOString(),
   };
 
   try {

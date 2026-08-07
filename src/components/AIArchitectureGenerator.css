@@ -1,15 +1,13 @@
 .btn-ai {
-  background: linear-gradient(135deg, #8B5CF6 0%, #EC4899 100%);
+  background: #7c3aed;
   color: white;
-  border: none;
-  box-shadow:
-    0 0 0 rgba(139, 92, 246, 0),
-    0 0 0 rgba(236, 72, 153, 0);
-  animation: ai-button-glow 1.6s ease-in-out infinite;
+  border: 1px solid #a78bfa;
+  box-shadow: none;
+  animation: none;
 }
 
 .btn-ai:hover {
-  background: linear-gradient(135deg, #7C3AED 0%, #DB2777 100%);
+  background: #6d28d9;
   transform: translateY(-1px);
 }
 
@@ -26,9 +24,41 @@
   }
 }
 
+.btn-generate-ai {
+  font-size: 0.875rem !important;
+  font-weight: 500 !important;
+  padding: 0.5rem 1rem !important;
+  animation: none;
+  position: relative;
+}
+
+.btn-generate-ai::before {
+  display: none;
+}
+
+.btn-generate-ai svg {
+  width: 18px !important;
+  height: 18px !important;
+}
+
+.btn-generate-ai:not(:disabled) {
+  background: #7c3aed !important;
+  border: 1px solid #a78bfa !important;
+  box-shadow: none;
+}
+
+.btn-generate-ai:not(:disabled):hover {
+  background: #6d28d9 !important;
+  transform: translateY(-1px);
+  box-shadow: none;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .btn-ai {
     animation: none;
+  }
+  .btn-generate-ai:not(:disabled):hover {
+    transform: none;
   }
 }
 
@@ -430,6 +460,48 @@ body.dark-mode .ai-architecture-modal .modal-col-left .image-uploader-header {
   background: #f0f9ff;
   border: 1px solid #0078d4;
   border-radius: 8px;
+}
+
+.generator-success-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  padding: 0.85rem;
+  border: 1px solid #b8d6c5;
+  border-radius: 7px;
+  background: #f1faf5;
+}
+
+.generator-success-panel .similar-architectures {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.generator-success-panel p {
+  margin: 0;
+  color: #425168;
+  font-size: 0.82rem;
+}
+
+.generator-success-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.generator-success-actions .btn {
+  min-height: 34px;
+}
+
+body.dark-mode .generator-success-panel {
+  background: #1f352c;
+  border-color: #416b58;
+}
+
+body.dark-mode .generator-success-panel p {
+  color: #c5d3cb;
 }
 
 .similar-architectures h3 {

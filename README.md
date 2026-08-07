@@ -187,7 +187,7 @@ Design **Microsoft Fabric** data platforms alongside core Azure services:
 An in-app **Help** button opens a centered guide so new users can get productive fast — Quick Start, a feature tour, example prompts, tips & FAQ, and resource links. (Opening it fires a `Help_Opened` telemetry event.)
 
 ### 💬 User Feedback
-A built-in feedback widget captures a rating, category, and free-text comment. Submissions persist to **Azure Cosmos DB** (keyless, managed-identity auth). If Cosmos is temporarily unreachable, the comment text is captured in telemetry as a fallback so feedback is never silently lost.
+A built-in feedback widget captures a rating, category, and optional free-text comment. The token server delivers submissions through **Azure Communication Services Email** and can also archive them in Azure Table Storage or Cosmos DB using managed identity. Application Insights receives rating metadata only; comment text and optional follow-up contact are never used as telemetry fallbacks.
 
 ### 🧠 Smart Layout Engine
 - **Dagre-based hierarchical layout** with compound node support
@@ -319,7 +319,7 @@ sequenceDiagram
     participant AI as Azure OpenAI
     participant L as Microsoft Learn MCP
     participant P as Azure Retail Prices API
-    participant DB as Cosmos DB
+    participant FD as Feedback delivery / archive
 
     U->>UI: Describe architecture
     UI->>MS: Get model selection
@@ -356,7 +356,7 @@ sequenceDiagram
 
     U->>UI: Submit feedback
     UI->>TS: POST /api/feedback
-    TS->>DB: Persist (managed identity)
+    TS->>FD: Deliver or archive (managed identity)
 ```
 
 ### Component Architecture
@@ -821,7 +821,7 @@ az ad sp update --id <SP_OBJECT_ID> --set appRoleAssignmentRequired=true
 | **Export** | JSZip, Draw.io XML format, PptxGenJS (client-side PPTX) |
 | **Avatar** | Azure Cognitive Services Speech SDK (TTS Avatar), `DefaultAzureCredential` (keyless), Express.js token server |
 | **MCP** | Model Context Protocol server (`@modelcontextprotocol/sdk`), stdio + Streamable-HTTP, Bearer auth — consumable by Microsoft Scout |
-| **Persistence** | Azure Cosmos DB (keyless / managed identity) for diagrams & feedback |
+| **Persistence** | Azure Blob Storage for authenticated diagrams; ACS Email with optional Table Storage or Cosmos DB archives for feedback |
 | **Docs grounding** | Microsoft Learn MCP endpoint (via server-side `/api/docs-search` proxy) |
 | **Deployment** | Docker, Azure Container Apps |
 
@@ -851,7 +851,7 @@ azure-diagrams/
 │   │   ├── deploymentGuideGenerator.ts  # Guides & Bicep generation
 │   │   ├── docsGroundingService.ts  # Microsoft Learn grounding for deployment guides
 │   │   ├── modificationPrompt.ts  # Architecture Chat: live-canvas modification prompts
-│   │   ├── feedbackService.ts  # User feedback (Cosmos + telemetry fallback)
+│   │   ├── feedbackService.ts  # User feedback delivery and metadata-only telemetry
 │   │   ├── costEstimationService.ts  # Pricing engine (PAYG / Reserved)
 │   │   ├── drawioExporter.ts  # Draw.io export
 │   │   ├── pptxExporter.ts   # PowerPoint slide export (PptxGenJS, dark/light theme)
@@ -929,7 +929,7 @@ The Diagram Builder is now an **MCP server** (8 tools: list / validate / estimat
 PAYG ↔ Reserved (1-year) toggle, a “Prices as of” stamp on exports, true per-region meters refreshable with `npm run pricing:refresh`, and corrected OneLake/Fabric rates.
 
 #### 🔒 Security & resilience
-All Azure OpenAI traffic is now **proxied server-side** (`/api/openai`) — the key never reaches the browser. Deployment guides are **grounded in Microsoft Learn** (`/api/docs-search`). A new **Help & Learn** panel and **User Feedback** (Cosmos DB + telemetry fallback) round out the release.
+All Azure OpenAI traffic is now **proxied server-side** (`/api/openai`) — the key never reaches the browser. Deployment guides are **grounded in Microsoft Learn** (`/api/docs-search`). A new **Help & Learn** panel and privacy-preserving **User Feedback** delivery round out the release.
 
 ---
 

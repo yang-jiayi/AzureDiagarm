@@ -25,6 +25,7 @@ param azureFoundryAllowedDeployments string = ''
 param feedbackEmailEndpoint string = ''
 param feedbackEmailSender string = ''
 param feedbackEmailRecipient string = ''
+param feedbackContactEnabled bool = false
 param azureTablesEndpoint string = ''
 param azureTablesFeedbackTable string = 'feedback'
 param frontDoorId string = ''
@@ -437,6 +438,7 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
             { name: 'FEEDBACK_EMAIL_ENDPOINT', value: feedbackEmailEndpoint }
             { name: 'FEEDBACK_EMAIL_SENDER', value: feedbackEmailSender }
             { name: 'FEEDBACK_EMAIL_RECIPIENT', value: feedbackEmailRecipient }
+            { name: 'FEEDBACK_CONTACT_ENABLED', value: string(feedbackContactEnabled) }
             { name: 'AZURE_TABLES_ENDPOINT', value: effectiveAzureTablesEndpoint }
             { name: 'AZURE_TABLES_FEEDBACK_TABLE', value: azureTablesFeedbackTable }
             { name: 'AZURE_TABLES_RATE_LIMIT_TABLE', value: diagramRateLimitTableName }

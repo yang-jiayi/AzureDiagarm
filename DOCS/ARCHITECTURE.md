@@ -1,12 +1,12 @@
 # Azure Architecture Diagram Builder - System Architecture
 
-**Last Updated**: July 2026 (native Visio VSDX + workflow-Markdown exports, `generate_bicep` MCP tool, structured MCP outputs, Microsoft Fabric F-SKU pricing, canvas UX)
+**Last Updated**: August 2026 (guided workflow, current Azure service names, MCP render profiles, secure feedback delivery)
 
 ## Overview
 
 The Azure Architecture Diagram Builder is a web-based tool that uses AI to generate Azure architecture diagrams with real-time pricing estimates. Built with React, TypeScript, and Vite, it leverages **12 AI models** via Azure OpenAI (GPT-5.1, GPT-5.2, GPT-5.2 Codex, GPT-5.3 Codex, GPT-5.4, GPT-5.4 Mini, DeepSeek V3.2 Speciale, DeepSeek V4 Pro, Grok 4.1 Fast, Grok 4.3, Mistral Large 3, Kimi K2.5) for diagram generation, validation, and Infrastructure as Code. The Azure Retail Prices API provides cost estimation across **8 regions** (PAYG and 1-year Reserved), including Microsoft Fabric capacity and OneLake.
 
-A lightweight Express.js **token server** (`127.0.0.1:3001`, co-located with nginx in the container) is the security boundary: it proxies all Azure OpenAI traffic (`/api/openai`) so the key never reaches the browser, grounds deployment guides in Microsoft Learn (`/api/docs-search`), persists user feedback to Cosmos DB (`/api/feedback`), and issues keyless Speech tokens (`/api/speech-token`) via `DefaultAzureCredential` (Managed Identity).
+A lightweight Express.js **token server** (`127.0.0.1:3001`, co-located with nginx in the container) is the security boundary: it proxies all Azure OpenAI traffic (`/api/openai`) so the key never reaches the browser, grounds deployment guides in Microsoft Learn (`/api/docs-search`), delivers feedback by email with optional Table Storage or Cosmos DB archives (`/api/feedback`), and issues keyless Speech tokens (`/api/speech-token`) via `DefaultAzureCredential` (Managed Identity).
 
 The project also ships a standalone **MCP server** (`mcp-server/`) exposing 8 tools over stdio + Streamable-HTTP, consumable by **Microsoft Scout** and other MCP clients. The app is deployed on Azure Container Apps and instrumented with Application Insights.
 
@@ -127,7 +127,7 @@ graph LR
         API[apiHelper.ts<br/>HTTP Retry Logic]
         AVP[avatarPresenter.ts<br/>Speech Avatar + ICE Relay<br/>TCP/443 fallback]
         DGr[docsGroundingService.ts<br/>Microsoft Learn grounding]
-        FB[feedbackService.ts<br/>Cosmos + telemetry fallback]
+        FB[feedbackService.ts<br/>Durable delivery + metadata-only telemetry]
         DRH[useDraggableResizable.ts<br/>Drag + Resize Hook]
     end
 
@@ -378,7 +378,7 @@ azure-diagrams/
 - **html2canvas 1.4.1** - Diagram export to PNG
 
 ### Backend Stack
-- **Express.js token server** - `127.0.0.1:3001`, co-located with nginx; proxies `/api/openai`, grounds docs via `/api/docs-search`, persists feedback via `/api/feedback`, and issues Speech tokens via `/api/speech-token` (keyless, `DefaultAzureCredential`)
+- **Express.js token server** - `127.0.0.1:3001`, co-located with nginx; proxies `/api/openai`, grounds docs via `/api/docs-search`, delivers or archives feedback via `/api/feedback`, and issues Speech tokens via `/api/speech-token` (keyless, `DefaultAzureCredential`)
 - **MCP server** - `@modelcontextprotocol/sdk`, stdio + Streamable-HTTP transports, Bearer-token auth (consumable by Microsoft Scout)
 - **Node.js** - Runtime for server, MCP server, and scripts
 
@@ -403,7 +403,9 @@ azure-diagrams/
 - **Azure OpenAI API** (`2025-04-01-preview`) - AI-powered diagram generation, validation, deployment guides (via the `/api/openai` server proxy)
 - **Microsoft Learn MCP** - documentation grounding for deployment guides (via the `/api/docs-search` server proxy)
 - **Azure Retail Prices API** - real-time pricing data (PAYG + Reserved), pre-fetched per region
-- **Azure Cosmos DB** - diagram & feedback persistence (keyless / managed identity)
+- **Azure Blob Storage** - authenticated diagram persistence (keyless / managed identity)
+- **Azure Communication Services Email** - preferred feedback delivery
+- **Azure Table Storage / Cosmos DB** - optional feedback archives (keyless / managed identity)
 - **Application Insights** - Telemetry, feature usage tracking, session analytics
 - **Vite Dynamic Imports** - SVG icon loading (`import.meta.glob`)
 
@@ -640,7 +642,7 @@ COSMOS_CONTAINER_ID=<Cosmos DB container ID>
 | `/api/ice-token` | WebRTC ICE relay credentials for avatar video |
 | `/api/openai` | Proxies Azure OpenAI calls (managed identity, key fallback) |
 | `/api/docs-search` | Microsoft Learn docs grounding for deployment guides |
-| `/api/feedback` | Stores user feedback in Cosmos DB |
+| `/api/feedback` | Delivers feedback email and optionally archives it in Table Storage or Cosmos DB |
 
 ## Known Limitations
 

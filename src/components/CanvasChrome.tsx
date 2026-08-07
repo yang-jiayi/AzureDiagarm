@@ -1,10 +1,11 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-import { Frame, Hand, Maximize2, MessagesSquare, X, ZoomIn } from 'lucide-react';
+import { Frame, Hand, Maximize2, X, ZoomIn } from 'lucide-react';
 import { MiniMap } from 'reactflow';
 import { useLanguage } from '../i18n/LanguageContext';
 import FeedbackFab from './FeedbackFab';
+import { StartChooser } from './GuidedJourney';
 import Legend from './Legend';
 import ModelBadge from './ModelBadge';
 import TitleBlock from './TitleBlock';
@@ -29,7 +30,10 @@ interface CanvasChromeProps {
   feedbackPulse?: boolean;
   onDismissNavigationHint: () => void;
   onFitView: () => void;
-  onOpenChat: () => void;
+  onGuidedChat: () => void;
+  onGenerateDiagram: () => void;
+  onImportTemplate: () => void;
+  onImportAzure: () => void;
   onTitleBlockUpdate: (
     data: { architectureName?: string; author?: string; version?: string },
   ) => void;
@@ -49,7 +53,10 @@ export default function CanvasChrome({
   feedbackPulse = false,
   onDismissNavigationHint,
   onFitView,
-  onOpenChat,
+  onGuidedChat,
+  onGenerateDiagram,
+  onImportTemplate,
+  onImportAzure,
   onTitleBlockUpdate,
   onFeedback,
   onExitFocus,
@@ -127,24 +134,12 @@ export default function CanvasChrome({
       )}
 
       {!focusMode && showEmptyState && !hasNodes && (
-        <div className="canvas-empty-cta" role="note" aria-label={t('Get started')}>
-          <div className="canvas-empty-cta-inner">
-            <MessagesSquare size={34} className="canvas-empty-cta-icon" />
-            <h2 className="canvas-empty-cta-title">{t('Start with a conversation')}</h2>
-            <p className="canvas-empty-cta-desc">
-              {t(
-                'Describe what you want to build in plain English — I’ll draw the first version, then you refine it step by step.',
-              )}
-            </p>
-            <button type="button" className="canvas-empty-cta-btn" onClick={onOpenChat}>
-              <MessagesSquare size={18} /> {t('Start with a conversation')}
-            </button>
-            <span className="canvas-empty-cta-alt">
-              {t('or use')} <strong>{t('Generate with AI')}</strong>
-              {' '}{t('· or add services from the left panel')}
-            </span>
-          </div>
-        </div>
+        <StartChooser
+          onGuidedChat={onGuidedChat}
+          onGenerate={onGenerateDiagram}
+          onImportTemplate={onImportTemplate}
+          onImportAzure={onImportAzure}
+        />
       )}
 
       {!focusMode && hasNodes && (

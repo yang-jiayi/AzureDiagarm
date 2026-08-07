@@ -12,7 +12,7 @@
     "test:icons": "node scripts/test-icon-library.mjs",
     "test:icon-workspace": "tsx scripts/test-icon-workspace.ts",
     "test:unit": "tsx --test tests/*.test.ts",
-    "test:core": "npm run test:unit && npm run test:arm && npm run test:layout-preservation && npm run test:icons && npm run test:icon-workspace",
+    "test:core": "npm run test:unit && npm run test:arm && npm run test:layout-preservation && npm run test:icons && npm run test:icon-workspace && npm run test:validation-freshness && npm run test:service-names",
     "test": "npm run test:core",
     "test:e2e": "playwright test",
     "build": "tsc && vite build",
@@ -23,6 +23,8 @@
     "pricing:refresh": "cd scripts && bash fetch-multi-region-pricing.sh",
     "test:arm": "node scripts/test-arm-extractor.mjs",
     "test:layout-preservation": "tsx scripts/test-layout-preservation.ts",
+    "test:validation-freshness": "tsx scripts/test-validation-freshness.ts",
+    "test:service-names": "tsx scripts/test-service-name-normalization.ts",
     "mcp:build": "cd mcp-server && npm run build",
     "mcp:start": "node mcp-server/dist/index.js"
   },

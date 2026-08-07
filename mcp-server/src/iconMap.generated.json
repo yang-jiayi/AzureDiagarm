@@ -38,12 +38,14 @@
     "isUsageBased": true,
     "costRange": "Usage-based (model, agent and tool consumption)"
   },
-  "Cognitive Services": {
-    "displayName": "Cognitive Services",
-    "iconFile": "cognitive-services",
+  "Foundry Tools": {
+    "displayName": "Foundry Tools",
+    "iconFile": "10162-icon-service-Cognitive-Services",
     "category": "ai + machine learning",
     "aliases": [
+      "Azure AI Services",
       "Azure Cognitive Services",
+      "Cognitive Services",
       "Cognitive Service"
     ],
     "hasPricingData": true,
@@ -125,14 +127,15 @@
     "isUsageBased": true,
     "costRange": "$25-250/mo"
   },
-  "Document Intelligence": {
-    "displayName": "Document Intelligence",
-    "iconFile": "document-intelligence",
+  "Azure AI Document Intelligence": {
+    "displayName": "Azure AI Document Intelligence",
+    "iconFile": "00819-icon-service-Form-Recognizers",
     "category": "ai + machine learning",
     "aliases": [
+      "Document Intelligence",
       "Form Recognizer",
+      "Azure Form Recognizer",
       "Azure Document Intelligence",
-      "Azure AI Document Intelligence",
       "Form Processing"
     ],
     "hasPricingData": true,
@@ -240,15 +243,15 @@
     "isUsageBased": true,
     "costRange": "$0-2000/mo (scale-to-zero capable)"
   },
-  "Azure Cognitive Search": {
-    "displayName": "Azure Cognitive Search",
-    "iconFile": "azure-cognitive-search",
+  "Azure AI Search": {
+    "displayName": "Azure AI Search",
+    "iconFile": "10044-icon-service-Cognitive-Search",
     "category": "ai + machine learning",
     "aliases": [
+      "Azure Cognitive Search",
       "Cognitive Search",
       "Azure Search",
-      "AI Search",
-      "Azure AI Search"
+      "AI Search"
     ],
     "hasPricingData": false,
     "isUsageBased": false,
@@ -1014,12 +1017,16 @@
     "isUsageBased": true,
     "costRange": "$0.50/mo per zone"
   },
-  "Azure API for FHIR": {
-    "displayName": "Azure API for FHIR",
-    "iconFile": "10212-icon-service-Azure-API-for-FHIR",
-    "category": "integration",
+  "Azure Health Data Services FHIR service": {
+    "displayName": "Azure Health Data Services FHIR service",
+    "iconFile": "02658-icon-service-FHIR-Service",
+    "category": "other",
     "aliases": [
-      "Legacy FHIR API"
+      "Azure API for FHIR",
+      "FHIR",
+      "FHIR Service",
+      "Azure Health Data Services FHIR",
+      "Azure FHIR service"
     ],
     "hasPricingData": false,
     "isUsageBased": true,

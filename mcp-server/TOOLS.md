@@ -219,9 +219,13 @@ edges with 2-line collision-avoided labels, distinct per-group header colors,
 and a footer band (wrapped legend + cost total). Best-effort per-node cost
 badges come from the same pricing resolution as `estimate_costs`.
 
-**Input:** `{ services[], connections?[], groups?[], title?, format? (svg|html), direction? (TB|LR), theme? (light|dark), region?, author?, generatedBy? }`
+**Input:** `{ services[], connections?[], groups?[], title?, format? (svg|html), direction? (TB|LR), theme? (light|dark), profile? (presentation|technical|cost), region?, author?, generatedBy? }`
 
-**Output:** the SVG or HTML markup (text). Set `region: "none"` to disable cost badges.
+**Output:** the SVG or HTML markup (text).
+
+- `presentation` (default): semantic reflow for ultra-wide capability groups and global/primary/secondary regional architectures, graph-derived request paths, WAF policy associations, quieter supporting edges, representative labels, larger text, and no pricing.
+- `technical`: natural layout with every connection label and no pricing.
+- `cost`: presentation composition and edge hierarchy plus per-node cost badges/ranges and a fixed-priced-baseline footer. Variable and ranged items are explicitly excluded from that baseline. `region` applies only to this profile; set it to `none` to suppress pricing enrichment.
 
 ---
 
