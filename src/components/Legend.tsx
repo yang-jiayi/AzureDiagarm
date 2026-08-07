@@ -65,7 +65,7 @@ const Legend: React.FC<LegendProps> = ({ forceCollapsed }) => {
             
             <div className="legend-item">
               <svg width="40" height="16" className="legend-line">
-                <line x1="4" y1="8" x2="36" y2="8" stroke="#64748b" strokeWidth="2" />
+                <line x1="4" y1="8" x2="36" y2="8" stroke="currentColor" strokeWidth="2" />
               </svg>
               <div className="legend-description">
                 <strong>{t("Synchronous")}</strong>
@@ -75,7 +75,7 @@ const Legend: React.FC<LegendProps> = ({ forceCollapsed }) => {
             
             <div className="legend-item">
               <svg width="40" height="16" className="legend-line">
-                <line x1="4" y1="8" x2="36" y2="8" stroke="#64748b" strokeWidth="2" strokeDasharray="5, 5" />
+                <line x1="4" y1="8" x2="36" y2="8" stroke="currentColor" strokeWidth="2" strokeDasharray="5, 5" />
               </svg>
               <div className="legend-description">
                 <strong>{t("Asynchronous")}</strong>
@@ -85,11 +85,31 @@ const Legend: React.FC<LegendProps> = ({ forceCollapsed }) => {
             
             <div className="legend-item">
               <svg width="40" height="16" className="legend-line">
-                <line x1="4" y1="8" x2="36" y2="8" stroke="#64748b" strokeWidth="2" strokeDasharray="2, 4" opacity="0.6" />
+                <line x1="4" y1="8" x2="36" y2="8" stroke="currentColor" strokeWidth="2" strokeDasharray="2, 4" opacity="0.65" />
               </svg>
               <div className="legend-description">
                 <strong>{t("Optional")}</strong>
                 <span>{t("Conditional, fallback paths")}</span>
+              </div>
+            </div>
+
+            <div className="legend-item">
+              <svg width="40" height="16" className="legend-line legend-line-security">
+                <line x1="4" y1="8" x2="36" y2="8" stroke="currentColor" strokeWidth="2.5" strokeDasharray="2, 3" />
+              </svg>
+              <div className="legend-description">
+                <strong>{t("Security")}</strong>
+                <span>{t("Identity, trust, and policy enforcement")}</span>
+              </div>
+            </div>
+
+            <div className="legend-item">
+              <svg width="40" height="16" className="legend-line legend-line-telemetry">
+                <line x1="4" y1="8" x2="36" y2="8" stroke="currentColor" strokeWidth="2" strokeDasharray="7, 3, 2, 3" />
+              </svg>
+              <div className="legend-description">
+                <strong>{t("Telemetry")}</strong>
+                <span>{t("Metrics, logs, traces, and diagnostics")}</span>
               </div>
             </div>
           </div>
@@ -98,56 +118,56 @@ const Legend: React.FC<LegendProps> = ({ forceCollapsed }) => {
             <div className="legend-section-title">{t("Service Categories")}</div>
             
             <div className="legend-item">
-              <div className="legend-color-box" style={{ backgroundColor: '#6b7280' }}></div>
+              <div className="legend-color-box category-web"></div>
               <div className="legend-description">
                 <strong>{t("Web & Frontend")}</strong>
               </div>
             </div>
             
             <div className="legend-item">
-              <div className="legend-color-box" style={{ backgroundColor: '#0078d4' }}></div>
+              <div className="legend-color-box category-compute"></div>
               <div className="legend-description">
                 <strong>{t("Compute & API")}</strong>
               </div>
             </div>
             
             <div className="legend-item">
-              <div className="legend-color-box" style={{ backgroundColor: '#10b981' }}></div>
+              <div className="legend-color-box category-data"></div>
               <div className="legend-description">
                 <strong>{t("Data & Storage")}</strong>
               </div>
             </div>
             
             <div className="legend-item">
-              <div className="legend-color-box" style={{ backgroundColor: '#f59e0b' }}></div>
+              <div className="legend-color-box category-ai"></div>
               <div className="legend-description">
                 <strong>{t("AI & Analytics")}</strong>
               </div>
             </div>
             
             <div className="legend-item">
-              <div className="legend-color-box" style={{ backgroundColor: '#f97316' }}></div>
+              <div className="legend-color-box category-iot"></div>
               <div className="legend-description">
                 <strong>{t("IoT & Devices")}</strong>
               </div>
             </div>
             
             <div className="legend-item">
-              <div className="legend-color-box" style={{ backgroundColor: '#ef4444' }}></div>
+              <div className="legend-color-box category-security"></div>
               <div className="legend-description">
                 <strong>{t("Security & Identity")}</strong>
               </div>
             </div>
             
             <div className="legend-item">
-              <div className="legend-color-box" style={{ backgroundColor: '#8b5cf6' }}></div>
+              <div className="legend-color-box category-operations"></div>
               <div className="legend-description">
                 <strong>{t("Monitoring & Ops")}</strong>
               </div>
             </div>
             
             <div className="legend-item">
-              <div className="legend-color-box" style={{ backgroundColor: '#06b6d4' }}></div>
+              <div className="legend-color-box category-networking"></div>
               <div className="legend-description">
                 <strong>{t("Networking & Integration")}</strong>
               </div>

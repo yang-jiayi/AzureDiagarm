@@ -66,3 +66,41 @@ test('edge layout merge updates layout styling while preserving concurrent label
   });
   assert.equal(merged[1], current[1]);
 });
+
+test('edge layout merge applies automatic label offsets without replacing manual edits', () => {
+  const source: Edge[] = [{
+    id: 'edge',
+    source: 'a',
+    target: 'b',
+    data: {
+      labelOffsetX: 0,
+      labelOffsetY: 0,
+      labelOffsetAuto: true,
+    },
+  }];
+  const laidOut: Edge[] = [{
+    ...source[0],
+    data: {
+      labelOffsetX: 24,
+      labelOffsetY: -18,
+      labelOffsetAuto: true,
+    },
+  }];
+
+  const automatic = mergeLayoutEdges([{ ...source[0] }], source, laidOut);
+  assert.deepEqual(automatic[0].data, laidOut[0].data);
+
+  const manual = mergeLayoutEdges([{
+    ...source[0],
+    data: {
+      labelOffsetX: 40,
+      labelOffsetY: 12,
+      labelOffsetAuto: false,
+    },
+  }], source, laidOut);
+  assert.deepEqual(manual[0].data, {
+    labelOffsetX: 40,
+    labelOffsetY: 12,
+    labelOffsetAuto: false,
+  });
+});

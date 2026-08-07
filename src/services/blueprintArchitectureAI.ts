@@ -18,7 +18,6 @@
 
 import { callAzureOpenAI, ModelOverride, AIMetrics } from './azureOpenAI';
 import { getServiceIconMapping } from '../data/serviceIconMapping';
-import { MODEL_CONFIG, getModelSettings } from '../stores/modelSettingsStore';
 import type { ComponentManifest } from './componentManifestAI';
 import { renderManifestForPrompt } from './componentManifestAI';
 import type { Language } from '../i18n/LanguageContext';
@@ -68,6 +67,8 @@ export interface BpEdge {
   routing?: 'orthogonal' | 'curve' | 'straight';
   /** Visual emphasis. */
   style?: 'solid' | 'dashed' | 'dotted';
+  /** Semantic relationship used for color and line treatment. */
+  type?: 'sync' | 'async' | 'optional' | 'security' | 'telemetry';
 }
 
 export interface BpWorkflowStep {
@@ -178,6 +179,7 @@ interface BlueprintArchitecture {
     label?: string;                                         // short verb phrase, <= 4 words ideal
     routing?: "orthogonal"|"curve"|"straight";
     style?: "solid"|"dashed"|"dotted";
+    type?: "sync"|"async"|"optional"|"security"|"telemetry";
   }>;
   workflow?: Array<{ step: number; description: string }>;
 }
@@ -228,7 +230,7 @@ K. Identity / OAuth flow direction — Microsoft Entra ID is an identity provide
 Content rules:
 9. Use ONLY OFFICIAL Microsoft product names that exist as Azure services ("Microsoft Entra ID", "Azure Cosmos DB", "Azure Functions", "Logic Apps", "Microsoft Sentinel", "Microsoft Defender for Cloud", "Azure Monitor", "Log Analytics", "Key Vault", "Application Insights", "API Management", "Service Bus", "Event Hubs", "Azure SQL Database", "Azure Cache for Redis", "Azure Kubernetes Service", "Azure Container Apps", etc.). Do NOT invent composite names like "Azure Workloads" or "Logic Apps Playbooks" — just use "Logic Apps". If you need a generic workloads tile, use kind: "cloud" with name "Azure Workloads" and category "compute" only as a last resort.
 10. Use 5–20 nodes total. Use 3–5 zones — always group related services into logical zones (kind: "subsystem" or "rg") such as "Edge / Ingress", "Compute / Microservices", "Messaging", "Data / Storage", "Observability", "Identity", or "On-Premises". Every service node (not personas) should belong to a zone via the "zone" field. A diagram with only one zone is incorrect.
-11. Use 4–15 edges. Every edge needs a step number and a short label — including telemetry, logging, and observability flows (those should additionally be dashed via "style": "dashed"). Do not leave any edge unnumbered. Re-read Rule C.1 before emitting any observability edge — verify the (from, to) pair has the emitter on the 'from' side and the collection store on the 'to' side. An edge { from: "monitor", to: "logs", label: "Send logs" } is incorrect; the correct form is { from: "<workload>", to: "logs", label: "Send logs" } (or { from: "appins", to: "logs", label: "Export logs" }).
+11. Use 4–15 edges. Every edge needs a step number, a short label, and a semantic "type". Use "security" for identity, authentication, trust, secrets, and policy; use "telemetry" for metrics, logs, traces, and diagnostics; use "async" for queues/events; use "optional" for fallback paths; otherwise use "sync". Telemetry, logging, and observability flows should additionally be dashed via "style": "dashed". Do not leave any edge unnumbered. Re-read Rule C.1 before emitting any observability edge — verify the (from, to) pair has the emitter on the 'from' side and the collection store on the 'to' side. An edge { from: "monitor", to: "logs", label: "Send logs" } is incorrect; the correct form is { from: "<workload>", to: "logs", label: "Send logs" } (or { from: "appins", to: "logs", label: "Export logs" }).
 12. Always include a workflow array matching the numbered edges. Step numbering is contiguous: the set of edge "step" values should equal exactly {1, 2, 3, …, workflow.length} with no gaps, no duplicates, and no numbers beyond workflow.length. For every workflow item with "step": N, include exactly one edge whose "step" field is N and whose "label" describes that same action. If a workflow step has no obvious arrow in the topology, either (a) add an edge for it, or (b) remove that workflow item — do not leave a gap.
 13. Personas (users, operators) use kind: "persona" and category: "general".
 14. Network gateways (Site-to-Site VPN, ExpressRoute, Front Door) use kind: "cloud".
@@ -244,10 +246,9 @@ Now generate a blueprint architecture for the user's request. Return JSON only.`
     { role: 'user', content: description },
   ];
 
-  const activeModel = modelOverride?.model || getModelSettings().model;
   const { content, metrics } = await callAzureOpenAI(messages, modelOverride, true);
   console.log(
-    `📐 Blueprint Architecture Response [${MODEL_CONFIG[activeModel].displayName}]: ${content.length} chars`,
+    `📐 Blueprint Architecture Response [${metrics.model || 'AI'}]: ${content.length} chars`,
   );
 
   let bp: BlueprintArchitecture;

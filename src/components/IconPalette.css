@@ -15,7 +15,7 @@
     var(--azd-color-brand-subtle),
     var(--azd-color-accent-ai-soft)
   );
-  color: var(--azd-color-text-muted);
+  color: var(--azd-color-text-secondary);
   font-size: 0.76rem;
   line-height: 1.4;
 }
@@ -278,7 +278,7 @@ body:has([role='dialog'][aria-modal='true']) .icon-palette.collapsed .palette-op
 
 .palette-view-tabs {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 0.25rem;
   margin-top: 0.6rem;
   border: 1px solid var(--azd-color-border);
@@ -292,23 +292,24 @@ body:has([role='dialog'][aria-modal='true']) .icon-palette.collapsed .palette-op
   min-width: 0;
   flex-direction: column;
   align-items: center;
-  gap: 0.12rem;
+  gap: 0.18rem;
+  min-height: 58px;
   border: 0;
   border-radius: 7px;
   background: transparent;
   color: var(--azd-color-text-muted);
   padding: 0.35rem 0.15rem;
   font: inherit;
-  font-size: 0.62rem;
+  font-size: 0.68rem;
   font-weight: 700;
   cursor: pointer;
 }
 
 .palette-view-tabs button span {
   max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.15;
+  text-align: center;
+  white-space: normal;
 }
 
 .palette-view-tabs button b {
@@ -622,6 +623,7 @@ body:has([role='dialog'][aria-modal='true']) .icon-palette.collapsed .palette-op
   min-height: 0;
   text-align: left;
   font-size: 0.82rem;
+  -webkit-line-clamp: 2;
 }
 
 .icon-palette.palette-layout-list .icon-add-indicator {

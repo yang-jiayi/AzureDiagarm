@@ -138,6 +138,7 @@ app.use('/api/diagrams', createDiagramsRouter({
 const OPENAI_ENDPOINT = process.env.AZURE_OPENAI_ENDPOINT;
 const OPENAI_API_KEY = process.env.AZURE_OPENAI_API_KEY; // optional fallback
 const OPENAI_API_VERSION = process.env.AZURE_OPENAI_API_VERSION || '2024-05-01-preview';
+const ALLOW_BYO_AI_ENDPOINTS = process.env.ALLOW_BYO_AI_ENDPOINTS === 'true';
 const FOUNDRY_ENDPOINT = process.env.AZURE_FOUNDRY_ENDPOINT;
 const FOUNDRY_API_KEY = process.env.AZURE_FOUNDRY_API_KEY; // optional fallback
 const OPENAI_ALLOWED_DEPLOYMENTS = new Set(
@@ -245,6 +246,11 @@ if (!OPENAI_ENDPOINT) {
 if (OPENAI_ALLOWED_DEPLOYMENTS.size === 0) {
   console.warn('[openai-proxy] AZURE_OPENAI_ALLOWED_DEPLOYMENTS is empty. All Azure OpenAI requests will be rejected (503) until the allowlist is configured.');
 }
+console.info(
+  `[openai-proxy] Bring-your-own Azure OpenAI / OpenAI endpoints are ${
+    ALLOW_BYO_AI_ENDPOINTS ? 'enabled' : 'disabled'
+  }.`,
+);
 logFoundryConfiguration(FOUNDRY_ENDPOINT, FOUNDRY_ALLOWED_DEPLOYMENTS, console);
 
 // ── Durable feedback storage ───────────────────────────────────────────────
@@ -514,6 +520,7 @@ app.use('/api/openai', createOpenAIProxyRouter({
   apiVersion: OPENAI_API_VERSION,
   allowedDeployments: OPENAI_ALLOWED_DEPLOYMENTS,
   allowedFoundryDeployments: FOUNDRY_ALLOWED_DEPLOYMENTS,
+  allowByoAIEndpoints: ALLOW_BYO_AI_ENDPOINTS,
   consumeRateLimit: consumeOpenAiRateLimit,
 }));
 

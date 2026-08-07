@@ -504,8 +504,8 @@ const IconPalette: React.FC<IconPaletteProps> = ({ forceCollapsed, openSignal, o
               <input
                 type="search"
                 placeholder={localize(language, {
-                  en: 'Search name, acronym, or purpose...',
-                  ja: '名前・略称・用途で検索...',
+                  en: 'Search Azure services...',
+                  ja: 'Azure サービスを検索...',
                 })}
                 aria-label={t('palette.searchLabel')}
                 value={searchTerm}

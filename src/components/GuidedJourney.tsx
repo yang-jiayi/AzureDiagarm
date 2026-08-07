@@ -116,7 +116,6 @@ export const StartChooser: React.FC<StartChooserProps> = ({
   return (
     <div className="start-chooser" role="region" aria-label={t('Choose how to start')}>
       <div className="start-chooser-heading">
-        <span className="start-chooser-kicker">{t('Step 1 · Create')}</span>
         <h2>{t('How would you like to start?')}</h2>
         <p>{t('Choose a path now. All paths lead to the same editable canvas and Guided Chat refinement.')}</p>
       </div>

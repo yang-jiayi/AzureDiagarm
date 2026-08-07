@@ -3,11 +3,12 @@
 
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { X, Loader2, Clock, Zap, CheckCircle, AlertCircle, GitCompare, FileJson, FileText, Shield, AlertTriangle, Info, Brain, MonitorPlay, StopCircle } from 'lucide-react';
-import { isAzureOpenAIConfigured, generateValidationCritique, ModelOverride } from '../services/azureOpenAI';
+import { isManagedAIConfigured, generateValidationCritique, ModelOverride } from '../services/azureOpenAI';
 import { validateArchitecture, ArchitectureValidation, ValidationModelOverride, AIMetrics } from '../services/architectureValidator';
 import { buildValidationConsensus, renderConsensusMarkdown, ConsensusResult } from '../services/validationConsensus';
 import { trackValidationCompared, trackValidationCritiqueRanked, trackValidationFindings } from '../services/telemetryService';
 import { useLanguage } from '../i18n/LanguageContext';
+import { localize } from '../i18n/localization';
 
 /** Parse the critique's #1-ranked / recommended model from its Markdown. */
 function parseCritiqueWinner(text: string): string | null {
@@ -89,6 +90,7 @@ const CompareValidationModal: React.FC<CompareValidationModalProps> = ({
   const { t, translate, language } = useLanguage();
   const availableModels = getAvailableModels();
   const currentSettings = getModelSettings();
+  const managedAIConfigured = isManagedAIConfigured();
 
   const [selectedModels, setSelectedModels] = useState<Set<ModelType>>(() => {
     const initial = new Set<ModelType>();
@@ -224,7 +226,7 @@ const CompareValidationModal: React.FC<CompareValidationModalProps> = ({
 
   const runComparison = async () => {
     if (selectedModels.size === 0 || services.length === 0) return;
-    if (!isAzureOpenAIConfigured()) return;
+    if (!isManagedAIConfigured()) return;
 
     setIsRunning(true);
     const models = Array.from(selectedModels);
@@ -247,6 +249,7 @@ const CompareValidationModal: React.FC<CompareValidationModalProps> = ({
         reasoningEffort: MODEL_CONFIG[model].isReasoning
           ? normalizeReasoningEffort(model, effectiveReasoningEffort)
           : 'none',
+        forceManaged: true,
       };
 
       try {
@@ -416,6 +419,7 @@ const CompareValidationModal: React.FC<CompareValidationModalProps> = ({
         reasoningEffort: MODEL_CONFIG[chosenModel].isReasoning
           ? normalizeReasoningEffort(chosenModel, effectiveReasoningEffort)
           : 'none',
+        forceManaged: true,
       };
       const { content } = await generateValidationCritique(
         summary,
@@ -788,11 +792,20 @@ const CompareValidationModal: React.FC<CompareValidationModalProps> = ({
           </div>
 
           {/* Run Button */}
+          {!managedAIConfigured && (
+            <div className="compare-managed-notice" role="status">
+              <AlertCircle size={16} aria-hidden="true" />
+              <span>{localize(language, {
+                en: 'Cross-model validation requires managed AI models configured by the application administrator.',
+                ja: 'モデル横断の検証には、アプリケーション管理者が設定した管理 AI モデルが必要です。',
+              })}</span>
+            </div>
+          )}
           {!hasResults && (
             <button
               className="btn btn-primary compare-run-btn"
               onClick={runComparison}
-              disabled={isRunning || services.length === 0 || selectedModels.size < 2}
+              disabled={!managedAIConfigured || isRunning || services.length === 0 || selectedModels.size < 2}
             >
               <GitCompare size={18} />
               {' '}{t("Compare Validation Across")}{' '}{selectedModels.size} {' '}{t("Models")}{' '}</button>

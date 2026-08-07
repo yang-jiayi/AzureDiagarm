@@ -15,8 +15,11 @@ const migratedStyles = [
   '../src/components/AzureNode.css',
   '../src/components/CanvasChrome.css',
   '../src/components/CommandPalette.css',
+  '../src/components/EditableEdge.css',
   '../src/components/IconPalette.css',
+  '../src/components/Legend.css',
   '../src/components/MobileCommandBar.css',
+  '../src/components/TitleBlock.css',
   '../src/components/WorkflowPanel.css',
   '../src/components/WorkflowStepper.css',
 ];

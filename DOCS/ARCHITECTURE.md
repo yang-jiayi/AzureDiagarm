@@ -609,7 +609,8 @@ scripts/fetch-multi-region-pricing.sh
 > (`/api/openai`). The API key is never embedded in the client bundle. The
 > `VITE_AZURE_OPENAI_ENDPOINT` build-time value is a non-secret flag that tells
 > the UI that AI is configured; the real endpoint and credentials are read at
-> runtime by the token server.
+> runtime by the token server. Optional user-owned credentials remain in
+> browser-tab memory only and are accepted only when the server enables BYO AI.
 
 ```env
 # Build-time variables (embedded by Vite via import.meta.env) — NON-SECRET.
@@ -628,6 +629,7 @@ VITE_REASONING_EFFORT=<medium|low|high|none>
 # Runtime variables (for server/container) — read by token-server.js
 AZURE_OPENAI_ENDPOINT=<Azure OpenAI endpoint URL — REQUIRED for /api/openai>
 AZURE_OPENAI_API_KEY=<Azure OpenAI key — OPTIONAL fallback; prefer managed identity>
+ALLOW_BYO_AI_ENDPOINTS=<true|false — allow trusted Azure OpenAI and official OpenAI user endpoints>
 LEARN_MCP_URL=<override for the Microsoft Learn MCP endpoint (optional)>
 AZURE_COSMOS_ENDPOINT=<Cosmos DB endpoint>
 COSMOS_DATABASE_ID=<Cosmos DB database ID>
@@ -640,9 +642,21 @@ COSMOS_CONTAINER_ID=<Cosmos DB container ID>
 |----------|---------|
 | `/api/speech-token` | Keyless AAD token for the Speech SDK (avatar) |
 | `/api/ice-token` | WebRTC ICE relay credentials for avatar video |
-| `/api/openai` | Proxies Azure OpenAI calls (managed identity, key fallback) |
+| `/api/openai` | Proxies managed AI calls and, when enabled, validated user-owned Azure OpenAI or official OpenAI calls |
 | `/api/docs-search` | Microsoft Learn docs grounding for deployment guides |
 | `/api/feedback` | Delivers feedback email and optionally archives it in Table Storage or Cosmos DB |
+
+### Bring-your-own AI security boundary
+
+- The browser persists only non-secret provider, endpoint, model, format, API
+  version, and capability preferences.
+- API keys remain in module memory for the current browser tab and are excluded
+  from diagrams, local storage, telemetry, URLs, and logs.
+- The server accepts only trusted Azure OpenAI DNS suffixes or the fixed
+  `api.openai.com` host, requires HTTPS, rejects credentials, ports, query
+  strings, fragments, and prebuilt API paths, and disables redirects.
+- Arbitrary OpenAI-compatible hosts are unsupported because they would turn the
+  application into an SSRF-capable open proxy.
 
 ## Known Limitations
 

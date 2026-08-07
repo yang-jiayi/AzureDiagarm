@@ -70,7 +70,12 @@ function mergeLayoutDataField(
   currentData: Record<string, unknown>,
   sourceData: Record<string, unknown>,
   laidOutData: Record<string, unknown>,
-  name: 'pathStyle' | 'primaryPath',
+  name:
+    | 'pathStyle'
+    | 'primaryPath'
+    | 'labelOffsetX'
+    | 'labelOffsetY'
+    | 'labelOffsetAuto',
 ) {
   if (currentData[name] !== sourceData[name]) return;
   if (laidOutData[name] === undefined) delete nextData[name];
@@ -107,6 +112,9 @@ export function mergeLayoutEdges(
     const nextData = { ...currentData };
     mergeLayoutDataField(nextData, currentData, sourceData, laidOutData, 'pathStyle');
     mergeLayoutDataField(nextData, currentData, sourceData, laidOutData, 'primaryPath');
+    mergeLayoutDataField(nextData, currentData, sourceData, laidOutData, 'labelOffsetX');
+    mergeLayoutDataField(nextData, currentData, sourceData, laidOutData, 'labelOffsetY');
+    mergeLayoutDataField(nextData, currentData, sourceData, laidOutData, 'labelOffsetAuto');
     return { ...current, data: nextData };
   });
 }

@@ -3,6 +3,7 @@ import test from 'node:test';
 import type { Edge, Node } from 'reactflow';
 import { relayoutDiagram as relayoutWithDagre } from '../src/utils/layoutEngine';
 import {
+  ELK_QUALITY_LAYOUT_OPTIONS,
   layoutArchitecture as layoutArchitectureWithElk,
   relayoutDiagram as relayoutWithElk,
 } from '../src/utils/elkLayoutEngine';
@@ -76,6 +77,15 @@ function boundsFor(
   const maxY = Math.max(...bounds.map(bound => bound.y + bound.height));
   return { x, y, width: maxX - x, height: maxY - y };
 }
+
+test('ELK quality options prioritize orthogonal routing and balanced placement', () => {
+  assert.equal(ELK_QUALITY_LAYOUT_OPTIONS['elk.edgeRouting'], 'ORTHOGONAL');
+  assert.equal(
+    ELK_QUALITY_LAYOUT_OPTIONS['elk.layered.nodePlacement.strategy'],
+    'NETWORK_SIMPLEX',
+  );
+  assert.equal(ELK_QUALITY_LAYOUT_OPTIONS['elk.spacing.edgeLabelNode'], '20');
+});
 
 test('fitGroupToContent preserves child absolute positions', () => {
   const nodes = [

@@ -521,7 +521,8 @@ closes them during graceful shutdown.
 
 - **Node.js 22**
 - **npm** or **yarn**
-- **Azure OpenAI** resource with GPT model deployment
+- **Azure OpenAI** resource with a model deployment for managed models, or a
+  user-owned Azure OpenAI / official OpenAI endpoint when BYO AI is enabled
 
 ### Installation
 
@@ -554,6 +555,9 @@ Create a `.env` file in the project root:
 VITE_AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com/
 AZURE_OPENAI_API_KEY=your-api-key-here   # optional server-side fallback; prefer managed identity
 VITE_AZURE_OPENAI_DEPLOYMENT=your-default-deployment
+
+# Optional user-owned endpoints. Disabled by default for self-hosted installs.
+ALLOW_BYO_AI_ENDPOINTS=false
 
 # Multi-model deployments (15 models)
 # OpenAI GPT-5.x family
@@ -988,6 +992,13 @@ Compare AI model critiques, then click **"Present"** to have a photorealistic **
 The same token server also brokers Azure OpenAI and Microsoft Foundry so credentials never reach the browser:
 
 - **`/api/openai`** — proxies architecture generation, chat refinement, validation, and deployment-guide calls. Azure OpenAI uses `AZURE_OPENAI_ENDPOINT`; Claude Opus 5 uses the Microsoft Foundry Anthropic Messages endpoint configured by `AZURE_FOUNDRY_ENDPOINT` and the fail-closed `AZURE_FOUNDRY_ALLOWED_DEPLOYMENTS` allowlist. Both prefer managed identity (`DefaultAzureCredential`) with optional server-side API-key fallback. The client only sends the request body, deployment name, and API format — keys are never bundled.
+- **Bring your own AI endpoint (optional)** — when `ALLOW_BYO_AI_ENDPOINTS=true`,
+  users can connect a deployment on a trusted Azure OpenAI host or a model on
+  the official `api.openai.com` API. The key is kept only in browser-tab memory
+  and passes through `/api/openai` for the request; it is not written to local
+  storage, diagrams, URLs, telemetry, or server logs. Arbitrary
+  OpenAI-compatible hosts are intentionally rejected to prevent SSRF and
+  open-proxy abuse.
 - **`/api/docs-search`** — grounds deployment guides in official Microsoft Learn documentation by calling the Microsoft Learn MCP endpoint server-side and returning citable `{title, url, excerpt}` results. Best-effort (soft-fails to empty).
 
 #### 🔧 Infrastructure

@@ -13,6 +13,9 @@ import ReactFlow, {
   Node,
   BackgroundVariant,
   MarkerType,
+  getNodesBounds,
+  type NodeChange,
+  type ReactFlowInstance,
 } from 'reactflow';
 import 'reactflow/dist/style.css';
 import type { CaptureOptions } from './utils/captureCanvas';
@@ -20,12 +23,14 @@ import { type ExportBackground } from './utils/captureCanvas';
 import { animateEdgeFlow } from './utils/animateEdges';
 import { sequenceWorkflowSvg } from './utils/sequenceWorkflow';
 import { buildWorkflowMarkdown } from './services/workflowNarrativeExporter';
-import { Download, Save, Upload, DollarSign, Shield, ShieldCheck, FileText, FileCode, ChevronDown, ChevronRight, Clock, Camera, Loader, GitCompare, RefreshCw, PanelLeftClose, Minimize2, Maximize2, Presentation, MessagesSquare, HelpCircle, Frame, PanelTopClose, PanelTopOpen, DownloadCloud, Sun, Moon, Play, Pause, Eye, EyeOff, Cloud, Copy, Trash2, Ungroup, Boxes, CheckSquare } from 'lucide-react';
+import { Download, Save, Upload, DollarSign, Shield, ShieldCheck, FileText, FileCode, ChevronDown, ChevronRight, Clock, Camera, Loader, GitCompare, RefreshCw, PanelLeftClose, Minimize2, Maximize2, Presentation, MessagesSquare, HelpCircle, Info, Frame, PanelTopClose, PanelTopOpen, DownloadCloud, Sun, Moon, Play, Pause, Eye, EyeOff, Cloud, Copy, Trash2, Ungroup, Boxes, CheckSquare } from 'lucide-react';
+import AboutDialog from './components/AboutDialog';
 import IconPalette from './components/IconPalette';
 import AzureNode from './components/AzureNode';
 import GroupNode from './components/GroupNode';
 import AIArchitectureGenerator from './components/AIArchitectureGenerator';
 import ArchitectureChatPanel from './components/ArchitectureChatPanel';
+import BYOAISettingsDialog from './components/BYOAISettingsDialog';
 import CanvasActivityOverlay from './components/CanvasActivityOverlay';
 import CanvasChrome from './components/CanvasChrome';
 import CommandPalette, { type CommandPaletteAction } from './components/CommandPalette';
@@ -138,6 +143,20 @@ import { toFileNameSegment } from './utils/fileName';
 import { readBooleanPreference, readLocalStorage, writeLocalStorage } from './utils/safeStorage';
 import { findAvailableServicePosition } from './utils/serviceNodePlacement';
 import { MEDIA_QUERIES } from './styles/breakpoints';
+import {
+  applyAutomaticEdgeLabelOffsets,
+  shouldRecalculateAutomaticEdgeLabels,
+} from './utils/edgeLabelLayout';
+import {
+  getConnectionPresentation,
+  normalizeConnectionType,
+  type DiagramConnectionType,
+} from './utils/edgePresentation';
+import {
+  expandDiagramContentBounds,
+  screenRectToDiagramBounds,
+  type DiagramContentBounds,
+} from './utils/exportComposition';
 
 type LazyFeatureBoundaryProps = {
   active: boolean;
@@ -299,7 +318,7 @@ const HEADER_COLLAPSED_STORAGE_KEY = 'azure-diagram-builder.headerCollapsed.v1';
 const FOCUS_MODE_STORAGE_KEY = 'azure-diagram-builder.focusMode.v1';
 const TOOLBAR_SECTIONS_STORAGE_KEY = 'azure-diagram-builder.toolbarSections.v1';
 const RIBBON_TAB_STORAGE_KEY = 'azure-diagram-builder.ribbonTab.v1';
-const DEFAULT_EDGE_COLOR = '#64748b';
+const DEFAULT_EDGE_COLOR = getConnectionPresentation('sync').stroke;
 const EDGE_CONTEXT_MENU_WIDTH = 220;
 const EDGE_CONTEXT_MENU_HEIGHT = 360;
 const EDGE_CONTEXT_MENU_MARGIN = 8;
@@ -824,6 +843,34 @@ function deriveTitleFromPrompt(prompt: string | undefined | null): string | unde
   return titled.length > 0 ? titled : undefined;
 }
 
+const EDGE_LABEL_CAPTURE_PADDING = 16;
+
+function getRenderedEdgeLabelBounds(
+  wrapper: HTMLElement | null,
+  instance: ReactFlowInstance | null,
+): DiagramContentBounds[] {
+  if (!wrapper || !instance) return [];
+
+  const flowOrigin = instance.flowToScreenPosition({ x: 0, y: 0 });
+  const { zoom } = instance.getViewport();
+
+  return [...wrapper.querySelectorAll<HTMLElement>('.editable-edge-label-shell')]
+    .filter((shell) => (
+      !shell.querySelector('.editable-edge-label.is-empty')
+      && shell.getClientRects().length > 0
+    ))
+    .flatMap((shell) => {
+      const rect = shell.getBoundingClientRect();
+      const bounds = screenRectToDiagramBounds({
+        left: rect.left,
+        top: rect.top,
+        width: rect.width,
+        height: rect.height,
+      }, flowOrigin, zoom);
+      return bounds ? [bounds] : [];
+    });
+}
+
 function App() {
   const { t, translate, language } = useLanguage();
   const [nodes, setNodes, onNodesChangeBase] = useNodesState([]);
@@ -866,11 +913,21 @@ function App() {
   }, []);
   const [importFormatLabel, setImportFormatLabel] = useState('Template');
   const [isApplyingRecommendations, setIsApplyingRecommendations] = useState(false);
-  const [reactFlowInstance, setReactFlowInstance] = useState<any>(null);
+  const [reactFlowInstance, setReactFlowInstance] = useState<ReactFlowInstance | null>(null);
+  const shouldRefreshAutomaticEdgeLabelsRef = useRef(false);
   
-  const onNodesChange = useCallback((changes: any[]) => {
+  const onNodesChange = useCallback((changes: NodeChange[]) => {
+    if (shouldRecalculateAutomaticEdgeLabels(changes)) {
+      shouldRefreshAutomaticEdgeLabelsRef.current = true;
+    }
     onNodesChangeBase(changes);
   }, [onNodesChangeBase]);
+
+  useEffect(() => {
+    if (!shouldRefreshAutomaticEdgeLabelsRef.current) return;
+    shouldRefreshAutomaticEdgeLabelsRef.current = false;
+    setEdges(currentEdges => applyAutomaticEdgeLabelOffsets(nodes, currentEdges));
+  }, [nodes, setEdges]);
 
   
   const [workflow, setWorkflow] = useState<any[]>([]);
@@ -942,6 +999,8 @@ function App() {
     version: '1.0',
     date: new Date().toLocaleDateString(),
   });
+  const latestTitleBlockDataRef = useRef(titleBlockData);
+  latestTitleBlockDataRef.current = titleBlockData;
 
   useEffect(() => {
     diagramRevisionGenerationRef.current.advance();
@@ -1019,6 +1078,8 @@ function App() {
   const [generatorOpenSignal, setGeneratorOpenSignal] = useState(0);
   const generatorOpenSourceRef = useRef<'first-start' | 'journey-strip' | 'toolbar'>('toolbar');
   const [isHelpOpen, setIsHelpOpen] = useState(false);
+  const [isAboutOpen, setIsAboutOpen] = useState(false);
+  const [isBYOAISettingsOpen, setIsBYOAISettingsOpen] = useState(false);
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
   const [isMobileRibbonOpen, setIsMobileRibbonOpen] = useState(false);
   const [paletteOpenSignal, setPaletteOpenSignal] = useState(0);
@@ -1033,7 +1094,7 @@ function App() {
   const [isHeaderCollapsed, setIsHeaderCollapsed] = useState<boolean>(() => {
     const stored = readLocalStorage(HEADER_COLLAPSED_STORAGE_KEY);
     if (stored !== null) return stored === '1';
-    return window.matchMedia(MEDIA_QUERIES.wide).matches;
+    return false;
   });
   const [activeRibbonTab, setActiveRibbonTab] = useState<RibbonTabId>(() => {
     const stored = readLocalStorage(RIBBON_TAB_STORAGE_KEY);
@@ -1222,7 +1283,7 @@ function App() {
     readBooleanPreference(EDGE_ANIMATION_STORAGE_KEY, true)
   );
   const [layoutEmphasizePrimaryPath, setLayoutEmphasizePrimaryPath] = useState(false);
-  const [layoutEngine, setLayoutEngine] = useState<LayoutEngineType>('dagre');
+  const [layoutEngine, setLayoutEngine] = useState<LayoutEngineType>('elk');
   
   const [isBulkSelectMenuOpen, setIsBulkSelectMenuOpen] = useState(false);
   const bulkSelectMenuRef = useRef<HTMLDivElement | null>(null);
@@ -1729,6 +1790,7 @@ function App() {
               ...edge.data, 
               labelOffsetX: offsetX, 
               labelOffsetY: offsetY,
+              labelOffsetAuto: false,
               onLabelChange: handleEdgeLabelChange,
               onLabelOffsetChange: handleEdgeLabelOffsetChange,
             },
@@ -1753,24 +1815,47 @@ function App() {
       if (typeof next.targetHandle === 'string' && TGT_FIX[next.targetHandle]) {
         next.targetHandle = TGT_FIX[next.targetHandle];
       }
-      if (next.style?.stroke === '#0078d4') {
-        next.style = { ...next.style, stroke: DEFAULT_EDGE_COLOR };
+      const presentation = getConnectionPresentation(next.data?.connectionType);
+      const semanticStyle = {
+        ...next.style,
+        stroke: presentation.stroke,
+      };
+      if (presentation.strokeDasharray) {
+        semanticStyle.strokeDasharray = presentation.strokeDasharray;
+      } else {
+        delete semanticStyle.strokeDasharray;
       }
+      if (presentation.opacity !== undefined) {
+        semanticStyle.opacity = presentation.opacity;
+      } else {
+        delete semanticStyle.opacity;
+      }
+      next.style = semanticStyle;
       if (next.markerEnd && typeof next.markerEnd === 'object') {
-        next.markerEnd = { ...next.markerEnd, color: DEFAULT_EDGE_COLOR };
+        next.markerEnd = { ...next.markerEnd, color: presentation.stroke };
       }
       if (next.markerStart && typeof next.markerStart === 'object') {
-        next.markerStart = { ...next.markerStart, color: DEFAULT_EDGE_COLOR };
+        next.markerStart = { ...next.markerStart, color: presentation.stroke };
       }
-      const baseFlowAnimated = Boolean(next.data?.baseFlowAnimated ?? next.data?.flowAnimated ?? true);
+      const baseFlowAnimated = Boolean(
+        next.data?.baseFlowAnimated
+        ?? next.data?.flowAnimated
+        ?? presentation.baseFlowAnimated,
+      );
       const edgeAnimationPreference = typeof next.data?.flowAnimated === 'boolean'
         ? next.data.flowAnimated
         : baseFlowAnimated;
+      const labelOffsetX = Number(next.data?.labelOffsetX) || 0;
+      const labelOffsetY = Number(next.data?.labelOffsetY) || 0;
       next.data = {
         ...next.data,
+        connectionType: presentation.type,
         baseFlowAnimated,
         flowAnimated: animateConnections && edgeAnimationPreference,
         pathStyle: normalizeLayoutEdgeStyle(next.data?.pathStyle ?? layoutEdgeStyle),
+        labelOffsetAuto: typeof next.data?.labelOffsetAuto === 'boolean'
+          ? next.data.labelOffsetAuto
+          : labelOffsetX === 0 && labelOffsetY === 0,
         onLabelChange: handleEdgeLabelChange,
         onLabelOffsetChange: handleEdgeLabelOffsetChange,
       };
@@ -1798,6 +1883,7 @@ function App() {
         pathStyle: layoutEdgeStyle,
         labelOffsetX: 0,
         labelOffsetY: 0,
+        labelOffsetAuto: true,
       },
     }, eds)),
     [setEdges, handleEdgeLabelChange, handleEdgeLabelOffsetChange, animateConnections, layoutEdgeStyle]
@@ -1938,8 +2024,9 @@ function App() {
       });
       if (!layoutGenerationRef.current.isCurrent(generation)) return;
 
+      const arrangedEdges = applyAutomaticEdgeLabelOffsets(result.nodes, result.edges);
       setNodes(currentNodes => mergeLayoutNodes(currentNodes, sourceNodes, result.nodes));
-      setEdges(currentEdges => mergeLayoutEdges(currentEdges, sourceEdges, result.edges));
+      setEdges(currentEdges => mergeLayoutEdges(currentEdges, sourceEdges, arrangedEdges));
 
       requestAnimationFrame(() => {
         reactFlowInstance?.fitView?.({ padding: 0.2, duration: 250, maxZoom: 1.2 });
@@ -2374,7 +2461,12 @@ function App() {
   const setConnectionAnimations = useCallback((enabled: boolean) => {
     setAnimateConnections(enabled);
     setEdges((currentEdges) => currentEdges.map((edge) => {
-      const baseFlowAnimated = Boolean(edge.data?.baseFlowAnimated ?? edge.data?.flowAnimated ?? true);
+      const presentation = getConnectionPresentation(edge.data?.connectionType);
+      const baseFlowAnimated = Boolean(
+        edge.data?.baseFlowAnimated
+        ?? edge.data?.flowAnimated
+        ?? presentation.baseFlowAnimated,
+      );
       return {
         ...edge,
         animated: false,
@@ -2415,20 +2507,21 @@ function App() {
       if (edge.id === edgeId) {
         let markerEnd: any = undefined;
         let markerStart: any = undefined;
+        const markerColor = getConnectionPresentation(edge.data?.connectionType).stroke;
         const baseFlowAnimated = Boolean(edge.data?.baseFlowAnimated ?? edge.data?.flowAnimated ?? true);
         const flowAnimated = animateConnections && baseFlowAnimated;
         const flowMode = direction === 'bidirectional' ? 'pulse' : 'directional';
         
         switch (direction) {
           case 'forward':
-            markerEnd = { type: MarkerType.ArrowClosed, color: DEFAULT_EDGE_COLOR };
+            markerEnd = { type: MarkerType.ArrowClosed, color: markerColor };
             break;
           case 'reverse':
-            markerStart = { type: MarkerType.ArrowClosed, color: DEFAULT_EDGE_COLOR };
+            markerStart = { type: MarkerType.ArrowClosed, color: markerColor };
             break;
           case 'bidirectional':
-            markerEnd = { type: MarkerType.ArrowClosed, color: DEFAULT_EDGE_COLOR };
-            markerStart = { type: MarkerType.ArrowClosed, color: DEFAULT_EDGE_COLOR };
+            markerEnd = { type: MarkerType.ArrowClosed, color: markerColor };
+            markerStart = { type: MarkerType.ArrowClosed, color: markerColor };
             break;
         }
         
@@ -2578,75 +2671,157 @@ function App() {
     [addServiceNodeAtPosition, reactFlowInstance]
   );
 
+  const createDiagramCaptureOptions = useCallback((excludePanels = true): CaptureOptions => {
+    const visibleNodes = latestNodesRef.current.filter(node => !node.hidden);
+    const bounds = expandDiagramContentBounds(
+      getNodesBounds(visibleNodes),
+      getRenderedEdgeLabelBounds(reactFlowWrapper.current, reactFlowInstance),
+      EDGE_LABEL_CAPTURE_PADDING,
+    );
+    const latestTitle = latestTitleBlockDataRef.current;
+    const sync = getConnectionPresentation('sync');
+    const asyncConnection = getConnectionPresentation('async');
+    const optional = getConnectionPresentation('optional');
+    const security = getConnectionPresentation('security');
+    const telemetry = getConnectionPresentation('telemetry');
+    const usedConnectionTypes = new Set<DiagramConnectionType>(
+      latestEdgesRef.current
+        .filter(edge => !edge.hidden)
+        .map(edge => normalizeConnectionType(edge.data?.connectionType)),
+    );
+    const legendItems = [
+      {
+        type: 'sync' as const,
+        label: t('Synchronous'),
+        description: t('Real-time, request-response (HTTP, SQL)'),
+        color: sync.stroke,
+        lineStyle: 'solid' as const,
+      },
+      {
+        type: 'async' as const,
+        label: t('Asynchronous'),
+        description: t('Message-based, event-driven (queues, events)'),
+        color: asyncConnection.stroke,
+        lineStyle: 'dashed' as const,
+      },
+      {
+        type: 'optional' as const,
+        label: t('Optional'),
+        description: t('Conditional, fallback paths'),
+        color: optional.stroke,
+        lineStyle: 'dotted' as const,
+      },
+      {
+        type: 'security' as const,
+        label: t('Security'),
+        description: t('Identity, trust, and policy enforcement'),
+        color: security.stroke,
+        lineStyle: 'dotted' as const,
+      },
+      {
+        type: 'telemetry' as const,
+        label: t('Telemetry'),
+        description: t('Metrics, logs, traces, and diagnostics'),
+        color: telemetry.stroke,
+        lineStyle: 'dashed' as const,
+      },
+    ]
+      .filter(item => usedConnectionTypes.has(item.type))
+      .map(({ type: _type, ...item }) => item);
+
+    return {
+      backgroundColor: exportCanvasBackground,
+      excludePanels,
+      exportBackground,
+      composition: {
+        bounds,
+        title: latestTitle.architectureName || 'Azure Architecture',
+        subtitle: [
+          latestTitle.author,
+          latestTitle.date,
+          latestTitle.version ? `v${latestTitle.version}` : '',
+        ].filter(Boolean).join(' · '),
+        legendTitle: localize(language, {
+          en: 'Connection legend',
+          ja: '接続凡例',
+        }),
+        legendItems,
+      },
+    };
+  }, [
+    exportBackground,
+    exportCanvasBackground,
+    language,
+    reactFlowInstance,
+    t,
+  ]);
+
   const exportDiagram = useCallback(async () => {
     if (!reactFlowWrapper.current || !reactFlowInstance) {
       return;
     }
 
-    // Fit all nodes into view with no animation for immediate rendering
-    reactFlowInstance.fitView({ padding: 0.2, duration: 0 });
-
-    // Wait for fitView to settle, then capture
-    setTimeout(async () => {
-      try {
-        const dataUrl = await captureDiagramAsPng(reactFlowWrapper.current as HTMLElement, {
-          backgroundColor: exportCanvasBackground,
-          exportBackground,
-        });
-
-        const res = await fetch(dataUrl);
-        const blob = await res.blob();
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        const fileName = generateModelFilename('azure-diagram', 'png');
-        link.download = fileName;
-        link.href = url;
-        link.click();
-        URL.revokeObjectURL(url);
-        recordExport('png', fileName);
-        trackExport('png', nodes.filter(n => n.type === 'azureNode').length, exportBackground);
-      } catch (err) {
-        console.error('Error exporting diagram:', err);
-        alert(t("Failed to export diagram. Please try again."));
-      }
-    }, 800);
-  }, [reactFlowInstance, recordExport, nodes, t, exportBackground, exportCanvasBackground]);
+    try {
+      const dataUrl = await captureDiagramAsPng(
+        reactFlowWrapper.current,
+        createDiagramCaptureOptions(false),
+      );
+      const res = await fetch(dataUrl);
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      const fileName = generateModelFilename('azure-diagram', 'png');
+      link.download = fileName;
+      link.href = url;
+      link.click();
+      URL.revokeObjectURL(url);
+      recordExport('png', fileName);
+      trackExport('png', nodes.filter(n => n.type === 'azureNode').length, exportBackground);
+    } catch (err) {
+      console.error('Error exporting diagram:', err);
+      alert(t("Failed to export diagram. Please try again."));
+    }
+  }, [
+    createDiagramCaptureOptions,
+    exportBackground,
+    nodes,
+    reactFlowInstance,
+    recordExport,
+    t,
+  ]);
 
   const exportAsSvg = useCallback(async () => {
     if (!reactFlowWrapper.current || !reactFlowInstance) {
       return;
     }
 
-    // Fit all nodes into view with no animation for immediate rendering
-    reactFlowInstance.fitView({ padding: 0.2, duration: 0 });
-
-    // Wait for fitView to settle, then capture
-    setTimeout(async () => {
-      try {
-        // captureDiagramAsSvg serialises the DOM natively — SVG edge paths
-        // (curves, dashes, orthogonal bends) are preserved as vector data.
-        const svgText = await captureDiagramAsSvg(reactFlowWrapper.current as HTMLElement, {
-          backgroundColor: exportCanvasBackground,
-          excludePanels: true,
-          exportBackground,
-        });
-
-        const blob = new Blob([svgText], { type: 'image/svg+xml;charset=utf-8' });
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.href = url;
-        const fileName = generateModelFilename('azure-diagram', 'svg');
-        link.download = fileName;
-        link.click();
-        URL.revokeObjectURL(url);
-        recordExport('svg', fileName);
-        trackExport('svg', nodes.filter(n => n.type === 'azureNode').length, exportBackground);
-      } catch (err) {
-        console.error('Error exporting SVG:', err);
-        alert(t("Failed to export SVG. Please try again."));
-      }
-    }, 800);
-  }, [reactFlowInstance, recordExport, nodes, t, exportBackground, exportCanvasBackground]);
+    try {
+      const svgText = await captureDiagramAsSvg(
+        reactFlowWrapper.current,
+        createDiagramCaptureOptions(),
+      );
+      const blob = new Blob([svgText], { type: 'image/svg+xml;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      const fileName = generateModelFilename('azure-diagram', 'svg');
+      link.download = fileName;
+      link.click();
+      URL.revokeObjectURL(url);
+      recordExport('svg', fileName);
+      trackExport('svg', nodes.filter(n => n.type === 'azureNode').length, exportBackground);
+    } catch (err) {
+      console.error('Error exporting SVG:', err);
+      alert(t("Failed to export SVG. Please try again."));
+    }
+  }, [
+    createDiagramCaptureOptions,
+    exportBackground,
+    nodes,
+    reactFlowInstance,
+    recordExport,
+    t,
+  ]);
 
   // Export the workflow narrative (title, prompt, services, step-by-step flow,
   // connections, optional validation/cost) as a Markdown document.
@@ -2694,33 +2869,34 @@ function App() {
       return;
     }
 
-    reactFlowInstance.fitView({ padding: 0.2, duration: 0 });
-
-    setTimeout(async () => {
-      try {
-        const svgText = await captureDiagramAsSvg(reactFlowWrapper.current as HTMLElement, {
-          backgroundColor: exportCanvasBackground,
-          excludePanels: true,
-          exportBackground,
-        });
-        const animatedSvg = animateEdgeFlow(svgText);
-
-        const blob = new Blob([animatedSvg], { type: 'image/svg+xml;charset=utf-8' });
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.href = url;
-        const fileName = generateModelFilename('azure-diagram-animated', 'svg');
-        link.download = fileName;
-        link.click();
-        URL.revokeObjectURL(url);
-        recordExport('animated-svg', fileName);
-        trackExport('animated-svg', nodes.filter(n => n.type === 'azureNode').length, exportBackground);
-      } catch (err) {
-        console.error('Error exporting animated SVG:', err);
-        alert(t("Failed to export animated SVG. Please try again."));
-      }
-    }, 800);
-  }, [reactFlowInstance, recordExport, nodes, t, exportBackground, exportCanvasBackground]);
+    try {
+      const svgText = await captureDiagramAsSvg(
+        reactFlowWrapper.current,
+        createDiagramCaptureOptions(),
+      );
+      const animatedSvg = animateEdgeFlow(svgText);
+      const blob = new Blob([animatedSvg], { type: 'image/svg+xml;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      const fileName = generateModelFilename('azure-diagram-animated', 'svg');
+      link.download = fileName;
+      link.click();
+      URL.revokeObjectURL(url);
+      recordExport('animated-svg', fileName);
+      trackExport('animated-svg', nodes.filter(n => n.type === 'azureNode').length, exportBackground);
+    } catch (err) {
+      console.error('Error exporting animated SVG:', err);
+      alert(t("Failed to export animated SVG. Please try again."));
+    }
+  }, [
+    createDiagramCaptureOptions,
+    exportBackground,
+    nodes,
+    reactFlowInstance,
+    recordExport,
+    t,
+  ]);
 
   // Export a SEQUENCED "workflow animation" SVG: plays the diagram's workflow
   // steps chronologically (one edge flows at a time) with a caption per step and
@@ -2735,33 +2911,36 @@ function App() {
       return;
     }
 
-    reactFlowInstance.fitView({ padding: 0.2, duration: 0 });
-
-    setTimeout(async () => {
-      try {
-        const svgText = await captureDiagramAsSvg(reactFlowWrapper.current as HTMLElement, {
-          backgroundColor: exportCanvasBackground,
-          excludePanels: true,
-          exportBackground,
-        });
-        const sequenced = sequenceWorkflowSvg(svgText, { nodes, edges, workflow, stepDurSec: 3 });
-
-        const blob = new Blob([sequenced], { type: 'image/svg+xml;charset=utf-8' });
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.href = url;
-        const fileName = generateModelFilename('azure-diagram-workflow', 'svg');
-        link.download = fileName;
-        link.click();
-        URL.revokeObjectURL(url);
-        recordExport('workflow-animation', fileName);
-        trackExport('workflow-animation', nodes.filter(n => n.type === 'azureNode').length, exportBackground);
-      } catch (err) {
-        console.error('Error exporting workflow animation:', err);
-        alert(t("Failed to export workflow animation. Please try again."));
-      }
-    }, 800);
-  }, [reactFlowInstance, recordExport, nodes, edges, workflow, t, exportBackground, exportCanvasBackground]);
+    try {
+      const svgText = await captureDiagramAsSvg(
+        reactFlowWrapper.current,
+        createDiagramCaptureOptions(),
+      );
+      const sequenced = sequenceWorkflowSvg(svgText, { nodes, edges, workflow, stepDurSec: 3 });
+      const blob = new Blob([sequenced], { type: 'image/svg+xml;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      const fileName = generateModelFilename('azure-diagram-workflow', 'svg');
+      link.download = fileName;
+      link.click();
+      URL.revokeObjectURL(url);
+      recordExport('workflow-animation', fileName);
+      trackExport('workflow-animation', nodes.filter(n => n.type === 'azureNode').length, exportBackground);
+    } catch (err) {
+      console.error('Error exporting workflow animation:', err);
+      alert(t("Failed to export workflow animation. Please try again."));
+    }
+  }, [
+    createDiagramCaptureOptions,
+    edges,
+    exportBackground,
+    nodes,
+    reactFlowInstance,
+    recordExport,
+    t,
+    workflow,
+  ]);
 
   const exportAsDrawio = useCallback(async () => {
     try {
@@ -2817,32 +2996,34 @@ function App() {
   const exportAsPptx = useCallback(async () => {
     if (!reactFlowWrapper.current || !reactFlowInstance) return;
 
-    reactFlowInstance.fitView({ padding: 0.2, duration: 0 });
-
-    setTimeout(async () => {
-      try {
-        const { exportDiagramAsPptx } = await import('./services/pptxExporter');
-        const imageDataUrl = await captureDiagramAsPng(reactFlowWrapper.current as HTMLElement, {
-          backgroundColor: exportCanvasBackground,
-          excludePanels: true,
-          exportBackground,
-        });
-
-        const fileName = await exportDiagramAsPptx(imageDataUrl, {
-          diagramName: titleBlockData.architectureName || 'Azure Architecture',
-          author: titleBlockData.author || 'Azure Architect',
-          date: titleBlockData.date || new Date().toLocaleDateString(),
-          isDarkMode,
-        });
-
-        recordExport('pptx', fileName);
-        trackExport('pptx', nodes.filter(n => n.type === 'azureNode').length, exportBackground);
-      } catch (err) {
-        console.error('Error exporting PPTX:', err);
-        alert(t("Failed to export PowerPoint slide. Please try again."));
-      }
-    }, 800);
-  }, [reactFlowInstance, recordExport, nodes, isDarkMode, titleBlockData, t, exportBackground, exportCanvasBackground]);
+    try {
+      const { exportDiagramAsPptx } = await import('./services/pptxExporter');
+      const imageDataUrl = await captureDiagramAsPng(
+        reactFlowWrapper.current,
+        createDiagramCaptureOptions(),
+      );
+      const fileName = await exportDiagramAsPptx(imageDataUrl, {
+        diagramName: titleBlockData.architectureName || 'Azure Architecture',
+        author: titleBlockData.author || 'Azure Architect',
+        date: titleBlockData.date || new Date().toLocaleDateString(),
+        isDarkMode,
+      });
+      recordExport('pptx', fileName);
+      trackExport('pptx', nodes.filter(n => n.type === 'azureNode').length, exportBackground);
+    } catch (err) {
+      console.error('Error exporting PPTX:', err);
+      alert(t("Failed to export PowerPoint slide. Please try again."));
+    }
+  }, [
+    createDiagramCaptureOptions,
+    exportBackground,
+    isDarkMode,
+    nodes,
+    reactFlowInstance,
+    recordExport,
+    t,
+    titleBlockData,
+  ]);
 
   const exportCustomerDeck = useCallback(async () => {
     if (!reactFlowWrapper.current || !reactFlowInstance) return;
@@ -2853,16 +3034,12 @@ function App() {
       return;
     }
 
-    reactFlowInstance.fitView({ padding: 0.2, duration: 0 });
-
-    setTimeout(async () => {
-      try {
+    try {
         const { exportArchitectureDeck } = await import('./services/pptxExporter');
-        const imageDataUrl = await captureDiagramAsPng(reactFlowWrapper.current as HTMLElement, {
-          backgroundColor: exportCanvasBackground,
-          excludePanels: true,
-          exportBackground,
-        });
+        const imageDataUrl = await captureDiagramAsPng(
+          reactFlowWrapper.current,
+          createDiagramCaptureOptions(),
+        );
 
         // Service inventory from the diagram nodes. Group membership is via
         // React Flow's parent link (parentNode/parentId) → the group node's
@@ -2986,12 +3163,25 @@ function App() {
 
         recordExport('pptx', fileName);
         trackExport('pptx-deck', azureNodes.length, exportBackground);
-      } catch (err) {
-        console.error('Error exporting customer deck:', err);
-        alert(t('Failed to export the customer deck. Please try again.'));
-      }
-    }, 800);
-  }, [reactFlowInstance, recordExport, nodes, isDarkMode, titleBlockData, currentValidationResult, pricingMode, architecturePrompt, originalPrompt, generatedWithModel, t, exportBackground, exportCanvasBackground]);
+    } catch (err) {
+      console.error('Error exporting customer deck:', err);
+      alert(t('Failed to export the customer deck. Please try again.'));
+    }
+  }, [
+    architecturePrompt,
+    createDiagramCaptureOptions,
+    currentValidationResult,
+    exportBackground,
+    generatedWithModel,
+    isDarkMode,
+    nodes,
+    originalPrompt,
+    pricingMode,
+    reactFlowInstance,
+    recordExport,
+    t,
+    titleBlockData,
+  ]);
 
   // ── az prototype export removed (feature unused) ───────────────────────
 
@@ -4286,7 +4476,10 @@ function App() {
     };
 
     // Function to determine arrow direction based on edge label
-    const determineEdgeDirection = (label: string): { direction: 'forward' | 'reverse' | 'bidirectional', markerEnd?: any, markerStart?: any, flowMode: 'directional' | 'pulse' } => {
+    const determineEdgeDirection = (
+      label: string,
+      markerColor: string,
+    ): { direction: 'forward' | 'reverse' | 'bidirectional', markerEnd?: any, markerStart?: any, flowMode: 'directional' | 'pulse' } => {
       const lowerLabel = label.toLowerCase();
       
       // Keywords that indicate reverse flow
@@ -4299,8 +4492,8 @@ function App() {
       if (bidirectionalKeywords.some(keyword => lowerLabel.includes(keyword))) {
         return {
           direction: 'bidirectional',
-          markerEnd: { type: MarkerType.ArrowClosed, color: DEFAULT_EDGE_COLOR },
-          markerStart: { type: MarkerType.ArrowClosed, color: DEFAULT_EDGE_COLOR },
+          markerEnd: { type: MarkerType.ArrowClosed, color: markerColor },
+          markerStart: { type: MarkerType.ArrowClosed, color: markerColor },
           flowMode: 'pulse',
         };
       }
@@ -4309,7 +4502,7 @@ function App() {
       if (reverseKeywords.some(keyword => lowerLabel.includes(keyword))) {
         return {
           direction: 'reverse',
-          markerStart: { type: MarkerType.ArrowClosed, color: DEFAULT_EDGE_COLOR },
+          markerStart: { type: MarkerType.ArrowClosed, color: markerColor },
           markerEnd: undefined,
           flowMode: 'directional',
         };
@@ -4318,42 +4511,25 @@ function App() {
       // Default to forward
       return {
         direction: 'forward',
-        markerEnd: { type: MarkerType.ArrowClosed, color: DEFAULT_EDGE_COLOR },
+        markerEnd: { type: MarkerType.ArrowClosed, color: markerColor },
         markerStart: undefined,
         flowMode: 'directional',
       };
     };
 
     // Create edges from connections
-    const newEdges: Edge[] = connections.map((conn: any, index: number) => {
+    const generatedEdges: Edge[] = connections.map((conn: any, index: number) => {
       const positions = getConnectionPositions(conn.from, conn.to, conn);
-      
-      // Determine edge direction based on label
-      const edgeDirection = determineEdgeDirection(conn.label || '');
-      
-      // Determine edge style based on connection type
-      const connectionType = conn.type || 'sync';
-      let edgeStyle = {};
-      let baseFlowAnimated = true;
-      
-      switch (connectionType) {
-        case 'async':
-          // Dashed line for asynchronous
-          edgeStyle = { strokeDasharray: '5, 5' };
-          baseFlowAnimated = true;
-          break;
-        case 'optional':
-          // Dotted line for optional
-          edgeStyle = { strokeDasharray: '2, 4', opacity: 0.6 };
-          baseFlowAnimated = false;
-          break;
-        case 'sync':
-        default:
-          // Solid line for synchronous (default)
-          edgeStyle = {};
-          baseFlowAnimated = true;
-          break;
-      }
+      const presentation = getConnectionPresentation(conn.type);
+      const edgeDirection = determineEdgeDirection(conn.label || '', presentation.stroke);
+      const edgeStyle = {
+        stroke: presentation.stroke,
+        ...(presentation.strokeDasharray
+          ? { strokeDasharray: presentation.strokeDasharray }
+          : {}),
+        ...(presentation.opacity !== undefined ? { opacity: presentation.opacity } : {}),
+      };
+      const baseFlowAnimated = presentation.baseFlowAnimated;
 
       const flowAnimated = animateConnections && baseFlowAnimated;
       
@@ -4368,11 +4544,11 @@ function App() {
         label: conn.label || '',
         markerEnd: edgeDirection.markerEnd,
         markerStart: edgeDirection.markerStart,
-        labelStyle: { fontSize: 13, fill: '#334155', fontWeight: 600 },
+        labelStyle: { fontSize: 14, fill: '#334155', fontWeight: 650 },
         labelBgStyle: { fill: 'white', fillOpacity: 0.94, stroke: '#cbd5e1', strokeWidth: 1 },
         style: edgeStyle,
         data: {
-          connectionType,
+          connectionType: presentation.type,
           direction: edgeDirection.direction,
           baseFlowAnimated,
           flowAnimated,
@@ -4382,9 +4558,11 @@ function App() {
           onLabelOffsetChange: handleEdgeLabelOffsetChange,
           labelOffsetX: 0,
           labelOffsetY: 0,
+          labelOffsetAuto: true,
         },
       };
     });
+    const newEdges = applyAutomaticEdgeLabelOffsets(finalNodes, generatedEdges);
 
     // Add the new nodes and edges
     console.log(`Setting ${finalNodes.length} nodes and ${newEdges.length} edges`);
@@ -4872,27 +5050,17 @@ function App() {
 
     // Capture diagram snapshot BEFORE opening the modal overlay
     let diagramImageDataUrl: string | undefined;
-    if (reactFlowWrapper.current && reactFlowInstance) {
-      const previousViewport = reactFlowInstance.getViewport();
+    if (reactFlowWrapper.current) {
       try {
-        reactFlowInstance.fitView({ padding: 0.2, duration: 0 });
-        // Brief delay for fitView to settle before capture
-        await new Promise(resolve => setTimeout(resolve, 400));
         if (!isCurrentValidation()) return;
-        const isDark = document.body.classList.contains('dark-mode');
-        diagramImageDataUrl = await captureDiagramAsPng(reactFlowWrapper.current, {
-          backgroundColor: isDark ? '#1a1a2e' : '#f8fafc',
-        });
+        diagramImageDataUrl = await captureDiagramAsPng(
+          reactFlowWrapper.current,
+          createDiagramCaptureOptions(),
+        );
         if (!isCurrentValidation()) return;
         console.log('\uD83D\uDCF8 Diagram snapshot captured for validation report');
       } catch (err) {
         console.warn('Could not capture diagram snapshot:', err);
-      } finally {
-        // fitView only exists to frame the capture, so put the canvas back
-        // where the user left it instead of silently zooming their view.
-        if (isCurrentValidation()) {
-          reactFlowInstance.setViewport(previousViewport, { duration: 0 });
-        }
       }
     }
     if (!isCurrentValidation()) return;
@@ -4976,7 +5144,7 @@ function App() {
         if (!isCurrentValidation()) setIsValidationModalOpen(false);
       }
     }
-  }, [nodes, edges, architecturePrompt, titleBlockData.architectureName, reactFlowInstance, t, language]);
+  }, [nodes, edges, architecturePrompt, titleBlockData.architectureName, createDiagramCaptureOptions, t, language]);
 
   const handleValidationHandoffStart = useCallback(() => {
     if (!validationHandoff) return;
@@ -5260,6 +5428,21 @@ function App() {
       run: toggleChatPanel,
     },
     {
+      id: 'configure-byo-ai',
+      label: localize(language, {
+        en: 'Configure custom AI endpoint',
+        ja: 'カスタム AI エンドポイントを設定',
+      }),
+      description: localize(language, {
+        en: 'Use your Azure OpenAI or official OpenAI endpoint and model',
+        ja: '独自の Azure OpenAI または公式 OpenAI のエンドポイントとモデルを使用します',
+      }),
+      keywords: ['ai', 'byo', 'custom', 'endpoint', 'model', 'openai', 'azure'],
+      group: localize(language, { en: 'Create', ja: '作成' }),
+      icon: <Info size={17} aria-hidden="true" />,
+      run: () => setIsBYOAISettingsOpen(true),
+    },
+    {
       id: 'save-diagram',
       label: localize(language, { en: 'Save diagram file', ja: '図ファイルを保存' }),
       description: localize(language, {
@@ -5388,6 +5571,18 @@ function App() {
         setFocusMode(false);
         setIsHelpOpen(true);
       },
+    },
+    {
+      id: 'open-about',
+      label: localize(language, { en: 'About this application', ja: 'このアプリについて' }),
+      description: localize(language, {
+        en: 'View version, attribution, license, and repository details',
+        ja: 'バージョン、作成者、ライセンス、リポジトリ情報を表示します',
+      }),
+      keywords: ['about', 'version', 'credits', 'license', 'repository'],
+      group: localize(language, { en: 'Help', ja: 'ヘルプ' }),
+      icon: <Info size={17} aria-hidden="true" />,
+      run: () => setIsAboutOpen(true),
     },
   ];
 
@@ -5622,6 +5817,7 @@ function App() {
                   ref={modelSettingsRef}
                   isOpen={isModelSettingsOpen}
                   onToggle={() => setIsModelSettingsOpen(v => !v)}
+                  onOpenBYOSettings={() => setIsBYOAISettingsOpen(true)}
                 />
                 <button
                   className={`btn btn-secondary${isChatOpen ? ' btn-active' : ''}`}
@@ -6408,6 +6604,22 @@ function App() {
           </div>
           </ResponsiveRibbonSurface>
           <div className="header-identity-actions">
+            <button
+              type="button"
+              className="header-utility-button"
+              onClick={() => setIsAboutOpen(true)}
+              title={localize(language, {
+                en: 'About this application',
+                ja: 'このアプリについて',
+              })}
+              aria-label={localize(language, {
+                en: 'About this application',
+                ja: 'このアプリについて',
+              })}
+            >
+              <Info size={17} />
+              <span>{localize(language, { en: 'About', ja: '情報' })}</span>
+            </button>
             {accessIdentity?.enabled && accessIdentity.isAdmin && (
               <button
                 type="button"
@@ -6523,7 +6735,9 @@ function App() {
             reconnectRadius={20}
             attributionPosition="bottom-left"
           >
-            <Controls fitViewOptions={{ padding: 0.2, maxZoom: 1.2 }} />
+            {nodes.length > 0 && (
+              <Controls fitViewOptions={{ padding: 0.2, maxZoom: 1.2 }} />
+            )}
             <Background 
               variant={BackgroundVariant.Dots} 
               gap={20} 
@@ -7167,17 +7381,13 @@ Return the IMPROVED architecture in the same JSON format as before with proper g
               // Apply this architecture to the canvas (no auto-snapshot to
               // avoid spamming the snapshot history with N intermediate states).
               await handleAIGenerate(item.architecture, item.prompt, false, false);
-              // Give icons, layout, and the post-generate fitView a moment to settle.
+              // Give icons and layout a moment to settle before cloning the viewport.
               await new Promise(res => setTimeout(res, 1500));
-              if (reactFlowInstance) {
-                reactFlowInstance.fitView({ padding: 0.2, duration: 0 });
-                await new Promise(res => setTimeout(res, 400));
-              }
               if (!reactFlowWrapper.current) continue;
-              const dataUrl = await captureDiagramAsPng(reactFlowWrapper.current, {
-                backgroundColor: exportCanvasBackground,
-                exportBackground,
-              });
+              const dataUrl = await captureDiagramAsPng(
+                reactFlowWrapper.current,
+                createDiagramCaptureOptions(),
+              );
               const a = document.createElement('a');
               a.href = dataUrl;
               a.download = item.filename;
@@ -7254,6 +7464,14 @@ Return the IMPROVED architecture in the same JSON format as before with proper g
       <HelpLearnPanel
         isOpen={isHelpOpen}
         onClose={() => setIsHelpOpen(false)}
+      />
+      <AboutDialog
+        isOpen={isAboutOpen}
+        onClose={() => setIsAboutOpen(false)}
+      />
+      <BYOAISettingsDialog
+        isOpen={isBYOAISettingsOpen}
+        onClose={() => setIsBYOAISettingsOpen(false)}
       />
       <FeedbackToast
         isOpen={isFeedbackToastOpen}

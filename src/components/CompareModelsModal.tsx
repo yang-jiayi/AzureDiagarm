@@ -4,7 +4,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { X, Sparkles, Loader2, Clock, Zap, CheckCircle, AlertCircle, GitCompare, Download, FileJson, FileText, Brain, MonitorPlay, StopCircle } from 'lucide-react';
 import { useDraggableResizable } from '../hooks/useDraggableResizable';
-import { generateArchitectureWithAI, generateCritique, isAzureOpenAIConfigured, AIMetrics, ModelOverride } from '../services/azureOpenAI';
+import { generateArchitectureWithAI, generateCritique, isManagedAIConfigured, AIMetrics, ModelOverride } from '../services/azureOpenAI';
 import { AvatarPresenter, AvatarStatus } from '../services/avatarPresenter';
 import {
   MODEL_CONFIG,
@@ -130,6 +130,7 @@ const CompareModelsModal: React.FC<CompareModelsModalProps> = ({ isOpen, onClose
   const { t, translate, language } = useLanguage();
   const availableModels = getAvailableModels();
   const currentSettings = getModelSettings();
+  const managedAIConfigured = isManagedAIConfigured();
   
   const [selectedModels, setSelectedModels] = useState<Set<ModelType>>(() => {
     const initial = new Set<ModelType>();
@@ -264,7 +265,7 @@ const CompareModelsModal: React.FC<CompareModelsModalProps> = ({ isOpen, onClose
 
   const runComparison = async () => {
     if (!prompt.trim() || selectedModels.size === 0) return;
-    if (!isAzureOpenAIConfigured()) return;
+    if (!isManagedAIConfigured()) return;
 
     setIsRunning(true);
     const models = Array.from(selectedModels);
@@ -289,6 +290,7 @@ const CompareModelsModal: React.FC<CompareModelsModalProps> = ({ isOpen, onClose
         reasoningEffort: MODEL_CONFIG[model].isReasoning
           ? normalizeReasoningEffort(model, effectiveReasoningEffort)
           : 'none',
+        forceManaged: true,
       };
 
       try {
@@ -373,6 +375,7 @@ const CompareModelsModal: React.FC<CompareModelsModalProps> = ({ isOpen, onClose
         reasoningEffort: MODEL_CONFIG[chosenModel].isReasoning
           ? normalizeReasoningEffort(chosenModel, effectiveReasoningEffort)
           : 'none',
+        forceManaged: true,
       };
       const { content } = await generateCritique(summary, prompt, override, language);
       setCritiqueText(content);
@@ -780,11 +783,20 @@ const CompareModelsModal: React.FC<CompareModelsModalProps> = ({ isOpen, onClose
           </div>
 
           {/* Run Button */}
+          {!managedAIConfigured && (
+            <div className="compare-managed-notice" role="status">
+              <AlertCircle size={16} aria-hidden="true" />
+              <span>{localize(language, {
+                en: 'Model comparison requires managed AI models configured by the application administrator.',
+                ja: 'モデル比較には、アプリケーション管理者が設定した管理 AI モデルが必要です。',
+              })}</span>
+            </div>
+          )}
           {!hasResults && (
             <button
               className="btn btn-primary compare-run-btn"
               onClick={runComparison}
-              disabled={isRunning || !prompt.trim() || selectedModels.size < 2}
+              disabled={!managedAIConfigured || isRunning || !prompt.trim() || selectedModels.size < 2}
             >
               <GitCompare size={18} />
               {' '}{t("Compare")}{' '}{selectedModels.size} {' '}{t("Models")}{' '}</button>

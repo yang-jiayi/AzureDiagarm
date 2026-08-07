@@ -6,6 +6,17 @@ const express = require('express');
 const { asyncHandler } = require('./async-handler');
 
 const DEPLOYMENT_NAME_RE = /^[A-Za-z0-9._-]{1,64}$/;
+const BYO_MODEL_NAME_RE = /^[A-Za-z0-9._:-]{1,128}$/;
+const API_VERSION_RE = /^\d{4}-\d{2}-\d{2}(?:-preview)?$/;
+const API_KEY_RE = /^[^\s\r\n]{8,512}$/;
+const AZURE_OPENAI_HOST_SUFFIXES = [
+  '.openai.azure.com',
+  '.openai.azure.us',
+  '.openai.azure.cn',
+  '.cognitiveservices.azure.com',
+  '.cognitiveservices.azure.us',
+  '.cognitiveservices.azure.cn',
+];
 const DEFAULT_API_VERSION = '2024-05-01-preview';
 const DEFAULT_ANTHROPIC_VERSION = '2023-06-01';
 const DEFAULT_TIMEOUT_MS = 210_000;
@@ -43,6 +54,161 @@ function buildOpenAIUrl(endpoint, deployment, apiFormat, apiVersion) {
     return `${base}openai/deployments/${encodeURIComponent(deployment)}/chat/completions?api-version=${apiVersion}`;
   }
   return `${base}openai/v1/responses`;
+}
+
+function createByoValidationError(code, message, status = 400) {
+  const error = new Error(message);
+  error.code = code;
+  error.status = status;
+  return error;
+}
+
+function normalizeHttpsEndpoint(rawEndpoint, allowedHost) {
+  let url;
+  try {
+    url = new URL(rawEndpoint);
+  } catch {
+    throw createByoValidationError(
+      'invalid_byo_endpoint',
+      'The custom AI endpoint must be a valid HTTPS URL.',
+    );
+  }
+  if (
+    url.protocol !== 'https:'
+    || url.username
+    || url.password
+    || url.port
+    || url.search
+    || url.hash
+    || !allowedHost(url.hostname.toLowerCase())
+  ) {
+    throw createByoValidationError(
+      'invalid_byo_endpoint',
+      'The custom AI endpoint is not an allowed HTTPS endpoint.',
+    );
+  }
+  if (url.pathname !== '/' && url.pathname !== '') {
+    throw createByoValidationError(
+      'invalid_byo_endpoint',
+      'The custom AI endpoint must not include an API path.',
+    );
+  }
+  return `${url.origin}/`;
+}
+
+function normalizeAzureOpenAIEndpoint(rawEndpoint) {
+  return normalizeHttpsEndpoint(rawEndpoint, hostname => (
+    AZURE_OPENAI_HOST_SUFFIXES.some(suffix => (
+      hostname.endsWith(suffix) && hostname.length > suffix.length
+    ))
+  ));
+}
+
+function normalizeOfficialOpenAIEndpoint(rawEndpoint) {
+  const normalized = normalizeHttpsEndpoint(
+    rawEndpoint || 'https://api.openai.com',
+    hostname => hostname === 'api.openai.com',
+  );
+  return normalized;
+}
+
+function resolveByoRequestConfig(rawConfig, allowByoAIEndpoints) {
+  if (rawConfig === undefined || rawConfig === null) return null;
+  if (!allowByoAIEndpoints) {
+    throw createByoValidationError(
+      'byo_not_enabled',
+      'Bring-your-own AI endpoints are not enabled on this server.',
+      403,
+    );
+  }
+  if (!rawConfig || typeof rawConfig !== 'object' || Array.isArray(rawConfig)) {
+    throw createByoValidationError(
+      'invalid_byo_configuration',
+      'The custom AI configuration is invalid.',
+    );
+  }
+
+  const provider = rawConfig.provider;
+  if (provider !== 'azure-openai' && provider !== 'openai') {
+    throw createByoValidationError(
+      'invalid_byo_provider',
+      "The custom AI provider must be 'azure-openai' or 'openai'.",
+    );
+  }
+
+  const apiKey = typeof rawConfig.apiKey === 'string' ? rawConfig.apiKey.trim() : '';
+  if (!API_KEY_RE.test(apiKey)) {
+    throw createByoValidationError(
+      'invalid_byo_api_key',
+      'The custom AI API key is missing or invalid.',
+    );
+  }
+
+  if (provider === 'openai') {
+    return {
+      provider,
+      endpoint: normalizeOfficialOpenAIEndpoint(rawConfig.endpoint),
+      apiKey,
+      apiVersion: null,
+    };
+  }
+
+  const apiVersion = typeof rawConfig.apiVersion === 'string'
+    ? rawConfig.apiVersion.trim()
+    : DEFAULT_API_VERSION;
+  if (!API_VERSION_RE.test(apiVersion)) {
+    throw createByoValidationError(
+      'invalid_byo_api_version',
+      'The Azure OpenAI API version is invalid.',
+    );
+  }
+  return {
+    provider,
+    endpoint: normalizeAzureOpenAIEndpoint(rawConfig.endpoint),
+    apiKey,
+    apiVersion,
+  };
+}
+
+function buildByoAIUrl(config, deployment, apiFormat) {
+  if (config.provider === 'openai') {
+    return apiFormat === 'chat-completions'
+      ? 'https://api.openai.com/v1/chat/completions'
+      : 'https://api.openai.com/v1/responses';
+  }
+  return buildOpenAIUrl(config.endpoint, deployment, apiFormat, config.apiVersion);
+}
+
+function classifyByoUpstreamError(classified) {
+  switch (classified.code) {
+    case 'azure_openai_authentication_failed':
+      return {
+        code: 'byo_authentication_failed',
+        message: 'The custom AI endpoint rejected the supplied API key.',
+      };
+    case 'azure_openai_rate_limited':
+      return {
+        code: 'byo_rate_limited',
+        message: 'The custom AI endpoint rate-limited the request.',
+      };
+    case 'azure_openai_timeout':
+      return {
+        code: 'byo_timeout',
+        message: 'The custom AI endpoint timed out while processing the request.',
+      };
+    case 'azure_openai_unavailable':
+      return {
+        code: 'byo_unavailable',
+        message: 'The custom AI endpoint is temporarily unavailable.',
+      };
+    case 'azure_openai_request_failed':
+      return {
+        code: 'byo_request_failed',
+        message: 'The custom AI endpoint rejected the request.',
+      };
+    default:
+      return classified;
+  }
 }
 
 function parseUpstreamError(text) {
@@ -179,6 +345,7 @@ function createOpenAIProxyRouter(options) {
     fetchImpl = globalThis.fetch,
     timeoutMs = DEFAULT_TIMEOUT_MS,
     consumeRateLimit = () => 0,
+    allowByoAIEndpoints = false,
     logger = console,
   } = options;
 
@@ -192,7 +359,7 @@ function createOpenAIProxyRouter(options) {
     const startedAt = Date.now();
     res.set('X-AzureDiagarm-Request-Id', requestId);
 
-    const { apiFormat, deployment, body } = req.body || {};
+    const { apiFormat, deployment, body, byo } = req.body || {};
     if (
       apiFormat !== 'responses'
       && apiFormat !== 'chat-completions'
@@ -204,10 +371,36 @@ function createOpenAIProxyRouter(options) {
         message: "apiFormat must be 'responses', 'chat-completions', or 'anthropic-messages'.",
       });
     }
+
+    let byoConfig;
+    try {
+      byoConfig = resolveByoRequestConfig(byo, allowByoAIEndpoints);
+    } catch (error) {
+      return sendError(res, error.status || 400, requestId, {
+        source: 'proxy',
+        code: error.code || 'invalid_byo_configuration',
+        message: error.message,
+      });
+    }
+
     const isAnthropic = apiFormat === 'anthropic-messages';
-    const upstreamEndpoint = isAnthropic ? foundryEndpoint : endpoint;
-    const upstreamSource = isAnthropic ? 'azure_foundry' : 'azure_openai';
-    const provider = isAnthropic ? 'foundry_anthropic' : 'azure_openai';
+    if (byoConfig && isAnthropic) {
+      return sendError(res, 400, requestId, {
+        source: 'proxy',
+        code: 'invalid_byo_api_format',
+        message: 'Bring-your-own AI supports Responses or Chat Completions.',
+      });
+    }
+    const upstreamEndpoint = byoConfig
+      ? byoConfig.endpoint
+      : (isAnthropic ? foundryEndpoint : endpoint);
+    const upstreamSource = byoConfig
+      ? (byoConfig.provider === 'openai' ? 'byo_openai' : 'byo_azure_openai')
+      : (isAnthropic ? 'azure_foundry' : 'azure_openai');
+    const provider = byoConfig
+      ? upstreamSource
+      : (isAnthropic ? 'foundry_anthropic' : 'azure_openai');
+    const loggedDeployment = byoConfig ? 'bring-your-own' : deployment;
     if (!upstreamEndpoint) {
       return sendError(res, 503, requestId, {
         source: 'proxy',
@@ -217,31 +410,34 @@ function createOpenAIProxyRouter(options) {
           : 'Azure OpenAI is not configured on the server.',
       });
     }
-    if (typeof deployment !== 'string' || !DEPLOYMENT_NAME_RE.test(deployment)) {
+    const deploymentPattern = byoConfig ? BYO_MODEL_NAME_RE : DEPLOYMENT_NAME_RE;
+    if (typeof deployment !== 'string' || !deploymentPattern.test(deployment)) {
       return sendError(res, 400, requestId, {
         source: 'proxy',
         code: 'invalid_deployment_name',
         message: 'The deployment name is invalid.',
       });
     }
-    const deploymentAllowlist = isAnthropic
-      ? allowedFoundryDeployments
-      : allowedDeployments;
-    if (deploymentAllowlist.size === 0) {
-      return sendError(res, 503, requestId, {
-        source: 'proxy',
-        code: 'deployment_allowlist_not_configured',
-        message: isAnthropic
-          ? 'Microsoft Foundry deployment access is not configured on the server.'
-          : 'Azure OpenAI deployment access is not configured on the server.',
-      });
-    }
-    if (!deploymentAllowlist.has(deployment)) {
-      return sendError(res, 403, requestId, {
-        source: 'proxy',
-        code: 'deployment_not_allowed',
-        message: 'The deployment is not allowed by the server configuration.',
-      });
+    if (!byoConfig) {
+      const deploymentAllowlist = isAnthropic
+        ? allowedFoundryDeployments
+        : allowedDeployments;
+      if (deploymentAllowlist.size === 0) {
+        return sendError(res, 503, requestId, {
+          source: 'proxy',
+          code: 'deployment_allowlist_not_configured',
+          message: isAnthropic
+            ? 'Microsoft Foundry deployment access is not configured on the server.'
+            : 'Azure OpenAI deployment access is not configured on the server.',
+        });
+      }
+      if (!deploymentAllowlist.has(deployment)) {
+        return sendError(res, 403, requestId, {
+          source: 'proxy',
+          code: 'deployment_not_allowed',
+          message: 'The deployment is not allowed by the server configuration.',
+        });
+      }
     }
     if (!body || typeof body !== 'object' || Array.isArray(body)) {
       return sendError(res, 400, requestId, {
@@ -270,6 +466,9 @@ function createOpenAIProxyRouter(options) {
         32768,
       );
     } else if (apiFormat === 'chat-completions') {
+      if (byoConfig?.provider === 'openai') {
+        upstreamBody.model = deployment;
+      }
       upstreamBody.max_tokens = Math.min(
         Math.max(Number(upstreamBody.max_tokens) || 1, 1),
         32768,
@@ -297,32 +496,40 @@ function createOpenAIProxyRouter(options) {
     }
 
     const headers = { 'Content-Type': 'application/json' };
-    const selectedApiKey = isAnthropic ? foundryApiKey : apiKey;
-    if (selectedApiKey) {
-      headers[isAnthropic ? 'x-api-key' : 'api-key'] = selectedApiKey;
+    if (byoConfig) {
+      if (byoConfig.provider === 'openai') {
+        headers.Authorization = `Bearer ${byoConfig.apiKey}`;
+      } else {
+        headers['api-key'] = byoConfig.apiKey;
+      }
     } else {
-      try {
-        const tokenScope = isAnthropic
-          ? 'https://ai.azure.com/.default'
-          : 'https://cognitiveservices.azure.com/.default';
-        const tokenResult = await credential?.getToken(tokenScope);
-        if (!tokenResult?.token) throw new Error('Credential returned no token');
-        headers.Authorization = `Bearer ${tokenResult.token}`;
-      } catch (error) {
-        logEvent(logger, 'error', {
-          event: 'credential_acquisition_failed',
-          requestId,
-          deployment,
-          apiFormat,
-          provider,
-          errorName: error?.name || 'Error',
-          errorCode: error?.code || null,
-        });
-        return sendError(res, 502, requestId, {
-          source: 'credential',
-          code: 'credential_acquisition_failed',
-          message: 'The server could not acquire an Azure OpenAI credential.',
-        });
+      const selectedApiKey = isAnthropic ? foundryApiKey : apiKey;
+      if (selectedApiKey) {
+        headers[isAnthropic ? 'x-api-key' : 'api-key'] = selectedApiKey;
+      } else {
+        try {
+          const tokenScope = isAnthropic
+            ? 'https://ai.azure.com/.default'
+            : 'https://cognitiveservices.azure.com/.default';
+          const tokenResult = await credential?.getToken(tokenScope);
+          if (!tokenResult?.token) throw new Error('Credential returned no token');
+          headers.Authorization = `Bearer ${tokenResult.token}`;
+        } catch (error) {
+          logEvent(logger, 'error', {
+            event: 'credential_acquisition_failed',
+            requestId,
+            deployment: loggedDeployment,
+            apiFormat,
+            provider,
+            errorName: error?.name || 'Error',
+            errorCode: error?.code || null,
+          });
+          return sendError(res, 502, requestId, {
+            source: 'credential',
+            code: 'credential_acquisition_failed',
+            message: 'The server could not acquire an Azure OpenAI credential.',
+          });
+        }
       }
     }
     if (isAnthropic) {
@@ -331,20 +538,26 @@ function createOpenAIProxyRouter(options) {
 
     let upstream;
     try {
-      upstream = await fetchImpl(buildOpenAIUrl(upstreamEndpoint, deployment, apiFormat, apiVersion), {
+      const upstreamUrl = byoConfig
+        ? buildByoAIUrl(byoConfig, deployment, apiFormat)
+        : buildOpenAIUrl(upstreamEndpoint, deployment, apiFormat, apiVersion);
+      upstream = await fetchImpl(upstreamUrl, {
         method: 'POST',
         headers,
         body: JSON.stringify(upstreamBody),
         signal: AbortSignal.timeout(timeoutMs),
+        redirect: 'error',
       });
     } catch (error) {
       const timedOut = error?.name === 'AbortError' || error?.name === 'TimeoutError';
       const status = timedOut ? 504 : 502;
-      const code = timedOut ? 'azure_openai_timeout' : 'azure_openai_connection_failed';
+      const code = byoConfig
+        ? (timedOut ? 'byo_timeout' : 'byo_connection_failed')
+        : (timedOut ? 'azure_openai_timeout' : 'azure_openai_connection_failed');
       logEvent(logger, 'error', {
         event: code,
         requestId,
-        deployment,
+        deployment: loggedDeployment,
         apiFormat,
         provider,
         durationMs: Date.now() - startedAt,
@@ -354,9 +567,13 @@ function createOpenAIProxyRouter(options) {
       return sendError(res, status, requestId, {
         source: 'proxy_transport',
         code,
-        message: timedOut
-          ? 'The Azure OpenAI request timed out.'
-          : 'The server could not connect to Azure OpenAI.',
+        message: byoConfig
+          ? (timedOut
+              ? 'The custom AI endpoint timed out.'
+              : 'The server could not connect to the custom AI endpoint.')
+          : (timedOut
+              ? 'The Azure OpenAI request timed out.'
+              : 'The server could not connect to Azure OpenAI.'),
       });
     }
 
@@ -386,7 +603,7 @@ function createOpenAIProxyRouter(options) {
       logEvent(logger, 'error', {
         event: 'upstream_body_read_failed',
         requestId,
-        deployment,
+        deployment: loggedDeployment,
         apiFormat,
         provider,
         upstreamStatus: upstream.status,
@@ -397,24 +614,29 @@ function createOpenAIProxyRouter(options) {
       });
       return sendError(res, 502, requestId, {
         source: 'proxy_transport',
-        code: 'azure_openai_connection_failed',
-        message: 'The server could not read the Azure OpenAI response.',
+        code: byoConfig ? 'byo_connection_failed' : 'azure_openai_connection_failed',
+        message: byoConfig
+          ? 'The server could not read the custom AI response.'
+          : 'The server could not read the Azure OpenAI response.',
         upstreamStatus: upstream.status,
         upstreamRequestId,
       });
     }
     if (!upstream.ok) {
       const { code: upstreamCode, message: upstreamMessage } = parseUpstreamError(text);
-      const classified = classifyUpstreamError(
+      const baseClassification = classifyUpstreamError(
         upstream.status,
         contentType,
         upstreamCode,
         upstreamMessage,
       );
+      const classified = byoConfig
+        ? classifyByoUpstreamError(baseClassification)
+        : baseClassification;
       logEvent(logger, 'error', {
         event: classified.code,
         requestId,
-        deployment,
+        deployment: loggedDeployment,
         apiFormat,
         provider,
         upstreamStatus: upstream.status,
@@ -437,7 +659,7 @@ function createOpenAIProxyRouter(options) {
       logEvent(logger, 'error', {
         event: 'invalid_upstream_response',
         requestId,
-        deployment,
+        deployment: loggedDeployment,
         apiFormat,
         provider,
         upstreamStatus: upstream.status,
@@ -448,7 +670,9 @@ function createOpenAIProxyRouter(options) {
       return sendError(res, 502, requestId, {
         source: upstreamSource,
         code: 'invalid_upstream_response',
-        message: 'Azure OpenAI returned an unexpected response format.',
+        message: byoConfig
+          ? 'The custom AI endpoint returned an unexpected response format.'
+          : 'Azure OpenAI returned an unexpected response format.',
         upstreamStatus: upstream.status,
         upstreamRequestId,
       });
@@ -457,7 +681,7 @@ function createOpenAIProxyRouter(options) {
     logEvent(logger, 'info', {
       event: 'request_succeeded',
       requestId,
-      deployment,
+      deployment: loggedDeployment,
       apiFormat,
       provider,
       upstreamStatus: upstream.status,
@@ -473,9 +697,12 @@ function createOpenAIProxyRouter(options) {
 }
 
 module.exports = {
+  buildByoAIUrl,
   buildOpenAIUrl,
   classifyUpstreamError,
   createOpenAIProxyRouter,
   logFoundryConfiguration,
+  normalizeAzureOpenAIEndpoint,
+  resolveByoRequestConfig,
   parseUpstreamError,
 };

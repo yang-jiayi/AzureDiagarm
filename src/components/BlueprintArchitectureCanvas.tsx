@@ -21,8 +21,19 @@ import type {
 import { getServiceIconMapping } from '../data/serviceIconMapping';
 import { resolveServiceIconLoose } from '../utils/serviceIconFuzzy';
 import { loadIcon } from '../utils/iconLoader';
+import {
+  getConnectionPresentation,
+  inferConnectionType,
+  type ConnectionPresentation,
+  type DiagramConnectionType,
+} from '../utils/edgePresentation';
+import {
+  BLUEPRINT_SIDEBAR_WIDTH,
+  calculateBlueprintContentFrame,
+  calculateBlueprintHostWidth,
+} from '../utils/publicationLayout';
 import './BlueprintArchitectureCanvas.css';
-import { useLanguage } from '../i18n/LanguageContext';
+import { useLanguage, type TranslationKey } from '../i18n/LanguageContext';
 
 export interface BlueprintArchitectureCanvasProps {
   data: BlueprintArchitecture;
@@ -44,7 +55,21 @@ export interface BlueprintArchitectureCanvasProps {
   legendPosition?: 'bottom' | 'right' | 'auto';
 }
 
-const LEGEND_RIGHT_WIDTH = 400;
+const CONNECTION_TYPE_ORDER: DiagramConnectionType[] = [
+  'sync',
+  'async',
+  'optional',
+  'security',
+  'telemetry',
+];
+
+const CONNECTION_TYPE_LABELS: Record<DiagramConnectionType, TranslationKey> = {
+  sync: 'Synchronous',
+  async: 'Asynchronous',
+  optional: 'Optional',
+  security: 'Security',
+  telemetry: 'Telemetry',
+};
 
 function resolveLegendPosition(
   position: 'bottom' | 'right' | 'auto' | undefined,
@@ -320,9 +345,10 @@ const BlueprintArchitectureCanvas: React.FC<BlueprintArchitectureCanvasProps> = 
   legendPosition,
 }) => {
   const { t } = useLanguage();
-  const { width: cW, height: cH } = data.canvas;
+  const contentFrame = useMemo(() => calculateBlueprintContentFrame(data), [data]);
+  const { width: cW, height: cH } = contentFrame;
   const resolvedLegend = resolveLegendPosition(legendPosition, cW, cH);
-  const hostWidth = resolvedLegend === 'right' ? cW + LEGEND_RIGHT_WIDTH + 32 : cW + 96;
+  const hostWidth = calculateBlueprintHostWidth(cW, resolvedLegend);
 
   const nodeById = useMemo(() => {
     const m = new Map<string, BpNode>();
@@ -351,6 +377,7 @@ const BlueprintArchitectureCanvas: React.FC<BlueprintArchitectureCanvasProps> = 
     lx: number; // label box center x
     ly: number; // label text baseline y
     lw: number; // label box width
+    presentation: ConnectionPresentation;
   };
   const placedEdges = useMemo<PlacedEdge[]>(() => {
     const LABEL_FONT = '14px \"Yu Gothic UI\", Arial, sans-serif';
@@ -394,6 +421,7 @@ const BlueprintArchitectureCanvas: React.FC<BlueprintArchitectureCanvasProps> = 
       geom: EdgeGeom;
       bx: number;
       by: number;
+      presentation: ConnectionPresentation;
     };
     const badges: Badge[] = [];
     for (const e of data.edges) {
@@ -408,6 +436,15 @@ const BlueprintArchitectureCanvas: React.FC<BlueprintArchitectureCanvasProps> = 
       const parallelOffset = count > 1 ? (idx - (count - 1) / 2) * 36 : 0;
 
       const geom = computeEdgeGeometry(a, b, e, data.nodes);
+      const presentation = getConnectionPresentation(inferConnectionType({
+        type: e.type,
+        style: e.style,
+        label: e.label,
+        fromCategory: a.category,
+        toCategory: b.category,
+        fromName: a.name,
+        toName: b.name,
+      }));
       const longest = geom.longest;
       let mx = (longest.x1 + longest.x2) / 2;
       let my = (longest.y1 + longest.y2) / 2;
@@ -492,7 +529,7 @@ const BlueprintArchitectureCanvas: React.FC<BlueprintArchitectureCanvasProps> = 
         if (!collided) break;
       }
 
-      badges.push({ e, a, b, geom, bx: finalBx, by: finalBy });
+      badges.push({ e, a, b, geom, bx: finalBx, by: finalBy, presentation });
     }
 
     // Badge circles become keep-out rects for the label pass.
@@ -574,9 +611,14 @@ const BlueprintArchitectureCanvas: React.FC<BlueprintArchitectureCanvasProps> = 
         lx: lbl?.lx ?? p.bx,
         ly: lbl?.ly ?? p.by,
         lw: lbl?.lw ?? 0,
+        presentation: p.presentation,
       };
     });
   }, [data, nodeById]);
+  const usedConnectionTypes = useMemo(() => {
+    const used = new Set(placedEdges.map(edge => edge.presentation.type));
+    return CONNECTION_TYPE_ORDER.filter(type => used.has(type));
+  }, [placedEdges]);
 
   return (
     <div
@@ -602,81 +644,126 @@ const BlueprintArchitectureCanvas: React.FC<BlueprintArchitectureCanvasProps> = 
         xmlns="http://www.w3.org/2000/svg"
       >
         <defs>
-          <marker
-            id="bp-arrow"
-            viewBox="0 0 10 10"
-            refX="9"
-            refY="5"
-            markerWidth="9"
-            markerHeight="9"
-            orient="auto-start-reverse"
-          >
-            <path d="M 0 0 L 10 5 L 0 10 z" fill="#1f2937" />
-          </marker>
+          {CONNECTION_TYPE_ORDER.map((type) => {
+            const presentation = getConnectionPresentation(type);
+            return (
+              <marker
+                key={type}
+                id={`bp-arrow-${type}`}
+                viewBox="0 0 10 10"
+                refX="9"
+                refY="5"
+                markerWidth="9"
+                markerHeight="9"
+                orient="auto-start-reverse"
+              >
+                <path d="M 0 0 L 10 5 L 0 10 z" fill={presentation.stroke} />
+              </marker>
+            );
+          })}
         </defs>
 
-        {/* Zones (nested, parents first) */}
-        {orderedZones.map((z) => (
-          <ZoneRect key={z.id} zone={z} />
-        ))}
-
-        {/* Edges drawn between zones and nodes so they sit beneath node tiles
-            but above zone fills. Only the connector paths render here; the
-            numbered badges + labels render in a later pass (after the node
-            tiles) so they are never hidden behind a tile. */}
-        <g className="bp-edges">
-          {placedEdges.map((p) => (
-            <path
-              key={`${p.e.id}-path`}
-              d={p.geom.d}
-              fill="none"
-              stroke="#1f2937"
-              strokeWidth={1.6}
-              strokeDasharray={p.geom.strokeDash}
-              markerEnd="url(#bp-arrow)"
-            />
+        <g transform={`translate(${contentFrame.offsetX} ${contentFrame.offsetY})`}>
+          {/* Zones (nested, parents first) */}
+          {orderedZones.map((z) => (
+            <ZoneRect key={z.id} zone={z} />
           ))}
-        </g>
 
-        {/* Nodes on top */}
-        <g className="bp-nodes">
-          {data.nodes.map((n) => (
-            <Node
-              key={n.id}
-              node={n}
-              preloadedIconUrl={iconMap?.[n.name]}
-              personaIconUrl={personaIconUrl}
-            />
-          ))}
-        </g>
+          {/* Edges drawn between zones and nodes so they sit beneath node tiles
+              but above zone fills. Only the connector paths render here; the
+              numbered badges + labels render in a later pass (after the node
+              tiles) so they are never hidden behind a tile. */}
+          <g className="bp-edges">
+            {placedEdges.map((p) => (
+              <path
+                key={`${p.e.id}-path`}
+                d={p.geom.d}
+                fill="none"
+                stroke={p.presentation.stroke}
+                strokeWidth={p.presentation.type === 'security' ? 2 : 1.8}
+                strokeDasharray={p.presentation.strokeDasharray || p.geom.strokeDash}
+                strokeOpacity={p.presentation.opacity}
+                markerEnd={`url(#bp-arrow-${p.presentation.type})`}
+              />
+            ))}
+          </g>
 
-        {/* Edge badges + labels render last so they always sit on top of the
-            node tiles and remain legible. */}
-        <g className="bp-edge-decor">
-          {placedEdges.map((p) => (
-            <EdgeDecor
-              key={`${p.e.id}-decor`}
-              edge={p.e}
-              badgeX={p.bx}
-              badgeY={p.by}
-              labelText={p.labelText}
-              labelX={p.lx}
-              labelY={p.ly}
-              labelW={p.lw}
-            />
-          ))}
+          {/* Nodes on top */}
+          <g className="bp-nodes">
+            {data.nodes.map((n) => (
+              <Node
+                key={n.id}
+                node={n}
+                preloadedIconUrl={iconMap?.[n.name]}
+                personaIconUrl={personaIconUrl}
+              />
+            ))}
+          </g>
+
+          {/* Edge badges + labels render last so they always sit on top of the
+              node tiles and remain legible. */}
+          <g className="bp-edge-decor">
+            {placedEdges.map((p) => (
+              <EdgeDecor
+                key={`${p.e.id}-decor`}
+                edge={p.e}
+                badgeX={p.bx}
+                badgeY={p.by}
+                labelText={p.labelText}
+                labelX={p.lx}
+                labelY={p.ly}
+                labelW={p.lw}
+              />
+            ))}
+          </g>
         </g>
       </svg>
 
-      {data.workflow && data.workflow.length > 0 && (
-        <ol className="bp-arch-workflow">
-          {data.workflow.map((step) => (
-            <li key={step.step}>
-              <span className="bp-step-badge">{step.step}</span>
-              <span className="bp-step-text">{step.description}</span>
-            </li>
-          ))}
-        </ol>
+      {(usedConnectionTypes.length > 0 || (data.workflow && data.workflow.length > 0)) && (
+        <div
+          className="bp-arch-support"
+          style={{ '--bp-support-width': `${BLUEPRINT_SIDEBAR_WIDTH}px` } as React.CSSProperties}
+        >
+          {usedConnectionTypes.length > 0 && (
+            <section className="bp-arch-connection-legend" aria-label={t("Connection Types")}>
+              <div className="bp-arch-connection-title">{t("Connection Types")}</div>
+              <div className="bp-arch-connection-items">
+                {usedConnectionTypes.map((type) => {
+                  const presentation = getConnectionPresentation(type);
+                  return (
+                    <div className="bp-arch-connection-item" key={type}>
+                      <svg width="46" height="16" aria-hidden="true">
+                        <line
+                          x1="3"
+                          y1="8"
+                          x2="39"
+                          y2="8"
+                          stroke={presentation.stroke}
+                          strokeWidth="2"
+                          strokeDasharray={presentation.strokeDasharray}
+                          strokeOpacity={presentation.opacity}
+                        />
+                        <path d="M 38 4 L 45 8 L 38 12 z" fill={presentation.stroke} />
+                      </svg>
+                      <span>{t(CONNECTION_TYPE_LABELS[type])}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
+          )}
+
+          {data.workflow && data.workflow.length > 0 && (
+            <ol className="bp-arch-workflow">
+              {data.workflow.map((step) => (
+                <li key={step.step}>
+                  <span className="bp-step-badge">{step.step}</span>
+                  <span className="bp-step-text">{step.description}</span>
+                </li>
+              ))}
+            </ol>
+          )}
+        </div>
       )}
       </div>
     </div>

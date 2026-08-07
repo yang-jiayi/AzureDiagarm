@@ -168,19 +168,19 @@
 @media (max-width: 900px) {
   .workflow-stepper {
     padding: var(--azd-space-1) var(--azd-space-2);
-    overflow-x: auto;
-    scrollbar-width: thin;
+    overflow: hidden;
   }
 
   .workflow-stepper ol {
-    width: max-content;
+    width: 100%;
     min-width: 100%;
-    grid-template-columns: repeat(4, minmax(138px, 1fr));
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: var(--azd-space-1);
   }
 
   .workflow-stepper button {
-    min-height: 46px;
-    grid-template-columns: 22px 18px minmax(0, 1fr);
+    min-height: 44px;
+    grid-template-columns: 22px minmax(0, 1fr);
     gap: var(--azd-space-1);
     padding: 0.35rem 0.45rem;
   }
@@ -192,6 +192,35 @@
 
   .workflow-stepper-copy small {
     display: none;
+  }
+
+  .workflow-stepper-icon {
+    display: none;
+  }
+
+  .workflow-stepper-copy strong {
+    font-size: 0.74rem;
+  }
+}
+
+@media (max-width: 480px) {
+  .workflow-stepper {
+    padding-inline: var(--azd-space-1);
+  }
+
+  .workflow-stepper button {
+    min-height: 40px;
+    grid-template-columns: 20px minmax(0, 1fr);
+    padding: 0.25rem;
+  }
+
+  .workflow-stepper-index {
+    width: 20px;
+    height: 20px;
+  }
+
+  .workflow-stepper-copy strong {
+    font-size: 0.68rem;
   }
 }
 

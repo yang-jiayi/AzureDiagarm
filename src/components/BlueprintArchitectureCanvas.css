@@ -58,17 +58,25 @@
   gap: 20px;
 }
 
+.bp-arch-support {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.bp-arch-body--right .bp-arch-support {
+  flex: 0 0 var(--bp-support-width, 400px);
+  width: var(--bp-support-width, 400px);
+}
+
 .bp-arch-body--right .bp-arch-workflow {
   grid-template-columns: 1fr;
-  flex: 0 0 380px;
-  width: 380px;
-  margin-top: 0;
 }
 
 .bp-arch-workflow {
   list-style: none;
   padding: 0;
-  margin: 24px 0 0;
+  margin: 0;
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 10px 24px;
@@ -99,4 +107,42 @@
 
 .bp-step-text {
   flex: 1;
+}
+
+.bp-arch-connection-legend {
+  padding: 14px 16px;
+  border: 1px solid #dbe3ee;
+  border-radius: 10px;
+  background: #f8fafc;
+  font-family: 'Yu Gothic UI', 'Segoe UI', system-ui, sans-serif;
+}
+
+.bp-arch-connection-title {
+  margin-bottom: 10px;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.bp-arch-connection-items {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+}
+
+.bp-arch-body--right .bp-arch-connection-items {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+}
+
+.bp-arch-connection-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: #334155;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
 }

@@ -157,8 +157,10 @@ export default function CanvasChrome({
           elapsedTimeMs={generatedWithModel.timeMs}
         />
       )}
-      {!focusMode && <Legend forceCollapsed={forceCollapsed} />}
-      {!focusMode && showFeedback && <FeedbackFab pulse={feedbackPulse} onClick={onFeedback} />}
+      {!focusMode && hasNodes && <Legend forceCollapsed={forceCollapsed} />}
+      {!focusMode && hasNodes && showFeedback && (
+        <FeedbackFab pulse={feedbackPulse} onClick={onFeedback} />
+      )}
     </>
   );
 }

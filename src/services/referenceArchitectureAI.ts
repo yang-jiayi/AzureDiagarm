@@ -16,7 +16,6 @@
 
 import { callAzureOpenAI, ModelOverride, AIMetrics } from './azureOpenAI';
 import { getServiceIconMapping } from '../data/serviceIconMapping';
-import { MODEL_CONFIG, getModelSettings } from '../stores/modelSettingsStore';
 import type { Language } from '../i18n/LanguageContext';
 import { getPromptLanguageInstruction } from '../i18n/localization';
 
@@ -355,10 +354,9 @@ Now generate a reference architecture for the user's request. Return JSON only.`
     { role: 'user', content: description },
   ];
 
-  const activeModel = modelOverride?.model || getModelSettings().model;
   const { content, metrics } = await callAzureOpenAI(messages, modelOverride, true);
   console.log(
-    `📐 Reference Architecture Response [${MODEL_CONFIG[activeModel].displayName}]: ${content.length} chars`
+    `📐 Reference Architecture Response [${metrics.model || 'AI'}]: ${content.length} chars`
   );
 
   let ref: ReferenceArchitecture;

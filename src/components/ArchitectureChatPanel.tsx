@@ -6,6 +6,11 @@ import { Sparkles, X, Send, Loader2, AlertCircle, MessageSquare, ChevronDown, Ch
 import { generateArchitectureWithAI, generateFollowUpSuggestions, isAzureOpenAIConfigured } from '../services/azureOpenAI';
 import { useModelSettings, MODEL_CONFIG } from '../stores/modelSettingsStore';
 import {
+  getBYOAIProviderLabel,
+  isBYOAIReady,
+  useBYOAISettings,
+} from '../stores/byoAISettingsStore';
+import {
   buildModificationPrompt,
   summarizeArchitectureChange,
   CurrentArchitecture,
@@ -260,6 +265,7 @@ const ArchitectureChatPanel: React.FC<ArchitectureChatPanelProps> = ({
   const [followUpsLoading, setFollowUpsLoading] = useState(false);
   const [askingBest, setAskingBest] = useState(false);
   const [modelSettings] = useModelSettings();
+  const byoSnapshot = useBYOAISettings();
 
   const threadRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -270,9 +276,12 @@ const ArchitectureChatPanel: React.FC<ArchitectureChatPanelProps> = ({
 
   diagramKeyRef.current = diagramKey;
 
-  const configured = isAzureOpenAIConfigured();
+  const byoReady = byoSnapshot.settings.enabled && isBYOAIReady();
+  const configured = isAzureOpenAIConfigured() || byoReady;
   const hasDiagram = currentArchitecture.nodes.some((n) => n.type === 'azureNode');
-  const modelName = MODEL_CONFIG[modelSettings.model]?.displayName || modelSettings.model;
+  const modelName = byoReady
+    ? `${getBYOAIProviderLabel(byoSnapshot.settings.provider)} · ${byoSnapshot.settings.model}`
+    : (MODEL_CONFIG[modelSettings.model]?.displayName || modelSettings.model);
 
   const markUsed = (s: string) =>
     setUsedSuggestions((prev) => (prev.has(s) ? prev : new Set(prev).add(s)));
@@ -666,7 +675,12 @@ const ArchitectureChatPanel: React.FC<ArchitectureChatPanelProps> = ({
       <div className="arch-chat-composer">
         {!configured && (
           <div className="arch-chat-warning">
-            <AlertCircle size={14} /> {' '}{t("Azure OpenAI is not configured.")}{' '}</div>
+            <AlertCircle size={14} /> {' '}
+            {localize(language, {
+              en: 'No AI model is configured.',
+              ja: 'AI モデルが設定されていません。',
+            })}{' '}
+          </div>
         )}
         <div className="arch-chat-input-row">
           <textarea

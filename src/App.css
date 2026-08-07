@@ -164,7 +164,8 @@
   grid-area: auto;
 }
 
-.access-admin-button {
+.access-admin-button,
+.header-utility-button {
   min-height: 36px;
   display: inline-flex;
   align-items: center;
@@ -181,11 +182,13 @@
   white-space: nowrap;
 }
 
-.access-admin-button:hover {
+.access-admin-button:hover,
+.header-utility-button:hover {
   background: rgba(255, 255, 255, 0.2);
 }
 
-.access-admin-button:focus-visible {
+.access-admin-button:focus-visible,
+.header-utility-button:focus-visible {
   outline: 2px solid #fff;
   outline-offset: 2px;
 }
@@ -343,14 +346,16 @@
     gap: 5px;
   }
 
-  .access-admin-button {
+  .access-admin-button,
+  .header-utility-button {
     min-width: 32px;
     min-height: 32px;
     justify-content: center;
     padding: 5px;
   }
 
-  .access-admin-button span {
+  .access-admin-button span,
+  .header-utility-button span {
     display: none;
   }
 

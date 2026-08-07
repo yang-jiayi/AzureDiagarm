@@ -19,6 +19,10 @@ import { getServiceIconMapping } from '../data/serviceIconMapping';
 import { resolveServiceIconLoose } from './serviceIconFuzzy';
 import { loadIcon } from './iconLoader';
 import { getModelSuffix } from './modelNaming';
+import {
+  calculateBlueprintContentFrame,
+  calculateBlueprintHostWidth,
+} from './publicationLayout';
 
 export interface ExportBlueprintPngOptions {
   fileName?: string;
@@ -27,8 +31,6 @@ export interface ExportBlueprintPngOptions {
   /** 'bottom' | 'right' | 'auto' (default 'auto'). Auto picks based on aspect ratio. */
   legendPosition?: 'bottom' | 'right' | 'auto';
 }
-
-const LEGEND_RIGHT_WIDTH = 400;
 
 function resolveLegendForExport(
   position: 'bottom' | 'right' | 'auto' | undefined,
@@ -61,10 +63,13 @@ export async function exportBlueprintArchitectureAsPng(
   const iconMap = await preloadIconMap(data);
   const personaIconUrl = await preloadPersonaIcon();
 
-  const resolvedLegend = resolveLegendForExport(legendPosition, data.canvas.width, data.canvas.height);
-  const hostPxWidth = resolvedLegend === 'right'
-    ? data.canvas.width + LEGEND_RIGHT_WIDTH + 32
-    : data.canvas.width + 96;
+  const contentFrame = calculateBlueprintContentFrame(data);
+  const resolvedLegend = resolveLegendForExport(
+    legendPosition,
+    contentFrame.width,
+    contentFrame.height,
+  );
+  const hostPxWidth = calculateBlueprintHostWidth(contentFrame.width, resolvedLegend);
 
   const host = document.createElement('div');
   host.setAttribute('data-bp-arch-export-host', 'true');

@@ -7,7 +7,7 @@
  * Provides recommendations for reliability, security, performance, cost optimization, and operational excellence
  */
 
-import { getModelSettingsForFeature, getModelSettings, getDeploymentName, MODEL_CONFIG, ModelType, ReasoningEffort } from '../stores/modelSettingsStore';
+import { ModelType, ReasoningEffort } from '../stores/modelSettingsStore';
 import { detectWafPatterns, calculatePreliminaryScore } from './wafPatternDetector';
 import { getKnowledgeBaseStats } from '../data/wafRules';
 import { scoreToBand } from './wafMaturity';
@@ -18,12 +18,15 @@ import {
   callAzureOpenAIProxy,
   createOpenAIProxyError,
   getApiFormatLabel,
-  isAiBackendConfigured,
 } from './apiHelper';
 import type { Language } from '../i18n/LanguageContext';
 import { getPromptLanguageInstruction } from '../i18n/localization';
+import {
+  resolveAIModelRuntime,
+  type RuntimeModelOverride,
+} from './aiModelRuntime';
 
-export interface ValidationModelOverride {
+export interface ValidationModelOverride extends RuntimeModelOverride {
   model: ModelType;
   reasoningEffort: ReasoningEffort;
 }
@@ -43,55 +46,30 @@ interface CallResult {
 }
 
 async function callAzureOpenAI(messages: any[], maxTokens: number = 8000, modelOverride?: ValidationModelOverride): Promise<CallResult> {
-  // Re-read settings fresh to pick up any recent UI changes
-  const storeSettings = getModelSettingsForFeature('validation');
-  const settings = modelOverride || storeSettings;
-  const defaultSettings = getModelSettings();
-  const modelConfig = MODEL_CONFIG[settings.model];
-  
-  // Log the full resolution chain so the user can see exactly which model is selected
-  const hasOverride = defaultSettings.featureOverrides?.['validation'];
-  console.log(`🔧 Validation model resolution: default=${defaultSettings.model}` +
-    `${hasOverride ? `, override=${hasOverride.model}` : ', no override'}` +
-    ` → using ${settings.model}`);
-  
-  let deployment: string;
-  try {
-    deployment = getDeploymentName(settings.model);
-  } catch {
-    throw new Error(`No deployment configured for ${settings.model}. Please check your .env file.`);
-  }
-
-  // Determine API format
-  const apiFormat = modelConfig.apiFormat || 'responses';
-  if (!isAiBackendConfigured(apiFormat)) {
-    throw new Error(apiFormat === 'anthropic-messages'
-      ? 'Microsoft Foundry is not configured'
-      : 'Azure OpenAI is not configured');
-  }
-
-  console.log(`🌐 Calling AI model service with ${modelConfig.displayName} | API: ${getApiFormatLabel(apiFormat)}`);
+  const runtime = resolveAIModelRuntime('validation', modelOverride);
+  console.log(`🌐 Calling AI model service with ${runtime.displayName} | API: ${getApiFormatLabel(runtime.apiFormat)}`);
   
   // Start timing
   const startTime = performance.now();
 
   // Build request body using the appropriate API format
-  const effectiveMaxTokens = Math.min(maxTokens, modelConfig.maxCompletionTokens);
+  const effectiveMaxTokens = Math.min(maxTokens, runtime.maxCompletionTokens);
   const requestBody = buildRequestBody({
-    deployment,
+    deployment: runtime.deployment,
     messages,
     maxTokens: effectiveMaxTokens,
-    apiFormat,
-    isReasoning: modelConfig.isReasoning,
-    reasoningEffort: settings.reasoningEffort,
+    apiFormat: runtime.apiFormat,
+    isReasoning: runtime.isReasoning,
+    reasoningEffort: runtime.reasoningEffort,
   });
   
-  console.log(`🤖 Using ${modelConfig.displayName}${modelConfig.isReasoning ? ` (reasoning: ${settings.reasoningEffort})` : ''} | max_tokens: ${effectiveMaxTokens} | API: ${getApiFormatLabel(apiFormat)}`);
+  console.log(`🤖 Using ${runtime.displayName}${runtime.isReasoning ? ` (reasoning: ${runtime.reasoningEffort})` : ''} | max_tokens: ${effectiveMaxTokens} | API: ${getApiFormatLabel(runtime.apiFormat)}`);
 
   const proxyResult = await callAzureOpenAIProxy({
-    apiFormat,
-    deployment,
+    apiFormat: runtime.apiFormat,
+    deployment: runtime.deployment,
     body: requestBody,
+    byo: runtime.byo,
   });
   
   // Calculate elapsed time
@@ -109,13 +87,13 @@ async function callAzureOpenAI(messages: any[], maxTokens: number = 8000, modelO
   }
   
   // Parse response using the appropriate API format
-  const parsed = parseApiResponse(proxyResult.data, apiFormat);
+  const parsed = parseApiResponse(proxyResult.data, runtime.apiFormat);
   const metrics: AIMetrics = {
     promptTokens: parsed.promptTokens,
     completionTokens: parsed.completionTokens,
     totalTokens: parsed.totalTokens,
     elapsedTimeMs,
-    model: proxyResult.data.model
+    model: runtime.displayName,
   };
   
   const content = parsed.content;
@@ -126,9 +104,9 @@ async function callAzureOpenAI(messages: any[], maxTokens: number = 8000, modelO
   
   // Track model usage telemetry
   trackAIModelUsage({
-    model: modelConfig.displayName,
+    model: runtime.telemetryModel,
     operation: 'architecture_validation',
-    reasoningEffort: modelConfig.isReasoning ? settings.reasoningEffort : undefined,
+    reasoningEffort: runtime.isReasoning ? runtime.reasoningEffort : undefined,
     promptTokens: metrics.promptTokens,
     completionTokens: metrics.completionTokens,
     totalTokens: metrics.totalTokens,
@@ -293,11 +271,9 @@ export async function validateArchitecture(
   modelOverride?: ValidationModelOverride,
   language: Language = 'en',
 ): Promise<ArchitectureValidation> {
-  const storeSettings = getModelSettingsForFeature('validation');
-  const settings = modelOverride || storeSettings;
-  const modelConfig = MODEL_CONFIG[settings.model];
+  const runtime = resolveAIModelRuntime('validation', modelOverride);
 
-  console.log(`🔍 Starting hybrid WAF validation with ${modelConfig.displayName}...`);
+  console.log(`🔍 Starting hybrid WAF validation with ${runtime.displayName}...`);
 
   // ── Phase 1: Instant local rule-based analysis ──────────────────────
   const localResult = detectWafPatterns(services, connections, groups);
@@ -488,7 +464,8 @@ Provide a comprehensive Well-Architected Framework assessment with actionable re
     
     validation.timestamp = new Date().toISOString();
     validation.metrics = metrics;
-    validation.modelUsed = modelConfig.displayName + (modelConfig.isReasoning ? ` (${settings.reasoningEffort})` : '');
+    validation.modelUsed = runtime.displayName
+      + (runtime.isReasoning ? ` (${runtime.reasoningEffort})` : '');
 
     // Attach hybrid metadata
     (validation as any).hybridMetadata = {

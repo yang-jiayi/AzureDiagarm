@@ -4,7 +4,11 @@
 const assert = require('node:assert/strict');
 const { test } = require('node:test');
 const express = require('express');
-const { createOpenAIProxyRouter, logFoundryConfiguration } = require('./openai-proxy');
+const {
+  createOpenAIProxyRouter,
+  logFoundryConfiguration,
+  normalizeAzureOpenAIEndpoint,
+} = require('./openai-proxy');
 
 async function startServer(options) {
   const app = express();
@@ -50,6 +54,19 @@ function anthropicRequestBody(overrides = {}) {
     },
     ...overrides,
   };
+}
+
+function byoRequestBody(overrides = {}) {
+  return requestBody({
+    deployment: 'my-gpt-deployment',
+    byo: {
+      provider: 'azure-openai',
+      endpoint: 'https://customer-resource.openai.azure.com/',
+      apiKey: 'customer-secret-key',
+      apiVersion: '2024-05-01-preview',
+    },
+    ...overrides,
+  });
 }
 
 function jsonResponse(status, body, headers = {}) {
@@ -99,6 +116,147 @@ test('Foundry logging warns only about partial configuration', () => {
   logFoundryConfiguration(undefined, new Set(['claude-opus-5']), logger);
   assert.equal(messages.warn.length, 1);
   assert.match(messages.warn[0], /AZURE_FOUNDRY_ENDPOINT is not set/);
+});
+
+test('BYO endpoint validation accepts only trusted Azure OpenAI HTTPS hosts', () => {
+  assert.equal(
+    normalizeAzureOpenAIEndpoint('https://customer-resource.openai.azure.com/'),
+    'https://customer-resource.openai.azure.com/',
+  );
+  assert.throws(
+    () => normalizeAzureOpenAIEndpoint('http://customer-resource.openai.azure.com/'),
+    error => error.code === 'invalid_byo_endpoint',
+  );
+  assert.throws(
+    () => normalizeAzureOpenAIEndpoint('https://customer-resource.openai.azure.com.attacker.example/'),
+    error => error.code === 'invalid_byo_endpoint',
+  );
+  assert.throws(
+    () => normalizeAzureOpenAIEndpoint('https://customer-resource.openai.azure.com/openai/v1'),
+    error => error.code === 'invalid_byo_endpoint',
+  );
+});
+
+test('OpenAI proxy rejects BYO requests unless the server enables them', async (t) => {
+  const server = await startServer({
+    endpoint: 'https://example.openai.azure.com/',
+    apiKey: 'test-key',
+    allowedDeployments: new Set(['approved']),
+    logger: silentLogger,
+  });
+  t.after(server.close);
+
+  const response = await fetch(`${server.baseUrl}/api/openai`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(byoRequestBody()),
+  });
+
+  assert.equal(response.status, 403);
+  assert.equal((await response.json()).error.code, 'byo_not_enabled');
+});
+
+test('OpenAI proxy routes BYO Azure OpenAI requests without logging credentials', async (t) => {
+  let captured;
+  const events = [];
+  const server = await startServer({
+    allowByoAIEndpoints: true,
+    fetchImpl: async (url, init) => {
+      captured = { url, init };
+      return jsonResponse(200, {
+        model: 'customer-model',
+        output_text: '{}',
+        usage: {},
+      });
+    },
+    logger: {
+      info(message) { events.push(message); },
+      error(message) { events.push(message); },
+    },
+  });
+  t.after(server.close);
+
+  const response = await fetch(`${server.baseUrl}/api/openai`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(byoRequestBody()),
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(
+    captured.url,
+    'https://customer-resource.openai.azure.com/openai/v1/responses',
+  );
+  assert.equal(captured.init.headers['api-key'], 'customer-secret-key');
+  assert.equal(captured.init.headers.Authorization, undefined);
+  assert.equal(captured.init.redirect, 'error');
+  assert.doesNotMatch(
+    events.join('\n'),
+    /customer-secret-key|customer-resource|my-gpt-deployment/,
+  );
+});
+
+test('OpenAI proxy routes BYO official OpenAI chat requests to the fixed API host', async (t) => {
+  let captured;
+  const server = await startServer({
+    allowByoAIEndpoints: true,
+    fetchImpl: async (url, init) => {
+      captured = { url, init };
+      return jsonResponse(200, {
+        model: 'gpt-custom',
+        choices: [{ message: { content: '{}' } }],
+        usage: {},
+      });
+    },
+    logger: silentLogger,
+  });
+  t.after(server.close);
+
+  const response = await fetch(`${server.baseUrl}/api/openai`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(byoRequestBody({
+      apiFormat: 'chat-completions',
+      deployment: 'gpt-custom',
+      byo: {
+        provider: 'openai',
+        endpoint: 'https://api.openai.com',
+        apiKey: 'sk-customer-secret',
+      },
+    })),
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(captured.url, 'https://api.openai.com/v1/chat/completions');
+  assert.equal(captured.init.headers.Authorization, 'Bearer sk-customer-secret');
+  assert.equal(captured.init.headers['api-key'], undefined);
+  assert.equal(JSON.parse(captured.init.body).model, 'gpt-custom');
+});
+
+test('OpenAI proxy returns a BYO-specific authentication error', async (t) => {
+  const server = await startServer({
+    allowByoAIEndpoints: true,
+    fetchImpl: async () => jsonResponse(401, {
+      error: {
+        code: 'invalid_api_key',
+        message: 'sensitive provider detail',
+      },
+    }),
+    logger: silentLogger,
+  });
+  t.after(server.close);
+
+  const response = await fetch(`${server.baseUrl}/api/openai`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(byoRequestBody()),
+  });
+
+  assert.equal(response.status, 401);
+  const payload = await response.json();
+  assert.equal(payload.error.source, 'byo_azure_openai');
+  assert.equal(payload.error.code, 'byo_authentication_failed');
+  assert.doesNotMatch(JSON.stringify(payload), /sensitive provider detail|customer-secret-key/);
 });
 
 test('OpenAI proxy rejects deployments outside the server allowlist', async (t) => {

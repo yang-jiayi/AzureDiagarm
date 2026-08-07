@@ -1,10 +1,18 @@
-import test from 'node:test';
+import test, { afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   buildApiUrl,
   buildRequestBody,
+  callAzureOpenAIProxy,
+  createOpenAIProxyError,
   parseApiResponse,
 } from '../src/services/apiHelper.ts';
+
+const originalFetch = globalThis.fetch;
+
+afterEach(() => {
+  globalThis.fetch = originalFetch;
+});
 
 test('buildRequestBody converts text and image input to Anthropic Messages format', () => {
   const body = buildRequestBody({
@@ -61,4 +69,53 @@ test('parseApiResponse extracts Anthropic text and token usage', () => {
     completionTokens: 30,
     totalTokens: 150,
   });
+});
+
+test('callAzureOpenAIProxy sends BYO credentials only in the server request body', async () => {
+  let requestUrl = '';
+  let requestBody: Record<string, unknown> | null = null;
+  globalThis.fetch = (async (input, init) => {
+    requestUrl = String(input);
+    requestBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    return new Response(JSON.stringify({ output_text: '{"services":[]}' }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }) as typeof fetch;
+
+  const result = await callAzureOpenAIProxy({
+    apiFormat: 'responses',
+    deployment: 'gpt-5',
+    body: { model: 'gpt-5', input: [{ role: 'user', content: 'Hello' }] },
+    byo: {
+      provider: 'openai',
+      endpoint: 'https://api.openai.com',
+      apiKey: 'sk-test-secret-value',
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(requestUrl, '/api/openai');
+  assert.deepEqual(requestBody?.byo, {
+    provider: 'openai',
+    endpoint: 'https://api.openai.com',
+    apiKey: 'sk-test-secret-value',
+  });
+});
+
+test('BYO authentication errors produce custom-endpoint guidance', () => {
+  const error = createOpenAIProxyError({
+    ok: false,
+    status: 401,
+    data: null,
+    error: {
+      source: 'byo_ai',
+      code: 'byo_authentication_failed',
+    },
+  });
+
+  assert.equal(
+    error.message,
+    'The custom AI endpoint rejected the API key. Check the key and try again.',
+  );
 });

@@ -8,7 +8,7 @@
  */
 
 import { forwardRef } from 'react';
-import { Brain, RotateCcw, ChevronDown, Cpu, Layers, Sparkles, Zap, Sun, Globe2, Moon, X } from 'lucide-react';
+import { Brain, RotateCcw, ChevronDown, Cpu, Layers, Sparkles, Zap, Sun, Globe2, Moon, X, PlugZap } from 'lucide-react';
 import {
   useModelSettings,
   MODEL_CONFIG,
@@ -23,20 +23,31 @@ import {
   updateFeatureOverride,
   hasFeatureOverride,
 } from '../stores/modelSettingsStore';
+import {
+  getBYOAIModelLabel,
+  isBYOAIReady,
+  useBYOAISettings,
+} from '../stores/byoAISettingsStore';
 import './ModelSettingsPopover.css';
 import { useLanguage } from '../i18n/LanguageContext';
+import { localize } from '../i18n/localization';
 
 interface ModelSettingsPopoverProps {
   isOpen: boolean;
   onToggle: () => void;
+  onOpenBYOSettings: () => void;
 }
 
 const ModelSettingsPopover = forwardRef<HTMLDivElement, ModelSettingsPopoverProps>(
-  ({ isOpen, onToggle }, ref) => {
-    const { t, translate } = useLanguage();
+  ({ isOpen, onToggle, onOpenBYOSettings }, ref) => {
+    const { t, translate, language } = useLanguage();
+    const text = (en: string, ja: string) => localize(language, { en, ja });
     const [settings, updateSettings] = useModelSettings();
+    const byoSnapshot = useBYOAISettings();
     const availableModels = getAvailableModels();
     const currentConfig = MODEL_CONFIG[settings.model];
+    const byoActive = byoSnapshot.settings.enabled && isBYOAIReady();
+    const byoConfigured = byoSnapshot.settings.enabled;
 
     const hasAnyOverride = (Object.keys(FEATURE_CONFIG) as FeatureType[]).some(hasFeatureOverride);
 
@@ -148,9 +159,11 @@ const ModelSettingsPopover = forwardRef<HTMLDivElement, ModelSettingsPopoverProp
           aria-haspopup="menu"
           aria-expanded={isOpen}
         >
-          {getModelIcon(settings.model)}
-          <span className="model-popover-label">{currentConfig.displayName}</span>
-          {currentConfig.isReasoning && (
+          {byoActive ? <PlugZap size={14} /> : getModelIcon(settings.model)}
+          <span className="model-popover-label">
+            {byoActive ? `Custom: ${byoSnapshot.settings.model}` : currentConfig.displayName}
+          </span>
+          {!byoActive && currentConfig.isReasoning && (
             <span className="model-popover-reasoning">{t(getReasoningEffortLabel(settings.reasoningEffort))}</span>
           )}
           {hasAnyOverride && <span className="model-popover-override-dot" />}
@@ -163,9 +176,8 @@ const ModelSettingsPopover = forwardRef<HTMLDivElement, ModelSettingsPopoverProp
             role="menu"
             aria-label={t("AI model settings")}
           >
-            {/* Default Model */}
             <div className="toolbar-dropdown-heading">
-              <span>{t("Default Model")}</span>
+              <span>{t("AI model settings")}</span>
               <button
                 className="msp-close-btn"
                 onClick={onToggle}
@@ -175,6 +187,58 @@ const ModelSettingsPopover = forwardRef<HTMLDivElement, ModelSettingsPopoverProp
                 <X size={13} />
               </button>
             </div>
+            <div className={`msp-byo-card${byoActive ? ' msp-byo-card--active' : ''}`}>
+              <div className="msp-byo-copy">
+                <span className="msp-byo-icon" aria-hidden="true">
+                  <PlugZap size={16} />
+                </span>
+                <span>
+                  <strong>{byoConfigured ? getBYOAIModelLabel() : text(
+                    'Bring your own AI endpoint',
+                    '独自の AI エンドポイントを使用',
+                  )}</strong>
+                  <small>
+                    {byoActive
+                      ? text(
+                          'Custom endpoint active. Managed per-feature settings are paused.',
+                          'カスタム エンドポイントを使用中です。機能別の管理モデル設定は一時停止しています。',
+                        )
+                      : byoConfigured
+                        ? text(
+                            'Custom endpoint needs an API key for this browser tab.',
+                            'このブラウザー タブで使用する API キーを入力してください。',
+                          )
+                        : text(
+                            'Use your Azure OpenAI or official OpenAI endpoint.',
+                            '独自の Azure OpenAI または公式 OpenAI エンドポイントを使用します。',
+                          )}
+                  </small>
+                </span>
+              </div>
+              <button
+                type="button"
+                className="msp-byo-button"
+                onClick={() => {
+                  onToggle();
+                  onOpenBYOSettings();
+                }}
+              >
+                {byoConfigured ? text('Configure', '設定') : text('Connect', '接続')}
+              </button>
+            </div>
+
+            <div className="toolbar-dropdown-separator" role="separator" />
+            <div className="toolbar-dropdown-heading">
+              <span>{text('Managed models', '管理モデル')}</span>
+            </div>
+            {byoActive && (
+              <p className="msp-managed-note">
+                {text(
+                  'These settings remain saved and will resume after the custom endpoint is disconnected.',
+                  'これらの設定は保持され、カスタム エンドポイントの接続解除後に再び使用されます。',
+                )}
+              </p>
+            )}
             <div className="msp-model-buttons">
               {availableModels.map((model) => (
                 <button
@@ -182,6 +246,7 @@ const ModelSettingsPopover = forwardRef<HTMLDivElement, ModelSettingsPopoverProp
                   className={`msp-model-btn ${settings.model === model ? 'active' : ''}`}
                   onClick={() => handleModelChange(model)}
                   title={translate(MODEL_CONFIG[model].description)}
+                  disabled={byoActive}
                 >
                   <span className="msp-model-btn-main">
                     {getModelIcon(model)}
@@ -208,6 +273,7 @@ const ModelSettingsPopover = forwardRef<HTMLDivElement, ModelSettingsPopoverProp
                         className={`msp-reasoning-btn ${settings.reasoningEffort === level ? 'active' : ''}`}
                         onClick={() => handleReasoningChange(level)}
                         title={level === 'none' ? t("No reasoning - fastest response") : undefined}
+                        disabled={byoActive}
                       >
                         {t(getReasoningEffortLabel(level))}
                       </button>
@@ -228,6 +294,7 @@ const ModelSettingsPopover = forwardRef<HTMLDivElement, ModelSettingsPopoverProp
                 className="msp-portfolio-btn"
                 onClick={applyRecommendedPortfolio}
                 title={t("Use recommended portfolio")}
+                disabled={byoActive}
               >
                 <Sparkles size={12} />
                 {t("Apply")}
@@ -237,7 +304,12 @@ const ModelSettingsPopover = forwardRef<HTMLDivElement, ModelSettingsPopoverProp
             {/* Per-Feature Overrides */}
             <div className="toolbar-dropdown-heading">
               {' '}{t("Per-Feature Settings")}{' '}{hasAnyOverride && (
-                <button className="msp-reset-btn" onClick={resetAllOverrides} title={t("Reset all to default")}>
+                <button
+                  className="msp-reset-btn"
+                  onClick={resetAllOverrides}
+                  title={t("Reset all to default")}
+                  disabled={byoActive}
+                >
                   <RotateCcw size={11} />
                 </button>
               )}
@@ -267,6 +339,7 @@ const ModelSettingsPopover = forwardRef<HTMLDivElement, ModelSettingsPopoverProp
                         value={currentModel}
                         onChange={(e) => handleFeatureModelChange(feature, e.target.value)}
                         className="msp-feature-select"
+                        disabled={byoActive}
                       >
                         <option value="default">{t("Default")}</option>
                         {availableModels.map((model) => (
@@ -283,6 +356,7 @@ const ModelSettingsPopover = forwardRef<HTMLDivElement, ModelSettingsPopoverProp
                             handleFeatureReasoningChange(feature, e.target.value as ReasoningEffort)
                           }
                           className="msp-reasoning-select"
+                          disabled={byoActive}
                         >
                           {getSupportedReasoningEfforts(currentModel as ModelType).map(level => (
                             <option key={level} value={level}>
