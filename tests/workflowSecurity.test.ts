@@ -18,6 +18,14 @@ const feedbackServer = readFileSync(
   new URL('../server/token-server.js', import.meta.url),
   'utf8',
 );
+const resourcesBicep = readFileSync(
+  new URL('../infra/resources.bicep', import.meta.url),
+  'utf8',
+);
+const deployScript = readFileSync(
+  new URL('../scripts/deploy_aca.sh', import.meta.url),
+  'utf8',
+);
 
 test('deployment notifications use OIDC instead of a Communication Services secret', () => {
   assert.doesNotMatch(workflow, /AZURE_COMMUNICATION_CONNECTION_STRING/);
@@ -114,4 +122,20 @@ test('follow-up contact stays disabled unless client and server opt in together'
     /process\.env\.FEEDBACK_CONTACT_ENABLED === 'true'/,
   );
   assert.match(feedbackServer, /createArchivedFeedbackContact\(item\.contact\)/);
+});
+
+test('BYO AI remains server-gated and is wired into every production deployment path', () => {
+  assert.match(feedbackServer, /process\.env\.ALLOW_BYO_AI_ENDPOINTS === 'true'/);
+  assert.match(resourcesBicep, /\{ name: 'ALLOW_BYO_AI_ENDPOINTS', value: 'true' \}/);
+  assert.match(workflow, /ALLOW_BYO_AI_ENDPOINTS: 'true'/);
+  assert.match(workflow, /AZURE_OPENAI_ENDPOINT ALLOW_BYO_AI_ENDPOINTS AZURE_OPENAI_DEPLOYMENT_GPT56SOL/);
+  assert.equal(
+    Array.from(workflow.matchAll(/"ALLOW_BYO_AI_ENDPOINTS=(?:\$ALLOW_BYO_AI_ENDPOINTS|true)"/g))
+      .length,
+    2,
+  );
+  assert.match(
+    deployScript,
+    /"ALLOW_BYO_AI_ENDPOINTS=\$\{ALLOW_BYO_AI_ENDPOINTS:-false\}"/,
+  );
 });

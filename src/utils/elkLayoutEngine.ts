@@ -146,6 +146,13 @@ function resolveGroupOverlaps(
 // Singleton ELK instance (re-used across calls)
 const elk = new ELK();
 
+export const ELK_QUALITY_LAYOUT_OPTIONS = {
+  'elk.edgeRouting': 'ORTHOGONAL',
+  'elk.layered.nodePlacement.strategy': 'NETWORK_SIMPLEX',
+  'elk.layered.unnecessaryBendpoints': 'true',
+  'elk.spacing.edgeLabelNode': '20',
+} as const;
+
 /**
  * Calculate optimal layout for Azure architecture diagram using ELK.js.
  * Signature-compatible with the Dagre `layoutArchitecture`.
@@ -193,6 +200,7 @@ export async function layoutArchitecture(
         'elk.padding': `[top=${pad + 40}, left=${pad + 20}, bottom=${pad + 20}, right=${pad + 20}]`,
         'elk.spacing.nodeNode': String(Math.max(opts.nodeSpacing * 0.6, 80)),
         'elk.layered.spacing.nodeNodeBetweenLayers': String(Math.max(opts.rankSpacing * 0.6, 120)),
+        ...ELK_QUALITY_LAYOUT_OPTIONS,
       },
       children: members.map(m => ({
         id: m.id,
@@ -243,6 +251,7 @@ export async function layoutArchitecture(
       'elk.layered.spacing.nodeNodeBetweenLayers': String(opts.rankSpacing),
       'elk.spacing.edgeNode': '80',
       'elk.spacing.edgeEdge': '30',
+      ...ELK_QUALITY_LAYOUT_OPTIONS,
       'elk.layered.considerModelOrder.strategy': 'NODES_AND_EDGES',
       'elk.hierarchyHandling': 'INCLUDE_CHILDREN',
       'elk.layered.crossingMinimization.strategy': 'LAYER_SWEEP',

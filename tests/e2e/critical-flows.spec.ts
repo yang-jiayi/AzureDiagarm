@@ -1,5 +1,6 @@
 import { expect, test, type Locator, type Page, type Route } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
+import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 
 const now = '2026-08-02T00:00:00.000Z';
@@ -266,13 +267,14 @@ async function openInteractionDiagram(
   page: Page,
   onSave?: (payload: Record<string, unknown>) => void,
   showCanvasHint = false,
+  documentOverride?: ReturnType<typeof interactionCloudDocument>,
 ) {
   await initializePage(page, {
     documentId: 'A',
     access: 'owner',
     role: 'owner',
   }, { showCanvasHint });
-  const document = interactionCloudDocument();
+  const document = documentOverride ?? interactionCloudDocument();
 
   await page.route('**/api/**', async (route) => {
     const request = route.request();
@@ -349,6 +351,9 @@ test('primary application shell meets WCAG A and AA checks', async ({ page }) =>
 
   await page.goto('/');
   await expect(page.getByRole('region', { name: 'Architecture canvas' })).toBeVisible();
+  await expect(page.locator('.react-flow__controls')).toHaveCount(0);
+  await expect(page.locator('.legend')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Feedback' })).toHaveCount(0);
   const paletteTabs = page.getByRole('tablist', { name: 'Icon library views' });
   const allTab = paletteTabs.getByRole('tab', { name: /^All/ });
   const favoritesTab = paletteTabs.getByRole('tab', { name: /^Favorites/ });
@@ -416,7 +421,10 @@ test('workflow stepper has stable light, dark, mobile, and forced-colors visuals
 
   await page.getByRole('button', { name: 'Switch to Light Mode' }).click();
   await page.setViewportSize({ width: 390, height: 844 });
-  await expect(stepper).toHaveCSS('overflow-x', 'auto');
+  await expect(stepper).toHaveCSS('overflow-x', 'hidden');
+  await expect.poll(() => stepper.evaluate((element) => (
+    element.scrollWidth <= element.clientWidth
+  ))).toBe(true);
   await expect(stepper).toHaveScreenshot('workflow-stepper-mobile.png', {
     animations: 'disabled',
     caret: 'hide',
@@ -439,6 +447,19 @@ test('workflow stepper has stable light, dark, mobile, and forced-colors visuals
 });
 
 test('feedback launcher is styled before the lazy modal chunk is opened', async ({ page }) => {
+  await openInteractionDiagram(page);
+  const launcher = page.getByRole('button', { name: 'Feedback' });
+  await expect(launcher).toBeVisible();
+  await expect(launcher).toHaveCSS('position', 'absolute');
+  await expect(launcher).toHaveCSS('border-radius', '999px');
+  expect((await launcher.boundingBox())?.width).toBeLessThan(180);
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(launcher).toHaveCSS('width', '44px');
+  await expect(launcher).toHaveCSS('height', '44px');
+});
+
+test('About dialog exposes attribution and repository details accessibly', async ({ page }) => {
   await initializePage(page);
   await page.route('**/api/**', async (route) => {
     const path = new URL(route.request().url()).pathname;
@@ -456,15 +477,222 @@ test('feedback launcher is styled before the lazy modal chunk is opened', async 
   });
 
   await page.goto('/');
-  const launcher = page.getByRole('button', { name: 'Feedback' });
-  await expect(launcher).toBeVisible();
-  await expect(launcher).toHaveCSS('position', 'absolute');
-  await expect(launcher).toHaveCSS('border-radius', '999px');
-  expect((await launcher.boundingBox())?.width).toBeLessThan(180);
+  await page.getByRole('region', { name: 'Architecture canvas' }).focus();
+  await page.keyboard.press('Control+K');
+  const palette = page.getByTestId('command-palette');
+  await palette.getByRole('combobox', { name: 'Search commands and services' }).fill('about');
+  await palette.getByRole('option', { name: /^About this application/ }).click();
 
-  await page.setViewportSize({ width: 390, height: 844 });
-  await expect(launcher).toHaveCSS('width', '44px');
-  await expect(launcher).toHaveCSS('height', '44px');
+  const dialog = page.getByRole('dialog', { name: 'Azure Architecture Diagram Builder' });
+  await expect(dialog).toBeFocused();
+  await expect(dialog.getByText('Arturo Quiroga')).toBeVisible();
+  await expect(dialog.getByText('Swarm Data SE, Jiayi Yang')).toBeVisible();
+  await expect(dialog.getByRole('link', { name: /yang-jiayi\/AzureDiagarm/ }))
+    .toHaveAttribute('href', 'https://github.com/yang-jiayi/AzureDiagarm');
+  await expectNoWcagViolations(page, '.about-dialog');
+
+  await page.keyboard.press('Escape');
+  await expect(dialog).toBeHidden();
+});
+
+test('custom AI settings keep credentials out of persistent browser storage', async ({ page }) => {
+  await initializePage(page);
+  const apiKey = 'sk-playwright-secret-value';
+  const proxyRequests: Record<string, unknown>[] = [];
+  await page.route('**/api/**', async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (path === '/api/access/me') {
+      await fulfillJson(route, {
+        enabled: false,
+        authenticated: true,
+        email: 'owner@example.com',
+        isAdmin: false,
+        allowed: true,
+      });
+      return;
+    }
+    if (path === '/api/openai') {
+      proxyRequests.push(route.request().postDataJSON() as Record<string, unknown>);
+      await fulfillJson(route, { output_text: '{"status":"ok"}' });
+      return;
+    }
+    await fulfillJson(route, { error: 'Not found' }, 404);
+  });
+
+  await page.goto('/');
+  await page.getByRole('region', { name: 'Architecture canvas' }).focus();
+  await page.keyboard.press('Control+K');
+  const palette = page.getByTestId('command-palette');
+  await palette.getByRole('combobox', { name: 'Search commands and services' })
+    .fill('custom AI');
+  await palette.getByRole('option', { name: /^Configure custom AI/ }).click();
+
+  const dialog = page.getByRole('dialog', { name: 'Bring your own AI endpoint' });
+  await expect(dialog).toBeFocused();
+  await expectNoWcagViolations(page, '.byo-ai-dialog');
+  await dialog.getByLabel('Provider').selectOption('openai');
+  await dialog.getByRole('textbox', { name: 'Model', exact: true }).fill('gpt-5');
+  await dialog.getByLabel('API key').fill(apiKey);
+  await dialog.getByRole('button', { name: 'Test connection' }).click();
+  await expect(dialog.getByText('Connection successful.')).toBeVisible();
+
+  expect(proxyRequests).toHaveLength(1);
+  expect((proxyRequests[0]?.byo as Record<string, unknown>)?.apiKey).toBe(apiKey);
+  const persistedValues = await page.evaluate(() => (
+    Object.values(localStorage).join('\n')
+  ));
+  expect(persistedValues).not.toContain(apiKey);
+
+  await dialog.getByRole('button', { name: 'Save and use' }).click();
+  await expect(dialog).toBeHidden();
+  await page.getByRole('tab', { name: 'Create' }).click();
+  await expect(page.locator('.model-popover-trigger')).toContainText('Custom: gpt-5');
+
+  const generator = await openAiGenerator(page);
+  await generator.getByLabel('Architecture Description or Modification')
+    .fill('Create a small web application');
+  await generator.getByRole('button', { name: 'Generate Architecture' }).click();
+  await expect.poll(() => proxyRequests.length).toBe(2);
+  expect((proxyRequests[1]?.byo as Record<string, unknown>)?.apiKey).toBe(apiKey);
+  expect((proxyRequests[1]?.byo as Record<string, unknown>)?.provider).toBe('openai');
+  expect(proxyRequests[1]?.deployment).toBe('gpt-5');
+});
+
+test('PNG export contains rendered diagram content instead of a blank canvas', async ({ page }, testInfo) => {
+  await openInteractionDiagram(page);
+  await page.waitForTimeout(500);
+  await page.getByRole('region', { name: 'Architecture canvas' }).focus();
+  await page.keyboard.press('Control+K');
+  const palette = page.getByTestId('command-palette');
+  await palette.getByRole('combobox', { name: 'Search commands and services' }).fill('export png');
+
+  const downloadPromise = page.waitForEvent('download');
+  await palette.getByRole('option', { name: /^Export PNG/ }).click();
+  const download = await downloadPromise;
+  const outputPath = testInfo.outputPath('diagram-export.png');
+  await download.saveAs(outputPath);
+  const png = await readFile(outputPath);
+  expect(png.byteLength).toBeGreaterThan(20_000);
+
+  const metrics = await page.evaluate(async (dataUrl) => {
+    const image = new Image();
+    image.src = dataUrl;
+    await image.decode();
+    const canvas = document.createElement('canvas');
+    canvas.width = image.naturalWidth;
+    canvas.height = image.naturalHeight;
+    const context = canvas.getContext('2d', { willReadFrequently: true });
+    if (!context) throw new Error('Canvas context unavailable');
+    context.drawImage(image, 0, 0);
+    const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
+    const colors = new Set<string>();
+    const stride = Math.max(4, Math.floor(pixels.length / 20_000 / 4) * 4);
+    for (let index = 0; index < pixels.length; index += stride) {
+      colors.add(`${pixels[index]},${pixels[index + 1]},${pixels[index + 2]},${pixels[index + 3]}`);
+    }
+    return {
+      width: canvas.width,
+      height: canvas.height,
+      sampledColors: colors.size,
+    };
+  }, `data:image/png;base64,${png.toString('base64')}`);
+
+  expect(metrics.width).toBeGreaterThan(600);
+  expect(metrics.height).toBeGreaterThan(400);
+  expect(metrics.sampledColors).toBeGreaterThan(40);
+});
+
+test('PNG export expands to include a manually offset edge label', async ({ page }, testInfo) => {
+  const document = interactionCloudDocument();
+  document.payload.edges = [{
+    ...document.payload.edges[0],
+    label: 'Reads application data',
+    data: {
+      labelOffsetX: 1100,
+      labelOffsetY: 0,
+      labelOffsetAuto: false,
+    },
+  }];
+  await openInteractionDiagram(page, undefined, false, document);
+  await expect(page.locator('.editable-edge-label-shell'))
+    .toHaveAttribute('data-label-offset-x', '1100');
+
+  await page.getByRole('region', { name: 'Architecture canvas' }).focus();
+  await page.keyboard.press('Control+K');
+  const palette = page.getByTestId('command-palette');
+  await palette.getByRole('combobox', { name: 'Search commands and services' }).fill('export png');
+
+  const downloadPromise = page.waitForEvent('download');
+  await palette.getByRole('option', { name: /^Export PNG/ }).click();
+  const download = await downloadPromise;
+  const outputPath = testInfo.outputPath('diagram-export-with-offset-label.png');
+  await download.saveAs(outputPath);
+  const png = await readFile(outputPath);
+  const width = await page.evaluate(async (dataUrl) => {
+    const image = new Image();
+    image.src = dataUrl;
+    await image.decode();
+    return image.naturalWidth;
+  }, `data:image/png;base64,${png.toString('base64')}`);
+
+  expect(width).toBeGreaterThan(3_000);
+});
+
+test('automatic edge label offsets refresh after a connected node moves', async ({ page }) => {
+  const document = interactionCloudDocument();
+  document.payload.nodes = [
+    ...document.payload.nodes,
+    {
+      id: 'node-blocker',
+      type: 'azureNode',
+      position: { x: 360, y: 220 },
+      data: { label: 'API Management', serviceName: 'API Management' },
+    },
+  ];
+  document.payload.edges = [{
+    ...document.payload.edges[0],
+    label: 'Reads application data',
+    data: {
+      labelOffsetX: 0,
+      labelOffsetY: 0,
+      labelOffsetAuto: true,
+    },
+  }];
+  await openInteractionDiagram(page, undefined, false, document);
+
+  const edgeLabelShell = page.locator('.editable-edge-label-shell');
+  await expect(edgeLabelShell).toHaveAttribute('data-label-offset-auto', 'true');
+  await expect.poll(async () => {
+    const offsetX = Number(await edgeLabelShell.getAttribute('data-label-offset-x'));
+    const offsetY = Number(await edgeLabelShell.getAttribute('data-label-offset-y'));
+    return Math.hypot(offsetX, offsetY);
+  }).toBeGreaterThan(0);
+
+  const [sourceBox, targetBox] = await Promise.all([
+    page.locator('[data-testid="rf__node-node-a"]').boundingBox(),
+    page.locator('[data-testid="rf__node-node-b"]').boundingBox(),
+  ]);
+  expect(sourceBox).not.toBeNull();
+  expect(targetBox).not.toBeNull();
+  if (!sourceBox || !targetBox) return;
+
+  await page.mouse.move(
+    targetBox.x + targetBox.width / 2,
+    targetBox.y + targetBox.height / 2,
+  );
+  await page.mouse.down();
+  await page.mouse.move(
+    sourceBox.x + sourceBox.width / 2,
+    targetBox.y + targetBox.height / 2 + 320,
+    { steps: 8 },
+  );
+  await page.mouse.up();
+
+  await expect.poll(async () => {
+    const offsetX = Number(await edgeLabelShell.getAttribute('data-label-offset-x'));
+    const offsetY = Number(await edgeLabelShell.getAttribute('data-label-offset-y'));
+    return Math.hypot(offsetX, offsetY);
+  }).toBe(0);
 });
 
 test('manual service insertion stays readable and avoids overlapping nodes', async ({ page }) => {
@@ -871,7 +1099,7 @@ test('canvas uses neutral defaults and brand emphasis only for selection and flo
   const edgeLabel = page.locator('[data-edge-label-id="edge-ab"]');
 
   await expect(edgePath).toHaveCSS('stroke', 'rgb(100, 116, 139)');
-  await expect(edgeLabel).toHaveCSS('background-color', 'rgba(255, 255, 255, 0.94)');
+  await expect(edgeLabel).toHaveCSS('background-color', 'rgba(255, 255, 255, 0.92)');
   await expect(group).toHaveCSS('background-color', 'rgba(107, 114, 128, 0.08)');
 
   await node.click();

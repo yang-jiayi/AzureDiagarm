@@ -181,6 +181,9 @@ const EditableEdge: React.FC<EdgeProps> = ({
             transform: `translate(-50%, -50%) translate(${labelX + offsetX}px,${labelY + offsetY}px)`,
             pointerEvents: 'all',
           }}
+          data-label-offset-x={offsetX}
+          data-label-offset-y={offsetY}
+          data-label-offset-auto={(data as any)?.labelOffsetAuto !== false}
           className={`nodrag nopan editable-edge-label-shell${selected ? ' is-selected' : ''}`}
         >
           {isEditing ? (

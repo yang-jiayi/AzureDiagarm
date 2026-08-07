@@ -12,6 +12,13 @@ import type { ReasoningEffort } from '../stores/modelSettingsStore';
 
 export type ApiFormat = 'responses' | 'chat-completions' | 'anthropic-messages';
 
+export interface BYOAIProxyConfig {
+  provider: 'azure-openai' | 'openai';
+  endpoint: string;
+  apiKey: string;
+  apiVersion?: string;
+}
+
 export function isAiBackendConfigured(apiFormat: ApiFormat): boolean {
   return apiFormat === 'anthropic-messages'
     ? Boolean(import.meta.env.VITE_AZURE_FOUNDRY_ENDPOINT)
@@ -389,6 +396,33 @@ export function createOpenAIProxyError(
     case 'deployment_not_allowed':
       message = 'The selected model deployment is not allowed by the server configuration.';
       break;
+    case 'byo_not_enabled':
+      message = 'Bring-your-own AI endpoints are not enabled on this server.';
+      break;
+    case 'invalid_byo_endpoint':
+    case 'invalid_byo_configuration':
+    case 'invalid_byo_provider':
+    case 'invalid_byo_api_version':
+    case 'invalid_byo_api_key':
+    case 'invalid_byo_api_format':
+      message = result.error?.message || 'The custom AI configuration is invalid.';
+      break;
+    case 'byo_authentication_failed':
+      message = 'The custom AI endpoint rejected the API key. Check the key and try again.';
+      break;
+    case 'byo_rate_limited':
+      message = 'The custom AI endpoint is rate-limiting requests. Wait a moment and try again.';
+      break;
+    case 'byo_timeout':
+      message = 'The custom AI endpoint is taking too long to respond. Please try again.';
+      break;
+    case 'byo_unavailable':
+    case 'byo_connection_failed':
+      message = 'The custom AI endpoint is unavailable or could not be reached.';
+      break;
+    case 'byo_request_failed':
+      message = 'The custom AI endpoint rejected the request.';
+      break;
     case 'credential_acquisition_failed':
       message = 'The server could not acquire an Azure OpenAI credential. Contact the administrator.';
       break;
@@ -456,6 +490,7 @@ export async function callAzureOpenAIProxy(params: {
   apiFormat: ApiFormat;
   deployment: string;
   body: any;
+  byo?: BYOAIProxyConfig;
   signal?: AbortSignal;
 }): Promise<OpenAIProxyResult> {
   let response: Response;
@@ -467,6 +502,7 @@ export async function callAzureOpenAIProxy(params: {
         apiFormat: params.apiFormat,
         deployment: params.deployment,
         body: params.body,
+        ...(params.byo ? { byo: params.byo } : {}),
       }),
       signal: params.signal,
     });

@@ -23,6 +23,11 @@ import {
   isModelAvailable,
   updateFeatureOverride,
 } from '../stores/modelSettingsStore';
+import {
+  getBYOAIProviderLabel,
+  isBYOAIReady,
+  useBYOAISettings,
+} from '../stores/byoAISettingsStore';
 import { trackImageImport } from '../services/telemetryService';
 import { buildModificationPrompt } from '../services/modificationPrompt';
 import './AIArchitectureGenerator.css';
@@ -249,10 +254,13 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
   // Opt-in: also download an editorial PNG when generating in reference mode.
   // Model settings from reactive hook (stays in sync with dropdown)
   const [modelSettings] = useModelSettings();
+  const byoSnapshot = useBYOAISettings();
+  const byoActive = byoSnapshot.settings.enabled && isBYOAIReady();
 
   // Blueprint generation requires a general-purpose OpenAI deployment.
   // Keep the architecture model untouched and correct only the blueprint override.
   useEffect(() => {
+    if (byoActive) return;
     if (!modeRequiresOpenAI(mode)) return;
     const blueprintSettings = getModelSettingsForFeature('blueprint');
     if (isBlueprintCapableModel(blueprintSettings.model)) return;
@@ -265,7 +273,7 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
         ? (cfg.defaultReasoningEffort ?? blueprintSettings.reasoningEffort)
         : undefined,
     });
-  }, [mode, modelSettings.featureOverrides, modelSettings.model, modelSettings.reasoningEffort]);
+  }, [byoActive, mode, modelSettings.featureOverrides, modelSettings.model, modelSettings.reasoningEffort]);
   
   // Auto-snapshot preference (stored in localStorage)
   const [autoSnapshot, setAutoSnapshot] = useState<boolean>(() => {
@@ -378,8 +386,11 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
       return;
     }
 
-    if (!isAzureOpenAIConfigured()) {
-      setError(translate('Azure OpenAI is not configured. Please check your environment variables.'));
+    if (!isAzureOpenAIConfigured() && !isBYOAIReady()) {
+      setError(localize(language, {
+        en: 'No AI model is configured. Connect a custom endpoint or contact the application administrator.',
+        ja: 'AI モデルが設定されていません。カスタム エンドポイントへ接続するか、アプリケーション管理者へ連絡してください。',
+      }));
       return;
     }
 
@@ -644,6 +655,27 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
   };
 
   const renderFeatureModelControls = (feature: FeatureType, openAiOnly: boolean) => {
+    if (byoActive) {
+      return (
+        <div className="ai-modal-model-group" key={feature}>
+          <span className="ai-modal-model-label">
+            {mode === 'both'
+              ? translate(FEATURE_CONFIG[feature].displayName)
+              : t("Model:")}
+          </span>
+          <span className="ai-modal-active-model">
+            {getBYOAIProviderLabel(byoSnapshot.settings.provider)} · {byoSnapshot.settings.model}
+            <span className="model-change-hint">
+              {localize(language, {
+                en: 'Custom endpoint active',
+                ja: 'カスタム エンドポイントを使用中',
+              })}
+            </span>
+          </span>
+        </div>
+      );
+    }
+
     const featureSettings = getModelSettingsForFeature(feature);
     const config = MODEL_CONFIG[featureSettings.model];
     const label = mode === 'both'

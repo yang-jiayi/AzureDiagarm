@@ -9,7 +9,6 @@
 
 import JSZip from 'jszip';
 import { generateModelFilename } from '../utils/modelNaming';
-import { getModelSettingsForFeature, getDeploymentName, MODEL_CONFIG } from '../stores/modelSettingsStore';
 import { trackAIModelUsage } from './telemetryService';
 import {
   buildRequestBody,
@@ -17,11 +16,11 @@ import {
   callAzureOpenAIProxy,
   createOpenAIProxyError,
   getApiFormatLabel,
-  isAiBackendConfigured,
 } from './apiHelper';
 import type { Language } from '../i18n/LanguageContext';
 import { getPromptLanguageInstruction } from '../i18n/localization';
 import { searchMicrosoftDocs, renderGroundingBlock, DocSource } from './docsGroundingService';
+import { resolveAIModelRuntime } from './aiModelRuntime';
 
 // Token usage metrics returned from Azure OpenAI API
 export interface AIMetrics {
@@ -38,47 +37,30 @@ interface CallResult {
 }
 
 async function callAzureOpenAI(messages: any[], maxTokens: number = 10000): Promise<CallResult> {
-  // Get model settings for deployment guide (uses override if set)
-  const settings = getModelSettingsForFeature('deploymentGuide');
-  const modelConfig = MODEL_CONFIG[settings.model];
-  
-  let deployment: string;
-  try {
-    deployment = getDeploymentName(settings.model);
-  } catch {
-    throw new Error(`No deployment configured for ${settings.model}. Please check your .env file.`);
-  }
-
-  // Determine API format
-  const apiFormat = modelConfig.apiFormat || 'responses';
-  if (!isAiBackendConfigured(apiFormat)) {
-    throw new Error(apiFormat === 'anthropic-messages'
-      ? 'Microsoft Foundry is not configured'
-      : 'Azure OpenAI is not configured');
-  }
-
-  console.log(`🌐 Calling AI model service with ${modelConfig.displayName} | API: ${getApiFormatLabel(apiFormat)}`);
+  const runtime = resolveAIModelRuntime('deploymentGuide');
+  console.log(`🌐 Calling AI model service with ${runtime.displayName} | API: ${getApiFormatLabel(runtime.apiFormat)}`);
   
   // Start timing
   const startTime = performance.now();
 
   // Build request body using the appropriate API format
-  const effectiveMaxTokens = Math.min(maxTokens, modelConfig.maxCompletionTokens);
+  const effectiveMaxTokens = Math.min(maxTokens, runtime.maxCompletionTokens);
   const requestBody = buildRequestBody({
-    deployment,
+    deployment: runtime.deployment,
     messages,
     maxTokens: effectiveMaxTokens,
-    apiFormat,
-    isReasoning: modelConfig.isReasoning,
-    reasoningEffort: settings.reasoningEffort,
+    apiFormat: runtime.apiFormat,
+    isReasoning: runtime.isReasoning,
+    reasoningEffort: runtime.reasoningEffort,
   });
   
-  console.log(`🤖 Using ${modelConfig.displayName}${modelConfig.isReasoning ? ` (reasoning: ${settings.reasoningEffort})` : ''} | max_tokens: ${effectiveMaxTokens} | API: ${getApiFormatLabel(apiFormat)}`);
+  console.log(`🤖 Using ${runtime.displayName}${runtime.isReasoning ? ` (reasoning: ${runtime.reasoningEffort})` : ''} | max_tokens: ${effectiveMaxTokens} | API: ${getApiFormatLabel(runtime.apiFormat)}`);
 
   const proxyResult = await callAzureOpenAIProxy({
-    apiFormat,
-    deployment,
+    apiFormat: runtime.apiFormat,
+    deployment: runtime.deployment,
     body: requestBody,
+    byo: runtime.byo,
   });
   
   // Calculate elapsed time
@@ -96,14 +78,14 @@ async function callAzureOpenAI(messages: any[], maxTokens: number = 10000): Prom
   }
   
   // Parse response using the appropriate API format
-  const parsed = parseApiResponse(proxyResult.data, apiFormat);
+  const parsed = parseApiResponse(proxyResult.data, runtime.apiFormat);
   let content = parsed.content;
   const metrics: AIMetrics = {
     promptTokens: parsed.promptTokens,
     completionTokens: parsed.completionTokens,
     totalTokens: parsed.totalTokens,
     elapsedTimeMs,
-    model: proxyResult.data.model
+    model: runtime.displayName,
   };
   
   console.log('📦 API Response:', content.length, 'chars |',
@@ -112,9 +94,9 @@ async function callAzureOpenAI(messages: any[], maxTokens: number = 10000): Prom
   
   // Track model usage telemetry
   trackAIModelUsage({
-    model: modelConfig.displayName,
+    model: runtime.telemetryModel,
     operation: 'deployment_guide',
-    reasoningEffort: modelConfig.isReasoning ? settings.reasoningEffort : undefined,
+    reasoningEffort: runtime.isReasoning ? runtime.reasoningEffort : undefined,
     promptTokens: metrics.promptTokens,
     completionTokens: metrics.completionTokens,
     totalTokens: metrics.totalTokens,
@@ -171,10 +153,9 @@ export async function generateDeploymentGuide(
   estimatedCost?: number,
   language: Language = 'en',
 ): Promise<DeploymentGuide> {
-  const settings = getModelSettingsForFeature('deploymentGuide');
-  const modelConfig = MODEL_CONFIG[settings.model];
+  const runtime = resolveAIModelRuntime('deploymentGuide');
 
-  console.log(`📋 Generating deployment guide with ${modelConfig.displayName}...`);
+  console.log(`📋 Generating deployment guide with ${runtime.displayName}...`);
 
   // Phase 1 grounding: pull current, citable Microsoft Learn docs for the top
   // services so the guide reflects up-to-date API versions, CLI flags, and

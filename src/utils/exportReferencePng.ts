@@ -19,11 +19,12 @@ import type { ReferenceArchitecture } from '../services/referenceArchitectureAI'
 import { captureDiagramAsPng } from './captureCanvas';
 import { getServiceIconMapping } from '../data/serviceIconMapping';
 import { loadIcon } from './iconLoader';
+import { calculateReferenceCanvasWidth } from './publicationLayout';
 
 export interface ExportReferencePngOptions {
   /** Filename (without extension) for the downloaded PNG. */
   fileName?: string;
-  /** Canvas width in pixels. Defaults to 1600. */
+  /** Optional fixed canvas width. By default the content determines the width. */
   width?: number;
   /** Author/credit chip shown in header. */
   author?: string;
@@ -41,10 +42,11 @@ export async function exportReferenceArchitectureAsPng(
 ): Promise<void> {
   const {
     fileName = sanitizeFileName(data.title || 'reference-architecture'),
-    width = 1600,
+    width,
     author,
     pixelRatio = 2,
   } = options;
+  const resolvedWidth = calculateReferenceCanvasWidth(data, width);
 
   // 1. Pre-resolve every icon URL up front and inline as a data: URL.
   //    This guarantees the rendered <img> tags have real, decoded sources
@@ -58,7 +60,7 @@ export async function exportReferenceArchitectureAsPng(
   host.style.position = 'fixed';
   host.style.left = '-100000px';
   host.style.top = '0';
-  host.style.width = `${width}px`;
+  host.style.width = `${resolvedWidth}px`;
   host.style.pointerEvents = 'none';
   host.style.zIndex = '-1';
   document.body.appendChild(host);
@@ -70,7 +72,7 @@ export async function exportReferenceArchitectureAsPng(
     root.render(
       React.createElement(ReferenceArchitectureCanvas, {
         data,
-        width,
+        width: resolvedWidth,
         author,
         iconMap,
         actorIconUrl,

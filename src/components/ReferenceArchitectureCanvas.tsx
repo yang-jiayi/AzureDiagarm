@@ -33,12 +33,13 @@ import type {
 } from '../services/referenceArchitectureAI';
 import { getServiceIconMapping } from '../data/serviceIconMapping';
 import { loadIcon } from '../utils/iconLoader';
+import { calculateReferenceCanvasWidth } from '../utils/publicationLayout';
 import './ReferenceArchitectureCanvas.css';
 import { useLanguage } from '../i18n/LanguageContext';
 
 export interface ReferenceArchitectureCanvasProps {
   data: ReferenceArchitecture;
-  /** Fixed export width in pixels. Defaults to 1600. */
+  /** Optional fixed export width. When omitted, the content determines the width. */
   width?: number;
   /** Optional author/credit chip shown in the header. */
   author?: string;
@@ -55,12 +56,21 @@ export interface ReferenceArchitectureCanvasProps {
 
 const ReferenceArchitectureCanvas: React.FC<ReferenceArchitectureCanvasProps> = ({
   data,
-  width = 1600,
+  width,
   author,
   iconMap,
   actorIconUrl,
 }) => {
   const { t } = useLanguage();
+  const resolvedWidth = calculateReferenceCanvasWidth(data, width);
+  const hasDataSources = Boolean(data.dataSources && data.dataSources.length > 0);
+  const hasActors = Boolean(data.actors && data.actors.length > 0);
+  const bodyColumns = [
+    hasDataSources ? '196px' : '',
+    'minmax(0, 1fr)',
+    hasActors ? '196px' : '',
+  ].filter(Boolean).join(' ');
+  const workflowColumns = resolvedWidth >= 1280 && (data.workflow?.length ?? 0) >= 4 ? 2 : 1;
   // Map each service id to the workflow step numbers it participates in,
   // so tiles can show small numbered badges that tie back to the narrative
   // legend at the bottom of the diagram. This replaces tile-to-tile arrows
@@ -104,7 +114,10 @@ const ReferenceArchitectureCanvas: React.FC<ReferenceArchitectureCanvasProps> = 
     <div
       className="ref-arch-canvas"
       data-ref-arch-canvas="true"
-      style={{ width: `${width}px` }}
+      style={{
+        width: `${resolvedWidth}px`,
+        '--ref-workflow-columns': workflowColumns,
+      } as React.CSSProperties}
     >
       <header className="ref-arch-header">
         <div className="ref-arch-header-text">
@@ -124,7 +137,7 @@ const ReferenceArchitectureCanvas: React.FC<ReferenceArchitectureCanvasProps> = 
         </div>
       )}
 
-      <div className="ref-arch-body">
+      <div className="ref-arch-body" style={{ gridTemplateColumns: bodyColumns }}>
         {data.dataSources && data.dataSources.length > 0 && (
           <aside className="ref-arch-datasources">
             <div className="ref-arch-col-header">{t("Data sources")}</div>

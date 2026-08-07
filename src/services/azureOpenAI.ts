@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-import { getModelSettingsForFeature, getModelSettings, getDeploymentName, getAvailableModels, MODEL_CONFIG, ModelType, ReasoningEffort } from '../stores/modelSettingsStore';
+import { getDeploymentName, ModelType } from '../stores/modelSettingsStore';
 import { resolveServiceIconMapping, SERVICE_ICON_MAP } from '../data/serviceIconMapping';
 import { trackAIModelUsage } from './telemetryService';
 import {
@@ -10,11 +10,16 @@ import {
   callAzureOpenAIProxy,
   createOpenAIProxyError,
   getApiFormatLabel,
-  isAiBackendConfigured,
   OpenAIProxyError,
 } from './apiHelper';
 import type { Language } from '../i18n/LanguageContext';
 import { getPromptLanguageInstruction } from '../i18n/localization';
+import {
+  isAnyAIModelConfigured,
+  isManagedAIModelConfigured,
+  resolveAIModelRuntime,
+  type RuntimeModelOverride,
+} from './aiModelRuntime';
 
 // Token usage metrics returned from Azure OpenAI API
 export interface AIMetrics {
@@ -31,37 +36,21 @@ interface CallResult {
   metrics: AIMetrics;
 }
 
-export interface ModelOverride {
-  model: ModelType;
-  reasoningEffort: ReasoningEffort;
-}
+export interface ModelOverride extends RuntimeModelOverride {}
 
 export async function callAzureOpenAI(messages: any[], modelOverride?: ModelOverride, jsonOutput = true, operation = 'architecture_generation'): Promise<CallResult> {
-  // Use explicit model override if provided, otherwise read from store
-  const storeSettings = getModelSettingsForFeature('architectureGeneration');
-  const rawStore = getModelSettings();
-  const settings = modelOverride || storeSettings;
-  const modelConfig = MODEL_CONFIG[settings.model];
-  
-  console.log(`📋 Model: using ${settings.model} | dropdown=${rawStore.model} | featureOverride=${rawStore.featureOverrides?.architectureGeneration?.model || 'none'} | source=${modelOverride ? 'explicit' : 'store'}`);
-
-  
-  let deployment: string;
-  try {
-    deployment = getDeploymentName(settings.model);
-  } catch {
-    throw new Error(`No deployment configured for ${settings.model}. Please check your .env file.`);
-  }
-
-  // Determine API format and verify the matching backend is configured.
-  const apiFormat = modelConfig.apiFormat || 'responses';
-  if (!isAiBackendConfigured(apiFormat)) {
-    throw new Error(
-      apiFormat === 'anthropic-messages'
-        ? 'Microsoft Foundry is not configured. Please check your .env file.'
-        : 'Azure OpenAI is not configured. Please check your .env file.',
-    );
-  }
+  const runtime = resolveAIModelRuntime('architectureGeneration', modelOverride);
+  const {
+    apiFormat,
+    byo,
+    deployment,
+    displayName,
+    isReasoning,
+    maxCompletionTokens,
+    reasoningEffort,
+    source,
+    telemetryModel,
+  } = runtime;
 
   // Stay below the 240-second Front Door origin limit so the client receives
   // a controlled timeout instead of an edge-generated 504.
@@ -75,20 +64,25 @@ export async function callAzureOpenAI(messages: any[], modelOverride?: ModelOver
   const requestBody = buildRequestBody({
     deployment,
     messages,
-    maxTokens: modelConfig.maxCompletionTokens,
+    maxTokens: maxCompletionTokens,
     apiFormat,
-    isReasoning: modelConfig.isReasoning,
-    reasoningEffort: settings.reasoningEffort,
+    isReasoning,
+    reasoningEffort,
     jsonOutput,
   });
   
-  console.log(`🤖 Using ${modelConfig.displayName} [deployment: ${deployment}]${modelConfig.isReasoning ? ` (reasoning: ${settings.reasoningEffort})` : ''} | max_tokens: ${modelConfig.maxCompletionTokens} | API: ${getApiFormatLabel(apiFormat)}`);
+  console.log(
+    `🤖 Using ${displayName}${source === 'managed' ? ` [deployment: ${deployment}]` : ''}`
+    + `${isReasoning ? ` (reasoning: ${reasoningEffort})` : ''}`
+    + ` | max_tokens: ${maxCompletionTokens} | API: ${getApiFormatLabel(apiFormat)}`,
+  );
 
   try {
     const proxyResult = await callAzureOpenAIProxy({
       apiFormat,
       deployment,
       body: requestBody,
+      byo,
       signal: controller.signal,
     });
 
@@ -116,21 +110,21 @@ export async function callAzureOpenAI(messages: any[], modelOverride?: ModelOver
       completionTokens: parsed.completionTokens,
       totalTokens: parsed.totalTokens,
       elapsedTimeMs,
-      model: proxyResult.data.model || modelConfig.displayName,
-      reasoningEffort: modelConfig.isReasoning ? settings.reasoningEffort : 'none',
+      model: displayName,
+      reasoningEffort: isReasoning ? reasoningEffort : 'none',
     };
     
     if (!content || content.trim().length === 0) {
       throw new Error('Empty response from Azure OpenAI. The request may have been too large or complex. Try reducing recommendations or using lower reasoning effort.');
     }
     
-    console.log(`API Response: ${content.length} chars | Tokens: ${metrics.promptTokens} in → ${metrics.completionTokens} out (${metrics.totalTokens} total) | Time: ${(metrics.elapsedTimeMs / 1000).toFixed(2)}s | Model: ${modelConfig.displayName}`);
+    console.log(`API Response: ${content.length} chars | Tokens: ${metrics.promptTokens} in → ${metrics.completionTokens} out (${metrics.totalTokens} total) | Time: ${(metrics.elapsedTimeMs / 1000).toFixed(2)}s | Model: ${displayName}`);
     
     // Track model usage telemetry
     trackAIModelUsage({
-      model: modelConfig.displayName,
+      model: telemetryModel,
       operation,
-      reasoningEffort: modelConfig.isReasoning ? settings.reasoningEffort : undefined,
+      reasoningEffort: isReasoning ? reasoningEffort : undefined,
       promptTokens: metrics.promptTokens,
       completionTokens: metrics.completionTokens,
       totalTokens: metrics.totalTokens,
@@ -277,10 +271,9 @@ LAYOUT READABILITY — CRITICAL:
       { role: 'user', content: description }
     ];
 
-    const activeModel = modelOverride?.model || getModelSettings().model;
     const { content, metrics } = await callAzureOpenAI(messages, modelOverride);
     
-    console.log(`Azure OpenAI Response [${MODEL_CONFIG[activeModel].displayName}]:`, content);
+    console.log(`AI model response [${metrics.model || 'unknown'}]:`, content);
     
     if (!content) {
       throw new Error('No response from Azure OpenAI. The model may have timed out or returned empty content.');
@@ -559,9 +552,11 @@ Verify findings independently.*`;
 }
 
 export function isAzureOpenAIConfigured(): boolean {
-  return getAvailableModels().some(model => (
-    isAiBackendConfigured(MODEL_CONFIG[model].apiFormat || 'responses')
-  ));
+  return isAnyAIModelConfigured();
+}
+
+export function isManagedAIConfigured(): boolean {
+  return isManagedAIModelConfigured();
 }
 
 /**
@@ -575,27 +570,10 @@ export async function analyzeArchitectureDiagramImage(
   mimeType: string = 'image/png',
   language: Language = 'en',
 ): Promise<{ description: string; metrics: AIMetrics }> {
-  const settings = getModelSettingsForFeature('architectureGeneration');
-  const modelConfig = MODEL_CONFIG[settings.model];
+  const runtime = resolveAIModelRuntime('architectureGeneration');
   
-  if (modelConfig.supportsVision === false) {
-    throw new Error(`${modelConfig.displayName} does not support image analysis. Please select a vision-capable model for diagram-to-architecture conversion.`);
-  }
-
-  let deployment: string;
-  try {
-    deployment = getDeploymentName(settings.model);
-  } catch {
-    throw new Error(`No deployment configured for ${settings.model}. Please check your .env file.`);
-  }
-
-  const apiFormat = modelConfig.apiFormat || 'responses';
-  if (!isAiBackendConfigured(apiFormat)) {
-    throw new Error(
-      apiFormat === 'anthropic-messages'
-        ? 'Microsoft Foundry is not configured. Please check your .env file.'
-        : 'Azure OpenAI is not configured. Please check your .env file.',
-    );
+  if (!runtime.supportsVision) {
+    throw new Error(`${runtime.displayName} does not support image analysis. Choose a vision-capable model in AI settings.`);
   }
 
   const systemPrompt = `You are an expert Azure cloud architect specializing in analyzing architecture diagrams.
@@ -648,7 +626,7 @@ If the image is not an architecture diagram or is unclear, describe what you can
   const startTime = performance.now();
 
   const requestBody = buildRequestBody({
-    deployment,
+    deployment: runtime.deployment,
     messages: [
       { role: 'system', content: systemPrompt },
       {
@@ -666,19 +644,20 @@ If the image is not an architecture diagram or is unclear, describe what you can
       },
     ],
     maxTokens: 4000,
-    apiFormat,
-    isReasoning: modelConfig.isReasoning,
-    reasoningEffort: settings.reasoningEffort,
+    apiFormat: runtime.apiFormat,
+    isReasoning: runtime.isReasoning,
+    reasoningEffort: runtime.reasoningEffort,
     jsonOutput: false,
   });
 
-  console.log(`🖼️ Analyzing architecture diagram with ${modelConfig.displayName}... | API: ${getApiFormatLabel(apiFormat)}`);
+  console.log(`🖼️ Analyzing architecture diagram with ${runtime.displayName}... | API: ${getApiFormatLabel(runtime.apiFormat)}`);
 
   try {
     const proxyResult = await callAzureOpenAIProxy({
-      apiFormat,
-      deployment,
+      apiFormat: runtime.apiFormat,
+      deployment: runtime.deployment,
       body: requestBody,
+      byo: runtime.byo,
       signal: controller.signal,
     });
 
@@ -696,14 +675,14 @@ If the image is not an architecture diagram or is unclear, describe what you can
       throw createOpenAIProxyError(proxyResult, { vision: true });
     }
     
-    const parsed = parseApiResponse(proxyResult.data, apiFormat);
+    const parsed = parseApiResponse(proxyResult.data, runtime.apiFormat);
     const content = parsed.content;
     const metrics: AIMetrics = {
       promptTokens: parsed.promptTokens,
       completionTokens: parsed.completionTokens,
       totalTokens: parsed.totalTokens,
       elapsedTimeMs,
-      model: proxyResult.data.model
+      model: runtime.displayName,
     };
     
     if (!content || content.trim().length === 0) {

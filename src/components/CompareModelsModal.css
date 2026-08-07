@@ -319,6 +319,21 @@
   line-height: 1.4;
 }
 
+.compare-managed-notice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--azd-color-warning) 45%, transparent);
+  border-radius: 7px;
+  background: var(--azd-color-warning-soft);
+  color: var(--azd-color-warning);
+  font-size: 0.8rem;
+  font-weight: 650;
+  line-height: 1.4;
+}
+
 /* Metrics */
 .compare-result-metrics {
   display: flex;

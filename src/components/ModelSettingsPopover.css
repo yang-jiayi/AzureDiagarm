@@ -53,6 +53,87 @@
   border: 1.5px solid rgba(255, 255, 255, 0.8);
 }
 
+.msp-byo-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 0.25rem 0.4rem 0.45rem;
+  padding: 10px;
+  border: 1px solid var(--azd-color-border-subtle);
+  border-radius: 8px;
+  background: var(--azd-color-surface-panel);
+}
+
+.msp-byo-card--active {
+  border-color: var(--azd-color-brand-border);
+  background: var(--azd-color-brand-subtle);
+}
+
+.msp-byo-copy {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.msp-byo-copy > span:last-child {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.msp-byo-copy strong {
+  overflow: hidden;
+  color: var(--azd-color-text-strong);
+  font-size: 0.78rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.msp-byo-copy small {
+  color: var(--azd-color-text-muted);
+  font-size: 0.68rem;
+  line-height: 1.35;
+}
+
+.msp-byo-icon {
+  width: 30px;
+  height: 30px;
+  display: inline-flex;
+  flex: 0 0 30px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 7px;
+  background: var(--azd-color-accent-ai-soft);
+  color: var(--azd-color-action);
+}
+
+.msp-byo-button {
+  flex: 0 0 auto;
+  padding: 6px 9px;
+  border: 1px solid var(--azd-color-action);
+  border-radius: 5px;
+  background: var(--azd-color-action);
+  color: #fff;
+  font-size: 0.72rem;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.msp-managed-note {
+  margin: 0 0.4rem 0.35rem;
+  color: var(--azd-color-text-muted);
+  font-size: 0.68rem;
+  line-height: 1.4;
+}
+
+.toolbar-dropdown-menu--model-settings button:disabled,
+.toolbar-dropdown-menu--model-settings select:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
 /* Model selection buttons */
 .msp-model-buttons {
   display: grid;
