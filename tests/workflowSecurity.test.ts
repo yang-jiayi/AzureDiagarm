@@ -31,6 +31,18 @@ test('deployment notifications use OIDC instead of a Communication Services secr
       .length,
     3,
   );
+  assert.equal(
+    Array.from(
+      workflow.matchAll(
+        /uses: azure\/login@532459ea530d8321f2fb9bb10d1e0bcf23869a43/g,
+      ),
+    ).length,
+    3,
+  );
+  assert.match(
+    workflow,
+    /- name: Refresh Azure sign-in for deployment notification[\s\S]*?if: \$\{\{ !cancelled\(\) && steps\.deployment\.outputs\.should_deploy == 'true' \}\}[\s\S]*?- name: Send detailed update email/,
+  );
 });
 
 test('the notification helper acquires a scoped token and waits for delivery', () => {
