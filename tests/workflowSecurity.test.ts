@@ -60,6 +60,45 @@ test('the notification helper acquires a scoped token and waits for delivery', (
   assert.match(emailHelper, /Succeeded\)/);
 });
 
+test('validated upstream publication isolates the main bypass credential', () => {
+  const validationIndex = workflow.indexOf(
+    '- name: Validate merged source before publishing',
+  );
+  const stagingIndex = workflow.indexOf('stage_validated_merge:');
+  const publisherIndex = workflow.indexOf('publish_validated_merge:');
+  const deployKeyIndex = workflow.indexOf('secrets.MAIN_BRANCH_DEPLOY_KEY');
+
+  assert.ok(validationIndex >= 0);
+  assert.ok(stagingIndex > validationIndex);
+  assert.ok(publisherIndex > stagingIndex);
+  assert.ok(deployKeyIndex > publisherIndex);
+  assert.equal(
+    Array.from(workflow.matchAll(/secrets\.MAIN_BRANCH_DEPLOY_KEY/g)).length,
+    1,
+  );
+  assert.match(
+    workflow,
+    /merge_validate:[\s\S]*?permissions:\s+contents: read[\s\S]*?artifact_name: \$\{\{ steps\.artifact\.outputs\.name \}\}[\s\S]*?details_file="\$RUNNER_TEMP\/update-details\.txt"[\s\S]*?git merge --no-ff --no-commit upstream\/main[\s\S]*?GIT_AUTHOR_DATE="@\$merge_epoch \+0000"[\s\S]*?\[\[ "\$actual_commit" == "\$expected_commit" \]\][\s\S]*?status --porcelain=v1 --untracked-files=all[\s\S]*?git bundle create[\s\S]*?actions\/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02[\s\S]*?name: \$\{\{ steps\.artifact\.outputs\.name \}\}/,
+  );
+  assert.match(
+    workflow,
+    /stage_validated_merge:[\s\S]*?permissions:\s+contents: write[\s\S]*?actions\/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093[\s\S]*?name: \$\{\{ needs\.merge_validate\.outputs\.artifact_name \}\}[\s\S]*?bundle_commit[\s\S]*?\[\[ "\$bundle_commit" == "\$EXPECTED_COMMIT" \]\][\s\S]*?\[\[ "\$current_main" == "\$BASE_COMMIT" \|\| "\$current_main" == "\$EXPECTED_COMMIT" \]\][\s\S]*?staged_branch="automation\/upstream-sync"[\s\S]*?--force-with-lease="\$staged_ref:\$existing_commit"[\s\S]*?"\$EXPECTED_COMMIT:\$staged_ref"/,
+  );
+  assert.match(
+    workflow,
+    /publish_validated_merge:[\s\S]*?ref: \$\{\{ needs\.merge_validate\.outputs\.fork_commit \}\}[\s\S]*?ssh-key: \$\{\{ secrets\.MAIN_BRANCH_DEPLOY_KEY \}\}[\s\S]*?if \[\[ "\$current_main" == "\$EXPECTED_COMMIT" \]\][\s\S]*?\[\[ "\$current_main" == "\$BASE_COMMIT" \]\][\s\S]*?--atomic[\s\S]*?"\$EXPECTED_COMMIT:refs\/heads\/main"/,
+  );
+  assert.match(
+    workflow,
+    /deploy:[\s\S]*?if: needs\.merge_validate\.outputs\.source_changed != 'true'/,
+  );
+  assert.doesNotMatch(workflow, /git push origin HEAD:main/);
+  assert.doesNotMatch(
+    workflow,
+    /"https:\/\/x-access-token:\$\{GITHUB_TOKEN\}@github\.com\/\$\{GITHUB_REPOSITORY\}\.git"\s+HEAD:main/,
+  );
+});
+
 test('follow-up contact stays disabled unless client and server opt in together', () => {
   assert.match(dockerfile, /ARG VITE_FEEDBACK_CONTACT_ENABLED=false/);
   assert.match(

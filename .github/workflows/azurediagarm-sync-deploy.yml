@@ -34,8 +34,11 @@ jobs:
     name: Merge and validate upstream
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
     outputs:
+      source_changed: ${{ steps.source.outputs.source_changed }}
+      base_commit: ${{ steps.source.outputs.base_commit }}
+      artifact_name: ${{ steps.artifact.outputs.name }}
       upstream_commit: ${{ steps.source.outputs.upstream_commit }}
       fork_commit: ${{ steps.source.outputs.fork_commit }}
       upstream_short: ${{ steps.source.outputs.upstream_short }}
@@ -62,6 +65,7 @@ jobs:
         id: source
         run: |
           set -Eeuo pipefail
+          details_file="$RUNNER_TEMP/update-details.txt"
 
           git config user.name "azurediagarm-updater"
           git config user.email "azurediagarm-updater@users.noreply.github.com"
@@ -80,6 +84,7 @@ jobs:
             fork_commit="$fork_before"
             {
               echo "source_changed=false"
+              echo "base_commit=$fork_before"
               echo "upstream_commit=$merge_base"
               echo "fork_commit=$fork_commit"
               echo "upstream_short=${merge_base:0:12}"
@@ -90,8 +95,8 @@ jobs:
               echo "- Deployed upstream baseline: ${merge_base:0:12}."
               echo "- Latest upstream commit awaiting manual review: ${upstream_commit:0:12}."
               echo "- Upstream synchronization requires a manual workflow dispatch."
-            } > update-details.txt
-            echo "update_details_b64=$(base64 -w 0 update-details.txt)" >> "$GITHUB_OUTPUT"
+            } > "$details_file"
+            echo "update_details_b64=$(base64 -w 0 "$details_file")" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
@@ -129,12 +134,12 @@ jobs:
               echo
               echo "Protected files:"
               printf -- '- %s\n' "${protected_changes[@]}"
-            } > update-details.txt
+            } > "$details_file"
             echo "::error::Upstream changed protected deployment or security files. See update-details.txt."
             exit 1
           fi
 
-          if ! git merge --no-edit upstream/main; then
+          if ! git merge --no-ff --no-commit upstream/main; then
             {
               echo "Upstream merge conflict detected."
               echo
@@ -143,11 +148,23 @@ jobs:
               echo
               echo "Conflicting files:"
               git diff --name-only --diff-filter=U
-            } > update-details.txt
+            } > "$details_file"
             git merge --abort
             echo "::error::Upstream changes conflict with AzureDiagarm customizations. See update-details.txt."
             exit 1
           fi
+
+          if git rev-parse --quiet --verify MERGE_HEAD > /dev/null; then
+            fork_epoch="$(git show --no-patch --format=%ct HEAD)"
+            upstream_epoch="$(git show --no-patch --format=%ct upstream/main)"
+            merge_epoch=$(( (fork_epoch > upstream_epoch ? fork_epoch : upstream_epoch) + 1 ))
+            GIT_AUTHOR_DATE="@$merge_epoch +0000" \
+            GIT_COMMITTER_DATE="@$merge_epoch +0000" \
+              git commit \
+                --no-verify \
+                --message "Merge approved upstream commit $upstream_commit"
+          fi
+
           fork_commit="$(git rev-parse HEAD)"
           source_changed=false
           if [[ "$fork_before" != "$fork_commit" ]]; then
@@ -156,6 +173,7 @@ jobs:
 
           {
             echo "source_changed=$source_changed"
+            echo "base_commit=$fork_before"
             echo "upstream_commit=$upstream_commit"
             echo "fork_commit=$fork_commit"
             echo "upstream_short=${upstream_commit:0:12}"
@@ -166,12 +184,12 @@ jobs:
             --no-merges \
             --date=iso-strict \
             --pretty=format:'- %h %ad %an: %s' \
-            "${merge_base}..${upstream_commit}" > update-details.txt
+            "${merge_base}..${upstream_commit}" > "$details_file"
 
-          if [[ ! -s update-details.txt ]]; then
-            printf '%s\n' "- No new upstream commits; checking deployment state for customization commit ${fork_commit:0:12}." > update-details.txt
+          if [[ ! -s "$details_file" ]]; then
+            printf '%s\n' "- No new upstream commits; checking deployment state for customization commit ${fork_commit:0:12}." > "$details_file"
           fi
-          echo "update_details_b64=$(base64 -w 0 update-details.txt)" >> "$GITHUB_OUTPUT"
+          echo "update_details_b64=$(base64 -w 0 "$details_file")" >> "$GITHUB_OUTPUT"
 
       - name: Validate merged source before publishing
         run: |
@@ -196,19 +214,177 @@ jobs:
           npm --prefix mcp-server run build
           npm --prefix mcp-server test
           git diff --exit-code
+          git diff --cached --exit-code
 
-      - name: Publish validated upstream merge
+          if [[ "${{ steps.source.outputs.source_changed }}" == "true" ]]; then
+            base_commit="${{ steps.source.outputs.base_commit }}"
+            expected_commit="${{ steps.source.outputs.fork_commit }}"
+            actual_commit="$(/usr/bin/git rev-parse HEAD)"
+            [[ "$base_commit" =~ ^[0-9a-f]{40}$ ]]
+            [[ "$expected_commit" =~ ^[0-9a-f]{40}$ ]]
+            [[ "$actual_commit" == "$expected_commit" ]]
+            /usr/bin/git merge-base --is-ancestor "$base_commit" "$expected_commit"
+            [[ -z "$(/usr/bin/git status --porcelain=v1 --untracked-files=all)" ]]
+
+            bundle_ref="refs/validated/upstream-merge"
+            /usr/bin/git update-ref "$bundle_ref" "$expected_commit"
+            trap '/usr/bin/git update-ref -d refs/validated/upstream-merge' EXIT
+            /usr/bin/git bundle create \
+              "$RUNNER_TEMP/validated-upstream-merge.bundle" \
+              "$bundle_ref" \
+              "^$base_commit"
+            /usr/bin/git bundle verify "$RUNNER_TEMP/validated-upstream-merge.bundle"
+          fi
+
+      - name: Name validated upstream artifact
+        id: artifact
         if: steps.source.outputs.source_changed == 'true'
+        run: echo "name=validated-upstream-merge-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload validated upstream merge
+        if: steps.source.outputs.source_changed == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ${{ steps.artifact.outputs.name }}
+          path: ${{ runner.temp }}/validated-upstream-merge.bundle
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+
+  stage_validated_merge:
+    name: Stage validated upstream merge
+    needs: merge_validate
+    if: needs.merge_validate.outputs.source_changed == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      staged_branch: ${{ steps.stage.outputs.branch }}
+    steps:
+      - name: Check out trusted publication base
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Download validated upstream merge
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: ${{ needs.merge_validate.outputs.artifact_name }}
+          path: ${{ runner.temp }}/validated-upstream-merge
+
+      - name: Verify and stage validated commit
+        id: stage
         env:
+          BASE_COMMIT: ${{ needs.merge_validate.outputs.base_commit }}
+          EXPECTED_COMMIT: ${{ needs.merge_validate.outputs.fork_commit }}
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -Eeuo pipefail
-          git push "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" HEAD:main
+          bundle="$RUNNER_TEMP/validated-upstream-merge/validated-upstream-merge.bundle"
+          [[ "$BASE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$EXPECTED_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+          [[ -f "$bundle" ]]
+
+          /usr/bin/git bundle verify "$bundle"
+          /usr/bin/git fetch \
+            "$bundle" \
+            refs/validated/upstream-merge:refs/remotes/validated/upstream-merge
+          bundle_commit="$(
+            /usr/bin/git rev-parse \
+              --verify refs/remotes/validated/upstream-merge^{commit}
+          )"
+          [[ "$bundle_commit" == "$EXPECTED_COMMIT" ]]
+
+          /usr/bin/git fetch \
+            --no-tags \
+            "https://github.com/${GITHUB_REPOSITORY}.git" \
+            main:refs/remotes/origin/main
+          current_main="$(/usr/bin/git rev-parse refs/remotes/origin/main)"
+          [[ "$current_main" == "$BASE_COMMIT" || "$current_main" == "$EXPECTED_COMMIT" ]]
+
+          staged_branch="automation/upstream-sync"
+          staged_ref="refs/heads/$staged_branch"
+          existing_commit="$(
+            /usr/bin/git ls-remote \
+              --heads \
+              "https://github.com/${GITHUB_REPOSITORY}.git" \
+              "$staged_ref" \
+              | awk '{ print $1 }'
+          )"
+          push_args=()
+          if [[ -n "$existing_commit" ]]; then
+            [[ "$existing_commit" =~ ^[0-9a-f]{40}$ ]]
+            push_args+=(--force-with-lease="$staged_ref:$existing_commit")
+          fi
+          /usr/bin/git push \
+            "${push_args[@]}" \
+            "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" \
+            "$EXPECTED_COMMIT:$staged_ref"
+          echo "branch=$staged_branch" >> "$GITHUB_OUTPUT"
+
+  publish_validated_merge:
+    name: Publish validated upstream merge
+    needs:
+      - merge_validate
+      - stage_validated_merge
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Check out validated upstream commit
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          ref: ${{ needs.merge_validate.outputs.fork_commit }}
+          fetch-depth: 0
+          ssh-key: ${{ secrets.MAIN_BRANCH_DEPLOY_KEY }}
+          persist-credentials: true
+
+      - name: Publish validated commit to main
+        env:
+          BASE_COMMIT: ${{ needs.merge_validate.outputs.base_commit }}
+          EXPECTED_COMMIT: ${{ needs.merge_validate.outputs.fork_commit }}
+          STAGED_BRANCH: ${{ needs.stage_validated_merge.outputs.staged_branch }}
+        run: |
+          set -Eeuo pipefail
+          [[ "$BASE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$EXPECTED_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$STAGED_BRANCH" == "automation/upstream-sync" ]]
+          [[ "$(/usr/bin/git rev-parse HEAD)" == "$EXPECTED_COMMIT" ]]
+
+          /usr/bin/git fetch origin "refs/heads/main:refs/remotes/origin/main"
+          current_main="$(
+            /usr/bin/git rev-parse --verify refs/remotes/origin/main^{commit}
+          )"
+          staged_commit="$(
+            /usr/bin/git ls-remote \
+              --heads origin "refs/heads/$STAGED_BRANCH" \
+              | awk '{ print $1 }'
+          )"
+
+          if [[ "$current_main" == "$EXPECTED_COMMIT" ]]; then
+            if [[ -n "$staged_commit" ]]; then
+              [[ "$staged_commit" == "$EXPECTED_COMMIT" ]]
+              /usr/bin/git push origin ":refs/heads/$STAGED_BRANCH"
+            fi
+            exit 0
+          fi
+
+          [[ "$current_main" == "$BASE_COMMIT" ]]
+          [[ "$staged_commit" == "$EXPECTED_COMMIT" ]]
+          /usr/bin/git push \
+            --atomic \
+            origin \
+            "$EXPECTED_COMMIT:refs/heads/main" \
+            ":refs/heads/$STAGED_BRANCH"
 
   notify_validation_failure:
-    name: Notify validation failure
-    needs: merge_validate
-    if: ${{ always() && needs.merge_validate.result == 'failure' }}
+    name: Notify synchronization failure
+    needs:
+      - merge_validate
+      - stage_validated_merge
+      - publish_validated_merge
+    if: ${{ always() && (needs.merge_validate.result == 'failure' || needs.stage_validated_merge.result == 'failure' || needs.publish_validated_merge.result == 'failure') }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -231,10 +407,10 @@ jobs:
           AZURE_COMMUNICATION_ENDPOINT: ${{ vars.FEEDBACK_EMAIL_ENDPOINT }}
           AZURE_EMAIL_SENDER: ${{ vars.AZURE_EMAIL_SENDER }}
           AZURE_EMAIL_RECIPIENT: ${{ vars.AZURE_EMAIL_RECIPIENT }}
-          AZURE_EMAIL_SUBJECT: AzureDiagarm update validation failed
+          AZURE_EMAIL_SUBJECT: AzureDiagarm update validation or publication failed
         run: |
           set -Eeuo pipefail
-          printf 'The AzureDiagarm upstream merge or validation failed.\n\nWorkflow: %s\n' \
+          printf 'The AzureDiagarm upstream merge, validation, or publication failed.\n\nWorkflow: %s\n' \
             "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
             > email-body.txt
           bash scripts/send-acs-email.sh email-body.txt
@@ -242,6 +418,7 @@ jobs:
   deploy:
     name: Deploy validated revision
     needs: merge_validate
+    if: needs.merge_validate.outputs.source_changed != 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
