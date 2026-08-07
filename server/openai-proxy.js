@@ -541,6 +541,9 @@ function createOpenAIProxyRouter(options) {
       const upstreamUrl = byoConfig
         ? buildByoAIUrl(byoConfig, deployment, apiFormat)
         : buildOpenAIUrl(upstreamEndpoint, deployment, apiFormat, apiVersion);
+      // codeql[js/request-forgery] -- BYO URLs are rebuilt only after HTTPS
+      // origin allowlisting, path/query rejection, fixed API routes, and
+      // redirect blocking; arbitrary hosts never reach this call.
       upstream = await fetchImpl(upstreamUrl, {
         method: 'POST',
         headers,
