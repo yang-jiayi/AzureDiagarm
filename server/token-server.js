@@ -18,6 +18,7 @@ const {
   createAccessControlRouter,
   getAccessControlConfiguration,
   getPrincipal,
+  normalizeEmail,
 } = require('./access-control');
 const { ArmKeyVaultAccessStore } = require('./arm-key-vault-access-store');
 const { createOpenAIProxyRouter, logFoundryConfiguration } = require('./openai-proxy');
@@ -764,9 +765,8 @@ app.post('/api/feedback', asyncHandler(async (req, res) => {
   if (contactConsent && !hasFeedbackContactConfiguration(feedbackConfiguration)) {
     return res.status(503).json({ error: 'follow-up contact delivery is not configured' });
   }
-  const rawContactEmail = typeof body.contact?.email === 'string' ? body.contact.email.trim() : '';
-  const validContactEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(rawContactEmail);
-  if (contactConsent && (rawContactEmail.length > 254 || !validContactEmail)) {
+  const contactEmail = contactConsent ? normalizeEmail(body.contact?.email) : '';
+  if (contactConsent && !contactEmail) {
     return res.status(400).json({ error: 'a valid email address is required when contact consent is enabled' });
   }
   const ctx = body.context && typeof body.context === 'object' ? body.context : {};
@@ -782,7 +782,7 @@ app.post('/api/feedback', asyncHandler(async (req, res) => {
     comment,
     contact: contactConsent ? {
       consent: true,
-      email: rawContactEmail.toLowerCase(),
+      email: contactEmail,
       consentAt: createdAt.toISOString(),
       expiresAt: contactExpiresAt.toISOString(),
       followUpStatus: 'new',

@@ -7,6 +7,7 @@ const express = require('express');
 const {
   createAccessControlRouter,
   getAccessControlConfiguration,
+  normalizeEmail,
 } = require('./access-control');
 
 class FakeTable {
@@ -68,6 +69,20 @@ const MEMBER_HEADERS = {
   'X-MS-CLIENT-PRINCIPAL-ID': '22222222-2222-2222-2222-222222222222',
 };
 const APP_ORIGIN = 'https://azurediagarm.mssql.biz';
+
+test('email normalization rejects oversized input before pattern matching', () => {
+  const oversized = `!@${'!.'.repeat(20_000)}@`;
+  const startedAt = process.hrtime.bigint();
+
+  assert.equal(normalizeEmail(oversized), '');
+  const elapsedMilliseconds = Number(process.hrtime.bigint() - startedAt) / 1_000_000;
+  assert.ok(elapsedMilliseconds < 50, `oversized email took ${elapsedMilliseconds} ms`);
+
+  assert.equal(normalizeEmail(' A@B.co '), 'a@b.co');
+  assert.equal(normalizeEmail(`${'a'.repeat(250)}@b.co`), '');
+  assert.equal(normalizeEmail(undefined), '');
+  assert.equal(normalizeEmail(42), '');
+});
 
 test('access-control configuration reports mandatory readiness dependencies', () => {
   assert.deepEqual(
@@ -273,6 +288,15 @@ test('access control maps Entra B2B guest UPNs back to their invited email', asy
     },
   });
   assert.equal(response.status, 204);
+
+  response = await fetch(`${server.baseUrl}/api/access/check`, {
+    headers: {
+      'X-MS-CLIENT-PRINCIPAL-NAME':
+        `${'x'.repeat(300)}_example.com#EXT#@exampletenant.onmicrosoft.com`,
+      'X-MS-CLIENT-PRINCIPAL-ID': '55555555-5555-5555-5555-555555555555',
+    },
+  });
+  assert.equal(response.status, 401);
 
   const encodedPrincipal = Buffer.from(JSON.stringify({
     auth_typ: 'aad',
