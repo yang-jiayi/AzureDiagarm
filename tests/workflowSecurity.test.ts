@@ -14,6 +14,7 @@ const emailHelper = readFileSync(
   'utf8',
 );
 const dockerfile = readFileSync(new URL('../Dockerfile', import.meta.url), 'utf8');
+const dockerignore = readFileSync(new URL('../.dockerignore', import.meta.url), 'utf8');
 const feedbackServer = readFileSync(
   new URL('../server/token-server.js', import.meta.url),
   'utf8',
@@ -145,4 +146,15 @@ test('BYO AI remains server-gated and is wired into every production deployment 
     deployScript,
     /"ALLOW_BYO_AI_ENDPOINTS=\$\{ALLOW_BYO_AI_ENDPOINTS:-false\}"/,
   );
+});
+
+test('the container build installs the image parser safeguard before npm ci', () => {
+  const patchCopyIndex = dockerfile.indexOf(
+    'COPY scripts/patch-image-size.mjs ./scripts/patch-image-size.mjs',
+  );
+  const installIndex = dockerfile.indexOf('RUN npm ci');
+
+  assert.ok(patchCopyIndex >= 0);
+  assert.ok(installIndex > patchCopyIndex);
+  assert.match(dockerignore, /^!scripts\/patch-image-size\.mjs$/m);
 });
