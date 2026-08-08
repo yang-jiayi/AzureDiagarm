@@ -71,6 +71,31 @@ test('parseApiResponse extracts Anthropic text and token usage', () => {
   });
 });
 
+test('reasoning Chat Completions uses modern token and reasoning parameters', () => {
+  const body = buildRequestBody({
+    deployment: 'gpt-5',
+    messages: [{ role: 'user', content: 'Return JSON.' }],
+    maxTokens: 2048,
+    apiFormat: 'chat-completions',
+    isReasoning: true,
+    reasoningEffort: 'high',
+  });
+
+  assert.equal(body.max_completion_tokens, 2048);
+  assert.equal(body.reasoning_effort, 'high');
+  assert.equal(body.max_tokens, undefined);
+  assert.equal(body.temperature, undefined);
+  assert.deepEqual(body.response_format, { type: 'json_object' });
+  assert.equal(
+    buildApiUrl(
+      'https://example.services.ai.azure.com',
+      'gpt-5-deployment',
+      'chat-completions',
+    ),
+    'https://example.services.ai.azure.com/openai/v1/chat/completions',
+  );
+});
+
 test('callAzureOpenAIProxy sends BYO credentials only in the server request body', async () => {
   let requestUrl = '';
   let requestBody: Record<string, unknown> | null = null;
@@ -101,6 +126,22 @@ test('callAzureOpenAIProxy sends BYO credentials only in the server request body
     endpoint: 'https://api.openai.com',
     apiKey: 'sk-test-secret-value',
   });
+});
+
+test('callAzureOpenAIProxy rejects misleading non-JSON response media types', async () => {
+  globalThis.fetch = (async () => new Response('{"output_text":"{}"}', {
+    status: 200,
+    headers: { 'Content-Type': 'application/notjson' },
+  })) as typeof fetch;
+
+  const result = await callAzureOpenAIProxy({
+    apiFormat: 'responses',
+    deployment: 'gpt-5',
+    body: { model: 'gpt-5', input: [{ role: 'user', content: 'Hello' }] },
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.error?.code, 'invalid_upstream_response');
 });
 
 test('BYO authentication errors produce custom-endpoint guidance', () => {

@@ -20,6 +20,7 @@ param mcpAuthToken string = ''
 // Azure OpenAI (passed through to container app env; not provisioned here)
 param azureOpenAiEndpoint string
 param azureOpenAiAllowedDeployments string = ''
+param allowByoAIEndpoints bool = false
 param azureFoundryEndpoint string = ''
 param azureFoundryAllowedDeployments string = ''
 param feedbackEmailEndpoint string = ''
@@ -432,7 +433,7 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
             { name: 'AZURE_CLIENT_ID', value: appIdentity.properties.clientId }
             { name: 'AZURE_OPENAI_ENDPOINT', value: azureOpenAiEndpoint }
             { name: 'AZURE_OPENAI_ALLOWED_DEPLOYMENTS', value: azureOpenAiAllowedDeployments }
-            { name: 'ALLOW_BYO_AI_ENDPOINTS', value: 'true' }
+            { name: 'ALLOW_BYO_AI_ENDPOINTS', value: string(allowByoAIEndpoints) }
             { name: 'AZURE_FOUNDRY_ENDPOINT', value: azureFoundryEndpoint }
             { name: 'AZURE_FOUNDRY_ALLOWED_DEPLOYMENTS', value: azureFoundryAllowedDeployments }
             { name: 'OPENAI_RATE_LIMIT_PER_HOUR', value: '120' }

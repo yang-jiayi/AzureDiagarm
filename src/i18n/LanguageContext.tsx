@@ -313,6 +313,7 @@ const exactJapanese: Readonly<Record<string, string>> = {
   'Loading icons...': 'アイコンを読み込み中...',
   'Loading versions...': 'バージョンを読み込み中...',
   'Low': '低',
+  'Minimal': '最小',
   'Med': '中',
   'Medium': '中',
   'Minimize': '最小化',

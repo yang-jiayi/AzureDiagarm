@@ -6,6 +6,7 @@ const { test } = require('node:test');
 const express = require('express');
 const {
   createOpenAIProxyRouter,
+  isJsonMediaType,
   logFoundryConfiguration,
   normalizeAzureOpenAIEndpoint,
 } = require('./openai-proxy');
@@ -63,7 +64,6 @@ function byoRequestBody(overrides = {}) {
       provider: 'azure-openai',
       endpoint: 'https://customer-resource.openai.azure.com/',
       apiKey: 'customer-secret-key',
-      apiVersion: '2024-05-01-preview',
     },
     ...overrides,
   });
@@ -123,6 +123,10 @@ test('BYO endpoint validation accepts only trusted Azure OpenAI HTTPS hosts', ()
     normalizeAzureOpenAIEndpoint('https://customer-resource.openai.azure.com/'),
     'https://customer-resource.openai.azure.com/',
   );
+  assert.equal(
+    normalizeAzureOpenAIEndpoint('https://customer-resource.services.ai.azure.com/'),
+    'https://customer-resource.services.ai.azure.com/',
+  );
   assert.throws(
     () => normalizeAzureOpenAIEndpoint('http://customer-resource.openai.azure.com/'),
     error => error.code === 'invalid_byo_endpoint',
@@ -135,6 +139,13 @@ test('BYO endpoint validation accepts only trusted Azure OpenAI HTTPS hosts', ()
     () => normalizeAzureOpenAIEndpoint('https://customer-resource.openai.azure.com/openai/v1'),
     error => error.code === 'invalid_byo_endpoint',
   );
+});
+
+test('JSON media type validation accepts JSON and vendor JSON only', () => {
+  assert.equal(isJsonMediaType('application/json; charset=utf-8'), true);
+  assert.equal(isJsonMediaType('application/problem+json'), true);
+  assert.equal(isJsonMediaType('application/notjson'), false);
+  assert.equal(isJsonMediaType('text/json'), false);
 });
 
 test('OpenAI proxy rejects BYO requests unless the server enables them', async (t) => {
@@ -231,6 +242,114 @@ test('OpenAI proxy routes BYO official OpenAI chat requests to the fixed API hos
   assert.equal(captured.init.headers.Authorization, 'Bearer sk-customer-secret');
   assert.equal(captured.init.headers['api-key'], undefined);
   assert.equal(JSON.parse(captured.init.body).model, 'gpt-custom');
+});
+
+test('OpenAI proxy routes BYO Azure reasoning chat through v1 with compatible parameters', async (t) => {
+  let captured;
+  const server = await startServer({
+    allowByoAIEndpoints: true,
+    fetchImpl: async (url, init) => {
+      captured = { url, init };
+      return jsonResponse(200, {
+        model: 'gpt-5-customer',
+        choices: [{ message: { content: '{}' } }],
+        usage: {},
+      });
+    },
+    logger: silentLogger,
+  });
+  t.after(server.close);
+
+  const response = await fetch(`${server.baseUrl}/api/openai`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(byoRequestBody({
+      apiFormat: 'chat-completions',
+      deployment: 'gpt-5-customer',
+      body: {
+        messages: [{ role: 'user', content: 'test prompt' }],
+        max_tokens: 99_999,
+        reasoning_effort: 'high',
+        temperature: 0.2,
+        top_p: 0.8,
+      },
+      byo: {
+        provider: 'azure-openai',
+        endpoint: 'https://customer-resource.services.ai.azure.com/',
+        apiKey: 'customer-secret-key',
+      },
+    })),
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(
+    captured.url,
+    'https://customer-resource.services.ai.azure.com/openai/v1/chat/completions',
+  );
+  const upstreamBody = JSON.parse(captured.init.body);
+  assert.equal(upstreamBody.model, 'gpt-5-customer');
+  assert.equal(upstreamBody.max_completion_tokens, 32768);
+  assert.equal(upstreamBody.max_tokens, undefined);
+  assert.equal(upstreamBody.reasoning_effort, 'high');
+  assert.equal(upstreamBody.temperature, undefined);
+  assert.equal(upstreamBody.top_p, undefined);
+});
+
+test('OpenAI proxy preserves an explicit non-reasoning chat configuration', async (t) => {
+  let captured;
+  const server = await startServer({
+    allowByoAIEndpoints: true,
+    fetchImpl: async (url, init) => {
+      captured = { url, init };
+      return jsonResponse(200, {
+        model: 'gpt-5-legacy-alias',
+        choices: [{ message: { content: '{}' } }],
+        usage: {},
+      });
+    },
+    logger: silentLogger,
+  });
+  t.after(server.close);
+
+  const response = await fetch(`${server.baseUrl}/api/openai`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(byoRequestBody({
+      apiFormat: 'chat-completions',
+      deployment: 'gpt-5-legacy-alias',
+      body: {
+        messages: [{ role: 'user', content: 'test prompt' }],
+        max_tokens: 500,
+        temperature: 0.2,
+      },
+    })),
+  });
+
+  assert.equal(response.status, 200);
+  const upstreamBody = JSON.parse(captured.init.body);
+  assert.equal(upstreamBody.model, 'gpt-5-legacy-alias');
+  assert.equal(upstreamBody.max_tokens, 500);
+  assert.equal(upstreamBody.max_completion_tokens, undefined);
+  assert.equal(upstreamBody.reasoning_effort, undefined);
+  assert.equal(upstreamBody.temperature, 0.2);
+});
+
+test('OpenAI proxy rejects punctuation-only BYO model names', async (t) => {
+  const server = await startServer({
+    allowByoAIEndpoints: true,
+    fetchImpl: async () => jsonResponse(200, {}),
+    logger: silentLogger,
+  });
+  t.after(server.close);
+
+  const response = await fetch(`${server.baseUrl}/api/openai`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(byoRequestBody({ deployment: '..' })),
+  });
+
+  assert.equal(response.status, 400);
+  assert.equal((await response.json()).error.code, 'invalid_deployment_name');
 });
 
 test('OpenAI proxy returns a BYO-specific authentication error', async (t) => {
@@ -374,14 +493,14 @@ test('OpenAI proxy classifies throttling and service failures', async (t) => {
   }
 });
 
-test('OpenAI proxy rejects malformed bodies and non-JSON success responses', async (t) => {
+test('OpenAI proxy rejects malformed bodies and misleading non-JSON success responses', async (t) => {
   const server = await startServer({
     endpoint: 'https://example.openai.azure.com/',
     apiKey: 'test-key',
     allowedDeployments: new Set(['gpt-5.6-sol']),
-    fetchImpl: async () => new Response('<html>unexpected</html>', {
+    fetchImpl: async () => new Response('not actually json', {
       status: 200,
-      headers: { 'Content-Type': 'text/html' },
+      headers: { 'Content-Type': 'application/notjson' },
     }),
     logger: silentLogger,
   });

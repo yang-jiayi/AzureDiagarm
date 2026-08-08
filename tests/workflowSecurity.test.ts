@@ -126,13 +126,20 @@ test('follow-up contact stays disabled unless client and server opt in together'
 
 test('BYO AI remains server-gated and is wired into every production deployment path', () => {
   assert.match(feedbackServer, /process\.env\.ALLOW_BYO_AI_ENDPOINTS === 'true'/);
-  assert.match(resourcesBicep, /\{ name: 'ALLOW_BYO_AI_ENDPOINTS', value: 'true' \}/);
-  assert.match(workflow, /ALLOW_BYO_AI_ENDPOINTS: 'true'/);
+  assert.match(resourcesBicep, /param allowByoAIEndpoints bool = false/);
+  assert.match(
+    resourcesBicep,
+    /\{ name: 'ALLOW_BYO_AI_ENDPOINTS', value: string\(allowByoAIEndpoints\) \}/,
+  );
+  assert.match(
+    workflow,
+    /ALLOW_BYO_AI_ENDPOINTS: \$\{\{ vars\.ALLOW_BYO_AI_ENDPOINTS \|\| 'false' \}\}/,
+  );
   assert.match(workflow, /AZURE_OPENAI_ENDPOINT ALLOW_BYO_AI_ENDPOINTS AZURE_OPENAI_DEPLOYMENT_GPT56SOL/);
-  assert.equal(
-    Array.from(workflow.matchAll(/"ALLOW_BYO_AI_ENDPOINTS=(?:\$ALLOW_BYO_AI_ENDPOINTS|true)"/g))
-      .length,
-    2,
+  assert.match(workflow, /"ALLOW_BYO_AI_ENDPOINTS=\$ALLOW_BYO_AI_ENDPOINTS"/);
+  assert.match(
+    workflow,
+    /"ALLOW_BYO_AI_ENDPOINTS=\$\{\{ vars\.ALLOW_BYO_AI_ENDPOINTS \|\| 'false' \}\}"/,
   );
   assert.match(
     deployScript,

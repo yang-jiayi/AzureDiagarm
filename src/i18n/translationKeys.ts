@@ -716,6 +716,7 @@ export const translationKeys = [
   "Exit Focus",
   "Expand Groups",
   "Extra High",
+  "Minimal",
   "Extra-thorough analysis with higher latency and token use",
   "Fast blueprints",
   "Faster responses, less detailed analysis",

@@ -511,6 +511,15 @@ app.get('/api/speech-token', asyncHandler(async (req, res) => {
   }
 }));
 
+app.get('/api/runtime-config', (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  res.json({
+    features: {
+      bringYourOwnAI: ALLOW_BYO_AI_ENDPOINTS,
+    },
+  });
+});
+
 app.use('/api/openai', createOpenAIProxyRouter({
   endpoint: OPENAI_ENDPOINT,
   foundryEndpoint: FOUNDRY_ENDPOINT,
