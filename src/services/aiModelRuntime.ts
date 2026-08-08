@@ -21,6 +21,10 @@ import {
   type ApiFormat,
   type BYOAIProxyConfig,
 } from './apiHelper';
+import {
+  getRuntimeConfigSnapshot,
+  isBYOAIEnabledOnServer,
+} from './runtimeConfig';
 
 export interface RuntimeModelOverride {
   model: ModelType;
@@ -49,6 +53,15 @@ export function resolveAIModelRuntime(
   const byoSettings = getBYOAISettings();
 
   if (byoSettings.enabled && !override?.forceManaged) {
+    const runtimeConfig = getRuntimeConfigSnapshot();
+    if (runtimeConfig.status !== 'ready') {
+      throw new Error(
+        'Bring-your-own AI availability has not been confirmed by the application server.',
+      );
+    }
+    if (!isBYOAIEnabledOnServer()) {
+      throw new Error('Bring-your-own AI is disabled by the application administrator.');
+    }
     const apiKey = getBYOAIApiKey();
     const validation = validateBYOAISettings(byoSettings, apiKey);
     if (!validation.valid || !validation.settings) {
@@ -66,12 +79,11 @@ export function resolveAIModelRuntime(
       isReasoning: normalized.isReasoning,
       supportsVision: normalized.supportsVision,
       maxCompletionTokens: 32_000,
-      reasoningEffort: featureSettings.reasoningEffort,
+      reasoningEffort: normalized.isReasoning ? normalized.reasoningEffort : 'none',
       byo: {
         provider: normalized.provider,
         endpoint: normalized.endpoint,
         apiKey,
-        apiVersion: normalized.apiVersion,
       },
     };
   }
@@ -115,6 +127,8 @@ export function isManagedAIModelConfigured(): boolean {
 }
 
 export function isAnyAIModelConfigured(): boolean {
-  if (getBYOAISettings().enabled) return isBYOAIReady();
+  if (getBYOAISettings().enabled) {
+    return isBYOAIEnabledOnServer() && isBYOAIReady();
+  }
   return isManagedAIModelConfigured();
 }

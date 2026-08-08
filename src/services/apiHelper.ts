@@ -16,7 +16,6 @@ export interface BYOAIProxyConfig {
   provider: 'azure-openai' | 'openai';
   endpoint: string;
   apiKey: string;
-  apiVersion?: string;
 }
 
 export function isAiBackendConfigured(apiFormat: ApiFormat): boolean {
@@ -34,16 +33,16 @@ export function getApiFormatLabel(apiFormat: ApiFormat): string {
 /**
  * Build the correct API URL for the given format.
  * - Responses API:       {endpoint}openai/v1/responses
- * - Chat Completions:    {endpoint}openai/deployments/{deployment}/chat/completions?api-version=2024-12-01-preview
+ * - Chat Completions:    {endpoint}openai/v1/chat/completions
  * - Anthropic Messages:   {endpoint}anthropic/v1/messages
  */
-export function buildApiUrl(endpoint: string, deployment: string, apiFormat: ApiFormat): string {
+export function buildApiUrl(endpoint: string, _deployment: string, apiFormat: ApiFormat): string {
   const base = endpoint.endsWith('/') ? endpoint : `${endpoint}/`;
   if (apiFormat === 'anthropic-messages') {
     return `${base}anthropic/v1/messages`;
   }
   if (apiFormat === 'chat-completions') {
-    return `${base}openai/deployments/${deployment}/chat/completions?api-version=2024-05-01-preview`;
+    return `${base}openai/v1/chat/completions`;
   }
   return `${base}openai/v1/responses`;
 }
@@ -165,9 +164,16 @@ export function buildRequestBody(params: {
   if (apiFormat === 'chat-completions') {
     return {
       messages,
-      max_tokens: maxTokens,
+      ...(isReasoning
+        ? {
+            max_completion_tokens: maxTokens,
+            reasoning_effort: reasoningEffort,
+          }
+        : {
+            max_tokens: maxTokens,
+            temperature: 0.7,
+          }),
       ...(jsonOutput ? { response_format: { type: 'json_object' } } : {}),
-      temperature: 0.7,
     };
   }
 
@@ -369,8 +375,13 @@ function inferUnstructuredError(
     ...common,
     source: 'unknown',
     code: `http_${response.status || 0}`,
-    message: 'The Azure OpenAI request failed.',
+    message: 'The AI provider request failed.',
   };
+}
+
+export function isJsonMediaType(contentType: string): boolean {
+  const mediaType = contentType.split(';', 1)[0].trim().toLowerCase();
+  return /^application\/(?:[a-z0-9!#$&^_.+-]+\+)?json$/.test(mediaType);
 }
 
 export function createOpenAIProxyError(
@@ -391,7 +402,7 @@ export function createOpenAIProxyError(
       message = 'The application authentication layer rejected the request. Refresh the page and try again.';
       break;
     case 'edge_request_blocked':
-      message = 'The request was blocked before it reached Azure OpenAI. Reduce the request size or contact the administrator.';
+      message = 'The request was blocked before it reached the AI provider. Reduce the request size or contact the administrator.';
       break;
     case 'deployment_not_allowed':
       message = 'The selected model deployment is not allowed by the server configuration.';
@@ -402,7 +413,6 @@ export function createOpenAIProxyError(
     case 'invalid_byo_endpoint':
     case 'invalid_byo_configuration':
     case 'invalid_byo_provider':
-    case 'invalid_byo_api_version':
     case 'invalid_byo_api_key':
     case 'invalid_byo_api_format':
       message = result.error?.message || 'The custom AI configuration is invalid.';
@@ -430,21 +440,21 @@ export function createOpenAIProxyError(
       message = 'Azure OpenAI rejected the server credential. Check the managed identity role assignment.';
       break;
     case 'deployment_not_found':
-      message = 'Deployment not found. Please check your model deployment name.';
+      message = 'Model or deployment not found. Check the configured name.';
       break;
     case 'proxy_rate_limit_exceeded':
       message = 'The application request limit was reached. Wait a moment and try again.';
       break;
     case 'azure_openai_rate_limited':
-      message = 'Azure OpenAI is rate-limiting requests. Wait a moment and try again.';
+      message = 'The AI provider is rate-limiting requests. Wait a moment and try again.';
       break;
     case 'azure_openai_timeout':
     case 'edge_origin_unavailable':
-      message = 'Azure OpenAI is taking too long to respond. Please try again.';
+      message = 'The AI provider is taking too long to respond. Please try again.';
       break;
     case 'azure_openai_unavailable':
     case 'azure_openai_connection_failed':
-      message = 'Azure OpenAI is temporarily unavailable. Please try again.';
+      message = 'The AI provider is temporarily unavailable. Please try again.';
       break;
     case 'request_too_large':
       message = 'The request is too large. Reduce the diagram or image size and try again.';
@@ -453,11 +463,11 @@ export function createOpenAIProxyError(
       message = 'The selected model may not support image analysis. Try using GPT-5.6 Sol.';
       break;
     case 'content_filtered':
-      message = 'Azure OpenAI content filtering rejected the request. Revise the prompt and try again.';
+      message = 'The AI provider content policy rejected the request. Revise the prompt and try again.';
       break;
     case 'invalid_upstream_response':
     case 'azure_openai_non_json_error':
-      message = 'Azure OpenAI returned an unexpected response. Please try again.';
+      message = 'The AI provider returned an unexpected response. Please try again.';
       break;
     case 'network_error':
       message = 'The application could not reach the Azure OpenAI proxy. Check your connection and try again.';
@@ -465,10 +475,10 @@ export function createOpenAIProxyError(
     case 'invalid_upstream_request':
       message = options.vision
         ? 'The selected model may not support image analysis. Try using GPT-5.6 Sol.'
-        : 'Azure OpenAI rejected the request format. Please try again or simplify the request.';
+        : 'The AI provider rejected the request format. Please try again or simplify the request.';
       break;
     default:
-      message = `Azure OpenAI request failed (${result.status || 'network error'}). Please try again.`;
+      message = `AI provider request failed (${result.status || 'network error'}). Please try again.`;
   }
 
   if (result.error?.requestId) {
@@ -562,7 +572,7 @@ export async function callAzureOpenAIProxy(params: {
     };
   }
 
-  if (!parsed || !contentType.toLowerCase().includes('json')) {
+  if (!parsed || !isJsonMediaType(contentType)) {
     const error: OpenAIProxyErrorDetails = {
       source: 'proxy',
       code: 'invalid_upstream_response',

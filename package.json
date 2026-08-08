@@ -4,6 +4,8 @@
   "description": "Azure architecture diagram builder with official icon library",
   "type": "module",
   "scripts": {
+    "postinstall": "node scripts/patch-image-size.mjs",
+    "audit:production": "node scripts/audit-production-dependencies.mjs",
     "dev": "vite",
     "dev:full": "./scripts/dev-all.sh",
     "icons:sync": "node scripts/sync-azure-icons.mjs && node scripts/sync-fabric-icons.mjs",
@@ -66,6 +68,7 @@
   },
   "overrides": {
     "uuid": "^11.1.1",
-    "brace-expansion": "^1.1.17"
+    "brace-expansion": "^1.1.17",
+    "nanoid": "^3.3.17"
   }
 }

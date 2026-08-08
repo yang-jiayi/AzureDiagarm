@@ -7,7 +7,8 @@
  */
 
 import { getModelSettings, MODEL_CONFIG, ModelType, ReasoningEffort } from '../stores/modelSettingsStore';
-import { getBYOAISettings, isBYOAIReady } from '../stores/byoAISettingsStore';
+import { getBYOAISettings, isBYOAIVerified } from '../stores/byoAISettingsStore';
+import { isBYOAIEnabledOnServer } from '../services/runtimeConfig';
 
 // Override model info set when a diagram is applied from Compare Models
 let _overrideModel: ModelType | null = null;
@@ -102,7 +103,7 @@ export function isReasoningModel(): boolean {
  *   - gpt52-low, gpt52-medium, gpt52-high (reasoning models)
  */
 export function getModelSuffix(): string {
-  if (!_overrideModel && isBYOAIReady()) {
+  if (!_overrideModel && isBYOAIEnabledOnServer() && isBYOAIVerified()) {
     const settings = getBYOAISettings();
     const provider = settings.provider === 'openai' ? 'openai' : 'azureopenai';
     const model = settings.model
@@ -110,7 +111,7 @@ export function getModelSuffix(): string {
       .replace(/[^a-z0-9]+/g, '-')
       .replace(/^-+|-+$/g, '')
       .slice(0, 48) || 'model';
-    const reasoning = settings.isReasoning ? `-${getReasoningEffort()}` : '';
+    const reasoning = settings.isReasoning ? `-${settings.reasoningEffort}` : '';
     return `byo-${provider}-${model}${reasoning}`;
   }
 

@@ -511,6 +511,12 @@ test('custom AI settings keep credentials out of persistent browser storage', as
       });
       return;
     }
+    if (path === '/api/runtime-config') {
+      await fulfillJson(route, {
+        features: { bringYourOwnAI: true },
+      });
+      return;
+    }
     if (path === '/api/openai') {
       proxyRequests.push(route.request().postDataJSON() as Record<string, unknown>);
       await fulfillJson(route, { output_text: '{"status":"ok"}' });
@@ -534,7 +540,7 @@ test('custom AI settings keep credentials out of persistent browser storage', as
   await dialog.getByRole('textbox', { name: 'Model', exact: true }).fill('gpt-5');
   await dialog.getByLabel('API key').fill(apiKey);
   await dialog.getByRole('button', { name: 'Test connection' }).click();
-  await expect(dialog.getByText('Connection successful.')).toBeVisible();
+  await expect(dialog.getByText('Connection verified. You can now save and use it.')).toBeVisible();
 
   expect(proxyRequests).toHaveLength(1);
   expect((proxyRequests[0]?.byo as Record<string, unknown>)?.apiKey).toBe(apiKey);
@@ -543,19 +549,78 @@ test('custom AI settings keep credentials out of persistent browser storage', as
   ));
   expect(persistedValues).not.toContain(apiKey);
 
-  await dialog.getByRole('button', { name: 'Save and use' }).click();
+  await dialog.getByRole('button', { name: 'Save verified connection' }).click();
   await expect(dialog).toBeHidden();
   await page.getByRole('tab', { name: 'Create' }).click();
   await expect(page.locator('.model-popover-trigger')).toContainText('Custom: gpt-5');
+
+  await page.reload();
+  await page.getByRole('tab', { name: 'Create' }).click();
+  const modelTrigger = page.locator('.model-popover-trigger');
+  await expect(modelTrigger).toContainText('Custom: gpt-5');
+  await expect(modelTrigger).toContainText('Key required');
+  await modelTrigger.click();
+  await page.getByRole('button', { name: 'Enter key' }).click();
+
+  const reentryDialog = page.getByRole('dialog', { name: 'Bring your own AI endpoint' });
+  await expect(reentryDialog.getByText(/API key required: the saved connection remains selected/))
+    .toBeVisible();
+  await expect(reentryDialog.getByLabel('API key')).toHaveValue('');
+  await reentryDialog.getByLabel('API key').fill(apiKey);
+  await reentryDialog.getByRole('button', { name: 'Test connection' }).click();
+  await expect(reentryDialog.getByText('Connection verified. You can now save and use it.'))
+    .toBeVisible();
+  await reentryDialog.getByRole('button', { name: 'Save verified connection' }).click();
+  await expect(reentryDialog).toBeHidden();
 
   const generator = await openAiGenerator(page);
   await generator.getByLabel('Architecture Description or Modification')
     .fill('Create a small web application');
   await generator.getByRole('button', { name: 'Generate Architecture' }).click();
-  await expect.poll(() => proxyRequests.length).toBe(2);
-  expect((proxyRequests[1]?.byo as Record<string, unknown>)?.apiKey).toBe(apiKey);
-  expect((proxyRequests[1]?.byo as Record<string, unknown>)?.provider).toBe('openai');
-  expect(proxyRequests[1]?.deployment).toBe('gpt-5');
+  await expect.poll(() => proxyRequests.length).toBe(3);
+  expect((proxyRequests[2]?.byo as Record<string, unknown>)?.apiKey).toBe(apiKey);
+  expect((proxyRequests[2]?.byo as Record<string, unknown>)?.provider).toBe('openai');
+  expect(proxyRequests[2]?.deployment).toBe('gpt-5');
+});
+
+test('custom AI settings fail closed when the server kill switch is disabled', async ({ page }) => {
+  await initializePage(page);
+  await page.route('**/api/**', async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (path === '/api/access/me') {
+      await fulfillJson(route, {
+        enabled: false,
+        authenticated: true,
+        email: 'owner@example.com',
+        isAdmin: false,
+        allowed: true,
+      });
+      return;
+    }
+    if (path === '/api/runtime-config') {
+      await fulfillJson(route, {
+        features: { bringYourOwnAI: false },
+      });
+      return;
+    }
+    await fulfillJson(route, { error: 'Not found' }, 404);
+  });
+
+  await page.goto('/');
+  await page.getByRole('region', { name: 'Architecture canvas' }).focus();
+  await page.keyboard.press('Control+K');
+  const palette = page.getByTestId('command-palette');
+  await palette.getByRole('combobox', { name: 'Search commands and services' })
+    .fill('custom AI');
+  await palette.getByRole('option', { name: /^Configure custom AI/ }).click();
+
+  const dialog = page.getByRole('dialog', { name: 'Bring your own AI endpoint' });
+  await expect(dialog.getByText(
+    'Custom AI connections are disabled by the application administrator.',
+  )).toBeVisible();
+  await expect(dialog.getByRole('button', { name: 'Test connection' })).toBeDisabled();
+  await expect(dialog.getByRole('button', { name: 'Save verified connection' })).toBeDisabled();
+  await expectNoWcagViolations(page, '.byo-ai-dialog');
 });
 
 test('PNG export contains rendered diagram content instead of a blank canvas', async ({ page }, testInfo) => {

@@ -130,7 +130,7 @@ import { trackArchitectureGeneration, trackValidation, trackValidationHandoff, t
 import { classifyValidationTopics } from './services/validationConsensus';
 import type { IaCFormat } from './services/azureOpenAI';
 import FeedbackToast from './components/FeedbackToast';
-import LanguageSwitch from './components/LanguageSwitch';
+import HeaderUtilityMenu from './components/HeaderUtilityMenu';
 import ValidationHandoffToast from './components/ValidationHandoffToast';
 import { FEEDBACK_DONE_KEY } from './services/feedbackService';
 import { getAccessIdentity, type AccessIdentity } from './services/accessControlService';
@@ -6604,22 +6604,6 @@ function App() {
           </div>
           </ResponsiveRibbonSurface>
           <div className="header-identity-actions">
-            <button
-              type="button"
-              className="header-utility-button"
-              onClick={() => setIsAboutOpen(true)}
-              title={localize(language, {
-                en: 'About this application',
-                ja: 'このアプリについて',
-              })}
-              aria-label={localize(language, {
-                en: 'About this application',
-                ja: 'このアプリについて',
-              })}
-            >
-              <Info size={17} />
-              <span>{localize(language, { en: 'About', ja: '情報' })}</span>
-            </button>
             {accessIdentity?.enabled && accessIdentity.isAdmin && (
               <button
                 type="button"
@@ -6634,7 +6618,7 @@ function App() {
                 <span>{localize(language, { en: 'Access', ja: 'アクセス管理' })}</span>
               </button>
             )}
-            <LanguageSwitch />
+            <HeaderUtilityMenu onOpenAbout={() => setIsAboutOpen(true)} />
           </div>
           <MobileCommandBar
             activeSection={ribbonTabs.find((tab) => tab.id === activeRibbonTab)?.label || ''}

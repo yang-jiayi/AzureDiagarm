@@ -6,9 +6,16 @@ const express = require('express');
 const { asyncHandler } = require('./async-handler');
 
 const DEPLOYMENT_NAME_RE = /^[A-Za-z0-9._-]{1,64}$/;
-const BYO_MODEL_NAME_RE = /^[A-Za-z0-9._:-]{1,128}$/;
-const API_VERSION_RE = /^\d{4}-\d{2}-\d{2}(?:-preview)?$/;
+const BYO_MODEL_NAME_RE = /^(?=.{1,128}$)(?=.*[A-Za-z0-9])[A-Za-z0-9._:-]+$/;
 const API_KEY_RE = /^[^\s\r\n]{8,512}$/;
+const BYO_REASONING_EFFORTS = new Set([
+  'none',
+  'minimal',
+  'low',
+  'medium',
+  'high',
+  'xhigh',
+]);
 const AZURE_OPENAI_HOST_SUFFIXES = [
   '.openai.azure.com',
   '.openai.azure.us',
@@ -16,6 +23,9 @@ const AZURE_OPENAI_HOST_SUFFIXES = [
   '.cognitiveservices.azure.com',
   '.cognitiveservices.azure.us',
   '.cognitiveservices.azure.cn',
+  '.services.ai.azure.com',
+  '.services.ai.azure.us',
+  '.services.ai.azure.cn',
 ];
 const DEFAULT_API_VERSION = '2024-05-01-preview';
 const DEFAULT_ANTHROPIC_VERSION = '2023-06-01';
@@ -149,24 +159,13 @@ function resolveByoRequestConfig(rawConfig, allowByoAIEndpoints) {
       provider,
       endpoint: normalizeOfficialOpenAIEndpoint(rawConfig.endpoint),
       apiKey,
-      apiVersion: null,
     };
   }
 
-  const apiVersion = typeof rawConfig.apiVersion === 'string'
-    ? rawConfig.apiVersion.trim()
-    : DEFAULT_API_VERSION;
-  if (!API_VERSION_RE.test(apiVersion)) {
-    throw createByoValidationError(
-      'invalid_byo_api_version',
-      'The Azure OpenAI API version is invalid.',
-    );
-  }
   return {
     provider,
     endpoint: normalizeAzureOpenAIEndpoint(rawConfig.endpoint),
     apiKey,
-    apiVersion,
   };
 }
 
@@ -176,7 +175,15 @@ function buildByoAIUrl(config, deployment, apiFormat) {
       ? 'https://api.openai.com/v1/chat/completions'
       : 'https://api.openai.com/v1/responses';
   }
-  return buildOpenAIUrl(config.endpoint, deployment, apiFormat, config.apiVersion);
+  const base = config.endpoint.endsWith('/') ? config.endpoint : `${config.endpoint}/`;
+  return apiFormat === 'chat-completions'
+    ? `${base}openai/v1/chat/completions`
+    : `${base}openai/v1/responses`;
+}
+
+function isJsonMediaType(contentType) {
+  const mediaType = String(contentType || '').split(';', 1)[0].trim().toLowerCase();
+  return /^application\/(?:[a-z0-9!#$&^_.+-]+\+)?json$/.test(mediaType);
 }
 
 function classifyByoUpstreamError(classified) {
@@ -466,13 +473,48 @@ function createOpenAIProxyRouter(options) {
         32768,
       );
     } else if (apiFormat === 'chat-completions') {
-      if (byoConfig?.provider === 'openai') {
+      if (byoConfig) {
         upstreamBody.model = deployment;
       }
-      upstreamBody.max_tokens = Math.min(
-        Math.max(Number(upstreamBody.max_tokens) || 1, 1),
+      const isReasoningRequest = upstreamBody.reasoning_effort !== undefined;
+      const usesCompletionTokenLimit = upstreamBody.max_completion_tokens !== undefined
+        || isReasoningRequest;
+      const requestedTokenLimit = usesCompletionTokenLimit
+        ? (upstreamBody.max_completion_tokens ?? upstreamBody.max_tokens)
+        : upstreamBody.max_tokens;
+      const boundedTokenLimit = Math.min(
+        Math.max(Number(requestedTokenLimit) || 1, 1),
         32768,
       );
+      if (usesCompletionTokenLimit) {
+        upstreamBody.max_completion_tokens = boundedTokenLimit;
+        delete upstreamBody.max_tokens;
+      } else {
+        upstreamBody.max_tokens = boundedTokenLimit;
+      }
+      if (isReasoningRequest) {
+        const requestedEffort = upstreamBody.reasoning_effort;
+        upstreamBody.reasoning_effort = BYO_REASONING_EFFORTS.has(requestedEffort)
+          ? requestedEffort
+          : 'low';
+        delete upstreamBody.temperature;
+        delete upstreamBody.top_p;
+        delete upstreamBody.presence_penalty;
+        delete upstreamBody.frequency_penalty;
+        delete upstreamBody.logprobs;
+        delete upstreamBody.logit_bias;
+        if (
+          Array.isArray(upstreamBody.tools)
+          && upstreamBody.tools.length > 0
+          && upstreamBody.reasoning_effort !== 'none'
+        ) {
+          return sendError(res, 400, requestId, {
+            source: 'proxy',
+            code: 'invalid_upstream_request',
+            message: 'Chat Completions tool calls require reasoning effort none. Use Responses for reasoning with tools.',
+          });
+        }
+      }
     } else {
       if (!Array.isArray(upstreamBody.messages) || upstreamBody.messages.length === 0) {
         return sendError(res, 400, requestId, {
@@ -657,7 +699,7 @@ function createOpenAIProxyRouter(options) {
       });
     }
 
-    if (!contentType.toLowerCase().includes('json')) {
+    if (!isJsonMediaType(contentType)) {
       logEvent(logger, 'error', {
         event: 'invalid_upstream_response',
         requestId,
@@ -703,6 +745,7 @@ module.exports = {
   buildOpenAIUrl,
   classifyUpstreamError,
   createOpenAIProxyRouter,
+  isJsonMediaType,
   logFoundryConfiguration,
   normalizeAzureOpenAIEndpoint,
   resolveByoRequestConfig,

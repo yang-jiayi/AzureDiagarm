@@ -7,9 +7,9 @@ import { generateArchitectureWithAI, generateFollowUpSuggestions, isAzureOpenAIC
 import { useModelSettings, MODEL_CONFIG } from '../stores/modelSettingsStore';
 import {
   getBYOAIProviderLabel,
-  isBYOAIReady,
   useBYOAISettings,
 } from '../stores/byoAISettingsStore';
+import { useRuntimeConfig } from '../services/runtimeConfig';
 import {
   buildModificationPrompt,
   summarizeArchitectureChange,
@@ -266,6 +266,7 @@ const ArchitectureChatPanel: React.FC<ArchitectureChatPanelProps> = ({
   const [askingBest, setAskingBest] = useState(false);
   const [modelSettings] = useModelSettings();
   const byoSnapshot = useBYOAISettings();
+  const runtimeConfig = useRuntimeConfig();
 
   const threadRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -276,7 +277,10 @@ const ArchitectureChatPanel: React.FC<ArchitectureChatPanelProps> = ({
 
   diagramKeyRef.current = diagramKey;
 
-  const byoReady = byoSnapshot.settings.enabled && isBYOAIReady();
+  const byoReady = byoSnapshot.settings.enabled
+    && byoSnapshot.verified
+    && runtimeConfig.status === 'ready'
+    && runtimeConfig.bringYourOwnAI;
   const configured = isAzureOpenAIConfigured() || byoReady;
   const hasDiagram = currentArchitecture.nodes.some((n) => n.type === 'azureNode');
   const modelName = byoReady

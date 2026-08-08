@@ -196,7 +196,8 @@ jobs:
           set -Eeuo pipefail
           git diff --check
           npm ci --ignore-scripts
-          npm audit --omit=dev --audit-level=high
+          node scripts/patch-image-size.mjs
+          npm run audit:production
           npm run build
           npm run lint
           npm test
@@ -949,7 +950,7 @@ jobs:
           AZURE_ACCESS_KEY_VAULT_RESOURCE_ID: ${{ vars.AZURE_ACCESS_KEY_VAULT_RESOURCE_ID }}
           AZURE_RUNTIME_CLIENT_ID: ${{ vars.AZURE_RUNTIME_CLIENT_ID }}
           AZURE_OPENAI_ENDPOINT: ${{ vars.AZURE_OPENAI_ENDPOINT }}
-          ALLOW_BYO_AI_ENDPOINTS: 'true'
+          ALLOW_BYO_AI_ENDPOINTS: ${{ vars.ALLOW_BYO_AI_ENDPOINTS || 'false' }}
           AZURE_OPENAI_DEPLOYMENT_GPT56SOL: ${{ vars.AZURE_OPENAI_DEPLOYMENT_GPT56SOL }}
           AZURE_OPENAI_DEPLOYMENT_GPT56TERRA: ${{ vars.AZURE_OPENAI_DEPLOYMENT_GPT56TERRA }}
           AZURE_OPENAI_DEPLOYMENT_GPT56LUNA: ${{ vars.AZURE_OPENAI_DEPLOYMENT_GPT56LUNA }}
@@ -1278,7 +1279,7 @@ jobs:
             "AZURE_CLIENT_ID=${{ vars.AZURE_RUNTIME_CLIENT_ID }}"
             "AZURE_OPENAI_ENDPOINT=${{ vars.AZURE_OPENAI_ENDPOINT }}"
             "AZURE_OPENAI_ALLOWED_DEPLOYMENTS=${{ vars.AZURE_OPENAI_DEPLOYMENT_GPT56SOL }},${{ vars.AZURE_OPENAI_DEPLOYMENT_GPT56TERRA }},${{ vars.AZURE_OPENAI_DEPLOYMENT_GPT56LUNA }}"
-            "ALLOW_BYO_AI_ENDPOINTS=true"
+            "ALLOW_BYO_AI_ENDPOINTS=${{ vars.ALLOW_BYO_AI_ENDPOINTS || 'false' }}"
             "AZURE_FOUNDRY_ENDPOINT=${{ vars.AZURE_FOUNDRY_ENDPOINT }}"
             "AZURE_FOUNDRY_ALLOWED_DEPLOYMENTS=${{ vars.AZURE_FOUNDRY_DEPLOYMENT_CLAUDE_OPUS5 }}"
             "OPENAI_RATE_LIMIT_PER_HOUR=120"

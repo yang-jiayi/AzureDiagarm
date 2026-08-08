@@ -25,9 +25,9 @@ import {
 } from '../stores/modelSettingsStore';
 import {
   getBYOAIProviderLabel,
-  isBYOAIReady,
   useBYOAISettings,
 } from '../stores/byoAISettingsStore';
+import { useRuntimeConfig } from '../services/runtimeConfig';
 import { trackImageImport } from '../services/telemetryService';
 import { buildModificationPrompt } from '../services/modificationPrompt';
 import './AIArchitectureGenerator.css';
@@ -255,7 +255,11 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
   // Model settings from reactive hook (stays in sync with dropdown)
   const [modelSettings] = useModelSettings();
   const byoSnapshot = useBYOAISettings();
-  const byoActive = byoSnapshot.settings.enabled && isBYOAIReady();
+  const runtimeConfig = useRuntimeConfig();
+  const byoActive = byoSnapshot.settings.enabled
+    && byoSnapshot.verified
+    && runtimeConfig.status === 'ready'
+    && runtimeConfig.bringYourOwnAI;
 
   // Blueprint generation requires a general-purpose OpenAI deployment.
   // Keep the architecture model untouched and correct only the blueprint override.
@@ -386,7 +390,7 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
       return;
     }
 
-    if (!isAzureOpenAIConfigured() && !isBYOAIReady()) {
+    if (!isAzureOpenAIConfigured()) {
       setError(localize(language, {
         en: 'No AI model is configured. Connect a custom endpoint or contact the application administrator.',
         ja: 'AI モデルが設定されていません。カスタム エンドポイントへ接続するか、アプリケーション管理者へ連絡してください。',

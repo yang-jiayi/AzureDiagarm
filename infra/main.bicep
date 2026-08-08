@@ -20,6 +20,9 @@ param azureOpenAiEndpoint string = ''
 @description('Full resource ID of the Azure OpenAI account for managed-identity RBAC.')
 param azureOpenAiResourceId string = ''
 
+@description('Allow users to route requests to approved user-owned Azure OpenAI, Microsoft Foundry, or OpenAI endpoints.')
+param allowByoAIEndpoints bool = false
+
 @description('Microsoft Foundry AIServices endpoint URL for Anthropic models.')
 param azureFoundryEndpoint string = ''
 
@@ -148,6 +151,7 @@ module resources './resources.bicep' = {
     mcpAuthToken: mcpAuthToken
     azureOpenAiEndpoint: azureOpenAiEndpoint
     azureOpenAiAllowedDeployments: openAiAllowedDeployments
+    allowByoAIEndpoints: allowByoAIEndpoints
     azureFoundryEndpoint: azureFoundryEndpoint
     azureFoundryAllowedDeployments: foundryAllowedDeployments
     feedbackEmailEndpoint: feedbackEmailEndpoint

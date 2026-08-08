@@ -8,7 +8,24 @@
  */
 
 import { forwardRef } from 'react';
-import { Brain, RotateCcw, ChevronDown, Cpu, Layers, Sparkles, Zap, Sun, Globe2, Moon, X, PlugZap } from 'lucide-react';
+import {
+  AlertTriangle,
+  Brain,
+  CheckCircle2,
+  ChevronDown,
+  Cpu,
+  Globe2,
+  KeyRound,
+  Layers,
+  Moon,
+  PlugZap,
+  RotateCcw,
+  SlidersHorizontal,
+  Sparkles,
+  Sun,
+  X,
+  Zap,
+} from 'lucide-react';
 import {
   useModelSettings,
   MODEL_CONFIG,
@@ -25,9 +42,9 @@ import {
 } from '../stores/modelSettingsStore';
 import {
   getBYOAIModelLabel,
-  isBYOAIReady,
   useBYOAISettings,
 } from '../stores/byoAISettingsStore';
+import { useRuntimeConfig } from '../services/runtimeConfig';
 import './ModelSettingsPopover.css';
 import { useLanguage } from '../i18n/LanguageContext';
 import { localize } from '../i18n/localization';
@@ -44,10 +61,42 @@ const ModelSettingsPopover = forwardRef<HTMLDivElement, ModelSettingsPopoverProp
     const text = (en: string, ja: string) => localize(language, { en, ja });
     const [settings, updateSettings] = useModelSettings();
     const byoSnapshot = useBYOAISettings();
+    const runtimeConfig = useRuntimeConfig();
     const availableModels = getAvailableModels();
     const currentConfig = MODEL_CONFIG[settings.model];
-    const byoActive = byoSnapshot.settings.enabled && isBYOAIReady();
     const byoConfigured = byoSnapshot.settings.enabled;
+    const byoServerAvailable = runtimeConfig.status === 'ready'
+      && runtimeConfig.bringYourOwnAI;
+    const byoActive = byoConfigured
+      && byoServerAvailable
+      && byoSnapshot.verified;
+    const byoStatus = !byoConfigured
+      ? 'not-connected'
+      : runtimeConfig.status === 'unknown' || runtimeConfig.status === 'loading'
+        ? 'checking'
+        : runtimeConfig.status === 'error'
+          ? 'server-error'
+        : !byoServerAvailable
+          ? 'unavailable'
+          : byoSnapshot.connectionState;
+    const byoStatusLabel = (() => {
+      switch (byoStatus) {
+        case 'verified':
+          return text('Verified', '確認済み');
+        case 'key-required':
+          return text('Key required', 'キーが必要');
+        case 'unverified':
+          return text('Verification required', '接続確認が必要');
+        case 'unavailable':
+          return text('Disabled by admin', '管理者により無効');
+        case 'server-error':
+          return text('Server unavailable', 'サーバー利用不可');
+        case 'checking':
+          return text('Checking server', 'サーバー確認中');
+        default:
+          return text('Not connected', '未接続');
+      }
+    })();
 
     const hasAnyOverride = (Object.keys(FEATURE_CONFIG) as FeatureType[]).some(hasFeatureOverride);
 
@@ -159,11 +208,15 @@ const ModelSettingsPopover = forwardRef<HTMLDivElement, ModelSettingsPopoverProp
           aria-haspopup="menu"
           aria-expanded={isOpen}
         >
-          {byoActive ? <PlugZap size={14} /> : getModelIcon(settings.model)}
+          {byoConfigured ? <PlugZap size={14} /> : getModelIcon(settings.model)}
           <span className="model-popover-label">
-            {byoActive ? `Custom: ${byoSnapshot.settings.model}` : currentConfig.displayName}
+            {byoConfigured ? `Custom: ${byoSnapshot.settings.model}` : currentConfig.displayName}
           </span>
-          {!byoActive && currentConfig.isReasoning && (
+          {byoConfigured ? (
+            <span className={`model-popover-reasoning model-popover-reasoning--${byoStatus}`}>
+              {byoStatusLabel}
+            </span>
+          ) : currentConfig.isReasoning && (
             <span className="model-popover-reasoning">{t(getReasoningEffortLabel(settings.reasoningEffort))}</span>
           )}
           {hasAnyOverride && <span className="model-popover-override-dot" />}
@@ -187,10 +240,16 @@ const ModelSettingsPopover = forwardRef<HTMLDivElement, ModelSettingsPopoverProp
                 <X size={13} />
               </button>
             </div>
-            <div className={`msp-byo-card${byoActive ? ' msp-byo-card--active' : ''}`}>
+            <div className={`msp-byo-card msp-byo-card--${byoStatus}`}>
               <div className="msp-byo-copy">
                 <span className="msp-byo-icon" aria-hidden="true">
-                  <PlugZap size={16} />
+                  {byoStatus === 'verified'
+                    ? <CheckCircle2 size={16} />
+                    : byoStatus === 'key-required'
+                      ? <KeyRound size={16} />
+                      : byoStatus === 'unavailable' || byoStatus === 'server-error'
+                        ? <AlertTriangle size={16} />
+                        : <PlugZap size={16} />}
                 </span>
                 <span>
                   <strong>{byoConfigured ? getBYOAIModelLabel() : text(
@@ -200,19 +259,37 @@ const ModelSettingsPopover = forwardRef<HTMLDivElement, ModelSettingsPopoverProp
                   <small>
                     {byoActive
                       ? text(
-                          'Custom endpoint active. Managed per-feature settings are paused.',
-                          'カスタム エンドポイントを使用中です。機能別の管理モデル設定は一時停止しています。',
+                          `Custom endpoint active with ${getReasoningEffortLabel(byoSnapshot.settings.reasoningEffort).toLowerCase()} reasoning.`,
+                          `カスタム エンドポイントを使用中です。推論強度: ${getReasoningEffortLabel(byoSnapshot.settings.reasoningEffort)}`,
                         )
-                      : byoConfigured
+                      : byoStatus === 'key-required'
                         ? text(
-                            'Custom endpoint needs an API key for this browser tab.',
-                            'このブラウザー タブで使用する API キーを入力してください。',
+                            'The saved endpoint remains selected. Re-enter and verify the API key to resume.',
+                            '保存済みエンドポイントは選択されたままです。API キーを再入力して確認すると再開できます。',
                           )
-                        : text(
-                            'Use your Azure OpenAI or official OpenAI endpoint.',
-                            '独自の Azure OpenAI または公式 OpenAI エンドポイントを使用します。',
-                          )}
+                        : byoStatus === 'unavailable'
+                          ? text(
+                              'The server kill switch is off. Disconnect or contact the administrator.',
+                              'サーバーのキル スイッチがオフです。接続解除するか管理者に連絡してください。',
+                            )
+                          : byoStatus === 'server-error'
+                            ? text(
+                                'Server availability could not be confirmed. Requests remain blocked.',
+                                'サーバーの利用可否を確認できないため、リクエストはブロックされています。',
+                              )
+                            : byoConfigured
+                            ? text(
+                                'Test this connection before it can be used.',
+                                '使用する前に接続テストを実行してください。',
+                              )
+                            : text(
+                                'Use your Azure OpenAI, Microsoft Foundry, or official OpenAI endpoint.',
+                                '独自の Azure OpenAI、Microsoft Foundry、または公式 OpenAI エンドポイントを使用します。',
+                              )}
                   </small>
+                  <span className={`msp-byo-status msp-byo-status--${byoStatus}`}>
+                    {byoStatusLabel}
+                  </span>
                 </span>
               </div>
               <button
@@ -223,7 +300,11 @@ const ModelSettingsPopover = forwardRef<HTMLDivElement, ModelSettingsPopoverProp
                   onOpenBYOSettings();
                 }}
               >
-                {byoConfigured ? text('Configure', '設定') : text('Connect', '接続')}
+                {byoStatus === 'key-required'
+                  ? text('Enter key', 'キーを入力')
+                  : byoConfigured
+                    ? text('Configure', '設定')
+                    : text('Connect', '接続')}
               </button>
             </div>
 
@@ -231,11 +312,11 @@ const ModelSettingsPopover = forwardRef<HTMLDivElement, ModelSettingsPopoverProp
             <div className="toolbar-dropdown-heading">
               <span>{text('Managed models', '管理モデル')}</span>
             </div>
-            {byoActive && (
+            {byoConfigured && (
               <p className="msp-managed-note">
                 {text(
-                  'These settings remain saved and will resume after the custom endpoint is disconnected.',
-                  'これらの設定は保持され、カスタム エンドポイントの接続解除後に再び使用されます。',
+                  'Managed settings remain saved but are paused while a custom endpoint is selected, including while its key is missing.',
+                  '管理モデル設定は保存されたままですが、キー未入力時を含め、カスタム エンドポイントが選択されている間は一時停止します。',
                 )}
               </p>
             )}
@@ -246,7 +327,7 @@ const ModelSettingsPopover = forwardRef<HTMLDivElement, ModelSettingsPopoverProp
                   className={`msp-model-btn ${settings.model === model ? 'active' : ''}`}
                   onClick={() => handleModelChange(model)}
                   title={translate(MODEL_CONFIG[model].description)}
-                  disabled={byoActive}
+                  disabled={byoConfigured}
                 >
                   <span className="msp-model-btn-main">
                     {getModelIcon(model)}
@@ -273,7 +354,7 @@ const ModelSettingsPopover = forwardRef<HTMLDivElement, ModelSettingsPopoverProp
                         className={`msp-reasoning-btn ${settings.reasoningEffort === level ? 'active' : ''}`}
                         onClick={() => handleReasoningChange(level)}
                         title={level === 'none' ? t("No reasoning - fastest response") : undefined}
-                        disabled={byoActive}
+                        disabled={byoConfigured}
                       >
                         {t(getReasoningEffortLabel(level))}
                       </button>
@@ -283,93 +364,106 @@ const ModelSettingsPopover = forwardRef<HTMLDivElement, ModelSettingsPopoverProp
               </>
             )}
 
-            <div className="toolbar-dropdown-separator" role="separator" />
-
-            <div className="msp-portfolio">
-              <div className="msp-portfolio-copy">
-                <strong>{t("Recommended portfolio")}</strong>
-                <span>{t("Sol for architecture • Terra for validation and deployment • Luna for blueprints")}</span>
-              </div>
-              <button
-                className="msp-portfolio-btn"
-                onClick={applyRecommendedPortfolio}
-                title={t("Use recommended portfolio")}
-                disabled={byoActive}
-              >
-                <Sparkles size={12} />
-                {t("Apply")}
-              </button>
-            </div>
-
-            {/* Per-Feature Overrides */}
-            <div className="toolbar-dropdown-heading">
-              {' '}{t("Per-Feature Settings")}{' '}{hasAnyOverride && (
-                <button
-                  className="msp-reset-btn"
-                  onClick={resetAllOverrides}
-                  title={t("Reset all to default")}
-                  disabled={byoActive}
-                >
-                  <RotateCcw size={11} />
-                </button>
-              )}
-            </div>
-
-            <div className="msp-features">
-              {(Object.keys(FEATURE_CONFIG) as FeatureType[]).map((feature) => {
-                const featureConfig = FEATURE_CONFIG[feature];
-                const currentModel = getFeatureCurrentModel(feature);
-                const currentReasoning = getFeatureCurrentReasoning(feature);
-                const isOverridden = currentModel !== 'default';
-                const selectedModelConfig = isOverridden ? MODEL_CONFIG[currentModel as ModelType] : null;
-                const effectiveModel = getEffectiveModel(feature);
-                const effectiveReasoning = getEffectiveReasoning(feature);
-
-                return (
-                  <div key={feature} className={`msp-feature-row ${isOverridden ? 'overridden' : ''}`}>
-                    <div className="msp-feature-info">
-                      <span className="msp-feature-name">{translate(featureConfig.displayName)}</span>
-                      <span className="msp-feature-effective">
-                        {MODEL_CONFIG[effectiveModel].displayName}
-                        {effectiveReasoning && ` (${t(getReasoningEffortLabel(effectiveReasoning))})`}
-                      </span>
-                    </div>
-                    <div className="msp-feature-controls">
-                      <select
-                        value={currentModel}
-                        onChange={(e) => handleFeatureModelChange(feature, e.target.value)}
-                        className="msp-feature-select"
-                        disabled={byoActive}
-                      >
-                        <option value="default">{t("Default")}</option>
-                        {availableModels.map((model) => (
-                          <option key={model} value={model}>
-                            {MODEL_CONFIG[model].displayName}
-                          </option>
-                        ))}
-                      </select>
-
-                      {isOverridden && selectedModelConfig?.isReasoning && (
-                        <select
-                          value={currentReasoning}
-                          onChange={(e) =>
-                            handleFeatureReasoningChange(feature, e.target.value as ReasoningEffort)
-                          }
-                          className="msp-reasoning-select"
-                          disabled={byoActive}
-                        >
-                          {getSupportedReasoningEfforts(currentModel as ModelType).map(level => (
-                            <option key={level} value={level}>
-                              {t(getReasoningEffortLabel(level))}
-                            </option>
-                          ))}
-                        </select>
-                      )}
-                    </div>
+            <details className="msp-advanced-settings">
+              <summary>
+                <span>
+                  <SlidersHorizontal size={14} aria-hidden="true" />
+                  {text('Advanced feature overrides', '高度な機能別設定')}
+                </span>
+                <span className="msp-advanced-summary-status">
+                  {hasAnyOverride
+                    ? text('Customized', 'カスタム済み')
+                    : text('Using defaults', '既定値を使用')}
+                  <ChevronDown size={14} aria-hidden="true" />
+                </span>
+              </summary>
+              <div className="msp-advanced-body">
+                <div className="msp-portfolio">
+                  <div className="msp-portfolio-copy">
+                    <strong>{t("Recommended portfolio")}</strong>
+                    <span>{t("Sol for architecture • Terra for validation and deployment • Luna for blueprints")}</span>
                   </div>
-                );
-              })}
-            </div>
+                  <button
+                    className="msp-portfolio-btn"
+                    onClick={applyRecommendedPortfolio}
+                    title={t("Use recommended portfolio")}
+                    disabled={byoConfigured}
+                  >
+                    <Sparkles size={12} />
+                    {t("Apply")}
+                  </button>
+                </div>
+
+                <div className="toolbar-dropdown-heading">
+                  {' '}{t("Per-Feature Settings")}{' '}{hasAnyOverride && (
+                    <button
+                      className="msp-reset-btn"
+                      onClick={resetAllOverrides}
+                      title={t("Reset all to default")}
+                      disabled={byoConfigured}
+                    >
+                      <RotateCcw size={11} />
+                    </button>
+                  )}
+                </div>
+
+                <div className="msp-features">
+                  {(Object.keys(FEATURE_CONFIG) as FeatureType[]).map((feature) => {
+                    const featureConfig = FEATURE_CONFIG[feature];
+                    const currentModel = getFeatureCurrentModel(feature);
+                    const currentReasoning = getFeatureCurrentReasoning(feature);
+                    const isOverridden = currentModel !== 'default';
+                    const selectedModelConfig = isOverridden ? MODEL_CONFIG[currentModel as ModelType] : null;
+                    const effectiveModel = getEffectiveModel(feature);
+                    const effectiveReasoning = getEffectiveReasoning(feature);
+
+                    return (
+                      <div key={feature} className={`msp-feature-row ${isOverridden ? 'overridden' : ''}`}>
+                        <div className="msp-feature-info">
+                          <span className="msp-feature-name">{translate(featureConfig.displayName)}</span>
+                          <span className="msp-feature-effective">
+                            {MODEL_CONFIG[effectiveModel].displayName}
+                            {effectiveReasoning && ` (${t(getReasoningEffortLabel(effectiveReasoning))})`}
+                          </span>
+                        </div>
+                        <div className="msp-feature-controls">
+                          <select
+                            value={currentModel}
+                            onChange={(e) => handleFeatureModelChange(feature, e.target.value)}
+                            className="msp-feature-select"
+                            disabled={byoConfigured}
+                          >
+                            <option value="default">{t("Default")}</option>
+                            {availableModels.map((model) => (
+                              <option key={model} value={model}>
+                                {MODEL_CONFIG[model].displayName}
+                              </option>
+                            ))}
+                          </select>
+
+                          {isOverridden && selectedModelConfig?.isReasoning && (
+                            <select
+                              value={currentReasoning}
+                              onChange={(e) =>
+                                handleFeatureReasoningChange(feature, e.target.value as ReasoningEffort)
+                              }
+                              className="msp-reasoning-select"
+                              disabled={byoConfigured}
+                            >
+                              {getSupportedReasoningEfforts(currentModel as ModelType).map(level => (
+                                <option key={level} value={level}>
+                                  {t(getReasoningEffortLabel(level))}
+                                </option>
+                              ))}
+                            </select>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </details>
           </div>
         )}
       </div>

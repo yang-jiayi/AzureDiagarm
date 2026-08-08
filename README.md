@@ -992,13 +992,18 @@ Compare AI model critiques, then click **"Present"** to have a photorealistic **
 The same token server also brokers Azure OpenAI and Microsoft Foundry so credentials never reach the browser:
 
 - **`/api/openai`** — proxies architecture generation, chat refinement, validation, and deployment-guide calls. Azure OpenAI uses `AZURE_OPENAI_ENDPOINT`; Claude Opus 5 uses the Microsoft Foundry Anthropic Messages endpoint configured by `AZURE_FOUNDRY_ENDPOINT` and the fail-closed `AZURE_FOUNDRY_ALLOWED_DEPLOYMENTS` allowlist. Both prefer managed identity (`DefaultAzureCredential`) with optional server-side API-key fallback. The client only sends the request body, deployment name, and API format — keys are never bundled.
-- **Bring your own AI endpoint (optional)** — when `ALLOW_BYO_AI_ENDPOINTS=true`,
-  users can connect a deployment on a trusted Azure OpenAI host or a model on
-  the official `api.openai.com` API. The key is kept only in browser-tab memory
-  and passes through `/api/openai` for the request; it is not written to local
-  storage, diagrams, URLs, telemetry, or server logs. Arbitrary
-  OpenAI-compatible hosts are intentionally rejected to prevent SSRF and
-  open-proxy abuse.
+- **Bring your own AI endpoint (optional)** — when the explicit server kill
+  switch `ALLOW_BYO_AI_ENDPOINTS=true` is enabled, users can connect a deployment
+  on a trusted Azure OpenAI or Microsoft Foundry resource host, or a model on the
+  official `api.openai.com` API. Azure requests use the implicit-versioned
+  `/openai/v1/responses` or `/openai/v1/chat/completions` routes. The key is kept
+  only in browser-tab memory and passes through `/api/openai` for the request; it
+  is not written to local storage, diagrams, URLs, telemetry, or server logs.
+  Reloading the tab keeps the selected public configuration but blocks AI calls
+  until the user re-enters and verifies the key. The client reads
+  `/api/runtime-config` so an administrator-disabled server switch is visible
+  before users attempt a connection. Arbitrary OpenAI-compatible hosts are
+  intentionally rejected to prevent SSRF and open-proxy abuse.
 - **`/api/docs-search`** — grounds deployment guides in official Microsoft Learn documentation by calling the Microsoft Learn MCP endpoint server-side and returning citable `{title, url, excerpt}` results. Best-effort (soft-fails to empty).
 
 #### 🔧 Infrastructure
@@ -1007,6 +1012,11 @@ The same token server also brokers Azure OpenAI and Microsoft Foundry so credent
 - `Dockerfile` — extended build stage with `ARG/ENV VITE_SPEECH_REGION`; production stage installs token server deps
 - `scripts/update_aca.sh` — adds `VITE_SPEECH_REGION` build arg and `AZURE_SPEECH_REGION` / `AZURE_SPEECH_RESOURCE_ID` runtime env vars
 - ACA managed identity assigned `Cognitive Services Speech User` role on the Speech resource (no stored credentials)
+
+For GitHub Actions deployments, set the repository variable
+`ALLOW_BYO_AI_ENDPOINTS=true` only after approving BYO access for that
+environment. Missing variables and all self-hosted deployment defaults remain
+fail-closed (`false`).
 
 ---
 

@@ -40,7 +40,7 @@ jobs:
 
       - name: Audit production dependencies
         run: |
-          npm audit --omit=dev --audit-level=high
+          npm run audit:production
           npm --prefix server audit --omit=dev --audit-level=high
 
       - name: Build (tsc + vite)
