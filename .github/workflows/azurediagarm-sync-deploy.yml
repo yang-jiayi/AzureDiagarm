@@ -196,7 +196,8 @@ jobs:
           set -Eeuo pipefail
           git diff --check
           npm ci --ignore-scripts
-          npm audit --omit=dev --audit-level=high
+          node scripts/patch-image-size.mjs
+          npm run audit:production
           npm run build
           npm run lint
           npm test
