@@ -5,6 +5,7 @@ WORKDIR /app
 
 # Copy package files
 COPY package*.json ./
+COPY scripts/patch-image-size.mjs ./scripts/patch-image-size.mjs
 
 # Install dependencies
 RUN npm ci
