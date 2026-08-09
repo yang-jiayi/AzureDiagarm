@@ -47,6 +47,16 @@ test('content capture plan omits optional composition regions', () => {
   assert.equal(plan.height, plan.diagramHeight);
 });
 
+test('content capture plan reserves enough height for an export overlay', () => {
+  const plan = calculateContentCapturePlan(
+    { x: 0, y: 0, width: 300, height: 80 },
+    { minDiagramHeight: 420 },
+  );
+
+  assert.equal(plan.diagramHeight, 420);
+  assert.equal(plan.height, 420);
+});
+
 test('screen-space label rectangles convert back to diagram coordinates', () => {
   const bounds = screenRectToDiagramBounds(
     { left: 540, top: 320, width: 180, height: 60 },

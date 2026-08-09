@@ -64,7 +64,7 @@
   z-index: 8;
   left: 50%;
   top: 50%;
-  width: min(860px, calc(100% - 48px));
+  width: min(1040px, calc(100% - 48px));
   transform: translate(-50%, -50%);
   padding: 1.15rem;
   background: var(--azd-color-surface-glass);
@@ -77,7 +77,7 @@
 .start-chooser-kicker { color: var(--azd-color-action); font-size: 0.72rem; font-weight: 800; text-transform: uppercase; }
 .start-chooser-heading h2 { margin: 0.22rem 0; color: var(--azd-color-text-strong); font-size: 1.35rem; }
 .start-chooser-heading p { margin: 0; color: var(--azd-color-text-muted); font-size: 0.86rem; }
-.start-choice-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.75rem; }
+.start-choice-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0.75rem; }
 .start-choice {
   position: relative;
   display: flex;
@@ -117,7 +117,7 @@ button.start-choice:hover { border-color: var(--azd-color-action); background: v
 .deliver-chooser-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 1800;
+  z-index: var(--azd-z-modal);
   display: grid;
   place-items: center;
   padding: 1rem;

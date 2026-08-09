@@ -39,6 +39,7 @@ interface ContentCapturePlanOptions {
   minWidth?: number;
   maxWidth?: number;
   maxDiagramHeight?: number;
+  minDiagramHeight?: number;
   minScale?: number;
   maxScale?: number;
 }
@@ -129,7 +130,10 @@ export function calculateContentCapturePlan(
   const scaledWidth = contentWidth * scale;
   const scaledHeight = contentHeight * scale;
   const width = Math.max(minWidth, Math.ceil(scaledWidth + 2 * margin));
-  const diagramHeight = Math.ceil(scaledHeight + 2 * margin);
+  const diagramHeight = Math.max(
+    options.minDiagramHeight ?? 0,
+    Math.ceil(scaledHeight + 2 * margin),
+  );
   const headerHeight = options.hasHeader ? 84 : 0;
   const legendItemCount = options.legendItemCount ?? 0;
   const legendColumns = width >= 1400 ? 5 : width >= 900 ? 3 : 2;

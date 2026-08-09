@@ -8,7 +8,7 @@
 .command-palette {
   width: min(680px, calc(100vw - 32px));
   max-height: min(720px, calc(100dvh - 48px));
-  z-index: 2800;
+  z-index: var(--azd-z-modal-elevated);
   display: flex;
   flex-direction: column;
   overflow: hidden;

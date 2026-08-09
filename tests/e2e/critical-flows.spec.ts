@@ -477,6 +477,7 @@ test('About dialog exposes attribution and repository details accessibly', async
   });
 
   await page.goto('/');
+  await expect(page.getByText('Community project', { exact: true })).toBeVisible();
   await page.getByRole('region', { name: 'Architecture canvas' }).focus();
   await page.keyboard.press('Control+K');
   const palette = page.getByTestId('command-palette');
@@ -487,12 +488,333 @@ test('About dialog exposes attribution and repository details accessibly', async
   await expect(dialog).toBeFocused();
   await expect(dialog.getByText('Arturo Quiroga')).toBeVisible();
   await expect(dialog.getByText('Swarm Data SE, Jiayi Yang')).toBeVisible();
+  await expect(dialog.getByText(/independent, community-maintained fork/)).toBeVisible();
+  await expect(dialog.getByText(/not an official Microsoft product/)).toBeVisible();
   await expect(dialog.getByRole('link', { name: /yang-jiayi\/AzureDiagarm/ }))
     .toHaveAttribute('href', 'https://github.com/yang-jiayi/AzureDiagarm');
   await expectNoWcagViolations(page, '.about-dialog');
 
   await page.keyboard.press('Escape');
   await expect(dialog).toBeHidden();
+  await page.getByRole('button', { name: 'More' }).click();
+  await page.getByRole('button', { name: '日本語' }).click();
+  await expect(page.getByText('コミュニティ版', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: /テンプレートを見る/ })).toBeVisible();
+});
+
+test('template gallery previews, filters, and applies a starter architecture', async ({ page }) => {
+  await initializePage(page);
+  await page.route('**/api/**', async (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    if (path === '/api/access/me') {
+      await fulfillJson(route, {
+        enabled: false,
+        authenticated: true,
+        email: 'owner@example.com',
+        isAdmin: false,
+        allowed: true,
+      });
+      return;
+    }
+    if (path === '/api/diagrams' && request.method() === 'POST') {
+      const body = request.postDataJSON() as {
+        diagramName: string;
+        payload: ReturnType<typeof interactionCloudDocument>['payload'];
+      };
+      await fulfillJson(route, {
+        ...cloudDocument('template-cloud', body.diagramName),
+        diagramName: body.diagramName,
+        payload: body.payload,
+      }, 200, { etag: '"template-cloud-1"' });
+      return;
+    }
+    await fulfillJson(route, { error: 'Not found' }, 404);
+  });
+
+  await page.goto('/');
+  await page.getByRole('tab', { name: 'Create' }).click();
+  await page.getByRole('button', { name: 'Templates', exact: true }).click();
+
+  const gallery = page.getByRole('dialog', { name: 'Choose a template' });
+  await expect(gallery).toBeFocused();
+  await expect(gallery.getByRole('option')).toHaveCount(4);
+  await expect(gallery.getByRole('option', { name: /Secure web application/ }))
+    .toHaveAttribute('aria-selected', 'true');
+
+  await gallery.getByPlaceholder('Search by workload or pattern').fill('serverless');
+  const eventTemplate = gallery.getByRole('option', { name: /Event-driven integration/ });
+  await expect(eventTemplate).toBeVisible();
+  await expect(gallery.getByRole('option')).toHaveCount(1);
+  await eventTemplate.click();
+  await expect(gallery.getByRole('heading', { name: 'Event-driven integration' })).toBeVisible();
+  await gallery.getByRole('button', { name: 'Use this template' }).click();
+
+  await expect(gallery).toBeHidden();
+  await expect(page.locator('.react-flow__node-azureNode')).toHaveCount(5);
+  await expect(page.locator('.react-flow__node-azureNode img.node-icon')).toHaveCount(5);
+  await expect(page.locator('.react-flow__node-azureNode', { hasText: 'API Management' }))
+    .toHaveCount(1);
+  await expect(page.locator('.react-flow__node-azureNode', { hasText: 'Azure Cosmos DB' }))
+    .toHaveCount(1);
+});
+
+test('diagram history, document status, privacy review, and threat overlay stay available', async ({ page }) => {
+  await openInteractionDiagram(page);
+
+  await expect(page.getByRole('button', { name: /^Document status: Saved/ })).toBeVisible();
+
+  await page.getByRole('tab', { name: 'Design' }).click();
+  const undo = page.getByRole('button', { name: 'Undo' });
+  const redo = page.getByRole('button', { name: 'Redo' });
+  await expect(undo).toBeDisabled();
+  const node = page.locator('[data-testid="rf__node-node-a"]');
+  const initial = await node.boundingBox();
+  expect(initial).not.toBeNull();
+  if (!initial) return;
+
+  await page.mouse.move(initial.x + initial.width / 2, initial.y + initial.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(initial.x + initial.width / 2 + 160, initial.y + initial.height / 2 + 80, {
+    steps: 8,
+  });
+  await page.mouse.up();
+  await expect(
+    page.getByRole('button', { name: /^Document status: Saving/ }),
+  ).toBeVisible({ timeout: 1_000 });
+  await expect(undo).toBeEnabled();
+  const moved = await node.boundingBox();
+  expect(moved).not.toBeNull();
+  expect(Math.abs((moved?.x || 0) - initial.x)).toBeGreaterThan(80);
+
+  await undo.click();
+  await expect.poll(async () => (await node.boundingBox())?.x ?? -1).toBeCloseTo(initial.x, 0);
+  await expect(redo).toBeEnabled();
+  await page.getByRole('region', { name: 'Architecture canvas' }).focus();
+  await page.keyboard.press('Control+Y');
+  await expect.poll(async () => (await node.boundingBox())?.x ?? -1)
+    .toBeCloseTo(moved?.x || 0, 0);
+
+  await page.getByRole('tab', { name: 'Review' }).click();
+  await page.getByRole('button', { name: 'Privacy' }).click();
+  const privacyDialog = page.getByRole('dialog', { name: 'Ready to share' });
+  await expect(privacyDialog).toBeFocused();
+  await expect(privacyDialog.getByText('No known sensitive patterns found')).toBeVisible();
+  await privacyDialog.getByRole('button', { name: 'Done' }).click();
+
+  const threats = page.getByRole('button', { name: 'Threats' });
+  await threats.click();
+  await expect(threats).toHaveAttribute('aria-pressed', 'true');
+  const threatOverlay = page.getByRole('complementary', { name: 'Threat model overlay' });
+  await expect(threatOverlay).toBeVisible();
+  await expect(page.locator('[data-testid="rf__node-node-b"]'))
+    .toHaveCSS('outline-color', 'rgb(217, 119, 6)');
+
+  await page.evaluate(() => {
+    const state = window as Window & {
+      __sawThreatOverlayExport?: boolean;
+      __threatOverlayExportClipped?: boolean;
+      __threatOverlayExportObserver?: MutationObserver;
+    };
+    state.__sawThreatOverlayExport = false;
+    state.__threatOverlayExportClipped = false;
+    state.__threatOverlayExportObserver?.disconnect();
+    const observer = new MutationObserver(() => {
+      const overlay = document.querySelector<HTMLElement>('[data-export-threat-overlay="true"]');
+      if (overlay) {
+        const frame = overlay.parentElement;
+        const overlayBounds = overlay.getBoundingClientRect();
+        const frameBounds = frame?.getBoundingClientRect();
+        state.__sawThreatOverlayExport = true;
+        state.__threatOverlayExportClipped = (
+          overlay.scrollHeight > overlay.clientHeight + 1
+          || Boolean(frameBounds && overlayBounds.bottom > frameBounds.bottom + 1)
+        );
+        observer.disconnect();
+      }
+    });
+    state.__threatOverlayExportObserver = observer;
+    observer.observe(document.body, { childList: true, subtree: true });
+  });
+  await page.getByRole('region', { name: 'Architecture canvas' }).focus();
+  await page.keyboard.press('Control+K');
+  const palette = page.getByTestId('command-palette');
+  await palette.getByRole('combobox', { name: 'Search commands and services' }).fill('export png');
+  const downloadPromise = page.waitForEvent('download');
+  await palette.getByRole('option', { name: /^Export PNG/ }).click();
+  await downloadPromise;
+  expect(await page.evaluate(() => (
+    (window as Window & { __sawThreatOverlayExport?: boolean }).__sawThreatOverlayExport
+  ))).toBe(true);
+  expect(await page.evaluate(() => (
+    (window as Window & { __threatOverlayExportClipped?: boolean })
+      .__threatOverlayExportClipped
+  ))).toBe(false);
+
+  await threatOverlay.getByRole('button', { name: 'Hide threat model overlay' }).click();
+  await expect(threatOverlay).toBeHidden();
+});
+
+test('mobile users can edit a selected service without opening a desktop inspector', async ({ page }) => {
+  await openInteractionDiagram(page);
+  await page.setViewportSize({ width: 390, height: 844 });
+
+  await page.locator('[data-testid="rf__node-node-a"]').click();
+  const launcher = page.getByRole('button', { name: 'Edit selected node: App Service' });
+  await expect(launcher).toBeVisible();
+  await launcher.click();
+
+  const editor = page.getByRole('dialog', { name: 'Edit selected node' });
+  await expect(editor).toBeVisible();
+  await editor.getByLabel('Display name').fill('Customer API');
+  await editor.getByLabel('Description').fill('Handles customer requests');
+  await editor.getByRole('button', { name: 'Save changes' }).click();
+
+  await expect(editor).toBeHidden();
+  await expect(page.getByRole('button', { name: 'Edit selected node: Customer API' })).toBeVisible();
+  await expect(page.locator('[data-testid="rf__node-node-a"]')).toContainText('Customer API');
+
+  await page.getByRole('button', { name: 'Edit selected node: Customer API' }).click();
+  await editor.getByRole('button', { name: 'Cost' }).click();
+  const pricingEditor = page.getByRole('dialog', { name: /Cost settings — App Service/ });
+  await expect(pricingEditor).toBeVisible();
+  await pricingEditor.getByRole('button', { name: 'Close' }).click();
+
+  const group = page.locator('[data-testid="rf__node-group-a"]');
+  await group.locator('.group-node-header').click();
+  await page.getByRole('button', { name: 'Edit selected node: Application layer' }).click();
+  const groupEditor = page.getByRole('dialog', { name: 'Edit selected node' });
+  await groupEditor.locator('input[type="color"]').fill('#ef4444');
+  await groupEditor.getByRole('button', { name: 'Save changes' }).click();
+  await page.locator('.react-flow__pane').click({ position: { x: 20, y: 20 } });
+  await expect(group.locator('.group-node')).toHaveCSS('border-color', 'rgb(239, 68, 68)');
+});
+
+test('cloud share links wait for privacy preflight confirmation', async ({ page }) => {
+  const document = interactionCloudDocument();
+  const remoteComment = {
+    commentId: 'comment-privacy',
+    message: 'client_secret=comment~Secret1234',
+    authorEmail: 'reviewer@example.com',
+    createdAt: now,
+  };
+  const historicalVersion = cloudVersion('A', 'version-privacy', 'Security review');
+  (historicalVersion.payload.nodes[0].data as Record<string, unknown>).description =
+    'password=history!Secret5678';
+  await openInteractionDiagram(page, undefined, false, document);
+  let shareRequests = 0;
+  let versionDetailRequests = 0;
+  let latestDocumentRequests = 0;
+  let persistedDocument = document;
+
+  await page.route('**/api/**', async (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    const method = request.method();
+    if (path === '/api/diagrams' && method === 'GET') {
+      await fulfillJson(route, { documents: [summary('A', document.diagramName)] });
+      return;
+    }
+    if (path === '/api/diagrams/A' && method === 'GET') {
+      latestDocumentRequests += 1;
+      const share = {
+        shareId: 'share-1',
+        role: 'viewer',
+        createdAt: now,
+      };
+      await fulfillJson(route, {
+        ...persistedDocument,
+        revision: shareRequests > 0 ? 4 : 3,
+        comments: [remoteComment],
+        shares: shareRequests > 0 ? [share] : [],
+      }, 200, { etag: shareRequests > 0 ? '"A-4"' : '"A-3"' });
+      return;
+    }
+    if (path === '/api/diagrams/A' && method === 'PUT') {
+      const body = JSON.parse(request.postData() || '{}');
+      persistedDocument = {
+        ...persistedDocument,
+        diagramName: body.diagramName || persistedDocument.diagramName,
+        payload: body.payload || persistedDocument.payload,
+        revision: 2,
+        etag: '"A-2"',
+      };
+      await fulfillJson(route, persistedDocument, 200, { etag: '"A-2"' });
+      return;
+    }
+    if (path === '/api/diagrams/A/versions' && method === 'GET') {
+      await fulfillJson(route, {
+        versions: [{
+          versionId: historicalVersion.versionId,
+          diagramId: historicalVersion.diagramId,
+          diagramName: historicalVersion.diagramName,
+          notes: historicalVersion.notes,
+          createdAt: historicalVersion.createdAt,
+          createdByEmail: historicalVersion.createdByEmail,
+          sourceRevision: historicalVersion.sourceRevision,
+        }],
+      });
+      return;
+    }
+    if (path === '/api/diagrams/A/versions/version-privacy' && method === 'GET') {
+      versionDetailRequests += 1;
+      await fulfillJson(route, { version: historicalVersion });
+      return;
+    }
+    if (path === '/api/diagrams/A/shares' && method === 'GET') {
+      await fulfillJson(route, { shares: [] });
+      return;
+    }
+    if (path === '/api/diagrams/A/shares' && method === 'POST') {
+      shareRequests += 1;
+      await fulfillJson(route, {
+        result: {
+          token: 'privacy-approved-share',
+          url: 'https://example.test/#share-privacy-approved-share',
+          share: {
+            shareId: 'share-1',
+            role: 'viewer',
+            createdAt: now,
+          },
+        },
+      });
+      return;
+    }
+    await route.fallback();
+  });
+
+  await page.getByRole('button', { name: /^Document status:/ }).click();
+  const cloudWorkspace = page.getByRole('dialog', { name: 'Cloud workspace' });
+  await expect(cloudWorkspace.getByRole('button', { name: 'Create link' })).toBeVisible();
+  await cloudWorkspace.getByRole('button', { name: 'Create link' }).click();
+
+  const privacyDialog = page.getByRole('dialog', { name: 'Review sensitive information' });
+  await expect(privacyDialog).toBeVisible();
+  await expect(privacyDialog.getByText('Credential', { exact: true })).toHaveCount(2);
+  await expect(
+    privacyDialog.getByText('share.current.comments[0].message', { exact: true }),
+  ).toBeVisible();
+  await expect(
+    privacyDialog.getByText('share.versions[0].payload.nodes[0].data.description', {
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(privacyDialog).not.toContainText('comment~Secret1234');
+  await expect(privacyDialog).not.toContainText('history!Secret5678');
+  expect(versionDetailRequests).toBe(1);
+  expect(latestDocumentRequests).toBe(1);
+  expect(shareRequests).toBe(0);
+  await page.keyboard.press('Escape');
+  await expect(privacyDialog).toBeHidden();
+  await expect(cloudWorkspace).toBeVisible();
+  expect(shareRequests).toBe(0);
+
+  await expect(cloudWorkspace.getByRole('button', { name: 'Create link' })).toBeEnabled();
+  await cloudWorkspace.getByRole('button', { name: 'Create link' }).click();
+  await privacyDialog.getByRole('button', { name: 'Proceed as shown' }).click();
+  await expect.poll(() => shareRequests).toBe(1);
+  await expect(cloudWorkspace.getByLabel('New share URL'))
+    .toHaveValue('https://example.test/#share-privacy-approved-share');
 });
 
 test('custom AI settings keep credentials out of persistent browser storage', async ({ page }) => {
@@ -576,6 +898,7 @@ test('custom AI settings keep credentials out of persistent browser storage', as
   const generator = await openAiGenerator(page);
   await generator.getByLabel('Architecture Description or Modification')
     .fill('Create a small web application');
+  await generator.getByRole('button', { name: 'Continue to output' }).click();
   await generator.getByRole('button', { name: 'Generate Architecture' }).click();
   await expect.poll(() => proxyRequests.length).toBe(3);
   expect((proxyRequests[2]?.byo as Record<string, unknown>)?.apiKey).toBe(apiKey);
@@ -1529,16 +1852,60 @@ test('AI generation cannot be dismissed while work is active', async ({ page }) 
   await expectNoWcagViolations(page, '.ai-architecture-modal');
   await modal.getByLabel('Architecture Description or Modification')
     .fill('Create a small web application');
+  await modal.getByRole('button', { name: 'Continue to output' }).click();
   await modal.getByRole('button', { name: 'Generate Architecture' }).click();
   await expect(modal).toHaveAttribute('aria-busy', 'true');
   await expect(modal.locator('.modal-close')).toBeDisabled();
   await page.keyboard.press('Escape');
   await expect(modal).toBeVisible();
-  await page.locator('.modal-overlay').dispatchEvent('click');
+  await page.locator('.ai-generator-overlay').dispatchEvent('click');
   await expect(modal).toBeVisible();
 
   await expect(modal).toHaveAttribute('aria-busy', 'false', { timeout: 5_000 });
   await page.keyboard.press('Escape');
+  await expect(modal).toBeHidden();
+});
+
+test('AI generator opens from the mobile start card above application chrome', async ({ page }) => {
+  await initializePage(page);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.route('**/api/**', async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (path === '/api/access/me') {
+      await fulfillJson(route, {
+        enabled: false,
+        authenticated: true,
+        email: 'owner@example.com',
+        isAdmin: false,
+        allowed: true,
+      });
+      return;
+    }
+    await fulfillJson(route, { error: 'Not found' }, 404);
+  });
+
+  await page.goto('/');
+  const startChooser = page.locator('.start-chooser');
+  await startChooser.getByRole('button', { name: 'Generate Diagram' }).click();
+
+  const modal = page.locator('.ai-architecture-modal');
+  await expect(modal).toBeFocused();
+  await expect(modal.getByRole('button', { name: '1. Brief' }))
+    .toHaveAttribute('aria-current', 'step');
+  await expectNoWcagViolations(page, '.ai-architecture-modal');
+
+  const closeIsTopmost = await modal.locator('.modal-close').evaluate((button) => {
+    const box = button.getBoundingClientRect();
+    const topmost = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+    return topmost === button || button.contains(topmost);
+  });
+  expect(closeIsTopmost).toBe(true);
+
+  await modal.locator('.modal-close').click();
+  await expect(modal).toBeHidden();
+
+  await startChooser.getByRole('button', { name: 'Generate Diagram' }).click();
+  await page.locator('.ai-generator-overlay').click({ position: { x: 4, y: 4 } });
   await expect(modal).toBeHidden();
 });
 
@@ -1612,7 +1979,7 @@ test('image analysis is single-flight and the reference viewer is keyboard safe'
     .toBeDisabled();
   await page.keyboard.press('Escape');
   await expect(modal).toBeVisible();
-  await page.locator('.modal-overlay').dispatchEvent('click');
+  await page.locator('.ai-generator-overlay').dispatchEvent('click');
   await expect(modal).toBeVisible();
   await page.evaluate((base64) => {
     const bytes = Uint8Array.from(atob(base64), character => character.charCodeAt(0));
@@ -1629,8 +1996,11 @@ test('image analysis is single-flight and the reference viewer is keyboard safe'
   await expect(modal).toHaveAttribute('aria-busy', 'false');
   expect(imageAnalysisCalls).toBe(1);
 
+  await modal.getByRole('button', { name: 'Continue to output' }).click();
   await modal.getByRole('button', { name: 'Generate Architecture' }).click();
   await expect(page.locator('[data-testid="rf__node-web"]')).toBeVisible({ timeout: 10_000 });
+  await modal.getByRole('button', { name: '1. Brief' }).click();
+  await expect(fileInput).toBeEnabled();
   await fileInput.setInputFiles({
     name: 'after-generation.png',
     mimeType: 'image/png',
@@ -1641,7 +2011,7 @@ test('image analysis is single-flight and the reference viewer is keyboard safe'
   await expect(modal).toBeVisible();
   await expect(modal).toHaveAttribute('aria-busy', 'false', { timeout: 5_000 });
   expect(imageAnalysisCalls).toBe(2);
-  await modal.locator('.modal-footer-actions').getByRole('button', { name: 'Close' }).click();
+  await modal.locator('.modal-footer-actions').getByRole('button', { name: 'Cancel' }).click();
   await expect(modal).toBeHidden();
 
   const expandReference = page.getByRole('button', { name: 'Expand reference image' });
@@ -2842,6 +3212,7 @@ test('share refresh failure blocks saves until the ETag is reconciled', async ({
   });
   let shareCreated = false;
   let initialUpdates = 0;
+  let storedDocument = cloudDocument('A', 'Diagram A');
 
   await page.route('**/api/**', async (route) => {
     const request = route.request();
@@ -2861,7 +3232,7 @@ test('share refresh failure blocks saves until the ETag is reconciled', async ({
       if (shareCreated) {
         await fulfillJson(route, { error: 'Temporary storage outage' }, 503);
       } else {
-        await fulfillJson(route, cloudDocument('A', 'Diagram A'), 200, { etag: '"A-1"' });
+        await fulfillJson(route, storedDocument, 200, { etag: storedDocument.etag });
       }
       return;
     }
@@ -2880,12 +3251,14 @@ test('share refresh failure blocks saves until the ETag is reconciled', async ({
     if (path === '/api/diagrams/A' && method === 'PUT') {
       initialUpdates += 1;
       const body = JSON.parse(request.postData() || '{}');
-      await fulfillJson(route, {
-        ...cloudDocument('A', body.diagramName || 'Diagram A'),
+      storedDocument = {
+        ...storedDocument,
+        diagramName: body.diagramName || storedDocument.diagramName,
         payload: body.payload,
         revision: 2,
         etag: '"A-2"',
-      }, 200, { etag: '"A-2"' });
+      };
+      await fulfillJson(route, storedDocument, 200, { etag: '"A-2"' });
       return;
     }
     if (path === '/api/diagrams/A/shares' && method === 'POST') {

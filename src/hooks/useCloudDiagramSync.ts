@@ -720,6 +720,7 @@ export function useCloudDiagramSync({
     }
 
     pendingSaveRef.current = latest;
+    setStatus('saving');
     if (debounceTimerRef.current !== null) {
       window.clearTimeout(debounceTimerRef.current);
     }

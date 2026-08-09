@@ -32,6 +32,7 @@ interface CanvasChromeProps {
   onFitView: () => void;
   onGuidedChat: () => void;
   onGenerateDiagram: () => void;
+  onBrowseTemplates: () => void;
   onImportTemplate: () => void;
   onImportAzure: () => void;
   onTitleBlockUpdate: (
@@ -55,6 +56,7 @@ export default function CanvasChrome({
   onFitView,
   onGuidedChat,
   onGenerateDiagram,
+  onBrowseTemplates,
   onImportTemplate,
   onImportAzure,
   onTitleBlockUpdate,
@@ -137,6 +139,7 @@ export default function CanvasChrome({
         <StartChooser
           onGuidedChat={onGuidedChat}
           onGenerate={onGenerateDiagram}
+          onBrowseTemplates={onBrowseTemplates}
           onImportTemplate={onImportTemplate}
           onImportAzure={onImportAzure}
         />

@@ -62,8 +62,8 @@ export default function AboutDialog({ isOpen, onClose }: AboutDialogProps) {
         <div className="about-dialog-body">
           <p className="about-dialog-summary">
             {text(
-              'A production-hardened, responsive fork for designing, reviewing, and sharing Azure architectures.',
-              'Azure アーキテクチャの設計、レビュー、共有に対応した、運用強化済みのレスポンシブ版です。',
+              'An independent, community-maintained fork for designing, reviewing, and sharing Azure architectures.',
+              'Azure アーキテクチャの設計、レビュー、共有に対応した、独立したコミュニティ運営のフォークです。',
             )}
           </p>
 
@@ -98,8 +98,8 @@ export default function AboutDialog({ isOpen, onClose }: AboutDialogProps) {
 
           <p className="about-dialog-note">
             {text(
-              'Licensed under the MIT License. Microsoft and Azure names and icons remain subject to their respective trademark and brand guidelines.',
-              'MIT License の下で提供されています。Microsoft、Azure の名称とアイコンには、それぞれの商標・ブランド ガイドラインが適用されます。',
+              'Licensed under the MIT License. This community project is not an official Microsoft product and is not sponsored or endorsed by Microsoft. Microsoft and Azure names and icons remain subject to their respective trademark and brand guidelines.',
+              'MIT License の下で提供されています。本コミュニティ プロジェクトは Microsoft の公式製品ではなく、Microsoft による後援または推奨を受けていません。Microsoft、Azure の名称とアイコンには、それぞれの商標・ブランド ガイドラインが適用されます。',
             )}
           </p>
         </div>

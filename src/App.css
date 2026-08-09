@@ -68,33 +68,31 @@
   min-width: 0;
 }
 
-.microsoft-logo {
+.community-brand {
   display: inline-flex;
   align-items: center;
   gap: 0.4rem;
   flex-shrink: 0;
 }
 
-.microsoft-symbol {
-  width: 20px;
-  height: 20px;
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  grid-template-rows: repeat(2, 1fr);
-  gap: 2px;
+.community-brand-symbol {
+  width: 28px;
+  height: 28px;
+  display: inline-grid;
+  place-items: center;
   flex-shrink: 0;
+  color: #dbeafe;
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.24), rgba(255, 255, 255, 0.08));
+  border: 1px solid rgba(255, 255, 255, 0.38);
+  border-radius: 8px;
 }
 
-.microsoft-square-red { background: #f25022; }
-.microsoft-square-green { background: #7fba00; }
-.microsoft-square-blue { background: #00a4ef; }
-.microsoft-square-yellow { background: #ffb900; }
-
-.microsoft-wordmark {
+.community-brand-wordmark {
   color: #ffffff;
-  font-size: 0.9rem;
+  font-size: 0.72rem;
   font-weight: 700;
   line-height: 1;
+  letter-spacing: 0.02em;
   white-space: nowrap;
 }
 
@@ -312,9 +310,9 @@
   display: none;
 }
 
-.app-header.header-collapsed .microsoft-symbol {
-  width: 16px;
-  height: 16px;
+.app-header.header-collapsed .community-brand-symbol {
+  width: 24px;
+  height: 24px;
 }
 
 .app-header.header-collapsed .app-header h1,
@@ -354,9 +352,9 @@
     padding: 0.4rem 0.75rem;
   }
 
-  .microsoft-symbol {
-    width: 18px;
-    height: 18px;
+  .community-brand-symbol {
+    width: 26px;
+    height: 26px;
   }
 
   .app-header h1 {
@@ -390,16 +388,16 @@
     gap: 0.4rem;
   }
 
-  .microsoft-logo {
+  .community-brand {
     gap: 0;
   }
 
-  .microsoft-symbol {
-    width: 15px;
-    height: 15px;
+  .community-brand-symbol {
+    width: 26px;
+    height: 26px;
   }
 
-  .microsoft-wordmark {
+  .community-brand-wordmark {
     display: none;
   }
 
@@ -905,6 +903,20 @@ body.dark-mode .toolbar-dropdown-separator {
 .btn-secondary:hover {
   background-color: rgba(255, 255, 255, 0.3);
   transform: translateY(-1px);
+}
+
+.toolbar-count-badge {
+  display: inline-grid;
+  min-width: 1.25rem;
+  height: 1.25rem;
+  place-items: center;
+  padding: 0 0.28rem;
+  color: var(--azd-color-on-danger, #fff);
+  background: var(--azd-color-danger);
+  border-radius: 999px;
+  font-size: 0.68rem;
+  font-weight: 800;
+  line-height: 1;
 }
 
 /* Compare Models button - standout styling */
@@ -1838,9 +1850,9 @@ body.dark-mode .app-header .toolbar-group--labeled .btn[aria-expanded='true'] {
   gap: 0.85rem;
 }
 
-.app-header:not(.header-collapsed) .microsoft-symbol {
-  width: 22px;
-  height: 22px;
+.app-header:not(.header-collapsed) .community-brand-symbol {
+  width: 30px;
+  height: 30px;
 }
 
 .app-header:not(.header-collapsed) h1 {

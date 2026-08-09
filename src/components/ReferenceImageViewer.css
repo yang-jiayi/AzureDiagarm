@@ -167,7 +167,7 @@
   bottom: 0;
   background: rgba(0, 0, 0, 0.75);
   backdrop-filter: blur(4px);
-  z-index: 10000;
+  z-index: var(--azd-z-modal);
   display: flex;
   align-items: center;
   justify-content: center;

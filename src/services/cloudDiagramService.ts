@@ -80,6 +80,8 @@ export interface CloudDiagramVersion {
   sourceRevision: number;
 }
 
+export type CloudDiagramVersionSummary = Omit<CloudDiagramVersion, 'payload'>;
+
 export interface CloudShareResult {
   share: CloudDiagramShare;
   token: string;
@@ -407,9 +409,9 @@ function versionCollectionPath(context: CloudDocumentContext): string {
 
 export async function listCloudVersions(
   context: CloudDocumentContext,
-): Promise<CloudDiagramVersion[]> {
+): Promise<CloudDiagramVersionSummary[]> {
   const { body } = await request(versionCollectionPath(context));
-  return unwrapArray<CloudDiagramVersion>(body, 'versions');
+  return unwrapArray<CloudDiagramVersionSummary>(body, 'versions');
 }
 
 export async function createCloudVersion(

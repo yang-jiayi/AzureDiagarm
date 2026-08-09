@@ -1,7 +1,7 @@
 .access-modal-overlay {
   position: fixed;
   inset: 0;
-  z-index: 2600;
+  z-index: var(--azd-z-modal);
   display: grid;
   place-items: center;
   padding: 20px;
