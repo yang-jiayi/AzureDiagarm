@@ -1,9 +1,9 @@
 .cloud-workspace-overlay {
-  z-index: 2590;
+  z-index: var(--azd-z-modal);
 }
 
 .responsive-drawer-panel.cloud-workspace-modal {
-  z-index: 2600;
+  z-index: calc(var(--azd-z-modal) + 1);
 }
 
 .cloud-workspace-modal {

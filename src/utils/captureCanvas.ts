@@ -359,9 +359,21 @@ function captureClasses(options: CaptureOptions): string[] {
     }
 
     const legendItems = composition.legendItems ?? [];
+    const threatOverlay = element.querySelector<HTMLElement>('.threat-model-overlay');
+    const threatItemCount = threatOverlay?.querySelectorAll('li').length ?? 0;
+    const measuredThreatHeight = threatOverlay
+      ? Math.max(
+          threatOverlay.scrollHeight,
+          threatOverlay.getBoundingClientRect().height,
+          112 + threatItemCount * 38,
+        )
+      : 0;
     const plan = calculateContentCapturePlan(composition.bounds, {
       hasHeader: Boolean(composition.title),
       legendItemCount: legendItems.length,
+      minDiagramHeight: measuredThreatHeight > 0
+        ? Math.ceil(measuredThreatHeight + 24)
+        : undefined,
     });
     const host = document.createElement('div');
     host.className = 'react-flow export-capture-composition';
@@ -413,6 +425,24 @@ function captureClasses(options: CaptureOptions): string[] {
       label.closest('.editable-edge-label-shell')?.remove();
     });
     frame.appendChild(viewportClone);
+
+    if (threatOverlay) {
+      const overlayClone = threatOverlay.cloneNode(true) as HTMLElement;
+      overlayClone.querySelectorAll('button').forEach(button => button.remove());
+      overlayClone.querySelectorAll<HTMLElement>('li').forEach((item) => {
+        item.style.setProperty('display', 'grid', 'important');
+      });
+      overlayClone.setAttribute('aria-hidden', 'true');
+      overlayClone.setAttribute('data-export-threat-overlay', 'true');
+      Object.assign(overlayClone.style, {
+        pointerEvents: 'none',
+        width: '310px',
+        maxHeight: 'none',
+        overflow: 'visible',
+      });
+      frame.appendChild(overlayClone);
+    }
+
     host.appendChild(frame);
 
     if (legendItems.length > 0) {

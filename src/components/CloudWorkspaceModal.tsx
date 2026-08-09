@@ -25,6 +25,7 @@ import {
   CloudDiagramShare,
   CloudDiagramSummary,
   CloudDiagramVersion,
+  CloudDiagramVersionSummary,
   CloudDocumentContext,
   addCloudComment,
   createCloudShare,
@@ -56,6 +57,7 @@ interface CloudWorkspaceModalProps {
   syncError: string;
   lastSavedAt: string | null;
   hasLocalDraft: boolean;
+  isCloseBlocked?: boolean;
   onOpenDocument: (
     document: CloudDiagramDocument,
     context: CloudDocumentContext,
@@ -79,6 +81,10 @@ interface CloudWorkspaceModalProps {
   ) => void;
   onDiscardPendingSave: () => void;
   onCreateNew: () => Promise<boolean>;
+  onBeforeShare: (
+    document: CloudDiagramDocument,
+    versions: CloudDiagramVersion[],
+  ) => Promise<boolean>;
 }
 
 function ownerContext(documentId: string): CloudDocumentContext {
@@ -98,6 +104,7 @@ const CloudWorkspaceModal: React.FC<CloudWorkspaceModalProps> = ({
   syncError,
   lastSavedAt,
   hasLocalDraft,
+  isCloseBlocked = false,
   onOpenDocument,
   onRestoreVersion,
   onDocumentUpdated,
@@ -109,6 +116,7 @@ const CloudWorkspaceModal: React.FC<CloudWorkspaceModalProps> = ({
   onCloudConflict,
   onDiscardPendingSave,
   onCreateNew,
+  onBeforeShare,
 }) => {
   const { language, t } = useLanguage();
   const text = useCallback(
@@ -117,7 +125,7 @@ const CloudWorkspaceModal: React.FC<CloudWorkspaceModalProps> = ({
   );
   const [documents, setDocuments] = useState<CloudDiagramSummary[]>([]);
   const [selectedDocument, setSelectedDocument] = useState<CloudDiagramDocument | null>(null);
-  const [versions, setVersions] = useState<CloudDiagramVersion[]>([]);
+  const [versions, setVersions] = useState<CloudDiagramVersionSummary[]>([]);
   const [shares, setShares] = useState<CloudDiagramShare[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isDetailsLoading, setIsDetailsLoading] = useState(false);
@@ -126,6 +134,7 @@ const CloudWorkspaceModal: React.FC<CloudWorkspaceModalProps> = ({
   const [comment, setComment] = useState('');
   const [shareRole, setShareRole] = useState<'viewer' | 'editor'>('viewer');
   const [newShareUrl, setNewShareUrl] = useState('');
+  const newShareDocumentIdRef = useRef<string | null>(null);
   const isOpenRef = useRef(isOpen);
   const currentDocumentIdRef = useRef(currentDocument?.id ?? null);
   const selectedDocumentIdRef = useRef<string | null>(null);
@@ -138,6 +147,7 @@ const CloudWorkspaceModal: React.FC<CloudWorkspaceModalProps> = ({
   currentDocumentIdRef.current = currentDocument?.id ?? null;
 
   const closeModal = useCallback(() => {
+    if (isCloseBlocked) return;
     loadGenerationRef.current.advance();
     operationGenerationRef.current.advance();
     selectedDocumentIdRef.current = null;
@@ -145,8 +155,10 @@ const CloudWorkspaceModal: React.FC<CloudWorkspaceModalProps> = ({
     setOperation('');
     setIsLoading(false);
     setIsDetailsLoading(false);
+    newShareDocumentIdRef.current = null;
+    setNewShareUrl('');
     onClose();
-  }, [onClose]);
+  }, [isCloseBlocked, onClose]);
 
   const isCurrentLoad = useCallback((generation: number) => (
     isOpenRef.current && loadGenerationRef.current.isCurrent(generation)
@@ -284,7 +296,10 @@ const CloudWorkspaceModal: React.FC<CloudWorkspaceModalProps> = ({
     setVersions([]);
     setShares([]);
     setComment('');
-    setNewShareUrl('');
+    if (newShareDocumentIdRef.current !== document.id) {
+      newShareDocumentIdRef.current = null;
+      setNewShareUrl('');
+    }
     try {
       const [nextVersions, nextShares] = await Promise.all([
         listCloudVersions(context),
@@ -424,6 +439,8 @@ const CloudWorkspaceModal: React.FC<CloudWorkspaceModalProps> = ({
     setOperation('');
     setIsLoading(false);
     setIsDetailsLoading(false);
+    newShareDocumentIdRef.current = null;
+    setNewShareUrl('');
   }, [isOpen]);
 
   const handleSelect = async (summary: CloudDiagramSummary) => {
@@ -439,6 +456,7 @@ const CloudWorkspaceModal: React.FC<CloudWorkspaceModalProps> = ({
     setVersions([]);
     setShares([]);
     setComment('');
+    newShareDocumentIdRef.current = null;
     setNewShareUrl('');
     try {
       if (currentDocument?.id === summary.id) {
@@ -626,18 +644,60 @@ const CloudWorkspaceModal: React.FC<CloudWorkspaceModalProps> = ({
   const handleCreateShare = async () => {
     if (!selectedDocument || selectedContext?.access !== 'owner') return;
     const targetDocument = selectedDocument;
+    const targetContext = selectedContext;
     const targetRole = shareRole;
     const generation = beginOperation('share');
     let conflictBaseline = targetDocument;
+    newShareDocumentIdRef.current = null;
     setNewShareUrl('');
     try {
       const savedDocument = await saveCurrentBeforeMetadata(targetDocument.id);
       if (!isCurrentOperation(generation, targetDocument.id)) return;
       if (await handleReplacementDocument(savedDocument, targetDocument.id, generation)) return;
       if (savedDocument) conflictBaseline = savedDocument;
+      const versionSummaries = await listCloudVersions(targetContext);
+      if (!isCurrentOperation(generation, targetDocument.id)) return;
+      setVersions(versionSummaries);
+      const versionDetails: CloudDiagramVersion[] = [];
+      const batchSize = 8;
+      for (let index = 0; index < versionSummaries.length; index += batchSize) {
+        const batch = await Promise.all(
+          versionSummaries
+            .slice(index, index + batchSize)
+            .map(version => getCloudVersion(targetContext, version.versionId)),
+        );
+        if (!isCurrentOperation(generation, targetDocument.id)) return;
+        versionDetails.push(...batch);
+      }
+      const latestDocument = await getCloudDiagram(targetDocument.id);
+      if (!isCurrentOperation(generation, targetDocument.id)) return;
+      const preflightBaseline = savedDocument || targetDocument;
+      if (
+        latestDocument.revision < preflightBaseline.revision
+        || (
+          latestDocument.revision === preflightBaseline.revision
+          && Boolean(preflightBaseline.etag)
+          && latestDocument.etag !== preflightBaseline.etag
+        )
+        || latestDocument.diagramName !== preflightBaseline.diagramName
+        || JSON.stringify(latestDocument.payload) !== JSON.stringify(preflightBaseline.payload)
+      ) {
+        throw new CloudDiagramApiError(
+          'The cloud diagram changed before sharing. Reload it and review the latest content.',
+          412,
+          'SHARE_PREFLIGHT_CONFLICT',
+        );
+      }
+      conflictBaseline = latestDocument;
+      onDocumentUpdated(latestDocument);
+      selectDocument(latestDocument);
+      if (!await onBeforeShare(latestDocument, versionDetails)) {
+        if (operationGenerationRef.current.isCurrent(generation)) setOperation('');
+        return;
+      }
+      if (!isCurrentOperation(generation, targetDocument.id)) return;
       const result = await createCloudShare(targetDocument.id, targetRole);
       if (isCurrentOperation(generation, targetDocument.id)) {
-        setNewShareUrl(result.url);
         setShares((items) => [result.share, ...items]);
       }
       try {
@@ -680,6 +740,10 @@ const CloudWorkspaceModal: React.FC<CloudWorkspaceModalProps> = ({
             '共有リンクは作成されましたが、図面のメタデータを更新できませんでした。',
           ));
         }
+      }
+      if (isCurrentOperation(generation, targetDocument.id)) {
+        newShareDocumentIdRef.current = targetDocument.id;
+        setNewShareUrl(result.url);
       }
     } catch (shareError) {
       reportCurrentConflict(shareError, conflictBaseline);

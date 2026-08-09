@@ -142,6 +142,7 @@
     .workflow-panel,
     .workflow-stepper,
     .alignment-toolbar,
+    .threat-model-overlay,
     .responsive-drawer-panel,
     .command-palette,
     .toolbar-dropdown-menu,
@@ -186,19 +187,30 @@
   .command-palette-backdrop,
   .modal-overlay,
   .access-modal-overlay,
-  .cloud-workspace-overlay {
+  .cloud-workspace-overlay,
+  .template-gallery-overlay,
+  .privacy-preflight-overlay,
+  .mobile-node-inspector-backdrop {
     forced-color-adjust: none;
     background: Canvas !important;
     opacity: 0.82;
     backdrop-filter: none !important;
   }
 
-  .microsoft-square-red,
-  .microsoft-square-green,
-  .microsoft-square-blue,
-  .microsoft-square-yellow {
+  .threat-model-overlay {
     forced-color-adjust: none;
-    background: CanvasText !important;
+    background: Canvas !important;
+    color: CanvasText !important;
+    border: 2px solid CanvasText !important;
+    box-shadow: none !important;
+    backdrop-filter: none !important;
+  }
+
+  .community-brand-symbol {
+    forced-color-adjust: none;
+    color: CanvasText !important;
+    background: Canvas !important;
+    border-color: CanvasText !important;
   }
 
   :where(

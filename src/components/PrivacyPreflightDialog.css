@@ -1,0 +1,63 @@
+/* Copyright (c) Microsoft Corporation. Licensed under the MIT License. */
+
+.privacy-preflight-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: var(--azd-z-modal-elevated);
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  background: var(--azd-color-overlay-backdrop);
+  backdrop-filter: blur(4px);
+}
+.privacy-preflight-dialog {
+  display: flex;
+  flex-direction: column;
+  width: min(780px, 100%);
+  max-height: min(90dvh, 820px);
+  overflow: hidden;
+  color: var(--azd-color-text);
+  background: var(--azd-color-surface-elevated);
+  border: 1px solid var(--azd-color-border);
+  border-radius: var(--azd-radius-lg);
+  box-shadow: var(--azd-shadow-overlay);
+  outline: none;
+}
+.privacy-preflight-dialog header,
+.privacy-preflight-dialog footer { display: flex; align-items: center; justify-content: space-between; gap: 0.7rem; padding: 1rem 1.1rem; }
+.privacy-preflight-dialog header { border-bottom: 1px solid var(--azd-color-border-subtle); }
+.privacy-preflight-dialog header > div { display: grid; gap: 0.2rem; }
+.privacy-preflight-dialog header span { display: inline-flex; align-items: center; gap: 0.35rem; color: var(--azd-color-success); font-size: 0.7rem; font-weight: 800; text-transform: uppercase; }
+.privacy-preflight-dialog header h2 { margin: 0; color: var(--azd-color-text-strong); font-size: 1.3rem; }
+.privacy-preflight-dialog header button { display: grid; place-items: center; padding: 0.4rem; color: var(--azd-color-text-muted); background: transparent; border: 0; border-radius: var(--azd-radius-sm); cursor: pointer; }
+.privacy-preflight-body { display: grid; gap: 0.85rem; padding: 1rem 1.1rem; overflow: auto; }
+.privacy-preflight-summary { display: grid; grid-template-columns: auto 1fr; gap: 0.7rem; padding: 0.8rem; border: 1px solid; border-radius: var(--azd-radius-md); }
+.privacy-preflight-summary.warning { color: var(--azd-color-warning); background: var(--azd-color-warning-soft); border-color: color-mix(in srgb, var(--azd-color-warning) 45%, transparent); }
+.privacy-preflight-summary.clear { color: var(--azd-color-success); background: var(--azd-color-success-soft); border-color: color-mix(in srgb, var(--azd-color-success) 45%, transparent); }
+.privacy-preflight-summary div { display: grid; gap: 0.2rem; }
+.privacy-preflight-summary span { color: var(--azd-color-text-secondary); font-size: 0.76rem; line-height: 1.4; }
+.privacy-finding-list { display: grid; gap: 0.5rem; margin: 0; padding: 0; list-style: none; }
+.privacy-finding-list li { display: grid; grid-template-columns: auto 1fr; gap: 0.6rem; padding: 0.65rem; background: var(--azd-color-surface-panel); border: 1px solid var(--azd-color-border-subtle); border-radius: var(--azd-radius-sm); }
+.privacy-finding-list li > div { display: grid; min-width: 0; gap: 0.12rem; }
+.privacy-finding-list small { color: var(--azd-color-text-muted); font-size: 0.68rem; }
+.privacy-finding-list code { overflow: hidden; color: var(--azd-color-text-secondary); font-size: 0.72rem; text-overflow: ellipsis; white-space: nowrap; }
+.privacy-finding-severity { align-self: start; padding: 0.2rem 0.35rem; color: white; border-radius: 4px; font-size: 0.62rem; font-weight: 800; text-transform: uppercase; }
+.privacy-finding-severity.high { background: var(--azd-color-danger); }
+.privacy-finding-severity.medium { background: var(--azd-color-warning); }
+.privacy-finding-severity.low { background: var(--azd-color-info); }
+.privacy-anonymize-note { margin: 0; padding: 0.7rem 0.8rem; color: var(--azd-color-text-secondary); background: var(--azd-color-surface-panel); border: 1px solid var(--azd-color-border-subtle); border-radius: var(--azd-radius-sm); font-size: 0.76rem; line-height: 1.45; }
+.privacy-threat-toggle { display: grid; grid-template-columns: auto auto 1fr; align-items: start; gap: 0.55rem; padding: 0.8rem; background: var(--azd-color-accent-ai-soft); border: 1px solid var(--azd-color-accent-ai-border); border-radius: var(--azd-radius-md); cursor: pointer; }
+.privacy-threat-toggle input { margin-top: 0.2rem; }
+.privacy-threat-toggle > svg { color: var(--azd-color-accent-ai); }
+.privacy-threat-toggle span { display: grid; }
+.privacy-threat-toggle strong { color: var(--azd-color-text-strong); }
+.privacy-threat-toggle small { color: var(--azd-color-text-muted); font-size: 0.73rem; line-height: 1.4; }
+.privacy-preflight-dialog footer { justify-content: flex-end; flex-wrap: wrap; border-top: 1px solid var(--azd-color-border-subtle); }
+.privacy-anonymize { color: var(--azd-color-accent-ai-strong) !important; border-color: var(--azd-color-accent-ai-border) !important; }
+.privacy-anonymize:disabled { color: var(--azd-color-text-disabled) !important; border-color: var(--azd-color-border-subtle) !important; }
+
+@media (max-width: 640px) {
+  .privacy-preflight-overlay { align-items: end; padding: 0; }
+  .privacy-preflight-dialog { max-height: 94dvh; border-radius: var(--azd-radius-lg) var(--azd-radius-lg) 0 0; }
+  .privacy-preflight-dialog footer .btn { flex: 1; justify-content: center; min-width: 120px; }
+}

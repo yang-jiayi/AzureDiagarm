@@ -111,6 +111,8 @@
   --azd-z-header: 1400;
   --azd-z-panel-backdrop: 1499;
   --azd-z-panel: 1500;
+  --azd-z-modal: 3000;
+  --azd-z-modal-elevated: 3100;
 }
 
 body.dark-mode {

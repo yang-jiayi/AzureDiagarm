@@ -6,6 +6,7 @@ import {
   Check,
   FileCode2,
   Import,
+  LayoutTemplate,
   MessageSquare,
   Presentation,
   ShieldCheck,
@@ -14,6 +15,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { useLanguage } from '../i18n/LanguageContext';
+import { localize, type LocalizedText } from '../i18n/localization';
 import './GuidedJourney.css';
 
 export type JourneyStep = 'create' | 'refine' | 'validate' | 'deliver';
@@ -30,14 +32,38 @@ interface JourneyStripProps {
 const STEPS: Array<{
   id: JourneyStep;
   number: number;
-  title: string;
-  detail: string;
+  title: LocalizedText;
+  detail: LocalizedText;
   Icon: LucideIcon;
 }> = [
-  { id: 'create', number: 1, title: 'Create', detail: 'Chat, brief, image, or import', Icon: Sparkles },
-  { id: 'refine', number: 2, title: 'Refine', detail: 'Chat or edit the canvas', Icon: Wrench },
-  { id: 'validate', number: 3, title: 'Validate & Improve', detail: 'Review, apply, and revalidate', Icon: ShieldCheck },
-  { id: 'deliver', number: 4, title: 'Share or Build', detail: 'Export or create deployment artifacts', Icon: Presentation },
+  {
+    id: 'create',
+    number: 1,
+    title: { en: 'Create', ja: '作成' },
+    detail: { en: 'Chat, brief, image, template, or import', ja: 'チャット、要件、画像、テンプレート、取り込み' },
+    Icon: Sparkles,
+  },
+  {
+    id: 'refine',
+    number: 2,
+    title: { en: 'Refine', ja: '改善' },
+    detail: { en: 'Chat or edit the canvas', ja: 'チャットまたはキャンバスで編集' },
+    Icon: Wrench,
+  },
+  {
+    id: 'validate',
+    number: 3,
+    title: { en: 'Validate & Improve', ja: '検証と改善' },
+    detail: { en: 'Review, apply, and revalidate', ja: '確認、適用、再検証' },
+    Icon: ShieldCheck,
+  },
+  {
+    id: 'deliver',
+    number: 4,
+    title: { en: 'Share or Build', ja: '共有または構築' },
+    detail: { en: 'Export or create deployment artifacts', ja: 'エクスポートまたはデプロイ成果物を作成' },
+    Icon: Presentation,
+  },
 ];
 
 export const JourneyStrip: React.FC<JourneyStripProps> = ({
@@ -48,6 +74,7 @@ export const JourneyStrip: React.FC<JourneyStripProps> = ({
   isGeneratingGuide,
   onStep,
 }) => {
+  const { language } = useLanguage();
   const active: JourneyStep = !hasDiagram
     ? 'create'
     : isValidating
@@ -66,12 +93,22 @@ export const JourneyStrip: React.FC<JourneyStripProps> = ({
   };
 
   return (
-    <nav className="journey-strip" aria-label="Recommended architecture workflow">
-      <span className="journey-strip-label">Recommended workflow</span>
+    <nav
+      className="journey-strip"
+      aria-label={localize(language, {
+        en: 'Recommended architecture workflow',
+        ja: '推奨アーキテクチャ ワークフロー',
+      })}
+    >
+      <span className="journey-strip-label">
+        {localize(language, { en: 'Recommended workflow', ja: '推奨ワークフロー' })}
+      </span>
       <div className="journey-steps">
         {STEPS.map(({ id, number, title, detail, Icon }, index) => {
           const isActive = active === id;
           const isComplete = complete(id);
+          const localizedTitle = localize(language, title);
+          const localizedDetail = localize(language, detail);
           return (
             <React.Fragment key={id}>
               {index > 0 && <span className={`journey-connector${isComplete ? ' complete' : ''}`} aria-hidden="true" />}
@@ -80,15 +117,15 @@ export const JourneyStrip: React.FC<JourneyStripProps> = ({
                 className={`journey-step${isActive ? ' active' : ''}${isComplete ? ' complete' : ''}`}
                 onClick={() => onStep(id)}
                 aria-current={isActive ? 'step' : undefined}
-                title={`${number}. ${title}: ${detail}`}
+                title={`${number}. ${localizedTitle}: ${localizedDetail}`}
               >
                 <span className="journey-step-number" aria-hidden="true">
                   {isComplete ? <Check size={13} /> : number}
                 </span>
                 <Icon size={16} />
                 <span className="journey-step-copy">
-                  <strong>{title}</strong>
-                  <small>{detail}</small>
+                  <strong>{localizedTitle}</strong>
+                  <small>{localizedDetail}</small>
                 </span>
               </button>
             </React.Fragment>
@@ -102,6 +139,7 @@ export const JourneyStrip: React.FC<JourneyStripProps> = ({
 interface StartChooserProps {
   onGuidedChat: () => void;
   onGenerate: () => void;
+  onBrowseTemplates: () => void;
   onImportTemplate: () => void;
   onImportAzure: () => void;
 }
@@ -109,10 +147,11 @@ interface StartChooserProps {
 export const StartChooser: React.FC<StartChooserProps> = ({
   onGuidedChat,
   onGenerate,
+  onBrowseTemplates,
   onImportTemplate,
   onImportAzure,
 }) => {
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
   return (
     <div className="start-chooser" role="region" aria-label={t('Choose how to start')}>
       <div className="start-chooser-heading">
@@ -130,6 +169,14 @@ export const StartChooser: React.FC<StartChooserProps> = ({
           <span className="start-choice-icon"><Sparkles size={24} /></span>
           <strong>{t('Generate Diagram')}</strong>
           <span>{t('Use a detailed prompt, upload a sketch, and choose Topology, Blueprint, or both.')}</span>
+        </button>
+        <button type="button" className="start-choice" onClick={onBrowseTemplates}>
+          <span className="start-choice-icon"><LayoutTemplate size={24} /></span>
+          <strong>{localize(language, { en: 'Browse Templates', ja: 'テンプレートを見る' })}</strong>
+          <span>{localize(language, {
+            en: 'Preview a proven starting architecture, then customize every service and connection.',
+            ja: '実績あるスターター構成をプレビューし、すべてのサービスと接続を編集できます。',
+          })}</span>
         </button>
         <div className="start-choice import-choice">
           <span className="start-choice-icon"><Import size={24} /></span>

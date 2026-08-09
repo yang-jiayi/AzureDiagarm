@@ -56,6 +56,8 @@ const isBlueprintCapableModel = (m: ModelType): boolean =>
 const modeRequiresOpenAI = (m: GenerationMode): boolean =>
   m === 'blueprint' || m === 'both';
 
+type GeneratorStep = 'brief' | 'output' | 'review';
+
 interface PromptCategory {
   category: LocalizedText;
   color: string;
@@ -189,6 +191,8 @@ interface AIArchitectureGeneratorProps {
   onGenerate: (architecture: any, prompt: string, autoSnapshot: boolean, referenceImageUrl?: string) => void | Promise<void>;
   /** Increment to open the modal from another in-product journey control. */
   openSignal?: number;
+  /** Render the toolbar trigger. The dialog host can stay mounted elsewhere. */
+  showTrigger?: boolean;
   onOpen?: () => void;
   onContinueInChat?: () => void;
   onReview?: () => void;
@@ -216,6 +220,7 @@ interface AIArchitectureGeneratorProps {
 const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
   onGenerate,
   openSignal,
+  showTrigger = true,
   onOpen,
   onContinueInChat,
   onReview,
@@ -226,6 +231,7 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
 }) => {
   const { t, translate, language } = useLanguage();
   const [isOpen, setIsOpen] = useState(false);
+  const [activeStep, setActiveStep] = useState<GeneratorStep>('brief');
   const [description, setDescription] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
   const [error, setError] = useState('');
@@ -324,6 +330,7 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
     if (isBusy) return;
     cancelScheduledClose();
     clearGenerationResult();
+    setActiveStep('brief');
     setIsOpen(false);
   }, [cancelScheduledClose, clearGenerationResult, isBusy]);
   const dialogRef = useModalFocus<HTMLDivElement>(isOpen);
@@ -345,6 +352,7 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
   const openGenerator = useCallback(() => {
     cancelScheduledClose();
     clearGenerationResult();
+    setActiveStep('brief');
     setIsOpen(true);
     setError('');
     setImageAnalyzed(false);
@@ -451,11 +459,12 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
           await exportReferenceArchitectureAsPng(ref);
         } catch (err) {
           console.warn('Reference architecture PNG export failed:', err);
-          setError(translate('PNG export failed. See console for details.'));
+          throw new Error('PNG export failed. See console for details.');
         }
 
         if (ref.metrics) setAiMetrics(ref.metrics);
         setCanvasGenerationCompleted(false);
+        setActiveStep('review');
         setDescription('');
         scheduleClose();
         return;
@@ -479,11 +488,12 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
           await exportBlueprintArchitectureAsPng(bp, { legendPosition });
         } catch (err) {
           console.warn('Blueprint architecture PNG export failed:', err);
-          setError(translate('PNG export failed. See console for details.'));
+          throw new Error('PNG export failed. See console for details.');
         }
 
         if (bp.metrics) setAiMetrics(bp.metrics);
         setCanvasGenerationCompleted(false);
+        setActiveStep('review');
         setDescription('');
         scheduleClose();
         return;
@@ -600,13 +610,16 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
 
         // Auto-download the blueprint PNG when the user has autoSnapshot on
         // (matches the existing "auto" behavior they're already used to).
+        let blueprintExportError: Error | null = null;
         if (autoSnapshot && bpResult) {
           try {
             const { exportBlueprintArchitectureAsPng } = await import('../utils/exportBlueprintPng');
             await exportBlueprintArchitectureAsPng(bpResult, { legendPosition });
           } catch (err) {
             console.warn('Blueprint architecture PNG export failed:', err);
-            setError(translate('Blueprint PNG export failed. See console for details.'));
+            blueprintExportError = new Error(
+              'Blueprint PNG export failed. See console for details.',
+            );
           }
         }
 
@@ -619,7 +632,9 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
           const detail = cause instanceof Error ? cause.message : String(cause);
           throw new Error(`${failedOutput} generation failed, but the other output was created successfully: ${detail}`);
         }
+        if (blueprintExportError) throw blueprintExportError;
 
+        setActiveStep('review');
         setDescription('');
         scheduleClose();
         return;
@@ -643,12 +658,14 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
       await onGenerate(result, description, autoSnapshot, uploadedImageUrl || undefined);
       if (result.metrics) setAiMetrics(result.metrics);
       setCanvasGenerationCompleted(true);
+      setActiveStep('review');
       setDescription('');
       
       // Close modal shortly after successful generation
       scheduleClose(); // Give user 45 seconds to review results or type a modification
     } catch (err: any) {
       setError(err.message ? translate(err.message) : translate('Failed to generate architecture. Please try again.'));
+      setActiveStep('output');
     } finally {
       setIsGenerating(false);
     }
@@ -656,6 +673,7 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
 
   const applyExample = (example: string) => {
     setDescription(example);
+    setError('');
   };
 
   const renderFeatureModelControls = (feature: FeatureType, openAiOnly: boolean) => {
@@ -742,21 +760,23 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
 
   return (
     <>
-      <button
-        type="button"
-        className="btn btn-ai btn-generate-ai"
-        onClick={openGenerator}
-        title={translate('Generate a diagram from detailed requirements or an uploaded image')}
-      >
-        <Sparkles size={18} />
-        {' '}{translate('Generate Diagram')}{' '}
-      </button>
+      {showTrigger && (
+        <button
+          type="button"
+          className="btn btn-ai btn-generate-ai"
+          onClick={openGenerator}
+          title={translate('Generate a diagram from detailed requirements or an uploaded image')}
+        >
+          <Sparkles size={18} />
+          {' '}{translate('Generate Diagram')}{' '}
+        </button>
+      )}
 
       {isOpen && createPortal(
-        <div className="modal-overlay" onClick={closeModal}>
+        <div className="ai-generator-overlay" onClick={closeModal}>
           <div
             ref={dialogRef}
-            className="modal-content ai-architecture-modal"
+            className="ai-generator-dialog ai-architecture-modal"
             role="dialog"
             aria-modal="true"
             aria-label={t("AI Architecture Generator")}
@@ -781,9 +801,43 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
               </button>
             </div>
 
+            <nav
+              className="generator-steps"
+              aria-label={localize(language, {
+                en: 'Diagram generation steps',
+                ja: '図の生成手順',
+              })}
+            >
+              {([
+                ['brief', localize(language, { en: '1. Brief', ja: '1. 要件' })],
+                ['output', localize(language, { en: '2. Output', ja: '2. 出力' })],
+                ['review', localize(language, { en: '3. Review', ja: '3. 確認' })],
+              ] as const).map(([step, label]) => (
+                <button
+                  key={step}
+                  type="button"
+                  className={`generator-step${activeStep === step ? ' active' : ''}`}
+                  aria-current={activeStep === step ? 'step' : undefined}
+                  disabled={
+                    isBusy
+                    || (step === 'output' && !description.trim() && activeStep === 'brief')
+                    || (step === 'review' && activeStep !== 'review')
+                  }
+                  onClick={() => {
+                    cancelScheduledClose();
+                    setActiveStep(step);
+                  }}
+                >
+                  {label}
+                </button>
+              ))}
+            </nav>
+
             <div className="modal-body">
-             <div className="modal-body-grid">
+             <div className={`modal-body-grid generator-step-${activeStep}`}>
               <div className="modal-col modal-col-left">
+              {activeStep === 'brief' && (
+              <>
               <p className="modal-description">
                 {mode === 'reference' ? (
                   localize(language, {
@@ -850,8 +904,26 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
                   {error}
                 </div>
               )}
+              </>
+              )}
 
-              {aiMetrics && (
+              {activeStep === 'output' && (
+                <div className="generator-output-summary">
+                  <span>{localize(language, { en: 'Architecture brief', ja: 'アーキテクチャ要件' })}</span>
+                  <p>{description}</p>
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    onClick={() => setActiveStep('brief')}
+                    disabled={isBusy}
+                  >
+                    {localize(language, { en: 'Edit brief', ja: '要件を編集' })}
+                  </button>
+                  {error && <div className="error-message">{error}</div>}
+                </div>
+              )}
+
+              {activeStep === 'review' && (
                 <div className="generator-success-panel">
                   <div className="similar-architectures">
                     <h3>
@@ -862,14 +934,14 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
                             ja: mode === 'blueprint' || mode === 'both' ? '✓ Blueprint PNGを作成しました' : '✓ Reference PNGを作成しました',
                           })}
                     </h3>
-                    <div className="ai-metrics">
+                    {aiMetrics && <div className="ai-metrics">
                       <span className="metric">
                         <Clock size={14} />
                         {(aiMetrics.elapsedTimeMs / 1000).toFixed(1)}{t("s")}{' '}</span>
                       <span className="metric">
                         <Zap size={14} />
                         {aiMetrics.promptTokens.toLocaleString()} {' '}{t("in →")}{' '}{aiMetrics.completionTokens.toLocaleString()} {' '}{t("out (")}{aiMetrics.totalTokens.toLocaleString()} {' '}{t("total)")}{' '}</span>
-                    </div>
+                    </div>}
                   </div>
                   <p>
                     {canvasGenerationCompleted
@@ -898,6 +970,7 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
               )}
               </div>
               <div className="modal-col modal-col-right">
+              {activeStep === 'output' && (
               <div className="mode-toggle" role="tablist" aria-label={t("Generation mode")}>
                 <button
                   role="tab"
@@ -937,6 +1010,8 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
                   <span className="mode-sub">{t("Topology + Blueprint")}</span>
                 </button>
               </div>
+              )}
+              {activeStep === 'brief' && (
               <div className="example-prompts">
                 <h3>{t("Example Prompts")}</h3>
                 <div className="example-list">
@@ -968,11 +1043,14 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
                   ))}
                 </div>
               </div>
+              )}
               </div>
              </div>
             </div>
 
             <div className="modal-footer">
+              {activeStep === 'output' && (
+              <>
               <div className="ai-modal-active-model">
                 <Brain size={20} />
                 <div className="ai-modal-model-controls">
@@ -1044,14 +1122,41 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
                     {' '}{t("Auto picks \"bottom\" for wide diagrams and \"right\" for square / tall ones.")}{' '}</p>
                 </div>
               )}
+              </>
+              )}
               <div className="modal-footer-actions">
+                {activeStep === 'brief' && (
+                <>
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      onClick={closeModal}
+                      disabled={isBusy}
+                    >
+                      {t("Cancel")}
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-primary"
+                      onClick={() => {
+                        setError('');
+                        setActiveStep('output');
+                      }}
+                      disabled={isBusy || !description.trim()}
+                    >
+                      {localize(language, { en: 'Continue to output', ja: '出力設定へ進む' })}
+                    </button>
+                </>
+                )}
+                {activeStep === 'output' && (
+                <>
                 <button
-                  type="button"
-                  className="btn btn-secondary"
-                  onClick={closeModal}
-                  disabled={isBusy}
+                    type="button"
+                    className="btn btn-secondary"
+                    onClick={() => setActiveStep('brief')}
+                    disabled={isBusy}
                 >
-                  {aiMetrics ? t("Close") : t("Cancel")}
+                    {localize(language, { en: 'Back', ja: '戻る' })}
                 </button>
                 <button
                   type="button"
@@ -1070,6 +1175,18 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
                       {' '}{t("Generate Architecture")}{' '}</>
                   )}
                 </button>
+                </>
+                )}
+                {activeStep === 'review' && (
+                  <button
+                      type="button"
+                      className="btn btn-primary"
+                      onClick={closeModal}
+                      disabled={isBusy}
+                  >
+                      {t("Close")}
+                  </button>
+                )}
               </div>
             </div>
           </div>

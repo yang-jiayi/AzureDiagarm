@@ -23,7 +23,7 @@ import { type ExportBackground } from './utils/captureCanvas';
 import { animateEdgeFlow } from './utils/animateEdges';
 import { sequenceWorkflowSvg } from './utils/sequenceWorkflow';
 import { buildWorkflowMarkdown } from './services/workflowNarrativeExporter';
-import { Download, Save, Upload, DollarSign, Shield, ShieldCheck, FileText, FileCode, ChevronDown, ChevronRight, Clock, Camera, Loader, GitCompare, RefreshCw, PanelLeftClose, Minimize2, Maximize2, Presentation, MessagesSquare, HelpCircle, Info, Frame, PanelTopClose, PanelTopOpen, DownloadCloud, Sun, Moon, Play, Pause, Eye, EyeOff, Cloud, Copy, Trash2, Ungroup, Boxes, CheckSquare } from 'lucide-react';
+import { Download, Save, Upload, DollarSign, Shield, ShieldCheck, FileText, FileCode, ChevronDown, ChevronRight, Clock, Camera, Loader, GitCompare, RefreshCw, PanelLeftClose, Minimize2, Maximize2, Presentation, MessagesSquare, HelpCircle, Info, Frame, PanelTopClose, PanelTopOpen, DownloadCloud, Sun, Moon, Play, Pause, Eye, EyeOff, Cloud, Copy, Trash2, Ungroup, Boxes, CheckSquare, Sparkles, Undo2, Redo2, LayoutTemplate } from 'lucide-react';
 import AboutDialog from './components/AboutDialog';
 import IconPalette from './components/IconPalette';
 import AzureNode from './components/AzureNode';
@@ -37,7 +37,12 @@ import CommandPalette, { type CommandPaletteAction } from './components/CommandP
 import { DeliverChooser } from './components/GuidedJourney';
 import HelpLearnPanel from './components/GuidedHelpPanel';
 import MobileCommandBar from './components/MobileCommandBar';
+import MobileNodeInspector from './components/MobileNodeInspector';
+import PrivacyPreflightDialog from './components/PrivacyPreflightDialog';
 import ResponsiveRibbonSurface from './components/ResponsiveRibbonSurface';
+import DocumentStatus from './components/DocumentStatus';
+import TemplateGallery from './components/TemplateGallery';
+import ThreatModelOverlay from './components/ThreatModelOverlay';
 import WorkflowStepper from './components/WorkflowStepper';
 import type { ReferenceArchitecture } from './services/referenceArchitectureAI';
 import type { BlueprintArchitecture } from './services/blueprintArchitectureAI';
@@ -80,6 +85,11 @@ import {
   CloudDiagramOperationCancelledError,
   useCloudDiagramSync,
 } from './hooks/useCloudDiagramSync';
+import type {
+  CloudDiagramDocument,
+  CloudDiagramVersion,
+} from './services/cloudDiagramService';
+import { useDiagramHistory } from './hooks/useDiagramHistory';
 import type { DeckService } from './services/pptxExporter';
 import { extractArchitectureFromArm, summarizeCoverage } from './services/armExtractor';
 import {
@@ -141,6 +151,14 @@ import { decodeUtf8Base64 } from './utils/base64Utf8';
 import { csvTextCell } from './utils/csv';
 import { toFileNameSegment } from './utils/fileName';
 import { readBooleanPreference, readLocalStorage, writeLocalStorage } from './utils/safeStorage';
+import type { ArchitectureTemplate } from './data/architectureTemplates';
+import {
+  anonymizeDiagramPayload,
+  detectSensitiveData,
+  detectSensitiveDataInValue,
+  type SensitiveFinding,
+} from './utils/privacyPreflight';
+import { analyzeThreatModel } from './utils/threatModel';
 import { findAvailableServicePosition } from './utils/serviceNodePlacement';
 import { MEDIA_QUERIES } from './styles/breakpoints';
 import {
@@ -318,6 +336,7 @@ const HEADER_COLLAPSED_STORAGE_KEY = 'azure-diagram-builder.headerCollapsed.v1';
 const FOCUS_MODE_STORAGE_KEY = 'azure-diagram-builder.focusMode.v1';
 const TOOLBAR_SECTIONS_STORAGE_KEY = 'azure-diagram-builder.toolbarSections.v1';
 const RIBBON_TAB_STORAGE_KEY = 'azure-diagram-builder.ribbonTab.v1';
+const THREAT_OVERLAY_STORAGE_KEY = 'azure-diagram-builder.threatOverlay.v1';
 const DEFAULT_EDGE_COLOR = getConnectionPresentation('sync').stroke;
 const EDGE_CONTEXT_MENU_WIDTH = 220;
 const EDGE_CONTEXT_MENU_HEIGHT = 360;
@@ -350,6 +369,14 @@ type PaneContextMenuState = {
   x: number;
   y: number;
   flowPosition: Node['position'];
+};
+
+type PrivacyRequest = {
+  purpose: 'export' | 'share' | 'review';
+  findings: SensitiveFinding[];
+  canAnonymize: boolean;
+  onProceed: () => void;
+  onCancel: () => void;
 };
 
 function clampContextMenuPosition(
@@ -871,6 +898,41 @@ function getRenderedEdgeLabelBounds(
     });
 }
 
+interface DiagramHistorySnapshot {
+  nodes: Node[];
+  edges: Edge[];
+  architecturePrompt: string;
+  originalPrompt: string;
+  validationScore?: number;
+  titleBlockData: {
+    architectureName: string;
+    author: string;
+    version: string;
+    date: string;
+  };
+  workflow: any[];
+  pricingScenarios: PricingScenario[];
+  iacBaseline: IaCBaseline | null;
+}
+
+function stripTransientNodeState(node: Node): Node {
+  const snapshot = { ...node } as Node & Record<string, unknown>;
+  delete snapshot.selected;
+  delete snapshot.dragging;
+  delete snapshot.width;
+  delete snapshot.height;
+  delete snapshot.positionAbsolute;
+  delete snapshot.measured;
+  delete snapshot.resizing;
+  return snapshot;
+}
+
+function stripTransientEdgeState(edge: Edge): Edge {
+  const snapshot = { ...edge } as Edge & Record<string, unknown>;
+  delete snapshot.selected;
+  return snapshot;
+}
+
 function App() {
   const { t, translate, language } = useLanguage();
   const [nodes, setNodes, onNodesChangeBase] = useNodesState([]);
@@ -897,6 +959,7 @@ function App() {
 
   const [isImportingTemplate, setIsImportingTemplate] = useState(false);
   const templateInputRef = useRef<HTMLInputElement>(null);
+  const [isTemplateGalleryOpen, setIsTemplateGalleryOpen] = useState(false);
   const [isAzureImportOpen, setIsAzureImportOpen] = useState(false);
   // After a delegated sign-in redirect returns, re-open the "Import from Azure"
   // modal so the user lands back where they left off (now signed in).
@@ -1071,6 +1134,10 @@ function App() {
   const [isVersionHistoryModalOpen, setIsVersionHistoryModalOpen] = useState(false);
   const [isSaveSnapshotModalOpen, setIsSaveSnapshotModalOpen] = useState(false);
   const [isCloudWorkspaceOpen, setIsCloudWorkspaceOpen] = useState(false);
+  const [privacyRequest, setPrivacyRequest] = useState<PrivacyRequest | null>(null);
+  const [threatOverlayEnabled, setThreatOverlayEnabled] = useState<boolean>(
+    () => readBooleanPreference(THREAT_OVERLAY_STORAGE_KEY, false),
+  );
   const [isPricingScenarioModalOpen, setIsPricingScenarioModalOpen] = useState(false);
   const [isCompareModelsOpen, setIsCompareModelsOpen] = useState(false);
   const [isChatOpen, setIsChatOpen] = useState(false);
@@ -1481,111 +1548,6 @@ function App() {
     };
   }, [isExportMenuOpen, isLayoutMenuOpen, isBulkSelectMenuOpen, isStylePresetMenuOpen, isModelSettingsOpen]);
 
-  // Keyboard shortcuts: Delete and Ctrl+D (duplicate)
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') cancelPendingPricingEditorOpen();
-
-      const target = e.target;
-      if (
-        !(target instanceof Element)
-        || e.defaultPrevented
-        || e.isComposing
-        || e.keyCode === 229
-        || pricingEditorNodeId
-        || target.tagName === 'INPUT'
-        || target.tagName === 'TEXTAREA'
-        || target.tagName === 'SELECT'
-        || (target.tagName === 'BUTTON' && !(focusMode && e.key === 'Escape'))
-        || (target instanceof HTMLElement && target.isContentEditable)
-        || target.closest('[role="dialog"], [role="menu"]')
-        || document.querySelector('[role="dialog"], [role="menu"]')
-      ) {
-        return;
-      }
-
-      if (e.key === 'Escape' && focusMode) {
-        e.preventDefault();
-        exitFocusMode();
-        return;
-      }
-
-      if (
-        (e.ctrlKey || e.metaKey)
-        && !e.altKey
-        && e.key.toLowerCase() === 'k'
-      ) {
-        e.preventDefault();
-        openCommandPalette();
-        return;
-      }
-
-      // Delete key - remove selected nodes and edges
-      if (e.key === 'Delete' || e.key === 'Backspace') {
-        const selectedNodes = nodes.filter(n => n.selected);
-        const selectedEdges = edges.filter(e => e.selected);
-        
-        if (selectedNodes.length > 0 || selectedEdges.length > 0) {
-          e.preventDefault();
-          
-          // Remove selected nodes
-          if (selectedNodes.length > 0) {
-            const nodeIdsToRemove = selectedNodes.map(n => n.id);
-            deleteCanvasNodes(nodeIdsToRemove);
-          }
-          
-          // Remove selected edges
-          if (selectedEdges.length > 0) {
-            const edgeIdsToRemove = selectedEdges.map(e => e.id);
-            setEdges(eds => eds.filter(e => !edgeIdsToRemove.includes(e.id)));
-          }
-
-          window.requestAnimationFrame(() => {
-            reactFlowWrapper.current?.focus();
-          });
-        }
-      }
-
-      // Ctrl+D or Cmd+D - duplicate selected nodes
-      if ((e.ctrlKey || e.metaKey) && e.key === 'd') {
-        const selectedNodes = nodes.filter(n => n.selected);
-        
-        if (selectedNodes.length > 0) {
-          e.preventDefault();
-
-          const duplicateRunId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-          let duplicateSequence = 0;
-          const result = duplicateSelectedSubgraph(
-            nodes,
-            edges,
-            selectedNodes.map(node => node.id),
-            (kind, sourceId) => (
-              `${sourceId}-copy-${kind}-${duplicateRunId}-${duplicateSequence++}`
-            ),
-          );
-          setNodes(result.nodes);
-          setEdges(result.edges);
-        }
-      }
-    };
-
-    document.addEventListener('keydown', handleKeyDown);
-    return () => {
-      document.removeEventListener('keydown', handleKeyDown);
-    };
-  }, [
-    nodes,
-    edges,
-    setNodes,
-    setEdges,
-    deleteCanvasNodes,
-    pricingEditorNodeId,
-    cancelPendingPricingEditorOpen,
-    exitFocusMode,
-    focusMode,
-    openCommandPalette,
-  ]);
-
   // Keep edge rendering style in sync even without re-layout.
   useEffect(() => {
     setEdges((eds) =>
@@ -1888,6 +1850,180 @@ function App() {
     }, eds)),
     [setEdges, handleEdgeLabelChange, handleEdgeLabelOffsetChange, animateConnections, layoutEdgeStyle]
   );
+
+  const diagramHistoryState = useMemo<DiagramHistorySnapshot>(() => ({
+    nodes: nodes.map(stripTransientNodeState),
+    edges: edges.map(stripTransientEdgeState),
+    architecturePrompt,
+    originalPrompt,
+    validationScore: currentValidationScore,
+    titleBlockData,
+    workflow,
+    pricingScenarios,
+    iacBaseline,
+  }), [
+    architecturePrompt,
+    currentValidationScore,
+    edges,
+    iacBaseline,
+    nodes,
+    originalPrompt,
+    pricingScenarios,
+    titleBlockData,
+    workflow,
+  ]);
+  const diagramHistoryStateRef = useRef(diagramHistoryState);
+  diagramHistoryStateRef.current = diagramHistoryState;
+
+  const restoreDiagramHistory = useCallback((snapshot: DiagramHistorySnapshot) => {
+    setNodes(snapshot.nodes);
+    setEdges(normalizeRestoredEdges(snapshot.edges));
+    setArchitecturePrompt(snapshot.architecturePrompt);
+    setOriginalPrompt(snapshot.originalPrompt);
+    setTitleBlockData(snapshot.titleBlockData);
+    setWorkflow(snapshot.workflow);
+    setPricingScenarios(snapshot.pricingScenarios);
+    setIaCBaseline(snapshot.iacBaseline);
+    setDriftPlanSummary(null);
+    setValidationResult(null);
+    setPersistedValidationScore(snapshot.validationScore);
+    setValidationNeedsRefresh(false);
+    setValidationHandoff(null);
+    feedbackAfterValidationRef.current = false;
+    setDeploymentGuide(null);
+    setReferenceImageUrl(null);
+    setLastReferenceArchitecture(null);
+    setLastBlueprintArchitecture(null);
+    window.requestAnimationFrame(() => {
+      reactFlowWrapper.current?.focus();
+    });
+  }, [normalizeRestoredEdges, setEdges, setNodes]);
+
+  const {
+    canUndo: canUndoDiagram,
+    canRedo: canRedoDiagram,
+    undo: undoDiagram,
+    redo: redoDiagram,
+    reset: resetDiagramHistory,
+  } = useDiagramHistory(diagramHistoryState, restoreDiagramHistory, {
+    delayMs: 250,
+    limit: 50,
+  });
+
+  // Keyboard shortcuts: undo/redo, delete, and duplicate.
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') cancelPendingPricingEditorOpen();
+
+      const target = e.target;
+      if (
+        !(target instanceof Element)
+        || e.defaultPrevented
+        || e.isComposing
+        || e.keyCode === 229
+        || pricingEditorNodeId
+        || target.tagName === 'INPUT'
+        || target.tagName === 'TEXTAREA'
+        || target.tagName === 'SELECT'
+        || (target.tagName === 'BUTTON' && !(focusMode && e.key === 'Escape'))
+        || (target instanceof HTMLElement && target.isContentEditable)
+        || target.closest('[role="dialog"], [role="menu"]')
+        || document.querySelector('[role="dialog"], [role="menu"]')
+      ) {
+        return;
+      }
+
+      if (e.key === 'Escape' && focusMode) {
+        e.preventDefault();
+        exitFocusMode();
+        return;
+      }
+
+      if (
+        (e.ctrlKey || e.metaKey)
+        && !e.altKey
+        && e.key.toLowerCase() === 'k'
+      ) {
+        e.preventDefault();
+        openCommandPalette();
+        return;
+      }
+
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 'z') {
+        e.preventDefault();
+        if (e.shiftKey) redoDiagram();
+        else undoDiagram();
+        return;
+      }
+
+      if (
+        (e.ctrlKey || e.metaKey)
+        && !e.altKey
+        && e.key.toLowerCase() === 'y'
+      ) {
+        e.preventDefault();
+        redoDiagram();
+        return;
+      }
+
+      if (e.key === 'Delete' || e.key === 'Backspace') {
+        const selectedNodes = nodes.filter(n => n.selected);
+        const selectedEdges = edges.filter(e => e.selected);
+
+        if (selectedNodes.length > 0 || selectedEdges.length > 0) {
+          e.preventDefault();
+          if (selectedNodes.length > 0) {
+            deleteCanvasNodes(selectedNodes.map(n => n.id));
+          }
+          if (selectedEdges.length > 0) {
+            const edgeIdsToRemove = selectedEdges.map(edge => edge.id);
+            setEdges(current => current.filter(edge => !edgeIdsToRemove.includes(edge.id)));
+          }
+          window.requestAnimationFrame(() => {
+            reactFlowWrapper.current?.focus();
+          });
+        }
+        return;
+      }
+
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'd') {
+        const selectedNodes = nodes.filter(n => n.selected);
+        if (selectedNodes.length === 0) return;
+
+        e.preventDefault();
+        const duplicateRunId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        let duplicateSequence = 0;
+        const result = duplicateSelectedSubgraph(
+          nodes,
+          edges,
+          selectedNodes.map(node => node.id),
+          (kind, sourceId) => (
+            `${sourceId}-copy-${kind}-${duplicateRunId}-${duplicateSequence++}`
+          ),
+        );
+        setNodes(result.nodes);
+        setEdges(result.edges);
+      }
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [
+    cancelPendingPricingEditorOpen,
+    deleteCanvasNodes,
+    edges,
+    exitFocusMode,
+    focusMode,
+    nodes,
+    openCommandPalette,
+    pricingEditorNodeId,
+    redoDiagram,
+    setEdges,
+    setNodes,
+    undoDiagram,
+  ]);
 
   // Bulk select operations
   const selectAllNodesOfType = useCallback((serviceType: string) => {
@@ -3746,6 +3882,18 @@ function App() {
     pricingScenarios,
     iacBaseline,
   ]);
+  const privacyFindings = useMemo(
+    () => detectSensitiveData(cloudDiagramPayload),
+    [cloudDiagramPayload],
+  );
+  const threatMarkers = useMemo(
+    () => analyzeThreatModel(nodes, edges),
+    [edges, nodes],
+  );
+  const updateThreatOverlay = useCallback((enabled: boolean) => {
+    setThreatOverlayEnabled(enabled);
+    writeLocalStorage(THREAT_OVERLAY_STORAGE_KEY, enabled ? '1' : '0');
+  }, []);
 
   const cloudDraftHasContent = useMemo(() => {
     const architectureName = titleBlockData.architectureName.trim();
@@ -3812,7 +3960,92 @@ function App() {
     setIsGeneratingGuide(false);
     setIsValidationModalOpen(false);
     setIsDeploymentGuideModalOpen(false);
-  }, [activeDiagramLineageId]);
+    resetDiagramHistory(diagramHistoryStateRef.current);
+  }, [activeDiagramLineageId, resetDiagramHistory]);
+
+  const requestPrivacyAction = useCallback((
+    purpose: PrivacyRequest['purpose'],
+    onProceed: () => void,
+    onCancel: () => void = () => undefined,
+    options?: {
+      findings?: SensitiveFinding[];
+      canAnonymize?: boolean;
+    },
+  ) => {
+    const findings = options?.findings ?? privacyFindings;
+    if (purpose !== 'review' && findings.length === 0) {
+      onProceed();
+      return;
+    }
+    setPrivacyRequest({
+      purpose,
+      findings,
+      canAnonymize: options?.canAnonymize ?? true,
+      onProceed,
+      onCancel,
+    });
+  }, [privacyFindings]);
+
+  const guardSensitiveExport = useCallback((action: () => void | Promise<void>) => {
+    requestPrivacyAction('export', () => {
+      void action();
+    });
+  }, [requestPrivacyAction]);
+
+  const confirmBeforeShare = useCallback((
+    document: CloudDiagramDocument,
+    versions: CloudDiagramVersion[],
+  ) => new Promise<boolean>((resolve) => {
+    requestPrivacyAction(
+      'share',
+      () => resolve(true),
+      () => resolve(false),
+      {
+        findings: detectSensitiveDataInValue({
+          current: {
+            diagramName: document.diagramName,
+            payload: document.payload,
+            comments: document.comments,
+          },
+          versions,
+        }, 'share'),
+        canAnonymize: document.id === cloudSync.document?.id,
+      },
+    );
+  }), [cloudSync.document?.id, requestPrivacyAction]);
+
+  const finishPrivacyRequest = useCallback((proceed: boolean) => {
+    const request = privacyRequest;
+    setPrivacyRequest(null);
+    if (!request) return;
+    if (proceed) request.onProceed();
+    else request.onCancel();
+  }, [privacyRequest]);
+
+  const anonymizeCurrentDiagram = useCallback(() => {
+    if (privacyRequest && !privacyRequest.canAnonymize) return;
+    const sanitized = anonymizeDiagramPayload(cloudDiagramPayload);
+    if (cloudSync.context) {
+      cloudSync.reset();
+      setLocalDiagramLineageId(createLocalDiagramLineageId('anonymized'));
+    }
+    applyFlowObject(sanitized);
+    if (privacyRequest?.purpose === 'share') {
+      setIsCloudWorkspaceOpen(false);
+    }
+    finishPrivacyRequest(false);
+    alert(localize(language, {
+      en: 'An anonymized working copy is ready. Review it, then repeat the export or share action.',
+      ja: '匿名化した作業コピーを用意しました。内容を確認してから、エクスポートまたは共有操作をもう一度実行してください。',
+    }));
+  }, [
+    applyFlowObject,
+    cloudDiagramPayload,
+    cloudSync,
+    finishPrivacyRequest,
+    language,
+    privacyRequest,
+  ]);
 
   const startFreshDiagram = useCallback(async (): Promise<boolean> => {
     const preserveAsCopy = cloudSync.context?.role === 'viewer';
@@ -3879,6 +4112,35 @@ function App() {
     setEdges,
     setNodes,
     translate,
+  ]);
+
+  const applyArchitectureTemplate = useCallback(async (template: ArchitectureTemplate) => {
+    if (nodes.length > 0 || cloudSync.context) {
+      const cleared = await startFreshDiagram();
+      if (!cleared) return;
+    } else {
+      cloudSync.reset();
+      setLocalDiagramLineageId(createLocalDiagramLineageId(`template-${template.id}`));
+    }
+
+    applyFlowObject(template.diagram);
+    setIsTemplateGalleryOpen(false);
+    trackGuidedJourney({
+      action: 'path-selected',
+      step: 'create',
+      path: 'template-import',
+      source: 'first-start',
+      hasDiagram: false,
+    });
+    window.setTimeout(() => {
+      reactFlowInstance?.fitView({ padding: 0.2, duration: 350, maxZoom: 1.2 });
+    }, 100);
+  }, [
+    applyFlowObject,
+    cloudSync,
+    nodes.length,
+    reactFlowInstance,
+    startFreshDiagram,
   ]);
 
   const iacComparison = useMemo(
@@ -5452,7 +5714,7 @@ function App() {
       keywords: ['download', 'json', 'file'],
       group: localize(language, { en: 'File', ja: 'ファイル' }),
       icon: <Save size={17} aria-hidden="true" />,
-      run: saveDiagram,
+      run: () => guardSensitiveExport(saveDiagram),
     },
     {
       id: 'export-png',
@@ -5465,7 +5727,36 @@ function App() {
       group: localize(language, { en: 'Export', ja: '出力' }),
       icon: <Download size={17} aria-hidden="true" />,
       disabled: nodes.length === 0,
-      run: exportDiagram,
+      run: () => guardSensitiveExport(exportDiagram),
+    },
+    {
+      id: 'privacy-preflight',
+      label: localize(language, { en: 'Review privacy before sharing', ja: '共有前にプライバシーを確認' }),
+      description: localize(language, {
+        en: 'Detect credentials, internal identifiers, addresses, and resource IDs',
+        ja: '資格情報、内部識別子、アドレス、リソース ID を検出します',
+      }),
+      keywords: ['privacy', 'security', 'sensitive', 'redact', 'anonymize'],
+      group: localize(language, { en: 'Review', ja: 'レビュー' }),
+      icon: <ShieldCheck size={17} aria-hidden="true" />,
+      disabled: nodes.length === 0,
+      run: () => requestPrivacyAction('review', () => undefined),
+    },
+    {
+      id: 'toggle-threat-overlay',
+      label: localize(language, {
+        en: threatOverlayEnabled ? 'Hide threat-model overlay' : 'Show threat-model overlay',
+        ja: threatOverlayEnabled ? '脅威モデル オーバーレイを非表示' : '脅威モデル オーバーレイを表示',
+      }),
+      description: localize(language, {
+        en: 'Highlight exposure, data, identity, secrets, and detection controls',
+        ja: '公開、データ、ID、シークレット、検出制御を強調します',
+      }),
+      keywords: ['threat', 'security', 'overlay', 'trust boundary'],
+      group: localize(language, { en: 'Review', ja: 'レビュー' }),
+      icon: <Shield size={17} aria-hidden="true" />,
+      disabled: nodes.length === 0,
+      run: () => updateThreatOverlay(!threatOverlayEnabled),
     },
     {
       id: 'fit-view',
@@ -5602,20 +5893,73 @@ function App() {
     setIsChatOpen(true);
   };
 
+  const aiGeneratorHost = (
+    <AIArchitectureGenerator
+      showTrigger={false}
+      openSignal={generatorOpenSignal}
+      onOpen={() => {
+        const source = generatorOpenSourceRef.current;
+        trackGuidedJourney({
+          action: 'path-selected',
+          step: nodes.length > 0 ? 'refine' : 'create',
+          path: 'brief-image',
+          source,
+          hasDiagram: nodes.length > 0,
+        });
+        generatorOpenSourceRef.current = 'toolbar';
+      }}
+      onGenerate={async (arch, prompt, autoSnap, refImageUrl) => {
+        await handleAIGenerate(arch, prompt, autoSnap, nodes.length > 0);
+        clearSourceModel();
+        setReferenceImageUrl(refImageUrl ?? null);
+        setLastBlueprintArchitecture(null);
+      }}
+      onReferenceArchitecture={(ref) => {
+        setLastReferenceArchitecture(ref ?? null);
+      }}
+      onBlueprintArchitecture={(bp) => {
+        setLastBlueprintArchitecture(bp ?? null);
+      }}
+      currentArchitecture={{
+        nodes,
+        edges,
+        architectureName: titleBlockData.architectureName,
+      }}
+      onContinueInChat={() => {
+        trackGuidedJourney({ action: 'post-generation-action', step: 'refine', path: 'guided-chat', source: 'generator-success', hasDiagram: true });
+        setIsChatOpen(true);
+      }}
+      onReview={() => {
+        trackGuidedJourney({ action: 'post-generation-action', step: 'refine', path: 'canvas', source: 'generator-success', hasDiagram: true });
+        window.setTimeout(() => reactFlowInstance?.fitView({ padding: 0.2, duration: 300 }), 100);
+      }}
+      onValidate={() => {
+        trackGuidedJourney({ action: 'post-generation-action', step: 'validate', source: 'generator-success', hasDiagram: true });
+        void handleValidateArchitecture();
+      }}
+    />
+  );
+
 
   return (
     <div className={`app${isChatOpen ? ' chat-open' : ''}${focusMode ? ' focus-mode' : ''}`}>
       <header className={`app-header${isHeaderCollapsed ? ' header-collapsed' : ''}${isMobileRibbonOpen ? ' mobile-ribbon-open' : ''}`}>
         <div className="header-content">
           <div className="header-brand">
-            <div className="microsoft-logo" role="img" aria-label={t("Microsoft")}>
-              <span className="microsoft-symbol" aria-hidden="true">
-                <span className="microsoft-square microsoft-square-red" />
-                <span className="microsoft-square microsoft-square-green" />
-                <span className="microsoft-square microsoft-square-blue" />
-                <span className="microsoft-square microsoft-square-yellow" />
+            <div
+              className="community-brand"
+              role="img"
+              aria-label={localize(language, {
+                en: 'Independent community project',
+                ja: '独立したコミュニティ プロジェクト',
+              })}
+            >
+              <span className="community-brand-symbol" aria-hidden="true">
+                <Boxes size={18} />
               </span>
-              <span className="microsoft-wordmark" aria-hidden="true">Microsoft</span>
+              <span className="community-brand-wordmark" aria-hidden="true">
+                {localize(language, { en: 'Community project', ja: 'コミュニティ版' })}
+              </span>
             </div>
             <h1>{t("Azure Architecture Diagram Builder")}</h1>
           </div>
@@ -5767,52 +6111,30 @@ function App() {
                     <rect x="3" y="3" width="18" height="18" rx="2" strokeDasharray="4 4" />
                   </svg>
                   {' '}{t("Add Group")}{' '}</button>
-                <AIArchitectureGenerator 
-                  openSignal={generatorOpenSignal}
-                  onOpen={() => {
-                    const source = generatorOpenSourceRef.current;
-                    trackGuidedJourney({
-                      action: 'path-selected',
-                      step: nodes.length > 0 ? 'refine' : 'create',
-                      path: 'brief-image',
-                      source,
-                      hasDiagram: nodes.length > 0,
-                    });
-                    generatorOpenSourceRef.current = 'toolbar';
-                  }}
-                  onGenerate={async (arch, prompt, autoSnap, refImageUrl) => {
-                    await handleAIGenerate(arch, prompt, autoSnap, nodes.length > 0);
-                    clearSourceModel();
-                    setReferenceImageUrl(refImageUrl ?? null);
-                    setLastBlueprintArchitecture(null);
-                  }}
-                  onReferenceArchitecture={(ref) => {
-                    // Reference mode does not push a topology onto the canvas;
-                    // just remember the ref so the toolbar can re-export the PNG.
-                    setLastReferenceArchitecture(ref ?? null);
-                  }}
-                  onBlueprintArchitecture={(bp) => {
-                    // Blueprint mode is also PNG-only; stash for re-export.
-                    setLastBlueprintArchitecture(bp ?? null);
-                  }}
-                  currentArchitecture={{
-                    nodes,
-                    edges,
-                    architectureName: titleBlockData.architectureName
-                  }}
-                  onContinueInChat={() => {
-                    trackGuidedJourney({ action: 'post-generation-action', step: 'refine', path: 'guided-chat', source: 'generator-success', hasDiagram: true });
-                    setIsChatOpen(true);
-                  }}
-                  onReview={() => {
-                    trackGuidedJourney({ action: 'post-generation-action', step: 'refine', path: 'canvas', source: 'generator-success', hasDiagram: true });
-                    window.setTimeout(() => reactFlowInstance?.fitView({ padding: 0.2, duration: 300 }), 100);
-                  }}
-                  onValidate={() => {
-                    trackGuidedJourney({ action: 'post-generation-action', step: 'validate', source: 'generator-success', hasDiagram: true });
-                    void handleValidateArchitecture();
-                  }}
-                />
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => setIsTemplateGalleryOpen(true)}
+                  title={localize(language, {
+                    en: 'Browse previewable starter architectures',
+                    ja: 'プレビュー可能なスターター アーキテクチャを参照',
+                  })}
+                >
+                  <LayoutTemplate size={18} />
+                  {localize(language, { en: 'Templates', ja: 'テンプレート' })}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-ai btn-generate-ai"
+                  onClick={() => openGeneratorFrom('toolbar')}
+                  title={localize(language, {
+                    en: 'Generate a diagram from detailed requirements or an uploaded image',
+                    ja: '詳細な要件またはアップロードした画像から図を生成',
+                  })}
+                >
+                  <Sparkles size={18} />
+                  {localize(language, { en: 'Generate Diagram', ja: '図を生成' })}
+                </button>
                 <ModelSettingsPopover
                   ref={modelSettingsRef}
                   isOpen={isModelSettingsOpen}
@@ -5892,7 +6214,7 @@ function App() {
                 aria-label={localize(language, { en: 'File and export actions', ja: 'ファイルと出力操作' })}
               >
                 {toolbarSectionHeading('file', localize(language, { en: 'File & export', ja: 'ファイル・出力' }))}
-                <button onClick={saveDiagram} className="btn btn-secondary" title={t("Save diagram")}>
+                <button onClick={() => guardSensitiveExport(saveDiagram)} className="btn btn-secondary" title={t("Save diagram")}>
                   <Save size={18} />
                   {' '}{t("Save")}{' '}</button>
 
@@ -5957,7 +6279,7 @@ function App() {
                         role="menuitem"
                         onClick={() => {
                           setIsExportMenuOpen(false);
-                          exportDiagram();
+                          guardSensitiveExport(exportDiagram);
                         }}
                         title={t("Export as PNG")}
                       >
@@ -5970,9 +6292,11 @@ function App() {
                         onClick={() => {
                           setIsExportMenuOpen(false);
                           if (!lastReferenceArchitecture) return;
-                          exportReferenceArchitectureAsPng(lastReferenceArchitecture).catch((err) => {
-                            console.error('Editorial PNG export failed:', err);
-                            alert(t("Editorial PNG export failed. See console for details."));
+                          guardSensitiveExport(async () => {
+                            await exportReferenceArchitectureAsPng(lastReferenceArchitecture).catch((err) => {
+                              console.error('Editorial PNG export failed:', err);
+                              alert(t("Editorial PNG export failed. See console for details."));
+                            });
                           });
                         }}
                         title={
@@ -5995,9 +6319,11 @@ function App() {
                             savedLegend === 'bottom' || savedLegend === 'right' || savedLegend === 'auto'
                               ? (savedLegend as 'bottom' | 'right' | 'auto')
                               : 'auto';
-                          exportBlueprintArchitectureAsPng(lastBlueprintArchitecture, { legendPosition }).catch((err) => {
-                            console.error('Blueprint PNG export failed:', err);
-                            alert(t("Blueprint PNG export failed. See console for details."));
+                          guardSensitiveExport(async () => {
+                            await exportBlueprintArchitectureAsPng(lastBlueprintArchitecture, { legendPosition }).catch((err) => {
+                              console.error('Blueprint PNG export failed:', err);
+                              alert(t("Blueprint PNG export failed. See console for details."));
+                            });
                           });
                         }}
                         title={
@@ -6013,7 +6339,7 @@ function App() {
                         role="menuitem"
                         onClick={() => {
                           setIsExportMenuOpen(false);
-                          exportAsSvg();
+                          guardSensitiveExport(exportAsSvg);
                         }}
                         title={t("Export as SVG (vector format)")}
                       >
@@ -6024,7 +6350,7 @@ function App() {
                         role="menuitem"
                         onClick={() => {
                           setIsExportMenuOpen(false);
-                          exportAsAnimatedSvg();
+                          guardSensitiveExport(exportAsAnimatedSvg);
                         }}
                         title={t("Export as Animated SVG — flowing data-flow arrows (open in a browser to see motion)")}
                       >
@@ -6036,7 +6362,7 @@ function App() {
                         disabled={workflow.length === 0}
                         onClick={() => {
                           setIsExportMenuOpen(false);
-                          exportWorkflowAnimation();
+                          guardSensitiveExport(exportWorkflowAnimation);
                         }}
                         title={
                           workflow.length > 0
@@ -6056,7 +6382,7 @@ function App() {
                         disabled={nodes.filter(n => n.type === 'azureNode').length === 0}
                         onClick={() => {
                           setIsExportMenuOpen(false);
-                          exportWorkflowMarkdown();
+                          guardSensitiveExport(exportWorkflowMarkdown);
                         }}
                         title={t("Export the workflow narrative (services, step-by-step flow, connections) as a Markdown file")}
                       >
@@ -6067,7 +6393,7 @@ function App() {
                         role="menuitem"
                         onClick={() => {
                           setIsExportMenuOpen(false);
-                          exportAsPptx();
+                          guardSensitiveExport(exportAsPptx);
                         }}
                         title={t("Export current diagram as a PowerPoint slide (.pptx)")}
                       >
@@ -6079,7 +6405,7 @@ function App() {
                         disabled={nodes.filter(n => n.type === 'azureNode').length === 0}
                         onClick={() => {
                           setIsExportMenuOpen(false);
-                          exportCustomerDeck();
+                          guardSensitiveExport(exportCustomerDeck);
                         }}
                         title={t("Export a customer-ready PowerPoint deck: title, diagram, services, plus WAF review and cost estimate when available")}
                       >
@@ -6091,7 +6417,7 @@ function App() {
                         role="menuitem"
                         onClick={() => {
                           setIsExportMenuOpen(false);
-                          exportAsDrawio();
+                          guardSensitiveExport(exportAsDrawio);
                         }}
                         title={t("Export for Draw.io / diagrams.net (editable diagram format)")}
                       >
@@ -6103,7 +6429,7 @@ function App() {
                         disabled={nodes.filter(n => n.type === 'azureNode').length === 0}
                         onClick={() => {
                           setIsExportMenuOpen(false);
-                          exportAsVsdx();
+                          guardSensitiveExport(exportAsVsdx);
                         }}
                         title={t("Export a native Visio drawing (.vsdx). Opens in desktop Visio and Visio for the web; also importable into diagrams.net. Generic editable shapes + connectors.")}
                       >
@@ -6115,7 +6441,7 @@ function App() {
                         disabled={nodes.filter(n => n.type === 'azureNode').length === 0}
                         onClick={() => {
                           setIsExportMenuOpen(false);
-                          exportAsHtml();
+                          guardSensitiveExport(exportAsHtml);
                         }}
                         title={t("Export as interactive HTML with pan, zoom, and tooltips")}
                       >
@@ -6131,7 +6457,7 @@ function App() {
                         disabled={!hasCostReportData}
                         onClick={() => {
                           setIsExportMenuOpen(false);
-                          exportCostBreakdown();
+                          guardSensitiveExport(exportCostBreakdown);
                         }}
                         title={!hasCostReportData ? t("Add services to estimate costs first") : t("Export cost breakdown as CSV")}
                       >
@@ -6143,7 +6469,7 @@ function App() {
                         disabled={!hasCostReportData}
                         onClick={() => {
                           setIsExportMenuOpen(false);
-                          exportCostBreakdownZip();
+                          guardSensitiveExport(exportCostBreakdownZip);
                         }}
                         title={!hasCostReportData ? t("Add services to estimate costs first") : t("Export CSV, JSON, summary and intelligent analysis as a ZIP")}
                       >
@@ -6265,6 +6591,32 @@ function App() {
                 aria-label={localize(language, { en: 'Arrange, select, and style', ja: '配置、選択、スタイル' })}
               >
                 {toolbarSectionHeading('arrange', localize(language, { en: 'Arrange', ja: '配置・選択' }))}
+                <div
+                  className="diagram-history-controls"
+                  role="group"
+                  aria-label={localize(language, { en: 'Diagram history', ja: '図の操作履歴' })}
+                >
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    onClick={undoDiagram}
+                    disabled={!canUndoDiagram}
+                    title={localize(language, { en: 'Undo (Ctrl+Z)', ja: '元に戻す (Ctrl+Z)' })}
+                  >
+                    <Undo2 size={18} />
+                    {localize(language, { en: 'Undo', ja: '元に戻す' })}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    onClick={redoDiagram}
+                    disabled={!canRedoDiagram}
+                    title={localize(language, { en: 'Redo (Ctrl+Y)', ja: 'やり直す (Ctrl+Y)' })}
+                  >
+                    <Redo2 size={18} />
+                    {localize(language, { en: 'Redo', ja: 'やり直す' })}
+                  </button>
+                </div>
                 <div className="toolbar-dropdown" ref={layoutMenuRef}>
                   <button
                     onClick={() => setIsLayoutMenuOpen((v) => !v)}
@@ -6549,6 +6901,36 @@ function App() {
                 >
                   <GitCompare size={18} />
                   {' '}{t("Compare Validation")}{' '}</button>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => requestPrivacyAction('review', () => undefined)}
+                  disabled={nodes.length === 0}
+                  title={localize(language, {
+                    en: 'Detect sensitive values before export or sharing',
+                    ja: 'エクスポートまたは共有前に機密情報を検出',
+                  })}
+                >
+                  <ShieldCheck size={18} />
+                  {localize(language, { en: 'Privacy', ja: 'プライバシー' })}
+                  {privacyFindings.length > 0 && (
+                    <span className="toolbar-count-badge">{privacyFindings.length}</span>
+                  )}
+                </button>
+                <button
+                  type="button"
+                  className={`btn btn-secondary${threatOverlayEnabled ? ' btn-active' : ''}`}
+                  onClick={() => updateThreatOverlay(!threatOverlayEnabled)}
+                  disabled={nodes.length === 0}
+                  aria-pressed={threatOverlayEnabled}
+                  title={localize(language, {
+                    en: 'Highlight internet exposure, sensitive data, identity, secrets, and detection controls',
+                    ja: 'インターネット公開、機密データ、ID、シークレット、検出制御を強調',
+                  })}
+                >
+                  <Eye size={18} />
+                  {localize(language, { en: 'Threats', ja: '脅威表示' })}
+                </button>
                 {validationResult && (
                   <button
                     onClick={() => setIsValidationModalOpen(true)}
@@ -6604,6 +6986,12 @@ function App() {
           </div>
           </ResponsiveRibbonSurface>
           <div className="header-identity-actions">
+            <DocumentStatus
+              status={cloudSync.status}
+              lastSavedAt={cloudSync.lastSavedAt}
+              hasCloudDocument={Boolean(cloudSync.context)}
+              onOpen={() => setIsCloudWorkspaceOpen(true)}
+            />
             {accessIdentity?.enabled && accessIdentity.isAdmin && (
               <button
                 type="button"
@@ -6651,6 +7039,7 @@ function App() {
         </div>
       </header>
 
+      {aiGeneratorHost}
 
       {!focusMode && (
         <WorkflowStepper
@@ -6750,6 +7139,7 @@ function App() {
               })}
               onGuidedChat={() => openGuidedChat('first-start')}
               onGenerateDiagram={() => openGeneratorFrom('first-start')}
+              onBrowseTemplates={() => setIsTemplateGalleryOpen(true)}
               onImportTemplate={() => {
                 trackGuidedJourney({ action: 'path-selected', step: 'create', path: 'template-import', source: 'first-start', hasDiagram: false });
                 templateInputRef.current?.click();
@@ -6800,6 +7190,11 @@ function App() {
               />
             )}
           </ReactFlow>
+          <ThreatModelOverlay
+            enabled={threatOverlayEnabled}
+            markers={threatMarkers}
+            onClose={() => updateThreatOverlay(false)}
+          />
           <AlignmentToolbar 
             selectedNodes={nodes.filter(n => n.selected)}
             onAlign={handleAlign}
@@ -7122,7 +7517,29 @@ function App() {
         )}
       </div>
 
+      <MobileNodeInspector
+        node={nodes.find(node => node.selected) ?? null}
+        onUpdate={(nodeId, patch) => {
+          setNodes(current => current.map(node => (
+            node.id === nodeId
+              ? { ...node, data: { ...node.data, ...patch } }
+              : node
+          )));
+        }}
+        onDelete={(nodeId) => deleteCanvasNodes([nodeId])}
+        onOpenPricing={(nodeId) => {
+          void editContextNodePricing(nodeId);
+        }}
+      />
+
       {/* Premium Feature Modals */}
+      <TemplateGallery
+        isOpen={isTemplateGalleryOpen}
+        onClose={() => setIsTemplateGalleryOpen(false)}
+        onApply={(template) => {
+          void applyArchitectureTemplate(template);
+        }}
+      />
       <ValidationModal
         validation={validationResult}
         isOpen={isValidationModalOpen}
@@ -7308,6 +7725,7 @@ Return the IMPROVED architecture in the same JSON format as before with proper g
       <CloudWorkspaceModal
         isOpen={isCloudWorkspaceOpen}
         onClose={() => setIsCloudWorkspaceOpen(false)}
+        isCloseBlocked={privacyRequest !== null}
         currentDocument={cloudSync.document}
         currentContext={cloudSync.context}
         syncStatus={cloudSync.status}
@@ -7325,6 +7743,18 @@ Return the IMPROVED architecture in the same JSON format as before with proper g
         onCloudConflict={cloudSync.reportConflict}
         onDiscardPendingSave={cloudSync.discardPendingSave}
         onCreateNew={startFreshDiagram}
+        onBeforeShare={confirmBeforeShare}
+      />
+      <PrivacyPreflightDialog
+        isOpen={privacyRequest !== null}
+        purpose={privacyRequest?.purpose ?? 'review'}
+        findings={privacyRequest?.findings ?? privacyFindings}
+        canAnonymize={privacyRequest?.canAnonymize ?? true}
+        threatOverlayEnabled={threatOverlayEnabled}
+        onThreatOverlayChange={updateThreatOverlay}
+        onCancel={() => finishPrivacyRequest(false)}
+        onProceed={() => finishPrivacyRequest(true)}
+        onAnonymize={anonymizeCurrentDiagram}
       />
       <PricingScenarioModal
         isOpen={isPricingScenarioModalOpen}

@@ -1,0 +1,37 @@
+/* Copyright (c) Microsoft Corporation. Licensed under the MIT License. */
+
+.threat-model-overlay {
+  position: absolute;
+  z-index: 1200;
+  top: 12px;
+  right: 12px;
+  width: min(310px, calc(100% - 24px));
+  padding: 0.75rem;
+  color: var(--azd-color-text);
+  background: var(--azd-color-surface-glass);
+  border: 1px solid var(--azd-color-border-strong);
+  border-radius: var(--azd-radius-md);
+  box-shadow: var(--azd-shadow-floating);
+  backdrop-filter: blur(8px);
+  pointer-events: auto;
+}
+.threat-model-overlay header { display: flex; justify-content: space-between; gap: 0.6rem; }
+.threat-model-overlay header > div { display: grid; gap: 0.2rem; }
+.threat-model-overlay header span,
+.threat-model-overlay header strong { display: inline-flex; align-items: center; gap: 0.35rem; }
+.threat-model-overlay header span { color: var(--azd-color-danger); font-size: 0.68rem; font-weight: 800; text-transform: uppercase; }
+.threat-model-overlay header strong { color: var(--azd-color-text-strong); }
+.threat-model-overlay header button { display: grid; place-items: center; width: 28px; height: 28px; color: var(--azd-color-text-muted); background: transparent; border: 0; border-radius: var(--azd-radius-sm); cursor: pointer; }
+.threat-model-overlay header button:hover { background: var(--azd-color-surface-hover); }
+.threat-model-overlay > p { margin: 0.55rem 0; color: var(--azd-color-text-muted); font-size: 0.74rem; line-height: 1.35; }
+.threat-model-overlay ul { display: grid; gap: 0.35rem; margin: 0; padding: 0; list-style: none; }
+.threat-model-overlay li { display: grid; grid-template-columns: 9px 1fr; align-items: center; gap: 0.45rem; }
+.threat-model-overlay li > span { width: 9px; height: 9px; border-radius: 50%; }
+.threat-model-overlay li div { display: grid; min-width: 0; }
+.threat-model-overlay li strong { overflow: hidden; color: var(--azd-color-text-strong); font-size: 0.75rem; text-overflow: ellipsis; white-space: nowrap; }
+.threat-model-overlay li small { color: var(--azd-color-text-muted); font-size: 0.67rem; }
+
+@media (max-width: 640px) {
+  .threat-model-overlay { top: 8px; right: 8px; width: min(260px, calc(100% - 16px)); max-height: 38dvh; overflow: auto; }
+  .threat-model-overlay ul li:nth-child(n + 4) { display: none; }
+}

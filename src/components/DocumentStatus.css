@@ -1,0 +1,36 @@
+/* Copyright (c) Microsoft Corporation. Licensed under the MIT License. */
+
+.document-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-height: 34px;
+  padding: 0.35rem 0.55rem;
+  color: var(--azd-color-text-inverse);
+  background: rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  border-radius: var(--azd-radius-md);
+  cursor: pointer;
+  font: inherit;
+}
+.document-status:hover { background: rgba(255, 255, 255, 0.22); }
+.document-status > span:first-child { display: grid; place-items: center; }
+.document-status-copy { display: flex; flex-direction: column; align-items: flex-start; min-width: 0; line-height: 1.05; }
+.document-status-copy strong { font-size: 0.72rem; white-space: nowrap; }
+.document-status-copy small { max-width: 96px; overflow: hidden; color: var(--azd-color-text-inverse-muted); font-size: 0.61rem; text-overflow: ellipsis; white-space: nowrap; }
+.document-status--success > span:first-child { color: #86efac; }
+.document-status--danger > span:first-child { color: #fecaca; }
+.document-status--offline > span:first-child { color: #fde68a; }
+.document-status--readonly > span:first-child { color: #bfdbfe; }
+.document-status-spinner { animation: document-status-spin 0.8s linear infinite; }
+@keyframes document-status-spin { to { transform: rotate(360deg); } }
+
+@media (max-width: 640px) {
+  .document-status { padding: 0.35rem; }
+  .document-status-copy small { display: none; }
+  .document-status-copy strong { max-width: 68px; overflow: hidden; text-overflow: ellipsis; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .document-status-spinner { animation: none; }
+}
