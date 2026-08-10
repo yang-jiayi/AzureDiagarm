@@ -118,17 +118,38 @@ async function deleteRecordIds(ids: string[]): Promise<void> {
   }
 }
 
+/**
+ * Random suffix for a session ID. Uses the platform CSPRNG; `Math.random` is
+ * deliberately avoided so the value is never a predictable identifier.
+ */
+function randomSessionSuffix(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.getRandomValues === 'function') {
+    const bytes = new Uint8Array(16);
+    crypto.getRandomValues(bytes);
+    return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
+  }
+  // No CSPRNG at all: fall back to a high-resolution timestamp. This only
+  // groups one browser session's own records and is never used as a token.
+  const monotonic = typeof performance !== 'undefined' ? performance.now() : 0;
+  return `${Date.now().toString(36)}-${Math.trunc(monotonic * 1000).toString(36)}`;
+}
+
+function createSessionId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `session-${randomSessionSuffix()}`;
+}
+
 export function getRecentWorkSessionId(): string {
   try {
     const stored = window.sessionStorage.getItem(SESSION_KEY);
     if (stored && stored.length <= 120) return stored;
-    const next = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
-      ? crypto.randomUUID()
-      : `session-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+    const next = createSessionId();
     window.sessionStorage.setItem(SESSION_KEY, next);
     return next;
   } catch {
-    return `session-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+    return createSessionId();
   }
 }
 

@@ -58,3 +58,14 @@ test('cloud review report localizes headings in Japanese', () => {
   assert.match(report, /レビュー状態:\*\* 承認済み/);
   assert.match(report, /未解決コメント/);
 });
+
+test('a trailing backslash cannot smuggle an unescaped pipe into a table cell', () => {
+  const doc = document();
+  doc.diagramName = 'Prod\\';
+  const report = buildCloudReviewReport(doc, 'en');
+  // Escaping the pipe alone would emit `Prod\|`, where the backslash escapes
+  // itself and the pipe breaks out of the cell.
+  assert.match(report, /Prod\\\\/, 'the backslash is escaped first');
+  assert.ok(!/[^\\]\|/.test(report.split('\n').find(line => line.includes('Prod')) ?? ''),
+    'no unescaped pipe survives in the diagram name row');
+});

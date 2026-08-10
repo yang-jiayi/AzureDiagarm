@@ -17,6 +17,10 @@ const statusLabels: Record<CloudReviewStatus, { en: string; ja: string }> = {
 function safeInline(value: unknown): string {
   return String(value ?? '')
     .replace(/[\r\n]+/g, ' ')
+    // The escape character must be escaped first, otherwise a trailing
+    // backslash in the input consumes the escape this adds and the pipe still
+    // breaks out of the Markdown table cell.
+    .replace(/\\/g, '\\\\')
     .replace(/\|/g, '\\|')
     .trim();
 }
