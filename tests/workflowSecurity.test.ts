@@ -2,7 +2,7 @@
 // Licensed under the MIT License.
 
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import test from 'node:test';
 
 const workflow = readFileSync(
@@ -157,4 +157,29 @@ test('the container build installs the image parser safeguard before npm ci', ()
   assert.ok(patchCopyIndex >= 0);
   assert.ok(installIndex > patchCopyIndex);
   assert.match(dockerignore, /^!scripts\/patch-image-size\.mjs$/m);
+});
+
+// The .dockerignore is allowlist-style ("ignore **, then re-include"), so a new
+// cross-package import from mcp-server into the repo-root scripts/ folder is
+// invisible locally and in CI but fails the image build with
+// ERR_MODULE_NOT_FOUND. Derive the requirement instead of hardcoding it.
+test('root scripts imported by the MCP build are re-included in the Docker context', () => {
+  const scriptsDir = new URL('../mcp-server/scripts/', import.meta.url);
+  const imported = new Set<string>();
+  for (const entry of readdirSync(scriptsDir)) {
+    if (!entry.endsWith('.mjs')) continue;
+    const source = readFileSync(new URL(entry, scriptsDir), 'utf8');
+    for (const match of source.matchAll(/from\s+'\.\.\/\.\.\/(scripts\/[\w.-]+)'/g)) {
+      imported.add(match[1]);
+    }
+  }
+
+  assert.ok(imported.size > 0, 'expected at least one cross-package build import');
+  for (const path of imported) {
+    assert.match(
+      dockerignore,
+      new RegExp(`^!${path.replace(/[.]/g, '\\.')}$`, 'm'),
+      `${path} is imported by an mcp-server build script but excluded from the Docker context`,
+    );
+  }
 });

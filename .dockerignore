@@ -14,6 +14,9 @@
 !tsconfig.node.json
 !eslint.config.js
 !scripts/patch-image-size.mjs
+# Imported by mcp-server/scripts/sync-pricing-data.mjs, which runs during the
+# MCP build stage. Without it that stage fails with ERR_MODULE_NOT_FOUND.
+!scripts/prep-pricing-data.mjs
 
 # --- App source ---
 !src/**
