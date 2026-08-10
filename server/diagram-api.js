@@ -31,7 +31,9 @@ const MAX_COMMENTS = 200;
 const MAX_SHARES = 100;
 const MAX_NAME_LEN = 200;
 const MAX_COMMENT_LEN = 2000;
+const MAX_COMMENT_ANCHOR_LABEL_LEN = 200;
 const MAX_NOTES_LEN = 500;
+const MAX_REVIEW_NOTE_LEN = 1000;
 const MAX_PAYLOAD_BYTES = 10 * 1024 * 1024;
 const MAX_NODES = 20_000;
 const MAX_EDGES = 40_000;
@@ -40,6 +42,9 @@ const SHARE_TOKEN_BYTES = 32; // 256-bit
 const SHARE_TOKEN_RE = /^[A-Za-z0-9_-]{43}$/;
 const IDEMPOTENCY_KEY_RE = /^[A-Za-z0-9._~-]{16,128}$/;
 const VALID_ROLES = new Set(['viewer', 'editor']);
+const VALID_COMMENT_ANCHOR_TYPES = new Set(['canvas', 'node', 'edge']);
+const VALID_REVIEW_STATUSES = new Set(['draft', 'in_review', 'changes_requested', 'approved']);
+const VALID_REVIEW_ACTIONS = new Set(['request', 'cancel', 'approve', 'request_changes']);
 const DELETION_MARKER_KIND = 'diagram-deletion-marker-v1';
 
 // ── Identity / hashing helpers ─────────────────────────────────────────────
@@ -158,6 +163,23 @@ function sanitizeComment(comment) {
     authorId: comment.authorId,
     authorEmail: comment.authorEmail,
     createdAt: comment.createdAt,
+    ...(comment.anchor ? { anchor: comment.anchor } : {}),
+    resolved: Boolean(comment.resolvedAt),
+    ...(comment.resolvedAt ? { resolvedAt: comment.resolvedAt } : {}),
+    ...(comment.resolvedByEmail ? { resolvedByEmail: comment.resolvedByEmail } : {}),
+  };
+}
+
+function sanitizeReview(review) {
+  const status = VALID_REVIEW_STATUSES.has(review?.status) ? review.status : 'draft';
+  return {
+    status,
+    ...(review?.requestedAt ? { requestedAt: review.requestedAt } : {}),
+    ...(review?.requestedByEmail ? { requestedByEmail: review.requestedByEmail } : {}),
+    ...(review?.decidedAt ? { decidedAt: review.decidedAt } : {}),
+    ...(review?.decidedByEmail ? { decidedByEmail: review.decidedByEmail } : {}),
+    ...(review?.decisionNote ? { decisionNote: review.decisionNote } : {}),
+    ...(review?.updatedAt ? { updatedAt: review.updatedAt } : {}),
   };
 }
 
@@ -186,6 +208,7 @@ function sanitizeDocument(doc, access, role) {
     owner,
     payload: doc.payload,
     comments: Array.isArray(doc.comments) ? doc.comments.map(sanitizeComment) : [],
+    review: sanitizeReview(doc.review),
     shares,
     createdAt: doc.createdAt,
     updatedAt: doc.updatedAt,
@@ -207,6 +230,10 @@ function documentSummary(doc, etag, access, role) {
     serviceCount: services,
     connectionCount: connections,
     commentCount: Array.isArray(doc.comments) ? doc.comments.length : 0,
+    openCommentCount: Array.isArray(doc.comments)
+      ? doc.comments.filter((comment) => !comment.resolvedAt).length
+      : 0,
+    reviewStatus: sanitizeReview(doc.review).status,
     shareCount: Array.isArray(doc.shares) ? doc.shares.length : 0,
     access,
     role,
@@ -319,6 +346,7 @@ function createDiagramsRouter(options = {}) {
       owner: { id: principal.id, email: principal.email },
       payload,
       comments: [],
+      review: { status: 'draft', updatedAt: now },
       shares: [],
       createdAt: now,
       updatedAt: now,
@@ -327,13 +355,14 @@ function createDiagramsRouter(options = {}) {
     };
   }
 
-  function buildComment(principal, text) {
+  function buildComment(principal, text, anchor) {
     return {
       id: crypto.randomUUID(),
       authorId: principal.id,
       authorEmail: principal.email,
       text,
       createdAt: new Date().toISOString(),
+      ...(anchor ? { anchor } : {}),
     };
   }
 
@@ -354,11 +383,18 @@ function createDiagramsRouter(options = {}) {
 
   // Apply an updated payload/name while preserving all server-owned fields.
   function applyUpdate(doc, name, payload) {
+    const contentChanged = doc.diagramName !== name
+      || JSON.stringify(doc.payload) !== JSON.stringify(payload);
+    const now = new Date().toISOString();
+    const review = sanitizeReview(doc.review);
     return {
       ...doc,
       diagramName: name,
       payload,
-      updatedAt: new Date().toISOString(),
+      ...(contentChanged && review.status === 'approved'
+        ? { review: { status: 'draft', updatedAt: now } }
+        : {}),
+      updatedAt: now,
       revision: (Number(doc.revision) || 0) + 1,
     };
   }
@@ -631,17 +667,56 @@ function createDiagramsRouter(options = {}) {
     return typeof source.message === 'string' ? source.message : source.text;
   }
 
+  function validateCommentAnchor(value, doc) {
+    if (value === undefined || value === null) return { value: undefined };
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      return { error: 'anchor must be an object' };
+    }
+    if (!VALID_COMMENT_ANCHOR_TYPES.has(value.type)) {
+      return { error: "anchor.type must be 'canvas', 'node', or 'edge'" };
+    }
+    if (value.type === 'canvas') return { value: { type: 'canvas' } };
+    if (typeof value.targetId !== 'string' || value.targetId.trim().length === 0) {
+      return { error: 'anchor.targetId is required' };
+    }
+    const targetId = value.targetId.trim();
+    if (targetId.length > MAX_COMMENT_ANCHOR_LABEL_LEN) {
+      return { error: `anchor.targetId must be at most ${MAX_COMMENT_ANCHOR_LABEL_LEN} characters` };
+    }
+    const collection = value.type === 'node' ? doc.payload?.nodes : doc.payload?.edges;
+    const target = Array.isArray(collection)
+      ? collection.find((item) => item && typeof item === 'object' && item.id === targetId)
+      : null;
+    if (!target) return { error: 'anchor target was not found in the current diagram' };
+    const rawLabel = value.type === 'node'
+      ? target.data?.label || target.data?.serviceName || target.id
+      : target.label || target.data?.label || target.id;
+    const label = String(rawLabel || targetId).slice(0, MAX_COMMENT_ANCHOR_LABEL_LEN);
+    return { value: { type: value.type, targetId, label } };
+  }
+
   // Append a comment to a freshly-read document, then persist with optimistic
   // concurrency on the read etag. Shared by owner and shared-token callers.
-  async function appendCommentAndSave(res, ownerKey, documentId, principal, text, access, role) {
+  async function appendCommentAndSave(
+    res,
+    ownerKey,
+    documentId,
+    principal,
+    text,
+    anchorValue,
+    access,
+    role,
+  ) {
     const record = await loadCurrent(ownerKey, documentId);
     if (!record) return res.status(404).json({ error: 'Not found' });
     const doc = record.value;
+    const anchor = validateCommentAnchor(anchorValue, doc);
+    if (anchor.error) return res.status(400).json({ error: anchor.error });
     doc.comments = Array.isArray(doc.comments) ? doc.comments : [];
     if (doc.comments.length >= MAX_COMMENTS) {
       return res.status(409).json({ error: 'This document has reached its comment limit.' });
     }
-    doc.comments.push(buildComment(principal, text));
+    doc.comments.push(buildComment(principal, text, anchor.value));
     doc.updatedAt = new Date().toISOString();
     doc.revision = (Number(doc.revision) || 0) + 1;
     const { etag } = await backend.replace(currentPath(ownerKey, documentId), doc, record.etag);
@@ -654,10 +729,164 @@ function createDiagramsRouter(options = {}) {
     if (text.error) return res.status(400).json({ error: text.error });
     try {
       return await appendCommentAndSave(
-        res, req.diagramOwnerKey, req.params.id, req.diagramPrincipal, text.value, 'owner', 'owner',
+        res,
+        req.diagramOwnerKey,
+        req.params.id,
+        req.diagramPrincipal,
+        text.value,
+        req.body?.anchor,
+        'owner',
+        'owner',
       );
     } catch (err) {
       return respondStorageError(res, logger, 'comment', err);
+    }
+  }));
+
+  async function setCommentResolutionAndSave(
+    res,
+    ownerKey,
+    documentId,
+    commentId,
+    principal,
+    resolved,
+    access,
+    role,
+  ) {
+    return withDocumentLock(ownerKey, documentId, async () => {
+      const record = await loadCurrent(ownerKey, documentId);
+      if (!record) return res.status(404).json({ error: 'Not found' });
+      const doc = record.value;
+      doc.comments = Array.isArray(doc.comments) ? doc.comments : [];
+      const comment = doc.comments.find((item) => item.id === commentId);
+      if (!comment) return res.status(404).json({ error: 'Comment not found' });
+      if (access === 'shared' && role === 'viewer' && comment.authorId !== principal.id) {
+        return res.status(403).json({ error: 'Viewer access can only update your own comments.' });
+      }
+      if (resolved) {
+        comment.resolvedAt = new Date().toISOString();
+        comment.resolvedById = principal.id;
+        comment.resolvedByEmail = principal.email;
+      } else {
+        delete comment.resolvedAt;
+        delete comment.resolvedById;
+        delete comment.resolvedByEmail;
+      }
+      doc.updatedAt = new Date().toISOString();
+      doc.revision = (Number(doc.revision) || 0) + 1;
+      const { etag } = await backend.replace(currentPath(ownerKey, documentId), doc, record.etag);
+      setEtag(res, etag);
+      return res.json({ document: sanitizeDocument(doc, access, role) });
+    });
+  }
+
+  router.patch('/:id/comments/:commentId', asyncHandler(async (req, res) => {
+    if (typeof req.body?.resolved !== 'boolean') {
+      return res.status(400).json({ error: 'resolved must be a boolean' });
+    }
+    try {
+      return await setCommentResolutionAndSave(
+        res,
+        req.diagramOwnerKey,
+        req.params.id,
+        req.params.commentId,
+        req.diagramPrincipal,
+        req.body.resolved,
+        'owner',
+        'owner',
+      );
+    } catch (err) {
+      return respondStorageError(res, logger, 'comment-resolution', err);
+    }
+  }));
+
+  function validateReviewRequest(body) {
+    const action = body?.action;
+    if (!VALID_REVIEW_ACTIONS.has(action)) {
+      return { error: 'action must be request, cancel, approve, or request_changes' };
+    }
+    const note = body?.note;
+    if (note !== undefined && typeof note !== 'string') {
+      return { error: 'note must be a string' };
+    }
+    if (typeof note === 'string' && note.length > MAX_REVIEW_NOTE_LEN) {
+      return { error: `note must be at most ${MAX_REVIEW_NOTE_LEN} characters` };
+    }
+    return { value: { action, note: typeof note === 'string' ? note.trim() : '' } };
+  }
+
+  async function updateReviewAndSave(
+    res,
+    ownerKey,
+    documentId,
+    principal,
+    request,
+    access,
+    role,
+  ) {
+    if (access === 'shared' && request.action !== 'approve' && request.action !== 'request_changes') {
+      return res.status(403).json({ error: 'Only the owner can start or cancel a review.' });
+    }
+    return withDocumentLock(ownerKey, documentId, async () => {
+      const record = await loadCurrent(ownerKey, documentId);
+      if (!record) return res.status(404).json({ error: 'Not found' });
+      const doc = record.value;
+      const current = sanitizeReview(doc.review);
+      const now = new Date().toISOString();
+
+      if (
+        (request.action === 'approve' || request.action === 'request_changes')
+        && current.status !== 'in_review'
+      ) {
+        return res.status(409).json({ error: 'This diagram is not currently awaiting review.' });
+      }
+      if (request.action === 'cancel' && current.status !== 'in_review') {
+        return res.status(409).json({ error: 'Only an active review can be cancelled.' });
+      }
+
+      if (request.action === 'request') {
+        doc.review = {
+          status: 'in_review',
+          requestedAt: now,
+          requestedByEmail: principal.email,
+          updatedAt: now,
+        };
+      } else if (request.action === 'cancel') {
+        doc.review = { status: 'draft', updatedAt: now };
+      } else {
+        doc.review = {
+          ...current,
+          status: request.action === 'approve' ? 'approved' : 'changes_requested',
+          decidedAt: now,
+          decidedByEmail: principal.email,
+          decisionNote: request.note,
+          updatedAt: now,
+        };
+      }
+
+      doc.updatedAt = now;
+      doc.revision = (Number(doc.revision) || 0) + 1;
+      const { etag } = await backend.replace(currentPath(ownerKey, documentId), doc, record.etag);
+      setEtag(res, etag);
+      return res.json({ document: sanitizeDocument(doc, access, role) });
+    });
+  }
+
+  router.patch('/:id/review', asyncHandler(async (req, res) => {
+    const reviewRequest = validateReviewRequest(req.body);
+    if (reviewRequest.error) return res.status(400).json({ error: reviewRequest.error });
+    try {
+      return await updateReviewAndSave(
+        res,
+        req.diagramOwnerKey,
+        req.params.id,
+        req.diagramPrincipal,
+        reviewRequest.value,
+        'owner',
+        'owner',
+      );
+    } catch (err) {
+      return respondStorageError(res, logger, 'review', err);
     }
   }));
 
@@ -825,11 +1054,63 @@ function createDiagramsRouter(options = {}) {
       const resolved = await resolveShare(token);
       if (resolved.status) return res.status(resolved.status).json({ error: 'Not found' });
       return await appendCommentAndSave(
-        res, resolved.ownerKey, resolved.documentId, req.diagramPrincipal, text.value,
-        'shared', resolved.share.role,
+        res,
+        resolved.ownerKey,
+        resolved.documentId,
+        req.diagramPrincipal,
+        text.value,
+        req.body?.anchor,
+        'shared',
+        resolved.share.role,
       );
     } catch (err) {
       return respondStorageError(res, logger, 'shared-comment', err);
+    }
+  }));
+
+  router.patch('/shared/:token/comments/:commentId', asyncHandler(async (req, res) => {
+    const token = requireToken(req, res);
+    if (!token) return undefined;
+    if (typeof req.body?.resolved !== 'boolean') {
+      return res.status(400).json({ error: 'resolved must be a boolean' });
+    }
+    try {
+      const resolvedShare = await resolveShare(token);
+      if (resolvedShare.status) return res.status(resolvedShare.status).json({ error: 'Not found' });
+      return await setCommentResolutionAndSave(
+        res,
+        resolvedShare.ownerKey,
+        resolvedShare.documentId,
+        req.params.commentId,
+        req.diagramPrincipal,
+        req.body.resolved,
+        'shared',
+        resolvedShare.share.role,
+      );
+    } catch (err) {
+      return respondStorageError(res, logger, 'shared-comment-resolution', err);
+    }
+  }));
+
+  router.patch('/shared/:token/review', asyncHandler(async (req, res) => {
+    const token = requireToken(req, res);
+    if (!token) return undefined;
+    const reviewRequest = validateReviewRequest(req.body);
+    if (reviewRequest.error) return res.status(400).json({ error: reviewRequest.error });
+    try {
+      const resolvedShare = await resolveShare(token);
+      if (resolvedShare.status) return res.status(resolvedShare.status).json({ error: 'Not found' });
+      return await updateReviewAndSave(
+        res,
+        resolvedShare.ownerKey,
+        resolvedShare.documentId,
+        req.diagramPrincipal,
+        reviewRequest.value,
+        'shared',
+        resolvedShare.share.role,
+      );
+    } catch (err) {
+      return respondStorageError(res, logger, 'shared-review', err);
     }
   }));
 

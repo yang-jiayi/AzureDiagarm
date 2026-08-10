@@ -124,6 +124,30 @@
   transition: background-color 0.15s;
 }
 
+.node-tags {
+  display: flex;
+  max-width: 150px;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 3px;
+  margin-top: 2px;
+}
+
+.node-tags span {
+  max-width: 72px;
+  overflow: hidden;
+  border: 1px solid var(--azd-color-brand-border);
+  border-radius: 999px;
+  padding: 1px 6px;
+  color: var(--azd-color-text-secondary);
+  background: var(--azd-color-brand-subtle);
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .node-badges {
   width: 100%;
   display: flex;

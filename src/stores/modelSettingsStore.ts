@@ -320,24 +320,42 @@ function normalizeFeatureOverrides(
  * inline the ENTIRE env object into the client bundle — which leaks every VITE_
  * variable, including the Azure OpenAI API key. Deployment names themselves are
  * not secrets, so embedding them is fine.
+ *
+ * The literals are read lazily inside a function so this module can also be
+ * imported by non-Vite runtimes (unit tests, scripts) where `import.meta.env`
+ * does not exist.
  */
-export const DEPLOYMENT_NAMES: Record<ModelType, string | undefined> = {
-  'gpt-5.1': import.meta.env.VITE_AZURE_OPENAI_DEPLOYMENT_GPT51,
-  'gpt-5.2': import.meta.env.VITE_AZURE_OPENAI_DEPLOYMENT_GPT52,
-  'gpt-5.4': import.meta.env.VITE_AZURE_OPENAI_DEPLOYMENT_GPT54,
-  'gpt-5.4-mini': import.meta.env.VITE_AZURE_OPENAI_DEPLOYMENT_GPT54MINI,
-  'gpt-5.6-sol': import.meta.env.VITE_AZURE_OPENAI_DEPLOYMENT_GPT56SOL,
-  'gpt-5.6-terra': import.meta.env.VITE_AZURE_OPENAI_DEPLOYMENT_GPT56TERRA,
-  'gpt-5.6-luna': import.meta.env.VITE_AZURE_OPENAI_DEPLOYMENT_GPT56LUNA,
-  'claude-opus-5': import.meta.env.VITE_AZURE_FOUNDRY_DEPLOYMENT_CLAUDE_OPUS5,
-  'deepseek-v3.2-speciale': import.meta.env.VITE_AZURE_OPENAI_DEPLOYMENT_DEEPSEEK,
-  'deepseek-v4-pro': import.meta.env.VITE_AZURE_OPENAI_DEPLOYMENT_DEEPSEEK_V4_PRO,
-  'grok-4.1-fast': import.meta.env.VITE_AZURE_OPENAI_DEPLOYMENT_GROK4FAST,
-  'grok-4.3': import.meta.env.VITE_AZURE_OPENAI_DEPLOYMENT_GROK43,
-  'mistral-large-3': import.meta.env.VITE_AZURE_OPENAI_DEPLOYMENT_MISTRALLARGE3,
-  'kimi-k2-5': import.meta.env.VITE_AZURE_OPENAI_DEPLOYMENT_KIMIK25,
-  'kimi-k2-7-code': import.meta.env.VITE_AZURE_OPENAI_DEPLOYMENT_KIMIK27CODE,
-};
+let deploymentNamesCache: Record<ModelType, string | undefined> | null = null;
+
+export function getDeploymentNames(): Record<ModelType, string | undefined> {
+  if (deploymentNamesCache) {
+    return deploymentNamesCache;
+  }
+  try {
+    deploymentNamesCache = {
+      'gpt-5.1': import.meta.env.VITE_AZURE_OPENAI_DEPLOYMENT_GPT51,
+      'gpt-5.2': import.meta.env.VITE_AZURE_OPENAI_DEPLOYMENT_GPT52,
+      'gpt-5.4': import.meta.env.VITE_AZURE_OPENAI_DEPLOYMENT_GPT54,
+      'gpt-5.4-mini': import.meta.env.VITE_AZURE_OPENAI_DEPLOYMENT_GPT54MINI,
+      'gpt-5.6-sol': import.meta.env.VITE_AZURE_OPENAI_DEPLOYMENT_GPT56SOL,
+      'gpt-5.6-terra': import.meta.env.VITE_AZURE_OPENAI_DEPLOYMENT_GPT56TERRA,
+      'gpt-5.6-luna': import.meta.env.VITE_AZURE_OPENAI_DEPLOYMENT_GPT56LUNA,
+      'claude-opus-5': import.meta.env.VITE_AZURE_FOUNDRY_DEPLOYMENT_CLAUDE_OPUS5,
+      'deepseek-v3.2-speciale': import.meta.env.VITE_AZURE_OPENAI_DEPLOYMENT_DEEPSEEK,
+      'deepseek-v4-pro': import.meta.env.VITE_AZURE_OPENAI_DEPLOYMENT_DEEPSEEK_V4_PRO,
+      'grok-4.1-fast': import.meta.env.VITE_AZURE_OPENAI_DEPLOYMENT_GROK4FAST,
+      'grok-4.3': import.meta.env.VITE_AZURE_OPENAI_DEPLOYMENT_GROK43,
+      'mistral-large-3': import.meta.env.VITE_AZURE_OPENAI_DEPLOYMENT_MISTRALLARGE3,
+      'kimi-k2-5': import.meta.env.VITE_AZURE_OPENAI_DEPLOYMENT_KIMIK25,
+      'kimi-k2-7-code': import.meta.env.VITE_AZURE_OPENAI_DEPLOYMENT_KIMIK27CODE,
+    };
+  } catch {
+    deploymentNamesCache = Object.fromEntries(
+      (Object.keys(MODEL_CONFIG) as ModelType[]).map(model => [model, undefined]),
+    ) as Record<ModelType, string | undefined>;
+  }
+  return deploymentNamesCache;
+}
 
 /**
  * Get deployment name for a specific model
@@ -346,8 +364,8 @@ export const DEPLOYMENT_NAMES: Record<ModelType, string | undefined> = {
 export function getDeploymentName(model: ModelType): string {
   const config = MODEL_CONFIG[model];
 
-  // Static lookup (see DEPLOYMENT_NAMES note above — do not use a dynamic key).
-  const specificDeployment = DEPLOYMENT_NAMES[model];
+  // Static lookup (see the deployment-name note above — do not use a dynamic key).
+  const specificDeployment = getDeploymentNames()[model];
   if (specificDeployment) {
     return specificDeployment;
   }
@@ -413,7 +431,7 @@ function loadSettings(): ModelSettings {
     : (availableModels[0] || DEFAULT_SETTINGS.model);
 
   try {
-    const stored = localStorage.getItem(STORAGE_KEY);
+    const stored = typeof localStorage === 'undefined' ? null : localStorage.getItem(STORAGE_KEY);
     if (stored) {
       const parsed = JSON.parse(stored);
       // Validate model type
@@ -450,6 +468,7 @@ function loadSettings(): ModelSettings {
  * Save settings to localStorage
  */
 function saveSettings(settings: ModelSettings): void {
+  if (typeof localStorage === 'undefined') return;
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({
       version: STORAGE_VERSION,

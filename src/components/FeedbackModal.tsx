@@ -6,8 +6,7 @@ import { X, MessageSquare, Send, CheckCircle2 } from 'lucide-react';
 import { submitFeedback, FeedbackContext } from '../services/feedbackService';
 import './FeedbackModal.css';
 import { useLanguage } from '../i18n/LanguageContext';
-import { useEscapeKey } from '../hooks/useEscapeKey';
-import { useModalFocus } from '../hooks/useModalFocus';
+import ModalScaffold from './ModalScaffold';
 
 interface FeedbackModalProps {
   isOpen: boolean;
@@ -42,7 +41,6 @@ const FEEDBACK_CONTACT_ENABLED = import.meta.env.VITE_FEEDBACK_CONTACT_ENABLED =
 
 const FeedbackModal: React.FC<FeedbackModalProps> = ({ isOpen, onClose, context, preselectedRating }) => {
   const { t, translate } = useLanguage();
-  const dialogRef = useModalFocus<HTMLDivElement>(isOpen);
   const [rating, setRating] = useState<number | null>(null);
   const [category, setCategory] = useState(CATEGORIES[0]);
   const [comment, setComment] = useState('');
@@ -75,7 +73,6 @@ const FeedbackModal: React.FC<FeedbackModalProps> = ({ isOpen, onClose, context,
     reset();
     onClose();
   };
-  useEscapeKey(isOpen, handleClose);
 
   const handleSubmit = async () => {
     if (rating === null) {
@@ -112,24 +109,28 @@ const FeedbackModal: React.FC<FeedbackModalProps> = ({ isOpen, onClose, context,
   if (!isOpen) return null;
 
   return (
-    <div className="modal-overlay" onClick={handleClose}>
-      <div
-        ref={dialogRef}
-        className="modal-content feedback-modal"
-        role="dialog"
-        aria-modal="true"
-        aria-label={t("Share Feedback")}
-        tabIndex={-1}
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="modal-header">
+    <ModalScaffold
+      isOpen={isOpen}
+      onClose={handleClose}
+      className="feedback-modal"
+      ariaLabel={t("Share Feedback")}
+      closeOnBackdrop={!isSubmitting}
+      closeOnEscape={!isSubmitting}
+    >
+      <div className="modal-header">
           <h2>
             <MessageSquare size={24} />
             {' '}{t("Share Feedback")}{' '}</h2>
-          <button className="modal-close" onClick={handleClose} title={t("Close")} aria-label={t("Close")}>
+          <button
+            className="modal-close"
+            onClick={handleClose}
+            title={t("Close")}
+            aria-label={t("Close")}
+            disabled={isSubmitting}
+          >
             <X size={24} />
           </button>
-        </div>
+      </div>
 
         {submitted ? (
           <div className="modal-body feedback-thanks">
@@ -140,7 +141,12 @@ const FeedbackModal: React.FC<FeedbackModalProps> = ({ isOpen, onClose, context,
                 ? translate('Your feedback was saved. The maintainer may contact you about this submission.')
                 : t("Your feedback helps us improve the Azure Architecture Diagram Builder.")}
             </p>
-            <button className="btn-primary" onClick={handleClose}>{t("Done")}</button>
+            <button
+              className="azd-button azd-button--primary"
+              onClick={handleClose}
+            >
+              {t("Done")}
+            </button>
           </div>
         ) : (
           <>
@@ -148,7 +154,7 @@ const FeedbackModal: React.FC<FeedbackModalProps> = ({ isOpen, onClose, context,
               <p className="feedback-intro">
                 {' '}{t("How is your experience so far? Your input shapes what we build next.")}{' '}</p>
 
-              <div className="form-group">
+              <div className="form-group azd-field">
                 <label>{t("How do you feel about the app?")}</label>
                 <div className="feedback-ratings" role="radiogroup" aria-label={t("Rating")}>
                   {RATINGS.map((r) => (
@@ -169,11 +175,11 @@ const FeedbackModal: React.FC<FeedbackModalProps> = ({ isOpen, onClose, context,
                 </div>
               </div>
 
-              <div className="form-group">
+              <div className="form-group azd-field">
                 <label htmlFor="feedback-category">{t("Category")}</label>
                 <select
                   id="feedback-category"
-                  className="feedback-category"
+                  className="feedback-category azd-control"
                   value={category}
                   onChange={(e) => setCategory(e.target.value)}
                   disabled={isSubmitting}
@@ -184,13 +190,13 @@ const FeedbackModal: React.FC<FeedbackModalProps> = ({ isOpen, onClose, context,
                 </select>
               </div>
 
-              <div className="form-group">
+              <div className="form-group azd-field">
                 <label htmlFor="feedback-comment">
                   {' '}{t("Tell us more (optional)")}{' '}<span className="label-hint">{t("What worked well, what was confusing, what you'd love to see")}</span>
                 </label>
                 <textarea
                   id="feedback-comment"
-                  className="feedback-comment"
+                  className="feedback-comment azd-control"
                   placeholder={t("e.g., The diagram generation is great, but I'd love to export to Visio...")}
                   value={comment}
                   onChange={(e) => setComment(e.target.value)}
@@ -198,7 +204,7 @@ const FeedbackModal: React.FC<FeedbackModalProps> = ({ isOpen, onClose, context,
                   maxLength={1000}
                   disabled={isSubmitting}
                 />
-                <div className="character-count">{comment.length}{t("/1000")}</div>
+                <div className="character-count azd-character-count">{comment.length}{t("/1000")}</div>
               </div>
 
               {FEEDBACK_CONTACT_ENABLED && (
@@ -222,6 +228,7 @@ const FeedbackModal: React.FC<FeedbackModalProps> = ({ isOpen, onClose, context,
                       {translate('Email address')}
                       <input
                         id="feedback-contact-email"
+                        className="azd-control"
                         type="email"
                         value={contactEmail}
                         onChange={(event) => {
@@ -241,9 +248,13 @@ const FeedbackModal: React.FC<FeedbackModalProps> = ({ isOpen, onClose, context,
                 </div>
               )}
 
-              {error && <div className="feedback-error">{error}</div>}
+              {error && (
+                <div className="feedback-error azd-callout azd-callout--danger" role="alert">
+                  {error}
+                </div>
+              )}
 
-              <div className="feedback-hint">
+              <div className="feedback-hint azd-callout">
                 {' '}{FEEDBACK_CONTACT_ENABLED
                   ? translate("🔒 Rating and comments help improve the app. If you opt in, your email is stored only with this feedback in Cosmos DB and is not sent to analytics. Don't include other sensitive information.")
                   : t("🔒 We collect your rating and comment to improve the app. Don't include sensitive information.")}{' '}</div>
@@ -266,8 +277,7 @@ const FeedbackModal: React.FC<FeedbackModalProps> = ({ isOpen, onClose, context,
             </div>
           </>
         )}
-      </div>
-    </div>
+    </ModalScaffold>
   );
 };
 

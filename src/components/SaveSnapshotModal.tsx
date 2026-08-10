@@ -5,9 +5,8 @@ import React, { useEffect, useRef, useState } from 'react';
 import { X, Camera } from 'lucide-react';
 import './SaveSnapshotModal.css';
 import { useLanguage } from '../i18n/LanguageContext';
-import { useEscapeKey } from '../hooks/useEscapeKey';
-import { useModalFocus } from '../hooks/useModalFocus';
 import { OperationGeneration } from '../utils/operationGeneration';
+import ModalScaffold from './ModalScaffold';
 
 interface SaveSnapshotModalProps {
   isOpen: boolean;
@@ -30,7 +29,6 @@ const SaveSnapshotModal: React.FC<SaveSnapshotModalProps> = ({
   const isOpenRef = useRef(isOpen);
   const savingRef = useRef(false);
   const saveGenerationRef = useRef(new OperationGeneration());
-  const dialogRef = useModalFocus<HTMLDivElement>(isOpen);
 
   isOpenRef.current = isOpen;
 
@@ -40,8 +38,6 @@ const SaveSnapshotModal: React.FC<SaveSnapshotModalProps> = ({
     savingRef.current = false;
     setIsSaving(false);
   }, [isOpen]);
-
-  useEscapeKey(isOpen && !isSaving, onClose);
 
   const handleSave = async () => {
     if (savingRef.current) return;
@@ -68,22 +64,15 @@ const SaveSnapshotModal: React.FC<SaveSnapshotModalProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div className="modal-overlay" onClick={() => {
-      if (!savingRef.current) onClose();
-    }}>
-      <div
-        ref={dialogRef}
-        className="modal-content save-snapshot-modal"
-        role="dialog"
-        aria-modal="true"
-        aria-label={t("Save Snapshot")}
-        tabIndex={-1}
-        onClick={(e) => e.stopPropagation()}
-        onKeyDown={(event) => {
-          if (event.key === 'Escape' && !savingRef.current) onClose();
-        }}
-      >
-        <div className="modal-header">
+    <ModalScaffold
+      isOpen={isOpen}
+      onClose={onClose}
+      className="save-snapshot-modal"
+      ariaLabel={t("Save Snapshot")}
+      closeOnBackdrop={!isSaving}
+      closeOnEscape={!isSaving}
+    >
+      <div className="modal-header">
           <h2>
             <Camera size={24} />
             {' '}{t("Save Snapshot")}{' '}</h2>
@@ -96,10 +85,10 @@ const SaveSnapshotModal: React.FC<SaveSnapshotModalProps> = ({
           >
             <X size={24} />
           </button>
-        </div>
+      </div>
 
-        <div className="modal-body">
-          <div className="snapshot-info">
+      <div className="modal-body">
+          <div className="snapshot-info azd-callout azd-callout--info">
             <p className="snapshot-info-text">
               {' '}{t("Creating a snapshot of")}{' '}<strong>{diagramName}</strong>
             </p>
@@ -108,13 +97,13 @@ const SaveSnapshotModal: React.FC<SaveSnapshotModalProps> = ({
             </p>
           </div>
 
-          <div className="form-group">
+          <div className="form-group azd-field">
             <label htmlFor="snapshot-notes">
               {' '}{t("Notes (optional)")}{' '}<span className="label-hint">{t("Describe what makes this version special")}</span>
             </label>
             <textarea
               id="snapshot-notes"
-              className="snapshot-notes"
+              className="snapshot-notes azd-control"
               placeholder={t("e.g., Before adding authentication, Initial production setup, Working state before experiment...")}
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
@@ -122,18 +111,18 @@ const SaveSnapshotModal: React.FC<SaveSnapshotModalProps> = ({
               maxLength={500}
               disabled={isSaving}
             />
-            <div className="character-count">
+            <div className="character-count azd-character-count">
               {notes.length}{t("/500")}{' '}</div>
           </div>
 
-          <div className="snapshot-hint">
+          <div className="snapshot-hint azd-callout azd-callout--warning">
             {language === 'ja'
               ? '💡 スナップショットはこのブラウザーに保存され、利用可能な場合はクラウドにも安全に保存されます。'
               : '💡 Snapshots are saved in this browser and securely copied to the cloud when available.'}
           </div>
-        </div>
+      </div>
 
-        <div className="modal-actions">
+      <div className="modal-actions">
           <button 
             className="btn-secondary" 
             onClick={onClose}
@@ -155,9 +144,8 @@ const SaveSnapshotModal: React.FC<SaveSnapshotModalProps> = ({
                 {' '}{t("Save Snapshot")}{' '}</>
             )}
           </button>
-        </div>
       </div>
-    </div>
+    </ModalScaffold>
   );
 };
 

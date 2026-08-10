@@ -3,8 +3,8 @@
    ========================================================================== */
 
 .version-history-modal {
-  max-width: 800px;
-  max-height: 85vh;
+  max-width: 1040px;
+  max-height: 90vh;
 }
 
 /* --------------------------------------------------------------------------
@@ -109,13 +109,13 @@
 }
 
 .version-badge.latest {
-  background: #10b981;
-  color: white;
+  background: var(--azd-color-badge-success);
+  color: var(--azd-color-badge-text);
 }
 
 .version-badge.score {
-  background: #3b82f6;
-  color: white;
+  background: var(--azd-color-badge-info);
+  color: var(--azd-color-badge-text);
 }
 
 .version-badge.current {
@@ -172,7 +172,7 @@
   flex-wrap: wrap;
   margin-bottom: 8px;
   font-size: 13px;
-  color: #6b7280;
+  color: var(--azd-color-text-muted);
 }
 
 .version-time {
@@ -241,8 +241,8 @@
 }
 
 .btn-restore {
-  background: #3b82f6;
-  color: white;
+  background: var(--azd-color-brand);
+  color: var(--azd-color-on-brand);
   border: none;
   padding: 8px 16px;
   border-radius: 6px;
@@ -256,7 +256,7 @@
 }
 
 .btn-restore:hover {
-  background: #2563eb;
+  background: var(--azd-color-brand-hover);
 }
 
 /* --------------------------------------------------------------------------
@@ -272,4 +272,300 @@
 .version-count {
   color: #6b7280;
   font-size: 14px;
+}
+
+/* --------------------------------------------------------------------------
+   Visual comparison and selective restore
+   -------------------------------------------------------------------------- */
+
+.version-comparison {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 18px;
+  padding: 16px;
+  border: 1px solid var(--azd-color-brand-border);
+  border-radius: var(--azd-radius-md);
+  background: var(--azd-color-brand-subtle);
+}
+
+.version-comparison-header,
+.version-comparison-header > div:first-child,
+.version-diff-summary,
+.version-diff-controls {
+  display: flex;
+  align-items: center;
+}
+
+.version-comparison-header {
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.version-comparison-header > div:first-child {
+  min-width: 0;
+  gap: 9px;
+}
+
+.version-comparison-header h3 {
+  margin: 0;
+  color: var(--azd-color-text-strong);
+  font-size: 0.95rem;
+}
+
+.version-comparison-header p {
+  margin: 2px 0 0;
+  color: var(--azd-color-text-secondary);
+  font-size: 0.72rem;
+}
+
+.version-diff-summary {
+  flex-shrink: 0;
+  gap: 6px;
+}
+
+.version-diff-summary span {
+  min-width: 34px;
+  padding: 4px 7px;
+  border-radius: var(--azd-radius-pill);
+  font-size: 0.68rem;
+  font-weight: 800;
+  text-align: center;
+}
+
+.version-diff-summary .added {
+  background: var(--azd-color-success-soft);
+  color: var(--azd-color-success);
+}
+
+.version-diff-summary .removed {
+  background: var(--azd-color-danger-soft);
+  color: var(--azd-color-danger-strong);
+}
+
+.version-diff-summary .changed {
+  background: var(--azd-color-warning-soft);
+  color: var(--azd-color-mark-text);
+}
+
+.version-diff-preview {
+  width: 100%;
+  height: 180px;
+  border: 1px solid var(--azd-color-border-subtle);
+  border-radius: var(--azd-radius-sm);
+  background:
+    linear-gradient(var(--azd-color-border-subtle) 1px, transparent 1px),
+    linear-gradient(90deg, var(--azd-color-border-subtle) 1px, transparent 1px),
+    var(--azd-color-surface-elevated);
+  background-size: 20px 20px;
+}
+
+.version-preview-edge {
+  stroke: var(--azd-color-connection);
+  stroke-width: 2;
+  opacity: 0.55;
+}
+
+.version-preview-edge--added {
+  stroke: var(--azd-color-success);
+  stroke-width: 3;
+  opacity: 1;
+}
+
+.version-preview-edge--removed {
+  stroke: var(--azd-color-danger);
+  stroke-width: 3;
+  stroke-dasharray: 6 4;
+  opacity: 1;
+}
+
+.version-preview-edge--changed {
+  stroke: var(--azd-color-warning);
+  stroke-width: 3;
+  opacity: 1;
+}
+
+.version-preview-node rect {
+  fill: var(--azd-color-surface-panel);
+  stroke: var(--azd-color-border-strong);
+  stroke-width: 1.5;
+}
+
+.version-preview-node text {
+  fill: var(--azd-color-text);
+  font-size: 8px;
+  font-weight: 700;
+}
+
+.version-preview-node--added rect {
+  fill: var(--azd-color-success-soft);
+  stroke: var(--azd-color-success);
+  stroke-width: 2.5;
+}
+
+.version-preview-node--removed rect {
+  fill: var(--azd-color-danger-soft);
+  stroke: var(--azd-color-danger);
+  stroke-width: 2.5;
+  stroke-dasharray: 5 3;
+}
+
+.version-preview-node--changed rect {
+  fill: var(--azd-color-warning-soft);
+  stroke: var(--azd-color-warning);
+  stroke-width: 2.5;
+}
+
+.version-diff-controls {
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.version-diff-controls button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 34px;
+  padding: 7px 10px;
+  border: 1px solid var(--azd-color-control-border);
+  border-radius: var(--azd-radius-sm);
+  background: var(--azd-color-control-background);
+  color: var(--azd-color-text);
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.version-diff-controls button:hover:not(:disabled) {
+  border-color: var(--azd-color-control-border-hover);
+  background: var(--azd-color-control-background-hover);
+}
+
+.version-diff-controls button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.version-diff-controls .version-apply-selection {
+  margin-left: auto;
+  border-color: var(--azd-color-brand);
+  background: var(--azd-color-brand);
+  color: var(--azd-color-on-brand);
+}
+
+.version-diff-list {
+  display: grid;
+  max-height: 220px;
+  gap: 6px;
+  overflow: auto;
+}
+
+.version-diff-item {
+  display: grid;
+  align-items: center;
+  grid-template-columns: auto auto minmax(0, 1fr) auto;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--azd-color-border-subtle);
+  border-left-width: 4px;
+  border-radius: var(--azd-radius-sm);
+  background: var(--azd-color-surface-elevated);
+  color: var(--azd-color-text);
+  cursor: pointer;
+}
+
+.version-diff-item--added {
+  border-left-color: var(--azd-color-success);
+}
+
+.version-diff-item--removed {
+  border-left-color: var(--azd-color-danger);
+}
+
+.version-diff-item--changed {
+  border-left-color: var(--azd-color-warning);
+}
+
+.version-diff-kind,
+.version-diff-status {
+  color: var(--azd-color-text-muted);
+  font-size: 0.65rem;
+}
+
+.version-diff-kind {
+  padding: 2px 6px;
+  border-radius: var(--azd-radius-pill);
+  background: var(--azd-color-surface-sunken);
+  color: var(--azd-color-text-secondary);
+  font-weight: 700;
+}
+
+.version-diff-item strong {
+  overflow: hidden;
+  font-size: 0.74rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.version-no-differences {
+  margin: 0;
+  color: var(--azd-color-text-subtle);
+  font-size: 0.78rem;
+  text-align: center;
+}
+
+body.dark-mode .version-item,
+body.dark-mode .version-prompt,
+body.dark-mode .version-notes,
+body.dark-mode .version-stat,
+body.dark-mode .version-action-btn {
+  border-color: var(--azd-color-border-subtle);
+  background: var(--azd-color-surface-panel);
+  color: var(--azd-color-text);
+}
+
+body.dark-mode .version-item:hover,
+body.dark-mode .version-item.selected {
+  border-color: var(--azd-color-control-border-hover);
+  background: var(--azd-color-surface-selected);
+}
+
+body.dark-mode .version-title h4,
+body.dark-mode .version-improvements strong {
+  color: var(--azd-color-text-strong);
+}
+
+body.dark-mode .version-meta,
+body.dark-mode .version-prompt,
+body.dark-mode .version-notes,
+body.dark-mode .version-improvements ul,
+body.dark-mode .version-count,
+body.dark-mode .version-empty {
+  color: var(--azd-color-text-subtle);
+}
+
+@media (max-width: 640px) {
+  .version-comparison-header,
+  .version-diff-controls {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .version-diff-summary {
+    align-self: flex-start;
+  }
+
+  .version-diff-controls .version-apply-selection {
+    width: 100%;
+    margin-left: 0;
+  }
+
+  .version-diff-item {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .version-diff-kind,
+  .version-diff-status {
+    grid-column: 2;
+  }
 }

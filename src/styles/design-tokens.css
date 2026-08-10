@@ -96,7 +96,11 @@
   --azd-shadow-overlay: 0 24px 70px rgba(15, 23, 42, 0.34);
   --azd-shadow-panel: 0 10px 30px rgba(15, 23, 42, 0.18);
   --azd-shadow-dock: -8px 0 30px rgba(0, 0, 0, 0.35);
+  --azd-shadow-drawer-left: 12px 0 34px rgba(15, 23, 42, 0.24);
+  --azd-shadow-drawer-right: -12px 0 34px rgba(15, 23, 42, 0.24);
+  --azd-shadow-drawer-bottom: 0 -16px 42px rgba(15, 23, 42, 0.3);
   --azd-shadow-floating: 0 6px 18px rgba(15, 23, 42, 0.24);
+  --azd-overlay-blur: 2px;
   --azd-space-1: 0.25rem;
   --azd-space-2: 0.5rem;
   --azd-space-3: 0.75rem;
@@ -174,5 +178,8 @@ body.dark-mode {
   --azd-shadow-overlay: 0 24px 70px rgba(0, 0, 0, 0.56);
   --azd-shadow-panel: 0 12px 34px rgba(0, 0, 0, 0.38);
   --azd-shadow-dock: -8px 0 32px rgba(0, 0, 0, 0.5);
+  --azd-shadow-drawer-left: 12px 0 38px rgba(0, 0, 0, 0.48);
+  --azd-shadow-drawer-right: -12px 0 38px rgba(0, 0, 0, 0.48);
+  --azd-shadow-drawer-bottom: 0 -16px 44px rgba(0, 0, 0, 0.48);
   --azd-shadow-floating: 0 8px 22px rgba(0, 0, 0, 0.4);
 }

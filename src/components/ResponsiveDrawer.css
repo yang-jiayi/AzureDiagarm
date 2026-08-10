@@ -9,14 +9,19 @@
   height: 100%;
   padding: 0;
   border: 0;
-  background: rgba(15, 23, 42, 0.52);
-  backdrop-filter: blur(2px);
+  background: var(--azd-color-overlay-scrim);
+  backdrop-filter: blur(var(--azd-overlay-blur));
 }
 
 .responsive-drawer-panel {
   z-index: var(--azd-z-panel);
   min-width: 0;
   outline: none;
+}
+
+.responsive-drawer-panel:focus-visible {
+  outline: 3px solid var(--azd-color-focus);
+  outline-offset: -3px;
 }
 
 .responsive-drawer-panel--left,
@@ -28,10 +33,12 @@
 
 .responsive-drawer-panel--left {
   left: 0;
+  box-shadow: var(--azd-shadow-drawer-left);
 }
 
 .responsive-drawer-panel--right {
   right: 0;
+  box-shadow: var(--azd-shadow-drawer-right);
 }
 
 .responsive-drawer-panel--bottom {
@@ -40,8 +47,8 @@
   bottom: 0;
   left: 0;
   max-height: min(88dvh, 760px);
-  border-radius: 18px 18px 0 0;
-  box-shadow: 0 -16px 42px rgba(15, 23, 42, 0.3);
+  border-radius: var(--azd-radius-xl) var(--azd-radius-xl) 0 0;
+  box-shadow: var(--azd-shadow-drawer-bottom);
 }
 
 .responsive-drawer-panel--center {
@@ -49,10 +56,13 @@
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
+  border-radius: var(--azd-radius-lg);
+  box-shadow: var(--azd-shadow-overlay);
 }
 
 .responsive-drawer-panel--docked {
   position: relative;
+  box-shadow: none;
 }
 
 @media (prefers-reduced-motion: reduce) {

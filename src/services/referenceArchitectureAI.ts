@@ -15,6 +15,7 @@
  */
 
 import { callAzureOpenAI, ModelOverride, AIMetrics } from './azureOpenAI';
+import { runWithCompactRetry } from './aiRetry';
 import { getServiceIconMapping } from '../data/serviceIconMapping';
 import type { Language } from '../i18n/LanguageContext';
 import { getPromptLanguageInstruction } from '../i18n/localization';
@@ -290,12 +291,16 @@ EXAMPLE 3 — Event-driven IoT analytics (hot + cool paths):
 // Generation
 // ──────────────────────────────────────────────────────────────────────────────
 
-export async function generateReferenceArchitectureWithAI(
-  description: string,
-  modelOverride?: ModelOverride,
-  language: Language = 'en',
-): Promise<ReferenceArchitecture> {
-  const systemPrompt = `You are an expert Azure cloud architect who creates publication-ready REFERENCE ARCHITECTURE diagrams in the editorial style of the Microsoft Azure Architecture Center.
+/** Thrown when the model responded but the payload was unusable (truncated / non-JSON). */
+class ReferenceResponseError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ReferenceResponseError';
+  }
+}
+
+function buildReferenceSystemPrompt(language: Language, compact: boolean): string {
+  return `You are an expert Azure cloud architect who creates publication-ready REFERENCE ARCHITECTURE diagrams in the editorial style of the Microsoft Azure Architecture Center.
 
 Reference architectures differ from topology diagrams: they show a NARRATIVE — how data and control flow through clearly named STAGES (swim lanes), left to right, with platform wrappers, optional hot/cool path bands, a foundation strip, and a cross-cutting governance strip.
 
@@ -343,52 +348,77 @@ Rules:
 11. IDs must be lowercase-kebab, unique across stages/actors/datasources.
 12. DO NOT include positions/coordinates/widths/heights — the layout engine computes them.
 
-Here are 3 high-quality reference architectures to imitate in structure and density:
-
-${FEW_SHOT_EXAMPLES}
+${compact
+    ? `SPEED MODE — no exemplars are supplied. Keep it tight: 3–4 stages, at most 5 services per stage, 8–14 connections, 3–5 workflow steps. A correct, complete JSON document matters more than breadth.`
+    : `Here are 3 high-quality reference architectures to imitate in structure and density:\n\n${FEW_SHOT_EXAMPLES}`}
 
 Now generate a reference architecture for the user's request. Return JSON only.`;
+}
 
-  const messages = [
-    { role: 'system', content: systemPrompt },
-    { role: 'user', content: description },
-  ];
+export async function generateReferenceArchitectureWithAI(
+  description: string,
+  modelOverride?: ModelOverride,
+  language: Language = 'en',
+): Promise<ReferenceArchitecture> {
+  const attempt = async (
+    compact: boolean,
+    override?: ModelOverride,
+  ): Promise<ReferenceArchitecture> => {
+    const messages = [
+      { role: 'system', content: buildReferenceSystemPrompt(language, compact) },
+      { role: 'user', content: description },
+    ];
 
-  const { content, metrics } = await callAzureOpenAI(messages, modelOverride, true);
-  console.log(
-    `📐 Reference Architecture Response [${metrics.model || 'AI'}]: ${content.length} chars`
-  );
+    const { content, metrics } = await callAzureOpenAI(messages, override, true);
+    console.log(
+      `📐 Reference Architecture Response [${metrics.model || 'AI'}]: ${content.length} chars`
+    );
 
-  let ref: ReferenceArchitecture;
-  try {
-    ref = JSON.parse(content);
-  } catch (e: any) {
-    console.error('Failed to parse reference architecture JSON:', content);
-    throw new Error(`Invalid JSON in reference architecture response: ${e.message}`);
-  }
+    let ref: ReferenceArchitecture;
+    try {
+      ref = JSON.parse(content);
+    } catch (e: any) {
+      console.error('Failed to parse reference architecture JSON:', content);
+      throw new ReferenceResponseError(
+        `Invalid JSON in reference architecture response: ${e.message}`,
+      );
+    }
 
-  // Validate minimum shape
-  if (!ref.stages || !Array.isArray(ref.stages) || ref.stages.length === 0) {
-    throw new Error('Reference architecture missing required "stages" array.');
-  }
-  if (!ref.connections || !Array.isArray(ref.connections)) {
-    ref.connections = [];
-  }
+    // Validate minimum shape
+    if (!ref.stages || !Array.isArray(ref.stages) || ref.stages.length === 0) {
+      throw new ReferenceResponseError('Reference architecture missing required "stages" array.');
+    }
+    if (!ref.connections || !Array.isArray(ref.connections)) {
+      ref.connections = [];
+    }
 
-  // Normalize service names against the canonical icon map
-  for (const stage of ref.stages) {
-    if (!Array.isArray(stage.services)) continue;
-    stage.services = stage.services.map((s) => {
-      const m = getServiceIconMapping(s.name);
-      if (m) {
-        return { ...s, name: m.displayName, category: m.category };
-      }
-      return s;
-    });
-  }
+    // Normalize service names against the canonical icon map
+    for (const stage of ref.stages) {
+      if (!Array.isArray(stage.services)) continue;
+      stage.services = stage.services.map((s) => {
+        const m = getServiceIconMapping(s.name);
+        if (m) {
+          return { ...s, name: m.displayName, category: m.category };
+        }
+        return s;
+      });
+    }
 
-  ref.metrics = metrics;
-  return ref;
+    ref.metrics = metrics;
+    return ref;
+  };
+
+  // One automatic retry with a compact prompt at low reasoning effort: the
+  // editorial prompt plus exemplars is what pushes this past the proxy's
+  // upstream budget and surfaces "The AI provider is taking too long to
+  // respond." to the user.
+  return runWithCompactRetry({
+    transportFeature: 'architectureGeneration',
+    override: modelOverride,
+    label: 'Reference architecture generation',
+    isRetryable: (error) => error instanceof ReferenceResponseError,
+    attempt,
+  });
 }
 
 // ──────────────────────────────────────────────────────────────────────────────

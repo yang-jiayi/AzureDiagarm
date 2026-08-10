@@ -66,6 +66,17 @@ const AzureNode: React.FC<NodeProps> = memo(({ data, selected, id }) => {
   // Extract style preset
   const stylePreset = (data as any).stylePreset || 'detailed';
   const showLabels = true; // Always show labels
+  const labelMaxWidth = (
+    typeof data.labelMaxWidth === 'number'
+    && Number.isFinite(data.labelMaxWidth)
+    && data.labelMaxWidth >= 120
+  )
+    ? Math.min(260, data.labelMaxWidth)
+    : undefined;
+  const rawTags: unknown[] = Array.isArray(data.tags) ? data.tags : [];
+  const tags = rawTags
+    .filter((tag: unknown): tag is string => typeof tag === 'string' && tag.trim() !== '')
+    .slice(0, 12);
   // Cost badges are suppressed by presentation styling OR by the standalone
   // cost-visibility preference, so a user can drop the figures without
   // restyling the whole diagram.
@@ -239,12 +250,14 @@ const AzureNode: React.FC<NodeProps> = memo(({ data, selected, id }) => {
                 onKeyDown={handleLabelKeyDown}
                 autoFocus
                 className="node-label-input"
+                style={labelMaxWidth ? { maxWidth: `${labelMaxWidth}px` } : undefined}
               />
             ) : (
               <div
                 ref={labelRef}
                 data-node-keyboard-target
                 className="node-label"
+                style={labelMaxWidth ? { maxWidth: `${labelMaxWidth}px` } : undefined}
                 onDoubleClick={handleLabelDoubleClick}
                 onKeyDown={handleNodeKeyDown}
                 role="button"
@@ -256,6 +269,14 @@ const AzureNode: React.FC<NodeProps> = memo(({ data, selected, id }) => {
               </div>
             )}
           </>
+        )}
+        {tags.length > 0 && (
+          <div className="node-tags" aria-label={tags.join(', ')}>
+            {tags.slice(0, 2).map(tag => (
+              <span key={tag} title={tag}>{tag}</span>
+            ))}
+            {tags.length > 2 && <span title={tags.slice(2).join(', ')}>+{tags.length - 2}</span>}
+          </div>
         )}
       </div>
       
@@ -296,6 +317,8 @@ const AzureNode: React.FC<NodeProps> = memo(({ data, selected, id }) => {
     prevProps.selected === nextProps.selected &&
 prevProps.data.parentNode === nextProps.data.parentNode &&
     prevProps.data.label === nextProps.data.label &&
+    prevProps.data.labelMaxWidth === nextProps.data.labelMaxWidth &&
+    JSON.stringify(prevProps.data.tags) === JSON.stringify(nextProps.data.tags) &&
     prevProps.data.iconPath === nextProps.data.iconPath &&
     prevProps.data.stylePreset === nextProps.data.stylePreset &&
     JSON.stringify(prevProps.data.pricing) === JSON.stringify(nextProps.data.pricing)

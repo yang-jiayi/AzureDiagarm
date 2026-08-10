@@ -2,17 +2,21 @@
 // Licensed under the MIT License.
 
 import { useEffect, useRef, useState } from 'react';
-import { Info, Languages, MoreHorizontal } from 'lucide-react';
+import { History, Info, Languages, MoreHorizontal, ScanSearch } from 'lucide-react';
 import { useLanguage } from '../i18n/LanguageContext';
 import { localize } from '../i18n/localization';
 import LanguageSwitch from './LanguageSwitch';
 
 interface HeaderUtilityMenuProps {
   onOpenAbout: () => void;
+  onOpenRecentWork: () => void;
+  onOpenQualityDoctor: () => void;
 }
 
 export default function HeaderUtilityMenu({
   onOpenAbout,
+  onOpenRecentWork,
+  onOpenQualityDoctor,
 }: HeaderUtilityMenuProps) {
   const { language } = useLanguage();
   const [isOpen, setIsOpen] = useState(false);
@@ -54,6 +58,28 @@ export default function HeaderUtilityMenu({
           role="dialog"
           aria-label={text('More application options', 'その他のアプリケーション オプション')}
         >
+          <button
+            type="button"
+            className="header-utility-menu-item"
+            onClick={() => {
+              setIsOpen(false);
+              onOpenRecentWork();
+            }}
+          >
+            <History size={17} aria-hidden="true" />
+            <span>{text('Resume recent work', '最近の作業を再開')}</span>
+          </button>
+          <button
+            type="button"
+            className="header-utility-menu-item"
+            onClick={() => {
+              setIsOpen(false);
+              onOpenQualityDoctor();
+            }}
+          >
+            <ScanSearch size={17} aria-hidden="true" />
+            <span>{text('Diagram Quality Doctor', 'ダイアグラム品質診断')}</span>
+          </button>
           <button
             type="button"
             className="header-utility-menu-item"

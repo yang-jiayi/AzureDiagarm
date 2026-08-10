@@ -15,8 +15,7 @@ import {
 import { getSignedInName } from '../services/msalAuth';
 import { useLanguage } from '../i18n/LanguageContext';
 import { localize } from '../i18n/localization';
-import { useEscapeKey } from '../hooks/useEscapeKey';
-import { useModalFocus } from '../hooks/useModalFocus';
+import ModalScaffold from './ModalScaffold';
 import './AzureImportModal.css';
 
 interface AzureImportModalProps {
@@ -49,8 +48,6 @@ const AzureImportModal: React.FC<AzureImportModalProps> = ({ isOpen, onClose, on
   const [importing, setImporting] = useState(false);
   const [disabled, setDisabled] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const dialogRef = useModalFocus<HTMLDivElement>(isOpen);
-  useEscapeKey(isOpen && !importing, onClose);
 
   const loadSubs = useCallback(() => {
     setLoadingSubs(true);
@@ -126,17 +123,15 @@ const AzureImportModal: React.FC<AzureImportModalProps> = ({ isOpen, onClose, on
   };
 
   return (
-    <div className="modal-overlay" onClick={importing ? undefined : onClose}>
-      <div
-        ref={dialogRef}
-        className="modal-content azure-import-modal"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="azure-import-title"
-        tabIndex={-1}
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="modal-header">
+    <ModalScaffold
+      isOpen={isOpen}
+      onClose={onClose}
+      className="azure-import-modal"
+      ariaLabelledBy="azure-import-title"
+      closeOnBackdrop={!importing}
+      closeOnEscape={!importing}
+    >
+      <div className="modal-header">
           <h2 id="azure-import-title">
             <DownloadCloud size={24} />
             {text('Import from Azure', 'Azureからインポート')}
@@ -150,11 +145,11 @@ const AzureImportModal: React.FC<AzureImportModalProps> = ({ isOpen, onClose, on
           >
             <X size={24} />
           </button>
-        </div>
+      </div>
 
-        <div className="modal-body">
+      <div className="modal-body">
           {disabled ? (
-            <div className="azimp-disabled">
+            <div className="azimp-disabled azd-callout azd-callout--warning">
               <AlertTriangle size={20} />
               <div>
                 <p>
@@ -191,7 +186,11 @@ const AzureImportModal: React.FC<AzureImportModalProps> = ({ isOpen, onClose, on
                   'アクセスのみを要求し、ユーザーの権限で許可された情報だけを照会します。情報は保存されません。',
                 )}
               </p>
-              <button className="btn-primary azimp-signin-btn" onClick={handleSignIn} disabled={signingIn}>
+              <button
+                className="azd-button azd-button--primary azimp-signin-btn"
+                onClick={handleSignIn}
+                disabled={signingIn}
+              >
                 <LogIn size={16} />
                 {signingIn
                   ? text('Signing in…', 'サインイン中…')
@@ -208,10 +207,11 @@ const AzureImportModal: React.FC<AzureImportModalProps> = ({ isOpen, onClose, on
                 {account && <> {text('Signed in as', 'サインイン中:')} <strong>{account}</strong>.</>}
               </p>
 
-              <div className="form-group">
+              <div className="form-group azd-field">
                 <label htmlFor="azimp-sub">{text('Subscription', 'Subscription')}</label>
                 <select
                   id="azimp-sub"
+                  className="azd-control"
                   value={subId}
                   onChange={(e) => setSubId(e.target.value)}
                   disabled={loadingSubs || importing}
@@ -229,10 +229,11 @@ const AzureImportModal: React.FC<AzureImportModalProps> = ({ isOpen, onClose, on
                 </select>
               </div>
 
-              <div className="form-group">
+              <div className="form-group azd-field">
                 <label htmlFor="azimp-rg">{text('Resource group', 'Resource Group')}</label>
                 <select
                   id="azimp-rg"
+                  className="azd-control"
                   value={rg}
                   onChange={(e) => setRg(e.target.value)}
                   disabled={!subId || loadingGroups || importing}
@@ -251,7 +252,11 @@ const AzureImportModal: React.FC<AzureImportModalProps> = ({ isOpen, onClose, on
               </div>
 
               {importing && (
-                <div className="azimp-progress" role="status" aria-live="polite">
+                <div
+                  className="azimp-progress azd-callout azd-callout--info"
+                  role="status"
+                  aria-live="polite"
+                >
                   <RefreshCw size={16} className="spin-icon" />
                   {text('Scanning', 'スキャン中:')} <strong>{rg}</strong>
                   {text(' and building the diagram…', '。図を作成しています…')}
@@ -260,10 +265,14 @@ const AzureImportModal: React.FC<AzureImportModalProps> = ({ isOpen, onClose, on
             </>
           )}
 
-          {error && <div className="azimp-error" role="alert"><AlertTriangle size={16} /> {error}</div>}
-        </div>
+          {error && (
+            <div className="azimp-error azd-callout azd-callout--danger" role="alert">
+              <AlertTriangle size={16} /> {error}
+            </div>
+          )}
+      </div>
 
-        <div className="modal-actions">
+      <div className="modal-actions">
           <button className="btn-secondary" onClick={onClose} disabled={importing}>
             {text('Cancel', 'キャンセル')}
           </button>
@@ -274,9 +283,8 @@ const AzureImportModal: React.FC<AzureImportModalProps> = ({ isOpen, onClose, on
                 : text('Import resource group', 'Resource Groupをインポート')}
             </button>
           )}
-        </div>
       </div>
-    </div>
+    </ModalScaffold>
   );
 };
 

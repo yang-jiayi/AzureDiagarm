@@ -2,7 +2,6 @@
 // Licensed under the MIT License.
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
 import { Sparkles, X, Loader2, Clock, Zap, Brain, Network, PenTool, Layers } from 'lucide-react';
 import { generateArchitectureWithAI, isAzureOpenAIConfigured, AIMetrics, analyzeArchitectureDiagramImage, ModelOverride } from '../services/azureOpenAI';
 import { generateReferenceArchitectureWithAI } from '../services/referenceArchitectureAI';
@@ -33,10 +32,10 @@ import { buildModificationPrompt } from '../services/modificationPrompt';
 import './AIArchitectureGenerator.css';
 import { useLanguage } from '../i18n/LanguageContext';
 import { localize, type LocalizedText } from '../i18n/localization';
-import { useEscapeKey } from '../hooks/useEscapeKey';
-import { useModalFocus } from '../hooks/useModalFocus';
 import type { GenerationMode } from '../utils/generationResult';
+import { planBothRun, type PendingRetry } from '../utils/bothModeRetry';
 import { readBooleanPreference, readLocalStorage, writeLocalStorage } from '../utils/safeStorage';
+import ModalScaffold from './ModalScaffold';
 
 // After a successful generation the modal stays open this long so the user can
 // review metrics or type a follow-up modification, then auto-closes. Typing a
@@ -235,6 +234,15 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
   const [description, setDescription] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
   const [error, setError] = useState('');
+  const [partialWarning, setPartialWarning] = useState('');
+  /**
+   * Set when exactly one of the two `both`-mode deliverables failed. It carries
+   * everything the retry needs so pressing "Retry missing output" regenerates
+   * only the missing half: rebuilding the prompt from the live canvas would
+   * turn the brief into a MODIFY instruction (the topology has already been
+   * applied) and re-running the succeeded half would overwrite it.
+   */
+  const [pendingRetry, setPendingRetry] = useState<PendingRetry | null>(null);
   const [aiMetrics, setAiMetrics] = useState<AIMetrics | null>(null);
   const [canvasGenerationCompleted, setCanvasGenerationCompleted] = useState(false);
   const [isAnalyzingImage, setIsAnalyzingImage] = useState(false);
@@ -318,10 +326,12 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
   const clearGenerationResult = useCallback(() => {
     setAiMetrics(null);
     setCanvasGenerationCompleted(false);
-  }, []);
-  const handleModeChange = useCallback((nextMode: GenerationMode) => {
+  }, []);  const handleModeChange = useCallback((nextMode: GenerationMode) => {
     cancelScheduledClose();
     clearGenerationResult();
+    // A retry only makes sense for the `both` run that produced it.
+    setPendingRetry(null);
+    setPartialWarning('');
     setMode(nextMode);
     writeLocalStorage('aiGenerator.mode', nextMode);
   }, [cancelScheduledClose, clearGenerationResult]);
@@ -333,8 +343,6 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
     setActiveStep('brief');
     setIsOpen(false);
   }, [cancelScheduledClose, clearGenerationResult, isBusy]);
-  const dialogRef = useModalFocus<HTMLDivElement>(isOpen);
-  useEscapeKey(isOpen && !isBusy, closeModal);
   const handleAnalyzingChange = useCallback((analyzing: boolean) => {
     if (analyzing) cancelScheduledClose();
     setIsAnalyzingImage(analyzing);
@@ -355,6 +363,8 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
     setActiveStep('brief');
     setIsOpen(true);
     setError('');
+    setPartialWarning('');
+    setPendingRetry(null);
     setImageAnalyzed(false);
     onOpen?.();
   }, [onOpen, cancelScheduledClose, clearGenerationResult]);
@@ -411,6 +421,13 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
     cancelScheduledClose();
     setIsGenerating(true);
     setError('');
+    setPartialWarning('');
+    // Snapshot and clear together: the warning and the retry it belongs to must
+    // never diverge. If this run throws, the user is left with no warning and
+    // no armed retry, so the next press is a clean full run. A partial failure
+    // re-arms both at the end.
+    const retrySnapshot = pendingRetry;
+    setPendingRetry(null);
     clearGenerationResult();
     
     const currentModelSettings: ModelOverride = getModelSettingsForFeature('architectureGeneration');
@@ -504,9 +521,16 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
       // and (when autoSnapshot is on) auto-downloaded as PNG. The toolbar's
       // "Export Blueprint PNG" remains available either way.
       if (mode === 'both') {
+        // A pending retry replays the original attempt's inputs. It is only
+        // honoured while the brief is untouched — an edited brief means the
+        // user wants a fresh run of both deliverables.
+        const { retry, runTopology, runBlueprint, reuseManifest } = planBothRun(retrySnapshot, description);
+
         // Build the same enriched context the topology branch uses below.
         let bothContextPrompt = description;
-        if (currentArchitecture && currentArchitecture.nodes.length > 0) {
+        if (retry) {
+          bothContextPrompt = retry.prompt;
+        } else if (currentArchitecture && currentArchitecture.nodes.length > 0) {
           const groups = currentArchitecture.nodes
             .filter((n) => n.type === 'groupNode')
             .map((n) => ({ name: n.data.label, id: n.id }));
@@ -534,22 +558,27 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
         const t0 = performance.now();
         // Pre-pass: extract a canonical component manifest so topology and
         // blueprint agree on the set of services, zones, and on-prem actors.
-        let manifest: ComponentManifest | undefined;
-        try {
-          manifest = await generateComponentManifest(bothContextPrompt, currentModelSettings, language);
-          console.log(
-            `📋 Manifest: ${manifest.components.length} components across ${manifest.zones.length} zones (${manifest.metrics?.totalTokens ?? '?'} tokens, ${Math.round((manifest.metrics?.elapsedTimeMs ?? 0) / 100) / 10}s)`,
-          );
-        } catch (err) {
-          console.warn('Component manifest pre-pass failed; falling back to independent generation:', err);
-          manifest = undefined;
+        // A retry reuses the manifest it already paid for.
+        let manifest: ComponentManifest | undefined = retry?.manifest;
+        if (!reuseManifest) {
+          try {
+            manifest = await generateComponentManifest(bothContextPrompt, currentModelSettings, language);
+            console.log(
+              `📋 Manifest: ${manifest.components.length} components across ${manifest.zones.length} zones (${manifest.metrics?.totalTokens ?? '?'} tokens, ${Math.round((manifest.metrics?.elapsedTimeMs ?? 0) / 100) / 10}s)`,
+            );
+          } catch (err) {
+            console.warn('Component manifest pre-pass failed; falling back to independent generation:', err);
+            manifest = undefined;
+          }
         }
 
         let topoResult: any = null;
         let bpResult: any = null;
         let topoFailure: unknown = null;
         let bpFailure: unknown = null;
-        if (bothInParallel) {
+        // On a retry only the missing deliverable runs, so the output that
+        // already succeeded is neither overwritten nor billed again.
+        if (bothInParallel && runTopology && runBlueprint) {
           const [topologyOutcome, blueprintOutcome] = await Promise.allSettled([
             topoCall(manifest),
             bpCall(manifest),
@@ -559,18 +588,22 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
           if (blueprintOutcome.status === 'fulfilled') bpResult = blueprintOutcome.value;
           else bpFailure = blueprintOutcome.reason;
         } else {
-          try {
-            topoResult = await topoCall(manifest);
-          } catch (error) {
-            topoFailure = error;
+          if (runTopology) {
+            try {
+              topoResult = await topoCall(manifest);
+            } catch (error) {
+              topoFailure = error;
+            }
           }
-          try {
-            bpResult = await bpCall(manifest);
-          } catch (error) {
-            bpFailure = error;
+          if (runBlueprint) {
+            try {
+              bpResult = await bpCall(manifest);
+            } catch (error) {
+              bpFailure = error;
+            }
           }
         }
-        if (!topoResult && !bpResult) {
+        if (!topoResult && !bpResult && !retry) {
           throw topoFailure || bpFailure || new Error('Topology and Blueprint generation failed.');
         }
         const wallElapsed = performance.now() - t0;
@@ -624,16 +657,45 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
         }
 
         if (combinedMetrics) setAiMetrics(combinedMetrics);
-        setCanvasGenerationCompleted(canvasApplied);
+        // A blueprint-only retry does not touch the canvas, but the topology
+        // from the original attempt is still there, so the flag must not be
+        // cleared back to false.
+        setCanvasGenerationCompleted(canvasApplied || Boolean(retry?.canvasApplied));
 
         if (topoFailure || bpFailure) {
-          const failedOutput = topoFailure ? 'Topology' : 'Blueprint';
+          // One deliverable is still missing. Surface it as a non-blocking
+          // warning instead of a hard error so the successful output stays
+          // usable, and remember exactly what to re-run.
+          const missing: 'topology' | 'blueprint' = topoFailure ? 'topology' : 'blueprint';
           const cause = topoFailure || bpFailure;
           const detail = cause instanceof Error ? cause.message : String(cause);
-          throw new Error(`${failedOutput} generation failed, but the other output was created successfully: ${detail}`);
+          setPendingRetry({
+            missing,
+            brief: description,
+            prompt: bothContextPrompt,
+            manifest,
+            canvasApplied: canvasApplied || Boolean(retry?.canvasApplied),
+          });
+          setPartialWarning(localize(language, {
+            en: `${missing === 'topology' ? 'Topology' : 'Blueprint'} generation did not complete, but the other output was created successfully. `
+              + `Reason: ${translate(detail)} `
+              + 'Press "Retry missing output" to re-run only what is missing — lowering reasoning effort or picking a faster model makes long requests finish inside the time limit.',
+            ja: `${missing === 'topology' ? 'トポロジー' : 'Blueprint'} の生成は完了しませんでしたが、もう一方の出力は正常に作成されました。`
+              + `理由: ${translate(detail)} `
+              + '「不足分を再生成」を押すと不足分のみ再試行できます。推論の強度を下げるか、より高速なモデルを選ぶと制限時間内に完了しやすくなります。',
+          }));
+        } else if (blueprintExportError) {
+          throw blueprintExportError;
         }
-        if (blueprintExportError) throw blueprintExportError;
 
+        if (topoFailure || bpFailure) {
+          // Stay on the output step: that is the only place the Generate button
+          // is rendered, so the preserved brief can be re-run with one click.
+          setActiveStep('output');
+          return;
+        }
+        // `pendingRetry` was already cleared when this run started, and the
+        // partial-failure branch above returns before reaching here.
         setActiveStep('review');
         setDescription('');
         scheduleClose();
@@ -772,18 +834,17 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
         </button>
       )}
 
-      {isOpen && createPortal(
-        <div className="ai-generator-overlay" onClick={closeModal}>
-          <div
-            ref={dialogRef}
-            className="ai-generator-dialog ai-architecture-modal"
-            role="dialog"
-            aria-modal="true"
-            aria-label={t("AI Architecture Generator")}
-            aria-busy={isBusy}
-            tabIndex={-1}
-            onClick={(e) => e.stopPropagation()}
-          >
+      {isOpen && (
+        <ModalScaffold
+          isOpen={isOpen}
+          onClose={closeModal}
+          className="ai-generator-dialog ai-architecture-modal"
+          overlayClassName="ai-generator-overlay"
+          ariaLabel={t("AI Architecture Generator")}
+          closeOnBackdrop={!isBusy}
+          closeOnEscape={!isBusy}
+          aria-busy={isBusy}
+        >
             <div className="modal-header">
               <div className="modal-title">
                 <Sparkles size={20} />
@@ -862,11 +923,11 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
                 )}
               </p>
 
-              <div className="form-group">
+              <div className="form-group azd-field">
                 <label htmlFor="architecture-description">{t("Architecture Description or Modification")}</label>
                 <textarea
                   id="architecture-description"
-                  className="form-textarea"
+                  className="form-textarea azd-control"
                   placeholder={imageAnalyzed 
                     ? t("AI has analyzed your diagram. Review the description above, make any adjustments, then click Generate.")
                     : t("Describe a new architecture or request changes to the current diagram. Example: I need a web app with a frontend, API backend, SQL database, and blob storage...")}
@@ -900,7 +961,7 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
               />
 
               {error && (
-                <div className="error-message">
+                <div className="error-message azd-callout azd-callout--danger" role="alert">
                   {error}
                 </div>
               )}
@@ -913,18 +974,32 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
                   <p>{description}</p>
                   <button
                     type="button"
-                    className="btn btn-secondary"
+                    className="azd-button azd-button--secondary"
                     onClick={() => setActiveStep('brief')}
                     disabled={isBusy}
                   >
                     {localize(language, { en: 'Edit brief', ja: '要件を編集' })}
                   </button>
-                  {error && <div className="error-message">{error}</div>}
+                  {error && (
+                    <div className="error-message azd-callout azd-callout--danger" role="alert">
+                      {error}
+                    </div>
+                  )}
+                  {partialWarning && (
+                    <div className="azd-callout azd-callout--warning" role="status">
+                      {partialWarning}
+                    </div>
+                  )}
                 </div>
               )}
 
               {activeStep === 'review' && (
                 <div className="generator-success-panel">
+                  {partialWarning && (
+                    <div className="azd-callout azd-callout--warning" role="status">
+                      {partialWarning}
+                    </div>
+                  )}
                   <div className="similar-architectures">
                     <h3>
                       {canvasGenerationCompleted
@@ -952,15 +1027,15 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
                         })}
                   </p>
                   <div className="generator-success-actions">
-                    <button type="button" className="btn btn-primary" disabled={isBusy} onClick={() => { cancelScheduledClose(); setIsOpen(false); onContinueInChat?.(); }}>
+                    <button type="button" className="azd-button azd-button--primary" disabled={isBusy} onClick={() => { cancelScheduledClose(); setIsOpen(false); onContinueInChat?.(); }}>
                       {translate('Continue in Guided Chat')}
                     </button>
                     {canvasGenerationCompleted && (
                       <>
-                        <button type="button" className="btn btn-secondary" disabled={isBusy} onClick={() => { cancelScheduledClose(); setIsOpen(false); onReview?.(); }}>
+                        <button type="button" className="azd-button azd-button--secondary" disabled={isBusy} onClick={() => { cancelScheduledClose(); setIsOpen(false); onReview?.(); }}>
                           {translate('Review on Canvas')}
                         </button>
-                        <button type="button" className="btn btn-secondary" disabled={isBusy} onClick={() => { cancelScheduledClose(); setIsOpen(false); onValidate?.(); }}>
+                        <button type="button" className="azd-button azd-button--secondary" disabled={isBusy} onClick={() => { cancelScheduledClose(); setIsOpen(false); onValidate?.(); }}>
                           {translate('Validate Now')}
                         </button>
                       </>
@@ -1048,7 +1123,7 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
              </div>
             </div>
 
-            <div className="modal-footer">
+            <div className="modal-actions modal-footer">
               {activeStep === 'output' && (
               <>
               <div className="ai-modal-active-model">
@@ -1073,7 +1148,7 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
                 </span>
               </div>
               {currentArchitecture && currentArchitecture.nodes.length > 0 && (
-                <div className="auto-snapshot-option">
+                <div className="auto-snapshot-option azd-callout azd-callout--warning">
                   <label className="checkbox-label">
                     <input
                       type="checkbox"
@@ -1088,7 +1163,7 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
                 </div>
               )}
               {mode === 'both' && (
-                <div className="auto-snapshot-option">
+                <div className="auto-snapshot-option azd-callout azd-callout--warning">
                   <label className="checkbox-label">
                     <input
                       type="checkbox"
@@ -1103,7 +1178,7 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
                 </div>
               )}
               {(mode === 'blueprint' || mode === 'both') && (
-                <div className="auto-snapshot-option">
+                <div className="auto-snapshot-option azd-callout azd-callout--warning">
                   <label className="checkbox-label" style={{ alignItems: 'center', gap: 8 }}>
                     <span>{t("Blueprint legend position:")}</span>
                     <select
@@ -1129,7 +1204,7 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
                 <>
                     <button
                       type="button"
-                      className="btn btn-secondary"
+                      className="azd-button azd-button--secondary"
                       onClick={closeModal}
                       disabled={isBusy}
                     >
@@ -1137,7 +1212,7 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
                     </button>
                     <button
                       type="button"
-                      className="btn btn-primary"
+                      className="azd-button azd-button--primary"
                       onClick={() => {
                         setError('');
                         setActiveStep('output');
@@ -1152,7 +1227,7 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
                 <>
                 <button
                     type="button"
-                    className="btn btn-secondary"
+                    className="azd-button azd-button--secondary"
                     onClick={() => setActiveStep('brief')}
                     disabled={isBusy}
                 >
@@ -1160,10 +1235,10 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
                 </button>
                 <button
                   type="button"
-                  className="btn btn-primary"
+                  className="azd-button azd-button--primary"
                   onClick={handleGenerate}
                   disabled={isGenerating || isAnalyzingImage || !description.trim()}
-                  style={{ display: aiMetrics ? 'none' : 'flex' }}
+                  style={{ display: aiMetrics && !partialWarning ? 'none' : 'flex' }}
                 >
                   {isGenerating ? (
                     <>
@@ -1172,7 +1247,9 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
                   ) : (
                     <>
                       <Sparkles size={18} />
-                      {' '}{t("Generate Architecture")}{' '}</>
+                      {' '}{partialWarning
+                        ? localize(language, { en: 'Retry missing output', ja: '不足分を再生成' })
+                        : t("Generate Architecture")}{' '}</>
                   )}
                 </button>
                 </>
@@ -1180,7 +1257,7 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
                 {activeStep === 'review' && (
                   <button
                       type="button"
-                      className="btn btn-primary"
+                      className="azd-button azd-button--primary"
                       onClick={closeModal}
                       disabled={isBusy}
                   >
@@ -1189,9 +1266,7 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
                 )}
               </div>
             </div>
-          </div>
-        </div>,
-        document.body
+        </ModalScaffold>
       )}
     </>
   );

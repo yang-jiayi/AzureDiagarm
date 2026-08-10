@@ -2,6 +2,7 @@ import { expect, test, type Locator, type Page, type Route } from '@playwright/t
 import AxeBuilder from '@axe-core/playwright';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
+import type { CloudDiagramDocument } from '../../src/services/cloudDiagramService';
 
 const now = '2026-08-02T00:00:00.000Z';
 const wait = (milliseconds: number) => new Promise(resolve => setTimeout(resolve, milliseconds));
@@ -459,6 +460,29 @@ test('feedback launcher is styled before the lazy modal chunk is opened', async 
   await expect(launcher).toHaveCSS('height', '44px');
 });
 
+test('shared feedback dialog follows the selected app theme and restores focus', async ({ page }) => {
+  await openInteractionDiagram(page);
+  const launcher = page.getByRole('button', { name: 'Feedback' });
+
+  await launcher.click();
+  let dialog = page.getByRole('dialog', { name: 'Share Feedback' });
+  await expect(dialog).toBeFocused();
+  await expect(dialog).toHaveCSS('background-color', 'rgb(255, 255, 255)');
+  await expectReadableContrast(dialog.getByRole('heading', { name: 'Share Feedback' }));
+  await expectNoWcagViolations(page, '.feedback-modal');
+  await page.keyboard.press('Escape');
+  await expect(dialog).toBeHidden();
+  await expect(launcher).toBeFocused();
+
+  await page.getByRole('tab', { name: 'Home' }).click();
+  await page.getByRole('button', { name: 'Switch to Dark Mode' }).click();
+  await launcher.click();
+  dialog = page.getByRole('dialog', { name: 'Share Feedback' });
+  await expect(dialog).toHaveCSS('background-color', 'rgb(39, 51, 61)');
+  await expectReadableContrast(dialog.getByRole('heading', { name: 'Share Feedback' }));
+  await expectNoWcagViolations(page, '.feedback-modal');
+});
+
 test('About dialog exposes attribution and repository details accessibly', async ({ page }) => {
   await initializePage(page);
   await page.route('**/api/**', async (route) => {
@@ -496,7 +520,7 @@ test('About dialog exposes attribution and repository details accessibly', async
 
   await page.keyboard.press('Escape');
   await expect(dialog).toBeHidden();
-  await page.getByRole('button', { name: 'More' }).click();
+  await page.getByRole('button', { name: 'More', exact: true }).click();
   await page.getByRole('button', { name: '日本語' }).click();
   await expect(page.getByText('コミュニティ版', { exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: /テンプレートを見る/ })).toBeVisible();
@@ -1411,6 +1435,576 @@ test('mobile command bar opens one keyboard-safe ribbon bottom sheet', async ({ 
   await expect(mobileFocus).toBeFocused();
 });
 
+test('mobile canvas-first mode collapses chrome after creation begins', async ({ page }) => {
+  await initializePage(page);
+  await page.route('**/api/**', async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (path === '/api/access/me') {
+      await fulfillJson(route, {
+        enabled: false,
+        authenticated: true,
+        email: 'owner@example.com',
+        isAdmin: false,
+        allowed: true,
+      });
+      return;
+    }
+    await fulfillJson(route, { error: 'Not found' }, 404);
+  });
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/');
+  await expect(page.locator('.workflow-stepper')).not.toHaveClass(/workflow-stepper--collapsed/);
+
+  const canvas = page.getByRole('region', { name: 'Architecture canvas' });
+  await canvas.focus();
+  await page.keyboard.press('Control+K');
+  const palette = page.getByTestId('command-palette');
+  await palette.getByRole('combobox', { name: 'Search commands and services' })
+    .fill('App Services');
+  await palette.getByRole('option', { name: /App Services/ }).click();
+
+  const app = page.locator('.app');
+  const stepper = page.locator('.workflow-stepper');
+  await expect(app).toHaveClass(/mobile-canvas-first/);
+  await expect(stepper).toHaveClass(/workflow-stepper--collapsed/);
+  await expect(page.locator('.icon-palette')).toHaveClass(/collapsed/);
+  const collapsedHeight = await stepper.evaluate(element => element.getBoundingClientRect().height);
+  expect(collapsedHeight).toBeLessThan(48);
+
+  const summary = stepper.locator('.workflow-stepper-summary');
+  await expect(summary).toHaveAttribute('aria-expanded', 'false');
+  await summary.click();
+  await expect(stepper).not.toHaveClass(/workflow-stepper--collapsed/);
+  await expect(stepper.getByRole('button', { name: 'Collapse workflow' })).toBeVisible();
+  await expectNoWcagViolations(page, '.workflow-stepper');
+
+  await stepper.getByRole('button', { name: 'Collapse workflow' }).click();
+  await expect(stepper).toHaveClass(/workflow-stepper--collapsed/);
+});
+
+test('diagram quality doctor finds and safely repairs visual issues', async ({ page }) => {
+  const document = interactionCloudDocument();
+  document.payload.nodes = [
+    {
+      id: 'node-a',
+      type: 'azureNode',
+      position: { x: 180, y: 220 },
+      style: {
+        width: 160,
+        height: 128,
+        color: '#777777',
+        backgroundColor: '#888888',
+      },
+      data: {
+        label: 'An exceptionally long Azure service label that needs more room',
+        serviceName: 'App Service',
+      },
+    },
+    {
+      id: 'node-b',
+      type: 'azureNode',
+      position: { x: 220, y: 250 },
+      style: { width: 160, height: 128 },
+      data: { label: 'Azure SQL Database', serviceName: 'Azure SQL Database' },
+    },
+  ];
+  document.payload.edges = [];
+  await openInteractionDiagram(page, undefined, false, document);
+
+  await page.getByRole('button', { name: 'More', exact: true }).click();
+  await page.getByRole('button', { name: 'Diagram Quality Doctor' }).click();
+
+  const doctor = page.getByRole('dialog', { name: 'Diagram Quality Doctor' });
+  await expect(doctor).toBeVisible();
+  await expect(doctor).toBeFocused();
+  await expect(page.locator('#root')).toHaveAttribute('inert', '');
+  await expect(page.locator('#root')).toHaveAttribute('aria-hidden', 'true');
+  await page.keyboard.press('Shift+Tab');
+  await expect(doctor.locator(':focus')).toHaveCount(1);
+  await expect(doctor.getByText('Overlapping diagram elements')).toBeVisible();
+  await expect(doctor.getByText('Crowded service label')).toBeVisible();
+  await expect(doctor.getByText('Low node text contrast')).toBeVisible();
+  await expect(doctor.getByText('Unconnected service').first()).toBeVisible();
+  await expect(doctor.getByRole('button', { name: /Apply selected fixes/ })).toBeEnabled();
+  await expectNoWcagViolations(page, '.quality-doctor-dialog');
+
+  await doctor.getByRole('button', { name: /Apply selected fixes/ }).click();
+  await expect(doctor).toBeHidden();
+  await expect(page.locator('#root')).not.toHaveAttribute('inert', '');
+  await expect(page.locator('#root')).not.toHaveAttribute('aria-hidden', 'true');
+
+  const firstNode = page.locator('[data-testid="rf__node-node-a"]');
+  const secondNode = page.locator('[data-testid="rf__node-node-b"]');
+  await expectNotToOverlap(firstNode, secondNode);
+  await expect(firstNode.locator('.node-label')).toHaveCSS('max-width', '260px');
+  await expect(firstNode).not.toHaveCSS('color', 'rgb(119, 119, 119)');
+  await expect(firstNode).not.toHaveCSS('background-color', 'rgb(136, 136, 136)');
+});
+
+test('diagram quality doctor stays usable on a mobile canvas', async ({ page }) => {
+  const document = interactionCloudDocument();
+  document.payload.nodes[1].position = { x: 190, y: 235 };
+  await openInteractionDiagram(page, undefined, false, document);
+  await page.setViewportSize({ width: 390, height: 844 });
+
+  const canvas = page.getByRole('region', { name: 'Architecture canvas' });
+  await canvas.focus();
+  await page.keyboard.press('Control+K');
+  const palette = page.getByTestId('command-palette');
+  await palette.getByRole('combobox', { name: 'Search commands and services' })
+    .fill('quality doctor');
+  await palette.getByRole('option', { name: /^Run Diagram Quality Doctor/ }).click();
+
+  const doctor = page.getByRole('dialog', { name: 'Diagram Quality Doctor' });
+  await expect(doctor).toBeVisible();
+  await expect(doctor.getByRole('button', { name: /Apply selected fixes/ })).toBeVisible();
+  const bounds = await doctor.boundingBox();
+  expect(bounds?.width).toBe(390);
+  expect(bounds?.height).toBe(844);
+  await expectNoWcagViolations(page, '.quality-doctor-dialog');
+  await page.keyboard.press('Escape');
+  await expect(doctor).toBeHidden();
+  await expect(canvas).toBeFocused();
+});
+
+test('cloud review supports anchored comments resolution requests and reports', async ({ page }, testInfo) => {
+  let current: CloudDiagramDocument = {
+    ...interactionCloudDocument(),
+    access: 'owner',
+    role: 'owner',
+    etag: '"A-1"',
+    review: { status: 'draft', updatedAt: now },
+  };
+  const updateCurrent = (changes: Partial<CloudDiagramDocument>) => {
+    const revision = current.revision + 1;
+    current = {
+      ...current,
+      ...changes,
+      revision,
+      updatedAt: new Date(Date.parse(now) + revision * 1_000).toISOString(),
+      etag: `"A-${revision}"`,
+    };
+  };
+
+  await initializePage(page, { documentId: 'A', access: 'owner', role: 'owner' });
+  await page.route('**/api/**', async (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    const method = request.method();
+    if (path === '/api/access/me') {
+      await fulfillJson(route, {
+        enabled: true,
+        authenticated: true,
+        email: 'owner@example.com',
+        isAdmin: false,
+        allowed: true,
+      });
+      return;
+    }
+    if (path === '/api/diagrams' && method === 'GET') {
+      await fulfillJson(route, {
+        documents: [{
+          ...summary('A', current.diagramName),
+          revision: current.revision,
+          commentCount: current.comments.length,
+          openCommentCount: current.comments.filter(comment => !comment.resolved).length,
+          reviewStatus: current.review?.status,
+          etag: current.etag,
+        }],
+      });
+      return;
+    }
+    if (path === '/api/diagrams/A' && method === 'GET') {
+      await fulfillJson(route, { document: current }, 200, { etag: current.etag });
+      return;
+    }
+    if (path === '/api/diagrams/A' && method === 'PUT') {
+      const body = request.postDataJSON() as {
+        diagramName: string;
+        payload: CloudDiagramDocument['payload'];
+      };
+      updateCurrent({ diagramName: body.diagramName, payload: body.payload });
+      await fulfillJson(route, { document: current }, 200, { etag: current.etag });
+      return;
+    }
+    if (path === '/api/diagrams/A/versions' && method === 'GET') {
+      await fulfillJson(route, { versions: [] });
+      return;
+    }
+    if (path === '/api/diagrams/A/shares' && method === 'GET') {
+      await fulfillJson(route, { shares: [] });
+      return;
+    }
+    if (path === '/api/diagrams/A/comments' && method === 'POST') {
+      const body = request.postDataJSON() as {
+        message: string;
+        anchor?: { type: 'canvas' | 'node' | 'edge'; targetId?: string; label?: string };
+      };
+      updateCurrent({
+        comments: [
+          ...current.comments,
+          {
+            commentId: 'comment-1',
+            message: body.message,
+            authorEmail: 'owner@example.com',
+            authorId: 'owner',
+            createdAt: now,
+            anchor: body.anchor,
+            resolved: false,
+          },
+        ],
+      });
+      await fulfillJson(route, { document: current }, 201, { etag: current.etag });
+      return;
+    }
+    if (path === '/api/diagrams/A/comments/comment-1' && method === 'PATCH') {
+      const body = request.postDataJSON() as { resolved: boolean };
+      updateCurrent({
+        comments: current.comments.map(comment => (
+          comment.commentId === 'comment-1'
+            ? {
+                ...comment,
+                resolved: body.resolved,
+                resolvedAt: body.resolved ? now : undefined,
+                resolvedByEmail: body.resolved ? 'owner@example.com' : undefined,
+              }
+            : comment
+        )),
+      });
+      await fulfillJson(route, { document: current }, 200, { etag: current.etag });
+      return;
+    }
+    if (path === '/api/diagrams/A/review' && method === 'PATCH') {
+      updateCurrent({
+        review: {
+          status: 'in_review',
+          requestedAt: now,
+          requestedByEmail: 'owner@example.com',
+          updatedAt: now,
+        },
+      });
+      await fulfillJson(route, { document: current }, 200, { etag: current.etag });
+      return;
+    }
+    await fulfillJson(route, { error: `Unhandled test endpoint: ${method} ${path}` }, 404);
+  });
+
+  await page.goto('/');
+  await expect(page.locator('[data-testid="rf__node-node-a"]')).toBeVisible();
+  await getCloudWorkspaceButton(page).click();
+
+  let workspace = page.getByRole('dialog', { name: 'Cloud workspace' });
+  const commentsCard = workspace.locator('.cloud-comments-card');
+  await commentsCard.getByRole('combobox', { name: 'Attach to' }).selectOption({ label: 'App Service' });
+  await commentsCard.getByPlaceholder('Add a review comment...').fill('Check the public endpoint.');
+  await commentsCard.getByRole('button', { name: 'Comment' }).click();
+  await expect(commentsCard.getByText('Check the public endpoint.')).toBeVisible();
+  await expectNoWcagViolations(page, '.cloud-workspace-modal');
+
+  await commentsCard.getByRole('button', { name: 'App Service' }).click();
+  await expect(workspace).toBeHidden();
+  await expect(page.locator('[data-testid="rf__node-node-a"]')).toHaveClass(/selected/);
+
+  await getCloudWorkspaceButton(page).click();
+  workspace = page.getByRole('dialog', { name: 'Cloud workspace' });
+  const reopenedComments = workspace.locator('.cloud-comments-card');
+  await reopenedComments.getByRole('button', { name: 'Resolve' }).click();
+  await expect(reopenedComments.getByText('Check the public endpoint.')).toBeHidden();
+  await reopenedComments.getByRole('button', { name: 'Show resolved comments' }).click();
+  await expect(reopenedComments.getByText('Resolved', { exact: true })).toBeVisible();
+
+  const reviewCard = workspace.locator('.cloud-review-card');
+  await reviewCard.getByRole('button', { name: 'Request review' }).click();
+  await expect(reviewCard.getByText('In review', { exact: true })).toBeVisible();
+
+  const downloadPromise = page.waitForEvent('download');
+  await reviewCard.getByRole('button', { name: 'Download report' }).click();
+  const download = await downloadPromise;
+  const reportPath = testInfo.outputPath('cloud-review.md');
+  await download.saveAs(reportPath);
+  const report = await readFile(reportPath, 'utf8');
+  expect(report).toContain('Review status:** In review');
+  expect(report).toContain('Resolved comments:** 1');
+  expect(report).toContain('Check the public endpoint.');
+});
+
+test('shared reviewers can approve the requested cloud revision', async ({ page }) => {
+  const shareToken = 'a'.repeat(43);
+  let current: CloudDiagramDocument = {
+    ...interactionCloudDocument(),
+    access: 'shared',
+    role: 'viewer',
+    etag: '"A-3"',
+    review: {
+      status: 'in_review',
+      requestedAt: now,
+      requestedByEmail: 'owner@example.com',
+      updatedAt: now,
+    },
+  };
+  await initializePage(page, {
+    documentId: 'A',
+    access: 'shared',
+    role: 'viewer',
+    shareToken,
+  });
+  await page.route('**/api/**', async (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    const method = request.method();
+    if (path === '/api/access/me') {
+      await fulfillJson(route, {
+        enabled: true,
+        authenticated: true,
+        email: 'reviewer@example.com',
+        isAdmin: false,
+        allowed: true,
+      });
+      return;
+    }
+    if (path === '/api/diagrams' && method === 'GET') {
+      await fulfillJson(route, { documents: [] });
+      return;
+    }
+    if (path === `/api/diagrams/shared/${shareToken}` && method === 'GET') {
+      await fulfillJson(route, { document: current }, 200, { etag: current.etag });
+      return;
+    }
+    if (path === `/api/diagrams/shared/${shareToken}/versions` && method === 'GET') {
+      await fulfillJson(route, { versions: [] });
+      return;
+    }
+    if (path === `/api/diagrams/shared/${shareToken}/review` && method === 'PATCH') {
+      const body = request.postDataJSON() as { note?: string };
+      current = {
+        ...current,
+        revision: current.revision + 1,
+        etag: '"A-4"',
+        review: {
+          ...current.review!,
+          status: 'approved',
+          decidedAt: now,
+          decidedByEmail: 'reviewer@example.com',
+          decisionNote: body.note,
+          updatedAt: now,
+        },
+      };
+      await fulfillJson(route, { document: current }, 200, { etag: current.etag });
+      return;
+    }
+    await fulfillJson(route, { error: `Unhandled test endpoint: ${method} ${path}` }, 404);
+  });
+
+  await page.goto('/');
+  await expect(page.locator('[data-testid="rf__node-node-a"]')).toBeVisible();
+  await getCloudWorkspaceButton(page).click();
+  const workspace = page.getByRole('dialog', { name: 'Cloud workspace' });
+  const reviewCard = workspace.locator('.cloud-review-card');
+  await reviewCard.getByLabel('Decision note (optional)').fill('Security review completed.');
+  await reviewCard.getByRole('button', { name: 'Approve revision' }).click();
+  await expect(reviewCard.getByText('Approved', { exact: true })).toBeVisible();
+  await expect(reviewCard.getByText('Security review completed.')).toBeVisible();
+  await expectNoWcagViolations(page, '.cloud-review-card');
+});
+
+test('multi-selection bulk edit applies grouping styling tags region and pricing', async ({ page }) => {
+  let latestSavedPayload: Record<string, unknown> | null = null;
+  const document = interactionCloudDocument();
+  document.payload.nodes.push({
+    id: 'group-b',
+    type: 'groupNode',
+    position: { x: 820, y: 560 },
+    style: { width: 180, height: 100 },
+    data: { label: 'Data layer', color: '#10b981' },
+  });
+  await openInteractionDiagram(page, payload => {
+    latestSavedPayload = payload;
+  }, false, document);
+
+  const firstNode = page.locator('[data-testid="rf__node-node-a"]');
+  const secondNode = page.locator('[data-testid="rf__node-node-b"]');
+  const groupNode = page.locator('[data-testid="rf__node-group-a"]');
+  const secondGroupNode = page.locator('[data-testid="rf__node-group-b"]');
+  await firstNode.click();
+  await secondNode.click({ modifiers: ['Control'] });
+
+  const toolbar = page.locator('.alignment-toolbar');
+  await expect(toolbar).toBeVisible();
+  await expect(toolbar).toContainText('2 selected');
+  await toolbar.getByRole('button', { name: 'Bulk edit' }).click();
+
+  const editor = page.getByRole('dialog', { name: 'Bulk edit selected items' });
+  await expect(editor).toBeVisible();
+  await editor.getByLabel('Group', { exact: true }).selectOption({ label: 'Application layer' });
+  await editor.getByLabel('Azure region').selectOption('eastus2');
+  await editor.getByLabel('Service style').selectOption('presentation');
+  await editor.getByLabel('Tags (comma-separated)').fill('production, critical');
+  await editor.getByLabel('Quantity').fill('2');
+  await editor.getByLabel('Custom monthly unit price (USD)').fill('125');
+  await expectNoWcagViolations(page, '.bulk-edit-popover');
+  await editor.getByRole('button', { name: 'Apply to selection' }).click();
+  await expect(editor).toBeHidden();
+
+  await expect(firstNode.locator('.azure-node')).toHaveClass(/style-presentation/);
+  await expect(secondNode.locator('.azure-node')).toHaveClass(/style-presentation/);
+  await expect(firstNode.locator('.node-tags')).toContainText('production');
+  await expect(firstNode.locator('.node-tags')).toContainText('critical');
+
+  await expect.poll(() => {
+    const payload = latestSavedPayload as {
+      nodes?: Array<{
+        id?: string;
+        parentNode?: string;
+        data?: {
+          groupId?: string;
+          stylePreset?: string;
+          tags?: string[];
+          customColor?: { name?: string };
+          pricing?: {
+            estimatedCost?: number;
+            quantity?: number;
+            region?: string;
+            isCustom?: boolean;
+          };
+        };
+      }>;
+    } | null;
+    const savedFirst = payload?.nodes?.find(node => node.id === 'node-a');
+    const savedSecond = payload?.nodes?.find(node => node.id === 'node-b');
+    return {
+      firstParent: savedFirst?.parentNode,
+      secondParent: savedSecond?.parentNode,
+      firstGroupId: savedFirst?.data?.groupId,
+      style: savedFirst?.data?.stylePreset,
+      tags: savedFirst?.data?.tags,
+      price: savedFirst?.data?.pricing?.estimatedCost,
+      quantity: savedFirst?.data?.pricing?.quantity,
+      region: savedFirst?.data?.pricing?.region,
+      custom: savedFirst?.data?.pricing?.isCustom,
+    };
+  }).toEqual({
+    firstParent: 'group-a',
+    secondParent: 'group-a',
+    firstGroupId: 'group-a',
+    style: 'presentation',
+    tags: ['production', 'critical'],
+    price: 125,
+    quantity: 2,
+    region: 'eastus2',
+    custom: true,
+  });
+
+  await toolbar.getByRole('button', { name: 'Align left' }).click();
+  await expect.poll(async () => {
+    const [firstBox, secondBox] = await Promise.all([
+      firstNode.boundingBox(),
+      secondNode.boundingBox(),
+    ]);
+    return firstBox && secondBox ? Math.abs(firstBox.x - secondBox.x) : 999;
+  }).toBeLessThan(1);
+
+  await groupNode.click();
+  await secondGroupNode.click({ modifiers: ['Control'] });
+  await expect(toolbar).toContainText('2 selected');
+  await toolbar.getByRole('button', { name: 'Bulk edit' }).click();
+  const groupEditor = page.getByRole('dialog', { name: 'Bulk edit selected items' });
+  await groupEditor.getByLabel('Group color', { exact: true }).selectOption('Blue');
+  await groupEditor.getByRole('button', { name: 'Apply to selection' }).click();
+  await expect(groupEditor).toBeHidden();
+  await expect.poll(() => {
+    const payload = latestSavedPayload as {
+      nodes?: Array<{ id?: string; data?: { customColor?: { name?: string } } }>;
+    } | null;
+    return payload?.nodes
+      ?.filter(node => node.id === 'group-a' || node.id === 'group-b')
+      .map(node => node.data?.customColor?.name);
+  }).toEqual(['Blue', 'Blue']);
+});
+
+test('bulk editor remains usable on a mobile canvas', async ({ page }) => {
+  await openInteractionDiagram(page);
+  await page.setViewportSize({ width: 390, height: 844 });
+  const firstNode = page.locator('[data-testid="rf__node-node-a"]');
+  const secondNode = page.locator('[data-testid="rf__node-node-b"]');
+  await firstNode.click();
+  await secondNode.click({ modifiers: ['Control'] });
+
+  const toolbar = page.locator('.alignment-toolbar');
+  await expect(toolbar).toBeVisible();
+  await toolbar.getByRole('button', { name: 'Bulk edit' }).click();
+  const editor = page.getByRole('dialog', { name: 'Bulk edit selected items' });
+  await expect(editor).toBeVisible();
+  await expect(editor.getByLabel('Tags (comma-separated)')).toBeVisible();
+  await expect(editor.getByRole('button', { name: 'Apply to selection' })).toBeVisible();
+  const bounds = await editor.boundingBox();
+  expect(bounds?.width).toBeLessThanOrEqual(370);
+  await expectNoWcagViolations(page, '.bulk-edit-popover');
+});
+
+test('cloud workspace owns opaque readable modal surfaces', async ({ page }) => {
+  await initializePage(page);
+  await page.route('**/api/**', async (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    const method = request.method();
+
+    if (path === '/api/access/me') {
+      await fulfillJson(route, {
+        enabled: false,
+        authenticated: true,
+        email: 'owner@example.com',
+        isAdmin: false,
+        allowed: true,
+      });
+      return;
+    }
+    if (path === '/api/diagrams' && method === 'GET') {
+      await fulfillJson(route, { documents: [summary('A', 'Diagram A')] });
+      return;
+    }
+    if (path === '/api/diagrams/A' && method === 'GET') {
+      await fulfillJson(route, cloudDocument('A', 'Diagram A'), 200, { etag: '"A-1"' });
+      return;
+    }
+    if (path === '/api/diagrams/A/versions' && method === 'GET') {
+      await fulfillJson(route, { versions: [] });
+      return;
+    }
+    if (path === '/api/diagrams/A/shares' && method === 'GET') {
+      await fulfillJson(route, { shares: [] });
+      return;
+    }
+    await fulfillJson(route, { error: `Unhandled test endpoint: ${method} ${path}` }, 404);
+  });
+
+  await page.goto('/');
+  await getCloudWorkspaceButton(page).click();
+
+  const modal = page.getByRole('dialog', { name: 'Cloud workspace' });
+  const surfaces = modal.locator(
+    ':scope, :scope > .modal-header, .cloud-document-details, :scope > .modal-actions',
+  );
+  await expect(modal.getByRole('heading', { name: 'Diagram A' })).toBeVisible();
+
+  for (let index = 0; index < await surfaces.count(); index += 1) {
+    const alpha = await surfaces.nth(index).evaluate((element) => {
+      const color = getComputedStyle(element).backgroundColor;
+      const channels = color
+        .replace(/^rgba?\(/, '')
+        .replace(/\)$/, '')
+        .split(/[\s,/]+/)
+        .filter(Boolean);
+      return channels.length > 3 ? Number(channels[3]) : 1;
+    });
+    expect(alpha).toBe(1);
+  }
+
+  await expectReadableContrast(modal.getByRole('heading', { name: 'Cloud workspace' }));
+  await expectReadableContrast(modal.getByRole('button', { name: 'Open', exact: true }));
+  await expectReadableContrast(modal.getByRole('button', { name: 'Close', exact: true }).last());
+});
+
 test('command palette adds services and focus mode persists until Escape', async ({ page }) => {
   await initializePage(page);
   await page.route('**/api/**', async (route) => {
@@ -1474,6 +2068,125 @@ test('command palette adds services and focus mode persists until Escape', async
   await expect.poll(() => page.evaluate(() => (
     localStorage.getItem('azure-diagram-builder.focusMode.v1')
   ))).toBe('0');
+});
+
+test('recent work restores an interrupted local diagram after reload', async ({ page }) => {
+  await initializePage(page);
+  await page.route('**/api/**', async (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    if (path === '/api/access/me') {
+      await fulfillJson(route, {
+        enabled: false,
+        authenticated: true,
+        email: 'owner@example.com',
+        isAdmin: false,
+        allowed: true,
+      });
+      return;
+    }
+    if (path === '/api/diagrams' && request.method() === 'GET') {
+      await fulfillJson(route, { error: 'Temporary cloud outage' }, 503);
+      return;
+    }
+    if (path === '/api/diagrams' && request.method() === 'POST') {
+      await fulfillJson(route, { error: 'Temporary cloud outage' }, 503);
+      return;
+    }
+    await fulfillJson(route, { error: 'Not found' }, 404);
+  });
+
+  await page.goto('/');
+  const canvas = page.getByRole('region', { name: 'Architecture canvas' });
+  await canvas.focus();
+  await page.keyboard.press('Control+K');
+  const palette = page.getByTestId('command-palette');
+  await palette.getByRole('combobox', { name: 'Search commands and services' })
+    .fill('App Services');
+  await palette.getByRole('option', { name: /App Services/ }).click();
+  await expect(page.locator('.react-flow__node-azureNode')).toHaveCount(1);
+  await page.waitForTimeout(1_200);
+
+  await page.getByRole('button', { name: 'More' }).click();
+  await page.getByRole('button', { name: 'Resume recent work' }).click();
+  const currentRecentWork = page.getByRole('dialog', { name: 'Recent work' });
+  await expect(currentRecentWork.getByRole('button', { name: 'Return' })).toBeVisible();
+  await currentRecentWork.getByRole('button', { name: 'Close recent work' }).click();
+
+  await page.evaluate(() => {
+    sessionStorage.removeItem('azurediagarm.recent-work-session.v1');
+  });
+  await page.reload();
+  await expect(page.locator('.react-flow__node-azureNode')).toHaveCount(0);
+
+  await page.getByRole('button', { name: 'More' }).click();
+  await page.getByRole('button', { name: 'Resume recent work' }).click();
+  const recentWork = page.getByRole('dialog', { name: 'Recent work' });
+  await expect(recentWork).toBeVisible();
+  await expect(recentWork.getByText('Recovered sessions')).toBeVisible();
+  await expectNoWcagViolations(page, '.recent-work-modal');
+  await recentWork.getByRole('button', { name: 'Resume' }).click();
+
+  await expect(recentWork).toBeHidden();
+  await expect(page.locator('.react-flow__node-azureNode')).toHaveCount(1);
+});
+
+test('version history compares and selectively restores diagram elements', async ({ page }) => {
+  await initializePage(page);
+  await page.route('**/api/**', async (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    if (path === '/api/access/me') {
+      await fulfillJson(route, {
+        enabled: false,
+        authenticated: true,
+        email: 'owner@example.com',
+        isAdmin: false,
+        allowed: true,
+      });
+      return;
+    }
+    if (path === '/api/diagrams' && request.method() === 'POST') {
+      await fulfillJson(route, { error: 'Temporary cloud outage' }, 503);
+      return;
+    }
+    await fulfillJson(route, { error: 'Not found' }, 404);
+  });
+
+  await page.goto('/');
+  const addService = async (name: string) => {
+    const canvas = page.getByRole('region', { name: 'Architecture canvas' });
+    await canvas.focus();
+    await page.keyboard.press('Control+K');
+    const palette = page.getByTestId('command-palette');
+    await palette.getByRole('combobox', { name: 'Search commands and services' }).fill(name);
+    await palette.getByRole('option', { name: new RegExp(name) }).first().click();
+  };
+
+  await addService('App Services');
+  await page.getByRole('button', { name: 'Snapshot', exact: true }).click();
+  const snapshotModal = page.getByRole('dialog', { name: 'Save Snapshot' });
+  await snapshotModal.locator('#snapshot-notes').fill('Baseline snapshot');
+  await snapshotModal.getByRole('button', { name: 'Save Snapshot' }).click();
+  await expect(snapshotModal).toBeHidden();
+
+  await addService('Storage Accounts');
+  await expect(page.locator('.react-flow__node-azureNode')).toHaveCount(2);
+  await page.getByTitle('View version history').click();
+
+  const history = page.getByRole('dialog', { name: 'Version History' });
+  await history.locator('.version-item').filter({ hasText: 'Baseline snapshot' }).click();
+  const comparison = history.getByRole('region', { name: 'Visual version comparison' });
+  await expect(comparison).toBeVisible();
+  await expect(comparison.getByText('−1')).toBeVisible();
+  await expectNoWcagViolations(page, '.version-history-modal');
+
+  await comparison.getByRole('button', { name: 'Select all' }).click();
+  page.on('dialog', dialog => dialog.accept());
+  await comparison.getByRole('button', { name: /Apply selected/ }).click();
+
+  await expect(history).toBeHidden();
+  await expect(page.locator('.react-flow__node-azureNode')).toHaveCount(1);
 });
 
 test('canvas uses neutral defaults and brand emphasis only for selection and flow', async ({ page }) => {

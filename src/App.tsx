@@ -23,7 +23,7 @@ import { type ExportBackground } from './utils/captureCanvas';
 import { animateEdgeFlow } from './utils/animateEdges';
 import { sequenceWorkflowSvg } from './utils/sequenceWorkflow';
 import { buildWorkflowMarkdown } from './services/workflowNarrativeExporter';
-import { Download, Save, Upload, DollarSign, Shield, ShieldCheck, FileText, FileCode, ChevronDown, ChevronRight, Clock, Camera, Loader, GitCompare, RefreshCw, PanelLeftClose, Minimize2, Maximize2, Presentation, MessagesSquare, HelpCircle, Info, Frame, PanelTopClose, PanelTopOpen, DownloadCloud, Sun, Moon, Play, Pause, Eye, EyeOff, Cloud, Copy, Trash2, Ungroup, Boxes, CheckSquare, Sparkles, Undo2, Redo2, LayoutTemplate } from 'lucide-react';
+import { Download, Save, Upload, DollarSign, Shield, ShieldCheck, FileText, FileCode, ChevronDown, ChevronRight, Clock, Camera, Loader, GitCompare, RefreshCw, PanelLeftClose, Minimize2, Maximize2, Presentation, MessagesSquare, HelpCircle, Info, Frame, PanelTopClose, PanelTopOpen, DownloadCloud, Sun, Moon, Play, Pause, Eye, EyeOff, Cloud, Copy, Trash2, Ungroup, Boxes, CheckSquare, Sparkles, Undo2, Redo2, LayoutTemplate, ScanSearch } from 'lucide-react';
 import AboutDialog from './components/AboutDialog';
 import IconPalette from './components/IconPalette';
 import AzureNode from './components/AzureNode';
@@ -48,13 +48,16 @@ import type { ReferenceArchitecture } from './services/referenceArchitectureAI';
 import type { BlueprintArchitecture } from './services/blueprintArchitectureAI';
 import ReferenceImageViewer from './components/ReferenceImageViewer';
 import EditableEdge from './components/EditableEdge';
-import AlignmentToolbar from './components/AlignmentToolbar';
+import AlignmentToolbar, {
+  type BulkEditRequest,
+  type BulkEditResult,
+} from './components/AlignmentToolbar';
 import WorkflowPanel from './components/WorkflowPanel';
 import RegionSelector from './components/RegionSelector';
 import ModelSettingsPopover from './components/ModelSettingsPopover';
 import { loadIconsFromCategory, type AzureIcon } from './utils/iconLoader';
 import { getServiceIconMapping, isCapacityConsumed } from './data/serviceIconMapping';
-import { initializeNodePricing, updateNodePricing, calculateCostBreakdown, exportCostBreakdownCSV, exportCostBreakdownJSON, getCostSummaryMarkdown, refreshAllNodePricing, type PricingMode } from './services/costEstimationService';
+import { initializeNodePricing, updateNodePricing, setCustomPricing, calculateCostBreakdown, exportCostBreakdownCSV, exportCostBreakdownJSON, getCostSummaryMarkdown, refreshAllNodePricing, type PricingMode } from './services/costEstimationService';
 import { prefetchCommonServices } from './services/azurePricingService';
 import { preloadCommonServices, getActiveRegion, AzureRegion, AVAILABLE_REGIONS, RegionInfo } from './services/regionalPricingService';
 import { formatMonthlyCost, getPricingFreshness } from './utils/pricingHelpers';
@@ -64,7 +67,7 @@ import { validateArchitecture, ArchitectureValidation } from './services/archite
 import { bandLabel } from './services/wafMaturity';
 import type { DeploymentGuide } from './services/deploymentGuideGenerator';
 import { generateArchitectureWithAI } from './services/azureOpenAI';
-import { MODEL_CONFIG, DEPLOYMENT_NAMES, type ModelType } from './stores/modelSettingsStore';
+import { MODEL_CONFIG, getDeploymentNames, type ModelType } from './stores/modelSettingsStore';
 import { usePricingDisplayPrefs } from './stores/pricingDisplayStore';
 import {
   useNodePricingEditor,
@@ -85,10 +88,19 @@ import {
   CloudDiagramOperationCancelledError,
   useCloudDiagramSync,
 } from './hooks/useCloudDiagramSync';
-import type {
+import {
+  type CloudCommentAnchor,
+  getCloudDiagram,
+  type CloudDiagramSummary,
   CloudDiagramDocument,
   CloudDiagramVersion,
 } from './services/cloudDiagramService';
+import {
+  getRecentWorkSessionId,
+  saveRecentWork,
+  type RecentWorkRecord,
+  type RecentWorkSyncState,
+} from './services/recentWorkService';
 import { useDiagramHistory } from './hooks/useDiagramHistory';
 import type { DeckService } from './services/pptxExporter';
 import { extractArchitectureFromArm, summarizeCoverage } from './services/armExtractor';
@@ -161,10 +173,23 @@ import {
 import { analyzeThreatModel } from './utils/threatModel';
 import { findAvailableServicePosition } from './utils/serviceNodePlacement';
 import { MEDIA_QUERIES } from './styles/breakpoints';
+import { useMediaQuery } from './hooks/useMediaQuery';
 import {
   applyAutomaticEdgeLabelOffsets,
   shouldRecalculateAutomaticEdgeLabels,
 } from './utils/edgeLabelLayout';
+import { applySelectedVersionChanges } from './utils/versionDiff';
+import {
+  alignSelectedNodes,
+  applyBulkNodeEdits,
+  BULK_GROUP_COLORS,
+  type BulkAlignmentType,
+} from './utils/bulkNodeEditing';
+import {
+  analyzeDiagramQuality,
+  applyDiagramQualityFixes,
+  type DiagramQualityFinding,
+} from './utils/diagramQuality';
 import {
   getConnectionPresentation,
   normalizeConnectionType,
@@ -271,6 +296,8 @@ const IaCRoundTripModal = lazyWhenOpen(() => import('./components/IaCRoundTripMo
 const VersionHistoryModal = lazyWhenOpen(() => import('./components/VersionHistoryModal'));
 const SaveSnapshotModal = lazyWhenOpen(() => import('./components/SaveSnapshotModal'));
 const CloudWorkspaceModal = lazyWhenOpen(() => import('./components/CloudWorkspaceModal'));
+const RecentWorkModal = lazyWhenOpen(() => import('./components/RecentWorkModal'));
+const DiagramQualityDialog = lazyWhenOpen(() => import('./components/DiagramQualityDialog'));
 const PricingScenarioModal = lazyWhenOpen(() => import('./components/PricingScenarioModal'));
 const AzureImportModal = lazyWhenOpen(() => import('./components/AzureImportModal'));
 const CompareModelsModal = lazyOnceOpened(() => import('./components/CompareModelsModal'));
@@ -605,6 +632,16 @@ function validateRestoredNodes(restoredNodes: unknown[]): Node[] {
       if (data[field] !== undefined && typeof data[field] !== 'string') {
         throw new Error(`Node ${value.id} has an invalid ${field}`);
       }
+    }
+    if (
+      data.tags !== undefined
+      && (
+        !Array.isArray(data.tags)
+        || data.tags.length > 12
+        || data.tags.some(tag => typeof tag !== 'string' || tag.length > 40)
+      )
+    ) {
+      throw new Error(`Node ${value.id} has invalid tags`);
     }
     if (data.pricing !== undefined && data.pricing !== null) {
       if (!isRecord(data.pricing)) {
@@ -1134,6 +1171,9 @@ function App() {
   const [isVersionHistoryModalOpen, setIsVersionHistoryModalOpen] = useState(false);
   const [isSaveSnapshotModalOpen, setIsSaveSnapshotModalOpen] = useState(false);
   const [isCloudWorkspaceOpen, setIsCloudWorkspaceOpen] = useState(false);
+  const [isRecentWorkOpen, setIsRecentWorkOpen] = useState(false);
+  const [isQualityDoctorOpen, setIsQualityDoctorOpen] = useState(false);
+  const recentWorkSessionId = useMemo(() => getRecentWorkSessionId(), []);
   const [privacyRequest, setPrivacyRequest] = useState<PrivacyRequest | null>(null);
   const [threatOverlayEnabled, setThreatOverlayEnabled] = useState<boolean>(
     () => readBooleanPreference(THREAT_OVERLAY_STORAGE_KEY, false),
@@ -1217,9 +1257,23 @@ function App() {
   const [lastReferenceArchitecture, setLastReferenceArchitecture] = useState<ReferenceArchitecture | null>(null);
   const [lastBlueprintArchitecture, setLastBlueprintArchitecture] = useState<BlueprintArchitecture | null>(null);
   const [panelsCollapsedSignal, setPanelsCollapsedSignal] = useState(0);
+  const isCompactViewport = useMediaQuery(MEDIA_QUERIES.compact);
+  const mobileCanvasFirstActive = isCompactViewport && nodes.length > 0;
+  const [isMobileJourneyExpanded, setIsMobileJourneyExpanded] = useState(false);
+  const wasMobileCanvasFirstRef = useRef(false);
   useEffect(() => {
     if (isChatOpen) setPanelsCollapsedSignal((previous) => previous + 1);
   }, [isChatOpen]);
+
+  useEffect(() => {
+    if (mobileCanvasFirstActive && !wasMobileCanvasFirstRef.current) {
+      setIsMobileJourneyExpanded(false);
+      setIsMobileRibbonOpen(false);
+      setPanelsCollapsedSignal((previous) => previous + 1);
+    }
+    if (!mobileCanvasFirstActive) setIsMobileJourneyExpanded(false);
+    wasMobileCanvasFirstRef.current = mobileCanvasFirstActive;
+  }, [mobileCanvasFirstActive]);
 
   useEffect(() => {
     if (nodes.length === 0) {
@@ -1240,6 +1294,8 @@ function App() {
     setIsChatOpen(false);
     setIsHelpOpen(false);
     setIsCloudWorkspaceOpen(false);
+    setIsRecentWorkOpen(false);
+    setIsQualityDoctorOpen(false);
     setPanelsCollapsedSignal((previous) => previous + 1);
   }, [focusMode]);
 
@@ -1248,6 +1304,8 @@ function App() {
     setIsChatOpen(false);
     setIsHelpOpen(false);
     setIsCloudWorkspaceOpen(false);
+    setIsRecentWorkOpen(false);
+    setIsQualityDoctorOpen(false);
     setPanelsCollapsedSignal((previous) => previous + 1);
     setIsCommandPaletteOpen(true);
   }, []);
@@ -1259,6 +1317,8 @@ function App() {
     setIsChatOpen(false);
     setIsHelpOpen(false);
     setIsCloudWorkspaceOpen(false);
+    setIsRecentWorkOpen(false);
+    setIsQualityDoctorOpen(false);
     setPanelsCollapsedSignal((previous) => previous + 1);
     setPaletteOpenSignal((previous) => previous + 1);
   }, []);
@@ -1269,6 +1329,8 @@ function App() {
     setIsCommandPaletteOpen(false);
     setIsHelpOpen(false);
     setIsCloudWorkspaceOpen(false);
+    setIsRecentWorkOpen(false);
+    setIsQualityDoctorOpen(false);
     setIsChatOpen((current) => !current);
   }, []);
 
@@ -1278,8 +1340,78 @@ function App() {
     setIsCommandPaletteOpen(false);
     setIsChatOpen(false);
     setIsHelpOpen(false);
+    setIsRecentWorkOpen(false);
+    setIsQualityDoctorOpen(false);
     setPanelsCollapsedSignal((previous) => previous + 1);
     setIsCloudWorkspaceOpen(true);
+  }, []);
+
+  const openRecentWork = useCallback(() => {
+    setFocusMode(false);
+    setIsMobileRibbonOpen(false);
+    setIsCommandPaletteOpen(false);
+    setIsChatOpen(false);
+    setIsHelpOpen(false);
+    setIsCloudWorkspaceOpen(false);
+    setIsQualityDoctorOpen(false);
+    setPanelsCollapsedSignal((previous) => previous + 1);
+    setIsRecentWorkOpen(true);
+  }, []);
+
+  const locateReviewAnchor = useCallback((anchor: CloudCommentAnchor) => {
+    const currentNodes = latestNodesRef.current;
+    const currentEdges = latestEdgesRef.current;
+    if (anchor.type === 'canvas' || !anchor.targetId) {
+      setNodes(nodes => nodes.map(node => ({ ...node, selected: false })));
+      setEdges(edges => edges.map(edge => ({ ...edge, selected: false })));
+      window.requestAnimationFrame(() => {
+        void reactFlowInstance?.fitView({ padding: 0.2, duration: 350, maxZoom: 1.2 });
+      });
+      return;
+    }
+
+    const selectedNodeIds = new Set<string>();
+    const selectedEdgeIds = new Set<string>();
+    if (anchor.type === 'node') {
+      selectedNodeIds.add(anchor.targetId);
+    } else {
+      selectedEdgeIds.add(anchor.targetId);
+      const targetEdge = currentEdges.find(edge => edge.id === anchor.targetId);
+      if (targetEdge) {
+        selectedNodeIds.add(targetEdge.source);
+        selectedNodeIds.add(targetEdge.target);
+      }
+    }
+    setNodes(nodes => nodes.map(node => ({
+      ...node,
+      selected: selectedNodeIds.has(node.id),
+    })));
+    setEdges(edges => edges.map(edge => ({
+      ...edge,
+      selected: selectedEdgeIds.has(edge.id),
+    })));
+    const targetNodes = currentNodes.filter(node => selectedNodeIds.has(node.id));
+    window.requestAnimationFrame(() => {
+      void reactFlowInstance?.fitView({
+        nodes: targetNodes,
+        padding: 0.4,
+        duration: 350,
+        maxZoom: 1.35,
+      });
+      reactFlowWrapper.current?.focus();
+    });
+  }, [reactFlowInstance, setEdges, setNodes]);
+
+  const openQualityDoctor = useCallback(() => {
+    setFocusMode(false);
+    setIsMobileRibbonOpen(false);
+    setIsCommandPaletteOpen(false);
+    setIsChatOpen(false);
+    setIsHelpOpen(false);
+    setIsCloudWorkspaceOpen(false);
+    setIsRecentWorkOpen(false);
+    setPanelsCollapsedSignal((previous) => previous + 1);
+    setIsQualityDoctorOpen(true);
   }, []);
 
   const enterFocusMode = useCallback(() => {
@@ -3143,6 +3275,9 @@ function App() {
         author: titleBlockData.author || 'Azure Architect',
         date: titleBlockData.date || new Date().toLocaleDateString(),
         isDarkMode,
+        // Supplying the canvas turns the slide into native, editable shapes
+        // instead of a flat screenshot.
+        diagram: { nodes, edges },
       });
       recordExport('pptx', fileName);
       trackExport('pptx', nodes.filter(n => n.type === 'azureNode').length, exportBackground);
@@ -3152,6 +3287,7 @@ function App() {
     }
   }, [
     createDiagramCaptureOptions,
+    edges,
     exportBackground,
     isDarkMode,
     nodes,
@@ -3295,6 +3431,7 @@ function App() {
           services,
           validation,
           cost,
+          diagram: { nodes, edges },
         });
 
         recordExport('pptx', fileName);
@@ -3307,6 +3444,7 @@ function App() {
     architecturePrompt,
     createDiagramCaptureOptions,
     currentValidationResult,
+    edges,
     exportBackground,
     generatedWithModel,
     isDarkMode,
@@ -3948,6 +4086,84 @@ function App() {
     : localDiagramLineageId;
   activeDiagramLineageIdRef.current = activeDiagramLineageId;
 
+  const recentWorkSyncState: RecentWorkSyncState = (() => {
+    if (!cloudSync.context) return 'local';
+    switch (cloudSync.status) {
+      case 'saving':
+      case 'readonly':
+      case 'offline':
+      case 'unavailable':
+      case 'conflict':
+      case 'error':
+        return cloudSync.status;
+      case 'saved':
+        return 'synced';
+      default:
+        return 'synced';
+    }
+  })();
+
+  const saveCurrentRecovery = useCallback(async (): Promise<RecentWorkRecord | null> => {
+    if (!cloudDraftHasContent) return null;
+    const recoveryPayload = JSON.parse(JSON.stringify({
+      ...cloudDiagramPayload,
+      viewport: reactFlowInstance?.getViewport(),
+    })) as RecentWorkRecord['payload'];
+    const recoveryRecord: RecentWorkRecord = {
+      id: activeDiagramLineageId.slice(0, 320),
+      lineageId: activeDiagramLineageId.slice(0, 320),
+      sessionId: recentWorkSessionId,
+      diagramName: (titleBlockData.architectureName.trim() || 'Untitled Architecture').slice(0, 200),
+      updatedAt: Date.now(),
+      payload: recoveryPayload,
+      syncState: recentWorkSyncState,
+      cloudDocumentId: cloudSync.context?.documentId,
+      cloudRevision: cloudSync.document?.revision,
+    };
+    await saveRecentWork(recoveryRecord);
+    return recoveryRecord;
+  }, [
+    activeDiagramLineageId,
+    cloudDiagramPayload,
+    cloudDraftHasContent,
+    cloudSync.context?.documentId,
+    cloudSync.document?.revision,
+    reactFlowInstance,
+    recentWorkSessionId,
+    recentWorkSyncState,
+    titleBlockData.architectureName,
+  ]);
+
+  useEffect(() => {
+    if (!cloudDraftHasContent) return;
+    const timeout = window.setTimeout(() => {
+      void saveCurrentRecovery().catch((error) => {
+        console.error('Failed to preserve recent work locally:', error);
+      });
+    }, 650);
+    return () => window.clearTimeout(timeout);
+  }, [cloudDraftHasContent, saveCurrentRecovery]);
+
+  useEffect(() => {
+    const preserveWhenHidden = () => {
+      if (document.visibilityState !== 'hidden') return;
+      void saveCurrentRecovery().catch((error) => {
+        console.error('Failed to preserve recent work while leaving the page:', error);
+      });
+    };
+    const preserveOnPageHide = () => {
+      void saveCurrentRecovery().catch((error) => {
+        console.error('Failed to preserve recent work during page hide:', error);
+      });
+    };
+    document.addEventListener('visibilitychange', preserveWhenHidden);
+    window.addEventListener('pagehide', preserveOnPageHide);
+    return () => {
+      document.removeEventListener('visibilitychange', preserveWhenHidden);
+      window.removeEventListener('pagehide', preserveOnPageHide);
+    };
+  }, [saveCurrentRecovery]);
+
   useEffect(() => {
     if (intentionalLineageTransitionRef.current === activeDiagramLineageId) {
       intentionalLineageTransitionRef.current = null;
@@ -4059,6 +4275,11 @@ function App() {
     }));
     if (!confirmed) return false;
     try {
+      await saveCurrentRecovery();
+    } catch (error) {
+      console.error('Failed to create the local recovery copy before starting fresh:', error);
+    }
+    try {
       const savedDocument = preserveAsCopy
         ? await cloudSync.saveAsCopy()
         : await cloudSync.saveNow({ force: true });
@@ -4109,9 +4330,89 @@ function App() {
     cloudSync,
     cloudDraftHasContent,
     language,
+    saveCurrentRecovery,
     setEdges,
     setNodes,
     translate,
+  ]);
+
+  const confirmRecentWorkReplacement = useCallback(async (targetName: string) => {
+    if (!cloudDraftHasContent) return true;
+    try {
+      await saveCurrentRecovery();
+    } catch (error) {
+      console.error('Failed to preserve the current diagram before switching work:', error);
+      const continueWithoutRecovery = window.confirm(localize(language, {
+        en: 'The current diagram could not be saved to local recovery storage. Continue switching work and discard it?',
+        ja: '現在の図面をローカル復旧ストレージへ保存できませんでした。破棄して作業を切り替えますか？',
+      }));
+      if (!continueWithoutRecovery) return false;
+    }
+    return window.confirm(localize(language, {
+      en: `Open "${targetName}"? The current canvas will be replaced, and its latest local recovery copy will remain in Recent work.`,
+      ja: `「${targetName}」を開きますか？ 現在のキャンバスは置き換えられ、最新のローカル復旧コピーは「最近の作業」に残ります。`,
+    }));
+  }, [cloudDraftHasContent, language, saveCurrentRecovery]);
+
+  const resumeRecentLocalWork = useCallback(async (record: RecentWorkRecord) => {
+    if (record.lineageId === activeDiagramLineageId) return true;
+    if (!await confirmRecentWorkReplacement(record.diagramName)) return false;
+    try {
+      cloudSync.reset();
+      setLocalDiagramLineageId(createLocalDiagramLineageId(
+        `recovered-${record.lineageId}`,
+      ));
+      applyFlowObject(record.payload);
+      window.setTimeout(() => {
+        void reactFlowInstance?.fitView({
+          padding: 0.2,
+          duration: 350,
+          maxZoom: 1.2,
+        });
+      }, 100);
+      return true;
+    } catch (error) {
+      console.error('Failed to resume local recent work:', error);
+      alert(localize(language, {
+        en: 'This local recovery copy could not be opened because its diagram data is invalid.',
+        ja: '図面データが無効なため、このローカル復旧コピーを開けませんでした。',
+      }));
+      return false;
+    }
+  }, [
+    activeDiagramLineageId,
+    applyFlowObject,
+    cloudSync,
+    confirmRecentWorkReplacement,
+    language,
+    reactFlowInstance,
+  ]);
+
+  const openRecentCloudWork = useCallback(async (summary: CloudDiagramSummary) => {
+    if (cloudSync.document?.id === summary.id) return true;
+    if (!await confirmRecentWorkReplacement(summary.diagramName)) return false;
+    try {
+      const document = await getCloudDiagram(summary.id);
+      cloudSync.openDocument(document, {
+        documentId: document.id,
+        access: 'owner',
+        role: 'owner',
+      });
+      return true;
+    } catch (error) {
+      console.error('Failed to open a recent cloud diagram:', error);
+      alert(error instanceof Error
+        ? error.message
+        : localize(language, {
+          en: 'The cloud diagram could not be opened.',
+          ja: 'クラウド図面を開けませんでした。',
+        }));
+      return false;
+    }
+  }, [
+    cloudSync,
+    confirmRecentWorkReplacement,
+    language,
   ]);
 
   const applyArchitectureTemplate = useCallback(async (template: ArchitectureTemplate) => {
@@ -4358,6 +4659,258 @@ function App() {
       alert(t("Failed to restore version"));
     }
   }, [applyFlowObject, cloudSync, t]);
+
+  const restoreSelectedVersionChanges = useCallback(async (
+    version: DiagramVersion,
+    selectedKeys: string[],
+  ): Promise<boolean> => {
+    if (selectedKeys.length === 0) return false;
+    try {
+      await createSnapshot(
+        nodes,
+        edges,
+        titleBlockData.architectureName,
+        {
+          lineageId: activeDiagramLineageId,
+          architecturePrompt,
+          originalPrompt: originalPrompt || architecturePrompt || undefined,
+          validationScore: cloudValidationScore,
+          notes: localize(language, {
+            en: 'Automatic backup before selective version restore',
+            ja: 'バージョンの選択復元前の自動バックアップ',
+          }),
+          titleBlockData,
+          workflow,
+          pricingScenarios,
+          iacBaseline,
+        },
+      );
+      try {
+        await cloudSync.saveSnapshot(localize(language, {
+          en: 'Automatic backup before selective version restore',
+          ja: 'バージョンの選択復元前の自動バックアップ',
+        }));
+      } catch (cloudError) {
+        console.warn('Cloud backup was unavailable before selective restore:', cloudError);
+      }
+
+      const restored = applySelectedVersionChanges(
+        nodes,
+        edges,
+        version.nodes,
+        version.edges,
+        selectedKeys,
+      );
+      if (restored.appliedKeys.length === 0) {
+        alert(localize(language, {
+          en: 'None of the selected changes could be applied safely.',
+          ja: '選択した変更を安全に適用できませんでした。',
+        }));
+        return false;
+      }
+
+      setNodes(restored.nodes);
+      setEdges(applyAutomaticEdgeLabelOffsets(restored.nodes, restored.edges));
+      if (validationResult || persistedValidationScore !== undefined) {
+        setValidationNeedsRefresh(true);
+      }
+      setDeploymentGuide(null);
+      setDriftPlanSummary(null);
+      trackVersionOperation('restore');
+      alert(localize(language, {
+        en: [
+          `Applied ${restored.appliedKeys.length} selected change${restored.appliedKeys.length === 1 ? '' : 's'}.`,
+          restored.autoAddedNodeIds.length > 0
+            ? `${restored.autoAddedNodeIds.length} required parent group${restored.autoAddedNodeIds.length === 1 ? ' was' : 's were'} included automatically.`
+            : '',
+          restored.autoRemovedEdgeIds.length > 0
+            ? `${restored.autoRemovedEdgeIds.length} dangling connection${restored.autoRemovedEdgeIds.length === 1 ? ' was' : 's were'} removed safely.`
+            : '',
+          restored.skippedKeys.length > 0
+            ? `${restored.skippedKeys.length} incompatible change${restored.skippedKeys.length === 1 ? ' was' : 's were'} skipped.`
+            : '',
+        ].filter(Boolean).join('\n'),
+        ja: [
+          `選択した${restored.appliedKeys.length}件の変更を適用しました。`,
+          restored.autoAddedNodeIds.length > 0
+            ? `必要な親グループ${restored.autoAddedNodeIds.length}件を自動的に追加しました。`
+            : '',
+          restored.autoRemovedEdgeIds.length > 0
+            ? `参照先のない接続${restored.autoRemovedEdgeIds.length}件を安全に削除しました。`
+            : '',
+          restored.skippedKeys.length > 0
+            ? `互換性のない変更${restored.skippedKeys.length}件をスキップしました。`
+            : '',
+        ].filter(Boolean).join('\n'),
+      }));
+      return true;
+    } catch (error) {
+      console.error('Failed to restore selected historical changes:', error);
+      alert(localize(language, {
+        en: 'The backup or selective restore could not be completed.',
+        ja: 'バックアップまたは選択復元を完了できませんでした。',
+      }));
+      return false;
+    }
+  }, [
+    activeDiagramLineageId,
+    architecturePrompt,
+    cloudSync,
+    cloudValidationScore,
+    edges,
+    iacBaseline,
+    language,
+    nodes,
+    originalPrompt,
+    persistedValidationScore,
+    pricingScenarios,
+    setEdges,
+    setNodes,
+    titleBlockData,
+    validationResult,
+    workflow,
+  ]);
+
+  const locateQualityFinding = useCallback((finding: DiagramQualityFinding) => {
+    const nodeIds = new Set(finding.nodeIds);
+    const edgeIds = new Set(finding.edgeIds);
+    for (const edge of edges) {
+      if (!edgeIds.has(edge.id)) continue;
+      nodeIds.add(edge.source);
+      nodeIds.add(edge.target);
+    }
+    setNodes(currentNodes => currentNodes.map(node => ({
+      ...node,
+      selected: nodeIds.has(node.id),
+    })));
+    setEdges(currentEdges => currentEdges.map(edge => ({
+      ...edge,
+      selected: edgeIds.has(edge.id),
+    })));
+    setIsQualityDoctorOpen(false);
+
+    const locatedNodes = nodes.filter(node => nodeIds.has(node.id));
+    window.requestAnimationFrame(() => {
+      void reactFlowInstance?.fitView({
+        nodes: locatedNodes,
+        padding: 0.35,
+        duration: 350,
+        maxZoom: 1.35,
+      });
+      reactFlowWrapper.current?.focus();
+    });
+  }, [edges, nodes, reactFlowInstance, setEdges, setNodes]);
+
+  const applyQualityDoctorFixes = useCallback(async (findingIds: string[]) => {
+    if (findingIds.length === 0) return;
+    try {
+      const report = analyzeDiagramQuality(nodes, edges);
+      const backupNotes = localize(language, {
+        en: 'Automatic backup before Diagram Quality Doctor fixes',
+        ja: 'ダイアグラム品質診断の修正前の自動バックアップ',
+      });
+
+      await createSnapshot(
+        nodes,
+        edges,
+        titleBlockData.architectureName,
+        {
+          lineageId: activeDiagramLineageId,
+          architecturePrompt,
+          originalPrompt: originalPrompt || architecturePrompt || undefined,
+          validationScore: cloudValidationScore,
+          notes: backupNotes,
+          titleBlockData,
+          workflow,
+          pricingScenarios,
+          iacBaseline,
+        },
+      );
+      try {
+        await cloudSync.saveSnapshot(backupNotes);
+      } catch (cloudError) {
+        console.warn('Cloud backup was unavailable before quality fixes:', cloudError);
+      }
+
+      const fixed = applyDiagramQualityFixes(
+        nodes,
+        edges,
+        report.findings,
+        findingIds,
+      );
+      if (fixed.fixedFindingIds.length === 0) {
+        alert(localize(language, {
+          en: 'None of the selected improvements could be applied safely.',
+          ja: '選択した改善項目を安全に適用できませんでした。',
+        }));
+        return;
+      }
+
+      let nextNodes = fixed.nodes;
+      let nextEdges = fixed.edges;
+      if (fixed.requiresLayout) {
+        const layoutResult = await applyLayoutPreset(nextNodes, nextEdges, {
+          preset: layoutPreset,
+          spacing: layoutSpacing,
+          edgeStyle: layoutEdgeStyle,
+          emphasizePrimaryPath: layoutEmphasizePrimaryPath
+            && (layoutPreset === 'flow-lr' || layoutPreset === 'flow-tb'),
+          selectedNodeId: nextNodes.find(
+            node => node.type === 'azureNode' && node.selected,
+          )?.id,
+          layoutEngine,
+        });
+        nextNodes = layoutResult.nodes;
+        nextEdges = layoutResult.edges;
+      }
+      nextEdges = applyAutomaticEdgeLabelOffsets(nextNodes, nextEdges);
+
+      setNodes(nextNodes);
+      setEdges(nextEdges);
+      if (validationResult || persistedValidationScore !== undefined) {
+        setValidationNeedsRefresh(true);
+      }
+      setDeploymentGuide(null);
+      setDriftPlanSummary(null);
+      setIsQualityDoctorOpen(false);
+      window.requestAnimationFrame(() => {
+        void reactFlowInstance?.fitView({
+          padding: 0.2,
+          duration: 350,
+          maxZoom: 1.2,
+        });
+      });
+    } catch (error) {
+      console.error('Failed to apply Diagram Quality Doctor fixes:', error);
+      alert(localize(language, {
+        en: 'The backup or selected quality fixes could not be completed.',
+        ja: 'バックアップまたは選択した品質修正を完了できませんでした。',
+      }));
+    }
+  }, [
+    activeDiagramLineageId,
+    architecturePrompt,
+    cloudSync,
+    cloudValidationScore,
+    edges,
+    iacBaseline,
+    language,
+    layoutEdgeStyle,
+    layoutEmphasizePrimaryPath,
+    layoutEngine,
+    layoutPreset,
+    layoutSpacing,
+    nodes,
+    originalPrompt,
+    persistedValidationScore,
+    pricingScenarios,
+    reactFlowInstance,
+    setEdges,
+    setNodes,
+    titleBlockData,
+    validationResult,
+    workflow,
+  ]);
 
   // Manual snapshot save handler
   const handleSaveSnapshot = useCallback(async (notes: string) => {
@@ -4859,8 +5412,9 @@ function App() {
 
     // Set the model badge from metrics
     if (architecture.metrics) {
+      const deploymentNames = getDeploymentNames();
       const modelKey = Object.keys(MODEL_CONFIG).find(
-        k => DEPLOYMENT_NAMES[k as ModelType] === architecture.metrics!.model
+        k => deploymentNames[k as ModelType] === architecture.metrics!.model
       );
       const displayName = modelKey
         ? MODEL_CONFIG[modelKey as keyof typeof MODEL_CONFIG].displayName
@@ -5199,97 +5753,154 @@ function App() {
     setDriftPlanSummary(null);
   }, [handleAIGenerate, language]);
 
-  const handleAlign = useCallback((type: string) => {
-    const selectedNodes = nodes.filter(n => n.selected);
-    if (selectedNodes.length < 2) return;
+  const handleAlign = useCallback((type: BulkAlignmentType) => {
+    setNodes(currentNodes => alignSelectedNodes(currentNodes, type));
+  }, [setNodes]);
 
-    const updatedNodes = [...nodes];
-    
-    switch (type) {
-      case 'left': {
-        const minX = Math.min(...selectedNodes.map(n => n.position.x));
-        selectedNodes.forEach(node => {
-          const idx = updatedNodes.findIndex(n => n.id === node.id);
-          updatedNodes[idx] = { ...updatedNodes[idx], position: { ...updatedNodes[idx].position, x: minX } };
-        });
-        break;
-      }
-      case 'right': {
-        const maxX = Math.max(...selectedNodes.map(n => n.position.x + (n.width || 150)));
-        selectedNodes.forEach(node => {
-          const idx = updatedNodes.findIndex(n => n.id === node.id);
-          const nodeWidth = node.width || 150;
-          updatedNodes[idx] = { ...updatedNodes[idx], position: { ...updatedNodes[idx].position, x: maxX - nodeWidth } };
-        });
-        break;
-      }
-      case 'center-h': {
-        const minX = Math.min(...selectedNodes.map(n => n.position.x));
-        const maxX = Math.max(...selectedNodes.map(n => n.position.x + (n.width || 150)));
-        const centerX = (minX + maxX) / 2;
-        selectedNodes.forEach(node => {
-          const idx = updatedNodes.findIndex(n => n.id === node.id);
-          const nodeWidth = node.width || 150;
-          updatedNodes[idx] = { ...updatedNodes[idx], position: { ...updatedNodes[idx].position, x: centerX - nodeWidth / 2 } };
-        });
-        break;
-      }
-      case 'top': {
-        const minY = Math.min(...selectedNodes.map(n => n.position.y));
-        selectedNodes.forEach(node => {
-          const idx = updatedNodes.findIndex(n => n.id === node.id);
-          updatedNodes[idx] = { ...updatedNodes[idx], position: { ...updatedNodes[idx].position, y: minY } };
-        });
-        break;
-      }
-      case 'bottom': {
-        const maxY = Math.max(...selectedNodes.map(n => n.position.y + (n.height || 100)));
-        selectedNodes.forEach(node => {
-          const idx = updatedNodes.findIndex(n => n.id === node.id);
-          const nodeHeight = node.height || 100;
-          updatedNodes[idx] = { ...updatedNodes[idx], position: { ...updatedNodes[idx].position, y: maxY - nodeHeight } };
-        });
-        break;
-      }
-      case 'center-v': {
-        const minY = Math.min(...selectedNodes.map(n => n.position.y));
-        const maxY = Math.max(...selectedNodes.map(n => n.position.y + (n.height || 100)));
-        const centerY = (minY + maxY) / 2;
-        selectedNodes.forEach(node => {
-          const idx = updatedNodes.findIndex(n => n.id === node.id);
-          const nodeHeight = node.height || 100;
-          updatedNodes[idx] = { ...updatedNodes[idx], position: { ...updatedNodes[idx].position, y: centerY - nodeHeight / 2 } };
-        });
-        break;
-      }
-      case 'distribute-h': {
-        const sorted = [...selectedNodes].sort((a, b) => a.position.x - b.position.x);
-        const minX = sorted[0].position.x;
-        const maxX = sorted[sorted.length - 1].position.x;
-        const spacing = (maxX - minX) / (sorted.length - 1);
-        sorted.forEach((node, i) => {
-          if (i === 0 || i === sorted.length - 1) return;
-          const idx = updatedNodes.findIndex(n => n.id === node.id);
-          updatedNodes[idx] = { ...updatedNodes[idx], position: { ...updatedNodes[idx].position, x: minX + spacing * i } };
-        });
-        break;
-      }
-      case 'distribute-v': {
-        const sorted = [...selectedNodes].sort((a, b) => a.position.y - b.position.y);
-        const minY = sorted[0].position.y;
-        const maxY = sorted[sorted.length - 1].position.y;
-        const spacing = (maxY - minY) / (sorted.length - 1);
-        sorted.forEach((node, i) => {
-          if (i === 0 || i === sorted.length - 1) return;
-          const idx = updatedNodes.findIndex(n => n.id === node.id);
-          updatedNodes[idx] = { ...updatedNodes[idx], position: { ...updatedNodes[idx].position, y: minY + spacing * i } };
-        });
-        break;
-      }
+  const handleBulkEdit = useCallback(async (
+    request: BulkEditRequest,
+  ): Promise<BulkEditResult> => {
+    const sourceNodes = latestNodesRef.current;
+    const selectedNodes = sourceNodes.filter(node => node.selected);
+    const selectedNodeIds = new Set(selectedNodes.map(node => node.id));
+    const selectedServices = selectedNodes.filter(node => node.type === 'azureNode');
+    if (selectedNodeIds.size < 2) {
+      throw new Error(localize(language, {
+        en: 'Select at least two items before applying bulk edits.',
+        ja: '一括編集を適用する前に2件以上を選択してください。',
+      }));
+    }
+    if (
+      request.targetGroupId
+      && !sourceNodes.some(node => node.id === request.targetGroupId && node.type === 'groupNode')
+    ) {
+      throw new Error(localize(language, {
+        en: 'The selected target group no longer exists.',
+        ja: '選択した移動先グループは存在しません。',
+      }));
+    }
+    if (
+      request.quantity !== undefined
+      && (
+        !Number.isInteger(request.quantity)
+        || request.quantity < 1
+        || request.quantity > 100_000
+      )
+    ) {
+      throw new Error(localize(language, {
+        en: 'Quantity must be a whole number from 1 to 100,000.',
+        ja: '数量は1から100,000までの整数で指定してください。',
+      }));
+    }
+    if (
+      request.customPrice !== undefined
+      && (
+        !Number.isFinite(request.customPrice)
+        || request.customPrice < 0
+        || request.customPrice > 1_000_000_000
+      )
+    ) {
+      throw new Error(localize(language, {
+        en: 'Custom monthly price must be between 0 and 1,000,000,000.',
+        ja: '独自の月額単価は0から1,000,000,000の範囲で指定してください。',
+      }));
     }
 
-    setNodes(updatedNodes);
-  }, [nodes, setNodes]);
+    const pricingByNodeId = new Map<string, NodePricingConfig>();
+    let pricingFailureCount = 0;
+    const shouldEditPricing = request.region !== undefined
+      || request.quantity !== undefined
+      || request.customPrice !== undefined;
+    if (shouldEditPricing) {
+      await Promise.all(selectedServices.map(async (node) => {
+        const currentPricing = node.data?.pricing as NodePricingConfig | undefined;
+        const serviceName = String(node.data?.serviceName || node.data?.label || '');
+        const targetRegion = request.region || currentPricing?.region || getActiveRegion();
+        try {
+          let nextPricing: NodePricingConfig | null | undefined;
+          if (currentPricing) {
+            if (request.region && !currentPricing.isCustom && request.customPrice === undefined) {
+              nextPricing = await updateNodePricing(
+                serviceName,
+                currentPricing,
+                undefined,
+                request.quantity,
+                request.region,
+              );
+            } else {
+              nextPricing = {
+                ...currentPricing,
+                region: targetRegion,
+                quantity: request.quantity ?? currentPricing.quantity,
+                lastUpdated: new Date().toISOString(),
+              };
+            }
+          } else if (request.customPrice !== undefined) {
+            nextPricing = createCustomPricingDraft(targetRegion as AzureRegion);
+            nextPricing.quantity = request.quantity ?? 1;
+          } else if (request.region) {
+            nextPricing = await initializeNodePricing(serviceName, request.region);
+            if (nextPricing && request.quantity !== undefined) {
+              nextPricing = { ...nextPricing, quantity: request.quantity };
+            }
+          }
+
+          if (nextPricing && request.customPrice !== undefined) {
+            nextPricing = setCustomPricing(nextPricing, request.customPrice);
+          }
+          if (nextPricing) pricingByNodeId.set(node.id, nextPricing);
+        } catch (error) {
+          pricingFailureCount += 1;
+          console.error(`Failed to update pricing for ${serviceName}:`, error);
+          if (currentPricing && request.quantity !== undefined) {
+            pricingByNodeId.set(node.id, {
+              ...currentPricing,
+              quantity: request.quantity,
+              lastUpdated: new Date().toISOString(),
+            });
+          }
+        }
+      }));
+    }
+
+    const groupColor = request.groupColorName === undefined
+      ? undefined
+      : request.groupColorName === null
+        ? null
+        : BULK_GROUP_COLORS.find(color => color.name === request.groupColorName);
+    if (request.groupColorName && !groupColor) {
+      throw new Error(localize(language, {
+        en: 'The selected group color is invalid.',
+        ja: '選択したグループ色は無効です。',
+      }));
+    }
+
+    setNodes(currentNodes => applyBulkNodeEdits(
+      currentNodes,
+      selectedNodeIds,
+      {
+        targetGroupId: request.targetGroupId,
+        stylePreset: request.stylePreset,
+        groupColor,
+        tags: request.tags,
+        pricingByNodeId,
+      },
+    ));
+    if (validationResult || persistedValidationScore !== undefined) {
+      setValidationNeedsRefresh(true);
+    }
+    setDeploymentGuide(null);
+    setDriftPlanSummary(null);
+    return {
+      updatedCount: selectedNodeIds.size,
+      pricingFailureCount,
+    };
+  }, [
+    language,
+    persistedValidationScore,
+    setNodes,
+    validationResult,
+  ]);
 
   // Premium Feature Handlers
   const handleValidateArchitecture = useCallback(async () => {
@@ -5791,6 +6402,34 @@ function App() {
       run: handleValidateArchitecture,
     },
     {
+      id: 'diagram-quality-doctor',
+      label: localize(language, {
+        en: 'Run Diagram Quality Doctor',
+        ja: 'ダイアグラム品質診断を実行',
+      }),
+      description: localize(language, {
+        en: 'Find visual clutter, disconnected services, spacing, label, and contrast issues',
+        ja: '視覚的な混雑、未接続サービス、余白、ラベル、コントラストの問題を検出します',
+      }),
+      keywords: ['quality', 'doctor', 'layout', 'overlap', 'crossing', 'contrast', 'readability'],
+      group: localize(language, { en: 'Review', ja: 'レビュー' }),
+      icon: <ScanSearch size={17} aria-hidden="true" />,
+      disabled: nodes.length === 0,
+      run: openQualityDoctor,
+    },
+    {
+      id: 'recent-work',
+      label: localize(language, { en: 'Resume recent work', ja: '最近の作業を再開' }),
+      description: localize(language, {
+        en: 'Continue local drafts, recovered sessions, unsynced work, or cloud diagrams',
+        ja: 'ローカル下書き、復旧セッション、未同期作業、クラウド図面を続行します',
+      }),
+      keywords: ['recent', 'resume', 'recover', 'draft', 'unsynced', 'cloud'],
+      group: localize(language, { en: 'Workspace', ja: 'ワークスペース' }),
+      icon: <Clock size={17} aria-hidden="true" />,
+      run: openRecentWork,
+    },
+    {
       id: 'cloud-workspace',
       label: localize(language, { en: 'Open cloud workspace', ja: 'クラウド ワークスペースを開く' }),
       description: localize(language, {
@@ -5942,7 +6581,7 @@ function App() {
 
 
   return (
-    <div className={`app${isChatOpen ? ' chat-open' : ''}${focusMode ? ' focus-mode' : ''}`}>
+    <div className={`app${isChatOpen ? ' chat-open' : ''}${focusMode ? ' focus-mode' : ''}${mobileCanvasFirstActive ? ' mobile-canvas-first' : ''}`}>
       <header className={`app-header${isHeaderCollapsed ? ' header-collapsed' : ''}${isMobileRibbonOpen ? ' mobile-ribbon-open' : ''}`}>
         <div className="header-content">
           <div className="header-brand">
@@ -7006,7 +7645,11 @@ function App() {
                 <span>{localize(language, { en: 'Access', ja: 'アクセス管理' })}</span>
               </button>
             )}
-            <HeaderUtilityMenu onOpenAbout={() => setIsAboutOpen(true)} />
+            <HeaderUtilityMenu
+              onOpenRecentWork={openRecentWork}
+              onOpenQualityDoctor={openQualityDoctor}
+              onOpenAbout={() => setIsAboutOpen(true)}
+            />
           </div>
           <MobileCommandBar
             activeSection={ribbonTabs.find((tab) => tab.id === activeRibbonTab)?.label || ''}
@@ -7052,6 +7695,10 @@ function App() {
           hasDeploymentGuide={deploymentGuide !== null}
           isValidating={isValidating}
           isGeneratingGuide={isGeneratingGuide}
+          collapsed={mobileCanvasFirstActive && !isMobileJourneyExpanded}
+          onToggleCollapsed={mobileCanvasFirstActive
+            ? () => setIsMobileJourneyExpanded(current => !current)
+            : undefined}
           onGenerate={openWorkflowGenerator}
           onValidate={openWorkflowValidation}
           onReviewCost={openWorkflowCostReview}
@@ -7197,7 +7844,14 @@ function App() {
           />
           <AlignmentToolbar 
             selectedNodes={nodes.filter(n => n.selected)}
+            groups={nodes
+              .filter(node => node.type === 'groupNode')
+              .map(node => ({
+                id: node.id,
+                label: String(node.data?.label || 'Group'),
+              }))}
             onAlign={handleAlign}
+            onApplyBulkEdit={handleBulkEdit}
           />
         </div>
         {workflow.length > 0 && (
@@ -7720,7 +8374,10 @@ Return the IMPROVED architecture in the same JSON format as before with proper g
         isOpen={isVersionHistoryModalOpen}
         onClose={() => setIsVersionHistoryModalOpen(false)}
         onRestoreVersion={restoreVersion}
+        onRestoreSelection={restoreSelectedVersionChanges}
         currentLineageId={activeDiagramLineageId}
+        currentNodes={nodes}
+        currentEdges={edges}
       />
       <CloudWorkspaceModal
         isOpen={isCloudWorkspaceOpen}
@@ -7744,6 +8401,25 @@ Return the IMPROVED architecture in the same JSON format as before with proper g
         onDiscardPendingSave={cloudSync.discardPendingSave}
         onCreateNew={startFreshDiagram}
         onBeforeShare={confirmBeforeShare}
+        currentUserEmail={accessIdentity?.email || undefined}
+        onLocateReviewAnchor={locateReviewAnchor}
+      />
+      <RecentWorkModal
+        isOpen={isRecentWorkOpen}
+        currentSessionId={recentWorkSessionId}
+        currentLineageId={activeDiagramLineageId}
+        onClose={() => setIsRecentWorkOpen(false)}
+        onResumeLocal={resumeRecentLocalWork}
+        onOpenCloud={openRecentCloudWork}
+      />
+      <DiagramQualityDialog
+        isOpen={isQualityDoctorOpen}
+        nodes={nodes}
+        edges={edges}
+        language={language}
+        onClose={() => setIsQualityDoctorOpen(false)}
+        onLocateFinding={locateQualityFinding}
+        onApplyFixes={applyQualityDoctorFixes}
       />
       <PrivacyPreflightDialog
         isOpen={privacyRequest !== null}

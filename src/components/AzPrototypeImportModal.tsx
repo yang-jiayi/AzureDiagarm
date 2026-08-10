@@ -4,9 +4,11 @@
 import { useState, useCallback } from 'react';
 import { Terminal, Upload, X, AlertCircle, Check } from 'lucide-react';
 import { importFromAzPrototype, type ImportResult } from '../services/azPrototypeService';
+import './AzPrototypeExportModal.css';
 import './AzPrototypeImportModal.css';
 import { useLanguage } from '../i18n/LanguageContext';
 import { localize } from '../i18n/localization';
+import ModalScaffold from './ModalScaffold';
 
 export interface AzPrototypeImportModalProps {
   isOpen: boolean;
@@ -84,29 +86,34 @@ export default function AzPrototypeImportModal({
   if (!isOpen) return null;
 
   return (
-    <div className="azp-modal-overlay" onClick={handleClose}>
-      <div className="azp-modal azp-import-modal" onClick={(e) => e.stopPropagation()}>
-        <div className="azp-modal-header">
+    <ModalScaffold
+      isOpen={isOpen}
+      onClose={handleClose}
+      className="azp-modal azp-import-modal"
+      overlayClassName="azp-modal-overlay"
+      ariaLabel={t("Import from az prototype")}
+    >
+        <div className="modal-header azp-modal-header">
           <div className="azp-modal-title">
             <Terminal size={22} />
             <span>{t("Import from az prototype")}</span>
           </div>
-          <button className="azp-modal-close" onClick={handleClose} aria-label={t("Close")}>
+          <button className="modal-close azp-modal-close" onClick={handleClose} aria-label={t("Close")}>
             <X size={20} />
           </button>
         </div>
 
-        <div className="azp-modal-body">
+        <div className="modal-body azp-modal-body">
           {stage === 'select' && (
             <>
               <p className="azp-modal-description">
                 {' '}{t("Import an architecture manifest produced by")}{' '}<code>{t("az prototype design")}</code> {' '}{t("or exported from the Azure Diagram Builder. The architecture will be rendered as an interactive, editable diagram with official Azure icons, workflow animation, and multi-region cost estimation.")}{' '}</p>
 
-              <label className="azp-import-dropzone">
+              <label className="azp-import-dropzone azd-surface">
                 <Upload size={32} />
                 <span className="azp-import-dropzone-text">
                   {' '}{t("Click to select an")}{' '}<code>{t("az-prototype-manifest.json")}</code> {' '}{t("file")}{' '}</span>
-                <span className="azp-import-dropzone-hint">
+                <span className="azp-import-dropzone-hint azd-field-hint">
                   {' '}{t("Accepts .json files (az prototype manifest or raw architecture JSON)")}{' '}</span>
                 <input
                   type="file"
@@ -120,31 +127,31 @@ export default function AzPrototypeImportModal({
 
           {stage === 'preview' && importResult && (
             <>
-              <div className="azp-import-success">
+              <div className="azp-import-success azd-callout azd-callout--success">
                 <Check size={18} />
                 <span>{t("Successfully parsed")}{' '}<strong>{fileName}</strong></span>
               </div>
 
               <div className="azp-modal-stats">
-                <div className="azp-stat">
+                <div className="azp-stat azd-surface">
                   <span className="azp-stat-value">{importResult.stats.services}</span>
                   <span className="azp-stat-label">{t("Services")}</span>
                 </div>
-                <div className="azp-stat">
+                <div className="azp-stat azd-surface">
                   <span className="azp-stat-value">{importResult.stats.connections}</span>
                   <span className="azp-stat-label">{t("Connections")}</span>
                 </div>
-                <div className="azp-stat">
+                <div className="azp-stat azd-surface">
                   <span className="azp-stat-value">{importResult.stats.groups}</span>
                   <span className="azp-stat-label">{t("Groups")}</span>
                 </div>
-                <div className="azp-stat">
+                <div className="azp-stat azd-surface">
                   <span className="azp-stat-value">{importResult.stats.workflowSteps}</span>
                   <span className="azp-stat-label">{t("Workflow Steps")}</span>
                 </div>
               </div>
 
-              <div className="azp-import-project-info">
+              <div className="azp-import-project-info azd-surface">
                 <div className="azp-import-project-row">
                   <span className="azp-import-project-key">{t("Project")}</span>
                   <span className="azp-import-project-val">{importResult.projectInfo.name}</span>
@@ -177,31 +184,30 @@ export default function AzPrototypeImportModal({
           )}
 
           {stage === 'error' && (
-            <div className="azp-import-error">
+            <div className="azp-import-error azd-callout azd-callout--danger" role="alert">
               <AlertCircle size={20} />
               <div>
                 <strong>{t("Import failed")}</strong>
                 <p>{errorMessage}</p>
               </div>
-              <button className="azp-btn azp-btn--secondary" onClick={reset}>
+              <button className="azd-button azd-button--secondary" onClick={reset}>
                 {' '}{t("Try again")}{' '}</button>
             </div>
           )}
         </div>
 
-        <div className="azp-modal-footer">
-          <button className="azp-btn azp-btn--secondary" onClick={handleClose}>
+        <div className="modal-actions azp-modal-footer">
+          <button className="azd-button azd-button--secondary" onClick={handleClose}>
             {' '}{t("Cancel")}{' '}</button>
           {stage === 'preview' && (
             <button
-              className="azp-btn azp-btn--primary"
+              className="azd-button azd-button--primary"
               onClick={handleConfirmImport}
             >
               <Upload size={18} />
               {' '}{t("Import to Diagram")}{' '}</button>
           )}
         </div>
-      </div>
-    </div>
+    </ModalScaffold>
   );
 }
