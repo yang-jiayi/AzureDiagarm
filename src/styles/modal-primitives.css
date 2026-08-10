@@ -1,0 +1,188 @@
+/* Copyright (c) Microsoft Corporation. Licensed under the MIT License. */
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: var(--azd-z-modal);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: var(--azd-color-overlay-backdrop);
+  backdrop-filter: blur(var(--azd-overlay-blur));
+}
+
+.modal-content {
+  width: 100%;
+  max-width: 900px;
+  max-height: 90dvh;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--azd-color-border-subtle);
+  border-radius: var(--azd-radius-lg);
+  background: var(--azd-color-surface-elevated);
+  color: var(--azd-color-text);
+  box-shadow: var(--azd-shadow-overlay);
+  overflow: hidden;
+}
+
+.modal-content:focus-visible {
+  outline: 3px solid var(--azd-color-focus);
+  outline-offset: 3px;
+}
+
+.modal-header {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--azd-space-4);
+  padding: var(--azd-space-5);
+  border-bottom: 1px solid var(--azd-color-border-subtle);
+  background: var(--azd-color-surface-elevated);
+}
+
+.modal-header h2 {
+  margin: 0;
+  color: var(--azd-color-text-strong);
+  font-size: 1.5rem;
+}
+
+.modal-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  padding: 5px;
+  border: 1px solid transparent;
+  border-radius: var(--azd-radius-sm);
+  background: transparent;
+  color: var(--azd-color-text-muted);
+  cursor: pointer;
+  transition:
+    border-color var(--azd-motion-fast),
+    background var(--azd-motion-fast),
+    color var(--azd-motion-fast);
+}
+
+.modal-close:hover {
+  border-color: var(--azd-color-border-subtle);
+  background: var(--azd-color-surface-hover);
+  color: var(--azd-color-text-strong);
+}
+
+.modal-close:focus-visible {
+  outline: 3px solid var(--azd-color-focus-soft);
+  outline-offset: 2px;
+}
+
+.modal-close:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.modal-body {
+  min-height: 0;
+  flex: 1;
+  padding: var(--azd-space-5);
+  background: var(--azd-color-surface-elevated);
+  overflow-y: auto;
+}
+
+.modal-actions {
+  position: sticky;
+  bottom: 0;
+  z-index: 10;
+  display: flex;
+  flex-shrink: 0;
+  justify-content: flex-end;
+  gap: var(--azd-space-3);
+  padding: var(--azd-space-4) var(--azd-space-5);
+  border-top: 1px solid var(--azd-color-border-subtle);
+  background: var(--azd-color-surface-panel);
+}
+
+.modal-actions .btn-primary,
+.modal-actions .btn-secondary,
+.modal-actions .btn-success {
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+  gap: var(--azd-space-2);
+  min-height: 38px;
+  padding: 9px 16px;
+  border-radius: var(--azd-radius-sm);
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition:
+    border-color var(--azd-motion-fast),
+    background var(--azd-motion-fast),
+    color var(--azd-motion-fast);
+}
+
+.modal-actions .btn-primary {
+  border: 1px solid var(--azd-color-brand);
+  background: var(--azd-color-brand);
+  color: var(--azd-color-on-brand);
+}
+
+.modal-actions .btn-primary:hover:not(:disabled) {
+  border-color: var(--azd-color-brand-hover);
+  background: var(--azd-color-brand-hover);
+}
+
+.modal-actions .btn-secondary {
+  border: 1px solid var(--azd-color-control-border);
+  background: var(--azd-color-control-background);
+  color: var(--azd-color-text);
+}
+
+.modal-actions .btn-secondary:hover:not(:disabled) {
+  border-color: var(--azd-color-control-border-hover);
+  background: var(--azd-color-control-background-hover);
+  color: var(--azd-color-text-strong);
+  transform: none;
+}
+
+.modal-actions .btn-success {
+  border: 1px solid var(--azd-color-success-emphasis);
+  background: var(--azd-color-success-emphasis);
+  color: var(--azd-color-on-brand);
+}
+
+.modal-actions .btn-primary:disabled,
+.modal-actions .btn-secondary:disabled,
+.modal-actions .btn-success:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.modal-actions .btn-primary:focus-visible,
+.modal-actions .btn-secondary:focus-visible,
+.modal-actions .btn-success:focus-visible {
+  outline: 3px solid var(--azd-color-focus-soft);
+  outline-offset: 2px;
+}
+
+@media (max-width: 640px) {
+  .modal-overlay {
+    align-items: flex-end;
+    padding: 0;
+  }
+
+  .modal-content {
+    max-height: 92dvh;
+    border-radius: var(--azd-radius-xl) var(--azd-radius-xl) 0 0;
+  }
+
+  .modal-header,
+  .modal-body {
+    padding: var(--azd-space-4);
+  }
+
+  .modal-actions {
+    padding: var(--azd-space-3) var(--azd-space-4);
+  }
+}

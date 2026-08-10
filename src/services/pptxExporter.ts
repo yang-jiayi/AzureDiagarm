@@ -12,7 +12,28 @@
  */
 
 import PptxGenJS from 'pptxgenjs';
+import type { Edge, Node } from 'reactflow';
+
+/**
+ * Interop guard: bundlers hand back the class directly, while Node resolving
+ * the CommonJS build hands back `{ default: PptxGenJS }`. Unit tests import
+ * this module under Node, so normalise the constructor once.
+ */
+const PptxCtor = (PptxGenJS as unknown as { default?: typeof PptxGenJS }).default ?? PptxGenJS;
+
 import { generateModelFilename } from '../utils/modelNaming';
+import { rasterizeIcons, type RasterizedIcon } from '../utils/exportIconRaster';
+import {
+  buildExportRoutes,
+  collectExportBoxes,
+  computeBounds,
+  computeFitTransform,
+  partitionBoxes,
+  type ExportBox,
+  type ExportRoute,
+  type FitTransform,
+  type Point,
+} from './diagramExportGeometry';
 
 // ─── Theme palettes ───────────────────────────────────────────────────────────
 
@@ -64,20 +85,313 @@ export interface PptxExportOptions {
   author: string;
   date: string;
   isDarkMode: boolean;
+  /**
+   * Canvas contents. When provided, the diagram is rendered with native
+   * PowerPoint shapes (rounded rectangles, embedded icons, arrow connectors)
+   * so every element stays selectable and editable inside PowerPoint. The
+   * captured PNG is only used as a fallback when no shapes can be produced.
+   */
+  diagram?: DiagramShapeSource | null;
+}
+
+export interface DiagramShapeSource {
+  nodes: Node[];
+  edges: Edge[];
+}
+
+// ─── Native (editable) diagram rendering ─────────────────────────────────────
+
+/** Category tints reused from the interactive HTML export for visual parity. */
+const CATEGORY_STYLES: Record<string, { bg: string; border: string }> = {
+  'ai + machine learning': { bg: 'E8F0FE', border: '4285F4' },
+  'app services': { bg: 'E8F4FD', border: '0078D4' },
+  compute: { bg: 'E8F4FD', border: '0078D4' },
+  databases: { bg: 'E6F4EA', border: '0B8043' },
+  storage: { bg: 'E6F4EA', border: '137333' },
+  networking: { bg: 'FFF3E0', border: 'E65100' },
+  analytics: { bg: 'F3E8FD', border: '7B1FA2' },
+  containers: { bg: 'E0F7FA', border: '00838F' },
+  integration: { bg: 'FCE4EC', border: 'C62828' },
+  identity: { bg: 'FFF8E1', border: 'F9A825' },
+  'management + governance': { bg: 'F1F8E9', border: '558B2F' },
+  iot: { bg: 'E0F2F1', border: '00695C' },
+  monitor: { bg: 'EDE7F6', border: '5E35B1' },
+  security: { bg: 'FFEBEE', border: 'C62828' },
+  web: { bg: 'E3F2FD', border: '1565C0' },
+  other: { bg: 'FFFFFF', border: '94A3B8' },
+};
+
+const GROUP_PALETTE = [
+  { bg: 'F0F6FF', border: '0078D4' },
+  { bg: 'F0FFF4', border: '00B294' },
+  { bg: 'FFFBEB', border: 'D97706' },
+  { bg: 'F8F0FF', border: '8764B8' },
+  { bg: 'FFF1F2', border: 'D13438' },
+  { bg: 'ECFEFF', border: '038387' },
+];
+
+function styleForBox(box: ExportBox): { bg: string; border: string } {
+  return CATEGORY_STYLES[box.category] ?? CATEGORY_STYLES.other;
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
+
+interface DiagramFrame { x: number; y: number; w: number; h: number }
+
+/**
+ * PptxGenJS ships `custGeom` at runtime (freeform path shapes) but omits it
+ * from the published `SHAPE_NAME` union, so the name is cast once here.
+ */
+const CUSTOM_GEOMETRY = 'custGeom' as unknown as Parameters<Slide['addShape']>[0];
+
+function toInches(point: Point, transform: FitTransform): Point {
+  return {
+    x: point.x * transform.scale + transform.offsetX,
+    y: point.y * transform.scale + transform.offsetY,
+  };
+}
+
+function addConnector(
+  pptx: PptxGenJS,
+  slide: Slide,
+  route: ExportRoute,
+  transform: FitTransform,
+  color: string,
+): void {
+  const points = route.points.map((point) => toInches(point, transform));
+  if (points.length < 2) return;
+
+  const lineProps = {
+    color,
+    width: 1.25,
+    dashType: route.dashed ? ('dash' as const) : ('solid' as const),
+    endArrowType: 'triangle' as const,
+  };
+
+  if (points.length === 2) {
+    // Straight run — a preset line keeps zero-height/zero-width geometry valid
+    // and stays a first-class editable connector inside PowerPoint.
+    const [from, to] = points;
+    slide.addShape(pptx.ShapeType.line, {
+      x: Math.min(from.x, to.x),
+      y: Math.min(from.y, to.y),
+      w: Math.abs(to.x - from.x),
+      h: Math.abs(to.y - from.y),
+      flipH: to.x < from.x,
+      flipV: to.y < from.y,
+      line: lineProps,
+      objectName: `connector-${route.id}`,
+    });
+    return;
+  }
+
+  const xs = points.map((point) => point.x);
+  const ys = points.map((point) => point.y);
+  const minX = Math.min(...xs);
+  const minY = Math.min(...ys);
+  const w = Math.max(...xs) - minX;
+  const h = Math.max(...ys) - minY;
+  slide.addShape(CUSTOM_GEOMETRY, {
+    x: minX,
+    y: minY,
+    w: Math.max(w, 0.01),
+    h: Math.max(h, 0.01),
+    points: points.map((point, index) => ({
+      x: point.x - minX,
+      y: point.y - minY,
+      ...(index === 0 ? { moveTo: true } : {}),
+    })),
+    fill: { type: 'none' },
+    line: lineProps,
+    objectName: `connector-${route.id}`,
+  });
+}
+
+function addConnectorLabel(
+  slide: Slide,
+  route: ExportRoute,
+  transform: FitTransform,
+  fontSize: number,
+): void {
+  if (!route.label) return;
+  const anchor = toInches(route.labelAnchor, transform);
+  const text = truncate(route.label, 42);
+  const w = clamp(text.length * fontSize * 0.0105 + 0.16, 0.5, 1.9);
+  const h = text.length > 26 ? 0.34 : 0.22;
+  slide.addText(text, {
+    x: anchor.x - w / 2,
+    y: anchor.y - h / 2,
+    w,
+    h,
+    shape: 'roundRect',
+    rectRadius: 0.03,
+    fill: { color: 'FEF9C3' },
+    line: { color: 'FDE68A', width: 0.5 },
+    color: 'B45309',
+    fontSize,
+    fontFace: 'Yu Gothic UI',
+    align: 'center',
+    valign: 'middle',
+    wrap: true,
+    objectName: `connector-label-${route.id}`,
+  });
+}
+
+function addNodeShape(
+  pptx: PptxGenJS,
+  slide: Slide,
+  box: ExportBox,
+  transform: FitTransform,
+  icon: RasterizedIcon | undefined,
+): void {
+  const topLeft = toInches({ x: box.x, y: box.y }, transform);
+  const w = box.w * transform.scale;
+  const h = box.h * transform.scale;
+  const palette = styleForBox(box);
+
+  slide.addShape(pptx.ShapeType.roundRect, {
+    x: topLeft.x,
+    y: topLeft.y,
+    w,
+    h,
+    rectRadius: Math.min(0.08, h / 4),
+    fill: { color: palette.bg },
+    line: { color: palette.border, width: 1.25 },
+    shadow: {
+      type: 'outer',
+      color: '94A3B8',
+      blur: 4,
+      offset: 1,
+      angle: 90,
+      opacity: 0.35,
+    },
+    objectName: `service-${box.id}`,
+  });
+
+  const pad = Math.min(0.06, h * 0.09);
+  let textTop = topLeft.y + pad;
+  let textHeight = h - pad * 2;
+
+  if (icon) {
+    const iconSize = clamp(Math.min(h * 0.46, w * 0.36), 0.16, 0.5);
+    slide.addImage({
+      data: icon.dataUrl,
+      x: topLeft.x + (w - iconSize) / 2,
+      y: topLeft.y + pad,
+      w: iconSize,
+      h: iconSize,
+      objectName: `icon-${box.id}`,
+    });
+    textTop = topLeft.y + pad + iconSize + 0.02;
+    textHeight = Math.max(0.14, topLeft.y + h - pad - textTop);
+  }
+
+  const fontSize = clamp(Math.round(h * 12), 6, 11);
+  slide.addText(truncate(box.label, 46), {
+    x: topLeft.x + 0.03,
+    y: textTop,
+    w: w - 0.06,
+    h: textHeight,
+    fontSize,
+    color: '1F2937',
+    fontFace: 'Yu Gothic UI',
+    align: 'center',
+    valign: icon ? 'top' : 'middle',
+    wrap: true,
+    objectName: `service-label-${box.id}`,
+  });
+}
+
+function addGroupShape(
+  pptx: PptxGenJS,
+  slide: Slide,
+  box: ExportBox,
+  index: number,
+  transform: FitTransform,
+): void {
+  const topLeft = toInches({ x: box.x, y: box.y }, transform);
+  const w = box.w * transform.scale;
+  const h = box.h * transform.scale;
+  const palette = GROUP_PALETTE[index % GROUP_PALETTE.length];
+
+  slide.addShape(pptx.ShapeType.roundRect, {
+    x: topLeft.x,
+    y: topLeft.y,
+    w,
+    h,
+    rectRadius: 0.06,
+    fill: { color: palette.bg, transparency: 15 },
+    line: { color: palette.border, width: 1, dashType: 'dash' },
+    objectName: `zone-${box.id}`,
+  });
+  slide.addText(truncate(box.label, 48), {
+    x: topLeft.x + 0.06,
+    y: topLeft.y + 0.04,
+    w: Math.max(0.4, w - 0.12),
+    h: 0.24,
+    fontSize: clamp(Math.round(h * 5), 8, 12),
+    bold: true,
+    color: palette.border,
+    fontFace: 'Yu Gothic UI',
+    align: 'left',
+    valign: 'middle',
+    objectName: `zone-label-${box.id}`,
+  });
 }
 
 /**
- * Build and download a single-slide PPTX containing the diagram image.
- * Returns the generated filename.
+ * Render the diagram onto `slide` using native PowerPoint shapes.
+ * Returns false when there is nothing to draw so callers can fall back to the
+ * captured PNG.
  */
-export async function exportDiagramAsPptx(
+async function addEditableDiagram(
+  pptx: PptxGenJS,
+  slide: Slide,
+  diagram: DiagramShapeSource,
+  frame: DiagramFrame,
+  isDarkMode: boolean,
+): Promise<boolean> {
+  const boxes = collectExportBoxes(diagram.nodes ?? []);
+  if (boxes.size === 0) return false;
+  const { groups, services } = partitionBoxes(boxes);
+  if (services.length === 0) return false;
+
+  const bounds = computeBounds(boxes.values());
+  const transform = computeFitTransform(bounds, frame, { maxScale: 1 / 96 });
+  const routes = buildExportRoutes(diagram.edges ?? [], boxes);
+  const icons = await rasterizeIcons(services.map((service) => service.iconPath), 128);
+
+  groups.forEach((group, index) => addGroupShape(pptx, slide, group, index, transform));
+  for (const service of services) {
+    addNodeShape(pptx, slide, service, transform, service.iconPath ? icons.get(service.iconPath) : undefined);
+  }
+
+  const connectorColor = isDarkMode ? '94A3B8' : '64748B';
+  for (const route of routes) addConnector(pptx, slide, route, transform, connectorColor);
+  // Labels are drawn after every connector so a chip is never hidden by a line
+  // that is rendered later.
+  const labelFontSize = clamp(Math.round(transform.scale * 850), 7, 10);
+  for (const route of routes) addConnectorLabel(slide, route, transform, labelFontSize);
+
+  return true;
+}
+
+/**
+ * Build the single-slide presentation in memory.
+ *
+ * Exposed separately from the download helper so tests (and future callers such
+ * as server-side rendering) can inspect the generated package.
+ */
+export async function buildDiagramSlidePptx(
   imageDataUrl: string,
   options: PptxExportOptions,
-): Promise<string> {
+): Promise<PptxGenJS> {
   const { diagramName, author, date, isDarkMode } = options;
   const t = isDarkMode ? DARK_THEME : LIGHT_THEME;
 
-  const pptx = new PptxGenJS();
+  const pptx = new PptxCtor();
   pptx.layout = 'LAYOUT_WIDE';
   pptx.author = author;
   pptx.title = diagramName;
@@ -131,15 +445,27 @@ export async function exportDiagramAsPptx(
     line: { color: t.accent, width: 0 },
   });
 
-  // ── Diagram image ────────────────────────────────────────────────────────────
-  slide.addImage({
-    data: imageDataUrl,
-    x: IMAGE_X,
-    y: IMAGE_Y,
-    w: IMAGE_W,
-    h: IMAGE_H,
-    sizing: { type: 'contain', w: IMAGE_W, h: IMAGE_H },
-  });
+  // ── Diagram body — native shapes when available, captured PNG otherwise ─────
+  const renderedNatively = options.diagram
+    ? await addEditableDiagram(
+      pptx,
+      slide,
+      options.diagram,
+      { x: IMAGE_X, y: IMAGE_Y, w: IMAGE_W, h: IMAGE_H },
+      isDarkMode,
+    )
+    : false;
+
+  if (!renderedNatively) {
+    slide.addImage({
+      data: imageDataUrl,
+      x: IMAGE_X,
+      y: IMAGE_Y,
+      w: IMAGE_W,
+      h: IMAGE_H,
+      sizing: { type: 'contain', w: IMAGE_W, h: IMAGE_H },
+    });
+  }
 
   // ── Footer text ──────────────────────────────────────────────────────────────
   slide.addText('Generated by Azure Architecture Diagram Builder  ·  microsoft.com/azure', {
@@ -150,6 +476,22 @@ export async function exportDiagramAsPptx(
     valign: 'middle',
   });
 
+  return pptx;
+}
+
+/**
+ * Build and download a single-slide PPTX for the diagram.
+ *
+ * The diagram is drawn with native PowerPoint shapes whenever canvas contents
+ * are supplied, so the recipient can move, restyle, and relabel every service
+ * directly in PowerPoint. `imageDataUrl` is the fallback for empty canvases.
+ * Returns the generated filename.
+ */
+export async function exportDiagramAsPptx(
+  imageDataUrl: string,
+  options: PptxExportOptions,
+): Promise<string> {
+  const pptx = await buildDiagramSlidePptx(imageDataUrl, options);
   const fileName = generateModelFilename('azure-diagram-slide', 'pptx');
   await pptx.writeFile({ fileName });
   return fileName;
@@ -289,11 +631,22 @@ function addTitleSlide(pptx: PptxGenJS, t: SlideTheme, o: ArchitectureDeckOption
   }
 }
 
-/** Slide 2 — the diagram image. */
-function addDiagramSlide(pptx: PptxGenJS, t: SlideTheme, imageDataUrl: string, o: ArchitectureDeckOptions): void {
+/** Slide 2 — the diagram, drawn with native (editable) PowerPoint shapes. */
+async function addDiagramSlide(pptx: PptxGenJS, t: SlideTheme, imageDataUrl: string, o: ArchitectureDeckOptions): Promise<void> {
   const slide = pptx.addSlide();
   addChrome(pptx, slide, t, o.diagramName, `${o.author}  ·  ${o.date}`);
-  slide.addImage({ data: imageDataUrl, x: IMAGE_X, y: IMAGE_Y, w: IMAGE_W, h: IMAGE_H, sizing: { type: 'contain', w: IMAGE_W, h: IMAGE_H } });
+  const renderedNatively = o.diagram
+    ? await addEditableDiagram(
+      pptx,
+      slide,
+      o.diagram,
+      { x: IMAGE_X, y: IMAGE_Y, w: IMAGE_W, h: IMAGE_H },
+      o.isDarkMode,
+    )
+    : false;
+  if (!renderedNatively) {
+    slide.addImage({ data: imageDataUrl, x: IMAGE_X, y: IMAGE_Y, w: IMAGE_W, h: IMAGE_H, sizing: { type: 'contain', w: IMAGE_W, h: IMAGE_H } });
+  }
 }
 
 /** Slide 3 — service inventory. */
@@ -527,7 +880,7 @@ export async function exportArchitectureDeck(
 ): Promise<string> {
   const t = options.isDarkMode ? DARK_THEME : LIGHT_THEME;
 
-  const pptx = new PptxGenJS();
+  const pptx = new PptxCtor();
   pptx.layout = 'LAYOUT_WIDE';
   pptx.author = options.author;
   pptx.title = options.diagramName;
@@ -535,7 +888,7 @@ export async function exportArchitectureDeck(
   pptx.company = 'Microsoft Azure';
 
   addTitleSlide(pptx, t, options);
-  addDiagramSlide(pptx, t, imageDataUrl, options);
+  await addDiagramSlide(pptx, t, imageDataUrl, options);
   addServicesSlide(pptx, t, options);
   addValidationSummarySlide(pptx, t, options);
   addValidationFindingsSlide(pptx, t, options);

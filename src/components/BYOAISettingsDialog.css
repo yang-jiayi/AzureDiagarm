@@ -10,7 +10,7 @@
 
 .byo-ai-dialog {
   width: min(800px, 100%);
-  max-height: min(900px, calc(100vh - (2 * var(--azd-space-4))));
+  max-height: min(900px, calc(100dvh - (2 * var(--azd-space-4))));
   overflow: auto;
   border: 1px solid var(--azd-color-border-strong);
   border-radius: var(--azd-radius-xl);
@@ -436,41 +436,8 @@
 }
 
 .byo-ai-status {
-  display: flex;
   align-items: center;
-  gap: var(--azd-space-2);
-  padding: var(--azd-space-3);
-  border-radius: var(--azd-radius-md);
-  font-size: 0.82rem;
   font-weight: 700;
-}
-
-.byo-ai-status--success {
-  border: 1px solid color-mix(in srgb, var(--azd-color-success) 45%, transparent);
-  background: var(--azd-color-success-soft);
-  color: var(--azd-color-success);
-}
-
-.byo-ai-status--error {
-  border: 1px solid color-mix(in srgb, var(--azd-color-danger) 45%, transparent);
-  background: var(--azd-color-danger-soft);
-  color: var(--azd-color-danger);
-}
-
-.byo-ai-status--warning {
-  border: 1px solid color-mix(in srgb, var(--azd-color-warning) 45%, transparent);
-  background: var(--azd-color-warning-soft);
-  color: color-mix(
-    in srgb,
-    var(--azd-color-warning) 58%,
-    var(--azd-color-text-strong)
-  );
-}
-
-.byo-ai-status--info {
-  border: 1px solid color-mix(in srgb, var(--azd-color-info) 40%, transparent);
-  background: var(--azd-color-info-soft);
-  color: var(--azd-color-info);
 }
 
 .byo-ai-dialog-footer {
@@ -478,13 +445,6 @@
   bottom: 0;
   border-top: 1px solid var(--azd-color-border-subtle);
   background: var(--azd-color-surface-elevated);
-}
-
-.byo-ai-dialog-footer .btn {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--azd-space-2);
-  justify-content: center;
 }
 
 .byo-ai-dialog-footer-spacer {
@@ -502,7 +462,7 @@
   }
 
   .byo-ai-dialog {
-    max-height: calc(100vh - (2 * var(--azd-space-2)));
+    max-height: calc(100dvh - (2 * var(--azd-space-2)));
     border-radius: var(--azd-radius-xl) var(--azd-radius-xl) var(--azd-radius-md) var(--azd-radius-md);
   }
 
@@ -534,7 +494,7 @@
     display: none;
   }
 
-  .byo-ai-dialog-footer .btn {
+  .byo-ai-dialog-footer .azd-button {
     flex: 1 1 140px;
   }
 }

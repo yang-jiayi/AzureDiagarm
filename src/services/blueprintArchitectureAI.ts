@@ -17,6 +17,7 @@
  */
 
 import { callAzureOpenAI, ModelOverride, AIMetrics } from './azureOpenAI';
+import { runWithCompactRetry } from './aiRetry';
 import { getServiceIconMapping } from '../data/serviceIconMapping';
 import type { ComponentManifest } from './componentManifestAI';
 import { renderManifestForPrompt } from './componentManifestAI';
@@ -143,14 +144,19 @@ EXAMPLE — Async batch processing with Azure Functions + Service Bus + Cosmos D
 // Generation
 // ──────────────────────────────────────────────────────────────────────────────
 
-export async function generateBlueprintArchitectureWithAI(
-  description: string,
-  modelOverride?: ModelOverride,
-  manifest?: ComponentManifest,
-  language: Language = 'en',
-): Promise<BlueprintArchitecture> {
-  const manifestBlock = manifest ? '\n\n' + renderManifestForPrompt(manifest) : '';
-  const systemPrompt = `You are an expert Azure cloud architect who creates whiteboard-style BLUEPRINT architecture diagrams — the kind a senior architect sketches on a whiteboard when explaining a system end-to-end.${manifestBlock}
+/**
+ * Blueprint system prompt.
+ *
+ * `compact` drops the (token-heavy) few-shot exemplar and asks for a leaner
+ * diagram. It is used only for the automatic retry after a transient timeout,
+ * where finishing inside the proxy budget matters more than maximum density.
+ */
+function buildBlueprintSystemPrompt(
+  manifestBlock: string,
+  language: Language,
+  compact: boolean,
+): string {
+  return `You are an expert Azure cloud architect who creates whiteboard-style BLUEPRINT architecture diagrams — the kind a senior architect sketches on a whiteboard when explaining a system end-to-end.${manifestBlock}
 
 Blueprint diagrams are NOT swim lanes. They use free positioning: services live inside nested "zones" (Azure subscription, VNet, on-prem network, resource groups), and flow is shown with numbered arrows carrying short labels ("POST /batch", "Trigger worker", "Persist result").
 
@@ -235,29 +241,71 @@ Content rules:
 13. Personas (users, operators) use kind: "persona" and category: "general".
 14. Network gateways (Site-to-Site VPN, ExpressRoute, Front Door) use kind: "cloud".
 
-Here is one high-quality blueprint to imitate in structure, density, and layout:
-
-${FEW_SHOT_EXAMPLE}
+${compact
+    ? 'SPEED MODE — a previous attempt timed out. Keep the blueprint lean: 6–12 nodes, 3–4 zones, 4–10 edges. Prioritise a correct, readable main flow over exhaustive coverage, and emit the JSON directly without lengthy deliberation.'
+    : `Here is one high-quality blueprint to imitate in structure, density, and layout:\n\n${FEW_SHOT_EXAMPLE}`}
 
 Now generate a blueprint architecture for the user's request. Return JSON only.`;
+}
 
-  const messages = [
-    { role: 'system', content: systemPrompt },
-    { role: 'user', content: description },
-  ];
-
-  const { content, metrics } = await callAzureOpenAI(messages, modelOverride, true);
-  console.log(
-    `📐 Blueprint Architecture Response [${metrics.model || 'AI'}]: ${content.length} chars`,
-  );
-
-  let bp: BlueprintArchitecture;
-  try {
-    bp = JSON.parse(content);
-  } catch (e: any) {
-    console.error('Failed to parse blueprint architecture JSON:', content);
-    throw new Error(`Invalid JSON in blueprint architecture response: ${e.message}`);
+/** Thrown when the model responded but the payload was unusable (truncated / non-JSON). */
+class BlueprintResponseError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'BlueprintResponseError';
   }
+}
+
+export async function generateBlueprintArchitectureWithAI(
+  description: string,
+  modelOverride?: ModelOverride,
+  manifest?: ComponentManifest,
+  language: Language = 'en',
+): Promise<BlueprintArchitecture> {
+  const manifestBlock = manifest ? '\n\n' + renderManifestForPrompt(manifest) : '';
+
+  const attempt = async (
+    compact: boolean,
+    override?: ModelOverride,
+  ): Promise<{ bp: BlueprintArchitecture; metrics: AIMetrics }> => {
+    const messages = [
+      { role: 'system', content: buildBlueprintSystemPrompt(manifestBlock, language, compact) },
+      { role: 'user', content: description },
+    ];
+
+    const { content, metrics } = await callAzureOpenAI(messages, override, true);
+    console.log(
+      `📐 Blueprint Architecture Response [${metrics.model || 'AI'}]: ${content.length} chars`,
+    );
+
+    let parsed: BlueprintArchitecture;
+    try {
+      parsed = JSON.parse(content);
+    } catch (e: any) {
+      console.error('Failed to parse blueprint architecture JSON:', content);
+      throw new BlueprintResponseError(
+        `Invalid JSON in blueprint architecture response: ${e.message}`,
+      );
+    }
+    if (!Array.isArray(parsed?.nodes) || parsed.nodes.length === 0) {
+      throw new BlueprintResponseError('Blueprint architecture missing required "nodes" array.');
+    }
+    return { bp: parsed, metrics };
+  };
+
+  // A single automatic retry covers the dominant failure mode: the editorial
+  // prompt exceeds the proxy's upstream budget and the user sees "The AI
+  // provider is taking too long to respond." The retry runs a compact prompt at
+  // reduced reasoning effort, which finishes well inside the budget.
+  const { bp, metrics } = await runWithCompactRetry({
+    // `callAzureOpenAI` resolves the `architectureGeneration` model, so the
+    // retry must fall back to that same feature rather than the blueprint one.
+    transportFeature: 'architectureGeneration',
+    override: modelOverride,
+    label: 'Blueprint generation',
+    isRetryable: (error) => error instanceof BlueprintResponseError,
+    attempt,
+  });
 
   if (!bp.canvas || typeof bp.canvas.width !== 'number') {
     bp.canvas = { width: 1600, height: 1000 };

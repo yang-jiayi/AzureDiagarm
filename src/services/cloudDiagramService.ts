@@ -24,12 +24,37 @@ export interface CloudDiagramOwner {
   email: string;
 }
 
+export type CloudCommentAnchorType = 'canvas' | 'node' | 'edge';
+
+export interface CloudCommentAnchor {
+  type: CloudCommentAnchorType;
+  targetId?: string;
+  label?: string;
+}
+
 export interface CloudDiagramComment {
   commentId: string;
   message: string;
   authorEmail: string;
   authorId?: string;
   createdAt: string;
+  anchor?: CloudCommentAnchor;
+  resolved?: boolean;
+  resolvedAt?: string;
+  resolvedByEmail?: string;
+}
+
+export type CloudReviewStatus = 'draft' | 'in_review' | 'changes_requested' | 'approved';
+export type CloudReviewAction = 'request' | 'cancel' | 'approve' | 'request_changes';
+
+export interface CloudDiagramReview {
+  status: CloudReviewStatus;
+  requestedAt?: string;
+  requestedByEmail?: string;
+  decidedAt?: string;
+  decidedByEmail?: string;
+  decisionNote?: string;
+  updatedAt?: string;
 }
 
 export interface CloudDiagramShare {
@@ -48,6 +73,7 @@ export interface CloudDiagramDocument {
   updatedAt: string;
   revision: number;
   comments: CloudDiagramComment[];
+  review?: CloudDiagramReview;
   shares?: CloudDiagramShare[];
   access: CloudDiagramAccess;
   role: CloudDiagramRole;
@@ -63,6 +89,8 @@ export interface CloudDiagramSummary {
   serviceCount: number;
   connectionCount: number;
   commentCount: number;
+  openCommentCount?: number;
+  reviewStatus?: CloudReviewStatus;
   shareCount: number;
   access: CloudDiagramAccess;
   role: CloudDiagramRole;
@@ -446,13 +474,47 @@ export async function getCloudVersion(
 export async function addCloudComment(
   context: CloudDocumentContext,
   message: string,
+  anchor?: CloudCommentAnchor,
 ): Promise<CloudDiagramDocument> {
   const path = context.access === 'shared' && context.shareToken
     ? `${sharedPath(context.shareToken)}/comments`
     : `${documentPath(context.documentId)}/comments`;
   const { response, body } = await request(path, {
     method: 'POST',
-    body: JSON.stringify({ message }),
+    body: JSON.stringify({ message, anchor }),
+  });
+  return withEtag<CloudDiagramDocument>(body, response);
+}
+
+export async function setCloudCommentResolved(
+  context: CloudDocumentContext,
+  commentId: string,
+  resolved: boolean,
+): Promise<CloudDiagramDocument> {
+  const basePath = context.access === 'shared' && context.shareToken
+    ? sharedPath(context.shareToken)
+    : documentPath(context.documentId);
+  const { response, body } = await request(
+    `${basePath}/comments/${encodeURIComponent(commentId)}`,
+    {
+      method: 'PATCH',
+      body: JSON.stringify({ resolved }),
+    },
+  );
+  return withEtag<CloudDiagramDocument>(body, response);
+}
+
+export async function updateCloudReview(
+  context: CloudDocumentContext,
+  action: CloudReviewAction,
+  note?: string,
+): Promise<CloudDiagramDocument> {
+  const basePath = context.access === 'shared' && context.shareToken
+    ? sharedPath(context.shareToken)
+    : documentPath(context.documentId);
+  const { response, body } = await request(`${basePath}/review`, {
+    method: 'PATCH',
+    body: JSON.stringify({ action, note }),
   });
   return withEtag<CloudDiagramDocument>(body, response);
 }

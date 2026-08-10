@@ -3,6 +3,8 @@
 
 import {
   Check,
+  ChevronDown,
+  ChevronUp,
   CircleDollarSign,
   Loader2,
   Rocket,
@@ -22,6 +24,8 @@ import './WorkflowStepper.css';
 
 interface WorkflowStepperProps extends WorkflowProgress {
   monthlyCostLabel: string;
+  collapsed?: boolean;
+  onToggleCollapsed?: () => void;
   onGenerate: () => void;
   onValidate: () => void;
   onReviewCost: () => void;
@@ -36,6 +40,8 @@ export default function WorkflowStepper({
   isValidating,
   isGeneratingGuide,
   monthlyCostLabel,
+  collapsed = false,
+  onToggleCollapsed,
   onGenerate,
   onValidate,
   onReviewCost,
@@ -123,6 +129,41 @@ export default function WorkflowStepper({
       disabled: statuses.deploy === 'pending' || statuses.deploy === 'busy',
     },
   ];
+  const activeStep = steps.find(step => (
+    statuses[step.id] === 'current' || statuses[step.id] === 'busy'
+  )) || steps.find(step => statuses[step.id] !== 'complete') || steps[steps.length - 1];
+  const activeStatus = statuses[activeStep.id];
+
+  if (collapsed) {
+    return (
+      <nav
+        className="workflow-stepper workflow-stepper--collapsed"
+        aria-label={localize(language, {
+          en: 'Architecture delivery workflow',
+          ja: 'アーキテクチャ提供ワークフロー',
+        })}
+      >
+        <button
+          type="button"
+          className="workflow-stepper-summary"
+          onClick={onToggleCollapsed}
+          aria-expanded="false"
+        >
+          <span className={`workflow-stepper-index is-${activeStatus}`} aria-hidden="true">
+            {activeStatus === 'busy'
+              ? <Loader2 size={15} className="workflow-stepper-spinner" />
+              : steps.findIndex(step => step.id === activeStep.id) + 1}
+          </span>
+          <span className="workflow-stepper-summary-copy">
+            <small>{localize(language, { en: 'Next step', ja: '次のステップ' })}</small>
+            <strong>{activeStep.label}</strong>
+          </span>
+          <span className="workflow-stepper-summary-detail">{activeStep.detail}</span>
+          <ChevronDown size={18} aria-hidden="true" />
+        </button>
+      </nav>
+    );
+  }
 
   return (
     <nav
@@ -132,6 +173,17 @@ export default function WorkflowStepper({
         ja: 'アーキテクチャ提供ワークフロー',
       })}
     >
+      {onToggleCollapsed && (
+        <button
+          type="button"
+          className="workflow-stepper-collapse"
+          onClick={onToggleCollapsed}
+          aria-expanded="true"
+        >
+          <ChevronUp size={16} aria-hidden="true" />
+          {localize(language, { en: 'Collapse workflow', ja: 'ワークフローを縮小' })}
+        </button>
+      )}
       <ol>
         {steps.map((step, index) => {
           const status = statuses[step.id];

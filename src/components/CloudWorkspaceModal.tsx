@@ -5,23 +5,32 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   AlertTriangle,
   Check,
+  CheckCircle2,
   Clock,
   Cloud,
   Copy,
+  Download,
   Edit3,
   Eye,
   FolderOpen,
   Link2,
   Loader,
+  MapPin,
   MessageSquare,
   Plus,
   RefreshCw,
+  RotateCcw,
+  Send,
+  ThumbsUp,
   Trash2,
   X,
 } from 'lucide-react';
 import {
+  CloudCommentAnchor,
   CloudDiagramApiError,
   CloudDiagramDocument,
+  CloudDiagramReview,
+  CloudReviewAction,
   CloudDiagramShare,
   CloudDiagramSummary,
   CloudDiagramVersion,
@@ -38,6 +47,8 @@ import {
   listCloudShares,
   listCloudVersions,
   revokeCloudShare,
+  setCloudCommentResolved,
+  updateCloudReview,
 } from '../services/cloudDiagramService';
 import type { CloudSyncStatus } from '../hooks/useCloudDiagramSync';
 import { useMediaQuery } from '../hooks/useMediaQuery';
@@ -45,6 +56,8 @@ import { useLanguage } from '../i18n/LanguageContext';
 import { localize } from '../i18n/localization';
 import { OperationGeneration } from '../utils/operationGeneration';
 import { MEDIA_QUERIES } from '../styles/breakpoints';
+import { buildCloudReviewReport } from '../utils/cloudReviewReport';
+import { toFileNameSegment } from '../utils/fileName';
 import ResponsiveDrawer from './ResponsiveDrawer';
 import './CloudWorkspaceModal.css';
 
@@ -85,6 +98,8 @@ interface CloudWorkspaceModalProps {
     document: CloudDiagramDocument,
     versions: CloudDiagramVersion[],
   ) => Promise<boolean>;
+  currentUserEmail?: string;
+  onLocateReviewAnchor: (anchor: CloudCommentAnchor) => void;
 }
 
 function ownerContext(documentId: string): CloudDocumentContext {
@@ -117,6 +132,8 @@ const CloudWorkspaceModal: React.FC<CloudWorkspaceModalProps> = ({
   onDiscardPendingSave,
   onCreateNew,
   onBeforeShare,
+  currentUserEmail,
+  onLocateReviewAnchor,
 }) => {
   const { language, t } = useLanguage();
   const text = useCallback(
@@ -132,6 +149,9 @@ const CloudWorkspaceModal: React.FC<CloudWorkspaceModalProps> = ({
   const [operation, setOperation] = useState('');
   const [error, setError] = useState('');
   const [comment, setComment] = useState('');
+  const [commentAnchorKey, setCommentAnchorKey] = useState('canvas');
+  const [showResolvedComments, setShowResolvedComments] = useState(false);
+  const [reviewNote, setReviewNote] = useState('');
   const [shareRole, setShareRole] = useState<'viewer' | 'editor'>('viewer');
   const [newShareUrl, setNewShareUrl] = useState('');
   const newShareDocumentIdRef = useRef<string | null>(null);
@@ -244,6 +264,58 @@ const CloudWorkspaceModal: React.FC<CloudWorkspaceModalProps> = ({
     return ownerContext(selectedDocument.id);
   }, [currentContext, currentDocument?.id, selectedDocument]);
 
+  const selectedReview: CloudDiagramReview = selectedDocument?.review || { status: 'draft' };
+  const commentAnchors = useMemo(() => {
+    if (!selectedDocument) return [{ key: 'canvas', anchor: { type: 'canvas' as const }, label: text('Whole canvas', 'キャンバス全体') }];
+    const nodeLabels = new Map<string, string>();
+    const nodeAnchors = selectedDocument.payload.nodes
+      .filter(node => node && typeof node.id === 'string')
+      .map(node => {
+        const label = String(node.data?.label || node.data?.serviceName || node.id);
+        nodeLabels.set(node.id, label);
+        return {
+          key: `node\u0000${node.id}`,
+          anchor: { type: 'node' as const, targetId: node.id, label },
+          label,
+        };
+      });
+    const edgeAnchors = selectedDocument.payload.edges
+      .filter(edge => edge && typeof edge.id === 'string')
+      .map(edge => {
+        const source = nodeLabels.get(edge.source) || edge.source;
+        const target = nodeLabels.get(edge.target) || edge.target;
+        const label = String(edge.label || edge.data?.label || `${source} → ${target}`);
+        return {
+          key: `edge\u0000${edge.id}`,
+          anchor: { type: 'edge' as const, targetId: edge.id, label },
+          label,
+        };
+      });
+    return [
+      { key: 'canvas', anchor: { type: 'canvas' as const }, label: text('Whole canvas', 'キャンバス全体') },
+      ...nodeAnchors,
+      ...edgeAnchors,
+    ];
+  }, [selectedDocument, text]);
+
+  const applyUpdatedMetadataDocument = useCallback((updated: CloudDiagramDocument) => {
+    onDocumentUpdated(updated);
+    if (!isOpenRef.current || selectedDocumentIdRef.current !== updated.id) return;
+    setDocuments(items => items.map(item => (
+      item.id === updated.id
+        ? {
+            ...item,
+            updatedAt: updated.updatedAt,
+            revision: updated.revision,
+            commentCount: updated.comments.length,
+            openCommentCount: updated.comments.filter(item => !item.resolved).length,
+            reviewStatus: updated.review?.status || 'draft',
+          }
+        : item
+    )));
+    selectDocument(updated);
+  }, [onDocumentUpdated, selectDocument]);
+
   const statusText = useMemo(() => {
     switch (syncStatus) {
       case 'saving':
@@ -296,6 +368,9 @@ const CloudWorkspaceModal: React.FC<CloudWorkspaceModalProps> = ({
     setVersions([]);
     setShares([]);
     setComment('');
+    setCommentAnchorKey('canvas');
+    setShowResolvedComments(false);
+    setReviewNote('');
     if (newShareDocumentIdRef.current !== document.id) {
       newShareDocumentIdRef.current = null;
       setNewShareUrl('');
@@ -348,6 +423,8 @@ const CloudWorkspaceModal: React.FC<CloudWorkspaceModalProps> = ({
           serviceCount: document.payload.nodes.length,
           connectionCount: document.payload.edges.length,
           commentCount: document.comments.length,
+          openCommentCount: document.comments.filter(item => !item.resolved).length,
+          reviewStatus: document.review?.status || 'draft',
           shareCount: document.shares?.length || 0,
           access: context?.access || document.access,
           role: context?.role || document.role,
@@ -600,6 +677,7 @@ const CloudWorkspaceModal: React.FC<CloudWorkspaceModalProps> = ({
   const handleAddComment = async () => {
     const message = comment.trim();
     if (!selectedDocument || !selectedContext || !message) return;
+    const anchor = commentAnchors.find(item => item.key === commentAnchorKey)?.anchor;
     const targetDocument = selectedDocument;
     const targetContext = selectedContext;
     const generation = beginOperation('comment');
@@ -609,24 +687,11 @@ const CloudWorkspaceModal: React.FC<CloudWorkspaceModalProps> = ({
       if (!isCurrentOperation(generation, targetDocument.id)) return;
       if (await handleReplacementDocument(savedDocument, targetDocument.id, generation)) return;
       if (savedDocument) conflictBaseline = savedDocument;
-      const updated = await addCloudComment(targetContext, message);
-      onDocumentUpdated(updated);
-      if (!isCurrentOperation(generation, targetDocument.id)) return;
-      if (isOpenRef.current) {
-        setDocuments((items) => items.map((item) => (
-          item.id === updated.id
-            ? {
-                ...item,
-                updatedAt: updated.updatedAt,
-                revision: updated.revision,
-                commentCount: updated.comments.length,
-              }
-            : item
-        )));
-      }
+      const updated = await addCloudComment(targetContext, message, anchor);
+      applyUpdatedMetadataDocument(updated);
       if (isCurrentOperation(generation, targetDocument.id)) {
-        selectDocument(updated);
         setComment('');
+        setCommentAnchorKey('canvas');
       }
     } catch (commentError) {
       reportCurrentConflict(commentError, conflictBaseline);
@@ -639,6 +704,80 @@ const CloudWorkspaceModal: React.FC<CloudWorkspaceModalProps> = ({
     } finally {
       if (isCurrentOperation(generation)) setOperation('');
     }
+  };
+
+  const handleCommentResolution = async (commentId: string, resolved: boolean) => {
+    if (!selectedDocument || !selectedContext) return;
+    const targetDocument = selectedDocument;
+    const targetContext = selectedContext;
+    const generation = beginOperation(`comment-resolution:${commentId}`);
+    let conflictBaseline = targetDocument;
+    try {
+      const savedDocument = await saveCurrentBeforeMetadata(targetDocument.id);
+      if (!isCurrentOperation(generation, targetDocument.id)) return;
+      if (await handleReplacementDocument(savedDocument, targetDocument.id, generation)) return;
+      if (savedDocument) conflictBaseline = savedDocument;
+      const updated = await setCloudCommentResolved(targetContext, commentId, resolved);
+      applyUpdatedMetadataDocument(updated);
+    } catch (resolutionError) {
+      reportCurrentConflict(resolutionError, conflictBaseline);
+      if (isCurrentOperation(generation, targetDocument.id)) {
+        setError(resolutionError instanceof Error ? resolutionError.message : text(
+          'Failed to update the comment.',
+          'コメントの状態を更新できませんでした。',
+        ));
+      }
+    } finally {
+      if (isCurrentOperation(generation)) setOperation('');
+    }
+  };
+
+  const handleReviewAction = async (action: CloudReviewAction) => {
+    if (!selectedDocument || !selectedContext) return;
+    const targetDocument = selectedDocument;
+    const targetContext = selectedContext;
+    const generation = beginOperation(`review:${action}`);
+    let conflictBaseline = targetDocument;
+    try {
+      const savedDocument = await saveCurrentBeforeMetadata(targetDocument.id);
+      if (!isCurrentOperation(generation, targetDocument.id)) return;
+      if (await handleReplacementDocument(savedDocument, targetDocument.id, generation)) return;
+      if (savedDocument) conflictBaseline = savedDocument;
+      const updated = await updateCloudReview(targetContext, action, reviewNote.trim());
+      applyUpdatedMetadataDocument(updated);
+      if (isCurrentOperation(generation, targetDocument.id)) setReviewNote('');
+    } catch (reviewError) {
+      reportCurrentConflict(reviewError, conflictBaseline);
+      if (isCurrentOperation(generation, targetDocument.id)) {
+        setError(reviewError instanceof Error ? reviewError.message : text(
+          'Failed to update the review.',
+          'レビュー状態を更新できませんでした。',
+        ));
+      }
+    } finally {
+      if (isCurrentOperation(generation)) setOperation('');
+    }
+  };
+
+  const downloadReviewReport = () => {
+    if (!selectedDocument) return;
+    const report = buildCloudReviewReport(selectedDocument, language);
+    const blob = new Blob([report], { type: 'text/markdown;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `${toFileNameSegment(selectedDocument.diagramName) || 'diagram'}-review.md`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const locateCommentAnchor = (anchor: CloudCommentAnchor) => {
+    if (!selectedDocument || !selectedContext) return;
+    if (currentDocument?.id !== selectedDocument.id) {
+      onOpenDocument(selectedDocument, selectedContext);
+    }
+    closeModal();
+    window.setTimeout(() => onLocateReviewAnchor(anchor), 80);
   };
 
   const handleCreateShare = async () => {
@@ -978,6 +1117,18 @@ const CloudWorkspaceModal: React.FC<CloudWorkspaceModalProps> = ({
     }
   };
 
+  const reviewStatusLabel = {
+    draft: text('Draft', '下書き'),
+    in_review: text('In review', 'レビュー中'),
+    changes_requested: text('Changes requested', '変更依頼'),
+    approved: text('Approved', '承認済み'),
+  }[selectedReview.status];
+  const visibleComments = selectedDocument?.comments.filter(
+    item => showResolvedComments || !item.resolved,
+  ) || [];
+  const openCommentCount = selectedDocument?.comments.filter(item => !item.resolved).length || 0;
+  const normalizedCurrentUserEmail = currentUserEmail?.trim().toLowerCase() || '';
+
   return (
     <ResponsiveDrawer
         isOpen={isOpen}
@@ -1030,7 +1181,11 @@ const CloudWorkspaceModal: React.FC<CloudWorkspaceModalProps> = ({
           )}
         </div>
 
-        {error && <div className="cloud-workspace-error" role="alert">{error}</div>}
+        {error && (
+          <div className="cloud-workspace-error azd-callout azd-callout--danger" role="alert">
+            {error}
+          </div>
+        )}
 
         <div className="cloud-workspace-body">
           <aside className="cloud-document-sidebar">
@@ -1190,39 +1345,228 @@ const CloudWorkspaceModal: React.FC<CloudWorkspaceModalProps> = ({
                       )}
                     </section>
 
-                    <section className="cloud-detail-card">
+                    <section className="cloud-detail-card cloud-review-card">
+                      <div className="cloud-card-title">
+                        <CheckCircle2 size={18} />
+                        <h4>{text('Review and approval', 'レビューと承認')}</h4>
+                        <span className={`cloud-review-status ${selectedReview.status}`}>
+                          {reviewStatusLabel}
+                        </span>
+                      </div>
+                      <div className="cloud-review-summary">
+                        <div>
+                          <strong>{text(
+                            `${openCommentCount} open review comment${openCommentCount === 1 ? '' : 's'}`,
+                            `未解決のレビューコメント ${openCommentCount} 件`,
+                          )}</strong>
+                          <p>{text(
+                            'Approval applies to the current cloud revision and returns to Draft when approved content changes.',
+                            '承認は現在のクラウド版に適用され、承認後に内容が変わると下書きへ戻ります。',
+                          )}</p>
+                        </div>
+                        {(selectedReview.requestedAt || selectedReview.decidedAt) && (
+                          <dl>
+                            {selectedReview.requestedAt && (
+                              <>
+                                <dt>{text('Requested', '依頼')}</dt>
+                                <dd>
+                                  {formatDate(selectedReview.requestedAt)}
+                                  {selectedReview.requestedByEmail
+                                    ? ` · ${selectedReview.requestedByEmail}`
+                                    : ''}
+                                </dd>
+                              </>
+                            )}
+                            {selectedReview.decidedAt && (
+                              <>
+                                <dt>{text('Decision', '判定')}</dt>
+                                <dd>
+                                  {formatDate(selectedReview.decidedAt)}
+                                  {selectedReview.decidedByEmail
+                                    ? ` · ${selectedReview.decidedByEmail}`
+                                    : ''}
+                                </dd>
+                              </>
+                            )}
+                          </dl>
+                        )}
+                        {selectedReview.decisionNote && (
+                          <blockquote>{selectedReview.decisionNote}</blockquote>
+                        )}
+                      </div>
+
+                      {selectedContext?.access === 'shared'
+                        && selectedReview.status === 'in_review' && (
+                          <label className="cloud-review-note">
+                            <span>{text('Decision note (optional)', '判定メモ（任意）')}</span>
+                            <textarea
+                              value={reviewNote}
+                              onChange={event => setReviewNote(event.target.value)}
+                              maxLength={1000}
+                              rows={2}
+                              placeholder={text(
+                                'Summarize approval evidence or required changes...',
+                                '承認根拠または必要な変更を要約...',
+                              )}
+                            />
+                          </label>
+                        )}
+
+                      <div className="cloud-review-actions">
+                        {selectedContext?.access === 'owner' && (
+                          selectedReview.status === 'in_review' ? (
+                            <button
+                              type="button"
+                              className="cloud-review-secondary"
+                              onClick={() => void handleReviewAction('cancel')}
+                              disabled={Boolean(operation)}
+                            >
+                              <RotateCcw size={15} />
+                              {text('Cancel review', 'レビューを取り消す')}
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              className="cloud-review-primary"
+                              onClick={() => void handleReviewAction('request')}
+                              disabled={Boolean(operation)}
+                            >
+                              <Send size={15} />
+                              {selectedReview.status === 'changes_requested'
+                                ? text('Request review again', '再レビューを依頼')
+                                : text('Request review', 'レビューを依頼')}
+                            </button>
+                          )
+                        )}
+                        {selectedContext?.access === 'shared'
+                          && selectedReview.status === 'in_review' && (
+                            <>
+                              <button
+                                type="button"
+                                className="cloud-review-secondary danger"
+                                onClick={() => void handleReviewAction('request_changes')}
+                                disabled={Boolean(operation)}
+                              >
+                                <Edit3 size={15} />
+                                {text('Request changes', '変更を依頼')}
+                              </button>
+                              <button
+                                type="button"
+                                className="cloud-review-primary approve"
+                                onClick={() => void handleReviewAction('approve')}
+                                disabled={Boolean(operation)}
+                              >
+                                <ThumbsUp size={15} />
+                                {text('Approve revision', 'この版を承認')}
+                              </button>
+                            </>
+                          )}
+                        <button
+                          type="button"
+                          className="cloud-review-secondary report"
+                          onClick={downloadReviewReport}
+                        >
+                          <Download size={15} />
+                          {text('Download report', 'レポートをダウンロード')}
+                        </button>
+                      </div>
+                    </section>
+
+                    <section className="cloud-detail-card cloud-comments-card">
                       <div className="cloud-card-title">
                         <MessageSquare size={18} />
-                        <h4>{text('Comments', 'コメント')}</h4>
-                        <span>{selectedDocument.comments.length}</span>
+                        <h4>{text('Anchored comments', 'アンカー付きコメント')}</h4>
+                        <span>{openCommentCount}/{selectedDocument.comments.length}</span>
                       </div>
+                      {selectedDocument.comments.some(item => item.resolved) && (
+                        <button
+                          type="button"
+                          className="cloud-resolved-toggle"
+                          onClick={() => setShowResolvedComments(value => !value)}
+                        >
+                          {showResolvedComments
+                            ? text('Hide resolved comments', '解決済みを非表示')
+                            : text('Show resolved comments', '解決済みを表示')}
+                        </button>
+                      )}
                       <div className="cloud-comment-list">
-                        {selectedDocument.comments.length === 0 ? (
+                        {visibleComments.length === 0 ? (
                           <p className="cloud-card-empty">{text('No comments yet.', 'コメントはまだありません。')}</p>
-                        ) : selectedDocument.comments.map((item) => (
-                          <article key={item.commentId}>
+                        ) : visibleComments.map((item) => {
+                          const canResolve = selectedContext?.role !== 'viewer'
+                            || (
+                              normalizedCurrentUserEmail
+                              && item.authorEmail.toLowerCase() === normalizedCurrentUserEmail
+                            );
+                          return (
+                          <article key={item.commentId} className={item.resolved ? 'resolved' : ''}>
                             <header>
-                              <strong>{item.authorEmail}</strong>
-                              <time>{formatDate(item.createdAt)}</time>
+                              <div>
+                                <strong>{item.authorEmail}</strong>
+                                <time>{formatDate(item.createdAt)}</time>
+                              </div>
+                              <span className={item.resolved ? 'resolved' : 'open'}>
+                                {item.resolved ? text('Resolved', '解決済み') : text('Open', '未解決')}
+                              </span>
                             </header>
                             <p>{item.message}</p>
+                            <footer>
+                              {item.anchor && (
+                                <button
+                                  type="button"
+                                  onClick={() => locateCommentAnchor(item.anchor!)}
+                                >
+                                  <MapPin size={13} />
+                                  {item.anchor.type === 'canvas'
+                                    ? text('Whole canvas', 'キャンバス全体')
+                                    : item.anchor.label || text('Locate item', '対象を表示')}
+                                </button>
+                              )}
+                              {canResolve && (
+                                <button
+                                  type="button"
+                                  onClick={() => void handleCommentResolution(
+                                    item.commentId,
+                                    !item.resolved,
+                                  )}
+                                  disabled={Boolean(operation)}
+                                >
+                                  {item.resolved
+                                    ? text('Reopen', '再開')
+                                    : text('Resolve', '解決')}
+                                </button>
+                              )}
+                            </footer>
                           </article>
-                        ))}
+                        )})}
                       </div>
                       <div className="cloud-comment-composer">
-                        <textarea
-                          value={comment}
-                          onChange={(event) => setComment(event.target.value)}
-                          maxLength={2000}
-                          rows={2}
-                          placeholder={text('Add a review comment...', 'レビューコメントを追加...')}
-                        />
-                        <button
-                          onClick={() => void handleAddComment()}
-                          disabled={!comment.trim() || Boolean(operation)}
-                        >
-                          {text('Comment', 'コメント')}
-                        </button>
+                        <label>
+                          <span>{text('Attach to', '対象')}</span>
+                          <select
+                            value={commentAnchorKey}
+                            onChange={event => setCommentAnchorKey(event.target.value)}
+                          >
+                            {commentAnchors.map(item => (
+                              <option key={item.key} value={item.key}>{item.label}</option>
+                            ))}
+                          </select>
+                        </label>
+                        <div>
+                          <textarea
+                            value={comment}
+                            onChange={(event) => setComment(event.target.value)}
+                            maxLength={2000}
+                            rows={2}
+                            placeholder={text('Add a review comment...', 'レビューコメントを追加...')}
+                          />
+                          <button
+                            onClick={() => void handleAddComment()}
+                            disabled={!comment.trim() || Boolean(operation)}
+                          >
+                            {text('Comment', 'コメント')}
+                          </button>
+                        </div>
                       </div>
                     </section>
 

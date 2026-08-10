@@ -1,8 +1,9 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { X, Clock, ExternalLink, Trash2, Copy } from 'lucide-react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { X, Clock, ExternalLink, Trash2, Copy, GitCompare, CheckSquare, Square } from 'lucide-react';
+import type { Edge, Node } from 'reactflow';
 import { DiagramVersion, getAllVersions, deleteVersion, getVersion } from '../services/versionStorageService';
 import './VersionHistoryModal.css';
 import { useLanguage } from '../i18n/LanguageContext';
@@ -10,24 +11,149 @@ import { localize } from '../i18n/localization';
 import { useEscapeKey } from '../hooks/useEscapeKey';
 import { useModalFocus } from '../hooks/useModalFocus';
 import { OperationGeneration } from '../utils/operationGeneration';
+import {
+  compareDiagramVersions,
+  type VersionDiff,
+  type VersionDiffItem,
+} from '../utils/versionDiff';
 
 interface VersionHistoryModalProps {
   isOpen: boolean;
   onClose: () => void;
   onRestoreVersion: (version: DiagramVersion, restoreAsCopy: boolean) => void;
+  onRestoreSelection: (version: DiagramVersion, selectedKeys: string[]) => Promise<boolean>;
   currentLineageId: string;
+  currentNodes: Node[];
+  currentEdges: Edge[];
+}
+
+interface VersionDiffPreviewProps {
+  currentNodes: Node[];
+  currentEdges: Edge[];
+  targetNodes: Node[];
+  targetEdges: Edge[];
+  diff: VersionDiff;
+  ariaLabel: string;
+}
+
+function VersionDiffPreview({
+  currentNodes,
+  currentEdges,
+  targetNodes,
+  targetEdges,
+  diff,
+  ariaLabel,
+}: VersionDiffPreviewProps) {
+  const preview = useMemo(() => {
+    const diffByNodeId = new Map(
+      diff.nodes.map(item => [item.id, item.status]),
+    );
+    const diffByEdgeId = new Map(
+      diff.edges.map(item => [item.id, item.status]),
+    );
+    const currentNodeMap = new Map(currentNodes.map(node => [node.id, node]));
+    const targetNodeMap = new Map(targetNodes.map(node => [node.id, node]));
+    const nodeIds = [...new Set([...currentNodeMap.keys(), ...targetNodeMap.keys()])];
+    const nodes = nodeIds.map((id) => {
+      const status = diffByNodeId.get(id);
+      const node = status === 'removed'
+        ? currentNodeMap.get(id)
+        : targetNodeMap.get(id) || currentNodeMap.get(id);
+      return node ? { node, status } : null;
+    }).filter((entry): entry is {
+      node: Node;
+      status: VersionDiffItem['status'] | undefined;
+    } => entry !== null);
+
+    const minX = Math.min(...nodes.map(entry => entry.node.position.x), 0);
+    const minY = Math.min(...nodes.map(entry => entry.node.position.y), 0);
+    const maxX = Math.max(...nodes.map(entry => entry.node.position.x), minX + 1);
+    const maxY = Math.max(...nodes.map(entry => entry.node.position.y), minY + 1);
+    const scaleX = 430 / Math.max(1, maxX - minX + 120);
+    const scaleY = 130 / Math.max(1, maxY - minY + 80);
+    const scale = Math.min(scaleX, scaleY, 1.6);
+    const positions = new Map(nodes.map(({ node }) => [
+      node.id,
+      {
+        x: 35 + (node.position.x - minX) * scale,
+        y: 25 + (node.position.y - minY) * scale,
+      },
+    ]));
+
+    const currentEdgeMap = new Map(currentEdges.map(edge => [edge.id, edge]));
+    const targetEdgeMap = new Map(targetEdges.map(edge => [edge.id, edge]));
+    const edgeIds = [...new Set([...currentEdgeMap.keys(), ...targetEdgeMap.keys()])];
+    const edges = edgeIds.map((id) => {
+      const status = diffByEdgeId.get(id);
+      const edge = status === 'removed'
+        ? currentEdgeMap.get(id)
+        : targetEdgeMap.get(id) || currentEdgeMap.get(id);
+      return edge ? { edge, status } : null;
+    }).filter((entry): entry is {
+      edge: Edge;
+      status: VersionDiffItem['status'] | undefined;
+    } => entry !== null);
+
+    return { nodes, edges, positions };
+  }, [currentEdges, currentNodes, diff.edges, diff.nodes, targetEdges, targetNodes]);
+
+  return (
+    <svg
+      className="version-diff-preview"
+      viewBox="0 0 500 180"
+      role="img"
+      aria-label={ariaLabel}
+    >
+      {preview.edges.map(({ edge, status }) => {
+        const source = preview.positions.get(edge.source);
+        const target = preview.positions.get(edge.target);
+        if (!source || !target) return null;
+        return (
+          <line
+            key={edge.id}
+            className={`version-preview-edge version-preview-edge--${status || 'unchanged'}`}
+            x1={source.x + 34}
+            y1={source.y + 16}
+            x2={target.x + 34}
+            y2={target.y + 16}
+          />
+        );
+      })}
+      {preview.nodes.map(({ node, status }) => {
+        const position = preview.positions.get(node.id);
+        if (!position) return null;
+        const label = String(node.data?.label || node.data?.serviceName || node.id);
+        return (
+          <g
+            key={node.id}
+            className={`version-preview-node version-preview-node--${status || 'unchanged'}`}
+            transform={`translate(${position.x} ${position.y})`}
+          >
+            <rect width="68" height="32" rx="7" />
+            <text x="34" y="20" textAnchor="middle">
+              {label.length > 12 ? `${label.slice(0, 11)}…` : label}
+            </text>
+          </g>
+        );
+      })}
+    </svg>
+  );
 }
 
 const VersionHistoryModal: React.FC<VersionHistoryModalProps> = ({
   isOpen,
   onClose,
   onRestoreVersion,
+  onRestoreSelection,
   currentLineageId,
+  currentNodes,
+  currentEdges,
 }) => {
   const { t, language } = useLanguage();
   const [versions, setVersions] = useState<DiagramVersion[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [selectedVersion, setSelectedVersion] = useState<string | null>(null);
+  const [selectedDiffKeys, setSelectedDiffKeys] = useState<Set<string>>(new Set());
   const [operation, setOperation] = useState('');
   const isOpenRef = useRef(isOpen);
   const loadGenerationRef = useRef(new OperationGeneration());
@@ -40,6 +166,7 @@ const VersionHistoryModal: React.FC<VersionHistoryModalProps> = ({
     loadGenerationRef.current.advance();
     operationGenerationRef.current.advance();
     setOperation('');
+    setSelectedDiffKeys(new Set());
     onClose();
   }, [onClose]);
 
@@ -72,8 +199,66 @@ const VersionHistoryModal: React.FC<VersionHistoryModalProps> = ({
     loadGenerationRef.current.advance();
     operationGenerationRef.current.advance();
     setOperation('');
+    setSelectedDiffKeys(new Set());
     setIsLoading(false);
   }, [isOpen, loadVersions]);
+
+  const selectedVersionData = useMemo(
+    () => versions.find(version => version.versionId === selectedVersion) || null,
+    [selectedVersion, versions],
+  );
+  const selectedDiff = useMemo(() => (
+    selectedVersionData
+      ? compareDiagramVersions(
+          currentNodes,
+          currentEdges,
+          selectedVersionData.nodes as Node[],
+          selectedVersionData.edges as Edge[],
+        )
+      : null
+  ), [currentEdges, currentNodes, selectedVersionData]);
+
+  const selectVersion = (versionId: string) => {
+    setSelectedVersion(versionId);
+    setSelectedDiffKeys(new Set());
+  };
+
+  const toggleDiffKey = (key: string) => {
+    setSelectedDiffKeys(current => {
+      const next = new Set(current);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+
+  const handleSelectiveRestore = async () => {
+    if (!selectedVersionData || selectedDiffKeys.size === 0) return;
+    const confirmed = window.confirm(localize(language, {
+      en: `Apply ${selectedDiffKeys.size} selected historical change${selectedDiffKeys.size === 1 ? '' : 's'} to the current diagram? A backup snapshot will be created first.`,
+      ja: `選択した${selectedDiffKeys.size}件の過去変更を現在の図面へ適用しますか？ 先にバックアップ スナップショットを作成します。`,
+    }));
+    if (!confirmed) return;
+    const generation = operationGenerationRef.current.advance();
+    setOperation(`selective-${selectedVersionData.versionId}`);
+    try {
+      const restored = await onRestoreSelection(
+        selectedVersionData,
+        [...selectedDiffKeys],
+      );
+      if (!isCurrentOperation(generation)) return;
+      if (restored) closeModal();
+    } catch (error) {
+      if (!isCurrentOperation(generation)) return;
+      console.error('Failed to restore selected version changes:', error);
+      alert(localize(language, {
+        en: 'The selected version changes could not be restored.',
+        ja: '選択したバージョン変更を復元できませんでした。',
+      }));
+    } finally {
+      if (isCurrentOperation(generation)) setOperation('');
+    }
+  };
 
   const handleDelete = async (versionId: string, event: React.MouseEvent) => {
     event.stopPropagation();
@@ -229,6 +414,111 @@ const VersionHistoryModal: React.FC<VersionHistoryModalProps> = ({
                 {' '}{t("Versions are automatically created when you regenerate architecture with AI, or you can manually create snapshots.")}{' '}</p>
             </div>
           ) : (
+            <>
+            {selectedVersionData && selectedDiff && (
+              <section className="version-comparison" aria-label={localize(language, {
+                en: 'Visual version comparison',
+                ja: 'バージョンの視覚比較',
+              })}>
+                <div className="version-comparison-header">
+                  <div>
+                    <GitCompare size={20} aria-hidden="true" />
+                    <span>
+                      <h3>{localize(language, {
+                        en: 'Compare with current diagram',
+                        ja: '現在の図面と比較',
+                      })}</h3>
+                      <p>{selectedVersionData.diagramName}</p>
+                    </span>
+                  </div>
+                  <div className="version-diff-summary" aria-label={localize(language, {
+                    en: 'Difference summary',
+                    ja: '差分の概要',
+                  })}>
+                    <span className="added">+{selectedDiff.counts.added}</span>
+                    <span className="removed">−{selectedDiff.counts.removed}</span>
+                    <span className="changed">~{selectedDiff.counts.changed}</span>
+                  </div>
+                </div>
+
+                <VersionDiffPreview
+                  currentNodes={currentNodes}
+                  currentEdges={currentEdges}
+                  targetNodes={selectedVersionData.nodes as Node[]}
+                  targetEdges={selectedVersionData.edges as Edge[]}
+                  diff={selectedDiff}
+                  ariaLabel={localize(language, {
+                    en: 'Diagram preview showing added, removed, and changed elements',
+                    ja: '追加、削除、変更された要素を示す図面プレビュー',
+                  })}
+                />
+
+                {selectedDiff.items.length === 0 ? (
+                  <p className="version-no-differences">{localize(language, {
+                    en: 'This version has the same diagram elements as the current canvas.',
+                    ja: 'このバージョンの図面要素は現在のキャンバスと同じです。',
+                  })}</p>
+                ) : (
+                  <>
+                    <div className="version-diff-controls">
+                      <button
+                        type="button"
+                        onClick={() => setSelectedDiffKeys(new Set(selectedDiff.items.map(item => item.key)))}
+                        disabled={Boolean(operation)}
+                      >
+                        <CheckSquare size={15} />
+                        {localize(language, { en: 'Select all', ja: 'すべて選択' })}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedDiffKeys(new Set())}
+                        disabled={Boolean(operation) || selectedDiffKeys.size === 0}
+                      >
+                        <Square size={15} />
+                        {localize(language, { en: 'Clear', ja: '選択解除' })}
+                      </button>
+                      <button
+                        type="button"
+                        className="version-apply-selection"
+                        onClick={() => void handleSelectiveRestore()}
+                        disabled={Boolean(operation) || selectedDiffKeys.size === 0}
+                      >
+                        <Copy size={15} />
+                        {localize(language, {
+                          en: `Apply selected (${selectedDiffKeys.size})`,
+                          ja: `選択項目を適用 (${selectedDiffKeys.size})`,
+                        })}
+                      </button>
+                    </div>
+                    <div className="version-diff-list">
+                      {selectedDiff.items.map(item => (
+                        <label key={item.key} className={`version-diff-item version-diff-item--${item.status}`}>
+                          <input
+                            type="checkbox"
+                            checked={selectedDiffKeys.has(item.key)}
+                            onChange={() => toggleDiffKey(item.key)}
+                            disabled={Boolean(operation)}
+                          />
+                          <span className="version-diff-kind">
+                            {item.kind === 'node'
+                              ? localize(language, { en: 'Service', ja: 'サービス' })
+                              : localize(language, { en: 'Connection', ja: '接続' })}
+                          </span>
+                          <strong>{item.label}</strong>
+                          <span className="version-diff-status">
+                            {item.status === 'added'
+                              ? localize(language, { en: 'Add from version', ja: 'バージョンから追加' })
+                              : item.status === 'removed'
+                                ? localize(language, { en: 'Remove from current', ja: '現在から削除' })
+                                : localize(language, { en: 'Restore historical value', ja: '過去の値へ戻す' })}
+                          </span>
+                        </label>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </section>
+            )}
             <div className="version-list">
               {versions.map((version, index) => {
                 const currentLineage = version.lineageId === currentLineageId;
@@ -236,7 +526,7 @@ const VersionHistoryModal: React.FC<VersionHistoryModalProps> = ({
                   <div
                   key={version.versionId}
                   className={`version-item ${selectedVersion === version.versionId ? 'selected' : ''}`}
-                  onClick={() => setSelectedVersion(version.versionId)}
+                  onClick={() => selectVersion(version.versionId)}
                 >
                   <div className="version-header">
                     <div className="version-title">
@@ -333,6 +623,7 @@ const VersionHistoryModal: React.FC<VersionHistoryModalProps> = ({
                 );
               })}
             </div>
+            </>
           )}
         </div>
 

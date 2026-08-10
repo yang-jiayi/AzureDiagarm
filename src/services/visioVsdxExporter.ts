@@ -13,35 +13,56 @@
  *   [Content_Types].xml
  *   _rels/.rels
  *   docProps/core.xml, docProps/app.xml
- *   visio/document.xml            (DocumentSettings, Colors, FaceNames, StyleSheets)
+ *   visio/document.xml            (DocumentSettings, FaceNames, StyleSheets)
  *   visio/_rels/document.xml.rels (-> pages, windows)
  *   visio/windows.xml
- *   visio/pages/pages.xml         (Page + PageSheet, -> page1)
+ *   visio/pages/pages.xml         (Page + PageSheet with layers, -> page1)
  *   visio/pages/_rels/pages.xml.rels
  *   visio/pages/page1.xml         (Shapes + Connects)
  *
- * Shape model: services/groups → rectangles (Geometry section, local inch
- * coords); edges → straight 1-D connectors glued to endpoints via Connects.
- * Coordinates convert React Flow px/top-left (Y down) → Visio inches/bottom-left
- * (Y up) at 96 px/inch.
+ * Shape model
+ * -----------
+ * - Zones  → rounded, dashed 2-D rectangles with a top-left title.
+ * - Services → a Visio **group** containing the tile rectangle and the embedded
+ *   Azure icon, so dragging the service in Visio moves the icon with it.
+ * - Edges  → real **1-D connectors** (ObjType 2, Begin/End cells) that are
+ *   glued to the shapes they join through the `<Connects>` table, so rerouting
+ *   or moving a service keeps the diagram wired up. The edge label is the
+ *   connector's own text, which means it follows the line.
  *
- * Generic shapes only (no Azure master stencils yet — a follow-up).
+ * Coordinates convert React Flow px / top-left (Y down) → Visio inches /
+ * bottom-left (Y up) at 96 px per inch.
  */
 
 import JSZip from 'jszip';
 import type { Node, Edge } from 'reactflow';
-import { loadIcon } from '../utils/iconLoader';
+import { rasterizeIcons, type RasterizedIcon } from '../utils/exportIconRaster';
+import {
+  buildExportRoutes,
+  collectExportBoxes,
+  computeBounds,
+  partitionBoxes,
+  type ExportBox,
+  type ExportRoute,
+  type Point,
+} from './diagramExportGeometry';
 
 const PX_PER_INCH = 96;
-const DEFAULT_NODE_W = 150;
-const DEFAULT_NODE_H = 75;
-const PAGE_PADDING_PX = 120;
+const PAGE_PADDING_IN = 0.6;
+const MIN_PAGE_W_IN = 11;
+const MIN_PAGE_H_IN = 8.5;
+const CORNER_ROUNDING_IN = 0.08;
 
 const VISIO_NS = 'http://schemas.microsoft.com/office/visio/2012/main';
 const REL_NS = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
 
-function esc(s: string): string {
-  return (s || '')
+/** Layer indexes declared on the page sheet. */
+const LAYER_ZONES = 0;
+const LAYER_SERVICES = 1;
+const LAYER_CONNECTIONS = 2;
+
+function esc(value: string): string {
+  return (value || '')
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
@@ -49,22 +70,48 @@ function esc(s: string): string {
     .replace(/'/g, '&apos;');
 }
 
-const inches = (px: number) => +(px / PX_PER_INCH).toFixed(4);
 const f = (n: number) => +n.toFixed(4);
 
-interface Box { x: number; y: number; w: number; h: number }
+// ─── Palette (mirrors the PowerPoint / HTML exports) ─────────────────────────
 
-function nodeSize(n: Node): { w: number; h: number } {
-  const anyN = n as any;
-  const styleW = typeof anyN.style?.width === 'number' ? anyN.style.width : undefined;
-  const styleH = typeof anyN.style?.height === 'number' ? anyN.style.height : undefined;
-  if (n.type === 'groupNode') {
-    return { w: styleW ?? anyN.width ?? 400, h: styleH ?? anyN.height ?? 300 };
-  }
-  return { w: anyN.width ?? styleW ?? DEFAULT_NODE_W, h: anyN.height ?? styleH ?? DEFAULT_NODE_H };
+interface Palette { fill: string; line: string; text: string }
+
+const CATEGORY_STYLES: Record<string, Palette> = {
+  'ai + machine learning': { fill: '#E8F0FE', line: '#4285F4', text: '#1A365D' },
+  'app services': { fill: '#E8F4FD', line: '#0078D4', text: '#12395B' },
+  compute: { fill: '#E8F4FD', line: '#0078D4', text: '#12395B' },
+  databases: { fill: '#E6F4EA', line: '#0B8043', text: '#0B3B22' },
+  storage: { fill: '#E6F4EA', line: '#137333', text: '#0B3B22' },
+  networking: { fill: '#FFF3E0', line: '#E65100', text: '#5A2B00' },
+  analytics: { fill: '#F3E8FD', line: '#7B1FA2', text: '#3C1050' },
+  containers: { fill: '#E0F7FA', line: '#00838F', text: '#03363B' },
+  integration: { fill: '#FCE4EC', line: '#C62828', text: '#5A1220' },
+  identity: { fill: '#FFF8E1', line: '#F9A825', text: '#5A4300' },
+  'management + governance': { fill: '#F1F8E9', line: '#558B2F', text: '#2A4413' },
+  iot: { fill: '#E0F2F1', line: '#00695C', text: '#00352E' },
+  monitor: { fill: '#EDE7F6', line: '#5E35B1', text: '#251451' },
+  security: { fill: '#FFEBEE', line: '#C62828', text: '#5A1220' },
+  web: { fill: '#E3F2FD', line: '#1565C0', text: '#0A2E52' },
+  other: { fill: '#FFFFFF', line: '#94A3B8', text: '#1F2937' },
+};
+
+const ZONE_PALETTE: Palette[] = [
+  { fill: '#F0F6FF', line: '#0078D4', text: '#12395B' },
+  { fill: '#F0FFF4', line: '#00B294', text: '#04463A' },
+  { fill: '#FFFBEB', line: '#D97706', text: '#5A3200' },
+  { fill: '#F8F0FF', line: '#8764B8', text: '#3B2557' },
+  { fill: '#FFF1F2', line: '#D13438', text: '#5A1417' },
+  { fill: '#ECFEFF', line: '#038387', text: '#023B3D' },
+];
+
+const CONNECTOR_COLOR = '#5B6673';
+const CONNECTOR_TEXT = '#374151';
+
+function paletteForService(box: ExportBox): Palette {
+  return CATEGORY_STYLES[box.category] ?? CATEGORY_STYLES.other;
 }
 
-// ── OPC static parts ────────────────────────────────────────────────────
+// ─── OPC static parts ────────────────────────────────────────────────────────
 
 const CONTENT_TYPES = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
@@ -97,13 +144,17 @@ const PAGES_RELS = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
   <Relationship Id="rId1" Type="http://schemas.microsoft.com/visio/2010/relationships/page" Target="page1.xml"/>
 </Relationships>`;
 
-const WINDOWS_XML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Windows xmlns="${VISIO_NS}" xmlns:r="${REL_NS}" ClientWidth="1000" ClientHeight="600">
-  <Window ID="0" WindowType="Drawing" WindowState="1073741824" WindowLeft="0" WindowTop="0" WindowWidth="1000" WindowHeight="600" ContainerType="Page" Page="0" ViewScale="1" ViewCenterX="5.5" ViewCenterY="4.25"/>
+function windowsXml(pageWidthIn: number, pageHeightIn: number): string {
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Windows xmlns="${VISIO_NS}" xmlns:r="${REL_NS}" ClientWidth="1200" ClientHeight="720">
+  <Window ID="0" WindowType="Drawing" WindowState="1073741824" WindowLeft="0" WindowTop="0" WindowWidth="1200" WindowHeight="720" ContainerType="Page" Page="0" ViewScale="-1" ViewCenterX="${f(pageWidthIn / 2)}" ViewCenterY="${f(pageHeightIn / 2)}"/>
 </Windows>`;
+}
 
-// document.xml — minimal DocumentSettings + a single "No Style" stylesheet (ID 0)
-// referenced by pages and shapes. Visio requires style sheet 0 to exist.
+/**
+ * document.xml — DocumentSettings, the Segoe UI face name used by every shape,
+ * and the "No Style" stylesheet (ID 0) that pages and shapes reference.
+ */
 const DOCUMENT_XML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <VisioDocument xmlns="${VISIO_NS}" xmlns:r="${REL_NS}">
   <DocumentSettings TopPage="0" DefaultTextStyle="0" DefaultLineStyle="0" DefaultFillStyle="0" DefaultGuideStyle="0">
@@ -116,6 +167,9 @@ const DOCUMENT_XML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
     <ProtectMasters>0</ProtectMasters>
     <ProtectBkgnds>0</ProtectBkgnds>
   </DocumentSettings>
+  <FaceNames>
+    <FaceName ID="1" NameU="Segoe UI" UnicodeRanges="-1 -369098753 63 0" CharSets="536871423 0" Panos="2 11 5 2 4 2 4 2 2 3" Flags="325"/>
+  </FaceNames>
   <StyleSheets>
     <StyleSheet ID="0" NameU="No Style" Name="No Style">
       <Cell N="EnableLineProps" V="1"/>
@@ -127,6 +181,8 @@ const DOCUMENT_XML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
       <Cell N="FillForegnd" V="1"/>
       <Cell N="FillPattern" V="1"/>
       <Cell N="TextBkgnd" V="0"/>
+      <Cell N="Font" V="1"/>
+      <Cell N="Size" V="0.1111111111111111"/>
     </StyleSheet>
   </StyleSheets>
 </VisioDocument>`;
@@ -149,203 +205,266 @@ const APP_XML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
   <AppVersion>16.0000</AppVersion>
 </Properties>`;
 
-// ── Shape / page builders ─────────────────────────────────────────────────
+// ─── Shape builders ──────────────────────────────────────────────────────────
 
-function rectShapeXml(id: number, pinX: number, pinY: number, w: number, h: number, text: string, fill: string, line: string, opts: { titleTop?: boolean; vAlignBottom?: boolean } = {}): string {
-  // Group boxes: title at top-left, bold — like a zone header. Shapes with an
-  // icon overlay use bottom-aligned text so it sits below the icon.
-  const alignCells = opts.titleTop
-    ? `
-      <Cell N="VerticalAlign" V="0"/>
-      <Cell N="TopMargin" V="0.06"/>
-      <Cell N="LeftMargin" V="0.1"/>`
-    : opts.vAlignBottom
-      ? `
-      <Cell N="VerticalAlign" V="2"/>
-      <Cell N="BottomMargin" V="0.03"/>`
-      : '';
-  const textSections = opts.titleTop
-    ? `
-      <Section N="Character"><Row IX="0"><Cell N="Size" V="0.13"/><Cell N="Style" V="1"/></Row></Section>
-      <Section N="Paragraph"><Row IX="0"><Cell N="HorzAlign" V="0"/></Row></Section>`
-    : opts.vAlignBottom
-      ? `
-      <Section N="Character"><Row IX="0"><Cell N="Size" V="0.09"/></Row></Section>`
-      : '';
-  return `    <Shape ID="${id}" Type="Shape" LineStyle="0" FillStyle="0" TextStyle="0">
-      <Cell N="PinX" V="${f(pinX)}"/>
-      <Cell N="PinY" V="${f(pinY)}"/>
-      <Cell N="Width" V="${f(w)}"/>
-      <Cell N="Height" V="${f(h)}"/>
-      <Cell N="LocPinX" V="${f(w / 2)}"/>
-      <Cell N="LocPinY" V="${f(h / 2)}"/>
-      <Cell N="Angle" V="0"/>
-      <Cell N="FillForegnd" V="${fill}"/>
-      <Cell N="FillPattern" V="1"/>
-      <Cell N="LineColor" V="${line}"/>
-      <Cell N="LineWeight" V="0.01"/>${alignCells}
-      <Section N="Geometry" IX="0">
+interface Rect { x: number; y: number; w: number; h: number }
+
+function layerRow(index: number, name: string): string {
+  return `      <Row IX="${index}"><Cell N="Name" V="${esc(name)}"/><Cell N="NameUniv" V="${esc(name)}"/><Cell N="Color" V="255"/><Cell N="Status" V="0"/><Cell N="Visible" V="1"/><Cell N="Print" V="1"/><Cell N="Active" V="0"/><Cell N="Lock" V="0"/><Cell N="Snap" V="1"/><Cell N="Glue" V="1"/><Cell N="ColorTrans" V="0"/></Row>`;
+}
+
+/** Rounded-rectangle geometry rows, relative to the shape's own width/height. */
+function roundedRectGeometry(): string {
+  return `      <Section N="Geometry" IX="0">
         <Cell N="NoFill" V="0"/>
         <Cell N="NoLine" V="0"/>
-        <Row T="MoveTo" IX="1"><Cell N="X" V="0"/><Cell N="Y" V="0"/></Row>
-        <Row T="LineTo" IX="2"><Cell N="X" V="${f(w)}"/><Cell N="Y" V="0"/></Row>
-        <Row T="LineTo" IX="3"><Cell N="X" V="${f(w)}"/><Cell N="Y" V="${f(h)}"/></Row>
-        <Row T="LineTo" IX="4"><Cell N="X" V="0"/><Cell N="Y" V="${f(h)}"/></Row>
-        <Row T="LineTo" IX="5"><Cell N="X" V="0"/><Cell N="Y" V="0"/></Row>
-      </Section>${textSections}
-      <Text>${text}</Text>
-    </Shape>`;
+        <Cell N="NoShow" V="0"/>
+        <Cell N="NoSnap" V="0"/>
+        <Row T="RelMoveTo" IX="1"><Cell N="X" V="0"/><Cell N="Y" V="0"/></Row>
+        <Row T="RelLineTo" IX="2"><Cell N="X" V="1"/><Cell N="Y" V="0"/></Row>
+        <Row T="RelLineTo" IX="3"><Cell N="X" V="1"/><Cell N="Y" V="1"/></Row>
+        <Row T="RelLineTo" IX="4"><Cell N="X" V="0"/><Cell N="Y" V="1"/></Row>
+        <Row T="RelLineTo" IX="5"><Cell N="X" V="0"/><Cell N="Y" V="0"/></Row>
+      </Section>`;
 }
 
-/** A Foreign (embedded bitmap) shape referencing a media image relationship. */
-function iconShapeXml(id: number, pinX: number, pinY: number, size: number, relId: string): string {
-  return `    <Shape ID="${id}" Type="Foreign" LineStyle="0" FillStyle="0" TextStyle="0">
-      <Cell N="PinX" V="${f(pinX)}"/>
-      <Cell N="PinY" V="${f(pinY)}"/>
-      <Cell N="Width" V="${f(size)}"/>
-      <Cell N="Height" V="${f(size)}"/>
-      <Cell N="LocPinX" V="${f(size / 2)}"/>
-      <Cell N="LocPinY" V="${f(size / 2)}"/>
+function propertyRow(name: string, label: string, value: string, sortKey: number): string {
+  return `        <Row N="${name}"><Cell N="Label" V="${esc(label)}"/><Cell N="Value" V="${esc(value)}"/><Cell N="Type" V="0"/><Cell N="SortKey" V="${sortKey}"/></Row>`;
+}
+
+/** Zone / group rectangle: dashed rounded outline with a top-left title. */
+function zoneShapeXml(id: number, rect: Rect, label: string, palette: Palette): string {
+  const titleH = Math.min(0.34, rect.h * 0.2);
+  const titleW = Math.max(0.4, rect.w - 0.24);
+  return `    <Shape ID="${id}" NameU="Zone.${id}" Name="${esc(label)}" Type="Shape" LineStyle="0" FillStyle="0" TextStyle="0">
+      <Cell N="PinX" V="${f(rect.x + rect.w / 2)}"/>
+      <Cell N="PinY" V="${f(rect.y + rect.h / 2)}"/>
+      <Cell N="Width" V="${f(rect.w)}"/>
+      <Cell N="Height" V="${f(rect.h)}"/>
+      <Cell N="LocPinX" V="${f(rect.w / 2)}"/>
+      <Cell N="LocPinY" V="${f(rect.h / 2)}"/>
       <Cell N="Angle" V="0"/>
-      <Cell N="ImgOffsetX" V="0"/>
-      <Cell N="ImgOffsetY" V="0"/>
-      <Cell N="ImgWidth" V="${f(size)}"/>
-      <Cell N="ImgHeight" V="${f(size)}"/>
-      <ForeignData ForeignType="Bitmap" CompressionType="PNG">
-        <Rel r:id="${relId}"/>
-      </ForeignData>
-    </Shape>`;
-}
-
-/**
- * Rasterize an SVG icon (fetched from iconPath) to PNG bytes via an offscreen
- * canvas. Browser-only; returns null on any failure so the caller falls back to
- * a plain rectangle.
- */
-async function rasterizeSvgToPng(iconPath: string, sizePx = 96): Promise<Uint8Array | null> {
-  try {
-    const res = await fetch(iconPath);
-    if (!res.ok) return null;
-    let svg = await res.text();
-    // Many Azure icon SVGs declare only a viewBox (no width/height). Without
-    // explicit pixel dimensions some browsers rasterize a 0-sized (blank)
-    // image, so inject width/height on the root <svg> when missing.
-    if (!/<svg[^>]*\bwidth\s*=/.test(svg)) {
-      svg = svg.replace(/<svg\b/, `<svg width="${sizePx}" height="${sizePx}"`);
-    }
-    const svgUrl = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
-    const img = new Image();
-    await new Promise<void>((resolve, reject) => {
-      img.onload = () => resolve();
-      img.onerror = () => reject(new Error('icon image load failed'));
-      img.src = svgUrl;
-    });
-    const canvas = document.createElement('canvas');
-    canvas.width = sizePx;
-    canvas.height = sizePx;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return null;
-    ctx.drawImage(img, 0, 0, sizePx, sizePx);
-    const blob: Blob | null = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
-    if (!blob) return null;
-    return new Uint8Array(await blob.arrayBuffer());
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Orthogonal connector: a 2-D polyline through right-angle waypoints (page-inch
- * points). Drawn with absolute local geometry (no rotation) so multi-segment
- * routes render correctly. Arrowhead on the final point.
- */
-function orthConnectorXml(id: number, pts: Array<[number, number]>): string {
-  const xs = pts.map((p) => p[0]);
-  const ys = pts.map((p) => p[1]);
-  const minX = Math.min(...xs);
-  const maxX = Math.max(...xs);
-  const minY = Math.min(...ys);
-  const maxY = Math.max(...ys);
-  const w = f(Math.max(maxX - minX, 0.0001));
-  const h = f(Math.max(maxY - minY, 0.0001));
-  const rows = pts
-    .map(
-      (p, i) =>
-        `        <Row T="${i === 0 ? 'MoveTo' : 'LineTo'}" IX="${i + 1}"><Cell N="X" V="${f(p[0] - minX)}"/><Cell N="Y" V="${f(p[1] - minY)}"/></Row>`,
-    )
-    .join('\n');
-  return `    <Shape ID="${id}" Type="Shape" LineStyle="0" FillStyle="0" TextStyle="0">
-      <Cell N="PinX" V="${f(minX + (maxX - minX) / 2)}"/>
-      <Cell N="PinY" V="${f(minY + (maxY - minY) / 2)}"/>
-      <Cell N="Width" V="${w}"/>
-      <Cell N="Height" V="${h}"/>
-      <Cell N="LocPinX" V="${f(w / 2)}"/>
-      <Cell N="LocPinY" V="${f(h / 2)}"/>
-      <Cell N="Angle" V="0"/>
-      <Cell N="LineColor" V="#6B7280"/>
-      <Cell N="LineWeight" V="0.01"/>
-      <Cell N="EndArrow" V="4"/>
-      <Section N="Geometry" IX="0">
-        <Cell N="NoFill" V="1"/>
-        <Cell N="NoLine" V="0"/>
-${rows}
-      </Section>
-    </Shape>`;
-}
-
-/**
- * Edge label chip: a boxed, wrapped, distinctly-colored text shape placed at the
- * connector's elbow — mirrors the app's yellow label chips. Text wraps within
- * the fixed width; label text color differs from the (blue/black) shapes.
- */
-function labelShapeXml(id: number, cx: number, cy: number, text: string): string {
-  const width = 1.7;
-  const perLine = 24; // approx chars per line at this width/size
-  const lines = Math.max(1, Math.ceil(text.length / perLine));
-  const height = +(lines * 0.17 + 0.1).toFixed(2);
-  return `    <Shape ID="${id}" Type="Shape" LineStyle="0" FillStyle="0" TextStyle="0">
-      <Cell N="PinX" V="${f(cx)}"/>
-      <Cell N="PinY" V="${f(cy)}"/>
-      <Cell N="Width" V="${width}"/>
-      <Cell N="Height" V="${height}"/>
-      <Cell N="LocPinX" V="${f(width / 2)}"/>
-      <Cell N="LocPinY" V="${f(height / 2)}"/>
-      <Cell N="Angle" V="0"/>
-      <Cell N="FillForegnd" V="#FEF9C3"/>
+      <Cell N="LayerMember" V="${LAYER_ZONES}"/>
+      <Cell N="FillForegnd" V="${palette.fill}"/>
       <Cell N="FillPattern" V="1"/>
-      <Cell N="LineColor" V="#9CA3AF"/>
-      <Cell N="LineWeight" V="0.005"/>
-      <Section N="Geometry" IX="0">
-        <Cell N="NoFill" V="0"/>
-        <Cell N="NoLine" V="0"/>
-        <Row T="MoveTo" IX="1"><Cell N="X" V="0"/><Cell N="Y" V="0"/></Row>
-        <Row T="LineTo" IX="2"><Cell N="X" V="${width}"/><Cell N="Y" V="0"/></Row>
-        <Row T="LineTo" IX="3"><Cell N="X" V="${width}"/><Cell N="Y" V="${height}"/></Row>
-        <Row T="LineTo" IX="4"><Cell N="X" V="0"/><Cell N="Y" V="${height}"/></Row>
-        <Row T="LineTo" IX="5"><Cell N="X" V="0"/><Cell N="Y" V="0"/></Row>
-      </Section>
+      <Cell N="LineColor" V="${palette.line}"/>
+      <Cell N="LineWeight" V="0.0125"/>
+      <Cell N="LinePattern" V="2"/>
+      <Cell N="Rounding" V="${f(CORNER_ROUNDING_IN * 1.5)}"/>
+      <Cell N="TxtWidth" V="${f(titleW)}"/>
+      <Cell N="TxtHeight" V="${f(titleH)}"/>
+      <Cell N="TxtPinX" V="${f(rect.w / 2)}"/>
+      <Cell N="TxtPinY" V="${f(rect.h - titleH / 2 - 0.06)}"/>
+      <Cell N="TxtLocPinX" V="${f(titleW / 2)}"/>
+      <Cell N="TxtLocPinY" V="${f(titleH / 2)}"/>
+      <Cell N="TxtAngle" V="0"/>
+${roundedRectGeometry()}
       <Section N="Character">
-        <Row IX="0"><Cell N="Color" V="#B45309"/><Cell N="Size" V="0.1"/></Row>
+        <Row IX="0"><Cell N="Font" V="1"/><Cell N="Color" V="${palette.text}"/><Cell N="Size" V="0.13"/><Cell N="Style" V="1"/></Row>
+      </Section>
+      <Section N="Paragraph">
+        <Row IX="0"><Cell N="HorzAlign" V="0"/></Row>
+      </Section>
+      <Section N="Property">
+${propertyRow('ZoneName', 'Zone', label, 1)}
+      </Section>
+      <Text>${esc(label)}</Text>
+    </Shape>`;
+}
+
+/**
+ * Service tile: a Visio group whose members are the rounded rectangle and the
+ * Azure icon, so the two never drift apart when the shape is moved.
+ */
+function serviceGroupXml(
+  ids: { group: number; rect: number; icon: number },
+  rect: Rect,
+  box: ExportBox,
+  palette: Palette,
+  iconRelId: string | null,
+  iconSizeIn: number,
+  properties: Array<{ name: string; label: string; value: string }>,
+): string {
+  const labelBandTop = iconRelId ? rect.h - iconSizeIn - 0.16 : rect.h - 0.08;
+  const textH = Math.max(0.16, labelBandTop - 0.06);
+  const textW = Math.max(0.3, rect.w - 0.12);
+  const iconChild = iconRelId
+    ? `
+        <Shape ID="${ids.icon}" NameU="Icon.${ids.icon}" Type="Foreign" LineStyle="0" FillStyle="0" TextStyle="0">
+          <Cell N="PinX" V="${f(rect.w / 2)}"/>
+          <Cell N="PinY" V="${f(rect.h - iconSizeIn / 2 - 0.07)}"/>
+          <Cell N="Width" V="${f(iconSizeIn)}"/>
+          <Cell N="Height" V="${f(iconSizeIn)}"/>
+          <Cell N="LocPinX" V="${f(iconSizeIn / 2)}"/>
+          <Cell N="LocPinY" V="${f(iconSizeIn / 2)}"/>
+          <Cell N="Angle" V="0"/>
+          <Cell N="LayerMember" V="${LAYER_SERVICES}"/>
+          <Cell N="ImgOffsetX" V="0"/>
+          <Cell N="ImgOffsetY" V="0"/>
+          <Cell N="ImgWidth" V="${f(iconSizeIn)}"/>
+          <Cell N="ImgHeight" V="${f(iconSizeIn)}"/>
+          <ForeignData ForeignType="Bitmap" CompressionType="PNG">
+            <Rel r:id="${iconRelId}"/>
+          </ForeignData>
+        </Shape>`
+    : '';
+
+  return `    <Shape ID="${ids.group}" NameU="Service.${ids.group}" Name="${esc(box.label)}" Type="Group" LineStyle="0" FillStyle="0" TextStyle="0">
+      <Cell N="PinX" V="${f(rect.x + rect.w / 2)}"/>
+      <Cell N="PinY" V="${f(rect.y + rect.h / 2)}"/>
+      <Cell N="Width" V="${f(rect.w)}"/>
+      <Cell N="Height" V="${f(rect.h)}"/>
+      <Cell N="LocPinX" V="${f(rect.w / 2)}"/>
+      <Cell N="LocPinY" V="${f(rect.h / 2)}"/>
+      <Cell N="Angle" V="0"/>
+      <Cell N="LayerMember" V="${LAYER_SERVICES}"/>
+      <Cell N="DontMoveChildren" V="0"/>
+      <Cell N="IsDropTarget" V="0"/>
+      <Cell N="IsTextEditTarget" V="1"/>
+      <Cell N="TxtWidth" V="${f(textW)}"/>
+      <Cell N="TxtHeight" V="${f(textH)}"/>
+      <Cell N="TxtPinX" V="${f(rect.w / 2)}"/>
+      <Cell N="TxtPinY" V="${f(0.06 + textH / 2)}"/>
+      <Cell N="TxtLocPinX" V="${f(textW / 2)}"/>
+      <Cell N="TxtLocPinY" V="${f(textH / 2)}"/>
+      <Cell N="TxtAngle" V="0"/>
+      <Section N="Character">
+        <Row IX="0"><Cell N="Font" V="1"/><Cell N="Color" V="${palette.text}"/><Cell N="Size" V="0.09"/></Row>
       </Section>
       <Section N="Paragraph">
         <Row IX="0"><Cell N="HorzAlign" V="1"/></Row>
       </Section>
-      <Text>${text}</Text>
+      <Section N="Property">
+${properties.map((property, index) => propertyRow(property.name, property.label, property.value, index + 1)).join('\n')}
+      </Section>
+      <Text>${esc(box.label)}</Text>
+      <Shapes>
+        <Shape ID="${ids.rect}" NameU="Tile.${ids.rect}" Type="Shape" LineStyle="0" FillStyle="0" TextStyle="0">
+          <Cell N="PinX" V="${f(rect.w / 2)}"/>
+          <Cell N="PinY" V="${f(rect.h / 2)}"/>
+          <Cell N="Width" V="${f(rect.w)}"/>
+          <Cell N="Height" V="${f(rect.h)}"/>
+          <Cell N="LocPinX" V="${f(rect.w / 2)}"/>
+          <Cell N="LocPinY" V="${f(rect.h / 2)}"/>
+          <Cell N="Angle" V="0"/>
+          <Cell N="LayerMember" V="${LAYER_SERVICES}"/>
+          <Cell N="FillForegnd" V="${palette.fill}"/>
+          <Cell N="FillPattern" V="1"/>
+          <Cell N="LineColor" V="${palette.line}"/>
+          <Cell N="LineWeight" V="0.0125"/>
+          <Cell N="LinePattern" V="1"/>
+          <Cell N="Rounding" V="${CORNER_ROUNDING_IN}"/>
+          <Cell N="ShdwPattern" V="1"/>
+          <Cell N="ShdwForegnd" V="#D5DDE8"/>
+${roundedRectGeometry()}
+        </Shape>${iconChild}
+      </Shapes>
     </Shape>`;
+}
+
+/**
+ * 1-D connector glued to its endpoints. Local geometry is expressed along the
+ * begin→end axis (Visio's convention for connectors) so multi-segment routes
+ * survive rotation, and the label rides on the line as the shape's own text.
+ */
+function connectorShapeXml(
+  id: number,
+  points: Point[],
+  label: string,
+  dashed: boolean,
+): string {
+  const begin = points[0];
+  const end = points[points.length - 1];
+  const dx = end.x - begin.x;
+  const dy = end.y - begin.y;
+  const length = Math.max(Math.hypot(dx, dy), 0.0001);
+  const angle = Math.atan2(dy, dx);
+  const cos = Math.cos(angle);
+  const sin = Math.sin(angle);
+
+  const rows = points
+    .map((point, index) => {
+      const vx = point.x - begin.x;
+      const vy = point.y - begin.y;
+      const lx = vx * cos + vy * sin;
+      const ly = -vx * sin + vy * cos;
+      return `        <Row T="${index === 0 ? 'MoveTo' : 'LineTo'}" IX="${index + 1}"><Cell N="X" V="${f(lx)}"/><Cell N="Y" V="${f(ly)}"/></Row>`;
+    })
+    .join('\n');
+
+  const textSections = label
+    ? `
+      <Cell N="TextBkgnd" V="2"/>
+      <Section N="Character">
+        <Row IX="0"><Cell N="Font" V="1"/><Cell N="Color" V="${CONNECTOR_TEXT}"/><Cell N="Size" V="0.085"/></Row>
+      </Section>
+      <Section N="Paragraph">
+        <Row IX="0"><Cell N="HorzAlign" V="1"/></Row>
+      </Section>`
+    : '';
+
+  return `    <Shape ID="${id}" NameU="Connector.${id}" Type="Shape" LineStyle="0" FillStyle="0" TextStyle="0">
+      <Cell N="PinX" V="${f(begin.x + dx / 2)}"/>
+      <Cell N="PinY" V="${f(begin.y + dy / 2)}"/>
+      <Cell N="Width" V="${f(length)}"/>
+      <Cell N="Height" V="0"/>
+      <Cell N="LocPinX" V="${f(length / 2)}"/>
+      <Cell N="LocPinY" V="0"/>
+      <Cell N="Angle" V="${f(angle)}"/>
+      <Cell N="BeginX" V="${f(begin.x)}"/>
+      <Cell N="BeginY" V="${f(begin.y)}"/>
+      <Cell N="EndX" V="${f(end.x)}"/>
+      <Cell N="EndY" V="${f(end.y)}"/>
+      <Cell N="ObjType" V="2"/>
+      <Cell N="ShapeRouteStyle" V="16"/>
+      <Cell N="ConFixedCode" V="0"/>
+      <Cell N="ConLineRouteExt" V="0"/>
+      <Cell N="LayerMember" V="${LAYER_CONNECTIONS}"/>
+      <Cell N="LineColor" V="${CONNECTOR_COLOR}"/>
+      <Cell N="LineWeight" V="0.0125"/>
+      <Cell N="LinePattern" V="${dashed ? 2 : 1}"/>
+      <Cell N="Rounding" V="0.0625"/>
+      <Cell N="BeginArrow" V="0"/>
+      <Cell N="EndArrow" V="4"/>
+      <Cell N="EndArrowSize" V="2"/>${textSections}
+      <Section N="Geometry" IX="0">
+        <Cell N="NoFill" V="1"/>
+        <Cell N="NoLine" V="0"/>
+        <Cell N="NoShow" V="0"/>
+        <Cell N="NoSnap" V="0"/>
+${rows}
+      </Section>
+      <Text>${esc(label)}</Text>
+    </Shape>`;
+}
+
+function connectXml(connectorId: number, sourceId: number, targetId: number): string {
+  return `    <Connect FromSheet="${connectorId}" FromCell="BeginX" FromPart="9" ToSheet="${sourceId}" ToCell="PinX" ToPart="3"/>
+    <Connect FromSheet="${connectorId}" FromCell="EndX" FromPart="12" ToSheet="${targetId}" ToCell="PinX" ToPart="3"/>`;
 }
 
 function pagesXml(pageWidthIn: number, pageHeightIn: number, title: string): string {
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Pages xmlns="${VISIO_NS}" xmlns:r="${REL_NS}">
-  <Page ID="0" NameU="${esc(title)}" Name="${esc(title)}" ViewScale="1" ViewCenterX="${f(pageWidthIn / 2)}" ViewCenterY="${f(pageHeightIn / 2)}">
+  <Page ID="0" NameU="${esc(title)}" Name="${esc(title)}" ViewScale="-1" ViewCenterX="${f(pageWidthIn / 2)}" ViewCenterY="${f(pageHeightIn / 2)}">
     <PageSheet LineStyle="0" FillStyle="0" TextStyle="0">
       <Cell N="PageWidth" V="${f(pageWidthIn)}"/>
       <Cell N="PageHeight" V="${f(pageHeightIn)}"/>
-      <Cell N="ShdwOffsetX" V="0.125"/>
-      <Cell N="ShdwOffsetY" V="-0.125"/>
+      <Cell N="ShdwOffsetX" V="0.06"/>
+      <Cell N="ShdwOffsetY" V="-0.06"/>
       <Cell N="PageScale" V="1"/>
       <Cell N="DrawingScale" V="1"/>
+      <Cell N="DrawingSizeType" V="3"/>
       <Cell N="DrawingScaleType" V="0"/>
+      <Cell N="InhibitSnap" V="0"/>
+      <Cell N="PageLockReplace" V="0"/>
+      <Cell N="PageLockDuplicate" V="0"/>
+      <Cell N="UIVisibility" V="0"/>
+      <Section N="Layer">
+${layerRow(LAYER_ZONES, 'Zones')}
+${layerRow(LAYER_SERVICES, 'Azure services')}
+${layerRow(LAYER_CONNECTIONS, 'Connections')}
+      </Section>
     </PageSheet>
     <Rel r:id="rId1"/>
   </Page>
@@ -353,7 +472,9 @@ function pagesXml(pageWidthIn: number, pageHeightIn: number, title: string): str
 }
 
 function pageContentsXml(shapes: string[], connects: string[]): string {
-  const connectsBlock = connects.length ? `\n  <Connects>\n${connects.join('\n')}\n  </Connects>` : '';
+  const connectsBlock = connects.length
+    ? `\n  <Connects>\n${connects.join('\n')}\n  </Connects>`
+    : '';
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <PageContents xmlns="${VISIO_NS}" xmlns:r="${REL_NS}">
   <Shapes>
@@ -362,145 +483,170 @@ ${shapes.join('\n')}
 </PageContents>`;
 }
 
+// ─── Package assembly ────────────────────────────────────────────────────────
+
+export interface VsdxPackage {
+  parts: Array<{ path: string; data: string | Uint8Array }>;
+  pageWidthIn: number;
+  pageHeightIn: number;
+}
+
+/**
+ * Build every part of the .vsdx package. Split out from {@link buildVsdxBlob}
+ * so the XML can be asserted in unit tests without a browser Blob.
+ */
+export async function buildVsdxPackage(
+  nodes: Node[],
+  edges: Edge[],
+  diagramName = 'Azure Architecture',
+): Promise<VsdxPackage> {
+  const boxes = collectExportBoxes(nodes);
+  const { groups, services } = partitionBoxes(boxes);
+  const routes = buildExportRoutes(edges, boxes);
+  const bounds = computeBounds(boxes.values());
+
+  const contentWIn = Math.max(bounds.maxX - bounds.minX, 1) / PX_PER_INCH;
+  const contentHIn = Math.max(bounds.maxY - bounds.minY, 1) / PX_PER_INCH;
+  const pageWidthIn = f(Math.max(contentWIn + PAGE_PADDING_IN * 2, MIN_PAGE_W_IN));
+  const pageHeightIn = f(Math.max(contentHIn + PAGE_PADDING_IN * 2, MIN_PAGE_H_IN));
+
+  // Centre the drawing on the page, converting to Visio's bottom-left origin.
+  const offsetXIn = (pageWidthIn - contentWIn) / 2;
+  const offsetYIn = (pageHeightIn - contentHIn) / 2;
+  const toRect = (box: ExportBox): Rect => {
+    const x = (box.x - bounds.minX) / PX_PER_INCH + offsetXIn;
+    const topY = (box.y - bounds.minY) / PX_PER_INCH + offsetYIn;
+    const w = box.w / PX_PER_INCH;
+    const h = box.h / PX_PER_INCH;
+    return { x, y: pageHeightIn - topY - h, w, h };
+  };
+  const toPoint = (point: Point): Point => ({
+    x: (point.x - bounds.minX) / PX_PER_INCH + offsetXIn,
+    y: pageHeightIn - ((point.y - bounds.minY) / PX_PER_INCH + offsetYIn),
+  });
+
+  const icons = await rasterizeIcons(services.map((box) => box.iconPath), 128);
+  const nodeById = new Map(nodes.map((node) => [node.id, node]));
+
+  const shapes: string[] = [];
+  const connects: string[] = [];
+  const media: Array<{ file: string; bytes: Uint8Array }> = [];
+  const pageRels: string[] = [];
+  const shapeIdByNode = new Map<string, number>();
+  let nextId = 1;
+  let mediaIndex = 0;
+
+  for (const zone of groups) {
+    const id = nextId++;
+    shapeIdByNode.set(zone.id, id);
+    const palette = ZONE_PALETTE[(id - 1) % ZONE_PALETTE.length];
+    shapes.push(zoneShapeXml(id, toRect(zone), zone.label, palette));
+  }
+
+  for (const service of services) {
+    const rect = toRect(service);
+    const groupId = nextId++;
+    const rectId = nextId++;
+    const iconId = nextId++;
+    shapeIdByNode.set(service.id, groupId);
+
+    const icon: RasterizedIcon | undefined = service.iconPath
+      ? icons.get(service.iconPath)
+      : undefined;
+    let relId: string | null = null;
+    if (icon) {
+      mediaIndex += 1;
+      const file = `image${mediaIndex}.png`;
+      relId = `rId${mediaIndex}`;
+      media.push({ file, bytes: icon.bytes });
+      pageRels.push(
+        `  <Relationship Id="${relId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/${file}"/>`,
+      );
+    }
+
+    const iconSizeIn = Math.min(rect.h * 0.46, rect.w * 0.5, 0.55);
+    const data = (nodeById.get(service.id)?.data ?? {}) as Record<string, unknown>;
+    const properties = [
+      {
+        name: 'AzureService',
+        label: 'Azure service',
+        value: service.serviceName ?? service.label,
+      },
+      {
+        name: 'Category',
+        label: 'Category',
+        value: service.category,
+      },
+      { name: 'NodeId', label: 'Diagram node ID', value: service.id },
+    ];
+    if (typeof data.sku === 'string' && data.sku) {
+      properties.push({ name: 'Sku', label: 'SKU', value: data.sku });
+    }
+    if (typeof data.region === 'string' && data.region) {
+      properties.push({ name: 'Region', label: 'Region', value: data.region });
+    }
+
+    shapes.push(
+      serviceGroupXml(
+        { group: groupId, rect: rectId, icon: iconId },
+        rect,
+        service,
+        paletteForService(service),
+        relId,
+        iconSizeIn,
+        properties,
+      ),
+    );
+  }
+
+  for (const route of routes as ExportRoute[]) {
+    const sourceId = shapeIdByNode.get(route.sourceId);
+    const targetId = shapeIdByNode.get(route.targetId);
+    if (sourceId === undefined || targetId === undefined) continue;
+    const id = nextId++;
+    shapes.push(connectorShapeXml(id, route.points.map(toPoint), route.label, route.dashed));
+    connects.push(connectXml(id, sourceId, targetId));
+  }
+
+  const parts: Array<{ path: string; data: string | Uint8Array }> = [
+    { path: '[Content_Types].xml', data: CONTENT_TYPES },
+    { path: '_rels/.rels', data: ROOT_RELS },
+    { path: 'docProps/core.xml', data: coreXml(diagramName) },
+    { path: 'docProps/app.xml', data: APP_XML },
+    { path: 'visio/document.xml', data: DOCUMENT_XML },
+    { path: 'visio/_rels/document.xml.rels', data: DOCUMENT_RELS },
+    { path: 'visio/windows.xml', data: windowsXml(pageWidthIn, pageHeightIn) },
+    { path: 'visio/pages/pages.xml', data: pagesXml(pageWidthIn, pageHeightIn, diagramName) },
+    { path: 'visio/pages/_rels/pages.xml.rels', data: PAGES_RELS },
+    { path: 'visio/pages/page1.xml', data: pageContentsXml(shapes, connects) },
+  ];
+
+  if (media.length > 0) {
+    parts.push({
+      path: 'visio/pages/_rels/page1.xml.rels',
+      data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">\n${pageRels.join('\n')}\n</Relationships>`,
+    });
+    for (const file of media) {
+      parts.push({ path: `visio/media/${file.file}`, data: file.bytes });
+    }
+  }
+
+  return { parts, pageWidthIn, pageHeightIn };
+}
+
 /**
  * Build a .vsdx package for the diagram and return it as a Blob.
  */
-export async function buildVsdxBlob(nodes: Node[], edges: Edge[], diagramName = 'Azure Architecture'): Promise<Blob> {
-  const groupNodes = nodes.filter((n) => n.type === 'groupNode');
-  const serviceNodes = nodes.filter((n) => n.type !== 'groupNode');
-
-  const groupPos = new Map<string, { x: number; y: number }>();
-  for (const g of groupNodes) groupPos.set(g.id, { x: g.position?.x ?? 0, y: g.position?.y ?? 0 });
-
-  const boxes = new Map<string, Box>();
-  for (const n of nodes) {
-    const { w, h } = nodeSize(n);
-    let x = n.position?.x ?? 0;
-    let y = n.position?.y ?? 0;
-    if (n.type !== 'groupNode' && n.parentNode && groupPos.has(n.parentNode)) {
-      const p = groupPos.get(n.parentNode)!;
-      x += p.x;
-      y += p.y;
-    }
-    boxes.set(n.id, { x, y, w, h });
-  }
-
-  let maxX = 0;
-  let maxY = 0;
-  for (const b of boxes.values()) {
-    maxX = Math.max(maxX, b.x + b.w);
-    maxY = Math.max(maxY, b.y + b.h);
-  }
-  const pageWidthIn = inches(Math.max(maxX + PAGE_PADDING_PX, 800));
-  const pageHeightIn = inches(Math.max(maxY + PAGE_PADDING_PX, 600));
-
-  const centerIn = (b: Box) => {
-    const cx = b.x + b.w / 2;
-    const cy = b.y + b.h / 2;
-    return { pinX: inches(cx), pinY: f(pageHeightIn - inches(cy)) };
-  };
-
-  const shapeId = new Map<string, number>();
-  let nextId = 1;
-  for (const g of groupNodes) shapeId.set(g.id, nextId++);
-  for (const s of serviceNodes) shapeId.set(s.id, nextId++);
-
-  const shapes: string[] = [];
-  const media: Array<{ file: string; bytes: Uint8Array }> = [];
-  const pageRels: string[] = [];
-  let imgIdx = 0;
-
-  // Group rectangles first (behind), title at top.
-  for (const g of groupNodes) {
-    const b = boxes.get(g.id)!;
-    const { pinX, pinY } = centerIn(b);
-    shapes.push(rectShapeXml(shapeId.get(g.id)!, pinX, pinY, inches(b.w), inches(b.h), esc(String((g.data as any)?.label ?? 'Group')), '#EEF3FB', '#8AA9D6', { titleTop: true }));
-  }
-
-  // Service rectangles, with the Azure icon rasterized + embedded on top.
-  for (const s of serviceNodes) {
-    const b = boxes.get(s.id)!;
-    const { pinX, pinY } = centerIn(b);
-    const wIn = inches(b.w);
-    const hIn = inches(b.h);
-    const label = esc(String((s.data as any)?.label ?? 'Service'));
-    const iconPath = (s.data as any)?.iconPath as string | undefined;
-
-    let png: Uint8Array | null = null;
-    if (iconPath) {
-      const url = await loadIcon(iconPath);
-      if (url) png = await rasterizeSvgToPng(url);
-    }
-
-    if (png) {
-      // Rectangle with text pushed to the bottom, icon centered in the top area.
-      shapes.push(rectShapeXml(shapeId.get(s.id)!, pinX, pinY, wIn, hIn, label, '#FFFFFF', '#0078D4', { vAlignBottom: true }));
-      imgIdx += 1;
-      const file = `image${imgIdx}.png`;
-      const relId = `rId${imgIdx}`;
-      media.push({ file, bytes: png });
-      pageRels.push(`  <Relationship Id="${relId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/${file}"/>`);
-      const iconSize = Math.min(hIn * 0.62, wIn * 0.5, 0.58);
-      const iconPinX = pinX;
-      const iconPinY = pinY + hIn / 2 - iconSize / 2 - 0.04;
-      shapes.push(iconShapeXml(nextId++, iconPinX, iconPinY, iconSize, relId));
-    } else {
-      shapes.push(rectShapeXml(shapeId.get(s.id)!, pinX, pinY, wIn, hIn, label, '#FFFFFF', '#0078D4'));
-    }
-  }
-
-  // Connectors — orthogonal (right-angle) routes + boxed wrapped labels.
-  for (const e of edges) {
-    const sBox = boxes.get(e.source);
-    const tBox = boxes.get(e.target);
-    if (!sBox || !tBox) continue;
-    const s = centerIn(sBox);
-    const t = centerIn(tBox);
-
-    // Right-angle "Z" route: bend at the horizontal midpoint for horizontal-
-    // dominant flows, else at the vertical midpoint. Label sits on the middle
-    // (elbow) segment so it stays clear of the shapes.
-    let pts: Array<[number, number]>;
-    let lcx: number;
-    let lcy: number;
-    if (Math.abs(t.pinX - s.pinX) >= Math.abs(t.pinY - s.pinY)) {
-      const midX = (s.pinX + t.pinX) / 2;
-      pts = [[s.pinX, s.pinY], [midX, s.pinY], [midX, t.pinY], [t.pinX, t.pinY]];
-      lcx = midX;
-      lcy = (s.pinY + t.pinY) / 2;
-    } else {
-      const midY = (s.pinY + t.pinY) / 2;
-      pts = [[s.pinX, s.pinY], [s.pinX, midY], [t.pinX, midY], [t.pinX, t.pinY]];
-      lcx = (s.pinX + t.pinX) / 2;
-      lcy = midY;
-    }
-
-    shapes.push(orthConnectorXml(nextId++, pts));
-    const label = typeof e.label === 'string' ? esc(e.label) : '';
-    if (label) shapes.push(labelShapeXml(nextId++, lcx, lcy, label));
-  }
-
+export async function buildVsdxBlob(
+  nodes: Node[],
+  edges: Edge[],
+  diagramName = 'Azure Architecture',
+): Promise<Blob> {
+  const { parts } = await buildVsdxPackage(nodes, edges, diagramName);
   const zip = new JSZip();
-  zip.file('[Content_Types].xml', CONTENT_TYPES);
-  zip.file('_rels/.rels', ROOT_RELS);
-  zip.file('docProps/core.xml', coreXml(diagramName));
-  zip.file('docProps/app.xml', APP_XML);
-  zip.file('visio/document.xml', DOCUMENT_XML);
-  zip.file('visio/_rels/document.xml.rels', DOCUMENT_RELS);
-  zip.file('visio/windows.xml', WINDOWS_XML);
-  zip.file('visio/pages/pages.xml', pagesXml(pageWidthIn, pageHeightIn, diagramName));
-  zip.file('visio/pages/_rels/pages.xml.rels', PAGES_RELS);
-  zip.file('visio/pages/page1.xml', pageContentsXml(shapes, []));
-
-  // Embedded icon images + the page's relationships to them.
-  if (media.length > 0) {
-    zip.file(
-      'visio/pages/_rels/page1.xml.rels',
-      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">\n${pageRels.join('\n')}\n</Relationships>`,
-    );
-    for (const mf of media) zip.file(`visio/media/${mf.file}`, mf.bytes);
+  for (const part of parts) {
+    zip.file(part.path, part.data);
   }
-
   return zip.generateAsync({
     type: 'blob',
     mimeType: 'application/vnd.ms-visio.drawing',

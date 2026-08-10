@@ -459,6 +459,139 @@ test('comments are added and bounded to the document', async (t) => {
   assert.equal(empty.status, 400);
 });
 
+test('comments support diagram anchors and protected resolution state', async (t) => {
+  const backend = new FakeBackend();
+  const server = await startServer({ backend });
+  t.after(server.close);
+
+  const created = await createDoc(server.baseUrl, USER_A);
+  const id = created.json.document.id;
+  const ownerComment = await call(server.baseUrl, 'POST', `/api/diagrams/${id}/comments`, {
+    headers: USER_A,
+    body: {
+      message: 'Check this service',
+      anchor: { type: 'node', targetId: 'n1', label: 'spoofed label' },
+    },
+  });
+  assert.equal(ownerComment.status, 201);
+  assert.deepEqual(ownerComment.json.document.comments[0].anchor, {
+    type: 'node',
+    targetId: 'n1',
+    label: 'n1',
+  });
+  assert.equal(ownerComment.json.document.comments[0].resolved, false);
+
+  const invalidAnchor = await call(server.baseUrl, 'POST', `/api/diagrams/${id}/comments`, {
+    headers: USER_A,
+    body: { message: 'Missing target', anchor: { type: 'node', targetId: 'missing' } },
+  });
+  assert.equal(invalidAnchor.status, 400);
+
+  const share = await call(server.baseUrl, 'POST', `/api/diagrams/${id}/shares`, {
+    headers: USER_A,
+    body: { role: 'viewer' },
+  });
+  const token = share.json.token;
+  const viewerComment = await call(
+    server.baseUrl,
+    'POST',
+    `/api/diagrams/shared/${token}/comments`,
+    {
+      headers: USER_B,
+      body: { message: 'My own note', anchor: { type: 'edge', targetId: 'e1' } },
+    },
+  );
+  assert.equal(viewerComment.status, 201);
+  const viewerCommentId = viewerComment.json.document.comments.at(-1).commentId;
+
+  const forbidden = await call(
+    server.baseUrl,
+    'PATCH',
+    `/api/diagrams/shared/${token}/comments/${ownerComment.json.document.comments[0].commentId}`,
+    { headers: USER_B, body: { resolved: true } },
+  );
+  assert.equal(forbidden.status, 403);
+
+  const resolved = await call(
+    server.baseUrl,
+    'PATCH',
+    `/api/diagrams/shared/${token}/comments/${viewerCommentId}`,
+    { headers: USER_B, body: { resolved: true } },
+  );
+  assert.equal(resolved.status, 200);
+  assert.equal(resolved.json.document.comments.at(-1).resolved, true);
+  assert.equal(resolved.json.document.comments.at(-1).resolvedByEmail, 'bob@example.com');
+
+  const reopened = await call(
+    server.baseUrl,
+    'PATCH',
+    `/api/diagrams/${id}/comments/${viewerCommentId}`,
+    { headers: USER_A, body: { resolved: false } },
+  );
+  assert.equal(reopened.status, 200);
+  assert.equal(reopened.json.document.comments.at(-1).resolved, false);
+});
+
+test('cloud review transitions require an active request and approval expires after edits', async (t) => {
+  const server = await startServer({ backend: new FakeBackend() });
+  t.after(server.close);
+
+  const created = await createDoc(server.baseUrl, USER_A);
+  const id = created.json.document.id;
+  assert.equal(created.json.document.review.status, 'draft');
+
+  const share = await call(server.baseUrl, 'POST', `/api/diagrams/${id}/shares`, {
+    headers: USER_A,
+    body: { role: 'viewer' },
+  });
+  const token = share.json.token;
+  const earlyApproval = await call(
+    server.baseUrl,
+    'PATCH',
+    `/api/diagrams/shared/${token}/review`,
+    { headers: USER_B, body: { action: 'approve' } },
+  );
+  assert.equal(earlyApproval.status, 409);
+
+  const requested = await call(server.baseUrl, 'PATCH', `/api/diagrams/${id}/review`, {
+    headers: USER_A,
+    body: { action: 'request' },
+  });
+  assert.equal(requested.status, 200);
+  assert.equal(requested.json.document.review.status, 'in_review');
+  assert.equal(requested.json.document.review.requestedByEmail, 'alice@example.com');
+
+  const approved = await call(
+    server.baseUrl,
+    'PATCH',
+    `/api/diagrams/shared/${token}/review`,
+    { headers: USER_B, body: { action: 'approve', note: 'Ready to ship' } },
+  );
+  assert.equal(approved.status, 200);
+  assert.equal(approved.json.document.review.status, 'approved');
+  assert.equal(approved.json.document.review.decidedByEmail, 'bob@example.com');
+  assert.equal(approved.json.document.review.decisionNote, 'Ready to ship');
+
+  const unchanged = await call(server.baseUrl, 'PUT', `/api/diagrams/${id}`, {
+    headers: USER_A,
+    ifMatch: approved.etag,
+    body: { diagramName: 'My Diagram', payload: samplePayload() },
+  });
+  assert.equal(unchanged.status, 200);
+  assert.equal(unchanged.json.document.review.status, 'approved');
+
+  const edited = await call(server.baseUrl, 'PUT', `/api/diagrams/${id}`, {
+    headers: USER_A,
+    ifMatch: unchanged.etag,
+    body: {
+      diagramName: 'My Diagram',
+      payload: samplePayload({ nodes: [{ id: 'n1' }, { id: 'n2' }, { id: 'n3' }] }),
+    },
+  });
+  assert.equal(edited.status, 200);
+  assert.equal(edited.json.document.review.status, 'draft');
+});
+
 test('sharing: viewer can read but not edit, editor can edit', async (t) => {
   const backend = new FakeBackend();
   const server = await startServer({ backend });

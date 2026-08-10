@@ -32,10 +32,9 @@ import {
 import { getReasoningEffortLabel } from '../stores/modelSettingsStore';
 import { buildRequestBody, callAzureOpenAIProxy } from '../services/apiHelper';
 import { useRuntimeConfig } from '../services/runtimeConfig';
-import { useEscapeKey } from '../hooks/useEscapeKey';
-import { useModalFocus } from '../hooks/useModalFocus';
 import { useLanguage } from '../i18n/LanguageContext';
 import { localize } from '../i18n/localization';
+import ModalScaffold from './ModalScaffold';
 import './BYOAISettingsDialog.css';
 
 interface BYOAISettingsDialogProps {
@@ -60,7 +59,6 @@ export default function BYOAISettingsDialog({
 }: BYOAISettingsDialogProps) {
   const { language } = useLanguage();
   const runtimeConfig = useRuntimeConfig();
-  const dialogRef = useModalFocus<HTMLElement>(isOpen);
   const [draft, setDraft] = useState<BYOAISettings>(DEFAULT_BYO_AI_SETTINGS);
   const [apiKey, setApiKey] = useState('');
   const [errors, setErrors] = useState<BYOAIValidationResult['errors']>({});
@@ -98,8 +96,6 @@ export default function BYOAISettingsDialog({
       isBYOAIVerified() ? configurationSignature(settings, key) : '',
     );
   }, [isOpen]);
-
-  useEscapeKey(isOpen && !isTesting, onClose);
 
   if (!isOpen) return null;
 
@@ -287,169 +283,172 @@ export default function BYOAISettingsDialog({
         : text('Unavailable', '利用不可');
 
   return (
-    <div className="byo-ai-dialog-overlay" onClick={isTesting ? undefined : onClose}>
-      <section
-        ref={dialogRef}
-        className="byo-ai-dialog"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="byo-ai-dialog-title"
-        aria-busy={isTesting}
-        tabIndex={-1}
-        onClick={event => event.stopPropagation()}
-      >
-        <header className="byo-ai-dialog-header">
-          <div className="byo-ai-dialog-heading">
-            <span className="byo-ai-dialog-icon" aria-hidden="true">
-              <PlugZap size={22} />
+    <ModalScaffold
+      isOpen={isOpen}
+      onClose={onClose}
+      className="byo-ai-dialog"
+      overlayClassName="byo-ai-dialog-overlay"
+      ariaLabelledBy="byo-ai-dialog-title"
+      closeOnBackdrop={!isTesting}
+      closeOnEscape={!isTesting}
+      aria-busy={isTesting}
+    >
+      <header className="byo-ai-dialog-header">
+        <div className="byo-ai-dialog-heading">
+          <span className="byo-ai-dialog-icon" aria-hidden="true">
+            <PlugZap size={22} />
+          </span>
+          <div>
+            <span className="byo-ai-dialog-eyebrow">
+              {text('Optional AI connection', '任意の AI 接続')}
             </span>
-            <div>
-              <span className="byo-ai-dialog-eyebrow">
-                {text('Optional AI connection', '任意の AI 接続')}
-              </span>
-              <h2 id="byo-ai-dialog-title">
-                {text('Bring your own AI endpoint', '独自の AI エンドポイントを使用')}
-              </h2>
-              <span className={`byo-ai-connection-badge byo-ai-connection-badge--${statusContent.kind}`}>
-                {connectionVerified
-                  ? <CheckCircle2 size={14} aria-hidden="true" />
-                  : <CircleDashed size={14} aria-hidden="true" />}
-                {statusLabel}
-              </span>
-            </div>
+            <h2 id="byo-ai-dialog-title">
+              {text('Bring your own AI endpoint', '独自の AI エンドポイントを使用')}
+            </h2>
+            <span className={`byo-ai-connection-badge byo-ai-connection-badge--${statusContent.kind}`}>
+              {connectionVerified
+                ? <CheckCircle2 size={14} aria-hidden="true" />
+                : <CircleDashed size={14} aria-hidden="true" />}
+              {statusLabel}
+            </span>
           </div>
-          <button
-            type="button"
-            className="byo-ai-dialog-close"
-            onClick={onClose}
-            disabled={isTesting}
-            aria-label={text('Close custom AI settings', 'カスタム AI 設定を閉じる')}
-          >
-            <X size={20} />
-          </button>
-        </header>
+        </div>
+        <button
+          type="button"
+          className="modal-close byo-ai-dialog-close"
+          onClick={onClose}
+          disabled={isTesting}
+          aria-label={text('Close custom AI settings', 'カスタム AI 設定を閉じる')}
+        >
+          <X size={20} />
+        </button>
+      </header>
 
-        <div className="byo-ai-dialog-body">
-          <section className="byo-ai-section" aria-labelledby="byo-ai-connection-heading">
-            <div className="byo-ai-section-heading">
-              <div>
-                <span className="byo-ai-section-step">1</span>
-                <h3 id="byo-ai-connection-heading">
-                  {text('Connection', '接続')}
-                </h3>
-              </div>
-              <p>
-                {text(
-                  'Choose a provider and enter the resource details you control.',
-                  '利用するプロバイダーと、ご自身で管理するリソース情報を入力します。',
-                )}
-              </p>
+      <div className="byo-ai-dialog-body">
+        <section className="byo-ai-section" aria-labelledby="byo-ai-connection-heading">
+          <div className="byo-ai-section-heading">
+            <div>
+              <span className="byo-ai-section-step">1</span>
+              <h3 id="byo-ai-connection-heading">
+                {text('Connection', '接続')}
+              </h3>
             </div>
+            <p>
+              {text(
+                'Choose a provider and enter the resource details you control.',
+                '利用するプロバイダーと、ご自身で管理するリソース情報を入力します。',
+              )}
+            </p>
+          </div>
 
-            <div className="byo-ai-form-grid">
-              <label>
-                <span>{text('Provider', 'プロバイダー')}</span>
-                <select
-                  value={draft.provider}
-                  onChange={event => handleProviderChange(event.target.value as BYOAIProvider)}
-                  disabled={isTesting}
-                >
-                  <option value="azure-openai">Azure OpenAI / Microsoft Foundry</option>
-                  <option value="openai">OpenAI</option>
-                </select>
-              </label>
+          <div className="byo-ai-form-grid">
+            <label className="azd-field">
+              <span>{text('Provider', 'プロバイダー')}</span>
+              <select
+                className="azd-control"
+                value={draft.provider}
+                onChange={event => handleProviderChange(event.target.value as BYOAIProvider)}
+                disabled={isTesting}
+              >
+                <option value="azure-openai">Azure OpenAI / Microsoft Foundry</option>
+                <option value="openai">OpenAI</option>
+              </select>
+            </label>
 
-              <label>
-                <span>
-                  {draft.provider === 'azure-openai'
-                    ? text('Deployment name', 'デプロイ名')
-                    : text('Model', 'モデル')}
-                </span>
-                <input
-                  type="text"
-                  value={draft.model}
-                  onChange={event => updateDraft('model', event.target.value)}
-                  placeholder={draft.provider === 'azure-openai' ? 'gpt-5-deployment' : 'gpt-5'}
-                  disabled={isTesting}
-                  aria-invalid={Boolean(errors.model)}
-                  aria-describedby={errors.model ? 'byo-ai-model-error' : undefined}
-                />
-                {errors.model && (
-                  <small id="byo-ai-model-error" className="byo-ai-field-error">
-                    {errors.model}
-                  </small>
-                )}
-              </label>
-
-              <label className="byo-ai-field-wide">
-                <span>{text('Endpoint', 'エンドポイント')}</span>
-                <input
-                  type="url"
-                  value={draft.endpoint}
-                  onChange={event => updateDraft('endpoint', event.target.value)}
-                  placeholder="https://your-resource.openai.azure.com"
-                  readOnly={draft.provider === 'openai'}
-                  disabled={isTesting}
-                  aria-invalid={Boolean(errors.endpoint)}
-                  aria-describedby={errors.endpoint ? 'byo-ai-endpoint-error' : 'byo-ai-endpoint-help'}
-                />
-                <small id="byo-ai-endpoint-help" className="byo-ai-field-help">
-                  {draft.provider === 'azure-openai'
-                    ? text(
-                        'Supports Azure OpenAI and Microsoft Foundry resource origins. Do not include /openai/v1.',
-                        'Azure OpenAI と Microsoft Foundry のリソース オリジンに対応します。/openai/v1 は含めないでください。',
-                      )
-                    : text(
-                        'Official OpenAI requests are fixed to api.openai.com.',
-                        'OpenAI のリクエスト先は api.openai.com に固定されます。',
-                      )}
+            <label className="azd-field">
+              <span>
+                {draft.provider === 'azure-openai'
+                  ? text('Deployment name', 'デプロイ名')
+                  : text('Model', 'モデル')}
+              </span>
+              <input
+                className="azd-control"
+                type="text"
+                value={draft.model}
+                onChange={event => updateDraft('model', event.target.value)}
+                placeholder={draft.provider === 'azure-openai' ? 'gpt-5-deployment' : 'gpt-5'}
+                disabled={isTesting}
+                aria-invalid={Boolean(errors.model)}
+                aria-describedby={errors.model ? 'byo-ai-model-error' : undefined}
+              />
+              {errors.model && (
+                <small id="byo-ai-model-error" className="byo-ai-field-error azd-field-error">
+                  {errors.model}
                 </small>
-                {errors.endpoint && (
-                  <small id="byo-ai-endpoint-error" className="byo-ai-field-error">
-                    {errors.endpoint}
-                  </small>
-                )}
-              </label>
+              )}
+            </label>
 
-              <label className="byo-ai-field-wide">
-                <span>{text('API key', 'API キー')}</span>
-                <div className="byo-ai-secret-field">
-                  <KeyRound size={17} aria-hidden="true" />
-                  <input
-                    type="password"
-                    value={apiKey}
-                    onChange={event => {
-                      setApiKey(event.target.value);
-                      setErrors(current => ({ ...current, apiKey: undefined }));
-                      resetVerification();
-                    }}
-                    autoComplete="off"
-                    spellCheck={false}
-                    placeholder={text(
-                      'Kept only for this browser tab',
-                      'このブラウザー タブ内でのみ保持',
+            <label className="byo-ai-field-wide azd-field">
+              <span>{text('Endpoint', 'エンドポイント')}</span>
+              <input
+                className="azd-control"
+                type="url"
+                value={draft.endpoint}
+                onChange={event => updateDraft('endpoint', event.target.value)}
+                placeholder="https://your-resource.openai.azure.com"
+                readOnly={draft.provider === 'openai'}
+                disabled={isTesting}
+                aria-invalid={Boolean(errors.endpoint)}
+                aria-describedby={errors.endpoint ? 'byo-ai-endpoint-error' : 'byo-ai-endpoint-help'}
+              />
+              <small id="byo-ai-endpoint-help" className="byo-ai-field-help azd-field-hint">
+                {draft.provider === 'azure-openai'
+                  ? text(
+                      'Supports Azure OpenAI and Microsoft Foundry resource origins. Do not include /openai/v1.',
+                      'Azure OpenAI と Microsoft Foundry のリソース オリジンに対応します。/openai/v1 は含めないでください。',
+                    )
+                  : text(
+                      'Official OpenAI requests are fixed to api.openai.com.',
+                      'OpenAI のリクエスト先は api.openai.com に固定されます。',
                     )}
-                    disabled={isTesting}
-                    aria-invalid={Boolean(errors.apiKey)}
-                    aria-describedby={errors.apiKey ? 'byo-ai-key-error' : 'byo-ai-key-help'}
-                  />
-                </div>
-                <small id="byo-ai-key-help" className="byo-ai-field-help">
-                  {text(
-                    'Closing or reloading this tab clears the key and requires verification again.',
-                    'このタブを閉じるか再読み込みするとキーが消去され、再確認が必要になります。',
-                  )}
+              </small>
+              {errors.endpoint && (
+                <small id="byo-ai-endpoint-error" className="byo-ai-field-error azd-field-error">
+                  {errors.endpoint}
                 </small>
-                {errors.apiKey && (
-                  <small id="byo-ai-key-error" className="byo-ai-field-error">
-                    {errors.apiKey}
-                  </small>
-                )}
-              </label>
-            </div>
-          </section>
+              )}
+            </label>
 
-          <div className="byo-ai-security-note">
+            <label className="byo-ai-field-wide azd-field">
+              <span>{text('API key', 'API キー')}</span>
+              <div className="byo-ai-secret-field">
+                <KeyRound size={17} aria-hidden="true" />
+                <input
+                  className="azd-control"
+                  type="password"
+                  value={apiKey}
+                  onChange={event => {
+                    setApiKey(event.target.value);
+                    setErrors(current => ({ ...current, apiKey: undefined }));
+                    resetVerification();
+                  }}
+                  autoComplete="off"
+                  spellCheck={false}
+                  placeholder={text(
+                    'Kept only for this browser tab',
+                    'このブラウザー タブ内でのみ保持',
+                  )}
+                  disabled={isTesting}
+                  aria-invalid={Boolean(errors.apiKey)}
+                  aria-describedby={errors.apiKey ? 'byo-ai-key-error' : 'byo-ai-key-help'}
+                />
+              </div>
+              <small id="byo-ai-key-help" className="byo-ai-field-help azd-field-hint">
+                {text(
+                  'Closing or reloading this tab clears the key and requires verification again.',
+                  'このタブを閉じるか再読み込みするとキーが消去され、再確認が必要になります。',
+                )}
+              </small>
+              {errors.apiKey && (
+                <small id="byo-ai-key-error" className="byo-ai-field-error azd-field-error">
+                  {errors.apiKey}
+                </small>
+              )}
+            </label>
+          </div>
+        </section>
+
+          <div className="byo-ai-security-note azd-callout azd-callout--info">
             <ShieldCheck size={19} aria-hidden="true" />
             <p>
               <strong>{text('Credential handling', '資格情報の取り扱い')}</strong>
@@ -475,9 +474,10 @@ export default function BYOAISettingsDialog({
             </summary>
             <div className="byo-ai-advanced-body">
               <div className="byo-ai-form-grid">
-                <label>
+                <label className="azd-field">
                   <span>{text('API format', 'API 形式')}</span>
                   <select
+                    className="azd-control"
                     value={draft.apiFormat}
                     onChange={event => updateDraft(
                       'apiFormat',
@@ -488,7 +488,7 @@ export default function BYOAISettingsDialog({
                     <option value="responses">Responses API (recommended)</option>
                     <option value="chat-completions">Chat Completions</option>
                   </select>
-                  <small className="byo-ai-field-help">
+                  <small className="byo-ai-field-help azd-field-hint">
                     {text(
                       'Azure v1 routing is used automatically; no dated API version is required.',
                       'Azure v1 ルーティングを自動使用するため、日付付き API バージョンは不要です。',
@@ -496,9 +496,10 @@ export default function BYOAISettingsDialog({
                   </small>
                 </label>
 
-                <label>
+                <label className="azd-field">
                   <span>{text('Capability setup', '機能設定')}</span>
                   <select
+                    className="azd-control"
                     value={draft.capabilityMode}
                     onChange={event => updateDraft(
                       'capabilityMode',
@@ -513,7 +514,7 @@ export default function BYOAISettingsDialog({
                       {text('Manual override', '手動設定')}
                     </option>
                   </select>
-                  <small className="byo-ai-field-help">
+                  <small className="byo-ai-field-help azd-field-hint">
                     {text(
                       'Use manual override when an Azure deployment uses a custom alias.',
                       'Azure デプロイが独自の別名を使用する場合は手動設定を選択してください。',
@@ -522,9 +523,10 @@ export default function BYOAISettingsDialog({
                 </label>
 
                 {draft.isReasoning && (
-                  <label>
+                  <label className="azd-field">
                     <span>{text('Reasoning effort', '推論強度')}</span>
                     <select
+                      className="azd-control"
                       value={draft.reasoningEffort}
                       onChange={event => updateDraft(
                         'reasoningEffort',
@@ -541,7 +543,7 @@ export default function BYOAISettingsDialog({
                         </option>
                       ))}
                     </select>
-                    <small className="byo-ai-field-help">
+                    <small className="byo-ai-field-help azd-field-hint">
                       {text(
                         'The same effort is used for connection testing and real requests.',
                         '接続テストと実際のリクエストで同じ推論強度を使用します。',
@@ -552,7 +554,7 @@ export default function BYOAISettingsDialog({
               </div>
 
               {draft.capabilityMode === 'auto' ? (
-                <div className="byo-ai-detected-capabilities">
+                <div className="byo-ai-detected-capabilities azd-callout azd-callout--info">
                   <Info size={17} aria-hidden="true" />
                   <span>
                     <strong>{text('Detected capabilities', '検出された機能')}</strong>
@@ -618,7 +620,7 @@ export default function BYOAISettingsDialog({
             </div>
 
             <div
-              className={`byo-ai-status byo-ai-status--${statusContent.kind}`}
+              className={`byo-ai-status byo-ai-status--${statusContent.kind} azd-callout azd-callout--${statusContent.kind}`}
               role={statusContent.kind === 'error' ? 'alert' : 'status'}
             >
               {statusContent.kind === 'success' && <CheckCircle2 size={17} aria-hidden="true" />}
@@ -630,10 +632,10 @@ export default function BYOAISettingsDialog({
           </section>
         </div>
 
-        <footer className="byo-ai-dialog-footer">
+        <footer className="modal-actions byo-ai-dialog-footer">
           <button
             type="button"
-            className="btn btn-secondary byo-ai-disconnect"
+            className="azd-button azd-button--secondary byo-ai-disconnect"
             onClick={handleDisconnect}
             disabled={isTesting || (!draft.enabled && !getBYOAIApiKey())}
           >
@@ -642,7 +644,7 @@ export default function BYOAISettingsDialog({
           <span className="byo-ai-dialog-footer-spacer" />
           <button
             type="button"
-            className="btn btn-secondary"
+            className="azd-button azd-button--secondary"
             onClick={() => void handleTest()}
             disabled={!canTest}
           >
@@ -653,7 +655,7 @@ export default function BYOAISettingsDialog({
           </button>
           <button
             type="button"
-            className="btn btn-primary"
+            className="azd-button azd-button--primary"
             onClick={handleSave}
             disabled={!canSave}
             title={!canSave
@@ -667,7 +669,6 @@ export default function BYOAISettingsDialog({
             {text('Save verified connection', '確認済み接続を保存')}
           </button>
         </footer>
-      </section>
-    </div>
+    </ModalScaffold>
   );
 }

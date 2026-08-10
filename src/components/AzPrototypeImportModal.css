@@ -11,34 +11,33 @@
   justify-content: center;
   gap: 10px;
   padding: 32px 20px;
-  border: 2px dashed #444;
-  border-radius: 10px;
+  border: 2px dashed var(--azd-color-border-strong);
   cursor: pointer;
   transition: border-color 0.15s, background 0.15s;
   text-align: center;
 }
 
 .azp-import-dropzone:hover {
-  border-color: #0078d4;
-  background: rgba(0, 120, 212, 0.06);
+  border-color: var(--azd-color-brand);
+  background: var(--azd-color-surface-hover);
 }
 
 .azp-import-dropzone svg {
-  color: #555;
+  color: var(--azd-color-text-muted);
 }
 
 .azp-import-dropzone:hover svg {
-  color: #0078d4;
+  color: var(--azd-color-action);
 }
 
 .azp-import-dropzone-text {
   font-size: 14px;
-  color: #ccc;
+  color: var(--azd-color-text);
 }
 
 .azp-import-dropzone-text code {
-  color: #4fc3f7;
-  background: #263238;
+  color: var(--azd-color-action);
+  background: var(--azd-color-surface-subtle);
   padding: 1px 4px;
   border-radius: 3px;
   font-size: 13px;
@@ -46,21 +45,12 @@
 
 .azp-import-dropzone-hint {
   font-size: 11px;
-  color: #777;
 }
 
 /* ── Success banner ──────────────────────────────────────────────────────── */
 
 .azp-import-success {
-  display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 10px 14px;
-  background: rgba(0, 178, 148, 0.1);
-  border: 1px solid rgba(0, 178, 148, 0.3);
-  border-radius: 8px;
-  color: #00b294;
-  font-size: 13px;
   margin-bottom: 16px;
 }
 
@@ -70,9 +60,6 @@
   display: flex;
   flex-direction: column;
   gap: 6px;
-  background: #252525;
-  border: 1px solid #333;
-  border-radius: 8px;
   padding: 12px 14px;
   margin-bottom: 16px;
 }
@@ -84,16 +71,16 @@
 }
 
 .azp-import-project-key {
-  color: #999;
+  color: var(--azd-color-text-muted);
 }
 
 .azp-import-project-val {
-  color: #e0e0e0;
+  color: var(--azd-color-text);
   font-weight: 500;
 }
 
 .azp-import-project-val--green {
-  color: #00b294;
+  color: var(--azd-color-success);
 }
 
 /* ── Service chips ───────────────────────────────────────────────────────── */
@@ -104,7 +91,7 @@
 
 .azp-import-services-title {
   font-size: 12px;
-  color: #999;
+  color: var(--azd-color-text-muted);
   margin-bottom: 8px;
   text-transform: uppercase;
   letter-spacing: 0.5px;
@@ -119,35 +106,33 @@
 .azp-import-service-chip {
   display: inline-block;
   padding: 4px 10px;
-  background: #2a2a2a;
-  border: 1px solid #444;
+  background: var(--azd-color-surface-subtle);
+  border: 1px solid var(--azd-color-border);
   border-radius: 14px;
   font-size: 12px;
-  color: #ccc;
+  color: var(--azd-color-text);
 }
 
 /* ── Error state ─────────────────────────────────────────────────────────── */
 
 .azp-import-error {
-  display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 12px;
   padding: 24px;
   text-align: center;
 }
 
 .azp-import-error svg {
-  color: #f85149;
+  color: var(--azd-color-danger);
 }
 
 .azp-import-error strong {
-  color: #f85149;
+  color: inherit;
   font-size: 15px;
 }
 
 .azp-import-error p {
-  color: #b0b0b0;
+  color: var(--azd-color-text-secondary);
   font-size: 13px;
   margin: 4px 0 0;
 }

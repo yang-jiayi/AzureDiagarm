@@ -26,7 +26,7 @@ import {
 import { formatMonthlyCost } from '../utils/pricingHelpers';
 import { useLanguage } from '../i18n/LanguageContext';
 import { localize } from '../i18n/localization';
-import { useModalFocus } from '../hooks/useModalFocus';
+import ModalScaffold from './ModalScaffold';
 import './NodePricingEditor.css';
 
 const MAX_QUANTITY = 100_000;
@@ -92,7 +92,6 @@ export default function NodePricingEditor({
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState('');
   const activeRef = useRef(true);
-  const dialogRef = useModalFocus<HTMLDivElement>(true, returnFocusTarget);
 
   useEffect(() => {
     activeRef.current = true;
@@ -121,14 +120,6 @@ export default function NodePricingEditor({
       cancelled = true;
     };
   }, [pricing, serviceType]);
-
-  useEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && !saving) onClose();
-    };
-    document.addEventListener('keydown', handleKeyDown);
-    return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [onClose, saving]);
 
   // Preview mirrors calculateMonthlyCost: unit price x quantity.
   //
@@ -207,17 +198,17 @@ export default function NodePricingEditor({
   };
 
   return (
-    <div className="npe-modal-overlay" onClick={handleClose}>
-      <div
-        ref={dialogRef}
-        className="npe-modal"
-        onClick={e => e.stopPropagation()}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="node-pricing-editor-title"
-        tabIndex={-1}
-      >
-        <div className="npe-modal-header">
+    <ModalScaffold
+      isOpen
+      onClose={handleClose}
+      className="npe-modal"
+      overlayClassName="npe-modal-overlay"
+      ariaLabelledBy="node-pricing-editor-title"
+      closeOnBackdrop={!saving}
+      closeOnEscape={!saving}
+      returnFocusTarget={returnFocusTarget}
+    >
+        <div className="modal-header npe-modal-header">
           <div className="npe-modal-title" id="node-pricing-editor-title">
             <DollarSign size={20} />
             <span>
@@ -229,7 +220,7 @@ export default function NodePricingEditor({
           </div>
           <button
             type="button"
-            className="npe-modal-close"
+            className="modal-close npe-modal-close"
             onClick={handleClose}
             disabled={saving}
             aria-label={localize(language, { en: 'Close', ja: '閉じる' })}
@@ -238,7 +229,7 @@ export default function NodePricingEditor({
           </button>
         </div>
 
-        <div className="npe-modal-body">
+        <div className="modal-body npe-modal-body">
           <p className="npe-note">
             {localize(language, {
               en: `Estimates are indicative catalog prices for ${pricing.region}. Adjust the SKU and instance count to match your design, or override the figure with your own negotiated price.`,
@@ -246,17 +237,17 @@ export default function NodePricingEditor({
             })}
           </p>
 
-          <label className="npe-field">
+          <label className="npe-field azd-field">
             <span className="npe-label">
               {localize(language, { en: 'Tier / SKU', ja: 'Tier / SKU' })}
             </span>
             {loadingTiers ? (
-              <span className="npe-hint">
+              <span className="npe-hint azd-field-hint">
                 {localize(language, { en: 'Loading available tiers…', ja: '利用可能なTierを読み込み中…' })}
               </span>
             ) : tiersSelectable ? (
               <select
-                className="npe-input"
+                className="npe-input azd-control"
                 value={tier}
                 disabled={saving || useCustom}
                 onChange={e => setTier(e.target.value)}
@@ -276,14 +267,14 @@ export default function NodePricingEditor({
                 ))}
               </select>
             ) : pricing.isUsageBased ? (
-              <span className="npe-hint">
+              <span className="npe-hint azd-field-hint">
                 {localize(language, {
                   en: `${serviceType} bills on consumption, so there is no monthly SKU to pick. The displayed figure estimates typical usage; override it below if you have a better value.`,
                   ja: `${serviceType} は従量課金のため、月額SKUはありません。表示額は一般的な使用量の参考値です。より正確な値がある場合は下で上書きしてください。`,
                 })}
               </span>
             ) : (
-              <span className="npe-hint">
+              <span className="npe-hint azd-field-hint">
                 {localize(language, {
                   en: 'No catalog tiers are available for this service. Use a custom price below.',
                   ja: 'このサービスで利用可能なカタログTierはありません。下で独自価格を指定してください。',
@@ -292,12 +283,12 @@ export default function NodePricingEditor({
             )}
           </label>
 
-          <label className="npe-field">
+          <label className="npe-field azd-field">
             <span className="npe-label">
               {localize(language, { en: 'Instances / units', ja: 'インスタンス / ユニット数' })}
             </span>
             <input
-              className="npe-input"
+              className="npe-input azd-control"
               type="number"
               min={1}
               max={MAX_QUANTITY}
@@ -328,7 +319,7 @@ export default function NodePricingEditor({
           </label>
 
           {useCustom && (
-            <label className="npe-field">
+            <label className="npe-field azd-field">
               <span className="npe-label">
                 {localize(language, {
                   en: 'Custom price (USD / month / unit)',
@@ -336,7 +327,7 @@ export default function NodePricingEditor({
                 })}
               </span>
               <input
-                className={`npe-input${customIsValid ? '' : ' npe-input--invalid'}`}
+                className={`npe-input azd-control${customIsValid ? '' : ' npe-input--invalid'}`}
                 type="number"
                 min={0}
                 step="0.01"
@@ -345,7 +336,7 @@ export default function NodePricingEditor({
                 onChange={e => setCustomPrice(e.target.value)}
               />
               {!customIsValid && (
-                <span className="npe-error">
+                <span className="npe-error azd-field-error">
                   {localize(language, {
                     en: 'Enter a finite number of 0 or more.',
                     ja: '0以上の有限の数値を入力してください。',
@@ -355,7 +346,7 @@ export default function NodePricingEditor({
             </label>
           )}
 
-          <div className="npe-preview">
+          <div className="npe-preview azd-callout azd-callout--success">
             <span className="npe-preview-label">
               {localize(language, { en: 'Estimated monthly cost', ja: '月額参考見積もり' })}
             </span>
@@ -367,23 +358,32 @@ export default function NodePricingEditor({
             )}
           </div>
           {saveError && (
-            <div className="npe-error" role="alert">
+            <div className="npe-error azd-callout azd-callout--danger" role="alert">
               {saveError}
             </div>
           )}
         </div>
 
-        <div className="npe-modal-footer">
-          <button type="button" className="npe-btn npe-btn--ghost" onClick={handleClose} disabled={saving}>
+        <div className="modal-actions npe-modal-footer">
+          <button
+            type="button"
+            className="azd-button azd-button--secondary"
+            onClick={handleClose}
+            disabled={saving}
+          >
             {localize(language, { en: 'Cancel', ja: 'キャンセル' })}
           </button>
-          <button type="button" className="npe-btn npe-btn--primary" onClick={handleApply} disabled={!canApply}>
+          <button
+            type="button"
+            className="azd-button azd-button--primary"
+            onClick={handleApply}
+            disabled={!canApply}
+          >
             {saving
               ? localize(language, { en: 'Applying…', ja: '適用中…' })
               : localize(language, { en: 'Apply', ja: '適用' })}
           </button>
         </div>
-      </div>
-    </div>
+    </ModalScaffold>
   );
 }

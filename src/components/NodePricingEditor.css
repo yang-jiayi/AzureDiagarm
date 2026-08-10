@@ -3,25 +3,10 @@
 
 /* Per-node cost editor modal */
 
-.npe-modal-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(15, 23, 42, 0.55);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: var(--azd-z-modal);
-  padding: 1rem;
-}
-
 .npe-modal {
-  background: #ffffff;
-  border-radius: 10px;
   width: 100%;
   max-width: 460px;
-  max-height: 90vh;
-  overflow-y: auto;
-  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.3);
+  max-height: 90dvh;
 }
 
 .npe-modal-header {
@@ -29,7 +14,6 @@
   align-items: center;
   justify-content: space-between;
   padding: 1rem 1.25rem;
-  border-bottom: 1px solid #e2e8f0;
 }
 
 .npe-modal-title {
@@ -38,35 +22,11 @@
   gap: 0.5rem;
   font-size: 1rem;
   font-weight: 600;
-  color: #0f172a;
+  color: var(--azd-color-text-strong);
 }
 
 .npe-modal-close {
-  background: transparent;
-  border: none;
-  color: #64748b;
-  cursor: pointer;
   padding: 0.25rem;
-  border-radius: 4px;
-  display: flex;
-}
-
-.npe-modal-close:hover {
-  background: #f1f5f9;
-  color: #0f172a;
-}
-
-.npe-modal-close:disabled,
-.npe-btn:disabled {
-  opacity: 0.55;
-  cursor: not-allowed;
-}
-
-.npe-modal-close:focus-visible,
-.npe-btn:focus-visible,
-.npe-input:focus-visible {
-  outline: 2px solid #0078d4;
-  outline-offset: 2px;
 }
 
 .npe-modal-body {
@@ -80,7 +40,7 @@
   margin: 0;
   font-size: 0.85rem;
   line-height: 1.45;
-  color: #475569;
+  color: var(--azd-color-text-secondary);
 }
 
 .npe-field {
@@ -92,43 +52,23 @@
 .npe-label {
   font-size: 0.8rem;
   font-weight: 600;
-  color: #334155;
+  color: var(--azd-color-text-secondary);
 }
 
 .npe-input {
-  width: 100%;
-  padding: 0.5rem 0.6rem;
-  border: 1px solid #cbd5e1;
-  border-radius: 6px;
   font-size: 0.875rem;
-  color: #0f172a;
-  background: #fff;
-}
-
-.npe-input:focus {
-  outline: none;
-  border-color: #0078d4;
-  box-shadow: 0 0 0 3px rgba(0, 120, 212, 0.15);
-}
-
-.npe-input:disabled {
-  background: #f1f5f9;
-  color: #94a3b8;
-  cursor: not-allowed;
 }
 
 .npe-input--invalid {
-  border-color: #dc2626;
+  border-color: var(--azd-color-danger);
 }
 
 .npe-error {
   font-size: 0.75rem;
-  color: #dc2626;
 }
 
 .npe-hint {
   font-size: 0.8rem;
-  color: #64748b;
 }
 
 .npe-checkbox {
@@ -136,72 +76,34 @@
   align-items: center;
   gap: 0.5rem;
   font-size: 0.85rem;
-  color: #334155;
+  color: var(--azd-color-text-secondary);
   cursor: pointer;
 }
 
 .npe-preview {
-  display: flex;
   align-items: baseline;
-  gap: 0.6rem;
   flex-wrap: wrap;
-  padding: 0.75rem 0.9rem;
-  background: #f0fdf4;
-  border: 1px solid #bbf7d0;
-  border-radius: 6px;
 }
 
 .npe-preview-label {
   font-size: 0.8rem;
-  color: #166534;
+  color: inherit;
   font-weight: 600;
 }
 
 .npe-preview-value {
   font-size: 1.1rem;
   font-weight: 700;
-  color: #15803d;
+  color: inherit;
 }
 
 .npe-preview-detail {
   font-size: 0.78rem;
-  color: #166534;
+  color: inherit;
 }
 
 .npe-modal-footer {
-  display: flex;
-  justify-content: flex-end;
-  gap: 0.5rem;
   padding: 0.9rem 1.25rem;
-  border-top: 1px solid #e2e8f0;
-}
-
-.npe-btn {
-  padding: 0.5rem 1rem;
-  border-radius: 6px;
-  font-size: 0.85rem;
-  font-weight: 600;
-  cursor: pointer;
-  border: 1px solid transparent;
-}
-
-.npe-btn--ghost {
-  background: #fff;
-  border-color: #cbd5e1;
-  color: #334155;
-}
-
-.npe-btn--ghost:hover {
-  background: #f8fafc;
-}
-
-.npe-btn--primary {
-  background: #0078d4;
-  color: #fff;
-}
-
-.npe-btn--primary:hover:not(:disabled) {
-  background: #106ebe;
 }
 
 /* Cost badge becomes an affordance for opening the editor */
@@ -215,77 +117,9 @@
   filter: brightness(1.08);
 }
 
-body.dark-mode .npe-modal {
-  background: #202b36;
-  border: 1px solid #415466;
-}
-
-body.dark-mode .npe-modal-header,
-body.dark-mode .npe-modal-footer {
-  border-color: #415466;
-}
-
-body.dark-mode .npe-modal-title,
-body.dark-mode .npe-note,
-body.dark-mode .npe-label,
-body.dark-mode .npe-checkbox {
-  color: #e5edf5;
-}
-
-body.dark-mode .npe-hint {
-  color: #b5c5d4;
-}
-
-body.dark-mode .npe-modal-close {
-  color: #b5c5d4;
-}
-
-body.dark-mode .npe-modal-close:hover {
-  background: #304152;
-  color: #fff;
-}
-
-body.dark-mode .npe-input {
-  border-color: #52677b;
-  background: #17212b;
-  color: #f1f5f9;
-}
-
-body.dark-mode .npe-input:disabled {
-  background: #273542;
-  color: #91a4b5;
-}
-
-body.dark-mode .npe-preview {
-  border-color: #28784a;
-  background: #163824;
-}
-
-body.dark-mode .npe-preview-label,
-body.dark-mode .npe-preview-value,
-body.dark-mode .npe-preview-detail {
-  color: #a7f3c2;
-}
-
-body.dark-mode .npe-btn--ghost {
-  border-color: #52677b;
-  background: #273542;
-  color: #e5edf5;
-}
-
-body.dark-mode .npe-btn--ghost:hover {
-  background: #304152;
-}
-
 @media (max-width: 640px) {
-  .npe-modal-overlay {
-    align-items: flex-end;
-    padding: 0;
-  }
-
   .npe-modal {
     max-width: none;
-    max-height: 92vh;
-    border-radius: 12px 12px 0 0;
+    max-height: 92dvh;
   }
 }

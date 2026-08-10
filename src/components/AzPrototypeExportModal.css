@@ -3,13 +3,8 @@
 /* ── Shared modal chrome ─────────────────────────────────────────────────── */
 
 .azp-modal-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.55);
-  z-index: var(--azd-z-modal);
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  padding: var(--azd-space-4);
+  background: var(--azd-color-overlay-backdrop);
   animation: azpFadeIn 0.15s ease-out;
 }
 
@@ -19,15 +14,9 @@
 }
 
 .azp-modal {
-  background: #1e1e1e;
-  border: 1px solid #333;
-  border-radius: 12px;
   width: 560px;
-  max-width: 95vw;
-  max-height: 90vh;
-  display: flex;
-  flex-direction: column;
-  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.4);
+  max-width: min(95vw, 560px);
+  max-height: 90dvh;
   animation: azpSlideUp 0.2s ease-out;
 }
 
@@ -41,7 +30,6 @@
   align-items: center;
   justify-content: space-between;
   padding: 16px 20px;
-  border-bottom: 1px solid #333;
 }
 
 .azp-modal-title {
@@ -50,27 +38,15 @@
   gap: 10px;
   font-size: 16px;
   font-weight: 600;
-  color: #e0e0e0;
+  color: var(--azd-color-text-strong);
 }
 
 .azp-modal-title svg {
-  color: #0078d4;
+  color: var(--azd-color-action);
 }
 
 .azp-modal-close {
-  background: none;
-  border: none;
-  color: #999;
-  cursor: pointer;
   padding: 4px;
-  border-radius: 4px;
-  display: flex;
-  align-items: center;
-}
-
-.azp-modal-close:hover {
-  color: #fff;
-  background: #333;
 }
 
 .azp-modal-body {
@@ -80,15 +56,15 @@
 }
 
 .azp-modal-description {
-  color: #b0b0b0;
+  color: var(--azd-color-text-secondary);
   font-size: 13px;
   line-height: 1.5;
   margin: 0 0 16px;
 }
 
 .azp-modal-description code {
-  color: #4fc3f7;
-  background: #263238;
+  color: var(--azd-color-action);
+  background: var(--azd-color-surface-subtle);
   padding: 1px 5px;
   border-radius: 3px;
   font-size: 12px;
@@ -108,20 +84,17 @@
   align-items: center;
   flex: 1;
   padding: 10px;
-  background: #252525;
-  border: 1px solid #333;
-  border-radius: 8px;
 }
 
 .azp-stat-value {
   font-size: 22px;
   font-weight: 700;
-  color: #0078d4;
+  color: var(--azd-color-action);
 }
 
 .azp-stat-label {
   font-size: 11px;
-  color: #999;
+  color: var(--azd-color-text-muted);
   text-transform: uppercase;
   letter-spacing: 0.5px;
   margin-top: 2px;
@@ -144,35 +117,22 @@
 
 .azp-form-group label {
   font-size: 13px;
-  color: #ccc;
+  color: var(--azd-color-text-secondary);
   font-weight: 500;
 }
 
 .azp-form-group input[type="text"],
 .azp-form-group select {
-  background: #2a2a2a;
-  border: 1px solid #444;
-  border-radius: 6px;
-  padding: 8px 10px;
-  color: #e0e0e0;
   font-size: 13px;
-  outline: none;
-  transition: border-color 0.15s;
-}
-
-.azp-form-group input[type="text"]:focus,
-.azp-form-group select:focus {
-  border-color: #0078d4;
 }
 
 .azp-form-hint {
   font-size: 11px;
-  color: #777;
 }
 
 .azp-form-hint code {
-  color: #4fc3f7;
-  background: #263238;
+  color: var(--azd-color-action);
+  background: var(--azd-color-surface-subtle);
   padding: 0 3px;
   border-radius: 2px;
   font-size: 11px;
@@ -187,7 +147,7 @@
 }
 
 .azp-form-group--checkbox input[type="checkbox"] {
-  accent-color: #0078d4;
+  accent-color: var(--azd-color-brand);
   width: 16px;
   height: 16px;
 }
@@ -195,15 +155,12 @@
 /* ── CLI preview ─────────────────────────────────────────────────────────── */
 
 .azp-cli-preview {
-  background: #0d1117;
-  border: 1px solid #30363d;
-  border-radius: 8px;
   padding: 12px 16px;
 }
 
 .azp-cli-preview-title {
   font-size: 12px;
-  color: #8b949e;
+  color: var(--azd-color-text-muted);
   margin-bottom: 8px;
   font-weight: 500;
 }
@@ -212,7 +169,7 @@
   font-family: 'Yu Gothic UI', 'Cascadia Code', 'Fira Code', 'JetBrains Mono', monospace;
   font-size: 12px;
   line-height: 1.6;
-  color: #c9d1d9;
+  color: var(--azd-color-text);
   margin: 0;
   white-space: pre-wrap;
   word-break: break-word;
@@ -221,45 +178,24 @@
 /* ── Footer ──────────────────────────────────────────────────────────────── */
 
 .azp-modal-footer {
-  display: flex;
-  justify-content: flex-end;
-  gap: 10px;
   padding: 14px 20px;
-  border-top: 1px solid #333;
 }
 
-.azp-btn {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 16px;
-  border-radius: 6px;
-  font-size: 13px;
-  font-weight: 500;
-  cursor: pointer;
-  border: none;
-  transition: background 0.15s;
+@media (max-width: 640px) {
+  .azp-modal-overlay {
+    padding: 0;
+  }
+
+  .azp-modal {
+    width: 100%;
+    max-width: none;
+    max-height: 92dvh;
+  }
 }
 
-.azp-btn--primary {
-  background: #0078d4;
-  color: #fff;
-}
-
-.azp-btn--primary:hover:not(:disabled) {
-  background: #106ebe;
-}
-
-.azp-btn--primary:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.azp-btn--secondary {
-  background: #333;
-  color: #e0e0e0;
-}
-
-.azp-btn--secondary:hover {
-  background: #444;
+@media (prefers-reduced-motion: reduce) {
+  .azp-modal-overlay,
+  .azp-modal {
+    animation: none;
+  }
 }
