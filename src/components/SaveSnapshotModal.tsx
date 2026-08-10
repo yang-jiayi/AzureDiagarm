@@ -93,7 +93,7 @@ const SaveSnapshotModal: React.FC<SaveSnapshotModalProps> = ({
               {' '}{t("Creating a snapshot of")}{' '}<strong>{diagramName}</strong>
             </p>
             <p className="snapshot-info-details">
-              {serviceCount} {' '}{t("services •")}{' '}{new Date().toLocaleString()}
+              {serviceCount} {' '}{t("services •")}{' '}{new Date().toLocaleString(language === 'ja' ? 'ja-JP' : 'en-US')}
             </p>
           </div>
 

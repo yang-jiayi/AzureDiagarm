@@ -70,7 +70,7 @@
     {
       "type": 1,
       "content": {
-        "json": "# Azure Diagram Builder \u2014 Usage Analytics\n---\nReal-time telemetry from the [Azure Architecture Diagram Builder](https://aka.ms/diagram-builder). Tracks feature usage, AI model performance, user geography, and architecture generation patterns.\n\n> \u2139\ufe0f **Coverage:** telemetry launched **2026-04-17** \u2014 windows starting earlier will show no data before that date. **\"Users\" = unique anonymous browsers** (cookie-based `user_Id`), a reach proxy, not verified individuals; `dcount` is an approximation and browser events are not bot-filtered."
+        "json": "# Azure Diagram Builder \u2014 Usage Analytics\n---\nReal-time telemetry from the [Microsoft Product Architecture Diagram Builder](https://aka.ms/diagram-builder). Tracks feature usage, AI model performance, user geography, and architecture generation patterns.\n\n> \u2139\ufe0f **Coverage:** telemetry launched **2026-04-17** \u2014 windows starting earlier will show no data before that date. **\"Users\" = unique anonymous browsers** (cookie-based `user_Id`), a reach proxy, not verified individuals; `dcount` is an approximation and browser events are not bot-filtered."
       },
       "name": "title"
     },

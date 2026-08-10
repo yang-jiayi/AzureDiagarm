@@ -6,6 +6,7 @@ import { X, MessageSquare, Send, CheckCircle2 } from 'lucide-react';
 import { submitFeedback, FeedbackContext } from '../services/feedbackService';
 import './FeedbackModal.css';
 import { useLanguage } from '../i18n/LanguageContext';
+import { localize } from '../i18n/localization';
 import ModalScaffold from './ModalScaffold';
 
 interface FeedbackModalProps {
@@ -40,7 +41,7 @@ const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const FEEDBACK_CONTACT_ENABLED = import.meta.env.VITE_FEEDBACK_CONTACT_ENABLED === 'true';
 
 const FeedbackModal: React.FC<FeedbackModalProps> = ({ isOpen, onClose, context, preselectedRating }) => {
-  const { t, translate } = useLanguage();
+  const { t, translate, language } = useLanguage();
   const [rating, setRating] = useState<number | null>(null);
   const [category, setCategory] = useState(CATEGORIES[0]);
   const [comment, setComment] = useState('');
@@ -76,12 +77,18 @@ const FeedbackModal: React.FC<FeedbackModalProps> = ({ isOpen, onClose, context,
 
   const handleSubmit = async () => {
     if (rating === null) {
-      setError(translate('Please pick a rating so we know how you feel.'));
+      setError(localize(language, {
+        en: 'Please pick a rating so we know how you feel.',
+        ja: '評価を選択してください（ご感想の把握に使用します）。',
+      }));
       return;
     }
     const normalizedEmail = contactEmail.trim();
     if (FEEDBACK_CONTACT_ENABLED && contactConsent && (!EMAIL_PATTERN.test(normalizedEmail) || normalizedEmail.length > 254)) {
-      setError(translate('Enter a valid email address so we can follow up.'));
+      setError(localize(language, {
+        en: 'Enter a valid email address so we can follow up.',
+        ja: 'フォローアップできるよう、有効なメールアドレスを入力してください。',
+      }));
       return;
     }
     setError(null);
@@ -139,7 +146,7 @@ const FeedbackModal: React.FC<FeedbackModalProps> = ({ isOpen, onClose, context,
             <p>
               {FEEDBACK_CONTACT_ENABLED && contactConsent
                 ? translate('Your feedback was saved. The maintainer may contact you about this submission.')
-                : t("Your feedback helps us improve the Azure Architecture Diagram Builder.")}
+                : t("Your feedback helps us improve the Microsoft Product Architecture Diagram Builder.")}
             </p>
             <button
               className="azd-button azd-button--primary"
@@ -256,8 +263,14 @@ const FeedbackModal: React.FC<FeedbackModalProps> = ({ isOpen, onClose, context,
 
               <div className="feedback-hint azd-callout">
                 {' '}{FEEDBACK_CONTACT_ENABLED
-                  ? translate("🔒 Rating and comments help improve the app. If you opt in, your email is stored only with this feedback in Cosmos DB and is not sent to analytics. Don't include other sensitive information.")
-                  : t("🔒 We collect your rating and comment to improve the app. Don't include sensitive information.")}{' '}</div>
+                  ? localize(language, {
+                      en: "🔒 Rating and comments help improve the app. If you opt in, your email is stored only with this feedback in Cosmos DB and is not sent to analytics. Don't include other sensitive information.",
+                      ja: '🔒 評価とコメントはアプリの改善に利用します。オプトインした場合、メールアドレスはこのフィードバックとともに Cosmos DB にのみ保存され、分析には送信されません。その他の機微な情報は入力しないでください。',
+                    })
+                  : localize(language, {
+                      en: "🔒 We collect your rating and comment to improve the app. Don't include sensitive information.",
+                      ja: '🔒 アプリ改善のため評価とコメントを収集します。機微な情報は入力しないでください。',
+                    })}{' '}</div>
             </div>
 
             <div className="modal-actions">

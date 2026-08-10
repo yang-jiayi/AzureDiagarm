@@ -6,10 +6,24 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 const nginx = readFileSync(new URL('../nginx.conf', import.meta.url), 'utf8');
-const policies = Array.from(
+const allPolicies = Array.from(
   nginx.matchAll(/add_header Content-Security-Policy "([^"]+)" always;/g),
   (match) => match[1],
 );
+/**
+ * `/pricing/` only ever returns static JSON, so it gets a hardened data-only
+ * policy instead of the application policy. Everything else must stay uniform.
+ */
+const DATA_ONLY_POLICY = "default-src 'none'; base-uri 'none'; frame-ancestors 'none'; sandbox";
+const policies = allPolicies.filter((policy) => policy !== DATA_ONLY_POLICY);
+
+test('nginx serves static pricing data under a hardened data-only CSP', () => {
+  assert.equal(
+    allPolicies.filter((policy) => policy === DATA_ONLY_POLICY).length,
+    1,
+    'exactly one block (the /pricing/ data location) may use the data-only CSP',
+  );
+});
 
 test('nginx applies one consistent CSP to every response block with custom headers', () => {
   assert.equal(policies.length, 8);

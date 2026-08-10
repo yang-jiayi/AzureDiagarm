@@ -1,7 +1,7 @@
 # Help & Learn — In‑App Guidance Plan
 
 This document captures the phased plan for adding in‑app learning and "how to use"
-guidance to the Azure Architecture Diagram Builder. It exists so the work can be
+guidance to the Microsoft Product Architecture Diagram Builder. It exists so the work can be
 picked up incrementally without losing the original intent.
 
 ## Goals

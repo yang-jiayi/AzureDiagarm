@@ -399,7 +399,7 @@ const IconPalette: React.FC<IconPaletteProps> = ({ forceCollapsed, openSignal, o
               decoding="async"
             />
           ) : (
-            <div className="icon-placeholder" aria-label={t('Loading...')}>
+            <div className="icon-placeholder" aria-hidden="true">
               {t('Loading...')}
             </div>
           )}
@@ -616,7 +616,7 @@ const IconPalette: React.FC<IconPaletteProps> = ({ forceCollapsed, openSignal, o
                 <Sparkles size={16} aria-hidden="true" />
                 <span>{localize(language, {
                   en: 'Common building blocks for starting an Azure architecture.',
-                  ja: 'Azure アーキテクチャを始めるための代表的な構成要素です。',
+                  ja: 'Azure アーキテクチャを始めるための代表的なノードです。',
                 })}</span>
               </div>
             )}

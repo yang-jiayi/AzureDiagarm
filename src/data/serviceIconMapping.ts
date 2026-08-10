@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 import { FABRIC_ICON_CATALOG } from './fabricIconCatalog';
+import { MICROSOFT_PRODUCT_ICON_CATALOG } from './microsoftProductIconCatalog';
 
 /**
  * Service to Icon Mapping
@@ -17,7 +18,7 @@ export interface ServiceIconMapping {
   /** Icon filename (without path or extension) */
   iconFile: string;
   /** Category/folder in icon library */
-  category: 'ai + machine learning' | 'app services' | 'compute' | 'databases' | 'storage' | 'networking' | 'web' | 'analytics' | 'containers' | 'integration' | 'identity' | 'management + governance' | 'iot' | 'monitor' | 'security' | 'fabric' | 'other';
+  category: 'ai + machine learning' | 'app services' | 'compute' | 'databases' | 'storage' | 'networking' | 'web' | 'analytics' | 'containers' | 'integration' | 'identity' | 'management + governance' | 'iot' | 'monitor' | 'security' | 'fabric' | 'power platform' | 'dynamics 365' | 'other';
   /** Whether we have real pricing data for this service */
   hasPricingData: boolean;
   /** Service name used in pricing files (if hasPricingData is true) */
@@ -47,6 +48,58 @@ const FABRIC_SERVICE_ICON_MAP = Object.fromEntries(
       costRange: definition.costRange,
     } satisfies ServiceIconMapping,
   ]),
+) as Record<string, ServiceIconMapping>;
+
+// The editorial exemplars (Reference / Blueprint few-shots) emit Microsoft
+// Fabric item names in shorthand that the base icon catalog does not list as
+// exact aliases (e.g. "OneLake Shortcuts", "Copy Jobs", "ML Model",
+// "Semantic Model (Direct Lake)"). Without an exact/alias match the STRICT
+// resolver used by ReferenceArchitectureCanvas and name normalization returns
+// null, so those tiles render icon-less. Map each shorthand to the correct
+// Fabric icon here. `aliases` references the shared catalog array, so we
+// REASSIGN a fresh array (never push) to avoid mutating FABRIC_ICON_CATALOG.
+const FABRIC_EXEMPLAR_ALIASES: Record<string, string[]> = {
+  OneLake: ['OneLake Shortcuts', 'OneLake Shortcut', 'Shortcuts'],
+  'Fabric Copy Job': ['Copy Jobs'],
+  'Fabric Notebook': ['Spark Notebook', 'Spark Notebooks'],
+  'Fabric Experiments': ['ML Experiment', 'ML Experiments'],
+  'Fabric Model': ['ML Model', 'ML Models'],
+  'Mirrored Database': ['Mirroring'],
+  'Semantic Model': ['Semantic Model (Direct Lake)', 'Semantic Model (Direct Query)'],
+  'Power BI Report': ['Interactive Report'],
+  'Power BI Paginated Report': ['Paginated Report'],
+  // Data Activator ships as part of the Real-Time Intelligence workload and has
+  // no standalone icon, so route it to the RTI workload glyph.
+  'Fabric Real-Time Intelligence': ['Activator', 'Data Activator', 'Fabric Activator', 'Reflex'],
+  // "API for GraphQL" is a real Fabric item but ships no dedicated icon in the
+  // catalog, so route it to the Fabric generic-item glyph rather than leave the
+  // reference tile icon-less.
+  'Fabric Generic Placeholder': ['API for GraphQL', 'GraphQL API', 'Fabric API for GraphQL'],
+};
+
+for (const [serviceName, extraAliases] of Object.entries(FABRIC_EXEMPLAR_ALIASES)) {
+  const mapping = FABRIC_SERVICE_ICON_MAP[serviceName];
+  if (!mapping) continue;
+  mapping.aliases = [...new Set([...mapping.aliases, ...extraAliases])];
+}
+
+// Power Platform, Copilot Studio, and Dynamics 365 are licensed per user or per
+// app rather than through Azure meters, so they never carry Azure pricing data.
+const MICROSOFT_PRODUCT_SERVICE_ICON_MAP = Object.fromEntries(
+  MICROSOFT_PRODUCT_ICON_CATALOG.filter(definition => definition.includeInServiceMap).map(
+    definition => [
+      definition.serviceName,
+      {
+        displayName: definition.displayName,
+        aliases: definition.aliases,
+        iconFile: definition.fileName,
+        category: definition.category,
+        hasPricingData: definition.hasPricingData,
+        isUsageBased: definition.isUsageBased,
+        costRange: definition.costRange,
+      } satisfies ServiceIconMapping,
+    ],
+  ),
 ) as Record<string, ServiceIconMapping>;
 
 /**
@@ -1060,6 +1113,10 @@ export const SERVICE_ICON_MAP: Record<string, ServiceIconMapping> = {
   // Microsoft Fabric service components. Navigation and sample-only symbols
   // remain available in the icon palette but are not advertised to AI/MCP as services.
   ...FABRIC_SERVICE_ICON_MAP,
+
+  // Microsoft Power Platform (including Copilot Studio and Agent 365) and
+  // Dynamics 365 business applications.
+  ...MICROSOFT_PRODUCT_SERVICE_ICON_MAP,
 };
 
 /**

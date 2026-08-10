@@ -15,6 +15,21 @@
 
 import { Node, Edge } from 'reactflow';
 import { generateModelFilename } from '../utils/modelNaming';
+import {
+  buildExportRoutes,
+  categoryStyle,
+  collectExportBoxes,
+  computeBounds,
+  metaSubline,
+  partitionBoxes,
+  zoneStyleFor,
+  type ExportBox,
+  type ExportRoute,
+  type Point,
+} from './diagramExportGeometry';
+
+/** Trim coordinates to 2dp so the XML stays compact and deterministic. */
+const f = (n: number): number => +n.toFixed(2);
 
 // Load SVG icon and convert to Base64 data URI for Draw.io
 async function loadIconAsBase64(iconPath: string): Promise<string | null> {
@@ -78,231 +93,141 @@ function resetCellIdCounter(): void {
   cellIdCounter = 2;
 }
 
-// Map Azure category to draw.io fill colors
-function getCategoryFillColor(category: string): string {
-  const colorMap: { [key: string]: string } = {
-    'compute': '#dbeafe',           // Light blue
-    'containers': '#dbeafe',
-    'databases': '#d1fae5',         // Light green
-    'storage': '#d1fae5',
-    'data layer': '#d1fae5',
-    'ai + machine learning': '#fef3c7', // Light orange/yellow
-    'analytics': '#ede9fe',         // Light purple
-    'networking': '#cffafe',        // Light cyan
-    'identity': '#fce7f3',          // Light pink
-    'security': '#fee2e2',          // Light red
-    'monitor': '#e0e7ff',           // Light indigo
-    'integration': '#ccfbf1',       // Light teal
-    'iot': '#ffedd5',               // Light orange
-    'app services': '#dbeafe',      // Light blue
-    'web': '#dbeafe',
-    'devops': '#ede9fe',            // Light purple
-  };
-  
-  const normalizedCategory = category?.toLowerCase() || '';
-  return colorMap[normalizedCategory] || '#f3f4f6'; // Default light gray
-}
-
-// Map Azure category to draw.io stroke colors
-function getCategoryStrokeColor(category: string): string {
-  const colorMap: { [key: string]: string } = {
-    'compute': '#0078d4',
-    'containers': '#0078d4',
-    'databases': '#10b981',
-    'storage': '#10b981',
-    'data layer': '#10b981',
-    'ai + machine learning': '#f59e0b',
-    'analytics': '#8b5cf6',
-    'networking': '#06b6d4',
-    'identity': '#ec4899',
-    'security': '#ef4444',
-    'monitor': '#6366f1',
-    'integration': '#14b8a6',
-    'iot': '#f97316',
-    'app services': '#3b82f6',
-    'web': '#3b82f6',
-    'devops': '#8b5cf6',
-  };
-  
-  const normalizedCategory = category?.toLowerCase() || '';
-  return colorMap[normalizedCategory] || '#6b7280';
-}
-
-// Map group categories to colors
-function getGroupFillColor(label: string): string {
-  const normalizedLabel = label.toLowerCase();
-  
-  if (normalizedLabel.includes('web') || normalizedLabel.includes('frontend')) {
-    return '#dbeafe';
-  } else if (normalizedLabel.includes('data') || normalizedLabel.includes('storage')) {
-    return '#d1fae5';
-  } else if (normalizedLabel.includes('security') || normalizedLabel.includes('identity')) {
-    return '#fee2e2';
-  } else if (normalizedLabel.includes('monitor') || normalizedLabel.includes('ops')) {
-    return '#e0e7ff';
-  } else if (normalizedLabel.includes('ai') || normalizedLabel.includes('ml') || normalizedLabel.includes('analytics')) {
-    return '#fef3c7';
-  } else if (normalizedLabel.includes('api') || normalizedLabel.includes('compute') || normalizedLabel.includes('application')) {
-    return '#cffafe';
+// Connection type → draw.io dash + colour, derived once in the shared layer so
+// Draw.io agrees with PPTX/VSDX/HTML and the PNG legend (fixes 4 & 11).
+function drawioEdgeStyle(route: ExportRoute): string {
+  let dash = 'dashed=0;';
+  if (route.dashed) {
+    switch (route.connectionType) {
+      case 'async':
+        dash = 'dashed=1;dashPattern=8 8;';
+        break;
+      case 'optional':
+      case 'security':
+        dash = 'dashed=1;dashPattern=1 4;';
+        break;
+      case 'telemetry':
+        dash = 'dashed=1;dashPattern=8 4 2 4;';
+        break;
+      default:
+        dash = 'dashed=1;dashPattern=6 6;';
+    }
   }
-  
-  return '#f9fafb'; // Default very light gray
+  const opacity = route.opacity < 1 ? `opacity=${Math.round(route.opacity * 100)};` : '';
+  return `${dash}strokeColor=${route.color};${opacity}`;
 }
 
-// Connection type to draw.io edge style
-function getEdgeStyle(edgeType?: string): string {
-  switch (edgeType) {
-    case 'async':
-      return 'dashed=1;dashPattern=8 8;';
-    case 'optional':
-      return 'dashed=1;dashPattern=4 4;strokeColor=#9ca3af;';
-    case 'sync':
-    default:
-      return 'dashed=0;';
-  }
-}
-
-// Create draw.io mxCell for a group node (container/swimlane)
-function createGroupCell(node: Node, cellId: string): string {
-  const x = node.position?.x || 0;
-  const y = node.position?.y || 0;
-  const width = (node as any).width || node.data?.width || 400;
-  const height = (node as any).height || node.data?.height || 300;
-  const label = escapeXml(node.data?.label || 'Group');
-  const fillColor = getGroupFillColor(label);
-  
-  // Use swimlane style for groups (collapsible container with header)
-  const style = `swimlane;whiteSpace=wrap;html=1;fillColor=${fillColor};strokeColor=#6b7280;fontStyle=1;startSize=30;rounded=1;arcSize=8;`;
-  
+// Create draw.io mxCell for a group node — absolute geometry, parent="1".
+// Zones and services are siblings on the root layer so a nested zone's absolute
+// position (resolved in the shared layer) is honoured verbatim (fixes 8 & 16).
+function createGroupCell(box: ExportBox, cellId: string, index: number): string {
+  const style = zoneStyleFor(box, index);
+  const label = escapeXml(box.label);
+  const cellStyle = `swimlane;whiteSpace=wrap;html=1;fillColor=${style.bg};strokeColor=${style.border};fontColor=${style.text};fontStyle=1;startSize=30;rounded=1;arcSize=6;`;
   return `
-      <mxCell id="${cellId}" value="${label}" style="${style}" vertex="1" parent="1">
-        <mxGeometry x="${x}" y="${y}" width="${width}" height="${height}" as="geometry" />
+      <mxCell id="${cellId}" value="${label}" style="${cellStyle}" vertex="1" parent="1">
+        <mxGeometry x="${f(box.x)}" y="${f(box.y)}" width="${f(box.w)}" height="${f(box.h)}" as="geometry" />
       </mxCell>`;
 }
 
-// Create draw.io mxCell for an Azure service node with embedded icon
+// Create draw.io mxCell for an Azure service node with an embedded icon.
+// The tile uses absolute geometry on the root layer, and the icon is a CHILD of
+// the tile (parent=cellId) so moving the service in draw.io moves its icon with
+// it (fix 17). Colours come from the shared category palette (fix 19) and the
+// SKU · region · cost sub-line mirrors the canvas tile (fix 10).
 async function createServiceCell(
-  node: Node, 
-  cellId: string, 
-  parentCellId: string,
-  groupNodeMap: Map<string, { cellId: string; x: number; y: number }>
+  box: ExportBox,
+  cellId: string,
 ): Promise<{ containerCell: string; iconCell: string | null }> {
-  // Get position - if node has a parent group, position is relative to group
-  let x = node.position?.x || 0;
-  let y = node.position?.y || 0;
-  
-  // Adjust position for grouped nodes (make relative to group)
-  if (node.parentNode && groupNodeMap.has(node.parentNode)) {
-    // Position is already relative in React Flow, but we need to account for swimlane header
-    y += 30; // Offset for swimlane header
-  }
-  
-  const width = 140;
-  const height = 90;
-  const label = escapeXml(node.data?.label || 'Azure Service');
-  const category = node.data?.category || '';
-  const fillColor = getCategoryFillColor(category);
-  const strokeColor = getCategoryStrokeColor(category);
-  
-  // Description/type for tooltip
-  const description = node.data?.description || node.data?.type || '';
-  const tooltip = description ? ` tooltip="${escapeXml(description)}"` : '';
-  
-  // Pricing info if available
-  const pricing = node.data?.pricing;
-  let pricingLabel = '';
-  if (pricing && pricing.estimatedCost > 0) {
-    const cost = pricing.estimatedCost * (pricing.quantity || 1);
-    pricingLabel = `&#xa;$${cost.toFixed(2)}/mo`;
-  }
-  
-  // Style for service node - rounded rectangle
-  const style = `rounded=1;whiteSpace=wrap;html=1;fillColor=${fillColor};strokeColor=${strokeColor};strokeWidth=2;fontStyle=0;verticalAlign=bottom;spacingBottom=8;`;
-  
-  // Service cell XML
+  const width = box.w;
+  const height = box.h;
+  const style = categoryStyle(box.category);
+  const label = escapeXml(box.label);
+  const meta = metaSubline(box);
+  const value = meta ? `${label}&#xa;${escapeXml(meta)}` : label;
+
+  const cellStyle = `rounded=1;whiteSpace=wrap;html=1;fillColor=${style.bg};strokeColor=${style.border};fontColor=${style.text};strokeWidth=2;fontStyle=0;verticalAlign=bottom;spacingBottom=8;`;
+
   const containerCell = `
-      <mxCell id="${cellId}" value="${label}${pricingLabel}" style="${style}" vertex="1"${tooltip} parent="${parentCellId}">
-        <mxGeometry x="${x}" y="${y}" width="${width}" height="${height}" as="geometry" />
+      <mxCell id="${cellId}" value="${value}" style="${cellStyle}" vertex="1" parent="1">
+        <mxGeometry x="${f(box.x)}" y="${f(box.y)}" width="${f(width)}" height="${f(height)}" as="geometry" />
       </mxCell>`;
-  
-  // Try to load and embed icon as Base64 - create as separate absolute-positioned cell
-  const iconPath = node.data?.iconPath;
-  console.log('[Draw.io Export] Node:', label, 'iconPath:', iconPath);
-  
+
   let iconCell: string | null = null;
-  
-  if (iconPath) {
-    const iconDataUri = await loadIconAsBase64(iconPath);
+  if (box.iconPath) {
+    const iconDataUri = await loadIconAsBase64(box.iconPath);
     if (iconDataUri) {
-      console.log('[Draw.io Export] Icon embedded for:', label);
-      
       const iconCellId = generateCellId();
       const iconSize = 48;
-      const iconX = x + (width - iconSize) / 2; // Absolute center position
-      const iconY = y + 8; // Absolute top padding
-      
-      // Draw.io image style - use raw data URI (they handle encoding internally)
+      // Icon geometry is RELATIVE to the parent tile so the two never drift.
+      const iconX = (width - iconSize) / 2;
+      const iconY = 8;
       const iconStyle = `shape=image;imageAspect=0;aspect=fixed;verticalLabelPosition=bottom;labelBackgroundColor=default;verticalAlign=top;html=1;image=${iconDataUri};`;
-      
       iconCell = `
-      <mxCell id="${iconCellId}" value="" style="${iconStyle}" vertex="1" parent="${parentCellId}">
-        <mxGeometry x="${iconX}" y="${iconY}" width="${iconSize}" height="${iconSize}" as="geometry" />
+      <mxCell id="${iconCellId}" value="" style="${iconStyle}" vertex="1" parent="${cellId}">
+        <mxGeometry x="${f(iconX)}" y="${iconY}" width="${iconSize}" height="${iconSize}" as="geometry" />
       </mxCell>`;
-    } else {
-      console.warn('[Draw.io Export] Failed to load icon for:', label);
     }
-  } else {
-    console.log('[Draw.io Export] No icon path for node:', label);
   }
-  
+
   return { containerCell, iconCell };
 }
 
-// Create draw.io mxCell for an edge/connection
+/** Waypoints (absolute) that de-collide parallel edges and draw self-loops. */
+function edgeWaypoints(route: ExportRoute): Point[] {
+  if (route.isSelfLoop) return route.points.slice(1, -1);
+  if (route.ordinal > 0 && route.points.length >= 2) return [route.labelAnchor];
+  return [];
+}
+
+// Create draw.io mxCell for an edge/connection from a shared-layer route.
 function createEdgeCell(
-  edge: Edge, 
-  edgeCellId: string, 
-  nodeIdToCellId: Map<string, string>
+  route: ExportRoute,
+  edgeCellId: string,
+  nodeIdToCellId: Map<string, string>,
 ): string {
-  const sourceCellId = nodeIdToCellId.get(edge.source);
-  const targetCellId = nodeIdToCellId.get(edge.target);
-  
+  const sourceCellId = nodeIdToCellId.get(route.sourceId);
+  const targetCellId = nodeIdToCellId.get(route.targetId);
+
   if (!sourceCellId || !targetCellId) {
-    console.warn(`Edge ${edge.id} references missing nodes: ${edge.source} -> ${edge.target}`);
+    console.warn(`Edge ${route.id} references missing nodes: ${route.sourceId} -> ${route.targetId}`);
     return '';
   }
-  
-  const label = edge.data?.label || edge.label || '';
-  const edgeType = edge.data?.connectionType || edge.type || 'sync';
-  const dashStyle = getEdgeStyle(edgeType);
-  
-  // Edge style: force ORTHOGONAL (right-angle) routing on export, regardless of
-  // the app's smooth/orthogonal setting — draw.io users expect square-cornered
-  // architecture connectors.
-  // - edgeStyle=orthogonalEdgeStyle routes with right angles
-  // - curved=0 + rounded=0 keeps corners square (no smooth/curved bends)
-  const style = `edgeStyle=orthogonalEdgeStyle;curved=0;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;${dashStyle}strokeWidth=2;strokeColor=#6b7280;endArrow=classic;endFill=1;`;
-  
-  // The line carries no inline label; instead a child edgeLabel cell holds the
-  // text with whiteSpace=wrap + a fixed width so long labels wrap into a compact
-  // box (an unbounded inline label just stretches out horizontally).
+
+  const label = route.label;
+
+  // Force ORTHOGONAL (right-angle) routing on export; colour + dash come from
+  // the canonical connection style so every format agrees.
+  const style = `edgeStyle=orthogonalEdgeStyle;curved=0;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;${drawioEdgeStyle(route)}strokeWidth=2;endArrow=classic;endFill=1;`;
+
+  const waypoints = edgeWaypoints(route);
+  const pointsXml = waypoints.length
+    ? `
+          <Array as="points">${waypoints
+            .map((point) => `<mxPoint x="${f(point.x)}" y="${f(point.y)}" />`)
+            .join('')}</Array>`
+    : '';
+
   let cells = `
       <mxCell id="${edgeCellId}" value="" style="${style}" edge="1" parent="1" source="${sourceCellId}" target="${targetCellId}">
-        <mxGeometry relative="1" as="geometry" />
+        <mxGeometry relative="1" as="geometry">${pointsXml}
+        </mxGeometry>
       </mxCell>`;
 
   if (label) {
     const labelStyle = 'edgeLabel;html=1;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=1;fillColor=#fef9c3;strokeColor=#374151;fontColor=#1f2937;fontStyle=1;fontSize=12;spacingLeft=4;spacingRight=4;spacingTop=2;spacingBottom=2;';
-    // Size the yellow box to the wrapped text: estimate lines from the label
-    // length at the wrap width so the box grows tall enough (no overflow).
-    const wrapWidth = 150;
-    const charsPerLine = 22; // ~150px at 12px font
+    // Widen the wrap before it ever truncates, and size the yellow box to the
+    // wrapped text so long labels stay legible instead of overflowing.
+    const wrapWidth = 170;
+    const charsPerLine = 26;
     const lineCount = Math.max(1, Math.ceil(String(label).length / charsPerLine));
     const boxHeight = 12 + lineCount * 16;
+    // Stagger parallel-edge chips along the segment so they don't stack.
+    const offsetX = route.ordinal === 0 ? 0 : (route.ordinal % 2 === 1 ? 1 : -1) * Math.ceil(route.ordinal / 2) * 24;
     cells += `
       <mxCell id="${edgeCellId}-lbl" value="${escapeXml(String(label))}" style="${labelStyle}" vertex="1" connectable="0" parent="${edgeCellId}">
         <mxGeometry x="0" y="0" width="${wrapWidth}" height="${boxHeight}" relative="1" as="geometry">
-          <mxPoint as="offset" />
+          <mxPoint x="${offsetX}" as="offset" />
         </mxGeometry>
       </mxCell>`;
   }
@@ -312,89 +237,66 @@ function createEdgeCell(
 
 // Main export function (async to support icon embedding)
 export async function exportToDrawio(
-  nodes: Node[], 
-  edges: Edge[], 
+  nodes: Node[],
+  edges: Edge[],
   diagramName: string = 'Azure Architecture'
 ): Promise<string> {
   resetCellIdCounter();
-  
-  // Maps to track cell IDs
+
+  // Resolve every node into an absolute pixel box via the shared layer so the
+  // Draw.io output matches PNG/PPTX/VSDX exactly (fixes 8, 12, 16).
+  const boxes = collectExportBoxes(nodes);
+  const { groups, services } = partitionBoxes(boxes);
+  const routes = buildExportRoutes(edges, boxes);
+
   const nodeIdToCellId = new Map<string, string>();
-  const groupNodeMap = new Map<string, { cellId: string; x: number; y: number }>();
-  
-  // Separate groups from service nodes
-  const groupNodes = nodes.filter(n => n.type === 'groupNode');
-  const serviceNodes = nodes.filter(n => n.type !== 'groupNode');
-  
-  // Generate cells for groups first
+
+  // Groups first so they paint behind the services that sit on top of them.
   const groupCells: string[] = [];
-  for (const groupNode of groupNodes) {
+  groups.forEach((group, index) => {
     const cellId = generateCellId();
-    nodeIdToCellId.set(groupNode.id, cellId);
-    groupNodeMap.set(groupNode.id, { 
-      cellId, 
-      x: groupNode.position?.x || 0, 
-      y: groupNode.position?.y || 0 
-    });
-    groupCells.push(createGroupCell(groupNode, cellId));
-  }
-  
-  // Generate cells for service nodes (with async icon loading)
-  const serviceCellPromises = serviceNodes.map(async (serviceNode) => {
-    const cellId = generateCellId();
-    nodeIdToCellId.set(serviceNode.id, cellId);
-    
-    // Determine parent - if node belongs to a group, use group's cell ID
-    let parentCellId = '1'; // Default parent (layer)
-    if (serviceNode.parentNode && groupNodeMap.has(serviceNode.parentNode)) {
-      parentCellId = groupNodeMap.get(serviceNode.parentNode)!.cellId;
-    }
-    
-    return await createServiceCell(serviceNode, cellId, parentCellId, groupNodeMap);
+    nodeIdToCellId.set(group.id, cellId);
+    groupCells.push(createGroupCell(group, cellId, index));
   });
-  
+
+  // Services (with async icon embedding) — all on the root layer.
+  const serviceCellPromises = services.map(async (service) => {
+    const cellId = generateCellId();
+    nodeIdToCellId.set(service.id, cellId);
+    return createServiceCell(service, cellId);
+  });
   const serviceCellResults = await Promise.all(serviceCellPromises);
-  
-  // Separate container cells and icon cells
+
   const serviceCells: string[] = [];
   const iconCells: string[] = [];
-  
   for (const result of serviceCellResults) {
     serviceCells.push(result.containerCell);
     if (result.iconCell) {
       iconCells.push(result.iconCell);
     }
   }
-  
-  // Generate cells for edges
+
+  // Edges from the shared routes (canonical colour/dash + parallel de-collision).
   const edgeCells: string[] = [];
-  for (const edge of edges) {
+  for (const route of routes) {
     const edgeCellId = generateCellId();
-    const edgeCell = createEdgeCell(edge, edgeCellId, nodeIdToCellId);
+    const edgeCell = createEdgeCell(route, edgeCellId, nodeIdToCellId);
     if (edgeCell) {
       edgeCells.push(edgeCell);
     }
   }
-  
+
   // Combine all cells - put icons after services so they appear on top
   const allCells = [...groupCells, ...serviceCells, ...iconCells, ...edgeCells].join('');
-  
-  // Calculate diagram bounds for page size
-  let maxX = 0, maxY = 0;
-  for (const node of nodes) {
-    const x = (node.position?.x || 0) + ((node as any).width || 400);
-    const y = (node.position?.y || 0) + ((node as any).height || 300);
-    maxX = Math.max(maxX, x);
-    maxY = Math.max(maxY, y);
-  }
-  
-  // Add padding
-  const pageWidth = Math.max(maxX + 100, 1200);
-  const pageHeight = Math.max(maxY + 100, 800);
+
+  // Page bounds from the real, resolved boxes (fix 12): no more 400x300 guesses.
+  const bounds = computeBounds(boxes.values());
+  const pageWidth = Math.max(f(bounds.maxX) + 100, 1200);
+  const pageHeight = Math.max(f(bounds.maxY) + 100, 800);
   
   // Build the full draw.io XML
   const drawioXml = `<?xml version="1.0" encoding="UTF-8"?>
-<mxfile host="app.diagrams.net" modified="${new Date().toISOString()}" agent="Azure Architecture Diagram Builder" version="1.0" type="device">
+<mxfile host="app.diagrams.net" modified="${new Date().toISOString()}" agent="Microsoft Product Architecture Diagram Builder" version="1.0" type="device">
   <diagram id="azure-architecture" name="${escapeXml(diagramName)}">
     <mxGraphModel dx="0" dy="0" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="${pageWidth}" pageHeight="${pageHeight}" math="0" shadow="0">
       <root>

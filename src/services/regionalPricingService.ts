@@ -38,23 +38,137 @@ interface RegionalPricingData {
   Items: AzureRetailPrice[];
 }
 
-// Statically bundle every regional pricing JSON so the data is available in the
-// production build. A plain `import(path)` with /* @vite-ignore */ is NOT
-// bundled, so in production it 404s to index.html (text/html) and fails the
-// strict module-script MIME check. `import.meta.glob` lets Vite create lazy
-// chunks for each file that resolve correctly in both dev and production.
-const pricingModules = import.meta.glob<{ default: RegionalPricingData }>(
-  '/src/data/pricing/regions/*/*.json'
-);
+/** Compacted on-disk shape produced by scripts/prep-pricing-data.mjs. */
+interface CompactPricingData {
+  BillingCurrency?: string;
+  ServiceName?: string;
+  Items?: Array<Partial<AzureRetailPrice> & Record<string, unknown>>;
+}
 
-// Cache for loaded regional data
-const regionalDataCache = new Map<AzureRegion, Map<string, RegionalPricingData>>();
+// Small LRU so the pricing caches never retain every parsed dataset forever.
+class LruCache<K, V> {
+  private readonly map = new Map<K, V>();
+  constructor(private readonly max: number) {}
+  get(key: K): V | undefined {
+    const value = this.map.get(key);
+    if (value !== undefined) {
+      // Refresh recency.
+      this.map.delete(key);
+      this.map.set(key, value);
+    }
+    return value;
+  }
+  has(key: K): boolean {
+    return this.map.has(key);
+  }
+  set(key: K, value: V): void {
+    if (this.map.has(key)) this.map.delete(key);
+    this.map.set(key, value);
+    while (this.map.size > this.max) {
+      const oldest = this.map.keys().next().value as K | undefined;
+      if (oldest === undefined) break;
+      this.map.delete(oldest);
+    }
+  }
+  clear(): void {
+    this.map.clear();
+  }
+  entries(): IterableIterator<[K, V]> {
+    return this.map.entries();
+  }
+  get size(): number {
+    return this.map.size;
+  }
+}
 
-// Cache for parsed service pricing
-const parsedPricingCache = new Map<string, ServicePricing>();
+// Cache of expanded raw file data, keyed by `${region}/${fileKey}` so a file
+// shared by several services (e.g. Foundry tools) is fetched once.
+const rawFileCache = new LruCache<string, RegionalPricingData>(24);
+
+// Cache for parsed service pricing (the hot path reused by callers).
+const parsedPricingCache = new LruCache<string, ServicePricing>(128);
 
 // Current active region
 let currentRegion: AzureRegion = 'japaneast';
+
+/**
+ * Base URL for the static pricing assets under `public/pricing/regions/**`.
+ * The Vite BASE_URL define is a literal replaced at build time with the
+ * configured `base` (defaults to '/'), so pricing loads correctly whether the
+ * app is served from root or a sub-path. The try/catch keeps the module safe to
+ * import in plain Node (unit tests), where that define is not injected.
+ */
+function pricingBaseUrl(): string {
+  let base = '/';
+  try {
+    base = import.meta.env.BASE_URL || '/';
+  } catch {
+    base = '/';
+  }
+  if (!base.endsWith('/')) base += '/';
+  return `${base}pricing/regions`;
+}
+
+/**
+ * Restore a compacted pricing file to the shape the parser expects. Mirrors
+ * scripts/prep-pricing-data.mjs `expandPricingData` — only fields the runtime
+ * reads are reconstructed. Exported for the round-trip test.
+ */
+export function expandPricingData(compact: CompactPricingData): RegionalPricingData {
+  const serviceName = compact?.ServiceName;
+  const items = Array.isArray(compact?.Items) ? compact.Items : [];
+  const expanded = items.map((item) => {
+    const next: Record<string, unknown> = { ...item };
+    if (next.type === undefined) next.type = 'Consumption';
+    if (next.serviceName === undefined && serviceName !== undefined) {
+      next.serviceName = serviceName;
+    }
+    if (next.unitPrice === undefined) next.unitPrice = next.retailPrice;
+    if (next.armSkuName === undefined) next.armSkuName = '';
+    if (next.productName === undefined) next.productName = '';
+    if (Array.isArray(next.savingsPlan)) {
+      next.savingsPlan = (next.savingsPlan as Array<Record<string, unknown>>).map((plan) => (
+        plan.unitPrice === undefined ? { ...plan, unitPrice: plan.retailPrice } : plan
+      ));
+    }
+    return next as unknown as AzureRetailPrice;
+  });
+  return {
+    BillingCurrency: compact?.BillingCurrency ?? 'USD',
+    Items: expanded,
+  };
+}
+
+/**
+ * Fetch a single regional pricing file, expanding it to the parser shape.
+ * Degrades gracefully: any network error or non-OK status resolves to null so
+ * pricing simply reads as "unavailable" instead of crashing the app.
+ */
+async function fetchRegionalFile(region: AzureRegion, fileKey: string): Promise<RegionalPricingData | null> {
+  const url = `${pricingBaseUrl()}/${region}/${fileKey}.json`;
+  try {
+    const response = await fetch(url);
+    if (!response.ok) {
+      console.warn(`⚠️ Pricing data unavailable (${response.status}) at ${url}`);
+      return null;
+    }
+    const compact = (await response.json()) as CompactPricingData;
+    return expandPricingData(compact);
+  } catch (error) {
+    console.warn(`⚠️ Failed to fetch pricing data at ${url}:`, error);
+    return null;
+  }
+}
+
+/** Fetch a raw file with LRU caching, deduped across services by file key. */
+async function getRawFile(region: AzureRegion, fileKey: string): Promise<RegionalPricingData | null> {
+  const cacheKey = `${region}/${fileKey}`;
+  const cached = rawFileCache.get(cacheKey);
+  if (cached) return cached;
+  const data = await fetchRegionalFile(region, fileKey);
+  if (data) rawFileCache.set(cacheKey, data);
+  return data;
+}
 
 /**
  * Map AI service display names to Foundry productNames
@@ -122,13 +236,11 @@ async function getFabricRegionalPricing(
   serviceName: string,
   region: AzureRegion
 ): Promise<ServicePricing | null> {
-  const path = `/src/data/pricing/regions/${region}/microsoft_fabric.json`;
-  const loader = pricingModules[path];
-  if (!loader) {
-    console.warn(`⚠️ No Fabric pricing data bundled at ${path}`);
+  const data = await getRawFile(region, 'microsoft_fabric');
+  if (!data) {
+    console.warn(`⚠️ No Fabric pricing data available for ${region}`);
     return null;
   }
-  const data = (await loader()).default as RegionalPricingData;
 
   if (isFabricCapacityService(serviceName)) {
     const rates = data.Items
@@ -211,75 +323,31 @@ export function getRegionInfo(region: AzureRegion): RegionInfo | undefined {
  * Load pricing data for a specific service in a region
  */
 async function loadServiceData(region: AzureRegion, serviceName: string): Promise<RegionalPricingData | null> {
-  // Check cache first
-  if (regionalDataCache.has(region)) {
-    const regionCache = regionalDataCache.get(region)!;
-    if (regionCache.has(serviceName)) {
-      return regionCache.get(serviceName)!;
-    }
-  }
-
-  try {
-    // Check if this is an AI service that needs Foundry data
-    if (isAIService(serviceName)) {
-      const aiMapping = AI_SERVICE_PRODUCT_MAP[serviceName];
-      console.log(`🤖 AI Service detected: ${serviceName} → Loading from ${aiMapping.file}, filtering by productName: ${aiMapping.productName}`);
-      
-      // Load the Foundry file
-      const path = `/src/data/pricing/regions/${region}/${aiMapping.file}.json`;
-      const loader = pricingModules[path];
-      if (!loader) {
-        console.warn(`⚠️ No pricing data bundled at ${path}`);
-        return null;
-      }
-      const module = await loader();
-      const fullData = module.default as RegionalPricingData;
-      
-      // Filter items by productName
-      const filteredItems = fullData.Items.filter(item => 
-        (item as any).productName === aiMapping.productName
-      );
-      
-      const filteredData: RegionalPricingData = {
-        BillingCurrency: fullData.BillingCurrency,
-        Items: filteredItems
-      };
-      
-      // Cache the filtered data
-      if (!regionalDataCache.has(region)) {
-        regionalDataCache.set(region, new Map());
-      }
-      regionalDataCache.get(region)!.set(serviceName, filteredData);
-      
-      console.log(`📦 Loaded AI service ${serviceName} for ${region}: ${filteredItems.length} items (filtered from ${fullData.Items.length})`);
-      return filteredData;
-    }
-    
-    // Regular service - load by filename
-    const filename = serviceName.toLowerCase().replace(/\s+/g, '_');
-    const path = `/src/data/pricing/regions/${region}/${filename}.json`;
-    
-    // Look up the statically bundled module for this file
-    const loader = pricingModules[path];
-    if (!loader) {
-      console.warn(`⚠️ No pricing data bundled at ${path}`);
+  // AI services share Foundry files and are filtered by productName.
+  if (isAIService(serviceName)) {
+    const aiMapping = AI_SERVICE_PRODUCT_MAP[serviceName];
+    const fullData = await getRawFile(region, aiMapping.file);
+    if (!fullData) {
+      console.warn(`⚠️ No pricing data available for ${serviceName} (${aiMapping.file}) in ${region}`);
       return null;
     }
-    const module = await loader();
-    const data = module.default as RegionalPricingData;
-    
-    // Cache the data
-    if (!regionalDataCache.has(region)) {
-      regionalDataCache.set(region, new Map());
-    }
-    regionalDataCache.get(region)!.set(serviceName, data);
-    
-    console.log(`📦 Loaded ${serviceName} pricing for ${region}: ${data.Items.length} items`);
-    return data;
-  } catch (error) {
-    console.warn(`⚠️ Failed to load ${serviceName} pricing for ${region}:`, error);
+    const filteredItems = fullData.Items.filter(item =>
+      (item as any).productName === aiMapping.productName
+    );
+    return {
+      BillingCurrency: fullData.BillingCurrency,
+      Items: filteredItems,
+    };
+  }
+
+  // Regular service - load by filename derived from the service name.
+  const filename = serviceName.toLowerCase().replace(/\s+/g, '_');
+  const data = await getRawFile(region, filename);
+  if (!data) {
+    console.warn(`⚠️ No pricing data available for ${serviceName} in ${region}`);
     return null;
   }
+  return data;
 }
 
 /**
@@ -304,7 +372,7 @@ export function getAvailableServices(_region: AzureRegion): string[] {
 /**
  * Filter pricing items by service and region
  */
-function filterPricingItems(
+export function filterPricingItems(
   items: AzureRetailPrice[],
   serviceName: string,
   consumptionOnly: boolean = true
@@ -337,7 +405,7 @@ function filterPricingItems(
 /**
  * Parse pricing items into tiers
  */
-function parsePricingTiers(items: AzureRetailPrice[], serviceName: string): PricingTier[] {
+export function parsePricingTiers(items: AzureRetailPrice[], serviceName: string): PricingTier[] {
   const tierMap = new Map<string, PricingTier>();
   const isAppService = serviceName.toLowerCase() === 'azure app service';
 
@@ -475,18 +543,20 @@ export function getRegionalPricingSummary(region?: AzureRegion): {
   cacheSize: number;
 } {
   const targetRegion = region || currentRegion;
-  const regionCache = regionalDataCache.get(targetRegion);
-  
+
+  let servicesLoaded = 0;
   let totalItems = 0;
-  if (regionCache) {
-    for (const data of regionCache.values()) {
+  const prefix = `${targetRegion}/`;
+  for (const [key, data] of rawFileCache.entries()) {
+    if (key.startsWith(prefix)) {
+      servicesLoaded += 1;
       totalItems += data.Items.length;
     }
   }
-  
+
   return {
     region: targetRegion,
-    servicesLoaded: regionCache?.size || 0,
+    servicesLoaded,
     totalItems,
     cacheSize: parsedPricingCache.size,
   };

@@ -153,13 +153,17 @@
 .group-label-input {
   font-size: 1.05rem;
   font-weight: 750;
-  color: #1e293b;
-  border: 1px solid #0f6cbd;
+  color: var(--azd-color-text-strong);
+  border: 1px solid var(--azd-color-action);
   border-radius: 6px;
   padding: 4px 6px;
-  outline: none;
-  background: white;
+  background: var(--azd-color-surface-elevated);
   width: 100%;
+}
+
+.group-label-input:focus-visible {
+  outline: 3px solid var(--azd-color-focus);
+  outline-offset: 1px;
 }
 
 .group-node-content {

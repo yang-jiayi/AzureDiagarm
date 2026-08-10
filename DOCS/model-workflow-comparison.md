@@ -16,7 +16,7 @@ estimated_reading_time: 8
 ## Overview
 
 This document compares the architecture workflow narrative quality produced by
-all seven AI models available in the Azure Architecture Diagram Builder. Two
+all seven AI models available in the Microsoft Product Architecture Diagram Builder. Two
 reference architectures were used as prompts, and each model generated a
 complete diagram with services, connections, groups, and a step-by-step
 workflow narrative.

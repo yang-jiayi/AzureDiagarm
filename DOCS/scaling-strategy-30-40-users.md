@@ -1,7 +1,7 @@
 # Scaling Strategy: 30-40 Concurrent Users
 
 > **Date:** March 4, 2026
-> **Context:** Preparing the Azure Architecture Diagram Builder for multi-user access (30-40 simultaneous users)
+> **Context:** Preparing the Microsoft Product Architecture Diagram Builder for multi-user access (30-40 simultaneous users)
 
 ## Current Architecture
 

@@ -53,6 +53,8 @@
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
+  min-width: 32px;
+  min-height: 32px;
   padding: 5px;
   border: 1px solid transparent;
   border-radius: var(--azd-radius-sm);
@@ -147,9 +149,9 @@
 }
 
 .modal-actions .btn-success {
-  border: 1px solid var(--azd-color-success-emphasis);
-  background: var(--azd-color-success-emphasis);
-  color: var(--azd-color-on-brand);
+  border: 1px solid var(--azd-color-success-button);
+  background: var(--azd-color-success-button);
+  color: var(--azd-color-on-success);
 }
 
 .modal-actions .btn-primary:disabled,

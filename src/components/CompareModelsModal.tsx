@@ -381,7 +381,19 @@ const CompareModelsModal: React.FC<CompareModelsModalProps> = ({ isOpen, onClose
       setCritiqueText(content);
       setCritiqueByModel(chosenModel);
     } catch (err: any) {
-      setCritiqueError(err.message || 'Failed to generate critique');
+      // Keep the raw failure detail in the console only; show the user a
+      // stable, localised message. Typed generation errors (OpenAIProxyError /
+      // ModelJsonError) already carry a translation-friendly message, so run it
+      // through `translate`; otherwise fall back to a pre-translated default.
+      console.error('Critique generation failed:', err);
+      setCritiqueError(
+        err?.message
+          ? translate(err.message)
+          : localize(language, {
+              en: 'Failed to generate critique. Please try again.',
+              ja: '批評の生成に失敗しました。もう一度お試しください。',
+            }),
+      );
     } finally {
       setIsCritiquing(false);
     }

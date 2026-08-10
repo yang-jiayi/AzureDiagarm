@@ -124,7 +124,7 @@
 
 .ref-image-preview-button:focus-visible,
 .ref-image-collapsed:focus-visible {
-  outline: 2px solid #4da3ff;
+  outline: 2px solid var(--azd-color-focus);
   outline-offset: 2px;
 }
 
@@ -226,49 +226,49 @@
   object-fit: contain;
 }
 
-/* ─── Light mode ──────────────────────────────────────────────────── */
-@media (prefers-color-scheme: light) {
-  .ref-image-collapsed {
-    background: rgba(255, 255, 255, 0.9);
-    border-color: rgba(0, 0, 0, 0.15);
-    color: #555;
-  }
+/* Light mode. The base rules above are the dark presentation; these override them
+   for the default theme. Keyed off body.dark-mode (the in-app switch) rather than
+   prefers-color-scheme, which follows the OS and desyncs from it. */
+body:not(.dark-mode) .ref-image-collapsed {
+  background: rgba(255, 255, 255, 0.9);
+  border-color: rgba(0, 0, 0, 0.15);
+  color: #555;
+}
 
-  .ref-image-collapsed:hover {
-    background: rgba(255, 255, 255, 0.95);
-    color: #333;
-  }
+body:not(.dark-mode) .ref-image-collapsed:hover {
+  background: rgba(255, 255, 255, 0.95);
+  color: #333;
+}
 
-  .ref-image-thumbnail {
-    background: rgba(255, 255, 255, 0.95);
-    border-color: rgba(0, 0, 0, 0.12);
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
-  }
+body:not(.dark-mode) .ref-image-thumbnail {
+  background: rgba(255, 255, 255, 0.95);
+  border-color: rgba(0, 0, 0, 0.12);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+}
 
-  .ref-image-header {
-    border-bottom-color: rgba(0, 0, 0, 0.08);
-  }
+body:not(.dark-mode) .ref-image-header {
+  border-bottom-color: rgba(0, 0, 0, 0.08);
+}
 
-  .ref-image-label {
-    color: #666;
-  }
+body:not(.dark-mode) .ref-image-label {
+  color: #666;
+}
 
-  .ref-image-btn {
-    color: #999;
-  }
+body:not(.dark-mode) .ref-image-btn {
+  color: #767676;
+}
 
-  .ref-image-btn:hover {
-    background: rgba(0, 0, 0, 0.06);
-    color: #333;
-  }
+body:not(.dark-mode) .ref-image-btn:hover {
+  background: rgba(0, 0, 0, 0.06);
+  color: #333;
+}
 
-  .ref-image-overlay-content {
-    background: #fff;
-    border-color: rgba(0, 0, 0, 0.15);
-  }
+body:not(.dark-mode) .ref-image-overlay-content {
+  background: #fff;
+  border-color: rgba(0, 0, 0, 0.15);
+}
 
-  .ref-image-overlay-header {
-    color: #333;
-    border-bottom-color: rgba(0, 0, 0, 0.1);
-  }
+body:not(.dark-mode) .ref-image-overlay-header {
+  color: #333;
+  border-bottom-color: rgba(0, 0, 0, 0.1);
 }

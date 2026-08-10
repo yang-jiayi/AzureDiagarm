@@ -21,6 +21,8 @@ export type IconPaletteCategoryId =
   | 'storage'
   | 'migration'
   | 'fabric'
+  | 'power-platform'
+  | 'dynamics-365'
   | 'general'
   | 'specialized';
 
@@ -204,6 +206,24 @@ export const iconPaletteCategories: IconPaletteCategory[] = [
     keywords: ['fabric', 'onelake', 'lakehouse', 'warehouse', 'power bi', 'semantic model', 'eventhouse', 'ファブリック'],
   },
   {
+    id: 'power-platform',
+    label: { en: 'Power Platform & Copilot Studio', ja: 'Power Platform・Copilot Studio' },
+    description: {
+      en: 'Power Apps, Power Automate, Power Pages, Dataverse, AI Builder, Copilot Studio, and Agent 365',
+      ja: 'Power Apps、Power Automate、Power Pages、Dataverse、AI Builder、Copilot Studio、Agent 365',
+    },
+    keywords: ['power platform', 'power apps', 'powerapps', 'power automate', 'power pages', 'dataverse', 'ai builder', 'copilot studio', 'power virtual agents', 'agent 365', 'low code', 'ローコード', 'パワープラットフォーム', 'コパイロットスタジオ'],
+  },
+  {
+    id: 'dynamics-365',
+    label: { en: 'Dynamics 365', ja: 'Dynamics 365' },
+    description: {
+      en: 'Sales, Customer Service, Field Service, Finance, Supply Chain, Commerce, and Business Central',
+      ja: 'Sales、Customer Service、Field Service、Finance、Supply Chain、Commerce、Business Central',
+    },
+    keywords: ['dynamics', 'dynamics 365', 'd365', 'crm', 'erp', 'sales', 'customer service', 'field service', 'finance', 'supply chain', 'commerce', 'business central', 'customer insights', 'ダイナミクス', '業務アプリ'],
+  },
+  {
     id: 'general',
     label: { en: 'General Azure Symbols', ja: 'Azure共通シンボル' },
     description: {
@@ -249,6 +269,8 @@ const directCategoryMap: Record<string, IconPaletteCategoryId> = {
   migrate: 'migration',
   migration: 'migration',
   fabric: 'fabric',
+  'power platform': 'power-platform',
+  'dynamics 365': 'dynamics-365',
   general: 'general',
   menu: 'general',
   blockchain: 'specialized',

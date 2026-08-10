@@ -21,6 +21,7 @@ import type { Language } from '../i18n/LanguageContext';
 import { getPromptLanguageInstruction } from '../i18n/localization';
 import { searchMicrosoftDocs, renderGroundingBlock, DocSource } from './docsGroundingService';
 import { resolveAIModelRuntime } from './aiModelRuntime';
+import { safeParseModelJson } from './aiRetry';
 
 // Token usage metrics returned from Azure OpenAI API
 export interface AIMetrics {
@@ -56,12 +57,28 @@ async function callAzureOpenAI(messages: any[], maxTokens: number = 10000): Prom
   
   console.log(`🤖 Using ${runtime.displayName}${runtime.isReasoning ? ` (reasoning: ${runtime.reasoningEffort})` : ''} | max_tokens: ${effectiveMaxTokens} | API: ${getApiFormatLabel(runtime.apiFormat)}`);
 
-  const proxyResult = await callAzureOpenAIProxy({
-    apiFormat: runtime.apiFormat,
-    deployment: runtime.deployment,
-    body: requestBody,
-    byo: runtime.byo,
-  });
+  // Client-side timeout keeps the documented chain intact: client 225s >
+  // proxy 210s > Front Door 240s. Without it this path could hang until the
+  // platform kills it with an opaque error.
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 225000);
+  let proxyResult;
+  try {
+    proxyResult = await callAzureOpenAIProxy({
+      apiFormat: runtime.apiFormat,
+      deployment: runtime.deployment,
+      body: requestBody,
+      byo: runtime.byo,
+      signal: controller.signal,
+    });
+  } catch (error: any) {
+    if (error?.name === 'AbortError') {
+      throw new Error('The AI provider is taking too long to respond. Please try again.');
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+  }
   
   // Calculate elapsed time
   const elapsedTimeMs = Math.round(performance.now() - startTime);
@@ -244,15 +261,11 @@ ${groundingBlock ? `${groundingBlock}
       throw new Error('Empty response from API. The architecture may be too complex. Try with fewer services.');
     }
 
-    // Parse JSON response
-    let guide: DeploymentGuide;
-    try {
-      guide = JSON.parse(content);
-    } catch (parseError) {
-      console.error('JSON parse error:', parseError);
-      console.error('Response content:', content.substring(0, 500));
-      throw new Error('Invalid response format from deployment guide generator. Please try again.');
-    }
+    // Parse JSON response. safeParseModelJson tolerates ```json fences / prose
+    // and raises a typed, localised error (never the raw parser message).
+    const guide: DeploymentGuide = safeParseModelJson<DeploymentGuide>(content, {
+      context: 'deployment guide',
+    });
     guide.timestamp = new Date().toISOString();
     guide.metrics = metrics;
 

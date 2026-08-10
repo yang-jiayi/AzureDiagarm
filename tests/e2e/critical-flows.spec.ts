@@ -508,7 +508,7 @@ test('About dialog exposes attribution and repository details accessibly', async
   await palette.getByRole('combobox', { name: 'Search commands and services' }).fill('about');
   await palette.getByRole('option', { name: /^About this application/ }).click();
 
-  const dialog = page.getByRole('dialog', { name: 'Azure Architecture Diagram Builder' });
+  const dialog = page.getByRole('dialog', { name: 'Microsoft Product Architecture Diagram Builder' });
   await expect(dialog).toBeFocused();
   await expect(dialog.getByText('Arturo Quiroga')).toBeVisible();
   await expect(dialog.getByText('Swarm Data SE, Jiayi Yang')).toBeVisible();

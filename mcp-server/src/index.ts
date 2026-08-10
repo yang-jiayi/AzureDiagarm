@@ -1,9 +1,9 @@
-﻿#!/usr/bin/env node
+#!/usr/bin/env node
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
 /**
- * Azure Architecture Diagram Builder — MCP Server
+ * Microsoft Product Architecture Diagram Builder — MCP Server
  *
  * Exposes the Diagram Builder's core capabilities as MCP tools so that
  * `az prototype` agents (or any MCP-compatible client) can:
@@ -488,7 +488,7 @@ server.registerTool(
 
 server.tool(
   'generate_manifest',
-  'Generate an az prototype interchange manifest (JSON) from a list of services and connections. The manifest can be imported into the Azure Architecture Diagram Builder or consumed by `az prototype build` for IaC generation.',
+  'Generate an az prototype interchange manifest (JSON) from a list of services and connections. The manifest can be imported into the Microsoft Product Architecture Diagram Builder or consumed by `az prototype build` for IaC generation.',
   {
     projectName: z.string().describe('Project name for the architecture'),
     location: z.string().optional().describe('Azure region (default: eastus2)'),
@@ -1132,7 +1132,7 @@ server.tool(
 
 server.tool(
   'export_reactflow_scene',
-  'Export an Azure architecture as a React Flow scene JSON compatible with the Azure Architecture Diagram Builder web app. Reuses the dagre layout engine for positions and the web app icon catalog for icon paths. The result can be imported directly into the web app (Open / Import Architecture).',
+  'Export an Azure architecture as a React Flow scene JSON compatible with the Microsoft Product Architecture Diagram Builder web app. Reuses the dagre layout engine for positions and the web app icon catalog for icon paths. The result can be imported directly into the web app (Open / Import Architecture).',
   {
     architectureName: z.string().optional().describe('Display name shown in the architecture metadata block. Default: "MCP Generated Architecture"'),
     architecturePrompt: z.string().optional().describe('Original natural-language prompt the diagram was generated from (preserved in the JSON for provenance)'),

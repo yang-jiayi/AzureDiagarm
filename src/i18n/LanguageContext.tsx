@@ -1,5 +1,6 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import type { StaticTranslationKey } from './translationKeys';
+import { helpJapanese } from './helpJapanese';
 
 export type Language = 'en' | 'ja';
 export type TranslationParams = Record<string, string | number>;
@@ -94,8 +95,10 @@ const extraJapanese: Record<ExtraTranslationKey, string> = {
   'error.deploymentGuide': 'Deployment Guide の生成に失敗しました: {message}',
 };
 
-const exactJapanese: Readonly<Record<string, string>> = {
-  'Azure Architecture Diagram Builder': 'Azure Architecture Diagram Builder',
+export const exactJapanese: Readonly<Record<string, string>> = {
+  // Spread first so any key declared explicitly below still wins.
+  ...helpJapanese,
+  'Microsoft Product Architecture Diagram Builder': 'Microsoft Product Architecture Diagram Builder',
   'AI Architecture Generator': 'AI Architecture Generator',
   '$XX': '$XX',
   '~$XX': '~$XX',
@@ -256,20 +259,39 @@ const exactJapanese: Readonly<Record<string, string>> = {
   'Your application session is no longer valid. Refresh the page and sign in again.': 'アプリケーションのセッションが無効です。ページを更新して、もう一度サインインしてください。',
   'Your account is not allowed to use this application.': 'このアカウントにはアプリケーションの利用が許可されていません。',
   'The application authentication layer rejected the request. Refresh the page and try again.': 'アプリケーションの認証レイヤーによってリクエストが拒否されました。ページを更新して、もう一度お試しください。',
-  'The request was blocked before it reached Azure OpenAI. Reduce the request size or contact the administrator.': 'リクエストは Azure OpenAI に到達する前にブロックされました。リクエスト サイズを小さくするか、管理者に連絡してください。',
+  'The request was blocked before it reached the AI provider. Reduce the request size or contact the administrator.': 'リクエストは AI プロバイダーに到達する前にブロックされました。リクエストのサイズを小さくするか、管理者に連絡してください。',
   'The selected model deployment is not allowed by the server configuration.': '選択したモデル デプロイはサーバー構成で許可されていません。',
   'The server could not acquire an Azure OpenAI credential. Contact the administrator.': 'サーバーが Azure OpenAI の資格情報を取得できませんでした。管理者に連絡してください。',
   'Azure OpenAI rejected the server credential. Check the managed identity role assignment.': 'Azure OpenAI がサーバーの資格情報を拒否しました。Managed Identity のロール割り当てを確認してください。',
-  'Deployment not found. Please check your model deployment name.': 'Deployment が見つかりません。モデル デプロイ名を確認してください。',
+  'Model or deployment not found. Check the configured name.': 'モデルまたはデプロイが見つかりません。設定されている名前を確認してください。',
   'The application request limit was reached. Wait a moment and try again.': 'アプリケーションのリクエスト上限に達しました。しばらく待ってから、もう一度お試しください。',
-  'Azure OpenAI is rate-limiting requests. Wait a moment and try again.': 'Azure OpenAI がリクエストを制限しています。しばらく待ってから、もう一度お試しください。',
-  'Azure OpenAI is taking too long to respond. Please try again.': 'Azure OpenAI の応答に時間がかかっています。もう一度お試しください。',
-  'Azure OpenAI is temporarily unavailable. Please try again.': 'Azure OpenAI は一時的に利用できません。もう一度お試しください。',
+  'The AI provider is rate-limiting requests. Wait a moment and try again.': 'AI プロバイダーがリクエストを制限しています。しばらく待ってから、もう一度お試しください。',
+  'The AI provider is taking too long to respond. Please try again.': 'AI プロバイダーの応答に時間がかかっています。もう一度お試しください。',
+  'The AI provider is temporarily unavailable. Please try again.': 'AI プロバイダーは一時的に利用できません。もう一度お試しください。',
   'The request is too large. Reduce the diagram or image size and try again.': 'リクエストが大きすぎます。図または画像のサイズを小さくして、もう一度お試しください。',
-  'Azure OpenAI content filtering rejected the request. Revise the prompt and try again.': 'Azure OpenAI のContent Filteringによってリクエストが拒否されました。プロンプトを修正して、もう一度お試しください。',
-  'Azure OpenAI returned an unexpected response. Please try again.': 'Azure OpenAI から予期しない応答が返されました。もう一度お試しください。',
+  'The AI provider content policy rejected the request. Revise the prompt and try again.': 'AI プロバイダーのコンテンツ ポリシーによってリクエストが拒否されました。プロンプトを修正して、もう一度お試しください。',
+  'The AI provider returned an unexpected response. Please try again.': 'AI プロバイダーから予期しない応答が返されました。もう一度お試しください。',
   'The application could not reach the Azure OpenAI proxy. Check your connection and try again.': 'アプリケーションから Azure OpenAI proxy に接続できませんでした。接続を確認して、もう一度お試しください。',
-  'Azure OpenAI rejected the request format. Please try again or simplify the request.': 'Azure OpenAI がリクエスト形式を拒否しました。もう一度試すか、リクエストを簡略化してください。',
+  'The AI provider rejected the request format. Please try again or simplify the request.': 'AI プロバイダーがリクエストの形式を拒否しました。もう一度試すか、リクエストを簡略化してください。',
+  // Bring-your-own (custom) AI endpoint failures.
+  'Bring-your-own AI endpoints are not enabled on this server.': 'このサーバーでは、独自の AI エンドポイント（BYO）は有効になっていません。',
+  'The custom AI configuration is invalid.': 'カスタム AI の構成が無効です。',
+  'The custom AI endpoint rejected the API key. Check the key and try again.': 'カスタム AI エンドポイントが API キーを拒否しました。キーを確認して、もう一度お試しください。',
+  'The custom AI endpoint is rate-limiting requests. Wait a moment and try again.': 'カスタム AI エンドポイントがリクエストを制限しています。しばらく待ってから、もう一度お試しください。',
+  'The custom AI endpoint is taking too long to respond. Please try again.': 'カスタム AI エンドポイントの応答に時間がかかっています。もう一度お試しください。',
+  'The custom AI endpoint is unavailable or could not be reached.': 'カスタム AI エンドポイントは利用できないか、接続できませんでした。',
+  'The custom AI endpoint rejected the request.': 'カスタム AI エンドポイントがリクエストを拒否しました。',
+  // Model JSON parsing failures (safeParseModelJson).
+  'The AI model returned an empty response. Please try again.': 'AI モデルから空の応答が返されました。もう一度お試しください。',
+  'The AI model declined to complete this request. Revise the prompt and try again.': 'AI モデルがこのリクエストの実行を拒否しました。プロンプトを修正して、もう一度お試しください。',
+  'The AI response was cut off before it finished. Please try again.': 'AI の応答が完了する前に途切れました。もう一度お試しください。',
+  'The AI model returned a response that was not valid JSON. Please try again.': 'AI モデルから有効な JSON ではない応答が返されました。もう一度お試しください。',
+  // Empty-architecture and configuration guardrails.
+  'The AI model returned an empty architecture (no services). Please try again or rephrase your request.': 'AI モデルが空のアーキテクチャ（サービスなし）を返しました。もう一度お試しいただくか、リクエストを言い換えてください。',
+  'No AI model is configured. Check the environment configuration or connect a custom AI endpoint.': 'AI モデルが設定されていません。環境設定を確認するか、カスタム AI エンドポイントへ接続してください。',
+  'Failed to generate architecture. Please try again.': 'アーキテクチャの生成に失敗しました。もう一度お試しください。',
+  'Failed to parse the template. Please try again.': 'テンプレートの解析に失敗しました。もう一度お試しください。',
+  'The selected model does not support image analysis. Choose a vision-capable model in AI settings.': '選択したモデルは画像分析に対応していません。AI 設定でビジョン対応のモデルを選択してください。',
   'Fit to content': '内容に合わせる',
   'Fit‑to‑view': '全体を表示',
   'Fixed Pricing': '固定料金',
@@ -561,7 +583,7 @@ const exactJapanese: Readonly<Record<string, string>> = {
   'What would you add?': '何を追加しますか？',
   'whiteboard-style blueprint': 'ホワイトボード形式の Blueprint',
   'You may close this panel at any time — once complete, reopen your results using the': 'このパネルはいつでも閉じられます。完了後は次を使って結果を再度開けます:',
-  'Your feedback helps us improve the Azure Architecture Diagram Builder.': 'フィードバックは Azure Architecture Diagram Builder の改善に役立ちます。',
+  'Your feedback helps us improve the Microsoft Product Architecture Diagram Builder.': 'フィードバックは Microsoft Product Architecture Diagram Builder の改善に役立ちます。',
   'Quick Start': 'クイック スタート',
   'AI Architecture Generation': 'AI Architecture Generation',
   'Image Import': '画像インポート',
@@ -939,6 +961,7 @@ const exactJapanese: Readonly<Record<string, string>> = {
 
 const phraseJapanese: ReadonlyArray<readonly [string, string]> = [
   ['Request ID:', 'リクエスト ID:'],
+  ['AI provider request failed (', 'AI プロバイダーのリクエストに失敗しました（'],
   ['Azure OpenAI request failed (', 'Azure OpenAI のリクエストに失敗しました（'],
   ['). Please try again.', '）。もう一度お試しください。'],
   ['Please try again.', 'もう一度お試しください。'],

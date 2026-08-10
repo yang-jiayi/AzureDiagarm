@@ -96,46 +96,46 @@ EXAMPLE 1 — Microsoft Fabric Medallion Lakehouse (data analytics):
     {
       "id": "ingest", "label": "Ingest",
       "services": [
-        { "id": "shortcuts", "name": "OneLake Shortcuts", "category": "analytics" },
-        { "id": "copy-jobs", "name": "Copy Jobs", "category": "integration" },
-        { "id": "pipeline", "name": "Data Factory Pipeline", "category": "integration" },
-        { "id": "dataflow", "name": "Dataflow Gen2", "category": "analytics" },
-        { "id": "mirroring", "name": "Mirroring", "category": "databases" },
-        { "id": "eventstream", "name": "Eventstream", "category": "analytics" }
+        { "id": "shortcuts", "name": "OneLake Shortcuts", "category": "fabric" },
+        { "id": "copy-jobs", "name": "Copy Jobs", "category": "fabric" },
+        { "id": "pipeline", "name": "Data Factory Pipeline", "category": "fabric" },
+        { "id": "dataflow", "name": "Dataflow Gen2", "category": "fabric" },
+        { "id": "mirroring", "name": "Mirroring", "category": "fabric" },
+        { "id": "eventstream", "name": "Eventstream", "category": "fabric" }
       ]
     },
     {
       "id": "process", "label": "Process, enrich, store",
       "services": [
-        { "id": "lake-bronze", "name": "Lakehouse (Bronze)", "category": "analytics" },
-        { "id": "lake-silver", "name": "Lakehouse (Silver)", "category": "analytics" },
-        { "id": "warehouse-gold", "name": "Warehouse (Gold)", "category": "analytics" },
-        { "id": "spark-nb1", "name": "Spark Notebook", "category": "analytics" },
-        { "id": "spark-nb2", "name": "Spark Notebook", "category": "analytics" },
-        { "id": "experiment", "name": "ML Experiment", "category": "ai + machine learning" },
-        { "id": "ml-model", "name": "ML Model", "category": "ai + machine learning" },
-        { "id": "mirrored-db", "name": "Mirrored Database", "category": "databases" },
-        { "id": "eventhouse", "name": "Eventhouse", "category": "analytics" }
+        { "id": "lake-bronze", "name": "Lakehouse (Bronze)", "category": "fabric" },
+        { "id": "lake-silver", "name": "Lakehouse (Silver)", "category": "fabric" },
+        { "id": "warehouse-gold", "name": "Warehouse (Gold)", "category": "fabric" },
+        { "id": "spark-nb1", "name": "Spark Notebook", "category": "fabric" },
+        { "id": "spark-nb2", "name": "Spark Notebook", "category": "fabric" },
+        { "id": "experiment", "name": "ML Experiment", "category": "fabric" },
+        { "id": "ml-model", "name": "ML Model", "category": "fabric" },
+        { "id": "mirrored-db", "name": "Mirrored Database", "category": "fabric" },
+        { "id": "eventhouse", "name": "Eventhouse", "category": "fabric" }
       ]
     },
     {
       "id": "model", "label": "Model",
       "services": [
-        { "id": "sem-direct-lake", "name": "Semantic Model (Direct Lake)", "category": "analytics" },
-        { "id": "sem-direct-query", "name": "Semantic Model (Direct Query)", "category": "analytics" },
-        { "id": "ontology", "name": "Ontology", "category": "analytics" }
+        { "id": "sem-direct-lake", "name": "Semantic Model (Direct Lake)", "category": "fabric" },
+        { "id": "sem-direct-query", "name": "Semantic Model (Direct Query)", "category": "fabric" },
+        { "id": "ontology", "name": "Ontology", "category": "fabric" }
       ]
     },
     {
       "id": "serve", "label": "Serve",
       "services": [
-        { "id": "api-graphql", "name": "API for GraphQL", "category": "integration" },
-        { "id": "report-interactive", "name": "Interactive Report", "category": "analytics" },
-        { "id": "report-paginated", "name": "Paginated Report", "category": "analytics" },
-        { "id": "data-agent", "name": "Data Agent", "category": "ai + machine learning" },
-        { "id": "rt-dashboard", "name": "Real-Time Dashboard", "category": "analytics" },
-        { "id": "kql-queryset", "name": "KQL Queryset", "category": "analytics" },
-        { "id": "activator", "name": "Activator", "category": "analytics" }
+        { "id": "api-graphql", "name": "API for GraphQL", "category": "fabric" },
+        { "id": "report-interactive", "name": "Interactive Report", "category": "fabric" },
+        { "id": "report-paginated", "name": "Paginated Report", "category": "fabric" },
+        { "id": "data-agent", "name": "Data Agent", "category": "fabric" },
+        { "id": "rt-dashboard", "name": "Real-Time Dashboard", "category": "fabric" },
+        { "id": "kql-queryset", "name": "KQL Queryset", "category": "fabric" },
+        { "id": "activator", "name": "Activator", "category": "fabric" }
       ]
     }
   ],
@@ -153,31 +153,31 @@ EXAMPLE 1 — Microsoft Fabric Medallion Lakehouse (data analytics):
   "foundation": ["OneLake"],
   "crossCutting": ["Microsoft Entra ID","Microsoft Purview","Microsoft Defender for Cloud","Microsoft Sentinel","Microsoft Intune","Azure Key Vault","Azure Cost Management","GitHub","Azure DevOps","Azure Policy"],
   "connections": [
-    { "from": "shortcuts",  "to": "lake-bronze", "band": "cool" },
-    { "from": "copy-jobs",  "to": "lake-bronze", "band": "cool" },
-    { "from": "pipeline",   "to": "lake-bronze", "band": "cool" },
-    { "from": "dataflow",   "to": "lake-bronze", "band": "cool" },
-    { "from": "mirroring",  "to": "mirrored-db", "band": "cool" },
-    { "from": "mirrored-db","to": "lake-silver", "band": "cool" },
-    { "from": "lake-bronze","to": "lake-silver", "band": "cool" },
-    { "from": "lake-silver","to": "spark-nb2",   "band": "cool" },
-    { "from": "spark-nb2",  "to": "warehouse-gold","band": "cool" },
-    { "from": "lake-bronze","to": "spark-nb1",   "band": "cool" },
-    { "from": "spark-nb1",  "to": "experiment",  "band": "cool" },
-    { "from": "experiment", "to": "ml-model",    "band": "cool" },
-    { "from": "warehouse-gold","to": "sem-direct-lake", "band": "cool" },
-    { "from": "sem-direct-lake","to": "report-interactive", "band": "cool" },
-    { "from": "sem-direct-lake","to": "report-paginated",   "band": "cool" },
-    { "from": "sem-direct-lake","to": "data-agent",         "band": "cool" },
-    { "from": "warehouse-gold","to": "api-graphql",         "band": "cool" },
-    { "from": "lake-silver","to": "ontology",    "band": "cool" },
-    { "from": "eventstream","to": "eventhouse",  "band": "hot" },
-    { "from": "eventhouse", "to": "sem-direct-query", "band": "hot" },
-    { "from": "sem-direct-query","to": "rt-dashboard", "band": "hot" },
-    { "from": "sem-direct-query","to": "kql-queryset", "band": "hot" },
-    { "from": "eventhouse", "to": "activator",   "band": "hot" },
-    { "from": "report-interactive","to": "users" },
-    { "from": "rt-dashboard","to": "users" }
+    { "from": "shortcuts",  "to": "lake-bronze", "label": "Land raw (Shortcuts)", "band": "cool" },
+    { "from": "copy-jobs",  "to": "lake-bronze", "label": "Copy to Bronze", "band": "cool" },
+    { "from": "pipeline",   "to": "lake-bronze", "label": "Ingest batch (Pipeline)", "band": "cool" },
+    { "from": "dataflow",   "to": "lake-bronze", "label": "Transform to Bronze", "band": "cool" },
+    { "from": "mirroring",  "to": "mirrored-db", "label": "Mirror source (CDC)", "band": "cool" },
+    { "from": "mirrored-db","to": "lake-silver", "label": "Replicate to Silver", "band": "cool" },
+    { "from": "lake-bronze","to": "lake-silver", "label": "Cleanse to Silver", "band": "cool" },
+    { "from": "lake-silver","to": "spark-nb2",   "label": "Read Silver", "band": "cool" },
+    { "from": "spark-nb2",  "to": "warehouse-gold","label": "Aggregate to Gold (Delta)", "band": "cool" },
+    { "from": "lake-bronze","to": "spark-nb1",   "label": "Featurize (Spark)", "band": "cool" },
+    { "from": "spark-nb1",  "to": "experiment",  "label": "Train run", "band": "cool" },
+    { "from": "experiment", "to": "ml-model",    "label": "Register model", "band": "cool" },
+    { "from": "warehouse-gold","to": "sem-direct-lake", "label": "Build model (Direct Lake)", "band": "cool" },
+    { "from": "sem-direct-lake","to": "report-interactive", "label": "Power interactive report", "band": "cool" },
+    { "from": "sem-direct-lake","to": "report-paginated",   "label": "Power paginated report", "band": "cool" },
+    { "from": "sem-direct-lake","to": "data-agent",         "label": "Ground Data Agent", "band": "cool" },
+    { "from": "warehouse-gold","to": "api-graphql",         "label": "Expose via GraphQL", "band": "cool" },
+    { "from": "lake-silver","to": "ontology",    "label": "Map to ontology", "band": "cool" },
+    { "from": "eventstream","to": "eventhouse",  "label": "Stream events", "band": "hot" },
+    { "from": "eventhouse", "to": "sem-direct-query", "label": "Serve real-time (DirectQuery)", "band": "hot" },
+    { "from": "sem-direct-query","to": "rt-dashboard", "label": "Serve KPIs (DirectQuery)", "band": "hot" },
+    { "from": "sem-direct-query","to": "kql-queryset", "label": "Run KQL query", "band": "hot" },
+    { "from": "eventhouse", "to": "activator",   "label": "Trigger alerts", "band": "hot" },
+    { "from": "report-interactive","to": "users", "label": "View insights" },
+    { "from": "rt-dashboard","to": "users", "label": "Monitor live" }
   ],
   "workflow": [
     { "step": 1, "description": "Batch sources land in Bronze via Shortcuts, Copy Jobs, Pipelines, Dataflow Gen2 and Mirroring.", "services": ["shortcuts","copy-jobs","pipeline","dataflow","mirroring","lake-bronze"] },
@@ -218,13 +218,13 @@ EXAMPLE 2 — AKS web application reference (simple 3-stage):
   "foundation": ["Virtual Network"],
   "crossCutting": ["Microsoft Entra ID","Azure Key Vault","Azure Monitor","Microsoft Defender for Cloud"],
   "connections": [
-    { "from": "users", "to": "frontdoor" },
-    { "from": "frontdoor", "to": "waf" },
-    { "from": "waf", "to": "apim" },
-    { "from": "apim", "to": "aks" },
-    { "from": "aks", "to": "sql" },
-    { "from": "aks", "to": "redis" },
-    { "from": "aks", "to": "blob" },
+    { "from": "users", "to": "frontdoor", "label": "HTTPS request" },
+    { "from": "frontdoor", "to": "waf", "label": "Inspect traffic" },
+    { "from": "waf", "to": "apim", "label": "Route clean traffic" },
+    { "from": "apim", "to": "aks", "label": "Proxy to microservices" },
+    { "from": "aks", "to": "sql", "label": "Read/write records" },
+    { "from": "aks", "to": "redis", "label": "Cache session" },
+    { "from": "aks", "to": "blob", "label": "Store blobs" },
     { "from": "acr", "to": "aks", "label": "Image pull" }
   ],
   "workflow": [
@@ -273,16 +273,16 @@ EXAMPLE 3 — Event-driven IoT analytics (hot + cool paths):
   "foundation": ["Azure Virtual Network"],
   "crossCutting": ["Microsoft Entra ID","Azure Monitor","Azure Key Vault","Microsoft Defender for Cloud"],
   "connections": [
-    { "from": "iothub", "to": "eventhubs", "band": "hot" },
-    { "from": "eventhubs", "to": "stream", "band": "hot" },
+    { "from": "iothub", "to": "eventhubs", "band": "hot", "label": "Forward telemetry" },
+    { "from": "eventhubs", "to": "stream", "band": "hot", "label": "Stream events" },
     { "from": "stream", "to": "grafana", "band": "hot", "label": "Real-time KPIs" },
     { "from": "iothub", "to": "adls", "band": "cool", "label": "Capture" },
-    { "from": "adls", "to": "func", "band": "cool" },
-    { "from": "func", "to": "cosmos", "band": "cool" },
-    { "from": "cosmos", "to": "synapse", "band": "cool" },
-    { "from": "synapse", "to": "powerbi", "band": "cool" },
-    { "from": "powerbi", "to": "ops" },
-    { "from": "grafana", "to": "ops" }
+    { "from": "adls", "to": "func", "band": "cool", "label": "Trigger processing" },
+    { "from": "func", "to": "cosmos", "band": "cool", "label": "Persist state" },
+    { "from": "cosmos", "to": "synapse", "band": "cool", "label": "Load for analytics" },
+    { "from": "synapse", "to": "powerbi", "band": "cool", "label": "Serve dataset" },
+    { "from": "powerbi", "to": "ops", "label": "View dashboards" },
+    { "from": "grafana", "to": "ops", "label": "Monitor live" }
   ]
 }
 `.trim();
@@ -332,7 +332,7 @@ interface ReferenceArchitecture {
 }
 
 Service "category" MUST be one of:
-"app services","databases","storage","networking","compute","containers","ai + machine learning","analytics","identity","monitor","iot","integration","devops","security","web","management + governance"
+"app services","databases","storage","networking","compute","containers","ai + machine learning","analytics","identity","monitor","iot","integration","devops","security","web","management + governance","fabric","power platform","dynamics 365","general"
 
 Rules:
 1. Use 3–6 stages. Order them left-to-right by data flow (Ingest → Process → Store → Model → Serve, or domain-equivalent).
@@ -340,13 +340,14 @@ Rules:
 3. Add platformWrappers when the workload sits inside an explicit MS platform (Fabric, Foundry, Synapse, AKS, Power Platform).
 4. Use pathBands ONLY when there's a genuine hot (real-time/streaming) AND cool (batch/historical) split.
 5. ALWAYS include a foundation entry (the unifying platform layer for the workload — e.g. OneLake, Azure VNet, AKS).
-6. ALWAYS include a crossCutting array of 4–10 governance/security services that apply across all stages.
+6. ALWAYS include a crossCutting array of 4–12 governance/security services that apply across all stages.
 7. Add a dataSources column ONLY when sources are heterogeneous and worth enumerating (apps + DBs + files + events).
 8. Add actors when external consumers (Users, Operators, Partners, Devices) are relevant.
-9. Connections should be SPECIFIC and SPARSE — show primary data flow only, not every implicit edge. Aim for 8–25 connections. Connect actors and dataSources directly to the first service they hit.
+9. Connections should be SPECIFIC and SPARSE — show primary data flow only, not every implicit edge. Aim for 8–25 connections. Connect actors and dataSources directly to the first service they hit. Every connection MUST carry a \`label\` naming the payload or protocol (e.g. 'Ingest batch (ADF)', 'Serve KPIs (DirectQuery)', 'Write Gold (Delta)'). Never emit a connection without a label.
 10. Provide 3–7 workflow steps narrating the end-to-end journey.
 11. IDs must be lowercase-kebab, unique across stages/actors/datasources.
 12. DO NOT include positions/coordinates/widths/heights — the layout engine computes them.
+13. For production/critical workloads model resiliency: deploy across Availability Zones and, where DR is implied, a paired secondary region — show the replication/failover edge (e.g. 'Geo-replicate (RA-GRS)', 'Failover routing (Front Door)'). Call out single-region only for dev/test.
 
 ${compact
     ? `SPEED MODE — no exemplars are supplied. Keep it tight: 3–4 stages, at most 5 services per stage, 8–14 connections, 3–5 workflow steps. A correct, complete JSON document matters more than breadth.`

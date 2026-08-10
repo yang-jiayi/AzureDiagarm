@@ -1,4 +1,4 @@
-# Azure Architecture Diagram Builder - LLM Prompt Documentation
+# Microsoft Product Architecture Diagram Builder - LLM Prompt Documentation
 
 ## Overview
 

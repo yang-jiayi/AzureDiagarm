@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-import {
+import type {
   ApplicationInsights,
   ICustomProperties,
   ITelemetryItem,
@@ -11,7 +11,7 @@ import {
  * Application Insights Telemetry Service
  * 
  * Tracks user activity, feature usage, and performance metrics for the
- * Azure Architecture Diagram Builder. Initializes only when a valid
+ * Microsoft Product Architecture Diagram Builder. Initializes only when a valid
  * connection string is provided via VITE_APPINSIGHTS_CONNECTION_STRING.
  * 
  * Tracked events:
@@ -29,6 +29,20 @@ import {
  */
 
 let appInsights: ApplicationInsights | null = null;
+// True once a connection string is configured, even before the SDK finishes
+// loading. Used to decide whether to buffer early track* calls vs. no-op.
+let telemetryEnabled = false;
+let telemetryInitStarted = false;
+
+// Early track* calls (fired before the deferred SDK load resolves) are buffered
+// here and flushed once App Insights is ready, so no telemetry call can throw
+// and no events are silently lost during startup.
+interface BufferedEvent { name: string; properties?: Record<string, unknown>; measurements?: Record<string, number>; }
+interface BufferedMetric { name: string; average: number; properties?: Record<string, string>; }
+const bufferedEvents: BufferedEvent[] = [];
+const bufferedMetrics: BufferedMetric[] = [];
+const TELEMETRY_BUFFER_LIMIT = 200;
+
 const TELEMETRY_SCHEMA_VERSION = '2.0.0';
 const WORKFLOW_ID_KEY = 'aadb.telemetry.workflowId';
 const SHARED_DIAGRAM_PATH_PATTERN = /\/api\/diagrams\/shared\/[^/?#\s]+/gi;
@@ -68,6 +82,11 @@ function rotateWorkflowId(): void {
 /**
  * Initialize Application Insights. Call once at app startup.
  * No-ops gracefully if connection string is not configured.
+ *
+ * The App Insights SDK (~90 kB gzip) is dynamically imported and its
+ * initialization is deferred to `requestIdleCallback` so it never competes with
+ * first paint or lands in the main bundle. Any track* calls made before the SDK
+ * finishes loading are buffered and flushed on init.
  */
 export function initTelemetry(): void {
   const connectionString = import.meta.env.VITE_APPINSIGHTS_CONNECTION_STRING;
@@ -77,8 +96,22 @@ export function initTelemetry(): void {
     return;
   }
 
+  if (telemetryInitStarted) return;
+  telemetryInitStarted = true;
+  telemetryEnabled = true;
+
+  const start = () => { void loadAndInitAppInsights(connectionString); };
+  if (typeof requestIdleCallback === 'function') {
+    requestIdleCallback(start, { timeout: 3000 });
+  } else {
+    setTimeout(start, 1);
+  }
+}
+
+async function loadAndInitAppInsights(connectionString: string): Promise<void> {
   try {
-    appInsights = new ApplicationInsights({
+    const { ApplicationInsights } = await import('@microsoft/applicationinsights-web');
+    const instance = new ApplicationInsights({
       config: {
         connectionString,
         enableAutoRouteTracking: true,       // Track SPA page views
@@ -92,16 +125,31 @@ export function initTelemetry(): void {
       },
     });
 
-    appInsights.loadAppInsights();
-    appInsights.addTelemetryInitializer((item) => {
+    instance.loadAppInsights();
+    instance.addTelemetryInitializer((item) => {
       redactSensitiveTelemetry(item);
     });
-    appInsights.trackPageView({ name: 'Azure Architecture Diagram Builder' });
+    instance.trackPageView({ name: 'Microsoft Product Architecture Diagram Builder' });
+    appInsights = instance;
+    flushBufferedTelemetry();
     console.log('✅ Application Insights initialized');
   } catch (error) {
     console.warn('⚠️ Failed to initialize Application Insights:', error);
     appInsights = null;
   }
+}
+
+/** Drain any track* calls buffered before the SDK finished loading. */
+function flushBufferedTelemetry(): void {
+  if (!appInsights) return;
+  for (const event of bufferedEvents) {
+    appInsights.trackEvent({ name: event.name, properties: event.properties, measurements: event.measurements });
+  }
+  for (const metric of bufferedMetrics) {
+    appInsights.trackMetric({ name: metric.name, average: metric.average }, metric.properties as ICustomProperties);
+  }
+  bufferedEvents.length = 0;
+  bufferedMetrics.length = 0;
 }
 
 /**
@@ -114,7 +162,7 @@ export function trackEvent(
   properties?: Record<string, string>,
   measurements?: Record<string, number>
 ): void {
-  if (!appInsights) return;
+  if (!appInsights && !telemetryEnabled) return;
   const context = {
     schemaVersion: TELEMETRY_SCHEMA_VERSION,
     appVersion: import.meta.env.VITE_APP_VERSION || 'development',
@@ -122,17 +170,29 @@ export function trackEvent(
     featureVersion: properties?.featureVersion || '1',
     workflowId: getWorkflowId(),
   };
-  appInsights.trackEvent(
-    { name, properties: { ...context, ...properties }, measurements },
-  );
+  const payload = { name, properties: { ...context, ...properties }, measurements };
+  if (appInsights) {
+    appInsights.trackEvent(payload);
+    return;
+  }
+  // SDK still loading — buffer until flushBufferedTelemetry runs.
+  if (bufferedEvents.length < TELEMETRY_BUFFER_LIMIT) {
+    bufferedEvents.push(payload);
+  }
 }
 
 /**
  * Track a metric value (e.g., generation time, token count).
  */
 export function trackMetric(name: string, average: number, properties?: Record<string, string>): void {
-  if (!appInsights) return;
-  appInsights.trackMetric({ name, average }, properties as ICustomProperties);
+  if (!appInsights && !telemetryEnabled) return;
+  if (appInsights) {
+    appInsights.trackMetric({ name, average }, properties as ICustomProperties);
+    return;
+  }
+  if (bufferedMetrics.length < TELEMETRY_BUFFER_LIMIT) {
+    bufferedMetrics.push({ name, average, properties });
+  }
 }
 
 // ─── Feature-specific tracking helpers ──────────────────────────────

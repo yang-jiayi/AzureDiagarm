@@ -201,7 +201,7 @@ const IaCRoundTripModal: React.FC<IaCRoundTripModalProps> = ({
                 <div className="iac-inline-list">
                   <span>{baseline.formatLabel}</span>
                   <span>•</span>
-                  <span>{new Date(baseline.capturedAt).toLocaleString(language)}</span>
+                  <span>{new Date(baseline.capturedAt).toLocaleString(language === 'ja' ? 'ja-JP' : 'en-US')}</span>
                 </div>
                 <ul className="iac-file-list">
                   {baseline.sourceFiles.map((file) => (
@@ -345,7 +345,7 @@ const IaCRoundTripModal: React.FC<IaCRoundTripModalProps> = ({
                   <span>•</span>
                   <span>{driftPlan.sourceFile}</span>
                   <span>•</span>
-                  <span>{new Date(driftPlan.importedAt).toLocaleString(language)}</span>
+                  <span>{new Date(driftPlan.importedAt).toLocaleString(language === 'ja' ? 'ja-JP' : 'en-US')}</span>
                 </div>
                 <div className="iac-drift-badges">
                   {driftOrder.map((action) => (

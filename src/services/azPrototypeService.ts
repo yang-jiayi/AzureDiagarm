@@ -4,7 +4,7 @@
 /**
  * az prototype Integration Service
  *
- * Provides bidirectional data exchange between the Azure Architecture Diagram Builder
+ * Provides bidirectional data exchange between the Microsoft Product Architecture Diagram Builder
  * and the `az prototype` Azure CLI extension. Enables:
  *   - Export: Diagram Builder → az prototype (design-phase architecture manifest)
  *   - Import: az prototype → Diagram Builder (render architecture as interactive diagram)

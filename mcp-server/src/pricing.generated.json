@@ -1,6 +1,6 @@
 {
   "generatedAt": "2026-07-01T00:00:00.000Z",
-  "source": "src/data/pricing/regions (Azure Retail Prices snapshot)",
+  "source": "public/pricing/regions (Azure Retail Prices snapshot)",
   "hoursPerMonth": 730,
   "currency": "USD",
   "regions": {

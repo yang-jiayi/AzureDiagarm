@@ -137,7 +137,7 @@ GLOBAL_SERVICES=(
 )
 
 # Output directory - use project structure
-OUTPUT_DIR="../src/data/pricing/regions"
+OUTPUT_DIR="../public/pricing/regions"
 
 echo "🌍 Fetching Azure pricing for ${#REGIONS[@]} regions..."
 echo "📦 Services: ${#SERVICES[@]}"
@@ -278,6 +278,13 @@ done
 
 echo ""
 echo "📁 Data saved in: $OUTPUT_DIR"
+
+# Compact the freshly-downloaded dumps in place so the browser downloads far
+# less pricing JSON. regionalPricingService.ts expands them at runtime, so the
+# parsed pricing tiers are identical (see tests/pricing-prep.test.ts).
+echo ""
+echo "🗜️  Compacting pricing data..."
+node prep-pricing-data.mjs --dir "$OUTPUT_DIR"
 
 # Stamp the "Prices as of" date so cost exports reflect this refresh.
 PRICING_TS_FILE="../src/data/azurePricing.ts"

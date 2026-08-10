@@ -234,6 +234,14 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
   const [description, setDescription] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
   const [error, setError] = useState('');
+  // Neutral "Cancelled" notice — a user-initiated abort is not an error, so it
+  // gets its own state instead of going through `setError`.
+  const [wasCancelled, setWasCancelled] = useState(false);
+  // Controller for the in-flight generation so the Cancel button can abort it.
+  // Only the topology path (which we own) receives the signal; blueprint /
+  // reference / manifest run in unowned services and finish in the background,
+  // but their late results are ignored once the run is aborted.
+  const abortControllerRef = useRef<AbortController | null>(null);
   const [partialWarning, setPartialWarning] = useState('');
   /**
    * Set when exactly one of the two `both`-mode deliverables failed. It carries
@@ -364,6 +372,7 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
     setIsOpen(true);
     setError('');
     setPartialWarning('');
+    setWasCancelled(false);
     setPendingRetry(null);
     setImageAnalyzed(false);
     onOpen?.();
@@ -403,6 +412,11 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
   }));
 
   const handleGenerate = async () => {
+    // Re-entrancy guard — matches ArchitectureChatPanel's `if (isSending) return;`.
+    // The button's `disabled` alone can be bypassed (keyboard, rapid double
+    // activation), which would start two overlapping generations.
+    if (isGenerating) return;
+
     if (!description.trim()) {
       setError(translate('Please describe your architecture'));
       return;
@@ -421,7 +435,13 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
     cancelScheduledClose();
     setIsGenerating(true);
     setError('');
+    setWasCancelled(false);
     setPartialWarning('');
+    // Fresh controller for this run so the Cancel button can abort the
+    // in-flight topology request. Stored in a ref so `handleCancel` (and the
+    // finally block) can reach it.
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
     // Snapshot and clear together: the warning and the retry it belongs to must
     // never diverge. If this run throws, the user is left with no warning and
     // no armed retry, so the next press is a clean full run. A partial failure
@@ -551,7 +571,7 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
         }
 
         const topoCall = (m?: ComponentManifest) =>
-          generateArchitectureWithAI(bothContextPrompt, currentModelSettings, m, language);
+          generateArchitectureWithAI(bothContextPrompt, currentModelSettings, m, language, controller.signal);
         const bpCall = (m?: ComponentManifest) =>
           generateBlueprintArchitectureWithAI(bothContextPrompt, blueprintModelSettings, m, language);
 
@@ -595,6 +615,9 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
               topoFailure = error;
             }
           }
+          // Stop before paying for the (unowned, non-abortable) blueprint call
+          // if the user already cancelled during the topology request.
+          if (controller.signal.aborted) return;
           if (runBlueprint) {
             try {
               bpResult = await bpCall(manifest);
@@ -603,6 +626,9 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
             }
           }
         }
+        // A user cancel aborts the topology half; discard whatever settled so it
+        // is reported as a neutral "Cancelled", not a partial-failure warning.
+        if (controller.signal.aborted) return;
         if (!topoResult && !bpResult && !retry) {
           throw topoFailure || bpFailure || new Error('Topology and Blueprint generation failed.');
         }
@@ -715,7 +741,12 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
         currentModelSettings,
         undefined,
         language,
+        controller.signal,
       );
+
+      // A cancel that landed while the request was in flight must not apply a
+      // result or advance the wizard.
+      if (controller.signal.aborted) return;
       
       await onGenerate(result, description, autoSnapshot, uploadedImageUrl || undefined);
       if (result.metrics) setAiMetrics(result.metrics);
@@ -726,12 +757,37 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
       // Close modal shortly after successful generation
       scheduleClose(); // Give user 45 seconds to review results or type a modification
     } catch (err: any) {
-      setError(err.message ? translate(err.message) : translate('Failed to generate architecture. Please try again.'));
-      setActiveStep('output');
+      // A user-initiated cancel surfaces as an AbortError (or lands with the
+      // controller already aborted). That is not a failure — show a neutral
+      // "Cancelled" notice instead of an error banner.
+      if (controller.signal.aborted || err?.name === 'AbortError') {
+        setWasCancelled(true);
+        setActiveStep('output');
+      } else {
+        setError(err.message ? translate(err.message) : translate('Failed to generate architecture. Please try again.'));
+        setActiveStep('output');
+      }
     } finally {
       setIsGenerating(false);
+      if (abortControllerRef.current === controller) abortControllerRef.current = null;
     }
   };
+
+  /**
+   * Abort the in-flight generation. The topology request (which we own) aborts
+   * immediately; unowned blueprint/reference/manifest calls keep running but
+   * their results are discarded once `signal.aborted` is set. `isGenerating` is
+   * cleared here so the UI never sticks on "Generating…".
+   */
+  const handleCancel = useCallback(() => {
+    const controller = abortControllerRef.current;
+    if (!controller) return;
+    controller.abort();
+    abortControllerRef.current = null;
+    setIsGenerating(false);
+    setWasCancelled(true);
+    setError('');
+  }, []);
 
   const applyExample = (example: string) => {
     setDescription(example);
@@ -985,6 +1041,14 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
                       {error}
                     </div>
                   )}
+                  {wasCancelled && !error && (
+                    <div className="azd-callout azd-callout--info" role="status">
+                      {localize(language, {
+                        en: 'Generation cancelled. Adjust your brief and generate again when ready.',
+                        ja: '生成をキャンセルしました。要件を調整し、準備ができたら再度生成してください。',
+                      })}
+                    </div>
+                  )}
                   {partialWarning && (
                     <div className="azd-callout azd-callout--warning" role="status">
                       {partialWarning}
@@ -1233,6 +1297,15 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
                 >
                     {localize(language, { en: 'Back', ja: '戻る' })}
                 </button>
+                {isGenerating && (
+                  <button
+                    type="button"
+                    className="azd-button azd-button--secondary"
+                    onClick={handleCancel}
+                  >
+                    <X size={18} />
+                    {' '}{localize(language, { en: 'Cancel generation', ja: '生成をキャンセル' })}{' '}</button>
+                )}
                 <button
                   type="button"
                   className="azd-button azd-button--primary"

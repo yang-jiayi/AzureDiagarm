@@ -131,7 +131,7 @@ const ValidationModal: React.FC<ValidationModalProps> = ({ validation, isOpen, o
         <div className="finding-evidence">
           <strong>
             <Search size={14} />
-            {localize(language, { en: 'Diagram evidence', ja: '図面上の根拠' })}
+            {localize(language, { en: 'Diagram evidence', ja: '図上の根拠' })}
           </strong>
           <ul>
             {finding.evidence.map((item, index) => <li key={index}>{item}</li>)}
@@ -326,11 +326,17 @@ const ValidationModal: React.FC<ValidationModalProps> = ({ validation, isOpen, o
                       {(validation.metrics.elapsedTimeMs / 1000).toFixed(1)}{t("s")}{' '}</span>
                     <span className="metric">
                       <Zap size={14} />
-                      {validation.metrics.promptTokens.toLocaleString()} {' '}{t("in →")}{' '}{validation.metrics.completionTokens.toLocaleString()} {' '}{t("out (")}{validation.metrics.totalTokens.toLocaleString()} {' '}{t("total)")}{' '}</span>
+                      {' '}{localize(language, {
+                        en: `${validation.metrics.promptTokens.toLocaleString()} in → ${validation.metrics.completionTokens.toLocaleString()} out (${validation.metrics.totalTokens.toLocaleString()} total)`,
+                        ja: `入力 ${validation.metrics.promptTokens.toLocaleString()} → 出力 ${validation.metrics.completionTokens.toLocaleString()}（合計 ${validation.metrics.totalTokens.toLocaleString()}）`,
+                      })}{' '}</span>
                     {(validation as any).hybridMetadata && (
                       <span className="metric hybrid-metric">
                         <Database size={14} />
-                        {(validation as any).hybridMetadata.localFindings} {' '}{t("local rules (")}{(validation as any).hybridMetadata.localElapsedMs}{t("ms) + AI refinement")}{' '}</span>
+                        {' '}{localize(language, {
+                          en: `${(validation as any).hybridMetadata.localFindings} local rules (${(validation as any).hybridMetadata.localElapsedMs}ms) + AI refinement`,
+                          ja: `ローカルルール ${(validation as any).hybridMetadata.localFindings} 件（${(validation as any).hybridMetadata.localElapsedMs}ms）＋ AI による精緻化`,
+                        })}{' '}</span>
                     )}
                   </div>
                 )}

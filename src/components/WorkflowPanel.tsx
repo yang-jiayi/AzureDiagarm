@@ -166,7 +166,14 @@ const WorkflowPanel: React.FC<WorkflowPanelProps> = ({
   return (
     <>
       <div className={`workflow-panel ${isExpanded ? 'expanded' : 'collapsed'}`}>
-        <div className="workflow-header" onClick={() => setIsExpanded(!isExpanded)}>
+        <div
+          className="workflow-header"
+          onClick={(event) => {
+            // Mouse convenience only; the accessible control is .workflow-toggle below.
+            if ((event.target as HTMLElement).closest('button')) return;
+            setIsExpanded(!isExpanded);
+          }}
+        >
           <div className="workflow-title">
             <ListOrdered size={20} />
             <h3>{t("Architecture Workflow")}</h3>
@@ -190,7 +197,10 @@ const WorkflowPanel: React.FC<WorkflowPanelProps> = ({
             )}
             <button
               className="workflow-toggle"
+              onClick={() => setIsExpanded(!isExpanded)}
               aria-label={workflowToggleLabel}
+              aria-expanded={isExpanded}
+              aria-controls="workflow-panel-content"
               title={workflowToggleLabel}
             >
               {isExpanded ? <ChevronRight size={20} /> : <ChevronLeft size={20} />}
@@ -199,7 +209,7 @@ const WorkflowPanel: React.FC<WorkflowPanelProps> = ({
         </div>
         
         {isExpanded && (
-          <div className="workflow-content">
+          <div className="workflow-content" id="workflow-panel-content">
             <div className="workflow-steps">
               {workflow.map((step) => (
                 <div

@@ -329,6 +329,14 @@ export async function generateBlueprintArchitectureWithAI(
   });
 
   enforceSpacing(bp);
+  // Deterministic left→right column ordering. enforceSpacing only pushes
+  // overlapping tiles apart; it imposes no order, so the same brief can render a
+  // materially different, crossing-heavy layout each call. orderBlueprintColumns
+  // makes column placement a pure function of the graph (BFS distance from the
+  // entry node), then we re-run enforceSpacing to resolve any tiles that the
+  // reordering pushed together.
+  orderBlueprintColumns(bp);
+  enforceSpacing(bp);
   validateStepNumbering(bp);
   fixObservabilityEdgeDirection(bp);
 
@@ -351,6 +359,102 @@ export async function generateBlueprintArchitectureWithAI(
 
   bp.metrics = metrics;
   return bp;
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Deterministic column ordering.
+//
+// enforceSpacing() only pushes overlapping tiles apart — it imposes no
+// left-to-right order and does not reduce edge crossings, so the same brief can
+// yield a materially different, crossing-heavy layout on each call. This pass
+// makes column placement DETERMINISTIC and flow-aware: within every zone it
+// re-assigns the zone's existing X "slots" to nodes ordered by their BFS
+// distance from the diagram's entry/ingress node. Data therefore flows strictly
+// left→right (backward and long crossing edges are reduced), while each node's Y
+// is left untouched — preserving the AI's hot/cool (and control/data) banding.
+//
+// It is a PURE function of its input: no randomness, clock, or shared state, so
+// identical input always produces identical output. Exported for unit testing.
+export function orderBlueprintColumns(bp: BlueprintArchitecture): void {
+  const nodes = bp.nodes;
+  if (!nodes || nodes.length < 2) return;
+  const edges = bp.edges || [];
+
+  const byId = new Map(nodes.map(n => [n.id, n]));
+
+  // Directed adjacency + in-degree (ignore self-loops and edges to unknown ids).
+  const adj = new Map<string, string[]>();
+  const indeg = new Map<string, number>();
+  for (const n of nodes) {
+    adj.set(n.id, []);
+    indeg.set(n.id, 0);
+  }
+  for (const e of edges) {
+    if (!byId.has(e.from) || !byId.has(e.to) || e.from === e.to) continue;
+    adj.get(e.from)!.push(e.to);
+    indeg.set(e.to, (indeg.get(e.to) ?? 0) + 1);
+  }
+  for (const list of adj.values()) list.sort();
+
+  // Entry = deterministic pick among in-degree-0 nodes (fallback: global min).
+  const cmpNode = (a: BpNode, b: BpNode): number =>
+    a.x - b.x || a.y - b.y || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+  const sources = nodes.filter(n => (indeg.get(n.id) ?? 0) === 0).sort(cmpNode);
+  const entry = sources[0] ?? [...nodes].sort(cmpNode)[0];
+
+  // BFS shortest distance from the entry over directed edges.
+  const dist = new Map<string, number>();
+  dist.set(entry.id, 0);
+  const queue: string[] = [entry.id];
+  for (let head = 0; head < queue.length; head++) {
+    const cur = queue[head];
+    const d = dist.get(cur)!;
+    for (const next of adj.get(cur) ?? []) {
+      if (!dist.has(next)) {
+        dist.set(next, d + 1);
+        queue.push(next);
+      }
+    }
+  }
+  // Secondary pass: reach nodes fed by another already-distanced predecessor
+  // (multi-source graphs). Iterate to a fixpoint; bounded by node count.
+  for (let changed = true; changed; ) {
+    changed = false;
+    for (const e of edges) {
+      if (dist.has(e.from) && byId.has(e.to) && !dist.has(e.to)) {
+        dist.set(e.to, dist.get(e.from)! + 1);
+        changed = true;
+      }
+    }
+  }
+  const UNREACHED = Number.MAX_SAFE_INTEGER;
+  const levelOf = (id: string): number => dist.get(id) ?? UNREACHED;
+
+  // Group nodes by zone (an absent zone forms its own group).
+  const groups = new Map<string, BpNode[]>();
+  for (const n of nodes) {
+    const key = n.zone ?? '';
+    const group = groups.get(key);
+    if (group) group.push(n);
+    else groups.set(key, [n]);
+  }
+
+  // Within each zone, reassign the existing X slots to nodes ordered by BFS
+  // level (then original X, Y, id for stable, deterministic tie-breaking).
+  // Reusing the same slot values keeps each zone's bounding box unchanged and
+  // preserves every node's Y, so the semantic banding survives.
+  for (const group of groups.values()) {
+    if (group.length < 2) continue;
+    const slots = group.map(n => n.x).sort((a, b) => a - b);
+    const ordered = [...group].sort((a, b) =>
+      levelOf(a.id) - levelOf(b.id)
+      || a.x - b.x
+      || a.y - b.y
+      || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+    for (let i = 0; i < ordered.length; i++) {
+      ordered[i].x = slots[i];
+    }
+  }
 }
 
 // ──────────────────────────────────────────────────────────────────────────────

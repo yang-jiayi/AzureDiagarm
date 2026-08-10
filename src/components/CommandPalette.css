@@ -35,7 +35,7 @@
   display: inline-flex;
   align-items: center;
   gap: 0.55rem;
-  color: var(--azd-color-brand-strong);
+  color: var(--azd-color-brand-text);
   font-size: 1rem;
   font-weight: 750;
 }

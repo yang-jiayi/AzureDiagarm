@@ -170,7 +170,7 @@ export default function AlignmentToolbar({
   return (
     <div className="alignment-toolbar" ref={rootRef}>
       <span className="toolbar-label">{text('Align', '整列')}</span>
-      <div className="alignment-toolbar-buttons" aria-label={text('Multi-selection alignment', '複数選択の整列')}>
+      <div className="alignment-toolbar-buttons" role="group" aria-label={text('Multi-selection alignment', '複数選択の整列')}>
         {alignmentButtons.map(button => (
           <button
             key={button.type}
@@ -306,7 +306,7 @@ export default function AlignmentToolbar({
                   onChange={event => setTags(event.target.value)}
                   maxLength={480}
                   aria-labelledby="bulk-edit-tags-label"
-                  placeholder={text('production, critical', 'production, critical')}
+                  placeholder={text('production, critical', '本番, 重要')}
                 />
               </div>
             </div>

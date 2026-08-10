@@ -1,10 +1,10 @@
-# Azure Architecture Diagram Builder - System Architecture
+# Microsoft Product Architecture Diagram Builder - System Architecture
 
 **Last Updated**: August 2026 (guided workflow, current Azure service names, MCP render profiles, secure feedback delivery)
 
 ## Overview
 
-The Azure Architecture Diagram Builder is a web-based tool that uses AI to generate Azure architecture diagrams with real-time pricing estimates. Built with React, TypeScript, and Vite, it leverages **12 AI models** via Azure OpenAI (GPT-5.1, GPT-5.2, GPT-5.2 Codex, GPT-5.3 Codex, GPT-5.4, GPT-5.4 Mini, DeepSeek V3.2 Speciale, DeepSeek V4 Pro, Grok 4.1 Fast, Grok 4.3, Mistral Large 3, Kimi K2.5) for diagram generation, validation, and Infrastructure as Code. The Azure Retail Prices API provides cost estimation across **8 regions** (PAYG and 1-year Reserved), including Microsoft Fabric capacity and OneLake.
+The Microsoft Product Architecture Diagram Builder is a web-based tool that uses AI to generate Azure architecture diagrams with real-time pricing estimates. Built with React, TypeScript, and Vite, it leverages **12 AI models** via Azure OpenAI (GPT-5.1, GPT-5.2, GPT-5.2 Codex, GPT-5.3 Codex, GPT-5.4, GPT-5.4 Mini, DeepSeek V3.2 Speciale, DeepSeek V4 Pro, Grok 4.1 Fast, Grok 4.3, Mistral Large 3, Kimi K2.5) for diagram generation, validation, and Infrastructure as Code. The Azure Retail Prices API provides cost estimation across **8 regions** (PAYG and 1-year Reserved), including Microsoft Fabric capacity and OneLake.
 
 A lightweight Express.js **token server** (`127.0.0.1:3001`, co-located with nginx in the container) is the security boundary: it proxies all Azure OpenAI traffic (`/api/openai`) so the key never reaches the browser, grounds deployment guides in Microsoft Learn (`/api/docs-search`), delivers feedback by email with optional Table Storage or Cosmos DB archives (`/api/feedback`), and issues keyless Speech tokens (`/api/speech-token`) via `DefaultAzureCredential` (Managed Identity).
 
@@ -746,7 +746,7 @@ the runtime identity.
 
 ## Conclusion
 
-The Azure Architecture Diagram Builder demonstrates a sophisticated integration of AI, real-time pricing data, and dynamic UI rendering to create an intelligent architecture design tool. The modular architecture separates concerns effectively, enabling easy maintenance and feature additions.
+The Microsoft Product Architecture Diagram Builder demonstrates a sophisticated integration of AI, real-time pricing data, and dynamic UI rendering to create an intelligent architecture design tool. The modular architecture separates concerns effectively, enabling easy maintenance and feature additions.
 
 Key architectural decisions:
 

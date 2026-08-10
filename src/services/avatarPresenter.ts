@@ -67,11 +67,12 @@ export class AvatarPresenter {
     // Dynamic import keeps the ~10 MB SDK out of the initial bundle
     const SpeechSDK = await import('microsoft-cognitiveservices-speech-sdk');
 
-    // Fetch a short-lived Speech token (aad#resourceId#aadToken format)
+    // Fetch a short-lived, Speech-scoped STS token (the server exchanges its managed-identity
+    // token for this so the identity credential never reaches the browser).
     const { token, region } = await this.fetchSpeechToken();
 
-    // Must use fromEndpoint + set authorizationToken — fromAuthorizationToken does not
-    // accept the aad# format required for Entra ID auth (WebSocket 1006 error otherwise)
+    // fromEndpoint is required for the talking-avatar query flag; the STS token is supplied
+    // through authorizationToken, which the SDK sends as `Authorization: Bearer <token>`.
     const wssUrl = new URL(`wss://${region}.tts.speech.microsoft.com/cognitiveservices/websocket/v1?enableTalkingAvatar=true`);
     const speechConfig = SpeechSDK.SpeechConfig.fromEndpoint(wssUrl);
     speechConfig.authorizationToken = token;

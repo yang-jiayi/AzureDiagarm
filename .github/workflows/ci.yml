@@ -77,6 +77,20 @@ jobs:
       - name: Test critical flows
         run: npm run test:e2e
 
+      # Visual baselines are rendered on Linux, so a Windows or macOS developer
+      # cannot reproduce a screenshot diff locally. Publishing the report and
+      # the "-actual" images makes CI-only failures debuggable.
+      - name: Upload Playwright report
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: playwright-report
+          path: |
+            playwright-report
+            test-results
+          retention-days: 7
+          if-no-files-found: ignore
+
   build-mcp:
     name: Build (MCP server)
     runs-on: ubuntu-latest

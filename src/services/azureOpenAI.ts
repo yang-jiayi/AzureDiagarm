@@ -20,6 +20,11 @@ import {
   resolveAIModelRuntime,
   type RuntimeModelOverride,
 } from './aiModelRuntime';
+import {
+  runWithCompactRetry,
+  safeParseModelJson,
+  ModelJsonError,
+} from './aiRetry';
 
 // Token usage metrics returned from Azure OpenAI API
 export interface AIMetrics {
@@ -38,7 +43,7 @@ interface CallResult {
 
 export interface ModelOverride extends RuntimeModelOverride {}
 
-export async function callAzureOpenAI(messages: any[], modelOverride?: ModelOverride, jsonOutput = true, operation = 'architecture_generation'): Promise<CallResult> {
+export async function callAzureOpenAI(messages: any[], modelOverride?: ModelOverride, jsonOutput = true, operation = 'architecture_generation', signal?: AbortSignal): Promise<CallResult> {
   const runtime = resolveAIModelRuntime('architectureGeneration', modelOverride);
   const {
     apiFormat,
@@ -53,9 +58,24 @@ export async function callAzureOpenAI(messages: any[], modelOverride?: ModelOver
   } = runtime;
 
   // Stay below the 240-second Front Door origin limit so the client receives
-  // a controlled timeout instead of an edge-generated 504.
+  // a controlled timeout instead of an edge-generated 504. A caller-supplied
+  // signal (e.g. a Cancel button) is chained in so aborting it aborts the
+  // in-flight request too; `userCancelled` lets us tell a user cancel apart
+  // from the internal timeout when mapping the resulting AbortError.
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), 225000);
+  let userCancelled = false;
+  if (signal) {
+    if (signal.aborted) {
+      userCancelled = true;
+      controller.abort();
+    } else {
+      signal.addEventListener('abort', () => {
+        userCancelled = true;
+        controller.abort();
+      }, { once: true });
+    }
+  }
   
   // Start timing
   const startTime = performance.now();
@@ -134,8 +154,19 @@ export async function callAzureOpenAI(messages: any[], modelOverride?: ModelOver
     return { content, metrics };
   } catch (error: any) {
     clearTimeout(timeoutId);
-    
+
     if (error.name === 'AbortError') {
+      // A caller cancel is not a failure — surface a neutral, still-AbortError
+      // so the UI can show a "Cancelled" state instead of an error banner. Tag
+      // it explicitly so the retry logic can tell a user cancel (terminal)
+      // apart from an internal timeout (retryable) without guessing from the
+      // AbortError name.
+      if (userCancelled) {
+        const cancelled = new Error('Generation cancelled.') as Error & { userCancelled?: boolean };
+        cancelled.name = 'AbortError';
+        cancelled.userCancelled = true;
+        throw cancelled;
+      }
       throw new Error('Request timed out after 225 seconds. The request may be too complex. Consider simplifying the architecture or reducing the number of recommendations.');
     }
     
@@ -198,7 +229,7 @@ Return ONLY JSON: {"suggestions":["..."]}`;
       'chat_followups',
     );
 
-    const parsed = JSON.parse(content);
+    const parsed = safeParseModelJson<any>(content, { context: 'follow-up suggestions' });
     const arr = Array.isArray(parsed?.suggestions) ? parsed.suggestions : [];
     return arr
       .map((s: any) => String(s).trim().replace(/[.;]+$/, ''))
@@ -209,11 +240,37 @@ Return ONLY JSON: {"suggestions":["..."]}`;
   }
 }
 
+/**
+ * Stable, localised message for a model response that parsed but described no
+ * services. Keyed verbatim by the Japanese dictionary (i18n coverage test).
+ */
+const EMPTY_ARCHITECTURE_MESSAGE =
+  'The AI model returned an empty architecture (no services). Please try again or rephrase your request.';
+
+/** Thrown when the model returned valid JSON but zero services (retryable). */
+class EmptyArchitectureError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'EmptyArchitectureError';
+  }
+}
+
+/**
+ * Recognise the configuration failures thrown by `aiModelRuntime` (Azure OpenAI
+ * / Foundry not configured, no deployment, BYO not ready). These are surfaced
+ * to the user as a single stable, actionable message rather than the raw text.
+ */
+function isAIConfigurationError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : typeof error === 'string' ? error : '';
+  return /not configured\. Please check your environment|No deployment configured for|Bring-your-own AI (is disabled|is not ready|availability has not been confirmed)/i.test(message);
+}
+
 export async function generateArchitectureWithAI(
   description: string,
   modelOverride?: ModelOverride,
   manifest?: import('./componentManifestAI').ComponentManifest,
   language: Language = 'en',
+  signal?: AbortSignal,
 ) {
   // Build a compact list of known service display names for the prompt
   const knownServices = Object.entries(SERVICE_ICON_MAP)
@@ -226,9 +283,15 @@ export async function generateArchitectureWithAI(
     ? '\n\n' + (await import('./componentManifestAI')).renderManifestForPrompt(manifest)
     : '';
 
-  const systemPrompt = `You are an expert Azure cloud architect. Analyze architecture requirements and return a JSON specification for an Azure architecture diagram with logical groupings.${manifestBlock}
+  // The full canonical service list is the biggest token sink in this prompt.
+  // A compact retry (triggered after a timeout) swaps it for a short naming
+  // hint so the request finishes inside the proxy's upstream budget.
+  const knownServicesFull = `KNOWN SERVICES (canonical type, display name, and icon category):\n${knownServices}`;
+  const knownServicesCompact = 'Use OFFICIAL Microsoft/Azure service names for "type" and "name" (e.g. "Microsoft Entra ID", "Azure Cosmos DB", "Azure Functions", "Azure Kubernetes Service"); the layout engine maps them to canonical icons.';
 
-**IMPORTANT: DO NOT include position, x, y, width, or height in your response. The layout engine will calculate optimal positions automatically.**
+  const buildSystemPrompt = (compact: boolean) => `You are an expert Azure cloud architect. Analyze architecture requirements and return a JSON specification for an Azure architecture diagram with logical groupings.${manifestBlock}
+
+**IMPORTANT: DO NOT include position, x, y, width, height, sourcePosition, or targetPosition in your response. The layout engine will calculate optimal positions automatically.**
 
 ${getPromptLanguageInstruction(language)}
 
@@ -240,11 +303,10 @@ Return ONLY a valid JSON object (no markdown, no explanations) with this structu
   "workflow": [{ "step": 1, "description": "What happens in this step", "services": ["service-id-1", "service-id-2"] }]
 }
 
-KNOWN SERVICES (canonical type, display name, and icon category):
-${knownServices}
+${compact ? knownServicesCompact : knownServicesFull}
 
 Icon categories (use for "category" field):
-"app services", "databases", "storage", "networking", "compute", "containers", "ai + machine learning", "analytics", "identity", "monitor", "iot", "integration", "devops", "security", "web", "management + governance", "fabric"
+"app services", "databases", "storage", "networking", "compute", "containers", "ai + machine learning", "analytics", "identity", "monitor", "iot", "integration", "devops", "security", "web", "management + governance", "fabric", "power platform", "dynamics 365", "general"
 
 Rules:
 1. Create 2-5 logical groups. Max 6 services per group.
@@ -252,41 +314,61 @@ Rules:
 3. For identity/auth, use "Microsoft Entra ID" (never "Azure Active Directory" or "AAD").
 4. Connection labels MUST be specific and action-oriented (e.g., "Submit batch job per tenant"), NOT generic ("Request", "Data").
 5. MICROSOFT FABRIC: When the solution uses Microsoft Fabric, put Fabric items (Lakehouse, Warehouse, Eventhouse, Eventstream, KQL Database, Fabric Notebook, Fabric Data Pipeline, Dataflow Gen2, Semantic Model, Power BI Report, Mirrored Database, Real-Time Dashboard) in a group named "Microsoft Fabric" and set their category to "fabric". Include "Microsoft Fabric Capacity" (the billed F SKU) and "OneLake" (storage) in that group — individual Fabric items consume the shared capacity, so the capacity carries the cost.
-5. Do NOT specify sourcePosition or targetPosition.
 6. Connection types: "sync" (solid, HTTP/SQL), "async" (dashed, queues/events), "optional" (dotted, fallback).
 7. Provide 5-10 workflow steps following the data flow chronologically. Each step's "services" array MUST list ALL service IDs involved in that step (typically 2-3 services per step, not just one).
 
 LAYOUT READABILITY — CRITICAL:
 8. **Directional group flow.** Arrange groups in a clear left-to-right pipeline: Ingress/Edge → Application/Compute → Data/Storage. Place Identity/Security as a separate group at the bottom-left. Place Monitoring/Observability as a separate group at the bottom-right.
-9. **Hub-and-spoke for monitoring.** Do NOT draw individual edges from every service to Log Analytics or Azure Monitor. Instead, connect ONLY the primary compute service to Azure Monitor, then a SINGLE edge from Azure Monitor to Log Analytics. Maximum 2-3 edges involving monitoring services total.
+9. **Hub-and-spoke for monitoring.** Do NOT draw individual edges from every service to Log Analytics or Azure Monitor. Instead, draw ONE representative telemetry edge FROM the primary compute service TO Log Analytics (or Application Insights), labelled "Send logs & metrics"; Application Insights forwards to Log Analytics (Application Insights → Log Analytics), never the reverse. Azure Monitor queries and alerts on Log Analytics — do NOT emit an "Azure Monitor → Log Analytics" edge; only add an edge FROM Azure Monitor TO an action target (Action Group, Logic Apps) when you are explicitly depicting alerting. Maximum 2-3 edges involving monitoring services total.
 10. **Limit total connections to 12-18.** Only include connections that represent the PRIMARY data or control flow. Omit obvious implicit relationships (e.g., every service using Key Vault — show only 1 representative Key Vault edge). Omit diagnostic/telemetry edges except the hub-and-spoke pattern in rule 9.
 11. **Minimize cross-group edges.** Place tightly-coupled services in the SAME group. If two services exchange data frequently, they belong together. Cross-group connections cause visual clutter — aim for no more than 1-2 outgoing edges per group to other groups.
-12. **Total service count: 8-12 max** unless the user's description explicitly names more services. Include every service the user mentions. Only add EXTRA security/identity services (Key Vault, Entra ID, DDoS, WAF) beyond what the user asked for when the architecture critically depends on them.
+12. **Total service count: 8-12 max** unless the user's description explicitly names more services. Include every service the user mentions. By DEFAULT also include the baseline controls every production Azure workload needs even when the user does not name them: Microsoft Entra ID (identity), Azure Key Vault (secrets/certificates), and Azure Monitor with Log Analytics (observability); for any internet-facing workload also add Azure Front Door or Application Gateway with a WAF. **Secure by default:** when a VNet is present, reach PaaS data services (Azure SQL, Storage, Cosmos DB, Cache for Redis, Key Vault) through an Azure Private Endpoint instead of a public edge, and have compute authenticate with a system-assigned managed identity — label those edges "Managed identity (RBAC)" rather than using connection strings or account keys. These baseline controls may push you slightly beyond the 8-12 target, which is acceptable; never drop a user-named service to stay under the cap. Omit the baseline controls only when the user explicitly requests a minimal or conceptual diagram.
 13. **Dashboard & visualization services.** When the user mentions dashboards, reporting, visualization, or analytics UIs, include a dedicated visualization service such as Azure Managed Grafana, Power BI Embedded, Azure Dashboard, or Azure Workbooks — do NOT substitute a generic compute/web service for the dashboard role.
-14. **No floating services — every service MUST be connected.** Each entry in "services" has to appear as the "from" or "to" of at least ONE connection. A service with no connection renders as a box sitting by itself with no stated purpose. "from" and "to" MUST use the service's exact "id" value — never its display name. If a service genuinely has no data or control flow to any other service, leave it out entirely rather than emitting it unconnected.`;
+14. **No floating services — every service MUST be connected.** Each entry in "services" has to appear as the "from" or "to" of at least ONE connection. A service with no connection renders as a box sitting by itself with no stated purpose. "from" and "to" MUST use the service's exact "id" value — never its display name. If a service genuinely has no data or control flow to any other service, leave it out entirely rather than emitting it unconnected.
 
-  try {
+15. **Model resiliency for production/critical workloads.** Deploy across Availability Zones and, where DR is implied, a paired secondary region — include the replication/failover edge (e.g. "Geo-replicate (RA-GRS)", "Failover routing (Front Door)"). Only use single-region for dev/test.
+
+16. **POWER PLATFORM & DYNAMICS 365.** When the solution involves low-code apps, workflow automation, conversational agents, or business applications, use the official first-party names and categories instead of approximating with Azure services: "Microsoft Power Apps", "Microsoft Power Automate", "Microsoft Power Pages", "Microsoft Dataverse", "AI Builder", "Microsoft Copilot Studio" (never "Power Virtual Agents"), and "Microsoft Agent 365" all take category "power platform"; every "Dynamics 365 ..." application (Sales, Customer Service, Contact Center, Field Service, Customer Insights, Finance, Supply Chain Management, Commerce, Business Central, Project Operations, Human Resources) takes category "dynamics 365". Put them in their own group ("Power Platform" or "Dynamics 365") and use Microsoft Dataverse as their shared data store — connect Azure services to Dataverse rather than directly to individual business apps. These are per-user licensed products, so they carry no Azure meter cost.${compact ? '\n\nSPEED MODE — a previous attempt exceeded the time budget. Return the JSON directly without lengthy deliberation: 8-12 services, 2-4 groups, 12-18 connections, 5-8 workflow steps. Prioritise a correct, readable primary flow over exhaustive coverage.' : ''}`;
+
+  const attempt = async (compact: boolean, override?: ModelOverride) => {
     const messages = [
-      { role: 'system', content: systemPrompt },
-      { role: 'user', content: description }
+      { role: 'system', content: buildSystemPrompt(compact) },
+      { role: 'user', content: description },
     ];
 
-    const { content, metrics } = await callAzureOpenAI(messages, modelOverride);
-    
+    const { content, metrics } = await callAzureOpenAI(messages, override, true, 'architecture_generation', signal);
+
     console.log(`AI model response [${metrics.model || 'unknown'}]:`, content);
-    
-    if (!content) {
-      throw new Error('No response from Azure OpenAI. The model may have timed out or returned empty content.');
+
+    // safeParseModelJson tolerates ```json fences / leading prose and raises a
+    // typed, localised error (never the raw parser message) for refusals and
+    // truncated output.
+    const parsed = safeParseModelJson<any>(content, { context: 'architecture generation' });
+
+    // A model returning {"services": []} previously rendered a blank canvas
+    // with no explanation. Treat it as a retryable failure so the compact
+    // retry gets a chance, then surface a clear, localised error if it persists.
+    if (!parsed || typeof parsed !== 'object' || !Array.isArray(parsed.services) || parsed.services.length === 0) {
+      throw new EmptyArchitectureError(EMPTY_ARCHITECTURE_MESSAGE);
     }
 
-    let architecture;
-    try {
-      architecture = JSON.parse(content);
-    } catch (parseError: any) {
-      console.error('Failed to parse JSON response:', content);
-      throw new Error(`Invalid JSON response from Azure OpenAI: ${parseError.message}`);
-    }
-    
+    return { architecture: parsed, metrics };
+  };
+
+  try {
+    // The dominant transient failure on this (primary) path is exceeding the
+    // proxy's 210s upstream budget — surfaced as "The AI provider is taking too
+    // long to respond." One automatic retry with a compact prompt at reduced
+    // reasoning effort finishes well inside the budget. Post-processing runs
+    // once, AFTER the retry settles, so a retried result can never double-apply.
+    const { architecture, metrics } = await runWithCompactRetry({
+      transportFeature: 'architectureGeneration',
+      override: modelOverride,
+      label: 'Architecture generation',
+      isRetryable: (error) => error instanceof EmptyArchitectureError,
+      attempt,
+    });
+
     // Post-process: normalize service names and categories against SERVICE_ICON_MAP
     if (architecture.services && Array.isArray(architecture.services)) {
       architecture.services = architecture.services.map((service: any) => {
@@ -436,17 +518,22 @@ LAYOUT READABILITY — CRITICAL:
 
     return architecture;
   } catch (error: any) {
+    // Keep the raw failure detail in the console only; the user gets a stable,
+    // pre-translated message chosen by error type (never the raw internals).
     console.error('Azure OpenAI Error:', error);
 
-    if (error instanceof OpenAIProxyError) {
-      throw error;
+    // Already-typed, already-localised failures pass through unchanged so the
+    // UI can still classify (OpenAIProxyError.code / ModelJsonError.kind) and
+    // localise them.
+    if (error instanceof OpenAIProxyError) throw error;
+    if (error instanceof ModelJsonError) throw error;
+    if (error instanceof EmptyArchitectureError) throw error;
+
+    if (isAIConfigurationError(error)) {
+      throw new Error('No AI model is configured. Check the environment configuration or connect a custom AI endpoint.');
     }
-    
-    if (error.message?.includes('credentials not configured')) {
-      throw new Error('Azure OpenAI is not configured. Please check your environment variables.');
-    }
-    
-    throw new Error(`Failed to generate architecture: ${error.message || 'Unknown error'}`);
+
+    throw new Error('Failed to generate architecture. Please try again.');
   }
 }
 
@@ -573,7 +660,7 @@ export async function analyzeArchitectureDiagramImage(
   const runtime = resolveAIModelRuntime('architectureGeneration');
   
   if (!runtime.supportsVision) {
-    throw new Error(`${runtime.displayName} does not support image analysis. Choose a vision-capable model in AI settings.`);
+    throw new Error('The selected model does not support image analysis. Choose a vision-capable model in AI settings.');
   }
 
   const systemPrompt = `You are an expert Azure cloud architect specializing in analyzing architecture diagrams.
@@ -1005,9 +1092,10 @@ ${JSON.stringify(stateJson, null, 2)}`;
 
 /** Post-process the architecture response to normalize groups and resolve conflicts */
 function normalizeArchitectureResponse(architecture: any): any {
-  // Validate response structure
-  if (!architecture.services || !Array.isArray(architecture.services)) {
-    throw new Error('Invalid response: missing services array');
+  // Validate response structure. A model returning {"services": []} must not
+  // silently render a blank canvas — surface a clear, localised error instead.
+  if (!architecture.services || !Array.isArray(architecture.services) || architecture.services.length === 0) {
+    throw new EmptyArchitectureError(EMPTY_ARCHITECTURE_MESSAGE);
   }
 
   if (!architecture.connections) {
@@ -1096,7 +1184,10 @@ export async function generateArchitectureFromIaC(input: IaCImportInput, languag
       userMessage = buildTerraformStateUserMessage(input.content);
       break;
     default:
-      throw new Error(`Unsupported IaC format: ${input.format}`);
+      // Unreachable given the `IaCFormat` union, but keep the specific format
+      // in the console and surface a static, localisable message to the user.
+      console.error(`Unsupported IaC format: ${input.format}`);
+      throw new Error('Failed to parse the template. Please try again.');
   }
   systemPrompt = `${systemPrompt}\n\n${getPromptLanguageInstruction(language)}`;
 
@@ -1108,17 +1199,31 @@ export async function generateArchitectureFromIaC(input: IaCImportInput, languag
 
     const { content, metrics } = await callAzureOpenAI(messages);
 
-    if (!content) {
-      throw new Error('No response from Azure OpenAI');
-    }
-
-    const architecture = JSON.parse(content);
+    // safeParseModelJson tolerates ```json fences / prose and raises a typed,
+    // localised error (never the raw parser message) for empty, refusal, and
+    // truncated responses.
+    const architecture = safeParseModelJson<any>(content, { context: `${label} template import` });
     architecture.metrics = metrics;
 
     return normalizeArchitectureResponse(architecture);
   } catch (error: any) {
     console.error(`${label} parsing error:`, error);
-    throw new Error(`Failed to parse ${label} template: ${error.message}`);
+    // Preserve already-typed, already-localised failures instead of wrapping
+    // them in an unlocalised "Failed to parse … : <raw>" string.
+    if (
+      error instanceof OpenAIProxyError
+      || error instanceof ModelJsonError
+      || error instanceof EmptyArchitectureError
+    ) {
+      throw error;
+    }
+    if (isAIConfigurationError(error)) {
+      throw new Error('No AI model is configured. Check the environment configuration or connect a custom AI endpoint.');
+    }
+    // Static (localisable) message — the specific format is already in the
+    // console log above, so it need not (and must not, for i18n) be interpolated
+    // into the user-facing string.
+    throw new Error('Failed to parse the template. Please try again.');
   }
 }
 

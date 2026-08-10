@@ -16,8 +16,8 @@
   margin-top: 0;
   position: sticky;
   bottom: 0;
-  background: #f9fafb;
-  border-top: 1px solid #e5e7eb;
+  background: var(--azd-color-surface-panel);
+  border-top: 1px solid var(--azd-color-border-subtle);
   z-index: 10;
 }
 
@@ -79,7 +79,7 @@
   margin: 0 0 16px 0;
   font-size: 18px;
   font-weight: 600;
-  color: #1f2937;
+  color: var(--azd-color-text);
   display: flex;
   align-items: center;
   gap: 8px;
@@ -94,12 +94,12 @@
 
 .prerequisites-list li {
   padding: 12px 16px;
-  background: #f9fafb;
-  border-left: 3px solid #3b82f6;
+  background: var(--azd-color-surface-panel);
+  border-left: 3px solid var(--azd-color-action);
   border-radius: 4px;
   margin-bottom: 8px;
   font-size: 14px;
-  color: #4b5563;
+  color: var(--azd-color-text-secondary);
 }
 
 .prerequisites-list li:before {
@@ -117,15 +117,15 @@
 }
 
 .step-card {
-  background: #f9fafb;
-  border: 1px solid #e5e7eb;
+  background: var(--azd-color-surface-panel);
+  border: 1px solid var(--azd-color-border-subtle);
   border-radius: 8px;
   overflow: hidden;
   transition: all 0.2s;
 }
 
 .step-card:hover {
-  border-color: #d1d5db;
+  border-color: var(--azd-color-border);
 }
 
 .step-header {
@@ -137,21 +137,21 @@
   border: 0;
   cursor: pointer;
   user-select: none;
-  background: white;
-  color: inherit;
+  background: var(--azd-color-surface-elevated);
+  color: var(--azd-color-text);
   font: inherit;
   text-align: left;
 }
 
 .step-header:hover {
-  background: #f9fafb;
+  background: var(--azd-color-surface-panel);
 }
 
 .step-header:focus-visible,
 .bicep-template-toggle:focus-visible,
 .btn-download-bicep:focus-visible,
 .copy-button:focus-visible {
-  outline: 3px solid #2563eb;
+  outline: 3px solid var(--azd-color-focus);
   outline-offset: 2px;
 }
 
@@ -178,8 +178,8 @@
 
 .step-method {
   padding: 4px 10px;
-  background: #eff6ff;
-  color: #1e40af;
+  background: var(--azd-color-brand-soft);
+  color: var(--azd-color-action);
   border-radius: 12px;
   font-size: 12px;
   font-weight: 500;
@@ -187,15 +187,15 @@
 
 .step-content {
   padding: 0 16px 16px 16px;
-  background: white;
+  background: var(--azd-color-surface-elevated);
 }
 
 .step-description {
   margin: 0 0 16px 0;
   padding: 12px;
-  background: #f9fafb;
+  background: var(--azd-color-surface-panel);
   border-radius: 6px;
-  color: #4b5563;
+  color: var(--azd-color-text-secondary);
   font-size: 14px;
   line-height: 1.6;
 }
@@ -211,13 +211,13 @@
   align-items: center;
   margin-bottom: 8px;
   padding: 0 0 8px 0;
-  border-bottom: 2px solid #e5e7eb;
+  border-bottom: 2px solid var(--azd-color-border-subtle);
 }
 
 .commands-header span {
   font-size: 13px;
   font-weight: 600;
-  color: #6b7280;
+  color: var(--azd-color-text-muted);
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
@@ -262,28 +262,28 @@
 .step-notes {
   margin-top: 12px;
   padding: 12px;
-  background: #fffbeb;
-  border-left: 3px solid #f59e0b;
+  background: var(--azd-color-warning-soft);
+  border-left: 3px solid var(--azd-color-warning-emphasis);
   border-radius: 4px;
   font-size: 13px;
-  color: #78350f;
+  color: var(--azd-color-warning);
 }
 
 /* Configuration Table */
 .configuration-table {
   overflow-x: auto;
   border-radius: 8px;
-  border: 1px solid #e5e7eb;
+  border: 1px solid var(--azd-color-border-subtle);
 }
 
 .configuration-table table {
   width: 100%;
   border-collapse: collapse;
-  background: white;
+  background: var(--azd-color-surface-elevated);
 }
 
 .configuration-table thead {
-  background: #f9fafb;
+  background: var(--azd-color-surface-panel);
 }
 
 .configuration-table th {
@@ -291,14 +291,14 @@
   text-align: left;
   font-size: 13px;
   font-weight: 600;
-  color: #374151;
-  border-bottom: 2px solid #e5e7eb;
+  color: var(--azd-color-text-secondary);
+  border-bottom: 2px solid var(--azd-color-border-subtle);
 }
 
 .configuration-table td {
   padding: 12px 16px;
   font-size: 14px;
-  border-bottom: 1px solid #f3f4f6;
+  border-bottom: 1px solid var(--azd-color-border-subtle);
 }
 
 .configuration-table tbody tr:last-child td {
@@ -306,26 +306,26 @@
 }
 
 .configuration-table tbody tr:hover {
-  background: #f9fafb;
+  background: var(--azd-color-surface-panel);
 }
 
 .config-key {
   font-weight: 600;
-  color: #1f2937;
+  color: var(--azd-color-text);
   white-space: nowrap;
 }
 
 .config-value code {
   padding: 2px 6px;
-  background: #f3f4f6;
+  background: var(--azd-color-surface-subtle);
   border-radius: 3px;
   font-family: 'Yu Gothic UI', 'Monaco', 'Menlo', monospace;
   font-size: 13px;
-  color: #1f2937;
+  color: var(--azd-color-text);
 }
 
 .config-description {
-  color: #6b7280;
+  color: var(--azd-color-text-muted);
 }
 
 /* Validation List */
@@ -337,21 +337,21 @@
 
 .validation-list li {
   padding: 10px 12px;
-  background: white;
-  border: 1px solid #e5e7eb;
+  background: var(--azd-color-surface-elevated);
+  border: 1px solid var(--azd-color-border-subtle);
   border-radius: 6px;
   margin-bottom: 8px;
   display: flex;
   align-items: center;
   gap: 12px;
   font-size: 14px;
-  color: #4b5563;
+  color: var(--azd-color-text-secondary);
   transition: all 0.2s;
 }
 
 .validation-list li:hover {
-  background: #f9fafb;
-  border-color: #d1d5db;
+  background: var(--azd-color-surface-panel);
+  border-color: var(--azd-color-border);
 }
 
 .validation-list input[type="checkbox"] {
@@ -367,10 +367,10 @@
 
 /* Troubleshooting */
 .troubleshooting-section {
-  background: #fef2f2;
+  background: var(--azd-color-danger-soft);
   padding: 20px;
   border-radius: 8px;
-  border: 1px solid #fee2e2;
+  border: 1px solid var(--azd-color-border-subtle);
 }
 
 .troubleshooting-list {
@@ -380,30 +380,30 @@
 }
 
 .troubleshooting-item {
-  background: white;
+  background: var(--azd-color-surface-elevated);
   padding: 16px;
   border-radius: 6px;
-  border-left: 4px solid #ef4444;
+  border-left: 4px solid var(--azd-color-danger-strong);
 }
 
 .troubleshooting-problem {
   margin-bottom: 8px;
-  color: #991b1b;
+  color: var(--azd-color-danger-strong);
   font-size: 14px;
 }
 
 .troubleshooting-solution {
-  color: #4b5563;
+  color: var(--azd-color-text-secondary);
   font-size: 14px;
   line-height: 1.6;
 }
 
 /* Best Practices */
 .best-practices-section {
-  background: #f0fdf4;
+  background: var(--azd-color-success-soft);
   padding: 20px;
   border-radius: 8px;
-  border: 1px solid #bbf7d0;
+  border: 1px solid var(--azd-color-border-subtle);
 }
 
 .best-practices-list {
@@ -414,12 +414,12 @@
 
 .best-practices-list li {
   padding: 12px 16px;
-  background: white;
-  border-left: 3px solid #10b981;
+  background: var(--azd-color-surface-elevated);
+  border-left: 3px solid var(--azd-color-success-emphasis);
   border-radius: 4px;
   margin-bottom: 8px;
   font-size: 14px;
-  color: #064e3b;
+  color: var(--azd-color-text);
 }
 
 .best-practices-list li:before {
@@ -427,39 +427,12 @@
   margin-right: 8px;
 }
 
-/* Modal Actions Buttons */
+/* Modal Actions Buttons — geometry only; colours come from modal-primitives.css */
 .deployment-modal .modal-actions .btn-primary,
 .deployment-modal .modal-actions .btn-secondary {
-  padding: 10px 20px;
-  border-radius: 6px;
-  font-size: 14px;
-  font-weight: 500;
-  cursor: pointer;
-  display: flex !important;
+  display: inline-flex;
   align-items: center;
   gap: 8px;
-  transition: all 0.2s;
-}
-
-.deployment-modal .modal-actions .btn-primary {
-  background: #2563eb;
-  color: white;
-  border: none;
-}
-
-.deployment-modal .modal-actions .btn-primary:hover {
-  background: #1d4ed8;
-}
-
-.deployment-modal .modal-actions .btn-secondary {
-  background: white;
-  color: #374151;
-  border: 1px solid #d1d5db;
-}
-
-.deployment-modal .modal-actions .btn-secondary:hover {
-  background: #f9fafb;
-  border-color: #9ca3af;
 }
 
 /* Bicep Templates Section */
@@ -467,7 +440,7 @@
   background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);
   padding: 20px;
   border-radius: 12px;
-  border: 1px solid #7dd3fc;
+  border: 1px solid var(--azd-color-brand-border);
 }
 
 .bicep-header {
@@ -482,7 +455,7 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  color: #0369a1;
+  color: var(--azd-color-info);
 }
 
 .btn-download-all-bicep {
@@ -508,17 +481,17 @@
 .bicep-description {
   margin: 0 0 16px 0;
   font-size: 14px;
-  color: #0c4a6e;
+  color: var(--azd-color-text);
   line-height: 1.6;
 }
 
 .bicep-description code {
-  background: #bae6fd;
+  background: var(--azd-color-brand-soft);
   padding: 2px 6px;
   border-radius: 4px;
   font-family: 'Yu Gothic UI', 'Monaco', 'Menlo', monospace;
   font-size: 12px;
-  color: #075985;
+  color: var(--azd-color-text-strong);
 }
 
 .bicep-templates-list {
@@ -528,15 +501,15 @@
 }
 
 .bicep-template-card {
-  background: white;
-  border: 1px solid #bae6fd;
+  background: var(--azd-color-surface-elevated);
+  border: 1px solid var(--azd-color-border-subtle);
   border-radius: 8px;
   overflow: hidden;
   transition: all 0.2s;
 }
 
 .bicep-template-card:hover {
-  border-color: #7dd3fc;
+  border-color: var(--azd-color-brand-border);
   box-shadow: 0 2px 8px rgba(14, 165, 233, 0.15);
 }
 
@@ -546,11 +519,11 @@
   align-items: center;
   gap: 8px;
   padding: 0 16px 0 0;
-  background: #f8fafc;
+  background: var(--azd-color-surface-panel);
 }
 
 .bicep-template-header:hover {
-  background: #f0f9ff;
+  background: var(--azd-color-surface-hover);
 }
 
 .bicep-template-toggle {
@@ -562,7 +535,7 @@
   padding: 14px 16px;
   border: 0;
   background: transparent;
-  color: inherit;
+  color: var(--azd-color-text);
   cursor: pointer;
   font: inherit;
   text-align: left;
@@ -575,7 +548,7 @@
 }
 
 .bicep-icon {
-  color: #0284c7;
+  color: var(--azd-color-action);
 }
 
 .bicep-template-meta {
@@ -586,13 +559,13 @@
 
 .bicep-template-name {
   font-weight: 600;
-  color: #1e293b;
+  color: var(--azd-color-text-strong);
   font-size: 14px;
 }
 
 .bicep-template-filename {
   font-size: 12px;
-  color: #64748b;
+  color: var(--azd-color-text-subtle);
   font-family: 'Yu Gothic UI', 'Monaco', 'Menlo', monospace;
 }
 
@@ -607,9 +580,9 @@
   align-items: center;
   justify-content: center;
   padding: 6px;
-  background: #e0f2fe;
-  color: #0284c7;
-  border: 1px solid #7dd3fc;
+  background: var(--azd-color-brand-soft);
+  color: var(--azd-color-action);
+  border: 1px solid var(--azd-color-brand-border);
   border-radius: 4px;
   cursor: pointer;
   transition: all 0.2s;
@@ -622,13 +595,13 @@
 
 .bicep-template-content {
   padding: 16px;
-  border-top: 1px solid #e2e8f0;
+  border-top: 1px solid var(--azd-color-border-subtle);
 }
 
 .bicep-template-description {
   margin: 0 0 12px 0;
   font-size: 13px;
-  color: #475569;
+  color: var(--azd-color-text-secondary);
   line-height: 1.5;
 }
 
@@ -684,7 +657,7 @@
   gap: 0.3rem;
 }
 .grounding-list a {
-  color: #4ea1ff;
+  color: var(--azd-color-action);
   text-decoration: none;
 }
 .grounding-list a:hover { text-decoration: underline; }
@@ -703,7 +676,7 @@
   gap: 0.3rem;
 }
 .grounding-list a {
-  color: #4ea1ff;
+  color: var(--azd-color-action);
   text-decoration: none;
 }
 .grounding-list a:hover { text-decoration: underline; }

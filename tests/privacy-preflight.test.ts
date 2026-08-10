@@ -96,3 +96,45 @@ test('anonymization remaps sensitive graph identifiers without breaking referenc
   assert.notEqual(edge.id, payload.edges[0].id);
   assert.deepEqual(detectSensitiveData(anonymized), []);
 });
+
+test('detectSensitiveData returns findings deduplicated by id (single-pass Set)', () => {
+  const payload = {
+    nodes: [
+      { id: 'a', data: { note: 'password: hunter2secret', host: 'app.internal' } },
+      { id: 'b', data: { contact: 'owner@contoso.com', ip: '10.1.2.3' } },
+    ],
+    edges: [],
+  };
+
+  const findings = detectSensitiveData(payload);
+  const ids = findings.map(finding => finding.id);
+
+  // Every id is unique — the Set-based dedup left no duplicates.
+  assert.equal(new Set(ids).size, ids.length);
+  const kinds = new Set(findings.map(finding => finding.kind));
+  assert.equal(kinds.has('credential'), true);
+  assert.equal(kinds.has('internal-host'), true);
+  assert.equal(kinds.has('email'), true);
+  assert.equal(kinds.has('private-address'), true);
+});
+
+test('detectSensitiveData scans large payloads without quadratic blowup', () => {
+  // Mostly-benign strings force a full recursive walk (the 100-finding cap is
+  // never reached), so this exercises the per-string regex path. With the
+  // compiled RegExps hoisted to module scope this scales linearly; the previous
+  // per-call `new RegExp` recompilation would be dramatically slower.
+  const nodes: Array<{ id: string; data: Record<string, string> }> = [];
+  for (let index = 0; index < 20000; index += 1) {
+    nodes.push({ id: `n${index}`, data: { label: `Service ${index}`, note: `benign note ${index}` } });
+  }
+  nodes.push({ id: 'secret', data: { note: 'api_key="abcdefgh12345678"' } });
+
+  const start = performance.now();
+  const findings = detectSensitiveData({ nodes, edges: [] });
+  const elapsedMs = performance.now() - start;
+
+  assert.equal(findings.some(finding => finding.kind === 'credential'), true);
+  const ids = findings.map(finding => finding.id);
+  assert.equal(new Set(ids).size, ids.length);
+  assert.ok(elapsedMs < 1500, `detectSensitiveData took ${elapsedMs.toFixed(0)}ms — expected linear scan`);
+});

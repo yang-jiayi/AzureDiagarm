@@ -17,6 +17,12 @@ const fabricManifestPath = resolve(
   'fabric-manifest.json',
 );
 const fabricCatalogPath = resolve(repoRoot, 'src', 'data', 'fabricIconCatalog.ts');
+const microsoftManifestPath = resolve(
+  repoRoot,
+  'Azure_Public_Service_Icons',
+  'microsoft-product-manifest.json',
+);
+const microsoftCatalogPath = resolve(repoRoot, 'src', 'data', 'microsoftProductIconCatalog.ts');
 
 function sha256(value) {
   return createHash('sha256').update(value).digest('hex');
@@ -189,6 +195,110 @@ async function main() {
     `[test:icons] Fabric ${fabricManifest.packageVersion}: all `
     + `${fabricManifest.officialFamilyCount} official architecture families verified `
     + `(${fabricManifest.paletteIconCount} palette icons including local capacity)`,
+  );
+
+  await verifyMicrosoftProductIcons();
+}
+
+async function verifyMicrosoftProductIcons() {
+  const manifest = JSON.parse(await readFile(microsoftManifestPath, 'utf8'));
+  if (!Array.isArray(manifest.files) || manifest.files.length !== manifest.iconCount) {
+    throw new Error('Microsoft product icon manifest count does not match its file inventory');
+  }
+
+  const catalogText = await readFile(microsoftCatalogPath, 'utf8');
+  const catalogVersion =
+    /MICROSOFT_PRODUCT_ICON_PACKAGE_VERSION\s*=\s*'([^']+)'/.exec(catalogText)?.[1];
+  if (catalogVersion !== manifest.packageVersion) {
+    throw new Error('Microsoft product catalog and manifest package versions do not match');
+  }
+
+  const catalogEntries = [];
+  const catalogPattern =
+    /defineMicrosoftProductIcon\(\s*'([^']+)'\s*,\s*'([^']+)'\s*,\s*'([^']+)'\s*,\s*'([^']+\.svg)'\s*,\s*'([^']+)'\s*,/g;
+  let catalogMatch;
+  while ((catalogMatch = catalogPattern.exec(catalogText)) !== null) {
+    catalogEntries.push({
+      serviceName: catalogMatch[1],
+      displayName: catalogMatch[2],
+      fileName: catalogMatch[3],
+      sourceAsset: catalogMatch[4],
+      family: catalogMatch[5],
+    });
+  }
+  if (catalogEntries.length !== manifest.iconCount) {
+    throw new Error('Microsoft product catalog count does not match the manifest');
+  }
+
+  const catalogByPath = new Map();
+  const serviceNames = new Set();
+  for (const entry of catalogEntries) {
+    if (entry.family !== 'power-platform' && entry.family !== 'dynamics-365') {
+      throw new Error(`Microsoft product catalog has an unknown family: ${entry.family}`);
+    }
+    const normalizedServiceName = entry.serviceName.toLocaleLowerCase();
+    if (serviceNames.has(normalizedServiceName)) {
+      throw new Error(`Microsoft product catalog has a duplicate service: ${entry.serviceName}`);
+    }
+    serviceNames.add(normalizedServiceName);
+
+    const category = entry.family === 'power-platform' ? 'power platform' : 'dynamics 365';
+    const path = `${category}/${entry.fileName}.svg`;
+    if (catalogByPath.has(path)) {
+      throw new Error(`Microsoft product catalog has a duplicate icon path: ${path}`);
+    }
+    catalogByPath.set(path, entry);
+  }
+
+  const missing = [];
+  const changed = [];
+  const seenPaths = new Set();
+  for (const entry of manifest.files) {
+    if (seenPaths.has(entry.path)) {
+      throw new Error(`Microsoft product manifest has a duplicate path: ${entry.path}`);
+    }
+    seenPaths.add(entry.path);
+
+    const catalogEntry = catalogByPath.get(entry.path);
+    if (!catalogEntry) {
+      throw new Error(`Microsoft product manifest path is not in the catalog: ${entry.path}`);
+    }
+    if (
+      catalogEntry.serviceName !== entry.serviceName
+      || catalogEntry.sourceAsset !== entry.sourceAsset
+      || catalogEntry.family !== entry.family
+    ) {
+      throw new Error(`Microsoft product manifest mapping is invalid: ${entry.path}`);
+    }
+    if (!/^[a-f0-9]{64}$/i.test(entry.sha256)) {
+      throw new Error(`Microsoft product manifest has an invalid SHA-256: ${entry.path}`);
+    }
+
+    const path = resolveManifestIconPath(entry.path);
+    try {
+      const content = await readFile(path);
+      if (sha256NormalizedSvg(content) !== entry.sha256) changed.push(entry.path);
+    } catch {
+      missing.push(entry.path);
+    }
+  }
+
+  if (seenPaths.size !== catalogByPath.size) {
+    throw new Error('Microsoft product catalog has entries that the manifest does not cover');
+  }
+  if (missing.length > 0 || changed.length > 0) {
+    const details = [
+      missing.length > 0 ? `missing: ${missing.join(', ')}` : '',
+      changed.length > 0 ? `changed: ${changed.join(', ')}` : '',
+    ].filter(Boolean).join('\n');
+    throw new Error(`Microsoft product icon library is incomplete or modified\n${details}`);
+  }
+
+  const counts = manifest.categories ?? {};
+  console.log(
+    `[test:icons] Microsoft product icons ${manifest.packageVersion}: all ${manifest.iconCount} `
+    + `verified (${counts['power platform'] ?? 0} Power Platform, `
+    + `${counts['dynamics 365'] ?? 0} Dynamics 365)`,
   );
 }
 

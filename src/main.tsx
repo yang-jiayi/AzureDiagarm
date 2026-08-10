@@ -11,6 +11,7 @@ import './index.css'
 import './styles/control-primitives.css'
 import './styles/modal-primitives.css'
 import './styles/high-contrast.css'
+import './styles/a11y.css'
 
 // Initialize Application Insights telemetry (no-ops if not configured)
 initTelemetry()
