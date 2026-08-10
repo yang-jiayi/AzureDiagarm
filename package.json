@@ -31,7 +31,8 @@
     "mcp:build": "cd mcp-server && npm run build",
     "mcp:start": "node mcp-server/dist/index.js",
     "icons:sync:microsoft": "node scripts/sync-microsoft-icons.mjs",
-    "icons:check:microsoft": "node scripts/sync-microsoft-icons.mjs --check"
+    "icons:check:microsoft": "node scripts/sync-microsoft-icons.mjs --check",
+    "docker:context": "node scripts/emulate-docker-context.mjs"
   },
   "dependencies": {
     "@azure/msal-browser": "^5.17.0",

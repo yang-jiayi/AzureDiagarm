@@ -2132,6 +2132,10 @@ test('recent work restores an interrupted local diagram after reload', async ({ 
 });
 
 test('version history compares and selectively restores diagram elements', async ({ page }) => {
+  // Adds two services through the command palette, snapshots, diffs, and then
+  // selectively restores — enough steps to exceed the default budget on a cold
+  // CI runner.
+  test.slow();
   await initializePage(page);
   await page.route('**/api/**', async (route) => {
     const request = route.request();
