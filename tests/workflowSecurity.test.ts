@@ -175,10 +175,14 @@ test('root scripts imported by the MCP build are re-included in the Docker conte
   }
 
   assert.ok(imported.size > 0, 'expected at least one cross-package build import');
+  // Compare against exact allowlist lines rather than building a RegExp from a
+  // path, which would need every metacharacter escaped to stay correct.
+  const allowlist = new Set(
+    dockerignore.split('\n').map((line) => line.trim()).filter(Boolean),
+  );
   for (const path of imported) {
-    assert.match(
-      dockerignore,
-      new RegExp(`^!${path.replace(/[.]/g, '\\.')}$`, 'm'),
+    assert.ok(
+      allowlist.has(`!${path}`),
       `${path} is imported by an mcp-server build script but excluded from the Docker context`,
     );
   }
