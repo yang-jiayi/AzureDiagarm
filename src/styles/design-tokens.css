@@ -12,6 +12,9 @@
   --azd-color-brand-border: #bfdbfe;
   --azd-color-action: #0f6cbd;
   --azd-color-action-hover: #005a9e;
+  /* Foreground-only brand tone. Unlike --azd-color-brand-strong (which is also used
+     as a fill) this flips light in dark mode so brand-coloured text stays legible. */
+  --azd-color-brand-text: #075a9c;
   --azd-color-on-brand: #ffffff;
   --azd-color-accent-ai: #7c3aed;
   --azd-color-accent-ai-strong: #5b21b6;
@@ -25,10 +28,10 @@
   --azd-color-category-compute: #0078d4;
   --azd-color-category-data: #047857;
   --azd-color-category-ai: #d97706;
-  --azd-color-category-iot: #ea580c;
+  --azd-color-category-iot: #c2410c;
   --azd-color-category-security: #dc2626;
   --azd-color-category-operations: #7c3aed;
-  --azd-color-category-networking: #0891b2;
+  --azd-color-category-networking: #0e7490;
   --azd-color-badge-success: #047857;
   --azd-color-badge-info: #1d4ed8;
   --azd-color-badge-warning: #b45309;
@@ -50,24 +53,26 @@
   --azd-color-text: #1f2937;
   --azd-color-text-secondary: #334155;
   --azd-color-text-muted: #52677b;
-  --azd-color-text-subtle: #64748b;
+  --azd-color-text-subtle: #5c6b7f;
   --azd-color-text-disabled: #64748b;
   --azd-color-text-inverse: #f8fafc;
   --azd-color-text-inverse-muted: #cbd5e1;
   --azd-color-border-subtle: #e2e8f0;
   --azd-color-border: #d7e0ea;
-  --azd-color-border-strong: #94a3b8;
+  --azd-color-border-strong: #7a8698;
   --azd-color-control-background: #ffffff;
   --azd-color-control-background-hover: #f8fafc;
   --azd-color-control-background-active: #eff6ff;
-  --azd-color-control-border: #cbd5e1;
+  --azd-color-control-border: #848fa1;
   --azd-color-control-border-hover: #0f6cbd;
   --azd-color-focus: #0f6cbd;
   --azd-color-focus-soft: rgba(15, 108, 189, 0.3);
   --azd-color-success: #047857;
+  --azd-color-success-button: #047857;
+  --azd-color-on-success: #ffffff;
   --azd-color-success-emphasis: #10b981;
   --azd-color-success-soft: #ecfdf5;
-  --azd-color-warning: #d97706;
+  --azd-color-warning: #a15c07;
   --azd-color-warning-emphasis: #eab308;
   --azd-color-warning-soft: #fef9c3;
   --azd-color-danger: #dc2626;
@@ -141,6 +146,7 @@ body.dark-mode {
   --azd-color-accent-ai-border: #8b7cf6;
   --azd-color-action: #7dd3fc;
   --azd-color-action-hover: #7dd3fc;
+  --azd-color-brand-text: #8cc9fb;
   --azd-color-text-strong: #f8fafc;
   --azd-color-text: #e5edf7;
   --azd-color-text-secondary: #cbd5e1;
@@ -154,11 +160,13 @@ body.dark-mode {
   --azd-color-control-background: #1b2738;
   --azd-color-control-background-hover: #233c58;
   --azd-color-control-background-active: #20384b;
-  --azd-color-control-border: #43536a;
+  --azd-color-control-border: #6f7d94;
   --azd-color-control-border-hover: #7dd3fc;
   --azd-color-focus: #7dd3fc;
   --azd-color-focus-soft: rgba(125, 211, 252, 0.24);
   --azd-color-success: #a7f3d0;
+  --azd-color-success-button: #34d399;
+  --azd-color-on-success: #062a1e;
   --azd-color-success-emphasis: #34d399;
   --azd-color-success-soft: #064e3b;
   --azd-color-warning: #fbbf24;

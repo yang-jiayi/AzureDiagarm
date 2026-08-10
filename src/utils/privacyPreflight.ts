@@ -89,8 +89,10 @@ function scanValue(
   if (depth > 10 || findings.length >= 100) return;
   if (typeof value === 'string') {
     for (const rule of RULES) {
-      const pattern = new RegExp(rule.pattern.source, rule.pattern.flags);
-      for (const match of value.matchAll(pattern)) {
+      // RULES patterns are module-scoped and global. matchAll() operates on an
+      // internal clone, so the shared regex's lastIndex is never mutated and it
+      // is safe to reuse directly instead of compiling a fresh RegExp per call.
+      for (const match of value.matchAll(rule.pattern)) {
         findings.push({
           id: `${rule.kind}:${path}:${match.index ?? findings.length}`,
           kind: rule.kind,
@@ -120,9 +122,16 @@ export function detectSensitiveDataInValue(
 ): SensitiveFinding[] {
   const findings: SensitiveFinding[] = [];
   scanValue(value, root, findings);
-  return findings.filter((finding, index, all) => (
-    all.findIndex(candidate => candidate.id === finding.id) === index
-  ));
+  // Deduplicate by id in a single pass (Set), keeping the first occurrence and
+  // preserving order — equivalent to the previous O(n^2) findIndex filter.
+  const seen = new Set<string>();
+  const deduped: SensitiveFinding[] = [];
+  for (const finding of findings) {
+    if (seen.has(finding.id)) continue;
+    seen.add(finding.id);
+    deduped.push(finding);
+  }
+  return deduped;
 }
 
 export function detectSensitiveData(payload: CloudDiagramPayload): SensitiveFinding[] {
@@ -132,15 +141,16 @@ export function detectSensitiveData(payload: CloudDiagramPayload): SensitiveFind
 export function anonymizeSensitiveText(value: string): string {
   let next = value;
   for (const rule of RULES) {
-    const pattern = new RegExp(rule.pattern.source, rule.pattern.flags);
+    // Reusing the module-scoped global regex is safe: String.replace resets a
+    // global pattern's lastIndex to 0 before scanning.
     if (typeof rule.replacement === 'string') {
-      next = next.replace(pattern, rule.replacement);
+      next = next.replace(rule.pattern, rule.replacement);
       continue;
     }
 
     let replacementIndex = 0;
     const replaceMatch = rule.replacement;
-    next = next.replace(pattern, match => replaceMatch(match, replacementIndex++));
+    next = next.replace(rule.pattern, match => replaceMatch(match, replacementIndex++));
   }
   return next;
 }

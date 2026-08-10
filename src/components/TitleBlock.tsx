@@ -19,10 +19,11 @@ const TitleBlock: React.FC<TitleBlockProps> = ({
   architectureName = 'Untitled Architecture',
   author = 'Unknown',
   version = '1.0',
-  date = new Date().toLocaleDateString(),
+  date,
   onUpdate,
 }) => {
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
+  const resolvedDate = date ?? new Date().toLocaleDateString(language === 'ja' ? 'ja-JP' : 'en-US');
   const [isEditing, setIsEditing] = useState(false);
   const [isCollapsed, setIsCollapsed] = useState(
     () => typeof window !== 'undefined' && window.matchMedia(MEDIA_QUERIES.narrow).matches,
@@ -212,7 +213,7 @@ const TitleBlock: React.FC<TitleBlockProps> = ({
             </div>
             <div className="title-block-row">
               <span className="title-block-field">{t("Date:")}</span>
-              <span className="title-block-value">{date}</span>
+              <span className="title-block-value">{resolvedDate}</span>
             </div>
             <div className="title-block-row">
               <span className="title-block-field">{t("Version:")}</span>

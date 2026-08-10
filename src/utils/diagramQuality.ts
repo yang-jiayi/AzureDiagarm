@@ -4,6 +4,7 @@
 import type { Edge, Node } from 'reactflow';
 import { fitGroupToContent } from './groupUtils';
 import { buildAbsolutePositionMap } from './preserveManualLayout';
+import { resolveServiceIconLoose } from './serviceIconFuzzy';
 
 export type DiagramQualityCategory =
   | 'crossing'
@@ -12,7 +13,15 @@ export type DiagramQualityCategory =
   | 'label'
   | 'density'
   | 'group-padding'
-  | 'contrast';
+  | 'contrast'
+  | 'unrecognized-service'
+  | 'generic-edge'
+  | 'dangling-edge'
+  | 'self-loop'
+  | 'duplicate-edge'
+  | 'under-specified'
+  | 'over-crowded'
+  | 'empty-group';
 
 export type DiagramQualitySeverity = 'high' | 'medium' | 'low';
 export type DiagramQualityFixKind =
@@ -92,6 +101,56 @@ function nodeLabel(node: Node): string {
   const data = isRecord(node.data) ? node.data : {};
   const label = data.label ?? data.serviceName;
   return typeof label === 'string' && label.trim() ? label.trim() : node.id;
+}
+
+/** Service identity used for icon resolution: prefers serviceName, then label. */
+function serviceIdentityName(node: Node): string {
+  const data = isRecord(node.data) ? node.data : {};
+  const identity = data.serviceName ?? data.label;
+  return typeof identity === 'string' ? identity.trim() : '';
+}
+
+function iconPathValue(node: Node): string {
+  const data = isRecord(node.data) ? node.data : {};
+  return typeof data.iconPath === 'string' ? data.iconPath.trim() : '';
+}
+
+/** Resolve an edge's label from either `edge.label` or `edge.data.label`. */
+function edgeLabelText(edge: Edge): string {
+  if (typeof edge.label === 'string' && edge.label.trim()) return edge.label.trim();
+  const data = isRecord(edge.data) ? edge.data : {};
+  return typeof data.label === 'string' ? data.label.trim() : '';
+}
+
+// Labels that are technically present but carry no real meaning — every
+// generator prompt demands a specific payload/protocol label instead.
+const GENERIC_EDGE_LABELS = new Set([
+  '',
+  'connects to',
+  'connect',
+  'data',
+  'request',
+  'response',
+  'uses',
+  'link',
+  'flow',
+  'api',
+]);
+
+/** True when `ancestorId` is a (transitive) parent of `node`. */
+function isAncestorGroup(
+  ancestorId: string,
+  node: Node,
+  nodesById: ReadonlyMap<string, Node>,
+): boolean {
+  const seen = new Set<string>();
+  let current: Node | undefined = node;
+  while (current?.parentNode && !seen.has(current.id)) {
+    if (current.parentNode === ancestorId) return true;
+    seen.add(current.id);
+    current = nodesById.get(current.parentNode);
+  }
+  return false;
 }
 
 function rectForNode(node: Node, absolutePositions: ReadonlyMap<string, Point>): Rect {
@@ -184,6 +243,7 @@ function pushFinding(
 export function analyzeDiagramQuality(nodes: Node[], edges: Edge[]): DiagramQualityReport {
   const findings: DiagramQualityFinding[] = [];
   const absolutePositions = buildAbsolutePositionMap(nodes);
+  const nodesById = new Map(nodes.map(node => [node.id, node]));
   const rectangles = new Map(nodes.map(node => [
     node.id,
     rectForNode(node, absolutePositions),
@@ -312,7 +372,18 @@ export function analyzeDiagramQuality(nodes: Node[], edges: Edge[]): DiagramQual
   for (const group of nodes.filter(node => node.type === 'groupNode')) {
     const groupSize = dimensions(group);
     const children = nodes.filter(node => node.parentNode === group.id);
-    if (children.length === 0) continue;
+    if (children.length === 0) {
+      pushFinding(findings, {
+        id: `empty-group:${group.id}`,
+        category: 'empty-group',
+        severity: 'low',
+        title: 'Empty group',
+        detail: `${nodeLabel(group)} contains no services and renders as an empty labelled box.`,
+        nodeIds: [group.id],
+        edgeIds: [],
+      });
+      continue;
+    }
     const crowded = children.some((child) => {
       const childSize = dimensions(child);
       return (
@@ -367,6 +438,159 @@ export function analyzeDiagramQuality(nodes: Node[], edges: Edge[]): DiagramQual
       nodeIds: [],
       edgeIds: [edge.id],
       fixKind: 'reset-contrast',
+    });
+  }
+
+  // --- Unrecognized service icons (issue 6). The most visible AI defect:
+  // a node whose name cannot be resolved to an Azure icon renders icon-less.
+  for (const node of serviceNodes) {
+    const identity = serviceIdentityName(node);
+    const resolved = identity ? resolveServiceIconLoose(identity) : null;
+    if (resolved && iconPathValue(node)) continue;
+    const shownName = identity || nodeLabel(node);
+    pushFinding(findings, {
+      id: `unrecognized-service:${node.id}`,
+      category: 'unrecognized-service',
+      severity: 'high',
+      title: 'Unrecognized service',
+      detail: `"${shownName}" does not resolve to an Azure icon — rename it to a known service so it renders correctly.`,
+      nodeIds: [node.id],
+      edgeIds: [],
+    });
+  }
+
+  // --- Generic / missing edge labels (issue 7). Every prompt demands a
+  // specific payload or protocol label on each connection.
+  for (const edge of edges) {
+    if (!GENERIC_EDGE_LABELS.has(edgeLabelText(edge).toLowerCase())) continue;
+    pushFinding(findings, {
+      id: `generic-edge:${edge.id}`,
+      category: 'generic-edge',
+      severity: 'medium',
+      title: 'Generic connection label',
+      detail: 'A connection has an empty or generic label; name the payload or protocol it carries.',
+      nodeIds: [],
+      edgeIds: [edge.id],
+    });
+  }
+
+  // --- Extended overlap (issue 10). The same-parent overlap loop above misses
+  // (a) a service overlapping a group it does not belong to and (b) two group
+  // rectangles that do not share a parent. Distinct id namespaces avoid clashes.
+  const groupNodes = nodes.filter(node => node.type === 'groupNode');
+  for (const service of serviceNodes) {
+    const serviceRect = rectangles.get(service.id);
+    if (!serviceRect) continue;
+    for (const group of groupNodes) {
+      if ((service.parentNode || '') === (group.parentNode || '')) continue;
+      if (isAncestorGroup(group.id, service, nodesById)) continue;
+      const groupRect = rectangles.get(group.id);
+      if (!groupRect) continue;
+      if (intersectionArea(serviceRect, groupRect) <= 400) continue;
+      pushFinding(findings, {
+        id: `overlap:node-group:${service.id}:${group.id}`,
+        category: 'overlap',
+        severity: 'medium',
+        title: 'Service overlaps unrelated group',
+        detail: `${nodeLabel(service)} overlaps ${nodeLabel(group)}, a group it does not belong to.`,
+        nodeIds: [service.id, group.id],
+        edgeIds: [],
+        fixKind: 'layout',
+      });
+    }
+  }
+  for (let leftIndex = 0; leftIndex < groupNodes.length; leftIndex += 1) {
+    const leftGroup = groupNodes[leftIndex];
+    const leftRect = rectangles.get(leftGroup.id);
+    if (!leftRect) continue;
+    for (let rightIndex = leftIndex + 1; rightIndex < groupNodes.length; rightIndex += 1) {
+      const rightGroup = groupNodes[rightIndex];
+      if ((leftGroup.parentNode || '') === (rightGroup.parentNode || '')) continue;
+      if (
+        isAncestorGroup(leftGroup.id, rightGroup, nodesById)
+        || isAncestorGroup(rightGroup.id, leftGroup, nodesById)
+      ) continue;
+      const rightRect = rectangles.get(rightGroup.id);
+      if (!rightRect) continue;
+      if (intersectionArea(leftRect, rightRect) <= 400) continue;
+      pushFinding(findings, {
+        id: `overlap:groups:${leftGroup.id}:${rightGroup.id}`,
+        category: 'overlap',
+        severity: 'medium',
+        title: 'Overlapping groups',
+        detail: `${nodeLabel(leftGroup)} overlaps ${nodeLabel(rightGroup)}.`,
+        nodeIds: [leftGroup.id, rightGroup.id],
+        edgeIds: [],
+        fixKind: 'layout',
+      });
+    }
+  }
+
+  // --- Edge integrity (issue 11): dangling endpoints, self-loops, duplicates.
+  const seenEdgePairs = new Set<string>();
+  for (const edge of edges) {
+    const sourceMissing = !nodesById.has(edge.source);
+    const targetMissing = !nodesById.has(edge.target);
+    if (sourceMissing || targetMissing) {
+      pushFinding(findings, {
+        id: `dangling-edge:${edge.id}`,
+        category: 'dangling-edge',
+        severity: 'high',
+        title: 'Dangling connection',
+        detail: `A connection references a missing ${sourceMissing ? 'source' : 'target'} node and cannot render.`,
+        nodeIds: [],
+        edgeIds: [edge.id],
+      });
+    }
+    if (edge.source === edge.target) {
+      const loopNode = nodesById.get(edge.source);
+      pushFinding(findings, {
+        id: `self-loop:${edge.id}`,
+        category: 'self-loop',
+        severity: 'medium',
+        title: 'Self-referencing connection',
+        detail: `${loopNode ? nodeLabel(loopNode) : edge.source} connects to itself.`,
+        nodeIds: loopNode ? [edge.source] : [],
+        edgeIds: [edge.id],
+      });
+    }
+    const pairKey = `${edge.source}->${edge.target}`;
+    if (seenEdgePairs.has(pairKey)) {
+      pushFinding(findings, {
+        id: `duplicate-edge:${edge.id}`,
+        category: 'duplicate-edge',
+        severity: 'low',
+        title: 'Duplicate connection',
+        detail: 'The same source-to-target connection is drawn more than once.',
+        nodeIds: [],
+        edgeIds: [edge.id],
+      });
+    } else {
+      seenEdgePairs.add(pairKey);
+    }
+  }
+
+  // --- Diagram scale (issue 13), independent of the density heuristic above.
+  if (serviceNodes.length > 0 && serviceNodes.length < 3) {
+    pushFinding(findings, {
+      id: 'under-specified',
+      category: 'under-specified',
+      severity: 'low',
+      title: 'Under-specified architecture',
+      detail: `Only ${serviceNodes.length} service${serviceNodes.length === 1 ? '' : 's'} — a production architecture usually needs more detail.`,
+      nodeIds: serviceNodes.map(node => node.id),
+      edgeIds: [],
+    });
+  }
+  if (serviceNodes.length > 25) {
+    pushFinding(findings, {
+      id: 'over-crowded',
+      category: 'over-crowded',
+      severity: 'medium',
+      title: 'Over-crowded diagram',
+      detail: `${serviceNodes.length} services make the diagram hard to read — split it into focused views.`,
+      nodeIds: [],
+      edgeIds: [],
     });
   }
 

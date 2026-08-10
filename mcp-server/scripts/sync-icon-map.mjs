@@ -17,6 +17,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..', '..');
 const sourcePath = resolve(repoRoot, 'src', 'data', 'serviceIconMapping.ts');
 const fabricCatalogPath = resolve(repoRoot, 'src', 'data', 'fabricIconCatalog.ts');
+const microsoftCatalogPath = resolve(repoRoot, 'src', 'data', 'microsoftProductIconCatalog.ts');
 const outPath = resolve(here, '..', 'src', 'iconMap.generated.json');
 
 const text = readFileSync(sourcePath, 'utf8');
@@ -69,6 +70,7 @@ while ((match = entryRe.exec(text)) !== null) {
 // mapping, so merge those entries explicitly for the standalone MCP renderer.
 const fabricText = readFileSync(fabricCatalogPath, 'utf8');
 const fabricEntryRe = /^\s*defineFabricIcon\('([^']+)',\s*'([^']+)',\s*'([^']+)',\s*(?:null|'[^']+'),\s*'[^']+',\s*'([^']+)',\s*\[([^\]]*)\]\s*(?:,\s*\{([^}]*)\})?\s*\)/gm;
+let fabricCount = 0;
 while ((match = fabricEntryRe.exec(fabricText)) !== null) {
   const [, key, displayName, iconFile, kind, aliasSource, optionsSource = ''] = match;
   const aliases = [...aliasSource.matchAll(/'([^']+)'/g)].map(alias => alias[1]);
@@ -80,6 +82,7 @@ while ((match = fabricEntryRe.exec(fabricText)) !== null) {
   if (includeInServiceMapMatch?.[1] === 'false') continue;
   const consumesCapacity = kind === 'workload' || kind === 'item' || kind === 'state';
   if (displayName !== key && !aliases.includes(displayName)) aliases.unshift(displayName);
+  fabricCount++;
   map[key] = {
     displayName,
     iconFile,
@@ -94,6 +97,59 @@ while ((match = fabricEntryRe.exec(fabricText)) !== null) {
         ? { costRange: '$0 (consumes Fabric capacity)' }
         : {}),
   };
+}
+if (fabricCount === 0) {
+  console.error(`[sync-icon-map] no entries extracted from ${fabricCatalogPath}`);
+  process.exit(1);
+}
+
+// Power Platform / Dynamics 365 icons follow the same catalog-and-spread shape
+// as Fabric, so they need their own parse pass or the MCP server silently ships
+// a catalog that is 24 services behind the web app.
+const microsoftText = readFileSync(microsoftCatalogPath, 'utf8');
+
+/** Parse a `const NAME: Record<...> = { 'key': 'value', ... };` literal. */
+function parseFamilyRecord(source, name) {
+  const block = source.match(new RegExp(`const ${name}:[^=]*=\\s*\\{([\\s\\S]*?)\\n\\};`));
+  if (!block) {
+    console.error(`[sync-icon-map] could not parse ${name} from ${microsoftCatalogPath}`);
+    process.exit(1);
+  }
+  return Object.fromEntries(
+    [...block[1].matchAll(/'([^']+)'\s*:\s*'([^']+)'/g)].map(entry => [entry[1], entry[2]]),
+  );
+}
+
+const microsoftFamilyCategory = parseFamilyRecord(microsoftText, 'FAMILY_CATEGORY');
+const microsoftFamilyCostRange = parseFamilyRecord(microsoftText, 'FAMILY_COST_RANGE');
+
+const microsoftEntryRe = /^\s*defineMicrosoftProductIcon\('([^']+)',\s*'([^']+)',\s*'([^']+)',\s*'[^']+',\s*'([^']+)',\s*'[^']+',\s*'[^']+',\s*\[([^\]]*)\]\s*\)/gm;
+let microsoftCount = 0;
+while ((match = microsoftEntryRe.exec(microsoftText)) !== null) {
+  const [, key, displayName, iconFile, family, aliasSource] = match;
+  const category = microsoftFamilyCategory[family];
+  if (!category) {
+    console.error(`[sync-icon-map] unknown Microsoft product icon family: ${family}`);
+    process.exit(1);
+  }
+  const aliases = [...aliasSource.matchAll(/'([^']+)'/g)].map(alias => alias[1]);
+  if (displayName !== key && !aliases.includes(displayName)) aliases.unshift(displayName);
+  // These products are licensed per user or per app, never through an Azure
+  // meter, so they always report as having no Azure pricing data.
+  map[key] = {
+    displayName,
+    iconFile,
+    category,
+    aliases,
+    hasPricingData: false,
+    isUsageBased: false,
+    ...(microsoftFamilyCostRange[family] ? { costRange: microsoftFamilyCostRange[family] } : {}),
+  };
+  microsoftCount++;
+}
+if (microsoftCount === 0) {
+  console.error(`[sync-icon-map] no entries extracted from ${microsoftCatalogPath}`);
+  process.exit(1);
 }
 
 const count = Object.keys(map).length;

@@ -32,6 +32,7 @@ import type {
   RefService,
 } from '../services/referenceArchitectureAI';
 import { getServiceIconMapping } from '../data/serviceIconMapping';
+import { resolveServiceIconLoose } from '../utils/serviceIconFuzzy';
 import { loadIcon } from '../utils/iconLoader';
 import { calculateReferenceCanvasWidth } from '../utils/publicationLayout';
 import './ReferenceArchitectureCanvas.css';
@@ -256,7 +257,7 @@ const ServiceTile: React.FC<{
       setIconUrl(preloadedIconUrl);
       return;
     }
-    const mapping = getServiceIconMapping(service.name);
+    const mapping = resolveServiceIconLoose(service.name) || getServiceIconMapping(service.name);
     if (!mapping) return;
     const path = `/Azure_Public_Service_Icons/Icons/${mapping.category}/${mapping.iconFile}.svg`;
     loadIcon(path).then((url) => {
@@ -274,7 +275,7 @@ const ServiceTile: React.FC<{
       data-band={band || undefined}
     >
       {steps && steps.length > 0 && (
-        <div className="ref-arch-tile-steps" aria-label={`Workflow steps ${steps.join(', ')}`}>
+        <div className="ref-arch-tile-steps" role="group" aria-label={`Workflow steps ${steps.join(', ')}`}>
           {steps.map((n) => (
             <span key={n} className="ref-arch-tile-step">{n}</span>
           ))}

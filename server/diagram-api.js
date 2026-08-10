@@ -40,6 +40,11 @@ const MAX_EDGES = 40_000;
 const SHARE_TOKEN_BYTES = 32; // 256-bit
 // crypto.randomBytes(32).toString('base64url') is always 43 base64url chars.
 const SHARE_TOKEN_RE = /^[A-Za-z0-9_-]{43}$/;
+// Document, version, comment and share ids are all crypto.randomUUID() values. They are
+// interpolated into blob names, so they are constrained to a traversal-free charset. Express
+// decodes %2F into route params, and the Azure SDK collapses ".." through the URL parser, so
+// without this an id like "../../shares/abc" would resolve outside owners/<ownerKey>/.
+const RESOURCE_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 const IDEMPOTENCY_KEY_RE = /^[A-Za-z0-9._~-]{16,128}$/;
 const VALID_ROLES = new Set(['viewer', 'editor']);
 const VALID_COMMENT_ANCHOR_TYPES = new Set(['canvas', 'node', 'edge']);
@@ -77,7 +82,18 @@ function documentIdForIdempotencyKey(key) {
 
 // ── Blob path helpers ──────────────────────────────────────────────────────
 
+// Last line of defence: every segment interpolated into a blob name must be traversal-free.
+// The route-level `router.param` validators reject bad input first; this throws if any future
+// caller composes a path from an unvalidated source.
+function assertPathSegment(value, label) {
+  if (typeof value !== 'string' || !RESOURCE_ID_RE.test(value)) {
+    throw new Error(`Invalid ${label} for blob path composition`);
+  }
+}
+
 function documentPrefix(ownerKey, documentId) {
+  assertPathSegment(ownerKey, 'ownerKey');
+  assertPathSegment(documentId, 'documentId');
   return `owners/${ownerKey}/documents/${documentId}/`;
 }
 
@@ -90,6 +106,7 @@ function versionsPrefix(ownerKey, documentId) {
 }
 
 function versionPath(ownerKey, documentId, versionId) {
+  assertPathSegment(versionId, 'versionId');
   return `${versionsPrefix(ownerKey, documentId)}${versionId}.json`;
 }
 
@@ -325,6 +342,17 @@ function createDiagramsRouter(options = {}) {
     req.diagramOwnerKey = deriveOwnerKey(principal.id);
     next();
   });
+
+  // Reject traversal / oversized ids before any blob path is composed from them.
+  // Responds 404 (not 400) so an attacker cannot distinguish "malformed" from "not yours".
+  for (const name of ['id', 'versionId', 'commentId', 'shareId']) {
+    router.param(name, (req, res, next, value) => {
+      if (!RESOURCE_ID_RE.test(String(value ?? ''))) {
+        return res.status(404).json({ error: 'Not found' });
+      }
+      return next();
+    });
+  }
 
   // ── Internal store operations (all owner-scoped) ─────────────────────────
 

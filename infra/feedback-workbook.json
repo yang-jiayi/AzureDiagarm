@@ -2,7 +2,7 @@
   "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
   "contentVersion": "1.0.0.0",
   "metadata": {
-    "description": "Azure Architecture Diagram Builder — User Feedback Trends workbook. Visualizes the App Insights custom event 'User_Feedback' (rating, category, hasComment, commentLength). Verbatim comment text is NOT in App Insights — it is stored durably in Cosmos DB (feedback container)."
+    "description": "Microsoft Product Architecture Diagram Builder — User Feedback Trends workbook. Visualizes the App Insights custom event 'User_Feedback' (rating, category, hasComment, commentLength). Verbatim comment text is NOT in App Insights — it is stored durably in Cosmos DB (feedback container)."
   },
   "parameters": {
     "appInsightsResourceId": {

@@ -29,12 +29,20 @@ interface DiagramQualityDialogProps {
 
 const categoryLabels: Record<DiagramQualityCategory, { en: string; ja: string }> = {
   crossing: { en: 'Crossed connections', ja: '接続線の交差' },
-  overlap: { en: 'Overlapping items', ja: '要素の重なり' },
+  overlap: { en: 'Overlapping items', ja: 'ノードの重なり' },
   orphan: { en: 'Disconnected services', ja: '未接続のサービス' },
   label: { en: 'Crowded labels', ja: '読みにくいラベル' },
   density: { en: 'Dense layout', ja: '過密なレイアウト' },
   'group-padding': { en: 'Group spacing', ja: 'グループの余白' },
   contrast: { en: 'Low contrast', ja: '低いコントラスト' },
+  'unrecognized-service': { en: 'Unrecognized service', ja: '未認識のサービス' },
+  'generic-edge': { en: 'Generic connection', ja: '汎用的な接続ラベル' },
+  'dangling-edge': { en: 'Dangling connection', ja: '接続先の欠落' },
+  'self-loop': { en: 'Self-referencing connection', ja: '自己参照の接続' },
+  'duplicate-edge': { en: 'Duplicate connection', ja: '重複した接続' },
+  'under-specified': { en: 'Under-specified architecture', ja: '詳細度の不足' },
+  'over-crowded': { en: 'Over-crowded diagram', ja: '過密な図' },
+  'empty-group': { en: 'Empty group', ja: '空のグループ' },
 };
 
 const findingMessages: Record<DiagramQualityCategory, { title: string; detail: string }> = {
@@ -43,7 +51,7 @@ const findingMessages: Record<DiagramQualityCategory, { title: string; detail: s
     detail: '接続関係を追いやすくするため、レイアウトの整理を推奨します。',
   },
   overlap: {
-    title: '要素が重なっています',
+    title: 'ノードが重なっています',
     detail: 'サービス同士の視認性を高めるため、間隔を確保してください。',
   },
   orphan: {
@@ -60,11 +68,43 @@ const findingMessages: Record<DiagramQualityCategory, { title: string; detail: s
   },
   'group-padding': {
     title: 'グループ内の余白が不足しています',
-    detail: '子要素が境界に近すぎるため、グループの範囲を調整できます。',
+    detail: '子ノードが境界に近すぎるため、グループの範囲を調整できます。',
   },
   contrast: {
     title: 'コントラストが不足しています',
     detail: '文字や境界線を読みやすくするため、安全な既定色に戻せます。',
+  },
+  'unrecognized-service': {
+    title: 'サービスを認識できません',
+    detail: '名称が Azure アイコンに一致しません。正しく表示されるよう、既知のサービス名に変更してください。',
+  },
+  'generic-edge': {
+    title: '接続ラベルが汎用的です',
+    detail: '接続のラベルが空または汎用的です。運ぶデータやプロトコルを明記してください。',
+  },
+  'dangling-edge': {
+    title: '接続先が見つかりません',
+    detail: '接続が存在しないノードを参照しているため、描画できません。',
+  },
+  'self-loop': {
+    title: '自己参照の接続があります',
+    detail: 'ノードが自分自身に接続しています。意図した接続かどうかを確認してください。',
+  },
+  'duplicate-edge': {
+    title: '接続が重複しています',
+    detail: '同じノード間の接続が複数回描かれています。重複を整理してください。',
+  },
+  'under-specified': {
+    title: 'アーキテクチャの詳細が不足しています',
+    detail: 'サービス数が少なめです。本番向けの構成では、通常さらに詳細が必要です。',
+  },
+  'over-crowded': {
+    title: '図が過密です',
+    detail: 'サービスが多く、図が読み取りにくくなっています。目的別のビューに分割することを検討してください。',
+  },
+  'empty-group': {
+    title: 'グループが空です',
+    detail: 'サービスを含まないグループがあり、空のラベル付きボックスとして表示されます。',
   },
 };
 
@@ -175,6 +215,7 @@ export default function DiagramQualityDialog({
           <section className="quality-doctor-score" aria-label={language === 'ja' ? '診断スコア' : 'Quality score'}>
             <div
               className={`quality-score-ring quality-score-${grade.toLowerCase()}`}
+              role="img"
               aria-label={`${report.score} / 100`}
             >
               <strong>{report.score}</strong>
@@ -207,7 +248,7 @@ export default function DiagramQualityDialog({
               <strong>{language === 'ja' ? '改善が必要な項目はありません' : 'No improvements needed'}</strong>
               <p>
                 {language === 'ja'
-                  ? '現在のダイアグラムには、検出可能な品質上の問題はありません。'
+                  ? '現在の図には、検出可能な品質上の問題はありません。'
                   : 'No detectable quality issues were found in the current diagram.'}
               </p>
             </div>

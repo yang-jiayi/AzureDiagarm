@@ -490,6 +490,52 @@ if (!RESOURCE_ID) {
   console.warn('[speech-token] AZURE_SPEECH_RESOURCE_ID is not set. Requests will fail.');
 }
 
+// SECURITY: the browser must NEVER receive the container's managed-identity token.
+// That token is issued for https://cognitiveservices.azure.com/.default, i.e. the whole
+// Cognitive Services data plane, and is therefore interchangeable with the credential the
+// Azure OpenAI proxy uses — replaying it would bypass the deployment allowlist, output-token
+// clamping, `store: false` and rate limiting that the proxy exists to enforce.
+// Instead we exchange it server-side for a Speech-only STS token (~10 min lifetime) via the
+// resource's custom domain, and hand the client only that.
+const SPEECH_STS_ENDPOINT = (() => {
+  const explicit = process.env.AZURE_SPEECH_STS_ENDPOINT;
+  if (explicit) return explicit.replace(/\/+$/, '');
+  const account = typeof RESOURCE_ID === 'string' ? RESOURCE_ID.split('/').pop() : '';
+  if (!account || !/^[A-Za-z0-9][A-Za-z0-9-]{1,62}$/.test(account)) return '';
+  return `https://${account}.cognitiveservices.azure.com`;
+})();
+
+// STS tokens are valid for 10 minutes; refresh a minute early and share across callers.
+const SPEECH_STS_TTL_MS = 9 * 60 * 1000;
+let speechStsCache = null;
+let speechStsInflight = null;
+
+async function issueSpeechStsToken() {
+  if (speechStsCache && speechStsCache.expiresAt > Date.now()) return speechStsCache.token;
+  if (speechStsInflight) return speechStsInflight;
+
+  speechStsInflight = (async () => {
+    const { token: aadToken } = await credential.getToken('https://cognitiveservices.azure.com/.default');
+    const response = await fetch(`${SPEECH_STS_ENDPOINT}/sts/v1.0/issueToken`, {
+      method: 'POST',
+      signal: AbortSignal.timeout(15_000),
+      headers: { Authorization: `Bearer ${aadToken}`, 'Content-Length': '0' },
+    });
+    if (!response.ok) {
+      const detail = await response.text().catch(() => '');
+      throw new Error(`Speech STS exchange returned ${response.status}: ${detail.slice(0, 200)}`);
+    }
+    const token = (await response.text()).trim();
+    if (!token) throw new Error('Speech STS exchange returned an empty token');
+    speechStsCache = { token, expiresAt: Date.now() + SPEECH_STS_TTL_MS };
+    return token;
+  })().finally(() => {
+    speechStsInflight = null;
+  });
+
+  return speechStsInflight;
+}
+
 app.get('/api/speech-token', asyncHandler(async (req, res) => {
   const retryAfter = consumeUtilityApiRateLimit(req);
   if (retryAfter > 0) {
@@ -499,15 +545,17 @@ app.get('/api/speech-token', asyncHandler(async (req, res) => {
   if (!REGION || !RESOURCE_ID) {
     return res.status(503).json({ error: 'AZURE_SPEECH_REGION and AZURE_SPEECH_RESOURCE_ID must be configured' });
   }
+  if (!SPEECH_STS_ENDPOINT) {
+    console.error('[speech-token] cannot derive the Speech STS endpoint from AZURE_SPEECH_RESOURCE_ID');
+    return res.status(503).json({ error: 'Speech token exchange is not configured' });
+  }
   try {
-    const { token: aadToken } = await credential.getToken(
-      'https://cognitiveservices.azure.com/.default',
-    );
-    // JS Speech SDK requires the aad#{resourceId}#{aadToken} format for Entra ID auth
-    res.json({ token: `aad#${RESOURCE_ID}#${aadToken}`, region: REGION });
+    // Never fall back to returning the managed-identity token: failing closed is required.
+    const token = await issueSpeechStsToken();
+    res.json({ token, region: REGION });
   } catch (err) {
     console.error('[speech-token] error:', err.message);
-    res.status(500).json({ error: 'Failed to acquire speech token' });
+    res.status(502).json({ error: 'Failed to acquire speech token' });
   }
 }));
 

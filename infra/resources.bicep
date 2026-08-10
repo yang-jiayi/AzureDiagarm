@@ -474,7 +474,7 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
 }
 
 // ── MCP Container App (decoupled, own FQDN) ──────────────────────────────────
-// The Azure Architecture Diagram Builder MCP server as its own Container App,
+// The Microsoft Product Architecture Diagram Builder MCP server as its own Container App,
 // so agent traffic scales, releases, and fails independently of the web UI.
 // azd locates it by the 'azd-service-name: mcp' tag (matches azure.yaml).
 var mcpExternalEnabled = !empty(mcpAuthToken)

@@ -4,6 +4,7 @@
 import { Frame, Hand, Maximize2, X, ZoomIn } from 'lucide-react';
 import { MiniMap } from 'reactflow';
 import { useLanguage } from '../i18n/LanguageContext';
+import { localize } from '../i18n/localization';
 import FeedbackFab from './FeedbackFab';
 import { StartChooser } from './GuidedJourney';
 import Legend from './Legend';
@@ -63,7 +64,7 @@ export default function CanvasChrome({
   onFeedback,
   onExitFocus,
 }: CanvasChromeProps) {
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
 
   return (
     <>
@@ -127,7 +128,7 @@ export default function CanvasChrome({
             type="button"
             className="canvas-nav-hint-close"
             onClick={onDismissNavigationHint}
-            title={t("Dismiss (won't show again)")}
+            title={localize(language, { en: "Dismiss (won't show again)", ja: '閉じる（今後表示しない）' })}
             aria-label={t('Dismiss navigation tips')}
           >
             <X size={14} />

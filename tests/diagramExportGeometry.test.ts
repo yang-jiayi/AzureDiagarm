@@ -131,12 +131,17 @@ test('routes carry labels and dash state, and skip dangling edges', () => {
   ] as unknown as Edge[];
 
   const routes = buildExportRoutes(edges, boxes);
-  assert.deepEqual(routes.map((route) => route.id), ['labelled', 'fallback', 'dashed', 'styled']);
+  // Dangling edges are dropped; self-loops are now kept as a visible stub.
+  assert.deepEqual(routes.map((route) => route.id), ['labelled', 'fallback', 'dashed', 'styled', 'self']);
   assert.equal(routes[0].label, 'HTTPS 443', 'data.label wins over the React Flow label');
   assert.equal(routes[1].label, 'legacy label');
   assert.equal(routes[0].dashed, false);
   assert.equal(routes[2].dashed, true, 'animated edges export dashed');
   assert.equal(routes[3].dashed, true, 'strokeDasharray exports dashed');
+
+  const self = routes.find((route) => route.id === 'self')!;
+  assert.equal(self.isSelfLoop, true, 'a self-referencing edge is a self-loop');
+  assert.ok(self.points.length >= 3, 'the self-loop is a visible stub, not a zero-length line');
 });
 
 test('the node category drives export colours, with the icon folder as fallback', () => {

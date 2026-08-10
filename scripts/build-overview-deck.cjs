@@ -1,5 +1,5 @@
 /**
- * Builds a polished overview slide deck for the Azure Architecture Diagram Builder.
+ * Builds a polished overview slide deck for the Microsoft Product Architecture Diagram Builder.
  *
  * Source data: DOCS/USAGE-AND-IMPACT-ONE-PAGER.md (real Application Insights +
  * Azure Cost Management telemetry, ~85-day window ending 2026-06-05) and README.md.
@@ -35,8 +35,8 @@ const H = 7.5;
 const pres = new pptxgen();
 pres.defineLayout({ name: 'WIDE', width: W, height: H });
 pres.layout = 'WIDE';
-pres.author = 'Azure Architecture Diagram Builder';
-pres.title = 'Azure Architecture Diagram Builder — Overview';
+pres.author = 'Microsoft Product Architecture Diagram Builder';
+pres.title = 'Microsoft Product Architecture Diagram Builder — Overview';
 
 // Fresh shadow factories (PptxGenJS mutates option objects in place).
 const softShadow = () => ({ type: 'outer', color: '0A1422', blur: 9, offset: 3, angle: 90, opacity: 0.18 });
@@ -45,7 +45,7 @@ const cardShadow = () => ({ type: 'outer', color: '233247', blur: 7, offset: 2, 
 // ── Reusable helpers ─────────────────────────────────────────────────────────
 function footer(slide, idx, dark) {
   const col = dark ? '5E7799' : C.slate;
-  slide.addText('Azure Architecture Diagram Builder', {
+  slide.addText('Microsoft Product Architecture Diagram Builder', {
     x: 0.5, y: H - 0.42, w: 7, h: 0.3, fontFace: FONT, fontSize: 9, color: col, align: 'left',
   });
   slide.addText(`${idx}`, {

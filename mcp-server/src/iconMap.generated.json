@@ -2078,5 +2078,344 @@
     ],
     "hasPricingData": false,
     "costRange": "$0 (consumes Fabric capacity)"
+  },
+  "Microsoft Power Platform": {
+    "displayName": "Microsoft Power Platform",
+    "iconFile": "power-platform",
+    "category": "power platform",
+    "aliases": [
+      "Power Platform",
+      "MS Power Platform",
+      "Microsoft Power Platform (Suite)",
+      "パワープラットフォーム"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Per-user or per-app subscription (not in Azure pricing)"
+  },
+  "Microsoft Power Apps": {
+    "displayName": "Power Apps",
+    "iconFile": "power-apps",
+    "category": "power platform",
+    "aliases": [
+      "Power Apps",
+      "PowerApps",
+      "Power App",
+      "Canvas App",
+      "Canvas Apps",
+      "Model-driven App",
+      "Model-driven Apps",
+      "パワーアップス"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Per-user or per-app subscription (not in Azure pricing)"
+  },
+  "Microsoft Power Automate": {
+    "displayName": "Power Automate",
+    "iconFile": "power-automate",
+    "category": "power platform",
+    "aliases": [
+      "Power Automate",
+      "PowerAutomate",
+      "Microsoft Flow",
+      "Power Automate Cloud Flow",
+      "Power Automate Desktop",
+      "Power Automate for desktop",
+      "パワーオートメイト"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Per-user or per-app subscription (not in Azure pricing)"
+  },
+  "Microsoft Power Pages": {
+    "displayName": "Power Pages",
+    "iconFile": "power-pages",
+    "category": "power platform",
+    "aliases": [
+      "Power Pages",
+      "PowerPages",
+      "Power Apps Portals",
+      "Power Apps Portal",
+      "パワーページズ"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Per-user or per-app subscription (not in Azure pricing)"
+  },
+  "Microsoft Dataverse": {
+    "displayName": "Dataverse",
+    "iconFile": "dataverse",
+    "category": "power platform",
+    "aliases": [
+      "Dataverse",
+      "Microsoft Dataverse for Teams",
+      "Common Data Service",
+      "Dataverse Table",
+      "データバース"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Per-user or per-app subscription (not in Azure pricing)"
+  },
+  "AI Builder": {
+    "displayName": "AI Builder",
+    "iconFile": "ai-builder",
+    "category": "power platform",
+    "aliases": [
+      "AI Builder",
+      "AIBuilder",
+      "Power Platform AI Builder",
+      "AI ビルダー"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Per-user or per-app subscription (not in Azure pricing)"
+  },
+  "Microsoft Copilot Studio": {
+    "displayName": "Copilot Studio",
+    "iconFile": "copilot-studio",
+    "category": "power platform",
+    "aliases": [
+      "Copilot Studio",
+      "CopilotStudio",
+      "Power Virtual Agents",
+      "Power Virtual Agent",
+      "Copilot Studio Agent",
+      "Declarative Agent",
+      "コパイロットスタジオ"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Per-user or per-app subscription (not in Azure pricing)"
+  },
+  "Microsoft Agent 365": {
+    "displayName": "Agent 365",
+    "iconFile": "agent-365",
+    "category": "power platform",
+    "aliases": [
+      "Agent 365",
+      "Agent365",
+      "Microsoft Agent365",
+      "エージェント365"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Per-user or per-app subscription (not in Azure pricing)"
+  },
+  "Dynamics 365": {
+    "displayName": "Dynamics 365",
+    "iconFile": "dynamics-365",
+    "category": "dynamics 365",
+    "aliases": [
+      "Microsoft Dynamics 365",
+      "D365",
+      "Dynamics",
+      "ダイナミクス365"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Per-user subscription (not in Azure pricing)"
+  },
+  "Dynamics 365 Sales": {
+    "displayName": "Dynamics 365 Sales",
+    "iconFile": "dynamics-365-sales",
+    "category": "dynamics 365",
+    "aliases": [
+      "D365 Sales",
+      "Dynamics Sales",
+      "Sales (Dynamics 365)",
+      "Dynamics CRM Sales"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Per-user subscription (not in Azure pricing)"
+  },
+  "Dynamics 365 Sales Insights": {
+    "displayName": "Dynamics 365 Sales Insights",
+    "iconFile": "dynamics-365-sales-insights",
+    "category": "dynamics 365",
+    "aliases": [
+      "D365 Sales Insights",
+      "Sales Insights",
+      "Sales Insights (Dynamics 365)"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Per-user subscription (not in Azure pricing)"
+  },
+  "Dynamics 365 Customer Service": {
+    "displayName": "Dynamics 365 Customer Service",
+    "iconFile": "dynamics-365-customer-service",
+    "category": "dynamics 365",
+    "aliases": [
+      "D365 Customer Service",
+      "Dynamics 365 Customer Services",
+      "Customer Service (Dynamics 365)"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Per-user subscription (not in Azure pricing)"
+  },
+  "Dynamics 365 Contact Center": {
+    "displayName": "Dynamics 365 Contact Center",
+    "iconFile": "dynamics-365-contact-center",
+    "category": "dynamics 365",
+    "aliases": [
+      "D365 Contact Center",
+      "Contact Center (Dynamics 365)",
+      "Dynamics 365 Omnichannel",
+      "Omnichannel for Customer Service"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Per-user subscription (not in Azure pricing)"
+  },
+  "Dynamics 365 Customer Insights": {
+    "displayName": "Dynamics 365 Customer Insights",
+    "iconFile": "dynamics-365-customer-insights",
+    "category": "dynamics 365",
+    "aliases": [
+      "D365 Customer Insights",
+      "Customer Insights",
+      "Customer Insights - Data",
+      "Customer Insights - Journeys",
+      "Dynamics 365 Marketing"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Per-user subscription (not in Azure pricing)"
+  },
+  "Dynamics 365 Customer Voice": {
+    "displayName": "Dynamics 365 Customer Voice",
+    "iconFile": "dynamics-365-customer-voice",
+    "category": "dynamics 365",
+    "aliases": [
+      "D365 Customer Voice",
+      "Customer Voice",
+      "Microsoft Forms Pro"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Per-user subscription (not in Azure pricing)"
+  },
+  "Dynamics 365 Field Service": {
+    "displayName": "Dynamics 365 Field Service",
+    "iconFile": "dynamics-365-field-service",
+    "category": "dynamics 365",
+    "aliases": [
+      "D365 Field Service",
+      "Field Service",
+      "Field Service (Dynamics 365)"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Per-user subscription (not in Azure pricing)"
+  },
+  "Dynamics 365 Finance": {
+    "displayName": "Dynamics 365 Finance",
+    "iconFile": "dynamics-365-finance",
+    "category": "dynamics 365",
+    "aliases": [
+      "D365 Finance",
+      "Dynamics Finance",
+      "Finance (Dynamics 365)"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Per-user subscription (not in Azure pricing)"
+  },
+  "Dynamics 365 Finance and Operations": {
+    "displayName": "Dynamics 365 Finance and Operations",
+    "iconFile": "dynamics-365-finance-operations",
+    "category": "dynamics 365",
+    "aliases": [
+      "D365 Finance and Operations",
+      "Dynamics 365 Finance & Operations",
+      "Finance and Operations",
+      "Dynamics 365 F&O",
+      "Dynamics AX"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Per-user subscription (not in Azure pricing)"
+  },
+  "Dynamics 365 Supply Chain Management": {
+    "displayName": "Dynamics 365 Supply Chain Management",
+    "iconFile": "dynamics-365-supply-chain-management",
+    "category": "dynamics 365",
+    "aliases": [
+      "D365 Supply Chain Management",
+      "Supply Chain Management",
+      "Dynamics 365 Supply Chain"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Per-user subscription (not in Azure pricing)"
+  },
+  "Dynamics 365 Commerce": {
+    "displayName": "Dynamics 365 Commerce",
+    "iconFile": "dynamics-365-commerce",
+    "category": "dynamics 365",
+    "aliases": [
+      "D365 Commerce",
+      "Dynamics 365 Retail",
+      "Commerce (Dynamics 365)"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Per-user subscription (not in Azure pricing)"
+  },
+  "Dynamics 365 Human Resources": {
+    "displayName": "Dynamics 365 Human Resources",
+    "iconFile": "dynamics-365-human-resources",
+    "category": "dynamics 365",
+    "aliases": [
+      "D365 Human Resources",
+      "Dynamics 365 HR",
+      "Human Resources (Dynamics 365)"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Per-user subscription (not in Azure pricing)"
+  },
+  "Dynamics 365 Intelligent Order Management": {
+    "displayName": "Dynamics 365 Intelligent Order Management",
+    "iconFile": "dynamics-365-intelligent-order-management",
+    "category": "dynamics 365",
+    "aliases": [
+      "D365 Intelligent Order Management",
+      "Intelligent Order Management"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Per-user subscription (not in Azure pricing)"
+  },
+  "Dynamics 365 Project Operations": {
+    "displayName": "Dynamics 365 Project Operations",
+    "iconFile": "dynamics-365-project-operations",
+    "category": "dynamics 365",
+    "aliases": [
+      "D365 Project Operations",
+      "Project Operations",
+      "Project Service Automation"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Per-user subscription (not in Azure pricing)"
+  },
+  "Dynamics 365 Business Central": {
+    "displayName": "Dynamics 365 Business Central",
+    "iconFile": "dynamics-365-business-central",
+    "category": "dynamics 365",
+    "aliases": [
+      "D365 Business Central",
+      "Business Central",
+      "Dynamics NAV",
+      "Microsoft Dynamics NAV"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Per-user subscription (not in Azure pricing)"
   }
 }

@@ -1,6 +1,6 @@
 // main.bicep — subscription-scoped entry point for azd
 // Provisions the resource group and all resources for the
-// Azure Architecture Diagram Builder.
+// Microsoft Product Architecture Diagram Builder.
 targetScope = 'subscription'
 
 // ── Environment ────────────────────────────────────────────────────────────────

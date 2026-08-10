@@ -1,6 +1,6 @@
 # Application Insights KQL Queries
 
-KQL queries for analyzing telemetry from the Azure Architecture Diagram Builder app via `aq-app-insights-001`.
+KQL queries for analyzing telemetry from the Microsoft Product Architecture Diagram Builder app via `aq-app-insights-001`.
 
 ---
 

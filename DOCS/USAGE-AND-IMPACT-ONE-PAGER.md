@@ -1,4 +1,4 @@
-# Azure Architecture Diagram Builder — Usage & Impact
+# Microsoft Product Architecture Diagram Builder — Usage & Impact
 
 _Snapshot: last ~85 days (2026-03-12 → 2026-06-05). Source: Azure Application Insights (`aq-app-insights-001`) + Azure Cost Management. All figures are real telemetry, not estimates._
 

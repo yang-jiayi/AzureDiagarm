@@ -1,6 +1,6 @@
 # WAF Scoring — FAQ for Reviewers
 
-> Short answers to the most common pushback on how the Azure Architecture Diagram Builder produces its Well-Architected Framework scores. For the full methodology, see [WAF-SCORING-METHODOLOGY.md](WAF-SCORING-METHODOLOGY.md).
+> Short answers to the most common pushback on how the Microsoft Product Architecture Diagram Builder produces its Well-Architected Framework scores. For the full methodology, see [WAF-SCORING-METHODOLOGY.md](WAF-SCORING-METHODOLOGY.md).
 
 ---
 

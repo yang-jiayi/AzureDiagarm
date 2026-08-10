@@ -9,11 +9,13 @@ import {
   type IconPaletteCategoryId,
 } from '../data/iconCatalog';
 import { getFabricIconByFileName } from '../data/fabricIconCatalog';
+import { getMicrosoftProductIconByFileName } from '../data/microsoftProductIconCatalog';
 import { SERVICE_ICON_MAP } from '../data/serviceIconMapping';
 import {
   getCurrentIconDisplayName,
   isSupersededIconFile,
 } from './iconNaming';
+import type { PaletteIconSource } from './iconDiscovery';
 
 export {
   getCurrentIconDisplayName,
@@ -32,13 +34,15 @@ export interface AzureIcon {
   paletteCategory: IconPaletteCategoryId;
   path: string;
   searchTerms: string[];
-  source: 'official-azure' | 'fabric' | 'supplemental';
+  source: PaletteIconSource;
 }
 
 export interface IconLibraryStats {
   azureVersion: string;
   officialAzureIcons: number;
   fabricIcons: number;
+  powerPlatformIcons: number;
+  dynamics365Icons: number;
   searchableIcons: number;
 }
 
@@ -207,9 +211,15 @@ function getIconMetadataCache(): IconMetadataCache {
     const fabricDefinition = sourceCategory === 'fabric'
       ? getFabricIconByFileName(fileNameWithoutExtension)
       : undefined;
+    const microsoftProductDefinition = sourceCategory === 'power platform'
+      || sourceCategory === 'dynamics 365'
+      ? getMicrosoftProductIconByFileName(fileNameWithoutExtension)
+      : undefined;
     const name = getCurrentIconDisplayName(
       fileNameWithoutExtension,
-      fabricDefinition?.displayName ?? formatIconName(fileNameWithoutExtension),
+      fabricDefinition?.displayName
+        ?? microsoftProductDefinition?.displayName
+        ?? formatIconName(fileNameWithoutExtension),
     );
     const paletteCategory = classifyIconPaletteCategory(
       sourceCategory,
@@ -235,12 +245,22 @@ function getIconMetadataCache(): IconMetadataCache {
             ...fabricDefinition.aliases,
           ]
         : []),
+      ...(microsoftProductDefinition
+        ? [
+            microsoftProductDefinition.serviceName,
+            microsoftProductDefinition.group,
+            microsoftProductDefinition.kind,
+            ...microsoftProductDefinition.aliases,
+          ]
+        : []),
     ];
 
     const icon: AzureIcon = {
       id: `${sourceCategory}/${fileNameWithoutExtension}`,
       name,
-      serviceName: fabricDefinition?.serviceName ?? name,
+      serviceName: fabricDefinition?.serviceName
+        ?? microsoftProductDefinition?.serviceName
+        ?? name,
       category: sourceCategory,
       paletteCategory,
       path,
@@ -249,7 +269,9 @@ function getIconMetadataCache(): IconMetadataCache {
         ? 'official-azure'
         : sourceCategory === 'fabric'
           ? 'fabric'
-          : 'supplemental',
+          : microsoftProductDefinition
+            ? microsoftProductDefinition.family
+            : 'supplemental',
     };
 
     all.push(icon);
@@ -296,6 +318,8 @@ export function getIconLibraryStats(): IconLibraryStats {
     azureVersion: azureIconManifest.packageVersion,
     officialAzureIcons: azureIconManifest.officialIconCount,
     fabricIcons: all.filter(icon => icon.source === 'fabric').length,
+    powerPlatformIcons: all.filter(icon => icon.source === 'power-platform').length,
+    dynamics365Icons: all.filter(icon => icon.source === 'dynamics-365').length,
     searchableIcons: all.length,
   };
 }

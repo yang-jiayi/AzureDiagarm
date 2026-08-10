@@ -13,12 +13,24 @@
  * (AZURE_IMPORT_ENABLED) for local / self-host use.
  */
 
-import {
+import type {
   PublicClientApplication,
-  InteractionRequiredAuthError,
-  type AccountInfo,
-  type Configuration,
+  AccountInfo,
+  Configuration,
 } from '@azure/msal-browser';
+
+// The MSAL SDK is ~90 kB gzip and is only needed once the user actually starts
+// a delegated "Import from Azure" sign-in. Load it lazily via dynamic import so
+// it never lands in the main bundle. The module-level config helpers below
+// (e.g. isDelegatedAuthConfigured) stay SDK-free and synchronous.
+type MsalModule = typeof import('@azure/msal-browser');
+let msalModulePromise: Promise<MsalModule> | null = null;
+function loadMsal(): Promise<MsalModule> {
+  if (!msalModulePromise) {
+    msalModulePromise = import('@azure/msal-browser');
+  }
+  return msalModulePromise;
+}
 
 const CLIENT_ID = (import.meta.env.VITE_AZURE_AD_CLIENT_ID as string | undefined) || '';
 const AUTHORITY = (import.meta.env.VITE_AZURE_AD_AUTHORITY as string | undefined)
@@ -40,13 +52,10 @@ export function isDelegatedAuthConfigured(): boolean {
 let pca: PublicClientApplication | null = null;
 let initPromise: Promise<void> | null = null;
 
-function getPca(): PublicClientApplication {
+/** Returns the initialized PublicClientApplication; call ensureInitialized first. */
+function requirePca(): PublicClientApplication {
   if (!pca) {
-    const config: Configuration = {
-      auth: { clientId: CLIENT_ID, authority: AUTHORITY, redirectUri: REDIRECT_URI },
-      cache: { cacheLocation: 'sessionStorage' },
-    };
-    pca = new PublicClientApplication(config);
+    throw new Error('MSAL is not initialized yet — call ensureInitialized() first.');
   }
   return pca;
 }
@@ -54,19 +63,25 @@ function getPca(): PublicClientApplication {
 async function ensureInitialized(): Promise<void> {
   if (!initPromise) {
     initPromise = (async () => {
-      const p = getPca();
+      const { PublicClientApplication } = await loadMsal();
+      const config: Configuration = {
+        auth: { clientId: CLIENT_ID, authority: AUTHORITY, redirectUri: REDIRECT_URI },
+        cache: { cacheLocation: 'sessionStorage' },
+      };
+      const p = new PublicClientApplication(config);
       await p.initialize();
       // Consume any pending redirect response (and clear a dangling #code= from
       // the URL) so leftover interaction state can't wedge later popup calls.
       const result = await p.handleRedirectPromise();
       if (result?.account) p.setActiveAccount(result.account);
+      pca = p;
     })();
   }
   return initPromise;
 }
 
 function activeAccount(): AccountInfo | null {
-  const p = getPca();
+  const p = requirePca();
   return p.getActiveAccount() || p.getAllAccounts()[0] || null;
 }
 
@@ -87,7 +102,7 @@ export async function signIn(): Promise<void> {
   await ensureInitialized();
   try { sessionStorage.setItem(REOPEN_KEY, '1'); } catch { /* ignore */ }
   try {
-    await getPca().loginRedirect({ scopes: [ARM_SCOPE], redirectUri: REDIRECT_URI });
+    await requirePca().loginRedirect({ scopes: [ARM_SCOPE], redirectUri: REDIRECT_URI });
   } catch (error) {
     try { sessionStorage.removeItem(REOPEN_KEY); } catch { /* ignore */ }
     throw error;
@@ -110,7 +125,7 @@ export function consumeReopenFlag(): boolean {
  */
 export async function getArmToken(): Promise<string> {
   await ensureInitialized();
-  const p = getPca();
+  const p = requirePca();
   const account = activeAccount();
   if (account) {
     try {
@@ -118,6 +133,7 @@ export async function getArmToken(): Promise<string> {
       p.setActiveAccount(res.account);
       return res.accessToken;
     } catch (err) {
+      const { InteractionRequiredAuthError } = await loadMsal();
       if (!(err instanceof InteractionRequiredAuthError)) throw err;
     }
   }
@@ -135,7 +151,7 @@ export async function getArmToken(): Promise<string> {
 /** Sign the current user out of this app's MSAL cache. */
 export async function signOut(): Promise<void> {
   await ensureInitialized();
-  const p = getPca();
+  const p = requirePca();
   const account = activeAccount();
   await p.clearCache(account ? { account } : undefined);
 }

@@ -81,7 +81,7 @@ export function renderHtml(layout: LayoutResult, title?: string, options: Render
   } else if (showCosts && rangeNodes.length > 0) {
     metaParts.push(`No fixed priced baseline. ${rangeNodes.length} usage-based or ranged items shown on nodes.`);
   } else {
-    metaParts.push('Azure Architecture Diagram Builder');
+    metaParts.push('Microsoft Product Architecture Diagram Builder');
   }
   const headerMeta = metaParts.join(' · ');
 

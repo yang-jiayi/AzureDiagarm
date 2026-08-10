@@ -35,7 +35,7 @@ const REGIONS = [
 ];
 
 const BASE_URL = 'https://prices.azure.com/api/retail/prices';
-const OUTPUT_DIR = path.join(__dirname, '../src/data/pricing/regions');
+const OUTPUT_DIR = path.join(__dirname, '../public/pricing/regions');
 
 /**
  * Make HTTPS request with promise

@@ -56,6 +56,7 @@ import WorkflowPanel from './components/WorkflowPanel';
 import RegionSelector from './components/RegionSelector';
 import ModelSettingsPopover from './components/ModelSettingsPopover';
 import { loadIconsFromCategory, type AzureIcon } from './utils/iconLoader';
+import { resolveServiceIconLoose } from './utils/serviceIconFuzzy';
 import { getServiceIconMapping, isCapacityConsumed } from './data/serviceIconMapping';
 import { initializeNodePricing, updateNodePricing, setCustomPricing, calculateCostBreakdown, exportCostBreakdownCSV, exportCostBreakdownJSON, getCostSummaryMarkdown, refreshAllNodePricing, type PricingMode } from './services/costEstimationService';
 import { prefetchCommonServices } from './services/azurePricingService';
@@ -364,6 +365,10 @@ const FOCUS_MODE_STORAGE_KEY = 'azure-diagram-builder.focusMode.v1';
 const TOOLBAR_SECTIONS_STORAGE_KEY = 'azure-diagram-builder.toolbarSections.v1';
 const RIBBON_TAB_STORAGE_KEY = 'azure-diagram-builder.ribbonTab.v1';
 const THREAT_OVERLAY_STORAGE_KEY = 'azure-diagram-builder.threatOverlay.v1';
+// Stable empty arrays so gated memos can skip work without creating a new
+// reference each render (which would defeat downstream memoization).
+const EMPTY_THREAT_MARKERS: ReturnType<typeof analyzeThreatModel> = [];
+const EMPTY_SENSITIVE_FINDINGS: SensitiveFinding[] = [];
 const DEFAULT_EDGE_COLOR = getConnectionPresentation('sync').stroke;
 const EDGE_CONTEXT_MENU_WIDTH = 220;
 const EDGE_CONTEXT_MENU_HEIGHT = 360;
@@ -972,6 +977,8 @@ function stripTransientEdgeState(edge: Edge): Edge {
 
 function App() {
   const { t, translate, language } = useLanguage();
+  // Locale tag for Date#toLocale* formatting so Japanese users get ja-JP dates.
+  const localeTag = language === 'ja' ? 'ja-JP' : 'en-US';
   const [nodes, setNodes, onNodesChangeBase] = useNodesState([]);
   const latestNodesRef = useRef<Node[]>(nodes);
   latestNodesRef.current = nodes;
@@ -1097,7 +1104,7 @@ function App() {
     architectureName: 'Untitled Architecture',
     author: 'Azure Architect',
     version: '1.0',
-    date: new Date().toLocaleDateString(),
+    date: new Date().toLocaleDateString(localeTag),
   });
   const latestTitleBlockDataRef = useRef(titleBlockData);
   latestTitleBlockDataRef.current = titleBlockData;
@@ -1720,21 +1727,85 @@ function App() {
     writeLocalStorage('darkMode', JSON.stringify(isDarkMode));
   }, [isDarkMode]);
 
-  // Preload pricing data on mount
+  // Preload pricing data once the browser is idle so it never competes with
+  // first paint. Falls back to a short timeout where requestIdleCallback is
+  // unavailable.
   useEffect(() => {
-    preloadCommonServices().catch(err => 
-      console.warn('Failed to preload regional pricing:', err)
-    );
-    prefetchCommonServices(getActiveRegion()).catch(err =>
-      console.warn('Failed to prefetch API pricing:', err)
-    );
+    let idleHandle: number | undefined;
+    let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+    const run = () => {
+      preloadCommonServices().catch(err =>
+        console.warn('Failed to preload regional pricing:', err)
+      );
+      prefetchCommonServices(getActiveRegion()).catch(err =>
+        console.warn('Failed to prefetch API pricing:', err)
+      );
+    };
+    if (typeof requestIdleCallback === 'function') {
+      idleHandle = requestIdleCallback(run, { timeout: 4000 });
+    } else {
+      timeoutHandle = setTimeout(run, 2000);
+    }
+    return () => {
+      if (idleHandle !== undefined && typeof cancelIdleCallback === 'function') {
+        cancelIdleCallback(idleHandle);
+      }
+      if (timeoutHandle !== undefined) {
+        clearTimeout(timeoutHandle);
+      }
+    };
   }, []);
 
-  // Recalculate total cost whenever nodes change
+  // A structural signature of every node's pricing-relevant fields (ids +
+  // pricing config), deliberately excluding positions so drag frames do not
+  // change it and therefore skip the cost recompute below.
+  const costSignature = useMemo(
+    () => nodes.map(node => `${node.id}:${nodePricingFingerprint(node)}`).join('|'),
+    [nodes],
+  );
+
+  // Recalculate total cost when the pricing signature changes. Debounced so a
+  // burst of edits collapses into a single recompute + render pass, and reads
+  // the freshest nodes from the ref when it fires.
   useEffect(() => {
-    const breakdown = calculateCostBreakdown(nodes, undefined, pricingMode);
-    setTotalMonthlyCost(breakdown.totalMonthlyCost);
-  }, [nodes, pricingMode]);
+    const handle = setTimeout(() => {
+      const breakdown = calculateCostBreakdown(latestNodesRef.current, undefined, pricingMode);
+      setTotalMonthlyCost(breakdown.totalMonthlyCost);
+    }, 150);
+    return () => clearTimeout(handle);
+    // costSignature intentionally keys this effect so position-only node
+    // changes are skipped; nodes are read fresh from the ref in the timer.
+  }, [costSignature, pricingMode]);
+
+  // AlignmentToolbar only reads the selection's ids/types and each group's
+  // id/label, never positions. Key both memos on a position-free signature so
+  // drag frames reuse the same array references instead of reallocating (which
+  // would defeat the toolbar's memoization).
+  const alignmentSelectionSignature = useMemo(
+    () => nodes.filter(node => node.selected).map(node => `${node.id}:${node.type ?? ''}`).join('|'),
+    [nodes],
+  );
+  const alignmentSelectedNodes = useMemo(
+    () => nodes.filter(node => node.selected),
+    // Keyed on the selection signature so drag frames keep the same reference.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [alignmentSelectionSignature],
+  );
+  const alignmentGroupSignature = useMemo(
+    () => nodes
+      .filter(node => node.type === 'groupNode')
+      .map(node => `${node.id}:${String(node.data?.label || 'Group')}`)
+      .join('|'),
+    [nodes],
+  );
+  const alignmentGroups = useMemo(
+    () => nodes
+      .filter(node => node.type === 'groupNode')
+      .map(node => ({ id: node.id, label: String(node.data?.label || 'Group') })),
+    // Keyed on the group signature so drag frames keep the same reference.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [alignmentGroupSignature],
+  );
 
   // Handle region change
   //
@@ -3251,7 +3322,7 @@ function App() {
     try {
       const { exportDiagramAsHtml } = await import('./services/htmlDiagramExporter');
       const diagramName = titleBlockData.architectureName || 'Azure Architecture';
-      exportDiagramAsHtml(nodes, edges, diagramName);
+      await exportDiagramAsHtml(nodes, edges, diagramName);
       const fileName = `${diagramName.replace(/[^a-zA-Z0-9-_ ]/g, '').replace(/\s+/g, '-').toLowerCase()}.html`;
       recordExport('html', fileName);
       trackExport('html', nodes.filter(n => n.type === 'azureNode').length);
@@ -3273,7 +3344,7 @@ function App() {
       const fileName = await exportDiagramAsPptx(imageDataUrl, {
         diagramName: titleBlockData.architectureName || 'Azure Architecture',
         author: titleBlockData.author || 'Azure Architect',
-        date: titleBlockData.date || new Date().toLocaleDateString(),
+        date: titleBlockData.date || new Date().toLocaleDateString(localeTag),
         isDarkMode,
         // Supplying the canvas turns the slide into native, editable shapes
         // instead of a flat screenshot.
@@ -3290,6 +3361,7 @@ function App() {
     edges,
     exportBackground,
     isDarkMode,
+    localeTag,
     nodes,
     reactFlowInstance,
     recordExport,
@@ -3424,7 +3496,7 @@ function App() {
         const fileName = await exportArchitectureDeck(imageDataUrl, {
           diagramName: titleBlockData.architectureName || 'Azure Architecture',
           author: titleBlockData.author || 'Azure Architect',
-          date: titleBlockData.date || new Date().toLocaleDateString(),
+          date: titleBlockData.date || new Date().toLocaleDateString(localeTag),
           isDarkMode,
           prompt: (originalPrompt || architecturePrompt) || undefined,
           model: generatedWithModel?.name,
@@ -3448,6 +3520,7 @@ function App() {
     exportBackground,
     generatedWithModel,
     isDarkMode,
+    localeTag,
     nodes,
     originalPrompt,
     pricingMode,
@@ -3562,7 +3635,7 @@ function App() {
     const analysisLines: string[] = [
       '# Azure Architecture — Cost Intelligence Report',
       '',
-      `_Generated ${new Date().toLocaleString()} · Region: \`${reportRegionLabel}\` · ${azureServiceNodes.length} service(s) on diagram_`,
+      `_Generated ${new Date().toLocaleString(localeTag)} · Region: \`${reportRegionLabel}\` · ${azureServiceNodes.length} service(s) on diagram_`,
       '',
     ];
 
@@ -3760,7 +3833,7 @@ function App() {
     analysisLines.push('');
     analysisLines.push('---');
     analysisLines.push('');
-    analysisLines.push('_Generated by Azure Architecture Diagram Builder. Estimates are indicative and exclude taxes, bandwidth egress, and support plans unless modeled explicitly._');
+    analysisLines.push('_Generated by Microsoft Product Architecture Diagram Builder. Estimates are indicative and exclude taxes, bandwidth egress, and support plans unless modeled explicitly._');
 
 
     // Build ZIP
@@ -3791,7 +3864,7 @@ function App() {
     zip.file('README.md', [
       '# Azure Architecture Cost Export',
       '',
-      `Generated ${new Date().toLocaleString()} for region \`${reportRegionLabel}\` by Azure Architecture Diagram Builder.`,
+      `Generated ${new Date().toLocaleString(localeTag)} for region \`${reportRegionLabel}\` by Microsoft Product Architecture Diagram Builder.`,
       '',
       ...(regionFailures.length > 0
         ? [`> Regional comparison is partial: ${regionResults.length} of ${AVAILABLE_REGIONS.length} regions preserve every selected SKU. Unavailable regions are listed in the analysis and comparison CSV.`, '']
@@ -3856,7 +3929,7 @@ function App() {
     URL.revokeObjectURL(url);
     recordExport('costs', `${fileBase}-all-formats.zip`);
     trackExport('csv', azureServiceNodes.length);
-  }, [nodes, recordExport, pricingMode, t]);
+  }, [localeTag, nodes, recordExport, pricingMode, t]);
 
   const prepareFlowObject = useCallback(
     (flow: unknown) => {
@@ -3917,13 +3990,13 @@ function App() {
           version: typeof restoredTitle.version === 'string' ? restoredTitle.version : '1.0',
           date: typeof restoredTitle.date === 'string'
             ? restoredTitle.date
-            : new Date().toLocaleDateString(),
+            : new Date().toLocaleDateString(localeTag),
         }
         : {
           architectureName: 'Untitled Architecture',
           author: 'Azure Architect',
           version: '1.0',
-          date: new Date().toLocaleDateString(),
+          date: new Date().toLocaleDateString(localeTag),
         };
       const pricing = normalizePricingScenarios(flow.pricingScenarios);
       const restoredIaCBaseline = restoreIaCBaseline(flow.iacBaseline);
@@ -3950,7 +4023,7 @@ function App() {
         originalPrompt: restoredOriginalPrompt,
       };
     },
-    [normalizeRestoredEdges],
+    [localeTag, normalizeRestoredEdges],
   );
 
   const applyPreparedFlowObject = useCallback(
@@ -4020,13 +4093,19 @@ function App() {
     pricingScenarios,
     iacBaseline,
   ]);
+  const cloudDiagramPayloadRef = useRef(cloudDiagramPayload);
+  cloudDiagramPayloadRef.current = cloudDiagramPayload;
+  // Only scan for sensitive data while a privacy or cloud dialog is open. The
+  // scan walks the whole payload, so keeping it out of the hot path avoids
+  // recomputing on every drag frame when nothing is looking at the result.
+  const privacyScanActive = privacyRequest !== null || isCloudWorkspaceOpen;
   const privacyFindings = useMemo(
-    () => detectSensitiveData(cloudDiagramPayload),
-    [cloudDiagramPayload],
+    () => (privacyScanActive ? detectSensitiveData(cloudDiagramPayload) : EMPTY_SENSITIVE_FINDINGS),
+    [privacyScanActive, cloudDiagramPayload],
   );
   const threatMarkers = useMemo(
-    () => analyzeThreatModel(nodes, edges),
-    [edges, nodes],
+    () => (threatOverlayEnabled ? analyzeThreatModel(nodes, edges) : EMPTY_THREAT_MARKERS),
+    [threatOverlayEnabled, edges, nodes],
   );
   const updateThreatOverlay = useCallback((enabled: boolean) => {
     setThreatOverlayEnabled(enabled);
@@ -4039,7 +4118,7 @@ function App() {
     const version = titleBlockData.version.trim();
     const date = titleBlockData.date.trim();
     const defaultDates = new Set([
-      new Date().toLocaleDateString(),
+      new Date().toLocaleDateString(localeTag),
       new Date().toISOString().split('T')[0],
     ]);
     const hasCustomizedTitle = (
@@ -4067,6 +4146,7 @@ function App() {
     architecturePrompt,
     edges.length,
     iacBaseline,
+    localeTag,
     nodes.length,
     originalPrompt,
     titleBlockData,
@@ -4188,7 +4268,7 @@ function App() {
       canAnonymize?: boolean;
     },
   ) => {
-    const findings = options?.findings ?? privacyFindings;
+    const findings = options?.findings ?? detectSensitiveData(cloudDiagramPayloadRef.current);
     if (purpose !== 'review' && findings.length === 0) {
       onProceed();
       return;
@@ -4200,7 +4280,7 @@ function App() {
       onProceed,
       onCancel,
     });
-  }, [privacyFindings]);
+  }, []);
 
   const guardSensitiveExport = useCallback((action: () => void | Promise<void>) => {
     requestPrivacyAction('export', () => {
@@ -5095,6 +5175,9 @@ function App() {
         // across Azure and Microsoft Fabric.
         let mapping = getServiceIconMapping(service.type);
         if (!mapping) mapping = getServiceIconMapping(service.name);
+        // Last-resort fuzzy match so AI-invented or misspelled names still
+        // resolve to a real icon instead of an endless placeholder spinner.
+        if (!mapping) mapping = resolveServiceIconLoose(service.type) || resolveServiceIconLoose(service.name);
         if (mapping) {
           console.log(`  🎯 Found mapping for "${service.name}" (type: ${service.type}): ${mapping.iconFile}`);
           const iconPath = `/Azure_Public_Service_Icons/Icons/${mapping.category}/${mapping.iconFile}.svg`;
@@ -6582,6 +6665,9 @@ function App() {
 
   return (
     <div className={`app${isChatOpen ? ' chat-open' : ''}${focusMode ? ' focus-mode' : ''}${mobileCanvasFirstActive ? ' mobile-canvas-first' : ''}`}>
+      <a className="skip-link" href="#main-canvas">
+        {localize(language, { en: 'Skip to canvas', ja: 'キャンバスへスキップ' })}
+      </a>
       <header className={`app-header${isHeaderCollapsed ? ' header-collapsed' : ''}${isMobileRibbonOpen ? ' mobile-ribbon-open' : ''}`}>
         <div className="header-content">
           <div className="header-brand">
@@ -6600,7 +6686,7 @@ function App() {
                 {localize(language, { en: 'Community project', ja: 'コミュニティ版' })}
               </span>
             </div>
-            <h1>{t("Azure Architecture Diagram Builder")}</h1>
+            <h1>{t("Microsoft Product Architecture Diagram Builder")}</h1>
           </div>
           <ResponsiveRibbonSurface
             isOpen={isMobileRibbonOpen}
@@ -6646,6 +6732,7 @@ function App() {
                 hidden={activeRibbonTab !== 'home'}
                 className={`toolbar-group toolbar-group--labeled${collapsedToolbarSections.has('context') ? ' toolbar-group-collapsed' : ''}`}
                 data-label={localize(language, { en: 'Pricing estimate region', ja: '料金見積リージョン' })}
+                role="group"
                 aria-label={localize(language, { en: 'Pricing estimate settings', ja: '料金見積の設定' })}
               >
                 {toolbarSectionHeading('context', t('pricing.regionLabel'))}
@@ -6742,6 +6829,7 @@ function App() {
                 hidden={activeRibbonTab !== 'create'}
                 className={`toolbar-group toolbar-group--labeled${collapsedToolbarSections.has('create') ? ' toolbar-group-collapsed' : ''}`}
                 data-label={localize(language, { en: 'Create & AI', ja: '作成・AI' })}
+                role="group"
                 aria-label={localize(language, { en: 'Create and AI tools', ja: '作成とAIツール' })}
               >
                 {toolbarSectionHeading('create', localize(language, { en: 'Create & AI', ja: '作成・AI' }))}
@@ -6814,6 +6902,7 @@ function App() {
                 hidden={activeRibbonTab !== 'create'}
                 className={`toolbar-group toolbar-group--labeled${collapsedToolbarSections.has('import') ? ' toolbar-group-collapsed' : ''}`}
                 data-label={localize(language, { en: 'Import', ja: 'インポート' })}
+                role="group"
                 aria-label={localize(language, { en: 'Import architecture', ja: 'アーキテクチャのインポート' })}
               >
                 {toolbarSectionHeading('import', localize(language, { en: 'Import', ja: 'インポート' }))}
@@ -6850,6 +6939,7 @@ function App() {
                 hidden={activeRibbonTab !== 'home'}
                 className={`toolbar-group toolbar-group--labeled${collapsedToolbarSections.has('file') ? ' toolbar-group-collapsed' : ''}`}
                 data-label={localize(language, { en: 'File & export', ja: 'ファイル・出力' })}
+                role="group"
                 aria-label={localize(language, { en: 'File and export actions', ja: 'ファイルと出力操作' })}
               >
                 {toolbarSectionHeading('file', localize(language, { en: 'File & export', ja: 'ファイル・出力' }))}
@@ -7141,6 +7231,7 @@ function App() {
                 hidden={activeRibbonTab !== 'home'}
                 className={`toolbar-group toolbar-group--labeled${collapsedToolbarSections.has('workspace') ? ' toolbar-group-collapsed' : ''}`}
                 data-label={localize(language, { en: 'Workspace', ja: '表示・操作' })}
+                role="group"
                 aria-label={localize(language, { en: 'Workspace and help actions', ja: '表示・操作とヘルプ' })}
               >
                 {toolbarSectionHeading('workspace', localize(language, { en: 'Workspace', ja: '表示・操作' }))}
@@ -7186,6 +7277,7 @@ function App() {
                 hidden={activeRibbonTab !== 'review'}
                 className={`toolbar-group toolbar-group--labeled${collapsedToolbarSections.has('history') ? ' toolbar-group-collapsed' : ''}`}
                 data-label={localize(language, { en: 'History', ja: '履歴' })}
+                role="group"
                 aria-label={localize(language, { en: 'History and snapshots', ja: '履歴とスナップショット' })}
               >
                 {toolbarSectionHeading('history', localize(language, { en: 'History', ja: '履歴' }))}
@@ -7227,6 +7319,7 @@ function App() {
                 hidden={activeRibbonTab !== 'design'}
                 className={`toolbar-group toolbar-group--labeled${collapsedToolbarSections.has('arrange') ? ' toolbar-group-collapsed' : ''}`}
                 data-label={localize(language, { en: 'Arrange', ja: '配置・選択' })}
+                role="group"
                 aria-label={localize(language, { en: 'Arrange, select, and style', ja: '配置、選択、スタイル' })}
               >
                 {toolbarSectionHeading('arrange', localize(language, { en: 'Arrange', ja: '配置・選択' }))}
@@ -7241,6 +7334,7 @@ function App() {
                     onClick={undoDiagram}
                     disabled={!canUndoDiagram}
                     title={localize(language, { en: 'Undo (Ctrl+Z)', ja: '元に戻す (Ctrl+Z)' })}
+                    aria-label={localize(language, { en: 'Undo (Ctrl+Z)', ja: '元に戻す (Ctrl+Z)' })}
                   >
                     <Undo2 size={18} />
                     {localize(language, { en: 'Undo', ja: '元に戻す' })}
@@ -7251,6 +7345,7 @@ function App() {
                     onClick={redoDiagram}
                     disabled={!canRedoDiagram}
                     title={localize(language, { en: 'Redo (Ctrl+Y)', ja: 'やり直す (Ctrl+Y)' })}
+                    aria-label={localize(language, { en: 'Redo (Ctrl+Y)', ja: 'やり直す (Ctrl+Y)' })}
                   >
                     <Redo2 size={18} />
                     {localize(language, { en: 'Redo', ja: 'やり直す' })}
@@ -7521,6 +7616,7 @@ function App() {
                 hidden={activeRibbonTab !== 'review'}
                 className={`toolbar-group toolbar-group--labeled${collapsedToolbarSections.has('review') ? ' toolbar-group-collapsed' : ''}`}
                 data-label={localize(language, { en: 'Review', ja: 'レビュー・ガイド' })}
+                role="group"
                 aria-label={localize(language, { en: 'Architecture review and guides', ja: 'アーキテクチャのレビューとガイド' })}
               >
                 {toolbarSectionHeading('review', localize(language, { en: 'Review', ja: 'レビュー・ガイド' }))}
@@ -7706,7 +7802,7 @@ function App() {
         />
       )}
       
-      <div className="workspace">
+      <main id="main-canvas" className="workspace" tabIndex={-1}>
         <IconPalette
           forceCollapsed={panelsCollapsedSignal > 0 ? panelsCollapsedSignal : undefined}
           openSignal={paletteOpenSignal > 0 ? paletteOpenSignal : undefined}
@@ -7843,13 +7939,8 @@ function App() {
             onClose={() => updateThreatOverlay(false)}
           />
           <AlignmentToolbar 
-            selectedNodes={nodes.filter(n => n.selected)}
-            groups={nodes
-              .filter(node => node.type === 'groupNode')
-              .map(node => ({
-                id: node.id,
-                label: String(node.data?.label || 'Group'),
-              }))}
+            selectedNodes={alignmentSelectedNodes}
+            groups={alignmentGroups}
             onAlign={handleAlign}
             onApplyBulkEdit={handleBulkEdit}
           />
@@ -8169,7 +8260,7 @@ function App() {
             </div>
           </>
         )}
-      </div>
+      </main>
 
       <MobileNodeInspector
         node={nodes.find(node => node.selected) ?? null}

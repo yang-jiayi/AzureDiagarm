@@ -4,7 +4,7 @@
 import React, { memo, useEffect, useRef, useState } from 'react';
 import { Handle, Position, NodeProps, useReactFlow } from 'reactflow';
 import { Zap, Unlink, Layers } from 'lucide-react';
-import { loadIcon } from '../utils/iconLoader';
+import { loadIcon, loadIconsFromCategory } from '../utils/iconLoader';
 import { NodePricingConfig } from '../types/pricing';
 import { formatMonthlyCost, getCostColor } from '../utils/pricingHelpers';
 import { isCapacityConsumed } from '../data/serviceIconMapping';
@@ -44,6 +44,10 @@ const getCategoryColor = (category: string): string => {
 const AzureNode: React.FC<NodeProps> = memo(({ data, selected, id }) => {
   const { t, language } = useLanguage();
   const [iconUrl, setIconUrl] = useState<string>('');
+  // When no icon can be resolved at all (neither the node's own iconPath nor a
+  // generic icon for its category), we render a static initial glyph instead of
+  // an endless loading spinner.
+  const [iconFallbackFailed, setIconFallbackFailed] = useState(false);
   const [isEditingLabel, setIsEditingLabel] = useState(false);
   const [label, setLabel] = useState(data.label || 'Azure Service');
   const cancelLabelEditRef = useRef(false);
@@ -84,12 +88,54 @@ const AzureNode: React.FC<NodeProps> = memo(({ data, selected, id }) => {
   const showPricing = stylePreset === 'detailed' && pricingPrefs.showCostBadges;
 
   useEffect(() => {
-    if (data.iconPath) {
-      loadIcon(data.iconPath).then(url => {
-        setIconUrl(url);
-      });
-    }
-  }, [data.iconPath]);
+    let cancelled = false;
+    const category = typeof data.category === 'string' ? data.category.trim() : '';
+
+    const resolve = async () => {
+      // 1. Preferred: the icon the node was generated/mapped with.
+      if (data.iconPath) {
+        const url = await loadIcon(data.iconPath as string);
+        if (cancelled) return;
+        if (url) {
+          setIconUrl(url);
+          setIconFallbackFailed(false);
+          return;
+        }
+      }
+
+      // 2. Last resort: any generic icon from the node's category folder so an
+      //    unresolved/misspelled service name still shows a meaningful glyph
+      //    rather than a spinner that never stops.
+      if (category) {
+        const icons = await loadIconsFromCategory(category);
+        if (cancelled) return;
+        const generic = icons[0];
+        if (generic) {
+          const url = await loadIcon(generic.path);
+          if (cancelled) return;
+          if (url) {
+            setIconUrl(url);
+            setIconFallbackFailed(false);
+            return;
+          }
+        }
+      }
+
+      // 3. Nothing resolved — fall back to a static initial glyph.
+      if (!cancelled) {
+        setIconUrl('');
+        setIconFallbackFailed(true);
+      }
+    };
+
+    setIconUrl('');
+    setIconFallbackFailed(false);
+    resolve();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [data.iconPath, data.category]);
 
   useEffect(() => {
     if (!isEditingLabel) {
@@ -145,6 +191,13 @@ const AzureNode: React.FC<NodeProps> = memo(({ data, selected, id }) => {
   };
 
   const categoryColor = getCategoryColor(data.category);
+  // First letter of the service/label, used for the static fallback glyph when
+  // no icon (primary or category-generic) can be resolved.
+  const nodeInitial = (
+    (typeof label === 'string' && label.trim())
+      || serviceKey
+      || 'Azure Service'
+  ).trim().charAt(0).toUpperCase() || '?';
   const borderStyle = {
     borderLeft: `4px solid ${categoryColor}`,
     borderTop: '1px solid #d8e1ea',
@@ -233,6 +286,26 @@ const AzureNode: React.FC<NodeProps> = memo(({ data, selected, id }) => {
         )}
         {iconUrl ? (
           <img src={iconUrl} alt={label} className={`node-icon ${stylePreset === 'presentation' ? 'node-icon--presentation' : ''}`} />
+        ) : iconFallbackFailed ? (
+          <div
+            className="node-icon-placeholder"
+            style={{ borderLeft: `3px solid ${categoryColor}` }}
+            role="img"
+            aria-label={label}
+            title={label}
+          >
+            <span
+              aria-hidden="true"
+              style={{
+                fontSize: '20px',
+                fontWeight: 700,
+                lineHeight: 1,
+                color: categoryColor,
+              }}
+            >
+              {nodeInitial}
+            </span>
+          </div>
         ) : (
           <div className="node-icon-placeholder">
             <div className="loading-spinner"></div>
@@ -271,7 +344,7 @@ const AzureNode: React.FC<NodeProps> = memo(({ data, selected, id }) => {
           </>
         )}
         {tags.length > 0 && (
-          <div className="node-tags" aria-label={tags.join(', ')}>
+          <div className="node-tags" role="group" aria-label={tags.join(', ')}>
             {tags.slice(0, 2).map(tag => (
               <span key={tag} title={tag}>{tag}</span>
             ))}
@@ -317,6 +390,7 @@ const AzureNode: React.FC<NodeProps> = memo(({ data, selected, id }) => {
     prevProps.selected === nextProps.selected &&
 prevProps.data.parentNode === nextProps.data.parentNode &&
     prevProps.data.label === nextProps.data.label &&
+    prevProps.data.category === nextProps.data.category &&
     prevProps.data.labelMaxWidth === nextProps.data.labelMaxWidth &&
     JSON.stringify(prevProps.data.tags) === JSON.stringify(nextProps.data.tags) &&
     prevProps.data.iconPath === nextProps.data.iconPath &&

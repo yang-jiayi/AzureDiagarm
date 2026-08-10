@@ -2,7 +2,7 @@
 
 ## Overview
 
-The Azure Architecture Diagram Builder supports two graph layout engines that can be switched at any time via the **Layout → Engine** dropdown in the toolbar. Both engines solve the same problem — automatically positioning Azure service nodes and groups into readable, professional diagrams — but they use different algorithms and produce different results.
+The Microsoft Product Architecture Diagram Builder supports two graph layout engines that can be switched at any time via the **Layout → Engine** dropdown in the toolbar. Both engines solve the same problem — automatically positioning Azure service nodes and groups into readable, professional diagrams — but they use different algorithms and produce different results.
 
 | Feature | Dagre | ELK |
 |---------|-------|-----|
@@ -93,7 +93,7 @@ ELK is a comprehensive layout framework from Kiel University. In our integration
 
 ## Best Fit for Our Use Case
 
-The Azure Architecture Diagram Builder generates **grouped, hierarchical diagrams** where services are organized into logical groups (Frontend, Backend, Data, Security, Networking, etc.) with cross-group connections. This is precisely the scenario where **ELK excels**.
+The Microsoft Product Architecture Diagram Builder generates **grouped, hierarchical diagrams** where services are organized into logical groups (Frontend, Backend, Data, Security, Networking, etc.) with cross-group connections. This is precisely the scenario where **ELK excels**.
 
 ### Why ELK is the better fit for complex architectures:
 

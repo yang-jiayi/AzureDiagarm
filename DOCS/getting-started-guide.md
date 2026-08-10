@@ -1,6 +1,6 @@
 ---
-title: Azure Architecture Diagram Builder, Getting Started Guide
-description: Step-by-step walkthrough of every feature in the Azure Architecture Diagram Builder, designed for new users and team leads evaluating the tool
+title: Microsoft Product Architecture Diagram Builder, Getting Started Guide
+description: Step-by-step walkthrough of every feature in the Microsoft Product Architecture Diagram Builder, designed for new users and team leads evaluating the tool
 author: Arturo Quiroga
 ms.date: 2026-03-04
 ms.topic: tutorial
@@ -15,7 +15,7 @@ estimated_reading_time: 12
 
 <!-- markdownlint-disable-file -->
 
-# Azure Architecture Diagram Builder: Getting Started Guide
+# Microsoft Product Architecture Diagram Builder: Getting Started Guide
 
 **Author:** Arturo Quiroga, Senior Partner Solutions Architect, Microsoft
 **Live App:** [https://aka.ms/diagram-builder](https://aka.ms/diagram-builder)
@@ -24,7 +24,7 @@ estimated_reading_time: 12
 
 ## What Is It?
 
-The Azure Architecture Diagram Builder is a web application that lets you design, validate, and deploy Azure cloud architectures. You describe what you need in plain English, and any of **fourteen** AI models generates a professional diagram with official Azure icons, logical groupings, data-flow connections, real-time cost estimates, and Infrastructure as Code templates.
+The Microsoft Product Architecture Diagram Builder is a web application that lets you design, validate, and deploy Azure cloud architectures. You describe what you need in plain English, and any of **fourteen** AI models generates a professional diagram with official Azure icons, logical groupings, data-flow connections, real-time cost estimates, and Infrastructure as Code templates.
 
 You can produce two kinds of visuals from the same prompt: an interactive, editable **topology** diagram on the canvas, and a polished **Blueprint** (whiteboard-style) PNG for sharing. The app also validates against the Well-Architected Framework, estimates costs across regions, and generates deployment guides with Bicep.
 

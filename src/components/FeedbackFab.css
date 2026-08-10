@@ -34,7 +34,7 @@
 }
 
 .feedback-fab:focus-visible {
-  outline: 3px solid rgba(96, 165, 250, 0.75);
+  outline: 3px solid var(--azd-color-focus);
   outline-offset: 3px;
 }
 

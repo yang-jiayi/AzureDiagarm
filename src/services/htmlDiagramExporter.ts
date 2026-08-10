@@ -12,29 +12,22 @@
 
 import dagre from 'dagre';
 import type { Node, Edge } from 'reactflow';
+import { rasterizeIcons } from '../utils/exportIconRaster';
+import {
+  buildExportRoutes,
+  categoryStyle,
+  collectExportBoxes,
+  computeBounds,
+  metaSubline,
+  partitionBoxes,
+  usedConnectionLegend,
+  zoneStyleFor,
+  type ExportBox,
+  type ExportRoute,
+  type ConnectionLegendEntry,
+} from './diagramExportGeometry';
 
 // ── Types ──────────────────────────────────────────────────────────────
-
-interface DiagramService {
-  id: string;
-  name: string;
-  type: string;
-  description: string;
-  groupId: string | null;
-}
-
-interface DiagramConnection {
-  id: string;
-  fromId: string;
-  toId: string;
-  label: string;
-  type: 'sync' | 'async' | 'optional';
-}
-
-interface DiagramGroup {
-  id: string;
-  label: string;
-}
 
 interface PositionedNode {
   id: string;
@@ -42,21 +35,24 @@ interface PositionedNode {
   type: string;
   description: string;
   category: string;
-  groupId: string | null;
+  meta: string;
   x: number;
   y: number;
   width: number;
   height: number;
   color: string;
+  bg: string;
   textColor: string;
+  icon: string;
 }
 
 interface PositionedEdge {
   id: string;
-  fromId: string;
-  toId: string;
   label: string;
-  type: string;
+  color: string;
+  dashed: boolean;
+  dashPattern: string;
+  connectionType: string;
   points: Array<{ x: number; y: number }>;
 }
 
@@ -68,253 +64,171 @@ interface PositionedGroup {
   width: number;
   height: number;
   color: string;
+  bg: string;
+}
+
+interface LegendEntry {
+  type: string;
+  label: string;
+  color: string;
+  dashed: boolean;
+  dashPattern: string;
 }
 
 interface LayoutResult {
   nodes: PositionedNode[];
   edges: PositionedEdge[];
   groups: PositionedGroup[];
+  connectionLegend: LegendEntry[];
   width: number;
   height: number;
 }
 
-// ── Azure category colors ──────────────────────────────────────────────
+// ── Layout via the shared geometry layer ───────────────────────────────
 
-const CATEGORY_COLORS: Record<string, { bg: string; border: string; text: string }> = {
-  'ai + machine learning':  { bg: '#E8F0FE', border: '#4285F4', text: '#1A73E8' },
-  'app services':           { bg: '#E8F4FD', border: '#0078D4', text: '#004578' },
-  'compute':                { bg: '#E8F4FD', border: '#0078D4', text: '#004578' },
-  'databases':              { bg: '#E6F4EA', border: '#0B8043', text: '#0B6B3A' },
-  'storage':                { bg: '#E6F4EA', border: '#137333', text: '#0B6B3A' },
-  'networking':             { bg: '#FFF3E0', border: '#E65100', text: '#BF360C' },
-  'analytics':              { bg: '#F3E8FD', border: '#7B1FA2', text: '#6A1B9A' },
-  'containers':             { bg: '#E0F7FA', border: '#00838F', text: '#006064' },
-  'integration':            { bg: '#FCE4EC', border: '#C62828', text: '#B71C1C' },
-  'identity':               { bg: '#FFF8E1', border: '#F9A825', text: '#F57F17' },
-  'management + governance':{ bg: '#F1F8E9', border: '#558B2F', text: '#33691E' },
-  'iot':                    { bg: '#E0F2F1', border: '#00695C', text: '#004D40' },
-  'monitor':                { bg: '#EDE7F6', border: '#5E35B1', text: '#4527A0' },
-  'security':               { bg: '#FFEBEE', border: '#C62828', text: '#B71C1C' },
-  'web':                    { bg: '#E3F2FD', border: '#1565C0', text: '#0D47A1' },
-  'other':                  { bg: '#F5F5F5', border: '#616161', text: '#424242' },
-};
-
-const GROUP_COLORS = [
-  { bg: '#F0F6FF', border: '#0078D4' },
-  { bg: '#F0FFF0', border: '#00B294' },
-  { bg: '#FFF8F0', border: '#FFB900' },
-  { bg: '#F8F0FF', border: '#8764B8' },
-  { bg: '#FFF0F0', border: '#D13438' },
-  { bg: '#F0FFFF', border: '#038387' },
-];
-
-const TYPE_TO_CATEGORY: Record<string, string> = {
-  'azure openai': 'ai + machine learning', 'cognitive services': 'ai + machine learning',
-  'computer vision': 'ai + machine learning', 'custom vision': 'ai + machine learning',
-  'speech services': 'ai + machine learning', 'translator': 'ai + machine learning',
-  'language': 'ai + machine learning', 'document intelligence': 'ai + machine learning',
-  'azure machine learning': 'ai + machine learning', 'azure ai search': 'ai + machine learning',
-  'azure cognitive search': 'ai + machine learning',
-  'virtual machines': 'compute', 'functions': 'compute',
-  'app service': 'app services',
-  'container instances': 'containers', 'kubernetes service': 'containers',
-  'container registry': 'containers', 'container apps': 'containers',
-  'azure cosmos db': 'databases', 'sql database': 'databases',
-  'postgresql': 'databases', 'mysql': 'databases', 'redis cache': 'databases',
-  'storage account': 'storage', 'data lake storage': 'storage',
-  'application gateway': 'networking', 'azure front door': 'networking',
-  'cdn': 'networking', 'virtual network': 'networking', 'load balancer': 'networking',
-  'azure firewall': 'networking', 'vpn gateway': 'networking', 'expressroute': 'networking',
-  'traffic manager': 'networking', 'azure bastion': 'networking',
-  'azure ddos protection': 'networking', 'private link': 'networking', 'azure dns': 'networking',
-  'network watcher': 'networking', 'web application firewall': 'networking',
-  'data factory': 'analytics', 'azure synapse analytics': 'analytics',
-  'stream analytics': 'analytics', 'event hubs': 'analytics',
-  'power bi embedded': 'analytics', 'azure workbooks': 'analytics',
-  'service bus': 'integration', 'logic apps': 'integration',
-  'api management': 'integration', 'event grid': 'integration',
-  'azure health data services fhir service': 'integration', 'azure api for fhir': 'integration',
-  'signalr service': 'web', 'static web apps': 'web',
-  'azure monitor': 'monitor', 'application insights': 'monitor', 'log analytics': 'monitor',
-  'azure managed grafana': 'monitor',
-  'key vault': 'security', 'microsoft defender for cloud': 'security',
-  'microsoft sentinel': 'security',
-  'microsoft entra id': 'identity',
-  'backup': 'management + governance', 'azure policy': 'management + governance',
-  'microsoft purview': 'management + governance',
-  'iot hub': 'iot', 'iot central': 'iot', 'digital twins': 'iot', 'notification hubs': 'iot',
-};
-
-function resolveCategory(serviceType: string): string {
-  return TYPE_TO_CATEGORY[serviceType.toLowerCase()] ?? 'other';
-}
-
-function getCategoryColor(category: string) {
-  return CATEGORY_COLORS[category] ?? CATEGORY_COLORS['other'];
-}
-
-// ── Extract diagram data from React Flow ───────────────────────────────
-
-function extractDiagramData(nodes: Node[], edges: Edge[]): {
-  services: DiagramService[];
-  connections: DiagramConnection[];
-  groups: DiagramGroup[];
-} {
-  const services: DiagramService[] = nodes
-    .filter(n => n.type === 'azureNode')
-    .map(n => ({
-      id: n.id,
-      name: (n.data.label as string) || 'Unknown Service',
-      type: (n.data.serviceName as string) || (n.data.label as string) || 'Unknown',
-      description: (n.data.description as string) || '',
-      groupId: n.parentNode ?? null,
-    }));
-
-  const serviceIds = new Set(services.map(service => service.id));
-
-  const connections: DiagramConnection[] = edges
-    .filter(e => serviceIds.has(e.source) && serviceIds.has(e.target))
-    .map(e => ({
-      id: e.id,
-      fromId: e.source,
-      toId: e.target,
-      label: typeof e.label === 'string' ? e.label : '',
-      type: (e.data?.connectionType as 'sync' | 'async' | 'optional') ?? 'sync',
-    }));
-
-  const groups: DiagramGroup[] = nodes
-    .filter(n => n.type === 'groupNode')
-    .map(n => ({
-      id: n.id,
-      label: (n.data.label as string) || 'Group',
-    }));
-
-  return { services, connections, groups };
-}
-
-// ── Dagre layout computation ───────────────────────────────────────────
-
-const NODE_WIDTH = 200;
-const NODE_HEIGHT = 70;
 const PADDING = 40;
 
-function computeLayout(
-  services: DiagramService[],
-  connections: DiagramConnection[],
-  groups: DiagramGroup[],
-): LayoutResult {
+/**
+ * Are the node positions genuinely present, or is everything stacked at the
+ * origin (in which case we fall back to an automatic dagre layout)?
+ */
+function positionsPresent(nodes: Node[]): boolean {
+  const services = nodes.filter((node) => node.type !== 'groupNode');
+  if (services.length === 0) return false;
+  const seen = new Set<string>();
+  let anyNonZero = false;
+  for (const node of services) {
+    const x = node.position?.x ?? 0;
+    const y = node.position?.y ?? 0;
+    if (x !== 0 || y !== 0) anyNonZero = true;
+    seen.add(`${x},${y}`);
+  }
+  // Real layouts have distinct, non-zero coordinates; a fresh AI import often
+  // has none, so only then do we synthesise positions.
+  return anyNonZero && seen.size > 1;
+}
+
+/** Run dagre only when the user has no real layout, writing positions back. */
+function assignDagrePositions(
+  nodes: Node[],
+  services: ExportBox[],
+  groups: ExportBox[],
+  edges: Edge[],
+): void {
   const g = new dagre.graphlib.Graph({ compound: true, multigraph: true });
-  const serviceGraphId = (id: string) => `service:${id}`;
-  const groupGraphId = (id: string) => `group:${id}`;
-
-  g.setGraph({
-    rankdir: 'TB',
-    nodesep: 60,
-    ranksep: 80,
-    edgesep: 30,
-    marginx: PADDING,
-    marginy: PADDING,
-  });
-
+  g.setGraph({ rankdir: 'TB', nodesep: 60, ranksep: 80, edgesep: 30, marginx: PADDING, marginy: PADDING });
   g.setDefaultEdgeLabel(() => ({}));
 
-  const groupMap = new Map(groups.map(gr => [gr.id, gr]));
+  const groupIds = new Set(groups.map((group) => group.id));
   for (const group of groups) {
-    g.setNode(groupGraphId(group.id), {
-      label: group.label,
-      clusterLabelPos: 'top',
-      style: 'fill: transparent',
-    });
+    g.setNode(`group:${group.id}`, { label: group.label, clusterLabelPos: 'top' });
   }
-
-  const serviceCategories = new Map<string, string>();
-  for (const svc of services) {
-    const category = resolveCategory(svc.type);
-    serviceCategories.set(svc.id, category);
-
-    g.setNode(serviceGraphId(svc.id), {
-      width: NODE_WIDTH,
-      height: NODE_HEIGHT,
-      label: svc.name,
-    });
-
-    if (svc.groupId && groupMap.has(svc.groupId)) {
-      g.setParent(serviceGraphId(svc.id), groupGraphId(svc.groupId));
-    }
+  const parentOf = new Map(nodes.map((node) => [node.id, node.parentNode]));
+  for (const service of services) {
+    g.setNode(`svc:${service.id}`, { width: service.w, height: service.h, label: service.label });
+    const parent = parentOf.get(service.id);
+    if (parent && groupIds.has(parent)) g.setParent(`svc:${service.id}`, `group:${parent}`);
   }
-
-  const serviceIds = new Set(services.map(s => s.id));
-  for (const conn of connections) {
-    if (serviceIds.has(conn.fromId) && serviceIds.has(conn.toId)) {
-      g.setEdge(serviceGraphId(conn.fromId), serviceGraphId(conn.toId), {
-        label: conn.label ?? '',
-        minlen: 1,
-      }, conn.id);
+  const serviceIds = new Set(services.map((service) => service.id));
+  for (const edge of edges) {
+    if (serviceIds.has(edge.source) && serviceIds.has(edge.target)) {
+      g.setEdge(`svc:${edge.source}`, `svc:${edge.target}`, {}, edge.id);
     }
   }
 
   dagre.layout(g);
 
-  const positionedNodes: PositionedNode[] = services.map(svc => {
-    const node = g.node(serviceGraphId(svc.id));
-    const category = serviceCategories.get(svc.id) ?? 'other';
-    const colors = getCategoryColor(category);
+  for (const service of services) {
+    const laid = g.node(`svc:${service.id}`);
+    if (laid) { service.x = laid.x - service.w / 2; service.y = laid.y - service.h / 2; }
+  }
+  for (const group of groups) {
+    const laid = g.node(`group:${group.id}`);
+    if (laid && laid.width && laid.height) {
+      group.x = laid.x - laid.width / 2;
+      group.y = laid.y - laid.height / 2;
+      group.w = laid.width;
+      group.h = laid.height;
+    }
+  }
+}
+
+/**
+ * Flatten React Flow nodes/edges into a positioned layout, honouring the user's
+ * real coordinates (fix 1), the shared category palette + real icons (fix 2),
+ * per-connection colour (fix 4), zone colours (fix 6) and metadata (fix 10).
+ */
+function buildLayout(nodes: Node[], edges: Edge[], icons: Map<string, string>): LayoutResult {
+  const boxes = collectExportBoxes(nodes);
+  const { groups, services } = partitionBoxes(boxes);
+  const dataById = new Map(nodes.map((node) => [node.id, (node.data ?? {}) as Record<string, unknown>]));
+
+  if (!positionsPresent(nodes)) {
+    assignDagrePositions(nodes, services, groups, edges);
+  }
+
+  const routes = buildExportRoutes(edges, boxes);
+  const bounds = computeBounds(boxes.values());
+  const dx = PADDING - bounds.minX;
+  const dy = PADDING - bounds.minY;
+
+  const positionedNodes: PositionedNode[] = services.map((box) => {
+    const style = categoryStyle(box.category);
+    const data = dataById.get(box.id) ?? {};
     return {
-      id: svc.id,
-      name: svc.name,
-      type: svc.type,
-      description: svc.description ?? '',
-      category,
-      groupId: svc.groupId ?? null,
-      x: node.x - NODE_WIDTH / 2,
-      y: node.y - NODE_HEIGHT / 2,
-      width: NODE_WIDTH,
-      height: NODE_HEIGHT,
-      color: colors.border,
-      textColor: colors.text,
+      id: box.id,
+      name: box.label,
+      type: box.serviceName ?? box.category,
+      description: typeof data.description === 'string' ? data.description : '',
+      category: box.category,
+      meta: metaSubline(box),
+      x: box.x + dx,
+      y: box.y + dy,
+      width: box.w,
+      height: box.h,
+      color: style.border,
+      bg: style.bg,
+      textColor: style.text,
+      icon: (box.iconPath && icons.get(box.iconPath)) || '',
     };
   });
 
-  const positionedEdges: PositionedEdge[] = connections
-    .filter(c => serviceIds.has(c.fromId) && serviceIds.has(c.toId))
-    .map(conn => {
-      const edge = g.edge({
-        v: serviceGraphId(conn.fromId),
-        w: serviceGraphId(conn.toId),
-        name: conn.id,
-      });
-      return {
-        id: conn.id,
-        fromId: conn.fromId,
-        toId: conn.toId,
-        label: conn.label ?? '',
-        type: conn.type ?? 'sync',
-        points: edge?.points ?? [],
-      };
-    });
-
-  const positionedGroups: PositionedGroup[] = groups.map((group, idx) => {
-    const gNode = g.node(groupGraphId(group.id));
-    const groupColor = GROUP_COLORS[idx % GROUP_COLORS.length];
-    if (!gNode) {
-      return { id: group.id, label: group.label, x: 0, y: 0, width: 0, height: 0, color: groupColor.border };
-    }
+  const positionedGroups: PositionedGroup[] = groups.map((box, index) => {
+    const style = zoneStyleFor(box, index);
     return {
-      id: group.id,
-      label: group.label,
-      x: gNode.x - (gNode.width ?? 200) / 2,
-      y: gNode.y - (gNode.height ?? 100) / 2,
-      width: gNode.width ?? 200,
-      height: gNode.height ?? 100,
-      color: groupColor.border,
+      id: box.id,
+      label: box.label,
+      x: box.x + dx,
+      y: box.y + dy,
+      width: box.w,
+      height: box.h,
+      color: style.border,
+      bg: style.bg,
     };
-  }).filter(g => g.width > 0);
+  });
 
-  const graphInfo = g.graph();
-  const width = (graphInfo.width ?? 800) + PADDING * 2;
-  const height = (graphInfo.height ?? 600) + PADDING * 2;
+  const positionedEdges: PositionedEdge[] = routes.map((route: ExportRoute) => ({
+    id: route.id,
+    label: route.label,
+    color: route.color,
+    dashed: route.dashed,
+    dashPattern: route.dashPattern ?? '',
+    connectionType: route.connectionType,
+    points: route.points.map((point) => ({ x: point.x + dx, y: point.y + dy })),
+  }));
 
-  return { nodes: positionedNodes, edges: positionedEdges, groups: positionedGroups, width, height };
+  const connectionLegend: LegendEntry[] = usedConnectionLegend(edges).map((entry: ConnectionLegendEntry) => ({
+    type: entry.type,
+    label: entry.label,
+    color: entry.color,
+    dashed: entry.dashed,
+    dashPattern: entry.dashPattern ?? '',
+  }));
+
+  const width = Math.max(1, bounds.maxX - bounds.minX) + PADDING * 2;
+  const height = Math.max(1, bounds.maxY - bounds.minY) + PADDING * 2;
+
+  return { nodes: positionedNodes, edges: positionedEdges, groups: positionedGroups, connectionLegend, width, height };
 }
 
 // ── HTML generation ────────────────────────────────────────────────────
@@ -355,17 +269,23 @@ function generateHtml(layout: LayoutResult, title: string): string {
   .canvas-container.dragging { cursor: grabbing; }
   .canvas { position: absolute; transform-origin: 0 0; }
   .node {
-    position: absolute; width: 200px; height: 70px; background: white;
+    position: absolute; background: white;
     border-radius: 8px; border: 2px solid #ccc; box-shadow: 0 2px 8px rgba(0,0,0,0.08);
     cursor: pointer; transition: box-shadow 0.2s, transform 0.2s;
-    display: flex; flex-direction: column; justify-content: center; padding: 0 14px 0 20px;
+    display: flex; flex-direction: row; align-items: center; gap: 8px; padding: 6px 10px;
     overflow: hidden;
   }
   .node:hover { box-shadow: 0 4px 16px rgba(0,0,0,0.15); transform: translateY(-1px); z-index: 10; }
   .node.highlighted { box-shadow: 0 0 0 3px rgba(0,120,212,0.4), 0 4px 16px rgba(0,0,0,0.15); }
-  .node .accent { position: absolute; left: 0; top: 0; width: 6px; height: 100%; border-radius: 3px 0 0 3px; }
+  .node .node-icon { width: 34px; height: 34px; object-fit: contain; flex-shrink: 0; }
+  .node .node-mono {
+    width: 34px; height: 34px; border-radius: 6px; flex-shrink: 0; color: #fff;
+    display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 15px;
+  }
+  .node .node-body { display: flex; flex-direction: column; overflow: hidden; min-width: 0; }
   .node .name { font-size: 13px; font-weight: 600; color: #1B1B1B; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .node .type { font-size: 11px; margin-top: 2px; }
+  .node .type { font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .node .meta { font-size: 10px; color: #64748b; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .edges-layer { position: absolute; top: 0; left: 0; pointer-events: none; }
   .edge-path { fill: none; stroke-width: 1.5; }
   .edge-label {
@@ -394,6 +314,8 @@ function generateHtml(layout: LayoutResult, title: string): string {
   }
   .legend-item { display: flex; align-items: center; gap: 4px; }
   .legend-dot { width: 10px; height: 10px; border-radius: 50%; }
+  .legend-sep { width: 100%; height: 0; border-top: 1px solid #e5e7eb; margin: 2px 0; }
+  .legend-line { width: 22px; height: 0; border-top-width: 2px; border-top-style: solid; }
 </style>
 </head>
 <body>
@@ -406,7 +328,7 @@ function generateHtml(layout: LayoutResult, title: string): string {
     <button onclick="resetView()">Reset</button>
     <button onclick="fitView()">Fit</button>
   </div>
-  <div class="meta">Generated by Azure Architecture Diagram Builder</div>
+  <div class="meta">Generated by Microsoft Product Architecture Diagram Builder &middot; Swarm Data SE, Jiayi Yang</div>
 </div>
 
 <div class="canvas-container" id="container">
@@ -424,64 +346,31 @@ function generateHtml(layout: LayoutResult, title: string): string {
 <script>
 const layout = ${layoutJson};
 
-const CATEGORY_COLORS = {
-  'ai + machine learning':  { bg: '#E8F0FE', border: '#4285F4' },
-  'app services':           { bg: '#E8F4FD', border: '#0078D4' },
-  'compute':                { bg: '#E8F4FD', border: '#0078D4' },
-  'databases':              { bg: '#E6F4EA', border: '#0B8043' },
-  'storage':                { bg: '#E6F4EA', border: '#137333' },
-  'networking':             { bg: '#FFF3E0', border: '#E65100' },
-  'analytics':              { bg: '#F3E8FD', border: '#7B1FA2' },
-  'containers':             { bg: '#E0F7FA', border: '#00838F' },
-  'integration':            { bg: '#FCE4EC', border: '#C62828' },
-  'identity':               { bg: '#FFF8E1', border: '#F9A825' },
-  'management + governance':{ bg: '#F1F8E9', border: '#558B2F' },
-  'iot':                    { bg: '#E0F2F1', border: '#00695C' },
-  'monitor':                { bg: '#EDE7F6', border: '#5E35B1' },
-  'security':               { bg: '#FFEBEE', border: '#C62828' },
-  'web':                    { bg: '#E3F2FD', border: '#1565C0' },
-  'other':                  { bg: '#F5F5F5', border: '#616161' },
-};
-
-const CATEGORY_ICONS = {
-  'ai + machine learning': '\\ud83e\\udd16', 'app services': '\\ud83c\\udf10', 'compute': '\\u26a1',
-  'databases': '\\ud83d\\uddc4\\ufe0f', 'storage': '\\ud83d\\udcbe', 'networking': '\\ud83d\\udd17', 'analytics': '\\ud83d\\udcca',
-  'containers': '\\ud83d\\udce6', 'integration': '\\ud83d\\udd04', 'identity': '\\ud83d\\udd11',
-  'management + governance': '\\u2699\\ufe0f', 'iot': '\\ud83d\\udce1', 'monitor': '\\ud83d\\udcc8',
-  'security': '\\ud83d\\udee1\\ufe0f', 'web': '\\ud83c\\udf0d', 'other': '\\u2601\\ufe0f',
-};
-
-const EDGE_COLORS = { sync: '#0078D4', async: '#8764B8', optional: '#A0A0A0' };
-const GROUP_COLORS = [
-  { bg: '#F0F6FF08', border: '#0078D4' },
-  { bg: '#F0FFF008', border: '#00B294' },
-  { bg: '#FFF8F008', border: '#FFB900' },
-  { bg: '#F8F0FF08', border: '#8764B8' },
-  { bg: '#FFF0F008', border: '#D13438' },
-  { bg: '#F0FFFF08', border: '#038387' },
-];
-
 let scale = 1, offsetX = 0, offsetY = 0, isDragging = false, dragStartX = 0, dragStartY = 0;
 const container = document.getElementById('container');
 const canvas = document.getElementById('canvas');
 const tooltip = document.getElementById('tooltip');
+
+function monogram(name) {
+  const s = (name || '?').trim();
+  return s ? s.charAt(0).toUpperCase() : '?';
+}
 
 function render() {
   canvas.innerHTML = '';
   canvas.style.width = layout.width + 'px';
   canvas.style.height = layout.height + 'px';
 
-  layout.groups.forEach((g, i) => {
-    const gc = GROUP_COLORS[i % GROUP_COLORS.length];
+  layout.groups.forEach((g) => {
     const el = document.createElement('div');
     el.className = 'group';
     el.style.left = (g.x - 12) + 'px';
     el.style.top = (g.y - 32) + 'px';
     el.style.width = (g.width + 24) + 'px';
     el.style.height = (g.height + 44) + 'px';
-    el.style.borderColor = gc.border;
-    el.style.background = gc.border + '08';
-    el.innerHTML = '<div class="group-label" style="color:' + gc.border + '">' + esc(g.label) + '</div>';
+    el.style.borderColor = g.color;
+    el.style.background = g.bg + '14';
+    el.innerHTML = '<div class="group-label" style="color:' + g.color + '">' + esc(g.label) + '</div>';
     canvas.appendChild(el);
   });
 
@@ -493,17 +382,23 @@ function render() {
   svg.style.width = layout.width + 'px';
   svg.style.height = layout.height + 'px';
 
+  // One arrow marker per distinct connection colour so heads match their line.
   const defs = document.createElementNS(svgNs, 'defs');
-  ['sync', 'async', 'optional'].forEach(t => {
+  const markerByColor = {};
+  let markerSeq = 0;
+  layout.edges.forEach(e => {
+    if (markerByColor[e.color]) return;
+    const id = 'arrow-' + (markerSeq++);
+    markerByColor[e.color] = id;
     const marker = document.createElementNS(svgNs, 'marker');
-    marker.setAttribute('id', 'arrow-' + t);
+    marker.setAttribute('id', id);
     marker.setAttribute('viewBox', '0 0 10 10');
     marker.setAttribute('refX', '10'); marker.setAttribute('refY', '5');
     marker.setAttribute('markerWidth', '8'); marker.setAttribute('markerHeight', '8');
     marker.setAttribute('orient', 'auto');
     const poly = document.createElementNS(svgNs, 'polygon');
     poly.setAttribute('points', '0,0 10,5 0,10');
-    poly.setAttribute('fill', EDGE_COLORS[t]);
+    poly.setAttribute('fill', e.color);
     marker.appendChild(poly);
     defs.appendChild(marker);
   });
@@ -511,16 +406,14 @@ function render() {
 
   layout.edges.forEach(e => {
     if (e.points.length < 2) return;
-    const eType = e.type || 'sync';
-    const color = EDGE_COLORS[eType] || EDGE_COLORS.sync;
+    const color = e.color || '#64748b';
     const d = e.points.map((p, i) => (i === 0 ? 'M' : 'L') + p.x + ' ' + p.y).join(' ');
     const path = document.createElementNS(svgNs, 'path');
     path.setAttribute('d', d);
     path.setAttribute('stroke', color);
     path.classList.add('edge-path');
-    path.setAttribute('marker-end', 'url(#arrow-' + eType + ')');
-    if (eType === 'async') path.setAttribute('stroke-dasharray', '6,4');
-    if (eType === 'optional') path.setAttribute('stroke-dasharray', '4,4');
+    path.setAttribute('marker-end', 'url(#' + markerByColor[e.color] + ')');
+    if (e.dashed) path.setAttribute('stroke-dasharray', (e.dashPattern || '6,4').replace(/\\s+/g, ''));
     svg.appendChild(path);
 
     if (e.label) {
@@ -538,19 +431,24 @@ function render() {
   canvas.appendChild(svg);
 
   layout.nodes.forEach(n => {
-    const cc = CATEGORY_COLORS[n.category] || CATEGORY_COLORS.other;
-    const icon = CATEGORY_ICONS[n.category] || '\\u2601\\ufe0f';
     const el = document.createElement('div');
     el.className = 'node';
     el.style.left = n.x + 'px';
     el.style.top = n.y + 'px';
     el.style.width = n.width + 'px';
     el.style.height = n.height + 'px';
-    el.style.borderColor = cc.border;
+    el.style.borderColor = n.color;
+    el.style.background = n.bg || '#ffffff';
+    const iconHtml = n.icon
+      ? '<img class="node-icon" src="' + n.icon + '" alt="" />'
+      : '<div class="node-mono" style="background:' + n.color + '">' + esc(monogram(n.name)) + '</div>';
     el.innerHTML =
-      '<div class="accent" style="background:' + cc.border + '"></div>' +
-      '<div class="name">' + icon + ' ' + esc(n.name) + '</div>' +
-      '<div class="type" style="color:' + cc.border + '">' + esc(n.type) + '</div>';
+      iconHtml +
+      '<div class="node-body">' +
+        '<div class="name">' + esc(n.name) + '</div>' +
+        '<div class="type" style="color:' + n.textColor + '">' + esc(n.type) + '</div>' +
+        (n.meta ? '<div class="meta">' + esc(n.meta) + '</div>' : '') +
+      '</div>';
 
     el.addEventListener('mouseenter', ev => showTooltip(ev, n));
     el.addEventListener('mouseleave', hideTooltip);
@@ -561,12 +459,22 @@ function render() {
     canvas.appendChild(el);
   });
 
-  const cats = [...new Set(layout.nodes.map(n => n.category))].sort();
+  // Legend: category colour dots plus the connection-type colour key so the
+  // interactive view agrees with the PNG/PPTX/VSDX legends.
+  const catColors = {};
+  layout.nodes.forEach(n => { catColors[n.category] = n.color; });
+  const cats = Object.keys(catColors).sort();
   const legendEl = document.getElementById('legend');
-  legendEl.innerHTML = cats.map(c => {
-    const cc = CATEGORY_COLORS[c] || CATEGORY_COLORS.other;
-    return '<div class="legend-item"><div class="legend-dot" style="background:' + cc.border + '"></div>' + (CATEGORY_ICONS[c] || '') + ' ' + esc(c) + '</div>';
-  }).join('');
+  let legendHtml = cats.map(c =>
+    '<div class="legend-item"><div class="legend-dot" style="background:' + catColors[c] + '"></div>' + esc(c) + '</div>'
+  ).join('');
+  const conn = layout.connectionLegend || [];
+  if (conn.length) {
+    legendHtml += '<div class="legend-sep"></div>' + conn.map(c =>
+      '<div class="legend-item"><div class="legend-line" style="border-top-color:' + c.color + ';border-top-style:' + (c.dashed ? 'dashed' : 'solid') + '"></div>' + esc(c.label) + '</div>'
+    ).join('');
+  }
+  legendEl.innerHTML = legendHtml;
 
   applyTransform();
 }
@@ -633,13 +541,38 @@ fitView();
 
 // ── Public API ─────────────────────────────────────────────────────────
 
-export function exportDiagramAsHtml(
+/**
+ * Rasterise the Azure icons referenced by the service nodes into base64 PNG
+ * data URIs so the exported HTML is fully self-contained (fix 2). In a
+ * non-browser context this resolves to an empty map and the renderer falls
+ * back to a coloured monogram.
+ */
+async function buildIconDataUrls(nodes: Node[]): Promise<Map<string, string>> {
+  const paths = new Set<string>();
+  for (const node of nodes) {
+    const iconPath = (node.data as { iconPath?: unknown } | undefined)?.iconPath;
+    if (typeof iconPath === 'string' && iconPath) paths.add(iconPath);
+  }
+  const result = new Map<string, string>();
+  if (paths.size === 0) return result;
+  try {
+    const rastered = await rasterizeIcons(Array.from(paths), 64);
+    for (const [path, raster] of rastered) {
+      if (raster?.dataUrl) result.set(path, raster.dataUrl);
+    }
+  } catch {
+    // Non-browser or fetch failure — monogram fallback is used.
+  }
+  return result;
+}
+
+export async function exportDiagramAsHtml(
   nodes: Node[],
   edges: Edge[],
   title?: string,
-): void {
+): Promise<void> {
   const diagramTitle = title || 'Azure Architecture Diagram';
-  const html = buildInteractiveDiagramHtml(nodes, edges, diagramTitle);
+  const html = await buildInteractiveDiagramHtml(nodes, edges, diagramTitle);
 
   if (!html) {
     alert('No services to export. Add Azure services to the diagram first.');
@@ -658,18 +591,18 @@ export function exportDiagramAsHtml(
   URL.revokeObjectURL(url);
 }
 
-export function buildInteractiveDiagramHtml(
+export async function buildInteractiveDiagramHtml(
   nodes: Node[],
   edges: Edge[],
   title?: string,
-): string | null {
+): Promise<string | null> {
   const diagramTitle = title || 'Azure Architecture Diagram';
-  const { services, connections, groups } = extractDiagramData(nodes, edges);
-
-  if (services.length === 0) {
+  const hasServices = nodes.some((node) => node.type !== 'groupNode');
+  if (!hasServices) {
     return null;
   }
 
-  const layout = computeLayout(services, connections, groups);
+  const icons = await buildIconDataUrls(nodes);
+  const layout = buildLayout(nodes, edges, icons);
   return generateHtml(layout, diagramTitle);
 }

@@ -1,7 +1,7 @@
 /**
  * demo-recording.mjs
  * ==================
- * Records a 30–60 second Playwright demo of the Azure Architecture Diagram Builder.
+ * Records a 30–60 second Playwright demo of the Microsoft Product Architecture Diagram Builder.
  *
  * Prerequisites:
  *   1. Dev server running:  npm run dev:avatar   (Vite on :5173 + token server on :3001)

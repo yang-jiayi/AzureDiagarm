@@ -1606,7 +1606,7 @@ jobs:
               grep -qi '^x-robots-tag:.*noindex' "$headers" || checks_ok=false
               grep -qi '^referrer-policy:.*same-origin' "$headers" || checks_ok=false
               grep -qi '^permissions-policy:' "$headers" || checks_ok=false
-              grep -q 'Azure Architecture Diagram Builder' /tmp/azurediagarm.html || checks_ok=false
+              grep -q 'Microsoft Product Architecture Diagram Builder' /tmp/azurediagarm.html || checks_ok=false
             else
               checks_ok=false
             fi
@@ -1771,7 +1771,7 @@ jobs:
           set -Eeuo pipefail
 
           {
-            echo "Azure Architecture Diagram Builder was updated successfully."
+            echo "Microsoft Product Architecture Diagram Builder was updated successfully."
             echo
             echo "URL: ${{ vars.AZURE_APP_URL }}"
             echo "Image: ${{ steps.image.outputs.image }}"

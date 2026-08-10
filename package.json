@@ -1,14 +1,15 @@
 {
   "name": "azure-architecture-diagram-builder",
   "version": "1.0.0",
-  "description": "Azure architecture diagram builder with official icon library",
+  "description": "Microsoft product architecture diagram builder with the official Azure, Microsoft Fabric, Power Platform, and Dynamics 365 icon libraries",
+  "author": "Swarm Data SE, Jiayi Yang",
   "type": "module",
   "scripts": {
     "postinstall": "node scripts/patch-image-size.mjs",
     "audit:production": "node scripts/audit-production-dependencies.mjs",
     "dev": "vite",
     "dev:full": "./scripts/dev-all.sh",
-    "icons:sync": "node scripts/sync-azure-icons.mjs && node scripts/sync-fabric-icons.mjs",
+    "icons:sync": "node scripts/sync-azure-icons.mjs && node scripts/sync-fabric-icons.mjs && node scripts/sync-microsoft-icons.mjs",
     "icons:sync:azure": "node scripts/sync-azure-icons.mjs",
     "icons:sync:fabric": "node scripts/sync-fabric-icons.mjs",
     "test:icons": "node scripts/test-icon-library.mjs",
@@ -28,17 +29,17 @@
     "test:validation-freshness": "tsx scripts/test-validation-freshness.ts",
     "test:service-names": "tsx scripts/test-service-name-normalization.ts",
     "mcp:build": "cd mcp-server && npm run build",
-    "mcp:start": "node mcp-server/dist/index.js"
+    "mcp:start": "node mcp-server/dist/index.js",
+    "icons:sync:microsoft": "node scripts/sync-microsoft-icons.mjs",
+    "icons:check:microsoft": "node scripts/sync-microsoft-icons.mjs --check"
   },
   "dependencies": {
     "@azure/msal-browser": "^5.17.0",
-    "@azure/openai": "^2.0.0",
     "@microsoft/applicationinsights-web": "^3.4.3",
     "@types/dagre": "^0.7.53",
     "dagre": "^0.8.5",
     "elkjs": "^0.11.0",
     "html-to-image": "^1.11.13",
-    "html2canvas": "^1.4.1",
     "jszip": "^3.10.1",
     "lucide-react": "^0.294.0",
     "microsoft-cognitiveservices-speech-sdk": "^1.50.0",

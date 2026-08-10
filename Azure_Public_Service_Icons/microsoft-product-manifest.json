@@ -1,0 +1,194 @@
+{
+  "schemaVersion": 1,
+  "packageVersion": "2025-12",
+  "packages": [
+    {
+      "family": "power-platform",
+      "sourcePage": "https://learn.microsoft.com/en-us/power-platform/guidance/icons",
+      "packageUrl": "https://download.microsoft.com/download/498606aa-6d27-4f13-aa5c-1401078c153b/Power-Platform-icons-scalable.zip",
+      "packageSha256": "d5abafebbce553690caf7b42dd14b8335bf2c0dfc09f46bd9ac8041187da2c3a"
+    },
+    {
+      "family": "dynamics-365",
+      "sourcePage": "https://learn.microsoft.com/en-us/dynamics365/get-started/icons",
+      "packageUrl": "https://download.microsoft.com/download/498606aa-6d27-4f13-aa5c-1401078c153b/Dynamics-365-icons-scalable.zip",
+      "packageSha256": "f5f4d96aaa637b71e47136cc74e9a4a69b8a81f7e43c1c5756f00b5cea9ffe02"
+    }
+  ],
+  "terms": "Microsoft permits these icons in architectural diagrams, training materials, or documentation. Do not crop, flip, rotate, or distort them, and do not use them to represent a non-Microsoft product.",
+  "iconCount": 24,
+  "categories": {
+    "dynamics 365": 16,
+    "power platform": 8
+  },
+  "files": [
+    {
+      "path": "dynamics 365/dynamics-365-business-central.svg",
+      "serviceName": "Dynamics 365 Business Central",
+      "family": "dynamics-365",
+      "sourceAsset": "Dynamics 365 App Icons/BusinessCentral_scalable.svg",
+      "sha256": "5effb9327ab3914ba1a4660c1a95282253ba6fb911580d227c62a222a4a76be8"
+    },
+    {
+      "path": "dynamics 365/dynamics-365-commerce.svg",
+      "serviceName": "Dynamics 365 Commerce",
+      "family": "dynamics-365",
+      "sourceAsset": "Dynamics 365 App Icons/Commerce_scalable.svg",
+      "sha256": "afc13a8f1cc879527d82284d948b042ea5f2d1b6e949da08290e04ce5b9d09f9"
+    },
+    {
+      "path": "dynamics 365/dynamics-365-contact-center.svg",
+      "serviceName": "Dynamics 365 Contact Center",
+      "family": "dynamics-365",
+      "sourceAsset": "Dynamics 365 App Icons/ContactCenter_scalable.svg",
+      "sha256": "8b1a36486dbcdce1442a9915dbed2140c660205c9916d4603f49e08b40807778"
+    },
+    {
+      "path": "dynamics 365/dynamics-365-customer-insights.svg",
+      "serviceName": "Dynamics 365 Customer Insights",
+      "family": "dynamics-365",
+      "sourceAsset": "Dynamics 365 App Icons/CustomerInsights_scalable.svg",
+      "sha256": "dbdaedf0ada05ca316e7b42b7d0d5d74ab51da234031f97a23cb8dbec7981bf0"
+    },
+    {
+      "path": "dynamics 365/dynamics-365-customer-service.svg",
+      "serviceName": "Dynamics 365 Customer Service",
+      "family": "dynamics-365",
+      "sourceAsset": "Dynamics 365 App Icons/CustomerServices_scalable.svg",
+      "sha256": "ecea20ecc386e7b92b22b79fcbad0d1c0672d6ed6df62d32fb08a6963ab9741a"
+    },
+    {
+      "path": "dynamics 365/dynamics-365-customer-voice.svg",
+      "serviceName": "Dynamics 365 Customer Voice",
+      "family": "dynamics-365",
+      "sourceAsset": "Dynamics 365 App Icons/CustomerVoice_scalable.svg",
+      "sha256": "0039b113f11ed87aa04ddd132b175b99c2c466b2df1577b2d87deaa094f26d1f"
+    },
+    {
+      "path": "dynamics 365/dynamics-365-field-service.svg",
+      "serviceName": "Dynamics 365 Field Service",
+      "family": "dynamics-365",
+      "sourceAsset": "Dynamics 365 App Icons/FieldService_scalable.svg",
+      "sha256": "b2d85d1a9abb56524483c5c56a89bff50ee10f6668e12354da87242c228b8177"
+    },
+    {
+      "path": "dynamics 365/dynamics-365-finance-operations.svg",
+      "serviceName": "Dynamics 365 Finance and Operations",
+      "family": "dynamics-365",
+      "sourceAsset": "Dynamics 365 App Icons/FinanceOperations_scalable.svg",
+      "sha256": "cb3c76a254571104fc12adc666a52fa53ce09bd7322ea790fc925976c17a63f7"
+    },
+    {
+      "path": "dynamics 365/dynamics-365-finance.svg",
+      "serviceName": "Dynamics 365 Finance",
+      "family": "dynamics-365",
+      "sourceAsset": "Dynamics 365 App Icons/Finance_scalable.svg",
+      "sha256": "ed70dcb0929202676654afe9455f4647f918ca92b5576ae447a86cf341461cab"
+    },
+    {
+      "path": "dynamics 365/dynamics-365-human-resources.svg",
+      "serviceName": "Dynamics 365 Human Resources",
+      "family": "dynamics-365",
+      "sourceAsset": "Dynamics 365 App Icons/HumanResources_scalable.svg",
+      "sha256": "279cfdfd29d8bb87c69a17666a0b1da0f34dc4cc545b4248c80a9ef3a28f2091"
+    },
+    {
+      "path": "dynamics 365/dynamics-365-intelligent-order-management.svg",
+      "serviceName": "Dynamics 365 Intelligent Order Management",
+      "family": "dynamics-365",
+      "sourceAsset": "Dynamics 365 App Icons/IntelligentOrderManagement_scalable.svg",
+      "sha256": "94a5fdb93f524b3fe44367ceff1d862522fee51441803ecbd7bb3400c380dd88"
+    },
+    {
+      "path": "dynamics 365/dynamics-365-project-operations.svg",
+      "serviceName": "Dynamics 365 Project Operations",
+      "family": "dynamics-365",
+      "sourceAsset": "Dynamics 365 App Icons/ProjectOperations_scalable.svg",
+      "sha256": "9eb30c022127faf8576be58dc9fd7c2f7f8787e283e77d423f8b72015566ddc2"
+    },
+    {
+      "path": "dynamics 365/dynamics-365-sales-insights.svg",
+      "serviceName": "Dynamics 365 Sales Insights",
+      "family": "dynamics-365",
+      "sourceAsset": "Dynamics 365 App Icons/SalesInsights_scalable.svg",
+      "sha256": "cd66eedebd23e5d00f35701fc8f25dbaa2d52bea78ff3c700359e7caf034f58a"
+    },
+    {
+      "path": "dynamics 365/dynamics-365-sales.svg",
+      "serviceName": "Dynamics 365 Sales",
+      "family": "dynamics-365",
+      "sourceAsset": "Dynamics 365 App Icons/Sales_scalable.svg",
+      "sha256": "af510c3f019faab2488dd8bdc2d0c358188ba242aec6ce6410663be5c8cfd3f4"
+    },
+    {
+      "path": "dynamics 365/dynamics-365-supply-chain-management.svg",
+      "serviceName": "Dynamics 365 Supply Chain Management",
+      "family": "dynamics-365",
+      "sourceAsset": "Dynamics 365 App Icons/SupplyChainManagement_scalable.svg",
+      "sha256": "4590d6037d9ff7b2eb255b90d36547a4e29cfd1690444de741a29a1a9057d8a6"
+    },
+    {
+      "path": "dynamics 365/dynamics-365.svg",
+      "serviceName": "Dynamics 365",
+      "family": "dynamics-365",
+      "sourceAsset": "Dynamics 365 Product Family Icons/Dynamics365_scalable.svg",
+      "sha256": "5017e931a0f5e724247a9c49e15e22bb22e252d5343e0a40f7f38366d2aeb388"
+    },
+    {
+      "path": "power platform/agent-365.svg",
+      "serviceName": "Microsoft Agent 365",
+      "family": "power-platform",
+      "sourceAsset": "Agent365_scalable.svg",
+      "sha256": "7d7988f5d29d3d3b425bdbb1ebacdd32d74a3e0819a177ed389a99ed73cb0ed9"
+    },
+    {
+      "path": "power platform/ai-builder.svg",
+      "serviceName": "AI Builder",
+      "family": "power-platform",
+      "sourceAsset": "Power Platform/AIBuilder_scalable.svg",
+      "sha256": "09354060aae6bfd903f3ff8246e90fce8514f4c56c603e676931fd99d338cfa8"
+    },
+    {
+      "path": "power platform/copilot-studio.svg",
+      "serviceName": "Microsoft Copilot Studio",
+      "family": "power-platform",
+      "sourceAsset": "CopilotStudio_scalable.svg",
+      "sha256": "c614fa6b9b7d33048c6c4efcdd508e5b7818d296cbd1cd7d8848bb2dd1be4fd0"
+    },
+    {
+      "path": "power platform/dataverse.svg",
+      "serviceName": "Microsoft Dataverse",
+      "family": "power-platform",
+      "sourceAsset": "Power Platform/Dataverse_scalable.svg",
+      "sha256": "df71c0111148d116515a02c5cb07483caad2bcb779664fa16fd837a4709504ab"
+    },
+    {
+      "path": "power platform/power-apps.svg",
+      "serviceName": "Microsoft Power Apps",
+      "family": "power-platform",
+      "sourceAsset": "Power Platform/PowerApps_scalable.svg",
+      "sha256": "c357907ad0a2d24a6d8c82b23fe4d2aaa4a4524076991f74770fc043a4cc455a"
+    },
+    {
+      "path": "power platform/power-automate.svg",
+      "serviceName": "Microsoft Power Automate",
+      "family": "power-platform",
+      "sourceAsset": "Power Platform/PowerAutomate_scalable.svg",
+      "sha256": "2025db7bb3feec49d75681934b8561fb958cf11bdf0e2acf6e2b28db5c755e8d"
+    },
+    {
+      "path": "power platform/power-pages.svg",
+      "serviceName": "Microsoft Power Pages",
+      "family": "power-platform",
+      "sourceAsset": "Power Platform/PowerPages_scalable.svg",
+      "sha256": "7fdc8facba1b64c4e30fbed3d331ecab78746d0d29c29bae593b18788e870631"
+    },
+    {
+      "path": "power platform/power-platform.svg",
+      "serviceName": "Microsoft Power Platform",
+      "family": "power-platform",
+      "sourceAsset": "Power Platform/PowerPlatform_scalable.svg",
+      "sha256": "c58871d6adac53a51512341e65055d0ec12f29948a001666c11dc7b5bb5fe142"
+    }
+  ]
+}

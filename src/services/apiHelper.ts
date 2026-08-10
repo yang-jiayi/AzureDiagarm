@@ -384,102 +384,135 @@ export function isJsonMediaType(contentType: string): boolean {
   return /^application\/(?:[a-z0-9!#$&^_.+-]+\+)?json$/.test(mediaType);
 }
 
-export function createOpenAIProxyError(
-  result: OpenAIProxyResult,
-  options: { vision?: boolean } = {},
-): OpenAIProxyError {
-  const code = result.error?.code || `http_${result.status || 0}`;
-  let message: string;
+/**
+ * Every proxy error code that maps to a stable, pre-translatable user message.
+ * The i18n coverage test iterates this list to assert each producible English
+ * message has an exact Japanese entry, so the two can never silently drift.
+ * Codes with a purely dynamic message (the `default` fallback) are excluded.
+ */
+export const PROXY_ERROR_MESSAGE_CODES = [
+  'application_authentication_required',
+  'application_access_denied',
+  'application_request_rejected',
+  'edge_request_blocked',
+  'deployment_not_allowed',
+  'byo_not_enabled',
+  'invalid_byo_endpoint',
+  'invalid_byo_configuration',
+  'invalid_byo_provider',
+  'invalid_byo_api_key',
+  'invalid_byo_api_format',
+  'byo_authentication_failed',
+  'byo_rate_limited',
+  'byo_timeout',
+  'byo_unavailable',
+  'byo_connection_failed',
+  'byo_request_failed',
+  'credential_acquisition_failed',
+  'azure_openai_authentication_failed',
+  'deployment_not_found',
+  'proxy_rate_limit_exceeded',
+  'azure_openai_rate_limited',
+  'azure_openai_timeout',
+  'edge_origin_unavailable',
+  'azure_openai_unavailable',
+  'azure_openai_connection_failed',
+  'request_too_large',
+  'image_not_supported',
+  'content_filtered',
+  'invalid_upstream_response',
+  'azure_openai_non_json_error',
+  'network_error',
+  'invalid_upstream_request',
+] as const;
 
+/**
+ * Resolve the user-facing message for a proxy error code. Pure and exported so
+ * the i18n coverage test can enumerate every producible message. When a code
+ * carries a server-provided message (the BYO configuration codes), pass it as
+ * `byoMessage`; the static fallback returned otherwise is what the coverage
+ * test asserts a translation for.
+ */
+export function proxyErrorMessageForCode(
+  code: string,
+  options: { vision?: boolean; status?: number; byoMessage?: string } = {},
+): string {
   switch (code) {
     case 'application_authentication_required':
-      message = 'Your application session is no longer valid. Refresh the page and sign in again.';
-      break;
+      return 'Your application session is no longer valid. Refresh the page and sign in again.';
     case 'application_access_denied':
-      message = 'Your account is not allowed to use this application.';
-      break;
+      return 'Your account is not allowed to use this application.';
     case 'application_request_rejected':
-      message = 'The application authentication layer rejected the request. Refresh the page and try again.';
-      break;
+      return 'The application authentication layer rejected the request. Refresh the page and try again.';
     case 'edge_request_blocked':
-      message = 'The request was blocked before it reached the AI provider. Reduce the request size or contact the administrator.';
-      break;
+      return 'The request was blocked before it reached the AI provider. Reduce the request size or contact the administrator.';
     case 'deployment_not_allowed':
-      message = 'The selected model deployment is not allowed by the server configuration.';
-      break;
+      return 'The selected model deployment is not allowed by the server configuration.';
     case 'byo_not_enabled':
-      message = 'Bring-your-own AI endpoints are not enabled on this server.';
-      break;
+      return 'Bring-your-own AI endpoints are not enabled on this server.';
     case 'invalid_byo_endpoint':
     case 'invalid_byo_configuration':
     case 'invalid_byo_provider':
     case 'invalid_byo_api_key':
     case 'invalid_byo_api_format':
-      message = result.error?.message || 'The custom AI configuration is invalid.';
-      break;
+      return options.byoMessage || 'The custom AI configuration is invalid.';
     case 'byo_authentication_failed':
-      message = 'The custom AI endpoint rejected the API key. Check the key and try again.';
-      break;
+      return 'The custom AI endpoint rejected the API key. Check the key and try again.';
     case 'byo_rate_limited':
-      message = 'The custom AI endpoint is rate-limiting requests. Wait a moment and try again.';
-      break;
+      return 'The custom AI endpoint is rate-limiting requests. Wait a moment and try again.';
     case 'byo_timeout':
-      message = 'The custom AI endpoint is taking too long to respond. Please try again.';
-      break;
+      return 'The custom AI endpoint is taking too long to respond. Please try again.';
     case 'byo_unavailable':
     case 'byo_connection_failed':
-      message = 'The custom AI endpoint is unavailable or could not be reached.';
-      break;
+      return 'The custom AI endpoint is unavailable or could not be reached.';
     case 'byo_request_failed':
-      message = 'The custom AI endpoint rejected the request.';
-      break;
+      return 'The custom AI endpoint rejected the request.';
     case 'credential_acquisition_failed':
-      message = 'The server could not acquire an Azure OpenAI credential. Contact the administrator.';
-      break;
+      return 'The server could not acquire an Azure OpenAI credential. Contact the administrator.';
     case 'azure_openai_authentication_failed':
-      message = 'Azure OpenAI rejected the server credential. Check the managed identity role assignment.';
-      break;
+      return 'Azure OpenAI rejected the server credential. Check the managed identity role assignment.';
     case 'deployment_not_found':
-      message = 'Model or deployment not found. Check the configured name.';
-      break;
+      return 'Model or deployment not found. Check the configured name.';
     case 'proxy_rate_limit_exceeded':
-      message = 'The application request limit was reached. Wait a moment and try again.';
-      break;
+      return 'The application request limit was reached. Wait a moment and try again.';
     case 'azure_openai_rate_limited':
-      message = 'The AI provider is rate-limiting requests. Wait a moment and try again.';
-      break;
+      return 'The AI provider is rate-limiting requests. Wait a moment and try again.';
     case 'azure_openai_timeout':
     case 'edge_origin_unavailable':
-      message = 'The AI provider is taking too long to respond. Please try again.';
-      break;
+      return 'The AI provider is taking too long to respond. Please try again.';
     case 'azure_openai_unavailable':
     case 'azure_openai_connection_failed':
-      message = 'The AI provider is temporarily unavailable. Please try again.';
-      break;
+      return 'The AI provider is temporarily unavailable. Please try again.';
     case 'request_too_large':
-      message = 'The request is too large. Reduce the diagram or image size and try again.';
-      break;
+      return 'The request is too large. Reduce the diagram or image size and try again.';
     case 'image_not_supported':
-      message = 'The selected model may not support image analysis. Try using GPT-5.6 Sol.';
-      break;
+      return 'The selected model may not support image analysis. Try using GPT-5.6 Sol.';
     case 'content_filtered':
-      message = 'The AI provider content policy rejected the request. Revise the prompt and try again.';
-      break;
+      return 'The AI provider content policy rejected the request. Revise the prompt and try again.';
     case 'invalid_upstream_response':
     case 'azure_openai_non_json_error':
-      message = 'The AI provider returned an unexpected response. Please try again.';
-      break;
+      return 'The AI provider returned an unexpected response. Please try again.';
     case 'network_error':
-      message = 'The application could not reach the Azure OpenAI proxy. Check your connection and try again.';
-      break;
+      return 'The application could not reach the Azure OpenAI proxy. Check your connection and try again.';
     case 'invalid_upstream_request':
-      message = options.vision
+      return options.vision
         ? 'The selected model may not support image analysis. Try using GPT-5.6 Sol.'
         : 'The AI provider rejected the request format. Please try again or simplify the request.';
-      break;
     default:
-      message = `AI provider request failed (${result.status || 'network error'}). Please try again.`;
+      return `AI provider request failed (${options.status || 'network error'}). Please try again.`;
   }
+}
+
+export function createOpenAIProxyError(
+  result: OpenAIProxyResult,
+  options: { vision?: boolean } = {},
+): OpenAIProxyError {
+  const code = result.error?.code || `http_${result.status || 0}`;
+  let message = proxyErrorMessageForCode(code, {
+    vision: options.vision,
+    status: result.status,
+    byoMessage: typeof result.error?.message === 'string' ? result.error.message : undefined,
+  });
 
   if (result.error?.requestId) {
     message = `${message} Request ID: ${result.error.requestId}`;

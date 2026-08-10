@@ -1,6 +1,6 @@
 ---
-title: Azure Architecture Diagram Builder vs GitHub Copilot + Draw.io
-description: Feature comparison between the Azure Architecture Diagram Builder and using GitHub Copilot with the Draw.io extension for architecture diagram generation
+title: Microsoft Product Architecture Diagram Builder vs GitHub Copilot + Draw.io
+description: Feature comparison between the Microsoft Product Architecture Diagram Builder and using GitHub Copilot with the Draw.io extension for architecture diagram generation
 author: Arturo Quiroga
 ms.date: 2026-03-16
 ms.topic: concept
@@ -16,16 +16,16 @@ keywords:
 
 This document compares two approaches to generating Azure architecture diagrams:
 
-1. **Azure Architecture Diagram Builder** — an AI-powered web application purpose-built for designing, validating, and deploying Azure cloud architectures.
+1. **Microsoft Product Architecture Diagram Builder** — an AI-powered web application purpose-built for designing, validating, and deploying Azure cloud architectures.
 2. **GitHub Copilot + Draw.io extension** — a general-purpose AI coding assistant combined with a diagramming VS Code extension.
 
-These tools serve fundamentally different purposes. GitHub Copilot + Draw.io is a **code-aware reverse-engineering** tool: it reads an existing codebase in the workspace and can generate a diagram reflecting what is already built. The Azure Architecture Diagram Builder is a **forward-looking architecture design** tool: it takes a natural-language description (or an ARM template, or an image) and produces a professional, validated, cost-estimated architecture ready for deployment.
+These tools serve fundamentally different purposes. GitHub Copilot + Draw.io is a **code-aware reverse-engineering** tool: it reads an existing codebase in the workspace and can generate a diagram reflecting what is already built. The Microsoft Product Architecture Diagram Builder is a **forward-looking architecture design** tool: it takes a natural-language description (or an ARM template, or an image) and produces a professional, validated, cost-estimated architecture ready for deployment.
 
 Comparing them is like comparing a rearview mirror to a GPS. One shows where you are; the other helps plan where to go. They complement each other — they do not compete.
 
 ## Feature Comparison
 
-| Capability | Azure Architecture Diagram Builder | GitHub Copilot + Draw.io |
+| Capability | Microsoft Product Architecture Diagram Builder | GitHub Copilot + Draw.io |
 |---|---|---|
 | **Primary purpose** | Design new architectures from natural language | Document existing code in a workspace |
 | **Input** | Natural language, ARM template import, image import | Existing codebase in the IDE workspace |
@@ -50,7 +50,7 @@ Comparing them is like comparing a rearview mirror to a GPS. One shows where you
 
 ## When to Use Each Tool
 
-### Use Azure Architecture Diagram Builder when
+### Use Microsoft Product Architecture Diagram Builder when
 
 * Designing a new Azure architecture from scratch based on business requirements.
 * A customer or stakeholder describes what they need in plain English and you need a professional diagram in minutes.
@@ -73,10 +73,10 @@ The two tools occupy different stages of the architecture lifecycle:
 
 | Stage | Tool |
 |---|---|
-| **Design and planning** (idea to architecture) | Azure Architecture Diagram Builder |
+| **Design and planning** (idea to architecture) | Microsoft Product Architecture Diagram Builder |
 | **Implementation documentation** (code to diagram) | GitHub Copilot + Draw.io |
-| **Validation and cost analysis** | Azure Architecture Diagram Builder |
-| **IaC generation** | Azure Architecture Diagram Builder |
+| **Validation and cost analysis** | Microsoft Product Architecture Diagram Builder |
+| **IaC generation** | Microsoft Product Architecture Diagram Builder |
 | **Ongoing code documentation** | GitHub Copilot + Draw.io |
 
-The Azure Architecture Diagram Builder does not need workspace code access because its purpose is not to document existing code — it is to **design, validate, cost-estimate, and generate deployable architectures** from requirements. That is a fundamentally different and complementary workflow.
+The Microsoft Product Architecture Diagram Builder does not need workspace code access because its purpose is not to document existing code — it is to **design, validate, cost-estimate, and generate deployable architectures** from requirements. That is a fundamentally different and complementary workflow.

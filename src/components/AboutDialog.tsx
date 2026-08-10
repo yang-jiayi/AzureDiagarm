@@ -45,7 +45,7 @@ export default function AboutDialog({ isOpen, onClose }: AboutDialogProps) {
             </span>
             <div>
               <span className="about-dialog-eyebrow">{text('About this application', 'このアプリについて')}</span>
-              <h2 id="about-dialog-title">Azure Architecture Diagram Builder</h2>
+              <h2 id="about-dialog-title">Microsoft Product Architecture Diagram Builder</h2>
             </div>
           </div>
           <button
@@ -62,8 +62,8 @@ export default function AboutDialog({ isOpen, onClose }: AboutDialogProps) {
         <div className="about-dialog-body">
           <p className="about-dialog-summary">
             {text(
-              'An independent, community-maintained fork for designing, reviewing, and sharing Azure architectures.',
-              'Azure アーキテクチャの設計、レビュー、共有に対応した、独立したコミュニティ運営のフォークです。',
+              'An independent, community-maintained fork for designing, reviewing, and sharing Microsoft product architectures across Azure, Microsoft Fabric, Power Platform, and Dynamics 365.',
+              'Azure、Microsoft Fabric、Power Platform、Dynamics 365 にわたる Microsoft 製品アーキテクチャの設計、レビュー、共有に対応した、独立したコミュニティ運営のフォークです。',
             )}
           </p>
 

@@ -1,6 +1,6 @@
 # WAF Scoring Methodology
 
-> How the Azure Architecture Diagram Builder validates generated architectures against the Azure Well-Architected Framework (WAF).
+> How the Microsoft Product Architecture Diagram Builder validates generated architectures against the Azure Well-Architected Framework (WAF).
 
 **Audience:** Reviewers, architects, and stakeholders who want to understand how the validation score is produced, what its limits are, and how to interpret findings responsibly.
 

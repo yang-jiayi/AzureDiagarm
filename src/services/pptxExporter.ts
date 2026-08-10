@@ -25,10 +25,16 @@ import { generateModelFilename } from '../utils/modelNaming';
 import { rasterizeIcons, type RasterizedIcon } from '../utils/exportIconRaster';
 import {
   buildExportRoutes,
+  categoryStyle,
   collectExportBoxes,
-  computeBounds,
+  computeContentBounds,
   computeFitTransform,
+  metaSubline,
   partitionBoxes,
+  stripHash,
+  truncateLabel,
+  usedConnectionLegend,
+  zoneStyleFor,
   type ExportBox,
   type ExportRoute,
   type FitTransform,
@@ -101,37 +107,10 @@ export interface DiagramShapeSource {
 
 // ─── Native (editable) diagram rendering ─────────────────────────────────────
 
-/** Category tints reused from the interactive HTML export for visual parity. */
-const CATEGORY_STYLES: Record<string, { bg: string; border: string }> = {
-  'ai + machine learning': { bg: 'E8F0FE', border: '4285F4' },
-  'app services': { bg: 'E8F4FD', border: '0078D4' },
-  compute: { bg: 'E8F4FD', border: '0078D4' },
-  databases: { bg: 'E6F4EA', border: '0B8043' },
-  storage: { bg: 'E6F4EA', border: '137333' },
-  networking: { bg: 'FFF3E0', border: 'E65100' },
-  analytics: { bg: 'F3E8FD', border: '7B1FA2' },
-  containers: { bg: 'E0F7FA', border: '00838F' },
-  integration: { bg: 'FCE4EC', border: 'C62828' },
-  identity: { bg: 'FFF8E1', border: 'F9A825' },
-  'management + governance': { bg: 'F1F8E9', border: '558B2F' },
-  iot: { bg: 'E0F2F1', border: '00695C' },
-  monitor: { bg: 'EDE7F6', border: '5E35B1' },
-  security: { bg: 'FFEBEE', border: 'C62828' },
-  web: { bg: 'E3F2FD', border: '1565C0' },
-  other: { bg: 'FFFFFF', border: '94A3B8' },
-};
-
-const GROUP_PALETTE = [
-  { bg: 'F0F6FF', border: '0078D4' },
-  { bg: 'F0FFF4', border: '00B294' },
-  { bg: 'FFFBEB', border: 'D97706' },
-  { bg: 'F8F0FF', border: '8764B8' },
-  { bg: 'FFF1F2', border: 'D13438' },
-  { bg: 'ECFEFF', border: '038387' },
-];
-
-function styleForBox(box: ExportBox): { bg: string; border: string } {
-  return CATEGORY_STYLES[box.category] ?? CATEGORY_STYLES.other;
+/** Shared category tint (bare hex for pptxgenjs) — one source of truth. */
+function styleForBox(box: ExportBox): { bg: string; border: string; text: string } {
+  const style = categoryStyle(box.category);
+  return { bg: stripHash(style.bg), border: stripHash(style.border), text: stripHash(style.text) };
 }
 
 function clamp(value: number, min: number, max: number): number {
@@ -153,21 +132,35 @@ function toInches(point: Point, transform: FitTransform): Point {
   };
 }
 
+/** PowerPoint dash preset for each canonical connection type. */
+function pptxDashType(route: ExportRoute): 'solid' | 'dash' | 'sysDot' | 'dashDot' {
+  if (!route.dashed) return 'solid';
+  switch (route.connectionType) {
+    case 'optional':
+    case 'security':
+      return 'sysDot';
+    case 'telemetry':
+      return 'dashDot';
+    default:
+      return 'dash';
+  }
+}
+
 function addConnector(
   pptx: PptxGenJS,
   slide: Slide,
   route: ExportRoute,
   transform: FitTransform,
-  color: string,
 ): void {
   const points = route.points.map((point) => toInches(point, transform));
   if (points.length < 2) return;
 
   const lineProps = {
-    color,
-    width: 1.25,
-    dashType: route.dashed ? ('dash' as const) : ('solid' as const),
+    color: stripHash(route.color),
+    width: route.connectionType === 'optional' ? 1 : 1.25,
+    dashType: pptxDashType(route),
     endArrowType: 'triangle' as const,
+    transparency: route.opacity < 1 ? Math.round((1 - route.opacity) * 100) : undefined,
   };
 
   if (points.length === 2) {
@@ -217,12 +210,15 @@ function addConnectorLabel(
 ): void {
   if (!route.label) return;
   const anchor = toInches(route.labelAnchor, transform);
-  const text = truncate(route.label, 42);
-  const w = clamp(text.length * fontSize * 0.0105 + 0.16, 0.5, 1.9);
-  const h = text.length > 26 ? 0.34 : 0.22;
+  // De-collide parallel-edge chips: stagger each ordinal along the segment so
+  // they never pile into one unreadable stack.
+  const stagger = route.ordinal === 0 ? 0 : (route.ordinal % 2 === 1 ? 1 : -1) * Math.ceil(route.ordinal / 2) * 0.2;
+  const text = truncateLabel(route.label, 48);
+  const w = clamp(text.length * fontSize * 0.011 + 0.2, 0.6, 2.4);
+  const h = text.length > 30 ? 0.4 : 0.24;
   slide.addText(text, {
     x: anchor.x - w / 2,
-    y: anchor.y - h / 2,
+    y: anchor.y - h / 2 + stagger,
     w,
     h,
     shape: 'roundRect',
@@ -289,11 +285,16 @@ function addNodeShape(
   }
 
   const fontSize = clamp(Math.round(h * 12), 6, 11);
-  slide.addText(truncate(box.label, 46), {
+  const meta = metaSubline(box);
+  // Reserve a slim band for the SKU · region · cost sub-line when there's room.
+  const metaFontSize = clamp(fontSize - 2, 5, 8);
+  const showMeta = !!meta && textHeight > 0.34;
+  const labelH = showMeta ? Math.max(0.12, textHeight - 0.16) : textHeight;
+  slide.addText(truncateLabel(box.label, 40), {
     x: topLeft.x + 0.03,
     y: textTop,
     w: w - 0.06,
-    h: textHeight,
+    h: labelH,
     fontSize,
     color: '1F2937',
     fontFace: 'Yu Gothic UI',
@@ -302,6 +303,21 @@ function addNodeShape(
     wrap: true,
     objectName: `service-label-${box.id}`,
   });
+  if (showMeta) {
+    slide.addText(truncateLabel(meta, 44), {
+      x: topLeft.x + 0.03,
+      y: topLeft.y + h - pad - 0.16,
+      w: w - 0.06,
+      h: 0.15,
+      fontSize: metaFontSize,
+      color: '64748B',
+      fontFace: 'Yu Gothic UI',
+      align: 'center',
+      valign: 'bottom',
+      wrap: false,
+      objectName: `service-meta-${box.id}`,
+    });
+  }
 }
 
 function addGroupShape(
@@ -314,7 +330,9 @@ function addGroupShape(
   const topLeft = toInches({ x: box.x, y: box.y }, transform);
   const w = box.w * transform.scale;
   const h = box.h * transform.scale;
-  const palette = GROUP_PALETTE[index % GROUP_PALETTE.length];
+  const palette = zoneStyleFor(box, index);
+  const bg = stripHash(palette.bg);
+  const border = stripHash(palette.border);
 
   slide.addShape(pptx.ShapeType.roundRect, {
     x: topLeft.x,
@@ -322,22 +340,70 @@ function addGroupShape(
     w,
     h,
     rectRadius: 0.06,
-    fill: { color: palette.bg, transparency: 15 },
-    line: { color: palette.border, width: 1, dashType: 'dash' },
+    fill: { color: bg, transparency: 15 },
+    line: { color: border, width: 1, dashType: 'dash' },
     objectName: `zone-${box.id}`,
   });
-  slide.addText(truncate(box.label, 48), {
+  // Let a long zone title wrap to two lines instead of clipping at a fixed band.
+  const titleH = clamp(h * 0.16, 0.24, 0.5);
+  slide.addText(truncateLabel(box.label, 60), {
     x: topLeft.x + 0.06,
     y: topLeft.y + 0.04,
     w: Math.max(0.4, w - 0.12),
-    h: 0.24,
+    h: titleH,
     fontSize: clamp(Math.round(h * 5), 8, 12),
     bold: true,
-    color: palette.border,
+    color: border,
     fontFace: 'Yu Gothic UI',
     align: 'left',
-    valign: 'middle',
+    valign: 'top',
+    wrap: true,
+    lineSpacingMultiple: 0.9,
     objectName: `zone-label-${box.id}`,
+  });
+}
+
+/** Small colour key so the deck agrees with the PNG's connection legend. */
+function addConnectionLegend(
+  pptx: PptxGenJS,
+  slide: Slide,
+  edges: Edge[],
+  frame: DiagramFrame,
+): void {
+  const entries = usedConnectionLegend(edges);
+  if (entries.length === 0) return;
+
+  const rowH = 0.2;
+  const swatchW = 0.34;
+  const boxW = 2.35;
+  const boxH = rowH * entries.length + 0.16;
+  const x = frame.x + 0.05;
+  const y = frame.y + frame.h - boxH - 0.02;
+
+  slide.addShape(pptx.ShapeType.roundRect, {
+    x, y, w: boxW, h: boxH,
+    rectRadius: 0.04,
+    fill: { color: 'FFFFFF', transparency: 8 },
+    line: { color: 'CBD5E1', width: 0.5 },
+    objectName: 'connection-legend',
+  });
+  entries.forEach((entry, i) => {
+    const ly = y + 0.08 + i * rowH;
+    slide.addShape(pptx.ShapeType.line, {
+      x: x + 0.1, y: ly + rowH / 2 - 0.02, w: swatchW, h: 0,
+      line: {
+        color: stripHash(entry.color),
+        width: 1.5,
+        dashType: entry.dashed ? (entry.type === 'telemetry' ? 'dashDot' : entry.type === 'async' ? 'dash' : 'sysDot') : 'solid',
+      },
+    });
+    slide.addText(entry.label, {
+      x: x + 0.1 + swatchW + 0.08, y: ly - 0.02, w: boxW - swatchW - 0.3, h: rowH,
+      fontSize: 8,
+      color: '475569',
+      fontFace: 'Yu Gothic UI',
+      valign: 'middle',
+    });
   });
 }
 
@@ -351,14 +417,14 @@ async function addEditableDiagram(
   slide: Slide,
   diagram: DiagramShapeSource,
   frame: DiagramFrame,
-  isDarkMode: boolean,
+  _isDarkMode: boolean,
 ): Promise<boolean> {
   const boxes = collectExportBoxes(diagram.nodes ?? []);
   if (boxes.size === 0) return false;
   const { groups, services } = partitionBoxes(boxes);
   if (services.length === 0) return false;
 
-  const bounds = computeBounds(boxes.values());
+  const bounds = computeContentBounds(boxes.values());
   const transform = computeFitTransform(bounds, frame, { maxScale: 1 / 96 });
   const routes = buildExportRoutes(diagram.edges ?? [], boxes);
   const icons = await rasterizeIcons(services.map((service) => service.iconPath), 128);
@@ -368,12 +434,14 @@ async function addEditableDiagram(
     addNodeShape(pptx, slide, service, transform, service.iconPath ? icons.get(service.iconPath) : undefined);
   }
 
-  const connectorColor = isDarkMode ? '94A3B8' : '64748B';
-  for (const route of routes) addConnector(pptx, slide, route, transform, connectorColor);
+  for (const route of routes) addConnector(pptx, slide, route, transform);
   // Labels are drawn after every connector so a chip is never hidden by a line
   // that is rendered later.
   const labelFontSize = clamp(Math.round(transform.scale * 850), 7, 10);
   for (const route of routes) addConnectorLabel(slide, route, transform, labelFontSize);
+
+  // Colour key so the deck's connectors agree with the PNG legend.
+  addConnectionLegend(pptx, slide, diagram.edges ?? [], frame);
 
   return true;
 }
@@ -395,8 +463,8 @@ export async function buildDiagramSlidePptx(
   pptx.layout = 'LAYOUT_WIDE';
   pptx.author = author;
   pptx.title = diagramName;
-  pptx.subject = 'Azure Architecture Diagram';
-  pptx.company = 'Microsoft Azure';
+  pptx.subject = 'Microsoft Product Architecture Diagram';
+  pptx.company = 'Swarm Data SE, Jiayi Yang';
 
   const slide = pptx.addSlide();
 
@@ -468,7 +536,7 @@ export async function buildDiagramSlidePptx(
   }
 
   // ── Footer text ──────────────────────────────────────────────────────────────
-  slide.addText('Generated by Azure Architecture Diagram Builder  ·  microsoft.com/azure', {
+  slide.addText('Generated by Microsoft Product Architecture Diagram Builder  ·  Swarm Data SE, Jiayi Yang', {
     x: 0.35, y: FOOTER_Y, w: W - 0.7, h: FOOTER_H,
     fontSize: 8,
     color: t.footerText,
@@ -608,7 +676,7 @@ function addChrome(pptx: PptxGenJS, slide: Slide, t: SlideTheme, title: string, 
     slide.addText(meta, { x: 9.9, y: ACCENT_H + 0.05, w: 3.08, h: HEADER_H - 0.1, fontSize: 10, color: t.metaText, fontFace: 'Yu Gothic UI', align: 'right', valign: 'middle' });
   }
   slide.addShape(pptx.ShapeType.rect, { x: 0, y: HEADER_END, w: W, h: SEP_H, fill: { color: t.accent }, line: { color: t.accent, width: 0 } });
-  slide.addText('Generated by Azure Architecture Diagram Builder  ·  microsoft.com/azure', { x: 0.35, y: FOOTER_Y, w: W - 0.7, h: FOOTER_H, fontSize: 8, color: t.footerText, fontFace: 'Yu Gothic UI', valign: 'middle' });
+  slide.addText('Generated by Microsoft Product Architecture Diagram Builder  ·  Swarm Data SE, Jiayi Yang', { x: 0.35, y: FOOTER_Y, w: W - 0.7, h: FOOTER_H, fontSize: 8, color: t.footerText, fontFace: 'Yu Gothic UI', valign: 'middle' });
 }
 
 /** Slide 1 — title / cover. */

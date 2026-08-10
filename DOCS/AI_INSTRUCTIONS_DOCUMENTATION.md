@@ -3,7 +3,7 @@
 **Last Updated**: July 2026  
 **Models Supported**: 12 via Azure OpenAI / Azure AI Foundry (GPT-5.1, GPT-5.2, GPT-5.2 Codex, GPT-5.3 Codex, GPT-5.4, GPT-5.4 Mini, DeepSeek V3.2 Speciale, DeepSeek V4 Pro, Grok 4.1 Fast, Grok 4.3, Mistral Large 3, Kimi K2.5)
 
-This document details the AI instructions (system prompts) for all three agents in the Azure Architecture Diagram Builder application. Each agent supports multi-model selection.
+This document details the AI instructions (system prompts) for all three agents in the Microsoft Product Architecture Diagram Builder application. Each agent supports multi-model selection.
 
 ---
 

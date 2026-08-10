@@ -1,4 +1,4 @@
-# Azure Architecture Diagram Builder
+# Microsoft Product Architecture Diagram Builder
 
 <div align="center">
 
@@ -11,7 +11,7 @@
 ![Mistral](https://img.shields.io/badge/Mistral-FF7000?style=for-the-badge&logoColor=white)
 ![Kimi](https://img.shields.io/badge/Kimi-1A1A1A?style=for-the-badge&logoColor=white)
 
-**A professional AI-powered tool for designing, validating, and deploying Azure cloud architectures**
+**A professional AI-powered tool for designing, validating, and deploying Microsoft cloud architectures across Azure, Microsoft Fabric, Power Platform, and Dynamics 365**
 
 [Live Demo](https://azurediagarm.mssql.biz) • [Upstream Project](https://github.com/Arturo-Quiroga-MSFT/azure-architecture-diagram-builder) • [Documentation](DOCS/ARCHITECTURE.md) • [Report Bug](../../issues)
 
@@ -35,7 +35,7 @@ The latest customization and production hardening were created by **Swarm Data S
 
 ## 📖 Overview
 
-Azure Architecture Diagram Builder is an enterprise-grade web application that empowers cloud architects to design, visualize, validate, and deploy Azure solutions. Leveraging **15 AI models** across multiple providers — **GPT-5.1, GPT-5.2, GPT-5.4, GPT-5.4 Mini, GPT-5.6 Sol, GPT-5.6 Terra, GPT-5.6 Luna, Claude Opus 5, DeepSeek V3.2 Speciale, DeepSeek V4 Pro, Grok 4.1 Fast, Grok 4.3, Mistral Large 3, Kimi K2.5, and Kimi K2.7 Code** (via Azure OpenAI and Microsoft Foundry model deployments) — it transforms natural language descriptions into professional architecture diagrams while providing real-time cost estimates, Well-Architected Framework validation, multi-model comparison, and Infrastructure as Code generation.
+Microsoft Product Architecture Diagram Builder is an enterprise-grade web application that empowers cloud architects to design, visualize, validate, and deploy Azure solutions. Leveraging **15 AI models** across multiple providers — **GPT-5.1, GPT-5.2, GPT-5.4, GPT-5.4 Mini, GPT-5.6 Sol, GPT-5.6 Terra, GPT-5.6 Luna, Claude Opus 5, DeepSeek V3.2 Speciale, DeepSeek V4 Pro, Grok 4.1 Fast, Grok 4.3, Mistral Large 3, Kimi K2.5, and Kimi K2.7 Code** (via Azure OpenAI and Microsoft Foundry model deployments) — it transforms natural language descriptions into professional architecture diagrams while providing real-time cost estimates, Well-Architected Framework validation, multi-model comparison, and Infrastructure as Code generation.
 
 Beyond editable **topology** diagrams, the app can also produce polished, whiteboard-style **Blueprint** diagrams (BETA) as shareable PNGs — ideal for presentations and design reviews.
 
@@ -183,6 +183,14 @@ Design **Microsoft Fabric** data platforms alongside core Azure services:
 - **Capacity-aware costing** — Fabric Capacity (F-SKU) carries the cost; compute items show an **“incl. capacity”** badge instead of double-counting, and OneLake is billed as usage-based storage. The full F2→F2048 ladder (PAYG + 1-yr reserved) is built in.
 - **Fabric example prompts** — medallion lakehouse, real-time intelligence, and Direct Lake Power BI scenarios
 
+### 🟪 Power Platform, Copilot Studio & Dynamics 365 Support
+Design business-application architectures next to Azure and Fabric, using Microsoft's current first-party logos:
+- **8 Power Platform icons** — Power Platform, Power Apps, Power Automate, Power Pages, Dataverse, AI Builder, **Microsoft Copilot Studio**, and **Microsoft Agent 365**, from the official December 2025 Power Platform icon package.
+- **16 Dynamics 365 icons** — the Dynamics 365 product family plus Sales, Sales Insights, Customer Service, Contact Center, Customer Insights, Customer Voice, Field Service, Finance, Finance and Operations, Supply Chain Management, Commerce, Human Resources, Intelligent Order Management, Project Operations, and Business Central.
+- **Two dedicated palette categories** with bilingual (EN/JA) labels, descriptions, and search keywords.
+- **AI-aware naming** — legacy and shorthand names resolve to the right icon (`Power Virtual Agents` → Copilot Studio, `Dynamics NAV` → Business Central, `D365 Sales` → Dynamics 365 Sales), and the generation prompt knows to group these products around **Microsoft Dataverse**.
+- **Honest costing** — these products are licensed per user, so they never carry a fabricated Azure meter cost.
+
 ### ❓ Help & Learn Panel
 An in-app **Help** button opens a centered guide so new users can get productive fast — Quick Start, a feature tour, example prompts, tips & FAQ, and resource links. (Opening it fires a `Help_Opened` telemetry event.)
 
@@ -203,12 +211,12 @@ A built-in feedback widget captures a rating, category, and optional free-text c
 - Entra-authenticated cloud autosave with immutable snapshots, comments, optimistic concurrency, and revocable viewer/editor links
 
 ### 🎨 Professional Diagramming
-- **Complete official Azure V24 icon package** — all 714 SVGs from Microsoft's July 2026 package, hash-verified from a committed manifest, plus the Microsoft Fabric icon set
-- **Purpose-based icon catalog** — 21 bilingual categories organize services by meaning while preserving all 29 official source folders for compatibility
+- **Complete official Azure V24 icon package** — all 714 SVGs from Microsoft's July 2026 package, hash-verified from a committed manifest, plus the Microsoft Fabric, Power Platform, and Dynamics 365 icon sets
+- **Purpose-based icon catalog** — 23 bilingual categories organize services by meaning while preserving every official source folder for compatibility
 - **Semantic icon search** — search names, acronyms, aliases, categories, purposes, and Japanese keywords
 - **Personal icon workspace** — favorites, recently used services, and custom collections persist locally
-- **Virtualized catalog rendering** — only visible rows are mounted, keeping the complete 807-icon catalog responsive
-- **89+ AI-mapped services** — with pricing, categories, and icon resolution (including ~21 Microsoft Fabric items)
+- **Virtualized catalog rendering** — only visible rows are mounted, keeping the complete 830-icon catalog responsive
+- **185+ AI-mapped services** — with pricing, categories, and icon resolution (including Microsoft Fabric items, Power Platform, and Dynamics 365 applications)
 - **Smart Grouping** — Logical organization (Frontend, Backend, Data, Security)
 - **Editable Connections** — Labels, direction, per-edge animation, and custom styling
 - **Alignment Tools** — Professional layout assistance
@@ -629,14 +637,28 @@ npm run dev:avatar
 ### Official Icon Library Maintenance
 
 ```bash
-npm run icons:sync   # discover and overlay the current official Microsoft package
-npm run test:icons   # verify all manifest files and SHA-256 hashes
+npm run icons:sync             # overlay every official Microsoft icon package
+npm run icons:sync:azure       # Azure architecture icons only
+npm run icons:sync:fabric      # Microsoft Fabric icons only
+npm run icons:sync:microsoft   # Power Platform + Dynamics 365 icons only
+npm run icons:check:microsoft  # fail if the pinned packages drifted from the catalog
+npm run test:icons             # verify all manifest files and SHA-256 hashes
 ```
 
 The sync is additive: it preserves legacy paths used by saved diagrams and service mappings.
-Official Azure icon assets remain subject to Microsoft's
-[Azure icon terms](https://learn.microsoft.com/azure/architecture/icons/), not this
-repository's MIT License.
+Official Microsoft icon assets remain subject to Microsoft's own terms, not this repository's
+MIT License:
+
+| Icon set | Terms |
+| --- | --- |
+| Azure architecture icons | [Azure icon terms](https://learn.microsoft.com/azure/architecture/icons/) |
+| Microsoft Fabric icons | [Fabric icon terms](https://learn.microsoft.com/fabric/fundamentals/icons) |
+| Power Platform & Copilot Studio icons | [Power Platform icon terms](https://learn.microsoft.com/power-platform/guidance/icons) |
+| Dynamics 365 icons | [Dynamics 365 icon terms](https://learn.microsoft.com/dynamics365/get-started/icons) |
+
+Microsoft permits these icons in architectural diagrams, training materials, and documentation.
+They must not be cropped, flipped, rotated, or distorted, and must not be used to represent a
+non-Microsoft product.
 
 #### Avatar narrator troubleshooting
 
@@ -888,7 +910,7 @@ azure-diagrams/
 │   ├── update_aca.sh         # Author's ACA deployment (hardcoded resources)
 │   ├── deploy-mcp-instance.sh  # Deploy the isolated MCP server ACA instance
 │   └── fetch-multi-region-pricing.sh  # Refresh per-region pricing (npm run pricing:refresh)
-├── Azure_Public_Service_Icons/  # 714 official Azure icons (29 categories)
+├── Azure_Public_Service_Icons/  # 714 Azure + 83 Fabric + 24 Power Platform/Dynamics 365 icons
 ├── mcp-server/               # MCP server (12 tools + 3 resources + 3 prompts, stdio + HTTP, Bearer auth)
 │   └── src/                  # serviceCatalog, wafDetector, layoutEngine, svgRenderer, htmlRenderer
 ├── SCOUT/                    # Microsoft Scout integration notes & sample session

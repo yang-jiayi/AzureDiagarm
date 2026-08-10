@@ -236,7 +236,7 @@ const VersionHistoryModal: React.FC<VersionHistoryModalProps> = ({
     if (!selectedVersionData || selectedDiffKeys.size === 0) return;
     const confirmed = window.confirm(localize(language, {
       en: `Apply ${selectedDiffKeys.size} selected historical change${selectedDiffKeys.size === 1 ? '' : 's'} to the current diagram? A backup snapshot will be created first.`,
-      ja: `選択した${selectedDiffKeys.size}件の過去変更を現在の図面へ適用しますか？ 先にバックアップ スナップショットを作成します。`,
+      ja: `選択した${selectedDiffKeys.size}件の過去変更を現在の図へ適用しますか？ 先にバックアップ スナップショットを作成します。`,
     }));
     if (!confirmed) return;
     const generation = operationGenerationRef.current.advance();
@@ -426,12 +426,12 @@ const VersionHistoryModal: React.FC<VersionHistoryModalProps> = ({
                     <span>
                       <h3>{localize(language, {
                         en: 'Compare with current diagram',
-                        ja: '現在の図面と比較',
+                        ja: '現在の図と比較',
                       })}</h3>
                       <p>{selectedVersionData.diagramName}</p>
                     </span>
                   </div>
-                  <div className="version-diff-summary" aria-label={localize(language, {
+                  <div className="version-diff-summary" role="group" aria-label={localize(language, {
                     en: 'Difference summary',
                     ja: '差分の概要',
                   })}>
@@ -449,14 +449,14 @@ const VersionHistoryModal: React.FC<VersionHistoryModalProps> = ({
                   diff={selectedDiff}
                   ariaLabel={localize(language, {
                     en: 'Diagram preview showing added, removed, and changed elements',
-                    ja: '追加、削除、変更された要素を示す図面プレビュー',
+                    ja: '追加、削除、変更されたノードを示す図プレビュー',
                   })}
                 />
 
                 {selectedDiff.items.length === 0 ? (
                   <p className="version-no-differences">{localize(language, {
                     en: 'This version has the same diagram elements as the current canvas.',
-                    ja: 'このバージョンの図面要素は現在のキャンバスと同じです。',
+                    ja: 'このバージョンのノードは現在のキャンバスと同じです。',
                   })}</p>
                 ) : (
                   <>
@@ -535,7 +535,7 @@ const VersionHistoryModal: React.FC<VersionHistoryModalProps> = ({
                       <span className={`version-badge ${currentLineage ? 'current' : 'copy'}`}>
                         {localize(language, {
                           en: currentLineage ? 'Current diagram' : 'Restore as copy',
-                          ja: currentLineage ? '現在の図面' : 'コピーとして復元',
+                          ja: currentLineage ? '現在の図' : 'コピーとして復元',
                         })}
                       </span>
                       {version.validationScore !== undefined && (

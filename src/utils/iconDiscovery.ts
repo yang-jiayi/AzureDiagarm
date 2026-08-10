@@ -1,13 +1,20 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+export type PaletteIconSource =
+  | 'official-azure'
+  | 'fabric'
+  | 'power-platform'
+  | 'dynamics-365'
+  | 'supplemental';
+
 interface PaletteIconCandidate {
   id: string;
   name: string;
   category: string;
   paletteCategory: string;
   path: string;
-  source: 'official-azure' | 'fabric' | 'supplemental';
+  source: PaletteIconSource;
 }
 
 export interface HighlightSegment {
@@ -35,6 +42,8 @@ const SOURCE_HINTS: Record<string, string[]> = {
   storage: ['storage'],
   migration: ['migration'],
   fabric: ['fabric'],
+  'power-platform': ['power platform'],
+  'dynamics-365': ['dynamics 365'],
 };
 
 export function normalizeIconDiscoveryText(value: string): string {
@@ -50,7 +59,13 @@ function candidateScore(icon: PaletteIconCandidate): number {
   const category = normalizeIconDiscoveryText(icon.category);
   const name = normalizeIconDiscoveryText(icon.name);
   const hints = SOURCE_HINTS[icon.paletteCategory] || [];
-  let score = icon.source === 'official-azure' ? 30 : icon.source === 'fabric' ? 20 : 10;
+  let score = icon.source === 'official-azure'
+    ? 30
+    : icon.source === 'power-platform' || icon.source === 'dynamics-365'
+      ? 25
+      : icon.source === 'fabric'
+        ? 20
+        : 10;
 
   if (category === name) score += 120;
   if (hints.includes(category)) score += 80;

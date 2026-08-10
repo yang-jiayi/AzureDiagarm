@@ -227,4 +227,4 @@ const EditableEdge: React.FC<EdgeProps> = ({
   );
 };
 
-export default EditableEdge;
+export default React.memo(EditableEdge);

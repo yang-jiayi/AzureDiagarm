@@ -2,7 +2,7 @@
   "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
   "contentVersion": "1.0.0.0",
   "metadata": {
-    "description": "Azure Architecture Diagram Builder — LLM Cost Monitor workbook. Estimates Azure OpenAI / Foundry spend from the App Insights custom event 'AI_Model_Usage' (model, operation, promptTokens, completionTokens, totalTokens). Cost is ESTIMATED using an editable per-model $/1M-token table; actual billed cost is in Cost Management (see scripts/llm-cost-report.py)."
+    "description": "Microsoft Product Architecture Diagram Builder — LLM Cost Monitor workbook. Estimates Azure OpenAI / Foundry spend from the App Insights custom event 'AI_Model_Usage' (model, operation, promptTokens, completionTokens, totalTokens). Cost is ESTIMATED using an editable per-model $/1M-token table; actual billed cost is in Cost Management (see scripts/llm-cost-report.py)."
   },
   "parameters": {
     "appInsightsResourceId": {

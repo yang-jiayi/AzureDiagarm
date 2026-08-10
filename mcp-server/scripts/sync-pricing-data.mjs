@@ -3,10 +3,15 @@
 // Licensed under the MIT License.
 
 /**
- * Build-time helper: distill the web app's raw Azure Retail Prices JSON
- * (src/data/pricing/regions/<region>/<service>.json — ~25 MB across 8 regions)
- * into a compact per-region sidecar the MCP server can bundle and query at
- * runtime WITHOUT shipping the full dataset.
+ * Build-time helper: distill the web app's Azure Retail Prices JSON
+ * (public/pricing/regions/<region>/<service>.json) into a compact per-region
+ * sidecar the MCP server can bundle and query at runtime WITHOUT shipping the
+ * full dataset.
+ *
+ * Those files are compacted in place by scripts/prep-pricing-data.mjs (hoisted
+ * ServiceName/type, dropped read-never fields), so they are expanded here with
+ * the very same `expandPricingData` the browser runtime uses. Reading them raw
+ * would silently distil zero entries, because `type` no longer exists per item.
  *
  * This mirrors sync-icon-map.mjs: the source of truth stays in the web app;
  * we generate a small derived artifact (src/pricing.generated.json, a few KB).
@@ -24,11 +29,29 @@
 import { readFileSync, writeFileSync, readdirSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve, basename } from 'node:path';
+import { expandPricingData } from '../../scripts/prep-pricing-data.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..', '..');
-const regionsRoot = resolve(repoRoot, 'src', 'data', 'pricing', 'regions');
+const regionsRoot = resolve(repoRoot, 'public', 'pricing', 'regions');
 const outPath = resolve(here, '..', 'src', 'pricing.generated.json');
+
+/**
+ * Read one compacted pricing file and restore the shape the distillers expect.
+ * `PricesAsOf` is the file-level vintage hoisted by the compaction step, since
+ * per-item `effectiveStartDate` is dropped there.
+ */
+function loadPricingFile(filePath) {
+  let compact;
+  try {
+    compact = JSON.parse(readFileSync(filePath, 'utf8'));
+  } catch {
+    return null;
+  }
+  const expanded = expandPricingData(compact);
+  const pricesAsOf = typeof compact?.PricesAsOf === 'string' ? compact.PricesAsOf : null;
+  return { ...expanded, pricesAsOf };
+}
 
 // Files kept as honest catalog ranges. Foundry (AI) meters are usage-based
 // (per-token / per-transaction) so a representative monthly is misleading; they
@@ -105,16 +128,11 @@ function modeOrDefault(nums, fallback) {
  * web app's getFabricRegionalPricing.
  */
 function distillFabric(filePath) {
-  let parsed;
-  try {
-    parsed = JSON.parse(readFileSync(filePath, 'utf8'));
-  } catch {
-    return null;
-  }
+  const parsed = loadPricingFile(filePath);
+  if (!parsed) return null;
   const items = Array.isArray(parsed.Items) ? parsed.Items : [];
   const currency = parsed.BillingCurrency || 'USD';
   const rates = [];
-  let newestDate = '';
   for (const i of items) {
     if (
       i.type === 'Consumption' &&
@@ -123,7 +141,6 @@ function distillFabric(filePath) {
     ) {
       const r = i.retailPrice || i.unitPrice || 0;
       if (r > 0) rates.push(r);
-      if (i.effectiveStartDate && i.effectiveStartDate > newestDate) newestDate = i.effectiveStartDate;
     }
   }
   if (rates.length === 0) return null;
@@ -139,7 +156,7 @@ function distillFabric(filePath) {
     sampleSku: 'F8',
     expectedBasis: 'fabric-capacity:F8',
     tierCount: 3,
-    pricesAsOf: newestDate ? newestDate.slice(0, 10) : null,
+    pricesAsOf: parsed.pricesAsOf,
   };
 }
 
@@ -148,12 +165,8 @@ function distillFabric(filePath) {
  * Returns null when there is no usable Consumption pricing.
  */
 function distillFile(filePath, stem) {
-  let parsed;
-  try {
-    parsed = JSON.parse(readFileSync(filePath, 'utf8'));
-  } catch {
-    return null;
-  }
+  const parsed = loadPricingFile(filePath);
+  if (!parsed) return null;
   const items = Array.isArray(parsed.Items) ? parsed.Items : [];
   const currency = parsed.BillingCurrency || 'USD';
 
@@ -165,17 +178,12 @@ function distillFile(filePath, stem) {
   // Dedupe to the cheapest monthly per SKU (matches web app tier parsing).
   const perSku = new Map();
   const savingsRatios = [];
-  let newestDate = '';
 
   for (const item of consumption) {
     const sku = item.skuName || item.armSkuName;
     if (!sku) continue;
     const monthly = monthlyFromItem(item);
     if (!perSku.has(sku) || monthly < perSku.get(sku)) perSku.set(sku, monthly);
-
-    if (item.effectiveStartDate && item.effectiveStartDate > newestDate) {
-      newestDate = item.effectiveStartDate;
-    }
 
     // 1-Year savings-plan ratio (reserved-term discount) when present.
     const plans = Array.isArray(item.savingsPlan) ? item.savingsPlan : [];
@@ -238,7 +246,7 @@ function distillFile(filePath, stem) {
     sampleSku,
     expectedBasis,
     tierCount: monthlies.length,
-    pricesAsOf: newestDate ? newestDate.slice(0, 10) : null,
+    pricesAsOf: parsed.pricesAsOf,
   };
 }
 
@@ -254,7 +262,7 @@ function main() {
 
   const out = {
     generatedAt: null,
-    source: 'src/data/pricing/regions (Azure Retail Prices snapshot)',
+    source: 'public/pricing/regions (Azure Retail Prices snapshot)',
     hoursPerMonth: HOURS_PER_MONTH,
     currency: 'USD',
     regions: {},

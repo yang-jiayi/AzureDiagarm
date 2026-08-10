@@ -160,7 +160,7 @@
 }
 
 .workflow-stepper-item.is-complete button {
-  border-color: var(--azd-color-success-emphasis);
+  border-color: var(--azd-color-success-button);
   background: var(--azd-color-success-soft);
 }
 
@@ -186,9 +186,9 @@
 }
 
 .is-complete .workflow-stepper-index {
-  border-color: var(--azd-color-success-emphasis);
-  background: var(--azd-color-success-emphasis);
-  color: var(--azd-color-on-brand);
+  border-color: var(--azd-color-success-button);
+  background: var(--azd-color-success-button);
+  color: var(--azd-color-on-success);
 }
 
 .workflow-stepper-icon {
@@ -206,11 +206,16 @@
   gap: 1px;
 }
 
+/* Step copy wraps to two lines: Japanese labels and the longer English descriptions
+   ("Check architecture readiness") both overflow a single nowrap line. */
 .workflow-stepper-copy strong,
 .workflow-stepper-copy small {
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow-wrap: anywhere;
 }
 
 .workflow-stepper-copy strong {

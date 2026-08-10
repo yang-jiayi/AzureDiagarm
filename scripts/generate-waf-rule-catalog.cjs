@@ -59,7 +59,7 @@ let md = `# WAF Rule Catalog
 
 > Companion artifact for [*WAR, Advisor, and Us: Three Ways to Score an Azure Architecture*](./blog-draft-waf-validation.md).
 >
-> This catalog is **auto-generated** from [\`src/data/wafRules.ts\`](../../src/data/wafRules.ts) — the exact same rules the [Azure Architecture Diagram Builder](https://aka.ms/diagram-builder) runs against during design-time WAF validation. Use it as a standalone design-time checklist independent of the tool.
+> This catalog is **auto-generated** from [\`src/data/wafRules.ts\`](../../src/data/wafRules.ts) — the exact same rules the [Microsoft Product Architecture Diagram Builder](https://aka.ms/diagram-builder) runs against during design-time WAF validation. Use it as a standalone design-time checklist independent of the tool.
 
 **Last generated:** ${new Date().toISOString().slice(0, 10)}
 

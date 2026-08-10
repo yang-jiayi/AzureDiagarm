@@ -151,7 +151,7 @@
 }
 
 .access-add-form input:focus {
-  outline: 2px solid #79b8ef;
+  outline: 2px solid var(--azd-color-focus);
   outline-offset: 1px;
   border-color: #0078d4;
 }
