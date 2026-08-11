@@ -599,3 +599,88 @@ test('a label chip is pushed clear of the services it sits between', async () =>
     );
   }
 });
+
+test('parallel connector labels and callouts stay on the slide', () => Promise.resolve().then(async () => {
+  // Three edges between the same close-together pair: each label sat on the
+  // one below, and the cap that kept a chip inside the gap between the tiles
+  // forced a long label into a tall narrow ribbon. The stagger then walked
+  // that ribbon straight off the bottom of the page, taking callout 2 with it.
+  const nodes = [service('a', 'Azure Front Door', 0, 0), service('b', 'Azure Kubernetes Service', 190, 0)];
+  const label = 'アプリケーション ゲートウェイ経由の HTTPS トラフィック';
+  const edges = ['p1', 'p2', 'p3'].map((id, i) => ({
+    id,
+    source: 'a',
+    target: 'b',
+    label: `${label} ${i + 1}`,
+    data: { stepNumber: i + 1 },
+  })) as Edge[];
+
+  const deck = await buildDeck(nodes, edges);
+  const page = { w: 13.333, h: 7.5 };
+  const offenders: string[] = [];
+  for (const slide of deck.slides) {
+    for (const prefix of ['connector-label-', 'connector-step-']) {
+      for (const box of shapeBoxes(slide, prefix)) {
+        if (box.x < -0.01 || box.y < -0.01 || box.x + box.w > page.w + 0.01 || box.y + box.h > page.h + 0.01) {
+          offenders.push(`${box.name} at ${box.x.toFixed(2)},${box.y.toFixed(2)} ${box.w.toFixed(2)}x${box.h.toFixed(2)}in`);
+        }
+      }
+    }
+  }
+  assert.deepEqual(offenders, [], `off the page: ${offenders.join('; ')}`);
+
+  const badges = deck.slides.flatMap((slide) => shapeBoxes(slide, 'connector-step-').map((b) => b.name));
+  assert.equal(new Set(badges).size, 3, `expected all 3 callouts, got ${[...new Set(badges)].join(', ')}`);
+
+  // A chip squeezed into the hop between two close tiles became a narrow
+  // ribbon several inches tall, which is unreadable and drives the stagger.
+  const tall = deck.slides
+    .flatMap((slide) => shapeBoxes(slide, 'connector-label-'))
+    .filter((b) => b.h > b.w);
+  assert.deepEqual(tall.map((b) => `${b.name} ${b.w.toFixed(2)}x${b.h.toFixed(2)}in`), [],
+    'a label chip was squeezed into a vertical ribbon');
+
+  // Parallel edges are staggered, but the walk that moves a chip off a tile
+  // could drag two of them back onto the same spot, because a chip could not
+  // see the chips already placed.
+  const marks = deck.slides.flatMap((slide) => [
+    ...shapeBoxes(slide, 'connector-label-'),
+    ...shapeBoxes(slide, 'connector-step-'),
+  ]);
+  const collisions: string[] = [];
+  for (let i = 0; i < marks.length; i += 1) {
+    for (let j = i + 1; j < marks.length; j += 1) {
+      const a = marks[i];
+      const b = marks[j];
+      const dx = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x);
+      const dy = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y);
+      if (dx > 0.01 && dy > 0.01) collisions.push(`${a.name}/${b.name}`);
+    }
+  }
+  assert.deepEqual(collisions, [], `annotations sit on each other: ${collisions.join(' ')}`);
+}));
+
+test('every numbered part of a tiled deck carries at least one service', () => Promise.resolve().then(async () => {
+  // A grid cell can cover a stretch of drawing that holds only zone outlines
+  // and pass-through arrows. That was still shipped as "part 1 of 6" — a slide
+  // with nothing on it that a reader could name.
+  const nodes: Node[] = [];
+  const edges: Edge[] = [];
+  // An L: services down the left and along the bottom, so the top-right of the
+  // bounding box is empty and its cells own nothing.
+  for (let i = 0; i < 9; i += 1) nodes.push(service(`down-${i}`, `Down Service ${i}`, 0, i * 240));
+  for (let i = 1; i < 10; i += 1) nodes.push(service(`across-${i}`, `Across Service ${i}`, i * 300, 8 * 240));
+  for (let i = 1; i < nodes.length; i += 1) {
+    edges.push({ id: `e${i}`, source: nodes[i - 1].id, target: nodes[i].id } as Edge);
+  }
+
+  const deck = await buildDeck(nodes, edges);
+  // The numbered workflow list continues onto its own slides, which carry a
+  // `(n / m)` footer of their own and legitimately hold no tiles.
+  const diagramParts = deck.parts.filter((slide) => !/Workflow \(/.test(slide));
+  assert.ok(diagramParts.length > 1, `expected a tiled deck, got ${diagramParts.length} part(s)`);
+  const empty = diagramParts
+    .map((slide, i) => ({ i: i + 1, tiles: shapeBoxes(slide, 'service-').filter((b) => !b.name.startsWith('service-label-')).length }))
+    .filter((part) => part.tiles === 0);
+  assert.deepEqual(empty, [], `blank part slide(s): ${empty.map((p) => `part ${p.i}`).join(', ')}`);
+}));

@@ -515,10 +515,35 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
   const density = tileArea / Math.max(pageW * pageH * slideCount, 1);
   const laidOut = scenario.nodes.filter((n) => n.type === 'azureNode');
   if (scenario.fromLayoutEngine && laidOut.length >= 4) {
-    const minX = Math.min(...laidOut.map((n) => n.position.x));
-    const maxX = Math.max(...laidOut.map((n) => n.position.x + (n.width ?? n.style?.width ?? 150)));
-    const minY = Math.min(...laidOut.map((n) => n.position.y));
-    const maxY = Math.max(...laidOut.map((n) => n.position.y + (n.height ?? n.style?.height ?? 75)));
+    // React Flow keeps a child's position relative to its parent, and every
+    // service in a grouped scenario has a `parentNode`. Reading raw positions
+    // measured the union of intra-zone offsets, so moving zones — which is
+    // exactly what wrapping does — changed nothing the rule could see, and it
+    // was simultaneously blind to a 72:1 grouped strip and noisy on a healthy
+    // wrapped layout. Resolve the parent chain first.
+    const byId = new Map(scenario.nodes.map((n) => [n.id, n]));
+    const absolute = (node: (typeof scenario.nodes)[number]): { x: number; y: number } => {
+      let x = node.position.x;
+      let y = node.position.y;
+      const seen = new Set<string>([node.id]);
+      let parent = node.parentNode ? byId.get(node.parentNode) : undefined;
+      while (parent && !seen.has(parent.id)) {
+        seen.add(parent.id);
+        x += parent.position.x;
+        y += parent.position.y;
+        parent = parent.parentNode ? byId.get(parent.parentNode) : undefined;
+      }
+      return { x, y };
+    };
+    const points = laidOut.map((n) => ({
+      ...absolute(n),
+      w: n.width ?? (n.style?.width as number | undefined) ?? 150,
+      h: n.height ?? (n.style?.height as number | undefined) ?? 75,
+    }));
+    const minX = Math.min(...points.map((p) => p.x));
+    const maxX = Math.max(...points.map((p) => p.x + p.w));
+    const minY = Math.min(...points.map((p) => p.y));
+    const maxY = Math.max(...points.map((p) => p.y + p.h));
     const aspect = (maxX - minX) / Math.max(maxY - minY, 1);
     if (aspect > WRAP_TRIGGER_RATIO) {
       issues.push(`layout is ${aspect.toFixed(1)}:1 — it was stretched into a strip`);

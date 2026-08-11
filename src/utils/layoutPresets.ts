@@ -201,7 +201,19 @@ export function straightenPrimaryPath(nodes: Node[], edges: Edge[], direction: '
   let heading = 0;
   for (let i = 0; i < steps.length; i += 1) {
     const stepSign = Math.sign(steps[i].step);
-    if (stepSign === 0) continue;
+    if (stepSign === 0) {
+      // No progress at all along the chain's own axis: the only thing this step
+      // did was cross the minor axis, which is what a seam is. Skipping it made
+      // the recovery slot below single-use, so a band holding exactly one rank
+      // between two others lost one of its two seams and was merged into a
+      // neighbour's run — straightened to that run's median, a whole band
+      // pitch away, landing on top of the node already there.
+      if (steps[i].drift !== 0) {
+        seamAfter.add(i);
+        heading = 0;
+      }
+      continue;
+    }
     if (heading === 0) {
       heading = stepSign;
       continue;
