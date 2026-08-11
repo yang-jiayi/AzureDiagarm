@@ -209,3 +209,145 @@ test('an empty diagram still produces a loadable package', async () => {
   assertWellFormed(page, 'page1.xml');
   assert.equal(page.includes('<Connects>'), false);
 });
+
+/**
+ * Reconstruct where Visio will actually draw each connector's text. Visio pins
+ * connector text to the midpoint of the begin-to-end chord and measures TxtPin
+ * in the connector's own rotated frame, so a label position can only be judged
+ * after re-applying that transform.
+ */
+function connectorLabelBoxes(xml: string): Array<{ text: string; x: number; y: number; w: number; h: number }> {
+  const boxes: Array<{ text: string; x: number; y: number; w: number; h: number }> = [];
+  for (const block of xml.matchAll(/<Shape [^>]*NameU="Connector\.\d+"[\s\S]*?<\/Shape>/g)) {
+    const shape = block[0];
+    const text = /<Text>([^<]*)<\/Text>/.exec(shape)?.[1] ?? '';
+    if (!text.trim()) continue;
+    const pin = /<Cell N="PinX" V="([\d.-]+)"\/>\s*<Cell N="PinY" V="([\d.-]+)"\/>/.exec(shape);
+    const txt = /<Cell N="TxtPinX" V="([\d.-]+)"\/>\s*<Cell N="TxtPinY" V="([\d.-]+)"\/>\s*<Cell N="TxtWidth" V="([\d.-]+)"\/>\s*<Cell N="TxtHeight" V="([\d.-]+)"\/>/.exec(shape);
+    assert.ok(pin, 'a connector must declare its pin');
+    assert.ok(txt, `connector text "${text}" must declare an explicit position, or Visio piles the fan on one point`);
+    const theta = Number(/<Cell N="Angle" V="([\d.-]+)"\/>/.exec(shape)?.[1] ?? 0);
+    const length = Number(/<Cell N="Width" V="([\d.-]+)"\/>/.exec(shape)?.[1] ?? 0);
+    const lx = Number(txt[1]) - length / 2;
+    const ly = Number(txt[2]);
+    const cx = Number(pin[1]) + lx * Math.cos(theta) - ly * Math.sin(theta);
+    const cy = Number(pin[2]) + lx * Math.sin(theta) + ly * Math.cos(theta);
+    boxes.push({ text, x: cx - Number(txt[3]) / 2, y: cy - Number(txt[4]) / 2, w: Number(txt[3]), h: Number(txt[4]) });
+  }
+  return boxes;
+}
+
+function overlapArea(
+  a: { x: number; y: number; w: number; h: number },
+  b: { x: number; y: number; w: number; h: number },
+): number {
+  const ow = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x);
+  const oh = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y);
+  return ow > 0 && oh > 0 ? ow * oh : 0;
+}
+
+/** A pair of services joined by `count` parallel numbered hops. */
+function parallelHops(count: number): { nodes: Node[]; edges: Edge[] } {
+  const fanNodes = [service('src', 'Event Hubs', 0, 0), service('dst', 'Stream Analytics', 460, 0)];
+  const fanEdges = Array.from({ length: count }, (unused, index) => ({
+    id: `p${index}`,
+    source: 'src',
+    target: 'dst',
+    label: `イベントを Service Bus に発行します ${index + 1}`,
+    data: { stepNumber: index + 1 },
+  } as Edge));
+  return { nodes: fanNodes, edges: fanEdges };
+}
+
+async function pageOf(diagramNodes: Node[], diagramEdges: Edge[]): Promise<string> {
+  const pkg = await buildVsdxPackage(diagramNodes, diagramEdges, 'Contoso');
+  return pkg.parts.find((part) => part.path === 'visio/pages/page1.xml')!.data as string;
+}
+
+test('parallel hops write their sentences on separate lines, not one pile', async () => {
+  const fan = parallelHops(4);
+  const boxes = connectorLabelBoxes(await pageOf(fan.nodes, fan.edges));
+  assert.ok(boxes.length >= 4, `all four hops must keep their wording, got ${boxes.length}`);
+  for (let i = 0; i < boxes.length; i += 1) {
+    for (let j = i + 1; j < boxes.length; j += 1) {
+      const smaller = Math.min(boxes[i].w * boxes[i].h, boxes[j].w * boxes[j].h);
+      assert.ok(
+        overlapArea(boxes[i], boxes[j]) <= 0.25 * smaller,
+        `"${boxes[i].text}" and "${boxes[j].text}" are written on top of each other`,
+      );
+    }
+  }
+});
+
+/** A grid of hops with two parallel fans hanging off it, as dense pages have. */
+function twinLadders(): { nodes: Node[]; edges: Edge[] } {
+  const gridNodes: Node[] = [];
+  for (let row = 0; row < 2; row += 1) {
+    for (let col = 0; col < 3; col += 1) {
+      gridNodes.push(service(`n${row}-${col}`, `Service ${row}${col}`, col * 290, row * 180));
+    }
+  }
+  const gridEdges: Edge[] = gridNodes.slice(1).map((node, index) => ({
+    id: `w${index}`,
+    source: gridNodes[index].id,
+    target: node.id,
+    label: `ホップ ${index + 1}`,
+    data: { stepNumber: index + 1 },
+  } as Edge));
+  for (let index = 0; index < 4; index += 1) {
+    gridEdges.push({
+      id: `u${index}`,
+      source: 'n1-0',
+      target: 'n1-1',
+      label: `マネージド ID で参照系を照会します ${index + 1}`,
+      data: { stepNumber: 20 + index },
+    } as Edge);
+  }
+  for (let index = 0; index < 6; index += 1) {
+    gridEdges.push({
+      id: `d${index}`,
+      source: 'n0-0',
+      target: 'n0-1',
+      label: `イベントを Service Bus に発行します ${index + 1}`,
+      data: { stepNumber: 40 + index },
+    } as Edge);
+  }
+  return { nodes: gridNodes, edges: gridEdges };
+}
+
+test('a connector label is never written off the edge of the sheet', async () => {
+  // Visio does not grow a page to fit stray text: whatever falls outside the
+  // sheet is simply not there when the file opens. Two fans on one page is the
+  // case that finds it, because the second ladder is pushed clear of the first.
+  const dense = twinLadders();
+  const pkg = await buildVsdxPackage(dense.nodes, dense.edges, 'Contoso');
+  const xml = pkg.parts.find((part) => part.path === 'visio/pages/page1.xml')!.data as string;
+  const labels = connectorLabelBoxes(xml);
+  assert.ok(labels.length >= 5, `the fixture must keep most of its wording, got ${labels.length}`);
+  for (const label of labels) {
+    assert.ok(
+      label.x >= -0.01 && label.y >= -0.01
+      && label.x + label.w <= pkg.pageWidthIn + 0.01
+      && label.y + label.h <= pkg.pageHeightIn + 0.01,
+      `"${label.text}" is drawn outside the ${pkg.pageWidthIn} x ${pkg.pageHeightIn} sheet at ${label.x.toFixed(2)},${label.y.toFixed(2)}`,
+    );
+  }
+});
+
+test('a fan too deep to write out keeps its numbers and the panel explains them', async () => {
+  // Twelve hops between one pair of services need a ladder taller than the
+  // sheet. Half-hidden sentences are worse than callouts, so the wording is
+  // dropped - but only if every one of those callouts is still spelled out.
+  const fan = parallelHops(12);
+  const xml = await pageOf(fan.nodes, fan.edges);
+  const badges = Array.from(xml.matchAll(/<Shape [^>]*NameU="StepBadge\.\d+"[\s\S]*?<Text>(\d+)<\/Text>/g))
+    .map((match) => match[1]);
+  assert.equal(badges.length, 12, 'every hop must still carry its callout');
+  const narrated = new Set(
+    Array.from(xml.matchAll(/<Shape [^>]*NameU="LegendText\.\d+"[\s\S]*?<Text>(\d+)\.<\/Text>/g))
+      .map((match) => match[1]),
+  );
+  for (const badge of badges) {
+    assert.ok(narrated.has(badge), `callout ${badge} is drawn but no workflow row explains it`);
+  }
+});

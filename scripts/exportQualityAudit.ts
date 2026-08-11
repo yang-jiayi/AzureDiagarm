@@ -30,6 +30,7 @@ interface Shape {
   h: number;
   text: string;
   fontSize: number | null;
+  path?: { x: number; y: number }[];
 }
 
 /** Approximate rendered text width in inches. CJK glyphs are full-width. */
@@ -53,19 +54,62 @@ function parseShapes(xml: string): Shape[] {
     if (!off || !ext) continue;
     const texts = [...body.matchAll(/<a:t>([\s\S]*?)<\/a:t>/g)].map((t) => t[1]);
     const sz = /sz="(\d+)"/.exec(body);
+    const x = +off[1] / EMU_PER_INCH;
+    const y = +off[2] / EMU_PER_INCH;
+    const w = +ext[1] / EMU_PER_INCH;
+    const h = +ext[2] / EMU_PER_INCH;
+    // The line a connector actually draws, not the box that contains it. An
+    // L-shaped hop's bounding box covers the whole corner, so measuring a chip
+    // against the box calls it "on" an arrow that runs nowhere near it.
+    let path: { x: number; y: number }[] | undefined;
+    const pts = [...body.matchAll(/<a:pt x="(-?\d+)" y="(-?\d+)"\s*\/>/g)];
+    if (/<a:custGeom>/.test(body) && pts.length >= 2) {
+      path = pts.map((pt) => ({ x: x + +pt[1] / EMU_PER_INCH, y: y + +pt[2] / EMU_PER_INCH }));
+    } else if (/prst="line"/.test(body)) {
+      const flipH = /flipH="1"/.test(body);
+      const flipV = /flipV="1"/.test(body);
+      path = [
+        { x: flipH ? x + w : x, y: flipV ? y + h : y },
+        { x: flipH ? x : x + w, y: flipV ? y : y + h },
+      ];
+    }
     shapes.push({
       name,
-      x: +off[1] / EMU_PER_INCH,
-      y: +off[2] / EMU_PER_INCH,
-      w: +ext[1] / EMU_PER_INCH,
-      h: +ext[2] / EMU_PER_INCH,
+      x,
+      y,
+      w,
+      h,
       text: texts.join('').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>'),
       fontSize: sz ? +sz[1] / 100 : null,
+      path,
     });
   }
   return shapes;
 }
 
+/** Distance from a point to the nearest edge of a shape, zero when inside it. */
+function edgeGap(box: { x: number; y: number; w: number; h: number }, at: { x: number; y: number }): number {
+  return Math.hypot(
+    at.x - Math.max(box.x, Math.min(at.x, box.x + box.w)),
+    at.y - Math.max(box.y, Math.min(at.y, box.y + box.h)),
+  );
+}
+
+/** Distance from a point to a connector's drawn path, falling back to its box. */
+function pathGap(shape: Shape, at: { x: number; y: number }): number {
+  if (!shape.path || shape.path.length < 2) return edgeGap(shape, at);
+  let best = Number.POSITIVE_INFINITY;
+  for (let i = 1; i < shape.path.length; i += 1) {
+    const a = shape.path[i - 1];
+    const b = shape.path[i];
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const len = dx * dx + dy * dy;
+    const t = len > 0 ? Math.max(0, Math.min(1, ((at.x - a.x) * dx + (at.y - a.y) * dy) / len)) : 0;
+    best = Math.min(best, Math.hypot(at.x - (a.x + t * dx), at.y - (a.y + t * dy)));
+  }
+  return best;
+}
 function overlapArea(a: Shape, b: Shape): number {
   const w = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x);
   const h = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y);
@@ -526,6 +570,57 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
       }
     }
   }
+  // Two annotations on one arrow's worth of space is a pile, not a ladder. The
+  // tile rules never look at annotation-on-annotation, so a fan restacking on
+  // itself - or one ladder parking on another - used to pass at zero issues.
+  for (const slideShapes of perSlide) {
+    const annotations = slideShapes.filter((s) => /^connector-(label|step)-/.test(s.name));
+    for (let i = 0; i < annotations.length; i += 1) {
+      for (let j = i + 1; j < annotations.length; j += 1) {
+        const a = annotations[i];
+        const b = annotations[j];
+        const hit = overlapArea(a, b);
+        if (hit > 0.01) issues.push(`annotation "${a.name}" and "${b.name}" overlap by ${hit.toFixed(3)}sq in`);
+      }
+    }
+  }
+  // A chip has to be readable AS the label of the arrow it belongs to. One
+  // parked beside a different hop is worse than one overlapping a tile: the
+  // reader matches it to the wrong arrow and never knows they did.
+  for (const slideShapes of perSlide) {
+    const arrows = slideShapes.filter((s) => s.name.startsWith('connector-') && !/^connector-(label|step)-/.test(s.name));
+    if (arrows.length === 0) continue;
+    for (const chip of slideShapes.filter((s) => s.name.startsWith('connector-label-'))) {
+      const own = arrows.find((arrow) => arrow.name === `connector-${chip.name.replace('connector-label-', '')}`);
+      if (!own) continue;
+      const at = { x: chip.x + chip.w / 2, y: chip.y + chip.h / 2 };
+      const mine = pathGap(own, at);
+      const nearest = arrows.reduce((best, arrow) => (pathGap(arrow, at) < pathGap(best, at) ? arrow : best), arrows[0]);
+      if (nearest.name !== own.name && pathGap(nearest, at) < mine - 0.25) {
+        issues.push(`edge chip "${chip.text}" is ${pathGap(nearest, at).toFixed(2)}in from ${nearest.name} but ${mine.toFixed(2)}in from its own arrow`);
+      }
+    }
+  }
+  // Wording may never simply vanish. A label the exporter decided not to draw
+  // has to survive as a numbered callout that the workflow slide explains -
+  // that is the only trade the Architecture Center makes - and if it does
+  // neither, the export has quietly lost content the author wrote.
+  const drawnChips = new Set(shapes.filter((s) => s.name.startsWith('connector-label-')).map((s) => s.name.replace('connector-label-', '')));
+  const drawnBadges = new Map(shapes.filter((s) => s.name.startsWith('connector-step-')).map((s) => [s.name.replace('connector-step-', ''), s.text]));
+  const explained = new Set(
+    shapes.map((s) => /^workflow-step-(\d+)$/.exec(s.name)?.[1]).filter((n): n is string => !!n),
+  );
+  for (const edge of scenario.edges) {
+    const label = typeof edge.label === 'string' ? edge.label.trim() : '';
+    if (!label || drawnChips.has(edge.id)) continue;
+    const badge = drawnBadges.get(edge.id);
+    if (badge !== undefined && explained.has(badge)) continue;
+    issues.push(
+      badge === undefined
+        ? `edge "${edge.id}" is labelled "${label}" but the deck has neither a chip nor a callout for it`
+        : `edge "${edge.id}" lost its label "${label}" to callout ${badge}, which no workflow row explains`,
+    );
+  }
   const truncated = shapes.filter((s) => s.text.includes('…'));
   if (truncated.length) issues.push(`${truncated.length} shapes carry truncated "…" text`);
 
@@ -814,6 +909,68 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
       }
     }
   }
+
+  // A connector's text is a block on the page like any other. It carries the
+  // sentence the arrow exists to say, so two of them on the same spot is the
+  // same defect as two chips on the same spot in PowerPoint — and until the
+  // exporter emitted an explicit text position, a fan of parallel hops wrote
+  // every one of its sentences at the identical midpoint.
+  const labelBoxes: Array<{ text: string; x: number; y: number; w: number; h: number }> = [];
+  for (const block of xml.matchAll(/<Shape [^>]*NameU="Connector\.\d+"[\s\S]*?<\/Shape>/g)) {
+    const shape = block[0];
+    const shown = /<Text>([^<]*)<\/Text>/.exec(shape)?.[1] ?? '';
+    if (!shown.trim()) continue;
+    const pin = /<Cell N="PinX" V="([\d.-]+)"\/>\s*<Cell N="PinY" V="([\d.-]+)"\/>/.exec(shape);
+    const angle = /<Cell N="Angle" V="([\d.-]+)"\/>/.exec(shape);
+    const txt = /<Cell N="TxtPinX" V="([\d.-]+)"\/>\s*<Cell N="TxtPinY" V="([\d.-]+)"\/>\s*<Cell N="TxtWidth" V="([\d.-]+)"\/>\s*<Cell N="TxtHeight" V="([\d.-]+)"\/>/.exec(shape);
+    if (!pin) continue;
+    if (!txt) {
+      issues.push(`Visio connector text "${shown.slice(0, 18)}" has no explicit position, so Visio centres it on the line`);
+      continue;
+    }
+    // TxtPin is in the connector's own rotated frame, measured from its begin
+    // point, while PinX/PinY is the centre of the line.
+    const theta = angle ? +angle[1] : 0;
+    const length = +(/<Cell N="Width" V="([\d.-]+)"\/>/.exec(shape)?.[1] ?? 0);
+    const lx = +txt[1] - length / 2;
+    const ly = +txt[2];
+    const cx = +pin[1] + lx * Math.cos(theta) - ly * Math.sin(theta);
+    const cy = +pin[2] + lx * Math.sin(theta) + ly * Math.cos(theta);
+    labelBoxes.push({ text: shown, x: cx - +txt[3] / 2, y: cy - +txt[4] / 2, w: +txt[3], h: +txt[4] });
+  }
+  const overlap = (a: { x: number; y: number; w: number; h: number }, b: { x: number; y: number; w: number; h: number }): number => {
+    const ow = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x);
+    const oh = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y);
+    return ow > 0 && oh > 0 ? ow * oh : 0;
+  };
+  let stacked = 0;
+  const piles: string[] = [];
+  for (let i = 0; i < labelBoxes.length; i += 1) {
+    for (let j = i + 1; j < labelBoxes.length; j += 1) {
+      const hit = overlap(labelBoxes[i], labelBoxes[j]);
+      if (hit > 0.25 * Math.min(labelBoxes[i].w * labelBoxes[i].h, labelBoxes[j].w * labelBoxes[j].h)) {
+        stacked += 1;
+        piles.push(`"${labelBoxes[i].text.slice(0, 12)}"/"${labelBoxes[j].text.slice(0, 12)}" at ${labelBoxes[i].x.toFixed(2)},${labelBoxes[i].y.toFixed(2)}`);
+      }
+    }
+  }
+  if (stacked > 0) {
+    issues.push(`${stacked} pair(s) of Visio connector labels are written on top of each other: ${piles.slice(0, 3).join('; ')}`);
+  }
+  let onService = 0;
+  const buried: string[] = [];
+  for (const label of labelBoxes) {
+    if (serviceBoxes.some((box) => overlap(label, box) > 0.4 * label.w * label.h)) {
+      onService += 1;
+      buried.push(`"${label.text.slice(0, 14)}" at ${label.x.toFixed(2)},${label.y.toFixed(2)}`);
+    }
+  }
+  if (onService > 0) {
+    issues.push(`${onService} Visio connector label(s) are buried under a service shape: ${buried.slice(0, 3).join('; ')}`);
+  }
+  const offSheet = labelBoxes.filter((label) => label.x < -0.01 || label.y < -0.01
+    || label.x + label.w > pkg.pageWidthIn + 0.01 || label.y + label.h > pkg.pageHeightIn + 0.01).length;
+  if (offSheet > 0) issues.push(`${offSheet} Visio connector label(s) run off the sheet`);
 
   // A sparse page is the outlier symptom: a huge sheet holding a small drawing.
   const shapeArea = [...xml.matchAll(/NameU="Service\.\d+"[\s\S]*?<Cell N="Width" V="([\d.]+)"\/>\s*<Cell N="Height" V="([\d.]+)"\/>/g)]
