@@ -29,6 +29,12 @@ function service(id: string, label: string, x: number, y: number): Node {
 
 interface Deck {
   slides: string[];
+  /**
+   * A tiled deck opens with the whole drawing shown small, so the legible
+   * parts are the slides after it. Rules about legibility and about a shape
+   * belonging to exactly one window apply to those, not to the overview.
+   */
+  parts: string[];
 }
 
 async function buildDeck(nodes: Node[], edges: Edge[]): Promise<Deck> {
@@ -45,7 +51,8 @@ async function buildDeck(nodes: Node[], edges: Edge[]): Promise<Deck> {
     .filter((name) => /^ppt\/slides\/slide\d+\.xml$/.test(name))
     .sort((a, b) => +a.replace(/\D/g, '') - +b.replace(/\D/g, ''));
   const slides = await Promise.all(names.map((name) => zip.file(name)!.async('string')));
-  return { slides };
+  const overview = slides.findIndex((xml) => xml.includes('(Overview)'));
+  return { slides, parts: overview < 0 ? slides : slides.slice(overview + 1) };
 }
 
 /** Font sizes carried by the service label text runs, in points. */
@@ -80,10 +87,11 @@ test('a diagram that fits stays on exactly one slide', async () => {
 test('an architecture too wide to stay readable is continued across slides', async () => {
   const { nodes, edges } = wideDiagram(40);
   const deck = await buildDeck(nodes, edges);
-  assert.ok(deck.slides.length > 1, `expected a multi-slide split, got ${deck.slides.length}`);
-  deck.slides.forEach((xml, index) => {
+  assert.ok(deck.parts.length > 1, `expected a multi-slide split, got ${deck.parts.length}`);
+  assert.ok(deck.slides[0].includes('(Overview)'), 'a tiled deck must open with the whole drawing');
+  deck.parts.forEach((xml, index) => {
     assert.ok(
-      xml.includes(`(${index + 1} / ${deck.slides.length})`),
+      xml.includes(`(${index + 1} / ${deck.parts.length})`),
       `slide ${index + 1} must say which part of the drawing it shows`,
     );
   });
@@ -92,7 +100,7 @@ test('an architecture too wide to stay readable is continued across slides', asy
 test('every tile label on every slide stays above the 7pt legibility floor', async () => {
   const { nodes, edges } = wideDiagram(40);
   const deck = await buildDeck(nodes, edges);
-  const sizes = deck.slides.flatMap(labelFontSizes);
+  const sizes = deck.parts.flatMap(labelFontSizes);
   assert.ok(sizes.length > 0, 'the deck must contain service labels');
   const smallest = Math.min(...sizes);
   assert.ok(smallest >= 7, `smallest label font is ${smallest}pt, below the 7pt legibility floor`);
@@ -102,7 +110,7 @@ test('splitting loses no service and duplicates none', async () => {
   const { nodes, edges } = wideDiagram(40);
   const deck = await buildDeck(nodes, edges);
   const drawn = new Map<string, number>();
-  for (const xml of deck.slides) {
+  for (const xml of deck.parts) {
     for (const match of xml.matchAll(/name="service-(n-\d+)"/g)) {
       drawn.set(match[1], (drawn.get(match[1]) ?? 0) + 1);
     }
@@ -198,8 +206,8 @@ test('a stray service outside the trimmed bounds is still drawn on a banded deck
   const { nodes, edges } = wideDiagram(40);
   nodes.push(service('stray', 'Copilot Studio', 100000, 40000));
   const deck = await buildDeck(nodes, edges);
-  assert.ok(deck.slides.length > 1, 'this diagram must band');
-  const drawn = deck.slides.filter((xml) => xml.includes('name="service-stray"')).length;
+  assert.ok(deck.parts.length > 1, 'this diagram must band');
+  const drawn = deck.parts.filter((xml) => xml.includes('name="service-stray"')).length;
   assert.equal(drawn, 1, 'the outlier must be clamped onto exactly one band, not dropped');
 });
 
@@ -208,8 +216,8 @@ test('a service straddling a band seam is drawn once, not on both slides', async
   // 40 tiles at a 260px pitch put the midpoint seam near x = 5145.
   nodes.push(service('straddler', 'Azure SQL Database', 5100, 700));
   const deck = await buildDeck(nodes, edges);
-  assert.ok(deck.slides.length > 1, 'this diagram must band');
-  const drawn = deck.slides.filter((xml) => xml.includes('name="service-straddler"')).length;
+  assert.ok(deck.parts.length > 1, 'this diagram must band');
+  const drawn = deck.parts.filter((xml) => xml.includes('name="service-straddler"')).length;
   assert.equal(drawn, 1, 'a seam-crossing service must belong to exactly one band');
 });
 
@@ -229,9 +237,9 @@ test('a numbered arrow crossing a seam carries exactly one badge and one chip', 
     }
   }
   const deck = await buildDeck(nodes, edges);
-  assert.ok(deck.slides.length > 1, 'this diagram must band');
+  assert.ok(deck.parts.length > 1, 'this diagram must band');
 
-  const count = (needle: string) => deck.slides.filter((xml) => xml.includes(needle)).length;
+  const count = (needle: string) => deck.parts.filter((xml) => xml.includes(needle)).length;
   for (let i = 1; i <= 24; i += 1) {
     assert.equal(count(`name="connector-step-x-${i}"`), 1, `badge ${i} must appear once`);
     assert.equal(count(`name="connector-label-x-${i}"`), 1, `chip for step ${i} must appear once`);
@@ -490,4 +498,104 @@ test('a trimmed outlier zone is clamped back onto the page, not cut to a hairlin
     );
   }
   assert.equal(seen, 1, 'the outlier zone was not drawn at all');
+});
+
+/** Slide-space rectangles for every shape whose objectName matches a prefix. */
+function shapeBoxes(slideXml: string, prefix: string): { name: string; x: number; y: number; w: number; h: number }[] {
+  const boxes: { name: string; x: number; y: number; w: number; h: number }[] = [];
+  const EMU = 914400;
+  for (const match of slideXml.matchAll(/<p:sp>[\s\S]*?<\/p:sp>/g)) {
+    const name = /name="([^"]*)"/.exec(match[0])?.[1] ?? '';
+    if (!name.startsWith(prefix)) continue;
+    const off = /<a:off x="(-?\d+)" y="(-?\d+)"\/>/.exec(match[0]);
+    const ext = /<a:ext cx="(-?[\d.]+)" cy="(-?[\d.]+)"\/>/.exec(match[0]);
+    if (!off || !ext) continue;
+    boxes.push({ name, x: +off[1] / EMU, y: +off[2] / EMU, w: +ext[1] / EMU, h: +ext[2] / EMU });
+  }
+  return boxes;
+}
+
+test('a drawing large in both directions is tiled onto ordinary slides, not a plotter sheet', async () => {
+  // Wide *and* tall: splitting on one axis alone left the page growing without
+  // limit, which is how a generated architecture ended up as a 27 x 16in sheet
+  // that PowerPoint will open but nobody can present.
+  const nodes: Node[] = [];
+  const edges: Edge[] = [];
+  for (let row = 0; row < 8; row += 1) {
+    for (let col = 0; col < 9; col += 1) {
+      const id = `g-${row}-${col}`;
+      nodes.push(service(id, 'Azure Kubernetes Service', col * 300, row * 240));
+      if (col > 0) edges.push({ id: `e-${row}-${col}`, source: `g-${row}-${col - 1}`, target: id } as Edge);
+    }
+  }
+  const deck = await buildDeck(nodes, edges);
+  const pageIn = /<p:sldSz cx="(\d+)" cy="(\d+)"/.exec(
+    await (async () => {
+      const pptx = await buildDiagramSlidePptx(PIXEL_PNG, {
+        diagramName: 'Contoso Platform',
+        author: 'Tester',
+        date: '2026-08-10',
+        isDarkMode: false,
+        diagram: { nodes, edges },
+      });
+      const buffer = (await pptx.write({ outputType: 'nodebuffer' })) as Buffer;
+      const zip = await JSZip.loadAsync(buffer);
+      return zip.file('ppt/presentation.xml')!.async('string');
+    })(),
+  );
+  assert.ok(pageIn, 'the deck must declare a slide size');
+  const pageW = +pageIn[1] / 914400;
+  const pageH = +pageIn[2] / 914400;
+  assert.ok(
+    Math.abs(pageW - 13.333) < 0.05 && Math.abs(pageH - 7.5) < 0.05,
+    `expected standard 13.33x7.5in slides, got ${pageW.toFixed(2)}x${pageH.toFixed(2)}in`,
+  );
+
+  // Tiling in one axis only would put every part in a single row or column, so
+  // check the windows really form a grid: at least two parts must repeat the
+  // same horizontal slice of the drawing at different heights.
+  const columnKeys = deck.parts.map((xml) => {
+    const tiles = shapeBoxes(xml, 'service-').filter((b) => !b.name.includes('label') && !b.name.includes('meta'));
+    return tiles.map((t) => t.name.replace(/^service-g-\d+-/, '')).sort().join(',');
+  });
+  const repeated = columnKeys.filter((key, index) => key && columnKeys.indexOf(key) !== index);
+  assert.ok(repeated.length > 0, `expected a 2-D grid of windows, got column sets ${JSON.stringify(columnKeys)}`);
+
+  const drawn = new Map<string, number>();
+  for (const xml of deck.parts) {
+    for (const tile of shapeBoxes(xml, 'service-')) {
+      if (tile.name.includes('label') || tile.name.includes('meta')) continue;
+      drawn.set(tile.name, (drawn.get(tile.name) ?? 0) + 1);
+    }
+  }
+  const wrong = nodes.filter((n) => drawn.get(`service-${n.id}`) !== 1);
+  assert.equal(wrong.length, 0, `services drawn on the wrong number of slides: ${wrong.slice(0, 4).map((n) => `${n.id}=${drawn.get(`service-${n.id}`) ?? 0}`).join(', ')}`);
+});
+
+test('a label chip is pushed clear of the services it sits between', async () => {
+  // Two tiles a hair apart with a long label: centred on the arrow the chip
+  // lands squarely on both of them, which is the "export needs redrawing by
+  // hand" complaint in its smallest form.
+  const nodes = [service('a', 'API Management', 0, 0), service('b', 'Azure Functions', 170, 0)];
+  const edges = [{
+    id: 'e',
+    source: 'a',
+    target: 'b',
+    label: 'HTTPS 経由でトークン検証を実施',
+  } as Edge];
+  const deck = await buildDeck(nodes, edges);
+  const xml = deck.parts[0] ?? deck.slides[0];
+  const tiles = shapeBoxes(xml, 'service-').filter((b) => !b.name.includes('label') && !b.name.includes('meta'));
+  const chips = shapeBoxes(xml, 'connector-label-');
+  assert.equal(chips.length, 1, 'the labelled arrow must carry exactly one chip');
+  assert.ok(tiles.length >= 2, 'both services must be drawn');
+  for (const tile of tiles) {
+    const dx = Math.min(chips[0].x + chips[0].w, tile.x + tile.w) - Math.max(chips[0].x, tile.x);
+    const dy = Math.min(chips[0].y + chips[0].h, tile.y + tile.h) - Math.max(chips[0].y, tile.y);
+    const area = dx > 0 && dy > 0 ? dx * dy : 0;
+    assert.ok(
+      area <= 0.02 * tile.w * tile.h,
+      `chip covers ${((area / (tile.w * tile.h)) * 100).toFixed(0)}% of ${tile.name}`,
+    );
+  }
 });
