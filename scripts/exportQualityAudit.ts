@@ -106,6 +106,46 @@ function grp(id: string, label: string, x: number, y: number, w: number, h: numb
   return { id, type: 'groupNode', position: { x, y }, style: { width: w, height: h }, data: { label } } as Node;
 }
 
+/**
+ * Two dense clusters joined by one long bridge, so the middle of the grid
+ * holds nothing. A part that owns only its own fitted cell leaves the bridge's
+ * label and callout belonging to no slide at all: the arrow is drawn, the
+ * number is missing, and the workflow list still cites it.
+ */
+function barbellScenario(): Scenario {
+  const nodes: Node[] = [];
+  const edges: Edge[] = [];
+  for (let i = 0; i < 6; i += 1) nodes.push(svc(`l${i}`, `Left Service ${i}`, (i % 2) * 220, Math.floor(i / 2) * 200));
+  for (let i = 0; i < 6; i += 1) nodes.push(svc(`r${i}`, `Right Service ${i}`, 3200 + (i % 2) * 220, Math.floor(i / 2) * 200));
+  for (let i = 1; i < 6; i += 1) {
+    edges.push({ id: `le${i}`, source: `l${i - 1}`, target: `l${i}`, label: `left hop ${i}`, data: { stepNumber: i } } as Edge);
+  }
+  edges.push({ id: 'bridge', source: 'l5', target: 'r0', label: 'private peering', data: { stepNumber: 6 } } as Edge);
+  for (let i = 1; i < 6; i += 1) {
+    edges.push({ id: `re${i}`, source: `r${i - 1}`, target: `r${i}`, label: `right hop ${i}`, data: { stepNumber: i + 6 } } as Edge);
+  }
+  return { id: 'barbell', nodes, edges };
+}
+
+/**
+ * Six parallel edges between one close-together pair, each with a long CJK
+ * label. The routes are already fanned apart by a fraction of a rung, so a
+ * stagger measured from each route's own anchor lands the chips off the
+ * lattice and half inside each other from the fourth rung on.
+ */
+function parallelScenario(): Scenario {
+  const nodes = [svc('pa', 'Azure Front Door', 0, 0), svc('pb', 'Azure Kubernetes Service', 190, 0)];
+  const label = 'ゲートウェイ経由の HTTPS';
+  const edges = Array.from({ length: 6 }, (_, i) => ({
+    id: `par${i + 1}`,
+    source: 'pa',
+    target: 'pb',
+    label: `${label} ${i + 1}`,
+    data: { stepNumber: i + 1 },
+  })) as Edge[];
+  return { id: 'parallel', nodes, edges };
+}
+
 /** Mirrors a real AI-generated enterprise diagram: wide, grouped, long labels. */
 function wideScenario(): Scenario {
   const nodes: Node[] = [];
@@ -683,7 +723,8 @@ async function main(): Promise<void> {
   mkdirSync(OUT, { recursive: true });
   const scenarios = [
     compactScenario(), wideScenario(), oversizeScenario(), outlierScenario(),
-    bandedScenario(), narrativeScenario(), await generatedScenario(), await groupedGeneratedScenario(),
+    bandedScenario(), narrativeScenario(), barbellScenario(), parallelScenario(),
+    await generatedScenario(), await groupedGeneratedScenario(),
   ];
   const reports: Report[] = [];
   for (const scenario of scenarios) {

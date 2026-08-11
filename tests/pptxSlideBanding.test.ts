@@ -601,13 +601,17 @@ test('a label chip is pushed clear of the services it sits between', async () =>
 });
 
 test('parallel connector labels and callouts stay on the slide', () => Promise.resolve().then(async () => {
-  // Three edges between the same close-together pair: each label sat on the
+  // Ten edges between the same close-together pair: each label sat on the
   // one below, and the cap that kept a chip inside the gap between the tiles
   // forced a long label into a tall narrow ribbon. The stagger then walked
   // that ribbon straight off the bottom of the page, taking callout 2 with it.
+  // Three edges is one short of the failure — the routes are already fanned
+  // apart by a fraction of a rung, so adding the stagger on top of each
+  // route's own anchor puts the chips off the lattice and half inside each
+  // other, which only shows up once the ladder is four or more rungs deep.
   const nodes = [service('a', 'Azure Front Door', 0, 0), service('b', 'Azure Kubernetes Service', 190, 0)];
   const label = 'アプリケーション ゲートウェイ経由の HTTPS トラフィック';
-  const edges = ['p1', 'p2', 'p3'].map((id, i) => ({
+  const edges = Array.from({ length: 10 }, (_, i) => `p${i + 1}`).map((id, i) => ({
     id,
     source: 'a',
     target: 'b',
@@ -630,7 +634,7 @@ test('parallel connector labels and callouts stay on the slide', () => Promise.r
   assert.deepEqual(offenders, [], `off the page: ${offenders.join('; ')}`);
 
   const badges = deck.slides.flatMap((slide) => shapeBoxes(slide, 'connector-step-').map((b) => b.name));
-  assert.equal(new Set(badges).size, 3, `expected all 3 callouts, got ${[...new Set(badges)].join(', ')}`);
+  assert.equal(new Set(badges).size, 10, `expected all 10 callouts, got ${[...new Set(badges)].join(', ')}`);
 
   // A chip squeezed into the hop between two close tiles became a narrow
   // ribbon several inches tall, which is unreadable and drives the stagger.
@@ -683,4 +687,55 @@ test('every numbered part of a tiled deck carries at least one service', () => P
     .map((slide, i) => ({ i: i + 1, tiles: shapeBoxes(slide, 'service-').filter((b) => !b.name.startsWith('service-label-')).length }))
     .filter((part) => part.tiles === 0);
   assert.deepEqual(empty, [], `blank part slide(s): ${empty.map((p) => `part ${p.i}`).join(', ')}`);
+}));
+
+test('a numbered hop across an empty stretch keeps its label and its callout', () => Promise.resolve().then(async () => {
+  // A barbell: two dense clusters with one long bridge between them. The grid
+  // cell the bridge's label sits in holds no service, so it was dropped from
+  // the deck — and the half-open ownership test only tiles the drawing while
+  // every cell survives. With a hole punched in the middle, the cell to the
+  // left of the label saw it as past its right edge and the cell to the right
+  // saw it as before its left edge, so neither drew it. The arrow was still
+  // drawn (it overlaps both parts) and the Workflow slide still listed the
+  // step, leaving an unlabelled, unnumbered connector.
+  const nodes: Node[] = [];
+  const edges: Edge[] = [];
+  for (let i = 0; i < 6; i += 1) nodes.push(service(`l${i}`, `Left Service ${i}`, (i % 2) * 220, Math.floor(i / 2) * 200));
+  for (let i = 0; i < 6; i += 1) nodes.push(service(`r${i}`, `Right Service ${i}`, 3200 + (i % 2) * 220, Math.floor(i / 2) * 200));
+  for (let i = 1; i < 6; i += 1) edges.push({ id: `le${i}`, source: `l${i - 1}`, target: `l${i}`, label: `left hop ${i}`, data: { stepNumber: i } } as Edge);
+  edges.push({ id: 'bridge', source: 'l5', target: 'r0', label: 'private peering', data: { stepNumber: 6 } } as Edge);
+  for (let i = 1; i < 6; i += 1) edges.push({ id: `re${i}`, source: `r${i - 1}`, target: `r${i}`, label: `right hop ${i}`, data: { stepNumber: i + 6 } } as Edge);
+
+  const deck = await buildDeck(nodes, edges);
+  const parts = deck.parts.filter((slide) => !/Workflow \(/.test(slide));
+  assert.ok(parts.length > 1, `expected a tiled deck, got ${parts.length} part(s)`);
+
+  const orphans: string[] = [];
+  for (const edge of edges) {
+    const labels = parts.filter((slide) => shapeBoxes(slide, `connector-label-${edge.id}`).length > 0).length;
+    const badges = parts.filter((slide) => shapeBoxes(slide, `connector-step-${edge.id}`).length > 0).length;
+    if (labels === 0 || badges === 0) orphans.push(`${edge.id}: label on ${labels} part(s), callout on ${badges}`);
+  }
+  assert.deepEqual(orphans, [], `numbered hops drawn on no part: ${orphans.join('; ')}`);
+}));
+
+test('a drawing too dense for one slide is grown, not squeezed to 4pt', () => Promise.resolve().then(async () => {
+  // Every service inside a single zone lands in one grid cell, so the tiling
+  // pass had nothing to split and reported the drawing as legible. The page
+  // was then left at the standard 13.33 x 7.5in and the labels were scaled
+  // down to fit — 4.2pt on the widest fixture, which no projector can render.
+  const nodes: Node[] = [{ id: 'z', type: 'groupNode', position: { x: 0, y: 0 }, style: { width: 2800, height: 1000 }, data: { label: 'Landing zone' } } as Node];
+  const edges: Edge[] = [];
+  for (let i = 0; i < 4; i += 1) {
+    nodes.push({ ...service(`c${i}`, `Clustered Service ${i}`, 40 + (i % 2) * 200, 40 + Math.floor(i / 2) * 130), parentNode: 'z' } as Node);
+    if (i > 0) edges.push({ id: `e${i}`, source: `c${i - 1}`, target: `c${i}` } as Edge);
+  }
+
+  const deck = await buildDeck(nodes, edges);
+  const fonts = deck.slides
+    .flatMap((slide) => [...slide.matchAll(/name="service-label-[^"]*"[\s\S]{0,600}?sz="(\d+)"/g)])
+    .map((m) => Number(m[1]) / 100);
+  assert.ok(fonts.length > 0, 'expected service labels in the deck');
+  const smallest = Math.min(...fonts);
+  assert.ok(smallest >= 7, `service labels shrank to ${smallest.toFixed(2)}pt, below the 7pt legibility floor`);
 }));
