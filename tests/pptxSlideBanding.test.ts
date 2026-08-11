@@ -442,3 +442,52 @@ test('a zone wider than a band is cut at the page edge, not slid across it', asy
   }
   assert.ok(checked > 0, 'no zone rectangle was found to check');
 });
+
+test('a trimmed outlier zone is clamped back onto the page, not cut to a hairline', async () => {
+  // `chooseExportBounds` trims a far outlier out of the drawing bounds, so its
+  // zone lands entirely outside the frame. Cutting a box that misses the frame
+  // leaves a hairline at an off-page coordinate -- and pptxgenjs writes any
+  // number above 100 as a raw EMU count, so the reader gets a service tile
+  // with no container at all.
+  const nodes: Node[] = [];
+  for (let i = 0; i < 20; i += 1) {
+    nodes.push({
+      id: `near-${i}`, type: 'azureNode', position: { x: (i % 5) * 220, y: Math.floor(i / 5) * 140 },
+      width: 150, height: 75, data: { label: 'Azure Functions', serviceName: 'Azure Functions' },
+    } as Node);
+  }
+  nodes.push({
+    id: 'zFar', type: 'groupNode', position: { x: 20000, y: 9000 },
+    style: { width: 600, height: 400 }, data: { label: 'Remote Region' },
+  } as Node);
+  nodes.push({
+    id: 'sFar', type: 'azureNode', parentNode: 'zFar', position: { x: 100, y: 120 },
+    width: 150, height: 75, data: { label: 'Azure Functions', serviceName: 'Azure Functions' },
+  } as Node);
+
+  const pptx = await buildDiagramSlidePptx(PIXEL_PNG, {
+    diagramName: 'Contoso Platform', author: 'Tester', date: '2026-08-10',
+    isDarkMode: false, diagram: { nodes, edges: [] },
+  });
+  const zip = await JSZip.loadAsync((await pptx.write({ outputType: 'nodebuffer' })) as Buffer);
+  const EMU = 914400;
+  const pres = await zip.file('ppt/presentation.xml')!.async('string');
+  const pageW = +/<p:sldSz[^>]*cx="(\d+)"/.exec(pres)![1] / EMU;
+  const pageH = +/<p:sldSz[^>]*cy="(\d+)"/.exec(pres)![1] / EMU;
+
+  let seen = 0;
+  for (const name of Object.keys(zip.files).filter((n) => /^ppt\/slides\/slide\d+\.xml$/.test(n))) {
+    const xml = await zip.file(name)!.async('string');
+    const at = xml.indexOf('name="zone-zFar"');
+    if (at < 0) continue;
+    const m = /<a:off x="(-?[\d.]+)" y="(-?[\d.]+)"\s*\/>\s*<a:ext cx="([\d.]+)" cy="([\d.]+)"/.exec(xml.slice(at, at + 400))!;
+    const [x, y, w, h] = [+m[1] / EMU, +m[2] / EMU, +m[3] / EMU, +m[4] / EMU];
+    seen += 1;
+    assert.ok(w > 0.2 && h > 0.2, `trimmed zone collapsed to ${w.toFixed(3)}x${h.toFixed(3)}in on ${name}`);
+    assert.ok(
+      x >= -0.01 && y >= -0.01 && x + w <= pageW + 0.01 && y + h <= pageH + 0.01,
+      `trimmed zone sits at ${x.toFixed(2)},${y.toFixed(2)} ${w.toFixed(2)}x${h.toFixed(2)}in off a ${pageW.toFixed(2)}x${pageH.toFixed(2)}in ${name}`,
+    );
+  }
+  assert.equal(seen, 1, 'the outlier zone was not drawn at all');
+});

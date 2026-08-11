@@ -550,16 +550,30 @@ function placeBox(
   const w = box.w * transform.scale;
   const h = box.h * transform.scale;
   if (!clampTo) return { x: topLeft.x, y: topLeft.y, w, h };
-  // A zone is routinely wider than the band it is drawn on. Clamping only the
-  // origin would slide the whole rectangle to the left margin at full width,
-  // painting it across the band and enclosing tiles that are not in it, so a
-  // clipped box is cut at the page edge instead of moved.
+  // A zone is routinely wider than the band it is drawn on, and clamping only
+  // the origin would slide the whole rectangle to the left margin at full
+  // width, painting it across the band and enclosing tiles that are not in it.
+  // PowerPoint's writer makes that worse: handed a width larger than a slide
+  // it emits the raw inch count as EMU and the boundary disappears. So a zone
+  // that meets the frame is cut at its edge.
   if (clip) {
     const left = Math.max(topLeft.x, clampTo.x);
     const top = Math.max(topLeft.y, clampTo.y);
     const right = Math.min(topLeft.x + w, clampTo.x + clampTo.w);
     const bottom = Math.min(topLeft.y + h, clampTo.y + clampTo.h);
-    return { x: left, y: top, w: Math.max(right - left, 0.01), h: Math.max(bottom - top, 0.01) };
+    if (right > left && bottom > top) return { x: left, y: top, w: right - left, h: bottom - top };
+    // A zone that misses the frame entirely is a trimmed outlier, and cutting
+    // that leaves a hairline at an off-page coordinate -- the "outlier
+    // silently disappears" defect again. Clamp it back on instead, shrinking
+    // it if it is larger than the frame so no dimension can escape the page.
+    const cw = Math.min(w, clampTo.w);
+    const ch = Math.min(h, clampTo.h);
+    return {
+      x: clamp(topLeft.x, clampTo.x, clampTo.x + clampTo.w - cw),
+      y: clamp(topLeft.y, clampTo.y, clampTo.y + clampTo.h - ch),
+      w: cw,
+      h: ch,
+    };
   }
   return {
     x: clamp(topLeft.x, clampTo.x, Math.max(clampTo.x, clampTo.x + clampTo.w - w)),
