@@ -14,6 +14,8 @@ import {
   buildNestedHierarchyLayout,
   layoutNodeDimensions,
 } from './layoutHierarchy';
+import { wrapPositionedLayout } from './serpentineWrap';
+import { fitGroupsToMembers, GROUP_INNER_PAD_PX, GROUP_HEADER_PAD_PX } from './groupFit';
 
 export interface LayoutOptions {
   direction: 'LR' | 'TB' | 'RL' | 'BT';
@@ -190,14 +192,14 @@ export async function layoutArchitecture(
   }
 
   // Build ELK children: groups become compound nodes containing their members.
-  // Use generous padding and internal spacing so groups are roomy like Dagre's.
+  // The container is refitted to its contents after layout, so the padding here
+  // only has to keep members clear of the zone's title bar.
   const groupElkNodes: ElkNode[] = groups.map(group => {
     const members = groupMembers.get(group.id) || [];
-    const pad = opts.groupPadding;
     return {
       id: groupIdMap.get(group.id) ?? group.id,
       layoutOptions: {
-        'elk.padding': `[top=${pad + 40}, left=${pad + 20}, bottom=${pad + 20}, right=${pad + 20}]`,
+        'elk.padding': `[top=${GROUP_HEADER_PAD_PX}, left=${GROUP_INNER_PAD_PX}, bottom=${GROUP_INNER_PAD_PX}, right=${GROUP_INNER_PAD_PX}]`,
         'elk.spacing.nodeNode': String(Math.max(opts.nodeSpacing * 0.6, 80)),
         'elk.layered.spacing.nodeNodeBetweenLayers': String(Math.max(opts.rankSpacing * 0.6, 120)),
         ...ELK_QUALITY_LAYOUT_OPTIONS,
@@ -321,16 +323,36 @@ export async function layoutArchitecture(
     });
   }
 
+  // ELK reports child coordinates relative to their parent, which is the form
+  // the fit expects. Hug the contents before anything downstream measures the
+  // drawing.
+  const fitted = fitGroupsToMembers(positionedGroups, positionedServices, {
+    nodeWidth: NODE_WIDTH,
+    nodeHeight: NODE_HEIGHT,
+  });
+
   // Post-process: resolve any overlapping groups
-  const { groups: finalGroups } = resolveGroupOverlaps(positionedGroups, positionedServices);
+  const { groups: finalGroups } = resolveGroupOverlaps(fitted.groups, fitted.services);
+
+  // Same reason as the Dagre path: a one-service-per-layer flow is a strip, and
+  // a strip cannot be exported cleanly onto any page.
+  const wrapped = wrapPositionedLayout(fitted.services, finalGroups, {
+    direction: opts.direction,
+    bandGap: opts.rankSpacing,
+    nodeWidth: NODE_WIDTH,
+    nodeHeight: NODE_HEIGHT,
+  });
+  if (wrapped.bands > 1) {
+    console.log(`  ✅ [ELK] Wrapped an over-wide layout into ${wrapped.bands} bands`);
+  }
 
   console.log('  ✅ [ELK] Services positioned');
   console.log('  ✅ [ELK] Groups positioned, overlaps resolved');
   console.log('📐 [ELK] Layout complete!');
 
   return {
-    services: positionedServices,
-    groups: finalGroups,
+    services: wrapped.services,
+    groups: wrapped.groups,
   };
 }
 

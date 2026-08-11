@@ -35,6 +35,7 @@ import {
   stripHash,
   truncateLabel,
   usedConnectionLegend,
+  workflowListFromEdges,
   zoneStyleFor,
   type Bounds,
   type ExportBox,
@@ -42,6 +43,7 @@ import {
   type FitTransform,
   type Point,
 } from './diagramExportGeometry';
+import { readStepNumber as readStepValue } from '../utils/workflowStepMapping';
 
 // ─── Theme palettes ───────────────────────────────────────────────────────────
 
@@ -107,6 +109,73 @@ interface SlideGeometry {
   overflow: boolean;
   /** True when far-placed nodes were pulled back onto the page to stay visible. */
   outliersClamped: boolean;
+  /**
+   * Horizontal slices of the drawing, one per slide. A single entry (the usual
+   * case) means the whole architecture fits on one legible page. More than one
+   * means the drawing was too wide to stay readable and was split the way a
+   * printed Azure Architecture Center diagram is continued across pages.
+   */
+  windows: Bounds[];
+}
+
+/**
+ * Smallest tile label PowerPoint may render. `addNodeShape` derives the label
+ * size from the tile height (`h * 12`), so a legible tile needs at least
+ * `LEGIBLE_TILE_PT / 12` inches of height. Anything below this is unreadable on
+ * a projector and forces the recipient to redraw the deck by hand.
+ */
+const LEGIBLE_TILE_PT = 7;
+
+/** Never explode one architecture into an unreviewable pile of slides. */
+const MAX_DIAGRAM_SLIDES = 6;
+
+/**
+ * Shortest workflow row that still fits a 12 pt sentence next to a badge. Rows
+ * stop shrinking here and the list continues on another slide instead.
+ */
+const MIN_WORKFLOW_ROW_IN = 0.34;
+
+/**
+ * Split the drawing into as few horizontal bands as keep the tiles legible.
+ *
+ * PowerPoint allows exactly one page size per deck, so every band shares the
+ * same slide geometry and the reader pans left to right across the slides.
+ * Returns a single full-width window whenever the diagram already fits, which
+ * keeps the common path byte-identical to the previous behaviour.
+ */
+function planDiagramWindows(
+  bounds: Bounds,
+  services: ExportBox[],
+  frame: DiagramFrame,
+): Bounds[] {
+  const contentW = Math.max(1, bounds.maxX - bounds.minX);
+  const contentH = Math.max(1, bounds.maxY - bounds.minY);
+  const whole: Bounds[] = [bounds];
+  if (services.length === 0 || frame.w <= 0 || frame.h <= 0) return whole;
+
+  const shortest = Math.min(...services.map((box) => box.h).filter((h) => h > 0));
+  if (!Number.isFinite(shortest) || shortest <= 0) return whole;
+
+  // Inches-per-pixel needed for the shortest tile to keep a readable label.
+  const legibleScale = LEGIBLE_TILE_PT / 12 / shortest;
+  // Height is shared by every band, so it caps the scale no matter how thin the
+  // bands get. When even a single-column band cannot be legible, splitting only
+  // multiplies the slides without fixing anything.
+  const heightScale = frame.h / contentH;
+  if (heightScale < legibleScale) return whole;
+  if (Math.min(frame.w / contentW, heightScale) >= legibleScale) return whole;
+
+  const bandWidth = frame.w / legibleScale;
+  const count = Math.ceil(contentW / bandWidth);
+  if (count <= 1 || count > MAX_DIAGRAM_SLIDES) return whole;
+
+  const step = contentW / count;
+  return Array.from({ length: count }, (_, index) => ({
+    minX: bounds.minX + step * index,
+    maxX: index === count - 1 ? bounds.maxX : bounds.minX + step * (index + 1),
+    minY: bounds.minY,
+    maxY: bounds.maxY,
+  }));
 }
 
 /**
@@ -149,6 +218,7 @@ function planSlideGeometry(diagram?: DiagramShapeSource | null): SlideGeometry {
   let outliersClamped = false;
 
   const nodes = diagram?.nodes ?? [];
+  let windows: Bounds[] = [];
   if (nodes.length > 0) {
     const boxes = collectExportBoxes(nodes);
     if (boxes.size > 0) {
@@ -162,6 +232,15 @@ function planSlideGeometry(diagram?: DiagramShapeSource | null): SlideGeometry {
       overflow = wantW > MAX_SLIDE_IN || wantH > MAX_SLIDE_IN;
       w = clamp(wantW, BASE_W, MAX_SLIDE_IN);
       h = clamp(wantH, BASE_H, MAX_SLIDE_IN);
+      const footer = h - FOOTER_H - 0.08;
+      windows = planDiagramWindows(
+        bounds,
+        partitionBoxes(boxes).services,
+        { x: IMAGE_X, y: IMAGE_Y, w: w - IMAGE_X * 2, h: footer - IMAGE_Y - 0.1 },
+      );
+      // Splitting restores legibility, so the "scaled down to fit" warning no
+      // longer applies — the drawing is now at its readable size.
+      if (windows.length > 1) overflow = false;
     }
   }
 
@@ -172,6 +251,7 @@ function planSlideGeometry(diagram?: DiagramShapeSource | null): SlideGeometry {
     footerY,
     overflow,
     outliersClamped,
+    windows,
     frame: { x: IMAGE_X, y: IMAGE_Y, w: w - IMAGE_X * 2, h: footerY - IMAGE_Y - 0.1 },
   };
 }
@@ -317,23 +397,34 @@ function addConnector(
   });
 }
 
-function addConnectorLabel(
-  slide: Slide,
+/**
+ * Geometry of a connector's label chip, or null when the edge has no label.
+ *
+ * Shared with the step badge so the badge can be placed from the chip's real
+ * height. Deriving it twice used to leave the badge sitting on top of tall,
+ * wrapped CJK labels.
+ */
+function connectorLabelBox(
   route: ExportRoute,
   transform: FitTransform,
   fontSize: number,
   px: number,
   clampTo?: DiagramFrame,
-): void {
-  if (!route.label) return;
+): { x: number; y: number; w: number; h: number; text: string } | null {
+  if (!route.label) return null;
   const anchor = toInches(route.labelAnchor, transform);
   const text = truncateLabel(route.label, 42);
 
   // Size the chip from the text it actually carries, capped so it can never
-  // dwarf the service tiles it sits between (a 150 px tile is 1.56" at 1 : 1).
-  const maxW = 1.5 * px;
+  // dwarf the service tiles it sits between (a 150 px tile is 1.56" at 1 : 1)
+  // nor overrun the gap between the two tiles it connects — a long label on a
+  // short hop used to be drawn straight across both endpoints.
+  const first = toInches(route.points[0] ?? route.labelAnchor, transform);
+  const last = toInches(route.points[route.points.length - 1] ?? route.labelAnchor, transform);
+  const span = Math.max(Math.abs(last.x - first.x), Math.abs(last.y - first.y));
+  const maxW = Math.max(0.34 * px, Math.min(1.5 * px, span > 0 ? span - 0.08 : 1.5 * px));
   const naturalW = estimateTextWidthIn(text, fontSize) + 0.14;
-  const w = clamp(naturalW <= maxW ? naturalW : maxW, 0.34 * px, maxW);
+  const w = clamp(naturalW <= maxW ? naturalW : maxW, Math.min(0.34 * px, maxW), maxW);
   const lines = Math.max(1, Math.ceil(estimateTextWidthIn(text, fontSize) / Math.max(w - 0.12, 0.05)));
   const h = Math.max(0.16 * px, (lines * fontSize * 1.3) / 72 + 0.06);
 
@@ -349,12 +440,25 @@ function addConnectorLabel(
     x = clamp(x, clampTo.x, Math.max(clampTo.x, clampTo.x + clampTo.w - w));
     y = clamp(y, clampTo.y, Math.max(clampTo.y, clampTo.y + clampTo.h - h));
   }
+  return { x, y, w, h, text };
+}
 
-  slide.addText(text, {
-    x,
-    y,
-    w,
-    h,
+function addConnectorLabel(
+  slide: Slide,
+  route: ExportRoute,
+  transform: FitTransform,
+  fontSize: number,
+  px: number,
+  clampTo?: DiagramFrame,
+): void {
+  const box = connectorLabelBox(route, transform, fontSize, px, clampTo);
+  if (!box) return;
+
+  slide.addText(box.text, {
+    x: box.x,
+    y: box.y,
+    w: box.w,
+    h: box.h,
     shape: 'roundRect',
     rectRadius: 0.03,
     fill: { color: 'FEF9C3', transparency: 8 },
@@ -367,6 +471,66 @@ function addConnectorLabel(
     margin: 0.02,
     wrap: true,
     objectName: `connector-label-${route.id}`,
+  });
+}
+
+/**
+ * Numbered callout on a connector, matching the workflow list.
+ *
+ * Reference architectures on the Azure Architecture Center number every arrow
+ * and repeat those numbers in the prose, so a deck exported without them makes
+ * the reader guess which sentence describes which hop. Drawn as a real
+ * PowerPoint oval so it stays editable rather than being baked into an image.
+ */
+function addStepBadge(
+  slide: Slide,
+  route: ExportRoute,
+  transform: FitTransform,
+  fontSize: number,
+  px: number,
+  clampTo?: DiagramFrame,
+): void {
+  if (route.stepNumber === undefined) return;
+  const anchor = toInches(route.labelAnchor, transform);
+  const d = clamp(0.26 * px, 0.18, 0.42);
+
+  // Sit fully clear of the label chip, measured from the chip's own box: a
+  // wrapped CJK label is several lines tall, so a fixed offset used to leave
+  // the badge sitting on top of the text.
+  const chip = connectorLabelBox(route, transform, fontSize, px, clampTo);
+  let x = anchor.x - d / 2;
+  let y = chip ? chip.y + chip.h + 0.03 : anchor.y - d / 2;
+  if (chip) x = chip.x + chip.w / 2 - d / 2;
+  if (clampTo) {
+    const bottom = clampTo.y + clampTo.h - d;
+    // Clamping the badge down-position back onto the page would push it into
+    // the chip it was just placed below — and the chip has itself already been
+    // clamped to the page bottom, so the badge would land squarely on the
+    // number's own label. Flip it above the chip instead.
+    if (chip && y > bottom) {
+      const above = chip.y - d - 0.03;
+      y = above >= clampTo.y ? above : bottom;
+    }
+    x = clamp(x, clampTo.x, Math.max(clampTo.x, clampTo.x + clampTo.w - d));
+    y = clamp(y, clampTo.y, Math.max(clampTo.y, bottom));
+  }
+
+  slide.addText(String(route.stepNumber), {
+    x,
+    y,
+    w: d,
+    h: d,
+    shape: 'ellipse',
+    fill: { color: '1F2937' },
+    line: { color: 'FFFFFF', width: 1.25 },
+    color: 'FFFFFF',
+    bold: true,
+    fontSize,
+    fontFace: 'Yu Gothic UI',
+    align: 'center',
+    valign: 'middle',
+    margin: 0,
+    objectName: `connector-step-${route.id}`,
   });
 }
 
@@ -600,6 +764,7 @@ async function addEditableDiagram(
   diagram: DiagramShapeSource,
   frame: DiagramFrame,
   _isDarkMode: boolean,
+  window?: Bounds,
 ): Promise<boolean> {
   const boxes = collectExportBoxes(diagram.nodes ?? []);
   if (boxes.size === 0) return false;
@@ -611,22 +776,71 @@ async function addEditableDiagram(
   // the slide, so when outliers are excluded from the fit they are clamped
   // back onto the page instead of being drawn into the void.
   const { bounds, clamped } = chooseExportBounds(boxes.values());
-  const transform = computeFitTransform(bounds, frame, { maxScale: 1 / PX_PER_IN });
-  const clampTo = clamped ? frame : undefined;
+  // A banded slide is sized from its own slice, which is what buys back the
+  // legible scale; the slice is then clamped so a shape straddling the seam is
+  // cut at the page edge instead of spilling into the void.
+  const banded = !!window && (window.minX > bounds.minX + 0.5 || window.maxX < bounds.maxX - 0.5);
+  const fitBounds = window ?? bounds;
+  const transform = computeFitTransform(fitBounds, frame, { maxScale: 1 / PX_PER_IN });
+  const clampTo = clamped || banded ? frame : undefined;
   const px = transform.scale * PX_PER_IN;
   const routes = buildExportRoutes(diagram.edges ?? [], boxes);
-  const icons = await rasterizeIcons(services.map((service) => service.iconPath), 128);
+  const isFirstBand = !banded || fitBounds.minX <= bounds.minX + 0.5;
+  const isLastBand = !banded || fitBounds.maxX >= bounds.maxX - 0.5;
 
-  groups.forEach((group, index) => addGroupShape(pptx, slide, group, index, transform, clampTo));
-  for (const service of services) {
+  // A band owns whatever falls inside it, so a shape straddling a seam is drawn
+  // once instead of twice. Strays that the outlier trim pushed outside `bounds`
+  // sit in no band at all under a plain range test and vanish from the deck
+  // entirely, so the outer bands claim everything beyond them and `clampTo`
+  // pulls those back onto the page exactly as it does on an unbanded slide.
+  const owns = (x: number): boolean => {
+    if (!banded) return true;
+    if (x < fitBounds.minX) return isFirstBand;
+    if (x > fitBounds.maxX) return isLastBand;
+    // Windows meet exactly at a seam, so a point landing on one is inside both.
+    // Half-open ranges hand it to the later band and nothing is drawn twice.
+    return x < fitBounds.maxX || isLastBand;
+  };
+  const visibleBox = (box: ExportBox): boolean => owns(box.x + box.w / 2);
+  // A zone is routinely wider than a whole band, so centre-ownership would
+  // print the boundary and its name on one slide and leave the services on the
+  // other slides floating with no container. Unlike a service tile, a zone is
+  // continued on every band it overlaps — the palette index below is already
+  // stable across slices, and a partial rectangle reads as a boundary that
+  // carries on, which is exactly what it does.
+  const visibleGroup = (box: ExportBox): boolean => {
+    if (!banded) return true;
+    return (box.x + box.w >= fitBounds.minX || isFirstBand)
+      && (box.x <= fitBounds.maxX || isLastBand);
+  };
+  // A connector is continued on every band it crosses so the reader can follow
+  // where it goes; only the band holding its anchor draws the chip and number.
+  const visibleRoute = (route: ExportRoute): boolean => {
+    if (!banded) return true;
+    const xs = route.points.map((point) => point.x);
+    if (xs.length === 0) return owns(route.labelAnchor.x);
+    return (Math.max(...xs) >= fitBounds.minX || isFirstBand)
+      && (Math.min(...xs) <= fitBounds.maxX || isLastBand);
+  };
+  const shownGroups = groups.filter(visibleGroup);
+  const shownServices = services.filter(visibleBox);
+  const shownRoutes = routes.filter(visibleRoute);
+  const annotatedRoutes = shownRoutes.filter((route) => owns(route.labelAnchor.x));
+  const icons = await rasterizeIcons(shownServices.map((service) => service.iconPath), 128);
+
+  // Index by the full group list so a zone keeps its palette colour on every
+  // slice it appears on.
+  shownGroups.forEach((group) => addGroupShape(pptx, slide, group, groups.indexOf(group), transform, clampTo));
+  for (const service of shownServices) {
     addNodeShape(pptx, slide, service, transform, service.iconPath ? icons.get(service.iconPath) : undefined, px, clampTo);
   }
 
-  for (const route of routes) addConnector(pptx, slide, route, transform, clampTo);
+  for (const route of shownRoutes) addConnector(pptx, slide, route, transform, clampTo);
   // Labels are drawn after every connector so a chip is never hidden by a line
   // that is rendered later.
   const labelFontSize = clamp(9 * px, 4, 10);
-  for (const route of routes) addConnectorLabel(slide, route, transform, labelFontSize, px, clampTo);
+  for (const route of annotatedRoutes) addConnectorLabel(slide, route, transform, labelFontSize, px, clampTo);
+  for (const route of annotatedRoutes) addStepBadge(slide, route, transform, labelFontSize, px, clampTo);
 
   // Colour key so the deck's connectors agree with the PNG legend.
   addConnectionLegend(pptx, slide, diagram.edges ?? [], frame);
@@ -664,93 +878,163 @@ export async function buildDiagramSlidePptx(
   pptx.subject = 'Microsoft Product Architecture Diagram';
   pptx.company = 'Swarm Data SE, Jiayi Yang';
 
-  const slide = pptx.addSlide();
+  const windows = geom.windows.length > 1 ? geom.windows : [undefined];
+  let renderedNatively = false;
 
-  // ── Background ──────────────────────────────────────────────────────────────
-  slide.background = { color: t.bg };
+  for (const [index, window] of windows.entries()) {
+    const slide = pptx.addSlide();
+    slide.background = { color: t.bg };
+    const partOf = windows.length > 1 ? `  (${index + 1} / ${windows.length})` : '';
 
-  // ── Top accent bar (Azure blue) ─────────────────────────────────────────────
-  slide.addShape(pptx.ShapeType.rect, {
-    x: 0, y: 0, w: W, h: ACCENT_H,
-    fill: { color: t.accent },
-    line: { color: t.accent, width: 0 },
-  });
-
-  // ── Header strip ────────────────────────────────────────────────────────────
-  slide.addShape(pptx.ShapeType.rect, {
-    x: 0, y: ACCENT_H, w: W, h: HEADER_H,
-    fill: { color: t.headerBg },
-    line: { color: t.headerBg, width: 0 },
-  });
-
-  // ── Diagram title ────────────────────────────────────────────────────────────
-  slide.addText(diagramName, {
-    x: 0.35, y: ACCENT_H + 0.05, w: Math.max(3, W - 3.85), h: HEADER_H - 0.1,
-    fontSize: 24,
-    bold: true,
-    color: t.titleText,
-    fontFace: 'Yu Gothic UI',
-    valign: 'middle',
-    wrap: true,
-  });
-
-  // ── Author + date (right side of header) ────────────────────────────────────
-  slide.addText(`${author}  ·  ${date}`, {
-    x: W - 3.43, y: ACCENT_H + 0.05, w: 3.08, h: HEADER_H - 0.1,
-    fontSize: 10,
-    color: t.metaText,
-    fontFace: 'Yu Gothic UI',
-    align: 'right',
-    valign: 'middle',
-  });
-
-  // ── Thin separator between header and image ──────────────────────────────────
-  slide.addShape(pptx.ShapeType.rect, {
-    x: 0, y: HEADER_END, w: W, h: SEP_H,
-    fill: { color: t.accent },
-    line: { color: t.accent, width: 0 },
-  });
-
-  // ── Diagram body — native shapes when available, captured PNG otherwise ─────
-  const renderedNatively = options.diagram
-    ? await addEditableDiagram(pptx, slide, options.diagram, geom.frame, isDarkMode)
-    : false;
-
-  if (!renderedNatively) {
-    slide.addImage({
-      data: imageDataUrl,
-      x: geom.frame.x,
-      y: geom.frame.y,
-      w: geom.frame.w,
-      h: geom.frame.h,
-      sizing: { type: 'contain', w: geom.frame.w, h: geom.frame.h },
+    // ── Top accent bar (Azure blue) ───────────────────────────────────────────
+    slide.addShape(pptx.ShapeType.rect, {
+      x: 0, y: 0, w: W, h: ACCENT_H,
+      fill: { color: t.accent },
+      line: { color: t.accent, width: 0 },
     });
-  }
 
-  // ── Footer text ──────────────────────────────────────────────────────────────
-  const note = geom.overflow
-    ? 'This architecture is wider than PowerPoint\'s 56" page limit, so it was scaled down to fit. Export to Visio (.vsdx) for a full-size, fully legible drawing.'
-    : geom.outliersClamped
-      ? 'One or more services sat far outside the main layout. They were moved to the page edge so they remain visible — reposition them on the canvas for an exact layout.'
-      : '';
-  if (note && renderedNatively) {
-    slide.addText(note, {
-      objectName: 'overflow-note',
-      x: 0.35, y: FOOTER_Y - 0.26, w: W - 0.7, h: 0.24,
-      fontSize: 9,
+    // ── Header strip ──────────────────────────────────────────────────────────
+    slide.addShape(pptx.ShapeType.rect, {
+      x: 0, y: ACCENT_H, w: W, h: HEADER_H,
+      fill: { color: t.headerBg },
+      line: { color: t.headerBg, width: 0 },
+    });
+
+    // ── Diagram title ─────────────────────────────────────────────────────────
+    slide.addText(`${diagramName}${partOf}`, {
+      x: 0.35, y: ACCENT_H + 0.05, w: Math.max(3, W - 3.85), h: HEADER_H - 0.1,
+      fontSize: 24,
       bold: true,
-      color: 'B45309',
+      color: t.titleText,
+      fontFace: 'Yu Gothic UI',
+      valign: 'middle',
+      wrap: true,
+    });
+
+    // ── Author + date (right side of header) ──────────────────────────────────
+    slide.addText(`${author}  ·  ${date}`, {
+      x: W - 3.43, y: ACCENT_H + 0.05, w: 3.08, h: HEADER_H - 0.1,
+      fontSize: 10,
+      color: t.metaText,
+      fontFace: 'Yu Gothic UI',
+      align: 'right',
+      valign: 'middle',
+    });
+
+    // ── Thin separator between header and image ───────────────────────────────
+    slide.addShape(pptx.ShapeType.rect, {
+      x: 0, y: HEADER_END, w: W, h: SEP_H,
+      fill: { color: t.accent },
+      line: { color: t.accent, width: 0 },
+    });
+
+    // ── Diagram body — native shapes when available, captured PNG otherwise ───
+    renderedNatively = options.diagram
+      ? await addEditableDiagram(pptx, slide, options.diagram, geom.frame, isDarkMode, window)
+      : false;
+
+    if (!renderedNatively) {
+      slide.addImage({
+        data: imageDataUrl,
+        x: geom.frame.x,
+        y: geom.frame.y,
+        w: geom.frame.w,
+        h: geom.frame.h,
+        sizing: { type: 'contain', w: geom.frame.w, h: geom.frame.h },
+      });
+    }
+
+    // ── Footer text ───────────────────────────────────────────────────────────
+    const note = windows.length > 1
+      ? `This architecture is too wide for one readable page, so it continues across ${windows.length} slides — this is part ${index + 1}. Export to Visio (.vsdx) for the whole drawing on a single sheet.`
+      : geom.overflow
+        ? 'This architecture is wider than PowerPoint\'s 56" page limit, so it was scaled down to fit. Export to Visio (.vsdx) for a full-size, fully legible drawing.'
+        : geom.outliersClamped
+          ? 'One or more services sat far outside the main layout. They were moved to the page edge so they remain visible — reposition them on the canvas for an exact layout.'
+          : '';
+    if (note && renderedNatively) {
+      slide.addText(note, {
+        objectName: 'overflow-note',
+        x: 0.35, y: FOOTER_Y - 0.26, w: W - 0.7, h: 0.24,
+        fontSize: 9,
+        bold: true,
+        color: 'B45309',
+        fontFace: 'Yu Gothic UI',
+        valign: 'middle',
+      });
+    }
+    slide.addText('Generated by Microsoft Product Architecture Diagram Builder  ·  Swarm Data SE, Jiayi Yang', {
+      x: 0.35, y: FOOTER_Y, w: W - 0.7, h: FOOTER_H,
+      fontSize: 8,
+      color: t.footerText,
       fontFace: 'Yu Gothic UI',
       valign: 'middle',
     });
   }
-  slide.addText('Generated by Microsoft Product Architecture Diagram Builder  ·  Swarm Data SE, Jiayi Yang', {
-    x: 0.35, y: FOOTER_Y, w: W - 0.7, h: FOOTER_H,
-    fontSize: 8,
-    color: t.footerText,
-    fontFace: 'Yu Gothic UI',
-    valign: 'middle',
-  });
+
+  // A numbered callout means nothing without the sentence it points at, so the
+  // Azure Architecture Center always pairs the badges with a numbered list.
+  const workflow = workflowListFromEdges(options.diagram?.edges ?? []);
+  if (workflow.length > 0) {
+    // Rows stop shrinking at a legible minimum, so a long workflow continues on
+    // another slide. Dropping the tail would leave badges on the drawing whose
+    // sentence appears nowhere in the deck.
+    const listTop = IMAGE_Y + 0.1;
+    const available = Math.max(MIN_WORKFLOW_ROW_IN, geom.footerY - 0.1 - listTop);
+    const perSlide = Math.max(1, Math.floor(available / MIN_WORKFLOW_ROW_IN));
+    const parts = Math.ceil(workflow.length / perSlide);
+
+    for (let part = 0; part < parts; part += 1) {
+      const rows = workflow.slice(part * perSlide, (part + 1) * perSlide);
+      const slide = pptx.addSlide();
+      slide.background = { color: t.bg };
+      slide.addShape(pptx.ShapeType.rect, {
+        x: 0, y: 0, w: W, h: ACCENT_H,
+        fill: { color: t.accent }, line: { color: t.accent, width: 0 },
+      });
+      slide.addShape(pptx.ShapeType.rect, {
+        x: 0, y: ACCENT_H, w: W, h: HEADER_H,
+        fill: { color: t.headerBg }, line: { color: t.headerBg, width: 0 },
+      });
+      slide.addText(parts > 1 ? `Workflow (${part + 1} / ${parts})` : 'Workflow', {
+        objectName: 'workflow-heading',
+        x: 0.35, y: ACCENT_H + 0.05, w: Math.max(3, W - 3.85), h: HEADER_H - 0.1,
+        fontSize: 24, bold: true, color: t.titleText, fontFace: 'Yu Gothic UI', valign: 'middle',
+      });
+      slide.addShape(pptx.ShapeType.rect, {
+        x: 0, y: HEADER_END, w: W, h: SEP_H,
+        fill: { color: t.accent }, line: { color: t.accent, width: 0 },
+      });
+
+      // The badge colour and shape repeat here so a reader can match a number on
+      // the drawing to its row without hunting.
+      const rowGap = Math.min(0.62, Math.max(MIN_WORKFLOW_ROW_IN, available / rows.length));
+      const badge = Math.min(0.34, rowGap - 0.06);
+      rows.forEach((entry, index) => {
+        const y = listTop + index * rowGap;
+        slide.addText(String(entry.step), {
+          objectName: `workflow-step-${entry.step}`,
+          shape: pptx.ShapeType.ellipse,
+          x: 0.42, y, w: badge, h: badge,
+          fill: { color: t.accent },
+          line: { color: 'FFFFFF', width: 1 },
+          fontSize: Math.max(8, badge * 26),
+          bold: true, color: 'FFFFFF', fontFace: 'Yu Gothic UI',
+          align: 'center', valign: 'middle', margin: 0,
+        });
+        slide.addText(entry.description, {
+          objectName: `workflow-text-${entry.step}`,
+          x: 0.42 + badge + 0.16, y, w: W - (0.42 + badge + 0.16) - 0.42, h: rowGap - 0.04,
+          fontSize: 12, color: t.titleText, fontFace: 'Yu Gothic UI',
+          valign: 'middle', wrap: true,
+        });
+      });
+      slide.addText('Generated by Microsoft Product Architecture Diagram Builder  ·  Swarm Data SE, Jiayi Yang', {
+        x: 0.35, y: FOOTER_Y, w: W - 0.7, h: FOOTER_H,
+        fontSize: 8, color: t.footerText, fontFace: 'Yu Gothic UI', valign: 'middle',
+      });
+    }
+  }
 
   return pptx;
 }
@@ -840,6 +1124,14 @@ export interface DeckCost {
   unavailableRegions?: string[];
 }
 
+export interface DeckWorkflowStep {
+  /** 1-based step number, matching the numbered callout drawn on the arrow. */
+  step: number;
+  description: string;
+  /** Services the step touches, in flow order. */
+  services?: string[];
+}
+
 export interface ArchitectureDeckOptions extends PptxExportOptions {
   /** The original natural-language prompt ("the napkin"). */
   prompt?: string;
@@ -847,6 +1139,12 @@ export interface ArchitectureDeckOptions extends PptxExportOptions {
   model?: string;
   /** Flat service inventory derived from the diagram nodes. */
   services: DeckService[];
+  /**
+   * Numbered dataflow. The Azure Architecture Center pairs every numbered
+   * arrow with a matching numbered paragraph; without this the callouts on the
+   * diagram slide refer to nothing. A slide is added only when present.
+   */
+  workflow?: DeckWorkflowStep[] | null;
   /** Optional WAF validation summary — a slide is added only when present. */
   validation?: DeckValidation | null;
   /** Optional cost estimate — a slide is added only when present. */
@@ -925,7 +1223,69 @@ async function addDiagramSlide(pptx: PptxGenJS, t: SlideTheme, imageDataUrl: str
   }
 }
 
-/** Slide 3 — service inventory. */
+/**
+ * Slide 3 — numbered dataflow.
+ *
+ * Mirrors the "Workflow" section of an Azure Architecture Center reference
+ * architecture: each numbered paragraph corresponds to the callout drawn on the
+ * matching arrow of the diagram slide. Emitted only when the architecture
+ * actually has a workflow, so a topology-only diagram gains no empty slide.
+ */
+function addWorkflowSlide(pptx: PptxGenJS, t: SlideTheme, o: ArchitectureDeckOptions): void {
+  const steps = (o.workflow ?? [])
+    .filter((entry) => entry && readStepValue(entry.step) !== undefined && !!entry.description)
+    .sort((a, b) => a.step - b.step);
+  if (steps.length === 0) return;
+
+  const MAX_ROWS = 12;
+  const shown = steps.slice(0, MAX_ROWS);
+  const slide = pptx.addSlide();
+  addChrome(pptx, slide, t, 'Workflow', `${steps.length} step${steps.length === 1 ? '' : 's'}`);
+
+  // The "+ N more" note is drawn last and used to paint over the final row, so
+  // the rows only ever get the space left after reserving it.
+  const overflowH = steps.length > MAX_ROWS ? 0.34 : 0;
+  const rowH = Math.min(0.62, (BODY_H - overflowH) / shown.length);
+  // Long descriptions have to shrink rather than overflow the slide.
+  const fontSize = rowH >= 0.5 ? 13 : rowH >= 0.38 ? 11 : 10;
+  const badgeD = Math.min(0.34, rowH - 0.06);
+
+  shown.forEach((entry, index) => {
+    const y = BODY_TOP + index * rowH;
+    slide.addShape(pptx.ShapeType.ellipse, {
+      x: 0.4, y: y + (rowH - badgeD) / 2, w: badgeD, h: badgeD,
+      fill: { color: t.accent }, line: { color: t.accent, width: 0 },
+    });
+    slide.addText(String(entry.step), {
+      x: 0.4, y: y + (rowH - badgeD) / 2, w: badgeD, h: badgeD,
+      fontSize: Math.max(8, Math.round(fontSize * 0.8)), bold: true, color: 'ffffff',
+      fontFace: 'Yu Gothic UI', align: 'center', valign: 'middle',
+    });
+    // A wrapped two-line description used to run straight through the services
+    // strip, so the strip is reserved out of the description box's height.
+    const services = (entry.services ?? []).filter(Boolean);
+    const showsServices = services.length > 0 && rowH >= 0.5;
+    slide.addText(truncate(entry.description, 240), {
+      x: 0.4 + badgeD + 0.16, y, w: W - 1.1 - badgeD, h: showsServices ? rowH - 0.2 : rowH,
+      fontSize, color: t.titleText, fontFace: 'Yu Gothic UI', valign: 'middle', wrap: true,
+    });
+    if (showsServices) {
+      slide.addText(services.join('  →  '), {
+        x: 0.4 + badgeD + 0.16, y: y + rowH - 0.2, w: W - 1.1 - badgeD, h: 0.18,
+        fontSize: 9, color: t.metaText, fontFace: 'Yu Gothic UI', valign: 'middle',
+      });
+    }
+  });
+
+  if (steps.length > MAX_ROWS) {
+    slide.addText(`+ ${steps.length - MAX_ROWS} more steps`, {
+      x: 0.4, y: BODY_TOP + shown.length * rowH + 0.04, w: 6, h: 0.3,
+      fontSize: 10, italic: true, color: t.footerText, fontFace: 'Yu Gothic UI',
+    });
+  }
+}
+
+/** Slide 4 — service inventory. */
 function addServicesSlide(pptx: PptxGenJS, t: SlideTheme, o: ArchitectureDeckOptions): void {
   if (!o.services.length) return;
   const slide = pptx.addSlide();
@@ -1145,15 +1505,15 @@ function addCostRegionsSlide(pptx: PptxGenJS, t: SlideTheme, o: ArchitectureDeck
 }
 
 /**
- * Build and download a multi-slide, customer-ready PPTX deck for the current
- * architecture: title, diagram, services, and (when available) a Well-Architected
- * review (summary + findings) and a cost estimate (overview + regional
- * comparison). Returns the generated filename.
+ * Assemble the multi-slide, customer-ready deck for the current architecture:
+ * title, diagram, numbered workflow, services, and (when available) a
+ * Well-Architected review (summary + findings) and a cost estimate (overview +
+ * regional comparison). Split from the download so tests can inspect the deck.
  */
-export async function exportArchitectureDeck(
+export async function buildArchitectureDeckPptx(
   imageDataUrl: string,
   options: ArchitectureDeckOptions,
-): Promise<string> {
+): Promise<PptxGenJS> {
   const t = options.isDarkMode ? DARK_THEME : LIGHT_THEME;
 
   const pptx = new PptxCtor();
@@ -1165,12 +1525,22 @@ export async function exportArchitectureDeck(
 
   addTitleSlide(pptx, t, options);
   await addDiagramSlide(pptx, t, imageDataUrl, options);
+  addWorkflowSlide(pptx, t, options);
   addServicesSlide(pptx, t, options);
   addValidationSummarySlide(pptx, t, options);
   addValidationFindingsSlide(pptx, t, options);
   addCostOverviewSlide(pptx, t, options);
   addCostRegionsSlide(pptx, t, options);
 
+  return pptx;
+}
+
+/** Build the deck and download it. Returns the generated filename. */
+export async function exportArchitectureDeck(
+  imageDataUrl: string,
+  options: ArchitectureDeckOptions,
+): Promise<string> {
+  const pptx = await buildArchitectureDeckPptx(imageDataUrl, options);
   const fileName = generateModelFilename('azure-architecture-deck', 'pptx');
   await pptx.writeFile({ fileName });
   return fileName;

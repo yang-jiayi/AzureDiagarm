@@ -214,20 +214,40 @@ function createEdgeCell(
         </mxGeometry>
       </mxCell>`;
 
+  // Sized here rather than inside the label block so the numbered callout can
+  // clear the chip it belongs to — a fixed offset put the badge on top of the
+  // text as soon as the label wrapped to a second line.
+  const labelText = label ? String(label) : '';
+  const wrapWidth = 170;
+  const charsPerLine = 26;
+  const labelLines = labelText ? Math.max(1, Math.ceil(labelText.length / charsPerLine)) : 0;
+  const labelBoxHeight = 12 + labelLines * 16;
+  // Stagger parallel-edge chips along the segment so they don't stack.
+  const offsetX = route.ordinal === 0 ? 0 : (route.ordinal % 2 === 1 ? 1 : -1) * Math.ceil(route.ordinal / 2) * 24;
+
   if (label) {
     const labelStyle = 'edgeLabel;html=1;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=1;fillColor=#fef9c3;strokeColor=#374151;fontColor=#1f2937;fontStyle=1;fontSize=12;spacingLeft=4;spacingRight=4;spacingTop=2;spacingBottom=2;';
-    // Widen the wrap before it ever truncates, and size the yellow box to the
-    // wrapped text so long labels stay legible instead of overflowing.
-    const wrapWidth = 170;
-    const charsPerLine = 26;
-    const lineCount = Math.max(1, Math.ceil(String(label).length / charsPerLine));
-    const boxHeight = 12 + lineCount * 16;
-    // Stagger parallel-edge chips along the segment so they don't stack.
-    const offsetX = route.ordinal === 0 ? 0 : (route.ordinal % 2 === 1 ? 1 : -1) * Math.ceil(route.ordinal / 2) * 24;
     cells += `
-      <mxCell id="${edgeCellId}-lbl" value="${escapeXml(String(label))}" style="${labelStyle}" vertex="1" connectable="0" parent="${edgeCellId}">
-        <mxGeometry x="0" y="0" width="${wrapWidth}" height="${boxHeight}" relative="1" as="geometry">
+      <mxCell id="${edgeCellId}-lbl" value="${escapeXml(labelText)}" style="${labelStyle}" vertex="1" connectable="0" parent="${edgeCellId}">
+        <mxGeometry x="0" y="0" width="${wrapWidth}" height="${labelBoxHeight}" relative="1" as="geometry">
           <mxPoint x="${offsetX}" as="offset" />
+        </mxGeometry>
+      </mxCell>`;
+  }
+
+  // Numbered callout matching the workflow list — the Azure Architecture
+  // Center convention. Drawn as an edge-anchored ellipse so it stays glued to
+  // the arrow when the reader reroutes it in Draw.io.
+  if (route.stepNumber !== undefined) {
+    const badge = 24;
+    const stepStyle = 'ellipse;html=1;align=center;verticalAlign=middle;fillColor=#1f2937;strokeColor=#ffffff;strokeWidth=2;fontColor=#ffffff;fontStyle=1;fontSize=12;';
+    // Both boxes are centred on their offset point, so clearing the chip needs
+    // half of each plus a gap. Without a chip the badge sits on the line.
+    const badgeY = label ? Math.round(labelBoxHeight / 2 + badge / 2 + 4) : 0;
+    cells += `
+      <mxCell id="${edgeCellId}-step" value="${escapeXml(String(route.stepNumber))}" style="${stepStyle}" vertex="1" connectable="0" parent="${edgeCellId}">
+        <mxGeometry x="0" y="0" width="${badge}" height="${badge}" relative="1" as="geometry">
+          <mxPoint x="${label ? offsetX : 0}" y="${badgeY}" as="offset" />
         </mxGeometry>
       </mxCell>`;
   }

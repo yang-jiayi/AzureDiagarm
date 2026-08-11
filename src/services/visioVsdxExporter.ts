@@ -46,8 +46,10 @@ import {
   metaSubline,
   partitionBoxes,
   usedConnectionLegend,
+  workflowListFromEdges,
   zoneStyleFor,
   type ConnectionLegendEntry,
+  type WorkflowListEntry,
   type ExportBox,
   type ExportRoute,
   type Point,
@@ -494,6 +496,55 @@ ${rows}
     </Shape>`;
 }
 
+/**
+ * Numbered callout drawn beside a connector, matching the workflow list.
+ *
+ * Reference architectures on the Azure Architecture Center number the arrows
+ * and repeat those numbers in the prose. A real Visio ellipse (rather than
+ * text baked into the connector) keeps the badge selectable and movable when
+ * the reader edits the drawing.
+ */
+/** Badge diameter in inches, shared with the on-page clamp. */
+const STEP_BADGE_IN = 0.24;
+
+function stepBadgeXml(id: number, centre: Point, stepNumber: number): string {
+  const d = STEP_BADGE_IN;
+  return `    <Shape ID="${id}" NameU="StepBadge.${id}" Type="Shape" LineStyle="0" FillStyle="0" TextStyle="0">
+      <Cell N="PinX" V="${f(centre.x)}"/>
+      <Cell N="PinY" V="${f(centre.y)}"/>
+      <Cell N="Width" V="${f(d)}"/>
+      <Cell N="Height" V="${f(d)}"/>
+      <Cell N="LocPinX" V="${f(d / 2)}"/>
+      <Cell N="LocPinY" V="${f(d / 2)}"/>
+      <Cell N="Angle" V="0"/>
+      <Cell N="LayerMember" V="${LAYER_CONNECTIONS}"/>
+      <Cell N="FillForegnd" V="#1F2937"/>
+      <Cell N="FillPattern" V="1"/>
+      <Cell N="LineColor" V="#FFFFFF"/>
+      <Cell N="LineWeight" V="0.0125"/>
+      <Cell N="LinePattern" V="1"/>
+      <Section N="Character">
+        <Row IX="0"><Cell N="Font" V="1"/><Cell N="Color" V="#FFFFFF"/><Cell N="Size" V="0.11"/><Cell N="Style" V="1"/></Row>
+      </Section>
+      <Section N="Paragraph">
+        <Row IX="0"><Cell N="HorzAlign" V="1"/></Row>
+      </Section>
+      <Section N="Geometry" IX="0">
+        <Cell N="NoFill" V="0"/>
+        <Cell N="NoLine" V="0"/>
+        <Row T="Ellipse" IX="1">
+          <Cell N="X" V="${f(d / 2)}"/>
+          <Cell N="Y" V="${f(d / 2)}"/>
+          <Cell N="A" V="${f(d)}"/>
+          <Cell N="B" V="${f(d / 2)}"/>
+          <Cell N="C" V="${f(d / 2)}"/>
+          <Cell N="D" V="${f(d)}"/>
+        </Row>
+      </Section>
+      <Text>${esc(String(stepNumber))}</Text>
+    </Shape>`;
+}
+
 function connectXml(connectorId: number, sourceId: number, targetId: number): string {
   return `    <Connect FromSheet="${connectorId}" FromCell="BeginX" FromPart="9" ToSheet="${sourceId}" ToCell="PinX" ToPart="3"/>
     <Connect FromSheet="${connectorId}" FromCell="EndX" FromPart="12" ToSheet="${targetId}" ToCell="PinX" ToPart="3"/>`;
@@ -592,6 +643,50 @@ ${roundedRectGeometry()}
   return { shapes, nextId: id };
 }
 
+/**
+ * Emit the numbered workflow narration beside the drawing.
+ *
+ * An Azure Architecture Center diagram never shows a numbered callout without
+ * the sentence it refers to; on its own the badge is just an unexplained digit.
+ * Rows stack downward from the top-left of the panel.
+ */
+function buildWorkflowPanel(
+  startId: number,
+  entries: WorkflowListEntry[],
+  originX: number,
+  topY: number,
+  width: number,
+): { shapes: string[]; nextId: number } {
+  const shapes: string[] = [];
+  let id = startId;
+  const rowH = 0.26;
+  const boxH = rowH * entries.length + 0.34;
+  const originY = topY - boxH;
+  shapes.push(`    <Shape ID="${id++}" NameU="Workflow.${startId}" Type="Shape" LineStyle="0" FillStyle="0" TextStyle="0">
+      <Cell N="PinX" V="${f(originX + width / 2)}"/>
+      <Cell N="PinY" V="${f(originY + boxH / 2)}"/>
+      <Cell N="Width" V="${f(width)}"/>
+      <Cell N="Height" V="${f(boxH)}"/>
+      <Cell N="LocPinX" V="${f(width / 2)}"/>
+      <Cell N="LocPinY" V="${f(boxH / 2)}"/>
+      <Cell N="Angle" V="0"/>
+      <Cell N="FillForegnd" V="#FFFFFF"/>
+      <Cell N="FillPattern" V="1"/>
+      <Cell N="LineColor" V="#CBD5E1"/>
+      <Cell N="LineWeight" V="0.01"/>
+      <Cell N="LinePattern" V="1"/>
+      <Cell N="Rounding" V="0.04"/>
+${roundedRectGeometry()}
+    </Shape>`);
+  shapes.push(legendTextXml(id++, originX + 0.12, originY + boxH - 0.18, width - 0.24, 'Workflow'));
+  entries.forEach((entry, index) => {
+    const rowY = originY + boxH - 0.34 - index * rowH;
+    shapes.push(legendTextXml(id++, originX + 0.14, rowY, 0.3, `${entry.step}.`));
+    shapes.push(legendTextXml(id++, originX + 0.46, rowY, width - 0.6, entry.description));
+  });
+  return { shapes, nextId: id };
+}
+
 function pagesXml(pageWidthIn: number, pageHeightIn: number, title: string): string {
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Pages xmlns="${VISIO_NS}" xmlns:r="${REL_NS}">
@@ -673,13 +768,20 @@ export async function buildVsdxPackage(
 
   const contentWIn = Math.max(bounds.maxX - bounds.minX, 1) / PX_PER_INCH;
   const contentHIn = Math.max(bounds.maxY - bounds.minY, 1) / PX_PER_INCH;
+  // A numbered workflow gets its own band across the top of the sheet, so the
+  // prose never lands on the drawing the way an overlaid panel would.
+  const workflowEntries = workflowListFromEdges(edges);
+  const workflowBandIn = workflowEntries.length > 0 ? 0.26 * workflowEntries.length + 0.5 : 0;
   const pageWidthIn = f(Math.max(contentWIn + PAGE_PADDING_IN * 2, MIN_PAGE_W_IN));
-  const pageHeightIn = f(Math.max(contentHIn + PAGE_PADDING_IN * 2, MIN_PAGE_H_IN));
+  const pageHeightIn = f(Math.max(contentHIn + PAGE_PADDING_IN * 2 + workflowBandIn, MIN_PAGE_H_IN));
 
   // Centre the drawing on the page, converting to Visio's bottom-left origin.
   const offsetXIn = (pageWidthIn - contentWIn) / 2;
-  const offsetYIn = (pageHeightIn - contentHIn) / 2;
+  const offsetYIn = (pageHeightIn - workflowBandIn - contentHIn) / 2 + workflowBandIn;
   const clampIn = (value: number, lo: number, hi: number) => Math.min(Math.max(value, lo), Math.max(lo, hi));
+  // The workflow panel is opaque and is drawn after every service, so a stray
+  // node clamped into its band would be painted over. Keep the clamp below it.
+  const drawingTopIn = workflowBandIn + PAGE_PADDING_IN / 2;
   const toRect = (box: ExportBox): Rect => {
     const w = box.w / PX_PER_INCH;
     const h = box.h / PX_PER_INCH;
@@ -687,7 +789,7 @@ export async function buildVsdxPackage(
     let topY = (box.y - bounds.minY) / PX_PER_INCH + offsetYIn;
     if (clampToPage) {
       x = clampIn(x, PAGE_PADDING_IN / 2, pageWidthIn - w - PAGE_PADDING_IN / 2);
-      topY = clampIn(topY, PAGE_PADDING_IN / 2, pageHeightIn - h - PAGE_PADDING_IN / 2);
+      topY = clampIn(topY, drawingTopIn, pageHeightIn - h - PAGE_PADDING_IN / 2);
     }
     return { x, y: pageHeightIn - topY - h, w, h };
   };
@@ -696,7 +798,7 @@ export async function buildVsdxPackage(
     let topY = (point.y - bounds.minY) / PX_PER_INCH + offsetYIn;
     if (clampToPage) {
       x = clampIn(x, 0, pageWidthIn);
-      topY = clampIn(topY, 0, pageHeightIn);
+      topY = clampIn(topY, drawingTopIn, pageHeightIn);
     }
     return { x, y: pageHeightIn - topY };
   };
@@ -794,6 +896,42 @@ export async function buildVsdxPackage(
       ),
     );
     connects.push(connectXml(id, sourceId, targetId));
+    if (route.stepNumber !== undefined) {
+      const anchor = toPoint(route.labelAnchor);
+      // Clear the connector's own text. The label inherits the connector's
+      // rotation and runs *along* the line, so the badge has to step off along
+      // the line's normal; dropping in page-Y would walk straight down a
+      // vertical connector's own label.
+      const points = route.points.map(toPoint);
+      const a = points[0] ?? anchor;
+      const b = points[points.length - 1] ?? anchor;
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      const len = Math.hypot(dx, dy) || 1;
+      // Unit normal, oriented downward in page space so a horizontal connector
+      // keeps the badge below the line exactly as before.
+      let nx = dy / len;
+      let ny = -dx / len;
+      if (ny > 0) {
+        nx = -nx;
+        ny = -ny;
+      }
+      const drop = route.label ? CONNECTOR_FONT_IN * 0.65 + 0.12 + 0.03 : 0;
+      // A clamped connector can put its anchor at the very page edge, and the
+      // normal offset then pushes the badge off the sheet, where Visio simply
+      // does not draw it.
+      const half = STEP_BADGE_IN / 2;
+      shapes.push(
+        stepBadgeXml(
+          nextId++,
+          {
+            x: clampIn(anchor.x + nx * drop, half, pageWidthIn - half),
+            y: clampIn(anchor.y + ny * drop, half, pageHeightIn - half),
+          },
+          route.stepNumber,
+        ),
+      );
+    }
   }
 
   // Colour key so the Visio page can't contradict the PNG's connection legend.
@@ -802,6 +940,19 @@ export async function buildVsdxPackage(
     const legend = buildConnectionLegend(nextId, legendEntries, 0.35, 0.35);
     nextId = legend.nextId;
     shapes.push(...legend.shapes);
+  }
+
+  // The numbered prose that the connector badges point at.
+  if (workflowEntries.length > 0) {
+    const panel = buildWorkflowPanel(
+      nextId,
+      workflowEntries,
+      0.35,
+      pageHeightIn - 0.2,
+      Math.min(Math.max(pageWidthIn - 0.7, 2.4), 7.5),
+    );
+    nextId = panel.nextId;
+    shapes.push(...panel.shapes);
   }
 
   const parts: Array<{ path: string; data: string | Uint8Array }> = [

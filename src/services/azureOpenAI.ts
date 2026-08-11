@@ -14,6 +14,7 @@ import {
 } from './apiHelper';
 import type { Language } from '../i18n/LanguageContext';
 import { getPromptLanguageInstruction } from '../i18n/localization';
+import { normalizeWorkflowSteps } from '../utils/workflowStepMapping';
 import {
   isAnyAIModelConfigured,
   isManagedAIModelConfigured,
@@ -315,7 +316,7 @@ Rules:
 4. Connection labels MUST be specific and action-oriented (e.g., "Submit batch job per tenant"), NOT generic ("Request", "Data").
 5. MICROSOFT FABRIC: When the solution uses Microsoft Fabric, put Fabric items (Lakehouse, Warehouse, Eventhouse, Eventstream, KQL Database, Fabric Notebook, Fabric Data Pipeline, Dataflow Gen2, Semantic Model, Power BI Report, Mirrored Database, Real-Time Dashboard) in a group named "Microsoft Fabric" and set their category to "fabric". Include "Microsoft Fabric Capacity" (the billed F SKU) and "OneLake" (storage) in that group — individual Fabric items consume the shared capacity, so the capacity carries the cost.
 6. Connection types: "sync" (solid, HTTP/SQL), "async" (dashed, queues/events), "optional" (dotted, fallback).
-7. Provide 5-10 workflow steps following the data flow chronologically. Each step's "services" array MUST list ALL service IDs involved in that step (typically 2-3 services per step, not just one).
+7. Provide 5-10 workflow steps following the data flow chronologically. Each step's "services" array MUST list ALL service IDs involved in that step (typically 2-3 services per step, not just one). Use the exact "id" values from "services" — never display names — and list them in flow order (source first, destination last), because each step is drawn as a numbered callout on the arrow between them. Number the steps 1, 2, 3 … with no gaps and no repeats.
 
 LAYOUT READABILITY — CRITICAL:
 8. **Directional group flow.** Arrange groups in a clear left-to-right pipeline: Ingress/Edge → Application/Compute → Data/Storage. Place Identity/Security as a separate group at the bottom-left. Place Monitoring/Observability as a separate group at the bottom-right.
@@ -509,11 +510,26 @@ LAYOUT READABILITY — CRITICAL:
       );
     }
 
+    // ── Workflow integrity ──────────────────────────────────────────────────
+    // The numbered callouts on the arrows are matched to workflow steps by
+    // service id. Models emit display names here just as often as they do on
+    // connections, and an unresolvable step silently produces an unnumbered
+    // diagram, so repair the references with the same alias table.
+    const normalizedWorkflow = normalizeWorkflowSteps(architecture.workflow, resolveEndpoint);
+    architecture.workflow = normalizedWorkflow.steps;
+    if (normalizedWorkflow.repairedRefs > 0 || normalizedWorkflow.droppedSteps > 0) {
+      console.warn(
+        `🔧 Workflow: repaired ${normalizedWorkflow.repairedRefs} service reference(s), dropped ${normalizedWorkflow.droppedSteps} unusable step(s)`,
+      );
+    }
+
     architecture.integrity = {
       repairedEdges,
       droppedEdges,
       orphanCount: orphans.length,
       orphanServices: orphans.map((s: any) => String(s.name || s.id)),
+      repairedWorkflowRefs: normalizedWorkflow.repairedRefs,
+      droppedWorkflowSteps: normalizedWorkflow.droppedSteps,
     };
 
     return architecture;

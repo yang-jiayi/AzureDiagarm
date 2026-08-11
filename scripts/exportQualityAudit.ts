@@ -14,6 +14,7 @@ import JSZip from 'jszip';
 import type { Edge, Node } from 'reactflow';
 import { buildDiagramSlidePptx } from '../src/services/pptxExporter.ts';
 import { buildVsdxPackage } from '../src/services/visioVsdxExporter.ts';
+import { WRAP_TRIGGER_RATIO } from '../src/utils/serpentineWrap.ts';
 
 const OUT = path.join(process.cwd(), 'tmp-export-audit');
 const EMU_PER_INCH = 914400;
@@ -71,7 +72,17 @@ function overlapArea(a: Shape, b: Shape): number {
   return w > 0 && h > 0 ? w * h : 0;
 }
 
-interface Scenario { id: string; nodes: Node[]; edges: Edge[] }
+interface Scenario {
+  id: string;
+  nodes: Node[];
+  edges: Edge[];
+  /**
+   * Set when the nodes came out of the real layout engine. The strip rule below
+   * only applies to those: a hand-placed strip is the user's own canvas and an
+   * exporter that silently refolded it would no longer match what they drew.
+   */
+  fromLayoutEngine?: boolean;
+}
 
 function svc(id: string, label: string, x: number, y: number, parent?: string, icon = true): Node {
   return {
@@ -117,6 +128,9 @@ function wideScenario(): Scenario {
       id: `e-${i}`,
       source: `svc-${i}`,
       target: `svc-${i + 1}`,
+      // Half the flow is numbered, so the audit sees both the badge path and
+      // the unnumbered path in the same drawing.
+      ...(i < 6 ? { data: { stepNumber: i + 1, stepDescription: `ステップ ${i + 1}: サービス間の呼び出しを実行します` } } : {}),
       label: i % 3 === 0 ? 'HTTPS 経由でトークン検証を実施' : i % 3 === 1 ? 'Private Link' : 'Managed identity authentication',
     } as Edge);
   }
@@ -143,6 +157,52 @@ function oversizeScenario(): Scenario {
   return { id: 'oversize', nodes, edges };
 }
 
+/**
+ * Banding, numbering and an outlier at once. Each rule existed but none had a
+ * scenario where they interact: a stray belongs to no band under a plain range
+ * test, and a shape straddling a seam is admitted by two bands at once.
+ */
+function bandedScenario(): Scenario {
+  const nodes: Node[] = [];
+  const edges: Edge[] = [];
+  for (let i = 0; i < 30; i += 1) {
+    nodes.push(svc(`b-${i}`, i % 2 ? 'Azure Functions' : 'Azure SQL Database', i * 300, (i % 3) * 200));
+    if (i > 0) {
+      edges.push({
+        id: `y-${i}`,
+        source: `b-${i - 1}`,
+        target: `b-${i}`,
+        label: 'HTTPS 経由でトークン検証を実施',
+        ...(i <= 8 ? { data: { stepNumber: i, stepDescription: `ステップ ${i}: 帯をまたぐ呼び出しを実行します` } } : {}),
+      } as Edge);
+    }
+  }
+  nodes.push(svc('b-stray', 'Copilot Studio', -14000, -6000));
+  return { id: 'banded', nodes, edges };
+}
+
+/**
+ * Twenty narrated steps: rows stop shrinking at the legible minimum, so the
+ * list has to continue onto another slide rather than drop its tail.
+ */
+function narrativeScenario(): Scenario {
+  const nodes: Node[] = [];
+  const edges: Edge[] = [];
+  for (let i = 0; i < 21; i += 1) {
+    nodes.push(svc(`w-${i}`, i % 2 ? 'Azure Service Bus' : 'Azure Functions', (i % 7) * 300, Math.floor(i / 7) * 240));
+    if (i > 0) {
+      edges.push({
+        id: `w-e-${i}`,
+        source: `w-${i - 1}`,
+        target: `w-${i}`,
+        label: 'Private Link',
+        data: { stepNumber: i, stepDescription: `ステップ ${i}: マネージド ID による認証を経てメッセージを転送します` },
+      } as Edge);
+    }
+  }
+  return { id: 'narrative', nodes, edges };
+}
+
 /** A dense cluster plus one far-placed node: nothing may fall off the page. */
 function outlierScenario(): Scenario {
   const nodes: Node[] = [];
@@ -150,10 +210,102 @@ function outlierScenario(): Scenario {
     nodes.push(svc(`c-${i}`, i % 2 ? 'Azure Functions' : 'Azure SQL Database', (i % 4) * 220, Math.floor(i / 4) * 180));
   }
   nodes.push(svc('outlier', 'Copilot Studio', 9000, 4000));
-  return { id: 'outlier', nodes, edges: [] };
+  // Numbered, labelled edges on the clamped path: this is the only
+  // configuration where the badge can be clamped back onto its own label chip,
+  // so without these edges that rule was never actually evaluated.
+  const edges: Edge[] = [
+    { id: 'e-out', source: 'c-0', target: 'outlier', label: 'HTTPS 経由でトークン検証を実施', data: { stepNumber: 1, stepDescription: '外れ値のサービスへ接続します' } } as Edge,
+    { id: 'e-in', source: 'c-1', target: 'c-2', label: 'Managed identity authentication', data: { stepNumber: 2, stepDescription: 'マネージド ID で認証します' } } as Edge,
+  ];
+  return { id: 'outlier', nodes, edges };
 }
 
 interface Report { scenario: string; format: string; issues: string[]; metrics: Record<string, number> }
+
+/**
+ * The shape the AI actually returns, run through the real layout engine.
+ *
+ * Every other scenario hand-places its nodes, so until this one existed the
+ * audit never saw what a generated diagram looks like — and a linear flow is by
+ * far the most common thing a model produces.
+ */
+async function generatedScenario(): Promise<Scenario> {
+  const { applyLayoutPreset } = await import('../src/utils/layoutPresets');
+  const names = [
+    'Azure Front Door', 'Application Gateway', 'Azure Kubernetes Service', 'Azure Service Bus',
+    'Azure Functions', 'Azure Cosmos DB', 'Azure Data Factory', 'Azure Synapse Analytics',
+    'Azure OpenAI Service', 'Azure AI Search', 'Key Vault', 'Azure Monitor',
+  ];
+  const nodes: Node[] = names.map((name, i) => svc(`g-${i}`, name, 0, 0));
+  const edges: Edge[] = names.slice(1).map((_, i) => ({
+    id: `g-e-${i + 1}`,
+    source: `g-${i}`,
+    target: `g-${i + 1}`,
+    label: 'HTTPS 経由でトークン検証を実施',
+    data: { stepNumber: i + 1, stepDescription: `ステップ ${i + 1}: 次のサービスへ要求を引き渡します` },
+  } as Edge));
+
+  const laidOut = await applyLayoutPreset(nodes, edges, {
+    preset: 'flow-lr', spacing: 'comfortable', edgeStyle: 'smooth', emphasizePrimaryPath: false,
+  });
+  return { id: 'generated', nodes: laidOut.nodes, edges: laidOut.edges, fromLayoutEngine: true };
+}
+
+/**
+ * What the generator is actually told to produce: 3 zones, 10 services,
+ * hub-and-spoke telemetry, numbered flow — then run through the real layout
+ * preset. `wide` is grouped but hand-placed and `generated` is engine-laid-out
+ * but flat, so until now no scenario exercised grouping and the layout engine
+ * at the same time, which is every diagram a user actually gets.
+ */
+async function groupedGeneratedScenario(): Promise<Scenario> {
+  const { applyLayoutPreset } = await import('../src/utils/layoutPresets');
+  const zones: { id: string; label: string; members: string[] }[] = [
+    { id: 'z-edge', label: 'Ingress zone', members: ['Azure Front Door', 'Application Gateway'] },
+    { id: 'z-app', label: 'Application zone', members: ['Azure Kubernetes Service', 'Azure Functions', 'Azure Service Bus'] },
+    { id: 'z-data', label: 'Data zone', members: ['Azure Cosmos DB', 'Azure SQL Database', 'Azure Data Lake Storage'] },
+    { id: 'z-ops', label: 'Security & operations', members: ['Microsoft Entra ID', 'Key Vault', 'Azure Monitor'] },
+  ];
+  const nodes: Node[] = [];
+  const flat: string[] = [];
+  zones.forEach((zone, z) => {
+    nodes.push(grp(zone.id, zone.label, z * 900, 0, 820, 560));
+    zone.members.forEach((name, i) => {
+      const id = `gg-${z}-${i}`;
+      nodes.push(svc(id, name, 60 + (i % 2) * 380, 90 + Math.floor(i / 2) * 200, zone.id));
+      flat.push(id);
+    });
+  });
+  const link = (n: number, from: string, to: string, label: string): Edge => ({
+    id: `gg-e-${n}`,
+    source: from,
+    target: to,
+    label,
+    data: { stepNumber: n, stepDescription: `ステップ ${n}: ${label}` },
+  } as Edge);
+  const edges: Edge[] = [
+    link(1, 'gg-0-0', 'gg-0-1', 'WAF で検査した要求を転送'),
+    link(2, 'gg-0-1', 'gg-1-0', 'コンテナー化された API へ負荷分散'),
+    link(3, 'gg-1-0', 'gg-1-2', '注文イベントを非同期で発行'),
+    link(4, 'gg-1-2', 'gg-1-1', 'キューの受信でハンドラーを起動'),
+    link(5, 'gg-1-1', 'gg-2-0', 'マネージド ID で注文ドキュメントを書き込み'),
+    link(6, 'gg-1-0', 'gg-2-1', 'Private Endpoint 経由で参照系を照会'),
+    link(7, 'gg-1-1', 'gg-2-2', '分析用に生データを保管'),
+    link(8, 'gg-3-0', 'gg-1-0', 'ワークロード ID にトークンを発行'),
+    link(9, 'gg-1-0', 'gg-3-1', '接続シークレットをマネージド ID で取得'),
+    link(10, 'gg-1-0', 'gg-3-2', 'ログとメトリックを送信'),
+  ];
+  const laidOut = await applyLayoutPreset(nodes, edges, {
+    preset: 'flow-lr', spacing: 'comfortable', edgeStyle: 'smooth', emphasizePrimaryPath: false,
+  });
+  return { id: 'grouped-generated', nodes: laidOut.nodes, edges: laidOut.edges, fromLayoutEngine: true };
+}
+
+function countByName(shapes: { name: string }[]): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const shape of shapes) counts.set(shape.name, (counts.get(shape.name) ?? 0) + 1);
+  return counts;
+}
 
 async function auditPptx(scenario: Scenario): Promise<Report> {
   const pptx = await buildDiagramSlidePptx(PIXEL_PNG, {
@@ -170,8 +322,14 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
   const sldSz = /<p:sldSz[^>]*cx="(\d+)"[^>]*cy="(\d+)"/.exec(presentation);
   const pageW = sldSz ? +sldSz[1] / EMU_PER_INCH : 13.333;
   const pageH = sldSz ? +sldSz[2] / EMU_PER_INCH : 7.5;
-  const xml = await zip.file('ppt/slides/slide1.xml')!.async('string');
-  const shapes = parseShapes(xml);
+  const xml = await Promise.all(
+    Object.keys(zip.files)
+      .filter((name) => /^ppt\/slides\/slide\d+\.xml$/.test(name))
+      .sort((a, b) => (+a.replace(/\D/g, '')) - (+b.replace(/\D/g, '')))
+      .map((name) => zip.file(name)!.async('string')),
+  );
+  const slideCount = xml.length;
+  const shapes = xml.flatMap((slideXml) => parseShapes(slideXml));
 
   const issues: string[] = [];
   const tiles = shapes.filter((s) => s.name.startsWith('service-') && !s.name.includes('label') && !s.name.includes('meta'));
@@ -208,6 +366,42 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
   const truncated = shapes.filter((s) => s.text.includes('…'));
   if (truncated.length) issues.push(`${truncated.length} shapes carry truncated "…" text`);
 
+  // Workflow numbering: an arrow that the AI numbered must carry its callout,
+  // and the callout must not sit on top of a node or its own label chip —
+  // either way the reader cannot match the arrow to the workflow prose.
+  const numberedEdges = scenario.edges.filter(
+    (e) => Number.isInteger((e.data as { stepNumber?: number } | undefined)?.stepNumber),
+  );
+  const badges = shapes.filter((s) => s.name.startsWith('connector-step-'));
+  if (badges.length !== numberedEdges.length) {
+    issues.push(`${badges.length} step badges drawn for ${numberedEdges.length} numbered connectors`);
+  }
+  // Membership alone is permutation-blind: swapping every badge onto the wrong
+  // arrow would pass. The object name carries the route id, so check the exact
+  // arrow-to-number correspondence instead.
+  const expectedByRoute = new Map(
+    numberedEdges.map((e) => [e.id, String((e.data as { stepNumber: number }).stepNumber)]),
+  );
+  for (const badge of badges) {
+    const routeId = badge.name.replace(/^connector-step-/, '');
+    const want = expectedByRoute.get(routeId);
+    if (want === undefined) {
+      issues.push(`step badge "${badge.name}" does not belong to any numbered connector`);
+    } else if (badge.text !== want) {
+      issues.push(`connector ${routeId} is numbered "${badge.text}" but its workflow step is ${want}`);
+    }
+    for (const tile of tiles) {
+      if (overlapArea(badge, tile) > 0.02 * tile.w * tile.h) {
+        issues.push(`step badge "${badge.name}" covers node "${tile.name}"`);
+      }
+    }
+    for (const chip of chips) {
+      if (overlapArea(badge, chip) > 0.25 * badge.w * badge.h) {
+        issues.push(`step badge "${badge.name}" collides with edge chip "${chip.text}"`);
+      }
+    }
+  }
+
   // Nothing may be drawn outside the page: an off-slide shape is invisible in
   // PowerPoint, which reads as missing content.
   for (const shape of shapes) {
@@ -218,11 +412,79 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
     }
   }
   // Absolute legibility, not just relative fit: sub-7pt body text is unreadable
-  // when projected. Exempt only the case where the diagram genuinely exceeds
-  // PowerPoint's 56" page and the slide says so.
-  const overflowNote = shapes.some((s) => s.name === 'overflow-note');
-  if (Number.isFinite(minFont) && minFont < 7 && !overflowNote) {
+  // when projected, and a warning note is not a substitute for a readable
+  // drawing — an oversized architecture must be split across slides instead.
+  if (Number.isFinite(minFont) && minFont < 7) {
     issues.push(`smallest label font is ${minFont}pt (below the 7pt legibility floor)`);
+  }
+
+  // Learn pairs every numbered callout with the sentence it points at. A badge
+  // without its row is an unexplained digit.
+  const narrated = new Set(
+    scenario.edges
+      .map((e) => e.data as { stepNumber?: number; stepDescription?: string } | undefined)
+      .filter((d) => Number.isInteger(d?.stepNumber) && !!d?.stepDescription)
+      .map((d) => d!.stepNumber!),
+  );
+  for (const step of narrated) {
+    if (!shapes.some((s) => s.name === `workflow-text-${step}`)) {
+      issues.push(`workflow step ${step} is numbered on the drawing but missing from the workflow list`);
+    }
+  }
+  for (const row of shapes.filter((s) => s.name.startsWith('workflow-text-'))) {
+    if (!row.text.trim()) issues.push(`workflow row "${row.name}" is blank`);
+  }
+
+  // Banding must not lose or duplicate anything. A service that falls between
+  // two bands is silently absent from the deck; one that straddles a seam is
+  // drawn twice, once shoved against a page edge on top of whatever is there.
+  const serviceIds = scenario.nodes.filter((n) => n.type === 'azureNode').map((n) => n.id);
+  const drawnTiles = new Map<string, number>();
+  for (const tile of tiles) {
+    const id = tile.name.replace(/^service-/, '');
+    drawnTiles.set(id, (drawnTiles.get(id) ?? 0) + 1);
+  }
+  for (const id of serviceIds) {
+    const drawn = drawnTiles.get(id) ?? 0;
+    if (drawn === 0) issues.push(`service "${id}" is drawn on no slide`);
+    else if (drawn > 1) issues.push(`service "${id}" is drawn on ${drawn} slides`);
+  }
+  for (const [name, count] of countByName(badges)) {
+    if (count > 1) issues.push(`step badge "${name}" is drawn ${count} times`);
+  }
+  for (const [name, count] of countByName(chips)) {
+    if (count > 1) issues.push(`edge chip "${name}" is drawn ${count} times`);
+  }
+  // Every narrated step must reach the deck, however long the workflow is:
+  // rows that stop shrinking have to continue onto another slide, not vanish.
+  const narratedRows = shapes.filter((s) => s.name.startsWith('workflow-text-')).length;
+  if (narrated.size > 0 && narratedRows < narrated.size) {
+    issues.push(`${narratedRows} workflow rows drawn for ${narrated.size} narrated steps`);
+  }
+
+  // The strip symptom is a SHAPE, not an area. Area fill barely moves when a
+  // drawing is stretched, because the page is sized from the drawing and both
+  // the numerator and the denominator shrink together — a one-rank-per-service
+  // strip still measures 3-4% full, so an area rule is silent exactly when it
+  // matters. Aspect ratio is what actually changes, and WRAP_TRIGGER_RATIO is
+  // the number the product itself uses to decide a layout needs folding.
+  //
+  // A deck that had to be banded is exempt: the drawing was genuinely larger
+  // than one page and the footer says so.
+  const tileArea = tiles.reduce((sum, tile) => sum + tile.w * tile.h, 0);
+  const density = tileArea / Math.max(pageW * pageH * slideCount, 1);
+  const slidesWithTiles = xml.filter((slideXml) =>
+    parseShapes(slideXml).some((s) => s.name.startsWith('service-') && !s.name.includes('label') && !s.name.includes('meta')),
+  ).length;
+  if (scenario.fromLayoutEngine && tiles.length >= 4 && slidesWithTiles <= 1) {
+    const minX = Math.min(...tiles.map((t) => t.x));
+    const maxX = Math.max(...tiles.map((t) => t.x + t.w));
+    const minY = Math.min(...tiles.map((t) => t.y));
+    const maxY = Math.max(...tiles.map((t) => t.y + t.h));
+    const aspect = (maxX - minX) / Math.max(maxY - minY, 0.01);
+    if (aspect > WRAP_TRIGGER_RATIO) {
+      issues.push(`drawing is ${aspect.toFixed(1)}:1 on one page — it was stretched into a strip`);
+    }
   }
 
   return {
@@ -230,6 +492,7 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
     format: 'pptx',
     issues,
     metrics: {
+      slides: slideCount,
       shapes: shapes.length,
       tiles: tiles.length,
       pageWidthIn: +pageW.toFixed(3),
@@ -238,6 +501,8 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
       minFontPt: minFont,
       chips: chips.length,
       maxChipWidthIn: chips.length ? +Math.max(...chips.map((c) => c.w)).toFixed(3) : 0,
+      stepBadges: badges.length,
+      fillPct: +(density * 100).toFixed(2),
     },
   };
 }
@@ -282,6 +547,51 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
   const minFontPt = +(minFontIn * 72).toFixed(2);
   if (minFontPt < 5.5) issues.push(`smallest Visio font is ${minFontPt}pt (below the 5.5pt floor)`);
 
+  // Workflow numbering must survive into Visio too, or the same drawing tells
+  // a different story in PowerPoint and in Visio.
+  const numberedEdges = scenario.edges.filter(
+    (e) => Number.isInteger((e.data as { stepNumber?: number } | undefined)?.stepNumber),
+  );
+  const badgeBlocks = [...xml.matchAll(/<Shape [^>]*NameU="StepBadge\.\d+"[\s\S]*?<\/Shape>/g)].map((m) => m[0]);
+  if (badgeBlocks.length !== numberedEdges.length) {
+    issues.push(`${badgeBlocks.length} Visio step badges for ${numberedEdges.length} numbered connectors`);
+  }
+  const expectedNumbers = new Set(
+    numberedEdges.map((e) => String((e.data as { stepNumber: number }).stepNumber)),
+  );
+  // Service boxes in page coordinates, so a badge that lands on one is caught.
+  const serviceBoxes: Array<{ x: number; y: number; w: number; h: number }> = [];
+  for (const m of xml.matchAll(
+    /NameU="Service\.\d+"[\s\S]*?<Cell N="PinX" V="([\d.-]+)"\/>\s*<Cell N="PinY" V="([\d.-]+)"\/>\s*<Cell N="Width" V="([\d.-]+)"\/>\s*<Cell N="Height" V="([\d.-]+)"\/>/g,
+  )) {
+    const [, pinX, pinY, w, h] = m;
+    serviceBoxes.push({ x: +pinX - +w / 2, y: +pinY - +h / 2, w: +w, h: +h });
+  }
+  for (const block of badgeBlocks) {
+    const shown = /<Text>([^<]*)<\/Text>/.exec(block)?.[1] ?? '';
+    if (!expectedNumbers.has(shown)) {
+      issues.push(`Visio step badge shows "${shown}", which is not a workflow step number`);
+    }
+    if (!/<Row T="Ellipse"/.test(block)) {
+      issues.push('Visio step badge is not drawn as an ellipse');
+    }
+    const geo = /<Cell N="PinX" V="([\d.-]+)"\/>\s*<Cell N="PinY" V="([\d.-]+)"\/>\s*<Cell N="Width" V="([\d.-]+)"\/>\s*<Cell N="Height" V="([\d.-]+)"\/>/.exec(block);
+    if (!geo) continue;
+    const badge = { x: +geo[1] - +geo[3] / 2, y: +geo[2] - +geo[4] / 2, w: +geo[3], h: +geo[4] };
+    if (badge.x < -0.01 || badge.y < -0.01
+      || badge.x + badge.w > pkg.pageWidthIn + 0.01 || badge.y + badge.h > pkg.pageHeightIn + 0.01) {
+      issues.push(`Visio step badge "${shown}" sits outside the page`);
+    }
+    for (const box of serviceBoxes) {
+      const ow = Math.min(badge.x + badge.w, box.x + box.w) - Math.max(badge.x, box.x);
+      const oh = Math.min(badge.y + badge.h, box.y + box.h) - Math.max(badge.y, box.y);
+      if (ow > 0 && oh > 0 && ow * oh > 0.25 * badge.w * badge.h) {
+        issues.push(`Visio step badge "${shown}" covers a service shape`);
+        break;
+      }
+    }
+  }
+
   // A sparse page is the outlier symptom: a huge sheet holding a small drawing.
   const shapeArea = [...xml.matchAll(/NameU="Service\.\d+"[\s\S]*?<Cell N="Width" V="([\d.]+)"\/>\s*<Cell N="Height" V="([\d.]+)"\/>/g)]
     .reduce((sum, m) => sum + +m[1] * +m[2], 0);
@@ -301,13 +611,17 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
       textBlocks: textCount,
       minFontPt,
       fillPct: +(density * 100).toFixed(2),
+      stepBadges: badgeBlocks.length,
     },
   };
 }
 
 async function main(): Promise<void> {
   mkdirSync(OUT, { recursive: true });
-  const scenarios = [compactScenario(), wideScenario(), oversizeScenario(), outlierScenario()];
+  const scenarios = [
+    compactScenario(), wideScenario(), oversizeScenario(), outlierScenario(),
+    bandedScenario(), narrativeScenario(), await generatedScenario(), await groupedGeneratedScenario(),
+  ];
   const reports: Report[] = [];
   for (const scenario of scenarios) {
     reports.push(await auditPptx(scenario));
