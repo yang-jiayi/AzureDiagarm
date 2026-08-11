@@ -173,8 +173,14 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
   const sldSz = /<p:sldSz[^>]*cx="(\d+)"[^>]*cy="(\d+)"/.exec(presentation);
   const pageW = sldSz ? +sldSz[1] / EMU_PER_INCH : 13.333;
   const pageH = sldSz ? +sldSz[2] / EMU_PER_INCH : 7.5;
-  const xml = await zip.file('ppt/slides/slide1.xml')!.async('string');
-  const shapes = parseShapes(xml);
+  const xml = await Promise.all(
+    Object.keys(zip.files)
+      .filter((name) => /^ppt\/slides\/slide\d+\.xml$/.test(name))
+      .sort((a, b) => (+a.replace(/\D/g, '')) - (+b.replace(/\D/g, '')))
+      .map((name) => zip.file(name)!.async('string')),
+  );
+  const slideCount = xml.length;
+  const shapes = xml.flatMap((slideXml) => parseShapes(slideXml));
 
   const issues: string[] = [];
   const tiles = shapes.filter((s) => s.name.startsWith('service-') && !s.name.includes('label') && !s.name.includes('meta'));
@@ -250,10 +256,9 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
     }
   }
   // Absolute legibility, not just relative fit: sub-7pt body text is unreadable
-  // when projected. Exempt only the case where the diagram genuinely exceeds
-  // PowerPoint's 56" page and the slide says so.
-  const overflowNote = shapes.some((s) => s.name === 'overflow-note');
-  if (Number.isFinite(minFont) && minFont < 7 && !overflowNote) {
+  // when projected, and a warning note is not a substitute for a readable
+  // drawing — an oversized architecture must be split across slides instead.
+  if (Number.isFinite(minFont) && minFont < 7) {
     issues.push(`smallest label font is ${minFont}pt (below the 7pt legibility floor)`);
   }
 
@@ -262,6 +267,7 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
     format: 'pptx',
     issues,
     metrics: {
+      slides: slideCount,
       shapes: shapes.length,
       tiles: tiles.length,
       pageWidthIn: +pageW.toFixed(3),
