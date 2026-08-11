@@ -108,6 +108,7 @@ test('punctuation and phrase keywords are handled', () => {
   assert.equal(classifyEdgeDirection('Two-way'), 'bidirectional');
   assert.equal(classifyEdgeDirection('two way channel'), 'bidirectional');
   assert.equal(classifyEdgeDirection('2-way link'), 'bidirectional');
+  assert.equal(classifyEdgeDirection('2 way link'), 'bidirectional');
   assert.equal(classifyEdgeDirection('sync-config'), 'bidirectional');
   // A non-English label has no keywords and must not be forced either way.
   assert.equal(classifyEdgeDirection('データ送信'), 'forward');

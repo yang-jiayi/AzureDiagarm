@@ -40,7 +40,7 @@ const BIDIRECTIONAL_WORDS = [
 ];
 
 /** Matched against the whole label because they span a word boundary. */
-const BIDIRECTIONAL_PHRASES = ['two-way', 'two way', '2-way'];
+const BIDIRECTIONAL_PHRASES = ['two-way', 'two way', '2-way', '2 way'];
 
 /**
  * Splits camelCase before lowercasing so "sendResponse" and "onCallback"

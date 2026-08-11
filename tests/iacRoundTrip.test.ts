@@ -315,6 +315,10 @@ test('a bidirectional connection yields rather than break a directed chain', () 
   const asDrawn = buildStarterTemplate(nodes, 'bicep', chain);
   const withTwoWay = buildStarterTemplate(nodes, 'bicep', [...chain, edge('e3', 'store', 'acr', 'bidirectional')]);
 
+  // Without this anchor every assertion below is vacuously true for a
+  // resolver that emits nothing at all.
+  assert.equal(asDrawn.dependencyCount, 2, 'the directed chain must produce two orderings');
+
   for (const header of headers) {
     const before = dependencyNames(blockMatching(asDrawn.content, header), 'dependsOn');
     const after = dependencyNames(blockMatching(withTwoWay.content, header), 'dependsOn');
@@ -329,6 +333,7 @@ test('a bidirectional connection yields rather than break a directed chain', () 
   for (const block of withTwoWay.content.matchAll(/resource (\w+) '[^']+' = \{\n([\s\S]*?)\n\}/g)) {
     graph.set(block[1], dependencyNames(`\n${block[2]}\n`, 'dependsOn'));
   }
+  assert.equal(graph.size, 3);
   const state = new Map<string, number>();
   const visit = (symbol: string): void => {
     assert.notEqual(state.get(symbol), 1, `cycle reached ${symbol}`);
