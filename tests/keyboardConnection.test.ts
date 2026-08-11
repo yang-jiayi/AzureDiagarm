@@ -5,7 +5,6 @@ import {
   announce,
   getAnnouncement,
   resetAnnouncements,
-  subscribeToAnnouncements,
 } from '../src/a11y/liveAnnouncer';
 import {
   KEYBOARD_CONNECT_EVENT,
@@ -13,6 +12,7 @@ import {
   cancelKeyboardConnection,
   completeKeyboardConnection,
   getPendingConnection,
+  subscribeToPendingConnection,
   type KeyboardConnectDetail,
 } from '../src/hooks/useKeyboardConnection';
 
@@ -66,16 +66,19 @@ test('completing a connection dispatches the source and target once', () => {
 
 test('cancelling clears the pending source and notifies subscribers', () => {
   let notifications = 0;
-  const unsubscribe = subscribeToAnnouncements(() => { notifications += 1; });
+  const unsubscribe = subscribeToPendingConnection(() => { notifications += 1; });
   try {
     beginKeyboardConnection('a', 'App Service');
+    assert.equal(notifications, 1, 'arming must notify the store subscribers');
+
     cancelKeyboardConnection();
     assert.equal(getPendingConnection(), null);
+    assert.equal(notifications, 2);
 
-    // Cancelling when nothing is pending must not churn subscribers.
-    const before = notifications;
+    // Cancelling when nothing is pending must not churn subscribers, otherwise
+    // every stray Escape re-renders every node on the canvas.
     cancelKeyboardConnection();
-    assert.equal(notifications, before);
+    assert.equal(notifications, 2);
   } finally {
     unsubscribe();
   }

@@ -2074,20 +2074,65 @@ function App() {
   // are funnelled through the same onConnect as pointer drags so both routes
   // produce identical edges. Handles match React Flow's default left-to-right
   // flow; the edge renderer re-routes them anyway.
+  //
+  // The pending source is held in a module store with no lifecycle tie to the
+  // node it names, so it can outlive a delete, an AI regeneration or a diagram
+  // load. React Flow's addEdge does not check that either endpoint still
+  // exists and its renderer then drops the edge without a warning, leaving a
+  // dangling edge in saved JSON and exports — hence the explicit re-check here,
+  // against live instance state rather than a captured closure.
   useEffect(() => {
     const handleKeyboardConnect = (event: Event) => {
       const detail = (event as CustomEvent<KeyboardConnectDetail>).detail;
       if (!detail?.source || !detail?.target || detail.source === detail.target) return;
+
+      const failed = localize(language, {
+        en: 'Connection failed. One of the nodes is no longer on the canvas.',
+        ja: '接続できませんでした。対象のノードがキャンバス上にありません。',
+      });
+      const sourceNode = reactFlowInstance?.getNode(detail.source);
+      const targetNode = reactFlowInstance?.getNode(detail.target);
+      if (!sourceNode || !targetNode) {
+        announce(failed, 'assertive');
+        return;
+      }
+
+      const sourceHandle = 'right';
+      const targetHandle = 'left';
+      // addEdge silently drops an identical connection, which would otherwise
+      // be announced as a second successful connection.
+      const alreadyConnected = (reactFlowInstance?.getEdges() ?? []).some((edge) => (
+        edge.source === detail.source
+        && edge.target === detail.target
+        && (edge.sourceHandle ?? null) === sourceHandle
+        && (edge.targetHandle ?? null) === targetHandle
+      ));
+
+      const sourceLabel = String(sourceNode.data?.label ?? detail.source);
+      const targetLabel = String(targetNode.data?.label ?? detail.target);
+
+      if (alreadyConnected) {
+        announce(localize(language, {
+          en: `${sourceLabel} is already connected to ${targetLabel}.`,
+          ja: `${sourceLabel} は既に ${targetLabel} に接続されています。`,
+        }));
+        return;
+      }
+
       onConnect({
         source: detail.source,
         target: detail.target,
-        sourceHandle: 'right',
-        targetHandle: 'left',
+        sourceHandle,
+        targetHandle,
       });
+      announce(localize(language, {
+        en: `Connected ${sourceLabel} to ${targetLabel}.`,
+        ja: `${sourceLabel} から ${targetLabel} へ接続しました。`,
+      }));
     };
     window.addEventListener(KEYBOARD_CONNECT_EVENT, handleKeyboardConnect);
     return () => window.removeEventListener(KEYBOARD_CONNECT_EVENT, handleKeyboardConnect);
-  }, [onConnect]);
+  }, [language, onConnect, reactFlowInstance]);
 
   const diagramHistoryState = useMemo<DiagramHistorySnapshot>(() => ({
     nodes: nodes.map(stripTransientNodeState),

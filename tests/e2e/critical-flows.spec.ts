@@ -6534,3 +6534,56 @@ test('nodes can be connected using only the keyboard', async ({ page }) => {
   await expect(liveRegion).toContainText('Connected Azure SQL Database to App Service');
   await expect(page.locator('[data-connect-source="true"]')).toHaveCount(0);
 });
+
+test('keyboard connections reject groups, duplicates and stale sources', async ({ page }) => {
+  await openInteractionDiagram(page);
+
+  const edges = page.locator('.react-flow__edge');
+  await expect(edges).toHaveCount(1);
+
+  const nodeA = page.locator('[data-testid="rf__node-node-a"] [data-node-keyboard-target]');
+  const nodeB = page.locator('[data-testid="rf__node-node-b"] [data-node-keyboard-target]');
+  const groupA = page.locator('[data-testid="rf__node-group-a"] [data-node-keyboard-target]');
+  const liveRegion = page.getByTestId('live-region-polite');
+
+  // Group boxes render no connection handles, so React Flow would keep the edge
+  // in state and never draw it. Arming on one must be refused outright.
+  await groupA.focus();
+  await page.keyboard.press('c');
+  await expect(liveRegion).toContainText('Group boxes cannot be connected');
+  await expect(page.locator('[data-connect-source="true"]')).toHaveCount(0);
+  await expect(edges).toHaveCount(1);
+
+  // node-a is already connected to node-b on the same handles; addEdge would
+  // drop the duplicate, which must not be announced as a new connection.
+  await nodeA.focus();
+  await page.keyboard.press('c');
+  await nodeB.focus();
+  await page.keyboard.press('c');
+  await expect(liveRegion).toContainText('is already connected to');
+  await expect(edges).toHaveCount(1);
+
+  // A source deleted mid-flow must not produce an edge with a dangling endpoint.
+  await nodeA.focus();
+  await page.keyboard.press('c');
+  await expect(page.locator('[data-testid="rf__node-node-a"] .azure-node'))
+    .toHaveAttribute('data-connect-source', 'true');
+  await page.locator('[data-testid="rf__node-node-a"]').click();
+  await page.keyboard.press('Delete');
+  await expect(page.locator('[data-testid="rf__node-node-a"]')).toHaveCount(0);
+
+  await nodeB.focus();
+  await page.keyboard.press('c');
+  await expect(page.getByTestId('live-region-assertive')).toContainText('no longer on the canvas');
+
+  const danglingEdges = await page.evaluate(() => {
+    const ids = new Set(Array.from(document.querySelectorAll('.react-flow__node')).map(
+      (el) => (el as HTMLElement).dataset.id,
+    ));
+    return Array.from(document.querySelectorAll('.react-flow__edge')).filter((el) => {
+      const id = (el as HTMLElement).dataset.testid || '';
+      return id.includes('node-a') && !ids.has('node-a');
+    }).length;
+  });
+  expect(danglingEdges).toBe(0);
+});

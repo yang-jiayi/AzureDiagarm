@@ -32,6 +32,11 @@ export function useNodeKeyboardInteraction(
     return String(label);
   }, [getNode]);
 
+  const isConnectable = useCallback((id: string): boolean => {
+    const type = getNode(id)?.type;
+    return type !== 'groupNode';
+  }, [getNode]);
+
   const handleFocus = useCallback((event: React.FocusEvent<HTMLElement>) => {
     if (
       event.relatedTarget instanceof Node
@@ -48,12 +53,28 @@ export function useNodeKeyboardInteraction(
   // Two-step keyboard connection: C on the source, then C on the target.
   // Without this there is no pointer-free way to draw an edge, because React
   // Flow's connection handles are drag-only.
+  //
+  // Only the outcome-independent transitions are announced here. Whether an
+  // edge was actually created depends on state this hook cannot see (both
+  // endpoints still existing, no duplicate connection), so the success and
+  // failure messages are emitted by the canvas listener that applies the edge.
   const handleConnectKey = useCallback(() => {
     const pending = getPendingConnection();
     const cancelled = localize(language, {
       en: 'Connection cancelled.',
       ja: '接続を取り消しました。',
     });
+
+    // Group boxes render no connection handles at all, so React Flow would keep
+    // the edge in state but never draw it. Reject them instead of reporting a
+    // connection that does not exist.
+    if (!isConnectable(nodeId)) {
+      announce(localize(language, {
+        en: 'Group boxes cannot be connected. Move to a service node and press C.',
+        ja: 'グループは接続できません。サービスのノードへ移動して C を押してください。',
+      }));
+      return;
+    }
 
     if (!pending) {
       const label = describe(nodeId, nodeLabel);
@@ -71,16 +92,8 @@ export function useNodeKeyboardInteraction(
       return;
     }
 
-    const sourceLabel = pending.label;
-    const targetLabel = describe(nodeId, nodeLabel);
-    const source = completeKeyboardConnection(nodeId);
-    announce(source
-      ? localize(language, {
-          en: `Connected ${sourceLabel} to ${targetLabel}.`,
-          ja: `${sourceLabel} から ${targetLabel} へ接続しました。`,
-        })
-      : cancelled);
-  }, [describe, language, nodeId, nodeLabel]);
+    if (!completeKeyboardConnection(nodeId)) announce(cancelled);
+  }, [describe, isConnectable, language, nodeId, nodeLabel]);
 
   const handleKeyDown = useCallback((event: React.KeyboardEvent<HTMLElement>) => {
     if (event.key === 'Enter' || event.key === ' ' || event.key === 'F2') {

@@ -341,7 +341,6 @@ const AzureNode: React.FC<NodeProps> = memo(({ data, selected, id }) => {
                 tabIndex={0}
                 aria-keyshortcuts="F2 C Escape ArrowUp ArrowDown ArrowLeft ArrowRight"
                 aria-describedby="azd-node-keyboard-help"
-                aria-pressed={isConnectSource || undefined}
                 title={t("Double-click to edit")}
               >
                 {label}

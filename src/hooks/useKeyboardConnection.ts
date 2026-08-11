@@ -48,6 +48,8 @@ function subscribe(listener: Listener): () => void {
   };
 }
 
+export { subscribe as subscribeToPendingConnection };
+
 function getPending(): PendingConnection | null {
   return pending;
 }
