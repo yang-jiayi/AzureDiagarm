@@ -232,6 +232,19 @@ function createEdgeCell(
       </mxCell>`;
   }
 
+  // Numbered callout matching the workflow list — the Azure Architecture
+  // Center convention. Drawn as an edge-anchored ellipse so it stays glued to
+  // the arrow when the reader reroutes it in Draw.io.
+  if (route.stepNumber !== undefined) {
+    const stepStyle = 'ellipse;html=1;align=center;verticalAlign=middle;fillColor=#1f2937;strokeColor=#ffffff;strokeWidth=2;fontColor=#ffffff;fontStyle=1;fontSize=12;';
+    cells += `
+      <mxCell id="${edgeCellId}-step" value="${escapeXml(String(route.stepNumber))}" style="${stepStyle}" vertex="1" connectable="0" parent="${edgeCellId}">
+        <mxGeometry x="0" y="0" width="24" height="24" relative="1" as="geometry">
+          <mxPoint x="-12" y="${label ? 14 : -12}" as="offset" />
+        </mxGeometry>
+      </mxCell>`;
+  }
+
   return cells;
 }
 

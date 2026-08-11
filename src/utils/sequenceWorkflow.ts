@@ -15,10 +15,14 @@
  * How steps map to edges: each workflow step lists the `services` it touches.
  * Saved diagrams don't number edges, so we map each edge to its SVG <path> by
  * GEOMETRY (matching the edge's source/target handle points to the path's
- * start/end), then greedily assign each step its forward edge. Node highlight
- * boxes are reconstructed from the matched edge endpoints, so they stay aligned
- * even when the JSON node positions are stale (e.g. a node was moved).
+ * start/end), then assign steps to edges through the shared
+ * `mapWorkflowStepsToEdges` contract that the canvas and every export format
+ * also use. Node highlight boxes are reconstructed from the matched edge
+ * endpoints, so they stay aligned even when the JSON node positions are stale
+ * (e.g. a node was moved).
  */
+
+import { mapWorkflowStepsToEdges } from './workflowStepMapping';
 
 export interface SequenceWorkflowOptions {
   nodes: any[];
@@ -148,26 +152,24 @@ export function sequenceWorkflowSvg(svgText: string, options: SequenceWorkflowOp
     return { x: avg(b.xs), y: avg(b.ys), w: b.w, h: b.h };
   };
 
-  // ── map workflow steps → edges (greedy, in order, by service membership) ─────
-  const assignedEdge = new Set<string>();
-  const pathStep = new Map<number, number>(); // pathIdx -> step number (1-based)
-  workflow.forEach((step, k) => {
-    const svc = new Set(step.services || []);
-    let picks = jsonEdges.filter(
-      (je) => !assignedEdge.has(je.id) && svc.has(je.source) && svc.has(je.target)
-    );
-    if (picks.length > 1) {
-      const order = step.services;
-      picks = picks
-        .slice()
-        .sort((a, b) => order.indexOf(b.target) - order.indexOf(a.target))
-        .slice(0, 1);
-    }
-    for (const je of picks) {
-      assignedEdge.add(je.id);
-      if (je.pathIdx >= 0) pathStep.set(je.pathIdx, k + 1);
-    }
+  // ── map workflow steps → edges ──────────────────────────────────────────────
+  // Shared with the canvas and every export so a step never gets one number in
+  // the animation and a different one in the PowerPoint. The timeline is driven
+  // by a step's *position* in the sorted list, not its declared number, because
+  // TOTAL is workflow.length * STEP_DUR — a gap in the numbering (1, 2, 5) would
+  // otherwise schedule an edge past the end of the loop and it would never play.
+  const stepByEdgeId = mapWorkflowStepsToEdges(jsonEdges, workflow);
+  const positionByStep = new Map<number, number>();
+  workflow.forEach((s, k) => {
+    if (!positionByStep.has(s.step)) positionByStep.set(s.step, k + 1);
   });
+  const pathStep = new Map<number, number>(); // pathIdx -> 1-based timeline slot
+  for (const je of jsonEdges) {
+    const step = stepByEdgeId.get(je.id);
+    if (step === undefined || je.pathIdx < 0) continue;
+    const slot = positionByStep.get(step);
+    if (slot !== undefined) pathStep.set(je.pathIdx, slot);
+  }
 
   // ── inject sequenced flow + node highlights ──────────────────────────────────
   let svg = svgText;

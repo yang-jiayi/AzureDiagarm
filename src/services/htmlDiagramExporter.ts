@@ -54,6 +54,8 @@ interface PositionedEdge {
   dashPattern: string;
   bidirectional: boolean;
   connectionType: string;
+  /** Workflow step this arrow carries, drawn as a numbered callout. */
+  stepNumber?: number;
   points: Array<{ x: number; y: number }>;
 }
 
@@ -216,6 +218,7 @@ function buildLayout(nodes: Node[], edges: Edge[], icons: Map<string, string>): 
     dashPattern: route.dashPattern ?? '',
     bidirectional: route.bidirectional,
     connectionType: route.connectionType,
+    ...(route.stepNumber !== undefined ? { stepNumber: route.stepNumber } : {}),
     points: route.points.map((point) => ({ x: point.x + dx, y: point.y + dy })),
   }));
 
@@ -290,6 +293,10 @@ function generateHtml(layout: LayoutResult, title: string): string {
   .node .meta { font-size: 10px; color: #64748b; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .edges-layer { position: absolute; top: 0; left: 0; pointer-events: none; }
   .edge-path { fill: none; stroke-width: 1.5; }
+  .edge-step {
+    font-family: 'Yu Gothic UI', 'Segoe UI', system-ui, sans-serif;
+    font-size: 11px; font-weight: 700;
+  }
   .edge-label {
     font-family: 'Yu Gothic UI', 'Segoe UI', system-ui, sans-serif; font-size: 10px;
     paint-order: stroke; stroke: white; stroke-width: 3px;
@@ -433,12 +440,38 @@ function render() {
       const mid = e.points[Math.floor(e.points.length / 2)];
       const text = document.createElementNS(svgNs, 'text');
       text.setAttribute('x', mid.x);
-      text.setAttribute('y', mid.y - 4);
+      text.setAttribute('y', mid.y - (e.stepNumber ? 18 : 4));
       text.setAttribute('text-anchor', 'middle');
       text.setAttribute('fill', color);
       text.classList.add('edge-label');
       text.textContent = e.label;
       svg.appendChild(text);
+    }
+
+    // Numbered callout, matching the workflow list: the Azure Architecture
+    // Center convention that ties each arrow to the step describing it.
+    if (e.stepNumber) {
+      const mid = e.points[Math.floor(e.points.length / 2)];
+      const halo = document.createElementNS(svgNs, 'circle');
+      halo.setAttribute('cx', mid.x);
+      halo.setAttribute('cy', mid.y);
+      halo.setAttribute('r', '11');
+      halo.setAttribute('fill', '#ffffff');
+      svg.appendChild(halo);
+      const disc = document.createElementNS(svgNs, 'circle');
+      disc.setAttribute('cx', mid.x);
+      disc.setAttribute('cy', mid.y);
+      disc.setAttribute('r', '9');
+      disc.setAttribute('fill', color);
+      svg.appendChild(disc);
+      const num = document.createElementNS(svgNs, 'text');
+      num.setAttribute('x', mid.x);
+      num.setAttribute('y', mid.y + 4);
+      num.setAttribute('text-anchor', 'middle');
+      num.setAttribute('fill', '#ffffff');
+      num.classList.add('edge-step');
+      num.textContent = String(e.stepNumber);
+      svg.appendChild(num);
     }
   });
   canvas.appendChild(svg);

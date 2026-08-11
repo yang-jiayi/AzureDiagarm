@@ -138,6 +138,14 @@ const EditableEdge: React.FC<EdgeProps> = ({
   const shouldPulseFlow = flowAnimated && flowMode === 'pulse' && direction === 'bidirectional';
   const edgeStroke = selected ? '#0f6cbd' : ((style as any)?.stroke ?? '#64748b');
   const edgeStrokeWidth = Number((style as any)?.strokeWidth) || 1.75;
+  // Azure Architecture Center reference diagrams number each arrow and repeat
+  // the number in the workflow prose. Show the same badge the exports draw so
+  // the canvas and the exported file can never disagree.
+  const rawStep = (data as { stepNumber?: unknown } | undefined)?.stepNumber;
+  const stepNumber =
+    typeof rawStep === 'number' && Number.isInteger(rawStep) && rawStep > 0 ? rawStep : undefined;
+  const badgeX = labelX + offsetX;
+  const badgeY = labelY + offsetY + (editLabel ? 18 : 0);
 
   return (
     <>
@@ -173,6 +181,33 @@ const EditableEdge: React.FC<EdgeProps> = ({
           }}
           aria-hidden="true"
         />
+      )}
+      {stepNumber !== undefined && (
+        <g
+          className="editable-edge-step"
+          pointerEvents="none"
+          role="img"
+          aria-label={localize(language, {
+            en: `Workflow step ${stepNumber}`,
+            ja: `ワークフロー ステップ ${stepNumber}`,
+          })}
+          data-edge-step={stepNumber}
+        >
+          {/* White halo so the number stays legible where it crosses the line. */}
+          <circle cx={badgeX} cy={badgeY} r={11} fill="#ffffff" />
+          <circle cx={badgeX} cy={badgeY} r={9} fill={edgeStroke} />
+          <text
+            x={badgeX}
+            y={badgeY + 3.5}
+            textAnchor="middle"
+            fill="#ffffff"
+            fontSize={11}
+            fontWeight={700}
+            fontFamily="Segoe UI, system-ui, sans-serif"
+          >
+            {stepNumber}
+          </text>
+        </g>
       )}
       <EdgeLabelRenderer>
         <div

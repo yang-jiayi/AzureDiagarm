@@ -107,6 +107,14 @@ export interface ExportRoute {
   points: Point[];
   /** Preferred label anchor (centre of the middle segment). */
   labelAnchor: Point;
+  /**
+   * Workflow step this arrow carries, when the diagram declares one.
+   *
+   * Every reference architecture on the Azure Architecture Center numbers its
+   * arrows and repeats the numbers in the prose beneath, so exporters draw a
+   * numbered callout here to keep the picture and the narrative linked.
+   */
+  stepNumber?: number;
 }
 
 export interface Bounds {
@@ -910,6 +918,16 @@ function pairKey(a: string, b: string): string {
  * and each route carries its canonical connection colour/dash so PPTX, VSDX,
  * Draw.io and HTML stay in agreement with the PNG legend.
  */
+/**
+ * Workflow step declared on an edge, if any. Only positive integers count: a
+ * `0` or a fractional value would render as a meaningless callout.
+ */
+function readStepNumber(edge: Edge): number | undefined {
+  const raw = (edge.data as { stepNumber?: unknown } | undefined)?.stepNumber;
+  const value = typeof raw === 'string' ? Number(raw) : raw;
+  return typeof value === 'number' && Number.isInteger(value) && value > 0 ? value : undefined;
+}
+
 export function buildExportRoutes(
   edges: Edge[],
   boxes: Map<string, ExportBox>,
@@ -956,6 +974,7 @@ export function buildExportRoutes(
       isSelfLoop: source.id === target.id,
       points: geometry.points,
       labelAnchor: geometry.labelAnchor,
+      ...(readStepNumber(edge) !== undefined ? { stepNumber: readStepNumber(edge) } : {}),
     });
   }
   return routes;

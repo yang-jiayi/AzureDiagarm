@@ -494,6 +494,52 @@ ${rows}
     </Shape>`;
 }
 
+/**
+ * Numbered callout drawn beside a connector, matching the workflow list.
+ *
+ * Reference architectures on the Azure Architecture Center number the arrows
+ * and repeat those numbers in the prose. A real Visio ellipse (rather than
+ * text baked into the connector) keeps the badge selectable and movable when
+ * the reader edits the drawing.
+ */
+function stepBadgeXml(id: number, centre: Point, stepNumber: number): string {
+  const d = 0.24;
+  return `    <Shape ID="${id}" NameU="StepBadge.${id}" Type="Shape" LineStyle="0" FillStyle="0" TextStyle="0">
+      <Cell N="PinX" V="${f(centre.x)}"/>
+      <Cell N="PinY" V="${f(centre.y)}"/>
+      <Cell N="Width" V="${f(d)}"/>
+      <Cell N="Height" V="${f(d)}"/>
+      <Cell N="LocPinX" V="${f(d / 2)}"/>
+      <Cell N="LocPinY" V="${f(d / 2)}"/>
+      <Cell N="Angle" V="0"/>
+      <Cell N="LayerMember" V="${LAYER_CONNECTIONS}"/>
+      <Cell N="FillForegnd" V="#1F2937"/>
+      <Cell N="FillPattern" V="1"/>
+      <Cell N="LineColor" V="#FFFFFF"/>
+      <Cell N="LineWeight" V="0.0125"/>
+      <Cell N="LinePattern" V="1"/>
+      <Section N="Character">
+        <Row IX="0"><Cell N="Font" V="1"/><Cell N="Color" V="#FFFFFF"/><Cell N="Size" V="0.11"/><Cell N="Style" V="1"/></Row>
+      </Section>
+      <Section N="Paragraph">
+        <Row IX="0"><Cell N="HorzAlign" V="1"/></Row>
+      </Section>
+      <Section N="Geometry" IX="0">
+        <Cell N="NoFill" V="0"/>
+        <Cell N="NoLine" V="0"/>
+        <Row T="Ellipse" IX="1">
+          <Cell N="X" V="${f(d / 2)}"/>
+          <Cell N="Y" V="${f(d / 2)}"/>
+          <Cell N="A" V="${f(d)}"/>
+          <Cell N="B" V="${f(d / 2)}"/>
+          <Cell N="C" V="${f(d / 2)}"/>
+          <Cell N="D" V="${f(d)}"/>
+        </Row>
+      </Section>
+      <Text>${esc(String(stepNumber))}</Text>
+    </Shape>`;
+}
+
 function connectXml(connectorId: number, sourceId: number, targetId: number): string {
   return `    <Connect FromSheet="${connectorId}" FromCell="BeginX" FromPart="9" ToSheet="${sourceId}" ToCell="PinX" ToPart="3"/>
     <Connect FromSheet="${connectorId}" FromCell="EndX" FromPart="12" ToSheet="${targetId}" ToCell="PinX" ToPart="3"/>`;
@@ -794,6 +840,13 @@ export async function buildVsdxPackage(
       ),
     );
     connects.push(connectXml(id, sourceId, targetId));
+    if (route.stepNumber !== undefined) {
+      const anchor = toPoint(route.labelAnchor);
+      // Clear the connector's own text: Visio centres the label on the line, so
+      // drop by half the text height plus half the badge before the gap.
+      const drop = route.label ? CONNECTOR_FONT_IN * 0.65 + 0.12 + 0.03 : 0;
+      shapes.push(stepBadgeXml(nextId++, { x: anchor.x, y: anchor.y - drop }, route.stepNumber));
+    }
   }
 
   // Colour key so the Visio page can't contradict the PNG's connection legend.

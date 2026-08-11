@@ -117,6 +117,9 @@ function wideScenario(): Scenario {
       id: `e-${i}`,
       source: `svc-${i}`,
       target: `svc-${i + 1}`,
+      // Half the flow is numbered, so the audit sees both the badge path and
+      // the unnumbered path in the same drawing.
+      ...(i < 6 ? { data: { stepNumber: i + 1 } } : {}),
       label: i % 3 === 0 ? 'HTTPS 経由でトークン検証を実施' : i % 3 === 1 ? 'Private Link' : 'Managed identity authentication',
     } as Edge);
   }
@@ -208,6 +211,35 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
   const truncated = shapes.filter((s) => s.text.includes('…'));
   if (truncated.length) issues.push(`${truncated.length} shapes carry truncated "…" text`);
 
+  // Workflow numbering: an arrow that the AI numbered must carry its callout,
+  // and the callout must not sit on top of a node or its own label chip —
+  // either way the reader cannot match the arrow to the workflow prose.
+  const numberedEdges = scenario.edges.filter(
+    (e) => Number.isInteger((e.data as { stepNumber?: number } | undefined)?.stepNumber),
+  );
+  const badges = shapes.filter((s) => s.name.startsWith('connector-step-'));
+  if (badges.length !== numberedEdges.length) {
+    issues.push(`${badges.length} step badges drawn for ${numberedEdges.length} numbered connectors`);
+  }
+  const expectedNumbers = new Set(
+    numberedEdges.map((e) => String((e.data as { stepNumber: number }).stepNumber)),
+  );
+  for (const badge of badges) {
+    if (!expectedNumbers.has(badge.text)) {
+      issues.push(`step badge shows "${badge.text}", which is not a workflow step number`);
+    }
+    for (const tile of tiles) {
+      if (overlapArea(badge, tile) > 0.02 * tile.w * tile.h) {
+        issues.push(`step badge "${badge.name}" covers node "${tile.name}"`);
+      }
+    }
+    for (const chip of chips) {
+      if (overlapArea(badge, chip) > 0.25 * badge.w * badge.h) {
+        issues.push(`step badge "${badge.name}" collides with edge chip "${chip.text}"`);
+      }
+    }
+  }
+
   // Nothing may be drawn outside the page: an off-slide shape is invisible in
   // PowerPoint, which reads as missing content.
   for (const shape of shapes) {
@@ -238,6 +270,7 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
       minFontPt: minFont,
       chips: chips.length,
       maxChipWidthIn: chips.length ? +Math.max(...chips.map((c) => c.w)).toFixed(3) : 0,
+      stepBadges: badges.length,
     },
   };
 }
@@ -282,6 +315,51 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
   const minFontPt = +(minFontIn * 72).toFixed(2);
   if (minFontPt < 5.5) issues.push(`smallest Visio font is ${minFontPt}pt (below the 5.5pt floor)`);
 
+  // Workflow numbering must survive into Visio too, or the same drawing tells
+  // a different story in PowerPoint and in Visio.
+  const numberedEdges = scenario.edges.filter(
+    (e) => Number.isInteger((e.data as { stepNumber?: number } | undefined)?.stepNumber),
+  );
+  const badgeBlocks = [...xml.matchAll(/<Shape [^>]*NameU="StepBadge\.\d+"[\s\S]*?<\/Shape>/g)].map((m) => m[0]);
+  if (badgeBlocks.length !== numberedEdges.length) {
+    issues.push(`${badgeBlocks.length} Visio step badges for ${numberedEdges.length} numbered connectors`);
+  }
+  const expectedNumbers = new Set(
+    numberedEdges.map((e) => String((e.data as { stepNumber: number }).stepNumber)),
+  );
+  // Service boxes in page coordinates, so a badge that lands on one is caught.
+  const serviceBoxes: Array<{ x: number; y: number; w: number; h: number }> = [];
+  for (const m of xml.matchAll(
+    /NameU="Service\.\d+"[\s\S]*?<Cell N="PinX" V="([\d.-]+)"\/>\s*<Cell N="PinY" V="([\d.-]+)"\/>\s*<Cell N="Width" V="([\d.-]+)"\/>\s*<Cell N="Height" V="([\d.-]+)"\/>/g,
+  )) {
+    const [, pinX, pinY, w, h] = m;
+    serviceBoxes.push({ x: +pinX - +w / 2, y: +pinY - +h / 2, w: +w, h: +h });
+  }
+  for (const block of badgeBlocks) {
+    const shown = /<Text>([^<]*)<\/Text>/.exec(block)?.[1] ?? '';
+    if (!expectedNumbers.has(shown)) {
+      issues.push(`Visio step badge shows "${shown}", which is not a workflow step number`);
+    }
+    if (!/<Row T="Ellipse"/.test(block)) {
+      issues.push('Visio step badge is not drawn as an ellipse');
+    }
+    const geo = /<Cell N="PinX" V="([\d.-]+)"\/>\s*<Cell N="PinY" V="([\d.-]+)"\/>\s*<Cell N="Width" V="([\d.-]+)"\/>\s*<Cell N="Height" V="([\d.-]+)"\/>/.exec(block);
+    if (!geo) continue;
+    const badge = { x: +geo[1] - +geo[3] / 2, y: +geo[2] - +geo[4] / 2, w: +geo[3], h: +geo[4] };
+    if (badge.x < -0.01 || badge.y < -0.01
+      || badge.x + badge.w > pkg.pageWidthIn + 0.01 || badge.y + badge.h > pkg.pageHeightIn + 0.01) {
+      issues.push(`Visio step badge "${shown}" sits outside the page`);
+    }
+    for (const box of serviceBoxes) {
+      const ow = Math.min(badge.x + badge.w, box.x + box.w) - Math.max(badge.x, box.x);
+      const oh = Math.min(badge.y + badge.h, box.y + box.h) - Math.max(badge.y, box.y);
+      if (ow > 0 && oh > 0 && ow * oh > 0.25 * badge.w * badge.h) {
+        issues.push(`Visio step badge "${shown}" covers a service shape`);
+        break;
+      }
+    }
+  }
+
   // A sparse page is the outlier symptom: a huge sheet holding a small drawing.
   const shapeArea = [...xml.matchAll(/NameU="Service\.\d+"[\s\S]*?<Cell N="Width" V="([\d.]+)"\/>\s*<Cell N="Height" V="([\d.]+)"\/>/g)]
     .reduce((sum, m) => sum + +m[1] * +m[2], 0);
@@ -301,6 +379,7 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
       textBlocks: textCount,
       minFontPt,
       fillPct: +(density * 100).toFixed(2),
+      stepBadges: badgeBlocks.length,
     },
   };
 }

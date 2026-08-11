@@ -231,3 +231,22 @@ test('a reverse edge still resolves its endpoints and self-loops are unaffected'
   assert.equal(loop.isSelfLoop, true);
   assert.equal(loop.sourceId, 'a');
 });
+
+/**
+ * Workflow numbering has to survive the trip into the shared geometry, because
+ * every exporter reads its badges from ExportRoute and nowhere else.
+ */
+test('export routes carry only well-formed workflow step numbers', () => {
+  const boxes = new Map([['a', box('a', 0, 0)], ['b', box('b', 400, 0)]]);
+  const routeFor = (data: Record<string, unknown>) =>
+    buildExportRoutes([{ id: 'e1', source: 'a', target: 'b', data } as Edge], boxes)[0];
+
+  assert.equal(routeFor({ stepNumber: 3 }).stepNumber, 3);
+  // Persisted diagrams round-trip through JSON, so a numeric string counts.
+  assert.equal(routeFor({ stepNumber: '2' }).stepNumber, 2);
+  assert.equal(routeFor({}).stepNumber, undefined, 'an unnumbered edge gets no badge');
+  for (const bad of [0, -1, 1.5, 'two', null, NaN, Infinity]) {
+    assert.equal(routeFor({ stepNumber: bad }).stepNumber, undefined,
+      `${String(bad)} is not a step number`);
+  }
+});

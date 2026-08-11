@@ -317,15 +317,21 @@ function addConnector(
   });
 }
 
-function addConnectorLabel(
-  slide: Slide,
+/**
+ * Geometry of a connector's label chip, or null when the edge has no label.
+ *
+ * Shared with the step badge so the badge can be placed from the chip's real
+ * height. Deriving it twice used to leave the badge sitting on top of tall,
+ * wrapped CJK labels.
+ */
+function connectorLabelBox(
   route: ExportRoute,
   transform: FitTransform,
   fontSize: number,
   px: number,
   clampTo?: DiagramFrame,
-): void {
-  if (!route.label) return;
+): { x: number; y: number; w: number; h: number; text: string } | null {
+  if (!route.label) return null;
   const anchor = toInches(route.labelAnchor, transform);
   const text = truncateLabel(route.label, 42);
 
@@ -349,12 +355,25 @@ function addConnectorLabel(
     x = clamp(x, clampTo.x, Math.max(clampTo.x, clampTo.x + clampTo.w - w));
     y = clamp(y, clampTo.y, Math.max(clampTo.y, clampTo.y + clampTo.h - h));
   }
+  return { x, y, w, h, text };
+}
 
-  slide.addText(text, {
-    x,
-    y,
-    w,
-    h,
+function addConnectorLabel(
+  slide: Slide,
+  route: ExportRoute,
+  transform: FitTransform,
+  fontSize: number,
+  px: number,
+  clampTo?: DiagramFrame,
+): void {
+  const box = connectorLabelBox(route, transform, fontSize, px, clampTo);
+  if (!box) return;
+
+  slide.addText(box.text, {
+    x: box.x,
+    y: box.y,
+    w: box.w,
+    h: box.h,
     shape: 'roundRect',
     rectRadius: 0.03,
     fill: { color: 'FEF9C3', transparency: 8 },
@@ -367,6 +386,57 @@ function addConnectorLabel(
     margin: 0.02,
     wrap: true,
     objectName: `connector-label-${route.id}`,
+  });
+}
+
+/**
+ * Numbered callout on a connector, matching the workflow list.
+ *
+ * Reference architectures on the Azure Architecture Center number every arrow
+ * and repeat those numbers in the prose, so a deck exported without them makes
+ * the reader guess which sentence describes which hop. Drawn as a real
+ * PowerPoint oval so it stays editable rather than being baked into an image.
+ */
+function addStepBadge(
+  slide: Slide,
+  route: ExportRoute,
+  transform: FitTransform,
+  fontSize: number,
+  px: number,
+  clampTo?: DiagramFrame,
+): void {
+  if (route.stepNumber === undefined) return;
+  const anchor = toInches(route.labelAnchor, transform);
+  const d = clamp(0.26 * px, 0.18, 0.42);
+
+  // Sit fully clear of the label chip, measured from the chip's own box: a
+  // wrapped CJK label is several lines tall, so a fixed offset used to leave
+  // the badge sitting on top of the text.
+  const chip = connectorLabelBox(route, transform, fontSize, px, clampTo);
+  let x = anchor.x - d / 2;
+  let y = chip ? chip.y + chip.h + 0.03 : anchor.y - d / 2;
+  if (chip) x = chip.x + chip.w / 2 - d / 2;
+  if (clampTo) {
+    x = clamp(x, clampTo.x, Math.max(clampTo.x, clampTo.x + clampTo.w - d));
+    y = clamp(y, clampTo.y, Math.max(clampTo.y, clampTo.y + clampTo.h - d));
+  }
+
+  slide.addText(String(route.stepNumber), {
+    x,
+    y,
+    w: d,
+    h: d,
+    shape: 'ellipse',
+    fill: { color: '1F2937' },
+    line: { color: 'FFFFFF', width: 1.25 },
+    color: 'FFFFFF',
+    bold: true,
+    fontSize,
+    fontFace: 'Yu Gothic UI',
+    align: 'center',
+    valign: 'middle',
+    margin: 0,
+    objectName: `connector-step-${route.id}`,
   });
 }
 
@@ -627,6 +697,7 @@ async function addEditableDiagram(
   // that is rendered later.
   const labelFontSize = clamp(9 * px, 4, 10);
   for (const route of routes) addConnectorLabel(slide, route, transform, labelFontSize, px, clampTo);
+  for (const route of routes) addStepBadge(slide, route, transform, labelFontSize, px, clampTo);
 
   // Colour key so the deck's connectors agree with the PNG legend.
   addConnectionLegend(pptx, slide, diagram.edges ?? [], frame);
@@ -840,6 +911,14 @@ export interface DeckCost {
   unavailableRegions?: string[];
 }
 
+export interface DeckWorkflowStep {
+  /** 1-based step number, matching the numbered callout drawn on the arrow. */
+  step: number;
+  description: string;
+  /** Services the step touches, in flow order. */
+  services?: string[];
+}
+
 export interface ArchitectureDeckOptions extends PptxExportOptions {
   /** The original natural-language prompt ("the napkin"). */
   prompt?: string;
@@ -847,6 +926,12 @@ export interface ArchitectureDeckOptions extends PptxExportOptions {
   model?: string;
   /** Flat service inventory derived from the diagram nodes. */
   services: DeckService[];
+  /**
+   * Numbered dataflow. The Azure Architecture Center pairs every numbered
+   * arrow with a matching numbered paragraph; without this the callouts on the
+   * diagram slide refer to nothing. A slide is added only when present.
+   */
+  workflow?: DeckWorkflowStep[] | null;
   /** Optional WAF validation summary — a slide is added only when present. */
   validation?: DeckValidation | null;
   /** Optional cost estimate — a slide is added only when present. */
@@ -925,7 +1010,63 @@ async function addDiagramSlide(pptx: PptxGenJS, t: SlideTheme, imageDataUrl: str
   }
 }
 
-/** Slide 3 — service inventory. */
+/**
+ * Slide 3 — numbered dataflow.
+ *
+ * Mirrors the "Workflow" section of an Azure Architecture Center reference
+ * architecture: each numbered paragraph corresponds to the callout drawn on the
+ * matching arrow of the diagram slide. Emitted only when the architecture
+ * actually has a workflow, so a topology-only diagram gains no empty slide.
+ */
+function addWorkflowSlide(pptx: PptxGenJS, t: SlideTheme, o: ArchitectureDeckOptions): void {
+  const steps = (o.workflow ?? [])
+    .filter((entry) => entry && Number.isFinite(entry.step) && !!entry.description)
+    .sort((a, b) => a.step - b.step);
+  if (steps.length === 0) return;
+
+  const MAX_ROWS = 12;
+  const shown = steps.slice(0, MAX_ROWS);
+  const slide = pptx.addSlide();
+  addChrome(pptx, slide, t, 'Workflow', `${steps.length} step${steps.length === 1 ? '' : 's'}`);
+
+  const rowH = Math.min(0.62, BODY_H / shown.length);
+  // Long descriptions have to shrink rather than overflow the slide.
+  const fontSize = rowH >= 0.5 ? 13 : rowH >= 0.38 ? 11 : 10;
+  const badgeD = Math.min(0.34, rowH - 0.06);
+
+  shown.forEach((entry, index) => {
+    const y = BODY_TOP + index * rowH;
+    slide.addShape(pptx.ShapeType.ellipse, {
+      x: 0.4, y: y + (rowH - badgeD) / 2, w: badgeD, h: badgeD,
+      fill: { color: t.accent }, line: { color: t.accent, width: 0 },
+    });
+    slide.addText(String(entry.step), {
+      x: 0.4, y: y + (rowH - badgeD) / 2, w: badgeD, h: badgeD,
+      fontSize: Math.max(8, Math.round(fontSize * 0.8)), bold: true, color: 'ffffff',
+      fontFace: 'Yu Gothic UI', align: 'center', valign: 'middle',
+    });
+    slide.addText(truncate(entry.description, 240), {
+      x: 0.4 + badgeD + 0.16, y, w: W - 1.1 - badgeD, h: rowH,
+      fontSize, color: t.titleText, fontFace: 'Yu Gothic UI', valign: 'middle', wrap: true,
+    });
+    const services = (entry.services ?? []).filter(Boolean);
+    if (services.length > 0 && rowH >= 0.5) {
+      slide.addText(services.join('  →  '), {
+        x: 0.4 + badgeD + 0.16, y: y + rowH - 0.2, w: W - 1.1 - badgeD, h: 0.18,
+        fontSize: 9, color: t.metaText, fontFace: 'Yu Gothic UI', valign: 'middle',
+      });
+    }
+  });
+
+  if (steps.length > MAX_ROWS) {
+    slide.addText(`+ ${steps.length - MAX_ROWS} more steps`, {
+      x: 0.4, y: FOOTER_Y - 0.32, w: 6, h: 0.3,
+      fontSize: 10, italic: true, color: t.footerText, fontFace: 'Yu Gothic UI',
+    });
+  }
+}
+
+/** Slide 4 — service inventory. */
 function addServicesSlide(pptx: PptxGenJS, t: SlideTheme, o: ArchitectureDeckOptions): void {
   if (!o.services.length) return;
   const slide = pptx.addSlide();
@@ -1145,15 +1286,15 @@ function addCostRegionsSlide(pptx: PptxGenJS, t: SlideTheme, o: ArchitectureDeck
 }
 
 /**
- * Build and download a multi-slide, customer-ready PPTX deck for the current
- * architecture: title, diagram, services, and (when available) a Well-Architected
- * review (summary + findings) and a cost estimate (overview + regional
- * comparison). Returns the generated filename.
+ * Assemble the multi-slide, customer-ready deck for the current architecture:
+ * title, diagram, numbered workflow, services, and (when available) a
+ * Well-Architected review (summary + findings) and a cost estimate (overview +
+ * regional comparison). Split from the download so tests can inspect the deck.
  */
-export async function exportArchitectureDeck(
+export async function buildArchitectureDeckPptx(
   imageDataUrl: string,
   options: ArchitectureDeckOptions,
-): Promise<string> {
+): Promise<PptxGenJS> {
   const t = options.isDarkMode ? DARK_THEME : LIGHT_THEME;
 
   const pptx = new PptxCtor();
@@ -1165,12 +1306,22 @@ export async function exportArchitectureDeck(
 
   addTitleSlide(pptx, t, options);
   await addDiagramSlide(pptx, t, imageDataUrl, options);
+  addWorkflowSlide(pptx, t, options);
   addServicesSlide(pptx, t, options);
   addValidationSummarySlide(pptx, t, options);
   addValidationFindingsSlide(pptx, t, options);
   addCostOverviewSlide(pptx, t, options);
   addCostRegionsSlide(pptx, t, options);
 
+  return pptx;
+}
+
+/** Build the deck and download it. Returns the generated filename. */
+export async function exportArchitectureDeck(
+  imageDataUrl: string,
+  options: ArchitectureDeckOptions,
+): Promise<string> {
+  const pptx = await buildArchitectureDeckPptx(imageDataUrl, options);
   const fileName = generateModelFilename('azure-architecture-deck', 'pptx');
   await pptx.writeFile({ fileName });
   return fileName;
