@@ -10,7 +10,6 @@
  * contextual analysis.
  * 
  * Sources:
- * - https://learn.microsoft.com/azure/architecture/framework/
  * - https://learn.microsoft.com/azure/well-architected/
  * - Azure Architecture Center service guides
  * 
@@ -199,7 +198,7 @@ export const WAF_RULE_ENRICHMENTS: Record<string, WafRuleEnrichment> = {
       type: 'regenerate',
       label: 'Add data replication',
     },
-    referenceUrl: 'https://learn.microsoft.com/azure/well-architected/reliability/data-management',
+    referenceUrl: 'https://learn.microsoft.com/azure/well-architected/reliability/redundancy',
   },
   'arch-no-caching': {
     evidence: [
@@ -311,7 +310,7 @@ export const WAF_RULE_ENRICHMENTS: Record<string, WafRuleEnrichment> = {
       label: 'Add backup and recovery',
       serviceType: 'Azure Backup Center',
     },
-    referenceUrl: 'https://learn.microsoft.com/azure/well-architected/reliability/backup-and-recovery',
+    referenceUrl: 'https://learn.microsoft.com/azure/well-architected/reliability/disaster-recovery',
   },
   'arch-no-api-gateway': {
     evidence: [

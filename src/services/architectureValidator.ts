@@ -611,7 +611,7 @@ export function formatValidationReport(validation: ArchitectureValidation): stri
   // Footer
   report += `---\n\n`;
   report += `## 📚 Additional Resources\n\n`;
-  report += `- [Azure Well-Architected Framework](https://learn.microsoft.com/azure/architecture/framework/)\n`;
+  report += `- [Azure Well-Architected Framework](https://learn.microsoft.com/azure/well-architected/)\n`;
   report += `- [Azure Architecture Center](https://learn.microsoft.com/azure/architecture/)\n`;
   report += `- [Azure Security Benchmark](https://learn.microsoft.com/security/benchmark/azure/)\n\n`;
   

@@ -52,6 +52,7 @@ interface PositionedEdge {
   color: string;
   dashed: boolean;
   dashPattern: string;
+  bidirectional: boolean;
   connectionType: string;
   points: Array<{ x: number; y: number }>;
 }
@@ -213,6 +214,7 @@ function buildLayout(nodes: Node[], edges: Edge[], icons: Map<string, string>): 
     color: route.color,
     dashed: route.dashed,
     dashPattern: route.dashPattern ?? '',
+    bidirectional: route.bidirectional,
     connectionType: route.connectionType,
     points: route.points.map((point) => ({ x: point.x + dx, y: point.y + dy })),
   }));
@@ -385,22 +387,32 @@ function render() {
   // One arrow marker per distinct connection colour so heads match their line.
   const defs = document.createElementNS(svgNs, 'defs');
   const markerByColor = {};
+  const startMarkerByColor = {};
   let markerSeq = 0;
-  layout.edges.forEach(e => {
-    if (markerByColor[e.color]) return;
-    const id = 'arrow-' + (markerSeq++);
-    markerByColor[e.color] = id;
+  const arrowMarker = (color, id, atStart) => {
     const marker = document.createElementNS(svgNs, 'marker');
     marker.setAttribute('id', id);
     marker.setAttribute('viewBox', '0 0 10 10');
-    marker.setAttribute('refX', '10'); marker.setAttribute('refY', '5');
+    marker.setAttribute('refX', atStart ? '0' : '10'); marker.setAttribute('refY', '5');
     marker.setAttribute('markerWidth', '8'); marker.setAttribute('markerHeight', '8');
     marker.setAttribute('orient', 'auto');
     const poly = document.createElementNS(svgNs, 'polygon');
-    poly.setAttribute('points', '0,0 10,5 0,10');
-    poly.setAttribute('fill', e.color);
+    poly.setAttribute('points', atStart ? '10,0 0,5 10,10' : '0,0 10,5 0,10');
+    poly.setAttribute('fill', color);
     marker.appendChild(poly);
     defs.appendChild(marker);
+  };
+  layout.edges.forEach(e => {
+    if (!markerByColor[e.color]) {
+      const id = 'arrow-' + (markerSeq++);
+      markerByColor[e.color] = id;
+      arrowMarker(e.color, id, false);
+    }
+    if (e.bidirectional && !startMarkerByColor[e.color]) {
+      const id = 'arrow-start-' + (markerSeq++);
+      startMarkerByColor[e.color] = id;
+      arrowMarker(e.color, id, true);
+    }
   });
   svg.appendChild(defs);
 
@@ -413,6 +425,7 @@ function render() {
     path.setAttribute('stroke', color);
     path.classList.add('edge-path');
     path.setAttribute('marker-end', 'url(#' + markerByColor[e.color] + ')');
+    if (e.bidirectional) path.setAttribute('marker-start', 'url(#' + startMarkerByColor[e.color] + ')');
     if (e.dashed) path.setAttribute('stroke-dasharray', (e.dashPattern || '6,4').replace(/\\s+/g, ''));
     svg.appendChild(path);
 

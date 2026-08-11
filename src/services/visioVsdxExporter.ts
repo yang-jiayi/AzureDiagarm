@@ -424,6 +424,7 @@ function connectorShapeXml(
   color: string,
   linePattern: number,
   opacity: number,
+  bidirectional = false,
 ): string {
   const begin = points[0];
   const end = points[points.length - 1];
@@ -478,7 +479,8 @@ function connectorShapeXml(
       <Cell N="LineWeight" V="0.0125"/>
       <Cell N="LinePattern" V="${linePattern}"/>${transCell}
       <Cell N="Rounding" V="0.0625"/>
-      <Cell N="BeginArrow" V="0"/>
+      <Cell N="BeginArrow" V="${bidirectional ? 4 : 0}"/>
+      <Cell N="BeginArrowSize" V="2"/>
       <Cell N="EndArrow" V="4"/>
       <Cell N="EndArrowSize" V="2"/>${textSections}
       <Section N="Geometry" IX="0">
@@ -788,6 +790,7 @@ export async function buildVsdxPackage(
         route.color,
         visioLinePattern(route),
         route.opacity,
+        route.bidirectional,
       ),
     );
     connects.push(connectXml(id, sourceId, targetId));

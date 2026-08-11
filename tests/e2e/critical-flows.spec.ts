@@ -6592,3 +6592,76 @@ test('keyboard connections reject groups, duplicates and stale sources', async (
     return payload.edges.filter(edge => !ids.has(edge.source) || !ids.has(edge.target)).length;
   }, { timeout: 15000 }).toBe(0);
 });
+
+/**
+ * The ungroup button is driven by the node's parentNode, which lives on the
+ * React Flow node rather than in `data`. Reading it with a non-reactive
+ * getNode() snapshot meant the memo comparator saw no change and the button
+ * stayed on screen for a node that had already left its group.
+ */
+test('the ungroup button disappears as soon as the node leaves its group', async ({ page }) => {
+  await initializePage(page, { documentId: 'A', access: 'owner', role: 'owner' });
+  const document = interactionCloudDocument();
+  document.payload.nodes = [
+    {
+      id: 'group-a',
+      type: 'groupNode',
+      position: { x: 320, y: 80 },
+      style: { width: 420, height: 260 },
+      data: { label: 'Application layer', color: '#0078d4' },
+    },
+    {
+      id: 'node-a',
+      type: 'azureNode',
+      position: { x: 20, y: 60 },
+      parentNode: 'group-a',
+      extent: 'parent',
+      data: { label: 'App Service', serviceName: 'App Service' },
+    },
+  ];
+  document.payload.edges = [];
+  let revision = 1;
+
+  await page.route('**/api/**', async (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    const method = request.method();
+    if (path === '/api/access/me') {
+      await fulfillJson(route, {
+        enabled: false, authenticated: true, email: 'owner@example.com', isAdmin: false, allowed: true,
+      });
+      return;
+    }
+    if (path === '/api/diagrams/A' && method === 'GET') {
+      await fulfillJson(route, document, 200, { etag: '"A-1"' });
+      return;
+    }
+    if (path === '/api/diagrams/A' && method === 'PUT') {
+      const body = JSON.parse(request.postData() || '{}');
+      revision += 1;
+      await fulfillJson(route, {
+        ...document, payload: body.payload, revision, etag: `"A-${revision}"`,
+      }, 200, { etag: `"A-${revision}"` });
+      return;
+    }
+    await fulfillJson(route, { error: `Unhandled test endpoint: ${method} ${path}` }, 404);
+  });
+
+  await page.goto('/');
+  const node = page.locator('[data-testid="rf__node-node-a"]');
+  await expect(node).toBeVisible();
+
+  const ungroupButton = node.locator('button.ungroup-button');
+  await expect(ungroupButton).toHaveCount(0);
+
+  await node.locator('[data-node-keyboard-target]').click();
+  await expect(ungroupButton).toBeVisible();
+
+  await ungroupButton.click();
+
+  // The node stays selected, its data object is untouched and its id is
+  // unchanged, so nothing the memo comparator looks at changes here. Only a
+  // reactive read of the store removes the button.
+  await expect(ungroupButton).toHaveCount(0);
+  await expect(node).toBeVisible();
+});

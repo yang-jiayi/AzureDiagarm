@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-import type { Node } from 'reactflow';
+import type { Edge, Node } from 'reactflow';
 import { resolveServiceIconMapping } from '../data/serviceIconMapping';
 import { lookupServiceMeta } from './armExtractor';
 import type { IaCFormat } from './azureOpenAI';
@@ -90,6 +90,8 @@ export interface StarterTemplate {
   content: string;
   supportedResourceCount: number;
   todoCount: number;
+  /** Deployment-ordering clauses derived from the diagram's connections. */
+  dependencyCount: number;
 }
 
 interface BaselineBuildInput {
@@ -214,6 +216,15 @@ const BICEP_SUPPORTED_TYPES = new Set([
   'microsoft.dbformysql/flexibleservers',
   'microsoft.eventhub/namespaces',
 ]);
+
+/**
+ * The table above has to stay in step with the switch in bicepStubForResource:
+ * a type listed there but missing a stub silently degrades to a TODO comment.
+ * Exported so the unit test can assert the two never drift apart.
+ */
+export function listBicepSupportedTypes(): string[] {
+  return [...BICEP_SUPPORTED_TYPES].sort();
+}
 
 function normalizeToken(value: string | null | undefined): string | null {
   if (!value) return null;
@@ -1440,7 +1451,7 @@ function bicepStubForResource(
         `          name: 'app'`,
         `          image: 'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest'`,
         `          resources: {`,
-        `            cpu: 0.5`,
+        `            cpu: json('0.5')`,
         `            memory: '1Gi'`,
         `          }`,
         `        }`,
@@ -1921,6 +1932,8 @@ function bicepHeader(passwordParameters: DatabasePasswordParameter[]): string {
     `param location string = resourceGroup().location`,
     ``,
     `@description('Short prefix used to derive starter resource names.')`,
+    `@minLength(3)`,
+    `@maxLength(12)`,
     `param namePrefix string = 'starter'`,
     ``,
     `@description('Environment tag value for the starter deployment.')`,
@@ -2010,7 +2023,194 @@ function terraformHeader(passwordParameters: DatabasePasswordParameter[]): strin
   return lines.join('\n');
 }
 
-export function buildStarterTemplate(nodes: Node[], format: StarterTemplateFormat): StarterTemplate {
+/**
+ * Reads back the address the emitted block declares, so the dependency
+ * clauses reference exactly what was written rather than a second, parallel
+ * derivation of the naming rules that could drift away from it.
+ *
+ * Every stub emits exactly one top-level resource, and its declaration is
+ * always the first line of the block.
+ */
+function declaredAddress(block: string, format: StarterTemplateFormat): string | null {
+  const firstLine = block.split('\n', 1)[0];
+  if (format === 'bicep') {
+    return /^resource\s+([A-Za-z_][A-Za-z0-9_]*)\s/.exec(firstLine)?.[1] ?? null;
+  }
+  const match = /^resource\s+"([^"]+)"\s+"([^"]+)"/.exec(firstLine);
+  return match ? `${match[1]}.${match[2]}` : null;
+}
+
+/**
+ * The arrow the user sees is not always `source -> target`: an edge with
+ * `direction: 'reverse'` keeps its stored tuple and only moves the arrowhead,
+ * so following the tuple would emit the ordering backwards relative to what
+ * was drawn. This mirrors normalizeDirectedAdjacency in layoutPresets.ts,
+ * which is the codebase's existing reader of the same field.
+ *
+ * An arrow drawn from A to B means A talks to B, so B has to exist before A
+ * can be deployed against it: the arrow's origin depends on its head.
+ *
+ * Diagrams routinely contain cycles — two services shown calling each other,
+ * or a bidirectional link — and both Bicep and Terraform reject a dependency
+ * cycle outright. Emitting one would leave the user with a template that
+ * cannot deploy at all, which is strictly worse than emitting none, so back
+ * edges found during a depth-first walk are dropped. The walk runs over the
+ * caller's emission order, which is already sorted, so the edge that gets
+ * dropped is stable between runs.
+ *
+ * A bidirectional edge asserts no deployment ordering on its own, so it is
+ * resolved only after every directed edge has been placed, and each half is
+ * kept only if it does not close a cycle. Letting both halves compete on
+ * equal terms instead allowed a speculative two-way link to evict an arrow
+ * the user had explicitly drawn, and to emit its exact inverse.
+ */
+function resolveDependencies(
+  edges: Edge[],
+  addressByNodeId: Map<string, string>,
+): Map<string, string[]> {
+  const order = [...addressByNodeId.keys()];
+  const rank = new Map(order.map((nodeId, index) => [nodeId, index]));
+
+  const candidates = new Map<string, Set<string>>(order.map((nodeId) => [nodeId, new Set<string>()]));
+  const modellable = (dependent: string, dependency: string) => (
+    dependent !== dependency && addressByNodeId.has(dependent) && addressByNodeId.has(dependency)
+  );
+  const twoWay: Array<{ source: string; target: string; id: string }> = [];
+
+  for (const edge of edges) {
+    if (!edge.source || !edge.target) continue;
+    if (!modellable(edge.source, edge.target)) continue;
+    const direction = (edge.data as { direction?: string } | undefined)?.direction ?? 'forward';
+    if (direction === 'reverse') {
+      candidates.get(edge.target)!.add(edge.source);
+    } else if (direction === 'bidirectional') {
+      twoWay.push({ source: edge.source, target: edge.target, id: edge.id ?? '' });
+    } else {
+      candidates.get(edge.source)!.add(edge.target);
+    }
+  }
+
+  const sortedTargets = (nodeId: string) => (
+    [...candidates.get(nodeId)!].sort((left, right) => (rank.get(left)! - rank.get(right)!))
+  );
+
+  const WHITE = 0;
+  const GRAY = 1;
+  const BLACK = 2;
+  const color = new Map(order.map((nodeId) => [nodeId, WHITE]));
+  const accepted = new Map<string, string[]>(order.map((nodeId) => [nodeId, []]));
+
+  for (const root of order) {
+    if (color.get(root) !== WHITE) continue;
+    const stack: Array<{ nodeId: string; pending: string[] }> = [
+      { nodeId: root, pending: sortedTargets(root) },
+    ];
+    color.set(root, GRAY);
+    while (stack.length > 0) {
+      const frame = stack[stack.length - 1];
+      const next = frame.pending.shift();
+      if (next === undefined) {
+        color.set(frame.nodeId, BLACK);
+        stack.pop();
+        continue;
+      }
+      // A gray successor is still on the stack, so this edge closes a cycle.
+      if (color.get(next) === GRAY) continue;
+      accepted.get(frame.nodeId)!.push(next);
+      if (color.get(next) === WHITE) {
+        color.set(next, GRAY);
+        stack.push({ nodeId: next, pending: sortedTargets(next) });
+      }
+    }
+  }
+
+  // Second phase: fit the two-way links into whatever ordering the directed
+  // arrows already established, never the other way round.
+  const reaches = (from: string, to: string): boolean => {
+    const seen = new Set<string>([from]);
+    const queue = [from];
+    while (queue.length > 0) {
+      const current = queue.shift()!;
+      if (current === to) return true;
+      for (const next of accepted.get(current) ?? []) {
+        if (seen.has(next)) continue;
+        seen.add(next);
+        queue.push(next);
+      }
+    }
+    return false;
+  };
+
+  twoWay.sort((left, right) => (
+    rank.get(left.source)! - rank.get(right.source)!
+    || rank.get(left.target)! - rank.get(right.target)!
+    || left.id.localeCompare(right.id)
+  ));
+  for (const link of twoWay) {
+    const alreadyOrdered = accepted.get(link.source)!.includes(link.target)
+      || accepted.get(link.target)!.includes(link.source);
+    if (alreadyOrdered) continue;
+    if (!reaches(link.target, link.source)) {
+      accepted.get(link.source)!.push(link.target);
+    } else if (!reaches(link.source, link.target)) {
+      accepted.get(link.target)!.push(link.source);
+    }
+  }
+
+  const resolved = new Map<string, string[]>();
+  for (const [nodeId, targets] of accepted) {
+    if (targets.length === 0) continue;
+    const ordered = [...targets].sort((left, right) => (rank.get(left)! - rank.get(right)!));
+    resolved.set(nodeId, ordered.map((target) => addressByNodeId.get(target)!));
+  }
+  return resolved;
+}
+
+/**
+ * Bicep's analyzer cannot infer a lower bound through `take(...)`, so it warns
+ * BCP334 on every generated resource name even though the shortest possible
+ * value is namePrefix (>= 3, enforced by the parameter) plus a suffix of at
+ * least five characters — comfortably above every target minimum. Left alone,
+ * a "starter" template greets the user with three warnings on first build.
+ */
+function withNameLengthSuppression(block: string): string {
+  return block
+    .split('\n')
+    .flatMap((line) => (
+      /^ {2}name: take\(/.test(line)
+        ? ['  #disable-next-line BCP334 // namePrefix is length-constrained, so the name is never too short', line]
+        : [line]
+    ))
+    .join('\n');
+}
+
+/**
+ * Every stub is assembled from an array whose last element is exactly the
+ * closing brace, so the clause can be placed last — where both languages
+ * conventionally put it — without having to match braces through the nested
+ * property bags each stub contains. If that ever stops holding, fall back to
+ * the declaration line, which both languages also accept.
+ */
+function withDependencyClause(
+  block: string,
+  dependencies: string[],
+  format: StarterTemplateFormat,
+): string {
+  if (dependencies.length === 0) return block;
+  const lines = block.split('\n');
+  const clause = format === 'bicep'
+    ? `  dependsOn: [${dependencies.map((address) => `\n    ${address}`).join('')}\n  ]`
+    : `  depends_on = [${dependencies.map((address) => `\n    ${address},`).join('')}\n  ]`;
+  const closingIndex = lines[lines.length - 1].trim() === '}' ? lines.length - 1 : 1;
+  lines.splice(closingIndex, 0, clause);
+  return lines.join('\n');
+}
+
+export function buildStarterTemplate(
+  nodes: Node[],
+  format: StarterTemplateFormat,
+  edges: Edge[] = [],
+): StarterTemplate {
   const resources = exportResourceDescriptors(nodes)
     .sort((left, right) => (
       compareText(left.canonicalService || left.label, right.canonicalService || right.label)
@@ -2027,6 +2227,12 @@ export function buildStarterTemplate(nodes: Node[], format: StarterTemplateForma
   let supportedResourceCount = 0;
   let todoCount = 0;
 
+  // First pass: emit every block and record the address it declares. A
+  // resource that fell through to a TODO comment has no address, so nothing
+  // can depend on it and it cannot depend on anything.
+  const emitted: Array<{ nodeId: string; title: string; block: string }> = [];
+  const addressByNodeId = new Map<string, string>();
+
   resources.forEach((resource, index) => {
     const armType = guessArmType(resource);
     const block = armType
@@ -2036,7 +2242,8 @@ export function buildStarterTemplate(nodes: Node[], format: StarterTemplateForma
       : null;
     const title = resource.canonicalService || resource.label;
 
-    if (!armType || !block || (format === 'bicep' && !BICEP_SUPPORTED_TYPES.has(armType) && !block)) {
+    const address = block ? declaredAddress(block, format) : null;
+    if (!armType || !block || !address) {
       const commentPrefix = format === 'bicep' ? '//' : '#';
       sections.push([
         `${commentPrefix} TODO: Model unsupported service "${title}"`,
@@ -2047,12 +2254,27 @@ export function buildStarterTemplate(nodes: Node[], format: StarterTemplateForma
       return;
     }
 
-    sections.push([
-      format === 'bicep' ? `// ${title}` : `# ${title}`,
-      block,
-    ].join('\n'));
+    emitted.push({
+      nodeId: resource.nodeId,
+      title,
+      block: format === 'bicep' ? withNameLengthSuppression(block) : block,
+    });
+    addressByNodeId.set(resource.nodeId, address);
     supportedResourceCount += 1;
   });
+
+  // Second pass: now that every address is known, translate the diagram's
+  // connections into deployment ordering.
+  const dependencies = resolveDependencies(edges, addressByNodeId);
+  let dependencyCount = 0;
+  for (const item of emitted) {
+    const addresses = dependencies.get(item.nodeId) ?? [];
+    dependencyCount += addresses.length;
+    sections.push([
+      format === 'bicep' ? `// ${item.title}` : `# ${item.title}`,
+      withDependencyClause(item.block, addresses, format),
+    ].join('\n'));
+  }
 
   if (resources.length === 0) {
     const commentPrefix = format === 'bicep' ? '//' : '#';
@@ -2066,5 +2288,6 @@ export function buildStarterTemplate(nodes: Node[], format: StarterTemplateForma
     content: sections.join('\n\n'),
     supportedResourceCount,
     todoCount,
+    dependencyCount,
   };
 }

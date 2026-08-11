@@ -95,6 +95,12 @@ export interface ExportRoute {
   opacity: number;
   /** 0-based index among parallel edges sharing the same endpoint pair. */
   ordinal: number;
+  /**
+   * True when the edge was drawn with arrowheads at both ends, so exporters
+   * add a start arrow as well. `sourceId`/`targetId` are already oriented to
+   * the drawn arrow, so a one-way head at the target end is always correct.
+   */
+  bidirectional: boolean;
   /** True for a source===target edge rendered as a small loop stub. */
   isSelfLoop: boolean;
   /** Orthogonal polyline in absolute pixels; first point starts at the source. */
@@ -870,6 +876,22 @@ function edgeConnectionType(edge: Edge): DiagramConnectionType {
   return normalizeConnectionType((edge.data as { connectionType?: unknown } | undefined)?.connectionType);
 }
 
+/**
+ * An edge stores the endpoints in the order they were connected, but an edge
+ * with `direction: 'reverse'` moves only its arrowhead — the tuple is left
+ * alone. Every exporter draws a single head at the target end, so following
+ * the tuple pointed the arrow the opposite way to the canvas. Orienting the
+ * route here fixes PPTX, VSDX, Draw.io and HTML at once and keeps the
+ * polyline running from the arrow's tail, which the exporters rely on.
+ */
+function orientEdge(edge: Edge): { fromId: string; toId: string; bidirectional: boolean } {
+  const direction = (edge.data as { direction?: unknown } | undefined)?.direction;
+  if (direction === 'reverse') {
+    return { fromId: edge.target, toId: edge.source, bidirectional: false };
+  }
+  return { fromId: edge.source, toId: edge.target, bidirectional: direction === 'bidirectional' };
+}
+
 /** Alternating perpendicular offset for the Nth parallel edge: 0, +16, -16… */
 function parallelOffset(ordinal: number): number {
   if (ordinal <= 0) return 0;
@@ -899,8 +921,9 @@ export function buildExportRoutes(
   const ordinals = new Map<string, number>();
 
   for (const edge of edges) {
-    const source = boxes.get(edge.source);
-    const target = boxes.get(edge.target);
+    const { fromId, toId, bidirectional } = orientEdge(edge);
+    const source = boxes.get(fromId);
+    const target = boxes.get(toId);
     if (!source || !target) continue;
 
     const type = edgeConnectionType(edge);
@@ -920,8 +943,8 @@ export function buildExportRoutes(
 
     routes.push({
       id: edge.id,
-      sourceId: edge.source,
-      targetId: edge.target,
+      sourceId: fromId,
+      targetId: toId,
       label,
       connectionType: type,
       color: style.color,
@@ -929,6 +952,7 @@ export function buildExportRoutes(
       dashPattern: dashed ? (style.dashPattern ?? '6, 4') : undefined,
       opacity: style.opacity,
       ordinal,
+      bidirectional,
       isSelfLoop: source.id === target.id,
       points: geometry.points,
       labelAnchor: geometry.labelAnchor,
