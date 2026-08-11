@@ -301,3 +301,46 @@ test('the Visio workflow panel never covers a clamped stray service', async () =
     );
   }
 });
+
+test('a generated linear flow lands on a page a document can actually use', async () => {
+  const { applyLayoutPreset } = await import('../src/utils/layoutPresets.ts');
+  const names = [
+    'Azure Front Door', 'Application Gateway', 'Azure Kubernetes Service', 'Azure Service Bus',
+    'Azure Functions', 'Azure Cosmos DB', 'Azure Data Factory', 'Azure Synapse Analytics',
+    'Azure OpenAI Service', 'Azure AI Search', 'Key Vault', 'Azure Monitor',
+  ];
+  const nodes = names.map((name, i) => service(`g-${i}`, name, 0, 0));
+  const edges = names.slice(1).map((_, i) => ({
+    id: `g-e-${i}`, source: `g-${i}`, target: `g-${i + 1}`, label: 'Invoke',
+  } as Edge));
+
+  const laidOut = await applyLayoutPreset(nodes, edges, {
+    preset: 'flow-lr', spacing: 'comfortable', edgeStyle: 'smooth', emphasizePrimaryPath: false,
+  });
+
+  const pptx = await buildDiagramSlidePptx(PIXEL_PNG, {
+    diagramName: 'Contoso Platform',
+    author: 'Tester',
+    date: '2026-08-10',
+    isDarkMode: false,
+    diagram: { nodes: laidOut.nodes, edges: laidOut.edges },
+  });
+  const buffer = (await pptx.write({ outputType: 'nodebuffer' })) as Buffer;
+  const zip = await JSZip.loadAsync(buffer);
+  const presentation = await zip.file('ppt/presentation.xml')!.async('string');
+  const size = /<p:sldSz[^>]*cx="(\d+)"[^>]*cy="(\d+)"/.exec(presentation)!;
+  const pageW = +size[1] / 914400;
+  const pageH = +size[2] / 914400;
+
+  // Unwrapped, dagre returns one rank per service and the same twelve services
+  // need a 42.6in page — over three standard slides side by side, printed
+  // across four sheets.
+  assert.ok(
+    pageW <= 13.333 * 2,
+    `a twelve-service flow needs a ${pageW.toFixed(1)}in page — it was not folded`,
+  );
+  assert.ok(
+    pageW / pageH <= 2.6,
+    `page is ${(pageW / pageH).toFixed(2)}:1, not a shape a document can use`,
+  );
+});
