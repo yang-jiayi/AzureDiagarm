@@ -101,7 +101,7 @@ body:has([role='dialog'][aria-modal='true']) .icon-palette.collapsed .palette-op
 .palette-open-toggle:focus-visible,
 .palette-close-toggle:focus-visible,
 .category-header:focus-visible {
-  outline: 3px solid var(--azd-color-focus-soft);
+  outline: 3px solid var(--azd-color-focus);
   outline-offset: 2px;
 }
 
@@ -427,7 +427,7 @@ body:has([role='dialog'][aria-modal='true']) .icon-palette.collapsed .palette-op
 }
 
 .virtualized-icons-viewport:focus-visible {
-  outline: 2px solid var(--azd-color-focus-soft);
+  outline: 2px solid var(--azd-color-focus);
   outline-offset: -2px;
 }
 
@@ -489,7 +489,7 @@ body:has([role='dialog'][aria-modal='true']) .icon-palette.collapsed .palette-op
 }
 
 .icon-item-main:focus-visible {
-  outline: 3px solid var(--azd-color-focus-soft);
+  outline: 3px solid var(--azd-color-focus);
   outline-offset: -3px;
 }
 

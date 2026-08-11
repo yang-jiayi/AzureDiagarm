@@ -27,6 +27,7 @@ import {
   buildExportRoutes,
   categoryStyle,
   collectExportBoxes,
+  computeBounds,
   computeContentBounds,
   computeFitTransform,
   metaSubline,
@@ -35,6 +36,7 @@ import {
   truncateLabel,
   usedConnectionLegend,
   zoneStyleFor,
+  type Bounds,
   type ExportBox,
   type ExportRoute,
   type FitTransform,
@@ -70,19 +72,123 @@ const LIGHT_THEME: SlideTheme = {
   footerText: '94a3b8', // slate-400
 };
 
-// ─── Slide layout constants (inches, LAYOUT_WIDE = 13.33" × 7.5") ────────────
+// ─── Slide layout (inches) ───────────────────────────────────────────────────
+//
+// The deck is normally 16:9 (13.333" × 7.5"). A diagram that would have to be
+// squeezed below legible size on that canvas gets a larger custom slide
+// instead — PowerPoint accepts any page up to 56", and a bigger page keeps the
+// shapes at their true 96 dpi size so labels stay readable and editable.
 
-const W = 13.33;  // slide width
+const PX_PER_IN = 96;
+const BASE_W = 13.333;
+const BASE_H = 7.5;
+const MAX_SLIDE_IN = 56; // PowerPoint's hard page-size limit
 const ACCENT_H = 0.07;
 const HEADER_H = 0.83;
 const HEADER_END = ACCENT_H + HEADER_H;   // 0.9"
 const SEP_H = 0.04;
 const IMAGE_Y = HEADER_END + SEP_H + 0.06; // ~1.0"
 const IMAGE_X = 0.2;
-const IMAGE_W = W - IMAGE_X * 2;           // 12.93"
 const FOOTER_H = 0.28;
-const FOOTER_Y = 7.5 - FOOTER_H - 0.08;   // ~7.14"
-const IMAGE_H = FOOTER_Y - IMAGE_Y - 0.1; // remaining body height
+
+// Fixed 16:9 geometry for the multi-slide architecture deck (title, services,
+// validation, cost). Only the single-slide diagram export grows its page.
+const W = BASE_W;
+const IMAGE_W = W - IMAGE_X * 2;
+const FOOTER_Y = BASE_H - FOOTER_H - 0.08;
+const IMAGE_H = FOOTER_Y - IMAGE_Y - 0.1;
+
+interface SlideGeometry {
+  w: number;
+  h: number;
+  frame: DiagramFrame;
+  footerY: number;
+  /** True when the drawing is wider/taller than PowerPoint's 56" page limit. */
+  overflow: boolean;
+  /** True when far-placed nodes were pulled back onto the page to stay visible. */
+  outliersClamped: boolean;
+}
+
+/**
+ * Which bounds should size the page *and* place every shape.
+ *
+ * Always the full bounds when they fit inside the 56" page — that keeps the
+ * drawing 1 : 1 and nothing can fall off. Only when the content genuinely
+ * exceeds the page does outlier trimming earn its keep: a single stray node at
+ * (9000, 4000) would otherwise shrink every readable tile to a speck. In that
+ * case the caller must clamp the strays back onto the page so they stay
+ * visible instead of being silently drawn into the void.
+ */
+function chooseExportBounds(boxes: Iterable<ExportBox>): { bounds: Bounds; clamped: boolean } {
+  const all = [...boxes];
+  const full = computeBounds(all);
+  const fullW = (full.maxX - full.minX) / PX_PER_IN;
+  const fullH = (full.maxY - full.minY) / PX_PER_IN;
+  if (fullW + IMAGE_X * 2 + 0.5 <= MAX_SLIDE_IN && fullH + IMAGE_Y + FOOTER_H + 0.78 <= MAX_SLIDE_IN) {
+    return { bounds: full, clamped: false };
+  }
+  const trimmed = computeContentBounds(all);
+  const trimmedW = (trimmed.maxX - trimmed.minX) / PX_PER_IN;
+  const trimmedH = (trimmed.maxY - trimmed.minY) / PX_PER_IN;
+  if (trimmedW < fullW * 0.8 || trimmedH < fullH * 0.8) {
+    return { bounds: trimmed, clamped: true };
+  }
+  return { bounds: full, clamped: false };
+}
+
+/**
+ * Pick the slide size. Grows the page (never the shrink factor) so a wide
+ * architecture keeps 1 : 1 geometry; only diagrams larger than the 56" page
+ * limit are scaled down, and then every dimension scales together.
+ */
+function planSlideGeometry(diagram?: DiagramShapeSource | null): SlideGeometry {
+  const chrome = { top: IMAGE_Y, bottom: FOOTER_H + 0.18 + 0.1 };
+  let w = BASE_W;
+  let h = BASE_H;
+  let overflow = false;
+  let outliersClamped = false;
+
+  const nodes = diagram?.nodes ?? [];
+  if (nodes.length > 0) {
+    const boxes = collectExportBoxes(nodes);
+    if (boxes.size > 0) {
+      const { bounds, clamped } = chooseExportBounds(boxes.values());
+      outliersClamped = clamped;
+      const contentW = Math.max(1, bounds.maxX - bounds.minX) / PX_PER_IN;
+      const contentH = Math.max(1, bounds.maxY - bounds.minY) / PX_PER_IN;
+      // Room for the connection legend plus breathing space around the drawing.
+      const wantW = contentW + IMAGE_X * 2 + 0.5;
+      const wantH = contentH + chrome.top + chrome.bottom + 0.5;
+      overflow = wantW > MAX_SLIDE_IN || wantH > MAX_SLIDE_IN;
+      w = clamp(wantW, BASE_W, MAX_SLIDE_IN);
+      h = clamp(wantH, BASE_H, MAX_SLIDE_IN);
+    }
+  }
+
+  const footerY = h - FOOTER_H - 0.08;
+  return {
+    w,
+    h,
+    footerY,
+    overflow,
+    outliersClamped,
+    frame: { x: IMAGE_X, y: IMAGE_Y, w: w - IMAGE_X * 2, h: footerY - IMAGE_Y - 0.1 },
+  };
+}
+
+/**
+ * Approximate rendered width of a string in inches. CJK characters occupy a
+ * full em, Latin about 0.54 em in Yu Gothic UI — good enough to size a chip so
+ * its text is not clipped.
+ */
+function estimateTextWidthIn(text: string, fontSizePt: number): number {
+  let units = 0;
+  for (const character of text) {
+    units += /[\u2e80-\u9fff\uac00-\ud7af\uff00-\uff60\uffe0-\uffe6]/.test(character) ? 1 : 0.54;
+  }
+  return (units * fontSizePt) / 72;
+}
+
 
 // ─── Public export function ───────────────────────────────────────────────────
 
@@ -151,8 +257,16 @@ function addConnector(
   slide: Slide,
   route: ExportRoute,
   transform: FitTransform,
+  clampTo?: DiagramFrame,
 ): void {
-  const points = route.points.map((point) => toInches(point, transform));
+  const points = route.points
+    .map((point) => toInches(point, transform))
+    .map((point) => (clampTo
+      ? {
+        x: clamp(point.x, clampTo.x, clampTo.x + clampTo.w),
+        y: clamp(point.y, clampTo.y, clampTo.y + clampTo.h),
+      }
+      : point));
   if (points.length < 2) return;
 
   const lineProps = {
@@ -207,32 +321,75 @@ function addConnectorLabel(
   route: ExportRoute,
   transform: FitTransform,
   fontSize: number,
+  px: number,
+  clampTo?: DiagramFrame,
 ): void {
   if (!route.label) return;
   const anchor = toInches(route.labelAnchor, transform);
-  // De-collide parallel-edge chips: stagger each ordinal along the segment so
-  // they never pile into one unreadable stack.
-  const stagger = route.ordinal === 0 ? 0 : (route.ordinal % 2 === 1 ? 1 : -1) * Math.ceil(route.ordinal / 2) * 0.2;
-  const text = truncateLabel(route.label, 48);
-  const w = clamp(text.length * fontSize * 0.011 + 0.2, 0.6, 2.4);
-  const h = text.length > 30 ? 0.4 : 0.24;
+  const text = truncateLabel(route.label, 42);
+
+  // Size the chip from the text it actually carries, capped so it can never
+  // dwarf the service tiles it sits between (a 150 px tile is 1.56" at 1 : 1).
+  const maxW = 1.5 * px;
+  const naturalW = estimateTextWidthIn(text, fontSize) + 0.14;
+  const w = clamp(naturalW <= maxW ? naturalW : maxW, 0.34 * px, maxW);
+  const lines = Math.max(1, Math.ceil(estimateTextWidthIn(text, fontSize) / Math.max(w - 0.12, 0.05)));
+  const h = Math.max(0.16 * px, (lines * fontSize * 1.3) / 72 + 0.06);
+
+  // De-collide parallel-edge chips: stagger each ordinal clear of the previous
+  // one, using the chip's own height so they never overlap.
+  const stagger = route.ordinal === 0
+    ? 0
+    : (route.ordinal % 2 === 1 ? 1 : -1) * Math.ceil(route.ordinal / 2) * (h + 0.04);
+
+  let x = anchor.x - w / 2;
+  let y = anchor.y - h / 2 + stagger;
+  if (clampTo) {
+    x = clamp(x, clampTo.x, Math.max(clampTo.x, clampTo.x + clampTo.w - w));
+    y = clamp(y, clampTo.y, Math.max(clampTo.y, clampTo.y + clampTo.h - h));
+  }
+
   slide.addText(text, {
-    x: anchor.x - w / 2,
-    y: anchor.y - h / 2 + stagger,
+    x,
+    y,
     w,
     h,
     shape: 'roundRect',
     rectRadius: 0.03,
-    fill: { color: 'FEF9C3' },
+    fill: { color: 'FEF9C3', transparency: 8 },
     line: { color: 'FDE68A', width: 0.5 },
     color: 'B45309',
     fontSize,
     fontFace: 'Yu Gothic UI',
     align: 'center',
     valign: 'middle',
+    margin: 0.02,
     wrap: true,
     objectName: `connector-label-${route.id}`,
   });
+}
+
+/**
+ * Where a box lands on the slide. `clampTo` pulls strays that sit outside the
+ * fitted frame back onto the page so they stay visible (see
+ * {@link chooseExportBounds}); without it an outlier is drawn off-slide and
+ * simply disappears in PowerPoint.
+ */
+function placeBox(
+  box: ExportBox,
+  transform: FitTransform,
+  clampTo?: DiagramFrame,
+): { x: number; y: number; w: number; h: number } {
+  const topLeft = toInches({ x: box.x, y: box.y }, transform);
+  const w = box.w * transform.scale;
+  const h = box.h * transform.scale;
+  if (!clampTo) return { x: topLeft.x, y: topLeft.y, w, h };
+  return {
+    x: clamp(topLeft.x, clampTo.x, Math.max(clampTo.x, clampTo.x + clampTo.w - w)),
+    y: clamp(topLeft.y, clampTo.y, Math.max(clampTo.y, clampTo.y + clampTo.h - h)),
+    w,
+    h,
+  };
 }
 
 function addNodeShape(
@@ -241,10 +398,12 @@ function addNodeShape(
   box: ExportBox,
   transform: FitTransform,
   icon: RasterizedIcon | undefined,
+  px: number,
+  clampTo?: DiagramFrame,
 ): void {
-  const topLeft = toInches({ x: box.x, y: box.y }, transform);
-  const w = box.w * transform.scale;
-  const h = box.h * transform.scale;
+  const topLeft = placeBox(box, transform, clampTo);
+  const w = topLeft.w;
+  const h = topLeft.h;
   const palette = styleForBox(box);
 
   slide.addShape(pptx.ShapeType.roundRect, {
@@ -267,11 +426,28 @@ function addNodeShape(
   });
 
   const pad = Math.min(0.06, h * 0.09);
-  let textTop = topLeft.y + pad;
-  let textHeight = h - pad * 2;
+  // Every typographic dimension is proportional to the drawing scale, so the
+  // number of wrapped lines is identical whatever size the diagram is drawn at.
+  const fontSize = clamp(h * 12, 4, 13);
+  const meta = metaSubline(box);
+  const metaFontSize = clamp(fontSize - 2, 3.5, 9);
+  const metaBand = showsMeta(h, px) && !!meta ? fontSize * 1.55 / 72 + 0.03 : 0;
 
+  const innerW = Math.max(0.05, w - 0.06);
+  const label = truncateLabel(box.label, 40);
+  const labelLines = Math.max(1, Math.ceil(estimateTextWidthIn(label, fontSize) / innerW));
+  const labelBlockH = (labelLines * fontSize * 1.22) / 72;
+
+  // Fit the icon into whatever vertical room the label does not need, instead
+  // of forcing a minimum that pushes the text out of the tile.
+  const available = h - pad * 2 - metaBand;
+  let iconSize = 0;
   if (icon) {
-    const iconSize = clamp(Math.min(h * 0.46, w * 0.36), 0.16, 0.5);
+    iconSize = clamp(Math.min(h * 0.42, w * 0.34, Math.max(0, available - labelBlockH - 0.02)), 0, 0.6);
+    if (iconSize < 0.08 * px) iconSize = 0; // too small to read — drop it and keep the words
+  }
+
+  if (iconSize > 0 && icon) {
     slide.addImage({
       data: icon.dataUrl,
       x: topLeft.x + (w - iconSize) / 2,
@@ -280,45 +456,49 @@ function addNodeShape(
       h: iconSize,
       objectName: `icon-${box.id}`,
     });
-    textTop = topLeft.y + pad + iconSize + 0.02;
-    textHeight = Math.max(0.14, topLeft.y + h - pad - textTop);
   }
 
-  const fontSize = clamp(Math.round(h * 12), 6, 11);
-  const meta = metaSubline(box);
-  // Reserve a slim band for the SKU · region · cost sub-line when there's room.
-  const metaFontSize = clamp(fontSize - 2, 5, 8);
-  const showMeta = !!meta && textHeight > 0.34;
-  const labelH = showMeta ? Math.max(0.12, textHeight - 0.16) : textHeight;
-  slide.addText(truncateLabel(box.label, 40), {
+  const textTop = iconSize > 0 ? topLeft.y + pad + iconSize + 0.02 : topLeft.y + pad;
+  const textHeight = Math.max(0.08, topLeft.y + h - pad - metaBand - textTop);
+
+  slide.addText(label, {
     x: topLeft.x + 0.03,
     y: textTop,
-    w: w - 0.06,
-    h: labelH,
+    w: innerW,
+    h: textHeight,
     fontSize,
     color: '1F2937',
     fontFace: 'Yu Gothic UI',
     align: 'center',
-    valign: icon ? 'top' : 'middle',
+    valign: iconSize > 0 ? 'top' : 'middle',
+    margin: 0,
+    lineSpacingMultiple: 0.9,
     wrap: true,
     objectName: `service-label-${box.id}`,
   });
-  if (showMeta) {
+  if (metaBand > 0 && meta) {
     slide.addText(truncateLabel(meta, 44), {
       x: topLeft.x + 0.03,
-      y: topLeft.y + h - pad - 0.16,
-      w: w - 0.06,
-      h: 0.15,
+      y: topLeft.y + h - pad - metaBand,
+      w: innerW,
+      h: metaBand,
       fontSize: metaFontSize,
       color: '64748B',
       fontFace: 'Yu Gothic UI',
       align: 'center',
       valign: 'bottom',
+      margin: 0,
       wrap: false,
       objectName: `service-meta-${box.id}`,
     });
   }
 }
+
+/** The SKU · region · cost sub-line only earns its space on a legible tile. */
+function showsMeta(heightIn: number, px: number): boolean {
+  return heightIn > 0.5 * px;
+}
+
 
 function addGroupShape(
   pptx: PptxGenJS,
@@ -326,10 +506,11 @@ function addGroupShape(
   box: ExportBox,
   index: number,
   transform: FitTransform,
+  clampTo?: DiagramFrame,
 ): void {
-  const topLeft = toInches({ x: box.x, y: box.y }, transform);
-  const w = box.w * transform.scale;
-  const h = box.h * transform.scale;
+  const topLeft = placeBox(box, transform, clampTo);
+  const w = topLeft.w;
+  const h = topLeft.h;
   const palette = zoneStyleFor(box, index);
   const bg = stripHash(palette.bg);
   const border = stripHash(palette.border);
@@ -424,21 +605,27 @@ async function addEditableDiagram(
   const { groups, services } = partitionBoxes(boxes);
   if (services.length === 0) return false;
 
-  const bounds = computeContentBounds(boxes.values());
-  const transform = computeFitTransform(bounds, frame, { maxScale: 1 / 96 });
+  // Size and draw from the SAME bounds. Sizing the page for the dense cluster
+  // while drawing every box is what silently pushed far-placed services off
+  // the slide, so when outliers are excluded from the fit they are clamped
+  // back onto the page instead of being drawn into the void.
+  const { bounds, clamped } = chooseExportBounds(boxes.values());
+  const transform = computeFitTransform(bounds, frame, { maxScale: 1 / PX_PER_IN });
+  const clampTo = clamped ? frame : undefined;
+  const px = transform.scale * PX_PER_IN;
   const routes = buildExportRoutes(diagram.edges ?? [], boxes);
   const icons = await rasterizeIcons(services.map((service) => service.iconPath), 128);
 
-  groups.forEach((group, index) => addGroupShape(pptx, slide, group, index, transform));
+  groups.forEach((group, index) => addGroupShape(pptx, slide, group, index, transform, clampTo));
   for (const service of services) {
-    addNodeShape(pptx, slide, service, transform, service.iconPath ? icons.get(service.iconPath) : undefined);
+    addNodeShape(pptx, slide, service, transform, service.iconPath ? icons.get(service.iconPath) : undefined, px, clampTo);
   }
 
-  for (const route of routes) addConnector(pptx, slide, route, transform);
+  for (const route of routes) addConnector(pptx, slide, route, transform, clampTo);
   // Labels are drawn after every connector so a chip is never hidden by a line
   // that is rendered later.
-  const labelFontSize = clamp(Math.round(transform.scale * 850), 7, 10);
-  for (const route of routes) addConnectorLabel(slide, route, transform, labelFontSize);
+  const labelFontSize = clamp(9 * px, 4, 10);
+  for (const route of routes) addConnectorLabel(slide, route, transform, labelFontSize, px, clampTo);
 
   // Colour key so the deck's connectors agree with the PNG legend.
   addConnectionLegend(pptx, slide, diagram.edges ?? [], frame);
@@ -460,7 +647,17 @@ export async function buildDiagramSlidePptx(
   const t = isDarkMode ? DARK_THEME : LIGHT_THEME;
 
   const pptx = new PptxCtor();
-  pptx.layout = 'LAYOUT_WIDE';
+  const geom = planSlideGeometry(options.diagram);
+  if (geom.w > BASE_W + 0.001 || geom.h > BASE_H + 0.001) {
+    // A custom page keeps every shape at its true size instead of squeezing a
+    // wide architecture until the labels break apart.
+    pptx.defineLayout({ name: 'AZD_FIT', width: geom.w, height: geom.h });
+    pptx.layout = 'AZD_FIT';
+  } else {
+    pptx.layout = 'LAYOUT_WIDE';
+  }
+  const W = geom.w;
+  const FOOTER_Y = geom.footerY;
   pptx.author = author;
   pptx.title = diagramName;
   pptx.subject = 'Microsoft Product Architecture Diagram';
@@ -487,7 +684,7 @@ export async function buildDiagramSlidePptx(
 
   // ── Diagram title ────────────────────────────────────────────────────────────
   slide.addText(diagramName, {
-    x: 0.35, y: ACCENT_H + 0.05, w: 9.5, h: HEADER_H - 0.1,
+    x: 0.35, y: ACCENT_H + 0.05, w: Math.max(3, W - 3.85), h: HEADER_H - 0.1,
     fontSize: 24,
     bold: true,
     color: t.titleText,
@@ -498,7 +695,7 @@ export async function buildDiagramSlidePptx(
 
   // ── Author + date (right side of header) ────────────────────────────────────
   slide.addText(`${author}  ·  ${date}`, {
-    x: 9.9, y: ACCENT_H + 0.05, w: 3.08, h: HEADER_H - 0.1,
+    x: W - 3.43, y: ACCENT_H + 0.05, w: 3.08, h: HEADER_H - 0.1,
     fontSize: 10,
     color: t.metaText,
     fontFace: 'Yu Gothic UI',
@@ -515,27 +712,37 @@ export async function buildDiagramSlidePptx(
 
   // ── Diagram body — native shapes when available, captured PNG otherwise ─────
   const renderedNatively = options.diagram
-    ? await addEditableDiagram(
-      pptx,
-      slide,
-      options.diagram,
-      { x: IMAGE_X, y: IMAGE_Y, w: IMAGE_W, h: IMAGE_H },
-      isDarkMode,
-    )
+    ? await addEditableDiagram(pptx, slide, options.diagram, geom.frame, isDarkMode)
     : false;
 
   if (!renderedNatively) {
     slide.addImage({
       data: imageDataUrl,
-      x: IMAGE_X,
-      y: IMAGE_Y,
-      w: IMAGE_W,
-      h: IMAGE_H,
-      sizing: { type: 'contain', w: IMAGE_W, h: IMAGE_H },
+      x: geom.frame.x,
+      y: geom.frame.y,
+      w: geom.frame.w,
+      h: geom.frame.h,
+      sizing: { type: 'contain', w: geom.frame.w, h: geom.frame.h },
     });
   }
 
   // ── Footer text ──────────────────────────────────────────────────────────────
+  const note = geom.overflow
+    ? 'This architecture is wider than PowerPoint\'s 56" page limit, so it was scaled down to fit. Export to Visio (.vsdx) for a full-size, fully legible drawing.'
+    : geom.outliersClamped
+      ? 'One or more services sat far outside the main layout. They were moved to the page edge so they remain visible — reposition them on the canvas for an exact layout.'
+      : '';
+  if (note && renderedNatively) {
+    slide.addText(note, {
+      objectName: 'overflow-note',
+      x: 0.35, y: FOOTER_Y - 0.26, w: W - 0.7, h: 0.24,
+      fontSize: 9,
+      bold: true,
+      color: 'B45309',
+      fontFace: 'Yu Gothic UI',
+      valign: 'middle',
+    });
+  }
   slide.addText('Generated by Microsoft Product Architecture Diagram Builder  ·  Swarm Data SE, Jiayi Yang', {
     x: 0.35, y: FOOTER_Y, w: W - 0.7, h: FOOTER_H,
     fontSize: 8,

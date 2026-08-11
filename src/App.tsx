@@ -1050,6 +1050,9 @@ function App() {
   const paneContextMenuRef = useRef<HTMLDivElement>(null);
   const paneContextMenuReturnFocusRef = useRef<HTMLElement | null>(null);
   const [totalMonthlyCost, setTotalMonthlyCost] = useState(0);
+  // Services with no published price are excluded from the total; surface the
+  // count so a partial estimate is never presented as complete.
+  const [unpricedCount, setUnpricedCount] = useState(0);
   const [pricingMode, setPricingMode] = useState<PricingMode>('payg');
   const [pricingScenarios, setPricingScenarios] = useState<PricingScenario[]>(
     () => loadPricingScenarios(),
@@ -1771,6 +1774,7 @@ function App() {
     const handle = setTimeout(() => {
       const breakdown = calculateCostBreakdown(latestNodesRef.current, undefined, pricingMode);
       setTotalMonthlyCost(breakdown.totalMonthlyCost);
+      setUnpricedCount(breakdown.unpricedServices?.length ?? 0);
     }, 150);
     return () => clearTimeout(handle);
     // costSignature intentionally keys this effect so position-only node
@@ -6775,6 +6779,17 @@ function App() {
                     >
                       {' '}{t("💰")}{' '}
                       {totalMonthlyCost === 0 ? '$0.00/mo' : formatMonthlyCost(totalMonthlyCost)}
+                      {unpricedCount > 0 && (
+                        <span
+                          className="cost-indicator-partial"
+                          title={localize(language, {
+                            en: `${unpricedCount} service(s) have no published price and are excluded from this total.`,
+                            ja: `${unpricedCount} 件のサービスは公開価格がないため、この合計に含まれていません。`,
+                          })}
+                        >
+                          {' '}+{unpricedCount}
+                        </span>
+                      )}
                     </div>
                     <div className="pricing-mode-toggle" role="group" aria-label={t("Pricing term")}>
                       <button

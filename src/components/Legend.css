@@ -49,7 +49,7 @@
 }
 
 .legend-header:focus-visible {
-  outline: 3px solid var(--azd-color-focus-soft);
+  outline: 3px solid var(--azd-color-focus);
   outline-offset: 2px;
 }
 

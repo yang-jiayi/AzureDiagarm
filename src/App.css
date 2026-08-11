@@ -769,6 +769,17 @@ body.dark-mode .toolbar-dropdown-separator {
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
 }
 
+/* Marks the total as partial: N services carry no published price. */
+.cost-indicator-partial {
+  font-size: 0.78rem;
+  font-weight: 700;
+  padding: 0.05rem 0.35rem;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.28);
+  border: 1px solid rgba(255, 255, 255, 0.55);
+  cursor: help;
+}
+
 /* PAYG / Reserved pricing-term toggle */
 .pricing-mode-toggle {
   display: inline-flex;

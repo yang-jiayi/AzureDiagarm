@@ -74,3 +74,6 @@ usage-reports/
 # Local-only working content — this repo is public, so keep these untracked.
 AIDC+AADB-FY27/
 narrations/
+
+# Export-quality audit artifacts (scripts/exportQualityAudit.ts)
+tmp-export-audit/

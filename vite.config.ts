@@ -45,7 +45,7 @@ export default defineConfig({
           // their own lazy chunks. Folding them into the eager vendor chunk
           // would block first paint and undo the lazy auth/telemetry split
           // (msal + Application Insights) and the code-split exporters/layout.
-          if (/[\\/]node_modules[\\/](?:@azure[\\/]msal-[^\\/]+|@microsoft[\\/]applicationinsights-[^\\/]+|@microsoft[\\/]dynamicproto-js|@nevware21[\\/][^\\/]+|pptxgenjs|jszip|html-to-image|elkjs|dagre|graphlib|lodash|image-size)[\\/]/.test(id)) {
+          if (/[\\/]node_modules[\\/](?:@azure[\\/]msal-[^\\/]+|@microsoft[\\/]applicationinsights-[^\\/]+|@microsoft[\\/]dynamicproto-js|@nevware21[\\/][^\\/]+|microsoft-cognitiveservices-speech-sdk|pptxgenjs|jszip|html-to-image|elkjs|dagre|graphlib|lodash|image-size)[\\/]/.test(id)) {
             return undefined;
           }
           // Remaining eagerly-loaded dependencies (e.g. lucide-react) form a

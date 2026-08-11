@@ -257,7 +257,7 @@
 .byo-ai-form-grid input:focus,
 .byo-ai-form-grid select:focus,
 .byo-ai-dialog button:focus-visible {
-  outline: 3px solid var(--azd-color-focus-soft);
+  outline: 3px solid var(--azd-color-focus);
   outline-offset: 2px;
 }
 
@@ -331,7 +331,7 @@
 }
 
 .byo-ai-advanced summary:focus-visible {
-  outline: 3px solid var(--azd-color-focus-soft);
+  outline: 3px solid var(--azd-color-focus);
   outline-offset: -3px;
 }
 

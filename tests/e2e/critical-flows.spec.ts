@@ -2208,7 +2208,10 @@ test('canvas uses neutral defaults and brand emphasis only for selection and flo
   await expect(group).toHaveCSS('background-color', 'rgba(107, 114, 128, 0.08)');
 
   await node.click();
-  await expect(nodeCard).toHaveCSS('outline-color', 'rgba(15, 108, 189, 0.3)');
+  // Solid brand blue, not the 30 %-alpha soft token: composited over the white
+  // card that resolved to ~1.3 : 1, far below the 3 : 1 WCAG needs for a
+  // non-text indicator. #0f6cbd on white is 5.4 : 1.
+  await expect(nodeCard).toHaveCSS('outline-color', 'rgb(15, 108, 189)');
   await expect(node).toHaveCSS('box-shadow', 'none');
 
   await edge.locator('.react-flow__edge-interaction').click({ force: true });

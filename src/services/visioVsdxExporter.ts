@@ -42,6 +42,7 @@ import {
   categoryStyle,
   collectExportBoxes,
   computeBounds,
+  computeContentBounds,
   metaSubline,
   partitionBoxes,
   usedConnectionLegend,
@@ -56,7 +57,35 @@ const PX_PER_INCH = 96;
 const PAGE_PADDING_IN = 0.6;
 const MIN_PAGE_W_IN = 11;
 const MIN_PAGE_H_IN = 8.5;
+/**
+ * Visio itself allows 200", but a page much beyond a plotter sheet is only ever
+ * produced by a stray far-placed node; past this the drawing is re-fitted to the
+ * dense cluster and the strays are clamped onto the page so nothing is lost.
+ */
+const MAX_USEFUL_PAGE_IN = 60;
 const CORNER_ROUNDING_IN = 0.08;
+
+/**
+ * Visio font sizes are inches (1 pt = 1/72"). These match the PowerPoint export
+ * at 1 : 1 — a 150 px tile is 1.56" wide, so the label reads at ~7.6 pt and the
+ * SKU sub-line at ~6 pt instead of the previous near-illegible 6.5/5 pt.
+ */
+const LABEL_FONT_IN = 0.105;
+const META_FONT_IN = 0.083;
+const CONNECTOR_FONT_IN = 0.1;
+const LEGEND_FONT_IN = 0.1;
+
+/**
+ * Approximate rendered width in inches. CJK glyphs occupy a full em, Latin
+ * about 0.54 em — enough to decide how many lines a label needs.
+ */
+function estimateTextWidthIn(text: string, fontSizeIn: number): number {
+  let units = 0;
+  for (const character of text) {
+    units += /[\u2e80-\u9fff\uac00-\ud7af\uff00-\uff60\uffe0-\uffe6]/.test(character) ? 1 : 0.54;
+  }
+  return units * fontSizeIn;
+}
 
 const VISIO_NS = 'http://schemas.microsoft.com/office/visio/2012/main';
 const REL_NS = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
@@ -285,14 +314,21 @@ function serviceGroupXml(
   box: ExportBox,
   palette: Palette,
   iconRelId: string | null,
-  iconSizeIn: number,
   properties: Array<{ name: string; label: string; value: string }>,
   meta: string,
 ): string {
-  const labelBandTop = iconRelId ? rect.h - iconSizeIn - 0.16 : rect.h - 0.08;
-  const textH = Math.max(0.16, labelBandTop - 0.06);
   const textW = Math.max(0.3, rect.w - 0.12);
-  const iconChild = iconRelId
+  // Give the label the room it actually needs and let the icon take the rest,
+  // so a two-line service name is never clipped and the icon never vanishes.
+  const labelLines = Math.max(1, Math.ceil(estimateTextWidthIn(box.label, LABEL_FONT_IN) / textW));
+  const neededTextH = labelLines * LABEL_FONT_IN * 1.28 + (meta ? META_FONT_IN * 1.4 : 0) + 0.05;
+  const maxIcon = iconRelId ? Math.min(rect.h * 0.46, rect.w * 0.5, 0.55) : 0;
+  const minIcon = Math.min(maxIcon, 0.18);
+  const room = Math.max(0.2, rect.h - 0.19);
+  const textH = Math.max(0.16, Math.min(neededTextH, room - minIcon));
+  const iconSizeIn = maxIcon > 0 ? Math.max(0, Math.min(maxIcon, room - textH)) : 0;
+  const showIcon = iconRelId !== null && iconSizeIn >= 0.08;
+  const iconChild = showIcon
     ? `
         <Shape ID="${ids.icon}" NameU="Icon.${ids.icon}" Type="Foreign" LineStyle="0" FillStyle="0" TextStyle="0">
           <Cell N="PinX" V="${f(rect.w / 2)}"/>
@@ -316,9 +352,9 @@ function serviceGroupXml(
   // Second, smaller run carries the SKU · region · cost annotation so the tile
   // shows the same metadata as the canvas instead of dropping it.
   const characterRows = meta
-    ? `        <Row IX="0"><Cell N="Font" V="1"/><Cell N="Color" V="${palette.text}"/><Cell N="Size" V="0.09"/></Row>
-        <Row IX="1"><Cell N="Font" V="1"/><Cell N="Color" V="#64748B"/><Cell N="Size" V="0.07"/></Row>`
-    : `        <Row IX="0"><Cell N="Font" V="1"/><Cell N="Color" V="${palette.text}"/><Cell N="Size" V="0.09"/></Row>`;
+    ? `        <Row IX="0"><Cell N="Font" V="1"/><Cell N="Color" V="${palette.text}"/><Cell N="Size" V="${LABEL_FONT_IN}"/></Row>
+        <Row IX="1"><Cell N="Font" V="1"/><Cell N="Color" V="#64748B"/><Cell N="Size" V="${META_FONT_IN}"/></Row>`
+    : `        <Row IX="0"><Cell N="Font" V="1"/><Cell N="Color" V="${palette.text}"/><Cell N="Size" V="${LABEL_FONT_IN}"/></Row>`;
   const textBody = meta
     ? `<cp IX="0"/>${esc(box.label)}\n<cp IX="1"/>${esc(meta)}`
     : esc(box.label);
@@ -412,7 +448,7 @@ function connectorShapeXml(
     ? `
       <Cell N="TextBkgnd" V="2"/>
       <Section N="Character">
-        <Row IX="0"><Cell N="Font" V="1"/><Cell N="Color" V="${CONNECTOR_TEXT}"/><Cell N="Size" V="0.085"/></Row>
+        <Row IX="0"><Cell N="Font" V="1"/><Cell N="Color" V="${CONNECTOR_TEXT}"/><Cell N="Size" V="${CONNECTOR_FONT_IN}"/></Row>
       </Section>
       <Section N="Paragraph">
         <Row IX="0"><Cell N="HorzAlign" V="1"/></Row>
@@ -503,7 +539,7 @@ function legendTextXml(id: number, x: number, y: number, width: number, text: st
       <Cell N="LinePattern" V="0"/>
       <Cell N="FillPattern" V="0"/>
       <Section N="Character">
-        <Row IX="0"><Cell N="Font" V="1"/><Cell N="Color" V="#475569"/><Cell N="Size" V="0.085"/></Row>
+        <Row IX="0"><Cell N="Font" V="1"/><Cell N="Color" V="#475569"/><Cell N="Size" V="${LEGEND_FONT_IN}"/></Row>
       </Section>
       <Section N="Paragraph">
         <Row IX="0"><Cell N="HorzAlign" V="0"/></Row>
@@ -614,7 +650,24 @@ export async function buildVsdxPackage(
   const boxes = collectExportBoxes(nodes);
   const { groups, services } = partitionBoxes(boxes);
   const routes = buildExportRoutes(edges, boxes);
-  const bounds = computeBounds(boxes.values());
+  // Match the PowerPoint strategy: draw 1 : 1 from the full bounds whenever the
+  // page stays a sensible size, and only fall back to the dense-cluster bounds
+  // (clamping the strays back on) when a far-placed node would otherwise blow
+  // the page up into a near-empty plotter sheet.
+  const fullBounds = computeBounds(boxes.values());
+  const fullWIn = Math.max(fullBounds.maxX - fullBounds.minX, 1) / PX_PER_INCH;
+  const fullHIn = Math.max(fullBounds.maxY - fullBounds.minY, 1) / PX_PER_INCH;
+  let bounds = fullBounds;
+  let clampToPage = false;
+  if (fullWIn > MAX_USEFUL_PAGE_IN || fullHIn > MAX_USEFUL_PAGE_IN) {
+    const trimmed = computeContentBounds(boxes.values());
+    const trimmedWIn = Math.max(trimmed.maxX - trimmed.minX, 1) / PX_PER_INCH;
+    const trimmedHIn = Math.max(trimmed.maxY - trimmed.minY, 1) / PX_PER_INCH;
+    if (trimmedWIn < fullWIn * 0.8 || trimmedHIn < fullHIn * 0.8) {
+      bounds = trimmed;
+      clampToPage = true;
+    }
+  }
 
   const contentWIn = Math.max(bounds.maxX - bounds.minX, 1) / PX_PER_INCH;
   const contentHIn = Math.max(bounds.maxY - bounds.minY, 1) / PX_PER_INCH;
@@ -624,17 +677,27 @@ export async function buildVsdxPackage(
   // Centre the drawing on the page, converting to Visio's bottom-left origin.
   const offsetXIn = (pageWidthIn - contentWIn) / 2;
   const offsetYIn = (pageHeightIn - contentHIn) / 2;
+  const clampIn = (value: number, lo: number, hi: number) => Math.min(Math.max(value, lo), Math.max(lo, hi));
   const toRect = (box: ExportBox): Rect => {
-    const x = (box.x - bounds.minX) / PX_PER_INCH + offsetXIn;
-    const topY = (box.y - bounds.minY) / PX_PER_INCH + offsetYIn;
     const w = box.w / PX_PER_INCH;
     const h = box.h / PX_PER_INCH;
+    let x = (box.x - bounds.minX) / PX_PER_INCH + offsetXIn;
+    let topY = (box.y - bounds.minY) / PX_PER_INCH + offsetYIn;
+    if (clampToPage) {
+      x = clampIn(x, PAGE_PADDING_IN / 2, pageWidthIn - w - PAGE_PADDING_IN / 2);
+      topY = clampIn(topY, PAGE_PADDING_IN / 2, pageHeightIn - h - PAGE_PADDING_IN / 2);
+    }
     return { x, y: pageHeightIn - topY - h, w, h };
   };
-  const toPoint = (point: Point): Point => ({
-    x: (point.x - bounds.minX) / PX_PER_INCH + offsetXIn,
-    y: pageHeightIn - ((point.y - bounds.minY) / PX_PER_INCH + offsetYIn),
-  });
+  const toPoint = (point: Point): Point => {
+    let x = (point.x - bounds.minX) / PX_PER_INCH + offsetXIn;
+    let topY = (point.y - bounds.minY) / PX_PER_INCH + offsetYIn;
+    if (clampToPage) {
+      x = clampIn(x, 0, pageWidthIn);
+      topY = clampIn(topY, 0, pageHeightIn);
+    }
+    return { x, y: pageHeightIn - topY };
+  };
 
   const icons = await rasterizeIcons(services.map((box) => box.iconPath), 128);
 
@@ -675,7 +738,6 @@ export async function buildVsdxPackage(
       );
     }
 
-    const iconSizeIn = Math.min(rect.h * 0.46, rect.w * 0.5, 0.55);
     const meta = metaSubline(service);
     const properties = [
       {
@@ -707,7 +769,6 @@ export async function buildVsdxPackage(
         service,
         paletteForService(service),
         relId,
-        iconSizeIn,
         properties,
         meta,
       ),
