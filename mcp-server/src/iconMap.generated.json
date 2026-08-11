@@ -1220,6 +1220,178 @@
     "isUsageBased": true,
     "costRange": "Service and storage based"
   },
+  "Azure Databricks": {
+    "displayName": "Azure Databricks",
+    "iconFile": "10787-icon-service-Azure-Databricks",
+    "category": "analytics",
+    "aliases": [
+      "Databricks",
+      "Databricks Workspace",
+      "Azure Databricks Workspace"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": true,
+    "costRange": "DBU and underlying VM based"
+  },
+  "Azure Virtual Desktop": {
+    "displayName": "Azure Virtual Desktop",
+    "iconFile": "00327-icon-service-Azure-Virtual-Desktop",
+    "category": "other",
+    "aliases": [
+      "Virtual Desktop",
+      "AVD",
+      "Azure Virtual Desktop Host Pool",
+      "Windows Virtual Desktop"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": true,
+    "costRange": "Session host VM and licensing based"
+  },
+  "Azure Arc": {
+    "displayName": "Azure Arc",
+    "iconFile": "00756-icon-service-Azure-Arc",
+    "category": "management + governance",
+    "aliases": [
+      "Arc",
+      "Arc-enabled servers",
+      "Azure Arc enabled servers",
+      "Arc-enabled Kubernetes"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": true,
+    "costRange": "Free for core inventory; per-resource for add-ons"
+  },
+  "Azure Virtual WAN": {
+    "displayName": "Azure Virtual WAN",
+    "iconFile": "10353-icon-service-Virtual-WANs",
+    "category": "networking",
+    "aliases": [
+      "Virtual WAN",
+      "vWAN",
+      "Virtual WANs",
+      "Azure vWAN"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": true,
+    "costRange": "Hub, scale unit and data transfer based"
+  },
+  "NAT Gateway": {
+    "displayName": "NAT Gateway",
+    "iconFile": "10310-icon-service-NAT",
+    "category": "networking",
+    "aliases": [
+      "Azure NAT Gateway",
+      "Virtual Network NAT",
+      "VNet NAT"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": true,
+    "costRange": "Hourly plus data processed"
+  },
+  "Azure Communication Services": {
+    "displayName": "Azure Communication Services",
+    "iconFile": "00968-icon-service-Azure-Communication-Services",
+    "category": "other",
+    "aliases": [
+      "Communication Services",
+      "ACS",
+      "Azure Communication Service"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": true,
+    "costRange": "Per message, minute and channel"
+  },
+  "Azure Managed Redis": {
+    "displayName": "Azure Managed Redis",
+    "iconFile": "03675-icon-service-Azure-Managed-Redis",
+    "category": "databases",
+    "aliases": [
+      "Managed Redis",
+      "AMR",
+      "Azure Managed Redis Cache"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Instance size and tier based"
+  },
+  "Azure Data Explorer": {
+    "displayName": "Azure Data Explorer",
+    "iconFile": "10145-icon-service-Azure-Data-Explorer-Clusters",
+    "category": "analytics",
+    "aliases": [
+      "Data Explorer",
+      "ADX",
+      "Kusto",
+      "Azure Data Explorer Cluster"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Cluster size and storage based"
+  },
+  "Azure NetApp Files": {
+    "displayName": "Azure NetApp Files",
+    "iconFile": "10096-icon-service-Azure-NetApp-Files",
+    "category": "storage",
+    "aliases": [
+      "NetApp Files",
+      "ANF",
+      "Azure NetApp"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Provisioned capacity and service level based"
+  },
+  "Azure Container Storage": {
+    "displayName": "Azure Container Storage",
+    "iconFile": "03401-icon-service-Azure-Container-Storage",
+    "category": "containers",
+    "aliases": [
+      "Container Storage",
+      "ACStor"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": true,
+    "costRange": "Backing storage and capacity based"
+  },
+  "Azure Load Testing": {
+    "displayName": "Azure Load Testing",
+    "iconFile": "02423-icon-service-Load-Testing",
+    "category": "devops",
+    "aliases": [
+      "Load Testing",
+      "Azure Load Test"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": true,
+    "costRange": "Virtual user hours based"
+  },
+  "Foundry Models": {
+    "displayName": "Foundry Models",
+    "iconFile": "038470614-icon-service-Foundry-Models",
+    "category": "ai + machine learning",
+    "aliases": [
+      "Azure AI Foundry Models",
+      "Model Catalog",
+      "Foundry Model Catalog"
+    ],
+    "hasPricingData": true,
+    "pricingServiceName": "Azure OpenAI",
+    "isUsageBased": true,
+    "costRange": "Token and deployment based"
+  },
+  "Foundry Agent Service": {
+    "displayName": "Foundry Agent Service",
+    "iconFile": "038470523-icon-service-Foundry-Agent-Service",
+    "category": "ai + machine learning",
+    "aliases": [
+      "Azure AI Agent Service",
+      "AI Agent Service",
+      "Foundry Agents"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": true,
+    "costRange": "Agent run and token based"
+  },
   "Microsoft Fabric": {
     "displayName": "Microsoft Fabric",
     "iconFile": "microsoft-fabric",
