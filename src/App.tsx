@@ -4609,12 +4609,12 @@ function App() {
     [nodes, iacBaseline],
   );
   const bicepStarterTemplate = useMemo(
-    () => buildStarterTemplate(nodes, 'bicep'),
-    [nodes],
+    () => buildStarterTemplate(nodes, 'bicep', edges),
+    [nodes, edges],
   );
   const terraformStarterTemplate = useMemo(
-    () => buildStarterTemplate(nodes, 'terraform'),
-    [nodes],
+    () => buildStarterTemplate(nodes, 'terraform', edges),
+    [nodes, edges],
   );
 
   const downloadStarterTemplate = useCallback((format: StarterTemplateFormat) => {

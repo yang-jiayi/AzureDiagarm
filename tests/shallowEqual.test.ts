@@ -19,7 +19,20 @@ test('shallowEqual compares one level of own keys', () => {
   assert.equal(shallowEqual(undefined, undefined), true);
   assert.equal(shallowEqual(undefined, {}), false);
   assert.equal(shallowEqual(null, {}), false);
+
+  // The real runtime case is pricing being REMOVED from a node, which puts the
+  // nullish value on the right. Without the right-hand guard this throws a
+  // TypeError from inside a React.memo comparator and takes the canvas down.
+  assert.equal(shallowEqual({ a: 1 }, undefined), false);
+  assert.equal(shallowEqual({ a: 1 }, null), false);
+
+  // Same key count, no shared keys: only the per-key ownership check rejects
+  // this, and both values are undefined so a value comparison would pass.
+  assert.equal(shallowEqual({ a: undefined }, { b: undefined }), false);
+
   assert.equal(shallowEqual({ a: NaN }, { a: NaN }), true, 'Object.is treats NaN as equal');
+  // JSON.stringify serialises both as "0" and would wrongly skip the render.
+  assert.equal(shallowEqual({ a: -0 }, { a: 0 }), false);
 });
 
 test('shallowEqual does not recurse into nested objects', () => {
@@ -34,5 +47,12 @@ test('shallowArrayEqual compares elements without allocating', () => {
   assert.equal(shallowArrayEqual(['a'], ['a', 'b']), false);
   assert.equal(shallowArrayEqual(undefined, undefined), true);
   assert.equal(shallowArrayEqual(undefined, []), false);
+  // Tags being removed from a node puts the nullish value on the right.
+  assert.equal(shallowArrayEqual(['a'], undefined), false);
   assert.equal(shallowArrayEqual([], []), true);
+  // Not an array on either side: without the Array.isArray guard, a plain
+  // object would fall through to a length comparison of undefined === undefined.
+  assert.equal(shallowArrayEqual({ 0: 'a', length: 1 }, ['a']), false);
+  assert.equal(shallowArrayEqual([NaN], [NaN]), true);
+  assert.equal(shallowArrayEqual([-0], [0]), false);
 });

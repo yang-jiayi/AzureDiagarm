@@ -14,18 +14,32 @@ import { join, relative, sep } from 'node:path';
  * test is the offline guard that stops a known-dead path from coming back.
  */
 
-const SRC = fileURLToPath(new URL('../src/', import.meta.url));
+const REPO = fileURLToPath(new URL('../', import.meta.url));
+const SCANNED_DIRS = ['src', 'scripts'];
 
 function collectSourceFiles(dir: string, out: string[] = []): string[] {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     const full = join(dir, entry.name);
     if (entry.isDirectory()) collectSourceFiles(full, out);
-    else if (/\.tsx?$/.test(entry.name)) out.push(full);
+    else if (/\.(tsx?|[cm]?js)$/.test(entry.name)) out.push(full);
   }
   return out;
 }
 
 const LINK_PATTERN = /https:\/\/learn\.microsoft\.com\/[^\s'"`)\\]+/g;
+
+/**
+ * Compare on the bare document path. A retired page is just as dead when it is
+ * written with a locale segment, a query string or a fragment, and this repo
+ * already writes locale-pinned Learn URLs in several places.
+ */
+function normalizePath(url: string): string {
+  return url
+    .replace('https://learn.microsoft.com', '')
+    .replace(/^\/[a-z]{2}-[a-z]{2}(?=\/)/, '')
+    .split(/[?#]/)[0]
+    .replace(/\/+$/, '');
+}
 
 interface FoundLink {
   path: string;
@@ -34,18 +48,20 @@ interface FoundLink {
 
 function collectLinks(): FoundLink[] {
   const found: FoundLink[] = [];
-  for (const file of collectSourceFiles(SRC)) {
-    const where = relative(SRC, file).split(sep).join('/');
-    readFileSync(file, 'utf8')
-      .split('\n')
-      .forEach((text, index) => {
-        for (const match of text.matchAll(LINK_PATTERN)) {
-          found.push({
-            path: match[0].replace(/[.,;:]+$/, '').replace('https://learn.microsoft.com', ''),
-            where: `${where}:${index + 1}`,
-          });
-        }
-      });
+  for (const dir of SCANNED_DIRS) {
+    for (const file of collectSourceFiles(join(REPO, dir))) {
+      const where = relative(REPO, file).split(sep).join('/');
+      readFileSync(file, 'utf8')
+        .split('\n')
+        .forEach((text, index) => {
+          for (const match of text.matchAll(LINK_PATTERN)) {
+            found.push({
+              path: normalizePath(match[0].replace(/[.,;:]+$/, '')),
+              where: `${where}:${index + 1}`,
+            });
+          }
+        });
+    }
   }
   return found;
 }
@@ -80,8 +96,28 @@ test('no source file references a retired Microsoft Learn path', () => {
   assert.deepEqual(offenders, [], `Retired documentation links:\n${offenders.join('\n')}`);
 });
 
+test('the retired-path matcher is not fooled by locale, query or fragment', () => {
+  const retired = '/azure/well-architected/reliability/data-management';
+  const variants = [
+    `https://learn.microsoft.com${retired}`,
+    `https://learn.microsoft.com/en-us${retired}`,
+    `https://learn.microsoft.com/ja-jp${retired}`,
+    `https://learn.microsoft.com${retired}?tabs=azure-portal`,
+    `https://learn.microsoft.com${retired}#backup`,
+    `https://learn.microsoft.com${retired}/`,
+  ];
+  for (const variant of variants) {
+    assert.equal(normalizePath(variant), retired, `${variant} normalized to something else`);
+  }
+  // A sibling that merely shares a prefix must not be flagged.
+  assert.notEqual(
+    normalizePath('https://learn.microsoft.com/azure/architecture/framework-of-reference'),
+    '/azure/architecture/framework',
+  );
+});
+
 test('user-facing WAF reference links are locale neutral and absolute', () => {
-  const source = readFileSync(join(SRC, 'data', 'wafRules.ts'), 'utf8');
+  const source = readFileSync(join(REPO, 'src', 'data', 'wafRules.ts'), 'utf8');
   const referenceUrls = [...source.matchAll(/referenceUrl:\s*'([^']+)'/g)].map((match) => match[1]);
   assert.ok(referenceUrls.length > 0, 'wafRules.ts exposes no referenceUrl, so the parser is stale.');
 
@@ -98,7 +134,7 @@ test('user-facing WAF reference links are locale neutral and absolute', () => {
 });
 
 test('the generated WAF pillar links resolve to real pillar landing pages', () => {
-  const source = readFileSync(join(SRC, 'services', 'wafPatternDetector.ts'), 'utf8');
+  const source = readFileSync(join(REPO, 'src', 'services', 'wafPatternDetector.ts'), 'utf8');
   const slugBlock = source.match(/const slug: Record<WafPillar, string> = \{([\s\S]*?)\};/);
   assert.ok(slugBlock, 'pillarReference no longer builds its URL from a slug map.');
 

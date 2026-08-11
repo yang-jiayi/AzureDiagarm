@@ -2,7 +2,7 @@
 // Licensed under the MIT License.
 
 import React, { memo, useEffect, useRef, useState } from 'react';
-import { Handle, Position, NodeProps, useReactFlow } from 'reactflow';
+import { Handle, Position, NodeProps, useReactFlow, useStore } from 'reactflow';
 import { Zap, Unlink, Layers } from 'lucide-react';
 import { loadIcon, loadIconsFromCategory } from '../utils/iconLoader';
 import { NodePricingConfig } from '../types/pricing';
@@ -54,8 +54,13 @@ const AzureNode: React.FC<NodeProps> = memo(({ data, selected, id }) => {
   const [label, setLabel] = useState(data.label || 'Azure Service');
   const cancelLabelEditRef = useRef(false);
   const labelRef = useRef<HTMLDivElement>(null);
-  const { getNode, setNodes } = useReactFlow();
-  const parentNode = getNode(id)?.parentNode;
+  const { setNodes } = useReactFlow();
+  // Group membership lives on the node itself, not in `data`, and getNode() is
+  // a non-reactive snapshot read. Subscribing to the store is what makes the
+  // ungroup button appear and disappear as the node joins or leaves a group;
+  // reading it through getNode() left the button on screen after an ungroup
+  // until some unrelated change happened to re-render the node.
+  const parentNode = useStore((state) => state.nodeInternals.get(id)?.parentNode);
   const pendingConnection = usePendingConnection();
   const isConnectSource = pendingConnection?.nodeId === id;
 
@@ -398,10 +403,14 @@ const AzureNode: React.FC<NodeProps> = memo(({ data, selected, id }) => {
   // nodes. shallowEqual is also strictly more correct: it is insensitive to key
   // order, which stringify is not, and it distinguishes an explicitly
   // undefined field from a missing one, which stringify collapses.
+  //
+  // Group membership is deliberately absent: it lives on the node rather than
+  // in `data`, so it is read reactively from the store instead. A
+  // `data.parentNode` term here compared undefined to undefined forever and
+  // only looked like it was doing something.
   return (
     prevProps.id === nextProps.id &&
     prevProps.selected === nextProps.selected &&
-    prevProps.data.parentNode === nextProps.data.parentNode &&
     prevProps.data.label === nextProps.data.label &&
     // Drives the "incl. capacity" badge independently of the label.
     prevProps.data.serviceName === nextProps.data.serviceName &&
