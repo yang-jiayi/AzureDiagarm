@@ -16,6 +16,7 @@ import { localize } from '../i18n/localization';
 import { useNodeKeyboardInteraction } from '../hooks/useNodeKeyboardInteraction';
 import { usePendingConnection } from '../hooks/useKeyboardConnection';
 import { detachNodeFromGroup } from '../utils/groupUtils';
+import { shallowArrayEqual, shallowEqual } from '../utils/shallowEqual';
 
 // Map categories to colors
 const getCategoryColor = (category: string): string => {
@@ -389,18 +390,27 @@ const AzureNode: React.FC<NodeProps> = memo(({ data, selected, id }) => {
     </div>
   );
 }, (prevProps, nextProps) => {
-  // Custom comparison for memo - re-render if these props change
+  // Custom comparison for memo - re-render if these props change.
+  //
+  // This runs for every node on every React Flow store update (drag, pan,
+  // selection, zoom), so it has to stay allocation-free — JSON.stringify here
+  // meant two serialisations per node per frame on diagrams with hundreds of
+  // nodes. shallowEqual is also strictly more correct: it is insensitive to key
+  // order, which stringify is not, and it distinguishes an explicitly
+  // undefined field from a missing one, which stringify collapses.
   return (
     prevProps.id === nextProps.id &&
     prevProps.selected === nextProps.selected &&
-prevProps.data.parentNode === nextProps.data.parentNode &&
+    prevProps.data.parentNode === nextProps.data.parentNode &&
     prevProps.data.label === nextProps.data.label &&
+    // Drives the "incl. capacity" badge independently of the label.
+    prevProps.data.serviceName === nextProps.data.serviceName &&
     prevProps.data.category === nextProps.data.category &&
     prevProps.data.labelMaxWidth === nextProps.data.labelMaxWidth &&
-    JSON.stringify(prevProps.data.tags) === JSON.stringify(nextProps.data.tags) &&
+    shallowArrayEqual(prevProps.data.tags, nextProps.data.tags) &&
     prevProps.data.iconPath === nextProps.data.iconPath &&
     prevProps.data.stylePreset === nextProps.data.stylePreset &&
-    JSON.stringify(prevProps.data.pricing) === JSON.stringify(nextProps.data.pricing)
+    shallowEqual(prevProps.data.pricing, nextProps.data.pricing)
   );
 });
 

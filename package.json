@@ -28,6 +28,7 @@
     "test:layout-preservation": "tsx scripts/test-layout-preservation.ts",
     "test:validation-freshness": "tsx scripts/test-validation-freshness.ts",
     "test:service-names": "tsx scripts/test-service-name-normalization.ts",
+    "verify:doc-links": "tsx scripts/verify-doc-links.ts",
     "mcp:build": "cd mcp-server && npm run build",
     "mcp:start": "node mcp-server/dist/index.js",
     "icons:sync:microsoft": "node scripts/sync-microsoft-icons.mjs",
