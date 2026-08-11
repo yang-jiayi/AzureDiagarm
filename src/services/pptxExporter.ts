@@ -565,8 +565,8 @@ function connectorLabelBox(
   px: number,
   clampTo?: DiagramFrame,
   obstacles: readonly { x: number; y: number; w: number; h: number }[] = [],
-  bundle?: { count: number; rung: number; x: number; y: number; shift?: number; font?: number; perCol?: number },
-): { x: number; y: number; w: number; h: number; text: string; badge: { x: number; y: number; d: number } | null; block: { x: number; y: number; w: number; h: number }; alongX: boolean } | null {
+  bundle?: { count: number; rung: number; x: number; y: number; shift?: number; across?: number; font?: number; perCol?: number },
+): { x: number; y: number; w: number; h: number; text: string; badge: { x: number; y: number; d: number } | null; block: { x: number; y: number; w: number; h: number }; alongX: boolean; fontSize: number } | null {
   if (!route.label) return null;
   const anchor = toInches(route.labelAnchor, transform);
   const text = truncateLabel(route.label, 42);
@@ -643,7 +643,10 @@ function connectorLabelBox(
   // the lattice and half inside each other. The ladder hangs off the bundle's
   // centre; only the ordinal decides which rung this chip takes.
   const base = bundle
-    ? { x: bundle.x + (alongX ? 0 : bundle.shift ?? 0), y: bundle.y + (alongX ? bundle.shift ?? 0 : 0) }
+    ? {
+      x: bundle.x + (alongX ? bundle.across ?? 0 : bundle.shift ?? 0),
+      y: bundle.y + (alongX ? bundle.shift ?? 0 : bundle.across ?? 0),
+    }
     : anchor;
   const reach = ((perCol - 1) / 2) * stepOut;
   let ladder = 0;
@@ -657,8 +660,8 @@ function connectorLabelBox(
   }
 
   const place = (offset: number, cross = 0): { x: number; y: number; clamped: boolean } => {
-    const rawX = (alongX ? anchor.x : base.x) - w / 2 + (alongX ? cross + columnShift : offset + ladder);
-    const rawY = (alongX ? base.y : anchor.y) - blockH / 2 + (alongX ? offset + ladder : cross + columnShift);
+    const rawX = (bundle ? base.x : alongX ? anchor.x : base.x) - w / 2 + (alongX ? cross + columnShift : offset + ladder);
+    const rawY = (bundle ? base.y : alongX ? base.y : anchor.y) - blockH / 2 + (alongX ? offset + ladder : cross + columnShift);
     let x = rawX;
     let y = rawY;
     if (clampTo) {
@@ -689,14 +692,22 @@ function connectorLabelBox(
       // ladder has to cross the band the tiles sit in, so moving along it just
       // trades one covered tile for another, and a rung that leaves the lattice
       // lands part-way inside its neighbour.
-      const candidate = siblings > 1
-        ? place(stagger, sign * step * (w / 2 + 0.06))
-        : place(stagger + sign * step * (stepOut / 2));
-      if (siblings > 1 && candidate.clamped) continue;
-      const cover = covered(candidate);
-      if (cover < bestCover) {
-        best = candidate;
-        bestCover = cover;
+      const out = sign * step * (stepOut / 2);
+      const side = sign * step * (w / 2 + 0.06);
+      // A lone chip is free to go anywhere, so search the plane around its
+      // arrow, not just the normal: on a crowded slide the only gap left is
+      // often beside the connector rather than above or below it.
+      const candidates = siblings > 1
+        ? [place(stagger, side)]
+        : [place(stagger + out), place(stagger, side), place(stagger + out, side), place(stagger + out, -side)];
+      for (const candidate of candidates) {
+        if (siblings > 1 && candidate.clamped) continue;
+        const cover = covered(candidate);
+        if (cover < bestCover) {
+          best = candidate;
+          bestCover = cover;
+        }
+        if (bestCover <= 0) break;
       }
       if (bestCover <= 0) break;
     }
@@ -704,7 +715,7 @@ function connectorLabelBox(
   const badge = badgeD > 0
     ? { x: best.x + w / 2 - badgeD / 2, y: best.y + h + 0.03, d: badgeD }
     : null;
-  return { x: best.x, y: best.y, w, h, text, badge, block: { x: best.x, y: best.y, w, h: blockH }, alongX };
+  return { x: best.x, y: best.y, w, h, text, badge, block: { x: best.x, y: best.y, w, h: blockH }, alongX, fontSize };
 }
 
 function addConnectorLabel(
@@ -1165,7 +1176,7 @@ async function addEditableDiagram(
   // Measure each bundle before placing any of it: the rungs of a ladder have to
   // step by the tallest block in that ladder, and hang off the bundle's own
   // centre, neither of which is known until every label in it has been sized.
-  const bundles = new Map<string, { count: number; rung: number; x: number; y: number; shift?: number; font?: number; perCol?: number }>();
+  const bundles = new Map<string, { count: number; rung: number; x: number; y: number; shift?: number; across?: number; font?: number; perCol?: number }>();
   const shapes = new Map<string, { w: number; h: number; alongX: boolean }>();
   for (const route of annotatedRoutes) {
     const key = bundleKey(route);
@@ -1191,7 +1202,32 @@ async function addEditableDiagram(
   }
   // Move the whole ladder off the tiles rather than letting each rung walk on
   // its own: a rung that leaves the lattice lands part-way inside the one above
-  // it, so the group takes a single offset that every rung shares.
+  // it, so the group takes a single offset that every rung shares. Ordinary
+  // single connectors are settled first, so a ladder — which is far the larger
+  // block — is the thing that has to dodge, rather than displacing a chip that
+  // has nowhere to go but onto its neighbour.
+  const ordered = [
+    ...annotatedRoutes.filter((route) => !bundles.has(bundleKey(route))),
+    ...annotatedRoutes.filter((route) => bundles.has(bundleKey(route))),
+  ];
+  // A chip landing on a service tile is untidy; a chip landing on another
+  // annotation makes one of the two unreadable. Keep the two apart so the
+  // ladder search always trades tile coverage for annotation clearance.
+  const tileObstacleCount = chipObstacles.length;
+  const settle = (routes: readonly ExportRoute[]): void => {
+    for (const route of routes) {
+      const box = connectorLabelBox(
+        route, transform, labelFontSize, px, labelFrame, chipObstacles, bundles.get(bundleKey(route)),
+      );
+      chips.set(route.id, box);
+      if (box) chipObstacles.push(box.block);
+      const badge = stepBadgeBox(route, transform, px, labelFrame, box);
+      badges.set(route.id, badge);
+      if (badge && !box) chipObstacles.push({ x: badge.x, y: badge.y, w: badge.d, h: badge.d });
+    }
+  };
+  settle(ordered.filter((route) => !bundles.has(bundleKey(route))));
+
   for (const [key, bundle] of bundles) {
     const shape = shapes.get(key);
     if (!shape || bundle.rung <= 0) continue;
@@ -1201,20 +1237,30 @@ async function addEditableDiagram(
     // bundle just enough to fit instead, so every label survives intact, and if
     // even the smallest readable size will not do it, wrap into columns.
     const corridor = shape.alongX ? labelFrame.h : labelFrame.w;
+    // Re-measure every member and take the max again, exactly as the seeding
+    // loop does. Re-probing only the first route drops the rung below a taller
+    // sibling's own step, and the bundle stops being a lattice.
     const remeasure = (): void => {
-      const redo = annotatedRoutes.find((r) => bundleKey(r) === key);
-      const again = redo
-        ? connectorLabelBox(redo, transform, labelFontSize, px, labelFrame, [], { ...bundle, rung: 0 })
-        : null;
-      if (!again) return;
-      bundle.rung = again.block.h + 0.05;
-      shape.w = again.w;
-      shape.h = again.block.h;
+      let rung = 0;
+      let wide = 0;
+      let tall = 0;
+      for (const member of annotatedRoutes) {
+        if (bundleKey(member) !== key) continue;
+        const again = connectorLabelBox(member, transform, labelFontSize, px, labelFrame, [], { ...bundle, rung: 0 });
+        if (!again) continue;
+        rung = Math.max(rung, again.block.h + 0.05);
+        wide = Math.max(wide, again.w);
+        tall = Math.max(tall, again.block.h);
+      }
+      if (rung <= 0) return;
+      bundle.rung = rung;
+      shape.w = wide;
+      shape.h = tall;
     };
     for (let pass = 0; pass < 4; pass += 1) {
       const needed = (bundle.count - 1) * bundle.rung + shape.h;
       if (needed <= corridor) break;
-      const font = Math.max(5.5, (bundle.font ?? labelFontSize) * (corridor / needed));
+      const font = Math.max(LEGIBLE_TILE_PT, (bundle.font ?? labelFontSize) * (corridor / needed));
       if (font >= (bundle.font ?? labelFontSize) - 0.01) break;
       bundle.font = font;
       remeasure();
@@ -1225,65 +1271,98 @@ async function addEditableDiagram(
       remeasure();
     }
 
-    const rungAt = (i: number): number => {
-      const perCol = Math.max(1, bundle.perCol ?? bundle.count);
-      const inColumn = Math.min(perCol, bundle.count - Math.floor(i / perCol) * perCol);
-      return (i % perCol - (inColumn - 1) / 2) * bundle.rung;
-    };
-    const columnAt = (i: number): number => {
-      const perCol = Math.max(1, bundle.perCol ?? bundle.count);
-      const columns = Math.max(1, Math.ceil(bundle.count / perCol));
-      return (Math.floor(i / perCol) - (columns - 1) / 2) * (shape.w + 0.12);
-    };
-    const cost = (shift: number): number => {
+    // Score the bundle at its REAL geometry: probe the same routine that will
+    // place it, with no obstacles so no walk runs. Modelling the lattice by
+    // hand kept choosing offsets that the in-frame clamps then undid, so the
+    // search believed it had found a clear slot that never materialised.
+    const members = annotatedRoutes.filter((route) => bundleKey(route) === key);
+    const cost = (shift: number, across: number): number => {
+      const placed: { x: number; y: number; w: number; h: number }[] = [];
       let sum = 0;
-      for (let i = 0; i < bundle.count; i += 1) {
-        const box = {
-          x: (shape.alongX ? bundle.x : bundle.x + shift) - shape.w / 2,
-          y: (shape.alongX ? bundle.y + shift : bundle.y) - shape.h / 2 + (shape.alongX ? rungAt(i) : 0),
-          w: shape.w,
-          h: shape.h,
-        };
-        if (shape.alongX) box.x += columnAt(i);
-        else {
-          box.x += rungAt(i);
-          box.y += columnAt(i);
-        }
-        for (const tile of tileRects) {
-          const dx = Math.min(box.x + box.w, tile.x + tile.w) - Math.max(box.x, tile.x);
-          const dy = Math.min(box.y + box.h, tile.y + tile.h) - Math.max(box.y, tile.y);
-          if (dx > 0 && dy > 0) sum += dx * dy;
+      for (const member of members) {
+        const box = connectorLabelBox(
+          member, transform, labelFontSize, px, labelFrame, [], { ...bundle, shift, across },
+        );
+        if (!box) continue;
+        placed.push(box.block);
+      }
+      // Anything the ladder lands on, plus any rung the frame clamp has stacked
+      // back on top of a sibling. Landing on another annotation is weighted far
+      // above landing on a tile: a covered tile is untidy, a covered label is
+      // lost.
+      for (let i = 0; i < placed.length; i += 1) {
+        const box = placed[i];
+        for (let j = 0; j < chipObstacles.length + i; j += 1) {
+          const taken = j < chipObstacles.length ? chipObstacles[j] : placed[j - chipObstacles.length];
+          const dx = Math.min(box.x + box.w, taken.x + taken.w) - Math.max(box.x, taken.x);
+          const dy = Math.min(box.y + box.h, taken.y + taken.h) - Math.max(box.y, taken.y);
+          if (dx > 0 && dy > 0) sum += dx * dy * (j < tileObstacleCount ? 1 : 24);
         }
       }
       return sum;
     };
-    let best = 0;
-    let bestCost = cost(0);
-    for (let step = 1; bestCost > 0 && step <= 8; step += 1) {
-      for (const sign of [1, -1]) {
-        const shift = sign * step * (bundle.rung / 2);
-        const c = cost(shift);
-        if (c < bestCost) {
-          best = shift;
-          bestCost = c;
+    // Search along the ladder AND across it. A ladder is far taller than one
+    // chip, so on a busy slide there is often no clear band anywhere along the
+    // arrow and the only way out is to step the whole thing off the corridor.
+    let best = { shift: 0, across: 0 };
+    let bestCost = cost(0, 0);
+    const alongStep = bundle.rung / 2;
+    const acrossStep = (shape.w + 0.12) / 2;
+    for (let ring = 1; bestCost > 0 && ring <= 6; ring += 1) {
+      for (let dx = -ring; dx <= ring && bestCost > 0; dx += 1) {
+        for (let dy = -ring; dy <= ring; dy += 1) {
+          if (Math.max(Math.abs(dx), Math.abs(dy)) !== ring) continue;
+          const c = cost(dx * alongStep, dy * acrossStep);
+          if (c < bestCost) {
+            best = { shift: dx * alongStep, across: dy * acrossStep };
+            bestCost = c;
+          }
+          if (bestCost <= 0) break;
         }
-        if (bestCost <= 0) break;
       }
     }
-    bundle.shift = best;
+    bundle.shift = best.shift;
+    bundle.across = best.across;
   }
+  settle(ordered.filter((route) => bundles.has(bundleKey(route))));
+  // Repair pass. A ladder is rigid — it has one offset for every rung — so where
+  // it still had to come down on an ordinary chip, move that chip instead: a
+  // single connector label can walk in any direction and usually has a free slot
+  // within a step or two. Repeat, because moving one chip can hand its old
+  // problem to the next.
+  const overlaps = (
+    a: { x: number; y: number; w: number; h: number },
+    b: { x: number; y: number; w: number; h: number },
+  ): boolean => Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x) > 0.01
+    && Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y) > 0.01;
+  for (let round = 0; round < 4; round += 1) {
+    let repaired = 0;
+    for (const route of ordered) {
+      if (bundles.has(bundleKey(route))) continue;
+      const box = chips.get(route.id);
+      if (!box) continue;
+      const others = chipObstacles.slice(tileObstacleCount).filter((taken) => taken !== box.block);
+      if (!others.some((taken) => overlaps(box.block, taken))) continue;
+      const moved = connectorLabelBox(
+        route, transform, labelFontSize, px, labelFrame,
+        chipObstacles.filter((taken) => taken !== box.block),
+      );
+      if (!moved || (moved.block.x === box.block.x && moved.block.y === box.block.y)) continue;
+      const slot = chipObstacles.indexOf(box.block);
+      if (slot >= 0) chipObstacles[slot] = moved.block;
+      chips.set(route.id, moved);
+      badges.set(route.id, stepBadgeBox(route, transform, px, labelFrame, moved));
+      repaired += 1;
+    }
+    if (repaired === 0) break;
+  }
+  // Draw at the size the box was measured at. A shrunk bundle written back out
+  // at the ordinary size spills its text past its own chip and over its own
+  // numbered callout, because the box is smaller than the text inside it.
   for (const route of annotatedRoutes) {
-    const key = bundleKey(route);
-    const box = connectorLabelBox(
-      route, transform, labelFontSize, px, labelFrame, chipObstacles, bundles.get(key),
-    );
-    chips.set(route.id, box);
-    if (box) chipObstacles.push(box.block);
-    const badge = stepBadgeBox(route, transform, px, labelFrame, box);
-    badges.set(route.id, badge);
-    if (badge && !box) chipObstacles.push({ x: badge.x, y: badge.y, w: badge.d, h: badge.d });
+    const box = chips.get(route.id) ?? null;
+    addConnectorLabel(slide, route, box?.fontSize ?? labelFontSize, box);
   }
-  for (const route of annotatedRoutes) addConnectorLabel(slide, route, labelFontSize, chips.get(route.id) ?? null);
   for (const route of annotatedRoutes) addStepBadge(slide, route, labelFontSize, badges.get(route.id) ?? null);
 
   // Colour key so the deck's connectors agree with the PNG legend.

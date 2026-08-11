@@ -739,3 +739,119 @@ test('a drawing too dense for one slide is grown, not squeezed to 4pt', () => Pr
   const smallest = Math.min(...fonts);
   assert.ok(smallest >= 7, `service labels shrank to ${smallest.toFixed(2)}pt, below the 7pt legibility floor`);
 }));
+
+/** Connector annotations with the point size they are actually drawn at. */
+function annotationBoxes(slideXml: string): { name: string; x: number; y: number; w: number; h: number; pt: number }[] {
+  const boxes: { name: string; x: number; y: number; w: number; h: number; pt: number }[] = [];
+  const EMU = 914400;
+  for (const match of slideXml.matchAll(/<p:sp>[\s\S]*?<\/p:sp>/g)) {
+    const name = /name="([^"]*)"/.exec(match[0])?.[1] ?? '';
+    if (!/^connector-(label|step)-/.test(name)) continue;
+    const off = /<a:off x="(-?\d+)" y="(-?\d+)"\/>/.exec(match[0]);
+    const ext = /<a:ext cx="(-?[\d.]+)" cy="(-?[\d.]+)"\/>/.exec(match[0]);
+    if (!off || !ext) continue;
+    const sz = /sz="(\d+)"/.exec(match[0]);
+    boxes.push({
+      name, x: +off[1] / EMU, y: +off[2] / EMU, w: +ext[1] / EMU, h: +ext[2] / EMU, pt: sz ? +sz[1] / 100 : 0,
+    });
+  }
+  return boxes;
+}
+
+/** Pairs of connector annotations that visibly sit on each other. */
+function annotationClashes(slides: string[]): string[] {
+  const clashes: string[] = [];
+  for (const slide of slides) {
+    const boxes = annotationBoxes(slide);
+    for (let i = 0; i < boxes.length; i += 1) {
+      for (let j = i + 1; j < boxes.length; j += 1) {
+        const a = boxes[i];
+        const b = boxes[j];
+        const dx = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x);
+        const dy = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y);
+        if (dx > 0.01 && dy > 0.01) clashes.push(`${a.name}/${b.name}`);
+      }
+    }
+  }
+  return clashes;
+}
+
+const FAN_LABEL = 'マネージド ID を使用して注文ドキュメントを Cosmos DB に書き込みます';
+
+function fan(count: number, label: (index: number) => string): { nodes: Node[]; edges: Edge[] } {
+  return {
+    nodes: [service('a', 'Azure Front Door', 0, 0), service('b', 'Azure Kubernetes Service', 190, 0)],
+    edges: Array.from({ length: count }, (_, i) => ({
+      id: `p${i + 1}`,
+      source: 'a',
+      target: 'b',
+      label: label(i),
+      data: { stepNumber: i + 1 },
+    })) as Edge[],
+  };
+}
+
+test('a shrunken fan is drawn at the size its chips were measured at', () => Promise.resolve().then(async () => {
+  // A deep fan is laid out at a reduced point size so the rungs fit the frame.
+  // Handing the draw call the ordinary size instead leaves the text spilling out
+  // of its own chip and over its own numbered callout - invisible to any test
+  // that only compares shape rectangles, because the rectangles do not move.
+  for (const count of [7, 8, 14]) {
+    const { nodes, edges } = fan(count, (i) => `${FAN_LABEL} ${i + 1}`);
+    const deck = await buildDeck(nodes, edges);
+    const chips = deck.slides.flatMap(annotationBoxes).filter((box) => box.name.startsWith('connector-label-'));
+    assert.equal(chips.length, count, `fan of ${count} lost a label`);
+    for (const chip of chips) {
+      assert.ok(chip.pt >= 7, `${chip.name} is drawn at ${chip.pt}pt, below the legibility floor`);
+      const line = (chip.pt * 1.3) / 72;
+      const lines = Math.max(1, Math.round((chip.h - 0.06) / line));
+      const needed = lines * line + 0.06;
+      assert.ok(
+        needed <= chip.h + 0.02,
+        `${chip.name} is drawn at ${chip.pt}pt needing ${needed.toFixed(3)}in inside a ${chip.h.toFixed(3)}in chip`,
+      );
+    }
+  }
+}));
+
+test('a fan whose first label is short still lays out on one lattice', () => Promise.resolve().then(async () => {
+  // The rung height is the tallest chip in the bundle. Re-measuring only the
+  // first route after a shrink reads a short label's height, the lattice
+  // collapses below its own step, and the long siblings overlap.
+  for (const count of [11, 12, 14, 20]) {
+    const { nodes, edges } = fan(count, (i) => (i === 0 ? '短' : `${FAN_LABEL} ${i + 1}`));
+    const deck = await buildDeck(nodes, edges);
+    const clashes = annotationClashes(deck.slides);
+    assert.deepEqual(clashes, [], `short-first fan of ${count} stacks annotations: ${clashes.slice(0, 4).join(' ')}`);
+  }
+}));
+
+test('a fan of parallel edges does not displace the ordinary connectors around it', () => Promise.resolve().then(async () => {
+  // A ladder is far larger than one chip, so on a busy slide it has to be the
+  // thing that dodges. Placing it first, or scoring it against the service
+  // tiles alone, pushed unrelated labels into each other instead.
+  const nodes: Node[] = [];
+  for (let row = 0; row < 4; row += 1) {
+    for (let col = 0; col < 5; col += 1) nodes.push(service(`t${row}-${col}`, `Service ${row}${col}`, col * 290, row * 180));
+  }
+  for (const depth of [5, 7, 8]) {
+    const edges: Edge[] = [];
+    for (let i = 1; i < nodes.length; i += 1) {
+      edges.push({
+        id: `q${i}`, source: nodes[i - 1].id, target: nodes[i].id, label: `ホップ ${i}`, data: { stepNumber: i },
+      } as Edge);
+    }
+    for (let i = 0; i < depth; i += 1) {
+      edges.push({
+        id: `bn${i}`,
+        source: 't0-0',
+        target: 't0-1',
+        label: `マネージド ID で参照系を照会します ${i + 1}`,
+        data: { stepNumber: nodes.length + i },
+      } as Edge);
+    }
+    const deck = await buildDeck(nodes, edges);
+    const clashes = annotationClashes(deck.slides);
+    assert.deepEqual(clashes, [], `a ${depth}-edge ladder displaced neighbours: ${clashes.slice(0, 4).join(' ')}`);
+  }
+}));

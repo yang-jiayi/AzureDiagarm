@@ -146,6 +146,35 @@ function parallelScenario(): Scenario {
   return { id: 'parallel', nodes, edges };
 }
 
+/**
+ * A deep fan dropped into a crowded grid. The ladder is far larger than any one
+ * chip, so unless it is the thing that dodges — and unless the chips it still
+ * lands on are then moved out from under it — it shunts unrelated labels into
+ * each other well away from the fan itself.
+ */
+function ladderInGridScenario(): Scenario {
+  const nodes: Node[] = [];
+  for (let row = 0; row < 4; row += 1) {
+    for (let col = 0; col < 5; col += 1) nodes.push(svc(`g${row}-${col}`, `Service ${row}${col}`, col * 290, row * 180));
+  }
+  const edges: Edge[] = [];
+  for (let i = 1; i < nodes.length; i += 1) {
+    edges.push({
+      id: `hop${i}`, source: nodes[i - 1].id, target: nodes[i].id, label: `ホップ ${i}`, data: { stepNumber: i },
+    } as Edge);
+  }
+  for (let i = 0; i < 7; i += 1) {
+    edges.push({
+      id: `fan${i}`,
+      source: 'g0-0',
+      target: 'g0-1',
+      label: `マネージド ID で参照系を照会します ${i + 1}`,
+      data: { stepNumber: nodes.length + i },
+    } as Edge);
+  }
+  return { id: 'ladder-in-grid', nodes, edges };
+}
+
 /** Mirrors a real AI-generated enterprise diagram: wide, grouped, long labels. */
 function wideScenario(): Scenario {
   const nodes: Node[] = [];
@@ -724,6 +753,7 @@ async function main(): Promise<void> {
   const scenarios = [
     compactScenario(), wideScenario(), oversizeScenario(), outlierScenario(),
     bandedScenario(), narrativeScenario(), barbellScenario(), parallelScenario(),
+    ladderInGridScenario(),
     await generatedScenario(), await groupedGeneratedScenario(),
   ];
   const reports: Report[] = [];
