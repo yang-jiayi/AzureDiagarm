@@ -6500,3 +6500,95 @@ test('deployment guide accordions are keyboard accessible and stale results are 
   await page.waitForTimeout(900);
   await expect(page.getByTitle('Open last deployment guide')).toHaveCount(0);
 });
+
+test('nodes can be connected using only the keyboard', async ({ page }) => {
+  await openInteractionDiagram(page);
+
+  const edges = page.locator('.react-flow__edge');
+  await expect(edges).toHaveCount(1);
+
+  const sourceLabel = page.locator('[data-testid="rf__node-node-b"] [data-node-keyboard-target]');
+  const targetLabel = page.locator('[data-testid="rf__node-node-a"] [data-node-keyboard-target]');
+  const liveRegion = page.getByTestId('live-region-polite');
+
+  // Step 1: arm the connection on the source node.
+  await sourceLabel.focus();
+  await page.keyboard.press('c');
+  await expect(page.locator('[data-testid="rf__node-node-b"] .azure-node'))
+    .toHaveAttribute('data-connect-source', 'true');
+  await expect(liveRegion).toContainText('Connection started from Azure SQL Database');
+
+  // Escape must abandon the attempt without creating an edge.
+  await page.keyboard.press('Escape');
+  await expect(page.locator('[data-connect-source="true"]')).toHaveCount(0);
+  await expect(liveRegion).toContainText('Connection cancelled.');
+  await expect(edges).toHaveCount(1);
+
+  // Step 2: arm again and complete on the target node.
+  await sourceLabel.focus();
+  await page.keyboard.press('c');
+  await targetLabel.focus();
+  await page.keyboard.press('c');
+
+  await expect(edges).toHaveCount(2);
+  await expect(liveRegion).toContainText('Connected Azure SQL Database to App Service');
+  await expect(page.locator('[data-connect-source="true"]')).toHaveCount(0);
+});
+
+test('keyboard connections reject groups, duplicates and stale sources', async ({ page }) => {
+  let latestSavedPayload: Record<string, unknown> | null = null;
+  await openInteractionDiagram(page, payload => {
+    latestSavedPayload = payload;
+  });
+
+  const edges = page.locator('.react-flow__edge');
+  await expect(edges).toHaveCount(1);
+
+  const nodeA = page.locator('[data-testid="rf__node-node-a"] [data-node-keyboard-target]');
+  const nodeB = page.locator('[data-testid="rf__node-node-b"] [data-node-keyboard-target]');
+  const groupA = page.locator('[data-testid="rf__node-group-a"] [data-node-keyboard-target]');
+  const liveRegion = page.getByTestId('live-region-polite');
+
+  // Group boxes render no connection handles, so React Flow would keep the edge
+  // in state and never draw it. Arming on one must be refused outright.
+  await groupA.focus();
+  await page.keyboard.press('c');
+  await expect(liveRegion).toContainText('Group boxes cannot be connected');
+  await expect(page.locator('[data-connect-source="true"]')).toHaveCount(0);
+  await expect(edges).toHaveCount(1);
+
+  // node-a is already connected to node-b on the same handles; addEdge would
+  // drop the duplicate, which must not be announced as a new connection.
+  await nodeA.focus();
+  await page.keyboard.press('c');
+  await nodeB.focus();
+  await page.keyboard.press('c');
+  await expect(liveRegion).toContainText('is already connected to');
+  await expect(edges).toHaveCount(1);
+
+  // A source deleted mid-flow must not produce an edge with a dangling endpoint.
+  await nodeA.focus();
+  await page.keyboard.press('c');
+  await expect(page.locator('[data-testid="rf__node-node-a"] .azure-node'))
+    .toHaveAttribute('data-connect-source', 'true');
+  await page.locator('[data-testid="rf__node-node-a"]').click();
+  await page.keyboard.press('Delete');
+  await expect(page.locator('[data-testid="rf__node-node-a"]')).toHaveCount(0);
+
+  await nodeB.focus();
+  await page.keyboard.press('c');
+  await expect(page.getByTestId('live-region-assertive')).toContainText('no longer on the canvas');
+
+  // A dangling edge never reaches the DOM — React Flow's renderer returns null
+  // when an endpoint is missing, which is exactly the ghost-edge mechanism this
+  // test exists to catch. It has to be asserted against persisted state.
+  await expect.poll(() => {
+    const payload = latestSavedPayload as {
+      nodes?: Array<{ id?: string }>;
+      edges?: Array<{ source?: string; target?: string }>;
+    } | null;
+    if (!payload?.edges || !payload?.nodes) return null;
+    const ids = new Set(payload.nodes.map(node => node.id));
+    return payload.edges.filter(edge => !ids.has(edge.source) || !ids.has(edge.target)).length;
+  }, { timeout: 15000 }).toBe(0);
+});

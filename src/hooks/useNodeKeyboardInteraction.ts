@@ -1,6 +1,16 @@
 import { useCallback } from 'react';
 import { useReactFlow } from 'reactflow';
 
+import { announce } from '../a11y/liveAnnouncer';
+import { useLanguage } from '../i18n/LanguageContext';
+import { localize } from '../i18n/localization';
+import {
+  beginKeyboardConnection,
+  cancelKeyboardConnection,
+  completeKeyboardConnection,
+  getPendingConnection,
+} from './useKeyboardConnection';
+
 const ARROW_DELTAS: Record<string, { x: number; y: number }> = {
   ArrowUp: { x: 0, y: -5 },
   ArrowRight: { x: 5, y: 0 },
@@ -11,8 +21,21 @@ const ARROW_DELTAS: Record<string, { x: number; y: number }> = {
 export function useNodeKeyboardInteraction(
   nodeId: string,
   startEditing: () => void,
+  nodeLabel?: string,
 ) {
-  const { setNodes, setEdges } = useReactFlow();
+  const { setNodes, setEdges, getNode } = useReactFlow();
+  const { language } = useLanguage();
+
+  const describe = useCallback((id: string, fallback?: string): string => {
+    const node = getNode(id);
+    const label = (node?.data?.label as string | undefined) || fallback || id;
+    return String(label);
+  }, [getNode]);
+
+  const isConnectable = useCallback((id: string): boolean => {
+    const type = getNode(id)?.type;
+    return type !== 'groupNode';
+  }, [getNode]);
 
   const handleFocus = useCallback((event: React.FocusEvent<HTMLElement>) => {
     if (
@@ -27,11 +50,64 @@ export function useNodeKeyboardInteraction(
     setEdges(edges => edges.map(edge => ({ ...edge, selected: false })));
   }, [nodeId, setEdges, setNodes]);
 
+  // Two-step keyboard connection: C on the source, then C on the target.
+  // Without this there is no pointer-free way to draw an edge, because React
+  // Flow's connection handles are drag-only.
+  //
+  // Only the outcome-independent transitions are announced here. Whether an
+  // edge was actually created depends on state this hook cannot see (both
+  // endpoints still existing, no duplicate connection), so the success and
+  // failure messages are emitted by the canvas listener that applies the edge.
+  const handleConnectKey = useCallback(() => {
+    const pending = getPendingConnection();
+    const cancelled = localize(language, {
+      en: 'Connection cancelled.',
+      ja: '接続を取り消しました。',
+    });
+
+    // Group boxes render no connection handles at all, so React Flow would keep
+    // the edge in state but never draw it. Reject them instead of reporting a
+    // connection that does not exist.
+    if (!isConnectable(nodeId)) {
+      announce(localize(language, {
+        en: 'Group boxes cannot be connected. Move to a service node and press C.',
+        ja: 'グループは接続できません。サービスのノードへ移動して C を押してください。',
+      }));
+      return;
+    }
+
+    if (!pending) {
+      const label = describe(nodeId, nodeLabel);
+      beginKeyboardConnection(nodeId, label);
+      announce(localize(language, {
+        en: `Connection started from ${label}. Move to another node and press C to connect, or press Escape to cancel.`,
+        ja: `${label} から接続を開始しました。別のノードへ移動して C を押すと接続、Escape で取り消します。`,
+      }));
+      return;
+    }
+
+    if (pending.nodeId === nodeId) {
+      cancelKeyboardConnection();
+      announce(cancelled);
+      return;
+    }
+
+    if (!completeKeyboardConnection(nodeId)) announce(cancelled);
+  }, [describe, isConnectable, language, nodeId, nodeLabel]);
+
   const handleKeyDown = useCallback((event: React.KeyboardEvent<HTMLElement>) => {
     if (event.key === 'Enter' || event.key === ' ' || event.key === 'F2') {
       event.preventDefault();
       event.stopPropagation();
       startEditing();
+      return;
+    }
+
+    // Guard the modifiers so Ctrl/Cmd+C still copies.
+    if ((event.key === 'c' || event.key === 'C') && !event.ctrlKey && !event.metaKey && !event.altKey) {
+      event.preventDefault();
+      event.stopPropagation();
+      handleConnectKey();
       return;
     }
 
@@ -53,11 +129,19 @@ export function useNodeKeyboardInteraction(
       )));
     } else if (event.key === 'Escape') {
       event.stopPropagation();
+      if (getPendingConnection()) {
+        cancelKeyboardConnection();
+        announce(localize(language, {
+          en: 'Connection cancelled.',
+          ja: '接続を取り消しました。',
+        }));
+        return;
+      }
       setNodes(nodes => nodes.map(node => (
         node.id === nodeId ? { ...node, selected: false } : node
       )));
     }
-  }, [nodeId, setNodes, startEditing]);
+  }, [handleConnectKey, language, nodeId, setNodes, startEditing]);
 
   return { handleFocus, handleKeyDown };
 }

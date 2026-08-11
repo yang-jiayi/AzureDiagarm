@@ -201,6 +201,12 @@ import {
   screenRectToDiagramBounds,
   type DiagramContentBounds,
 } from './utils/exportComposition';
+import { LiveAnnouncer } from './components/LiveAnnouncer';
+import { announce } from './a11y/liveAnnouncer';
+import {
+  KEYBOARD_CONNECT_EVENT,
+  type KeyboardConnectDetail,
+} from './hooks/useKeyboardConnection';
 
 type LazyFeatureBoundaryProps = {
   active: boolean;
@@ -1591,7 +1597,13 @@ function App() {
     const id = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
     const item: ExportHistoryItem = { id, kind, fileName, createdAt: Date.now() };
     setExportHistory((prev) => [item, ...prev].slice(0, 25));
-  }, []);
+    // Exports finish asynchronously and never move focus, so this is the only
+    // completion signal a screen-reader user gets (WCAG 4.1.3).
+    announce(localize(language, {
+      en: `Export complete. ${fileName} downloaded.`,
+      ja: `エクスポートが完了しました。${fileName} をダウンロードしました。`,
+    }));
+  }, [language]);
 
   const formatTimeAgo = useCallback((ts: number) => {
     const diffMs = Date.now() - ts;
@@ -2057,6 +2069,70 @@ function App() {
     }, eds)),
     [setEdges, handleEdgeLabelChange, handleEdgeLabelOffsetChange, animateConnections, layoutEdgeStyle]
   );
+
+  // Keyboard-created edges (press C on the source node, then C on the target)
+  // are funnelled through the same onConnect as pointer drags so both routes
+  // produce identical edges. Handles match React Flow's default left-to-right
+  // flow; the edge renderer re-routes them anyway.
+  //
+  // The pending source is held in a module store with no lifecycle tie to the
+  // node it names, so it can outlive a delete, an AI regeneration or a diagram
+  // load. React Flow's addEdge does not check that either endpoint still
+  // exists and its renderer then drops the edge without a warning, leaving a
+  // dangling edge in saved JSON and exports — hence the explicit re-check here,
+  // against live instance state rather than a captured closure.
+  useEffect(() => {
+    const handleKeyboardConnect = (event: Event) => {
+      const detail = (event as CustomEvent<KeyboardConnectDetail>).detail;
+      if (!detail?.source || !detail?.target || detail.source === detail.target) return;
+
+      const failed = localize(language, {
+        en: 'Connection failed. One of the nodes is no longer on the canvas.',
+        ja: '接続できませんでした。対象のノードがキャンバス上にありません。',
+      });
+      const sourceNode = reactFlowInstance?.getNode(detail.source);
+      const targetNode = reactFlowInstance?.getNode(detail.target);
+      if (!sourceNode || !targetNode) {
+        announce(failed, 'assertive');
+        return;
+      }
+
+      const sourceHandle = 'right';
+      const targetHandle = 'left';
+      // addEdge silently drops an identical connection, which would otherwise
+      // be announced as a second successful connection.
+      const alreadyConnected = (reactFlowInstance?.getEdges() ?? []).some((edge) => (
+        edge.source === detail.source
+        && edge.target === detail.target
+        && (edge.sourceHandle ?? null) === sourceHandle
+        && (edge.targetHandle ?? null) === targetHandle
+      ));
+
+      const sourceLabel = String(sourceNode.data?.label ?? detail.source);
+      const targetLabel = String(targetNode.data?.label ?? detail.target);
+
+      if (alreadyConnected) {
+        announce(localize(language, {
+          en: `${sourceLabel} is already connected to ${targetLabel}.`,
+          ja: `${sourceLabel} は既に ${targetLabel} に接続されています。`,
+        }));
+        return;
+      }
+
+      onConnect({
+        source: detail.source,
+        target: detail.target,
+        sourceHandle,
+        targetHandle,
+      });
+      announce(localize(language, {
+        en: `Connected ${sourceLabel} to ${targetLabel}.`,
+        ja: `${sourceLabel} から ${targetLabel} へ接続しました。`,
+      }));
+    };
+    window.addEventListener(KEYBOARD_CONNECT_EVENT, handleKeyboardConnect);
+    return () => window.removeEventListener(KEYBOARD_CONNECT_EVENT, handleKeyboardConnect);
+  }, [language, onConnect, reactFlowInstance]);
 
   const diagramHistoryState = useMemo<DiagramHistorySnapshot>(() => ({
     nodes: nodes.map(stripTransientNodeState),
@@ -5585,6 +5661,17 @@ function App() {
     };
     setValidationHandoff(handoffContext);
 
+    // AI generation runs for tens of seconds and swaps the canvas without moving
+    // focus, so the completion is otherwise silent for assistive technology.
+    announce(localize(language, {
+      en: isRefinement
+        ? `Diagram updated. ${services.length} services and ${connections.length} connections.`
+        : `Diagram generated. ${services.length} services and ${connections.length} connections.`,
+      ja: isRefinement
+        ? `図を更新しました。サービス ${services.length} 件、接続 ${connections.length} 件です。`
+        : `図を生成しました。サービス ${services.length} 件、接続 ${connections.length} 件です。`,
+    }));
+
     // ── Success-moment feedback ask ──────────────────────────────────────
     // After the 2nd successful generation this session, surface the one-click
     // toast — the user now has a real opinion. Fires once and only if they
@@ -5616,6 +5703,10 @@ function App() {
       if (error instanceof CloudDiagramOperationCancelledError) throw error;
       console.error('Error in handleAIGenerate:', error);
       if (reportErrors) {
+        announce(localize(language, {
+          en: 'Diagram generation failed.',
+          ja: '図の生成に失敗しました。',
+        }), 'assertive');
         alert(t("Failed to generate diagram. Check console for details."));
       }
       throw error;
@@ -5630,6 +5721,7 @@ function App() {
     handleEdgeLabelOffsetChange,
     iacBaseline,
     isFeedbackModalOpen,
+    language,
     layoutEdgeStyle,
     layoutEngine,
     nodes,
@@ -6672,6 +6764,15 @@ function App() {
       <a className="skip-link" href="#main-canvas">
         {localize(language, { en: 'Skip to canvas', ja: 'キャンバスへスキップ' })}
       </a>
+      <LiveAnnouncer />
+      {/* Referenced by every node's aria-describedby so the keyboard contract is
+          discoverable without hunting through the help dialog. */}
+      <span id="azd-node-keyboard-help" className="azd-visually-hidden">
+        {localize(language, {
+          en: 'Arrow keys move the node, Shift with an arrow key moves it further, F2 renames it, C starts or completes a connection to another node, Escape cancels.',
+          ja: '矢印キーでノードを移動、Shift+矢印キーで大きく移動、F2 で名前を変更、C で他のノードへの接続を開始または確定、Escape で取り消します。',
+        })}
+      </span>
       <header className={`app-header${isHeaderCollapsed ? ' header-collapsed' : ''}${isMobileRibbonOpen ? ' mobile-ribbon-open' : ''}`}>
         <div className="header-content">
           <div className="header-brand">

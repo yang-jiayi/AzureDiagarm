@@ -109,7 +109,7 @@ const GroupNode: React.FC<NodeProps> = memo(({ id, data, selected }) => {
   const {
     handleFocus: handleNodeFocus,
     handleKeyDown: handleNodeKeyDown,
-  } = useNodeKeyboardInteraction(id, handleLabelDoubleClick);
+  } = useNodeKeyboardInteraction(id, handleLabelDoubleClick, data.label);
 
   const handleLabelChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setLabel(e.target.value);

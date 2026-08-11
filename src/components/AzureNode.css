@@ -22,6 +22,21 @@
   box-shadow: var(--azd-shadow-md);
 }
 
+/*
+ * Origin of an in-progress keyboard connection (press C on a node, then C on the
+ * target). Uses a dashed outline plus a solid ring so the state is distinguished
+ * from plain selection by shape as well as colour (WCAG 1.4.1 Use of Colour).
+ */
+.azure-node.connect-source {
+  outline: 3px dashed var(--azd-color-action);
+  outline-offset: 3px;
+  box-shadow: 0 0 0 2px var(--azd-color-surface), var(--azd-shadow-md);
+}
+
+.azure-node.connect-source .node-handle {
+  opacity: 1;
+}
+
 .azure-node:hover {
   box-shadow: var(--azd-shadow-md);
   transform: translateY(-1px);
