@@ -211,6 +211,35 @@ function outlierScenario(): Scenario {
 
 interface Report { scenario: string; format: string; issues: string[]; metrics: Record<string, number> }
 
+/**
+ * The shape the AI actually returns, run through the real layout engine.
+ *
+ * Every other scenario hand-places its nodes, so until this one existed the
+ * audit never saw what a generated diagram looks like — and a linear flow is by
+ * far the most common thing a model produces.
+ */
+async function generatedScenario(): Promise<Scenario> {
+  const { applyLayoutPreset } = await import('../src/utils/layoutPresets');
+  const names = [
+    'Azure Front Door', 'Application Gateway', 'Azure Kubernetes Service', 'Azure Service Bus',
+    'Azure Functions', 'Azure Cosmos DB', 'Azure Data Factory', 'Azure Synapse Analytics',
+    'Azure OpenAI Service', 'Azure AI Search', 'Key Vault', 'Azure Monitor',
+  ];
+  const nodes: Node[] = names.map((name, i) => svc(`g-${i}`, name, 0, 0));
+  const edges: Edge[] = names.slice(1).map((_, i) => ({
+    id: `g-e-${i + 1}`,
+    source: `g-${i}`,
+    target: `g-${i + 1}`,
+    label: 'HTTPS 経由でトークン検証を実施',
+    data: { stepNumber: i + 1, stepDescription: `ステップ ${i + 1}: 次のサービスへ要求を引き渡します` },
+  } as Edge));
+
+  const laidOut = await applyLayoutPreset(nodes, edges, {
+    preset: 'flow-lr', spacing: 'comfortable', edgeStyle: 'smooth', emphasizePrimaryPath: false,
+  });
+  return { id: 'generated', nodes: laidOut.nodes, edges: laidOut.edges };
+}
+
 function countByName(shapes: { name: string }[]): Map<string, number> {
   const counts = new Map<string, number>();
   for (const shape of shapes) counts.set(shape.name, (counts.get(shape.name) ?? 0) + 1);
@@ -372,6 +401,14 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
     issues.push(`${narratedRows} workflow rows drawn for ${narrated.size} narrated steps`);
   }
 
+  // A page that is almost entirely white is the strip symptom: the drawing was
+  // stretched into a shape the page cannot use. Mirrors the VSDX density rule.
+  const tileArea = tiles.reduce((sum, tile) => sum + tile.w * tile.h, 0);
+  const density = tileArea / Math.max(pageW * pageH * slideCount, 1);
+  if (tiles.length >= 4 && density < 0.005) {
+    issues.push(`slides are ${(density * 100).toFixed(2)}% full — the drawing was stretched into a strip`);
+  }
+
   return {
     scenario: scenario.id,
     format: 'pptx',
@@ -387,6 +424,7 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
       chips: chips.length,
       maxChipWidthIn: chips.length ? +Math.max(...chips.map((c) => c.w)).toFixed(3) : 0,
       stepBadges: badges.length,
+      fillPct: +((tiles.reduce((sum, t) => sum + t.w * t.h, 0) / (pageW * pageH * slideCount)) * 100).toFixed(2),
     },
   };
 }
@@ -504,7 +542,7 @@ async function main(): Promise<void> {
   mkdirSync(OUT, { recursive: true });
   const scenarios = [
     compactScenario(), wideScenario(), oversizeScenario(), outlierScenario(),
-    bandedScenario(), narrativeScenario(),
+    bandedScenario(), narrativeScenario(), await generatedScenario(),
   ];
   const reports: Report[] = [];
   for (const scenario of scenarios) {
