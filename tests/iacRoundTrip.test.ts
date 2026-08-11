@@ -154,8 +154,30 @@ test('buildStarterTemplate requires secure database password inputs', () => {
   assert.match(terraform.content, /administrator_login_password = var\.sql_administrator_password/);
 });
 
-function edge(id: string, source: string, target: string): Edge {
-  return { id, source, target } as Edge;
+function edge(id: string, source: string, target: string, direction?: string): Edge {
+  return { id, source, target, ...(direction ? { data: { direction } } : {}) } as Edge;
+}
+
+/**
+ * Slices out a single top-level block so assertions cannot accidentally match
+ * a clause that belongs to a later resource: an unanchored `[\s\S]*?` gap will
+ * happily cross a block boundary and pass on the wrong block's dependsOn.
+ * Every generated stub ends on a line containing only `}`.
+ */
+function blockMatching(content: string, header: RegExp): string {
+  const start = header.exec(content);
+  assert.ok(start, `no block header matching ${header}`);
+  const from = start.index;
+  const end = content.indexOf('\n}\n', from);
+  return content.slice(from, end === -1 ? content.length : end + 3);
+}
+
+function dependencyNames(block: string, clause: 'dependsOn' | 'depends_on'): string[] {
+  const body = clause === 'dependsOn'
+    ? /\n {2}dependsOn: \[\n([\s\S]*?)\n {2}\]/.exec(block)
+    : /\n {2}depends_on = \[\n([\s\S]*?)\n {2}\]/.exec(block);
+  if (!body) return [];
+  return body[1].split('\n').map((line) => line.trim().replace(/,$/, '')).filter(Boolean);
 }
 
 /**
@@ -177,18 +199,69 @@ test('buildStarterTemplate turns diagram connections into deployment ordering', 
   const vaultSymbol = /resource (\w+) 'Microsoft\.KeyVault\/vaults/.exec(bicep.content)?.[1];
   assert.ok(storeSymbol && vaultSymbol);
   // Ordering follows emission order, which is sorted, so the output is stable.
-  assert.match(
-    bicep.content,
-    new RegExp(`resource \\w+ 'Microsoft\\.Web/sites[\\s\\S]*?\\n  dependsOn: \\[\\n    ${vaultSymbol}\\n    ${storeSymbol}\\n  \\]\\n\\}`),
-  );
+  const webBlock = blockMatching(bicep.content, /resource \w+ 'Microsoft\.Web\/sites@/);
+  assert.deepEqual(dependencyNames(webBlock, 'dependsOn'), [vaultSymbol, storeSymbol]);
+  // The dependencies themselves must not have picked any up.
+  assert.deepEqual(dependencyNames(blockMatching(bicep.content, /resource \w+ 'Microsoft\.Storage\/storageAccounts@/), 'dependsOn'), []);
   assert.equal(bicep.dependencyCount, 2);
 
   const terraform = buildStarterTemplate(nodes, 'terraform', edges);
-  assert.match(
-    terraform.content,
-    /resource "azurerm_linux_web_app" "[^"]+" \{[\s\S]*?\n  depends_on = \[\n    azurerm_key_vault\.\w+,\n    azurerm_storage_account\.\w+,\n  \]\n\}/,
+  const tfWebBlock = blockMatching(terraform.content, /resource "azurerm_linux_web_app" "[^"]+" \{/);
+  const tfDeps = dependencyNames(tfWebBlock, 'depends_on');
+  assert.equal(tfDeps.length, 2);
+  assert.match(tfDeps[0], /^azurerm_key_vault\.\w+$/);
+  assert.match(tfDeps[1], /^azurerm_storage_account\.\w+$/);
+  assert.deepEqual(
+    dependencyNames(blockMatching(terraform.content, /resource "azurerm_storage_account" "[^"]+" \{/), 'depends_on'),
+    [],
   );
   assert.equal(terraform.dependencyCount, 2);
+});
+
+/**
+ * A reverse edge keeps its stored source/target tuple and only moves the
+ * arrowhead, so following the tuple emitted the ordering backwards relative to
+ * the arrow the user actually drew.
+ */
+test('buildStarterTemplate follows the drawn arrow, not the stored tuple', () => {
+  const nodes = [azureNode('web', 'App Service'), azureNode('store', 'Storage Account')];
+  const webHeader = /resource \w+ 'Microsoft\.Web\/sites@/;
+  const storeHeader = /resource \w+ 'Microsoft\.Storage\/storageAccounts@/;
+  const symbolOf = (content: string, header: RegExp) => /resource (\w+) '/.exec(blockMatching(content, header))![1];
+
+  // Drawn web -> store: the app depends on storage.
+  const forward = buildStarterTemplate(nodes, 'bicep', [edge('e1', 'web', 'store')]);
+  assert.deepEqual(
+    dependencyNames(blockMatching(forward.content, webHeader), 'dependsOn'),
+    [symbolOf(forward.content, storeHeader)],
+  );
+  assert.deepEqual(dependencyNames(blockMatching(forward.content, storeHeader), 'dependsOn'), []);
+
+  // Same tuple, but the arrowhead is at the source end, so it reads store -> web.
+  const reverse = buildStarterTemplate(nodes, 'bicep', [edge('e1', 'web', 'store', 'reverse')]);
+  assert.deepEqual(
+    dependencyNames(blockMatching(reverse.content, storeHeader), 'dependsOn'),
+    [symbolOf(reverse.content, webHeader)],
+    'a reverse edge must invert the emitted ordering',
+  );
+  assert.deepEqual(dependencyNames(blockMatching(reverse.content, webHeader), 'dependsOn'), []);
+  assert.equal(reverse.dependencyCount, 1);
+});
+
+/**
+ * A bidirectional edge asserts both orderings, which is a cycle; the breaker
+ * has to keep exactly one so the template still deploys.
+ */
+test('buildStarterTemplate reduces a bidirectional connection to one ordering', () => {
+  const nodes = [azureNode('web', 'App Service'), azureNode('store', 'Storage Account')];
+  const template = buildStarterTemplate(nodes, 'bicep', [edge('e1', 'web', 'store', 'bidirectional')]);
+  assert.equal(template.dependencyCount, 1);
+  const webDeps = dependencyNames(blockMatching(template.content, /resource \w+ 'Microsoft\.Web\/sites@/), 'dependsOn');
+  const storeDeps = dependencyNames(blockMatching(template.content, /resource \w+ 'Microsoft\.Storage\/storageAccounts@/), 'dependsOn');
+  assert.equal(webDeps.length + storeDeps.length, 1, 'exactly one direction survives');
+  // Deterministic between runs so exports do not churn.
+  const repeat = buildStarterTemplate(nodes, 'bicep', [edge('e1', 'web', 'store', 'bidirectional')]);
+  assert.equal(repeat.content, template.content);
 });
 
 test('buildStarterTemplate emits no ordering when the diagram has no connections', () => {

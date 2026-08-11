@@ -179,6 +179,7 @@ import {
   applyAutomaticEdgeLabelOffsets,
   shouldRecalculateAutomaticEdgeLabels,
 } from './utils/edgeLabelLayout';
+import { classifyEdgeDirection } from './utils/edgeDirection';
 import { applySelectedVersionChanges } from './utils/versionDiff';
 import {
   alignSelectedNodes,
@@ -5458,16 +5459,9 @@ function App() {
       label: string,
       markerColor: string,
     ): { direction: 'forward' | 'reverse' | 'bidirectional', markerEnd?: any, markerStart?: any, flowMode: 'directional' | 'pulse' } => {
-      const lowerLabel = label.toLowerCase();
-      
-      // Keywords that indicate reverse flow
-      const reverseKeywords = ['response', 'callback', 'return', 'acknowledge', 'ack', 'reply'];
-      
-      // Keywords that indicate bidirectional flow
-      const bidirectionalKeywords = ['sync', 'bidirectional', 'two-way', 'exchange', 'communicate'];
-      
-      // Check for bidirectional
-      if (bidirectionalKeywords.some(keyword => lowerLabel.includes(keyword))) {
+      const direction = classifyEdgeDirection(label);
+
+      if (direction === 'bidirectional') {
         return {
           direction: 'bidirectional',
           markerEnd: { type: MarkerType.ArrowClosed, color: markerColor },
@@ -5475,9 +5469,8 @@ function App() {
           flowMode: 'pulse',
         };
       }
-      
-      // Check for reverse
-      if (reverseKeywords.some(keyword => lowerLabel.includes(keyword))) {
+
+      if (direction === 'reverse') {
         return {
           direction: 'reverse',
           markerStart: { type: MarkerType.ArrowClosed, color: markerColor },
@@ -5485,8 +5478,7 @@ function App() {
           flowMode: 'directional',
         };
       }
-      
-      // Default to forward
+
       return {
         direction: 'forward',
         markerEnd: { type: MarkerType.ArrowClosed, color: markerColor },

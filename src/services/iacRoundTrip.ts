@@ -2041,8 +2041,16 @@ function declaredAddress(block: string, format: StarterTemplateFormat): string |
 }
 
 /**
+ * The arrow the user sees is not always `source -> target`: an edge with
+ * `direction: 'reverse'` keeps its stored tuple and only moves the arrowhead,
+ * so following the tuple would emit the ordering backwards relative to what
+ * was drawn. This mirrors normalizeDirectedAdjacency in layoutPresets.ts,
+ * which is the codebase's existing reader of the same field.
+ *
  * An arrow drawn from A to B means A talks to B, so B has to exist before A
- * can be deployed against it: the SOURCE depends on the TARGET.
+ * can be deployed against it: the arrow's origin depends on its head. A
+ * bidirectional edge contributes both orderings and lets the cycle breaker
+ * below choose one, rather than silently privileging the stored tuple.
  *
  * Diagrams routinely contain cycles — two services shown calling each other,
  * or a bidirectional link — and both Bicep and Terraform reject a dependency
@@ -2060,10 +2068,23 @@ function resolveDependencies(
   const rank = new Map(order.map((nodeId, index) => [nodeId, index]));
 
   const candidates = new Map<string, Set<string>>(order.map((nodeId) => [nodeId, new Set<string>()]));
+  const addCandidate = (dependent: string, dependency: string) => {
+    if (dependent === dependency) return;
+    if (!addressByNodeId.has(dependent) || !addressByNodeId.has(dependency)) return;
+    candidates.get(dependent)!.add(dependency);
+  };
+
   for (const edge of edges) {
-    if (!edge.source || !edge.target || edge.source === edge.target) continue;
-    if (!addressByNodeId.has(edge.source) || !addressByNodeId.has(edge.target)) continue;
-    candidates.get(edge.source)!.add(edge.target);
+    if (!edge.source || !edge.target) continue;
+    const direction = (edge.data as { direction?: string } | undefined)?.direction ?? 'forward';
+    if (direction === 'reverse') {
+      addCandidate(edge.target, edge.source);
+    } else if (direction === 'bidirectional') {
+      addCandidate(edge.source, edge.target);
+      addCandidate(edge.target, edge.source);
+    } else {
+      addCandidate(edge.source, edge.target);
+    }
   }
 
   const sortedTargets = (nodeId: string) => (
