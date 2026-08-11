@@ -460,6 +460,16 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
           issues.push(`step badge "${badge.name}" collides with edge chip "${chip.text}"`);
         }
       }
+      // A callout whose number runs outside its own bubble reads as a smear
+      // over whatever the arrow passes through.
+      const digits = badge.text.length;
+      const wide = digits * 0.62 * ((badge.fontSize ?? 9) / 72);
+      const tall = ((badge.fontSize ?? 9) * 1.3) / 72;
+      if (wide > badge.w + 0.005 || tall > badge.h + 0.005) {
+        issues.push(
+          `step badge "${badge.name}" draws "${badge.text}" at ${(badge.fontSize ?? 9).toFixed(1)}pt needing ${wide.toFixed(3)}x${tall.toFixed(3)}in inside a ${badge.w.toFixed(3)}in circle`,
+        );
+      }
     }
   }
   const truncated = shapes.filter((s) => s.text.includes('…'));
@@ -488,6 +498,27 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
       issues.push(`step badge "${badge.name}" does not belong to any numbered connector`);
     } else if (badge.text !== want) {
       issues.push(`connector ${routeId} is numbered "${badge.text}" but its workflow step is ${want}`);
+    }
+  }
+
+  // The Workflow list is the prose the reader matches the drawing against, so
+  // every number it cites has to exist as a callout on the canvas and vice
+  // versa. A hop whose callout was dropped leaves the prose pointing at nothing;
+  // a callout with no prose leaves the reader with an unexplained number.
+  const workflowNumbers = new Set(
+    shapes
+      .map((s) => /^workflow-step-(\d+)$/.exec(s.name)?.[1])
+      .filter((n): n is string => !!n),
+  );
+  if (workflowNumbers.size > 0) {
+    const callouts = new Set(badges.map((b) => b.text));
+    const missing = [...workflowNumbers].filter((n) => !callouts.has(n));
+    const unexplained = [...callouts].filter((n) => !workflowNumbers.has(n));
+    if (missing.length) {
+      issues.push(`workflow cites step${missing.length === 1 ? '' : 's'} ${missing.sort((a, b) => +a - +b).join(', ')} with no callout on the canvas`);
+    }
+    if (unexplained.length) {
+      issues.push(`callout${unexplained.length === 1 ? '' : 's'} ${unexplained.sort((a, b) => +a - +b).join(', ')} appear on the canvas but not in the workflow`);
     }
   }
 

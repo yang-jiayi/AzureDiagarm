@@ -1363,9 +1363,7 @@ async function addEditableDiagram(
     const box = chips.get(route.id) ?? null;
     addConnectorLabel(slide, route, box?.fontSize ?? labelFontSize, box);
   }
-  for (const route of annotatedRoutes) {
-    addStepBadge(slide, route, chips.get(route.id)?.fontSize ?? labelFontSize, badges.get(route.id) ?? null);
-  }
+  for (const route of annotatedRoutes) addStepBadge(slide, route, labelFontSize, badges.get(route.id) ?? null);
 
   // Colour key so the deck's connectors agree with the PNG legend.
   addConnectionLegend(pptx, slide, diagram.edges ?? [], frame);

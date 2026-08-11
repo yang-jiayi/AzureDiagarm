@@ -855,3 +855,29 @@ test('a fan of parallel edges does not displace the ordinary connectors around i
     assert.deepEqual(clashes, [], `a ${depth}-edge ladder displaced neighbours: ${clashes.slice(0, 4).join(' ')}`);
   }
 }));
+
+test('a three-digit callout still fits inside its own bubble', () => Promise.resolve().then(async () => {
+  // The callout circle is sized by the drawing scale, not by the label it hangs
+  // off. Drawing the number at the label's point size runs a 3-digit step
+  // straight out of its own bubble and over whatever the arrow passes through.
+  const nodes: Node[] = [];
+  const edges: Edge[] = [];
+  for (let i = 0; i < 8; i += 1) nodes.push(service(`s${i}`, `Service ${i}`, (i % 4) * 300, Math.floor(i / 4) * 220));
+  for (let i = 1; i < nodes.length; i += 1) {
+    edges.push({
+      id: `e${i}`, source: `s${i - 1}`, target: `s${i}`, label: `step ${i}`, data: { stepNumber: 99 + i },
+    } as Edge);
+  }
+  const deck = await buildDeck(nodes, edges);
+  const badges = deck.slides.flatMap(annotationBoxes).filter((box) => box.name.startsWith('connector-step-'));
+  assert.ok(badges.length > 0, 'no callouts were drawn');
+  for (const badge of badges) {
+    const digits = 3;
+    const wide = digits * 0.62 * (badge.pt / 72);
+    const tall = (badge.pt * 1.3) / 72;
+    assert.ok(
+      wide <= badge.w + 0.005 && tall <= badge.h + 0.005,
+      `${badge.name} draws 3 digits at ${badge.pt}pt needing ${wide.toFixed(3)}x${tall.toFixed(3)}in inside a ${badge.w.toFixed(3)}in circle`,
+    );
+  }
+}));
