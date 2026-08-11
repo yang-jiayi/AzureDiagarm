@@ -126,8 +126,41 @@ interface SlideGeometry {
  */
 const LEGIBLE_TILE_PT = 7;
 
-/** Never explode one architecture into an unreviewable pile of slides. */
-const MAX_DIAGRAM_SLIDES = 6;
+/**
+ * The label size tiling actually aims for.
+ *
+ * Splitting to exactly the floor leaves the deck permanently at its worst
+ * acceptable size — 7pt labels on 1.19" tiles, which is "not an issue" and
+ * still not something anyone wants to present. Aim higher and fall back to the
+ * floor only when the extra sheets would blow the slide budget.
+ */
+const COMFORTABLE_TILE_PT = 8.6;
+
+/**
+ * Below this, an extra sheet buys size at the cost of the reader losing the
+ * architecture: a slide carrying two services out of twelve shows no system,
+ * only a fragment.
+ */
+const MIN_SERVICES_PER_SLIDE = 6;
+
+/**
+ * Never explode one architecture into an unreviewable pile of slides.
+ *
+ * A 3 x 3 grid is the point where splitting still beats handing the reader a
+ * plotter sheet: past it the deck stops being readable as one architecture.
+ */
+const MAX_DIAGRAM_SLIDES = 9;
+
+/**
+ * How far past its own window a slide keeps drawing.
+ *
+ * A connector chip is anchored at the middle of its arrow but is drawn around
+ * that point, so a chip near a seam is half outside the window that owns it.
+ * Clamping it back inside slid it on top of a service tile. The window that
+ * owns a shape therefore renders a margin beyond its bounds — wide enough for
+ * half a chip — while ownership itself stays exact, so nothing is drawn twice.
+ */
+const WINDOW_BLEED_PX = 100;
 
 /**
  * Shortest workflow row that still fits a 12 pt sentence next to a badge. Rows
@@ -136,21 +169,25 @@ const MAX_DIAGRAM_SLIDES = 6;
 const MIN_WORKFLOW_ROW_IN = 0.34;
 
 /**
- * Split the drawing into as few horizontal bands as keep the tiles legible.
+ * Split the drawing into as few standard-slide windows as keep tiles legible.
  *
- * PowerPoint allows exactly one page size per deck, so every band shares the
- * same slide geometry and the reader pans left to right across the slides.
- * Returns a single full-width window whenever the diagram already fits, which
- * keeps the common path byte-identical to the previous behaviour.
+ * PowerPoint allows exactly one page size per deck, so every window shares the
+ * same slide geometry and the reader moves through them in reading order:
+ * left to right, then down. Returns a single full window whenever the diagram
+ * already fits, which keeps the common path byte-identical.
+ *
+ * `legible` says whether the frame can show the drawing at a readable size at
+ * all — either whole or tiled. When it cannot, the caller grows the page
+ * instead, because splitting further only multiplies slides.
  */
 function planDiagramWindows(
   bounds: Bounds,
   services: ExportBox[],
   frame: DiagramFrame,
-): Bounds[] {
+): { windows: Bounds[]; legible: boolean } {
   const contentW = Math.max(1, bounds.maxX - bounds.minX);
   const contentH = Math.max(1, bounds.maxY - bounds.minY);
-  const whole: Bounds[] = [bounds];
+  const whole = { windows: [bounds], legible: true };
   if (services.length === 0 || frame.w <= 0 || frame.h <= 0) return whole;
 
   const shortest = Math.min(...services.map((box) => box.h).filter((h) => h > 0));
@@ -158,24 +195,50 @@ function planDiagramWindows(
 
   // Inches-per-pixel needed for the shortest tile to keep a readable label.
   const legibleScale = LEGIBLE_TILE_PT / 12 / shortest;
-  // Height is shared by every band, so it caps the scale no matter how thin the
-  // bands get. When even a single-column band cannot be legible, splitting only
-  // multiplies the slides without fixing anything.
-  const heightScale = frame.h / contentH;
-  if (heightScale < legibleScale) return whole;
-  if (Math.min(frame.w / contentW, heightScale) >= legibleScale) return whole;
+  if (Math.min(frame.w / contentW, frame.h / contentH) >= legibleScale) return whole;
 
-  const bandWidth = frame.w / legibleScale;
-  const count = Math.ceil(contentW / bandWidth);
-  if (count <= 1 || count > MAX_DIAGRAM_SLIDES) return whole;
+  // Splitting on one axis only is why a tall drawing used to grow the page
+  // without limit: a grouped architecture is large in both directions, so the
+  // window has to tile in both. Each window also renders a bleed margin, which
+  // comes out of its own budget so the tiles stay legible.
+  const gridFor = (perIn: number): { cols: number; rows: number; slides: number } | null => {
+    const usableW = frame.w / perIn - WINDOW_BLEED_PX * 2;
+    const usableH = frame.h / perIn - WINDOW_BLEED_PX * 2;
+    if (usableW <= 0 || usableH <= 0) return null;
+    const cols = Math.max(1, Math.ceil(contentW / usableW));
+    const rows = Math.max(1, Math.ceil(contentH / usableH));
+    return { cols, rows, slides: cols * rows };
+  };
 
-  const step = contentW / count;
-  return Array.from({ length: count }, (_, index) => ({
-    minX: bounds.minX + step * index,
-    maxX: index === count - 1 ? bounds.maxX : bounds.minX + step * (index + 1),
-    minY: bounds.minY,
-    maxY: bounds.maxY,
-  }));
+  // Take the coarsest grid that still reads well: aim for comfortable labels,
+  // but never split so finely that a sheet stops carrying a meaningful piece
+  // of the architecture. Eight sheets for a twelve-service diagram is not a
+  // deck, it is a flip-book; that trade only pays on a genuinely large drawing.
+  const comfortable = gridFor(COMFORTABLE_TILE_PT / 12 / shortest);
+  const floor = gridFor(legibleScale);
+  const worthIt = comfortable
+    && comfortable.slides <= MAX_DIAGRAM_SLIDES
+    && services.length / comfortable.slides >= MIN_SERVICES_PER_SLIDE;
+  const grid = worthIt ? comfortable : floor;
+  if (!grid) return { windows: [bounds], legible: false };
+  const { cols, rows } = grid;
+  if (cols * rows <= 1) return whole;
+  if (cols * rows > MAX_DIAGRAM_SLIDES) return { windows: [bounds], legible: false };
+
+  const stepX = contentW / cols;
+  const stepY = contentH / rows;
+  const windows: Bounds[] = [];
+  for (let row = 0; row < rows; row += 1) {
+    for (let col = 0; col < cols; col += 1) {
+      windows.push({
+        minX: bounds.minX + stepX * col,
+        maxX: col === cols - 1 ? bounds.maxX : bounds.minX + stepX * (col + 1),
+        minY: bounds.minY + stepY * row,
+        maxY: row === rows - 1 ? bounds.maxY : bounds.minY + stepY * (row + 1),
+      });
+    }
+  }
+  return { windows, legible: true };
 }
 
 /**
@@ -212,6 +275,10 @@ function chooseExportBounds(boxes: Iterable<ExportBox>): { bounds: Bounds; clamp
  */
 function planSlideGeometry(diagram?: DiagramShapeSource | null): SlideGeometry {
   const chrome = { top: IMAGE_Y, bottom: FOOTER_H + 0.18 + 0.1 };
+  const frameFor = (pageW: number, pageH: number): DiagramFrame => {
+    const footer = pageH - FOOTER_H - 0.08;
+    return { x: IMAGE_X, y: IMAGE_Y, w: pageW - IMAGE_X * 2, h: footer - IMAGE_Y - 0.1 };
+  };
   let w = BASE_W;
   let h = BASE_H;
   let overflow = false;
@@ -224,23 +291,36 @@ function planSlideGeometry(diagram?: DiagramShapeSource | null): SlideGeometry {
     if (boxes.size > 0) {
       const { bounds, clamped } = chooseExportBounds(boxes.values());
       outliersClamped = clamped;
+      const { services } = partitionBoxes(boxes);
       const contentW = Math.max(1, bounds.maxX - bounds.minX) / PX_PER_IN;
       const contentH = Math.max(1, bounds.maxY - bounds.minY) / PX_PER_IN;
       // Room for the connection legend plus breathing space around the drawing.
       const wantW = contentW + IMAGE_X * 2 + 0.5;
       const wantH = contentH + chrome.top + chrome.bottom + 0.5;
-      overflow = wantW > MAX_SLIDE_IN || wantH > MAX_SLIDE_IN;
-      w = clamp(wantW, BASE_W, MAX_SLIDE_IN);
-      h = clamp(wantH, BASE_H, MAX_SLIDE_IN);
-      const footer = h - FOOTER_H - 0.08;
-      windows = planDiagramWindows(
-        bounds,
-        partitionBoxes(boxes).services,
-        { x: IMAGE_X, y: IMAGE_Y, w: w - IMAGE_X * 2, h: footer - IMAGE_Y - 0.1 },
-      );
-      // Splitting restores legibility, so the "scaled down to fit" warning no
-      // longer applies — the drawing is now at its readable size.
-      if (windows.length > 1) overflow = false;
+
+      // A reader can present a deck of ordinary slides; nobody can present a
+      // 28in x 16in plotter sheet, and PowerPoint gives a deck exactly one page
+      // size, so the title and workflow slides inherit whatever the drawing
+      // demands. Prefer standard slides: shrink onto one while the labels stay
+      // above the legibility floor, tile across several when they would not,
+      // and only grow the page when even the slide budget is exceeded.
+      const standard = planDiagramWindows(bounds, services, frameFor(BASE_W, BASE_H));
+      if (standard.legible) {
+        windows = standard.windows.length > 1 ? standard.windows : [];
+      } else {
+        // Only a genuinely enormous drawing gets here — one that cannot be read
+        // on nine standard slides. Grow the page for it, then tile that page
+        // too: a 56in sheet split into three readable parts still beats one
+        // 56in sheet at 4.9pt, which is not a diagram, it is a smudge.
+        overflow = wantW > MAX_SLIDE_IN || wantH > MAX_SLIDE_IN;
+        w = clamp(wantW, BASE_W, MAX_SLIDE_IN);
+        h = clamp(wantH, BASE_H, MAX_SLIDE_IN);
+        const grown = planDiagramWindows(bounds, services, frameFor(w, h));
+        windows = grown.windows.length > 1 ? grown.windows : [];
+        // Splitting restores legibility, so the "scaled down to fit" warning no
+        // longer applies — the drawing is now at its readable size.
+        if (windows.length > 1) overflow = false;
+      }
     }
   }
 
@@ -252,7 +332,7 @@ function planSlideGeometry(diagram?: DiagramShapeSource | null): SlideGeometry {
     overflow,
     outliersClamped,
     windows,
-    frame: { x: IMAGE_X, y: IMAGE_Y, w: w - IMAGE_X * 2, h: footerY - IMAGE_Y - 0.1 },
+    frame: frameFor(w, h),
   };
 }
 
@@ -410,6 +490,7 @@ function connectorLabelBox(
   fontSize: number,
   px: number,
   clampTo?: DiagramFrame,
+  obstacles: readonly { x: number; y: number; w: number; h: number }[] = [],
 ): { x: number; y: number; w: number; h: number; text: string } | null {
   if (!route.label) return null;
   const anchor = toInches(route.labelAnchor, transform);
@@ -428,19 +509,51 @@ function connectorLabelBox(
   const lines = Math.max(1, Math.ceil(estimateTextWidthIn(text, fontSize) / Math.max(w - 0.12, 0.05)));
   const h = Math.max(0.16 * px, (lines * fontSize * 1.3) / 72 + 0.06);
 
+  // Slide the chip along the edge's normal, never across it, so it still reads
+  // as belonging to that arrow.
+  const alongX = Math.abs(last.x - first.x) >= Math.abs(last.y - first.y);
+  const stepOut = alongX ? h + 0.04 : w / 2 + 0.06;
+
   // De-collide parallel-edge chips: stagger each ordinal clear of the previous
   // one, using the chip's own height so they never overlap.
   const stagger = route.ordinal === 0
     ? 0
-    : (route.ordinal % 2 === 1 ? 1 : -1) * Math.ceil(route.ordinal / 2) * (h + 0.04);
+    : (route.ordinal % 2 === 1 ? 1 : -1) * Math.ceil(route.ordinal / 2) * stepOut;
 
-  let x = anchor.x - w / 2;
-  let y = anchor.y - h / 2 + stagger;
-  if (clampTo) {
-    x = clamp(x, clampTo.x, Math.max(clampTo.x, clampTo.x + clampTo.w - w));
-    y = clamp(y, clampTo.y, Math.max(clampTo.y, clampTo.y + clampTo.h - h));
+  const place = (offset: number): { x: number; y: number } => {
+    let x = anchor.x - w / 2 + (alongX ? 0 : offset);
+    let y = anchor.y - h / 2 + (alongX ? offset : 0);
+    if (clampTo) {
+      x = clamp(x, clampTo.x, Math.max(clampTo.x, clampTo.x + clampTo.w - w));
+      y = clamp(y, clampTo.y, Math.max(clampTo.y, clampTo.y + clampTo.h - h));
+    }
+    return { x, y };
+  };
+  const covered = (at: { x: number; y: number }): number => obstacles.reduce((sum, tile) => {
+    const dx = Math.min(at.x + w, tile.x + tile.w) - Math.max(at.x, tile.x);
+    const dy = Math.min(at.y + h, tile.y + tile.h) - Math.max(at.y, tile.y);
+    return dx > 0 && dy > 0 ? sum + dx * dy : sum;
+  }, 0);
+
+  // A chip centred on its arrow lands on top of a tile whenever the free gap
+  // between the two services is narrower than the label — routine on a dense
+  // architecture, and unavoidable once a long CJK label meets a 0.5" hop. Walk
+  // it outwards along the normal and take the first clear position, falling
+  // back to the least-obscured one so a chip can never simply be dropped.
+  let best = place(stagger);
+  let bestCover = covered(best);
+  for (let step = 1; bestCover > 0 && step <= 4; step += 1) {
+    for (const sign of [1, -1]) {
+      const candidate = place(stagger + sign * step * stepOut);
+      const cover = covered(candidate);
+      if (cover < bestCover) {
+        best = candidate;
+        bestCover = cover;
+      }
+      if (bestCover <= 0) break;
+    }
   }
-  return { x, y, w, h, text };
+  return { x: best.x, y: best.y, w, h, text };
 }
 
 function addConnectorLabel(
@@ -450,8 +563,9 @@ function addConnectorLabel(
   fontSize: number,
   px: number,
   clampTo?: DiagramFrame,
+  obstacles: readonly { x: number; y: number; w: number; h: number }[] = [],
 ): void {
-  const box = connectorLabelBox(route, transform, fontSize, px, clampTo);
+  const box = connectorLabelBox(route, transform, fontSize, px, clampTo, obstacles);
   if (!box) return;
 
   slide.addText(box.text, {
@@ -489,6 +603,7 @@ function addStepBadge(
   fontSize: number,
   px: number,
   clampTo?: DiagramFrame,
+  obstacles: readonly { x: number; y: number; w: number; h: number }[] = [],
 ): void {
   if (route.stepNumber === undefined) return;
   const anchor = toInches(route.labelAnchor, transform);
@@ -497,7 +612,7 @@ function addStepBadge(
   // Sit fully clear of the label chip, measured from the chip's own box: a
   // wrapped CJK label is several lines tall, so a fixed offset used to leave
   // the badge sitting on top of the text.
-  const chip = connectorLabelBox(route, transform, fontSize, px, clampTo);
+  const chip = connectorLabelBox(route, transform, fontSize, px, clampTo, obstacles);
   let x = anchor.x - d / 2;
   let y = chip ? chip.y + chip.h + 0.03 : anchor.y - d / 2;
   if (chip) x = chip.x + chip.w / 2 - d / 2;
@@ -550,16 +665,30 @@ function placeBox(
   const w = box.w * transform.scale;
   const h = box.h * transform.scale;
   if (!clampTo) return { x: topLeft.x, y: topLeft.y, w, h };
-  // A zone is routinely wider than the band it is drawn on. Clamping only the
-  // origin would slide the whole rectangle to the left margin at full width,
-  // painting it across the band and enclosing tiles that are not in it, so a
-  // clipped box is cut at the page edge instead of moved.
+  // A zone is routinely wider than the band it is drawn on, and clamping only
+  // the origin would slide the whole rectangle to the left margin at full
+  // width, painting it across the band and enclosing tiles that are not in it.
+  // PowerPoint's writer makes that worse: handed a width larger than a slide
+  // it emits the raw inch count as EMU and the boundary disappears. So a zone
+  // that meets the frame is cut at its edge.
   if (clip) {
     const left = Math.max(topLeft.x, clampTo.x);
     const top = Math.max(topLeft.y, clampTo.y);
     const right = Math.min(topLeft.x + w, clampTo.x + clampTo.w);
     const bottom = Math.min(topLeft.y + h, clampTo.y + clampTo.h);
-    return { x: left, y: top, w: Math.max(right - left, 0.01), h: Math.max(bottom - top, 0.01) };
+    if (right > left && bottom > top) return { x: left, y: top, w: right - left, h: bottom - top };
+    // A zone that misses the frame entirely is a trimmed outlier, and cutting
+    // that leaves a hairline at an off-page coordinate -- the "outlier
+    // silently disappears" defect again. Clamp it back on instead, shrinking
+    // it if it is larger than the frame so no dimension can escape the page.
+    const cw = Math.min(w, clampTo.w);
+    const ch = Math.min(h, clampTo.h);
+    return {
+      x: clamp(topLeft.x, clampTo.x, clampTo.x + clampTo.w - cw),
+      y: clamp(topLeft.y, clampTo.y, clampTo.y + clampTo.h - ch),
+      w: cw,
+      h: ch,
+    };
   }
   return {
     x: clamp(topLeft.x, clampTo.x, Math.max(clampTo.x, clampTo.x + clampTo.w - w)),
@@ -791,53 +920,75 @@ async function addEditableDiagram(
   // A banded slide is sized from its own slice, which is what buys back the
   // legible scale; the slice is then clamped so a shape straddling the seam is
   // cut at the page edge instead of spilling into the void.
-  const banded = !!window && (window.minX > bounds.minX + 0.5 || window.maxX < bounds.maxX - 0.5);
+  const banded = !!window && (
+    window.minX > bounds.minX + 0.5 || window.maxX < bounds.maxX - 0.5
+    || window.minY > bounds.minY + 0.5 || window.maxY < bounds.maxY - 0.5
+  );
   const fitBounds = window ?? bounds;
-  const transform = computeFitTransform(fitBounds, frame, { maxScale: 1 / PX_PER_IN });
+  // Ownership is decided by the exact window; what the slide draws is the
+  // window plus a bleed, so a chip anchored near a seam has room to be drawn
+  // where it belongs instead of being clamped on top of a tile. The bleed is
+  // deliberately *not* trimmed at the drawing's edge: every window is the same
+  // size, so every part of the deck then renders at exactly the same scale.
+  const view = banded
+    ? {
+      minX: fitBounds.minX - WINDOW_BLEED_PX,
+      maxX: fitBounds.maxX + WINDOW_BLEED_PX,
+      minY: fitBounds.minY - WINDOW_BLEED_PX,
+      maxY: fitBounds.maxY + WINDOW_BLEED_PX,
+    }
+    : fitBounds;
+  const transform = computeFitTransform(view, frame, { maxScale: 1 / PX_PER_IN });
   const clampTo = clamped || banded ? frame : undefined;
   const px = transform.scale * PX_PER_IN;
   const routes = buildExportRoutes(diagram.edges ?? [], boxes);
-  const isFirstBand = !banded || fitBounds.minX <= bounds.minX + 0.5;
-  const isLastBand = !banded || fitBounds.maxX >= bounds.maxX - 0.5;
+  const first = { x: fitBounds.minX <= bounds.minX + 0.5, y: fitBounds.minY <= bounds.minY + 0.5 };
+  const last = { x: fitBounds.maxX >= bounds.maxX - 0.5, y: fitBounds.maxY >= bounds.maxY - 0.5 };
 
-  // A band owns whatever falls inside it, so a shape straddling a seam is drawn
-  // once instead of twice. Strays that the outlier trim pushed outside `bounds`
-  // sit in no band at all under a plain range test and vanish from the deck
-  // entirely, so the outer bands claim everything beyond them and `clampTo`
-  // pulls those back onto the page exactly as it does on an unbanded slide.
-  const owns = (x: number): boolean => {
-    if (!banded) return true;
-    if (x < fitBounds.minX) return isFirstBand;
-    if (x > fitBounds.maxX) return isLastBand;
+  // A window owns whatever falls inside it, so a shape straddling a seam is
+  // drawn once instead of twice. Strays that the outlier trim pushed outside
+  // `bounds` sit in no window at all under a plain range test and vanish from
+  // the deck entirely, so the outer windows claim everything beyond them and
+  // `clampTo` pulls those back onto the page exactly as on an unbanded slide.
+  const ownsAxis = (v: number, lo: number, hi: number, isFirst: boolean, isLast: boolean): boolean => {
+    if (v < lo) return isFirst;
+    if (v > hi) return isLast;
     // Windows meet exactly at a seam, so a point landing on one is inside both.
-    // Half-open ranges hand it to the later band and nothing is drawn twice.
-    return x < fitBounds.maxX || isLastBand;
+    // Half-open ranges hand it to the later window and nothing is drawn twice.
+    return v < hi || isLast;
   };
-  const visibleBox = (box: ExportBox): boolean => owns(box.x + box.w / 2);
-  // A zone is routinely wider than a whole band, so centre-ownership would
+  const owns = (x: number, y: number): boolean => !banded || (
+    ownsAxis(x, fitBounds.minX, fitBounds.maxX, first.x, last.x)
+    && ownsAxis(y, fitBounds.minY, fitBounds.maxY, first.y, last.y)
+  );
+  const visibleBox = (box: ExportBox): boolean => owns(box.x + box.w / 2, box.y + box.h / 2);
+  // A zone is routinely larger than a whole window, so centre-ownership would
   // print the boundary and its name on one slide and leave the services on the
   // other slides floating with no container. Unlike a service tile, a zone is
-  // continued on every band it overlaps — the palette index below is already
+  // continued on every window it overlaps — the palette index below is already
   // stable across slices, and a partial rectangle reads as a boundary that
   // carries on, which is exactly what it does.
-  const visibleGroup = (box: ExportBox): boolean => {
-    if (!banded) return true;
-    return (box.x + box.w >= fitBounds.minX || isFirstBand)
-      && (box.x <= fitBounds.maxX || isLastBand);
-  };
-  // A connector is continued on every band it crosses so the reader can follow
-  // where it goes; only the band holding its anchor draws the chip and number.
+  const overlapsAxis = (lo: number, hi: number, wLo: number, wHi: number, isFirst: boolean, isLast: boolean): boolean =>
+    (hi >= wLo || isFirst) && (lo <= wHi || isLast);
+  const visibleGroup = (box: ExportBox): boolean => !banded || (
+    overlapsAxis(box.x, box.x + box.w, view.minX, view.maxX, first.x, last.x)
+    && overlapsAxis(box.y, box.y + box.h, view.minY, view.maxY, first.y, last.y)
+  );
+  // A connector is continued on every window it crosses so the reader can
+  // follow where it goes; only the window holding its anchor draws the chip and
+  // number.
   const visibleRoute = (route: ExportRoute): boolean => {
     if (!banded) return true;
+    if (route.points.length === 0) return owns(route.labelAnchor.x, route.labelAnchor.y);
     const xs = route.points.map((point) => point.x);
-    if (xs.length === 0) return owns(route.labelAnchor.x);
-    return (Math.max(...xs) >= fitBounds.minX || isFirstBand)
-      && (Math.min(...xs) <= fitBounds.maxX || isLastBand);
+    const ys = route.points.map((point) => point.y);
+    return overlapsAxis(Math.min(...xs), Math.max(...xs), view.minX, view.maxX, first.x, last.x)
+      && overlapsAxis(Math.min(...ys), Math.max(...ys), view.minY, view.maxY, first.y, last.y);
   };
   const shownGroups = groups.filter(visibleGroup);
   const shownServices = services.filter(visibleBox);
   const shownRoutes = routes.filter(visibleRoute);
-  const annotatedRoutes = shownRoutes.filter((route) => owns(route.labelAnchor.x));
+  const annotatedRoutes = shownRoutes.filter((route) => owns(route.labelAnchor.x, route.labelAnchor.y));
   const icons = await rasterizeIcons(shownServices.map((service) => service.iconPath), 128);
 
   // Index by the full group list so a zone keeps its palette colour on every
@@ -851,8 +1002,11 @@ async function addEditableDiagram(
   // Labels are drawn after every connector so a chip is never hidden by a line
   // that is rendered later.
   const labelFontSize = clamp(9 * px, 4, 10);
-  for (const route of annotatedRoutes) addConnectorLabel(slide, route, transform, labelFontSize, px, clampTo);
-  for (const route of annotatedRoutes) addStepBadge(slide, route, transform, labelFontSize, px, clampTo);
+  // Chips and numbers dodge the tiles that are actually on this slide, so a
+  // label on a short hop is pushed clear instead of covering a service.
+  const tileRects = shownServices.map((service) => placeBox(service, transform, clampTo));
+  for (const route of annotatedRoutes) addConnectorLabel(slide, route, transform, labelFontSize, px, clampTo, tileRects);
+  for (const route of annotatedRoutes) addStepBadge(slide, route, transform, labelFontSize, px, clampTo, tileRects);
 
   // Colour key so the deck's connectors agree with the PNG legend.
   addConnectionLegend(pptx, slide, diagram.edges ?? [], frame);
@@ -890,13 +1044,22 @@ export async function buildDiagramSlidePptx(
   pptx.subject = 'Microsoft Product Architecture Diagram';
   pptx.company = 'Swarm Data SE, Jiayi Yang';
 
-  const windows = geom.windows.length > 1 ? geom.windows : [undefined];
+  // A tiled deck opens with the whole drawing, deliberately below the
+  // legibility floor, so the reader sees the architecture before panning
+  // through the readable parts of it. This is how the Azure Architecture
+  // Center presents one: an overview, then the numbered workflow.
+  const parts = geom.windows.length > 1 ? geom.windows : [];
+  const windows: (Bounds | undefined)[] = parts.length > 0 ? [undefined, ...parts] : [undefined];
   let renderedNatively = false;
 
   for (const [index, window] of windows.entries()) {
     const slide = pptx.addSlide();
     slide.background = { color: t.bg };
-    const partOf = windows.length > 1 ? `  (${index + 1} / ${windows.length})` : '';
+    const partOf = parts.length === 0
+      ? ''
+      : index === 0
+        ? '  (Overview)'
+        : `  (${index} / ${parts.length})`;
 
     // ── Top accent bar (Azure blue) ───────────────────────────────────────────
     slide.addShape(pptx.ShapeType.rect, {
@@ -957,8 +1120,10 @@ export async function buildDiagramSlidePptx(
     }
 
     // ── Footer text ───────────────────────────────────────────────────────────
-    const note = windows.length > 1
-      ? `This architecture is too wide for one readable page, so it continues across ${windows.length} slides — this is part ${index + 1}. Export to Visio (.vsdx) for the whole drawing on a single sheet.`
+    const note = parts.length > 0
+      ? index === 0
+        ? `The whole architecture, shown small enough to fit one slide. The next ${parts.length} slides repeat it at a readable size, in reading order.`
+        : `This architecture needs more than one readable slide, so it continues across ${parts.length} of them — this is part ${index}. Export to Visio (.vsdx) for the whole drawing on a single sheet.`
       : geom.overflow
         ? 'This architecture is wider than PowerPoint\'s 56" page limit, so it was scaled down to fit. Export to Visio (.vsdx) for a full-size, fully legible drawing.'
         : geom.outliersClamped

@@ -102,7 +102,7 @@ function wideDiagram(): { nodes: Node[]; edges: Edge[] } {
   return { nodes, edges };
 }
 
-async function slideShapes(diagram: { nodes: Node[]; edges: Edge[] }): Promise<{ shapes: Shape[]; slideW: number }> {
+async function slideShapes(diagram: { nodes: Node[]; edges: Edge[] }): Promise<{ shapes: Shape[]; slideW: number; parts: Shape[][] }> {
   const pptx = await buildDiagramSlidePptx(PIXEL_PNG, {
     diagramName: 'Contoso Platform',
     author: 'Tester',
@@ -114,20 +114,44 @@ async function slideShapes(diagram: { nodes: Node[]; edges: Edge[] }): Promise<{
   const zip = await JSZip.loadAsync(buffer);
   const presentation = await zip.file('ppt/presentation.xml')!.async('string');
   const slideW = +(/<p:sldSz cx="(\d+)"/.exec(presentation)?.[1] ?? '0') / EMU_PER_INCH;
-  const xml = await zip.file('ppt/slides/slide1.xml')!.async('string');
-  return { shapes: parseShapes(xml), slideW };
+  const all = await Promise.all(
+    Object.keys(zip.files)
+      .filter((name) => /^ppt\/slides\/slide\d+\.xml$/.test(name))
+      .sort((a, b) => +a.replace(/\D/g, '') - +b.replace(/\D/g, ''))
+      .map((name) => zip.file(name)!.async('string')),
+  );
+  // A drawing too big for one readable page is now continued across ordinary
+  // slides, and such a deck opens with the whole thing shown small on purpose.
+  // Legibility is a property of the parts, so measure those; reading slide 1
+  // blind would grade the export on the one slide that is meant to be a
+  // thumbnail.
+  const overviewAt = all.findIndex((xml) => xml.includes('(Overview)'));
+  const parts = (overviewAt < 0 ? all : all.slice(overviewAt + 1)).map(parseShapes);
+  const withTiles = parts.find((shapes) => shapes.some((s) => /^service-[^l]/.test(s.name) && !s.name.startsWith('service-label') && !s.name.startsWith('service-meta')));
+  return { shapes: withTiles ?? parseShapes(all[0]), slideW, parts };
 }
 
-test('a wide diagram grows the slide instead of shrinking the shapes', async () => {
-  const { shapes, slideW } = await slideShapes(wideDiagram());
-  assert.ok(slideW > 13.4, `expected a custom page wider than 16:9, got ${slideW.toFixed(2)}in`);
+test('a wide diagram keeps its shapes full size instead of shrinking them', async () => {
+  const { shapes, slideW, parts } = await slideShapes(wideDiagram());
   assert.ok(slideW <= 56.01, `page must stay within PowerPoint's 56in limit, got ${slideW.toFixed(2)}in`);
 
-  const tiles = shapes.filter((s) => /^service-[^l]/.test(s.name) && !s.name.startsWith('service-label') && !s.name.startsWith('service-meta'));
-  assert.equal(tiles.length, 12);
-  for (const tile of tiles) {
-    assert.ok(tile.w > 1.4, `tile ${tile.name} shrank to ${tile.w.toFixed(2)}in`);
+  const isTile = (s: Shape): boolean => /^service-[^l]/.test(s.name) && !s.name.startsWith('service-label') && !s.name.startsWith('service-meta');
+  for (const tile of shapes.filter(isTile)) {
+    // 7pt is the product's legibility floor and a 75px tile renders its label
+    // at h * 12, so 7/12in is the smallest tile the exporter may emit. A
+    // continued drawing sits near that floor by design; anything under it is
+    // the old "squeeze it onto one sheet" defect.
+    assert.ok(tile.w > 1.15, `tile ${tile.name} shrank to ${tile.w.toFixed(2)}in`);
   }
+  // Whether the page grew or the drawing was continued across slides, all
+  // twelve services must reach the deck exactly once.
+  const drawn = new Map<string, number>();
+  for (const part of parts) {
+    for (const tile of part.filter(isTile)) drawn.set(tile.name, (drawn.get(tile.name) ?? 0) + 1);
+  }
+  assert.equal(drawn.size, 12, `expected 12 services across the deck, got ${drawn.size}`);
+  const duplicated = [...drawn].filter(([, count]) => count !== 1);
+  assert.equal(duplicated.length, 0, `services drawn more than once: ${duplicated.map(([name]) => name).join(', ')}`);
 });
 
 test('node labels never wrap to a few characters per line', async () => {
@@ -136,7 +160,10 @@ test('node labels never wrap to a few characters per line', async () => {
   assert.ok(labels.length > 0);
   for (const label of labels) {
     const font = label.fontSize ?? 11;
-    assert.ok(font >= 8, `label "${label.text}" fell to ${font}pt`);
+    // The exporter's own floor. A drawing continued across slides is rendered
+    // at whatever size keeps it here, so this is the number to hold, not a
+    // larger one that only the old grow-the-page behaviour could reach.
+    assert.ok(font >= 7, `label "${label.text}" fell to ${font}pt`);
     const charsPerLine = label.w / (font / 72);
     assert.ok(charsPerLine >= 8, `label "${label.text}" fits only ${charsPerLine.toFixed(1)} chars per line`);
     const lines = Math.ceil(textWidthIn(label.text, font) / Math.max(label.w, 0.01));

@@ -180,26 +180,47 @@ export function straightenPrimaryPath(nodes: Node[], edges: Edge[], direction: '
   const minorOf = (node: Node): number =>
     absolutePositions.get(node.id)?.[axis] ?? node.position[axis];
 
-  const runs: Node[][] = [[chainNodes[0]]];
-  const minorExtent = direction === 'LR' ? NODE_HEIGHT : NODE_WIDTH;
+  // What a seam looks like depends on the direction and on how the bands
+  // happen to line up, so no threshold on either axis identifies one. Reading
+  // the minor axis alone misses every TB seam, where the band gap (a tile
+  // width plus the rank spacing, about 290px) is smaller than a node is wide.
+  // Reading the major axis alone misses an LR seam between bands of different
+  // widths, where the hop is (extent_next - extent_prev)/2 and can be large
+  // and forward-pointing.
+  //
+  // What is always true is that the chain reverses at a seam, and that the
+  // seam hop is whichever of the two steps around that reversal crossed the
+  // band gap. So find the reversal and attribute it, comparing those two steps
+  // against each other rather than against any constant.
+  const steps = chainNodes.slice(1).map((node, i) => ({
+    step: majorOf(node) - majorOf(chainNodes[i]),
+    drift: minorOf(node) - minorOf(chainNodes[i]),
+  }));
+
+  const seamAfter = new Set<number>();
   let heading = 0;
-  for (let i = 1; i < chainNodes.length; i += 1) {
-    const step = majorOf(chainNodes[i]) - majorOf(chainNodes[i - 1]);
-    const drift = minorOf(chainNodes[i]) - minorOf(chainNodes[i - 1]);
-    const stepSign = Math.sign(step);
-    // A seam is the hop between two bands, and the only thing that reliably
-    // identifies it is the distance crossed on the minor axis: a band gap is
-    // never smaller than a tile plus the rank spacing. The major step is not
-    // usable — bands are centred on the widest one, so the tail-to-head offset
-    // at a seam is (extent_next - extent_prev)/2 and can be arbitrarily large
-    // in either direction when adjacent bands differ in width.
-    const seam = Math.abs(drift) > minorExtent * 2;
-    if (seam || (stepSign !== 0 && heading !== 0 && stepSign !== heading)) {
-      runs.push([]);
-      heading = seam ? 0 : stepSign;
-    } else if (stepSign !== 0) {
+  for (let i = 0; i < steps.length; i += 1) {
+    const stepSign = Math.sign(steps[i].step);
+    if (stepSign === 0) continue;
+    if (heading === 0) {
       heading = stepSign;
+      continue;
     }
+    if (stepSign === heading) continue;
+    // The reversal shows up at step i, but the band was left at whichever of
+    // steps i-1 and i actually travelled across the minor axis.
+    if (i > 0 && Math.abs(steps[i - 1].drift) > Math.abs(steps[i].drift)) {
+      seamAfter.add(i - 1);
+      heading = stepSign;
+    } else {
+      seamAfter.add(i);
+      heading = 0;
+    }
+  }
+
+  const runs: Node[][] = [[chainNodes[0]]];
+  for (let i = 1; i < chainNodes.length; i += 1) {
+    if (seamAfter.has(i - 1)) runs.push([]);
     runs[runs.length - 1].push(chainNodes[i]);
   }
 

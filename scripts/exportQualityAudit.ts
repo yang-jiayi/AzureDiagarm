@@ -322,14 +322,22 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
   const sldSz = /<p:sldSz[^>]*cx="(\d+)"[^>]*cy="(\d+)"/.exec(presentation);
   const pageW = sldSz ? +sldSz[1] / EMU_PER_INCH : 13.333;
   const pageH = sldSz ? +sldSz[2] / EMU_PER_INCH : 7.5;
-  const xml = await Promise.all(
+  const allSlides = await Promise.all(
     Object.keys(zip.files)
       .filter((name) => /^ppt\/slides\/slide\d+\.xml$/.test(name))
       .sort((a, b) => (+a.replace(/\D/g, '')) - (+b.replace(/\D/g, '')))
       .map((name) => zip.file(name)!.async('string')),
   );
-  const slideCount = xml.length;
-  const shapes = xml.flatMap((slideXml) => parseShapes(slideXml));
+  const slideCount = allSlides.length;
+  // A tiled deck opens with the whole drawing shown small on purpose, so the
+  // legibility and one-slide-per-service rules below are about the slides that
+  // follow it. Measuring the overview against them would report every tiled
+  // deck as broken, and dropping the rules to accommodate it would stop them
+  // measuring anything.
+  const overviewAt = allSlides.findIndex((slideXml) => slideXml.includes('(Overview)'));
+  const xml = overviewAt < 0 ? allSlides : allSlides.slice(overviewAt + 1);
+  const perSlide = xml.map((slideXml) => parseShapes(slideXml));
+  const shapes = perSlide.flat();
 
   const issues: string[] = [];
   const tiles = shapes.filter((s) => s.name.startsWith('service-') && !s.name.includes('label') && !s.name.includes('meta'));
@@ -356,10 +364,32 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
     if (minTileW > 0 && chip.w > minTileW) {
       issues.push(`edge chip "${chip.text}" is ${(chip.w / minTileW).toFixed(1)}x wider than the smallest node tile`);
     }
-    for (const tile of tiles) {
-      const area = overlapArea(chip, tile);
-      if (area > 0.02 * tile.w * tile.h) {
-        issues.push(`edge chip "${chip.text}" overlaps node "${tile.name}" by ${((area / (tile.w * tile.h)) * 100).toFixed(0)}%`);
+  }
+  // Collisions are only real between shapes printed on the same sheet. Reading
+  // every slide as one pile reported a chip on part 1 as covering a tile on
+  // part 3, which turned every tiled deck into a wall of phantom issues and
+  // hid whatever was genuinely wrong.
+  for (const slideShapes of perSlide) {
+    const slideTiles = slideShapes.filter((s) => s.name.startsWith('service-') && !s.name.includes('label') && !s.name.includes('meta'));
+    const slideChips = slideShapes.filter((s) => s.name.startsWith('connector-label-'));
+    for (const chip of slideChips) {
+      for (const tile of slideTiles) {
+        const area = overlapArea(chip, tile);
+        if (area > 0.02 * tile.w * tile.h) {
+          issues.push(`edge chip "${chip.text}" overlaps node "${tile.name}" by ${((area / (tile.w * tile.h)) * 100).toFixed(0)}%`);
+        }
+      }
+    }
+    for (const badge of slideShapes.filter((s) => s.name.startsWith('connector-step-'))) {
+      for (const tile of slideTiles) {
+        if (overlapArea(badge, tile) > 0.02 * tile.w * tile.h) {
+          issues.push(`step badge "${badge.name}" covers node "${tile.name}"`);
+        }
+      }
+      for (const chip of slideChips) {
+        if (overlapArea(badge, chip) > 0.25 * badge.w * badge.h) {
+          issues.push(`step badge "${badge.name}" collides with edge chip "${chip.text}"`);
+        }
       }
     }
   }
@@ -390,16 +420,6 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
     } else if (badge.text !== want) {
       issues.push(`connector ${routeId} is numbered "${badge.text}" but its workflow step is ${want}`);
     }
-    for (const tile of tiles) {
-      if (overlapArea(badge, tile) > 0.02 * tile.w * tile.h) {
-        issues.push(`step badge "${badge.name}" covers node "${tile.name}"`);
-      }
-    }
-    for (const chip of chips) {
-      if (overlapArea(badge, chip) > 0.25 * badge.w * badge.h) {
-        issues.push(`step badge "${badge.name}" collides with edge chip "${chip.text}"`);
-      }
-    }
   }
 
   // Nothing may be drawn outside the page: an off-slide shape is invisible in
@@ -416,6 +436,23 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
   // drawing — an oversized architecture must be split across slides instead.
   if (Number.isFinite(minFont) && minFont < 7) {
     issues.push(`smallest label font is ${minFont}pt (below the 7pt legibility floor)`);
+  }
+
+  // A deck nobody can open in PowerPoint is not an export. PowerPoint gives a
+  // deck exactly one page size, so an oversized drawing drags the title and
+  // workflow slides onto the plotter sheet with it. Splitting the drawing
+  // across ordinary slides is the way out, so the rule has an escape hatch --
+  // but a single grown page has none, and this rule is deliberately not scoped
+  // to the layout-engine scenarios: a hand-placed canvas exports through the
+  // same code path and deserves the same deck.
+  const standardPage = Math.abs(pageW - 13.333) < 0.05 && Math.abs(pageH - 7.5) < 0.05;
+  const diagramSlides = perSlide.filter((slideShapes) =>
+    slideShapes.some((s) => s.name.startsWith('service-') && !s.name.includes('label') && !s.name.includes('meta')),
+  ).length;
+  if (!standardPage && diagramSlides <= 1) {
+    issues.push(
+      `the deck is a single ${pageW.toFixed(2)}x${pageH.toFixed(2)}in page instead of standard 13.33x7.5in slides`,
+    );
   }
 
   // Learn pairs every numbered callout with the sentence it points at. A badge
@@ -469,21 +506,22 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
   // matters. Aspect ratio is what actually changes, and WRAP_TRIGGER_RATIO is
   // the number the product itself uses to decide a layout needs folding.
   //
-  // A deck that had to be banded is exempt: the drawing was genuinely larger
-  // than one page and the footer says so.
+  // A deck that had to be banded is exempt from *how it was drawn*, but not
+  // from the layout itself: measuring per-slide tile bounds meant a wrap
+  // regression escaped the moment the strip grew long enough to be split, so
+  // the shape is measured on the layout the engine produced, in its own
+  // coordinates, whatever the exporter then did with it.
   const tileArea = tiles.reduce((sum, tile) => sum + tile.w * tile.h, 0);
   const density = tileArea / Math.max(pageW * pageH * slideCount, 1);
-  const slidesWithTiles = xml.filter((slideXml) =>
-    parseShapes(slideXml).some((s) => s.name.startsWith('service-') && !s.name.includes('label') && !s.name.includes('meta')),
-  ).length;
-  if (scenario.fromLayoutEngine && tiles.length >= 4 && slidesWithTiles <= 1) {
-    const minX = Math.min(...tiles.map((t) => t.x));
-    const maxX = Math.max(...tiles.map((t) => t.x + t.w));
-    const minY = Math.min(...tiles.map((t) => t.y));
-    const maxY = Math.max(...tiles.map((t) => t.y + t.h));
-    const aspect = (maxX - minX) / Math.max(maxY - minY, 0.01);
+  const laidOut = scenario.nodes.filter((n) => n.type === 'azureNode');
+  if (scenario.fromLayoutEngine && laidOut.length >= 4) {
+    const minX = Math.min(...laidOut.map((n) => n.position.x));
+    const maxX = Math.max(...laidOut.map((n) => n.position.x + (n.width ?? n.style?.width ?? 150)));
+    const minY = Math.min(...laidOut.map((n) => n.position.y));
+    const maxY = Math.max(...laidOut.map((n) => n.position.y + (n.height ?? n.style?.height ?? 75)));
+    const aspect = (maxX - minX) / Math.max(maxY - minY, 1);
     if (aspect > WRAP_TRIGGER_RATIO) {
-      issues.push(`drawing is ${aspect.toFixed(1)}:1 on one page — it was stretched into a strip`);
+      issues.push(`layout is ${aspect.toFixed(1)}:1 — it was stretched into a strip`);
     }
   }
 

@@ -270,3 +270,41 @@ test('bands of different widths are still straightened separately', async () => 
     `nodes pulled into the wrong band: ${strayed.map((n) => `${n.id} ${n.want}->${n.got}`).join(', ')}`,
   );
 });
+
+test('a top-to-bottom serpentine keeps its columns apart', async () => {
+  const { applyLayoutPreset } = await import('../src/utils/layoutPresets.ts');
+  // No fixture anywhere used flow-tb, which is why a seam test that only reads
+  // the minor axis passed everything: on TB the minor axis is x, a band gap is
+  // one tile width plus the rank spacing (about 290px), and that is smaller
+  // than a node is wide.
+  for (const spacing of ['compact', 'comfortable'] as const) {
+    for (let n = 4; n <= 14; n += 1) {
+      const nodes = Array.from({ length: n }, (_, i) => ({
+        id: `c${i}`, type: 'azureNode', position: { x: 0, y: 0 }, width: 150, height: 100,
+        data: { label: `S${i}`, serviceName: 'Azure Functions' },
+      })) as any[];
+      const edges = Array.from({ length: n - 1 }, (_, i) => ({
+        id: `e${i}`, source: `c${i}`, target: `c${i + 1}`,
+      })) as any[];
+
+      const out = await applyLayoutPreset(nodes, edges, {
+        preset: 'flow-tb', spacing, emphasizePrimaryPath: true, layoutEngine: 'dagre',
+      } as never);
+
+      const boxes = out.nodes
+        .filter((node: any) => node.type === 'azureNode')
+        .map((node: any) => ({ id: node.id, x: node.position.x, y: node.position.y, w: 150, h: 100 }));
+      const collisions: string[] = [];
+      for (let a = 0; a < boxes.length; a += 1) {
+        for (let b = a + 1; b < boxes.length; b += 1) {
+          const p = boxes[a];
+          const q = boxes[b];
+          if (p.x < q.x + q.w && q.x < p.x + p.w && p.y < q.y + q.h && q.y < p.y + p.h) {
+            collisions.push(`${p.id}(${p.x},${p.y})/${q.id}(${q.x},${q.y})`);
+          }
+        }
+      }
+      assert.deepEqual(collisions, [], `flow-tb ${spacing} n=${n} stacked: ${collisions.join(' ')}`);
+    }
+  }
+});
