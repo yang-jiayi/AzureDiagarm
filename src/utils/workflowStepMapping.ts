@@ -30,6 +30,50 @@ export interface StepMappableEdge {
 }
 
 /**
+ * The one definition of a usable step number, shared by the mapper, the export
+ * geometry, the canvas badge and the deck's numbered list.
+ *
+ * Every consumer must agree, or a step can claim an edge here and then draw no
+ * badge downstream — which leaves the prose numbered where the arrows are not.
+ * Numeric strings are accepted because models emit `"1"` about as often as `1`.
+ */
+export function readStepNumber(value: unknown): number | undefined {
+  const step = typeof value === 'number' ? value : typeof value === 'string' ? Number(value) : NaN;
+  return Number.isInteger(step) && step > 0 ? step : undefined;
+}
+
+/** One edge's place in the numbered flow. */
+export interface StepAssignment {
+  /** The number shown on the badge — the step's own declared number. */
+  step: number;
+  /**
+   * 1-based position in the flow-ordered step list. The animation timeline runs
+   * for `workflow.length * STEP_DUR` and its captions and node highlights are
+   * scheduled by list position, so the flowing edge must use the same index.
+   * The declared number cannot: a gap (1, 2, 5) would schedule past the end of
+   * the loop, and a duplicate (1, 1, 2) would collapse two edges into one
+   * window and leave a third of the animation with nothing flowing.
+   */
+  slot: number;
+}
+
+/**
+ * The steps that can carry a number, in flow order.
+ *
+ * Exported so the animation can schedule its captions against exactly the list
+ * the mapper numbered against — any other ordering desynchronises the caption
+ * from the edge it describes.
+ */
+export function orderedWorkflowSteps<T extends WorkflowStepInput>(
+  workflow: readonly T[] | undefined | null,
+): T[] {
+  if (!Array.isArray(workflow)) return [];
+  return workflow
+    .filter((entry): entry is T => !!entry && readStepNumber(entry.step) !== undefined)
+    .sort((a, b) => readStepNumber(a.step)! - readStepNumber(b.step)!);
+}
+
+/**
  * Assign at most one step number to each edge, and use each step at most once.
  *
  * A step matches an edge only when *both* endpoints appear in that step's
@@ -38,26 +82,23 @@ export interface StepMappableEdge {
  * service named is the step's destination. Ties fall back to edge id so the
  * numbering is stable across runs and identical in every export.
  */
-export function mapWorkflowStepsToEdges(
+export function assignWorkflowSteps(
   edges: readonly StepMappableEdge[],
   workflow: readonly WorkflowStepInput[] | undefined | null,
-): Map<string, number> {
-  const assigned = new Map<string, number>();
-  if (!Array.isArray(workflow) || workflow.length === 0) return assigned;
+): Map<string, StepAssignment> {
+  const assigned = new Map<string, StepAssignment>();
+  const ordered = orderedWorkflowSteps(workflow);
+  if (ordered.length === 0) return assigned;
 
-  const ordered = [...workflow]
-    .filter((entry): entry is WorkflowStepInput => !!entry && Number.isFinite(entry.step))
-    .sort((a, b) => a.step - b.step);
-
-  for (const entry of ordered) {
+  ordered.forEach((entry, index) => {
     const services = Array.isArray(entry.services) ? entry.services : [];
-    if (services.length === 0) continue;
+    if (services.length === 0) return;
     const membership = new Set(services);
 
     const candidates = edges.filter(
       (edge) => !assigned.has(edge.id) && membership.has(edge.source) && membership.has(edge.target),
     );
-    if (candidates.length === 0) continue;
+    if (candidates.length === 0) return;
 
     const best = candidates.reduce((winner, edge) => {
       const rank = services.indexOf(edge.target);
@@ -66,10 +107,20 @@ export function mapWorkflowStepsToEdges(
       return String(edge.id).localeCompare(String(winner.id)) < 0 ? edge : winner;
     });
 
-    assigned.set(best.id, entry.step);
-  }
+    assigned.set(best.id, { step: readStepNumber(entry.step)!, slot: index + 1 });
+  });
 
   return assigned;
+}
+
+/** Badge numbers only — the shape most callers need. */
+export function mapWorkflowStepsToEdges(
+  edges: readonly StepMappableEdge[],
+  workflow: readonly WorkflowStepInput[] | undefined | null,
+): Map<string, number> {
+  return new Map(
+    [...assignWorkflowSteps(edges, workflow)].map(([id, assignment]) => [id, assignment.step]),
+  );
 }
 
 export interface NormalizedWorkflow {

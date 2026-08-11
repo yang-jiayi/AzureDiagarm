@@ -5502,6 +5502,13 @@ function App() {
       })),
       Array.isArray(workflowSteps) ? workflowSteps : [],
     );
+    // The prose travels with the arrow so every exporter can rebuild the
+    // numbered workflow list from the same data that drew the badges.
+    const workflowProseByStep = new Map<number, string>(
+      (Array.isArray(workflowSteps) ? workflowSteps : [])
+        .filter((s: any) => Number.isInteger(s?.step) && typeof s?.description === 'string')
+        .map((s: any) => [s.step as number, String(s.description).trim()]),
+    );
     const generatedEdges: Edge[] = connections.map((conn: any, index: number) => {
       const positions = getConnectionPositions(conn.from, conn.to, conn);
       const presentation = getConnectionPresentation(conn.type);
@@ -5535,7 +5542,12 @@ function App() {
           connectionType: presentation.type,
           direction: edgeDirection.direction,
           ...(workflowStepByEdgeId.has(`edge-${index}`)
-            ? { stepNumber: workflowStepByEdgeId.get(`edge-${index}`) }
+            ? {
+                stepNumber: workflowStepByEdgeId.get(`edge-${index}`),
+                stepDescription: workflowProseByStep.get(
+                  workflowStepByEdgeId.get(`edge-${index}`) as number,
+                ),
+              }
             : {}),
           baseFlowAnimated,
           flowAnimated,

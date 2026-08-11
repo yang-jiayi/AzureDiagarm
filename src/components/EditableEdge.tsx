@@ -12,7 +12,23 @@ import {
 } from 'reactflow';
 import { useLanguage } from '../i18n/LanguageContext';
 import { localize } from '../i18n/localization';
+import { readStepNumber } from '../utils/workflowStepMapping';
 import './EditableEdge.css';
+
+/**
+ * Rendered width of a label at the chip's 0.82rem size, in CSS pixels.
+ *
+ * CJK glyphs take a full em (~13.1px) and Latin about 0.54em, which is what
+ * decides whether a label wraps — and therefore how far the numbered badge has
+ * to sit below the chip to stay visible.
+ */
+function measureLabelWidthPx(text: string): number {
+  let px = 0;
+  for (const character of text) {
+    px += /[\u2e80-\u9fff\uac00-\ud7af\uff00-\uff60\uffe0-\uffe6]/.test(character) ? 13.1 : 7.1;
+  }
+  return px;
+}
 
 const EditableEdge: React.FC<EdgeProps> = ({
   id,
@@ -142,10 +158,18 @@ const EditableEdge: React.FC<EdgeProps> = ({
   // the number in the workflow prose. Show the same badge the exports draw so
   // the canvas and the exported file can never disagree.
   const rawStep = (data as { stepNumber?: unknown } | undefined)?.stepNumber;
-  const stepNumber =
-    typeof rawStep === 'number' && Number.isInteger(rawStep) && rawStep > 0 ? rawStep : undefined;
+  const stepNumber = readStepNumber(rawStep);
   const badgeX = labelX + offsetX;
-  const badgeY = labelY + offsetY + (editLabel ? 18 : 0);
+  // The chip is rendered in the EdgeLabelRenderer portal, which paints above
+  // the edge SVG, so the badge has to clear the chip's *real* height. The chip
+  // is 0.82rem at line-height 1.35 plus 5px padding and a 1px border, wraps at
+  // 220px, and clamps at three lines — a constant offset hid the badge behind
+  // a two-line label, which is the normal case for a Japanese label.
+  const chipLines = editLabel
+    ? Math.min(3, Math.max(1, Math.ceil(measureLabelWidthPx(editLabel) / 210)))
+    : 0;
+  const chipHeight = chipLines > 0 ? chipLines * 17.7 + 12 : 0;
+  const badgeY = labelY + offsetY + (chipHeight > 0 ? chipHeight / 2 + 13 : 0);
 
   return (
     <>

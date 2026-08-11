@@ -18,6 +18,7 @@
  */
 
 import type { Edge, Node } from 'reactflow';
+import { readStepNumber as readStepValue } from '../utils/workflowStepMapping';
 import {
   getConnectionPresentation,
   normalizeConnectionType,
@@ -378,6 +379,38 @@ export function usedConnectionLegend(edges: Edge[]): ConnectionLegendEntry[] {
     edges.map((edge) => normalizeConnectionType((edge.data as { connectionType?: unknown } | undefined)?.connectionType)),
   );
   return CONNECTION_LEGEND.filter((entry) => used.has(entry.type));
+}
+
+/** One numbered row of the Azure Architecture Center style workflow list. */
+export interface WorkflowListEntry {
+  step: number;
+  description: string;
+}
+
+/**
+ * Collect the numbered workflow narration carried by the edges.
+ *
+ * Every Azure Architecture Center diagram pairs its numbered callouts with a
+ * numbered prose list; a badge with no matching sentence tells the reader
+ * nothing. Exporters call this so the list is built from the same edge data
+ * that produced the badges and can never drift from them.
+ *
+ * Duplicate step numbers keep the first description, and the result is sorted
+ * so the list reads in flow order regardless of edge ordering.
+ */
+export function workflowListFromEdges(edges: Edge[]): WorkflowListEntry[] {
+  const byStep = new Map<number, string>();
+  for (const edge of edges) {
+    const data = edge.data as { stepNumber?: unknown; stepDescription?: unknown } | undefined;
+    const step = readStepValue(data?.stepNumber);
+    if (step === undefined) continue;
+    const description = typeof data?.stepDescription === 'string' ? data.stepDescription.trim() : '';
+    if (!description || byStep.has(step)) continue;
+    byStep.set(step, description);
+  }
+  return [...byStep.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([step, description]) => ({ step, description }));
 }
 
 // ─── Truncation / wrapping policy (single, wide-character aware) ──────────────
@@ -919,13 +952,12 @@ function pairKey(a: string, b: string): string {
  * Draw.io and HTML stay in agreement with the PNG legend.
  */
 /**
- * Workflow step declared on an edge, if any. Only positive integers count: a
- * `0` or a fractional value would render as a meaningless callout.
+ * Workflow step declared on an edge, if any. Delegates to the single shared
+ * predicate so the geometry, the mapper, the canvas and the deck's numbered
+ * list can never disagree about which steps are usable.
  */
 function readStepNumber(edge: Edge): number | undefined {
-  const raw = (edge.data as { stepNumber?: unknown } | undefined)?.stepNumber;
-  const value = typeof raw === 'string' ? Number(raw) : raw;
-  return typeof value === 'number' && Number.isInteger(value) && value > 0 ? value : undefined;
+  return readStepValue((edge.data as { stepNumber?: unknown } | undefined)?.stepNumber);
 }
 
 export function buildExportRoutes(

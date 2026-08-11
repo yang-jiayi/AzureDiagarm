@@ -119,7 +119,7 @@ function wideScenario(): Scenario {
       target: `svc-${i + 1}`,
       // Half the flow is numbered, so the audit sees both the badge path and
       // the unnumbered path in the same drawing.
-      ...(i < 6 ? { data: { stepNumber: i + 1 } } : {}),
+      ...(i < 6 ? { data: { stepNumber: i + 1, stepDescription: `ステップ ${i + 1}: サービス間の呼び出しを実行します` } } : {}),
       label: i % 3 === 0 ? 'HTTPS 経由でトークン検証を実施' : i % 3 === 1 ? 'Private Link' : 'Managed identity authentication',
     } as Edge);
   }
@@ -153,7 +153,14 @@ function outlierScenario(): Scenario {
     nodes.push(svc(`c-${i}`, i % 2 ? 'Azure Functions' : 'Azure SQL Database', (i % 4) * 220, Math.floor(i / 4) * 180));
   }
   nodes.push(svc('outlier', 'Copilot Studio', 9000, 4000));
-  return { id: 'outlier', nodes, edges: [] };
+  // Numbered, labelled edges on the clamped path: this is the only
+  // configuration where the badge can be clamped back onto its own label chip,
+  // so without these edges that rule was never actually evaluated.
+  const edges: Edge[] = [
+    { id: 'e-out', source: 'c-0', target: 'outlier', label: 'HTTPS 経由でトークン検証を実施', data: { stepNumber: 1, stepDescription: '外れ値のサービスへ接続します' } } as Edge,
+    { id: 'e-in', source: 'c-1', target: 'c-2', label: 'Managed identity authentication', data: { stepNumber: 2, stepDescription: 'マネージド ID で認証します' } } as Edge,
+  ];
+  return { id: 'outlier', nodes, edges };
 }
 
 interface Report { scenario: string; format: string; issues: string[]; metrics: Record<string, number> }
@@ -227,12 +234,19 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
   if (badges.length !== numberedEdges.length) {
     issues.push(`${badges.length} step badges drawn for ${numberedEdges.length} numbered connectors`);
   }
-  const expectedNumbers = new Set(
-    numberedEdges.map((e) => String((e.data as { stepNumber: number }).stepNumber)),
+  // Membership alone is permutation-blind: swapping every badge onto the wrong
+  // arrow would pass. The object name carries the route id, so check the exact
+  // arrow-to-number correspondence instead.
+  const expectedByRoute = new Map(
+    numberedEdges.map((e) => [e.id, String((e.data as { stepNumber: number }).stepNumber)]),
   );
   for (const badge of badges) {
-    if (!expectedNumbers.has(badge.text)) {
-      issues.push(`step badge shows "${badge.text}", which is not a workflow step number`);
+    const routeId = badge.name.replace(/^connector-step-/, '');
+    const want = expectedByRoute.get(routeId);
+    if (want === undefined) {
+      issues.push(`step badge "${badge.name}" does not belong to any numbered connector`);
+    } else if (badge.text !== want) {
+      issues.push(`connector ${routeId} is numbered "${badge.text}" but its workflow step is ${want}`);
     }
     for (const tile of tiles) {
       if (overlapArea(badge, tile) > 0.02 * tile.w * tile.h) {
@@ -260,6 +274,23 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
   // drawing — an oversized architecture must be split across slides instead.
   if (Number.isFinite(minFont) && minFont < 7) {
     issues.push(`smallest label font is ${minFont}pt (below the 7pt legibility floor)`);
+  }
+
+  // Learn pairs every numbered callout with the sentence it points at. A badge
+  // without its row is an unexplained digit.
+  const narrated = new Set(
+    scenario.edges
+      .map((e) => e.data as { stepNumber?: number; stepDescription?: string } | undefined)
+      .filter((d) => Number.isInteger(d?.stepNumber) && !!d?.stepDescription)
+      .map((d) => d!.stepNumber!),
+  );
+  for (const step of narrated) {
+    if (!shapes.some((s) => s.name === `workflow-text-${step}`)) {
+      issues.push(`workflow step ${step} is numbered on the drawing but missing from the workflow list`);
+    }
+  }
+  for (const row of shapes.filter((s) => s.name.startsWith('workflow-text-'))) {
+    if (!row.text.trim()) issues.push(`workflow row "${row.name}" is blank`);
   }
 
   return {

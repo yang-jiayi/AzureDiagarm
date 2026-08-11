@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import JSZip from 'jszip';
 import type { Edge, Node } from 'reactflow';
 import { buildDiagramSlidePptx } from '../src/services/pptxExporter.ts';
+import { buildVsdxPackage } from '../src/services/visioVsdxExporter.ts';
 
 /**
  * An architecture that is too wide for one readable PowerPoint page used to be
@@ -141,4 +142,47 @@ test('a split deck keeps every shape inside the page', async () => {
       );
     }
   }
+});
+
+test('the numbered badges are paired with a numbered workflow list', async () => {
+  const nodes = [service('a', 'API Management', 0, 0), service('b', 'Azure Functions', 320, 0), service('c', 'Azure SQL Database', 640, 0)];
+  const edges = [
+    { id: 'e1', source: 'a', target: 'b', data: { stepNumber: 1, stepDescription: 'API Management がリクエストを受け取ります' } },
+    { id: 'e2', source: 'b', target: 'c', data: { stepNumber: 2, stepDescription: 'Functions が SQL Database に書き込みます' } },
+  ] as Edge[];
+  const deck = await buildDeck(nodes, edges);
+  const all = deck.slides.join('');
+  for (const step of [1, 2]) {
+    assert.ok(all.includes(`name="workflow-step-${step}"`), `step ${step} is missing its numbered badge in the list`);
+    assert.ok(all.includes(`name="workflow-text-${step}"`), `step ${step} is missing its narration row`);
+  }
+  assert.ok(all.includes('API Management がリクエストを受け取ります'), 'the step prose must be carried into the deck');
+});
+
+test('an unnumbered diagram gets no workflow list', async () => {
+  const nodes = [service('a', 'API Management', 0, 0), service('b', 'Azure Functions', 320, 0)];
+  const deck = await buildDeck(nodes, [{ id: 'e', source: 'a', target: 'b', label: 'Invoke' } as Edge]);
+  assert.equal(deck.slides.length, 1, 'no workflow means no extra slide');
+  assert.ok(!deck.slides[0].includes('workflow-text-'), 'no workflow rows without workflow data');
+});
+
+test('the Visio sheet carries the same numbered workflow narration', async () => {
+  const nodes = [service('a', 'API Management', 0, 0), service('b', 'Azure Functions', 320, 0)];
+  const edges = [
+    { id: 'e1', source: 'a', target: 'b', data: { stepNumber: 1, stepDescription: 'Front Door がトラフィックを転送します' } },
+  ] as Edge[];
+  const pkg = await buildVsdxPackage(nodes, edges, 'Contoso Platform');
+  const page = pkg.parts.find((p) => /page1\.xml$/i.test(p.path));
+  assert.ok(page, 'the package must contain page1.xml');
+  const xml = String(page.data);
+  assert.ok(/NameU="Workflow\.\d+"/.test(xml), 'the workflow panel shape is missing');
+  assert.ok(xml.includes('Front Door がトラフィックを転送します'), 'the step prose must reach the Visio sheet');
+  assert.ok(xml.includes('&gt;Workflow&lt;') || xml.includes('>Workflow<'), 'the panel must be titled');
+});
+
+test('a Visio sheet without a workflow gets no panel', async () => {
+  const nodes = [service('a', 'API Management', 0, 0), service('b', 'Azure Functions', 320, 0)];
+  const pkg = await buildVsdxPackage(nodes, [{ id: 'e', source: 'a', target: 'b' } as Edge], 'Contoso');
+  const xml = String(pkg.parts.find((p) => /page1\.xml$/i.test(p.path))!.data);
+  assert.ok(!/NameU="Workflow\.\d+"/.test(xml), 'no workflow data must mean no panel');
 });

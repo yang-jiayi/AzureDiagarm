@@ -79,3 +79,40 @@ test('out-of-order workflow entries animate in step order, not array order', () 
 test('an empty workflow leaves the SVG untouched', () => {
   assert.equal(sequenceWorkflowSvg(SVG, { nodes: NODES, edges: EDGES, workflow: [] }), SVG);
 });
+
+test('duplicate step numbers never collapse two edges into one animation slot', async () => {
+  const { sequenceWorkflowSvg } = await import('../src/utils/sequenceWorkflow.ts');
+  const nodes = [
+    { id: 'a', position: { x: 0, y: 0 }, width: 100, height: 60 },
+    { id: 'b', position: { x: 300, y: 0 }, width: 100, height: 60 },
+    { id: 'c', position: { x: 600, y: 0 }, width: 100, height: 60 },
+    { id: 'd', position: { x: 900, y: 0 }, width: 100, height: 60 },
+  ];
+  const edges = [
+    { id: 'e1', source: 'a', target: 'b' },
+    { id: 'e2', source: 'b', target: 'c' },
+    { id: 'e3', source: 'c', target: 'd' },
+  ];
+  const svg =
+    '<svg width="1200" height="400">' +
+    edges.map(() => '<path class="react-flow__edge-path" d="M0,0 L10,10"/>').join('') +
+    '</svg>';
+  const out = sequenceWorkflowSvg(svg, {
+    nodes,
+    edges,
+    workflow: [
+      { step: 1, description: 'first', services: ['a', 'b'] },
+      { step: 1, description: 'second', services: ['b', 'c'] },
+      { step: 2, description: 'third', services: ['c', 'd'] },
+    ],
+  });
+  // One emphasize animation per numbered edge; each must own its own window or
+  // two hops light up together and a third of the loop shows nothing.
+  const starts = [...out.matchAll(/attributeName="stroke"[^>]*keyTimes="0;([\d.]+);/g)].map((m) => m[1]);
+  assert.equal(starts.length, 3, `expected three numbered edges, got ${starts.length}`);
+  assert.equal(
+    new Set(starts).size,
+    3,
+    `each hop needs its own animation window, got ${starts.join(', ')}`,
+  );
+});

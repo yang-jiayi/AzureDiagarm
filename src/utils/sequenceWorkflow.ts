@@ -22,7 +22,7 @@
  * (e.g. a node was moved).
  */
 
-import { mapWorkflowStepsToEdges } from './workflowStepMapping';
+import { assignWorkflowSteps, orderedWorkflowSteps } from './workflowStepMapping';
 
 export interface SequenceWorkflowOptions {
   nodes: any[];
@@ -38,7 +38,9 @@ const EDGE_RE = /(<path\b[^>]*?react-flow__edge-path[^>]*?)(\/>|>\s*<\/path>|>)/
 export function sequenceWorkflowSvg(svgText: string, options: SequenceWorkflowOptions): string {
   const { nodes, edges } = options;
   const STEP_DUR = options.stepDurSec ?? 3;
-  const workflow = (options.workflow || []).slice().sort((a, b) => a.step - b.step);
+  // Exactly the list the mapper numbers against, so caption index k and the
+  // edge's timeline slot are the same thing by construction.
+  const workflow = orderedWorkflowSteps(options.workflow || []);
   if (!workflow.length) return svgText;
   const TOTAL = workflow.length * STEP_DUR;
 
@@ -155,20 +157,17 @@ export function sequenceWorkflowSvg(svgText: string, options: SequenceWorkflowOp
   // ── map workflow steps → edges ──────────────────────────────────────────────
   // Shared with the canvas and every export so a step never gets one number in
   // the animation and a different one in the PowerPoint. The timeline is driven
-  // by a step's *position* in the sorted list, not its declared number, because
-  // TOTAL is workflow.length * STEP_DUR — a gap in the numbering (1, 2, 5) would
-  // otherwise schedule an edge past the end of the loop and it would never play.
-  const stepByEdgeId = mapWorkflowStepsToEdges(jsonEdges, workflow);
-  const positionByStep = new Map<number, number>();
-  workflow.forEach((s, k) => {
-    if (!positionByStep.has(s.step)) positionByStep.set(s.step, k + 1);
-  });
+  // by the *slot* the mapper hands back — a dense 1-based index over the steps
+  // that actually claimed an edge — never by the declared number. TOTAL is
+  // `count * STEP_DUR`, so a gap (1, 2, 5) would schedule past the end of the
+  // loop and a duplicate (1, 1, 2) would collapse two edges into one window,
+  // leaving a third of the animation with nothing flowing.
+  const assignments = assignWorkflowSteps(jsonEdges, workflow);
   const pathStep = new Map<number, number>(); // pathIdx -> 1-based timeline slot
   for (const je of jsonEdges) {
-    const step = stepByEdgeId.get(je.id);
-    if (step === undefined || je.pathIdx < 0) continue;
-    const slot = positionByStep.get(step);
-    if (slot !== undefined) pathStep.set(je.pathIdx, slot);
+    const assignment = assignments.get(je.id);
+    if (!assignment || je.pathIdx < 0) continue;
+    pathStep.set(je.pathIdx, assignment.slot);
   }
 
   // ── inject sequenced flow + node highlights ──────────────────────────────────
