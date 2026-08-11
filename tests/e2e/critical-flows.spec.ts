@@ -6536,7 +6536,10 @@ test('nodes can be connected using only the keyboard', async ({ page }) => {
 });
 
 test('keyboard connections reject groups, duplicates and stale sources', async ({ page }) => {
-  await openInteractionDiagram(page);
+  let latestSavedPayload: Record<string, unknown> | null = null;
+  await openInteractionDiagram(page, payload => {
+    latestSavedPayload = payload;
+  });
 
   const edges = page.locator('.react-flow__edge');
   await expect(edges).toHaveCount(1);
@@ -6576,14 +6579,16 @@ test('keyboard connections reject groups, duplicates and stale sources', async (
   await page.keyboard.press('c');
   await expect(page.getByTestId('live-region-assertive')).toContainText('no longer on the canvas');
 
-  const danglingEdges = await page.evaluate(() => {
-    const ids = new Set(Array.from(document.querySelectorAll('.react-flow__node')).map(
-      (el) => (el as HTMLElement).dataset.id,
-    ));
-    return Array.from(document.querySelectorAll('.react-flow__edge')).filter((el) => {
-      const id = (el as HTMLElement).dataset.testid || '';
-      return id.includes('node-a') && !ids.has('node-a');
-    }).length;
-  });
-  expect(danglingEdges).toBe(0);
+  // A dangling edge never reaches the DOM — React Flow's renderer returns null
+  // when an endpoint is missing, which is exactly the ghost-edge mechanism this
+  // test exists to catch. It has to be asserted against persisted state.
+  await expect.poll(() => {
+    const payload = latestSavedPayload as {
+      nodes?: Array<{ id?: string }>;
+      edges?: Array<{ source?: string; target?: string }>;
+    } | null;
+    if (!payload?.edges || !payload?.nodes) return null;
+    const ids = new Set(payload.nodes.map(node => node.id));
+    return payload.edges.filter(edge => !ids.has(edge.source) || !ids.has(edge.target)).length;
+  }, { timeout: 15000 }).toBe(0);
 });
