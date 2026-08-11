@@ -238,7 +238,35 @@ function planDiagramWindows(
       });
     }
   }
-  return { windows, legible: true };
+  // An architecture is not a filled rectangle, so a cell of the grid can own no
+  // services at all — and one was being emitted as a numbered part carrying two
+  // zone outlines and three arrows whose endpoints are both on other slides.
+  // Dropping empties cannot lose anything: a service is only ever owned by the
+  // cell its centre falls in, and that cell is by definition not empty.
+  const owned = windows.filter((window) => services.some(
+    (box) => windowOwnsPoint(window, bounds, box.x + box.w / 2, box.y + box.h / 2),
+  ));
+  if (owned.length <= 1) return whole;
+  return { windows: owned, legible: true };
+}
+
+/**
+ * Does this window own the point, and therefore the shape centred on it?
+ *
+ * Windows meet exactly at a seam, so a point landing on one is inside both;
+ * half-open ranges hand it to the later window and nothing is drawn twice.
+ * Strays that the outlier trim pushed outside `bounds` sit in no window at all
+ * under a plain range test and would vanish from the deck entirely, so the
+ * outer windows claim everything beyond them.
+ */
+function windowOwnsPoint(window: Bounds, bounds: Bounds, x: number, y: number): boolean {
+  const axis = (v: number, lo: number, hi: number, isFirst: boolean, isLast: boolean): boolean => {
+    if (v < lo) return isFirst;
+    if (v > hi) return isLast;
+    return v < hi || isLast;
+  };
+  return axis(x, window.minX, window.maxX, window.minX <= bounds.minX + 0.5, window.maxX >= bounds.maxX - 0.5)
+    && axis(y, window.minY, window.maxY, window.minY <= bounds.minY + 0.5, window.maxY >= bounds.maxY - 0.5);
 }
 
 /**
@@ -497,22 +525,28 @@ function connectorLabelBox(
   const text = truncateLabel(route.label, 42);
 
   // Size the chip from the text it actually carries, capped so it can never
-  // dwarf the service tiles it sits between (a 150 px tile is 1.56" at 1 : 1)
-  // nor overrun the gap between the two tiles it connects — a long label on a
-  // short hop used to be drawn straight across both endpoints.
+  // dwarf the service tiles it sits between (a 150 px tile is 1.56" at 1 : 1).
+  // The gap between the two tiles is a *preference*, not a hard cap: squeezing
+  // a long label into a 190px hop turned the chip into a 0.34" ribbon several
+  // inches tall, and the parallel-edge stagger — which steps by the chip's own
+  // height — then flung the second and third ordinals off the top and bottom
+  // of the slide, taking their step numbers with them. A chip that is a little
+  // wider than the gap is fine; the obstacle walk below moves it clear.
   const first = toInches(route.points[0] ?? route.labelAnchor, transform);
   const last = toInches(route.points[route.points.length - 1] ?? route.labelAnchor, transform);
   const span = Math.max(Math.abs(last.x - first.x), Math.abs(last.y - first.y));
-  const maxW = Math.max(0.34 * px, Math.min(1.5 * px, span > 0 ? span - 0.08 : 1.5 * px));
+  const gap = span > 0 ? span - 0.08 : 1.5 * px;
+  const maxW = clamp(Math.max(gap, 0.9 * px), 0.34 * px, 1.5 * px);
   const naturalW = estimateTextWidthIn(text, fontSize) + 0.14;
   const w = clamp(naturalW <= maxW ? naturalW : maxW, Math.min(0.34 * px, maxW), maxW);
   const lines = Math.max(1, Math.ceil(estimateTextWidthIn(text, fontSize) / Math.max(w - 0.12, 0.05)));
   const h = Math.max(0.16 * px, (lines * fontSize * 1.3) / 72 + 0.06);
 
   // Slide the chip along the edge's normal, never across it, so it still reads
-  // as belonging to that arrow.
+  // as belonging to that arrow. The step is bounded by the tile pitch so a tall
+  // chip cannot walk itself off the page.
   const alongX = Math.abs(last.x - first.x) >= Math.abs(last.y - first.y);
-  const stepOut = alongX ? h + 0.04 : w / 2 + 0.06;
+  const stepOut = Math.min(alongX ? h + 0.04 : w / 2 + 0.06, 0.9 * px);
 
   // De-collide parallel-edge chips: stagger each ordinal clear of the previous
   // one, using the chip's own height so they never overlap.
@@ -559,13 +593,9 @@ function connectorLabelBox(
 function addConnectorLabel(
   slide: Slide,
   route: ExportRoute,
-  transform: FitTransform,
   fontSize: number,
-  px: number,
-  clampTo?: DiagramFrame,
-  obstacles: readonly { x: number; y: number; w: number; h: number }[] = [],
+  box: ReturnType<typeof connectorLabelBox>,
 ): void {
-  const box = connectorLabelBox(route, transform, fontSize, px, clampTo, obstacles);
   if (!box) return;
 
   slide.addText(box.text, {
@@ -596,23 +626,20 @@ function addConnectorLabel(
  * the reader guess which sentence describes which hop. Drawn as a real
  * PowerPoint oval so it stays editable rather than being baked into an image.
  */
-function addStepBadge(
-  slide: Slide,
+function stepBadgeBox(
   route: ExportRoute,
   transform: FitTransform,
-  fontSize: number,
   px: number,
-  clampTo?: DiagramFrame,
-  obstacles: readonly { x: number; y: number; w: number; h: number }[] = [],
-): void {
-  if (route.stepNumber === undefined) return;
+  clampTo: DiagramFrame | undefined,
+  chip: ReturnType<typeof connectorLabelBox>,
+): { x: number; y: number; d: number } | null {
+  if (route.stepNumber === undefined) return null;
   const anchor = toInches(route.labelAnchor, transform);
   const d = clamp(0.26 * px, 0.18, 0.42);
 
   // Sit fully clear of the label chip, measured from the chip's own box: a
   // wrapped CJK label is several lines tall, so a fixed offset used to leave
   // the badge sitting on top of the text.
-  const chip = connectorLabelBox(route, transform, fontSize, px, clampTo, obstacles);
   let x = anchor.x - d / 2;
   let y = chip ? chip.y + chip.h + 0.03 : anchor.y - d / 2;
   if (chip) x = chip.x + chip.w / 2 - d / 2;
@@ -629,6 +656,17 @@ function addStepBadge(
     x = clamp(x, clampTo.x, Math.max(clampTo.x, clampTo.x + clampTo.w - d));
     y = clamp(y, clampTo.y, Math.max(clampTo.y, bottom));
   }
+  return { x, y, d };
+}
+
+function addStepBadge(
+  slide: Slide,
+  route: ExportRoute,
+  fontSize: number,
+  box: { x: number; y: number; d: number } | null,
+): void {
+  if (!box) return;
+  const { x, y, d } = box;
 
   slide.addText(String(route.stepNumber), {
     x,
@@ -940,27 +978,22 @@ async function addEditableDiagram(
     : fitBounds;
   const transform = computeFitTransform(view, frame, { maxScale: 1 / PX_PER_IN });
   const clampTo = clamped || banded ? frame : undefined;
+  // A tile is drawn where the drawing says; a chip is drawn *around* its arrow
+  // and is therefore the one shape that can be pushed off the sheet by its own
+  // size. Parallel ordinals on a short hop used to land in the header strip and
+  // below the footer, and their step numbers vanished with them. Chips and
+  // badges are always held inside the frame, on every slide, banded or not.
+  const labelFrame = clampTo ?? frame;
   const px = transform.scale * PX_PER_IN;
   const routes = buildExportRoutes(diagram.edges ?? [], boxes);
   const first = { x: fitBounds.minX <= bounds.minX + 0.5, y: fitBounds.minY <= bounds.minY + 0.5 };
   const last = { x: fitBounds.maxX >= bounds.maxX - 0.5, y: fitBounds.maxY >= bounds.maxY - 0.5 };
 
   // A window owns whatever falls inside it, so a shape straddling a seam is
-  // drawn once instead of twice. Strays that the outlier trim pushed outside
-  // `bounds` sit in no window at all under a plain range test and vanish from
-  // the deck entirely, so the outer windows claim everything beyond them and
-  // `clampTo` pulls those back onto the page exactly as on an unbanded slide.
-  const ownsAxis = (v: number, lo: number, hi: number, isFirst: boolean, isLast: boolean): boolean => {
-    if (v < lo) return isFirst;
-    if (v > hi) return isLast;
-    // Windows meet exactly at a seam, so a point landing on one is inside both.
-    // Half-open ranges hand it to the later window and nothing is drawn twice.
-    return v < hi || isLast;
-  };
-  const owns = (x: number, y: number): boolean => !banded || (
-    ownsAxis(x, fitBounds.minX, fitBounds.maxX, first.x, last.x)
-    && ownsAxis(y, fitBounds.minY, fitBounds.maxY, first.y, last.y)
-  );
+  // drawn once instead of twice, and `clampTo` pulls strays back onto the page
+  // exactly as on an unbanded slide. The rule lives in `windowOwnsPoint` so the
+  // planner can drop empty cells using the very same test.
+  const owns = (x: number, y: number): boolean => !banded || windowOwnsPoint(fitBounds, bounds, x, y);
   const visibleBox = (box: ExportBox): boolean => owns(box.x + box.w / 2, box.y + box.h / 2);
   // A zone is routinely larger than a whole window, so centre-ownership would
   // print the boundary and its name on one slide and leave the services on the
@@ -1005,8 +1038,23 @@ async function addEditableDiagram(
   // Chips and numbers dodge the tiles that are actually on this slide, so a
   // label on a short hop is pushed clear instead of covering a service.
   const tileRects = shownServices.map((service) => placeBox(service, transform, clampTo));
-  for (const route of annotatedRoutes) addConnectorLabel(slide, route, transform, labelFontSize, px, clampTo, tileRects);
-  for (const route of annotatedRoutes) addStepBadge(slide, route, transform, labelFontSize, px, clampTo, tileRects);
+  // Place every chip before drawing any of them, adding each to the obstacle
+  // list as it is settled. Parallel edges between the same pair are staggered,
+  // but the tile-avoidance walk could drag two of them back onto the same spot
+  // because a chip could not see the chips already placed.
+  const chipObstacles: { x: number; y: number; w: number; h: number }[] = [...tileRects];
+  const chips = new Map<string, ReturnType<typeof connectorLabelBox>>();
+  const badges = new Map<string, ReturnType<typeof stepBadgeBox>>();
+  for (const route of annotatedRoutes) {
+    const box = connectorLabelBox(route, transform, labelFontSize, px, labelFrame, chipObstacles);
+    chips.set(route.id, box);
+    if (box) chipObstacles.push(box);
+    const badge = stepBadgeBox(route, transform, px, labelFrame, box);
+    badges.set(route.id, badge);
+    if (badge) chipObstacles.push({ x: badge.x, y: badge.y, w: badge.d, h: badge.d });
+  }
+  for (const route of annotatedRoutes) addConnectorLabel(slide, route, labelFontSize, chips.get(route.id) ?? null);
+  for (const route of annotatedRoutes) addStepBadge(slide, route, labelFontSize, badges.get(route.id) ?? null);
 
   // Colour key so the deck's connectors agree with the PNG legend.
   addConnectionLegend(pptx, slide, diagram.edges ?? [], frame);

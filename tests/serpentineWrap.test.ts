@@ -8,6 +8,7 @@ import {
   WRAP_TRIGGER_RATIO,
   type WrapBox,
 } from '../src/utils/serpentineWrap';
+import { straightenPrimaryPath } from '../src/utils/layoutPresets';
 
 function strip(count: number, pitch = 300, w = 180, h = 100): WrapBox[] {
   return Array.from({ length: count }, (_, i) => ({ id: `n${i}`, x: i * pitch, y: 0, width: w, height: h }));
@@ -306,5 +307,49 @@ test('a top-to-bottom serpentine keeps its columns apart', async () => {
       }
       assert.deepEqual(collisions, [], `flow-tb ${spacing} n=${n} stacked: ${collisions.join(' ')}`);
     }
+  }
+});
+
+test('a band holding a single rank keeps its own column instead of merging into a neighbour', () => {
+  // Two seams back to back: c3 and c4 each sit alone in their band, so the
+  // step between them advances nothing along the flow axis. That step used to
+  // be skipped outright, one of the two seams was lost, and the pair was
+  // straightened to a shared median a whole band pitch away — landing exactly
+  // on top of each other.
+  const w = 150;
+  const h = 75;
+  const laid = [
+    ['c0', 0, 0], ['c1', 0, 240], ['c2', 0, 480],
+    ['c3', 290, 240], ['c4', 580, 240],
+    ['c5', 870, 0], ['c6', 870, 240], ['c7', 870, 480],
+  ] as const;
+
+  for (const direction of ['TB', 'LR'] as const) {
+    const nodes = laid.map(([id, x, y]) => ({
+      id,
+      type: 'azureNode',
+      position: direction === 'TB' ? { x, y } : { x: y, y: x },
+      width: w,
+      height: h,
+      data: {},
+    })) as never[];
+    const edges = laid.slice(1).map(([id], i) => ({
+      id: `e${i}`,
+      source: laid[i][0],
+      target: id,
+    })) as never[];
+
+    const out = straightenPrimaryPath(nodes, edges, direction).nodes;
+    const overlaps: string[] = [];
+    for (let i = 0; i < out.length; i += 1) {
+      for (let j = i + 1; j < out.length; j += 1) {
+        const a = out[i].position;
+        const b = out[j].position;
+        if (Math.abs(a.x - b.x) < w && Math.abs(a.y - b.y) < h) {
+          overlaps.push(`${out[i].id}/${out[j].id}`);
+        }
+      }
+    }
+    assert.deepEqual(overlaps, [], `${direction} superimposed: ${overlaps.join(' ')}`);
   }
 });
