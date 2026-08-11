@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import JSZip from 'jszip';
 import type { Edge, Node } from 'reactflow';
 import { buildDiagramSlidePptx } from '../src/services/pptxExporter.ts';
+import { buildExportRoutes, collectExportBoxes } from '../src/services/diagramExportGeometry.ts';
 import { buildVsdxPackage } from '../src/services/visioVsdxExporter.ts';
 
 /**
@@ -879,5 +880,223 @@ test('a three-digit callout still fits inside its own bubble', () => Promise.res
       wide <= badge.w + 0.005 && tall <= badge.h + 0.005,
       `${badge.name} draws 3 digits at ${badge.pt}pt needing ${wide.toFixed(3)}x${tall.toFixed(3)}in inside a ${badge.w.toFixed(3)}in circle`,
     );
+  }
+}));
+
+test('a very large architecture is tiled onto standard slides, not a plotter page', () => Promise.resolve().then(async () => {
+  // PowerPoint gives a deck exactly one page size, so growing the page for the
+  // drawing drags the title and workflow slides onto the plotter sheet too.
+  // Tiling a 56in sheet into four 56in parts is not an escape from that: every
+  // part still inherits the page. Standard slides are the only usable answer
+  // short of a drawing that genuinely cannot be tiled at all.
+  const nodes: Node[] = [];
+  const edges: Edge[] = [];
+  for (let i = 0; i < 40; i += 1) {
+    nodes.push(service(`n-${i}`, i % 2 ? 'Azure Kubernetes Service' : 'Copilot Studio', i * 260, (i % 4) * 220));
+    if (i > 0) edges.push({ id: `x-${i}`, source: `n-${i - 1}`, target: `n-${i}`, label: 'managed identity' } as Edge);
+  }
+
+  const pptx = await buildDiagramSlidePptx(PIXEL_PNG, {
+    diagramName: 'Contoso Platform',
+    author: 'Tester',
+    date: '2026-08-10',
+    isDarkMode: false,
+    diagram: { nodes, edges },
+  });
+  const presLayout = (pptx as unknown as { presLayout: { width: number; height: number } }).presLayout;
+  const pageW = presLayout.width / 914400;
+  const pageH = presLayout.height / 914400;
+  assert.ok(
+    Math.abs(pageW - 13.333) < 0.05 && Math.abs(pageH - 7.5) < 0.05,
+    `the deck is a ${pageW.toFixed(2)}x${pageH.toFixed(2)}in page instead of standard 13.33x7.5in slides`,
+  );
+
+  const deck = await buildDeck(nodes, edges);
+  const fonts = deck.parts
+    .flatMap((slide) => [...slide.matchAll(/name="service-label-[^"]*"[\s\S]{0,600}?sz="(\d+)"/g)])
+    .map((m) => Number(m[1]) / 100);
+  assert.ok(fonts.length > 0, 'expected service labels in the deck');
+  const smallest = Math.min(...fonts);
+  assert.ok(smallest >= 7, `tiling dropped service labels to ${smallest.toFixed(2)}pt`);
+}));
+
+/** Every shape on a slide that is a drawn connector rather than an annotation. */
+function arrowBoxes(slideXml: string): { name: string; x: number; y: number; w: number; h: number }[] {
+  return shapeBoxes(slideXml, 'connector-').filter((box) => !/^connector-(label|step)-/.test(box.name));
+}
+
+/** Distance from a point to the nearest edge of a box, zero when inside it. */
+function gap(box: { x: number; y: number; w: number; h: number }, at: { x: number; y: number }): number {
+  return Math.hypot(
+    at.x - Math.max(box.x, Math.min(at.x, box.x + box.w)),
+    at.y - Math.max(box.y, Math.min(at.y, box.y + box.h)),
+  );
+}
+
+/** A grid of services wired left to right, one long CJK label per hop. */
+function wiredGrid(cols: number, rows: number): { nodes: Node[]; edges: Edge[] } {
+  const nodes: Node[] = [];
+  for (let row = 0; row < rows; row += 1) {
+    for (let col = 0; col < cols; col += 1) {
+      nodes.push(service(`g${row}-${col}`, `Azure Service ${row}${col}`, 120 + col * 290, 120 + row * 180));
+    }
+  }
+  const edges: Edge[] = [];
+  let step = 1;
+  for (let row = 0; row < rows; row += 1) {
+    for (let col = 0; col + 1 < cols; col += 1) {
+      edges.push({
+        id: `h${row}_${col}`, source: `g${row}-${col}`, target: `g${row}-${col + 1}`,
+        label: FAN_LABEL, data: { stepNumber: step },
+      } as Edge);
+      step += 1;
+    }
+  }
+  return { nodes, edges };
+}
+
+test('the ladder stacks its rungs in the same order the arrows fan out', () => Promise.resolve().then(async () => {
+  // Parallel arrows are fanned alternately about the centre line - 0, +1, -1,
+  // +2 - while a ladder runs straight down. Ranking the rungs by edge ordinal
+  // therefore parks callout 1 beside the middle arrow and callout 3 beside the
+  // top one: every chip is legible, every chip is on the wrong hop.
+  for (const count of [3, 5, 7]) {
+    const nodes = [service('a', 'Azure Front Door', 100, 400), service('b', 'Azure Kubernetes Service', 900, 400)];
+    const edges = Array.from({ length: count }, (_, i) => ({
+      id: `p${i + 1}`, source: 'a', target: 'b', label: `${FAN_LABEL} ${i + 1}`, data: { stepNumber: i + 1 },
+    })) as Edge[];
+    const fanned = new Map(buildExportRoutes(edges, collectExportBoxes(nodes)).map((r) => [r.id, r.fanOffset]));
+    const deck = await buildDeck(nodes, edges);
+    const chips = deck.slides
+      .flatMap(annotationBoxes)
+      .filter((box) => box.name.startsWith('connector-label-'))
+      .map((box) => ({ ...box, id: box.name.replace('connector-label-', '') }));
+    assert.equal(chips.length, count, `fan of ${count} lost a label`);
+    chips.sort((l, r) => (fanned.get(l.id) ?? 0) - (fanned.get(r.id) ?? 0));
+    const order = chips.map((chip) => chip.id).join(',');
+    for (let i = 1; i < chips.length; i += 1) {
+      assert.ok(
+        chips[i].y >= chips[i - 1].y - 0.001,
+        `rung order does not follow the arrows: ${chips[i - 1].id} sits below ${chips[i].id} (top to bottom by arrow: ${order})`,
+      );
+    }
+  }
+}));
+
+test('repairing an overlap never carries a chip onto a different arrow', () => Promise.resolve().then(async () => {
+  // The repair pass walks a chip until it stops overlapping. Unbounded, on a
+  // dense grid the nearest clear spot is a row away, and the label ends up
+  // perfectly legible beside somebody else's hop - worse than the overlap it
+  // escaped, because the reader cannot tell it is on the wrong arrow.
+  const nodes: Node[] = [];
+  const edges: Edge[] = [];
+  let step = 1;
+  for (let row = 0; row < 6; row += 1) {
+    for (let col = 0; col < 6; col += 1) nodes.push(service(`n${row}-${col}`, `Azure Service ${row}${col}`, col * 200, row * 140));
+  }
+  for (let row = 0; row < 6; row += 1) {
+    for (let col = 0; col + 1 < 6; col += 1) {
+      edges.push({
+        id: `x${row}_${col}`, source: `n${row}-${col}`, target: `n${row}-${col + 1}`,
+        label: `${FAN_LABEL} ${step}`, data: { stepNumber: step },
+      } as Edge);
+      step += 1;
+    }
+  }
+  for (let col = 0; col < 6; col += 2) {
+    for (let row = 0; row + 1 < 6; row += 1) {
+      edges.push({
+        id: `y${col}_${row}`, source: `n${row}-${col}`, target: `n${row + 1}-${col}`,
+        label: `${FAN_LABEL} ${step}`, data: { stepNumber: step },
+      } as Edge);
+      step += 1;
+    }
+  }
+  const deck = await buildDeck(nodes, edges);
+  let checked = 0;
+  let strayed = 0;
+  let worst = { name: '', d: 0 };
+  const strays: string[] = [];
+  for (const slide of deck.slides) {
+    const arrows = arrowBoxes(slide);
+    if (arrows.length === 0) continue;
+    for (const chip of shapeBoxes(slide, 'connector-label-')) {
+      const own = arrows.find((arrow) => arrow.name === `connector-${chip.name.replace('connector-label-', '')}`);
+      if (!own) continue;
+      checked += 1;
+      const at = { x: chip.x + chip.w / 2, y: chip.y + chip.h / 2 };
+      const mine = gap(own, at);
+      if (mine > worst.d) worst = { name: chip.name, d: mine };
+      const nearest = arrows.reduce((best, arrow) => (gap(arrow, at) < gap(best, at) ? arrow : best), arrows[0]);
+      if (nearest.name !== own.name && gap(nearest, at) < mine - 0.05) {
+        strayed += 1;
+        strays.push(`${chip.name} is ${gap(nearest, at).toFixed(2)}in from ${nearest.name} but ${mine.toFixed(2)}in from its own arrow`);
+      }
+    }
+  }
+  assert.ok(checked > 30, `only ${checked} chips were checked, the fixture did not build`);
+  // Arrows genuinely cross on a grid this tight, so the nearest-arrow reading
+  // is not exact - but a handful is a crossing and half the deck is a bug.
+  assert.ok(
+    strayed <= checked * 0.05,
+    `${strayed} of ${checked} chips sit closer to a foreign arrow: ${strays.slice(0, 3).join('; ')}`,
+  );
+  assert.ok(worst.d <= 1.5, `${worst.name} was carried ${worst.d.toFixed(2)}in away from the hop it describes`);
+}));
+
+test('two ladders on one slide each find their own lane', () => Promise.resolve().then(async () => {
+  // One bundle dodges the tiles and the other dodges the tiles, and both pick
+  // the same clear band: a bundle has to be re-scored against the annotations
+  // already placed, not only against the drawing.
+  for (const [first, second] of [[4, 4], [3, 10]]) {
+    const { nodes, edges } = wiredGrid(4, 5);
+    for (let i = 0; i < first; i += 1) {
+      edges.push({
+        id: `f${i}`, source: 'g1-0', target: 'g1-1', label: `${FAN_LABEL} ${i + 1}`, data: { stepNumber: 100 + i },
+      } as Edge);
+    }
+    for (let i = 0; i < second; i += 1) {
+      edges.push({
+        id: `k${i}`, source: 'g2-0', target: 'g2-1', label: `${FAN_LABEL} ${i + 1}`, data: { stepNumber: 200 + i },
+      } as Edge);
+    }
+    const deck = await buildDeck(nodes, edges);
+    const clashes = annotationClashes(deck.slides);
+    assert.deepEqual(clashes, [], `fans of ${first} and ${second} collide: ${clashes.slice(0, 4).join(' ')}`);
+  }
+}));
+
+test('a fan on a vertical arrow is spaced by the width of its chips', () => Promise.resolve().then(async () => {
+  // A vertical hop stacks its chips side by side, so the rung is a width. Using
+  // the height there - the horizontal case - spaces a column of 2in labels
+  // 0.3in apart and every one of them lands on its neighbour.
+  for (const count of [3, 5, 7]) {
+    const nodes = [service('a', 'Azure Front Door', 700, 120), service('b', 'Azure Kubernetes Service', 700, 420)];
+    const edges = Array.from({ length: count }, (_, i) => ({
+      id: `v${i + 1}`,
+      source: 'a',
+      target: 'b',
+      label: `カスタム ドメインの TLS 終端とヘッダー書き換えを行います ${i + 1}`,
+      data: { stepNumber: i + 1 },
+    })) as Edge[];
+    const deck = await buildDeck(nodes, edges);
+    const clashes = annotationClashes(deck.slides);
+    assert.deepEqual(clashes, [], `a vertical fan of ${count} stacks annotations: ${clashes.slice(0, 4).join(' ')}`);
+    const chips = deck.slides
+      .flatMap(annotationBoxes)
+      .filter((box) => box.name.startsWith('connector-label-'))
+      .sort((l, r) => l.x - r.x);
+    assert.equal(chips.length, count, `a vertical fan of ${count} lost labels: only ${chips.length} survived`);
+    for (let i = 1; i < chips.length; i += 1) {
+      const pitch = chips[i].x - chips[i - 1].x;
+      assert.ok(
+        pitch >= chips[i - 1].w * 0.95,
+        `vertical rungs are ${pitch.toFixed(2)}in apart for ${chips[i - 1].w.toFixed(2)}in chips, so the ladder is a pile`,
+      );
+      assert.ok(
+        Math.abs(chips[i].y - chips[0].y) <= chips[i].h,
+        `${chips[i].name} sits ${Math.abs(chips[i].y - chips[0].y).toFixed(2)}in off the row its siblings are on`,
+      );
+    }
   }
 }));

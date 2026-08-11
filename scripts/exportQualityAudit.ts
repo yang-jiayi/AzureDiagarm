@@ -175,6 +175,60 @@ function ladderInGridScenario(): Scenario {
   return { id: 'ladder-in-grid', nodes, edges };
 }
 
+/**
+ * Two deep fans on neighbouring rows of the same grid. Each ladder is larger
+ * than the corridor it belongs to, so both have to step off it - and the clear
+ * band one of them finds is the band the other one wanted. A bundle scored
+ * only against the drawing parks itself straight on top of its neighbour.
+ */
+function twinLaddersScenario(): Scenario {
+  const nodes: Node[] = [];
+  for (let row = 0; row < 4; row += 1) {
+    for (let col = 0; col < 5; col += 1) nodes.push(svc(`t${row}-${col}`, `Service ${row}${col}`, col * 290, row * 180));
+  }
+  const edges: Edge[] = [];
+  for (let i = 1; i < nodes.length; i += 1) {
+    edges.push({
+      id: `w${i}`, source: nodes[i - 1].id, target: nodes[i].id, label: `ホップ ${i}`, data: { stepNumber: i },
+    } as Edge);
+  }
+  for (let i = 0; i < 4; i += 1) {
+    edges.push({
+      id: `u${i}`, source: 't1-0', target: 't1-1', label: `マネージド ID で参照系を照会します ${i + 1}`, data: { stepNumber: nodes.length + i },
+    } as Edge);
+  }
+  for (let i = 0; i < 10; i += 1) {
+    edges.push({
+      id: `d${i}`, source: 't2-0', target: 't2-1', label: `イベントを Service Bus に発行します ${i + 1}`, data: { stepNumber: nodes.length + 20 + i },
+    } as Edge);
+  }
+  return { id: 'twin-ladders', nodes, edges };
+}
+/**
+ * One product group containing a dense field of services. A zone is a single
+ * box, so the tiler used to see one shape it could not split and grew the page
+ * into a plotter sheet the whole deck then inherited.
+ */
+function denseZoneScenario(): Scenario {
+  const nodes: Node[] = [grp('zone', 'Production landing zone', 0, 0, 2400, 1200)];
+  const edges: Edge[] = [];
+  for (let i = 0; i < 28; i += 1) {
+    nodes.push(svc(
+      `d-${i}`,
+      i % 2 ? 'Azure Kubernetes Service' : 'Azure Container Registry',
+      60 + (i % 7) * 320,
+      90 + Math.floor(i / 7) * 260,
+      'zone',
+    ));
+    if (i > 0) {
+      edges.push({
+        id: `dz-${i}`, source: `d-${i - 1}`, target: `d-${i}`, label: 'private endpoint', data: { stepNumber: i },
+      } as Edge);
+    }
+  }
+  return { id: 'dense-zone', nodes, edges };
+}
+
 /** Mirrors a real AI-generated enterprise diagram: wide, grouped, long labels. */
 function wideScenario(): Scenario {
   const nodes: Node[] = [];
@@ -549,9 +603,15 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
   const diagramSlides = perSlide.filter((slideShapes) =>
     slideShapes.some((s) => s.name.startsWith('service-') && !s.name.includes('label') && !s.name.includes('meta')),
   ).length;
-  if (!standardPage && diagramSlides <= 1) {
+  if (!standardPage) {
+    // Tiling is the escape hatch, but tiling a plotter sheet into more plotter
+    // sheets is not: every part still inherits the page size, so the deck is
+    // still one nobody can open. A grown page is only defensible when the
+    // drawing genuinely cannot be tiled onto ordinary slides at all.
     issues.push(
-      `the deck is a single ${pageW.toFixed(2)}x${pageH.toFixed(2)}in page instead of standard 13.33x7.5in slides`,
+      diagramSlides <= 1
+        ? `the deck is a single ${pageW.toFixed(2)}x${pageH.toFixed(2)}in page instead of standard 13.33x7.5in slides`
+        : `the deck is ${diagramSlides} parts of a ${pageW.toFixed(2)}x${pageH.toFixed(2)}in page instead of standard 13.33x7.5in slides`,
     );
   }
 
@@ -784,7 +844,7 @@ async function main(): Promise<void> {
   const scenarios = [
     compactScenario(), wideScenario(), oversizeScenario(), outlierScenario(),
     bandedScenario(), narrativeScenario(), barbellScenario(), parallelScenario(),
-    ladderInGridScenario(),
+    ladderInGridScenario(), twinLaddersScenario(), denseZoneScenario(),
     await generatedScenario(), await groupedGeneratedScenario(),
   ];
   const reports: Report[] = [];
@@ -802,6 +862,7 @@ async function main(): Promise<void> {
   writeFileSync(path.join(OUT, 'report.json'), JSON.stringify(reports, null, 2));
   const total = reports.reduce((sum, r) => sum + r.issues.length, 0);
   console.log(`\nTOTAL ISSUES: ${total}`);
+  if (total > 0) process.exitCode = 1;
 }
 
 main().catch((error) => {
