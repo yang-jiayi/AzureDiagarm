@@ -1175,24 +1175,51 @@ export const FALLBACK_PRICING: Record<string, {
  * Get Azure API service name for a given service type
  */
 export function getAzureServiceName(serviceType: string): string {
-  return SERVICE_NAME_MAPPING[serviceType] || serviceType;
+  return lookupByServiceKey(SERVICE_NAME_MAPPING, serviceType) || serviceType;
 }
 
 /**
  * Get default tier for a service
  */
 export function getDefaultTier(serviceType: string): string {
-  return DEFAULT_TIERS[serviceType] || 'Standard';
+  return lookupByServiceKey(DEFAULT_TIERS, serviceType) || 'Standard';
 }
 
 /**
- * Get fallback pricing for a service
+ * Resolve a service key against a lookup table that may be keyed by either the
+ * short historical name ("SQL Database") or the official display name
+ * ("Azure SQL Database"). Callers hand us whatever the canvas or the AI
+ * produced, so try the raw key first and then the prefix-folded variants.
  */
-export function getFallbackPricing(serviceType: string, tier: 'basic' | 'standard' | 'premium' = 'standard'): number {
-  const pricing = FALLBACK_PRICING[serviceType];
+function lookupByServiceKey<T>(table: Record<string, T>, serviceType: string): T | undefined {
+  if (table[serviceType] !== undefined) return table[serviceType];
+  const trimmed = serviceType.trim();
+  const withoutPrefix = trimmed.replace(/^(?:Microsoft|Azure)\s+/i, '');
+  const candidates = [trimmed, withoutPrefix, `Azure ${withoutPrefix}`, `Microsoft ${withoutPrefix}`];
+  for (const candidate of candidates) {
+    if (table[candidate] !== undefined) return table[candidate];
+  }
+  const wanted = withoutPrefix.toLowerCase();
+  for (const [key, value] of Object.entries(table)) {
+    if (key.replace(/^(?:Microsoft|Azure)\s+/i, '').toLowerCase() === wanted) return value;
+  }
+  return undefined;
+}
+
+/**
+ * Get fallback pricing for a service.
+ *
+ * Returns `null` — never 0 — when nothing is known, so the caller can render
+ * "unavailable" instead of a green "Free" badge for a service that is not free.
+ */
+export function getFallbackPricing(
+  serviceType: string,
+  tier: 'basic' | 'standard' | 'premium' = 'standard',
+): number | null {
+  const pricing = lookupByServiceKey(FALLBACK_PRICING, serviceType);
   if (!pricing) {
     console.warn(`No fallback pricing found for ${serviceType}`);
-    return 0;
+    return null;
   }
   return pricing[tier];
 }

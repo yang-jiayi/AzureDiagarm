@@ -158,6 +158,12 @@ export interface CostBreakdown {
   region: string;
   currency: string;
   lastCalculated: string;
+  /**
+   * Azure services on the canvas that carry no resolvable price, so the total
+   * above excludes them. Surfaced in the UI and the summary export so a
+   * partial estimate is never presented as a complete one.
+   */
+  unpricedServices?: { nodeId: string; serviceName: string }[];
   /** Date the underlying pricing data was last refreshed (YYYY-MM-DD). */
   pricesAsOf?: string;
   /** Billing term the costs reflect (e.g. "Pay-as-you-go", "Savings Plan (1-year)"). */

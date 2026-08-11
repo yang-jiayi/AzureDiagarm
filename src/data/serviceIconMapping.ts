@@ -18,7 +18,7 @@ export interface ServiceIconMapping {
   /** Icon filename (without path or extension) */
   iconFile: string;
   /** Category/folder in icon library */
-  category: 'ai + machine learning' | 'app services' | 'compute' | 'databases' | 'storage' | 'networking' | 'web' | 'analytics' | 'containers' | 'integration' | 'identity' | 'management + governance' | 'iot' | 'monitor' | 'security' | 'fabric' | 'power platform' | 'dynamics 365' | 'other';
+  category: 'ai + machine learning' | 'app services' | 'compute' | 'databases' | 'storage' | 'networking' | 'web' | 'analytics' | 'containers' | 'devops' | 'integration' | 'identity' | 'management + governance' | 'iot' | 'monitor' | 'security' | 'fabric' | 'power platform' | 'dynamics 365' | 'other';
   /** Whether we have real pricing data for this service */
   hasPricingData: boolean;
   /** Service name used in pricing files (if hasPricingData is true) */
@@ -1108,6 +1108,130 @@ export const SERVICE_ICON_MAP: Record<string, ServiceIconMapping> = {
     pricingServiceName: 'Azure API for FHIR',
     isUsageBased: true,
     costRange: 'Service and storage based'
+  },
+
+  // ========================================
+  // Widely-used services whose official icons already ship in the library.
+  // No regional pricing dataset exists for these yet, so they declare
+  // hasPricingData: false and carry a qualitative costRange.
+  // ========================================
+  'Azure Databricks': {
+    displayName: 'Azure Databricks',
+    aliases: ['Databricks', 'Databricks Workspace', 'Azure Databricks Workspace'],
+    iconFile: '10787-icon-service-Azure-Databricks',
+    category: 'analytics',
+    hasPricingData: false,
+    isUsageBased: true,
+    costRange: 'DBU and underlying VM based'
+  },
+  'Azure Virtual Desktop': {
+    displayName: 'Azure Virtual Desktop',
+    aliases: ['Virtual Desktop', 'AVD', 'Azure Virtual Desktop Host Pool', 'Windows Virtual Desktop'],
+    iconFile: '00327-icon-service-Azure-Virtual-Desktop',
+    category: 'other',
+    hasPricingData: false,
+    isUsageBased: true,
+    costRange: 'Session host VM and licensing based'
+  },
+  'Azure Arc': {
+    displayName: 'Azure Arc',
+    aliases: ['Arc', 'Arc-enabled servers', 'Azure Arc enabled servers', 'Arc-enabled Kubernetes'],
+    iconFile: '00756-icon-service-Azure-Arc',
+    category: 'management + governance',
+    hasPricingData: false,
+    isUsageBased: true,
+    costRange: 'Free for core inventory; per-resource for add-ons'
+  },
+  'Azure Virtual WAN': {
+    displayName: 'Azure Virtual WAN',
+    aliases: ['Virtual WAN', 'vWAN', 'Virtual WANs', 'Azure vWAN'],
+    iconFile: '10353-icon-service-Virtual-WANs',
+    category: 'networking',
+    hasPricingData: false,
+    isUsageBased: true,
+    costRange: 'Hub, scale unit and data transfer based'
+  },
+  'NAT Gateway': {
+    displayName: 'NAT Gateway',
+    aliases: ['Azure NAT Gateway', 'Virtual Network NAT', 'VNet NAT'],
+    iconFile: '10310-icon-service-NAT',
+    category: 'networking',
+    hasPricingData: false,
+    isUsageBased: true,
+    costRange: 'Hourly plus data processed'
+  },
+  'Azure Communication Services': {
+    displayName: 'Azure Communication Services',
+    aliases: ['Communication Services', 'ACS', 'Azure Communication Service'],
+    iconFile: '00968-icon-service-Azure-Communication-Services',
+    category: 'other',
+    hasPricingData: false,
+    isUsageBased: true,
+    costRange: 'Per message, minute and channel'
+  },
+  'Azure Managed Redis': {
+    displayName: 'Azure Managed Redis',
+    aliases: ['Managed Redis', 'AMR', 'Azure Managed Redis Cache'],
+    iconFile: '03675-icon-service-Azure-Managed-Redis',
+    category: 'databases',
+    hasPricingData: false,
+    isUsageBased: false,
+    costRange: 'Instance size and tier based'
+  },
+  'Azure Data Explorer': {
+    displayName: 'Azure Data Explorer',
+    aliases: ['Data Explorer', 'ADX', 'Kusto', 'Azure Data Explorer Cluster'],
+    iconFile: '10145-icon-service-Azure-Data-Explorer-Clusters',
+    category: 'analytics',
+    hasPricingData: false,
+    isUsageBased: false,
+    costRange: 'Cluster size and storage based'
+  },
+  'Azure NetApp Files': {
+    displayName: 'Azure NetApp Files',
+    aliases: ['NetApp Files', 'ANF', 'Azure NetApp'],
+    iconFile: '10096-icon-service-Azure-NetApp-Files',
+    category: 'storage',
+    hasPricingData: false,
+    isUsageBased: false,
+    costRange: 'Provisioned capacity and service level based'
+  },
+  'Azure Container Storage': {
+    displayName: 'Azure Container Storage',
+    aliases: ['Container Storage', 'ACStor'],
+    iconFile: '03401-icon-service-Azure-Container-Storage',
+    category: 'containers',
+    hasPricingData: false,
+    isUsageBased: true,
+    costRange: 'Backing storage and capacity based'
+  },
+  'Azure Load Testing': {
+    displayName: 'Azure Load Testing',
+    aliases: ['Load Testing', 'Azure Load Test'],
+    iconFile: '02423-icon-service-Load-Testing',
+    category: 'devops',
+    hasPricingData: false,
+    isUsageBased: true,
+    costRange: 'Virtual user hours based'
+  },
+  'Foundry Models': {
+    displayName: 'Foundry Models',
+    aliases: ['Azure AI Foundry Models', 'Model Catalog', 'Foundry Model Catalog'],
+    iconFile: '038470614-icon-service-Foundry-Models',
+    category: 'ai + machine learning',
+    hasPricingData: true,
+    pricingServiceName: 'Azure OpenAI',
+    isUsageBased: true,
+    costRange: 'Token and deployment based'
+  },
+  'Foundry Agent Service': {
+    displayName: 'Foundry Agent Service',
+    aliases: ['Azure AI Agent Service', 'AI Agent Service', 'Foundry Agents'],
+    iconFile: '038470523-icon-service-Foundry-Agent-Service',
+    category: 'ai + machine learning',
+    hasPricingData: false,
+    isUsageBased: true,
+    costRange: 'Agent run and token based'
   },
 
   // Microsoft Fabric service components. Navigation and sample-only symbols

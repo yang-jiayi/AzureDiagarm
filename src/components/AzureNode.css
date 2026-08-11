@@ -17,7 +17,7 @@
 }
 
 .azure-node.selected {
-  outline: 3px solid var(--azd-color-focus-soft);
+  outline: 3px solid var(--azd-color-focus);
   outline-offset: 2px;
   box-shadow: var(--azd-shadow-md);
 }

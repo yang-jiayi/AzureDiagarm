@@ -68,7 +68,7 @@
 }
 
 .azd-button:focus-visible {
-  outline: 3px solid var(--azd-color-focus-soft);
+  outline: 3px solid var(--azd-color-focus);
   outline-offset: 2px;
 }
 
@@ -116,7 +116,7 @@ textarea.azd-control {
 
 .azd-control:focus {
   border-color: var(--azd-color-focus);
-  outline: 3px solid var(--azd-color-focus-soft);
+  outline: 3px solid var(--azd-color-focus);
   outline-offset: 1px;
 }
 

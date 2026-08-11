@@ -21,6 +21,7 @@ import {
   type Severity,
 } from '../data/wafRules';
 import type { ValidationFinding } from './architectureValidator';
+import { resolveServiceIconMapping } from '../data/serviceIconMapping';
 
 interface ServiceInput {
   name: string;
@@ -98,56 +99,79 @@ function findingFromRule(
 // Service category helpers
 // ---------------------------------------------------------------------------
 
-const DATABASE_TYPES = new Set([
+const DATABASE_TYPES = typeSet([
   'sql database', 'azure cosmos db', 'postgresql', 'mysql',
   'azure database for postgresql', 'azure database for mysql',
   'cosmos db', 'cosmosdb', 'redis cache', 'azure cache for redis',
 ]);
 
-const COMPUTE_TYPES = new Set([
+const COMPUTE_TYPES = typeSet([
   'app service', 'functions', 'azure functions', 'virtual machines',
   'kubernetes service', 'azure kubernetes service', 'container apps',
   'azure container apps', 'container instances',
 ]);
 
-const FRONTEND_TYPES = new Set([
+const FRONTEND_TYPES = typeSet([
   'static web apps', 'azure static web apps', 'cdn',
   'content delivery network', 'azure front door',
 ]);
 
-const CACHE_TYPES = new Set([
+const CACHE_TYPES = typeSet([
   'redis cache', 'azure cache for redis', 'cdn', 'content delivery network',
 ]);
 
-const MONITORING_TYPES = new Set([
+const MONITORING_TYPES = typeSet([
   'azure monitor', 'application insights', 'log analytics',
   'app insights',
 ]);
 
-const IDENTITY_TYPES = new Set([
+const IDENTITY_TYPES = typeSet([
   'microsoft entra id', 'entra id', 'azure ad',
   'azure active directory',
 ]);
 
-const WAF_TYPES = new Set([
+const WAF_TYPES = typeSet([
   'web application firewall', 'waf', 'azure waf',
 ]);
 
-const KEY_VAULT_TYPES = new Set([
+const KEY_VAULT_TYPES = typeSet([
   'key vault', 'azure key vault',
 ]);
 
-const BACKUP_TYPES = new Set([
+const BACKUP_TYPES = typeSet([
   'azure backup', 'backup', 'recovery services',
 ]);
 
-const API_GATEWAY_TYPES = new Set([
+const API_GATEWAY_TYPES = typeSet([
   'api management', 'apim', 'azure api management',
   'application gateway', 'azure front door',
 ]);
 
+/**
+ * Canonical service key. The catalog, the palette and every AI prompt emit the
+ * official display name ("Azure Kubernetes Service"), while the rule tables
+ * were written against the short form ("Kubernetes Service"). Every spelling is
+ * first resolved through the shared service catalog — which knows renames such
+ * as "Redis Cache" → "Azure Cache for Redis" — and the vendor prefix is then
+ * folded away, so both forms land on the same key and the rules actually fire.
+ */
 function normalizeType(type: string): string {
-  return type.toLowerCase().trim();
+  const resolved = resolveServiceIconMapping(type)?.serviceName ?? type;
+  return resolved
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/^(?:microsoft|azure)\s+(?=.)/, '');
+}
+
+/** Build a lookup whose members go through the same canonicalisation. */
+function typeSet(values: string[]): Set<string> {
+  return new Set(values.map(normalizeType));
+}
+
+function isType(value: string, ...candidates: string[]): boolean {
+  const normalized = normalizeType(value);
+  return candidates.some((candidate) => normalizeType(candidate) === normalized);
 }
 
 function hasServiceOfType(services: ServiceInput[], typeSet: Set<string>): boolean {
@@ -171,10 +195,7 @@ function detectPatterns(
   // Single region — we can't truly detect multi-region from the diagram,
   // but if there's no Traffic Manager / Front Door with multiple backends,
   // it's likely single-region
-  const hasGlobalLB = services.some(s => {
-    const t = normalizeType(s.type);
-    return t === 'azure traffic manager' || t === 'azure front door' || t === 'traffic manager';
-  });
+  const hasGlobalLB = services.some(s => isType(s.type, 'Azure Traffic Manager', 'Azure Front Door'));
   if (!hasGlobalLB && services.length >= 3) {
     patterns.push('single-region');
   }
@@ -206,18 +227,12 @@ function detectPatterns(
 
   // No WAF — only applies if there are public-facing services
   const hasFrontend = hasServiceOfType(services, FRONTEND_TYPES);
-  const hasWebApp = services.some(s => {
-    const t = normalizeType(s.type);
-    return t === 'app service' || t === 'static web apps' || t === 'azure static web apps';
-  });
+  const hasWebApp = services.some(s => isType(s.type, 'App Service', 'Azure Static Web Apps'));
   if ((hasFrontend || hasWebApp) && !hasServiceOfType(services, WAF_TYPES)) {
-    // Check if Front Door or App Gateway already has WAF capability
-    const hasAppGw = services.some(s => normalizeType(s.type) === 'application gateway');
-    const hasFrontDoor = services.some(s => normalizeType(s.type) === 'azure front door');
-    // They might have WAF, but we flag it as a recommendation to verify
-    if (!hasAppGw && !hasFrontDoor) {
-      patterns.push('no-waf');
-    }
+    // Application Gateway and Front Door *can* carry a WAF policy, but the
+    // diagram cannot prove one is attached — so still advise verifying it
+    // rather than silently clearing an internet-facing app.
+    patterns.push('no-waf');
   }
 
   // Direct frontend-to-database access
@@ -361,8 +376,7 @@ function getAffectedResources(
 
     case 'no-waf':
       return services
-        .filter(s => FRONTEND_TYPES.has(normalizeType(s.type)) ||
-          normalizeType(s.type) === 'app service')
+        .filter(s => FRONTEND_TYPES.has(normalizeType(s.type)) || isType(s.type, 'App Service'))
         .map(s => s.name);
 
     case 'direct-db-access':

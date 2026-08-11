@@ -73,7 +73,7 @@
 .bulk-edit-popover button:focus-visible,
 .bulk-edit-popover select:focus-visible,
 .bulk-edit-popover input:focus-visible {
-  outline: 3px solid var(--azd-color-focus-soft);
+  outline: 3px solid var(--azd-color-focus);
   outline-offset: 2px;
 }
 

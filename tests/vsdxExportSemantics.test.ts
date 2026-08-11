@@ -13,7 +13,7 @@ function service(id: string, label: string, x: number, y: number, data: Record<s
     data: {
       label,
       serviceName: label,
-      iconPath: '/Azure_Public_Service_Icons/Icons/compute/10021-icon-service-Function-Apps.svg',
+      iconPath: '/Azure_Public_Service_Icons/Icons/compute/10021-icon-service-Virtual-Machine.svg',
       ...data,
     },
   } as Node;
