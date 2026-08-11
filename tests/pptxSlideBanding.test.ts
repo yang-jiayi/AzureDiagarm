@@ -1100,3 +1100,126 @@ test('a fan on a vertical arrow is spaced by the width of its chips', () => Prom
     }
   }
 }));
+
+
+/** Step numbers narrated by the workflow slides, from the deck itself. */
+function narratedSteps(slides: string[]): Set<number> {
+  const steps = new Set<number>();
+  for (const slide of slides) {
+    for (const match of slide.matchAll(/name="workflow-text-(\d+)"/g)) steps.add(+match[1]);
+  }
+  return steps;
+}
+
+/** Step numbers drawn as callouts on the drawing, per connector. */
+function drawnCallouts(slides: string[]): Map<string, number> {
+  const drawn = new Map<string, number>();
+  for (const slide of slides) {
+    for (const match of slide.matchAll(/<p:sp>[\s\S]*?<\/p:sp>/g)) {
+      const name = /name="connector-step-([^"]*)"/.exec(match[0])?.[1];
+      if (!name) continue;
+      const text = /<a:t>([^<]*)<\/a:t>/.exec(match[0])?.[1] ?? '';
+      const step = Number.parseInt(text, 10);
+      if (Number.isFinite(step)) drawn.set(name, step);
+    }
+  }
+  return drawn;
+}
+
+/** Connector ids that still carry readable chip text. */
+function chippedRoutes(slides: string[]): Set<string> {
+  const carried = new Set<string>();
+  for (const slide of slides) {
+    for (const match of slide.matchAll(/<p:sp>[\s\S]*?<\/p:sp>/g)) {
+      const name = /name="connector-label-([^"]*)"/.exec(match[0])?.[1];
+      if (!name) continue;
+      if (/<a:t>[^<]+<\/a:t>/.test(match[0])) carried.add(name);
+    }
+  }
+  return carried;
+}
+
+/** A grid of services wired left-to-right and top-to-bottom, `fanned` times over. */
+function fannedGrid(cols: number, rows: number, fanned: number): { nodes: Node[]; edges: Edge[] } {
+  const nodes: Node[] = [];
+  const edges: Edge[] = [];
+  let step = 1;
+  for (let r = 0; r < rows; r += 1) {
+    for (let c = 0; c < cols; c += 1) nodes.push(service(`n${r}-${c}`, `Azure Service ${r}${c}`, c * 260, r * 170));
+  }
+  const wire = (id: string, source: string, target: string, label: string): void => {
+    edges.push({ id, source, target, label, data: { stepNumber: step } } as Edge);
+    step += 1;
+  };
+  for (let r = 0; r < rows; r += 1) {
+    for (let c = 0; c + 1 < cols; c += 1) {
+      for (let f = 0; f < fanned; f += 1) wire(`h${r}_${c}_${f}`, `n${r}-${c}`, `n${r}-${c + 1}`, `${FAN_LABEL} ${f + 1}`);
+    }
+  }
+  for (let c = 0; c < cols; c += 1) {
+    for (let r = 0; r + 1 < rows; r += 1) {
+      for (let f = 0; f < fanned; f += 1) wire(`v${c}_${r}_${f}`, `n${r}-${c}`, `n${r + 1}-${c}`, `${FAN_LABEL} ${f + 1}`);
+    }
+  }
+  return { nodes, edges };
+}
+
+test('a labelled edge never loses both its chip and its narration', () => Promise.resolve().then(async () => {
+  // The deep-fan fallback drops the chips and numbers the arrows instead. Only
+  // the pairs the workflow slide narrates carry a step number, so every other
+  // member of the fan lost its wording entirely: no chip, no callout, no row.
+  // That is a silent deletion of the one thing the arrow was drawn to say.
+  const { nodes, edges } = fannedGrid(4, 3, 5);
+  const deck = await buildDeck(nodes, edges);
+  const chips = chippedRoutes(deck.slides);
+  const callouts = drawnCallouts(deck.slides);
+  const narrated = narratedSteps(deck.slides);
+  const lost = edges
+    .filter((edge) => {
+      const step = callouts.get(edge.id);
+      return !chips.has(edge.id) && (step === undefined || !narrated.has(step));
+    })
+    .map((edge) => edge.id);
+  assert.deepEqual(lost, [], `${lost.length} of ${edges.length} labelled edges say nothing at all: ${lost.slice(0, 6).join(' ')}`);
+}));
+
+test('every callout the drawing shows is a row the workflow explains', () => Promise.resolve().then(async () => {
+  // A numbered bubble with no matching row sends the reader to a list that does
+  // not mention it. Backfilling the fan members has to backfill the narration
+  // too, or the fallback trades one silent failure for another.
+  const { nodes, edges } = fannedGrid(3, 3, 4);
+  const deck = await buildDeck(nodes, edges);
+  const narrated = narratedSteps(deck.slides);
+  const orphans = [...drawnCallouts(deck.slides)].filter(([, step]) => !narrated.has(step));
+  assert.deepEqual(orphans.map(([id, step]) => `${id}#${step}`), [], 'callouts point at workflow rows that were never written');
+}));
+
+test('a deep fan of arrows stays inside its own row', () => Promise.resolve().then(async () => {
+  // The fan spreads its arrows by a fixed step per ordinal, so a nine-way fan
+  // reached most of a row's height in each direction and the outer arrows ran
+  // straight through the services above and below.
+  const nodes = [service('a', 'Azure Front Door', 0, 300), service('b', 'Azure Kubernetes Service', 400, 300)];
+  const edges = Array.from({ length: 9 }, (_, i) => ({
+    id: `p${i + 1}`, source: 'a', target: 'b', label: `${FAN_LABEL} ${i + 1}`, data: { stepNumber: i + 1 },
+  })) as Edge[];
+  const routes = buildExportRoutes(edges, collectExportBoxes(nodes));
+  const centre = 300 + 75 / 2;
+  const spread = Math.max(...routes.flatMap((route) => route.points.map((point) => Math.abs(point.y - centre))));
+  assert.ok(
+    spread <= 75 / 2 + 0.01,
+    `the fan reaches ${spread.toFixed(1)}px off centre, past the ${(75 / 2).toFixed(1)}px half-row it is allowed`,
+  );
+}));
+
+test('a dense diagram of parallel flows exports without hanging', () => Promise.resolve().then(async () => {
+  // The ladder search scored every candidate offset by re-measuring and
+  // re-wrapping every rung, over a lattice that reached the far side of the
+  // page: a thirty-service grid of three-way fans took 42 seconds, which in a
+  // browser is a frozen tab, not an export.
+  const { nodes, edges } = fannedGrid(6, 5, 3);
+  assert.ok(edges.length >= 140, `the fixture must stay dense, got ${edges.length} edges`);
+  const started = Date.now();
+  await buildDeck(nodes, edges);
+  const elapsed = Date.now() - started;
+  assert.ok(elapsed < 15000, `exporting ${edges.length} labelled edges took ${(elapsed / 1000).toFixed(1)}s`);
+}));

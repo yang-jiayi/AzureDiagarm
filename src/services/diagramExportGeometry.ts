@@ -32,6 +32,14 @@ export const DEFAULT_SERVICE_H = 75;
 export const DEFAULT_GROUP_W = 400;
 export const DEFAULT_GROUP_H = 300;
 
+/**
+ * How far the outermost arrow of a parallel fan may sit from the straight line
+ * between its two services, in diagram pixels. Half a service tile's height:
+ * past that the arrow — and the label that follows it — is closer to the row
+ * above than to the hop it belongs to.
+ */
+const MAX_FAN_SPREAD = DEFAULT_SERVICE_H / 2;
+
 export interface ExportBox {
   id: string;
   kind: 'group' | 'service';
@@ -418,6 +426,62 @@ export function workflowListFromEdges(edges: Edge[]): WorkflowListEntry[] {
   return [...byStep.entries()]
     .sort((a, b) => a[0] - b[0])
     .map(([step, description]) => ({ step, description }));
+}
+
+/**
+ * Make sure every numbered callout the drawing will show has a sentence to
+ * point at, and that every label in a deep parallel fan carries a number.
+ *
+ * A model asked for "the app talks to the database" happily emits five or ten
+ * separate connections between the same pair, each with its own sentence. Ten
+ * sentences cannot be written along one arrow, so the Architecture Center draws
+ * the numbers on the drawing and the sentences in the workflow list. That only
+ * works if each of those arrows actually carries a number: the step mapper
+ * gives at most one number per node pair, so the rest of the fan would have no
+ * callout and no row, and dropping its chip would delete the author's words.
+ *
+ * So: any labelled edge that already has a number but no sentence is given its
+ * own label as the sentence — a badge nobody can look up is worse than no badge
+ * — and the un-numbered members of a deep fan are handed their own steps,
+ * continuing after the highest number already in use so nothing is renumbered.
+ */
+export function narrateEdgeCallouts(edges: Edge[], minFanSize = 5): Edge[] {
+  const labelled = edges.filter((edge) => readEdgeLabel(edge) !== '');
+
+  const pairKey = (edge: Edge): string => (edge.source < edge.target
+    ? `${edge.source}|${edge.target}`
+    : `${edge.target}|${edge.source}`);
+  const fanSize = new Map<string, number>();
+  let nextStep = 0;
+  for (const edge of labelled) {
+    const key = pairKey(edge);
+    fanSize.set(key, (fanSize.get(key) ?? 0) + 1);
+  }
+  for (const edge of edges) {
+    const step = readStepValue((edge.data as { stepNumber?: unknown } | undefined)?.stepNumber);
+    if (step !== undefined) nextStep = Math.max(nextStep, step);
+  }
+
+  let changed = false;
+  const result = edges.map((edge) => {
+    const label = readEdgeLabel(edge);
+    if (!label) return edge;
+    const data = edge.data as { stepNumber?: unknown; stepDescription?: unknown } | undefined;
+    const step = readStepValue(data?.stepNumber);
+    const description = typeof data?.stepDescription === 'string' ? data.stepDescription.trim() : '';
+    if (step !== undefined && description) return edge;
+    // A number with no sentence is as useless as a sentence with no number: the
+    // badge lands on the drawing and the workflow list has no row to read it
+    // from. Only a fan is deep enough to be worth numbering from scratch.
+    if (step === undefined && (fanSize.get(pairKey(edge)) ?? 0) < minFanSize) return edge;
+    changed = true;
+    if (step === undefined) nextStep += 1;
+    return {
+      ...edge,
+      data: { ...(data ?? {}), stepNumber: step ?? nextStep, stepDescription: description || label },
+    };
+  });
+  return changed ? result : edges;
 }
 
 // ─── Truncation / wrapping policy (single, wide-character aware) ──────────────
@@ -940,11 +1004,24 @@ function orientEdge(edge: Edge): { fromId: string; toId: string; bidirectional: 
   return { fromId: edge.source, toId: edge.target, bidirectional: direction === 'bidirectional' };
 }
 
-/** Alternating perpendicular offset for the Nth parallel edge: 0, +16, -16… */
-function parallelOffset(ordinal: number): number {
+/**
+ * Alternating perpendicular offset for the Nth parallel edge: 0, +16, -16…
+ *
+ * The spread is capped, because a fan is drawn between two services that have
+ * neighbours: ten edges stepping 16 px apart reach 80 px out, far enough for
+ * the outer arrows to run through the row above and below and collect their
+ * labels. Past the cap the arrows keep their order and simply crowd together —
+ * which is what a cable bundle looks like anyway, and each one still carries
+ * its own numbered callout.
+ */
+function parallelOffset(ordinal: number, siblings = 0): number {
   if (ordinal <= 0) return 0;
   const step = 16;
-  const magnitude = Math.ceil(ordinal / 2) * step;
+  const rungs = Math.ceil(ordinal / 2);
+  const deepest = Math.max(rungs, Math.ceil(Math.max(siblings - 1, 0) / 2));
+  const magnitude = deepest * step <= MAX_FAN_SPREAD
+    ? rungs * step
+    : (rungs * MAX_FAN_SPREAD) / deepest;
   return ordinal % 2 === 1 ? magnitude : -magnitude;
 }
 
@@ -976,6 +1053,15 @@ export function buildExportRoutes(
   const obstacles = options.obstacles
     ?? [...boxes.values()].filter((box) => box.kind === 'service');
   const ordinals = new Map<string, number>();
+  // How deep each fan is, so the whole bundle can be scaled to a spread that
+  // does not reach into its neighbours' rows.
+  const fanSizes = new Map<string, number>();
+  for (const edge of edges) {
+    const { fromId, toId } = orientEdge(edge);
+    if (!boxes.has(fromId) || !boxes.has(toId) || fromId === toId) continue;
+    const key = pairKey(fromId, toId);
+    fanSizes.set(key, (fanSizes.get(key) ?? 0) + 1);
+  }
 
   for (const edge of edges) {
     const { fromId, toId, bidirectional } = orientEdge(edge);
@@ -991,7 +1077,7 @@ export function buildExportRoutes(
     const ordinal = ordinals.get(key) ?? 0;
     ordinals.set(key, ordinal + 1);
 
-    const fanOffset = source.id === target.id ? 0 : parallelOffset(ordinal);
+    const fanOffset = source.id === target.id ? 0 : parallelOffset(ordinal, fanSizes.get(key) ?? 1);
     const geometry = source.id === target.id
       ? selfLoopRoute(source, ordinal)
       : routeOrthogonal(source, target, {
