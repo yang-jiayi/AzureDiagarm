@@ -6500,3 +6500,37 @@ test('deployment guide accordions are keyboard accessible and stale results are 
   await page.waitForTimeout(900);
   await expect(page.getByTitle('Open last deployment guide')).toHaveCount(0);
 });
+
+test('nodes can be connected using only the keyboard', async ({ page }) => {
+  await openInteractionDiagram(page);
+
+  const edges = page.locator('.react-flow__edge');
+  await expect(edges).toHaveCount(1);
+
+  const sourceLabel = page.locator('[data-testid="rf__node-node-b"] [data-node-keyboard-target]');
+  const targetLabel = page.locator('[data-testid="rf__node-node-a"] [data-node-keyboard-target]');
+  const liveRegion = page.getByTestId('live-region-polite');
+
+  // Step 1: arm the connection on the source node.
+  await sourceLabel.focus();
+  await page.keyboard.press('c');
+  await expect(page.locator('[data-testid="rf__node-node-b"] .azure-node'))
+    .toHaveAttribute('data-connect-source', 'true');
+  await expect(liveRegion).toContainText('Connection started from Azure SQL Database');
+
+  // Escape must abandon the attempt without creating an edge.
+  await page.keyboard.press('Escape');
+  await expect(page.locator('[data-connect-source="true"]')).toHaveCount(0);
+  await expect(liveRegion).toContainText('Connection cancelled.');
+  await expect(edges).toHaveCount(1);
+
+  // Step 2: arm again and complete on the target node.
+  await sourceLabel.focus();
+  await page.keyboard.press('c');
+  await targetLabel.focus();
+  await page.keyboard.press('c');
+
+  await expect(edges).toHaveCount(2);
+  await expect(liveRegion).toContainText('Connected Azure SQL Database to App Service');
+  await expect(page.locator('[data-connect-source="true"]')).toHaveCount(0);
+});

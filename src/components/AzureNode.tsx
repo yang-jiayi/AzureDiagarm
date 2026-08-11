@@ -14,6 +14,7 @@ import './AzureNode.css';
 import { useLanguage } from '../i18n/LanguageContext';
 import { localize } from '../i18n/localization';
 import { useNodeKeyboardInteraction } from '../hooks/useNodeKeyboardInteraction';
+import { usePendingConnection } from '../hooks/useKeyboardConnection';
 import { detachNodeFromGroup } from '../utils/groupUtils';
 
 // Map categories to colors
@@ -54,6 +55,8 @@ const AzureNode: React.FC<NodeProps> = memo(({ data, selected, id }) => {
   const labelRef = useRef<HTMLDivElement>(null);
   const { getNode, setNodes } = useReactFlow();
   const parentNode = getNode(id)?.parentNode;
+  const pendingConnection = usePendingConnection();
+  const isConnectSource = pendingConnection?.nodeId === id;
 
   // Extract pricing data
   const pricing = data.pricing as NodePricingConfig | undefined;
@@ -150,7 +153,7 @@ const AzureNode: React.FC<NodeProps> = memo(({ data, selected, id }) => {
   const {
     handleFocus: handleNodeFocus,
     handleKeyDown: handleNodeKeyDown,
-  } = useNodeKeyboardInteraction(id, handleLabelDoubleClick);
+  } = useNodeKeyboardInteraction(id, handleLabelDoubleClick, data.label);
 
   const handleLabelChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setLabel(e.target.value);
@@ -207,9 +210,10 @@ const AzureNode: React.FC<NodeProps> = memo(({ data, selected, id }) => {
 
   return (
     <div
-      className={`azure-node ${selected ? 'selected' : ''} style-${stylePreset}`}
+      className={`azure-node ${selected ? 'selected' : ''} style-${stylePreset}${isConnectSource ? ' connect-source' : ''}`}
       style={borderStyle}
       onFocus={handleNodeFocus}
+      data-connect-source={isConnectSource ? 'true' : undefined}
     >
       {parentNode && selected && (
         <button
@@ -335,7 +339,9 @@ const AzureNode: React.FC<NodeProps> = memo(({ data, selected, id }) => {
                 onKeyDown={handleNodeKeyDown}
                 role="button"
                 tabIndex={0}
-                aria-keyshortcuts="F2"
+                aria-keyshortcuts="F2 C Escape ArrowUp ArrowDown ArrowLeft ArrowRight"
+                aria-describedby="azd-node-keyboard-help"
+                aria-pressed={isConnectSource || undefined}
                 title={t("Double-click to edit")}
               >
                 {label}
