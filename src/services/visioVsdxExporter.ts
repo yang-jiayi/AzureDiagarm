@@ -779,6 +779,9 @@ export async function buildVsdxPackage(
   const offsetXIn = (pageWidthIn - contentWIn) / 2;
   const offsetYIn = (pageHeightIn - workflowBandIn - contentHIn) / 2 + workflowBandIn;
   const clampIn = (value: number, lo: number, hi: number) => Math.min(Math.max(value, lo), Math.max(lo, hi));
+  // The workflow panel is opaque and is drawn after every service, so a stray
+  // node clamped into its band would be painted over. Keep the clamp below it.
+  const drawingTopIn = workflowBandIn + PAGE_PADDING_IN / 2;
   const toRect = (box: ExportBox): Rect => {
     const w = box.w / PX_PER_INCH;
     const h = box.h / PX_PER_INCH;
@@ -786,7 +789,7 @@ export async function buildVsdxPackage(
     let topY = (box.y - bounds.minY) / PX_PER_INCH + offsetYIn;
     if (clampToPage) {
       x = clampIn(x, PAGE_PADDING_IN / 2, pageWidthIn - w - PAGE_PADDING_IN / 2);
-      topY = clampIn(topY, PAGE_PADDING_IN / 2, pageHeightIn - h - PAGE_PADDING_IN / 2);
+      topY = clampIn(topY, drawingTopIn, pageHeightIn - h - PAGE_PADDING_IN / 2);
     }
     return { x, y: pageHeightIn - topY - h, w, h };
   };
@@ -795,7 +798,7 @@ export async function buildVsdxPackage(
     let topY = (point.y - bounds.minY) / PX_PER_INCH + offsetYIn;
     if (clampToPage) {
       x = clampIn(x, 0, pageWidthIn);
-      topY = clampIn(topY, 0, pageHeightIn);
+      topY = clampIn(topY, drawingTopIn, pageHeightIn);
     }
     return { x, y: pageHeightIn - topY };
   };

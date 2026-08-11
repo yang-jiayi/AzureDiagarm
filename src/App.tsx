@@ -180,7 +180,7 @@ import {
   shouldRecalculateAutomaticEdgeLabels,
 } from './utils/edgeLabelLayout';
 import { classifyEdgeDirection } from './utils/edgeDirection';
-import { mapWorkflowStepsToEdges } from './utils/workflowStepMapping';
+import { mapWorkflowStepsToEdges, readStepNumber } from './utils/workflowStepMapping';
 import { applySelectedVersionChanges } from './utils/versionDiff';
 import {
   alignSelectedNodes,
@@ -5506,8 +5506,8 @@ function App() {
     // numbered workflow list from the same data that drew the badges.
     const workflowProseByStep = new Map<number, string>(
       (Array.isArray(workflowSteps) ? workflowSteps : [])
-        .filter((s: any) => Number.isInteger(s?.step) && typeof s?.description === 'string')
-        .map((s: any) => [s.step as number, String(s.description).trim()]),
+        .filter((s: any) => readStepNumber(s?.step) !== null && typeof s?.description === 'string')
+        .map((s: any) => [readStepNumber(s.step) as number, String(s.description).trim()]),
     );
     const generatedEdges: Edge[] = connections.map((conn: any, index: number) => {
       const positions = getConnectionPositions(conn.from, conn.to, conn);

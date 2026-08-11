@@ -14,6 +14,7 @@ import {
   buildNestedHierarchyLayout,
   layoutNodeDimensions,
 } from './layoutHierarchy';
+import { wrapPositionedLayout } from './serpentineWrap';
 
 export interface LayoutOptions {
   direction: 'LR' | 'TB' | 'RL' | 'BT';
@@ -324,13 +325,25 @@ export async function layoutArchitecture(
   // Post-process: resolve any overlapping groups
   const { groups: finalGroups } = resolveGroupOverlaps(positionedGroups, positionedServices);
 
+  // Same reason as the Dagre path: a one-service-per-layer flow is a strip, and
+  // a strip cannot be exported cleanly onto any page.
+  const wrapped = wrapPositionedLayout(positionedServices, finalGroups, {
+    direction: opts.direction,
+    bandGap: opts.rankSpacing,
+    nodeWidth: NODE_WIDTH,
+    nodeHeight: NODE_HEIGHT,
+  });
+  if (wrapped.bands > 1) {
+    console.log(`  ✅ [ELK] Wrapped an over-wide layout into ${wrapped.bands} bands`);
+  }
+
   console.log('  ✅ [ELK] Services positioned');
   console.log('  ✅ [ELK] Groups positioned, overlaps resolved');
   console.log('📐 [ELK] Layout complete!');
 
   return {
-    services: positionedServices,
-    groups: finalGroups,
+    services: wrapped.services,
+    groups: wrapped.groups,
   };
 }
 

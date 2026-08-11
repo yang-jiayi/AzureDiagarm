@@ -11,6 +11,7 @@ import {
   buildNestedHierarchyLayout,
   layoutNodeDimensions,
 } from './layoutHierarchy';
+import { wrapPositionedLayout } from './serpentineWrap';
 
 export interface LayoutOptions {
   direction: 'LR' | 'TB' | 'RL' | 'BT'; // Left-Right, Top-Bottom, etc.
@@ -310,13 +311,26 @@ export function layoutArchitecture(
     positionedGroups,
     relativeServices,
   );
-  
+
+  // A linear flow ranks one service per column, which is a 43:1 strip by the
+  // twelfth step. Fold it into bands so the drawing keeps the shape of the page
+  // it will be exported onto.
+  const wrapped = wrapPositionedLayout(finalServices, finalGroups, {
+    direction: opts.direction,
+    bandGap: opts.rankSpacing,
+    nodeWidth: NODE_WIDTH,
+    nodeHeight: NODE_HEIGHT,
+  });
+  if (wrapped.bands > 1) {
+    console.log(`  ✅ Wrapped an over-wide layout into ${wrapped.bands} bands`);
+  }
+
   console.log('  ✅ Groups positioned, overlaps resolved, positions made relative');
   console.log('📐 Layout complete!');
   
   return {
-    services: finalServices,
-    groups: finalGroups
+    services: wrapped.services,
+    groups: wrapped.groups
   };
 }
 

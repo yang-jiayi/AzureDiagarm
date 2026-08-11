@@ -130,6 +130,12 @@ const LEGIBLE_TILE_PT = 7;
 const MAX_DIAGRAM_SLIDES = 6;
 
 /**
+ * Shortest workflow row that still fits a 12 pt sentence next to a badge. Rows
+ * stop shrinking here and the list continues on another slide instead.
+ */
+const MIN_WORKFLOW_ROW_IN = 0.34;
+
+/**
  * Split the drawing into as few horizontal bands as keep the tiles legible.
  *
  * PowerPoint allows exactly one page size per deck, so every band shares the
@@ -779,13 +785,36 @@ async function addEditableDiagram(
   const clampTo = clamped || banded ? frame : undefined;
   const px = transform.scale * PX_PER_IN;
   const routes = buildExportRoutes(diagram.edges ?? [], boxes);
-  const visibleBox = (box: ExportBox): boolean =>
-    !banded || (box.x + box.w >= fitBounds.minX && box.x <= fitBounds.maxX);
-  const visibleRoute = (route: ExportRoute): boolean =>
-    !banded || route.points.some((p) => p.x >= fitBounds.minX && p.x <= fitBounds.maxX);
+  const isFirstBand = !banded || fitBounds.minX <= bounds.minX + 0.5;
+  const isLastBand = !banded || fitBounds.maxX >= bounds.maxX - 0.5;
+
+  // A band owns whatever falls inside it, so a shape straddling a seam is drawn
+  // once instead of twice. Strays that the outlier trim pushed outside `bounds`
+  // sit in no band at all under a plain range test and vanish from the deck
+  // entirely, so the outer bands claim everything beyond them and `clampTo`
+  // pulls those back onto the page exactly as it does on an unbanded slide.
+  const owns = (x: number): boolean => {
+    if (!banded) return true;
+    if (x < fitBounds.minX) return isFirstBand;
+    if (x > fitBounds.maxX) return isLastBand;
+    // Windows meet exactly at a seam, so a point landing on one is inside both.
+    // Half-open ranges hand it to the later band and nothing is drawn twice.
+    return x < fitBounds.maxX || isLastBand;
+  };
+  const visibleBox = (box: ExportBox): boolean => owns(box.x + box.w / 2);
+  // A connector is continued on every band it crosses so the reader can follow
+  // where it goes; only the band holding its anchor draws the chip and number.
+  const visibleRoute = (route: ExportRoute): boolean => {
+    if (!banded) return true;
+    const xs = route.points.map((point) => point.x);
+    if (xs.length === 0) return owns(route.labelAnchor.x);
+    return (Math.max(...xs) >= fitBounds.minX || isFirstBand)
+      && (Math.min(...xs) <= fitBounds.maxX || isLastBand);
+  };
   const shownGroups = groups.filter(visibleBox);
   const shownServices = services.filter(visibleBox);
   const shownRoutes = routes.filter(visibleRoute);
+  const annotatedRoutes = shownRoutes.filter((route) => owns(route.labelAnchor.x));
   const icons = await rasterizeIcons(shownServices.map((service) => service.iconPath), 128);
 
   // Index by the full group list so a zone keeps its palette colour on every
@@ -799,8 +828,8 @@ async function addEditableDiagram(
   // Labels are drawn after every connector so a chip is never hidden by a line
   // that is rendered later.
   const labelFontSize = clamp(9 * px, 4, 10);
-  for (const route of shownRoutes) addConnectorLabel(slide, route, transform, labelFontSize, px, clampTo);
-  for (const route of shownRoutes) addStepBadge(slide, route, transform, labelFontSize, px, clampTo);
+  for (const route of annotatedRoutes) addConnectorLabel(slide, route, transform, labelFontSize, px, clampTo);
+  for (const route of annotatedRoutes) addStepBadge(slide, route, transform, labelFontSize, px, clampTo);
 
   // Colour key so the deck's connectors agree with the PNG legend.
   addConnectionLegend(pptx, slide, diagram.edges ?? [], frame);
@@ -936,54 +965,64 @@ export async function buildDiagramSlidePptx(
   // Azure Architecture Center always pairs the badges with a numbered list.
   const workflow = workflowListFromEdges(options.diagram?.edges ?? []);
   if (workflow.length > 0) {
-    const slide = pptx.addSlide();
-    slide.background = { color: t.bg };
-    slide.addShape(pptx.ShapeType.rect, {
-      x: 0, y: 0, w: W, h: ACCENT_H,
-      fill: { color: t.accent }, line: { color: t.accent, width: 0 },
-    });
-    slide.addShape(pptx.ShapeType.rect, {
-      x: 0, y: ACCENT_H, w: W, h: HEADER_H,
-      fill: { color: t.headerBg }, line: { color: t.headerBg, width: 0 },
-    });
-    slide.addText('Workflow', {
-      objectName: 'workflow-heading',
-      x: 0.35, y: ACCENT_H + 0.05, w: Math.max(3, W - 3.85), h: HEADER_H - 0.1,
-      fontSize: 24, bold: true, color: t.titleText, fontFace: 'Yu Gothic UI', valign: 'middle',
-    });
-    slide.addShape(pptx.ShapeType.rect, {
-      x: 0, y: HEADER_END, w: W, h: SEP_H,
-      fill: { color: t.accent }, line: { color: t.accent, width: 0 },
-    });
+    // Rows stop shrinking at a legible minimum, so a long workflow continues on
+    // another slide. Dropping the tail would leave badges on the drawing whose
+    // sentence appears nowhere in the deck.
+    const listTop = IMAGE_Y + 0.1;
+    const available = Math.max(MIN_WORKFLOW_ROW_IN, geom.footerY - 0.1 - listTop);
+    const perSlide = Math.max(1, Math.floor(available / MIN_WORKFLOW_ROW_IN));
+    const parts = Math.ceil(workflow.length / perSlide);
 
-    // The badge colour and shape repeat here so a reader can match a number on
-    // the drawing to its row without hunting.
-    const rowGap = Math.min(0.62, Math.max(0.34, (geom.footerY - IMAGE_Y - 0.4) / workflow.length));
-    const badge = Math.min(0.34, rowGap - 0.06);
-    workflow.forEach((entry, index) => {
-      const y = IMAGE_Y + 0.1 + index * rowGap;
-      if (y + badge > geom.footerY - 0.1) return;
-      slide.addText(String(entry.step), {
-        objectName: `workflow-step-${entry.step}`,
-        shape: pptx.ShapeType.ellipse,
-        x: 0.42, y, w: badge, h: badge,
-        fill: { color: t.accent },
-        line: { color: 'FFFFFF', width: 1 },
-        fontSize: Math.max(8, badge * 26),
-        bold: true, color: 'FFFFFF', fontFace: 'Yu Gothic UI',
-        align: 'center', valign: 'middle', margin: 0,
+    for (let part = 0; part < parts; part += 1) {
+      const rows = workflow.slice(part * perSlide, (part + 1) * perSlide);
+      const slide = pptx.addSlide();
+      slide.background = { color: t.bg };
+      slide.addShape(pptx.ShapeType.rect, {
+        x: 0, y: 0, w: W, h: ACCENT_H,
+        fill: { color: t.accent }, line: { color: t.accent, width: 0 },
       });
-      slide.addText(entry.description, {
-        objectName: `workflow-text-${entry.step}`,
-        x: 0.42 + badge + 0.16, y, w: W - (0.42 + badge + 0.16) - 0.42, h: rowGap - 0.04,
-        fontSize: 12, color: t.titleText, fontFace: 'Yu Gothic UI',
-        valign: 'middle', wrap: true,
+      slide.addShape(pptx.ShapeType.rect, {
+        x: 0, y: ACCENT_H, w: W, h: HEADER_H,
+        fill: { color: t.headerBg }, line: { color: t.headerBg, width: 0 },
       });
-    });
-    slide.addText('Generated by Microsoft Product Architecture Diagram Builder  ·  Swarm Data SE, Jiayi Yang', {
-      x: 0.35, y: FOOTER_Y, w: W - 0.7, h: FOOTER_H,
-      fontSize: 8, color: t.footerText, fontFace: 'Yu Gothic UI', valign: 'middle',
-    });
+      slide.addText(parts > 1 ? `Workflow (${part + 1} / ${parts})` : 'Workflow', {
+        objectName: 'workflow-heading',
+        x: 0.35, y: ACCENT_H + 0.05, w: Math.max(3, W - 3.85), h: HEADER_H - 0.1,
+        fontSize: 24, bold: true, color: t.titleText, fontFace: 'Yu Gothic UI', valign: 'middle',
+      });
+      slide.addShape(pptx.ShapeType.rect, {
+        x: 0, y: HEADER_END, w: W, h: SEP_H,
+        fill: { color: t.accent }, line: { color: t.accent, width: 0 },
+      });
+
+      // The badge colour and shape repeat here so a reader can match a number on
+      // the drawing to its row without hunting.
+      const rowGap = Math.min(0.62, Math.max(MIN_WORKFLOW_ROW_IN, available / rows.length));
+      const badge = Math.min(0.34, rowGap - 0.06);
+      rows.forEach((entry, index) => {
+        const y = listTop + index * rowGap;
+        slide.addText(String(entry.step), {
+          objectName: `workflow-step-${entry.step}`,
+          shape: pptx.ShapeType.ellipse,
+          x: 0.42, y, w: badge, h: badge,
+          fill: { color: t.accent },
+          line: { color: 'FFFFFF', width: 1 },
+          fontSize: Math.max(8, badge * 26),
+          bold: true, color: 'FFFFFF', fontFace: 'Yu Gothic UI',
+          align: 'center', valign: 'middle', margin: 0,
+        });
+        slide.addText(entry.description, {
+          objectName: `workflow-text-${entry.step}`,
+          x: 0.42 + badge + 0.16, y, w: W - (0.42 + badge + 0.16) - 0.42, h: rowGap - 0.04,
+          fontSize: 12, color: t.titleText, fontFace: 'Yu Gothic UI',
+          valign: 'middle', wrap: true,
+        });
+      });
+      slide.addText('Generated by Microsoft Product Architecture Diagram Builder  ·  Swarm Data SE, Jiayi Yang', {
+        x: 0.35, y: FOOTER_Y, w: W - 0.7, h: FOOTER_H,
+        fontSize: 8, color: t.footerText, fontFace: 'Yu Gothic UI', valign: 'middle',
+      });
+    }
   }
 
   return pptx;

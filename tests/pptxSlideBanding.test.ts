@@ -186,3 +186,118 @@ test('a Visio sheet without a workflow gets no panel', async () => {
   const xml = String(pkg.parts.find((p) => /page1\.xml$/i.test(p.path))!.data);
   assert.ok(!/NameU="Workflow\.\d+"/.test(xml), 'no workflow data must mean no panel');
 });
+
+/**
+ * The four defects the second review found, all in the banding and workflow
+ * code. Each one produced a deck that looked fine and was quietly wrong: a
+ * missing service, a service drawn twice, a tile hidden under an opaque panel,
+ * and a badge on the drawing whose sentence was nowhere in the deck.
+ */
+
+test('a stray service outside the trimmed bounds is still drawn on a banded deck', async () => {
+  const { nodes, edges } = wideDiagram(40);
+  nodes.push(service('stray', 'Copilot Studio', 100000, 40000));
+  const deck = await buildDeck(nodes, edges);
+  assert.ok(deck.slides.length > 1, 'this diagram must band');
+  const drawn = deck.slides.filter((xml) => xml.includes('name="service-stray"')).length;
+  assert.equal(drawn, 1, 'the outlier must be clamped onto exactly one band, not dropped');
+});
+
+test('a service straddling a band seam is drawn once, not on both slides', async () => {
+  const { nodes, edges } = wideDiagram(40);
+  // 40 tiles at a 260px pitch put the midpoint seam near x = 5145.
+  nodes.push(service('straddler', 'Azure SQL Database', 5100, 700));
+  const deck = await buildDeck(nodes, edges);
+  assert.ok(deck.slides.length > 1, 'this diagram must band');
+  const drawn = deck.slides.filter((xml) => xml.includes('name="service-straddler"')).length;
+  assert.equal(drawn, 1, 'a seam-crossing service must belong to exactly one band');
+});
+
+test('a numbered arrow crossing a seam carries exactly one badge and one chip', async () => {
+  const nodes: Node[] = [];
+  const edges: Edge[] = [];
+  for (let i = 0; i < 40; i += 1) {
+    nodes.push(service(`n-${i}`, i % 2 ? 'Azure Kubernetes Service' : 'Copilot Studio', i * 260, (i % 4) * 220));
+    if (i > 0) {
+      edges.push({
+        id: `x-${i}`,
+        source: `n-${i - 1}`,
+        target: `n-${i}`,
+        label: 'Managed identity',
+        ...(i <= 24 ? { data: { stepNumber: i, stepDescription: `Step ${i}` } } : {}),
+      } as Edge);
+    }
+  }
+  const deck = await buildDeck(nodes, edges);
+  assert.ok(deck.slides.length > 1, 'this diagram must band');
+
+  const count = (needle: string) => deck.slides.filter((xml) => xml.includes(needle)).length;
+  for (let i = 1; i <= 24; i += 1) {
+    assert.equal(count(`name="connector-step-x-${i}"`), 1, `badge ${i} must appear once`);
+    assert.equal(count(`name="connector-label-x-${i}"`), 1, `chip for step ${i} must appear once`);
+  }
+});
+
+test('a workflow too long for one slide is continued, never truncated', async () => {
+  const nodes: Node[] = [];
+  const edges: Edge[] = [];
+  for (let i = 0; i < 21; i += 1) {
+    nodes.push(service(`w-${i}`, 'Azure Functions', (i % 7) * 300, Math.floor(i / 7) * 240));
+    if (i > 0) {
+      edges.push({
+        id: `w-${i}`,
+        source: `w-${i - 1}`,
+        target: `w-${i}`,
+        label: 'Private Link',
+        data: { stepNumber: i, stepDescription: `Step ${i} moves the message onward` },
+      } as Edge);
+    }
+  }
+  const deck = await buildDeck(nodes, edges);
+  for (let step = 1; step <= 20; step += 1) {
+    const rows = deck.slides.filter((xml) => xml.includes(`name="workflow-text-${step}"`)).length;
+    assert.equal(rows, 1, `step ${step} must have exactly one row somewhere in the deck`);
+  }
+});
+
+test('the Visio workflow panel never covers a clamped stray service', async () => {
+  const nodes: Node[] = [];
+  for (let i = 0; i < 8; i += 1) {
+    nodes.push(service(`c-${i}`, 'Azure Functions', (i % 4) * 220, Math.floor(i / 4) * 180));
+  }
+  // Above and to the left of the cluster: the clamp used to pull it into the
+  // band the opaque workflow panel occupies.
+  nodes.push(service('stray', 'Copilot Studio', -9000, -4000));
+  const edges: Edge[] = [
+    { id: 'e-out', source: 'c-0', target: 'stray', label: 'Reach the stray', data: { stepNumber: 1, stepDescription: 'Connect to the far service' } } as Edge,
+    { id: 'e-in', source: 'c-1', target: 'c-2', label: 'Managed identity', data: { stepNumber: 2, stepDescription: 'Authenticate with a managed identity' } } as Edge,
+  ];
+
+  const pkg = await buildVsdxPackage(nodes, edges, 'Contoso Platform');
+  const xml = String(pkg.parts.find((p) => /page1\.xml$/i.test(p.path))!.data);
+
+  const boxes = (namePattern: string) => {
+    const re = new RegExp(
+      `NameU="(${namePattern})"[\\s\\S]*?<Cell N="PinX" V="([\\d.-]+)"\\/>\\s*<Cell N="PinY" V="([\\d.-]+)"\\/>\\s*<Cell N="Width" V="([\\d.-]+)"\\/>\\s*<Cell N="Height" V="([\\d.-]+)"\\/>`,
+      'g',
+    );
+    return [...xml.matchAll(re)].map((m) => ({
+      name: m[1], x: +m[2] - +m[4] / 2, y: +m[3] - +m[5] / 2, w: +m[4], h: +m[5],
+    }));
+  };
+
+  const panels = boxes('Workflow\\.\\d+');
+  assert.equal(panels.length, 1, 'the sheet must carry exactly one workflow panel');
+  const panel = panels[0];
+  const tiles = boxes('Service\\.\\d+');
+  assert.ok(tiles.length > 0, 'the sheet must carry service tiles');
+  for (const tile of tiles) {
+    const ox = Math.min(tile.x + tile.w, panel.x + panel.w) - Math.max(tile.x, panel.x);
+    const oy = Math.min(tile.y + tile.h, panel.y + panel.h) - Math.max(tile.y, panel.y);
+    const overlap = Math.max(0, ox) * Math.max(0, oy);
+    assert.ok(
+      overlap <= 0.02 * tile.w * tile.h,
+      `${tile.name} is ${((overlap / (tile.w * tile.h)) * 100).toFixed(0)}% hidden behind the workflow panel`,
+    );
+  }
+});

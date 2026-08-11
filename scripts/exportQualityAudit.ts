@@ -146,6 +146,52 @@ function oversizeScenario(): Scenario {
   return { id: 'oversize', nodes, edges };
 }
 
+/**
+ * Banding, numbering and an outlier at once. Each rule existed but none had a
+ * scenario where they interact: a stray belongs to no band under a plain range
+ * test, and a shape straddling a seam is admitted by two bands at once.
+ */
+function bandedScenario(): Scenario {
+  const nodes: Node[] = [];
+  const edges: Edge[] = [];
+  for (let i = 0; i < 30; i += 1) {
+    nodes.push(svc(`b-${i}`, i % 2 ? 'Azure Functions' : 'Azure SQL Database', i * 300, (i % 3) * 200));
+    if (i > 0) {
+      edges.push({
+        id: `y-${i}`,
+        source: `b-${i - 1}`,
+        target: `b-${i}`,
+        label: 'HTTPS 経由でトークン検証を実施',
+        ...(i <= 8 ? { data: { stepNumber: i, stepDescription: `ステップ ${i}: 帯をまたぐ呼び出しを実行します` } } : {}),
+      } as Edge);
+    }
+  }
+  nodes.push(svc('b-stray', 'Copilot Studio', -14000, -6000));
+  return { id: 'banded', nodes, edges };
+}
+
+/**
+ * Twenty narrated steps: rows stop shrinking at the legible minimum, so the
+ * list has to continue onto another slide rather than drop its tail.
+ */
+function narrativeScenario(): Scenario {
+  const nodes: Node[] = [];
+  const edges: Edge[] = [];
+  for (let i = 0; i < 21; i += 1) {
+    nodes.push(svc(`w-${i}`, i % 2 ? 'Azure Service Bus' : 'Azure Functions', (i % 7) * 300, Math.floor(i / 7) * 240));
+    if (i > 0) {
+      edges.push({
+        id: `w-e-${i}`,
+        source: `w-${i - 1}`,
+        target: `w-${i}`,
+        label: 'Private Link',
+        data: { stepNumber: i, stepDescription: `ステップ ${i}: マネージド ID による認証を経てメッセージを転送します` },
+      } as Edge);
+    }
+  }
+  return { id: 'narrative', nodes, edges };
+}
+
 /** A dense cluster plus one far-placed node: nothing may fall off the page. */
 function outlierScenario(): Scenario {
   const nodes: Node[] = [];
@@ -164,6 +210,12 @@ function outlierScenario(): Scenario {
 }
 
 interface Report { scenario: string; format: string; issues: string[]; metrics: Record<string, number> }
+
+function countByName(shapes: { name: string }[]): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const shape of shapes) counts.set(shape.name, (counts.get(shape.name) ?? 0) + 1);
+  return counts;
+}
 
 async function auditPptx(scenario: Scenario): Promise<Report> {
   const pptx = await buildDiagramSlidePptx(PIXEL_PNG, {
@@ -291,6 +343,33 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
   }
   for (const row of shapes.filter((s) => s.name.startsWith('workflow-text-'))) {
     if (!row.text.trim()) issues.push(`workflow row "${row.name}" is blank`);
+  }
+
+  // Banding must not lose or duplicate anything. A service that falls between
+  // two bands is silently absent from the deck; one that straddles a seam is
+  // drawn twice, once shoved against a page edge on top of whatever is there.
+  const serviceIds = scenario.nodes.filter((n) => n.type === 'azureNode').map((n) => n.id);
+  const drawnTiles = new Map<string, number>();
+  for (const tile of tiles) {
+    const id = tile.name.replace(/^service-/, '');
+    drawnTiles.set(id, (drawnTiles.get(id) ?? 0) + 1);
+  }
+  for (const id of serviceIds) {
+    const drawn = drawnTiles.get(id) ?? 0;
+    if (drawn === 0) issues.push(`service "${id}" is drawn on no slide`);
+    else if (drawn > 1) issues.push(`service "${id}" is drawn on ${drawn} slides`);
+  }
+  for (const [name, count] of countByName(badges)) {
+    if (count > 1) issues.push(`step badge "${name}" is drawn ${count} times`);
+  }
+  for (const [name, count] of countByName(chips)) {
+    if (count > 1) issues.push(`edge chip "${name}" is drawn ${count} times`);
+  }
+  // Every narrated step must reach the deck, however long the workflow is:
+  // rows that stop shrinking have to continue onto another slide, not vanish.
+  const narratedRows = shapes.filter((s) => s.name.startsWith('workflow-text-')).length;
+  if (narrated.size > 0 && narratedRows < narrated.size) {
+    issues.push(`${narratedRows} workflow rows drawn for ${narrated.size} narrated steps`);
   }
 
   return {
@@ -423,7 +502,10 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
 
 async function main(): Promise<void> {
   mkdirSync(OUT, { recursive: true });
-  const scenarios = [compactScenario(), wideScenario(), oversizeScenario(), outlierScenario()];
+  const scenarios = [
+    compactScenario(), wideScenario(), oversizeScenario(), outlierScenario(),
+    bandedScenario(), narrativeScenario(),
+  ];
   const reports: Report[] = [];
   for (const scenario of scenarios) {
     reports.push(await auditPptx(scenario));
