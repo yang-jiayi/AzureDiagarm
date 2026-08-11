@@ -12,10 +12,17 @@
  * offset of its contents change.
  */
 
+// The editor already measured these: the visible "Fit to content" button
+// reserves GROUP_PADDING + GROUP_HEADER_HEIGHT above the first tile, and the
+// zone header wraps to two lines for a long name, so anything less overlaps
+// the first row. Reusing them keeps an automatic layout and a manual "fit to
+// content" agreeing on what a zone should look like.
+import { GROUP_PADDING, GROUP_HEADER_HEIGHT } from './groupUtils';
+
 /** Breathing room on the left, right and bottom of a zone. */
-export const GROUP_INNER_PAD_PX = 26;
+export const GROUP_INNER_PAD_PX = GROUP_PADDING;
 /** Top inset: the same breathing room plus the zone's title bar. */
-export const GROUP_HEADER_PAD_PX = 46;
+export const GROUP_HEADER_PAD_PX = GROUP_PADDING + GROUP_HEADER_HEIGHT;
 
 const MIN_GROUP_W = 220;
 const MIN_GROUP_H = 150;

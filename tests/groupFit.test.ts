@@ -3,6 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { fitGroupsToMembers, GROUP_INNER_PAD_PX, GROUP_HEADER_PAD_PX } from '../src/utils/groupFit';
+import { GROUP_PADDING, GROUP_HEADER_HEIGHT } from '../src/utils/groupUtils';
 
 const OPTS = { nodeWidth: 180, nodeHeight: 100 };
 
@@ -38,8 +39,10 @@ test('a zone is refitted to hug the services inside it', () => {
   assert.equal(box.height, maxY + GROUP_INNER_PAD_PX);
   assert.ok(box.width < 510 && box.height < 915, `zone did not shrink: ${box.width}x${box.height}`);
 
+  // 54% before the refit. It cannot reach zero: the inset is the title bar the
+  // editor really renders, so a three-tile zone keeps a visible header band.
   const waste = 1 - ((maxX - minX) * (maxY - minY)) / (box.width * box.height);
-  assert.ok(waste < 0.35, `zone is still ${(waste * 100).toFixed(0)}% empty border`);
+  assert.ok(waste < 0.42, `zone is still ${(waste * 100).toFixed(0)}% empty border`);
 });
 
 test('members keep their relative arrangement when the zone is refitted', () => {
@@ -68,8 +71,11 @@ test('an empty zone and an ungrouped service are left alone', () => {
 });
 
 test('a single-service zone stays above the minimum size and centres its tile', () => {
+  // A tile small enough that the minimum size binds -- a normal 150x75 tile
+  // already needs 230x205, so the minimum would otherwise never be reached and
+  // the centring it exists for would be unreachable code.
   const groups = [zone('z', 900, 600)];
-  const services = [member('only', 'z', 300, 300)];
+  const services = [{ id: 'only', groupId: 'z', position: { x: 300, y: 300 }, width: 40, height: 20 }];
   const fitted = fitGroupsToMembers(groups, services, OPTS);
   const box = fitted.groups[0];
   const tile = fitted.services[0];
@@ -79,4 +85,43 @@ test('a single-service zone stays above the minimum size and centres its tile', 
   const rightGap = box.width - (tile.position.x + tile.width);
   assert.ok(Math.abs(leftGap - rightGap) < 1, `tile not centred: ${leftGap} vs ${rightGap}`);
   assert.ok(tile.position.y >= GROUP_HEADER_PAD_PX, 'tile must clear the title bar');
+});
+
+test('an automatic refit and the "Fit to content" button agree on a zone', async () => {
+  // The header inset must be the height the editor actually renders. It was
+  // 46px -- less than the 50px title bar alone -- so a two-line zone name
+  // overlapped the first row of tiles, and an auto-laid-out zone did not match
+  // the one a user gets from the visible button.
+  const { fitGroupToContent } = await import('../src/utils/groupUtils');
+  const members = [member('a', 'z', 130, 210), member('b', 'z', 430, 210), member('c', 'z', 130, 430)];
+
+  const fitted = fitGroupsToMembers([zone('z', 900, 800)], members, OPTS);
+  const box = fitted.groups[0];
+
+  const byButton = fitGroupToContent(
+    [
+      { id: 'z', type: 'groupNode', position: { x: 0, y: 0 }, style: { width: 900, height: 800 }, data: {} },
+      ...members.map((m) => ({
+        id: m.id, type: 'azureNode', parentNode: 'z', position: { ...m.position },
+        width: m.width, height: m.height, data: {},
+      })),
+    ] as never,
+    'z',
+  )!;
+  const buttonBox = byButton.find((n) => n.id === 'z')!;
+
+  assert.equal(box.width, buttonBox.style!.width, 'auto width differs from the Fit to content button');
+  assert.equal(box.height, buttonBox.style!.height, 'auto height differs from the Fit to content button');
+
+  for (const m of members) {
+    const auto = fitted.services.find((s) => s.id === m.id)!;
+    const manual = byButton.find((n) => n.id === m.id)!;
+    assert.deepEqual(auto.position, manual.position, `member ${m.id} sits somewhere else after the auto refit`);
+  }
+
+  const topInset = Math.min(...fitted.services.map((s) => s.position.y));
+  assert.ok(
+    topInset >= GROUP_HEADER_HEIGHT + GROUP_PADDING,
+    `first tile row starts at ${topInset}px, under a ${GROUP_HEADER_HEIGHT}px title bar plus ${GROUP_PADDING}px padding`,
+  );
 });

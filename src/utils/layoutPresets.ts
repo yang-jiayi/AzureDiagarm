@@ -181,18 +181,19 @@ export function straightenPrimaryPath(nodes: Node[], edges: Edge[], direction: '
     absolutePositions.get(node.id)?.[axis] ?? node.position[axis];
 
   const runs: Node[][] = [[chainNodes[0]]];
-  const majorExtent = direction === 'LR' ? NODE_WIDTH : NODE_HEIGHT;
   const minorExtent = direction === 'LR' ? NODE_HEIGHT : NODE_WIDTH;
   let heading = 0;
   for (let i = 1; i < chainNodes.length; i += 1) {
     const step = majorOf(chainNodes[i]) - majorOf(chainNodes[i - 1]);
     const drift = minorOf(chainNodes[i]) - minorOf(chainNodes[i - 1]);
     const stepSign = Math.sign(step);
-    // A seam is the short hop between two bands: it makes no progress along
-    // the flow but crosses the whole band gap. Its major step is ~0, so the
-    // sign never flips and the reversal test alone would miss it and fold the
-    // next band onto this one.
-    const seam = Math.abs(step) < majorExtent && Math.abs(drift) > minorExtent;
+    // A seam is the hop between two bands, and the only thing that reliably
+    // identifies it is the distance crossed on the minor axis: a band gap is
+    // never smaller than a tile plus the rank spacing. The major step is not
+    // usable — bands are centred on the widest one, so the tail-to-head offset
+    // at a seam is (extent_next - extent_prev)/2 and can be arbitrarily large
+    // in either direction when adjacent bands differ in width.
+    const seam = Math.abs(drift) > minorExtent * 2;
     if (seam || (stepSign !== 0 && heading !== 0 && stepSign !== heading)) {
       runs.push([]);
       heading = seam ? 0 : stepSign;

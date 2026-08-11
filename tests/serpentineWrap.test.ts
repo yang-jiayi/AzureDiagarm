@@ -229,3 +229,44 @@ test('a reversed band gets connectors that leave the face they actually travel t
     assert.equal((edge as any).targetHandle, 'right-target');
   }
 });
+
+test('a re-arrange keeps the handles the layout realigned', async () => {
+  const { mergeLayoutEdges } = await import('../src/utils/layoutResultMerge.ts');
+  const before = [{ id: 'e1', source: 'a', target: 'b', sourceHandle: 'right', targetHandle: 'left' }] as any[];
+  const laidOut = [{ id: 'e1', source: 'a', target: 'b', sourceHandle: 'left-source', targetHandle: 'right-target' }] as any[];
+
+  // `applyLayout` feeds the layout's edges through this merge before setting
+  // state; handles are top-level Edge fields, so a merge that only rebuilds
+  // `data` silently restores the pre-layout direction.
+  const merged = mergeLayoutEdges(before, before, laidOut);
+  assert.equal(merged[0].sourceHandle, 'left-source', 'realigned source handle was discarded');
+  assert.equal(merged[0].targetHandle, 'right-target', 'realigned target handle was discarded');
+
+  const handAttached = [{ id: 'e1', source: 'a', target: 'b', sourceHandle: 'top', targetHandle: 'bottom' }] as any[];
+  const kept = mergeLayoutEdges(handAttached, before, laidOut);
+  assert.equal(kept[0].sourceHandle, 'top', 'a hand-attached handle must survive a re-arrange');
+});
+
+test('bands of different widths are still straightened separately', async () => {
+  const { straightenPrimaryPath } = await import('../src/utils/layoutPresets.ts');
+  // Two bands centred on the widest, so the seam makes a large FORWARD jump on
+  // the major axis: the reversal test cannot see it and a seam test that reads
+  // the major step cannot either.
+  const xs = [0, 400, 800, 1200, 1600, 2000, 2400, 2800, 3800, 3400, 3000, 2600];
+  const ys = [0, 0, 0, 0, 0, 0, 0, 0, 400, 400, 400, 400];
+  const nodes = xs.map((x, i) => ({
+    id: `n${i}`, type: 'azureNode', position: { x, y: ys[i] }, width: 180, height: 100, data: { label: `S${i}` },
+  })) as any[];
+  const edges = xs.slice(1).map((_, i) => ({ id: `e${i}`, source: `n${i}`, target: `n${i + 1}` })) as any[];
+
+  const result = straightenPrimaryPath(nodes, edges, 'LR');
+  const placed = new Map(result.nodes.map((n: any) => [n.id, Math.round(n.position.y)]));
+  const strayed = nodes
+    .map((n: any, i: number) => ({ id: n.id, want: ys[i], got: placed.get(n.id) }))
+    .filter((n) => n.got !== n.want);
+  assert.deepEqual(
+    strayed,
+    [],
+    `nodes pulled into the wrong band: ${strayed.map((n) => `${n.id} ${n.want}->${n.got}`).join(', ')}`,
+  );
+});
