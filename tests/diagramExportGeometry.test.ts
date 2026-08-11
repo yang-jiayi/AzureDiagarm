@@ -176,3 +176,58 @@ test('the canonical service name is carried into exports separately from the lab
   assert.equal(boxes.get('unnamed')?.serviceName, undefined);
   assert.equal(boxes.get('blank')?.serviceName, undefined, 'whitespace is not a service name');
 });
+
+/**
+ * Every exporter draws a single arrowhead at the route's target end, so the
+ * route — not the stored tuple — decides which way the arrow points. An edge
+ * with direction 'reverse' keeps its tuple and moves only the arrowhead, so
+ * following the tuple pointed PPTX, VSDX, Draw.io and HTML the opposite way
+ * to the canvas.
+ */
+test('export routes follow the drawn arrow, not the stored endpoint tuple', () => {
+  const boxes = new Map([
+    ['a', box('a', 0, 0)],
+    ['b', box('b', 400, 0)],
+  ]);
+  const directed = (direction?: string): Edge => ({
+    id: 'e1',
+    source: 'a',
+    target: 'b',
+    ...(direction ? { data: { direction } } : {}),
+  } as Edge);
+
+  const forward = buildExportRoutes([directed()], boxes)[0];
+  assert.equal(forward.sourceId, 'a');
+  assert.equal(forward.targetId, 'b');
+  assert.equal(forward.bidirectional, false);
+
+  const reverse = buildExportRoutes([directed('reverse')], boxes)[0];
+  assert.equal(reverse.sourceId, 'b', 'a reverse edge points from b');
+  assert.equal(reverse.targetId, 'a', 'a reverse edge points to a');
+  assert.equal(reverse.bidirectional, false);
+
+  // The polyline has to run from the arrow tail too: exporters place the head
+  // at the last point and Visio derives its whole local axis from begin->end.
+  assert.ok(reverse.points[0].x > reverse.points[reverse.points.length - 1].x,
+    'the reverse polyline must start at the right-hand box');
+  assert.ok(forward.points[0].x < forward.points[forward.points.length - 1].x);
+
+  const both = buildExportRoutes([directed('bidirectional')], boxes)[0];
+  assert.equal(both.bidirectional, true, 'a two-way edge asks for a second arrowhead');
+  assert.equal(both.sourceId, 'a');
+  assert.equal(both.targetId, 'b');
+
+  // An unknown or missing direction must never be treated as reverse.
+  const unknown = buildExportRoutes([directed('sideways')], boxes)[0];
+  assert.equal(unknown.sourceId, 'a');
+  assert.equal(unknown.bidirectional, false);
+});
+
+test('a reverse edge still resolves its endpoints and self-loops are unaffected', () => {
+  const boxes = new Map([['a', box('a', 0, 0)], ['b', box('b', 400, 0)]]);
+  // Dangling endpoints must still be skipped after orientation.
+  assert.equal(buildExportRoutes([{ id: 'e', source: 'a', target: 'gone', data: { direction: 'reverse' } } as Edge], boxes).length, 0);
+  const loop = buildExportRoutes([{ id: 'e', source: 'a', target: 'a', data: { direction: 'reverse' } } as Edge], boxes)[0];
+  assert.equal(loop.isSelfLoop, true);
+  assert.equal(loop.sourceId, 'a');
+});

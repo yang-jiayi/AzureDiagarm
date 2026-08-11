@@ -2048,9 +2048,7 @@ function declaredAddress(block: string, format: StarterTemplateFormat): string |
  * which is the codebase's existing reader of the same field.
  *
  * An arrow drawn from A to B means A talks to B, so B has to exist before A
- * can be deployed against it: the arrow's origin depends on its head. A
- * bidirectional edge contributes both orderings and lets the cycle breaker
- * below choose one, rather than silently privileging the stored tuple.
+ * can be deployed against it: the arrow's origin depends on its head.
  *
  * Diagrams routinely contain cycles — two services shown calling each other,
  * or a bidirectional link — and both Bicep and Terraform reject a dependency
@@ -2059,6 +2057,12 @@ function declaredAddress(block: string, format: StarterTemplateFormat): string |
  * edges found during a depth-first walk are dropped. The walk runs over the
  * caller's emission order, which is already sorted, so the edge that gets
  * dropped is stable between runs.
+ *
+ * A bidirectional edge asserts no deployment ordering on its own, so it is
+ * resolved only after every directed edge has been placed, and each half is
+ * kept only if it does not close a cycle. Letting both halves compete on
+ * equal terms instead allowed a speculative two-way link to evict an arrow
+ * the user had explicitly drawn, and to emit its exact inverse.
  */
 function resolveDependencies(
   edges: Edge[],
@@ -2068,22 +2072,21 @@ function resolveDependencies(
   const rank = new Map(order.map((nodeId, index) => [nodeId, index]));
 
   const candidates = new Map<string, Set<string>>(order.map((nodeId) => [nodeId, new Set<string>()]));
-  const addCandidate = (dependent: string, dependency: string) => {
-    if (dependent === dependency) return;
-    if (!addressByNodeId.has(dependent) || !addressByNodeId.has(dependency)) return;
-    candidates.get(dependent)!.add(dependency);
-  };
+  const modellable = (dependent: string, dependency: string) => (
+    dependent !== dependency && addressByNodeId.has(dependent) && addressByNodeId.has(dependency)
+  );
+  const twoWay: Array<{ source: string; target: string; id: string }> = [];
 
   for (const edge of edges) {
     if (!edge.source || !edge.target) continue;
+    if (!modellable(edge.source, edge.target)) continue;
     const direction = (edge.data as { direction?: string } | undefined)?.direction ?? 'forward';
     if (direction === 'reverse') {
-      addCandidate(edge.target, edge.source);
+      candidates.get(edge.target)!.add(edge.source);
     } else if (direction === 'bidirectional') {
-      addCandidate(edge.source, edge.target);
-      addCandidate(edge.target, edge.source);
+      twoWay.push({ source: edge.source, target: edge.target, id: edge.id ?? '' });
     } else {
-      addCandidate(edge.source, edge.target);
+      candidates.get(edge.source)!.add(edge.target);
     }
   }
 
@@ -2121,10 +2124,44 @@ function resolveDependencies(
     }
   }
 
+  // Second phase: fit the two-way links into whatever ordering the directed
+  // arrows already established, never the other way round.
+  const reaches = (from: string, to: string): boolean => {
+    const seen = new Set<string>([from]);
+    const queue = [from];
+    while (queue.length > 0) {
+      const current = queue.shift()!;
+      if (current === to) return true;
+      for (const next of accepted.get(current) ?? []) {
+        if (seen.has(next)) continue;
+        seen.add(next);
+        queue.push(next);
+      }
+    }
+    return false;
+  };
+
+  twoWay.sort((left, right) => (
+    rank.get(left.source)! - rank.get(right.source)!
+    || rank.get(left.target)! - rank.get(right.target)!
+    || left.id.localeCompare(right.id)
+  ));
+  for (const link of twoWay) {
+    const alreadyOrdered = accepted.get(link.source)!.includes(link.target)
+      || accepted.get(link.target)!.includes(link.source);
+    if (alreadyOrdered) continue;
+    if (!reaches(link.target, link.source)) {
+      accepted.get(link.source)!.push(link.target);
+    } else if (!reaches(link.source, link.target)) {
+      accepted.get(link.target)!.push(link.source);
+    }
+  }
+
   const resolved = new Map<string, string[]>();
   for (const [nodeId, targets] of accepted) {
     if (targets.length === 0) continue;
-    resolved.set(nodeId, targets.map((target) => addressByNodeId.get(target)!));
+    const ordered = [...targets].sort((left, right) => (rank.get(left)! - rank.get(right)!));
+    resolved.set(nodeId, ordered.map((target) => addressByNodeId.get(target)!));
   }
   return resolved;
 }

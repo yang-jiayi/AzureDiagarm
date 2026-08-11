@@ -264,6 +264,82 @@ test('buildStarterTemplate reduces a bidirectional connection to one ordering', 
   assert.equal(repeat.content, template.content);
 });
 
+/**
+ * A two-way link states that the services talk, not which one deploys first,
+ * so it must never displace an arrow the user explicitly drew. Letting both
+ * halves compete on equal terms let a bidirectional edge evict a directed one
+ * and emit its exact inverse.
+ */
+test('a bidirectional connection never overrides an explicitly drawn arrow', () => {
+  const nodes = [azureNode('app', 'App Service'), azureNode('store', 'Storage Account')];
+  const appHeader = /resource \w+ 'Microsoft\.Web\/sites@/;
+  const storeHeader = /resource \w+ 'Microsoft\.Storage\/storageAccounts@/;
+  const symbolOf = (content: string, header: RegExp) => /resource (\w+) '/.exec(blockMatching(content, header))![1];
+
+  // The user drew Storage -> App, and separately marked the pair as two-way.
+  const drawn = [edge('e1', 'store', 'app')];
+  const alone = buildStarterTemplate(nodes, 'bicep', drawn);
+  const withTwoWay = buildStarterTemplate(nodes, 'bicep', [...drawn, edge('e2', 'app', 'store', 'bidirectional')]);
+
+  const expected = [symbolOf(alone.content, appHeader)];
+  assert.deepEqual(dependencyNames(blockMatching(alone.content, storeHeader), 'dependsOn'), expected);
+  assert.deepEqual(
+    dependencyNames(blockMatching(withTwoWay.content, storeHeader), 'dependsOn'),
+    expected,
+    'the drawn arrow must survive the two-way link',
+  );
+  assert.deepEqual(
+    dependencyNames(blockMatching(withTwoWay.content, appHeader), 'dependsOn'),
+    [],
+    'the inverse must never be emitted',
+  );
+  assert.equal(withTwoWay.dependencyCount, 1);
+});
+
+/**
+ * The two-way link closes a longer cycle here, so it must not cost any part
+ * of the directed chain. It may still contribute the half that stays acyclic.
+ */
+test('a bidirectional connection yields rather than break a directed chain', () => {
+  const nodes = [
+    azureNode('acr', 'Container Registry'),
+    azureNode('app', 'App Service'),
+    azureNode('store', 'Storage Account'),
+  ];
+  const headers = [
+    /resource \w+ 'Microsoft\.ContainerRegistry\/registries@/,
+    /resource \w+ 'Microsoft\.Web\/sites@/,
+    /resource \w+ 'Microsoft\.Storage\/storageAccounts@/,
+  ];
+  const chain = [edge('e1', 'acr', 'app'), edge('e2', 'app', 'store')];
+  const asDrawn = buildStarterTemplate(nodes, 'bicep', chain);
+  const withTwoWay = buildStarterTemplate(nodes, 'bicep', [...chain, edge('e3', 'store', 'acr', 'bidirectional')]);
+
+  for (const header of headers) {
+    const before = dependencyNames(blockMatching(asDrawn.content, header), 'dependsOn');
+    const after = dependencyNames(blockMatching(withTwoWay.content, header), 'dependsOn');
+    for (const dependency of before) {
+      assert.ok(after.includes(dependency), `directed dependency ${dependency} must survive the two-way link`);
+    }
+  }
+  assert.ok(withTwoWay.dependencyCount >= asDrawn.dependencyCount, 'no directed edge may be traded away');
+
+  // Whatever the two-way link contributed, the result still has to deploy.
+  const graph = new Map<string, string[]>();
+  for (const block of withTwoWay.content.matchAll(/resource (\w+) '[^']+' = \{\n([\s\S]*?)\n\}/g)) {
+    graph.set(block[1], dependencyNames(`\n${block[2]}\n`, 'dependsOn'));
+  }
+  const state = new Map<string, number>();
+  const visit = (symbol: string): void => {
+    assert.notEqual(state.get(symbol), 1, `cycle reached ${symbol}`);
+    if (state.get(symbol) === 2) return;
+    state.set(symbol, 1);
+    for (const next of graph.get(symbol) ?? []) visit(next);
+    state.set(symbol, 2);
+  };
+  for (const symbol of graph.keys()) visit(symbol);
+});
+
 test('buildStarterTemplate emits no ordering when the diagram has no connections', () => {
   const template = buildStarterTemplate([azureNode('store', 'Storage Account')], 'bicep');
   assert.equal(template.dependencyCount, 0);

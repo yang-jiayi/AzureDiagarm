@@ -274,6 +274,7 @@ function addConnector(
     width: route.connectionType === 'optional' ? 1 : 1.25,
     dashType: pptxDashType(route),
     endArrowType: 'triangle' as const,
+    ...(route.bidirectional ? { beginArrowType: 'triangle' as const } : {}),
     transparency: route.opacity < 1 ? Math.round((1 - route.opacity) * 100) : undefined,
   };
 

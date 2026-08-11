@@ -198,7 +198,7 @@ function createEdgeCell(
 
   // Force ORTHOGONAL (right-angle) routing on export; colour + dash come from
   // the canonical connection style so every format agrees.
-  const style = `edgeStyle=orthogonalEdgeStyle;curved=0;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;${drawioEdgeStyle(route)}strokeWidth=2;endArrow=classic;endFill=1;`;
+  const style = `edgeStyle=orthogonalEdgeStyle;curved=0;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;${drawioEdgeStyle(route)}strokeWidth=2;endArrow=classic;endFill=1;${route.bidirectional ? 'startArrow=classic;startFill=1;' : ''}`;
 
   const waypoints = edgeWaypoints(route);
   const pointsXml = waypoints.length

@@ -37,6 +37,65 @@ test('direction keywords still match when genuinely present', () => {
   }
 });
 
+/**
+ * The label is free text from a model, so the inflected form is at least as
+ * likely as the bare verb. Matching exact words only sent all of these back
+ * to 'forward', which is the same wrong-way arrow reached from the other side.
+ */
+test('inflected forms of the keywords are still recognised', () => {
+  for (const label of [
+    'Responses',
+    'HTTP responses',
+    'Callbacks',
+    'Acknowledges',
+    'Acknowledgement',
+    'Acknowledgment sent',
+    'Returned payload',
+    'Returning results',
+    'Replies',
+  ]) {
+    assert.equal(classifyEdgeDirection(label), 'reverse', `"${label}" should be reverse`);
+  }
+
+  for (const label of [
+    'Synchronize',
+    'Synchronizes data',
+    'Synchronization',
+    'Synchronisation',
+    'Syncs config',
+    'Exchanges tokens',
+    'Communicates with',
+    'Communication channel',
+  ]) {
+    assert.equal(classifyEdgeDirection(label), 'bidirectional', `"${label}" should be bidirectional`);
+  }
+});
+
+test('camelCase labels are split before matching', () => {
+  assert.equal(classifyEdgeDirection('sendResponse'), 'reverse');
+  assert.equal(classifyEdgeDirection('onCallback'), 'reverse');
+  assert.equal(classifyEdgeDirection('syncState'), 'bidirectional');
+  // Splitting must not manufacture a match that is not there.
+  assert.equal(classifyEdgeDirection('backupBlob'), 'forward');
+});
+
+/**
+ * Stemming must not become greedy: these are ordinary Azure vocabulary that
+ * happens to start with a keyword stem and means something entirely different.
+ */
+test('stemming does not swallow unrelated Azure vocabulary', () => {
+  for (const label of [
+    'Replicates data',
+    'Geo-replication',
+    'Replica set',
+    'Synchronous call',
+    'Synchronously invokes',
+    'Responsible service',
+  ]) {
+    assert.equal(classifyEdgeDirection(label), 'forward', `"${label}" should stay forward`);
+  }
+});
+
 test('bidirectional wins over reverse, and unknown labels stay forward', () => {
   assert.equal(classifyEdgeDirection('Sync response'), 'bidirectional');
   assert.equal(classifyEdgeDirection('Sends telemetry'), 'forward');
@@ -44,9 +103,12 @@ test('bidirectional wins over reverse, and unknown labels stay forward', () => {
   assert.equal(classifyEdgeDirection(undefined as unknown as string), 'forward');
 });
 
-test('hyphenated and multi-word keywords are matched on the raw label', () => {
+test('punctuation and phrase keywords are handled', () => {
+  assert.equal(classifyEdgeDirection('request/response'), 'reverse');
   assert.equal(classifyEdgeDirection('Two-way'), 'bidirectional');
-  assert.equal(classifyEdgeDirection('two-way sync channel'), 'bidirectional');
-  // A hyphen is a word separator, so the single-word keywords also survive it.
-  assert.equal(classifyEdgeDirection('request-response'), 'reverse');
+  assert.equal(classifyEdgeDirection('two way channel'), 'bidirectional');
+  assert.equal(classifyEdgeDirection('2-way link'), 'bidirectional');
+  assert.equal(classifyEdgeDirection('sync-config'), 'bidirectional');
+  // A non-English label has no keywords and must not be forced either way.
+  assert.equal(classifyEdgeDirection('データ送信'), 'forward');
 });
