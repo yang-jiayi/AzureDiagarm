@@ -97,6 +97,13 @@ export interface ExportRoute {
   /** 0-based index among parallel edges sharing the same endpoint pair. */
   ordinal: number;
   /**
+   * Perpendicular offset, in pixels, this route was fanned by. The fan
+   * alternates about the centre (0, +16, -16 …), so a label ladder ordered by
+   * `ordinal` runs in a different order from the arrows themselves and every
+   * callout ends up beside the wrong one. Rank by this instead.
+   */
+  fanOffset: number;
+  /**
    * True when the edge was drawn with arrowheads at both ends, so exporters
    * add a start arrow as well. `sourceId`/`targetId` are already oriented to
    * the drawn arrow, so a one-way head at the target end is always correct.
@@ -984,10 +991,11 @@ export function buildExportRoutes(
     const ordinal = ordinals.get(key) ?? 0;
     ordinals.set(key, ordinal + 1);
 
+    const fanOffset = source.id === target.id ? 0 : parallelOffset(ordinal);
     const geometry = source.id === target.id
       ? selfLoopRoute(source, ordinal)
       : routeOrthogonal(source, target, {
-        offset: parallelOffset(ordinal),
+        offset: fanOffset,
         obstacles: obstacles.filter((box) => box.id !== source.id && box.id !== target.id),
       });
 
@@ -1002,6 +1010,7 @@ export function buildExportRoutes(
       dashPattern: dashed ? (style.dashPattern ?? '6, 4') : undefined,
       opacity: style.opacity,
       ordinal,
+      fanOffset,
       bidirectional,
       isSelfLoop: source.id === target.id,
       points: geometry.points,

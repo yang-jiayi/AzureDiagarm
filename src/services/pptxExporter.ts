@@ -110,12 +110,26 @@ interface SlideGeometry {
   /** True when far-placed nodes were pulled back onto the page to stay visible. */
   outliersClamped: boolean;
   /**
-   * Horizontal slices of the drawing, one per slide. A single entry (the usual
-   * case) means the whole architecture fits on one legible page. More than one
-   * means the drawing was too wide to stay readable and was split the way a
-   * printed Azure Architecture Center diagram is continued across pages.
+   * Tiles of the drawing, one per slide. A single entry (the usual case) means
+   * the whole architecture fits on one legible page. More than one means the
+   * drawing was too large to stay readable and was split the way a printed
+   * Azure Architecture Center diagram is continued across pages.
    */
-  windows: Bounds[];
+  windows: DiagramWindow[];
+}
+
+/**
+ * One tile of a split drawing.
+ *
+ * `fit` sizes the page and is the same shape on every part, so the whole deck
+ * renders at one scale. `own` says which shapes this part is responsible for
+ * and covers the drawing exactly once between all the parts — it is wider than
+ * `fit` wherever a neighbouring cell held no service and was not worth its own
+ * slide, so nothing anchored there is left belonging to no part at all.
+ */
+interface DiagramWindow {
+  fit: Bounds;
+  own: Bounds;
 }
 
 /**
@@ -146,10 +160,28 @@ const MIN_SERVICES_PER_SLIDE = 6;
 /**
  * Never explode one architecture into an unreviewable pile of slides.
  *
- * A 3 x 3 grid is the point where splitting still beats handing the reader a
- * plotter sheet: past it the deck stops being readable as one architecture.
+ * A 3 x 3 grid is where splitting stops being obviously better than one larger
+ * sheet, so it is the point past which the *comfortable* grid is not worth
+ * taking. It is not the hard limit: PowerPoint has exactly one page size per
+ * deck, so growing past 13.333" drags the title and workflow slides onto a
+ * plotter sheet nobody can open, and a 56" page tiled into four 56" parts is
+ * no better than one. Beyond the comfortable grid, more standard slides is
+ * still the lesser evil.
  */
 const MAX_DIAGRAM_SLIDES = 9;
+
+/**
+ * Hard ceiling on the tiled deck. A drawing that needs more sheets than this
+ * to stay above the legibility floor is genuinely a plotter drawing, and the
+ * page grows for it.
+ */
+const MAX_TILED_SLIDES = 24;
+
+/**
+ * A sheet has to carry a piece of the architecture, not a lone tile floating
+ * on white. Below this the split has stopped adding information.
+ */
+const MIN_SERVICES_PER_TILED_SLIDE = 1.5;
 
 /**
  * How far past its own window a slide keeps drawing.
@@ -161,6 +193,35 @@ const MAX_DIAGRAM_SLIDES = 9;
  * half a chip — while ownership itself stays exact, so nothing is drawn twice.
  */
 const WINDOW_BLEED_PX = 100;
+
+/**
+ * What an inch of travel away from a chip's own arrow costs, in square inches
+ * of overlap it is allowed to avoid by moving. This is only a tie-breaker that
+ * keeps a chip from drifting for no gain — the hard bounds on the walk are what
+ * keep a label attributable — so it is priced well under the area of the tile a
+ * chip would otherwise be sitting on.
+ */
+const DRIFT_COST_PER_IN = 0.02;
+
+/**
+ * How much worse it is to cover another annotation than to cover a service
+ * tile. A tile under a chip is untidy and still recognisable; a label under a
+ * chip is simply lost, and so is the numbered callout that hangs off it.
+ */
+const ANNOTATION_WEIGHT = 24;
+
+/**
+ * Something a connector label has to keep clear of. `annotation` marks the
+ * blocks belonging to other labels, which are worth far more than the service
+ * tiles they sit between.
+ */
+interface Obstacle {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  annotation?: boolean;
+}
 
 /**
  * Shortest workflow row that still fits a 12 pt sentence next to a badge. Rows
@@ -184,10 +245,10 @@ function planDiagramWindows(
   bounds: Bounds,
   services: ExportBox[],
   frame: DiagramFrame,
-): { windows: Bounds[]; legible: boolean } {
+): { windows: DiagramWindow[]; legible: boolean } {
   const contentW = Math.max(1, bounds.maxX - bounds.minX);
   const contentH = Math.max(1, bounds.maxY - bounds.minY);
-  const whole = { windows: [bounds], legible: true };
+  const whole = { windows: [] as DiagramWindow[], legible: true };
   if (services.length === 0 || frame.w <= 0 || frame.h <= 0) return whole;
 
   const shortest = Math.min(...services.map((box) => box.h).filter((h) => h > 0));
@@ -202,6 +263,10 @@ function planDiagramWindows(
   // window has to tile in both. Each window also renders a bleed margin, which
   // comes out of its own budget so the tiles stay legible.
   const gridFor = (perIn: number): { cols: number; rows: number; slides: number } | null => {
+    // Every window renders the same bleed on all four sides, including at the
+    // drawing's outer edge, so that every part of the deck shares one scale.
+    // The budget has to be charged the same way or the planned grid renders
+    // smaller than planned and drops under the legibility floor.
     const usableW = frame.w / perIn - WINDOW_BLEED_PX * 2;
     const usableH = frame.h / perIn - WINDOW_BLEED_PX * 2;
     if (usableW <= 0 || usableH <= 0) return null;
@@ -220,34 +285,76 @@ function planDiagramWindows(
     && comfortable.slides <= MAX_DIAGRAM_SLIDES
     && services.length / comfortable.slides >= MIN_SERVICES_PER_SLIDE;
   const grid = worthIt ? comfortable : floor;
-  if (!grid) return { windows: [bounds], legible: false };
+  if (!grid) return { windows: [], legible: false };
   const { cols, rows } = grid;
   if (cols * rows <= 1) return whole;
-  if (cols * rows > MAX_DIAGRAM_SLIDES) return { windows: [bounds], legible: false };
+  // Past the comfortable grid the choice is not "more slides or one nice page",
+  // it is "more standard slides or a plotter sheet the whole deck inherits", so
+  // the tiled deck is allowed to run well past the comfortable ceiling. It
+  // still has to be a deck: sheets that carry barely a tile each are a
+  // flip-book, and a drawing needing more than the hard ceiling really is a
+  // plotter drawing.
+  if (cols * rows > MAX_TILED_SLIDES) return { windows: [], legible: false };
+  if (
+    cols * rows > MAX_DIAGRAM_SLIDES
+    && services.length / (cols * rows) < MIN_SERVICES_PER_TILED_SLIDE
+  ) return { windows: [], legible: false };
 
   const stepX = contentW / cols;
   const stepY = contentH / rows;
-  const windows: Bounds[] = [];
-  for (let row = 0; row < rows; row += 1) {
-    for (let col = 0; col < cols; col += 1) {
-      windows.push({
-        minX: bounds.minX + stepX * col,
-        maxX: col === cols - 1 ? bounds.maxX : bounds.minX + stepX * (col + 1),
-        minY: bounds.minY + stepY * row,
-        maxY: row === rows - 1 ? bounds.maxY : bounds.minY + stepY * (row + 1),
-      });
-    }
-  }
+  const cellX = (col: number) => ({
+    minX: bounds.minX + stepX * col,
+    maxX: col === cols - 1 ? bounds.maxX : bounds.minX + stepX * (col + 1),
+  });
+  const cellY = (row: number) => ({
+    minY: bounds.minY + stepY * row,
+    maxY: row === rows - 1 ? bounds.maxY : bounds.minY + stepY * (row + 1),
+  });
+  const holds = (col: number, row: number): boolean => {
+    const cell = { ...cellX(col), ...cellY(row) };
+    return services.some((box) => windowOwnsPoint(cell, bounds, box.x + box.w / 2, box.y + box.h / 2));
+  };
+
   // An architecture is not a filled rectangle, so a cell of the grid can own no
   // services at all — and one was being emitted as a numbered part carrying two
   // zone outlines and three arrows whose endpoints are both on other slides.
-  // Dropping empties cannot lose anything: a service is only ever owned by the
-  // cell its centre falls in, and that cell is by definition not empty.
-  const owned = windows.filter((window) => services.some(
-    (box) => windowOwnsPoint(window, bounds, box.x + box.w / 2, box.y + box.h / 2),
-  ));
-  if (owned.length <= 1) return whole;
-  return { windows: owned, legible: true };
+  //
+  // An empty cell is not simply deleted, though: ownership has to stay a
+  // partition of the whole drawing, or a connector label anchored in the gap an
+  // empty cell used to cover belongs to no part and is silently dropped from
+  // the deck — arrow drawn, number missing, and the workflow list still citing
+  // it. The surviving neighbours absorb the vacated bands instead, keeping the
+  // *fitted* cell — and therefore the scale — identical on every part.
+  const keptRows: number[] = [];
+  for (let row = 0; row < rows; row += 1) {
+    if (Array.from({ length: cols }, (_, col) => col).some((col) => holds(col, row))) keptRows.push(row);
+  }
+  if (keptRows.length === 0) return whole;
+
+  const spans = (kept: number[], lo: (i: number) => number, hi: (i: number) => number, min: number, max: number) =>
+    kept.map((index, i) => ({
+      lo: i === 0 ? min : (hi(kept[i - 1]) + lo(index)) / 2,
+      hi: i === kept.length - 1 ? max : (hi(index) + lo(kept[i + 1])) / 2,
+    }));
+
+  const rowOwn = spans(keptRows, (r) => cellY(r).minY, (r) => cellY(r).maxY, bounds.minY, bounds.maxY);
+  const windows: DiagramWindow[] = [];
+  keptRows.forEach((row, r) => {
+    const keptCols: number[] = [];
+    for (let col = 0; col < cols; col += 1) if (holds(col, row)) keptCols.push(col);
+    const colOwn = spans(keptCols, (c) => cellX(c).minX, (c) => cellX(c).maxX, bounds.minX, bounds.maxX);
+    keptCols.forEach((col, c) => {
+      windows.push({
+        fit: { ...cellX(col), ...cellY(row) },
+        own: { minX: colOwn[c].lo, maxX: colOwn[c].hi, minY: rowOwn[r].lo, maxY: rowOwn[r].hi },
+      });
+    });
+  });
+  // A single surviving cell means the drawing cannot be tiled at all. Saying it
+  // is legible would pin an over-large drawing to one standard slide at a scale
+  // that already failed the legibility test above; let the page grow instead.
+  if (windows.length <= 1) return { windows: [], legible: false };
+  return { windows, legible: true };
 }
 
 /**
@@ -313,7 +420,7 @@ function planSlideGeometry(diagram?: DiagramShapeSource | null): SlideGeometry {
   let outliersClamped = false;
 
   const nodes = diagram?.nodes ?? [];
-  let windows: Bounds[] = [];
+  let windows: DiagramWindow[] = [];
   if (nodes.length > 0) {
     const boxes = collectExportBoxes(nodes);
     if (boxes.size > 0) {
@@ -334,7 +441,7 @@ function planSlideGeometry(diagram?: DiagramShapeSource | null): SlideGeometry {
       // and only grow the page when even the slide budget is exceeded.
       const standard = planDiagramWindows(bounds, services, frameFor(BASE_W, BASE_H));
       if (standard.legible) {
-        windows = standard.windows.length > 1 ? standard.windows : [];
+        windows = standard.windows;
       } else {
         // Only a genuinely enormous drawing gets here — one that cannot be read
         // on nine standard slides. Grow the page for it, then tile that page
@@ -344,7 +451,7 @@ function planSlideGeometry(diagram?: DiagramShapeSource | null): SlideGeometry {
         w = clamp(wantW, BASE_W, MAX_SLIDE_IN);
         h = clamp(wantH, BASE_H, MAX_SLIDE_IN);
         const grown = planDiagramWindows(bounds, services, frameFor(w, h));
-        windows = grown.windows.length > 1 ? grown.windows : [];
+        windows = grown.windows;
         // Splitting restores legibility, so the "scaled down to fit" warning no
         // longer applies — the drawing is now at its readable size.
         if (windows.length > 1) overflow = false;
@@ -515,14 +622,30 @@ function addConnector(
 function connectorLabelBox(
   route: ExportRoute,
   transform: FitTransform,
-  fontSize: number,
+  requestedFontSize: number,
   px: number,
   clampTo?: DiagramFrame,
-  obstacles: readonly { x: number; y: number; w: number; h: number }[] = [],
-): { x: number; y: number; w: number; h: number; text: string } | null {
+  obstacles: readonly Obstacle[] = [],
+  bundle?: {
+    count: number; rung: number; x: number; y: number;
+    shift?: number; across?: number; font?: number; perCol?: number;
+    /** Rung index per route id, ordered the way the arrows themselves fan. */
+    rank?: ReadonlyMap<string, number>;
+    /** Length of the longest hop in the bundle, so the ladder stays over it. */
+    span?: number;
+    /** Width the ladder has been told to fit into, when it has no clear slot. */
+    maxWidth?: number;
+    /** The fan has nowhere clean to stand: number the arrows, drop the chips. */
+    badgesOnly?: boolean;
+  },
+): { x: number; y: number; w: number; h: number; text: string; badge: { x: number; y: number; d: number } | null; block: Obstacle; alongX: boolean; fontSize: number } | null {
   if (!route.label) return null;
   const anchor = toInches(route.labelAnchor, transform);
-  const text = truncateLabel(route.label, 42);
+  // A fan with nowhere clean to stand carries its wording on the workflow slide
+  // instead and leaves numbered callouts on the arrows. That is what the
+  // Architecture Center does with a bundle of parallel flows, and it beats
+  // seven chips laid across the services they run between.
+  const text = bundle?.badgesOnly ? '' : truncateLabel(route.label, 42);
 
   // Size the chip from the text it actually carries, capped so it can never
   // dwarf the service tiles it sits between (a 150 px tile is 1.56" at 1 : 1).
@@ -536,58 +659,197 @@ function connectorLabelBox(
   const last = toInches(route.points[route.points.length - 1] ?? route.labelAnchor, transform);
   const span = Math.max(Math.abs(last.x - first.x), Math.abs(last.y - first.y));
   const gap = span > 0 ? span - 0.08 : 1.5 * px;
-  const maxW = clamp(Math.max(gap, 0.9 * px), 0.34 * px, 1.5 * px);
+  // The ladder of parallel chips runs across the edge, so its room is the
+  // frame dimension perpendicular to the arrow.
+  const alongX = Math.abs(last.x - first.x) >= Math.abs(last.y - first.y);
+  // A bundle of parallel edges is stacked into a ladder, so every chip in it
+  // gets a share of the corridor rather than its natural size. Wide-and-short
+  // is what fits a ladder, so the width cap is relaxed for bundles.
+  const siblings = bundle?.count ?? 1;
+  // A fan deeper than the slide is tall cannot be laid out at the ordinary
+  // label size; the caller works out how far the whole bundle has to shrink so
+  // that every rung still fits, which keeps the text intact.
+  const fontSize = bundle?.font ?? requestedFontSize;
+  // Wide-and-short is the shape that fits a ladder: a fan of six chips each
+  // wrapped onto four lines is taller than the slide, and clamping them into
+  // the frame one by one just restacks them on the page edge. Letting a chip in
+  // a fan run past the hop it labels halves its height instead.
+  const prefer = siblings > 2 ? 1.4 : 0.9;
+  // A ladder that has nowhere clear to stand is told to narrow itself to the
+  // lane between the two services instead. Wrapping the text onto more lines is
+  // a far better trade than parking seven chips on top of the tiles either
+  // side, which is what a wide fan does in a dense grid.
+  const maxW = bundle?.maxWidth !== undefined
+    ? clamp(bundle.maxWidth, 0.34 * px, 1.5 * px)
+    : clamp(Math.max(gap, prefer * px), 0.34 * px, 1.5 * px);
   const naturalW = estimateTextWidthIn(text, fontSize) + 0.14;
   const w = clamp(naturalW <= maxW ? naturalW : maxW, Math.min(0.34 * px, maxW), maxW);
-  const lines = Math.max(1, Math.ceil(estimateTextWidthIn(text, fontSize) / Math.max(w - 0.12, 0.05)));
-  const h = Math.max(0.16 * px, (lines * fontSize * 1.3) / 72 + 0.06);
+  const perLine = Math.max(w - 0.12, 0.05);
+  const lineH = (fontSize * 1.3) / 72;
+  const badgeD = route.stepNumber === undefined ? 0 : clamp(0.26 * px, 0.18, 0.42);
+
+  const lines = Math.max(1, Math.ceil(estimateTextWidthIn(text, fontSize) / perLine));
+  const h = Math.max(0.16 * px, lines * lineH + 0.06);
 
   // Slide the chip along the edge's normal, never across it, so it still reads
-  // as belonging to that arrow. The step is bounded by the tile pitch so a tall
-  // chip cannot walk itself off the page.
-  const alongX = Math.abs(last.x - first.x) >= Math.abs(last.y - first.y);
-  const stepOut = Math.min(alongX ? h + 0.04 : w / 2 + 0.06, 0.9 * px);
+  // as belonging to that arrow. A rung of the ladder has to clear the chip AND
+  // the numbered callout that hangs off it, or ordinal n's badge is painted
+  // inside ordinal n+1's label.
+  // The numbered callout hangs off the chip, so the two are placed as one
+  // block: scoring the chip alone let a badge land inside a neighbour's label,
+  // and the badge could not be moved without moving the chip it belongs to.
+  const blockH = h + (badgeD > 0 ? badgeD + 0.03 : 0);
+  // Every chip in a bundle steps by the SAME amount, measured from the tallest
+  // block in it, and both the stagger and the obstacle walk move in whole
+  // steps. That puts the bundle on a lattice: a chip pushed off a tile lands on
+  // a free rung instead of half inside the neighbour above it.
+  const natural = alongX ? blockH + 0.05 : Math.max(w / 2 + 0.06, blockH);
+  // A ladder on a vertical arrow steps sideways, so its rung has to be the
+  // chip's WIDTH plus a gap. Reusing the block height there — or `natural`,
+  // which only ever guarantees half the width — left every rung overlapping its
+  // neighbour by nearly half a chip, and only the obstacle walk hid it.
+  const ladderStep = alongX ? blockH + 0.05 : w + 0.12;
+  const stepOut = bundle && bundle.rung > 0 ? Math.max(bundle.rung, ladderStep) : natural;
 
-  // De-collide parallel-edge chips: stagger each ordinal clear of the previous
-  // one, using the chip's own height so they never overlap.
-  const stagger = route.ordinal === 0
-    ? 0
-    : (route.ordinal % 2 === 1 ? 1 : -1) * Math.ceil(route.ordinal / 2) * stepOut;
+  // De-collide parallel-edge chips: give each ordinal its own rung, centred on
+  // the bundle. A fan too deep to fit even at the smallest readable size wraps
+  // into a second column rather than restacking on the page edge.
+  //
+  // The rung is chosen by where the ARROW was fanned to, not by the ordinal.
+  // `parallelOffset` alternates about the centre (0, +16, -16 …) while an
+  // ordinal ladder runs straight down, so ranking by ordinal drew callout 1
+  // beside the middle arrow and callout n beside the bottom one — six of seven
+  // callouts against the wrong arrow at n = 7.
+  const rung = bundle?.rank?.get(route.id) ?? route.ordinal;
+  const perCol = Math.max(1, bundle?.perCol ?? siblings);
+  const columns = Math.max(1, Math.ceil(siblings / perCol));
+  const column = Math.floor(rung / perCol);
+  const inColumn = Math.min(perCol, siblings - column * perCol);
+  const stagger = (rung % perCol - (inColumn - 1) / 2) * stepOut;
+  const columnShift = (column - (columns - 1) / 2) * (w + 0.12);
 
-  const place = (offset: number): { x: number; y: number } => {
-    let x = anchor.x - w / 2 + (alongX ? 0 : offset);
-    let y = anchor.y - h / 2 + (alongX ? offset : 0);
+  // Clamp the whole ladder, not each rung. Holding every parallel chip inside
+  // the frame on its own collapses the ladder onto the page edge and stacks the
+  // ordinals right back on top of each other; shifting the anchor so the ladder
+  // as a whole fits keeps the rungs their full step apart.
+  // Parallel routes are already fanned apart by a fraction of a rung, so
+  // stacking the stagger on top of each route's own anchor puts the chips off
+  // the lattice and half inside each other. The ladder hangs off the bundle's
+  // centre; only the ordinal decides which rung this chip takes.
+  const base = bundle
+    ? {
+      x: bundle.x + (alongX ? bundle.across ?? 0 : bundle.shift ?? 0),
+      y: bundle.y + (alongX ? bundle.shift ?? 0 : bundle.across ?? 0),
+    }
+    : anchor;
+  const reach = ((perCol - 1) / 2) * stepOut;
+  let ladder = 0;
+  if (clampTo && reach > 0) {
+    const size = alongX ? blockH : w;
+    const centre = alongX ? base.y : base.x;
+    const lo = alongX ? clampTo.y : clampTo.x;
+    const hi = lo + (alongX ? clampTo.h : clampTo.w);
+    if (centre - size / 2 - reach < lo) ladder = lo - (centre - size / 2 - reach);
+    else if (centre + size / 2 + reach > hi) ladder = hi - (centre + size / 2 + reach);
+  }
+
+  const place = (offset: number, cross = 0): { x: number; y: number; clamped: boolean } => {
+    const rawX = (bundle ? base.x : alongX ? anchor.x : base.x) - w / 2 + (alongX ? cross + columnShift : offset + ladder);
+    const rawY = (bundle ? base.y : alongX ? base.y : anchor.y) - blockH / 2 + (alongX ? offset + ladder : cross + columnShift);
+    let x = rawX;
+    let y = rawY;
     if (clampTo) {
       x = clamp(x, clampTo.x, Math.max(clampTo.x, clampTo.x + clampTo.w - w));
-      y = clamp(y, clampTo.y, Math.max(clampTo.y, clampTo.y + clampTo.h - h));
+      y = clamp(y, clampTo.y, Math.max(clampTo.y, clampTo.y + clampTo.h - blockH));
     }
-    return { x, y };
+    return { x, y, clamped: x !== rawX || y !== rawY };
   };
   const covered = (at: { x: number; y: number }): number => obstacles.reduce((sum, tile) => {
     const dx = Math.min(at.x + w, tile.x + tile.w) - Math.max(at.x, tile.x);
-    const dy = Math.min(at.y + h, tile.y + tile.h) - Math.max(at.y, tile.y);
+    const dy = Math.min(at.y + blockH, tile.y + tile.h) - Math.max(at.y, tile.y);
+    return dx > 0 && dy > 0 ? sum + dx * dy * (tile.annotation ? ANNOTATION_WEIGHT : 1) : sum;
+  }, 0);
+  const onLabel = (at: { x: number; y: number }): number => obstacles.reduce((sum, tile) => {
+    if (!tile.annotation) return sum;
+    const dx = Math.min(at.x + w, tile.x + tile.w) - Math.max(at.x, tile.x);
+    const dy = Math.min(at.y + blockH, tile.y + tile.h) - Math.max(at.y, tile.y);
     return dx > 0 && dy > 0 ? sum + dx * dy : sum;
   }, 0);
+  // A chip is only readable as belonging to its arrow while it is near it, so
+  // distance from the natural spot is part of the cost, not a free move. Left
+  // unpriced, a chip squeezed out of a crowded band walked over 6in from the
+  // 0.9in hop it labels and its callout came to rest beside a different arrow —
+  // an unattributable number is worse than a small overlap.
+  const home = place(stagger);
+  // How far a chip may be moved before it stops reading as this arrow's label.
+  // Roughly half a chip sideways or a couple of rows up, which on any ordinary
+  // layout still leaves it nearer its own arrow than any neighbouring one. Past
+  // that a small overlap is the better trade: the reviewer measured a chip
+  // walking 6in from the 0.9in hop it labelled, taking its numbered callout to
+  // rest beside a completely different arrow.
+  const chipReach = Math.max(1.2 * blockH, 0.6 * w, 0.5);
+  const score = (at: { x: number; y: number }): number => {
+    const drift = Math.hypot(at.x - home.x, at.y - home.y);
+    return covered(at) + DRIFT_COST_PER_IN * drift;
+  };
+  // Sitting on another label is the one thing worth a long walk: nothing is
+  // readable there at all. Sitting on a tile is not, so that search stays
+  // inside the radius where the chip still plainly belongs to its own arrow.
+  const limit = onLabel(home) > 0 ? 2 * chipReach : chipReach;
+  // And in no case may it leave the run of its own hop. Distance alone is a
+  // poor test on a grid — a chip one row up is only an inch away but reads as
+  // the label of a completely different arrow — so the walk is bounded by where
+  // the arrow actually goes, not by a radius.
+  const runLo = (alongX ? Math.min(first.x, last.x) : Math.min(first.y, last.y)) - (alongX ? w : blockH) / 2;
+  const runHi = (alongX ? Math.max(first.x, last.x) : Math.max(first.y, last.y)) + (alongX ? w : blockH) / 2;
+  const inReach = (at: { x: number; y: number }): boolean => {
+    const centre = alongX ? at.x + w / 2 : at.y + blockH / 2;
+    if (centre < runLo || centre > runHi) return false;
+    const drift = alongX ? at.y - home.y : at.x - home.x;
+    return Math.abs(drift) <= limit + 0.001;
+  };
 
   // A chip centred on its arrow lands on top of a tile whenever the free gap
   // between the two services is narrower than the label — routine on a dense
   // architecture, and unavoidable once a long CJK label meets a 0.5" hop. Walk
   // it outwards along the normal and take the first clear position, falling
-  // back to the least-obscured one so a chip can never simply be dropped.
-  let best = place(stagger);
-  let bestCover = covered(best);
-  for (let step = 1; bestCover > 0 && step <= 4; step += 1) {
+  // back to the least-obscured one so a chip can never simply be dropped. The
+  // walk moves in half steps and ranges well past the ladder, because on a
+  // fan of parallel edges a chip pushed off a tile lands squarely in the slot
+  // of the ordinal above it if it can only stop where another rung already is.
+  let best = home;
+  let bestScore = score(home);
+  for (let step = 1; bestScore > 0 && step <= 16; step += 1) {
     for (const sign of [1, -1]) {
-      const candidate = place(stagger + sign * step * stepOut);
-      const cover = covered(candidate);
-      if (cover < bestCover) {
-        best = candidate;
-        bestCover = cover;
+      // A rung keeps its slot on the ladder and dodges sideways instead: the
+      // ladder has to cross the band the tiles sit in, so moving along it just
+      // trades one covered tile for another, and a rung that leaves the lattice
+      // lands part-way inside its neighbour.
+      const out = sign * step * (stepOut / 2);
+      const side = sign * step * (w / 2 + 0.06);
+      // A lone chip is free to go anywhere, so search the plane around its
+      // arrow, not just the normal: on a crowded slide the only gap left is
+      // often beside the connector rather than above or below it.
+      const candidates = siblings > 1
+        ? [place(stagger, side)]
+        : [place(stagger + out), place(stagger, side), place(stagger + out, side), place(stagger + out, -side)];
+      for (const candidate of candidates) {
+        if (siblings > 1 && candidate.clamped) continue;
+        if (!inReach(candidate)) continue;
+        const cost = score(candidate);
+        if (cost < bestScore) {
+          best = candidate;
+          bestScore = cost;
+        }
+        if (bestScore <= 0) break;
       }
-      if (bestCover <= 0) break;
+      if (bestScore <= 0) break;
     }
   }
-  return { x: best.x, y: best.y, w, h, text };
+  const badge = badgeD > 0
+    ? { x: best.x + w / 2 - badgeD / 2, y: best.y + h + 0.03, d: badgeD }
+    : null;
+  return { x: best.x, y: best.y, w, h, text, badge, block: { x: best.x, y: best.y, w, h: blockH, annotation: true }, alongX, fontSize };
 }
 
 function addConnectorLabel(
@@ -596,7 +858,7 @@ function addConnectorLabel(
   fontSize: number,
   box: ReturnType<typeof connectorLabelBox>,
 ): void {
-  if (!box) return;
+  if (!box || !box.text) return;
 
   slide.addText(box.text, {
     x: box.x,
@@ -634,27 +896,16 @@ function stepBadgeBox(
   chip: ReturnType<typeof connectorLabelBox>,
 ): { x: number; y: number; d: number } | null {
   if (route.stepNumber === undefined) return null;
+  if (chip?.badge) return chip.badge;
+
+  // No chip to hang off (an unlabelled but numbered hop): sit on the anchor.
   const anchor = toInches(route.labelAnchor, transform);
   const d = clamp(0.26 * px, 0.18, 0.42);
-
-  // Sit fully clear of the label chip, measured from the chip's own box: a
-  // wrapped CJK label is several lines tall, so a fixed offset used to leave
-  // the badge sitting on top of the text.
   let x = anchor.x - d / 2;
-  let y = chip ? chip.y + chip.h + 0.03 : anchor.y - d / 2;
-  if (chip) x = chip.x + chip.w / 2 - d / 2;
+  let y = anchor.y - d / 2;
   if (clampTo) {
-    const bottom = clampTo.y + clampTo.h - d;
-    // Clamping the badge down-position back onto the page would push it into
-    // the chip it was just placed below — and the chip has itself already been
-    // clamped to the page bottom, so the badge would land squarely on the
-    // number's own label. Flip it above the chip instead.
-    if (chip && y > bottom) {
-      const above = chip.y - d - 0.03;
-      y = above >= clampTo.y ? above : bottom;
-    }
     x = clamp(x, clampTo.x, Math.max(clampTo.x, clampTo.x + clampTo.w - d));
-    y = clamp(y, clampTo.y, Math.max(clampTo.y, bottom));
+    y = clamp(y, clampTo.y, Math.max(clampTo.y, clampTo.y + clampTo.h - d));
   }
   return { x, y, d };
 }
@@ -943,7 +1194,7 @@ async function addEditableDiagram(
   diagram: DiagramShapeSource,
   frame: DiagramFrame,
   _isDarkMode: boolean,
-  window?: Bounds,
+  window?: DiagramWindow,
 ): Promise<boolean> {
   const boxes = collectExportBoxes(diagram.nodes ?? []);
   if (boxes.size === 0) return false;
@@ -955,14 +1206,15 @@ async function addEditableDiagram(
   // the slide, so when outliers are excluded from the fit they are clamped
   // back onto the page instead of being drawn into the void.
   const { bounds, clamped } = chooseExportBounds(boxes.values());
-  // A banded slide is sized from its own slice, which is what buys back the
-  // legible scale; the slice is then clamped so a shape straddling the seam is
+  // A banded slide is sized from its own tile, which is what buys back the
+  // legible scale; the tile is then clamped so a shape straddling the seam is
   // cut at the page edge instead of spilling into the void.
   const banded = !!window && (
-    window.minX > bounds.minX + 0.5 || window.maxX < bounds.maxX - 0.5
-    || window.minY > bounds.minY + 0.5 || window.maxY < bounds.maxY - 0.5
+    window.fit.minX > bounds.minX + 0.5 || window.fit.maxX < bounds.maxX - 0.5
+    || window.fit.minY > bounds.minY + 0.5 || window.fit.maxY < bounds.maxY - 0.5
   );
-  const fitBounds = window ?? bounds;
+  const fitBounds = window?.fit ?? bounds;
+  const ownBounds = window?.own ?? bounds;
   // Ownership is decided by the exact window; what the slide draws is the
   // window plus a bleed, so a chip anchored near a seam has room to be drawn
   // where it belongs instead of being clamped on top of a tile. The bleed is
@@ -989,11 +1241,13 @@ async function addEditableDiagram(
   const first = { x: fitBounds.minX <= bounds.minX + 0.5, y: fitBounds.minY <= bounds.minY + 0.5 };
   const last = { x: fitBounds.maxX >= bounds.maxX - 0.5, y: fitBounds.maxY >= bounds.maxY - 0.5 };
 
-  // A window owns whatever falls inside it, so a shape straddling a seam is
-  // drawn once instead of twice, and `clampTo` pulls strays back onto the page
-  // exactly as on an unbanded slide. The rule lives in `windowOwnsPoint` so the
-  // planner can drop empty cells using the very same test.
-  const owns = (x: number, y: number): boolean => !banded || windowOwnsPoint(fitBounds, bounds, x, y);
+  // A window owns whatever falls inside its `own` rectangle, so a shape
+  // straddling a seam is drawn once instead of twice, and `clampTo` pulls
+  // strays back onto the page exactly as on an unbanded slide. The `own`
+  // rectangles cover the drawing exactly once between them even where an empty
+  // cell was not worth a slide of its own, so nothing anchored anywhere in the
+  // drawing can end up belonging to no part.
+  const owns = (x: number, y: number): boolean => !banded || windowOwnsPoint(ownBounds, bounds, x, y);
   const visibleBox = (box: ExportBox): boolean => owns(box.x + box.w / 2, box.y + box.h / 2);
   // A zone is routinely larger than a whole window, so centre-ownership would
   // print the boundary and its name on one slide and leave the services on the
@@ -1042,19 +1296,395 @@ async function addEditableDiagram(
   // list as it is settled. Parallel edges between the same pair are staggered,
   // but the tile-avoidance walk could drag two of them back onto the same spot
   // because a chip could not see the chips already placed.
-  const chipObstacles: { x: number; y: number; w: number; h: number }[] = [...tileRects];
+  const chipObstacles: Obstacle[] = [...tileRects];
   const chips = new Map<string, ReturnType<typeof connectorLabelBox>>();
   const badges = new Map<string, ReturnType<typeof stepBadgeBox>>();
+  const parallel = new Map<string, number>();
+  const bundleKey = (route: ExportRoute): string => (route.sourceId < route.targetId
+    ? `${route.sourceId}|${route.targetId}`
+    : `${route.targetId}|${route.sourceId}`);
   for (const route of annotatedRoutes) {
-    const box = connectorLabelBox(route, transform, labelFontSize, px, labelFrame, chipObstacles);
-    chips.set(route.id, box);
-    if (box) chipObstacles.push(box);
-    const badge = stepBadgeBox(route, transform, px, labelFrame, box);
-    badges.set(route.id, badge);
-    if (badge) chipObstacles.push({ x: badge.x, y: badge.y, w: badge.d, h: badge.d });
+    const key = bundleKey(route);
+    parallel.set(key, (parallel.get(key) ?? 0) + 1);
   }
-  for (const route of annotatedRoutes) addConnectorLabel(slide, route, labelFontSize, chips.get(route.id) ?? null);
-  for (const route of annotatedRoutes) addStepBadge(slide, route, labelFontSize, badges.get(route.id) ?? null);
+  // Measure each bundle before placing any of it: the rungs of a ladder have to
+  // step by the tallest block in that ladder, and hang off the bundle's own
+  // centre, neither of which is known until every label in it has been sized.
+  const bundles = new Map<string, {
+    count: number; rung: number; x: number; y: number;
+    shift?: number; across?: number; font?: number; perCol?: number;
+    rank?: ReadonlyMap<string, number>;
+    span?: number;
+    maxWidth?: number;
+    badgesOnly?: boolean;
+  }>();
+  const shapes = new Map<string, { w: number; h: number; alongX: boolean }>();
+  for (const route of annotatedRoutes) {
+    const key = bundleKey(route);
+    const count = parallel.get(key) ?? 1;
+    if (count < 2) continue;
+    const at = toInches(route.labelAnchor, transform);
+    const seed = bundles.get(key) ?? { count, rung: 0, x: 0, y: 0 };
+    const probe = connectorLabelBox(route, transform, labelFontSize, px, labelFrame, [], { count, rung: 0, x: at.x, y: at.y });
+    const shape = shapes.get(key);
+    if (probe) {
+      shapes.set(key, {
+        w: Math.max(shape?.w ?? 0, probe.w),
+        h: Math.max(shape?.h ?? 0, probe.block.h),
+        alongX: probe.alongX,
+      });
+    }
+    const ends = [route.points[0] ?? route.labelAnchor, route.points[route.points.length - 1] ?? route.labelAnchor]
+      .map((point) => toInches(point, transform));
+    bundles.set(key, {
+      count,
+      rung: Math.max(seed.rung, probe ? (probe.alongX ? probe.block.h + 0.05 : probe.w + 0.12) : 0),
+      x: seed.x + at.x / count,
+      y: seed.y + at.y / count,
+      span: Math.max(seed.span ?? 0, Math.abs(ends[1].x - ends[0].x), Math.abs(ends[1].y - ends[0].y)),
+    });
+  }
+  // Rung order follows the arrows, not the edge order. `parallelOffset` fans
+  // the routes alternately about the centre, so a ladder numbered by ordinal
+  // runs in a different order from the arrows it labels and the callouts end up
+  // beside the wrong ones.
+  for (const [key, bundle] of bundles) {
+    const members = annotatedRoutes
+      .filter((route) => bundleKey(route) === key)
+      .sort((a, b) => (a.fanOffset - b.fanOffset) || (a.ordinal - b.ordinal));
+    bundle.rank = new Map(members.map((route, index) => [route.id, index]));
+  }
+  // Move the whole ladder off the tiles rather than letting each rung walk on
+  // its own: a rung that leaves the lattice lands part-way inside the one above
+  // it, so the group takes a single offset that every rung shares. Ordinary
+  // single connectors are settled first, so a ladder — which is far the larger
+  // block — is the thing that has to dodge, rather than displacing a chip that
+  // has nowhere to go but onto its neighbour.
+  const ordered = [
+    ...annotatedRoutes.filter((route) => !bundles.has(bundleKey(route))),
+    ...annotatedRoutes.filter((route) => bundles.has(bundleKey(route))),
+  ];
+  // A chip landing on a service tile is untidy; a chip landing on another
+  // annotation makes one of the two unreadable. Keep the two apart so the
+  // ladder search always trades tile coverage for annotation clearance.
+  const tileObstacleCount = chipObstacles.length;
+  const settle = (routes: readonly ExportRoute[]): void => {
+    for (const route of routes) {
+      const box = connectorLabelBox(
+        route, transform, labelFontSize, px, labelFrame, chipObstacles, bundles.get(bundleKey(route)),
+      );
+      chips.set(route.id, box);
+      if (box) chipObstacles.push(box.block);
+      const badge = stepBadgeBox(route, transform, px, labelFrame, box);
+      badges.set(route.id, badge);
+      if (badge && !box) chipObstacles.push({ x: badge.x, y: badge.y, w: badge.d, h: badge.d, annotation: true });
+    }
+  };
+  settle(ordered.filter((route) => !bundles.has(bundleKey(route))));
+
+  type Block = Obstacle;
+  type Bundle = NonNullable<ReturnType<typeof bundles.get>>;
+  const area = (a: Block, b: Block): number => {
+    const dx = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x);
+    const dy = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y);
+    return dx > 0 && dy > 0 ? dx * dy : 0;
+  };
+  // Score the bundle at its REAL geometry: probe the same routine that will
+  // place it, with no obstacles so no walk runs. Modelling the lattice by hand
+  // kept choosing offsets that the in-frame clamps then undid, so the search
+  // believed it had found a clear slot that never materialised.
+  //
+  // `ignore` lifts a bundle's own already-placed blocks out of the obstacle
+  // list so the same search can be re-run later. Bundles are otherwise settled
+  // one after another and frozen, which leaves the first one on a slide unable
+  // to move even when a later one has come down on top of it.
+  const searchBundle = (key: string, bundle: Bundle, ignore: ReadonlySet<Block> = new Set()): number => {
+    const shape = shapes.get(key);
+    if (!shape || bundle.rung <= 0) return 0;
+    const members = annotatedRoutes.filter((route) => bundleKey(route) === key);
+    const taken = chipObstacles.filter((block) => !ignore.has(block));
+    const cost = (shift: number, across: number): { total: number; onLabel: number; overlap: number } => {
+      const placed: Block[] = [];
+      for (const member of members) {
+        const box = connectorLabelBox(
+          member, transform, labelFontSize, px, labelFrame, [], { ...bundle, shift, across },
+        );
+        if (box) placed.push(box.block);
+      }
+      // Anything the ladder lands on, plus any rung the frame clamp has stacked
+      // back on top of a sibling. Landing on another annotation is weighted far
+      // above landing on a tile: a covered tile is untidy, a covered label is
+      // lost.
+      let tiles = 0;
+      let labels = 0;
+      for (let i = 0; i < placed.length; i += 1) {
+        for (const other of taken) {
+          const hit = area(placed[i], other);
+          if (other.annotation) labels += hit; else tiles += hit;
+        }
+        for (let j = 0; j < i; j += 1) labels += area(placed[i], placed[j]);
+      }
+      // The same price a single chip pays. A ladder moves as one object, so the
+      // trip is charged once, not once per rung: priced per rung a deep fan
+      // could not afford to step off a tile it was completely covering.
+      const drift = DRIFT_COST_PER_IN * Math.hypot(shift, across);
+      return { total: tiles + labels * ANNOTATION_WEIGHT + drift, onLabel: labels, overlap: tiles + labels * ANNOTATION_WEIGHT };
+    };
+    // Search along the ladder AND across it. A ladder is far taller than one
+    // chip, so on a busy slide there is often no clear band anywhere along the
+    // arrow and the only way out is to step the whole thing off the corridor.
+    // Seeded at wherever the bundle already sits, so a re-run can only improve
+    // on it and never trades an equal position for a different one.
+    const alongStep = bundle.rung / 2;
+    const acrossStep = (shape.alongX ? shape.w + 0.12 : shape.h + 0.05) / 2;
+    // Far enough to cross the whole drawing. A fixed ring budget is a budget in
+    // units of the object's own size, so a ladder of bare callouts — the very
+    // case that has already failed to place at full size — could only ever
+    // travel an inch and never reached the clear band two rows away.
+    const rings = Math.max(
+      6,
+      Math.min(48, Math.ceil(Math.max(labelFrame.w / Math.max(acrossStep, 0.05), labelFrame.h / Math.max(alongStep, 0.05)))),
+    );
+    const sweep = (acrossLimit: number): { shift: number; across: number; cost: number; onLabel: number; overlap: number } => {
+      let best = { shift: bundle.shift ?? 0, across: bundle.across ?? 0 };
+      let at = cost(best.shift, best.across);
+      for (let ring = 1; at.total > 0 && ring <= rings; ring += 1) {
+        for (let dx = -ring; dx <= ring && at.total > 0; dx += 1) {
+          for (let dy = -ring; dy <= ring; dy += 1) {
+            if (Math.max(Math.abs(dx), Math.abs(dy)) !== ring) continue;
+            if (Math.abs(dy * acrossStep) > acrossLimit + 0.001) continue;
+            const c = cost(dx * alongStep, dy * acrossStep);
+            if (c.total < at.total) {
+              best = { shift: dx * alongStep, across: dy * acrossStep };
+              at = c;
+            }
+            if (at.total <= 0) break;
+          }
+        }
+      }
+      return { ...best, cost: at.total, onLabel: at.onLabel, overlap: at.overlap };
+    };
+    // The ladder steps across its arrows freely — that is how it dodges the
+    // tiles — but sliding it along them past the hop's own ends parks the whole
+    // fan beside the two services instead of between them. The one thing worth
+    // that is another label: two ladders on neighbouring rows have nowhere else
+    // to go, and a buried label is not a label at all.
+    let picked = sweep(Math.max((bundle.span ?? 0) / 2 + 2 * shape.w, 3 * acrossStep));
+    if (picked.onLabel > 0) {
+      const wider = sweep(Number.POSITIVE_INFINITY);
+      if (wider.onLabel < picked.onLabel) picked = wider;
+    }
+    // The ring search moves in half-chip steps, so a ladder that comes to rest
+    // a few hundredths of an inch over a tile has no lattice point left to shed
+    // that last sliver. Refine on a quarter lattice around whatever it chose.
+    for (const frac of [0.5, 0.25]) {
+      if (picked.cost <= 0) break;
+      for (let dx = -2; dx <= 2; dx += 1) {
+        for (let dy = -2; dy <= 2; dy += 1) {
+          if (dx === 0 && dy === 0) continue;
+          const shift = picked.shift + dx * frac * alongStep;
+          const across = picked.across + dy * frac * acrossStep;
+          const c = cost(shift, across);
+          if (c.total < picked.cost) {
+            picked = { shift, across, cost: c.total, onLabel: c.onLabel, overlap: c.overlap };
+          }
+        }
+      }
+    }
+    bundle.shift = picked.shift;
+    bundle.across = picked.across;
+    // The overlap alone, not the total: the drift tie-breaker is never zero, so
+    // scoring a placement by the total would report every bundle as unplaceable.
+    return picked.overlap;
+  };
+
+  for (const [key, bundle] of bundles) {
+    const shape = shapes.get(key);
+    if (!shape || bundle.rung <= 0) continue;
+
+    // A fan deeper than the frame cannot be laid out at the ordinary label size:
+    // the rungs get clamped onto the page edge and restack. Shrink the whole
+    // bundle just enough to fit instead, so every label survives intact, and if
+    // even the smallest readable size will not do it, wrap into columns.
+    const corridor = shape.alongX ? labelFrame.h : labelFrame.w;
+    // Re-measure every member and take the max again, exactly as the seeding
+    // loop does. Re-probing only the first route drops the rung below a taller
+    // sibling's own step, and the bundle stops being a lattice.
+    const remeasure = (): void => {
+      let rung = 0;
+      let wide = 0;
+      let tall = 0;
+      for (const member of annotatedRoutes) {
+        if (bundleKey(member) !== key) continue;
+        const again = connectorLabelBox(member, transform, labelFontSize, px, labelFrame, [], { ...bundle, rung: 0 });
+        if (!again) continue;
+        rung = Math.max(rung, again.alongX ? again.block.h + 0.05 : again.w + 0.12);
+        wide = Math.max(wide, again.w);
+        tall = Math.max(tall, again.block.h);
+      }
+      if (rung <= 0) return;
+      bundle.rung = rung;
+      shape.w = wide;
+      shape.h = tall;
+    };
+    // How deep one rung is along the ladder's own axis: a horizontal arrow
+    // stacks its chips vertically and needs their height, a vertical one stacks
+    // them side by side and needs their width.
+    const depth = (): number => (shape.alongX ? shape.h : shape.w);
+    const fitCorridor = (): void => {
+      for (let pass = 0; pass < 4; pass += 1) {
+        const needed = (bundle.count - 1) * bundle.rung + depth();
+        if (needed <= corridor) break;
+        const font = Math.max(LEGIBLE_TILE_PT, (bundle.font ?? labelFontSize) * (corridor / needed));
+        if (font >= (bundle.font ?? labelFontSize) - 0.01) break;
+        bundle.font = font;
+        remeasure();
+      }
+      if ((bundle.count - 1) * bundle.rung + depth() > corridor) {
+        bundle.perCol = Math.max(1, Math.floor((corridor - depth()) / bundle.rung) + 1);
+        remeasure();
+      }
+    };
+    fitCorridor();
+
+    // Score the bundle at its REAL geometry: probe the same routine that will
+    // place it, with no obstacles so no walk runs. Modelling the lattice by
+    // hand kept choosing offsets that the in-frame clamps then undid, so the
+    // search believed it had found a clear slot that never materialised.
+    const cost = searchBundle(key, bundle);
+    if (cost <= 0) continue;
+
+    // Nowhere clear at its natural width. Narrow the whole ladder to the lane
+    // between the two services and look again: a fan wrapped onto more lines
+    // fits the gap it belongs in, where at full width it can only stand on the
+    // tiles either side of that gap.
+    const wide = { rung: bundle.rung, font: bundle.font, perCol: bundle.perCol, shift: bundle.shift, across: bundle.across, w: shape.w, h: shape.h };
+    bundle.maxWidth = Math.max(0.34 * px, ((bundle.span ?? 0) - 0.16) || 0.34 * px);
+    bundle.shift = undefined;
+    bundle.across = undefined;
+    remeasure();
+    fitCorridor();
+    const narrowed = searchBundle(key, bundle);
+    if (narrowed >= cost) {
+      bundle.maxWidth = undefined;
+      bundle.rung = wide.rung;
+      bundle.font = wide.font;
+      bundle.perCol = wide.perCol;
+      bundle.shift = wide.shift;
+      bundle.across = wide.across;
+      shape.w = wide.w;
+      shape.h = wide.h;
+    }
+    // Still nothing. A deep fan across a crowded drawing has no honest inline
+    // position left: every slot it can reach is on top of a service or another
+    // label. Fall back to what the Architecture Center itself does with a
+    // bundle of parallel flows — number the arrows and let the workflow slide
+    // carry the wording. Only for a fan that is both deep and badly stuck: a
+    // rung clipping a tile corner is not worth losing every label for.
+    const stuck = Math.min(cost, narrowed);
+    if (stuck > 0.25 * shape.w * shape.h && bundle.count >= 5) {
+      bundle.badgesOnly = true;
+      // A ladder of bare callouts is a different object from the one the pitch
+      // and the offsets were chosen for: at the wrapped-label pitch the badges
+      // stay strung across the same rows the labels could not fit in. Measure
+      // it at its real size and look for a slot again from scratch.
+      bundle.perCol = undefined;
+      bundle.shift = undefined;
+      bundle.across = undefined;
+      remeasure();
+      // Wrap the callouts into a block roughly as long as the hop they belong
+      // to. Left as one column a fan of ten runs the full height of the frame,
+      // which on a grid means crossing every row above and below its own — the
+      // ladder is compact but it is still strung across other people's tiles.
+      const lane = Math.max(bundle.span ?? 0, 2 * bundle.rung);
+      bundle.perCol = Math.max(1, Math.min(bundle.count, Math.floor(lane / Math.max(bundle.rung, 0.01))));
+      remeasure();
+      fitCorridor();
+      searchBundle(key, bundle);
+    }
+  }
+  settle(ordered.filter((route) => bundles.has(bundleKey(route))));
+  // Repair pass. A ladder is rigid — it has one offset for every rung — so where
+  // it still had to come down on an ordinary chip, move that chip instead: a
+  // single connector label can walk in any direction and usually has a free slot
+  // within a step or two. Repeat, because moving one chip can hand its old
+  // problem to the next.
+  const overlaps = (
+    a: { x: number; y: number; w: number; h: number },
+    b: { x: number; y: number; w: number; h: number },
+  ): boolean => Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x) > 0.01
+    && Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y) > 0.01;
+  for (let round = 0; round < 4; round += 1) {
+    let repaired = 0;
+    for (const route of ordered) {
+      if (bundles.has(bundleKey(route))) continue;
+      const box = chips.get(route.id);
+      if (!box) continue;
+      const others = chipObstacles.slice(tileObstacleCount).filter((taken) => taken !== box.block);
+      if (!others.some((taken) => overlaps(box.block, taken))) continue;
+      const moved = connectorLabelBox(
+        route, transform, labelFontSize, px, labelFrame,
+        chipObstacles.filter((taken) => taken !== box.block),
+      );
+      if (!moved || (moved.block.x === box.block.x && moved.block.y === box.block.y)) continue;
+      // A chip only reads as belonging to the arrow under it. Refuse a repair
+      // that carries it further than its own size from where it started: the
+      // move is not worth an unreadable diagram, and a numbered callout landed
+      // beside a different arrow entirely.
+      const reach = 1.5 * Math.max(box.w, box.block.h);
+      if (Math.hypot(moved.block.x - box.block.x, moved.block.y - box.block.y) > reach) continue;
+      const slot = chipObstacles.indexOf(box.block);
+      if (slot >= 0) chipObstacles[slot] = moved.block;
+      chips.set(route.id, moved);
+      badges.set(route.id, stepBadgeBox(route, transform, px, labelFrame, moved));
+      repaired += 1;
+    }
+    // A second ladder on the same slide is placed against the first, but the
+    // first was frozen before the second existed. Re-run its search with its own
+    // rungs lifted out of the way; seeded at where it already sits, so it only
+    // ever moves to a strictly better slot.
+    for (const [key, bundle] of bundles) {
+      const members = annotatedRoutes.filter((route) => bundleKey(route) === key);
+      const own = new Set<Block>();
+      for (const route of members) {
+        const block = chips.get(route.id)?.block;
+        if (block) own.add(block);
+      }
+      if (own.size === 0) continue;
+      const others = chipObstacles.slice(tileObstacleCount).filter((taken) => !own.has(taken));
+      if (![...own].some((block) => others.some((taken) => overlaps(block, taken)))) continue;
+      const before = { shift: bundle.shift ?? 0, across: bundle.across ?? 0 };
+      searchBundle(key, bundle, own);
+      if (bundle.shift === before.shift && bundle.across === before.across) continue;
+      const pool = chipObstacles.filter((taken) => !own.has(taken));
+      for (const route of members) {
+        const old = chips.get(route.id);
+        const moved = connectorLabelBox(route, transform, labelFontSize, px, labelFrame, pool, bundle);
+        chips.set(route.id, moved);
+        badges.set(route.id, stepBadgeBox(route, transform, px, labelFrame, moved));
+        const slot = old?.block ? chipObstacles.indexOf(old.block) : -1;
+        if (moved) {
+          pool.push(moved.block);
+          if (slot >= 0) chipObstacles[slot] = moved.block;
+          else chipObstacles.push(moved.block);
+        } else if (slot >= 0) {
+          chipObstacles.splice(slot, 1);
+        }
+      }
+      repaired += 1;
+    }
+    if (repaired === 0) break;
+  }
+  // Draw at the size the box was measured at. A shrunk bundle written back out
+  // at the ordinary size spills its text past its own chip and over its own
+  // numbered callout, because the box is smaller than the text inside it.
+  for (const route of annotatedRoutes) {
+    const box = chips.get(route.id) ?? null;
+    addConnectorLabel(slide, route, box?.fontSize ?? labelFontSize, box);
+  }
+  for (const route of annotatedRoutes) {
+    addStepBadge(slide, route, chips.get(route.id)?.fontSize ?? labelFontSize, badges.get(route.id) ?? null);
+  }
 
   // Colour key so the deck's connectors agree with the PNG legend.
   addConnectionLegend(pptx, slide, diagram.edges ?? [], frame);
@@ -1096,8 +1726,8 @@ export async function buildDiagramSlidePptx(
   // legibility floor, so the reader sees the architecture before panning
   // through the readable parts of it. This is how the Azure Architecture
   // Center presents one: an overview, then the numbered workflow.
-  const parts = geom.windows.length > 1 ? geom.windows : [];
-  const windows: (Bounds | undefined)[] = parts.length > 0 ? [undefined, ...parts] : [undefined];
+  const parts = geom.windows;
+  const windows: (DiagramWindow | undefined)[] = parts.length > 0 ? [undefined, ...parts] : [undefined];
   let renderedNatively = false;
 
   for (const [index, window] of windows.entries()) {

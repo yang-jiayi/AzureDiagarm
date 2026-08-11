@@ -106,6 +106,129 @@ function grp(id: string, label: string, x: number, y: number, w: number, h: numb
   return { id, type: 'groupNode', position: { x, y }, style: { width: w, height: h }, data: { label } } as Node;
 }
 
+/**
+ * Two dense clusters joined by one long bridge, so the middle of the grid
+ * holds nothing. A part that owns only its own fitted cell leaves the bridge's
+ * label and callout belonging to no slide at all: the arrow is drawn, the
+ * number is missing, and the workflow list still cites it.
+ */
+function barbellScenario(): Scenario {
+  const nodes: Node[] = [];
+  const edges: Edge[] = [];
+  for (let i = 0; i < 6; i += 1) nodes.push(svc(`l${i}`, `Left Service ${i}`, (i % 2) * 220, Math.floor(i / 2) * 200));
+  for (let i = 0; i < 6; i += 1) nodes.push(svc(`r${i}`, `Right Service ${i}`, 3200 + (i % 2) * 220, Math.floor(i / 2) * 200));
+  for (let i = 1; i < 6; i += 1) {
+    edges.push({ id: `le${i}`, source: `l${i - 1}`, target: `l${i}`, label: `left hop ${i}`, data: { stepNumber: i } } as Edge);
+  }
+  edges.push({ id: 'bridge', source: 'l5', target: 'r0', label: 'private peering', data: { stepNumber: 6 } } as Edge);
+  for (let i = 1; i < 6; i += 1) {
+    edges.push({ id: `re${i}`, source: `r${i - 1}`, target: `r${i}`, label: `right hop ${i}`, data: { stepNumber: i + 6 } } as Edge);
+  }
+  return { id: 'barbell', nodes, edges };
+}
+
+/**
+ * Six parallel edges between one close-together pair, each with a long CJK
+ * label. The routes are already fanned apart by a fraction of a rung, so a
+ * stagger measured from each route's own anchor lands the chips off the
+ * lattice and half inside each other from the fourth rung on.
+ */
+function parallelScenario(): Scenario {
+  const nodes = [svc('pa', 'Azure Front Door', 0, 0), svc('pb', 'Azure Kubernetes Service', 190, 0)];
+  const label = 'ゲートウェイ経由の HTTPS';
+  const edges = Array.from({ length: 6 }, (_, i) => ({
+    id: `par${i + 1}`,
+    source: 'pa',
+    target: 'pb',
+    label: `${label} ${i + 1}`,
+    data: { stepNumber: i + 1 },
+  })) as Edge[];
+  return { id: 'parallel', nodes, edges };
+}
+
+/**
+ * A deep fan dropped into a crowded grid. The ladder is far larger than any one
+ * chip, so unless it is the thing that dodges — and unless the chips it still
+ * lands on are then moved out from under it — it shunts unrelated labels into
+ * each other well away from the fan itself.
+ */
+function ladderInGridScenario(): Scenario {
+  const nodes: Node[] = [];
+  for (let row = 0; row < 4; row += 1) {
+    for (let col = 0; col < 5; col += 1) nodes.push(svc(`g${row}-${col}`, `Service ${row}${col}`, col * 290, row * 180));
+  }
+  const edges: Edge[] = [];
+  for (let i = 1; i < nodes.length; i += 1) {
+    edges.push({
+      id: `hop${i}`, source: nodes[i - 1].id, target: nodes[i].id, label: `ホップ ${i}`, data: { stepNumber: i },
+    } as Edge);
+  }
+  for (let i = 0; i < 7; i += 1) {
+    edges.push({
+      id: `fan${i}`,
+      source: 'g0-0',
+      target: 'g0-1',
+      label: `マネージド ID で参照系を照会します ${i + 1}`,
+      data: { stepNumber: nodes.length + i },
+    } as Edge);
+  }
+  return { id: 'ladder-in-grid', nodes, edges };
+}
+
+/**
+ * Two deep fans on neighbouring rows of the same grid. Each ladder is larger
+ * than the corridor it belongs to, so both have to step off it - and the clear
+ * band one of them finds is the band the other one wanted. A bundle scored
+ * only against the drawing parks itself straight on top of its neighbour.
+ */
+function twinLaddersScenario(): Scenario {
+  const nodes: Node[] = [];
+  for (let row = 0; row < 4; row += 1) {
+    for (let col = 0; col < 5; col += 1) nodes.push(svc(`t${row}-${col}`, `Service ${row}${col}`, col * 290, row * 180));
+  }
+  const edges: Edge[] = [];
+  for (let i = 1; i < nodes.length; i += 1) {
+    edges.push({
+      id: `w${i}`, source: nodes[i - 1].id, target: nodes[i].id, label: `ホップ ${i}`, data: { stepNumber: i },
+    } as Edge);
+  }
+  for (let i = 0; i < 4; i += 1) {
+    edges.push({
+      id: `u${i}`, source: 't1-0', target: 't1-1', label: `マネージド ID で参照系を照会します ${i + 1}`, data: { stepNumber: nodes.length + i },
+    } as Edge);
+  }
+  for (let i = 0; i < 10; i += 1) {
+    edges.push({
+      id: `d${i}`, source: 't2-0', target: 't2-1', label: `イベントを Service Bus に発行します ${i + 1}`, data: { stepNumber: nodes.length + 20 + i },
+    } as Edge);
+  }
+  return { id: 'twin-ladders', nodes, edges };
+}
+/**
+ * One product group containing a dense field of services. A zone is a single
+ * box, so the tiler used to see one shape it could not split and grew the page
+ * into a plotter sheet the whole deck then inherited.
+ */
+function denseZoneScenario(): Scenario {
+  const nodes: Node[] = [grp('zone', 'Production landing zone', 0, 0, 2400, 1200)];
+  const edges: Edge[] = [];
+  for (let i = 0; i < 28; i += 1) {
+    nodes.push(svc(
+      `d-${i}`,
+      i % 2 ? 'Azure Kubernetes Service' : 'Azure Container Registry',
+      60 + (i % 7) * 320,
+      90 + Math.floor(i / 7) * 260,
+      'zone',
+    ));
+    if (i > 0) {
+      edges.push({
+        id: `dz-${i}`, source: `d-${i - 1}`, target: `d-${i}`, label: 'private endpoint', data: { stepNumber: i },
+      } as Edge);
+    }
+  }
+  return { id: 'dense-zone', nodes, edges };
+}
+
 /** Mirrors a real AI-generated enterprise diagram: wide, grouped, long labels. */
 function wideScenario(): Scenario {
   const nodes: Node[] = [];
@@ -391,6 +514,16 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
           issues.push(`step badge "${badge.name}" collides with edge chip "${chip.text}"`);
         }
       }
+      // A callout whose number runs outside its own bubble reads as a smear
+      // over whatever the arrow passes through.
+      const digits = badge.text.length;
+      const wide = digits * 0.62 * ((badge.fontSize ?? 9) / 72);
+      const tall = ((badge.fontSize ?? 9) * 1.3) / 72;
+      if (wide > badge.w + 0.005 || tall > badge.h + 0.005) {
+        issues.push(
+          `step badge "${badge.name}" draws "${badge.text}" at ${(badge.fontSize ?? 9).toFixed(1)}pt needing ${wide.toFixed(3)}x${tall.toFixed(3)}in inside a ${badge.w.toFixed(3)}in circle`,
+        );
+      }
     }
   }
   const truncated = shapes.filter((s) => s.text.includes('…'));
@@ -422,6 +555,27 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
     }
   }
 
+  // The Workflow list is the prose the reader matches the drawing against, so
+  // every number it cites has to exist as a callout on the canvas and vice
+  // versa. A hop whose callout was dropped leaves the prose pointing at nothing;
+  // a callout with no prose leaves the reader with an unexplained number.
+  const workflowNumbers = new Set(
+    shapes
+      .map((s) => /^workflow-step-(\d+)$/.exec(s.name)?.[1])
+      .filter((n): n is string => !!n),
+  );
+  if (workflowNumbers.size > 0) {
+    const callouts = new Set(badges.map((b) => b.text));
+    const missing = [...workflowNumbers].filter((n) => !callouts.has(n));
+    const unexplained = [...callouts].filter((n) => !workflowNumbers.has(n));
+    if (missing.length) {
+      issues.push(`workflow cites step${missing.length === 1 ? '' : 's'} ${missing.sort((a, b) => +a - +b).join(', ')} with no callout on the canvas`);
+    }
+    if (unexplained.length) {
+      issues.push(`callout${unexplained.length === 1 ? '' : 's'} ${unexplained.sort((a, b) => +a - +b).join(', ')} appear on the canvas but not in the workflow`);
+    }
+  }
+
   // Nothing may be drawn outside the page: an off-slide shape is invisible in
   // PowerPoint, which reads as missing content.
   for (const shape of shapes) {
@@ -449,9 +603,15 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
   const diagramSlides = perSlide.filter((slideShapes) =>
     slideShapes.some((s) => s.name.startsWith('service-') && !s.name.includes('label') && !s.name.includes('meta')),
   ).length;
-  if (!standardPage && diagramSlides <= 1) {
+  if (!standardPage) {
+    // Tiling is the escape hatch, but tiling a plotter sheet into more plotter
+    // sheets is not: every part still inherits the page size, so the deck is
+    // still one nobody can open. A grown page is only defensible when the
+    // drawing genuinely cannot be tiled onto ordinary slides at all.
     issues.push(
-      `the deck is a single ${pageW.toFixed(2)}x${pageH.toFixed(2)}in page instead of standard 13.33x7.5in slides`,
+      diagramSlides <= 1
+        ? `the deck is a single ${pageW.toFixed(2)}x${pageH.toFixed(2)}in page instead of standard 13.33x7.5in slides`
+        : `the deck is ${diagramSlides} parts of a ${pageW.toFixed(2)}x${pageH.toFixed(2)}in page instead of standard 13.33x7.5in slides`,
     );
   }
 
@@ -683,7 +843,9 @@ async function main(): Promise<void> {
   mkdirSync(OUT, { recursive: true });
   const scenarios = [
     compactScenario(), wideScenario(), oversizeScenario(), outlierScenario(),
-    bandedScenario(), narrativeScenario(), await generatedScenario(), await groupedGeneratedScenario(),
+    bandedScenario(), narrativeScenario(), barbellScenario(), parallelScenario(),
+    ladderInGridScenario(), twinLaddersScenario(), denseZoneScenario(),
+    await generatedScenario(), await groupedGeneratedScenario(),
   ];
   const reports: Report[] = [];
   for (const scenario of scenarios) {
@@ -700,6 +862,7 @@ async function main(): Promise<void> {
   writeFileSync(path.join(OUT, 'report.json'), JSON.stringify(reports, null, 2));
   const total = reports.reduce((sum, r) => sum + r.issues.length, 0);
   console.log(`\nTOTAL ISSUES: ${total}`);
+  if (total > 0) process.exitCode = 1;
 }
 
 main().catch((error) => {
