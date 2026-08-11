@@ -3,7 +3,7 @@
 
 import type { Edge, Node } from 'reactflow';
 import { collectNestedHierarchyNodeIds } from './layoutHierarchy';
-import { buildAbsolutePositionMap } from './preserveManualLayout';
+import { buildAbsolutePositionMap, selectHorizontalConnectionHandles } from './preserveManualLayout';
 
 export type LayoutEngineType = 'dagre' | 'elk';
 
@@ -167,12 +167,47 @@ export function straightenPrimaryPath(nodes: Node[], edges: Edge[], direction: '
 
   const axis = direction === 'LR' ? 'y' : 'x';
   const absolutePositions = buildAbsolutePositionMap(nodes);
-  const values = chainNodes
-    .map((node) => absolutePositions.get(node.id)?.[axis] ?? node.position[axis])
-    .slice()
-    .sort((a, b) => a - b);
 
-  const median = values[Math.floor(values.length / 2)];
+  // The serpentine wrap folds a long flow into bands and reverses every other
+  // one, so the chain doubles back on itself. Snapping the whole chain to one
+  // median would stack every band on top of the others. A band is exactly a
+  // maximal run of the chain that travels in one direction, so split on the
+  // direction changes and straighten within each run. An unwrapped chain never
+  // reverses, giving one run and the original behaviour.
+  const majorAxis = direction === 'LR' ? 'x' : 'y';
+  const majorOf = (node: Node): number =>
+    absolutePositions.get(node.id)?.[majorAxis] ?? node.position[majorAxis];
+  const minorOf = (node: Node): number =>
+    absolutePositions.get(node.id)?.[axis] ?? node.position[axis];
+
+  const runs: Node[][] = [[chainNodes[0]]];
+  const majorExtent = direction === 'LR' ? NODE_WIDTH : NODE_HEIGHT;
+  const minorExtent = direction === 'LR' ? NODE_HEIGHT : NODE_WIDTH;
+  let heading = 0;
+  for (let i = 1; i < chainNodes.length; i += 1) {
+    const step = majorOf(chainNodes[i]) - majorOf(chainNodes[i - 1]);
+    const drift = minorOf(chainNodes[i]) - minorOf(chainNodes[i - 1]);
+    const stepSign = Math.sign(step);
+    // A seam is the short hop between two bands: it makes no progress along
+    // the flow but crosses the whole band gap. Its major step is ~0, so the
+    // sign never flips and the reversal test alone would miss it and fold the
+    // next band onto this one.
+    const seam = Math.abs(step) < majorExtent && Math.abs(drift) > minorExtent;
+    if (seam || (stepSign !== 0 && heading !== 0 && stepSign !== heading)) {
+      runs.push([]);
+      heading = seam ? 0 : stepSign;
+    } else if (stepSign !== 0) {
+      heading = stepSign;
+    }
+    runs[runs.length - 1].push(chainNodes[i]);
+  }
+
+  const medianById = new Map<string, number>();
+  for (const run of runs) {
+    const sorted = run.map(minorOf).sort((a, b) => a - b);
+    const runMedian = sorted[Math.floor(sorted.length / 2)];
+    for (const node of run) medianById.set(node.id, runMedian);
+  }
 
   const parentById = new Map<string, Node>();
   for (const n of nodes) {
@@ -181,6 +216,9 @@ export function straightenPrimaryPath(nodes: Node[], edges: Edge[], direction: '
 
   const updatedNodes = nodes.map((n) => {
     if (!chain.includes(n.id) || n.type !== 'azureNode') return n;
+
+    const median = medianById.get(n.id);
+    if (median === undefined) return n;
 
     // Keep node inside group bounds if it's a child.
     const parentId = (n as any).parentNode as string | undefined;
@@ -527,7 +565,41 @@ async function getRelayoutFn(engine: LayoutEngineType = 'dagre'): Promise<Relayo
   return relayoutDiagram;
 }
 
+/**
+ * React Flow takes the direction an edge leaves and enters a tile from its
+ * handles, not from where the tiles ended up. Only the generation path chose
+ * them, so after a re-arrange — and above all after the serpentine wrap
+ * reverses every other band — an edge running right-to-left still left the
+ * right face and looped back into a target behind it, contradicting the
+ * numbered badge on the same arrow. Re-derive them from the geometry the
+ * layout actually produced.
+ *
+ * Only the two horizontal pairs the selector itself emits are rewritten, so a
+ * hand-attached top/bottom handle is left alone.
+ */
+const HORIZONTAL_HANDLE_PAIRS = new Set(['right|left', 'left-source|right-target']);
+
+function realignHorizontalConnectionHandles(nodes: Node[], edges: Edge[]): Edge[] {
+  if (edges.length === 0) return edges;
+  const absolutePositions = buildAbsolutePositionMap(nodes);
+  let changed = false;
+  const next = edges.map((edge) => {
+    const pair = `${edge.sourceHandle ?? ''}|${edge.targetHandle ?? ''}`;
+    if (!HORIZONTAL_HANDLE_PAIRS.has(pair)) return edge;
+    const handles = selectHorizontalConnectionHandles(absolutePositions, edge.source, edge.target);
+    if (handles.sourceHandle === edge.sourceHandle && handles.targetHandle === edge.targetHandle) return edge;
+    changed = true;
+    return { ...edge, ...handles };
+  });
+  return changed ? next : edges;
+}
+
 export async function applyLayoutPreset(nodes: Node[], edges: Edge[], opts: ApplyLayoutOptions): Promise<{ nodes: Node[]; edges: Edge[] }> {
+  const result = await layoutWithPreset(nodes, edges, opts);
+  return { nodes: result.nodes, edges: realignHorizontalConnectionHandles(result.nodes, result.edges) };
+}
+
+async function layoutWithPreset(nodes: Node[], edges: Edge[], opts: ApplyLayoutOptions): Promise<{ nodes: Node[]; edges: Edge[] }> {
   const spacing = getSpacing(opts.spacing);
   const doRelayout = await getRelayoutFn(opts.layoutEngine);
 

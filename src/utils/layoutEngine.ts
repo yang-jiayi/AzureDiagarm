@@ -12,6 +12,7 @@ import {
   layoutNodeDimensions,
 } from './layoutHierarchy';
 import { wrapPositionedLayout } from './serpentineWrap';
+import { fitGroupsToMembers } from './groupFit';
 
 export interface LayoutOptions {
   direction: 'LR' | 'TB' | 'RL' | 'BT'; // Left-Right, Top-Bottom, etc.
@@ -306,10 +307,17 @@ export function layoutArchitecture(
     return service;
   });
 
+  // Dagre's compound box plus groupPadding leaves a border wider than the
+  // tiles inside it. Hug the contents the way the Architecture Center does.
+  const fitted = fitGroupsToMembers(positionedGroups, relativeServices, {
+    nodeWidth: NODE_WIDTH,
+    nodeHeight: NODE_HEIGHT,
+  });
+
   // Post-process: resolve any overlapping groups.
   const { groups: finalGroups, services: finalServices } = resolveGroupOverlaps(
-    positionedGroups,
-    relativeServices,
+    fitted.groups,
+    fitted.services,
   );
 
   // A linear flow ranks one service per column, which is a 43:1 strip by the

@@ -14,6 +14,7 @@ import JSZip from 'jszip';
 import type { Edge, Node } from 'reactflow';
 import { buildDiagramSlidePptx } from '../src/services/pptxExporter.ts';
 import { buildVsdxPackage } from '../src/services/visioVsdxExporter.ts';
+import { WRAP_TRIGGER_RATIO } from '../src/utils/serpentineWrap.ts';
 
 const OUT = path.join(process.cwd(), 'tmp-export-audit');
 const EMU_PER_INCH = 914400;
@@ -71,7 +72,17 @@ function overlapArea(a: Shape, b: Shape): number {
   return w > 0 && h > 0 ? w * h : 0;
 }
 
-interface Scenario { id: string; nodes: Node[]; edges: Edge[] }
+interface Scenario {
+  id: string;
+  nodes: Node[];
+  edges: Edge[];
+  /**
+   * Set when the nodes came out of the real layout engine. The strip rule below
+   * only applies to those: a hand-placed strip is the user's own canvas and an
+   * exporter that silently refolded it would no longer match what they drew.
+   */
+  fromLayoutEngine?: boolean;
+}
 
 function svc(id: string, label: string, x: number, y: number, parent?: string, icon = true): Node {
   return {
@@ -237,7 +248,57 @@ async function generatedScenario(): Promise<Scenario> {
   const laidOut = await applyLayoutPreset(nodes, edges, {
     preset: 'flow-lr', spacing: 'comfortable', edgeStyle: 'smooth', emphasizePrimaryPath: false,
   });
-  return { id: 'generated', nodes: laidOut.nodes, edges: laidOut.edges };
+  return { id: 'generated', nodes: laidOut.nodes, edges: laidOut.edges, fromLayoutEngine: true };
+}
+
+/**
+ * What the generator is actually told to produce: 3 zones, 10 services,
+ * hub-and-spoke telemetry, numbered flow — then run through the real layout
+ * preset. `wide` is grouped but hand-placed and `generated` is engine-laid-out
+ * but flat, so until now no scenario exercised grouping and the layout engine
+ * at the same time, which is every diagram a user actually gets.
+ */
+async function groupedGeneratedScenario(): Promise<Scenario> {
+  const { applyLayoutPreset } = await import('../src/utils/layoutPresets');
+  const zones: { id: string; label: string; members: string[] }[] = [
+    { id: 'z-edge', label: 'Ingress zone', members: ['Azure Front Door', 'Application Gateway'] },
+    { id: 'z-app', label: 'Application zone', members: ['Azure Kubernetes Service', 'Azure Functions', 'Azure Service Bus'] },
+    { id: 'z-data', label: 'Data zone', members: ['Azure Cosmos DB', 'Azure SQL Database', 'Azure Data Lake Storage'] },
+    { id: 'z-ops', label: 'Security & operations', members: ['Microsoft Entra ID', 'Key Vault', 'Azure Monitor'] },
+  ];
+  const nodes: Node[] = [];
+  const flat: string[] = [];
+  zones.forEach((zone, z) => {
+    nodes.push(grp(zone.id, zone.label, z * 900, 0, 820, 560));
+    zone.members.forEach((name, i) => {
+      const id = `gg-${z}-${i}`;
+      nodes.push(svc(id, name, 60 + (i % 2) * 380, 90 + Math.floor(i / 2) * 200, zone.id));
+      flat.push(id);
+    });
+  });
+  const link = (n: number, from: string, to: string, label: string): Edge => ({
+    id: `gg-e-${n}`,
+    source: from,
+    target: to,
+    label,
+    data: { stepNumber: n, stepDescription: `ステップ ${n}: ${label}` },
+  } as Edge);
+  const edges: Edge[] = [
+    link(1, 'gg-0-0', 'gg-0-1', 'WAF で検査した要求を転送'),
+    link(2, 'gg-0-1', 'gg-1-0', 'コンテナー化された API へ負荷分散'),
+    link(3, 'gg-1-0', 'gg-1-2', '注文イベントを非同期で発行'),
+    link(4, 'gg-1-2', 'gg-1-1', 'キューの受信でハンドラーを起動'),
+    link(5, 'gg-1-1', 'gg-2-0', 'マネージド ID で注文ドキュメントを書き込み'),
+    link(6, 'gg-1-0', 'gg-2-1', 'Private Endpoint 経由で参照系を照会'),
+    link(7, 'gg-1-1', 'gg-2-2', '分析用に生データを保管'),
+    link(8, 'gg-3-0', 'gg-1-0', 'ワークロード ID にトークンを発行'),
+    link(9, 'gg-1-0', 'gg-3-1', '接続シークレットをマネージド ID で取得'),
+    link(10, 'gg-1-0', 'gg-3-2', 'ログとメトリックを送信'),
+  ];
+  const laidOut = await applyLayoutPreset(nodes, edges, {
+    preset: 'flow-lr', spacing: 'comfortable', edgeStyle: 'smooth', emphasizePrimaryPath: false,
+  });
+  return { id: 'grouped-generated', nodes: laidOut.nodes, edges: laidOut.edges, fromLayoutEngine: true };
 }
 
 function countByName(shapes: { name: string }[]): Map<string, number> {
@@ -401,12 +462,29 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
     issues.push(`${narratedRows} workflow rows drawn for ${narrated.size} narrated steps`);
   }
 
-  // A page that is almost entirely white is the strip symptom: the drawing was
-  // stretched into a shape the page cannot use. Mirrors the VSDX density rule.
+  // The strip symptom is a SHAPE, not an area. Area fill barely moves when a
+  // drawing is stretched, because the page is sized from the drawing and both
+  // the numerator and the denominator shrink together — a one-rank-per-service
+  // strip still measures 3-4% full, so an area rule is silent exactly when it
+  // matters. Aspect ratio is what actually changes, and WRAP_TRIGGER_RATIO is
+  // the number the product itself uses to decide a layout needs folding.
+  //
+  // A deck that had to be banded is exempt: the drawing was genuinely larger
+  // than one page and the footer says so.
   const tileArea = tiles.reduce((sum, tile) => sum + tile.w * tile.h, 0);
   const density = tileArea / Math.max(pageW * pageH * slideCount, 1);
-  if (tiles.length >= 4 && density < 0.005) {
-    issues.push(`slides are ${(density * 100).toFixed(2)}% full — the drawing was stretched into a strip`);
+  const slidesWithTiles = xml.filter((slideXml) =>
+    parseShapes(slideXml).some((s) => s.name.startsWith('service-') && !s.name.includes('label') && !s.name.includes('meta')),
+  ).length;
+  if (scenario.fromLayoutEngine && tiles.length >= 4 && slidesWithTiles <= 1) {
+    const minX = Math.min(...tiles.map((t) => t.x));
+    const maxX = Math.max(...tiles.map((t) => t.x + t.w));
+    const minY = Math.min(...tiles.map((t) => t.y));
+    const maxY = Math.max(...tiles.map((t) => t.y + t.h));
+    const aspect = (maxX - minX) / Math.max(maxY - minY, 0.01);
+    if (aspect > WRAP_TRIGGER_RATIO) {
+      issues.push(`drawing is ${aspect.toFixed(1)}:1 on one page — it was stretched into a strip`);
+    }
   }
 
   return {
@@ -424,7 +502,7 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
       chips: chips.length,
       maxChipWidthIn: chips.length ? +Math.max(...chips.map((c) => c.w)).toFixed(3) : 0,
       stepBadges: badges.length,
-      fillPct: +((tiles.reduce((sum, t) => sum + t.w * t.h, 0) / (pageW * pageH * slideCount)) * 100).toFixed(2),
+      fillPct: +(density * 100).toFixed(2),
     },
   };
 }
@@ -542,7 +620,7 @@ async function main(): Promise<void> {
   mkdirSync(OUT, { recursive: true });
   const scenarios = [
     compactScenario(), wideScenario(), oversizeScenario(), outlierScenario(),
-    bandedScenario(), narrativeScenario(), await generatedScenario(),
+    bandedScenario(), narrativeScenario(), await generatedScenario(), await groupedGeneratedScenario(),
   ];
   const reports: Report[] = [];
   for (const scenario of scenarios) {

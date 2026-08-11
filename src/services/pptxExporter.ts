@@ -802,6 +802,17 @@ async function addEditableDiagram(
     return x < fitBounds.maxX || isLastBand;
   };
   const visibleBox = (box: ExportBox): boolean => owns(box.x + box.w / 2);
+  // A zone is routinely wider than a whole band, so centre-ownership would
+  // print the boundary and its name on one slide and leave the services on the
+  // other slides floating with no container. Unlike a service tile, a zone is
+  // continued on every band it overlaps — the palette index below is already
+  // stable across slices, and a partial rectangle reads as a boundary that
+  // carries on, which is exactly what it does.
+  const visibleGroup = (box: ExportBox): boolean => {
+    if (!banded) return true;
+    return (box.x + box.w >= fitBounds.minX || isFirstBand)
+      && (box.x <= fitBounds.maxX || isLastBand);
+  };
   // A connector is continued on every band it crosses so the reader can follow
   // where it goes; only the band holding its anchor draws the chip and number.
   const visibleRoute = (route: ExportRoute): boolean => {
@@ -811,7 +822,7 @@ async function addEditableDiagram(
     return (Math.max(...xs) >= fitBounds.minX || isFirstBand)
       && (Math.min(...xs) <= fitBounds.maxX || isLastBand);
   };
-  const shownGroups = groups.filter(visibleBox);
+  const shownGroups = groups.filter(visibleGroup);
   const shownServices = services.filter(visibleBox);
   const shownRoutes = routes.filter(visibleRoute);
   const annotatedRoutes = shownRoutes.filter((route) => owns(route.labelAnchor.x));

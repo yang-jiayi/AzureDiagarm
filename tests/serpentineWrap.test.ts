@@ -153,3 +153,79 @@ test('an ungrouped service standing next to zones is wrapped along with them', (
   const loose = wrapped.services.find((s) => s.id === 'loose')!;
   assert.notDeepEqual(loose.position, { x: 4600, y: 0 }, 'the loose service was left behind');
 });
+
+// --- Downstream of the wrap: the two paths that the fold invalidated ---
+
+async function wrappedChain(emphasize: boolean) {
+  const { applyLayoutPreset } = await import('../src/utils/layoutPresets.ts');
+  const nodes = Array.from({ length: 12 }, (_, i) => ({
+    id: `c${i}`,
+    type: 'azureNode',
+    position: { x: 0, y: 0 },
+    width: 180,
+    height: 100,
+    data: { label: `Service ${i}` },
+  })) as any[];
+  const edges = Array.from({ length: 11 }, (_, i) => ({
+    id: `ce${i}`,
+    source: `c${i}`,
+    target: `c${i + 1}`,
+    sourceHandle: 'right',
+    targetHandle: 'left',
+    label: 'Invoke',
+  })) as any[];
+  return applyLayoutPreset(nodes, edges, {
+    preset: 'flow-lr',
+    spacing: 'comfortable',
+    edgeStyle: 'smooth',
+    emphasizePrimaryPath: emphasize,
+  });
+}
+
+test('emphasising the primary path straightens each band, it does not stack them', async () => {
+  const { nodes } = await wrappedChain(true);
+  const tiles = nodes.filter((n: any) => n.type === 'azureNode');
+  const rows = new Set(tiles.map((n: any) => Math.round(n.position.y)));
+
+  // Snapping the whole chain to one median y would flatten the fold back into
+  // the strip it was folded out of.
+  assert.ok(rows.size > 1, `all ${tiles.length} tiles collapsed onto y=${[...rows][0]}`);
+
+  const overlaps: string[] = [];
+  for (let i = 0; i < tiles.length; i += 1) {
+    for (let j = i + 1; j < tiles.length; j += 1) {
+      const a = tiles[i] as any;
+      const b = tiles[j] as any;
+      const dx = Math.min(a.position.x + a.width, b.position.x + b.width) - Math.max(a.position.x, b.position.x);
+      const dy = Math.min(a.position.y + a.height, b.position.y + b.height) - Math.max(a.position.y, b.position.y);
+      if (dx > 1 && dy > 1) overlaps.push(`${a.id}/${b.id}`);
+    }
+  }
+  assert.deepEqual(overlaps, [], `tiles overlap after straightening: ${overlaps.join(', ')}`);
+});
+
+test('a reversed band gets connectors that leave the face they actually travel towards', async () => {
+  const { nodes, edges } = await wrappedChain(false);
+  const at = new Map(nodes.map((n: any) => [n.id, n.position.x]));
+
+  const backwards = edges.filter((e: any) => {
+    const from = at.get(e.source);
+    const to = at.get(e.target);
+    if (from === undefined || to === undefined) return false;
+    // Leaving the right face towards a target that sits to the left draws a
+    // loop back across both tiles — the opposite of what the badge asserts.
+    return e.sourceHandle === 'right' && to < from;
+  });
+  assert.deepEqual(
+    backwards.map((e: any) => e.id),
+    [],
+    `${backwards.length}/${edges.length} connectors point backwards`,
+  );
+
+  const reversed = edges.filter((e: any) => (at.get(e.target) ?? 0) < (at.get(e.source) ?? 0));
+  assert.ok(reversed.length > 0, 'the fixture no longer produces a reversed band');
+  for (const edge of reversed) {
+    assert.equal((edge as any).sourceHandle, 'left-source');
+    assert.equal((edge as any).targetHandle, 'right-target');
+  }
+});

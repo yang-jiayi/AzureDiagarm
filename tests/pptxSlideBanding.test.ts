@@ -344,3 +344,51 @@ test('a generated linear flow lands on a page a document can actually use', asyn
     `page is ${(pageW / pageH).toFixed(2)}:1, not a shape a document can use`,
   );
 });
+
+test('a zone that spans a band seam keeps its boundary on every slide', async () => {
+  const nodes: Node[] = [
+    { id: 'zone1', type: 'groupNode', position: { x: -60, y: -60 }, style: { width: 40 * 260 + 120, height: 400 }, data: { label: 'Production VNet' } } as Node,
+  ];
+  for (let i = 0; i < 40; i += 1) {
+    nodes.push({
+      id: `z-${i}`,
+      type: 'azureNode',
+      parentNode: 'zone1',
+      position: { x: 60 + i * 260, y: 60 },
+      width: 150,
+      height: 75,
+      data: { label: 'Azure Functions', serviceName: 'Azure Functions' },
+    } as Node);
+  }
+
+  const pptx = await buildDiagramSlidePptx(PIXEL_PNG, {
+    diagramName: 'Contoso Platform',
+    author: 'Tester',
+    date: '2026-08-10',
+    isDarkMode: false,
+    diagram: { nodes, edges: [] },
+  });
+  const buffer = (await pptx.write({ outputType: 'nodebuffer' })) as Buffer;
+  const zip = await JSZip.loadAsync(buffer);
+  const slides = Object.keys(zip.files)
+    .filter((n) => /^ppt\/slides\/slide\d+\.xml$/.test(n))
+    .sort((a, b) => (+a.replace(/\D/g, '')) - (+b.replace(/\D/g, '')));
+
+  const withServices: string[] = [];
+  const withZone: string[] = [];
+  for (const name of slides) {
+    const xml = await zip.file(name)!.async('string');
+    if (/name="service-/.test(xml)) withServices.push(name);
+    if (/name="(group|zone)-?[^"]*zone1"/.test(xml) || /Production VNet/.test(xml)) withZone.push(name);
+  }
+
+  assert.ok(withServices.length > 1, 'the fixture no longer bands across slides');
+  // A zone is wider than a whole band, so centre-ownership would print the
+  // boundary on one slide and leave the services on the others with no
+  // container and no name.
+  assert.deepEqual(
+    withServices.filter((s) => !withZone.includes(s)),
+    [],
+    `slides show services with no zone boundary: ${withServices.filter((s) => !withZone.includes(s)).join(', ')}`,
+  );
+});
