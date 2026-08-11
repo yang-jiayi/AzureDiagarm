@@ -544,11 +544,23 @@ function placeBox(
   box: ExportBox,
   transform: FitTransform,
   clampTo?: DiagramFrame,
+  clip = false,
 ): { x: number; y: number; w: number; h: number } {
   const topLeft = toInches({ x: box.x, y: box.y }, transform);
   const w = box.w * transform.scale;
   const h = box.h * transform.scale;
   if (!clampTo) return { x: topLeft.x, y: topLeft.y, w, h };
+  // A zone is routinely wider than the band it is drawn on. Clamping only the
+  // origin would slide the whole rectangle to the left margin at full width,
+  // painting it across the band and enclosing tiles that are not in it, so a
+  // clipped box is cut at the page edge instead of moved.
+  if (clip) {
+    const left = Math.max(topLeft.x, clampTo.x);
+    const top = Math.max(topLeft.y, clampTo.y);
+    const right = Math.min(topLeft.x + w, clampTo.x + clampTo.w);
+    const bottom = Math.min(topLeft.y + h, clampTo.y + clampTo.h);
+    return { x: left, y: top, w: Math.max(right - left, 0.01), h: Math.max(bottom - top, 0.01) };
+  }
   return {
     x: clamp(topLeft.x, clampTo.x, Math.max(clampTo.x, clampTo.x + clampTo.w - w)),
     y: clamp(topLeft.y, clampTo.y, Math.max(clampTo.y, clampTo.y + clampTo.h - h)),
@@ -673,7 +685,7 @@ function addGroupShape(
   transform: FitTransform,
   clampTo?: DiagramFrame,
 ): void {
-  const topLeft = placeBox(box, transform, clampTo);
+  const topLeft = placeBox(box, transform, clampTo, true);
   const w = topLeft.w;
   const h = topLeft.h;
   const palette = zoneStyleFor(box, index);

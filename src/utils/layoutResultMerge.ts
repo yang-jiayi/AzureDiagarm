@@ -115,6 +115,23 @@ export function mergeLayoutEdges(
     mergeLayoutDataField(nextData, currentData, sourceData, laidOutData, 'labelOffsetX');
     mergeLayoutDataField(nextData, currentData, sourceData, laidOutData, 'labelOffsetY');
     mergeLayoutDataField(nextData, currentData, sourceData, laidOutData, 'labelOffsetAuto');
+
+    // Connection handles are top-level Edge fields, not `data`, so returning
+    // `{ ...current, data }` restored the pre-layout handles and threw away the
+    // realignment the layout just did. That matters after a serpentine fold:
+    // an edge in a reversed band still left the right face and looped back into
+    // a target now behind it. Only accept a handle the layout changed, and only
+    // when the user has not since attached the edge somewhere else.
+    const handlesUntouched = current.sourceHandle === source.sourceHandle
+      && current.targetHandle === source.targetHandle;
+    if (handlesUntouched) {
+      return {
+        ...current,
+        sourceHandle: laidOut.sourceHandle,
+        targetHandle: laidOut.targetHandle,
+        data: nextData,
+      };
+    }
     return { ...current, data: nextData };
   });
 }

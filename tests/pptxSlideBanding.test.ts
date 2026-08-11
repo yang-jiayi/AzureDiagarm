@@ -392,3 +392,53 @@ test('a zone that spans a band seam keeps its boundary on every slide', async ()
     `slides show services with no zone boundary: ${withServices.filter((s) => !withZone.includes(s)).join(', ')}`,
   );
 });
+
+test('a zone wider than a band is cut at the page edge, not slid across it', async () => {
+  const nodes: Node[] = [
+    { id: 'zoneA', type: 'groupNode', position: { x: -60, y: -60 }, style: { width: 40 * 260 + 120, height: 400 }, data: { label: 'Production VNet' } } as Node,
+  ];
+  for (let i = 0; i < 40; i += 1) {
+    nodes.push({
+      id: `zz-${i}`,
+      type: 'azureNode',
+      parentNode: 'zoneA',
+      position: { x: 60 + i * 260, y: 60 },
+      width: 150,
+      height: 75,
+      data: { label: 'Azure Functions', serviceName: 'Azure Functions' },
+    } as Node);
+  }
+
+  const pptx = await buildDiagramSlidePptx(PIXEL_PNG, {
+    diagramName: 'Contoso Platform',
+    author: 'Tester',
+    date: '2026-08-10',
+    isDarkMode: false,
+    diagram: { nodes, edges: [] },
+  });
+  const buffer = (await pptx.write({ outputType: 'nodebuffer' })) as Buffer;
+  const zip = await JSZip.loadAsync(buffer);
+  const slides = Object.keys(zip.files)
+    .filter((n) => /^ppt\/slides\/slide\d+\.xml$/.test(n))
+    .sort((a, b) => (+a.replace(/\D/g, '')) - (+b.replace(/\D/g, '')));
+
+  const EMU = 914400;
+  let checked = 0;
+  for (const name of slides) {
+    const xml = await zip.file(name)!.async('string');
+    const page = /<p:sldSz[^>]*cx="(\d+)"/.exec(await zip.file('ppt/presentation.xml')!.async('string'));
+    const pageW = page ? +page[1] / EMU : 13.333;
+    for (const m of xml.matchAll(/name="zone-zoneA"[\s\S]{0,400}?<a:off x="(-?[\d.]+)" y="(-?[\d.]+)"\s*\/>\s*<a:ext cx="([\d.]+)" cy="([\d.]+)"\s*\/>/g)) {
+      const x = +m[1] / EMU;
+      const w = +m[3] / EMU;
+      checked += 1;
+      // A zone clamped by its origin alone keeps its full width, so it is
+      // painted right across the band and boxes in tiles that are not inside
+      // it -- and PowerPoint's writer, handed a width larger than a slide,
+      // emits the raw inch count as EMU and the boundary vanishes entirely.
+      assert.ok(x + w <= pageW + 0.01, `zone runs ${(x + w).toFixed(2)}in past a ${pageW.toFixed(2)}in page on ${name}`);
+      assert.ok(w >= pageW * 0.5, `zone spanning every tile shrank to ${w.toFixed(3)}in on a ${pageW.toFixed(2)}in ${name}`);
+    }
+  }
+  assert.ok(checked > 0, 'no zone rectangle was found to check');
+});
