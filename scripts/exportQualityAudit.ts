@@ -910,6 +910,68 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
     }
   }
 
+  // A connector's text is a block on the page like any other. It carries the
+  // sentence the arrow exists to say, so two of them on the same spot is the
+  // same defect as two chips on the same spot in PowerPoint — and until the
+  // exporter emitted an explicit text position, a fan of parallel hops wrote
+  // every one of its sentences at the identical midpoint.
+  const labelBoxes: Array<{ text: string; x: number; y: number; w: number; h: number }> = [];
+  for (const block of xml.matchAll(/<Shape [^>]*NameU="Connector\.\d+"[\s\S]*?<\/Shape>/g)) {
+    const shape = block[0];
+    const shown = /<Text>([^<]*)<\/Text>/.exec(shape)?.[1] ?? '';
+    if (!shown.trim()) continue;
+    const pin = /<Cell N="PinX" V="([\d.-]+)"\/>\s*<Cell N="PinY" V="([\d.-]+)"\/>/.exec(shape);
+    const angle = /<Cell N="Angle" V="([\d.-]+)"\/>/.exec(shape);
+    const txt = /<Cell N="TxtPinX" V="([\d.-]+)"\/>\s*<Cell N="TxtPinY" V="([\d.-]+)"\/>\s*<Cell N="TxtWidth" V="([\d.-]+)"\/>\s*<Cell N="TxtHeight" V="([\d.-]+)"\/>/.exec(shape);
+    if (!pin) continue;
+    if (!txt) {
+      issues.push(`Visio connector text "${shown.slice(0, 18)}" has no explicit position, so Visio centres it on the line`);
+      continue;
+    }
+    // TxtPin is in the connector's own rotated frame, measured from its begin
+    // point, while PinX/PinY is the centre of the line.
+    const theta = angle ? +angle[1] : 0;
+    const length = +(/<Cell N="Width" V="([\d.-]+)"\/>/.exec(shape)?.[1] ?? 0);
+    const lx = +txt[1] - length / 2;
+    const ly = +txt[2];
+    const cx = +pin[1] + lx * Math.cos(theta) - ly * Math.sin(theta);
+    const cy = +pin[2] + lx * Math.sin(theta) + ly * Math.cos(theta);
+    labelBoxes.push({ text: shown, x: cx - +txt[3] / 2, y: cy - +txt[4] / 2, w: +txt[3], h: +txt[4] });
+  }
+  const overlap = (a: { x: number; y: number; w: number; h: number }, b: { x: number; y: number; w: number; h: number }): number => {
+    const ow = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x);
+    const oh = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y);
+    return ow > 0 && oh > 0 ? ow * oh : 0;
+  };
+  let stacked = 0;
+  const piles: string[] = [];
+  for (let i = 0; i < labelBoxes.length; i += 1) {
+    for (let j = i + 1; j < labelBoxes.length; j += 1) {
+      const hit = overlap(labelBoxes[i], labelBoxes[j]);
+      if (hit > 0.25 * Math.min(labelBoxes[i].w * labelBoxes[i].h, labelBoxes[j].w * labelBoxes[j].h)) {
+        stacked += 1;
+        piles.push(`"${labelBoxes[i].text.slice(0, 12)}"/"${labelBoxes[j].text.slice(0, 12)}" at ${labelBoxes[i].x.toFixed(2)},${labelBoxes[i].y.toFixed(2)}`);
+      }
+    }
+  }
+  if (stacked > 0) {
+    issues.push(`${stacked} pair(s) of Visio connector labels are written on top of each other: ${piles.slice(0, 3).join('; ')}`);
+  }
+  let onService = 0;
+  const buried: string[] = [];
+  for (const label of labelBoxes) {
+    if (serviceBoxes.some((box) => overlap(label, box) > 0.4 * label.w * label.h)) {
+      onService += 1;
+      buried.push(`"${label.text.slice(0, 14)}" at ${label.x.toFixed(2)},${label.y.toFixed(2)}`);
+    }
+  }
+  if (onService > 0) {
+    issues.push(`${onService} Visio connector label(s) are buried under a service shape: ${buried.slice(0, 3).join('; ')}`);
+  }
+  const offSheet = labelBoxes.filter((label) => label.x < -0.01 || label.y < -0.01
+    || label.x + label.w > pkg.pageWidthIn + 0.01 || label.y + label.h > pkg.pageHeightIn + 0.01).length;
+  if (offSheet > 0) issues.push(`${offSheet} Visio connector label(s) run off the sheet`);
+
   // A sparse page is the outlier symptom: a huge sheet holding a small drawing.
   const shapeArea = [...xml.matchAll(/NameU="Service\.\d+"[\s\S]*?<Cell N="Width" V="([\d.]+)"\/>\s*<Cell N="Height" V="([\d.]+)"\/>/g)]
     .reduce((sum, m) => sum + +m[1] * +m[2], 0);

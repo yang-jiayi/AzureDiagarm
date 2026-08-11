@@ -44,6 +44,8 @@ import {
   computeBounds,
   computeContentBounds,
   metaSubline,
+  narrateEdgeCallouts,
+  truncateLabel,
   partitionBoxes,
   usedConnectionLegend,
   workflowListFromEdges,
@@ -427,6 +429,8 @@ function connectorShapeXml(
   linePattern: number,
   opacity: number,
   bidirectional = false,
+  /** Where the label sits relative to the line, and how big it is. */
+  text?: { drop: number; along: number; w: number; h: number },
 ): string {
   const begin = points[0];
   const end = points[points.length - 1];
@@ -449,7 +453,16 @@ function connectorShapeXml(
 
   const textSections = label
     ? `
-      <Cell N="TextBkgnd" V="2"/>
+      <Cell N="TextBkgnd" V="2"/>${text
+  ? `
+      <Cell N="TxtPinX" V="${f(length / 2 + text.along)}"/>
+      <Cell N="TxtPinY" V="${f(text.drop)}"/>
+      <Cell N="TxtWidth" V="${f(text.w)}"/>
+      <Cell N="TxtHeight" V="${f(text.h)}"/>
+      <Cell N="TxtLocPinX" V="${f(text.w / 2)}"/>
+      <Cell N="TxtLocPinY" V="${f(text.h / 2)}"/>
+      <Cell N="TxtAngle" V="${f(-angle)}"/>`
+  : ''}
       <Section N="Character">
         <Row IX="0"><Cell N="Font" V="1"/><Cell N="Color" V="${CONNECTOR_TEXT}"/><Cell N="Size" V="${CONNECTOR_FONT_IN}"/></Row>
       </Section>
@@ -746,7 +759,12 @@ export async function buildVsdxPackage(
 ): Promise<VsdxPackage> {
   const boxes = collectExportBoxes(nodes);
   const { groups, services } = partitionBoxes(boxes);
-  const routes = buildExportRoutes(edges, boxes);
+  // Same narration the deck gets: only one hop between a given pair of services
+  // is ever given a step number, so the other members of a fan carry a callout
+  // that the panel never explains — or, once the fan drops its wording, say
+  // nothing at all.
+  const narrated = narrateEdgeCallouts(edges);
+  const routes = buildExportRoutes(narrated, boxes);
   // Match the PowerPoint strategy: draw 1 : 1 from the full bounds whenever the
   // page stays a sensible size, and only fall back to the dense-cluster bounds
   // (clamping the strays back on) when a far-placed node would otherwise blow
@@ -770,7 +788,7 @@ export async function buildVsdxPackage(
   const contentHIn = Math.max(bounds.maxY - bounds.minY, 1) / PX_PER_INCH;
   // A numbered workflow gets its own band across the top of the sheet, so the
   // prose never lands on the drawing the way an overlaid panel would.
-  const workflowEntries = workflowListFromEdges(edges);
+  const workflowEntries = workflowListFromEdges(narrated);
   const workflowBandIn = workflowEntries.length > 0 ? 0.26 * workflowEntries.length + 0.5 : 0;
   const pageWidthIn = f(Math.max(contentWIn + PAGE_PADDING_IN * 2, MIN_PAGE_W_IN));
   const pageHeightIn = f(Math.max(contentHIn + PAGE_PADDING_IN * 2 + workflowBandIn, MIN_PAGE_H_IN));
@@ -879,44 +897,318 @@ export async function buildVsdxPackage(
     );
   }
 
+  // Parallel hops between the same two services all put their text at the same
+  // midpoint, so a fan of five wrote five sentences on top of each other and
+  // the sheet was unreadable at exactly the place it had the most to say. Fan
+  // the labels the way the arrows themselves are fanned, and hang each badge
+  // off its own rung.
+  const bundleOf = (route: ExportRoute): string => (route.sourceId < route.targetId
+    ? `${route.sourceId}|${route.targetId}`
+    : `${route.targetId}|${route.sourceId}`);
+  const labelSize = (label: string): { w: number; h: number } => {
+    const natural = estimateTextWidthIn(label, CONNECTOR_FONT_IN) + 0.08;
+    const w = Math.min(Math.max(natural, 0.5), 1.7);
+    const lines = Math.max(1, Math.ceil(estimateTextWidthIn(label, CONNECTOR_FONT_IN) / Math.max(w - 0.08, 0.1)));
+    return { w, h: lines * CONNECTOR_FONT_IN * 1.3 + 0.05 };
+  };
+  // The same cut every other exporter makes. A 200-character sentence left
+  // whole wraps into a twelve-line block that buries the services around it.
+  // A muted hop is one whose fan could not be written out anywhere on the
+  // sheet; it keeps its numbered callout and the workflow band explains it.
+  const muted = new Set<string>();
+  const labelOf = (route: ExportRoute): string => (route.label && !muted.has(route.id)
+    ? truncateLabel(route.label, 42)
+    : '');
+  const ladder = new Map<string, { drop: number; along: number }>();
+  const byBundle = new Map<string, ExportRoute[]>();
+  for (const route of routes as ExportRoute[]) {
+    // A numbered hop with no wording still puts a callout on the page, and that
+    // callout has to be placed like everything else: leaving it out of the
+    // search let it come to rest in the middle of a service tile.
+    if (!route.label && route.stepNumber === undefined) continue;
+    const key = bundleOf(route);
+    const list = byBundle.get(key);
+    if (list) list.push(route); else byBundle.set(key, [route]);
+  }
+  /** Unit normal of a route, oriented downward in page space. */
+  const normalOf = (route: ExportRoute): Point => {
+    const points = route.points.map(toPoint);
+    const a = points[0] ?? { x: 0, y: 0 };
+    const b = points[points.length - 1] ?? a;
+    const len = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+    const n = { x: (b.y - a.y) / len, y: -(b.x - a.x) / len };
+    return n.y > 0 ? { x: -n.x, y: -n.y } : n;
+  };
+  // A connector's local +Y is the line's LEFT normal, which is the opposite of
+  // the page-down normal the badges use unless the line runs right to left.
+  // Reading the sign back off the flipped normal cannot work — both cases come
+  // out pointing down — so it is taken from the run direction itself.
+  const localSignOf = (route: ExportRoute): number => {
+    const points = route.points.map(toPoint);
+    const a = points[0] ?? { x: 0, y: 0 };
+    const b = points[points.length - 1] ?? a;
+    return b.x - a.x < 0 ? 1 : -1;
+  };
+  /** Unit vector along the line, begin to end. */
+  const directionOf = (route: ExportRoute): Point => {
+    const points = route.points.map(toPoint);
+    const a = points[0] ?? { x: 0, y: 0 };
+    const b = points[points.length - 1] ?? a;
+    const len = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+    return { x: (b.x - a.x) / len, y: (b.y - a.y) / len };
+  };
+  /** How long the connector is, so the text is never slid off its own arrow. */
+  const runOf = (route: ExportRoute): number => {
+    const points = route.points.map(toPoint);
+    const a = points[0] ?? { x: 0, y: 0 };
+    const b = points[points.length - 1] ?? a;
+    return Math.hypot(b.x - a.x, b.y - a.y);
+  };
+  const midOf = (route: ExportRoute): Point => toPoint(route.labelAnchor);
+  /**
+   * Where Visio actually puts connector text: the shape's pin is the midpoint
+   * of the begin→end chord, and TxtPin is measured from there. An elbowed hop's
+   * label anchor sits on the polyline, which is somewhere else entirely, so a
+   * search that reasoned about the anchor was placing labels it could not see.
+   */
+  const chordOf = (route: ExportRoute): Point => {
+    const points = route.points.map(toPoint);
+    const a = points[0] ?? { x: 0, y: 0 };
+    const b = points[points.length - 1] ?? a;
+    return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+  };
+  /** The anchor expressed in the connector's own frame, relative to the chord. */
+  const seatOf = (route: ExportRoute): { drop: number; along: number } => {
+    const anchor = midOf(route);
+    const chord = chordOf(route);
+    const n = normalOf(route);
+    const u = directionOf(route);
+    const dx = anchor.x - chord.x;
+    const dy = anchor.y - chord.y;
+    return { drop: dx * n.x + dy * n.y, along: dx * u.x + dy * u.y };
+  };
+  // Where every label would land if nothing moved, so the ladders can be
+  // stepped clear of the services and of each other. Visio has no autolayout
+  // for connector text: whatever position the file carries is what the reader
+  // opens, so the placement has to be settled here.
+  const serviceRects = services.map((service) => {
+    const rect = toRect(service);
+    return { x: rect.x, y: rect.y, w: rect.w, h: rect.h };
+  });
+  const rectAt = (route: ExportRoute, drop: number, along: number): { x: number; y: number; w: number; h: number } => {
+    const centre = chordOf(route);
+    const n = normalOf(route);
+    const u = directionOf(route);
+    const size = labelSize(labelOf(route));
+    return {
+      x: centre.x + n.x * drop + u.x * along - size.w / 2,
+      y: centre.y + n.y * drop + u.y * along - size.h / 2,
+      w: size.w,
+      h: size.h,
+    };
+  };
+  const hit = (
+    a: { x: number; y: number; w: number; h: number },
+    b: { x: number; y: number; w: number; h: number },
+  ): number => {
+    const ow = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x);
+    const oh = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y);
+    return ow > 0 && oh > 0 ? ow * oh : 0;
+  };
+  // Every label starts where its own anchor put it, expressed in the frame the
+  // drawing actually uses, and the ladder and the settle pass move it from
+  // there.
+  for (const [, members] of byBundle) {
+    for (const member of members) ladder.set(member.id, seatOf(member));
+  }
+  /** Space the fan's text out along the normal, one rung per arrow. */
+  const rungify = (members: ExportRoute[]): void => {
+    if (members.length < 2) return;
+    let rung = 0;
+    for (const member of members) {
+      const size = labelOf(member) ? labelSize(labelOf(member)).h : 0;
+      rung = Math.max(rung, size + (member.stepNumber === undefined ? 0.05 : STEP_BADGE_IN + 0.07));
+    }
+    // Ranked by where the ARROW was fanned to, not by the order the edges were
+    // declared, so rung n sits beside arrow n instead of crossing over it.
+    const n = normalOf(members[0]);
+    const ordered = [...members].sort((l, r) => {
+      const lm = midOf(l);
+      const rm = midOf(r);
+      return (lm.x * n.x + lm.y * n.y) - (rm.x * n.x + rm.y * n.y);
+    });
+    ordered.forEach((member, index) => {
+      const seat = ladder.get(member.id) ?? { drop: 0, along: 0 };
+      ladder.set(member.id, { drop: (index - (ordered.length - 1) / 2) * rung, along: seat.along });
+    });
+  };
+  for (const [, members] of byBundle) rungify(members);
+
+  // Step each ladder — and each lone label — clear of the services and of the
+  // labels already settled, and hold it on the sheet. Without this the rungs
+  // land wherever the arrows happen to run: on a grid that is on top of the
+  // tiles, on top of the next hop's sentence, or past the page edge, where
+  // Visio quietly draws nothing at all.
+  const placedLabels: Array<{ x: number; y: number; w: number; h: number }> = [];
+  const settleOrder = [...byBundle.entries()].sort((l, r) => r[1].length - l[1].length);
+  /**
+   * Move one fan as a body and report where it came to rest. `blocked` is the
+   * collision area alone: the drift terms only break ties, so mixing them into
+   * the total would make a clean placement look like a dirty one and the
+   * caller could never tell whether the fan actually fits.
+   */
+  const settle = (members: ExportRoute[]): { shift: number; slide: number; blocked: number } => {
+    const step = Math.max(
+      0.14,
+      ...members.map((member) => (labelOf(member) ? labelSize(labelOf(member)).h : STEP_BADGE_IN) + 0.05),
+    );
+    const badgeRoom = members.some((member) => member.stepNumber !== undefined) ? STEP_BADGE_IN + 0.06 : 0;
+    const blockage = (shift: number, slide: number): number => {
+      let cost = 0;
+      for (const member of members) {
+        const seat = ladder.get(member.id) ?? { drop: 0, along: 0 };
+        const drop = seat.drop + shift;
+        const along = seat.along + slide;
+        const text = labelOf(member);
+        const box = rectAt(member, drop, along);
+        const parts = text ? [box] : [];
+        if (member.stepNumber !== undefined && badgeRoom > 0) {
+          const n = normalOf(member);
+          const u = directionOf(member);
+          const centre = chordOf(member);
+          const away = drop + (text ? box.h / 2 + STEP_BADGE_IN / 2 + 0.03 : 0);
+          parts.push({
+            x: centre.x + n.x * away + u.x * along - STEP_BADGE_IN / 2,
+            y: centre.y + n.y * away + u.y * along - STEP_BADGE_IN / 2,
+            w: STEP_BADGE_IN,
+            h: STEP_BADGE_IN,
+          });
+        }
+        for (const part of parts) {
+          if (part.x < 0.05 || part.y < 0.05
+            || part.x + part.w > pageWidthIn - 0.05 || part.y + part.h > pageHeightIn - 0.05) {
+            // Off the sheet is not a cost to be traded against, it is a deletion.
+            cost += 100;
+          }
+          for (const rect of serviceRects) cost += hit(part, rect) * 4;
+          for (const other of placedLabels) cost += hit(part, other) * 12;
+        }
+      }
+      return cost;
+    };
+    // Sliding along the arrow is the cheaper move visually — the text still
+    // reads as that arrow's — but both are a last resort against a label
+    // sitting where it cannot be read.
+    const score = (shift: number, slide: number): number => blockage(shift, slide)
+      + Math.abs(shift) * 0.01 + Math.abs(slide) * 0.008;
+    let best = { shift: 0, slide: 0 };
+    let bestCost = score(0, 0);
+    let bestBlocked = blockage(0, 0);
+    // Far enough to cross the drawing. A fixed budget is a budget in units of
+    // the label's own height, so on a big sheet a ladder could only ever travel
+    // an inch and never reached the clear band one row away.
+    const rings = Math.max(8, Math.min(60, Math.ceil(Math.max(pageWidthIn, pageHeightIn) / Math.max(step, 0.05))));
+    // Sliding a label past its own endpoints parks it beside a service instead
+    // of on the hop it belongs to, so the run is the limit.
+    const slideStep = Math.max(0.12, Math.max(...members.map((member) => labelSize(labelOf(member)).w)) / 2);
+    const slides = Math.max(0, Math.floor(Math.max(...members.map(runOf)) / (2 * slideStep)));
+    const consider = (shift: number, slide: number): void => {
+      const cost = score(shift, slide);
+      if (cost < bestCost) {
+        bestCost = cost;
+        bestBlocked = blockage(shift, slide);
+        best = { shift, slide };
+      }
+    };
+    for (let ring = 1; bestBlocked > 0 && ring <= rings; ring += 1) {
+      for (let s = -Math.min(slides, ring); s <= Math.min(slides, ring); s += 1) {
+        consider(ring * step, s * slideStep);
+        consider(-ring * step, s * slideStep);
+        if (s !== 0) consider(0, s * slideStep);
+      }
+    }
+    return { ...best, blocked: bestBlocked };
+  };
+  for (const [, members] of settleOrder) {
+    let placement = settle(members);
+    // A fan whose sentences cannot be written anywhere clear keeps its numbers
+    // and drops its wording, exactly as the deck does. Ten hops between one
+    // pair of services need a ladder taller than the sheet, and a half-hidden
+    // sentence is worse than a callout the workflow band spells out in full.
+    const explained = members.every((member) => member.stepNumber !== undefined);
+    if (placement.blocked > 0 && members.length >= 2 && explained
+      && members.some((member) => labelOf(member))) {
+      const before = placement.blocked;
+      for (const member of members) muted.add(member.id);
+      rungify(members);
+      const retry = settle(members);
+      if (retry.blocked < before) {
+        placement = retry;
+      } else {
+        for (const member of members) muted.delete(member.id);
+        rungify(members);
+      }
+    }
+    const best = { shift: placement.shift, slide: placement.slide };
+    for (const member of members) {
+      const seat = ladder.get(member.id) ?? { drop: 0, along: 0 };
+      const placed = { drop: seat.drop + best.shift, along: seat.along + best.slide };
+      ladder.set(member.id, placed);
+      if (labelOf(member)) placedLabels.push(rectAt(member, placed.drop, placed.along));
+      if (member.stepNumber !== undefined) {
+        const n = normalOf(member);
+        const u = directionOf(member);
+        const centre = chordOf(member);
+        const box = rectAt(member, placed.drop, placed.along);
+        const away = placed.drop + (labelOf(member) ? box.h / 2 + STEP_BADGE_IN / 2 + 0.03 : 0);
+        placedLabels.push({
+          x: centre.x + n.x * away + u.x * placed.along - STEP_BADGE_IN / 2,
+          y: centre.y + n.y * away + u.y * placed.along - STEP_BADGE_IN / 2,
+          w: STEP_BADGE_IN,
+          h: STEP_BADGE_IN,
+        });
+      }
+    }
+  }
+
   for (const route of routes as ExportRoute[]) {
     const sourceId = shapeIdByNode.get(route.sourceId);
     const targetId = shapeIdByNode.get(route.targetId);
     if (sourceId === undefined || targetId === undefined) continue;
     const id = nextId++;
+    const text = labelOf(route);
+    const size = text ? labelSize(text) : { w: 0, h: 0 };
+    const seat = ladder.get(route.id) ?? { drop: 0, along: 0 };
+    // Local +Y is the line's left normal; the page-space normal used for the
+    // badge is its opposite whenever the line runs left to right, so the sign
+    // has to be carried across or the ladder and the badges fan apart.
+    const pageNormal = normalOf(route);
+    const localSign = localSignOf(route);
     shapes.push(
       connectorShapeXml(
         id,
         route.points.map(toPoint),
-        route.label,
+        text,
         route.color,
         visioLinePattern(route),
         route.opacity,
         route.bidirectional,
+        text ? { drop: localSign * seat.drop, along: seat.along, w: size.w, h: size.h } : undefined,
       ),
     );
     connects.push(connectXml(id, sourceId, targetId));
     if (route.stepNumber !== undefined) {
-      const anchor = toPoint(route.labelAnchor);
-      // Clear the connector's own text. The label inherits the connector's
-      // rotation and runs *along* the line, so the badge has to step off along
-      // the line's normal; dropping in page-Y would walk straight down a
-      // vertical connector's own label.
-      const points = route.points.map(toPoint);
-      const a = points[0] ?? anchor;
-      const b = points[points.length - 1] ?? anchor;
-      const dx = b.x - a.x;
-      const dy = b.y - a.y;
-      const len = Math.hypot(dx, dy) || 1;
-      // Unit normal, oriented downward in page space so a horizontal connector
-      // keeps the badge below the line exactly as before.
-      let nx = dy / len;
-      let ny = -dx / len;
-      if (ny > 0) {
-        nx = -nx;
-        ny = -ny;
-      }
-      const drop = route.label ? CONNECTOR_FONT_IN * 0.65 + 0.12 + 0.03 : 0;
+      // The badge hangs off the label's own rung, in the same frame the label
+      // is drawn in. Measuring it from the route's anchor instead put it inches
+      // from its own sentence on any elbowed hop, because Visio pins connector
+      // text to the begin→end chord and the anchor sits on the polyline.
+      const anchor = chordOf(route);
+      const { x: nx, y: ny } = pageNormal;
+      const along = directionOf(route);
+      // Each rung carries its own badge, so the badge steps off that rung and
+      // not off the line: with a fan, one shared drop stacked every badge in
+      // the bundle on the same spot.
+      const drop = (text ? size.h / 2 + STEP_BADGE_IN / 2 + 0.03 : 0) + seat.drop;
       // A clamped connector can put its anchor at the very page edge, and the
       // normal offset then pushes the badge off the sheet, where Visio simply
       // does not draw it.
@@ -925,8 +1217,8 @@ export async function buildVsdxPackage(
         stepBadgeXml(
           nextId++,
           {
-            x: clampIn(anchor.x + nx * drop, half, pageWidthIn - half),
-            y: clampIn(anchor.y + ny * drop, half, pageHeightIn - half),
+            x: clampIn(anchor.x + nx * drop + along.x * seat.along, half, pageWidthIn - half),
+            y: clampIn(anchor.y + ny * drop + along.y * seat.along, half, pageHeightIn - half),
           },
           route.stepNumber,
         ),
