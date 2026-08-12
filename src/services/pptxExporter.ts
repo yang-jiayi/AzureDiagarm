@@ -1218,12 +1218,19 @@ function stepBadgeBox(
       y: clamp(y, clampTo.y, Math.max(clampTo.y, clampTo.y + clampTo.h - d)),
     }
     : { x, y });
+  // A number printed over another number cannot be read at all, while a number
+  // over the corner of a tile can. So overlapping an existing annotation — a
+  // chip block or an already-placed callout — is priced far above overlapping
+  // a service. Without this the walk's own lattice, which is finer than the
+  // disc it places, let a muted fan stack two callouts on each other: the
+  // overlap was real but cost less than the clear slot further out.
+  const ANNOTATION_OVERLAP_WEIGHT = 8;
   const cover = (at: { x: number; y: number }): number => {
     let sum = 0;
     for (const other of obstacles) {
       const dx = Math.min(at.x + d, other.x + other.w) - Math.max(at.x, other.x);
       const dy = Math.min(at.y + d, other.y + other.h) - Math.max(at.y, other.y);
-      if (dx > 0 && dy > 0) sum += dx * dy;
+      if (dx > 0 && dy > 0) sum += dx * dy * (other.annotation ? ANNOTATION_OVERLAP_WEIGHT : 1);
     }
     return sum;
   };
@@ -1263,42 +1270,6 @@ function stepBadgeBox(
         }
         if (spotCover <= 0) break;
       }
-    }
-  }
-  // The ring walk reaches about 1.4in from the arrow's midpoint. On a long hop
-  // — the wrap-around from the end of one row to the start of the next, say —
-  // that midpoint can be deep inside an unrelated tile with more tiles all
-  // around it, and the number ends up printed over a service it has nothing to
-  // do with. Every point along the arrow's own path is equally on that arrow,
-  // though, and a long hop runs through open paper somewhere. So when the rings
-  // find nothing clear, follow the polyline: attribution is perfect by
-  // construction there, which is why these candidates so often beat a clear
-  // slot found a long way off to one side.
-  if (spotCover > 0 && route.points.length >= 2) {
-    const path = route.points.map((point) => toInches(point, transform));
-    let travelled = 0;
-    const lengths = path.slice(1).map((point, i) => Math.hypot(point.x - path[i].x, point.y - path[i].y));
-    const total = lengths.reduce((sum, len) => sum + len, 0);
-    for (let i = 1; i < path.length && spotCover > 0; i += 1) {
-      const segLen = lengths[i - 1];
-      const steps = Math.max(1, Math.round(segLen / (d * 0.75)));
-      for (let s = 0; s <= steps; s += 1) {
-        const t = s / steps;
-        // The very ends sit under the tiles the arrow joins, so skip them.
-        const along = travelled + t * segLen;
-        if (total > 0 && (along < d || along > total - d)) continue;
-        const candidate = fit(
-          path[i - 1].x + (path[i].x - path[i - 1].x) * t - d / 2,
-          path[i - 1].y + (path[i].y - path[i - 1].y) * t - d / 2,
-        );
-        const score = cost(candidate);
-        if (score < spotCover - 0.0001) {
-          spot = candidate;
-          spotCover = score;
-          if (spotCover <= 0) break;
-        }
-      }
-      travelled += segLen;
     }
   }
   return { x: spot.x, y: spot.y, d };
@@ -2888,7 +2859,15 @@ export async function buildDiagramSlidePptx(
 
       // The badge colour and shape repeat here so a reader can match a number on
       // the drawing to its row without hunting.
-      const rowGap = Math.min(0.62, Math.max(MIN_WORKFLOW_ROW_IN, available / rows.length));
+      // The 0.62in cap keeps a short list from turning into widely-spaced
+      // bullets — but pagination has just reserved `neededRow` per row for the
+      // longest sentence at the 9pt floor, and capping below that threw the
+      // reservation away and printed the text outside its own box. Never
+      // shrink a row below what the pagination promised it.
+      const rowGap = Math.max(
+        neededRow,
+        Math.min(0.62, Math.max(MIN_WORKFLOW_ROW_IN, available / rows.length)),
+      );
       const badge = Math.min(0.34, rowGap - 0.06);
       // Pagination already reserved room for the longest sentence at the floor
       // size; this hands every shorter row the largest size that still fits its

@@ -995,6 +995,32 @@ export function routeOrthogonal(
 }
 
 /**
+ * Midpoints of the clear bands between obstacle spans, nearest the direct line
+ * first. `bestDetour` derives its lanes from the bounding box of every blocked
+ * obstacle at once, so when a route is blocked in two separate places — the row
+ * it starts in and the row it ends in, which is what a wrap-around hop always
+ * does — every lane it can name lies outside both, and the one that actually
+ * works, the gutter between them, is inside the box and never offered.
+ */
+function clearLanes(spans: Array<[number, number]>, from: number, to: number, margin: number): number[] {
+  if (spans.length === 0) return [];
+  const merged: Array<[number, number]> = [];
+  for (const [lo, hi] of [...spans].sort((a, b) => a[0] - b[0])) {
+    const last = merged[merged.length - 1];
+    if (last && lo <= last[1] + 2 * margin) last[1] = Math.max(last[1], hi);
+    else merged.push([lo, hi]);
+  }
+  const lanes: number[] = [];
+  for (let i = 1; i < merged.length; i += 1) {
+    const gapLo = merged[i - 1][1];
+    const gapHi = merged[i][0];
+    if (gapHi - gapLo > 2 * margin + 4) lanes.push((gapLo + gapHi) / 2);
+  }
+  const mid = (from + to) / 2;
+  return lanes.sort((a, b) => Math.abs(a - mid) - Math.abs(b - mid));
+}
+
+/**
  * Try a handful of deterministic detours (shift the connecting line past the
  * blocking cluster, or take a clear perpendicular gutter) and keep the first
  * fully-clear candidate — otherwise the least-blocked one. Cheap and stable.
@@ -1043,6 +1069,28 @@ function bestDetour(
   let best = base;
   let bestBlocked = countBlocked(base.points, obstacles, margin);
   for (const candidate of candidates) {
+    const blocked = countBlocked(candidate.points, obstacles, margin);
+    if (blocked === 0) return candidate;
+    if (blocked < bestBlocked) { best = candidate; bestBlocked = blocked; }
+  }
+  // Nothing past the cluster worked. Fall through to the gutters between the
+  // obstacle rows and columns — appended after the originals on purpose, so a
+  // route that already had a clear detour keeps exactly the one it had and only
+  // the previously-unsolvable cases change.
+  const gutters: Array<{ points: Point[]; labelAnchor: Point }> = [];
+  for (const laneY of clearLanes(obstacles.map((b) => [b.y, b.y + b.h] as [number, number]), start.y, end.y, margin)) {
+    gutters.push({
+      points: [start, { x: start.x, y: laneY }, { x: end.x, y: laneY }, end],
+      labelAnchor: { x: (start.x + end.x) / 2, y: laneY },
+    });
+  }
+  for (const laneX of clearLanes(obstacles.map((b) => [b.x, b.x + b.w] as [number, number]), start.x, end.x, margin)) {
+    gutters.push({
+      points: [start, { x: laneX, y: start.y }, { x: laneX, y: end.y }, end],
+      labelAnchor: { x: laneX, y: (start.y + end.y) / 2 },
+    });
+  }
+  for (const candidate of gutters) {
     const blocked = countBlocked(candidate.points, obstacles, margin);
     if (blocked === 0) return candidate;
     if (blocked < bestBlocked) { best = candidate; bestBlocked = blocked; }

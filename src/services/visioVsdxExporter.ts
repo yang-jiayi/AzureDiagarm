@@ -369,10 +369,16 @@ function serviceGroupXml(
   // flat #64748B reads at 4.26:1 or worse on every lighter category fill, which
   // is under the WCAG AA bar — the PowerPoint path was corrected the same way.
   const metaColor = meta ? readableTextOn('#64748B', palette.fill) : '#64748B';
+  // The tile name is drawn in the category's own accent, which on two of the
+  // sixteen palettes is unreadable on that category's fill — ai + machine
+  // learning at 3.93:1 and identity at 2.49:1. PowerPoint draws the same words
+  // at a flat #1F2937, so the two exporters were disagreeing about what is
+  // legible. Resolve the accent against the tile the same way the sub-line is.
+  const nameColor = readableTextOn(palette.text, palette.fill);
   const characterRows = meta
-    ? `        <Row IX="0"><Cell N="Font" V="1"/><Cell N="Color" V="${palette.text}"/><Cell N="Size" V="${LABEL_FONT_IN}"/></Row>
+    ? `        <Row IX="0"><Cell N="Font" V="1"/><Cell N="Color" V="${nameColor}"/><Cell N="Size" V="${LABEL_FONT_IN}"/></Row>
         <Row IX="1"><Cell N="Font" V="1"/><Cell N="Color" V="${metaColor}"/><Cell N="Size" V="${META_FONT_IN}"/></Row>`
-    : `        <Row IX="0"><Cell N="Font" V="1"/><Cell N="Color" V="${palette.text}"/><Cell N="Size" V="${LABEL_FONT_IN}"/></Row>`;
+    : `        <Row IX="0"><Cell N="Font" V="1"/><Cell N="Color" V="${nameColor}"/><Cell N="Size" V="${LABEL_FONT_IN}"/></Row>`;
   const textBody = meta
     ? `<cp IX="0"/>${esc(box.label)}\n<cp IX="1"/>${esc(meta)}`
     : esc(box.label);

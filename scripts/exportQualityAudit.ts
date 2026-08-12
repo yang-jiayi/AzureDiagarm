@@ -16,7 +16,7 @@ import { buildDiagramSlidePptx } from '../src/services/pptxExporter.ts';
 import { nativizeSlideXml } from '../src/services/pptxNativeShapes.ts';
 import { buildVsdxPackage } from '../src/services/visioVsdxExporter.ts';
 import { WRAP_TRIGGER_RATIO } from '../src/utils/serpentineWrap.ts';
-import { narrateEdgeCallouts } from '../src/services/diagramExportGeometry.ts';
+import { narrateEdgeCallouts, CATEGORY_STYLES } from '../src/services/diagramExportGeometry.ts';
 
 const OUT = path.join(process.cwd(), 'tmp-export-audit');
 const EMU_PER_INCH = 914400;
@@ -273,7 +273,7 @@ interface Scenario {
   dark?: boolean;
 }
 
-function svc(id: string, label: string, x: number, y: number, parent?: string, icon = true): Node {
+function svc(id: string, label: string, x: number, y: number, parent?: string, icon = true, category?: string): Node {
   return {
     id,
     type: 'azureNode',
@@ -284,6 +284,7 @@ function svc(id: string, label: string, x: number, y: number, parent?: string, i
     data: {
       label,
       serviceName: label,
+      ...(category ? { category } : {}),
       ...(icon
         ? { iconPath: '/Azure_Public_Service_Icons/Icons/compute/10021-icon-service-Virtual-Machine.svg' }
         : {}),
@@ -323,6 +324,54 @@ function workflowProseScenario(): Scenario {
     } as Edge);
   }
   return { id: 'workflow-prose', nodes, edges };
+}
+
+/**
+ * A step whose sentence needs more rows than the 0.62in row cap allowed. The
+ * cap silently overrode the pagination reserve, so the text was printed
+ * outside its own box and, past about 800 Latin characters, over the row
+ * below it. `workflow-prose` cannot reach this: its sentences all fit at 12pt.
+ */
+function workflowLongProseScenario(): Scenario {
+  const clause = 'The regional ingestion tier authenticates the caller with its managed identity, validates the payload against the published schema, '
+    + 'writes the accepted document to Azure Cosmos DB, emits a change-feed event onto Azure Service Bus for the downstream fulfilment pipeline, '
+    + 'and records the correlation identifier in Application Insights so the whole hop can be traced end to end afterwards. ';
+  const nodes: Node[] = [];
+  for (let i = 0; i < 13; i += 1) {
+    nodes.push(svc(`g${i}`, `Azure Service ${i}`, (i % 6) * 220, Math.floor(i / 6) * 150));
+  }
+  const edges: Edge[] = [];
+  for (let i = 0; i < 12; i += 1) {
+    edges.push({
+      id: `r${i}`, source: `g${i}`, target: `g${i + 1}`,
+      label: 'hands off the payload',
+      // Long enough to need five lines at the 9pt floor, which is more than
+      // the capped row could ever hold.
+      data: { stepNumber: i + 1, stepDescription: `${clause}${clause}`.slice(0, 800) },
+    } as Edge);
+  }
+  return { id: 'workflow-long-prose', nodes, edges };
+}
+
+/**
+ * One tile per category, so every accent in `CATEGORY_STYLES` is actually
+ * rendered. Nothing else in the corpus sets `data.category`, so all 31
+ * scenarios fell through to `other` and fifteen of the sixteen palettes had
+ * never been drawn, let alone measured for contrast.
+ */
+function allCategoriesScenario(): Scenario {
+  const names = Object.keys(CATEGORY_STYLES);
+  const nodes = names.map((category, i) => svc(
+    `k${i}`, `Azure Service ${i}`, (i % 4) * 240, Math.floor(i / 4) * 170, undefined, true, category,
+  ));
+  const edges: Edge[] = [];
+  for (let i = 1; i < names.length; i += 1) {
+    edges.push({
+      id: `c${i}`, source: `k${i - 1}`, target: `k${i}`,
+      label: `step ${i}`, data: { stepNumber: i },
+    } as Edge);
+  }
+  return { id: 'all-categories', nodes, edges };
 }
 
 /**
@@ -1500,10 +1549,29 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
       }
     }
     for (const badge of slideShapes.filter((s) => s.name.startsWith('connector-step-'))) {
+      let buried = 0;
       for (const tile of slideTiles) {
+        buried += overlapArea(badge, tile);
         if (overlapArea(badge, tile) > tileBudget(badge.name, tile) * tile.w * tile.h) {
           issues.push(`step badge "${badge.name}" covers node "${tile.name}" by ${((overlapArea(badge, tile)/(tile.w*tile.h))*100).toFixed(0)}% (badge area ${((overlapArea(badge, tile)/(badge.w*badge.h))*100).toFixed(0)}%)`);
         }
+      }
+      // The rule above is measured against the TILE, so a disc swallowed whole
+      // by a large tile is only 4% of it and never fires — which is how a
+      // callout came to sit 100% inside an unrelated service with the gate
+      // still green. Readability is a property of the disc, so measure it that
+      // way too.
+      //
+      // The bar is "swallowed", not "touching". A disc straddling a tile edge
+      // still reads as a callout on an arrow; one wholly inside a tile reads as
+      // that tile's own number and hides the icon underneath it. Measured
+      // residue at the time of writing: `twin-ladders` rests two rungs of a
+      // ten-deep ladder at ~50% over a tile edge, which no weight in the walk
+      // moves and which is the accepted cost of routing its wrap-around hops
+      // through the row gutter instead of straight through three services.
+      if (buried > 0.9 * badge.w * badge.h) {
+        const worst = slideTiles.reduce((a, b) => (overlapArea(badge, b) > overlapArea(badge, a) ? b : a), slideTiles[0]);
+        issues.push(`step badge "${badge.name}" is ${((buried / (badge.w * badge.h)) * 100).toFixed(0)}% buried inside "${worst?.name}"`);
       }
       for (const chip of slideChips) {
         if (overlapArea(badge, chip) > 0.25 * badge.w * badge.h) {
@@ -1533,6 +1601,54 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
         const b = annotations[j];
         const hit = overlapArea(a, b);
         if (hit > 0.01) issues.push(`annotation "${a.name}" and "${b.name}" overlap by ${hit.toFixed(3)}sq in`);
+      }
+    }
+  }
+  // On the Azure Architecture Center an arrow never runs through a service it
+  // does not connect: a line that disappears under a tile and comes out the
+  // other side reads as touching it, and on a generated layout that is the most
+  // visible difference between a reference drawing and a sketch. Nothing
+  // measured this — the connector path was parsed only to attribute chips.
+  const endpointsOf = new Map<string, { source: string; target: string }>();
+  for (const edge of scenario.edges) {
+    endpointsOf.set(String(edge.id), { source: String(edge.source), target: String(edge.target) });
+  }
+  for (const slideShapes of perSlide) {
+    const tiles = slideShapes.filter(
+      (s) => s.name.startsWith('service-') && !s.name.includes('label') && !s.name.includes('meta'),
+    );
+    for (const arrow of slideShapes.filter((s) => s.name.startsWith('connector-') && !/^connector-(label|step)-/.test(s.name))) {
+      const path = arrow.path;
+      if (!path || path.length < 2) continue;
+      const ends = endpointsOf.get(arrow.name.slice('connector-'.length));
+      if (!ends) continue;
+      for (const tile of tiles) {
+        const id = tile.name.slice('service-'.length);
+        if (id === ends.source || id === ends.target) continue;
+        // Shrink the tile so an arrow that merely grazes a corner or runs along
+        // an edge is not reported; only a line that genuinely goes under the
+        // service counts.
+        const inset = 0.04;
+        const box = { x: tile.x + inset, y: tile.y + inset, w: tile.w - 2 * inset, h: tile.h - 2 * inset };
+        if (box.w <= 0 || box.h <= 0) continue;
+        let inside = 0;
+        for (let i = 1; i < path.length; i += 1) {
+          const a = path[i - 1];
+          const b = path[i];
+          const segLen = Math.hypot(b.x - a.x, b.y - a.y);
+          const steps = Math.max(2, Math.ceil(segLen / 0.02));
+          for (let s = 0; s <= steps; s += 1) {
+            const t = s / steps;
+            const px = a.x + (b.x - a.x) * t;
+            const py = a.y + (b.y - a.y) * t;
+            if (px >= box.x && px <= box.x + box.w && py >= box.y && py <= box.y + box.h) {
+              inside += segLen / steps;
+            }
+          }
+        }
+        if (inside > 0.15) {
+          issues.push(`arrow "${arrow.name}" runs ${inside.toFixed(2)}in through node "${tile.name}", which it does not connect`);
+        }
       }
     }
   }
@@ -2199,7 +2315,7 @@ async function main(): Promise<void> {
     compactScenario(), wideScenario(), oversizeScenario(), outlierScenario(),
     bandedScenario(), narrativeScenario(), barbellScenario(), parallelScenario(),
     ladderInGridScenario(), twinLaddersScenario(), strayLadderScenario(), legendCornerScenario(), duplicateStepsScenario(), denseZoneScenario(),
-    metaChipScenario(), gridFanScenario(), gridFan3Scenario(), fan8Tight5x5Scenario(), metaSublineScenario(), grid5x5CaptionScenario(), longNameGridScenario(), longLabelGridScenario(), metaTightScenario(),     longNameFanScenario(), estateChainScenario(), chain24Scenario(), tripleMutedScenario(), estate72Scenario(), workflowProseScenario(),
+    metaChipScenario(), gridFanScenario(), gridFan3Scenario(), fan8Tight5x5Scenario(), metaSublineScenario(), grid5x5CaptionScenario(), longNameGridScenario(), longLabelGridScenario(), metaTightScenario(),     longNameFanScenario(), estateChainScenario(), chain24Scenario(), tripleMutedScenario(), estate72Scenario(), workflowProseScenario(), workflowLongProseScenario(), allCategoriesScenario(),
     await generatedScenario(), await groupedGeneratedScenario(),
   ];
   // Dark twins. Adding a `dark` flag was not enough on its own: nothing set it,
