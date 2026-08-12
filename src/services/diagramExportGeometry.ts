@@ -445,6 +445,24 @@ export function workflowListFromEdges(edges: Edge[]): WorkflowListEntry[] {
  * — and the un-numbered members of a deep fan are handed their own steps,
  * continuing after the highest number already in use so nothing is renumbered.
  */
+/**
+ * Whether a workflow row already says what an arrow's own label says. Compared
+ * with punctuation and case folded away, because the same wording routinely
+ * differs by a trailing full stop or a capital between the two fields.
+ *
+ * Used when a chip is muted: the trade the exporter makes is "the workflow
+ * slide carries this wording instead", which is only a trade if the row
+ * actually contains it.
+ */
+export function carriesWording(description: string, label: string): boolean {
+  const fold = (s: string): string => s
+    .toLowerCase()
+    .replace(/[\s\u3000]+/g, '')
+    .replace(/[.,;:!?、。（）()[\]「」"'`´’‘“”-]/g, '');
+  const needle = fold(label);
+  return needle.length === 0 || fold(description).includes(needle);
+}
+
 export function narrateEdgeCallouts(edges: Edge[], minFanSize = 5): Edge[] {
   const labelled = edges.filter((edge) => readEdgeLabel(edge) !== '');
 

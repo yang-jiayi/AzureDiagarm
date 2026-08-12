@@ -379,6 +379,21 @@ function estateChainScenario(): Scenario {
   return { id: 'estate-chain', nodes, edges };
 }
 
+/**
+ * The same shape as the estate chain, but six per row and with an English
+ * sentence for a label. A scenario proves a fix for the string it carries, so
+ * the chain is run at both a CJK width and a Latin one.
+ */
+function chain24Scenario(): Scenario {
+  const nodes: Node[] = [];
+  for (let i = 0; i < 24; i += 1) nodes.push(svc(`n${i}`, `Azure Service ${i}`, (i % 6) * 240, Math.floor(i / 6) * 190));
+  const edges: Edge[] = [];
+  for (let i = 1; i < 24; i += 1) {
+    edges.push({ id: `c${i}`, source: `n${i - 1}`, target: `n${i}`, label: 'writes the order document to Cosmos DB', data: { stepNumber: i, stepDescription: `Step ${i}` } } as Edge);
+  }
+  return { id: 'chain24-en', nodes, edges };
+}
+
 
 function denseZoneScenario(): Scenario {
   const nodes: Node[] = [grp('zone', 'Production landing zone', 0, 0, 2400, 1200)];
@@ -777,6 +792,32 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
       }
     }
   }
+  // The numbered callout has to point at the same hop its wording does. It is
+  // measured against arrows from *other* bundles only: a fan of parallel edges
+  // between one pair of services is a single object to the reader, so a rung
+  // sitting nearer fan-sibling 5 than fan-sibling 6 misleads nobody.
+  const bundleOf = new Map<string, string>();
+  for (const edge of scenario.edges) {
+    bundleOf.set(edge.id, [edge.source, edge.target].sort().join('|'));
+  }
+  const bundleKey = (arrowName: string): string => bundleOf.get(arrowName.replace('connector-', '')) ?? arrowName;
+  for (const slideShapes of perSlide) {
+    const arrows = slideShapes.filter((s) => s.name.startsWith('connector-') && !/^connector-(label|step)-/.test(s.name));
+    if (arrows.length === 0) continue;
+    for (const badge of slideShapes.filter((s) => s.name.startsWith('connector-step-'))) {
+      const own = arrows.find((arrow) => arrow.name === `connector-${badge.name.replace('connector-step-', '')}`);
+      if (!own) continue;
+      const ownBundle = bundleKey(own.name);
+      const at = { x: badge.x + badge.w / 2, y: badge.y + badge.h / 2 };
+      const mine = pathGap(own, at);
+      const strangers = arrows.filter((arrow) => bundleKey(arrow.name) !== ownBundle);
+      if (strangers.length === 0) continue;
+      const nearest = strangers.reduce((best, arrow) => (pathGap(arrow, at) < pathGap(best, at) ? arrow : best), strangers[0]);
+      if (pathGap(nearest, at) < mine - 0.25) {
+        issues.push(`callout "${badge.name}" is ${pathGap(nearest, at).toFixed(2)}in from ${nearest.name} but ${mine.toFixed(2)}in from its own arrow`);
+      }
+    }
+  }
   // The colour key is drawn last and is 92% opaque, so whatever it lands on is
   // invisible in the finished deck. A callout it buries leaves the workflow
   // band citing a step number that appears nowhere on the drawing.
@@ -799,11 +840,25 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
   const explained = new Set(
     shapes.map((s) => /^workflow-step-(\d+)$/.exec(s.name)?.[1]).filter((n): n is string => !!n),
   );
+  // A row that exists is not a row that says anything. The trade the exporter
+  // makes when it mutes a chip is "the workflow slide carries this wording
+  // instead", so the wording has to actually be on that slide - otherwise the
+  // deck reads "13. Step 13" and the author's sentence is simply gone.
+  const foldWording = (s: string): string => s
+    .toLowerCase()
+    .replace(/[\s\u3000]+/g, '')
+    .replace(/[.,;:!?、。（）()[\]「」"'`´’‘“”\-…]/g, '');
+  const deckWording = foldWording(shapes.map((s) => s.text).join(' '));
   for (const edge of scenario.edges) {
     const label = typeof edge.label === 'string' ? edge.label.trim() : '';
     if (!label || drawnChips.has(edge.id)) continue;
     const badge = drawnBadges.get(edge.id);
-    if (badge !== undefined && explained.has(badge)) continue;
+    if (badge !== undefined && explained.has(badge)) {
+      if (!deckWording.includes(foldWording(label))) {
+        issues.push(`edge "${edge.id}" was muted to callout ${badge}, but its wording "${label}" appears nowhere in the deck`);
+      }
+      continue;
+    }
     issues.push(
       badge === undefined
         ? `edge "${edge.id}" is labelled "${label}" but the deck has neither a chip nor a callout for it`
@@ -946,7 +1001,10 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
   );
   if (authored.size > 0) {
     const rowText = new Set(shapes.filter((s) => s.name.startsWith('workflow-text-')).map((s) => s.text.replace(/…$/, '').trim()));
-    const lost = [...authored].filter((d) => ![...rowText].some((r) => r.length > 0 && d.startsWith(r)));
+    // Either direction is a match: a row truncated with an ellipsis is a prefix
+    // of what the author wrote, and a row that has had the arrow's own label
+    // appended to it starts with what the author wrote.
+    const lost = [...authored].filter((d) => ![...rowText].some((r) => r.length > 0 && (d.startsWith(r) || r.startsWith(d))));
     if (lost.length) {
       issues.push(`${lost.length} authored step description(s) reach no slide: ${lost.slice(0, 3).join(' | ')}`);
     }
@@ -1228,7 +1286,7 @@ async function main(): Promise<void> {
     compactScenario(), wideScenario(), oversizeScenario(), outlierScenario(),
     bandedScenario(), narrativeScenario(), barbellScenario(), parallelScenario(),
     ladderInGridScenario(), twinLaddersScenario(), strayLadderScenario(), legendCornerScenario(), duplicateStepsScenario(), denseZoneScenario(),
-    gridFanScenario(), estateChainScenario(),
+    gridFanScenario(), estateChainScenario(), chain24Scenario(),
     await generatedScenario(), await groupedGeneratedScenario(),
   ];
   const reports: Report[] = [];
@@ -1239,6 +1297,7 @@ async function main(): Promise<void> {
   for (const report of reports) {
     console.log(`\n=== ${report.scenario} / ${report.format} ===`);
     console.log('metrics:', JSON.stringify(report.metrics));
+
     if (report.issues.length === 0) console.log('  PASS - no issues');
     else report.issues.slice(0, 14).forEach((i) => console.log('  ISSUE:', i));
     if (report.issues.length > 14) console.log(`  ...and ${report.issues.length - 14} more`);
