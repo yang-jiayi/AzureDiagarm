@@ -476,7 +476,19 @@ function planDiagramWindows(
   // switching the floor off, and 400 services then came out as 49 slides on
   // which every tile read "Azure…".
   const finestPerIn = Math.min(frame.w, frame.h) / (WINDOW_BLEED_PX * 2 + Math.max(1, target));
-  const legibleScale = Math.min(LEGIBLE_TILE_PT / 12 / target, finestPerIn);
+  // The renderer's ceiling, which is the mirror image of the same mistake.
+  //
+  // Every window is drawn through `computeFitTransform(..., { maxScale: 1 /
+  // PX_PER_IN })`, so a tile can never come out larger than the size it was
+  // authored at. `LEGIBLE_TILE_PT / 12 / target` exceeds that for any median
+  // tile under 56px — so a drawing of short tiles asks for a magnification the
+  // renderer will hand back regardless of how far the planner splits, and the
+  // break condition keeps firing at ever-finer grids. Sixty services authored
+  // 20px tall came out as sixty-one slides carrying one tile each, 0.3% of the
+  // page inked, with tiles no wider, type no larger and no name any more
+  // complete than the twenty-five slides they needed. `finestPerIn` is what
+  // this *frame* can deliver; this is what the *renderer* will.
+  const legibleScale = Math.min(LEGIBLE_TILE_PT / 12 / target, finestPerIn, 1 / PX_PER_IN);
   if (Math.min(frame.w / contentW, frame.h / contentH) >= legibleScale) return whole;
 
   // Splitting on one axis only is why a tall drawing used to grow the page

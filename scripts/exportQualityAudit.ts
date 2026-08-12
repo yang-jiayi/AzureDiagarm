@@ -1025,6 +1025,68 @@ function sharedPrefixEstateScenario(): Scenario {
 }
 
 /**
+ * Sixty services authored 20px tall, on a pitch that forces the planner to tile.
+ *
+ * A short tile makes `LEGIBLE_TILE_PT / 12 / target` demand a magnification the
+ * renderer never grants — every window is drawn through a transform capped at
+ * natural size — so the planner split, found the tiles no larger, and split
+ * again, down to one tile per slide on a page 0.3% inked. Nothing about the
+ * result improved across those extra thirty-six slides: same tile widths, same
+ * 7pt floor, same zero truncations, same sixty distinct names.
+ *
+ * Twenty pixels is not a size the canvas can author — `NodeResizer` sits on
+ * groups only, at `minHeight={150}` — but the model can, since
+ * `blueprintArchitectureAI.ts:173` emits a height per node, and the same
+ * runaway starts from an entirely ordinary 40px.
+ */
+function shortTileEstateScenario(): Scenario {
+  const names = ['Front Door', 'API Management', 'App Service', 'Functions', 'Service Bus', 'Event Hubs',
+    'Cosmos DB', 'SQL Database', 'Key Vault', 'Storage Account', 'Redis Cache', 'Container Apps'];
+  const nodes: Node[] = Array.from({ length: 60 }, (_, i) => ({
+    ...svc(`st-${i}`, `${names[i % 12]} ${i}`, (i % 10) * 400, Math.floor(i / 10) * 400),
+    height: 20,
+  } as Node));
+  const edges: Edge[] = Array.from({ length: 11 }, (_, k) => ({
+    id: `ste${k}`, source: `st-${k}`, target: `st-${k + 1}`, label: 'Calls',
+  } as Edge));
+  return { id: 'short-tile-estate', nodes, edges };
+}
+
+/**
+ * Tiles authored between the icon threshold and the standard height.
+ *
+ * `serviceGroupXml`'s icon arithmetic is proportional, so an icon fits from
+ * 0.43in — 41.28px — upward, not from the standard 75px. Everything authored in
+ * between drew an icon that no rule watched: 45% of a standard tile, wide open.
+ *
+ * The second half of the fixture is the same rule's opposite failure. These
+ * nodes carry no `height` at all and are sized through `style`, which is what
+ * `readSize` reads and what the canvas writes when a layout engine sets a size.
+ * Reading only `height` saw the default 75 and demanded icons the exporter is
+ * right not to draw at 30px.
+ */
+function compactEstateScenario(): Scenario {
+  const names = ['Front Door', 'API Management', 'App Service', 'Functions', 'Service Bus', 'Event Hubs',
+    'Cosmos DB', 'SQL Database', 'Key Vault', 'Storage Account', 'Redis Cache', 'Container Apps'];
+  const nodes: Node[] = [];
+  for (let i = 0; i < 6; i += 1) {
+    nodes.push({
+      ...svc(`ce-${i}`, `${names[i]} Tier`, (i % 3) * 260, Math.floor(i / 3) * 190),
+      height: 50,
+    } as Node);
+  }
+  for (let i = 0; i < 12; i += 1) {
+    const base = svc(`ces-${i}`, `${names[i]} Probe`, (i % 4) * 260, 450 + Math.floor(i / 4) * 190);
+    delete (base as { height?: number }).height;
+    nodes.push({ ...base, style: { width: 150, height: 30 } } as Node);
+  }
+  const edges: Edge[] = Array.from({ length: 5 }, (_, k) => ({
+    id: `cee${k}`, source: `ce-${k}`, target: `ce-${(k + 1) % 6}`, label: 'Calls',
+  } as Edge));
+  return { id: 'compact-estate', nodes, edges };
+}
+
+/**
  * A 560-service estate under a 500-step CJK workflow.
  *
  * The band is sized twice — once at the narrowest page the exporter emits, to
@@ -2507,6 +2569,31 @@ function drawingSpanIn(scenario: Scenario): { w: number; h: number } {
  * floor, and every service must reach exactly one window.
  */
 async function auditCustomerDeck(scenario: Scenario): Promise<string[]> {
+  // Built the way `App.tsx:3483` builds it. Passing an empty list audited a
+  // configuration the product never ships, which left the Services slide — the
+  // customer deck's only path for spelling out a name the drawing shortened —
+  // permanently empty and so permanently unexercised by every rule below.
+  const groupLabels = new Map<string, string>();
+  for (const node of scenario.nodes) {
+    if (node.type === 'groupNode') {
+      groupLabels.set(node.id, String((node.data as { label?: string } | undefined)?.label ?? ''));
+    }
+  }
+  const deckServices = scenario.nodes
+    .filter((n) => n.type !== 'groupNode')
+    .map((n) => {
+      const parentId = (n as { parentNode?: string; parentId?: string }).parentNode
+        ?? (n as { parentNode?: string; parentId?: string }).parentId;
+      const data = n.data as { label?: string; iconPath?: string } | undefined;
+      const category = data?.iconPath?.match(/\/Icons\/([^/]+)\//i)?.[1]
+        .replace(/[-_]+/g, ' ')
+        .replace(/\b\w/g, (c) => c.toUpperCase());
+      return {
+        name: data?.label || 'Unnamed service',
+        category,
+        group: (parentId ? groupLabels.get(parentId) : undefined) || undefined,
+      };
+    });
   const pptx = await buildArchitectureDeckPptx(PIXEL_PNG, {
     diagramName: 'Contoso Platform',
     author: 'Audit',
@@ -2514,7 +2601,7 @@ async function auditCustomerDeck(scenario: Scenario): Promise<string[]> {
     isDarkMode: scenario.dark === true,
     diagram: { nodes: scenario.nodes, edges: scenario.edges },
     presetIcons: synthesisedIcons(scenario),
-    services: [],
+    services: deckServices,
   });
   const zip = await JSZip.loadAsync((await pptx.write({ outputType: 'nodebuffer' })) as Buffer);
   const presentation = await zip.file('ppt/presentation.xml')!.async('string');
@@ -2579,6 +2666,35 @@ async function auditCustomerDeck(scenario: Scenario): Promise<string[]> {
     const on = windows.filter((xml) => xml.includes(marker)).length;
     if (on === 0) issues.push(`customer deck: service "${node.id}" is drawn on no slide`);
     else if (on > 1) issues.push(`customer deck: service "${node.id}" is drawn on ${on} slides`);
+  }
+
+  // Every name the drawing shortened must be spelled out somewhere in the deck,
+  // and in this deck the Services table is the only place that can do it.
+  //
+  // Read out of `<a:t>` rather than out of the shape scrape, because table text
+  // lives in an `<a:tbl>` inside a `<p:graphicFrame>` and a `<p:sp>`/`<p:pic>`
+  // scan cannot see it at all — which is how a table that was working got
+  // reported as empty. The check is on the full authored string: a table that
+  // stops at row twenty announces sixty components and discharges twenty.
+  const deckText = new Set<string>();
+  for (const xml of slides) {
+    for (const match of xml.matchAll(/<a:t>([^<]*)<\/a:t>/g)) deckText.add(match[1].trim());
+  }
+  const stranded: string[] = [];
+  for (const node of scenario.nodes) {
+    if ((node.type ?? '') === 'groupNode') continue;
+    // Trimmed on both sides of the comparison. A label carrying a forbidden
+    // code point comes back from `auditStrip` with the gap it left, and the
+    // deck writes the same name without it; that is the sanitiser working, not
+    // a name gone missing.
+    const name = auditStrip(String((node.data as { label?: string } | undefined)?.label ?? '')).trim();
+    if (name && !deckText.has(name)) stranded.push(name);
+  }
+  if (stranded.length > 0) {
+    issues.push(
+      `customer deck: ${stranded.length} service name(s) appear nowhere in full — e.g. `
+      + `${stranded.slice(0, 3).map((n) => `"${n}"`).join(', ')}`,
+    );
   }
   return issues;
 }
@@ -3539,6 +3655,42 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
   for (const [name, count] of countByName(badges)) {
     if (count > 1) issues.push(`step badge "${name}" is drawn ${count} times`);
   }
+  // Splitting that buys nothing. The planner is allowed to spend slides to make
+  // tiles bigger, but a window is drawn through a transform capped at natural
+  // size, so once a tile is already as large as it was authored, splitting
+  // again cannot enlarge it — it only moves the same ink onto more pages. Sixty
+  // services authored 20px tall came out as sixty-one slides carrying one tile
+  // each, on a page 0.3% inked, with tiles no wider and type no larger than the
+  // twenty-five slides they needed. Bar the shape of that: a window slide alone
+  // with its tile while that tile is already at natural width.
+  const authoredWidths = new Map(
+    scenario.nodes
+      .filter((n) => n.type === 'azureNode')
+      .map((n) => [
+        auditStrip(String(n.id)),
+        n.width ?? (n.style?.width as number | undefined) ?? 150,
+      ]),
+  );
+  let lonelyWindows = 0;
+  for (const slideShapes of perSlide) {
+    const slideTiles = slideShapes.filter(
+      (s) => s.name.startsWith('service-')
+        && !s.name.startsWith('service-label-')
+        && !s.name.startsWith('service-meta-')
+        && s.w > 0,
+    );
+    if (slideTiles.length !== 1) continue;
+    const authoredIn = (authoredWidths.get(slideTiles[0].name.replace(/^service-/, '')) ?? 150) / 96;
+    if (slideTiles[0].w >= authoredIn * 0.99) lonelyWindows += 1;
+  }
+  // One lone tile is ordinary — a drawing whose last window holds the remainder
+  // will have exactly that. A deck built out of them is the defect.
+  if (lonelyWindows > 2 && lonelyWindows > slideCount * 0.5) {
+    issues.push(
+      `${lonelyWindows} of ${slideCount} slides carry a single service tile already at natural `
+      + `width — the deck split past the point where splitting can enlarge anything`,
+    );
+  }
   for (const [name, count] of countByName(chips)) {
     if (count > 1) issues.push(`edge chip "${name}" is drawn ${count} times`);
   }
@@ -3659,15 +3811,26 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
   // scale 0.5504, on two scenarios that were passing. Count the shapes.
   const pageXmlForIcons = typeof pagePart?.data === 'string' ? pagePart.data : '';
   const drawnIcons = (pageXmlForIcons.match(/NameU="Icon\.\d+"/g) ?? []).length;
-  // Only tiles that had room. A node collapsed below the standard 75px is one
-  // the exporter is right to hand over to its words — dropping an icon a tile
-  // cannot render is the documented behaviour, and counting those would make
-  // the rule fire on the one case it should not.
-  const wantIcons = scenario.nodes.filter(
-    (n) => n.type !== 'groupNode'
+  // Only tiles that had room, measured the way the exporter measures them.
+  //
+  // `serviceGroupXml`'s icon arithmetic is fully proportional, so the height at
+  // which an icon stops fitting is scale-invariant and depends only on the
+  // authored height: solving `0.78125h - 0.19h - 0.16h >= 0.08h` puts the
+  // threshold at 0.43in, or 41.28px. Writing the standard tile height there
+  // instead left a 34px band — 45% of a standard tile — in which the exporter
+  // draws icons and no rule watched them, so the icon scaling could break for
+  // every node in it and the gate would sleep through it. The fallback matters
+  // as much as the number: the exporter reads `height ?? style.height ??
+  // DEFAULT_SERVICE_H` (`diagramExportGeometry.ts:170`), so reading only
+  // `height` made the rule fire on a correct sheet whose nodes carry their size
+  // on `style` and are rightly too short for an icon.
+  const ICON_MIN_PX = 0.43 * 96;
+  const wantIcons = scenario.nodes.filter((n) => {
+    const styled = (n.style as { height?: number } | undefined)?.height;
+    return n.type !== 'groupNode'
       && Boolean((n.data as { iconPath?: string } | undefined)?.iconPath)
-      && (n.height ?? 75) >= 75,
-  ).length;
+      && (n.height ?? styled ?? 75) >= ICON_MIN_PX;
+  }).length;
   if (wantIcons > 0 && drawnIcons < wantIcons) {
     issues.push(`${wantIcons - drawnIcons} of ${wantIcons} service icon(s) are embedded but never drawn on the sheet`);
   }
@@ -4718,6 +4881,8 @@ async function main(): Promise<void> {
     metaChipScenario(), gridFanScenario(), gridFan3Scenario(), fan8Tight5x5Scenario(), metaSublineScenario(), grid5x5CaptionScenario(), longNameGridScenario(), longLabelGridScenario(), metaTightScenario(),     longNameFanScenario(), estateChainScenario(), chain24Scenario(), tripleMutedScenario(), estate72Scenario(),     workflowProseScenario(), workflowLongProseScenario(), workflowFanScenario(), workflowWideBandScenario(), allCategoriesScenario(), controlCharScenario(), shortServiceGridScenario(),
     cascadeScenario(),
     sharedPrefixEstateScenario(),
+    shortTileEstateScenario(),
+    compactEstateScenario(),
     squeezedBadgeScenario(),
     await generatedScenario(), await groupedGeneratedScenario(),
   ];
