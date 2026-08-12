@@ -330,54 +330,29 @@ export function getRegionInfo(region: AzureRegion): RegionInfo | undefined {
 }
 
 /**
- * Meter vintage per service, recorded as pricing files are parsed.
+ * ISO calendar date, which is the only form `PricesAsOf` is written in.
  *
- * The estimate is assembled synchronously from pricing that was loaded
- * asynchronously, and the caller that builds the breakdown has the service
- * names but not the files they came from. Rather than thread the date through
- * every pricing call site, each parse records what it saw and the breakdown
- * asks afterwards. Keyed by the service name the caller uses, so it answers the
- * question actually being asked: "how old is the price I am about to print?"
+ * The vintage used to live in a module-level registry keyed by service name,
+ * written as files were parsed and read back when the breakdown was assembled.
+ * That was wrong in four separate ways, all of them the same mistake — the date
+ * was not attached to the number it described:
+ *
+ *  - it was recorded under the *mapped* Azure name and read back under the raw
+ *    canvas name, so it silently answered "nothing" for the ~half of the
+ *    catalogue where those differ;
+ *  - it was oldest-wins *across regions*, so switching region (or using the
+ *    built-in nine-region comparison) permanently attributed one region's
+ *    vintage to another's prices — the one direction that over-claims;
+ *  - it was recorded when a file *loaded*, not when a meter was *used*, so a
+ *    node priced from the static fallback table still got an attestation that
+ *    Azure had set that price on some date;
+ *  - it lived only in session state, so restoring a saved diagram and exporting
+ *    gave a different answer from exporting after any later pricing fetch.
+ *
+ * The date now rides on the pricing object and is stamped onto the node, so it
+ * is bound to its own number, its own region, and its own provenance.
  */
-const meterVintage = new Map<string, string>();
-
-/** ISO calendar date, which is the only form `PricesAsOf` is written in. */
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
-
-/**
- * Record the vintage of a parsed service, keeping the oldest seen per name.
- * Exported as the write half of the registry the getters below read.
- */
-export function recordMeterVintage(serviceName: string, asOf: string | undefined): void {
-  if (!asOf || !ISO_DATE.test(asOf)) return;
-  const seen = meterVintage.get(serviceName);
-  // Oldest wins: the same service can be loaded for several regions, and a
-  // number is only as trustworthy as the stalest meter behind it.
-  if (seen === undefined || asOf < seen) meterVintage.set(serviceName, asOf);
-}
-
-/**
- * The meter vintage recorded for a service, or undefined if none was parsed.
- * Synchronous, so the cost breakdown can ask without becoming async.
- */
-export function getMeterVintage(serviceName: string): string | undefined {
-  return meterVintage.get(serviceName);
-}
-
-/** The oldest meter vintage among the named services. */
-export function oldestMeterVintage(serviceNames: readonly string[]): string | undefined {
-  let oldest: string | undefined;
-  for (const name of serviceNames) {
-    const asOf = meterVintage.get(name);
-    if (asOf && (oldest === undefined || asOf < oldest)) oldest = asOf;
-  }
-  return oldest;
-}
-
-/** Drop every recorded vintage. Exported so tests start from a known state. */
-export function resetMeterVintages(): void {
-  meterVintage.clear();
-}
 
 /**
  * Load pricing data for a specific service in a region
@@ -394,7 +369,6 @@ async function loadServiceData(region: AzureRegion, serviceName: string): Promis
     const filteredItems = fullData.Items.filter(item =>
       (item as any).productName === aiMapping.productName
     );
-    recordMeterVintage(serviceName, fullData.pricesAsOf);
     return {
       BillingCurrency: fullData.BillingCurrency,
       Items: filteredItems,
@@ -409,7 +383,6 @@ async function loadServiceData(region: AzureRegion, serviceName: string): Promis
     console.warn(`⚠️ No pricing data available for ${serviceName} in ${region}`);
     return null;
   }
-  recordMeterVintage(serviceName, data.pricesAsOf);
   return data;
 }
 
@@ -588,6 +561,10 @@ export async function getRegionalServicePricing(
     tiers,
     calculationType: 'hourly',
     lastUpdated: new Date().toISOString(),
+    // Travels with the tiers it describes, so whoever ends up printing one of
+    // these numbers can say how long Azure has been charging it without
+    // knowing which file, which region or which name it was found under.
+    meterAsOf: data.pricesAsOf && ISO_DATE.test(data.pricesAsOf) ? data.pricesAsOf : undefined,
   };
   
   // Cache the result

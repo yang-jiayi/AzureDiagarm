@@ -90,6 +90,13 @@ export interface ServicePricing {
   calculationType: 'hourly' | 'monthly' | 'usage'; // How to calculate cost
   sourceUrl?: string;                     // Link to official pricing page
   lastUpdated: string;                    // ISO timestamp
+  /**
+   * The date of the newest meter in the file these tiers were parsed from, so
+   * "how long has this price held?" can be answered from the price itself
+   * rather than from session state. Absent when the tiers did not come from a
+   * priced meter file.
+   */
+  meterAsOf?: string;
 }
 
 /**
@@ -115,6 +122,16 @@ export interface NodePricingConfig {
   reserved1yrCost?: number;
   /** True when reserved1yrCost came from a real savings-plan meter (not the % fallback). */
   reservedIsSavingsPlan?: boolean;
+  /**
+   * When Azure last restated the meter this price came from.
+   *
+   * Carried on the node rather than looked up from a registry so that it is
+   * bound to the number it describes: it is stamped only when the figure came
+   * from a real meter (never from the static fallback table), it belongs to the
+   * region in `region` above, and it survives save and restore, so the same
+   * diagram exports the same provenance twice running.
+   */
+  meterAsOf?: string;
   usageEstimate?: {           // For usage-based services
     type: 'light' | 'medium' | 'heavy';
     description: string;
