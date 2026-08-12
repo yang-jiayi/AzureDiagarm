@@ -218,6 +218,31 @@ test('a diagram beyond the page limit degrades proportionally, not typographical
   }
 });
 
+test('an arrow chip is never written smaller than the names beside it', async () => {
+  // A chip carried its own 4pt floor while a tile name stopped at 7, so a
+  // drawing scaled down far enough wrote its arrow labels at 6.74pt next to
+  // tile names held at 7.04 — the one piece of text on the slide that says
+  // *why* two services are joined, and the only one small enough to be mush.
+  // Dropping the chip is the designed answer: the workflow list on the slide
+  // still carries the sentence against the same step number.
+  const nodes: Node[] = [];
+  const edges: Edge[] = [];
+  const names = ['Azure Front Door', 'Application Gateway', 'Azure App Service', 'Azure Functions'];
+  for (let i = 0; i < 27; i += 1) {
+    nodes.push(service(`d-${i}`, names[i % names.length], i * 900, i * 620));
+    if (i > 0) edges.push({ id: `h-${i}`, source: `d-${i - 1}`, target: `d-${i}`, label: 'Hands off' } as Edge);
+  }
+  const { parts } = await slideShapes({ nodes, edges });
+
+  const chips = parts.flat().filter((s) => s.name.startsWith('connector-label-') && s.text.trim() !== '');
+  assert.ok(chips.length > 0, 'the diagram drew no connector labels at all');
+  const under = chips.filter((c) => (c.fontSize ?? 99) < 7);
+  assert.equal(
+    under.length, 0,
+    `${under.length} chip(s) below the 7pt floor, smallest ${Math.min(...under.map((c) => c.fontSize ?? 99))}pt`,
+  );
+});
+
 test('a far-placed outlier node still lands on the slide', async () => {
   const nodes: Node[] = [];
   for (let i = 0; i < 8; i += 1) nodes.push(service(`c-${i}`, 'Azure Functions', (i % 4) * 200, Math.floor(i / 4) * 160));

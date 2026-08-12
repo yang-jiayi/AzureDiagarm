@@ -184,6 +184,28 @@ function parseShapes(xml: string): Shape[] {
  * behind it, to WCAG 2.1 AA. Nothing had ever measured this: the audit only
  * ever built the light deck, and no rule looked at colour at all.
  */
+/**
+ * The 7pt floor, applied to the chips that sit on the arrows.
+ *
+ * A connector chip is the only text on the slide that says *why* two services
+ * are joined, and it was the one piece of text the legibility rules never
+ * measured: the tile rule filters on `service-label-`, so a chip drawn at 6.39pt
+ * beside a 7pt tile name passed the audit clean. It is not exempt for being
+ * secondary — an arrow whose reason cannot be read is an arrow the reader has
+ * to guess about.
+ */
+function connectorLabelFontIssues(shapes: Shape[], prefix: string): string[] {
+  const chips = shapes.filter(
+    (s) => s.name.startsWith('connector-label-') && s.text.trim() !== '' && s.fontSize !== null,
+  );
+  const under = chips.filter((s) => (s.fontSize ?? 99) < 7);
+  if (under.length === 0) return [];
+  const worst = under.reduce((a, b) => ((a.fontSize ?? 99) <= (b.fontSize ?? 99) ? a : b));
+  return [
+    `${prefix}${under.length} connector label(s) drawn below the 7pt legibility floor, smallest ${worst.fontSize}pt: "${worst.text.slice(0, 40)}"`,
+  ];
+}
+
 function contrastIssues(shapes: Shape[], slideBg: string): string[] {
   const issues: string[] = [];
   shapes.forEach((shape, idx) => {
@@ -2084,6 +2106,7 @@ async function auditCustomerDeck(scenario: Scenario): Promise<string[]> {
   if (minFont < 7) {
     issues.push(`customer deck: smallest label font is ${minFont}pt (below the 7pt legibility floor)`);
   }
+  issues.push(...connectorLabelFontIssues(shapes, 'customer deck: '));
 
   // Same contract as the diagram-only deck: every hop the caller asked for has
   // to be drawn somewhere. This deck tiles on its own plan against a page that
@@ -2891,6 +2914,16 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
   // drawing — an oversized architecture must be split across slides instead.
   if (Number.isFinite(minFont) && minFont < 7) {
     issues.push(`smallest label font is ${minFont}pt (below the 7pt legibility floor)`);
+  }
+  {
+    // Same floor, applied to the arrow chips. It has to be measured separately
+    // because the tile rule filters on `service-label-` and so never saw them:
+    // the chip carried its own 4pt floor and a scaled-down drawing wrote arrow
+    // labels at 6.39pt while every tile beside them was held at 7.
+    const chipShapes = allSlides
+      .filter((xml) => !xml.includes('(Overview)'))
+      .flatMap((xml) => parseShapes(xml));
+    issues.push(...connectorLabelFontIssues(chipShapes, ''));
   }
 
   // A deck nobody can open in PowerPoint is not an export. PowerPoint gives a

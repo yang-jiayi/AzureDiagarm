@@ -2441,7 +2441,20 @@ async function addEditableDiagram(
   for (const route of shownRoutes) addConnector(pptx, slide, route, transform, clampTo);
   // Labels are drawn after every connector so a chip is never hidden by a line
   // that is rendered later.
-  const labelFontSize = clamp(9 * px, 4, 10);
+  //
+  // The floor is the tiles' floor, deliberately. A chip was allowed down to 4pt
+  // while a tile name stopped at 7, so a window slide wrote its arrow labels at
+  // 6.74pt beside tile names held at 7.04 — grey mush on a projector, and the
+  // one piece of text on the slide that says *why* two services are connected.
+  // A chip that cannot be written legibly has somewhere better to go:
+  // `connectorLabelBox` drops it and the workflow list on the slide still
+  // carries the sentence against the same step number. Smaller-but-drawn is the
+  // worse of the two outcomes.
+  //
+  // The overview keeps its own, lower floor. It is a map rather than a reading
+  // surface, its names are carried by the slides that follow, and forcing its
+  // chips up to reading size would only crowd the picture it exists to give.
+  const labelFontSize = clamp(9 * px, thumbnail ? OVERVIEW_LEGIBLE_PT : LEGIBLE_TILE_PT, 10);
   // Chips and numbers dodge the tiles that are actually on this slide, so a
   // label on a short hop is pushed clear instead of covering a service.
   const tileRects = shownServices.map((service) => ({ ...placeBox(service, transform, clampTo), node: service.id }));
