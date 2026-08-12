@@ -1374,3 +1374,61 @@ test('a muted fan hands its wording to the workflow row that replaces it', async
   const lost = muted.filter((label) => !drawn.includes(label));
   assert.deepEqual(lost, [], `${lost.length} muted label(s) appear nowhere in the deck: ${lost.join('; ')}`);
 });
+test('the overview thumbnail never draws type the reader cannot resolve', async () => {
+  // The overview is a map, not a reading surface, so it is exempt from the
+  // legibility floor the detail slides are held to. It is not exempt from
+  // being drawn at all: at 40 services the tile labels clamp to 4pt, which is
+  // grey ink rather than small words. Every one of those strings is legible on
+  // the slide that follows, so the thumbnail shows the shape and leaves the
+  // wording to them.
+  const { nodes, edges } = wideDiagram(40);
+  const deck = await buildDeck(nodes, edges);
+  assert.ok(deck.parts.length > 1, 'the fixture must tile for there to be an overview at all');
+  const overview = deck.slides[deck.slides.length - deck.parts.length - 1];
+  assert.ok(overview.includes('(Overview)'), 'located the overview slide');
+
+  const RESOLVABLE_PT = 6;
+  const tooSmall: string[] = [];
+  for (const shape of overview.matchAll(/<p:sp>[\s\S]*?<\/p:sp>/g)) {
+    const text = [...shape[0].matchAll(/<a:t>([^<]*)<\/a:t>/g)].map((m) => m[1]).join('');
+    if (text.trim() === '') continue;
+    for (const size of shape[0].matchAll(/sz="(\d+)"/g)) {
+      if (+size[1] / 100 < RESOLVABLE_PT) tooSmall.push(`${text} @ ${+size[1] / 100}pt`);
+    }
+  }
+  assert.deepEqual(tooSmall, [], `${tooSmall.length} unresolvable run(s) on the overview: ${tooSmall.slice(0, 3).join('; ')}`);
+
+  // and the names it gave up are on the readable slides
+  assert.ok(deck.parts.join(' ').includes('Azure Kubernetes Service'), 'the detail slides carry the names');
+});
+
+test('a tile that gives up its name still says something', async () => {
+  // Dropping unreadable type is only an improvement while the tile keeps
+  // meaning something. Under Node no icon ever rasterises, so a tile that has
+  // given up its name and has no icon to fall back on would be drawn as an
+  // empty grey box — which says strictly less than type that is merely small,
+  // and which the font-size rule scores perfectly because there is no type
+  // left to measure.
+  const { nodes, edges } = wideDiagram(72);
+  const deck = await buildDeck(nodes, edges);
+  assert.ok(deck.parts.length > 1, 'the fixture must tile for there to be an overview at all');
+  const overview = deck.slides[deck.slides.length - deck.parts.length - 1];
+
+  const named = new Set(
+    [...overview.matchAll(/name="service-label-([^"]+)"/g)].map((m) => m[1]),
+  );
+  const iconed = new Set([...overview.matchAll(/name="icon-([^"]+)"/g)].map((m) => m[1]));
+  const tiles = [...overview.matchAll(/name="service-((?!label-|meta-)[^"]+)"/g)].map((m) => m[1]);
+  assert.ok(tiles.length > 0, 'the overview draws tiles');
+  const blank = tiles.filter((id) => !named.has(id) && !iconed.has(id));
+  assert.deepEqual(blank, [], `${blank.length} of ${tiles.length} overview tiles carry neither a name nor an icon`);
+
+  // and what it does say is still above the floor
+  for (const shape of overview.matchAll(/<p:sp>[\s\S]*?<\/p:sp>/g)) {
+    const text = [...shape[0].matchAll(/<a:t>([^<]*)<\/a:t>/g)].map((m) => m[1]).join('');
+    if (text.trim() === '') continue;
+    for (const size of shape[0].matchAll(/sz="(\d+)"/g)) {
+      assert.ok(+size[1] / 100 >= 6, `"${text}" drawn at ${+size[1] / 100}pt on the overview`);
+    }
+  }
+});

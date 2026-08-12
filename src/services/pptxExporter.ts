@@ -84,6 +84,14 @@ const LIGHT_THEME: SlideTheme = {
 // shapes at their true 96 dpi size so labels stay readable and editable.
 
 const PX_PER_IN = 96;
+/**
+ * Type below this is grey ink rather than small words: a reader cannot resolve
+ * it on a projected slide, and it makes the drawing harder to read, not more
+ * informative. Only the overview thumbnail is allowed to reach it, and there it
+ * drops the wording instead, because every one of those strings is legible on
+ * the detail slide that follows.
+ */
+const OVERVIEW_LEGIBLE_PT = 6;
 const BASE_W = 13.333;
 const BASE_H = 7.5;
 const MAX_SLIDE_IN = 56; // PowerPoint's hard page-size limit
@@ -507,6 +515,22 @@ function estimateTextWidthIn(text: string, fontSizePt: number): number {
     units += /[\u2e80-\u9fff\uac00-\ud7af\uff00-\uff60\uffe0-\uffe6]/.test(character) ? 1 : 0.54;
   }
   return (units * fontSizePt) / 72;
+}
+
+/**
+ * As much of `text` as will fit in `widthIn` at `fontSizePt`, with an ellipsis
+ * for the rest. Used where the tile is too small for the whole name and the
+ * only alternatives are unreadable type or an empty box.
+ */
+function fitLabelToBox(text: string, widthIn: number, fontSizePt: number): string {
+  if (estimateTextWidthIn(text, fontSizePt) <= widthIn) return text;
+  const budget = widthIn - estimateTextWidthIn('…', fontSizePt);
+  let out = '';
+  for (const character of text) {
+    if (estimateTextWidthIn(out + character, fontSizePt) > budget) break;
+    out += character;
+  }
+  return out.trimEnd() === '' ? '…' : `${out.trimEnd()}…`;
 }
 
 
@@ -1210,6 +1234,11 @@ function addNodeShape(
   icon: RasterizedIcon | undefined,
   px: number,
   clampTo?: DiagramFrame,
+  /**
+   * The whole drawing shown small ahead of the readable slices of it. Names
+   * are carried by those slices, so the thumbnail shows the shapes.
+   */
+  thumbnail = false,
 ): void {
   const topLeft = placeBox(box, transform, clampTo);
   const w = topLeft.w;
@@ -1239,13 +1268,34 @@ function addNodeShape(
   // Every typographic dimension is proportional to the drawing scale, so the
   // number of wrapped lines is identical whatever size the diagram is drawn at.
   const fontSize = clamp(h * 12, 4, 13);
+  // At 72 services the overview clamps this to 4pt, which is not small type —
+  // it is grey ink the reader cannot resolve, and it makes the thumbnail
+  // harder to read rather than more informative. The overview exists to show
+  // the shape of the architecture before the reader pans through the readable
+  // slices of it, and every one of those names appears in full on the slice
+  // that follows, so below the resolvable floor the thumbnail draws the icon
+  // and the tile and leaves the naming to them.
+  const named = !thumbnail || h * 12 >= OVERVIEW_LEGIBLE_PT;
+  // Giving up the name only works when the icon is left to carry the tile. A
+  // service with no icon would otherwise be drawn as an empty grey box, which
+  // says strictly less than type that is merely small. So the name comes back
+  // at exactly the floor, cut to what the tile can hold: a short legible word
+  // beats both an empty box and a paragraph of grey mush.
+  const stub = !named && !icon;
+  const drawnFont = named ? fontSize : OVERVIEW_LEGIBLE_PT;
   const meta = metaSubline(box);
   const metaFontSize = clamp(fontSize - 2, 3.5, 9);
-  const metaBand = showsMeta(h, px) && !!meta ? fontSize * 1.55 / 72 + 0.03 : 0;
+  const metaBand = named && showsMeta(h, px) && !!meta ? fontSize * 1.55 / 72 + 0.03 : 0;
 
   const innerW = Math.max(0.05, w - 0.06);
-  const label = truncateLabel(box.label, 40);
-  const labelLines = Math.max(1, Math.ceil(estimateTextWidthIn(label, fontSize) / innerW));
+  const full = truncateLabel(box.label, 40);
+  // A stub gets as much of the name as fits the tile at the floor size, on as
+  // many lines as the tile is tall enough for, and an ellipsis for the rest.
+  const stubLines = stub
+    ? Math.max(1, Math.floor((h - pad * 2) / ((OVERVIEW_LEGIBLE_PT * 1.22) / 72)))
+    : 0;
+  const label = stub ? fitLabelToBox(full, innerW * stubLines, OVERVIEW_LEGIBLE_PT) : full;
+  const labelLines = named ? Math.max(1, Math.ceil(estimateTextWidthIn(label, fontSize) / innerW)) : 0;
   const labelBlockH = (labelLines * fontSize * 1.22) / 72;
 
   // Fit the icon into whatever vertical room the label does not need, instead
@@ -1256,12 +1306,17 @@ function addNodeShape(
     iconSize = clamp(Math.min(h * 0.42, w * 0.34, Math.max(0, available - labelBlockH - 0.02)), 0, 0.6);
     if (iconSize < 0.08 * px) iconSize = 0; // too small to read — drop it and keep the words
   }
+  // With no name to make room for, the icon is the only thing carrying meaning
+  // in the tile, so it takes the whole of it.
+  if (!named && icon) {
+    iconSize = clamp(Math.min(h * 0.78, w * 0.78, available), 0, 0.6);
+  }
 
   if (iconSize > 0 && icon) {
     slide.addImage({
       data: icon.dataUrl,
       x: topLeft.x + (w - iconSize) / 2,
-      y: topLeft.y + pad,
+      y: named ? topLeft.y + pad : topLeft.y + (h - iconSize) / 2,
       w: iconSize,
       h: iconSize,
       objectName: `icon-${box.id}`,
@@ -1271,21 +1326,23 @@ function addNodeShape(
   const textTop = iconSize > 0 ? topLeft.y + pad + iconSize + 0.02 : topLeft.y + pad;
   const textHeight = Math.max(0.08, topLeft.y + h - pad - metaBand - textTop);
 
-  slide.addText(label, {
-    x: topLeft.x + 0.03,
-    y: textTop,
-    w: innerW,
-    h: textHeight,
-    fontSize,
-    color: '1F2937',
-    fontFace: 'Yu Gothic UI',
-    align: 'center',
-    valign: iconSize > 0 ? 'top' : 'middle',
-    margin: 0,
-    lineSpacingMultiple: 0.9,
-    wrap: true,
-    objectName: `service-label-${box.id}`,
-  });
+  if (named || stub) {
+    slide.addText(label, {
+      x: topLeft.x + 0.03,
+      y: stub ? topLeft.y + pad : textTop,
+      w: innerW,
+      h: stub ? Math.max(0.08, h - pad * 2) : textHeight,
+      fontSize: drawnFont,
+      color: '1F2937',
+      fontFace: 'Yu Gothic UI',
+      align: 'center',
+      valign: !stub && iconSize > 0 ? 'top' : 'middle',
+      margin: 0,
+      lineSpacingMultiple: 0.9,
+      wrap: true,
+      objectName: `service-label-${box.id}`,
+    });
+  }
   if (metaBand > 0 && meta) {
     slide.addText(truncateLabel(meta, 44), {
       x: topLeft.x + 0.03,
@@ -1435,6 +1492,11 @@ async function addEditableDiagram(
    * the workflow slide, and a muted label survives only if that slide says it.
    */
   mutedWording: Map<number, string> = new Map(),
+  /**
+   * This is the whole drawing shown small ahead of the readable slices of it,
+   * so anything that would land under the resolvable floor is left to them.
+   */
+  thumbnail = false,
 ): Promise<boolean> {
   const boxes = collectExportBoxes(diagram.nodes ?? []);
   if (boxes.size === 0) return false;
@@ -1531,7 +1593,7 @@ async function addEditableDiagram(
     { here: zoneMembers(group, shownServices), all: zoneMembers(group, services) },
   ));
   for (const service of shownServices) {
-    addNodeShape(pptx, slide, service, transform, service.iconPath ? icons.get(service.iconPath) : undefined, px, clampTo);
+    addNodeShape(pptx, slide, service, transform, service.iconPath ? icons.get(service.iconPath) : undefined, px, clampTo, thumbnail);
   }
 
   for (const route of shownRoutes) addConnector(pptx, slide, route, transform, clampTo);
@@ -1646,13 +1708,17 @@ async function addEditableDiagram(
   // cannot answer: is this rung still nearer its OWN hop than anybody else's?
   type Seg = { ax: number; ay: number; bx: number; by: number };
   const segsByBundle = new Map<string, Seg[]>();
+  const segsByRoute = new Map<string, Seg[]>();
   for (const route of shownRoutes) {
     const key = bundleKey(route);
     const pts = route.points.map((point) => toInches(point, transform));
     const list = segsByBundle.get(key) ?? [];
+    const own: Seg[] = [];
     for (let i = 1; i < pts.length; i += 1) {
-      list.push({ ax: pts[i - 1].x, ay: pts[i - 1].y, bx: pts[i].x, by: pts[i].y });
+      own.push({ ax: pts[i - 1].x, ay: pts[i - 1].y, bx: pts[i].x, by: pts[i].y });
     }
+    list.push(...own);
+    if (own.length) segsByRoute.set(route.id, own);
     if (list.length) segsByBundle.set(key, list);
   }
   const gapToSeg = (x: number, y: number, s: Seg): number => {
@@ -1698,7 +1764,12 @@ async function addEditableDiagram(
     return rivals.length ? (x: number, y: number) => gapToSegs(x, y, rivals) : undefined;
   };
   const ownGapFor = (route: ExportRoute): ((x: number, y: number) => number) | undefined => {
-    const segs = segsByBundle.get(bundleKey(route));
+    // Its OWN arrow, not its bundle's. A fan is fanned — `parallelOffset`
+    // spreads the members apart — so "nearest arrow in my bundle" is a much
+    // shorter distance than "nearest point of the arrow I am labelling", and
+    // measuring the first lets a callout drift onto a stranger's hop while
+    // still passing the attribution test.
+    const segs = segsByRoute.get(route.id);
     return segs && segs.length ? (x: number, y: number) => gapToSegs(x, y, segs) : undefined;
   };
   const settle = (routes: readonly ExportRoute[]): void => {
@@ -2126,7 +2197,7 @@ async function addEditableDiagram(
       for (const route of members) {
         if (route.stepNumber === undefined || !route.label) continue;
         if (carriesWording(narratedRows.get(route.stepNumber) ?? '', route.label)) continue;
-        mutedWording.set(route.stepNumber, route.label);
+        if (!thumbnail) mutedWording.set(route.stepNumber, route.label);
       }
       // A ladder of bare callouts is a different object from the one the pitch
       // and the offsets were chosen for: at the wrapped-label pitch the badges
@@ -2265,12 +2336,21 @@ async function addEditableDiagram(
   // Draw at the size the box was measured at. A shrunk bundle written back out
   // at the ordinary size spills its text past its own chip and over its own
   // numbered callout, because the box is smaller than the text inside it.
+  //
+  // On the thumbnail, anything that has been squeezed below the resolvable
+  // floor is dropped rather than drawn as grey noise: the same annotation is
+  // legible on the detail slide that follows, and on the workflow list.
+  const drawable = (size: number): boolean => !thumbnail || size >= OVERVIEW_LEGIBLE_PT;
   for (const route of annotatedRoutes) {
     const box = chips.get(route.id) ?? null;
-    addConnectorLabel(slide, route, box?.fontSize ?? labelFontSize, box);
+    const size = box?.fontSize ?? labelFontSize;
+    if (!drawable(size)) continue;
+    addConnectorLabel(slide, route, size, box);
   }
   for (const route of annotatedRoutes) {
-    addStepBadge(slide, route, chips.get(route.id)?.fontSize ?? labelFontSize, badges.get(route.id) ?? null);
+    const size = chips.get(route.id)?.fontSize ?? labelFontSize;
+    if (!drawable(size)) continue;
+    addStepBadge(slide, route, size, badges.get(route.id) ?? null);
   }
 
   // Colour key so the deck's connectors agree with the PNG legend. Drawn in the
@@ -2379,7 +2459,7 @@ export async function buildDiagramSlidePptx(
 
     // ── Diagram body — native shapes when available, captured PNG otherwise ───
     renderedNatively = diagram
-      ? await addEditableDiagram(pptx, slide, diagram, geom.frame, isDarkMode, window, mutedWording)
+      ? await addEditableDiagram(pptx, slide, diagram, geom.frame, isDarkMode, window, mutedWording, window === undefined && parts.length > 0)
       : false;
 
     if (!renderedNatively) {
