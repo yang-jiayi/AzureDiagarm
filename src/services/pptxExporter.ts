@@ -417,8 +417,23 @@ function planDiagramWindows(
   const shortest = Math.min(...services.map((box) => box.h).filter((h) => h > 0));
   if (!Number.isFinite(shortest) || shortest <= 0) return whole;
 
-  // Inches-per-pixel needed for the shortest tile to keep a readable label.
-  const legibleScale = LEGIBLE_TILE_PT / 12 / shortest;
+  // The strict minimum is the wrong statistic for a *target*. One sliver among
+  // eighty-one ordinary tiles asks for a grid 3.75x finer than the rest of the
+  // sheet needs; no grid within the slide budget delivers it, so `legible` came
+  // back false at every stage and the drawing fell through to the one outcome
+  // worse than either — a plotter page tiled into twenty plotter pages.
+  //
+  // What makes ignoring the outlier honest is that the renderer now floors a
+  // window tile's type at `LEGIBLE_TILE_PT` whatever its height, so the sliver
+  // reads either way. That splits one contract cleanly in two: the renderer
+  // guarantees the floor, the planner optimises for it, and the planner
+  // optimises for the tiles that stand to gain. When tiles are uniform, or when
+  // the whole sheet is short, this is exactly the minimum and nothing moves.
+  const heights = services.map((box) => box.h).filter((h) => h > 0).sort((a, b) => a - b);
+  const target = heights[Math.floor(heights.length * 0.1)] ?? shortest;
+
+  // Inches-per-pixel needed for a representative tile to keep a readable label.
+  const legibleScale = LEGIBLE_TILE_PT / 12 / target;
   if (Math.min(frame.w / contentW, frame.h / contentH) >= legibleScale) return whole;
 
   // Splitting on one axis only is why a tall drawing used to grow the page
@@ -599,7 +614,7 @@ function planDiagramWindows(
     return { windows: tile(c, r), legible: achieved >= legibleScale };
   };
 
-  const comfortable = gridFor(COMFORTABLE_TILE_PT / 12 / shortest);
+  const comfortable = gridFor(COMFORTABLE_TILE_PT / 12 / target);
   const floor = gridFor(legibleScale);
   const worthIt = comfortable
     && comfortable.slides <= MAX_DIAGRAM_SLIDES
@@ -788,7 +803,14 @@ function planSlideGeometry(diagram?: DiagramShapeSource | null): SlideGeometry {
       const forced = standard.legible ? null : planDiagramWindows(bounds, services, frameFor(BASE_W, BASE_H), { mustTile: true });
       if (standard.legible) {
         windows = standard.windows;
-      } else if (forced && forced.legible && forced.windows.length > 1) {
+      } else if (forced && forced.windows.length > 1) {
+        // Not `forced.legible`. That test asked the planner whether the tiles
+        // land at their natural size, and used the answer to decide something
+        // else entirely: standard slides versus a page nobody can open. Now
+        // that the renderer floors a window tile's type at the legibility limit
+        // whatever the grid, the honest comparison is between a deck of
+        // ordinary slides and a 56in plotter sheet — and the sheet loses every
+        // time, because a reader can at least present the deck.
         windows = forced.windows;
       } else {
         // Only a genuinely enormous drawing gets here — one that cannot be read
@@ -798,7 +820,13 @@ function planSlideGeometry(diagram?: DiagramShapeSource | null): SlideGeometry {
         overflow = wantW > MAX_SLIDE_IN || wantH > MAX_SLIDE_IN;
         w = clamp(wantW, BASE_W, MAX_SLIDE_IN);
         h = clamp(wantH, BASE_H, MAX_SLIDE_IN);
-        const grown = planDiagramWindows(bounds, services, frameFor(w, h));
+        // `mustTile` is what makes the sentence above true. Without it the
+        // planner still weighs these windows against the option of growing the
+        // page — and this page has already grown to the maximum, so there is no
+        // such option left; the bail-outs it takes on that assumption returned
+        // no windows at all and left a 200-service estate as a single 56x39.87in
+        // sheet, which is the one outcome this branch exists to avoid.
+        const grown = planDiagramWindows(bounds, services, frameFor(w, h), { mustTile: true });
         windows = grown.windows;
         // Splitting restores legibility, so the "scaled down to fit" warning no
         // longer applies — the drawing is now at its readable size.
@@ -1881,7 +1909,19 @@ function addNodeShape(
   const pad = Math.min(0.06, h * 0.09);
   // Every typographic dimension is proportional to the drawing scale, so the
   // number of wrapped lines is identical whatever size the diagram is drawn at.
-  const fontSize = clamp(h * 12, 4, 13);
+  //
+  // The floor differs by what the slide is for. A thumbnail may go below the
+  // legibility floor because the `named` test below then takes the name off it
+  // entirely and the slice that follows carries it in full. A window slide has
+  // no later slice — it *is* the readable view — so a tile too short for
+  // legible type must still get legible type. The planner's whole contract is
+  // that the grid it picks clears `LEGIBLE_TILE_PT` for the shortest service on
+  // the sheet, but when no grid can (one 20px node among eighty-one ordinary
+  // ones is enough, because the shortest tile sets the target for all of them)
+  // it returns the best grid it found and this clamp quietly drew that tile's
+  // name at four points. Two floors for one contract, and only the planner's
+  // was ever checked.
+  const fontSize = clamp(h * 12, thumbnail ? 4 : LEGIBLE_TILE_PT, 13);
   // At 72 services the overview clamps this to 4pt, which is not small type —
   // it is grey ink the reader cannot resolve, and it makes the thumbnail
   // harder to read rather than more informative. The overview exists to show
@@ -1977,19 +2017,33 @@ function addNodeShape(
     // measuring "how much of the name is covered" is really measuring the tile.
     // Vertically centred text inside a shrunk, centred box draws in exactly the
     // same place, so this describes the caption without moving it.
-    const drawnH = Math.min(boxH, Math.max(0.08, (Math.max(1, labelLines) * drawnFont * 1.22) / 72));
+    //
+    // The band is what the type needs, not what the tile has. Clamping it to
+    // the tile was right while type was derived from the tile, because then it
+    // always fit; now that a window tile's type is floored at the legibility
+    // limit however short the tile is, a collapsed node's 0.08in box carries a
+    // 7pt line needing 0.12in, and clamping described a line that reaches past
+    // the band it was measured in. On every ordinary tile the type still fits
+    // and this is exactly the old value.
+    const needH = Math.max(0.08, (Math.max(1, labelLines) * drawnFont * 1.22) / 72);
+    const drawnH = needH;
+    // Growing the band grows the box the words are actually drawn in, kept
+    // centred on the tile so a sliver's name overhangs evenly instead of
+    // hanging off one edge. Identical to `boxY`/`boxH` whenever the type fits.
+    const textBoxH = Math.max(boxH, needH);
+    const textBoxY = boxY - (textBoxH - boxH) / 2;
     const topAligned = !stub && iconSize > 0;
     captionBand = {
       x: topLeft.x + 0.03,
-      y: topAligned ? boxY : boxY + (boxH - drawnH) / 2,
+      y: topAligned ? boxY : textBoxY + (textBoxH - drawnH) / 2,
       w: innerW,
       h: drawnH,
     };
     slide.addText(label, {
       x: topLeft.x + 0.03,
-      y: boxY,
+      y: topAligned ? boxY : textBoxY,
       w: innerW,
-      h: boxH,
+      h: topAligned ? boxH : textBoxH,
       fontSize: drawnFont,
       color: '1F2937',
       fontFace: 'Yu Gothic UI',

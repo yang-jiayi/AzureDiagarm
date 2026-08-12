@@ -901,6 +901,72 @@ function controlCharScenario(): Scenario {
 }
 
 /**
+ * Eighty-one services, one of which is a 20px sliver.
+ *
+ * The cheapest shape that reaches the only branch where `drop()`'s
+ * axis-awareness decides anything. The legible scale is set by the *shortest*
+ * service on the sheet, so one short node explodes the grid the planner starts
+ * from — 81 ordinary nodes plus one sliver is enough to walk past
+ * `MAX_TILED_CELLS`, which is the loop that coarsens with `drop()` and nothing
+ * else. Every other caller breaks on the first step, because the grid it starts
+ * from is legible by construction.
+ *
+ * The rule this is a fixture for is the 7pt floor that already exists. Stepping
+ * toward a square instead of dropping the slack axis costs between 17% and
+ * 4196% of the type size on drawings shaped like this, and sometimes emits
+ * *more* slides for the privilege. Without a fixture that reaches the branch,
+ * the axis-aware version reads as unreachable cleverness and gets deleted.
+ */
+function shortServiceGridScenario(): Scenario {
+  const nodes: Node[] = [];
+  for (let i = 0; i < 81; i += 1) {
+    nodes.push(svc(`ss-${i}`, `Service ${i}`, (i % 9) * 260, Math.floor(i / 9) * 190));
+  }
+  // The sliver. A 20px-tall service is what a collapsed annotation or a
+  // hand-resized node looks like, and it is the whole reason the grid explodes.
+  nodes.push({ ...svc('ss-thin', 'Tag', 9 * 260, 0), height: 20 } as Node);
+  const edges: Edge[] = [];
+  for (let i = 1; i < 9; i += 1) {
+    edges.push({ id: `ss${i}`, source: `ss-${i - 1}`, target: `ss-${i}`, label: 'Calls' } as Edge);
+  }
+  return { id: 'short-service-grid', nodes, edges };
+}
+
+/**
+ * A two-hundred-stage pipeline, a fifth of it collapsed to slivers.
+ *
+ * The regression guard for `drop()`'s axis-awareness, which nothing else in the
+ * corpus reaches: mutate it to step toward a square and every other scenario,
+ * including `short-service-grid`, emits byte-identical decks.
+ *
+ * Three things have to be true at once, and each was found by a fixture that
+ * failed to fire without it. The grid must exceed `MAX_TILED_CELLS`, because
+ * that is the only coarsening loop with no legibility break — the other two
+ * call `drop()` once and discard the result, since a grid built to meet the
+ * floor is by construction one step above it. Reaching 22500 cells needs a
+ * genuinely short representative tile, so a fifth of the estate is collapsed
+ * rather than one stray node, and the tenth-percentile target moves with it.
+ * And the drawing must be shaped unlike the frame: at 100 stages across and 2
+ * deep the width axis binds by a wide margin, so dropping the axis that already
+ * binds spends scale for nothing.
+ *
+ * Square-stepping on this shape narrows the tiles from 1.29in to 0.51in and
+ * truncates all two hundred labels.
+ */
+function cascadeScenario(): Scenario {
+  const nodes: Node[] = [];
+  for (let i = 0; i < 200; i += 1) {
+    const base = svc(`cs-${i}`, `Service ${i}`, (i % 100) * 2000, Math.floor(i / 100) * 1600);
+    nodes.push(i % 5 === 0 ? ({ ...base, height: 12 } as Node) : base);
+  }
+  const edges: Edge[] = [];
+  for (let i = 1; i < 20; i += 1) {
+    edges.push({ id: `cse${i}`, source: `cs-${i - 1}`, target: `cs-${i}`, label: 'Calls' } as Edge);
+  }
+  return { id: 'cascade', nodes, edges };
+}
+
+/**
  * A 560-service estate under a 500-step CJK workflow.
  *
  * The band is sized twice — once at the narrowest page the exporter emits, to
@@ -4466,7 +4532,8 @@ async function main(): Promise<void> {
     scaledZoneRowScenario(),
     corridorZoneScenario(),
     ladderInGridScenario(), twinLaddersScenario(), strayLadderScenario(), legendCornerScenario(), duplicateStepsScenario(), denseZoneScenario(),
-    metaChipScenario(), gridFanScenario(), gridFan3Scenario(), fan8Tight5x5Scenario(), metaSublineScenario(), grid5x5CaptionScenario(), longNameGridScenario(), longLabelGridScenario(), metaTightScenario(),     longNameFanScenario(), estateChainScenario(), chain24Scenario(), tripleMutedScenario(), estate72Scenario(),     workflowProseScenario(), workflowLongProseScenario(), workflowFanScenario(), workflowWideBandScenario(), allCategoriesScenario(), controlCharScenario(),
+    metaChipScenario(), gridFanScenario(), gridFan3Scenario(), fan8Tight5x5Scenario(), metaSublineScenario(), grid5x5CaptionScenario(), longNameGridScenario(), longLabelGridScenario(), metaTightScenario(),     longNameFanScenario(), estateChainScenario(), chain24Scenario(), tripleMutedScenario(), estate72Scenario(),     workflowProseScenario(), workflowLongProseScenario(), workflowFanScenario(), workflowWideBandScenario(), allCategoriesScenario(), controlCharScenario(), shortServiceGridScenario(),
+    cascadeScenario(),
     await generatedScenario(), await groupedGeneratedScenario(),
   ];
   // Dark twins. Adding a `dark` flag was not enough on its own: nothing set it,
