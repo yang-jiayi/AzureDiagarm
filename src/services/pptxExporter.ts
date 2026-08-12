@@ -410,6 +410,43 @@ const WORKFLOW_MIN_PT = 9;
  * needs rather than after.
  */
 const SPOILED_CHIP_SQ_IN = 0.015;
+
+/**
+ * Inches-per-pixel worth splitting the drawing to reach, for a `target`-pixel
+ * tile in a `frame`-inch window.
+ *
+ * Two ceilings, and getting either wrong has produced the same catastrophe from
+ * opposite directions, because both coarsening loops break on
+ * `scaleOf(c, r) >= legibleScale && scaleOf(next) < legibleScale`. If nothing
+ * reachable ever reaches `legibleScale`, the left conjunct is false at every
+ * step, the break never fires, and the loop walks past every grid that reads —
+ * so a demand that cannot be met is not a legibility floor, it is a way of
+ * switching the floor off.
+ *
+ * `finestPerIn` is what this *frame* can deliver: `gridFor` returns null the
+ * moment the bleed alone fills the window, and a null grid sends the planner to
+ * `capped(150, 150)`. Missing it, 400 services came out as 49 slides on which
+ * every tile read "Azure…".
+ *
+ * `1 / PX_PER_IN` is what the *renderer* will: every window is drawn through
+ * `computeFitTransform(..., { maxScale: 1 / PX_PER_IN })`, so a tile can never
+ * be larger than the size it was authored at, while `LEGIBLE_TILE_PT / 12 /
+ * target` exceeds that for any tile under 56px. Missing it, 60 services
+ * authored 20px tall came out as 61 slides carrying one tile each on a page
+ * 0.3% inked — with tiles no wider, type no larger and no name any more
+ * complete than the 25 slides they needed.
+ *
+ * Exported so the invariant can be asserted directly. The end-to-end audit can
+ * only see the catastrophic end of this: between 40 and 55 authored pixels the
+ * deck over-tiles by 24-48% while every window still carries two tiles, and no
+ * property of the emitted file distinguishes that from a small correct deck.
+ * The distinguishing fact is a counterfactual — a coarser split would have
+ * produced identical tiles — so it has to be checked here, on the function.
+ */
+export function legibleScaleFor(target: number, frame: { w: number; h: number }): number {
+  const finestPerIn = Math.min(frame.w, frame.h) / (WINDOW_BLEED_PX * 2 + Math.max(1, target));
+  return Math.min(LEGIBLE_TILE_PT / 12 / Math.max(1, target), finestPerIn, 1 / PX_PER_IN);
+}
 /**
  * Split the drawing into as few standard-slide windows as keep tiles legible.
  *
@@ -460,35 +497,11 @@ function planDiagramWindows(
   const heights = services.map((box) => box.h).filter((h) => h > 0).sort((a, b) => a - b);
   const target = heights[Math.floor(heights.length * 0.5)] ?? shortest;
 
-  // Inches-per-pixel needed for a representative tile to keep a readable label,
-  // capped at the finest grid this frame can actually deliver.
-  //
-  // The cap is the load-bearing half. `gridFor` returns null the moment the
-  // bleed alone fills the window, and a null grid sends the planner to
-  // `capped(150, 150)` — where both coarsening loops break on
-  // `scaleOf(c, r) >= legibleScale && scaleOf(next) < legibleScale`. If no grid
-  // in this frame reaches `legibleScale`, the left conjunct is false at every
-  // step, so the break never fires and the loop walks past every grid that
-  // reads down to the slide cap. The comment on that loop says "the ceiling is
-  // a preference and legibility is not"; written as an absolute threshold the
-  // frame can make unreachable, it inverted into exactly the opposite. A
-  // demand the frame cannot meet is not a legibility floor, it is a way of
-  // switching the floor off, and 400 services then came out as 49 slides on
-  // which every tile read "Azure…".
-  const finestPerIn = Math.min(frame.w, frame.h) / (WINDOW_BLEED_PX * 2 + Math.max(1, target));
-  // The renderer's ceiling, which is the mirror image of the same mistake.
-  //
-  // Every window is drawn through `computeFitTransform(..., { maxScale: 1 /
-  // PX_PER_IN })`, so a tile can never come out larger than the size it was
-  // authored at. `LEGIBLE_TILE_PT / 12 / target` exceeds that for any median
-  // tile under 56px — so a drawing of short tiles asks for a magnification the
-  // renderer will hand back regardless of how far the planner splits, and the
-  // break condition keeps firing at ever-finer grids. Sixty services authored
-  // 20px tall came out as sixty-one slides carrying one tile each, 0.3% of the
-  // page inked, with tiles no wider, type no larger and no name any more
-  // complete than the twenty-five slides they needed. `finestPerIn` is what
-  // this *frame* can deliver; this is what the *renderer* will.
-  const legibleScale = Math.min(LEGIBLE_TILE_PT / 12 / target, finestPerIn, 1 / PX_PER_IN);
+  // Inches-per-pixel worth splitting to reach for a representative tile. Both
+  // ceilings and the reasoning behind them live on `legibleScaleFor`, which is
+  // exported so the invariant can be asserted on the function rather than
+  // inferred from the deck it produces.
+  const legibleScale = legibleScaleFor(target, frame);
   if (Math.min(frame.w / contentW, frame.h / contentH) >= legibleScale) return whole;
 
   // Splitting on one axis only is why a tall drawing used to grow the page
@@ -4231,12 +4244,64 @@ function addServicesSlide(pptx: PptxGenJS, t: SlideTheme, o: ArchitectureDeckOpt
   // An inventory that omits its own contents is not an inventory. The heading
   // counted every service while the table stopped at twenty, so a deck for a
   // sixty-service estate announced sixty components and listed a third of them.
-  const rowH = 0.32;
-  const perSlide = Math.max(1, Math.floor(BODY_H / rowH) - 1); // less the header row
-  const pages = Math.ceil(o.services.length / perSlide);
+  //
+  // Paginating on a flat row height then reintroduced the same defect one level
+  // down. This table declares no autofit, so PowerPoint treats `<a:tr h>` as a
+  // minimum and grows any row whose text wraps — and a name that wraps to two
+  // lines is 0.45in against the 0.32in it was budgeted. Eighteen rows of that
+  // put the last of them 1.6in below the bottom of the slide, still present in
+  // the file and readable by any rule that greps the XML, and invisible to the
+  // reader. Since this table is where every name the drawing shortened is
+  // spelled out, a row off the page is a name lost after all. Measure the wrap
+  // and pack rows by their real height.
+  const FONT_PT = 12;
+  const COL_W = [5.2, 3.9, 3.53];
+  const CELL_MARGIN_IN = 0.2; // marL + marR, as pptxgenjs emits them
+  const MIN_ROW_H = 0.32;
+  const cellsOf = (s: DeckService): string[] => [s.name, s.category || '—', s.group || '—'];
+  const heightOf = (cells: string[], pt: number): number => {
+    const lines = Math.max(...cells.map((text, i) => Math.max(1, Math.ceil(
+      estimateTextWidthIn(text, pt) / Math.max(0.5, COL_W[i] - CELL_MARGIN_IN),
+    ))));
+    return Math.max(MIN_ROW_H, lines * pt * 1.35 / 72);
+  };
+
+  // A page's type shrinks only for the row that cannot otherwise fit, and never
+  // below the deck's legibility floor. One name long enough to fill a page on
+  // its own is not something an architecture produces, but a table that grows
+  // silently past the slide is exactly the defect above, so it gets an answer
+  // rather than an assumption.
+  const pageFontFor = (services: DeckService[]): number => {
+    let pt = FONT_PT;
+    while (pt > LEGIBLE_TILE_PT) {
+      const header = heightOf(['Service', 'Category', 'Zone / Group'], pt);
+      const tallest = Math.max(...services.map((s) => heightOf(cellsOf(s), pt)));
+      if (header + tallest <= BODY_H) break;
+      pt -= 0.5;
+    }
+    return Math.max(LEGIBLE_TILE_PT, pt);
+  };
+
+  const pageSlices: DeckService[][] = [];
+  let current: DeckService[] = [];
+  let used = heightOf(['Service', 'Category', 'Zone / Group'], FONT_PT);
+  for (const service of o.services) {
+    const h = heightOf(cellsOf(service), FONT_PT);
+    if (current.length > 0 && used + h > BODY_H) {
+      pageSlices.push(current);
+      current = [];
+      used = heightOf(['Service', 'Category', 'Zone / Group'], FONT_PT);
+    }
+    current.push(service);
+    used += h;
+  }
+  if (current.length > 0) pageSlices.push(current);
+  const pages = pageSlices.length;
 
   for (let page = 0; page < pages; page += 1) {
-    const shown = o.services.slice(page * perSlide, (page + 1) * perSlide);
+    const shown = pageSlices[page];
+    const pagePt = pageFontFor(shown);
+    const headerH = heightOf(['Service', 'Category', 'Zone / Group'], pagePt);
     const slide = pptx.addSlide();
     addChrome(
       pptx, slide, t,
@@ -4255,12 +4320,14 @@ function addServicesSlide(pptx: PptxGenJS, t: SlideTheme, o: ArchitectureDeckOpt
       { text: s.category || '—', options: { color: t.metaText } },
       { text: s.group || '—', options: { color: t.metaText } },
     ]);
+    const rowHeights = [headerH, ...shown.map((s) => heightOf(cellsOf(s), pagePt))];
     slide.addTable([header, ...rows], {
-      x: 0.35, y: BODY_TOP, w: W - 0.7, h: BODY_H,
-      colW: [5.2, 3.9, 3.53],
-      fontSize: 12, fontFace: 'Yu Gothic UI',
+      x: 0.35, y: BODY_TOP, w: W - 0.7,
+      h: rowHeights.reduce((sum, h) => sum + h, 0),
+      colW: COL_W,
+      fontSize: pagePt, fontFace: 'Yu Gothic UI',
       border: { type: 'solid', color: t.headerBg, pt: 1 },
-      valign: 'middle', rowH,
+      valign: 'middle', rowH: rowHeights,
     });
   }
 }

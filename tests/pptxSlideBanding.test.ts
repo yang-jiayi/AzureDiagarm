@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import JSZip from 'jszip';
 import type { Edge, Node } from 'reactflow';
-import { buildDiagramSlidePptx } from '../src/services/pptxExporter.ts';
+import { buildDiagramSlidePptx, legibleScaleFor } from '../src/services/pptxExporter.ts';
 import { buildExportRoutes, collectExportBoxes } from '../src/services/diagramExportGeometry.ts';
 import { buildVsdxPackage } from '../src/services/visioVsdxExporter.ts';
 
@@ -1561,5 +1561,64 @@ test('a name the tile can hold is not cut short', async () => {
       drawn.some((text) => text === name),
       `"${name}" is not written in full anywhere; captions were ${JSON.stringify(drawn)}`,
     );
+  }
+});
+
+/**
+ * Splitting has to be able to stop.
+ *
+ * Both coarsening loops in `planDiagramWindows` break on
+ * `scaleOf(c, r) >= legibleScale && scaleOf(next) < legibleScale`, so a
+ * `legibleScale` no reachable grid ever attains makes the left conjunct false
+ * at every step and the break never fires — the loop coarsens past every grid
+ * that reads. That has produced two separate catastrophes from opposite
+ * directions: a demand the frame could not meet gave 400 services 49 slides
+ * reading "Azure…", and a demand the renderer would not grant gave 60
+ * short-tile services 61 slides carrying one tile each.
+ *
+ * The end-to-end audit only sees the second one when the deck collapses all the
+ * way to one tile per slide. Between 40 and 55 authored pixels the deck
+ * over-tiles by 24-48% while every window still carries two tiles, and no
+ * property of the emitted file separates that from a small correct deck — the
+ * distinguishing fact is a counterfactual. So it is asserted here instead, on
+ * the function, where it is true by construction or not at all.
+ */
+test('the legibility target never exceeds what the renderer will draw', () => {
+  const NATURAL_PER_IN = 1 / 96;
+  const frames = [
+    { w: 12.63, h: 5.78 },   // the standard 16:9 window
+    { w: 4, h: 2 },          // a frame small enough for its own ceiling to bind
+    { w: 40, h: 20 },        // a grown page
+  ];
+  for (const frame of frames) {
+    for (let target = 1; target <= 400; target += 1) {
+      const scale = legibleScaleFor(target, frame);
+      assert.ok(
+        scale <= NATURAL_PER_IN + 1e-12,
+        `target ${target}px in a ${frame.w}x${frame.h}in frame asks for ${scale} in/px, `
+        + `but the renderer caps every window at ${NATURAL_PER_IN} in/px`,
+      );
+      assert.ok(scale > 0, `target ${target}px produced a non-positive scale ${scale}`);
+    }
+  }
+});
+
+/**
+ * The frame ceiling still has to bind when it is the tighter of the two, or the
+ * first catastrophe comes back: `gridFor` returns null the moment the window
+ * bleed alone fills the frame, and a null grid sends the planner to a fixed
+ * fallback grid the coarsening loops then walk straight past.
+ */
+test('the legibility target never exceeds what the frame can deliver', () => {
+  const BLEED_PX = 18;
+  for (const frame of [{ w: 12.63, h: 5.78 }, { w: 2, h: 1 }, { w: 40, h: 20 }]) {
+    for (let target = 1; target <= 400; target += 1) {
+      const finest = Math.min(frame.w, frame.h) / (BLEED_PX * 2 + target);
+      assert.ok(
+        legibleScaleFor(target, frame) <= finest + 1e-12,
+        `target ${target}px in a ${frame.w}x${frame.h}in frame asks for more than the `
+        + `${finest} in/px the frame can hold`,
+      );
+    }
   }
 });

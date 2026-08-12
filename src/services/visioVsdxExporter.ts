@@ -1938,10 +1938,22 @@ export async function buildVsdxPackage(
     const strangers = arrows.filter((arrow) => arrow.bundle !== ownBundle
       && gapToPoly(arrow.pts, centre) < 3);
     const run = Math.max(runOf(member), 0);
-    const seatAt = (side: number, away: number, slide: number): Point => ({
-      x: centre.x + n.x * side * away + u.x * slide,
-      y: centre.y + n.y * side * away + u.y * slide,
-    });
+    const seatAt = (d: number, side: number, away: number, slide: number): Point => {
+      // Scored where the badge will actually sit, not where the search would
+      // like it to. `clampBadge` pulls a seat back onto the page and out from
+      // under the top furniture, and it used to do so *after* the winner was
+      // chosen — so every term below was computed at a position the badge would
+      // then be moved away from, and its attribution at the position it really
+      // occupies was never checked at all. That was harmless only by accident,
+      // because the candidate list happens to include a seat on the arrow
+      // itself; it is an invariant now rather than a coincidence.
+      const at = clampBadge({
+        x: centre.x + n.x * side * away + u.x * slide,
+        y: centre.y + n.y * side * away + u.y * slide,
+        d,
+      });
+      return { x: at.x, y: at.y };
+    };
     // Full size first, then progressively smaller, stopping at the first
     // diameter that finds a seat with nothing wrong with it. Shrinking is a
     // real cost — a tighter badge has less air around its number — so it is
@@ -2030,7 +2042,7 @@ export async function buildVsdxPackage(
         ? [placed.along, placed.along - run * 0.2, placed.along + run * 0.2,
           placed.along - run * 0.35, placed.along + run * 0.35]
         : [placed.along];
-      let best = seatAt(1, naturalAway, placed.along);
+      let best = seatAt(d, 1, naturalAway, placed.along);
       let bestScore = cost(best, 1, naturalAway, placed.along);
       // Attribution first, then everything else. The weight of 6 keeps
       // misattribution ahead of the proximity term it directly competes with,
@@ -2049,7 +2061,7 @@ export async function buildVsdxPackage(
       for (const side of [1, -1]) {
         for (const away of aways) {
           for (const slide of slides) {
-            const at = seatAt(side, away, slide);
+            const at = seatAt(d, side, away, slide);
             const score = cost(at, side, away, slide);
             if (beats(score, bestScore)) {
               bestScore = score;

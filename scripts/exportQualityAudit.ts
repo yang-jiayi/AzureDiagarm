@@ -27,6 +27,22 @@ const PX_PER_IN = 96;
 const BASE_SLIDE_W_IN = 13.333;
 const BASE_SLIDE_H_IN = 7.5;
 /**
+ * How wide a run of text is at a point size, measured here rather than imported.
+ *
+ * The exporter has its own copy of this arithmetic, and a rule that shares the
+ * exporter's estimator cannot catch the exporter mis-estimating — it would agree
+ * with the bug. Full-width code points count as one em and everything else as
+ * 0.54, which is Segoe UI's average lowercase advance and slightly generous for
+ * digits (0.539 measured from the font's own `hmtx`).
+ */
+function auditTextWidthIn(text: string, fontSizePt: number): number {
+  let units = 0;
+  for (const character of text) {
+    units += /[\u2e80-\u9fff\uac00-\ud7af\uff00-\uff60\uffe0-\uffe6]/.test(character) ? 1 : 0.54;
+  }
+  return (units * fontSizePt) / 72;
+}
+/**
  * Chrome the exporter adds around the drawing, in inches.
  *
  * Not a guess: `visioVsdxExporter.ts` pads the sheet by `PAGE_PADDING_IN` on
@@ -1084,6 +1100,34 @@ function compactEstateScenario(): Scenario {
     id: `cee${k}`, source: `ce-${k}`, target: `ce-${(k + 1) % 6}`, label: 'Calls',
   } as Edge));
   return { id: 'compact-estate', nodes, edges };
+}
+
+/**
+ * Service names long enough to wrap the customer deck's inventory table.
+ *
+ * That table is `colW: [5.2, ...]` at 12pt with 0.1in cell margins on each
+ * side, so column zero holds 55 ASCII characters on a line, and it declares no
+ * autofit — PowerPoint reads `<a:tr h>` as a minimum and grows the row. One
+ * name in two lines costs 0.13in more than it was budgeted, and eighteen of
+ * them put the last rows below the bottom of the slide, still in the file and
+ * invisible on the page.
+ *
+ * The corpus was 5.5% away from this on its own: `long-name-fan` measures
+ * 4.727in against the 5.00in budget, so three more ASCII characters would have
+ * shipped it. These names are 77 characters, which is what an estate that names
+ * its tier, region and redundancy in the label looks like.
+ */
+function wrappedInventoryScenario(): Scenario {
+  const nodes: Node[] = Array.from({ length: 34 }, (_, i) => svc(
+    `wi-${i}`,
+    `Azure Database for PostgreSQL Flexible Server (Production, Zone Redundant) ${i}`,
+    (i % 6) * 320,
+    Math.floor(i / 6) * 200,
+  ));
+  const edges: Edge[] = Array.from({ length: 5 }, (_, k) => ({
+    id: `wie${k}`, source: `wi-${k}`, target: `wi-${k + 1}`, label: 'Replicates',
+  } as Edge));
+  return { id: 'wrapped-inventory', nodes, edges };
 }
 
 /**
@@ -2695,6 +2739,47 @@ async function auditCustomerDeck(scenario: Scenario): Promise<string[]> {
       `customer deck: ${stranded.length} service name(s) appear nowhere in full — e.g. `
       + `${stranded.slice(0, 3).map((n) => `"${n}"`).join(', ')}`,
     );
+  }
+
+  // A row that is present in the file but below the bottom of the slide is a
+  // name lost, and the rule above cannot tell: it proves the string is in the
+  // package, not that it is on the page. The table declares no autofit, so
+  // PowerPoint treats `<a:tr h>` as a minimum and grows any row whose text
+  // wraps — one two-line name in eighteen rows is enough to push the last of
+  // them off the sheet. Measure the wrap against each column's usable width
+  // and add it up.
+  for (const [index, xml] of slides.entries()) {
+    for (const frame of xml.matchAll(/<p:graphicFrame>([\s\S]*?)<\/p:graphicFrame>/g)) {
+      const body = frame[1];
+      if (!body.includes('<a:tbl>')) continue;
+      const offY = /<a:off[^>]*\by="(-?\d+)"/.exec(body);
+      const top = offY ? +offY[1] / EMU_PER_INCH : BASE_SLIDE_H_IN;
+      const cols = [...body.matchAll(/<a:gridCol[^>]*\bw="(\d+)"/g)].map((m) => +m[1] / EMU_PER_INCH);
+      if (cols.length === 0) continue;
+      const marginIn = 0.2;
+      let total = 0;
+      for (const row of body.matchAll(/<a:tr[^>]*>([\s\S]*?)<\/a:tr>/g)) {
+        const declared = /<a:tr[^>]*\bh="(\d+)"/.exec(row[0]);
+        const minH = declared ? +declared[1] / EMU_PER_INCH : 0;
+        let lines = 1;
+        let cell = 0;
+        for (const tc of row[1].matchAll(/<a:tc[\s\S]*?<\/a:tc>/g)) {
+          const text = [...tc[0].matchAll(/<a:t>([^<]*)<\/a:t>/g)].map((m) => m[1]).join('');
+          const pt = +(/\bsz="(\d+)"/.exec(tc[0])?.[1] ?? 1200) / 100;
+          const usable = Math.max(0.5, (cols[cell] ?? cols[0]) - marginIn);
+          if (text) lines = Math.max(lines, Math.ceil(auditTextWidthIn(text, pt) / usable));
+          cell += 1;
+        }
+        const pt = +(/\bsz="(\d+)"/.exec(row[1])?.[1] ?? 1200) / 100;
+        total += Math.max(minH, lines * pt * 1.35 / 72);
+      }
+      if (top + total > BASE_SLIDE_H_IN + 0.01) {
+        issues.push(
+          `customer deck: slide ${index + 1}'s table wraps to ${total.toFixed(2)}in from y=${top.toFixed(2)}in `
+          + `— ${(top + total - BASE_SLIDE_H_IN).toFixed(2)}in of it is below the bottom of the slide`,
+        );
+      }
+    }
   }
   return issues;
 }
@@ -4883,6 +4968,7 @@ async function main(): Promise<void> {
     sharedPrefixEstateScenario(),
     shortTileEstateScenario(),
     compactEstateScenario(),
+    wrappedInventoryScenario(),
     squeezedBadgeScenario(),
     await generatedScenario(), await groupedGeneratedScenario(),
   ];
