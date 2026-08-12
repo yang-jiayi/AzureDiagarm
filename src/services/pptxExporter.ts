@@ -517,6 +517,22 @@ function estimateTextWidthIn(text: string, fontSizePt: number): number {
   return (units * fontSizePt) / 72;
 }
 
+/**
+ * As much of `text` as will fit in `widthIn` at `fontSizePt`, with an ellipsis
+ * for the rest. Used where the tile is too small for the whole name and the
+ * only alternatives are unreadable type or an empty box.
+ */
+function fitLabelToBox(text: string, widthIn: number, fontSizePt: number): string {
+  if (estimateTextWidthIn(text, fontSizePt) <= widthIn) return text;
+  const budget = widthIn - estimateTextWidthIn('…', fontSizePt);
+  let out = '';
+  for (const character of text) {
+    if (estimateTextWidthIn(out + character, fontSizePt) > budget) break;
+    out += character;
+  }
+  return out.trimEnd() === '' ? '…' : `${out.trimEnd()}…`;
+}
+
 
 // ─── Public export function ───────────────────────────────────────────────────
 
@@ -1260,12 +1276,25 @@ function addNodeShape(
   // that follows, so below the resolvable floor the thumbnail draws the icon
   // and the tile and leaves the naming to them.
   const named = !thumbnail || h * 12 >= OVERVIEW_LEGIBLE_PT;
+  // Giving up the name only works when the icon is left to carry the tile. A
+  // service with no icon would otherwise be drawn as an empty grey box, which
+  // says strictly less than type that is merely small. So the name comes back
+  // at exactly the floor, cut to what the tile can hold: a short legible word
+  // beats both an empty box and a paragraph of grey mush.
+  const stub = !named && !icon;
+  const drawnFont = named ? fontSize : OVERVIEW_LEGIBLE_PT;
   const meta = metaSubline(box);
   const metaFontSize = clamp(fontSize - 2, 3.5, 9);
   const metaBand = named && showsMeta(h, px) && !!meta ? fontSize * 1.55 / 72 + 0.03 : 0;
 
   const innerW = Math.max(0.05, w - 0.06);
-  const label = truncateLabel(box.label, 40);
+  const full = truncateLabel(box.label, 40);
+  // A stub gets as much of the name as fits the tile at the floor size, on as
+  // many lines as the tile is tall enough for, and an ellipsis for the rest.
+  const stubLines = stub
+    ? Math.max(1, Math.floor((h - pad * 2) / ((OVERVIEW_LEGIBLE_PT * 1.22) / 72)))
+    : 0;
+  const label = stub ? fitLabelToBox(full, innerW * stubLines, OVERVIEW_LEGIBLE_PT) : full;
   const labelLines = named ? Math.max(1, Math.ceil(estimateTextWidthIn(label, fontSize) / innerW)) : 0;
   const labelBlockH = (labelLines * fontSize * 1.22) / 72;
 
@@ -1297,17 +1326,17 @@ function addNodeShape(
   const textTop = iconSize > 0 ? topLeft.y + pad + iconSize + 0.02 : topLeft.y + pad;
   const textHeight = Math.max(0.08, topLeft.y + h - pad - metaBand - textTop);
 
-  if (named) {
+  if (named || stub) {
     slide.addText(label, {
       x: topLeft.x + 0.03,
-      y: textTop,
+      y: stub ? topLeft.y + pad : textTop,
       w: innerW,
-      h: textHeight,
-      fontSize,
+      h: stub ? Math.max(0.08, h - pad * 2) : textHeight,
+      fontSize: drawnFont,
       color: '1F2937',
       fontFace: 'Yu Gothic UI',
       align: 'center',
-      valign: iconSize > 0 ? 'top' : 'middle',
+      valign: !stub && iconSize > 0 ? 'top' : 'middle',
       margin: 0,
       lineSpacingMultiple: 0.9,
       wrap: true,
@@ -1679,13 +1708,17 @@ async function addEditableDiagram(
   // cannot answer: is this rung still nearer its OWN hop than anybody else's?
   type Seg = { ax: number; ay: number; bx: number; by: number };
   const segsByBundle = new Map<string, Seg[]>();
+  const segsByRoute = new Map<string, Seg[]>();
   for (const route of shownRoutes) {
     const key = bundleKey(route);
     const pts = route.points.map((point) => toInches(point, transform));
     const list = segsByBundle.get(key) ?? [];
+    const own: Seg[] = [];
     for (let i = 1; i < pts.length; i += 1) {
-      list.push({ ax: pts[i - 1].x, ay: pts[i - 1].y, bx: pts[i].x, by: pts[i].y });
+      own.push({ ax: pts[i - 1].x, ay: pts[i - 1].y, bx: pts[i].x, by: pts[i].y });
     }
+    list.push(...own);
+    if (own.length) segsByRoute.set(route.id, own);
     if (list.length) segsByBundle.set(key, list);
   }
   const gapToSeg = (x: number, y: number, s: Seg): number => {
@@ -1731,7 +1764,12 @@ async function addEditableDiagram(
     return rivals.length ? (x: number, y: number) => gapToSegs(x, y, rivals) : undefined;
   };
   const ownGapFor = (route: ExportRoute): ((x: number, y: number) => number) | undefined => {
-    const segs = segsByBundle.get(bundleKey(route));
+    // Its OWN arrow, not its bundle's. A fan is fanned — `parallelOffset`
+    // spreads the members apart — so "nearest arrow in my bundle" is a much
+    // shorter distance than "nearest point of the arrow I am labelling", and
+    // measuring the first lets a callout drift onto a stranger's hop while
+    // still passing the attribution test.
+    const segs = segsByRoute.get(route.id);
     return segs && segs.length ? (x: number, y: number) => gapToSegs(x, y, segs) : undefined;
   };
   const settle = (routes: readonly ExportRoute[]): void => {

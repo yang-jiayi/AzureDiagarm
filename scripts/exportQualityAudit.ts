@@ -394,6 +394,46 @@ function chain24Scenario(): Scenario {
   return { id: 'chain24-en', nodes, edges };
 }
 
+/**
+ * Three fans of five stacked on adjacent rows. All three mute, and once a
+ * muted fan is placed as loose numbers rather than a lattice, the lowest fan's
+ * callouts are free to drift onto the hops of the fan above it. This is the
+ * only shape in the corpus with more than one muted fan.
+ */
+function tripleMutedScenario(): Scenario {
+  const EN = 'writes the order document to Cosmos DB';
+  const nodes: Node[] = [];
+  const edges: Edge[] = [];
+  let step = 0;
+  for (let r = 0; r < 4; r += 1) {
+    for (let c = 0; c < 4; c += 1) nodes.push(svc(`g${r}${c}`, `Azure Service ${r}${c}`, c * 250, r * 165));
+  }
+  const hop = (id: string, a: string, b: string, label: string): void => {
+    step += 1;
+    edges.push({ id, source: a, target: b, label, data: { stepNumber: step, stepDescription: `Step ${step}` } } as Edge);
+  };
+  for (let r = 0; r < 4; r += 1) for (let c = 0; c < 3; c += 1) hop(`h${r}${c}`, `g${r}${c}`, `g${r}${c + 1}`, EN);
+  for (let r = 0; r < 3; r += 1) for (let c = 0; c < 4; c += 1) hop(`v${r}${c}`, `g${r}${c}`, `g${r + 1}${c}`, EN);
+  ([['g11', 'g12'], ['g21', 'g22'], ['g31', 'g32']] as const).forEach(([a, b], fan) => {
+    for (let i = 0; i < 5; i += 1) hop(`F${fan}_${i}`, a, b, `${EN} ${fan}${i}`);
+  });
+  return { id: 'triple-muted', nodes, edges };
+}
+
+/**
+ * Past 72 services the overview clamps tile type to 4pt. This is the fixture
+ * that decides what a tile does when it can no longer be named.
+ */
+function estate72Scenario(): Scenario {
+  const nodes: Node[] = [];
+  const edges: Edge[] = [];
+  for (let i = 0; i < 72; i += 1) {
+    nodes.push(svc(`e${i}`, `Azure Container Apps ${i}`, (i % 9) * 230, Math.floor(i / 9) * 165));
+    if (i > 0) edges.push({ id: `k${i}`, source: `e${i - 1}`, target: `e${i}`, label: 'HTTPS' } as Edge);
+  }
+  return { id: 'estate72', nodes, edges };
+}
+
 
 function denseZoneScenario(): Scenario {
   const nodes: Node[] = [grp('zone', 'Production landing zone', 0, 0, 2400, 1200)];
@@ -656,6 +696,7 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
   // the shapes and let the slides that follow carry the names.
   const OVERVIEW_FLOOR_PT = 6;
   let overviewMinFont = 0;
+  let overviewEmptyTiles = 0;
   if (overviewAt >= 0) {
     const overviewShapes = parseShapes(allSlides[overviewAt]);
     const sized = overviewShapes.filter((s) => s.text.trim() !== '' && s.fontSize !== null);
@@ -664,6 +705,27 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
     if (illegible.length) {
       issues.push(
         `overview draws ${illegible.length} text run(s) at ${Math.min(...illegible.map((s) => s.fontSize ?? 99))}pt, under the ${OVERVIEW_FLOOR_PT}pt the reader can resolve: e.g. "${illegible[0].text}"`,
+      );
+    }
+    // The rule above counts type, so it is satisfied by drawing none — an empty
+    // grey box scores perfectly. This is the rule that cannot be satisfied by
+    // deleting content: whatever else it does, a tile must say something.
+    const named = new Set(
+      overviewShapes.filter((s) => s.name.startsWith('service-label-')).map((s) => s.name.slice('service-label-'.length)),
+    );
+    const iconed = new Set(
+      [...allSlides[overviewAt].matchAll(/name="icon-([^"]+)"/g)].map((m) => m[1]),
+    );
+    const blank = overviewShapes
+      .filter((s) => s.name.startsWith('service-') && !s.name.includes('label') && !s.name.includes('meta'))
+      .filter((s) => {
+        const id = s.name.slice('service-'.length);
+        return !named.has(id) && !iconed.has(id) && s.text.trim() === '';
+      });
+    overviewEmptyTiles = blank.length;
+    if (blank.length) {
+      issues.push(
+        `overview draws ${blank.length} tile(s) with neither a name nor an icon, e.g. "${blank[0].name}" — an empty box says less than small type`,
       );
     }
   }
@@ -1119,6 +1181,7 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
       minTileWidthIn: +minTileW.toFixed(3),
       minFontPt: minFont,
       overviewMinFontPt: overviewMinFont,
+      overviewEmptyTiles,
       chips: chips.length,
       maxChipWidthIn: chips.length ? +Math.max(...chips.map((c) => c.w)).toFixed(3) : 0,
       stepBadges: badges.length,
@@ -1305,7 +1368,7 @@ async function main(): Promise<void> {
     compactScenario(), wideScenario(), oversizeScenario(), outlierScenario(),
     bandedScenario(), narrativeScenario(), barbellScenario(), parallelScenario(),
     ladderInGridScenario(), twinLaddersScenario(), strayLadderScenario(), legendCornerScenario(), duplicateStepsScenario(), denseZoneScenario(),
-    gridFanScenario(), estateChainScenario(), chain24Scenario(),
+    gridFanScenario(), estateChainScenario(), chain24Scenario(), tripleMutedScenario(), estate72Scenario(),
     await generatedScenario(), await groupedGeneratedScenario(),
   ];
   const reports: Report[] = [];
