@@ -159,6 +159,11 @@ interface DiagramWindow {
 // untidy one: the reader silently attaches the wording to the wrong arrow and
 // never finds out, so it is priced above any overlap a walk is likely to see.
 const LEGIBLE_TILE_PT = 7;
+/**
+ * Floor for the SKU / region / price sub-line. Below this the string is there
+ * but nobody can read it, which is worse than an honest ellipsis.
+ */
+const META_LEGIBLE_PT = 5;
 
 /**
  * The label size tiling actually aims for.
@@ -1303,7 +1308,12 @@ function addNodeShape(
    * are carried by those slices, so the thumbnail shows the shapes.
    */
   thumbnail = false,
-): { x: number; y: number; w: number; h: number } | null {
+): {
+  /** The box the service NAME is drawn in, not the room left over for it. */
+  caption: { x: number; y: number; w: number; h: number } | null;
+  /** The box the SKU / region / price sub-line is drawn in, when it is shown. */
+  meta: { x: number; y: number; w: number; h: number } | null;
+} {
   const topLeft = placeBox(box, transform, clampTo);
   const w = topLeft.w;
   const h = topLeft.h;
@@ -1432,13 +1442,59 @@ function addNodeShape(
       objectName: `service-label-${box.id}`,
     });
   }
+  let metaBandRect: { x: number; y: number; w: number; h: number } | null = null;
   if (metaBand > 0 && meta) {
-    slide.addText(truncateLabel(meta, 44), {
+    // Fitted to the tile, not to a flat 44 characters. This line is
+    // `wrap: false`, so a string the tile cannot hold does not wrap or clip —
+    // it is drawn centred at its full natural width and spills out of both
+    // sides of the tile, over whatever the neighbours put there. A count of
+    // characters cannot know that: "P1v3 · japaneast · $9.60/mo" and
+    // "Standard_D4s_v5 · japaneast · $128.40/mo" are both under 44 and only
+    // one of them fits.
+    //
+    // Shrink before cutting. Every character of a SKU, a region and a price is
+    // load-bearing and none of it is recoverable from an ellipsis, so a point
+    // of type is a far better trade than the end of the string.
+    let metaPt = metaFontSize;
+    while (metaPt > META_LEGIBLE_PT && estimateTextWidthIn(meta, metaPt) > innerW) {
+      metaPt = Math.max(META_LEGIBLE_PT, metaPt - 0.5);
+    }
+    // Still too wide at the smallest legible size. Drop whole facts from the
+    // least essential end rather than cutting mid-token: "Standard_D4s_v…" is
+    // a SKU nobody can look up, while "Standard_D4s_v5 · japaneast" is two
+    // true statements and the price it dropped is on the cost slides. A tile
+    // too small for even one whole fact carries none — an ellipsis there would
+    // only claim to say something it does not.
+    let shown = meta;
+    if (estimateTextWidthIn(shown, metaPt) > innerW) {
+      const facts = meta.split(' · ');
+      shown = '';
+      while (facts.length > 1) {
+        facts.pop();
+        const candidate = facts.join(' · ');
+        if (estimateTextWidthIn(candidate, metaPt) <= innerW) { shown = candidate; break; }
+      }
+      if (shown === '' && facts.length === 1 && estimateTextWidthIn(facts[0], metaPt) <= innerW) shown = facts[0];
+    }
+    const drawnW = Math.min(innerW, estimateTextWidthIn(shown, metaPt));
+    // The height of the glyphs, not of the band. The line is bottom-aligned in
+    // a band sized for the tile, so the room above the words holds nothing —
+    // and an obstacle that claims it makes every "how deep is this bite" test
+    // read shallower than what is actually drawn.
+    const drawnH = Math.min(metaBand, (metaPt * 1.22) / 72);
+    metaBandRect = {
+      x: topLeft.x + 0.03 + (innerW - drawnW) / 2,
+      y: topLeft.y + h - pad - drawnH,
+      w: drawnW,
+      h: drawnH,
+    };
+    if (shown === '') metaBandRect = null;
+    else slide.addText(shown, {
       x: topLeft.x + 0.03,
       y: topLeft.y + h - pad - metaBand,
       w: innerW,
       h: metaBand,
-      fontSize: metaFontSize,
+      fontSize: metaPt,
       // The tile fill is category-dependent, so a fixed grey reads at 4.26:1 on
       // the lighter categories. Derive it from the panel it is printed on.
       color: stripHash(readableTextOn('#64748B', `#${stripHash(palette.bg)}`)),
@@ -1450,7 +1506,7 @@ function addNodeShape(
       objectName: `service-meta-${box.id}`,
     });
   }
-  return captionBand;
+  return { caption: captionBand, meta: metaBandRect };
 }
 
 /** The SKU · region · cost sub-line only earns its space on a legible tile. */
@@ -1690,12 +1746,19 @@ async function addEditableDiagram(
   ));
   const captionBands: Obstacle[] = [];
   for (const service of shownServices) {
-    const caption = addNodeShape(pptx, slide, service, transform, service.iconPath ? icons.get(service.iconPath) : undefined, px, clampTo, thumbnail);
+    const bands = addNodeShape(pptx, slide, service, transform, service.iconPath ? icons.get(service.iconPath) : undefined, px, clampTo, thumbnail);
     // A tile can be leaned on: the reader still sees which service it is. Its
     // name cannot, because the name is the only thing that says so, and a chip
     // is drawn over it at 92% opacity. Weighted far above a tile so that even
     // a chip allowed to touch its own endpoint is pushed off the words.
-    if (caption) captionBands.push({ ...caption, weight: 60, caption: true });
+    if (bands.caption) captionBands.push({ ...bands.caption, weight: 60, caption: true });
+    // The sub-line deliberately gets no obstacle of its own. It is drawn INSIDE
+    // the tile, and the tile is already an obstacle, so the only way a chip
+    // could ever reach it was by the sub-line escaping the tile — which is what
+    // a `wrap="none"` line wider than its box did. Fitting it to the tile
+    // closes that, and an extra band here proved indistinguishable from nothing
+    // across every fixture and every row spacing tried. The audit measures it
+    // regardless, which is what keeps this honest.
   }
 
   for (const route of shownRoutes) addConnector(pptx, slide, route, transform, clampTo);

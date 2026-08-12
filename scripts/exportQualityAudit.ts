@@ -208,12 +208,16 @@ function contrastIssues(shapes: Shape[], slideBg: string): string[] {
   return issues;
 }
 
-function drawnTextRect(shape: Shape): { x: number; y: number; w: number; h: number } | null {
+function drawnTextRect(shape: Shape, singleLine = false): { x: number; y: number; w: number; h: number } | null {
   const text = shape.text.trim();
   if (text === '' || !shape.fontSize) return null;
-  const lines = Math.max(1, Math.ceil(textWidthIn(text, shape.fontSize) / shape.w));
+  // A `wrap="none"` run is drawn on one line whatever its width, and a centred
+  // one that outgrows its box overflows equally on both sides rather than
+  // wrapping. Modelling it as wrapped would claim rows above it that hold
+  // nothing and report chips that never touched a glyph.
+  const lines = singleLine ? 1 : Math.max(1, Math.ceil(textWidthIn(text, shape.fontSize) / shape.w));
   const h = Math.min(shape.h, (lines * shape.fontSize * 1.22) / 72);
-  const w = lines > 1 ? shape.w : Math.min(shape.w, textWidthIn(text, shape.fontSize));
+  const w = lines > 1 ? shape.w : (singleLine ? textWidthIn(text, shape.fontSize) : Math.min(shape.w, textWidthIn(text, shape.fontSize)));
   const x = shape.x + (shape.w - w) / 2;
   const y = shape.anchor === 't'
     ? shape.y
@@ -289,6 +293,35 @@ function svc(id: string, label: string, x: number, y: number, parent?: string, i
 
 function grp(id: string, label: string, x: number, y: number, w: number, h: number): Node {
   return { id, type: 'groupNode', position: { x, y }, style: { width: w, height: h }, data: { label } } as Node;
+}
+
+/**
+ * Wide tiles carrying a full sub-line, stacked in rows barely further apart
+ * than a chip is tall. The only clear paper for a label is the strip directly
+ * under a tile — which is exactly where the SKU, the region and the price are
+ * drawn. `meta-subline` does not discriminate here: its tiles are narrow
+ * enough that the sub-line leaves slack at both ends, so a chip can settle
+ * beside the words without touching them.
+ */
+function metaChipScenario(): Scenario {
+  const nodes: Node[] = [];
+  for (let i = 0; i < 8; i += 1) {
+    const node = svc(`w${i}`, `Service ${i}`, (i % 4) * 300, Math.floor(i / 4) * 168);
+    Object.assign(node.data as Record<string, unknown>, {
+      sku: 'Standard_D2s',
+      region: 'japaneast',
+      pricing: { estimatedCost: 64.2, quantity: 1, region: 'japaneast' },
+    });
+    nodes.push(node);
+  }
+  const edges: Edge[] = [];
+  for (let i = 0; i < 4; i += 1) {
+    edges.push({
+      id: `d${i}`, source: `w${i}`, target: `w${i + 4}`,
+      label: 'replicates state', data: { stepNumber: i + 1, stepDescription: `step ${i + 1}` },
+    } as Edge);
+  }
+  return { id: 'meta-chip', nodes, edges };
 }
 
 /**
@@ -1368,8 +1401,46 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
           issues.push(`edge chip "${chip.text}" covers ${(share * 100).toFixed(0)}% of the name "${caption.text}"`);
         }
       }
+      // The SKU / region / price sub-line was drawn, modelled by no obstacle
+      // and measured by no rule, so a chip could sit squarely on it and every
+      // check passed. It is the second reason the tile is on the slide — an
+      // architecture the reader cannot cost or place in a region is a different
+      // document — but it is recoverable from the service itself in a way the
+      // name is not, so it is budgeted a little more loosely than the name.
+      for (const meta of slideShapes.filter((s) => s.name.startsWith('service-meta-'))) {
+        const words = drawnTextRect(meta, true);
+        if (!words) continue;
+        const dx = Math.min(chip.x + chip.w, words.x + words.w) - Math.max(chip.x, words.x);
+        const dy = Math.min(chip.y + chip.h, words.y + words.h) - Math.max(chip.y, words.y);
+        if (dx <= 0 || dy <= 0) continue;        // Which way the chip bites matters, and an area share cannot tell the
+        // two apart. A deep bite over a run of columns costs the reader those
+        // characters outright — the region, or the price. A shallow one across
+        // the whole line clips every character instead: still a defect, but a
+        // different one, and it is invisible to a rule that only sums area
+        // because a thin sliver of a thin line is a very small number.
+        const columns = dx / words.w;
+        const rows = dy / words.h;
+        const tile = meta.name.slice('service-meta-'.length);
+        if (rows > 0.5 && columns > 0.12) {
+          issues.push(`edge chip "${chip.text}" covers ${(columns * 100).toFixed(0)}% of ${tile}'s sub-line "${meta.text}"`);
+        } else if (rows > 0.25 && columns > 0.6) {
+          issues.push(`edge chip "${chip.text}" clips ${(rows * 100).toFixed(0)}% off every character of ${tile}'s sub-line "${meta.text}"`);
+        }
+      }
     }
-    // A container drawn as a closed box says "these are all of them". On a
+    // A `wrap="none"` line that outgrows its box does not wrap and does not
+    // clip: PowerPoint draws it centred at full width, spilling out of both
+    // sides of the tile over whatever the neighbours put there. Nothing else
+    // measures it, because every other rule scores against the shape's box and
+    // the box is the one thing this text ignores.
+    for (const meta of slideShapes.filter((s) => s.name.startsWith('service-meta-'))) {
+      const drawn = textWidthIn(meta.text.trim(), meta.fontSize ?? 0);
+      if (meta.text.trim() === '' || !meta.fontSize) continue;
+      if (drawn > meta.w + 0.01) {
+        issues.push(`sub-line "${meta.text}" overflows its tile by ${((drawn - meta.w) * 100 / meta.w).toFixed(0)}% (${drawn.toFixed(2)}in of text in a ${meta.w.toFixed(2)}in box)`);
+      }
+    }
+
     // tiled deck the box is redrawn on every slide a member landed on, so a
     // zone of six services can appear five times, each time as a closed box
     // around one tile — the reader has no way to tell the fragment from the
@@ -2034,7 +2105,7 @@ async function main(): Promise<void> {
     compactScenario(), wideScenario(), oversizeScenario(), outlierScenario(),
     bandedScenario(), narrativeScenario(), barbellScenario(), parallelScenario(),
     ladderInGridScenario(), twinLaddersScenario(), strayLadderScenario(), legendCornerScenario(), duplicateStepsScenario(), denseZoneScenario(),
-    gridFanScenario(), gridFan3Scenario(), fan8Tight5x5Scenario(), metaSublineScenario(), grid5x5CaptionScenario(), longNameGridScenario(), longLabelGridScenario(), metaTightScenario(), longNameFanScenario(), estateChainScenario(), chain24Scenario(), tripleMutedScenario(), estate72Scenario(),
+    metaChipScenario(), gridFanScenario(), gridFan3Scenario(), fan8Tight5x5Scenario(), metaSublineScenario(), grid5x5CaptionScenario(), longNameGridScenario(), longLabelGridScenario(), metaTightScenario(), longNameFanScenario(), estateChainScenario(), chain24Scenario(), tripleMutedScenario(), estate72Scenario(),
     await generatedScenario(), await groupedGeneratedScenario(),
   ];
   const reports: Report[] = [];
