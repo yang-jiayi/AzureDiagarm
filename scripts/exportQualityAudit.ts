@@ -369,6 +369,39 @@ function gridFanScenario(): Scenario {
   return { id: 'grid-fan', nodes, edges };
 }
 
+/**
+ * The same grid, but the fan is three deep instead of five. Three is the awkward
+ * depth: too many to sit on the arrows as a single chip, too few to trip the
+ * mute that turns a fan into loose numbers. So it stays a rigid three-rung
+ * ladder on the most crowded row of the drawing, which is exactly the shape
+ * that has nowhere to stand.
+ */
+function gridFan3Scenario(): Scenario {
+  const nodes: Node[] = [];
+  for (let r = 0; r < 3; r += 1) {
+    for (let c = 0; c < 3; c += 1) nodes.push(svc(`g${r}${c}`, `Azure Service ${r}${c}`, c * 300, r * 200));
+  }
+  const edges: Edge[] = [];
+  let step = 0;
+  for (let r = 0; r < 3; r += 1) {
+    for (let c = 0; c + 1 < 3; c += 1) {
+      step += 1;
+      edges.push({ id: `h${r}${c}`, source: `g${r}${c}`, target: `g${r}${c + 1}`, label: '注文ドキュメントを Cosmos DB に書き込みます', data: { stepNumber: step, stepDescription: `手順 ${step}` } } as Edge);
+    }
+  }
+  for (let r = 0; r + 1 < 3; r += 1) {
+    for (let c = 0; c < 3; c += 1) {
+      step += 1;
+      edges.push({ id: `v${r}${c}`, source: `g${r}${c}`, target: `g${r + 1}${c}`, label: '注文ドキュメントを Cosmos DB に書き込みます', data: { stepNumber: step, stepDescription: `手順 ${step}` } } as Edge);
+    }
+  }
+  for (let i = 0; i < 3; i += 1) {
+    step += 1;
+    edges.push({ id: `f${i}`, source: 'g11', target: 'g12', label: `注文ドキュメントを Cosmos DB に書き込みます ${i}`, data: { stepNumber: step, stepDescription: `手順 ${step}` } } as Edge);
+  }
+  return { id: 'grid3x3-fan3-JA', nodes, edges };
+}
+
 /** A plain chain of 40 services, no fans at all — the least exotic estate there is. */
 function estateChainScenario(): Scenario {
   const nodes: Node[] = [];
@@ -938,7 +971,7 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
       const mine = pathGap(own, at);
       const nearest = arrows.reduce((best, arrow) => (pathGap(arrow, at) < pathGap(best, at) ? arrow : best), arrows[0]);
       if (nearest.name !== own.name && pathGap(nearest, at) < mine - 0.25) {
-        issues.push(`edge chip "${chip.text}" is ${pathGap(nearest, at).toFixed(2)}in from ${nearest.name} but ${mine.toFixed(2)}in from its own arrow`);
+        issues.push(`edge chip [${chip.name}] "${chip.text}" is ${pathGap(nearest, at).toFixed(2)}in from ${nearest.name} but ${mine.toFixed(2)}in from its own arrow`);
       }
     }
   }
@@ -1441,7 +1474,7 @@ async function main(): Promise<void> {
     compactScenario(), wideScenario(), oversizeScenario(), outlierScenario(),
     bandedScenario(), narrativeScenario(), barbellScenario(), parallelScenario(),
     ladderInGridScenario(), twinLaddersScenario(), strayLadderScenario(), legendCornerScenario(), duplicateStepsScenario(), denseZoneScenario(),
-    gridFanScenario(), estateChainScenario(), chain24Scenario(), tripleMutedScenario(), estate72Scenario(),
+    gridFanScenario(), gridFan3Scenario(), estateChainScenario(), chain24Scenario(), tripleMutedScenario(), estate72Scenario(),
     await generatedScenario(), await groupedGeneratedScenario(),
   ];
   const reports: Report[] = [];

@@ -1432,3 +1432,98 @@ test('a tile that gives up its name still says something', async () => {
     }
   }
 });
+
+
+/**
+ * A fan of parallel hops is drawn as a rigid ladder: one offset moves every
+ * rung together. On a crowded drawing there is sometimes no offset at all that
+ * puts every rung nearer its own arrow than anybody else's — not a position the
+ * search can improve on, but proof that no honest position exists for an object
+ * that shape. The escape is the one the Architecture Center itself uses for a
+ * bundle of parallel flows: number the arrows and let the workflow list carry
+ * the sentences.
+ *
+ * This used to be gated on the fan being at least five deep, so a shallow fan
+ * with nowhere honest to stand simply shipped a rung parked beside a stranger's
+ * hop — read, believed, and wrong.
+ */
+test('a ladder with nowhere honest to stand becomes numbers rather than lie', async () => {
+  const nodes: Node[] = [];
+  for (let r = 0; r < 3; r += 1) {
+    for (let c = 0; c < 3; c += 1) nodes.push(service(`g${r}${c}`, `Azure Service ${r}${c}`, c * 300, r * 200));
+  }
+  const wording = '注文ドキュメントを Cosmos DB に書き込みます';
+  const edges: Edge[] = [];
+  let step = 0;
+  for (let r = 0; r < 3; r += 1) {
+    for (let c = 0; c + 1 < 3; c += 1) {
+      step += 1;
+      edges.push({ id: `h${r}${c}`, source: `g${r}${c}`, target: `g${r}${c + 1}`, label: wording, data: { stepNumber: step, stepDescription: `手順 ${step}` } } as Edge);
+    }
+  }
+  for (let r = 0; r + 1 < 3; r += 1) {
+    for (let c = 0; c < 3; c += 1) {
+      step += 1;
+      edges.push({ id: `v${r}${c}`, source: `g${r}${c}`, target: `g${r + 1}${c}`, label: wording, data: { stepNumber: step, stepDescription: `手順 ${step}` } } as Edge);
+    }
+  }
+  for (let i = 0; i < 3; i += 1) {
+    step += 1;
+    edges.push({ id: `f${i}`, source: 'g11', target: 'g12', label: `${wording} ${i}`, data: { stepNumber: step, stepDescription: `手順 ${step}` } } as Edge);
+  }
+
+  const deck = await buildDeck(nodes, edges);
+  const slide = deck.slides[0];
+
+  // Every drawn chip has to read as belonging to the arrow it names, measured
+  // the same way a reader would: against the nearest arrow of any other hop.
+  const shapes = [...slide.matchAll(/<p:sp>[\s\S]*?<\/p:sp>/g)].map((m) => m[0]);
+  const box = (xml: string): { x: number; y: number; w: number; h: number } | null => {
+    const off = /<a:off x="(-?\d+)" y="(-?\d+)"\/>/.exec(xml);
+    const ext = /<a:ext cx="(\d+)" cy="(\d+)"\/>/.exec(xml);
+    return off && ext
+      ? { x: +off[1] / 914400, y: +off[2] / 914400, w: +ext[1] / 914400, h: +ext[2] / 914400 }
+      : null;
+  };
+  const named = shapes
+    .map((xml) => ({ name: /name="([^"]+)"/.exec(xml)?.[1] ?? '', rect: box(xml) }))
+    .filter((s): s is { name: string; rect: NonNullable<ReturnType<typeof box>> } => s.rect !== null);
+  const arrows = named.filter((s) => s.name.startsWith('connector-') && !/^connector-(label|step)-/.test(s.name));
+  assert.ok(arrows.length > 0, 'the fixture draws arrows');
+
+  // Distance from a point to an arrow's bounding segment, which is how the
+  // exporter and the audit both measure it.
+  const gap = (r: { x: number; y: number; w: number; h: number }, p: { x: number; y: number }): number => {
+    const ax = r.x;
+    const ay = r.y;
+    const bx = r.x + r.w;
+    const by = r.y + r.h;
+    const dx = bx - ax;
+    const dy = by - ay;
+    const len = dx * dx + dy * dy;
+    const t = len === 0 ? 0 : Math.max(0, Math.min(1, ((p.x - ax) * dx + (p.y - ay) * dy) / len));
+    return Math.hypot(p.x - (ax + t * dx), p.y - (ay + t * dy));
+  };
+
+  let checked = 0;
+  for (const chip of named.filter((s) => s.name.startsWith('connector-label-'))) {
+    const own = arrows.find((a) => a.name === `connector-${chip.name.replace('connector-label-', '')}`);
+    if (!own) continue;
+    const at = { x: chip.rect.x + chip.rect.w / 2, y: chip.rect.y + chip.rect.h / 2 };
+    const mine = gap(own.rect, at);
+    const nearest = arrows.reduce((best, a) => (gap(a.rect, at) < gap(best.rect, at) ? a : best), arrows[0]);
+    checked += 1;
+    assert.ok(
+      nearest.name === own.name || gap(nearest.rect, at) >= mine - 0.25,
+      `${chip.name} is ${gap(nearest.rect, at).toFixed(2)}in from ${nearest.name} but ${mine.toFixed(2)}in from its own arrow`,
+    );
+  }
+  assert.ok(checked > 0, 'the fixture must draw chips for the rule to mean anything');
+
+  // Muting is only honest if the sentence survives somewhere the reader can
+  // reach, so whatever the fan gave up has to appear in the deck's text.
+  const text = deck.slides.join('');
+  for (let i = 0; i < 3; i += 1) {
+    assert.ok(text.includes(`${wording} ${i}`.slice(0, 12)), `the wording of fan member ${i} left the deck entirely`);
+  }
+});

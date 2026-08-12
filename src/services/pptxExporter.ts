@@ -1654,6 +1654,7 @@ async function addEditableDiagram(
     maxWidth?: number;
     badgesOnly?: boolean;
     dirty?: number;
+    stray?: number;
   }>();
   const shapes = new Map<string, { w: number; h: number; alongX: boolean }>();
   for (const route of annotatedRoutes) {
@@ -1748,6 +1749,13 @@ async function addEditableDiagram(
   // will sit on a corner rather than walk to a clean slot beside a stranger,
   // and not so much that it refuses to move when there is nowhere else at all.
   const DIRTY_RUNG_COST = 0.5;
+  // What one MISREAD rung is worth. Dearer than a clipped one, and dearer than
+  // a whole covered tile: a rung clipping a corner is untidy and the reader
+  // still knows what it says about which arrow, but a rung parked beside a
+  // stranger's hop is read, believed, and wrong. Kept apart from the clipping
+  // count because the two have different cures — a clip usually moves away,
+  // and a misread often cannot move anywhere at all.
+  const STRAY_RUNG_COST = 1.5;
   // The arrows a given hop's own label could be mistaken for: every bundle but
   // its own, near enough to compete. Cached, because the walk asks per
   // candidate position and a wide estate has hundreds of segments.
@@ -1910,17 +1918,25 @@ async function addEditableDiagram(
     });
     const stamp = new Int32Array(taken.length);
     let visit = 0;
-    const cost = (shift: number, across: number): { total: number; onLabel: number; overlap: number; dirty: number } => {
-      const placed: Block[] = [];
+    const cost = (shift: number, across: number): { total: number; onLabel: number; overlap: number; dirty: number; stray: number } => {
+      // Each rung paired with the segments of the ONE arrow it labels. A fan is
+      // fanned, so the bundle's nearest segment to a given rung is usually a
+      // sibling's arrow rather than its own, and scoring attribution against
+      // the bundle lets a rung drift onto a stranger's hop while still reading
+      // as correctly attributed. Carried alongside the block because a rung
+      // that fails to measure is skipped, and a bare index would then pair
+      // every later rung with the wrong arrow.
+      const placed: { block: Block; own: Seg[] }[] = [];
       if (translatable) {
-        for (const box of measured) {
+        for (let i = 0; i < measured.length; i += 1) {
+          const box = measured[i];
           const moved = {
             ...box.block,
             x: box.block.x + (box.alongX ? across : shift),
             y: box.block.y + (box.alongX ? shift : across),
           };
           if (!free(moved)) { placed.length = 0; break; }
-          placed.push(moved);
+          placed.push({ block: moved, own: segsByRoute.get(members[i].id) ?? ownSegs });
         }
       }
       if (placed.length !== members.length) {
@@ -1929,7 +1945,7 @@ async function addEditableDiagram(
           const box = connectorLabelBox(
             member, transform, labelFontSize, px, labelFrame, [], { ...bundle, shift, across },
           );
-          if (box) placed.push(box.block);
+          if (box) placed.push({ block: box.block, own: segsByRoute.get(member.id) ?? ownSegs });
         }
       }
       // Anything the ladder lands on, plus any rung the frame clamp has stacked
@@ -1943,23 +1959,29 @@ async function addEditableDiagram(
       // buried under a tile with eight clean ones is a different picture from
       // nine chips each clipping a corner.
       let dirty = 0;
+      // Rungs a reader would credit to the wrong arrow. Counted apart from the
+      // clipped ones because it is the only kind of dirt a ladder cannot always
+      // walk away from, and that is what decides whether it should stop being a
+      // ladder at all.
+      let stray = 0;
       for (let i = 0; i < placed.length; i += 1) {
-        const own = Math.max(0.0001, placed[i].w * placed[i].h);
+        const rect = placed[i].block;
+        const own = Math.max(0.0001, rect.w * rect.h);
         let mine = 0;
         visit += 1;
-        for (const cell of cellsOf(placed[i])) {
+        for (const cell of cellsOf(rect)) {
           for (const index of buckets.get(cell) ?? []) {
             if (stamp[index] === visit) continue;
             stamp[index] = visit;
             const other = taken[index];
-            const hit = area(placed[i], other);
+            const hit = area(rect, other);
             if (hit <= 0) continue;
             if (other.annotation) labels += hit; else tiles += hit * (other.weight ?? 1);
             mine += other.annotation ? hit * 4 : hit * (other.weight ?? 1);
           }
         }
         for (let j = 0; j < i; j += 1) {
-          const hit = area(placed[i], placed[j]);
+          const hit = area(rect, placed[j].block);
           labels += hit;
           mine += hit * 4;
         }
@@ -1971,18 +1993,19 @@ async function addEditableDiagram(
         // callouts — which is what the Architecture Center draws for a bundle
         // of parallel flows anyway.
         else if (rivals.length > 0) {
-          const cx = placed[i].x + placed[i].w / 2;
+          const mineSegs = placed[i].own;
+          const cx = rect.x + rect.w / 2;
           // The centre alone is not the rung. A numbered callout hangs off the
           // bottom of the block, so a rung whose centre reads correctly can
           // still have its badge sitting on somebody else's arrow — and after a
           // fan mutes, the badge is the ONLY thing tying a sentence to a hop.
           const ys = [
-            placed[i].y + placed[i].h / 2,
-            placed[i].y + Math.min(0.08, placed[i].h / 2),
-            placed[i].y + placed[i].h - Math.min(0.08, placed[i].h / 2),
+            rect.y + rect.h / 2,
+            rect.y + Math.min(0.08, rect.h / 2),
+            rect.y + rect.h - Math.min(0.08, rect.h / 2),
           ];
-          if (ys.some((cy) => gapToSegs(cx, cy, rivals) < gapToSegs(cx, cy, ownSegs) - CONFUSION_SLACK)) {
-            dirty += 1;
+          if (ys.some((cy) => gapToSegs(cx, cy, rivals) < gapToSegs(cx, cy, mineSegs) - CONFUSION_SLACK)) {
+            stray += 1;
           }
         }
       }
@@ -1991,10 +2014,11 @@ async function addEditableDiagram(
       // could not afford to step off a tile it was completely covering.
       const drift = DRIFT_COST_PER_IN * Math.hypot(shift, across);
       return {
-        total: tiles + labels * ANNOTATION_WEIGHT + dirty * DIRTY_RUNG_COST + drift,
+        total: tiles + labels * ANNOTATION_WEIGHT + dirty * DIRTY_RUNG_COST + stray * STRAY_RUNG_COST + drift,
         onLabel: labels,
         overlap: tiles + labels * ANNOTATION_WEIGHT,
         dirty,
+        stray,
       };
     };
     // Search along the ladder AND across it. A ladder is far taller than one
@@ -2012,7 +2036,7 @@ async function addEditableDiagram(
       6,
       Math.min(48, Math.ceil(Math.max(labelFrame.w / Math.max(acrossStep, 0.05), labelFrame.h / Math.max(alongStep, 0.05)))),
     );
-    const sweep = (acrossLimit: number, shiftLimit: number): { shift: number; across: number; cost: number; onLabel: number; overlap: number; dirty: number } => {
+    const sweep = (acrossLimit: number, shiftLimit: number): { shift: number; across: number; cost: number; onLabel: number; overlap: number; dirty: number; stray: number } => {
       let best = { shift: bundle.shift ?? 0, across: bundle.across ?? 0 };
       let at = cost(best.shift, best.across);
       // Coarse to fine. Scanning every lattice point out to the far side of the
@@ -2041,7 +2065,7 @@ async function addEditableDiagram(
       };
       pass(4, 0, 0, rings);
       if (at.total > 0) pass(1, best.shift, best.across, 4);
-      return { ...best, cost: at.total, onLabel: at.onLabel, overlap: at.overlap, dirty: at.dirty };
+      return { ...best, cost: at.total, onLabel: at.onLabel, overlap: at.overlap, dirty: at.dirty, stray: at.stray };
     };
     // The ladder steps across its arrows freely — that is how it dodges the
     // tiles — but sliding it along them past the hop's own ends parks the whole
@@ -2065,7 +2089,9 @@ async function addEditableDiagram(
           const across = picked.across + dy * frac * acrossStep;
           const c = cost(shift, across);
           if (c.total < picked.cost) {
-            picked = { shift, across, cost: c.total, onLabel: c.onLabel, overlap: c.overlap, dirty: c.dirty };
+            picked = {
+              shift, across, cost: c.total, onLabel: c.onLabel, overlap: c.overlap, dirty: c.dirty, stray: c.stray,
+            };
           }
         }
       }
@@ -2073,6 +2099,7 @@ async function addEditableDiagram(
     bundle.shift = picked.shift;
     bundle.across = picked.across;
     bundle.dirty = picked.dirty;
+    bundle.stray = picked.stray;
     // Covered area PLUS the rungs a reader would credit to the wrong arrow, and
     // never the drift tie-breaker (which is never zero, so a total would report
     // every bundle as unplaceable). Returning area alone made the confusion
@@ -2080,7 +2107,7 @@ async function addEditableDiagram(
     // beside a foreign hop scored 0, so the caller skipped the retry and the
     // mute, and drew every rung beside the wrong arrow. That is the one case
     // the rule exists to catch.
-    return picked.overlap + picked.dirty * DIRTY_RUNG_COST;
+    return picked.overlap + picked.dirty * DIRTY_RUNG_COST + picked.stray * STRAY_RUNG_COST;
   };
 
   // Which step numbers the workflow slide will actually narrate. Dropping a
@@ -2150,7 +2177,7 @@ async function addEditableDiagram(
     // between the two services and look again: a fan wrapped onto more lines
     // fits the gap it belongs in, where at full width it can only stand on the
     // tiles either side of that gap.
-    const wide = { rung: bundle.rung, font: bundle.font, perCol: bundle.perCol, shift: bundle.shift, across: bundle.across, w: shape.w, h: shape.h, dirty: bundle.dirty };
+    const wide = { rung: bundle.rung, font: bundle.font, perCol: bundle.perCol, shift: bundle.shift, across: bundle.across, w: shape.w, h: shape.h, dirty: bundle.dirty, stray: bundle.stray };
     bundle.maxWidth = Math.max(0.34 * px, ((bundle.span ?? 0) - 0.16) || 0.34 * px);
     bundle.shift = undefined;
     bundle.across = undefined;
@@ -2167,6 +2194,7 @@ async function addEditableDiagram(
       shape.w = wide.w;
       shape.h = wide.h;
       bundle.dirty = wide.dirty;
+      bundle.stray = wide.stray;
     }
     // Still nothing. A deep fan across a crowded drawing has no honest inline
     // position left: every slot it can reach is on top of a service or another
@@ -2188,7 +2216,22 @@ async function addEditableDiagram(
     // measured against one chip a whole fan was erased for clipping a sixth of
     // one tile.
     const soiled = Math.max(2, Math.ceil(0.35 * bundle.count));
-    if (carried && bundle.count >= 5 && (bundle.dirty ?? 0) >= soiled) {
+    // Two different reasons to stop being a ladder.
+    //
+    // Deep and clipped: a big fan that lands on tiles wherever it stands. The
+    // depth gate is what keeps a shallow fan from losing every label because
+    // one rung clips a corner.
+    const clipped = bundle.count >= 5 && (bundle.dirty ?? 0) + (bundle.stray ?? 0) >= soiled;
+    // Or misread anywhere it can reach. The search has already swept the whole
+    // frame and this is the best it found, so a rung still credited to a
+    // stranger's arrow is not a placement the ladder can improve on — it is
+    // proof that no honest position exists for an object this shape. Depth is
+    // beside the point: a fan of three that reads as belonging to the wrong hop
+    // is wrong at every depth, and unlike a clip it cannot be walked away from.
+    // Muting is not a loss here, because `carried` has already established that
+    // every rung's sentence reaches the workflow slide.
+    const misread = bundle.count >= 3 && (bundle.stray ?? 0) > 0;
+    if (carried && (clipped || misread)) {
       bundle.badgesOnly = true;
       // A row that exists is still not a row that says anything. An author who
       // writes both a terse description ("Step 13") and a real label loses the
@@ -2225,7 +2268,7 @@ async function addEditableDiagram(
       ]);
       for (let cols = 1; cols <= 6; cols += 1) shapesToTry.add(Math.max(1, Math.ceil(bundle.count / cols)));
       let bestScore = Number.POSITIVE_INFINITY;
-      let bestShape: { perCol: number; shift?: number; across?: number; w: number; h: number; dirty?: number } | null = null;
+      let bestShape: { perCol: number; shift?: number; across?: number; w: number; h: number; dirty?: number; stray?: number } | null = null;
       for (const perCol of shapesToTry) {
         bundle.perCol = perCol;
         bundle.shift = undefined;
@@ -2236,7 +2279,7 @@ async function addEditableDiagram(
         if (score < bestScore) {
           bestScore = score;
           bestShape = {
-            perCol, shift: bundle.shift, across: bundle.across, w: shape.w, h: shape.h, dirty: bundle.dirty,
+            perCol, shift: bundle.shift, across: bundle.across, w: shape.w, h: shape.h, dirty: bundle.dirty, stray: bundle.stray,
           };
         }
         if (bestScore <= 0) break;
@@ -2248,6 +2291,7 @@ async function addEditableDiagram(
         bundle.shift = bestShape.shift;
         bundle.across = bestShape.across;
         bundle.dirty = bestShape.dirty;
+        bundle.stray = bestShape.stray;
         shape.w = bestShape.w;
         shape.h = bestShape.h;
       }
