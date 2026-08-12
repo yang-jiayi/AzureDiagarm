@@ -9,6 +9,8 @@ import {
   computeContentBounds,
   computeFitTransform,
   fitBoxesWithin,
+  boxScaleWithin,
+  scaleBoxesWithin,
   partitionBoxes,
   routeOrthogonal,
   narrateEdgeCallouts,
@@ -667,4 +669,33 @@ test('a grid packed tighter than the clearance margin still routes around its ti
       `${route.id} is drawn through ${crossed.map((t) => t.id).join(', ')}, which it does not connect`,
     );
   }
+});
+
+test('a budget already spent scales down, never inside out', () => {
+  // A caller that has spent the page on something else — a Visio sheet whose
+  // numbered workflow band is taller than the page Visio will open — hands in a
+  // negative budget. A signed ratio turns that into a negative scale, which
+  // mirrors every shape about the drawing's own origin and floors every tile at
+  // 1px, so the guard against an oversized page produced a larger page than no
+  // guard at all.
+  const boxes = new Map<string, ExportBox>();
+  for (let i = 0; i < 6; i += 1) boxes.set(`s${i}`, box(`s${i}`, i * 300, 0));
+  const before = computeBounds(boxes.values());
+
+  for (const budget of [-5000, -1, 0]) {
+    const scale = boxScaleWithin(boxes, 4000, budget);
+    assert.ok(scale > 0, `budget ${budget} produced a scale of ${scale}`);
+
+    const out = scaleBoxesWithin(boxes, 4000, budget);
+    const after = computeBounds(out.values());
+    assert.ok(after.maxX >= after.minX && after.maxY >= after.minY,
+      `budget ${budget} turned the drawing inside out: ${JSON.stringify(after)}`);
+    // Order is what mirroring destroys: s0 must still be left of s5.
+    assert.ok(out.get('s0')!.x <= out.get('s5')!.x,
+      `budget ${budget} reversed the drawing — s0 landed right of s5`);
+    for (const b of out.values()) {
+      assert.ok(b.w > 0 && b.h > 0, `budget ${budget} produced a ${b.w}x${b.h} shape`);
+    }
+  }
+  assert.ok(before.maxX > before.minX, 'the fixture must have a positive span to begin with');
 });

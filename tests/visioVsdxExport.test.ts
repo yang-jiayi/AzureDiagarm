@@ -523,3 +523,54 @@ test('a drawing scaled down to fit the page takes its type down with it', async 
     + `(${(textIn / tileIn).toFixed(1)}x its own box) at ${(fontIn * 72).toFixed(2)}pt`,
   );
 });
+
+function meshWithSteps(n: number): { nodes: Node[]; edges: Edge[]; steps: number } {
+  const names = ['Azure Front Door', 'Azure App Service', 'Azure SQL Database'];
+  const nodes = Array.from({ length: n }, (_, i) => (
+    service(`m-${i}`, names[i % 3], (i % 8) * 260, Math.floor(i / 8) * 200)
+  ));
+  const edges: Edge[] = [];
+  let step = 0;
+  for (let a = 0; a < n; a += 1) {
+    for (let b = a + 1; b < n; b += 1) {
+      step += 1;
+      edges.push({
+        id: `e${a}-${b}`, source: `m-${a}`, target: `m-${b}`, label: `Hop ${step}`,
+        data: { stepNumber: step, stepDescription: `Step ${step} of the flow.` },
+      } as Edge);
+    }
+  }
+  return { nodes, edges, steps: step };
+}
+
+test('a workflow longer than the page cannot evict the drawing it describes', async () => {
+  // workflowListFromEdges has no cap, so a fully meshed architecture numbers
+  // every pair. At 762 steps a single-column band was taller than the whole
+  // 198in budget, so the height left for the drawing went NEGATIVE — and a
+  // signed ratio turned that into a negative scale, which mirrored every shape
+  // about the drawing's origin and floored every tile at 1px. The guard against
+  // an oversized page produced a bigger page than no guard at all.
+  //
+  // The band is laid in columns rather than truncated, because a sentence the
+  // author wrote that appears nowhere is content loss, not a smaller drawing.
+  const { nodes: mesh, edges: hops, steps } = meshWithSteps(40);
+  assert.ok(steps > 762, 'the fixture has to cross the point where the band outgrows the page');
+  const pkg = await buildVsdxPackage(mesh, hops, 'Mesh');
+  assert.ok(pkg.pageWidthIn <= 200 && pkg.pageHeightIn <= 200,
+    `page ${pkg.pageWidthIn.toFixed(2)}x${pkg.pageHeightIn.toFixed(2)}in is outside what Visio will open`);
+
+  const xml = pkg.parts.find((part) => part.path === 'visio/pages/page1.xml')!.data as string;
+  const widths = [...xml.matchAll(/NameU="Service\.\d+"[\s\S]*?<Cell N="Width" V="([\d.]+)"/g)]
+    .map((m) => Number(m[1]));
+  assert.ok(widths.length > 0, 'the sheet must carry service tiles');
+  assert.ok(Math.min(...widths) > 0.2,
+    `tiles collapsed to ${Math.min(...widths).toFixed(4)}in — the drawing was crushed to make room for its own caption`);
+
+  const written = new Set([...xml.matchAll(/>Step (\d+) of the flow\./g)].map((m) => Number(m[1])));
+  assert.equal(written.size, steps, `${steps - written.size} of ${steps} numbered steps are on no part of the sheet`);
+
+  const panel = /NameU="Workflow\.\d+"[\s\S]*?<Cell N="Width" V="([\d.]+)"\/>\s*<Cell N="Height" V="([\d.]+)"/.exec(xml);
+  assert.ok(panel, 'the workflow band must be drawn');
+  assert.ok(Number(panel[1]) <= pkg.pageWidthIn && Number(panel[2]) <= pkg.pageHeightIn,
+    `the band is ${panel[1]}x${panel[2]}in on a ${pkg.pageWidthIn.toFixed(2)}x${pkg.pageHeightIn.toFixed(2)}in page`);
+});

@@ -82,6 +82,9 @@ const MAX_USEFUL_PAGE_IN = 60;
 const MAX_VISIO_PAGE_IN = 200;
 const CORNER_ROUNDING_IN = 0.08;
 
+/** Height of one numbered row in the workflow band. */
+const WORKFLOW_ROW_IN = 0.26;
+
 /**
  * Visio font sizes are inches (1 pt = 1/72"). These match the PowerPoint export
  * at 1 : 1 — a 150 px tile is 1.56" wide, so the label reads at ~7.6 pt and the
@@ -746,12 +749,16 @@ function buildWorkflowPanel(
   originX: number,
   topY: number,
   width: number,
+  columns = 1,
 ): { shapes: string[]; nextId: number } {
   const shapes: string[] = [];
   let id = startId;
-  const rowH = 0.26;
-  const boxH = rowH * entries.length + 0.34;
+  const rowH = WORKFLOW_ROW_IN;
+  const cols = Math.max(1, columns);
+  const perColumn = Math.ceil(entries.length / cols);
+  const boxH = rowH * perColumn + 0.34;
   const originY = topY - boxH;
+  const colW = width / cols;
   shapes.push(`    <Shape ID="${id++}" NameU="Workflow.${startId}" Type="Shape" LineStyle="0" FillStyle="0" TextStyle="0">
       <Cell N="PinX" V="${f(originX + width / 2)}"/>
       <Cell N="PinY" V="${f(originY + boxH / 2)}"/>
@@ -770,9 +777,11 @@ ${roundedRectGeometry()}
     </Shape>`);
   shapes.push(legendTextXml(id++, originX + 0.12, originY + boxH - 0.18, width - 0.24, 'Workflow'));
   entries.forEach((entry, index) => {
-    const rowY = originY + boxH - 0.34 - index * rowH;
-    shapes.push(legendTextXml(id++, originX + 0.14, rowY, 0.3, `${entry.step}.`));
-    shapes.push(legendTextXml(id++, originX + 0.46, rowY, width - 0.6, entry.description));
+    const column = Math.floor(index / perColumn);
+    const rowY = originY + boxH - 0.34 - (index % perColumn) * rowH;
+    const colX = originX + column * colW;
+    shapes.push(legendTextXml(id++, colX + 0.14, rowY, 0.3, `${entry.step}.`));
+    shapes.push(legendTextXml(id++, colX + 0.46, rowY, colW - 0.6, entry.description));
   });
   return { shapes, nextId: id };
 }
@@ -866,7 +875,19 @@ export async function buildVsdxPackage(
   // limit and a twenty-step workflow is 5.7in, so a tall architecture with a
   // workflow was written at 202in and Visio refused to open it at all.
   const workflowEntries = workflowListFromEdges(narrated);
-  const workflowBandIn = workflowEntries.length > 0 ? 0.26 * workflowEntries.length + 0.5 : 0;
+  // The band is page furniture, and furniture does not get to evict the thing
+  // it describes. `workflowListFromEdges` has no cap, so a fully-meshed
+  // architecture produces hundreds of numbered steps and a single-column band
+  // taller than the page itself — at 762 steps it took the whole 198in and
+  // handed the fit a negative height budget. Lay the rows in as many columns as
+  // it takes to stay inside a third of the sheet: every sentence the author
+  // wrote is still on the page, which is the one thing that must not be traded,
+  // and the drawing keeps the two thirds it was drawn for.
+  const workflowColumns = workflowEntries.length > 0
+    ? Math.max(1, Math.ceil((WORKFLOW_ROW_IN * workflowEntries.length + 0.5) / (MAX_VISIO_PAGE_IN / 3)))
+    : 1;
+  const workflowRows = Math.ceil(workflowEntries.length / workflowColumns);
+  const workflowBandIn = workflowEntries.length > 0 ? WORKFLOW_ROW_IN * workflowRows + 0.5 : 0;
   const fitted = fitBoxesWithin(
     compactEmptyGutters(collectExportBoxes(nodes)),
     limitPx,
@@ -1443,7 +1464,10 @@ export async function buildVsdxPackage(
       }),
       0.35,
       pageHeightIn - 0.2,
-      Math.min(Math.max(pageWidthIn - 0.7, 2.4), 7.5),
+      // One column is the 7.5in reading measure the panel has always used;
+      // more columns need proportionally more of the sheet, bounded by it.
+      Math.min(Math.max(pageWidthIn - 0.7, 2.4), 7.5 * workflowColumns),
+      workflowColumns,
     );
     nextId = panel.nextId;
     shapes.push(...panel.shapes);

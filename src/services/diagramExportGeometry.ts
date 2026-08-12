@@ -1083,6 +1083,18 @@ export function fitBoxesWithin(
  * genuinely worse — but a page Visio will not open is not an export at all, so
  * a small drawing beats no drawing. Returns the map untouched when it fits.
  */
+/**
+ * How far a drawing has to shrink to fit inside a box.
+ *
+ * The limits are clamped positive before they are used. A caller that has
+ * already spent the page on something else — a Visio sheet whose numbered
+ * workflow band is taller than the page Visio will open — hands in a NEGATIVE
+ * budget, and a signed ratio turns that into a negative scale, which mirrors
+ * every shape about the drawing's own origin and floors every tile at 1px. The
+ * guard against an oversized page then produces a larger page than no guard at
+ * all. There is no meaningful drawing at a negative budget, but there is a
+ * meaningful smallest one, and it is the same side of zero as every other.
+ */
 export function boxScaleWithin(
   boxes: Map<string, ExportBox>,
   maxW: number,
@@ -1092,7 +1104,9 @@ export function boxScaleWithin(
   const bounds = computeBounds(boxes.values());
   const w = bounds.maxX - bounds.minX;
   const h = bounds.maxY - bounds.minY;
-  return Math.min(1, w > 0 ? maxW / w : 1, h > 0 ? maxH / h : 1);
+  const usableW = Math.max(1, maxW);
+  const usableH = Math.max(1, maxH);
+  return Math.min(1, w > 0 ? usableW / w : 1, h > 0 ? usableH / h : 1);
 }
 
 export function scaleBoxesWithin(
