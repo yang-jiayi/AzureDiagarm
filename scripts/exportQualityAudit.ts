@@ -342,6 +342,44 @@ function legendCornerScenario(): Scenario {
  * box, so the tiler used to see one shape it could not split and grew the page
  * into a plotter sheet the whole deck then inherited.
  */
+function gridFanScenario(): Scenario {
+  const nodes: Node[] = [];
+  for (let r = 0; r < 3; r += 1) {
+    for (let c = 0; c < 3; c += 1) nodes.push(svc(`g${r}${c}`, `Azure Service ${r}${c}`, c * 300, r * 200));
+  }
+  const edges: Edge[] = [];
+  let step = 0;
+  for (let r = 0; r < 3; r += 1) {
+    for (let c = 0; c + 1 < 3; c += 1) {
+      step += 1;
+      edges.push({ id: `h${r}${c}`, source: `g${r}${c}`, target: `g${r}${c + 1}`, label: '注文ドキュメントを Cosmos DB に書き込みます', data: { stepNumber: step, stepDescription: `手順 ${step}` } } as Edge);
+    }
+  }
+  for (let r = 0; r + 1 < 3; r += 1) {
+    for (let c = 0; c < 3; c += 1) {
+      step += 1;
+      edges.push({ id: `v${r}${c}`, source: `g${r}${c}`, target: `g${r + 1}${c}`, label: '注文ドキュメントを Cosmos DB に書き込みます', data: { stepNumber: step, stepDescription: `手順 ${step}` } } as Edge);
+    }
+  }
+  for (let i = 0; i < 5; i += 1) {
+    step += 1;
+    edges.push({ id: `f${i}`, source: 'g11', target: 'g12', label: `注文ドキュメントを Cosmos DB に書き込みます ${i}`, data: { stepNumber: step, stepDescription: `手順 ${step}` } } as Edge);
+  }
+  return { id: 'grid-fan', nodes, edges };
+}
+
+/** A plain chain of 40 services, no fans at all — the least exotic estate there is. */
+function estateChainScenario(): Scenario {
+  const nodes: Node[] = [];
+  for (let i = 0; i < 40; i += 1) nodes.push(svc(`n${i}`, `Azure Service ${i}`, (i % 8) * 240, Math.floor(i / 8) * 190));
+  const edges: Edge[] = [];
+  for (let i = 1; i < 40; i += 1) {
+    edges.push({ id: `c${i}`, source: `n${i - 1}`, target: `n${i}`, label: 'マネージド ID で参照系を照会します', data: { stepNumber: i, stepDescription: `手順 ${i}` } } as Edge);
+  }
+  return { id: 'estate-chain', nodes, edges };
+}
+
+
 function denseZoneScenario(): Scenario {
   const nodes: Node[] = [grp('zone', 'Production landing zone', 0, 0, 2400, 1200)];
   const edges: Edge[] = [];
@@ -628,17 +666,32 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
   for (const slideShapes of perSlide) {
     const slideTiles = slideShapes.filter((s) => s.name.startsWith('service-') && !s.name.includes('label') && !s.name.includes('meta'));
     const slideChips = slideShapes.filter((s) => s.name.startsWith('connector-label-'));
+    // A label may lean on the two services its own arrow connects. The reader
+    // still attributes it correctly — it is touching the very icons it is about
+    // — and on a hop shorter than the label there is nowhere else for it to go.
+    // Leaning on a THIRD service is a different thing entirely: it hides an
+    // unrelated icon and reads as that service's caption. So the bar for a
+    // stranger's tile stays at a couple of percent, and an endpoint of the
+    // arrow itself is allowed a tenth of its area before it counts as hidden.
+    const endpointsOf = new Map<string, Set<string>>();
+    for (const edge of scenario.edges) {
+      endpointsOf.set(edge.id, new Set([`service-${edge.source}`, `service-${edge.target}`]));
+    }
+    const tileBudget = (annotation: string, tile: Shape): number => {
+      const routeId = annotation.replace(/^connector-(label|step)-/, '');
+      return endpointsOf.get(routeId)?.has(tile.name) ? 0.1 : 0.02;
+    };
     for (const chip of slideChips) {
       for (const tile of slideTiles) {
         const area = overlapArea(chip, tile);
-        if (area > 0.02 * tile.w * tile.h) {
+        if (area > tileBudget(chip.name, tile) * tile.w * tile.h) {
           issues.push(`edge chip "${chip.text}" overlaps node "${tile.name}" by ${((area / (tile.w * tile.h)) * 100).toFixed(0)}%`);
         }
       }
     }
     for (const badge of slideShapes.filter((s) => s.name.startsWith('connector-step-'))) {
       for (const tile of slideTiles) {
-        if (overlapArea(badge, tile) > 0.02 * tile.w * tile.h) {
+        if (overlapArea(badge, tile) > tileBudget(badge.name, tile) * tile.w * tile.h) {
           issues.push(`step badge "${badge.name}" covers node "${tile.name}" by ${((overlapArea(badge, tile)/(tile.w*tile.h))*100).toFixed(0)}% (badge area ${((overlapArea(badge, tile)/(badge.w*badge.h))*100).toFixed(0)}%)`);
         }
       }
@@ -1141,6 +1194,7 @@ async function main(): Promise<void> {
     compactScenario(), wideScenario(), oversizeScenario(), outlierScenario(),
     bandedScenario(), narrativeScenario(), barbellScenario(), parallelScenario(),
     ladderInGridScenario(), twinLaddersScenario(), strayLadderScenario(), legendCornerScenario(), duplicateStepsScenario(), denseZoneScenario(),
+    gridFanScenario(), estateChainScenario(),
     await generatedScenario(), await groupedGeneratedScenario(),
   ];
   const reports: Report[] = [];

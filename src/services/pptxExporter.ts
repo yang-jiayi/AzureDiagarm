@@ -139,6 +139,10 @@ interface DiagramWindow {
  * `LEGIBLE_TILE_PT / 12` inches of height. Anything below this is unreadable on
  * a projector and forces the recipient to redraw the deck by hand.
  */
+// What a chip that reads as somebody else's label costs, in the same units the
+// placement walk scores covered tile area in. A misread chip is worse than an
+// untidy one: the reader silently attaches the wording to the wrong arrow and
+// never finds out, so it is priced above any overlap a walk is likely to see.
 const LEGIBLE_TILE_PT = 7;
 
 /**
@@ -660,6 +664,12 @@ function connectorLabelBox(
   },
   /** Width to wrap into, when the natural chip has nowhere clear to stand. */
   squeezeTo?: number,
+  /**
+   * Distance from a point to the nearest arrow that is NOT this chip's own hop.
+   * Ladders price this themselves; a lone chip had no such test at all, so its
+   * walk could settle it beside a stranger's arrow and every rule was happy.
+   */
+  foreignGap?: (x: number, y: number) => number,
 ): { x: number; y: number; w: number; h: number; text: string; badge: { x: number; y: number; d: number } | null; block: Obstacle; alongX: boolean; fontSize: number; stuck: number } | null {
   if (!route.label) return null;
   const anchor = toInches(route.labelAnchor, transform);
@@ -837,8 +847,17 @@ function connectorLabelBox(
   // poor test on a grid — a chip one row up is only an inch away but reads as
   // the label of a completely different arrow — so the walk is bounded by where
   // the arrow actually goes, not by a radius.
-  const runLo = (alongX ? Math.min(first.x, last.x) : Math.min(first.y, last.y)) - (alongX ? w : blockH) / 2;
-  const runHi = (alongX ? Math.max(first.x, last.x) : Math.max(first.y, last.y)) + (alongX ? w : blockH) / 2;
+  //
+  // Half a chip of slack past the end of the hop is only defensible when the
+  // chip is too wide for the hop in the first place. When it fits, that slack
+  // is simply permission to lap onto the service at the far end — measured at
+  // 13% of a tile on a plain 40-service chain — so a chip that fits is held
+  // entirely inside its own run.
+  const runSpan = alongX ? Math.abs(last.x - first.x) : Math.abs(last.y - first.y);
+  const chipSpan = alongX ? w : blockH;
+  const pad = chipSpan <= runSpan ? -chipSpan / 2 : chipSpan / 2;
+  const runLo = (alongX ? Math.min(first.x, last.x) : Math.min(first.y, last.y)) - pad;
+  const runHi = (alongX ? Math.max(first.x, last.x) : Math.max(first.y, last.y)) + pad;
   const inReach = (at: { x: number; y: number }): boolean => {
     const centre = alongX ? at.x + w / 2 : at.y + blockH / 2;
     if (centre < runLo || centre > runHi) return false;
@@ -871,16 +890,24 @@ function connectorLabelBox(
     return bestGap;
   };
   const attributable = (at: { x: number; y: number }): boolean => {
-    if (nearby.length === 0 || ownSegments.length === 0) return true;
+    if (ownSegments.length === 0) return true;
     const cx = at.x + w / 2;
-    const cy = at.y + blockH / 2;
-    const mine = toOwn(cx, cy);
-    for (const tile of nearby) {
-      const gapToOther = Math.hypot(
-        cx - Math.max(tile.x, Math.min(cx, tile.x + tile.w)),
-        cy - Math.max(tile.y, Math.min(cy, tile.y + tile.h)),
-      );
-      if (gapToOther < mine - 0.35) return false;
+    // The chip's centre, and the bottom of the block where its numbered callout
+    // hangs. A chip that reads correctly can still have its badge sitting on a
+    // stranger's arrow, and the badge is what the workflow list points at.
+    const sampleYs = blockH > h + 0.01
+      ? [at.y + blockH / 2, at.y + blockH - Math.min(0.1, blockH / 2)]
+      : [at.y + blockH / 2];
+    for (const cy of sampleYs) {
+      const mine = toOwn(cx, cy);
+      if (foreignGap && foreignGap(cx, cy) < mine - 0.1) return false;
+      for (const tile of nearby) {
+        const gapToOther = Math.hypot(
+          cx - Math.max(tile.x, Math.min(cx, tile.x + tile.w)),
+          cy - Math.max(tile.y, Math.min(cy, tile.y + tile.h)),
+        );
+        if (gapToOther < mine - 0.35) return false;
+      }
     }
     return true;
   };
@@ -951,21 +978,31 @@ function connectorLabelBox(
   // type buys the room the walk could not find.
   if (bestScore > 0 && squeezeTo === undefined && !bundle && text) {
     const retries: { font: number; width: number }[] = [];
-    if (gap > 0.3 && gap < w) retries.push({ font: requestedFontSize, width: gap });
+    // The lane is worth trying even when it is narrow. Gating this at 0.3in
+    // meant a long CJK label on a tight hop had no squeeze available at all and
+    // could only stand on a tile — a wrapped chip inside the lane is the better
+    // picture, and the width floor keeps it from becoming a ribbon.
+    const lane = Math.max(gap, 0.34 * px);
+    if (lane < w) retries.push({ font: requestedFontSize, width: lane });
     const smaller = Math.max(LEGIBLE_TILE_PT, requestedFontSize - 1);
     if (smaller < requestedFontSize - 0.01) {
-      retries.push({ font: smaller, width: gap > 0.3 && gap < w ? gap : maxW });
+      retries.push({ font: smaller, width: lane < w ? lane : maxW });
     }
     let bestBox: ReturnType<typeof connectorLabelBox> = null;
     for (const retry of retries) {
       const tighter = connectorLabelBox(
-        route, transform, retry.font, px, clampTo, obstacles, bundle, retry.width,
+        route, transform, retry.font, px, clampTo, obstacles, bundle, retry.width, foreignGap,
       );
       if (tighter && tighter.stuck < (bestBox?.stuck ?? bestScore)) bestBox = tighter;
       if (bestBox && bestBox.stuck <= 0) break;
     }
     if (bestBox) return bestBox;
   }
+  // Nowhere on the slide reads as this arrow's own label. A numbered hop can
+  // give up its wording — the workflow list on the slide still carries the
+  // sentence against the same number — and that is strictly better than parking
+  // it where it will be read as the label of a different arrow.
+
   return { x: best.x, y: best.y, w, h, text, badge, block: { x: best.x, y: best.y, w, h: blockH, annotation: true }, alongX, fontSize, stuck: bestScore };
 }
 
@@ -1011,20 +1048,52 @@ function stepBadgeBox(
   px: number,
   clampTo: DiagramFrame | undefined,
   chip: ReturnType<typeof connectorLabelBox>,
+  obstacles: readonly Obstacle[] = [],
 ): { x: number; y: number; d: number } | null {
   if (route.stepNumber === undefined) return null;
   if (chip?.badge) return chip.badge;
 
-  // No chip to hang off (an unlabelled but numbered hop): sit on the anchor.
+  // No chip to hang off: either an unlabelled but numbered hop, or one whose
+  // wording was muted because it had nowhere legible to stand. The anchor is
+  // the natural home, but it is the middle of the arrow, which on a dense
+  // drawing is routinely the middle of a tile — and a number printed over an
+  // icon is the one thing on the slide the workflow list cannot survive
+  // without. So walk outwards for a clear slot the way a chip does.
   const anchor = toInches(route.labelAnchor, transform);
   const d = clamp(0.26 * px, 0.18, 0.42);
-  let x = anchor.x - d / 2;
-  let y = anchor.y - d / 2;
-  if (clampTo) {
-    x = clamp(x, clampTo.x, Math.max(clampTo.x, clampTo.x + clampTo.w - d));
-    y = clamp(y, clampTo.y, Math.max(clampTo.y, clampTo.y + clampTo.h - d));
+  const fit = (x: number, y: number): { x: number; y: number } => (clampTo
+    ? {
+      x: clamp(x, clampTo.x, Math.max(clampTo.x, clampTo.x + clampTo.w - d)),
+      y: clamp(y, clampTo.y, Math.max(clampTo.y, clampTo.y + clampTo.h - d)),
+    }
+    : { x, y });
+  const cover = (at: { x: number; y: number }): number => {
+    let sum = 0;
+    for (const other of obstacles) {
+      const dx = Math.min(at.x + d, other.x + other.w) - Math.max(at.x, other.x);
+      const dy = Math.min(at.y + d, other.y + other.h) - Math.max(at.y, other.y);
+      if (dx > 0 && dy > 0) sum += dx * dy;
+    }
+    return sum;
+  };
+  let spot = fit(anchor.x - d / 2, anchor.y - d / 2);
+  let spotCover = cover(spot);
+  const step = d * 0.9;
+  for (let ring = 1; spotCover > 0 && ring <= 6; ring += 1) {
+    for (let a = -ring; a <= ring && spotCover > 0; a += 1) {
+      for (let b = -ring; b <= ring; b += 1) {
+        if (Math.max(Math.abs(a), Math.abs(b)) !== ring) continue;
+        const candidate = fit(anchor.x - d / 2 + a * step, anchor.y - d / 2 + b * step);
+        const score = cover(candidate);
+        if (score < spotCover - 0.0001) {
+          spot = candidate;
+          spotCover = score;
+        }
+        if (spotCover <= 0) break;
+      }
+    }
   }
-  return { x, y, d };
+  return { x: spot.x, y: spot.y, d };
 }
 
 function addStepBadge(
@@ -1523,27 +1592,6 @@ async function addEditableDiagram(
   // annotation makes one of the two unreadable. Keep the two apart so the
   // ladder search always trades tile coverage for annotation clearance.
   const tileObstacleCount = chipObstacles.length;
-  const settle = (routes: readonly ExportRoute[]): void => {
-    for (const route of routes) {
-      const box = connectorLabelBox(
-        route, transform, labelFontSize, px, labelFrame, chipObstacles, bundles.get(bundleKey(route)),
-      );
-      chips.set(route.id, box);
-      if (box) chipObstacles.push(box.block);
-      const badge = stepBadgeBox(route, transform, px, labelFrame, box);
-      badges.set(route.id, badge);
-      if (badge && !box) chipObstacles.push({ x: badge.x, y: badge.y, w: badge.d, h: badge.d, annotation: true });
-    }
-  };
-  settle(ordered.filter((route) => !bundles.has(bundleKey(route))));
-
-  type Block = Obstacle;
-  type Bundle = NonNullable<ReturnType<typeof bundles.get>>;
-  const area = (a: Block, b: Block): number => {
-    const dx = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x);
-    const dy = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y);
-    return dx > 0 && dy > 0 ? dx * dy : 0;
-  };
   // Every arrow as line segments in page inches, grouped by the bundle it
   // belongs to, so a ladder can be asked the one question a collision check
   // cannot answer: is this rung still nearer its OWN hop than anybody else's?
@@ -1583,6 +1631,45 @@ async function addEditableDiagram(
   // will sit on a corner rather than walk to a clean slot beside a stranger,
   // and not so much that it refuses to move when there is nowhere else at all.
   const DIRTY_RUNG_COST = 0.5;
+  // The arrows a given hop's own label could be mistaken for: every bundle but
+  // its own, near enough to compete. Cached, because the walk asks per
+  // candidate position and a wide estate has hundreds of segments.
+  const rivalCache = new Map<string, Seg[]>();
+  const foreignGapFor = (route: ExportRoute): ((x: number, y: number) => number) | undefined => {
+    const key = bundleKey(route);
+    let rivals = rivalCache.get(key);
+    if (!rivals) {
+      rivals = [];
+      for (const [other, segs] of segsByBundle) {
+        if (other === key) continue;
+        rivals.push(...segs);
+      }
+      rivalCache.set(key, rivals);
+    }
+    return rivals.length ? (x: number, y: number) => gapToSegs(x, y, rivals) : undefined;
+  };
+  const settle = (routes: readonly ExportRoute[]): void => {
+    for (const route of routes) {
+      const box = connectorLabelBox(
+        route, transform, labelFontSize, px, labelFrame, chipObstacles, bundles.get(bundleKey(route)),
+        undefined, foreignGapFor(route),
+      );
+      chips.set(route.id, box);
+      if (box) chipObstacles.push(box.block);
+      const badge = stepBadgeBox(route, transform, px, labelFrame, box, chipObstacles);
+      badges.set(route.id, badge);
+      if (badge && !box) chipObstacles.push({ x: badge.x, y: badge.y, w: badge.d, h: badge.d, annotation: true });
+    }
+  };
+  settle(ordered.filter((route) => !bundles.has(bundleKey(route))));
+
+  type Block = Obstacle;
+  type Bundle = NonNullable<ReturnType<typeof bundles.get>>;
+  const area = (a: Block, b: Block): number => {
+    const dx = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x);
+    const dy = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y);
+    return dx > 0 && dy > 0 ? dx * dy : 0;
+  };
   // Score the bundle at its REAL geometry: probe the same routine that will
   // place it, with no obstacles so no walk runs. Modelling the lattice by hand
   // kept choosing offsets that the in-frame clamps then undid, so the search
@@ -1748,8 +1835,16 @@ async function addEditableDiagram(
         // of parallel flows anyway.
         else if (rivals.length > 0) {
           const cx = placed[i].x + placed[i].w / 2;
-          const cy = placed[i].y + placed[i].h / 2;
-          if (gapToSegs(cx, cy, rivals) < gapToSegs(cx, cy, ownSegs) - CONFUSION_SLACK) {
+          // The centre alone is not the rung. A numbered callout hangs off the
+          // bottom of the block, so a rung whose centre reads correctly can
+          // still have its badge sitting on somebody else's arrow — and after a
+          // fan mutes, the badge is the ONLY thing tying a sentence to a hop.
+          const ys = [
+            placed[i].y + placed[i].h / 2,
+            placed[i].y + Math.min(0.08, placed[i].h / 2),
+            placed[i].y + placed[i].h - Math.min(0.08, placed[i].h / 2),
+          ];
+          if (ys.some((cy) => gapToSegs(cx, cy, rivals) < gapToSegs(cx, cy, ownSegs) - CONFUSION_SLACK)) {
             dirty += 1;
           }
         }
@@ -1841,9 +1936,14 @@ async function addEditableDiagram(
     bundle.shift = picked.shift;
     bundle.across = picked.across;
     bundle.dirty = picked.dirty;
-    // The overlap alone, not the total: the drift tie-breaker is never zero, so
-    // scoring a placement by the total would report every bundle as unplaceable.
-    return picked.overlap;
+    // Covered area PLUS the rungs a reader would credit to the wrong arrow, and
+    // never the drift tie-breaker (which is never zero, so a total would report
+    // every bundle as unplaceable). Returning area alone made the confusion
+    // machinery unreachable: a ladder that emigrated into perfectly EMPTY air
+    // beside a foreign hop scored 0, so the caller skipped the retry and the
+    // mute, and drew every rung beside the wrong arrow. That is the one case
+    // the rule exists to catch.
+    return picked.overlap + picked.dirty * DIRTY_RUNG_COST;
   };
 
   // Which step numbers the workflow slide will actually narrate. Dropping a
@@ -2026,6 +2126,7 @@ async function addEditableDiagram(
       const moved = connectorLabelBox(
         route, transform, labelFontSize, px, labelFrame,
         chipObstacles.filter((taken) => taken !== box.block),
+        undefined, undefined, foreignGapFor(route),
       );
       if (!moved || (moved.block.x === box.block.x && moved.block.y === box.block.y)) continue;
       // A chip only reads as belonging to the arrow under it. Refuse a repair
@@ -2037,7 +2138,7 @@ async function addEditableDiagram(
       const slot = chipObstacles.indexOf(box.block);
       if (slot >= 0) chipObstacles[slot] = moved.block;
       chips.set(route.id, moved);
-      badges.set(route.id, stepBadgeBox(route, transform, px, labelFrame, moved));
+      badges.set(route.id, stepBadgeBox(route, transform, px, labelFrame, moved, chipObstacles));
       repaired += 1;
     }
     // A second ladder on the same slide is placed against the first, but the
@@ -2062,7 +2163,7 @@ async function addEditableDiagram(
         const old = chips.get(route.id);
         const moved = connectorLabelBox(route, transform, labelFontSize, px, labelFrame, pool, bundle);
         chips.set(route.id, moved);
-        badges.set(route.id, stepBadgeBox(route, transform, px, labelFrame, moved));
+        badges.set(route.id, stepBadgeBox(route, transform, px, labelFrame, moved, pool));
         const slot = old?.block ? chipObstacles.indexOf(old.block) : -1;
         if (moved) {
           pool.push(moved.block);
@@ -2807,6 +2908,5 @@ export async function exportArchitectureDeck(
   await pptx.writeFile({ fileName });
   return fileName;
 }
-
 
 
