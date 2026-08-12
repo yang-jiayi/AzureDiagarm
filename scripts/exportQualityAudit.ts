@@ -673,6 +673,11 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
     // unrelated icon and reads as that service's caption. So the bar for a
     // stranger's tile stays at a couple of percent, and an endpoint of the
     // arrow itself is allowed a tenth of its area before it counts as hidden.
+    const membersOfZone = new Map<string, number>();
+    for (const node of scenario.nodes) {
+      if (!node.parentNode) continue;
+      membersOfZone.set(node.parentNode, (membersOfZone.get(node.parentNode) ?? 0) + 1);
+    }
     const endpointsOf = new Map<string, Set<string>>();
     for (const edge of scenario.edges) {
       endpointsOf.set(edge.id, new Set([`service-${edge.source}`, `service-${edge.target}`]));
@@ -687,6 +692,35 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
         if (area > tileBudget(chip.name, tile) * tile.w * tile.h) {
           issues.push(`edge chip "${chip.text}" overlaps node "${tile.name}" by ${((area / (tile.w * tile.h)) * 100).toFixed(0)}%`);
         }
+      }
+    }
+    // A container drawn as a closed box says "these are all of them". On a
+    // tiled deck the box is redrawn on every slide a member landed on, so a
+    // zone of six services can appear five times, each time as a closed box
+    // around one tile — the reader has no way to tell the fragment from the
+    // whole. A fragment has to hold most of what it claims.
+    for (const zone of slideShapes.filter((s) => s.name.startsWith('zone-') && !s.name.startsWith('zone-label-'))) {
+      const zoneId = zone.name.replace(/^zone-/, '');
+      const total = membersOfZone.get(zoneId);
+      if (!total || total <= 2) continue;
+      const held = slideTiles.filter((tile) => overlapArea(tile, zone) > 0.5 * tile.w * tile.h).length;
+      // Saying so is enough: a title that reads "Data zone (3 / 28)" tells the
+      // reader this is a slice, which is all the closed box failed to do.
+      const title = slideShapes.find((s) => s.name === `zone-label-${zoneId}`);
+      if (/\(\s*\d+\s*\/\s*\d+\s*\)/.test(title?.text ?? '')) continue;
+      if (held > 0 && held < Math.ceil(total / 2)) {
+        issues.push(`zone "${zone.name}" is drawn closed around ${held} of its ${total} services`);
+      }
+    }
+    // A zone title that a member tile is standing on is a zone with no name.
+    // The band belongs to the container, so nothing the container holds may be
+    // drawn across it.
+    for (const title of slideShapes.filter((s) => s.name.startsWith('zone-label-'))) {
+      let covered = 0;
+      for (const tile of slideTiles) covered += overlapArea(title, tile);
+      if (covered > 0.25 * title.w * title.h) {
+        const pct = ((covered / (title.w * title.h)) * 100).toFixed(0);
+        issues.push(`zone title "${title.text}" is ${pct}% covered by the tiles inside it`);
       }
     }
     for (const badge of slideShapes.filter((s) => s.name.startsWith('connector-step-'))) {
