@@ -702,21 +702,50 @@ function grp(id: string, label: string, x: number, y: number, w: number, h: numb
  * several neighbours. Nothing in the corpus reached the scaler, so both the
  * exporter and the two rules below carried the assumption untested.
  */
-function overRowScenario(): Scenario {
+function overRowScenario(count = 150, id = 'over-row'): Scenario {
   const names = [
     'Azure Front Door', 'Azure App Service', 'Azure SQL Database', 'Azure Functions',
     'Azure Key Vault', 'Azure Service Bus',
   ];
-  const nodes: Node[] = Array.from({ length: 150 }, (_, i) => (
+  const nodes: Node[] = Array.from({ length: count }, (_, i) => (
     svc(`w-${i}`, names[i % names.length], i * 200, 0)
   ));
   return {
-    id: 'over-row',
+    id,
     nodes,
     edges: Array.from({ length: 8 }, (_, i) => (
-      { id: `o${i}`, source: `w-${i * 4}`, target: `w-${i * 4 + 2}`, label: 'Calls' }
+      { id: `o${i}`, source: `w-${i * 4}`, target: `w-${i * 4 + 2}`, label: 'Calls', data: { stepNumber: i + 1 } }
     )) as Edge[],
   };
+}
+
+/**
+ * Deep scale, where the two pieces of drawing furniture that are not tiles get
+ * measured: a zone caption and a numbered step badge.
+ *
+ * `over-row` only reaches 85%, which is nowhere near the regime either of them
+ * fails in. The zones are one service each so that the box a caption has to
+ * fit inside comes down with the drawing: 360 of them in a row take the sheet
+ * to 15%, and there the caption — held at its natural 9.4pt because nothing
+ * scaled it — wraps to seven lines and stands 462% of the height of the zone
+ * it names, printed straight over the service inside it and its neighbours.
+ *
+ * A row is also the shape that squeezes hardest, so this is the fixture that
+ * catches two tiles welded flush and the zero-length connector between them.
+ */
+function scaledZoneRowScenario(): Scenario {
+  const names = ['Azure App Service', 'Azure SQL Database', 'Azure Key Vault', 'Azure Functions', 'Azure Cache for Redis'];
+  const nodes: Node[] = [];
+  const edges: Edge[] = [];
+  for (let s = 0; s < 480; s += 1) {
+    const originX = s * 260;
+    nodes.push(grp(`sub-${s}`, `Perimeter network subnet ${s}`, originX, 0, 200, 130));
+    nodes.push(svc(`z-${s}`, names[s % names.length], originX + 25, 40));
+    if (s > 0) {
+      edges.push({ id: `ze-${s}`, source: `z-${s - 1}`, target: `z-${s}`, label: 'Peers', data: { stepNumber: s } } as Edge);
+    }
+  }
+  return { id: 'scaled-zone-row', nodes, edges };
 }
 
 /**
@@ -3484,7 +3513,7 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
   const sheetScale = tileWidths.length > 0
     ? Math.min(1, Math.max(...tileWidths) / (150 / PX_PER_IN))
     : 1;
-  const floorPt = sheetScale >= 0.999 ? 7 : 7 * Math.max(0.25, sheetScale);
+  const floorPt = sheetScale >= 0.999 ? 7 : 7 * sheetScale;
   // The floor is PowerPoint's, deliberately. Both exporters draw the same
   // drawing at the same scale, so type that is unreadable in the deck is
   // unreadable on the sheet, and the two must not disagree about where the
@@ -3517,6 +3546,36 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
       issues.push(`service name "${label}" is set at ${(fontIn * 72).toFixed(2)}pt on a ${tileIn.toFixed(2)}in tile `
         + `— ${(ratio / natural).toFixed(1)}x the type-to-tile ratio the sheet draws at full size, `
         + `so the name wraps past the room the tile has for it`);
+    }
+  }
+
+  // The same bargain for the two pieces of drawing furniture that are not
+  // tiles. A zone caption and a numbered step badge sit among the tiles and
+  // scale with them, and both were invisible to the rule above because it only
+  // ever matched `Service.n` — a caption held at natural size on a deeply
+  // scaled sheet was 4.4x the service names beside it and overflowed the zone
+  // onto the tiles inside it, and a badge held at 0.24in was wider than a
+  // whole service.
+  for (const zone of xml.matchAll(/NameU="Zone\.\d+" Name="([^"]*)"[\s\S]*?<Cell N="Width" V="([\d.]+)"[\s\S]*?<Cell N="Height" V="([\d.]+)"[\s\S]*?<Cell N="Size" V="([\d.]+)"/g)) {
+    const zoneW = +zone[2];
+    const zoneH = +zone[3];
+    const fontIn = +zone[4];
+    if (!zone[1] || zoneW <= 0 || zoneH <= 0 || fontIn <= 0) continue;
+    const lines = Math.max(1, Math.ceil(textWidthIn(zone[1], fontIn * 72) / Math.max(zoneW * 0.92, 0.02)));
+    const blockIn = lines * fontIn * 1.3;
+    if (blockIn > zoneH * 0.6) {
+      issues.push(`zone caption "${zone[1]}" needs ${blockIn.toFixed(3)}in of type `
+        + `on a ${zoneW.toFixed(3)} x ${zoneH.toFixed(3)}in zone `
+        + `— ${((blockIn / zoneH) * 100).toFixed(0)}% of the box it names, so it covers what is inside it`);
+    }
+  }
+  const badges = [...xml.matchAll(/NameU="StepBadge\.\d+"[\s\S]*?<Cell N="Width" V="([\d.]+)"/g)].map((m) => +m[1]);
+  if (badges.length > 0 && tileWidths.length > 0) {
+    const widest = Math.max(...badges);
+    const tile = Math.min(...tileWidths);
+    if (widest > tile * 0.55) {
+      issues.push(`a step badge is ${widest.toFixed(3)}in across on a ${tile.toFixed(3)}in tile `
+        + `— ${((widest / tile) * 100).toFixed(0)}% of the service it is calling out`);
     }
   }
 
@@ -3630,6 +3689,24 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
   }
   if (unglued > 0) issues.push(`${unglued} Visio connector(s) are not glued to the shapes they join`);
   if (detached > 0) issues.push(`${detached} Visio connector end(s) are glued to a shape they do not touch`);
+
+  // A connector whose two ends are the same point is not a short arrow, it is
+  // no arrow: Visio draws nothing, the relationship is absent from the sheet,
+  // and the step number that belongs to it is stranded on whatever tile it
+  // landed on. It happens when the fit squeezes two tiles flush, so the hop
+  // between them runs from a shared edge to itself. The bar is an arrowhead,
+  // because a line shorter than its own head cannot show a direction either.
+  let tooShort = 0;
+  for (const block of xml.matchAll(/<Shape ID="\d+" NameU="Connector\.\d+"[\s\S]*?<\/Shape>/g)) {
+    const at = (cell: string): number => +(new RegExp(`<Cell N="${cell}" V="([\\d.-]+)"/>`).exec(block[0])?.[1] ?? NaN);
+    const dx = at('EndX') - at('BeginX');
+    const dy = at('EndY') - at('BeginY');
+    if (!Number.isFinite(dx) || !Number.isFinite(dy)) continue;
+    if (Math.hypot(dx, dy) < 0.04) tooShort += 1;
+  }
+  if (tooShort > 0) {
+    issues.push(`${tooShort} Visio connector(s) are shorter than an arrowhead and draw nothing`);
+  }
 
   // Arrows must not be drawn through services. PowerPoint has had this rule for
   // several rounds; Visio shares the router but had no geometry rule of any
@@ -3874,6 +3951,10 @@ async function main(): Promise<void> {
     // 6.31pt, and 90 at 4.00pt, on exactly forty-eight slides either way.
     diagonalCascadeScenario(52, 'diagonal-cascade-52'),
     bandAboveScenario(), framedCascadeScenario(), tightSeamScenario(), overRowScenario(),
+    // Past where the type floor used to stop tracking the drawing: the ratio
+    // rule below was unsatisfiable by construction from about 24% down.
+    overRowScenario(700, 'over-row-700'),
+    scaledZoneRowScenario(),
     corridorZoneScenario(),
     ladderInGridScenario(), twinLaddersScenario(), strayLadderScenario(), legendCornerScenario(), duplicateStepsScenario(), denseZoneScenario(),
     metaChipScenario(), gridFanScenario(), gridFan3Scenario(), fan8Tight5x5Scenario(), metaSublineScenario(), grid5x5CaptionScenario(), longNameGridScenario(), longLabelGridScenario(), metaTightScenario(),     longNameFanScenario(), estateChainScenario(), chain24Scenario(), tripleMutedScenario(), estate72Scenario(), workflowProseScenario(), workflowLongProseScenario(), allCategoriesScenario(),

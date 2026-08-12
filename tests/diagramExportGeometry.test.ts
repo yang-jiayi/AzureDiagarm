@@ -562,16 +562,39 @@ test('a drawing that already fits is returned untouched, and a zone keeps its me
   assert.ok(far.x >= zone.x + zone.w, 'without being pulled inside the zone it was never in');
 });
 
-test('shapes alone over the limit are squeezed to touching rather than into each other', () => {
-  // There is no whitespace left to spend. Closing every gap is the least-lossy
-  // thing available; overlapping the services would not be.
+test('shapes alone over the limit are squeezed towards each other but never welded', () => {
+  // There is no whitespace left to spend, so the squeeze takes all of it that
+  // it is allowed to. What it is not allowed to take is the last sliver: two
+  // tiles squeezed flush share an edge, and the hop between them is then a
+  // connector from that edge to itself — zero length, no direction, drawn as
+  // nothing at all. Every arrow in the drawing disappears to buy tile width
+  // the caller's uniform scale would have given back anyway.
   const map = new Map<string, ExportBox>();
-  for (let i = 0; i < 10; i += 1) map.set(`s${i}`, box(`s${i}`, i * 160, 0));
+  for (let i = 0; i < 10; i += 1) map.set(`s${i}`, box(`s${i}`, i * 400, 0));
 
   const fitted = fitBoxesWithin(map, 400, 400);
-  const xs = [...Array(10).keys()].map((i) => fitted.get(`s${i}`)!.x);
+  const xs = [...Array(10).keys()].map((i) => fitted.get(`s${i}`)!);
   for (let i = 1; i < xs.length; i += 1) {
-    assert.equal(xs[i] - xs[i - 1], 150, `s${i} is not flush against s${i - 1}`);
+    const gap = xs[i].x - (xs[i - 1].x + xs[i - 1].w);
+    assert.ok(gap > 0, `s${i} was welded onto s${i - 1} (gap ${gap}px)`);
+    // A gap proportional to the tile stays proportional under the uniform
+    // scale the caller applies next, so it is still there on the page.
+    assert.ok(gap >= 150 * 0.12 - 1e-9, `s${i} kept only ${gap}px of clearance`);
+    assert.ok(gap < 250, `s${i} kept ${gap}px, so the squeeze did no work`);
+  }
+});
+
+test('a squeeze never widens a gap that was already tighter than the floor', () => {
+  // The floor is a limit on how hard the squeeze may push, not a spacing to be
+  // imposed: a drawing that was drawn tight stays as tight as it was drawn.
+  const map = new Map<string, ExportBox>();
+  for (let i = 0; i < 10; i += 1) map.set(`s${i}`, box(`s${i}`, i * 154, 0));
+
+  const fitted = fitBoxesWithin(map, 400, 400);
+  for (let i = 1; i < 10; i += 1) {
+    const prev = fitted.get(`s${i - 1}`)!;
+    const gap = fitted.get(`s${i}`)!.x - (prev.x + prev.w);
+    assert.ok(gap > 0 && gap <= 4 + 1e-9, `s${i} came back ${gap}px from its neighbour, not the 4px it was drawn at`);
   }
 });
 

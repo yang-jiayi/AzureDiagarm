@@ -829,6 +829,22 @@ export function computeBounds(boxes: Iterable<ExportBox>): Bounds {
 const MAX_VOID_SPAN_PX = 1536;
 /** What a closed void is replaced by — still a clear separation, not a join. */
 const VOID_GUTTER_PX = 320;
+/**
+ * The narrowest gap a squeeze may leave between two shapes, as a fraction of a
+ * typical shape.
+ *
+ * A gap closed completely welds two tiles into one silhouette, and the hop
+ * between them becomes a connector whose two endpoints are the same point:
+ * zero length, no direction, nothing drawn. A drawing that has lost its arrows
+ * is not an architecture diagram, so this floor is worth more than the tile
+ * width the squeeze was protecting.
+ *
+ * It is a fraction of a shape rather than an absolute distance because the
+ * caller scales whatever comes back down to the page. A gap held at a fixed
+ * number of pixels shrinks with everything else and is gone again; a gap held
+ * at a fraction of a tile is still that fraction of a tile at any scale.
+ */
+const MIN_SHAPE_GAP_FRACTION = 0.12;
 
 /**
  * Close empty bands that run the full height (or width) of the drawing.
@@ -1036,19 +1052,33 @@ export function fitBoxesWithin(
     const covered = merged.reduce((sum, [from, to]) => sum + (to - from), 0);
     const empty = (end - origin) - covered;
     // Shapes alone over the limit: there is no whitespace left to spend, so
-    // close every gap and let the caller deal with what remains. Squeezing to
-    // touching is still the least-lossy thing available.
+    // squeeze as hard as the limit asks for and let the caller scale the rest.
     const keep = empty <= 0 ? 0 : Math.max(0, Math.min(1, (limit - covered) / empty));
+    // Never all the way to touching, though. Two tiles squeezed flush share an
+    // edge, and the router then hands the exporter a hop from that edge to
+    // itself, which is drawn as nothing at all.
+    const sizes = dense.map(size).filter((v) => v > 0).sort((a, b) => a - b);
+    const typical = sizes.length > 0 ? sizes[Math.floor(sizes.length / 2)] : 0;
+    const floorGap = typical * MIN_SHAPE_GAP_FRACTION;
+    // Never widens a gap: a space already tighter than the floor is left alone.
+    const keepOf = (gap: number): number => (gap > 0
+      ? Math.max(Math.min(gap, floorGap), gap * keep) / gap
+      : keep);
     return (at: number): number => {
       let mapped = origin;
       let cursor = origin;
+      // The margin before the first shape and the margin after the last are
+      // nobody's clearance — no hop runs through them — so they are spent in
+      // full. Only the gaps between two shapes are held open.
+      let between = false;
       for (const [from, to] of merged) {
         if (at <= cursor) return mapped;
-        mapped += Math.min(at - cursor, from - cursor) * keep;
+        mapped += Math.min(at - cursor, from - cursor) * (between ? keepOf(from - cursor) : keep);
         cursor = from;
         if (at <= cursor) return mapped;
         mapped += Math.min(at - cursor, to - from);
         cursor = to;
+        between = true;
       }
       return mapped + Math.max(0, at - cursor) * keep;
     };

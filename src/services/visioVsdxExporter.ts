@@ -103,16 +103,27 @@ const META_FONT_IN = Math.max(0.083, LEGIBLE_IN);
 const CONNECTOR_FONT_IN = Math.max(0.1, LEGIBLE_IN);
 const LEGEND_FONT_IN = Math.max(0.1, LEGIBLE_IN);
 
+/** Zone caption, and the number inside a step badge — both drawing content. */
+const ZONE_TITLE_FONT_IN = 0.13;
+const BADGE_FONT_IN = 0.11;
+
 interface VisioFonts {
+  /** How far the drawing was scaled to fit the page; 1 when it was not. */
+  scale: number;
   label: number;
   meta: number;
   connector: number;
+  zone: number;
+  badge: number;
 }
 
 const NATURAL_FONTS: VisioFonts = {
+  scale: 1,
   label: LABEL_FONT_IN,
   meta: META_FONT_IN,
   connector: CONNECTOR_FONT_IN,
+  zone: ZONE_TITLE_FONT_IN,
+  badge: BADGE_FONT_IN,
 };
 
 /**
@@ -122,20 +133,31 @@ const NATURAL_FONTS: VisioFonts = {
  * of an inch wide and no type is legible on it at any size. Holding the point
  * size fixed there does not rescue the words, it prints "Azure Front Door" over
  * seven of its neighbours and destroys the structure too — a reader can zoom
- * into small type but cannot untangle overlapping type. So the type comes down
- * with the drawing, and stops at a quarter size where it is still a visible
- * mark that says "something is named here".
+ * into small type but cannot untangle overlapping type.
  *
- * The legend and the workflow band are page furniture laid out in page inches,
- * not drawing content, so they are not in here and keep their natural size.
+ * So the type comes down with the drawing, all the way. A floor was tried and
+ * is wrong: below about a quarter size it has stopped rescuing anything a
+ * reader can read — a name at 1.9pt is not legible at any zoom — and it is
+ * still buying that nothing with the overlap it was meant to prevent, because
+ * Visio wraps a name too big for its shape into more and more lines inside a
+ * text block that is itself shrinking. Proportion is the only property left
+ * worth keeping at that size.
+ *
+ * A zone caption and a numbered step badge are drawing content and are in
+ * here. The legend and the workflow band are page furniture laid out in page
+ * inches, so they are not, and keep their natural size.
  */
 function fontsForScale(scale: number): VisioFonts {
   if (scale >= 0.999) return NATURAL_FONTS;
-  const k = Math.max(0.25, scale);
+  // Only to keep the XML well formed; nothing is drawn at this size.
+  const k = Math.max(0.001, scale);
   return {
+    scale: k,
     label: LABEL_FONT_IN * k,
     meta: META_FONT_IN * k,
     connector: CONNECTOR_FONT_IN * k,
+    zone: ZONE_TITLE_FONT_IN * k,
+    badge: BADGE_FONT_IN * k,
   };
 }
 
@@ -336,10 +358,27 @@ function propertyRow(name: string, label: string, value: string, sortKey: number
 }
 
 /** Zone / group rectangle: dashed rounded outline with a top-left title. */
-function zoneShapeXml(id: number, rect: Rect, label: string, palette: Palette): string {
-  // Allow the title band to grow to two lines instead of clipping a long name.
-  const titleH = Math.min(0.56, Math.max(0.24, rect.h * 0.22));
-  const titleW = Math.max(0.4, rect.w - 0.24);
+function zoneShapeXml(
+  id: number,
+  rect: Rect,
+  label: string,
+  palette: Palette,
+  fonts: VisioFonts = NATURAL_FONTS,
+): string {
+  // A zone is drawing content: it goes through the same fit and scale as the
+  // tiles inside it, so its caption has to come down with it. Held at its
+  // natural size it was 4.4x the service names beside it on a deeply scaled
+  // sheet, wrapping to five characters a line and overflowing both its own
+  // text block and the zone onto the tiles it is supposed to contain.
+  const k = fonts.scale;
+  // Allow the title band to grow to two lines instead of clipping a long name,
+  // but never past half the zone — a caption taller than the box it names has
+  // stopped being a caption.
+  const titleH = Math.min(rect.h * 0.5, Math.min(0.56 * k, Math.max(0.24 * k, rect.h * 0.22)));
+  // The inset is a margin, not a minimum: floored at 0.4in it measured *wider*
+  // than the zone once the zone was under 0.64in, so the text was laid out to
+  // a width that does not exist.
+  const titleW = Math.max(0.08, Math.min(rect.w * 0.92, rect.w - 0.24 * k));
   return `    <Shape ID="${id}" NameU="Zone.${id}" Name="${esc(label)}" Type="Shape" LineStyle="0" FillStyle="0" TextStyle="0">
       <Cell N="PinX" V="${f(rect.x + rect.w / 2)}"/>
       <Cell N="PinY" V="${f(rect.y + rect.h / 2)}"/>
@@ -364,7 +403,7 @@ function zoneShapeXml(id: number, rect: Rect, label: string, palette: Palette): 
       <Cell N="TxtAngle" V="0"/>
 ${roundedRectGeometry()}
       <Section N="Character">
-        <Row IX="0"><Cell N="Font" V="1"/><Cell N="Color" V="${palette.text}"/><Cell N="Size" V="0.13"/><Cell N="Style" V="1"/></Row>
+        <Row IX="0"><Cell N="Font" V="1"/><Cell N="Color" V="${palette.text}"/><Cell N="Size" V="${ff(fonts.zone)}"/><Cell N="Style" V="1"/></Row>
       </Section>
       <Section N="Paragraph">
         <Row IX="0"><Cell N="HorzAlign" V="0"/></Row>
@@ -600,8 +639,16 @@ ${rows}
 /** Badge diameter in inches, shared with the on-page clamp. */
 const STEP_BADGE_IN = 0.24;
 
-function stepBadgeXml(id: number, centre: Point, stepNumber: number): string {
-  const d = STEP_BADGE_IN;
+function stepBadgeXml(
+  id: number,
+  centre: Point,
+  stepNumber: number,
+  fonts: VisioFonts = NATURAL_FONTS,
+): string {
+  // A badge is drawn on the arrows, between the tiles, so it scales with them.
+  // Held at its natural size it was 109% of a whole service tile once the
+  // sheet was down to a seventh: a callout larger than the thing it calls out.
+  const d = STEP_BADGE_IN * fonts.scale;
   return `    <Shape ID="${id}" NameU="StepBadge.${id}" Type="Shape" LineStyle="0" FillStyle="0" TextStyle="0">
       <Cell N="PinX" V="${f(centre.x)}"/>
       <Cell N="PinY" V="${f(centre.y)}"/>
@@ -617,7 +664,7 @@ function stepBadgeXml(id: number, centre: Point, stepNumber: number): string {
       <Cell N="LineWeight" V="0.0125"/>
       <Cell N="LinePattern" V="1"/>
       <Section N="Character">
-        <Row IX="0"><Cell N="Font" V="1"/><Cell N="Color" V="#FFFFFF"/><Cell N="Size" V="0.11"/><Cell N="Style" V="1"/></Row>
+        <Row IX="0"><Cell N="Font" V="1"/><Cell N="Color" V="#FFFFFF"/><Cell N="Size" V="${ff(fonts.badge)}"/><Cell N="Style" V="1"/></Row>
       </Section>
       <Section N="Paragraph">
         <Row IX="0"><Cell N="HorzAlign" V="1"/></Row>
@@ -989,7 +1036,7 @@ export async function buildVsdxPackage(
     const id = nextId++;
     shapeIdByNode.set(zone.id, id);
     const palette = paletteForZone(zone, zoneIndex);
-    shapes.push(zoneShapeXml(id, toRect(zone), zone.label, palette));
+    shapes.push(zoneShapeXml(id, toRect(zone), zone.label, palette, fonts));
   }
 
   for (const service of services) {
@@ -1059,6 +1106,10 @@ export async function buildVsdxPackage(
   const bundleOf = (route: ExportRoute): string => (route.sourceId < route.targetId
     ? `${route.sourceId}|${route.targetId}`
     : `${route.targetId}|${route.sourceId}`);
+  // The badge scales with the drawing, so every allowance made for one has
+  // to scale too, or the rungs reserve a quarter inch for a mark an eighth of
+  // an inch across and the fan is spaced for furniture that is not there.
+  const badgeIn = STEP_BADGE_IN * fonts.scale;
   const labelSize = (label: string): { w: number; h: number } => {
     const natural = estimateTextWidthIn(label, fonts.connector) + 0.08;
     const w = Math.min(Math.max(natural, 0.5), 1.7);
@@ -1181,7 +1232,7 @@ export async function buildVsdxPackage(
     let rung = 0;
     for (const member of members) {
       const size = labelOf(member) ? labelSize(labelOf(member)).h : 0;
-      rung = Math.max(rung, size + (member.stepNumber === undefined ? 0.05 : STEP_BADGE_IN + 0.07));
+      rung = Math.max(rung, size + (member.stepNumber === undefined ? 0.05 : badgeIn + 0.07));
     }
     // Ranked by where the ARROW was fanned to, not by the order the edges were
     // declared, so rung n sits beside arrow n instead of crossing over it.
@@ -1214,9 +1265,9 @@ export async function buildVsdxPackage(
   const settle = (members: ExportRoute[]): { shift: number; slide: number; blocked: number; buried: number } => {
     const step = Math.max(
       0.14,
-      ...members.map((member) => (labelOf(member) ? labelSize(labelOf(member)).h : STEP_BADGE_IN) + 0.05),
+      ...members.map((member) => (labelOf(member) ? labelSize(labelOf(member)).h : badgeIn) + 0.05),
     );
-    const badgeRoom = members.some((member) => member.stepNumber !== undefined) ? STEP_BADGE_IN + 0.06 : 0;
+    const badgeRoom = members.some((member) => member.stepNumber !== undefined) ? badgeIn + 0.06 : 0;
     const blockage = (shift: number, slide: number): number => {
       let cost = 0;
       for (const member of members) {
@@ -1230,12 +1281,12 @@ export async function buildVsdxPackage(
           const n = normalOf(member);
           const u = directionOf(member);
           const centre = chordOf(member);
-          const away = drop + (text ? box.h / 2 + STEP_BADGE_IN / 2 + 0.03 : 0);
+          const away = drop + (text ? box.h / 2 + badgeIn / 2 + 0.03 : 0);
           parts.push({
-            x: centre.x + n.x * away + u.x * along - STEP_BADGE_IN / 2,
-            y: centre.y + n.y * away + u.y * along - STEP_BADGE_IN / 2,
-            w: STEP_BADGE_IN,
-            h: STEP_BADGE_IN,
+            x: centre.x + n.x * away + u.x * along - badgeIn / 2,
+            y: centre.y + n.y * away + u.y * along - badgeIn / 2,
+            w: badgeIn,
+            h: badgeIn,
           });
         }
         for (const part of parts) {
@@ -1376,12 +1427,12 @@ export async function buildVsdxPackage(
         const u = directionOf(member);
         const centre = chordOf(member);
         const box = rectAt(member, placed.drop, placed.along);
-        const away = placed.drop + (labelOf(member) ? box.h / 2 + STEP_BADGE_IN / 2 + 0.03 : 0);
+        const away = placed.drop + (labelOf(member) ? box.h / 2 + badgeIn / 2 + 0.03 : 0);
         placedLabels.push({
-          x: centre.x + n.x * away + u.x * placed.along - STEP_BADGE_IN / 2,
-          y: centre.y + n.y * away + u.y * placed.along - STEP_BADGE_IN / 2,
-          w: STEP_BADGE_IN,
-          h: STEP_BADGE_IN,
+          x: centre.x + n.x * away + u.x * placed.along - badgeIn / 2,
+          y: centre.y + n.y * away + u.y * placed.along - badgeIn / 2,
+          w: badgeIn,
+          h: badgeIn,
         });
       }
     }
@@ -1425,11 +1476,11 @@ export async function buildVsdxPackage(
       // Each rung carries its own badge, so the badge steps off that rung and
       // not off the line: with a fan, one shared drop stacked every badge in
       // the bundle on the same spot.
-      const drop = (text ? size.h / 2 + STEP_BADGE_IN / 2 + 0.03 : 0) + seat.drop;
+      const drop = (text ? size.h / 2 + badgeIn / 2 + 0.03 : 0) + seat.drop;
       // A clamped connector can put its anchor at the very page edge, and the
       // normal offset then pushes the badge off the sheet, where Visio simply
       // does not draw it.
-      const half = STEP_BADGE_IN / 2;
+      const half = badgeIn / 2;
       shapes.push(
         stepBadgeXml(
           nextId++,
@@ -1438,6 +1489,7 @@ export async function buildVsdxPackage(
             y: clampIn(anchor.y + ny * drop + along.y * seat.along, half, pageHeightIn - half),
           },
           route.stepNumber,
+          fonts,
         ),
       );
     }
