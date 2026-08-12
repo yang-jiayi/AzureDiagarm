@@ -471,6 +471,30 @@ function sharedServiceScenario(): Scenario {
   return { id: 'shared-service', nodes, edges };
 }
 
+/**
+ * Twenty-four services on a 165 x 105 grid: a gutter of about fifteen pixels,
+ * narrower than a callout disc. The reviewer's case for the buried-badge work
+ * — with nowhere clear to sit, a ring search that gives up too early parks the
+ * numbers on the tiles and the reader cannot match them to the step list.
+ */
+function tightGridScenario(): Scenario {
+  const nodes: Node[] = [];
+  const edges: Edge[] = [];
+  for (let i = 0; i < 24; i += 1) {
+    nodes.push(svc(`tg${i}`, `Service ${i}`, (i % 6) * 165, Math.floor(i / 6) * 105));
+  }
+  for (let i = 1; i < 24; i += 1) {
+    edges.push({
+      id: `tg${i - 1}-${i}`,
+      source: `tg${i - 1}`,
+      target: `tg${i}`,
+      label: `step ${i}`,
+      data: { stepNumber: i },
+    } as Edge);
+  }
+  return { id: 'tight-grid', nodes, edges };
+}
+
 function barbellScenario(): Scenario {
   const nodes: Node[] = [];
   const edges: Edge[] = [];
@@ -2687,7 +2711,7 @@ async function main(): Promise<void> {
   mkdirSync(OUT, { recursive: true });
   const base = [
     compactScenario(), wideScenario(), oversizeScenario(), outlierScenario(),
-    bandedScenario(), narrativeScenario(), barbellScenario(), hubFanScenario(), sharedServiceScenario(), parallelScenario(),
+    bandedScenario(), narrativeScenario(), barbellScenario(), hubFanScenario(), sharedServiceScenario(), tightGridScenario(), parallelScenario(),
     ladderInGridScenario(), twinLaddersScenario(), strayLadderScenario(), legendCornerScenario(), duplicateStepsScenario(), denseZoneScenario(),
     metaChipScenario(), gridFanScenario(), gridFan3Scenario(), fan8Tight5x5Scenario(), metaSublineScenario(), grid5x5CaptionScenario(), longNameGridScenario(), longLabelGridScenario(), metaTightScenario(),     longNameFanScenario(), estateChainScenario(), chain24Scenario(), tripleMutedScenario(), estate72Scenario(), workflowProseScenario(), workflowLongProseScenario(), allCategoriesScenario(),
     await generatedScenario(), await groupedGeneratedScenario(),

@@ -1347,7 +1347,6 @@ function stepBadgeBox(
   foreignGap?: (x: number, y: number) => number,
 ): { x: number; y: number; d: number } | null {
   if (route.stepNumber === undefined) return null;
-  if (chip?.badge) return chip.badge;
 
   // No chip to hang off: either an unlabelled but numbered hop, or one whose
   // wording was muted because it had nowhere legible to stand. The anchor is
@@ -1390,7 +1389,26 @@ function stepBadgeBox(
       if (dx > 0 && dy > 0 && dx * dy >= 0.9 * d * d) return true;
     }
     return false;
-  };  const cover = (at: { x: number; y: number }): number => {
+  };
+  // A number hanging off its own chip is the best outcome there is, so the
+  // chip's placement is taken whenever it is legible. But the disc is nailed
+  // to the chip and can only slide along it, so on a grid whose gutters are
+  // narrower than the disc the block comes to rest where the WORDING fits and
+  // the number ends up swallowed whole by a tile — where it reads as that
+  // service's own badge and the step list describes a hop the reader cannot
+  // find. A swallowed disc is worth less than a free-standing one, so it falls
+  // through to the walk below, which prices burial and misattribution against
+  // each other instead of being unable to move at all.
+  if (chip?.badge) {
+    const badge = chip.badge;
+    const buried = obstacles.some((other) => {
+      if (other.annotation) return false;
+      const dx = Math.min(badge.x + badge.d, other.x + other.w) - Math.max(badge.x, other.x);
+      const dy = Math.min(badge.y + badge.d, other.y + other.h) - Math.max(badge.y, other.y);
+      return dx > 0 && dy > 0 && dx * dy >= 0.9 * badge.d * badge.d;
+    });
+    if (!buried) return badge;
+  }  const cover = (at: { x: number; y: number }): number => {
     let sum = 0;
     for (const other of obstacles) {
       const dx = Math.min(at.x + d, other.x + other.w) - Math.max(at.x, other.x);
