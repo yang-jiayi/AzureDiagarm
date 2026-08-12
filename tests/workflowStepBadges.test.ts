@@ -210,5 +210,15 @@ test('the PowerPoint badge clears even a tall wrapped label', async () => {
   const overlapW = Math.min(chip.x + chip.w, badge.x + badge.w) - Math.max(chip.x, badge.x);
   const overlap = overlapW > 0 && overlapH > 0 ? overlapW * overlapH : 0;
   assert.equal(overlap, 0, 'the badge does not overlap the label chip');
-  assert.ok(badge.y >= chip.y + chip.h, 'the badge sits below the whole chip');
+  // Which SIDE it clears to is not fixed. The number is the reader's handle on
+  // the hop, so it hangs from whichever end of the block faces the arrow it
+  // numbers — below a chip that sits above its arrow, above one that hangs
+  // below it. Pinning it to "below" put the number nearer the NEXT row's arrow
+  // on a stack of parallel hops. What must hold is that the two are adjacent
+  // and stacked, never side by side or separated.
+  const clearsBelow = badge.y >= chip.y + chip.h - 1e-9;
+  const clearsAbove = chip.y >= badge.y + badge.h - 1e-9;
+  assert.ok(clearsBelow || clearsAbove, 'the badge clears the chip vertically');
+  const seam = clearsBelow ? badge.y - (chip.y + chip.h) : chip.y - (badge.y + badge.h);
+  assert.ok(seam < 0.1, `the badge stays against the chip (seam ${seam.toFixed(3)}in)`);
 });

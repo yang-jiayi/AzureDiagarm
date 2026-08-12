@@ -40,6 +40,7 @@ import {
   workflowListFromEdges,
   narrateEdgeCallouts,
   zoneStyleFor,
+  readableTextOn,
   carriesWording,
   type Bounds,
   type ExportBox,
@@ -66,7 +67,9 @@ const DARK_THEME: SlideTheme = {
   accent: '0078d4',   // Azure blue
   titleText: 'ffffff',
   metaText: '94a3b8', // slate-400
-  footerText: '475569', // slate-600
+  // slate-400: slate-600 read at 1.93:1 on this background, so the attribution
+  // line was effectively invisible in the exported deck.
+  footerText: '94a3b8',
 };
 
 const LIGHT_THEME: SlideTheme = {
@@ -75,7 +78,8 @@ const LIGHT_THEME: SlideTheme = {
   accent: '0078d4',   // Azure blue
   titleText: '0f172a', // slate-900
   metaText: '475569',  // slate-600
-  footerText: '94a3b8', // slate-400
+  // slate-500: slate-400 read at 2.45:1 here, well under the WCAG AA bar.
+  footerText: '64748b',
 };
 
 // ─── Slide layout (inches) ───────────────────────────────────────────────────
@@ -245,6 +249,8 @@ interface Obstacle {
   w: number;
   h: number;
   annotation?: boolean;
+  /** A service name. Covering one is a different kind of damage from a tile. */
+  caption?: boolean;
   /** Bundle this obstacle belongs to; its own labels ignore it. */
   owner?: string;
   /** Cost multiplier per square inch covered; defaults to a tile's 1. */
@@ -257,6 +263,15 @@ interface Obstacle {
  */
 const MIN_WORKFLOW_ROW_IN = 0.34;
 
+/**
+ * How much of a chip may end up over a service name or another callout before
+ * the chip is dropped in favour of a numbered callout plus a step-list row.
+ *
+ * Set just under the smallest overlap the export audit reports (0.018 sq in),
+ * so a chip is handed over before it is drawn on top of something the reader
+ * needs rather than after.
+ */
+const SPOILED_CHIP_SQ_IN = 0.015;
 /**
  * Split the drawing into as few standard-slide windows as keep tiles legible.
  *
@@ -744,15 +759,45 @@ function connectorLabelBox(
       ? clamp(squeezeTo, 0.34 * px, 1.5 * px)
       : clamp(Math.max(gap, prefer * px), 0.34 * px, 1.5 * px);
   const naturalW = estimateTextWidthIn(text, fontSize) + 0.14;
-  const badgeD = route.stepNumber === undefined ? 0 : clamp(0.26 * px, 0.18, 0.42);
-  // A muted rung carries no wording, so it is exactly its callout. Reserving an
+  const badgeD = route.stepNumber === undefined ? 0 : clamp(0.26 * px, 0.18, 0.42);  // A muted rung carries no wording, so it is exactly its callout. Reserving an
   // empty text box above the number anyway made every rung ~40% taller and a
   // third wider than the thing it draws, which is what pushed a deep fan's end
   // callouts onto the tiles it runs between.
   const bare = text === '' && badgeD > 0;
+  // A hop that runs down the page has to fit its chip into the band between two
+  // rows. `gap` is that band's height, but it is being used as a WIDTH cap, so
+  // a long sentence is wrapped onto more lines until the chip is taller than
+  // the corridor it has to sit in — and then no position clears the service it
+  // labels. The band is short but wide, so widen the chip, by exactly enough to
+  // shed the lines that do not fit and no more: widening further only pushes it
+  // into the columns either side.
+  let roomW = maxW;
+  if (!alongX && !bare && bundle === undefined && squeezeTo === undefined && gap > 0) {
+    const lineH0 = (fontSize * 1.3) / 72;
+    const asIs = Math.max(1, Math.ceil(estimateTextWidthIn(text, fontSize) / Math.max(maxW - 0.12, 0.05)));
+    // Only when the chip does not already fit the band. Widening one that does
+    // buys nothing and costs a lean on the columns either side.
+    if (asIs * lineH0 + 0.06 > gap) {
+      const fits = Math.max(1, Math.floor((gap - 0.06) / lineH0));
+      const needed = estimateTextWidthIn(text, fontSize) / fits + 0.12;
+      roomW = clamp(Math.max(maxW, needed), 0.34 * px, 1.5 * px);
+    }
+  } else if (alongX && !bare && bundle === undefined && squeezeTo === undefined && gap > 0) {
+    // The mirror case. The band between two columns is narrow but tall, so a
+    // chip wider than the hop leans on the services either side of it. Narrow
+    // it to the corridor — but only while the result stays a chip: squeezing
+    // every label to the hop width is what once produced a 0.34" ribbon inches
+    // tall, which `prefer` exists to prevent.
+    const narrowed = clamp(gap, 0.34 * px, 1.5 * px);
+    if (narrowed < maxW) {
+      const lineH0 = (fontSize * 1.3) / 72;
+      const lineCount = Math.max(1, Math.ceil(estimateTextWidthIn(text, fontSize) / Math.max(narrowed - 0.12, 0.05)));
+      if (lineCount * lineH0 + 0.06 <= 0.9 * px) roomW = narrowed;
+    }
+  }
   const w = bare
     ? badgeD
-    : clamp(naturalW <= maxW ? naturalW : maxW, Math.min(0.34 * px, maxW), maxW);
+    : clamp(naturalW <= roomW ? naturalW : roomW, Math.min(0.34 * px, roomW), roomW);
   const perLine = Math.max(w - 0.12, 0.05);
   const lineH = (fontSize * 1.3) / 72;
 
@@ -912,6 +957,17 @@ function connectorLabelBox(
     }
     return bestGap;
   };
+  // Which end of the block the numbered callout hangs from. It used to be
+  // always the bottom, which on a chip that hangs BELOW its arrow puts the one
+  // mark a reader uses to identify the hop as far from that hop as the block
+  // allows — on a stack of parallel rows, nearer the next row's arrow than its
+  // own. The Architecture Center draws the number against the arrow it
+  // numbers, so hang it from whichever end of the block faces that arrow.
+  const badgeAtTop = badgeD > 0 && !bare
+    && toOwn(home.x + w / 2, home.y + badgeD / 2)
+      < toOwn(home.x + w / 2, home.y + blockH - badgeD / 2);
+  const badgeYAt = (y: number): number => (badgeAtTop ? y : y + h + badgeGap);
+  const textYAt = (y: number): number => (badgeAtTop ? y + badgeD + badgeGap : y);
   const attributable = (at: { x: number; y: number }): boolean => {
     if (ownSegments.length === 0) return true;
     const cx = at.x + w / 2;
@@ -921,7 +977,7 @@ function connectorLabelBox(
     // contains both belongs to neither, and on a chip with a badge it sits a
     // quarter inch below the text it is supposed to stand for.
     const sampleYs = blockH > h + 0.01
-      ? [at.y + h / 2, at.y + blockH - Math.min(0.1, blockH / 2)]
+      ? [textYAt(at.y) + h / 2, badgeYAt(at.y) + badgeD / 2]
       : [at.y + h / 2];
     for (const cy of sampleYs) {
       const mine = toOwn(cx, cy);
@@ -1007,7 +1063,7 @@ function connectorLabelBox(
     }
   }
   const badge = badgeD > 0
-    ? { x: best.x + w / 2 - badgeD / 2, y: best.y + h + badgeGap, d: badgeD }
+    ? { x: best.x + w / 2 - badgeD / 2, y: badgeYAt(best.y), d: badgeD }
     : null;
   // Still standing on something. A chip is allowed to be wider than the gap it
   // labels, but when that width is the reason it has nowhere to go, wrapping it
@@ -1041,7 +1097,7 @@ function connectorLabelBox(
   // sentence against the same number — and that is strictly better than parking
   // it where it will be read as the label of a different arrow.
 
-  return { x: best.x, y: best.y, w, h, text, badge, block: { x: best.x, y: best.y, w, h: blockH, annotation: true }, alongX, fontSize, stuck: bestScore };
+  return { x: best.x, y: textYAt(best.y), w, h, text, badge, block: { x: best.x, y: best.y, w, h: blockH, annotation: true }, alongX, fontSize, stuck: bestScore };
 }
 
 function addConnectorLabel(
@@ -1128,7 +1184,13 @@ function stepBadgeBox(
     if (!ownGap || !foreignGap) return 0;
     const cx = at.x + d / 2;
     const cy = at.y + d / 2;
-    return foreignGap(cx, cy) < ownGap(cx, cy) - 0.1 ? 0.5 * d * d : 0;
+    if (foreignGap(cx, cy) >= ownGap(cx, cy) - 0.1) return 0;
+    // For a hop whose wording was muted this number is the whole label: the
+    // step list describes an arrow, and if the number sits nearer a different
+    // one the sentence is simply attached to the wrong hop. There is no chip
+    // beside it to say otherwise, so for a bare callout misattribution is
+    // priced above being covered rather than at half of it.
+    return (chip ? 0.5 : 4) * d * d;
   };
   const cost = (at: { x: number; y: number }): number => cover(at) + misread(at);
   let spot = fit(anchor.x - d / 2, anchor.y - d / 2);
@@ -1377,7 +1439,9 @@ function addNodeShape(
       w: innerW,
       h: metaBand,
       fontSize: metaFontSize,
-      color: '64748B',
+      // The tile fill is category-dependent, so a fixed grey reads at 4.26:1 on
+      // the lighter categories. Derive it from the panel it is printed on.
+      color: stripHash(readableTextOn('#64748B', `#${stripHash(palette.bg)}`)),
       fontFace: 'Yu Gothic UI',
       align: 'center',
       valign: 'bottom',
@@ -1411,6 +1475,10 @@ function addGroupShape(
   const palette = zoneStyleFor(box, index);
   const bg = stripHash(palette.bg);
   const border = stripHash(palette.border);
+  // The border colour is tuned to be seen as a 1pt line, not read as words: on
+  // the light slide it lands at 2.6-4.4:1, below the WCAG AA bar. The palette
+  // already carries a text colour chosen for reading; use it.
+  const labelColor = stripHash(palette.text);
 
   slide.addShape(pptx.ShapeType.roundRect, {
     x: topLeft.x,
@@ -1436,7 +1504,7 @@ function addGroupShape(
     h: titleH,
     fontSize: clamp(Math.round(h * 5), 8, 12),
     bold: true,
-    color: border,
+    color: labelColor,
     fontFace: 'Yu Gothic UI',
     align: 'left',
     valign: 'top',
@@ -1627,7 +1695,7 @@ async function addEditableDiagram(
     // name cannot, because the name is the only thing that says so, and a chip
     // is drawn over it at 92% opacity. Weighted far above a tile so that even
     // a chip allowed to touch its own endpoint is pushed off the words.
-    if (caption) captionBands.push({ ...caption, weight: 12 });
+    if (caption) captionBands.push({ ...caption, weight: 60, caption: true });
   }
 
   for (const route of shownRoutes) addConnector(pptx, slide, route, transform, clampTo);
@@ -1805,6 +1873,12 @@ async function addEditableDiagram(
     }
     return rivals.length ? (x: number, y: number) => gapToSegs(x, y, rivals) : undefined;
   };
+  // Which step numbers the workflow slide will actually narrate. Dropping a
+  // chip is only ever a trade against that list; with no row to read it is a
+  // deletion.
+  const narratedRows = new Map(workflowListFromEdges(diagram.edges ?? []).map((entry) => [entry.step, entry.description]));
+  const narratedSteps = new Set(narratedRows.keys());
+
   const ownGapFor = (route: ExportRoute): ((x: number, y: number) => number) | undefined => {
     // Its OWN arrow, not its bundle's. A fan is fanned — `parallelOffset`
     // spreads the members apart — so "nearest arrow in my bundle" is a much
@@ -1824,10 +1898,35 @@ async function addEditableDiagram(
       // belongs to, which is what the Architecture Center draws, and it is then
       // placed one at a time against the same attribution test as everything
       // else.
-      const box = bundle?.badgesOnly ? null : connectorLabelBox(
+      let box = bundle?.badgesOnly ? null : connectorLabelBox(
         route, transform, labelFontSize, px, labelFrame, chipObstacles, bundle,
         undefined, foreignGapFor(route),
       );
+      // A chip that still lands on a service name or on another callout after
+      // the walk has done its best is worse than no chip: it is drawn at 92%
+      // opacity over the one thing that says which service this is, or over a
+      // step number. On a slide this crowded the Architecture Center leaves a
+      // numbered callout on the arrow and puts the sentence in the step list,
+      // which is exactly the trade `mutedWording` already implements — so make
+      // it per route, not only per fan.
+      if (box && route.stepNumber !== undefined && narratedSteps.has(route.stepNumber)) {
+        const b = box.block;
+        let spoiled = 0;
+        for (const o of chipObstacles) {
+          if (!o.annotation && !o.caption) continue;
+          if (o.owner !== undefined && o.owner === bundleKey(route)) continue;
+          const dx = Math.min(b.x + b.w, o.x + o.w) - Math.max(b.x, o.x);
+          const dy = Math.min(b.y + b.h, o.y + o.h) - Math.max(b.y, o.y);
+          if (dx > 0 && dy > 0) spoiled += dx * dy;
+        }
+        if (spoiled > SPOILED_CHIP_SQ_IN) {
+          if (!thumbnail && route.label
+            && !carriesWording(narratedRows.get(route.stepNumber) ?? '', route.label)) {
+            mutedWording.set(route.stepNumber, route.label);
+          }
+          box = null;
+        }
+      }
       chips.set(route.id, box);
       if (box) chipObstacles.push(box.block);
       const badge = stepBadgeBox(
@@ -1835,6 +1934,8 @@ async function addEditableDiagram(
         ownGapFor(route), foreignGapFor(route),
       );
       badges.set(route.id, badge);
+      // Only when the route has no chip: with one, `stepBadgeBox` returns the
+      // badge the chip already reserved room for inside its block.
       if (badge && !box) chipObstacles.push({ x: badge.x, y: badge.y, w: badge.d, h: badge.d, annotation: true });
     }
   };
@@ -2145,8 +2246,6 @@ async function addEditableDiagram(
   // Which step numbers the workflow slide will actually narrate. Dropping a
   // chip is only ever a trade against that list; with no row to read it is a
   // deletion.
-  const narratedRows = new Map(workflowListFromEdges(diagram.edges ?? []).map((entry) => [entry.step, entry.description]));
-  const narratedSteps = new Set(narratedRows.keys());
 
   for (const [key, bundle] of bundles) {
     const shape = shapes.get(key);

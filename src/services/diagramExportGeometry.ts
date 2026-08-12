@@ -317,6 +317,50 @@ export function mixWithWhite(hex: string, weight: number): string {
 }
 
 /**
+ * sRGB relative luminance (WCAG 2.1) of a `#rrggbb` colour.
+ */
+export function relativeLuminance(hex: string): number {
+  const base = normalizeHex(hex) ?? '#000000';
+  const channel = (i: number) => {
+    const c = parseInt(base.slice(i, i + 2), 16) / 255;
+    return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+  };
+  return 0.2126 * channel(1) + 0.7152 * channel(3) + 0.0722 * channel(5);
+}
+
+/** WCAG 2.1 contrast ratio between two colours, 1..21. */
+export function contrastRatio(a: string, b: string): number {
+  const la = relativeLuminance(a);
+  const lb = relativeLuminance(b);
+  return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05);
+}
+
+/**
+ * The nearest version of `color` that is legible as text on `background`.
+ *
+ * Scales the colour toward black or toward white — whichever direction the
+ * background allows — until it clears `target`, keeping the hue so the drawing
+ * still reads as the user's chosen palette. Falls back to plain black or white
+ * when even the extreme does not reach the target.
+ */
+export function readableTextOn(color: string, background: string, target = 4.5): string {
+  const base = normalizeHex(color) ?? '#000000';
+  const bg = normalizeHex(background) ?? '#ffffff';
+  if (contrastRatio(base, bg) >= target) return base;
+  const r = parseInt(base.slice(1, 3), 16);
+  const g = parseInt(base.slice(3, 5), 16);
+  const b = parseInt(base.slice(5, 7), 16);
+  const toward = relativeLuminance(bg) > 0.5 ? 0 : 255;
+  for (let step = 1; step <= 20; step += 1) {
+    const t = step / 20;
+    const mix = (v: number) => Math.round(v * (1 - t) + toward * t).toString(16).padStart(2, '0');
+    const candidate = `#${mix(r)}${mix(g)}${mix(b)}`;
+    if (contrastRatio(candidate, bg) >= target) return candidate;
+  }
+  return toward === 0 ? '#000000' : '#ffffff';
+}
+
+/**
  * Resolve the colour for a zone. The user's picked colour wins; otherwise the
  * shared palette is cycled by group index so the fallback is identical in every
  * export.
@@ -324,7 +368,12 @@ export function mixWithWhite(hex: string, weight: number): string {
 export function zoneStyleFor(box: ExportBox, index: number): ZoneStyle {
   const border = normalizeHex(box.customColor?.border) ?? normalizeHex(box.customColor?.header);
   if (border) {
-    return { bg: mixWithWhite(border, 0.14), border, text: border };
+    const bg = mixWithWhite(border, 0.14);
+    // A picked colour is chosen to look right as a border, where contrast does
+    // not matter. Reused verbatim as label text it routinely lands at 2-3:1 —
+    // the zone title, which names the tier, becomes the least readable words on
+    // the slide. Darken it until it clears AA against its own panel.
+    return { bg, border, text: readableTextOn(border, bg) };
   }
   return ZONE_PALETTE[index % ZONE_PALETTE.length];
 }

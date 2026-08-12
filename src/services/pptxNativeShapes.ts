@@ -201,7 +201,11 @@ function foldLabels(shapes: ShapeXml[]): Map<number, string> {
         } lIns="${pad.l}" tIns="${pad.t}" rIns="${pad.r}" bIns="${pad.b}">`,
     );
     folded.set(label.id, '');
-    folded.set(owner.id, owner.xml.replace(/<\/p:sp>$/, `${anchored}</p:sp>`));
+    // Build on any caption already folded into this owner, not on the original
+    // shape: a tile that owns two captions would otherwise keep only the last,
+    // having already deleted the first.
+    const base = folded.get(owner.id) || owner.xml;
+    folded.set(owner.id, base.replace(/<\/p:sp>$/, `${anchored}</p:sp>`));
   }
   return folded;
 }

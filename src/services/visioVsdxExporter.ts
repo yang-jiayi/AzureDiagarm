@@ -765,6 +765,16 @@ export async function buildVsdxPackage(
   nodes: Node[],
   edges: Edge[],
   diagramName = 'Azure Architecture',
+  /**
+   * Already-rendered icons, when the caller has them.
+   *
+   * Rasterisation needs a DOM, so under Node every icon resolves to nothing
+   * and the drawing ships with no media and no page relationships at all —
+   * which is the one configuration no user ever receives, and the one every
+   * check was being run against. A caller that can supply the bitmaps gets the
+   * real drawing measured instead.
+   */
+  presetIcons?: Map<string, RasterizedIcon>,
 ): Promise<VsdxPackage> {
   const boxes = collectExportBoxes(nodes);
   const { groups, services } = partitionBoxes(boxes);
@@ -830,7 +840,7 @@ export async function buildVsdxPackage(
     return { x, y: pageHeightIn - topY };
   };
 
-  const icons = await rasterizeIcons(services.map((box) => box.iconPath), 128);
+  const icons = presetIcons ?? await rasterizeIcons(services.map((box) => box.iconPath), 128);
 
   const shapes: string[] = [];
   const connects: string[] = [];

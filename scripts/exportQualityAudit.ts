@@ -24,6 +24,10 @@ const EMU_PER_INCH = 914400;
 const PIXEL_PNG =
   'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
 
+const PIXEL_PNG_BYTES = Uint8Array.from(
+  Buffer.from(PIXEL_PNG.slice(PIXEL_PNG.indexOf(',') + 1), 'base64'),
+);
+
 interface Shape {
   name: string;
   x: number;
@@ -34,7 +38,42 @@ interface Shape {
   fontSize: number | null;
   /** Vertical anchor of the text body: 't', 'ctr', or 'b'. */
   anchor: string | null;
+  /** Shape fill as RRGGBB, or null when the shape declares no fill. */
+  fill: string | null;
+  /** Fill opacity, 0..1. A translucent chip shows what is underneath it. */
+  fillAlpha: number;
+  /** Every drawn text run, with the colour and size it is drawn at. */
+  runs: { color: string | null; sizePt: number; bold: boolean; text: string }[];
   path?: { x: number; y: number }[];
+}
+
+/** sRGB relative luminance, per WCAG 2.1. */
+function luminance(hex: string): number {
+  const v = [0, 2, 4].map((i) => {
+    const c = parseInt(hex.slice(i, i + 2), 16) / 255;
+    return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+  });
+  return 0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2];
+}
+
+/** WCAG contrast ratio between two RRGGBB colours, 1..21. */
+function contrastRatio(a: string, b: string): number {
+  const la = luminance(a);
+  const lb = luminance(b);
+  return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05);
+}
+
+/** What a translucent fill actually looks like over what is behind it. */
+function blend(fg: string, bg: string, alpha: number): string {
+  if (alpha >= 1) return fg;
+  const mix = (i: number) => {
+    const f = parseInt(fg.slice(i, i + 2), 16);
+    const b = parseInt(bg.slice(i, i + 2), 16);
+    return Math.round(f * alpha + b * (1 - alpha))
+      .toString(16)
+      .padStart(2, '0');
+  };
+  return `${mix(0)}${mix(2)}${mix(4)}`;
 }
 
 /** Approximate rendered text width in inches. CJK glyphs are full-width. */
@@ -77,6 +116,26 @@ function parseShapes(xml: string): Shape[] {
         { x: flipH ? x : x + w, y: flipV ? y : y + h },
       ];
     }
+    // Colour, so a rule can ask whether the text is actually readable against
+    // what is drawn behind it. The fill lives in spPr before <a:ln>, which has
+    // a solidFill of its own.
+    const txIdx = body.indexOf('<p:txBody>');
+    const spPr = txIdx >= 0 ? body.slice(0, txIdx) : body;
+    const beforeLn = spPr.split('<a:ln')[0];
+    const fillMatch = /<a:solidFill>\s*<a:srgbClr val="([0-9A-Fa-f]{6})"\s*(?:\/>|>([\s\S]*?)<\/a:srgbClr>)/.exec(beforeLn);
+    const fill = /<a:noFill\/>/.test(beforeLn) ? null : (fillMatch?.[1]?.toLowerCase() ?? null);
+    const alphaMatch = fillMatch?.[2] ? /<a:alpha val="(\d+)"\/>/.exec(fillMatch[2]) : null;
+    const fillAlpha = alphaMatch ? +alphaMatch[1] / 100000 : 1;
+    const runs = [...body.matchAll(/<a:r>([\s\S]*?)<\/a:r>/g)].map((r) => {
+      const rb = r[1];
+      const rpr = /<a:rPr[^>]*>([\s\S]*?)<\/a:rPr>/.exec(rb);
+      return {
+        color: /<a:srgbClr val="([0-9A-Fa-f]{6})"/.exec(rpr?.[1] ?? '')?.[1]?.toLowerCase() ?? null,
+        sizePt: (+(/<a:rPr[^>]*\bsz="(\d+)"/.exec(rb)?.[1] ?? 0) || 1800) / 100,
+        bold: /<a:rPr[^>]*\bb="1"/.test(rb),
+        text: (/<a:t>([\s\S]*?)<\/a:t>/.exec(rb)?.[1] ?? '').trim(),
+      };
+    });
     shapes.push({
       name,
       x,
@@ -86,6 +145,9 @@ function parseShapes(xml: string): Shape[] {
       text: texts.join('').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>'),
       fontSize: sz ? +sz[1] / 100 : null,
       anchor: /<a:bodyPr[^>]*\banchor="([^"]+)"/.exec(body)?.[1] ?? null,
+      fill,
+      fillAlpha,
+      runs,
       path,
     });
   }
@@ -101,6 +163,51 @@ function parseShapes(xml: string): Shape[] {
  * covered" has to ask about the lines, because asking about the box is asking
  * about the tile.
  */
+/**
+ * Whether every word on the slide is actually readable against what is drawn
+ * behind it, to WCAG 2.1 AA. Nothing had ever measured this: the audit only
+ * ever built the light deck, and no rule looked at colour at all.
+ */
+function contrastIssues(shapes: Shape[], slideBg: string): string[] {
+  const issues: string[] = [];
+  shapes.forEach((shape, idx) => {
+    const readable = shape.runs.filter((r) => r.text !== '' && r.color);
+    if (readable.length === 0) return;
+    // The backdrop is everything already drawn under these glyphs, composited
+    // in order — a caption on a translucent zone inside a tile is read against
+    // the result, not against any one of them.
+    let backdrop = slideBg;
+    for (let i = 0; i < idx; i++) {
+      const under = shapes[i];
+      if (!under.fill) continue;
+      if (
+        under.x <= shape.x + 0.02 &&
+        under.y <= shape.y + 0.02 &&
+        under.x + under.w >= shape.x + shape.w - 0.02 &&
+        under.y + under.h >= shape.y + shape.h - 0.02
+      ) {
+        backdrop = blend(under.fill, backdrop, under.fillAlpha);
+      }
+    }
+    if (shape.fill) backdrop = blend(shape.fill, backdrop, shape.fillAlpha);
+    let worst: { ratio: number; need: number; run: (typeof readable)[number] } | null = null;
+    for (const run of readable) {
+      const ratio = contrastRatio(run.color!, backdrop);
+      const large = run.sizePt >= 18 || (run.bold && run.sizePt >= 14);
+      const need = large ? 3 : 4.5;
+      if (ratio < need && (!worst || ratio < worst.ratio)) worst = { ratio, need, run };
+    }
+    if (worst) {
+      const sample = worst.run.text.length > 28 ? `${worst.run.text.slice(0, 28)}…` : worst.run.text;
+      issues.push(
+        `"${sample}" in ${shape.name || 'shape'} is #${worst.run.color} on #${backdrop} — ` +
+          `contrast ${worst.ratio.toFixed(2)}:1, below the ${worst.need}:1 WCAG AA bar at ${worst.run.sizePt}pt`,
+      );
+    }
+  });
+  return issues;
+}
+
 function drawnTextRect(shape: Shape): { x: number; y: number; w: number; h: number } | null {
   const text = shape.text.trim();
   if (text === '' || !shape.fontSize) return null;
@@ -155,6 +262,11 @@ interface Scenario {
    * exporter that silently refolded it would no longer match what they drew.
    */
   fromLayoutEngine?: boolean;
+  /**
+   * Export against the dark palette. Every check had only ever run against the
+   * light theme, so no colour the dark deck uses had ever been measured.
+   */
+  dark?: boolean;
 }
 
 function svc(id: string, label: string, x: number, y: number, parent?: string, icon = true): Node {
@@ -520,6 +632,102 @@ function grid5x5CaptionScenario(): Scenario {
     }
   }
   return { id: 'grid5x5-captions', nodes, edges };
+}
+
+/**
+ * A 5×5 grid whose vertical hops carry an ordinary 45-character sentence.
+ *
+ * No fan, no metadata, no CJK, stock names — the least exotic diagram that can
+ * be drawn, and the corridor between rows is still too narrow for the chip.
+ */
+function longLabelGridScenario(): Scenario {
+  const nodes: Node[] = [];
+  for (let r = 0; r < 5; r += 1) {
+    for (let c = 0; c < 5; c += 1) nodes.push(svc(`p${r}${c}`, `Azure Service ${r}${c}`, c * 210, r * 140));
+  }
+  const edges: Edge[] = [];
+  let step = 0;
+  for (let r = 0; r < 5; r += 1) {
+    for (let c = 0; c + 1 < 5; c += 1) {
+      step += 1;
+      edges.push({ id: `h${r}${c}`, source: `p${r}${c}`, target: `p${r}${c + 1}`, label: 'writes order documents to Cosmos DB', data: { stepNumber: step, stepDescription: `Step ${step}` } } as Edge);
+    }
+  }
+  for (let r = 0; r + 1 < 5; r += 1) {
+    for (let c = 0; c < 5; c += 1) {
+      step += 1;
+      edges.push({ id: `v${r}${c}`, source: `p${r}${c}`, target: `p${r + 1}${c}`, label: 'queries the read model with a managed identity', data: { stepNumber: step, stepDescription: `Step ${step}` } } as Edge);
+    }
+  }
+  return { id: 'long-label-grid', nodes, edges };
+}
+
+/**
+ * The same grid with SKU / region / price on every tile, so the bottom-anchored
+ * sub-line is present — the strip a chip lapping its endpoint tile from below
+ * lands on, which nothing modelled and no rule measured.
+ */
+function metaTightScenario(): Scenario {
+  const nodes: Node[] = [];
+  for (let r = 0; r < 5; r += 1) {
+    for (let c = 0; c < 5; c += 1) {
+      const node = svc(`q${r}${c}`, `Azure Database for PostgreSQL ${r}${c}`, c * 210, r * 140);
+      Object.assign(node.data as Record<string, unknown>, {
+        sku: 'Standard_D4s_v5',
+        region: 'japaneast',
+        pricing: { estimatedCost: 128.4, quantity: 1, region: 'japaneast' },
+      });
+      nodes.push(node);
+    }
+  }
+  const edges: Edge[] = [];
+  let step = 0;
+  for (let r = 0; r < 5; r += 1) {
+    for (let c = 0; c + 1 < 5; c += 1) {
+      step += 1;
+      edges.push({ id: `h${r}${c}`, source: `q${r}${c}`, target: `q${r}${c + 1}`, label: 'writes order documents to Cosmos DB', data: { stepNumber: step, stepDescription: `Step ${step}` } } as Edge);
+    }
+  }
+  for (let r = 0; r + 1 < 5; r += 1) {
+    for (let c = 0; c < 5; c += 1) {
+      step += 1;
+      edges.push({ id: `v${r}${c}`, source: `q${r}${c}`, target: `q${r + 1}${c}`, label: 'queries the read model with a managed identity', data: { stepNumber: step, stepDescription: `Step ${step}` } } as Edge);
+    }
+  }
+  for (let i = 0; i < 8; i += 1) {
+    step += 1;
+    edges.push({ id: `mf${i}`, source: 'q22', target: 'q23', label: `replicates the order stream ${i}`, data: { stepNumber: step, stepDescription: `Step ${step}` } } as Edge);
+  }
+  return { id: 'meta-tight', nodes, edges };
+}
+
+/** The same pressure with CJK names long enough to fill all three tile lines. */
+function longNameFanScenario(): Scenario {
+  const nodes: Node[] = [];
+  for (let r = 0; r < 5; r += 1) {
+    for (let c = 0; c < 5; c += 1) {
+      nodes.push(svc(`w${r}${c}`, `Azure Database for PostgreSQL フレキシブル サーバー ${r}${c}`, c * 210, r * 140));
+    }
+  }
+  const edges: Edge[] = [];
+  let step = 0;
+  for (let r = 0; r < 5; r += 1) {
+    for (let c = 0; c + 1 < 5; c += 1) {
+      step += 1;
+      edges.push({ id: `h${r}${c}`, source: `w${r}${c}`, target: `w${r}${c + 1}`, label: '注文ドキュメントを Cosmos DB に書き込みます', data: { stepNumber: step, stepDescription: `手順 ${step}` } } as Edge);
+    }
+  }
+  for (let r = 0; r + 1 < 5; r += 1) {
+    for (let c = 0; c < 5; c += 1) {
+      step += 1;
+      edges.push({ id: `v${r}${c}`, source: `w${r}${c}`, target: `w${r + 1}${c}`, label: 'マネージド ID で参照系を照会します', data: { stepNumber: step, stepDescription: `手順 ${step}` } } as Edge);
+    }
+  }
+  for (let i = 0; i < 8; i += 1) {
+    step += 1;
+    edges.push({ id: `wf${i}`, source: 'w22', target: 'w23', label: `注文ストリームを複製します ${i}`, data: { stepNumber: step, stepDescription: `手順 ${step}` } } as Edge);
+  }
+  return { id: 'long-name-fan', nodes, edges };
 }
 
 function fan8Tight5x5Scenario(): Scenario {
@@ -958,11 +1166,29 @@ function auditNativeConversion(rawSlides: readonly string[]): { issues: string[]
       }
     }
 
-    // Nothing the reader could see may be lost by the conversion.
-    for (const label of before.filter((s) => s.name.startsWith('service-label-'))) {
+    // A duplicated shape id makes PowerPoint declare the file damaged and
+    // repair it. The splice works by byte offset against the original shape
+    // list, so a collision is exactly the failure this transform is most
+    // likely to produce — and a glue check only proves ids *resolve*, not that
+    // they resolve to one shape.
+    const seenIds = new Set<string>();
+    for (const decl of after.matchAll(/<p:cNvPr id="(\d+)" name="([^"]*)"/g)) {
+      if (seenIds.has(decl[1])) {
+        issues.push(`${where}: conversion emitted shape id ${decl[1]} twice ("${decl[2]}")`);
+      }
+      seenIds.add(decl[1]);
+    }
+
+    // Nothing the reader could see may be lost by the conversion. The SKU /
+    // region / price sub-line counts: a conversion that ate the cost figure
+    // would otherwise pass every rule here.
+    for (const label of before.filter(
+      (s) => s.name.startsWith('service-label-') || s.name.startsWith('service-meta-'),
+    )) {
       if (label.text.trim() === '') continue;
       if (!after.includes(escapeXml(label.text))) {
-        issues.push(`${where}: conversion lost the service name "${label.text}"`);
+        const kind = label.name.startsWith('service-meta-') ? 'service sub-line' : 'service name';
+        issues.push(`${where}: conversion lost the ${kind} "${label.text}"`);
       }
     }
     for (const tile of before.filter((s) => s.name.startsWith('service-') && !s.name.includes('label') && !s.name.includes('meta'))) {
@@ -989,7 +1215,7 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
     diagramName: 'Contoso Platform',
     author: 'Audit',
     date: '2026-08-10',
-    isDarkMode: false,
+    isDarkMode: scenario.dark === true,
     diagram: { nodes: scenario.nodes, edges: scenario.edges },
   });
   const buffer = (await pptx.write({ outputType: 'nodebuffer' })) as Buffer;
@@ -1019,6 +1245,10 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
   const issues: string[] = [];
   const native = auditNativeConversion(allSlides);
   issues.push(...native.issues);
+  for (const slideXml of allSlides) {
+    const bg = /<p:bg>[\s\S]*?<a:srgbClr val="([0-9A-Fa-f]{6})"/.exec(slideXml)?.[1]?.toLowerCase() ?? 'ffffff';
+    issues.push(...contrastIssues(parseShapes(slideXml), bg));
+  }
   // The overview is exempt from the legibility floor because it is a map, not
   // a reading surface — but "smaller than the floor" is not the same as "ink
   // the reader cannot resolve at all". Type this small is grey mush that makes
@@ -1544,15 +1774,47 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
 }
 
 async function auditVsdx(scenario: Scenario): Promise<Report> {
-  const pkg = await buildVsdxPackage(scenario.nodes, scenario.edges, 'Contoso Platform');
+  // The drawing a user receives, not the one Node happens to be able to build.
+  // Rasterisation needs a DOM, so every icon silently resolved to nothing and
+  // the package shipped with no media and no page relationships — meaning the
+  // icon wiring, which is exactly what "the icons are missing" was about, had
+  // never once been measured.
+  const iconPaths = new Set<string>();
+  for (const node of scenario.nodes) {
+    const path = (node.data as { iconPath?: string } | undefined)?.iconPath;
+    if (path) iconPaths.add(path);
+  }
+  const icons = new Map<string, { bytes: Uint8Array; dataUrl: string; sizePx: number }>();
+  for (const path of iconPaths) {
+    icons.set(path, { bytes: PIXEL_PNG_BYTES, dataUrl: PIXEL_PNG, sizePx: 128 });
+  }
+  const pkg = await buildVsdxPackage(scenario.nodes, scenario.edges, 'Contoso Platform', icons);
   const issues: string[] = [];
   const pagePart = pkg.parts.find((p) => /page1\.xml$/i.test(p.path));
   const media = pkg.parts.filter((p) => /\/media\//i.test(p.path));
   const serviceCount = scenario.nodes.filter((n) => n.type !== 'groupNode').length;
-  // Icon rasterisation needs a DOM; under Node it always yields zero media
-  // parts, so icon coverage is asserted by the Playwright probe instead.
-  const canRasterize = typeof document !== 'undefined';
-  if (canRasterize && media.length === 0) issues.push(`no embedded icon media parts (expected ~${serviceCount})`);
+  if (iconPaths.size > 0 && media.length === 0) {
+    issues.push(`no embedded icon media parts (expected ~${serviceCount})`);
+  }
+  // A drawing that names a relationship it does not ship is a drawing Visio
+  // refuses to open. Neither half was ever checked, because under Node there
+  // were no relationships to check.
+  const relsPart = pkg.parts.find((p) => /page1\.xml\.rels$/i.test(p.path));
+  const relsXml = typeof relsPart?.data === 'string' ? relsPart.data : '';
+  const pageXmlForRels = typeof pagePart?.data === 'string' ? pagePart.data : '';
+  const referenced = new Set([...pageXmlForRels.matchAll(/r:id="([^"]+)"/g)].map((m) => m[1]));
+  if (referenced.size > 0 && relsXml === '') {
+    issues.push(`${referenced.size} icon relationship(s) referenced but no page1.xml.rels part was written`);
+  }
+  const declared = new Set([...relsXml.matchAll(/Id="([^"]+)"/g)].map((m) => m[1]));
+  for (const id of referenced) {
+    if (!declared.has(id)) issues.push(`icon relationship "${id}" is used on the page but never declared`);
+  }
+  const targets = [...relsXml.matchAll(/Target="\.\.\/media\/([^"]+)"/g)].map((m) => m[1]);
+  const shipped = new Set(media.map((p) => p.path.replace(/^.*\/media\//, '')));
+  for (const target of targets) {
+    if (!shipped.has(target)) issues.push(`icon relationship points at media/${target}, which is not in the package`);
+  }
   const xml = typeof pagePart?.data === 'string' ? pagePart.data : '';
   const textCount = (xml.match(/<Text>/g) ?? []).length;
   if (textCount < serviceCount) issues.push(`only ${textCount} text blocks for ${serviceCount} services`);
@@ -1772,11 +2034,19 @@ async function main(): Promise<void> {
     compactScenario(), wideScenario(), oversizeScenario(), outlierScenario(),
     bandedScenario(), narrativeScenario(), barbellScenario(), parallelScenario(),
     ladderInGridScenario(), twinLaddersScenario(), strayLadderScenario(), legendCornerScenario(), duplicateStepsScenario(), denseZoneScenario(),
-    gridFanScenario(), gridFan3Scenario(), fan8Tight5x5Scenario(), metaSublineScenario(), grid5x5CaptionScenario(), longNameGridScenario(), estateChainScenario(), chain24Scenario(), tripleMutedScenario(), estate72Scenario(),
+    gridFanScenario(), gridFan3Scenario(), fan8Tight5x5Scenario(), metaSublineScenario(), grid5x5CaptionScenario(), longNameGridScenario(), longLabelGridScenario(), metaTightScenario(), longNameFanScenario(), estateChainScenario(), chain24Scenario(), tripleMutedScenario(), estate72Scenario(),
     await generatedScenario(), await groupedGeneratedScenario(),
   ];
   const reports: Report[] = [];
-  for (const scenario of scenarios) {
+  // A single scenario name (or comma-separated list) narrows the run. The full
+  // corpus takes minutes, which makes an iterate-on-one-fixture loop painful;
+  // CI and `npm test` pass no argument and so always run everything.
+  const only = process.argv.slice(2).filter((a) => !a.startsWith('-')).flatMap((a) => a.split(','));
+  const selected = only.length > 0 ? scenarios.filter((s) => only.includes(s.id)) : scenarios;
+  if (only.length > 0 && selected.length === 0) {
+    throw new Error(`no scenario matched ${only.join(', ')}; known: ${scenarios.map((s) => s.id).join(', ')}`);
+  }
+  for (const scenario of selected) {
     reports.push(await auditPptx(scenario));
     reports.push(await auditVsdx(scenario));
   }
