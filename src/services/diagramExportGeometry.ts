@@ -1369,9 +1369,15 @@ export function buildExportRoutes(
     // deterministic.
     const sorted = [...ends].sort((a, b) => (a.along - b.along) || a.edgeId.localeCompare(b.edgeId));
     const step = Math.min(extent / (2 * (sorted.length + 1)), 26);
+    // Monotone along the side. Dealing ±1, ±2 … by rank instead put the k-th
+    // nearest destination alternately above and below the centre, so a six-way
+    // fan out of a front door left the side in the order 4 2 0 1 3 5 and drew
+    // itself as a braid. An odd fan is nudged half a step so nothing lands on
+    // the centre, which belongs to the straight hops.
+    const middle = (sorted.length - 1) / 2;
+    const offCentre = sorted.length % 2 === 1 ? 0.5 : 0;
     sorted.forEach((entry, i) => {
-      const rank = Math.floor(i / 2) + 1;
-      shifts.set(`${entry.edgeId}#${entry.end}`, (i % 2 === 0 ? -1 : 1) * rank * step);
+      shifts.set(`${entry.edgeId}#${entry.end}`, (i - middle + offCentre) * step);
     });
   }
 
@@ -1380,7 +1386,6 @@ export function buildExportRoutes(
     const source = boxes.get(fromId);
     const target = boxes.get(toId);
     if (!source || !target) continue;
-
     const type = edgeConnectionType(edge);
     const style = connectionStyleFor(type);
     const dashed = style.dashed || isDashed(edge);

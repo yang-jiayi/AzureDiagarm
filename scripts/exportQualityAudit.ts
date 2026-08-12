@@ -432,6 +432,22 @@ function metaSublineScenario(): Scenario {
  * label and callout belonging to no slide at all: the arrow is drawn, the
  * number is missing, and the workflow list still cites it.
  */
+/**
+ * One front door fanning out to six services stacked on the far side. The
+ * commonest Architecture Center shape, and the one that exposes port dealing:
+ * if the six east-side ports are not handed out in the same top-to-bottom
+ * order as the targets, the hops braid on their way across the paper.
+ */
+function hubFanScenario(): Scenario {
+  const nodes: Node[] = [svc('hub', 'Azure Front Door', 0, 500)];
+  const edges: Edge[] = [];
+  for (let i = 0; i < 6; i += 1) {
+    nodes.push(svc(`h${i}`, `Backend Service ${i}`, 600, i * 200));
+    edges.push({ id: `hf${i}`, source: 'hub', target: `h${i}`, label: `route ${i}`, data: { stepNumber: i + 1 } } as Edge);
+  }
+  return { id: 'hub-fan', nodes, edges };
+}
+
 function barbellScenario(): Scenario {
   const nodes: Node[] = [];
   const edges: Edge[] = [];
@@ -1398,6 +1414,39 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
   }
   const native = auditNativeConversion(allSlides);
   issues.push(...native.issues);
+  // A chip or a numbered callout with no arrow anywhere in the deck is worse
+  // than a missing label: the reader sees a sentence and a ① floating on blank
+  // paper and goes looking for a hop that was never drawn. This caught a route
+  // dropped from EVERY window at once by a per-window "don't draw a flattened
+  // hop" rule that assumed some other window would carry it.
+  const drawnArrows = new Set<string>();
+  const annotatedArrows = new Set<string>();
+  for (const slideXml of allSlides) {
+    for (const shape of parseShapes(slideXml)) {
+      if (shape.name.startsWith('connector-label-')) annotatedArrows.add(shape.name.slice('connector-label-'.length));
+      else if (shape.name.startsWith('connector-step-')) annotatedArrows.add(shape.name.slice('connector-step-'.length));
+      else if (shape.name.startsWith('connector-')) drawnArrows.add(shape.name.slice('connector-'.length));
+    }
+  }
+  for (const id of annotatedArrows) {
+    if (!drawnArrows.has(id)) issues.push(`arrow "connector-${id}" is annotated but drawn on no slide`);
+  }
+  // A tile asked to show a SKU, a region and a price and showing none of them
+  // is silent content loss: unlike a muted chip, whose wording is handed to the
+  // step list, a dropped sub-line has no carrier anywhere in the deck. The
+  // numbers the reader came for are simply absent. Exempt when the tiles are
+  // too small to carry a second character row at all.
+  const wantsMeta = scenario.nodes.filter((node) => {
+    const data = node.data as Record<string, unknown> | undefined;
+    return !!data && (data.sku !== undefined || data.region !== undefined);
+  }).length;
+  if (wantsMeta > 0 && roomyTile) {
+    const drawnMeta = allSlides.reduce(
+      (sum, slideXml) => sum + parseShapes(slideXml).filter((s) => s.name.startsWith('service-meta-')).length,
+      0,
+    );
+    if (drawnMeta === 0) issues.push(`deck drops the SKU/region sub-line on all ${wantsMeta} tiles that declare one`);
+  }
   for (const slideXml of allSlides) {
     const bg = /<p:bg>[\s\S]*?<a:srgbClr val="([0-9A-Fa-f]{6})"/.exec(slideXml)?.[1]?.toLowerCase() ?? 'ffffff';
     issues.push(...contrastIssues(parseShapes(slideXml), bg));
@@ -1784,6 +1833,47 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
           .slice(0, 4)
           .join(', ');
         issues.push(`arrow "${short.name}" is drawn under other arrows (${under || 'unnamed'}) for ${coincident.toFixed(2)}in of its ${shortLen.toFixed(2)}in length`);
+      }
+    }
+    // Two hops leaving the SAME side of the SAME service must leave it in the
+    // same order they arrive. A fan out of a front door is one of the commonest
+    // shapes on the Architecture Center, and when the ports are dealt in the
+    // wrong order the arrows braid: every line crosses its neighbours on the
+    // way out and the reader has to trace each one through the knot. The braid
+    // forms on the shared jog column, where the segments are collinear rather
+    // than properly crossing, so it is caught by ranking rather than by
+    // intersection.
+    const sourceOf = new Map<string, string>();
+    for (const edge of scenario.edges) sourceOf.set(String(edge.id), String(edge.source));
+    const fans = new Map<string, { name: string; depart: number; arrive: number }[]>();
+    for (const arrow of arrows) {
+      const path = arrow.path ?? [];
+      if (path.length < 4) continue;
+      const from = sourceOf.get(arrow.name.slice('connector-'.length));
+      if (from === undefined) continue;
+      const stubIsHorizontal = Math.abs(path[1].x - path[0].x) > Math.abs(path[1].y - path[0].y);
+      const key = `${from}#${stubIsHorizontal ? (path[1].x > path[0].x ? 'E' : 'W') : (path[1].y > path[0].y ? 'S' : 'N')}`;
+      const list = fans.get(key) ?? [];
+      const end = path[path.length - 1];
+      list.push({
+        name: arrow.name,
+        depart: stubIsHorizontal ? path[2].y - path[0].y : path[2].x - path[0].x,
+        arrive: stubIsHorizontal ? end.y : end.x,
+      });
+      fans.set(key, list);
+    }
+    for (const [key, fan] of fans) {
+      if (fan.length < 2) continue;
+      const ranked = [...fan].sort((a, b) => a.arrive - b.arrive);
+      for (let i = 1; i < ranked.length; i += 1) {
+        const prev = ranked[i - 1];
+        const here = ranked[i];
+        // Only judge pairs whose destinations are genuinely apart, so a tie
+        // broken either way is never called a braid.
+        if (here.arrive - prev.arrive < 0.05) continue;
+        if (here.depart < prev.depart - 0.001) {
+          issues.push(`arrows "${prev.name}" and "${here.name}" leave "service-${key.split('#')[0]}" in the opposite order to their destinations and cross each other`);
+        }
       }
     }
   }
@@ -2445,7 +2535,7 @@ async function main(): Promise<void> {
   mkdirSync(OUT, { recursive: true });
   const base = [
     compactScenario(), wideScenario(), oversizeScenario(), outlierScenario(),
-    bandedScenario(), narrativeScenario(), barbellScenario(), parallelScenario(),
+    bandedScenario(), narrativeScenario(), barbellScenario(), hubFanScenario(), parallelScenario(),
     ladderInGridScenario(), twinLaddersScenario(), strayLadderScenario(), legendCornerScenario(), duplicateStepsScenario(), denseZoneScenario(),
     metaChipScenario(), gridFanScenario(), gridFan3Scenario(), fan8Tight5x5Scenario(), metaSublineScenario(), grid5x5CaptionScenario(), longNameGridScenario(), longLabelGridScenario(), metaTightScenario(),     longNameFanScenario(), estateChainScenario(), chain24Scenario(), tripleMutedScenario(), estate72Scenario(), workflowProseScenario(), workflowLongProseScenario(), allCategoriesScenario(),
     await generatedScenario(), await groupedGeneratedScenario(),

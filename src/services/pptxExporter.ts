@@ -633,6 +633,97 @@ function pptxDashType(route: ExportRoute): 'solid' | 'dash' | 'sysDot' | 'dashDo
   }
 }
 
+/**
+ * The part of a polyline that is actually on this window's paper.
+ *
+ * Off-window points used to be CLAMPED onto the frame border, which turns a leg
+ * running somewhere else on the drawing into a line along the edge of the
+ * slide. It is not where the arrow goes, and — because every clamped route is
+ * flattened onto the same border — two of them end up drawn exactly on top of
+ * each other: on a 72-service estate two wrap-around hops shared 10.39in of a
+ * 10.51in line.
+ *
+ * Clipping instead of clamping draws the hop where it really is and simply
+ * stops it at the paper's edge, which is what a reader expects at a seam. A
+ * route that lies wholly inside the frame comes back untouched, so the
+ * overwhelming majority of arrows are byte-identical to before.
+ *
+ * Discarding the hop instead was tried and is wrong: nothing guarantees another
+ * window draws it. A single-window clamped deck, or a hop spanning two windows
+ * and contained by neither, loses the arrow from the deck ENTIRELY while its
+ * chip and numbered callout stay behind pointing at blank paper.
+ */
+function clipToFrame(
+  points: readonly { x: number; y: number }[],
+  frame: DiagramFrame,
+): { x: number; y: number }[] {
+  const x0 = frame.x;
+  const x1 = frame.x + frame.w;
+  const y0 = frame.y;
+  const y1 = frame.y + frame.h;
+  const eps = 1e-6;
+  const inside = (p: { x: number; y: number }): boolean => p.x >= x0 - eps && p.x <= x1 + eps
+    && p.y >= y0 - eps && p.y <= y1 + eps;
+  if (points.every(inside)) return [...points];
+
+  // Liang-Barsky, run per segment so an axis-aligned leg keeps exact endpoints.
+  const clipSegment = (
+    a: { x: number; y: number },
+    b: { x: number; y: number },
+  ): [{ x: number; y: number }, { x: number; y: number }] | null => {
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    let t0 = 0;
+    let t1 = 1;
+    const edges: Array<[number, number]> = [[-dx, a.x - x0], [dx, x1 - a.x], [-dy, a.y - y0], [dy, y1 - a.y]];
+    for (const [p, q] of edges) {
+      if (Math.abs(p) < eps) {
+        if (q < -eps) return null;
+      } else {
+        const r = q / p;
+        if (p < 0) {
+          if (r > t1) return null;
+          if (r > t0) t0 = r;
+        } else {
+          if (r < t0) return null;
+          if (r < t1) t1 = r;
+        }
+      }
+    }
+    const at = (t: number): { x: number; y: number } => (t <= 0 ? a : t >= 1 ? b : { x: a.x + dx * t, y: a.y + dy * t });
+    return [at(t0), at(t1)];
+  };
+
+  const runs: Array<{ x: number; y: number }[]> = [];
+  let current: { x: number; y: number }[] = [];
+  const near = (a: { x: number; y: number }, b: { x: number; y: number }): boolean => Math.abs(a.x - b.x) < 1e-4 && Math.abs(a.y - b.y) < 1e-4;
+  for (let i = 1; i < points.length; i += 1) {
+    const piece = clipSegment(points[i - 1], points[i]);
+    if (!piece) {
+      if (current.length >= 2) runs.push(current);
+      current = [];
+      continue;
+    }
+    const [from, to] = piece;
+    if (current.length === 0) current = [from, to];
+    else if (near(current[current.length - 1], from)) current.push(to);
+    else {
+      if (current.length >= 2) runs.push(current);
+      current = [from, to];
+    }
+  }
+  if (current.length >= 2) runs.push(current);
+  if (runs.length === 0) return [];
+
+  // The longest surviving run: one arrow per hop per slide, and the shape that
+  // carries the arrowhead should be the piece the reader actually follows.
+  const length = (run: { x: number; y: number }[]): number => run.reduce(
+    (sum, point, i) => (i === 0 ? 0 : sum + Math.hypot(point.x - run[i - 1].x, point.y - run[i - 1].y)),
+    0,
+  );
+  return runs.reduce((best, run) => (length(run) > length(best) ? run : best), runs[0]);
+}
+
 function addConnector(
   pptx: PptxGenJS,
   slide: Slide,
@@ -641,41 +732,8 @@ function addConnector(
   clampTo?: DiagramFrame,
 ): void {
   const raw = route.points.map((point) => toInches(point, transform));
-  const points = raw
-    .map((point) => (clampTo
-      ? {
-        x: clamp(point.x, clampTo.x, clampTo.x + clampTo.w),
-        y: clamp(point.y, clampTo.y, clampTo.y + clampTo.h),
-      }
-      : point));
+  const points = clampTo ? clipToFrame(raw, clampTo) : raw;
   if (points.length < 2) return;
-  // A hop whose route mostly lies outside this window is not drawn as a hop.
-  //
-  // Clamping moves each off-window point onto the frame border, so a leg that
-  // runs somewhere else on the drawing is flattened into a line along the edge
-  // of this slide. It is not where the arrow goes, it is not readable as a hop,
-  // and — because every clamped route is flattened onto the SAME border — two
-  // of them are drawn exactly on top of each other: on a 72-service estate two
-  // wrap-around hops shared 10.39in of a 10.51in line. The hop is still drawn
-  // in full on the window that actually contains it, so here it is left out.
-  if (clampTo) {
-    const outside = raw.some((point) => point.x < clampTo.x - 0.01 || point.x > clampTo.x + clampTo.w + 0.01
-      || point.y < clampTo.y - 0.01 || point.y > clampTo.y + clampTo.h + 0.01);
-    if (outside) {
-      const onEdge = (p: { x: number; y: number }): boolean => Math.abs(p.x - clampTo.x) < 0.005
-        || Math.abs(p.x - (clampTo.x + clampTo.w)) < 0.005
-        || Math.abs(p.y - clampTo.y) < 0.005
-        || Math.abs(p.y - (clampTo.y + clampTo.h)) < 0.005;
-      let total = 0;
-      let flattened = 0;
-      for (let i = 1; i < points.length; i += 1) {
-        const len = Math.hypot(points[i].x - points[i - 1].x, points[i].y - points[i - 1].y);
-        total += len;
-        if (onEdge(points[i - 1]) && onEdge(points[i])) flattened += len;
-      }
-      if (total > 0 && flattened > 0.6 * total) return;
-    }
-  }
 
   const lineProps = {
     color: stripHash(route.color),
@@ -1524,7 +1582,11 @@ function addNodeShape(
   const drawnFont = named ? fontSize : OVERVIEW_LEGIBLE_PT;
   const meta = metaSubline(box);
   const metaFontSize = clamp(fontSize - 2, 3.5, 9);
-  let metaBand = named && showsMeta(h, px) && !!meta ? fontSize * 1.55 / 72 + 0.03 : 0;
+  // Sized from the sub-line's own font, not the name's. Deriving the band from
+  // `fontSize` reserved 0.232in for a line needing 0.117in on every tile in the
+  // corpus, and on a tight deck that phantom 0.05-0.09in was the whole reason
+  // the icon did not fit and was dropped.
+  let metaBand = named && showsMeta(h, px) && !!meta ? metaFontSize * 1.55 / 72 + 0.03 : 0;
 
   const innerW = Math.max(0.05, w - 0.06);
   // How much of the name the tile can actually hold, rather than a flat 40
@@ -1905,8 +1967,34 @@ async function addEditableDiagram(
     if (route.points.length === 0) return owns(route.labelAnchor.x, route.labelAnchor.y);
     const xs = route.points.map((point) => point.x);
     const ys = route.points.map((point) => point.y);
-    return overlapsAxis(Math.min(...xs), Math.max(...xs), view.minX, view.maxX, first.x, last.x)
-      && overlapsAxis(Math.min(...ys), Math.max(...ys), view.minY, view.maxY, first.y, last.y);
+    if (!(overlapsAxis(Math.min(...xs), Math.max(...xs), view.minX, view.maxX, first.x, last.x)
+      && overlapsAxis(Math.min(...ys), Math.max(...ys), view.minY, view.maxY, first.y, last.y))) return false;
+    // Bounding-box overlap alone lets a hop that merely clips a corner of this
+    // window be drawn as a stub at the seam. Several wrap-arounds leaving the
+    // same edge reduce to the same stub, so the reader sees one short line
+    // standing for three hops that go somewhere else entirely. A quarter of the
+    // hop has to be on this paper for the fragment to be worth drawing.
+    //
+    // Safe to drop because a banded deck always opens with an overview slide
+    // covering the whole drawing, so every route is drawn there whatever the
+    // slices decide — and the audit fails any deck with an annotation whose
+    // arrow is drawn on no slide at all.
+    let total = 0;
+    let inView = 0;
+    for (let i = 1; i < route.points.length; i += 1) {
+      const a = route.points[i - 1];
+      const b = route.points[i];
+      const len = Math.hypot(b.x - a.x, b.y - a.y);
+      total += len;
+      const steps = Math.max(1, Math.ceil(len / 8));
+      for (let s = 0; s < steps; s += 1) {
+        const t = (s + 0.5) / steps;
+        const x = a.x + (b.x - a.x) * t;
+        const y = a.y + (b.y - a.y) * t;
+        if (x >= view.minX && x <= view.maxX && y >= view.minY && y <= view.maxY) inView += len / steps;
+      }
+    }
+    return total <= 0 || inView >= 0.25 * total;
   };
   const shownGroups = groups.filter(visibleGroup);
   const shownServices = services.filter(visibleBox);
@@ -2167,9 +2255,15 @@ async function addEditableDiagram(
         //
         // Priced separately and much more loosely than the caption bar above.
         // A chip may brush a bystander's rim; the export audit allows a
-        // fiftieth of a tile, so this bar sits at roughly double that and
-        // cannot mute a chip the audit would have passed.
-        const STRANGER_TILE_SQ_IN = 0.04;
+        // fiftieth of a tile, so this bar sits at exactly that and hands the
+        // wording over the moment the drawing would fail the gate.
+        // Priced as a FRACTION of the bystander, exactly as the export audit
+        // prices it, so the exporter and the gate can never disagree about
+        // what counts as standing on a stranger. A flat area bar cannot match
+        // it: a fiftieth of a small tile and of a large one are different
+        // numbers of square inches, and the difference is what let a 2% lap
+        // ship while a 13% one was muted.
+        const STRANGER_TILE_FRACTION = 0.02;
         const ownEnds = new Set([route.sourceId, route.targetId]);
         let onStrangers = 0;
         for (const o of chipObstacles) {
@@ -2180,11 +2274,11 @@ async function addEditableDiagram(
           const dx = Math.min(b.x + b.w, o.x + o.w) - Math.max(b.x, o.x);
           const dy = Math.min(b.y + b.h, o.y + o.h) - Math.max(b.y, o.y);
           if (dx > 0 && dy > 0) {
-            if (stranger) onStrangers += dx * dy;
+            if (stranger) onStrangers = Math.max(onStrangers, (dx * dy) / Math.max(1e-6, o.w * o.h));
             else spoiled += dx * dy;
           }
         }
-        if (spoiled > SPOILED_CHIP_SQ_IN || onStrangers > STRANGER_TILE_SQ_IN) {
+        if (spoiled > SPOILED_CHIP_SQ_IN || onStrangers > STRANGER_TILE_FRACTION) {
           if (!thumbnail && route.label
             && !carriesWording(narratedRows.get(route.stepNumber) ?? '', route.label)) {
             mutedWording.set(route.stepNumber, route.label);
