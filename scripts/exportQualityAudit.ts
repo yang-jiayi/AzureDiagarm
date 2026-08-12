@@ -3646,6 +3646,55 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
   if (wantIcons > 0 && drawnIcons < wantIcons) {
     issues.push(`${wantIcons - drawnIcons} of ${wantIcons} service icon(s) are embedded but never drawn on the sheet`);
   }
+  // Ink has to stay in proportion to the shape it outlines. Every LineWeight on
+  // the sheet used to be a literal while the geometry around it scaled, so on a
+  // deeply reduced drawing the border stopped being an outline and became the
+  // tile: measured at 900 stages, a 0.0125in pen was a quarter of the tile's
+  // height and a connector stroke was over half the gap it crossed. The reader
+  // sees a grey mat, and zooming in does not recover it because the weight is
+  // in the file rather than in the view.
+  //
+  // A sixteenth of the typical tile is the bar: a border at that width already
+  // takes an eighth of the tile's vertical extent once both edges are counted.
+  // Measured on `over-row-700` at 16.2% sheet scale, the flat literal is 9.9% of
+  // the tile and a scaled pen is 2.8% — the bar sits between them with room on
+  // both sides, and at natural size the literal is 1.6% and never near it.
+  //
+  // Typical, not shortest, and for the same reason the window planner stopped
+  // sizing itself from the shortest tile: one authored 12px node makes every
+  // pen on an otherwise ordinary sheet look ten times too heavy, and a rule
+  // that fires there says nothing about the sheet the reader is holding.
+  //
+  // Pens are read per shape rather than in bulk. The legend and workflow band
+  // are page furniture drawn at natural size whatever the drawing is reduced
+  // to, so their pen is in the right proportion to them and measuring it
+  // against a reduced tile is a category error — and they cannot be told apart
+  // by weight, since the furniture's 0.01in is lighter than the drawing's
+  // 0.0125in.
+  const DRAWING_SHAPES = /^(Service|Tile|Zone|Connector|StepBadge)$/;
+  const tileHeights: number[] = [];
+  const drawingPens: number[] = [];
+  for (const chunk of pageXmlForIcons.split('<Shape ').slice(1)) {
+    const kind = /^[^>]*NameU="([A-Za-z]+)\./.exec(chunk)?.[1];
+    if (!kind || !DRAWING_SHAPES.test(kind)) continue;
+    if (kind === 'Tile') {
+      const h = Number(/<Cell N="Height" V="([\d.]+)"/.exec(chunk)?.[1]);
+      if (h > 0) tileHeights.push(h);
+    }
+    const w = Number(/<Cell N="LineWeight" V="([\d.]+)"/.exec(chunk)?.[1]);
+    if (w > 0) drawingPens.push(w);
+  }
+  if (tileHeights.length > 0 && drawingPens.length > 0) {
+    tileHeights.sort((a, b) => a - b);
+    const typicalTile = tileHeights[Math.floor(tileHeights.length * 0.5)];
+    const heaviest = Math.max(...drawingPens);
+    if (heaviest > typicalTile / 16) {
+      issues.push(
+        `line weight ${heaviest.toFixed(4)}in is ${(heaviest / typicalTile * 100).toFixed(1)}% of the `
+        + `typical tile (${typicalTile.toFixed(3)}in) — the outline has become the shape`,
+      );
+    }
+  }
   // A drawing that names a relationship it does not ship is a drawing Visio
   // refuses to open. Neither half was ever checked, because under Node there
   // were no relationships to check.

@@ -4150,6 +4150,13 @@ async function addDiagramSlide(pptx: PptxGenJS, t: SlideTheme, imageDataUrl: str
  * architecture: each numbered paragraph corresponds to the callout drawn on the
  * matching arrow of the diagram slide. Emitted only when the architecture
  * actually has a workflow, so a topology-only diagram gains no empty slide.
+ *
+ * Continues onto further slides rather than stopping at a fixed count. A flat
+ * cap of twelve turned a sixteen-step architecture into a drawing carrying
+ * callouts 13 to 16 that the deck then never explained, and the reader had no
+ * way to find out what they meant — the wording was not truncated, it was
+ * discarded. The diagram deck has always paginated its workflow; this is the
+ * same rule applied to the deck the customer is actually sent.
  */
 function addWorkflowSlide(pptx: PptxGenJS, t: SlideTheme, o: ArchitectureDeckOptions): void {
   const steps = (o.workflow ?? [])
@@ -4157,50 +4164,50 @@ function addWorkflowSlide(pptx: PptxGenJS, t: SlideTheme, o: ArchitectureDeckOpt
     .sort((a, b) => a.step - b.step);
   if (steps.length === 0) return;
 
-  const MAX_ROWS = 12;
-  const shown = steps.slice(0, MAX_ROWS);
-  const slide = pptx.addSlide();
-  addChrome(pptx, slide, t, 'Workflow', `${steps.length} step${steps.length === 1 ? '' : 's'}`);
+  // The smallest row still worth reading, which is what sets how many fit.
+  const MIN_ROW_IN = 0.3;
+  const perSlide = Math.max(1, Math.floor(BODY_H / MIN_ROW_IN));
+  const pages = Math.ceil(steps.length / perSlide);
 
-  // The "+ N more" note is drawn last and used to paint over the final row, so
-  // the rows only ever get the space left after reserving it.
-  const overflowH = steps.length > MAX_ROWS ? 0.34 : 0;
-  const rowH = Math.min(0.62, (BODY_H - overflowH) / shown.length);
-  // Long descriptions have to shrink rather than overflow the slide.
-  const fontSize = rowH >= 0.5 ? 13 : rowH >= 0.38 ? 11 : 10;
-  const badgeD = Math.min(0.34, rowH - 0.06);
+  for (let page = 0; page < pages; page += 1) {
+    const shown = steps.slice(page * perSlide, (page + 1) * perSlide);
+    const slide = pptx.addSlide();
+    addChrome(
+      pptx, slide, t,
+      pages > 1 ? `Workflow (${page + 1} / ${pages})` : 'Workflow',
+      `${steps.length} step${steps.length === 1 ? '' : 's'}`,
+    );
 
-  shown.forEach((entry, index) => {
-    const y = BODY_TOP + index * rowH;
-    slide.addShape(pptx.ShapeType.ellipse, {
-      x: 0.4, y: y + (rowH - badgeD) / 2, w: badgeD, h: badgeD,
-      fill: { color: t.accent }, line: { color: t.accent, width: 0 },
-    });
-    slide.addText(String(entry.step), {
-      x: 0.4, y: y + (rowH - badgeD) / 2, w: badgeD, h: badgeD,
-      fontSize: Math.max(8, Math.round(fontSize * 0.8)), bold: true, color: 'ffffff',
-      fontFace: 'Yu Gothic UI', align: 'center', valign: 'middle',
-    });
-    // A wrapped two-line description used to run straight through the services
-    // strip, so the strip is reserved out of the description box's height.
-    const services = (entry.services ?? []).filter(Boolean);
-    const showsServices = services.length > 0 && rowH >= 0.5;
-    slide.addText(truncate(entry.description, 240), {
-      x: 0.4 + badgeD + 0.16, y, w: W - 1.1 - badgeD, h: showsServices ? rowH - 0.2 : rowH,
-      fontSize, color: t.titleText, fontFace: 'Yu Gothic UI', valign: 'middle', wrap: true,
-    });
-    if (showsServices) {
-      slide.addText(services.join('  →  '), {
-        x: 0.4 + badgeD + 0.16, y: y + rowH - 0.2, w: W - 1.1 - badgeD, h: 0.18,
-        fontSize: 9, color: t.metaText, fontFace: 'Yu Gothic UI', valign: 'middle',
+    const rowH = Math.min(0.62, BODY_H / shown.length);
+    // Long descriptions have to shrink rather than overflow the slide.
+    const fontSize = rowH >= 0.5 ? 13 : rowH >= 0.38 ? 11 : 10;
+    const badgeD = Math.min(0.34, rowH - 0.06);
+
+    shown.forEach((entry, index) => {
+      const y = BODY_TOP + index * rowH;
+      slide.addShape(pptx.ShapeType.ellipse, {
+        x: 0.4, y: y + (rowH - badgeD) / 2, w: badgeD, h: badgeD,
+        fill: { color: t.accent }, line: { color: t.accent, width: 0 },
       });
-    }
-  });
-
-  if (steps.length > MAX_ROWS) {
-    slide.addText(`+ ${steps.length - MAX_ROWS} more steps`, {
-      x: 0.4, y: BODY_TOP + shown.length * rowH + 0.04, w: 6, h: 0.3,
-      fontSize: 10, italic: true, color: t.footerText, fontFace: 'Yu Gothic UI',
+      slide.addText(String(entry.step), {
+        x: 0.4, y: y + (rowH - badgeD) / 2, w: badgeD, h: badgeD,
+        fontSize: Math.max(8, Math.round(fontSize * 0.8)), bold: true, color: 'ffffff',
+        fontFace: 'Yu Gothic UI', align: 'center', valign: 'middle',
+      });
+      // A wrapped two-line description used to run straight through the services
+      // strip, so the strip is reserved out of the description box's height.
+      const services = (entry.services ?? []).filter(Boolean);
+      const showsServices = services.length > 0 && rowH >= 0.5;
+      slide.addText(truncate(entry.description, 240), {
+        x: 0.4 + badgeD + 0.16, y, w: W - 1.1 - badgeD, h: showsServices ? rowH - 0.2 : rowH,
+        fontSize, color: t.titleText, fontFace: 'Yu Gothic UI', valign: 'middle', wrap: true,
+      });
+      if (showsServices) {
+        slide.addText(services.join('  →  '), {
+          x: 0.4 + badgeD + 0.16, y: y + rowH - 0.2, w: W - 1.1 - badgeD, h: 0.18,
+          fontSize: 9, color: t.metaText, fontFace: 'Yu Gothic UI', valign: 'middle',
+        });
+      }
     });
   }
 }
@@ -4208,30 +4215,41 @@ function addWorkflowSlide(pptx: PptxGenJS, t: SlideTheme, o: ArchitectureDeckOpt
 /** Slide 4 — service inventory. */
 function addServicesSlide(pptx: PptxGenJS, t: SlideTheme, o: ArchitectureDeckOptions): void {
   if (!o.services.length) return;
-  const slide = pptx.addSlide();
-  addChrome(pptx, slide, t, `Services  ·  ${o.services.length} components`);
 
-  const MAX_ROWS = 20;
-  const shown = o.services.slice(0, MAX_ROWS);
-  const header = [
-    { text: 'Service', options: { bold: true, color: 'ffffff', fill: { color: t.accent } } },
-    { text: 'Category', options: { bold: true, color: 'ffffff', fill: { color: t.accent } } },
-    { text: 'Zone / Group', options: { bold: true, color: 'ffffff', fill: { color: t.accent } } },
-  ];
-  const rows = shown.map((s) => [
-    { text: s.name, options: { color: t.titleText } },
-    { text: s.category || '—', options: { color: t.metaText } },
-    { text: s.group || '—', options: { color: t.metaText } },
-  ]);
-  slide.addTable([header, ...rows], {
-    x: 0.35, y: BODY_TOP, w: W - 0.7, h: BODY_H,
-    colW: [5.2, 3.9, 3.53],
-    fontSize: 12, fontFace: 'Yu Gothic UI',
-    border: { type: 'solid', color: t.headerBg, pt: 1 },
-    valign: 'middle', rowH: 0.32,
-  });
-  if (o.services.length > MAX_ROWS) {
-    slide.addText(`+ ${o.services.length - MAX_ROWS} more services`, { x: 0.35, y: FOOTER_Y - 0.32, w: 6, h: 0.3, fontSize: 10, italic: true, color: t.footerText, fontFace: 'Yu Gothic UI' });
+  // An inventory that omits its own contents is not an inventory. The heading
+  // counted every service while the table stopped at twenty, so a deck for a
+  // sixty-service estate announced sixty components and listed a third of them.
+  const rowH = 0.32;
+  const perSlide = Math.max(1, Math.floor(BODY_H / rowH) - 1); // less the header row
+  const pages = Math.ceil(o.services.length / perSlide);
+
+  for (let page = 0; page < pages; page += 1) {
+    const shown = o.services.slice(page * perSlide, (page + 1) * perSlide);
+    const slide = pptx.addSlide();
+    addChrome(
+      pptx, slide, t,
+      pages > 1
+        ? `Services  ·  ${o.services.length} components  (${page + 1} / ${pages})`
+        : `Services  ·  ${o.services.length} components`,
+    );
+
+    const header = [
+      { text: 'Service', options: { bold: true, color: 'ffffff', fill: { color: t.accent } } },
+      { text: 'Category', options: { bold: true, color: 'ffffff', fill: { color: t.accent } } },
+      { text: 'Zone / Group', options: { bold: true, color: 'ffffff', fill: { color: t.accent } } },
+    ];
+    const rows = shown.map((s) => [
+      { text: s.name, options: { color: t.titleText } },
+      { text: s.category || '—', options: { color: t.metaText } },
+      { text: s.group || '—', options: { color: t.metaText } },
+    ]);
+    slide.addTable([header, ...rows], {
+      x: 0.35, y: BODY_TOP, w: W - 0.7, h: BODY_H,
+      colW: [5.2, 3.9, 3.53],
+      fontSize: 12, fontFace: 'Yu Gothic UI',
+      border: { type: 'solid', color: t.headerBg, pt: 1 },
+      valign: 'middle', rowH,
+    });
   }
 }
 

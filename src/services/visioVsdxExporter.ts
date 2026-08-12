@@ -83,6 +83,35 @@ const MAX_USEFUL_PAGE_IN = 60;
 const MAX_VISIO_PAGE_IN = 200;
 const CORNER_ROUNDING_IN = 0.08;
 
+/**
+ * The thinnest line Visio renders as a line rather than as nothing: its
+ * hairline, 1/4 point.
+ */
+const HAIRLINE_IN = 0.0035;
+
+/**
+ * Pen width for drawing content, in inches, at a given sheet scale.
+ *
+ * The literals this replaces did not scale while everything around them did, so
+ * on a deeply reduced sheet the ink stopped being an outline and became the
+ * shape: at 900 stages a 0.0125in border was a quarter of the tile's height and
+ * a connector stroke was over half the gap it crossed, which is why a large
+ * Visio export read as a grey mat with nothing legible on it. Zooming in does
+ * not recover it — the weight is stored in the file, not derived from the view.
+ *
+ * The floor is Visio's own hairline rather than zero. Below it the pen would go
+ * on thinning past what the renderer can draw and the line would stop appearing
+ * altogether; at the hairline it stays visible while taking as little of the
+ * tile as the format allows.
+ *
+ * Page furniture — the legend and the workflow band — deliberately does not use
+ * this. Those panels are drawn at natural size on the sheet whatever the drawing
+ * inside is reduced to, so their pen is already in the right proportion to them.
+ */
+function penIn(natural: number, scale: number): number {
+  return Math.max(HAIRLINE_IN, natural * scale);
+}
+
 /** Height of one numbered row in the workflow band. */
 const WORKFLOW_ROW_IN = 0.26;
 /**
@@ -409,9 +438,9 @@ function zoneShapeXml(
       <Cell N="FillForegnd" V="${palette.fill}"/>
       <Cell N="FillPattern" V="1"/>
       <Cell N="LineColor" V="${palette.line}"/>
-      <Cell N="LineWeight" V="0.0125"/>
+      <Cell N="LineWeight" V="${f(penIn(0.0125, fonts.scale))}"/>
       <Cell N="LinePattern" V="2"/>
-      <Cell N="Rounding" V="${f(CORNER_ROUNDING_IN * 1.5)}"/>
+      <Cell N="Rounding" V="${f(CORNER_ROUNDING_IN * 1.5 * fonts.scale)}"/>
       <Cell N="TxtWidth" V="${f(titleW)}"/>
       <Cell N="TxtHeight" V="${f(titleH)}"/>
       <Cell N="TxtPinX" V="${f(rect.w / 2)}"/>
@@ -551,9 +580,9 @@ ${properties.map((property, index) => propertyRow(property.name, property.label,
           <Cell N="FillForegnd" V="${palette.fill}"/>
           <Cell N="FillPattern" V="1"/>
           <Cell N="LineColor" V="${palette.line}"/>
-          <Cell N="LineWeight" V="0.0125"/>
+          <Cell N="LineWeight" V="${f(penIn(0.0125, fonts.scale))}"/>
           <Cell N="LinePattern" V="1"/>
-          <Cell N="Rounding" V="${CORNER_ROUNDING_IN}"/>
+          <Cell N="Rounding" V="${f(CORNER_ROUNDING_IN * fonts.scale)}"/>
           <Cell N="ShdwPattern" V="1"/>
           <Cell N="ShdwForegnd" V="#D5DDE8"/>
 ${roundedRectGeometry()}
@@ -640,9 +669,9 @@ function connectorShapeXml(
       <Cell N="ConLineRouteExt" V="0"/>
       <Cell N="LayerMember" V="${LAYER_CONNECTIONS}"/>
       <Cell N="LineColor" V="${color}"/>
-      <Cell N="LineWeight" V="0.0125"/>
+      <Cell N="LineWeight" V="${f(penIn(0.0125, fonts.scale))}"/>
       <Cell N="LinePattern" V="${linePattern}"/>${transCell}
-      <Cell N="Rounding" V="0.0625"/>
+      <Cell N="Rounding" V="${f(0.0625 * fonts.scale)}"/>
       <Cell N="BeginArrow" V="${bidirectional ? 4 : 0}"/>
       <Cell N="BeginArrowSize" V="2"/>
       <Cell N="EndArrow" V="4"/>
@@ -748,7 +777,7 @@ function stepBadgeXml(
       <Cell N="FillForegnd" V="#1F2937"/>
       <Cell N="FillPattern" V="1"/>
       <Cell N="LineColor" V="#FFFFFF"/>
-      <Cell N="LineWeight" V="0.0125"/>
+      <Cell N="LineWeight" V="${f(penIn(0.0125, fonts.scale))}"/>
       <Cell N="LinePattern" V="1"/>
       <Section N="Character">
         <Row IX="0"><Cell N="Font" V="1"/><Cell N="Color" V="#FFFFFF"/><Cell N="Size" V="${ff(size)}"/><Cell N="Style" V="1"/></Row>
