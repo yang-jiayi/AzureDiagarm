@@ -754,6 +754,49 @@ function scaledZoneRowScenario(): Scenario {
  * only ever measured with sentences that fit on one line — and pagination
  * assumed exactly that.
  */
+/**
+ * A tight grid under a fan of twenty numbered arrows between one pair.
+ *
+ * The workflow band is opaque white and drawn last, and its reservation was
+ * measured from the *authored* sentences while the panel is drawn from the
+ * sentences plus the wording muted labels hand back to it. A fan mutes heavily
+ * — twenty labels on one chord — so the panel grew 1.8in past its reservation
+ * and painted out six of the nine services. Nothing in the corpus could see it:
+ * the band was well-formed by every rule that judged the band.
+ *
+ * The grid is deliberately dense (150px tiles on a 220px pitch) so the drawing
+ * is short and the band is the tall thing on the page. The fan is eight arrows
+ * rather than the twenty that first exposed this: twenty badges on one chord is
+ * a separate, inherent crowding problem, and it drowned the defect this guards
+ * in noise. Eight still mutes the whole fan, which is all Issue 1 needs.
+ */
+function workflowFanScenario(): Scenario {
+  const nodes: Node[] = [];
+  for (let r = 0; r < 3; r += 1) {
+    for (let c = 0; c < 3; c += 1) nodes.push(svc(`f${r}-${c}`, `Azure Service ${r}${c}`, c * 220, r * 120));
+  }
+  const edges: Edge[] = [];
+  let step = 1;
+  for (let i = 1; i < nodes.length; i += 1) {
+    edges.push({
+      id: `fh${i}`, source: nodes[i - 1].id, target: nodes[i].id,
+      label: `Hop ${i}`,
+      data: { stepNumber: step++, stepDescription: `Hop ${i}: traffic is inspected at the perimeter and forwarded to the next tier.` },
+    } as Edge);
+  }
+  for (let i = 0; i < 8; i += 1) {
+    edges.push({
+      id: `ff${i}`, source: 'f1-1', target: 'f1-2',
+      label: `The workload queries the reference store through a managed identity ${i + 1}`,
+      data: {
+        stepNumber: step++,
+        stepDescription: `The workload queries the reference store through a managed identity, retrying on throttling ${i + 1}.`,
+      },
+    } as Edge);
+  }
+  return { id: 'workflow-fan', nodes, edges };
+}
+
 function workflowProseScenario(): Scenario {
   const sentences = [
     'The client sends the request to Azure Front Door, which terminates TLS at the edge and applies the WAF ruleset before anything reaches the origin.',
@@ -3353,13 +3396,17 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
   // this catches the whole class, and unlike that rule it has no constant to
   // tune — the bar is the drawing itself.
   const span = drawingSpanIn(scenario);
-  // The numbered workflow gets its own band across the top of the sheet, and
-  // the sheet has a minimum size; neither is outlier growth. Read from the band
-  // the exporter drew rather than modelled from a row pitch — rows are as tall
-  // as their sentences, and the "band must be the size of its rows" rule below
-  // is what stops this allowance from being inflatable.
+  // The numbered workflow gets its own band across the top of the sheet, the
+  // colour key gets a strip at the bottom, and the sheet has a minimum size;
+  // none of that is outlier growth. Read from the panels the exporter drew
+  // rather than modelled from a row pitch — rows are as tall as their sentences
+  // — plus the slack the reservation is allowed to miss by, which the "band
+  // sits on the drawing it describes" rule below is what actually bounds.
   const drawnBand = /NameU="Workflow\.\d+"[\s\S]*?<Cell N="Height" V="([\d.-]+)"\/>/.exec(xml);
-  const bandIn = drawnBand ? +drawnBand[1] + 0.24 : 0;
+  const drawnLegend = /NameU="Legend\.\d+"[\s\S]*?<Cell N="Height" V="([\d.-]+)"\/>/.exec(xml);
+  const BAND_RESERVE_SLACK_IN = 1.2;
+  const bandIn = (drawnBand ? +drawnBand[1] + 0.24 + BAND_RESERVE_SLACK_IN : 0)
+    + (drawnLegend ? +drawnLegend[1] + 0.45 : 0);
   const allowedW = Math.max(11, span.w + PAGE_CHROME_SLACK_IN);
   const allowedH = Math.max(8.5, span.h + PAGE_CHROME_SLACK_IN + bandIn);
   if (pkg.pageWidthIn > allowedW) {
@@ -3670,8 +3717,7 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
     const dead = lowest - panelBottom;
     if (dead > 0.6) {
       issues.push(`the Visio workflow band reserves ${dead.toFixed(2)}in below its last row — the page it takes has to be the page it uses`);
-    }
-  }
+    }  }
 
   // Workflow numbering must survive into Visio too, or the same drawing tells
   // a different story in PowerPoint and in Visio. Measured against the repaired
@@ -3873,6 +3919,75 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
   if (stacked > 0) {
     issues.push(`${stacked} pair(s) of Visio connector labels are written on top of each other: ${piles.slice(0, 3).join('; ')}`);
   }
+
+  // The workflow band and the connection legend are opaque white panels drawn
+  // last, over everything. Every other rule about them asks whether the band is
+  // well-formed — its rows fit, its rows are inside it, it reserves no dead air
+  // — and every one of them passes while the panel sits on top of six of the
+  // nine services in the drawing. This asks the only question the reader asks:
+  // is anything underneath it? Nothing else in the corpus could see the band
+  // paint out a tile, or the label search park a ladder in the band's strip
+  // because that strip held no service and no other label.
+  const panelRects: Array<{ name: string; x: number; y: number; w: number; h: number }> = [];
+  for (const m of xml.matchAll(
+    /NameU="(Workflow|Legend)\.\d+"[\s\S]*?<Cell N="PinX" V="([\d.-]+)"\/>\s*<Cell N="PinY" V="([\d.-]+)"\/>\s*<Cell N="Width" V="([\d.-]+)"\/>\s*<Cell N="Height" V="([\d.-]+)"\/>/g,
+  )) {
+    const [, name, pinX, pinY, w, h] = m;
+    panelRects.push({ name: name === 'Workflow' ? 'workflow band' : 'connection legend', x: +pinX - +w / 2, y: +pinY - +h / 2, w: +w, h: +h });
+  }
+  if (panelRects.length > 0) {
+    const badgeRects: Array<{ text: string; x: number; y: number; w: number; h: number }> = [];
+    for (const m of xml.matchAll(
+      /NameU="StepBadge\.\d+"[\s\S]*?<Cell N="PinX" V="([\d.-]+)"\/>\s*<Cell N="PinY" V="([\d.-]+)"\/>\s*<Cell N="Width" V="([\d.-]+)"\/>\s*<Cell N="Height" V="([\d.-]+)"\/>[\s\S]*?<Text>([\s\S]*?)<\/Text>/g,
+    )) {
+      const [, pinX, pinY, w, h, text] = m;
+      badgeRects.push({ text: text.trim(), x: +pinX - +w / 2, y: +pinY - +h / 2, w: +w, h: +h });
+    }
+    const buried = (
+      what: string,
+      boxes: Array<{ text?: string; name?: string; x: number; y: number; w: number; h: number }>,
+      bar: number,
+    ): void => {
+      const hidden: string[] = [];
+      for (const box of boxes) {
+        const own = Math.max(box.w * box.h, 1e-9);
+        for (const p of panelRects) {
+          if (overlap(box, p) > bar * own) {
+            hidden.push(`"${(box.text ?? box.name ?? '?').slice(0, 16)}" under the ${p.name}`);
+            break;
+          }
+        }
+      }
+      if (hidden.length > 0) {
+        issues.push(`${hidden.length} ${what} drawn under an opaque panel: ${hidden.slice(0, 3).join(', ')}`);
+      }
+    };
+    // The band's page reservation is measured before the drawing is laid out,
+    // from sentences that can still grow when a muted label hands its wording
+    // over. It is deliberately an over-estimate, because under-reserving paints
+    // the panel across the drawing — but an over-estimate is blank paper
+    // between the drawing and the band, and on a 21.5in sheet it was 2.5in of
+    // it. Measured as the asymmetry of the drawing's margins rather than the
+    // gap itself: the drawing is centred between the two panels, so a small
+    // architecture on a minimum-size sheet has wide margins for a legitimate
+    // reason, and only the reservation the band did not use pushes the top
+    // margin past the bottom one.
+    const band = panelRects.find((p) => p.name === 'workflow band');
+    if (band && serviceBoxes.length > 0) {
+      const floor = panelRects.filter((p) => p.name === 'connection legend').reduce((lo, p) => Math.max(lo, p.y + p.h), 0);
+      const above = band.y - Math.max(...serviceBoxes.map((s) => s.y + s.h));
+      const below = Math.min(...serviceBoxes.map((s) => s.y)) - floor;
+      if (above - below > BAND_RESERVE_SLACK_IN) {
+        issues.push(`${(above - below).toFixed(2)}in of blank paper between the drawing and the workflow band — the band reserved page it did not use`);
+      }
+    }
+    // A service is a picture: any of it lost is a service the reader cannot
+    // identify. Text is gone the moment enough of it is covered to stop it
+    // reading, which is the same 1% bar the exporter's own muting pass uses.
+    buried('Visio service tile(s)', serviceBoxes, 0.01);
+    buried('Visio step badge(s)', badgeRects, 0.01);
+    buried('Visio connector label(s)', labelBoxes, 0.01);
+  }
   let onService = 0;
   const buried: string[] = [];
   for (const label of labelBoxes) {
@@ -4004,7 +4119,7 @@ async function main(): Promise<void> {
     scaledZoneRowScenario(),
     corridorZoneScenario(),
     ladderInGridScenario(), twinLaddersScenario(), strayLadderScenario(), legendCornerScenario(), duplicateStepsScenario(), denseZoneScenario(),
-    metaChipScenario(), gridFanScenario(), gridFan3Scenario(), fan8Tight5x5Scenario(), metaSublineScenario(), grid5x5CaptionScenario(), longNameGridScenario(), longLabelGridScenario(), metaTightScenario(),     longNameFanScenario(), estateChainScenario(), chain24Scenario(), tripleMutedScenario(), estate72Scenario(), workflowProseScenario(), workflowLongProseScenario(), allCategoriesScenario(),
+    metaChipScenario(), gridFanScenario(), gridFan3Scenario(), fan8Tight5x5Scenario(), metaSublineScenario(), grid5x5CaptionScenario(), longNameGridScenario(), longLabelGridScenario(), metaTightScenario(),     longNameFanScenario(), estateChainScenario(), chain24Scenario(), tripleMutedScenario(), estate72Scenario(), workflowProseScenario(), workflowLongProseScenario(), workflowFanScenario(), allCategoriesScenario(),
     await generatedScenario(), await groupedGeneratedScenario(),
   ];
   // Dark twins. Adding a `dark` flag was not enough on its own: nothing set it,

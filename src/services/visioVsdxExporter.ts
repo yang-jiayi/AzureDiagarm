@@ -962,6 +962,7 @@ export async function buildVsdxPackage(
   // that the panel never explains — or, once the fan drops its wording, say
   // nothing at all.
   const narrated = narrateEdgeCallouts(edges);
+  const legendEntries = usedConnectionLegend(edges);
   // A numbered workflow gets its own band across the top of the sheet, so the
   // prose never lands on the drawing the way an overlaid panel would. It is
   // measured HERE, before the drawing is fitted, because it is page height the
@@ -969,6 +970,32 @@ export async function buildVsdxPackage(
   // limit and a twenty-step workflow is 5.7in, so a tall architecture with a
   // workflow was written at 202in and Visio refused to open it at all.
   const workflowEntries = workflowListFromEdges(narrated);
+  // Sized against the longest the rows can possibly get, not the shortest.
+  //
+  // A muted connector hands its wording to its workflow row, in a parenthesis
+  // appended when the band is drawn — long after the band's reservation was
+  // measured from the authored sentences. Muting is decided by label placement,
+  // which needs the page, which needs the band, so the exact text is not
+  // knowable here. What *is* knowable is the ceiling: muting only ever hands a
+  // step the label of its own connector, so reserving as though every numbered
+  // connector were muted can only over-reserve. It used to under-reserve, and
+  // the panel is opaque white drawn last: on a 3x3 grid with a 20-arrow fan it
+  // grew 1.8in past its reservation and painted out six of the nine services.
+  //
+  // Restricting this to bundled arrows looks tempting and is wrong: a lone
+  // arrow's label is muted too, and five service tiles went under the band the
+  // moment the reservation stopped counting them.
+  const handableWording = new Map<number, string>();
+  for (const edge of narrated) {
+    const step = (edge.data as { stepNumber?: number } | undefined)?.stepNumber;
+    if (Number.isInteger(step) && edge.label && !handableWording.has(step as number)) {
+      handableWording.set(step as number, String(edge.label));
+    }
+  }
+  const reservedEntries = workflowEntries.map((entry) => {
+    const handed = handableWording.get(entry.step);
+    return handed ? { ...entry, description: `${entry.description}（${handed}）` } : entry;
+  });
   const drawing = compactEmptyGutters(collectExportBoxes(nodes));
   // The band is page furniture, and furniture does not get to evict the thing
   // it describes. `workflowListFromEdges` has no cap, so a fully-meshed
@@ -979,6 +1006,13 @@ export async function buildVsdxPackage(
   // wrote is still on the page, which is the one thing that must not be traded,
   // and the drawing keeps the two thirds it was drawn for.
   //
+  // "A third of the sheet" is a third of *this* drawing's sheet, not of Visio's
+  // 200in ceiling. Measured against the ceiling, a nine-service architecture on
+  // an 11in page kept a single-column band 9.4in tall — 70% of the page, with
+  // the drawing squeezed into what was left — because 9.4in is nothing next to
+  // 66in. The drawing's own natural height is what the band has to be modest
+  // beside.
+  //
   // What is measured is now the height the rows actually occupy rather than one
   // pitch each, because a sentence too long for its column wraps and a band
   // sized for one line per step is short by however many lines it did not count.
@@ -987,46 +1021,72 @@ export async function buildVsdxPackage(
   // page the exporter will emit. Measuring there can only ever reserve too much
   // room, never too little, which is the safe direction: the band is drawn at
   // the real page width and comes out no taller than its reservation.
-  const stackFor = (cols: number): number => workflowStackIn(
-    workflowEntries,
+  const stackFor = (cols: number, widthIn: number): number => workflowStackIn(
+    reservedEntries,
     cols,
-    workflowPanelWidthIn(MIN_PAGE_W_IN, cols) / cols,
+    workflowPanelWidthIn(widthIn, cols) / cols,
   ) + 0.5;
   // Splitting trades column height for column width, and the sentences have to
   // fit the width: past a point the extra wrapping costs more lines than the
   // split saves rows. So take the first split that gets under the target, and
   // if none does, the shortest band on offer.
-  let workflowColumns = 1;
-  if (workflowEntries.length > 0 && stackFor(1) > MAX_VISIO_PAGE_IN / 3) {
-    let shortest = stackFor(1);
-    for (let cols = 2; cols <= MAX_WORKFLOW_COLUMNS; cols += 1) {
-      const height = stackFor(cols);
-      if (height < shortest) {
-        shortest = height;
-        workflowColumns = cols;
-      }
-      if (height <= MAX_VISIO_PAGE_IN / 3) {
-        workflowColumns = cols;
-        break;
+  const naturalHIn = (() => {
+    const b = computeBounds(drawing.values());
+    return Math.max(b.maxY - b.minY, 1) / PX_PER_INCH;
+  })();
+  const bandTargetIn = Math.min(
+    MAX_VISIO_PAGE_IN / 3,
+    Math.max(MIN_PAGE_H_IN / 3, naturalHIn / 2),
+  );
+  const bandFor = (widthIn: number): { columns: number; height: number } => {
+    if (workflowEntries.length === 0) return { columns: 1, height: 0 };
+    let columns = 1;
+    if (stackFor(1, widthIn) > bandTargetIn) {
+      let shortest = stackFor(1, widthIn);
+      for (let cols = 2; cols <= MAX_WORKFLOW_COLUMNS; cols += 1) {
+        const height = stackFor(cols, widthIn);
+        if (height < shortest) {
+          shortest = height;
+          columns = cols;
+        }
+        if (height <= bandTargetIn) {
+          columns = cols;
+          break;
+        }
       }
     }
-  }
-  const workflowBandIn = workflowEntries.length > 0 ? stackFor(workflowColumns) : 0;
+    return { columns, height: stackFor(columns, widthIn) };
+  };
+  // Sized twice, because the band's height depends on how wide the page turns
+  // out to be and the page's width is not known until the drawing is fitted.
+  // The first pass reserves at the narrowest page the exporter emits, which is
+  // the safe direction — a narrow column wraps longest, so it can only reserve
+  // too much. That is what the fit is given. The second pass, once the real
+  // width is known, is what the page is actually sized and laid out from: on a
+  // 21.5in sheet the first pass over-reserved by 2.5in, and every inch of it
+  // was drawn as blank paper between the drawing and the band.
+  const reserveBandIn = bandFor(MIN_PAGE_W_IN).height;
+  // The colour key is the same construction as the workflow band — opaque white
+  // fill, drawn after every service — but it was pinned to the bottom-left
+  // corner and reserved nothing, so on any drawing that reached the bottom of
+  // its page it was simply painted over a service tile. Give it a strip of its
+  // own, the way the band has one at the top.
+  const legendBandIn = legendEntries.length > 0 ? 0.24 * legendEntries.length + 0.79 : 0;
   const fitted = fitBoxesWithin(
     drawing,
     limitPx,
-    limitPx - workflowBandIn * PX_PER_INCH,
+    limitPx - (reserveBandIn + legendBandIn) * PX_PER_INCH,
   );
   // Squeezing the gaps is the first answer because it costs nothing but
   // distance. It has nothing left to give when the shapes alone are over the
   // limit — a single row of more than 127 tiles, or a zone rectangle spanning
   // the drawing, which counts as solid. Scaling is worse: it takes the type
   // down with it. A file Visio will not open is worse still.
-  const raw = scaleBoxesWithin(fitted, limitPx, limitPx - workflowBandIn * PX_PER_INCH);
+  const raw = scaleBoxesWithin(fitted, limitPx, limitPx - (reserveBandIn + legendBandIn) * PX_PER_INCH);
   // Take the type down with the drawing. Holding it fixed does not rescue the
   // words on a tile an eighth of an inch wide, it prints each name over its
   // neighbours and loses the structure as well as the labels.
-  const fonts = fontsForScale(boxScaleWithin(fitted, limitPx, limitPx - workflowBandIn * PX_PER_INCH));
+  const fonts = fontsForScale(boxScaleWithin(fitted, limitPx, limitPx - (reserveBandIn + legendBandIn) * PX_PER_INCH));
   // Match the PowerPoint strategy: draw 1 : 1 from the full bounds whenever the
   // page stays a sensible size, and only fall back to the dense-cluster bounds
   // (clamping the strays back on) when a far-placed node would otherwise blow
@@ -1063,11 +1123,26 @@ export async function buildVsdxPackage(
   const contentWIn = Math.max(bounds.maxX - bounds.minX, 1) / PX_PER_INCH;
   const contentHIn = Math.max(bounds.maxY - bounds.minY, 1) / PX_PER_INCH;
   const pageWidthIn = f(Math.max(contentWIn + PAGE_PADDING_IN * 2, MIN_PAGE_W_IN));
-  const pageHeightIn = f(Math.max(contentHIn + PAGE_PADDING_IN * 2 + workflowBandIn, MIN_PAGE_H_IN));
+  // Second pass: the real width is known now, so the band can be laid out for
+  // the page it is actually going on instead of for the narrowest one.
+  const refined = bandFor(pageWidthIn);
+  const workflowColumns = refined.columns;
+  // Not `min(refined, reserveBandIn)`: the two are laid out at different widths
+  // and so can pick different column counts, which makes the narrow-page
+  // estimate the *smaller* of the two. Taking the min then modelled a band
+  // 0.03in shorter than the one drawn, and a badge stepped clear of the model
+  // still had a sliver under the panel. The band drawn is the band at this
+  // width; the reservation only ever has to be an upper bound of it.
+  const workflowBandIn = refined.height;
+  const pageHeightIn = f(Math.max(contentHIn + PAGE_PADDING_IN * 2 + workflowBandIn + legendBandIn, MIN_PAGE_H_IN));
 
-  // Centre the drawing on the page, converting to Visio's bottom-left origin.
+  // Centre the drawing between the two panels, converting to Visio's
+  // bottom-left origin. `topY` counts down from the top of the page, so the
+  // band — which is drawn at the top — is what the offset has to clear; the
+  // legend sits at the bottom and is cleared by leaving its strip out of the
+  // height the drawing is centred in.
   const offsetXIn = (pageWidthIn - contentWIn) / 2;
-  const offsetYIn = (pageHeightIn - workflowBandIn - contentHIn) / 2 + workflowBandIn;
+  const offsetYIn = (pageHeightIn - workflowBandIn - legendBandIn - contentHIn) / 2 + workflowBandIn;
   const clampIn = (value: number, lo: number, hi: number) => Math.min(Math.max(value, lo), Math.max(lo, hi));
   // The workflow panel is opaque and is drawn after every service, so a stray
   // node clamped into its band would be painted over. Keep the clamp below it.
@@ -1079,7 +1154,7 @@ export async function buildVsdxPackage(
     let topY = (box.y - bounds.minY) / PX_PER_INCH + offsetYIn;
     if (clampToPage) {
       x = clampIn(x, PAGE_PADDING_IN / 2, pageWidthIn - w - PAGE_PADDING_IN / 2);
-      topY = clampIn(topY, drawingTopIn, pageHeightIn - h - PAGE_PADDING_IN / 2);
+      topY = clampIn(topY, drawingTopIn, pageHeightIn - h - Math.max(legendBandIn, PAGE_PADDING_IN / 2));
     }
     return { x, y: pageHeightIn - topY - h, w, h };
   };
@@ -1277,6 +1352,24 @@ export async function buildVsdxPackage(
     const rect = toRect(service);
     return { x: rect.x, y: rect.y, w: rect.w, h: rect.h };
   });
+  // The two panels are opaque white and are drawn last, over everything.
+  //
+  // The search used to bound itself against the page alone, so the strip the
+  // workflow band occupies read as a wide expanse of clear paper holding no
+  // service and no label — and the ring search walked whole ladders into it.
+  // On `twin-ladders` that hid ten of thirty-three connector labels and ten
+  // step badges under the panel, while every rule in the audit passed: the
+  // exporter was scoring itself on text it had written, not on text a reader
+  // can see. Measured as rectangles rather than as a ceiling on `y`, because
+  // the band is 7.5in wide on a 14.85in sheet and the paper beside it is real.
+  const furnitureRects: Array<{ x: number; y: number; w: number; h: number }> = [];
+  if (workflowEntries.length > 0) {
+    const bandW = workflowPanelWidthIn(pageWidthIn, workflowColumns);
+    furnitureRects.push({ x: 0.35, y: pageHeightIn - 0.2 - workflowBandIn, w: bandW, h: workflowBandIn });
+  }
+  if (legendEntries.length > 0) {
+    furnitureRects.push({ x: 0.35, y: 0.35, w: 2.4, h: 0.24 * legendEntries.length + 0.34 });
+  }
   const rectAt = (route: ExportRoute, drop: number, along: number): { x: number; y: number; w: number; h: number } => {
     const centre = chordOf(route);
     const n = normalOf(route);
@@ -1307,9 +1400,11 @@ export async function buildVsdxPackage(
   const rungify = (members: ExportRoute[]): void => {
     if (members.length < 2) return;
     let rung = 0;
+    let colPitch = 0;
     for (const member of members) {
-      const size = labelOf(member) ? labelSize(labelOf(member)).h : 0;
-      rung = Math.max(rung, size + (member.stepNumber === undefined ? 0.05 : badgeIn + 0.07));
+      const size = labelOf(member) ? labelSize(labelOf(member)) : { w: badgeIn, h: 0 };
+      rung = Math.max(rung, size.h + (member.stepNumber === undefined ? 0.05 : badgeIn + 0.07));
+      colPitch = Math.max(colPitch, size.w + 0.12);
     }
     // Ranked by where the ARROW was fanned to, not by the order the edges were
     // declared, so rung n sits beside arrow n instead of crossing over it.
@@ -1319,9 +1414,24 @@ export async function buildVsdxPackage(
       const rm = midOf(r);
       return (lm.x * n.x + lm.y * n.y) - (rm.x * n.x + rm.y * n.y);
     });
+    // A single column of rungs is only a ladder while it is shorter than the
+    // paper it stands in. Twenty numbered arrows between one pair of services
+    // is 6.2in of rungs beside a 2.6in drawing, and the ladder simply kept
+    // climbing — off the top of the sheet before, and into the workflow band
+    // once the band was reserved. Fold it instead: the same rungs in as many
+    // columns as it takes, which is the one arrangement that keeps every badge
+    // both beside its arrow and on visible paper.
+    const roomIn = Math.max(rung * 2, pageHeightIn - workflowBandIn - 0.4);
+    const perColumn = Math.max(2, Math.min(ordered.length, Math.floor(roomIn / Math.max(rung, 0.01))));
+    const columns = Math.ceil(ordered.length / perColumn);
     ordered.forEach((member, index) => {
-      const seat = ladder.get(member.id) ?? { drop: 0, along: 0 };
-      ladder.set(member.id, { drop: (index - (ordered.length - 1) / 2) * rung, along: seat.along });
+      const column = Math.floor(index / perColumn);
+      const row = index % perColumn;
+      const rows = Math.min(perColumn, ordered.length - column * perColumn);
+      ladder.set(member.id, {
+        drop: (row - (rows - 1) / 2) * rung,
+        along: seatOf(member).along + (column - (columns - 1) / 2) * colPitch,
+      });
     });
   };
   for (const [, members] of byBundle) rungify(members);
@@ -1373,6 +1483,9 @@ export async function buildVsdxPackage(
             cost += 100;
           }
           for (const rect of serviceRects) cost += hit(part, rect) * 4;
+          // Under the panel is not a position to be traded against either — the
+          // panel is drawn over it and the reader never sees the text at all.
+          for (const rect of furnitureRects) if (hit(part, rect) > 0) cost += 100;
           for (const other of placedLabels) cost += hit(part, other) * 12;
         }
       }
@@ -1399,6 +1512,12 @@ export async function buildVsdxPackage(
         }
         let covered = 0;
         for (const rect of serviceRects) covered += hit(box, rect);
+        // An opaque panel over the words is a deletion, not a degradation: the
+        // muting pass has to be told the trade failed so it puts the wording
+        // back into the workflow row, where it can actually be read.
+        for (const rect of furnitureRects) {
+          if (hit(box, rect) > 0.01) return 1;
+        }
         // Text over a tile is ugly but still readable — the tile is mostly
         // empty fill. Two sentences written on the same spot are both lost, and
         // no fraction of that is acceptable, so any contact a reader could
@@ -1556,24 +1675,39 @@ export async function buildVsdxPackage(
       const drop = (text ? size.h / 2 + badgeIn / 2 + 0.03 : 0) + seat.drop;
       // A clamped connector can put its anchor at the very page edge, and the
       // normal offset then pushes the badge off the sheet, where Visio simply
-      // does not draw it.
+      // does not draw it. The workflow band is the same kind of edge: it is
+      // opaque and drawn afterwards, so a badge clamped to the top of the page
+      // is a badge clamped underneath the band.
       const half = badgeIn / 2;
-      shapes.push(
-        stepBadgeXml(
-          nextId++,
-          {
-            x: clampIn(anchor.x + nx * drop + along.x * seat.along, half, pageWidthIn - half),
-            y: clampIn(anchor.y + ny * drop + along.y * seat.along, half, pageHeightIn - half),
-          },
-          route.stepNumber,
-          fonts,
-        ),
+      const ceiling = furnitureRects.reduce(
+        (top, rect) => (rect.y + rect.h >= pageHeightIn - 0.5 ? Math.min(top, rect.y) : top),
+        pageHeightIn,
       );
+      const at = {
+        x: clampIn(anchor.x + nx * drop + along.x * seat.along, half, pageWidthIn - half),
+        y: clampIn(anchor.y + ny * drop + along.y * seat.along, half, ceiling - half),
+      };
+      // The search does its best, but a chord pinned under the band has no
+      // clear seat within reach and settles for the least bad one — which is
+      // still a callout the reader cannot see. A badge is a half-inch disc:
+      // stepping it out of the panel is always possible and always better than
+      // leaving it invisible, even when the only room left is over a tile.
+      for (const rect of furnitureRects) {
+        if (at.x + half <= rect.x || at.x - half >= rect.x + rect.w
+          || at.y + half <= rect.y || at.y - half >= rect.y + rect.h) continue;
+        const below = rect.y - half - 0.02;
+        const above = rect.y + rect.h + half + 0.02;
+        at.y = below >= half && (at.y <= rect.y + rect.h / 2 || above > pageHeightIn - half)
+          ? below
+          : above;
+      }
+      shapes.push(stepBadgeXml(nextId++, at, route.stepNumber, fonts));
     }
   }
 
   // Colour key so the Visio page can't contradict the PNG's connection legend.
-  const legendEntries = usedConnectionLegend(edges);
+  // Resolved before the labels are placed: it is an opaque panel in the
+  // bottom-left corner, so the search has to know where it will be.
   if (legendEntries.length > 0) {
     const legend = buildConnectionLegend(nextId, legendEntries, 0.35, 0.35);
     nextId = legend.nextId;

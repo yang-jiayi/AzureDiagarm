@@ -237,6 +237,23 @@ function connectorLabelBoxes(xml: string): Array<{ text: string; x: number; y: n
   return boxes;
 }
 
+/**
+ * The workflow band and the connection legend, as rectangles.
+ *
+ * Both are opaque white and both are drawn after everything else, so anything
+ * they cover is gone from the file the reader opens even though it is still in
+ * the XML.
+ */
+function panelBoxes(xml: string): Array<{ x: number; y: number; w: number; h: number }> {
+  const boxes: Array<{ x: number; y: number; w: number; h: number }> = [];
+  for (const m of xml.matchAll(
+    /NameU="(?:Workflow|Legend)\.\d+"[\s\S]*?<Cell N="PinX" V="([\d.-]+)"\/>\s*<Cell N="PinY" V="([\d.-]+)"\/>\s*<Cell N="Width" V="([\d.-]+)"\/>\s*<Cell N="Height" V="([\d.-]+)"\/>/g,
+  )) {
+    boxes.push({ x: +m[1] - +m[3] / 2, y: +m[2] - +m[4] / 2, w: +m[3], h: +m[4] });
+  }
+  return boxes;
+}
+
 function overlapArea(
   a: { x: number; y: number; w: number; h: number },
   b: { x: number; y: number; w: number; h: number },
@@ -323,7 +340,32 @@ test('a connector label is never written off the edge of the sheet', async () =>
   const pkg = await buildVsdxPackage(dense.nodes, dense.edges, 'Contoso');
   const xml = pkg.parts.find((part) => part.path === 'visio/pages/page1.xml')!.data as string;
   const labels = connectorLabelBoxes(xml);
-  assert.ok(labels.length >= 5, `the fixture must keep most of its wording, got ${labels.length}`);
+  // Counted as *visible* labels, not as labels in the file. This assertion used
+  // to read 33 on a page where 16 of them were under the opaque workflow band:
+  // a count of what was written rewards hiding text, because burying a label
+  // and keeping it both score the same. Every label here is checked to be on
+  // the sheet and clear of the panels below, so the count is honest.
+  const panels = panelBoxes(xml);
+  const visible = labels.filter(
+    (label) => !panels.some((panel) => overlapArea(label, panel) > 0.01 * label.w * label.h),
+  );
+  assert.equal(visible.length, labels.length, 'no label may be drawn under an opaque panel');
+  // Not a count of labels kept. A count rewards hiding — this assertion used to
+  // read 33 on a page where 16 of them were under the opaque workflow band, and
+  // burying a label scored exactly the same as writing it. What matters is that
+  // no wording is *lost*: a label with nowhere legible to go is muted, and its
+  // sentence is handed to the workflow band, so every step must be readable in
+  // one place or the other.
+  const spelledOut = new Set(
+    Array.from(xml.matchAll(/<Shape [^>]*NameU="LegendText\.\d+"[\s\S]*?<Text>(\d+)\.<\/Text>/g))
+      .map((match) => match[1]),
+  );
+  const drawn = new Set(visible.map((label) => label.text.trim()));
+  const lost = dense.edges.filter((edge) => {
+    const step = String((edge.data as { stepNumber?: number }).stepNumber);
+    return !spelledOut.has(step) && !drawn.has(String(edge.label).trim());
+  });
+  assert.equal(lost.length, 0, `${lost.length} step(s) are neither drawn nor spelled out in the band`);
   for (const label of labels) {
     assert.ok(
       label.x >= -0.01 && label.y >= -0.01
