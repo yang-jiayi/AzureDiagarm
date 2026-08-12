@@ -221,6 +221,18 @@ const MAX_TILED_SLIDES = 24;
 const MAX_LEGIBLE_TILED_SLIDES = 48;
 
 /**
+ * And the length past which a deck has stopped being a deck at all, applied
+ * only once legibility has already been given its way.
+ *
+ * The ceiling above is a preference — it yields to type that reads. This one
+ * does not, because at some size a drawing is simply too large for a fixed
+ * page and the honest answer is the most readable deck of a finite length,
+ * not an unbounded one. Set where a reader would abandon the deck rather than
+ * where a designer would.
+ */
+const MAX_FIXED_PAGE_SLIDES = 120;
+
+/**
  * And a bound on the grid itself, so the search for a grid that fits the deck
  * ceiling cannot walk a pathological one.
  *
@@ -232,7 +244,7 @@ const MAX_LEGIBLE_TILED_SLIDES = 48;
  * cells cost nothing but the cost of enumerating them, which is what this
  * number is actually for.
  */
-const MAX_TILED_CELLS = 4096;
+const MAX_TILED_CELLS = 22500;
 
 /**
  * A sheet has to carry a piece of the architecture, not a lone tile floating
@@ -373,10 +385,24 @@ function planDiagramWindows(
       minY: bounds.minY + stepY * row,
       maxY: row === rows - 1 ? bounds.maxY : bounds.minY + stepY * (row + 1),
     });
-    const holds = (col: number, row: number): boolean => {
-      const cell = { ...cellX(col), ...cellY(row) };
-      return services.some((box) => windowOwnsPoint(cell, bounds, box.x + box.w / 2, box.y + box.h / 2));
-    };
+    // `windowOwnsPoint` is a partition, so every service centre falls in
+    // exactly one cell and that cell can be computed directly. Asking each of
+    // the cells whether any service lands in it is the same answer for
+    // `cols * rows * services` work, which is what made the search for a
+    // readable grid unaffordable on the sparse drawings that need the finest
+    // ones: `shrinkToFit` walks a few hundred grids, so a 150 x 150 search over
+    // 140 services is hundreds of millions of point tests before a single slide
+    // is written.
+    const cellOf = (v: number, lo: number, step: number, n: number): number => (
+      step > 0 ? Math.min(n - 1, Math.max(0, Math.floor((v - lo) / step))) : 0
+    );
+    const occupied = new Set<number>();
+    for (const box of services) {
+      const col = cellOf(box.x + box.w / 2, bounds.minX, stepX, cols);
+      const row = cellOf(box.y + box.h / 2, bounds.minY, stepY, rows);
+      occupied.add(row * cols + col);
+    }
+    const holds = (col: number, row: number): boolean => occupied.has(row * cols + col);
 
     // An architecture is not a filled rectangle, so a cell of the grid can own
     // no services at all — and one was being emitted as a numbered part
@@ -437,6 +463,13 @@ function planDiagramWindows(
   // Capping the grid instead of the deck therefore refused a thirteen-slide
   // readable deck in favour of a twenty-four-cell one at four points.
   const slidesFor = (c: number, r: number): number => tile(c, r).length;
+  // The scale a reader actually gets from a grid: each window covers
+  // `content / n` of the drawing, so a finer grid is a bigger drawing, and the
+  // binding axis is whichever fits worst.
+  const scaleOf = (c: number, r: number): number => Math.min(
+    frame.w / (contentW / c + WINDOW_BLEED_PX * 2),
+    frame.h / (contentH / r + WINDOW_BLEED_PX * 2),
+  );
   // Coarsening an axis costs scale along that axis alone, and the scale the
   // reader gets is the smaller of the two. Spending that cost on the axis that
   // already binds therefore shrinks the type for nothing, while the other axis
@@ -457,7 +490,24 @@ function planDiagramWindows(
     // A grid this fine is a plotter drawing however it is counted, and the
     // bound also keeps the search below from walking a pathological grid.
     while (c * r > MAX_TILED_CELLS) ({ c, r } = drop(c, r));
-    while (c * r > 1 && slidesFor(c, r) > MAX_LEGIBLE_TILED_SLIDES) ({ c, r } = drop(c, r));
+    // Coarsen toward the deck ceiling — but the ceiling is a preference and
+    // legibility is not. Every drop buys a shorter deck with smaller type, so
+    // a drawing sparse enough to need more than the ceiling's worth of windows
+    // used to be coarsened right past the point where its labels stopped
+    // reading: a fifty-two service cascade came out at 6.31pt and a ninety at
+    // 4.00pt, on exactly forty-eight slides either way. Nobody wants ninety
+    // slides of one diagram, but the alternative here is not fewer slides, it
+    // is the same diagram nobody can read. Stop at the last grid that reads.
+    while (c * r > 1 && slidesFor(c, r) > MAX_LEGIBLE_TILED_SLIDES) {
+      const next = drop(c, r);
+      if (scaleOf(c, r) >= legibleScale && scaleOf(next.c, next.r) < legibleScale) break;
+      ({ c, r } = next);
+    }
+    // Nothing reads at any grid, or it reads and runs long. Either way the
+    // deck still has to be a deck, so cap it — this is the point at which a
+    // drawing is genuinely too large for a fixed page and the honest answer is
+    // the most readable deck of a finite length.
+    while (c * r > 1 && slidesFor(c, r) > MAX_FIXED_PAGE_SLIDES) ({ c, r } = drop(c, r));
     return { c, r };
   };
   const capped = (cols: number, rows: number): { windows: DiagramWindow[]; legible: boolean } | null => {

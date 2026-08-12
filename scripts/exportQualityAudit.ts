@@ -3868,6 +3868,11 @@ async function main(): Promise<void> {
     hubSpokeScenario(), scopeZoneScenario(), strayZonePairScenario(), zoneStrayScenario(),
     boundaryVoidScenario(), stackedSubnetsScenario(), tightSubnetsScenario(), diagonalCascadeScenario(),
     diagonalCascadeScenario(27, 'diagonal-cascade-27'),
+    // Past the deck ceiling. A drawing this sparse needs one window per service
+    // to reach seven points, so it is the shape that used to be coarsened until
+    // the ceiling was satisfied and the type was not — 52 services came out at
+    // 6.31pt, and 90 at 4.00pt, on exactly forty-eight slides either way.
+    diagonalCascadeScenario(52, 'diagonal-cascade-52'),
     bandAboveScenario(), framedCascadeScenario(), tightSeamScenario(), overRowScenario(),
     corridorZoneScenario(),
     ladderInGridScenario(), twinLaddersScenario(), strayLadderScenario(), legendCornerScenario(), duplicateStepsScenario(), denseZoneScenario(),
