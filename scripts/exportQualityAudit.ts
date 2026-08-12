@@ -830,9 +830,40 @@ function workflowFanScenario(): Scenario {
   return { id: 'workflow-fan', nodes, edges };
 }
 
+/**
+ * A 560-service estate under a 500-step CJK workflow.
+ *
+ * The band is sized twice — once at the narrowest page the exporter emits, to
+ * hand the fit a budget, and once at the real width, which is what the page is
+ * built from. The first was assumed to be an upper bound of the second because
+ * narrow columns wrap longer. It is not, when the search stops at the first
+ * split under its target rather than the shortest: wider columns wrap less, so
+ * the wide pass reaches the target at *fewer* columns, and fewer columns is a
+ * taller band. Both are under the target; the wide one was 6.55in taller.
+ *
+ * The fit is handed `198.3 − reserve` inches and the page is then built as
+ * `content + drawn`, so every inch of divergence lands straight on the sheet:
+ * this came out at 50 x 206in, which Visio refuses to open. The margin is
+ * 0.5in and `ladder-in-grid` was already at 68% of it.
+ */
+function workflowWideBandScenario(): Scenario {
+  const prose = '受注要求はエッジで認証されプライベートエンドポイント経由でワークロードへ転送されます詳細は運用手順書の該当節を参照してください追加の注記もあります';
+  const nodes: Node[] = [];
+  for (let r = 0; r < 28; r += 1) {
+    for (let c = 0; c < 20; c += 1) nodes.push(svc(`w${r}-${c}`, `Service ${r}${c}`, c * 240, r * 760));
+  }
+  const edges: Edge[] = [];
+  for (let i = 1; i <= 500; i += 1) {
+    edges.push({
+      id: `we${i}`, source: nodes[i - 1].id, target: nodes[i].id, label: `Hop ${i}`,
+      data: { stepNumber: i, stepDescription: prose.slice(0, 44) },
+    } as Edge);
+  }
+  return { id: 'workflow-wide-band', nodes, edges };
+}
+
 function workflowProseScenario(): Scenario {
-  const sentences = [
-    'The client sends the request to Azure Front Door, which terminates TLS at the edge and applies the WAF ruleset before anything reaches the origin.',
+  const sentences = [    'The client sends the request to Azure Front Door, which terminates TLS at the edge and applies the WAF ruleset before anything reaches the origin.',
     'Front Door forwards the validated request to the App Service origin over Private Link, so the origin is never reachable from the public internet.',
     'The web tier exchanges its managed identity for an access token and calls the API tier, which authorises the caller against the roles in the token.',
     'The API tier writes the order document to Azure Cosmos DB and the accompanying blob to Azure Storage in the same logical transaction boundary.',
@@ -4202,7 +4233,7 @@ async function main(): Promise<void> {
     scaledZoneRowScenario(),
     corridorZoneScenario(),
     ladderInGridScenario(), twinLaddersScenario(), strayLadderScenario(), legendCornerScenario(), duplicateStepsScenario(), denseZoneScenario(),
-    metaChipScenario(), gridFanScenario(), gridFan3Scenario(), fan8Tight5x5Scenario(), metaSublineScenario(), grid5x5CaptionScenario(), longNameGridScenario(), longLabelGridScenario(), metaTightScenario(),     longNameFanScenario(), estateChainScenario(), chain24Scenario(), tripleMutedScenario(), estate72Scenario(), workflowProseScenario(), workflowLongProseScenario(), workflowFanScenario(), allCategoriesScenario(),
+    metaChipScenario(), gridFanScenario(), gridFan3Scenario(), fan8Tight5x5Scenario(), metaSublineScenario(), grid5x5CaptionScenario(), longNameGridScenario(), longLabelGridScenario(), metaTightScenario(),     longNameFanScenario(), estateChainScenario(), chain24Scenario(), tripleMutedScenario(), estate72Scenario(), workflowProseScenario(), workflowLongProseScenario(), workflowFanScenario(), workflowWideBandScenario(), allCategoriesScenario(),
     await generatedScenario(), await groupedGeneratedScenario(),
   ];
   // Dark twins. Adding a `dark` flag was not enough on its own: nothing set it,

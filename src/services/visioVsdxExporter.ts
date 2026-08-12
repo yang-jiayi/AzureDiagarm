@@ -1028,8 +1028,19 @@ export async function buildVsdxPackage(
   ) + 0.5;
   // Splitting trades column height for column width, and the sentences have to
   // fit the width: past a point the extra wrapping costs more lines than the
-  // split saves rows. So take the first split that gets under the target, and
-  // if none does, the shortest band on offer.
+  // split saves rows.
+  //
+  // Always the SHORTEST split, never the first one under the target. "First
+  // under target" is not comparable between two page widths: wider columns wrap
+  // less, so the wide pass reaches the target at fewer columns, and a band in
+  // fewer columns is taller. Both results are under the target and the wide one
+  // can still be much taller than the narrow one — which is exactly the
+  // reservation this feeds. On a 500-step CJK workflow the narrow pass reserved
+  // 58.95in at 3 columns and the wide pass drew 65.50in at 2, and the page came
+  // out at 206in: a file Visio will not open at all. The shortest band at a
+  // wider page is no taller than the shortest at a narrower one for every
+  // column count, so taking the shortest makes the reservation an upper bound
+  // by construction.
   const naturalHIn = (() => {
     const b = computeBounds(drawing.values());
     return Math.max(b.maxY - b.minY, 1) / PX_PER_INCH;
@@ -1041,21 +1052,17 @@ export async function buildVsdxPackage(
   const bandFor = (widthIn: number): { columns: number; height: number } => {
     if (workflowEntries.length === 0) return { columns: 1, height: 0 };
     let columns = 1;
-    if (stackFor(1, widthIn) > bandTargetIn) {
-      let shortest = stackFor(1, widthIn);
+    let shortest = stackFor(1, widthIn);
+    if (shortest > bandTargetIn) {
       for (let cols = 2; cols <= MAX_WORKFLOW_COLUMNS; cols += 1) {
         const height = stackFor(cols, widthIn);
         if (height < shortest) {
           shortest = height;
           columns = cols;
         }
-        if (height <= bandTargetIn) {
-          columns = cols;
-          break;
-        }
       }
     }
-    return { columns, height: stackFor(columns, widthIn) };
+    return { columns, height: shortest };
   };
   // Sized twice, because the band's height depends on how wide the page turns
   // out to be and the page's width is not known until the drawing is fitted.
