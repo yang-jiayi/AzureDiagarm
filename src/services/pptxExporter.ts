@@ -893,11 +893,53 @@ function connectorLabelBox(
     }
     return { x, y, clamped: x !== rawX || y !== rawY };
   };
-  const covered = (at: { x: number; y: number }): number => seen.reduce((sum, tile) => {
-    const dx = Math.min(at.x + w, tile.x + tile.w) - Math.max(at.x, tile.x);
-    const dy = Math.min(at.y + blockH, tile.y + tile.h) - Math.max(at.y, tile.y);
-    return dx > 0 && dy > 0 ? sum + dx * dy * (tile.annotation ? ANNOTATION_WEIGHT : tile.weight ?? 1) : sum;
-  }, 0) + badgeCovered(at);
+  // Where the arrow this chip labels actually runs. Declared up here, ahead of
+  // the cost functions, because the numbered disc's cost depends on which end
+  // of the block the disc hangs from — leaving these below `covered` worked
+  // only because nothing happened to call it early enough to trip the
+  // temporal dead zone.
+  const ownSegments: { ax: number; ay: number; bx: number; by: number }[] = [];
+  for (let i = 1; i < route.points.length; i += 1) {
+    const a = toInches(route.points[i - 1], transform);
+    const b = toInches(route.points[i], transform);
+    ownSegments.push({ ax: a.x, ay: a.y, bx: b.x, by: b.y });
+  }
+  const toOwn = (cx: number, cy: number): number => {
+    let bestGap = Number.POSITIVE_INFINITY;
+    for (const seg of ownSegments) {
+      const dx = seg.bx - seg.ax;
+      const dy = seg.by - seg.ay;
+      const len = dx * dx + dy * dy;
+      const t = len > 0 ? Math.max(0, Math.min(1, ((cx - seg.ax) * dx + (cy - seg.ay) * dy) / len)) : 0;
+      bestGap = Math.min(bestGap, Math.hypot(cx - (seg.ax + t * dx), cy - (seg.ay + t * dy)));
+    }
+    return bestGap;
+  };
+  // Which end of the block the numbered callout hangs from. It used to be
+  // always the bottom, which on a chip that hangs BELOW its arrow puts the one
+  // mark a reader uses to identify the hop as far from that hop as the block
+  // allows — on a stack of parallel rows, nearer the next row's arrow than its
+  // own. The Architecture Center draws the number against the arrow it
+  // numbers, so hang it from whichever end of the block faces that arrow.
+  const badgeAtTopAt = (x: number, y: number): boolean => {
+    if (badgeD <= 0 || bare) return false;
+    const cx = x + w / 2;
+    const topY = y + badgeD / 2;
+    const botY = y + blockH - badgeD / 2;
+    const top = toOwn(cx, topY);
+    const bot = toOwn(cx, botY);
+    // A polyline that doubles back puts both ends of the block the same
+    // distance from the arrow by construction — `toOwn` takes the minimum over
+    // every segment, so the two tie. Neither end is then better for reading the
+    // number against its own hop, and the question that still has an answer is
+    // which end is furthest from somebody else's.
+    if (Math.abs(top - bot) < 0.01) {
+      return foreignGap ? foreignGap(cx, topY) > foreignGap(cx, botY) : false;
+    }
+    return top < bot;
+  };
+  const badgeYAt = (x: number, y: number): number => (badgeAtTopAt(x, y) ? y : y + h + badgeGap);
+  const textYAt = (x: number, y: number): number => (badgeAtTopAt(x, y) ? y + badgeD + badgeGap : y);
   // The wording has an opaque chip behind it and is expected to stand in the
   // corridors between tiles, so a graze costs it little. The number does not:
   // it is a small solid disc, and dropped on a tile it hides part of an icon
@@ -907,7 +949,7 @@ function connectorLabelBox(
   // how a wrap-around hop's callout came to sit 100% inside a stranger's tile.
   // So the disc is priced on its own footprint, and at a premium.
   const BADGE_COVER_WEIGHT = 4;
-  function badgeCovered(at: { x: number; y: number }): number {
+  const badgeCovered = (at: { x: number; y: number }): number => {
     if (badgeD <= 0 || blockH <= h + 0.01) return 0;
     const bx = at.x + w / 2 - badgeD / 2;
     const by = badgeYAt(at.x, at.y);
@@ -917,7 +959,13 @@ function connectorLabelBox(
       const dy = Math.min(by + badgeD, tile.y + tile.h) - Math.max(by, tile.y);
       return dx > 0 && dy > 0 ? sum + dx * dy * BADGE_COVER_WEIGHT * (tile.weight ?? 1) : sum;
     }, 0);
-  }  const onLabel = (at: { x: number; y: number }): number => seen.reduce((sum, tile) => {
+  };
+  const covered = (at: { x: number; y: number }): number => seen.reduce((sum, tile) => {
+    const dx = Math.min(at.x + w, tile.x + tile.w) - Math.max(at.x, tile.x);
+    const dy = Math.min(at.y + blockH, tile.y + tile.h) - Math.max(at.y, tile.y);
+    return dx > 0 && dy > 0 ? sum + dx * dy * (tile.annotation ? ANNOTATION_WEIGHT : tile.weight ?? 1) : sum;
+  }, 0) + badgeCovered(at);
+  const onLabel = (at: { x: number; y: number }): number => seen.reduce((sum, tile) => {
     if (!tile.annotation) return sum;
     const dx = Math.min(at.x + w, tile.x + tile.w) - Math.max(at.x, tile.x);
     const dy = Math.min(at.y + blockH, tile.y + tile.h) - Math.max(at.y, tile.y);
@@ -965,52 +1013,11 @@ function connectorLabelBox(
   // which on a grid is the wrong shape: a clear slot a row away is well inside
   // it and sits right beside a different hop. So a candidate also has to stay
   // nearer its own line than anybody else's, which is exactly what a reader
-  // does when they match a chip to an arrow.
-  const ownSegments: { ax: number; ay: number; bx: number; by: number }[] = [];
-  for (let i = 1; i < route.points.length; i += 1) {
-    const a = toInches(route.points[i - 1], transform);
-    const b = toInches(route.points[i], transform);
-    ownSegments.push({ ax: a.x, ay: a.y, bx: b.x, by: b.y });
-  }
+  // does when they match a chip to an arrow. `ownSegments` and `toOwn` are
+  // declared with the cost functions above, which need them too.
   const nearby = obstacles.filter((tile) => tile.owner !== undefined && tile.owner !== ownerKey
     && tile.x - (limit + w) <= home.x + w && tile.x + tile.w + limit + w >= home.x
     && tile.y - (limit + blockH) <= home.y + blockH && tile.y + tile.h + limit + blockH >= home.y);
-  const toOwn = (cx: number, cy: number): number => {
-    let bestGap = Number.POSITIVE_INFINITY;
-    for (const seg of ownSegments) {
-      const dx = seg.bx - seg.ax;
-      const dy = seg.by - seg.ay;
-      const len = dx * dx + dy * dy;
-      const t = len > 0 ? Math.max(0, Math.min(1, ((cx - seg.ax) * dx + (cy - seg.ay) * dy) / len)) : 0;
-      bestGap = Math.min(bestGap, Math.hypot(cx - (seg.ax + t * dx), cy - (seg.ay + t * dy)));
-    }
-    return bestGap;
-  };
-  // Which end of the block the numbered callout hangs from. It used to be
-  // always the bottom, which on a chip that hangs BELOW its arrow puts the one
-  // mark a reader uses to identify the hop as far from that hop as the block
-  // allows — on a stack of parallel rows, nearer the next row's arrow than its
-  // own. The Architecture Center draws the number against the arrow it
-  // numbers, so hang it from whichever end of the block faces that arrow.
-  const badgeAtTopAt = (x: number, y: number): boolean => {
-    if (badgeD <= 0 || bare) return false;
-    const cx = x + w / 2;
-    const topY = y + badgeD / 2;
-    const botY = y + blockH - badgeD / 2;
-    const top = toOwn(cx, topY);
-    const bot = toOwn(cx, botY);
-    // A polyline that doubles back puts both ends of the block the same
-    // distance from the arrow by construction — `toOwn` takes the minimum over
-    // every segment, so the two tie. Neither end is then better for reading the
-    // number against its own hop, and the question that still has an answer is
-    // which end is furthest from somebody else's.
-    if (Math.abs(top - bot) < 0.01) {
-      return foreignGap ? foreignGap(cx, topY) > foreignGap(cx, botY) : false;
-    }
-    return top < bot;
-  };
-  const badgeYAt = (x: number, y: number): number => (badgeAtTopAt(x, y) ? y : y + h + badgeGap);
-  const textYAt = (x: number, y: number): number => (badgeAtTopAt(x, y) ? y + badgeD + badgeGap : y);
   const attributable = (at: { x: number; y: number }): boolean => {
     if (ownSegments.length === 0) return true;
     const cx = at.x + w / 2;
