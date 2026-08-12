@@ -459,3 +459,37 @@ test('nothing on the sheet is set smaller than the deck would set it', async () 
   const smallest = Math.min(...sizes);
   assert.ok(smallest >= 7, `smallest Visio font is ${smallest.toFixed(2)}pt, below the 7pt floor the deck enforces`);
 });
+
+test('a tall drawing with a numbered workflow still fits the page Visio will open', async () => {
+  // The fit left exactly 0.5in of headroom under Visio's 200in limit, and the
+  // workflow band is 0.26in a step on top of a 0.5in header — so a twenty-step
+  // workflow on a tall architecture was written at over 200in and Visio refused
+  // the file outright. The band is page height the drawing does not get.
+  const tall: Node[] = Array.from({ length: 40 }, (_, i) => service(`s${i}`, `Service ${i}`, 0, i * 900));
+  const steps: Edge[] = Array.from({ length: 39 }, (_, i) => ({
+    id: `w${i}`, source: `s${i}`, target: `s${i + 1}`, label: `Step ${i + 1}`, data: { stepNumber: i + 1 },
+  } as Edge));
+
+  const pkg = await buildVsdxPackage(tall, steps, 'Tall', new Map());
+  assert.ok(pkg.pageHeightIn <= 200, `page is ${pkg.pageHeightIn}in tall, which Visio will not open`);
+  assert.ok(pkg.pageWidthIn <= 200, `page is ${pkg.pageWidthIn}in wide, which Visio will not open`);
+
+  // And every service is still on it, which is the whole reason for squeezing
+  // the gaps rather than cropping.
+  const page = pkg.parts.find((p) => /page1\.xml$/i.test(p.path));
+  const xml = typeof page?.data === 'string' ? page.data : '';
+  assert.equal((xml.match(/NameU="Service\.\d+"/g) ?? []).length, tall.length, 'a service was lost off the page');
+});
+
+test('a row longer than the page can hold is scaled rather than written unopenable', async () => {
+  // Squeezing the gaps has nothing left to give once the tiles alone are over
+  // the limit. Scaling costs point size, which is bad; a file Visio refuses to
+  // open costs everything.
+  const row: Node[] = Array.from({ length: 200 }, (_, i) => service(`s${i}`, `Service ${i}`, i * 400, 0));
+
+  const pkg = await buildVsdxPackage(row, [], 'Wide', new Map());
+  assert.ok(pkg.pageWidthIn <= 200, `page is ${pkg.pageWidthIn}in wide, which Visio will not open`);
+  const page = pkg.parts.find((p) => /page1\.xml$/i.test(p.path));
+  const xml = typeof page?.data === 'string' ? page.data : '';
+  assert.equal((xml.match(/NameU="Service\.\d+"/g) ?? []).length, row.length, 'a service was lost off the page');
+});

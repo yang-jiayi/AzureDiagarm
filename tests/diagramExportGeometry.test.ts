@@ -8,6 +8,7 @@ import {
   compactEmptyGutters,
   computeContentBounds,
   computeFitTransform,
+  fitBoxesWithin,
   partitionBoxes,
   routeOrthogonal,
   narrateEdgeCallouts,
@@ -507,4 +508,60 @@ test('a fan keeps one lane per member even where a lone hop would be re-anchored
   assert.equal(new Set(lanes).size, 3, `the bundle collapsed onto one lane:\n${lanes.join('\n')}`);
   const anchors = routes.map((r) => `${r.labelAnchor.x.toFixed(1)},${r.labelAnchor.y.toFixed(1)}`);
   assert.equal(new Set(anchors).size, 3, `two labels share a spot: ${anchors.join(' ')}`);
+});
+
+test('a drawing too wide for the format gives up its gaps, never its shapes', () => {
+  // Visio refuses a page over 200in, and a long cascade at the author's own
+  // spacing is well past it. Scaling shrinks the type below the legibility
+  // floor and cropping loses services, so the whitespace is what pays.
+  const map = new Map<string, ExportBox>();
+  for (let i = 0; i < 27; i += 1) map.set(`s${i}`, box(`s${i}`, i * 900, 0));
+  const limit = 6000;
+
+  const fitted = fitBoxesWithin(map, limit, limit);
+  const after = computeBounds(fitted.values());
+
+  assert.ok(after.maxX - after.minX <= limit + 1, `still ${after.maxX - after.minX}px wide`);
+  assert.equal(fitted.size, map.size, 'no service was dropped');
+  for (const [id, b] of fitted) {
+    assert.equal(b.w, map.get(id)!.w, `${id} kept its width`);
+    assert.equal(b.h, map.get(id)!.h, `${id} kept its height`);
+  }
+  // Reading order and relative position survive: the squeeze is monotonic.
+  const xs = [...Array(27).keys()].map((i) => fitted.get(`s${i}`)!.x);
+  for (let i = 1; i < xs.length; i += 1) {
+    assert.ok(xs[i] > xs[i - 1], `s${i} overtook s${i - 1}`);
+    assert.ok(xs[i] - xs[i - 1] >= 150, `s${i} overlaps its neighbour`);
+  }
+});
+
+test('a drawing that already fits is returned untouched, and a zone keeps its members inside it', () => {
+  const map = new Map<string, ExportBox>();
+  map.set('zone', { id: 'zone', kind: 'group', label: 'Zone', x: 0, y: 0, w: 400, h: 300 });
+  map.set('a', box('a', 20, 40));
+  map.set('far', box('far', 3000, 40));
+
+  assert.equal(fitBoxesWithin(map, 10000, 10000), map, 'a drawing inside the limit is not rebuilt at all');
+
+  const fitted = fitBoxesWithin(map, 800, 10000);
+  const zone = fitted.get('zone')!;
+  const a = fitted.get('a')!;
+  const far = fitted.get('far')!;
+  assert.equal(zone.w, 400, 'the zone keeps its own size — only the gap outside it is spent');
+  assert.ok(zone.x <= a.x && zone.x + zone.w >= a.x + a.w, 'and it still contains the service drawn inside it');
+  assert.ok(far.x + far.w <= 801, `the far service came back onto the paper (${far.x + far.w}px)`);
+  assert.ok(far.x >= zone.x + zone.w, 'without being pulled inside the zone it was never in');
+});
+
+test('shapes alone over the limit are squeezed to touching rather than into each other', () => {
+  // There is no whitespace left to spend. Closing every gap is the least-lossy
+  // thing available; overlapping the services would not be.
+  const map = new Map<string, ExportBox>();
+  for (let i = 0; i < 10; i += 1) map.set(`s${i}`, box(`s${i}`, i * 160, 0));
+
+  const fitted = fitBoxesWithin(map, 400, 400);
+  const xs = [...Array(10).keys()].map((i) => fitted.get(`s${i}`)!.x);
+  for (let i = 1; i < xs.length; i += 1) {
+    assert.equal(xs[i] - xs[i - 1], 150, `s${i} is not flush against s${i - 1}`);
+  }
 });

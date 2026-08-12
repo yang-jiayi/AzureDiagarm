@@ -43,6 +43,7 @@ import {
   collectExportBoxes,
   compactEmptyGutters,
   fitBoxesWithin,
+  scaleBoxesWithin,
   clampedBoxes,
   computeBounds,
   computeContentBounds,
@@ -806,12 +807,30 @@ export async function buildVsdxPackage(
   // size, and the only thing given up is distance — which is the one thing on
   // a sheet this size the reader was never going to use.
   const limitPx = (MAX_VISIO_PAGE_IN - PAGE_PADDING_IN * 2 - 0.5) * PX_PER_INCH;
-  const raw = fitBoxesWithin(compactEmptyGutters(collectExportBoxes(nodes)), limitPx, limitPx);
   // Same narration the deck gets: only one hop between a given pair of services
   // is ever given a step number, so the other members of a fan carry a callout
   // that the panel never explains — or, once the fan drops its wording, say
   // nothing at all.
   const narrated = narrateEdgeCallouts(edges);
+  // A numbered workflow gets its own band across the top of the sheet, so the
+  // prose never lands on the drawing the way an overlaid panel would. It is
+  // measured HERE, before the drawing is fitted, because it is page height the
+  // drawing does not get: the fit left exactly 0.5in of headroom under Visio's
+  // limit and a twenty-step workflow is 5.7in, so a tall architecture with a
+  // workflow was written at 202in and Visio refused to open it at all.
+  const workflowEntries = workflowListFromEdges(narrated);
+  const workflowBandIn = workflowEntries.length > 0 ? 0.26 * workflowEntries.length + 0.5 : 0;
+  const fitted = fitBoxesWithin(
+    compactEmptyGutters(collectExportBoxes(nodes)),
+    limitPx,
+    limitPx - workflowBandIn * PX_PER_INCH,
+  );
+  // Squeezing the gaps is the first answer because it costs nothing but
+  // distance. It has nothing left to give when the shapes alone are over the
+  // limit — a single row of more than 127 tiles, or a zone rectangle spanning
+  // the drawing, which counts as solid. Scaling is worse: it takes the type
+  // down with it. A file Visio will not open is worse still.
+  const raw = scaleBoxesWithin(fitted, limitPx, limitPx - workflowBandIn * PX_PER_INCH);
   // Match the PowerPoint strategy: draw 1 : 1 from the full bounds whenever the
   // page stays a sensible size, and only fall back to the dense-cluster bounds
   // (clamping the strays back on) when a far-placed node would otherwise blow
@@ -847,10 +866,6 @@ export async function buildVsdxPackage(
 
   const contentWIn = Math.max(bounds.maxX - bounds.minX, 1) / PX_PER_INCH;
   const contentHIn = Math.max(bounds.maxY - bounds.minY, 1) / PX_PER_INCH;
-  // A numbered workflow gets its own band across the top of the sheet, so the
-  // prose never lands on the drawing the way an overlaid panel would.
-  const workflowEntries = workflowListFromEdges(narrated);
-  const workflowBandIn = workflowEntries.length > 0 ? 0.26 * workflowEntries.length + 0.5 : 0;
   const pageWidthIn = f(Math.max(contentWIn + PAGE_PADDING_IN * 2, MIN_PAGE_W_IN));
   const pageHeightIn = f(Math.max(contentHIn + PAGE_PADDING_IN * 2 + workflowBandIn, MIN_PAGE_H_IN));
 

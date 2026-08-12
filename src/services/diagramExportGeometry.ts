@@ -1031,6 +1031,42 @@ export function fitBoxesWithin(
   return out;
 }
 
+/**
+ * Scale a drawing down until it fits a hard limit — the last resort, used only
+ * where the format refuses the file outright.
+ *
+ * {@link fitBoxesWithin} is always tried first because it costs nothing but
+ * distance. It has nothing left to give when the shapes themselves are over the
+ * limit: a single row of more than 127 tiles, or a zone rectangle drawn across
+ * the whole drawing, which it has to count as solid because it cannot know the
+ * rectangle is mostly air. Scaling takes the type down with the tiles and is
+ * genuinely worse — but a page Visio will not open is not an export at all, so
+ * a small drawing beats no drawing. Returns the map untouched when it fits.
+ */
+export function scaleBoxesWithin(
+  boxes: Map<string, ExportBox>,
+  maxW: number,
+  maxH: number,
+): Map<string, ExportBox> {
+  if (boxes.size === 0) return boxes;
+  const bounds = computeBounds(boxes.values());
+  const w = bounds.maxX - bounds.minX;
+  const h = bounds.maxY - bounds.minY;
+  const scale = Math.min(1, w > 0 ? maxW / w : 1, h > 0 ? maxH / h : 1);
+  if (scale >= 0.999) return boxes;
+  const out = new Map<string, ExportBox>();
+  for (const [id, box] of boxes) {
+    out.set(id, {
+      ...box,
+      x: bounds.minX + (box.x - bounds.minX) * scale,
+      y: bounds.minY + (box.y - bounds.minY) * scale,
+      w: Math.max(1, box.w * scale),
+      h: Math.max(1, box.h * scale),
+    });
+  }
+  return out;
+}
+
 function quartiles(sorted: number[]): [number, number] {
   const at = (q: number) => {
     const pos = (sorted.length - 1) * q;
