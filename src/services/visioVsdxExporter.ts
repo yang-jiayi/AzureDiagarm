@@ -794,7 +794,7 @@ export async function buildVsdxPackage(
   // that the panel never explains — or, once the fan drops its wording, say
   // nothing at all.
   const narrated = narrateEdgeCallouts(edges);
-  const routes = buildExportRoutes(narrated, boxes);
+  let routes = buildExportRoutes(narrated, boxes);
   // Match the PowerPoint strategy: draw 1 : 1 from the full bounds whenever the
   // page stays a sensible size, and only fall back to the dense-cluster bounds
   // (clamping the strays back on) when a far-placed node would otherwise blow
@@ -850,6 +850,27 @@ export async function buildVsdxPackage(
     }
     return { x, y: pageHeightIn - topY };
   };
+
+  // Reroute against the positions the tiles will actually occupy. The clamp
+  // moves a stray tile onto the page but the routes were planned from where it
+  // used to be, so every hop touching it ended somewhere else — on the "outlier"
+  // fixture one arrow finished at the page corner, 0.3in clear of the tile the
+  // <Connects> table said it was glued to. Visio would have snapped that line
+  // across the page the first time the reader moved anything.
+  if (clampToPage) {
+    const moved = new Map<string, ExportBox>();
+    for (const [id, box] of boxes) {
+      const rect = toRect(box);
+      // Back into the layout's pixel space, so the router sees one coordinate
+      // system and produces routes that need no further correction.
+      moved.set(id, {
+        ...box,
+        x: (rect.x - offsetXIn) * PX_PER_INCH + bounds.minX,
+        y: (pageHeightIn - rect.y - rect.h - offsetYIn) * PX_PER_INCH + bounds.minY,
+      });
+    }
+    routes = buildExportRoutes(narrated, moved);
+  }
 
   const icons = presetIcons ?? await rasterizeIcons(services.map((box) => box.iconPath), 128);
 

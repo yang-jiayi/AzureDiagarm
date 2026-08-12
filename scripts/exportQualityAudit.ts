@@ -2420,6 +2420,90 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
     const [, pinX, pinY, w, h] = m;
     serviceBoxes.push({ x: +pinX - +w / 2, y: +pinY - +h / 2, w: +w, h: +h });
   }
+
+  // Glue. A .vsdx whose connectors are not attached to the shapes they join is
+  // a picture, not a diagram, and being editable is the whole reason to export
+  // Visio: drag a service in an unglued drawing and the arrows stay behind.
+  // Two halves have to agree. The `<Connects>` table has to name both ends,
+  // and the geometry has to start and finish on the shapes the table names —
+  // a line glued to a box it does not touch is snapped across the page the
+  // first time Visio reroutes it, and the reader's layout jumps.
+  const shapeBoxById = new Map<string, { x: number; y: number; w: number; h: number }>();
+  for (const m of xml.matchAll(
+    /<Shape ID="(\d+)" NameU="Service\.\d+"[\s\S]*?<Cell N="PinX" V="([\d.-]+)"\/>\s*<Cell N="PinY" V="([\d.-]+)"\/>\s*<Cell N="Width" V="([\d.-]+)"\/>\s*<Cell N="Height" V="([\d.-]+)"\/>/g,
+  )) {
+    shapeBoxById.set(m[1], { x: +m[2] - +m[4] / 2, y: +m[3] - +m[5] / 2, w: +m[4], h: +m[5] });
+  }
+  const glue = new Map<string, { begin?: string; end?: string }>();
+  for (const m of xml.matchAll(/<Connect FromSheet="(\d+)" FromCell="(BeginX|EndX)"[^>]*ToSheet="(\d+)"/g)) {
+    const entry = glue.get(m[1]) ?? {};
+    if (m[2] === 'BeginX') entry.begin = m[3]; else entry.end = m[3];
+    glue.set(m[1], entry);
+  }
+  let unglued = 0;
+  let detached = 0;
+  for (const block of xml.matchAll(/<Shape ID="(\d+)" NameU="Connector\.\d+"[\s\S]*?<\/Shape>/g)) {
+    const id = block[1];
+    const ends = glue.get(id);
+    if (!ends?.begin || !ends?.end) { unglued += 1; continue; }
+    const at = (cell: string): number => +(new RegExp(`<Cell N="${cell}" V="([\\d.-]+)"/>`).exec(block[0])?.[1] ?? NaN);
+    const pairs: Array<[string, number, number]> = [
+      [ends.begin, at('BeginX'), at('BeginY')],
+      [ends.end, at('EndX'), at('EndY')],
+    ];
+    for (const [sheet, x, y] of pairs) {
+      const box = shapeBoxById.get(sheet);
+      if (!box || !Number.isFinite(x) || !Number.isFinite(y)) continue;
+      // A stub jog leaves the endpoint a little outside the tile, so the bar is
+      // the gap the exporter itself uses rather than exact containment.
+      const gap = Math.max(box.x - x, x - (box.x + box.w), box.y - y, y - (box.y + box.h));
+      if (gap > 0.2) detached += 1;
+    }
+  }
+  if (unglued > 0) issues.push(`${unglued} Visio connector(s) are not glued to the shapes they join`);
+  if (detached > 0) issues.push(`${detached} Visio connector end(s) are glued to a shape they do not touch`);
+
+  // Arrows must not be drawn through services. PowerPoint has had this rule for
+  // several rounds; Visio shares the router but had no geometry rule of any
+  // kind, so a routing regression could ship in the .vsdx while the deck stayed
+  // clean. Geometry rows are in the connector's own rotated frame, measured
+  // from its begin point, so they are carried back to the page before judging.
+  for (const block of xml.matchAll(/<Shape ID="\d+" NameU="Connector\.\d+"[\s\S]*?<\/Shape>/g)) {
+    const shape = block[0];
+    const num = (cell: string): number => +(new RegExp(`<Cell N="${cell}" V="([\\d.-]+)"/>`).exec(shape)?.[1] ?? NaN);
+    const bx = num('BeginX');
+    const by = num('BeginY');
+    const theta = num('Angle');
+    if (!Number.isFinite(bx) || !Number.isFinite(by) || !Number.isFinite(theta)) continue;
+    const cos = Math.cos(theta);
+    const sin = Math.sin(theta);
+    const pts = [...shape.matchAll(/<Cell N="X" V="([\d.-]+)"\/><Cell N="Y" V="([\d.-]+)"\/>/g)]
+      .map((p) => ({ x: bx + +p[1] * cos - +p[2] * sin, y: by + +p[1] * sin + +p[2] * cos }));
+    if (pts.length < 2) continue;
+    const ownEnds = [pts[0], pts[pts.length - 1]];
+    let through = 0;
+    for (let i = 1; i < pts.length; i += 1) {
+      const a = pts[i - 1];
+      const b = pts[i];
+      const len = Math.hypot(b.x - a.x, b.y - a.y);
+      const steps = Math.max(2, Math.ceil(len / 0.02));
+      for (let s = 0; s < steps; s += 1) {
+        const t = (s + 0.5) / steps;
+        const at = { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
+        // Its own endpoints sit on their tiles by design; only a third shape
+        // being crossed is a defect.
+        if (ownEnds.some((e) => Math.hypot(e.x - at.x, e.y - at.y) < 0.35)) continue;
+        const inside = serviceBoxes.some(
+          (box) => at.x > box.x + 0.02 && at.x < box.x + box.w - 0.02 && at.y > box.y + 0.02 && at.y < box.y + box.h - 0.02,
+        );
+        if (inside) through += len / steps;
+      }
+    }
+    if (through > 0.2) {
+      const name = /NameU="(Connector\.\d+)"/.exec(shape)?.[1] ?? 'connector';
+      issues.push(`Visio ${name} is drawn through a service for ${through.toFixed(2)}in`);
+    }
+  }
   for (const block of badgeBlocks) {
     const shown = /<Text>([^<]*)<\/Text>/.exec(block)?.[1] ?? '';
     if (!expectedNumbers.has(shown)) {
