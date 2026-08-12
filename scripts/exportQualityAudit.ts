@@ -655,6 +655,34 @@ function framedCascadeScenario(count = 40, id = 'framed-cascade'): Scenario {
   };
 }
 
+/**
+ * A grid packed so tightly that the gutters are narrower than a stub.
+ *
+ * 150x75 tiles on a 160x85 pitch leaves 10px between neighbours — below the
+ * router's own 6px clearance margin on both sides, so `clearLanes` merges every
+ * column into one span and offers no lane at all. `countBlocked` inflates each
+ * tile by the same margin, so on this pitch every candidate reports the same
+ * maximal count and the router cannot tell a route that grazes a corner from
+ * one that runs the full height of three tiles it does not connect.
+ *
+ * A clean route exists — the 310..320 gutter between columns 1 and 2 — which is
+ * what makes this a defect rather than an impossible drawing.
+ */
+function tightSeamScenario(): Scenario {
+  const names = ['Azure Front Door', 'Azure App Service', 'Azure SQL Database', 'Azure Functions'];
+  const nodes: Node[] = Array.from({ length: 20 }, (_, i) => (
+    svc(`s-${i}`, names[i % names.length], (i % 5) * 160, Math.floor(i / 5) * 85)
+  ));
+  return {
+    id: 'tight-seam',
+    nodes,
+    edges: [
+      { id: 'x1', source: 's-0', target: 's-12', label: 'Calls' },
+      { id: 'x2', source: 's-4', target: 's-15', label: 'Reads' },
+    ] as Edge[],
+  };
+}
+
 function grp(id: string, label: string, x: number, y: number, w: number, h: number): Node {
   return { id, type: 'groupNode', position: { x, y }, style: { width: w, height: h }, data: { label } } as Node;
 }
@@ -3763,7 +3791,7 @@ async function main(): Promise<void> {
     hubSpokeScenario(), scopeZoneScenario(), strayZonePairScenario(), zoneStrayScenario(),
     boundaryVoidScenario(), stackedSubnetsScenario(), tightSubnetsScenario(), diagonalCascadeScenario(),
     diagonalCascadeScenario(27, 'diagonal-cascade-27'),
-    bandAboveScenario(), framedCascadeScenario(),
+    bandAboveScenario(), framedCascadeScenario(), tightSeamScenario(),
     corridorZoneScenario(),
     ladderInGridScenario(), twinLaddersScenario(), strayLadderScenario(), legendCornerScenario(), duplicateStepsScenario(), denseZoneScenario(),
     metaChipScenario(), gridFanScenario(), gridFan3Scenario(), fan8Tight5x5Scenario(), metaSublineScenario(), grid5x5CaptionScenario(), longNameGridScenario(), longLabelGridScenario(), metaTightScenario(),     longNameFanScenario(), estateChainScenario(), chain24Scenario(), tripleMutedScenario(), estate72Scenario(), workflowProseScenario(), workflowLongProseScenario(), allCategoriesScenario(),

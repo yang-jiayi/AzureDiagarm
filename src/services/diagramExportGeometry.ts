@@ -1573,6 +1573,11 @@ function routesBetweenSides(
   target: ExportBox,
   targetSide: BoxSide,
   gap: number,
+  // Coordinates on the perpendicular axis that are known to be clear of every
+  // obstacle. Without these the only crossing lane on offer is derived from the
+  // two tiles alone, which on a packed grid runs straight down the middle of
+  // the column between them.
+  crossLanes: number[] = [],
 ): Array<{ points: Point[]; labelAnchor: Point }> {
   const head = sitePoint(source, sourceSide);
   const tail = sitePoint(target, targetSide);
@@ -1594,10 +1599,14 @@ function routesBetweenSides(
       else lo = Math.max(lo, along(stub));
     }
     if (lo <= hi) {
-      const lane = Math.min(Math.max((along(headStub) + along(tailStub)) / 2, lo), hi);
-      shapes.push(sourceVertical
-        ? [head, headStub, { x: headStub.x, y: lane }, { x: tailStub.x, y: lane }, tailStub, tail]
-        : [head, headStub, { x: lane, y: headStub.y }, { x: lane, y: tailStub.y }, tailStub, tail]);
+      const mid = (along(headStub) + along(tailStub)) / 2;
+      const feasible = [mid, ...crossLanes.filter((lane) => lane >= lo && lane <= hi)];
+      for (const raw of feasible) {
+        const lane = Math.min(Math.max(raw, lo), hi);
+        shapes.push(sourceVertical
+          ? [head, headStub, { x: headStub.x, y: lane }, { x: tailStub.x, y: lane }, tailStub, tail]
+          : [head, headStub, { x: lane, y: headStub.y }, { x: lane, y: tailStub.y }, tailStub, tail]);
+      }
     }
     // Stubs pointing the same way, or away from each other, need a jog on the
     // perpendicular axis: out along each stub, across in the clear, and back.
@@ -1609,6 +1618,7 @@ function routesBetweenSides(
       (near[2] + near[3]) / 2,
       Math.max(near[0], near[2]) + gap,
       Math.min(near[1], near[3]) - gap,
+      ...crossLanes,
     ];
     for (const jog of spans) {
       shapes.push(sourceVertical
@@ -1625,6 +1635,13 @@ function routesBetweenSides(
       ? { x: headStub.x, y: tailStub.y }
       : { x: tailStub.x, y: headStub.y };
     shapes.push([head, headStub, safe, tailStub, tail], [head, headStub, other, tailStub, tail]);
+    // Two bends through a clear lane, for when one bend has to be placed inside
+    // a neighbour because the tiles are packed against each other.
+    for (const lane of crossLanes) {
+      shapes.push(sourceVertical
+        ? [head, headStub, { x: headStub.x, y: lane }, { x: tailStub.x, y: lane }, tailStub, tail]
+        : [head, headStub, { x: lane, y: headStub.y }, { x: lane, y: tailStub.y }, tailStub, tail]);
+    }
   }
 
   return shapes.map((raw) => {
@@ -1757,17 +1774,46 @@ function bestDetour(
   // clear, so a route that already had a clear lane keeps exactly the one it
   // had and only the previously-unsolvable cases change.
   if (allowResite && bestBlocked > 0 && source && target) {
-    for (const targetSide of BOX_SIDES) {
-      for (const sourceSide of BOX_SIDES) {
-        for (const candidate of routesBetweenSides(source, sourceSide, target, targetSide, gap)) {
-          if (countBlocked(candidate.points, obstacles, margin) > 0) continue;
-          // The tiles a route joins are not in `obstacles`, so a shape that
-          // doubles back through its own source counts as perfectly clear.
-          if (pathEntersBox(candidate.points, source) || pathEntersBox(candidate.points, target)) continue;
-          return candidate;
+    // Lanes at a relaxed margin as well as the comfortable one. The 6px
+    // clearance is a preference, not a requirement: on a grid whose gutters are
+    // 10px wide it merges every column into a single span and offers no lane at
+    // all, so the router could not see the one route that crosses nothing and
+    // drew an arrow the full height of three tiles it does not connect. A line
+    // 5px from a tile edge is a far better drawing than a line through it.
+    const spansX = obstacles.map((b) => [b.x, b.x + b.w] as [number, number]);
+    const spansY = obstacles.map((b) => [b.y, b.y + b.h] as [number, number]);
+    const relaxed = (spans: Array<[number, number]>, from: number, to: number): number[] => {
+      for (const m of [margin, 2, 0]) {
+        const lanes = clearLanes(spans, from, to, m);
+        if (lanes.length > 0) return lanes;
+      }
+      return [];
+    };
+    const lanesX = relaxed(spansX, start.x, end.x);
+    const lanesY = relaxed(spansY, start.y, end.y);
+    // A stub has to fit the gutter it stands in. At 18px it lands inside the
+    // neighbour on a packed grid, which makes every route from that side wrong
+    // before it has gone anywhere.
+    let strict: Candidate | null = null;
+    for (const stub of [gap, 6, 3]) {
+      for (const targetSide of BOX_SIDES) {
+        for (const sourceSide of BOX_SIDES) {
+          const vertical = isVerticalSide(sourceSide) === isVerticalSide(targetSide)
+            ? !isVerticalSide(sourceSide)
+            : true;
+          const lanes = vertical ? lanesY : lanesX;
+          for (const candidate of routesBetweenSides(source, sourceSide, target, targetSide, stub, lanes)) {
+            if (pathEntersBox(candidate.points, source) || pathEntersBox(candidate.points, target)) continue;
+            if (countBlocked(candidate.points, obstacles, margin) === 0) return candidate;
+            // Second tier: clear of every tile's interior, even though it does
+            // not keep the full comfort margin. Held back rather than returned
+            // so a route that can have the margin still gets it.
+            if (!strict && !obstacles.some((box) => pathEntersBox(candidate.points, box))) strict = candidate;
+          }
         }
       }
     }
+    if (strict) return strict;
   }
   return best;
 }

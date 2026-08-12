@@ -1,0 +1,20 @@
+Route around tiles even when the grid is packed tighter than the margin
+
+A 150x75 tile on a 160x85 pitch leaves a 10px gutter, which is narrower than
+the 6px clearance the router keeps either side of a line. clearLanes merges
+spans within 2*margin of each other, so every column of that grid collapsed
+into a single obstacle and no lane was offered at all. countBlocked then
+inflated every tile by the same margin, so a route grazing one edge scored
+identically to one running the full height of three tiles, and bestDetour
+could not tell them apart. The result was an arrow drawn straight through
+three tiles it does not connect.
+
+The clearance is a preference, not a requirement: a line 5px from a tile edge
+is a far better drawing than a line through it. bestDetour now retries
+clearLanes at a degraded margin when the comfortable one yields nothing, feeds
+those lanes to routesBetweenSides as crossLanes, and tries shorter stubs
+because an 18px stub lands inside the neighbour on a packed grid. A candidate
+that crosses no tile interior is accepted only after every candidate has failed
+to earn the full margin, so routes that already had clearance keep it.
+
+Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>

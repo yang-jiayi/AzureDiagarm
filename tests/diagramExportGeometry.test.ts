@@ -633,3 +633,38 @@ test('a frame drawn around the drawing does not make the fit a no-op', () => {
   const lost = (spread(plain) - spread(framed)) / spread(plain);
   assert.ok(lost < 0.02, `the frame cost the services ${(lost * 100).toFixed(0)}% of the room they had`);
 });
+
+test('a grid packed tighter than the clearance margin still routes around its tiles', () => {
+  // 150x75 tiles on a 160x85 pitch leaves 10px gutters — narrower than the 6px
+  // clearance the router keeps on each side of a line. clearLanes merged every
+  // column into one span and offered no lane at all, so the router took a route
+  // that ran the full height of three tiles it does not connect. The clearance
+  // is a preference, not a requirement: a line 5px from a tile edge is a far
+  // better drawing than a line through it, and one exists here — the 310..320
+  // gutter between columns 1 and 2.
+  const boxes = new Map<string, ExportBox>();
+  for (let i = 0; i < 20; i += 1) boxes.set(`s${i}`, box(`s${i}`, (i % 5) * 160, Math.floor(i / 5) * 85));
+  const edges = [
+    { id: 'x1', source: 's0', target: 's12' },
+    { id: 'x2', source: 's4', target: 's15' },
+  ] as Edge[];
+
+  const routes = buildExportRoutes(edges, boxes);
+  assert.equal(routes.length, 2, 'both hops must be drawn');
+  for (const route of routes) {
+    const crossed = [...boxes.values()].filter((tile) => {
+      if (tile.id === route.fromId || tile.id === route.toId) return false;
+      for (let i = 1; i < route.points.length; i += 1) {
+        const a = route.points[i - 1];
+        const b = route.points[i];
+        if (Math.max(a.x, b.x) > tile.x + 1 && Math.min(a.x, b.x) < tile.x + tile.w - 1
+          && Math.max(a.y, b.y) > tile.y + 1 && Math.min(a.y, b.y) < tile.y + tile.h - 1) return true;
+      }
+      return false;
+    });
+    assert.deepEqual(
+      crossed.map((t) => t.id), [],
+      `${route.id} is drawn through ${crossed.map((t) => t.id).join(', ')}, which it does not connect`,
+    );
+  }
+});
