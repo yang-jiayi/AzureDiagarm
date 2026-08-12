@@ -38,6 +38,7 @@ import {
   workflowListFromEdges,
   narrateEdgeCallouts,
   zoneStyleFor,
+  carriesWording,
   type Bounds,
   type ExportBox,
   type ExportRoute,
@@ -835,10 +836,6 @@ function connectorLabelBox(
   // walking 6in from the 0.9in hop it labelled, taking its numbered callout to
   // rest beside a completely different arrow.
   const chipReach = Math.max(1.2 * blockH, 0.6 * w, 0.5);
-  const score = (at: { x: number; y: number }): number => {
-    const drift = Math.hypot(at.x - home.x, at.y - home.y);
-    return covered(at) + DRIFT_COST_PER_IN * drift;
-  };
   // Sitting on another label is the one thing worth a long walk: nothing is
   // readable there at all. Sitting on a tile is not, so that search stays
   // inside the radius where the chip still plainly belongs to its own arrow.
@@ -892,12 +889,14 @@ function connectorLabelBox(
   const attributable = (at: { x: number; y: number }): boolean => {
     if (ownSegments.length === 0) return true;
     const cx = at.x + w / 2;
-    // The chip's centre, and the bottom of the block where its numbered callout
-    // hangs. A chip that reads correctly can still have its badge sitting on a
-    // stranger's arrow, and the badge is what the workflow list points at.
+    // The centre of the wording, and the row where the numbered callout hangs.
+    // A reader attributes each of those to the arrow nearest to it, so each has
+    // to be tested where it is actually drawn: the centre of the block that
+    // contains both belongs to neither, and on a chip with a badge it sits a
+    // quarter inch below the text it is supposed to stand for.
     const sampleYs = blockH > h + 0.01
-      ? [at.y + blockH / 2, at.y + blockH - Math.min(0.1, blockH / 2)]
-      : [at.y + blockH / 2];
+      ? [at.y + h / 2, at.y + blockH - Math.min(0.1, blockH / 2)]
+      : [at.y + h / 2];
     for (const cy of sampleYs) {
       const mine = toOwn(cx, cy);
       if (foreignGap && foreignGap(cx, cy) < mine - 0.1) return false;
@@ -910,6 +909,19 @@ function connectorLabelBox(
       }
     }
     return true;
+  };
+  // A chip sitting where it reads as somebody else's label is a defect worth
+  // about half a covered tile, which is what the ladder search already charges
+  // for a misread rung. It is priced, not forbidden: the natural spot is taken
+  // unconditionally whenever nothing overlaps it, so without a price a rung
+  // whose home happens to be clean never looks for a better slot at all - and
+  // that is how a callout came to rest 0.32in from a stranger's arrow while
+  // its own ran 0.67in away. The walk still refuses to *move* to an
+  // unattributable slot, so this can only ever improve a placement.
+  const MISREAD_COST = 0.5;
+  const score = (at: { x: number; y: number }): number => {
+    const drift = Math.hypot(at.x - home.x, at.y - home.y);
+    return covered(at) + DRIFT_COST_PER_IN * drift + (attributable(at) ? 0 : MISREAD_COST);
   };
 
   // A chip centred on its arrow lands on top of a tile whenever the free gap
@@ -1049,6 +1061,8 @@ function stepBadgeBox(
   clampTo: DiagramFrame | undefined,
   chip: ReturnType<typeof connectorLabelBox>,
   obstacles: readonly Obstacle[] = [],
+  ownGap?: (x: number, y: number) => number,
+  foreignGap?: (x: number, y: number) => number,
 ): { x: number; y: number; d: number } | null {
   if (route.stepNumber === undefined) return null;
   if (chip?.badge) return chip.badge;
@@ -1076,15 +1090,30 @@ function stepBadgeBox(
     }
     return sum;
   };
+  // A muted hop has nothing left but this number, so where it lands decides
+  // which arrow the workflow list appears to be describing. The walk below is
+  // free to travel more than an inch looking for clear paper, which on a
+  // ladder is far enough to come to rest against a completely different hop -
+  // measured at 0.32in from a stranger's arrow while its own ran 0.67in away.
+  // So a slot that reads as somebody else's is priced like half a covered
+  // badge rather than forbidden: the number is never dropped, it just prefers
+  // to stay where it can still be attributed.
+  const misread = (at: { x: number; y: number }): number => {
+    if (!ownGap || !foreignGap) return 0;
+    const cx = at.x + d / 2;
+    const cy = at.y + d / 2;
+    return foreignGap(cx, cy) < ownGap(cx, cy) - 0.1 ? 0.5 * d * d : 0;
+  };
+  const cost = (at: { x: number; y: number }): number => cover(at) + misread(at);
   let spot = fit(anchor.x - d / 2, anchor.y - d / 2);
-  let spotCover = cover(spot);
+  let spotCover = cost(spot);
   const step = d * 0.9;
   for (let ring = 1; spotCover > 0 && ring <= 6; ring += 1) {
     for (let a = -ring; a <= ring && spotCover > 0; a += 1) {
       for (let b = -ring; b <= ring; b += 1) {
         if (Math.max(Math.abs(a), Math.abs(b)) !== ring) continue;
         const candidate = fit(anchor.x - d / 2 + a * step, anchor.y - d / 2 + b * step);
-        const score = cover(candidate);
+        const score = cost(candidate);
         if (score < spotCover - 0.0001) {
           spot = candidate;
           spotCover = score;
@@ -1401,6 +1430,11 @@ async function addEditableDiagram(
   fullFrame: DiagramFrame,
   _isDarkMode: boolean,
   window?: DiagramWindow,
+  /**
+   * Wording that a muted chip handed over, by step number. The caller writes
+   * the workflow slide, and a muted label survives only if that slide says it.
+   */
+  mutedWording: Map<number, string> = new Map(),
 ): Promise<boolean> {
   const boxes = collectExportBoxes(diagram.nodes ?? []);
   if (boxes.size === 0) return false;
@@ -1663,15 +1697,30 @@ async function addEditableDiagram(
     }
     return rivals.length ? (x: number, y: number) => gapToSegs(x, y, rivals) : undefined;
   };
+  const ownGapFor = (route: ExportRoute): ((x: number, y: number) => number) | undefined => {
+    const segs = segsByBundle.get(bundleKey(route));
+    return segs && segs.length ? (x: number, y: number) => gapToSegs(x, y, segs) : undefined;
+  };
   const settle = (routes: readonly ExportRoute[]): void => {
     for (const route of routes) {
-      const box = connectorLabelBox(
-        route, transform, labelFontSize, px, labelFrame, chipObstacles, bundles.get(bundleKey(route)),
+      const bundle = bundles.get(bundleKey(route));
+      // A muted fan carries no wording at all, so the rigid lattice that keeps
+      // text from colliding has nothing left to protect - and a lattice cannot
+      // bend, so on a crowded slide it comes down as a block beside somebody
+      // else's hop. A bare number is small enough to sit on the arrow it
+      // belongs to, which is what the Architecture Center draws, and it is then
+      // placed one at a time against the same attribution test as everything
+      // else.
+      const box = bundle?.badgesOnly ? null : connectorLabelBox(
+        route, transform, labelFontSize, px, labelFrame, chipObstacles, bundle,
         undefined, foreignGapFor(route),
       );
       chips.set(route.id, box);
       if (box) chipObstacles.push(box.block);
-      const badge = stepBadgeBox(route, transform, px, labelFrame, box, chipObstacles);
+      const badge = stepBadgeBox(
+        route, transform, px, labelFrame, box, chipObstacles,
+        ownGapFor(route), foreignGapFor(route),
+      );
       badges.set(route.id, badge);
       if (badge && !box) chipObstacles.push({ x: badge.x, y: badge.y, w: badge.d, h: badge.d, annotation: true });
     }
@@ -1964,7 +2013,8 @@ async function addEditableDiagram(
   // Which step numbers the workflow slide will actually narrate. Dropping a
   // chip is only ever a trade against that list; with no row to read it is a
   // deletion.
-  const narratedSteps = new Set(workflowListFromEdges(diagram.edges ?? []).map((entry) => entry.step));
+  const narratedRows = new Map(workflowListFromEdges(diagram.edges ?? []).map((entry) => [entry.step, entry.description]));
+  const narratedSteps = new Set(narratedRows.keys());
 
   for (const [key, bundle] of bundles) {
     const shape = shapes.get(key);
@@ -2067,6 +2117,17 @@ async function addEditableDiagram(
     const soiled = Math.max(2, Math.ceil(0.35 * bundle.count));
     if (carried && bundle.count >= 5 && (bundle.dirty ?? 0) >= soiled) {
       bundle.badgesOnly = true;
+      // A row that exists is still not a row that says anything. An author who
+      // writes both a terse description ("Step 13") and a real label loses the
+      // label the moment its chip is muted: the deck then reads "13. Step 13"
+      // and the sentence the arrow carried is gone. Muting is the right trade
+      // on a stuck fan, so it stands — but the wording it trades away is
+      // handed to the row that is supposed to be carrying it.
+      for (const route of members) {
+        if (route.stepNumber === undefined || !route.label) continue;
+        if (carriesWording(narratedRows.get(route.stepNumber) ?? '', route.label)) continue;
+        mutedWording.set(route.stepNumber, route.label);
+      }
       // A ladder of bare callouts is a different object from the one the pitch
       // and the offsets were chosen for: at the wrapped-label pitch the badges
       // stay strung across the same rows the labels could not fit in. Measure
@@ -2153,7 +2214,10 @@ async function addEditableDiagram(
       const slot = chipObstacles.indexOf(box.block);
       if (slot >= 0) chipObstacles[slot] = moved.block;
       chips.set(route.id, moved);
-      badges.set(route.id, stepBadgeBox(route, transform, px, labelFrame, moved, chipObstacles));
+      badges.set(route.id, stepBadgeBox(
+        route, transform, px, labelFrame, moved, chipObstacles,
+        ownGapFor(route), foreignGapFor(route),
+      ));
       repaired += 1;
     }
     // A second ladder on the same slide is placed against the first, but the
@@ -2176,9 +2240,15 @@ async function addEditableDiagram(
       const pool = chipObstacles.filter((taken) => !own.has(taken));
       for (const route of members) {
         const old = chips.get(route.id);
-        const moved = connectorLabelBox(route, transform, labelFontSize, px, labelFrame, pool, bundle);
+        const moved = connectorLabelBox(
+          route, transform, labelFontSize, px, labelFrame, pool, bundle,
+          undefined, foreignGapFor(route),
+        );
         chips.set(route.id, moved);
-        badges.set(route.id, stepBadgeBox(route, transform, px, labelFrame, moved, pool));
+        badges.set(route.id, stepBadgeBox(
+          route, transform, px, labelFrame, moved, pool,
+          ownGapFor(route), foreignGapFor(route),
+        ));
         const slot = old?.block ? chipObstacles.indexOf(old.block) : -1;
         if (moved) {
           pool.push(moved.block);
@@ -2252,6 +2322,9 @@ export async function buildDiagramSlidePptx(
   const parts = geom.windows;
   const windows: (DiagramWindow | undefined)[] = parts.length > 0 ? [undefined, ...parts] : [undefined];
   let renderedNatively = false;
+  // Wording that a muted chip handed to the workflow slide, filled in by the
+  // diagram pass and read when that slide is written.
+  const mutedWording = new Map<number, string>();
 
   for (const [index, window] of windows.entries()) {
     const slide = pptx.addSlide();
@@ -2306,7 +2379,7 @@ export async function buildDiagramSlidePptx(
 
     // ── Diagram body — native shapes when available, captured PNG otherwise ───
     renderedNatively = diagram
-      ? await addEditableDiagram(pptx, slide, diagram, geom.frame, isDarkMode, window)
+      ? await addEditableDiagram(pptx, slide, diagram, geom.frame, isDarkMode, window, mutedWording)
       : false;
 
     if (!renderedNatively) {
@@ -2352,7 +2425,13 @@ export async function buildDiagramSlidePptx(
 
   // A numbered callout means nothing without the sentence it points at, so the
   // Azure Architecture Center always pairs the badges with a numbered list.
-  const workflow = workflowListFromEdges(diagram?.edges ?? []);
+  const workflow = workflowListFromEdges(diagram?.edges ?? []).map((row) => {
+    // A chip that was muted traded its wording for this row, so the row has to
+    // say it. The label goes in the parenthesis the Architecture Center uses
+    // for the mechanism on a numbered flow.
+    const handed = mutedWording.get(row.step);
+    return handed ? { ...row, description: `${row.description}（${handed}）` } : row;
+  });
   if (workflow.length > 0) {
     // Rows stop shrinking at a legible minimum, so a long workflow continues on
     // another slide. Dropping the tail would leave badges on the drawing whose

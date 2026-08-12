@@ -1332,3 +1332,45 @@ test('the colour key never stands on a tile or a numbered callout', () => Promis
   assert.ok(keys > 0, 'the fixture must draw a colour key for this to test anything');
   assert.deepEqual(buried, [], `${buried.length} shape(s) sit under the key: ${buried.slice(0, 4).join('; ')}`);
 }));
+
+test('a muted fan hands its wording to the workflow row that replaces it', async () => {
+  // A stuck fan trades its chips for numbered callouts and the workflow slide.
+  // That is only a trade if the slide says what the chips said: an author who
+  // writes a terse description as well as a real label used to lose the label
+  // outright, leaving the deck reading "13. Step 13" with the sentence gone.
+  const nodes: Node[] = [];
+  for (let r = 0; r < 3; r += 1) {
+    for (let c = 0; c < 3; c += 1) nodes.push(service(`g${r}${c}`, `Azure Service ${r}${c}`, c * 300, r * 200));
+  }
+  const edges: Edge[] = [];
+  let step = 0;
+  for (let r = 0; r < 3; r += 1) {
+    for (let c = 0; c + 1 < 3; c += 1) {
+      step += 1;
+      edges.push({ id: `h${r}${c}`, source: `g${r}${c}`, target: `g${r}${c + 1}`, label: 'writes the order document', data: { stepNumber: step, stepDescription: `Step ${step}` } } as Edge);
+    }
+  }
+  for (let r = 0; r + 1 < 3; r += 1) {
+    for (let c = 0; c < 3; c += 1) {
+      step += 1;
+      edges.push({ id: `v${r}${c}`, source: `g${r}${c}`, target: `g${r + 1}${c}`, label: 'writes the order document', data: { stepNumber: step, stepDescription: `Step ${step}` } } as Edge);
+    }
+  }
+  const fanLabels: string[] = [];
+  for (let i = 0; i < 5; i += 1) {
+    step += 1;
+    const label = `replicates the ledger ${i}`;
+    fanLabels.push(label);
+    edges.push({ id: `f${i}`, source: 'g11', target: 'g12', label, data: { stepNumber: step, stepDescription: `Step ${step}` } } as Edge);
+  }
+
+  const deck = await buildDeck(nodes, edges);
+  const drawn = deck.slides.join(' ');
+  const chips = new Set(
+    [...drawn.matchAll(/name="connector-label-([^"]+)"/g)].map((m) => m[1]),
+  );
+  const muted = fanLabels.filter((_, i) => !chips.has(`f${i}`));
+  assert.ok(muted.length > 0, 'the fixture must mute at least one chip for this to test anything');
+  const lost = muted.filter((label) => !drawn.includes(label));
+  assert.deepEqual(lost, [], `${lost.length} muted label(s) appear nowhere in the deck: ${lost.join('; ')}`);
+});
