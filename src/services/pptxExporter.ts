@@ -1288,6 +1288,8 @@ function addGroupShape(
   index: number,
   transform: FitTransform,
   clampTo?: DiagramFrame,
+  /** Members of this zone on this slide, and in the drawing as a whole. */
+  held?: { here: number; all: number },
 ): void {
   const topLeft = placeBox(box, transform, clampTo, true);
   const w = topLeft.w;
@@ -1308,7 +1310,12 @@ function addGroupShape(
   });
   // Let a long zone title wrap to two lines instead of clipping at a fixed band.
   const titleH = clamp(h * 0.16, 0.24, 0.5);
-  slide.addText(truncateLabel(box.label, 60), {
+  // A closed box says "these are all of them". When a drawing is split across
+  // slides the same zone is redrawn on each one, so a zone of 28 services can
+  // appear as a closed box around 3 with nothing to tell the reader it is a
+  // fragment. Say so in the title, the way a split reference architecture does.
+  const fragment = held && held.all > held.here ? ` (${held.here} / ${held.all})` : '';
+  slide.addText(truncateLabel(box.label, 60) + fragment, {
     x: topLeft.x + 0.06,
     y: topLeft.y + 0.04,
     w: Math.max(0.4, w - 0.12),
@@ -1480,7 +1487,15 @@ async function addEditableDiagram(
 
   // Index by the full group list so a zone keeps its palette colour on every
   // slice it appears on.
-  shownGroups.forEach((group) => addGroupShape(pptx, slide, group, groups.indexOf(group), transform, clampTo));
+  const zoneMembers = (group: ExportBox, list: readonly ExportBox[]): number => list.filter((service) => {
+    const cx = service.x + service.w / 2;
+    const cy = service.y + service.h / 2;
+    return cx >= group.x && cx <= group.x + group.w && cy >= group.y && cy <= group.y + group.h;
+  }).length;
+  shownGroups.forEach((group) => addGroupShape(
+    pptx, slide, group, groups.indexOf(group), transform, clampTo,
+    { here: zoneMembers(group, shownServices), all: zoneMembers(group, services) },
+  ));
   for (const service of shownServices) {
     addNodeShape(pptx, slide, service, transform, service.iconPath ? icons.get(service.iconPath) : undefined, px, clampTo);
   }
