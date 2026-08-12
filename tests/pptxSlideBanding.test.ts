@@ -1374,3 +1374,30 @@ test('a muted fan hands its wording to the workflow row that replaces it', async
   const lost = muted.filter((label) => !drawn.includes(label));
   assert.deepEqual(lost, [], `${lost.length} muted label(s) appear nowhere in the deck: ${lost.join('; ')}`);
 });
+test('the overview thumbnail never draws type the reader cannot resolve', async () => {
+  // The overview is a map, not a reading surface, so it is exempt from the
+  // legibility floor the detail slides are held to. It is not exempt from
+  // being drawn at all: at 40 services the tile labels clamp to 4pt, which is
+  // grey ink rather than small words. Every one of those strings is legible on
+  // the slide that follows, so the thumbnail shows the shape and leaves the
+  // wording to them.
+  const { nodes, edges } = wideDiagram(40);
+  const deck = await buildDeck(nodes, edges);
+  assert.ok(deck.parts.length > 1, 'the fixture must tile for there to be an overview at all');
+  const overview = deck.slides[deck.slides.length - deck.parts.length - 1];
+  assert.ok(overview.includes('(Overview)'), 'located the overview slide');
+
+  const RESOLVABLE_PT = 6;
+  const tooSmall: string[] = [];
+  for (const shape of overview.matchAll(/<p:sp>[\s\S]*?<\/p:sp>/g)) {
+    const text = [...shape[0].matchAll(/<a:t>([^<]*)<\/a:t>/g)].map((m) => m[1]).join('');
+    if (text.trim() === '') continue;
+    for (const size of shape[0].matchAll(/sz="(\d+)"/g)) {
+      if (+size[1] / 100 < RESOLVABLE_PT) tooSmall.push(`${text} @ ${+size[1] / 100}pt`);
+    }
+  }
+  assert.deepEqual(tooSmall, [], `${tooSmall.length} unresolvable run(s) on the overview: ${tooSmall.slice(0, 3).join('; ')}`);
+
+  // and the names it gave up are on the readable slides
+  assert.ok(deck.parts.join(' ').includes('Azure Kubernetes Service'), 'the detail slides carry the names');
+});

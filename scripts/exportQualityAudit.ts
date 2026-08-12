@@ -649,6 +649,24 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
   const shapes = perSlide.flat();
 
   const issues: string[] = [];
+  // The overview is exempt from the legibility floor because it is a map, not
+  // a reading surface — but "smaller than the floor" is not the same as "ink
+  // the reader cannot resolve at all". Type this small is grey mush that makes
+  // the thumbnail harder to read, not easier, so it must not be drawn: show
+  // the shapes and let the slides that follow carry the names.
+  const OVERVIEW_FLOOR_PT = 6;
+  let overviewMinFont = 0;
+  if (overviewAt >= 0) {
+    const overviewShapes = parseShapes(allSlides[overviewAt]);
+    const sized = overviewShapes.filter((s) => s.text.trim() !== '' && s.fontSize !== null);
+    overviewMinFont = sized.length ? Math.min(...sized.map((s) => s.fontSize ?? 99)) : 0;
+    const illegible = sized.filter((s) => (s.fontSize ?? 99) < OVERVIEW_FLOOR_PT);
+    if (illegible.length) {
+      issues.push(
+        `overview draws ${illegible.length} text run(s) at ${Math.min(...illegible.map((s) => s.fontSize ?? 99))}pt, under the ${OVERVIEW_FLOOR_PT}pt the reader can resolve: e.g. "${illegible[0].text}"`,
+      );
+    }
+  }
   const tiles = shapes.filter((s) => s.name.startsWith('service-') && !s.name.includes('label') && !s.name.includes('meta'));
   const labels = shapes.filter((s) => s.name.startsWith('service-label-'));
   const chips = shapes.filter((s) => s.name.startsWith('connector-label-'));
@@ -1100,6 +1118,7 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
       pageHeightIn: +pageH.toFixed(3),
       minTileWidthIn: +minTileW.toFixed(3),
       minFontPt: minFont,
+      overviewMinFontPt: overviewMinFont,
       chips: chips.length,
       maxChipWidthIn: chips.length ? +Math.max(...chips.map((c) => c.w)).toFixed(3) : 0,
       stepBadges: badges.length,
