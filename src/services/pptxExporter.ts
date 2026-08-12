@@ -260,6 +260,8 @@ interface Obstacle {
   owner?: string;
   /** Cost multiplier per square inch covered; defaults to a tile's 1. */
   weight?: number;
+  /** Service this obstacle is part of, so a label can tell whose tile it is. */
+  node?: string;
 }
 
 /**
@@ -574,6 +576,15 @@ export interface PptxExportOptions {
    * captured PNG is only used as a fallback when no shapes can be produced.
    */
   diagram?: DiagramShapeSource | null;
+  /**
+   * Pre-rasterised icons, bypassing the DOM-only rasteriser. `canRasterize()`
+   * is false under Node, so an offline harness draws every tile with no icon
+   * at all — a different tile interior, with the caption band 2.1x too tall
+   * and a third of an inch out of position, which is what the chip walk and
+   * every contrast composite are then tuned against. Visio already had this
+   * escape hatch; PowerPoint did not.
+   */
+  presetIcons?: Map<string, RasterizedIcon>;
 }
 
 export interface DiagramShapeSource {
@@ -629,8 +640,8 @@ function addConnector(
   transform: FitTransform,
   clampTo?: DiagramFrame,
 ): void {
-  const points = route.points
-    .map((point) => toInches(point, transform))
+  const raw = route.points.map((point) => toInches(point, transform));
+  const points = raw
     .map((point) => (clampTo
       ? {
         x: clamp(point.x, clampTo.x, clampTo.x + clampTo.w),
@@ -638,6 +649,33 @@ function addConnector(
       }
       : point));
   if (points.length < 2) return;
+  // A hop whose route mostly lies outside this window is not drawn as a hop.
+  //
+  // Clamping moves each off-window point onto the frame border, so a leg that
+  // runs somewhere else on the drawing is flattened into a line along the edge
+  // of this slide. It is not where the arrow goes, it is not readable as a hop,
+  // and — because every clamped route is flattened onto the SAME border — two
+  // of them are drawn exactly on top of each other: on a 72-service estate two
+  // wrap-around hops shared 10.39in of a 10.51in line. The hop is still drawn
+  // in full on the window that actually contains it, so here it is left out.
+  if (clampTo) {
+    const outside = raw.some((point) => point.x < clampTo.x - 0.01 || point.x > clampTo.x + clampTo.w + 0.01
+      || point.y < clampTo.y - 0.01 || point.y > clampTo.y + clampTo.h + 0.01);
+    if (outside) {
+      const onEdge = (p: { x: number; y: number }): boolean => Math.abs(p.x - clampTo.x) < 0.005
+        || Math.abs(p.x - (clampTo.x + clampTo.w)) < 0.005
+        || Math.abs(p.y - clampTo.y) < 0.005
+        || Math.abs(p.y - (clampTo.y + clampTo.h)) < 0.005;
+      let total = 0;
+      let flattened = 0;
+      for (let i = 1; i < points.length; i += 1) {
+        const len = Math.hypot(points[i].x - points[i - 1].x, points[i].y - points[i - 1].y);
+        total += len;
+        if (onEdge(points[i - 1]) && onEdge(points[i])) flattened += len;
+      }
+      if (total > 0 && flattened > 0.6 * total) return;
+    }
+  }
 
   const lineProps = {
     color: stripHash(route.color),
@@ -940,6 +978,50 @@ function connectorLabelBox(
   };
   const badgeYAt = (x: number, y: number): number => (badgeAtTopAt(x, y) ? y : y + h + badgeGap);
   const textYAt = (x: number, y: number): number => (badgeAtTopAt(x, y) ? y + badgeD + badgeGap : y);
+  // Where along the edge it hangs from the disc sits.
+  //
+  // Nailed to the middle of the chip it is the one part of the block that
+  // cannot be moved off a tile: the walk can only take the whole block with it,
+  // the wording is several times wider than the disc, so the block comes to
+  // rest where the WORDING fits and drags the number onto a service. A chip
+  // squeezed into a corridor narrower than itself has to overlap something —
+  // but the 0.21in disc almost always has somewhere clear to be along the
+  // 0.67in edge it hangs from. Sliding it there keeps it touching its own chip,
+  // so it still reads as that hop's number, and takes it off the icon.
+  //
+  // The centre is preferred outright on a tie, so every placement that was
+  // already clear is unchanged.
+  const badgeXAt = (at: { x: number; y: number }): number => {
+    const centre = at.x + w / 2 - badgeD / 2;
+    if (bare || w <= badgeD + 0.02) return centre;
+    const by = badgeYAt(at.x, at.y);
+    const costAt = (bx: number): number => seen.reduce((sum, tile) => {
+      const dx = Math.min(bx + badgeD, tile.x + tile.w) - Math.max(bx, tile.x);
+      const dy = Math.min(by + badgeD, tile.y + tile.h) - Math.max(by, tile.y);
+      return dx > 0 && dy > 0 ? sum + dx * dy * (tile.annotation ? ANNOTATION_WEIGHT : tile.weight ?? 1) : sum;
+    }, 0);
+    let bestX = centre;
+    let bestCost = costAt(centre);
+    // Sliding is only ever worth it while the disc still reads as this hop's
+    // number. Moved along the edge it can end up nearer a different arrow than
+    // its own, which trades a hidden number for a number attached to the wrong
+    // sentence — strictly the worse of the two.
+    const attrAt = (bx: number): number => {
+      if (!foreignGap) return Number.POSITIVE_INFINITY;
+      return foreignGap(bx + badgeD / 2, by + badgeD / 2) - toOwn(bx + badgeD / 2, by + badgeD / 2);
+    };
+    const floor = Math.min(attrAt(centre), 0) - 0.001;
+    const slots = 8;
+    for (let i = 0; i <= slots && bestCost > 0; i += 1) {
+      const bx = at.x + (i / slots) * (w - badgeD);
+      const cost = costAt(bx);
+      if (cost < bestCost - 0.0001 && attrAt(bx) >= floor) {
+        bestX = bx;
+        bestCost = cost;
+      }
+    }
+    return bestX;
+  };
   // The wording has an opaque chip behind it and is expected to stand in the
   // corridors between tiles, so a graze costs it little. The number does not:
   // it is a small solid disc, and dropped on a tile it hides part of an icon
@@ -951,6 +1033,11 @@ function connectorLabelBox(
   const BADGE_COVER_WEIGHT = 4;
   const badgeCovered = (at: { x: number; y: number }): number => {
     if (badgeD <= 0 || blockH <= h + 0.01) return 0;
+    // Measured at the centre of the edge, not at the slid position. The slide
+    // is a repair applied once the block has come to rest; letting the walk
+    // count on it makes the cost optimistic, and the block then settles
+    // somewhere the wording is worse off for the sake of a disc that had
+    // somewhere to go anyway.
     const bx = at.x + w / 2 - badgeD / 2;
     const by = badgeYAt(at.x, at.y);
     return seen.reduce((sum, tile) => {
@@ -1113,7 +1200,7 @@ function connectorLabelBox(
     }
   }
   const badge = badgeD > 0
-    ? { x: best.x + w / 2 - badgeD / 2, y: badgeYAt(best.x, best.y), d: badgeD }
+    ? { x: badgeXAt(best), y: badgeYAt(best.x, best.y), d: badgeD }
     : null;
   // Still standing on something. A chip is allowed to be wider than the gap it
   // labels, but when that width is the reason it has nowhere to go, wrapping it
@@ -1225,13 +1312,34 @@ function stepBadgeBox(
   // disc it places, let a muted fan stack two callouts on each other: the
   // overlap was real but cost less than the clear slot further out.
   const ANNOTATION_OVERLAP_WEIGHT = 8;
-  const cover = (at: { x: number; y: number }): number => {
+  // A disc entirely inside one tile is not a callout any more — it reads as
+  // that service's own badge, and the step list then describes a hop the
+  // reader cannot find. A disc straddling the gutter between two tiles covers
+  // almost the same area but is still unmistakably a callout, so plain area is
+  // blind to the difference that matters. On a dense grid there is no clear
+  // paper within reach at all, so without this the walk had no reason to move
+  // and left the number in the middle of a service. Priced under the
+  // misattribution penalty below: a number swallowed whole by a tile is *also*
+  // misattributed — it reads as that service's own badge — so escaping is worth
+  // slightly more than the price of landing near a stranger's arrow, where at
+  // least the digit is still legible.
+  const FULL_BURIAL_WEIGHT = 5;
+  const swallowed = (at: { x: number; y: number }): boolean => {
+    for (const other of obstacles) {
+      if (other.annotation) continue;
+      const dx = Math.min(at.x + d, other.x + other.w) - Math.max(at.x, other.x);
+      const dy = Math.min(at.y + d, other.y + other.h) - Math.max(at.y, other.y);
+      if (dx > 0 && dy > 0 && dx * dy >= 0.9 * d * d) return true;
+    }
+    return false;
+  };  const cover = (at: { x: number; y: number }): number => {
     let sum = 0;
     for (const other of obstacles) {
       const dx = Math.min(at.x + d, other.x + other.w) - Math.max(at.x, other.x);
       const dy = Math.min(at.y + d, other.y + other.h) - Math.max(at.y, other.y);
       if (dx > 0 && dy > 0) sum += dx * dy * (other.annotation ? ANNOTATION_OVERLAP_WEIGHT : 1);
     }
+    if (swallowed(at)) sum += FULL_BURIAL_WEIGHT * d * d;
     return sum;
   };
   // A muted hop has nothing left but this number, so where it lands decides
@@ -1416,7 +1524,7 @@ function addNodeShape(
   const drawnFont = named ? fontSize : OVERVIEW_LEGIBLE_PT;
   const meta = metaSubline(box);
   const metaFontSize = clamp(fontSize - 2, 3.5, 9);
-  const metaBand = named && showsMeta(h, px) && !!meta ? fontSize * 1.55 / 72 + 0.03 : 0;
+  let metaBand = named && showsMeta(h, px) && !!meta ? fontSize * 1.55 / 72 + 0.03 : 0;
 
   const innerW = Math.max(0.05, w - 0.06);
   // How much of the name the tile can actually hold, rather than a flat 40
@@ -1435,6 +1543,21 @@ function addNodeShape(
   const label = stub ? fitLabelToBox(full, innerW * stubLines, OVERVIEW_LEGIBLE_PT) : full;
   const labelLines = named ? Math.max(1, Math.ceil(estimateTextWidthIn(label, fontSize) / innerW)) : 0;
   const labelBlockH = (labelLines * fontSize * 1.22) / 72;
+
+  // Which of the three things a tile carries yields when it cannot hold all
+  // three. The subline used to win by default — it is subtracted before the
+  // icon is measured — and on a 1.36x0.68in tile with a two-line name that
+  // left 0.06in for the icon, under the legibility floor, so the icon was
+  // dropped. Twenty-five tiles then shipped as grey boxes of type. That is the
+  // wrong way round: on the Architecture Center the icon is what says which
+  // service this is, and the SKU and the price are supplementary. A tile larger
+  // than one that comfortably draws an icon must not lose it to a subline.
+  const iconFloor = 0.08 * px;
+  const roomFor = (band: number): number =>
+    Math.min(h * 0.42, w * 0.34, Math.max(0, h - pad * 2 - band - labelBlockH - 0.02));
+  if (metaBand > 0 && icon && named && roomFor(metaBand) < iconFloor && roomFor(0) >= iconFloor) {
+    metaBand = 0;
+  }
 
   // Fit the icon into whatever vertical room the label does not need, instead
   // of forcing a minimum that pushes the text out of the tile.
@@ -1706,6 +1829,7 @@ async function addEditableDiagram(
    * so anything that would land under the resolvable floor is left to them.
    */
   thumbnail = false,
+  presetIcons?: Map<string, RasterizedIcon>,
 ): Promise<boolean> {
   const boxes = collectExportBoxes(diagram.nodes ?? []);
   if (boxes.size === 0) return false;
@@ -1788,7 +1912,7 @@ async function addEditableDiagram(
   const shownServices = services.filter(visibleBox);
   const shownRoutes = routes.filter(visibleRoute);
   const annotatedRoutes = shownRoutes.filter((route) => owns(route.labelAnchor.x, route.labelAnchor.y));
-  const icons = await rasterizeIcons(shownServices.map((service) => service.iconPath), 128);
+  const icons = presetIcons ?? await rasterizeIcons(shownServices.map((service) => service.iconPath), 128);
 
   // Index by the full group list so a zone keeps its palette colour on every
   // slice it appears on.
@@ -1824,7 +1948,7 @@ async function addEditableDiagram(
   const labelFontSize = clamp(9 * px, 4, 10);
   // Chips and numbers dodge the tiles that are actually on this slide, so a
   // label on a short hop is pushed clear instead of covering a service.
-  const tileRects = shownServices.map((service) => placeBox(service, transform, clampTo));
+  const tileRects = shownServices.map((service) => ({ ...placeBox(service, transform, clampTo), node: service.id }));
   // Place every chip before drawing any of them, adding each to the obstacle
   // list as it is settled. Parallel edges between the same pair are staggered,
   // but the tile-avoidance walk could drag two of them back onto the same spot
@@ -2032,14 +2156,35 @@ async function addEditableDiagram(
       if (box && route.stepNumber !== undefined && narratedSteps.has(route.stepNumber)) {
         const b = box.block;
         let spoiled = 0;
+        // A chip standing on a service that is not at either end of its own
+        // arrow is the same failure by a different route: the reader reads it
+        // as that service's caption and the hop it actually describes goes
+        // unlabelled. The walk cannot always avoid it — on `meta-subline` and
+        // `workflow-prose` every slot within reach laps a bystander, and
+        // weighting them twelve times a tile moved the chip not at all — so
+        // the wording is handed to the step list exactly as it is when a
+        // caption is in the way.
+        //
+        // Priced separately and much more loosely than the caption bar above.
+        // A chip may brush a bystander's rim; the export audit allows a
+        // fiftieth of a tile, so this bar sits at roughly double that and
+        // cannot mute a chip the audit would have passed.
+        const STRANGER_TILE_SQ_IN = 0.04;
+        const ownEnds = new Set([route.sourceId, route.targetId]);
+        let onStrangers = 0;
         for (const o of chipObstacles) {
-          if (!o.annotation && !o.caption) continue;
+          const stranger = !o.annotation && !o.caption
+            && o.node !== undefined && !ownEnds.has(o.node);
+          if (!o.annotation && !o.caption && !stranger) continue;
           if (o.owner !== undefined && o.owner === bundleKey(route)) continue;
           const dx = Math.min(b.x + b.w, o.x + o.w) - Math.max(b.x, o.x);
           const dy = Math.min(b.y + b.h, o.y + o.h) - Math.max(b.y, o.y);
-          if (dx > 0 && dy > 0) spoiled += dx * dy;
+          if (dx > 0 && dy > 0) {
+            if (stranger) onStrangers += dx * dy;
+            else spoiled += dx * dy;
+          }
         }
-        if (spoiled > SPOILED_CHIP_SQ_IN) {
+        if (spoiled > SPOILED_CHIP_SQ_IN || onStrangers > STRANGER_TILE_SQ_IN) {
           if (!thumbnail && route.label
             && !carriesWording(narratedRows.get(route.stepNumber) ?? '', route.label)) {
             mutedWording.set(route.stepNumber, route.label);
@@ -2756,7 +2901,7 @@ export async function buildDiagramSlidePptx(
 
     // ── Diagram body — native shapes when available, captured PNG otherwise ───
     renderedNatively = diagram
-      ? await addEditableDiagram(pptx, slide, diagram, geom.frame, isDarkMode, window, mutedWording, window === undefined && parts.length > 0)
+      ? await addEditableDiagram(pptx, slide, diagram, geom.frame, isDarkMode, window, mutedWording, window === undefined && parts.length > 0, options.presetIcons)
       : false;
 
     if (!renderedNatively) {
@@ -3121,6 +3266,10 @@ async function addDiagramSlide(pptx: PptxGenJS, t: SlideTheme, imageDataUrl: str
       o.diagram,
       { x: IMAGE_X, y: IMAGE_Y, w: IMAGE_W, h: IMAGE_H },
       o.isDarkMode,
+      undefined,
+      undefined,
+      false,
+      o.presetIcons,
     )
     : false;
   if (!renderedNatively) {

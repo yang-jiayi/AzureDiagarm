@@ -919,6 +919,52 @@ export interface RouteOptions {
   offset?: number;
   /** Boxes to route around (source/target should be excluded by the caller). */
   obstacles?: ExportBox[];
+  /**
+   * Lateral shift (px) of the anchor on the source / target side, so a hop that
+   * arrives around a corner does not land on the same point of the same tile as
+   * one that arrives head-on. Applied only to the elbow form: a straight hop
+   * keeps the centre of the side, which is the anchor a reader expects and the
+   * one that must not move if the line is to stay straight.
+   */
+  sourceShift?: number;
+  targetShift?: number;
+}
+
+/**
+ * How far outside a tile a shifted hop turns off the centre line.
+ *
+ * The anchor itself must stay on the middle of the side: that is the only point
+ * PowerPoint recognises as a connection site, and an arrow that leaves it stops
+ * being glued to the service it joins. So the hop leaves head-on, takes a short
+ * step, and only then moves to its own lane. The stub is what remains lying on
+ * the shared centre line, so it is kept to a fraction of the run and capped —
+ * long enough to read as a deliberate jog, far too short to hide a hop.
+ */
+function stubLength(from: number, mid: number): number {
+  return Math.min(Math.abs(mid - from) * 0.35, 14);
+}
+
+/**
+ * Drop duplicate and collinear points, so a route built from the general
+ * eight-point form collapses to exactly the four-point Z it used to be
+ * whenever no lane shift applies.
+ */
+function simplifyPath(points: Point[]): Point[] {
+  const out: Point[] = [];
+  for (const p of points) {
+    const last = out[out.length - 1];
+    if (last && Math.abs(last.x - p.x) < 0.01 && Math.abs(last.y - p.y) < 0.01) continue;
+    out.push(p);
+  }
+  for (let i = out.length - 2; i >= 1; i -= 1) {
+    const a = out[i - 1];
+    const b = out[i];
+    const c = out[i + 1];
+    const collinear = (Math.abs(a.x - b.x) < 0.01 && Math.abs(b.x - c.x) < 0.01)
+      || (Math.abs(a.y - b.y) < 0.01 && Math.abs(b.y - c.y) < 0.01);
+    if (collinear) out.splice(i, 1);
+  }
+  return out;
 }
 
 /**
@@ -942,6 +988,10 @@ export function routeOrthogonal(
   const horizontal = Math.abs(dx) >= Math.abs(dy);
 
   let base: { points: Point[]; labelAnchor: Point };
+  let ends: { lead: Point[]; tail: Point[] } | undefined;
+  const sourceShift = options.sourceShift ?? 0;
+  const targetShift = options.targetShift ?? 0;
+  const shifted = Math.abs(sourceShift) > 0.01 || Math.abs(targetShift) > 0.01;
   if (horizontal) {
     const startX = dx >= 0 ? source.x + source.w : source.x;
     const endX = dx >= 0 ? target.x : target.x + target.w;
@@ -954,15 +1004,34 @@ export function routeOrthogonal(
       };
     } else {
       const midX = (startX + endX) / 2;
+      const shiftedStartY = startY + sourceShift;
+      const shiftedEndY = endY + targetShift;
+      const stub = stubLength(startX, midX);
+      const sStubX = startX + Math.sign(midX - startX) * stub;
+      const eStubX = endX + Math.sign(midX - endX) * stub;
       base = {
-        points: [
+        points: simplifyPath([
           { x: startX, y: startY },
-          { x: midX, y: startY },
-          { x: midX, y: endY },
+          { x: sStubX, y: startY },
+          { x: sStubX, y: shiftedStartY },
+          { x: midX, y: shiftedStartY },
+          { x: midX, y: shiftedEndY },
+          { x: eStubX, y: shiftedEndY },
+          { x: eStubX, y: endY },
           { x: endX, y: endY },
-        ],
+        ]),
+        // The anchor stays on the UNSHIFTED mid line. The per-side fan is a
+        // short jog near the endpoints that keeps two hops off one another; it
+        // is not meant to move the label, and letting it do so dragged a chip
+        // up to 26px onto a bystanding tile.
         labelAnchor: { x: midX, y: (startY + endY) / 2 },
       };
+      if (shifted) {
+        ends = {
+          lead: [{ x: startX, y: startY }, { x: sStubX, y: startY }, { x: sStubX, y: shiftedStartY }],
+          tail: [{ x: eStubX, y: shiftedEndY }, { x: eStubX, y: endY }, { x: endX, y: endY }],
+        };
+      }
     }
   } else {
     const startY = dy >= 0 ? source.y + source.h : source.y;
@@ -976,22 +1045,37 @@ export function routeOrthogonal(
       };
     } else {
       const midY = (startY + endY) / 2;
+      const shiftedStartX = startX + sourceShift;
+      const shiftedEndX = endX + targetShift;
+      const stub = stubLength(startY, midY);
+      const sStubY = startY + Math.sign(midY - startY) * stub;
+      const eStubY = endY + Math.sign(midY - endY) * stub;
       base = {
-        points: [
+        points: simplifyPath([
           { x: startX, y: startY },
-          { x: startX, y: midY },
-          { x: endX, y: midY },
+          { x: startX, y: sStubY },
+          { x: shiftedStartX, y: sStubY },
+          { x: shiftedStartX, y: midY },
+          { x: shiftedEndX, y: midY },
+          { x: shiftedEndX, y: eStubY },
+          { x: endX, y: eStubY },
           { x: endX, y: endY },
-        ],
+        ]),
         labelAnchor: { x: (startX + endX) / 2, y: midY },
       };
+      if (shifted) {
+        ends = {
+          lead: [{ x: startX, y: startY }, { x: startX, y: sStubY }, { x: shiftedStartX, y: sStubY }],
+          tail: [{ x: shiftedEndX, y: eStubY }, { x: endX, y: eStubY }, { x: endX, y: endY }],
+        };
+      }
     }
   }
 
   if (obstacles.length === 0) return base;
   const margin = 6;
   if (countBlocked(base.points, obstacles, margin) === 0) return base;
-  return bestDetour(base, obstacles, horizontal, margin);
+  return bestDetour(base, obstacles, horizontal, margin, ends);
 }
 
 /**
@@ -1030,9 +1114,22 @@ function bestDetour(
   obstacles: ExportBox[],
   horizontal: boolean,
   margin: number,
+  // The fixed head and tail of the route, when the hop leaves or arrives on its
+  // own lane rather than the centre of the side. Every candidate below is built
+  // from two endpoints and a lane, so without this a blocked hop silently threw
+  // its lane away and went back to lying on top of its neighbour — which is
+  // every wrap-around hop, the ones most likely to share a side in the first
+  // place. Omitted when nothing was shifted, so an unshifted route is rebuilt
+  // exactly as it always was.
+  ends?: { lead: Point[]; tail: Point[] },
 ): { points: Point[]; labelAnchor: Point } {
-  const start = base.points[0];
-  const end = base.points[base.points.length - 1];
+  const lead = ends?.lead ?? [base.points[0]];
+  const tail = ends?.tail ?? [base.points[base.points.length - 1]];
+  const start = lead[lead.length - 1];
+  const end = tail[0];
+  const mk = (mid: Point[]): Point[] => (ends
+    ? simplifyPath([...lead, ...mid, ...tail])
+    : [start, ...mid, end]);
   const blocking = obstacles.filter((box) =>
     base.points.some((_, i) => i > 0 && segmentHitsBox(base.points[i - 1], base.points[i], box, margin)),
   );
@@ -1047,22 +1144,30 @@ function bestDetour(
   if (horizontal) {
     // Route the vertical connector just past the cluster, on the roomier side.
     for (const laneX of [maxBX + gap, minBX - gap]) {
-      const points = [start, { x: laneX, y: start.y }, { x: laneX, y: end.y }, end];
-      candidates.push({ points, labelAnchor: { x: laneX, y: (start.y + end.y) / 2 } });
+      candidates.push({
+        points: mk([{ x: laneX, y: start.y }, { x: laneX, y: end.y }]),
+        labelAnchor: { x: laneX, y: (start.y + end.y) / 2 },
+      });
     }
     // Take a clear horizontal gutter above / below the cluster.
     for (const laneY of [minBY - gap, maxBY + gap]) {
-      const points = [start, { x: start.x, y: laneY }, { x: end.x, y: laneY }, end];
-      candidates.push({ points, labelAnchor: { x: (start.x + end.x) / 2, y: laneY } });
+      candidates.push({
+        points: mk([{ x: start.x, y: laneY }, { x: end.x, y: laneY }]),
+        labelAnchor: { x: (start.x + end.x) / 2, y: laneY },
+      });
     }
   } else {
     for (const laneY of [maxBY + gap, minBY - gap]) {
-      const points = [start, { x: start.x, y: laneY }, { x: end.x, y: laneY }, end];
-      candidates.push({ points, labelAnchor: { x: (start.x + end.x) / 2, y: laneY } });
+      candidates.push({
+        points: mk([{ x: start.x, y: laneY }, { x: end.x, y: laneY }]),
+        labelAnchor: { x: (start.x + end.x) / 2, y: laneY },
+      });
     }
     for (const laneX of [minBX - gap, maxBX + gap]) {
-      const points = [start, { x: laneX, y: start.y }, { x: laneX, y: end.y }, end];
-      candidates.push({ points, labelAnchor: { x: laneX, y: (start.y + end.y) / 2 } });
+      candidates.push({
+        points: mk([{ x: laneX, y: start.y }, { x: laneX, y: end.y }]),
+        labelAnchor: { x: laneX, y: (start.y + end.y) / 2 },
+      });
     }
   }
 
@@ -1080,13 +1185,13 @@ function bestDetour(
   const gutters: Array<{ points: Point[]; labelAnchor: Point }> = [];
   for (const laneY of clearLanes(obstacles.map((b) => [b.y, b.y + b.h] as [number, number]), start.y, end.y, margin)) {
     gutters.push({
-      points: [start, { x: start.x, y: laneY }, { x: end.x, y: laneY }, end],
+      points: mk([{ x: start.x, y: laneY }, { x: end.x, y: laneY }]),
       labelAnchor: { x: (start.x + end.x) / 2, y: laneY },
     });
   }
   for (const laneX of clearLanes(obstacles.map((b) => [b.x, b.x + b.w] as [number, number]), start.x, end.x, margin)) {
     gutters.push({
-      points: [start, { x: laneX, y: start.y }, { x: laneX, y: end.y }, end],
+      points: mk([{ x: laneX, y: start.y }, { x: laneX, y: end.y }]),
       labelAnchor: { x: laneX, y: (start.y + end.y) / 2 },
     });
   }
@@ -1212,6 +1317,64 @@ export function buildExportRoutes(
     fanSizes.set(key, (fanSizes.get(key) ?? 0) + 1);
   }
 
+  // Which point of which side each hop attaches to.
+  //
+  // The router is a pure function of one edge, so two hops that meet the same
+  // side of the same service are handed the identical anchor — the centre of
+  // that side. On a chain laid out in rows that is guaranteed: hop n leaves a
+  // tile head-on along the row centre line, and hop n-1 arrives at the same
+  // tile around a corner, whose final leg runs along that same centre line.
+  // The two are then drawn on top of each other and the shorter one is simply
+  // not on the slide. Reference architectures never do this; every arrow into
+  // a box lands on its own point.
+  //
+  // Only the elbow form is moved. A straight hop keeps the centre of the side,
+  // because that is the anchor a reader expects and the only one that keeps the
+  // line straight; the hop that already turns a corner can afford to turn it
+  // slightly earlier. Offsets are dealt from ±1, ±2 … so no elbow ever lands on
+  // the centre, and no two elbows on one side land on each other.
+  const elbowEnds = new Map<string, { edgeId: string; end: 'source' | 'target'; along: number }[]>();
+  const shifts = new Map<string, number>();
+  for (const edge of edges) {
+    const { fromId, toId } = orientEdge(edge);
+    const source = boxes.get(fromId);
+    const target = boxes.get(toId);
+    if (!source || !target || fromId === toId) continue;
+    const sc = centre(source);
+    const tc = centre(target);
+    const dx = tc.x - sc.x;
+    const dy = tc.y - sc.y;
+    const horizontal = Math.abs(dx) >= Math.abs(dy);
+    const straight = horizontal ? Math.abs(sc.y - tc.y) < 0.5 : Math.abs(sc.x - tc.x) < 0.5;
+    if (straight) continue;
+    const sourceSide = horizontal ? (dx >= 0 ? 'E' : 'W') : (dy >= 0 ? 'S' : 'N');
+    const targetSide = horizontal ? (dx >= 0 ? 'W' : 'E') : (dy >= 0 ? 'N' : 'S');
+    const add = (nodeId: string, side: string, end: 'source' | 'target', along: number): void => {
+      const key = `${nodeId}#${side}`;
+      const list = elbowEnds.get(key) ?? [];
+      list.push({ edgeId: String(edge.id), end, along });
+      elbowEnds.set(key, list);
+    };
+    add(source.id, sourceSide, 'source', horizontal ? tc.y : tc.x);
+    add(target.id, targetSide, 'target', horizontal ? sc.y : sc.x);
+  }
+  for (const [key, ends] of elbowEnds) {
+    const box = boxes.get(key.slice(0, key.lastIndexOf('#')));
+    if (!box) continue;
+    const side = key.slice(key.lastIndexOf('#') + 1);
+    const extent = side === 'N' || side === 'S' ? box.w : box.h;
+    // Rank by where the far end of the hop sits, so the arrows leave the side
+    // in the same order they arrive at their destinations and never cross each
+    // other on the tile itself. Ties break on edge id so exports stay
+    // deterministic.
+    const sorted = [...ends].sort((a, b) => (a.along - b.along) || a.edgeId.localeCompare(b.edgeId));
+    const step = Math.min(extent / (2 * (sorted.length + 1)), 26);
+    sorted.forEach((entry, i) => {
+      const rank = Math.floor(i / 2) + 1;
+      shifts.set(`${entry.edgeId}#${entry.end}`, (i % 2 === 0 ? -1 : 1) * rank * step);
+    });
+  }
+
   for (const edge of edges) {
     const { fromId, toId, bidirectional } = orientEdge(edge);
     const source = boxes.get(fromId);
@@ -1232,6 +1395,8 @@ export function buildExportRoutes(
       : routeOrthogonal(source, target, {
         offset: fanOffset,
         obstacles: obstacles.filter((box) => box.id !== source.id && box.id !== target.id),
+        sourceShift: shifts.get(`${String(edge.id)}#source`) ?? 0,
+        targetShift: shifts.get(`${String(edge.id)}#target`) ?? 0,
       });
 
     routes.push({

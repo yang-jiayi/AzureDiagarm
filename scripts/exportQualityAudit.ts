@@ -1322,6 +1322,22 @@ function escapeXml(text: string): string {
   return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
+/**
+ * Stand-in for the DOM rasteriser, which returns nothing under Node. Without
+ * this every tile is drawn with no icon at all — a materially different tile
+ * interior, with the caption band 2.1x too tall and 0.35in out of position —
+ * so the chip walk, the spoiled-chip budget and every contrast composite were
+ * being measured against a layout the user never receives.
+ */
+function synthesisedIcons(scenario: Scenario): Map<string, { bytes: Uint8Array; dataUrl: string; sizePx: number }> {
+  const icons = new Map<string, { bytes: Uint8Array; dataUrl: string; sizePx: number }>();
+  for (const node of scenario.nodes) {
+    const path = (node.data as { iconPath?: string } | undefined)?.iconPath;
+    if (path) icons.set(path, { bytes: PIXEL_PNG_BYTES, dataUrl: PIXEL_PNG, sizePx: 128 });
+  }
+  return icons;
+}
+
 async function auditPptx(scenario: Scenario): Promise<Report> {
   const pptx = await buildDiagramSlidePptx(PIXEL_PNG, {
     diagramName: 'Contoso Platform',
@@ -1329,6 +1345,7 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
     date: '2026-08-10',
     isDarkMode: scenario.dark === true,
     diagram: { nodes: scenario.nodes, edges: scenario.edges },
+    presetIcons: synthesisedIcons(scenario),
   });
   const buffer = (await pptx.write({ outputType: 'nodebuffer' })) as Buffer;
   writeFileSync(path.join(OUT, `${scenario.id}.pptx`), buffer);
@@ -1344,6 +1361,12 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
       .map((name) => zip.file(name)!.async('string')),
   );
   const slideCount = allSlides.length;
+  // The icons have to actually reach the deck. `rasterizeIcons` needs a DOM and
+  // returns an empty map under Node, so for most of this audit's life every
+  // tile was measured with no icon in it — a different tile interior from the
+  // one the user receives. Assert the pictures are there, so the harness can
+  // never silently go blind that way again.
+  const drawnPics = allSlides.reduce((sum, slideXml) => sum + (slideXml.match(/<p:pic>/g) ?? []).length, 0);
   // A tiled deck opens with the whole drawing shown small on purpose, so the
   // legibility and one-slide-per-service rules below are about the slides that
   // follow it. Measuring the overview against them would report every tiled
@@ -1355,6 +1378,24 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
   const shapes = perSlide.flat();
 
   const issues: string[] = [];
+  // The audit ran icon-blind for its whole life: `canRasterize()` is false
+  // under Node, so `rasterizeIcons` returned an empty map and every rule that
+  // measures a tile — the caption band's position and height, and therefore
+  // every chip, callout and contrast composite derived from it — was tuned
+  // against a deck nobody is ever sent. This is the tripwire for that.
+  //
+  // It cannot simply demand pictures: the exporter deliberately drops an icon
+  // the tile is too small to render legibly and keeps the words instead, which
+  // is right and is what `meta-tight` (a 5x5 grid whose tiles also carry an
+  // SKU, a region and a price) does on every tile. So the rule fires only for a
+  // deck with a tile roomy enough that no such trade was needed.
+  const roomyTile = perSlide.flat().some(
+    (s) => s.name.startsWith('service-') && !s.name.includes('label') && !s.name.includes('meta')
+      && s.h >= 0.55 && s.w >= 0.9,
+  );
+  if (synthesisedIcons(scenario).size > 0 && drawnPics === 0 && roomyTile) {
+    issues.push(`deck embeds no icon pictures for ${scenario.nodes.length} nodes`);
+  }
   const native = auditNativeConversion(allSlides);
   issues.push(...native.issues);
   for (const slideXml of allSlides) {
@@ -1552,8 +1593,22 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
       let buried = 0;
       for (const tile of slideTiles) {
         buried += overlapArea(badge, tile);
-        if (overlapArea(badge, tile) > tileBudget(badge.name, tile) * tile.w * tile.h) {
-          issues.push(`step badge "${badge.name}" covers node "${tile.name}" by ${((overlapArea(badge, tile)/(tile.w*tile.h))*100).toFixed(0)}% (badge area ${((overlapArea(badge, tile)/(badge.w*badge.h))*100).toFixed(0)}%)`);
+        // Two bars, both of which have to be crossed. The tile bar catches a
+        // number printed over a service; the badge bar keeps a number that is
+        // merely lapping a rim from being reported as one.
+        //
+        // A callout stands on the arrow it numbers. On a dense grid that arrow
+        // runs through a row gutter narrower than the disc, so the disc has to
+        // lap the tile above or below it — `chain24-en`'s wrap-around hop laps
+        // its neighbour by half a disc, which is 3% of the tile. There is no
+        // clear slot within reach in any direction, so failing that case only
+        // rewards moving the number away from its own hop. A number genuinely
+        // printed over an icon is 90-100% of the disc, so the badge bar leaves
+        // that firmly caught while dropping the rim laps.
+        const onTile = overlapArea(badge, tile);
+        if (onTile > tileBudget(badge.name, tile) * tile.w * tile.h
+          && onTile > 0.6 * badge.w * badge.h) {
+          issues.push(`step badge "${badge.name}" covers node "${tile.name}" by ${((onTile/(tile.w*tile.h))*100).toFixed(0)}% (badge area ${((onTile/(badge.w*badge.h))*100).toFixed(0)}%)`);
         }
       }
       // The rule above is measured against the TILE, so a disc swallowed whole
@@ -1649,6 +1704,86 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
         if (inside > 0.15) {
           issues.push(`arrow "${arrow.name}" runs ${inside.toFixed(2)}in through node "${tile.name}", which it does not connect`);
         }
+      }
+    }
+  }
+  // Two arrows drawn one on top of the other are one arrow to the reader. The
+  // router is a pure function of a single edge, so two hops that meet the same
+  // port of the same service — a chain hop leaving head-on and an elbow hop
+  // arriving around the corner — are handed the identical centre line and the
+  // shorter of the two simply disappears. Reference architectures never do
+  // this: every arrow into a box lands on its own point.
+  //
+  // Fan siblings are exempt. A bundle of parallel edges between one pair of
+  // services is deliberately drawn as a set of parallel lines and is already
+  // spread by `fanOffset`; measuring them against each other would report the
+  // feature as the defect.
+  for (const slideShapes of perSlide) {
+    const arrows = slideShapes
+      .filter((s) => s.name.startsWith('connector-') && !/^connector-(label|step)-/.test(s.name))
+      .filter((s) => (s.path?.length ?? 0) >= 2);
+    const pairKey = (name: string): string => {
+      const ends = endpointsOf.get(name.slice('connector-'.length));
+      if (!ends) return name;
+      return ends.source < ends.target ? `${ends.source}|${ends.target}` : `${ends.target}|${ends.source}`;
+    };
+    const lengthOf = (s: Shape): number => {
+      const path = s.path ?? [];
+      let sum = 0;
+      for (let i = 1; i < path.length; i += 1) sum += Math.hypot(path[i].x - path[i - 1].x, path[i].y - path[i - 1].y);
+      return sum;
+    };
+    const bboxOf = (s: Shape): { x0: number; y0: number; x1: number; y1: number } => {
+      const path = s.path ?? [];
+      return {
+        x0: Math.min(...path.map((p) => p.x)),
+        y0: Math.min(...path.map((p) => p.y)),
+        x1: Math.max(...path.map((p) => p.x)),
+        y1: Math.max(...path.map((p) => p.y)),
+      };
+    };
+    for (const short of arrows) {
+      const shortLen = lengthOf(short);
+      if (shortLen < 0.05) continue;
+      const bs = bboxOf(short);
+      const others = arrows.filter((other) => {
+        if (other === short) return false;
+        if (pairKey(other.name) === pairKey(short.name)) return false;
+        if (lengthOf(other) < shortLen - 0.001) return false;
+        // Same length: break the tie by name so a genuinely coincident pair is
+        // reported once, against one of the two, rather than twice or not at all.
+        if (Math.abs(lengthOf(other) - shortLen) <= 0.001 && other.name <= short.name) return false;
+        const bo = bboxOf(other);
+        return !(bs.x1 + 0.05 < bo.x0 || bo.x1 + 0.05 < bs.x0 || bs.y1 + 0.05 < bo.y0 || bo.y1 + 0.05 < bs.y0);
+      });
+      if (others.length === 0) continue;
+      const path = short.path ?? [];
+      let coincident = 0;
+      for (let k = 1; k < path.length; k += 1) {
+        const p = path[k - 1];
+        const q = path[k];
+        const segLen = Math.hypot(q.x - p.x, q.y - p.y);
+        const steps = Math.max(2, Math.ceil(segLen / 0.03));
+        for (let s = 0; s < steps; s += 1) {
+          const t = (s + 0.5) / steps;
+          const at = { x: p.x + (q.x - p.x) * t, y: p.y + (q.y - p.y) * t };
+          if (others.some((other) => pathGap(other, at) < 0.02)) coincident += segLen / steps;
+        }
+      }
+      // Both bars matter. A long absolute run is unreadable however long the
+      // arrow is, and a short hop swallowed whole is invisible however short
+      // the run. The share bar is above a half so two hops that merely share a
+      // corner, or cross, are never reported.
+      if (coincident > 0.3 && coincident > 0.55 * shortLen) {
+        const under = others
+          .filter((other) => {
+            const p2 = short.path ?? [];
+            return p2.some((pt) => pathGap(other, pt) < 0.02);
+          })
+          .map((other) => other.name)
+          .slice(0, 4)
+          .join(', ');
+        issues.push(`arrow "${short.name}" is drawn under other arrows (${under || 'unnamed'}) for ${coincident.toFixed(2)}in of its ${shortLen.toFixed(2)}in length`);
       }
     }
   }
@@ -2014,10 +2149,7 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
     const path = (node.data as { iconPath?: string } | undefined)?.iconPath;
     if (path) iconPaths.add(path);
   }
-  const icons = new Map<string, { bytes: Uint8Array; dataUrl: string; sizePx: number }>();
-  for (const path of iconPaths) {
-    icons.set(path, { bytes: PIXEL_PNG_BYTES, dataUrl: PIXEL_PNG, sizePx: 128 });
-  }
+  const icons = synthesisedIcons(scenario);
   const pkg = await buildVsdxPackage(scenario.nodes, scenario.edges, 'Contoso Platform', icons);
   const issues: string[] = [];
   const pagePart = pkg.parts.find((p) => /page1\.xml$/i.test(p.path));
