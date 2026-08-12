@@ -42,6 +42,7 @@ import {
   categoryStyle,
   collectExportBoxes,
   compactEmptyGutters,
+  fitBoxesWithin,
   clampedBoxes,
   computeBounds,
   computeContentBounds,
@@ -71,6 +72,12 @@ const MIN_PAGE_H_IN = 8.5;
  * dense cluster and the strays are clamped onto the page so nothing is lost.
  */
 const MAX_USEFUL_PAGE_IN = 60;
+/**
+ * And the limit the format itself imposes. Visio will not open a page beyond
+ * this, so it is not a preference — a drawing that needs more has to be made
+ * to fit before it is written, or the file is unopenable.
+ */
+const MAX_VISIO_PAGE_IN = 200;
 const CORNER_ROUNDING_IN = 0.08;
 
 /**
@@ -793,7 +800,13 @@ export async function buildVsdxPackage(
   // drawn 6000px east of the primary is a two-region architecture, not an
   // outlier to trim and not a stray to park, and exporting the void between
   // them cost 50in of a 72in sheet.
-  const raw = compactEmptyGutters(collectExportBoxes(nodes));
+  // Visio refuses to open a page larger than 200in on a side, so a drawing
+  // wider than that is not a big export, it is no export at all. Tighten the
+  // gaps until it fits: every shape keeps its size and every label its point
+  // size, and the only thing given up is distance — which is the one thing on
+  // a sheet this size the reader was never going to use.
+  const limitPx = (MAX_VISIO_PAGE_IN - PAGE_PADDING_IN * 2 - 0.5) * PX_PER_INCH;
+  const raw = fitBoxesWithin(compactEmptyGutters(collectExportBoxes(nodes)), limitPx, limitPx);
   // Same narration the deck gets: only one hop between a given pair of services
   // is ever given a step number, so the other members of a fan carry a callout
   // that the panel never explains — or, once the fan drops its wording, say

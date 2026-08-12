@@ -857,7 +857,28 @@ const VOID_GUTTER_PX = 320;
  */
 export function compactEmptyGutters(boxes: Map<string, ExportBox>): Map<string, ExportBox> {
   const all = [...boxes.values()];
-  const occupying = all.filter((box) => box.kind !== 'group');
+  const parented = new Set(all.map((box) => box.parent).filter((id): id is string => !!id));
+  const services = all.filter((box) => box.kind !== 'group');
+  // A zone is a claim about a region whenever anything lives in that region,
+  // whether by declaration or by geometry, and a claim must not be allowed to
+  // bridge a void: a frame drawn around the whole drawing would otherwise
+  // report the drawing as gapless and export a sheet nine tenths blank.
+  //
+  // A zone with nothing in it is the opposite. It is a label for a piece of
+  // empty canvas — the corridor between two regions marked "ExpressRoute
+  // circuit", "Internet", "On-premises", which is one click away in the editor
+  // and among the commonest annotations the Architecture Center draws — and the
+  // space it names is the whole point of it. Treating those as claims deleted
+  // them: a 900px corridor box came out 1px wide, a vertical line where the
+  // author had drawn a labelled band.
+  const holdsNothing = (zone: ExportBox): boolean => (
+    !parented.has(zone.id)
+    && !services.some((box) => (
+      box.x < zone.x + zone.w && box.x + box.w > zone.x
+      && box.y < zone.y + zone.h && box.y + box.h > zone.y
+    ))
+  );
+  const occupying = all.filter((box) => box.kind !== 'group' || holdsNothing(box));
   if (all.length < 2 || occupying.length < 2) return boxes;
 
   /** Voids on one axis, as [start, gap, amount-to-remove] in ascending order. */
@@ -909,7 +930,103 @@ export function compactEmptyGutters(boxes: Map<string, ExportBox>): Map<string, 
     const y = box.y - shift(yVoids, box.y);
     const right = box.x + box.w - shift(xVoids, box.x + box.w);
     const bottom = box.y + box.h - shift(yVoids, box.y + box.h);
-    out.set(id, { ...box, x, y, w: Math.max(1, right - x), h: Math.max(1, bottom - y) });
+    // Nothing may be compacted out of existence. Removing space a shape stands
+    // in is not closing a void, it is deleting the shape — and a rectangle
+    // reduced to a hairline is worse than one left too wide, because the reader
+    // cannot see that anything is missing. Whatever the mapping says, every box
+    // keeps a usable fraction of the size the author gave it.
+    const floor = (drawn: number, was: number): number => Math.max(drawn, Math.min(was, VOID_GUTTER_PX / 2));
+    out.set(id, {
+      ...box,
+      x,
+      y,
+      w: floor(Math.max(1, right - x), box.w),
+      h: floor(Math.max(1, bottom - y), box.h),
+    });
+  }
+  return out;
+}
+
+/**
+ * Squeeze the empty space between shapes, proportionally, until the drawing
+ * fits inside a hard limit — leaving every shape its own size.
+ *
+ * This is the answer to a format that simply refuses a drawing: Visio will not
+ * open a page over 200in on a side, and a 27-service cascade at the author's
+ * own spacing is 247in wide. Every other lever makes the export worse. Scaling
+ * the drawing shrinks the type with it, and the type is already sitting on the
+ * legibility floor, so the file would open and be unreadable. Cropping loses
+ * services. Refusing to export tells the user nothing they can act on.
+ *
+ * Tightening the gaps is what a person does when a drawing runs off the paper,
+ * and it is the only transform here that costs nothing but whitespace: shapes
+ * keep their size, text keeps its point size, reading order and relative
+ * position are preserved, and what is lost is the distance between things,
+ * uniformly, so nothing about the architecture is misrepresented. Gaps that
+ * were larger give up proportionally more, because that is where the space is.
+ *
+ * `compactEmptyGutters` runs first and removes whole empty bands; this handles
+ * what is left when a drawing is genuinely, evenly too big.
+ */
+export function fitBoxesWithin(
+  boxes: Map<string, ExportBox>,
+  maxW: number,
+  maxH: number,
+): Map<string, ExportBox> {
+  const all = [...boxes.values()];
+  if (all.length < 2) return boxes;
+
+  const axis = (
+    lo: (b: ExportBox) => number,
+    size: (b: ExportBox) => number,
+    limit: number,
+  ): ((at: number) => number) | null => {
+    const spans = all.map((b) => [lo(b), lo(b) + size(b)] as [number, number])
+      .sort((a, b) => a[0] - b[0]);
+    const origin = spans[0][0];
+    const end = Math.max(...spans.map((s) => s[1]));
+    if (end - origin <= limit) return null;
+    // The union of the shapes is the part that cannot be given up.
+    const merged: Array<[number, number]> = [];
+    for (const [from, to] of spans) {
+      const last = merged[merged.length - 1];
+      if (last && from <= last[1]) last[1] = Math.max(last[1], to);
+      else merged.push([from, to]);
+    }
+    const covered = merged.reduce((sum, [from, to]) => sum + (to - from), 0);
+    const empty = (end - origin) - covered;
+    // Shapes alone over the limit: there is no whitespace left to spend, so
+    // close every gap and let the caller deal with what remains. Squeezing to
+    // touching is still the least-lossy thing available.
+    const keep = empty <= 0 ? 0 : Math.max(0, Math.min(1, (limit - covered) / empty));
+    return (at: number): number => {
+      let mapped = origin;
+      let cursor = origin;
+      for (const [from, to] of merged) {
+        if (at <= cursor) return mapped;
+        mapped += Math.min(at - cursor, from - cursor) * keep;
+        cursor = from;
+        if (at <= cursor) return mapped;
+        mapped += Math.min(at - cursor, to - from);
+        cursor = to;
+      }
+      return mapped + Math.max(0, at - cursor);
+    };
+  };
+
+  const mapX = axis((b) => b.x, (b) => b.w, maxW);
+  const mapY = axis((b) => b.y, (b) => b.h, maxH);
+  if (!mapX && !mapY) return boxes;
+
+  const out = new Map<string, ExportBox>();
+  for (const [id, box] of boxes) {
+    const x = mapX ? mapX(box.x) : box.x;
+    const y = mapY ? mapY(box.y) : box.y;
+    // Widths come from the map as well, so a zone still ends where its last
+    // member ends; a shape can only ever keep or lose gap, never lose itself.
+    const w = mapX ? Math.max(box.w > 0 ? 1 : 0, mapX(box.x + box.w) - x) : box.w;
+    const h = mapY ? Math.max(box.h > 0 ? 1 : 0, mapY(box.y + box.h) - y) : box.h;
+    out.set(id, { ...box, x, y, w: Math.max(w, Math.min(box.w, VOID_GUTTER_PX / 2)), h: Math.max(h, Math.min(box.h, VOID_GUTTER_PX / 2)) });
   }
   return out;
 }
@@ -1059,6 +1176,15 @@ export interface RouteOptions {
    */
   sourceShift?: number;
   targetShift?: number;
+  /**
+   * False when the hop is one of several drawn between the same pair of tiles.
+   *
+   * A bundle is held apart by nothing but the lane each member was given, so
+   * any rule that moves a lane for its own reasons has to leave a fan alone —
+   * including the middle member of an odd fan, whose offset is zero and which
+   * therefore looks exactly like a hop standing on its own.
+   */
+  solo?: boolean;
 }
 
 /**
@@ -1252,7 +1378,18 @@ export function routeOrthogonal(
   if (obstacles.length === 0) return base;
   const margin = 6;
   if (countBlocked(base.points, obstacles, margin) === 0) return base;
-  return bestDetour(base, obstacles, horizontal, margin, ends);
+  const detourable = (options.solo ?? true) && Math.abs(offset) <= 0.01;
+  return bestDetour(
+    base,
+    obstacles,
+    horizontal,
+    margin,
+    ends,
+    source,
+    target,
+    detourable,
+    offset,
+  );
 }
 
 /**
@@ -1282,6 +1419,150 @@ function clearLanes(spans: Array<[number, number]>, from: number, to: number, ma
 }
 
 /**
+ * The four points PowerPoint and Visio recognise as connection sites.
+ *
+ * `routeOrthogonal` picks the pair of sides from the dominant axis alone, so a
+ * target whose facing side abuts a neighbour can never be reached: every route
+ * has to finish inside the neighbour. Re-anchoring to a perpendicular side is
+ * the only way out, and because these are sites too the arrow stays glued.
+ */
+type BoxSide = 'left' | 'right' | 'top' | 'bottom';
+
+const BOX_SIDES: BoxSide[] = ['right', 'left', 'bottom', 'top'];
+
+function sitePoint(box: ExportBox, side: BoxSide): Point {
+  switch (side) {
+    case 'left': return { x: box.x, y: box.y + box.h / 2 };
+    case 'right': return { x: box.x + box.w, y: box.y + box.h / 2 };
+    case 'top': return { x: box.x + box.w / 2, y: box.y };
+    default: return { x: box.x + box.w / 2, y: box.y + box.h };
+  }
+}
+
+function stepOutward(point: Point, side: BoxSide, distance: number): Point {
+  switch (side) {
+    case 'left': return { x: point.x - distance, y: point.y };
+    case 'right': return { x: point.x + distance, y: point.y };
+    case 'top': return { x: point.x, y: point.y - distance };
+    default: return { x: point.x, y: point.y + distance };
+  }
+}
+
+const isVerticalSide = (side: BoxSide): boolean => side === 'top' || side === 'bottom';
+
+/** -1 when the side faces up or left, +1 when it faces down or right. */
+const outwardSign = (side: BoxSide): number => (side === 'top' || side === 'left' ? -1 : 1);
+
+/**
+ * Does an axis-aligned segment pass through the *interior* of a box?
+ *
+ * `segmentHitsBox` inflates the box and compares bounding boxes, which is the
+ * right test for "keep clear of a bystander" and the wrong one for "did this
+ * arrow re-enter the tile it just left" — every stub touches its own tile by
+ * construction. The inset keeps a segment lying exactly on an edge outside.
+ */
+function segmentEntersBox(a: Point, b: Point, box: ExportBox, inset = 1): boolean {
+  return (
+    Math.max(a.x, b.x) > box.x + inset
+    && Math.min(a.x, b.x) < box.x + box.w - inset
+    && Math.max(a.y, b.y) > box.y + inset
+    && Math.min(a.y, b.y) < box.y + box.h - inset
+  );
+}
+
+function pathEntersBox(points: Point[], box: ExportBox): boolean {
+  for (let i = 1; i < points.length; i += 1) {
+    if (segmentEntersBox(points[i - 1], points[i], box)) return true;
+  }
+  return false;
+}
+
+/**
+ * Orthogonal routes that leave `source` and arrive at `target` head-on, one per
+ * plausible shape for the given pair of sides.
+ *
+ * Several shapes rather than one because the obvious construction — join the
+ * two stubs on their mid-line — doubles back through the tile it just left
+ * whenever the stubs point away from each other. Leaving the top of a service
+ * to reach something *below* it put the arrow straight back down through its
+ * own source, and the caller could not see it: the boxes a route connects are
+ * excluded from its obstacle list, so the collision was invisible to every
+ * check in this file. The lane is therefore constrained to the side of each
+ * tile its own stub points at, and when that is infeasible the route jogs
+ * sideways instead. The caller picks the first candidate that is clear.
+ */
+function routesBetweenSides(
+  source: ExportBox,
+  sourceSide: BoxSide,
+  target: ExportBox,
+  targetSide: BoxSide,
+  gap: number,
+): Array<{ points: Point[]; labelAnchor: Point }> {
+  const head = sitePoint(source, sourceSide);
+  const tail = sitePoint(target, targetSide);
+  const headStub = stepOutward(head, sourceSide, gap);
+  const tailStub = stepOutward(tail, targetSide, gap);
+  const sourceVertical = isVerticalSide(sourceSide);
+  const targetVertical = isVerticalSide(targetSide);
+
+  const shapes: Point[][] = [];
+  if (sourceVertical === targetVertical) {
+    // Both stubs run along the same axis, so they are joined by one crossing
+    // lane. It has to sit beyond each stub in the direction that stub points,
+    // or the run back to it re-enters the tile.
+    const along = (p: Point): number => (sourceVertical ? p.y : p.x);
+    let lo = -Infinity;
+    let hi = Infinity;
+    for (const [side, stub] of [[sourceSide, headStub], [targetSide, tailStub]] as const) {
+      if (outwardSign(side) < 0) hi = Math.min(hi, along(stub));
+      else lo = Math.max(lo, along(stub));
+    }
+    if (lo <= hi) {
+      const lane = Math.min(Math.max((along(headStub) + along(tailStub)) / 2, lo), hi);
+      shapes.push(sourceVertical
+        ? [head, headStub, { x: headStub.x, y: lane }, { x: tailStub.x, y: lane }, tailStub, tail]
+        : [head, headStub, { x: lane, y: headStub.y }, { x: lane, y: tailStub.y }, tailStub, tail]);
+    }
+    // Stubs pointing the same way, or away from each other, need a jog on the
+    // perpendicular axis: out along each stub, across in the clear, and back.
+    const near = sourceVertical
+      ? [source.x + source.w, target.x, target.x + target.w, source.x]
+      : [source.y + source.h, target.y, target.y + target.h, source.y];
+    const spans: number[] = [
+      (near[0] + near[1]) / 2,
+      (near[2] + near[3]) / 2,
+      Math.max(near[0], near[2]) + gap,
+      Math.min(near[1], near[3]) - gap,
+    ];
+    for (const jog of spans) {
+      shapes.push(sourceVertical
+        ? [head, headStub, { x: jog, y: headStub.y }, { x: jog, y: tailStub.y }, tailStub, tail]
+        : [head, headStub, { x: headStub.x, y: jog }, { x: tailStub.x, y: jog }, tailStub, tail]);
+    }
+  } else {
+    // Perpendicular sides meet at a single bend. Put it on each stub's own
+    // outward coordinate, so neither leg ever runs back across its own tile.
+    const safe = sourceVertical
+      ? { x: tailStub.x, y: headStub.y }
+      : { x: headStub.x, y: tailStub.y };
+    const other = sourceVertical
+      ? { x: headStub.x, y: tailStub.y }
+      : { x: tailStub.x, y: headStub.y };
+    shapes.push([head, headStub, safe, tailStub, tail], [head, headStub, other, tailStub, tail]);
+  }
+
+  return shapes.map((raw) => {
+    const points = simplifyPath(raw);
+    const mid = points[Math.max(1, Math.floor(points.length / 2) - 1)];
+    const next = points[Math.max(1, Math.floor(points.length / 2))];
+    return {
+      points,
+      labelAnchor: { x: (mid.x + next.x) / 2, y: (mid.y + next.y) / 2 },
+    };
+  });
+}
+
+/**
  * Try a handful of deterministic detours (shift the connecting line past the
  * blocking cluster, or take a clear perpendicular gutter) and keep the first
  * fully-clear candidate — otherwise the least-blocked one. Cheap and stable.
@@ -1299,6 +1580,18 @@ function bestDetour(
   // place. Omitted when nothing was shifted, so an unshifted route is rebuilt
   // exactly as it always was.
   ends?: { lead: Point[]; tail: Point[] },
+  // The tiles being joined, so a route with no clear lane can re-anchor onto a
+  // different connection site instead of finishing inside a bystander.
+  source?: ExportBox,
+  target?: ExportBox,
+  // False for one member of a parallel fan, whose separation comes from its
+  // lane: re-anchoring would put every member of the bundle back on one site.
+  allowResite = false,
+  // This hop's place in its bundle. Every lane below is rebuilt from the two
+  // endpoints, which throws the fan spread away: a blocked bundle collapsed
+  // onto one lane, drawn as a single arrow with every sibling hidden underneath
+  // it. Carried into the lane so a detoured fan is still a fan.
+  laneOffset = 0,
 ): { points: Point[]; labelAnchor: Point } {
   const lead = ends?.lead ?? [base.points[0]];
   const tail = ends?.tail ?? [base.points[base.points.length - 1]];
@@ -1316,31 +1609,33 @@ function bestDetour(
   const minBY = Math.min(...cluster.map((b) => b.y));
   const maxBY = Math.max(...cluster.map((b) => b.y + b.h));
   const gap = 18;
+  const spread = (lane: number): number => lane + laneOffset;
 
-  const candidates: Array<{ points: Point[]; labelAnchor: Point }> = [];
+  type Candidate = { points: Point[]; labelAnchor: Point };
+  const candidates: Candidate[] = [];
   if (horizontal) {
     // Route the vertical connector just past the cluster, on the roomier side.
-    for (const laneX of [maxBX + gap, minBX - gap]) {
+    for (const laneX of [spread(maxBX + gap), spread(minBX - gap)]) {
       candidates.push({
         points: mk([{ x: laneX, y: start.y }, { x: laneX, y: end.y }]),
         labelAnchor: { x: laneX, y: (start.y + end.y) / 2 },
       });
     }
     // Take a clear horizontal gutter above / below the cluster.
-    for (const laneY of [minBY - gap, maxBY + gap]) {
+    for (const laneY of [spread(minBY - gap), spread(maxBY + gap)]) {
       candidates.push({
         points: mk([{ x: start.x, y: laneY }, { x: end.x, y: laneY }]),
         labelAnchor: { x: (start.x + end.x) / 2, y: laneY },
       });
     }
   } else {
-    for (const laneY of [maxBY + gap, minBY - gap]) {
+    for (const laneY of [spread(maxBY + gap), spread(minBY - gap)]) {
       candidates.push({
         points: mk([{ x: start.x, y: laneY }, { x: end.x, y: laneY }]),
         labelAnchor: { x: (start.x + end.x) / 2, y: laneY },
       });
     }
-    for (const laneX of [minBX - gap, maxBX + gap]) {
+    for (const laneX of [spread(minBX - gap), spread(maxBX + gap)]) {
       candidates.push({
         points: mk([{ x: laneX, y: start.y }, { x: laneX, y: end.y }]),
         labelAnchor: { x: laneX, y: (start.y + end.y) / 2 },
@@ -1350,32 +1645,53 @@ function bestDetour(
 
   let best = base;
   let bestBlocked = countBlocked(base.points, obstacles, margin);
-  for (const candidate of candidates) {
+  const consider = (candidate: Candidate): boolean => {
     const blocked = countBlocked(candidate.points, obstacles, margin);
-    if (blocked === 0) return candidate;
+    if (blocked === 0) return true;
     if (blocked < bestBlocked) { best = candidate; bestBlocked = blocked; }
-  }
+    return false;
+  };
+  for (const candidate of candidates) if (consider(candidate)) return candidate;
   // Nothing past the cluster worked. Fall through to the gutters between the
   // obstacle rows and columns — appended after the originals on purpose, so a
   // route that already had a clear detour keeps exactly the one it had and only
   // the previously-unsolvable cases change.
-  const gutters: Array<{ points: Point[]; labelAnchor: Point }> = [];
-  for (const laneY of clearLanes(obstacles.map((b) => [b.y, b.y + b.h] as [number, number]), start.y, end.y, margin)) {
+  const gutters: Candidate[] = [];
+  for (const lane of clearLanes(obstacles.map((b) => [b.y, b.y + b.h] as [number, number]), start.y, end.y, margin)) {
+    const laneY = spread(lane);
     gutters.push({
       points: mk([{ x: start.x, y: laneY }, { x: end.x, y: laneY }]),
       labelAnchor: { x: (start.x + end.x) / 2, y: laneY },
     });
   }
-  for (const laneX of clearLanes(obstacles.map((b) => [b.x, b.x + b.w] as [number, number]), start.x, end.x, margin)) {
+  for (const lane of clearLanes(obstacles.map((b) => [b.x, b.x + b.w] as [number, number]), start.x, end.x, margin)) {
+    const laneX = spread(lane);
     gutters.push({
       points: mk([{ x: laneX, y: start.y }, { x: laneX, y: end.y }]),
       labelAnchor: { x: laneX, y: (start.y + end.y) / 2 },
     });
   }
-  for (const candidate of gutters) {
-    const blocked = countBlocked(candidate.points, obstacles, margin);
-    if (blocked === 0) return candidate;
-    if (blocked < bestBlocked) { best = candidate; bestBlocked = blocked; }
+  for (const candidate of gutters) if (consider(candidate)) return candidate;
+
+  // Every lane above keeps the sides the dominant axis chose. When the facing
+  // side of a tile is flush against a neighbour — a service on the seam of a
+  // grid, the shape a wide estate always takes — no lane can reach it, because
+  // the last stretch is inside the neighbour whatever route precedes it. So try
+  // the other connection sites. Accepted only when the result is completely
+  // clear, so a route that already had a clear lane keeps exactly the one it
+  // had and only the previously-unsolvable cases change.
+  if (allowResite && bestBlocked > 0 && source && target) {
+    for (const targetSide of BOX_SIDES) {
+      for (const sourceSide of BOX_SIDES) {
+        for (const candidate of routesBetweenSides(source, sourceSide, target, targetSide, gap)) {
+          if (countBlocked(candidate.points, obstacles, margin) > 0) continue;
+          // The tiles a route joins are not in `obstacles`, so a shape that
+          // doubles back through its own source counts as perfectly clear.
+          if (pathEntersBox(candidate.points, source) || pathEntersBox(candidate.points, target)) continue;
+          return candidate;
+        }
+      }
+    }
   }
   return best;
 }
@@ -1579,6 +1895,7 @@ export function buildExportRoutes(
         obstacles: obstacles.filter((box) => box.id !== source.id && box.id !== target.id),
         sourceShift: shifts.get(`${String(edge.id)}#source`) ?? 0,
         targetShift: shifts.get(`${String(edge.id)}#target`) ?? 0,
+        solo: (fanSizes.get(key) ?? 1) <= 1,
       });
 
     routes.push({
@@ -1675,30 +1992,24 @@ export function clampedBoxes(
   }
   if (strays.length === 0 && clipped.length === 0) return { boxes: new Map(boxes), bounds };
 
-  // Membership is declared, never inferred. A stray zone takes its own children
-  // with it — a frame parked away from its services is drawn as an empty box
-  // next to an unexplained cluster.
   // Membership is what the author declared, never what happens to overlap: a
   // compliance band drawn across an architecture owns nothing it crosses, and
   // reading containment geometrically once let one claim half a grid that
   // belonged to another zone, tearing the grid down the middle and moving 55%
   // of the drawing — past the 40% the outlier trim's own majority floor allows.
   //
-  // That failure is now prevented one level up, and the two definitions can no
-  // longer be told apart from outside: a zone reaches this line only when it
-  // does not intersect the trimmed drawing at all, since a zone that does is
-  // clipped rather than parked. Anything geometrically inside such a zone is
-  // therefore also entirely outside the drawing, which is to say already a
-  // stray being parked. Geometric containment can gather no box here that is
-  // not being moved anyway, so no measurement can separate the two, and
-  // several fixtures built to try — a chained cascade, an overlapping
-  // sovereignty band, a policy service standing inside a parked region's box —
-  // each returned byte-identical exports.
-  //
-  // Declared is kept because it is the correct definition rather than the
-  // provably-equal one: it is what the drawing says, it stays right if the
-  // clipping rule above is ever relaxed, and it does not quietly re-acquire a
-  // member the author dragged out of the box.
+  // An earlier version of this comment argued the two definitions had become
+  // indistinguishable from outside, on the grounds that anything geometrically
+  // inside a parked zone is itself already a stray being parked. The premise
+  // is true and the conclusion does not follow: gathering a box changes which
+  // *cluster* it lands in, and clusters are packed into separate slots. A
+  // policy service standing inside a parked region's rectangle is carried with
+  // that region under geometric containment and packed into a slot of its own
+  // under declared, so the two produce visibly different sheets — the service
+  // ends up outside the boundary it was drawn inside. `pipeline-region` is the
+  // fixture that shows it. Declared is still the right definition, because it
+  // is what the drawing says rather than what its coordinates imply, but it is
+  // a choice this code makes and not a distinction without a difference.
   const holds = (parent: ExportBox, child: ExportBox): boolean => parent !== child && child.parent === parent.id;
 
   // A stray zone takes everything it contains with it, stray or not: the zone

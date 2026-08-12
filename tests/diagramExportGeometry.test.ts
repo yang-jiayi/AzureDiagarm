@@ -453,3 +453,58 @@ test('a zone drawn around a void shrinks to its contents instead of dragging the
     'and it still contains every service it contained before',
   );
 });
+
+test('an arrow re-anchored onto another side never doubles back through its own tile', () => {
+  // A service on the seam of a grid can only be reached by re-anchoring: every
+  // lane the router can name finishes inside the neighbour flush against the
+  // side the dominant axis chose. The escape is a different connection site,
+  // and the obvious way to join two of them — meet on the mid line between the
+  // stubs — runs straight back down through the tile it just left whenever the
+  // stubs point away from each other. Nothing caught it, because the boxes a
+  // route connects are excluded from its own obstacle list.
+  const boxes = new Map<string, ExportBox>();
+  for (let i = 0; i < 60; i += 1) boxes.set(`g-${i}`, box(`g-${i}`, (i % 10) * 250, Math.floor(i / 10) * 200));
+  boxes.set('h-0', box('h-0', 2400, 400));
+  const routes = buildExportRoutes(
+    [{ id: 'seam', source: 'g-2', target: 'h-0', label: 'Queries' } as Edge],
+    boxes,
+  );
+  assert.equal(routes.length, 1);
+  const { points } = routes[0];
+  for (const id of ['g-2', 'h-0']) {
+    const tile = boxes.get(id)!;
+    for (let i = 1; i < points.length; i += 1) {
+      const a = points[i - 1];
+      const b = points[i];
+      const enters = Math.max(a.x, b.x) > tile.x + 1 && Math.min(a.x, b.x) < tile.x + tile.w - 1
+        && Math.max(a.y, b.y) > tile.y + 1 && Math.min(a.y, b.y) < tile.y + tile.h - 1;
+      assert.ok(!enters, `the hop runs back through ${id}: (${a.x},${a.y})->(${b.x},${b.y})`);
+    }
+  }
+  // And it still reaches both tiles, which is the point of re-anchoring.
+  const touches = (p: { x: number; y: number }, t: ExportBox): boolean => p.x >= t.x - 1 && p.x <= t.x + t.w + 1
+    && p.y >= t.y - 1 && p.y <= t.y + t.h + 1;
+  assert.ok(touches(points[0], boxes.get('g-2')!), 'the hop starts on its source');
+  assert.ok(touches(points[points.length - 1], boxes.get('h-0')!), 'the hop ends on its target');
+});
+
+test('a fan keeps one lane per member even where a lone hop would be re-anchored', () => {
+  // Re-anchoring is gated on the hop standing alone, and "alone" cannot be read
+  // off the lane offset: the middle member of an odd fan is handed offset zero
+  // and looks exactly like a solitary hop. Moving it puts two arrows, and their
+  // two step numbers, on the same line.
+  const boxes = new Map<string, ExportBox>();
+  for (let i = 0; i < 60; i += 1) boxes.set(`g-${i}`, box(`g-${i}`, (i % 10) * 250, Math.floor(i / 10) * 200));
+  boxes.set('h-0', box('h-0', 2400, 400));
+  const routes = buildExportRoutes(
+    [0, 1, 2].map((i) => ({ id: `seam-${i}`, source: 'g-2', target: 'h-0', label: `Queries ${i}` } as Edge)),
+    boxes,
+  );
+  assert.equal(routes.length, 3);
+  // The anchors themselves must stay on the connection site, so separation is
+  // in the lane: the paths, and the points the labels hang off, must differ.
+  const lanes = routes.map((r) => r.points.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' '));
+  assert.equal(new Set(lanes).size, 3, `the bundle collapsed onto one lane:\n${lanes.join('\n')}`);
+  const anchors = routes.map((r) => `${r.labelAnchor.x.toFixed(1)},${r.labelAnchor.y.toFixed(1)}`);
+  assert.equal(new Set(anchors).size, 3, `two labels share a spot: ${anchors.join(' ')}`);
+});

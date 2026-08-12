@@ -222,10 +222,17 @@ const MAX_LEGIBLE_TILED_SLIDES = 48;
 
 /**
  * And a bound on the grid itself, so the search for a grid that fits the deck
- * ceiling cannot walk a pathological one. A drawing needing finer than this is
- * a plotter drawing however its slides are counted.
+ * ceiling cannot walk a pathological one.
+ *
+ * This is a bound on the *search*, not a judgement about the drawing, and
+ * setting it as if it were the latter is what pinned a 27-service cascade to a
+ * 56in page: a diagonal occupies one cell per service, so it needs an n x n
+ * grid to be read at all, and 400 cells ran out at 20. Emitted slides are what
+ * a reader counts and `MAX_LEGIBLE_TILED_SLIDES` is what limits them; empty
+ * cells cost nothing but the cost of enumerating them, which is what this
+ * number is actually for.
  */
-const MAX_TILED_CELLS = 400;
+const MAX_TILED_CELLS = 4096;
 
 /**
  * A sheet has to carry a piece of the architecture, not a lone tile floating
@@ -430,19 +437,27 @@ function planDiagramWindows(
   // Capping the grid instead of the deck therefore refused a thirteen-slide
   // readable deck in favour of a twenty-four-cell one at four points.
   const slidesFor = (c: number, r: number): number => tile(c, r).length;
+  // Coarsening an axis costs scale along that axis alone, and the scale the
+  // reader gets is the smaller of the two. Spending that cost on the axis that
+  // already binds therefore shrinks the type for nothing, while the other axis
+  // sits on slack it is not using — which is what stepping toward a square did
+  // to every long drawing: a diagonal cascade lost the axis it was long in and
+  // came out at 6.0pt on *fewer* slides than the same drawing one service
+  // smaller, so adding a service made the deck shorter and less readable.
+  const drop = (c: number, r: number): { c: number; r: number } => {
+    if (c <= 1) return { c, r: Math.max(1, r - 1) };
+    if (r <= 1) return { c: Math.max(1, c - 1), r };
+    const scaleX = frame.w / (contentW / c + WINDOW_BLEED_PX * 2);
+    const scaleY = frame.h / (contentH / r + WINDOW_BLEED_PX * 2);
+    return scaleX > scaleY ? { c: c - 1, r } : { c, r: r - 1 };
+  };
   const shrinkToFit = (cols: number, rows: number): { c: number; r: number } => {
     let c = Math.max(1, cols);
     let r = Math.max(1, rows);
     // A grid this fine is a plotter drawing however it is counted, and the
     // bound also keeps the search below from walking a pathological grid.
-    while (c * r > MAX_TILED_CELLS) {
-      if (c >= r) c -= 1;
-      else r -= 1;
-    }
-    while (c * r > 1 && slidesFor(c, r) > MAX_LEGIBLE_TILED_SLIDES) {
-      if (c >= r) c -= 1;
-      else r -= 1;
-    }
+    while (c * r > MAX_TILED_CELLS) ({ c, r } = drop(c, r));
+    while (c * r > 1 && slidesFor(c, r) > MAX_LEGIBLE_TILED_SLIDES) ({ c, r } = drop(c, r));
     return { c, r };
   };
   const capped = (cols: number, rows: number): { windows: DiagramWindow[]; legible: boolean } | null => {
@@ -1963,16 +1978,6 @@ function addGroupShape(
   // already carries a text colour chosen for reading; use it.
   const labelColor = stripHash(palette.text);
 
-  slide.addShape(pptx.ShapeType.roundRect, {
-    x: topLeft.x,
-    y: topLeft.y,
-    w,
-    h,
-    rectRadius: 0.06,
-    fill: { color: bg, transparency: 15 },
-    line: { color: border, width: 1, dashType: 'dash' },
-    objectName: `zone-${box.id}`,
-  });
   // Let a long zone title wrap to two lines instead of clipping at a fixed band.
   const titleH = clamp(h * 0.16, 0.24, 0.5);
   // A closed box says "these are all of them". When a drawing is split across
@@ -2000,6 +2005,29 @@ function addGroupShape(
   const top = topLeft.y + 0.04;
   const foot = topLeft.y + h - titleH - 0.04;
   const part = (share: number): number => Math.max(0.4, w * share - 0.12);
+  // The bands the tiles actually left free, rather than the fractions of the
+  // width somebody guessed at. Fixed shares only work while the row has a
+  // quarter of itself spare: fill a subnet — which is what a subnet drawn to
+  // scale looks like — and every band on offer, full width, half or third,
+  // lands on the same tiles, so a rule that fails a title at 25% coverage had
+  // no legal placement left to choose. Reading the gaps finds the one the
+  // author left, wherever it happens to be.
+  const runs = (y: number): Array<{ x: number; y: number; w: number }> => {
+    const lo = topLeft.x + 0.06;
+    const hi = topLeft.x + w - 0.06;
+    const blockers = (occupied ?? [])
+      .filter((t) => t.y < y + titleH && t.y + t.h > y && t.x + t.w > lo && t.x < hi)
+      .map((t) => [Math.max(lo, t.x), Math.min(hi, t.x + t.w)] as [number, number])
+      .sort((a, b) => a[0] - b[0]);
+    const out: Array<{ x: number; y: number; w: number }> = [];
+    let cursor = lo;
+    for (const [from, to] of blockers) {
+      if (from - cursor >= 0.35) out.push({ x: cursor, y, w: Math.min(titleW, from - cursor) });
+      cursor = Math.max(cursor, to);
+    }
+    if (hi - cursor >= 0.35) out.push({ x: cursor, y, w: Math.min(titleW, hi - cursor) });
+    return out.sort((a, b) => b.w - a.w);
+  };
   // Inside the box it names, always — a name is a claim about what the box
   // contains, and a name printed anywhere else is a different claim. When the
   // full-width band across the top is standing on the zone's own tiles, the
@@ -2010,6 +2038,8 @@ function addGroupShape(
   const inside = [
     { x: topLeft.x + 0.06, y: top, w: titleW },
     { x: topLeft.x + 0.06, y: foot, w: titleW },
+    ...runs(top),
+    ...runs(foot),
     { x: topLeft.x + w - part(0.5) - 0.06, y: top, w: part(0.5) },
     { x: topLeft.x + 0.06, y: top, w: part(0.5) },
     { x: topLeft.x + w - part(0.34) - 0.06, y: top, w: part(0.34) },
@@ -2063,11 +2093,68 @@ function addGroupShape(
       title = candidate;
     }
   }
+  // A full box has no gap to give, and every band inside it is standing on a
+  // tile. The answer a container diagram has always used is a header strip:
+  // the name lives in a band that is part of the box, above the things the box
+  // holds. The author drew the rectangle around their tiles, so the strip is
+  // taken from just outside it and the drawn rectangle grows to include it —
+  // the title is then inside the boundary it names, covering nothing, which is
+  // what both rules ask for and what neither could otherwise be given.
+  let rectY = topLeft.y;
+  let rectH = h;
+  let bandH = titleH;
+  if (best > 0.2) {
+    const lo = topLeft.x + 0.06;
+    const hi = topLeft.x + w - 0.06;
+    // How far the box can grow before it meets something, rather than whether
+    // a fixed strip happens to be clear. A subnet stack is drawn with its tiers
+    // close together — the gap between two of them is the gap, not a
+    // negotiation — and asking for a comfortable strip meant the middle tier of
+    // three got none at all while its neighbours, which had the page edge to
+    // grow into, got theirs. The band only has to hold one line.
+    const blockers = [...(occupied ?? []), ...(foreign ?? [])].filter((r) => r.x < hi && r.x + r.w > lo);
+    const ceiling = clampTo ? clampTo.y : topLeft.y - titleH - 0.1;
+    const floorY = clampTo ? clampTo.y + clampTo.h : topLeft.y + h + titleH + 0.1;
+    const roomAbove = topLeft.y - Math.max(
+      ceiling,
+      ...blockers.filter((r) => r.y + r.h <= topLeft.y + 1e-6).map((r) => r.y + r.h),
+    );
+    const roomBelow = Math.min(
+      floorY,
+      ...blockers.filter((r) => r.y >= topLeft.y + h - 1e-6).map((r) => r.y),
+    ) - (topLeft.y + h);
+    const fits = (available: number): number => Math.min(titleH, available - 0.015);
+    const above = fits(roomAbove);
+    const below = fits(roomBelow);
+    // One line of the smallest type this title is ever set in, plus its margin.
+    const MIN_STRIP = 0.16;
+    if (above >= MIN_STRIP && above >= below) {
+      bandH = above;
+      rectY = topLeft.y - above;
+      rectH = h + above;
+      title = { x: lo, y: rectY + 0.005, w: titleW };
+    } else if (below >= MIN_STRIP) {
+      bandH = below;
+      rectH = h + below;
+      title = { x: lo, y: topLeft.y + h + 0.005, w: titleW };
+    }
+  }
+
+  slide.addShape(pptx.ShapeType.roundRect, {
+    x: topLeft.x,
+    y: rectY,
+    w,
+    h: rectH,
+    rectRadius: 0.06,
+    fill: { color: bg, transparency: 15 },
+    line: { color: border, width: 1, dashType: 'dash' },
+    objectName: `zone-${box.id}`,
+  });
   slide.addText(truncateLabel(box.label, 60) + fragment, {
     x: title.x,
     y: title.y,
     w: title.w,
-    h: titleH,
+    h: bandH,
     fontSize: clamp(Math.round(h * 5), 8, 12),
     bold: true,
     color: labelColor,
@@ -2199,7 +2286,35 @@ async function addEditableDiagram(
       maxY: fitBounds.maxY + WINDOW_BLEED_PX,
     }
     : fitBounds;
-  const transform = computeFitTransform(view, frame, { maxScale: 1 / PX_PER_IN });
+  // Routes are planned from where the tiles are, and on a clamped drawing that
+  // is where `clampedBoxes` above put them — miles from the node's declared
+  // position. Planning from the declared position aimed every hop touching a
+  // stray off the sheet, where the clip then threw it away: the arrow vanished
+  // while its chip, its numbered callout and its line in the step list all
+  // stayed behind.
+  const routes = buildExportRoutes(diagram.edges ?? [], boxes);
+  // An arrow is drawn as surely as a tile is, and a detour lane placed just
+  // past the last obstacle is frequently just past the last tile as well. The
+  // page was sized from the boxes alone, so those few pixels fell outside the
+  // frame and the clip cut the hop down to whichever fragment survived — one
+  // that stood nearly two inches from the service it names, with no arrowhead.
+  // So the view is the union of everything drawn, not of the boxes alone.
+  // Routing is untouched by this, and wherever the drawing is smaller than the
+  // frame the scale cap absorbs the extra room without changing anything.
+  //
+  // Slices keep exactly their own window: every window is the same size so that
+  // every slide renders at one scale, and the overview covers the whole drawing
+  // anyway.
+  const drawnView = banded ? view : routes.reduce(
+    (acc, route) => route.points.reduce((box, point) => ({
+      minX: Math.min(box.minX, point.x),
+      maxX: Math.max(box.maxX, point.x),
+      minY: Math.min(box.minY, point.y),
+      maxY: Math.max(box.maxY, point.y),
+    }), acc),
+    view,
+  );
+  const transform = computeFitTransform(drawnView, frame, { maxScale: 1 / PX_PER_IN });
   const clampTo = clamped || banded ? frame : undefined;
   // A tile is drawn where the drawing says; a chip is drawn *around* its arrow
   // and is therefore the one shape that can be pushed off the sheet by its own
@@ -2208,13 +2323,6 @@ async function addEditableDiagram(
   // badges are always held inside the frame, on every slide, banded or not.
   const labelFrame = clampTo ?? frame;
   const px = transform.scale * PX_PER_IN;
-  // Routes are planned from where the tiles are, and on a clamped drawing that
-  // is where `clampedBoxes` above put them — miles from the node's declared
-  // position. Planning from the declared position aimed every hop touching a
-  // stray off the sheet, where the clip then threw it away: the arrow vanished
-  // while its chip, its numbered callout and its line in the step list all
-  // stayed behind.
-  const routes = buildExportRoutes(diagram.edges ?? [], boxes);
   const first = { x: fitBounds.minX <= bounds.minX + 0.5, y: fitBounds.minY <= bounds.minY + 0.5 };
   const last = { x: fitBounds.maxX >= bounds.maxX - 0.5, y: fitBounds.maxY >= bounds.maxY - 0.5 };
 
