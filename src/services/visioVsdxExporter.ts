@@ -41,6 +41,7 @@ import {
   buildExportRoutes,
   categoryStyle,
   collectExportBoxes,
+  clampedBoxes,
   computeBounds,
   computeContentBounds,
   metaSubline,
@@ -787,25 +788,23 @@ export async function buildVsdxPackage(
    */
   presetIcons?: Map<string, RasterizedIcon>,
 ): Promise<VsdxPackage> {
-  const boxes = collectExportBoxes(nodes);
-  const { groups, services } = partitionBoxes(boxes);
+  const raw = collectExportBoxes(nodes);
   // Same narration the deck gets: only one hop between a given pair of services
   // is ever given a step number, so the other members of a fan carry a callout
   // that the panel never explains — or, once the fan drops its wording, say
   // nothing at all.
   const narrated = narrateEdgeCallouts(edges);
-  let routes = buildExportRoutes(narrated, boxes);
   // Match the PowerPoint strategy: draw 1 : 1 from the full bounds whenever the
   // page stays a sensible size, and only fall back to the dense-cluster bounds
   // (clamping the strays back on) when a far-placed node would otherwise blow
   // the page up into a near-empty plotter sheet.
-  const fullBounds = computeBounds(boxes.values());
+  const fullBounds = computeBounds(raw.values());
   const fullWIn = Math.max(fullBounds.maxX - fullBounds.minX, 1) / PX_PER_INCH;
   const fullHIn = Math.max(fullBounds.maxY - fullBounds.minY, 1) / PX_PER_INCH;
   let bounds = fullBounds;
   let clampToPage = false;
   if (fullWIn > MAX_USEFUL_PAGE_IN || fullHIn > MAX_USEFUL_PAGE_IN) {
-    const trimmed = computeContentBounds(boxes.values());
+    const trimmed = computeContentBounds(raw.values());
     const trimmedWIn = Math.max(trimmed.maxX - trimmed.minX, 1) / PX_PER_INCH;
     const trimmedHIn = Math.max(trimmed.maxY - trimmed.minY, 1) / PX_PER_INCH;
     if (trimmedWIn < fullWIn * 0.8 || trimmedHIn < fullHIn * 0.8) {
@@ -813,6 +812,20 @@ export async function buildVsdxPackage(
       clampToPage = true;
     }
   }
+  // Pull the strays back onto the drawing once, in the drawing's own
+  // coordinates, before anything is routed or measured. The clamp used to live
+  // in `toRect`, in inches, which left the router planning hops to where a
+  // stray used to be — on the "outlier" fixture one arrow finished at the page
+  // corner, 0.3in clear of the tile the <Connects> table said it was glued to,
+  // and Visio would have snapped that line across the page the first time the
+  // reader moved anything. It also parks strays clear of each other: two nodes
+  // far off the same corner clamp to the same corner, and the hop between them
+  // was then drawn straight through the tile covering both.
+  const parked = clampToPage ? clampedBoxes(raw, bounds) : { boxes: raw, bounds };
+  const boxes = parked.boxes;
+  bounds = parked.bounds;
+  const { groups, services } = partitionBoxes(boxes);
+  const routes = buildExportRoutes(narrated, boxes);
 
   const contentWIn = Math.max(bounds.maxX - bounds.minX, 1) / PX_PER_INCH;
   const contentHIn = Math.max(bounds.maxY - bounds.minY, 1) / PX_PER_INCH;
@@ -851,26 +864,10 @@ export async function buildVsdxPackage(
     return { x, y: pageHeightIn - topY };
   };
 
-  // Reroute against the positions the tiles will actually occupy. The clamp
-  // moves a stray tile onto the page but the routes were planned from where it
-  // used to be, so every hop touching it ended somewhere else — on the "outlier"
-  // fixture one arrow finished at the page corner, 0.3in clear of the tile the
-  // <Connects> table said it was glued to. Visio would have snapped that line
-  // across the page the first time the reader moved anything.
-  if (clampToPage) {
-    const moved = new Map<string, ExportBox>();
-    for (const [id, box] of boxes) {
-      const rect = toRect(box);
-      // Back into the layout's pixel space, so the router sees one coordinate
-      // system and produces routes that need no further correction.
-      moved.set(id, {
-        ...box,
-        x: (rect.x - offsetXIn) * PX_PER_INCH + bounds.minX,
-        y: (pageHeightIn - rect.y - rect.h - offsetYIn) * PX_PER_INCH + bounds.minY,
-      });
-    }
-    routes = buildExportRoutes(narrated, moved);
-  }
+  // Reroute is no longer needed here: `clampedBoxes` above moved the strays
+  // before anything was routed, so the tile, the arrow aimed at it and the glue
+  // record all agree. The inch-space clamp below stays as a backstop for the
+  // workflow band, and is a no-op for a box already inside the drawing.
 
   const icons = presetIcons ?? await rasterizeIcons(services.map((box) => box.iconPath), 128);
 

@@ -29,6 +29,7 @@ import {
   buildExportRoutes,
   categoryStyle,
   collectExportBoxes,
+  clampedBoxes,
   computeBounds,
   computeContentBounds,
   computeFitTransform,
@@ -483,10 +484,18 @@ function planSlideGeometry(diagram?: DiagramShapeSource | null): SlideGeometry {
   const nodes = diagram?.nodes ?? [];
   let windows: DiagramWindow[] = [];
   if (nodes.length > 0) {
-    const boxes = collectExportBoxes(nodes);
-    if (boxes.size > 0) {
-      const { bounds, clamped } = chooseExportBounds(boxes.values());
+    const raw = collectExportBoxes(nodes);
+    if (raw.size > 0) {
+      const { bounds: fitted, clamped } = chooseExportBounds(raw.values());
       outliersClamped = clamped;
+      // Plan the windows against the drawing the slides will actually carry.
+      // Parking a stray widens the drawing by the strip it sits in, and a
+      // window plan made from the pre-parking bounds leaves that strip
+      // belonging to no window at all — the stray, and every hop touching it,
+      // is then drawn on no slide.
+      const parked = clamped ? clampedBoxes(raw, fitted) : { boxes: raw, bounds: fitted };
+      const boxes = parked.boxes;
+      const bounds = parked.bounds;
       const { services } = partitionBoxes(boxes);
       const contentW = Math.max(1, bounds.maxX - bounds.minX) / PX_PER_IN;
       const contentH = Math.max(1, bounds.maxY - bounds.minY) / PX_PER_IN;
@@ -1087,8 +1096,14 @@ function connectorLabelBox(
   // as block area it is cheap to sacrifice — the walk will happily park the
   // disc dead centre on a service to keep the much larger text clear, which is
   // how a wrap-around hop's callout came to sit 100% inside a stranger's tile.
-  // So the disc is priced on its own footprint, and at a premium.
-  const BADGE_COVER_WEIGHT = 4;
+  // So the disc is priced on its own footprint.
+  //
+  // It carried a x4 premium for several rounds. That premium is now inert:
+  // annotation overlap is priced at x8 and a swallowed disc leaves its chip
+  // altogether, so an A/B at 4 and at 0 across five grid pitches was
+  // byte-identical on four of them and moved 0.5% of one disc's ink on the
+  // fifth, whose worst burial was unchanged. An untested constant is worse
+  // than no constant, so it is gone rather than gated.
   const badgeCovered = (at: { x: number; y: number }): number => {
     if (badgeD <= 0 || blockH <= h + 0.01) return 0;
     // Measured at the centre of the edge, not at the slid position. The slide
@@ -1102,7 +1117,7 @@ function connectorLabelBox(
       if (tile.annotation) return sum;
       const dx = Math.min(bx + badgeD, tile.x + tile.w) - Math.max(bx, tile.x);
       const dy = Math.min(by + badgeD, tile.y + tile.h) - Math.max(by, tile.y);
-      return dx > 0 && dy > 0 ? sum + dx * dy * BADGE_COVER_WEIGHT * (tile.weight ?? 1) : sum;
+      return dx > 0 && dy > 0 ? sum + dx * dy * (tile.weight ?? 1) : sum;
     }, 0);
   };
   const covered = (at: { x: number; y: number }): number => seen.reduce((sum, tile) => {
@@ -1381,41 +1396,43 @@ function stepBadgeBox(
   // slightly more than the price of landing near a stranger's arrow, where at
   // least the digit is still legible.
   const FULL_BURIAL_WEIGHT = 5;
-  const swallowed = (at: { x: number; y: number }): boolean => {
+  const deepest = (at: { x: number; y: number }, dd: number): number => {
+    let worst = 0;
     for (const other of obstacles) {
       if (other.annotation) continue;
-      const dx = Math.min(at.x + d, other.x + other.w) - Math.max(at.x, other.x);
-      const dy = Math.min(at.y + d, other.y + other.h) - Math.max(at.y, other.y);
-      if (dx > 0 && dy > 0 && dx * dy >= 0.9 * d * d) return true;
+      const dx = Math.min(at.x + dd, other.x + other.w) - Math.max(at.x, other.x);
+      const dy = Math.min(at.y + dd, other.y + other.h) - Math.max(at.y, other.y);
+      if (dx > 0 && dy > 0) worst = Math.max(worst, (dx * dy) / (dd * dd));
     }
-    return false;
+    return worst;
   };
   // A number hanging off its own chip is the best outcome there is, so the
   // chip's placement is taken whenever it is legible. But the disc is nailed
   // to the chip and can only slide along it, so on a grid whose gutters are
   // narrower than the disc the block comes to rest where the WORDING fits and
-  // the number ends up swallowed whole by a tile — where it reads as that
-  // service's own badge and the step list describes a hop the reader cannot
-  // find. A swallowed disc is worth less than a free-standing one, so it falls
-  // through to the walk below, which prices burial and misattribution against
-  // each other instead of being unable to move at all.
-  if (chip?.badge) {
-    const badge = chip.badge;
-    const buried = obstacles.some((other) => {
-      if (other.annotation) return false;
-      const dx = Math.min(badge.x + badge.d, other.x + other.w) - Math.max(badge.x, other.x);
-      const dy = Math.min(badge.y + badge.d, other.y + other.h) - Math.max(badge.y, other.y);
-      return dx > 0 && dy > 0 && dx * dy >= 0.9 * badge.d * badge.d;
-    });
-    if (!buried) return badge;
-  }  const cover = (at: { x: number; y: number }): number => {
+  // the number ends up buried in a tile — where it reads as that service's own
+  // badge and the step list describes a hop the reader cannot find. A buried
+  // disc is worth less than a free-standing one, so it falls through to the
+  // walk below, which prices burial and misattribution against each other
+  // instead of being unable to move at all.
+  //
+  // The bar is 0.7, not the 0.9 the walk itself uses. The two are asking
+  // different questions. The walk's is "is this candidate slot ruined", and it
+  // is choosing between real alternatives, so a near-miss there is genuinely
+  // survivable. This one is "is the chip's slot so much better than anything
+  // the walk could find that the walk need not even run", and 87% inside a
+  // tile — the residue a grid one node wider than `tight-grid` leaves — is not.
+  // Falling through does not commit the disc to moving: the walk keeps it
+  // where it is unless it finds something better.
+  if (chip?.badge && deepest(chip.badge, chip.badge.d) < 0.7) return chip.badge;
+  const cover = (at: { x: number; y: number }): number => {
     let sum = 0;
     for (const other of obstacles) {
       const dx = Math.min(at.x + d, other.x + other.w) - Math.max(at.x, other.x);
       const dy = Math.min(at.y + d, other.y + other.h) - Math.max(at.y, other.y);
       if (dx > 0 && dy > 0) sum += dx * dy * (other.annotation ? ANNOTATION_OVERLAP_WEIGHT : 1);
     }
-    if (swallowed(at)) sum += FULL_BURIAL_WEIGHT * d * d;
+    sum += deepest(at, d) >= 0.9 ? FULL_BURIAL_WEIGHT * d * d : 0;
     return sum;
   };
   // A muted hop has nothing left but this number, so where it lands decides
@@ -1438,6 +1455,7 @@ function stepBadgeBox(
     // priced above being covered rather than at half of it.
     return (chip ? 0.5 : 4) * d * d;
   };
+
   const cost = (at: { x: number; y: number }): number => cover(at) + misread(at);
   let spot = fit(anchor.x - d / 2, anchor.y - d / 2);
   let spotCover = cost(spot);
@@ -1456,9 +1474,12 @@ function stepBadgeBox(
       }
     }
   }
+  // Falling through is not the same as leaving. If the walk cannot better the
+  // chip's own slot — which on a drawing with no clear paper at all is the
+  // usual outcome — the disc stays where it belongs, beside its wording.
+  if (chip?.badge && cost(chip.badge) <= spotCover) return chip.badge;
   return { x: spot.x, y: spot.y, d };
 }
-
 function addStepBadge(
   slide: Slide,
   route: ExportRoute,
@@ -1911,17 +1932,24 @@ async function addEditableDiagram(
   thumbnail = false,
   presetIcons?: Map<string, RasterizedIcon>,
 ): Promise<boolean> {
-  const boxes = collectExportBoxes(diagram.nodes ?? []);
-  if (boxes.size === 0) return false;
-  const { groups, services } = partitionBoxes(boxes);
-  if (services.length === 0) return false;
+  const raw = collectExportBoxes(diagram.nodes ?? []);
+  if (raw.size === 0) return false;
   const frame = fullFrame;
 
   // Size and draw from the SAME bounds. Sizing the page for the dense cluster
   // while drawing every box is what silently pushed far-placed services off
   // the slide, so when outliers are excluded from the fit they are clamped
   // back onto the page instead of being drawn into the void.
-  const { bounds, clamped } = chooseExportBounds(boxes.values());
+  const { bounds: fitted, clamped } = chooseExportBounds(raw.values());
+  // Clamped once, here, so the whole slide pipeline — routing, window
+  // ownership, drawing — agrees on where a stray ended up. Doing it inside
+  // `placeBox` on each slide meant the tile, the arrow aimed at it and the
+  // window that claimed it could each pick a different answer.
+  const parked = clamped ? clampedBoxes(raw, fitted) : { boxes: raw, bounds: fitted };
+  const boxes = parked.boxes;
+  const bounds = parked.bounds;
+  const { groups, services } = partitionBoxes(boxes);
+  if (services.length === 0) return false;
   // A banded slide is sized from its own tile, which is what buys back the
   // legible scale; the tile is then clamped so a shape straddling the seam is
   // cut at the page edge instead of spilling into the void.
@@ -1953,6 +1981,12 @@ async function addEditableDiagram(
   // badges are always held inside the frame, on every slide, banded or not.
   const labelFrame = clampTo ?? frame;
   const px = transform.scale * PX_PER_IN;
+  // Routes are planned from where the tiles are, and on a clamped drawing that
+  // is where `clampedBoxes` above put them — miles from the node's declared
+  // position. Planning from the declared position aimed every hop touching a
+  // stray off the sheet, where the clip then threw it away: the arrow vanished
+  // while its chip, its numbered callout and its line in the step list all
+  // stayed behind.
   const routes = buildExportRoutes(diagram.edges ?? [], boxes);
   const first = { x: fitBounds.minX <= bounds.minX + 0.5, y: fitBounds.minY <= bounds.minY + 0.5 };
   const last = { x: fitBounds.maxX >= bounds.maxX - 0.5, y: fitBounds.maxY >= bounds.maxY - 0.5 };
@@ -1994,9 +2028,9 @@ async function addEditableDiagram(
     // hop has to be on this paper for the fragment to be worth drawing.
     //
     // Safe to drop because a banded deck always opens with an overview slide
-    // covering the whole drawing, so every route is drawn there whatever the
-    // slices decide — and the audit fails any deck with an annotation whose
-    // arrow is drawn on no slide at all.
+    // covering the whole drawing, so every route that meets the fitted bounds
+    // is drawn there whatever the slices decide — and the audit fails any deck
+    // with an edge drawn on no slide at all.
     let total = 0;
     let inView = 0;
     for (let i = 1; i < route.points.length; i += 1) {
@@ -2012,7 +2046,16 @@ async function addEditableDiagram(
         if (x >= view.minX && x <= view.maxX && y >= view.minY && y <= view.maxY) inView += len / steps;
       }
     }
-    return total <= 0 || inView >= 0.25 * total;
+    // A share alone is backwards for exactly the hops that matter most. The
+    // longer a hop is, the smaller its share of any one window — so a pure
+    // fraction suppresses hardest the wrap-around that explains how one row
+    // reaches the next. On a 24-wide chain the row-turn hop had 17% of itself
+    // on every window and was dropped from all seven, although the visible
+    // piece was longer than the window is wide. So a fragment also earns its
+    // place by absolute length: more than half a window of arrow is never a
+    // meaningless stub, whatever fraction of the whole it happens to be.
+    const span = Math.max(view.maxX - view.minX, view.maxY - view.minY);
+    return total <= 0 || inView >= 0.25 * total || inView >= 0.6 * span;
   };
   const shownGroups = groups.filter(visibleGroup);
   const shownServices = services.filter(visibleBox);
@@ -2311,9 +2354,14 @@ async function addEditableDiagram(
         ownGapFor(route), foreignGapFor(route),
       );
       badges.set(route.id, badge);
-      // Only when the route has no chip: with one, `stepBadgeBox` returns the
-      // badge the chip already reserved room for inside its block.
-      if (badge && !box) chipObstacles.push({ x: badge.x, y: badge.y, w: badge.d, h: badge.d, annotation: true });
+      // The chip reserves room for its own badge inside its block, so a badge
+      // still sitting there needs no obstacle of its own. One that left — the
+      // walk moves it when the chip's slot is buried — is outside that block
+      // and invisible to every annotation placed afterwards, which is how a
+      // callout came to be covered by a chip settled six hops later.
+      if (badge && badge !== box?.badge) {
+        chipObstacles.push({ x: badge.x, y: badge.y, w: badge.d, h: badge.d, annotation: true });
+      }
     }
   };
   settle(ordered.filter((route) => !bundles.has(bundleKey(route))));

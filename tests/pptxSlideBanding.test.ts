@@ -498,7 +498,12 @@ test('a trimmed outlier zone is clamped back onto the page, not cut to a hairlin
       `trimmed zone sits at ${x.toFixed(2)},${y.toFixed(2)} ${w.toFixed(2)}x${h.toFixed(2)}in off a ${pageW.toFixed(2)}x${pageH.toFixed(2)}in ${name}`,
     );
   }
-  assert.equal(seen, 1, 'the outlier zone was not drawn at all');
+  // Parking the stray beside the drawing rather than on top of it widens the
+  // drawing, which can push it over the legibility floor and tile the deck. A
+  // zone is then continued on the overview and on each window it overlaps, so
+  // the count is not fixed — what has to hold is that every drawing of it is a
+  // real rectangle sitting on the page.
+  assert.ok(seen >= 1, 'the outlier zone was not drawn at all');
 });
 
 /** Slide-space rectangles for every shape whose objectName matches a prefix. */

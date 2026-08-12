@@ -1488,3 +1488,78 @@ export function partitionBoxes(boxes: Map<string, ExportBox>): {
   }
   return { groups, services };
 }
+
+/**
+ * Where the far-placed nodes go on a drawing whose fit had to trim them.
+ *
+ * Returns the boxes with the strays parked and the bounds that now contain
+ * them. Clamping is a layout decision, made once here: when each slice clamped
+ * independently, in inches and against its own window's transform, a stray
+ * landed somewhere different on every slide, the hop touching it was planned
+ * for none of them, and — because that clamp targets the printable frame,
+ * which is larger than the drawing sitting centred inside it — the stray's
+ * coordinates stayed outside the drawing, so no window ever claimed the arrow.
+ *
+ * The strays move as ONE cloud, by a single translation, and are parked in the
+ * margin ALONGSIDE the drawing rather than inside it. Clamping them
+ * individually stacked everything that was off the same corner onto the same
+ * spot — two strays became one tile with a hop drawn straight through it — and
+ * a zone parked away from the services it contains stops being their
+ * container. Parking them inside the content bounds is worse still: on a full
+ * grid every corner is occupied, so the stray is simply drawn on top of a
+ * service. The drawing therefore grows by the width of the strip, which is all
+ * the page margin was ever being used for.
+ */
+export function clampedBoxes(
+  boxes: Map<string, ExportBox>,
+  bounds: Bounds,
+): { boxes: Map<string, ExportBox>; bounds: Bounds } {
+  const strays: [string, ExportBox][] = [];
+  for (const [id, box] of boxes) {
+    const outside = box.x < bounds.minX || box.y < bounds.minY
+      || box.x + box.w > bounds.maxX || box.y + box.h > bounds.maxY;
+    if (outside) strays.push([id, box]);
+  }
+  if (strays.length === 0) return { boxes: new Map(boxes), bounds };
+
+  const cloud = {
+    minX: Math.min(...strays.map(([, b]) => b.x)),
+    minY: Math.min(...strays.map(([, b]) => b.y)),
+    maxX: Math.max(...strays.map(([, b]) => b.x + b.w)),
+    maxY: Math.max(...strays.map(([, b]) => b.y + b.h)),
+  };
+  const cloudW = cloud.maxX - cloud.minX;
+  const cloudH = cloud.maxY - cloud.minY;
+  const GAP = 60;
+  const pin = (v: number, lo: number, hi: number): number => Math.min(Math.max(v, lo), Math.max(lo, hi));
+  // Parked on the side it drifted off, so the hop to it still runs the way the
+  // author drew it and the reader's mental map survives the move.
+  const awayX = (cloud.minX + cloud.maxX) / 2 - (bounds.minX + bounds.maxX) / 2;
+  const awayY = (cloud.minY + cloud.maxY) / 2 - (bounds.minY + bounds.maxY) / 2;
+  let target: { x: number; y: number };
+  if (Math.abs(awayX) >= Math.abs(awayY)) {
+    target = {
+      x: awayX >= 0 ? bounds.maxX + GAP : bounds.minX - GAP - cloudW,
+      y: pin(cloud.minY, bounds.minY, bounds.maxY - cloudH),
+    };
+  } else {
+    target = {
+      x: pin(cloud.minX, bounds.minX, bounds.maxX - cloudW),
+      y: awayY >= 0 ? bounds.maxY + GAP : bounds.minY - GAP - cloudH,
+    };
+  }
+
+  const dx = target.x - cloud.minX;
+  const dy = target.y - cloud.minY;
+  const moved = new Map<string, ExportBox>(boxes);
+  for (const [id, box] of strays) moved.set(id, { ...box, x: box.x + dx, y: box.y + dy });
+  return {
+    boxes: moved,
+    bounds: {
+      minX: Math.min(bounds.minX, target.x),
+      minY: Math.min(bounds.minY, target.y),
+      maxX: Math.max(bounds.maxX, target.x + cloudW),
+      maxY: Math.max(bounds.maxY, target.y + cloudH),
+    },
+  };
+}

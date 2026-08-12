@@ -495,6 +495,85 @@ function tightGridScenario(): Scenario {
   return { id: 'tight-grid', nodes, edges };
 }
 
+/**
+ * The reviewer's two-stray case: a thirty-node banded estate plus a pair of
+ * far-placed services with an edge of their own. Clamping pulls the strays back
+ * onto the page but the router plans from where they used to be, so the hop
+ * between them lands outside every window at once — annotations and all.
+ */
+function bandedTwoStraysScenario(): Scenario {
+  const nodes: Node[] = [];
+  const edges: Edge[] = [];
+  for (let i = 0; i < 30; i += 1) {
+    nodes.push(svc(`b-${i}`, i % 2 ? 'Azure Functions' : 'Azure SQL Database', i * 300, (i % 3) * 200));
+    if (i > 0) {
+      edges.push({
+        id: `y-${i}`,
+        source: `b-${i - 1}`,
+        target: `b-${i}`,
+        label: 'HTTPS token check',
+        ...(i <= 8 ? { data: { stepNumber: i, stepDescription: `step ${i}` } } : {}),
+      } as Edge);
+    }
+  }
+  nodes.push(svc('b-stray', 'Copilot Studio', -14000, -6000));
+  nodes.push(svc('b-stray2', 'Microsoft Fabric', -14000, -5600));
+  edges.push({
+    id: 'ss',
+    source: 'b-stray',
+    target: 'b-stray2',
+    label: 'mirrors the analytics estate',
+    data: { stepNumber: 9, stepDescription: 'mirrors the analytics estate into Fabric' },
+  } as Edge);
+  return { id: 'banded-two-strays', nodes, edges };
+}
+
+/**
+ * Forty-eight services in two rows of twenty-four. The hop that turns the row
+ * is the longest in the drawing and the only thing that explains how row one
+ * reaches row two, and a seam filter expressed purely as a fraction of the
+ * whole hop drops it from every window.
+ */
+function wideChainScenario(): Scenario {
+  const nodes: Node[] = [];
+  const edges: Edge[] = [];
+  for (let i = 0; i < 48; i += 1) {
+    nodes.push(svc(`w${i}`, `Service ${i}`, (i % 24) * 300, Math.floor(i / 24) * 220));
+    if (i > 0) {
+      edges.push({
+        id: `w${i - 1}-${i}`,
+        source: `w${i - 1}`,
+        target: `w${i}`,
+        label: `step ${i}`,
+        data: { stepNumber: i },
+      } as Edge);
+    }
+  }
+  return { id: 'wide-chain', nodes, edges };
+}
+
+/**
+ * A grid one node wider than `tight-grid`, at the pitch where the callouts sat
+ * 87% inside a tile and the old 0.9 burial bar let them through.
+ */
+function grid5x5TightScenario(): Scenario {
+  const nodes: Node[] = [];
+  const edges: Edge[] = [];
+  for (let i = 0; i < 25; i += 1) {
+    nodes.push(svc(`a${i}`, `Service ${i}`, (i % 5) * 168, Math.floor(i / 5) * 108));
+    if (i > 0) {
+      edges.push({
+        id: `a${i - 1}-${i}`,
+        source: `a${i - 1}`,
+        target: `a${i}`,
+        label: `step ${i}`,
+        data: { stepNumber: i },
+      } as Edge);
+    }
+  }
+  return { id: 'grid5x5-tight', nodes, edges };
+}
+
 function barbellScenario(): Scenario {
   const nodes: Node[] = [];
   const edges: Edge[] = [];
@@ -1268,8 +1347,12 @@ function withSynthesizedIcons(slideXml: string): string {
  * The one that matters most is the last: a conversion that quietly eats a
  * service name would satisfy every structural rule perfectly.
  */
-function auditNativeConversion(rawSlides: readonly string[]): { issues: string[]; glued: number; ungluable: number; groups: number } {
+function auditNativeConversion(
+  rawSlides: readonly string[],
+  edges: readonly Edge[] = [],
+): { issues: string[]; glued: number; ungluable: number; groups: number } {
   const issues: string[] = [];
+  const edgeById = new Map(edges.map((edge) => [String(edge.id), edge]));
   let glued = 0;
   let ungluable = 0;
   let groups = 0;
@@ -1341,6 +1424,37 @@ function auditNativeConversion(rawSlides: readonly string[]): { issues: string[]
       const anchored = arrowsHere.filter((s) => onSite(s.path![0]) && onSite(s.path![s.path!.length - 1])).length;
       if (anchored < 0.6 * arrowsHere.length) {
         issues.push(`${where}: only ${anchored} of ${arrowsHere.length} arrows begin and end on a connection site, so most of the deck cannot be glued at all`);
+      }
+    }
+    // Both rules above judge an arrow against the SITES, and an arrow that
+    // reaches neither is exempt from the first and just a statistic in the
+    // second. That is the shape a mis-planned route takes: on a clamped
+    // drawing the router aimed a hop at a stray's declared position while the
+    // tile was drawn somewhere else entirely, and the arrow finished 7in away
+    // from the service it names, on a deck too small for the 60% floor to
+    // apply. So measure the ends against the TILES they claim, whenever the
+    // slide draws them — orientation-agnostic, because the exporter is free to
+    // draw a hop from either end.
+    const tileByName = new Map(tilesHere.map((t) => [t.name.slice('service-'.length), t]));
+    for (const arrow of before.filter((s) => s.name.startsWith('connector-')
+      && !s.name.startsWith('connector-label-') && !s.name.startsWith('connector-step-'))) {
+      const path = arrow.path ?? [];
+      if (path.length < 2) continue;
+      const edge = edgeById.get(arrow.name.slice('connector-'.length));
+      if (!edge) continue;
+      const head = path[0];
+      const tail = path[path.length - 1];
+      for (const id of [String(edge.source), String(edge.target)]) {
+        const tile = tileByName.get(id);
+        if (!tile) continue;
+        const gap = (p: { x: number; y: number }): number => Math.hypot(
+          Math.max(tile.x - p.x, 0, p.x - (tile.x + tile.w)),
+          Math.max(tile.y - p.y, 0, p.y - (tile.y + tile.h)),
+        );
+        const near = Math.min(gap(head), gap(tail));
+        if (near > 0.2) {
+          issues.push(`${where}: arrow "${arrow.name}" ends ${near.toFixed(2)}in from "${id}", the service it connects`);
+        }
       }
     }
     groups += (after.match(/<p:grpSp>/g) ?? []).length;
@@ -1504,7 +1618,7 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
   if (synthesisedIcons(scenario).size > 0 && drawnPics === 0 && roomyTile) {
     issues.push(`deck embeds no icon pictures for ${scenario.nodes.length} nodes`);
   }
-  const native = auditNativeConversion(allSlides);
+  const native = auditNativeConversion(allSlides, scenario.edges);
   issues.push(...native.issues);
   // A chip or a numbered callout with no arrow anywhere in the deck is worse
   // than a missing label: the reader sees a sentence and a ① floating on blank
@@ -1522,6 +1636,15 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
   }
   for (const id of annotatedArrows) {
     if (!drawnArrows.has(id)) issues.push(`arrow "connector-${id}" is annotated but drawn on no slide`);
+  }
+  // Annotation is not enough on its own. A hop dropped before its chip is even
+  // placed loses the annotation too, so nothing is left to be orphaned and the
+  // rule above stays silent while the step list still describes the hop. The
+  // real contract is the scenario's own edge list: every edge the caller asked
+  // for has to appear somewhere in the deck.
+  for (const edge of scenario.edges) {
+    const id = String(edge.id);
+    if (!drawnArrows.has(id)) issues.push(`edge "${id}" is in the diagram but drawn on no slide`);
   }
   // A tile asked to show a SKU, a region and a price and showing none of them
   // is silent content loss: unlike a muted chip, whose wording is handed to the
@@ -1765,7 +1888,13 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
       // ten-deep ladder at ~50% over a tile edge, which no weight in the walk
       // moves and which is the accepted cost of routing its wrap-around hops
       // through the row gutter instead of straight through three services.
-      if (buried > 0.9 * badge.w * badge.h) {
+      //
+      // The bar was 0.9 and that was fixture-tuned: a grid one node wider
+      // buried five callouts at 87% and passed, although 0.87 and 0.93 are the
+      // same picture and a disc can be moved 3% of its diameter to satisfy the
+      // rule. Against the shipping corpus the worst single-tile burial is 0.50,
+      // so 0.7 leaves 0.20 of headroom and still catches those grids.
+      if (buried > 0.7 * badge.w * badge.h) {
         const worst = slideTiles.reduce((a, b) => (overlapArea(badge, b) > overlapArea(badge, a) ? b : a), slideTiles[0]);
         issues.push(`step badge "${badge.name}" is ${((buried / (badge.w * badge.h)) * 100).toFixed(0)}% buried inside "${worst?.name}"`);
       }
@@ -2711,7 +2840,7 @@ async function main(): Promise<void> {
   mkdirSync(OUT, { recursive: true });
   const base = [
     compactScenario(), wideScenario(), oversizeScenario(), outlierScenario(),
-    bandedScenario(), narrativeScenario(), barbellScenario(), hubFanScenario(), sharedServiceScenario(), tightGridScenario(), parallelScenario(),
+    bandedScenario(), narrativeScenario(), barbellScenario(), hubFanScenario(), sharedServiceScenario(), tightGridScenario(), bandedTwoStraysScenario(), wideChainScenario(), grid5x5TightScenario(), parallelScenario(),
     ladderInGridScenario(), twinLaddersScenario(), strayLadderScenario(), legendCornerScenario(), duplicateStepsScenario(), denseZoneScenario(),
     metaChipScenario(), gridFanScenario(), gridFan3Scenario(), fan8Tight5x5Scenario(), metaSublineScenario(), grid5x5CaptionScenario(), longNameGridScenario(), longLabelGridScenario(), metaTightScenario(),     longNameFanScenario(), estateChainScenario(), chain24Scenario(), tripleMutedScenario(), estate72Scenario(), workflowProseScenario(), workflowLongProseScenario(), allCategoriesScenario(),
     await generatedScenario(), await groupedGeneratedScenario(),
