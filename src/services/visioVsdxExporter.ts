@@ -558,6 +558,8 @@ function connectorShapeXml(
   /** Where the label sits relative to the line, and how big it is. */
   text?: { drop: number; along: number; w: number; h: number },
   fonts: VisioFonts = NATURAL_FONTS,
+  /** The edge this arrow draws, so the shape carries a name a reader knows. */
+  edgeId?: string,
 ): string {
   const begin = points[0];
   const end = points[points.length - 1];
@@ -600,7 +602,7 @@ function connectorShapeXml(
   // Faded (optional) connectors get line transparency so they read as secondary.
   const transCell = opacity < 1 ? `\n      <Cell N="LineColorTrans" V="${f(1 - opacity)}"/>` : '';
 
-  return `    <Shape ID="${id}" NameU="Connector.${id}" Type="Shape" LineStyle="0" FillStyle="0" TextStyle="0">
+  return `    <Shape ID="${id}" NameU="Connector.${id}"${edgeId ? ` Name="edge-${esc(edgeId)}"` : ''} Type="Shape" LineStyle="0" FillStyle="0" TextStyle="0">
       <Cell N="PinX" V="${f(begin.x + dx / 2)}"/>
       <Cell N="PinY" V="${f(begin.y + dy / 2)}"/>
       <Cell N="Width" V="${f(length)}"/>
@@ -647,17 +649,55 @@ ${rows}
 /** Badge diameter in inches, shared with the on-page clamp. */
 const STEP_BADGE_IN = 0.24;
 
+/**
+ * The 7pt floor, in the inches Visio's `Size` cell is written in. Both
+ * exporters promise it and the export audit enforces it, so a badge that
+ * shrinks to fit a gap may take its padding away but never its legibility.
+ * 0.0973 rather than 0.0972 because 0.0972in is 6.998pt — a hair under.
+ */
+const MIN_BADGE_FONT_IN = 0.0973;
+
+/**
+ * The smallest disc that still holds its own number at the legibility floor.
+ * A badge is mostly padding, so squeezing it into a gap between two tiles is
+ * mostly a matter of giving that padding up; what cannot be given up is the
+ * digits, and a three-digit step needs visibly more room than a one-digit one.
+ */
+function badgeMinDiameterIn(stepNumber: number, fonts: VisioFonts): number {
+  const pt = Math.max(MIN_BADGE_FONT_IN, Math.min(fonts.badge, MIN_BADGE_FONT_IN));
+  const digits = String(Math.max(1, Math.abs(Math.trunc(stepNumber)))).length;
+  return Math.max(pt * 1.15, digits * pt * 0.55 + 0.02);
+}
+
 function stepBadgeXml(
   id: number,
   centre: Point,
   stepNumber: number,
   fonts: VisioFonts = NATURAL_FONTS,
+  /** The edge this callout numbers, so the shape carries a name a reader knows. */
+  edgeId?: string,
+  /**
+   * Diameter, when the natural one will not fit. On a dense sheet the only gap
+   * between two tiles can be narrower than a badge, and the placement search
+   * then has nowhere to put it but out on the next hop's arrow — where the
+   * reader reads the number as that hop's. A smaller disc that sits on its own
+   * arrow says the right thing; a full-size one parked on a stranger does not.
+   */
+  diameterIn?: number,
 ): string {
   // A badge is drawn on the arrows, between the tiles, so it scales with them.
   // Held at its natural size it was 109% of a whole service tile once the
   // sheet was down to a seventh: a callout larger than the thing it calls out.
-  const d = STEP_BADGE_IN * fonts.scale;
-  return `    <Shape ID="${id}" NameU="StepBadge.${id}" Type="Shape" LineStyle="0" FillStyle="0" TextStyle="0">
+  const natural = STEP_BADGE_IN * fonts.scale;
+  const floor = badgeMinDiameterIn(stepNumber, fonts);
+  const d = diameterIn !== undefined && diameterIn > 0
+    ? Math.min(natural, Math.max(floor, diameterIn))
+    : natural;
+  // The digits come down with the disc so they do not spill out of it, but
+  // never below the floor both exporters promise: an illegible number in the
+  // right place is no better than a legible one in the wrong place.
+  const size = Math.max(MIN_BADGE_FONT_IN, fonts.badge * Math.min(1, d / natural));
+  return `    <Shape ID="${id}" NameU="StepBadge.${id}"${edgeId ? ` Name="step-${esc(edgeId)}"` : ''} Type="Shape" LineStyle="0" FillStyle="0" TextStyle="0">
       <Cell N="PinX" V="${f(centre.x)}"/>
       <Cell N="PinY" V="${f(centre.y)}"/>
       <Cell N="Width" V="${f(d)}"/>
@@ -672,7 +712,7 @@ function stepBadgeXml(
       <Cell N="LineWeight" V="0.0125"/>
       <Cell N="LinePattern" V="1"/>
       <Section N="Character">
-        <Row IX="0"><Cell N="Font" V="1"/><Cell N="Color" V="#FFFFFF"/><Cell N="Size" V="${ff(fonts.badge)}"/><Cell N="Style" V="1"/></Row>
+        <Row IX="0"><Cell N="Font" V="1"/><Cell N="Color" V="#FFFFFF"/><Cell N="Size" V="${ff(size)}"/><Cell N="Style" V="1"/></Row>
       </Section>
       <Section N="Paragraph">
         <Row IX="0"><Cell N="HorzAlign" V="1"/></Row>
@@ -1450,6 +1490,63 @@ export async function buildVsdxPackage(
   // Visio quietly draws nothing at all.
   const placedLabels: Array<{ x: number; y: number; w: number; h: number }> = [];
   const settleOrder = [...byBundle.entries()].sort((l, r) => r[1].length - l[1].length);
+  // Every arrow on the sheet as the polyline it is actually drawn as, so a
+  // placement can be scored against the hops it is NOT the label of. The
+  // begin→end chord is the wrong line to measure against even though Visio pins
+  // text to it: on an elbowed hop the chord runs through paper the arrow never
+  // touches, so a seat 0.1in from the chord could be 0.7in from anything the
+  // reader can see — and the export audit, which reads the drawn geometry, says
+  // so. Measuring what is drawn is the only way the exporter and the rule that
+  // judges it can agree.
+  const polyOf = (route: ExportRoute): Point[] => route.points.map(toPoint);
+  const polyCache = new Map<string, Point[]>();
+  const polyFor = (route: ExportRoute): Point[] => {
+    const seen = polyCache.get(route.id);
+    if (seen) return seen;
+    const pts = polyOf(route);
+    polyCache.set(route.id, pts);
+    return pts;
+  };
+  const gapToSegment = (a: Point, b: Point, at: Point): number => {
+    const vx = b.x - a.x;
+    const vy = b.y - a.y;
+    const len2 = vx * vx + vy * vy;
+    const t = len2 > 0
+      ? Math.min(1, Math.max(0, ((at.x - a.x) * vx + (at.y - a.y) * vy) / len2))
+      : 0;
+    return Math.hypot(at.x - (a.x + vx * t), at.y - (a.y + vy * t));
+  };
+  const gapToPoly = (pts: Point[], at: Point): number => {
+    if (pts.length === 0) return Infinity;
+    if (pts.length === 1) return Math.hypot(at.x - pts[0].x, at.y - pts[0].y);
+    let best = Infinity;
+    for (let i = 1; i < pts.length; i += 1) {
+      best = Math.min(best, gapToSegment(pts[i - 1], pts[i], at));
+      if (best === 0) break;
+    }
+    return best;
+  };
+  const arrows = (routes as ExportRoute[]).map((route) => ({
+    bundle: bundleOf(route),
+    pts: polyFor(route),
+  }));
+  // Where a step badge sits on its rung: on the far side of its own label, so
+  // the number and the words read as one object and the badge never covers the
+  // text it belongs to.
+  // Shared by the placement search and the emit — the two computing this
+  // differently is how a badge ends up nowhere near the seat that was scored.
+  // Leading the label instead (number first, then words) was tried and is
+  // worse: it moves the badge *along* the hop rather than away from it, and on
+  // a grid that carries it past its own arrow's end and onto the perpendicular
+  // neighbour, turning 10 stray callouts into 26.
+  const badgeSeatIn = (
+    drop: number,
+    along: number,
+    textH: number,
+  ): { away: number; along: number } => ({
+    away: drop + (textH > 0 ? textH / 2 + badgeIn / 2 + 0.03 : 0),
+    along,
+  });
   /**
    * Move one fan as a body and report where it came to rest. `blocked` is the
    * collision area alone: the drift terms only break ties, so mixing them into
@@ -1461,7 +1558,44 @@ export async function buildVsdxPackage(
       0.14,
       ...members.map((member) => (labelOf(member) ? labelSize(labelOf(member)).h : badgeIn) + 0.05),
     );
+    // The arrows this fan's text could be mistaken for. Fan siblings are not
+    // among them: a bundle of parallel edges between one pair of services is a
+    // single object to the reader, so a rung nearer sibling 5 than sibling 6
+    // misleads nobody. Gathered once per fan and filtered to the arrows that
+    // pass anywhere near it, because the alternative is every candidate seat
+    // measured against every arrow on a five-hundred hop sheet.
+    const ownBundle = bundleOf(members[0]);
+    const near = chordOf(members[0]);
+    const strangers = arrows.filter((arrow) => arrow.bundle !== ownBundle
+      && gapToPoly(arrow.pts, near) < 6);
     const badgeRoom = members.some((member) => member.stepNumber !== undefined) ? badgeIn + 0.06 : 0;
+    // How far this ladder's text can drift before it stops belonging to its own
+    // arrow. Sliding along a hop keeps the words reading as that hop's;
+    // stepping away from it does not, and past a point the label is simply
+    // nearer a different arrow — the reader then matches it to the wrong hop
+    // and never knows they did. The walk was bounded only by blockage, so on a
+    // tight grid a sentence crossed six inches of paper to find clear air and
+    // arrived beside somebody else's arrow: 92 labels and 241 callouts across
+    // the corpus, one of them 6.84in from its own hop and 0.59in from a
+    // stranger's. The deck bounds the same walk with `chipReach`.
+    //
+    // Priced rather than forbidden. A hard cap on the search radius stopped the
+    // wandering but also walled labels in: on a dense sheet the only clear seat
+    // is often further than a comfortable reach, and capping the walk left
+    // seven labels buried under icons on `estate72` and one on `tight-seam` —
+    // trading a label the reader misattributes for one they cannot read at all.
+    // Free inside the reach, then growing with the square of the excess, so a
+    // ladder escaping a tile pays a little and one escaping an opaque panel can
+    // still pay its way across the page.
+    const stackIn = members.reduce(
+      (sum, member) => sum + (labelOf(member) ? labelSize(labelOf(member)).h : badgeIn) + 0.05,
+      0,
+    );
+    const reachIn = Math.max(
+      1.2 * stackIn,
+      0.6 * Math.max(...members.map((member) => labelSize(labelOf(member)).w)),
+      0.5,
+    );
     const blockage = (shift: number, slide: number): number => {
       let cost = 0;
       for (const member of members) {
@@ -1470,17 +1604,20 @@ export async function buildVsdxPackage(
         const along = seat.along + slide;
         const text = labelOf(member);
         const box = rectAt(member, drop, along);
-        const parts = text ? [box] : [];
+        const parts: Array<{ x: number; y: number; w: number; h: number; disc: boolean }> = text
+          ? [{ ...box, disc: false }]
+          : [];
         if (member.stepNumber !== undefined && badgeRoom > 0) {
           const n = normalOf(member);
           const u = directionOf(member);
           const centre = chordOf(member);
-          const away = drop + (text ? box.h / 2 + badgeIn / 2 + 0.03 : 0);
+          const away = badgeSeatIn(drop, along, text ? box.h : 0);
           parts.push({
-            x: centre.x + n.x * away + u.x * along - badgeIn / 2,
-            y: centre.y + n.y * away + u.y * along - badgeIn / 2,
+            x: centre.x + n.x * away.away + u.x * away.along - badgeIn / 2,
+            y: centre.y + n.y * away.away + u.y * away.along - badgeIn / 2,
             w: badgeIn,
             h: badgeIn,
+            disc: true,
           });
         }
         for (const part of parts) {
@@ -1489,11 +1626,47 @@ export async function buildVsdxPackage(
             // Off the sheet is not a cost to be traded against, it is a deletion.
             cost += 100;
           }
-          for (const rect of serviceRects) cost += hit(part, rect) * 4;
+          // A step badge is a filled disc, not text: where a sentence written
+          // across a tile is untidy but still legible over mostly-empty fill, a
+          // badge paints the icon out entirely. Priced as a fixed penalty
+          // rather than by area — a half-inch disc has so little of it that
+          // `area * 4` was small change beside the terms below, and the search
+          // happily parked badges on icons to buy a tenth of an inch elsewhere.
+          if (part.disc) {
+            for (const rect of serviceRects) if (hit(part, rect) > 0) cost += 30;
+          } else {
+            for (const rect of serviceRects) cost += hit(part, rect) * 4;
+          }
           // Under the panel is not a position to be traded against either — the
           // panel is drawn over it and the reader never sees the text at all.
           for (const rect of furnitureRects) if (hit(part, rect) > 0) cost += 100;
           for (const other of placedLabels) cost += hit(part, other) * 12;
+          // Nearer somebody else's hop than its own is the one failure a reader
+          // cannot detect: the words look like a perfectly ordinary label, just
+          // of the wrong arrow. Scored as the distance the seat is on the wrong
+          // side of that comparison, so a seat that is merely close to a
+          // neighbour costs nothing and one that has crossed over costs in
+          // proportion to how far.
+          //
+          // Deleting this term leaves the export audit at zero, because a
+          // sentence that lands beside a stranger is judged lost and the muting
+          // pass moves it into the workflow band — correct, but no longer on
+          // the drawing. What it actually buys is text: `estate-chain` draws 35
+          // labels with this term and 10 without. It is doing the work the
+          // audit cannot see, and it is not dead code.
+          const at = { x: part.x + part.w / 2, y: part.y + part.h / 2 };
+          const mine = gapToPoly(polyFor(member), at);
+          if (strangers.length > 0) {
+            let closest = Infinity;
+            for (const arrow of strangers) closest = Math.min(closest, gapToPoly(arrow.pts, at));
+            if (closest < mine) cost += (mine - closest) * 6;
+          }
+          // And even with nobody to be confused with, text an arm's length from
+          // its arrow belongs to nothing the reader can see. Free within reach,
+          // then squared, so escaping a tile is affordable and drifting across
+          // the page is not.
+          const over = mine - reachIn;
+          if (over > 0) cost += over * over * 3;
         }
       }
       return cost;
@@ -1519,6 +1692,18 @@ export async function buildVsdxPackage(
         }
         let covered = 0;
         for (const rect of serviceRects) covered += hit(box, rect);
+        // Words that sit nearer another hop than the one they describe are not
+        // degraded, they are wrong: the reader attaches them to that hop with
+        // complete confidence and never finds out. Counted as lost so the
+        // muting pass moves the sentence into the workflow band, where it is
+        // printed against its own step number and cannot be misread.
+        if (strangers.length > 0) {
+          const at = { x: box.x + box.w / 2, y: box.y + box.h / 2 };
+          const mine = gapToPoly(polyFor(member), at);
+          let closest = Infinity;
+          for (const arrow of strangers) closest = Math.min(closest, gapToPoly(arrow.pts, at));
+          if (closest < mine) return 1;
+        }
         // An opaque panel over the words is a deletion, not a degradation: the
         // muting pass has to be told the trade failed so it puts the wording
         // back into the workflow row, where it can actually be read.
@@ -1546,10 +1731,17 @@ export async function buildVsdxPackage(
     let best = { shift: 0, slide: 0 };
     let bestCost = score(0, 0);
     let bestBlocked = blockage(0, 0);
-    // Far enough to cross the drawing. A fixed budget is a budget in units of
-    // the label's own height, so on a big sheet a ladder could only ever travel
-    // an inch and never reached the clear band one row away.
-    const rings = Math.max(8, Math.min(60, Math.ceil(Math.max(pageWidthIn, pageHeightIn) / Math.max(step, 0.05))));
+    // Far enough that a ladder can cross a row of tiles to find clear air, and
+    // no further. The bound used to be `reachIn` itself, which walled labels in
+    // and left seven buried under icons on `estate72`; lifting it entirely
+    // fixed that but made the walk scan every ring on a 200in page — over a
+    // thousand of them per fan, and the export test file went from seconds to
+    // beyond twenty minutes. Four times the reach is room enough to escape and
+    // still a bounded search.
+    const rings = Math.max(2, Math.min(
+      Math.ceil(Math.max(pageWidthIn, pageHeightIn) / Math.max(step, 0.05)),
+      Math.ceil(4 * reachIn / Math.max(step, 0.05)),
+    ));
     // Sliding a label past its own endpoints parks it beside a service instead
     // of on the hop it belongs to, so the run is the limit.
     const slideStep = Math.max(0.12, Math.max(...members.map((member) => labelSize(labelOf(member)).w)) / 2);
@@ -1563,6 +1755,11 @@ export async function buildVsdxPackage(
       }
     };
     for (let ring = 1; bestBlocked > 0 && ring <= rings; ring += 1) {
+      // Travel is priced superlinearly and every other term is non-negative, so
+      // once a ring's own travel already costs more than the best seat found,
+      // nothing further out can beat it and the rest of the walk is waste.
+      const excess = ring * step - reachIn;
+      if (excess > 0 && excess * excess * 3 >= bestCost) break;
       for (let s = -Math.min(slides, ring); s <= Math.min(slides, ring); s += 1) {
         consider(ring * step, s * slideStep);
         consider(-ring * step, s * slideStep);
@@ -1581,6 +1778,157 @@ export async function buildVsdxPackage(
   // Visio sheet has nowhere else for the sentence to go.
   const mutedWording = new Map<number, string>();
   const narratedRows = new Map(workflowEntries.map((entry) => [entry.step, entry.description]));
+  // Where a step badge sits, resolved once. Three copies of this arithmetic
+  // used to exist — the placement search's model, the reservation that keeps
+  // later fans off it, and the emit — and a badge is only ever as good as the
+  // worst of them agreeing.
+  //
+  // The natural seat is the far side of its own label, so number and words read
+  // as one object. That seat is a whole text-height further from the arrow than
+  // the text is, though, and on a tight grid that extra 0.58in is the *next*
+  // row's arrow: a numbered callout the reader confidently attaches to the
+  // wrong hop. The fan-wide search cannot help — moving the ladder moves the
+  // label too — so the badge is allowed to look for its own seat: the other
+  // side of its arrow, closer in, or slid along it. Judged by the same tests
+  // the export audit applies, and by whether it is nearer a stranger's arrow
+  // than its own.
+  //
+  // Leading the label instead (number first, then words) was tried and is
+  // worse: it moves the badge *along* the hop rather than away from it, and on
+  // a grid that carries it past its own arrow's end onto the perpendicular
+  // neighbour — 10 stray callouts became 26.
+  const badgeAt = new Map<string, { x: number; y: number; d: number }>();
+  // A chord pinned at the page edge, or under the band, has no seat within
+  // reach and the search settles for the least bad one — still a callout the
+  // reader cannot see. A badge is a small disc: stepping it clear of an opaque
+  // panel is always possible and always better than leaving it invisible, even
+  // when the only room left is over a tile.
+  const clampBadge = (seat: { x: number; y: number; d: number }): {
+    x: number; y: number; d: number;
+  } => {
+    const half = seat.d / 2;
+    const ceiling = furnitureRects.reduce(
+      (top, rect) => (rect.y + rect.h >= pageHeightIn - 0.5 ? Math.min(top, rect.y) : top),
+      pageHeightIn,
+    );
+    const at = {
+      x: clampIn(seat.x, half, pageWidthIn - half),
+      y: clampIn(seat.y, half, ceiling - half),
+      d: seat.d,
+    };
+    for (const rect of furnitureRects) {
+      if (at.x + half <= rect.x || at.x - half >= rect.x + rect.w
+        || at.y + half <= rect.y || at.y - half >= rect.y + rect.h) continue;
+      const below = rect.y - half - 0.02;
+      const above = rect.y + rect.h + half + 0.02;
+      at.y = below >= half && (at.y <= rect.y + rect.h / 2 || above > pageHeightIn - half)
+        ? below
+        : above;
+    }
+    return at;
+  };
+  const badgeSeatFor = (
+    member: ExportRoute,
+    placed: { drop: number; along: number },
+  ): { x: number; y: number; d: number } => {
+    const n = normalOf(member);
+    const u = directionOf(member);
+    const centre = chordOf(member);
+    const box = rectAt(member, placed.drop, placed.along);
+    const textH = labelOf(member) ? box.h : 0;
+    const ownPts = polyFor(member);
+    const ownBundle = bundleOf(member);
+    const strangers = arrows.filter((arrow) => arrow.bundle !== ownBundle
+      && gapToPoly(arrow.pts, centre) < 3);
+    const run = Math.max(runOf(member), 0);
+    const seatAt = (side: number, away: number, slide: number): Point => ({
+      x: centre.x + n.x * side * away + u.x * slide,
+      y: centre.y + n.y * side * away + u.y * slide,
+    });
+    // Full size first, then progressively smaller, stopping at the first
+    // diameter that finds a seat with nothing wrong with it. Shrinking is a
+    // real cost — a tighter badge has less air around its number — so it is
+    // only ever paid to buy a clean seat, never a marginally cheaper one. The
+    // last step is the smallest disc that still holds the number at the 7pt
+    // floor: below that the badge is no longer readable and there is nothing
+    // left to trade.
+    const natural = badgeIn;
+    const floorD = badgeMinDiameterIn(member.stepNumber ?? 1, fonts);
+    const diameters = [...new Set([natural, natural * 0.82, natural * 0.68, floorD])]
+      .filter((d) => d >= floorD - 1e-9 && d <= natural + 1e-9)
+      .sort((l, r) => r - l);
+    // On a sheet scaled so far down that even a full-size badge is under the
+    // floor, there is nothing to choose between: the drawing has already made
+    // that trade everywhere else, and an empty candidate list would leave the
+    // badge sitting on the raw chord — which is a tile.
+    if (diameters.length === 0) diameters.push(natural);
+    let fallback: { x: number; y: number; d: number } | undefined;
+    for (const d of diameters) {
+      const half = d / 2;
+      const naturalAway = placed.drop + (textH > 0 ? textH / 2 + half + 0.03 : 0);
+      const cost = (at: Point, side: number, away: number, slide: number): {
+        total: number;
+        clean: boolean;
+      } => {
+        const rect = { x: at.x - half, y: at.y - half, w: d, h: d };
+        let total = 0;
+        let clean = true;
+        if (rect.x < 0.05 || rect.y < 0.05
+          || rect.x + rect.w > pageWidthIn - 0.05 || rect.y + rect.h > pageHeightIn - 0.05) {
+          total += 100;
+          clean = false;
+        }
+        for (const furniture of furnitureRects) {
+          if (hit(rect, furniture) > 0) { total += 100; clean = false; }
+        }
+        for (const service of serviceRects) {
+          if (hit(rect, service) > 0) { total += 30; clean = false; }
+        }
+        for (const other of placedLabels) {
+          const over = hit(rect, other);
+          if (over > 0.01) clean = false;
+          total += over * 12;
+        }
+        const mine = gapToPoly(ownPts, at);
+        let closest = Infinity;
+        for (const arrow of strangers) closest = Math.min(closest, gapToPoly(arrow.pts, at));
+        if (closest < mine) { total += (mine - closest) * 6; clean = false; }
+        // Near its own arrow, on the side its label chose, at the seat that
+        // reads as part of the sentence: all three are preferences, not
+        // requirements, and each is worth less than being read as another
+        // hop's step.
+        total += mine * 0.4;
+        total += side < 0 ? 0.12 : 0;
+        total += Math.abs(away - naturalAway) * 0.3;
+        total += Math.abs(slide - placed.along) * 0.25;
+        return { total, clean };
+      };
+      const aways = [naturalAway, placed.drop, half + 0.04];
+      const slides = run > 0
+        ? [placed.along, placed.along - run * 0.2, placed.along + run * 0.2,
+          placed.along - run * 0.35, placed.along + run * 0.35]
+        : [placed.along];
+      let best = seatAt(1, naturalAway, placed.along);
+      let bestScore = cost(best, 1, naturalAway, placed.along);
+      for (const side of [1, -1]) {
+        for (const away of aways) {
+          for (const slide of slides) {
+            const at = seatAt(side, away, slide);
+            const score = cost(at, side, away, slide);
+            if (score.total < bestScore.total) {
+              bestScore = score;
+              best = at;
+            }
+          }
+        }
+      }
+      const seat = { x: best.x, y: best.y, d };
+      if (bestScore.clean) return clampBadge(seat);
+      if (!fallback) fallback = seat;
+    }
+    return clampBadge(fallback ?? { x: centre.x, y: centre.y, d: natural });
+  };
+
   for (const [, members] of settleOrder) {
     let placement = settle(members);
     // A fan whose sentences cannot be written anywhere clear keeps its numbers
@@ -1619,23 +1967,21 @@ export async function buildVsdxPackage(
         rungify(members);
       }
     }
-    const best = { shift: placement.shift, slide: placement.slide };
+  // Where a step badge sits, resolved once. Three copies of this arithmetic
+  const best = { shift: placement.shift, slide: placement.slide };
     for (const member of members) {
       const seat = ladder.get(member.id) ?? { drop: 0, along: 0 };
       const placed = { drop: seat.drop + best.shift, along: seat.along + best.slide };
       ladder.set(member.id, placed);
       if (labelOf(member)) placedLabels.push(rectAt(member, placed.drop, placed.along));
       if (member.stepNumber !== undefined) {
-        const n = normalOf(member);
-        const u = directionOf(member);
-        const centre = chordOf(member);
-        const box = rectAt(member, placed.drop, placed.along);
-        const away = placed.drop + (labelOf(member) ? box.h / 2 + badgeIn / 2 + 0.03 : 0);
+        const at = badgeSeatFor(member, placed);
+        badgeAt.set(member.id, at);
         placedLabels.push({
-          x: centre.x + n.x * away + u.x * placed.along - badgeIn / 2,
-          y: centre.y + n.y * away + u.y * placed.along - badgeIn / 2,
-          w: badgeIn,
-          h: badgeIn,
+          x: at.x - at.d / 2,
+          y: at.y - at.d / 2,
+          w: at.d,
+          h: at.d,
         });
       }
     }
@@ -1649,10 +1995,10 @@ export async function buildVsdxPackage(
     const text = labelOf(route);
     const size = text ? labelSize(text) : { w: 0, h: 0 };
     const seat = ladder.get(route.id) ?? { drop: 0, along: 0 };
-    // Local +Y is the line's left normal; the page-space normal used for the
-    // badge is its opposite whenever the line runs left to right, so the sign
-    // has to be carried across or the ladder and the badges fan apart.
-    const pageNormal = normalOf(route);
+    // Local +Y is the line's left normal, and the page-space normal the badge
+    // seat is resolved in is its opposite whenever the line runs left to right,
+    // so the sign has to be carried across or the ladder and the badges fan
+    // apart.
     const localSign = localSignOf(route);
     shapes.push(
       connectorShapeXml(
@@ -1665,50 +2011,15 @@ export async function buildVsdxPackage(
         route.bidirectional,
         text ? { drop: localSign * seat.drop, along: seat.along, w: size.w, h: size.h } : undefined,
         fonts,
+        route.id,
       ),
     );
     connects.push(connectXml(id, sourceId, targetId));
     if (route.stepNumber !== undefined) {
-      // The badge hangs off the label's own rung, in the same frame the label
-      // is drawn in. Measuring it from the route's anchor instead put it inches
-      // from its own sentence on any elbowed hop, because Visio pins connector
-      // text to the begin→end chord and the anchor sits on the polyline.
-      const anchor = chordOf(route);
-      const { x: nx, y: ny } = pageNormal;
-      const along = directionOf(route);
-      // Each rung carries its own badge, so the badge steps off that rung and
-      // not off the line: with a fan, one shared drop stacked every badge in
-      // the bundle on the same spot.
-      const drop = (text ? size.h / 2 + badgeIn / 2 + 0.03 : 0) + seat.drop;
-      // A clamped connector can put its anchor at the very page edge, and the
-      // normal offset then pushes the badge off the sheet, where Visio simply
-      // does not draw it. The workflow band is the same kind of edge: it is
-      // opaque and drawn afterwards, so a badge clamped to the top of the page
-      // is a badge clamped underneath the band.
-      const half = badgeIn / 2;
-      const ceiling = furnitureRects.reduce(
-        (top, rect) => (rect.y + rect.h >= pageHeightIn - 0.5 ? Math.min(top, rect.y) : top),
-        pageHeightIn,
-      );
-      const at = {
-        x: clampIn(anchor.x + nx * drop + along.x * seat.along, half, pageWidthIn - half),
-        y: clampIn(anchor.y + ny * drop + along.y * seat.along, half, ceiling - half),
-      };
-      // The search does its best, but a chord pinned under the band has no
-      // clear seat within reach and settles for the least bad one — which is
-      // still a callout the reader cannot see. A badge is a half-inch disc:
-      // stepping it out of the panel is always possible and always better than
-      // leaving it invisible, even when the only room left is over a tile.
-      for (const rect of furnitureRects) {
-        if (at.x + half <= rect.x || at.x - half >= rect.x + rect.w
-          || at.y + half <= rect.y || at.y - half >= rect.y + rect.h) continue;
-        const below = rect.y - half - 0.02;
-        const above = rect.y + rect.h + half + 0.02;
-        at.y = below >= half && (at.y <= rect.y + rect.h / 2 || above > pageHeightIn - half)
-          ? below
-          : above;
-      }
-      shapes.push(stepBadgeXml(nextId++, at, route.stepNumber, fonts));
+      // Resolved with the reservation, so the seat that was scored against the
+      // panels, the tiles and every other arrow is the seat that gets drawn.
+      const at = badgeAt.get(route.id) ?? badgeSeatFor(route, seat);
+      shapes.push(stepBadgeXml(nextId++, at, route.stepNumber, fonts, route.id, at.d));
     }
   }
 

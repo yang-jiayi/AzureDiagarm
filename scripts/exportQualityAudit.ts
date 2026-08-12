@@ -3947,7 +3947,7 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
   // same defect as two chips on the same spot in PowerPoint — and until the
   // exporter emitted an explicit text position, a fan of parallel hops wrote
   // every one of its sentences at the identical midpoint.
-  const labelBoxes: Array<{ text: string; x: number; y: number; w: number; h: number }> = [];
+  const labelBoxes: Array<{ text: string; edge: string; x: number; y: number; w: number; h: number }> = [];
   for (const block of xml.matchAll(/<Shape [^>]*NameU="Connector\.\d+"[\s\S]*?<\/Shape>/g)) {
     const shape = block[0];
     const shown = /<Text>([^<]*)<\/Text>/.exec(shape)?.[1] ?? '';
@@ -3968,7 +3968,14 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
     const ly = +txt[2];
     const cx = +pin[1] + lx * Math.cos(theta) - ly * Math.sin(theta);
     const cy = +pin[2] + lx * Math.sin(theta) + ly * Math.cos(theta);
-    labelBoxes.push({ text: shown, x: cx - +txt[3] / 2, y: cy - +txt[4] / 2, w: +txt[3], h: +txt[4] });
+    labelBoxes.push({
+      text: shown,
+      edge: /Name="edge-([^"]*)"/.exec(shape)?.[1] ?? '',
+      x: cx - +txt[3] / 2,
+      y: cy - +txt[4] / 2,
+      w: +txt[3],
+      h: +txt[4],
+    });
   }
   const overlap = (a: { x: number; y: number; w: number; h: number }, b: { x: number; y: number; w: number; h: number }): number => {
     const ow = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x);
@@ -3988,6 +3995,92 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
   }
   if (stacked > 0) {
     issues.push(`${stacked} pair(s) of Visio connector labels are written on top of each other: ${piles.slice(0, 3).join('; ')}`);
+  }
+
+  // A callout has to be readable AS the label of the arrow it belongs to. One
+  // parked beside a different hop is worse than one overlapping a tile: the
+  // reader matches it to the wrong arrow and never knows they did. The deck has
+  // said this since the parallel-edge work; the sheet never had, because every
+  // shape in the .vsdx was named `Connector.41` and nothing could tell which
+  // arrow a number belonged to. Both now carry the edge they draw as their
+  // shape name, which is also what Visio's Drawing Explorer lists.
+  const arrowPaths: Array<{ edge: string; bundle: string; pts: Array<{ x: number; y: number }> }> = [];
+  for (const block of xml.matchAll(/<Shape [^>]*NameU="Connector\.\d+"[\s\S]*?<\/Shape>/g)) {
+    const shape = block[0];
+    const edge = /Name="edge-([^"]*)"/.exec(shape)?.[1];
+    const pin = /<Cell N="PinX" V="([\d.-]+)"\/>\s*<Cell N="PinY" V="([\d.-]+)"\/>/.exec(shape);
+    if (!edge || !pin) continue;
+    const theta = +(/<Cell N="Angle" V="([\d.-]+)"\/>/.exec(shape)?.[1] ?? 0);
+    const length = +(/<Cell N="Width" V="([\d.-]+)"\/>/.exec(shape)?.[1] ?? 0);
+    // Geometry rows are in the arrow's own rotated frame, measured from its
+    // begin point, while the pin is the centre of the begin→end chord.
+    const pts = Array.from(shape.matchAll(/<Row T="(?:MoveTo|LineTo)" IX="\d+"><Cell N="X" V="([\d.-]+)"\/><Cell N="Y" V="([\d.-]+)"\/><\/Row>/g))
+      .map((row) => {
+        const lx = +row[1] - length / 2;
+        const ly = +row[2];
+        return {
+          x: +pin[1] + lx * Math.cos(theta) - ly * Math.sin(theta),
+          y: +pin[2] + lx * Math.sin(theta) + ly * Math.cos(theta),
+        };
+      });
+    if (pts.length < 2) continue;
+    const model = scenario.edges.find((e) => String(e.id) === edge);
+    arrowPaths.push({
+      edge,
+      bundle: model ? [String(model.source), String(model.target)].sort().join('|') : edge,
+      pts,
+    });
+  }
+  if (arrowPaths.length > 1) {
+    const gapTo = (arrow: { pts: Array<{ x: number; y: number }> }, at: { x: number; y: number }): number => {
+      let best = Infinity;
+      for (let i = 1; i < arrow.pts.length; i += 1) {
+        const a = arrow.pts[i - 1];
+        const b = arrow.pts[i];
+        const vx = b.x - a.x;
+        const vy = b.y - a.y;
+        const len2 = vx * vx + vy * vy;
+        const t = len2 > 0 ? Math.min(1, Math.max(0, ((at.x - a.x) * vx + (at.y - a.y) * vy) / len2)) : 0;
+        best = Math.min(best, Math.hypot(at.x - (a.x + vx * t), at.y - (a.y + vy * t)));
+      }
+      return best;
+    };
+    const stray = (
+      what: string,
+      items: Array<{ id: string; edge: string; at: { x: number; y: number } }>,
+      crossBundleOnly: boolean,
+    ): void => {
+      const reports: string[] = [];
+      for (const item of items) {
+        const own = arrowPaths.find((a) => a.edge === item.edge);
+        if (!own) continue;
+        // Fan siblings are exempt for the numbers: a bundle of parallel edges
+        // between one pair of services is a single object to the reader, so a
+        // rung nearer sibling 5 than sibling 6 misleads nobody.
+        const others = arrowPaths.filter((a) => (crossBundleOnly ? a.bundle !== own.bundle : a.edge !== own.edge));
+        if (others.length === 0) continue;
+        const mine = gapTo(own, item.at);
+        const nearest = others.reduce((best, a) => (gapTo(a, item.at) < gapTo(best, item.at) ? a : best), others[0]);
+        const theirs = gapTo(nearest, item.at);
+        if (theirs < mine - 0.25) {
+          reports.push(`"${item.id.slice(0, 20)}" is ${theirs.toFixed(2)}in from ${nearest.edge} but ${mine.toFixed(2)}in from its own arrow`);
+        }
+      }
+      if (reports.length > 0) {
+        issues.push(`${reports.length} Visio ${what} nearer another hop than their own: ${reports.slice(0, 3).join('; ')}`);
+      }
+    };
+    const labelItems = labelBoxes
+      .filter((box) => box.edge !== '')
+      .map((box) => ({ id: box.text, edge: box.edge, at: { x: box.x + box.w / 2, y: box.y + box.h / 2 } }));
+    stray('connector label(s)', labelItems, false);
+    const badgeItems: Array<{ id: string; edge: string; at: { x: number; y: number } }> = [];
+    for (const m of xml.matchAll(
+      /NameU="StepBadge\.\d+" Name="step-([^"]*)"[\s\S]*?<Cell N="PinX" V="([\d.-]+)"\/>\s*<Cell N="PinY" V="([\d.-]+)"\/>[\s\S]*?<Text>([\s\S]*?)<\/Text>/g,
+    )) {
+      badgeItems.push({ id: `callout ${m[4].trim()}`, edge: m[1], at: { x: +m[2], y: +m[3] } });
+    }
+    stray('numbered callout(s)', badgeItems, true);
   }
 
   // The workflow band and the connection legend are opaque white panels drawn

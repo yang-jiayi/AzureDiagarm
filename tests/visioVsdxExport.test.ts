@@ -332,6 +332,49 @@ function twinLadders(): { nodes: Node[]; edges: Edge[] } {
   return { nodes: gridNodes, edges: gridEdges };
 }
 
+/** A plain chain of 40 services, eight to a row, every hop carrying the same sentence. */
+function proseChain(): { nodes: Node[]; edges: Edge[] } {
+  const nodes: Node[] = [];
+  for (let index = 0; index < 40; index += 1) {
+    nodes.push(service(`n${index}`, `Azure Service ${index}`, (index % 8) * 240, Math.floor(index / 8) * 190));
+  }
+  const edges: Edge[] = [];
+  for (let index = 1; index < 40; index += 1) {
+    edges.push({
+      id: `c${index}`,
+      source: `n${index - 1}`,
+      target: `n${index}`,
+      label: 'マネージド ID で参照系を照会します',
+      data: { stepNumber: index, stepDescription: `手順 ${index}` },
+    } as Edge);
+  }
+  return { nodes, edges };
+}
+
+test('a sentence that could be written on the drawing is not exiled to the band', async () => {
+  // Muting is the safety net, not the plan. Every rule that judges this sheet
+  // is satisfied by hiding a label and printing it in the workflow band, so a
+  // placement search that gives up early scores perfectly while handing the
+  // reader a drawing with no words on it. This is the assertion that notices.
+  //
+  // The measured difference is the foreign-arrow term in `blockage`: on this
+  // shape the exporter draws 35 sentences with it and 10 without, because
+  // without it the search settles beside a stranger's arrow, that seat counts
+  // as lost, and the wording goes to the band instead. The floor sits between
+  // the two so it cannot be met by accident.
+  const chain = proseChain();
+  const pkg = await buildVsdxPackage(chain.nodes, chain.edges, 'Contoso');
+  const xml = pkg.parts.find((part) => part.path === 'visio/pages/page1.xml')!.data as string;
+  const panels = panelBoxes(xml);
+  const visible = connectorLabelBoxes(xml).filter(
+    (label) => !panels.some((panel) => overlapArea(label, panel) > 0.01 * label.w * label.h),
+  );
+  assert.ok(
+    visible.length >= 20,
+    `only ${visible.length} of ${chain.edges.length} sentences are drawn on the sheet; the rest were muted into the band`,
+  );
+});
+
 test('a connector label is never written off the edge of the sheet', async () => {
   // Visio does not grow a page to fit stray text: whatever falls outside the
   // sheet is simply not there when the file opens. Two fans on one page is the
