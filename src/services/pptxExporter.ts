@@ -507,7 +507,18 @@ function planDiagramWindows(
     // deck still has to be a deck, so cap it — this is the point at which a
     // drawing is genuinely too large for a fixed page and the honest answer is
     // the most readable deck of a finite length.
-    while (c * r > 1 && slidesFor(c, r) > MAX_FIXED_PAGE_SLIDES) ({ c, r } = drop(c, r));
+    //
+    // The cap is still a preference and legibility is still not. A cascade
+    // needs one window per service to read, so no grid satisfies the cap at
+    // all, and chasing it walked the grid down to nothing and fell through to a
+    // single untiled slide: at 120 services the deck was 121 slides at 7.03pt
+    // and at 121 it was one slide at 4pt. One service more turned a deck that
+    // reads into a slide that does not.
+    while (c * r > 1 && slidesFor(c, r) > MAX_FIXED_PAGE_SLIDES) {
+      const next = drop(c, r);
+      if (scaleOf(c, r) >= legibleScale && scaleOf(next.c, next.r) < legibleScale) break;
+      ({ c, r } = next);
+    }
     return { c, r };
   };
   const capped = (cols: number, rows: number): { windows: DiagramWindow[]; legible: boolean } | null => {

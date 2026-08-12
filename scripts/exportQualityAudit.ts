@@ -4098,6 +4098,50 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
   };
 }
 
+/**
+ * Adding a service must not make the deck shorter *and* its type smaller.
+ *
+ * Coarsening the window grid toward a square costs scale on whichever axis is
+ * coarsened, and the reader gets the smaller of the two axes' scales — so
+ * spending the cost on the axis that already binds shrinks the type and buys
+ * nothing. A diagonal cascade is long in one axis by construction, and it used
+ * to lose exactly that axis: fifty-two services came out at 6.0pt on *fewer*
+ * slides than fifty-one, which means adding a service to the diagram made the
+ * deck both shorter and less readable.
+ *
+ * Every rule in this file judges one export on its own, and no single export of
+ * that cascade looks wrong — 6.0pt on 30 slides is a perfectly ordinary deck.
+ * The defect is only visible as a discontinuity across the family, so this
+ * walks consecutive sizes and compares them.
+ */
+async function auditDeckGrowth(): Promise<Report> {
+  const issues: string[] = [];
+  const seen: Array<{ n: number; slides: number; font: number }> = [];
+  for (const n of [118, 119, 120, 121, 122]) {
+    const report = await auditPptx(diagonalCascadeScenario(n, `deck-growth-${n}`));
+    seen.push({
+      n,
+      slides: Number(report.metrics.slides ?? 0),
+      font: Number(report.metrics.minFontPt ?? 0),
+    });
+  }
+  for (let i = 1; i < seen.length; i += 1) {
+    const prev = seen[i - 1];
+    const cur = seen[i];
+    if (cur.slides < prev.slides && cur.font < prev.font - 0.01) {
+      issues.push(
+        `a ${cur.n}-service cascade is ${prev.slides - cur.slides} slide(s) shorter than a ${prev.n}-service one *and* ${(prev.font - cur.font).toFixed(2)}pt smaller (${prev.slides} slides at ${prev.font}pt, then ${cur.slides} at ${cur.font}pt) — adding a service made the deck worse in both directions`,
+      );
+    }
+  }
+  return {
+    scenario: 'deck-growth',
+    format: 'pptx',
+    issues,
+    metrics: Object.fromEntries(seen.map((s) => [`n${s.n}`, `${s.slides}sl/${s.font}pt`])),
+  };
+}
+
 async function main(): Promise<void> {
   mkdirSync(OUT, { recursive: true });
   const base = [
@@ -4139,13 +4183,18 @@ async function main(): Promise<void> {
   // CI and `npm test` pass no argument and so always run everything.
   const only = process.argv.slice(2).filter((a) => !a.startsWith('-')).flatMap((a) => a.split(','));
   const selected = only.length > 0 ? scenarios.filter((s) => only.includes(s.id)) : scenarios;
-  if (only.length > 0 && selected.length === 0) {
-    throw new Error(`no scenario matched ${only.join(', ')}; known: ${scenarios.map((s) => s.id).join(', ')}`);
+  // `deck-growth` is a family comparison, not a scenario: it exports the same
+  // drawing at several sizes and judges the differences between them, so it has
+  // no entry in `scenarios` and has to be named explicitly to be selectable.
+  const growth = only.length === 0 || only.includes('deck-growth');
+  if (only.length > 0 && selected.length === 0 && !growth) {
+    throw new Error(`no scenario matched ${only.join(', ')}; known: deck-growth, ${scenarios.map((s) => s.id).join(', ')}`);
   }
   for (const scenario of selected) {
     reports.push(await auditPptx(scenario));
     reports.push(await auditVsdx(scenario));
   }
+  if (growth) reports.push(await auditDeckGrowth());
   for (const report of reports) {
     console.log(`\n=== ${report.scenario} / ${report.format} ===`);
     console.log('metrics:', JSON.stringify(report.metrics));
