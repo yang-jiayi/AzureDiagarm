@@ -84,6 +84,14 @@ const CORNER_ROUNDING_IN = 0.08;
 
 /** Height of one numbered row in the workflow band. */
 const WORKFLOW_ROW_IN = 0.26;
+/**
+ * How many columns the workflow band may be split into.
+ *
+ * Splitting trades column height for column width, and the sentences have to
+ * fit the width: past a dozen columns on an 11in page a step is under an inch
+ * wide and every row wraps to more lines than the split saved.
+ */
+const MAX_WORKFLOW_COLUMNS = 12;
 
 /**
  * Visio font sizes are inches (1 pt = 1/72"). These match the PowerPoint export
@@ -720,14 +728,14 @@ function legendSwatchXml(id: number, x: number, y: number, entry: ConnectionLege
 }
 
 /** The text label beside a legend swatch. */
-function legendTextXml(id: number, x: number, y: number, width: number, text: string): string {
-  return `    <Shape ID="${id}" NameU="LegendText.${id}" Type="Shape" LineStyle="0" FillStyle="0" TextStyle="0">
+function legendTextXml(id: number, x: number, y: number, width: number, text: string, height = 0.18, name = ''): string {
+  return `    <Shape ID="${id}" NameU="LegendText.${id}"${name ? ` Name="${esc(name)}"` : ''} Type="Shape" LineStyle="0" FillStyle="0" TextStyle="0">
       <Cell N="PinX" V="${f(x + width / 2)}"/>
       <Cell N="PinY" V="${f(y)}"/>
       <Cell N="Width" V="${f(width)}"/>
-      <Cell N="Height" V="0.18"/>
+      <Cell N="Height" V="${f(height)}"/>
       <Cell N="LocPinX" V="${f(width / 2)}"/>
-      <Cell N="LocPinY" V="0.09"/>
+      <Cell N="LocPinY" V="${f(height / 2)}"/>
       <Cell N="Angle" V="0"/>
       <Cell N="LinePattern" V="0"/>
       <Cell N="FillPattern" V="0"/>
@@ -784,6 +792,41 @@ ${roundedRectGeometry()}
 }
 
 /**
+ * How tall one workflow row has to be to hold the sentence written in it.
+ *
+ * The band used to draw every row at a fixed pitch and give the sentence a
+ * 0.18in text block whatever it said. A description too long for its column
+ * wraps, and Visio draws the extra lines outside the block, straight through
+ * the row beneath: on an 11in page a 76-character step is three lines in a
+ * 0.26in pitch, so every row in the band overran the next, all the way down.
+ */
+function workflowRowHeightIn(description: string, colW: number): number {
+  const textW = Math.max(colW - 0.6, 0.4);
+  const lines = Math.max(1, Math.ceil(estimateTextWidthIn(description, LEGEND_FONT_IN) / textW));
+  return Math.max(WORKFLOW_ROW_IN, lines * LEGEND_FONT_IN * 1.35 + 0.08);
+}
+
+/** The tallest column, which is the height the band has to reserve. */
+function workflowStackIn(entries: WorkflowListEntry[], columns: number, colW: number): number {
+  const cols = Math.max(1, columns);
+  const perColumn = Math.ceil(entries.length / cols);
+  let tallest = 0;
+  for (let c = 0; c < cols; c += 1) {
+    let stack = 0;
+    for (let i = c * perColumn; i < Math.min((c + 1) * perColumn, entries.length); i += 1) {
+      stack += workflowRowHeightIn(entries[i].description, colW);
+    }
+    tallest = Math.max(tallest, stack);
+  }
+  return tallest;
+}
+
+/** How wide the sheet will draw the band, for a page of a given width. */
+function workflowPanelWidthIn(pageWidthIn: number, columns: number): number {
+  return Math.min(Math.max(pageWidthIn - 0.7, 2.4), 7.5 * Math.max(1, columns));
+}
+
+/**
  * Emit the numbered workflow narration beside the drawing.
  *
  * An Azure Architecture Center diagram never shows a numbered callout without
@@ -800,12 +843,11 @@ function buildWorkflowPanel(
 ): { shapes: string[]; nextId: number } {
   const shapes: string[] = [];
   let id = startId;
-  const rowH = WORKFLOW_ROW_IN;
   const cols = Math.max(1, columns);
   const perColumn = Math.ceil(entries.length / cols);
-  const boxH = rowH * perColumn + 0.34;
-  const originY = topY - boxH;
   const colW = width / cols;
+  const boxH = workflowStackIn(entries, cols, colW) + 0.34;
+  const originY = topY - boxH;
   shapes.push(`    <Shape ID="${id++}" NameU="Workflow.${startId}" Type="Shape" LineStyle="0" FillStyle="0" TextStyle="0">
       <Cell N="PinX" V="${f(originX + width / 2)}"/>
       <Cell N="PinY" V="${f(originY + boxH / 2)}"/>
@@ -823,12 +865,17 @@ function buildWorkflowPanel(
 ${roundedRectGeometry()}
     </Shape>`);
   shapes.push(legendTextXml(id++, originX + 0.12, originY + boxH - 0.18, width - 0.24, 'Workflow'));
+  // Each row starts where the one above it ended, so a sentence that wraps
+  // pushes the rest of its column down instead of being drawn over it.
+  const cursor = new Array(cols).fill(0);
   entries.forEach((entry, index) => {
-    const column = Math.floor(index / perColumn);
-    const rowY = originY + boxH - 0.34 - (index % perColumn) * rowH;
+    const column = Math.min(cols - 1, Math.floor(index / perColumn));
+    const rowH = workflowRowHeightIn(entry.description, colW);
+    const rowTop = originY + boxH - 0.34 - cursor[column];
+    cursor[column] += rowH;
     const colX = originX + column * colW;
-    shapes.push(legendTextXml(id++, colX + 0.14, rowY, 0.3, `${entry.step}.`));
-    shapes.push(legendTextXml(id++, colX + 0.46, rowY, colW - 0.6, entry.description));
+    shapes.push(legendTextXml(id++, colX + 0.14, rowTop - 0.09, 0.3, `${entry.step}.`));
+    shapes.push(legendTextXml(id++, colX + 0.46, rowTop - rowH / 2, colW - 0.6, entry.description, rowH, `workflow-text-${entry.step}`));
   });
   return { shapes, nextId: id };
 }
@@ -922,6 +969,7 @@ export async function buildVsdxPackage(
   // limit and a twenty-step workflow is 5.7in, so a tall architecture with a
   // workflow was written at 202in and Visio refused to open it at all.
   const workflowEntries = workflowListFromEdges(narrated);
+  const drawing = compactEmptyGutters(collectExportBoxes(nodes));
   // The band is page furniture, and furniture does not get to evict the thing
   // it describes. `workflowListFromEdges` has no cap, so a fully-meshed
   // architecture produces hundreds of numbered steps and a single-column band
@@ -930,13 +978,42 @@ export async function buildVsdxPackage(
   // it takes to stay inside a third of the sheet: every sentence the author
   // wrote is still on the page, which is the one thing that must not be traded,
   // and the drawing keeps the two thirds it was drawn for.
-  const workflowColumns = workflowEntries.length > 0
-    ? Math.max(1, Math.ceil((WORKFLOW_ROW_IN * workflowEntries.length + 0.5) / (MAX_VISIO_PAGE_IN / 3)))
-    : 1;
-  const workflowRows = Math.ceil(workflowEntries.length / workflowColumns);
-  const workflowBandIn = workflowEntries.length > 0 ? WORKFLOW_ROW_IN * workflowRows + 0.5 : 0;
+  //
+  // What is measured is now the height the rows actually occupy rather than one
+  // pitch each, because a sentence too long for its column wraps and a band
+  // sized for one line per step is short by however many lines it did not count.
+  //
+  // A column is narrowest, and so its sentences wrap longest, on the narrowest
+  // page the exporter will emit. Measuring there can only ever reserve too much
+  // room, never too little, which is the safe direction: the band is drawn at
+  // the real page width and comes out no taller than its reservation.
+  const stackFor = (cols: number): number => workflowStackIn(
+    workflowEntries,
+    cols,
+    workflowPanelWidthIn(MIN_PAGE_W_IN, cols) / cols,
+  ) + 0.5;
+  // Splitting trades column height for column width, and the sentences have to
+  // fit the width: past a point the extra wrapping costs more lines than the
+  // split saves rows. So take the first split that gets under the target, and
+  // if none does, the shortest band on offer.
+  let workflowColumns = 1;
+  if (workflowEntries.length > 0 && stackFor(1) > MAX_VISIO_PAGE_IN / 3) {
+    let shortest = stackFor(1);
+    for (let cols = 2; cols <= MAX_WORKFLOW_COLUMNS; cols += 1) {
+      const height = stackFor(cols);
+      if (height < shortest) {
+        shortest = height;
+        workflowColumns = cols;
+      }
+      if (height <= MAX_VISIO_PAGE_IN / 3) {
+        workflowColumns = cols;
+        break;
+      }
+    }
+  }
+  const workflowBandIn = workflowEntries.length > 0 ? stackFor(workflowColumns) : 0;
   const fitted = fitBoxesWithin(
-    compactEmptyGutters(collectExportBoxes(nodes)),
+    drawing,
     limitPx,
     limitPx - workflowBandIn * PX_PER_INCH,
   );
@@ -1518,7 +1595,7 @@ export async function buildVsdxPackage(
       pageHeightIn - 0.2,
       // One column is the 7.5in reading measure the panel has always used;
       // more columns need proportionally more of the sheet, bounded by it.
-      Math.min(Math.max(pageWidthIn - 0.7, 2.4), 7.5 * workflowColumns),
+      workflowPanelWidthIn(pageWidthIn, workflowColumns),
       workflowColumns,
     );
     nextId = panel.nextId;

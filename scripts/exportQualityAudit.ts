@@ -3353,12 +3353,13 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
   // this catches the whole class, and unlike that rule it has no constant to
   // tune — the bar is the drawing itself.
   const span = drawingSpanIn(scenario);
-  const vsdxSteps = narrateEdgeCallouts(scenario.edges).filter(
-    (e) => Number.isInteger((e.data as { stepNumber?: number } | undefined)?.stepNumber),
-  ).length;
   // The numbered workflow gets its own band across the top of the sheet, and
-  // the sheet has a minimum size; neither is outlier growth.
-  const bandIn = vsdxSteps > 0 ? 0.26 * vsdxSteps + 0.5 : 0;
+  // the sheet has a minimum size; neither is outlier growth. Read from the band
+  // the exporter drew rather than modelled from a row pitch — rows are as tall
+  // as their sentences, and the "band must be the size of its rows" rule below
+  // is what stops this allowance from being inflatable.
+  const drawnBand = /NameU="Workflow\.\d+"[\s\S]*?<Cell N="Height" V="([\d.-]+)"\/>/.exec(xml);
+  const bandIn = drawnBand ? +drawnBand[1] + 0.24 : 0;
   const allowedW = Math.max(11, span.w + PAGE_CHROME_SLACK_IN);
   const allowedH = Math.max(8.5, span.h + PAGE_CHROME_SLACK_IN + bandIn);
   if (pkg.pageWidthIn > allowedW) {
@@ -3624,6 +3625,52 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
   }
   if (lost.length > 0) {
     issues.push(`the Visio sheet has lost connector wording: ${lost.slice(0, 3).join(', ')}`);
+  }
+
+  // Visio does not clip a text block — it draws the overflow past both edges,
+  // straight through whatever is above and below. The workflow band drew every
+  // step in a fixed 0.18in block at a fixed 0.26in pitch, so a sentence that
+  // wrapped ran through the row beneath it: a 76-character step (which is
+  // ordinary Architecture Center prose) is three lines on an 11in page, and
+  // every row in the band overran the next, all the way down. Measured against
+  // the box the exporter actually wrote, not against the pitch it intended.
+  const workflowRows = [...xml.matchAll(
+    /NameU="LegendText\.\d+" Name="workflow-text-(\d+)"[\s\S]*?<Cell N="PinX" V="([\d.-]+)"\/>\s*<Cell N="PinY" V="([\d.-]+)"\/>\s*<Cell N="Width" V="([\d.-]+)"\/>\s*<Cell N="Height" V="([\d.-]+)"\/>[\s\S]*?<Cell N="Size" V="([\d.-]+)"\/>[\s\S]*?<Text>([\s\S]*?)<\/Text>/g,
+  )].map((m) => ({
+    step: m[1],
+    x: +m[2],
+    y: +m[3],
+    w: +m[4],
+    h: +m[5],
+    pt: +m[6] * 72,
+    text: m[7].replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, '&'),
+  }));
+  const spilling = workflowRows
+    .map((row) => {
+      const lines = Math.max(1, Math.ceil(textWidthIn(row.text.trim(), row.pt) / row.w));
+      return { row, needed: (lines * row.pt * 1.22) / 72, lines };
+    })
+    .filter((r) => r.needed > r.row.h + 0.01);
+  if (spilling.length > 0) {
+    const worst = spilling.sort((a, b) => b.needed / b.row.h - a.needed / a.row.h)[0];
+    issues.push(`${spilling.length} Visio workflow row(s) overrun their neighbours — step ${worst.row.step} needs ${worst.needed.toFixed(2)}in (${worst.lines} lines at ${worst.row.pt.toFixed(1)}pt) in a ${worst.row.h.toFixed(2)}in row`);
+  }
+  // The rows have to be inside the panel that frames them, and the panel has to
+  // be the size of its rows: a band reserved larger than its contents steals
+  // the page from the drawing just as surely as one drawn too small spills.
+  const panel = /NameU="Workflow\.\d+"[\s\S]*?<Cell N="PinY" V="([\d.-]+)"\/>\s*<Cell N="Width" V="([\d.-]+)"\/>\s*<Cell N="Height" V="([\d.-]+)"\/>/.exec(xml);
+  if (panel && workflowRows.length > 0) {
+    const panelTop = +panel[1] + +panel[3] / 2;
+    const panelBottom = +panel[1] - +panel[3] / 2;
+    const outside = workflowRows.filter((r) => r.y + r.h / 2 > panelTop + 0.01 || r.y - r.h / 2 < panelBottom - 0.01);
+    if (outside.length > 0) {
+      issues.push(`${outside.length} Visio workflow row(s) are drawn outside the ${(+panel[3]).toFixed(2)}in band that frames them, starting at step ${outside[0].step}`);
+    }
+    const lowest = Math.min(...workflowRows.map((r) => r.y - r.h / 2));
+    const dead = lowest - panelBottom;
+    if (dead > 0.6) {
+      issues.push(`the Visio workflow band reserves ${dead.toFixed(2)}in below its last row — the page it takes has to be the page it uses`);
+    }
   }
 
   // Workflow numbering must survive into Visio too, or the same drawing tells
