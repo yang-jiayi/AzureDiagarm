@@ -12,7 +12,7 @@ import { writeFileSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
 import JSZip from 'jszip';
 import type { Edge, Node } from 'reactflow';
-import { buildDiagramSlidePptx } from '../src/services/pptxExporter.ts';
+import { buildDiagramSlidePptx, buildArchitectureDeckPptx } from '../src/services/pptxExporter.ts';
 import { nativizeSlideXml } from '../src/services/pptxNativeShapes.ts';
 import { buildVsdxPackage } from '../src/services/visioVsdxExporter.ts';
 import { WRAP_TRIGGER_RATIO } from '../src/utils/serpentineWrap.ts';
@@ -20,6 +20,18 @@ import { narrateEdgeCallouts, CATEGORY_STYLES } from '../src/services/diagramExp
 
 const OUT = path.join(process.cwd(), 'tmp-export-audit');
 const EMU_PER_INCH = 914400;
+/** Layout pixels per inch — the scale both exporters draw the canvas at. */
+const PX_PER_IN = 96;
+/** The standard 16:9 slide both decks start from, before any page growth. */
+const BASE_SLIDE_W_IN = 13.333;
+const BASE_SLIDE_H_IN = 7.5;
+/**
+ * Chrome an export may legitimately add around the drawing: margins, the header
+ * strip, the connection legend and the footer. Measured at 2.6in on a healthy
+ * Visio sheet and 1.2in on an untrimmed one, so 4in is generous slack — the
+ * rule is aimed at a sheet that has grown by *tens* of inches.
+ */
+const PAGE_CHROME_SLACK_IN = 4;
 
 const PIXEL_PNG =
   'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
@@ -526,6 +538,75 @@ function bandedTwoStraysScenario(): Scenario {
     data: { stepNumber: 9, stepDescription: 'mirrors the analytics estate into Fabric' },
   } as Edge);
   return { id: 'banded-two-strays', nodes, edges };
+}
+
+/**
+ * Strays in OPPOSITE directions — the case a rigid translation cannot survive.
+ * Moving the cloud as one body preserved the 18000px of empty space between the
+ * two strays, so trimming the outliers *grew* the drawing from 189in to 198in:
+ * a 199in Visio sheet (Visio refuses anything past 200in), a 56in slide, and
+ * 4pt type on the fixed-size customer deck. Packing them into a strip in the
+ * margin costs the width of the strip and nothing else.
+ */
+function oppositeStraysScenario(): Scenario {
+  const nodes: Node[] = [];
+  for (let i = 0; i < 8; i += 1) {
+    nodes.push(svc(`o-${i}`, i % 2 ? 'Azure Functions' : 'Azure SQL Database', (i % 4) * 220, Math.floor(i / 4) * 180));
+  }
+  nodes.push(svc('o-west', 'Copilot Studio', -9000, 400));
+  nodes.push(svc('o-east', 'Microsoft Fabric', 9000, 400));
+  const edges: Edge[] = [
+    { id: 'ow', source: 'o-0', target: 'o-west', label: 'agent actions', data: { stepNumber: 1, stepDescription: 'Copilot Studio calls the agent action' } } as Edge,
+    { id: 'oe', source: 'o-3', target: 'o-east', label: 'mirrored to Fabric', data: { stepNumber: 2, stepDescription: 'Operational data is mirrored into Fabric' } } as Edge,
+  ];
+  return { id: 'opposite-strays', nodes, edges };
+}
+
+/**
+ * Three strays off three different corners plus a zone that has drifted with
+ * one of them, so the packing has to keep a group with the service it contains
+ * while still collapsing the empty space in both directions at once.
+ */
+function cornerStraysScenario(): Scenario {
+  const nodes: Node[] = [];
+  for (let i = 0; i < 8; i += 1) {
+    nodes.push(svc(`x-${i}`, i % 2 ? 'Azure Functions' : 'Azure SQL Database', (i % 4) * 220, Math.floor(i / 4) * 180));
+  }
+  nodes.push(svc('x-nw', 'Copilot Studio', -9000, -9000));
+  nodes.push(grp('x-far', 'Remote Region', 9000, -9000, 520, 300));
+  nodes.push(svc('x-ne', 'Microsoft Fabric', 9120, -8880, 'x-far'));
+  nodes.push(svc('x-se', 'Power BI', 9000, 9000));
+  const edges: Edge[] = [
+    { id: 'cw', source: 'x-0', target: 'x-nw', label: 'agent actions', data: { stepNumber: 1, stepDescription: 'Copilot Studio calls the agent action' } } as Edge,
+    { id: 'cn', source: 'x-1', target: 'x-ne', label: 'mirrored to Fabric', data: { stepNumber: 2, stepDescription: 'Operational data is mirrored into Fabric' } } as Edge,
+    { id: 'cs', source: 'x-3', target: 'x-se', label: 'served to Power BI', data: { stepNumber: 3, stepDescription: 'Power BI reads the semantic model' } } as Edge,
+  ];
+  return { id: 'corner-strays', nodes, edges };
+}
+
+/**
+ * A single row of services with one node far left and one far right. Every
+ * service shares a row, so the vertical quartile range is zero, the fence has
+ * zero width, and the one node on a second row used to count as an outlier —
+ * which pushed the kept set under the majority bar and abandoned the trim on
+ * BOTH axes. The drawing then sized an 85in page and shipped 0.24in tiles that
+ * no rule could see, because trimming never ran and so nothing was ever parked.
+ */
+function symmetricStraysScenario(): Scenario {
+  const nodes: Node[] = [
+    svc('y-0', 'Azure Front Door', 0, 0),
+    svc('y-1', 'Azure Functions', 260, 0),
+    svc('y-2', 'Azure SQL Database', 520, 0),
+    svc('y-3', 'Azure Key Vault', 260, 170),
+    svc('y-west', 'Copilot Studio', -4000, 0),
+    svc('y-east', 'Microsoft Fabric', 4000, 0),
+  ];
+  const edges: Edge[] = [
+    { id: 'sw', source: 'y-0', target: 'y-west', label: 'agent actions', data: { stepNumber: 1, stepDescription: 'Copilot Studio calls the agent action' } } as Edge,
+    { id: 'se', source: 'y-2', target: 'y-east', label: 'mirrored to Fabric', data: { stepNumber: 2, stepDescription: 'Operational data is mirrored into Fabric' } } as Edge,
+    { id: 'sk', source: 'y-1', target: 'y-3', label: 'reads secrets', data: { stepNumber: 3, stepDescription: 'The function reads its secrets from Key Vault' } } as Edge,
+  ];
+  return { id: 'symmetric-strays', nodes, edges };
 }
 
 /**
@@ -1560,6 +1641,114 @@ function synthesisedIcons(scenario: Scenario): Map<string, { bytes: Uint8Array; 
   return icons;
 }
 
+/**
+ * How wide and tall the author's own drawing is, in inches, before any export
+ * decides anything. Trimming far-placed nodes out of the fit exists to make the
+ * sheet *smaller*, so neither exporter can legitimately produce a page much
+ * larger than this: when one does, outlier handling has grown the drawing it
+ * was supposed to shrink, and the user gets a plotter sheet with a stamp of
+ * architecture in the middle of it.
+ */
+function drawingSpanIn(scenario: Scenario): { w: number; h: number } {
+  const byId = new Map(scenario.nodes.map((n) => [n.id, n]));
+  const absolute = (node: Node): { x: number; y: number } => {
+    let x = node.position.x;
+    let y = node.position.y;
+    const seen = new Set<string>([node.id]);
+    let parent = node.parentNode ? byId.get(node.parentNode) : undefined;
+    while (parent && !seen.has(parent.id)) {
+      seen.add(parent.id);
+      x += parent.position.x;
+      y += parent.position.y;
+      parent = parent.parentNode ? byId.get(parent.parentNode) : undefined;
+    }
+    return { x, y };
+  };
+  const rects = scenario.nodes.map((node) => {
+    const at = absolute(node);
+    return {
+      ...at,
+      w: node.width ?? (node.style?.width as number | undefined) ?? 150,
+      h: node.height ?? (node.style?.height as number | undefined) ?? 75,
+    };
+  });
+  if (rects.length === 0) return { w: 0, h: 0 };
+  const minX = Math.min(...rects.map((r) => r.x));
+  const maxX = Math.max(...rects.map((r) => r.x + r.w));
+  const minY = Math.min(...rects.map((r) => r.y));
+  const maxY = Math.max(...rects.map((r) => r.y + r.h));
+  return { w: (maxX - minX) / PX_PER_IN, h: (maxY - minY) / PX_PER_IN };
+}
+
+/**
+ * The deck the export button actually produces.
+ *
+ * `buildDiagramSlidePptx` is a diagram-only deck that may grow its page for a
+ * large architecture; `buildArchitectureDeckPptx` carries title, workflow,
+ * services, review and cost slides that are all designed for a standard 16:9
+ * page, so it cannot. Every rule in this file was measured against the first
+ * one, and the second — the one `App.tsx` calls — was drawing the whole
+ * architecture squeezed onto one fixed slide: 0.05in tiles and 4pt type for a
+ * drawing the audited deck showed at 0.44in. Same failure class as the icons:
+ * the gate did not exercise the configuration that ships.
+ *
+ * Only the properties that can differ between the two are checked here, so
+ * this stays cheap: the page must never grow, the type must clear the same
+ * floor, and every service must reach exactly one window.
+ */
+async function auditCustomerDeck(scenario: Scenario): Promise<string[]> {
+  const pptx = await buildArchitectureDeckPptx(PIXEL_PNG, {
+    diagramName: 'Contoso Platform',
+    author: 'Audit',
+    date: '2026-08-10',
+    isDarkMode: scenario.dark === true,
+    diagram: { nodes: scenario.nodes, edges: scenario.edges },
+    presetIcons: synthesisedIcons(scenario),
+    services: [],
+  });
+  const zip = await JSZip.loadAsync((await pptx.write({ outputType: 'nodebuffer' })) as Buffer);
+  const presentation = await zip.file('ppt/presentation.xml')!.async('string');
+  const sldSz = /<p:sldSz[^>]*cx="(\d+)"[^>]*cy="(\d+)"/.exec(presentation);
+  const pageW = sldSz ? +sldSz[1] / EMU_PER_INCH : BASE_SLIDE_W_IN;
+  const pageH = sldSz ? +sldSz[2] / EMU_PER_INCH : BASE_SLIDE_H_IN;
+
+  const issues: string[] = [];
+  if (pageW > BASE_SLIDE_W_IN + 0.01 || pageH > BASE_SLIDE_H_IN + 0.01) {
+    issues.push(`customer deck: page is ${pageW.toFixed(2)}x${pageH.toFixed(2)}in — every other slide in this deck is laid out for ${BASE_SLIDE_W_IN}x${BASE_SLIDE_H_IN}in`);
+  }
+
+  const slides = await Promise.all(
+    Object.keys(zip.files)
+      .filter((name) => /^ppt\/slides\/slide\d+\.xml$/.test(name))
+      .sort((a, b) => (+a.replace(/\D/g, '')) - (+b.replace(/\D/g, '')))
+      .map((name) => zip.file(name)!.async('string')),
+  );
+  // A tiled deck opens with the whole drawing shown small on purpose, so the
+  // floors below are about the windows that follow it.
+  const drawn = slides.filter((xml) => xml.includes('name="service-'));
+  const windows = drawn.filter((xml) => !xml.includes('(Overview)'));
+  if (drawn.length === 0) {
+    issues.push('customer deck: the diagram slide carries no native shapes at all');
+    return issues;
+  }
+
+  const shapes = windows.flatMap((xml) => parseShapes(xml));
+  const labels = shapes.filter((s) => s.name.startsWith('service-label-'));
+  const minFont = labels.length > 0 ? Math.min(...labels.map((l) => l.fontSize ?? 99)) : 99;
+  if (minFont < 7) {
+    issues.push(`customer deck: smallest label font is ${minFont}pt (below the 7pt legibility floor)`);
+  }
+
+  for (const node of scenario.nodes) {
+    if ((node.type ?? '') === 'groupNode') continue;
+    const marker = `name="service-${node.id}"`;
+    const on = windows.filter((xml) => xml.includes(marker)).length;
+    if (on === 0) issues.push(`customer deck: service "${node.id}" is drawn on no slide`);
+    else if (on > 1) issues.push(`customer deck: service "${node.id}" is drawn on ${on} slides`);
+  }
+  return issues;
+}
+
 async function auditPptx(scenario: Scenario): Promise<Report> {
   const pptx = await buildDiagramSlidePptx(PIXEL_PNG, {
     diagramName: 'Contoso Platform',
@@ -1620,6 +1809,12 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
   }
   const native = auditNativeConversion(allSlides, scenario.edges);
   issues.push(...native.issues);
+  // The PPTX equivalent of the Visio sheet-size invariant below is unreachable
+  // and deliberately absent: the page is clamped to PowerPoint's 56in limit,
+  // and the fit only trims outliers once the drawing is already past ~52in, so
+  // "page larger than the drawing plus chrome" cannot happen. Rigid-translation
+  // parking is caught here by the font floor and the page-count rule instead.
+  issues.push(...await auditCustomerDeck(scenario));
   // A chip or a numbered callout with no arrow anywhere in the deck is worse
   // than a missing label: the reader sees a sentence and a ① floating on blank
   // paper and goes looking for a hop that was never drawn. This caught a route
@@ -2546,6 +2741,29 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
   if (pkg.pageWidthIn > 200 || pkg.pageHeightIn > 200) {
     issues.push(`page ${pkg.pageWidthIn.toFixed(0)}x${pkg.pageHeightIn.toFixed(0)}in exceeds Visio's 200in limit`);
   }
+  // Visio draws 1 : 1, so the sheet is the drawing plus its margins and the
+  // workflow band — it can never legitimately be much larger than the drawing
+  // it carries. Parking two opposite strays by translating them as one body
+  // took an 8.4in architecture onto a 199in sheet: 4% of the page width, i.e.
+  // invisible at "fit to window", and 0.68in short of the file being rejected
+  // outright. The 200in rule above only catches the very end of that range;
+  // this catches the whole class, and unlike that rule it has no constant to
+  // tune — the bar is the drawing itself.
+  const span = drawingSpanIn(scenario);
+  const vsdxSteps = narrateEdgeCallouts(scenario.edges).filter(
+    (e) => Number.isInteger((e.data as { stepNumber?: number } | undefined)?.stepNumber),
+  ).length;
+  // The numbered workflow gets its own band across the top of the sheet, and
+  // the sheet has a minimum size; neither is outlier growth.
+  const bandIn = vsdxSteps > 0 ? 0.26 * vsdxSteps + 0.5 : 0;
+  const allowedW = Math.max(11, span.w + PAGE_CHROME_SLACK_IN);
+  const allowedH = Math.max(8.5, span.h + PAGE_CHROME_SLACK_IN + bandIn);
+  if (pkg.pageWidthIn > allowedW) {
+    issues.push(`Visio sheet is ${pkg.pageWidthIn.toFixed(1)}in wide for a drawing that spans ${span.w.toFixed(1)}in — trimming outliers must shrink the sheet, never grow it`);
+  }
+  if (pkg.pageHeightIn > allowedH) {
+    issues.push(`Visio sheet is ${pkg.pageHeightIn.toFixed(1)}in tall for a drawing that spans ${span.h.toFixed(1)}in — trimming outliers must shrink the sheet, never grow it`);
+  }
 
   // Every service group must sit on the page, or Visio simply shows nothing
   // where the user expects a service.
@@ -2841,6 +3059,7 @@ async function main(): Promise<void> {
   const base = [
     compactScenario(), wideScenario(), oversizeScenario(), outlierScenario(),
     bandedScenario(), narrativeScenario(), barbellScenario(), hubFanScenario(), sharedServiceScenario(), tightGridScenario(), bandedTwoStraysScenario(), wideChainScenario(), grid5x5TightScenario(), parallelScenario(),
+    oppositeStraysScenario(), cornerStraysScenario(), symmetricStraysScenario(),
     ladderInGridScenario(), twinLaddersScenario(), strayLadderScenario(), legendCornerScenario(), duplicateStepsScenario(), denseZoneScenario(),
     metaChipScenario(), gridFanScenario(), gridFan3Scenario(), fan8Tight5x5Scenario(), metaSublineScenario(), grid5x5CaptionScenario(), longNameGridScenario(), longLabelGridScenario(), metaTightScenario(),     longNameFanScenario(), estateChainScenario(), chain24Scenario(), tripleMutedScenario(), estate72Scenario(), workflowProseScenario(), workflowLongProseScenario(), allCategoriesScenario(),
     await generatedScenario(), await groupedGeneratedScenario(),

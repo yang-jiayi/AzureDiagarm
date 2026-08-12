@@ -5,6 +5,7 @@ import {
   buildExportRoutes,
   collectExportBoxes,
   computeBounds,
+  computeContentBounds,
   computeFitTransform,
   partitionBoxes,
   routeOrthogonal,
@@ -283,4 +284,42 @@ test('a diagram whose numbering is already distinct is left exactly as it was', 
     data: { stepNumber: i + 1, stepDescription: `sentence ${i}` },
   })) as unknown as Edge[];
   assert.equal(narrateEdgeCallouts(edges), edges, 'an untouched diagram must return the same array');
+});
+
+test('a legitimate second row survives the outlier trim that removes real strays', () => {
+  // Ten services on one row, one on a second row, and two nodes flung far to
+  // either side. The vertical quartile range of a single-row drawing is zero,
+  // so a per-axis fence has zero width vertically and throws the second-row
+  // service out with the strays — it is then parked into the margin strip,
+  // away from the neighbours it is wired to. One fence width shared by both
+  // axes, floored at the median tile extent, keeps it.
+  const boxes = [
+    ...Array.from({ length: 10 }, (_, i) => box(`row${i}`, i * 200, 0)),
+    box('secondRow', 400, 260),
+    box('farLeft', -6000, 0),
+    box('farRight', 6000, 0),
+  ];
+  const trimmed = computeContentBounds(boxes);
+  const inside = (b: ExportBox): boolean => b.x >= trimmed.minX && b.y >= trimmed.minY
+    && b.x + b.w <= trimmed.maxX && b.y + b.h <= trimmed.maxY;
+
+  assert.equal(inside(boxes.find((b) => b.id === 'secondRow')!), true, 'the second row is part of the drawing');
+  assert.equal(inside(boxes.find((b) => b.id === 'row0')!), true, 'the first row is part of the drawing');
+  assert.equal(inside(boxes.find((b) => b.id === 'farLeft')!), false, 'a node 6000px away is a stray');
+  assert.equal(inside(boxes.find((b) => b.id === 'farRight')!), false, 'a node 6000px away is a stray');
+});
+
+test('outliers off several corners are peeled instead of setting their own fence', () => {
+  // Four strays in a twelve-box drawing drag the upper quartile out far enough
+  // that three of the four land inside a single-pass fence, and the "dense
+  // cluster" comes back nearly as large as never trimming at all. Recomputing
+  // the quartiles from the survivors each pass tightens the fence onto the
+  // pack.
+  const cluster = Array.from({ length: 8 }, (_, i) => box(`c${i}`, (i % 4) * 200, Math.floor(i / 4) * 180));
+  const strays = [box('nw', -4000, -3000), box('ne', 4000, -3000), box('sw', -4000, 3000), box('se', 4000, 3000)];
+  const trimmed = computeContentBounds([...cluster, ...strays]);
+
+  assert.equal(trimmed.minX, 0, 'the trimmed bounds start at the cluster');
+  assert.equal(trimmed.maxX, 750, 'the trimmed bounds end at the cluster');
+  assert.ok(trimmed.maxY - trimmed.minY < 400, 'the trimmed drawing is the two-row cluster, not the corners');
 });

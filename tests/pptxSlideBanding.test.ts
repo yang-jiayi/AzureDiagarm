@@ -485,6 +485,7 @@ test('a trimmed outlier zone is clamped back onto the page, not cut to a hairlin
   const pageH = +/<p:sldSz[^>]*cy="(\d+)"/.exec(pres)![1] / EMU;
 
   let seen = 0;
+  let onWindows = 0;
   for (const name of Object.keys(zip.files).filter((n) => /^ppt\/slides\/slide\d+\.xml$/.test(n))) {
     const xml = await zip.file(name)!.async('string');
     const at = xml.indexOf('name="zone-zFar"');
@@ -492,18 +493,20 @@ test('a trimmed outlier zone is clamped back onto the page, not cut to a hairlin
     const m = /<a:off x="(-?[\d.]+)" y="(-?[\d.]+)"\s*\/>\s*<a:ext cx="([\d.]+)" cy="([\d.]+)"/.exec(xml.slice(at, at + 400))!;
     const [x, y, w, h] = [+m[1] / EMU, +m[2] / EMU, +m[3] / EMU, +m[4] / EMU];
     seen += 1;
+    if (!xml.includes('(Overview)')) onWindows += 1;
     assert.ok(w > 0.2 && h > 0.2, `trimmed zone collapsed to ${w.toFixed(3)}x${h.toFixed(3)}in on ${name}`);
     assert.ok(
       x >= -0.01 && y >= -0.01 && x + w <= pageW + 0.01 && y + h <= pageH + 0.01,
       `trimmed zone sits at ${x.toFixed(2)},${y.toFixed(2)} ${w.toFixed(2)}x${h.toFixed(2)}in off a ${pageW.toFixed(2)}x${pageH.toFixed(2)}in ${name}`,
     );
   }
-  // Parking the stray beside the drawing rather than on top of it widens the
-  // drawing, which can push it over the legibility floor and tile the deck. A
-  // zone is then continued on the overview and on each window it overlaps, so
-  // the count is not fixed — what has to hold is that every drawing of it is a
-  // real rectangle sitting on the page.
+  // Bringing a 6.25in remote zone back beside a 10.7in drawing makes a 17.6in
+  // drawing, which cannot be shown on one standard slide above 6.7pt — so this
+  // deck is tiled, and a tiled deck opens with an overview that redraws
+  // everything. What must hold is the audit's own rule: exactly one *window*
+  // carries the zone, so it is neither dropped nor drawn twice.
   assert.ok(seen >= 1, 'the outlier zone was not drawn at all');
+  assert.equal(onWindows, 1, 'the outlier zone must belong to exactly one window');
 });
 
 /** Slide-space rectangles for every shape whose objectName matches a prefix. */

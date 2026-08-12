@@ -459,6 +459,41 @@ function chooseExportBounds(boxes: Iterable<ExportBox>): { bounds: Bounds; clamp
 }
 
 /**
+ * The parked layout every part of the pipeline must agree on: bounds that the
+ * page is sized from, boxes the shapes and the routes are both planned from.
+ *
+ * Trimming far-placed nodes out of the fit is only half a decision — the strays
+ * still have to be drawn somewhere, and unless the same answer reaches the page
+ * sizer, the window planner, the renderer and the router, a stray tile, the
+ * arrow aimed at it and the slide that claims it each pick a different one.
+ */
+function parkedLayout(nodes: Node[]): { boxes: Map<string, ExportBox>; bounds: Bounds; clamped: boolean } {
+  const raw = collectExportBoxes(nodes);
+  const { bounds: fitted, clamped } = chooseExportBounds(raw.values());
+  const parked = clamped ? clampedBoxes(raw, fitted) : { boxes: raw, bounds: fitted };
+  return { ...parked, clamped };
+}
+
+/**
+ * Windows for a deck whose page size is fixed.
+ *
+ * The customer deck carries title, workflow, services, review and cost slides
+ * all designed for a standard 16:9 page, and PowerPoint gives a deck exactly
+ * one page size, so a large architecture cannot buy legibility by growing the
+ * sheet the way the diagram-only deck does. It tiles instead. Returns an empty
+ * list when the drawing already fits, which keeps the common path unchanged.
+ */
+function planFixedPageWindows(diagram: DiagramShapeSource, frame: DiagramFrame): DiagramWindow[] {
+  const nodes = diagram.nodes ?? [];
+  if (nodes.length === 0) return [];
+  const { boxes, bounds } = parkedLayout(nodes);
+  if (boxes.size === 0) return [];
+  const { services } = partitionBoxes(boxes);
+  if (services.length === 0) return [];
+  return planDiagramWindows(bounds, services, frame).windows;
+}
+
+/**
  * Pick the slide size. Grows the page (never the shrink factor) so a wide
  * architecture keeps 1 : 1 geometry; only diagrams larger than the 56" page
  * limit are scaled down, and then every dimension scales together.
@@ -484,16 +519,14 @@ function planSlideGeometry(diagram?: DiagramShapeSource | null): SlideGeometry {
   const nodes = diagram?.nodes ?? [];
   let windows: DiagramWindow[] = [];
   if (nodes.length > 0) {
-    const raw = collectExportBoxes(nodes);
-    if (raw.size > 0) {
-      const { bounds: fitted, clamped } = chooseExportBounds(raw.values());
-      outliersClamped = clamped;
+    const parked = parkedLayout(nodes);
+    if (parked.boxes.size > 0) {
+      outliersClamped = parked.clamped;
       // Plan the windows against the drawing the slides will actually carry.
       // Parking a stray widens the drawing by the strip it sits in, and a
       // window plan made from the pre-parking bounds leaves that strip
       // belonging to no window at all — the stray, and every hop touching it,
       // is then drawn on no slide.
-      const parked = clamped ? clampedBoxes(raw, fitted) : { boxes: raw, bounds: fitted };
       const boxes = parked.boxes;
       const bounds = parked.bounds;
       const { services } = partitionBoxes(boxes);
@@ -1932,22 +1965,20 @@ async function addEditableDiagram(
   thumbnail = false,
   presetIcons?: Map<string, RasterizedIcon>,
 ): Promise<boolean> {
-  const raw = collectExportBoxes(diagram.nodes ?? []);
-  if (raw.size === 0) return false;
   const frame = fullFrame;
 
   // Size and draw from the SAME bounds. Sizing the page for the dense cluster
   // while drawing every box is what silently pushed far-placed services off
   // the slide, so when outliers are excluded from the fit they are clamped
   // back onto the page instead of being drawn into the void.
-  const { bounds: fitted, clamped } = chooseExportBounds(raw.values());
-  // Clamped once, here, so the whole slide pipeline — routing, window
-  // ownership, drawing — agrees on where a stray ended up. Doing it inside
-  // `placeBox` on each slide meant the tile, the arrow aimed at it and the
-  // window that claimed it could each pick a different answer.
-  const parked = clamped ? clampedBoxes(raw, fitted) : { boxes: raw, bounds: fitted };
-  const boxes = parked.boxes;
-  const bounds = parked.bounds;
+  //
+  // Parked once, by the shared helper, so the whole slide pipeline — page
+  // sizing, window planning, routing, drawing — agrees on where a stray ended
+  // up. Doing it inside `placeBox` on each slide meant the tile, the arrow
+  // aimed at it and the window that claimed it could each pick a different
+  // answer.
+  const { boxes, bounds, clamped } = parkedLayout(diagram.nodes ?? []);
+  if (boxes.size === 0) return false;
   const { groups, services } = partitionBoxes(boxes);
   if (services.length === 0) return false;
   // A banded slide is sized from its own tile, which is what buys back the
@@ -3415,25 +3446,47 @@ function addTitleSlide(pptx: PptxGenJS, t: SlideTheme, o: ArchitectureDeckOption
   }
 }
 
-/** Slide 2 — the diagram, drawn with native (editable) PowerPoint shapes. */
+/**
+ * Slide 2 — the diagram, drawn with native (editable) PowerPoint shapes.
+ *
+ * This deck carries title, workflow, services, review and cost slides that are
+ * all designed for a standard 16:9 page, so unlike {@link buildDiagramSlidePptx}
+ * it cannot grow the page for a large drawing — PowerPoint gives a deck exactly
+ * one page size. It tiles instead: an overview, then one slide per readable
+ * window, exactly as the diagram-only deck does when the page has stopped
+ * growing. Squeezing the whole drawing onto the single fixed slide is what
+ * produced 0.05in tiles and 4pt type on the deck the export button actually
+ * ships, while the audited deck showed 0.44in tiles for the same architecture.
+ */
 async function addDiagramSlide(pptx: PptxGenJS, t: SlideTheme, imageDataUrl: string, o: ArchitectureDeckOptions): Promise<void> {
-  const slide = pptx.addSlide();
-  addChrome(pptx, slide, t, o.diagramName, `${o.author}  ·  ${o.date}`);
-  const renderedNatively = o.diagram
-    ? await addEditableDiagram(
-      pptx,
-      slide,
-      o.diagram,
-      { x: IMAGE_X, y: IMAGE_Y, w: IMAGE_W, h: IMAGE_H },
-      o.isDarkMode,
-      undefined,
-      undefined,
-      false,
-      o.presetIcons,
-    )
-    : false;
-  if (!renderedNatively) {
-    slide.addImage({ data: imageDataUrl, x: IMAGE_X, y: IMAGE_Y, w: IMAGE_W, h: IMAGE_H, sizing: { type: 'contain', w: IMAGE_W, h: IMAGE_H } });
+  const frame = { x: IMAGE_X, y: IMAGE_Y, w: IMAGE_W, h: IMAGE_H };
+  const parts = o.diagram ? planFixedPageWindows(o.diagram, frame) : [];
+  const windows: (DiagramWindow | undefined)[] = parts.length > 0 ? [undefined, ...parts] : [undefined];
+  for (const [index, window] of windows.entries()) {
+    const slide = pptx.addSlide();
+    const partOf = parts.length === 0
+      ? ''
+      : index === 0
+        ? '  (Overview)'
+        : `  (${index} / ${parts.length})`;
+    addChrome(pptx, slide, t, `${o.diagramName}${partOf}`, `${o.author}  ·  ${o.date}`);
+    const renderedNatively = o.diagram
+      ? await addEditableDiagram(
+        pptx,
+        slide,
+        o.diagram,
+        frame,
+        o.isDarkMode,
+        window,
+        undefined,
+        window === undefined && parts.length > 0,
+        o.presetIcons,
+      )
+      : false;
+    if (!renderedNatively) {
+      slide.addImage({ data: imageDataUrl, x: IMAGE_X, y: IMAGE_Y, w: IMAGE_W, h: IMAGE_H, sizing: { type: 'contain', w: IMAGE_W, h: IMAGE_H } });
+      return;
+    }
   }
 }
 

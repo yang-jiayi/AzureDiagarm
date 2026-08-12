@@ -825,28 +825,41 @@ export function computeContentBounds(
   if (all.length <= 3) return computeBounds(all);
 
   const k = options.iqrMultiplier ?? 3;
-  const centresX = all.map((box) => box.x + box.w / 2).sort((a, b) => a - b);
-  const centresY = all.map((box) => box.y + box.h / 2).sort((a, b) => a - b);
-  const [qx1, qx3] = quartiles(centresX);
-  const [qy1, qy3] = quartiles(centresY);
-  const iqrX = qx3 - qx1;
-  const iqrY = qy3 - qy1;
-  const loX = qx1 - k * iqrX;
-  const hiX = qx3 + k * iqrX;
-  const loY = qy1 - k * iqrY;
-  const hiY = qy3 + k * iqrY;
+  // The clear majority of the diagram has to survive, or the "outliers" are the
+  // diagram; anything less and the trim is abandoned rather than hiding real
+  // content.
+  const majority = Math.max(2, Math.ceil(all.length * 0.6));
 
-  const kept = all.filter((box) => {
-    const cx = box.x + box.w / 2;
-    const cy = box.y + box.h / 2;
-    return cx >= loX && cx <= hiX && cy >= loY && cy <= hiY;
-  });
-
-  // Only trust the trimmed set when it keeps the clear majority of the diagram;
-  // otherwise fall back to the full bounds to avoid hiding real content.
-  if (kept.length >= 2 && kept.length >= Math.ceil(all.length * 0.6)) {
-    return computeBounds(kept);
+  // Peeled repeatedly, because outliers contaminate the quartiles that are
+  // supposed to find them. Four strays off three corners of a twelve-box
+  // drawing dragged the upper quartile out to 2820px, so the fence swallowed
+  // three of the four and the "dense cluster" came back 99in wide — a 56in
+  // slide and a 100in Visio sheet carrying eight tiles. Each pass recomputes
+  // the quartiles from the survivors, so the fence tightens onto the pack;
+  // a drawing with no gap in it is stable on the first pass and unchanged.
+  let kept = all;
+  for (let pass = 0; pass < 8; pass += 1) {
+    const [qx1, qx3] = quartiles(kept.map((box) => box.x + box.w / 2).sort((a, b) => a - b));
+    const [qy1, qy3] = quartiles(kept.map((box) => box.y + box.h / 2).sort((a, b) => a - b));
+    // One fence width for both axes, because a diagram has one scale — and
+    // because a degenerate axis was otherwise vetoing the other. When every
+    // service sits on one row the vertical quartile range is zero, the fence
+    // has zero width, the single service on a second row counts as an outlier
+    // and gets parked in the margin away from the neighbours it is wired to.
+    // Sharing the wider of the two ranges can only ever keep more boxes than
+    // per-axis fences, so it cannot over-trim.
+    const fence = k * Math.max(qx3 - qx1, qy3 - qy1);
+    const next = kept.filter((box) => {
+      const cx = box.x + box.w / 2;
+      const cy = box.y + box.h / 2;
+      return cx >= qx1 - fence && cx <= qx3 + fence && cy >= qy1 - fence && cy <= qy3 + fence;
+    });
+    if (next.length === kept.length) break;
+    if (next.length < majority) break;
+    kept = next;
   }
+
+  if (kept.length >= majority && kept.length < all.length) return computeBounds(kept);
   return computeBounds(all);
 }
 
@@ -1500,15 +1513,26 @@ export function partitionBoxes(boxes: Map<string, ExportBox>): {
  * which is larger than the drawing sitting centred inside it — the stray's
  * coordinates stayed outside the drawing, so no window ever claimed the arrow.
  *
- * The strays move as ONE cloud, by a single translation, and are parked in the
- * margin ALONGSIDE the drawing rather than inside it. Clamping them
- * individually stacked everything that was off the same corner onto the same
- * spot — two strays became one tile with a hop drawn straight through it — and
- * a zone parked away from the services it contains stops being their
- * container. Parking them inside the content bounds is worse still: on a full
- * grid every corner is occupied, so the stray is simply drawn on top of a
- * service. The drawing therefore grows by the width of the strip, which is all
- * the page margin was ever being used for.
+ * The strays are PACKED into a strip in the margin beside the drawing, keeping
+ * their reading order but discarding the empty space between them. Translating
+ * the cloud rigidly instead — preserving the author's spacing — made the parked
+ * drawing *larger* than never trimming at all: two strays 9000px either side of
+ * a 8.4in cluster produced a 198in drawing, a 199in Visio sheet (Visio refuses
+ * anything past 200in) and 4pt type on the fixed-size deck. Whatever the
+ * spacing between two far-flung nodes was meant to convey, it is not worth 190
+ * inches of paper.
+ *
+ * Each stray is parked with the zone that contains it, because a group moved
+ * away from its children stops being their container. Parking inside the
+ * content bounds is worse than the margin: on a full grid every corner is
+ * occupied, so the stray is simply drawn on top of a service.
+ *
+ * Trimming outliers exists to make the drawing smaller, and packing keeps that
+ * promise for free: the trim only fires on a gap far wider than the strip that
+ * replaces it, so the parked drawing is always smaller than never trimming at
+ * all. A guard asserting that could not be made to fire on any layout once the
+ * strip replaced the rigid translation, so the invariant is asserted in the
+ * export audit instead of defended here.
  */
 export function clampedBoxes(
   boxes: Map<string, ExportBox>,
@@ -1522,44 +1546,110 @@ export function clampedBoxes(
   }
   if (strays.length === 0) return { boxes: new Map(boxes), bounds };
 
-  const cloud = {
-    minX: Math.min(...strays.map(([, b]) => b.x)),
-    minY: Math.min(...strays.map(([, b]) => b.y)),
-    maxX: Math.max(...strays.map(([, b]) => b.x + b.w)),
-    maxY: Math.max(...strays.map(([, b]) => b.y + b.h)),
+  const holds = (parent: ExportBox, child: ExportBox): boolean =>
+    parent !== child && child.x >= parent.x - 1 && child.y >= parent.y - 1
+    && child.x + child.w <= parent.x + parent.w + 1 && child.y + child.h <= parent.y + parent.h + 1;
+
+  // A stray zone takes everything it contains with it, stray or not: the zone
+  // is what left the drawing, and a frame parked away from its services is
+  // drawn as an empty box next to an unexplained cluster.
+  const strayZones = strays
+    .filter(([, box]) => box.kind === 'group')
+    .map(([, box]) => box)
+    .sort((a, b) => b.w * b.h - a.w * a.h);
+  const claimed = new Set<string>();
+  const clusters: Array<{ ids: string[]; x: number; y: number; w: number; h: number }> = [];
+  const cluster = (ids: string[]): void => {
+    const members = ids.map((id) => boxes.get(id)!);
+    const x = Math.min(...members.map((b) => b.x));
+    const y = Math.min(...members.map((b) => b.y));
+    clusters.push({
+      ids,
+      x,
+      y,
+      w: Math.max(...members.map((b) => b.x + b.w)) - x,
+      h: Math.max(...members.map((b) => b.y + b.h)) - y,
+    });
   };
-  const cloudW = cloud.maxX - cloud.minX;
-  const cloudH = cloud.maxY - cloud.minY;
-  const GAP = 60;
-  const pin = (v: number, lo: number, hi: number): number => Math.min(Math.max(v, lo), Math.max(lo, hi));
-  // Parked on the side it drifted off, so the hop to it still runs the way the
-  // author drew it and the reader's mental map survives the move.
-  const awayX = (cloud.minX + cloud.maxX) / 2 - (bounds.minX + bounds.maxX) / 2;
-  const awayY = (cloud.minY + cloud.maxY) / 2 - (bounds.minY + bounds.maxY) / 2;
-  let target: { x: number; y: number };
-  if (Math.abs(awayX) >= Math.abs(awayY)) {
-    target = {
-      x: awayX >= 0 ? bounds.maxX + GAP : bounds.minX - GAP - cloudW,
-      y: pin(cloud.minY, bounds.minY, bounds.maxY - cloudH),
-    };
-  } else {
-    target = {
-      x: pin(cloud.minX, bounds.minX, bounds.maxX - cloudW),
-      y: awayY >= 0 ? bounds.maxY + GAP : bounds.minY - GAP - cloudH,
-    };
+  for (const zone of strayZones) {
+    if (claimed.has(zone.id)) continue;
+    const ids = [zone.id];
+    claimed.add(zone.id);
+    for (const [id, box] of boxes) {
+      if (claimed.has(id) || !holds(zone, box)) continue;
+      claimed.add(id);
+      ids.push(id);
+    }
+    cluster(ids);
+  }
+  for (const [id] of strays) {
+    if (claimed.has(id)) continue;
+    claimed.add(id);
+    cluster([id]);
   }
 
-  const dx = target.x - cloud.minX;
-  const dy = target.y - cloud.minY;
+  const contentW = Math.max(1, bounds.maxX - bounds.minX);
+  const contentH = Math.max(1, bounds.maxY - bounds.minY);
+  const GAP = 60;
+  const PITCH = 40;
+  // Parked on the side they drifted off, so the hop to a stray still runs the
+  // way the author drew it and the reader's mental map survives the move.
+  const cloudX = clusters.reduce((sum, c) => sum + c.x + c.w / 2, 0) / clusters.length;
+  const cloudY = clusters.reduce((sum, c) => sum + c.y + c.h / 2, 0) / clusters.length;
+  const awayX = cloudX - (bounds.minX + bounds.maxX) / 2;
+  const awayY = cloudY - (bounds.minY + bounds.maxY) / 2;
+  const column = Math.abs(awayX) >= Math.abs(awayY);
+
+  // Reading order down the column or along the row, so the strip lists the
+  // strays in the order the drawing did.
+  clusters.sort((a, b) => (column ? a.y - b.y || a.x - b.x : a.x - b.x || a.y - b.y));
+
+  // Pack into the strip, wrapping onto a second lane rather than running past
+  // the drawing it sits beside.
+  const limit = column
+    ? Math.max(contentH, ...clusters.map((c) => c.h))
+    : Math.max(contentW, ...clusters.map((c) => c.w));
+  const slots: Array<{ dx: number; dy: number }> = [];
+  let lane = 0;
+  let laneDepth = 0;
+  let along = 0;
+  let stripDepth = 0;
+  let stripAlong = 0;
+  for (const c of clusters) {
+    const size = column ? c.h : c.w;
+    const depth = column ? c.w : c.h;
+    if (along > 0 && along + size > limit) {
+      lane += laneDepth + PITCH;
+      laneDepth = 0;
+      along = 0;
+    }
+    slots.push(column ? { dx: lane, dy: along } : { dx: along, dy: lane });
+    laneDepth = Math.max(laneDepth, depth);
+    along += size + PITCH;
+    stripDepth = Math.max(stripDepth, lane + laneDepth);
+    stripAlong = Math.max(stripAlong, along - PITCH);
+  }
+  const stripW = column ? stripDepth : stripAlong;
+  const stripH = column ? stripAlong : stripDepth;
+  const origin = column
+    ? { x: awayX >= 0 ? bounds.maxX + GAP : bounds.minX - GAP - stripW, y: bounds.minY }
+    : { x: bounds.minX, y: awayY >= 0 ? bounds.maxY + GAP : bounds.minY - GAP - stripH };
+
   const moved = new Map<string, ExportBox>(boxes);
-  for (const [id, box] of strays) moved.set(id, { ...box, x: box.x + dx, y: box.y + dy });
-  return {
-    boxes: moved,
-    bounds: {
-      minX: Math.min(bounds.minX, target.x),
-      minY: Math.min(bounds.minY, target.y),
-      maxX: Math.max(bounds.maxX, target.x + cloudW),
-      maxY: Math.max(bounds.maxY, target.y + cloudH),
-    },
+  clusters.forEach((c, index) => {
+    const dx = origin.x + slots[index].dx - c.x;
+    const dy = origin.y + slots[index].dy - c.y;
+    for (const id of c.ids) {
+      const box = boxes.get(id)!;
+      moved.set(id, { ...box, x: box.x + dx, y: box.y + dy });
+    }
+  });
+
+  const parked = {
+    minX: Math.min(bounds.minX, origin.x),
+    minY: Math.min(bounds.minY, origin.y),
+    maxX: Math.max(bounds.maxX, origin.x + stripW),
+    maxY: Math.max(bounds.maxY, origin.y + stripH),
   };
+  return { boxes: moved, bounds: parked };
 }
