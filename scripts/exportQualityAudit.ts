@@ -32,6 +32,8 @@ interface Shape {
   h: number;
   text: string;
   fontSize: number | null;
+  /** Vertical anchor of the text body: 't', 'ctr', or 'b'. */
+  anchor: string | null;
   path?: { x: number; y: number }[];
 }
 
@@ -83,10 +85,35 @@ function parseShapes(xml: string): Shape[] {
       h,
       text: texts.join('').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>'),
       fontSize: sz ? +sz[1] / 100 : null,
+      anchor: /<a:bodyPr[^>]*\banchor="([^"]+)"/.exec(body)?.[1] ?? null,
       path,
     });
   }
   return shapes;
+}
+
+/**
+ * Where the words in a text shape are actually drawn.
+ *
+ * A text box is laid out to the room available, not to its contents: a service
+ * caption on an icon-less tile is given nearly the whole tile, and the name is
+ * then centred inside it on one or two lines. Anything asking "is the name
+ * covered" has to ask about the lines, because asking about the box is asking
+ * about the tile.
+ */
+function drawnTextRect(shape: Shape): { x: number; y: number; w: number; h: number } | null {
+  const text = shape.text.trim();
+  if (text === '' || !shape.fontSize) return null;
+  const lines = Math.max(1, Math.ceil(textWidthIn(text, shape.fontSize) / shape.w));
+  const h = Math.min(shape.h, (lines * shape.fontSize * 1.22) / 72);
+  const w = lines > 1 ? shape.w : Math.min(shape.w, textWidthIn(text, shape.fontSize));
+  const x = shape.x + (shape.w - w) / 2;
+  const y = shape.anchor === 't'
+    ? shape.y
+    : shape.anchor === 'b'
+      ? shape.y + shape.h - h
+      : shape.y + (shape.h - h) / 2;
+  return { x, y, w, h };
 }
 
 /** Distance from a point to the nearest edge of a shape, zero when inside it. */
@@ -150,6 +177,29 @@ function svc(id: string, label: string, x: number, y: number, parent?: string, i
 
 function grp(id: string, label: string, x: number, y: number, w: number, h: number): Node {
   return { id, type: 'groupNode', position: { x, y }, style: { width: w, height: h }, data: { label } } as Node;
+}
+
+/**
+ * Every tile carrying the SKU/region/cost sub-line. Nothing else in the corpus
+ * sets `meta`, so the second character row — the smallest type either exporter
+ * draws — was never emitted and no rule about it could ever fire.
+ */
+function metaSublineScenario(): Scenario {
+  const nodes: Node[] = [];
+  for (let i = 0; i < 9; i += 1) {
+    const node = svc(`m${i}`, `Azure Service ${i}`, (i % 3) * 260, Math.floor(i / 3) * 200);
+    Object.assign(node.data as Record<string, unknown>, {
+      sku: i % 2 ? 'Standard_D4s_v5' : 'P1v3',
+      region: 'japaneast',
+      pricing: { estimatedCost: 128.4, quantity: 1, region: 'japaneast' },
+    });
+    nodes.push(node);
+  }
+  const edges: Edge[] = [];
+  for (let i = 1; i < 9; i += 1) {
+    edges.push({ id: `c${i}`, source: `m${i - 1}`, target: `m${i}`, label: 'マネージド ID で参照系を照会します', data: { stepNumber: i, stepDescription: `手順 ${i}` } } as Edge);
+  }
+  return { id: 'meta-subline', nodes, edges };
 }
 
 /**
@@ -408,6 +458,70 @@ function gridFan3Scenario(): Scenario {
  * there is no clear air anywhere for anything to escape into, and the fan is
  * deep enough that its ladder is taller than the row it stands in.
  */
+/**
+ * The reviewer's caption fixture: a plain 5x5 grid on a 210x140 pitch, every
+ * edge carrying the same sentence, no fan anywhere. The tight vertical pitch
+ * leaves 65px between rows, which is less than a chip is tall, so chips are
+ * pushed onto the tile below — and onto the one thing that says which service
+ * that tile is.
+ */
+/**
+ * Long names on a tight pitch. A short name is one centred line in the middle
+ * of the tile, so a chip lapping the tile's edge misses the words entirely; a
+ * name that wraps to three lines fills the tile, and then the same lap lands
+ * squarely on the letters. This is the case where "the chip is only 8% over
+ * the tile" and "the chip is sitting on the name" are the same event.
+ */
+function longNameGridScenario(): Scenario {
+  const nodes: Node[] = [];
+  const names = [
+    'Azure Kubernetes Service 本番クラスター',
+    'Azure Database for PostgreSQL フレキシブル サーバー',
+    'Azure Container Registry プレミアム',
+    'Microsoft Entra ID ワークロード ID',
+  ];
+  for (let r = 0; r < 4; r += 1) {
+    for (let c = 0; c < 4; c += 1) nodes.push(svc(`n${r}${c}`, names[(r + c) % names.length], c * 205, r * 135));
+  }
+  const edges: Edge[] = [];
+  let step = 0;
+  for (let r = 0; r < 4; r += 1) {
+    for (let c = 0; c + 1 < 4; c += 1) {
+      step += 1;
+      edges.push({ id: `lh${r}${c}`, source: `n${r}${c}`, target: `n${r}${c + 1}`, label: '注文ドキュメントを書き込みます', data: { stepNumber: step, stepDescription: `手順 ${step}` } } as Edge);
+    }
+  }
+  for (let r = 0; r + 1 < 4; r += 1) {
+    for (let c = 0; c < 4; c += 1) {
+      step += 1;
+      edges.push({ id: `lv${r}${c}`, source: `n${r}${c}`, target: `n${r + 1}${c}`, label: '参照系を照会します', data: { stepNumber: step, stepDescription: `手順 ${step}` } } as Edge);
+    }
+  }
+  return { id: 'long-names-tight', nodes, edges };
+}
+
+function grid5x5CaptionScenario(): Scenario {
+  const nodes: Node[] = [];
+  for (let r = 0; r < 5; r += 1) {
+    for (let c = 0; c < 5; c += 1) nodes.push(svc(`g${r}${c}`, `Azure Service ${r}${c}`, c * 210, r * 140));
+  }
+  const edges: Edge[] = [];
+  let step = 0;
+  for (let r = 0; r < 5; r += 1) {
+    for (let c = 0; c + 1 < 5; c += 1) {
+      step += 1;
+      edges.push({ id: `h${r}${c}`, source: `g${r}${c}`, target: `g${r}${c + 1}`, label: 'writes order documents to Cosmos DB', data: { stepNumber: step, stepDescription: `Step ${step}` } } as Edge);
+    }
+  }
+  for (let r = 0; r + 1 < 5; r += 1) {
+    for (let c = 0; c < 5; c += 1) {
+      step += 1;
+      edges.push({ id: `v${r}${c}`, source: `g${r}${c}`, target: `g${r + 1}${c}`, label: 'writes order documents to Cosmos DB', data: { stepNumber: step, stepDescription: `Step ${step}` } } as Edge);
+    }
+  }
+  return { id: 'grid5x5-captions', nodes, edges };
+}
+
 function fan8Tight5x5Scenario(): Scenario {
   const nodes: Node[] = [];
   for (let r = 0; r < 5; r += 1) {
@@ -723,6 +837,45 @@ function countByName(shapes: { name: string }[]): Map<string, number> {
 }
 
 /**
+ * Put an icon on every tile before the conversion is measured.
+ *
+ * Nothing rasterizes under Node — `canRasterize()` wants `document` and
+ * `Image` — so a generated deck reaches the audit with zero `icon-*` shapes.
+ * That is not the deck a user exports, and it silently switched off the whole
+ * grouping half of the conversion: with no icon there is nothing to group, so
+ * the group frame, the child z-order, and the question of gluing a connector
+ * to a shape nested inside a `<p:grpSp>` were all scored at 0% coverage.
+ *
+ * The geometry mirrors `pptxExporter`'s own `addImage` call: square, centred
+ * across the tile, sitting just below its top edge.
+ */
+function withSynthesizedIcons(slideXml: string): string {
+  const tiles = parseShapes(slideXml).filter(
+    (s) => s.name.startsWith('service-') && !s.name.includes('label') && !s.name.includes('meta'),
+  );
+  if (tiles.length === 0) return slideXml;
+  const usedIds = [...slideXml.matchAll(/<p:cNvPr id="(\d+)"/g)].map((m) => +m[1]);
+  let nextId = Math.max(0, ...usedIds) + 1;
+  const pics: string[] = [];
+  for (const tile of tiles) {
+    const size = Math.min(0.6, tile.w * 0.3, tile.h * 0.42);
+    if (size <= 0) continue;
+    const emu = (v: number): number => Math.round(v * EMU_PER_INCH);
+    pics.push(
+      `<p:pic><p:nvPicPr><p:cNvPr id="${nextId}" name="icon-${tile.name.slice('service-'.length)}"/>`
+      + `<p:cNvPicPr><a:picLocks noChangeAspect="1"/></p:cNvPicPr><p:nvPr/></p:nvPicPr>`
+      + `<p:blipFill><a:blip r:embed="rId2"/><a:stretch><a:fillRect/></a:stretch></p:blipFill>`
+      + `<p:spPr><a:xfrm><a:off x="${emu(tile.x + (tile.w - size) / 2)}" y="${emu(tile.y + tile.h * 0.06)}"/>`
+      + `<a:ext cx="${emu(size)}" cy="${emu(size)}"/></a:xfrm>`
+      + `<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr></p:pic>`,
+    );
+    nextId += 1;
+  }
+  if (pics.length === 0) return slideXml;
+  return slideXml.replace('</p:spTree>', `${pics.join('')}</p:spTree>`);
+}
+
+/**
  * The deck is repaired into real PowerPoint objects after pptxgenjs has
  * written it — connectors glued to the services they join, service names
  * inside their tiles, tiles grouped with their icons. The rules the drawing is
@@ -732,11 +885,12 @@ function countByName(shapes: { name: string }[]): Map<string, number> {
  * The one that matters most is the last: a conversion that quietly eats a
  * service name would satisfy every structural rule perfectly.
  */
-function auditNativeConversion(allSlides: readonly string[]): { issues: string[]; glued: number; ungluable: number; groups: number } {
+function auditNativeConversion(rawSlides: readonly string[]): { issues: string[]; glued: number; ungluable: number; groups: number } {
   const issues: string[] = [];
   let glued = 0;
   let ungluable = 0;
   let groups = 0;
+  const allSlides = rawSlides.map(withSynthesizedIcons);
 
   allSlides.forEach((slideXml, index) => {
     const before = parseShapes(slideXml);
@@ -762,6 +916,47 @@ function auditNativeConversion(allSlides: readonly string[]): { issues: string[]
       else ungluable += 1;
     }
     groups += (after.match(/<p:grpSp>/g) ?? []).length;
+
+    // A group frame that does not enclose its children clips them, and a
+    // child offset that does not match the frame shifts every child by the
+    // difference. Both are silent: the XML stays well formed and the deck
+    // still opens, it just draws in the wrong place.
+    for (const group of after.matchAll(/<p:grpSp>[\s\S]*?<\/p:grpSp>/g)) {
+      const name = /<p:cNvPr id="\d+" name="([^"]*)"/.exec(group[0])?.[1] ?? 'group';
+      const frame = /<p:grpSpPr><a:xfrm><a:off x="(-?\d+)" y="(-?\d+)"\/><a:ext cx="(\d+)" cy="(\d+)"\/><a:chOff x="(-?\d+)" y="(-?\d+)"\/><a:chExt cx="(\d+)" cy="(\d+)"\/>/.exec(group[0]);
+      if (!frame) {
+        issues.push(`${where}: group "${name}" has no readable frame, so PowerPoint cannot place its children`);
+        continue;
+      }
+      const [ox, oy, cx, cy, hx, hy, hcx, hcy] = frame.slice(1).map(Number);
+      // Child coordinates are absolute only while the child origin and extent
+      // equal the frame's. Any drift here scales and translates the contents.
+      if (ox !== hx || oy !== hy || cx !== hcx || cy !== hcy) {
+        issues.push(`${where}: group "${name}" child frame ${hx},${hy} ${hcx}x${hcy} differs from its own ${ox},${oy} ${cx}x${cy}, which shifts every child`);
+      }
+      for (const child of parseShapes(group[0])) {
+        const cxEmu = child.x * EMU_PER_INCH;
+        const cyEmu = child.y * EMU_PER_INCH;
+        const slack = 0.01 * EMU_PER_INCH;
+        if (
+          cxEmu < ox - slack || cyEmu < oy - slack
+          || cxEmu + child.w * EMU_PER_INCH > ox + cx + slack
+          || cyEmu + child.h * EMU_PER_INCH > oy + cy + slack
+        ) {
+          issues.push(`${where}: group "${name}" does not enclose its child "${child.name}", which will be clipped`);
+        }
+      }
+    }
+
+    // The conversion groups a tile with its icon and also glues arrows to that
+    // tile, so most glue ends up pointing at a shape nested inside a group.
+    // If that ever stops resolving, every arrow silently detaches.
+    for (const glue of after.matchAll(/<a:(?:st|end)Cxn id="(\d+)" idx="\d+"\/>/g)) {
+      const target = new RegExp(`<p:cNvPr id="${glue[1]}" name="([^"]*)"`).exec(after)?.[1];
+      if (target && !target.startsWith('service-')) {
+        issues.push(`${where}: connector glued to "${target}", which is not a service tile`);
+      }
+    }
 
     // Nothing the reader could see may be lost by the conversion.
     for (const label of before.filter((s) => s.name.startsWith('service-label-'))) {
@@ -921,6 +1116,26 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
         const area = overlapArea(chip, tile);
         if (area > tileBudget(chip.name, tile) * tile.w * tile.h) {
           issues.push(`edge chip "${chip.text}" overlaps node "${tile.name}" by ${((area / (tile.w * tile.h)) * 100).toFixed(0)}%`);
+        }
+      }
+    }
+    // Leaning on a tile is tolerable — the reader can still see which service
+    // it is. Leaning on the tile's *name* is not, because the name is the only
+    // thing that says which service it is, and a chip is drawn on top of it in
+    // a near-solid fill. Measured against the words themselves, not the box
+    // they are laid out in: with no icon that box is nearly the whole tile, so
+    // scoring against it would just restate the tile rule at a tighter budget.
+    // This also closes the gap in "a tile with neither a name nor an icon is an
+    // issue" — a name present in the XML but painted over satisfies that rule
+    // while telling the reader nothing.
+    for (const chip of slideChips) {
+      for (const caption of slideShapes.filter((s) => s.name.startsWith('service-label-'))) {
+        const words = drawnTextRect(caption);
+        if (!words) continue;
+        const area = overlapArea(chip, words);
+        const share = area / Math.max(words.w * words.h, 1e-6);
+        if (share > 0.05) {
+          issues.push(`edge chip "${chip.text}" covers ${(share * 100).toFixed(0)}% of the name "${caption.text}"`);
         }
       }
     }
@@ -1366,7 +1581,11 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
     minFontIn = Math.min(minFontIn, +size[1]);
   }
   const minFontPt = +(minFontIn * 72).toFixed(2);
-  if (minFontPt < 5.5) issues.push(`smallest Visio font is ${minFontPt}pt (below the 5.5pt floor)`);
+  // The floor is PowerPoint's, deliberately. Both exporters draw the same
+  // drawing at the same scale, so type that is unreadable in the deck is
+  // unreadable on the sheet, and the two must not disagree about where the
+  // limit is.
+  if (minFontPt < 7) issues.push(`smallest Visio font is ${minFontPt}pt (below the 7pt floor the deck enforces)`);
 
   // Every sentence the author wrote has to survive somewhere a reader can find
   // it. The sheet drops a label it cannot write anywhere legible and hands the
@@ -1553,7 +1772,7 @@ async function main(): Promise<void> {
     compactScenario(), wideScenario(), oversizeScenario(), outlierScenario(),
     bandedScenario(), narrativeScenario(), barbellScenario(), parallelScenario(),
     ladderInGridScenario(), twinLaddersScenario(), strayLadderScenario(), legendCornerScenario(), duplicateStepsScenario(), denseZoneScenario(),
-    gridFanScenario(), gridFan3Scenario(), fan8Tight5x5Scenario(), estateChainScenario(), chain24Scenario(), tripleMutedScenario(), estate72Scenario(),
+    gridFanScenario(), gridFan3Scenario(), fan8Tight5x5Scenario(), metaSublineScenario(), grid5x5CaptionScenario(), longNameGridScenario(), estateChainScenario(), chain24Scenario(), tripleMutedScenario(), estate72Scenario(),
     await generatedScenario(), await groupedGeneratedScenario(),
   ];
   const reports: Report[] = [];

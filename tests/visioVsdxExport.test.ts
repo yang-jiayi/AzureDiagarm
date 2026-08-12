@@ -429,3 +429,33 @@ test('a label with nowhere legible to go gives its sentence to the workflow band
     assert.ok(found >= count, `the sheet says "${stem}" ${found} times but the author wrote it ${count} times`);
   }
 });
+
+test('nothing on the sheet is set smaller than the deck would set it', async () => {
+  // Both exporters draw the same drawing at the same scale, so type that is
+  // unreadable in one is unreadable in the other. The sub-line used to be set
+  // at 5.98pt on a sheet whose deck drew the same words at 9.38pt, and the
+  // floor that was supposed to catch it was 5.5pt — a bar nothing could fail.
+  const metaNodes = [0, 1, 2, 3].map((i) => {
+    const node = service(`m${i}`, `Azure Service ${i}`, (i % 2) * 260, Math.floor(i / 2) * 200);
+    Object.assign(node.data as Record<string, unknown>, {
+      sku: 'Standard_D4s_v5',
+      region: 'japaneast',
+      pricing: { estimatedCost: 128.4, quantity: 1, region: 'japaneast' },
+    });
+    return node;
+  });
+  const metaEdges = [1, 2, 3].map((i) => (
+    { id: `e${i}`, source: `m${i - 1}`, target: `m${i}`, label: '参照系を照会します', data: { stepNumber: i, stepDescription: `手順 ${i}` } } as Edge
+  ));
+  const pkg = await buildVsdxPackage(metaNodes, metaEdges, 'Contoso');
+  const xml = pkg.parts.filter((part) => /visio\/pages\/page\d+\.xml/.test(part.path))
+    .map((part) => part.data as string).join('');
+
+  const sizes = [...xml.matchAll(/<Cell N="Size" V="([\d.]+)"\/>/g)].map((m) => +m[1] * 72);
+  assert.ok(sizes.length > 0, 'no font sizes were emitted, so this test proves nothing');
+  // The SKU sub-line is the smallest type either exporter draws, so it has to
+  // be present for the floor to mean anything.
+  assert.ok(/Standard_D4s_v5/.test(xml), 'the sub-line was not drawn, so the smallest type is untested');
+  const smallest = Math.min(...sizes);
+  assert.ok(smallest >= 7, `smallest Visio font is ${smallest.toFixed(2)}pt, below the 7pt floor the deck enforces`);
+});

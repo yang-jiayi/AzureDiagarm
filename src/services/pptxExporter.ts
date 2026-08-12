@@ -1241,7 +1241,7 @@ function addNodeShape(
    * are carried by those slices, so the thumbnail shows the shapes.
    */
   thumbnail = false,
-): void {
+): { x: number; y: number; w: number; h: number } | null {
   const topLeft = placeBox(box, transform, clampTo);
   const w = topLeft.w;
   const h = topLeft.h;
@@ -1290,7 +1290,14 @@ function addNodeShape(
   const metaBand = named && showsMeta(h, px) && !!meta ? fontSize * 1.55 / 72 + 0.03 : 0;
 
   const innerW = Math.max(0.05, w - 0.06);
-  const full = truncateLabel(box.label, 40);
+  // How much of the name the tile can actually hold, rather than a flat 40
+  // cells. The flat cap clipped names a three-line tile had ample room for —
+  // "Azure Database for PostgreSQL フレキシ…" on a tile that fits the whole
+  // thing — and what it cut was not written down anywhere, so the reader had
+  // no way to recover it. Cut to the tile, and only when the tile is really
+  // too small.
+  const nameLines = Math.max(1, Math.floor((h - pad * 2 - metaBand) / ((fontSize * 1.22) / 72)));
+  const full = fitLabelToBox(box.label, innerW * nameLines, fontSize);
   // A stub gets as much of the name as fits the tile at the floor size, on as
   // many lines as the tile is tall enough for, and an ellipsis for the rest.
   const stubLines = stub
@@ -1328,12 +1335,30 @@ function addNodeShape(
   const textTop = iconSize > 0 ? topLeft.y + pad + iconSize + 0.02 : topLeft.y + pad;
   const textHeight = Math.max(0.08, topLeft.y + h - pad - metaBand - textTop);
 
+  let captionBand: { x: number; y: number; w: number; h: number } | null = null;
   if (named || stub) {
+    const boxY = stub ? topLeft.y + pad : textTop;
+    const boxH = stub ? Math.max(0.08, h - pad * 2) : textHeight;
+    // The box the words are drawn in, not the room left over for them. With no
+    // icon the leftover room is nearly the whole tile, and a caption box that
+    // claims the whole tile tells every later pass nothing: a chip weighed
+    // against it is weighed against the tile it already knew about, and a rule
+    // measuring "how much of the name is covered" is really measuring the tile.
+    // Vertically centred text inside a shrunk, centred box draws in exactly the
+    // same place, so this describes the caption without moving it.
+    const drawnH = Math.min(boxH, Math.max(0.08, (Math.max(1, labelLines) * drawnFont * 1.22) / 72));
+    const topAligned = !stub && iconSize > 0;
+    captionBand = {
+      x: topLeft.x + 0.03,
+      y: topAligned ? boxY : boxY + (boxH - drawnH) / 2,
+      w: innerW,
+      h: drawnH,
+    };
     slide.addText(label, {
       x: topLeft.x + 0.03,
-      y: stub ? topLeft.y + pad : textTop,
+      y: boxY,
       w: innerW,
-      h: stub ? Math.max(0.08, h - pad * 2) : textHeight,
+      h: boxH,
       fontSize: drawnFont,
       color: '1F2937',
       fontFace: 'Yu Gothic UI',
@@ -1361,6 +1386,7 @@ function addNodeShape(
       objectName: `service-meta-${box.id}`,
     });
   }
+  return captionBand;
 }
 
 /** The SKU · region · cost sub-line only earns its space on a legible tile. */
@@ -1594,8 +1620,14 @@ async function addEditableDiagram(
     pptx, slide, group, groups.indexOf(group), transform, clampTo,
     { here: zoneMembers(group, shownServices), all: zoneMembers(group, services) },
   ));
+  const captionBands: Obstacle[] = [];
   for (const service of shownServices) {
-    addNodeShape(pptx, slide, service, transform, service.iconPath ? icons.get(service.iconPath) : undefined, px, clampTo, thumbnail);
+    const caption = addNodeShape(pptx, slide, service, transform, service.iconPath ? icons.get(service.iconPath) : undefined, px, clampTo, thumbnail);
+    // A tile can be leaned on: the reader still sees which service it is. Its
+    // name cannot, because the name is the only thing that says so, and a chip
+    // is drawn over it at 92% opacity. Weighted far above a tile so that even
+    // a chip allowed to touch its own endpoint is pushed off the words.
+    if (caption) captionBands.push({ ...caption, weight: 12 });
   }
 
   for (const route of shownRoutes) addConnector(pptx, slide, route, transform, clampTo);
@@ -1609,7 +1641,7 @@ async function addEditableDiagram(
   // list as it is settled. Parallel edges between the same pair are staggered,
   // but the tile-avoidance walk could drag two of them back onto the same spot
   // because a chip could not see the chips already placed.
-  const chipObstacles: Obstacle[] = [...tileRects];
+  const chipObstacles: Obstacle[] = [...tileRects, ...captionBands];
   // The colour key is drawn last and is all but opaque, so anything it lands on
   // is simply gone: a numbered callout under it leaves the workflow band citing
   // a step the reader cannot find. Reserve whichever corner it will take.
@@ -2638,6 +2670,11 @@ async function downloadNativePptx(pptx: PptxGenJS, fileName: string): Promise<vo
     const repaired = await zip.generateAsync({
       type: 'blob',
       mimeType: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+      // pptxgenjs writes the package uncompressed. Once this path owns the
+      // write it may as well deflate it: measured ~9x smaller (425KB -> 46KB),
+      // which is the difference between a deck that mails and one that bounces.
+      compression: 'DEFLATE',
+      compressionOptions: { level: 6 },
     });
     const url = URL.createObjectURL(repaired);
     const link = document.createElement('a');

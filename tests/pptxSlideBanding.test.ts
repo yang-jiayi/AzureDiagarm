@@ -1527,3 +1527,31 @@ test('a ladder with nowhere honest to stand becomes numbers rather than lie', as
     assert.ok(text.includes(`${wording} ${i}`.slice(0, 12)), `the wording of fan member ${i} left the deck entirely`);
   }
 });
+
+test('a name the tile can hold is not cut short', async () => {
+  // The cap used to be a flat 40 cells regardless of the tile, so a roomy tile
+  // showed "Azure Database for PostgreSQL フレキシ…" and the rest of the name
+  // was written down nowhere at all. A tile is allowed to clip a name only
+  // when the tile genuinely cannot hold it.
+  const names = [
+    'Azure Kubernetes Service 本番クラスター',
+    'Azure Database for PostgreSQL フレキシブル サーバー',
+    'Azure Container Registry プレミアム',
+  ];
+  const nodes = names.map((name, i) => service(`s${i}`, name, i * 260, 0));
+  const edges = names.slice(1).map((_, i) => (
+    { id: `e${i}`, source: `s${i}`, target: `s${i + 1}`, label: '書き込み' } as Edge
+  ));
+  const deck = await buildDeck(nodes, edges);
+  const drawn = deck.slides
+    .flatMap((xml) => [...xml.matchAll(/<p:sp>[\s\S]*?<\/p:sp>/g)].map((m) => m[0]))
+    .filter((sp) => /name="service-label-/.test(sp))
+    .map((sp) => [...sp.matchAll(/<a:t>([\s\S]*?)<\/a:t>/g)].map((t) => t[1]).join(''));
+  assert.ok(drawn.length >= names.length, `expected a caption per service, saw ${drawn.length}`);
+  for (const name of names) {
+    assert.ok(
+      drawn.some((text) => text === name),
+      `"${name}" is not written in full anywhere; captions were ${JSON.stringify(drawn)}`,
+    );
+  }
+});

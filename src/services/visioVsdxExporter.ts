@@ -73,12 +73,20 @@ const CORNER_ROUNDING_IN = 0.08;
 /**
  * Visio font sizes are inches (1 pt = 1/72"). These match the PowerPoint export
  * at 1 : 1 — a 150 px tile is 1.56" wide, so the label reads at ~7.6 pt and the
- * SKU sub-line at ~6 pt instead of the previous near-illegible 6.5/5 pt.
+ * SKU sub-line at ~7 pt instead of the previous near-illegible 6.5/5 pt.
+ *
+ * Nothing here may fall below the legibility floor the deck enforces. The two
+ * exporters draw the same drawing at the same scale, so a size that is
+ * unreadable in one is unreadable in the other, and the sub-line used to be set
+ * at 5.98 pt — a whole point under the deck's own floor for exactly the same
+ * words on exactly the same tile.
  */
+const LEGIBLE_PT = 7;
+const LEGIBLE_IN = LEGIBLE_PT / 72;
 const LABEL_FONT_IN = 0.105;
-const META_FONT_IN = 0.083;
-const CONNECTOR_FONT_IN = 0.1;
-const LEGEND_FONT_IN = 0.1;
+const META_FONT_IN = Math.max(0.083, LEGIBLE_IN);
+const CONNECTOR_FONT_IN = Math.max(0.1, LEGIBLE_IN);
+const LEGEND_FONT_IN = Math.max(0.1, LEGIBLE_IN);
 
 /**
  * Approximate rendered width in inches. CJK glyphs occupy a full em, Latin

@@ -223,6 +223,12 @@ function connectorXml(shape: ShapeXml, tiles: ShapeXml[]): string | null {
   if (!ends) return null;
   const from = glueFor({ x: ends.x1, y: ends.y1 }, tiles);
   const to = glueFor({ x: ends.x2, y: ends.y2 }, tiles);
+  // Tiles that touch exactly share an edge, so both ends of the hop between
+  // them land on the same site of the same shape. Gluing that tells PowerPoint
+  // the arrow starts and finishes in one place, which it has no sane way to
+  // reroute, so leave the hop unglued and let it stay a plain line.
+  const sameSite = from && to && from.id === to.id && from.idx === to.idx;
+  if (sameSite) return null;
   // An unglued bent hop gains nothing from the conversion and the wrapper is
   // not free, so leave it exactly as it was.
   if (bent && !from && !to) return null;

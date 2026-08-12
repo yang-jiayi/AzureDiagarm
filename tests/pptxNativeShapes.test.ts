@@ -182,3 +182,80 @@ test('the converted package still opens and its tags balance', async () => {
   assert.equal(Object.keys(reopened.files).length, before, 'no part is lost');
   assert.ok(await reopened.file('ppt/presentation.xml')!.async('string'), 'the presentation part reads back');
 });
+
+test('two tiles that touch do not get an arrow glued to itself', async () => {
+  // Tiles 150px wide on a 150px pitch meet exactly, so the hop between them is
+  // zero-length and both of its ends land on the same site of the same shape.
+  // Gluing that tells PowerPoint the arrow starts and finishes in one place.
+  const nodes = [service('a', 'A', 0, 0), service('b', 'B', 150, 0), service('c', 'C', 300, 0)];
+  const edges = [
+    { id: 'ab', source: 'a', target: 'b', label: 'calls' },
+    { id: 'bc', source: 'b', target: 'c', label: 'calls' },
+  ] as Edge[];
+  for (const xml of await slidesOf(nodes, edges)) {
+    const out = nativizeSlideXml(xml);
+    for (const cxn of out.matchAll(/<p:cxnSp>[\s\S]*?<\/p:cxnSp>/g)) {
+      const start = /<a:stCxn id="(\d+)" idx="(\d+)"\/>/.exec(cxn[0]);
+      const end = /<a:endCxn id="(\d+)" idx="(\d+)"\/>/.exec(cxn[0]);
+      if (!start || !end) continue;
+      assert.ok(
+        !(start[1] === end[1] && start[2] === end[2]),
+        `connector glued to shape ${start[1]} site ${start[2]} at both ends`,
+      );
+    }
+  }
+});
+
+test('a group holds everything it claims to hold, at the coordinates it was drawn at', async () => {
+  // Nothing rasterizes under Node, so a generated deck has no icon to group
+  // with. Synthesise the picture a browser would emit, which is the only
+  // configuration a user ever exports, and check the frame that results.
+  const { nodes, edges } = chain(6);
+  const slides = await slidesOf(nodes, edges);
+  let checked = 0;
+  for (const xml of slides) {
+    const tiles = [...xml.matchAll(/<p:sp>[\s\S]*?<\/p:sp>/g)]
+      .map((m) => m[0])
+      .filter((sp) => /name="service-[^"]*"/.test(sp) && !/name="service-(label|meta)-/.test(sp));
+    let nextId = Math.max(...[...xml.matchAll(/<p:cNvPr id="(\d+)"/g)].map((m) => +m[1])) + 1;
+    const pics = tiles.map((sp) => {
+      const id = /name="service-([^"]*)"/.exec(sp)![1];
+      const off = /<a:off x="(-?\d+)" y="(-?\d+)"\/>/.exec(sp)!;
+      const ext = /<a:ext cx="(\d+)" cy="(\d+)"\/>/.exec(sp)!;
+      const size = Math.round(Math.min(+ext[1] * 0.3, +ext[2] * 0.42));
+      const pic = `<p:pic><p:nvPicPr><p:cNvPr id="${nextId}" name="icon-${id}"/>`
+        + `<p:cNvPicPr><a:picLocks noChangeAspect="1"/></p:cNvPicPr><p:nvPr/></p:nvPicPr>`
+        + `<p:blipFill><a:blip r:embed="rId2"/><a:stretch><a:fillRect/></a:stretch></p:blipFill>`
+        + `<p:spPr><a:xfrm><a:off x="${+off[1] + Math.round((+ext[1] - size) / 2)}" y="${+off[2] + Math.round(+ext[2] * 0.06)}"/>`
+        + `<a:ext cx="${size}" cy="${size}"/></a:xfrm>`
+        + `<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr></p:pic>`;
+      nextId += 1;
+      return pic;
+    });
+    if (pics.length === 0) continue;
+    const out = nativizeSlideXml(xml.replace('</p:spTree>', `${pics.join('')}</p:spTree>`));
+
+    for (const group of out.matchAll(/<p:grpSp>[\s\S]*?<\/p:grpSp>/g)) {
+      const frame = /<p:grpSpPr><a:xfrm><a:off x="(-?\d+)" y="(-?\d+)"\/><a:ext cx="(\d+)" cy="(\d+)"\/><a:chOff x="(-?\d+)" y="(-?\d+)"\/><a:chExt cx="(\d+)" cy="(\d+)"\/>/.exec(group[0]);
+      assert.ok(frame, 'group has no readable frame');
+      const [ox, oy, cx, cy, hx, hy, hcx, hcy] = frame!.slice(1).map(Number);
+      // Child coordinates stay absolute only while these agree. Any drift
+      // silently translates and rescales everything inside the group.
+      assert.deepEqual([hx, hy, hcx, hcy], [ox, oy, cx, cy], 'group child frame differs from its own frame');
+
+      for (const child of group[0].matchAll(/<p:(sp|pic)>[\s\S]*?<\/p:\1>/g)) {
+        const off = /<a:off x="(-?\d+)" y="(-?\d+)"\/>/.exec(child[0]);
+        const ext = /<a:ext cx="(\d+)" cy="(\d+)"\/>/.exec(child[0]);
+        if (!off || !ext) continue;
+        const slack = 9144; // 0.01in
+        assert.ok(
+          +off[1] >= ox - slack && +off[2] >= oy - slack
+            && +off[1] + +ext[1] <= ox + cx + slack && +off[2] + +ext[2] <= oy + cy + slack,
+          'group does not enclose a child, which clips it',
+        );
+        checked += 1;
+      }
+    }
+  }
+  assert.ok(checked > 0, 'no grouped children were checked, so this test proves nothing');
+});
