@@ -332,7 +332,7 @@ interface ReferenceArchitecture {
 }
 
 Service "category" MUST be one of:
-"app services","databases","storage","networking","compute","containers","ai + machine learning","analytics","identity","monitor","iot","integration","devops","security","web","management + governance","fabric","power platform","dynamics 365","general"
+"app services","databases","storage","networking","compute","containers","ai + machine learning","analytics","identity","monitor","iot","integration","devops","security","web","management + governance","fabric","power platform","dynamics 365","microsoft 365","general"
 
 Rules:
 1. Use 3–6 stages. Order them left-to-right by data flow (Ingest → Process → Store → Model → Serve, or domain-equivalent).

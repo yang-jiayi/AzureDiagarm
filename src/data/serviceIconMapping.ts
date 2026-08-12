@@ -18,7 +18,7 @@ export interface ServiceIconMapping {
   /** Icon filename (without path or extension) */
   iconFile: string;
   /** Category/folder in icon library */
-  category: 'ai + machine learning' | 'app services' | 'compute' | 'databases' | 'storage' | 'networking' | 'web' | 'analytics' | 'containers' | 'devops' | 'integration' | 'identity' | 'management + governance' | 'iot' | 'monitor' | 'security' | 'fabric' | 'power platform' | 'dynamics 365' | 'other';
+  category: 'ai + machine learning' | 'app services' | 'compute' | 'databases' | 'storage' | 'networking' | 'web' | 'analytics' | 'containers' | 'devops' | 'integration' | 'identity' | 'management + governance' | 'iot' | 'monitor' | 'security' | 'fabric' | 'power platform' | 'dynamics 365' | 'microsoft 365' | 'other';
   /** Whether we have real pricing data for this service */
   hasPricingData: boolean;
   /** Service name used in pricing files (if hasPricingData is true) */

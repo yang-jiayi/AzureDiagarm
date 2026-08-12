@@ -65,6 +65,60 @@ test('deduplicatePaletteIcons prefers the category matching the curated palette'
   assert.equal(result.icons[0]?.id, 'monitor/application-insights');
 });
 
+test('a generic concept shape never replaces the official icon of the same name', () => {
+  // The Microsoft 365 package ships reusable Fluent shapes under names such as
+  // "Search" and "Apps". Those names belong to real Azure and Fabric assets.
+  const result = deduplicatePaletteIcons([
+    {
+      id: 'microsoft 365/m365-search',
+      name: 'Search',
+      category: 'microsoft 365',
+      paletteCategory: 'microsoft-365',
+      path: '/microsoft 365/m365-search.svg',
+      source: 'microsoft-365',
+      generic: true,
+    },
+    {
+      id: 'general/10834-icon-service-Search',
+      name: 'Search',
+      category: 'general',
+      paletteCategory: 'azure-general',
+      path: '/general/10834-icon-service-Search.svg',
+      source: 'official-azure',
+    },
+  ]);
+
+  assert.deepEqual(result.icons.map(icon => icon.id), ['general/10834-icon-service-Search']);
+  assert.equal(
+    result.canonicalIdById.get('microsoft 365/m365-search'),
+    'general/10834-icon-service-Search',
+  );
+});
+
+test('a named Microsoft 365 workload still wins against a generic shape', () => {
+  const result = deduplicatePaletteIcons([
+    {
+      id: 'general/10800-icon-service-Teams',
+      name: 'Microsoft Teams',
+      category: 'general',
+      paletteCategory: 'azure-general',
+      path: '/general/10800-icon-service-Teams.svg',
+      source: 'official-azure',
+      generic: true,
+    },
+    {
+      id: 'microsoft 365/m365-app-teams',
+      name: 'Microsoft Teams',
+      category: 'microsoft 365',
+      paletteCategory: 'microsoft-365',
+      path: '/microsoft 365/m365-app-teams.svg',
+      source: 'microsoft-365',
+    },
+  ]);
+
+  assert.deepEqual(result.icons.map(icon => icon.id), ['microsoft 365/m365-app-teams']);
+});
+
 test('splitIconSearchHighlight marks every matching search token without changing text', () => {
   const segments = splitIconSearchHighlight('Front Door and CDN Profiles', 'front CDN');
   assert.equal(segments.map(segment => segment.text).join(''), 'Front Door and CDN Profiles');

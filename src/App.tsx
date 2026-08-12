@@ -6478,7 +6478,7 @@ function App() {
   const commandPaletteCommands: CommandPaletteAction[] = [
     {
       id: 'open-services',
-      label: localize(language, { en: 'Open Azure services', ja: 'Azure サービスを開く' }),
+      label: localize(language, { en: 'Open Microsoft services', ja: 'Microsoft サービスを開く' }),
       description: localize(language, {
         en: 'Browse the complete service catalog',
         ja: 'サービス カタログ全体を参照します',

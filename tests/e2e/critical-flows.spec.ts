@@ -1348,7 +1348,7 @@ test('compact chat and services panels provide dismissible backdrops', async ({ 
 
   const paletteBackdrop = page.locator('.palette-backdrop');
   await expect(paletteBackdrop).toBeVisible();
-  await expect(page.getByRole('dialog', { name: 'Azure Services' })).toBeVisible();
+  await expect(page.getByRole('dialog', { name: 'Microsoft Services' })).toBeVisible();
   await expect(page.locator('.app-header')).toHaveAttribute('inert', '');
   await expect(page.locator('.canvas-container')).toHaveAttribute('inert', '');
   const backdropBounds = await paletteBackdrop.boundingBox();
@@ -1359,7 +1359,7 @@ test('compact chat and services panels provide dismissible backdrops', async ({ 
       y: Math.max(1, (backdropBounds?.height || 1) / 2),
     },
   });
-  await expect(page.getByRole('dialog', { name: 'Azure Services' })).toBeHidden();
+  await expect(page.getByRole('dialog', { name: 'Microsoft Services' })).toBeHidden();
   await expect(servicesButton).toBeFocused();
 
   await mobileBar.getByRole('button', { name: 'Search' }).click();

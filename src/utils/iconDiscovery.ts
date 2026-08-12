@@ -6,6 +6,7 @@ export type PaletteIconSource =
   | 'fabric'
   | 'power-platform'
   | 'dynamics-365'
+  | 'microsoft-365'
   | 'supplemental';
 
 interface PaletteIconCandidate {
@@ -15,6 +16,12 @@ interface PaletteIconCandidate {
   paletteCategory: string;
   path: string;
   source: PaletteIconSource;
+  /**
+   * Reusable concept shape rather than a named product. The Microsoft 365
+   * package ships these under deliberately generic names such as "Search",
+   * "Code" and "Apps", which collide with real Azure and Fabric assets.
+   */
+  generic?: boolean;
 }
 
 export interface HighlightSegment {
@@ -42,8 +49,10 @@ const SOURCE_HINTS: Record<string, string[]> = {
   storage: ['storage'],
   migration: ['migration'],
   fabric: ['fabric'],
+  'microsoft-copilot': ['power platform', 'microsoft 365', 'fabric', 'ai machine learning'],
   'power-platform': ['power platform'],
   'dynamics-365': ['dynamics 365'],
+  'microsoft-365': ['microsoft 365'],
 };
 
 export function normalizeIconDiscoveryText(value: string): string {
@@ -65,7 +74,11 @@ function candidateScore(icon: PaletteIconCandidate): number {
       ? 25
       : icon.source === 'fabric'
         ? 20
-        : 10;
+        : icon.source === 'microsoft-365'
+          // Concept symbols are reusable shapes, so several of them match any
+          // given search. They must never outrank a product logo.
+          ? 15
+          : 10;
 
   if (category === name) score += 120;
   if (hints.includes(category)) score += 80;
@@ -88,6 +101,10 @@ export function deduplicatePaletteIcons<T extends PaletteIconCandidate>(
   const canonicalIdById = new Map<string, string>();
   const uniqueIcons = [...groups.values()].map((group) => {
     const canonical = group.reduce((best, candidate) => {
+      // A generic concept shape never represents a name that a named product or
+      // an official asset already owns, however well it scores on category hints.
+      const genericDifference = Number(best.generic ?? false) - Number(candidate.generic ?? false);
+      if (genericDifference !== 0) return genericDifference > 0 ? candidate : best;
       const scoreDifference = candidateScore(candidate) - candidateScore(best);
       if (scoreDifference > 0) return candidate;
       if (scoreDifference < 0) return best;

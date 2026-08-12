@@ -5,20 +5,30 @@
     {
       "family": "power-platform",
       "sourcePage": "https://learn.microsoft.com/en-us/power-platform/guidance/icons",
+      "released": "2025-12",
       "packageUrl": "https://download.microsoft.com/download/498606aa-6d27-4f13-aa5c-1401078c153b/Power-Platform-icons-scalable.zip",
       "packageSha256": "d5abafebbce553690caf7b42dd14b8335bf2c0dfc09f46bd9ac8041187da2c3a"
     },
     {
       "family": "dynamics-365",
       "sourcePage": "https://learn.microsoft.com/en-us/dynamics365/get-started/icons",
+      "released": "2025-12",
       "packageUrl": "https://download.microsoft.com/download/498606aa-6d27-4f13-aa5c-1401078c153b/Dynamics-365-icons-scalable.zip",
       "packageSha256": "f5f4d96aaa637b71e47136cc74e9a4a69b8a81f7e43c1c5756f00b5cea9ffe02"
+    },
+    {
+      "family": "microsoft-365",
+      "sourcePage": "https://learn.microsoft.com/en-us/previous-versions/microsoft-365/solutions/architecture-icons-templates",
+      "released": "2024-04",
+      "packageUrl": "https://go.microsoft.com/fwlink/?linkid=869455",
+      "packageSha256": "522c4d43cf98a00380b0836f9ec6e06d81fb99758b258c49b6e5f385c05c547a"
     }
   ],
   "terms": "Microsoft permits these icons in architectural diagrams, training materials, or documentation. Do not crop, flip, rotate, or distort them, and do not use them to represent a non-Microsoft product.",
-  "iconCount": 24,
+  "iconCount": 229,
   "categories": {
     "dynamics 365": 16,
+    "microsoft 365": 205,
     "power platform": 8
   },
   "files": [
@@ -133,6 +143,1441 @@
       "family": "dynamics-365",
       "sourceAsset": "Dynamics 365 Product Family Icons/Dynamics365_scalable.svg",
       "sha256": "5017e931a0f5e724247a9c49e15e22bb22e252d5343e0a40f7f38366d2aeb388"
+    },
+    {
+      "path": "microsoft 365/m365-app-admin-center.svg",
+      "serviceName": "Microsoft 365 Admin Center",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Dark Blue Icon/Toolbox.svg",
+      "sha256": "e112ecc7041b79f014e15aa935f0c97138ec8a7994bbc96d9d1ca7584a729bca"
+    },
+    {
+      "path": "microsoft 365/m365-app-bookings.svg",
+      "serviceName": "Microsoft Bookings",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Dark Blue Icon/Calendar Month.svg",
+      "sha256": "49c2186348a175efa7de1461e1eef16defd143bf4c5aa0ec1df7b67833d2e5ae"
+    },
+    {
+      "path": "microsoft 365/m365-app-clipchamp.svg",
+      "serviceName": "Microsoft Clipchamp",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Dark Blue Icon/Video.svg",
+      "sha256": "161d8c8ddab97143744754c7e90051c09f1c2b3227743b89e320939525331cab"
+    },
+    {
+      "path": "microsoft 365/m365-app-copilot.svg",
+      "serviceName": "Microsoft 365 Copilot",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Dark Blue Icon/Bot.svg",
+      "sha256": "0cdd0e3888c6df1e349e1632e699059609b4c20c83174d6ee4155e5db89250d5"
+    },
+    {
+      "path": "microsoft 365/m365-app-defender-office-365.svg",
+      "serviceName": "Microsoft Defender for Office 365",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Dark Blue Icon/Shield Error.svg",
+      "sha256": "ca15ec2d41ef2e9115ea990aca77852852efcf196f0f16fa751fcba0f70a9434"
+    },
+    {
+      "path": "microsoft 365/m365-app-defender-xdr.svg",
+      "serviceName": "Microsoft Defender XDR",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Dark Blue Icon/Radar.svg",
+      "sha256": "182fb3e815d07e6f8989d688d8f2eb9acb1650a28f2bd377e924fb1b6ea2e5ea"
+    },
+    {
+      "path": "microsoft 365/m365-app-excel.svg",
+      "serviceName": "Microsoft Excel",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Dark Blue Icon/Data Bar Vertical.svg",
+      "sha256": "2659fb496ea07ffad11573f182ae338aba7695adfacf9dfee91f4940de0c1338"
+    },
+    {
+      "path": "microsoft 365/m365-app-exchange-online.svg",
+      "serviceName": "Exchange Online",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Dark Blue Icon/Mail.svg",
+      "sha256": "5218575a7f5fb85318d3e230c9429e15a47c8fd9cbf51a8f18eb9af1d9bf72d2"
+    },
+    {
+      "path": "microsoft 365/m365-app-forms.svg",
+      "serviceName": "Microsoft Forms",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Dark Blue Icon/Clipboard Task List.svg",
+      "sha256": "16ef02ede540521d6cc2ec31d0d0a3dc2488b81e3c5ae9be2cf66260346ea9b2"
+    },
+    {
+      "path": "microsoft 365/m365-app-graph-powershell.svg",
+      "serviceName": "Microsoft Graph PowerShell",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Dark Blue Icon/Script.svg",
+      "sha256": "6503243ef254fff269f886d610558e1a3b980088aee68de0d7dbcc24802ec713"
+    },
+    {
+      "path": "microsoft 365/m365-app-graph.svg",
+      "serviceName": "Microsoft Graph",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Dark Blue Icon/Layer Diagonal.svg",
+      "sha256": "6598548d64c85adff51d3f103781d0c5c7116b95b5ddad2b2f864395c85cfeb4"
+    },
+    {
+      "path": "microsoft 365/m365-app-intune.svg",
+      "serviceName": "Microsoft Intune",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Dark Blue Icon/Phone Desktop.svg",
+      "sha256": "40916929afda6f2649e38e2e1f9b92613d7beb585b066f6fb4a8b23976d2eda8"
+    },
+    {
+      "path": "microsoft 365/m365-app-lists.svg",
+      "serviceName": "Microsoft Lists",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Dark Blue Icon/Document Bullet List.svg",
+      "sha256": "bc160f6e953c8c8de08cd25d5d7bfe958ec2362555c0327b8214b4d126679ff7"
+    },
+    {
+      "path": "microsoft 365/m365-app-loop.svg",
+      "serviceName": "Microsoft Loop",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Dark Blue Icon/Shapes Three.svg",
+      "sha256": "f1561419846daf4033e250b2112f0877f546f14c963a39c08143260152e49273"
+    },
+    {
+      "path": "microsoft 365/m365-app-microsoft-365.svg",
+      "serviceName": "Microsoft 365",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Dark Blue Icon/Grid Circles.svg",
+      "sha256": "3b4fa6750ea52b08129f72c94117424f2390d23ed52bfe9ee0e058368922e0ae"
+    },
+    {
+      "path": "microsoft 365/m365-app-onedrive.svg",
+      "serviceName": "OneDrive for Business",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Dark Blue Icon/Cloud Arrow Up.svg",
+      "sha256": "3a9315752c181e34bd4919ff20151ef49bfc3a38fa794413dfecf08481a08f29"
+    },
+    {
+      "path": "microsoft 365/m365-app-onenote.svg",
+      "serviceName": "Microsoft OneNote",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Dark Blue Icon/Notebook.svg",
+      "sha256": "849be9f75ce7b6d32a853e602547bab1073e2c155d0670373c103a67d39faa34"
+    },
+    {
+      "path": "microsoft 365/m365-app-outlook.svg",
+      "serviceName": "Microsoft Outlook",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Dark Blue Icon/Mail Read.svg",
+      "sha256": "cb460919dec5d3af30b71771935fe087826ccbab6df2d7816d5dcb55310e0b6e"
+    },
+    {
+      "path": "microsoft 365/m365-app-planner.svg",
+      "serviceName": "Microsoft Planner",
+      "family": "microsoft-365",
+      "sourceAsset": "Planner Green/48x48 SVG Icons/Ribbon_Planner_Light.svg",
+      "sha256": "9aed5e836ce3a0ec88026b0fa5152a1f1587bcc2a7fd5fd9301efdbb4f5d72b8"
+    },
+    {
+      "path": "microsoft 365/m365-app-powerpoint.svg",
+      "serviceName": "Microsoft PowerPoint",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Dark Blue Icon/Slide Layout.svg",
+      "sha256": "c261a0da664eefc6d434a8e39660c52ae0c6fd8067e16bbe8b2269802290565f"
+    },
+    {
+      "path": "microsoft 365/m365-app-project.svg",
+      "serviceName": "Microsoft Project",
+      "family": "microsoft-365",
+      "sourceAsset": "Project Green/48x48 SVG Icons/Text_Bullet_List_Square_Light.svg",
+      "sha256": "a7ffb625893da9d4858c8c835126b0f1b6d81ddbb329acdde5e885083b74107d"
+    },
+    {
+      "path": "microsoft 365/m365-app-purview-compliance-manager.svg",
+      "serviceName": "Microsoft Purview Compliance Manager",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Dark Blue Icon/Certificate.svg",
+      "sha256": "2e46399dbae8449a1a10d96a2e7eee685be9f9e32bae50979bd548af4c1d77d0"
+    },
+    {
+      "path": "microsoft 365/m365-app-purview-dlp.svg",
+      "serviceName": "Microsoft Purview Data Loss Prevention",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Dark Blue Icon/Document Key.svg",
+      "sha256": "0ef28a23f5461d1ba9102a19c1178543ccde870f4ee83fc3b5144e720e284d4d"
+    },
+    {
+      "path": "microsoft 365/m365-app-purview-information-protection.svg",
+      "serviceName": "Microsoft Purview Information Protection",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Dark Blue Icon/Lock Shield.svg",
+      "sha256": "950dc267333e6a0f6ece4675998b7b850ec8b7bcbe5a6bac5e0beb4bbd20c77d"
+    },
+    {
+      "path": "microsoft 365/m365-app-search.svg",
+      "serviceName": "Microsoft Search",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Dark Blue Icon/Search.svg",
+      "sha256": "067424bea627a6e78c02efaf62551ca9013e3b0fb879beb5a1d0876bc9b98ba1"
+    },
+    {
+      "path": "microsoft 365/m365-app-sharepoint.svg",
+      "serviceName": "SharePoint Online",
+      "family": "microsoft-365",
+      "sourceAsset": "SharePoint Teal/48x48 SVG Icon/Organization_Light.svg",
+      "sha256": "b121ab7de3cf762240163171809ecfd053f4411b00db1cc875fa4a1be1d7c411"
+    },
+    {
+      "path": "microsoft 365/m365-app-stream.svg",
+      "serviceName": "Microsoft Stream",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Dark Blue Icon/Filmstrip Play.svg",
+      "sha256": "2c9a9687185098535af748f4d58e702371d98c3af91a162d422fe3182bacbd09"
+    },
+    {
+      "path": "microsoft 365/m365-app-sway.svg",
+      "serviceName": "Microsoft Sway",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Dark Blue Icon/Presenter.svg",
+      "sha256": "d21ec5c871d23800038bded0340beeaf03ae9afd9831fdc0927c25df1e948bcb"
+    },
+    {
+      "path": "microsoft 365/m365-app-teams-channel.svg",
+      "serviceName": "Microsoft Teams Channel",
+      "family": "microsoft-365",
+      "sourceAsset": "Teams Purple/48x48 Light Purple Icon/People Team.svg",
+      "sha256": "6530001fd8fdc93368ff094a722ec69646a6a4b0be6f438e1d5d22aa7f0d5793"
+    },
+    {
+      "path": "microsoft 365/m365-app-teams-chat.svg",
+      "serviceName": "Microsoft Teams Chat",
+      "family": "microsoft-365",
+      "sourceAsset": "Teams Purple/48x48 Light Purple Icon/Chat Multiple.svg",
+      "sha256": "70f1ffa2930b1ae55f95da879aa354bb91bb3af70029f9a0c330e9e771205b4f"
+    },
+    {
+      "path": "microsoft 365/m365-app-teams-meeting.svg",
+      "serviceName": "Microsoft Teams Meeting",
+      "family": "microsoft-365",
+      "sourceAsset": "Teams Purple/48x48 Light Purple Icon/Share Screen Person.svg",
+      "sha256": "f8f0ab7b4a770cd6095d8ba7fa8337026b18ebe0166bded548a885b865783967"
+    },
+    {
+      "path": "microsoft 365/m365-app-teams-phone.svg",
+      "serviceName": "Microsoft Teams Phone",
+      "family": "microsoft-365",
+      "sourceAsset": "Teams Purple/48x48 Light Purple Icon/Call.svg",
+      "sha256": "bc57c868713da9163f2f01cad1337563582757d395d262021635f01251965ce4"
+    },
+    {
+      "path": "microsoft 365/m365-app-teams-rooms.svg",
+      "serviceName": "Microsoft Teams Rooms",
+      "family": "microsoft-365",
+      "sourceAsset": "Teams Purple/48x48 Light Purple Icon/Presenter.svg",
+      "sha256": "d389d2ae5154c4600f3ff5fcd98fb0291b025b1977fa6141ffa97b3fb837415e"
+    },
+    {
+      "path": "microsoft 365/m365-app-teams-shifts.svg",
+      "serviceName": "Microsoft Teams Shifts",
+      "family": "microsoft-365",
+      "sourceAsset": "Teams Purple/48x48 Light Purple Icon/Shifts Activity.svg",
+      "sha256": "7551306176ede7ff01a4fe281a9b56218ecbd92cec3716f4ca5a1210162ec57e"
+    },
+    {
+      "path": "microsoft 365/m365-app-teams.svg",
+      "serviceName": "Microsoft Teams",
+      "family": "microsoft-365",
+      "sourceAsset": "Teams Purple/Building People_Teams_Light.svg",
+      "sha256": "01713b9db23f73a1dfebeb17ff9e861338ba86f363065fa65ab974952056e01c"
+    },
+    {
+      "path": "microsoft 365/m365-app-tenant.svg",
+      "serviceName": "Microsoft 365 Tenant",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Dark Blue Icon/Building Cloud.svg",
+      "sha256": "6ba47fbcf0267904e0b2de90b97d8561b8b85e305511b5d53aa9f40424014f47"
+    },
+    {
+      "path": "microsoft 365/m365-app-to-do.svg",
+      "serviceName": "Microsoft To Do",
+      "family": "microsoft-365",
+      "sourceAsset": "Planner Green/48x48 SVG Icons/Task_List_Square_Light.svg",
+      "sha256": "0f7490cbad06083ce874b6bf1e2de5f34839660728d36ddcd977da74cd880fa3"
+    },
+    {
+      "path": "microsoft 365/m365-app-viva-connections.svg",
+      "serviceName": "Microsoft Viva Connections",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Dark Blue Icon/Megaphone Loud.svg",
+      "sha256": "0ad9110b7fc75fd346c4c9dc3870edd0e44489094b5fe7e75f09b16c3e9599a5"
+    },
+    {
+      "path": "microsoft 365/m365-app-viva-engage.svg",
+      "serviceName": "Microsoft Viva Engage",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Dark Blue Icon/People Community.svg",
+      "sha256": "ca702f08beada14f2e087e548b24f0d59cce12c618ad2fdd94a420bd6ca7355f"
+    },
+    {
+      "path": "microsoft 365/m365-app-viva-insights.svg",
+      "serviceName": "Microsoft Viva Insights",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Dark Blue Icon/Heart Pulse.svg",
+      "sha256": "297a7e7a509043babb790d78d76c896e499e26c0e6b550bc0836c2ad2af051c8"
+    },
+    {
+      "path": "microsoft 365/m365-app-viva-learning.svg",
+      "serviceName": "Microsoft Viva Learning",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Dark Blue Icon/Hat Graduation.svg",
+      "sha256": "c17560f2b325b87248adb1ce87bbe3f5d3d0f2097e335450e49a3f2518f8688f"
+    },
+    {
+      "path": "microsoft 365/m365-app-whiteboard.svg",
+      "serviceName": "Microsoft Whiteboard",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Dark Blue Icon/Edit.svg",
+      "sha256": "fc393e5117eb94d526a6d93cc1fdb43b40ab7bab66cd2441b8ec4220004e9d1e"
+    },
+    {
+      "path": "microsoft 365/m365-app-windows-365.svg",
+      "serviceName": "Windows 365",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Dark Blue Icon/Cloud Desktop.svg",
+      "sha256": "199ff5c4e945870d56e37832d6564b59c07bb854eb1672bf6a680211023e5873"
+    },
+    {
+      "path": "microsoft 365/m365-app-word.svg",
+      "serviceName": "Microsoft Word",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Dark Blue Icon/Document Text.svg",
+      "sha256": "1a943b9b6ed4332b9056b3829d3a1d5ea2e6ff01f11a51002eb1ceac147f9e2d"
+    },
+    {
+      "path": "microsoft 365/m365-apps-list-detail.svg",
+      "serviceName": "Microsoft 365 Apps List Detail",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Apps List Detail.svg",
+      "sha256": "184ba62a6247e081a1ad6895526160ab86cf88dbadc4e9647b1eb66f285251ba"
+    },
+    {
+      "path": "microsoft 365/m365-apps.svg",
+      "serviceName": "Microsoft 365 Apps",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Apps.svg",
+      "sha256": "220f9499115d5ad76133fc2c4f379e466a9cede9b5562af082b358e6e1ea36b8"
+    },
+    {
+      "path": "microsoft 365/m365-arrow-circle-left.svg",
+      "serviceName": "Microsoft 365 Arrow Circle Left",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Arrow Circle Left.svg",
+      "sha256": "d2a23abe7efc9460a8fce73aedb22794fd46c3d74b7138aa2a4f587a990c0301"
+    },
+    {
+      "path": "microsoft 365/m365-arrow-circle-right.svg",
+      "serviceName": "Microsoft 365 Arrow Circle Right",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Arrow Circle Right.svg",
+      "sha256": "049fbb6dd7673d644e3b14673a916e5cb5e788fc347dcb3db7daa3d4ee2b5e62"
+    },
+    {
+      "path": "microsoft 365/m365-arrow-clockwise.svg",
+      "serviceName": "Microsoft 365 Arrow Clockwise",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Arrow Clockwise.svg",
+      "sha256": "1b4d631b5508f5f599d8a290656af79017163fa7c7e532e010f8ab740873e391"
+    },
+    {
+      "path": "microsoft 365/m365-arrow-down.svg",
+      "serviceName": "Microsoft 365 Arrow Down",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Arrow Down.svg",
+      "sha256": "b37029de2b0aae23a33940e43273e430737bfb42075073c721bec4a1c593aba2"
+    },
+    {
+      "path": "microsoft 365/m365-arrow-download.svg",
+      "serviceName": "Microsoft 365 Arrow Download",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Arrow Download.svg",
+      "sha256": "5471ea85782f04e2b3f5b301e4733c51b051e02a523edf9cfe61717c28c28f32"
+    },
+    {
+      "path": "microsoft 365/m365-arrow-sync.svg",
+      "serviceName": "Microsoft 365 Arrow Sync",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Arrow Sync.svg",
+      "sha256": "e8c7da178254c76cbed0d3818108c72323712502641f020d4463516489a8a13a"
+    },
+    {
+      "path": "microsoft 365/m365-arrow-upload.svg",
+      "serviceName": "Microsoft 365 Arrow Upload",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Arrow Upload.svg",
+      "sha256": "5b90c991047a84f72abeab8221d541f4c84040ecbc0ba483591aaa40499ec645"
+    },
+    {
+      "path": "microsoft 365/m365-attach.svg",
+      "serviceName": "Microsoft 365 Attach",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Attach.svg",
+      "sha256": "10d821721cee11337322106b4e4d35ce238adc2b1cc470a36778828dfeca23dd"
+    },
+    {
+      "path": "microsoft 365/m365-book-contacts.svg",
+      "serviceName": "Microsoft 365 Book Contacts",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Book Contacts.svg",
+      "sha256": "f3b494dc2e6e92bfd9dfe1568ca384b56511afdab97fae7aabb367609ba2ec4b"
+    },
+    {
+      "path": "microsoft 365/m365-bot.svg",
+      "serviceName": "Microsoft 365 Bot",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Bot.svg",
+      "sha256": "5da00f332df7e5c5e5485ae921f895edf0a745612f5aabc0b9b99d820b1f4546"
+    },
+    {
+      "path": "microsoft 365/m365-building-cloud.svg",
+      "serviceName": "Microsoft 365 Building Cloud",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Building Cloud.svg",
+      "sha256": "adeec3bd2a4a9976d0a85be637ab858137b9bb11794412c484ea7342e94c37a7"
+    },
+    {
+      "path": "microsoft 365/m365-building-multiple.svg",
+      "serviceName": "Microsoft 365 Building Multiple",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Building Multiple.svg",
+      "sha256": "280907829baac600fe9b44afc01de6d864e3f5e2bc5f4b28f06e716e291b76d5"
+    },
+    {
+      "path": "microsoft 365/m365-building-people.svg",
+      "serviceName": "Microsoft 365 Building People",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Building People_Blue_Light.svg",
+      "sha256": "68135dd50086e7e4a707e3dac336c6e564ca8686f942f4bb103ed4cf818340b6"
+    },
+    {
+      "path": "microsoft 365/m365-building-retail.svg",
+      "serviceName": "Microsoft 365 Building Retail",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Building Retail.svg",
+      "sha256": "98f084f3776c0fe201ba71c2c509b956f3f27fc1c59136389b6eb9fd2e5f96fc"
+    },
+    {
+      "path": "microsoft 365/m365-building.svg",
+      "serviceName": "Microsoft 365 Building",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Building.svg",
+      "sha256": "0a5b4078f807a6fd2133a83e254a4276a76d253f306af3ef3b3b5c8957546c6b"
+    },
+    {
+      "path": "microsoft 365/m365-calculator.svg",
+      "serviceName": "Microsoft 365 Calculator",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Calculator.svg",
+      "sha256": "b1f83bc11e97b76c95f71cffe4d42d2e3e72b2fb6d9302a5d8bc7f4c34ead2b7"
+    },
+    {
+      "path": "microsoft 365/m365-calendar-month.svg",
+      "serviceName": "Microsoft 365 Calendar Month",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Calendar Month.svg",
+      "sha256": "1c1924148eee9a7df9d7e2427c49041303edffdabaca9ad270f6f3aec3b84bba"
+    },
+    {
+      "path": "microsoft 365/m365-call.svg",
+      "serviceName": "Microsoft 365 Call",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Call.svg",
+      "sha256": "7daf4b3f4c55d39461ccf69677503ab7b490a768d85b3c96f0f5f603e3df1aef"
+    },
+    {
+      "path": "microsoft 365/m365-camera.svg",
+      "serviceName": "Microsoft 365 Camera",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Camera.svg",
+      "sha256": "9430ba433cb50c2beeef5f389c3a13c6d8a4645e72b7b9832301b149e777293b"
+    },
+    {
+      "path": "microsoft 365/m365-cart.svg",
+      "serviceName": "Microsoft 365 Cart",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Cart.svg",
+      "sha256": "bee5a720fd68713499585d56ce4574311c28844bdddb2bbbc66c7016a5e75855"
+    },
+    {
+      "path": "microsoft 365/m365-certificate.svg",
+      "serviceName": "Microsoft 365 Certificate",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Certificate.svg",
+      "sha256": "d685b5cd537256419ef1d3fbf900f13f397828f719578d4b0f0686b25071b20a"
+    },
+    {
+      "path": "microsoft 365/m365-chart-multiple.svg",
+      "serviceName": "Microsoft 365 Chart Multiple",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Chart Multiple.svg",
+      "sha256": "bf93294e97a0d4a90e34bb521b460d9b6312b4185749b6c86565a790b44dda08"
+    },
+    {
+      "path": "microsoft 365/m365-chat-multiple.svg",
+      "serviceName": "Microsoft 365 Chat Multiple",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Chat Multiple.svg",
+      "sha256": "83d4d30d88c89ce96868f612d51c811e6b245ce80583878925ba20bca1ff8893"
+    },
+    {
+      "path": "microsoft 365/m365-chat.svg",
+      "serviceName": "Microsoft 365 Chat",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Chat.svg",
+      "sha256": "8659aa63d3de6fae91611de69b5946fd6c7658dec39f2180b77ac4256afad652"
+    },
+    {
+      "path": "microsoft 365/m365-check.svg",
+      "serviceName": "Microsoft 365 Check",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Check.svg",
+      "sha256": "90cbd507fbaa253e245d67ca51e9b5b47725ba4aa16518cb3d10dd19a0a2cdf5"
+    },
+    {
+      "path": "microsoft 365/m365-checkmark-circle.svg",
+      "serviceName": "Microsoft 365 Checkmark Circle",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Checkmark Circle.svg",
+      "sha256": "67c52990beb4eeaff344ef10323dedd436654691535b8ebadc2d29c3eb465b8b"
+    },
+    {
+      "path": "microsoft 365/m365-checkmark.svg",
+      "serviceName": "Microsoft 365 Checkmark",
+      "family": "microsoft-365",
+      "sourceAsset": "Planner Green/48x48 SVG Icons/Checkmark_Dark.svg",
+      "sha256": "2095d1276a221c11957054151f896f103d5eb1fdc629e893a087e0210617dac5"
+    },
+    {
+      "path": "microsoft 365/m365-chevron-circle.svg",
+      "serviceName": "Microsoft 365 Chevron Circle",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Chevron Circle.svg",
+      "sha256": "7bcd3eb29d718c80409e8e221d214825abb74a593b3782788b6e1626296d2651"
+    },
+    {
+      "path": "microsoft 365/m365-clipboard-task-list.svg",
+      "serviceName": "Microsoft 365 Clipboard Task List",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Clipboard Task List.svg",
+      "sha256": "b663d0038529d214dbb036af5441f4304823f87897220617f38d8bba8c798c2d"
+    },
+    {
+      "path": "microsoft 365/m365-clipboard.svg",
+      "serviceName": "Microsoft 365 Clipboard",
+      "family": "microsoft-365",
+      "sourceAsset": "Planner Green/48x48 SVG Icons/Clipboard_Dark.svg",
+      "sha256": "bbc0224c364e415f2a26f09ecf76851fee1eaa683efe5edb2e9c26d2deeacd21"
+    },
+    {
+      "path": "microsoft 365/m365-clock-alarm.svg",
+      "serviceName": "Microsoft 365 Clock Alarm",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Clock Alarm.svg",
+      "sha256": "04131a8faa0fba9aefd9feff1135cc823093f289a695226db0b8576dca91b5cb"
+    },
+    {
+      "path": "microsoft 365/m365-clock.svg",
+      "serviceName": "Microsoft 365 Clock",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Clock.svg",
+      "sha256": "4c159b48eecf6b23fda9d4d54d2ed19ad126de07aefab9d99044bfd9532bd8d4"
+    },
+    {
+      "path": "microsoft 365/m365-cloud-add.svg",
+      "serviceName": "Microsoft 365 Cloud Add",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Cloud Add.svg",
+      "sha256": "40cd45c554917173043b69e4f8a339912dcabd905ce27fa61dc47bd05cf544fd"
+    },
+    {
+      "path": "microsoft 365/m365-cloud-arrow-down.svg",
+      "serviceName": "Microsoft 365 Cloud Arrow Down",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Cloud Arrow Down.svg",
+      "sha256": "927de58f0de50a5336a8988004111f8abebfd56fff21befff3055e7c108bee81"
+    },
+    {
+      "path": "microsoft 365/m365-cloud-arrow-up.svg",
+      "serviceName": "Microsoft 365 Cloud Arrow Up",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Cloud Arrow Up.svg",
+      "sha256": "94ac30251a761e6c46f756c1af54f15e76b16229d924f719fae23d0952c680e5"
+    },
+    {
+      "path": "microsoft 365/m365-cloud-beaker.svg",
+      "serviceName": "Microsoft 365 Cloud Beaker",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Cloud Beaker.svg",
+      "sha256": "3af6ee5acbd30e0f50ddbc36e91bb0544e6d44efacf5d9a5884f6eee9bfd5606"
+    },
+    {
+      "path": "microsoft 365/m365-cloud-cube.svg",
+      "serviceName": "Microsoft 365 Cloud Cube",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Cloud Cube.svg",
+      "sha256": "21256716d9abe5ff7a144907371e3c09b6f341a551e8c4179604286f66765cda"
+    },
+    {
+      "path": "microsoft 365/m365-cloud-database.svg",
+      "serviceName": "Microsoft 365 Cloud Database",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Cloud Database.svg",
+      "sha256": "b3afe7f8c902fe442f5a158302bb41ba11eb569b3d1bff2713fa047b5bf823b1"
+    },
+    {
+      "path": "microsoft 365/m365-cloud-desktop.svg",
+      "serviceName": "Microsoft 365 Cloud Desktop",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Cloud Desktop.svg",
+      "sha256": "c480c0b109d8c39b2e70f5f6213a3f83307f0e71b78a5af76b343b87d611c95c"
+    },
+    {
+      "path": "microsoft 365/m365-cloud.svg",
+      "serviceName": "Microsoft 365 Cloud",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Cloud.svg",
+      "sha256": "225ddc61b4b2156d30a44459803125fa39d8c18e38c1a1adcc851ff9f505362e"
+    },
+    {
+      "path": "microsoft 365/m365-code.svg",
+      "serviceName": "Microsoft 365 Code",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Code.svg",
+      "sha256": "1bc40d9604e3d0ffd1a9dc5fad19f9631280df0eb332d9f9967a0cd9219c0818"
+    },
+    {
+      "path": "microsoft 365/m365-column-arrow-right.svg",
+      "serviceName": "Microsoft 365 Column Arrow Right",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Column Arrow Right.svg",
+      "sha256": "26ec3d1e3c4304ae1fd4a0a257a5851668beab331c21ef7bae203cd8e174cbe9"
+    },
+    {
+      "path": "microsoft 365/m365-comment-multiple.svg",
+      "serviceName": "Microsoft 365 Comment Multiple",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Comment Multiple.svg",
+      "sha256": "cb09cd2e3ae64af635782c199173b37262971ea64baedf7d9c7603fc65b8272e"
+    },
+    {
+      "path": "microsoft 365/m365-comment.svg",
+      "serviceName": "Microsoft 365 Comment",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Comment.svg",
+      "sha256": "0fac268cd2abecc08302a78078975a68786d5390617b4ade1aef8ea3764c754c"
+    },
+    {
+      "path": "microsoft 365/m365-data-area.svg",
+      "serviceName": "Microsoft 365 Data Area",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Data Area.svg",
+      "sha256": "3285b92bf4edee5a8370881ca09c3f60d0b2566570a30c11708fcf44cea5c05a"
+    },
+    {
+      "path": "microsoft 365/m365-data-bar-vertical.svg",
+      "serviceName": "Microsoft 365 Data Bar Vertical",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Data Bar Vertical.svg",
+      "sha256": "80b94d1d2e12570a13b249463216412763c99f7242a14bc171f6fb1d3f09ac2a"
+    },
+    {
+      "path": "microsoft 365/m365-data-pie.svg",
+      "serviceName": "Microsoft 365 Data Pie",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Data Pie.svg",
+      "sha256": "7cc95f7ea4429f38fcfba680ec744472f99957ec9e8ee747f336887ddd6e3553"
+    },
+    {
+      "path": "microsoft 365/m365-data-trending-1.svg",
+      "serviceName": "Microsoft 365 Data Trending (1)",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Data Trending (1).svg",
+      "sha256": "765386c8c835f98af3ebd0d0364811e64da7e9081a3f978caf2a57d692c3ed11"
+    },
+    {
+      "path": "microsoft 365/m365-data-trending-2.svg",
+      "serviceName": "Microsoft 365 Data Trending (2)",
+      "family": "microsoft-365",
+      "sourceAsset": "Teams Purple/48x48 Light Purple Icon/Data Trending (2).svg",
+      "sha256": "3b81e4280ca556d1c73f8d22595aff469d4c05fa8344bcd81e0e1b69b9bf6035"
+    },
+    {
+      "path": "microsoft 365/m365-data-trending.svg",
+      "serviceName": "Microsoft 365 Data Trending",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Data Trending.svg",
+      "sha256": "765386c8c835f98af3ebd0d0364811e64da7e9081a3f978caf2a57d692c3ed11"
+    },
+    {
+      "path": "microsoft 365/m365-data-usage.svg",
+      "serviceName": "Microsoft 365 Data Usage",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Data Usage.svg",
+      "sha256": "3969ced0a9204412241113521b7b46a66e55c29d8dcbe69a91f565a375394b0e"
+    },
+    {
+      "path": "microsoft 365/m365-database.svg",
+      "serviceName": "Microsoft 365 Database",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Database.svg",
+      "sha256": "32426e9637dde8ee471e4393abeeb5708ecf67f723815408307a1077b1adb509"
+    },
+    {
+      "path": "microsoft 365/m365-deploy.svg",
+      "serviceName": "Microsoft 365 Deploy",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Deploy.svg",
+      "sha256": "cc7d441d0941bc9327b994dd440048359fc73f85cd23711dffbdc09f29415336"
+    },
+    {
+      "path": "microsoft 365/m365-desktop-arrow-down.svg",
+      "serviceName": "Microsoft 365 Desktop Arrow Down",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Desktop Arrow Down.svg",
+      "sha256": "dc44765f8c44bee0adc817616aefb72be959978cd15288004ebb9b30d0a36142"
+    },
+    {
+      "path": "microsoft 365/m365-desktop-tower.svg",
+      "serviceName": "Microsoft 365 Desktop Tower",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Desktop Tower.svg",
+      "sha256": "1654677441194058e3b5386a3d8c17f345b60d60a41ed609ab1275ec6ba4ef1c"
+    },
+    {
+      "path": "microsoft 365/m365-dismiss-circle.svg",
+      "serviceName": "Microsoft 365 Dismiss Circle",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Dismiss Circle.svg",
+      "sha256": "ba44d08e66145c72495668e4497dfa7b273105b6f96fccf66094250a7ae52c91"
+    },
+    {
+      "path": "microsoft 365/m365-document-bullet-list-multiple.svg",
+      "serviceName": "Microsoft 365 Document Bullet List Multiple",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Document Bullet List Multiple.svg",
+      "sha256": "d669c7a61ab645613ba492cbc5aede07e52eb8e5b002d2014943b103eaa9fd88"
+    },
+    {
+      "path": "microsoft 365/m365-document-bullet-list.svg",
+      "serviceName": "Microsoft 365 Document Bullet List",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Document Bullet List.svg",
+      "sha256": "bfa0bf65dae49f221430cdfb7aad794f8e18e9a97d83695821f13a8443e87a4a"
+    },
+    {
+      "path": "microsoft 365/m365-document-key.svg",
+      "serviceName": "Microsoft 365 Document Key",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Document Key.svg",
+      "sha256": "6ae6c29d27ae76828700f0fe5d998cef4cf7e2c9e7ebe54ff562519cfc99e06f"
+    },
+    {
+      "path": "microsoft 365/m365-document-lock.svg",
+      "serviceName": "Microsoft 365 Document Lock",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Document Lock.svg",
+      "sha256": "9f2c5b94015bcc34b277da927847c6a5076671b58e9f5bd21f5ada0f98b9bae7"
+    },
+    {
+      "path": "microsoft 365/m365-document-multiple.svg",
+      "serviceName": "Microsoft 365 Document Multiple",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Document Multiple.svg",
+      "sha256": "08ea62b5ad16f467c620d1a951e28e41201ac016d1c32dbf15892260e0d93236"
+    },
+    {
+      "path": "microsoft 365/m365-document-one-page.svg",
+      "serviceName": "Microsoft 365 Document One Page",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Document One Page.svg",
+      "sha256": "187f49533cc31efc5ff42615bea2095397297ba1c19ba512e22009bf45544742"
+    },
+    {
+      "path": "microsoft 365/m365-document-text.svg",
+      "serviceName": "Microsoft 365 Document Text",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Document Text.svg",
+      "sha256": "74580502e587e2981b6f866c41ba6544ee6584eefb577a23899038ba880b5f41"
+    },
+    {
+      "path": "microsoft 365/m365-document.svg",
+      "serviceName": "Microsoft 365 Document",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Document.svg",
+      "sha256": "2e66a5c94c06e099363e3044ff7cd6b330dd0ea5f2a9bf7bf10c89e520ee53e3"
+    },
+    {
+      "path": "microsoft 365/m365-edit.svg",
+      "serviceName": "Microsoft 365 Edit",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Edit.svg",
+      "sha256": "10ad1b5b086854c4989556781abed611a504bf62a24eaa98518afb5b3d5ae355"
+    },
+    {
+      "path": "microsoft 365/m365-filmstrip-play.svg",
+      "serviceName": "Microsoft 365 Filmstrip Play",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Filmstrip Play.svg",
+      "sha256": "e3b1b9cd68321df69afcaea2862266668ceede6cb28376ec1e203730bc91d8ee"
+    },
+    {
+      "path": "microsoft 365/m365-fingerprint.svg",
+      "serviceName": "Microsoft 365 Fingerprint",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Fingerprint.svg",
+      "sha256": "7ff49d10b97648bab1c089dcab9cd37d68f4420623748e779ade087317b33cb0"
+    },
+    {
+      "path": "microsoft 365/m365-flag.svg",
+      "serviceName": "Microsoft 365 Flag",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Flag.svg",
+      "sha256": "531f152d773a44d9b71f4a203f473360d4944c9dafc1753e482c06aa3f2431b4"
+    },
+    {
+      "path": "microsoft 365/m365-folder-multiple.svg",
+      "serviceName": "Microsoft 365 Folder Multiple",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Folder Multiple.svg",
+      "sha256": "2d74a49bb29e2ea1e272a5a11e23d579736daa50b1f20cc2673a22a996735f6e"
+    },
+    {
+      "path": "microsoft 365/m365-folder-open-vertical.svg",
+      "serviceName": "Microsoft 365 Folder Open Vertical",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Folder Open Vertical.svg",
+      "sha256": "093056fe34b742c9d3e93308c63549b2bd6dc10c05ceacdf9b9fceadd5d63912"
+    },
+    {
+      "path": "microsoft 365/m365-folder-open.svg",
+      "serviceName": "Microsoft 365 Folder Open",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Folder Open.svg",
+      "sha256": "f6f3dc0bf20b57b6720ecae44e1292c3f072dc9a4456bf4303f25a322e8222c5"
+    },
+    {
+      "path": "microsoft 365/m365-folder-people.svg",
+      "serviceName": "Microsoft 365 Folder People",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Folder People.svg",
+      "sha256": "54f18fe652a5ca03b1669c1a0a0ea989524d9d58c36c4f50045cb3ab6239a708"
+    },
+    {
+      "path": "microsoft 365/m365-globe.svg",
+      "serviceName": "Microsoft 365 Globe",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Globe.svg",
+      "sha256": "4d1a55cc7f97e3c2e13af5248f65fe7ca10afaf171f88d62c9cad705d976da1d"
+    },
+    {
+      "path": "microsoft 365/m365-grid-circles.svg",
+      "serviceName": "Microsoft 365 Grid Circles",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Grid Circles.svg",
+      "sha256": "bb0fd95b881bffc19d3ce0c49138742a965ae6e7135fd9dee32bde4ec2dcd756"
+    },
+    {
+      "path": "microsoft 365/m365-handshake.svg",
+      "serviceName": "Microsoft 365 Handshake",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Handshake.svg",
+      "sha256": "3269d32cb73d642e52b3d829e63213b256e4523eb114ef91aba11d15aec24e18"
+    },
+    {
+      "path": "microsoft 365/m365-hat-graduation.svg",
+      "serviceName": "Microsoft 365 Hat Graduation",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Hat Graduation.svg",
+      "sha256": "8e0fb4e4114bc086803dbead8970f92edb047bcd4f9856ea2ba283a4822d3089"
+    },
+    {
+      "path": "microsoft 365/m365-headset.svg",
+      "serviceName": "Microsoft 365 Headset",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Headset.svg",
+      "sha256": "00da5489fef6c964b5a840f8645db1692f5366e18873ce9c7e25bfbb0ec81ba4"
+    },
+    {
+      "path": "microsoft 365/m365-heart-pulse.svg",
+      "serviceName": "Microsoft 365 Heart Pulse",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Heart Pulse.svg",
+      "sha256": "14c2484f2fbe28c51bd86edda44888f09b98323eecdd469b94a591f04c659e41"
+    },
+    {
+      "path": "microsoft 365/m365-heart.svg",
+      "serviceName": "Microsoft 365 Heart",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Heart.svg",
+      "sha256": "909d8837aaee041a78287b3e0b17b35ea1c7597bc9e492c1140755825cd18b9c"
+    },
+    {
+      "path": "microsoft 365/m365-image.svg",
+      "serviceName": "Microsoft 365 Image",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Image.svg",
+      "sha256": "1892bac34fde29687573ee09e1fa7b33241f5e41b28a1d52b4fcf38c7ee52c64"
+    },
+    {
+      "path": "microsoft 365/m365-key.svg",
+      "serviceName": "Microsoft 365 Key",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Key.svg",
+      "sha256": "6bc822493ecde70815935a199f2244859f370826b440f670e7e959c2b01edca8"
+    },
+    {
+      "path": "microsoft 365/m365-laptop.svg",
+      "serviceName": "Microsoft 365 Laptop",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Laptop.svg",
+      "sha256": "a04552cdd554116374fe039bf0221d563a529cfcf5a6c9fe41fd38fdd6e1366d"
+    },
+    {
+      "path": "microsoft 365/m365-layer-diagonal.svg",
+      "serviceName": "Microsoft 365 Layer Diagonal",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Layer Diagonal.svg",
+      "sha256": "e326d3efb3297d7e9403894171e195cfa4d7124844122d0d07069420f0edfce8"
+    },
+    {
+      "path": "microsoft 365/m365-lightbulb-checkmark.svg",
+      "serviceName": "Microsoft 365 Lightbulb Checkmark",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Lightbulb Checkmark.svg",
+      "sha256": "84cf83425cd72a8bf10da4d9ea77d0f91f53563b710ee69a94b2c7ec142d0229"
+    },
+    {
+      "path": "microsoft 365/m365-lightbulb.svg",
+      "serviceName": "Microsoft 365 Lightbulb",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Lightbulb.svg",
+      "sha256": "9c65c619daab22d7d0d4e7ef11a28d54cc6c460ee5cde436883baf7e3087b305"
+    },
+    {
+      "path": "microsoft 365/m365-lock-closed.svg",
+      "serviceName": "Microsoft 365 Lock Closed",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Lock Closed.svg",
+      "sha256": "28264adaa931cbae03262fca38d329747a82e1af9478da2bbe358cae14216709"
+    },
+    {
+      "path": "microsoft 365/m365-lock-shield.svg",
+      "serviceName": "Microsoft 365 Lock Shield",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Lock Shield.svg",
+      "sha256": "ce88e4666f073c184be32fd0a27c6ccb92ed1d988537d825d66bd302e03384b9"
+    },
+    {
+      "path": "microsoft 365/m365-mail-alert.svg",
+      "serviceName": "Microsoft 365 Mail Alert",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Mail Alert.svg",
+      "sha256": "b1fce8838539caca9cd44fdaa7ea7c01348f960aefc5113e0898107d6abff7c2"
+    },
+    {
+      "path": "microsoft 365/m365-mail-attach.svg",
+      "serviceName": "Microsoft 365 Mail Attach",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Mail Attach.svg",
+      "sha256": "be90fa73b29a2ad8a34ec83ba90773333527c72b9331ed3b6e813ae34c15062e"
+    },
+    {
+      "path": "microsoft 365/m365-mail-error.svg",
+      "serviceName": "Microsoft 365 Mail Error",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Mail Error.svg",
+      "sha256": "e8de07e0ff441d4ec2b674260effcebd63f2756f8142023ddffc003b48f81d94"
+    },
+    {
+      "path": "microsoft 365/m365-mail-read.svg",
+      "serviceName": "Microsoft 365 Mail Read",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Mail Read.svg",
+      "sha256": "7fa5789da7d7f6e79ce2afe6b792a85e580939df649a1fe9d87d5d0ce24cec15"
+    },
+    {
+      "path": "microsoft 365/m365-mail.svg",
+      "serviceName": "Microsoft 365 Mail",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Mail.svg",
+      "sha256": "d9894fa7e110220946463a6e6bdf5b87d4d7d14dd712c0e74817124f7066f5fa"
+    },
+    {
+      "path": "microsoft 365/m365-map.svg",
+      "serviceName": "Microsoft 365 Map",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Map.svg",
+      "sha256": "31deba48530a9ea85571a20f321495099325d835438d056b06303baaa141f8ba"
+    },
+    {
+      "path": "microsoft 365/m365-megaphone-loud.svg",
+      "serviceName": "Microsoft 365 Megaphone Loud",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Megaphone Loud.svg",
+      "sha256": "a1a7e36122293fb65ca25ec9ac246f24be14fd016b48a5b9699cd2f33e593b61"
+    },
+    {
+      "path": "microsoft 365/m365-merge.svg",
+      "serviceName": "Microsoft 365 Merge",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Merge.svg",
+      "sha256": "d3b12fe08a270e6ea45f616ef86ebb7d1d3270be85e42464cb7ee32316d8058e"
+    },
+    {
+      "path": "microsoft 365/m365-notebook.svg",
+      "serviceName": "Microsoft 365 Notebook",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Notebook.svg",
+      "sha256": "cf1fe35d6d58532a0f24ed213116c97ad46f54013fc588b75ab1e1f23a7ef9da"
+    },
+    {
+      "path": "microsoft 365/m365-number-circle-1.svg",
+      "serviceName": "Microsoft 365 Number Circle 1",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Number Circle 1.svg",
+      "sha256": "25c6a95e1c2d81e217053be896d7ebe24f87324fa0aaf9c167bf13a565ad6abf"
+    },
+    {
+      "path": "microsoft 365/m365-number-circle-2.svg",
+      "serviceName": "Microsoft 365 Number Circle 2",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Number Circle 2.svg",
+      "sha256": "40674abf1a5ed2ab808a5b72c1bf165de28fbcad214e1581ca86d2ef2e611a7a"
+    },
+    {
+      "path": "microsoft 365/m365-number-circle-3.svg",
+      "serviceName": "Microsoft 365 Number Circle 3",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Number Circle 3.svg",
+      "sha256": "214ebec5b76b40e269005044e7637a9cb9095cadea80efe96283c002eabb9dae"
+    },
+    {
+      "path": "microsoft 365/m365-number-circle-4.svg",
+      "serviceName": "Microsoft 365 Number Circle 4",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Number Circle 4.svg",
+      "sha256": "81b9107f438c397f09d3d0d0f3fc0878dd35fae3c2abf9deba7c77e26fddd6e6"
+    },
+    {
+      "path": "microsoft 365/m365-organization-horizontal.svg",
+      "serviceName": "Microsoft 365 Organization Horizontal",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Organization Horizontal.svg",
+      "sha256": "98e7dc336b61e7ab9c65292f0965aa02e602a368961f538922fdbdbca2b842ac"
+    },
+    {
+      "path": "microsoft 365/m365-organization.svg",
+      "serviceName": "Microsoft 365 Organization",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Organization.svg",
+      "sha256": "b5fe8c847a0668588ea1e6e038418b8412f5844e096be68a93d26166ed7ed202"
+    },
+    {
+      "path": "microsoft 365/m365-panel-left-header-key.svg",
+      "serviceName": "Microsoft 365 Panel Left Header Key",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Panel Left Header Key.svg",
+      "sha256": "d19f6372a3d1578de8a85a1523b3eca9b0da5fe795eec514bfc4a84ae970d048"
+    },
+    {
+      "path": "microsoft 365/m365-panel-left-header.svg",
+      "serviceName": "Microsoft 365 Panel Left Header",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Panel Left Header.svg",
+      "sha256": "cb483d30dfe452a0ca656c06ae25e9f28715581f949001a287b02b11898c1dd7"
+    },
+    {
+      "path": "microsoft 365/m365-payment.svg",
+      "serviceName": "Microsoft 365 Payment",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Payment.svg",
+      "sha256": "f0e967a53d278f21b44652e5aca0d989451c28a79f9eba36793742afabc5a5aa"
+    },
+    {
+      "path": "microsoft 365/m365-people-audience.svg",
+      "serviceName": "Microsoft 365 People Audience",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/People Audience.svg",
+      "sha256": "c81aea9867262bfb825e3022a4ece0e0775bf3782cb9590917dc9c995280a7f3"
+    },
+    {
+      "path": "microsoft 365/m365-people-community.svg",
+      "serviceName": "Microsoft 365 People Community",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/People Community.svg",
+      "sha256": "db7c8d270179777fd76cb33fac9aa8212af2fee6b689db155fcb9aeb2255536c"
+    },
+    {
+      "path": "microsoft 365/m365-people-settings.svg",
+      "serviceName": "Microsoft 365 People Settings",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/People Settings.svg",
+      "sha256": "c95151c605845c9d4f5dfc184cc95e4cdc37ae73435bc9fb70aada4c0da1ae05"
+    },
+    {
+      "path": "microsoft 365/m365-people-team.svg",
+      "serviceName": "Microsoft 365 People Team",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/People Team.svg",
+      "sha256": "24c37c05e73afa1d45544980b52e04042aca2ab48a97edb46c01774f79e3551f"
+    },
+    {
+      "path": "microsoft 365/m365-people.svg",
+      "serviceName": "Microsoft 365 People",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/People.svg",
+      "sha256": "f6798d9bc6426fccc3163d4743abfd0b1d8a09bdd0f213399518caedd785f86f"
+    },
+    {
+      "path": "microsoft 365/m365-person-accounts.svg",
+      "serviceName": "Microsoft 365 Person Accounts",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Person Accounts.svg",
+      "sha256": "0ce29b27d2933f521603eed57b8c83ba41b12f3e048e02a6a4c3506bba070a18"
+    },
+    {
+      "path": "microsoft 365/m365-person-desktop.svg",
+      "serviceName": "Microsoft 365 Person Desktop",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Person Desktop.svg",
+      "sha256": "7cd703c7a07ce3ff798ee920cd933a2eca9feef15434e34cf1908958949487ca"
+    },
+    {
+      "path": "microsoft 365/m365-person-settings.svg",
+      "serviceName": "Microsoft 365 Person Settings",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Person Settings.svg",
+      "sha256": "2730cfbe58f66951ffb54ae6cf63034f3527162e5beacb5ff0dc2e0a522152fe"
+    },
+    {
+      "path": "microsoft 365/m365-person-square.svg",
+      "serviceName": "Microsoft 365 Person Square",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Person Square.svg",
+      "sha256": "22ab6ca2c61cc5c8aa8838554736be3098fb088cb71ce185bb42cc85846b2155"
+    },
+    {
+      "path": "microsoft 365/m365-person-wrench.svg",
+      "serviceName": "Microsoft 365 Person Wrench",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Person Wrench.svg",
+      "sha256": "8b059cbaf80495c3f7908e168aa70df9fc587e03c6d9b10e6dbef4d6bb32004a"
+    },
+    {
+      "path": "microsoft 365/m365-person.svg",
+      "serviceName": "Microsoft 365 Person",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Person.svg",
+      "sha256": "838e65d9dcf8a1de441e2c5cea921f4c651ccbc12cd36542a41f176839ac6a7c"
+    },
+    {
+      "path": "microsoft 365/m365-phone-desktop.svg",
+      "serviceName": "Microsoft 365 Phone Desktop",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Phone Desktop.svg",
+      "sha256": "cb73b5b1e026413612a08912caed2c683cb84968189b1b97f4015765d6e098c8"
+    },
+    {
+      "path": "microsoft 365/m365-phone-laptop.svg",
+      "serviceName": "Microsoft 365 Phone Laptop",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Phone Laptop.svg",
+      "sha256": "8900d737013b05ad1b134d2d3e5f8b551e34a94159279659dbd714a5d339c253"
+    },
+    {
+      "path": "microsoft 365/m365-phone-tablet.svg",
+      "serviceName": "Microsoft 365 Phone Tablet",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Phone Tablet.svg",
+      "sha256": "50acae82b59d5fcbbd227f61d453515092df593ab72d49ad9bedd16a0191a54d"
+    },
+    {
+      "path": "microsoft 365/m365-phone-update.svg",
+      "serviceName": "Microsoft 365 Phone Update",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Phone Update.svg",
+      "sha256": "2c9e64f0d0f93fbeac7440f5e491bffab53a15056d70b692d3ff7bd5297b9659"
+    },
+    {
+      "path": "microsoft 365/m365-phone.svg",
+      "serviceName": "Microsoft 365 Phone",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Phone.svg",
+      "sha256": "fb3d299ce01944a5ee6f3df9fe85403cedff72a60e6c21a76f7cc74c1229aee0"
+    },
+    {
+      "path": "microsoft 365/m365-presenter.svg",
+      "serviceName": "Microsoft 365 Presenter",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Presenter.svg",
+      "sha256": "ff1f1ea97a9043f185a0f9eb2e79e5986b1d30fc05f1c7e334c7502668a3347f"
+    },
+    {
+      "path": "microsoft 365/m365-question-circle.svg",
+      "serviceName": "Microsoft 365 Question Circle",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Question Circle.svg",
+      "sha256": "5fa5a7b5b2d47b15b812f5b1135f4b609ff8eb99ad27cd26a773880a39c0ede0"
+    },
+    {
+      "path": "microsoft 365/m365-radar.svg",
+      "serviceName": "Microsoft 365 Radar",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Radar.svg",
+      "sha256": "a523bda7763e3eeed2aa1efa1086107db9d967425651ec121d6a37ccae584017"
+    },
+    {
+      "path": "microsoft 365/m365-receipt.svg",
+      "serviceName": "Microsoft 365 Receipt",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Receipt.svg",
+      "sha256": "1e117d14fdd75b652d0be48fa8e6378831f6f28acb724d1f8ca8e0ee4d4c6369"
+    },
+    {
+      "path": "microsoft 365/m365-ribbon-star.svg",
+      "serviceName": "Microsoft 365 Ribbon Star",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Ribbon Star.svg",
+      "sha256": "3cf3b9a2cbe3238ee12b6306d4266208b5cff3f63c29140812b6b196ff6f6f1c"
+    },
+    {
+      "path": "microsoft 365/m365-ribbon.svg",
+      "serviceName": "Microsoft 365 Ribbon",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Ribbon.svg",
+      "sha256": "878a71b906756aa4304ce3dbc85043e138f74d1a8f10544a40d5bd2eace10301"
+    },
+    {
+      "path": "microsoft 365/m365-road-cone.svg",
+      "serviceName": "Microsoft 365 Road Cone",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Road Cone.svg",
+      "sha256": "1f3c7d5f024dd0bfd3779b89d7d3871a2527de10ed361a4c1d0c8faa088f0ab7"
+    },
+    {
+      "path": "microsoft 365/m365-script.svg",
+      "serviceName": "Microsoft 365 Script",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Script.svg",
+      "sha256": "bbffc7a68e625796dcc66060fc4e9ffc93811bb94ac09c5b4351da2b50f849de"
+    },
+    {
+      "path": "microsoft 365/m365-search.svg",
+      "serviceName": "Microsoft 365 Search",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Search.svg",
+      "sha256": "9b285173e2980438a703746bec9c556d14528fe93e66c431b29c812e35305ae2"
+    },
+    {
+      "path": "microsoft 365/m365-select-all.svg",
+      "serviceName": "Microsoft 365 Select All",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Select All.svg",
+      "sha256": "03d063b1497b8bd1d310429c3513487d3d743c33c7ff8243a7347db5cdf488b2"
+    },
+    {
+      "path": "microsoft 365/m365-settings-cog-multiple.svg",
+      "serviceName": "Microsoft 365 Settings Cog Multiple",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Settings Cog Multiple.svg",
+      "sha256": "bcabae9ca636c4a663d933f4ec6e2007e891f0b0b3f819f42ef8a5fd90c26b11"
+    },
+    {
+      "path": "microsoft 365/m365-settings.svg",
+      "serviceName": "Microsoft 365 Settings",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Settings.svg",
+      "sha256": "d1ba5982955ee4d942443a72de58d58c33f54e67b66b9e2750e1fbd81ebeb08e"
+    },
+    {
+      "path": "microsoft 365/m365-shapes-three.svg",
+      "serviceName": "Microsoft 365 Shapes Three",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Shapes Three.svg",
+      "sha256": "4fb85be44c68d3d35c0df429b1b16d61fa7b6d0added859a57257ec0bdd148c9"
+    },
+    {
+      "path": "microsoft 365/m365-share-screen-person-overlay.svg",
+      "serviceName": "Microsoft 365 Share Screen Person Overlay",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Share Screen Person Overlay.svg",
+      "sha256": "f551f0f17dbc56617d363aa49099e4a8df1a625fddc67e18740b518cb150e8e4"
+    },
+    {
+      "path": "microsoft 365/m365-share-screen-person.svg",
+      "serviceName": "Microsoft 365 Share Screen Person",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Share Screen Person.svg",
+      "sha256": "74f965f728e44a5d20f70dceef6ec40c7e987dc74afbccb659eb6c4eb5a13a3e"
+    },
+    {
+      "path": "microsoft 365/m365-share.svg",
+      "serviceName": "Microsoft 365 Share",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Share.svg",
+      "sha256": "a80637dd19f87b2c072fbcacbeae50f3772c64443704dea56a16bf6940a73d4b"
+    },
+    {
+      "path": "microsoft 365/m365-shield-error.svg",
+      "serviceName": "Microsoft 365 Shield Error",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Shield Error.svg",
+      "sha256": "21a5685cff4e206a99abaf4581bfdd85b8bd887673d9dbe40f78bb58a5df64ff"
+    },
+    {
+      "path": "microsoft 365/m365-shifts-activity.svg",
+      "serviceName": "Microsoft 365 Shifts Activity",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Shifts Activity.svg",
+      "sha256": "a0b4417987e604fdc4be5fab97f0d1d10ac85e559206fdccae32f8822ddddaba"
+    },
+    {
+      "path": "microsoft 365/m365-shopping-bag.svg",
+      "serviceName": "Microsoft 365 Shopping Bag",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Shopping Bag.svg",
+      "sha256": "505fbcb77222f9a0fd27bb22b5c78e924b9b604fec50c344ddc8e2b05c28fbfd"
+    },
+    {
+      "path": "microsoft 365/m365-signature.svg",
+      "serviceName": "Microsoft 365 Signature",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Signature.svg",
+      "sha256": "7dcffbc590a87ec8ae28b58c681d69ec79a6a005ff82a9be394c45560dc4ba17"
+    },
+    {
+      "path": "microsoft 365/m365-slide-layout.svg",
+      "serviceName": "Microsoft 365 Slide Layout",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Slide Layout.svg",
+      "sha256": "fca64cf68e9c4f344b053aeb63d7723fc8659155de39368ed6072ffb4ffd1e24"
+    },
+    {
+      "path": "microsoft 365/m365-tablet-laptop.svg",
+      "serviceName": "Microsoft 365 Tablet Laptop",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Tablet Laptop.svg",
+      "sha256": "90915be88a794076b3b0d29a613dd77c85551a65584b58d1d2898a37764b4554"
+    },
+    {
+      "path": "microsoft 365/m365-tablet.svg",
+      "serviceName": "Microsoft 365 Tablet",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Tablet.svg",
+      "sha256": "338d03a4ad85d0ec16cd8d3b6c4e25c5e211d900c53b750089c422fcaf2f69c4"
+    },
+    {
+      "path": "microsoft 365/m365-tap.svg",
+      "serviceName": "Microsoft 365 Tap",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Tap.svg",
+      "sha256": "72ab69e7bdfd64eae72d5061de56da8e2d4abfd452a88b3fa09c3665dc85e13d"
+    },
+    {
+      "path": "microsoft 365/m365-task-list-ltr.svg",
+      "serviceName": "Microsoft 365 Task List LTR",
+      "family": "microsoft-365",
+      "sourceAsset": "Planner Green/48x48 SVG Icons/Task_List_LTR_Dark.svg",
+      "sha256": "16034ce4c1c0b411d5a2b8f5c9dd3284c2430e271cf2415701c9f2cf35d4d051"
+    },
+    {
+      "path": "microsoft 365/m365-task-list-square.svg",
+      "serviceName": "Microsoft 365 Task List Square",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Task List Square.svg",
+      "sha256": "6c12daf8cb1cfb0407bac74d438ac0e860d47774bc1d18cd42c18f8021789b04"
+    },
+    {
+      "path": "microsoft 365/m365-text-bullet-list-square.svg",
+      "serviceName": "Microsoft 365 Text Bullet List Square",
+      "family": "microsoft-365",
+      "sourceAsset": "Project Green/48x48 SVG Icons/Text_Bullet_List_Square_Dark.svg",
+      "sha256": "fbacdc9774c7fdad1d5df6077d7676b835dc5561351463697d81a8e1fcb5ed84"
+    },
+    {
+      "path": "microsoft 365/m365-text-bullet-list.svg",
+      "serviceName": "Microsoft 365 Text Bullet List",
+      "family": "microsoft-365",
+      "sourceAsset": "Project Green/48x48 SVG Icons/Text_Bullet_List_Dark.svg",
+      "sha256": "3f7f897cdaade615f6d29de3c391e404279c5fb9cc4d2d82958515f7784097de"
+    },
+    {
+      "path": "microsoft 365/m365-text-first-line.svg",
+      "serviceName": "Microsoft 365 Text First Line",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Text First Line.svg",
+      "sha256": "6fd72e56c26f3fbcfc8f8ce4a0db6adf0e67fb38d7bfc252ceffc83b330f95af"
+    },
+    {
+      "path": "microsoft 365/m365-text-number-list.svg",
+      "serviceName": "Microsoft 365 Text Number List",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Text Number List.svg",
+      "sha256": "9e146275710c1d6efa86d0c8da48a7f37a877a0d8198fa2f2fba0a24b209cadc"
+    },
+    {
+      "path": "microsoft 365/m365-toolbox.svg",
+      "serviceName": "Microsoft 365 Toolbox",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Toolbox.svg",
+      "sha256": "f7f756a5bef8e8b29ac59870c3e82b5c5ebd8daba893d3df60638c02b47aadf4"
+    },
+    {
+      "path": "microsoft 365/m365-top-speed.svg",
+      "serviceName": "Microsoft 365 Top Speed",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Top Speed.svg",
+      "sha256": "76fbb5770d2d1883b5553429bea78f6fb1065d0fa0e875bc6febf13c991e8455"
+    },
+    {
+      "path": "microsoft 365/m365-video.svg",
+      "serviceName": "Microsoft 365 Video",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Video.svg",
+      "sha256": "79fee98d0f833b675249c5e650cf55378af4c83451e117a17fb65dc5e298ef70"
+    },
+    {
+      "path": "microsoft 365/m365-wallet-credit-card.svg",
+      "serviceName": "Microsoft 365 Wallet Credit Card",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Wallet Credit Card.svg",
+      "sha256": "bed271260a619122f51151c93ce594d8b09a8c7f3f36d75d579cdf1f6299591a"
+    },
+    {
+      "path": "microsoft 365/m365-window-dev-edit.svg",
+      "serviceName": "Microsoft 365 Window Dev Edit",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Window Dev Edit.svg",
+      "sha256": "e260ac78c598424326c7ae7bf1f093e48b7dbeca31858bc4606ab342344d6ff8"
+    },
+    {
+      "path": "microsoft 365/m365-window-edit.svg",
+      "serviceName": "Microsoft 365 Window Edit",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Window Edit.svg",
+      "sha256": "93f3e9d1e0cfbc268ee0a37446221f25bd63ad31cf6454fd5fd69c140b908115"
+    },
+    {
+      "path": "microsoft 365/m365-window.svg",
+      "serviceName": "Microsoft 365 Window",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Window.svg",
+      "sha256": "7c06955c90ec2bb56ff96df4b89f0aca4b6c8bcae73684279613a747533d6b24"
+    },
+    {
+      "path": "microsoft 365/m365-wrench.svg",
+      "serviceName": "Microsoft 365 Wrench",
+      "family": "microsoft-365",
+      "sourceAsset": "Microsoft Blue/48x48 Light Blue Icon/Wrench.svg",
+      "sha256": "8bd6b9da7d41e758ae0b95c98dbe344703b54f1759b940f113ab19c24dd5deae"
     },
     {
       "path": "power platform/agent-365.svg",

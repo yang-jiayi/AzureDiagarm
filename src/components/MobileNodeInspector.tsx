@@ -114,7 +114,7 @@ export default function MobileNodeInspector({
           <div>
             <span>{isGroup
               ? localize(language, { en: 'Group', ja: 'グループ' })
-              : localize(language, { en: 'Azure service', ja: 'Azure サービス' })}</span>
+              : localize(language, { en: 'Microsoft service', ja: 'Microsoft サービス' })}</span>
             <h2>{nodeLabel}</h2>
           </div>
           <button type="button" onClick={() => setIsOpen(false)} aria-label={localize(language, { en: 'Close node editor', ja: 'ノード エディターを閉じる' })}>
