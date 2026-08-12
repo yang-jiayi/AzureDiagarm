@@ -448,6 +448,29 @@ function hubFanScenario(): Scenario {
   return { id: 'hub-fan', nodes, edges };
 }
 
+/**
+ * One shared service consumed from all over a wide estate. Every hop is long
+ * and several cross window seams, which is the arrangement that exposed the
+ * dropped-hop class: the shared service is the single most important box on
+ * the page, and an arrow into it that is not drawn takes its chip with it.
+ */
+function sharedServiceScenario(): Scenario {
+  const nodes: Node[] = [svc('m', 'Azure Key Vault', 1500, 700)];
+  const edges: Edge[] = [];
+  const spots: Array<[number, number]> = [[0, 0], [3000, 0], [0, 1400], [3000, 1400], [1500, 0], [1500, 1400]];
+  spots.forEach(([x, y], i) => {
+    nodes.push(svc(`t${i}`, `Consumer Workload ${i}`, x, y));
+    edges.push({
+      id: `m-t${i}`,
+      source: `t${i}`,
+      target: 'm',
+      label: `シークレットを取得 ${i}`,
+      data: { stepNumber: i + 1 },
+    } as Edge);
+  });
+  return { id: 'shared-service', nodes, edges };
+}
+
 function barbellScenario(): Scenario {
   const nodes: Node[] = [];
   const edges: Edge[] = [];
@@ -1227,6 +1250,7 @@ function auditNativeConversion(rawSlides: readonly string[]): { issues: string[]
   let ungluable = 0;
   let groups = 0;
   const allSlides = rawSlides.map(withSynthesizedIcons);
+  let seenAnchorable = false;
 
   allSlides.forEach((slideXml, index) => {
     const before = parseShapes(slideXml);
@@ -1250,6 +1274,50 @@ function auditNativeConversion(rawSlides: readonly string[]): { issues: string[]
     for (const cxn of after.matchAll(/<p:cxnSp>[\s\S]*?<\/p:cxnSp>/g)) {
       if (/<a:stCxn /.test(cxn[0]) && /<a:endCxn /.test(cxn[0])) glued += 1;
       else ungluable += 1;
+    }
+    // Glue is the difference between a deck the reader can rearrange and one
+    // that falls apart on the first drag: an unglued line stays behind when its
+    // tile moves. A hop cut by a window seam cannot be glued and must not be
+    // counted against the exporter, so only the hops whose BOTH endpoints
+    // already coincide with a tile drawn on this very slide are judged. Two
+    // thirds of the arrows on the shared-service deck were reported unglueable
+    // and nothing in the audit had ever looked at why.
+    const siteSlack = 0.021;
+    const tilesHere = before.filter(
+      (s) => s.name.startsWith('service-') && !s.name.startsWith('service-label-') && !s.name.startsWith('service-meta-') && s.w > 0,
+    );
+    const onSite = (p: { x: number; y: number }): boolean => tilesHere.some((t) => [
+      { x: t.x + t.w / 2, y: t.y },
+      { x: t.x, y: t.y + t.h / 2 },
+      { x: t.x + t.w / 2, y: t.y + t.h },
+      { x: t.x + t.w, y: t.y + t.h / 2 },
+    ].some((site) => Math.hypot(site.x - p.x, site.y - p.y) <= siteSlack));
+    const nativeById = new Map<string, string>();
+    for (const cxn of after.matchAll(/<p:(?:cxnSp|sp)>[\s\S]*?<\/p:(?:cxnSp|sp)>/g)) {
+      const name = /<p:cNvPr id="\d+" name="(connector-[^"]*)"/.exec(cxn[0])?.[1];
+      if (name) nativeById.set(name, cxn[0]);
+    }
+    for (const arrow of before.filter((s) => s.name.startsWith('connector-'))) {
+      const path = arrow.path ?? [];
+      if (path.length < 2) continue;
+      if (!onSite(path[0]) || !onSite(path[path.length - 1])) continue;
+      const xml = nativeById.get(arrow.name);
+      if (xml && !(/<a:stCxn /.test(xml) && /<a:endCxn /.test(xml))) {
+        issues.push(`${where}: arrow "${arrow.name}" starts and ends on connection sites but is not glued, so it detaches when the reader moves a tile`);
+      }
+    }
+    // The rule above can only judge arrows that already land on a site, so it
+    // would fall silent the day the router stopped putting them there — glue
+    // would vanish deck-wide and the audit would report nothing. The overview
+    // slide draws every tile, so on it every hop is anchorable; if most are
+    // not, the endpoints themselves have drifted.
+    const arrowsHere = before.filter((s) => s.name.startsWith('connector-') && (s.path ?? []).length >= 2);
+    if (!seenAnchorable && arrowsHere.length >= 4) {
+      seenAnchorable = true;
+      const anchored = arrowsHere.filter((s) => onSite(s.path![0]) && onSite(s.path![s.path!.length - 1])).length;
+      if (anchored < 0.6 * arrowsHere.length) {
+        issues.push(`${where}: only ${anchored} of ${arrowsHere.length} arrows begin and end on a connection site, so most of the deck cannot be glued at all`);
+      }
     }
     groups += (after.match(/<p:grpSp>/g) ?? []).length;
 
@@ -2619,7 +2687,7 @@ async function main(): Promise<void> {
   mkdirSync(OUT, { recursive: true });
   const base = [
     compactScenario(), wideScenario(), oversizeScenario(), outlierScenario(),
-    bandedScenario(), narrativeScenario(), barbellScenario(), hubFanScenario(), parallelScenario(),
+    bandedScenario(), narrativeScenario(), barbellScenario(), hubFanScenario(), sharedServiceScenario(), parallelScenario(),
     ladderInGridScenario(), twinLaddersScenario(), strayLadderScenario(), legendCornerScenario(), duplicateStepsScenario(), denseZoneScenario(),
     metaChipScenario(), gridFanScenario(), gridFan3Scenario(), fan8Tight5x5Scenario(), metaSublineScenario(), grid5x5CaptionScenario(), longNameGridScenario(), longLabelGridScenario(), metaTightScenario(),     longNameFanScenario(), estateChainScenario(), chain24Scenario(), tripleMutedScenario(), estate72Scenario(), workflowProseScenario(), workflowLongProseScenario(), allCategoriesScenario(),
     await generatedScenario(), await groupedGeneratedScenario(),

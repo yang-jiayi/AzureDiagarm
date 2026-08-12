@@ -991,21 +991,48 @@ export function routeOrthogonal(
   let ends: { lead: Point[]; tail: Point[] } | undefined;
   const sourceShift = options.sourceShift ?? 0;
   const targetShift = options.targetShift ?? 0;
-  const shifted = Math.abs(sourceShift) > 0.01 || Math.abs(targetShift) > 0.01;
+  // The parallel fan used to be added to the endpoints themselves, which took
+  // every member of a fan off its tile's connection site and made it impossible
+  // for PowerPoint to glue — on the "parallel" fixture only one arrow in six
+  // could be attached, so the deck came apart the moment a reader moved a tile.
+  // The separation is now a jog, exactly like the per-side port fan: the line
+  // leaves the site, steps into its own lane, and comes back to a site.
+  const shifted = Math.abs(sourceShift) > 0.01 || Math.abs(targetShift) > 0.01 || Math.abs(offset) > 0.01;
   if (horizontal) {
     const startX = dx >= 0 ? source.x + source.w : source.x;
     const endX = dx >= 0 ? target.x : target.x + target.w;
-    const startY = sc.y + offset;
-    const endY = tc.y + offset;
-    if (Math.abs(startY - endY) < 0.5) {
+    const startY = sc.y;
+    const endY = tc.y;
+    if (Math.abs(startY - endY) < 0.5 && Math.abs(offset) <= 0.01) {
       base = {
         points: [{ x: startX, y: startY }, { x: endX, y: endY }],
         labelAnchor: { x: (startX + endX) / 2, y: startY },
       };
+    } else if (Math.abs(startY - endY) < 0.5) {
+      // Aligned tiles. Without a lane every member of the fan would be drawn on
+      // the one centre line and the reader would see a single arrow.
+      const stub = stubLength(startX, endX);
+      const sStubX = startX + Math.sign(endX - startX) * stub;
+      const eStubX = endX + Math.sign(startX - endX) * stub;
+      base = {
+        points: simplifyPath([
+          { x: startX, y: startY },
+          { x: sStubX, y: startY },
+          { x: sStubX, y: startY + offset },
+          { x: eStubX, y: endY + offset },
+          { x: eStubX, y: endY },
+          { x: endX, y: endY },
+        ]),
+        labelAnchor: { x: (startX + endX) / 2, y: startY + offset },
+      };
+      ends = {
+        lead: [{ x: startX, y: startY }, { x: sStubX, y: startY }, { x: sStubX, y: startY + offset }],
+        tail: [{ x: eStubX, y: endY + offset }, { x: eStubX, y: endY }, { x: endX, y: endY }],
+      };
     } else {
       const midX = (startX + endX) / 2;
-      const shiftedStartY = startY + sourceShift;
-      const shiftedEndY = endY + targetShift;
+      const shiftedStartY = startY + offset + sourceShift;
+      const shiftedEndY = endY + offset + targetShift;
       const stub = stubLength(startX, midX);
       const sStubX = startX + Math.sign(midX - startX) * stub;
       const eStubX = endX + Math.sign(midX - endX) * stub;
@@ -1024,7 +1051,7 @@ export function routeOrthogonal(
         // short jog near the endpoints that keeps two hops off one another; it
         // is not meant to move the label, and letting it do so dragged a chip
         // up to 26px onto a bystanding tile.
-        labelAnchor: { x: midX, y: (startY + endY) / 2 },
+        labelAnchor: { x: midX, y: (startY + endY) / 2 + offset },
       };
       if (shifted) {
         ends = {
@@ -1036,17 +1063,36 @@ export function routeOrthogonal(
   } else {
     const startY = dy >= 0 ? source.y + source.h : source.y;
     const endY = dy >= 0 ? target.y : target.y + target.h;
-    const startX = sc.x + offset;
-    const endX = tc.x + offset;
-    if (Math.abs(startX - endX) < 0.5) {
+    const startX = sc.x;
+    const endX = tc.x;
+    if (Math.abs(startX - endX) < 0.5 && Math.abs(offset) <= 0.01) {
       base = {
         points: [{ x: startX, y: startY }, { x: endX, y: endY }],
         labelAnchor: { x: startX, y: (startY + endY) / 2 },
       };
+    } else if (Math.abs(startX - endX) < 0.5) {
+      const stub = stubLength(startY, endY);
+      const sStubY = startY + Math.sign(endY - startY) * stub;
+      const eStubY = endY + Math.sign(startY - endY) * stub;
+      base = {
+        points: simplifyPath([
+          { x: startX, y: startY },
+          { x: startX, y: sStubY },
+          { x: startX + offset, y: sStubY },
+          { x: endX + offset, y: eStubY },
+          { x: endX, y: eStubY },
+          { x: endX, y: endY },
+        ]),
+        labelAnchor: { x: startX + offset, y: (startY + endY) / 2 },
+      };
+      ends = {
+        lead: [{ x: startX, y: startY }, { x: startX, y: sStubY }, { x: startX + offset, y: sStubY }],
+        tail: [{ x: endX + offset, y: eStubY }, { x: endX, y: eStubY }, { x: endX, y: endY }],
+      };
     } else {
       const midY = (startY + endY) / 2;
-      const shiftedStartX = startX + sourceShift;
-      const shiftedEndX = endX + targetShift;
+      const shiftedStartX = startX + offset + sourceShift;
+      const shiftedEndX = endX + offset + targetShift;
       const stub = stubLength(startY, midY);
       const sStubY = startY + Math.sign(midY - startY) * stub;
       const eStubY = endY + Math.sign(midY - endY) * stub;
@@ -1061,7 +1107,7 @@ export function routeOrthogonal(
           { x: endX, y: eStubY },
           { x: endX, y: endY },
         ]),
-        labelAnchor: { x: (startX + endX) / 2, y: midY },
+        labelAnchor: { x: (startX + endX) / 2 + offset, y: midY },
       };
       if (shifted) {
         ends = {
