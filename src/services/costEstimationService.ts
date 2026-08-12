@@ -17,7 +17,8 @@ import {
   getServicePricing
 } from './azurePricingService';
 import { 
-  getActiveRegion
+  getActiveRegion,
+  oldestMeterVintage
 } from './regionalPricingService';
 import { 
   getAzureServiceName, 
@@ -330,6 +331,21 @@ export async function getAvailableTiers(
 export type PricingMode = 'payg' | 'reserved1yr';
 
 /**
+ * How long a price must have held before its age is worth reporting. Azure
+ * reprices most meters well inside a year, so anything that survives this has
+ * been genuinely stable rather than merely not-refreshed-this-week.
+ */
+const STABLE_PRICE_DAYS = 365;
+
+/** Whole days between two ISO calendar dates, or 0 if either is unusable. */
+function ageInDays(from: string, to: string): number {
+  const a = Date.parse(`${from}T00:00:00Z`);
+  const b = Date.parse(`${to}T00:00:00Z`);
+  if (Number.isNaN(a) || Number.isNaN(b)) return 0;
+  return Math.floor((b - a) / 86_400_000);
+}
+
+/**
  * Calculate total cost breakdown for all nodes
  */
 export function calculateCostBreakdown(
@@ -355,6 +371,11 @@ export function calculateCostBreakdown(
   const groupCosts = new Map<string, { label: string; cost: number; count: number }>();
   const categoryCosts = new Map<string, number>();
   const pricingRegions = new Set<string>();
+  // Which catalogue services the estimate actually priced, so the vintage
+  // reported is the vintage of the numbers on this page rather than of the
+  // whole dataset. Node labels are user-editable, so the lookup key is the
+  // service name the pricing loader was given.
+  const pricedServiceNames = new Set<string>();
 
   // Calculate per-service costs
   const unpricedServices: { nodeId: string; serviceName: string }[] = [];
@@ -368,6 +389,12 @@ export function calculateCostBreakdown(
     }
     const pricingRegion = typeof pricing.region === 'string' ? pricing.region.trim() : '';
     pricingRegions.add(pricingRegion || 'Unknown');
+    // A custom price is a number the user typed, so no Azure meter stands
+    // behind it and it must not drag the reported vintage backwards.
+    if (!pricing.isCustom) {
+      const priced = String(node.data.serviceName || node.data.label || '').trim();
+      if (priced) pricedServiceNames.add(priced);
+    }
 
     let cost = pricing.estimatedCost * pricing.quantity;
     // Apply the 1-year commitment to reservation-eligible, non-usage-based
@@ -440,6 +467,16 @@ export function calculateCostBreakdown(
 
   if (unpricedServices.length > 0) breakdown.unpricedServices = unpricedServices;
 
+  // Only worth saying when the prices have actually held for a while. Every
+  // meter predates the download by some margin, so reporting any gap at all
+  // would put a second date on every slide that never means anything; a year
+  // is well past Azure's normal repricing cadence, so what survives it is the
+  // genuinely long-stable pricing worth mentioning out loud.
+  const oldest = oldestMeterVintage([...pricedServiceNames]);
+  if (oldest && ageInDays(oldest, PRICING_DATA_AS_OF) > STABLE_PRICE_DAYS) {
+    breakdown.oldestMeterAsOf = oldest;
+  }
+
   return breakdown;
 }
 
@@ -501,6 +538,10 @@ export function getCostSummaryText(breakdown: CostBreakdown): string {
     const f = getPricingFreshness(breakdown.pricesAsOf);
     lines.push(`Prices as of: ${breakdown.pricesAsOf}${f.isStale ? ` (⚠️ ${f.ageLabel} — refresh with "npm run pricing:refresh")` : ''}`);
   }
+  if (breakdown.oldestMeterAsOf) {
+    lines.push(`Oldest unchanged price: ${breakdown.oldestMeterAsOf} `
+      + '(these are current Azure prices; the date is when Azure last changed the longest-standing one)');
+  }
   lines.push(`Last Updated: ${new Date(breakdown.lastCalculated).toLocaleString()}`);
   lines.push('');
   
@@ -554,6 +595,7 @@ export function getCostSummaryMarkdown(breakdown: CostBreakdown): string {
   lines.push(`| Currency | ${breakdown.currency} |`);
   if (breakdown.pricingTerm) lines.push(`| Pricing term | ${breakdown.pricingTerm} |`);
   if (breakdown.pricesAsOf) lines.push(`| Prices as of | ${breakdown.pricesAsOf} |`);
+  if (breakdown.oldestMeterAsOf) lines.push(`| Oldest unchanged price | ${breakdown.oldestMeterAsOf} |`);
   lines.push(`| Last updated | ${new Date(breakdown.lastCalculated).toLocaleString()} |`);
   lines.push('');
 
@@ -614,6 +656,7 @@ export function exportCostBreakdownCSV(breakdown: CostBreakdown, nodes?: Node[])
   lines.push(`Region,${csvTextCell(breakdown.region)}`);
   if (breakdown.pricingTerm) lines.push(`Pricing Term,${csvTextCell(breakdown.pricingTerm)}`);
   if (breakdown.pricesAsOf) lines.push(`Prices As Of,${csvTextCell(breakdown.pricesAsOf)}`);
+  if (breakdown.oldestMeterAsOf) lines.push(`Oldest Unchanged Price,${csvTextCell(breakdown.oldestMeterAsOf)}`);
   lines.push(`Date,${csvTextCell(new Date(breakdown.lastCalculated).toLocaleDateString())}`);
   lines.push('');
   

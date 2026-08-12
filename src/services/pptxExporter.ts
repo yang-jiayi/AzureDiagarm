@@ -3742,6 +3742,13 @@ export interface DeckCost {
   term?: string;
   region?: string;
   pricesAsOf?: string;
+  /**
+   * The oldest still-unchanged price behind this estimate, when it has held for
+   * over a year. Not a staleness warning — these are current Azure prices — but
+   * a customer asking "how firm is this number?" is asking a fair question and
+   * the deck should answer it.
+   */
+  oldestMeterAsOf?: string;
   /** Fixed (predictable) vs usage-based split, when derivable. */
   fixedCost?: number;
   usageCost?: number;
@@ -4047,7 +4054,12 @@ function addCostOverviewSlide(pptx: PptxGenJS, t: SlideTheme, o: ArchitectureDec
   const c = o.cost;
   if (!c) return;
   const slide = pptx.addSlide();
-  const meta = [c.term, c.region, c.pricesAsOf ? `prices as of ${c.pricesAsOf}` : undefined].filter(Boolean).join('  ·  ');
+  const meta = [
+    c.term,
+    c.region,
+    c.pricesAsOf ? `prices as of ${c.pricesAsOf}` : undefined,
+    c.oldestMeterAsOf ? `unchanged since ${c.oldestMeterAsOf}` : undefined,
+  ].filter(Boolean).join('  ·  ');
   addChrome(pptx, slide, t, 'Estimated cost', meta || undefined);
 
   // Headline monthly + annual

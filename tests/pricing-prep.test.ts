@@ -3,14 +3,18 @@
 
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { compactPricingData } from '../scripts/prep-pricing-data.mjs';
 import {
   expandPricingData,
   filterPricingItems,
+  getMeterVintage,
+  oldestMeterVintage,
   parsePricingTiers,
+  recordMeterVintage,
+  resetMeterVintages,
 } from '../src/services/regionalPricingService';
 import type { AzureRetailPrice } from '../src/types/pricing';
 
@@ -176,4 +180,133 @@ test('real compacted regional files expand and parse to non-empty VM tiers', () 
     );
     assert.deepEqual(reTiers, tiers, `round-trip must be idempotent for ${region}`);
   }
+});
+
+// ---------------------------------------------------------------------------
+// Meter vintage. `PricesAsOf` is the newest meter date in a file, which is not
+// the date the file was downloaded: Azure restates a meter only when it
+// changes, so a refresh run today still returns 2018 meters for services it has
+// not repriced. The shipped corpus spans 2018-02 to 2026-07, so quoting the
+// download date alone tells a customer a deck is current when part of it is
+// eight years old.
+// ---------------------------------------------------------------------------
+
+test('expansion carries the meter vintage off the file', () => {
+  const compact = { BillingCurrency: 'USD', ServiceName: 'Virtual Machines', PricesAsOf: '2018-02-01', Items: [] };
+  assert.equal(expandPricingData(compact as never).pricesAsOf, '2018-02-01');
+});
+
+test('a malformed or missing vintage is dropped rather than reported', () => {
+  // A bad date is worse than no date: it would be printed on a customer deck
+  // verbatim, and it would sort against real dates in the oldest-wins compare.
+  for (const bad of [undefined, '', 'last Tuesday', '2018-2-1', '2018-02-01T00:00:00Z', 42]) {
+    const compact = { BillingCurrency: 'USD', Items: [], PricesAsOf: bad };
+    assert.equal(expandPricingData(compact as never).pricesAsOf, undefined, `rejected: ${String(bad)}`);
+  }
+});
+
+test('the registry keeps the oldest vintage seen for a service', () => {
+  resetMeterVintages();
+  assert.equal(getMeterVintage('Virtual Machines'), undefined);
+  recordMeterVintage('Virtual Machines', '2024-10-01');
+  assert.equal(getMeterVintage('Virtual Machines'), '2024-10-01');
+  // The same service is loaded once per region, and a number is only as
+  // trustworthy as the stalest meter behind it.
+  recordMeterVintage('Virtual Machines', '2018-02-01');
+  assert.equal(getMeterVintage('Virtual Machines'), '2018-02-01');
+  recordMeterVintage('Virtual Machines', '2026-07-01');
+  assert.equal(getMeterVintage('Virtual Machines'), '2018-02-01', 'a newer region must not refresh an older meter');
+});
+
+test('the registry refuses a vintage it cannot trust', () => {
+  // The guard in `recordMeterVintage` is not redundant with the one in
+  // `expandPricingData`: this is an exported entry point, and the values it
+  // stores are compared with `<` and printed verbatim on a customer deck. A
+  // string that is not an ISO date would sort arbitrarily against real ones and
+  // could win the oldest-wins compare on every estimate.
+  resetMeterVintages();
+  for (const bad of [undefined, '', 'last Tuesday', '2018-2-1', '2018-02-01T00:00:00Z']) {
+    recordMeterVintage('Virtual Machines', bad as string | undefined);
+    assert.equal(getMeterVintage('Virtual Machines'), undefined, `accepted: ${String(bad)}`);
+  }
+  recordMeterVintage('Virtual Machines', '2018-02-01');
+  assert.equal(getMeterVintage('Virtual Machines'), '2018-02-01');
+});
+
+test('the oldest vintage is taken across only the services asked about', () => {
+  resetMeterVintages();
+  recordMeterVintage('Virtual Machines', '2018-02-01');
+  recordMeterVintage('Storage', '2024-10-01');
+  recordMeterVintage('SQL Database', '2026-07-01');
+  assert.equal(oldestMeterVintage(['Storage', 'SQL Database']), '2024-10-01');
+  assert.equal(oldestMeterVintage(['Virtual Machines', 'Storage']), '2018-02-01');
+  assert.equal(oldestMeterVintage(['Unpriced Thing']), undefined);
+  assert.equal(oldestMeterVintage([]), undefined);
+});
+
+test('every shipped pricing file states a vintage that parses', () => {
+  // The whole feature rests on this field being present and well formed in the
+  // data as shipped; a silent regression in the prep script would otherwise
+  // just make the warning quietly stop appearing.
+  let checked = 0;
+  for (const region of ['japaneast', 'eastus2', 'westeurope']) {
+    for (const entry of readdirSync(join(REGIONS_DIR, region))) {
+      if (!entry.endsWith('.json')) continue;
+      const compact = JSON.parse(readFileSync(join(REGIONS_DIR, region, entry), 'utf8'));
+      if (!Array.isArray(compact.Items) || compact.Items.length === 0) continue;
+      checked += 1;
+      const asOf = expandPricingData(compact).pricesAsOf;
+      assert.ok(asOf, `${region}/${entry} ships meters but states no vintage`);
+      assert.ok(!Number.isNaN(Date.parse(asOf!)), `${region}/${entry} states an unparseable vintage ${asOf}`);
+    }
+  }
+  assert.ok(checked > 50, `expected a real corpus, checked only ${checked} files`);
+});
+
+test('the estimate reports how long its longest-standing price has held', async () => {
+  // Azure's retail API returns current prices, so a 2018 meter is genuinely
+  // today's price — it is one Azure has not repriced since. That is not a
+  // staleness warning, it is the answer to "how firm is this number?", and it
+  // is only worth putting on a slide when the price has actually held for a
+  // while: every meter predates the download by some margin, so reporting any
+  // gap at all would put a second date on every deck that never means anything.
+  const { calculateCostBreakdown } = await import('../src/services/costEstimationService');
+  const { PRICING_DATA_AS_OF } = await import('../src/data/azurePricing');
+  const node = (id: string, serviceName: string, extra: Record<string, unknown> = {}) => ({
+    id,
+    position: { x: 0, y: 0 },
+    data: {
+      label: serviceName,
+      serviceName,
+      category: 'compute',
+      pricing: { estimatedCost: 10, quantity: 1, tier: 'Standard', region: 'japaneast', ...extra },
+    },
+  });
+
+  resetMeterVintages();
+  recordMeterVintage('Virtual Machines', '2018-02-01');
+  recordMeterVintage('Storage', '2026-07-01');
+
+  const stable = calculateCostBreakdown([node('a', 'Virtual Machines'), node('b', 'Storage')] as never);
+  assert.equal(stable.pricesAsOf, PRICING_DATA_AS_OF, 'the refresh date still says when the data was fetched');
+  assert.equal(stable.oldestMeterAsOf, '2018-02-01', 'the oldest of the two, not the newest');
+
+  // A fortnight is not news. Reporting it would make the line permanent
+  // furniture and therefore invisible when it does matter.
+  const recent = calculateCostBreakdown([node('b', 'Storage')] as never);
+  assert.equal(recent.oldestMeterAsOf, undefined);
+
+  // A custom price is a number the user typed; no Azure meter stands behind it,
+  // so it must not drag the reported vintage backwards.
+  resetMeterVintages();
+  recordMeterVintage('Virtual Machines', '2018-02-01');
+  const typed = calculateCostBreakdown([node('a', 'Virtual Machines', { isCustom: true })] as never);
+  assert.equal(typed.oldestMeterAsOf, undefined);
+
+  // The bar is a year, so a price that moved eleven months ago is still recent.
+  const elevenMonths = new Date(Date.parse(`${PRICING_DATA_AS_OF}T00:00:00Z`) - 334 * 86_400_000)
+    .toISOString().slice(0, 10);
+  resetMeterVintages();
+  recordMeterVintage('Virtual Machines', elevenMonths);
+  assert.equal(calculateCostBreakdown([node('a', 'Virtual Machines')] as never).oldestMeterAsOf, undefined);
 });

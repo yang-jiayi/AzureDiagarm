@@ -3554,6 +3554,7 @@ function App() {
           term: breakdown.pricingTerm,
           region: breakdown.region,
           pricesAsOf: breakdown.pricesAsOf,
+          oldestMeterAsOf: breakdown.oldestMeterAsOf,
           fixedCost,
           usageCost: breakdown.totalMonthlyCost - fixedCost,
           byCategory: breakdown.byCategory

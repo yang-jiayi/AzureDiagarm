@@ -36,12 +36,20 @@ export const AVAILABLE_REGIONS: RegionInfo[] = [
 interface RegionalPricingData {
   BillingCurrency: string;
   Items: AzureRetailPrice[];
+  /**
+   * The newest meter effective date in the file this data came from, which is
+   * how old the prices actually are. Not the date the file was downloaded: the
+   * corpus spans 2018-02 to 2026-07, so a refresh run in 2026 still ships 2018
+   * meters for the services Azure has not repriced since.
+   */
+  pricesAsOf?: string;
 }
 
 /** Compacted on-disk shape produced by scripts/prep-pricing-data.mjs. */
 interface CompactPricingData {
   BillingCurrency?: string;
   ServiceName?: string;
+  PricesAsOf?: string;
   Items?: Array<Partial<AzureRetailPrice> & Record<string, unknown>>;
 }
 
@@ -113,8 +121,7 @@ function pricingBaseUrl(): string {
  * Restore a compacted pricing file to the shape the parser expects. Mirrors
  * scripts/prep-pricing-data.mjs `expandPricingData` — only fields the runtime
  * reads are reconstructed. Exported for the round-trip test.
- */
-export function expandPricingData(compact: CompactPricingData): RegionalPricingData {
+ */export function expandPricingData(compact: CompactPricingData): RegionalPricingData {
   const serviceName = compact?.ServiceName;
   const items = Array.isArray(compact?.Items) ? compact.Items : [];
   const expanded = items.map((item) => {
@@ -136,6 +143,9 @@ export function expandPricingData(compact: CompactPricingData): RegionalPricingD
   return {
     BillingCurrency: compact?.BillingCurrency ?? 'USD',
     Items: expanded,
+    pricesAsOf: typeof compact?.PricesAsOf === 'string' && ISO_DATE.test(compact.PricesAsOf)
+      ? compact.PricesAsOf
+      : undefined,
   };
 }
 
@@ -320,6 +330,56 @@ export function getRegionInfo(region: AzureRegion): RegionInfo | undefined {
 }
 
 /**
+ * Meter vintage per service, recorded as pricing files are parsed.
+ *
+ * The estimate is assembled synchronously from pricing that was loaded
+ * asynchronously, and the caller that builds the breakdown has the service
+ * names but not the files they came from. Rather than thread the date through
+ * every pricing call site, each parse records what it saw and the breakdown
+ * asks afterwards. Keyed by the service name the caller uses, so it answers the
+ * question actually being asked: "how old is the price I am about to print?"
+ */
+const meterVintage = new Map<string, string>();
+
+/** ISO calendar date, which is the only form `PricesAsOf` is written in. */
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * Record the vintage of a parsed service, keeping the oldest seen per name.
+ * Exported as the write half of the registry the getters below read.
+ */
+export function recordMeterVintage(serviceName: string, asOf: string | undefined): void {
+  if (!asOf || !ISO_DATE.test(asOf)) return;
+  const seen = meterVintage.get(serviceName);
+  // Oldest wins: the same service can be loaded for several regions, and a
+  // number is only as trustworthy as the stalest meter behind it.
+  if (seen === undefined || asOf < seen) meterVintage.set(serviceName, asOf);
+}
+
+/**
+ * The meter vintage recorded for a service, or undefined if none was parsed.
+ * Synchronous, so the cost breakdown can ask without becoming async.
+ */
+export function getMeterVintage(serviceName: string): string | undefined {
+  return meterVintage.get(serviceName);
+}
+
+/** The oldest meter vintage among the named services. */
+export function oldestMeterVintage(serviceNames: readonly string[]): string | undefined {
+  let oldest: string | undefined;
+  for (const name of serviceNames) {
+    const asOf = meterVintage.get(name);
+    if (asOf && (oldest === undefined || asOf < oldest)) oldest = asOf;
+  }
+  return oldest;
+}
+
+/** Drop every recorded vintage. Exported so tests start from a known state. */
+export function resetMeterVintages(): void {
+  meterVintage.clear();
+}
+
+/**
  * Load pricing data for a specific service in a region
  */
 async function loadServiceData(region: AzureRegion, serviceName: string): Promise<RegionalPricingData | null> {
@@ -334,9 +394,11 @@ async function loadServiceData(region: AzureRegion, serviceName: string): Promis
     const filteredItems = fullData.Items.filter(item =>
       (item as any).productName === aiMapping.productName
     );
+    recordMeterVintage(serviceName, fullData.pricesAsOf);
     return {
       BillingCurrency: fullData.BillingCurrency,
       Items: filteredItems,
+      pricesAsOf: fullData.pricesAsOf,
     };
   }
 
@@ -347,6 +409,7 @@ async function loadServiceData(region: AzureRegion, serviceName: string): Promis
     console.warn(`⚠️ No pricing data available for ${serviceName} in ${region}`);
     return null;
   }
+  recordMeterVintage(serviceName, data.pricesAsOf);
   return data;
 }
 

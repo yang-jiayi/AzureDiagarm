@@ -166,6 +166,19 @@ export interface CostBreakdown {
   unpricedServices?: { nodeId: string; serviceName: string }[];
   /** Date the underlying pricing data was last refreshed (YYYY-MM-DD). */
   pricesAsOf?: string;
+  /**
+   * The oldest meter date behind the services in this estimate (YYYY-MM-DD),
+   * when the prices have been unchanged for long enough to be worth saying.
+   *
+   * Not a staleness warning. Azure's retail API returns current prices, so a
+   * 2018 meter is genuinely today's price — it is simply one Azure has not
+   * repriced since. `pricesAsOf` says when the data was fetched, which answers
+   * "is this current?"; this answers the different question a customer asks in
+   * the room, "how firm is this number?" The shipped corpus spans 2018-02 to
+   * 2026-07, and a price that has held for eight years is a materially
+   * different planning input from one that moved last month.
+   */
+  oldestMeterAsOf?: string;
   /** Billing term the costs reflect (e.g. "Pay-as-you-go", "Savings Plan (1-year)"). */
   pricingTerm?: string;
 }
