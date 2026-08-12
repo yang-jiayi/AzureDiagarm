@@ -3696,6 +3696,27 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
         + `— ${((widest / tile) * 100).toFixed(0)}% of the service it is calling out`);
     }
   }
+  // A callout is a white number on a dark disc, and the disc is the only thing
+  // making it readable. Every other piece of type on the sheet is measured
+  // against the shape that has to hold it — the service name against its tile,
+  // the zone caption against its zone — but the badge was measured only by its
+  // diameter against a tile, which says nothing about whether the number fits
+  // the disc. Overflow here is not untidy, it is white ink on white paper: the
+  // reader sees a dark speck with an invisible smear across it, and the digits,
+  // which are the one thing muting a label into the workflow band is supposed
+  // to preserve, carry no information at all.
+  for (const badge of xml.matchAll(/NameU="StepBadge\.\d+"[\s\S]*?<Cell N="Width" V="([\d.]+)"[\s\S]*?<Cell N="Size" V="([\d.]+)"[\s\S]*?<Text>([^<]*)<\/Text>/g)) {
+    const discIn = +badge[1];
+    const fontIn = +badge[2];
+    const digits = badge[3].trim();
+    if (!digits || discIn <= 0 || fontIn <= 0) continue;
+    const needIn = textWidthIn(digits, fontIn * 72);
+    if (needIn > discIn) {
+      issues.push(`step badge "${digits}" needs ${needIn.toFixed(4)}in of type on a `
+        + `${discIn.toFixed(4)}in disc — ${(needIn / discIn).toFixed(2)}x the disc that backs it, `
+        + `so most of the number is white on white`);
+    }
+  }
 
   // Every sentence the author wrote has to survive somewhere a reader can find
   // it. The sheet drops a label it cannot write anywhere legible and hands the
@@ -4142,6 +4163,22 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
       const below = Math.min(...serviceBoxes.map((s) => s.y)) - floor;
       if (above - below > BAND_RESERVE_SLACK_IN) {
         issues.push(`${(above - below).toFixed(2)}in of blank paper between the drawing and the workflow band — the band reserved page it did not use`);
+      }
+    }
+    // Two opaque panels that overlap each other are a hole in every rule above:
+    // the "nothing may be drawn under a panel" test rescues a badge by stepping
+    // it out of the one it is under, and if the panels intersect, the seat it
+    // steps to is inside the other one. It cannot happen today — the legend
+    // reserves 0.24n + 0.79in of page while its rectangle only reaches
+    // 0.24n + 0.69in, and the page height always carries both reservations plus
+    // the padding — but that is an argument about three constants in a file
+    // nobody reads while changing a fourth. This is the same statement, checked.
+    for (let i = 0; i < panelRects.length; i += 1) {
+      for (let j = i + 1; j < panelRects.length; j += 1) {
+        if (panelRects[i].name === panelRects[j].name) continue;
+        if (overlapArea(panelRects[i], panelRects[j]) > 0) {
+          issues.push(`the ${panelRects[i].name} and the ${panelRects[j].name} overlap each other, so stepping a shape out of one puts it inside the other`);
+        }
       }
     }
     // A service is a picture: any of it lost is a service the reader cannot

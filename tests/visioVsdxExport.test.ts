@@ -357,12 +357,25 @@ test('a sentence that could be written on the drawing is not exiled to the band'
   // placement search that gives up early scores perfectly while handing the
   // reader a drawing with no words on it. This is the assertion that notices.
   //
-  // The measured difference is the foreign-arrow term in `blockage`: on this
-  // shape the exporter draws 35 sentences with it and 10 without, because
-  // without it the search settles beside a stranger's arrow, that seat counts
-  // as lost, and the wording goes to the band instead. The floor sits between
-  // the two so it cannot be met by accident.
+  // The measured difference is the foreign-arrow term in `blockage`: without it
+  // the search settles beside a stranger's arrow, that seat counts as lost, and
+  // the wording goes to the band instead.
+  //
+  // The floor is derived from the fixture rather than from what the exporter
+  // happens to achieve, so it cannot be re-baselined by hand. A hop between two
+  // neighbours in the same row is a short horizontal arrow with the whole
+  // 190px gap to the next row of clear paper beside it: there is no legitimate
+  // reason for its sentence to leave the drawing. Only the four back-hops that
+  // wrap from the end of one row to the start of the next cross the drawing and
+  // may honestly fail to seat. Change the fixture's shape and the floor follows
+  // it. (It is not a number nobody can miss, either: the same fixture draws 10
+  // with the foreign-arrow term removed.)
   const chain = proseChain();
+  const inRow = chain.edges.filter((edge) => {
+    const from = Number(edge.source.slice(1));
+    const to = Number(edge.target.slice(1));
+    return Math.floor(from / 8) === Math.floor(to / 8);
+  }).length;
   const pkg = await buildVsdxPackage(chain.nodes, chain.edges, 'Contoso');
   const xml = pkg.parts.find((part) => part.path === 'visio/pages/page1.xml')!.data as string;
   const panels = panelBoxes(xml);
@@ -370,8 +383,9 @@ test('a sentence that could be written on the drawing is not exiled to the band'
     (label) => !panels.some((panel) => overlapArea(label, panel) > 0.01 * label.w * label.h),
   );
   assert.ok(
-    visible.length >= 20,
-    `only ${visible.length} of ${chain.edges.length} sentences are drawn on the sheet; the rest were muted into the band`,
+    visible.length >= inRow,
+    `only ${visible.length} of ${chain.edges.length} sentences are drawn on the sheet, `
+      + `but ${inRow} of them are hops within a row with clear paper beside them; the rest were muted into the band`,
   );
 });
 

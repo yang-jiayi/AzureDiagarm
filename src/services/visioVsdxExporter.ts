@@ -658,13 +658,32 @@ const STEP_BADGE_IN = 0.24;
 const MIN_BADGE_FONT_IN = 0.0973;
 
 /**
+ * The floor the badge digits may shrink to *on this sheet*.
+ *
+ * The shrink ladder is a natural-scale mechanism — it buys a badge a seat
+ * between two tiles by giving up padding — and against it a fixed 7pt floor is
+ * right. Against `fonts.scale` it is not: a scaled sheet draws everything,
+ * including the service names, below 7pt on purpose, and holding the badge
+ * alone at 7pt does not rescue it, it detaches it from the disc that backs it.
+ * At `scaled-zone-row`'s 0.236 the digits came out 2.78x the width of their own
+ * disc, so about two thirds of every number was white ink on white paper — a
+ * dark speck with an invisible smear across it, and 479 of them to repair by
+ * hand. `fontsForScale` already settled this argument for the other type on the
+ * sheet: proportion is the only property worth keeping at that size. So the
+ * floor may never raise the badge above what the sheet scale asks for.
+ */
+function badgeFontFloorIn(fonts: VisioFonts): number {
+  return Math.min(MIN_BADGE_FONT_IN, fonts.badge);
+}
+
+/**
  * The smallest disc that still holds its own number at the legibility floor.
  * A badge is mostly padding, so squeezing it into a gap between two tiles is
  * mostly a matter of giving that padding up; what cannot be given up is the
  * digits, and a three-digit step needs visibly more room than a one-digit one.
  */
 function badgeMinDiameterIn(stepNumber: number, fonts: VisioFonts): number {
-  const pt = Math.max(MIN_BADGE_FONT_IN, Math.min(fonts.badge, MIN_BADGE_FONT_IN));
+  const pt = badgeFontFloorIn(fonts);
   const digits = String(Math.max(1, Math.abs(Math.trunc(stepNumber)))).length;
   return Math.max(pt * 1.15, digits * pt * 0.55 + 0.02);
 }
@@ -696,7 +715,7 @@ function stepBadgeXml(
   // The digits come down with the disc so they do not spill out of it, but
   // never below the floor both exporters promise: an illegible number in the
   // right place is no better than a legible one in the wrong place.
-  const size = Math.max(MIN_BADGE_FONT_IN, fonts.badge * Math.min(1, d / natural));
+  const size = Math.max(badgeFontFloorIn(fonts), fonts.badge * Math.min(1, d / natural));
   return `    <Shape ID="${id}" NameU="StepBadge.${id}"${edgeId ? ` Name="step-${esc(edgeId)}"` : ''} Type="Shape" LineStyle="0" FillStyle="0" TextStyle="0">
       <Cell N="PinX" V="${f(centre.x)}"/>
       <Cell N="PinY" V="${f(centre.y)}"/>
@@ -1754,11 +1773,26 @@ export async function buildVsdxPackage(
         best = { shift, slide };
       }
     };
+    // The travel term is priced on distance to the drawn polyline, but `ring`
+    // counts displacement along the chord normal, and those are not the same
+    // quantity: the natural seat already sits `drop` off the chord, and on an
+    // elbowed hop a shift can walk *toward* the polyline before it walks away.
+    // A break that estimated travel as `ring * step` was therefore free to cut
+    // off a ring cheaper than its own estimate. Distance to a fixed set moves
+    // by at most the distance the point moved, so `ring * step - approachIn` is
+    // a sound lower bound on how far out the seat really is, where `approachIn`
+    // is the furthest any member's seat starts from its own arrow.
+    const approachIn = members.reduce((far, member) => {
+      const seat = ladder.get(member.id) ?? { drop: 0, along: 0 };
+      const box = rectAt(member, seat.drop, seat.along);
+      const at = { x: box.x + box.w / 2, y: box.y + box.h / 2 };
+      return Math.max(far, gapToPoly(polyFor(member), at));
+    }, 0);
     for (let ring = 1; bestBlocked > 0 && ring <= rings; ring += 1) {
       // Travel is priced superlinearly and every other term is non-negative, so
       // once a ring's own travel already costs more than the best seat found,
       // nothing further out can beat it and the rest of the walk is waste.
-      const excess = ring * step - reachIn;
+      const excess = ring * step - approachIn - reachIn;
       if (excess > 0 && excess * excess * 3 >= bestCost) break;
       for (let s = -Math.min(slides, ring); s <= Math.min(slides, ring); s += 1) {
         consider(ring * step, s * slideStep);
@@ -1816,6 +1850,13 @@ export async function buildVsdxPackage(
       y: clampIn(seat.y, half, ceiling - half),
       d: seat.d,
     };
+    // The badge is stepped clear of any furniture panel it lands in. One pass
+    // is enough: the panels are disjoint in `y` by construction — the page
+    // always reserves `contentH + 1.2 + band + legend`, and the legend's
+    // reservation runs 0.45in past its drawn box, which buys 1.10in of
+    // guaranteed separation — so stepping out of one cannot land inside the
+    // other. The export audit asserts that disjointness directly rather than
+    // leaving it as an argument about four constants in two files.
     for (const rect of furnitureRects) {
       if (at.x + half <= rect.x || at.x - half >= rect.x + rect.w
         || at.y + half <= rect.y || at.y - half >= rect.y + rect.h) continue;
