@@ -350,7 +350,13 @@ export function readableTextOn(color: string, background: string, target = 4.5):
   const r = parseInt(base.slice(1, 3), 16);
   const g = parseInt(base.slice(3, 5), 16);
   const b = parseInt(base.slice(5, 7), 16);
-  const toward = relativeLuminance(bg) > 0.5 ? 0 : 255;
+  // Which extreme to walk toward. Black and white give equal contrast at a
+  // background luminance of 0.179, not 0.5 — the WCAG ratio is not linear in
+  // luminance. Asking which extreme actually wins states that without the
+  // magic number, and makes the fallback below correct by construction: on a
+  // mid-grey (0.18 < L < 0.5) the old test walked toward black and then
+  // returned black, when white was the readable choice.
+  const toward = contrastRatio('#000000', bg) >= contrastRatio('#ffffff', bg) ? 0 : 255;
   for (let step = 1; step <= 20; step += 1) {
     const t = step / 20;
     const mix = (v: number) => Math.round(v * (1 - t) + toward * t).toString(16).padStart(2, '0');

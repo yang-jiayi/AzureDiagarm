@@ -296,6 +296,36 @@ function grp(id: string, label: string, x: number, y: number, w: number, h: numb
 }
 
 /**
+ * Real Architecture-Center step prose, long enough that every row wraps. The
+ * whole corpus used `step N` and one-clause labels, so the workflow list was
+ * only ever measured with sentences that fit on one line — and pagination
+ * assumed exactly that.
+ */
+function workflowProseScenario(): Scenario {
+  const sentences = [
+    'The client sends the request to Azure Front Door, which terminates TLS at the edge and applies the WAF ruleset before anything reaches the origin.',
+    'Front Door forwards the validated request to the App Service origin over Private Link, so the origin is never reachable from the public internet.',
+    'The web tier exchanges its managed identity for an access token and calls the API tier, which authorises the caller against the roles in the token.',
+    'The API tier writes the order document to Azure Cosmos DB and the accompanying blob to Azure Storage in the same logical transaction boundary.',
+    'A change feed trigger raises an event on Azure Service Bus so downstream processing is decoupled from the request path and can be retried safely.',
+    'Azure Functions consumes the message, enriches it against the reference data cache and hands the result to the fulfilment system for dispatch.',
+  ];
+  const nodes: Node[] = [];
+  for (let i = 0; i < 24; i += 1) {
+    nodes.push(svc(`p${i}`, `Azure Service ${i}`, (i % 6) * 220, Math.floor(i / 6) * 150));
+  }
+  const edges: Edge[] = [];
+  for (let i = 0; i < 23; i += 1) {
+    edges.push({
+      id: `q${i}`, source: `p${i}`, target: `p${i + 1}`,
+      label: 'forwards the validated request',
+      data: { stepNumber: i + 1, stepDescription: sentences[i % sentences.length] },
+    } as Edge);
+  }
+  return { id: 'workflow-prose', nodes, edges };
+}
+
+/**
  * Wide tiles carrying a full sub-line, stacked in rows barely further apart
  * than a chip is tall. The only clear paper for a label is the strip directly
  * under a tile — which is exactly where the SKU, the region and the price are
@@ -1715,6 +1745,19 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
   }
   for (const row of shapes.filter((s) => s.name.startsWith('workflow-text-'))) {
     if (!row.text.trim()) issues.push(`workflow row "${row.name}" is blank`);
+    // PowerPoint does not clip a `valign: middle` box — it spills the overflow
+    // symmetrically past both edges. A step sentence that wraps to more lines
+    // than its row is tall therefore runs into the rows above and below it, and
+    // the list stops being readable exactly when the prose gets real.
+    // Measured unclamped on purpose: `drawnTextRect` caps height at the box,
+    // which is what makes it useless for asking whether the text fits the box.
+    if (row.fontSize && row.text.trim()) {
+      const lines = Math.max(1, Math.ceil(textWidthIn(row.text.trim(), row.fontSize) / row.w));
+      const needed = (lines * row.fontSize * 1.22) / 72;
+      if (needed > row.h + 0.01) {
+        issues.push(`workflow row "${row.name}" needs ${needed.toFixed(2)}in of text (${lines} lines at ${row.fontSize}pt) in a ${row.h.toFixed(2)}in row, so it spills onto its neighbours`);
+      }
+    }
   }
   // Numbers are the only handle a reader has on the prose, so two arrows may
   // never wear the same one, and no sentence the author wrote may go missing.
@@ -1887,6 +1930,57 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
     if (!shipped.has(target)) issues.push(`icon relationship points at media/${target}, which is not in the package`);
   }
   const xml = typeof pagePart?.data === 'string' ? pagePart.data : '';
+  // Visio text contrast. The Visio path carried its own hard-coded colours and
+  // was never measured — the PowerPoint deck had a contrast rule, this one did
+  // not, so a fix applied to one exporter could silently miss the other.
+  // Each `<Shape>` fragment carries its own fill or inherits the enclosing
+  // group's, and every character `Row` in it names a text colour.
+  const hex6 = /^#[0-9a-fA-F]{6}$/;
+  const seenVsdxContrast = new Set<string>();
+  // Visio nests: a service group carries the label text, but the fill that text
+  // is read against lives on the group's child tile, and a step badge is a flat
+  // sibling with a fill of its own. So a shape's backdrop is its own fill, else
+  // the first one among its descendants, else its ancestors', else the white
+  // page. Attributing fills by document order instead reads a badge's dark disc
+  // as the backdrop of whatever was drawn next.
+  type Frame = { name: string; fill?: string; runs: { color: string; size: number }[] };
+  const stack: Frame[] = [];
+  const drawn: { name: string; fill: string; color: string; size: number }[] = [];
+  const tokenRe = /<Shape\s[^>]*?(\/?)>|<\/Shape>|<Cell N="FillForegnd" V="(#[0-9a-fA-F]{6})"\/>|<Cell N="Color" V="(#[0-9a-fA-F]{6})"\/><Cell N="Size" V="([\d.]+)"/g;
+  const closeFrame = (): void => {
+    const frame = stack.pop();
+    if (!frame) return;
+    let fill = frame.fill;
+    for (let i = stack.length - 1; i >= 0 && !fill; i -= 1) fill = stack[i].fill;
+    for (const run of frame.runs) drawn.push({ name: frame.name, fill: fill ?? '#FFFFFF', ...run });
+    const parent = stack[stack.length - 1];
+    if (parent && !parent.fill && frame.fill) parent.fill = frame.fill;
+  };
+  for (const token of xml.matchAll(tokenRe)) {
+    const [text, selfClosing, fillHex, colorHex, sizeIn] = token;
+    if (text.startsWith('</Shape')) { closeFrame(); continue; }
+    if (text.startsWith('<Shape')) {
+      stack.push({ name: /NameU="([^"]*)"/.exec(text)?.[1] ?? 'shape', runs: [] });
+      if (selfClosing === '/') closeFrame();
+      continue;
+    }
+    const top = stack[stack.length - 1];
+    if (!top) continue;
+    if (fillHex) top.fill = fillHex;
+    else if (colorHex) top.runs.push({ color: colorHex, size: +sizeIn });
+  }
+  while (stack.length > 0) closeFrame();
+  for (const run of drawn) {
+    if (!hex6.test(run.color) || !hex6.test(run.fill)) continue;
+    const ratio = contrastRatio(run.color.slice(1), run.fill.slice(1));
+    // Visio font sizes are inches; 18pt = 0.25in is the WCAG large-text bar.
+    const bar = run.size >= 0.25 ? 3 : 4.5;
+    if (ratio >= bar) continue;
+    const key = `${run.color}|${run.fill}|${bar}`;
+    if (seenVsdxContrast.has(key)) continue;
+    seenVsdxContrast.add(key);
+    issues.push(`${run.name} draws ${run.color} text on ${run.fill} — contrast ${ratio.toFixed(2)}:1, below the ${bar}:1 WCAG AA bar`);
+  }
   const textCount = (xml.match(/<Text>/g) ?? []).length;
   if (textCount < serviceCount) issues.push(`only ${textCount} text blocks for ${serviceCount} services`);
   // Visio refuses pages larger than 200" on a side.
@@ -2101,13 +2195,24 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
 
 async function main(): Promise<void> {
   mkdirSync(OUT, { recursive: true });
-  const scenarios = [
+  const base = [
     compactScenario(), wideScenario(), oversizeScenario(), outlierScenario(),
     bandedScenario(), narrativeScenario(), barbellScenario(), parallelScenario(),
     ladderInGridScenario(), twinLaddersScenario(), strayLadderScenario(), legendCornerScenario(), duplicateStepsScenario(), denseZoneScenario(),
-    metaChipScenario(), gridFanScenario(), gridFan3Scenario(), fan8Tight5x5Scenario(), metaSublineScenario(), grid5x5CaptionScenario(), longNameGridScenario(), longLabelGridScenario(), metaTightScenario(), longNameFanScenario(), estateChainScenario(), chain24Scenario(), tripleMutedScenario(), estate72Scenario(),
+    metaChipScenario(), gridFanScenario(), gridFan3Scenario(), fan8Tight5x5Scenario(), metaSublineScenario(), grid5x5CaptionScenario(), longNameGridScenario(), longLabelGridScenario(), metaTightScenario(),     longNameFanScenario(), estateChainScenario(), chain24Scenario(), tripleMutedScenario(), estate72Scenario(), workflowProseScenario(),
     await generatedScenario(), await groupedGeneratedScenario(),
   ];
+  // Dark twins. Adding a `dark` flag was not enough on its own: nothing set it,
+  // so the dark palette stayed exactly as unmeasured as it had always been and
+  // the contrast failures found so far were all light-theme ones. Every colour
+  // the deck picks is theme-dependent — panel fills, zone tints, callout
+  // accents, the workflow band, the footer — so the twins carry the scenarios
+  // that between them draw every one of those, not just a dense grid.
+  const darkTwins = ['dense-zone', 'narrative', 'legend-corner', 'meta-subline', 'grid5x5-captions', 'generated']
+    .map((id) => base.find((s) => s.id === id))
+    .filter((s): s is Scenario => s !== undefined)
+    .map((s) => ({ ...s, id: `${s.id}-dark`, dark: true }));
+  const scenarios = [...base, ...darkTwins];
   const reports: Report[] = [];
   // A single scenario name (or comma-separated list) narrows the run. The full
   // corpus takes minutes, which makes an iterate-on-one-fixture loop painful;

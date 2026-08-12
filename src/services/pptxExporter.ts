@@ -267,6 +267,10 @@ interface Obstacle {
  * stop shrinking here and the list continues on another slide instead.
  */
 const MIN_WORKFLOW_ROW_IN = 0.34;
+// The workflow list's preferred and floor type sizes. A step sentence shrinks
+// between them to fit its row rather than spilling out of it.
+const WORKFLOW_ROW_PT = 12;
+const WORKFLOW_MIN_PT = 9;
 
 /**
  * How much of a chip may end up over a service name or another callout before
@@ -893,7 +897,27 @@ function connectorLabelBox(
     const dx = Math.min(at.x + w, tile.x + tile.w) - Math.max(at.x, tile.x);
     const dy = Math.min(at.y + blockH, tile.y + tile.h) - Math.max(at.y, tile.y);
     return dx > 0 && dy > 0 ? sum + dx * dy * (tile.annotation ? ANNOTATION_WEIGHT : tile.weight ?? 1) : sum;
-  }, 0);  const onLabel = (at: { x: number; y: number }): number => seen.reduce((sum, tile) => {
+  }, 0) + badgeCovered(at);
+  // The wording has an opaque chip behind it and is expected to stand in the
+  // corridors between tiles, so a graze costs it little. The number does not:
+  // it is a small solid disc, and dropped on a tile it hides part of an icon
+  // and is the one mark the workflow list cannot be read without. Charged only
+  // as block area it is cheap to sacrifice — the walk will happily park the
+  // disc dead centre on a service to keep the much larger text clear, which is
+  // how a wrap-around hop's callout came to sit 100% inside a stranger's tile.
+  // So the disc is priced on its own footprint, and at a premium.
+  const BADGE_COVER_WEIGHT = 4;
+  function badgeCovered(at: { x: number; y: number }): number {
+    if (badgeD <= 0 || blockH <= h + 0.01) return 0;
+    const bx = at.x + w / 2 - badgeD / 2;
+    const by = badgeYAt(at.x, at.y);
+    return seen.reduce((sum, tile) => {
+      if (tile.annotation) return sum;
+      const dx = Math.min(bx + badgeD, tile.x + tile.w) - Math.max(bx, tile.x);
+      const dy = Math.min(by + badgeD, tile.y + tile.h) - Math.max(by, tile.y);
+      return dx > 0 && dy > 0 ? sum + dx * dy * BADGE_COVER_WEIGHT * (tile.weight ?? 1) : sum;
+    }, 0);
+  }  const onLabel = (at: { x: number; y: number }): number => seen.reduce((sum, tile) => {
     if (!tile.annotation) return sum;
     const dx = Math.min(at.x + w, tile.x + tile.w) - Math.max(at.x, tile.x);
     const dy = Math.min(at.y + blockH, tile.y + tile.h) - Math.max(at.y, tile.y);
@@ -968,11 +992,25 @@ function connectorLabelBox(
   // allows — on a stack of parallel rows, nearer the next row's arrow than its
   // own. The Architecture Center draws the number against the arrow it
   // numbers, so hang it from whichever end of the block faces that arrow.
-  const badgeAtTop = badgeD > 0 && !bare
-    && toOwn(home.x + w / 2, home.y + badgeD / 2)
-      < toOwn(home.x + w / 2, home.y + blockH - badgeD / 2);
-  const badgeYAt = (y: number): number => (badgeAtTop ? y : y + h + badgeGap);
-  const textYAt = (y: number): number => (badgeAtTop ? y + badgeD + badgeGap : y);
+  const badgeAtTopAt = (x: number, y: number): boolean => {
+    if (badgeD <= 0 || bare) return false;
+    const cx = x + w / 2;
+    const topY = y + badgeD / 2;
+    const botY = y + blockH - badgeD / 2;
+    const top = toOwn(cx, topY);
+    const bot = toOwn(cx, botY);
+    // A polyline that doubles back puts both ends of the block the same
+    // distance from the arrow by construction — `toOwn` takes the minimum over
+    // every segment, so the two tie. Neither end is then better for reading the
+    // number against its own hop, and the question that still has an answer is
+    // which end is furthest from somebody else's.
+    if (Math.abs(top - bot) < 0.01) {
+      return foreignGap ? foreignGap(cx, topY) > foreignGap(cx, botY) : false;
+    }
+    return top < bot;
+  };
+  const badgeYAt = (x: number, y: number): number => (badgeAtTopAt(x, y) ? y : y + h + badgeGap);
+  const textYAt = (x: number, y: number): number => (badgeAtTopAt(x, y) ? y + badgeD + badgeGap : y);
   const attributable = (at: { x: number; y: number }): boolean => {
     if (ownSegments.length === 0) return true;
     const cx = at.x + w / 2;
@@ -982,7 +1020,7 @@ function connectorLabelBox(
     // contains both belongs to neither, and on a chip with a badge it sits a
     // quarter inch below the text it is supposed to stand for.
     const sampleYs = blockH > h + 0.01
-      ? [textYAt(at.y) + h / 2, badgeYAt(at.y) + badgeD / 2]
+      ? [textYAt(at.x, at.y) + h / 2, badgeYAt(at.x, at.y) + badgeD / 2]
       : [at.y + h / 2];
     for (const cy of sampleYs) {
       const mine = toOwn(cx, cy);
@@ -1068,7 +1106,7 @@ function connectorLabelBox(
     }
   }
   const badge = badgeD > 0
-    ? { x: best.x + w / 2 - badgeD / 2, y: badgeYAt(best.y), d: badgeD }
+    ? { x: best.x + w / 2 - badgeD / 2, y: badgeYAt(best.x, best.y), d: badgeD }
     : null;
   // Still standing on something. A chip is allowed to be wider than the gap it
   // labels, but when that width is the reason it has nowhere to go, wrapping it
@@ -1102,7 +1140,7 @@ function connectorLabelBox(
   // sentence against the same number — and that is strictly better than parking
   // it where it will be read as the label of a different arrow.
 
-  return { x: best.x, y: textYAt(best.y), w, h, text, badge, block: { x: best.x, y: best.y, w, h: blockH, annotation: true }, alongX, fontSize, stuck: bestScore };
+  return { x: best.x, y: textYAt(best.x, best.y), w, h, text, badge, block: { x: best.x, y: best.y, w, h: blockH, annotation: true }, alongX, fontSize, stuck: bestScore };
 }
 
 function addConnectorLabel(
@@ -1122,7 +1160,12 @@ function addConnectorLabel(
     rectRadius: 0.03,
     fill: { color: 'FEF9C3', transparency: 8 },
     line: { color: 'FDE68A', width: 0.5 },
-    color: 'B45309',
+    // Amber-800, not amber-700. The chip is a fixed light yellow in both
+    // themes, but it is 8% translucent — so on a dark slide the backdrop
+    // darkens it to about #ECE8B8 and amber-700 lands at 4.02:1, under the
+    // WCAG AA bar. One step darker clears both composites with margin and is
+    // indistinguishable on the light one.
+    color: '92400E',
     fontSize,
     fontFace: 'Yu Gothic UI',
     align: 'center',
@@ -1213,6 +1256,42 @@ function stepBadgeBox(
         }
         if (spotCover <= 0) break;
       }
+    }
+  }
+  // The ring walk reaches about 1.4in from the arrow's midpoint. On a long hop
+  // — the wrap-around from the end of one row to the start of the next, say —
+  // that midpoint can be deep inside an unrelated tile with more tiles all
+  // around it, and the number ends up printed over a service it has nothing to
+  // do with. Every point along the arrow's own path is equally on that arrow,
+  // though, and a long hop runs through open paper somewhere. So when the rings
+  // find nothing clear, follow the polyline: attribution is perfect by
+  // construction there, which is why these candidates so often beat a clear
+  // slot found a long way off to one side.
+  if (spotCover > 0 && route.points.length >= 2) {
+    const path = route.points.map((point) => toInches(point, transform));
+    let travelled = 0;
+    const lengths = path.slice(1).map((point, i) => Math.hypot(point.x - path[i].x, point.y - path[i].y));
+    const total = lengths.reduce((sum, len) => sum + len, 0);
+    for (let i = 1; i < path.length && spotCover > 0; i += 1) {
+      const segLen = lengths[i - 1];
+      const steps = Math.max(1, Math.round(segLen / (d * 0.75)));
+      for (let s = 0; s <= steps; s += 1) {
+        const t = s / steps;
+        // The very ends sit under the tiles the arrow joins, so skip them.
+        const along = travelled + t * segLen;
+        if (total > 0 && (along < d || along > total - d)) continue;
+        const candidate = fit(
+          path[i - 1].x + (path[i].x - path[i - 1].x) * t - d / 2,
+          path[i - 1].y + (path[i].y - path[i - 1].y) * t - d / 2,
+        );
+        const score = cost(candidate);
+        if (score < spotCover - 0.0001) {
+          spot = candidate;
+          spotCover = score;
+          if (spotCover <= 0) break;
+        }
+      }
+      travelled += segLen;
     }
   }
   return { x: spot.x, y: spot.y, d };
@@ -2729,7 +2808,7 @@ export async function buildDiagramSlidePptx(
         x: 0.35, y: FOOTER_Y - 0.26, w: W - 0.7, h: 0.24,
         fontSize: 9,
         bold: true,
-        color: 'B45309',
+        color: stripHash(readableTextOn('#B45309', `#${stripHash(t.bg)}`)),
         fontFace: 'Yu Gothic UI',
         valign: 'middle',
       });
@@ -2758,7 +2837,24 @@ export async function buildDiagramSlidePptx(
     // sentence appears nowhere in the deck.
     const listTop = IMAGE_Y + 0.1;
     const available = Math.max(MIN_WORKFLOW_ROW_IN, geom.footerY - 0.1 - listTop);
-    const perSlide = Math.max(1, Math.floor(available / MIN_WORKFLOW_ROW_IN));
+    // The sentence column, measured against the widest the badge is ever
+    // allowed to be so the estimate is never optimistic.
+    const rowTextW = Math.max(1, W - (0.42 + 0.34 + 0.16) - 0.42);
+    const rowHeightIn = (text: string, pt: number): number => {
+      const lines = Math.max(1, Math.ceil(estimateTextWidthIn(text, pt) / rowTextW));
+      return lines * pt * 1.25 / 72;
+    };
+    // Paginating on a flat 0.34in assumed every step was one line. Real
+    // Architecture-Center prose wraps to two or three, and PowerPoint does not
+    // clip a `valign: middle` box — it spills symmetrically — so a wrapped row
+    // ran into the rows above and below it. Give each slide as many rows as
+    // actually fit once the longest sentence is allowed to wrap at the smallest
+    // size still worth reading.
+    const neededRow = Math.max(
+      MIN_WORKFLOW_ROW_IN,
+      ...workflow.map(entry => rowHeightIn(entry.description, WORKFLOW_MIN_PT) + 0.06),
+    );
+    const perSlide = Math.max(1, Math.floor(available / neededRow));
     const parts = Math.ceil(workflow.length / perSlide);
 
     for (let part = 0; part < parts; part += 1) {
@@ -2787,6 +2883,15 @@ export async function buildDiagramSlidePptx(
       // the drawing to its row without hunting.
       const rowGap = Math.min(0.62, Math.max(MIN_WORKFLOW_ROW_IN, available / rows.length));
       const badge = Math.min(0.34, rowGap - 0.06);
+      // Pagination already reserved room for the longest sentence at the floor
+      // size; this hands every shorter row the largest size that still fits its
+      // own box, so only the sentences that need to shrink do.
+      const rowFontPt = (text: string, boxH: number): number => {
+        for (let pt = WORKFLOW_ROW_PT; pt > WORKFLOW_MIN_PT; pt -= 0.5) {
+          if (rowHeightIn(text, pt) <= boxH) return pt;
+        }
+        return WORKFLOW_MIN_PT;
+      };
       rows.forEach((entry, index) => {
         const y = listTop + index * rowGap;
         slide.addText(String(entry.step), {
@@ -2802,7 +2907,8 @@ export async function buildDiagramSlidePptx(
         slide.addText(entry.description, {
           objectName: `workflow-text-${entry.step}`,
           x: 0.42 + badge + 0.16, y, w: W - (0.42 + badge + 0.16) - 0.42, h: rowGap - 0.04,
-          fontSize: 12, color: t.titleText, fontFace: 'Yu Gothic UI',
+          fontSize: rowFontPt(entry.description, rowGap - 0.04),
+          color: t.titleText, fontFace: 'Yu Gothic UI',
           valign: 'middle', wrap: true,
         });
       });

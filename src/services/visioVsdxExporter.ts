@@ -47,6 +47,7 @@ import {
   narrateEdgeCallouts,
   truncateLabel,
   partitionBoxes,
+  readableTextOn,
   usedConnectionLegend,
   workflowListFromEdges,
   carriesWording,
@@ -364,9 +365,13 @@ function serviceGroupXml(
 
   // Second, smaller run carries the SKU · region · cost annotation so the tile
   // shows the same metadata as the canvas instead of dropping it.
+  // The sub-line colour is resolved against the tile it sits on, not fixed. A
+  // flat #64748B reads at 4.26:1 or worse on every lighter category fill, which
+  // is under the WCAG AA bar — the PowerPoint path was corrected the same way.
+  const metaColor = meta ? readableTextOn('#64748B', palette.fill) : '#64748B';
   const characterRows = meta
     ? `        <Row IX="0"><Cell N="Font" V="1"/><Cell N="Color" V="${palette.text}"/><Cell N="Size" V="${LABEL_FONT_IN}"/></Row>
-        <Row IX="1"><Cell N="Font" V="1"/><Cell N="Color" V="#64748B"/><Cell N="Size" V="${META_FONT_IN}"/></Row>`
+        <Row IX="1"><Cell N="Font" V="1"/><Cell N="Color" V="${metaColor}"/><Cell N="Size" V="${META_FONT_IN}"/></Row>`
     : `        <Row IX="0"><Cell N="Font" V="1"/><Cell N="Color" V="${palette.text}"/><Cell N="Size" V="${LABEL_FONT_IN}"/></Row>`;
   const textBody = meta
     ? `<cp IX="0"/>${esc(box.label)}\n<cp IX="1"/>${esc(meta)}`
