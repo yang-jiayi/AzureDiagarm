@@ -699,3 +699,56 @@ test('a budget already spent scales down, never inside out', () => {
   }
   assert.ok(before.maxX > before.minX, 'the fixture must have a positive span to begin with');
 });
+
+test('a route to the tile directly below must not leave by the top', () => {
+  // routesBetweenSides crosses on a different axis at each of its three shapes:
+  // a same-axis pair is joined by a lane perpendicular to its own stubs, while
+  // the jog that replaces that lane when it is infeasible runs parallel to
+  // them. bestDetour derived one axis flag and handed the same array to all
+  // three, so two of them were fed coordinates from the wrong axis: the
+  // same-axis lane could never be used at all, and the two-bend lane was wrong
+  // whenever the source left by its left or right side. The router then fell
+  // through to a detour that left the estate to get somewhere inside it —
+  // out of the TOP of a tile, along above the drawing, down its whole height
+  // and back up into a target that was directly below where it started.
+  const nodes: Node[] = [];
+  for (let r = 0; r < 4; r += 1) {
+    for (let c = 0; c < 4; c += 1) {
+      nodes.push({
+        id: `s${r * 4 + c}`, type: 'azureService', width: 150, height: 75,
+        position: { x: c * 158, y: r * 83 }, data: { label: 'x', serviceType: 'vm' },
+      } as unknown as Node);
+    }
+  }
+  const edges: Edge[] = [];
+  for (let i = 0; i < nodes.length; i += 1) {
+    for (let j = i + 1; j < nodes.length; j += 1) {
+      if ((i * 31 + j * 17) % 5 === 0) edges.push({ id: `e${i}-${j}`, source: `s${i}`, target: `s${j}` } as Edge);
+    }
+  }
+  const boxes = collectExportBoxes(nodes);
+  const routes = buildExportRoutes(edges, boxes, { obstacles: [...boxes.values()] });
+
+  let stacked = 0;
+  for (const route of routes) {
+    const from = boxes.get(route.sourceId)!;
+    const to = boxes.get(route.targetId)!;
+    if (Math.abs(from.x - to.x) > 1 || to.y <= from.y) continue;
+    stacked += 1;
+    const above = route.points.filter((p) => p.y < from.y - 1);
+    assert.equal(above.length, 0,
+      `${route.id} goes up and over to reach a tile below it: ${
+        route.points.map((p) => `${Math.round(p.x)},${Math.round(p.y)}`).join(' ')}`);
+  }
+  assert.ok(stacked >= 4, `the fixture must contain stacked pairs, found ${stacked}`);
+
+  // and the shorter routes must not have been bought by crossing a tile.
+  for (const route of routes) {
+    const ends = new Set([route.sourceId, route.targetId]);
+    for (const b of boxes.values()) {
+      if (ends.has(b.id)) continue;
+      const inside = route.points.some((p) => p.x > b.x + 1 && p.x < b.x + b.w - 1 && p.y > b.y + 1 && p.y < b.y + b.h - 1);
+      assert.ok(!inside, `${route.id} is drawn through ${b.id}`);
+    }
+  }
+});
