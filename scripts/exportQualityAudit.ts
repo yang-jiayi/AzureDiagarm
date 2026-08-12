@@ -15,6 +15,7 @@ import type { Edge, Node } from 'reactflow';
 import { buildDiagramSlidePptx } from '../src/services/pptxExporter.ts';
 import { buildVsdxPackage } from '../src/services/visioVsdxExporter.ts';
 import { WRAP_TRIGGER_RATIO } from '../src/utils/serpentineWrap.ts';
+import { narrateEdgeCallouts } from '../src/services/diagramExportGeometry.ts';
 
 const OUT = path.join(process.cwd(), 'tmp-export-audit');
 const EMU_PER_INCH = 914400;
@@ -287,6 +288,35 @@ function strayLadderScenario(): Scenario {
  * the finished deck, and a buried callout leaves the workflow band citing a
  * step the reader cannot find anywhere on the drawing.
  */
+/**
+ * A model asked for one flow twice hands several arrows the SAME step number,
+ * each with its own sentence. The workflow list is keyed by number, so every
+ * sentence after the first was dropped while all of those badges still read the
+ * same digit.
+ */
+function duplicateStepsScenario(): Scenario {
+  const nodes: Node[] = [
+    svc('web', 'App Service', 0, 0),
+    svc('api', 'API Management', 300, 0),
+    svc('db', 'Azure SQL Database', 600, 0),
+    svc('cache', 'Azure Cache for Redis', 300, 190),
+    svc('log', 'Log Analytics', 600, 190),
+  ];
+  const hops: [string, string, string][] = [
+    ['web', 'api', 'ユーザー要求をゲートウェイに転送します'],
+    ['api', 'db', '注文レコードを読み書きします'],
+    ['api', 'cache', 'セッション状態をキャッシュします'],
+    ['api', 'log', '要求メトリックを送信します'],
+    ['db', 'log', '監査ログを送信します'],
+  ];
+  const edges: Edge[] = hops.map(([source, target, label], i) => ({
+    id: `dup${i}`, source, target, label,
+    // Every one of them numbered 3, which is exactly what a re-prompted model emits.
+    data: { stepNumber: 3, stepDescription: `${label}。` },
+  } as Edge));
+  return { id: 'duplicate-steps', nodes, edges };
+}
+
 function legendCornerScenario(): Scenario {
   const nodes: Node[] = [];
   for (let row = 0; row < 4; row += 1) {
@@ -710,7 +740,11 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
   // Workflow numbering: an arrow that the AI numbered must carry its callout,
   // and the callout must not sit on top of a node or its own label chip —
   // either way the reader cannot match the arrow to the workflow prose.
-  const numberedEdges = scenario.edges.filter(
+  //
+  // Expectations come from the repaired edges, not the raw scenario: the
+  // exporter renumbers duplicate step numbers before drawing, so raw data
+  // would assert that five arrows all still read "3".
+  const numberedEdges = narrateEdgeCallouts(scenario.edges).filter(
     (e) => Number.isInteger((e.data as { stepNumber?: number } | undefined)?.stepNumber),
   );
   const badges = shapes.filter((s) => s.name.startsWith('connector-step-'));
@@ -808,6 +842,27 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
   }
   for (const row of shapes.filter((s) => s.name.startsWith('workflow-text-'))) {
     if (!row.text.trim()) issues.push(`workflow row "${row.name}" is blank`);
+  }
+  // Numbers are the only handle a reader has on the prose, so two arrows may
+  // never wear the same one, and no sentence the author wrote may go missing.
+  // A duplicate used to be silent twice over: both badges read the same digit
+  // and the workflow list, keyed by number, kept only the first sentence.
+  const badgeCounts = new Map<string, number>();
+  for (const badge of badges) badgeCounts.set(badge.text, (badgeCounts.get(badge.text) ?? 0) + 1);
+  for (const [text, count] of badgeCounts) {
+    if (count > 1) issues.push(`${count} callouts all read "${text}", so the reader cannot tell which row is which`);
+  }
+  const authored = new Set(
+    scenario.edges
+      .map((e) => (e.data as { stepDescription?: string } | undefined)?.stepDescription?.trim())
+      .filter((d): d is string => !!d),
+  );
+  if (authored.size > 0) {
+    const rowText = new Set(shapes.filter((s) => s.name.startsWith('workflow-text-')).map((s) => s.text.replace(/…$/, '').trim()));
+    const lost = [...authored].filter((d) => ![...rowText].some((r) => r.length > 0 && d.startsWith(r)));
+    if (lost.length) {
+      issues.push(`${lost.length} authored step description(s) reach no slide: ${lost.slice(0, 3).join(' | ')}`);
+    }
   }
 
   // Banding must not lose or duplicate anything. A service that falls between
@@ -949,8 +1004,9 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
   if (minFontPt < 5.5) issues.push(`smallest Visio font is ${minFontPt}pt (below the 5.5pt floor)`);
 
   // Workflow numbering must survive into Visio too, or the same drawing tells
-  // a different story in PowerPoint and in Visio.
-  const numberedEdges = scenario.edges.filter(
+  // a different story in PowerPoint and in Visio. Measured against the repaired
+  // edges, which is what both exporters draw from.
+  const numberedEdges = narrateEdgeCallouts(scenario.edges).filter(
     (e) => Number.isInteger((e.data as { stepNumber?: number } | undefined)?.stepNumber),
   );
   const badgeBlocks = [...xml.matchAll(/<Shape [^>]*NameU="StepBadge\.\d+"[\s\S]*?<\/Shape>/g)].map((m) => m[0]);
@@ -1084,7 +1140,7 @@ async function main(): Promise<void> {
   const scenarios = [
     compactScenario(), wideScenario(), oversizeScenario(), outlierScenario(),
     bandedScenario(), narrativeScenario(), barbellScenario(), parallelScenario(),
-    ladderInGridScenario(), twinLaddersScenario(), strayLadderScenario(), legendCornerScenario(), denseZoneScenario(),
+    ladderInGridScenario(), twinLaddersScenario(), strayLadderScenario(), legendCornerScenario(), duplicateStepsScenario(), denseZoneScenario(),
     await generatedScenario(), await groupedGeneratedScenario(),
   ];
   const reports: Report[] = [];
