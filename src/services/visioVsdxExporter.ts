@@ -44,6 +44,7 @@ import {
   compactEmptyGutters,
   fitBoxesWithin,
   scaleBoxesWithin,
+  boxScaleWithin,
   clampedBoxes,
   computeBounds,
   computeContentBounds,
@@ -99,6 +100,42 @@ const META_FONT_IN = Math.max(0.083, LEGIBLE_IN);
 const CONNECTOR_FONT_IN = Math.max(0.1, LEGIBLE_IN);
 const LEGEND_FONT_IN = Math.max(0.1, LEGIBLE_IN);
 
+interface VisioFonts {
+  label: number;
+  meta: number;
+  connector: number;
+}
+
+const NATURAL_FONTS: VisioFonts = {
+  label: LABEL_FONT_IN,
+  meta: META_FONT_IN,
+  connector: CONNECTOR_FONT_IN,
+};
+
+/**
+ * Type for a drawing that had to be scaled down to fit the page Visio will
+ * open. The floors above are a promise about an ordinary drawing, not a law of
+ * geometry: once a thousand tiles are squeezed onto 200in a tile is an eighth
+ * of an inch wide and no type is legible on it at any size. Holding the point
+ * size fixed there does not rescue the words, it prints "Azure Front Door" over
+ * seven of its neighbours and destroys the structure too — a reader can zoom
+ * into small type but cannot untangle overlapping type. So the type comes down
+ * with the drawing, and stops at a quarter size where it is still a visible
+ * mark that says "something is named here".
+ *
+ * The legend and the workflow band are page furniture laid out in page inches,
+ * not drawing content, so they are not in here and keep their natural size.
+ */
+function fontsForScale(scale: number): VisioFonts {
+  if (scale >= 0.999) return NATURAL_FONTS;
+  const k = Math.max(0.25, scale);
+  return {
+    label: LABEL_FONT_IN * k,
+    meta: META_FONT_IN * k,
+    connector: CONNECTOR_FONT_IN * k,
+  };
+}
+
 /**
  * Approximate rendered width in inches. CJK glyphs occupy a full em, Latin
  * about 0.54 em — enough to decide how many lines a label needs.
@@ -129,6 +166,14 @@ function esc(value: string): string {
 }
 
 const f = (n: number) => +n.toFixed(4);
+
+/**
+ * Font sizes round UP. `f`'s 4-decimal truncation takes the 7pt sub-line to
+ * 0.0972in, which is 6.998pt — a hair under the floor both exporters promise,
+ * and enough to fail the deck's own legibility gate on a size that was correct
+ * before it was written down.
+ */
+const ff = (n: number) => +(Math.ceil(n * 1e6) / 1e6).toFixed(6);
 
 // ─── Palette (single source of truth in the shared geometry layer) ───────────
 
@@ -340,12 +385,13 @@ function serviceGroupXml(
   iconRelId: string | null,
   properties: Array<{ name: string; label: string; value: string }>,
   meta: string,
+  fonts: VisioFonts = NATURAL_FONTS,
 ): string {
   const textW = Math.max(0.3, rect.w - 0.12);
   // Give the label the room it actually needs and let the icon take the rest,
   // so a two-line service name is never clipped and the icon never vanishes.
-  const labelLines = Math.max(1, Math.ceil(estimateTextWidthIn(box.label, LABEL_FONT_IN) / textW));
-  const neededTextH = labelLines * LABEL_FONT_IN * 1.28 + (meta ? META_FONT_IN * 1.4 : 0) + 0.05;
+  const labelLines = Math.max(1, Math.ceil(estimateTextWidthIn(box.label, fonts.label) / textW));
+  const neededTextH = labelLines * fonts.label * 1.28 + (meta ? fonts.meta * 1.4 : 0) + 0.05;
   const maxIcon = iconRelId ? Math.min(rect.h * 0.46, rect.w * 0.5, 0.55) : 0;
   const minIcon = Math.min(maxIcon, 0.18);
   const room = Math.max(0.2, rect.h - 0.19);
@@ -386,9 +432,9 @@ function serviceGroupXml(
   // legible. Resolve the accent against the tile the same way the sub-line is.
   const nameColor = readableTextOn(palette.text, palette.fill);
   const characterRows = meta
-    ? `        <Row IX="0"><Cell N="Font" V="1"/><Cell N="Color" V="${nameColor}"/><Cell N="Size" V="${LABEL_FONT_IN}"/></Row>
-        <Row IX="1"><Cell N="Font" V="1"/><Cell N="Color" V="${metaColor}"/><Cell N="Size" V="${META_FONT_IN}"/></Row>`
-    : `        <Row IX="0"><Cell N="Font" V="1"/><Cell N="Color" V="${nameColor}"/><Cell N="Size" V="${LABEL_FONT_IN}"/></Row>`;
+    ? `        <Row IX="0"><Cell N="Font" V="1"/><Cell N="Color" V="${nameColor}"/><Cell N="Size" V="${ff(fonts.label)}"/></Row>
+        <Row IX="1"><Cell N="Font" V="1"/><Cell N="Color" V="${metaColor}"/><Cell N="Size" V="${ff(fonts.meta)}"/></Row>`
+    : `        <Row IX="0"><Cell N="Font" V="1"/><Cell N="Color" V="${nameColor}"/><Cell N="Size" V="${ff(fonts.label)}"/></Row>`;
   const textBody = meta
     ? `<cp IX="0"/>${esc(box.label)}\n<cp IX="1"/>${esc(meta)}`
     : esc(box.label);
@@ -461,6 +507,7 @@ function connectorShapeXml(
   bidirectional = false,
   /** Where the label sits relative to the line, and how big it is. */
   text?: { drop: number; along: number; w: number; h: number },
+  fonts: VisioFonts = NATURAL_FONTS,
 ): string {
   const begin = points[0];
   const end = points[points.length - 1];
@@ -494,7 +541,7 @@ function connectorShapeXml(
       <Cell N="TxtAngle" V="${f(-angle)}"/>`
   : ''}
       <Section N="Character">
-        <Row IX="0"><Cell N="Font" V="1"/><Cell N="Color" V="${CONNECTOR_TEXT}"/><Cell N="Size" V="${CONNECTOR_FONT_IN}"/></Row>
+        <Row IX="0"><Cell N="Font" V="1"/><Cell N="Color" V="${CONNECTOR_TEXT}"/><Cell N="Size" V="${ff(fonts.connector)}"/></Row>
       </Section>
       <Section N="Paragraph">
         <Row IX="0"><Cell N="HorzAlign" V="1"/></Row>
@@ -831,6 +878,10 @@ export async function buildVsdxPackage(
   // the drawing, which counts as solid. Scaling is worse: it takes the type
   // down with it. A file Visio will not open is worse still.
   const raw = scaleBoxesWithin(fitted, limitPx, limitPx - workflowBandIn * PX_PER_INCH);
+  // Take the type down with the drawing. Holding it fixed does not rescue the
+  // words on a tile an eighth of an inch wide, it prints each name over its
+  // neighbours and loses the structure as well as the labels.
+  const fonts = fontsForScale(boxScaleWithin(fitted, limitPx, limitPx - workflowBandIn * PX_PER_INCH));
   // Match the PowerPoint strategy: draw 1 : 1 from the full bounds whenever the
   // page stays a sensible size, and only fall back to the dense-cluster bounds
   // (clamping the strays back on) when a far-placed node would otherwise blow
@@ -974,6 +1025,7 @@ export async function buildVsdxPackage(
         relId,
         properties,
         meta,
+        fonts,
       ),
     );
   }
@@ -987,10 +1039,10 @@ export async function buildVsdxPackage(
     ? `${route.sourceId}|${route.targetId}`
     : `${route.targetId}|${route.sourceId}`);
   const labelSize = (label: string): { w: number; h: number } => {
-    const natural = estimateTextWidthIn(label, CONNECTOR_FONT_IN) + 0.08;
+    const natural = estimateTextWidthIn(label, fonts.connector) + 0.08;
     const w = Math.min(Math.max(natural, 0.5), 1.7);
-    const lines = Math.max(1, Math.ceil(estimateTextWidthIn(label, CONNECTOR_FONT_IN) / Math.max(w - 0.08, 0.1)));
-    return { w, h: lines * CONNECTOR_FONT_IN * 1.3 + 0.05 };
+    const lines = Math.max(1, Math.ceil(estimateTextWidthIn(label, fonts.connector) / Math.max(w - 0.08, 0.1)));
+    return { w, h: lines * fonts.connector * 1.3 + 0.05 };
   };
   // The same cut every other exporter makes. A 200-character sentence left
   // whole wraps into a twelve-line block that buries the services around it.
@@ -1337,6 +1389,7 @@ export async function buildVsdxPackage(
         route.opacity,
         route.bidirectional,
         text ? { drop: localSign * seat.drop, along: seat.along, w: size.w, h: size.h } : undefined,
+        fonts,
       ),
     );
     connects.push(connectXml(id, sourceId, targetId));

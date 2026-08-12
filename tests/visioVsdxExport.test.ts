@@ -493,3 +493,33 @@ test('a row longer than the page can hold is scaled rather than written unopenab
   const xml = typeof page?.data === 'string' ? page.data : '';
   assert.equal((xml.match(/NameU="Service\.\d+"/g) ?? []).length, row.length, 'a service was lost off the page');
 });
+
+test('a drawing scaled down to fit the page takes its type down with it', async () => {
+  // 600 tiles in one row is 1249in wide. Squeezing the gaps cannot help — the
+  // shapes alone are over the limit — so scaleBoxesWithin is the only recourse
+  // and every tile ends up a fraction of an inch wide. The label point size was
+  // a fixed constant, so it stayed at 7.56pt on a 0.33in tile and printed each
+  // service name across several of its neighbours. Small type can be zoomed
+  // into; overlapping type cannot be untangled.
+  const wide: Node[] = Array.from({ length: 600 }, (_, i) => service(`s${i}`, 'Azure Front Door', i * 200, 0));
+  const pkg = await buildVsdxPackage(wide, [], 'Scaled');
+  const xml = pkg.parts.find((part) => part.path === 'visio/pages/page1.xml')!.data as string;
+
+  const widths = [...xml.matchAll(/NameU="Service\.\d+"[\s\S]*?<Cell N="Width" V="([\d.]+)"/g)]
+    .map((m) => Number(m[1]));
+  assert.ok(widths.length > 0, 'the sheet must carry service tiles');
+  const tileIn = Math.min(...widths);
+
+  const sizes = [...xml.matchAll(/NameU="Service\.\d+"[\s\S]*?<Row IX="0"><Cell N="Font"[^>]*\/><Cell N="Color"[^>]*\/><Cell N="Size" V="([\d.]+)"/g)]
+    .map((m) => Number(m[1]));
+  assert.ok(sizes.length > 0, 'the tiles must carry a label size');
+  const fontIn = Math.max(...sizes);
+
+  // "Azure Front Door" is 16 Latin glyphs at roughly 0.54em.
+  const textIn = 16 * 0.54 * fontIn;
+  assert.ok(
+    textIn <= tileIn * 1.6,
+    `the label is ${textIn.toFixed(2)}in of type on a ${tileIn.toFixed(2)}in tile `
+    + `(${(textIn / tileIn).toFixed(1)}x its own box) at ${(fontIn * 72).toFixed(2)}pt`,
+  );
+});

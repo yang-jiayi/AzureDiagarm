@@ -1083,6 +1083,18 @@ export function fitBoxesWithin(
  * genuinely worse — but a page Visio will not open is not an export at all, so
  * a small drawing beats no drawing. Returns the map untouched when it fits.
  */
+export function boxScaleWithin(
+  boxes: Map<string, ExportBox>,
+  maxW: number,
+  maxH: number,
+): number {
+  if (boxes.size === 0) return 1;
+  const bounds = computeBounds(boxes.values());
+  const w = bounds.maxX - bounds.minX;
+  const h = bounds.maxY - bounds.minY;
+  return Math.min(1, w > 0 ? maxW / w : 1, h > 0 ? maxH / h : 1);
+}
+
 export function scaleBoxesWithin(
   boxes: Map<string, ExportBox>,
   maxW: number,
@@ -1090,9 +1102,7 @@ export function scaleBoxesWithin(
 ): Map<string, ExportBox> {
   if (boxes.size === 0) return boxes;
   const bounds = computeBounds(boxes.values());
-  const w = bounds.maxX - bounds.minX;
-  const h = bounds.maxY - bounds.minY;
-  const scale = Math.min(1, w > 0 ? maxW / w : 1, h > 0 ? maxH / h : 1);
+  const scale = boxScaleWithin(boxes, maxW, maxH);
   if (scale >= 0.999) return boxes;
   const out = new Map<string, ExportBox>();
   for (const [id, box] of boxes) {
