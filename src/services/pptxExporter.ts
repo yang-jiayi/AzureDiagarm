@@ -423,9 +423,16 @@ function chooseExportBounds(boxes: Iterable<ExportBox>): { bounds: Bounds; clamp
  */
 function planSlideGeometry(diagram?: DiagramShapeSource | null): SlideGeometry {
   const chrome = { top: IMAGE_Y, bottom: FOOTER_H + 0.18 + 0.1 };
+  // The colour key is drawn last, over everything, and is 92% opaque, so
+  // whatever is under it is missing from the finished deck — on a full grid
+  // that was 92% of a service tile, icon and name and all, and no corner of a
+  // full grid is free to move it to. Reserve its strip here rather than in the
+  // renderer, so the tiler plans legibility against the height the drawing will
+  // actually get: reserved later, the two disagreed and tiles slid under 7pt.
+  const legendH = usedConnectionLegend(diagram?.edges ?? []).length > 0 ? 0.24 + 0.03 : 0;
   const frameFor = (pageW: number, pageH: number): DiagramFrame => {
     const footer = pageH - FOOTER_H - 0.08;
-    return { x: IMAGE_X, y: IMAGE_Y, w: pageW - IMAGE_X * 2, h: footer - IMAGE_Y - 0.1 };
+    return { x: IMAGE_X, y: IMAGE_Y, w: pageW - IMAGE_X * 2, h: footer - IMAGE_Y - 0.1 - legendH };
   };
   let w = BASE_W;
   let h = BASE_H;
@@ -700,13 +707,21 @@ function connectorLabelBox(
       ? clamp(squeezeTo, 0.34 * px, 1.5 * px)
       : clamp(Math.max(gap, prefer * px), 0.34 * px, 1.5 * px);
   const naturalW = estimateTextWidthIn(text, fontSize) + 0.14;
-  const w = clamp(naturalW <= maxW ? naturalW : maxW, Math.min(0.34 * px, maxW), maxW);
+  const badgeD = route.stepNumber === undefined ? 0 : clamp(0.26 * px, 0.18, 0.42);
+  // A muted rung carries no wording, so it is exactly its callout. Reserving an
+  // empty text box above the number anyway made every rung ~40% taller and a
+  // third wider than the thing it draws, which is what pushed a deep fan's end
+  // callouts onto the tiles it runs between.
+  const bare = text === '' && badgeD > 0;
+  const w = bare
+    ? badgeD
+    : clamp(naturalW <= maxW ? naturalW : maxW, Math.min(0.34 * px, maxW), maxW);
   const perLine = Math.max(w - 0.12, 0.05);
   const lineH = (fontSize * 1.3) / 72;
-  const badgeD = route.stepNumber === undefined ? 0 : clamp(0.26 * px, 0.18, 0.42);
 
   const lines = Math.max(1, Math.ceil(estimateTextWidthIn(text, fontSize) / perLine));
-  const h = Math.max(0.16 * px, lines * lineH + 0.06);
+  const h = bare ? 0 : Math.max(0.16 * px, lines * lineH + 0.06);
+  const badgeGap = bare ? 0 : 0.03;
 
   // Slide the chip along the edge's normal, never across it, so it still reads
   // as belonging to that arrow. A rung of the ladder has to clear the chip AND
@@ -715,7 +730,7 @@ function connectorLabelBox(
   // The numbered callout hangs off the chip, so the two are placed as one
   // block: scoring the chip alone let a badge land inside a neighbour's label,
   // and the badge could not be moved without moving the chip it belongs to.
-  const blockH = h + (badgeD > 0 ? badgeD + 0.03 : 0);
+  const blockH = h + (badgeD > 0 ? badgeD + badgeGap : 0);
   // Every chip in a bundle steps by the SAME amount, measured from the tallest
   // block in it, and both the stagger and the obstacle walk move in whole
   // steps. That puts the bundle on a lattice: a chip pushed off a tile lands on
@@ -927,7 +942,7 @@ function connectorLabelBox(
     }
   }
   const badge = badgeD > 0
-    ? { x: best.x + w / 2 - badgeD / 2, y: best.y + h + 0.03, d: badgeD }
+    ? { x: best.x + w / 2 - badgeD / 2, y: best.y + h + badgeGap, d: badgeD }
     : null;
   // Still standing on something. A chip is allowed to be wider than the gap it
   // labels, but when that width is the reason it has nowhere to go, wrapping it
@@ -1241,6 +1256,22 @@ function addGroupShape(
   });
 }
 
+/** Where the colour key lands, so the drawing can keep out from under it. */
+function connectionLegendRect(
+  edges: Edge[],
+  frame: DiagramFrame,
+): { x: number; y: number; w: number; h: number } | null {
+  const entries = usedConnectionLegend(edges);
+  if (entries.length === 0) return null;
+  // One row of swatches along the bottom rather than a stacked card in a
+  // corner. The card was 92% opaque and drawn last, so on a full grid it simply
+  // deleted whatever tile it landed on, and no corner of a full grid is free;
+  // a strip costs a third of the height to reserve and collides with nothing.
+  const w = Math.min(frame.w - 0.1, entries.length * 1.55);
+  const h = 0.24;
+  return { x: frame.x + 0.05, y: frame.y + frame.h + 0.03, w, h };
+}
+
 /** Small colour key so the deck agrees with the PNG's connection legend. */
 function addConnectionLegend(
   pptx: PptxGenJS,
@@ -1249,26 +1280,23 @@ function addConnectionLegend(
   frame: DiagramFrame,
 ): void {
   const entries = usedConnectionLegend(edges);
-  if (entries.length === 0) return;
+  const seat = connectionLegendRect(edges, frame);
+  if (entries.length === 0 || !seat) return;
 
-  const rowH = 0.2;
-  const swatchW = 0.34;
-  const boxW = 2.35;
-  const boxH = rowH * entries.length + 0.16;
-  const x = frame.x + 0.05;
-  const y = frame.y + frame.h - boxH - 0.02;
+  const swatchW = 0.3;
+  const cellW = seat.w / entries.length;
 
   slide.addShape(pptx.ShapeType.roundRect, {
-    x, y, w: boxW, h: boxH,
+    x: seat.x, y: seat.y, w: seat.w, h: seat.h,
     rectRadius: 0.04,
     fill: { color: 'FFFFFF', transparency: 8 },
     line: { color: 'CBD5E1', width: 0.5 },
     objectName: 'connection-legend',
   });
   entries.forEach((entry, i) => {
-    const ly = y + 0.08 + i * rowH;
+    const cx = seat.x + i * cellW + 0.08;
     slide.addShape(pptx.ShapeType.line, {
-      x: x + 0.1, y: ly + rowH / 2 - 0.02, w: swatchW, h: 0,
+      x: cx, y: seat.y + seat.h / 2, w: swatchW, h: 0,
       line: {
         color: stripHash(entry.color),
         width: 1.5,
@@ -1276,7 +1304,7 @@ function addConnectionLegend(
       },
     });
     slide.addText(entry.label, {
-      x: x + 0.1 + swatchW + 0.08, y: ly - 0.02, w: boxW - swatchW - 0.3, h: rowH,
+      x: cx + swatchW + 0.06, y: seat.y, w: Math.max(cellW - swatchW - 0.2, 0.3), h: seat.h,
       fontSize: 8,
       color: '475569',
       fontFace: 'Yu Gothic UI',
@@ -1294,7 +1322,7 @@ async function addEditableDiagram(
   pptx: PptxGenJS,
   slide: Slide,
   diagram: DiagramShapeSource,
-  frame: DiagramFrame,
+  fullFrame: DiagramFrame,
   _isDarkMode: boolean,
   window?: DiagramWindow,
 ): Promise<boolean> {
@@ -1302,6 +1330,7 @@ async function addEditableDiagram(
   if (boxes.size === 0) return false;
   const { groups, services } = partitionBoxes(boxes);
   if (services.length === 0) return false;
+  const frame = fullFrame;
 
   // Size and draw from the SAME bounds. Sizing the page for the dense cluster
   // while drawing every box is what silently pushed far-placed services off
@@ -1399,6 +1428,11 @@ async function addEditableDiagram(
   // but the tile-avoidance walk could drag two of them back onto the same spot
   // because a chip could not see the chips already placed.
   const chipObstacles: Obstacle[] = [...tileRects];
+  // The colour key is drawn last and is all but opaque, so anything it lands on
+  // is simply gone: a numbered callout under it leaves the workflow band citing
+  // a step the reader cannot find. Reserve whichever corner it will take.
+  const legendRect = connectionLegendRect(diagram.edges ?? [], frame);
+  if (legendRect) chipObstacles.push({ ...legendRect, weight: 4 });
   const chips = new Map<string, ReturnType<typeof connectorLabelBox>>();
   const badges = new Map<string, ReturnType<typeof stepBadgeBox>>();
   const parallel = new Map<string, number>();
@@ -1510,6 +1544,45 @@ async function addEditableDiagram(
     const dy = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y);
     return dx > 0 && dy > 0 ? dx * dy : 0;
   };
+  // Every arrow as line segments in page inches, grouped by the bundle it
+  // belongs to, so a ladder can be asked the one question a collision check
+  // cannot answer: is this rung still nearer its OWN hop than anybody else's?
+  type Seg = { ax: number; ay: number; bx: number; by: number };
+  const segsByBundle = new Map<string, Seg[]>();
+  for (const route of shownRoutes) {
+    const key = bundleKey(route);
+    const pts = route.points.map((point) => toInches(point, transform));
+    const list = segsByBundle.get(key) ?? [];
+    for (let i = 1; i < pts.length; i += 1) {
+      list.push({ ax: pts[i - 1].x, ay: pts[i - 1].y, bx: pts[i].x, by: pts[i].y });
+    }
+    if (list.length) segsByBundle.set(key, list);
+  }
+  const gapToSeg = (x: number, y: number, s: Seg): number => {
+    const vx = s.bx - s.ax;
+    const vy = s.by - s.ay;
+    const len = vx * vx + vy * vy;
+    const t = len <= 0 ? 0 : Math.max(0, Math.min(1, ((x - s.ax) * vx + (y - s.ay) * vy) / len));
+    return Math.hypot(x - (s.ax + t * vx), y - (s.ay + t * vy));
+  };
+  const gapToSegs = (x: number, y: number, segs: readonly Seg[]): number => {
+    let best = Number.POSITIVE_INFINITY;
+    for (const s of segs) {
+      const d = gapToSeg(x, y, s);
+      if (d < best) best = d;
+    }
+    return best;
+  };
+  // How much nearer a foreign arrow has to be before a reader would credit the
+  // label to it. The audit uses the same slack, because this is the rule it
+  // enforces on the finished deck.
+  const CONFUSION_SLACK = 0.25;
+  // What one misread rung is worth, in the square inches the rest of the score
+  // is measured in. A service tile is about 1.2 sq in, so a rung parked beside
+  // the wrong arrow costs roughly half a covered tile: enough that a ladder
+  // will sit on a corner rather than walk to a clean slot beside a stranger,
+  // and not so much that it refuses to move when there is nowhere else at all.
+  const DIRTY_RUNG_COST = 0.5;
   // Score the bundle at its REAL geometry: probe the same routine that will
   // place it, with no obstacles so no walk runs. Modelling the lattice by hand
   // kept choosing offsets that the in-frame clamps then undid, so the search
@@ -1523,6 +1596,29 @@ async function addEditableDiagram(
     const shape = shapes.get(key);
     if (!shape || bundle.rung <= 0) return 0;
     const members = annotatedRoutes.filter((route) => bundleKey(route) === key);
+    // The arrows this ladder could be mistaken for. Only the ones near enough
+    // to compete: a rung is never credited to a hop on the far side of the
+    // slide, and scoring against every segment on a busy drawing would put the
+    // whole export back into the quadratic regime the stride pass escaped.
+    const ownSegs = segsByBundle.get(key) ?? [];
+    const rivals: Seg[] = [];
+    if (ownSegs.length) {
+      let lo = { x: Infinity, y: Infinity };
+      let hi = { x: -Infinity, y: -Infinity };
+      for (const s of ownSegs) {
+        lo = { x: Math.min(lo.x, s.ax, s.bx), y: Math.min(lo.y, s.ay, s.by) };
+        hi = { x: Math.max(hi.x, s.ax, s.bx), y: Math.max(hi.y, s.ay, s.by) };
+      }
+      const REACH = 4;
+      for (const [other, segs] of segsByBundle) {
+        if (other === key) continue;
+        for (const s of segs) {
+          if (Math.min(s.ax, s.bx) > hi.x + REACH || Math.max(s.ax, s.bx) < lo.x - REACH) continue;
+          if (Math.min(s.ay, s.by) > hi.y + REACH || Math.max(s.ay, s.by) < lo.y - REACH) continue;
+          rivals.push(s);
+        }
+      }
+    }
     // A ladder's rungs are a fixed shape that the search only ever TRANSLATES,
     // so measure them once. Re-wrapping every label for every candidate offset
     // made a 30-node grid of three-way fans take 42 seconds to export; the
@@ -1644,13 +1740,26 @@ async function addEditableDiagram(
           mine += hit * 4;
         }
         if (mine / own >= 0.02) dirty += 1;
+        // A clean slot beside somebody else's arrow is not a solution. A rung a
+        // reader would credit to the wrong hop is as wrong as one buried under
+        // a tile, and counts the same, so a ladder that can only find clear air
+        // by emigrating is recognised as stuck and falls back to bare numbered
+        // callouts — which is what the Architecture Center draws for a bundle
+        // of parallel flows anyway.
+        else if (rivals.length > 0) {
+          const cx = placed[i].x + placed[i].w / 2;
+          const cy = placed[i].y + placed[i].h / 2;
+          if (gapToSegs(cx, cy, rivals) < gapToSegs(cx, cy, ownSegs) - CONFUSION_SLACK) {
+            dirty += 1;
+          }
+        }
       }
       // The same price a single chip pays. A ladder moves as one object, so the
       // trip is charged once, not once per rung: priced per rung a deep fan
       // could not afford to step off a tile it was completely covering.
       const drift = DRIFT_COST_PER_IN * Math.hypot(shift, across);
       return {
-        total: tiles + labels * ANNOTATION_WEIGHT + drift,
+        total: tiles + labels * ANNOTATION_WEIGHT + dirty * DIRTY_RUNG_COST + drift,
         onLabel: labels,
         overlap: tiles + labels * ANNOTATION_WEIGHT,
         dirty,
@@ -1671,7 +1780,7 @@ async function addEditableDiagram(
       6,
       Math.min(48, Math.ceil(Math.max(labelFrame.w / Math.max(acrossStep, 0.05), labelFrame.h / Math.max(alongStep, 0.05)))),
     );
-    const sweep = (acrossLimit: number): { shift: number; across: number; cost: number; onLabel: number; overlap: number; dirty: number } => {
+    const sweep = (acrossLimit: number, shiftLimit: number): { shift: number; across: number; cost: number; onLabel: number; overlap: number; dirty: number } => {
       let best = { shift: bundle.shift ?? 0, across: bundle.across ?? 0 };
       let at = cost(best.shift, best.across);
       // Coarse to fine. Scanning every lattice point out to the far side of the
@@ -1687,6 +1796,7 @@ async function addEditableDiagram(
               const shift = centreShift + dx * stride * alongStep;
               const across = centreAcross + dy * stride * acrossStep;
               if (Math.abs(across) > acrossLimit + 0.001) continue;
+              if (Math.abs(shift) > shiftLimit + 0.001) continue;
               const c = cost(shift, across);
               if (c.total < at.total) {
                 best = { shift, across };
@@ -1706,9 +1816,9 @@ async function addEditableDiagram(
     // fan beside the two services instead of between them. The one thing worth
     // that is another label: two ladders on neighbouring rows have nowhere else
     // to go, and a buried label is not a label at all.
-    let picked = sweep(Math.max((bundle.span ?? 0) / 2 + 2 * shape.w, 3 * acrossStep));
+    let picked = sweep(Math.max((bundle.span ?? 0) / 2 + 2 * shape.w, 3 * acrossStep), Number.POSITIVE_INFINITY);
     if (picked.onLabel > 0) {
-      const wider = sweep(Number.POSITIVE_INFINITY);
+      const wider = sweep(Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY);
       if (wider.onLabel < picked.onLabel) picked = wider;
     }
     // The ring search moves in half-chip steps, so a ladder that comes to rest
@@ -1854,11 +1964,44 @@ async function addEditableDiagram(
       // to. Left as one column a fan of ten runs the full height of the frame,
       // which on a grid means crossing every row above and below its own — the
       // ladder is compact but it is still strung across other people's tiles.
+      //
+      // Which shape fits is not something the hop's length alone can decide:
+      // one column is too tall, and enough columns to match the hop are wider
+      // than the gap between the two services. Try the handful of shapes a
+      // block of this many callouts can take and keep whichever one the search
+      // scores best — the same measurement that decides everything else.
       const lane = Math.max(bundle.span ?? 0, 2 * bundle.rung);
-      bundle.perCol = Math.max(1, Math.min(bundle.count, Math.floor(lane / Math.max(bundle.rung, 0.01))));
-      remeasure();
-      fitCorridor();
-      searchBundle(key, bundle);
+      const shapesToTry = new Set<number>([
+        Math.max(1, Math.min(bundle.count, Math.floor(lane / Math.max(bundle.rung, 0.01)))),
+      ]);
+      for (let cols = 1; cols <= 6; cols += 1) shapesToTry.add(Math.max(1, Math.ceil(bundle.count / cols)));
+      let bestScore = Number.POSITIVE_INFINITY;
+      let bestShape: { perCol: number; shift?: number; across?: number; w: number; h: number; dirty?: number } | null = null;
+      for (const perCol of shapesToTry) {
+        bundle.perCol = perCol;
+        bundle.shift = undefined;
+        bundle.across = undefined;
+        remeasure();
+        fitCorridor();
+        const score = searchBundle(key, bundle);
+        if (score < bestScore) {
+          bestScore = score;
+          bestShape = {
+            perCol, shift: bundle.shift, across: bundle.across, w: shape.w, h: shape.h, dirty: bundle.dirty,
+          };
+        }
+        if (bestScore <= 0) break;
+      }
+      if (bestShape) {
+        bundle.perCol = bestShape.perCol;
+        remeasure();
+        fitCorridor();
+        bundle.shift = bestShape.shift;
+        bundle.across = bestShape.across;
+        bundle.dirty = bestShape.dirty;
+        shape.w = bestShape.w;
+        shape.h = bestShape.h;
+      }
     }
   }
   settle(ordered.filter((route) => bundles.has(bundleKey(route))));
@@ -1944,8 +2087,9 @@ async function addEditableDiagram(
     addStepBadge(slide, route, chips.get(route.id)?.fontSize ?? labelFontSize, badges.get(route.id) ?? null);
   }
 
-  // Colour key so the deck's connectors agree with the PNG legend.
-  addConnectionLegend(pptx, slide, diagram.edges ?? [], frame);
+  // Colour key so the deck's connectors agree with the PNG legend. Drawn in the
+  // strip reserved for it below the diagram, not over the drawing.
+  addConnectionLegend(pptx, slide, diagram.edges ?? [], fullFrame);
 
   return true;
 }

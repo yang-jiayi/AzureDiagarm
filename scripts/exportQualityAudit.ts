@@ -249,6 +249,65 @@ function twinLaddersScenario(): Scenario {
   return { id: 'twin-ladders', nodes, edges };
 }
 /**
+ * A fan on a roomy grid. There is clear air a long way off in every direction,
+ * so a ladder scored only on what it covers will happily walk to the far side
+ * of the drawing and settle beside somebody else's arrow. Nothing about that
+ * placement looks wrong to a collision check — it is perfectly clean — but the
+ * reader matches the wording to the arrow nearest it and gets the wrong hop.
+ */
+function strayLadderScenario(): Scenario {
+  const nodes: Node[] = [];
+  for (let row = 0; row < 3; row += 1) {
+    for (let col = 0; col < 4; col += 1) nodes.push(svc(`s${row}-${col}`, `Service ${row}${col}`, col * 260, row * 170));
+  }
+  const edges: Edge[] = [];
+  let step = 0;
+  for (let row = 0; row < 3; row += 1) {
+    for (let col = 0; col + 1 < 4; col += 1) {
+      step += 1;
+      edges.push({
+        id: `h${row}_${col}`, source: `s${row}-${col}`, target: `s${row}-${col + 1}`,
+        label: 'マネージド ID で参照系を照会します', data: { stepNumber: step },
+      } as Edge);
+    }
+  }
+  for (let i = 0; i < 8; i += 1) {
+    step += 1;
+    edges.push({
+      id: `fan${i}`, source: 's1-0', target: 's1-1',
+      label: `注文ドキュメントを Cosmos DB に書き込みます ${i + 1}`, data: { stepNumber: step },
+    } as Edge);
+  }
+  return { id: 'stray-ladder', nodes, edges };
+}
+/**
+ * A dense grid with all four connection types in play, so the colour key is at
+ * its tallest, and enough labelled hops that the bottom-left corner is busy.
+ * The key is drawn last and is all but opaque: anything under it is gone from
+ * the finished deck, and a buried callout leaves the workflow band citing a
+ * step the reader cannot find anywhere on the drawing.
+ */
+function legendCornerScenario(): Scenario {
+  const nodes: Node[] = [];
+  for (let row = 0; row < 4; row += 1) {
+    for (let col = 0; col < 6; col += 1) nodes.push(svc(`g${row}${col}`, `Azure Service ${row}${col}`, col * 260, row * 190));
+  }
+  const kinds = ['sync', 'async', 'telemetry', 'data'];
+  const edges: Edge[] = [];
+  let step = 0;
+  for (let row = 0; row < 4; row += 1) {
+    for (let col = 0; col + 1 < 6; col += 1) {
+      step += 1;
+      edges.push({
+        id: `h${row}${col}`, source: `g${row}${col}`, target: `g${row}${col + 1}`,
+        label: 'マネージド ID で注文ドキュメントを書き込みます',
+        data: { connectionType: kinds[row % 4], stepNumber: step, stepDescription: `手順 ${step}` },
+      } as Edge);
+    }
+  }
+  return { id: 'legend-corner', nodes, edges };
+}
+/**
  * One product group containing a dense field of services. A zone is a single
  * box, so the tiler used to see one shape it could not split and grew the page
  * into a plotter sheet the whole deck then inherited.
@@ -550,7 +609,7 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
     for (const badge of slideShapes.filter((s) => s.name.startsWith('connector-step-'))) {
       for (const tile of slideTiles) {
         if (overlapArea(badge, tile) > 0.02 * tile.w * tile.h) {
-          issues.push(`step badge "${badge.name}" covers node "${tile.name}"`);
+          issues.push(`step badge "${badge.name}" covers node "${tile.name}" by ${((overlapArea(badge, tile)/(tile.w*tile.h))*100).toFixed(0)}% (badge area ${((overlapArea(badge, tile)/(badge.w*badge.h))*100).toFixed(0)}%)`);
         }
       }
       for (const chip of slideChips) {
@@ -601,6 +660,19 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
       }
     }
   }
+  // The colour key is drawn last and is 92% opaque, so whatever it lands on is
+  // invisible in the finished deck. A callout it buries leaves the workflow
+  // band citing a step number that appears nowhere on the drawing.
+  for (const slideShapes of perSlide) {
+    const legend = slideShapes.find((s) => s.name === 'connection-legend');
+    if (!legend) continue;
+    for (const other of slideShapes) {
+      if (!/^(connector-label-|connector-step-|service-)/.test(other.name)) continue;
+      const hit = overlapArea(legend, other);
+      if (hit <= 0.001) continue;
+      issues.push(`connection legend covers ${((hit / Math.max(other.w * other.h, 1e-6)) * 100).toFixed(0)}% of "${other.name}"`);
+    }
+  }
   // Wording may never simply vanish. A label the exporter decided not to draw
   // has to survive as a numbered callout that the workflow slide explains -
   // that is the only trade the Architecture Center makes - and if it does
@@ -621,8 +693,19 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
         : `edge "${edge.id}" lost its label "${label}" to callout ${badge}, which no workflow row explains`,
     );
   }
+  // Truncation is only acceptable when the full wording survives somewhere the
+  // reader can reach. A chip clipped to 42 cells with no workflow row carrying
+  // the rest has silently thrown away what the author wrote.
   const truncated = shapes.filter((s) => s.text.includes('…'));
-  if (truncated.length) issues.push(`${truncated.length} shapes carry truncated "…" text`);
+  const stranded = truncated.filter((s) => {
+    const id = /^connector-label-(.*)$/.exec(s.name)?.[1];
+    if (!id) return true;
+    const badge = drawnBadges.get(id);
+    return badge === undefined || !explained.has(badge);
+  });
+  if (stranded.length) {
+    issues.push(`${stranded.length} truncated label(s) have no workflow row carrying the rest: ${stranded.slice(0, 3).map((s) => s.name).join(', ')}`);
+  }
 
   // Workflow numbering: an arrow that the AI numbered must carry its callout,
   // and the callout must not sit on top of a node or its own label chip —
@@ -1001,7 +1084,7 @@ async function main(): Promise<void> {
   const scenarios = [
     compactScenario(), wideScenario(), oversizeScenario(), outlierScenario(),
     bandedScenario(), narrativeScenario(), barbellScenario(), parallelScenario(),
-    ladderInGridScenario(), twinLaddersScenario(), denseZoneScenario(),
+    ladderInGridScenario(), twinLaddersScenario(), strayLadderScenario(), legendCornerScenario(), denseZoneScenario(),
     await generatedScenario(), await groupedGeneratedScenario(),
   ];
   const reports: Report[] = [];
