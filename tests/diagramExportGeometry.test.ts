@@ -8,6 +8,8 @@ import {
   computeFitTransform,
   partitionBoxes,
   routeOrthogonal,
+  narrateEdgeCallouts,
+  workflowListFromEdges,
   type ExportBox,
 } from '../src/services/diagramExportGeometry.ts';
 
@@ -249,4 +251,36 @@ test('export routes carry only well-formed workflow step numbers', () => {
     assert.equal(routeFor({ stepNumber: bad }).stepNumber, undefined,
       `${String(bad)} is not a step number`);
   }
+});
+
+test('two arrows never wear the same number, and no sentence is lost to a duplicate', () => {
+  // A re-prompted model happily numbers every hop of a flow "3", each with its
+  // own sentence. The workflow list is keyed by number, so all but the first
+  // sentence vanished while five badges on the drawing all read 3 - the reader
+  // has five identical digits and one row to look them up in.
+  const edges = ['a', 'b', 'c', 'd', 'e'].map((k, i) => ({
+    id: `dup${i}`, source: `n${i}`, target: `n${i + 1}`, label: `hop ${k}`,
+    data: { stepNumber: 3, stepDescription: `sentence ${k}` },
+  })) as unknown as Edge[];
+
+  const repaired = narrateEdgeCallouts(edges);
+  const numbers = repaired.map((e) => (e.data as { stepNumber: number }).stepNumber);
+  assert.equal(new Set(numbers).size, numbers.length, `duplicate callouts remain: ${numbers.join(', ')}`);
+  // The author's own numbering is respected: the first keeps 3.
+  assert.equal(numbers[0], 3);
+
+  const rows = workflowListFromEdges(repaired);
+  assert.deepEqual(
+    rows.map((r) => r.description).sort(),
+    ['sentence a', 'sentence b', 'sentence c', 'sentence d', 'sentence e'],
+    'every authored sentence must reach the workflow list',
+  );
+});
+
+test('a diagram whose numbering is already distinct is left exactly as it was', () => {
+  const edges = [0, 1, 2].map((i) => ({
+    id: `e${i}`, source: `n${i}`, target: `n${i + 1}`, label: `hop ${i}`,
+    data: { stepNumber: i + 1, stepDescription: `sentence ${i}` },
+  })) as unknown as Edge[];
+  assert.equal(narrateEdgeCallouts(edges), edges, 'an untouched diagram must return the same array');
 });

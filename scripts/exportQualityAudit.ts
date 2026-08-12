@@ -15,6 +15,7 @@ import type { Edge, Node } from 'reactflow';
 import { buildDiagramSlidePptx } from '../src/services/pptxExporter.ts';
 import { buildVsdxPackage } from '../src/services/visioVsdxExporter.ts';
 import { WRAP_TRIGGER_RATIO } from '../src/utils/serpentineWrap.ts';
+import { narrateEdgeCallouts } from '../src/services/diagramExportGeometry.ts';
 
 const OUT = path.join(process.cwd(), 'tmp-export-audit');
 const EMU_PER_INCH = 914400;
@@ -247,6 +248,94 @@ function twinLaddersScenario(): Scenario {
     } as Edge);
   }
   return { id: 'twin-ladders', nodes, edges };
+}
+/**
+ * A fan on a roomy grid. There is clear air a long way off in every direction,
+ * so a ladder scored only on what it covers will happily walk to the far side
+ * of the drawing and settle beside somebody else's arrow. Nothing about that
+ * placement looks wrong to a collision check — it is perfectly clean — but the
+ * reader matches the wording to the arrow nearest it and gets the wrong hop.
+ */
+function strayLadderScenario(): Scenario {
+  const nodes: Node[] = [];
+  for (let row = 0; row < 3; row += 1) {
+    for (let col = 0; col < 4; col += 1) nodes.push(svc(`s${row}-${col}`, `Service ${row}${col}`, col * 260, row * 170));
+  }
+  const edges: Edge[] = [];
+  let step = 0;
+  for (let row = 0; row < 3; row += 1) {
+    for (let col = 0; col + 1 < 4; col += 1) {
+      step += 1;
+      edges.push({
+        id: `h${row}_${col}`, source: `s${row}-${col}`, target: `s${row}-${col + 1}`,
+        label: 'マネージド ID で参照系を照会します', data: { stepNumber: step },
+      } as Edge);
+    }
+  }
+  for (let i = 0; i < 8; i += 1) {
+    step += 1;
+    edges.push({
+      id: `fan${i}`, source: 's1-0', target: 's1-1',
+      label: `注文ドキュメントを Cosmos DB に書き込みます ${i + 1}`, data: { stepNumber: step },
+    } as Edge);
+  }
+  return { id: 'stray-ladder', nodes, edges };
+}
+/**
+ * A dense grid with all four connection types in play, so the colour key is at
+ * its tallest, and enough labelled hops that the bottom-left corner is busy.
+ * The key is drawn last and is all but opaque: anything under it is gone from
+ * the finished deck, and a buried callout leaves the workflow band citing a
+ * step the reader cannot find anywhere on the drawing.
+ */
+/**
+ * A model asked for one flow twice hands several arrows the SAME step number,
+ * each with its own sentence. The workflow list is keyed by number, so every
+ * sentence after the first was dropped while all of those badges still read the
+ * same digit.
+ */
+function duplicateStepsScenario(): Scenario {
+  const nodes: Node[] = [
+    svc('web', 'App Service', 0, 0),
+    svc('api', 'API Management', 300, 0),
+    svc('db', 'Azure SQL Database', 600, 0),
+    svc('cache', 'Azure Cache for Redis', 300, 190),
+    svc('log', 'Log Analytics', 600, 190),
+  ];
+  const hops: [string, string, string][] = [
+    ['web', 'api', 'ユーザー要求をゲートウェイに転送します'],
+    ['api', 'db', '注文レコードを読み書きします'],
+    ['api', 'cache', 'セッション状態をキャッシュします'],
+    ['api', 'log', '要求メトリックを送信します'],
+    ['db', 'log', '監査ログを送信します'],
+  ];
+  const edges: Edge[] = hops.map(([source, target, label], i) => ({
+    id: `dup${i}`, source, target, label,
+    // Every one of them numbered 3, which is exactly what a re-prompted model emits.
+    data: { stepNumber: 3, stepDescription: `${label}。` },
+  } as Edge));
+  return { id: 'duplicate-steps', nodes, edges };
+}
+
+function legendCornerScenario(): Scenario {
+  const nodes: Node[] = [];
+  for (let row = 0; row < 4; row += 1) {
+    for (let col = 0; col < 6; col += 1) nodes.push(svc(`g${row}${col}`, `Azure Service ${row}${col}`, col * 260, row * 190));
+  }
+  const kinds = ['sync', 'async', 'telemetry', 'data'];
+  const edges: Edge[] = [];
+  let step = 0;
+  for (let row = 0; row < 4; row += 1) {
+    for (let col = 0; col + 1 < 6; col += 1) {
+      step += 1;
+      edges.push({
+        id: `h${row}${col}`, source: `g${row}${col}`, target: `g${row}${col + 1}`,
+        label: 'マネージド ID で注文ドキュメントを書き込みます',
+        data: { connectionType: kinds[row % 4], stepNumber: step, stepDescription: `手順 ${step}` },
+      } as Edge);
+    }
+  }
+  return { id: 'legend-corner', nodes, edges };
 }
 /**
  * One product group containing a dense field of services. A zone is a single
@@ -550,7 +639,7 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
     for (const badge of slideShapes.filter((s) => s.name.startsWith('connector-step-'))) {
       for (const tile of slideTiles) {
         if (overlapArea(badge, tile) > 0.02 * tile.w * tile.h) {
-          issues.push(`step badge "${badge.name}" covers node "${tile.name}"`);
+          issues.push(`step badge "${badge.name}" covers node "${tile.name}" by ${((overlapArea(badge, tile)/(tile.w*tile.h))*100).toFixed(0)}% (badge area ${((overlapArea(badge, tile)/(badge.w*badge.h))*100).toFixed(0)}%)`);
         }
       }
       for (const chip of slideChips) {
@@ -601,6 +690,19 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
       }
     }
   }
+  // The colour key is drawn last and is 92% opaque, so whatever it lands on is
+  // invisible in the finished deck. A callout it buries leaves the workflow
+  // band citing a step number that appears nowhere on the drawing.
+  for (const slideShapes of perSlide) {
+    const legend = slideShapes.find((s) => s.name === 'connection-legend');
+    if (!legend) continue;
+    for (const other of slideShapes) {
+      if (!/^(connector-label-|connector-step-|service-)/.test(other.name)) continue;
+      const hit = overlapArea(legend, other);
+      if (hit <= 0.001) continue;
+      issues.push(`connection legend covers ${((hit / Math.max(other.w * other.h, 1e-6)) * 100).toFixed(0)}% of "${other.name}"`);
+    }
+  }
   // Wording may never simply vanish. A label the exporter decided not to draw
   // has to survive as a numbered callout that the workflow slide explains -
   // that is the only trade the Architecture Center makes - and if it does
@@ -621,13 +723,28 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
         : `edge "${edge.id}" lost its label "${label}" to callout ${badge}, which no workflow row explains`,
     );
   }
+  // Truncation is only acceptable when the full wording survives somewhere the
+  // reader can reach. A chip clipped to 42 cells with no workflow row carrying
+  // the rest has silently thrown away what the author wrote.
   const truncated = shapes.filter((s) => s.text.includes('…'));
-  if (truncated.length) issues.push(`${truncated.length} shapes carry truncated "…" text`);
+  const stranded = truncated.filter((s) => {
+    const id = /^connector-label-(.*)$/.exec(s.name)?.[1];
+    if (!id) return true;
+    const badge = drawnBadges.get(id);
+    return badge === undefined || !explained.has(badge);
+  });
+  if (stranded.length) {
+    issues.push(`${stranded.length} truncated label(s) have no workflow row carrying the rest: ${stranded.slice(0, 3).map((s) => s.name).join(', ')}`);
+  }
 
   // Workflow numbering: an arrow that the AI numbered must carry its callout,
   // and the callout must not sit on top of a node or its own label chip —
   // either way the reader cannot match the arrow to the workflow prose.
-  const numberedEdges = scenario.edges.filter(
+  //
+  // Expectations come from the repaired edges, not the raw scenario: the
+  // exporter renumbers duplicate step numbers before drawing, so raw data
+  // would assert that five arrows all still read "3".
+  const numberedEdges = narrateEdgeCallouts(scenario.edges).filter(
     (e) => Number.isInteger((e.data as { stepNumber?: number } | undefined)?.stepNumber),
   );
   const badges = shapes.filter((s) => s.name.startsWith('connector-step-'));
@@ -725,6 +842,27 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
   }
   for (const row of shapes.filter((s) => s.name.startsWith('workflow-text-'))) {
     if (!row.text.trim()) issues.push(`workflow row "${row.name}" is blank`);
+  }
+  // Numbers are the only handle a reader has on the prose, so two arrows may
+  // never wear the same one, and no sentence the author wrote may go missing.
+  // A duplicate used to be silent twice over: both badges read the same digit
+  // and the workflow list, keyed by number, kept only the first sentence.
+  const badgeCounts = new Map<string, number>();
+  for (const badge of badges) badgeCounts.set(badge.text, (badgeCounts.get(badge.text) ?? 0) + 1);
+  for (const [text, count] of badgeCounts) {
+    if (count > 1) issues.push(`${count} callouts all read "${text}", so the reader cannot tell which row is which`);
+  }
+  const authored = new Set(
+    scenario.edges
+      .map((e) => (e.data as { stepDescription?: string } | undefined)?.stepDescription?.trim())
+      .filter((d): d is string => !!d),
+  );
+  if (authored.size > 0) {
+    const rowText = new Set(shapes.filter((s) => s.name.startsWith('workflow-text-')).map((s) => s.text.replace(/…$/, '').trim()));
+    const lost = [...authored].filter((d) => ![...rowText].some((r) => r.length > 0 && d.startsWith(r)));
+    if (lost.length) {
+      issues.push(`${lost.length} authored step description(s) reach no slide: ${lost.slice(0, 3).join(' | ')}`);
+    }
   }
 
   // Banding must not lose or duplicate anything. A service that falls between
@@ -866,8 +1004,9 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
   if (minFontPt < 5.5) issues.push(`smallest Visio font is ${minFontPt}pt (below the 5.5pt floor)`);
 
   // Workflow numbering must survive into Visio too, or the same drawing tells
-  // a different story in PowerPoint and in Visio.
-  const numberedEdges = scenario.edges.filter(
+  // a different story in PowerPoint and in Visio. Measured against the repaired
+  // edges, which is what both exporters draw from.
+  const numberedEdges = narrateEdgeCallouts(scenario.edges).filter(
     (e) => Number.isInteger((e.data as { stepNumber?: number } | undefined)?.stepNumber),
   );
   const badgeBlocks = [...xml.matchAll(/<Shape [^>]*NameU="StepBadge\.\d+"[\s\S]*?<\/Shape>/g)].map((m) => m[0]);
@@ -1001,7 +1140,7 @@ async function main(): Promise<void> {
   const scenarios = [
     compactScenario(), wideScenario(), oversizeScenario(), outlierScenario(),
     bandedScenario(), narrativeScenario(), barbellScenario(), parallelScenario(),
-    ladderInGridScenario(), twinLaddersScenario(), denseZoneScenario(),
+    ladderInGridScenario(), twinLaddersScenario(), strayLadderScenario(), legendCornerScenario(), duplicateStepsScenario(), denseZoneScenario(),
     await generatedScenario(), await groupedGeneratedScenario(),
   ];
   const reports: Report[] = [];

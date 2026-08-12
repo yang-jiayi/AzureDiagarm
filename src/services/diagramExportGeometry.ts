@@ -463,12 +463,40 @@ export function narrateEdgeCallouts(edges: Edge[], minFanSize = 5): Edge[] {
   }
 
   let changed = false;
+  // Two arrows may not carry the same number. The workflow list is keyed by
+  // number, so the second and later sentences were dropped without a trace
+  // while every one of those badges still read the same digit — five callouts
+  // all saying "3" and one row to look them up in. The first occurrence keeps
+  // the author's number; the rest continue after the highest already in use.
+  const used = new Set<number>();
+  const renumbered = new Map<Edge, number>();
+  for (const edge of edges) {
+    if (readEdgeLabel(edge) === '') continue;
+    const step = readStepValue((edge.data as { stepNumber?: unknown } | undefined)?.stepNumber);
+    if (step === undefined) continue;
+    if (!used.has(step)) {
+      used.add(step);
+      continue;
+    }
+    nextStep += 1;
+    used.add(nextStep);
+    renumbered.set(edge, nextStep);
+  }
+
   const result = edges.map((edge) => {
     const label = readEdgeLabel(edge);
     if (!label) return edge;
     const data = edge.data as { stepNumber?: unknown; stepDescription?: unknown } | undefined;
     const step = readStepValue(data?.stepNumber);
     const description = typeof data?.stepDescription === 'string' ? data.stepDescription.trim() : '';
+    const fresh = renumbered.get(edge);
+    if (fresh !== undefined) {
+      changed = true;
+      return {
+        ...edge,
+        data: { ...(data ?? {}), stepNumber: fresh, stepDescription: description || label },
+      };
+    }
     if (step !== undefined && description) return edge;
     // A number with no sentence is as useless as a sentence with no number: the
     // badge lands on the drawing and the workflow list has no row to read it

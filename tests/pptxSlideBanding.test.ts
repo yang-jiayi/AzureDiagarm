@@ -1223,3 +1223,112 @@ test('a dense diagram of parallel flows exports without hanging', () => Promise.
   const elapsed = Date.now() - started;
   assert.ok(elapsed < 15000, `exporting ${edges.length} labelled edges took ${(elapsed / 1000).toFixed(1)}s`);
 }));
+
+/** Every shape on a slide with its page rectangle in inches. */
+function boxesOn(slide: string): { name: string; x: number; y: number; w: number; h: number }[] {
+  const out: { name: string; x: number; y: number; w: number; h: number }[] = [];
+  for (const match of slide.matchAll(/<p:(?:sp|cxnSp)>[\s\S]*?<\/p:(?:sp|cxnSp)>/g)) {
+    const name = /name="([^"]*)"/.exec(match[0])?.[1];
+    const off = /<a:off x="(-?\d+)" y="(-?\d+)"\/><a:ext cx="(\d+)" cy="(\d+)"/.exec(match[0]);
+    if (!name || !off) continue;
+    out.push({ name, x: +off[1] / 914400, y: +off[2] / 914400, w: +off[3] / 914400, h: +off[4] / 914400 });
+  }
+  return out;
+}
+
+/** Distance from a point to a rectangle's outline-as-diagonal, as the audit measures arrows. */
+function gapToArrow(arrow: { x: number; y: number; w: number; h: number }, px: number, py: number): number {
+  const dx = Math.max(arrow.x - px, 0, px - (arrow.x + arrow.w));
+  const dy = Math.max(arrow.y - py, 0, py - (arrow.y + arrow.h));
+  return Math.hypot(dx, dy);
+}
+
+test('a fan of labels never parks itself beside somebody else s arrow', () => Promise.resolve().then(async () => {
+  // A ladder was scored only on what it covered, so on a roomy grid it walked
+  // to whatever clear air it could find - which is beside a DIFFERENT hop. The
+  // placement is spotless by every collision rule and the reader still credits
+  // every rung to the wrong arrow, which is worse than clipping a tile because
+  // nothing about it looks wrong.
+  const nodes: Node[] = [];
+  for (let r = 0; r < 3; r += 1) {
+    for (let c = 0; c < 4; c += 1) nodes.push(service(`s${r}-${c}`, `Service ${r}${c}`, c * 260, r * 170));
+  }
+  const edges: Edge[] = [];
+  let step = 0;
+  for (let r = 0; r < 3; r += 1) {
+    for (let c = 0; c + 1 < 4; c += 1) {
+      step += 1;
+      edges.push({ id: `h${r}_${c}`, source: `s${r}-${c}`, target: `s${r}-${c + 1}`, label: 'マネージド ID で参照系を照会します', data: { stepNumber: step } } as Edge);
+    }
+  }
+  for (let i = 0; i < 8; i += 1) {
+    step += 1;
+    edges.push({ id: `fan${i}`, source: 's1-0', target: 's1-1', label: `注文ドキュメントを Cosmos DB に書き込みます ${i + 1}`, data: { stepNumber: step } } as Edge);
+  }
+  const deck = await buildDeck(nodes, edges);
+  const strays: string[] = [];
+  for (const slide of deck.slides) {
+    const shapes = boxesOn(slide);
+    const arrows = shapes.filter((s) => /^connector-/.test(s.name) && !/^connector-(label|step)-/.test(s.name));
+    if (arrows.length === 0) continue;
+    for (const chip of shapes.filter((s) => s.name.startsWith('connector-label-'))) {
+      const own = arrows.find((a) => a.name === `connector-${chip.name.slice('connector-label-'.length)}`);
+      if (!own) continue;
+      const cx = chip.x + chip.w / 2;
+      const cy = chip.y + chip.h / 2;
+      const mine = gapToArrow(own, cx, cy);
+      for (const rival of arrows) {
+        if (rival.name === own.name) continue;
+        if (gapToArrow(rival, cx, cy) < mine - 0.25) {
+          strays.push(`${chip.name} is ${mine.toFixed(2)}in from its own arrow but ${gapToArrow(rival, cx, cy).toFixed(2)}in from ${rival.name}`);
+          break;
+        }
+      }
+    }
+  }
+  assert.deepEqual(strays, [], `${strays.length} label(s) sit nearer a foreign arrow: ${strays.slice(0, 4).join('; ')}`);
+}));
+
+test('the colour key never stands on a tile or a numbered callout', () => Promise.resolve().then(async () => {
+  // The key used to be stamped as a card over the drawing, so on a full grid it
+  // buried a service tile by 92% and hid a numbered callout outright. It is a
+  // strip in a band the tiler reserves, which is why the two agree on how much
+  // height the drawing actually gets.
+  const nodes: Node[] = [];
+  for (let r = 0; r < 4; r += 1) {
+    for (let c = 0; c < 6; c += 1) nodes.push(service(`g${r}${c}`, `Azure Service ${r}${c}`, c * 260, r * 190));
+  }
+  const kinds = ['sync', 'async', 'telemetry', 'data'];
+  const edges: Edge[] = [];
+  let step = 0;
+  for (let r = 0; r < 4; r += 1) {
+    for (let c = 0; c + 1 < 6; c += 1) {
+      step += 1;
+      edges.push({
+        id: `h${r}${c}`, source: `g${r}${c}`, target: `g${r}${c + 1}`,
+        label: 'マネージド ID で注文ドキュメントを書き込みます',
+        data: { connectionType: kinds[r % 4], stepNumber: step, stepDescription: `手順 ${step}` },
+      } as Edge);
+    }
+  }
+  const deck = await buildDeck(nodes, edges);
+  const buried: string[] = [];
+  let keys = 0;
+  for (const slide of deck.slides) {
+    const shapes = boxesOn(slide);
+    const key = shapes.find((s) => s.name === 'connection-legend');
+    if (!key) continue;
+    keys += 1;
+    for (const s of shapes) {
+      if (s.name === 'connection-legend') continue;
+      const isTile = s.name.startsWith('service-') && !s.name.includes('label') && !s.name.includes('meta');
+      if (!isTile && !s.name.startsWith('connector-step-') && !s.name.startsWith('connector-label-')) continue;
+      const w = Math.max(0, Math.min(key.x + key.w, s.x + s.w) - Math.max(key.x, s.x));
+      const h = Math.max(0, Math.min(key.y + key.h, s.y + s.h) - Math.max(key.y, s.y));
+      const own = Math.max(0.0001, s.w * s.h);
+      if (w * h > 0.02 * own) buried.push(`${s.name} is ${((w * h) / own * 100).toFixed(0)}% under the colour key`);
+    }
+  }
+  assert.ok(keys > 0, 'the fixture must draw a colour key for this to test anything');
+  assert.deepEqual(buried, [], `${buried.length} shape(s) sit under the key: ${buried.slice(0, 4).join('; ')}`);
+}));
