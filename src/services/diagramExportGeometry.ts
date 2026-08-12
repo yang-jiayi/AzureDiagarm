@@ -808,16 +808,25 @@ export function computeBounds(boxes: Iterable<ExportBox>): Bounds {
 /** Linear-interpolated quartiles (Q1, Q3) of an ascending numeric array. */
 
 /**
- * A band of the canvas wider than this, with nothing whatsoever in it, is not
- * spacing — it is a void. Sixteen inches of blank paper says nothing that three
- * inches does not, and it costs the whole drawing its scale.
+ * How far apart two parts of a drawing have to be, centre to centre across an
+ * otherwise empty band, before the space between them stops being spacing and
+ * becomes a void. Sixteen inches of blank paper says nothing that three inches
+ * does not, and it costs the whole drawing its scale.
  *
- * Deliberately above the widest gap an author's own layout produces: a
- * hub-and-spoke on the 1400px radius the Architecture Center draws leaves
- * 1250px between the west spoke and the hub, and closing that would pull one
- * arm in and leave the other out, turning a symmetric drawing lopsided.
+ * Measured centre to centre, not edge to edge, deliberately: a service tile is
+ * 150 x 75, so the same radius leaves a 75px wider gap horizontally than
+ * vertically, and an edge-to-edge bar therefore closed one axis of a symmetric
+ * drawing and not the other. A hub-and-spoke at radius 1700 came out with its
+ * north and south arms 4.1in long and its east and west arms 17.7in, for four
+ * hops the author drew identical. Centre distance is the radius on both axes,
+ * so the decision is the same on both.
+ *
+ * The bar itself sits above the widest separation an author's own layout
+ * produces — the 1400px radius the Architecture Center draws hub-and-spoke at —
+ * and is exactly the 16in the audit rejects a void at, so there is no band the
+ * exporter refuses to close that the gate then fails.
  */
-const MAX_VOID_PX = 1600;
+const MAX_VOID_SPAN_PX = 1536;
 /** What a closed void is replaced by — still a clear separation, not a join. */
 const VOID_GUTTER_PX = 320;
 
@@ -834,31 +843,56 @@ const VOID_GUTTER_PX = 320;
  * Closing the void keeps every semantic the author drew: order along both axes
  * is preserved exactly, nothing changes side, and relative spacing within each
  * part is untouched. Only genuinely empty space is removed, so no shape can
- * collide with another, and a zone always spans its own members, which means a
- * void can never fall inside a container and tear it apart.
+ * collide with another.
+ *
+ * Emptiness is judged by where the *services* are. A zone is a claim about a
+ * region of the canvas rather than a thing occupying it, and one rectangle
+ * drawn around the whole architecture — an "Azure" frame, a subscription or
+ * tenant boundary, the most ordinary annotation in the Architecture Center —
+ * spans every void there is. Counting it as content meant a five-region
+ * drawing kept all 256in of its empty space, and the gate that should have
+ * caught that was blinded by the same rectangle. A zone that straddles a
+ * closed void is shrunk by what was removed from underneath it, so it still
+ * ends exactly where its contents do.
  */
 export function compactEmptyGutters(boxes: Map<string, ExportBox>): Map<string, ExportBox> {
   const all = [...boxes.values()];
-  if (all.length < 2) return boxes;
+  const occupying = all.filter((box) => box.kind !== 'group');
+  if (all.length < 2 || occupying.length < 2) return boxes;
 
-  /** Voids on one axis, as [start, width-to-remove] pairs in ascending order. */
-  const voids = (start: (b: ExportBox) => number, size: (b: ExportBox) => number): [number, number][] => {
-    const spans = all
-      .map((box) => [start(box), start(box) + size(box)] as [number, number])
+  /** Voids on one axis, as [start, gap, amount-to-remove] in ascending order. */
+  const voids = (start: (b: ExportBox) => number, size: (b: ExportBox) => number): [number, number, number][] => {
+    const spans = occupying
+      .map((box) => [start(box), start(box) + size(box), size(box)] as [number, number, number])
       .sort((a, b) => a[0] - b[0]);
-    const found: [number, number][] = [];
+    const found: [number, number, number][] = [];
     let reach = spans[0][1];
-    for (const [from, to] of spans) {
-      if (from - reach > MAX_VOID_PX) found.push([reach, from - reach - VOID_GUTTER_PX]);
-      reach = Math.max(reach, to);
+    let reachSize = spans[0][2];
+    for (const [from, to, ownSize] of spans) {
+      const gap = from - reach;
+      if (gap > 0 && gap + (reachSize + ownSize) / 2 > MAX_VOID_SPAN_PX) {
+        found.push([reach, gap, gap - VOID_GUTTER_PX]);
+      }
+      if (to > reach) {
+        reach = to;
+        reachSize = ownSize;
+      }
     }
     return found;
   };
-  const shift = (found: [number, number][], at: number): number => {
+  // Continuous and non-decreasing, which is what keeps a rectangle a
+  // rectangle: a coordinate on the near lip of a void does not move, one past
+  // the far lip moves by the whole amount, and one inside moves by how far in
+  // it is. A step function instead of a ramp was worse than it sounds — a tile
+  // whose right edge landed exactly on the lip had that edge moved while its
+  // left edge stayed, so the tile collapsed to a hairline and took its label
+  // with it. Two of the twelve services in an ordinary two-region drawing end
+  // on the lip, because the lip is by definition where the last of them ends.
+  const shift = (found: [number, number, number][], at: number): number => {
     let total = 0;
-    for (const [from, amount] of found) {
-      if (at >= from) total += amount;
-      else break;
+    for (const [from, , amount] of found) {
+      if (at <= from) break;
+      total += Math.min(at - from, amount);
     }
     return total;
   };
@@ -869,7 +903,13 @@ export function compactEmptyGutters(boxes: Map<string, ExportBox>): Map<string, 
 
   const out = new Map<string, ExportBox>();
   for (const [id, box] of boxes) {
-    out.set(id, { ...box, x: box.x - shift(xVoids, box.x), y: box.y - shift(yVoids, box.y) });
+    // Both edges are mapped, so a rectangle that spans a void loses exactly the
+    // emptiness that was under it and keeps everything else.
+    const x = box.x - shift(xVoids, box.x);
+    const y = box.y - shift(yVoids, box.y);
+    const right = box.x + box.w - shift(xVoids, box.x + box.w);
+    const bottom = box.y + box.h - shift(yVoids, box.y + box.h);
+    out.set(id, { ...box, x, y, w: Math.max(1, right - x), h: Math.max(1, bottom - y) });
   }
   return out;
 }
@@ -1637,19 +1677,28 @@ export function clampedBoxes(
 
   // Membership is declared, never inferred. A stray zone takes its own children
   // with it — a frame parked away from its services is drawn as an empty box
-  // next to an unexplained cluster — but nothing else: geometric containment
-  // let an overlapping boundary claim half a 4x2 grid of core services that
-  // belonged to a different zone, tearing the grid down the middle and moving
-  // 55% of the drawing, past the 40% the outlier trim's own majority floor
-  // allows.
+  // next to an unexplained cluster.
   // Membership is what the author declared, never what happens to overlap: a
   // compliance band drawn across an architecture owns nothing it crosses, and
-  // reading containment geometrically let one claim half a grid that belonged
-  // to another zone. Argued rather than measured — a cluster of declared
-  // members is always a subset of the geometric one, and a zone is always in
-  // the same cluster as everything it owns, so this can separate a zone from
-  // its members in no case where geometry would not. No fixture yet reaches
-  // the difference.
+  // reading containment geometrically once let one claim half a grid that
+  // belonged to another zone, tearing the grid down the middle and moving 55%
+  // of the drawing — past the 40% the outlier trim's own majority floor allows.
+  //
+  // That failure is now prevented one level up, and the two definitions can no
+  // longer be told apart from outside: a zone reaches this line only when it
+  // does not intersect the trimmed drawing at all, since a zone that does is
+  // clipped rather than parked. Anything geometrically inside such a zone is
+  // therefore also entirely outside the drawing, which is to say already a
+  // stray being parked. Geometric containment can gather no box here that is
+  // not being moved anyway, so no measurement can separate the two, and
+  // several fixtures built to try — a chained cascade, an overlapping
+  // sovereignty band, a policy service standing inside a parked region's box —
+  // each returned byte-identical exports.
+  //
+  // Declared is kept because it is the correct definition rather than the
+  // provably-equal one: it is what the drawing says, it stays right if the
+  // clipping rule above is ever relaxed, and it does not quietly re-acquire a
+  // member the author dragged out of the box.
   const holds = (parent: ExportBox, child: ExportBox): boolean => parent !== child && child.parent === parent.id;
 
   // A stray zone takes everything it contains with it, stray or not: the zone

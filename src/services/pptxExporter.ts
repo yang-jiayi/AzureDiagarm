@@ -205,6 +205,29 @@ const MAX_DIAGRAM_SLIDES = 9;
 const MAX_TILED_SLIDES = 24;
 
 /**
+ * The same ceiling for a deck whose page size is fixed, where the alternative
+ * to another slide is not a bigger sheet but smaller type.
+ *
+ * Counted in slides actually emitted, not grid cells: a sparse drawing needs a
+ * fine grid to reach seven points but fills few of its cells, and charging it
+ * for the empty ones is what refused a readable thirteen-slide deck in favour
+ * of an unreadable one.
+ *
+ * Deliberately high. Nobody wants forty slides of one diagram, but everybody
+ * would rather have forty they can read than twenty-four they cannot, and the
+ * only drawings that get anywhere near this are the ones that would otherwise
+ * have shipped at four points.
+ */
+const MAX_LEGIBLE_TILED_SLIDES = 48;
+
+/**
+ * And a bound on the grid itself, so the search for a grid that fits the deck
+ * ceiling cannot walk a pathological one. A drawing needing finer than this is
+ * a plotter drawing however its slides are counted.
+ */
+const MAX_TILED_CELLS = 400;
+
+/**
  * A sheet has to carry a piece of the architecture, not a lone tile floating
  * on white. Below this the split has stopped adding information.
  */
@@ -401,18 +424,34 @@ function planDiagramWindows(
   // fits" is what put 4pt type on the shipping deck for every drawing sparse
   // enough to defeat the services-per-slide floors.
   const mustTile = options.mustTile === true;
-  const capped = (cols: number, rows: number): { windows: DiagramWindow[]; legible: boolean } | null => {
-    if (!mustTile) return null;
+  // Empty cells cost nothing. A reader counts slides, and a sparse drawing's
+  // grid is mostly cells no service falls in — the diagonal cascade needs a
+  // 10 x 13 grid to reach seven points and emits thirteen slides from it.
+  // Capping the grid instead of the deck therefore refused a thirteen-slide
+  // readable deck in favour of a twenty-four-cell one at four points.
+  const slidesFor = (c: number, r: number): number => tile(c, r).length;
+  const shrinkToFit = (cols: number, rows: number): { c: number; r: number } => {
     let c = Math.max(1, cols);
     let r = Math.max(1, rows);
-    while (c * r > MAX_TILED_SLIDES) {
+    // A grid this fine is a plotter drawing however it is counted, and the
+    // bound also keeps the search below from walking a pathological grid.
+    while (c * r > MAX_TILED_CELLS) {
       if (c >= r) c -= 1;
       else r -= 1;
     }
+    while (c * r > 1 && slidesFor(c, r) > MAX_LEGIBLE_TILED_SLIDES) {
+      if (c >= r) c -= 1;
+      else r -= 1;
+    }
+    return { c, r };
+  };
+  const capped = (cols: number, rows: number): { windows: DiagramWindow[]; legible: boolean } | null => {
+    if (!mustTile) return null;
+    const { c, r } = shrinkToFit(cols, rows);
     if (c * r <= 1) return whole;
-    // Report honestly whether the capped grid clears the legibility floor. A
-    // deck that can grow its page only prefers these windows when they read;
-    // one that cannot takes them either way, because its alternative is worse.
+    // Report honestly whether the grid clears the legibility floor. A deck that
+    // can grow its page only prefers these windows when they read; one that
+    // cannot takes them either way, because its alternative is worse.
     const achieved = Math.min(
       frame.w / (contentW / c + WINDOW_BLEED_PX * 2),
       frame.h / (contentH / r + WINDOW_BLEED_PX * 2),
@@ -427,25 +466,28 @@ function planDiagramWindows(
     && services.length / comfortable.slides >= MIN_SERVICES_PER_SLIDE;
   const grid = worthIt ? comfortable : floor;
   if (!grid) {
-    return capped(Math.ceil(Math.sqrt(MAX_TILED_SLIDES)), Math.ceil(Math.sqrt(MAX_TILED_SLIDES)))
+    return capped(Math.ceil(Math.sqrt(MAX_TILED_CELLS)), Math.ceil(Math.sqrt(MAX_TILED_CELLS)))
       ?? { windows: [], legible: false };
   }
   const { cols, rows } = grid;
   if (cols * rows <= 1) return whole;
+  // A fixed-page deck has no third option, so it never bails out here: both
+  // the flip-book floor and the deck ceiling below exist to protect a deck
+  // that could instead grow its page, and applying them to one that cannot is
+  // what put four-point type on the shipping deck.
+  if (mustTile) return capped(cols, rows) ?? { windows: [], legible: false };
   // Past the comfortable grid the choice is not "more slides or one nice page",
   // it is "more standard slides or a plotter sheet the whole deck inherits", so
   // the tiled deck is allowed to run well past the comfortable ceiling. It
   // still has to be a deck: sheets that carry barely a tile each are a
   // flip-book, and a drawing needing more than the hard ceiling really is a
   // plotter drawing.
-  if (cols * rows > MAX_TILED_SLIDES) {
-    return capped(cols, rows) ?? { windows: [], legible: false };
-  }
+  if (cols * rows > MAX_TILED_SLIDES) return { windows: [], legible: false };
   if (
     cols * rows > MAX_DIAGRAM_SLIDES
     && services.length / (cols * rows) < MIN_SERVICES_PER_TILED_SLIDE
   ) {
-    return capped(cols, rows) ?? { windows: [], legible: false };
+    return { windows: [], legible: false };
   }
   const windows = tile(cols, rows);
   // A single surviving cell means the drawing cannot be tiled at all. Saying it
@@ -1903,10 +1945,16 @@ function addGroupShape(
   held?: { here: number; all: number },
   /** Where the tiles already landed, so a title is not written on top of one. */
   occupied?: readonly { x: number; y: number; w: number; h: number }[],
+  /** The other zones, which a title may never be written inside. */
+  foreign?: readonly { x: number; y: number; w: number; h: number }[],
 ): void {
   const topLeft = placeBox(box, transform, clampTo, true);
   const w = topLeft.w;
   const h = topLeft.h;
+  // Whether the window cut this zone, which decides whether the drawn
+  // rectangle is the zone or only the part of it that survived the cut.
+  const uncut = placeBox(box, transform);
+  const clipped = Math.abs(uncut.w - w) > 1e-6 || Math.abs(uncut.h - h) > 1e-6;
   const palette = zoneStyleFor(box, index);
   const bg = stripHash(palette.bg);
   const border = stripHash(palette.border);
@@ -1942,38 +1990,83 @@ function addGroupShape(
   // A zone cut to a sliver at the frame edge has less width than its own title
   // needs, so the band has to be pulled back onto the page — placed raw it ran
   // off the slide and PowerPoint dropped it, taking the zone's name with it.
-  const fit = (c: { x: number; y: number }): { x: number; y: number } => (clampTo
+  const fit = <T extends { x: number; y: number; w: number }>(c: T): T => (clampTo
     ? {
-      x: clamp(c.x, clampTo.x, Math.max(clampTo.x, clampTo.x + clampTo.w - titleW)),
+      ...c,
+      x: clamp(c.x, clampTo.x, Math.max(clampTo.x, clampTo.x + clampTo.w - c.w)),
       y: clamp(c.y, clampTo.y, Math.max(clampTo.y, clampTo.y + clampTo.h - titleH)),
     }
     : c);
-  const candidates = [
-    { x: topLeft.x + 0.06, y: topLeft.y + 0.04 },
-    { x: topLeft.x + 0.06, y: topLeft.y + h - titleH - 0.04 },
-    { x: topLeft.x + 0.06, y: topLeft.y - titleH - 0.02 },
-    { x: topLeft.x + 0.06, y: topLeft.y + h + 0.02 },
-  ].filter((c, i) => i < 2 || !clampTo || (c.y >= clampTo.y && c.y + titleH <= clampTo.y + clampTo.h))
-    .map(fit);
-  const cover = (c: { x: number; y: number }): number => (occupied ?? []).reduce((sum, tile) => {
-    const ox = Math.max(0, Math.min(c.x + titleW, tile.x + tile.w) - Math.max(c.x, tile.x));
+  const top = topLeft.y + 0.04;
+  const foot = topLeft.y + h - titleH - 0.04;
+  const part = (share: number): number => Math.max(0.4, w * share - 0.12);
+  // Inside the box it names, always — a name is a claim about what the box
+  // contains, and a name printed anywhere else is a different claim. When the
+  // full-width band across the top is standing on the zone's own tiles, the
+  // answer is a narrower band in the part of the zone the tiles left free, not
+  // a clear band belonging to somebody else: a subnet stack drawn tight has no
+  // room above any box except the box above it, and "Data subnet" printed
+  // there says the data tier is part of the application tier.
+  const inside = [
+    { x: topLeft.x + 0.06, y: top, w: titleW },
+    { x: topLeft.x + 0.06, y: foot, w: titleW },
+    { x: topLeft.x + w - part(0.5) - 0.06, y: top, w: part(0.5) },
+    { x: topLeft.x + 0.06, y: top, w: part(0.5) },
+    { x: topLeft.x + w - part(0.34) - 0.06, y: top, w: part(0.34) },
+    { x: topLeft.x + 0.06, y: top, w: part(0.34) },
+    { x: topLeft.x + w - part(0.34) - 0.06, y: foot, w: part(0.34) },
+    { x: topLeft.x + 0.06, y: foot, w: part(0.34) },
+  ];
+  // A fragment is the one exception. Its drawn rectangle is not the zone — it
+  // is whatever survived the window cut — so there may be no room inside it at
+  // all, and the band just outside the cut is still inside the zone the reader
+  // is being shown.
+  const outside = clipped
+    ? [
+      { x: topLeft.x + 0.06, y: topLeft.y - titleH - 0.02, w: titleW },
+      { x: topLeft.x + 0.06, y: topLeft.y + h + 0.02, w: titleW },
+    ].filter((c) => !clampTo || (c.y >= clampTo.y && c.y + titleH <= clampTo.y + clampTo.h))
+    : [];
+  const candidates = [...inside, ...outside].map(fit);
+  const cover = (c: { x: number; y: number; w: number }): number => (occupied ?? []).reduce((sum, tile) => {
+    const ox = Math.max(0, Math.min(c.x + c.w, tile.x + tile.w) - Math.max(c.x, tile.x));
     const oy = Math.max(0, Math.min(c.y + titleH, tile.y + tile.h) - Math.max(c.y, tile.y));
     return sum + ox * oy;
   }, 0);
+  // Whatever the band gains in clear space it must not buy from a neighbour.
+  const trespass = (c: { x: number; y: number; w: number }): number => (foreign ?? []).reduce((sum, zone) => {
+    const ox = Math.max(0, Math.min(c.x + c.w, zone.x + zone.w) - Math.max(c.x, zone.x));
+    const oy = Math.max(0, Math.min(c.y + titleH, zone.y + zone.h) - Math.max(c.y, zone.y));
+    return Math.max(sum, ox * oy);
+  }, 0);
+  // Scored as a fraction of the band, not as absolute area: a narrower band
+  // covers less simply by being narrower, so absolute area would always prefer
+  // the smallest one on offer even when the widest is completely clear.
+  //
+  // Trespass is weighted above coverage because the two failures are not
+  // comparable. A name lying over its own icon is crowded; a name lying inside
+  // a different zone's box asserts a containment the architecture does not
+  // have. Both are scored rather than filtered so that when every band
+  // trespasses — which is what two overlapping zones give you — the least bad
+  // one still wins instead of the first one tried.
+  const score = (c: { x: number; y: number; w: number }): number => {
+    const area = Math.max(1e-6, c.w * titleH);
+    return cover(c) / area + 2 * (trespass(c) / area);
+  };
   let title = candidates[0];
-  let best = cover(title);
+  let best = score(title);
   for (const candidate of candidates.slice(1)) {
     if (best <= 0.01) break;
-    const score = cover(candidate);
-    if (score < best - 1e-6) {
-      best = score;
+    const next = score(candidate);
+    if (next < best - 1e-6) {
+      best = next;
       title = candidate;
     }
   }
   slide.addText(truncateLabel(box.label, 60) + fragment, {
     x: title.x,
     y: title.y,
-    w: titleW,
+    w: title.w,
     h: titleH,
     fontSize: clamp(Math.round(h * 5), 8, 12),
     bold: true,
@@ -2213,10 +2306,12 @@ async function addEditableDiagram(
     return cx >= group.x && cx <= group.x + group.w && cy >= group.y && cy <= group.y + group.h;
   }).length;
   const placedTiles = shownServices.map((service) => placeBox(service, transform, clampTo));
+  const placedZones = new Map(shownGroups.map((group) => [group.id, placeBox(group, transform, clampTo, true)]));
   shownGroups.forEach((group) => addGroupShape(
     pptx, slide, group, groups.indexOf(group), transform, clampTo,
     { here: zoneMembers(group, shownServices), all: zoneMembers(group, services) },
     placedTiles,
+    shownGroups.filter((other) => other !== group).map((other) => placedZones.get(other.id)!),
   ));
   const captionBands: Obstacle[] = [];
   for (const service of shownServices) {

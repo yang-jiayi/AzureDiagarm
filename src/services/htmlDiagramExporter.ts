@@ -17,6 +17,7 @@ import {
   buildExportRoutes,
   categoryStyle,
   collectExportBoxes,
+  compactEmptyGutters,
   computeBounds,
   metaSubline,
   partitionBoxes,
@@ -162,7 +163,10 @@ function assignDagrePositions(
  * per-connection colour (fix 4), zone colours (fix 6) and metadata (fix 10).
  */
 function buildLayout(nodes: Node[], edges: Edge[], icons: Map<string, string>): LayoutResult {
-  const boxes = collectExportBoxes(nodes);
+  // Empty bands are closed first, the same way the PPTX and Visio exporters do
+  // it, so the PNG and the deck are the same drawing rather than one being a
+  // fiftieth-scale version of the other.
+  const boxes = compactEmptyGutters(collectExportBoxes(nodes));
   const { groups, services } = partitionBoxes(boxes);
   const dataById = new Map(nodes.map((node) => [node.id, (node.data ?? {}) as Record<string, unknown>]));
 

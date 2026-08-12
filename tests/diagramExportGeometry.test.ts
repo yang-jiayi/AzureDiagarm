@@ -369,3 +369,87 @@ test('a hub-and-spoke on the Architecture Center radius is left alone', () => {
 
   assert.equal(compact, map, 'a radial layout is returned untouched, not rebuilt');
 });
+
+test('a symmetric hub-and-spoke stays symmetric when its voids are closed', () => {
+  // A service tile is 150 wide and 75 tall, so at any given radius the gap
+  // between two tiles is 75px larger horizontally than vertically. Judging a
+  // void by that gap therefore answered the same question differently on the
+  // two axes: at radius 1700 the north and south arms were closed and the east
+  // and west arms were not, and a drawing the author made perfectly symmetric
+  // came out with 4.1in arms one way and 17.7in the other.
+  //
+  // Measuring centre to centre removes the tile's own size from the question,
+  // so both axes see the same 1700 and make the same decision.
+  const R = 1700;
+  const map = new Map<string, ExportBox>();
+  for (const b of [
+    box('hub', 0, 0), box('n', 0, -R), box('s', 0, R), box('e', R, 0), box('w', -R, 0),
+  ]) map.set(b.id, b);
+
+  const compact = compactEmptyGutters(map);
+  const hub = compact.get('hub')!;
+  // Edge to edge, which is what a reader sees as the length of an arm.
+  const gap = {
+    n: hub.y - (compact.get('n')!.y + 75),
+    s: compact.get('s')!.y - (hub.y + 75),
+    e: compact.get('e')!.x - (hub.x + 150),
+    w: hub.x - (compact.get('w')!.x + 150),
+  };
+
+  assert.equal(gap.n, gap.s, 'the two vertical arms stay equal');
+  assert.equal(gap.e, gap.w, 'the two horizontal arms stay equal');
+  assert.equal(
+    gap.n,
+    gap.e,
+    `a symmetric drawing stays symmetric: vertical arm ${gap.n}px, horizontal arm ${gap.e}px`,
+  );
+  assert.ok(gap.e < R - 150, 'and the voids really were closed, so this is not symmetric by doing nothing');
+});
+
+test('a box whose edge lands exactly on a void is not collapsed to a hairline', () => {
+  // The lip of a void is by definition where the last box before it ends, so
+  // there is always at least one box sitting on it. Shifting coordinates in a
+  // step rather than a ramp moved that box's right edge without moving its
+  // left, collapsing it to 1px: in an ordinary two-region drawing two of the
+  // twelve services came out 0.008in wide and their labels with them.
+  const map = new Map<string, ExportBox>();
+  for (const b of [
+    box('a', 0, 0), box('b', 200, 0), box('c', 400, 0),
+    box('far-a', 6000, 0), box('far-b', 6200, 0),
+  ]) map.set(b.id, b);
+
+  const compact = compactEmptyGutters(map);
+
+  for (const id of ['a', 'b', 'c', 'far-a', 'far-b']) {
+    assert.equal(compact.get(id)!.w, 150, `${id} keeps its full width across the void`);
+    assert.equal(compact.get(id)!.h, 75, `${id} keeps its full height across the void`);
+  }
+  assert.ok(
+    compact.get('far-a')!.x - compact.get('c')!.x < 1000,
+    'and the void really was closed',
+  );
+});
+
+test('a zone drawn around a void shrinks to its contents instead of dragging the void along', () => {
+  // A subscription frame, a tenant boundary, an "Azure" box — the commonest
+  // annotation there is, and it spans every void in the drawing. Counting it
+  // as content found no void at all and exported a sheet nine tenths blank;
+  // moving only its origin would have left it 6000px wider than everything
+  // inside it.
+  const map = new Map<string, ExportBox>();
+  map.set('azure', { id: 'azure', kind: 'group', label: 'Azure', x: -80, y: -80, w: 7060, h: 400 });
+  for (const b of [
+    box('e0', 0, 0), box('e1', 200, 0), box('e2', 400, 0),
+    box('w0', 6000, 0), box('w1', 6200, 0), box('w2', 6400, 0),
+  ]) map.set(b.id, b);
+
+  const compact = compactEmptyGutters(map);
+  const frame = compact.get('azure')!;
+  const west = compact.get('w2')!;
+
+  assert.ok(frame.w < 2200, `the frame closes with its contents, not around the void (${frame.w}px)`);
+  assert.ok(
+    frame.x <= compact.get('e0')!.x && frame.x + frame.w >= west.x + west.w,
+    'and it still contains every service it contained before',
+  );
+});

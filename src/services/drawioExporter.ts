@@ -19,6 +19,7 @@ import {
   buildExportRoutes,
   categoryStyle,
   collectExportBoxes,
+  compactEmptyGutters,
   computeBounds,
   metaSubline,
   partitionBoxes,
@@ -264,8 +265,10 @@ export async function exportToDrawio(
   resetCellIdCounter();
 
   // Resolve every node into an absolute pixel box via the shared layer so the
-  // Draw.io output matches PNG/PPTX/VSDX exactly (fixes 8, 12, 16).
-  const boxes = collectExportBoxes(nodes);
+  // Draw.io output matches PNG/PPTX/VSDX exactly (fixes 8, 12, 16). Empty bands
+  // are closed here too, or the same drawing arrives in Draw.io with fifty
+  // inches of blank canvas the other three exporters removed.
+  const boxes = compactEmptyGutters(collectExportBoxes(nodes));
   const { groups, services } = partitionBoxes(boxes);
   const routes = buildExportRoutes(edges, boxes);
 

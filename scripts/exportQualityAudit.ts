@@ -321,37 +321,148 @@ function svc(id: string, label: string, x: number, y: number, parent?: string, i
  * slip.
  */
 /**
- * A dense grid with a chain of hops trailing away to a remote service.
+ * A dense core with a secondary region parked far from it, and one service the
+ * region's box happens to cover without owning.
  *
- * Every earlier stray fixture separated its outliers with a band of empty
- * canvas, and closing empty bands is now the first thing either exporter does —
- * so all of them stopped reaching the parking code that trims and packs, and
- * several hundred lines of it were being carried untested. The chain here fills
- * both projections, leaving no band to close, while the far end is still an
- * outlier the fit has to trim: 39.1x29.9in of drawing, 22.5x15.4in once the
- * tail is packed.
+ * Two jobs. Closing empty bands is now the first thing either exporter does, so
+ * every fixture that separated its outliers with blank canvas on both axes
+ * stopped reaching the parking code that trims and packs — several hundred
+ * lines of it were being carried untested. The horizontal separation here is
+ * 1030px, ordinary spacing rather than a void, so it survives compaction and
+ * the region is still an outlier the fit must trim and pack.
+ *
+ * And `probe` is what tells declared membership from geometric. It sits inside
+ * the secondary region's rectangle but belongs to no zone — an annotation band
+ * drawn across something it does not own, which is exactly what a compliance
+ * or residency boundary looks like. Reading membership from the drawing rather
+ * than from the author's own `parentNode` moves it with the region, so the
+ * finished sheet shows a service inside a boundary the architecture never put
+ * it in.
  */
-function chainedStrayScenario(): Scenario {
+function zoneStrayScenario(): Scenario {
+  const names = [
+    'Azure Front Door', 'Application Gateway', 'Azure App Service', 'Azure Functions',
+    'Azure SQL Database', 'Azure Cosmos DB', 'Azure Key Vault', 'Azure Monitor',
+    'Azure Service Bus', 'Azure Cache for Redis', 'Azure Blob Storage', 'Microsoft Entra ID',
+  ];
   const nodes: Node[] = [
-    ...Array.from({ length: 12 }, (_, i) => svc(
+    ...Array.from({ length: 36 }, (_, i) => svc(
       `g-${i}`,
-      ['Azure Front Door', 'Azure App Service', 'Azure SQL Database', 'Azure Key Vault'][i % 4],
-      (i % 4) * 200,
-      Math.floor(i / 4) * 180,
+      names[i % names.length],
+      (i % 12) * 250,
+      Math.floor(i / 12) * 200,
     )),
-    svc('link-1', 'Azure Private Link', 900, 700),
-    svc('link-2', 'Azure ExpressRoute', 1800, 1400),
-    svc('link-3', 'Azure VPN Gateway', 2700, 2100),
-    svc('remote-hsm', 'Azure Payment HSM', 3600, 2800),
+    grp('dr', 'Secondary region', 7000, 3000, 620, 300),
+    svc('dr-gw', 'Azure VPN Gateway', 30, 40, 'dr'),
+    svc('dr-db', 'Azure SQL Database', 330, 40, 'dr'),
+    svc('dr-store', 'Azure Blob Storage', 30, 180, 'dr'),
+    svc('probe', 'Azure Policy', 7330, 3180),
   ];
   const edges: Edge[] = [
     { id: 'c1', source: 'g-0', target: 'g-1', label: 'Routes' } as Edge,
-    { id: 'c2', source: 'g-3', target: 'link-1', label: 'Egresses' } as Edge,
-    { id: 'c3', source: 'link-1', target: 'link-2', label: 'Peers' } as Edge,
-    { id: 'c4', source: 'link-2', target: 'link-3', label: 'Tunnels' } as Edge,
-    { id: 'c5', source: 'link-3', target: 'remote-hsm', label: 'Signs' } as Edge,
+    { id: 'c2', source: 'g-1', target: 'g-2', label: 'Balances' } as Edge,
+    { id: 'c3', source: 'g-2', target: 'g-4', label: 'Queries' } as Edge,
+    { id: 'c4', source: 'g-4', target: 'dr-db', label: 'Replicates' } as Edge,
+    { id: 'c5', source: 'dr-gw', target: 'dr-db', label: 'Connects' } as Edge,
+    { id: 'c6', source: 'dr-db', target: 'dr-store', label: 'Archives' } as Edge,
   ];
-  return { id: 'chained-stray', nodes, edges };
+  return { id: 'zone-stray', nodes, edges };
+}
+
+/**
+ * Two regions far apart, with one rectangle drawn around both of them.
+ *
+ * A subscription frame, a tenant boundary, an "Azure" box — the most ordinary
+ * annotation in the Architecture Center, and it spans every empty band in the
+ * drawing. Judging emptiness by every rectangle therefore found no void at all,
+ * so a sheet that is nine tenths blank was exported at full size, and the gate
+ * meant to catch that was blinded by the same rectangle.
+ */
+function boundaryVoidScenario(): Scenario {
+  const nodes: Node[] = [
+    grp('azure', 'Azure', -80, -80, 7060, 1000),
+    ...Array.from({ length: 6 }, (_, i) => svc(
+      `east-${i}`,
+      ['Azure Front Door', 'Azure App Service', 'Azure SQL Database'][i % 3],
+      80 + (i % 3) * 200,
+      80 + Math.floor(i / 3) * 180,
+      'azure',
+    )),
+    ...Array.from({ length: 6 }, (_, i) => svc(
+      `west-${i}`,
+      ['Azure Traffic Manager', 'Azure Functions', 'Azure Cosmos DB'][i % 3],
+      6080 + (i % 3) * 200,
+      80 + Math.floor(i / 3) * 180,
+      'azure',
+    )),
+  ];
+  const edges: Edge[] = [
+    { id: 'b1', source: 'east-0', target: 'east-1', label: 'Routes' } as Edge,
+    { id: 'b2', source: 'east-2', target: 'west-2', label: 'Replicates' } as Edge,
+    { id: 'b3', source: 'west-0', target: 'west-1', label: 'Serves' } as Edge,
+  ];
+  return { id: 'boundary-void', nodes, edges };
+}
+
+/**
+ * Subnets stacked one above another inside a virtual network — the shape of
+ * every hub-and-spoke and every N-tier drawing the Architecture Center
+ * publishes.
+ *
+ * The band immediately above a zone is clear of service tiles and belongs to
+ * the zone above it. Scoring title placement against tiles alone therefore
+ * moved a title out of its own box and into its neighbour's, so the drawing
+ * asserted "Data subnet" was part of the application tier.
+ */
+function stackedSubnetsScenario(): Scenario {
+  const nodes: Node[] = [];
+  const tiers = [
+    ['web', 'Web subnet', 'Azure Application Gateway', 'Azure Front Door'],
+    ['app', 'Application subnet', 'Azure App Service', 'Azure Functions'],
+    ['data', 'Data subnet', 'Azure SQL Database', 'Azure Cosmos DB'],
+  ];
+  tiers.forEach(([id, label, first, second], tier) => {
+    // Drawn tight around their contents and stacked close, the way a real
+    // subnet stack is: there is no clear band inside the box for a title, and
+    // the only clear band near it belongs to the subnet above.
+    nodes.push(grp(id, label, 0, tier * 118, 620, 95));
+    nodes.push(svc(`${id}-a`, first, 40, 10, id));
+    nodes.push(svc(`${id}-b`, second, 320, 10, id));
+  });
+  const edges: Edge[] = [
+    { id: 's1', source: 'web-a', target: 'app-a', label: 'Forwards' } as Edge,
+    { id: 's2', source: 'app-a', target: 'data-a', label: 'Queries' } as Edge,
+    { id: 's3', source: 'app-b', target: 'data-b', label: 'Reads' } as Edge,
+  ];
+  return { id: 'stacked-subnets', nodes, edges };
+}
+
+/**
+ * A long diagonal cascade — every hop stepping down and across, the shape a
+ * hand-dragged flow takes once it outgrows a screen.
+ *
+ * Nothing here is an outlier and no band is empty on either projection, so
+ * neither trimming nor gutter compaction has anything to remove: the drawing
+ * really is this large, and the only lever left is how many slides it is shown
+ * on. The fixed-page deck used to compute the grid that would make it readable,
+ * find it past the shared slide ceiling, and throw it away in favour of a grid
+ * that reads at four points — which is what the customer deck then shipped.
+ */
+function diagonalCascadeScenario(): Scenario {
+  const names = [
+    'Azure Front Door', 'Application Gateway', 'Azure App Service', 'Azure Functions',
+    'Azure Service Bus', 'Azure SQL Database', 'Azure Cosmos DB', 'Azure Data Factory',
+    'Azure Synapse Analytics', 'Azure Blob Storage', 'Azure Key Vault', 'Azure Monitor',
+    'Azure Cache for Redis', 'Azure Event Hubs', 'Azure Logic Apps', 'Azure API Management',
+  ];
+  const nodes: Node[] = names.map((name, i) => svc(`d-${i}`, name, i * 900, i * 620));
+  const edges: Edge[] = names.slice(1).map((_, i) => ({
+    id: `d-e-${i}`,
+    source: `d-${i}`,
+    target: `d-${i + 1}`,
+    label: 'Hands off',
+  } as Edge));
+  return { id: 'diagonal-cascade', nodes, edges };
 }
 
 function strayZonePairScenario(): Scenario {
@@ -2213,6 +2324,41 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
         issues.push(`zone title "${title.text}" is ${pct}% covered by the tiles inside it`);
       }
     }
+    // A zone's name written inside a *different* zone is the same false
+    // containment claim as a service drawn outside its own boundary, in the
+    // other direction — and it is exactly what scoring title placement against
+    // service tiles alone produced: in a stacked drawing the clear band just
+    // above a zone belongs to the zone above it, so "Data subnet" was printed
+    // inside the Application subnet's box.
+    for (const title of slideShapes.filter((s) => s.name.startsWith('zone-label-'))) {
+      const zoneId = title.name.replace(/^zone-label-/, '');
+      const own = slideShapes.find((s) => s.name === `zone-${zoneId}`);
+      if (!own) continue;
+      const area = Math.max(1e-6, title.w * title.h);
+      const inside = overlapArea(title, own);
+      // A fragment's drawn rectangle is not the zone, it is what survived the
+      // window cut, so its name may legitimately sit just outside the cut.
+      const fragment = /\(\s*\d+\s*\/\s*\d+\s*\)/.test(title.text ?? '');
+      if (!fragment && inside < 0.9 * area) {
+        issues.push(`zone title "${title.text}" is only ${((inside / area) * 100).toFixed(0)}% inside the "${zoneId}" boundary it names`);
+      }
+      for (const other of slideShapes) {
+        if (!other.name.startsWith('zone-') || other.name.startsWith('zone-label-')) continue;
+        if (other.name === `zone-${zoneId}`) continue;
+        const trespass = overlapArea(title, other);
+        // Only when the name is not in its own box as well. An author who
+        // draws a compliance band across half a virtual network has drawn two
+        // rectangles that overlap, and every point inside one of them is
+        // inside the other — there is no placement the exporter could choose
+        // that would satisfy a flat "never inside another zone", so demanding
+        // it turns this rule into noise. What is always avoidable, and what
+        // the stacked-subnet defect actually was, is a name that sits inside a
+        // neighbour and nowhere near the box it names.
+        if (trespass > 0.01 * area && inside < 0.9 * area) {
+          issues.push(`zone title "${title.text}" is written ${((trespass / area) * 100).toFixed(0)}% inside "${other.name}" and only ${((inside / area) * 100).toFixed(0)}% inside the "${zoneId}" it names`);
+        }
+      }
+    }
     for (const badge of slideShapes.filter((s) => s.name.startsWith('connector-step-'))) {
       let buried = 0;
       for (const tile of slideTiles) {
@@ -3249,7 +3395,28 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
   const shapeArea = [...xml.matchAll(/NameU="Service\.\d+"[\s\S]*?<Cell N="Width" V="([\d.]+)"\/>\s*<Cell N="Height" V="([\d.]+)"\/>/g)]
     .reduce((sum, m) => sum + +m[1] * +m[2], 0);
   const density = shapeArea / (pkg.pageWidthIn * pkg.pageHeightIn);
-  if (serviceCount >= 4 && density < 0.005) {
+  // Sparse is the symptom; outliers are the disease, and only the disease is
+  // the exporter's to cure. A drawing whose services are spread evenly across
+  // the sheet — a long cascade, a wide bus, a timeline — is thin everywhere,
+  // and Visio reproducing it at 1:1 is the tool working correctly; there is
+  // nothing to trim, and reporting it only teaches the gate to be ignored.
+  // What a stray actually looks like is a sheet whose span collapses once the
+  // few boxes at the extremes are set aside.
+  const centres = [
+    ...xml.matchAll(new RegExp('<Shape [^>]*NameU="Service\\.\\d+"[\\s\\S]*?<\\/Shape>', 'g')),
+  ].map((m) => rectOf(m[0]))
+    .filter((r): r is { x: number; y: number; w: number; h: number } => r !== null)
+    .map((r) => ({ x: r.x + r.w / 2, y: r.y + r.h / 2 }));
+  const lopsided = (pick: (c: { x: number; y: number }) => number): number => {
+    const sorted = centres.map(pick).sort((a, b) => a - b);
+    const full = sorted[sorted.length - 1] - sorted[0];
+    if (full <= 0) return 1;
+    const cut = Math.floor(sorted.length * 0.1);
+    const core = sorted[sorted.length - 1 - cut] - sorted[cut];
+    return core / full;
+  };
+  const outlierDriven = centres.length >= 4 && Math.min(lopsided((c) => c.x), lopsided((c) => c.y)) < 0.6;
+  if (serviceCount >= 4 && density < 0.005 && outlierDriven) {
     issues.push(`page is ${(density * 100).toFixed(2)}% full — a stray node blew the sheet up`);
   }
 
@@ -3257,12 +3424,15 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
   // sheet is 3% full, well clear of the floor, and 52in of that sheet is one
   // continuous band with nothing in it. Whitespace is not content — it costs
   // the rest of the drawing its scale, and on the fixed-size deck it costs it
-  // in font size. The bar sits above the widest band an author's own layout
-  // produces (13in between a spoke and its hub on the 1400px radius the
-  // Architecture Center draws), so only a genuine void is reported.
-  const allRects = (['Zone', 'Service'] as const).flatMap((prefix) => [
-    ...xml.matchAll(new RegExp(`<Shape [^>]*NameU="${prefix}\\.\\d+"[\\s\\S]*?<\\/Shape>`, 'g')),
-  ].map((m) => rectOf(m[0])).filter((r): r is { x: number; y: number; w: number; h: number } => r !== null));
+  // in font size.
+  //
+  // Measured across the services only, for the same reason the exporter closes
+  // voids by the services only: one rectangle drawn around the whole
+  // architecture spans every band there is, and counting it as content let a
+  // five-region drawing report 0.0in of void while carrying 256in of it.
+  const allRects = [
+    ...xml.matchAll(new RegExp('<Shape [^>]*NameU="Service\\.\\d+"[\\s\\S]*?<\\/Shape>', 'g')),
+  ].map((m) => rectOf(m[0])).filter((r): r is { x: number; y: number; w: number; h: number } => r !== null);
   const widestVoid = (start: (r: { x: number; y: number; w: number; h: number }) => number,
     size: (r: { x: number; y: number; w: number; h: number }) => number): number => {
     const spans = allRects.map((r) => [start(r), start(r) + size(r)] as [number, number])
@@ -3304,7 +3474,8 @@ async function main(): Promise<void> {
     compactScenario(), wideScenario(), oversizeScenario(), outlierScenario(),
     bandedScenario(), narrativeScenario(), barbellScenario(), hubFanScenario(), sharedServiceScenario(), tightGridScenario(), bandedTwoStraysScenario(), wideChainScenario(), grid5x5TightScenario(), parallelScenario(),
     oppositeStraysScenario(), cornerStraysScenario(), symmetricStraysScenario(),
-    hubSpokeScenario(), scopeZoneScenario(), strayZonePairScenario(), chainedStrayScenario(),
+    hubSpokeScenario(), scopeZoneScenario(), strayZonePairScenario(), zoneStrayScenario(),
+    boundaryVoidScenario(), stackedSubnetsScenario(), diagonalCascadeScenario(),
     ladderInGridScenario(), twinLaddersScenario(), strayLadderScenario(), legendCornerScenario(), duplicateStepsScenario(), denseZoneScenario(),
     metaChipScenario(), gridFanScenario(), gridFan3Scenario(), fan8Tight5x5Scenario(), metaSublineScenario(), grid5x5CaptionScenario(), longNameGridScenario(), longLabelGridScenario(), metaTightScenario(),     longNameFanScenario(), estateChainScenario(), chain24Scenario(), tripleMutedScenario(), estate72Scenario(), workflowProseScenario(), workflowLongProseScenario(), allCategoriesScenario(),
     await generatedScenario(), await groupedGeneratedScenario(),
