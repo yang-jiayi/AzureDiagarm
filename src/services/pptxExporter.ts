@@ -12,6 +12,7 @@
  */
 
 import PptxGenJS from 'pptxgenjs';
+import JSZip from 'jszip';
 import type { Edge, Node } from 'reactflow';
 
 /**
@@ -23,6 +24,7 @@ const PptxCtor = (PptxGenJS as unknown as { default?: typeof PptxGenJS }).defaul
 
 import { generateModelFilename } from '../utils/modelNaming';
 import { rasterizeIcons, type RasterizedIcon } from '../utils/exportIconRaster';
+import { nativizePackage } from './pptxNativeShapes';
 import {
   buildExportRoutes,
   categoryStyle,
@@ -2577,6 +2579,37 @@ export async function buildDiagramSlidePptx(
 }
 
 /**
+ * Write the deck out after repairing it into shapes PowerPoint treats as its
+ * own — real connectors glued to the services they join, service names living
+ * inside their tiles, and each tile grouped with its icon.
+ *
+ * pptxgenjs cannot emit any of that, so it is done on the finished package.
+ * If anything goes wrong the untouched deck is still downloaded: a deck that
+ * is harder to edit is very much better than no deck at all.
+ */
+async function downloadNativePptx(pptx: PptxGenJS, fileName: string): Promise<void> {
+  try {
+    const blob = (await pptx.write({ outputType: 'blob' })) as Blob;
+    const zip = await nativizePackage(await JSZip.loadAsync(blob));
+    const repaired = await zip.generateAsync({
+      type: 'blob',
+      mimeType: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    });
+    const url = URL.createObjectURL(repaired);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = fileName;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  } catch (error) {
+    console.warn('PowerPoint shape conversion failed; exporting the unconverted deck.', error);
+    await pptx.writeFile({ fileName });
+  }
+}
+
+/**
  * Build and download a single-slide PPTX for the diagram.
  *
  * The diagram is drawn with native PowerPoint shapes whenever canvas contents
@@ -2590,7 +2623,7 @@ export async function exportDiagramAsPptx(
 ): Promise<string> {
   const pptx = await buildDiagramSlidePptx(imageDataUrl, options);
   const fileName = generateModelFilename('azure-diagram-slide', 'pptx');
-  await pptx.writeFile({ fileName });
+  await downloadNativePptx(pptx, fileName);
   return fileName;
 }
 
@@ -3079,7 +3112,7 @@ export async function exportArchitectureDeck(
 ): Promise<string> {
   const pptx = await buildArchitectureDeckPptx(imageDataUrl, options);
   const fileName = generateModelFilename('azure-architecture-deck', 'pptx');
-  await pptx.writeFile({ fileName });
+  await downloadNativePptx(pptx, fileName);
   return fileName;
 }
 

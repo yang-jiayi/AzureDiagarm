@@ -13,6 +13,7 @@ import path from 'node:path';
 import JSZip from 'jszip';
 import type { Edge, Node } from 'reactflow';
 import { buildDiagramSlidePptx } from '../src/services/pptxExporter.ts';
+import { nativizeSlideXml } from '../src/services/pptxNativeShapes.ts';
 import { buildVsdxPackage } from '../src/services/visioVsdxExporter.ts';
 import { WRAP_TRIGGER_RATIO } from '../src/utils/serpentineWrap.ts';
 import { narrateEdgeCallouts } from '../src/services/diagramExportGeometry.ts';
@@ -656,6 +657,73 @@ function countByName(shapes: { name: string }[]): Map<string, number> {
   return counts;
 }
 
+/**
+ * The deck is repaired into real PowerPoint objects after pptxgenjs has
+ * written it — connectors glued to the services they join, service names
+ * inside their tiles, tiles grouped with their icons. The rules the drawing is
+ * measured by all address shapes that conversion moves or removes, so the
+ * conversion gets its own rules, run on the converted XML.
+ *
+ * The one that matters most is the last: a conversion that quietly eats a
+ * service name would satisfy every structural rule perfectly.
+ */
+function auditNativeConversion(allSlides: readonly string[]): { issues: string[]; glued: number; ungluable: number; groups: number } {
+  const issues: string[] = [];
+  let glued = 0;
+  let ungluable = 0;
+  let groups = 0;
+
+  allSlides.forEach((slideXml, index) => {
+    const before = parseShapes(slideXml);
+    const after = nativizeSlideXml(slideXml);
+    const where = `slide ${index + 1}`;
+
+    for (const tag of ['p:sp', 'p:cxnSp', 'p:grpSp', 'p:pic', 'p:txBody'] as const) {
+      const open = (after.match(new RegExp(`<${tag}>`, 'g')) ?? []).length;
+      const close = (after.match(new RegExp(`</${tag}>`, 'g')) ?? []).length;
+      if (open !== close) issues.push(`${where}: converted XML has ${open} <${tag}> but ${close} </${tag}>`);
+    }
+
+    // A connector glued to an id that is not on the slide is dropped by
+    // PowerPoint on open, which loses the arrow entirely.
+    const ids = new Set([...after.matchAll(/<p:cNvPr id="(\d+)"/g)].map((m) => m[1]));
+    for (const glue of after.matchAll(/<a:(?:st|end)Cxn id="(\d+)" idx="(\d+)"\/>/g)) {
+      if (!ids.has(glue[1])) issues.push(`${where}: connector glued to shape id ${glue[1]}, which is not on the slide`);
+      if (+glue[2] > 3) issues.push(`${where}: connector glued to site ${glue[2]}, which a rectangle does not have`);
+    }
+
+    for (const cxn of after.matchAll(/<p:cxnSp>[\s\S]*?<\/p:cxnSp>/g)) {
+      if (/<a:stCxn /.test(cxn[0]) && /<a:endCxn /.test(cxn[0])) glued += 1;
+      else ungluable += 1;
+    }
+    groups += (after.match(/<p:grpSp>/g) ?? []).length;
+
+    // Nothing the reader could see may be lost by the conversion.
+    for (const label of before.filter((s) => s.name.startsWith('service-label-'))) {
+      if (label.text.trim() === '') continue;
+      if (!after.includes(escapeXml(label.text))) {
+        issues.push(`${where}: conversion lost the service name "${label.text}"`);
+      }
+    }
+    for (const tile of before.filter((s) => s.name.startsWith('service-') && !s.name.includes('label') && !s.name.includes('meta'))) {
+      const id = tile.name.slice('service-'.length);
+      const grouped = new RegExp(`<p:grpSp>(?:(?!</p:grpSp>)[\\s\\S])*name="service-${escapeRe(id)}"`).test(after);
+      if (before.some((s) => s.name === `icon-${id}`) && !grouped) {
+        issues.push(`${where}: tile "${tile.name}" was not grouped with its icon, so dragging it leaves the icon behind`);
+      }
+    }
+  });
+  return { issues, glued, ungluable, groups };
+}
+
+function escapeRe(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function escapeXml(text: string): string {
+  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
 async function auditPptx(scenario: Scenario): Promise<Report> {
   const pptx = await buildDiagramSlidePptx(PIXEL_PNG, {
     diagramName: 'Contoso Platform',
@@ -689,6 +757,8 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
   const shapes = perSlide.flat();
 
   const issues: string[] = [];
+  const native = auditNativeConversion(allSlides);
+  issues.push(...native.issues);
   // The overview is exempt from the legibility floor because it is a map, not
   // a reading surface — but "smaller than the floor" is not the same as "ink
   // the reader cannot resolve at all". Type this small is grey mush that makes
@@ -1182,6 +1252,9 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
       minFontPt: minFont,
       overviewMinFontPt: overviewMinFont,
       overviewEmptyTiles,
+      gluedConnectors: native.glued,
+      unglueableConnectors: native.ungluable,
+      shapeGroups: native.groups,
       chips: chips.length,
       maxChipWidthIn: chips.length ? +Math.max(...chips.map((c) => c.w)).toFixed(3) : 0,
       stepBadges: badges.length,
