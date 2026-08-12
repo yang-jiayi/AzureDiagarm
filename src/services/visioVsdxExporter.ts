@@ -37,6 +37,7 @@
 import JSZip from 'jszip';
 import type { Node, Edge } from 'reactflow';
 import { rasterizeIcons, type RasterizedIcon } from '../utils/exportIconRaster';
+import { stripXmlForbidden } from '../utils/xmlText';
 import {
   buildExportRoutes,
   categoryStyle,
@@ -189,8 +190,17 @@ const LAYER_ZONES = 0;
 const LAYER_SERVICES = 1;
 const LAYER_CONNECTIONS = 2;
 
+/**
+ * Escape a string for XML, after removing what XML cannot carry at all.
+ *
+ * The escaping and the stripping are separate problems and both are required.
+ * `& < > " '` have encodings; the C0 controls do not — `&#11;` is exactly as
+ * illegal as a raw U+000B — so a vertical tab pasted out of Word into a service
+ * name produced a `.vsdx` that Visio refuses to open, with no error at export
+ * time and nothing to see until the recipient double-clicks it.
+ */
 function esc(value: string): string {
-  return (value || '')
+  return stripXmlForbidden(value || '')
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')

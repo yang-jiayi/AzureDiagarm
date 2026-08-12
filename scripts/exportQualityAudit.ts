@@ -16,6 +16,7 @@ import { buildDiagramSlidePptx, buildArchitectureDeckPptx } from '../src/service
 import { nativizeSlideXml } from '../src/services/pptxNativeShapes.ts';
 import { buildVsdxPackage } from '../src/services/visioVsdxExporter.ts';
 import { WRAP_TRIGGER_RATIO } from '../src/utils/serpentineWrap.ts';
+
 import { narrateEdgeCallouts, CATEGORY_STYLES } from '../src/services/diagramExportGeometry.ts';
 
 const OUT = path.join(process.cwd(), 'tmp-export-audit');
@@ -309,6 +310,36 @@ interface Scenario {
    * light theme, so no colour the dark deck uses had ever been measured.
    */
   dark?: boolean;
+}
+
+/**
+ * Every XML part in an OPC package has to be XML.
+ *
+ * Not a layout rule — a "does the file open at all" rule, and the only one of
+ * those in this file that no amount of measuring geometry would ever catch.
+ * The forbidden code points cannot be escaped, so an exporter that faithfully
+ * passes a label through produces a package Word, PowerPoint and Visio all
+ * refuse, while the export itself reports success. Cheap enough to run over
+ * every part of every scenario: it is one regex per string already in memory.
+ *
+ * The test is written out here rather than imported from `xmlText`, on purpose.
+ * A gate that asks the code under test whether the code under test is correct
+ * is not a gate: the first version of this rule called `hasXmlForbidden`, and
+ * neutering `stripXmlForbidden` disabled the strip and the detector in one
+ * edit, so the mutation came back green.
+ */
+const AUDIT_FORBIDDEN = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\uFFFE\uFFFF]|[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+
+function xmlWellFormednessIssues(parts: Array<{ path: string; text: string }>, prefix: string): string[] {  const issues: string[] = [];
+  for (const part of parts) {
+    const hit = AUDIT_FORBIDDEN.exec(part.text);
+    if (!hit) continue;
+    const code = hit[0].codePointAt(hit[0].length - 1) ?? 0;
+    issues.push(
+      `${prefix}${part.path} carries U+${code.toString(16).toUpperCase().padStart(4, '0')}, which XML 1.0 forbids and no escaping can encode — the package will not open`,
+    );
+  }
+  return issues;
 }
 
 function svc(id: string, label: string, x: number, y: number, parent?: string, icon = true, category?: string): Node {
@@ -828,6 +859,45 @@ function workflowFanScenario(): Scenario {
     } as Edge);
   }
   return { id: 'workflow-fan', nodes, edges };
+}
+
+/**
+ * Text carrying the code points XML 1.0 cannot represent.
+ *
+ * Every one of these arrives without the user typing anything unusual. U+000B
+ * is Word and PowerPoint's own manual line break, so it comes in on a
+ * copy-pasted service name; it is also a legal JSON escape, so it survives an
+ * IaC or prototype import intact. A lone surrogate is what a string sliced at a
+ * fixed character count leaves behind when it cuts an emoji in half.
+ *
+ * The failure they cause is invisible at export time and total at open time,
+ * which is why this is a fixture and not a unit test: the point is that the
+ * whole package — slides, drawing, and the document properties written from the
+ * diagram name and the author — comes out openable.
+ */
+function controlCharScenario(): Scenario {
+  const vt = '\u000b';
+  const nodes = [
+    svc('cc-web', `Payments${vt}gateway`, 0, 0),
+    svc('cc-app', `Orders\u000cservice \u{1F680}`, 320, 0),
+    svc('cc-db', `Ledger\u0001store\uD83D`, 640, 0),
+    svc('cc-log', `Audit\u001ftrail`, 960, 0),
+  ];
+  const edges = [
+    {
+      id: 'cc1', source: 'cc-web', target: 'cc-app', label: `writes${vt}orders`,
+      data: { stepNumber: 1, stepDescription: `The gateway writes${vt}orders to the service.` },
+    },
+    {
+      id: 'cc2', source: 'cc-app', target: 'cc-db', label: 'commits\u0000rows',
+      data: { stepNumber: 2, stepDescription: 'The service commits\u0000rows to the ledger.' },
+    },
+    {
+      id: 'cc3', source: 'cc-db', target: 'cc-log', label: 'emits\uDC00events',
+      data: { stepNumber: 3, stepDescription: 'The ledger emits\uDC00events to the audit trail.' },
+    },
+  ] as Edge[];
+  return { id: 'control-chars', nodes, edges };
 }
 
 /**
@@ -2329,6 +2399,7 @@ async function auditCustomerDeck(scenario: Scenario): Promise<string[]> {
   const pageH = sldSz ? +sldSz[2] / EMU_PER_INCH : BASE_SLIDE_H_IN;
 
   const issues: string[] = [];
+  issues.push(...xmlWellFormednessIssues(await zipXmlParts(zip), 'customer deck: '));
   if (pageW > BASE_SLIDE_W_IN + 0.01 || pageH > BASE_SLIDE_H_IN + 0.01) {
     issues.push(`customer deck: page is ${pageW.toFixed(2)}x${pageH.toFixed(2)}in — every other slide in this deck is laid out for ${BASE_SLIDE_W_IN}x${BASE_SLIDE_H_IN}in`);
   }
@@ -2384,6 +2455,25 @@ async function auditCustomerDeck(scenario: Scenario): Promise<string[]> {
   return issues;
 }
 
+/**
+ * What the audit expects a sanitised string to look like.
+ *
+ * Independent of the exporter's own strip for the same reason as the regex
+ * above: the rules that compare authored text against emitted text have to
+ * agree with the *specification*, not with whatever the shipped code currently
+ * does, or a broken strip would move the goalposts to meet itself.
+ */
+function auditStrip(value: string): string {
+  return value.replace(
+    /[\uD800-\uDBFF][\uDC00-\uDFFF]|[\u0000-\u0008\u000B\u000C\u000E-\u001F\uFFFE\uFFFF]|[\uD800-\uDFFF]/g,
+    (m) => (m.length === 2 ? m : ' '),
+  );
+}
+async function zipXmlParts(zip: JSZip): Promise<Array<{ path: string; text: string }>> {
+  const names = Object.keys(zip.files).filter((n) => !zip.files[n].dir && /\.(xml|rels)$/i.test(n));
+  return Promise.all(names.map(async (path) => ({ path, text: await zip.files[path].async('string') })));
+}
+
 async function auditPptx(scenario: Scenario): Promise<Report> {
   const pptx = await buildDiagramSlidePptx(PIXEL_PNG, {
     diagramName: 'Contoso Platform',
@@ -2424,6 +2514,7 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
   const shapes = perSlide.flat();
 
   const issues: string[] = [];
+  issues.push(...xmlWellFormednessIssues(await zipXmlParts(zip), ''));
   // The audit ran icon-blind for its whole life: `canRasterize()` is false
   // under Node, so `rasterizeIcons` returned an empty map and every rule that
   // measures a tile — the caption band's position and height, and therefore
@@ -3244,7 +3335,13 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
   const authored = new Set(
     scenario.edges
       .map((e) => (e.data as { stepDescription?: string } | undefined)?.stepDescription?.trim())
-      .filter((d): d is string => !!d),
+      .filter((d): d is string => !!d)
+      // Compare against what the exporter is *right* to emit. A description
+      // carrying an XML-forbidden code point has to be sanitised on the way
+      // out, so the sentence on the slide legitimately differs from the one the
+      // author typed, and demanding they match byte-for-byte would make the
+      // only correct behaviour look like a dropped sentence.
+      .map((d) => auditStrip(d)),
   );
   if (authored.size > 0) {
     const rowText = new Set(shapes.filter((s) => s.name.startsWith('workflow-text-')).map((s) => s.text.replace(/…$/, '').trim()));
@@ -3374,6 +3471,12 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
   const icons = synthesisedIcons(scenario);
   const pkg = await buildVsdxPackage(scenario.nodes, scenario.edges, 'Contoso Platform', icons);
   const issues: string[] = [];
+  issues.push(...xmlWellFormednessIssues(
+    pkg.parts
+      .filter((p) => typeof p.data === 'string' && /\.(xml|rels)$/i.test(p.path))
+      .map((p) => ({ path: p.path, text: p.data as string })),
+    '',
+  ));
   const pagePart = pkg.parts.find((p) => /page1\.xml$/i.test(p.path));
   const media = pkg.parts.filter((p) => /\/media\//i.test(p.path));
   const serviceCount = scenario.nodes.filter((n) => n.type !== 'groupNode').length;
@@ -3748,7 +3851,7 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
   };
   const wanted = new Map<string, { need: number; sample: string }>();
   for (const edge of scenario.edges) {
-    const label = typeof edge.label === 'string' ? edge.label.trim() : '';
+    const label = typeof edge.label === 'string' ? auditStrip(edge.label).trim() : '';
     // Truncation is a different rule's business, so compare on a stem short
     // enough that the exporter is always allowed to keep it.
     const stem = foldVsdx(label).slice(0, 12);
@@ -4363,7 +4466,7 @@ async function main(): Promise<void> {
     scaledZoneRowScenario(),
     corridorZoneScenario(),
     ladderInGridScenario(), twinLaddersScenario(), strayLadderScenario(), legendCornerScenario(), duplicateStepsScenario(), denseZoneScenario(),
-    metaChipScenario(), gridFanScenario(), gridFan3Scenario(), fan8Tight5x5Scenario(), metaSublineScenario(), grid5x5CaptionScenario(), longNameGridScenario(), longLabelGridScenario(), metaTightScenario(),     longNameFanScenario(), estateChainScenario(), chain24Scenario(), tripleMutedScenario(), estate72Scenario(), workflowProseScenario(), workflowLongProseScenario(), workflowFanScenario(), workflowWideBandScenario(), allCategoriesScenario(),
+    metaChipScenario(), gridFanScenario(), gridFan3Scenario(), fan8Tight5x5Scenario(), metaSublineScenario(), grid5x5CaptionScenario(), longNameGridScenario(), longLabelGridScenario(), metaTightScenario(),     longNameFanScenario(), estateChainScenario(), chain24Scenario(), tripleMutedScenario(), estate72Scenario(),     workflowProseScenario(), workflowLongProseScenario(), workflowFanScenario(), workflowWideBandScenario(), allCategoriesScenario(), controlCharScenario(),
     await generatedScenario(), await groupedGeneratedScenario(),
   ];
   // Dark twins. Adding a `dark` flag was not enough on its own: nothing set it,

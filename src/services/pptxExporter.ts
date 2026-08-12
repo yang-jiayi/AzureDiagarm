@@ -22,8 +22,72 @@ import type { Edge, Node } from 'reactflow';
  */
 const PptxCtor = (PptxGenJS as unknown as { default?: typeof PptxGenJS }).default ?? PptxGenJS;
 
+/**
+ * A deck whose every slide sanitises the text put on it.
+ *
+ * XML 1.0 forbids the C0 control characters outright, and no escaping helps —
+ * `&#11;` is exactly as illegal as a raw U+000B. A single one anywhere in
+ * `ppt/slides/*.xml` makes PowerPoint refuse to open the file, and the export
+ * itself succeeds silently, so the first anyone hears of it is the recipient
+ * reporting a corrupt deck. They are not exotic: U+000B is Word and
+ * PowerPoint's own manual line break, so it arrives by copy-paste, and it is a
+ * legal JSON escape, so it survives an IaC or prototype import untouched.
+ *
+ * Wrapped at the slide factory rather than at the forty-odd `addText` calls,
+ * because the interesting failure is the call site nobody remembered.
+ */
+function newDeck(): PptxGenJS {
+  const pptx = new PptxCtor();
+  const addSlide = pptx.addSlide.bind(pptx);
+  pptx.addSlide = ((...args: Parameters<typeof pptx.addSlide>) => {
+    const slide = addSlide(...args);
+    const addText = slide.addText.bind(slide);
+    slide.addText = ((text: unknown, opts: unknown) => addText(cleanText(text) as never, opts as never)) as typeof slide.addText;
+    const addTable = slide.addTable.bind(slide);
+    slide.addTable = ((rows: unknown, opts: unknown) => addTable(cleanText(rows) as never, opts as never)) as typeof slide.addTable;
+    return slide;
+  }) as typeof pptx.addSlide;
+
+  // `docProps/core.xml` is written from these, and a deck whose metadata is
+  // ill-formed is just as unopenable as one whose slides are — the caller
+  // passes the diagram name and the author's name straight through, and both
+  // are free text a user typed or pasted.
+  for (const key of ['author', 'company', 'revision', 'subject', 'title'] as const) {
+    let holder: object | null = pptx;
+    let desc: PropertyDescriptor | undefined;
+    while (holder && !desc) {
+      desc = Object.getOwnPropertyDescriptor(holder, key);
+      holder = Object.getPrototypeOf(holder) as object | null;
+    }
+    if (!desc?.set) continue;
+    const { get, set } = desc;
+    Object.defineProperty(pptx, key, {
+      configurable: true,
+      get: get ? () => get.call(pptx) : undefined,
+      set: (value: unknown) => set.call(pptx, cleanText(value)),
+    });
+  }
+  return pptx;
+}
+
+/** Strip XML-forbidden code points wherever text hides in a pptxgenjs argument. */
+function cleanText(value: unknown): unknown {
+  if (typeof value === 'string') return stripXmlForbidden(value);
+  if (Array.isArray(value)) return value.map(cleanText);
+  if (value && typeof value === 'object') {
+    const source = value as Record<string, unknown>;
+    // `text` is the only string pptxgenjs renders; everything else in an options
+    // bag is a colour, a size or a font name, and rewriting those would be a
+    // different kind of bug.
+    if (!('text' in source)) return value;
+    return { ...source, text: cleanText(source.text) };
+  }
+  return value;
+}
+
 import { generateModelFilename } from '../utils/modelNaming';
 import { rasterizeIcons, type RasterizedIcon } from '../utils/exportIconRaster';
+import { stripXmlForbidden } from '../utils/xmlText';
 import { nativizePackage } from './pptxNativeShapes';
 import {
   buildExportRoutes,
@@ -3401,7 +3465,7 @@ export async function buildDiagramSlidePptx(
     ? { ...options.diagram, edges: narrateEdgeCallouts(options.diagram.edges ?? []) }
     : options.diagram;
 
-  const pptx = new PptxCtor();
+  const pptx = newDeck();
   const geom = planSlideGeometry(diagram);
   if (geom.w > BASE_W + 0.001 || geom.h > BASE_H + 0.001) {
     // A custom page keeps every shape at its true size instead of squeezing a
@@ -4185,7 +4249,7 @@ export async function buildArchitectureDeckPptx(
 ): Promise<PptxGenJS> {
   const t = options.isDarkMode ? DARK_THEME : LIGHT_THEME;
 
-  const pptx = new PptxCtor();
+  const pptx = newDeck();
   pptx.layout = 'LAYOUT_WIDE';
   pptx.author = options.author;
   pptx.title = options.diagramName;
