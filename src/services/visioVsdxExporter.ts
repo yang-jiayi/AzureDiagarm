@@ -41,6 +41,7 @@ import {
   buildExportRoutes,
   categoryStyle,
   collectExportBoxes,
+  compactEmptyGutters,
   clampedBoxes,
   computeBounds,
   computeContentBounds,
@@ -788,7 +789,11 @@ export async function buildVsdxPackage(
    */
   presetIcons?: Map<string, RasterizedIcon>,
 ): Promise<VsdxPackage> {
-  const raw = collectExportBoxes(nodes);
+  // Empty space is closed on both axes before the sheet is sized: a DR region
+  // drawn 6000px east of the primary is a two-region architecture, not an
+  // outlier to trim and not a stray to park, and exporting the void between
+  // them cost 50in of a 72in sheet.
+  const raw = compactEmptyGutters(collectExportBoxes(nodes));
   // Same narration the deck gets: only one hop between a given pair of services
   // is ever given a step number, so the other members of a fan carry a callout
   // that the panel never explains — or, once the fan drops its wording, say

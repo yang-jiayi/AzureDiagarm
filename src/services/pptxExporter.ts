@@ -29,6 +29,7 @@ import {
   buildExportRoutes,
   categoryStyle,
   collectExportBoxes,
+  compactEmptyGutters,
   clampedBoxes,
   computeBounds,
   computeContentBounds,
@@ -300,6 +301,7 @@ function planDiagramWindows(
   bounds: Bounds,
   services: ExportBox[],
   frame: DiagramFrame,
+  options: { mustTile?: boolean } = {},
 ): { windows: DiagramWindow[]; legible: boolean } {
   const contentW = Math.max(1, bounds.maxX - bounds.minX);
   const contentH = Math.max(1, bounds.maxY - bounds.minY);
@@ -330,17 +332,104 @@ function planDiagramWindows(
     return { cols, rows, slides: cols * rows };
   };
 
+  const tile = (cols: number, rows: number): DiagramWindow[] => {
+    const stepX = contentW / cols;
+    const stepY = contentH / rows;
+    const cellX = (col: number) => ({
+      minX: bounds.minX + stepX * col,
+      maxX: col === cols - 1 ? bounds.maxX : bounds.minX + stepX * (col + 1),
+    });
+    const cellY = (row: number) => ({
+      minY: bounds.minY + stepY * row,
+      maxY: row === rows - 1 ? bounds.maxY : bounds.minY + stepY * (row + 1),
+    });
+    const holds = (col: number, row: number): boolean => {
+      const cell = { ...cellX(col), ...cellY(row) };
+      return services.some((box) => windowOwnsPoint(cell, bounds, box.x + box.w / 2, box.y + box.h / 2));
+    };
+
+    // An architecture is not a filled rectangle, so a cell of the grid can own
+    // no services at all — and one was being emitted as a numbered part
+    // carrying two zone outlines and three arrows whose endpoints are both on
+    // other slides.
+    //
+    // An empty cell is not simply deleted, though: ownership has to stay a
+    // partition of the whole drawing, or a connector label anchored in the gap
+    // an empty cell used to cover belongs to no part and is silently dropped
+    // from the deck — arrow drawn, number missing, and the workflow list still
+    // citing it. The surviving neighbours absorb the vacated bands instead,
+    // keeping the *fitted* cell — and therefore the scale — identical on every
+    // part.
+    const keptRows: number[] = [];
+    for (let row = 0; row < rows; row += 1) {
+      if (Array.from({ length: cols }, (_, col) => col).some((col) => holds(col, row))) keptRows.push(row);
+    }
+    if (keptRows.length === 0) return [];
+
+    const spans = (kept: number[], lo: (i: number) => number, hi: (i: number) => number, min: number, max: number) =>
+      kept.map((index, i) => ({
+        lo: i === 0 ? min : (hi(kept[i - 1]) + lo(index)) / 2,
+        hi: i === kept.length - 1 ? max : (hi(index) + lo(kept[i + 1])) / 2,
+      }));
+
+    const rowOwn = spans(keptRows, (r) => cellY(r).minY, (r) => cellY(r).maxY, bounds.minY, bounds.maxY);
+    const windows: DiagramWindow[] = [];
+    keptRows.forEach((row, r) => {
+      const keptCols: number[] = [];
+      for (let col = 0; col < cols; col += 1) if (holds(col, row)) keptCols.push(col);
+      const colOwn = spans(keptCols, (c) => cellX(c).minX, (c) => cellX(c).maxX, bounds.minX, bounds.maxX);
+      keptCols.forEach((col, c) => {
+        windows.push({
+          fit: { ...cellX(col), ...cellY(row) },
+          own: { minX: colOwn[c].lo, maxX: colOwn[c].hi, minY: rowOwn[r].lo, maxY: rowOwn[r].hi },
+        });
+      });
+    });
+    return windows;
+  };
+
   // Take the coarsest grid that still reads well: aim for comfortable labels,
   // but never split so finely that a sheet stops carrying a meaningful piece
   // of the architecture. Eight sheets for a twelve-service diagram is not a
   // deck, it is a flip-book; that trade only pays on a genuinely large drawing.
+  // "This frame cannot show the drawing readably at any grid" has two answers.
+  // A deck that can grow its page takes that one, and every bail-out below
+  // hands it the decision. A deck whose page is fixed has no such option: its
+  // only alternatives are more slides or unreadable type, and more slides
+  // always wins. `mustTile` callers therefore get the finest grid the ceiling
+  // allows instead of an empty plan — reading `windows: []` as "it already
+  // fits" is what put 4pt type on the shipping deck for every drawing sparse
+  // enough to defeat the services-per-slide floors.
+  const mustTile = options.mustTile === true;
+  const capped = (cols: number, rows: number): { windows: DiagramWindow[]; legible: boolean } | null => {
+    if (!mustTile) return null;
+    let c = Math.max(1, cols);
+    let r = Math.max(1, rows);
+    while (c * r > MAX_TILED_SLIDES) {
+      if (c >= r) c -= 1;
+      else r -= 1;
+    }
+    if (c * r <= 1) return whole;
+    // Report honestly whether the capped grid clears the legibility floor. A
+    // deck that can grow its page only prefers these windows when they read;
+    // one that cannot takes them either way, because its alternative is worse.
+    const achieved = Math.min(
+      frame.w / (contentW / c + WINDOW_BLEED_PX * 2),
+      frame.h / (contentH / r + WINDOW_BLEED_PX * 2),
+    );
+    return { windows: tile(c, r), legible: achieved >= legibleScale };
+  };
+
   const comfortable = gridFor(COMFORTABLE_TILE_PT / 12 / shortest);
   const floor = gridFor(legibleScale);
   const worthIt = comfortable
     && comfortable.slides <= MAX_DIAGRAM_SLIDES
     && services.length / comfortable.slides >= MIN_SERVICES_PER_SLIDE;
   const grid = worthIt ? comfortable : floor;
-  if (!grid) return { windows: [], legible: false };
+  if (!grid) {
+    return capped(Math.ceil(Math.sqrt(MAX_TILED_SLIDES)), Math.ceil(Math.sqrt(MAX_TILED_SLIDES)))
+      ?? { windows: [], legible: false };
+  }
   const { cols, rows } = grid;
   if (cols * rows <= 1) return whole;
   // Past the comfortable grid the choice is not "more slides or one nice page",
@@ -349,68 +438,23 @@ function planDiagramWindows(
   // still has to be a deck: sheets that carry barely a tile each are a
   // flip-book, and a drawing needing more than the hard ceiling really is a
   // plotter drawing.
-  if (cols * rows > MAX_TILED_SLIDES) return { windows: [], legible: false };
+  if (cols * rows > MAX_TILED_SLIDES) {
+    return capped(cols, rows) ?? { windows: [], legible: false };
+  }
   if (
     cols * rows > MAX_DIAGRAM_SLIDES
     && services.length / (cols * rows) < MIN_SERVICES_PER_TILED_SLIDE
-  ) return { windows: [], legible: false };
-
-  const stepX = contentW / cols;
-  const stepY = contentH / rows;
-  const cellX = (col: number) => ({
-    minX: bounds.minX + stepX * col,
-    maxX: col === cols - 1 ? bounds.maxX : bounds.minX + stepX * (col + 1),
-  });
-  const cellY = (row: number) => ({
-    minY: bounds.minY + stepY * row,
-    maxY: row === rows - 1 ? bounds.maxY : bounds.minY + stepY * (row + 1),
-  });
-  const holds = (col: number, row: number): boolean => {
-    const cell = { ...cellX(col), ...cellY(row) };
-    return services.some((box) => windowOwnsPoint(cell, bounds, box.x + box.w / 2, box.y + box.h / 2));
-  };
-
-  // An architecture is not a filled rectangle, so a cell of the grid can own no
-  // services at all — and one was being emitted as a numbered part carrying two
-  // zone outlines and three arrows whose endpoints are both on other slides.
-  //
-  // An empty cell is not simply deleted, though: ownership has to stay a
-  // partition of the whole drawing, or a connector label anchored in the gap an
-  // empty cell used to cover belongs to no part and is silently dropped from
-  // the deck — arrow drawn, number missing, and the workflow list still citing
-  // it. The surviving neighbours absorb the vacated bands instead, keeping the
-  // *fitted* cell — and therefore the scale — identical on every part.
-  const keptRows: number[] = [];
-  for (let row = 0; row < rows; row += 1) {
-    if (Array.from({ length: cols }, (_, col) => col).some((col) => holds(col, row))) keptRows.push(row);
+  ) {
+    return capped(cols, rows) ?? { windows: [], legible: false };
   }
-  if (keptRows.length === 0) return whole;
-
-  const spans = (kept: number[], lo: (i: number) => number, hi: (i: number) => number, min: number, max: number) =>
-    kept.map((index, i) => ({
-      lo: i === 0 ? min : (hi(kept[i - 1]) + lo(index)) / 2,
-      hi: i === kept.length - 1 ? max : (hi(index) + lo(kept[i + 1])) / 2,
-    }));
-
-  const rowOwn = spans(keptRows, (r) => cellY(r).minY, (r) => cellY(r).maxY, bounds.minY, bounds.maxY);
-  const windows: DiagramWindow[] = [];
-  keptRows.forEach((row, r) => {
-    const keptCols: number[] = [];
-    for (let col = 0; col < cols; col += 1) if (holds(col, row)) keptCols.push(col);
-    const colOwn = spans(keptCols, (c) => cellX(c).minX, (c) => cellX(c).maxX, bounds.minX, bounds.maxX);
-    keptCols.forEach((col, c) => {
-      windows.push({
-        fit: { ...cellX(col), ...cellY(row) },
-        own: { minX: colOwn[c].lo, maxX: colOwn[c].hi, minY: rowOwn[r].lo, maxY: rowOwn[r].hi },
-      });
-    });
-  });
+  const windows = tile(cols, rows);
   // A single surviving cell means the drawing cannot be tiled at all. Saying it
   // is legible would pin an over-large drawing to one standard slide at a scale
   // that already failed the legibility test above; let the page grow instead.
-  if (windows.length <= 1) return { windows: [], legible: false };
+  if (windows.length <= 1) return mustTile ? whole : { windows: [], legible: false };
   return { windows, legible: true };
 }
+
 
 /**
  * Does this window own the point, and therefore the shape centred on it?
@@ -468,7 +512,10 @@ function chooseExportBounds(boxes: Iterable<ExportBox>): { bounds: Bounds; clamp
  * arrow aimed at it and the slide that claims it each pick a different one.
  */
 function parkedLayout(nodes: Node[]): { boxes: Map<string, ExportBox>; bounds: Bounds; clamped: boolean } {
-  const raw = collectExportBoxes(nodes);
+  // Empty space is closed before anything is measured, so the page sizer, the
+  // window planner and the trim all see the drawing rather than the void
+  // around it.
+  const raw = compactEmptyGutters(collectExportBoxes(nodes));
   const { bounds: fitted, clamped } = chooseExportBounds(raw.values());
   const parked = clamped ? clampedBoxes(raw, fitted) : { boxes: raw, bounds: fitted };
   return { ...parked, clamped };
@@ -480,8 +527,13 @@ function parkedLayout(nodes: Node[]): { boxes: Map<string, ExportBox>; bounds: B
  * The customer deck carries title, workflow, services, review and cost slides
  * all designed for a standard 16:9 page, and PowerPoint gives a deck exactly
  * one page size, so a large architecture cannot buy legibility by growing the
- * sheet the way the diagram-only deck does. It tiles instead. Returns an empty
- * list when the drawing already fits, which keeps the common path unchanged.
+ * sheet the way the diagram-only deck does. It tiles instead, and it tiles even
+ * when the planner reports the drawing cannot be shown legibly at any grid:
+ * that verdict exists so a deck that *can* grow its page does, and reading it
+ * as "no windows needed" put 4pt type on every drawing sparse enough to defeat
+ * the services-per-slide floors — a hub with four spokes at 1400px, the most
+ * ordinary shape in the Architecture Center, among them. Returns an empty list
+ * only when the drawing already fits, which keeps the common path unchanged.
  */
 function planFixedPageWindows(diagram: DiagramShapeSource, frame: DiagramFrame): DiagramWindow[] {
   const nodes = diagram.nodes ?? [];
@@ -490,7 +542,7 @@ function planFixedPageWindows(diagram: DiagramShapeSource, frame: DiagramFrame):
   if (boxes.size === 0) return [];
   const { services } = partitionBoxes(boxes);
   if (services.length === 0) return [];
-  return planDiagramWindows(bounds, services, frame).windows;
+  return planDiagramWindows(bounds, services, frame, { mustTile: true }).windows;
 }
 
 /**
@@ -543,8 +595,19 @@ function planSlideGeometry(diagram?: DiagramShapeSource | null): SlideGeometry {
       // above the legibility floor, tile across several when they would not,
       // and only grow the page when even the slide budget is exceeded.
       const standard = planDiagramWindows(bounds, services, frameFor(BASE_W, BASE_H));
+      // `legible: false` is a request to grow the page, not a verdict that the
+      // drawing cannot be tiled. A sparse architecture — the hub-and-spoke
+      // every Architecture Center reference draws — defeats the
+      // services-per-slide floors purely by having whitespace between its
+      // parts, and was handed a 31x32in plotter page nobody can open. Ask the
+      // planner for the finest grid the slide budget allows before giving up on
+      // ordinary slides; the 7pt floor still governs whether the result is
+      // readable, and every part still shares one scale.
+      const forced = standard.legible ? null : planDiagramWindows(bounds, services, frameFor(BASE_W, BASE_H), { mustTile: true });
       if (standard.legible) {
         windows = standard.windows;
+      } else if (forced && forced.legible && forced.windows.length > 1) {
+        windows = forced.windows;
       } else {
         // Only a genuinely enormous drawing gets here — one that cannot be read
         // on nine standard slides. Grow the page for it, then tile that page
@@ -1838,6 +1901,8 @@ function addGroupShape(
   clampTo?: DiagramFrame,
   /** Members of this zone on this slide, and in the drawing as a whole. */
   held?: { here: number; all: number },
+  /** Where the tiles already landed, so a title is not written on top of one. */
+  occupied?: readonly { x: number; y: number; w: number; h: number }[],
 ): void {
   const topLeft = placeBox(box, transform, clampTo, true);
   const w = topLeft.w;
@@ -1867,10 +1932,48 @@ function addGroupShape(
   // appear as a closed box around 3 with nothing to tell the reader it is a
   // fragment. Say so in the title, the way a split reference architecture does.
   const fragment = held && held.all > held.here ? ` (${held.here} / ${held.all})` : '';
+  // A zone's title band is empty because the author left it empty — and a
+  // window that cuts the zone's top away takes that room with it, so the band
+  // lands on whatever tiles are nearest the cut and the fragment loses its
+  // name. Every candidate here keeps the title attached to the fragment; the
+  // one that covers the fewest tiles wins, and the top-left band still wins
+  // outright whenever it is clear, which is every drawing that is not split.
+  const titleW = Math.max(0.4, w - 0.12);
+  // A zone cut to a sliver at the frame edge has less width than its own title
+  // needs, so the band has to be pulled back onto the page — placed raw it ran
+  // off the slide and PowerPoint dropped it, taking the zone's name with it.
+  const fit = (c: { x: number; y: number }): { x: number; y: number } => (clampTo
+    ? {
+      x: clamp(c.x, clampTo.x, Math.max(clampTo.x, clampTo.x + clampTo.w - titleW)),
+      y: clamp(c.y, clampTo.y, Math.max(clampTo.y, clampTo.y + clampTo.h - titleH)),
+    }
+    : c);
+  const candidates = [
+    { x: topLeft.x + 0.06, y: topLeft.y + 0.04 },
+    { x: topLeft.x + 0.06, y: topLeft.y + h - titleH - 0.04 },
+    { x: topLeft.x + 0.06, y: topLeft.y - titleH - 0.02 },
+    { x: topLeft.x + 0.06, y: topLeft.y + h + 0.02 },
+  ].filter((c, i) => i < 2 || !clampTo || (c.y >= clampTo.y && c.y + titleH <= clampTo.y + clampTo.h))
+    .map(fit);
+  const cover = (c: { x: number; y: number }): number => (occupied ?? []).reduce((sum, tile) => {
+    const ox = Math.max(0, Math.min(c.x + titleW, tile.x + tile.w) - Math.max(c.x, tile.x));
+    const oy = Math.max(0, Math.min(c.y + titleH, tile.y + tile.h) - Math.max(c.y, tile.y));
+    return sum + ox * oy;
+  }, 0);
+  let title = candidates[0];
+  let best = cover(title);
+  for (const candidate of candidates.slice(1)) {
+    if (best <= 0.01) break;
+    const score = cover(candidate);
+    if (score < best - 1e-6) {
+      best = score;
+      title = candidate;
+    }
+  }
   slide.addText(truncateLabel(box.label, 60) + fragment, {
-    x: topLeft.x + 0.06,
-    y: topLeft.y + 0.04,
-    w: Math.max(0.4, w - 0.12),
+    x: title.x,
+    y: title.y,
+    w: titleW,
     h: titleH,
     fontSize: clamp(Math.round(h * 5), 8, 12),
     bold: true,
@@ -2091,7 +2194,15 @@ async function addEditableDiagram(
   const shownGroups = groups.filter(visibleGroup);
   const shownServices = services.filter(visibleBox);
   const shownRoutes = routes.filter(visibleRoute);
-  const annotatedRoutes = shownRoutes.filter((route) => owns(route.labelAnchor.x, route.labelAnchor.y));
+  // Ownership of a label and visibility of its arrow were decided by two
+  // different tests, so a long diagonal hop could have its midpoint owned by a
+  // window that carried too little of the arrow to draw it, while the windows
+  // that did draw it owned no part of the label. The wording was then written
+  // on no slide at all. The window holding the anchor draws the hop, whatever
+  // fraction of it lands there: exactly one window owns any point, so this adds
+  // an arrow, never a duplicate.
+  const annotatedRoutes = routes.filter((route) => owns(route.labelAnchor.x, route.labelAnchor.y));
+  for (const route of annotatedRoutes) if (!shownRoutes.includes(route)) shownRoutes.push(route);
   const icons = presetIcons ?? await rasterizeIcons(shownServices.map((service) => service.iconPath), 128);
 
   // Index by the full group list so a zone keeps its palette colour on every
@@ -2101,9 +2212,11 @@ async function addEditableDiagram(
     const cy = service.y + service.h / 2;
     return cx >= group.x && cx <= group.x + group.w && cy >= group.y && cy <= group.y + group.h;
   }).length;
+  const placedTiles = shownServices.map((service) => placeBox(service, transform, clampTo));
   shownGroups.forEach((group) => addGroupShape(
     pptx, slide, group, groups.indexOf(group), transform, clampTo,
     { here: zoneMembers(group, shownServices), all: zoneMembers(group, services) },
+    placedTiles,
   ));
   const captionBands: Obstacle[] = [];
   for (const service of shownServices) {

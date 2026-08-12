@@ -5,6 +5,7 @@ import {
   buildExportRoutes,
   collectExportBoxes,
   computeBounds,
+  compactEmptyGutters,
   computeContentBounds,
   computeFitTransform,
   partitionBoxes,
@@ -322,4 +323,49 @@ test('outliers off several corners are peeled instead of setting their own fence
   assert.equal(trimmed.minX, 0, 'the trimmed bounds start at the cluster');
   assert.equal(trimmed.maxX, 750, 'the trimmed bounds end at the cluster');
   assert.ok(trimmed.maxY - trimmed.minY < 400, 'the trimmed drawing is the two-row cluster, not the corners');
+});
+
+test('an empty band wider than a screen is closed, and ordinary spacing is not', () => {
+  // A DR region drawn 6000px east of the primary is a second region, not an
+  // outlier to trim and not a stray to park: nothing in the drawing says to
+  // move it, only the void between them is worth removing. Closing it turned a
+  // 72in Visio sheet into 21in without changing what the drawing says.
+  const map = new Map<string, ExportBox>();
+  for (const b of [
+    ...Array.from({ length: 12 }, (_, i) => box(`p${i}`, (i % 4) * 220, Math.floor(i / 4) * 180)),
+    box('dr-a', 6020, 20),
+    box('dr-b', 6720, 20),
+  ]) map.set(b.id, b);
+
+  const compact = compactEmptyGutters(map);
+  const before = computeBounds(map.values());
+  const after = computeBounds(compact.values());
+
+  assert.ok(after.maxX - after.minX < 2200, 'the void between the two regions is closed');
+  assert.ok(before.maxX - before.minX > 6800, 'the untouched drawing really was that wide');
+  assert.equal(after.maxY - after.minY, before.maxY - before.minY, 'the axis with no void is untouched');
+  assert.ok(
+    compact.get('dr-a')!.x > compact.get('p3')!.x,
+    'the DR region is still east of the primary — closing a void must not reorder the drawing',
+  );
+  assert.equal(
+    compact.get('dr-b')!.x - compact.get('dr-a')!.x,
+    700,
+    'spacing inside a region is the author is, and is preserved exactly',
+  );
+});
+
+test('a hub-and-spoke on the Architecture Center radius is left alone', () => {
+  // The widest gap an author is own layout produces is the 1250px between a
+  // spoke and the hub. Closing that would pull one arm in and leave the other
+  // out, so the threshold sits deliberately above it.
+  const R = 1400;
+  const map = new Map<string, ExportBox>();
+  for (const b of [
+    box('hub', 0, 0), box('n', 0, -R), box('s', 0, R), box('e', R, 0), box('w', -R, 0),
+  ]) map.set(b.id, b);
+
+  const compact = compactEmptyGutters(map);
+
+  assert.equal(compact, map, 'a radial layout is returned untouched, not rebuilt');
 });

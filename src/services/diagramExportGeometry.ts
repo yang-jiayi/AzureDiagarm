@@ -65,6 +65,15 @@ export interface ExportBox {
    * tile, so native exports can render the same sub-line instead of dropping it.
    */
   meta?: BoxMeta;
+  /**
+   * The zone this box declares as its container (`Node.parentNode`), when it
+   * has one. Membership has to be declared, not inferred from geometry: an
+   * Architecture Center security diagram routinely draws a compliance boundary
+   * straight across a drawing, and a purely geometric test let that boundary
+   * claim — and drag into the margin — half a grid of services that belong to
+   * a different container entirely.
+   */
+  parent?: string;
   /** Absolute pixel geometry (top-left origin). */
   x: number;
   y: number;
@@ -769,6 +778,7 @@ export function collectExportBoxes(nodes: Node[]): Map<string, ExportBox> {
         : undefined,
       customColor: isGroup ? readCustomColor(data) : undefined,
       meta: isGroup ? undefined : readMeta(data),
+      parent: typeof node.parentNode === 'string' && node.parentNode ? node.parentNode : undefined,
       x: position.x,
       y: position.y,
       w: Math.max(1, finiteOr(w, isGroup ? DEFAULT_GROUP_W : DEFAULT_SERVICE_W)),
@@ -796,6 +806,74 @@ export function computeBounds(boxes: Iterable<ExportBox>): Bounds {
 }
 
 /** Linear-interpolated quartiles (Q1, Q3) of an ascending numeric array. */
+
+/**
+ * A band of the canvas wider than this, with nothing whatsoever in it, is not
+ * spacing — it is a void. Sixteen inches of blank paper says nothing that three
+ * inches does not, and it costs the whole drawing its scale.
+ *
+ * Deliberately above the widest gap an author's own layout produces: a
+ * hub-and-spoke on the 1400px radius the Architecture Center draws leaves
+ * 1250px between the west spoke and the hub, and closing that would pull one
+ * arm in and leave the other out, turning a symmetric drawing lopsided.
+ */
+const MAX_VOID_PX = 1600;
+/** What a closed void is replaced by — still a clear separation, not a join. */
+const VOID_GUTTER_PX = 320;
+
+/**
+ * Close empty bands that run the full height (or width) of the drawing.
+ *
+ * The AI generator and hand-editing both produce canvases where two parts of
+ * an architecture sit thousands of pixels apart with nothing in between: a DR
+ * region 6000px east of the primary made a 72in Visio sheet, 50in of which was
+ * blank. Trimming cannot help — a third of the boxes is not an outlier, it is
+ * a region — and packing must not, because moving a region into a margin strip
+ * throws away the one thing its position was saying.
+ *
+ * Closing the void keeps every semantic the author drew: order along both axes
+ * is preserved exactly, nothing changes side, and relative spacing within each
+ * part is untouched. Only genuinely empty space is removed, so no shape can
+ * collide with another, and a zone always spans its own members, which means a
+ * void can never fall inside a container and tear it apart.
+ */
+export function compactEmptyGutters(boxes: Map<string, ExportBox>): Map<string, ExportBox> {
+  const all = [...boxes.values()];
+  if (all.length < 2) return boxes;
+
+  /** Voids on one axis, as [start, width-to-remove] pairs in ascending order. */
+  const voids = (start: (b: ExportBox) => number, size: (b: ExportBox) => number): [number, number][] => {
+    const spans = all
+      .map((box) => [start(box), start(box) + size(box)] as [number, number])
+      .sort((a, b) => a[0] - b[0]);
+    const found: [number, number][] = [];
+    let reach = spans[0][1];
+    for (const [from, to] of spans) {
+      if (from - reach > MAX_VOID_PX) found.push([reach, from - reach - VOID_GUTTER_PX]);
+      reach = Math.max(reach, to);
+    }
+    return found;
+  };
+  const shift = (found: [number, number][], at: number): number => {
+    let total = 0;
+    for (const [from, amount] of found) {
+      if (at >= from) total += amount;
+      else break;
+    }
+    return total;
+  };
+
+  const xVoids = voids((b) => b.x, (b) => b.w);
+  const yVoids = voids((b) => b.y, (b) => b.h);
+  if (xVoids.length === 0 && yVoids.length === 0) return boxes;
+
+  const out = new Map<string, ExportBox>();
+  for (const [id, box] of boxes) {
+    out.set(id, { ...box, x: box.x - shift(xVoids, box.x), y: box.y - shift(yVoids, box.y) });
+  }
+  return out;
+}
+
 function quartiles(sorted: number[]): [number, number] {
   const at = (q: number) => {
     const pos = (sorted.length - 1) * q;
@@ -1528,27 +1606,51 @@ export function partitionBoxes(boxes: Map<string, ExportBox>): {
  * occupied, so the stray is simply drawn on top of a service.
  *
  * Trimming outliers exists to make the drawing smaller, and packing keeps that
- * promise for free: the trim only fires on a gap far wider than the strip that
- * replaces it, so the parked drawing is always smaller than never trimming at
- * all. A guard asserting that could not be made to fire on any layout once the
- * strip replaced the rigid translation, so the invariant is asserted in the
- * export audit instead of defended here.
+ * promise on its own for strays that are loose boxes. A zone is not bounded
+ * that way, so the invariant is still asserted at the end and the untrimmed
+ * layout returned when parking would grow the drawing.
  */
 export function clampedBoxes(
   boxes: Map<string, ExportBox>,
   bounds: Bounds,
 ): { boxes: Map<string, ExportBox>; bounds: Bounds } {
   const strays: [string, ExportBox][] = [];
+  const clipped: [string, ExportBox][] = [];
   for (const [id, box] of boxes) {
+    const overlaps = box.x < bounds.maxX && box.x + box.w > bounds.minX
+      && box.y < bounds.maxY && box.y + box.h > bounds.minY;
     const outside = box.x < bounds.minX || box.y < bounds.minY
       || box.x + box.w > bounds.maxX || box.y + box.h > bounds.maxY;
-    if (outside) strays.push([id, box]);
+    if (!outside) continue;
+    // A zone that starts inside the drawing and runs out of it is not a stray,
+    // it is a band — a compliance scope drawn across the architecture to one
+    // remote service. Moving it destroys its meaning and, because it is wider
+    // than the whole drawing, packing it is the rigid translation this function
+    // exists to avoid: an 8800px scope band parked as a unit produced a 101.7in
+    // drawing where never trimming at all gave 95.2in. Clip it to the drawing
+    // instead. It still contains the services it did before; only the empty
+    // reach towards the parked member is given up.
+    if (overlaps && box.kind === 'group') clipped.push([id, box]);
+    else if (!overlaps) strays.push([id, box]);
   }
-  if (strays.length === 0) return { boxes: new Map(boxes), bounds };
+  if (strays.length === 0 && clipped.length === 0) return { boxes: new Map(boxes), bounds };
 
-  const holds = (parent: ExportBox, child: ExportBox): boolean =>
-    parent !== child && child.x >= parent.x - 1 && child.y >= parent.y - 1
-    && child.x + child.w <= parent.x + parent.w + 1 && child.y + child.h <= parent.y + parent.h + 1;
+  // Membership is declared, never inferred. A stray zone takes its own children
+  // with it — a frame parked away from its services is drawn as an empty box
+  // next to an unexplained cluster — but nothing else: geometric containment
+  // let an overlapping boundary claim half a 4x2 grid of core services that
+  // belonged to a different zone, tearing the grid down the middle and moving
+  // 55% of the drawing, past the 40% the outlier trim's own majority floor
+  // allows.
+  // Membership is what the author declared, never what happens to overlap: a
+  // compliance band drawn across an architecture owns nothing it crosses, and
+  // reading containment geometrically let one claim half a grid that belonged
+  // to another zone. Argued rather than measured — a cluster of declared
+  // members is always a subset of the geometric one, and a zone is always in
+  // the same cluster as everything it owns, so this can separate a zone from
+  // its members in no case where geometry would not. No fixture yet reaches
+  // the difference.
+  const holds = (parent: ExportBox, child: ExportBox): boolean => parent !== child && child.parent === parent.id;
 
   // A stray zone takes everything it contains with it, stray or not: the zone
   // is what left the drawing, and a frame parked away from its services is
@@ -1594,8 +1696,8 @@ export function clampedBoxes(
   const PITCH = 40;
   // Parked on the side they drifted off, so the hop to a stray still runs the
   // way the author drew it and the reader's mental map survives the move.
-  const cloudX = clusters.reduce((sum, c) => sum + c.x + c.w / 2, 0) / clusters.length;
-  const cloudY = clusters.reduce((sum, c) => sum + c.y + c.h / 2, 0) / clusters.length;
+  const cloudX = clusters.length > 0 ? clusters.reduce((sum, c) => sum + c.x + c.w / 2, 0) / clusters.length : bounds.maxX;
+  const cloudY = clusters.length > 0 ? clusters.reduce((sum, c) => sum + c.y + c.h / 2, 0) / clusters.length : bounds.maxY;
   const awayX = cloudX - (bounds.minX + bounds.maxX) / 2;
   const awayY = cloudY - (bounds.minY + bounds.maxY) / 2;
   const column = Math.abs(awayX) >= Math.abs(awayY);
@@ -1651,5 +1753,29 @@ export function clampedBoxes(
     maxX: Math.max(bounds.maxX, origin.x + stripW),
     maxY: Math.max(bounds.maxY, origin.y + stripH),
   };
+  for (const [id, box] of clipped) {
+    const x = Math.max(parked.minX, box.x);
+    const y = Math.max(parked.minY, box.y);
+    moved.set(id, {
+      ...box,
+      x,
+      y,
+      w: Math.max(1, Math.min(parked.maxX, box.x + box.w) - x),
+      h: Math.max(1, Math.min(parked.maxY, box.y + box.h) - y),
+    });
+  }
+  // Trimming outliers exists to make the drawing smaller, so parking can never
+  // legitimately return bounds larger than not trimming at all. Packing alone
+  // upholds that on every layout whose strays are loose boxes, but a zone can
+  // be arbitrarily large, and the case that proves the guard is not decoration
+  // is a compliance band drawn across the drawing: parked 101.7in against a
+  // 95.2in untrimmed original.
+  const full = computeBounds(boxes.values());
+  if (
+    parked.maxX - parked.minX > full.maxX - full.minX + 1e-6
+    || parked.maxY - parked.minY > full.maxY - full.minY + 1e-6
+  ) {
+    return { boxes: new Map(boxes), bounds: full };
+  }
   return { boxes: moved, bounds: parked };
 }
