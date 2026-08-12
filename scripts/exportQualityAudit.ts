@@ -958,6 +958,31 @@ function shortServiceGridScenario(): Scenario {
  * Square-stepping on this shape narrows the tiles from 1.29in to 0.51in and
  * truncates all two hundred labels.
  */
+/**
+ * Badges squeezed onto their own arrows in gaps narrower than a badge.
+ *
+ * Tiles are pitched 170x95 against a 150x75 node, so every gap is 20px — under
+ * the natural badge diameter, which forces the placement search to hand
+ * `stepBadgeXml` a reduced diameter and puts `badgeMinDiameterIn` on the
+ * critical path. Nothing else in the corpus reaches that floor, so without this
+ * the rule guarding it would be measuring geometry that is never built. Steps
+ * run past nine because a two-digit number is where solving the disc for width
+ * alone stops being nearly right.
+ */
+function squeezedBadgeScenario(): Scenario {
+  const nodes: Node[] = [];
+  const edges: Edge[] = [];
+  for (let i = 0; i < 12; i += 1) {
+    nodes.push(svc(`sb-${i}`, 'Azure Container Registry', (i % 6) * 158, Math.floor(i / 6) * 83));
+    if (i > 0) {
+      edges.push({
+        id: `sbe-${i}`, source: `sb-${i - 1}`, target: `sb-${i}`, label: 'private endpoint', data: { stepNumber: i + 10 },
+      } as Edge);
+    }
+  }
+  return { id: 'squeezed-badges', nodes, edges };
+}
+
 function cascadeScenario(): Scenario {
   const nodes: Node[] = [];
   for (let i = 0; i < 200; i += 1) {
@@ -4026,10 +4051,22 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
     const digits = badge[3].trim();
     if (!digits || discIn <= 0 || fontIn <= 0) continue;
     const needIn = textWidthIn(digits, fontIn * 72);
-    if (needIn > discIn) {
-      issues.push(`step badge "${digits}" needs ${needIn.toFixed(4)}in of type on a `
-        + `${discIn.toFixed(4)}in disc — ${(needIn / discIn).toFixed(2)}x the disc that backs it, `
-        + `so most of the number is white on white`);
+    // On the diagonal. The number is centred in the disc, so it occupies a
+    // chord rather than the diameter, and the half-chord at the height of the
+    // glyphs is shorter than the radius. Testing width against diameter passes
+    // a badge whose first and last digit are outside the circle — which is not
+    // untidy, it is white ink on white paper, and the digits are the one thing
+    // muting a label into the workflow band is supposed to preserve.
+    const diagonalIn = Math.hypot(needIn, fontIn * 0.7);
+    // A tenth of the disc is kept as a ring. A badge is a white number on a
+    // dark disc and the disc is the only thing making it readable, so digits
+    // that run to the edge stop being backed by it — and a disc solved for
+    // exactly the number it holds clears a bare containment test by 0.2%, which
+    // is not a margin, it is a rounding error. The natural badge sits at 0.60.
+    if (diagonalIn > discIn * 0.9) {
+      issues.push(`step badge "${digits}" needs ${diagonalIn.toFixed(4)}in across the disc on a `
+        + `${discIn.toFixed(4)}in disc — ${(diagonalIn / discIn * 100).toFixed(0)}% of the disc that `
+        + `backs it, so the number runs to the rim`);
     }
   }
 
@@ -4681,6 +4718,7 @@ async function main(): Promise<void> {
     metaChipScenario(), gridFanScenario(), gridFan3Scenario(), fan8Tight5x5Scenario(), metaSublineScenario(), grid5x5CaptionScenario(), longNameGridScenario(), longLabelGridScenario(), metaTightScenario(),     longNameFanScenario(), estateChainScenario(), chain24Scenario(), tripleMutedScenario(), estate72Scenario(),     workflowProseScenario(), workflowLongProseScenario(), workflowFanScenario(), workflowWideBandScenario(), allCategoriesScenario(), controlCharScenario(), shortServiceGridScenario(),
     cascadeScenario(),
     sharedPrefixEstateScenario(),
+    squeezedBadgeScenario(),
     await generatedScenario(), await groupedGeneratedScenario(),
   ];
   // Dark twins. Adding a `dark` flag was not enough on its own: nothing set it,

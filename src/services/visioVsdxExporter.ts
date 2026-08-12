@@ -730,11 +730,18 @@ function badgeFontFloorIn(fonts: VisioFonts): number {
  * A badge is mostly padding, so squeezing it into a gap between two tiles is
  * mostly a matter of giving that padding up; what cannot be given up is the
  * digits, and a three-digit step needs visibly more room than a one-digit one.
+ *
+ * Measured on the diagonal, because the digits do not sit on the diameter. A
+ * line of type centred in a circle occupies a chord, and the half-chord at the
+ * height of the glyphs is shorter than the radius — so solving `width <= d`
+ * leaves the ends of a two-digit number outside the disc even though the
+ * arithmetic says it fits. The old form cleared its own test by 1.4%, which is
+ * to say it did not clear the real one at all.
  */
 function badgeMinDiameterIn(stepNumber: number, fonts: VisioFonts): number {
   const pt = badgeFontFloorIn(fonts);
   const digits = String(Math.max(1, Math.abs(Math.trunc(stepNumber)))).length;
-  return Math.max(pt * 1.15, digits * pt * 0.55 + 0.02);
+  return Math.max(pt * 1.15, Math.hypot(digits * pt * 0.55, pt * 0.7) + 0.02);
 }
 
 function stepBadgeXml(
@@ -1952,13 +1959,24 @@ export async function buildVsdxPackage(
     // that trade everywhere else, and an empty candidate list would leave the
     // badge sitting on the raw chord — which is a tile.
     if (diameters.length === 0) diameters.push(natural);
-    let fallback: { x: number; y: number; d: number } | undefined;
+    // The least-bad seat across every diameter, not the first one tried.
+    //
+    // When no seat anywhere is clean, this is what the badge gets, and keeping
+    // the first meant keeping the largest disc's — even when giving up a little
+    // size bought a seat on the callout's own arrow instead of on a stranger's.
+    // The scorer already weighs that trade at 6 against inches; it was simply
+    // never asked. On a grid pitched tighter than a badge is wide, five
+    // callouts in twelve sat on a hop they did not belong to, which tells the
+    // reader the architecture does something it does not.
+    let fallback: { seat: { x: number; y: number; d: number }; total: number; attributed: boolean } | undefined;
     for (const d of diameters) {
       const half = d / 2;
       const naturalAway = placed.drop + (textH > 0 ? textH / 2 + half + 0.03 : 0);
       const cost = (at: Point, side: number, away: number, slide: number): {
         total: number;
         clean: boolean;
+        /** Nearer its own arrow than any other, so it reads as its own hop's. */
+        attributed: boolean;
       } => {
         const rect = { x: at.x - half, y: at.y - half, w: d, h: d };
         let total = 0;
@@ -1999,7 +2017,7 @@ export async function buildVsdxPackage(
         total += side < 0 ? 0.12 : 0;
         total += Math.abs(away - naturalAway) * 0.3;
         total += Math.abs(slide - placed.along) * 0.25;
-        return { total, clean };
+        return { total, clean, attributed: closest >= mine };
       };
       // Three search axes, all three load-bearing. Measured over the audit
       // corpus, which seats 2052 callouts: the default seat wins 1841 of them,
@@ -2014,12 +2032,26 @@ export async function buildVsdxPackage(
         : [placed.along];
       let best = seatAt(1, naturalAway, placed.along);
       let bestScore = cost(best, 1, naturalAway, placed.along);
+      // Attribution first, then everything else. The weight of 6 keeps
+      // misattribution ahead of the proximity term it directly competes with,
+      // but not ahead of the 30 a seat pays for covering a service — so on a
+      // grid with no clear air the search bought a tidy sheet with a callout
+      // parked on someone else's arrow. Covering part of a tile is untidy and
+      // the reader still sees which hop the number belongs to; sitting on the
+      // wrong arrow says the architecture does something it does not. Rank the
+      // two, rather than pricing them against each other.
+      const beats = (
+        candidate: { total: number; attributed: boolean },
+        incumbent: { total: number; attributed: boolean },
+      ): boolean => (candidate.attributed !== incumbent.attributed
+        ? candidate.attributed
+        : candidate.total < incumbent.total);
       for (const side of [1, -1]) {
         for (const away of aways) {
           for (const slide of slides) {
             const at = seatAt(side, away, slide);
             const score = cost(at, side, away, slide);
-            if (score.total < bestScore.total) {
+            if (beats(score, bestScore)) {
               bestScore = score;
               best = at;
             }
@@ -2028,9 +2060,11 @@ export async function buildVsdxPackage(
       }
       const seat = { x: best.x, y: best.y, d };
       if (bestScore.clean) return clampBadge(seat);
-      if (!fallback) fallback = seat;
+      if (!fallback || beats(bestScore, fallback)) {
+        fallback = { seat, total: bestScore.total, attributed: bestScore.attributed };
+      }
     }
-    return clampBadge(fallback ?? { x: centre.x, y: centre.y, d: natural });
+    return clampBadge(fallback?.seat ?? { x: centre.x, y: centre.y, d: natural });
   };
 
   for (const [, members] of settleOrder) {
