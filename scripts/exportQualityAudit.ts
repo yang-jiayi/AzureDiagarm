@@ -1739,6 +1739,24 @@ async function auditCustomerDeck(scenario: Scenario): Promise<string[]> {
     issues.push(`customer deck: smallest label font is ${minFont}pt (below the 7pt legibility floor)`);
   }
 
+  // Same contract as the diagram-only deck: every hop the caller asked for has
+  // to be drawn somewhere. This deck tiles on its own plan against a page that
+  // cannot grow, so a route can be dropped here while the audited deck carries
+  // it — and a workflow slide that describes a hop the reader cannot find is
+  // exactly the defect the numbered-callout convention exists to prevent.
+  const drawnArrows = new Set<string>();
+  for (const xml of drawn) {
+    for (const shape of parseShapes(xml)) {
+      if (!shape.name.startsWith('connector-')) continue;
+      if (shape.name.startsWith('connector-label-') || shape.name.startsWith('connector-step-')) continue;
+      drawnArrows.add(shape.name.slice('connector-'.length));
+    }
+  }
+  for (const edge of scenario.edges) {
+    const id = String(edge.id);
+    if (!drawnArrows.has(id)) issues.push(`customer deck: edge "${id}" is in the diagram but drawn on no slide`);
+  }
+
   for (const node of scenario.nodes) {
     if ((node.type ?? '') === 'groupNode') continue;
     const marker = `name="service-${node.id}"`;
