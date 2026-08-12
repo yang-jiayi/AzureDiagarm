@@ -688,6 +688,38 @@ function grp(id: string, label: string, x: number, y: number, w: number, h: numb
 }
 
 /**
+ * A drawing no page can hold even after every gap is closed.
+ *
+ * `fitBoxesWithin` gives up distance, which costs nothing but proximity. It has
+ * nothing left to give when the shapes ALONE are over the limit: 150px tiles
+ * are 1.5625in each, so past about 127 in a row the sheet is over Visio's 200in
+ * ceiling with the tiles already touching. `scaleBoxesWithin` is the only
+ * remaining answer and it shrinks every shape.
+ *
+ * This is the fixture that says what happens to the type when it does. The
+ * point size used to be a fixed constant, so a 0.33in tile still carried 7.56pt
+ * and printed its name almost three times wider than its own box, across
+ * several neighbours. Nothing in the corpus reached the scaler, so both the
+ * exporter and the two rules below carried the assumption untested.
+ */
+function overRowScenario(): Scenario {
+  const names = [
+    'Azure Front Door', 'Azure App Service', 'Azure SQL Database', 'Azure Functions',
+    'Azure Key Vault', 'Azure Service Bus',
+  ];
+  const nodes: Node[] = Array.from({ length: 150 }, (_, i) => (
+    svc(`w-${i}`, names[i % names.length], i * 200, 0)
+  ));
+  return {
+    id: 'over-row',
+    nodes,
+    edges: Array.from({ length: 8 }, (_, i) => (
+      { id: `o${i}`, source: `w-${i * 4}`, target: `w-${i * 4 + 2}`, label: 'Calls' }
+    )) as Edge[],
+  };
+}
+
+/**
  * Real Architecture-Center step prose, long enough that every row wraps. The
  * whole corpus used `step N` and one-clause labels, so the workflow list was
  * only ever measured with sentences that fit on one line — and pagination
@@ -3437,11 +3469,56 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
     minFontIn = Math.min(minFontIn, +size[1]);
   }
   const minFontPt = +(minFontIn * 72).toFixed(2);
+  // A drawing wider than 127 tiles is over Visio's 200in ceiling with its
+  // shapes already touching, so it is scaled down bodily and no absolute point
+  // size is attainable: 7pt type on a tile shrunk to a third of an inch is not
+  // legible, it is three times wider than its own box and printed over the
+  // neighbours. What the sheet owes the reader there is proportion — type
+  // shrunk no harder than the drawing was, so zooming in recovers it.
+  //
+  // Measure the scale from the sheet rather than recomputing the exporter's
+  // arithmetic, so the two cannot drift: a service tile is 150px = 1.5625in
+  // when nothing has been given up.
+  const tileWidths = [...xml.matchAll(/NameU="Service\.\d+"[\s\S]*?<Cell N="Width" V="([\d.]+)"/g)]
+    .map((m) => +m[1]);
+  const sheetScale = tileWidths.length > 0
+    ? Math.min(1, Math.max(...tileWidths) / (150 / PX_PER_IN))
+    : 1;
+  const floorPt = sheetScale >= 0.999 ? 7 : 7 * Math.max(0.25, sheetScale);
   // The floor is PowerPoint's, deliberately. Both exporters draw the same
   // drawing at the same scale, so type that is unreadable in the deck is
   // unreadable on the sheet, and the two must not disagree about where the
   // limit is.
-  if (minFontPt < 7) issues.push(`smallest Visio font is ${minFontPt}pt (below the 7pt floor the deck enforces)`);
+  if (minFontPt < floorPt - 0.01) {
+    issues.push(sheetScale >= 0.999
+      ? `smallest Visio font is ${minFontPt}pt (below the 7pt floor the deck enforces)`
+      : `smallest Visio font is ${minFontPt}pt on a sheet scaled to ${(sheetScale * 100).toFixed(0)}% `
+        + `— type shrunk harder than the drawing it labels (floor ${floorPt.toFixed(2)}pt)`);
+  }
+
+  // The other half of that bargain, and the rule the scaler actually broke: the
+  // type has to stay in proportion to the tile it labels. Visio wraps a name
+  // inside its shape, so holding the point size fixed while the shape shrinks
+  // does not spill it sideways — it forces more and more lines into a text
+  // block that is itself shrinking, until the name is clipped to its first
+  // syllable and the icon is squeezed out entirely. A tile drawn at 1.5625in
+  // carries 0.105in type; that ratio is what "fits" means here, and it must
+  // survive any scaling the page limit forces.
+  const NATURAL_TILE_IN = 150 / PX_PER_IN;
+  const NATURAL_LABEL_IN = 0.105;
+  for (const group of xml.matchAll(/NameU="Service\.\d+" Name="([^"]*)"[\s\S]*?<Cell N="Width" V="([\d.]+)"[\s\S]*?<Cell N="Size" V="([\d.]+)"/g)) {
+    const label = group[1];
+    const tileIn = +group[2];
+    const fontIn = +group[3];
+    if (!label || tileIn <= 0 || fontIn <= 0) continue;
+    const ratio = fontIn / tileIn;
+    const natural = NATURAL_LABEL_IN / NATURAL_TILE_IN;
+    if (ratio > natural * 1.05) {
+      issues.push(`service name "${label}" is set at ${(fontIn * 72).toFixed(2)}pt on a ${tileIn.toFixed(2)}in tile `
+        + `— ${(ratio / natural).toFixed(1)}x the type-to-tile ratio the sheet draws at full size, `
+        + `so the name wraps past the room the tile has for it`);
+    }
+  }
 
   // Every sentence the author wrote has to survive somewhere a reader can find
   // it. The sheet drops a label it cannot write anywhere legible and hands the
@@ -3791,7 +3868,7 @@ async function main(): Promise<void> {
     hubSpokeScenario(), scopeZoneScenario(), strayZonePairScenario(), zoneStrayScenario(),
     boundaryVoidScenario(), stackedSubnetsScenario(), tightSubnetsScenario(), diagonalCascadeScenario(),
     diagonalCascadeScenario(27, 'diagonal-cascade-27'),
-    bandAboveScenario(), framedCascadeScenario(), tightSeamScenario(),
+    bandAboveScenario(), framedCascadeScenario(), tightSeamScenario(), overRowScenario(),
     corridorZoneScenario(),
     ladderInGridScenario(), twinLaddersScenario(), strayLadderScenario(), legendCornerScenario(), duplicateStepsScenario(), denseZoneScenario(),
     metaChipScenario(), gridFanScenario(), gridFan3Scenario(), fan8Tight5x5Scenario(), metaSublineScenario(), grid5x5CaptionScenario(), longNameGridScenario(), longLabelGridScenario(), metaTightScenario(),     longNameFanScenario(), estateChainScenario(), chain24Scenario(), tripleMutedScenario(), estate72Scenario(), workflowProseScenario(), workflowLongProseScenario(), allCategoriesScenario(),
