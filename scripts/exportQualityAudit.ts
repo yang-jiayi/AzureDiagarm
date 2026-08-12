@@ -880,7 +880,12 @@ function controlCharScenario(): Scenario {
   const nodes = [
     svc('cc-web', `Payments${vt}gateway`, 0, 0),
     svc('cc-app', `Orders\u000cservice \u{1F680}`, 320, 0),
-    svc('cc-db', `Ledger\u0001store\uD83D`, 640, 0),
+    // The id, not the label. Shape ids reach `<p:cNvPr name>` through
+    // `objectName` and the Visio `NameU`, and they are the half of this that
+    // looks like it came from us — it did not: an imported template or a model
+    // response names its own nodes, and a name is as fatal to the parse as a
+    // caption is.
+    svc(`cc-db${vt}1`, `Ledger\u0001store\uD83D`, 640, 0),
     svc('cc-log', `Audit\u001ftrail`, 960, 0),
   ];
   const edges = [
@@ -889,11 +894,11 @@ function controlCharScenario(): Scenario {
       data: { stepNumber: 1, stepDescription: `The gateway writes${vt}orders to the service.` },
     },
     {
-      id: 'cc2', source: 'cc-app', target: 'cc-db', label: 'commits\u0000rows',
+      id: `cc2${vt}b`, source: 'cc-app', target: `cc-db${vt}1`, label: 'commits\u0000rows',
       data: { stepNumber: 2, stepDescription: 'The service commits\u0000rows to the ledger.' },
     },
     {
-      id: 'cc3', source: 'cc-db', target: 'cc-log', label: 'emits\uDC00events',
+      id: 'cc3', source: `cc-db${vt}1`, target: 'cc-log', label: 'emits\uDC00events',
       data: { stepNumber: 3, stepDescription: 'The ledger emits\uDC00events to the audit trail.' },
     },
   ] as Edge[];
@@ -956,7 +961,7 @@ function shortServiceGridScenario(): Scenario {
 function cascadeScenario(): Scenario {
   const nodes: Node[] = [];
   for (let i = 0; i < 200; i += 1) {
-    const base = svc(`cs-${i}`, `Service ${i}`, (i % 100) * 2000, Math.floor(i / 100) * 1600);
+    const base = svc(`cs-${i}`, `Azure Kubernetes Service ${i}`, (i % 100) * 2000, Math.floor(i / 100) * 1600);
     nodes.push(i % 5 === 0 ? ({ ...base, height: 12 } as Node) : base);
   }
   const edges: Edge[] = [];
@@ -964,6 +969,34 @@ function cascadeScenario(): Scenario {
     edges.push({ id: `cse${i}`, source: `cs-${i - 1}`, target: `cs-${i}`, label: 'Calls' } as Edge);
   }
   return { id: 'cascade', nodes, edges };
+}
+
+/**
+ * Four hundred services with one name between them, a ninth of them collapsed.
+ *
+ * The collapsed fraction is the whole point. `target` is the tenth percentile
+ * of tile heights, so at 40 of 400 it is still 75px and everything is ordinary;
+ * at 45 of 400 it is 12px, `LEGIBLE_TILE_PT / 12 / 12` exceeds anything the
+ * frame can deliver, and before the cap on `legibleScale` the legibility break
+ * in both coarsening loops could never fire. The deck came out as 49 slides of
+ * 0.47in tiles on which all 400 names read `"Azure…"` — one string for four
+ * hundred services, and every width-based rule passed it at 4.24 characters per
+ * line, which is why the rule guarding this is written on identity instead.
+ *
+ * The shared `"Azure "` prefix is not decoration: it is what makes a generous-
+ * looking character budget collapse into a single string.
+ */
+function sharedPrefixEstateScenario(): Scenario {
+  const nodes: Node[] = [];
+  for (let i = 0; i < 400; i += 1) {
+    const base = svc(`sp-${i}`, `Azure Kubernetes Service ${i}`, (i % 20) * 900, Math.floor(i / 20) * 900);
+    nodes.push(i % 9 === 0 ? ({ ...base, height: 12 } as Node) : base);
+  }
+  const edges: Edge[] = [];
+  for (let i = 1; i < 12; i += 1) {
+    edges.push({ id: `spe${i}`, source: `sp-${i - 1}`, target: `sp-${i}`, label: 'Calls' } as Edge);
+  }
+  return { id: 'shared-prefix-estate', nodes, edges };
 }
 
 /**
@@ -2507,13 +2540,17 @@ async function auditCustomerDeck(scenario: Scenario): Promise<string[]> {
     }
   }
   for (const edge of scenario.edges) {
-    const id = String(edge.id);
+    // Against the name the exporter writes, not the one the diagram authored.
+    // Ids reach the package through the same sanitiser as prose, so an id
+    // carrying a forbidden code point is drawn under its stripped name and a
+    // raw-id lookup reports it missing from a deck that in fact contains it.
+    const id = auditStrip(String(edge.id));
     if (!drawnArrows.has(id)) issues.push(`customer deck: edge "${id}" is in the diagram but drawn on no slide`);
   }
 
   for (const node of scenario.nodes) {
     if ((node.type ?? '') === 'groupNode') continue;
-    const marker = `name="service-${node.id}"`;
+    const marker = `name="service-${auditStrip(String(node.id))}"`;
     const on = windows.filter((xml) => xml.includes(marker)).length;
     if (on === 0) issues.push(`customer deck: service "${node.id}" is drawn on no slide`);
     else if (on > 1) issues.push(`customer deck: service "${node.id}" is drawn on ${on} slides`);
@@ -2630,7 +2667,7 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
   // real contract is the scenario's own edge list: every edge the caller asked
   // for has to appear somewhere in the deck.
   for (const edge of scenario.edges) {
-    const id = String(edge.id);
+    const id = auditStrip(String(edge.id));
     if (!drawnArrows.has(id)) issues.push(`edge "${id}" is in the diagram but drawn on no slide`);
   }
   // A tile asked to show a SKU, a region and a price and showing none of them
@@ -3231,26 +3268,45 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
     .replace(/[.,;:!?、。（）()[\]「」"'`´’‘“”\-…]/g, '');
   const deckWording = foldWording(shapes.map((s) => s.text).join(' '));
   for (const edge of scenario.edges) {
-    const label = typeof edge.label === 'string' ? edge.label.trim() : '';
-    if (!label || drawnChips.has(edge.id)) continue;
-    const badge = drawnBadges.get(edge.id);
+    // Both sides sanitised: the deck's chips and badges are keyed by the name
+    // the exporter wrote, and its wording is the sanitised wording.
+    const eid = auditStrip(String(edge.id));
+    const label = typeof edge.label === 'string' ? auditStrip(edge.label).trim() : '';
+    if (!label || drawnChips.has(eid)) continue;
+    const badge = drawnBadges.get(eid);
     if (badge !== undefined && explained.has(badge)) {
       if (!deckWording.includes(foldWording(label))) {
-        issues.push(`edge "${edge.id}" was muted to callout ${badge}, but its wording "${label}" appears nowhere in the deck`);
+        issues.push(`edge "${eid}" was muted to callout ${badge}, but its wording "${label}" appears nowhere in the deck`);
       }
       continue;
     }
     issues.push(
       badge === undefined
-        ? `edge "${edge.id}" is labelled "${label}" but the deck has neither a chip nor a callout for it`
-        : `edge "${edge.id}" lost its label "${label}" to callout ${badge}, which no workflow row explains`,
+        ? `edge "${eid}" is labelled "${label}" but the deck has neither a chip nor a callout for it`
+        : `edge "${eid}" lost its label "${label}" to callout ${badge}, which no workflow row explains`,
     );
+  }
+  const authoredNames = new Map<string, string>();
+  for (const node of scenario.nodes) {
+    if (node.type !== 'azureNode') continue;
+    const label = (node.data as { label?: string } | undefined)?.label;
+    if (typeof label === 'string' && label) authoredNames.set(auditStrip(String(node.id)), label);
   }
   // Truncation is only acceptable when the full wording survives somewhere the
   // reader can reach. A chip clipped to 42 cells with no workflow row carrying
   // the rest has silently thrown away what the author wrote.
+  const indexed = new Set(
+    shapes.filter((s) => s.name.startsWith('index-name-')).map((s) => s.text.trim()),
+  );
   const truncated = shapes.filter((s) => s.text.includes('…'));
   const stranded = truncated.filter((s) => {
+    const svcId = /^service-label-(.*)$/.exec(s.name)?.[1];
+    if (svcId !== undefined) {
+      // The deck's index slide spells this one out, so the drawing is free to
+      // abbreviate it.
+      const name = authoredNames.get(svcId);
+      return !name || !indexed.has(name);
+    }
     const id = /^connector-label-(.*)$/.exec(s.name)?.[1];
     if (!id) return true;
     const badge = drawnBadges.get(id);
@@ -3278,7 +3334,7 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
   // arrow would pass. The object name carries the route id, so check the exact
   // arrow-to-number correspondence instead.
   const expectedByRoute = new Map(
-    numberedEdges.map((e) => [e.id, String((e.data as { stepNumber: number }).stepNumber)]),
+    numberedEdges.map((e) => [auditStrip(String(e.id)), String((e.data as { stepNumber: number }).stepNumber)]),
   );
   for (const badge of badges) {
     const routeId = badge.name.replace(/^connector-step-/, '');
@@ -3423,7 +3479,7 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
   // Banding must not lose or duplicate anything. A service that falls between
   // two bands is silently absent from the deck; one that straddles a seam is
   // drawn twice, once shoved against a page edge on top of whatever is there.
-  const serviceIds = scenario.nodes.filter((n) => n.type === 'azureNode').map((n) => n.id);
+  const serviceIds = scenario.nodes.filter((n) => n.type === 'azureNode').map((n) => auditStrip(String(n.id)));
   const drawnTiles = new Map<string, number>();
   for (const tile of tiles) {
     const id = tile.name.replace(/^service-/, '');
@@ -3433,6 +3489,27 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
     const drawn = drawnTiles.get(id) ?? 0;
     if (drawn === 0) issues.push(`service "${id}" is drawn on no slide`);
     else if (drawn > 1) issues.push(`service "${id}" is drawn on ${drawn} slides`);
+  }
+  // Truncation is fine; truncation that stops telling two services apart is
+  // not. Bar this on identity rather than on a character budget, because Azure
+  // names share the prefix "Azure " and a tile with room for four characters
+  // still looks generous while every name on the sheet has collapsed to
+  // "Azure…". Measured per slide, since that is the unit a reader looks at.
+  for (const [index, slideShapes] of perSlide.entries()) {
+    const labels = slideShapes.filter((s) => s.name.startsWith('service-label-'));
+    if (labels.length < 2) continue;
+    const authored = new Set<string>();
+    for (const shape of labels) {
+      const name = authoredNames.get(shape.name.slice('service-label-'.length));
+      if (name) authored.add(name);
+    }
+    const drawnDistinct = new Set(labels.map((s) => s.text.trim()).filter(Boolean));
+    if (authored.size > 1 && drawnDistinct.size < authored.size) {
+      issues.push(
+        `slide ${index + 1} draws ${authored.size} differently-named services as only `
+        + `${drawnDistinct.size} distinct string(s) — e.g. "${[...drawnDistinct][0] ?? ''}"`,
+      );
+    }
   }
   for (const [name, count] of countByName(badges)) {
     if (count > 1) issues.push(`step badge "${name}" is drawn ${count} times`);
@@ -3548,6 +3625,26 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
   const serviceCount = scenario.nodes.filter((n) => n.type !== 'groupNode').length;
   if (iconPaths.size > 0 && media.length === 0) {
     issues.push(`no embedded icon media parts (expected ~${serviceCount})`);
+  }
+  // Counting the payload is not counting the picture. Media parts and their
+  // relationships are pushed unconditionally, but the `<Rel>` that puts one on
+  // the sheet is emitted only inside `iconChild`, so a drawing can ship 700
+  // rasters and 700 relationships that no shape references and satisfy the rule
+  // above while showing not one icon. That is exactly what happened below sheet
+  // scale 0.5504, on two scenarios that were passing. Count the shapes.
+  const pageXmlForIcons = typeof pagePart?.data === 'string' ? pagePart.data : '';
+  const drawnIcons = (pageXmlForIcons.match(/NameU="Icon\.\d+"/g) ?? []).length;
+  // Only tiles that had room. A node collapsed below the standard 75px is one
+  // the exporter is right to hand over to its words — dropping an icon a tile
+  // cannot render is the documented behaviour, and counting those would make
+  // the rule fire on the one case it should not.
+  const wantIcons = scenario.nodes.filter(
+    (n) => n.type !== 'groupNode'
+      && Boolean((n.data as { iconPath?: string } | undefined)?.iconPath)
+      && (n.height ?? 75) >= 75,
+  ).length;
+  if (wantIcons > 0 && drawnIcons < wantIcons) {
+    issues.push(`${wantIcons - drawnIcons} of ${wantIcons} service icon(s) are embedded but never drawn on the sheet`);
   }
   // A drawing that names a relationship it does not ship is a drawing Visio
   // refuses to open. Neither half was ever checked, because under Node there
@@ -4534,6 +4631,7 @@ async function main(): Promise<void> {
     ladderInGridScenario(), twinLaddersScenario(), strayLadderScenario(), legendCornerScenario(), duplicateStepsScenario(), denseZoneScenario(),
     metaChipScenario(), gridFanScenario(), gridFan3Scenario(), fan8Tight5x5Scenario(), metaSublineScenario(), grid5x5CaptionScenario(), longNameGridScenario(), longLabelGridScenario(), metaTightScenario(),     longNameFanScenario(), estateChainScenario(), chain24Scenario(), tripleMutedScenario(), estate72Scenario(),     workflowProseScenario(), workflowLongProseScenario(), workflowFanScenario(), workflowWideBandScenario(), allCategoriesScenario(), controlCharScenario(), shortServiceGridScenario(),
     cascadeScenario(),
+    sharedPrefixEstateScenario(),
     await generatedScenario(), await groupedGeneratedScenario(),
   ];
   // Dark twins. Adding a `dark` flag was not enough on its own: nothing set it,

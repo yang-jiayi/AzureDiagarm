@@ -41,10 +41,18 @@ function newDeck(): PptxGenJS {
   const addSlide = pptx.addSlide.bind(pptx);
   pptx.addSlide = ((...args: Parameters<typeof pptx.addSlide>) => {
     const slide = addSlide(...args);
-    const addText = slide.addText.bind(slide);
-    slide.addText = ((text: unknown, opts: unknown) => addText(cleanText(text) as never, opts as never)) as typeof slide.addText;
-    const addTable = slide.addTable.bind(slide);
-    slide.addTable = ((rows: unknown, opts: unknown) => addTable(cleanText(rows) as never, opts as never)) as typeof slide.addTable;
+    // Every writer, and every argument of it. Sanitising only the text argument
+    // of `addText` left two ways through: the options bag was passed on
+    // untouched, and `objectName` in it becomes the `name` attribute of
+    // `<p:cNvPr>` carrying a node, group or edge id straight from the diagram;
+    // and `addShape`/`addImage` were not wrapped at all, which is where the
+    // icon and tile ids go. A shape name is as fatal to the parse as a caption.
+    for (const key of ['addText', 'addTable', 'addShape', 'addImage', 'addChart', 'addMedia', 'addNotes'] as const) {
+      const fn = (slide as unknown as Record<string, unknown>)[key];
+      if (typeof fn !== 'function') continue;
+      const bound = (fn as (...a: unknown[]) => unknown).bind(slide);
+      (slide as unknown as Record<string, unknown>)[key] = (...args: unknown[]) => bound(...args.map(cleanText));
+    }
     return slide;
   }) as typeof pptx.addSlide;
 
@@ -76,11 +84,22 @@ function cleanText(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(cleanText);
   if (value && typeof value === 'object') {
     const source = value as Record<string, unknown>;
-    // `text` is the only string pptxgenjs renders; everything else in an options
-    // bag is a colour, a size or a font name, and rewriting those would be a
-    // different kind of bug.
-    if (!('text' in source)) return value;
-    return { ...source, text: cleanText(source.text) };
+    // `text` is the only string pptxgenjs renders, but it is not the only one
+    // it writes. `objectName` becomes the `name` attribute of `<p:cNvPr>`, and
+    // it is built from diagram ids rather than typed prose, which is exactly
+    // why it was missed: ids look like they came from us. They did not — an
+    // imported template or a model response names its own nodes.
+    //
+    // Everything else in an options bag is a colour, a size, a font name or a
+    // base64 image, and rewriting those would be a different kind of bug, so
+    // this deliberately does not recurse into values it was not asked about.
+    const hasText = 'text' in source;
+    const hasName = typeof source.objectName === 'string';
+    if (!hasText && !hasName) return value;
+    const out = { ...source };
+    if (hasText) out.text = cleanText(source.text);
+    if (hasName) out.objectName = stripXmlForbidden(source.objectName as string);
+    return out;
   }
   return value;
 }
@@ -429,11 +448,35 @@ function planDiagramWindows(
   // guarantees the floor, the planner optimises for it, and the planner
   // optimises for the tiles that stand to gain. When tiles are uniform, or when
   // the whole sheet is short, this is exactly the minimum and nothing moves.
+  // The median, not the minimum and not a low percentile. The renderer floors a
+  // window tile's type at the legibility limit however short the tile is, so
+  // the planner's job is to pick the grid that serves the tiles that stand to
+  // gain, and that is the typical tile. A low percentile only moved the cliff:
+  // at 40 collapsed nodes in 400 the tenth percentile is still 75px and the
+  // deck is ordinary, at 45 it is 12px and the deck collapsed to one string for
+  // four hundred services. The median has no such neighbour — half the sheet
+  // has to be collapsed before it moves, and when tiles are uniform it is the
+  // minimum, so nothing moves on an ordinary drawing.
   const heights = services.map((box) => box.h).filter((h) => h > 0).sort((a, b) => a - b);
-  const target = heights[Math.floor(heights.length * 0.1)] ?? shortest;
+  const target = heights[Math.floor(heights.length * 0.5)] ?? shortest;
 
-  // Inches-per-pixel needed for a representative tile to keep a readable label.
-  const legibleScale = LEGIBLE_TILE_PT / 12 / target;
+  // Inches-per-pixel needed for a representative tile to keep a readable label,
+  // capped at the finest grid this frame can actually deliver.
+  //
+  // The cap is the load-bearing half. `gridFor` returns null the moment the
+  // bleed alone fills the window, and a null grid sends the planner to
+  // `capped(150, 150)` — where both coarsening loops break on
+  // `scaleOf(c, r) >= legibleScale && scaleOf(next) < legibleScale`. If no grid
+  // in this frame reaches `legibleScale`, the left conjunct is false at every
+  // step, so the break never fires and the loop walks past every grid that
+  // reads down to the slide cap. The comment on that loop says "the ceiling is
+  // a preference and legibility is not"; written as an absolute threshold the
+  // frame can make unreachable, it inverted into exactly the opposite. A
+  // demand the frame cannot meet is not a legibility floor, it is a way of
+  // switching the floor off, and 400 services then came out as 49 slides on
+  // which every tile read "Azure…".
+  const finestPerIn = Math.min(frame.w, frame.h) / (WINDOW_BLEED_PX * 2 + Math.max(1, target));
+  const legibleScale = Math.min(LEGIBLE_TILE_PT / 12 / target, finestPerIn);
   if (Math.min(frame.w / contentW, frame.h / contentH) >= legibleScale) return whole;
 
   // Splitting on one axis only is why a tall drawing used to grow the page
@@ -868,12 +911,31 @@ function estimateTextWidthIn(text: string, fontSizePt: number): number {
 function fitLabelToBox(text: string, widthIn: number, fontSizePt: number): string {
   if (estimateTextWidthIn(text, fontSizePt) <= widthIn) return text;
   const budget = widthIn - estimateTextWidthIn('…', fontSizePt);
-  let out = '';
-  for (const character of text) {
-    if (estimateTextWidthIn(out + character, fontSizePt) > budget) break;
-    out += character;
+  if (budget <= 0) return '…';
+  const chars = [...text];
+  // Keep the end as well as the beginning. Service names are overwhelmingly
+  // "<vendor> <family> <qualifier>", so the characters that tell two of them
+  // apart are the last ones: cut only from the right and a slide of twenty
+  // different services becomes twenty tiles reading "Azure Kubernetes Ser…",
+  // which a reader takes for a rendering fault rather than for a name that did
+  // not fit. Head and tail cannot overlap — their combined width is under a
+  // budget the whole string already exceeded.
+  let tail = '';
+  for (let i = chars.length - 1; i >= 0; i -= 1) {
+    const next = chars[i] + tail;
+    if (estimateTextWidthIn(next, fontSizePt) > budget / 3) break;
+    tail = next;
   }
-  return out.trimEnd() === '' ? '…' : `${out.trimEnd()}…`;
+  tail = tail.trimStart();
+  const headBudget = budget - estimateTextWidthIn(tail, fontSizePt);
+  let head = '';
+  for (const character of chars) {
+    if (estimateTextWidthIn(head + character, fontSizePt) > headBudget) break;
+    head += character;
+  }
+  head = head.trimEnd();
+  if (!head) return tail ? `…${tail}` : '…';
+  return `${head}…${tail}`;
 }
 
 
@@ -1881,6 +1943,8 @@ function addNodeShape(
   caption: { x: number; y: number; w: number; h: number } | null;
   /** The box the SKU / region / price sub-line is drawn in, when it is shown. */
   meta: { x: number; y: number; w: number; h: number } | null;
+  /** The authored name, when the tile could not hold all of it. */
+  clipped: string | null;
 } {
   const topLeft = placeBox(box, transform, clampTo);
   const w = topLeft.w;
@@ -2119,7 +2183,7 @@ function addNodeShape(
       objectName: `service-meta-${box.id}`,
     });
   }
-  return { caption: captionBand, meta: metaBandRect };
+  return { caption: captionBand, meta: metaBandRect, clipped: label === box.label ? null : box.label };
 }
 
 /** The SKU · region · cost sub-line only earns its space on a legible tile. */
@@ -2421,6 +2485,12 @@ async function addEditableDiagram(
    */
   mutedWording: Map<number, string> = new Map(),
   /**
+   * Names the tiles had to cut, filled in as they are drawn. The caller lists
+   * them on an index slide, because a name clipped on the drawing and written
+   * down nowhere else has been thrown away.
+   */
+  truncatedNames: Set<string> = new Set(),
+  /**
    * This is the whole drawing shown small ahead of the readable slices of it,
    * so anything that would land under the resolvable floor is left to them.
    */
@@ -2603,6 +2673,9 @@ async function addEditableDiagram(
   const captionBands: Obstacle[] = [];
   for (const service of shownServices) {
     const bands = addNodeShape(pptx, slide, service, transform, service.iconPath ? icons.get(service.iconPath) : undefined, px, clampTo, thumbnail);
+    // The overview is allowed to clip: every name it clips is drawn in full on
+    // the slice that follows. Only a window slide's clipping is a real loss.
+    if (bands.clipped && !thumbnail) truncatedNames.add(bands.clipped);
     // A tile can be leaned on: the reader still sees which service it is. Its
     // name cannot, because the name is the only thing that says so, and a chip
     // is drawn over it at 92% opacity. Weighted far above a tile so that even
@@ -3546,6 +3619,8 @@ export async function buildDiagramSlidePptx(
   // Wording that a muted chip handed to the workflow slide, filled in by the
   // diagram pass and read when that slide is written.
   const mutedWording = new Map<number, string>();
+  // Names the tiles had to cut, for the index slide at the end of the deck.
+  const truncatedNames = new Set<string>();
 
   for (const [index, window] of windows.entries()) {
     const slide = pptx.addSlide();
@@ -3600,7 +3675,7 @@ export async function buildDiagramSlidePptx(
 
     // ── Diagram body — native shapes when available, captured PNG otherwise ───
     renderedNatively = diagram
-      ? await addEditableDiagram(pptx, slide, diagram, geom.frame, isDarkMode, window, mutedWording, window === undefined && parts.length > 0, options.presetIcons)
+      ? await addEditableDiagram(pptx, slide, diagram, geom.frame, isDarkMode, window, mutedWording, truncatedNames, window === undefined && parts.length > 0, options.presetIcons)
       : false;
 
     if (!renderedNatively) {
@@ -3740,6 +3815,68 @@ export async function buildDiagramSlidePptx(
           fontSize: rowFontPt(entry.description, rowGap - 0.04),
           color: t.titleText, fontFace: 'Yu Gothic UI',
           valign: 'middle', wrap: true,
+        });
+      });
+      slide.addText('Generated by Microsoft Product Architecture Diagram Builder  ·  Swarm Data SE, Jiayi Yang', {
+        x: 0.35, y: FOOTER_Y, w: W - 0.7, h: FOOTER_H,
+        fontSize: 8, color: t.footerText, fontFace: 'Yu Gothic UI', valign: 'middle',
+      });
+    }
+  }
+
+  // Every name the drawing had to cut, spelled out.
+  //
+  // A tile too small for its name is a fact of any large estate — the drawing
+  // is a map, and a map abbreviates. Throwing the name away is not. Without
+  // this slide the reader of a 400-service deck meets rows of
+  // "Azure Kubernetes Ser…" and has nowhere to go, which is precisely the
+  // "export it and then retype it by hand" outcome this exporter exists to
+  // avoid. Columns are sized from the longest name so nothing is clipped twice.
+  if (truncatedNames.size > 0) {
+    const names = [...truncatedNames].sort((a, b) => a.localeCompare(b));
+    const listTop = IMAGE_Y + 0.1;
+    const available = Math.max(0.3, geom.footerY - 0.1 - listTop);
+    const INDEX_PT = 10;
+    const rowH = INDEX_PT * 1.45 / 72;
+    const rowsPerCol = Math.max(1, Math.floor(available / rowH));
+    const widest = Math.max(...names.map((n) => estimateTextWidthIn(n, INDEX_PT)));
+    const cols = Math.max(1, Math.min(
+      Math.floor((W - 0.7) / (widest + 0.25)),
+      Math.ceil(names.length / rowsPerCol),
+    ));
+    const perSlide = rowsPerCol * cols;
+    const colW = (W - 0.7) / cols;
+    const pages = Math.ceil(names.length / perSlide);
+
+    for (let page = 0; page < pages; page += 1) {
+      const slice = names.slice(page * perSlide, (page + 1) * perSlide);
+      const slide = pptx.addSlide();
+      slide.background = { color: t.bg };
+      addChrome(
+        pptx, slide, t,
+        pages > 1 ? `Service names (${page + 1} / ${pages})` : 'Service names',
+        `${author}  ·  ${date}`,
+      );
+      slide.addText(
+        'Names shortened on the drawing, in full.',
+        {
+          objectName: 'index-note',
+          x: 0.35, y: HEADER_END + SEP_H + 0.04, w: W - 0.7, h: 0.22,
+          fontSize: 9, color: t.metaText, fontFace: 'Yu Gothic UI', valign: 'middle',
+        },
+      );
+      slice.forEach((name, i) => {
+        slide.addText(name, {
+          objectName: `index-name-${page * perSlide + i}`,
+          x: 0.35 + Math.floor(i / rowsPerCol) * colW,
+          y: listTop + 0.24 + (i % rowsPerCol) * rowH,
+          w: colW - 0.15,
+          h: rowH,
+          fontSize: INDEX_PT,
+          color: t.titleText,
+          fontFace: 'Yu Gothic UI',
+          valign: 'middle',
+          wrap: false,
         });
       });
       slide.addText('Generated by Microsoft Product Architecture Diagram Builder  ·  Swarm Data SE, Jiayi Yang', {
@@ -3993,6 +4130,7 @@ async function addDiagramSlide(pptx: PptxGenJS, t: SlideTheme, imageDataUrl: str
         frame,
         o.isDarkMode,
         window,
+        undefined,
         undefined,
         window === undefined && parts.length > 0,
         o.presetIcons,

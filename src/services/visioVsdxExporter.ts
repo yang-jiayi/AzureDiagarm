@@ -447,17 +447,27 @@ function serviceGroupXml(
   meta: string,
   fonts: VisioFonts = NATURAL_FONTS,
 ): string {
-  const textW = Math.max(0.3, rect.w - 0.12);
+  const textW = Math.max(0.3 * fonts.scale, rect.w - 0.12 * fonts.scale);
   // Give the label the room it actually needs and let the icon take the rest,
   // so a two-line service name is never clipped and the icon never vanishes.
+  //
+  // Every inch here is scaled, because the tile it divides up is. Written flat,
+  // these floors kept their absolute size while the tile shrank, so the text
+  // band reserved a constant 0.16in out of a tile that was 0.78125*scale inches
+  // tall: below scale 0.5504 the arithmetic `0.78125s - 0.19 - 0.16 >= 0.08`
+  // fails and `showIcon` goes false for *every* tile at once. Adding one
+  // service to a 205-service pipeline took all 205 Azure icons off the sheet,
+  // while the PowerPoint export of the same diagram drew them; below scale
+  // 0.2048 the reserved band was taller than the whole tile. The equivalent
+  // floor in the deck is written `0.08 * px` and never had the bug.
   const labelLines = Math.max(1, Math.ceil(estimateTextWidthIn(box.label, fonts.label) / textW));
-  const neededTextH = labelLines * fonts.label * 1.28 + (meta ? fonts.meta * 1.4 : 0) + 0.05;
-  const maxIcon = iconRelId ? Math.min(rect.h * 0.46, rect.w * 0.5, 0.55) : 0;
-  const minIcon = Math.min(maxIcon, 0.18);
-  const room = Math.max(0.2, rect.h - 0.19);
-  const textH = Math.max(0.16, Math.min(neededTextH, room - minIcon));
+  const neededTextH = labelLines * fonts.label * 1.28 + (meta ? fonts.meta * 1.4 : 0) + 0.05 * fonts.scale;
+  const maxIcon = iconRelId ? Math.min(rect.h * 0.46, rect.w * 0.5, 0.55 * fonts.scale) : 0;
+  const minIcon = Math.min(maxIcon, 0.18 * fonts.scale);
+  const room = Math.max(0.2 * fonts.scale, rect.h - 0.19 * fonts.scale);
+  const textH = Math.max(0.16 * fonts.scale, Math.min(neededTextH, room - minIcon));
   const iconSizeIn = maxIcon > 0 ? Math.max(0, Math.min(maxIcon, room - textH)) : 0;
-  const showIcon = iconRelId !== null && iconSizeIn >= 0.08;
+  const showIcon = iconRelId !== null && iconSizeIn >= 0.08 * fonts.scale;
   const iconChild = showIcon
     ? `
         <Shape ID="${ids.icon}" NameU="Icon.${ids.icon}" Type="Foreign" LineStyle="0" FillStyle="0" TextStyle="0">
