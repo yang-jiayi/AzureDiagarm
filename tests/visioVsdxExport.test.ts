@@ -351,3 +351,81 @@ test('a fan too deep to write out keeps its numbers and the panel explains them'
     assert.ok(narrated.has(badge), `callout ${badge} is drawn but no workflow row explains it`);
   }
 });
+
+
+/**
+ * A tight grid where the lane between two columns is narrower than a sentence.
+ * There is no clear air anywhere on the sheet, so every vertical hop's label
+ * lands on a service tile or on the horizontal hop's label beside it.
+ *
+ * A fan has always had a way out of this — drop the wording, keep the numbers,
+ * let the workflow band say it — but a lone label did not, and simply shipped
+ * on top of whatever it landed on. Being unable to read the words is the
+ * problem; how many hops share the arrow never had anything to do with it.
+ */
+test('a label with nowhere legible to go gives its sentence to the workflow band', async () => {
+  const nodes: Node[] = [];
+  for (let r = 0; r < 5; r += 1) {
+    for (let c = 0; c < 5; c += 1) {
+      nodes.push({
+        id: `t${r}${c}`,
+        type: 'azureNode',
+        position: { x: c * 215, y: r * 150 },
+        width: 150,
+        height: 75,
+        data: { label: `Azure Service ${r}${c}`, serviceName: `Azure Service ${r}${c}` },
+      } as Node);
+    }
+  }
+  const edges: Edge[] = [];
+  let step = 0;
+  for (let r = 0; r < 5; r += 1) {
+    for (let c = 0; c + 1 < 5; c += 1) {
+      step += 1;
+      edges.push({ id: `h${r}${c}`, source: `t${r}${c}`, target: `t${r}${c + 1}`, label: 'writes the order document to Cosmos DB', data: { stepNumber: step, stepDescription: `Step ${step}` } } as Edge);
+    }
+  }
+  for (let r = 0; r + 1 < 5; r += 1) {
+    for (let c = 0; c < 5; c += 1) {
+      step += 1;
+      edges.push({ id: `v${r}${c}`, source: `t${r}${c}`, target: `t${r + 1}${c}`, label: 'queries the read model with a managed identity', data: { stepNumber: step, stepDescription: `Step ${step}` } } as Edge);
+    }
+  }
+
+  const pkg = await buildVsdxPackage(nodes, edges, 'Contoso');
+  const xml = pkg.parts.find((part) => part.path === 'visio/pages/page1.xml')!.data as string;
+
+  // No two sentences may be written on the same spot: whichever is drawn second
+  // simply covers the first, and Visio has no autolayout to pull them apart.
+  const labels = connectorLabelBoxes(xml);
+  for (let i = 0; i < labels.length; i += 1) {
+    for (let j = i + 1; j < labels.length; j += 1) {
+      const hit = overlapArea(labels[i], labels[j]);
+      assert.ok(
+        hit <= 0.01,
+        `"${labels[i].text}" and "${labels[j].text}" are written on top of each other (${hit.toFixed(3)}sq in)`,
+      );
+    }
+  }
+
+  // And nothing may be quietly deleted to achieve that. Counted, not merely
+  // looked for: a drawing repeats its wording, and a rule that stops at the
+  // first surviving copy is passed by dropping all the others.
+  const fold = (s: string): string => s.toLowerCase().replace(/[\s\u3000]+/g, '').replace(/[.,;:!?、。（）()-]/g, '');
+  const shapeText = (prefix: string): string => [
+    ...xml.matchAll(new RegExp(`<Shape [^>]*NameU="${prefix}\\.\\d+"[\\s\\S]*?<\\/Shape>`, 'g')),
+  ]
+    .map((m) => /<Text>([\s\S]*?)<\/Text>/.exec(m[0])?.[1] ?? '')
+    .join('\u0000');
+  const spoken = fold(`${shapeText('Connector')}\u0000${shapeText('LegendText')}`);
+  const need = new Map<string, number>();
+  for (const edge of edges) {
+    const stem = fold(String(edge.label)).slice(0, 12);
+    need.set(stem, (need.get(stem) ?? 0) + 1);
+  }
+  for (const [stem, count] of need) {
+    let found = 0;
+    for (let at = spoken.indexOf(stem); at >= 0; at = spoken.indexOf(stem, at + 1)) found += 1;
+    assert.ok(found >= count, `the sheet says "${stem}" ${found} times but the author wrote it ${count} times`);
+  }
+});

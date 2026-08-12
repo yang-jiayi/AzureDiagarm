@@ -49,6 +49,7 @@ import {
   partitionBoxes,
   usedConnectionLegend,
   workflowListFromEdges,
+  carriesWording,
   zoneStyleFor,
   type ConnectionLegendEntry,
   type WorkflowListEntry,
@@ -1057,7 +1058,7 @@ export async function buildVsdxPackage(
    * the total would make a clean placement look like a dirty one and the
    * caller could never tell whether the fan actually fits.
    */
-  const settle = (members: ExportRoute[]): { shift: number; slide: number; blocked: number } => {
+  const settle = (members: ExportRoute[]): { shift: number; slide: number; blocked: number; buried: number } => {
     const step = Math.max(
       0.14,
       ...members.map((member) => (labelOf(member) ? labelSize(labelOf(member)).h : STEP_BADGE_IN) + 0.05),
@@ -1096,6 +1097,40 @@ export async function buildVsdxPackage(
       }
       return cost;
     };
+    // How much of the worst sentence a reader cannot see, as a fraction of the
+    // sentence itself. `blockage` is a weighted score tuned for choosing
+    // between positions, so its magnitude says nothing about legibility: a
+    // label clipping a tile corner and a label buried under one both score
+    // "greater than zero". Deciding whether wording survives needs the plain
+    // question — what fraction of this text is covered?
+    const buriedAt = (shift: number, slide: number): number => {
+      let worst = 0;
+      for (const member of members) {
+        const text = labelOf(member);
+        if (!text) continue;
+        const seat = ladder.get(member.id) ?? { drop: 0, along: 0 };
+        const box = rectAt(member, seat.drop + shift, seat.along + slide);
+        const own = Math.max(box.w * box.h, 1e-6);
+        if (box.x < 0.05 || box.y < 0.05
+          || box.x + box.w > pageWidthIn - 0.05 || box.y + box.h > pageHeightIn - 0.05) {
+          worst = 1;
+          continue;
+        }
+        let covered = 0;
+        for (const rect of serviceRects) covered += hit(box, rect);
+        // Text over a tile is ugly but still readable — the tile is mostly
+        // empty fill. Two sentences written on the same spot are both lost, and
+        // no fraction of that is acceptable, so any contact a reader could
+        // notice counts as fully buried. The threshold is the one the export
+        // audit itself calls a defect, so the exporter and the rule that judges
+        // it cannot disagree about what "unreadable" means.
+        for (const other of placedLabels) {
+          if (hit(box, other) > 0.01) return 1;
+        }
+        worst = Math.max(worst, Math.min(1, covered / own));
+      }
+      return worst;
+    };
     // Sliding along the arrow is the cheaper move visually — the text still
     // reads as that arrow's — but both are a last resort against a label
     // sitting where it cannot be read.
@@ -1127,23 +1162,51 @@ export async function buildVsdxPackage(
         if (s !== 0) consider(0, s * slideStep);
       }
     }
-    return { ...best, blocked: bestBlocked };
+    return { ...best, blocked: bestBlocked, buried: buriedAt(best.shift, best.slide) };
   };
+  // How much of a sentence can be covered before dropping it outright is the
+  // kinder outcome. A sliver off one corner still reads; a third of the words
+  // hidden under a service tile does not, and a half-read sentence is worse
+  // than a numbered callout the workflow band spells out in full.
+  const BURIED_LIMIT = 0.35;
+  // Wording a muted label handed to the workflow band, by step number. Nothing
+  // may be muted unless it lands here or the row already says it, because the
+  // Visio sheet has nowhere else for the sentence to go.
+  const mutedWording = new Map<number, string>();
+  const narratedRows = new Map(workflowEntries.map((entry) => [entry.step, entry.description]));
   for (const [, members] of settleOrder) {
     let placement = settle(members);
     // A fan whose sentences cannot be written anywhere clear keeps its numbers
     // and drops its wording, exactly as the deck does. Ten hops between one
     // pair of services need a ladder taller than the sheet, and a half-hidden
     // sentence is worse than a callout the workflow band spells out in full.
-    const explained = members.every((member) => member.stepNumber !== undefined);
-    if (placement.blocked > 0 && members.length >= 2 && explained
-      && members.some((member) => labelOf(member))) {
+    //
+    // A lone label has exactly the same problem and used to have no way out of
+    // it: on a tight grid a sentence is wider than the lane between two columns
+    // and there is no clear air anywhere on the sheet, so it simply shipped on
+    // top of whatever it landed on. Depth was never the point — being unable to
+    // read the words is.
+    const explained = members.every(
+      (member) => member.stepNumber !== undefined && narratedRows.has(member.stepNumber),
+    );
+    const stuck = members.length >= 2 ? placement.blocked > 0 : placement.buried >= BURIED_LIMIT;
+    if (stuck && explained && members.some((member) => labelOf(member))) {
       const before = placement.blocked;
+      const buriedBefore = placement.buried;
+      const handed = members
+        .filter((member) => member.stepNumber !== undefined && member.label
+          && !carriesWording(narratedRows.get(member.stepNumber) ?? '', member.label))
+        .map((member) => [member.stepNumber as number, member.label as string] as const);
       for (const member of members) muted.add(member.id);
       rungify(members);
       const retry = settle(members);
-      if (retry.blocked < before) {
+      if (retry.blocked < before || retry.buried < buriedBefore) {
         placement = retry;
+        // Muting is only honest once the sentence has somewhere else to be
+        // read, so the handover happens here — after the retry has proved the
+        // trade was worth making — and never on the branch that puts the
+        // wording back.
+        for (const [step, label] of handed) mutedWording.set(step, label);
       } else {
         for (const member of members) muted.delete(member.id);
         rungify(members);
@@ -1238,7 +1301,13 @@ export async function buildVsdxPackage(
   if (workflowEntries.length > 0) {
     const panel = buildWorkflowPanel(
       nextId,
-      workflowEntries,
+      // A label that was muted traded its wording for this row, so the row has
+      // to say it. The same parenthesis the deck uses, so the two exports of
+      // one drawing read alike.
+      workflowEntries.map((entry) => {
+        const handed = mutedWording.get(entry.step);
+        return handed ? { ...entry, description: `${entry.description}（${handed}）` } : entry;
+      }),
       0.35,
       pageHeightIn - 0.2,
       Math.min(Math.max(pageWidthIn - 0.7, 2.4), 7.5),

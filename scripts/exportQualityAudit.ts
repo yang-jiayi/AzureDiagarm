@@ -402,6 +402,38 @@ function gridFan3Scenario(): Scenario {
   return { id: 'grid3x3-fan3-JA', nodes, edges };
 }
 
+/**
+ * A 5x5 grid on tight spacing with a fan of eight in the middle of it. The
+ * densest shape in the corpus: every hop has neighbours on all four sides, so
+ * there is no clear air anywhere for anything to escape into, and the fan is
+ * deep enough that its ladder is taller than the row it stands in.
+ */
+function fan8Tight5x5Scenario(): Scenario {
+  const nodes: Node[] = [];
+  for (let r = 0; r < 5; r += 1) {
+    for (let c = 0; c < 5; c += 1) nodes.push(svc(`t${r}${c}`, `Azure Service ${r}${c}`, c * 215, r * 150));
+  }
+  const edges: Edge[] = [];
+  let step = 0;
+  for (let r = 0; r < 5; r += 1) {
+    for (let c = 0; c + 1 < 5; c += 1) {
+      step += 1;
+      edges.push({ id: `h${r}${c}`, source: `t${r}${c}`, target: `t${r}${c + 1}`, label: 'writes the order document to Cosmos DB', data: { stepNumber: step, stepDescription: `Step ${step}` } } as Edge);
+    }
+  }
+  for (let r = 0; r + 1 < 5; r += 1) {
+    for (let c = 0; c < 5; c += 1) {
+      step += 1;
+      edges.push({ id: `v${r}${c}`, source: `t${r}${c}`, target: `t${r + 1}${c}`, label: 'queries the read model with a managed identity', data: { stepNumber: step, stepDescription: `Step ${step}` } } as Edge);
+    }
+  }
+  for (let i = 0; i < 8; i += 1) {
+    step += 1;
+    edges.push({ id: `f${i}`, source: 't22', target: 't23', label: `writes the order document to Cosmos DB ${i}`, data: { stepNumber: step, stepDescription: `Step ${step}` } } as Edge);
+  }
+  return { id: 'fan8-5x5-tight', nodes, edges };
+}
+
 /** A plain chain of 40 services, no fans at all — the least exotic estate there is. */
 function estateChainScenario(): Scenario {
   const nodes: Node[] = [];
@@ -1336,6 +1368,53 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
   const minFontPt = +(minFontIn * 72).toFixed(2);
   if (minFontPt < 5.5) issues.push(`smallest Visio font is ${minFontPt}pt (below the 5.5pt floor)`);
 
+  // Every sentence the author wrote has to survive somewhere a reader can find
+  // it. The sheet drops a label it cannot write anywhere legible and hands the
+  // wording to the workflow band, which is a fair trade only for as long as the
+  // band actually says it — and this is the one rule that cannot be satisfied
+  // by drawing less, because deleting the label is exactly what it checks for.
+  //
+  // Counted rather than merely looked for, because a drawing repeats its
+  // wording: eight parallel hops carrying one sentence are eight sentences the
+  // reader has to be able to account for, and a rule that stops at the first
+  // surviving copy is passed by muting the other seven.
+  const foldVsdx = (s: string): string => s
+    .toLowerCase()
+    .replace(/[\s\u3000]+/g, '')
+    .replace(/[.,;:!?、。（）()[\]「」"'`´’‘“”\-…]/g, '');
+  const textOf = (namePrefix: string): string => [
+    ...xml.matchAll(new RegExp(`<Shape [^>]*NameU="${namePrefix}\\.\\d+"[\\s\\S]*?<\\/Shape>`, 'g')),
+  ]
+    .map((m) => /<Text>([\s\S]*?)<\/Text>/.exec(m[0])?.[1] ?? '')
+    .join('\u0000');
+  // Connector text and workflow prose only. A service happening to be named
+  // after a verb in somebody's sentence is not that sentence surviving.
+  const spoken = foldVsdx(`${textOf('Connector')}\u0000${textOf('LegendText')}`);
+  const occurrences = (stem: string): number => {
+    if (!stem) return 0;
+    let count = 0;
+    for (let at = spoken.indexOf(stem); at >= 0; at = spoken.indexOf(stem, at + 1)) count += 1;
+    return count;
+  };
+  const wanted = new Map<string, { need: number; sample: string }>();
+  for (const edge of scenario.edges) {
+    const label = typeof edge.label === 'string' ? edge.label.trim() : '';
+    // Truncation is a different rule's business, so compare on a stem short
+    // enough that the exporter is always allowed to keep it.
+    const stem = foldVsdx(label).slice(0, 12);
+    if (!stem) continue;
+    const seen = wanted.get(stem);
+    if (seen) seen.need += 1; else wanted.set(stem, { need: 1, sample: label });
+  }
+  const lost: string[] = [];
+  for (const [stem, { need, sample }] of wanted) {
+    const found = occurrences(stem);
+    if (found < need) lost.push(`"${sample}" x${need - found}`);
+  }
+  if (lost.length > 0) {
+    issues.push(`the Visio sheet has lost connector wording: ${lost.slice(0, 3).join(', ')}`);
+  }
+
   // Workflow numbering must survive into Visio too, or the same drawing tells
   // a different story in PowerPoint and in Visio. Measured against the repaired
   // edges, which is what both exporters draw from.
@@ -1474,7 +1553,7 @@ async function main(): Promise<void> {
     compactScenario(), wideScenario(), oversizeScenario(), outlierScenario(),
     bandedScenario(), narrativeScenario(), barbellScenario(), parallelScenario(),
     ladderInGridScenario(), twinLaddersScenario(), strayLadderScenario(), legendCornerScenario(), duplicateStepsScenario(), denseZoneScenario(),
-    gridFanScenario(), gridFan3Scenario(), estateChainScenario(), chain24Scenario(), tripleMutedScenario(), estate72Scenario(),
+    gridFanScenario(), gridFan3Scenario(), fan8Tight5x5Scenario(), estateChainScenario(), chain24Scenario(), tripleMutedScenario(), estate72Scenario(),
     await generatedScenario(), await groupedGeneratedScenario(),
   ];
   const reports: Report[] = [];
