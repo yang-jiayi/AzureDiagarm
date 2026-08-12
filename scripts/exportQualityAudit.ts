@@ -512,6 +512,39 @@ function tightSubnetsScenario(): Scenario {
 }
 
 /**
+ * The same stack with the subnets sharing their edges.
+ *
+ * `stacked-subnets` and `tight-subnets` both leave a 23px gutter between tiers,
+ * so a zone name that drifts off its own band lands in blank paper and no rule
+ * about *whose* box it landed in can fire. Subnets drawn flush inside a virtual
+ * network share an edge — it is how the Architecture Center draws them — and
+ * then the paper above a band is not blank, it belongs to the tier above.
+ */
+function flushSubnetsScenario(): Scenario {
+  const nodes: Node[] = [];
+  const rows: Array<[string, string, number]> = [
+    ['fweb', 'Web subnet', 3],
+    ['fapp', 'Application subnet', 3],
+    ['fdata', 'Data subnet', 3],
+  ];
+  const names = [
+    'Azure Application Gateway', 'Azure App Service', 'Azure Functions',
+    'Azure SQL Database', 'Azure Cosmos DB', 'Azure Key Vault',
+  ];
+  rows.forEach(([id, label, count], tier) => {
+    nodes.push(grp(id, label, 0, tier * 95, 620, 95));
+    for (let i = 0; i < count; i += 1) {
+      nodes.push(svc(`${id}-${i}`, names[(tier * 2 + i) % names.length], 10 + i * 200, 10, id));
+    }
+  });
+  const edges: Edge[] = [
+    { id: 'fs1', source: 'fweb-0', target: 'fapp-0', label: 'Forwards' } as Edge,
+    { id: 'fs2', source: 'fapp-0', target: 'fdata-0', label: 'Queries' } as Edge,
+  ];
+  return { id: 'flush-subnets', nodes, edges };
+}
+
+/**
  * A long diagonal cascade — every hop stepping down and across, the shape a
  * hand-dragged flow takes once it outgrows a screen.
  *
@@ -2648,15 +2681,21 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
         if (!other.name.startsWith('zone-') || other.name.startsWith('zone-label-')) continue;
         if (other.name === `zone-${zoneId}`) continue;
         const trespass = overlapArea(title, other);
-        // Only when the name is not in its own box as well. An author who
-        // draws a compliance band across half a virtual network has drawn two
-        // rectangles that overlap, and every point inside one of them is
-        // inside the other — there is no placement the exporter could choose
-        // that would satisfy a flat "never inside another zone", so demanding
-        // it turns this rule into noise. What is always avoidable, and what
-        // the stacked-subnet defect actually was, is a name that sits inside a
-        // neighbour and nowhere near the box it names.
-        if (trespass > 0.01 * area && inside < 0.9 * area) {
+        // Only when the name is not in its own box as well — and only when the
+        // two boxes actually overlap. An author who draws a compliance band
+        // across half a virtual network has drawn two rectangles that overlap,
+        // and every point inside one of them is inside the other: there is no
+        // placement the exporter could choose that would satisfy a flat "never
+        // inside another zone", so demanding it turns this rule into noise.
+        //
+        // Gating that exemption on the title's own containment instead of on
+        // the zones' was too generous in the other direction. Two boxes that do
+        // not overlap at all have a placement that satisfies the rule by
+        // construction — inside one is outside the other — so a name 90% in its
+        // own box and 10% in a disjoint neighbour is an avoidable false claim
+        // that the old gate waved through.
+        const authored = overlapArea(own, other) > 0;
+        if (trespass > 0.01 * area && (!authored || inside < 0.9 * area)) {
           issues.push(`zone title "${title.text}" is written ${((trespass / area) * 100).toFixed(0)}% inside "${other.name}" and only ${((inside / area) * 100).toFixed(0)}% inside the "${zoneId}" it names`);
         }
       }
@@ -4149,7 +4188,7 @@ async function main(): Promise<void> {
     bandedScenario(), narrativeScenario(), barbellScenario(), hubFanScenario(), sharedServiceScenario(), tightGridScenario(), bandedTwoStraysScenario(), wideChainScenario(), grid5x5TightScenario(), parallelScenario(),
     oppositeStraysScenario(), cornerStraysScenario(), symmetricStraysScenario(),
     hubSpokeScenario(), scopeZoneScenario(), strayZonePairScenario(), zoneStrayScenario(),
-    boundaryVoidScenario(), stackedSubnetsScenario(), tightSubnetsScenario(), diagonalCascadeScenario(),
+    boundaryVoidScenario(), stackedSubnetsScenario(), tightSubnetsScenario(), flushSubnetsScenario(), diagonalCascadeScenario(),
     diagonalCascadeScenario(27, 'diagonal-cascade-27'),
     // Past the deck ceiling. A drawing this sparse needs one window per service
     // to reach seven points, so it is the shape that used to be coarsened until
