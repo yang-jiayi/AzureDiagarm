@@ -878,11 +878,37 @@ export function compactEmptyGutters(boxes: Map<string, ExportBox>): Map<string, 
       && box.y < zone.y + zone.h && box.y + box.h > zone.y
     ))
   );
-  const occupying = all.filter((box) => box.kind !== 'group' || holdsNothing(box));
-  if (all.length < 2 || occupying.length < 2) return boxes;
+  if (all.length < 2 || services.length < 2) return boxes;
+
+  /**
+   * The boxes that define emptiness on one axis.
+   *
+   * An empty zone names the space it stands in, so on the axis where it stands
+   * *between* things it is content and the band must not be closed underneath
+   * it. On an axis where it merely stretches *over* the drawing it is not: a
+   * caption band across the top of an architecture would otherwise report every
+   * horizontal gap as occupied and switch compaction off entirely, which is how
+   * two clusters 5,450px apart stayed 5,450px apart under a rectangle that
+   * covered neither of them. The distinction is per-axis because the same
+   * rectangle is usually both: the sovereign band stands above the drawing on y
+   * and spans it on x.
+   *
+   * "Stretches over" is measured against each service's own size so it scales
+   * with the drawing: a corridor whose edge merely abuts a region is still
+   * standing between them, while one that swallows a tile whole is not.
+   */
+  const occupyingOn = (start: (b: ExportBox) => number, size: (b: ExportBox) => number): ExportBox[] => {
+    const spans = (zone: ExportBox): boolean => services.some((box) => {
+      const over = Math.min(start(box) + size(box), start(zone) + size(zone)) - Math.max(start(box), start(zone));
+      return over > size(box) / 2;
+    });
+    return all.filter((box) => box.kind !== 'group' || (holdsNothing(box) && !spans(box)));
+  };
 
   /** Voids on one axis, as [start, gap, amount-to-remove] in ascending order. */
   const voids = (start: (b: ExportBox) => number, size: (b: ExportBox) => number): [number, number, number][] => {
+    const occupying = occupyingOn(start, size);
+    if (occupying.length < 2) return [];
     const spans = occupying
       .map((box) => [start(box), start(box) + size(box), size(box)] as [number, number, number])
       .sort((a, b) => a[0] - b[0]);
@@ -975,6 +1001,20 @@ export function fitBoxesWithin(
 ): Map<string, ExportBox> {
   const all = [...boxes.values()];
   if (all.length < 2) return boxes;
+  // The union is taken over the *services*, for the same reason
+  // `compactEmptyGutters` closes voids by them. A subscription rectangle drawn
+  // around the whole architecture is one span covering the axis, so counting it
+  // as solid made the union the entire drawing, left no whitespace to spend and
+  // returned the identity map — an ordinary annotation switched the fit off and
+  // handed the sheet to the uniform scaler, which takes the tiles down while
+  // the label point size stays where it is. A 40-service cascade lost 47% of
+  // its tile width to a rectangle drawn around it.
+  //
+  // `origin` and `end` still come from every box, because the frame is part of
+  // what has to fit; only the question "which parts cannot be given up" is
+  // answered by the shapes.
+  const solid = all.filter((b) => b.kind !== 'group');
+  const dense = solid.length >= 2 ? solid : all;
 
   const axis = (
     lo: (b: ExportBox) => number,
@@ -988,7 +1028,7 @@ export function fitBoxesWithin(
     if (end - origin <= limit) return null;
     // The union of the shapes is the part that cannot be given up.
     const merged: Array<[number, number]> = [];
-    for (const [from, to] of spans) {
+    for (const [from, to] of dense.map((b) => [lo(b), lo(b) + size(b)] as [number, number]).sort((a, b) => a[0] - b[0])) {
       const last = merged[merged.length - 1];
       if (last && from <= last[1]) last[1] = Math.max(last[1], to);
       else merged.push([from, to]);
@@ -1010,7 +1050,7 @@ export function fitBoxesWithin(
         mapped += Math.min(at - cursor, to - from);
         cursor = to;
       }
-      return mapped + Math.max(0, at - cursor);
+      return mapped + Math.max(0, at - cursor) * keep;
     };
   };
 

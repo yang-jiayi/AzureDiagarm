@@ -547,7 +547,14 @@ test('a drawing that already fits is returned untouched, and a zone keeps its me
   const zone = fitted.get('zone')!;
   const a = fitted.get('a')!;
   const far = fitted.get('far')!;
-  assert.equal(zone.w, 400, 'the zone keeps its own size — only the gap outside it is spent');
+  // The zone gives up the empty part of itself, exactly like any other gap. It
+  // used to keep all 400px because the union of "shapes that cannot be given
+  // up" was taken over every box including this one — which made a rectangle
+  // drawn around a whole architecture read as solid, left no whitespace to
+  // spend anywhere, and returned the identity map. What a zone must never lose
+  // is its contents.
+  assert.ok(zone.w < 400, 'the empty part of a zone is whitespace like any other');
+  assert.ok(zone.w >= a.w, `the zone was squeezed below the service inside it (${zone.w}px vs ${a.w}px)`);
   assert.ok(zone.x <= a.x && zone.x + zone.w >= a.x + a.w, 'and it still contains the service drawn inside it');
   assert.ok(far.x + far.w <= 801, `the far service came back onto the paper (${far.x + far.w}px)`);
   assert.ok(far.x >= zone.x + zone.w, 'without being pulled inside the zone it was never in');
@@ -564,4 +571,65 @@ test('shapes alone over the limit are squeezed to touching rather than into each
   for (let i = 1; i < xs.length; i += 1) {
     assert.equal(xs[i] - xs[i - 1], 150, `s${i} is not flush against s${i - 1}`);
   }
+});
+
+test('an empty band drawn over the drawing does not switch gutter compaction off', () => {
+  // A childless zone is treated as the content of the band it names, so that a
+  // labelled corridor between two regions is not compacted out of existence.
+  // Stretched *over* the drawing instead of standing between things, the same
+  // rule made it bridge every void it spanned: two clusters 5,450px apart
+  // stayed 5,450px apart under a caption that covered neither of them, and the
+  // sheet went out at 74.74in for a 16in drawing.
+  const map = new Map<string, ExportBox>();
+  map.set('scope', { id: 'scope', kind: 'group', label: 'Sovereign boundary', x: -80, y: -600, w: 7060, h: 400 });
+  for (let i = 0; i < 6; i += 1) map.set(`east${i}`, box(`east${i}`, (i % 3) * 200, Math.floor(i / 3) * 180));
+  for (let i = 0; i < 6; i += 1) map.set(`west${i}`, box(`west${i}`, 6000 + (i % 3) * 200, Math.floor(i / 3) * 180));
+
+  const out = compactEmptyGutters(map);
+  const span = Math.max(...[...out.values()].map((b) => b.x + b.w)) - Math.min(...[...out.values()].map((b) => b.x));
+  assert.ok(span < 3000, `the void under the band was never closed — still ${span.toFixed(0)}px wide`);
+  // The band still reaches both clusters: it lost the emptiness underneath it,
+  // not its meaning.
+  const band = out.get('scope')!;
+  assert.ok(band.x <= out.get('east0')!.x, 'the band no longer starts before the drawing it names');
+  assert.ok(band.x + band.w >= out.get('west2')!.x + out.get('west2')!.w, 'the band no longer reaches the far cluster');
+});
+
+test('a corridor standing between two regions keeps the band it names', () => {
+  // The other half of the same rule, and the reason it exists. Nothing is
+  // inside this zone and no service overlaps its span on x, so the space it
+  // names is the whole point of it and must not be closed.
+  const map = new Map<string, ExportBox>();
+  map.set('corridor', { id: 'corridor', kind: 'group', label: 'ExpressRoute circuit', x: 1000, y: -40, w: 3000, h: 400 });
+  for (let i = 0; i < 4; i += 1) map.set(`a${i}`, box(`a${i}`, (i % 2) * 200, Math.floor(i / 2) * 180));
+  for (let i = 0; i < 4; i += 1) map.set(`b${i}`, box(`b${i}`, 4100 + (i % 2) * 200, Math.floor(i / 2) * 180));
+
+  const out = compactEmptyGutters(map);
+  const corridor = out.get('corridor')!;
+  assert.ok(corridor.w > 2000, `the labelled corridor was compacted to ${corridor.w.toFixed(0)}px of its 3000`);
+});
+
+test('a frame drawn around the drawing does not make the fit a no-op', () => {
+  // The union of "what cannot be given up" is taken over the services. Counting
+  // an outer rectangle as solid made it span the axis, left no whitespace to
+  // spend and returned the identity map, so an ordinary subscription frame cost
+  // a 40-service cascade 47% of its tile width to the uniform scaler behind it.
+  const build = (framed: boolean): Map<string, ExportBox> => {
+    const map = new Map<string, ExportBox>();
+    if (framed) map.set('azure', { id: 'azure', kind: 'group', label: 'Azure', x: -80, y: -80, w: 40 * 900 + 160, h: 400 });
+    for (let i = 0; i < 40; i += 1) map.set(`s${i}`, box(`s${i}`, i * 900, 0));
+    return map;
+  };
+  const width = (m: Map<string, ExportBox>): number =>
+    Math.max(...[...m.values()].map((b) => b.x + b.w)) - Math.min(...[...m.values()].map((b) => b.x));
+
+  const plain = fitBoxesWithin(build(false), 9000, 100000);
+  const framed = fitBoxesWithin(build(true), 9000, 100000);
+  assert.ok(width(plain) <= 9001, `the unframed drawing did not fit (${width(plain).toFixed(0)}px)`);
+  assert.ok(width(framed) <= 9001, `the framed drawing did not fit (${width(framed).toFixed(0)}px)`);
+  // And the frame costs the services only its own padding, not their space. It
+  // was costing 22% of the tile width at 27 services and 77% at 90.
+  const spread = (m: Map<string, ExportBox>): number => m.get('s39')!.x - m.get('s0')!.x;
+  const lost = (spread(plain) - spread(framed)) / spread(plain);
+  assert.ok(lost < 0.02, `the frame cost the services ${(lost * 100).toFixed(0)}% of the room they had`);
 });

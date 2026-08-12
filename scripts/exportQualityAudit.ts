@@ -603,6 +603,58 @@ function strayZonePairScenario(): Scenario {
   return { id: 'stray-zone-pair', nodes, edges };
 }
 
+/**
+ * An empty annotation band drawn across the top of the whole drawing.
+ *
+ * One click in the editor (`addGroupBoxAtPosition`) makes an empty group box,
+ * and a sovereignty or tenant caption stretched over an architecture is among
+ * the commonest things drawn on top of one. It is empty in both senses that
+ * matter: nothing declares it as a parent and no tile is inside it.
+ *
+ * That combination made the band count as *occupied* — the rule that keeps a
+ * labelled corridor from being crushed — so it bridged every void it spanned
+ * and turned gutter compaction off for the whole drawing. Two clusters 5,450px
+ * apart stayed 5,450px apart, and the deck that had been one legible slide
+ * became three at 6.93pt.
+ */
+function bandAboveScenario(): Scenario {
+  const names = ['Azure Front Door', 'Azure App Service', 'Azure SQL Database'];
+  const cluster = (prefix: string, atX: number): Node[] => Array.from({ length: 6 }, (_, i) => (
+    svc(`${prefix}-${i}`, names[i % names.length], atX + (i % 3) * 200, Math.floor(i / 3) * 180)
+  ));
+  return {
+    id: 'band-above',
+    nodes: [
+      grp('scope', 'Sovereign boundary', -80, -600, 7060, 400),
+      ...cluster('east', 0),
+      ...cluster('west', 6000),
+    ],
+    edges: [
+      { id: 'b-1', source: 'east-0', target: 'east-1', label: 'Routes' },
+      { id: 'b-2', source: 'east-2', target: 'west-2', label: 'Replicates' },
+      { id: 'b-3', source: 'west-0', target: 'west-1', label: 'Serves' },
+    ] as Edge[],
+  };
+}
+
+/**
+ * The same diagonal cascade, inside the frame everyone draws around one.
+ *
+ * A subscription or "Azure" rectangle around the whole architecture is the most
+ * ordinary annotation there is, and it made `fitBoxesWithin` a no-op: the frame
+ * is one span covering the drawing, so the union of the shapes was the entire
+ * axis, there was no whitespace left to spend, and the identity map came back.
+ * The sheet then went to the uniform scaler, which takes the tiles down while
+ * the label point size stays where it is.
+ */
+function framedCascadeScenario(count = 40, id = 'framed-cascade'): Scenario {
+  const inner = diagonalCascadeScenario(count, id);
+  return {
+    ...inner,
+    nodes: [grp('azure', 'Azure subscription', -80, -80, count * 900 + 160, count * 620 + 235), ...inner.nodes],
+  };
+}
+
 function grp(id: string, label: string, x: number, y: number, w: number, h: number): Node {
   return { id, type: 'groupNode', position: { x, y }, style: { width: w, height: h }, data: { label } } as Node;
 }
@@ -3318,19 +3370,36 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
     // label between two regions, and it is the shape a void-closing bug
     // destroys, because it is by construction standing in the emptiest part of
     // the drawing.
+    //
+    // "Nothing underneath it" is per-axis, because the usual annotation is both
+    // at once. A sovereign caption stretched over an architecture holds no
+    // service, yet every gap between the clusters it covers lies within its
+    // width and is closed under it — so its exported width is not determined
+    // and demanding the author's is demanding the void back. Its height is
+    // determined, because on that axis it genuinely stands clear.
+    const spansOn = (
+      pos: (n: Node) => number, size: (n: Node) => number, zoneAt: number, zoneSize: number,
+    ): boolean => scenario.nodes.some((other) => {
+      if (other === node || other.type === 'groupNode') return false;
+      const over = Math.min(pos(other) + size(other), zoneAt + zoneSize) - Math.max(pos(other), zoneAt);
+      return over > size(other) / 2;
+    });
+    const nx = Number(node.position?.x ?? 0);
+    const ny = Number(node.position?.y ?? 0);
+    const spansX = spansOn((n) => Number(n.position?.x ?? 0), (n) => Number(n.width ?? 150), nx, drawnW);
+    const spansY = spansOn((n) => Number(n.position?.y ?? 0), (n) => Number(n.height ?? 75), ny, drawnH);
     const holdsAny = scenario.nodes.some((other) => {
       if (other === node || other.type === 'groupNode') return false;
       const ox = Number(other.position?.x ?? 0) + Number(other.width ?? 150) / 2;
       const oy = Number(other.position?.y ?? 0) + Number(other.height ?? 75) / 2;
       if (other.parentNode) return other.parentNode === node.id;
-      const nx = Number(node.position?.x ?? 0);
-      const ny = Number(node.position?.y ?? 0);
       return ox >= nx && ox <= nx + drawnW && oy >= ny && oy <= ny + drawnH;
     });
     const tileW = serviceRects.size > 0 ? Math.max(...[...serviceRects.values()].map((r) => r.w)) : 0;
     const scale = tileW > 0 ? tileW / 150 : 0;
-    const starved = !holdsAny && scale > 0 && drawnW > 0 && drawnH > 0
-      && (rect.w < 0.6 * drawnW * scale || rect.h < 0.6 * drawnH * scale);
+    const measurable = !holdsAny && scale > 0 && drawnW > 0 && drawnH > 0;
+    const starved = measurable
+      && ((!spansX && rect.w < 0.6 * drawnW * scale) || (!spansY && rect.h < 0.6 * drawnH * scale));
     if (rect.w < 0.05 || rect.h < 0.05 || starved) {
       issues.push(`zone "${String(node.data?.label ?? node.id)}" is exported ${rect.w.toFixed(3)}x${rect.h.toFixed(3)}in for a ${drawnW}x${drawnH} box the sheet draws at ${(drawnW * scale).toFixed(3)}x${(drawnH * scale).toFixed(3)}in — a shape flattened to a line is a shape deleted`);
     }
@@ -3636,14 +3705,23 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
     .filter((n) => n.type === 'groupNode' && !parentedZones.has(n.id))
     .map((n) => zoneRects.get(escAttr(String(n.data?.label ?? ''))))
     .filter((r): r is { x: number; y: number; w: number; h: number } => !!r);
-  const allRects = [
-    ...[...xml.matchAll(new RegExp('<Shape [^>]*NameU="Service\\.\\d+"[\\s\\S]*?<\\/Shape>', 'g'))]
-      .map((m) => rectOf(m[0])).filter((r): r is { x: number; y: number; w: number; h: number } => r !== null),
-    ...corridorRects,
-  ];
-  const widestVoid = (start: (r: { x: number; y: number; w: number; h: number }) => number,
-    size: (r: { x: number; y: number; w: number; h: number }) => number): number => {
-    const spans = allRects.map((r) => [start(r), start(r) + size(r)] as [number, number])
+  type VoidRect = { x: number; y: number; w: number; h: number };
+  const tileRects = [...xml.matchAll(new RegExp('<Shape [^>]*NameU="Service\\.\\d+"[\\s\\S]*?<\\/Shape>', 'g'))]
+    .map((m) => rectOf(m[0])).filter((r): r is VoidRect => r !== null);
+  const widestVoid = (start: (r: VoidRect) => number, size: (r: VoidRect) => number): number => {
+    // Per-axis, and for the same reason the exporter closes voids per-axis: a
+    // childless box standing *between* two clusters is the content of the band
+    // it names, but one stretched *over* the drawing is not. Counting the
+    // second as content is what let a sovereign caption across the top report
+    // 0.0in of void on a sheet carrying 56.8in of it — the audit was blinded by
+    // the identical rectangle that blinded the exporter, so the gate that
+    // should have caught the defect passed it clean.
+    const standsBetween = (zone: VoidRect): boolean => !tileRects.some((r) => {
+      const over = Math.min(start(r) + size(r), start(zone) + size(zone)) - Math.max(start(r), start(zone));
+      return over > size(r) / 2;
+    });
+    const spans = [...tileRects, ...corridorRects.filter(standsBetween)]
+      .map((r) => [start(r), start(r) + size(r)] as [number, number])
       .sort((a, b) => a[0] - b[0]);
     if (spans.length === 0) return 0;
     let reach = spans[0][1];
@@ -3685,6 +3763,7 @@ async function main(): Promise<void> {
     hubSpokeScenario(), scopeZoneScenario(), strayZonePairScenario(), zoneStrayScenario(),
     boundaryVoidScenario(), stackedSubnetsScenario(), tightSubnetsScenario(), diagonalCascadeScenario(),
     diagonalCascadeScenario(27, 'diagonal-cascade-27'),
+    bandAboveScenario(), framedCascadeScenario(),
     corridorZoneScenario(),
     ladderInGridScenario(), twinLaddersScenario(), strayLadderScenario(), legendCornerScenario(), duplicateStepsScenario(), denseZoneScenario(),
     metaChipScenario(), gridFanScenario(), gridFan3Scenario(), fan8Tight5x5Scenario(), metaSublineScenario(), grid5x5CaptionScenario(), longNameGridScenario(), longLabelGridScenario(), metaTightScenario(),     longNameFanScenario(), estateChainScenario(), chain24Scenario(), tripleMutedScenario(), estate72Scenario(), workflowProseScenario(), workflowLongProseScenario(), allCategoriesScenario(),
