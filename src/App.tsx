@@ -629,6 +629,19 @@ function validateRestoredNodes(restoredNodes: unknown[]): Node[] {
     if (value.parentNode !== undefined && typeof value.parentNode !== 'string') {
       throw new Error(`Node ${value.id} has an invalid parent`);
     }
+    // A restored file is the one place a node's size arrives from outside the
+    // editor, where the resize handles bound it. Nothing downstream re-checked
+    // it, so a hand-edited or corrupt file could hand the exporters a tile of
+    // any size at all — and a hairline one used to hang the export in a loop
+    // that could not terminate. That loop is fixed, but the size is still worth
+    // refusing here rather than carrying it into every consumer.
+    for (const field of ['width', 'height'] as const) {
+      const size = value[field];
+      if (size === undefined || size === null) continue;
+      if (typeof size !== 'number' || !Number.isFinite(size) || size <= 0 || size > 100_000) {
+        throw new Error(`Node ${value.id} has an invalid ${field}`);
+      }
+    }
 
     const data = value.data;
     const stringDataFields = [

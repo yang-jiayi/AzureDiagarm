@@ -1438,7 +1438,15 @@ function connectorLabelBox(
   // words are on the window slide that follows by exactly the route a tile name
   // too small to draw already takes.
   const widestGlyph = widestGlyphIn(wanted, fontSize);
-  const minChipW = widestGlyph + CHIP_INSET_IN * 2;
+  // TWO of them, not one. "Does a single letter fit?" is a test about the
+  // wrong thing: a column that holds exactly one glyph produces a chip that
+  // spells its sentence vertically, one character per line, and that is the
+  // artefact the guard exists to prevent — not a narrower version of it. It
+  // let 97 chips through at 1.8 characters per line, the worst of them 29
+  // copies of a 0.200 x 1.252in ribbon down the middle of the first slide,
+  // passing by 0.0022in. Room for two of the widest glyph is the least that
+  // can be called a line of text.
+  const minChipW = widestGlyph * 2 + CHIP_INSET_IN * 2;
   const text = wanted;
   // Wide-and-short is the shape that fits a ladder: a fan of six chips each
   // wrapped onto four lines is taller than the slide, and clamping them into
@@ -1495,6 +1503,27 @@ function connectorLabelBox(
   // place the "no room for a letter" test can be made. Testing against the cap
   // instead let a chip whose corridor was far narrower than the cap survive it.
   if (text !== '' && roomW + 0.002 < minChipW) {
+    // The bar is about the room this column has AT THIS SIZE, and smaller type
+    // needs a narrower column: `minChipW` scales with the font while `roomW`
+    // is floored at `0.34 * px`, which does not. So come down half a point at
+    // a time to the legibility floor before concluding that nothing can be
+    // drawn here — a fan whose rungs refuse the sentence at 8.4pt sets it
+    // perfectly well at 7pt, and dropping it instead loses seven labels that
+    // the reader could have read. Terminates: the size strictly decreases by
+    // half a point toward a fixed floor, and the floor never retries.
+    // Only for a ladder. A bundle is laid out at whatever size makes its rungs
+    // fit, so trading type size for room is already its contract; an ordinary
+    // chip's size is the reader's floor and shrinking it to win a placement
+    // moves the chip nearer a stranger's arrow than its own.
+    const floor = Math.min(OVERVIEW_LEGIBLE_PT, requestedFontSize);
+    if (bundle && !bundle.badgesOnly && fontSize > floor + 0.01) {
+      const smaller = Math.max(floor, fontSize - 0.5);
+      const retry = connectorLabelBox(
+        route, transform, requestedFontSize, px, clampTo, obstacles,
+        { ...bundle, font: smaller }, squeezeTo, foreignGap,
+      );
+      if (retry) return retry;
+    }
     // Nothing legible can be drawn here. A numbered hop still gets its callout
     // — the number is one glyph in a circle sized independently — and its
     // wording is on the workflow slide. An un-numbered one draws nothing at
@@ -2265,7 +2294,20 @@ function addNodeShape(
   // slices of it, and every one of those names appears in full on the slice
   // that follows, so below the resolvable floor the thumbnail draws the icon
   // and the tile and leaves the naming to them.
-  const named = !thumbnail || h * 12 >= OVERVIEW_LEGIBLE_PT;
+  // Width, as well as height, and on every slide rather than only the overview.
+  // The height test asks whether the type would be resolvable; this asks
+  // whether the tile has a column to set it in. A tile 0.08in wide draws "…",
+  // which names nothing — the same empty claim a zone caption cut to "P…"
+  // makes, and it is refused one function below for exactly that reason.
+  //
+  // Four characters is the bar the gate uses (`charsPerLine < 4`), so the
+  // drawing and the thing that checks it cannot disagree about when a name has
+  // stopped being a name. Below it the tile is icon-and-box, and `clipped`
+  // sends the full name to the index slide, which is where a cut tile name has
+  // always been recoverable.
+  const nameColumn = Math.max(0.05, w - 0.06);
+  const namedWidth = nameColumn >= 4 * (fontSize / 72);
+  const named = (!thumbnail || h * 12 >= OVERVIEW_LEGIBLE_PT) && namedWidth;
   // Giving up the name only works when the icon is left to carry the tile. A
   // service with no icon would otherwise be drawn as an empty grey box, which
   // says strictly less than type that is merely small. So the name comes back
@@ -2282,7 +2324,11 @@ function addNodeShape(
   // the icon did not fit and was dropped.
   let metaBand = named && showsMeta(h, px) && !!meta ? metaFontSize * 1.55 / 72 + 0.03 : 0;
 
-  const innerW = Math.max(0.05, w - 0.06);
+  // Floored above one ellipsis at the 7pt type floor (0.0525in), not at an
+  // arbitrary 0.05in: below that the fitter's own last resort does not fit the
+  // column it is being fitted to, which is a contradiction the shrink loop
+  // used to spin on.
+  const innerW = Math.max(0.06, w - 0.06);
   // How much of the name the tile can actually hold, rather than a flat 40
   // cells. The flat cap clipped names a three-line tile had ample room for —
   // "Azure Database for PostgreSQL フレキシ…" on a tile that fits the whole
@@ -2351,10 +2397,29 @@ function addNodeShape(
       labelLines = Math.max(1, wrappedLineCount(label, innerW, nameFont));
       labelBlockH = (labelLines * nameFont * 1.22) / 72;
     }
-    while (labelLines > 1 && roomFor(metaBand) < iconFloor) {
-      labelLines -= 1;
-      label = fitLabelToLines(box.label, innerW, nameFont / 72, labelLines, linesIn);
-      labelLines = Math.max(1, wrappedLineCount(label, innerW, nameFont));
+    // `labelLines` is both the loop's control variable AND re-derived from a
+    // measurement inside the body, so the body can put it back UP — and a
+    // `while` on a value the body re-measures cannot be proved to terminate.
+    // It did not: at the type floor `fitLabelToLines` returns "…", which is
+    // 0.0525in at 7pt and does not fit `innerW`'s own 0.05in floor, so a
+    // request for ONE line measures as two, and 2 → 1 → 2 → 1 forever. The
+    // exit condition cannot save it either, because `roomFor` is capped by
+    // `w * 0.34`, which does not depend on the font.
+    //
+    // This hangs the tab synchronously for any tile narrower than 0.113in at
+    // 7pt: no error, no watchdog, no way to close the page. File → Load
+    // reaches it, because the restore validator never checks `width`.
+    //
+    // So drive the loop by the REQUEST, which only ever falls, and stop the
+    // moment asking for fewer lines stops producing fewer.
+    let asked = labelLines;
+    while (asked > 1 && roomFor(metaBand) < iconFloor) {
+      asked -= 1;
+      const shorter = fitLabelToLines(box.label, innerW, nameFont / 72, asked, linesIn);
+      const measured = Math.max(1, wrappedLineCount(shorter, innerW, nameFont));
+      if (measured >= labelLines) break;
+      label = shorter;
+      labelLines = measured;
       labelBlockH = (labelLines * nameFont * 1.22) / 72;
     }
     drawnFont = nameFont;
@@ -2501,7 +2566,13 @@ function addNodeShape(
       objectName: `service-meta-${box.id}`,
     });
   }
-  return { caption: captionBand, meta: metaBandRect, clipped: label === box.label ? null : box.label };
+  return {
+    caption: captionBand,
+    meta: metaBandRect,
+    // A name the tile refused to set at all is as lost as one it cut, and it is
+    // the index slide that gets it back either way.
+    clipped: !named && box.label ? box.label : (label === box.label ? null : box.label),
+  };
 }
 
 /** The SKU · region · cost sub-line only earns its space on a legible tile. */
@@ -2838,7 +2909,12 @@ function addGroupShape(
   // below about 0.043in — the one geometry the corpus happened to sample — and
   // was silent across the whole ordinary range of small zones between.
   const widest = widestGlyphIn(caption, captionSize);
-  if (caption && widest > captionColumn(title.w) + 0.01) {
+  // Two of them for a caption of more than one character, for the reason the
+  // chip guard has: a column that holds one glyph draws the zone's name down
+  // the side of it, one letter per line, which no reader follows back to the
+  // box it names.
+  const needs = caption.length > 1 ? widest * 2 : widest;
+  if (caption && needs > captionColumn(title.w) + 0.01) {
     truncatedNames?.add(box.label);
     return { caption: { x: title.x, y: title.y, w: 0, h: 0 } };
   }
@@ -3442,6 +3518,14 @@ async function addEditableDiagram(
       // keeps its callout and the sentence goes to the workflow slide.
       // Membership of `promotable` already means "labelled and un-numbered", so
       // it is the whole test — the route's own `label` is the resolved one.
+      //
+      // Reachability, measured: every assignment to the sizer's `roomW` is
+      // clamped with lower bound `0.34 * px`, and the chip font is
+      // `clamp(9 * px, 7, 10)`. Since the bar became TWO of the widest glyph
+      // the drop needs `0.34*px + 0.002 < 2*widestGlyph + 0.12`, which fires
+      // well inside the corpus range (min px 0.7473 over 3,124 non-thumbnail
+      // samples) — before the two-glyph bar it needed px < 0.633 and was dead
+      // code. Kept, and now live.
       if (box === null && !bundle?.badgesOnly && !thumbnail
         && route.stepNumber === undefined) {
         const step = promotable.get(route.id);

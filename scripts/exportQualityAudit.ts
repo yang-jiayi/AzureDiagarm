@@ -71,6 +71,54 @@ function measuredWidestGlyphIn(text: string, fontSizePt: number): number {
   return (widest * fontSizePt) / 72;
 }
 
+/** Measured width of a run, in inches, from the real advance table. */
+function measuredTextWidthIn(text: string, fontSizePt: number): number {
+  let em = 0;
+  for (const character of text) em += measuredAdvanceEm(character);
+  return (em * fontSizePt) / 72;
+}
+
+/**
+ * Lines a run takes in a column, wrapped the way a renderer wraps it, using
+ * measured advances rather than the exporter's flat 0.54 em.
+ *
+ * `auditWrappedLines` shares its width model with `estimateTextWidthIn`, so it
+ * agrees with the exporter about every string the exporter mis-measures — and
+ * 0.54 em/char under-measures "HTTPS" (real: 0.710/0.524/0.524/0.560/0.531) by
+ * a fifth, which is a whole extra line in a narrow column. This is the string
+ * -width half of the independent oracle; `measuredWidestGlyphIn` was the
+ * glyph half.
+ */
+function measuredWrappedLines(text: string, widthIn: number, fontSizePt: number): number {
+  if (!text) return 1;
+  const box = Math.max(0.001, widthIn);
+  let lines = 0;
+  for (const paragraph of text.split(/\r\n|\r|\n/)) {
+    const runs = paragraph.split(/(?<=[\s\u2e80-\u9fff\uac00-\ud7af\uff00-\uff60\uffe0-\uffe6])/);
+    let rows = 1;
+    let used = 0;
+    for (const run of runs) {
+      const width = measuredTextWidthIn(run, fontSizePt);
+      if (used > 0 && used + width > box) { rows += 1; used = 0; }
+      if (width > box) {
+        // Break inside the run, one character at a time, because that is what
+        // the renderer does with a word wider than its column.
+        let row = 0;
+        for (const character of run) {
+          const advance = (measuredAdvanceEm(character) * fontSizePt) / 72;
+          if (row > 0 && row + advance > box) { rows += 1; row = 0; }
+          row += advance;
+        }
+        used = row;
+        continue;
+      }
+      used += width;
+    }
+    lines += Math.max(1, rows);
+  }
+  return Math.max(1, lines);
+}
+
 /**
  * How wide a run of text is at a point size, measured here rather than imported.
  *
@@ -842,6 +890,51 @@ function dataLabelPromotionScenario(): Scenario {
       ? ({ id: 't1', source: 'web-0', target: 'app-0', data: { label: 'Forwards' } } as unknown as Edge)
       : e)),
   };
+}
+
+/**
+ * Tiles with an authored width of a few pixels, alongside ordinary ones.
+ *
+ * The corpus could not reach this shape by scaling: across 9,607 tiles the
+ * narrowest reading-slide tile is 1.1076in, and a 20,000px zone still leaves
+ * the page scale above 0.82. It takes an AUTHORED width — which File → Load
+ * hands over without complaint, because `validateRestoredNodes` checks `id`,
+ * `position`, `data`, `type`, `parentNode`, tags, pricing and colour, and
+ * never looks at `width` or `height`.
+ *
+ * That gap hid a synchronous infinite loop in the tile-name fitter for any
+ * tile under 0.113in: no error, no watchdog — the event loop is blocked, so
+ * the tab freezes and force-quit is the only exit.
+ *
+ * Deliberately keeps three ordinary tiles beside the hairlines so the deck
+ * still has real geometry to measure rather than degenerating into a page of
+ * slivers that every other rule skips.
+ */
+function hairlineTilesScenario(): Scenario {
+  const icon = '/Azure_Public_Service_Icons/Icons/compute/10029-icon-service-Function-Apps.svg';
+  const widths = [8, 10, 14, 22, 40, 160, 160, 160];
+  const nodes: Node[] = widths.map((width, i) => ({
+    id: `hair${i}`,
+    type: 'azureNode',
+    position: { x: i * 260, y: (i % 2) * 200 },
+    width,
+    height: width < 60 ? 30 : 110,
+    data: {
+      label: 'Orders processing function app',
+      serviceName: 'Azure Functions',
+      category: 'compute',
+      iconPath: icon,
+      sku: 'EP2',
+      region: 'japaneast',
+    },
+  } as unknown as Node));
+  const edges: Edge[] = widths.slice(1).map((_, i) => ({
+    id: `hair-e${i}`,
+    source: `hair${i}`,
+    target: `hair${i + 1}`,
+    label: 'invokes',
+  } as Edge));
+  return { id: 'hairline-tiles', nodes, edges };
 }
 
 function unlabelledStepInflationScenario(): Scenario {
@@ -4089,10 +4182,19 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
     const column = Math.max(0, shape.w - shape.insetX);
     // Same 0.01in tolerance the exporter's own guard uses, so the rule and the
     // thing it measures cannot disagree about the borderline case.
-    if (widest > column + 0.01) {
+    //
+    // TWO of the widest glyph, matching the exporter's bar. Asking whether one
+    // letter fits cannot see a chip that spells its sentence one character per
+    // line, and 97 of them did exactly that while clearing the one-glyph test
+    // by 0.0022in.
+    const needs = text.length > 1 ? widest * 2 : widest;
+    if (needs > column + 0.01) {
+      const many = text.length > 1;
       issues.push(
         `overview draws "${text}" at ${pt}pt in a ${shape.w.toFixed(3)}in box — `
-        + `its widest letter needs ${widest.toFixed(3)}in and the column is ${column.toFixed(3)}in`,
+        + `its widest letter needs ${widest.toFixed(3)}in`
+        + (many ? `, so a line of them needs ${needs.toFixed(3)}in,` : '')
+        + ` and the column is ${column.toFixed(3)}in`,
       );
     }
   }
@@ -4112,7 +4214,7 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
       const pt = chip.fontSize;
       if (text === '' || !pt) continue;
       const column = Math.max(MIN_TEXT_COLUMN_IN, chip.w - chip.insetX);
-      const rows = auditWrappedLines(text, column, pt);
+      const rows = measuredWrappedLines(text, column, pt);
       const need = rows * ((pt * 1.3) / 72);
       if (need > chip.h + 0.02) {
         const where = at < 0 ? 'the overview' : `slide ${at + 2}`;
@@ -4287,6 +4389,11 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
   const chips = shapes.filter((s) => s.name.startsWith('connector-label-'));
 
   const minTileW = Math.min(...tiles.map((t) => t.w));
+  const namedTiles = new Set(labels.map((l) => l.name.replace('service-label-', '')));
+  const namedWidths = tiles
+    .filter((t) => namedTiles.has(t.name.replace('service-', '')))
+    .map((t) => t.w);
+  const namedMinTileW = namedWidths.length > 0 ? Math.min(...namedWidths) : minTileW;
   const minFont = Math.min(...labels.map((l) => l.fontSize ?? 99));
 
   for (const label of labels) {
@@ -4303,8 +4410,13 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
     }
   }
   for (const chip of chips) {
-    if (minTileW > 0 && chip.w > minTileW) {
-      issues.push(`edge chip "${chip.text}" is ${(chip.w / minTileW).toFixed(1)}x wider than the smallest node tile`);
+    // Measured against the smallest tile that still carries a NAME. An unnamed
+    // tile is not the drawing's unit of scale — it is a box the fitter has
+    // already decided cannot hold type — and letting an authored 8px sliver
+    // define "the size of a service" made every chip in the deck a violation
+    // while saying nothing about whether the chip dominates the drawing.
+    if (namedMinTileW > 0 && chip.w > namedMinTileW) {
+      issues.push(`edge chip "${chip.text}" is ${(chip.w / namedMinTileW).toFixed(1)}x wider than the smallest node tile`);
     }
   }
   // Collisions are only real between shapes printed on the same sheet. Reading
@@ -5662,11 +5774,16 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
   // survive any scaling the page limit forces.
   const NATURAL_TILE_IN = 150 / PX_PER_IN;
   const NATURAL_LABEL_IN = 0.105;
-  for (const group of xml.matchAll(/NameU="Service\.\d+" Name="([^"]*)"[\s\S]*?<Cell N="Width" V="([\d.]+)"[\s\S]*?<Cell N="Size" V="([\d.]+)"/g)) {
+  for (const group of xml.matchAll(/NameU="Service\.\d+" Name="([^"]*)"[\s\S]*?<Cell N="Width" V="([\d.]+)"[\s\S]*?<Cell N="Size" V="([\d.]+)"[\s\S]*?<Text>([\s\S]*?)<\/Text>/g)) {
     const label = group[1];
     const tileIn = +group[2];
     const fontIn = +group[3];
-    if (!label || tileIn <= 0 || fontIn <= 0) continue;
+    // The DRAWN text, not the `Name` attribute. The attribute deliberately
+    // carries the whole name whatever the tile does with it — that is how a cut
+    // name stays findable in Drawing Explorer — so measuring it reported a
+    // ratio for every shape including the ones that draw no text at all.
+    const drawn = group[4].replace(/<[^>]*>/g, '').trim();
+    if (!label || !drawn || tileIn <= 0 || fontIn <= 0) continue;
     const ratio = fontIn / tileIn;
     const natural = NATURAL_LABEL_IN / NATURAL_TILE_IN;
     if (ratio > natural * 1.05) {
@@ -6531,6 +6648,7 @@ async function main(): Promise<void> {
     stringStepPromotionScenario(),
     unlabelledStepInflationScenario(),
     dataLabelPromotionScenario(),
+  hairlineTilesScenario(),
     corridorZoneScenario(),
     ladderInGridScenario(), twinLaddersScenario(), strayLadderScenario(), legendCornerScenario(), duplicateStepsScenario(), denseZoneScenario(),
     metaChipScenario(), gridFanScenario(), gridFan3Scenario(), fan8Tight5x5Scenario(), metaSublineScenario(), grid5x5CaptionScenario(), longNameGridScenario(), longLabelGridScenario(), metaTightScenario(),     longNameFanScenario(), estateChainScenario(), chain24Scenario(), tripleMutedScenario(), estate72Scenario(),     workflowProseScenario(), workflowLongProseScenario(), workflowFanScenario(), workflowWideBandScenario(), allCategoriesScenario(), controlCharScenario(), shortServiceGridScenario(),

@@ -546,7 +546,25 @@ function serviceGroupXml(
     );
   }
   const labelLines = wrappedLinesIn(label, textW, labelFont);
-  const neededTextH = labelLines * labelFont * lineH + metaBand + 0.05 * fonts.scale;
+  // A tile with no column to set the name in draws no name. Visio wraps text
+  // inside the shape and does not clip it, so a 0.08in tile holding 7pt type
+  // spells the name one letter per line straight out through the bottom of the
+  // shape — the same artefact the deck's chips produced, from the same cause,
+  // and the type-to-tile ratio here reached 17.4x what the sheet draws at full
+  // size. Nothing is lost by refusing: the whole name stays on the shape's
+  // `Name` attribute and in its shape data, so Drawing Explorer and Visio's own
+  // search still find it, which is the recovery route this file already
+  // documents for a cut name.
+  //
+  // Four characters of its own type, which is the bar the audit holds the deck
+  // to, so the two drawings cannot disagree about when a name has stopped
+  // being a name.
+  const drawsName = textW >= 4 * labelFont;
+  if (!drawsName) label = '';
+  const drawsMeta = showsMeta && drawsName;
+  const neededTextH = drawsName
+    ? labelLines * labelFont * lineH + metaBand + 0.05 * fonts.scale
+    : 0;
   // Never taller than the tile it sits in. `0.16 * scale` is a floor so a band
   // is never degenerate, but a collapsed 12px node is 0.125in tall — shorter
   // than one line of legible type — and the floor then declared a band half as
@@ -594,11 +612,11 @@ function serviceGroupXml(
   // at a flat #1F2937, so the two exporters were disagreeing about what is
   // legible. Resolve the accent against the tile the same way the sub-line is.
   const nameColor = readableTextOn(palette.text, palette.fill);
-  const characterRows = showsMeta
+  const characterRows = drawsMeta
     ? `        <Row IX="0"><Cell N="Font" V="1"/><Cell N="Color" V="${nameColor}"/><Cell N="Size" V="${ff(labelFont)}"/></Row>
         <Row IX="1"><Cell N="Font" V="1"/><Cell N="Color" V="${metaColor}"/><Cell N="Size" V="${ff(fonts.meta)}"/></Row>`
     : `        <Row IX="0"><Cell N="Font" V="1"/><Cell N="Color" V="${nameColor}"/><Cell N="Size" V="${ff(labelFont)}"/></Row>`;
-  const textBody = showsMeta
+  const textBody = drawsMeta
     ? `<cp IX="0"/>${esc(label)}\n<cp IX="1"/>${esc(meta)}`
     : esc(label);
 

@@ -805,10 +805,17 @@ test('a shrunken fan is drawn at the size its chips were measured at', () => Pro
   // Handing the draw call the ordinary size instead leaves the text spilling out
   // of its own chip and over its own numbered callout - invisible to any test
   // that only compares shape rectangles, because the rectangles do not move.
+  //
+  // A rung this narrow may legitimately refuse the sentence rather than set it
+  // one glyph per line — but refusing is not the same as losing it. The ladder
+  // trades type size for room first and only then hands the wording to the
+  // workflow slide, so every hop still arrives as a chip or as a numbered
+  // callout.
   for (const count of [7, 8, 14]) {
     const { nodes, edges } = fan(count, (i) => `${FAN_LABEL} ${i + 1}`);
     const deck = await buildDeck(nodes, edges);
-    const chips = deck.slides.flatMap(annotationBoxes).filter((box) => box.name.startsWith('connector-label-'));
+    const shapes = deck.slides.flatMap(annotationBoxes);
+    const chips = shapes.filter((box) => box.name.startsWith('connector-label-'));
     assert.equal(chips.length, count, `fan of ${count} lost a label`);
     for (const chip of chips) {
       assert.ok(chip.pt >= 7, `${chip.name} is drawn at ${chip.pt}pt, below the legibility floor`);
@@ -823,8 +830,29 @@ test('a shrunken fan is drawn at the size its chips were measured at', () => Pro
   }
 }));
 
-test('a fan whose first label is short still lays out on one lattice', () => Promise.resolve().then(async () => {
-  // The rung height is the tallest chip in the bundle. Re-measuring only the
+test('no drawn chip sets its sentence one glyph per line', () => Promise.resolve().then(async () => {
+  // The drop guard used to ask "does a single letter fit?", which is a test
+  // about the wrong thing: a column that holds exactly one glyph draws the
+  // sentence vertically, one character per line. 97 chips cleared it, the worst
+  // by 0.0022in. A line of text means room for at least two of the widest glyph
+  // the run contains.
+  for (const count of [3, 7, 14]) {
+    const { nodes, edges } = fan(count, (i) => `${FAN_LABEL} ${i + 1}`);
+    const deck = await buildDeck(nodes, edges);
+    for (const chip of deck.slides.flatMap(annotationBoxes)) {
+      if (!chip.name.startsWith('connector-label-')) continue;
+      const glyph = (chip.pt * 1.0) / 72;
+      const column = chip.w - 0.12;
+      assert.ok(
+        column + 0.01 >= glyph * 2,
+        `${chip.name} is a ${chip.w.toFixed(3)}in ribbon at ${chip.pt}pt — `
+        + `its ${column.toFixed(3)}in column holds ${(column / glyph).toFixed(2)} glyph(s)`,
+      );
+    }
+  }
+}));
+
+test('a fan whose first label is short still lays out on one lattice', () => Promise.resolve().then(async () => {  // The rung height is the tallest chip in the bundle. Re-measuring only the
   // first route after a shrink reads a short label's height, the lattice
   // collapses below its own step, and the long siblings overlap.
   for (const count of [11, 12, 14, 20]) {
