@@ -1678,6 +1678,66 @@ function panelBurialScenario(): Scenario {
  * `Math.max(colW - 0.6, 0.4)` floor measured a row at 0.4in while drawing it
  * in 0.2583in, 1.55 times wider than the column it is set in.
  */
+/**
+ * Long, realistic service names on hairline tiles.
+ *
+ * The index rows read "<stub>  =  <full name>", which makes them the longest
+ * strings the exporter emits, and the column they are set in was a CONSTANT
+ * 3.4in - the one text decision in the file that never asked how wide its text
+ * was. Four of five rows wrapped to two lines of 0.135in inside a 0.2in box,
+ * and since rows are pitched at exactly the box height, the spill went through
+ * the neighbouring row: two services' names drawn through each other by 35% of
+ * the type size, in the panel whose entire purpose is that a shortened name
+ * stays readable.
+ */
+/**
+ * Eight services whose names share a long common prefix, on tiles too narrow to
+ * print it. Every one of them shortens to the same stub, which makes the stub
+ * useless as the index lookup key it is supposed to be: the index is on another
+ * page, so the reader cannot see both at once and the drawing has to be
+ * self-consistent on its own.
+ */
+function collidingStubsScenario(): Scenario {
+  const icon = '/Azure_Public_Service_Icons/Icons/compute/10029-icon-service-Function-Apps.svg';
+  const suffixes = ['alpha', 'bravo', 'charlie', 'delta', 'echo', 'foxtrot', 'golf', 'hotel'];
+  const nodes: Node[] = suffixes.map((suffix, i) => ({
+    id: `cs${i}`,
+    type: 'azureNode',
+    position: { x: i * 200, y: (i % 2) * 180 },
+    width: 18,
+    height: 30,
+    data: {
+      label: `Contoso platform shared services region ${suffix}`,
+      serviceName: 'Azure Functions',
+      category: 'compute',
+      iconPath: icon,
+    },
+  } as unknown as Node));
+  return { id: 'probe-colliding-stubs', nodes, edges: [] };
+}
+
+function longIndexRowsScenario(): Scenario {
+  const icon = '/Azure_Public_Service_Icons/Icons/compute/10029-icon-service-Function-Apps.svg';
+  const names = [
+    'Payments reconciliation and settlement processing function app',
+    'Customer identity and access management gateway for partner tenants',
+    'Regional telemetry ingestion and cold storage archival pipeline',
+    'Order intake validation service (EMEA production, zone redundant)',
+    'Azure Database for PostgreSQL flexible server - analytics replica',
+    'Nimbus', 'Quartz', 'Zephyr',
+  ];
+  const widths = [8, 10, 14, 22, 40, 160, 160, 160];
+  const nodes: Node[] = names.map((label, i) => ({
+    id: `ln${i}`,
+    type: 'azureNode',
+    position: { x: i * 210, y: (i % 2) * 200 },
+    width: widths[i],
+    height: widths[i] < 60 ? 30 : 110,
+    data: { label, serviceName: 'Azure Functions', category: 'compute', iconPath: icon },
+  } as unknown as Node));
+  return { id: 'probe-long-index', nodes, edges: [] };
+}
+
 function briefWorkflowStepsScenario(): Scenario {
   const icon = '/Azure_Public_Service_Icons/Icons/compute/10029-icon-service-Function-Apps.svg';
   const nodes: Node[] = Array.from({ length: 13 }, (_, i) => ({
@@ -7247,6 +7307,108 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
     );
   }
 
+  // EVERY PAGE THE EXPORTER EMITS MUST BE MEASURED BY SOME RULE. Page 2 was
+  // shipped, opened cleanly, and looked at by exactly one rule - `namedInIndex`,
+  // which reads its TEXT and never its GEOMETRY. So the index sized its column
+  // to a constant 3.4in while its rows were the longest strings in the file,
+  // wrapped to two lines of 0.135in inside a 0.2in box, and overprinted its
+  // neighbour by 35% of the type size. Moving furniture to a new page moved it
+  // out of the auditor's field of view, which is the same defect as a rule that
+  // cannot fire: a shipped artefact nothing looks at.
+  const INDEX_FONT_PT = 7.2;
+  const indexSpill: string[] = [];
+  const indexRows: Array<{ name: string; left: number; right: number; top: number; bottom: number }> = [];
+  for (const chunk of indexXml.split('<Shape ID=')) {
+    const named = /Name="(service-name-\d+)"/.exec(chunk.slice(0, 400));
+    if (!named) continue;
+    const w = /<Cell N="Width" V="([\d.]+)"/.exec(chunk);
+    const h = /<Cell N="Height" V="([\d.]+)"/.exec(chunk);
+    const pinY = /<Cell N="PinY" V="([-\d.]+)"/.exec(chunk);
+    const text = /<Text>([\s\S]*?)<\/Text>/.exec(chunk);
+    if (!w || !h || !text) continue;
+    const boxW = Number(w[1]);
+    const boxH = Number(h[1]);
+    const body = unescapeXml(text[1].replace(/<[^>]*>/g, '')).trim();
+    const lines = auditWrappedLines(body, boxW, INDEX_FONT_PT);
+    const needsIn = lines * (INDEX_FONT_PT / 72) * 1.35;
+    if (needsIn > boxH + 1e-6) {
+      indexSpill.push(
+        `${named[1]} needs ${needsIn.toFixed(4)}in (${lines} lines) in a ${boxH.toFixed(4)}in box`,
+      );
+    }
+    if (pinY) {
+      const pinX = /<Cell N="PinX" V="([-\d.]+)"/.exec(chunk);
+      const centre = Number(pinY[1]);
+      indexRows.push({
+        name: named[1],
+        left: pinX ? Number(pinX[1]) - boxW / 2 : 0,
+        right: pinX ? Number(pinX[1]) + boxW / 2 : boxW,
+        top: centre + needsIn / 2,
+        bottom: centre - needsIn / 2,
+      });
+    }
+  }
+  if (indexSpill.length > 0) {
+    issues.push(
+      `${indexSpill.length} index row(s) print more lines than their box holds, so they overprint the row `
+      + `above or below: ${indexSpill.slice(0, 3).join('; ')}`,
+    );
+  }
+  const collidingRows: string[] = [];
+  for (let i = 0; i < indexRows.length; i += 1) {
+    for (let j = i + 1; j < indexRows.length; j += 1) {
+      const a = indexRows[i];
+      const b = indexRows[j];
+      // Rows in DIFFERENT COLUMNS share a Y by design, so a bare Y comparison
+      // would report the whole index as broken the moment it needs two columns.
+      const across = Math.min(a.right, b.right) - Math.max(a.left, b.left);
+      if (across <= 1e-6) continue;
+      const overlap = Math.min(a.top, b.top) - Math.max(a.bottom, b.bottom);
+      if (overlap > 1e-6) {
+        collidingRows.push(`${a.name} and ${b.name} overlap by ${overlap.toFixed(4)}in`);
+      }
+    }
+  }
+  if (collidingRows.length > 0) {
+    issues.push(
+      `${collidingRows.length} pair(s) of index rows are drawn through each other: `
+      + `${collidingRows.slice(0, 3).join('; ')}`,
+    );
+  }
+
+  // ASK-60-A: COUNT COLLISIONS, NOT CHARACTERS. A stub is a lookup key into an
+  // index that lives on ANOTHER PAGE, so the reader cannot see both at once and
+  // the drawing has to be self-consistent alone. "N..." is a perfectly good key
+  // until a second tile draws "N..." too, at which point neither row in the
+  // index is matchable and the two tiles are indistinguishable. The bar is
+  // uniqueness over the strings actually DRAWN, shortened or not - a stub
+  // colliding with a name another tile drew in full is the same ambiguity.
+  const drawnStrings = new Map<string, Set<string>>();
+  for (const chunk of xml.split('<Shape ID=')) {
+    const head = chunk.slice(0, 400);
+    if (!/NameU="Service\.\d+"/.test(head)) continue;
+    const authoredAttr = /NameU="Service\.\d+" Name="([^"]*)"/.exec(head);
+    const text = /<Text>([\s\S]*?)<\/Text>/.exec(chunk);
+    if (!text) continue;
+    const body = unescapeXml(text[1].replace(/<[^>]*>/g, '')).split('\n')[0].trim();
+    if (!body) continue;
+    const authored = unescapeXml(authoredAttr?.[1] ?? '');
+    if (!drawnStrings.has(body)) drawnStrings.set(body, new Set());
+    drawnStrings.get(body)!.add(authored);
+  }
+  // Two tiles of the SAME service drawing the same string is not ambiguity, it
+  // is the truth: a diagram with twenty Copilot Studio nodes should say so
+  // twenty times. The defect is two DIFFERENTLY-named services collapsing onto
+  // one string, which is what makes the index rows unmatchable.
+  const ambiguous = [...drawnStrings].filter(([, names]) => names.size > 1);
+  if (ambiguous.length > 0) {
+    issues.push(
+      `${ambiguous.length} string(s) are drawn for more than one differently-named Visio service, so neither `
+      + `the tiles nor their index rows can be told apart: `
+      + `${ambiguous.slice(0, 3).map(([s, n]) => `${JSON.stringify(s)} for ${n.size} names`).join('; ')}`,
+    );
+  }
+
   // The other half of that bargain, and the rule the scaler actually broke: the
   // type has to stay in proportion to the tile it labels. Visio wraps a name
   // inside its shape, so holding the point size fixed while the shape shrinks
@@ -8264,6 +8426,8 @@ async function main(): Promise<void> {
   whitespaceLabelsScenario(),
   panelBurialScenario(),
   briefWorkflowStepsScenario(),
+  longIndexRowsScenario(),
+  collidingStubsScenario(),
   tallNarrowTilesScenario(),
     corridorZoneScenario(),
     ladderInGridScenario(), twinLaddersScenario(), strayLadderScenario(), legendCornerScenario(), duplicateStepsScenario(), denseZoneScenario(),

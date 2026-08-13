@@ -2264,6 +2264,19 @@ function addNodeShape(
    * are carried by those slices, so the thumbnail shows the shapes.
    */
   thumbnail = false,
+  /**
+   * The strings already drawn on THIS slide.
+   *
+   * A shortened name is a lookup key into the index slide, and the reader
+   * cannot see the index and the drawing at the same time, so the drawing has
+   * to be self-consistent on its own. Eight services sharing a long prefix on
+   * narrow tiles all cut to the same stub, and four of them cut all the way to
+   * a bare ellipsis, which tells the reader nothing and leaves four index rows
+   * unmatchable. Passing what has already been drawn lets a colliding tile fall
+   * back to a numeric key: unique, narrower than most letters, and resolved on
+   * the index slide exactly as any other stub is.
+   */
+  drawnHere?: Map<string, string>,
 ): {
   /** The box the service NAME is drawn in, not the room left over for it. */
   caption: { x: number; y: number; w: number; h: number } | null;
@@ -2527,6 +2540,38 @@ function addNodeShape(
     labelBlockH = chosen.blockH;
     drawnFont = nameFont;
   }
+
+  // A KEY THAT REPEATS IS NOT A KEY, and this is the LAST word on what the tile
+  // draws - the squeeze above re-picks the label to save the icon, so checking
+  // any earlier reads a string that is then thrown away. Everything above
+  // decides what THIS tile can hold; none of it can see what the tile beside it
+  // drew. Once a name is shortened it stops being a name and becomes a lookup
+  // key into the index slide, and two tiles holding the same key - or holding
+  // none at all - are indistinguishable to a reader who cannot see the index
+  // and the drawing at the same time. Eight services sharing a long prefix cut
+  // to a bare ellipsis and four of them landed on one slide. Lengthening is not
+  // always available: a column with room for 1.79 characters has nothing to
+  // lengthen into. A number is, and it is narrower than most letters.
+  // Compared against the AUTHORED name, not against `full` - `full` is itself
+  // already the fitted string, so the two are equal on exactly the tiles that
+  // cut the hardest and the test excluded the only case it was written for.
+  const authoredLabel = String(box.label ?? '').trim();
+  // A bare ellipsis is not a short name, it is an absent one: it carries no
+  // character of the service it stands for, so it is exactly as useful as a
+  // blank tile and no more distinguishable. Anything with no letter or digit in
+  // it fails as a lookup key for the same reason a repeated one does.
+  const informative = /[\p{L}\p{N}]/u.test(label);
+  const claimed = drawnHere?.get(label);
+  if (drawnHere && label !== authoredLabel
+    && (!informative || (claimed !== undefined && claimed !== authoredLabel))) {
+    const key = `${drawnHere.size + 1}`;
+    if (innerW >= 2 * widestGlyphIn(key, drawnFont)) {
+      label = key;
+      labelLines = Math.max(1, labelLinesFor(label));
+      labelBlockH = (labelLines * drawnFont * 1.35) / 72;
+    }
+  }
+  if (drawnHere && label) drawnHere.set(label, authoredLabel);
 
   // Fit the icon into whatever vertical room the label does not need, instead
   // of forcing a minimum that pushes the text out of the tile.
@@ -3343,8 +3388,11 @@ async function addEditableDiagram(
     // wrong claim rather than a blemish.
     captionBands.push({ ...bands.caption, weight: 60, caption: true });
   });
+  // Per SLIDE, not per deck: the reader looks at one slide at a time, so the
+  // keys only have to be distinguishable among the tiles they are drawn beside.
+  const drawnHere = new Map<string, string>();
   for (const service of shownServices) {
-    const bands = addNodeShape(pptx, slide, service, transform, service.iconPath ? icons.get(service.iconPath) : undefined, px, clampTo, thumbnail);
+    const bands = addNodeShape(pptx, slide, service, transform, service.iconPath ? icons.get(service.iconPath) : undefined, px, clampTo, thumbnail, drawnHere);
     // The overview is allowed to clip: every name it clips is drawn in full on
     // the slice that follows. Only a window slide's clipping is a real loss.
     if (bands.clipped && !thumbnail) truncatedNames.add(bands.clipped);

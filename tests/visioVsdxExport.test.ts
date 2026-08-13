@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import type { Edge, Node } from 'reactflow';
-import { buildVsdxPackage } from '../src/services/visioVsdxExporter.ts';
+import { buildVsdxPackage, wrappedLinesIn } from '../src/services/visioVsdxExporter.ts';
 
 /**
  * Minimal well-formedness check: tags must nest and close correctly and text
@@ -888,4 +888,101 @@ test('a workflow sentence is never set in a column too narrow to read', async ()
   assert.ok(Number.isFinite(narrowest), 'the workflow band must be drawn');
   assert.ok(narrowest >= 0.9,
     `a workflow sentence is set in ${narrowest.toFixed(4)}in, which is a couple of characters wide`);
+});
+
+// --- Round 61: the index page is measured, and a stub is a unique key ---
+
+/**
+ * The index rows read "<stub>  =  <full name>", which makes them the longest
+ * strings the exporter emits - and the column they were set in was a CONSTANT
+ * 3.4in, the one text decision in the file that never asked how wide its text
+ * was. legendTextXml emits no TxtWidth, so Visio wraps at the shape box: four
+ * of five rows became two lines of 0.135in inside a 0.2in box. Rows are pitched
+ * at exactly the box height, so the spill went through the neighbouring row.
+ */
+test('an index row is never taller than the box it is drawn in', async () => {
+  const names = [
+    'Payments reconciliation and settlement processing function app',
+    'Customer identity and access management gateway for partner tenants',
+    'Regional telemetry ingestion and cold storage archival pipeline',
+    'Order intake validation service (EMEA production, zone redundant)',
+    'Azure Database for PostgreSQL flexible server - analytics replica',
+    'Nimbus', 'Quartz', 'Zephyr',
+  ];
+  const widths = [8, 10, 14, 22, 40, 160, 160, 160];
+  const long: Node[] = names.map((label, i) => ({
+    id: `li${i}`,
+    type: 'azureNode',
+    position: { x: i * 210, y: (i % 2) * 200 },
+    width: widths[i],
+    height: widths[i] < 60 ? 30 : 110,
+    data: { label, serviceName: 'Azure Functions', category: 'compute' },
+  } as unknown as Node));
+  const pkg = await buildVsdxPackage(long, [], 'Long index rows', new Map());
+  const index = pkg.parts.find((part) => part.path === 'visio/pages/page2.xml')?.data as string;
+  assert.ok(index, 'the index page must be emitted');
+
+  // The exporter's own width model, at the legend's 0.1in type.
+  const LINE_IN = 0.1 * 1.35;
+  let rows = 0;
+  for (const chunk of index.split('<Shape ID=')) {
+    if (!/Name="service-name-\d+"/.test(chunk.slice(0, 400))) continue;
+    const w = /<Cell N="Width" V="([\d.]+)"/.exec(chunk);
+    const h = /<Cell N="Height" V="([\d.]+)"/.exec(chunk);
+    const text = /<Text>([\s\S]*?)<\/Text>/.exec(chunk);
+    if (!w || !h || !text) continue;
+    rows += 1;
+    const body = text[1].replace(/<[^>]*>/g, '').replace(/&amp;/g, '&')
+      .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"')
+      .replace(/&apos;/g, "'").trim();
+    const lines = wrappedLinesIn(body, Number(w[1]), 0.1);
+    assert.ok(lines * LINE_IN <= Number(h[1]) + 1e-6,
+      `an index row needs ${(lines * LINE_IN).toFixed(4)}in in a ${Number(h[1]).toFixed(4)}in box, `
+      + `so it prints through its neighbour: ${JSON.stringify(body.slice(0, 40))}`);
+  }
+  assert.ok(rows > 0, 'the index must actually have rows to measure');
+});
+
+/**
+ * A shortened name stops being a name and becomes a lookup key into an index
+ * that lives on ANOTHER PAGE - so the reader cannot see both at once, and the
+ * drawing has to be self-consistent on its own. Eight services sharing a long
+ * prefix on narrow tiles all cut to "C...", which leaves every one of their
+ * index rows unmatchable.
+ */
+test('two differently-named services never draw the same string', async () => {
+  const suffixes = ['alpha', 'bravo', 'charlie', 'delta', 'echo', 'foxtrot', 'golf', 'hotel'];
+  const colliding: Node[] = suffixes.map((suffix, i) => ({
+    id: `cs${i}`,
+    type: 'azureNode',
+    position: { x: i * 200, y: (i % 2) * 180 },
+    width: 18,
+    height: 30,
+    data: {
+      label: `Contoso platform shared services region ${suffix}`,
+      serviceName: 'Azure Functions',
+      category: 'compute',
+    },
+  } as unknown as Node));
+  const pkg = await buildVsdxPackage(colliding, [], 'Colliding stubs', new Map());
+  const xml = pageOfPkg(pkg);
+  const byString = new Map<string, Set<string>>();
+  for (const chunk of xml.split('<Shape ID=')) {
+    const head = chunk.slice(0, 400);
+    if (!/NameU="Service\.\d+"/.test(head)) continue;
+    const authored = /NameU="Service\.\d+" Name="([^"]*)"/.exec(head);
+    const text = /<Text>([\s\S]*?)<\/Text>/.exec(chunk);
+    if (!text) continue;
+    const body = text[1].replace(/<[^>]*>/g, '').split('\n')[0].trim();
+    if (!body) continue;
+    if (!byString.has(body)) byString.set(body, new Set());
+    byString.get(body)!.add(authored?.[1] ?? '');
+  }
+  assert.ok(byString.size > 0, 'the tiles must draw something');
+  for (const [drawn, names] of byString) {
+    // Repeats of the SAME service are the truth, not an ambiguity.
+    assert.equal(names.size, 1,
+      `${JSON.stringify(drawn)} is drawn for ${names.size} differently-named services, `
+      + 'so neither the tiles nor their index rows can be told apart');
+  }
 });

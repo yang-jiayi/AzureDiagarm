@@ -1136,7 +1136,7 @@ ${roundedRectGeometry()}
  * resource names that drew eight — every row overrunning its neighbours by
  * roughly a tenth of an inch, invisibly, because the guard used the same ratio.
  */
-function wrappedLinesIn(text: string, widthIn: number, fontSizeIn: number): number {
+export function wrappedLinesIn(text: string, widthIn: number, fontSizeIn: number): number {
   if (!text) return 1;
   // Visio wraps in `TxtWidth` and in nothing else. A floor here budgeted the
   // lines for a column the shape does not have: on a 0.1042in tile the count
@@ -1283,8 +1283,27 @@ function buildServiceNamePanel(
 ): { shapes: string[]; nextId: number; widthIn: number; heightIn: number } {
   const shapes: string[] = [];
   let id = startId;
-  const rowH = 0.2;
-  const colW = 3.4;
+  // MEASURE THE ROW, THEN SIZE THE COLUMN TO IT. This was the one text
+  // decision in the file that was a constant: colW was 3.4in whatever the row
+  // said, and legendTextXml emits no TxtWidth, so Visio wraps at the shape box
+  // and a row too long for 3.16in silently became two lines of 0.135in inside a
+  // 0.2in box. Rows are pitched at exactly rowH, so the spill had nowhere to go
+  // but through the neighbouring row: two services' names drawn through each
+  // other, in the panel whose whole purpose is that a shortened name stays
+  // readable. Making the row twice as long for ASK-59-C (stub = full name) put
+  // the longest string in the file in the only unmeasured box.
+  const rowText = entries.map((entry) => (
+    `${entry.drawn === '' ? '(not drawn)' : entry.drawn}  =  ${entry.authored}`
+  ));
+  const PAD_IN = 0.24;
+  // A cap, because one pathological name should not set the width of every
+  // column. Rows past it wrap, and the pitch below grows to carry the wrap.
+  const MAX_INDEX_COL_IN = 6.0;
+  const widest = rowText.reduce((w, row) => Math.max(w, estimateTextWidthIn(row, LEGEND_FONT_IN)), 0);
+  const colW = Math.min(MAX_INDEX_COL_IN, Math.max(2.4, widest + PAD_IN));
+  const textW = colW - PAD_IN;
+  const tallest = rowText.reduce((n, row) => Math.max(n, wrappedLinesIn(row, textW, LEGEND_FONT_IN)), 1);
+  const rowH = Math.max(0.2, tallest * LEGEND_FONT_IN * 1.35 + 0.06);
   // The page is sized to the index, not the index to the page, so there is no
   // clamp to get wrong and nothing to overflow. Kept near a printable shape by
   // filling a column to about a Letter page before starting the next one.
@@ -1314,7 +1333,7 @@ function buildServiceNamePanel(
 ${roundedRectGeometry()}
     </Shape>`);
   shapes.push(legendTextXml(id++, originX + 0.12, originY + boxH - 0.18, boxW - 0.24, 'Service names shortened on the drawing, in full'));
-  entries.forEach((entry, index) => {
+  entries.forEach((_entry, index) => {
     const column = Math.floor(index / perColumn);
     const row = index % perColumn;
     // BOTH HALVES. The stub is what the reader sees on the drawing, so it is
@@ -1324,8 +1343,8 @@ ${roundedRectGeometry()}
       id++,
       originX + 0.12 + column * colW,
       originY + 0.14 + row * rowH,
-      colW - 0.24,
-      `${entry.drawn === '' ? '(not drawn)' : entry.drawn}  =  ${entry.authored}`,
+      textW,
+      rowText[index],
       rowH,
       `service-name-${index}`,
     ));
@@ -1741,6 +1760,7 @@ export async function buildVsdxPackage(
   // Names the tiles could not hold in full, for the panel that gives the sheet
   // the recovery route the deck has had all along.
   const shortenedNames: Array<{ authored: string; drawn: string }> = [];
+  const drawnByTile = new Map<string, string>();
   for (const service of services) {
     const rect = toRect(service);
     const groupId = nextId++;
@@ -1790,7 +1810,7 @@ export async function buildVsdxPackage(
     // "Which names did the tile shorten?" is answered by exactly one piece of
     // code - the one that wrote the shape - so the panel cannot drift out of
     // step with the drawing the way a second copy of the fitting rules would.
-    const tileXml = serviceGroupXml(
+    let tileXml = serviceGroupXml(
       { group: groupId, rect: rectId, icon: iconId },
       rect,
       service,
@@ -1801,13 +1821,50 @@ export async function buildVsdxPackage(
       fonts,
     );
     const authoredName = String(service.label ?? '').trim();
-    const drawnName = (/<Text>([\s\S]*?)<\/Text>/.exec(tileXml)?.[1] ?? '')
+    const readDrawn = (src: string): string => (/<Text>([\s\S]*?)<\/Text>/.exec(src)?.[1] ?? '')
       .replace(/<[^>]*>/g, '')
       .split('\n')[0]
-      .trim();
-    if (authoredName && drawnName
+      .trim()
       .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"')
-      .replace(/&apos;/g, "'").replace(/&amp;/g, '&') !== authoredName) {
+      .replace(/&apos;/g, "'").replace(/&amp;/g, '&');
+    let drawnName = readDrawn(tileXml);
+    // A STUB IS A LOOKUP KEY, AND A KEY THAT REPEATS IS NOT A KEY. The index is
+    // on another page, so the reader cannot see it and the drawing at the same
+    // time: the drawing has to be self-consistent alone. Eight services sharing
+    // a long prefix on narrow tiles all shortened to "C…", which makes both the
+    // tiles and their index rows unmatchable. Lengthening is not always
+    // available - a tile with room for 1.79 characters has nothing to lengthen
+    // into - so a colliding tile falls back to a numeric key, which is unique,
+    // narrower than most letters, and resolves in the index exactly as a stub
+    // does. Never blank the tile: a longer key costs nothing, a blank tile
+    // costs everything.
+    if (authoredName && drawnName !== authoredName
+      && (!/[\p{L}\p{N}]/u.test(drawnName)
+        || (drawnByTile.has(drawnName) && drawnByTile.get(drawnName) !== authoredName))) {
+      const key = `${drawnByTile.size + 1}`;
+      tileXml = serviceGroupXml(
+        { group: groupId, rect: rectId, icon: iconId },
+        rect,
+        { ...service, label: key },
+        paletteForService(service),
+        relId,
+        properties,
+        meta,
+        fonts,
+      );
+      // The KEY is what gets drawn; the NAME attribute still has to carry the
+      // service the shape actually is. Visio's Name is what a reader sees in
+      // the shape window and what every cross-format check identifies a tile
+      // by, so letting the re-render stamp "2" over it would rename the service
+      // rather than merely abbreviate its caption.
+      tileXml = tileXml.replace(
+        `NameU="Service.${groupId}" Name="${esc(key)}"`,
+        `NameU="Service.${groupId}" Name="${esc(authoredName)}"`,
+      );
+      drawnName = readDrawn(tileXml);
+    }
+    if (drawnName) drawnByTile.set(drawnName, authoredName);
+    if (authoredName && drawnName !== authoredName) {
       shortenedNames.push({ authored: authoredName, drawn: drawnName });
     }
     shapes.push(tileXml);
