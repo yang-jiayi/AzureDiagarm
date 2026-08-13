@@ -124,6 +124,7 @@ import {
   stripHash,
   truncateLabel,
   widestGlyphIn,
+  drawableInColumn,
   advanceWidthIn,
   trailingWhitespaceIn,
   usedConnectionLegend,
@@ -2352,7 +2353,7 @@ function addNodeShape(
   // characters a line. The cross-format rule caught it as a divergence from
   // Visio, which named both; two tiles of 0.57 square inches were losing their
   // names to an arithmetic accident rather than to a legibility limit.
-  const namedWidth = nameColumn >= 2 * widestGlyphIn(box.label, nameFloorPt);
+  const namedWidth = drawableInColumn(box.label, nameFloorPt, nameColumn);
   // And once the tile is allowed to draw its name, the name is set at a size
   // the COLUMN can hold, not only one the height implies. A 0.78in-wide tile
   // is 13pt tall enough and 2.9 characters wide, so the height-derived size

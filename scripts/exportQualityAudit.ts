@@ -94,6 +94,67 @@ const YU_GOTHIC_EXTRA_EM: Record<string, number> = {
  */
 const AUDIT_SPACE_EM = 0.274;
 
+/**
+ * Latin-1 Supplement and Latin Extended-A, U+00A1 to U+017F, measured from the
+ * installed font with GDI+ - the gate's own copy, taken from its own run.
+ *
+ * These fell through to the 1 em unknown fallback, which is 91% over for `é`.
+ * That made the gate agree with the exporter that a 0.190in column could not
+ * hold `Réseau privé sécurisé`, when the widest glyph in that string is an `R`
+ * at 0.598 em and the column held it comfortably. A shared blind spot reads
+ * exactly like a passing test.
+ */
+const YU_GOTHIC_LATIN_EM = [
+  0.284, 0.539, 0.539, 0.556, 0.539, 0.239, 0.448, 0.414, 0.89, 0.392,
+  0.506, 0.684, 0, 0.89, 0.415, 0.377, 0.684, 0.366, 0.366, 0.282,
+  0.577, 0.458, 0.217, 0.205, 0.351, 0.431, 0.506, 0.906, 0.931, 0.952,
+  0.448, 0.645, 0.645, 0.645, 0.645, 0.645, 0.645, 0.86, 0.619, 0.506,
+  0.506, 0.506, 0.506, 0.266, 0.266, 0.266, 0.266, 0.701, 0.748, 0.754,
+  0.754, 0.754, 0.754, 0.754, 0.684, 0.754, 0.687, 0.687, 0.687, 0.687,
+  0.553, 0.56, 0.544, 0.509, 0.509, 0.509, 0.509, 0.509, 0.509, 0.832,
+  0.462, 0.523, 0.523, 0.523, 0.523, 0.242, 0.242, 0.242, 0.242, 0.559,
+  0.566, 0.586, 0.586, 0.586, 0.586, 0.586, 0.684, 0.586, 0.566, 0.566,
+  0.566, 0.566, 0.484, 0.588, 0.484, 0.65, 0.554, 0.65, 0.554, 0.65,
+  0.554, 0.683, 0.519, 0.683, 0.519, 0.683, 0.519, 0.683, 0.519, 0.744,
+  0.672, 0.744, 0.578, 0.618, 0.555, 0.618, 0.555, 0.618, 0.555, 0.618,
+  0.555, 0.618, 0.555, 0.728, 0.547, 0.728, 0.547, 0.728, 0.547, 0.728,
+  0.547, 0.746, 0.58, 0.746, 0.582, 0.298, 0.266, 0.298, 0.266, 0.297,
+  0.266, 0.297, 0.266, 0.298, 0.266, 0.676, 0.542, 0.4, 0.296, 0.691,
+  0.531, 0.531, 0.596, 0.266, 0.596, 0.266, 0.596, 0.358, 0.596, 0.354,
+  0.596, 0.265, 0.749, 0.58, 0.749, 0.58, 0.749, 0.58, 0.641, 0.749,
+  0.58, 0.732, 0.559, 0.732, 0.559, 0.732, 0.559, 0.931, 0.928, 0.671,
+  0.366, 0.671, 0.366, 0.671, 0.366, 0.628, 0.507, 0.628, 0.507, 0.628,
+  0.507, 0.531, 0.424, 0.626, 0.351, 0.626, 0.406, 0.626, 0.35, 0.739,
+  0.58, 0.739, 0.58, 0.739, 0.58, 0.739, 0.58, 0.739, 0.58, 0.74,
+  0.58, 0.93, 0.774, 0.65, 0.489, 0.553, 0.612, 0.455, 0.612, 0.455,
+  0.57, 0.452, 0.316,
+];
+
+/**
+ * XML entities, undone.
+ *
+ * Every rule that harvests text back out of an emitted file reads it escaped:
+ * a slide carrying `Backup &amp; Recovery` is correct OOXML for `Backup &
+ * Recovery`, but a comparison against the authored label sees two different
+ * strings and reports that the deck dropped the name. The measurement rules
+ * are worse than the comparison ones - `&amp;` measures 2.975 em against `&`'s
+ * 0.800, so a correct text block is declared 3.7x short of its own ink.
+ *
+ * The direction is always over-measure, so this class of bug produces false
+ * RED rather than misses. On a project where the gate arbitrates every round,
+ * a gate that cries defect is as expensive as one that stays quiet.
+ */
+function unescapeXml(text: string): string {
+  return text
+    .replace(/&#x([0-9a-fA-F]+);/g, (_m, hex: string) => String.fromCodePoint(parseInt(hex, 16)))
+    .replace(/&#(\d+);/g, (_m, dec: string) => String.fromCodePoint(Number(dec)))
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, '&');
+}
+
 /** True when `character` has a measured advance rather than the fallback. */
 function hasAuditAdvance(character: string): boolean {
   if (/\s/.test(character)) return true;
@@ -102,6 +163,7 @@ function hasAuditAdvance(character: string): boolean {
   if (YU_GOTHIC_EXTRA_EM[character] !== undefined) return true;
   const code = character.codePointAt(0) ?? 0;
   if (code >= 0x10000) return true;
+  if (code >= 0xa1 && code <= 0x17f) return true;
   return code >= 33 && code <= 126;
 }
 
@@ -123,6 +185,7 @@ function measuredAdvanceEm(character: string): number {
   if (extra !== undefined) return extra;
   const code = character.codePointAt(0) ?? 0;
   if (code >= 0x10000) return 1.36;
+  if (code >= 0xa1 && code <= 0x17f) return YU_GOTHIC_LATIN_EM[code - 0xa1];
   return code >= 33 && code <= 126 ? YU_GOTHIC_ADVANCE_EM[code - 33] : 1;
 }
 
@@ -135,14 +198,21 @@ function measuredTrailingWsIn(text: string, fontSizePt: number): number {
   return (em * fontSizePt) / 72;
 }
 
-/** Widest character in `text`, in inches, from the measured table. */
+/**
+ * Widest character in `text`, in inches, from the measured table.
+ *
+ * An unmeasured character is charged the NARROWEST measured advance here, not
+ * the widest. This is the one measurement in the gate that decides whether the
+ * exporter was entitled to withhold a name, and a rule that guesses high there
+ * agrees with the exporter that a column was too narrow when it was not.
+ */
 function measuredWidestGlyphIn(text: string, fontSizePt: number): number {
   let widest = 0;
   for (const character of text) {
     // Whitespace is not a glyph: it advances, but a column that holds only a
     // space holds no ink.
     if (/\s/.test(character)) continue;
-    widest = Math.max(widest, measuredAdvanceEm(character));
+    widest = Math.max(widest, hasAuditAdvance(character) ? measuredAdvanceEm(character) : 0.205);
   }
   return (widest * fontSizePt) / 72;
 }
@@ -150,7 +220,17 @@ function measuredWidestGlyphIn(text: string, fontSizePt: number): number {
 /** Measured width of a run, in inches, from the real advance table. */
 function measuredTextWidthIn(text: string, fontSizePt: number): number {
   let em = 0;
-  for (const character of text) em += measuredAdvanceEm(character);
+  let previous = '';
+  for (const character of text) {
+    // A flag is two regional indicators and a skin tone is a base plus a
+    // modifier; both draw as ONE glyph, so only the first is charged.
+    const joined = /[\u{1f3fb}-\u{1f3ff}]/u.test(character)
+      || (/[\u{1f1e6}-\u{1f1ff}]/u.test(character) && /[\u{1f1e6}-\u{1f1ff}]/u.test(previous))
+      || (previous !== '' && /[\u200b-\u200f\u2060\ufe00-\ufe0f\ufeff]/.test(previous)
+        && (character.codePointAt(0) ?? 0) >= 0x10000);
+    if (!joined) em += measuredAdvanceEm(character);
+    previous = character;
+  }
   return (em * fontSizePt) / 72;
 }
 
@@ -424,14 +504,14 @@ function parseShapes(xml: string): Shape[] {
     const off = /<a:off x="(-?\d+)" y="(-?\d+)"\/>/.exec(body);
     const ext = /<a:ext cx="(\d+)" cy="(\d+)"\/>/.exec(body);
     if (!off || !ext) continue;
-    const texts = [...body.matchAll(/<a:t>([\s\S]*?)<\/a:t>/g)].map((t) => t[1]);
+    const texts = [...body.matchAll(/<a:t>([\s\S]*?)<\/a:t>/g)].map((t) => unescapeXml(t[1]));
     // Per paragraph, joined with the break the renderer actually draws. Joining
     // every `<a:t>` with nothing at all made a shape carrying five paragraphs
     // indistinguishable from one carrying a single line, so no rule in this
     // file could see a hard break — the exact blind spot that let a sixteen-row
     // table measure 5.83in and draw 10.33in.
     const paragraphs = [...body.matchAll(/<a:p>([\s\S]*?)<\/a:p>/g)]
-      .map((p) => [...p[1].matchAll(/<a:t>([\s\S]*?)<\/a:t>/g)].map((t) => t[1]).join(''));
+      .map((p) => [...p[1].matchAll(/<a:t>([\s\S]*?)<\/a:t>/g)].map((t) => unescapeXml(t[1])).join(''));
     const sz = /sz="(\d+)"/.exec(body);
     const x = +off[1] / EMU_PER_INCH;
     const y = +off[2] / EMU_PER_INCH;
@@ -478,7 +558,7 @@ function parseShapes(xml: string): Shape[] {
         color: /<a:srgbClr val="([0-9A-Fa-f]{6})"/.exec(rpr?.[1] ?? '')?.[1]?.toLowerCase() ?? null,
         sizePt: (+(/<a:rPr[^>]*\bsz="(\d+)"/.exec(rb)?.[1] ?? 0) || 1800) / 100,
         bold: /<a:rPr[^>]*\bb="1"/.test(rb),
-        text: (/<a:t>([\s\S]*?)<\/a:t>/.exec(rb)?.[1] ?? '').trim(),
+        text: unescapeXml(/<a:t>([\s\S]*?)<\/a:t>/.exec(rb)?.[1] ?? '').trim(),
       };
     });
     shapes.push({
@@ -1077,6 +1157,120 @@ function probeArrowScenario(): Scenario {
       } as unknown as Node);
     });
   return { id: 'probe-arrow', nodes, edges };
+}
+
+/**
+ * The same tile, twice, spelled once with accents and once without.
+ *
+ * Latin-1 and Latin Extended-A had no measured advance and took the 1 em
+ * unknown-character fallback, which is 91% over for `e-acute` and 276% over
+ * for a dotless `i`. The fallback was defended as harmless over-reservation:
+ * charge too much and the type shrinks or buys a line it did not need. That
+ * reasoning is false for exactly one caller. `widestGlyphIn` decides whether a
+ * tile is wide enough to be worth naming at all, so an over-charge there does
+ * not shrink anything - it DELETES the name, and a 0.190in column that really
+ * holds this string was told its widest glyph was a full em when the true
+ * widest is an `R` at 0.598.
+ *
+ * The pair is the whole point. Both tiles are 0.250 x 1.563in and differ only
+ * in four accents, so any rule that reports one drawn and the other missing is
+ * describing the width model and nothing else. Every European language a
+ * customer might name a resource group in lives in this range.
+ */
+function probeAccentScenario(): Scenario {
+  const icon = '/Azure_Public_Service_Icons/Icons/compute/10029-icon-service-Function-Apps.svg';
+  const names = [
+    'R\u00e9seau priv\u00e9 s\u00e9curis\u00e9',
+    'Reseau prive securise',
+    'Cami\u00f3n log\u00edstica an\u00e1lisis',
+    'Zar\u0105dzanie sieci\u0105 wirtualn\u0105',
+  ];
+  const nodes: Node[] = names.map((label, i) => ({
+    id: `acc${i}`,
+    type: 'azureNode',
+    position: { x: (i % 2) * 120, y: Math.floor(i / 2) * 260 },
+    width: i < 2 ? 24 : 26,
+    height: 150,
+    data: { label, serviceName: 'Virtual Network', category: 'networking', iconPath: icon },
+  } as unknown as Node));
+  nodes.push({
+    id: 'acchub',
+    type: 'azureNode',
+    position: { x: 420, y: 130 },
+    width: 150,
+    height: 75,
+    data: { label: 'Hub virtual network', serviceName: 'Virtual Network', category: 'networking', iconPath: icon },
+  } as unknown as Node);
+  const edges: Edge[] = names.map((_, i) => (
+    { id: `acce${i}`, source: `acc${i}`, target: 'acchub', label: 'peers' } as Edge
+  ));
+  // Sizes at which the 20% over-charge changes the DRAWN STRING rather than
+  // the draw/skip decision. At 80x55 and 140x30 the measured table sets
+  // `Reseau prive securise partage` whole and the fallback cuts it to
+  // `Reseau prive secu...partage` - the tile had the room all along, and the
+  // ellipsis is the only thing the reader ever sees of the difference.
+  [[80, 55], [90, 55], [140, 30], [50, 75]].forEach(([w, h], i) => {
+    nodes.push({
+      id: `acc-cut${i}`,
+      type: 'azureNode',
+      position: { x: 700 + (i % 2) * 340, y: 420 + Math.floor(i / 2) * 220 },
+      width: w,
+      height: h,
+      data: {
+        label: 'R\u00e9seau priv\u00e9 s\u00e9curis\u00e9 partag\u00e9',
+        serviceName: 'Virtual Network',
+        category: 'networking',
+        iconPath: icon,
+      },
+    } as unknown as Node);
+  });
+  return { id: 'probe-accent', nodes, edges };
+}
+
+/**
+ * Ordinary tiles whose names contain an ampersand.
+ *
+ * `Backup & Recovery` is written into a slide as `Backup &amp; Recovery`,
+ * which is correct OOXML and the only legal way to write it. Every rule that
+ * read text back out of an emitted file compared and MEASURED that escaped
+ * form: the comparison saw two different strings and reported that the deck
+ * had dropped a name it had drawn perfectly, and the measurement charged
+ * `&amp;` 2.975 em against `&`'s 0.800, declaring a correct text block 3.7x
+ * short of its own ink.
+ *
+ * The direction is always over-measure, so this is a false-RED class rather
+ * than a miss - which on a gate that arbitrates every round costs exactly as
+ * much as a miss. The third name is the control: same length, same structure,
+ * no ampersand.
+ */
+function probeAmpScenario(): Scenario {
+  const icon = '/Azure_Public_Service_Icons/Icons/compute/10029-icon-service-Function-Apps.svg';
+  const names = [
+    'Backup & Recovery & Archive vault',
+    'R&D analytics & reporting workspace',
+    'Ordinary control plane workspace',
+    'Identity <core> "primary" workspace',
+  ];
+  const nodes: Node[] = names.map((label, i) => ({
+    id: `amp${i}`,
+    type: 'azureNode',
+    position: { x: (i % 2) * 320, y: Math.floor(i / 2) * 200 },
+    width: 150,
+    height: 75,
+    data: {
+      label,
+      serviceName: 'Recovery Services',
+      category: 'management',
+      iconPath: icon,
+      sku: 'GRS',
+      region: 'japaneast',
+    },
+  } as unknown as Node));
+  const edges: Edge[] = [
+    { id: 'ampe0', source: 'amp0', target: 'amp1', label: 'replicates' } as Edge,
+    { id: 'ampe1', source: 'amp2', target: 'amp3', label: 'audits & logs' } as Edge,
+  ];
+  return { id: 'probe-amp', nodes, edges };
 }
 
 function hairlineTilesScenario(): Scenario {
@@ -3555,7 +3749,15 @@ function auditNativeConversion(
       // the emitted XML keeps each paragraph in its own `<a:t>`, so a
       // whole-string search for a multi-paragraph label can never match.
       const paragraphs = label.text.split('\n').filter((p) => p.trim() !== '');
-      if (!paragraphs.every((p) => after.includes(escapeXml(p)))) {
+      // Against the UNESCAPED runs, not against a re-escaped needle searched in
+      // raw XML. `"` is legal unescaped in element content and `&` is not, so
+      // re-escaping a name to look for it means guessing which of several legal
+      // spellings the writer chose - and guessing wrong reports that a name the
+      // conversion preserved perfectly was lost.
+      const afterText = [...after.matchAll(/<a:t>([\s\S]*?)<\/a:t>/g)]
+        .map((m) => unescapeXml(m[1]))
+        .join('\n');
+      if (!paragraphs.every((p) => afterText.includes(p))) {
         const kind = label.name.startsWith('service-meta-') ? 'service sub-line' : 'service name';
         issues.push(`${where}: conversion lost the ${kind} "${label.text}"`);
       }
@@ -3573,10 +3775,6 @@ function auditNativeConversion(
 
 function escapeRe(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-function escapeXml(text: string): string {
-  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
 /**
@@ -3952,7 +4150,7 @@ async function auditCustomerDeck(scenario: Scenario): Promise<string[]> {
   // it left out — anything else reads as a complete assessment and is not one.
   {
     const said = slides
-      .flatMap((xml) => [...xml.matchAll(/<a:t>([^<]*)<\/a:t>/g)].map((m) => m[1]))
+      .flatMap((xml) => [...xml.matchAll(/<a:t>([^<]*)<\/a:t>/g)].map((m) => unescapeXml(m[1])))
       .join('\n');
     const missing = deckValidation.findings.filter((f) => !said.includes(auditStrip(f.issue)));
     const declares = new RegExp(`\\b${deckValidation.findings.length}\\s+finding`).test(said);
@@ -3974,7 +4172,7 @@ async function auditCustomerDeck(scenario: Scenario): Promise<string[]> {
   // stops at row twenty announces sixty components and discharges twenty.
   const deckText = new Set<string>();
   for (const xml of slides) {
-    for (const match of xml.matchAll(/<a:t>([^<]*)<\/a:t>/g)) deckText.add(collapseWs(match[1]));
+    for (const match of xml.matchAll(/<a:t>([^<]*)<\/a:t>/g)) deckText.add(collapseWs(unescapeXml(match[1])));
   }
   const stranded: string[] = [];
   for (const node of scenario.nodes) {
@@ -4032,7 +4230,7 @@ async function auditCustomerDeck(scenario: Scenario): Promise<string[]> {
           // Per paragraph, like the shape scrape: a cell whose name carries a
           // hard break is several lines tall and used to measure as one.
           const text = [...tc[0].matchAll(/<a:p>([\s\S]*?)<\/a:p>/g)]
-            .map((p) => [...p[1].matchAll(/<a:t>([^<]*)<\/a:t>/g)].map((m) => m[1]).join(''))
+            .map((p) => [...p[1].matchAll(/<a:t>([^<]*)<\/a:t>/g)].map((m) => unescapeXml(m[1])).join(''))
             .join('\n');
           const pt = +(/\bsz="(\d+)"/.exec(tc[0])?.[1] ?? 1200) / 100;
           const usable = Math.max(0.5, (cols[cell] ?? cols[0]) - marginIn);
@@ -4413,9 +4611,7 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
   const unmeasured = new Map<string, number>();
   for (const slideXml of allSlides) {
     for (const match of slideXml.matchAll(/<a:t>([\s\S]*?)<\/a:t>/g)) {
-      const run = match[1]
-        .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"')
-        .replace(/&#39;/g, "'").replace(/&apos;/g, "'").replace(/&amp;/g, '&');
+      const run = unescapeXml(match[1]);
       for (const character of run) {
         if (hasAuditAdvance(character)) continue;
         unmeasured.set(character, (unmeasured.get(character) ?? 0) + 1);
@@ -4798,12 +4994,27 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
     // exporter's arithmetic — the same move `measuredWidestGlyphIn` made for
     // the chip guard. It passes on every named tile in the corpus and reports
     // the stub ladder.
+    // Two questions, not one, and an outlier may not answer either.
+    //
+    // A box narrower than the widest glyph cannot set that glyph at all; a box
+    // that holds fewer than two of the string's TYPICAL characters spells it
+    // one letter per line. The old form asked only `w >= 2 * widest`, which
+    // lets a single `m` at 0.861 em speak for a string whose mean is 0.55 -
+    // and that made this rule report a name the exporter was right to draw,
+    // in a column setting 2.8 characters a line.
     const widest = measuredWidestGlyphIn(label.text, font);
-    if (label.text && label.w + 0.005 < 2 * widest) {
+    const glyphs = [...label.text].filter((character) => !/\s/.test(character));
+    const mean = glyphs.length > 0
+      ? measuredTextWidthIn(glyphs.join(''), font) / glyphs.length
+      : 0;
+    if (label.text && glyphs.length > 0
+      && (label.w + 0.005 < widest || label.w + 0.005 < 2 * mean)) {
+      const bar = Math.max(widest, 2 * mean);
       issues.push(
         `label "${label.text}" is drawn at ${font}pt in a ${label.w.toFixed(3)}in box — `
-        + `its widest glyph is ${widest.toFixed(3)}in, so a line of them needs `
-        + `${(2 * widest).toFixed(3)}in and only ${(label.w / widest).toFixed(2)} fit`,
+        + `its widest glyph is ${widest.toFixed(3)}in and its mean is ${mean.toFixed(3)}in, `
+        + `so a readable line needs ${bar.toFixed(3)}in and only `
+        + `${(label.w / Math.max(mean, 1e-9)).toFixed(2)} typical characters fit`,
       );
     }
     // 1.35, matching every other line-height in this file and in the exporter:
@@ -6230,8 +6441,16 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
   // as working because the only tile it had ever fired on was icon-less.
   // Splitting on the shape tag ends each chunk exactly where its first child
   // begins.
+  // A rule that has silently measured NOTHING twice does not get to report
+  // zero on trust. Every skip above is a `continue` with no record, so the
+  // difference between "all clean" and "the scan matched nothing" is invisible
+  // - which is exactly how the child-`<Text>` capture and the missing `<cp>`
+  // marker both read as passing. Count what was reached and say so.
+  let serviceChunks = 0;
+  let measuredChunks = 0;
   for (const chunk of xml.split('<Shape ID=')) {
     if (!/NameU="Service\.\d+"/.test(chunk.slice(0, 200))) continue;
+    serviceChunks += 1;
     const label = /Name="([^"]*)"/.exec(chunk)?.[1] ?? '';
     const cell = (name: string): number => {
       const hit = new RegExp(`<Cell N="${name}" V="([\\d.-]+)"`).exec(chunk);
@@ -6244,10 +6463,22 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
     // Each run is drawn at its OWN size: the name and the sub-line are
     // separate character rows, and measuring both at the name's size reports a
     // block that is neither.
+    //
+    // Split on the row tag rather than spanning rows with a lazy quantifier.
+    // That is the same defect as the child-`<Text>` capture above, one Section
+    // down: a Row that happens to omit `Size` would let the scan walk into the
+    // next Row and report the WRONG run's size, silently. Every Row emits one
+    // today, which is exactly the kind of premise that fails without a sound.
     const characterSection = /<Section N="Character">([\s\S]*?)<\/Section>/.exec(chunk)?.[1] ?? '';
-    const sizes = [...characterSection.matchAll(/<Row IX="(\d+)"[^>]*>[\s\S]*?<Cell N="Size" V="([\d.]+)"/g)]
-      .reduce<Record<string, number>>((acc, row) => ({ ...acc, [row[1]]: +row[2] }), {});
-    const textBody = /<Text>([\s\S]*?)<\/Text>/.exec(chunk)?.[1] ?? '';
+    const sizes = characterSection.split('<Row IX=').slice(1).reduce<Record<string, number>>(
+      (acc, row) => {
+        const ix = /^"(\d+)"/.exec(row)?.[1];
+        const size = /<Cell N="Size" V="([\d.]+)"/.exec(row)?.[1];
+        return ix && size ? { ...acc, [ix]: +size } : acc;
+      },
+      {},
+    );
+    const textBody = unescapeXml(/<Text>([\s\S]*?)<\/Text>/.exec(chunk)?.[1] ?? '');
     // A tile with no sub-line emits its name as bare text, with no `<cp>` run
     // marker at all - so a rule that keys on the marker measures nothing on
     // exactly the tiles that carry only a name.
@@ -6257,6 +6488,7 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
     if (runs.length === 0 || txtW <= 0 || tileH <= 0) continue;
     let inkH = 0;
     let lineCount = 0;
+    let widestGlyph = 0;
     runs.forEach((run, i) => {
       const fontIn = sizes[run.ix] ?? 0;
       const text = run.text.replace(/<[^>]*>/g, '').trim();
@@ -6267,10 +6499,26 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
         (sum, para) => sum + measuredWrappedLines(para, txtW, fontIn * 72),
         0,
       );
+      // The horizontal failure, which neither `over` nor `short` can see. A
+      // long WORD is not it - Visio breaks a word that outgrows its column
+      // between glyphs, which is what the packing counter models. A single
+      // GLYPH wider than the column is: there is no break inside it, so the
+      // renderer centres it and paints it out through both sides.
+      for (const glyph of text) {
+        if (/\s/.test(glyph)) continue;
+        widestGlyph = Math.max(widestGlyph, measuredTextWidthIn(glyph, fontIn * 72));
+      }
       lineCount += lines;
       inkH += lines * fontIn * multiple;
     });
     if (inkH <= 0) continue;
+    measuredChunks += 1;
+    if (widestGlyph > txtW + 0.01) {
+      issues.push(
+        `Visio tile "${label}" draws a glyph ${widestGlyph.toFixed(3)}in wide in a `
+        + `${txtW.toFixed(3)}in column - no break fits inside a glyph, so it paints out both sides`,
+      );
+    }
     // Two failures, both fatal, and the second is the one a shape can hide.
     //
     // The block is centred on `TxtPinY`, so the ink runs half its height
@@ -6297,6 +6545,20 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
       );
     }
   }
+  // A named tile whose text this rule could not reach is a hole in the rule,
+  // not a clean tile. `drawnNames` is built by a separate scan, so it is an
+  // independent count of how many tiles really carry text.
+  const namedTiles = new Set(
+    [...xml.matchAll(/NameU="Service\.\d+" Name="([^"]*)"[\s\S]*?<Text>([\s\S]*?)<\/Text>/g)]
+      .filter((m) => m[2].replace(/<[^>]*>/g, '').trim() !== '')
+      .map((m) => m[1]),
+  ).size;
+  if (measuredChunks < namedTiles) {
+    issues.push(
+      `Visio containment rule measured ${measuredChunks} of ${serviceChunks} service shape(s) `
+      + `but ${namedTiles} draw text - ${namedTiles - measuredChunks} named tile(s) went unchecked`,
+    );
+  }
 
   // The other half of that bargain, and the rule the scaler actually broke: the
   // type has to stay in proportion to the tile it labels. Visio wraps a name
@@ -6308,16 +6570,22 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
   // survive any scaling the page limit forces.
   const NATURAL_TILE_IN = 150 / PX_PER_IN;
   const NATURAL_LABEL_IN = 0.105;
-  for (const group of xml.matchAll(/NameU="Service\.\d+" Name="([^"]*)"[\s\S]*?<Cell N="Width" V="([\d.]+)"[\s\S]*?<Cell N="Height" V="([\d.]+)"[\s\S]*?<Cell N="Size" V="([\d.]+)"[\s\S]*?<Text>([\s\S]*?)<\/Text>/g)) {
-    const label = group[1];
-    const tileIn = +group[2];
-    const tileH = +group[3];
-    const fontIn = +group[4];
+  for (const chunk of xml.split('<Shape ID=')) {
+    if (!/NameU="Service\.\d+"/.test(chunk.slice(0, 200))) continue;
+    const cellOf = (name: string): number => {
+      const hit = new RegExp(`<Cell N="${name}" V="([\\d.-]+)"`).exec(chunk);
+      return hit ? +hit[1] : 0;
+    };
+    const label = /Name="([^"]*)"/.exec(chunk)?.[1] ?? '';
+    const tileIn = cellOf('Width');
+    const tileH = cellOf('Height');
+    const fontIn = +(/<Section N="Character">[\s\S]*?<Cell N="Size" V="([\d.]+)"/.exec(chunk)?.[1] ?? 0);
     // The DRAWN text, not the `Name` attribute. The attribute deliberately
     // carries the whole name whatever the tile does with it — that is how a cut
     // name stays findable in Drawing Explorer — so measuring it reported a
     // ratio for every shape including the ones that draw no text at all.
-    const drawn = group[5].replace(/<[^>]*>/g, '').trim();
+    const drawn = unescapeXml(/<Text>([\s\S]*?)<\/Text>/.exec(chunk)?.[1] ?? '')
+      .replace(/<[^>]*>/g, '').trim();
     if (!label || !drawn || tileIn <= 0 || fontIn <= 0) continue;
     const ratio = fontIn / tileIn;
     const natural = NATURAL_LABEL_IN / NATURAL_TILE_IN;
@@ -6329,7 +6597,12 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
     // type — below every legibility floor in this file, so the rule was
     // unsatisfiable rather than strict. Measure the thing the proxy stands for
     // and only fall back on the ratio when the real measurement is unavailable.
-    const columnIn = Math.max(0.01, tileIn - 0.1);
+    //
+    // The column is READ, not guessed. `tileIn - 0.1` is a fixed inset
+    // subtracted from a variable tile, so on the 0.23in tiles this rule exists
+    // to police it under-stated the column by 43% and reported an 11-line
+    // overflow on a name the shape sets in seven.
+    const columnIn = cellOf('TxtWidth') > 0 ? cellOf('TxtWidth') : Math.max(0.01, tileIn - 0.1);
     const wrapped = measuredWrappedLines(drawn, columnIn, fontIn * 72);
     const neededIn = wrapped * fontIn * 1.2;
     if (tileH > 0 && neededIn <= tileH * 0.9) continue;
@@ -6420,7 +6693,7 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
   const textOf = (namePrefix: string): string => [
     ...xml.matchAll(new RegExp(`<Shape [^>]*NameU="${namePrefix}\\.\\d+"[\\s\\S]*?<\\/Shape>`, 'g')),
   ]
-    .map((m) => /<Text>([\s\S]*?)<\/Text>/.exec(m[0])?.[1] ?? '')
+    .map((m) => unescapeXml(/<Text>([\s\S]*?)<\/Text>/.exec(m[0])?.[1] ?? ''))
     .join('\u0000');
   // Connector text and workflow prose only. A service happening to be named
   // after a verb in somebody's sentence is not that sentence surviving.
@@ -6466,7 +6739,7 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
     w: +m[4],
     h: +m[5],
     pt: +m[6] * 72,
-    text: m[7].replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, '&'),
+    text: unescapeXml(m[7]),
   }));
   const spilling = workflowRows
     .map((row) => {
@@ -6553,7 +6826,7 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
       const hit = new RegExp(`<Cell N="${n}" V="([^"]*)"`).exec(shape);
       return hit ? Number(hit[1]) : NaN;
     };
-    const body = /<Text>([\s\S]*?)<\/Text>/.exec(shape)?.[1] ?? '';
+    const body = unescapeXml(/<Text>([\s\S]*?)<\/Text>/.exec(shape)?.[1] ?? '');
     // Written out rather than reusing the `<Text>([^<]*)` scrape below, which
     // returns '' for any body that opens with a `<cp>` run marker — as every
     // tile carrying a sub-line does.
@@ -6701,7 +6974,7 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
     }
   }
   for (const block of badgeBlocks) {
-    const shown = /<Text>([^<]*)<\/Text>/.exec(block)?.[1] ?? '';
+    const shown = unescapeXml(/<Text>([^<]*)<\/Text>/.exec(block)?.[1] ?? '');
     if (!expectedNumbers.has(shown)) {
       issues.push(`Visio step badge shows "${shown}", which is not a workflow step number`);
     }
@@ -6737,7 +7010,7 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
   }> = [];
   for (const block of xml.matchAll(/<Shape [^>]*NameU="Connector\.\d+"[\s\S]*?<\/Shape>/g)) {
     const shape = block[0];
-    const shown = /<Text>([^<]*)<\/Text>/.exec(shape)?.[1] ?? '';
+    const shown = unescapeXml(/<Text>([^<]*)<\/Text>/.exec(shape)?.[1] ?? '');
     if (!shown.trim()) continue;
     const pin = /<Cell N="PinX" V="([\d.-]+)"\/>\s*<Cell N="PinY" V="([\d.-]+)"\/>/.exec(shape);
     const angle = /<Cell N="Angle" V="([\d.-]+)"\/>/.exec(shape);
@@ -6924,7 +7197,7 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
     for (const m of xml.matchAll(
       /NameU="StepBadge\.\d+" Name="step-([^"]*)"[\s\S]*?<Cell N="PinX" V="([\d.-]+)"\/>\s*<Cell N="PinY" V="([\d.-]+)"\/>[\s\S]*?<Text>([\s\S]*?)<\/Text>/g,
     )) {
-      badgeItems.push({ id: `callout ${m[4].trim()}`, edge: m[1], at: { x: +m[2], y: +m[3] } });
+      badgeItems.push({ id: `callout ${unescapeXml(m[4]).trim()}`, edge: m[1], at: { x: +m[2], y: +m[3] } });
     }
     stray('numbered callout(s)', badgeItems, true);
   }
@@ -7112,11 +7385,7 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
     format: 'vsdx',
     issues,
     drawnNames: (() => {
-      const unesc = (s: string): string => s
-        .replace(/<[^>]*>/g, '')
-        .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"')
-        .replace(/&#39;/g, "'").replace(/&apos;/g, "'").replace(/&amp;/g, '&')
-        .trim();
+      const unesc = (s: string): string => unescapeXml(s.replace(/<[^>]*>/g, '')).trim();
       const best = new Map<string, string>();
       for (const m of xml.matchAll(/NameU="Service\.\d+" Name="([^"]*)"[\s\S]*?<Text>([\s\S]*?)<\/Text>/g)) {
         const drawn = unesc(m[2]);
@@ -7278,6 +7547,8 @@ async function main(): Promise<void> {
     dataLabelPromotionScenario(),
   hairlineTilesScenario(),
   probeArrowScenario(),
+  probeAccentScenario(),
+  probeAmpScenario(),
   tallNarrowTilesScenario(),
     corridorZoneScenario(),
     ladderInGridScenario(), twinLaddersScenario(), strayLadderScenario(), legendCornerScenario(), duplicateStepsScenario(), denseZoneScenario(),

@@ -53,7 +53,7 @@ import {
   metaSubline,
   narrateEdgeCallouts,
   truncateLabel,
-  widestGlyphIn,
+  drawableInColumn,
   advanceWidthIn,
   trailingWhitespaceIn,
   partitionBoxes,
@@ -627,7 +627,15 @@ function serviceGroupXml(
   // the same diagram named four services in the .pptx and three in the .vsdx.
   // A user who exports both and finds different services labelled in each has
   // been handed two drawings, not two renderings of one.
-  const drawsName = textColumn >= 2 * widestGlyphIn(label, labelFont * 72);
+  // Measured at the LEGIBILITY FLOOR, not at the size this tile happened to
+  // settle on. The question is whether the name can be drawn at all, and the
+  // exporter is free to shrink to `floorLabel` before it gives up - so asking
+  // it at a larger size refuses a name that the very next step would have set
+  // comfortably. The deck asks at its floor, and the two answers diverged on a
+  // 0.271in tile: `Camion logistica analisis` was named in the .pptx and drawn
+  // on no shape at all in the .vsdx, because one `m` at 0.861 em vetoed it here
+  // and nowhere else.
+  const drawsName = drawableInColumn(label, floorLabel * 72, textColumn);
   if (!drawsName) label = '';
   const drawsMeta = showsMeta && drawsName;
   const neededTextH = drawsName

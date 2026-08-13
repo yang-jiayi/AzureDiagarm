@@ -723,8 +723,57 @@ const GEOMETRY_SPACE_EM = 0.274;
  */
 const GEOMETRY_ASTRAL_EM = 1.36;
 
+/**
+ * Latin-1 Supplement and Latin Extended-A, U+00A1 to U+017F, measured.
+ *
+ * These used to take the 1 em unknown-character fallback, which is 91% over
+ * for `é`, 116% over for `ç` and 276% over for a dotless `ı`. That is not the
+ * harmless over-reservation the fallback comment claims, because
+ * `widestGlyphIn` is the gate on whether a tile is worth naming at all: a
+ * 0.190in column that really holds `Réseau privé sécurisé` was told its widest
+ * glyph was a full em, and the name was deleted from the sheet entirely while
+ * the same tile carrying the unaccented spelling drew it in full.
+ *
+ * Every European language a customer might name a resource group in lives in
+ * this range. It is ordinary text, not an exotic symbol, and it is not allowed
+ * anywhere near a fallback.
+ */
+const GEOMETRY_LATIN_EM = [
+  0.284, 0.539, 0.539, 0.556, 0.539, 0.239, 0.448, 0.414, 0.89, 0.392,
+  0.506, 0.684, 0, 0.89, 0.415, 0.377, 0.684, 0.366, 0.366, 0.282,
+  0.577, 0.458, 0.217, 0.205, 0.351, 0.431, 0.506, 0.906, 0.931, 0.952,
+  0.448, 0.645, 0.645, 0.645, 0.645, 0.645, 0.645, 0.86, 0.619, 0.506,
+  0.506, 0.506, 0.506, 0.266, 0.266, 0.266, 0.266, 0.701, 0.748, 0.754,
+  0.754, 0.754, 0.754, 0.754, 0.684, 0.754, 0.687, 0.687, 0.687, 0.687,
+  0.553, 0.56, 0.544, 0.509, 0.509, 0.509, 0.509, 0.509, 0.509, 0.832,
+  0.462, 0.523, 0.523, 0.523, 0.523, 0.242, 0.242, 0.242, 0.242, 0.559,
+  0.566, 0.586, 0.586, 0.586, 0.586, 0.586, 0.684, 0.586, 0.566, 0.566,
+  0.566, 0.566, 0.484, 0.588, 0.484, 0.65, 0.554, 0.65, 0.554, 0.65,
+  0.554, 0.683, 0.519, 0.683, 0.519, 0.683, 0.519, 0.683, 0.519, 0.744,
+  0.672, 0.744, 0.578, 0.618, 0.555, 0.618, 0.555, 0.618, 0.555, 0.618,
+  0.555, 0.618, 0.555, 0.728, 0.547, 0.728, 0.547, 0.728, 0.547, 0.728,
+  0.547, 0.746, 0.58, 0.746, 0.582, 0.298, 0.266, 0.298, 0.266, 0.297,
+  0.266, 0.297, 0.266, 0.298, 0.266, 0.676, 0.542, 0.4, 0.296, 0.691,
+  0.531, 0.531, 0.596, 0.266, 0.596, 0.266, 0.596, 0.358, 0.596, 0.354,
+  0.596, 0.265, 0.749, 0.58, 0.749, 0.58, 0.749, 0.58, 0.641, 0.749,
+  0.58, 0.732, 0.559, 0.732, 0.559, 0.732, 0.559, 0.931, 0.928, 0.671,
+  0.366, 0.671, 0.366, 0.671, 0.366, 0.628, 0.507, 0.628, 0.507, 0.628,
+  0.507, 0.531, 0.424, 0.626, 0.351, 0.626, 0.406, 0.626, 0.35, 0.739,
+  0.58, 0.739, 0.58, 0.739, 0.58, 0.739, 0.58, 0.739, 0.58, 0.74,
+  0.58, 0.93, 0.774, 0.65, 0.489, 0.553, 0.612, 0.455, 0.612, 0.455,
+  0.57, 0.452, 0.316,
+];
+
 /** Zero-width: a variation selector or a joiner styles the glyph before it. */
 const GEOMETRY_ZERO_WIDTH_RE = /[\u200b-\u200f\u2060\ufe00-\ufe0f\ufeff]/;
+
+/**
+ * A code point that is drawn as part of the cluster before it rather than as a
+ * glyph of its own: a skin-tone modifier, or a regional indicator that is the
+ * second half of a flag.
+ */
+const GEOMETRY_MODIFIER_RE = /[\u{1f3fb}-\u{1f3ff}]/u;
+const GEOMETRY_REGIONAL_RE = /[\u{1f1e6}-\u{1f1ff}]/u;
 
 /** True when `character` has a measured advance rather than the fallback. */
 export function hasMeasuredAdvance(character: string): boolean {
@@ -734,6 +783,7 @@ export function hasMeasuredAdvance(character: string): boolean {
   if (GEOMETRY_EXTRA_EM[character] !== undefined) return true;
   const code = character.codePointAt(0) ?? 0;
   if (code >= 0x10000) return true;
+  if (code >= 0xa1 && code <= 0x17f) return true;
   return code >= 33 && code <= 126;
 }
 
@@ -743,6 +793,8 @@ export function hasMeasuredAdvance(character: string): boolean {
  * The fallback is 1 em, an UPPER bound, because a character this table has
  * never heard of is far more likely to be a symbol or a full-width form than a
  * narrow Latin letter, and a sizer that guesses low paints outside the box.
+ * That reasoning only holds where the answer sizes a box - see
+ * `lowerBoundAdvanceEm` for the one caller where guessing high destroys text.
  */
 export function advanceEm(character: string): number {
   if (/\s/.test(character)) return GEOMETRY_SPACE_EM;
@@ -752,7 +804,26 @@ export function advanceEm(character: string): number {
   if (extra !== undefined) return extra;
   const code = character.codePointAt(0) ?? 0;
   if (code >= 0x10000) return GEOMETRY_ASTRAL_EM;
+  if (code >= 0xa1 && code <= 0x17f) return GEOMETRY_LATIN_EM[code - 0xa1];
   return code >= 33 && code <= 126 ? GEOMETRY_ADVANCE_EM[code - 33] : 1;
+}
+
+/**
+ * The narrowest a character could plausibly be, in em.
+ *
+ * Identical to `advanceEm` for everything measured; the difference is the
+ * unknown, which is charged the narrowest advance in the measured table rather
+ * than a full em. This exists for `widestGlyphIn` alone, because that is the
+ * only place in the pipeline where an over-estimate does not shrink type or
+ * buy a line - it WITHHOLDS the name. The wrap that follows still charges the
+ * upper bound, so letting a name through on a low guess cannot overflow
+ * anything: it only means the name is measured properly instead of discarded
+ * on a guess.
+ */
+const GEOMETRY_NARROWEST_EM = 0.205;
+
+function lowerBoundAdvanceEm(character: string): number {
+  return hasMeasuredAdvance(character) ? advanceEm(character) : GEOMETRY_NARROWEST_EM;
 }
 
 /**
@@ -762,7 +833,19 @@ export function advanceEm(character: string): number {
  */
 export function advanceWidthIn(text: string, fontSizePt: number): number {
   let em = 0;
-  for (const character of text) em += advanceEm(character);
+  let previous = '';
+  for (const character of text) {
+    // A flag is two regional indicators and a skin tone is a base plus a
+    // modifier; both render as ONE glyph. Charging each code point 1.36 em
+    // makes a four-person family emoji 5.44 em wide, and an over-charge is
+    // what deletes a name - see `lowerBoundAdvanceEm`.
+    const joined = GEOMETRY_MODIFIER_RE.test(character)
+      || (GEOMETRY_REGIONAL_RE.test(character) && GEOMETRY_REGIONAL_RE.test(previous))
+      || (previous !== '' && GEOMETRY_ZERO_WIDTH_RE.test(previous)
+        && (character.codePointAt(0) ?? 0) >= 0x10000);
+    if (!joined) em += advanceEm(character);
+    previous = character;
+  }
   return (em * fontSizePt) / 72;
 }
 
@@ -798,9 +881,37 @@ export function widestGlyphIn(text: string, fontSizePt: number): number {
     // WIDTH, but "the widest thing that has to fit on a line" is about ink and
     // a column that holds only a space holds nothing.
     if (/\s/.test(character)) continue;
-    widest = Math.max(widest, advanceEm(character));
+    widest = Math.max(widest, lowerBoundAdvanceEm(character));
   }
   return (widest * fontSizePt) / 72;
+}
+
+/**
+ * Whether `text` is worth drawing in a column `columnIn` wide.
+ *
+ * Two questions, not one. A column narrower than the widest glyph cannot set
+ * that glyph at all - the renderer centres it and spills out both sides - and
+ * a column that holds fewer than two of the name's TYPICAL characters spells
+ * it one letter per line down and out of the shape. Both are the same defect
+ * to a reader, so both refuse.
+ *
+ * The old test was `column >= 2 * widest`, which conflates them and lets an
+ * outlier speak for the string. `Camión logística análisis` contains exactly
+ * one `m`, at 0.861 em against a mean of 0.55, and that single glyph withheld
+ * the whole name from a 0.151in column that sets 2.8 characters a line - while
+ * the deck, whose column is fractionally wider, drew it. The user got two
+ * drawings of one diagram naming different services.
+ *
+ * A wide glyph inside an otherwise ordinary name is a HORIZONTAL overflow of
+ * one line, which the first clause already answers; it is not evidence that
+ * the name has stopped being a name.
+ */
+export function drawableInColumn(text: string, fontSizePt: number, columnIn: number): boolean {
+  const glyphs = [...text].filter((character) => !/\s/.test(character));
+  if (glyphs.length === 0) return false;
+  if (columnIn < widestGlyphIn(text, fontSizePt)) return false;
+  const mean = advanceWidthIn(glyphs.join(''), fontSizePt) / glyphs.length;
+  return columnIn >= 2 * mean;
 }
 
 /**

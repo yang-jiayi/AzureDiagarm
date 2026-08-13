@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { widestGlyphIn, estimateTextWidthIn } from '../src/services/pptxExporter.ts';
-import { hasMeasuredAdvance } from '../src/services/diagramExportGeometry.ts';
+import { hasMeasuredAdvance, drawableInColumn, advanceWidthIn } from '../src/services/diagramExportGeometry.ts';
 
 /**
  * Real advances for Yu Gothic UI, in em, measured from the installed font with
@@ -135,4 +135,68 @@ test('every character the exporters draw has a measured advance', () => {
     'these characters have no measured advance, so every width and wrap that touches them is a '
     + `guess: ${missing.map((c) => `U+${c.codePointAt(0)!.toString(16).toUpperCase().padStart(4, '0')}`).join(', ')}`,
   );
+});
+
+/**
+ * Latin-1 Supplement and Latin Extended-A, measured the same way.
+ *
+ * These fell through to the 1 em unknown-character fallback, which the model
+ * defended as harmless over-reservation. It is not: `widestGlyphIn` gates
+ * whether a tile is named at all, so an over-charge there DELETES the name -
+ * and `Reseau prive securise` spelled with its accents drew nothing on a tile
+ * that drew the unaccented spelling in full.
+ */
+const MEASURED_LATIN_EM: Record<string, number> = {
+  '\u00e9': 0.523, '\u00e7': 0.462, '\u00e3': 0.509, '\u00c9': 0.506,
+  '\u00f1': 0.566, '\u00fc': 0.566, '\u00b0': 0.377, '\u0131': 0.266,
+  '\u00df': 0.544, '\u0142': 0.265, '\u0105': 0.554, '\u017e': 0.452,
+  '\u0153': 0.928, '\u00e6': 0.832, '\u00d8': 0.754, '\u016f': 0.580,
+};
+
+test('Latin-1 and Latin Extended-A are measured, not guessed at a full em', () => {
+  for (const [character, em] of Object.entries(MEASURED_LATIN_EM)) {
+    assert.equal(hasMeasuredAdvance(character), true, `${character} has no measured advance`);
+    const got = estimateTextWidthIn(character, 72);
+    assert.ok(
+      Math.abs(got - em) < 0.02,
+      `${character} measures ${em} em but the model charges ${got.toFixed(3)}`,
+    );
+  }
+});
+
+test('an accent does not make a name unnameable', () => {
+  // Same string, twice, differing only in four accents. `e-acute` is NARROWER
+  // than the `R` that really is the widest glyph, so the two must agree
+  // exactly - a divergence here is the deck and the sheet naming different
+  // services in one diagram.
+  const accented = 'R\u00e9seau priv\u00e9 s\u00e9curis\u00e9';
+  const plain = 'Reseau prive securise';
+  assert.equal(widestGlyphIn(accented, 7), widestGlyphIn(plain, 7));
+});
+
+test('a wide glyph in an ordinary name does not withhold it', () => {
+  // `drawableInColumn` asks two questions: can the widest glyph set at all,
+  // and does the column hold two TYPICAL characters. The old single question,
+  // `column >= 2 * widest`, let one `m` at 0.861 em speak for a string whose
+  // mean is 0.55 and delete the whole name from a column setting 2.8
+  // characters a line.
+  const name = 'Cami\u00f3n log\u00edstica an\u00e1lisis';
+  assert.equal(drawableInColumn(name, 7, 0.1508), true);
+  // A column that cannot set the widest glyph still refuses.
+  assert.equal(drawableInColumn(name, 7, 0.05), false);
+  // So does one too narrow for two typical characters: the mean is 0.043in,
+  // so anything under 0.086in spells the name one letter per line.
+  assert.equal(drawableInColumn(name, 7, 0.085), false);
+});
+
+test('an emoji cluster is charged once, not once per code point', () => {
+  const one = advanceWidthIn('\u{1f680}', 72);
+  // A flag is two regional indicators drawn as a single glyph.
+  assert.ok(Math.abs(advanceWidthIn('\u{1f1ef}\u{1f1f5}', 72) - one) < 1e-9);
+  // So is a skin-toned thumb.
+  assert.ok(Math.abs(advanceWidthIn('\u{1f44d}\u{1f3fd}', 72) - one) < 1e-9);
+  // And a four-person family, which is four astral code points and three
+  // joiners: 5.44 em charged against one glyph drawn.
+  const family = '\u{1f468}\u200d\u{1f469}\u200d\u{1f467}\u200d\u{1f466}';
+  assert.ok(Math.abs(advanceWidthIn(family, 72) - one) < 1e-9);
 });
