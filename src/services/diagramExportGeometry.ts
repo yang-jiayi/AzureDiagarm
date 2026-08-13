@@ -1021,6 +1021,40 @@ const GEOMETRY_ASTRAL_CJK_MAX = 0x3ffff;
 const GEOMETRY_EMOJI_RE = /[\u{1f000}-\u{1faff}]/u;
 
 /**
+ * WHICH FONT measured this character: the label font itself, or a substitute.
+ *
+ * The two are both measurements and neither is a guess, but they are not the
+ * same claim, and a coverage message that cannot tell them apart cannot be
+ * acted on. Yu Gothic UI genuinely contains no Thai, no Hebrew and no
+ * precomposed Vietnamese, so for those scripts a substitute face is the only
+ * measurement that exists anywhere - reporting them as "untabled" would send
+ * someone looking for a table entry that can never be written. Reporting them
+ * as tier 1 would claim a precision the file does not have.
+ *
+ * - `label`  the advance came out of the label font's own `hmtx`.
+ * - `substitute`  the advance came from the face the renderer will fall back
+ *   to for this script, because the label font has no glyph for it.
+ * - `none`  no measurement at all; the width model is guessing.
+ */
+export type AdvanceTier = 'label' | 'substitute' | 'none';
+
+/** Scripts Yu Gothic UI has no glyphs for, so the renderer substitutes. */
+const GEOMETRY_SUBSTITUTED_RE = /[\u0e00-\u0e7f\u0590-\u05ff\u1e00-\u1eff\u0700-\u074f\u0600-\u06ff\u0900-\u097f]/;
+
+/**
+ * The tier behind `hasMeasuredAdvance`, for messages that need to say which.
+ *
+ * `hasMeasuredAdvance` stays a boolean on purpose: every call site that gates
+ * on it wants "do we have a number", and both tiers answer yes.
+ */
+export function advanceTier(character: string): AdvanceTier {
+  if (!hasMeasuredAdvance(character)) return 'none';
+  if (GEOMETRY_SUBSTITUTED_RE.test(character)) return 'substitute';
+  if (GEOMETRY_EMOJI_RE.test(character)) return 'substitute';
+  return 'label';
+}
+
+/**
  * True when `character` has a measured advance rather than the fallback.
  *
  * This is the only honest oracle in the pipeline - the audit's coverage rule

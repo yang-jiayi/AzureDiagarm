@@ -1558,9 +1558,56 @@ function probeScriptScenario(): Scenario {
   return { id: 'probe-script', nodes, edges };
 }
 
+/**
+ * A long, shallow pipeline - the one drawing shape that forces the sheet scaler
+ * down far enough to matter.
+ *
+ * A grid grows the page instead: 20x20 = 400 services still reports scale
+ * 1.0001 and never triggers anything. 260 services in a line scales to 0.436,
+ * which is where flat positioning constants and scaled dimensions come apart.
+ */
+function scaleDownPipelineScenario(): Scenario {
+  const icon = '/Azure_Public_Service_Icons/Icons/compute/10029-icon-service-Function-Apps.svg';
+  const count = 260;
+  const nodes: Node[] = Array.from({ length: count }, (_, i) => ({
+    id: `ps${i}`,
+    type: 'azureNode',
+    position: { x: i * 170, y: 0 },
+    width: 150,
+    height: 75,
+    data: {
+      label: `Orders processing function ${i}`,
+      serviceName: 'Azure Functions',
+      category: 'compute',
+      iconPath: icon,
+    },
+  } as unknown as Node));
+  const edges: Edge[] = Array.from({ length: count - 1 }, (_, i) => ({
+    id: `ps-e${i}`,
+    source: `ps${i}`,
+    target: `ps${i + 1}`,
+  } as Edge));
+  return { id: 'probe-scaledown', nodes, edges };
+}
+
 function hairlineTilesScenario(): Scenario {
   const icon = '/Azure_Public_Service_Icons/Icons/compute/10029-icon-service-Function-Apps.svg';
   const widths = [8, 10, 14, 22, 40, 160, 160, 160];
+  // SIX DIFFERENT NAMES, not one repeated eight times.
+  //
+  // A shared label is a general anaesthetic for two of the best rules in this
+  // file. The cross-format naming rule asks whether a name appears in both
+  // drawings and the "name is nowhere on the page" rule asks whether it appears
+  // at all - and when every tile carries the same string, ONE tile that draws it
+  // satisfies both questions on behalf of the seven that did not. The fixture
+  // was reporting the corpus clean by giving every rule the same answer eight
+  // times.
+  const names = [
+    'Zephyr order intake function', 'Quartz billing reconciliation',
+    'Nimbus telemetry ingestion hub', 'Cobalt fraud scoring service',
+    'Verdant analytics warehouse', 'Onyx configuration store',
+    'Amber checkout orchestrator', 'Slate inventory projection',
+  ];
   const nodes: Node[] = widths.map((width, i) => ({
     id: `hair${i}`,
     type: 'azureNode',
@@ -1568,7 +1615,7 @@ function hairlineTilesScenario(): Scenario {
     width,
     height: width < 60 ? 30 : 110,
     data: {
-      label: 'Orders processing function app',
+      label: names[i],
       serviceName: 'Azure Functions',
       category: 'compute',
       iconPath: icon,
@@ -6314,6 +6361,36 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
         const drawn = shape.text.trim();
         if ((best.get(authored)?.length ?? -1) < drawn.length) best.set(authored, drawn);
       }
+      // The index slide names the service too, and that is the whole reason it
+      // exists: "Names shortened on the drawing, in full."
+      //
+      // Harvesting only `service-label-*` shapes made the cross-format rule
+      // claim a service was "on no shape at all in the PowerPoint deck" while
+      // its name sat in full on the index. The deck's recovery route for a tile
+      // too small to caption is the index; Visio has no index, which is exactly
+      // why the sheet needed a rule of its own. Ignoring the index here does not
+      // make the rule stricter, it makes it wrong - and it fired on one of the
+      // five shortened names in a fixture where all five were indexed.
+      // Scoped to the INDEX SLIDE and to SERVICES. Harvesting all text, or all
+      // nodes, let zone and boundary captions - which are drawn by a different
+      // shape on the sheet and were never in this comparison - register as
+      // service names, and the rule reported 565 phantom divergences.
+      const INDEX_MARKER = 'Names shortened on the drawing, in full.';
+      const indexed = new Set(
+        allSlides
+          .filter((slideXml) => slideXml.includes(INDEX_MARKER))
+          .flatMap((slideXml) => parseShapes(slideXml))
+          .map((s) => s.text.trim()),
+      );
+      const serviceNames = new Set(
+        scenario.nodes
+          .filter((n) => n.type !== 'groupNode')
+          .map((n) => String(n.data?.label ?? '')),
+      );
+      for (const authored of serviceNames) {
+        if (!authored || !indexed.has(authored)) continue;
+        if ((best.get(authored)?.length ?? -1) < authored.length) best.set(authored, authored);
+      }
       return [...best]
         .map(([authored, drawn]) => ({ authored, drawn }))
         .sort((a, b) => a.authored.localeCompare(b.authored));
@@ -6913,6 +6990,67 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
         + `the ${VISIO_FLOOR_PT}pt floor, so a truncated name was available and was not drawn`,
       );
     }
+  }
+
+  // Two shapes, not one. Every other rule in this file measures INSIDE a block -
+  // line counts against TxtHeight, containment against the shape - so a picture
+  // printed across the name it labels is invisible to all of them.
+  //
+  // The tile positions its text band `0.06in` above its floor and its icon
+  // `0.07in` below its ceiling. Both were flat while every dimension around
+  // them scaled, so when the icon is room-limited the two blocks overlap by
+  // exactly `0.13 - 0.19 * scale` inches: below scale 0.6842 the icon is drawn
+  // ON TOP OF the name. A 260-service pipeline scales to 0.436 and overlapped
+  // on 100% of its tiles; at 440 the icon was wholly inside the text block on
+  // 340 of them. A grid never triggers it - the page grows instead - so only a
+  // wide shallow drawing reaches it, which is the shape of a pipeline.
+  const overlaps: string[] = [];
+  // The icon is a CHILD shape, so splitting on `<Shape ID=` puts it in its OWN
+  // chunk, never in the parent's. The first version of this rule looked for
+  // `NameU="Icon."` inside the service chunk and skipped when it was absent -
+  // which was ALWAYS - so the rule ran on every corpus and could not fire once.
+  // Shapes arrive in document order as Service, Tile, Icon, so pair each tile
+  // with the next icon before the next service.
+  const vsdxChunks = xml.split('<Shape ID=');
+  for (let i = 0; i < vsdxChunks.length; i += 1) {
+    const head = vsdxChunks[i].slice(0, 400);
+    if (!/NameU="Service\.\d+"/.test(head)) continue;
+    const named = /\sName="([^"]*)"/.exec(head);
+    const authored = named ? unescapeXml(named[1]) : '';
+    const cellIn = (src: string, name: string): number | null => {
+      const hit = new RegExp(`<Cell N="${name}" V="([-\\d.eE]+)"`).exec(src);
+      return hit ? Number(hit[1]) : null;
+    };
+    const txtPinY = cellIn(vsdxChunks[i], 'TxtPinY');
+    const txtLocPinY = cellIn(vsdxChunks[i], 'TxtLocPinY');
+    const txtHeight = cellIn(vsdxChunks[i], 'TxtHeight');
+    if (txtPinY === null || txtLocPinY === null || txtHeight === null) continue;
+    if (!(txtHeight > 0)) continue;
+    let iconChunk: string | null = null;
+    for (let j = i + 1; j < vsdxChunks.length; j += 1) {
+      const ahead = vsdxChunks[j].slice(0, 400);
+      if (/NameU="Service\.\d+"/.test(ahead)) break;
+      if (ahead.includes('NameU="Icon.')) { iconChunk = vsdxChunks[j]; break; }
+    }
+    if (!iconChunk) continue;
+    const iconPinY = cellIn(iconChunk, 'PinY');
+    const iconHeight = cellIn(iconChunk, 'Height');
+    if (iconPinY === null || iconHeight === null) continue;
+    // Both are in the parent group's local frame, and in Visio y grows upward,
+    // so the band's ceiling is its pin plus what sits above the pin, and the
+    // icon's floor is its pin less half its height.
+    const bandTop = txtPinY - txtLocPinY + txtHeight;
+    const iconBottom = iconPinY - iconHeight / 2;
+    const over = bandTop - iconBottom;
+    if (over > 1e-6) {
+      overlaps.push(`"${authored}" by ${over.toFixed(4)}in (${((over / txtHeight) * 100).toFixed(0)}% of its band)`);
+    }
+  }
+  if (overlaps.length > 0) {
+    issues.push(
+      `${overlaps.length} Visio service tile(s) draw the icon on top of the name: `
+      + `${overlaps.slice(0, 3).join('; ')}`,
+    );
   }
 
   // The other half of that bargain, and the rule the scaler actually broke: the
@@ -7748,6 +7886,21 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
         const authored = unesc(m[1]);
         if ((best.get(authored)?.length ?? -1) < drawn.length) best.set(authored, drawn);
       }
+      // The sheet's own index panel names the service too. Mirrors the deck
+      // side exactly - a name printed in the panel is a name a reader can see,
+      // and refusing to count it would report the sheet as having lost a
+      // service it prints in full.
+      const panelNames = new Set(
+        [...xml.matchAll(/Name="service-name-\d+"[\s\S]*?<Text>([\s\S]*?)<\/Text>/g)].map((m) => unesc(m[1])),
+      );
+      for (const m of xml.matchAll(/NameU="Service\.\d+" Name="([^"]*)"/g)) {
+        const authored = unesc(m[1]);
+        if (!authored || !panelNames.has(authored)) continue;
+        // Longest rendition wins, the same rule the tiles use above: the panel
+        // prints the name IN FULL, so a tile that could only fit "N..." has not
+        // cost the reader the name.
+        if ((best.get(authored)?.length ?? -1) < authored.length) best.set(authored, authored);
+      }
       return [...best]
         .map(([authored, drawn]) => ({ authored, drawn }))
         .sort((a, b) => a.authored.localeCompare(b.authored));
@@ -7905,6 +8058,7 @@ async function main(): Promise<void> {
   probeAccentScenario(),
   probeAmpScenario(),
   probeScriptScenario(),
+  scaleDownPipelineScenario(),
   tallNarrowTilesScenario(),
     corridorZoneScenario(),
     ladderInGridScenario(), twinLaddersScenario(), strayLadderScenario(), legendCornerScenario(), duplicateStepsScenario(), denseZoneScenario(),

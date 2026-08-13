@@ -330,6 +330,16 @@ function windowsXml(pageWidthIn: number, pageHeightIn: number): string {
 /**
  * document.xml — DocumentSettings, the Segoe UI face name used by every shape,
  * and the "No Style" stylesheet (ID 0) that pages and shapes reference.
+ *
+ * THE DECLARED FACE IS SEGOE UI; THE WIDTH TABLE IS YU GOTHIC UI. That is not
+ * a defect and it is not worth "fixing" - it is written down here so nobody
+ * loses an afternoon to it a third time. The two faces are close enough that
+ * the difference cannot reach a layout decision: over the ASCII range the mean
+ * absolute difference is 0.0017 em, the Cyrillic and Greek advances are
+ * bit-identical between them, and over the real service names this exporter
+ * draws the two models land 0.00% apart. Yu Gothic UI is the table because it
+ * is the face that has to carry the Japanese names, and a model that is right
+ * about kanji and 0.0017 em out on Latin is the correct trade.
  */
 const DOCUMENT_XML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <VisioDocument xmlns="${VISIO_NS}" xmlns:r="${REL_NS}">
@@ -449,7 +459,7 @@ function zoneShapeXml(
       <Cell N="TxtWidth" V="${f(titleW)}"/>
       <Cell N="TxtHeight" V="${f(titleH)}"/>
       <Cell N="TxtPinX" V="${f(rect.w / 2)}"/>
-      <Cell N="TxtPinY" V="${f(rect.h - titleH / 2 - 0.06)}"/>
+      <Cell N="TxtPinY" V="${f(rect.h - titleH / 2 - 0.06 * fonts.scale)}"/>
       <Cell N="TxtLocPinX" V="${f(titleW / 2)}"/>
       <Cell N="TxtLocPinY" V="${f(titleH / 2)}"/>
       <Cell N="TxtAngle" V="0"/>
@@ -585,7 +595,7 @@ function serviceGroupXml(
   // Four characters of the drawn size per line, the same bargain the deck
   // strikes, floored at the sheet's own legibility limit so this can shrink
   // type but never make it unreadable.
-  const columnLabel = Math.max(floorLabel, Math.min(fonts.label, textColumn / 4));
+  const columnLabel = Math.max(floorLabel, Math.min(fonts.label, textW / 4));
   let bandUsed = bandRoom;
   for (const budget of [bandRoom, bandMax]) {
     bandUsed = budget;
@@ -663,16 +673,24 @@ function serviceGroupXml(
   // ceiling. Positioning the band by its bottom edge alone hung the name of
   // every collapsed tile 0.079in above the shape it names — 85 of them across
   // the corpus, each one a caption floating in the gap over its own box.
+  //
+  // SCALED, like every other inch in this function. Flat, this offset and the
+  // icon's flat 0.07in below stayed put while the tile shrank around them, and
+  // the two blocks overlapped by exactly `0.13 - 0.19 * scale` inches - so
+  // below scale 0.6842 the icon is drawn ON TOP OF the name. A 260-service
+  // pipeline scales to 0.436 and overlapped on 100% of tiles; at 440 services
+  // the icon was entirely inside the text block on 340 of them. Scaled, the
+  // gap is `0.06 * scale` and cannot close.
   const txtPinY = textH >= rect.h
     ? rect.h / 2
-    : Math.min(0.06 + textH / 2, rect.h - textH / 2);
+    : Math.min(0.06 * fonts.scale + textH / 2, rect.h - textH / 2);
   const iconSizeIn = maxIcon > 0 ? Math.max(0, Math.min(maxIcon, room - textH)) : 0;
   const showIcon = iconRelId !== null && iconSizeIn >= 0.08 * fonts.scale;
   const iconChild = showIcon
     ? `
         <Shape ID="${ids.icon}" NameU="Icon.${ids.icon}" Type="Foreign" LineStyle="0" FillStyle="0" TextStyle="0">
           <Cell N="PinX" V="${f(rect.w / 2)}"/>
-          <Cell N="PinY" V="${f(rect.h - iconSizeIn / 2 - 0.07)}"/>
+          <Cell N="PinY" V="${f(rect.h - iconSizeIn / 2 - 0.07 * fonts.scale)}"/>
           <Cell N="Width" V="${f(iconSizeIn)}"/>
           <Cell N="Height" V="${f(iconSizeIn)}"/>
           <Cell N="LocPinX" V="${f(iconSizeIn / 2)}"/>
@@ -1170,7 +1188,14 @@ function wrapOneLineIn(text: string, column: number, fontSizeIn: number): number
  * 0.26in pitch, so every row in the band overran the next, all the way down.
  */
 function workflowRowHeightIn(description: string, colW: number): number {
-  const textW = Math.max(colW - 0.6, 0.4);
+  // The column the row is actually DRAWN in, with no floor under it. The floor
+  // was a fourth copy of the `Math.max(0.2, widthIn)` defect: it measured the
+  // wrap in a column wider than the one the text is given, so a narrow band
+  // would reserve fewer lines than the renderer sets and every row would overrun
+  // the next - which is the exact failure the comment above says this function
+  // exists to prevent. Unreachable today, because `workflowColumnWidthIn` never
+  // returns below 1.2in, but it was one call site away from being live.
+  const textW = colW - 0.6;
   const lines = wrappedLinesIn(description, textW, LEGEND_FONT_IN);
   return Math.max(WORKFLOW_ROW_IN, lines * LEGEND_FONT_IN * 1.35 + 0.08);
 }
@@ -1202,6 +1227,69 @@ function workflowPanelWidthIn(pageWidthIn: number, columns: number): number {
  * the sentence it refers to; on its own the badge is just an unexplained digit.
  * Rows stack downward from the top-left of the panel.
  */
+/**
+ * The sheet's answer to the deck's "Service names" slide.
+ *
+ * PowerPoint can afford to shorten a caption because it prints an index behind
+ * the drawing: "Names shortened on the drawing, in full." Visio has one page,
+ * so a name the tile could not hold used to exist nowhere a reader can see -
+ * it survived only in the shape's Name attribute and its shape data, which are
+ * handles for automation and are never put on paper. That asymmetry is what
+ * made the same defect High on the sheet and merely untidy in the deck, and it
+ * is why the two exports of one diagram could name different services.
+ *
+ * Columns rather than one long list, because a hairline-heavy drawing can
+ * shorten dozens of names and a single column would run off the top of the page.
+ */
+function buildServiceNamePanel(
+  startId: number,
+  entries: Array<{ authored: string; drawn: string }>,
+  originX: number,
+  originY: number,
+  pageHeightIn: number,
+): { shapes: string[]; nextId: number; width: number; height: number } {
+  const shapes: string[] = [];
+  let id = startId;
+  const rowH = 0.2;
+  const colW = 2.6;
+  const perColumn = Math.max(1, Math.floor((pageHeightIn - 1.6) / rowH));
+  const columns = Math.max(1, Math.ceil(entries.length / perColumn));
+  const rows = Math.min(entries.length, perColumn);
+  const boxW = colW * columns;
+  const boxH = rowH * rows + 0.34;
+  shapes.push(`    <Shape ID="${id++}" NameU="ServiceNames.${startId}" Type="Shape" LineStyle="0" FillStyle="0" TextStyle="0">
+      <Cell N="PinX" V="${f(originX + boxW / 2)}"/>
+      <Cell N="PinY" V="${f(originY + boxH / 2)}"/>
+      <Cell N="Width" V="${f(boxW)}"/>
+      <Cell N="Height" V="${f(boxH)}"/>
+      <Cell N="LocPinX" V="${f(boxW / 2)}"/>
+      <Cell N="LocPinY" V="${f(boxH / 2)}"/>
+      <Cell N="Angle" V="0"/>
+      <Cell N="FillForegnd" V="#FFFFFF"/>
+      <Cell N="FillPattern" V="1"/>
+      <Cell N="LineColor" V="#CBD5E1"/>
+      <Cell N="LineWeight" V="0.01"/>
+      <Cell N="LinePattern" V="1"/>
+      <Cell N="Rounding" V="0.04"/>
+${roundedRectGeometry()}
+    </Shape>`);
+  shapes.push(legendTextXml(id++, originX + 0.12, originY + boxH - 0.18, boxW - 0.24, 'Service names shortened on the drawing, in full'));
+  entries.forEach((entry, index) => {
+    const column = Math.floor(index / perColumn);
+    const row = index % perColumn;
+    shapes.push(legendTextXml(
+      id++,
+      originX + 0.12 + column * colW,
+      originY + 0.14 + row * rowH,
+      colW - 0.24,
+      entry.authored,
+      rowH,
+      `service-name-${index}`,
+    ));
+  });
+  return { shapes, nextId: id, width: boxW, height: boxH };
+}
+
 function buildWorkflowPanel(
   startId: number,
   entries: WorkflowListEntry[],
@@ -1567,6 +1655,9 @@ export async function buildVsdxPackage(
     shapes.push(zoneShapeXml(id, toRect(zone), zone.label, palette, fonts));
   }
 
+  // Names the tiles could not hold in full, for the panel that gives the sheet
+  // the recovery route the deck has had all along.
+  const shortenedNames: Array<{ authored: string; drawn: string }> = [];
   for (const service of services) {
     const rect = toRect(service);
     const groupId = nextId++;
@@ -1612,18 +1703,31 @@ export async function buildVsdxPackage(
       properties.push({ name: 'MonthlyCost', label: 'Monthly cost', value: service.meta.costLabel });
     }
 
-    shapes.push(
-      serviceGroupXml(
-        { group: groupId, rect: rectId, icon: iconId },
-        rect,
-        service,
-        paletteForService(service),
-        relId,
-        properties,
-        meta,
-        fonts,
-      ),
+    // Read back from the XML that was just emitted, rather than re-deciding.
+    // "Which names did the tile shorten?" is answered by exactly one piece of
+    // code - the one that wrote the shape - so the panel cannot drift out of
+    // step with the drawing the way a second copy of the fitting rules would.
+    const tileXml = serviceGroupXml(
+      { group: groupId, rect: rectId, icon: iconId },
+      rect,
+      service,
+      paletteForService(service),
+      relId,
+      properties,
+      meta,
+      fonts,
     );
+    const authoredName = String(service.label ?? '').trim();
+    const drawnName = (/<Text>([\s\S]*?)<\/Text>/.exec(tileXml)?.[1] ?? '')
+      .replace(/<[^>]*>/g, '')
+      .split('\n')[0]
+      .trim();
+    if (authoredName && drawnName
+      .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"')
+      .replace(/&apos;/g, "'").replace(/&amp;/g, '&') !== authoredName) {
+      shortenedNames.push({ authored: authoredName, drawn: drawnName });
+    }
+    shapes.push(tileXml);
   }
 
   // Parallel hops between the same two services all put their text at the same
@@ -1754,6 +1858,20 @@ export async function buildVsdxPackage(
   }
   if (legendEntries.length > 0) {
     furnitureRects.push({ x: 0.35, y: 0.35, w: 2.4, h: 0.24 * legendEntries.length + 0.34 });
+  }
+  // Reserved before the connector labels are placed, for the same reason the
+  // other two panels are: it is opaque and drawn last, so a label routed under
+  // it is a label the reader never sees.
+  const namePanelX = legendEntries.length > 0 ? 0.35 + 2.4 + 0.25 : 0.35;
+  const namePanelRows = Math.max(1, Math.floor((pageHeightIn - 1.6) / 0.2));
+  const namePanelColumns = Math.max(1, Math.ceil(shortenedNames.length / namePanelRows));
+  if (shortenedNames.length > 0) {
+    furnitureRects.push({
+      x: namePanelX,
+      y: 0.35,
+      w: 2.6 * namePanelColumns,
+      h: 0.2 * Math.min(shortenedNames.length, namePanelRows) + 0.34,
+    });
   }
   const rectAt = (route: ExportRoute, drop: number, along: number): { x: number; y: number; w: number; h: number } => {
     const centre = chordOf(route);
@@ -2443,6 +2561,14 @@ export async function buildVsdxPackage(
     const legend = buildConnectionLegend(nextId, legendEntries, 0.35, 0.35);
     nextId = legend.nextId;
     shapes.push(...legend.shapes);
+  }
+
+  // The sheet's index. Without it a name the tile could not hold is nowhere on
+  // the page at all, which is the one thing a deck never does to a reader.
+  if (shortenedNames.length > 0) {
+    const namePanel = buildServiceNamePanel(nextId, shortenedNames, namePanelX, 0.35, pageHeightIn);
+    nextId = namePanel.nextId;
+    shapes.push(...namePanel.shapes);
   }
 
   // The numbered prose that the connector badges point at.

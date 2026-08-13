@@ -673,3 +673,124 @@ test('a workflow longer than the page cannot evict the drawing it describes', as
   assert.ok(Number(panel[1]) <= pkg.pageWidthIn && Number(panel[2]) <= pkg.pageHeightIn,
     `the band is ${panel[1]}x${panel[2]}in on a ${pkg.pageWidthIn.toFixed(2)}x${pkg.pageHeightIn.toFixed(2)}in page`);
 });
+
+// --- Round 59: the tile's two blocks, and the sheet's index ---
+
+function pageOfPkg(pkg: { parts: Array<{ path: string; data: unknown }> }): string {
+  const page = pkg.parts.find((part) => part.path === 'visio/pages/page1.xml');
+  assert.ok(page, 'page1.xml must be present');
+  return page.data as string;
+}
+
+function scaledDownChain(count: number): { nodes: Node[]; edges: Edge[] } {
+  const chainNodes: Node[] = [];
+  const chainEdges: Edge[] = [];
+  for (let i = 0; i < count; i += 1) {
+    chainNodes.push(service(`s${i}`, `Orders processing function ${i}`, i * 220, 0));
+    if (i > 0) chainEdges.push({ id: `e${i}`, source: `s${i - 1}`, target: `s${i}` } as Edge);
+  }
+  return { nodes: chainNodes, edges: chainEdges };
+}
+
+/**
+ * A tile scales every dimension it has, so the two constants that POSITION its
+ * blocks have to scale with them. While the text band sat a flat 0.06in above
+ * the floor and the icon a flat 0.07in below the ceiling, a room-limited icon
+ * overlapped the name by exactly `0.13 - 0.19 * scale` inches: below scale
+ * 0.6842 the picture was printed on top of the words. A 260-service pipeline
+ * scales to 0.436 and every one of its tiles was overlapped. Only a wide
+ * shallow drawing gets there - a grid grows the page instead - which is why
+ * this test is a pipeline.
+ */
+test('a scaled-down tile never prints its icon on top of its name', async () => {
+  const { nodes: chainNodes, edges: chainEdges } = scaledDownChain(260);
+  // The icon has to actually exist, or the tile emits no icon child and the
+  // rule has nothing to compare the name band against. A one-pixel PNG is
+  // enough: this test measures where the icon is put, not what it shows.
+  const PIXEL = Uint8Array.from(atob(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+  ), (c) => c.charCodeAt(0));
+  const iconMap = new Map([[
+    '/Azure_Public_Service_Icons/Icons/networking/10061-icon-service-Front-Doors.svg',
+    { bytes: PIXEL, dataUrl: 'data:image/png;base64,iVBORw0KGgo=', sizePx: 1 },
+  ]]);
+  const pkg = await buildVsdxPackage(chainNodes, chainEdges, 'Scaled pipeline', iconMap);
+  const xml = pageOfPkg(pkg);
+  const chunks = xml.split('<Shape ID=');
+  const cellIn = (src: string, name: string): number | null => {
+    const hit = new RegExp(`<Cell N="${name}" V="([-\\d.eE]+)"`).exec(src);
+    return hit ? Number(hit[1]) : null;
+  };
+  let tiles = 0;
+  let worst = -Infinity;
+  for (let i = 0; i < chunks.length; i += 1) {
+    if (!/NameU="Service\.\d+"/.test(chunks[i].slice(0, 400))) continue;
+    const txtPinY = cellIn(chunks[i], 'TxtPinY');
+    const txtLocPinY = cellIn(chunks[i], 'TxtLocPinY');
+    const txtHeight = cellIn(chunks[i], 'TxtHeight');
+    if (txtPinY === null || txtLocPinY === null || txtHeight === null) continue;
+    // The icon is a CHILD, so it is its own chunk. Shapes come out in document
+    // order as Service, Tile, Icon: pair forward, never inside the parent.
+    let icon: string | null = null;
+    for (let j = i + 1; j < chunks.length; j += 1) {
+      const ahead = chunks[j].slice(0, 400);
+      if (/NameU="Service\.\d+"/.test(ahead)) break;
+      if (ahead.includes('NameU="Icon.')) { icon = chunks[j]; break; }
+    }
+    if (!icon) continue;
+    const iconPinY = cellIn(icon, 'PinY');
+    const iconH = cellIn(icon, 'Height');
+    if (iconPinY === null || iconH === null) continue;
+    tiles += 1;
+    worst = Math.max(worst, (txtPinY - txtLocPinY + txtHeight) - (iconPinY - iconH / 2));
+  }
+  assert.ok(tiles > 200, `expected the pipeline to draw its tiles, drew ${tiles}`);
+  assert.ok(worst <= 0,
+    `the icon overlaps the name band by ${worst.toFixed(4)}in on the worst of ${tiles} tiles`);
+});
+
+/**
+ * Recoverability was asymmetric between the two exports of one diagram. The
+ * deck ends on an index slide that spells out every name a chip had to shorten,
+ * so nothing is ever lost; the drawing is a single sheet with no such page, so
+ * a name cut to "N..." was gone. The two files then named different services.
+ */
+test('a name the tile had to shorten is still spelled out somewhere on the sheet', async () => {
+  // Hairline tiles: the WIDTH is what forces a name to be cut, not the node
+  // count. A long chain just makes a long page and the names wrap instead.
+  const widths = [8, 10, 14, 22, 40, 160, 160, 160];
+  const authored = [
+    'Zephyr order intake function', 'Quartz billing reconciliation',
+    'Nimbus telemetry ingestion hub', 'Cobalt fraud scoring service',
+    'Verdant analytics warehouse', 'Onyx configuration store',
+    'Amber checkout orchestrator', 'Slate inventory projection',
+  ];
+  const hairline = widths.map((width, i) => ({
+    id: `hair${i}`,
+    type: 'azureNode',
+    position: { x: i * 260, y: (i % 2) * 200 },
+    width,
+    height: width < 60 ? 30 : 110,
+    data: {
+      label: authored[i],
+      serviceName: 'Azure Functions',
+      iconPath: '/Azure_Public_Service_Icons/Icons/networking/10061-icon-service-Front-Doors.svg',
+    },
+  } as unknown as Node));
+  const hairlineEdges = widths.slice(1).map((_, i) => ({
+    id: `hair-e${i}`, source: `hair${i}`, target: `hair${i + 1}`, label: 'invokes',
+  } as Edge));
+  const pkg = await buildVsdxPackage(hairline, hairlineEdges, 'Hairline tiles', new Map());
+  const xml = pageOfPkg(pkg);
+  const drawn = new Set<string>();
+  for (const chunk of xml.split('<Shape ID=')) {
+    for (const hit of chunk.matchAll(/<Text>([\s\S]*?)<\/Text>/g)) {
+      drawn.add(hit[1].replace(/<[^>]*>/g, '').replace(/&amp;/g, '&').replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'").trim());
+    }
+  }
+  for (const label of authored) {
+    assert.ok(drawn.has(label),
+      `"${label}" is nowhere on the sheet in full, so the drawing and the deck name different services`);
+  }
+});

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { widestGlyphIn, estimateTextWidthIn } from '../src/services/pptxExporter.ts';
-import { hasMeasuredAdvance, drawableInColumn, advanceWidthIn, widestGlyphUpperIn, widestGlyphIn as widestGlyphLowerIn } from '../src/services/diagramExportGeometry.ts';
+import { hasMeasuredAdvance, advanceTier, drawableInColumn, advanceWidthIn, widestGlyphUpperIn, widestGlyphIn as widestGlyphLowerIn } from '../src/services/diagramExportGeometry.ts';
 
 /**
  * Real advances for Yu Gothic UI, in em, measured from the installed font with
@@ -292,4 +292,32 @@ test('the sizing bound and the drawing bound are different functions', () => {
   // function made one of them wrong whichever way it was written.
   const unknown = '\u{10A00}';
   assert.ok(widestGlyphLowerIn(unknown, 7) < widestGlyphUpperIn(unknown, 7));
+});
+
+/**
+ * ASK-58-A: a measurement has a TIER, and the message has to say which.
+ *
+ * "Measured" and "measured in a font that is not the label font" are both
+ * numbers off a real `hmtx`, but they are different claims. Yu Gothic UI has
+ * no Thai, no Hebrew and no precomposed Vietnamese at all, so for those a
+ * substitute face is the only measurement that exists - calling them untabled
+ * would send someone hunting for a table entry nobody can ever write, and
+ * calling them tier 1 would claim a precision the font file does not have.
+ */
+test('an advance reports whether it came from the label font or a substitute', () => {
+  for (const glyph of ['A', 'e', '9', '\u6ce8', '\u3042', '\u00e9', '\u0430']) {
+    assert.equal(advanceTier(glyph), 'label', `${glyph} should be measured in the label font`);
+  }
+  // Scripts Yu Gothic UI does not contain, and emoji, which Segoe UI Emoji draws.
+  for (const glyph of ['\u0e01', '\u05d0', '\u1ea1', '\u{1f600}']) {
+    assert.equal(advanceTier(glyph), 'substitute',
+      `${glyph} is drawn by a substitute face, so its tier must say so`);
+  }
+  // Genuinely untabled: mathematical alphanumerics are in no face here.
+  assert.equal(advanceTier('\u{1d400}'), 'none');
+  // The tier must never disagree with the boolean every call site gates on.
+  for (const glyph of ['A', '\u6ce8', '\u0e01', '\u{1f600}', '\u{1d400}']) {
+    assert.equal(advanceTier(glyph) !== 'none', hasMeasuredAdvance(glyph),
+      `the tier and the boolean disagree about ${glyph}`);
+  }
 });
