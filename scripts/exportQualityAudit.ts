@@ -18,6 +18,7 @@ import { buildVsdxPackage } from '../src/services/visioVsdxExporter.ts';
 import { WRAP_TRIGGER_RATIO } from '../src/utils/serpentineWrap.ts';
 
 import { narrateEdgeCallouts, CATEGORY_STYLES } from '../src/services/diagramExportGeometry.ts';
+import { readStepNumber } from '../src/utils/workflowStepMapping.ts';
 
 const OUT = path.join(process.cwd(), 'tmp-export-audit');
 const EMU_PER_INCH = 914400;
@@ -67,6 +68,22 @@ function auditWrappedLines(text: string, boxIn: number, fontSizePt: number): num
 }
 
 /**
+ * The narrowest column the audit will pretend a box has.
+ *
+ * One number, shared by the wrap and the column measurement, because two
+ * different floors let a real defect through by cancelling out: at 0.1 the
+ * wrap counted two lines for a caption PowerPoint stacks into four, and at
+ * 0.05 the column said the ink did not fit — the containment rule saw a
+ * caption that fits perfectly and the physics rule saw a violation, and the
+ * only reason the class was visible at all was that the two disagreed.
+ *
+ * Small enough to be under any real column, because a box narrower than a
+ * glyph is exactly the case being measured: PowerPoint does not clip, it puts
+ * one character on each line and paints the rest below the box.
+ */
+const MIN_TEXT_COLUMN_IN = 0.01;
+
+/**
  * The ink width of each line the wrap produces.
  *
  * A box's width is what it *may* use; the widest of these is what it *does*
@@ -77,7 +94,7 @@ function auditWrappedLines(text: string, boxIn: number, fontSizePt: number): num
  * splitting on whitespace alone only ends a run at one.
  */
 function auditLineWidths(text: string, boxIn: number, fontSizePt: number): number[] {
-  const box = Math.max(0.1, boxIn);
+  const box = Math.max(MIN_TEXT_COLUMN_IN, boxIn);
   const widths: number[] = [];
   for (const paragraph of String(text ?? '').split(/\r\n|\r|\n/)) {
     const tokens = paragraph.split(/(?<=[\s\u2e80-\u9fff\uac00-\ud7af\uff00-\uff60\uffe0-\uffe6])/);
@@ -395,7 +412,7 @@ function linePitchIn(shape: Shape, pt: number): number {
  * not less a guess at PowerPoint's defaults.
  */
 function textColumnIn(shape: Shape): number {
-  return Math.max(0.05, shape.w - shape.insetX);
+  return Math.max(MIN_TEXT_COLUMN_IN, shape.w - shape.insetX);
 }
 
 function drawnTextRect(shape: Shape, singleLine = false): { x: number; y: number; w: number; h: number } | null {
@@ -716,6 +733,65 @@ function tightSubnetsScenario(): Scenario {
 }
 
 /**
+ * `tight-subnets` plus one edge the author numbered with a STRING.
+ *
+ * Models emit `"2"` about as often as `2`, and the Load-diagram path never
+ * validates the field, so a saved or hand-edited file carries it verbatim into
+ * the exporter. The promotion allocator read the field directly instead of
+ * through `readStepNumber`, so it did not see the `"2"`: it started counting at
+ * zero, handed the promoted chip the number 2 as well, and then found a row
+ * already at step 2 and dropped the wording it exists to save. Two badges read
+ * "2" and one arrow's label was deleted.
+ *
+ * The fixture also pins the second half of the same predicate mismatch — an
+ * unlabelled edge can never promote, so it must not consume a number and push
+ * the ones the reader sees out into the teens.
+ */
+function stringStepPromotionScenario(): Scenario {
+  const base = tightSubnetsScenario();
+  return {
+    id: 'string-step-promotion',
+    nodes: base.nodes,
+    edges: [
+      ...base.edges,
+      {
+        id: 'a0',
+        source: 'web-1',
+        target: 'app-2',
+        label: 'Authenticates',
+        data: { stepNumber: '2', stepDescription: 'Validates the caller token' },
+      } as unknown as Edge,
+    ],
+  };
+}
+
+/**
+ * The same deck with a crowd of plain, wordless connectors alongside.
+ *
+ * Promotion hands a stranded label the next free number. The numbers it may
+ * hand out are bounded by what the workflow list can explain — the highest
+ * authored step plus one per labelled arrow — but the allocator used to queue
+ * every unnumbered edge, wordless ones included. Those can never become a row,
+ * so each one silently pushed the real promotion further out: three authored
+ * steps and twelve plain arrows numbered the one promoted hop 16, and the
+ * reader was shown a list reading 1, 2, 3, 16.
+ *
+ * `string-step-promotion` cannot see this, because there the extra numbers
+ * happen to land in a gap and collide with nothing.
+ */
+function unlabelledStepInflationScenario(): Scenario {
+  const base = tightSubnetsScenario();
+  // Deliberately along the same grain as the labelled hops, so the drawing has
+  // no routing complaint of its own and the only thing under test is how many
+  // numbers these arrows consume.
+  const pairs: Array<[string, string]> = [
+    ['web-1', 'app-1'], ['web-2', 'app-2'], ['app-2', 'data-2'], ['app-3', 'data-3'],
+  ];
+  const plain = pairs.map(([source, target], i) => ({ id: `plain-${i}`, source, target } as Edge));
+  return { id: 'unlabelled-step-inflation', nodes: base.nodes, edges: [...base.edges, ...plain] };
+}
+
+/**
  * The same stack with the subnets sharing their edges.
  *
  * `stacked-subnets` and `tight-subnets` both leave a 23px gutter between tiers,
@@ -971,10 +1047,31 @@ function overRowScenario(count = 150, id = 'over-row'): Scenario {
  * catches two tiles welded flush and the zero-length connector between them.
  */
 function scaledZoneRowScenario(): Scenario {
+  return zoneRowScenario('scaled-zone-row', 480);
+}
+
+/**
+ * The same row at 40 subnets, which is an ordinary landing-zone estate rather
+ * than a stress test — and the band width the corpus never sampled.
+ *
+ * At 480 the zones are 0.027in wide and the exporter drops the caption
+ * outright; at 20 they are half an inch and everything fits. Between them sits
+ * the whole range where the band is narrower than 0.4in but wide enough to
+ * draw, and that is where a caption column floored at 0.2in promised the
+ * fitter a line that does not exist: the name was fitted onto one line and
+ * PowerPoint stacked it one letter per line, out of the bottom of the band and
+ * across the neighbours. Sampling one end of a range and calling it covered is
+ * how that shipped.
+ */
+function midZoneRowScenario(): Scenario {
+  return zoneRowScenario('mid-zone-row', 40);
+}
+
+function zoneRowScenario(id: string, count: number): Scenario {
   const names = ['Azure App Service', 'Azure SQL Database', 'Azure Key Vault', 'Azure Functions', 'Azure Cache for Redis'];
   const nodes: Node[] = [];
   const edges: Edge[] = [];
-  for (let s = 0; s < 480; s += 1) {
+  for (let s = 0; s < count; s += 1) {
     const originX = s * 260;
     nodes.push(grp(`sub-${s}`, `Perimeter network subnet ${s}`, originX, 0, 200, 130));
     nodes.push(svc(`z-${s}`, names[s % names.length], originX + 25, 40));
@@ -982,7 +1079,7 @@ function scaledZoneRowScenario(): Scenario {
       edges.push({ id: `ze-${s}`, source: `z-${s - 1}`, target: `z-${s}`, label: 'Peers', data: { stepNumber: s } } as Edge);
     }
   }
-  return { id: 'scaled-zone-row', nodes, edges };
+  return { id, nodes, edges };
 }
 
 /**
@@ -4695,7 +4792,7 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
   // exporter renumbers duplicate step numbers before drawing, so raw data
   // would assert that five arrows all still read "3".
   const numberedEdges = narrateEdgeCallouts(scenario.edges).filter(
-    (e) => Number.isInteger((e.data as { stepNumber?: number } | undefined)?.stepNumber),
+    (e) => readStepNumber((e.data as { stepNumber?: unknown } | undefined)?.stepNumber) !== undefined,
   );
   const badges = shapes.filter((s) => s.name.startsWith('connector-step-'));
   // A labelled edge the author never numbered may be PROMOTED: when its chip
@@ -4705,7 +4802,7 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
   // floor, plus the set of arrows allowed to appear above it.
   const promotableIds = new Set(
     narrateEdgeCallouts(scenario.edges)
-      .filter((e) => !Number.isInteger((e.data as { stepNumber?: number } | undefined)?.stepNumber)
+      .filter((e) => readStepNumber((e.data as { stepNumber?: unknown } | undefined)?.stepNumber) === undefined
         && String((e as { label?: unknown }).label ?? '').trim() !== '')
       .map((e) => auditStrip(String(e.id))),
   );
@@ -4713,7 +4810,7 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
   // arrow would pass. The object name carries the route id, so check the exact
   // arrow-to-number correspondence instead.
   const expectedByRoute = new Map(
-    numberedEdges.map((e) => [auditStrip(String(e.id)), String((e.data as { stepNumber: number }).stepNumber)]),
+    numberedEdges.map((e) => [auditStrip(String(e.id)), String(readStepNumber((e.data as { stepNumber?: unknown } | undefined)?.stepNumber))]),
   );
   const badgedRoutes = new Set(badges.map((b) => b.name.replace(/^connector-step-/, '')));
   for (const [routeId, want] of expectedByRoute) {
@@ -4740,6 +4837,31 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
       issues.push(`connectors ${already} and ${routeId} both carry the badge "${badge.text}"`);
     }
     seenNumbers.set(badge.text, routeId);
+  }
+
+  // A promoted number is only useful if the reader can find it in the list, and
+  // a list that reads 1, 2, 3, 16 tells the reader twelve steps went missing.
+  // The numbers available to promotion are bounded: the highest number the
+  // author wrote, plus one per labelled arrow that could need one. Spending
+  // them on the plain connectors — which carry no words and so can never
+  // become a row — pushed the one real promotion off the end of the sequence.
+  {
+    const authoredMax = numberedEdges.reduce(
+      (most, e) => Math.max(most, readStepNumber((e.data as { stepNumber?: unknown } | undefined)?.stepNumber) ?? 0),
+      0,
+    );
+    const ceiling = authoredMax + promotableIds.size;
+    for (const badge of badges) {
+      const routeId = badge.name.replace(/^connector-step-/, '');
+      if (!promotableIds.has(routeId) || expectedByRoute.has(routeId)) continue;
+      const read = Number(badge.text);
+      if (Number.isFinite(read) && read > ceiling) {
+        issues.push(
+          `promoted connector ${routeId} is numbered "${badge.text}", past the ${ceiling} `
+          + `numbers this drawing can explain (${authoredMax} authored + ${promotableIds.size} labelled)`,
+        );
+      }
+    }
   }
 
   // The Workflow list is the prose the reader matches the drawing against, so
@@ -5590,14 +5712,14 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
   // a different story in PowerPoint and in Visio. Measured against the repaired
   // edges, which is what both exporters draw from.
   const numberedEdges = narrateEdgeCallouts(scenario.edges).filter(
-    (e) => Number.isInteger((e.data as { stepNumber?: number } | undefined)?.stepNumber),
+    (e) => readStepNumber((e.data as { stepNumber?: unknown } | undefined)?.stepNumber) !== undefined,
   );
   const badgeBlocks = [...xml.matchAll(/<Shape [^>]*NameU="StepBadge\.\d+"[\s\S]*?<\/Shape>/g)].map((m) => m[0]);
   if (badgeBlocks.length !== numberedEdges.length) {
     issues.push(`${badgeBlocks.length} Visio step badges for ${numberedEdges.length} numbered connectors`);
   }
   const expectedNumbers = new Set(
-    numberedEdges.map((e) => String((e.data as { stepNumber: number }).stepNumber)),
+    numberedEdges.map((e) => String(readStepNumber((e.data as { stepNumber?: unknown } | undefined)?.stepNumber))),
   );
   // Service boxes in page coordinates, so a badge that lands on one is caught.
   const serviceBoxes: Array<{ x: number; y: number; w: number; h: number; name?: string }> = [];
@@ -6267,6 +6389,9 @@ async function main(): Promise<void> {
     // rule below was unsatisfiable by construction from about 24% down.
     overRowScenario(700, 'over-row-700'),
     scaledZoneRowScenario(),
+    midZoneRowScenario(),
+    stringStepPromotionScenario(),
+    unlabelledStepInflationScenario(),
     corridorZoneScenario(),
     ladderInGridScenario(), twinLaddersScenario(), strayLadderScenario(), legendCornerScenario(), duplicateStepsScenario(), denseZoneScenario(),
     metaChipScenario(), gridFanScenario(), gridFan3Scenario(), fan8Tight5x5Scenario(), metaSublineScenario(), grid5x5CaptionScenario(), longNameGridScenario(), longLabelGridScenario(), metaTightScenario(),     longNameFanScenario(), estateChainScenario(), chain24Scenario(), tripleMutedScenario(), estate72Scenario(),     workflowProseScenario(), workflowLongProseScenario(), workflowFanScenario(), workflowWideBandScenario(), allCategoriesScenario(), controlCharScenario(), shortServiceGridScenario(),

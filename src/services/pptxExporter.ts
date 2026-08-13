@@ -126,6 +126,7 @@ import {
   usedConnectionLegend,
   workflowListFromEdges,
   narrateEdgeCallouts,
+  readEdgeLabel,
   zoneStyleFor,
   readableTextOn,
   carriesWording,
@@ -2447,7 +2448,15 @@ function addGroupShape(
   // rather than two guesses that happen to agree today.
   const captionPt = clamp(Math.round(h * 5), 8, 12);
   const captionText = `${box.label}${fragment}`;
-  const captionColumn = (width: number): number => Math.max(0.2, width - 0.2);
+  // PowerPoint applies a 0.1in inset on each side of a text box that declares
+  // no margin, so `width - 0.2` is the column the words actually get. The
+  // `max(0.2, …)` floor that used to sit here was a lie the fitter believed:
+  // on a band narrower than 0.4in it promised 0.2in of line that does not
+  // exist, so the name was fitted onto one line and PowerPoint stacked it one
+  // letter per line, running out of the bottom of the band. Zero is the honest
+  // answer for a band that has no column at all; the guard below stops before
+  // anything is drawn into it.
+  const captionColumn = (width: number): number => Math.max(0, width - 0.2);
   const captionRoom = (band: number, pt: number): number => Math.max(1, Math.floor(band / ((pt * 1.35) / 72)));  // A zone cut to a sliver at the frame edge has less width than its own title
   // needs, so the band has to be pulled back onto the page — placed raw it ran
   // off the slide and PowerPoint dropped it, taking the zone's name with it.
@@ -2528,11 +2537,11 @@ function addGroupShape(
     ...runs(top),
     ...runs(foot),
     ...gapRows.flatMap((y) => runs(y)),
-    { x: topLeft.x + w - part(0.5) - 0.06, y: top, w: part(0.5) },
+    { x: topLeft.x + Math.max(0, w - part(0.5) - 0.06), y: top, w: part(0.5) },
     { x: titleX, y: top, w: part(0.5) },
-    { x: topLeft.x + w - part(0.34) - 0.06, y: top, w: part(0.34) },
+    { x: topLeft.x + Math.max(0, w - part(0.34) - 0.06), y: top, w: part(0.34) },
     { x: titleX, y: top, w: part(0.34) },
-    { x: topLeft.x + w - part(0.34) - 0.06, y: foot, w: part(0.34) },
+    { x: topLeft.x + Math.max(0, w - part(0.34) - 0.06), y: foot, w: part(0.34) },
     { x: titleX, y: foot, w: part(0.34) },
   ];
   // A fragment is the one exception. Its drawn rectangle is not the zone — it
@@ -2685,16 +2694,20 @@ function addGroupShape(
     }
   }
 
-  // A band narrower than a single character cannot paint a name inside itself.
-  // PowerPoint does not clip a text box, so what it does instead is print the
-  // glyphs straight across the zones on either side — on a row of 480 subnets
-  // scaled to 0.02in each, every caption was written over nine of its
-  // neighbours' and the reader could not tell which box any of them named.
-  // Silence is the honest answer here, and it is not a loss: an undrawable
-  // zone name goes to the index slide by exactly the route a window-clipped
-  // one already takes.
+  // A column narrower than a single character cannot paint a name inside the
+  // band. PowerPoint does not clip a text box, so what it does instead is stack
+  // the word one letter per line and print the tail below the band and across
+  // the zones on either side — on a row of subnets scaled small, every caption
+  // was written over its neighbours' and the reader could not tell which box
+  // any of them named. Silence is the honest answer here, and it is not a loss:
+  // an undrawable zone name goes to the index slide by exactly the route a
+  // window-clipped one already takes.
+  //
+  // Measured against the COLUMN, not the box. Against the box this fired only
+  // below about 0.043in — the one geometry the corpus happened to sample — and
+  // was silent across the whole ordinary range of small zones between.
   const widest = [...caption].reduce((most, ch) => Math.max(most, estimateTextWidthIn(ch, captionSize)), 0);
-  if (caption && widest > title.w + 0.01) {
+  if (caption && widest > captionColumn(title.w) + 0.01) {
     truncatedNames?.add(box.label);
     return { caption: { x: title.x, y: title.y, w: 0, h: 0 } };
   }
@@ -3241,15 +3254,23 @@ async function addEditableDiagram(
   {
     let next = 0;
     for (const edge of diagram.edges ?? []) {
-      const step = (edge.data as { stepNumber?: unknown } | undefined)?.stepNumber;
-      if (typeof step === 'number' && Number.isFinite(step)) next = Math.max(next, step);
+      // `readStepValue` is the one predicate every other reader of this field
+      // uses. A model emits `"1"` about as often as `1`, and the load path
+      // never coerces it, so reading the raw field here disagreed with the
+      // workflow list in both directions: it skipped an authored `"2"` (then
+      // handed 2 out again to a promoted edge, whose row the list dropped as a
+      // duplicate — losing exactly the label promotion exists to carry) and it
+      // accepted a `2.5` that no list row can match.
+      const step = readStepValue((edge.data as { stepNumber?: unknown } | undefined)?.stepNumber);
+      if (step !== undefined) next = Math.max(next, step);
     }
     const waiting = (diagram.edges ?? [])
-      .filter((edge) => {
-        const data = edge.data as { stepNumber?: unknown } | undefined;
-        const step = data?.stepNumber;
-        return !(typeof step === 'number' && Number.isFinite(step));
-      })
+      // Only an edge with a label has anything to promote. Counting the
+      // unlabelled ones spent numbers on rows that will never exist, so a deck
+      // with three authored steps and twelve plain connectors numbered its one
+      // promoted hop 16 and read 1, 2, 3, 16.
+      .filter((edge) => readStepValue((edge.data as { stepNumber?: unknown } | undefined)?.stepNumber) === undefined
+        && readEdgeLabel(edge) !== '')
       .map((edge) => edge.id)
       .sort();
     waiting.forEach((id, at) => promotable.set(id, next + 1 + at));

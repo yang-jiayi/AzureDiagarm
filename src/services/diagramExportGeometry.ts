@@ -2069,7 +2069,7 @@ export function selfLoopRoute(box: ExportBox, ordinal = 0): { points: Point[]; l
   };
 }
 
-function readEdgeLabel(edge: Edge): string {
+export function readEdgeLabel(edge: Edge): string {
   const dataLabel = (edge.data as { label?: unknown } | undefined)?.label;
   if (typeof dataLabel === 'string' && dataLabel.trim()) return dataLabel.trim();
   if (typeof edge.label === 'string' && edge.label.trim()) return edge.label.trim();
