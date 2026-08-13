@@ -337,6 +337,57 @@ const AUDIT_ASTRAL_CJK_MIN = 0x20000;
 const AUDIT_ASTRAL_CJK_MAX = 0x3ffff;
 const AUDIT_EMOJI_RE = /[\u{1f000}-\u{1faff}]/u;
 
+/** Emoji advance, in em - the widest glyph in the substituted face. */
+const AUDIT_EMOJI_EM = 1.373;
+
+/** A joiner welds on what follows; a variation selector only restyles what came before. */
+const AUDIT_JOINER_RE = /[\u200d\u2060]/;
+
+/** VARIATION SELECTOR-16: draw the character before me as an emoji. */
+const AUDIT_VS16 = '\ufe0f';
+
+/**
+ * `text` split into rendered clusters, independently of the exporter's walker.
+ *
+ * The gate's whole value is that it is a SECOND implementation, so this is
+ * deliberately its own code rather than an import. It carries the same three
+ * corrections because they are corrections of fact, not of style: VS16 promotes
+ * its base, a joiner absorbs a BMP code point as readily as an astral one, and
+ * a promoted cluster is measured even when its base code point is not.
+ */
+function auditClusters(text: string): Array<{ text: string; em: number; measured: boolean }> {
+  const characters = [...text];
+  const clusters: Array<{ text: string; em: number; measured: boolean }> = [];
+  let regionalRun = 0;
+  let previous = '';
+  for (const [index, character] of characters.entries()) {
+    const regional = /[\u{1f1e6}-\u{1f1ff}]/u.test(character);
+    regionalRun = regional ? regionalRun + 1 : 0;
+    // A flag is two regional indicators and a skin tone is a base plus a
+    // modifier; both draw as ONE glyph, so only the first is charged.
+    const joined = /[\u{1f3fb}-\u{1f3ff}]/u.test(character)
+      || (regional && regionalRun % 2 === 0)
+      || (previous !== '' && AUDIT_JOINER_RE.test(previous));
+    previous = character;
+    const last = clusters[clusters.length - 1];
+    if (joined && last) {
+      last.text += character;
+      continue;
+    }
+    const promoted = characters[index + 1] === AUDIT_VS16
+      && !/[\u2e80-\u9fff\uac00-\ud7af\uff00-\uff60\uffe0-\uffe6]/.test(character)
+      && !/\s/.test(character);
+    const em = promoted ? AUDIT_EMOJI_EM : measuredAdvanceEm(character);
+    const measured = promoted || hasAuditAdvance(character);
+    if (em === 0 && last && /[\u200b-\u200f\u2060\ufe00-\ufe0f\ufeff]/.test(character)) {
+      last.text += character;
+      continue;
+    }
+    clusters.push({ text: character, em, measured });
+  }
+  return clusters;
+}
+
 /**
  * True when `character` has a measured advance rather than the fallback.
  *
@@ -405,11 +456,11 @@ function measuredTrailingWsIn(text: string, fontSizePt: number): number {
  */
 function measuredWidestGlyphIn(text: string, fontSizePt: number): number {
   let widest = 0;
-  for (const character of text) {
+  for (const cluster of auditClusters(text)) {
     // Whitespace is not a glyph: it advances, but a column that holds only a
     // space holds no ink.
-    if (/\s/.test(character)) continue;
-    widest = Math.max(widest, hasAuditAdvance(character) ? measuredAdvanceEm(character) : 0);
+    if (/^\s*$/.test(cluster.text)) continue;
+    widest = Math.max(widest, cluster.measured ? cluster.em : 0);
   }
   return (widest * fontSizePt) / 72;
 }
@@ -424,33 +475,18 @@ function measuredWidestGlyphIn(text: string, fontSizePt: number): number {
  * wide enough for it.
  */
 function measuredDrawableInColumn(text: string, fontSizePt: number, columnIn: number): boolean {
-  const glyphs = [...text].filter((character) => !/\s/.test(character));
+  const glyphs = auditClusters(text).filter((cluster) => !/^\s*$/.test(cluster.text));
   if (glyphs.length === 0) return false;
   if (columnIn < measuredWidestGlyphIn(text, fontSizePt)) return false;
   let em = 0;
-  for (const glyph of glyphs) em += hasAuditAdvance(glyph) ? measuredAdvanceEm(glyph) : 0;
+  for (const glyph of glyphs) em += glyph.measured ? glyph.em : 0;
   return columnIn >= (2 * em * fontSizePt) / 72 / glyphs.length;
 }
 
 /** Measured width of a run, in inches, from the real advance table. */
 function measuredTextWidthIn(text: string, fontSizePt: number): number {
   let em = 0;
-  let previous = '';
-  // Regional indicators come in PAIRS. "an indicator after an indicator is
-  // free" charges two adjacent flags the width of one glyph.
-  let regionalRun = 0;
-  for (const character of text) {
-    const regional = /[\u{1f1e6}-\u{1f1ff}]/u.test(character);
-    regionalRun = regional ? regionalRun + 1 : 0;
-    // A flag is two regional indicators and a skin tone is a base plus a
-    // modifier; both draw as ONE glyph, so only the first is charged.
-    const joined = /[\u{1f3fb}-\u{1f3ff}]/u.test(character)
-      || (regional && regionalRun % 2 === 0)
-      || (previous !== '' && /[\u200b-\u200f\u2060\ufe00-\ufe0f\ufeff]/.test(previous)
-        && (character.codePointAt(0) ?? 0) >= 0x10000);
-    if (!joined) em += measuredAdvanceEm(character);
-    previous = character;
-  }
+  for (const cluster of auditClusters(text)) em += cluster.em;
   return (em * fontSizePt) / 72;
 }
 
@@ -1740,6 +1776,53 @@ function hairlineStubsScenario(): Scenario {
     },
   } as unknown as Node));
   return { id: 'probe-hairline-stubs', nodes, edges: [] };
+}
+
+/**
+ * Emoji clusters an author actually pastes into a service name.
+ *
+ * A cluster is one glyph and is priced as one. Three separate ways of getting
+ * that wrong all ended in a name drawn at the wrong size: VARIATION SELECTOR-16
+ * promotes its base to the emoji advance rather than merely vanishing (a heart
+ * is 1.000 em as a dingbat and 1.373 as an emoji, and a keycap digit is 0.539
+ * against 1.373 - 61% under); a ZERO WIDTH JOINER absorbs what follows it
+ * whatever plane that lives in (the staff in a health worker is U+2695, in the
+ * BMP, so the cluster was charged twice - 73% over); and a promoted cluster is
+ * MEASURED even though its base code point is not, or the coverage rule reports
+ * a correctly priced glyph as a guess in every run forever.
+ *
+ * Under-charging paints a line out past its box; over-charging withholds the
+ * name altogether. Both are here.
+ */
+function emojiClusterScenario(): Scenario {
+  const icon = '/Azure_Public_Service_Icons/Icons/compute/10029-icon-service-Function-Apps.svg';
+  const names = [
+    'Status \u2764\ufe0f monitor',
+    'Cloud \u2601\ufe0f ingest gateway',
+    'Step 1\ufe0f\u20e3 intake validation',
+    'Clinic \u{1f468}\u200d\u2695\ufe0f records service',
+    'Warning \u26a0\ufe0f alert router',
+    'Region \u{1f1ef}\u{1f1f5}\u{1f1e9}\u{1f1ea} failover pair',
+  ];
+  const nodes: Node[] = names.map((label, i) => ({
+    id: `ec${i}`,
+    type: 'azureNode',
+    position: { x: (i % 3) * 260, y: Math.floor(i / 3) * 200 },
+    width: 150,
+    height: 110,
+    data: { label, serviceName: 'Azure Functions', category: 'compute', iconPath: icon },
+  } as unknown as Node));
+  const edges = [
+    {
+      id: 'ece1', source: 'ec0', target: 'ec1', label: 'heartbeat \u2764\ufe0f',
+      data: { stepNumber: 1, stepDescription: 'The monitor sends a heartbeat \u2764\ufe0f every 30s.' },
+    },
+    {
+      id: 'ece2', source: 'ec2', target: 'ec3', label: 'step 1\ufe0f\u20e3',
+      data: { stepNumber: 2, stepDescription: 'Intake hands step 1\ufe0f\u20e3 to the clinic \u{1f468}\u200d\u2695\ufe0f service.' },
+    },
+  ] as unknown as Edge[];
+  return { id: 'probe-emoji-clusters', nodes, edges };
 }
 
 function longIndexRowsScenario(): Scenario {
@@ -5133,13 +5216,18 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
   // This rule is sound whether or not both sides are correct: it asserts
   // COVERAGE rather than agreement, and it fails on the commit that first
   // draws a character nobody has measured.
+  //
+  // ASKED ABOUT THE CLUSTER, not the code point. A promoted heart is U+2764
+  // plus VS16 and is charged the emoji advance exactly, but no table entry for
+  // U+2764 can ever read 1.373, so per code point this reported a correctly
+  // priced glyph as a guess in every future run - an issue nobody could clear.
   const unmeasured = new Map<string, number>();
   for (const slideXml of allSlides) {
     for (const match of slideXml.matchAll(/<a:t>([\s\S]*?)<\/a:t>/g)) {
       const run = unescapeXml(match[1]);
-      for (const character of run) {
-        if (hasAuditAdvance(character)) continue;
-        unmeasured.set(character, (unmeasured.get(character) ?? 0) + 1);
+      for (const cluster of auditClusters(run)) {
+        if (cluster.measured) continue;
+        unmeasured.set(cluster.text, (unmeasured.get(cluster.text) ?? 0) + 1);
       }
     }
   }
@@ -5528,12 +5616,14 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
     // and that made this rule report a name the exporter was right to draw,
     // in a column setting 2.8 characters a line.
     const widest = measuredWidestGlyphIn(label.text, font);
-    const glyphs = [...label.text].filter((character) => !/\s/.test(character));
+    const glyphs = auditClusters(label.text).filter((cluster) => !/^\s*$/.test(cluster.text));
     // The LOWER bound in both clauses. Reading the widest glyph one way and
     // the mean the other made every character of an untabled script argue
-    // both sides of the same test, and the mean is the binding one.
+    // both sides of the same test, and the mean is the binding one. By
+    // CLUSTER in both, too: counting a keycap as three glyphs divided one
+    // glyph's advance across three of them.
     let meanEm = 0;
-    for (const glyph of glyphs) meanEm += hasAuditAdvance(glyph) ? measuredAdvanceEm(glyph) : 0;
+    for (const glyph of glyphs) meanEm += glyph.measured ? glyph.em : 0;
     const mean = glyphs.length > 0 ? (meanEm * font) / 72 / glyphs.length : 0;
     if (label.text && glyphs.length > 0
       && (label.w + 0.005 < widest || label.w + 0.005 < 2 * mean)) {
@@ -7291,9 +7381,10 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
   // deck, which had at least drawn something, reported the guess.
   const unmeasuredInk = new Map<string, number>();
   for (const match of xml.matchAll(/<Text>([\s\S]*?)<\/Text>/g)) {
-    for (const character of unescapeXml(match[1].replace(/<[^>]*>/g, ''))) {
-      if (hasAuditAdvance(character)) continue;
-      unmeasuredInk.set(character, (unmeasuredInk.get(character) ?? 0) + 1);
+    // By cluster, for the reason the deck's copy of this rule gives.
+    for (const cluster of auditClusters(unescapeXml(match[1].replace(/<[^>]*>/g, '')))) {
+      if (cluster.measured) continue;
+      unmeasuredInk.set(cluster.text, (unmeasuredInk.get(cluster.text) ?? 0) + 1);
     }
   }
   if (unmeasuredInk.size > 0) {
@@ -8600,6 +8691,7 @@ async function main(): Promise<void> {
   longIndexRowsScenario(),
   collidingStubsScenario(),
   hairlineStubsScenario(),
+  emojiClusterScenario(),
   tallNarrowTilesScenario(),
     corridorZoneScenario(),
     ladderInGridScenario(), twinLaddersScenario(), strayLadderScenario(), legendCornerScenario(), duplicateStepsScenario(), denseZoneScenario(),

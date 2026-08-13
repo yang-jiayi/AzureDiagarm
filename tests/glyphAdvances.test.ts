@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { widestGlyphIn, estimateTextWidthIn } from '../src/services/pptxExporter.ts';
-import { hasMeasuredAdvance, advanceTier, drawableInColumn, advanceWidthIn, widestGlyphUpperIn, widestGlyphIn as widestGlyphLowerIn } from '../src/services/diagramExportGeometry.ts';
+import { hasMeasuredAdvance, advanceTier, drawableInColumn, advanceWidthIn, widestGlyphUpperIn, widestGlyphIn as widestGlyphLowerIn, hasMeasuredCluster } from '../src/services/diagramExportGeometry.ts';
 
 /**
  * Real advances for Yu Gothic UI, in em, measured from the installed font with
@@ -320,4 +320,103 @@ test('an advance reports whether it came from the label font or a substitute', (
     assert.equal(advanceTier(glyph) !== 'none', hasMeasuredAdvance(glyph),
       `the tier and the boolean disagree about ${glyph}`);
   }
+});
+
+/**
+ * Round 63: VARIATION SELECTOR-16 PROMOTES a cluster, it does not vanish.
+ *
+ * The selector was charged zero and the base was charged its own advance, so
+ * the model priced an emoji at its TEXT width. A heart is 1.000 em as a
+ * dingbat and 1.373 as an emoji - 27% under - and an ASCII base is far worse,
+ * because a keycap is a digit plus the selector plus a zero-width combining
+ * enclosure: 0.539 em charged against 1.373 drawn, 61% under. Under-charging
+ * is the direction that paints a line out past its box.
+ */
+const EMOJI_EM = 1.373;
+
+test('a variation selector promotes its base to the emoji advance', () => {
+  for (const cluster of ['\u2764\ufe0f', '\u2601\ufe0f', '\u2699\ufe0f', '\u26a0\ufe0f']) {
+    assert.ok(
+      Math.abs(advanceWidthIn(cluster, 72) - EMOJI_EM) < 1e-9,
+      `${cluster} is drawn as an emoji but the model charges `
+      + `${advanceWidthIn(cluster, 72).toFixed(3)} em, not ${EMOJI_EM}`,
+    );
+  }
+});
+
+test('promotion reaches an ASCII base, so a keycap is one emoji wide', () => {
+  // The enclosing keycap U+20E3 is already a zero-width combining mark in the
+  // table, so this needs no rule of its own ONCE the digit is promoted. Zeroing
+  // the selector alone left the digit at 0.539.
+  for (const cluster of ['1\ufe0f\u20e3', '9\ufe0f\u20e3', '#\ufe0f\u20e3', '*\ufe0f\u20e3']) {
+    assert.ok(
+      Math.abs(advanceWidthIn(cluster, 72) - EMOJI_EM) < 1e-9,
+      `keycap ${cluster} charges ${advanceWidthIn(cluster, 72).toFixed(3)} em, not ${EMOJI_EM}`,
+    );
+  }
+  // And the bare digit must NOT be promoted: 0.539 is right for a digit.
+  assert.ok(Math.abs(advanceWidthIn('1', 72) - 0.539) < 1e-9);
+});
+
+test('a joiner welds on what follows it whatever plane it lives in', () => {
+  // The staff of aesculapius in a health worker is U+2695, in the BMP. The old
+  // joiner rule only absorbed astral code points, so this cluster was charged
+  // the man AND the staff - 2.373 em against 1.373 drawn, 73% over, and an
+  // over-charge is what withholds a name entirely.
+  for (const cluster of [
+    '\u{1f468}\u200d\u2695\ufe0f',
+    '\u{1f469}\u200d\u2696\ufe0f',
+    '\u{1f9d1}\u200d\u2708\ufe0f',
+  ]) {
+    assert.ok(
+      Math.abs(advanceWidthIn(cluster, 72) - EMOJI_EM) < 1e-9,
+      `${cluster} charges ${advanceWidthIn(cluster, 72).toFixed(3)} em against one glyph drawn`,
+    );
+  }
+});
+
+test('a variation selector does not weld on the character after it', () => {
+  // A selector restyles what came BEFORE it. Absorbing what follows would make
+  // every character after an emoji free, which silently shortens a whole name.
+  const promoted = advanceWidthIn('\u2764\ufe0f', 72);
+  assert.ok(
+    Math.abs(advanceWidthIn('\u2764\ufe0fA', 72) - (promoted + advanceWidthIn('A', 72))) < 1e-9,
+    'the letter after a variation selector must still be charged',
+  );
+});
+
+test('the widest-glyph pair measures the cluster, not the base inside it', () => {
+  // `widestGlyphIn` decides whether a column is wide enough to draw a run in.
+  // Reading the base code point of a keycap reported 0.539 em for something the
+  // width model draws at 1.373, sizing the column at 39% of what the line needs
+  // - the same defect as measuring `box.label` and drawing something else.
+  for (const cluster of ['1\ufe0f\u20e3', '\u2764\ufe0f', '\u{1f468}\u200d\u2695\ufe0f']) {
+    for (const [name, measure] of [
+      ['lower', widestGlyphLowerIn], ['upper', widestGlyphUpperIn],
+    ] as const) {
+      assert.ok(
+        Math.abs(measure(cluster, 72) - EMOJI_EM) < 1e-9,
+        `${name} bound reports ${measure(cluster, 72).toFixed(3)} for a glyph drawn at ${EMOJI_EM}`,
+      );
+    }
+    // And the column test agrees with both: a column narrower than the glyph
+    // cannot set it.
+    assert.equal(drawableInColumn(cluster, 72, EMOJI_EM - 0.01), false);
+    assert.equal(drawableInColumn(cluster, 72, 2 * EMOJI_EM), true);
+  }
+});
+
+test('a promoted cluster counts as measured, not as an unmeasurable guess', () => {
+  // The coverage oracle asked per code point, so it called a promoted heart
+  // unmeasured forever: no table entry for U+2764 can ever read 1.373, because
+  // that is not the code point's width. A rule that can never be satisfied is a
+  // rule nobody can act on - and it drove `widestGlyphIn` to the zero lower
+  // bound, which sizes the column at nothing.
+  assert.equal(hasMeasuredAdvance('\u2764'), false, 'the bare dingbat is honestly untabled');
+  assert.equal(hasMeasuredCluster('\u2764\ufe0f'), true);
+  assert.equal(hasMeasuredCluster('1\ufe0f\u20e3'), true);
+  assert.equal(hasMeasuredCluster('\u{1f468}\u200d\u2695\ufe0f'), true);
+  // It must still be able to say no, or it is not an oracle.
+  assert.equal(hasMeasuredCluster('\u{1d400}'), false);
+  assert.equal(hasMeasuredCluster(''), false);
 });

@@ -1005,6 +1005,20 @@ const GEOMETRY_MODIFIER_RE = /[\u{1f3fb}-\u{1f3ff}]/u;
 const GEOMETRY_REGIONAL_RE = /[\u{1f1e6}-\u{1f1ff}]/u;
 
 /**
+ * A joiner, as distinct from a variation selector.
+ *
+ * `GEOMETRY_ZERO_WIDTH_RE` covers both, which is right for "how wide is this
+ * code point" and wrong for "does the code point AFTER it belong to the same
+ * glyph". A joiner welds what follows onto the cluster; a variation selector
+ * only restyles what came before, so the character after one starts a new
+ * glyph and must be charged for.
+ */
+const GEOMETRY_JOINER_RE = /[\u200d\u2060]/;
+
+/** VARIATION SELECTOR-16: draw the character before me as an emoji. */
+const GEOMETRY_VS16 = '\ufe0f';
+
+/**
  * The astral planes the emoji font covers, and the astral planes the CJK font
  * covers, are two different questions and were being answered as one.
  *
@@ -1084,7 +1098,7 @@ export function hasMeasuredAdvance(character: string): boolean {
  * never heard of is far more likely to be a symbol or a full-width form than a
  * narrow Latin letter, and a sizer that guesses low paints outside the box.
  * That reasoning only holds where the answer sizes a box - see
- * `lowerBoundAdvanceEm` for the one caller where guessing high destroys text.
+ * `GEOMETRY_NARROWEST_EM` for the callers where guessing high destroys text.
  *
  * With Cyrillic, Greek and the rest now measured, what is left over is symbols
  * and rare scripts, for which one em is usually right rather than merely safe.
@@ -1130,8 +1144,91 @@ export function advanceEm(character: string): number {
  */
 const GEOMETRY_NARROWEST_EM = 0;
 
-function lowerBoundAdvanceEm(character: string): number {
-  return hasMeasuredAdvance(character) ? advanceEm(character) : GEOMETRY_NARROWEST_EM;
+/**
+ * Whether the width model's answer for one rendered cluster is a measurement.
+ *
+ * The code-point oracle cannot answer this. A promoted heart is `U+2764` plus
+ * VS16 and draws at the emoji advance, so no table entry for `U+2764` will ever
+ * make `hasMeasuredAdvance` say yes at 1.373 - that is not the code point's
+ * width. Asked per code point, every promoted cluster was reported unmeasured
+ * forever, which is a coverage rule that can never be satisfied and therefore
+ * one nobody can act on.
+ */
+export function hasMeasuredCluster(cluster: string): boolean {
+  const clusters = advanceClusters(cluster);
+  return clusters.length > 0 && clusters.every((one) => one.measured);
+}
+
+/**
+ * Rendered width of a run, in inches, from the measured advances. The one
+ * width model both exporters use, so the sheet and the deck wrap a name in the
+ * same place.
+ */
+/**
+ * `text` split into rendered clusters, each with the em advance it draws at.
+ *
+ * One walker, three callers. The width model and the widest-glyph model used
+ * to walk separately: `advanceWidthIn` knew a keycap was one glyph and
+ * `widestGlyphIn` reported the digit inside it, so a column sized on the
+ * widest glyph was too narrow for the run that had to fit in it - the same
+ * shape of defect as measuring `box.label` and drawing something else.
+ */
+function advanceClusters(text: string): Array<{ text: string; em: number; measured: boolean }> {
+  const characters = [...text];
+  const clusters: Array<{ text: string; em: number; measured: boolean }> = [];
+  let regionalRun = 0;
+  let previous = '';
+  for (const [index, character] of characters.entries()) {
+    const regional = GEOMETRY_REGIONAL_RE.test(character);
+    regionalRun = regional ? regionalRun + 1 : 0;
+    // A flag is two regional indicators, a skin tone is a base plus a modifier
+    // and a family is four people joined by three joiners; each renders as ONE
+    // glyph. Charging every code point separately made a family 5.44 em wide,
+    // and an over-charge is what deletes a name - see `lowerBoundAdvanceEm`.
+    //
+    // The joiner test used to demand that what followed be astral. It is the
+    // BMP members of these clusters that the demand excluded: the staff of
+    // aesculapius in a health worker is U+2695, so "man health worker" was
+    // charged its own glyph on top of the man's and came out 73% over. What a
+    // joiner welds on is part of the cluster whatever plane it lives in.
+    const joined = GEOMETRY_MODIFIER_RE.test(character)
+      || (regional && regionalRun % 2 === 0)
+      || (previous !== '' && GEOMETRY_JOINER_RE.test(previous));
+    previous = character;
+    const last = clusters[clusters.length - 1];
+    if (joined && last) {
+      last.text += character;
+      continue;
+    }
+    // VARIATION SELECTOR-16 PROMOTES, it does not merely disappear. Charging
+    // the selector nothing and the base its own advance left the base at its
+    // TEXT width: a heart is 1.000 em as a dingbat and 1.373 as an emoji, so
+    // "❤️" and "☁️" were 27% under. Worse on an ASCII base - a keycap "1️⃣"
+    // is "1" + VS16 + U+20E3, and the digit's 0.539 em made it 61% under.
+    // Applying this to ASCII too is what lets U+20E3 stay a 0-width combining
+    // mark in the table rather than needing a rule of its own.
+    const promoted = characters[index + 1] === GEOMETRY_VS16
+      && !GEOMETRY_CJK_RE.test(character)
+      && !/\s/.test(character);
+    const em = promoted ? GEOMETRY_ASTRAL_EM : advanceEm(character);
+    // WHETHER THE CLUSTER IS MEASURED IS A QUESTION ABOUT THE CLUSTER. Asking
+    // it of the base code point calls a promoted heart unmeasured forever: no
+    // table will ever hold U+2764 at 1.373, because 1.373 is not that code
+    // point's width - it is the width of the emoji glyph VS16 selects, which is
+    // as measured as any other emoji. Reported per code point, every promoted
+    // cluster took the lower bound of 0 and `widestGlyphIn` sized its column at
+    // nothing.
+    const measured = promoted || hasMeasuredAdvance(character);
+    // A zero-width code point that joins nothing - a lone selector, a combining
+    // mark opening a string - still belongs to the cluster it modifies rather
+    // than standing alone, but there is nothing before it to attach to.
+    if (em === 0 && last && GEOMETRY_ZERO_WIDTH_RE.test(character)) {
+      last.text += character;
+      continue;
+    }
+    clusters.push({ text: character, em, measured });
+  }
+  return clusters;
 }
 
 /**
@@ -1141,26 +1238,7 @@ function lowerBoundAdvanceEm(character: string): number {
  */
 export function advanceWidthIn(text: string, fontSizePt: number): number {
   let em = 0;
-  let previous = '';
-  // How many regional indicators the current unbroken run is already carrying.
-  // A flag is a PAIR, so the third indicator in a row opens a second flag: the
-  // rule cannot be "an indicator after an indicator is free" or two adjacent
-  // flags charge one glyph's width and paint over whatever follows them.
-  let regionalRun = 0;
-  for (const character of text) {
-    const regional = GEOMETRY_REGIONAL_RE.test(character);
-    regionalRun = regional ? regionalRun + 1 : 0;
-    // A flag is two regional indicators, a skin tone is a base plus a modifier
-    // and a family is four people joined by three joiners; each renders as ONE
-    // glyph. Charging every code point separately made a family 5.44 em wide,
-    // and an over-charge is what deletes a name - see `lowerBoundAdvanceEm`.
-    const joined = GEOMETRY_MODIFIER_RE.test(character)
-      || (regional && regionalRun % 2 === 0)
-      || (previous !== '' && GEOMETRY_ZERO_WIDTH_RE.test(previous)
-        && (character.codePointAt(0) ?? 0) >= 0x10000);
-    if (!joined) em += advanceEm(character);
-    previous = character;
-  }
+  for (const cluster of advanceClusters(text)) em += cluster.em;
   return (em * fontSizePt) / 72;
 }
 
@@ -1191,12 +1269,17 @@ export function trailingWhitespaceIn(text: string, fontSizePt: number): number {
  */
 export function widestGlyphIn(text: string, fontSizePt: number): number {
   let widest = 0;
-  for (const character of text) {
+  for (const cluster of advanceClusters(text)) {
     // Whitespace is not a glyph. It advances 0.274 em, which matters to a
     // WIDTH, but "the widest thing that has to fit on a line" is about ink and
     // a column that holds only a space holds nothing.
-    if (/\s/.test(character)) continue;
-    widest = Math.max(widest, lowerBoundAdvanceEm(character));
+    if (/^\s*$/.test(cluster.text)) continue;
+    // A cluster's own advance, not the widest code point inside it. The lower
+    // bound applies to a SINGLE unmeasured character; a keycap or a flag is
+    // measured as a cluster whatever its parts are, so asking the parts here
+    // reported 0.539 em for a glyph the width model draws at 1.373 and sized
+    // the column at 39% of what the line needs.
+    widest = Math.max(widest, cluster.measured ? cluster.em : GEOMETRY_NARROWEST_EM);
   }
   return (widest * fontSizePt) / 72;
 }
@@ -1214,9 +1297,9 @@ export function widestGlyphIn(text: string, fontSizePt: number): number {
  */
 export function widestGlyphUpperIn(text: string, fontSizePt: number): number {
   let widest = 0;
-  for (const character of text) {
-    if (/\s/.test(character)) continue;
-    widest = Math.max(widest, advanceEm(character));
+  for (const cluster of advanceClusters(text)) {
+    if (/^\s*$/.test(cluster.text)) continue;
+    widest = Math.max(widest, cluster.em);
   }
   return (widest * fontSizePt) / 72;
 }
@@ -1252,11 +1335,15 @@ export function widestGlyphUpperIn(text: string, fontSizePt: number): number {
  * one test have to agree about what they do not know.
  */
 export function drawableInColumn(text: string, fontSizePt: number, columnIn: number): boolean {
-  const glyphs = [...text].filter((character) => !/\s/.test(character));
+  // Clusters, not code points. The two clauses have to agree about what a
+  // glyph IS as well as about what they do not know: counting a keycap as
+  // three glyphs charged 0.539 em across three of them and reported a mean
+  // advance of 0.180 em for a run that draws at 1.373.
+  const glyphs = advanceClusters(text).filter((cluster) => !/^\s*$/.test(cluster.text));
   if (glyphs.length === 0) return false;
   if (columnIn < widestGlyphIn(text, fontSizePt)) return false;
   let em = 0;
-  for (const glyph of glyphs) em += lowerBoundAdvanceEm(glyph);
+  for (const glyph of glyphs) em += glyph.measured ? glyph.em : GEOMETRY_NARROWEST_EM;
   return columnIn >= (2 * em * fontSizePt) / 72 / glyphs.length;
 }
 
