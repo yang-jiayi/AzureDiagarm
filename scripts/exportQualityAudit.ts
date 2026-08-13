@@ -1216,6 +1216,43 @@ function longWorkflowScenario(): Scenario {
 }
 
 /**
+ * Nine Visio workflow rows of unbreakable resource names.
+ *
+ * The Visio band and its guard both counted lines as `ceil(width / column)`,
+ * which is a lower bound rather than a count: prose breaks between words and
+ * abandons the rest of the line. Ordinary prose drew five lines in a budget of
+ * four; a description made of 30-character resource names — the kind a naming
+ * convention produces and a generated dataflow quotes verbatim — drew eight in
+ * a budget of six. Visio does not clip, so every row painted through the rows
+ * above and below it, and the guard reported nothing.
+ */
+function visioTokenWorkflowScenario(): Scenario {
+  const nodes: Node[] = Array.from({ length: 10 }, (_, i) => svc(
+    `vtw${i}`,
+    `Contoso platform service ${i}`,
+    (i % 5) * 300,
+    Math.floor(i / 5) * 200,
+  ));
+  const edges: Edge[] = Array.from({ length: 9 }, (_, i) => ({
+    id: `vtwe${i}`,
+    source: `vtw${i}`,
+    target: `vtw${i + 1}`,
+    label: 'Hands off',
+    data: {
+      stepNumber: i + 1,
+      // Long unbreakable runs: a greedy renderer cannot fit two on a line that
+      // holds one and a half, so it wastes the tail of every line. The ratio
+      // count never sees that waste.
+      stepDescription: Array.from(
+        { length: 8 },
+        (_, k) => `contoso-platform-production-eastus2-instance-${String(i * 8 + k).padStart(2, '0')}`,
+      ).join(' '),
+    },
+  } as Edge));
+  return { id: 'visio-token-workflow', nodes, edges };
+}
+
+/**
  * A 560-service estate under a 500-step CJK workflow.
  *
  * The band is sized twice — once at the narrowest page the exporter emits, to
@@ -2757,25 +2794,65 @@ async function auditCustomerDeck(scenario: Scenario): Promise<string[]> {
     description: stepText(edge as unknown as { source: string; target: string; label?: unknown; data?: unknown }),
     services: [labelOf(edge.source), labelOf(edge.target)].filter(Boolean),
   }));
+  // The corpus was blind to its own worst case: the synthesised assessment was
+  // English boilerplate, so no scenario ever exercised a Japanese finding —
+  // and `localization.ts` instructs the model, verbatim, to write findings and
+  // recommendations in Japanese. CJK is roughly twice the width per character,
+  // so a box that holds an English finding holds half a Japanese one.
+  const hasCjk = (s: unknown) => /[\u3040-\u30ff\u4e00-\u9fff]/.test(String(s ?? ''));
+  const isJa = scenario.nodes.some((n) => hasCjk((n.data as { label?: string } | undefined)?.label))
+    || scenario.edges.some((e) => hasCjk(e.label)
+      || hasCjk((e.data as { stepDescription?: string } | undefined)?.stepDescription));
   const deckValidation = {
     overallScore: 72,
-    overallLabel: 'Adequate, with gaps',
-    summary: 'The estate meets the reliability and security baselines, with cost and '
-      + 'operational-excellence gaps that are worth closing before the next release.',
-    pillars: [
-      { pillar: 'Reliability', score: 78, maturity: 'Adequate, with gaps' },
-      { pillar: 'Security', score: 81, maturity: 'Good' },
-      { pillar: 'Cost Optimization', score: 58, maturity: 'Needs work' },
-      { pillar: 'Operational Excellence', score: 66, maturity: 'Adequate, with gaps' },
-      { pillar: 'Performance Efficiency', score: 74, maturity: 'Adequate, with gaps' },
-    ],
+    overallLabel: isJa ? '一部に改善余地あり' : 'Adequate, with gaps',
+    summary: isJa
+      ? 'この構成は信頼性とセキュリティの基本要件をおおむね満たしていますが、コスト最適化と'
+        + '運用性の観点では改善の余地が残されています。特に単一ゾーン配置の資源が複数あり、'
+        + 'ゾーン障害時には該当階層が全面的に停止する構成となっているため、次回のリリースまでに'
+        + 'ゾーン冗長構成への移行を検討することを推奨します。また、監視とアラートの設定が'
+        + '一部の資源に限定されており、障害の検知が運用チームへの通報に依存している箇所が'
+        + '見受けられますので、併せて是正されることを推奨いたします。加えて、バックアップの'
+        + '保持期間が既定値のままとなっている資源が存在し、監査要件で求められる期間を'
+        + '下回る可能性がありますので、要件を確認のうえ保持ポリシーを明示的に設定して'
+        + 'ください。ネットワーク境界については、パブリックエンドポイントが有効なままの'
+        + 'データストアが確認されましたので、プライベートエンドポイントへの移行と'
+        + 'パブリックアクセスの無効化を、移行計画に含めることを強く推奨いたします。'
+        + '最後に、容量計画の根拠となる負荷試験の記録が確認できませんでしたので、'
+        + '本番相当の負荷での試験結果を残されることをご検討ください。あわせて、'
+        + '構成変更の履歴が追跡できる形で保存されていない資源が複数確認されましたので、'
+        + 'コードとしてのインフラストラクチャによる管理へ段階的に移行し、'
+        + '変更内容の審査と承認の記録が残る運用体制を整備されることを推奨いたします。'
+        + 'また、identity の観点では、共有シークレットによる認証が残存しているため、'
+        + 'マネージド ID への移行を優先度の高い課題として計画に含めてください。'
+      : 'The estate meets the reliability and security baselines, with cost and '
+        + 'operational-excellence gaps that are worth closing before the next release.',
+    pillars: (isJa
+      ? ['信頼性', 'セキュリティ', 'コスト最適化', 'オペレーショナルエクセレンス', 'パフォーマンス効率']
+      : ['Reliability', 'Security', 'Cost Optimization', 'Operational Excellence', 'Performance Efficiency']
+    ).map((pillar, index) => ({
+      pillar,
+      score: [78, 81, 58, 66, 74][index],
+      maturity: isJa ? '一部に改善余地あり' : 'Adequate, with gaps',
+    })),
     findings: deckServices.slice(0, 14).map((service, index) => ({
       severity: (['critical', 'high', 'medium', 'low'] as const)[index % 4],
-      category: service.category || 'Platform',
-      issue: `${service.name} is deployed to a single availability zone, so a zone outage `
-        + 'takes the whole tier offline for the duration of the incident.',
-      recommendation: 'Move to a zone-redundant SKU and spread the instance count across at '
-        + 'least two zones in the primary region.',
+      category: isJa ? '信頼性' : (service.category || 'Platform'),
+      issue: isJa
+        ? `${service.name}は単一の可用性ゾーンにのみ配置されているため、ゾーン障害が発生した`
+          + '場合には当該階層の全インスタンスが同時に停止し、復旧までの間サービス全体が'
+          + '利用できなくなる構成となっています。またフェールオーバー手順が文書化されて'
+          + 'おらず、障害発生時の復旧作業が特定の担当者の記憶に依存する状態です。'
+        : `${service.name} is deployed to a single availability zone, so a zone outage `
+          + 'takes the whole tier offline for the duration of the incident.',
+      recommendation: isJa
+        ? '主要リージョン内の少なくとも二つの可用性ゾーンにインスタンスを分散したうえで、'
+          + 'ゾーン冗長構成に対応した SKU へ移行し、あわせてゾーン単位の正常性監視を'
+          + '有効化してください。移行に際しては、事前に検証環境で切り替え手順を確認し、'
+          + '復旧目標時間と復旧目標地点を関係者間で合意したうえで、手順書として'
+          + '文書化されることを推奨いたします。'
+        : 'Move to a zone-redundant SKU and spread the instance count across at '
+          + 'least two zones in the primary region.',
     })),
     modelUsed: 'audit',
   };
@@ -2882,6 +2959,25 @@ async function auditCustomerDeck(scenario: Scenario): Promise<string[]> {
     const on = windows.filter((xml) => xml.includes(marker)).length;
     if (on === 0) issues.push(`customer deck: service "${node.id}" is drawn on no slide`);
     else if (on > 1) issues.push(`customer deck: service "${node.id}" is drawn on ${on} slides`);
+  }
+
+  // A `slice(0, N)` with nothing said about the remainder is the same silent
+  // loss the cost and services tables were both fixed for: the reader is shown
+  // five findings, the app selected six, and the sixth appears on no slide and
+  // in no footnote. Either the deck carries a finding whole or it says how many
+  // it left out — anything else reads as a complete assessment and is not one.
+  {
+    const said = slides
+      .flatMap((xml) => [...xml.matchAll(/<a:t>([^<]*)<\/a:t>/g)].map((m) => m[1]))
+      .join('\n');
+    const missing = deckValidation.findings.filter((f) => !said.includes(auditStrip(f.issue)));
+    const declares = new RegExp(`\\b${deckValidation.findings.length}\\s+finding`).test(said);
+    if (missing.length > 0 && !declares) {
+      issues.push(
+        `customer deck: ${missing.length} of ${deckValidation.findings.length} WAF finding(s) appear `
+        + 'nowhere in the deck, and no heading says how many were shown',
+      );
+    }
   }
 
   // Every name the drawing shortened must be spelled out somewhere in the deck,
@@ -2995,29 +3091,54 @@ async function auditCustomerDeck(scenario: Scenario): Promise<string[]> {
         );
       }
     }
-    // Overlap is only conclusive where the type is bigger than the box that
-    // holds it: two boxes may legitimately be stacked, but ink that has spilled
-    // out of its own box and landed on a neighbour's is never a layout.
+    // Overlap needs only *one* side to have spilled. Two boxes may legitimately
+    // be stacked, so a collision between two well-behaved boxes is a layout —
+    // but ink that has left its own box and landed on a neighbour is never
+    // legitimate, and the neighbour has no reason to be overflowing too. The
+    // stricter pairing missed a Japanese assessment paragraph painting 0.30in
+    // over a section heading that fitted its own box perfectly.
     const spilling = painted.filter((p) => p.over > 0.01);
-    for (let i = 0; i < spilling.length; i += 1) {
-      for (let j = i + 1; j < spilling.length; j += 1) {
-        const a = spilling[i];
-        const b = spilling[j];
+    const reported = new Set<string>();
+    for (const a of spilling) {
+      for (const b of painted) {
+        if (a === b) continue;
         // Only rows that share a column can collide; two captions side by side
         // in the same band are a layout, not an overlap.
         const sharesX = a.shape.x < b.shape.x + b.shape.w - 0.02
           && b.shape.x < a.shape.x + a.shape.w - 0.02;
         if (!sharesX) continue;
         const overlap = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top);
-        if (overlap > 0.02) {
-          issues.push(
-            `customer deck: slide ${index + 1} overlaps "${a.shape.text.trim().slice(0, 24)}" and `
-            + `"${b.shape.text.trim().slice(0, 24)}" by ${overlap.toFixed(2)}in of type`,
-          );
-        }
+        if (overlap <= 0.02) continue;
+        // Both orderings reach this when two boxes each spill onto the other;
+        // report the pair once so a count of issues stays a count of defects.
+        const key = [painted.indexOf(a), painted.indexOf(b)].sort((x, y) => x - y).join(':');
+        if (reported.has(key)) continue;
+        reported.add(key);
+        issues.push(
+          `customer deck: slide ${index + 1} overlaps "${a.shape.text.trim().slice(0, 24)}" and `
+          + `"${b.shape.text.trim().slice(0, 24)}" by ${overlap.toFixed(2)}in of type`,
+        );
       }
     }
   }
+  // Every measurement in this file assumes CJK draws at one em. That holds for
+  // Yu Gothic UI and not for the Calibri the theme's minor font falls back to,
+  // whose `ea` is empty — so a run that reached the file without an explicit
+  // East Asian typeface would be measured 60% too wide and every fit above it
+  // would be quietly wrong in the unsafe direction. pptxgenjs writes `<a:ea>`
+  // alongside every `<a:latin>` today, but that is its behaviour, not a
+  // guarantee, so pin it rather than depend on it.
+  {
+    const latin = slides.reduce((n, xml) => n + (xml.match(/<a:latin\b/g) ?? []).length, 0);
+    const ea = slides.reduce((n, xml) => n + (xml.match(/<a:ea\b/g) ?? []).length, 0);
+    if (ea < latin) {
+      issues.push(
+        `customer deck: ${latin - ea} run(s) declare a Latin typeface with no East Asian `
+        + 'typeface, so CJK falls through to the theme font and is measured wrong',
+      );
+    }
+  }
+
   return issues;
 }
 
@@ -4622,8 +4743,14 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
   }));
   const spilling = workflowRows
     .map((row) => {
-      const lines = Math.max(1, Math.ceil(textWidthIn(row.text.trim(), row.pt) / row.w));
-      return { row, needed: (lines * row.pt * 1.22) / 72, lines };
+      // The exporter's own estimator is deliberately not reused: a guard that
+      // imports the estimator agrees with the bug by construction. This is an
+      // independent greedy count against the same 1.35 line multiple the rest
+      // of the deck is measured with — the 1.22 used before was smaller than
+      // the exporter's own multiple, so the guard granted the exporter more
+      // room than the exporter granted itself and fired on nothing.
+      const lines = auditWrappedLines(row.text.trim(), row.w, row.pt);
+      return { row, needed: (lines * row.pt * 1.35) / 72, lines };
     })
     .filter((r) => r.needed > r.row.h + 0.01);
   if (spilling.length > 0) {
@@ -5208,6 +5335,7 @@ async function main(): Promise<void> {
     wrappedInventoryScenario(),
     tokenWrapInventoryScenario(),
     longWorkflowScenario(),
+    visioTokenWorkflowScenario(),
     squeezedBadgeScenario(),
     await generatedScenario(), await groupedGeneratedScenario(),
   ];

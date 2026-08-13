@@ -4367,7 +4367,7 @@ export function tableRowHeightIn(cells: string[], colW: number[], pt: number): n
  * drivers under a heading that says ten is the same defect as a truncated
  * inventory.
  */
-function fitTableRows(
+export function fitTableRows(
   rows: string[][], header: string[], colW: number[], availableIn: number, startPt: number,
 ): { rows: number; pt: number } {
   let pt = startPt;
@@ -4483,10 +4483,31 @@ function addValidationSummarySlide(pptx: PptxGenJS, t: SlideTheme, o: Architectu
 
   // Executive summary text (right of score block)
   if (v.summary) {
+    // 620 characters is about seven lines of English in this column and
+    // thirteen of Japanese, and the box holds ten — so the tail of a Japanese
+    // assessment printed straight over the "Pillar maturity" heading below it.
+    // Shrink the type to what the box can hold rather than cap the characters:
+    // a character cap discharges nothing, and it is wrong by roughly 2x
+    // depending on the script.
+    const SUMMARY_H = 2.35;
+    const summaryW = W - 3.7 - 0.35 - 0.2; // less the box's own insets
+    const text = `Assessment.  ${v.summary}`;
+    let summaryPt = 12.5;
+    while (summaryPt > LEGIBLE_TILE_PT
+      && wrappedLineCount(text, summaryW, summaryPt) * summaryPt * 1.35 / 72 + 0.1 > SUMMARY_H) {
+      summaryPt -= 0.5;
+    }
+    // Only if it still will not fit at the floor is anything cut, and then by
+    // measurement rather than by a character count.
+    let body = v.summary;
+    while (body.length > 40
+      && wrappedLineCount(`Assessment.  ${body}`, summaryW, summaryPt) * summaryPt * 1.35 / 72 + 0.1 > SUMMARY_H) {
+      body = body.slice(0, Math.max(40, Math.floor(body.length * 0.9)));
+    }
     slide.addText([
       { text: 'Assessment.  ', options: { bold: true, color: t.titleText } },
-      { text: truncate(v.summary, 620), options: { color: t.metaText } },
-    ], { x: 3.7, y: BODY_TOP, w: W - 3.7 - 0.35, h: 2.35, fontSize: 12.5, fontFace: 'Yu Gothic UI', valign: 'top', wrap: true });
+      { text: body === v.summary ? body : `${body.trimEnd()}…`, options: { color: t.metaText } },
+    ], { x: 3.7, y: BODY_TOP, w: W - 3.7 - 0.35, h: SUMMARY_H, fontSize: summaryPt, fontFace: 'Yu Gothic UI', valign: 'top', wrap: true });
   }
 
   // Pillar maturity table (full width, below)
@@ -4526,26 +4547,81 @@ function addValidationSummarySlide(pptx: PptxGenJS, t: SlideTheme, o: Architectu
 function addValidationFindingsSlide(pptx: PptxGenJS, t: SlideTheme, o: ArchitectureDeckOptions): void {
   const v = o.validation;
   if (!v || !v.findings.length) return;
-  const slide = pptx.addSlide();
-  addChrome(pptx, slide, t, 'Key findings & recommendations');
 
-  const findings = v.findings.slice(0, 5);
-  const rowH = (FOOTER_Y - BODY_TOP - 0.1) / findings.length;
-  findings.forEach((f, i) => {
-    const y = BODY_TOP + i * rowH;
-    // Severity chip
-    slide.addText(f.severity.toUpperCase(), { x: 0.35, y: y + 0.05, w: 1.05, h: 0.34, fontSize: 9, bold: true, color: 'ffffff', fill: { color: severityColor(f.severity) }, align: 'center', valign: 'middle', fontFace: 'Yu Gothic UI' });
-    // Issue + recommendation
-    slide.addText([
-      { text: `${f.category}. `, options: { bold: true, color: t.titleText } },
-      { text: truncate(f.issue, 170), options: { color: t.metaText } },
-    ], { x: 1.55, y: y + 0.02, w: W - 1.95, h: rowH * 0.5, fontSize: 12, fontFace: 'Yu Gothic UI', valign: 'top', wrap: true });
-    if (f.recommendation) {
-      slide.addText([
-        { text: '→ Fix:  ', options: { bold: true, color: t.accent } },
-        { text: truncate(f.recommendation, 220), options: { color: t.metaText, italic: true } },
-      ], { x: 1.55, y: y + rowH * 0.5, w: W - 1.95, h: rowH * 0.46, fontSize: 11, fontFace: 'Yu Gothic UI', valign: 'top', wrap: true });
+  // Every other prose surface in this deck is paginated on measured height.
+  // This one divided the body by a row *count* and capped its contents by
+  // character count — and 170 characters is about two lines of English but
+  // four of Japanese, which the model is explicitly instructed to write. At the
+  // five findings the app always sends, the issue painted over its own Fix, the
+  // Fix over the next issue, and the last Fix over the footer: nine collisions
+  // on one slide, in the only case that occurs.
+  const ISSUE_PT = 12;
+  const FIX_PT = 11;
+  const COL_W = W - 1.95 - 0.2; // the box, less its own left/right insets
+  const GAP_IN = 0.12;
+  const INSET_V_IN = 0.1;
+  const available = FOOTER_Y - BODY_TOP - 0.1;
+  const blockFor = (f: DeckFinding, issuePt: number, fixPt: number) => {
+    const issueH = wrappedLineCount(`${f.category}. ${f.issue}`, COL_W, issuePt)
+      * issuePt * 1.35 / 72 + INSET_V_IN;
+    const fixH = f.recommendation
+      ? wrappedLineCount(`→ Fix:  ${f.recommendation}`, COL_W, fixPt) * fixPt * 1.35 / 72 + INSET_V_IN
+      : 0;
+    return { issueH, fixH, total: issueH + fixH + GAP_IN };
+  };
+  // Shrink before splitting, so a page holds as many findings as it can read.
+  let issuePt = ISSUE_PT;
+  let fixPt = FIX_PT;
+  while (issuePt > LEGIBLE_TILE_PT
+    && Math.max(...v.findings.map((f) => blockFor(f, issuePt, fixPt).total)) > available) {
+    issuePt -= 0.5;
+    fixPt = Math.max(LEGIBLE_TILE_PT, fixPt - 0.5);
+  }
+
+  // Pack by measured height rather than dropping the tail. The app sends the
+  // top six by severity and this slide drew five; the sixth appeared nowhere
+  // else in the deck, which is the same silent truncation the cost table and
+  // the services table were both fixed for.
+  const pages: DeckFinding[][] = [];
+  let current: DeckFinding[] = [];
+  let used = 0;
+  for (const f of v.findings) {
+    const h = blockFor(f, issuePt, fixPt).total;
+    if (current.length > 0 && used + h > available) {
+      pages.push(current);
+      current = [];
+      used = 0;
     }
+    current.push(f);
+    used += h;
+  }
+  if (current.length > 0) pages.push(current);
+
+  pages.forEach((shown, page) => {
+    const slide = pptx.addSlide();
+    addChrome(
+      pptx, slide, t,
+      pages.length > 1 ? `Key findings & recommendations (${page + 1} / ${pages.length})` : 'Key findings & recommendations',
+      `${v.findings.length} finding${v.findings.length === 1 ? '' : 's'}`,
+    );
+    let y = BODY_TOP;
+    shown.forEach((f) => {
+      const block = blockFor(f, issuePt, fixPt);
+      // Severity chip
+      slide.addText(f.severity.toUpperCase(), { x: 0.35, y: y + 0.05, w: 1.05, h: 0.34, fontSize: 9, bold: true, color: 'ffffff', fill: { color: severityColor(f.severity) }, align: 'center', valign: 'middle', fontFace: 'Yu Gothic UI' });
+      // Issue + recommendation
+      slide.addText([
+        { text: `${f.category}. `, options: { bold: true, color: t.titleText } },
+        { text: f.issue, options: { color: t.metaText } },
+      ], { x: 1.55, y, w: W - 1.95, h: block.issueH, fontSize: issuePt, fontFace: 'Yu Gothic UI', valign: 'top', wrap: true });
+      if (f.recommendation) {
+        slide.addText([
+          { text: '→ Fix:  ', options: { bold: true, color: t.accent } },
+          { text: f.recommendation, options: { color: t.metaText, italic: true } },
+        ], { x: 1.55, y: y + block.issueH, w: W - 1.95, h: block.fixH, fontSize: fixPt, fontFace: 'Yu Gothic UI', valign: 'top', wrap: true });
+      }
+      y += block.total;
+    });
   });
 }
 

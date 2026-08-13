@@ -907,6 +907,45 @@ ${roundedRectGeometry()}
 }
 
 /**
+ * How many lines the text actually takes, wrapped the way a renderer wraps it.
+ *
+ * `ceil(width / column)` is only a lower bound: Latin prose breaks between
+ * words, so a run that will not fit on the current line abandons the rest of
+ * that line and starts the next one. On the workflow band that lower bound
+ * budgeted four lines for prose that drew five, and six for unbreakable
+ * resource names that drew eight — every row overrunning its neighbours by
+ * roughly a tenth of an inch, invisibly, because the guard used the same ratio.
+ */
+function wrappedLinesIn(text: string, widthIn: number, fontSizeIn: number): number {
+  const column = Math.max(0.2, widthIn);
+  // Latin breaks at spaces; CJK may break after any full-width code point.
+  const runs = String(text ?? '').match(/[^\s\u2e80-\u9fff\uac00-\ud7af\uff00-\uff60\uffe0-\uffe6]+|[\u2e80-\u9fff\uac00-\ud7af\uff00-\uff60\uffe0-\uffe6]|\s+/g) ?? [];
+  let lines = 1;
+  let used = 0;
+  const spaceW = estimateTextWidthIn(' ', fontSizeIn);
+  for (const run of runs) {
+    if (/^\s+$/.test(run)) {
+      if (used > 0) used += spaceW;
+      continue;
+    }
+    const w = estimateTextWidthIn(run, fontSizeIn);
+    if (used > 0 && used + w > column) {
+      lines += 1;
+      used = 0;
+    }
+    if (w > column) {
+      // A single run wider than the box breaks inside itself.
+      const whole = Math.ceil(w / column);
+      lines += whole - 1;
+      used = w - (whole - 1) * column;
+      continue;
+    }
+    used += w;
+  }
+  return Math.max(1, lines);
+}
+
+/**
  * How tall one workflow row has to be to hold the sentence written in it.
  *
  * The band used to draw every row at a fixed pitch and give the sentence a
@@ -917,7 +956,7 @@ ${roundedRectGeometry()}
  */
 function workflowRowHeightIn(description: string, colW: number): number {
   const textW = Math.max(colW - 0.6, 0.4);
-  const lines = Math.max(1, Math.ceil(estimateTextWidthIn(description, LEGEND_FONT_IN) / textW));
+  const lines = wrappedLinesIn(description, textW, LEGEND_FONT_IN);
   return Math.max(WORKFLOW_ROW_IN, lines * LEGEND_FONT_IN * 1.35 + 0.08);
 }
 

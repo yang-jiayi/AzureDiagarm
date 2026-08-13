@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import JSZip from 'jszip';
 import type { Edge, Node } from 'reactflow';
-import { buildDiagramSlidePptx, legibleScaleFor, tableRowHeightIn, wrappedLineCount } from '../src/services/pptxExporter.ts';
+import { buildDiagramSlidePptx, fitTableRows, legibleScaleFor, tableRowHeightIn, wrappedLineCount } from '../src/services/pptxExporter.ts';
 import { buildExportRoutes, collectExportBoxes } from '../src/services/diagramExportGeometry.ts';
 import { buildVsdxPackage } from '../src/services/visioVsdxExporter.ts';
 
@@ -1705,4 +1705,42 @@ test('the legibility target never exceeds what the frame can deliver', () => {
       );
     }
   }
+});
+
+/**
+ * The WAF pillar and regional-comparison tables must never silently drop a row.
+ *
+ * `fitTableRows` shrinks the type first and only then discards rows, and on
+ * these two the contents are closed sets — five fixed WAF pillar names against
+ * a 2.91in budget, and the shipped region list against 5.32in — so the
+ * row-dropping arm should be unreachable. "Should be unreachable" is worth
+ * pinning: it is reachable the moment either budget is tightened or either
+ * label grows, and the failure is silent by construction.
+ */
+test('the closed-set tables keep every row they are given', () => {
+  const PILLARS = [
+    'Reliability', 'Security', 'Cost Optimization',
+    'Operational Excellence', 'Performance Efficiency',
+  ];
+  const pillarRows = PILLARS.map((p) => [p, 'Adequate, with gaps', '72 / 100']);
+  const pillarFit = fitTableRows(
+    pillarRows,
+    ['Pillar', 'Maturity', 'Score'],
+    [4.2, 6.6, 1.83],
+    2.91,
+    12,
+  );
+  assert.equal(pillarFit.rows, pillarRows.length, 'the pillar table dropped a WAF pillar');
+
+  const regionRows = Array.from({ length: 9 }, (_, i) => [
+    `East US ${i} (Zone redundant)`, '$12,345', '+4.2%', 'Comparable to baseline',
+  ]);
+  const regionFit = fitTableRows(
+    regionRows,
+    ['Region', 'Monthly', 'Delta', 'Notes'],
+    [3.4, 2.4, 2.0, 4.8],
+    5.32,
+    12,
+  );
+  assert.equal(regionFit.rows, regionRows.length, 'the region table dropped a region');
 });
