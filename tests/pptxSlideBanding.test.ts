@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import JSZip from 'jszip';
 import type { Edge, Node } from 'reactflow';
-import { buildDiagramSlidePptx, fitTableRows, legibleScaleFor, tableRowHeightIn, wrappedLineCount } from '../src/services/pptxExporter.ts';
+import { buildDiagramSlidePptx, estimateTextWidthIn, fitTableRows, legibleScaleFor, tableRowHeightIn, wrappedLineCount } from '../src/services/pptxExporter.ts';
 import { buildExportRoutes, collectExportBoxes, fitLabelToLines, fitLabelToWidth } from '../src/services/diagramExportGeometry.ts';
 import { buildVsdxPackage } from '../src/services/visioVsdxExporter.ts';
 
@@ -1456,8 +1456,36 @@ test('a tile that gives up its name still says something', async () => {
   const iconed = new Set([...overview.matchAll(/name="icon-([^"]+)"/g)].map((m) => m[1]));
   const tiles = [...overview.matchAll(/name="service-((?!label-|meta-)[^"]+)"/g)].map((m) => m[1]);
   assert.ok(tiles.length > 0, 'the overview draws tiles');
-  const blank = tiles.filter((id) => !named.has(id) && !iconed.has(id));
-  assert.deepEqual(blank, [], `${blank.length} of ${tiles.length} overview tiles carry neither a name nor an icon`);
+
+  // A blank tile is allowed only where the name is genuinely unwritable, and
+  // only because the reading slides carry it.
+  //
+  // The rule this used to state - that an overview tile must always show a
+  // name or an icon - rested on "an empty grey box says less than type that is
+  // merely small". That premise fails at the bottom: these tiles are 0.104in
+  // wide, so the column is 0.050in and the widest glyph of "Copilot Studio" at
+  // the 6pt floor is 0.078in. Not one letter fits. What was drawn there was
+  // not small type, it was a column of fragments spilling out of both sides of
+  // the box, and the honest answer is to draw nothing.
+  //
+  // So the test now asks the question it always meant to ask: is anything
+  // LOST? Every tile the overview leaves blank must be drawn with its name, in
+  // full, on one of the reading slides that follow.
+  const partNamed = new Set<string>();
+  for (const part of deck.parts) {
+    for (const shape of part.matchAll(/<p:sp>[\s\S]*?<\/p:sp>/g)) {
+      const id = /name="service-label-([^"]+)"/.exec(shape[0])?.[1];
+      if (!id) continue;
+      const text = [...shape[0].matchAll(/<a:t>([^<]*)<\/a:t>/g)].map((m) => m[1]).join('').trim();
+      if (text !== '') partNamed.add(id);
+    }
+  }
+  const lost = tiles.filter((id) => !named.has(id) && !iconed.has(id) && !partNamed.has(id));
+  assert.deepEqual(
+    lost,
+    [],
+    `${lost.length} of ${tiles.length} overview tiles are blank and are not named on any reading slide either`,
+  );
 
   // and what it does say is still above the floor
   for (const shape of overview.matchAll(/<p:sp>[\s\S]*?<\/p:sp>/g)) {
@@ -1646,7 +1674,6 @@ test('the legibility target never exceeds what the renderer will draw', () => {
  * chose, so a rule reading them back agrees with whatever it did.
  */
 test('a wrapped line count is never below the break-anywhere ratio', () => {
-  const EM = 0.54; // the estimator's average Latin advance
   const samples = [
     'Azure Kubernetes Service aks001contosoplatformprodeastus2 nodepool001systemsurgeeastus2',
     'Azure Database for PostgreSQL Flexible Server (Production, Zone Redundant) 17',
@@ -1660,11 +1687,16 @@ test('a wrapped line count is never below the break-anywhere ratio', () => {
       for (const pt of [7, 9, 10, 12]) {
         const lines = wrappedLineCount(text, box, pt);
         assert.ok(Number.isInteger(lines) && lines >= 1, `"${text.slice(0, 20)}" gave ${lines} lines`);
-        let units = 0;
-        for (const ch of text) {
-          units += /[\u2e80-\u9fff\uac00-\ud7af\uff00-\uff60\uffe0-\uffe6]/.test(ch) ? 1 : EM;
-        }
-        const ratio = Math.max(1, Math.ceil((units * pt / 72) / box));
+        // The ratio is deliberately computed from the estimator the wrap
+        // itself uses. `lines >= ink / box` is an identity about the WRAP -
+        // greedy packing never fits more ink on a line than the line is wide -
+        // so it only says something about wrapping when both sides measure the
+        // ink the same way. Building it on a hard-coded 0.54 em turned it into
+        // a width test that failed the moment the estimator started measuring
+        // real advances, because 0.54 over-states lowercase prose by about 8%
+        // and the "lower bound" rose above the true count. Widths are the
+        // subject of tests/glyphAdvances.test.ts; this one is about the wrap.
+        const ratio = Math.max(1, Math.ceil(estimateTextWidthIn(text, pt) / box));
         assert.ok(
           lines >= ratio,
           `"${text.slice(0, 28)}" at ${pt}pt in ${box}in wraps to ${lines} lines, `
@@ -1678,7 +1710,7 @@ test('a wrapped line count is never below the break-anywhere ratio', () => {
   // breaking between words cannot, because the second run will not fit after
   // the first and the rest of that line is abandoned.
   const tokens = 'aaaaaaaaaaaa bbbbbbbbbbbb cccccccccccc';
-  const ratio = Math.max(1, Math.ceil((tokens.length * EM * 12 / 72) / 2.0));
+  const ratio = Math.max(1, Math.ceil(estimateTextWidthIn(tokens, 12) / 2.0));
   assert.equal(ratio, 2, 'the fixture must be one the break-anywhere ratio calls two lines');
   assert.equal(
     wrappedLineCount(tokens, 2.0, 12), 3,

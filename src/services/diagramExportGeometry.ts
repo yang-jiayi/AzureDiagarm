@@ -624,6 +624,81 @@ export function textWidth(text: string): number {
   return width;
 }
 
+const GEOMETRY_CJK_RE = /[\u2e80-\u9fff\uac00-\ud7af\uff00-\uff60\uffe0-\uffe6]/;
+
+/**
+ * Real per-character advances for Yu Gothic UI, in em, printable ASCII 33-126.
+ *
+ * Measured from the installed font with GDI+. Both exporters used to charge a
+ * flat 0.54 em for every non-CJK character, which is the average LOWERCASE
+ * advance: it under-states `W` (0.934), `M` (0.898) and `@` (0.955) by up to
+ * 77% and over-states `i` (0.242) by more than a factor of two. Under-stating
+ * is how a name cut to the five lines its tile had room for really wrapped to
+ * six and painted the sixth below the box.
+ *
+ * A class-wise bucket cannot fix that. To be a true upper bound a bucket has to
+ * carry its class maximum, and charging every lowercase letter the width of `m`
+ * over-states ordinary prose by about 60% - which shrinks type and cuts names
+ * that would have fitted. The only model that is neither short nor fat is the
+ * measured one.
+ *
+ * The export audit holds its own hard-coded copy of these numbers rather than
+ * importing this one, on purpose: it is the oracle, and an oracle that shares
+ * its constants cannot see them drift.
+ */
+const GEOMETRY_ADVANCE_EM = [
+  0.284, 0.392, 0.591, 0.539, 0.818, 0.8, 0.23, 0.302, 0.302, 0.417,
+  0.684, 0.217, 0.4, 0.217, 0.39, 0.539, 0.539, 0.539, 0.539, 0.539,
+  0.539, 0.539, 0.539, 0.539, 0.539, 0.217, 0.217, 0.684, 0.684, 0.684,
+  0.448, 0.955, 0.645, 0.573, 0.619, 0.701, 0.506, 0.488, 0.686, 0.71,
+  0.266, 0.357, 0.58, 0.471, 0.898, 0.748, 0.754, 0.56, 0.754, 0.598,
+  0.531, 0.524, 0.687, 0.621, 0.934, 0.59, 0.553, 0.57, 0.302, 0.539,
+  0.302, 0.684, 0.415, 0.268, 0.509, 0.588, 0.462, 0.589, 0.523, 0.313,
+  0.589, 0.566, 0.242, 0.242, 0.497, 0.242, 0.861, 0.566, 0.586, 0.588,
+  0.589, 0.348, 0.424, 0.339, 0.566, 0.479, 0.723, 0.459, 0.484, 0.452,
+  0.302, 0.239, 0.302, 0.684,
+];
+
+/**
+ * Advance of one character, in em. CJK is a full em by construction; a
+ * character outside the measured range falls back to the old flat 0.54.
+ */
+export function advanceEm(character: string): number {
+  if (/\s/.test(character)) return 0;
+  if (GEOMETRY_CJK_RE.test(character)) return 1;
+  const code = character.codePointAt(0) ?? 0;
+  return code >= 33 && code <= 126 ? GEOMETRY_ADVANCE_EM[code - 33] : 0.54;
+}
+
+/**
+ * Rendered width of a run, in inches, from the measured advances. The one
+ * width model both exporters use, so the sheet and the deck wrap a name in the
+ * same place.
+ */
+export function advanceWidthIn(text: string, fontSizePt: number): number {
+  let em = 0;
+  for (const character of text) em += advanceEm(character);
+  return (em * fontSizePt) / 72;
+}
+
+/**
+ * The widest single glyph in `text`, in inches.
+ *
+ * Measured, not bucketed. The class-wise version charged every capital the
+ * width of `W`, which over-stated `O` by 24% - safe where it sizes a box, but
+ * this also decides whether a tile is wide enough to be worth naming, and there
+ * an over-estimate WITHHOLDS a name that would have fitted.
+ *
+ * Shared by both exporters. It used to live in the PowerPoint exporter alone,
+ * and while Visio decided the same question with a flat four-character rule the
+ * two formats named different services in the same diagram.
+ */
+export function widestGlyphIn(text: string, fontSizePt: number): number {
+  let widest = 0;
+  for (const character of text) widest = Math.max(widest, advanceEm(character));
+  return (widest * fontSizePt) / 72;
+}
+
 /**
  * Truncate to `maxWidth` display cells (CJK aware), appending an ellipsis. One
  * policy shared by every exporter so a Japanese label is cut identically.

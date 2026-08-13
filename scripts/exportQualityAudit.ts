@@ -20,6 +20,7 @@ import { WRAP_TRIGGER_RATIO } from '../src/utils/serpentineWrap.ts';
 
 import { narrateEdgeCallouts, readEdgeLabel, CATEGORY_STYLES } from '../src/services/diagramExportGeometry.ts';
 import { readStepNumber } from '../src/utils/workflowStepMapping.ts';
+import { stripXmlForbidden } from '../src/utils/xmlText.ts';
 
 const OUT = path.join(process.cwd(), 'tmp-export-audit');
 const EMU_PER_INCH = 914400;
@@ -125,9 +126,21 @@ function measuredWrappedLines(text: string, widthIn: number, fontSizePt: number)
  *
  * The exporter has its own copy of this arithmetic, and a rule that shares the
  * exporter's estimator cannot catch the exporter mis-estimating — it would agree
- * with the bug. Full-width code points count as one em and everything else as
- * 0.54, which is Segoe UI's average lowercase advance and slightly generous for
- * digits (0.539 measured from the font's own `hmtx`).
+ * with the bug.
+ *
+ * That independence was bought with a flat 0.54 em per non-CJK character, and
+ * the price turned out to be accuracy: 0.54 is Yu Gothic UI's average LOWERCASE
+ * advance, so it over-states `i` (0.242 measured) by more than a factor of two,
+ * under-states `W` (0.934) by 42%, and charges a full 0.54 for a space that
+ * advances 0. Rules built on it reported 770 phantom overlaps and 142 phantom
+ * short labels the moment the exporters started measuring for real.
+ *
+ * It now measures with `measuredAdvanceEm`, the per-glyph table above. That
+ * keeps the independence where it actually matters: the table is hard-coded
+ * HERE rather than imported from `diagramExportGeometry`, so if the shared
+ * table drifts these rules disagree; and the wrap below is still a separate
+ * implementation from the exporter's, which is how the mid-word `ceil(w / box)`
+ * under-count was caught.
  */
 /** Whitespace of any shape, reduced to single spaces, for text comparisons. */
 function collapseWs(text: string): string {
@@ -135,11 +148,7 @@ function collapseWs(text: string): string {
 }
 
 function auditTextWidthIn(text: string, fontSizePt: number): number {
-  let units = 0;
-  for (const character of text) {
-    units += /[\u2e80-\u9fff\uac00-\ud7af\uff00-\uff60\uffe0-\uffe6]/.test(character) ? 1 : 0.54;
-  }
-  return (units * fontSizePt) / 72;
+  return measuredTextWidthIn(text, fontSizePt);
 }
 /**
  * How many lines a run takes in a box, wrapping the way a renderer wraps.
@@ -306,12 +315,17 @@ function blend(fg: string, bg: string, alpha: number): string {
 }
 
 /** Approximate rendered text width in inches. CJK glyphs are full-width. */
+/**
+ * Width of a run in inches, from the measured advances.
+ *
+ * This was a fifth copy of the flat 0.54 em model, with a CJK range that did
+ * not even match the other four (`\u3000-\u9fff\uff00-\uffef` against
+ * `\u2e80-\u9fff\uac00-\ud7af...`). It charged 0.54 em for every space, which
+ * advances 0, so a six-word sub-line was measured 3.2 em too wide and the rule
+ * reported an overflow that is not there.
+ */
 function textWidthIn(text: string, fontSizePt: number): number {
-  let units = 0;
-  for (const ch of text) {
-    units += /[\u3000-\u9fff\uff00-\uffef]/.test(ch) ? 1 : 0.54;
-  }
-  return (units * fontSizePt) / 72;
+  return measuredTextWidthIn(text, fontSizePt);
 }
 
 function parseShapes(xml: string): Shape[] {
@@ -962,6 +976,17 @@ function tallNarrowTilesScenario(): Scenario {
     { w: 100, h: 400, icon: true },
     { w: 75, h: 300, icon: false },
     { w: 40, h: 120, icon: false },
+    // The stub ladder. An icon-less tile is refused a name by `namedWidth` and
+    // then drew one anyway with no column test: at 14px and 10px the widest
+    // glyph in the drawn string is the ellipsis, which is wider than the whole
+    // column, so nothing could set on one line at all.
+    { w: 22, h: 120, icon: false },
+    { w: 14, h: 120, icon: false },
+    { w: 10, h: 200, icon: false },
+    // Wide enough to keep its name, short enough that fitting it at 6pt and
+    // painting it at 7pt does not agree: 0.84in of box is 8 lines at 6pt and
+    // 7 at 7pt, so the eighth line is drawn below the box it was measured in.
+    { w: 60, h: 191, icon: false },
   ];
   const nodes: Node[] = shapes.map((shape, i) => ({
     id: `tall${i}`,
@@ -3040,7 +3065,24 @@ function outlierScenario(): Scenario {
   return { id: 'outlier', nodes, edges };
 }
 
-interface Report { scenario: string; format: string; issues: string[]; metrics: Record<string, number> }
+interface Report {
+  scenario: string;
+  format: string;
+  issues: string[];
+  metrics: Record<string, number>;
+  /**
+   * The service names this format actually drew on the sheet.
+   *
+   * Not a measurement of either format on its own — it exists so the two can
+   * be compared. PPTX and Visio have now disagreed about the same tile in both
+   * directions in consecutive rounds (Visio drew nothing where PowerPoint drew
+   * a name, then PowerPoint drew a smear where Visio drew nothing), and no
+   * rule inside either auditor could see it: each one only ever reads the
+   * shapes its own exporter emitted, so a name that is missing from one file
+   * is invisible by construction.
+   */
+  drawnNames?: string[];
+}
 
 /**
  * The shape the AI actually returns, run through the real layout engine.
@@ -4435,18 +4477,19 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
     }
   }
   const tiles = shapes.filter((s) => s.name.startsWith('service-') && !s.name.includes('label') && !s.name.includes('meta'));
-  const overviewTileNames = new Set(
-    overviewAt < 0 ? [] : parseShapes(allSlides[overviewAt]).map((s) => s.name),
-  );
-  const labels = shapes.filter((s) => s.name.startsWith('service-label-'));
+  // A shape that draws nothing is not a name. The exporter emits a
+  // `service-label-` box whenever the tile is `named || stub`; when the stub
+  // column cannot hold two glyphs that box now carries an empty string, and
+  // counting it as a name let four blank slivers back into `namedWidths` and
+  // drag the median tile width from 0.503in down to 0.200in — which reported
+  // eight perfectly ordinary chips as "2.8x wider than the smallest node tile".
+  const labels = shapes.filter((s) => s.name.startsWith('service-label-') && s.text.trim() !== '');
   const chips = shapes.filter((s) => s.name.startsWith('connector-label-'));
 
   const minTileW = Math.min(...tiles.map((t) => t.w));
   const namedTiles = new Set(labels.map((l) => l.name.replace('service-label-', '')));
-  const namedWidths = tiles
-    .filter((t) => namedTiles.has(t.name.replace('service-', '')))
-    .map((t) => t.w)
-    .sort((a, b) => a - b);
+  const namedBoxes = tiles.filter((t) => namedTiles.has(t.name.replace('service-', '')));
+  const namedWidths = namedBoxes.map((t) => t.w).sort((a, b) => a - b);
   // The MEDIAN named tile, not the narrowest. "Wider than the smallest tile"
   // is a statement about the drawing's unit of scale, and one authored sliver
   // is not that unit: a deck with a legitimate 0.42in tile beside ordinary
@@ -4456,6 +4499,17 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
   const namedMinTileW = namedWidths.length > 0
     ? namedWidths[Math.floor((namedWidths.length - 1) / 2)]
     : minTileW;
+  // Weighed by AREA, because that is what "dominates the drawing" means and
+  // width alone is only a proxy for it. The proxy holds while tiles are
+  // roughly as wide as they are tall and breaks the moment they are not: a
+  // deck of deliberately tall, narrow tiles reported a 0.560 x 0.131in chip
+  // as outweighing a 0.377 x 1.510in service — 0.073 in^2 against 0.570 in^2,
+  // one eighth of it — purely because the chip is 0.18in wider. Same failure
+  // as the Visio type-to-tile ratio: measure the thing, not the stand-in.
+  const namedAreas = namedBoxes.map((t) => t.w * t.h).sort((a, b) => a - b);
+  const namedMedianArea = namedAreas.length > 0
+    ? namedAreas[Math.floor((namedAreas.length - 1) / 2)]
+    : 0;
   const minFont = Math.min(...labels.map((l) => l.fontSize ?? 99));
 
   // A tile with room for a name and no name on it. The width guard in the
@@ -4465,38 +4519,125 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
   // the labels that WERE emitted, so a missing one is invisible by
   // construction. This reads the tiles instead and asks whether each one had
   // the column the exporter's own floor asks for.
-  for (const tile of tiles) {
-    if (namedTiles.has(tile.name.replace('service-', ''))) continue;
-    const column = Math.max(0.05, tile.w - 0.06);
-    const floorPt = overviewTileNames.has(tile.name) ? 6 : 7;
-    const tallEnough = overviewTileNames.has(tile.name) ? tile.h * 12 >= floorPt : tile.h >= 0.2;
-    if (column >= 4 * (floorPt / 72) && tallEnough) {
-      issues.push(
-        `tile "${tile.name}" is ${tile.w.toFixed(3)}x${tile.h.toFixed(3)}in and draws no name — `
-        + `its ${column.toFixed(3)}in column holds ${(column / (floorPt / 72)).toFixed(1)} chars at the ${floorPt}pt floor`,
-      );
+  // Per SLIDE, and MEASURED rather than restated. A tile keeps the same
+  // `service-<id>` shape name on every slide it appears on, so a set built
+  // from the whole deck says "this tile is named" when only one slide names
+  // it, and the deck-wide overview set judged reading-slide copies by the
+  // overview's 6pt floor and the overview's height test — two errors that
+  // happened to cancel, which is not a reason to keep either.
+  //
+  // The old bar, `column >= 4 * floorPt/72`, was the exporter's own predicate
+  // copied verbatim: it could only ever agree, and it caught the round-52 bug
+  // by luck because that bug changed which font the operand used. This asks
+  // instead whether the WHOLE authored name, wrapped into the column the tile
+  // has at the floor size, fits the height the tile has — a statement about
+  // the text and the box, which the exporter cannot make true by changing its
+  // mind about a constant.
+  //
+  // "Two of the widest glyph fit" alone is necessary but not sufficient, and
+  // saying otherwise reported two hairline tiles whose names would have needed
+  // thirteen lines of a two-line shape. A tile that cannot hold its name is
+  // entitled to hand it to the index slide; a tile with room for all of it and
+  // nothing drawn is the round-53 defect, where 2.44 square inches went blank.
+  // "The whole name fits" has to mean fits BESIDE THE ICON. An overview tile
+  // draws its icon at up to 78% of its height and hands the name to the
+  // reading slide, which is the design; measuring the name against the tile's
+  // full height called all 354 of them a defect. The icon's drawn height is on
+  // the slide, so this reads it rather than modelling it.
+  const iconHeights = new Map<string, number>();
+  for (const slideXml of allSlides) {
+    for (const pic of slideXml.matchAll(
+      /<p:pic>[\s\S]*?name="icon-([^"]+)"[\s\S]*?<a:ext cx="\d+" cy="(\d+)"\/>[\s\S]*?<\/p:pic>/g,
+    )) {
+      iconHeights.set(`${allSlides.indexOf(slideXml)}:${pic[1]}`, +pic[2] / EMU_PER_INCH);
+    }
+  }
+  const authoredById = new Map(
+    scenario.nodes.map((n) => [auditStrip(String(n.id)), String(n.data?.label ?? '')]),
+  );
+  const overviewIndex = overviewAt;
+  const slidesForTiles: { shapes: Shape[]; overview: boolean }[] = allSlides.map((xml, at) => ({
+    shapes: parseShapes(xml),
+    overview: at === overviewIndex,
+  }));
+  for (const [at, slide] of slidesForTiles.entries()) {
+    const slideNamed = new Set(
+      slide.shapes.filter((s) => s.name.startsWith('service-label-') && s.text.trim() !== '')
+        .map((s) => s.name.slice('service-label-'.length)),
+    );
+    const slideTiles = slide.shapes.filter(
+      (s) => s.name.startsWith('service-') && !s.name.includes('label') && !s.name.includes('meta'),
+    );
+    for (const tile of slideTiles) {
+      const id = tile.name.slice('service-'.length);
+      if (slideNamed.has(id)) continue;
+      const authored = authoredById.get(id);
+      if (!authored) continue;
+      const floorPt = slide.overview ? 6 : 7;
+      const column = Math.max(0.05, tile.w - 0.06);
+      const lines = measuredWrappedLines(authored, column, floorPt);
+      const needed = (lines * floorPt * 1.22) / 72;
+      const room = tile.h - 0.06 - (iconHeights.get(`${at}:${id}`) ?? 0);
+      if (column >= 2 * measuredWidestGlyphIn(authored, floorPt) && needed <= room) {
+        issues.push(
+          `tile "${tile.name}" is ${tile.w.toFixed(3)}x${tile.h.toFixed(3)}in and draws no name — `
+          + `"${authored}" wraps to ${lines} line(s) needing ${needed.toFixed(3)}in of the `
+          + `${room.toFixed(3)}in its icon leaves at the ${floorPt}pt floor, so the whole name fits`,
+        );
+      }
     }
   }
 
-  const iconedTiles = new Set(
-    allSlides.flatMap((s) => [...s.matchAll(/name="icon-([^"]+)"/g)].map((m) => m[1])),
-  );
   for (const label of labels) {
     const font = label.fontSize ?? 11;
     const needed = textWidthIn(label.text, font);
     const lines = Math.ceil(needed / Math.max(label.w, 0.01));
-    const charsPerLine = label.w / (font / 72);
-    // A tile with no icon is exempt. The exporter draws its name at the
-    // legibility floor whatever the column holds, because the alternative is
-    // an empty grey box — which the overview rule above forbids for exactly
-    // the reason that it says strictly less than type that is merely small.
-    // Holding both rules at once would demand that such a tile draw nothing
-    // and something at the same time.
-    const stub = !iconedTiles.has(label.name.replace('service-label-', ''));
-    if (charsPerLine < 4 && !stub) {
-      issues.push(`label "${label.text}" has room for only ${charsPerLine.toFixed(1)} chars/line (w=${label.w.toFixed(2)}in @ ${font}pt)`);
+    // Independent of the exporter's inequality, not a restatement of it.
+    //
+    // `charsPerLine = w / (pt/72) >= 4` was a TAUTOLOGY: the exporter
+    // guarantees `nameColumn >= 4 * fontSize/72`, only ever lowers the drawn
+    // font from there, and emits the box at exactly `innerW === nameColumn`.
+    // Every named tile in the corpus reported exactly 4.0 or comfortably
+    // above, and it could not land below whatever the exporter did — so it
+    // was checking its own premise. Worse, an exemption then had to be carved
+    // out for stub tiles, which made the rule blind to five genuinely
+    // unreadable labels at once.
+    //
+    // Two of the widest glyph the string actually contains, from the measured
+    // table, is a statement about the drawn text rather than about the
+    // exporter's arithmetic — the same move `measuredWidestGlyphIn` made for
+    // the chip guard. It passes on every named tile in the corpus and reports
+    // the stub ladder.
+    const widest = measuredWidestGlyphIn(label.text, font);
+    if (label.text && label.w + 0.005 < 2 * widest) {
+      issues.push(
+        `label "${label.text}" is drawn at ${font}pt in a ${label.w.toFixed(3)}in box — `
+        + `its widest glyph is ${widest.toFixed(3)}in, so a line of them needs `
+        + `${(2 * widest).toFixed(3)}in and only ${(label.w / widest).toFixed(2)} fit`,
+      );
     }
-    const lineHeight = (font * 1.25) / 72;
+    // 1.35, matching every other line-height in this file and in the exporter:
+    // `Yu Gothic UI`'s own hhea and OS/2 win metrics give 1.3301. 1.25 was 6%
+    // optimistic and the tile path was reserving at 1.22, 8% optimistic, and
+    // both errors were invisible while the two sides shared a width model that
+    // over-counted lines by more than the shortfall.
+    const lineHeight = (font * 1.35) / 72;
+    // Counted by WRAPPING the string, not by dividing its total ink by the
+    // column. `ceil(width / w)` is the break-anywhere assumption: it says how
+    // many lines the ink would need if words could be split at any character,
+    // which is a lower bound and never the answer. The chip rule was moved off
+    // it in round 52 and the tile-label rule was left behind, so a name fitted
+    // at one size and painted at another - eight lines believed, seven real -
+    // drew its last line 0.104in below the box it was measured in and 0.044in
+    // past the bottom of its own tile, and nothing reported it.
+    const realLines = measuredWrappedLines(label.text, label.w, font);
+    if (realLines * lineHeight > label.h + 0.02) {
+      issues.push(
+        `label "${label.text}" wraps to ${realLines} line(s) at ${font}pt in its `
+        + `${label.w.toFixed(3)}in column, needing ${(realLines * lineHeight).toFixed(3)}in `
+        + `of a ${label.h.toFixed(3)}in box - ${((realLines * lineHeight) - label.h).toFixed(3)}in is painted below it`,
+      );
+    }
     if (lines * lineHeight > label.h + 0.02) {
       issues.push(`label "${label.text}" needs ${lines} lines (${(lines * lineHeight).toFixed(2)}in) but has ${label.h.toFixed(2)}in`);
     }
@@ -4507,8 +4648,11 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
     // already decided cannot hold type — and letting an authored 8px sliver
     // define "the size of a service" made every chip in the deck a violation
     // while saying nothing about whether the chip dominates the drawing.
-    if (namedMinTileW > 0 && chip.w > namedMinTileW) {
-      issues.push(`edge chip "${chip.text}" is ${(chip.w / namedMinTileW).toFixed(1)}x wider than the smallest node tile`);
+    if (namedMinTileW > 0 && chip.w > namedMinTileW && chip.w * chip.h > namedMedianArea) {
+      issues.push(
+        `edge chip "${chip.text}" is ${(chip.w / namedMinTileW).toFixed(1)}x wider than the typical node tile `
+        + `and covers ${(chip.w * chip.h).toFixed(3)}in^2 against its ${namedMedianArea.toFixed(3)}in^2`,
+      );
     }
   }
   // Collisions are only real between shapes printed on the same sheet. Reading
@@ -5289,8 +5433,12 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
     // Measured unclamped on purpose: `drawnTextRect` caps height at the box,
     // which is what makes it useless for asking whether the text fits the box.
     if (row.fontSize && row.text.trim()) {
-      const lines = Math.max(1, Math.ceil(textWidthIn(row.text.trim(), row.fontSize) / row.w));
-      const needed = (lines * row.fontSize * 1.22) / 72;
+      // Greedy wrap and 1.35, not `ceil(ink / w)` and 1.22. The ratio is the
+      // break-anywhere lower bound the rest of this file was moved off, and
+      // 1.22 is below `Yu Gothic UI`'s own 1.3301 win metric, so this rule
+      // simultaneously under-counted the lines and under-charged for each one.
+      const lines = auditWrappedLines(row.text.trim(), row.w, row.fontSize);
+      const needed = (lines * row.fontSize * 1.35) / 72;
       if (needed > row.h + 0.01) {
         issues.push(`workflow row "${row.name}" needs ${needed.toFixed(2)}in of text (${lines} lines at ${row.fontSize}pt) in a ${row.h.toFixed(2)}in row, so it spills onto its neighbours`);
       }
@@ -5466,6 +5614,15 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
     scenario: scenario.id,
     format: 'pptx',
     issues,
+    drawnNames: (() => {
+      const byId = new Map(scenario.nodes.map((n) => [auditStrip(String(n.id)), String(n.data?.label ?? '')]));
+      const ids = new Set(
+        allSlides.flatMap((xml) => parseShapes(xml))
+          .filter((s) => s.name.startsWith('service-label-') && s.text.trim() !== '')
+          .map((s) => s.name.slice('service-label-'.length)),
+      );
+      return [...ids].map((id) => byId.get(id) ?? id).sort();
+    })(),
     metrics: {
       slides: slideCount,
       shapes: shapes.length,
@@ -6669,6 +6826,10 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
     scenario: scenario.id,
     format: 'vsdx',
     issues,
+    drawnNames: [...xml.matchAll(/NameU="Service\.\d+" Name="([^"]*)"[\s\S]*?<Text>([\s\S]*?)<\/Text>/g)]
+      .filter((m) => m[2].replace(/<[^>]*>/g, '').trim() !== '')
+      .map((m) => m[1])
+      .sort(),
     metrics: {
       pageWidthIn: +pkg.pageWidthIn.toFixed(2),
       pageHeightIn: +pkg.pageHeightIn.toFixed(2),
@@ -6872,6 +7033,50 @@ async function main(): Promise<void> {
   beat('deck-growth');
   if (growth) reports.push(await auditDeckGrowth());
   stopWatchdog();
+  // The two files, against each other.
+  //
+  // Every rule above reads one format's own output, so a name that one
+  // exporter drops and the other keeps is invisible to both by construction —
+  // and that is exactly what happened twice running, in opposite directions.
+  // A user who exports the same diagram to PowerPoint and to Visio and finds
+  // different services named in each has been handed two drawings, not two
+  // renderings of one, and neither file can be checked against the other from
+  // the inside.
+  //
+  // Compared as SETS, not as counts.
+  //
+  // The two formats draw the same diagram at deliberately different scales —
+  // Visio exports one large sheet, PowerPoint a 13.33in slide — so the same
+  // tile is a different number of inches wide in each, and a tile that clears
+  // the legibility bar in one may honestly miss it in the other. Counting
+  // tiles reported that as a defect: nine identically-named tiles were named
+  // five times in the deck and six times on the sheet, purely because the
+  // sheet is 1.1x larger. What is never legitimate is a service that is named
+  // in one file and appears nowhere in the other, which is exactly what
+  // happened in both directions in consecutive rounds.
+  for (const scenario of selected) {
+    const p = reports.find((r) => r.scenario === scenario.id && r.format === 'pptx');
+    const v = reports.find((r) => r.scenario === scenario.id && r.format === 'vsdx');
+    if (!p?.drawnNames || !v?.drawnNames) continue;
+    // Both sides through the same normaliser, and specifically through the
+    // same one the exporters use. A name carrying a vertical tab or a lone
+    // surrogate reaches both files with that code point replaced by a space,
+    // while the deck's key here was taken from the authored label and still
+    // held the raw character — so the two keys differed for 41 names that both
+    // files had drawn perfectly well. That is a difference between the
+    // comparison's own two spellings, not between the drawings.
+    const key = (s: string): string => stripXmlForbidden(s).replace(/\s+/g, ' ').trim();
+    const pt = new Set(p.drawnNames.map(key));
+    const vt = new Set(v.drawnNames.map(key));
+    for (const name of new Set([...pt, ...vt])) {
+      if (pt.has(name) === vt.has(name)) continue;
+      const missing = pt.has(name) ? 'the Visio drawing' : 'the PowerPoint deck';
+      p.issues.push(
+        `"${name}" is named in the .${pt.has(name) ? 'pptx' : 'vsdx'} and on no shape at all in `
+        + `${missing} — the two exports of one diagram do not name the same services`,
+      );
+    }
+  }
   for (const report of reports) {
     console.log(`\n=== ${report.scenario} / ${report.format} ===`);
     console.log('metrics:', JSON.stringify(report.metrics));

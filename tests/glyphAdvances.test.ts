@@ -51,8 +51,15 @@ test('widestGlyphIn reports the widest glyph of a run, not its average', () => {
   // one-glyph-per-line chips. Its widest letter is M.
   const run = widestGlyphIn('Managed identity authentication', 6);
   assert.ok(run >= (MEASURED_EM.M * 6) / 72 - 0.0005, `widest of the run was ${run.toFixed(4)}in, M needs ${((MEASURED_EM.M * 6) / 72).toFixed(4)}in`);
-  // The average estimator is what it must NOT be: 0.54 em at 6pt is 0.045in.
-  assert.ok(run > estimateTextWidthIn('M', 6), 'the widest glyph must exceed the average-advance estimate for a capital');
+  // The average estimator is what it must NOT be: `widestGlyphIn` has to
+  // report the run's widest letter, not the width its characters average to.
+  // Comparing against `estimateTextWidthIn('M')` used to express that while the
+  // estimator charged a flat 0.54 em for every character; now that it measures
+  // real advances, `estimateTextWidthIn('M')` IS M's advance and the comparison
+  // is a tautology. Compare against the run's mean advance instead, which is
+  // the quantity the rule exists to reject.
+  const mean = estimateTextWidthIn('Managed identity authentication', 6) / 'Managed identity authentication'.length;
+  assert.ok(run > mean, `the widest glyph (${run.toFixed(4)}in) must exceed the run's mean advance (${mean.toFixed(4)}in)`);
 });
 
 test('widestGlyphIn ignores whitespace and is zero for an empty run', () => {

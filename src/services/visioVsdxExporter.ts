@@ -53,6 +53,8 @@ import {
   metaSubline,
   narrateEdgeCallouts,
   truncateLabel,
+  widestGlyphIn,
+  advanceWidthIn,
   partitionBoxes,
   readableTextOn,
   usedConnectionLegend,
@@ -201,15 +203,16 @@ function fontsForScale(scale: number): VisioFonts {
 }
 
 /**
- * Approximate rendered width in inches. CJK glyphs occupy a full em, Latin
- * about 0.54 em — enough to decide how many lines a label needs.
+ * Approximate rendered width in inches, from the measured Yu Gothic UI
+ * advances shared with the PowerPoint exporter.
+ *
+ * The flat 0.54 em this used to charge is the average LOWERCASE advance, so
+ * every title-cased service name measured narrow and the sheet believed a label
+ * needed one line fewer than it draws. Sizes here are in INCHES, not points, so
+ * the shared helper is called at 72pt and scaled.
  */
 function estimateTextWidthIn(text: string, fontSizeIn: number): number {
-  let units = 0;
-  for (const character of text) {
-    units += /[\u2e80-\u9fff\uac00-\ud7af\uff00-\uff60\uffe0-\uffe6]/.test(character) ? 1 : 0.54;
-  }
-  return units * fontSizeIn;
+  return advanceWidthIn(text, 72) * fontSizeIn;
 }
 
 const VISIO_NS = 'http://schemas.microsoft.com/office/visio/2012/main';
@@ -477,7 +480,17 @@ function serviceGroupXml(
   meta: string,
   fonts: VisioFonts = NATURAL_FONTS,
 ): string {
-  const textW = Math.max(0.3 * fonts.scale, rect.w - 0.12 * fonts.scale);
+  // The column the tile actually has, and the band that is emitted for it.
+  //
+  // `Math.max(0.3 * scale, ...)` is a floor that keeps a band usable on an
+  // ordinary tile, but on a hairline it hands the text a band WIDER than the
+  // shape it sits in — a 0.08in tile was given a 0.30in band. Every later
+  // question then got the wrong answer: the wrap was counted in a column the
+  // tile does not have, and "is this still a name?" was asked of the floor
+  // rather than of the tile. The band is now clamped to the shape, and the
+  // decision below is taken on the real column.
+  const textColumn = Math.max(0.01, rect.w - 0.12 * fonts.scale);
+  const textW = Math.min(rect.w, Math.max(0.3 * fonts.scale, textColumn));
   // Give the label the room it actually needs and let the icon take the rest,
   // so a two-line service name is never clipped and the icon never vanishes.
   //
@@ -529,8 +542,21 @@ function serviceGroupXml(
   // icon is what says which service a tile is.
   let labelFont = fonts.label;
   let label = box.label;
+  // Sized by the column the tile has, not only by the height it has.
+  //
+  // The loop below only shrinks when the name does not FIT, and on a tall
+  // narrow tile it always fits: a 0.42 x 1.25in shape has room for eleven
+  // lines, so the name kept full-size type and wrapped to nine of them, three
+  // glyphs to a line. That is the shape the deck hit in round 53 and fixed by
+  // deriving the size from the column as well as the height; doing only half
+  // of it here is why the two formats disagreed about this tile at all.
+  //
+  // Four characters of the drawn size per line, the same bargain the deck
+  // strikes, floored at the sheet's own legibility limit so this can shrink
+  // type but never make it unreadable.
+  const columnLabel = Math.max(floorLabel, Math.min(fonts.label, textColumn / 4));
   for (let step = 0; step < 6; step += 1) {
-    const size = fonts.label - ((fonts.label - floorLabel) * step) / 5;
+    const size = columnLabel - ((columnLabel - floorLabel) * step) / 5;
     labelFont = size;
     const fits = wrappedLinesIn(box.label, textW, size) * size * lineH + metaBand <= bandRoom;
     if (fits) {
@@ -556,10 +582,16 @@ function serviceGroupXml(
   // search still find it, which is the recovery route this file already
   // documents for a cut name.
   //
-  // Four characters of its own type, which is the bar the audit holds the deck
-  // to, so the two drawings cannot disagree about when a name has stopped
-  // being a name.
-  const drawsName = textW >= 4 * labelFont;
+  // Two of the widest glyph the name contains, which is the bar the deck now
+  // holds itself to, so the two drawings cannot disagree about when a name has
+  // stopped being a name.
+  //
+  // "Four characters" charged a flat em to every glyph. It survived here after
+  // the deck replaced it, and the cross-format rule caught the result at once:
+  // the same diagram named four services in the .pptx and three in the .vsdx.
+  // A user who exports both and finds different services labelled in each has
+  // been handed two drawings, not two renderings of one.
+  const drawsName = textColumn >= 2 * widestGlyphIn(label, labelFont * 72);
   if (!drawsName) label = '';
   const drawsMeta = showsMeta && drawsName;
   const neededTextH = drawsName

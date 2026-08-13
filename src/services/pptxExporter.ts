@@ -123,6 +123,8 @@ import {
   partitionBoxes,
   stripHash,
   truncateLabel,
+  widestGlyphIn,
+  advanceWidthIn,
   usedConnectionLegend,
   workflowListFromEdges,
   narrateEdgeCallouts,
@@ -1014,9 +1016,6 @@ function planSlideGeometry(diagram?: DiagramShapeSource | null): SlideGeometry {
   };
 }
 
-/** Han, kana, hangul and the fullwidth forms — one em each. */
-const CJK_RE = /[\u2e80-\u9fff\uac00-\ud7af\uff00-\uff60\uffe0-\uffe6]/;
-
 /**
  * Advance of the WIDEST character in `text`, in inches.
  *
@@ -1028,41 +1027,35 @@ const CJK_RE = /[\u2e80-\u9fff\uac00-\ud7af\uff00-\uff60\uffe0-\uffe6]/;
  * the average answered yes for boxes that hold no capital at all, and drew a
  * 31-character word one letter per line down a 2.55in ribbon.
  *
- * The buckets below are the measured maxima of each class, so this never
- * under-states a glyph. It over-states a narrow one, which is the safe
- * direction: the cost is dropping wording that would just have fitted, and the
- * words are carried elsewhere.
+ * The buckets are the measured maxima of each class, so this never under-states
+ * a glyph. It over-states a narrow one, which is the safe direction: the cost
+ * is dropping wording that would just have fitted, and the words are carried
+ * elsewhere.
+ *
+ * Re-exported from the shared geometry module, where it now lives so the Visio
+ * exporter can decide "is this still a name?" with the same rule the deck uses.
  */
-export function widestGlyphIn(text: string, fontSizePt: number): number {
-  let widest = 0;
-  for (const character of text) {
-    const em = CJK_RE.test(character)
-      ? 1
-      : /[A-Z]/.test(character)
-        ? 0.934
-        : /[a-z]/.test(character)
-          ? 0.861
-          : /[0-9]/.test(character)
-            ? 0.539
-            : /\s/.test(character)
-              ? 0
-              : 0.955;
-    widest = Math.max(widest, em);
-  }
-  return (widest * fontSizePt) / 72;
-}
+export { widestGlyphIn };
 
 /**
- * Approximate rendered width of a string in inches. CJK characters occupy a
- * full em, Latin about 0.54 em in Yu Gothic UI — good enough to size a chip so
- * its text is not clipped.
+ * Approximate rendered width of a string in inches, from the measured Yu
+ * Gothic UI advances in `diagramExportGeometry`.
+ *
+ * This used to charge a flat 0.54 em for everything non-CJK - the average
+ * LOWERCASE advance - so a name written in title case measured about 8% narrow.
+ * That is the width `wrappedLineCount` and `fitLabelToLines` divide a column
+ * by, so the error surfaced as a LINE: a name cut to the five lines its tile
+ * had room for really wrapped to six, and the sixth was painted 0.079in below
+ * the box it was measured in.
+ *
+ * A class-wise bucket was tried first and rejected. A bucket is only an upper
+ * bound if it carries its class maximum, and charging every lowercase letter
+ * the width of `m` inflates ordinary prose by about 60%, which shrinks type and
+ * cuts names that would have fitted. Measured advances are neither short nor
+ * fat.
  */
 export function estimateTextWidthIn(text: string, fontSizePt: number): number {
-  let units = 0;
-  for (const character of text) {
-    units += CJK_RE.test(character) ? 1 : 0.54;
-  }
-  return (units * fontSizePt) / 72;
+  return advanceWidthIn(text, fontSizePt);
 }
 
 /**
@@ -1113,11 +1106,26 @@ function wrapOneLine(text: string, box: number, fontSizePt: number): number {
       lines += 1;
       used = 0;
     }
-    // A single run wider than the whole box breaks inside itself.
+    // A single run wider than the whole box breaks inside itself, one
+    // CHARACTER at a time.
+    //
+    // `ceil(w / box)` assumes the word packs exactly a boxful per line, which
+    // is only true if a break may fall part-way through a glyph. Breaks fall
+    // between glyphs, so every line but the last ends short of the column and
+    // the ratio is a lower bound, never the count. On a 0.204in column that is
+    // one whole line: a name cut to the five lines its tile has room for
+    // really wrapped to six, and the sixth was painted 0.079in below the box.
     if (w > box) {
-      const inner = Math.ceil(w / box);
-      lines += inner - 1;
-      used = w - (inner - 1) * box;
+      let lineUsed = used;
+      for (const glyph of run) {
+        const gw = estimateTextWidthIn(glyph, fontSizePt);
+        if (lineUsed > 0 && lineUsed + gw > box) {
+          lines += 1;
+          lineUsed = 0;
+        }
+        lineUsed += gw;
+      }
+      used = lineUsed;
       continue;
     }
     used += w;
@@ -2325,7 +2333,18 @@ function addNodeShape(
   // meet it, exactly as the Visio exporter already does.
   const nameFloorPt = thumbnail ? OVERVIEW_LEGIBLE_PT : LEGIBLE_TILE_PT;
   const nameColumn = Math.max(0.05, w - 0.06);
-  const namedWidth = nameColumn >= 4 * (nameFloorPt / 72);
+  // Two of the widest glyph the name actually contains, which is the same bar
+  // the stub below and the connector chips already use.
+  //
+  // "Four characters" charged a flat 1 em to every glyph, so it was strictly
+  // harsher than any real string except solid CJK, and it disagreed with the
+  // stub bar sitting a few lines away: at a 0.377in width an ICON-LESS tile
+  // drew its name in full while an ICONED one of the same size drew nothing —
+  // even though the iconed tile passes the two-glyph test with room for 3.8
+  // characters a line. The cross-format rule caught it as a divergence from
+  // Visio, which named both; two tiles of 0.57 square inches were losing their
+  // names to an arithmetic accident rather than to a legibility limit.
+  const namedWidth = nameColumn >= 2 * widestGlyphIn(box.label, nameFloorPt);
   // And once the tile is allowed to draw its name, the name is set at a size
   // the COLUMN can hold, not only one the height implies. A 0.78in-wide tile
   // is 13pt tall enough and 2.9 characters wide, so the height-derived size
@@ -2374,23 +2393,42 @@ function addNodeShape(
   // "Azure Kubernetes Service Automatic cluster" was admitted whole at 13pt on
   // a 160x110 tile, drew 5 lines of a 3-line box, and painted 0.224in — all of
   // it — straight through the "P1v3 · eastus" sub-line below.
-  const nameLines = Math.max(1, Math.floor((h - pad * 2 - metaBand) / ((fontSize * 1.22) / 72)));
+  const nameLines = Math.max(1, Math.floor((h - pad * 2 - metaBand) / ((fontSize * 1.35) / 72)));
   const linesIn = (text: string, columnIn: number, sizeIn: number): number => wrappedLineCount(text, columnIn, sizeIn * 72);
   const full = fitLabelToLines(box.label, innerW, fontSize / 72, nameLines, linesIn);
   // A stub gets as much of the name as fits the tile at the floor size, on as
   // many lines as the tile is tall enough for, and an ellipsis for the rest.
+  //
+  // Measured at the size it is PAINTED at. `drawnFont` moved to the reading
+  // slide's 7pt floor last round and these two measurements did not, so the
+  // string was fitted at 6pt and drawn at 7 — 16.7% under-measured in width,
+  // in line height and in the line count. A 0.177 x 0.965in tile kept 14
+  // characters where 6pt fitting said 8 lines would fit and only 7 do, and
+  // painted 0.104in — one whole line — below its own box and 0.044in past the
+  // bottom of the tile.
   const stubLines = stub
-    ? Math.max(1, Math.floor((h - pad * 2) / ((OVERVIEW_LEGIBLE_PT * 1.22) / 72)))
+    ? Math.max(1, Math.floor((h - pad * 2) / ((drawnFont * 1.35) / 72)))
     : 0;
   const labelLinesFor = (text: string): number => (named ? wrappedLineCount(text, innerW, fontSize) : 0);
-  let label = stub ? fitLabelToLines(full, innerW, OVERVIEW_LEGIBLE_PT / 72, stubLines, linesIn) : full;
+  let label = stub ? fitLabelToLines(full, innerW, drawnFont / 72, stubLines, linesIn) : full;
+  // And a stub whose column cannot hold two of its own widest glyph draws
+  // nothing at all. `namedWidth` has just decided this column is too narrow
+  // for a name; drawing one anyway with no column test at all was the same
+  // "a chip narrower than one letter is not a small chip, it is a broken one"
+  // artefact, one function away. At 0.080in and 0.060in the widest glyph in
+  // the drawn string is the ellipsis — 1.0 em, WIDER than the whole column —
+  // so nothing can set on one line and PowerPoint centres each glyph and
+  // overflows both sides. The premise that an icon-less tile says less than
+  // small type fails once no glyph fits at all, and the whole name is already
+  // on the index slide by the route `clipped` takes.
+  if (stub && innerW < 2 * widestGlyphIn(label, drawnFont)) label = '';
   // Counted by wrapping, not by dividing total ink by the column. The ratio is
   // the break-anywhere assumption: it says how many lines the ink would need if
   // words could be split at any character, which is a lower bound and never the
   // answer. `labelBlockH` feeds the icon size and the top-aligned text box, so
   // under-counting here is what let the surplus lines out of the box.
   let labelLines = labelLinesFor(label);
-  let labelBlockH = (labelLines * fontSize * 1.22) / 72;
+  let labelBlockH = (labelLines * fontSize * 1.35) / 72;
 
   // Which of the three things a tile carries yields when it cannot hold all
   // three. The subline used to win by default — it is subtracted before the
@@ -2427,7 +2465,7 @@ function addNodeShape(
       nameFont = Math.max(LEGIBLE_TILE_PT, nameFont - 0.5);
       label = fitLabelToLines(box.label, innerW, nameFont / 72, nameLines, linesIn);
       labelLines = Math.max(1, wrappedLineCount(label, innerW, nameFont));
-      labelBlockH = (labelLines * nameFont * 1.22) / 72;
+      labelBlockH = (labelLines * nameFont * 1.35) / 72;
     }
     // `labelLines` is both the loop's control variable AND re-derived from a
     // measurement inside the body, so the body can put it back UP — and a
@@ -2452,7 +2490,7 @@ function addNodeShape(
       if (measured >= labelLines) break;
       label = shorter;
       labelLines = measured;
-      labelBlockH = (labelLines * nameFont * 1.22) / 72;
+      labelBlockH = (labelLines * nameFont * 1.35) / 72;
     }
     drawnFont = nameFont;
   }
@@ -2486,7 +2524,7 @@ function addNodeShape(
   const textHeight = Math.max(0.08, topLeft.y + h - pad - metaBand - textTop);
 
   let captionBand: { x: number; y: number; w: number; h: number } | null = null;
-  if (named || stub) {
+  if ((named || stub) && label !== '') {
     const boxY = stub ? topLeft.y + pad : textTop;
     const boxH = stub ? Math.max(0.08, h - pad * 2) : textHeight;
     // The box the words are drawn in, not the room left over for them. With no
@@ -2504,7 +2542,7 @@ function addNodeShape(
     // 7pt line needing 0.12in, and clamping described a line that reaches past
     // the band it was measured in. On every ordinary tile the type still fits
     // and this is exactly the old value.
-    const needH = Math.max(0.08, (Math.max(1, labelLines) * drawnFont * 1.22) / 72);
+    const needH = Math.max(0.08, (Math.max(1, labelLines) * drawnFont * 1.35) / 72);
     const drawnH = needH;
     // Growing the band grows the box the words are actually drawn in, kept
     // centred on the tile so a sliver's name overhangs evenly instead of
@@ -2573,7 +2611,7 @@ function addNodeShape(
     // a band sized for the tile, so the room above the words holds nothing —
     // and an obstacle that claims it makes every "how deep is this bite" test
     // read shallower than what is actually drawn.
-    const drawnH = Math.min(metaBand, (metaPt * 1.22) / 72);
+    const drawnH = Math.min(metaBand, (metaPt * 1.35) / 72);
     metaBandRect = {
       x: topLeft.x + 0.03 + (innerW - drawnW) / 2,
       y: topLeft.y + h - pad - drawnH,
