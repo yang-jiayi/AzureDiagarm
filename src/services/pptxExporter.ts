@@ -4863,17 +4863,39 @@ export async function buildDiagramSlidePptx(
     let indexPt = INDEX_MAX_PT;
     let cols = 1;
     let colW = W - 0.7;
-    for (;;) {
-      const widest = Math.max(...names.map((n) => estimateTextWidthIn(n, indexPt)));
-      const rowsPer = Math.max(1, Math.floor(available / (indexPt * 1.45 / 72)));
-      cols = Math.max(1, Math.min(
+    // A SHRINK IS ONLY WORTH WHAT IT BUYS. The loop stepped the type down half
+    // a point at a time until the widest name fitted its column on one line,
+    // but it also stopped at the 7pt floor - and a name too long for a
+    // full-width column at 10pt is still too long at 7pt. `probe-overlong-index`
+    // walked all the way down and wrapped anyway: the reader was handed 7pt
+    // type AND the wrapping the shrink existed to prevent. Three points of
+    // legibility spent on nothing, on the one page a reader opens precisely
+    // because a mark on the drawing meant nothing to them.
+    //
+    // So the size is chosen rather than walked into. Take the largest size that
+    // actually fits; if none does, keep the largest size and let the rows wrap.
+    // Where the shrink pays - `probe-shrinkable-index` - the answer is
+    // unchanged, because the first size that fits is the one the walk reached.
+    const indexFitAt = (pt: number) => {
+      const widest = Math.max(...names.map((n) => estimateTextWidthIn(n, pt)));
+      const rowsPer = Math.max(1, Math.floor(available / (pt * 1.45 / 72)));
+      const at = Math.max(1, Math.min(
         Math.floor((W - 0.7) / (widest + 0.25)),
         Math.ceil(names.length / rowsPer),
       ));
-      colW = (W - 0.7) / cols;
-      if (widest <= colW - 0.15 || indexPt <= INDEX_MIN_PT) break;
-      indexPt = Math.max(INDEX_MIN_PT, indexPt - 0.5);
+      const width = (W - 0.7) / at;
+      return { cols: at, colW: width, fits: widest <= width - 0.15 };
+    };
+    let indexFit = indexFitAt(INDEX_MAX_PT);
+    for (let pt = INDEX_MAX_PT; pt >= INDEX_MIN_PT - 1e-9; pt -= 0.5) {
+      const at = indexFitAt(pt);
+      if (!at.fits) continue;
+      indexPt = pt;
+      indexFit = at;
+      break;
     }
+    cols = indexFit.cols;
+    colW = indexFit.colW;
     const lineH = indexPt * 1.45 / 72;
     const indexTextW = Math.max(0.05, colW - 0.15);
     // EACH ROW TAKES ITS OWN HEIGHT, and the rows are packed by accumulated

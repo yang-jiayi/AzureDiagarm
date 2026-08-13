@@ -7227,6 +7227,39 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
       + `${avoidablyWrapped.slice(0, 3).join('; ')}`,
     );
   }
+  // AND THE SHRINK MUST HAVE BOUGHT SOMETHING. The rule above says the type
+  // shrinks before a row is allowed to wrap; this one says the opposite thing
+  // and is the reason that one is safe. The fit loop stepped down half a point
+  // at a time and also stopped at the 7pt floor, so a name too long for a
+  // full-width column at 10pt walked all the way to the bottom of the range and
+  // wrapped there anyway - the reader was handed the smallest type the deck can
+  // set AND the wrapping the shrink existed to prevent. Nothing was bought and
+  // three points of legibility were spent, on the one page a reader opens
+  // precisely because a mark on the drawing meant nothing to them.
+  //
+  // Stated as a property of the printed page rather than of the loop: below the
+  // maximum size, no row may wrap. Shrinking is permitted only where it ends
+  // the wrapping outright.
+  const pointlessShrink: string[] = [];
+  for (const row of shapes.filter((s) => s.name.startsWith('index-name-'))) {
+    if (!row.text.trim() || row.wrapNone) continue;
+    const pt = row.fontSize ?? 10;
+    if (pt >= 10 - 0.01) continue;
+    const column = Math.max(0.05, row.w - row.insetX);
+    const lines = measuredWrappedLines(row.text, column, pt);
+    if (lines <= 1) continue;
+    pointlessShrink.push(
+      `${row.name} is set at ${pt.toFixed(1)}pt and still wraps to ${lines} lines `
+      + `(${row.text.length} chars in ${column.toFixed(2)}in)`,
+    );
+  }
+  if (pointlessShrink.length > 0) {
+    issues.push(
+      `${pointlessShrink.length} index row(s) pay for a shrink that bought nothing: the page dropped `
+      + `below 10pt and the rows wrapped regardless, so the reader gets the smallest type the deck `
+      + `sets and the broken column too: ${pointlessShrink.slice(0, 3).join('; ')}`,
+    );
+  }
   // AND AGAINST THE PAGE'S OTHER FURNITURE, not only against itself. The three
   // rules above measure a row against its own box and against the sheet edge,
   // and between those two the row walked into the footer: the grid was fitted
