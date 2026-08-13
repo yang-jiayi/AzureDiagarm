@@ -3499,13 +3499,23 @@ async function addEditableDiagram(
     // The overview is allowed to clip: every name it clips is drawn in full on
     // the slice that follows. Only a window slide's clipping is a real loss.
     //
-    // The MARK goes with it. An index that prints only the full name leaves the
-    // reader holding a tile marked "3" and a list of sentences, none of which
-    // contains a 3; the row has to define the mark it is looked up by. EVERY
-    // distinct mark is kept: two slides draw the same service at two widths,
-    // and quoting only the longer one left the shorter one drawn on a tile and
-    // defined nowhere - the very thing the index exists to prevent.
-    if (bands.clipped && !thumbnail) {
+    // The MARK is not allowed to go with it. An index that prints only the full
+    // name leaves the reader holding a tile marked "3" and a list of sentences,
+    // none of which contains a 3; the row has to define the mark it is looked
+    // up by. EVERY distinct mark is kept: two slides draw the same service at
+    // two widths, and quoting only the longer one left the shorter one drawn on
+    // a tile and defined nowhere - the very thing the index exists to prevent.
+    //
+    // AND EVERY SLIDE THAT DRAWS ONE, INCLUDING THE OVERVIEW. Gating the
+    // recording on `!thumbnail` alongside the clipping made the gap structural:
+    // the overview is where tiles are smallest, so it is where keys are most
+    // often needed, and it was the one slide guaranteed to define none of them.
+    // `wide-chain` shipped an overview covered in 38 bare integers in a deck
+    // with no index slide at all, in a drawing whose workflow numbers its own
+    // steps with bare integers - and "3" sat on the tile for Service 10.
+    // Whether the overview's clipping counts as a LOSS is a separate question
+    // from whether the mark it draws needs defining; it does.
+    if (bands.clipped && (!thumbnail || bands.drawn)) {
       recordMark(truncatedNames, bands.clipped, bands.drawn ?? '');
     }
     // A tile can be leaned on: the reader still sees which service it is. Its
@@ -4831,16 +4841,43 @@ export async function buildDiagramSlidePptx(
       });
     const listTop = IMAGE_Y + 0.1;
     const available = Math.max(0.3, geom.footerY - 0.1 - listTop);
-    const INDEX_PT = 10;
-    const rowH = INDEX_PT * 1.45 / 72;
+    // THE INDEX IS THE ONE PAGE A READER OPENS WHEN A MARK MEANS NOTHING TO
+    // THEM, so a row that runs off the sheet defeats the entire page. At a
+    // fixed 10pt with `wrap: false`, PowerPoint neither clips the row nor
+    // complains: it simply paints past the slide edge and the characters are
+    // gone. A 130-character pair drew 0.140in past the edge and a 175-character
+    // pair drew 3.127in past it, losing about 45 characters, and the corpus was
+    // already inside 0.040in of the margin - so this was one long service name
+    // away from shipping. The type shrinks to fit its column first, and what
+    // still will not fit at the floor WRAPS and takes the height it needs,
+    // which is the same remedy the Visio index was given.
+    const INDEX_MAX_PT = 10;
+    const INDEX_MIN_PT = 7;
+    let indexPt = INDEX_MAX_PT;
+    let cols = 1;
+    let colW = W - 0.7;
+    for (;;) {
+      const widest = Math.max(...names.map((n) => estimateTextWidthIn(n, indexPt)));
+      const rowsPer = Math.max(1, Math.floor(available / (indexPt * 1.45 / 72)));
+      cols = Math.max(1, Math.min(
+        Math.floor((W - 0.7) / (widest + 0.25)),
+        Math.ceil(names.length / rowsPer),
+      ));
+      colW = (W - 0.7) / cols;
+      if (widest <= colW - 0.15 || indexPt <= INDEX_MIN_PT) break;
+      indexPt = Math.max(INDEX_MIN_PT, indexPt - 0.5);
+    }
+    const lineH = indexPt * 1.45 / 72;
+    // Every row is given the tallest row's height rather than its own. The rows
+    // are a fixed grid - row `i` is placed at `i * rowH` - so a row that grew
+    // while its neighbours did not would be printed over the one beneath it.
+    const indexLines = Math.max(
+      1,
+      ...names.map((n) => wrappedLineCount(n, Math.max(0.05, colW - 0.15), indexPt)),
+    );
+    const rowH = lineH * indexLines;
     const rowsPerCol = Math.max(1, Math.floor(available / rowH));
-    const widest = Math.max(...names.map((n) => estimateTextWidthIn(n, INDEX_PT)));
-    const cols = Math.max(1, Math.min(
-      Math.floor((W - 0.7) / (widest + 0.25)),
-      Math.ceil(names.length / rowsPerCol),
-    ));
     const perSlide = rowsPerCol * cols;
-    const colW = (W - 0.7) / cols;
     const pages = Math.ceil(names.length / perSlide);
 
     for (let page = 0; page < pages; page += 1) {
@@ -4867,11 +4904,11 @@ export async function buildDiagramSlidePptx(
           y: listTop + 0.24 + (i % rowsPerCol) * rowH,
           w: colW - 0.15,
           h: rowH,
-          fontSize: INDEX_PT,
+          fontSize: indexPt,
           color: t.titleText,
           fontFace: 'Yu Gothic UI',
           valign: 'middle',
-          wrap: false,
+          wrap: indexLines > 1,
         });
       });
       slide.addText('Generated by Microsoft Product Architecture Diagram Builder  ·  Swarm Data SE, Jiayi Yang', {

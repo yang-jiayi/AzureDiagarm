@@ -1825,6 +1825,66 @@ function emojiClusterScenario(): Scenario {
   return { id: 'probe-emoji-clusters', nodes, edges };
 }
 
+/**
+ * ASK-61-B, half one: twelve one-word steps.
+ *
+ * The band minimises stack height and nothing else, so brief descriptions push
+ * it to its 12 column cap and each sentence gets 0.2583in of text column - two
+ * characters. NO LINE-COUNT BOUND CAN SEE THIS: "ack" sets in one line in two
+ * characters' width just as happily as in ten inches. Only the width can.
+ */
+function briefWorkflowScenario(): Scenario {
+  const icon = '/Azure_Public_Service_Icons/Icons/compute/10029-icon-service-Function-Apps.svg';
+  const nodes: Node[] = Array.from({ length: 13 }, (_, i) => ({
+    id: `bw${i}`,
+    type: 'azureNode',
+    position: { x: (i % 5) * 240, y: Math.floor(i / 5) * 200 },
+    width: 150,
+    height: 110,
+    data: { label: `Step service ${i}`, serviceName: 'Azure Functions', category: 'compute', iconPath: icon },
+  } as unknown as Node));
+  const edges = Array.from({ length: 12 }, (_, i) => ({
+    id: `bwe${i}`,
+    source: `bw${i}`,
+    target: `bw${i + 1}`,
+    label: 'ack',
+    data: { stepNumber: i + 1, stepDescription: 'ack' },
+  })) as unknown as Edge[];
+  return { id: 'probe-brief-workflow', nodes, edges };
+}
+
+/**
+ * ASK-61-B, half two: twelve long steps.
+ *
+ * Long prose keeps the column wide enough to clear any width floor, and every
+ * sentence still wraps to eight or ten lines - a stack of ribbons no reader
+ * follows. NO WIDTH FLOOR CAN SEE THIS. The two fixtures exist as a pair so
+ * that neither rule can be deleted on the grounds that the other covers it.
+ */
+function shreddedWorkflowScenario(): Scenario {
+  const icon = '/Azure_Public_Service_Icons/Icons/compute/10029-icon-service-Function-Apps.svg';
+  const sentence = (i: number): string =>
+    `The regional ingestion tier validates the payload envelope, resolves the partner tenant `
+    + `against the directory, writes an audit record for step ${i + 1}, and forwards the request `
+    + `to the downstream settlement processor over a private endpoint.`;
+  const nodes: Node[] = Array.from({ length: 13 }, (_, i) => ({
+    id: `sw${i}`,
+    type: 'azureNode',
+    position: { x: (i % 5) * 240, y: Math.floor(i / 5) * 200 },
+    width: 150,
+    height: 110,
+    data: { label: `Ingest service ${i}`, serviceName: 'Azure Functions', category: 'compute', iconPath: icon },
+  } as unknown as Node));
+  const edges = Array.from({ length: 12 }, (_, i) => ({
+    id: `swe${i}`,
+    source: `sw${i}`,
+    target: `sw${i + 1}`,
+    label: `step ${i + 1}`,
+    data: { stepNumber: i + 1, stepDescription: sentence(i) },
+  })) as unknown as Edge[];
+  return { id: 'probe-shredded-workflow', nodes, edges };
+}
+
 function longIndexRowsScenario(): Scenario {
   const icon = '/Azure_Public_Service_Icons/Icons/compute/10029-icon-service-Function-Apps.svg';
   const names = [
@@ -1845,6 +1905,68 @@ function longIndexRowsScenario(): Scenario {
     data: { label, serviceName: 'Azure Functions', category: 'compute', iconPath: icon },
   } as unknown as Node));
   return { id: 'probe-long-index', nodes, edges: [] };
+}
+
+/**
+ * An index row too long for the sheet at the index's top size.
+ *
+ * `probe-long-index` proves rows are DEFINED; this proves they are DRAWN ON
+ * THE PAGE. Names here are long enough that "<mark>  =  <name>" passes 170
+ * characters, which at 10pt is about 8.9in of ink in a 12.6in column - fine on
+ * its own, but the marks are cut stubs of the SAME leading words, so the pairs
+ * are near-identical and the index cannot split into two columns without each
+ * column falling under the row's natural width. That is the shape that drew
+ * 3.127in past the right edge.
+ */
+function overlongIndexRowsScenario(): Scenario {
+  const icon = '/Azure_Public_Service_Icons/Icons/compute/10029-icon-service-Function-Apps.svg';
+  const stem = 'Contoso regional payments reconciliation, settlement and dispute resolution '
+    + 'processing function application for the European Union production estate, '
+    + 'zone redundant across three availability zones with cross region read replicas '
+    + 'and a customer managed encryption key held in the shared platform vault';
+  const nodes: Node[] = Array.from({ length: 6 }, (_, i) => ({
+    id: `xi${i}`,
+    type: 'azureNode',
+    position: { x: i * 190, y: (i % 2) * 180 },
+    // Narrow enough that every name is cut to a stub, so every one earns a row.
+    width: 26,
+    height: 30,
+    data: {
+      label: `${stem} - ring ${i}`,
+      serviceName: 'Azure Functions',
+      category: 'compute',
+      iconPath: icon,
+    },
+  } as unknown as Node));
+  return { id: 'probe-overlong-index', nodes, edges: [] };
+}
+
+/**
+ * An index row that wraps at 10pt and fits on one line at 7pt.
+ *
+ * `probe-overlong-index` is past saving at any size and proves the WRAP;
+ * this one is inside the range and proves the SHRINK. Without the pair, one
+ * mutation covers for the other and neither half is really tested.
+ */
+function shrinkableIndexRowsScenario(): Scenario {
+  const icon = '/Azure_Public_Service_Icons/Icons/compute/10029-icon-service-Function-Apps.svg';
+  const stem = 'Contoso regional payments reconciliation and settlement processing function '
+    + 'application for the European Union production estate, zone redundant with a '
+    + 'customer managed key held in the shared platform vault and paired for recovery';
+  const nodes: Node[] = Array.from({ length: 6 }, (_, i) => ({
+    id: `si${i}`,
+    type: 'azureNode',
+    position: { x: i * 190, y: (i % 2) * 180 },
+    width: 26,
+    height: 30,
+    data: {
+      label: `${stem} ${i}`,
+      serviceName: 'Azure Functions',
+      category: 'compute',
+      iconPath: icon,
+    },
+  } as unknown as Node));
+  return { id: 'probe-shrinkable-index', nodes, edges: [] };
 }
 
 function briefWorkflowStepsScenario(): Scenario {
@@ -6582,7 +6704,15 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
   const authoredSet = new Set([...authoredNames.values()].map(drawnForm));
   const undefinedMarks = new Map<string, string>();
   const ambiguousMarks = new Map<string, number>();
-  for (const shape of shapes) {
+  // THE OVERVIEW DRAWS MARKS TOO, AND IS WHERE MOST OF THEM ARE. It is excluded
+  // from the legibility rules for a real reason - it is deliberately small -
+  // but "this mark is defined somewhere" is not a legibility question. Reading
+  // only the window slides made the blind spot line up exactly with the defect:
+  // the overview holds the smallest tiles, so it needs the most keys, and it
+  // was the one slide none of whose keys were checked. `wide-chain` drew 38
+  // bare integers there in a deck with no index slide at all and reported PASS.
+  const markShapes = [...shapes, ...overviewShapes];
+  for (const shape of markShapes) {
     if (!shape.name.startsWith('service-label-')) continue;
     const mark = shape.text.trim();
     if (!mark) continue;
@@ -6626,7 +6756,7 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
   // floor draws no text at all, so eight rows named eight marks and eight tiles
   // carried none of them.
   const drawnMarks = new Set(
-    shapes
+    markShapes
       .filter((s) => s.name.startsWith('service-label-') || s.name.startsWith('zone-label-'))
       .map((s) => s.text.trim())
       .filter(Boolean),
@@ -6662,6 +6792,92 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
       `${cutIndexNames.length} index row(s) do not spell a service name out in full, so the one place `
       + `the reader can recover the wording has lost it too: `
       + `${cutIndexNames.slice(0, 3).map((n) => JSON.stringify(n)).join('; ')}`,
+    );
+  }
+  // THE INDEX PAGE MUST BE MEASURED, NOT ONLY READ. Every rule above this one
+  // reads the index's TEXT - is the mark defined, is the name spelled in full -
+  // and not one of them looks at where the row is DRAWN. So the index sized its
+  // type at a hard-coded 10pt, drew each row with `wrap="none"`, and PowerPoint
+  // did what `wrap="none"` means: it painted the row at its natural width,
+  // straight off the right edge of the sheet. Nothing clips it and nothing
+  // warns; the characters past the edge are simply not on the page. The corpus
+  // came within 0.040in of the margin, which is one long service name away.
+  //
+  // This is the same blind spot the Visio index had in round 60 and the same
+  // one page 2 had before it: a page that some rule reads is not a page any
+  // rule MEASURES.
+  const rowOverruns: string[] = [];
+  const rowOverflows: string[] = [];
+  for (const row of shapes.filter((s) => s.name.startsWith('index-name-'))) {
+    if (!row.text.trim()) continue;
+    const pt = row.fontSize ?? 10;
+    const column = Math.max(0.05, row.w - row.insetX);
+    if (row.wrapNone) {
+      // Unwrapped ink takes its natural width from the box's left edge,
+      // whatever the box says, so the box width is not the bound - the sheet
+      // is.
+      const ink = measuredTextWidthIn(row.text, pt);
+      const past = (row.x + row.insetX / 2 + ink) - (pageW - 0.05);
+      if (past > 0.005) {
+        rowOverruns.push(
+          `${row.name} draws ${past.toFixed(3)}in past the right edge at ${pt.toFixed(1)}pt `
+          + `(${row.text.length} chars): ${JSON.stringify(row.text.slice(0, 40))}`,
+        );
+      }
+    } else {
+      // A wrapping row must be given the height its lines take, or the row
+      // below is printed over it.
+      const lines = measuredWrappedLines(row.text, column, pt);
+      const need = lines * pt * 1.45 / 72;
+      if (need > row.h + 0.01) {
+        rowOverflows.push(
+          `${row.name} wraps to ${lines} line(s) needing ${need.toFixed(3)}in in a `
+          + `${row.h.toFixed(3)}in row`,
+        );
+      }
+    }
+  }
+  if (rowOverruns.length > 0) {
+    issues.push(
+      `${rowOverruns.length} index row(s) are drawn off the right edge of the slide, so the one `
+      + `page that defines the drawing's marks loses its own text: ${rowOverruns.slice(0, 3).join('; ')}`,
+    );
+  }
+  if (rowOverflows.length > 0) {
+    issues.push(
+      `${rowOverflows.length} index row(s) are taller than the row they are given, so each is `
+      + `printed over the row beneath it: ${rowOverflows.slice(0, 3).join('; ')}`,
+    );
+  }
+  // AND THE ROW MUST NOT WRAP WHEN IT DID NOT HAVE TO. Wrapping stops a row
+  // being lost, but a lookup row broken across lines is still the wrong answer
+  // when a smaller size in the range the index already allows would have kept
+  // it whole: the reader scans this page by running down the left column, and
+  // a wrapped row puts the next mark two lines below where the eye expects it
+  // while halving how many pairs the page holds. So the type shrinks FIRST and
+  // wrapping is the last resort, not the first.
+  const avoidablyWrapped: string[] = [];
+  for (const row of shapes.filter((s) => s.name.startsWith('index-name-'))) {
+    if (!row.text.trim() || row.wrapNone) continue;
+    const pt = row.fontSize ?? 10;
+    const column = Math.max(0.05, row.w - row.insetX);
+    if (measuredWrappedLines(row.text, column, pt) <= 1) continue;
+    // The smallest size this page is allowed to set. Anything below it is a
+    // different defect - the legibility floor - and is not proposed here.
+    const floorPt = 7;
+    if (pt <= floorPt + 0.01) continue;
+    if (measuredWrappedLines(row.text, column, floorPt) <= 1) {
+      avoidablyWrapped.push(
+        `${row.name} wraps at ${pt.toFixed(1)}pt but fits one line at ${floorPt}pt `
+        + `(${row.text.length} chars in ${column.toFixed(2)}in)`,
+      );
+    }
+  }
+  if (avoidablyWrapped.length > 0) {
+    issues.push(
+      `${avoidablyWrapped.length} index row(s) are broken across lines at a size the page did not `
+      + `have to use, so the lookup column the reader scans is interrupted for nothing: `
+      + `${avoidablyWrapped.slice(0, 3).join('; ')}`,
     );
   }
   for (const [name, count] of countByName(badges)) {
@@ -7545,28 +7761,92 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
     );
   }
 
-  // A COLUMN TOO NARROW TO READ. The workflow band picks its column count by
-  // minimising stack height and nothing else, so on brief descriptions - where
-  // every split shortens the stack - it ran to its 12 column cap and set each
-  // sentence in 0.2583in of text column, about two characters wide. Every rule
-  // before this one asked whether the text FITS; fitting in two characters is
-  // not the same as being readable, and the band passed all of them.
+  // A COLUMN TOO NARROW TO READ, asked TWO ways.
+  //
+  // The band picks its column count by minimising stack height and nothing
+  // else, so on brief descriptions - where every split shortens the stack - it
+  // ran to its 12 column cap and set each sentence in 0.2583in of text column,
+  // about two characters wide. Every rule before this one asked whether the
+  // text FITS; fitting in two characters is not the same as being readable.
+  //
+  // The width floor alone is not enough, and neither is the line bound alone,
+  // because they fail on different inputs. Twelve one-word sentences shred to a
+  // hairline column that each still sets in ONE line, so no line-count bound
+  // can see it - only the width can. Twelve long sentences keep a column wide
+  // enough to clear any width floor while every one of them wraps to eight or
+  // ten lines, which is a stack of ribbons no reader follows - only the line
+  // count can see that. So both, and the fixtures below prove neither covers
+  // for the other.
   const cramped: string[] = [];
+  const shredded: number[] = [];
+  const bodies: string[] = [];
+  const columnXs = new Set<string>();
+  let workflowPt = 0;
+  let workflowColW = 0;
   for (const chunk of xml.split('<Shape ID=')) {
     if (!/Name="workflow-text-\d+"/.test(chunk.slice(0, 400))) continue;
     const w = /<Cell N="Width" V="([\d.]+)"/.exec(chunk);
     const text = /<Text>([\s\S]*?)<\/Text>/.exec(chunk);
     if (!w) continue;
     const widthIn = Number(w[1]);
-    if (widthIn >= 0.9) continue;
+    const pinX = /<Cell N="PinX" V="([\d.]+)"/.exec(chunk);
+    if (pinX) columnXs.add(Number(pinX[1]).toFixed(2));
+    workflowColW = Math.max(workflowColW, widthIn);
     const body = unescapeXml((text?.[1] ?? '').replace(/<[^>]*>/g, '')).trim();
-    cramped.push(`${widthIn.toFixed(4)}in for ${JSON.stringify(body.slice(0, 28))}`);
+    if (widthIn < 0.9) {
+      cramped.push(`${widthIn.toFixed(4)}in for ${JSON.stringify(body.slice(0, 28))}`);
+    }
+    // Visio sets type in inches; the size cell is the em height.
+    const size = /<Cell N="Size" V="([\d.]+)"/.exec(chunk);
+    const pt = size ? Number(size[1]) * 72 : 7.2;
+    workflowPt = pt;
+    // The width cell IS the text column on the Visio side: the band already
+    // subtracted the badge gutter before emitting the shape, and no margin
+    // cells are written. Subtracting PowerPoint's 0.1in-a-side inset here
+    // charged the sentence a column it never lost and reported four lines for
+    // a row the sheet sets in three.
+    if (body) {
+      shredded.push(measuredWrappedLines(body, Math.max(0.01, widthIn), pt));
+      bodies.push(body);
+    }
   }
   if (cramped.length > 0) {
     issues.push(
       `${cramped.length} workflow sentence(s) are set in a column too narrow to read: `
       + `${cramped.slice(0, 3).join('; ')}`,
     );
+  }
+  // The MEDIAN, not the worst. One long sentence among twelve is an author's
+  // sentence, not a column defect, and failing on the maximum would report
+  // every band that carries one. When HALF the band wraps past three lines the
+  // column itself is the problem.
+  //
+  // And RELATIVE to the unsplit band, not an absolute three. An 800-character
+  // sentence takes six lines in the widest column this page has to give, so an
+  // absolute bound accuses the exporter of a defect it cannot repair and the
+  // only way to satisfy it would be to edit the author's prose. The question
+  // a reader actually cares about is whether SPLITTING the band shredded the
+  // sentence: the exporter chose the column count, so that is the part it owns.
+  if (shredded.length >= 4) {
+    const sorted = [...shredded].sort((a, b) => a - b);
+    const median = sorted[Math.floor(sorted.length / 2)];
+    const cols = Math.max(1, columnXs.size);
+    // What ONE column would have given: the band's full width, less the one
+    // badge gutter that column still pays.
+    const unsplitW = cols > 1 ? (workflowColW + 0.6) * cols - 0.6 : workflowColW;
+    const unsplit = bodies
+      .map((b) => measuredWrappedLines(b, Math.max(0.01, unsplitW), workflowPt))
+      .sort((a, b) => a - b);
+    const floorLines = Math.max(3, unsplit[Math.floor(unsplit.length / 2)]);
+    if (median > floorLines) {
+      issues.push(
+        `the workflow band sets half its ${shredded.length} sentence(s) in ${median} or more `
+        + `wrapped lines at ${workflowPt.toFixed(1)}pt, so the ${cols}-column split shreds the `
+        + `prose into ribbons a single column would have set in `
+        + `${unsplit[Math.floor(unsplit.length / 2)]}: the widest sentence takes `
+        + `${sorted[sorted.length - 1]} lines`,
+      );
+    }
   }
 
   // EVERY PAGE THE EXPORTER EMITS MUST BE MEASURED BY SOME RULE. Page 2 was
@@ -8689,9 +8969,13 @@ async function main(): Promise<void> {
   panelBurialScenario(),
   briefWorkflowStepsScenario(),
   longIndexRowsScenario(),
+  overlongIndexRowsScenario(),
+  shrinkableIndexRowsScenario(),
   collidingStubsScenario(),
   hairlineStubsScenario(),
   emojiClusterScenario(),
+  briefWorkflowScenario(),
+  shreddedWorkflowScenario(),
   tallNarrowTilesScenario(),
     corridorZoneScenario(),
     ladderInGridScenario(), twinLaddersScenario(), strayLadderScenario(), legendCornerScenario(), duplicateStepsScenario(), denseZoneScenario(),

@@ -53,7 +53,15 @@ async function buildDeck(nodes: Node[], edges: Edge[]): Promise<Deck> {
     .sort((a, b) => +a.replace(/\D/g, '') - +b.replace(/\D/g, ''));
   const slides = await Promise.all(names.map((name) => zip.file(name)!.async('string')));
   const overview = slides.findIndex((xml) => xml.includes('(Overview)'));
-  return { slides, parts: overview < 0 ? slides : slides.slice(overview + 1) };
+  // The DRAWING's parts, which is what every caller of `parts` means. Two other
+  // kinds of slide sit after the overview and carry no tiles by design: the
+  // numbered workflow continuation, and the service-name index - which the deck
+  // now emits far more often, because the overview records the marks it draws
+  // and its tiles are the smallest in the deck. Neither is a part of the
+  // drawing, and counting them as one made "part 6 of 6" a blank slide.
+  const drawingParts = (overview < 0 ? slides : slides.slice(overview + 1))
+    .filter((xml) => !/Workflow \(/.test(xml) && !xml.includes('name="index-name-'));
+  return { slides, parts: drawingParts };
 }
 
 /** Font sizes carried by the service label text runs, in points. */
@@ -1420,7 +1428,10 @@ test('the overview thumbnail never draws type the reader cannot resolve', async 
   const { nodes, edges } = wideDiagram(40);
   const deck = await buildDeck(nodes, edges);
   assert.ok(deck.parts.length > 1, 'the fixture must tile for there to be an overview at all');
-  const overview = deck.slides[deck.slides.length - deck.parts.length - 1];
+  // Found by its own title rather than by counting back from the end. `parts`
+  // no longer includes the index and workflow slides, so an offset from the
+  // end lands on a different slide than it used to.
+  const overview = deck.slides.find((xml) => xml.includes('(Overview)')) ?? '';
   assert.ok(overview.includes('(Overview)'), 'located the overview slide');
 
   const RESOLVABLE_PT = 6;
@@ -2031,6 +2042,164 @@ test('every mark a tile draws is defined by an index row that names one service'
         defined.get(mark)!.size,
         1,
         `"${mark}" is defined against ${defined.get(mark)!.size} services, so it identifies none of them`,
+      );
+    }
+  }
+});
+
+/**
+ * ASK-61-D: a zone caption fits the band the exporter draws it into.
+ *
+ * The caption fitter shrinks, then cuts, then blanks - three escape hatches,
+ * each of which can be reached with the previous one having done nothing. A
+ * corpus scenario cannot pin this, because it samples ONE geometry: the guard
+ * that measured the caption against the box instead of the column fired only
+ * below about 0.043in, which is the single width the corpus happened to hold,
+ * and was silent across the whole ordinary range of small zones between.
+ *
+ * So this sweeps the geometry instead. For every zone the sweep produces, the
+ * claim is the same one the reader cares about: the lines the caption wraps to,
+ * at the size it is set in, in the column it is given, take no more height than
+ * the band. PowerPoint does not clip a text box - it prints the overflow below
+ * the band and across whatever is there, which on a row of subnets is the
+ * neighbouring zones' captions.
+ */
+const ZONE_LINE_PITCH = 1.35;
+
+/** Every zone caption the deck emitted, with the box it was emitted into. */
+function zoneCaptions(slideXml: string): Array<{ text: string; pt: number; w: number; h: number }> {
+  const out: Array<{ text: string; pt: number; w: number; h: number }> = [];
+  for (const match of slideXml.matchAll(/<p:sp>[\s\S]*?<\/p:sp>/g)) {
+    const shape = match[0];
+    if (!/name="zone-label-/.test(shape)) continue;
+    const ext = /<a:ext cx="(\d+)" cy="(\d+)"\/>/.exec(shape);
+    const size = /sz="(\d+)"/.exec(shape);
+    if (!ext || !size) continue;
+    const text = [...shape.matchAll(/<a:t>([\s\S]*?)<\/a:t>/g)]
+      .map((t) => t[1].replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>'))
+      .join('');
+    // EMU: 914400 per inch.
+    out.push({ text, pt: +size[1] / 100, w: +ext[1] / 914400, h: +ext[2] / 914400 });
+  }
+  return out;
+}
+
+test('a zone caption never needs more lines than its band can hold', async () => {
+  // Widths and heights across the range a real drawing produces, including the
+  // slivers a window cut leaves behind, crossed with captions short enough to
+  // fit outright and long enough to force every hatch in turn.
+  const labels = [
+    'DMZ',
+    'Production VNet',
+    'Production landing zone - shared services subnet (EMEA)',
+    'Zone d\u2019atterrissage de production pour les services partag\u00e9s r\u00e9gionaux',
+  ];
+  const widths = [40, 90, 150, 260, 420, 700];
+  const heights = [60, 110, 200, 380];
+  const nodes: Node[] = [];
+  let i = 0;
+  let x = 0;
+  for (const label of labels) {
+    for (const w of widths) {
+      for (const h of heights) {
+        const zoneId = `zs-${i}`;
+        nodes.push({
+          id: zoneId,
+          type: 'groupNode',
+          position: { x, y: 0 },
+          style: { width: w, height: h },
+          data: { label },
+        } as Node);
+        nodes.push({
+          id: `zsn-${i}`,
+          type: 'azureNode',
+          parentNode: zoneId,
+          position: { x: x + 8, y: 8 },
+          width: Math.max(20, w - 16),
+          height: Math.max(20, h - 16),
+          data: { label: 'Azure Functions', serviceName: 'Azure Functions' },
+        } as Node);
+        x += w + 140;
+        i += 1;
+      }
+    }
+  }
+
+  const { slides } = await buildDeck(nodes, []);
+  const failures: string[] = [];
+  let checked = 0;
+  for (const xml of slides) {
+    for (const caption of zoneCaptions(xml)) {
+      // A blanked caption is the honest third hatch, not a violation.
+      if (!caption.text || caption.w <= 0 || caption.h <= 0) continue;
+      checked += 1;
+      // The column PowerPoint actually gives the words: a text box that
+      // declares no margin still takes a 0.1in inset on each side.
+      const column = Math.max(0, caption.w - 0.2);
+      const lines = wrappedLineCount(caption.text, column, caption.pt);
+      const needs = (lines * caption.pt * ZONE_LINE_PITCH) / 72;
+      if (needs > caption.h + 0.005) {
+        failures.push(
+          `"${caption.text}" at ${caption.pt}pt wraps to ${lines} line(s) in a `
+          + `${column.toFixed(3)}in column, needing ${needs.toFixed(3)}in of a `
+          + `${caption.h.toFixed(3)}in band - ${(needs - caption.h).toFixed(3)}in prints below it`,
+        );
+      }
+    }
+  }
+  assert.ok(checked >= 40, `the sweep only produced ${checked} drawn captions, so it proves little`);
+  assert.deepEqual(failures.slice(0, 6), [], failures.slice(0, 6).join('\n'));
+});
+
+test('a zone caption is never wider than the zone it names', async () => {
+  // A band wider than its own box hangs over both neighbours, and no placement
+  // can fix that: the geometry makes the overlap compulsory. One scaled row of
+  // small zones produced 2385 pairs of captions written across each other.
+  const nodes: Node[] = [];
+  const sizes = [30, 45, 60, 80, 120, 200];
+  let x = 0;
+  for (const [i, w] of sizes.entries()) {
+    nodes.push({
+      id: `zw-${i}`,
+      type: 'groupNode',
+      position: { x, y: 0 },
+      style: { width: w, height: 70 },
+      data: { label: 'Shared services perimeter' },
+    } as Node);
+    nodes.push({
+      id: `zwn-${i}`,
+      type: 'azureNode',
+      parentNode: `zw-${i}`,
+      position: { x: x + 6, y: 6 },
+      width: Math.max(16, w - 12),
+      height: 50,
+      data: { label: 'Azure Functions', serviceName: 'Azure Functions' },
+    } as Node);
+    x += w + 160;
+  }
+
+  const { slides } = await buildDeck(nodes, []);
+  const zones = new Map<string, number>();
+  for (const xml of slides) {
+    for (const match of xml.matchAll(/<p:sp>[\s\S]*?<\/p:sp>/g)) {
+      const id = /name="zone-(zw-\d+)"/.exec(match[0]);
+      const ext = /<a:ext cx="(\d+)" cy="(\d+)"\/>/.exec(match[0]);
+      if (id && ext) zones.set(id[1], +ext[1] / 914400);
+    }
+  }
+  assert.ok(zones.size > 0, 'the sweep drew no zone boxes at all');
+  for (const xml of slides) {
+    for (const match of xml.matchAll(/<p:sp>[\s\S]*?<\/p:sp>/g)) {
+      const id = /name="zone-label-(zw-\d+)"/.exec(match[0]);
+      const ext = /<a:ext cx="(\d+)" cy="(\d+)"\/>/.exec(match[0]);
+      if (!id || !ext) continue;
+      const bandW = +ext[1] / 914400;
+      const zoneW = zones.get(id[1]);
+      if (zoneW === undefined) continue;
+      assert.ok(
+        bandW <= zoneW + 0.005,
+        `${id[1]}: a ${bandW.toFixed(3)}in caption band on a ${zoneW.toFixed(3)}in zone `
+        + 'hangs over the zones on either side',
       );
     }
   }

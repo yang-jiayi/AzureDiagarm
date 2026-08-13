@@ -19,6 +19,7 @@
 
 import type { Edge, Node } from 'reactflow';
 import { readStepNumber as readStepValue } from '../utils/workflowStepMapping';
+import { stripXmlForbidden } from '../utils/xmlText';
 import {
   getConnectionPresentation,
   normalizeConnectionType,
@@ -1647,9 +1648,24 @@ function finiteOr(value: unknown, fallback: number): number {
  * finding, an assessment — means its line breaks and is measured and paginated
  * as written. A *name* is an identifier and reads as one line, wrapping only
  * because the tile is narrow.
+ *
+ * SANITISE FIRST, THEN COLLAPSE. `stripXmlForbidden` replaces each forbidden
+ * code point with a SPACE rather than deleting it, and it runs at draw time,
+ * after this. So a control character sitting between two spaces was not
+ * whitespace when the collapse ran and was whitespace afterwards, when nothing
+ * was left to collapse it - and the drawn name came out holding a doubled
+ * space. The index slide keys its rows on `"  =  "` and separates a service's
+ * marks with `"  |  "`, both chosen precisely because a drawn string could not
+ * contain two consecutive spaces. It could: `"Contoso \u0001=\u0001 platform"`
+ * drew as `"Contoso  =  platform"`, so the row parsed as a mark of `"Contoso"`
+ * standing for a name that was really two names and a separator. Doing the two
+ * in this order makes the claim true by construction rather than by argument.
  */
 export function singleLineName(text: string): string {
-  return text.replace(/[\r\n\t\v\f\u2028\u2029]+/g, ' ').replace(/ {2,}/g, ' ').trim();
+  return stripXmlForbidden(text)
+    .replace(/[\r\n\t\v\f\u2028\u2029]+/g, ' ')
+    .replace(/ {2,}/g, ' ')
+    .trim();
 }
 
 export function collectExportBoxes(nodes: Node[]): Map<string, ExportBox> {

@@ -143,6 +143,26 @@ const MAX_WORKFLOW_COLUMNS = 12;
 const MIN_WORKFLOW_COL_IN = 1.6;
 
 /**
+ * The other half of the same bound, because a width floor cannot see this one.
+ *
+ * The minimiser scores nothing but stack height, and on LONG descriptions the
+ * height still falls with every split while the column stays comfortably above
+ * the width floor - so it split to the cap anyway and set the median sentence
+ * of `visio-token-workflow` in SIXTEEN wrapped lines. Sixteen lines of a column
+ * two or three words wide is not a sentence a reader follows; it is a ribbon.
+ *
+ * Neither bound covers for the other. Twelve one-word steps shred to a hairline
+ * column while each still sets in ONE line, which no line bound can see; twelve
+ * long steps keep a wide column while every one wraps to eight, which no width
+ * floor can see. `probe-brief-workflow` and `probe-shredded-workflow` hold the
+ * two geometries so that neither can be deleted on the grounds of the other.
+ *
+ * Three, because two is the ordinary shape of a step description at this size
+ * and four is where the eye starts losing its place returning to the margin.
+ */
+const MAX_WORKFLOW_MEDIAN_LINES = 3;
+
+/**
  * Visio font sizes are inches (1 pt = 1/72"). These match the PowerPoint export
  * at 1 : 1 — a 150 px tile is 1.56" wide, so the label reads at ~7.6 pt and the
  * SKU sub-line at ~7 pt instead of the previous near-illegible 6.5/5 pt.
@@ -1228,6 +1248,20 @@ function workflowRowHeightIn(description: string, colW: number): number {
   return Math.max(WORKFLOW_ROW_IN, lines * LEGEND_FONT_IN * 1.35 + 0.08);
 }
 
+/**
+ * The median sentence's wrapped line count, for a given column width.
+ *
+ * The MEDIAN, not the worst. One long sentence among twelve is the author's
+ * sentence and no evidence about the column; when HALF the band wraps past
+ * three lines the column itself has stopped being prose and become a ribbon.
+ */
+function workflowMedianLines(entries: WorkflowListEntry[], colW: number): number {
+  const lines = entries
+    .map((entry) => wrappedLinesIn(entry.description, colW - 0.6, LEGEND_FONT_IN))
+    .sort((a, b) => a - b);
+  return lines.length === 0 ? 0 : lines[Math.floor(lines.length / 2)];
+}
+
 /** The tallest column, which is the height the band has to reserve. */
 function workflowStackIn(entries: WorkflowListEntry[], columns: number, colW: number): number {
   const cols = Math.max(1, columns);
@@ -1600,20 +1634,55 @@ export async function buildVsdxPackage(
     MAX_VISIO_PAGE_IN / 3,
     Math.max(MIN_PAGE_H_IN / 3, naturalHIn / 2),
   );
+  // HOW MANY COLUMNS THE PROSE WILL STAND, decided ONCE and for every page
+  // width. Both bounds below depend on the column's width, so asking them per
+  // page made the admissible SET depend on the page - and the reservation pass
+  // runs at the narrowest page the exporter emits while the layout pass runs at
+  // the real one. A narrow page allowed fewer columns and so reserved a taller
+  // band than the wide page went on to draw, and the difference was printed as
+  // blank paper between the drawing and the band: 1.30in of it. Deciding the
+  // set at the reserve width keeps "the reservation is an upper bound" true by
+  // construction, which is the property the two-pass sizing rests on.
+  //
+  // A COLUMN TOO NARROW TO READ IS NOT A SHORTER BAND, IT IS A LOST SENTENCE.
+  // The minimiser scores nothing but stack height, and with brief descriptions
+  // the height falls monotonically in the column count, so it took the cap
+  // every time: twelve two-syllable steps were set in columns 0.8583in wide,
+  // leaving 0.2583in of text column - about two characters. Splitting has to
+  // stop while the sentence is still a sentence.
+  //
+  // And the same bound asked the other way. A wide column can still shred long
+  // prose into ribbons, which the width test cannot see and the height score
+  // actively rewards.
+  //
+  // RELATIVE to what one column would have set, not an absolute three. An
+  // 800-character sentence takes six lines in the widest column this page has
+  // to give, so an absolute bound accuses the split of damage the prose did:
+  // it refused to split at all, the band came out 2.98in tall in one column,
+  // and 1.30in of the page it reserved was printed as blank paper. What the
+  // split owns is the DIFFERENCE it makes, which is what this measures - and
+  // it is the same test the audit applies to the emitted sheet.
+  const admissibleColumns = (() => {
+    const unsplit = workflowMedianLines(
+      reservedEntries,
+      workflowPanelWidthIn(MIN_PAGE_W_IN, 1),
+    );
+    const bound = Math.max(MAX_WORKFLOW_MEDIAN_LINES, unsplit);
+    let last = 1;
+    for (let cols = 2; cols <= MAX_WORKFLOW_COLUMNS; cols += 1) {
+      const colW = workflowPanelWidthIn(MIN_PAGE_W_IN, cols) / cols;
+      if (colW < MIN_WORKFLOW_COL_IN) break;
+      if (workflowMedianLines(reservedEntries, colW) > bound) break;
+      last = cols;
+    }
+    return last;
+  })();
   const bandFor = (widthIn: number): { columns: number; height: number } => {
     if (workflowEntries.length === 0) return { columns: 1, height: 0 };
     let columns = 1;
     let shortest = stackFor(1, widthIn);
     if (shortest > bandTargetIn) {
-      for (let cols = 2; cols <= MAX_WORKFLOW_COLUMNS; cols += 1) {
-        // A COLUMN TOO NARROW TO READ IS NOT A SHORTER BAND, IT IS A LOST
-        // SENTENCE. The minimiser scores nothing but stack height, and with
-        // brief descriptions the height falls monotonically in the column
-        // count, so it took the cap every time: twelve two-syllable steps were
-        // set in columns 0.8583in wide, leaving 0.2583in of text column - about
-        // two characters. Splitting has to stop while the sentence is still a
-        // sentence.
-        if (workflowPanelWidthIn(widthIn, cols) / cols < MIN_WORKFLOW_COL_IN) break;
+      for (let cols = 2; cols <= admissibleColumns; cols += 1) {
         const height = stackFor(cols, widthIn);
         if (height < shortest) {
           shortest = height;
