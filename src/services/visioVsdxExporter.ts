@@ -1367,7 +1367,20 @@ function buildServiceNamePanel(
   // A cap, because one pathological name should not set the width of every
   // column. Rows past it wrap, and the pitch below grows to carry the wrap.
   const MAX_INDEX_COL_IN = 6.0;
-  const widest = rowText.reduce((w, row) => Math.max(w, estimateTextWidthIn(row, LEGEND_FONT_IN)), 0);
+  // ROOM OVER THE MEASUREMENT, not room equal to it. `textW` came out as
+  // `widest` exactly, so the longest row in the panel was given a text box the
+  // precise width of its own estimated ink and fitted on one line only if the
+  // renderer's measurement agreed with this file's to the last fraction. It
+  // does not have to: the estimate is a model of one font, Visio measures the
+  // font it actually loaded, and the two models already in this repo disagree
+  // at the boundary (one tests `used + visible > column`, one `>=`). A Thai row
+  // estimated at 2.2581in in a 2.2581in box was one line here and two lines to
+  // the audit, inside a 0.2000in single-line pitch, drawn straight through the
+  // row above - the exact overprint the measurement above was added to stop.
+  // Below 2.4in the floor supplied this slack by accident, which is why only
+  // scripts with no spaces to wrap at ever reached the case.
+  const INDEX_FIT_SLACK = 1.03;
+  const widest = rowText.reduce((w, row) => Math.max(w, estimateTextWidthIn(row, LEGEND_FONT_IN)), 0) * INDEX_FIT_SLACK;
   const colW = Math.min(MAX_INDEX_COL_IN, Math.max(2.4, widest + PAD_IN));
   const textW = colW - PAD_IN;
   const tallest = rowText.reduce((n, row) => Math.max(n, wrappedLinesIn(row, textW, LEGEND_FONT_IN)), 1);

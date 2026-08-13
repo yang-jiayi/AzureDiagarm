@@ -5910,7 +5910,27 @@ function addCostRegionsSlide(pptx: PptxGenJS, t: SlideTheme, o: ArchitectureDeck
  * and reads as one line, wrapping only because the column is narrow.
  */
 function singleLine(text: string): string {
-  return text.replace(/[\r\n\t\v\f\u2028\u2029]+/g, ' ').replace(/ {2,}/g, ' ').trim();
+  // Composed, for the same reason the drawing composes: the deck writes a
+  // name in two places, and if the two spellings differ the reader searching
+  // the inventory for the name on the tile finds nothing. The tile side goes
+  // through `singleLineName`, which composes; this side did not, so seven
+  // Vietnamese and Turkish services were drawn on the diagram slide and
+  // absent from the inventory that is supposed to spell them out in full.
+  return text.replace(/[\r\n\t\v\f\u2028\u2029]+/g, ' ').replace(/ {2,}/g, ' ').trim().normalize('NFC');
+}
+
+/**
+ * Prose, composed but otherwise untouched.
+ *
+ * A sentence keeps its line breaks - that is the whole difference between it
+ * and a name - but it must not keep a decomposed spelling, because every
+ * measurement in this file prices a combining mark at nothing and the two
+ * spellings would then be drawn at two different widths. Composing here, at
+ * the entry point, means every box in the deck is measured against the string
+ * that will actually be written into it.
+ */
+function composedProse(text: string): string {
+  return text.normalize('NFC');
 }
 
 /**
@@ -5929,6 +5949,8 @@ function withSingleLineNames(o: ArchitectureDeckOptions): ArchitectureDeckOption
         ...(s.tier ? { tier: singleLine(s.tier) } : {}),
       })),
       ...(o.cost.regions ? { regions: o.cost.regions.map((r) => ({ ...r, name: singleLine(r.name) })) } : {}),
+      ...(o.cost.term ? { term: singleLine(o.cost.term) } : {}),
+      ...(o.cost.region ? { region: singleLine(o.cost.region) } : {}),
       ...(o.cost.unavailableRegions
         ? { unavailableRegions: o.cost.unavailableRegions.map(singleLine) }
         : {}),
@@ -5947,12 +5969,18 @@ function withSingleLineNames(o: ArchitectureDeckOptions): ArchitectureDeckOption
         ...f,
         severity: singleLine(f.severity),
         category: singleLine(f.category),
+        issue: composedProse(f.issue),
+        ...(f.recommendation ? { recommendation: composedProse(f.recommendation) } : {}),
       })),
+      ...(o.validation.summary ? { summary: composedProse(o.validation.summary) } : {}),
+      ...(o.validation.modelUsed ? { modelUsed: singleLine(o.validation.modelUsed) } : {}),
     }
     : o.validation;
   return {
     ...o,
     diagramName: singleLine(o.diagramName),
+    ...(o.prompt ? { prompt: composedProse(o.prompt) } : {}),
+    ...(o.model ? { model: singleLine(o.model) } : {}),
     services: o.services.map((s) => ({
       ...s,
       name: singleLine(s.name),
@@ -5965,6 +5993,7 @@ function withSingleLineNames(o: ArchitectureDeckOptions): ArchitectureDeckOption
       ? {
         workflow: o.workflow.map((w) => ({
           ...w,
+          description: composedProse(w.description),
           ...(w.services ? { services: w.services.map(singleLine) } : {}),
         })),
       }

@@ -265,6 +265,12 @@ const YU_GOTHIC_WIDE_EM: ReadonlyArray<readonly [number, readonly number[]]> = [
 ];
 
 const YU_GOTHIC_FALLBACK_EM: ReadonlyArray<readonly [number, readonly number[]]> = [
+  // Latin Extended-B's two horn vowels, the one Latin gap in the dump. Read
+  // off this table's own toned forms at 0x1ee8 and 0x1eda rather than measured
+  // afresh, because a tone mark adds no advance and `ư` must not be priced
+  // differently from `ứ`. See the twin note in `diagramExportGeometry.ts`.
+  [0x1a0, [0.763, 0.597]],
+  [0x1af, [0.708, 0.588]],
   [0x591, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0.4, 0, 0.202, 0, 0, 0.217, 0, 0, 0.399, 0]],
   [0x5d0, [0.637, 0.57, 0.439, 0.481, 0.678, 0.268, 0.337, 0.674, 0.681, 0.268, 0.559, 0.545, 0.551, 0.694, 0.674, 0.268, 0.399, 0.676, 0.605, 0.611, 0.631, 0.565, 0.585, 0.664, 0.559, 0.785, 0.726]],
   [0x5ef, [0.542, 0.522, 0.522, 0.522, 0.229, 0.377]],
@@ -2182,69 +2188,122 @@ function bandFillScenario(): Scenario {
 }
 
 /**
- * The same visible names, spelled composed and decomposed.
+ * Names whose combining marks are still there after composition.
  *
- * NFD is not exotic: macOS-authored input, Finder filenames and many clipboard
- * paths are decomposed by default, and the corpus was entirely Windows-authored
- * NFC, which is exactly why this was never seen. Both width models charged a
- * combining mark as though it were a glyph, so "Passerelle securisee" cost
- * 13.7% more decomposed than composed for text that draws identically - and
- * because BOTH models made the same mistake the divergence rule was silent and
- * the coverage rule was satisfied.
+ * The exporter now composes every drawn string, which retires the whole
+ * Latin question - but it does NOT retire combining marks, and treating that
+ * as the same problem would leave the cluster rules with no fixture that
+ * reaches them. Arabic harakat, Devanagari matras and Thai vowel signs have no
+ * precomposed forms at all: they survive NFC untouched, they are ordinary
+ * spelling rather than decoration, and they are what the cluster pricing and
+ * the cluster-boundary cut actually have to be right about.
  *
- * The tiles are small on purpose. Over-charging does not merely mis-measure a
- * name, it CUTS it: at 60x30 the decomposed spelling was five characters
- * shorter than the composed one and the cut landed between a letter and its
- * accent, printing an acute stacked on the ellipsis.
+ * The tiles are small and their widths vary on purpose. Over-charging does not
+ * merely mis-measure a name, it CUTS it, and a cut lands wherever the tile
+ * happens to be narrow - at one width a code-point cut printed a mark stacked
+ * on the ellipsis, and at the next width it did not.
  */
 function decomposedNameScenario(): Scenario {
   const icon = '/Azure_Public_Service_Icons/Icons/compute/10029-icon-service-Function-Apps.svg';
-  const names = [
-    'Passerelle sécurisée données clés partagées',
-    'Ingestión de datos años atrás en la región',
-    'Contoso Zahlungsverkehr Prüfung München',
-  ];
-  const labels = names.flatMap((name) => [name.normalize('NFC'), name.normalize('NFD')]);
-  // Four more, decomposed only, at four tile widths. Pricing is one property
-  // and cutting is another: the divergence rule above compares two models
-  // against each other and would stay silent if both were wrong, and a cut
-  // lands wherever the tile happens to be narrow. These names are dense in
-  // accents on purpose, so a code-point cut has nowhere safe to fall.
   const dense = [
-    'Réplication accélérée déléguée américaine réservée',
-    'Réseau privé sécurisé européen partagé',
-    'Contrôleur délégué prééminent',
-    'Référentiel privé accéléré',
-  ].map((name) => name.normalize('NFD'));
-  const nodes: Node[] = [
-    ...labels.map((label, i) => ({
-      id: `nd${i}`,
-      type: 'azureNode',
-      position: { x: (i % 2) * 220, y: Math.floor(i / 2) * 120 },
-      width: 60,
-      height: 30,
-      data: { label, serviceName: 'Azure Functions', category: 'compute', iconPath: icon },
-    } as unknown as Node)),
-    ...dense.map((label, i) => ({
-      id: `ndd${i}`,
-      type: 'azureNode',
-      position: { x: (i % 2) * 220, y: 380 + Math.floor(i / 2) * 120 },
-      width: [44, 76, 120, 168][i],
-      height: 30,
-      data: { label, serviceName: 'Azure Functions', category: 'compute', iconPath: icon },
-    } as unknown as Node)),
+    // Arabic, fully vocalised: ten marks in thirty characters.
+    'مَرْكَز البَيَانَات المُشْتَرَك',
+    'خِدْمَة التَّخْزِين المُدَارَة',
+    'شَبَكَة خَاصَّة مُؤَمَّنَة',
+    // Thai, where the vowel signs stack above and below the consonant.
+    'บริการจัดเก็บข้อมูลที่ใช้ร่วมกัน',
+    'ระบบเครือข่ายส่วนตัวที่ปลอดภัย',
+    'บริการรักษาความปลอดภัยของข้อมูล',
+    // Yoruba, the case that SURVIVES composition. `ẹ̀` is U+1EB9 followed by
+    // U+0300 and there is no single code point for it, so NFC leaves the mark
+    // standing on a Latin base - which is the only remaining way a combining
+    // mark can reach the exporter now that every entry point composes. The
+    // table prices these marks at half an em when they are not recognised as
+    // marks, and that is a Latin-width error on a Latin name.
+    'Ẹ̀rọ ìsopọ̀ àwọn ìlú',
+    'Ìṣàkóso ìpamọ́ dátà',
+    'Ẹ̀rọ ìdánilójú ààbọ̀',
+    'Ìtọ́jú ìwọ̀n ìlànà',
   ];
+  const nodes: Node[] = dense.map((label, i) => ({
+    id: `nd${i}`,
+    type: 'azureNode',
+    position: { x: (i % 2) * 220, y: Math.floor(i / 2) * 120 },
+    width: [44, 60, 76, 104, 132, 168, 52, 68, 92, 120][i],
+    height: 30,
+    data: { label, serviceName: 'Azure Functions', category: 'compute', iconPath: icon },
+  } as unknown as Node));
   const edges = [
     {
-      id: 'nde1', source: 'nd0', target: 'nd1', label: 'réplique',
-      data: { stepNumber: 1, stepDescription: 'La passerelle sécurisée réplique les données vers la région jumelée.'.normalize('NFD') },
+      id: 'nde1', source: 'nd0', target: 'nd1', label: 'يَنْسَخ',
+      data: { stepNumber: 1, stepDescription: 'يَنْسَخ مَرْكَز البَيَانَات السِّجِلَّات إِلَى المِنْطَقَة التَّوْأَم.' },
     },
     {
-      id: 'nde2', source: 'nd2', target: 'nd3', label: 'archiva',
-      data: { stepNumber: 2, stepDescription: 'El proceso archiva la ingestión de años atrás en almacenamiento frío.' },
+      id: 'nde2', source: 'nd3', target: 'nd4', label: 'จัดเก็บ',
+      data: { stepNumber: 2, stepDescription: 'บริการนี้จัดเก็บข้อมูลเก่าไว้ในที่จัดเก็บแบบเย็น' },
     },
   ] as unknown as Edge[];
   return { id: 'probe-nfd', nodes, edges };
+}
+
+/**
+ * Round 66, issue 1: Turkish and Vietnamese names, authored decomposed.
+ *
+ * Pricing a combining mark at zero was correct and was not enough. The font
+ * gives a precomposed glyph and its base different advances - "ş" is 0.5070
+ * composed and 0.4240 decomposed, a 16.4% gap - so the same visible name still
+ * measured differently depending on where it was typed, and BOTH models read
+ * the same table, so the divergence rule agreed with the exporter. At 48x24
+ * one spelling drew "Payla...si" and the other drew a bare "4".
+ *
+ * Authored decomposed only, with no composed twin. The two spellings are the
+ * SAME NAME, so a diagram carrying both is a diagram with duplicate services
+ * and every rule about distinct names fires on the fixture rather than on the
+ * defect. What is checked here is single-file and observable: whatever was
+ * authored, nothing decomposed may reach the slide. The counterfactual half -
+ * that the two spellings produce identical decks - is a differential between
+ * two files and lives in `tests/glyphAdvances.test.ts`.
+ *
+ * Turkish on purpose. The round-65 test used four names whose accents happen
+ * to be in the class where the table agrees with itself, and passed - proving
+ * the sample rather than the property. These are from the other class.
+ */
+function normFormScenario(): Scenario {
+  const icon = '/Azure_Public_Service_Icons/Icons/networking/10061-icon-service-Virtual-Networks.svg';
+  const names = [
+    'Şişli şube şebeke sunucusu',
+    'Paylaşılan şifreleme şeması',
+    'Şirket şubesi bağlantı noktası',
+    'Bağlantı ağ geçidi dağıtım',
+  ];
+  // Vietnamese, for the same reason and a different cause: the two bare horn
+  // vowels are the one Latin gap in the measured table, and no name can be
+  // written in Vietnamese without them.
+  const viet = [
+    'Dịch vụ lưu trữ đối tượng',
+    'Cổng kết nối riêng tư',
+    'Tường lửa ứng dụng web',
+  ];
+  const labels = [...names, ...viet].map((name) => name.normalize('NFD'));
+  const nodes: Node[] = labels.map((label, i) => ({
+    id: `nf${i}`,
+    type: 'azureNode',
+    position: { x: (i % 2) * 180, y: Math.floor(i / 2) * 115 },
+    width: 48,
+    height: 24,
+    data: { label, serviceName: 'Virtual Network', category: 'networking', iconPath: icon },
+  } as unknown as Node));
+  const edges = [
+    {
+      id: 'nfe1', source: 'nf0', target: 'nf1', label: 'bağ'.normalize('NFD'),
+      data: { stepNumber: 1, stepDescription: 'Şirket şubesi şifreleme şemasını paylaşır.'.normalize('NFD') },
+    },
+    {
+      id: 'nfe2', source: 'nf4', target: 'nf5', label: 'lưu'.normalize('NFD'),
+      data: { stepNumber: 2, stepDescription: 'Dịch vụ lưu trữ đối tượng ghi dữ liệu vào vùng lưu trữ lạnh.' },
+    },
+  ] as unknown as Edge[];
+  return { id: 'probe-normform', nodes, edges };
 }
 
 function briefWorkflowStepsScenario(): Scenario {
@@ -5541,7 +5600,13 @@ function auditStrip(value: string): string {
   return value.replace(
     /[\uD800-\uDBFF][\uDC00-\uDFFF]|[\u0000-\u0008\u000B\u000C\u000E-\u001F\uFFFE\uFFFF]|[\uD800-\uDFFF]/g,
     (m) => (m.length === 2 ? m : ' '),
-  );
+  // COMPOSED, because the exporters compose. Every use of this function asks
+  // "what is the exporter right to emit for this authored string?", and the
+  // answer now includes a canonical spelling. Left decomposed, a name or a
+  // sentence authored on a Mac was compared against a composed drawn string
+  // and reported as never having reached a slide. This is ICU answering a
+  // question about the bytes, not a copy of the exporter's normaliser.
+  ).normalize('NFC');
 }
 async function zipXmlParts(zip: JSZip): Promise<Array<{ path: string; text: string }>> {
   const names = Object.keys(zip.files).filter((n) => !zip.files[n].dir && /\.(xml|rels)$/i.test(n));
@@ -5706,6 +5771,36 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
     issues.push(
       `${strandedMarks.size} drawn string(s) put a combining mark on nothing, so it lands on the ellipsis `
       + `or on the space before it: ${[...strandedMarks].slice(0, 3).map((run) => JSON.stringify(run)).join('; ')}`,
+    );
+  }
+  // AND THE SPELLING MUST NOT BE OBSERVABLE AT ALL.
+  //
+  // The two rules above ask whether the width model prices a mark correctly.
+  // That question was answered twice and was wrong twice, because the
+  // disagreement kept retreating a level: first the walk, then the pricing
+  // rule, then the TABLE both models read - and the font gives a precomposed
+  // glyph and its base different advances for 532 characters, so "a mark costs
+  // nothing" still prices "Şişli şube şebeke sunucusu" 2.8% apart depending on
+  // where it was typed. 480 of those 532 are cheaper decomposed, which is the
+  // direction that paints outside the tile.
+  //
+  // This rule stops asking. Every drawn string must already be in composed
+  // form, so no measurement, cut or comparison downstream can tell which
+  // spelling was authored. It re-derives nothing and shares no table with the
+  // exporter: it asks ICU one question about the bytes on the slide.
+  const decomposed = new Set<string>();
+  for (const slideXml of allSlides) {
+    for (const match of slideXml.matchAll(/<a:t>([\s\S]*?)<\/a:t>/g)) {
+      const run = unescapeXml(match[1]);
+      if (!run.trim() || run.normalize('NFC') === run) continue;
+      decomposed.add(run.slice(0, 32));
+    }
+  }
+  if (decomposed.size > 0) {
+    issues.push(
+      `${decomposed.size} drawn string(s) are not in composed form, so the same visible name is `
+      + `measured and cut differently depending on where it was typed: `
+      + `${[...decomposed].slice(0, 3).map((run) => JSON.stringify(run)).join('; ')}`,
     );
   }
   // The audit ran icon-blind for its whole life: `canRasterize()` is false
@@ -6705,7 +6800,13 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
   for (const node of scenario.nodes) {
     if (node.type !== 'azureNode') continue;
     const label = (node.data as { label?: string } | undefined)?.label;
-    if (typeof label === 'string' && label) authoredNames.set(auditStrip(String(node.id)), label);
+    // Stored in the form the exporters will actually draw, not as authored.
+    // Every comparison below asks "did this name reach a shape?", and an
+    // authored spelling that no file contains answers no for every one of
+    // them. `singleLineName` is the exporter's own function, called rather
+    // than copied, and it is idempotent, so the later `drawnForm` calls are
+    // unaffected.
+    if (typeof label === 'string' && label) authoredNames.set(auditStrip(String(node.id)), singleLineName(label));
   }
   const authoredZones = new Map<string, string>();
   for (const node of scenario.nodes) {
@@ -9443,6 +9544,7 @@ async function main(): Promise<void> {
   bandGapScenario(),
   bandFillScenario(),
   decomposedNameScenario(),
+  normFormScenario(),
   collidingStubsScenario(),
   hairlineStubsScenario(),
   emojiClusterScenario(),
@@ -9534,7 +9636,14 @@ async function main(): Promise<void> {
     // held the raw character — so the two keys differed for 41 names that both
     // files had drawn perfectly well. That is a difference between the
     // comparison's own two spellings, not between the drawings.
-    const key = (s: string): string => stripXmlForbidden(s).replace(/\s+/g, ' ').trim();
+    //
+    // Canonical form is the same mistake on a second axis. The exporters now
+    // compose every drawn string, so a name authored decomposed arrives in
+    // both files composed and identical - and this key, taken from the
+    // authored label, still held the decomposed spelling. Seven Turkish and
+    // Vietnamese names that both files had drawn correctly were reported as
+    // missing from one of them.
+    const key = (s: string): string => stripXmlForbidden(s).replace(/\s+/g, ' ').trim().normalize('NFC');
     const pt = new Map(p.drawnNames.map((n) => [key(n.authored), key(n.drawn)]));
     const vt = new Map(v.drawnNames.map((n) => [key(n.authored), key(n.drawn)]));
     for (const name of new Set([...pt.keys(), ...vt.keys()])) {

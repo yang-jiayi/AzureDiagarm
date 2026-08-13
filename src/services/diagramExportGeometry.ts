@@ -931,6 +931,17 @@ const GEOMETRY_WIDE_EM: ReadonlyArray<readonly [number, readonly number[]]> = [
  * each one a full em made a pointed Hebrew name measure three times its ink.
  */
 const GEOMETRY_FALLBACK_EM: ReadonlyArray<readonly [number, readonly number[]]> = [
+  // THE ONE LATIN BLOCK THE DUMP SKIPPED. The table covers Latin-1, Latin
+  // Extended-A and Latin Extended-Additional, and Vietnamese's two bare horn
+  // vowels live in Latin Extended-B - the gap between them. Every TONED form
+  // is tabled (`ứ ừ ử ữ ự` at 0.588, `ớ ờ ở ỡ ợ` at 0.597); only the untoned
+  // base fell through to the one-em fallback, so a name like "Dich vu luu tru
+  // doi tuong" - which cannot be written without them - was charged 7.8% over
+  // and truncated early. The numbers are not new measurements: they are read
+  // off this table's own toned forms, because a tone mark adds no advance, and
+  // taking them from anywhere else would price `ư` and `ứ` differently.
+  [0x1a0, [0.763, 0.597]],
+  [0x1af, [0.708, 0.588]],
   [0x591, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0.4, 0, 0.202, 0, 0, 0.217, 0, 0, 0.399, 0]],
   [0x5d0, [0.637, 0.57, 0.439, 0.481, 0.678, 0.268, 0.337, 0.674, 0.681, 0.268, 0.559, 0.545, 0.551, 0.694, 0.674, 0.268, 0.399, 0.676, 0.605, 0.611, 0.631, 0.565, 0.585, 0.664, 0.559, 0.785, 0.726]],
   [0x5ef, [0.542, 0.522, 0.522, 0.522, 0.229, 0.377]],
@@ -1736,11 +1747,41 @@ function finiteOr(value: unknown, fallback: number): number {
  * standing for a name that was really two names and a separator. Doing the two
  * in this order makes the claim true by construction rather than by argument.
  */
+/**
+ * The one spelling every drawn string is reduced to.
+ *
+ * Unicode lets the same visible name be written more than one way: "é" is one
+ * code point or two, and which one arrives depends on where the text was
+ * typed. macOS filenames, Finder paths and many clipboards hand over the
+ * decomposed form; Windows and the web hand over the composed one.
+ *
+ * Pricing them alike was attempted twice and failed twice. First both models
+ * summed a cluster's code points, so a mark was billed as a glyph. Then a mark
+ * was priced at zero - correct in itself, and still not enough, because it
+ * makes the decomposed spelling cost `advance(base)` while the composed one
+ * costs `advance(precomposed)`, and the font's own table gives those different
+ * numbers for 532 characters between U+00A0 and U+2FFF. "Şişli şube şebeke
+ * sunucusu" cost 11.8220 decomposed against 12.1680 composed; at a 48x24 tile
+ * one spelling drew a readable stub and the other drew a bare numeral.
+ *
+ * The lesson is that the disagreement kept retreating one level down - from
+ * the walk, to the pricing rule, to the table both models read - and chasing
+ * it there is endless. So the question is removed instead of answered: every
+ * drawn string is composed once, at the three points where text enters the
+ * export, and after that no measurement, cut or comparison can tell which
+ * spelling was authored. What cannot be observed cannot be got wrong.
+ */
+export function canonicalSpelling(text: string): string {
+  return text.normalize('NFC');
+}
+
 export function singleLineName(text: string): string {
-  return stripXmlForbidden(text)
-    .replace(/[\r\n\t\v\f\u2028\u2029]+/g, ' ')
-    .replace(/ {2,}/g, ' ')
-    .trim();
+  return canonicalSpelling(
+    stripXmlForbidden(text)
+      .replace(/[\r\n\t\v\f\u2028\u2029]+/g, ' ')
+      .replace(/ {2,}/g, ' ')
+      .trim(),
+  );
 }
 
 /**
@@ -1756,11 +1797,13 @@ export function singleLineName(text: string): string {
  * every drawn string rather than for the ones that happen to reach the index.
  */
 export function sanitisedProse(text: string): string {
-  return stripXmlForbidden(text)
-    .replace(/[\t\v\f]+/g, ' ')
-    .replace(/ {2,}/g, ' ')
-    .replace(/[ ]*(\r\n|\r|\n)[ ]*/g, '\n')
-    .trim();
+  return canonicalSpelling(
+    stripXmlForbidden(text)
+      .replace(/[\t\v\f]+/g, ' ')
+      .replace(/ {2,}/g, ' ')
+      .replace(/[ ]*(\r\n|\r|\n)[ ]*/g, '\n')
+      .trim(),
+  );
 }
 
 export function collectExportBoxes(nodes: Node[]): Map<string, ExportBox> {
@@ -2905,8 +2948,8 @@ export function selfLoopRoute(box: ExportBox, ordinal = 0): { points: Point[]; l
 
 export function readEdgeLabel(edge: Edge): string {
   const dataLabel = (edge.data as { label?: unknown } | undefined)?.label;
-  if (typeof dataLabel === 'string' && dataLabel.trim()) return dataLabel.trim();
-  if (typeof edge.label === 'string' && edge.label.trim()) return edge.label.trim();
+  if (typeof dataLabel === 'string' && dataLabel.trim()) return canonicalSpelling(dataLabel.trim());
+  if (typeof edge.label === 'string' && edge.label.trim()) return canonicalSpelling(edge.label.trim());
   return '';
 }
 

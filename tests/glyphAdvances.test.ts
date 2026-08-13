@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { widestGlyphIn, estimateTextWidthIn } from '../src/services/pptxExporter.ts';
-import { hasMeasuredAdvance, advanceTier, drawableInColumn, advanceWidthIn, widestGlyphUpperIn, widestGlyphIn as widestGlyphLowerIn, hasMeasuredCluster, fitLabelToWidth } from '../src/services/diagramExportGeometry.ts';
+import { hasMeasuredAdvance, advanceTier, drawableInColumn, advanceWidthIn, widestGlyphUpperIn, widestGlyphIn as widestGlyphLowerIn, hasMeasuredCluster, fitLabelToWidth, singleLineName } from '../src/services/diagramExportGeometry.ts';
 
 /**
  * Real advances for Yu Gothic UI, in em, measured from the installed font with
@@ -560,3 +560,74 @@ test('truncation never strands an accent on the ellipsis', () => {
   }
 });
 
+
+// ---------------------------------------------------------------------------
+// Canonical spelling. Round 66: the same visible name cost different widths
+// depending on which normalisation form it was typed in, because a combining
+// mark is priced at nothing and a precomposed letter is priced from the table.
+// The fix is to compose at every entry point, so these are the counterfactual
+// half of the proof - a property no single exported file can show, because a
+// file only ever contains one of the two spellings.
+// ---------------------------------------------------------------------------
+
+test('a name costs the same however it was typed', () => {
+  const names = [
+    'Sisli sube sebeke sunucusu'.replace(/S/g, '\u015e').replace(/s(?=[iue])/g, '\u015f'),
+    'Ba\u011flant\u0131 a\u011f ge\u00e7idi da\u011f\u0131t\u0131m',
+    'D\u1ecbch v\u1ee5 l\u01b0u tr\u1eef \u0111\u1ed1i t\u01b0\u1ee3ng',
+    'C\u1ed5ng k\u1ebft n\u1ed1i ri\u00eang t\u01b0',
+  ];
+  for (const name of names) {
+    const nfc = singleLineName(name.normalize('NFC'));
+    const nfd = singleLineName(name.normalize('NFD'));
+    assert.equal(nfd, nfc, 'the two spellings must reach the drawing as one string');
+    assert.equal(
+      advanceWidthIn(nfd, 72).toFixed(4),
+      advanceWidthIn(nfc, 72).toFixed(4),
+      `${JSON.stringify(name)} is priced differently in the two forms`,
+    );
+  }
+});
+
+test('a name is cut at the same place however it was typed', () => {
+  const name = 'Ba\u011flant\u0131 a\u011f ge\u00e7idi da\u011f\u0131t\u0131m';
+  for (let widthIn = 0.2; widthIn <= 2.0; widthIn += 0.05) {
+    const nfc = fitLabelToWidth(singleLineName(name.normalize('NFC')), widthIn, 9 / 72);
+    const nfd = fitLabelToWidth(singleLineName(name.normalize('NFD')), widthIn, 9 / 72);
+    assert.equal(nfd, nfc, `at ${widthIn.toFixed(2)}in the two spellings are cut differently`);
+  }
+});
+
+test('the bare horn vowels are measured, and cost what their toned forms cost', () => {
+  // Latin Extended-B, the one gap in the dump. Read off the toned forms in the
+  // same table rather than measured afresh: a tone mark adds no advance, so
+  // `u-horn` and `u-horn-acute` are the same width by construction, and taking
+  // the number from anywhere else would make them differ.
+  const pairs: Array<[string, string]> = [
+    ['\u01a0', '\u1eda'], ['\u01a1', '\u1edb'],
+    ['\u01af', '\u1ee8'], ['\u01b0', '\u1ee9'],
+  ];
+  for (const [bare, toned] of pairs) {
+    assert.ok(hasMeasuredAdvance(bare), `U+${bare.codePointAt(0)!.toString(16)} has no measured advance`);
+    assert.equal(
+      advanceWidthIn(bare, 72).toFixed(4),
+      advanceWidthIn(toned.normalize('NFC'), 72).toFixed(4),
+      `U+${bare.codePointAt(0)!.toString(16)} is not priced like its toned form`,
+    );
+  }
+});
+
+test('a mark with no precomposed form still costs nothing', () => {
+  // Yoruba: `e-dot-below` exists as one code point, `e-dot-below-grave` does
+  // not, so NFC leaves the grave standing. This is the only way a combining
+  // mark reaches the exporter now, and it is the case the zero-width rule
+  // still has to hold for.
+  const base = '\u1eb9';
+  const marked = '\u1eb9\u0300';
+  assert.equal(marked.normalize('NFC'), marked, 'the fixture must not compose away');
+  assert.equal(
+    advanceWidthIn(marked, 72).toFixed(4),
+    advanceWidthIn(base, 72).toFixed(4),
+    'a residual combining mark was charged an advance',
+  );
+});
