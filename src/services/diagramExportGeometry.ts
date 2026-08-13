@@ -754,6 +754,23 @@ function finiteOr(value: unknown, fallback: number): number {
  * Flatten React Flow nodes into absolute pixel boxes. Children — including
  * nested groups — are offset by their whole ancestor chain.
  */
+/**
+ * Collapse a name onto one line, for both exporters at once.
+ *
+ * A newline survives the XML sanitiser: PowerPoint turns each one into a real
+ * `<a:p>` and Visio renders it as a paragraph break, so a service name pasted
+ * out of a spreadsheet cell draws as four lines on every tile that carries it.
+ * On the PowerPoint side that squeezed the icon off the tile entirely; on the
+ * Visio side it pinned every tile's text band at its clamp and drew the name
+ * 0.15in taller than the band it was granted. Prose — a step description, a
+ * finding, an assessment — means its line breaks and is measured and paginated
+ * as written. A *name* is an identifier and reads as one line, wrapping only
+ * because the tile is narrow.
+ */
+function singleLineName(text: string): string {
+  return text.replace(/[\r\n\t\v\f\u2028\u2029]+/g, ' ').replace(/ {2,}/g, ' ').trim();
+}
+
 export function collectExportBoxes(nodes: Node[]): Map<string, ExportBox> {
   const positions = resolveAbsolutePositions(nodes);
 
@@ -769,12 +786,12 @@ export function collectExportBoxes(nodes: Node[]): Map<string, ExportBox> {
       id: node.id,
       kind: isGroup ? 'group' : 'service',
       label: typeof data.label === 'string' && data.label.trim()
-        ? data.label
+        ? singleLineName(data.label)
         : isGroup ? 'Group' : 'Service',
       iconPath,
       category: resolveCategory(data, iconPath),
       serviceName: typeof data.serviceName === 'string' && data.serviceName.trim()
-        ? data.serviceName
+        ? singleLineName(data.serviceName)
         : undefined,
       customColor: isGroup ? readCustomColor(data) : undefined,
       meta: isGroup ? undefined : readMeta(data),

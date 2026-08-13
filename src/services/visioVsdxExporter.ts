@@ -1444,9 +1444,18 @@ export async function buildVsdxPackage(
   // an inch across and the fan is spaced for furniture that is not there.
   const badgeIn = STEP_BADGE_IN * fonts.scale;
   const labelSize = (label: string): { w: number; h: number } => {
+    // `natural` is a width and a hard break contributes nothing to it, so the
+    // chip is only ever as wide as the longest single line — which is right.
+    // The *height* has to be counted, not divided: this was the third copy of
+    // `ceil(width / column)` in the file, and because a newline adds no width
+    // it sized a four-paragraph label at one line. `h` is not decoration — it
+    // is the collision rectangle for seating, the rung pitch of a fan, the walk
+    // step when a chip is settled, and the emitted `TxtHeight` — so a fan of
+    // four hops kept a frozen 0.490in pitch while the text grew to 0.570in and
+    // the chips were written through each other.
     const natural = estimateTextWidthIn(label, fonts.connector) + 0.08;
     const w = Math.min(Math.max(natural, 0.5), 1.7);
-    const lines = Math.max(1, Math.ceil(estimateTextWidthIn(label, fonts.connector) / Math.max(w - 0.08, 0.1)));
+    const lines = wrappedLinesIn(label, Math.max(w - 0.08, 0.1), fonts.connector);
     return { w, h: lines * fonts.connector * 1.3 + 0.05 };
   };
   // The same cut every other exporter makes. A 200-character sentence left

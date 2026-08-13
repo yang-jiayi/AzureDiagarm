@@ -114,6 +114,8 @@ interface Shape {
   w: number;
   h: number;
   text: string;
+  /** Drawn text, one entry per `<a:p>`. Evidence, not a calculation. */
+  paragraphs: string[];
   fontSize: number | null;
   /** Vertical anchor of the text body: 't', 'ctr', or 'b'. */
   anchor: string | null;
@@ -230,6 +232,7 @@ function parseShapes(xml: string): Shape[] {
       h,
       text: (paragraphs.length > 0 ? paragraphs.join('\n') : texts.join(''))
         .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>'),
+      paragraphs: paragraphs.map((p) => p.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')),
       fontSize: sz ? +sz[1] / 100 : null,
       anchor: /<a:bodyPr[^>]*\banchor="([^"]+)"/.exec(body)?.[1] ?? null,
       fill,
@@ -1327,6 +1330,33 @@ function hardBreakInventoryScenario(): Scenario {
     },
   } as Edge));
   return { id: 'hard-break-inventory', nodes, edges };
+}
+
+/**
+ * A fan of four parallel hops whose connector labels carry hard breaks.
+ *
+ * `labelSize` was the third copy of `ceil(width / column)` in the file and the
+ * one that survived the sweep. `estimateTextWidthIn` returns a *width*, and a
+ * newline has none, so a four-paragraph label measured as one line. That height
+ * is not decoration: it is the chip's collision rectangle when it is seated,
+ * the rung pitch of a fan, the walk step when a chip is settled, and the
+ * emitted `TxtHeight`. The pitch stayed frozen at 0.490in while the text grew
+ * to 0.570in, and the chips were written through each other.
+ *
+ * The guard could not see it either, because it read `TxtHeight` back out of
+ * the file — asking the exporter how tall its own text is. It measures the ink
+ * now, the way the PowerPoint side has since the painted-ink rule.
+ */
+function visioBrokenLabelFanScenario(): Scenario {
+  const nodes: Node[] = [svc('vbfa', 'Alpha', 0, 0), svc('vbfb', 'Bravo', 520, 0)];
+  const edges: Edge[] = Array.from({ length: 4 }, (_, i) => ({
+    id: `vbf${i}`,
+    source: 'vbfa',
+    target: 'vbfb',
+    label: `L1 p${i + 1}\nL2 p${i + 1}\nL3 p${i + 1}\nL4 p${i + 1}`,
+    data: { stepNumber: i + 1, stepDescription: `Step ${i + 1}.` },
+  } as Edge));
+  return { id: 'visio-broken-label-fan', nodes, edges };
 }
 
 /**
@@ -3008,10 +3038,35 @@ async function auditCustomerDeck(scenario: Scenario): Promise<string[]> {
       }
       : {}),
   };
+  // The cover's "Brief:" box had never been drawn — `prompt` appeared nowhere
+  // in this file — and it was the last unmeasured character cap in the
+  // exporter. It is the user's typed brief, straight out of a `<textarea>`, so
+  // hard breaks are the normal case: twenty bulleted lines is 213 characters,
+  // half the old 420-character cap, and drew 4.875in in a 1.700in box.
+  const brief = [
+    'Front Door + WAF', 'Container Apps', 'Azure SQL Managed Instance', 'Blob storage',
+    'Key Vault', 'Microsoft Entra ID', 'Log Analytics', 'Application Insights',
+    'Private Link', 'NAT gateway', 'Azure Bastion', 'Azure Firewall', 'Azure Cache for Redis',
+    'Service Bus', 'Azure Functions', 'Event Grid', 'API Management', 'Front-end CDN',
+    'Zone redundancy across three availability zones', 'Paired-region disaster recovery',
+  ].join('\n');
   const pptx = await buildArchitectureDeckPptx(PIXEL_PNG, {
     diagramName: 'Contoso Platform',
     author: 'Audit',
     date: '2026-08-10',
+    prompt: isJa
+      ? ['フロント ドアと WAF を前段に配置します。', 'コンテナー アプリでアプリケーションを実行します。',
+        'データベースは SQL Managed Instance を使用します。', 'ストレージは BLOB を使用します。',
+        'シークレットは Key Vault に格納します。', '認証は Microsoft Entra ID で行います。',
+        'ログは Log Analytics に集約します。', '監視は Application Insights を使用します。',
+        'ネットワークは Private Link で閉域化します。', '送信は NAT ゲートウェイを経由します。',
+        '運用アクセスは Azure Bastion に限定します。', '境界は Azure Firewall で保護します。',
+        'キャッシュは Azure Cache for Redis を使用します。', '非同期処理は Service Bus を使用します。',
+        'イベント処理は Azure Functions で実装します。', 'イベント配信は Event Grid を使用します。',
+        'API は API Management で公開します。', '静的配信は CDN を使用します。',
+        '可用性ゾーンは 3 つに分散します。', 'ディザスター リカバリーはペア リージョンに構成します。'].join('\n')
+      : brief,
+    model: 'gpt-5 (2026-06)',
     isDarkMode: scenario.dark === true,
     diagram: { nodes: scenario.nodes, edges: scenario.edges },
     presetIcons: synthesisedIcons(scenario),
@@ -3229,6 +3284,39 @@ async function auditCustomerDeck(scenario: Scenario): Promise<string[]> {
         const top = s.anchor === 'ctr' ? s.y - over / 2 : s.y;
         return { shape: s, top, bottom: top + Math.max(s.h, need), over };
       });
+    // Two invariants that do not re-wrap anything.
+    //
+    // The whole line-counting apparatus — the two exporters' counters and this
+    // file's copy — is one algorithm written three times, so a blind spot in
+    // the algorithm is a blind spot in all three at once. That is not a theory:
+    // it is exactly how a hard line break stayed invisible to every measurement
+    // in the codebase simultaneously. These two are different in kind. The
+    // first is *evidence* read straight out of the emitted file — the renderer
+    // has already committed to one paragraph per `<a:p>`, and no wrap can put
+    // two of them on one line, so the paragraph count is a hard lower bound on
+    // the lines drawn. The second is physics: however the words are broken up,
+    // the total ink has to fit inside the total line length. Both catch only
+    // the dangerous direction, which is under-counting.
+    for (const s of parseShapes(xml)) {
+      if (!s.text.trim() || s.name.startsWith('connector-')) continue;
+      const pt = s.fontSize ?? (s.runs[0]?.sizePt ?? 12);
+      const box = Math.max(0.2, s.w - 0.2);
+      const counted = auditWrappedLines(s.text.trim(), box, pt);
+      const drawn = s.paragraphs.filter((p) => p.trim().length > 0).length;
+      if (drawn > counted) {
+        issues.push(
+          `customer deck: slide ${index + 1} counts ${counted} line(s) for "${s.text.trim().slice(0, 24)}" `
+          + `but the file already contains ${drawn} non-empty paragraphs`,
+        );
+      }
+      const ink = s.runs.reduce((sum, r) => sum + auditTextWidthIn(r.text, r.sizePt || pt), 0);
+      if (ink > counted * box + 0.01) {
+        issues.push(
+          `customer deck: slide ${index + 1} counts ${counted} line(s) for "${s.text.trim().slice(0, 24)}" `
+          + `— ${ink.toFixed(2)}in of type cannot fit in ${(counted * box).toFixed(2)}in of line`,
+        );
+      }
+    }
     // Off the sheet is off the sheet whether the box overflowed or the row
     // pitch simply walked past the bottom — both lose the words either way.
     for (const p of painted) {
@@ -3260,6 +3348,22 @@ async function auditCustomerDeck(scenario: Scenario): Promise<string[]> {
           issues.push(
             `customer deck: slide ${index + 1} paints "${p.shape.text.trim().slice(0, 32)}" `
             + `${into.toFixed(2)}in into a table`,
+          );
+        }
+      }
+    }
+    // Pictures are ink too, and `painted` can never hold one — it is filtered
+    // to shapes carrying text, so an icon overlapping a table was blind by
+    // construction on the one slide that has both. A picture has no wrapping to
+    // measure, so its own rectangle is the whole story.
+    for (const rect of tableRects.get(index) ?? []) {
+      for (const pic of parseShapes(xml)) {
+        if (!pic.name.startsWith('icon-') && !pic.name.startsWith('picture-') && pic.text.trim()) continue;
+        const ox = Math.min(pic.x + pic.w, rect.x + rect.w) - Math.max(pic.x, rect.x);
+        const oy = Math.min(pic.y + pic.h, rect.y + rect.h) - Math.max(pic.y, rect.y);
+        if (ox > 0.02 && oy > 0.02) {
+          issues.push(
+            `customer deck: slide ${index + 1} draws picture "${pic.name}" ${oy.toFixed(2)}in into a table`,
           );
         }
       }
@@ -5118,13 +5222,24 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
     const ly = +txt[2];
     const cx = +pin[1] + lx * Math.cos(theta) - ly * Math.sin(theta);
     const cy = +pin[2] + lx * Math.sin(theta) + ly * Math.cos(theta);
+    // The ink, not the box the exporter declared for it.
+    //
+    // `TxtHeight` is the exporter's own answer to "how tall is this text?", so
+    // reading it back asks the suspect to testify: a chip whose height was
+    // sized by `ceil(width / column)` declared 0.180in while Visio drew 0.440in
+    // of it, and two such chips 0.490in apart never overlapped on paper no
+    // matter what was written through what. Measure the sentence instead, the
+    // way the PowerPoint side has measured its own since the painted-ink rule.
+    const sizePt = +(/<Cell N="Size" V="([\d.-]+)"\/>/.exec(shape)?.[1] ?? 0) * 72 || 7.2;
+    const inkH = (auditWrappedLines(shown, Math.max(0.1, +txt[3] - 0.08), sizePt) * sizePt * 1.35) / 72;
+    const boxH = Math.max(+txt[4], inkH);
     labelBoxes.push({
       text: shown,
       edge: /Name="edge-([^"]*)"/.exec(shape)?.[1] ?? '',
       x: cx - +txt[3] / 2,
-      y: cy - +txt[4] / 2,
+      y: cy - boxH / 2,
       w: +txt[3],
-      h: +txt[4],
+      h: boxH,
     });
   }
   const overlap = (a: { x: number; y: number; w: number; h: number }, b: { x: number; y: number; w: number; h: number }): number => {
@@ -5145,6 +5260,35 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
   }
   if (stacked > 0) {
     issues.push(`${stacked} pair(s) of Visio connector labels are written on top of each other: ${piles.slice(0, 3).join('; ')}`);
+  }
+
+  // The PowerPoint semantic, on the sheet. The rule above wants a quarter of a
+  // box's area before it will speak, which is right for *declared* boxes —
+  // those carry padding and a touch is normal — but ink written through ink is
+  // never legitimate, and a fan of four hops whose rung pitch was frozen at
+  // 0.490in against 0.570in of text overlapped by 0.080in: a tenth of the area
+  // bar, and every sentence unreadable. This is what the deck's painted-ink
+  // rule has caught since it was written, and what the sheet could not.
+  const bled: string[] = [];
+  for (let i = 0; i < labelBoxes.length; i += 1) {
+    for (let j = i + 1; j < labelBoxes.length; j += 1) {
+      const a = labelBoxes[i];
+      const b = labelBoxes[j];
+      const ow = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x);
+      const oh = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y);
+      // A quarter of the narrower chip has to be shared before this is type on
+      // type. A chip's text is centred in it, so two boxes clipping corners by
+      // 0.038in of their 1.7in width — 1% of the area, which is what two hops
+      // crossing at a junction actually do — cannot have glyphs in the same
+      // place. Vertically there is no such slack: the lines are stacked at the
+      // pitch, so 0.02in of shared height is already one line over another.
+      if (ow > 0.25 * Math.min(a.w, b.w) && oh > 0.02) {
+        bled.push(`"${a.text.split('\n')[0].slice(0, 12)}"/"${b.text.split('\n')[0].slice(0, 12)}" by ${oh.toFixed(3)}in`);
+      }
+    }
+  }
+  if (bled.length > 0) {
+    issues.push(`${bled.length} pair(s) of Visio connector labels paint over each other: ${bled.slice(0, 3).join('; ')}`);
   }
 
   // A callout has to be readable AS the label of the arrow it belongs to. One
@@ -5502,6 +5646,7 @@ async function main(): Promise<void> {
     longWorkflowScenario(),
     visioTokenWorkflowScenario(),
     hardBreakInventoryScenario(),
+    visioBrokenLabelFanScenario(),
     squeezedBadgeScenario(),
     await generatedScenario(), await groupedGeneratedScenario(),
   ];
