@@ -4578,6 +4578,33 @@ function addValidationFindingsSlide(pptx: PptxGenJS, t: SlideTheme, o: Architect
     fixPt = Math.max(LEGIBLE_TILE_PT, fixPt - 0.5);
   }
 
+  // A finding that still will not fit a whole page at the legible floor is the
+  // one case shrinking cannot answer, and the packer below always places at
+  // least one block per page — so without this it would be placed anyway and
+  // painted straight off the slide. Cut it physically, by measurement, and only
+  // as far as it takes: a character cap is what this slide was just fixed for.
+  const shortened = new Map<DeckFinding, DeckFinding>();
+  const fitToPage = (f: DeckFinding): DeckFinding => {
+    if (blockFor(f, issuePt, fixPt).total <= available) return f;
+    let issue = f.issue;
+    let recommendation = f.recommendation ?? '';
+    while (blockFor({ ...f, issue, recommendation }, issuePt, fixPt).total > available) {
+      // Take from whichever half is longer, so neither is starved to keep the
+      // other whole.
+      if (recommendation.length > issue.length && recommendation.length > 24) {
+        recommendation = recommendation.slice(0, Math.floor(recommendation.length * 0.9));
+      } else if (issue.length > 24) {
+        issue = issue.slice(0, Math.floor(issue.length * 0.9));
+      } else break;
+    }
+    return {
+      ...f,
+      issue: issue === f.issue ? issue : `${issue.trimEnd()}…`,
+      recommendation: recommendation === (f.recommendation ?? '') ? f.recommendation : `${recommendation.trimEnd()}…`,
+    };
+  };
+  for (const f of v.findings) shortened.set(f, fitToPage(f));
+
   // Pack by measured height rather than dropping the tail. The app sends the
   // top six by severity and this slide drew five; the sixth appeared nowhere
   // else in the deck, which is the same silent truncation the cost table and
@@ -4585,7 +4612,8 @@ function addValidationFindingsSlide(pptx: PptxGenJS, t: SlideTheme, o: Architect
   const pages: DeckFinding[][] = [];
   let current: DeckFinding[] = [];
   let used = 0;
-  for (const f of v.findings) {
+  for (const authored of v.findings) {
+    const f = shortened.get(authored)!;
     const h = blockFor(f, issuePt, fixPt).total;
     if (current.length > 0 && used + h > available) {
       pages.push(current);
