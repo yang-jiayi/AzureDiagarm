@@ -1515,7 +1515,14 @@ function connectorLabelBox(
     // fit, so trading type size for room is already its contract; an ordinary
     // chip's size is the reader's floor and shrinking it to win a placement
     // moves the chip nearer a stranger's arrow than its own.
-    const floor = Math.min(OVERVIEW_LEGIBLE_PT, requestedFontSize);
+    // Floored at the READING slide's legibility floor, not the overview's.
+    // `Math.min(OVERVIEW_LEGIBLE_PT, requestedFontSize)` resolved to 6 on every
+    // reading slide, because the requested size there is already >= 7 — so a
+    // ladder could step down to 6.0pt on a full-size slide, under the floor
+    // `labelFontSize` itself enforces and under the gate's `minFont < 7` rule.
+    // On the overview the requested size is the overview's own floor, so taking
+    // the minimum of the two keeps that case unchanged.
+    const floor = Math.min(requestedFontSize, LEGIBLE_TILE_PT);
     if (bundle && !bundle.badgesOnly && fontSize > floor + 0.01) {
       const smaller = Math.max(floor, fontSize - 0.5);
       const retry = connectorLabelBox(
@@ -2286,7 +2293,7 @@ function addNodeShape(
   // it returns the best grid it found and this clamp quietly drew that tile's
   // name at four points. Two floors for one contract, and only the planner's
   // was ever checked.
-  const fontSize = clamp(h * 12, thumbnail ? 4 : LEGIBLE_TILE_PT, 13);
+  const heightFontSize = clamp(h * 12, thumbnail ? 4 : LEGIBLE_TILE_PT, 13);
   // At 72 services the overview clamps this to 4pt, which is not small type —
   // it is grey ink the reader cannot resolve, and it makes the thumbnail
   // harder to read rather than more informative. The overview exists to show
@@ -2305,8 +2312,30 @@ function addNodeShape(
   // stopped being a name. Below it the tile is icon-and-box, and `clipped`
   // sends the full name to the index slide, which is where a cut tile name has
   // always been recoverable.
+  //
+  // Measured against the SMALLEST font the tile is willing to draw, not the
+  // one its height implies. `fontSize` comes from the height, so testing the
+  // width against it made a taller tile demand a wider column: past
+  // h = 1.0833in the bar saturates at 4 x 13/72 = 0.7222in and every tile
+  // narrower than 0.7822in lost its name however tall it was. A 0.7813 x
+  // 3.1250in tile — 2.44 square inches — missed by 0.0009in and drew no text
+  // at all, while at 7pt the same column sets 7.9 capitals per line with 33
+  // lines of room. That is the "this size doesn't fit" mistake rather than
+  // "no legible size fits"; the name shrink loop below is what comes down to
+  // meet it, exactly as the Visio exporter already does.
+  const nameFloorPt = thumbnail ? OVERVIEW_LEGIBLE_PT : LEGIBLE_TILE_PT;
   const nameColumn = Math.max(0.05, w - 0.06);
-  const namedWidth = nameColumn >= 4 * (fontSize / 72);
+  const namedWidth = nameColumn >= 4 * (nameFloorPt / 72);
+  // And once the tile is allowed to draw its name, the name is set at a size
+  // the COLUMN can hold, not only one the height implies. A 0.78in-wide tile
+  // is 13pt tall enough and 2.9 characters wide, so the height-derived size
+  // set "Azure Firewall Premium" three characters to a line down a shape that
+  // had room for eight at the floor. This is the same shrink Visio does before
+  // it decides whether to draw at all.
+  const fontSize = Math.max(
+    nameFloorPt,
+    Math.min(heightFontSize, Math.floor((nameColumn / 4) * 72 * 10) / 10),
+  );
   const named = (!thumbnail || h * 12 >= OVERVIEW_LEGIBLE_PT) && namedWidth;
   // Giving up the name only works when the icon is left to carry the tile. A
   // service with no icon would otherwise be drawn as an empty grey box, which
@@ -2315,7 +2344,10 @@ function addNodeShape(
   // beats both an empty box and a paragraph of grey mush.
   const stub = !named && !icon;
   // Reassigned below when the name has to give type size back to the icon.
-  let drawnFont = named ? fontSize : OVERVIEW_LEGIBLE_PT;
+  // The floor is the slide's own, not the overview's: handing a reading slide
+  // OVERVIEW_LEGIBLE_PT drew stub names at 6pt, under the 7pt floor the line
+  // above enforces and under the gate's own `minFont < 7` rule.
+  let drawnFont = named ? fontSize : nameFloorPt;
   const meta = metaSubline(box);
   const metaFontSize = clamp(fontSize - 2, 3.5, 9);
   // Sized from the sub-line's own font, not the name's. Deriving the band from

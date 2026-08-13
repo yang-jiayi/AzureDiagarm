@@ -10,6 +10,7 @@
  */
 import { writeFileSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
+import { Worker } from 'node:worker_threads';
 import JSZip from 'jszip';
 import type { Edge, Node } from 'reactflow';
 import { buildDiagramSlidePptx, buildArchitectureDeckPptx } from '../src/services/pptxExporter.ts';
@@ -935,6 +936,55 @@ function hairlineTilesScenario(): Scenario {
     label: 'invokes',
   } as Edge));
   return { id: 'hairline-tiles', nodes, edges };
+}
+
+/**
+ * Tiles that are tall and narrow rather than the editor's default 2:1.
+ *
+ * `AzureNode` has no resize handle — the only `NodeResizer` is on groups — so
+ * a non-2:1 tile arrives from loaded JSON, an MCP scene or a generated
+ * blueprint, and never from dragging. That is why the corpus had none, and
+ * why a width guard keyed on the HEIGHT-derived font went unmeasured: past
+ * h = 1.0833in the four-character bar saturates at 0.7222in, so a 0.7813 x
+ * 3.1250in tile — two and a half square inches — carried no text at all,
+ * missing the bar by 0.0009in, while at the 7pt floor its column sets 7.9
+ * capitals per line with 33 lines of room.
+ *
+ * The last two nodes carry no icon, which is the branch that used to fall
+ * back to the OVERVIEW's 6pt floor on a full-size reading slide.
+ */
+function tallNarrowTilesScenario(): Scenario {
+  const icon = '/Azure_Public_Service_Icons/Icons/networking/10063-icon-service-Firewalls.svg';
+  const shapes: { w: number; h: number; icon: boolean }[] = [
+    { w: 150, h: 75, icon: true },
+    { w: 75, h: 300, icon: true },
+    { w: 60, h: 200, icon: true },
+    { w: 100, h: 400, icon: true },
+    { w: 75, h: 300, icon: false },
+    { w: 40, h: 120, icon: false },
+  ];
+  const nodes: Node[] = shapes.map((shape, i) => ({
+    id: `tall${i}`,
+    type: 'azureNode',
+    position: { x: i * 320, y: 0 },
+    width: shape.w,
+    height: shape.h,
+    data: {
+      label: 'Azure Firewall Premium',
+      serviceName: 'Azure Firewall',
+      category: 'networking',
+      ...(shape.icon ? { iconPath: icon } : {}),
+      sku: 'Premium',
+      region: 'japaneast',
+    },
+  } as unknown as Node));
+  const edges: Edge[] = shapes.slice(1).map((_, i) => ({
+    id: `tall-e${i}`,
+    source: `tall${i}`,
+    target: `tall${i + 1}`,
+    label: 'inspects',
+  } as Edge));
+  return { id: 'tall-narrow-tiles', nodes, edges };
 }
 
 function unlabelledStepInflationScenario(): Scenario {
@@ -4385,6 +4435,9 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
     }
   }
   const tiles = shapes.filter((s) => s.name.startsWith('service-') && !s.name.includes('label') && !s.name.includes('meta'));
+  const overviewTileNames = new Set(
+    overviewAt < 0 ? [] : parseShapes(allSlides[overviewAt]).map((s) => s.name),
+  );
   const labels = shapes.filter((s) => s.name.startsWith('service-label-'));
   const chips = shapes.filter((s) => s.name.startsWith('connector-label-'));
 
@@ -4392,16 +4445,55 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
   const namedTiles = new Set(labels.map((l) => l.name.replace('service-label-', '')));
   const namedWidths = tiles
     .filter((t) => namedTiles.has(t.name.replace('service-', '')))
-    .map((t) => t.w);
-  const namedMinTileW = namedWidths.length > 0 ? Math.min(...namedWidths) : minTileW;
+    .map((t) => t.w)
+    .sort((a, b) => a - b);
+  // The MEDIAN named tile, not the narrowest. "Wider than the smallest tile"
+  // is a statement about the drawing's unit of scale, and one authored sliver
+  // is not that unit: a deck with a legitimate 0.42in tile beside ordinary
+  // 1.7in ones reported every perfectly proportioned chip as a violation while
+  // saying nothing about whether any chip dominates the drawing. The median is
+  // the typical tile, which is what the rule has always meant.
+  const namedMinTileW = namedWidths.length > 0
+    ? namedWidths[Math.floor((namedWidths.length - 1) / 2)]
+    : minTileW;
   const minFont = Math.min(...labels.map((l) => l.fontSize ?? 99));
 
+  // A tile with room for a name and no name on it. The width guard in the
+  // exporter used to be keyed on the font its HEIGHT implied, so a taller tile
+  // demanded a wider column and a 0.78 x 3.13in shape — two and a half square
+  // inches — drew no text at all. Nothing could see it: every label rule reads
+  // the labels that WERE emitted, so a missing one is invisible by
+  // construction. This reads the tiles instead and asks whether each one had
+  // the column the exporter's own floor asks for.
+  for (const tile of tiles) {
+    if (namedTiles.has(tile.name.replace('service-', ''))) continue;
+    const column = Math.max(0.05, tile.w - 0.06);
+    const floorPt = overviewTileNames.has(tile.name) ? 6 : 7;
+    const tallEnough = overviewTileNames.has(tile.name) ? tile.h * 12 >= floorPt : tile.h >= 0.2;
+    if (column >= 4 * (floorPt / 72) && tallEnough) {
+      issues.push(
+        `tile "${tile.name}" is ${tile.w.toFixed(3)}x${tile.h.toFixed(3)}in and draws no name — `
+        + `its ${column.toFixed(3)}in column holds ${(column / (floorPt / 72)).toFixed(1)} chars at the ${floorPt}pt floor`,
+      );
+    }
+  }
+
+  const iconedTiles = new Set(
+    allSlides.flatMap((s) => [...s.matchAll(/name="icon-([^"]+)"/g)].map((m) => m[1])),
+  );
   for (const label of labels) {
     const font = label.fontSize ?? 11;
     const needed = textWidthIn(label.text, font);
     const lines = Math.ceil(needed / Math.max(label.w, 0.01));
     const charsPerLine = label.w / (font / 72);
-    if (charsPerLine < 4) {
+    // A tile with no icon is exempt. The exporter draws its name at the
+    // legibility floor whatever the column holds, because the alternative is
+    // an empty grey box — which the overview rule above forbids for exactly
+    // the reason that it says strictly less than type that is merely small.
+    // Holding both rules at once would demand that such a tile draw nothing
+    // and something at the same time.
+    const stub = !iconedTiles.has(label.name.replace('service-label-', ''));
+    if (charsPerLine < 4 && !stub) {
       issues.push(`label "${label.text}" has room for only ${charsPerLine.toFixed(1)} chars/line (w=${label.w.toFixed(2)}in @ ${font}pt)`);
     }
     const lineHeight = (font * 1.25) / 72;
@@ -5774,22 +5866,35 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
   // survive any scaling the page limit forces.
   const NATURAL_TILE_IN = 150 / PX_PER_IN;
   const NATURAL_LABEL_IN = 0.105;
-  for (const group of xml.matchAll(/NameU="Service\.\d+" Name="([^"]*)"[\s\S]*?<Cell N="Width" V="([\d.]+)"[\s\S]*?<Cell N="Size" V="([\d.]+)"[\s\S]*?<Text>([\s\S]*?)<\/Text>/g)) {
+  for (const group of xml.matchAll(/NameU="Service\.\d+" Name="([^"]*)"[\s\S]*?<Cell N="Width" V="([\d.]+)"[\s\S]*?<Cell N="Height" V="([\d.]+)"[\s\S]*?<Cell N="Size" V="([\d.]+)"[\s\S]*?<Text>([\s\S]*?)<\/Text>/g)) {
     const label = group[1];
     const tileIn = +group[2];
-    const fontIn = +group[3];
+    const tileH = +group[3];
+    const fontIn = +group[4];
     // The DRAWN text, not the `Name` attribute. The attribute deliberately
     // carries the whole name whatever the tile does with it — that is how a cut
     // name stays findable in Drawing Explorer — so measuring it reported a
     // ratio for every shape including the ones that draw no text at all.
-    const drawn = group[4].replace(/<[^>]*>/g, '').trim();
+    const drawn = group[5].replace(/<[^>]*>/g, '').trim();
     if (!label || !drawn || tileIn <= 0 || fontIn <= 0) continue;
     const ratio = fontIn / tileIn;
     const natural = NATURAL_LABEL_IN / NATURAL_TILE_IN;
+    // The ratio is a proxy for "the name wraps past the room the tile has",
+    // and on a tall narrow tile the proxy is simply wrong: it demands the type
+    // scale with the WIDTH while the room is the AREA. A 0.78 x 3.13in tile
+    // reported 2.0x while its name wrapped to three lines of a shape with room
+    // for twenty-nine, and satisfying the proxy there would have meant 3.8pt
+    // type — below every legibility floor in this file, so the rule was
+    // unsatisfiable rather than strict. Measure the thing the proxy stands for
+    // and only fall back on the ratio when the real measurement is unavailable.
+    const columnIn = Math.max(0.01, tileIn - 0.1);
+    const wrapped = measuredWrappedLines(drawn, columnIn, fontIn * 72);
+    const neededIn = wrapped * fontIn * 1.2;
+    if (tileH > 0 && neededIn <= tileH * 0.9) continue;
     if (ratio > natural * 1.05) {
       issues.push(`service name "${label}" is set at ${(fontIn * 72).toFixed(2)}pt on a ${tileIn.toFixed(2)}in tile `
         + `— ${(ratio / natural).toFixed(1)}x the type-to-tile ratio the sheet draws at full size, `
-        + `so the name wraps past the room the tile has for it`);
+        + `so the name wraps to ${wrapped} line(s) needing ${neededIn.toFixed(2)}in of a ${tileH.toFixed(2)}in shape`);
     }
   }
 
@@ -6625,6 +6730,70 @@ async function auditDeckGrowth(): Promise<Report> {
   };
 }
 
+/**
+ * A watchdog that survives a blocked event loop.
+ *
+ * An exporter that spins forever does it SYNCHRONOUSLY: the tile-name fitter
+ * that hung the browser this round also hung this script, which stopped
+ * writing artefacts and sat there for fourteen minutes with no output and no
+ * non-zero exit. A `setTimeout` cannot fire in that state and neither can
+ * `Promise.race` — the timer never gets a turn. So the clock has to live in
+ * another thread: the main thread stamps a shared buffer before each scenario,
+ * a worker polls it, and if the stamp goes stale the worker names the scenario
+ * and signals the OS process, which is the one thing that still works when the
+ * main thread will not yield.
+ *
+ * Without this a non-terminating exporter turns `npm test` into an infinite
+ * wait rather than a red build, which is the difference between a regression
+ * test and no test at all.
+ */
+const SCENARIO_BUDGET_MS = 240_000;
+const heartbeatBuffer = new SharedArrayBuffer(8);
+const heartbeat = new Int32Array(heartbeatBuffer);
+const auditStartedAt = Date.now();
+let watchdog: Worker | null = null;
+
+function beat(id: string): void {
+  watchdog?.postMessage(id);
+  Atomics.store(heartbeat, 0, Math.floor((Date.now() - auditStartedAt) / 100));
+  Atomics.store(heartbeat, 1, 1);
+}
+
+function startWatchdog(): void {
+  const source = `
+    const { parentPort, workerData } = require('node:worker_threads');
+    const view = new Int32Array(workerData.buffer);
+    const budget = workerData.budget;
+    let name = 'startup';
+    parentPort.on('message', (m) => { name = m; });
+    setInterval(() => {
+      if (Atomics.load(view, 1) === 0) return;
+      const stampMs = Atomics.load(view, 0) * 100;
+      const stalled = (Date.now() - workerData.startedAt) - stampMs;
+      if (stalled > budget) {
+        // writeSync, not console.error: the process is about to be killed and
+        // a buffered stream never gets flushed, so the one diagnostic that
+        // explains the failure would be lost exactly when it is needed.
+        require('node:fs').writeSync(2, '\\nWATCHDOG: scenario "' + name + '" has made no progress for '
+          + (stalled / 1000).toFixed(0) + 's. The exporter is not terminating - '
+          + 'a synchronous loop cannot be interrupted, so the run is being killed.\\n');
+        process.kill(process.pid, 'SIGKILL');
+      }
+    }, 2000).unref();
+  `;
+  watchdog = new Worker(source, {
+    eval: true,
+    workerData: { buffer: heartbeatBuffer, budget: SCENARIO_BUDGET_MS, startedAt: auditStartedAt },
+  });
+  watchdog.unref();
+}
+
+function stopWatchdog(): void {
+  Atomics.store(heartbeat, 1, 0);
+  void watchdog?.terminate();
+  watchdog = null;
+}
+
 async function main(): Promise<void> {
   mkdirSync(OUT, { recursive: true });
   const base = [
@@ -6649,6 +6818,7 @@ async function main(): Promise<void> {
     unlabelledStepInflationScenario(),
     dataLabelPromotionScenario(),
   hairlineTilesScenario(),
+  tallNarrowTilesScenario(),
     corridorZoneScenario(),
     ladderInGridScenario(), twinLaddersScenario(), strayLadderScenario(), legendCornerScenario(), duplicateStepsScenario(), denseZoneScenario(),
     metaChipScenario(), gridFanScenario(), gridFan3Scenario(), fan8Tight5x5Scenario(), metaSublineScenario(), grid5x5CaptionScenario(), longNameGridScenario(), longLabelGridScenario(), metaTightScenario(),     longNameFanScenario(), estateChainScenario(), chain24Scenario(), tripleMutedScenario(), estate72Scenario(),     workflowProseScenario(), workflowLongProseScenario(), workflowFanScenario(), workflowWideBandScenario(), allCategoriesScenario(), controlCharScenario(), shortServiceGridScenario(),
@@ -6695,10 +6865,13 @@ async function main(): Promise<void> {
     throw new Error(`no scenario matched ${only.join(', ')}; known: deck-growth, ${scenarios.map((s) => s.id).join(', ')}`);
   }
   for (const scenario of selected) {
+    beat(scenario.id);
     reports.push(await auditPptx(scenario));
     reports.push(await auditVsdx(scenario));
   }
+  beat('deck-growth');
   if (growth) reports.push(await auditDeckGrowth());
+  stopWatchdog();
   for (const report of reports) {
     console.log(`\n=== ${report.scenario} / ${report.format} ===`);
     console.log('metrics:', JSON.stringify(report.metrics));
@@ -6712,6 +6885,8 @@ async function main(): Promise<void> {
   console.log(`\nTOTAL ISSUES: ${total}`);
   if (total > 0) process.exitCode = 1;
 }
+
+startWatchdog();
 
 main().catch((error) => {
   console.error(error);
