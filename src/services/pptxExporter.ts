@@ -2057,7 +2057,8 @@ function addNodeShape(
   // at exactly the floor, cut to what the tile can hold: a short legible word
   // beats both an empty box and a paragraph of grey mush.
   const stub = !named && !icon;
-  const drawnFont = named ? fontSize : OVERVIEW_LEGIBLE_PT;
+  // Reassigned below when the name has to give type size back to the icon.
+  let drawnFont = named ? fontSize : OVERVIEW_LEGIBLE_PT;
   const meta = metaSubline(box);
   const metaFontSize = clamp(fontSize - 2, 3.5, 9);
   // Sized from the sub-line's own font, not the name's. Deriving the band from
@@ -2073,16 +2074,30 @@ function addNodeShape(
   // thing — and what it cut was not written down anywhere, so the reader had
   // no way to recover it. Cut to the tile, and only when the tile is really
   // too small.
+  //
+  // Fitted to the *lines* the tile has, not to `innerW * nameLines` of total
+  // ink. Word wrap abandons the tail of a line whenever the next word will not
+  // fit, so a name whose ink fits three lines routinely draws four or five:
+  // "Azure Kubernetes Service Automatic cluster" was admitted whole at 13pt on
+  // a 160x110 tile, drew 5 lines of a 3-line box, and painted 0.224in — all of
+  // it — straight through the "P1v3 · eastus" sub-line below.
   const nameLines = Math.max(1, Math.floor((h - pad * 2 - metaBand) / ((fontSize * 1.22) / 72)));
-  const full = fitLabelToBox(box.label, innerW * nameLines, fontSize);
+  const linesIn = (text: string, columnIn: number, sizeIn: number): number => wrappedLineCount(text, columnIn, sizeIn * 72);
+  const full = fitLabelToLines(box.label, innerW, fontSize / 72, nameLines, linesIn);
   // A stub gets as much of the name as fits the tile at the floor size, on as
   // many lines as the tile is tall enough for, and an ellipsis for the rest.
   const stubLines = stub
     ? Math.max(1, Math.floor((h - pad * 2) / ((OVERVIEW_LEGIBLE_PT * 1.22) / 72)))
     : 0;
-  const label = stub ? fitLabelToBox(full, innerW * stubLines, OVERVIEW_LEGIBLE_PT) : full;
-  const labelLines = named ? Math.max(1, Math.ceil(estimateTextWidthIn(label, fontSize) / innerW)) : 0;
-  const labelBlockH = (labelLines * fontSize * 1.22) / 72;
+  const labelLinesFor = (text: string): number => (named ? wrappedLineCount(text, innerW, fontSize) : 0);
+  let label = stub ? fitLabelToLines(full, innerW, OVERVIEW_LEGIBLE_PT / 72, stubLines, linesIn) : full;
+  // Counted by wrapping, not by dividing total ink by the column. The ratio is
+  // the break-anywhere assumption: it says how many lines the ink would need if
+  // words could be split at any character, which is a lower bound and never the
+  // answer. `labelBlockH` feeds the icon size and the top-aligned text box, so
+  // under-counting here is what let the surplus lines out of the box.
+  let labelLines = labelLinesFor(label);
+  let labelBlockH = (labelLines * fontSize * 1.22) / 72;
 
   // Which of the three things a tile carries yields when it cannot hold all
   // three. The subline used to win by default — it is subtracted before the
@@ -2097,6 +2112,37 @@ function addNodeShape(
     Math.min(h * 0.42, w * 0.34, Math.max(0, h - pad * 2 - band - labelBlockH - 0.02));
   if (metaBand > 0 && icon && named && roomFor(metaBand) < iconFloor && roomFor(0) >= iconFloor) {
     metaBand = 0;
+  }
+  // And if the name is what is crowding the icon out, the name yields — not the
+  // icon. The same reasoning as the sub-line above, one step further: on the
+  // Architecture Center the icon is what says which service a tile is, and it
+  // is the one thing on the tile that cannot be recovered anywhere else. A tile
+  // that loses its icon is a grey box of type; a name set two points smaller is
+  // still the whole name.
+  //
+  // Type size first, and characters only if that is not enough. Dropping a line
+  // outright looks equivalent — both free the same room — but it is not: on an
+  // inventory of names that differ only in their last token it cut six
+  // distinct services down to one drawn string, which is a worse failure than
+  // either a small name or a missing icon. Shrinking keeps every character.
+  // Counting the lines honestly is what made this reachable at all: the old
+  // ratio under-counted the block, so the icon kept a share of the tile the
+  // words were already using.
+  let nameFont = fontSize;
+  if (icon && named && !stub) {
+    while (nameFont > LEGIBLE_TILE_PT && roomFor(metaBand) < iconFloor) {
+      nameFont = Math.max(LEGIBLE_TILE_PT, nameFont - 0.5);
+      label = fitLabelToLines(box.label, innerW, nameFont / 72, nameLines, linesIn);
+      labelLines = Math.max(1, wrappedLineCount(label, innerW, nameFont));
+      labelBlockH = (labelLines * nameFont * 1.22) / 72;
+    }
+    while (labelLines > 1 && roomFor(metaBand) < iconFloor) {
+      labelLines -= 1;
+      label = fitLabelToLines(box.label, innerW, nameFont / 72, labelLines, linesIn);
+      labelLines = Math.max(1, wrappedLineCount(label, innerW, nameFont));
+      labelBlockH = (labelLines * nameFont * 1.22) / 72;
+    }
+    drawnFont = nameFont;
   }
 
   // Fit the icon into whatever vertical room the label does not need, instead
@@ -2343,11 +2389,33 @@ function addGroupShape(
   // a clear band belonging to somebody else: a subnet stack drawn tight has no
   // room above any box except the box above it, and "Data subnet" printed
   // there says the data tier is part of the application tier.
+  //
+  // Rows, plural. Every candidate used to sit at either `top` or `foot`, so a
+  // zone whose tiles are stacked down its length was offered nothing but the
+  // two rows its tiles are thickest in — and a tall narrow zone with clear
+  // paper between every pair of tiles took a 0.40in band standing on a tile
+  // while 0.86in of clear width sat one row below. The gaps between a zone's
+  // own tiles are exactly the rows it has to give, so offer them.
+  const gapRows: number[] = [];
+  {
+    const mine = (occupied ?? [])
+      .filter((t) => t.x < topLeft.x + w && topLeft.x < t.x + t.w
+        && t.y < topLeft.y + h && topLeft.y < t.y + t.h)
+      .sort((a, b) => a.y - b.y);
+    let cursor = top;
+    for (const tile of mine) {
+      if (tile.y - cursor >= titleH && gapRows.length < 4) gapRows.push(cursor);
+      cursor = Math.max(cursor, tile.y + tile.h + 0.02);
+    }
+    if (cursor + titleH <= foot && gapRows.length < 4) gapRows.push(cursor);
+  }
   const inside = [
     { x: topLeft.x + 0.06, y: top, w: titleW },
     { x: topLeft.x + 0.06, y: foot, w: titleW },
+    ...gapRows.map((y) => ({ x: topLeft.x + 0.06, y, w: titleW })),
     ...runs(top),
     ...runs(foot),
+    ...gapRows.flatMap((y) => runs(y)),
     { x: topLeft.x + w - part(0.5) - 0.06, y: top, w: part(0.5) },
     { x: topLeft.x + 0.06, y: top, w: part(0.5) },
     { x: topLeft.x + w - part(0.34) - 0.06, y: top, w: part(0.34) },
@@ -2387,15 +2455,22 @@ function addGroupShape(
   // have. Both are scored rather than filtered so that when every band
   // trespasses — which is what two overlapping zones give you — the least bad
   // one still wins instead of the first one tried.
-  // A fit term was tried here and removed. The premise — that a clear 0.4in
-  // band can beat a 3.7in one that holds the name — does not survive reading
+  // A fit term was tried here and removed. The premise as first stated — that a
+  // clear 0.4in band can beat a 3.7in one on score — does not survive reading
   // the candidate order: the full-width band is `inside[0]`, it is scored
   // first, and the loop only replaces on a strictly better score, so a clear
-  // full-width band always wins outright. The 0.4in band that painted 22 lines
-  // was not chosen over a wider one; it was the only one on offer, because the
-  // window had cut that zone to 0.39in. Scoring fit changed the chosen band in
-  // no fixture in the corpus, and at any weight large enough to change one it
-  // bought a 48% covered band in `flush-subnets`. The cut is the fix.
+  // full-width band always wins on score. Scoring fit changed the chosen band
+  // in no fixture in the corpus, and at any weight large enough to change one
+  // it bought a 48% covered band in `flush-subnets`.
+  //
+  // The defect was in the *tie-break*, not the score. Two candidates that are
+  // both completely clear both score 0, and `if (best <= 0.01) break` stopped
+  // at whichever came first in the array — so a zone with its tiles flush to
+  // the top handed its caption to the 0.43in gap above them and never looked at
+  // the 9.35in of clear paper below, drawing "Producti…dant" for want of a
+  // comparison it had already decided not to make. Score all of them, and when
+  // the score cannot separate two bands, take the wider one: it holds more of
+  // the name for exactly the same cost.
   const score = (c: { x: number; y: number; w: number }): number => {
     const area = Math.max(1e-6, c.w * titleH);
     return cover(c) / area + 2 * (trespass(c) / area);
@@ -2403,9 +2478,8 @@ function addGroupShape(
   let title = candidates[0];
   let best = score(title);
   for (const candidate of candidates.slice(1)) {
-    if (best <= 0.01) break;
     const next = score(candidate);
-    if (next < best - 1e-6) {
+    if (next < best - 1e-6 || (Math.abs(next - best) <= 1e-6 && candidate.w > title.w + 1e-6)) {
       best = next;
       title = candidate;
     }
@@ -4262,7 +4336,15 @@ function addTitleSlide(pptx: PptxGenJS, t: SlideTheme, o: ArchitectureDeckOption
  * ships, while the audited deck showed 0.44in tiles for the same architecture.
  */
 async function addDiagramSlide(pptx: PptxGenJS, t: SlideTheme, imageDataUrl: string, o: ArchitectureDeckOptions): Promise<void> {
-  const frame = { x: IMAGE_X, y: IMAGE_Y, w: IMAGE_W, h: IMAGE_H };
+  // The colour key is seated just below the drawing frame, so the frame has to
+  // give up that strip first. `planSlideGeometry` does exactly this for the
+  // single-slide export; the deck used the raw constant and so seated the key
+  // 0.27in lower — 7.07in to 7.31in on a 7.5in page, straight through the top
+  // of the footer band at 7.14in. It overflowed nothing and left nothing off
+  // the sheet, so it was a pure position defect on every drawing slide of
+  // every scenario in the corpus.
+  const legendH = usedConnectionLegend(o.diagram?.edges ?? []).length > 0 ? 0.24 + 0.03 : 0;
+  const frame = { x: IMAGE_X, y: IMAGE_Y, w: IMAGE_W, h: IMAGE_H - legendH };
   const parts = o.diagram ? planFixedPageWindows(o.diagram, frame) : [];
   const windows: (DiagramWindow | undefined)[] = parts.length > 0 ? [undefined, ...parts] : [undefined];
   for (const [index, window] of windows.entries()) {

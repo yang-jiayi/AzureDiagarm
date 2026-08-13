@@ -139,6 +139,23 @@ interface Shape {
   fillAlpha: number;
   /** Every drawn text run, with the colour and size it is drawn at. */
   runs: { color: string | null; sizePt: number; bold: boolean; text: string }[];
+  /**
+   * Left plus right text inset in inches, read from `<a:bodyPr>` rather than
+   * assumed. PowerPoint's default is 0.1in a side, but a shape that sets
+   * `margin: 0` gets its full width as a column — assuming the default there
+   * shrinks the modelled column by 0.2in and hands back a line count that is
+   * too low on exactly the shapes that need the most care.
+   */
+  insetX: number;
+  /** Top plus bottom text inset in inches, read from `<a:bodyPr>`. */
+  insetY: number;
+  /** True when the body declares `wrap="none"`: one line however wide. */
+  wrapNone: boolean;
+  /**
+   * Declared line spacing as a multiple, or null when the shape states none.
+   * Read so a box sized at the spacing it asked for is measured at it.
+   */
+  lineSpacing: number | null;
   path?: { x: number; y: number }[];
 }
 
@@ -228,6 +245,15 @@ function parseShapes(xml: string): Shape[] {
     const fill = /<a:noFill\/>/.test(beforeLn) ? null : (fillMatch?.[1]?.toLowerCase() ?? null);
     const alphaMatch = fillMatch?.[2] ? /<a:alpha val="(\d+)"\/>/.exec(fillMatch[2]) : null;
     const fillAlpha = alphaMatch ? +alphaMatch[1] / 100000 : 1;
+    // Read, not assumed. PowerPoint's defaults are 0.1in left/right and 0.05in
+    // top/bottom, but any shape may override them and the tile name does.
+    const bodyPr = /<a:bodyPr[^>]*>/.exec(body)?.[0] ?? '';
+    const inset = (attr: string, dflt: number): number => {
+      const v = new RegExp(`\\b${attr}="(-?\\d+)"`).exec(bodyPr)?.[1];
+      return v === undefined ? dflt : +v / EMU_PER_INCH;
+    };
+    const insetX = inset('lIns', 0.1) + inset('rIns', 0.1);
+    const insetY = inset('tIns', 0.05) + inset('bIns', 0.05);
     const runs = [...body.matchAll(/<a:r>([\s\S]*?)<\/a:r>/g)].map((r) => {
       const rb = r[1];
       const rpr = /<a:rPr[^>]*>([\s\S]*?)<\/a:rPr>/.exec(rb);
@@ -252,6 +278,13 @@ function parseShapes(xml: string): Shape[] {
       fill,
       fillAlpha,
       runs,
+      insetX,
+      insetY,
+      wrapNone: /\bwrap="none"/.test(bodyPr),
+      lineSpacing: (() => {
+        const pct = /<a:lnSpc>\s*<a:spcPct val="(\d+)"\s*\/>/.exec(body)?.[1];
+        return pct === undefined ? null : +pct / 100000;
+      })(),
       path,
     });
   }
@@ -334,6 +367,29 @@ function contrastIssues(shapes: Shape[], slideBg: string): string[] {
   return issues;
 }
 
+/**
+ * The height one wrapped line occupies, in inches.
+ *
+ * 1.35 em is a deliberate margin over the ~1.2 em a renderer actually uses,
+ * and every box the exporter sizes for itself is checked against it. But a
+ * shape may *state* its line spacing — `<a:lnSpc><a:spcPct>` — and two do: the
+ * tile name and the zone caption both ask for 0.9. Measuring a box that was
+ * sized at 0.9 against a 1.35 model reports every one of them as 10% over
+ * before a single word is wrong, which is not a defect, it is the model
+ * disagreeing with the file. Where the file says what it wants, believe it.
+ */
+function linePitchIn(shape: Shape, pt: number): number {
+  return (pt * (shape.lineSpacing === null ? 1.35 : 1.2 * shape.lineSpacing)) / 72;
+}
+
+/**
+ * The width a wrapped line actually has: the shape less the insets it declares,
+ * not less a guess at PowerPoint's defaults.
+ */
+function textColumnIn(shape: Shape): number {
+  return Math.max(0.05, shape.w - shape.insetX);
+}
+
 function drawnTextRect(shape: Shape, singleLine = false): { x: number; y: number; w: number; h: number } | null {
   const text = shape.text.trim();
   if (text === '' || !shape.fontSize) return null;
@@ -341,9 +397,21 @@ function drawnTextRect(shape: Shape, singleLine = false): { x: number; y: number
   // one that outgrows its box overflows equally on both sides rather than
   // wrapping. Modelling it as wrapped would claim rows above it that hold
   // nothing and report chips that never touched a glyph.
-  const lines = singleLine ? 1 : Math.max(1, Math.ceil(textWidthIn(text, shape.fontSize) / shape.w));
-  const h = Math.min(shape.h, (lines * shape.fontSize * 1.22) / 72);
-  const w = lines > 1 ? shape.w : (singleLine ? textWidthIn(text, shape.fontSize) : Math.min(shape.w, textWidthIn(text, shape.fontSize)));
+  //
+  // The wrapped count is a wrap, not a ratio. Dividing total ink by the column
+  // is the break-anywhere assumption — it says how many lines the ink would
+  // need if words could split at any character, which is a lower bound and
+  // never the answer. It is also the *same* arithmetic the tile exporter used,
+  // so the rule and the code it checks were wrong together: a tile name that
+  // drew five lines of a three-line box reported three here and no collision
+  // with anything.
+  const lines = singleLine ? 1 : auditWrappedLines(text, textColumnIn(shape), shape.fontSize);
+  // The real pitch, not the margin: this rect is used for collisions, where
+  // over-stating the ink invents overlaps. A declared spacing still counts.
+  const h = Math.min(shape.h, (lines * shape.fontSize * 1.22 * (shape.lineSpacing ?? 1)) / 72);
+  const w = lines > 1
+    ? shape.w
+    : (singleLine ? textWidthIn(text, shape.fontSize) : Math.min(shape.w, textWidthIn(text, shape.fontSize)));
   const x = shape.x + (shape.w - w) / 2;
   const y = shape.anchor === 't'
     ? shape.y
@@ -417,7 +485,8 @@ interface Scenario {
  */
 const AUDIT_FORBIDDEN = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\uFFFE\uFFFF]|[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
 
-function xmlWellFormednessIssues(parts: Array<{ path: string; text: string }>, prefix: string): string[] {  const issues: string[] = [];
+function xmlWellFormednessIssues(parts: Array<{ path: string; text: string }>, prefix: string): string[] {
+  const issues: string[] = [];
   for (const part of parts) {
     const hit = AUDIT_FORBIDDEN.exec(part.text);
     if (!hit) continue;
@@ -425,26 +494,6 @@ function xmlWellFormednessIssues(parts: Array<{ path: string; text: string }>, p
     issues.push(
       `${prefix}${part.path} carries U+${code.toString(16).toUpperCase().padStart(4, '0')}, which XML 1.0 forbids and no escaping can encode — the package will not open`,
     );
-    // The footer band is chrome: it is drawn on every slide, always last, and
-    // nothing in the body may reach it. A body box that is sized correctly for
-    // its own contents but positioned over the footer spills nothing, so the
-    // pair rule above cannot see it — and yet the footer prints on top and the
-    // last line of the body is gone. This is the arm that catches a block too
-    // tall for a page rather than a box too small for its text.
-    const footer = painted.find((p) => p.shape.text.includes('Generated by Microsoft Product'));
-    if (footer) {
-      for (const p of painted) {
-        if (p === footer) continue;
-        if (p.shape.y > footer.shape.y - 0.01) continue; // chrome and notes that live there
-        const into = p.bottom - footer.top;
-        if (into > 0.02) {
-          issues.push(
-            `customer deck: slide ${index + 1} paints "${p.shape.text.trim().slice(0, 32)}" `
-            + `${into.toFixed(2)}in into the footer band`,
-          );
-        }
-      }
-    }
   }
   return issues;
 }
@@ -1388,6 +1437,102 @@ function visioBrokenLabelFanScenario(): Scenario {
  * The names are graded — one that fits, one just over, one well over, and a
  * Japanese one — so a regression shows up as a step rather than a cliff.
  */
+/**
+ * Realistic service names on a tile that also carries a SKU and a region.
+ *
+ * The tile planner asked `Math.ceil(inkWidth / column)` how many lines a name
+ * needs. That is the break-anywhere assumption — the count the ink would need
+ * if a word could be split at any character — so it is a lower bound and never
+ * the answer. Word wrap abandons the tail of a line whenever the next word will
+ * not fit, and on these six names it costs one or two whole lines each: five of
+ * the six were planned at three lines and drew four or five.
+ *
+ * The lines have to go somewhere. `labelBlockH` is what sizes the icon and, in
+ * the top-aligned branch, what is left over becomes the text box's height —
+ * so the surplus is drawn straight down through the "P1v3 · eastus" sub-line
+ * and out of the bottom of the tile. "Azure Kubernetes Service Automatic
+ * cluster" covered 100% of its sub-line's band.
+ *
+ * Nothing caught it because three separate things were wrong in the same
+ * direction: the ink rule skipped every `service-` shape, `drawnTextRect` used
+ * the identical ratio so the chip rules agreed with the defect, and all three
+ * meta scenarios used names short enough to wrap the way the ratio predicts.
+ */
+function tileNameWithMetaScenario(): Scenario {
+  const names = [
+    'Azure Database for PostgreSQL Flexible Server',
+    'Azure Kubernetes Service Automatic cluster',
+    'Azure Monitor Application Insights workspace',
+    'Azure Container Apps Environment workload profile',
+    'Azure Synapse Analytics dedicated SQL pool',
+    'Azure Cache for Redis Enterprise Flash tier',
+  ];
+  const nodes: Node[] = names.map((label, i) => ({
+    ...svc(`tnm${i}`, label, (i % 2) * 230, Math.floor(i / 2) * 190, undefined, true, 'compute'),
+    width: 160,
+    height: 110,
+    data: {
+      label,
+      serviceName: label,
+      category: 'compute',
+      iconPath: '/Azure_Public_Service_Icons/Icons/compute/10021-icon-service-Virtual-Machine.svg',
+      sku: 'P1v3',
+      region: 'eastus',
+    },
+  } as Node));
+  const edges: Edge[] = names.slice(1).map((_, i) => ({
+    id: `tnm-e${i}`,
+    source: `tnm${i}`,
+    target: `tnm${i + 1}`,
+    label: 'sync',
+  } as Edge));
+  return { id: 'tile-name-with-meta', nodes, edges };
+}
+
+/**
+ * A wide zone whose tiles sit flush against its top edge, with a long name.
+ *
+ * Built to exercise the band search where the score cannot separate two
+ * candidates: a strip above the tiles and clear paper below them both cover no
+ * tile at all, so both score zero and something other than the score decides.
+ * The search used to stop at the first zero it found — `runs(top)` is pushed
+ * into the candidate array before `runs(foot)` — and so took whichever clear
+ * band was built first rather than the one that holds more of the name.
+ *
+ * Honest about what it does and does not show: on this geometry the caption
+ * lands in a 4.28in third-band that holds the whole name at 10pt, with or
+ * without the tie-break, so this fixture pins the *outcome* rather than
+ * reproducing the tie. It is here because a flush-top zone with a 96-character
+ * name is otherwise unrepresented in the corpus, and because the rule below —
+ * which compares a cut caption's band against the widest clear strip of its
+ * own zone — needs a zone with clear strips to be exercised against at all.
+ */
+function flushTopZoneScenario(): Scenario {
+  const zone: Node = {
+    id: 'ftz',
+    type: 'groupNode',
+    position: { x: 0, y: 0 },
+    width: 1800,
+    height: 360,
+    data: { label: 'Production landing zone with zone redundant ingress, egress control and paired region failover' },
+  } as Node;
+  const nodes: Node[] = [zone];
+  for (let i = 0; i < 11; i += 1) {
+    nodes.push({
+      ...svc(`ftz${i}`, `Service ${i}`, 10 + i * 160, 0, 'ftz', true, 'compute'),
+      width: 150,
+      height: 300,
+    });
+  }
+  const edges: Edge[] = Array.from({ length: 10 }, (_, i) => ({
+    id: `ftz-e${i}`,
+    source: `ftz${i}`,
+    target: `ftz${i + 1}`,
+    label: 'calls',
+  } as Edge));
+  return { id: 'flush-top-zone', nodes, edges };
+}
+
 function visioDefaultTileNamesScenario(): Scenario {
   const names = [
     'Azure Database for PostgreSQL flexible server - Business Critical - East US 2',
@@ -3377,12 +3522,30 @@ async function auditCustomerDeck(scenario: Scenario): Promise<string[]> {
       // drawing in the corpus, which is how a 0.4x0.24in zone caption came to
       // paint 22 wrapped lines and 3.3in of ink down the page unnoticed.
       .filter((s) => s.text.trim().length > 0
+        // Connector chips are exempt, and that exemption is a known hole, not a
+        // judgement: measured, 22 of them paint outside their own rounded
+        // rectangles, by up to 0.29in of a 0.385in box. The cause is the same
+        // break-anywhere ratio as the tile name below — `connectorLabelBox`
+        // sizes the chip with `Math.ceil(ink / perLine)` and a crowded chip
+        // wraps to one line more than that. It is left here because correcting
+        // it is not a one-line change: an honest count makes the chip taller,
+        // 36 chips then cannot be seated between the tiles, and walking the
+        // retry ladder down to the legibility floor to buy the room detaches 5
+        // numbered callouts from their own arrows. It needs the placement
+        // search, and it needs its own round.
         && !s.name.startsWith('connector-')
-        && !s.name.startsWith('service-'))
+        // The tile *name* is measured here like everything else. It was the
+        // last text on a drawing slide with no ink rule over it, and it was
+        // wrong: `Math.ceil(ink / column)` planned three lines for a name that
+        // wraps to five, and the two surplus lines were drawn straight through
+        // the "P1v3 · eastus" sub-line under it. The sub-line's own box is
+        // `wrap="none"` — one line however wide — so it is measured by the
+        // chip rules instead, and the tile rectangle carries no text at all.
+        && !(s.name.startsWith('service-') && !s.name.startsWith('service-label-')))
       .map((s) => {
         const pt = s.fontSize ?? (s.runs[0]?.sizePt ?? 12);
-        const lines = auditWrappedLines(s.text.trim(), Math.max(0.2, s.w - 0.2), pt);
-        const need = lines * pt * 1.35 / 72;
+        const lines = auditWrappedLines(s.text.trim(), textColumnIn(s), pt);
+        const need = lines * linePitchIn(s, pt);
         const over = Math.max(0, need - s.h);
         // `anchor="ctr"` grows the block from the middle, so an overflow spills
         // equally out of the top and the bottom; a top-anchored box spills down.
@@ -3405,7 +3568,7 @@ async function auditCustomerDeck(scenario: Scenario): Promise<string[]> {
     for (const s of parseShapes(xml)) {
       if (!s.text.trim() || s.name.startsWith('connector-')) continue;
       const pt = s.fontSize ?? (s.runs[0]?.sizePt ?? 12);
-      const box = Math.max(0.2, s.w - 0.2);
+      const box = textColumnIn(s);
       const counted = auditWrappedLines(s.text.trim(), box, pt);
       const drawn = s.paragraphs.filter((p) => p.trim().length > 0).length;
       if (drawn > counted) {
@@ -3444,7 +3607,7 @@ async function auditCustomerDeck(scenario: Scenario): Promise<string[]> {
       for (const p of painted) {
         if (p.over <= 0.02) continue;
         const pt = p.shape.fontSize ?? (p.shape.runs[0]?.sizePt ?? 12);
-        const drawnLines = auditWrappedLines(p.shape.text.trim(), Math.max(0.2, p.shape.w - 0.2), pt);
+        const drawnLines = auditWrappedLines(p.shape.text.trim(), textColumnIn(p.shape), pt);
         issues.push(
           `customer deck: slide ${index + 1} draws "${p.shape.text.trim().slice(0, 32)}" as `
           + `${drawnLines} line(s) at ${pt}pt in a ${p.shape.w.toFixed(3)}x${p.shape.h.toFixed(3)}in band `
@@ -3516,6 +3679,34 @@ async function auditCustomerDeck(scenario: Scenario): Promise<string[]> {
           `customer deck: slide ${index + 1} overlaps "${a.shape.text.trim().slice(0, 24)}" and `
           + `"${b.shape.text.trim().slice(0, 24)}" by ${overlap.toFixed(2)}in of type`,
         );
+      }
+    }
+    // The footer band is chrome: it is drawn on every slide, always last, and
+    // nothing in the body may reach it. A body box that is sized correctly for
+    // its own contents but positioned over the footer spills nothing, so the
+    // pair rule above cannot see it — and yet the footer prints on top and the
+    // last line of the body is gone. This is the arm that catches a block too
+    // tall for a page rather than a box too small for its text.
+    //
+    // It lives here, and not where it was found: an earlier edit landed the
+    // whole block inside `xmlWellFormednessIssues`, whose scope has no
+    // `painted` and no `index`. It could therefore never run — and worse, the
+    // one branch that would have reached it was the branch that reports a
+    // character XML cannot encode, so the first genuinely unopenable package
+    // would have crashed the gate with a ReferenceError instead of naming the
+    // defect.
+    const footer = painted.find((p) => p.shape.text.includes('Generated by Microsoft Product'));
+    if (footer) {
+      for (const p of painted) {
+        if (p === footer) continue;
+        if (p.shape.y > footer.shape.y - 0.01) continue; // chrome and notes that live there
+        const into = p.bottom - footer.top;
+        if (into > 0.02) {
+          issues.push(
+            `customer deck: slide ${index + 1} paints "${p.shape.text.trim().slice(0, 32)}" `
+            + `${into.toFixed(2)}in into the footer band`,
+          );
+        }
       }
     }
   }
@@ -3671,6 +3862,52 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
   for (const slideXml of allSlides) {
     const bg = /<p:bg>[\s\S]*?<a:srgbClr val="([0-9A-Fa-f]{6})"/.exec(slideXml)?.[1]?.toLowerCase() ?? 'ffffff';
     issues.push(...contrastIssues(parseShapes(slideXml), bg));
+  }
+  // A zone caption that was cut while the zone had wider clear paper to put it
+  // on. The band search scores candidates by how much of a tile each would
+  // cover, and two completely clear bands both score zero — so the score cannot
+  // separate them and something else decides. That something used to be the
+  // order they happen to sit in the array, with a short-circuit on the first
+  // zero, which handed the caption to whichever clear band was built first
+  // rather than to the one that holds the name.
+  //
+  // The loss is invisible to every other rule here: the cut name reaches the
+  // index slide, the band is inside its zone, the type is above the floor, and
+  // nothing overflows. Only the comparison the search declined to make shows
+  // it, so make it: for a caption that is cut, find the widest strip of the
+  // zone that is free of tiles and tall enough for the band, and require the
+  // band to be within a fifth of it.
+  for (const [index, slideXml] of allSlides.entries()) {
+    const shapes = parseShapes(slideXml);
+    const tiles = shapes.filter((s) => /^service-[^-]/.test(s.name));
+    if (tiles.length === 0) continue;
+    for (const caption of shapes.filter((s) => s.name.startsWith('zone-label-'))) {
+      if (!caption.text.includes('…')) continue;
+      const zone = shapes.find((s) => s.name === `zone-${caption.name.slice('zone-label-'.length)}`);
+      if (!zone) continue;
+      // Every horizontal strip of the zone that could seat this band: above the
+      // tiles, below them, and in any gap between two rows of them. A strip is
+      // usable only if it is at least as tall as the band already drawn.
+      const inZone = tiles.filter((t) => t.x < zone.x + zone.w && zone.x < t.x + t.w
+        && t.y < zone.y + zone.h && zone.y < t.y + t.h);
+      const edges = [zone.y, zone.y + zone.h, ...inZone.flatMap((t) => [t.y, t.y + t.h])]
+        .filter((y) => y >= zone.y - 1e-6 && y <= zone.y + zone.h + 1e-6)
+        .sort((a, b) => a - b);
+      let widest = 0;
+      for (let i = 0; i + 1 < edges.length; i += 1) {
+        const top = edges[i];
+        const bot = edges[i + 1];
+        if (bot - top < caption.h - 1e-6) continue;
+        const blocked = inZone.some((t) => t.y < bot - 1e-6 && top < t.y + t.h - 1e-6);
+        if (!blocked) widest = Math.max(widest, zone.w);
+      }
+      if (widest > caption.w * 1.25 + 0.01) {
+        issues.push(
+          `customer deck: slide ${index + 1} cuts zone caption "${caption.text.trim().slice(0, 28)}" `
+          + `into a ${caption.w.toFixed(2)}in band when ${widest.toFixed(2)}in of the zone is clear`,
+        );
+      }
+    }
   }
   // The overview is exempt from the legibility floor because it is a map, not
   // a reading surface — but "smaller than the floor" is not the same as "ink
@@ -5882,6 +6119,8 @@ async function main(): Promise<void> {
     hardBreakInventoryScenario(),
     visioBrokenLabelFanScenario(),
     visioDefaultTileNamesScenario(),
+    flushTopZoneScenario(),
+    tileNameWithMetaScenario(),
     zoneCaptionWideEstateScenario(),
     squeezedBadgeScenario(),
     await generatedScenario(), await groupedGeneratedScenario(),
