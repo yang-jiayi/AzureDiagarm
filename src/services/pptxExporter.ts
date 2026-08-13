@@ -929,6 +929,44 @@ function estimateTextWidthIn(text: string, fontSizePt: number): number {
 }
 
 /**
+ * How many lines `text` takes in a box `widthIn` wide, wrapping the way
+ * PowerPoint wraps.
+ *
+ * `ceil(width / widthIn)` is exact only for text that can break anywhere — CJK,
+ * or a single token long enough that PowerPoint breaks it mid-run. Real prose
+ * breaks between words and throws away the remainder of a line whenever the
+ * next word will not fit, so three tokens each wider than half the box take
+ * three lines where the ratio predicts two. A resource name that spells out its
+ * environment and region is exactly that shape, and under-counting it is how a
+ * table budgeted for the page ends up printing below it.
+ */
+export function wrappedLineCount(text: string, widthIn: number, fontSizePt: number): number {
+  if (!text) return 1;
+  const box = Math.max(0.1, widthIn);
+  // Breaks are between words, and additionally after any full-width character,
+  // which is where CJK is allowed to break.
+  const runs = text.split(/(?<=[\s\u2e80-\u9fff\uac00-\ud7af\uff00-\uff60\uffe0-\uffe6])/);
+  let lines = 1;
+  let used = 0;
+  for (const run of runs) {
+    const w = estimateTextWidthIn(run, fontSizePt);
+    if (used > 0 && used + w > box) {
+      lines += 1;
+      used = 0;
+    }
+    // A single run wider than the whole box breaks inside itself.
+    if (w > box) {
+      const inner = Math.ceil(w / box);
+      lines += inner - 1;
+      used = w - (inner - 1) * box;
+      continue;
+    }
+    used += w;
+  }
+  return Math.max(1, lines);
+}
+
+/**
  * As much of `text` as will fit in `widthIn` at `fontSizePt`, with an ellipsis
  * for the rest. Used where the tile is too small for the whole name and the
  * only alternatives are unreadable type or an empty box.
@@ -3761,10 +3799,17 @@ export async function buildDiagramSlidePptx(
     const available = Math.max(MIN_WORKFLOW_ROW_IN, geom.footerY - 0.1 - listTop);
     // The sentence column, measured against the widest the badge is ever
     // allowed to be so the estimate is never optimistic.
-    const rowTextW = Math.max(1, W - (0.42 + 0.34 + 0.16) - 0.42);
+    const rowTextW = Math.max(1, W - (0.42 + 0.34 + 0.16) - 0.42 - 0.2);
     const rowHeightIn = (text: string, pt: number): number => {
-      const lines = Math.max(1, Math.ceil(estimateTextWidthIn(text, pt) / rowTextW));
-      return lines * pt * 1.25 / 72;
+      // 1.35, matching every other line-height in this file: `Yu Gothic UI`'s
+      // own hhea and OS/2 win metrics give 1.3301, and the same face carries
+      // the Latin and the CJK. 1.25 was 6% optimistic, which the row slack
+      // absorbed only up to about six lines. And measure the wrap the way a
+      // renderer wraps it — the ratio is a lower bound for text that breaks
+      // between words. The 0.2in off the column and 0.1in on the row are the
+      // text box's own insets, which come out of the room the words get.
+      const lines = wrappedLineCount(text, rowTextW, pt);
+      return lines * pt * 1.35 / 72 + 0.1;
     };
     // Paginating on a flat 0.34in assumed every step was one line. Real
     // Architecture-Center prose wraps to two or three, and PowerPoint does not
@@ -4184,14 +4229,55 @@ async function addDiagramSlide(pptx: PptxGenJS, t: SlideTheme, imageDataUrl: str
  * same rule applied to the deck the customer is actually sent.
  */
 function addWorkflowSlide(pptx: PptxGenJS, t: SlideTheme, o: ArchitectureDeckOptions): void {
-  const steps = (o.workflow ?? [])
+  const authored = (o.workflow ?? [])
     .filter((entry) => entry && readStepValue(entry.step) !== undefined && !!entry.description)
     .sort((a, b) => a.step - b.step);
-  if (steps.length === 0) return;
+  if (authored.length === 0) return;
 
-  // The smallest row still worth reading, which is what sets how many fit.
+  // The smallest row still worth reading, which used to be all that set how
+  // many fit — a row *count*, with nothing measuring the words in it. The box
+  // is `wrap="square"` with no autofit, so a description longer than its row
+  // renders at full size and spills symmetrically out of both ends: at nineteen
+  // steps of ordinary prose the rows overlap by a fifth of their pitch, at
+  // CJK lengths by four fifths, and the top row prints over the header bar.
+  // This is the same defect the diagram deck's workflow band was rewritten to
+  // fix, and it takes the same answer — measure the wrap, then paginate on it.
   const MIN_ROW_IN = 0.3;
-  const perSlide = Math.max(1, Math.floor(BODY_H / MIN_ROW_IN));
+  const FLOOR_PT = 10;
+  const ROW_SLACK_IN = 0.06;
+  // A text box has insets of its own — pptxgenjs emits 0.1in left and right,
+  // 0.05in top and bottom — and they come out of the room the words get. The
+  // column is therefore 0.2in narrower than the box, and the row 0.1in taller
+  // than its type. Measuring the box instead of the column under-counts the
+  // wrap by a line exactly where the line is expensive.
+  const TEXT_INSET_H_IN = 0.2;
+  const TEXT_INSET_V_IN = 0.1;
+  const descW = W - 1.1 - 0.34 - TEXT_INSET_H_IN;
+  const needsFor = (text: string, hasServices: boolean, pt: number): number =>
+    wrappedLineCount(text, descW, pt) * pt * 1.35 / 72 + TEXT_INSET_V_IN
+    + (hasServices ? 0.2 : 0) + ROW_SLACK_IN;
+  // A flat 240-character cap cut roughly a sentence off every generated step
+  // and put it nowhere else in the deck — the same "truncated with no
+  // discharge" defect the callout convention exists to prevent. Now that the
+  // slide paginates on measured height there is no reason for a cap short of
+  // the physical one: a step is shortened only when it could not fit a whole
+  // page at the legibility floor, which generated prose never reaches.
+  const steps = authored.map((entry) => {
+    const hasServices = (entry.services ?? []).filter(Boolean).length > 0;
+    let text = entry.description;
+    while (text.length > 40 && needsFor(text, hasServices, FLOOR_PT) > BODY_H) {
+      text = text.slice(0, Math.max(40, Math.floor(text.length * 0.9)));
+    }
+    return {
+      entry,
+      hasServices,
+      description: text === entry.description ? text : `${text.trimEnd()}…`,
+    };
+  });
+  const rowNeeds = (s: typeof steps[number], pt: number): number =>
+    needsFor(s.description, s.hasServices, pt);
+  const neededRow = Math.max(MIN_ROW_IN, ...steps.map((s) => rowNeeds(s, FLOOR_PT)));
+  const perSlide = Math.max(1, Math.floor(BODY_H / neededRow));
   const pages = Math.ceil(steps.length / perSlide);
 
   for (let page = 0; page < pages; page += 1) {
@@ -4204,37 +4290,94 @@ function addWorkflowSlide(pptx: PptxGenJS, t: SlideTheme, o: ArchitectureDeckOpt
     );
 
     const rowH = Math.min(0.62, BODY_H / shown.length);
-    // Long descriptions have to shrink rather than overflow the slide.
-    const fontSize = rowH >= 0.5 ? 13 : rowH >= 0.38 ? 11 : 10;
-    const badgeD = Math.min(0.34, rowH - 0.06);
+    // The type a row can carry without spilling out of it, not the type its
+    // pitch suggests. A ladder of `rowH >= 0.5 ? 13 : …` reads the row's height
+    // and ignores its contents, so a tall row full of prose still overflowed.
+    const pitch = Math.max(rowH, ...shown.map((entry) => rowNeeds(entry, FLOOR_PT)));
+    let fontSize = rowH >= 0.5 ? 13 : rowH >= 0.38 ? 11 : 10;
+    while (fontSize > FLOOR_PT
+      && shown.some((entry) => rowNeeds(entry, fontSize) > pitch)) {
+      fontSize -= 0.5;
+    }
+    const badgeD = Math.min(0.34, pitch - 0.06);
 
-    shown.forEach((entry, index) => {
-      const y = BODY_TOP + index * rowH;
+    shown.forEach((s, index) => {
+      const entry = s.entry;
+      const y = BODY_TOP + index * pitch;
       slide.addShape(pptx.ShapeType.ellipse, {
-        x: 0.4, y: y + (rowH - badgeD) / 2, w: badgeD, h: badgeD,
+        x: 0.4, y: y + (pitch - badgeD) / 2, w: badgeD, h: badgeD,
         fill: { color: t.accent }, line: { color: t.accent, width: 0 },
       });
       slide.addText(String(entry.step), {
-        x: 0.4, y: y + (rowH - badgeD) / 2, w: badgeD, h: badgeD,
+        x: 0.4, y: y + (pitch - badgeD) / 2, w: badgeD, h: badgeD,
         fontSize: Math.max(8, Math.round(fontSize * 0.8)), bold: true, color: 'ffffff',
         fontFace: 'Yu Gothic UI', align: 'center', valign: 'middle',
       });
       // A wrapped two-line description used to run straight through the services
       // strip, so the strip is reserved out of the description box's height.
       const services = (entry.services ?? []).filter(Boolean);
-      const showsServices = services.length > 0 && rowH >= 0.5;
-      slide.addText(truncate(entry.description, 240), {
-        x: 0.4 + badgeD + 0.16, y, w: W - 1.1 - badgeD, h: showsServices ? rowH - 0.2 : rowH,
+      const showsServices = services.length > 0 && pitch >= 0.5;
+      slide.addText(s.description, {
+        x: 0.4 + badgeD + 0.16, y, w: W - 1.1 - badgeD, h: showsServices ? pitch - 0.2 : pitch,
         fontSize, color: t.titleText, fontFace: 'Yu Gothic UI', valign: 'middle', wrap: true,
       });
       if (showsServices) {
-        slide.addText(services.join('  →  '), {
-          x: 0.4 + badgeD + 0.16, y: y + rowH - 0.2, w: W - 1.1 - badgeD, h: 0.18,
+        // One line, fitted. The strip is a breadcrumb under a sentence that
+        // already names the same services, and it was given a flat 0.18in with
+        // nothing measuring what went in it — two long resource names joined by
+        // an arrow wrap to two lines and the second is painted over the row
+        // below. Every name here is spelled out in full on the Services slide,
+        // so shortening this one is a shortening, not a loss.
+        const stripW = W - 1.1 - badgeD;
+        slide.addText(fitLabelToBox(services.join('  →  '), stripW - 0.2, 9), {
+          x: 0.4 + badgeD + 0.16, y: y + pitch - 0.2, w: stripW, h: 0.18,
           fontSize: 9, color: t.metaText, fontFace: 'Yu Gothic UI', valign: 'middle',
         });
       }
     });
   }
+}
+
+/**
+ * The height a table row occupies once PowerPoint has wrapped it.
+ *
+ * `rowH` is a *minimum*, not a height: none of these tables declares autofit,
+ * so PowerPoint grows any row whose text wraps and the table quietly gets
+ * taller than the slide. Anything sizing a table has to measure the words —
+ * including the vertical cell insets, which pptxgenjs emits (`marT`/`marB`,
+ * 0.05in each) and which are charged to the row on top of the type.
+ */
+const TABLE_CELL_MARGIN_IN = 0.2; // marL + marR
+const TABLE_CELL_INSET_V_IN = 0.1; // marT + marB
+const TABLE_MIN_ROW_H = 0.325;
+export function tableRowHeightIn(cells: string[], colW: number[], pt: number): number {
+  const lines = Math.max(...cells.map((text, i) => wrappedLineCount(
+    text, Math.max(0.5, (colW[i] ?? colW[0]) - TABLE_CELL_MARGIN_IN), pt,
+  )));
+  return Math.max(TABLE_MIN_ROW_H, lines * pt * 1.35 / 72 + TABLE_CELL_INSET_V_IN);
+}
+
+/**
+ * As many rows as fit in `availableIn`, and the type they fit at.
+ *
+ * Used where the table cannot paginate — a summary slide shows the top N and
+ * the tail is genuinely optional — so the answer to "too tall" is smaller type
+ * first, down to the deck's legibility floor, and only then fewer rows. A
+ * caller that drops rows has to say so; silently listing eight of ten cost
+ * drivers under a heading that says ten is the same defect as a truncated
+ * inventory.
+ */
+function fitTableRows(
+  rows: string[][], header: string[], colW: number[], availableIn: number, startPt: number,
+): { rows: number; pt: number } {
+  let pt = startPt;
+  const heightAt = (p: number, count: number): number => tableRowHeightIn(header, colW, p)
+    + rows.slice(0, count).reduce((sum, r) => sum + tableRowHeightIn(r, colW, p), 0);
+  while (pt > LEGIBLE_TILE_PT && heightAt(pt, rows.length) > availableIn) pt -= 0.5;
+  pt = Math.max(LEGIBLE_TILE_PT, pt);
+  let count = rows.length;
+  while (count > 1 && heightAt(pt, count) > availableIn) count -= 1;
+  return { rows: count, pt };
 }
 
 /** Slide 4 — service inventory. */
@@ -4256,15 +4399,8 @@ function addServicesSlide(pptx: PptxGenJS, t: SlideTheme, o: ArchitectureDeckOpt
   // and pack rows by their real height.
   const FONT_PT = 12;
   const COL_W = [5.2, 3.9, 3.53];
-  const CELL_MARGIN_IN = 0.2; // marL + marR, as pptxgenjs emits them
-  const MIN_ROW_H = 0.32;
   const cellsOf = (s: DeckService): string[] => [s.name, s.category || '—', s.group || '—'];
-  const heightOf = (cells: string[], pt: number): number => {
-    const lines = Math.max(...cells.map((text, i) => Math.max(1, Math.ceil(
-      estimateTextWidthIn(text, pt) / Math.max(0.5, COL_W[i] - CELL_MARGIN_IN),
-    ))));
-    return Math.max(MIN_ROW_H, lines * pt * 1.35 / 72);
-  };
+  const heightOf = (cells: string[], pt: number): number => tableRowHeightIn(cells, COL_W, pt);
 
   // A page's type shrinks only for the row that cannot otherwise fit, and never
   // below the deck's legibility floor. One name long enough to fill a page on
@@ -4362,16 +4498,27 @@ function addValidationSummarySlide(pptx: PptxGenJS, t: SlideTheme, o: Architectu
     { text: 'Maturity', options: { bold: true, color: 'ffffff', fill: { color: t.accent } } },
     { text: 'Score', options: { bold: true, color: 'ffffff', fill: { color: t.accent }, align: 'right' as const } },
   ];
-  const rows = pillars.map((p) => [
+  const PILLAR_COL_W = [4.2, 6.6, 1.83];
+  const pillarCells = pillars.map((p) => [
+    p.pillar, p.maturity || scoreBand(p.score), `${Math.round(p.score)} / 100`,
+  ]);
+  // Same contract as every other table in this deck: no autofit is declared, so
+  // a long maturity label wraps and grows its row. This one starts 2.65in down
+  // the body, so it has that much less room to grow into.
+  const pillarFit = fitTableRows(
+    pillarCells, ['Pillar', 'Maturity', 'Score'], PILLAR_COL_W,
+    Math.max(TABLE_MIN_ROW_H * 2, FOOTER_Y - (pTop + 0.36) - 0.1), 12,
+  );
+  const rows = pillars.slice(0, pillarFit.rows).map((p) => [
     { text: p.pillar, options: { color: t.titleText } },
     { text: p.maturity || scoreBand(p.score), options: { color: t.metaText } },
     { text: `${Math.round(p.score)} / 100`, options: { color: scoreColor(p.score), bold: true, align: 'right' as const } },
   ]);
   slide.addTable([header, ...rows], {
     x: 0.35, y: pTop + 0.36, w: W - 0.7,
-    colW: [4.2, 6.6, 1.83],
-    fontSize: 12, fontFace: 'Yu Gothic UI',
-    border: { type: 'solid', color: t.headerBg, pt: 1 }, valign: 'middle', rowH: 0.34,
+    colW: PILLAR_COL_W,
+    fontSize: pillarFit.pt, fontFace: 'Yu Gothic UI',
+    border: { type: 'solid', color: t.headerBg, pt: 1 }, valign: 'middle', rowH: TABLE_MIN_ROW_H,
   });
 }
 
@@ -4451,13 +4598,27 @@ function addCostOverviewSlide(pptx: PptxGenJS, t: SlideTheme, o: ArchitectureDec
   // Top cost drivers table (right)
   const svcs = c.topServices.slice(0, 10);
   if (svcs.length) {
+    const COST_COL_W = [3.3, 1.85, 1.15, 0.78];
+    const headerCells = ['Top cost drivers', 'Tier', 'Monthly', 'Share'];
+    const rowCells = svcs.map((s) => [
+      s.serviceName,
+      s.tier || '—',
+      money(s.cost, c.currency),
+      s.percentage != null ? `${Math.round(s.percentage)}%` : '—',
+    ]);
+    // Ten rows at a declared 0.32in is a row *count*, and this table declares
+    // no autofit — a service name that wraps in a 3.3in column grows its row,
+    // and ten of those ran two inches past the bottom of the slide. Measure the
+    // wrap, shrink the type, and only then show fewer drivers.
+    const fitted = fitTableRows(rowCells, headerCells, COST_COL_W, BODY_H, 12);
+    const shown = svcs.slice(0, fitted.rows);
     const header = [
-      { text: 'Top cost drivers', options: { bold: true, color: 'ffffff', fill: { color: t.accent } } },
+      { text: `Top cost drivers${shown.length < svcs.length ? ` (top ${shown.length})` : ''}`, options: { bold: true, color: 'ffffff', fill: { color: t.accent } } },
       { text: 'Tier', options: { bold: true, color: 'ffffff', fill: { color: t.accent } } },
       { text: 'Monthly', options: { bold: true, color: 'ffffff', fill: { color: t.accent }, align: 'right' as const } },
       { text: 'Share', options: { bold: true, color: 'ffffff', fill: { color: t.accent }, align: 'right' as const } },
     ];
-    const rows = svcs.map((s) => [
+    const rows = shown.map((s) => [
       { text: s.serviceName, options: { color: t.titleText } },
       { text: s.tier || '—', options: { color: t.metaText } },
       { text: money(s.cost, c.currency), options: { color: t.metaText, align: 'right' as const } },
@@ -4465,9 +4626,9 @@ function addCostOverviewSlide(pptx: PptxGenJS, t: SlideTheme, o: ArchitectureDec
     ]);
     slide.addTable([header, ...rows], {
       x: 5.9, y: BODY_TOP, w: W - 5.9 - 0.35,
-      colW: [3.3, 1.85, 1.15, 0.78],
-      fontSize: 12, fontFace: 'Yu Gothic UI',
-      border: { type: 'solid', color: t.headerBg, pt: 1 }, valign: 'middle', rowH: 0.32,
+      colW: COST_COL_W,
+      fontSize: fitted.pt, fontFace: 'Yu Gothic UI',
+      border: { type: 'solid', color: t.headerBg, pt: 1 }, valign: 'middle', rowH: TABLE_MIN_ROW_H,
     });
   }
 }
@@ -4512,17 +4673,23 @@ function addCostRegionsSlide(pptx: PptxGenJS, t: SlideTheme, o: ArchitectureDeck
       { text: vsBaseline, options: { color: t.metaText, align: 'right' as const } },
     ];
   });
+  const regionCells = rows.map((r) => r.map((cell) => cell.text));
   const header = [
     { text: 'Region', options: { bold: true, color: 'ffffff', fill: { color: t.accent } } },
     { text: 'Monthly', options: { bold: true, color: 'ffffff', fill: { color: t.accent }, align: 'right' as const } },
     { text: 'Annual', options: { bold: true, color: 'ffffff', fill: { color: t.accent }, align: 'right' as const } },
     { text: comparisonComplete ? 'vs cheapest' : 'vs lowest shown', options: { bold: true, color: 'ffffff', fill: { color: t.accent }, align: 'right' as const } },
   ];
-  slide.addTable([header, ...rows], {
+  const REGION_COL_W = [6.13, 2.0, 2.0, 1.5];
+  const regionFit = fitTableRows(
+    regionCells, ['Region', 'Monthly', 'Annual', 'vs cheapest'], REGION_COL_W,
+    Math.max(TABLE_MIN_ROW_H * 2, FOOTER_Y - (BODY_TOP + 0.6) - 0.1), 12,
+  );
+  slide.addTable([header, ...rows.slice(0, regionFit.rows)], {
     x: 0.35, y: BODY_TOP + 0.6, w: W - 0.7,
-    colW: [6.13, 2.0, 2.0, 1.5],
-    fontSize: 12, fontFace: 'Yu Gothic UI',
-    border: { type: 'solid', color: t.headerBg, pt: 1 }, valign: 'middle', rowH: 0.36,
+    colW: REGION_COL_W,
+    fontSize: regionFit.pt, fontFace: 'Yu Gothic UI',
+    border: { type: 'solid', color: t.headerBg, pt: 1 }, valign: 'middle', rowH: TABLE_MIN_ROW_H,
   });
 }
 

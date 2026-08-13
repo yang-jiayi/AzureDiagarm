@@ -43,6 +43,38 @@ function auditTextWidthIn(text: string, fontSizePt: number): number {
   return (units * fontSizePt) / 72;
 }
 /**
+ * How many lines a run takes in a box, wrapping the way a renderer wraps.
+ *
+ * `ceil(width / box)` is a lower bound, not a count: it assumes text can break
+ * anywhere. Latin prose breaks between words and abandons the rest of a line
+ * whenever the next word will not fit, so a name made of several long tokens
+ * takes more lines than the ratio predicts — which is precisely the case where
+ * a table measured onto the page prints below it. Written out here rather than
+ * imported, for the same reason as the estimator above.
+ */
+function auditWrappedLines(text: string, boxIn: number, fontSizePt: number): number {
+  if (!text) return 1;
+  const box = Math.max(0.1, boxIn);
+  const tokens = text.split(/(?<=[\s\u2e80-\u9fff\uac00-\ud7af\uff00-\uff60\uffe0-\uffe6])/);
+  let lines = 1;
+  let used = 0;
+  for (const token of tokens) {
+    const w = auditTextWidthIn(token, fontSizePt);
+    if (used > 0 && used + w > box) {
+      lines += 1;
+      used = 0;
+    }
+    if (w > box) {
+      const inner = Math.ceil(w / box);
+      lines += inner - 1;
+      used = w - (inner - 1) * box;
+      continue;
+    }
+    used += w;
+  }
+  return Math.max(1, lines);
+}
+/**
  * Chrome the exporter adds around the drawing, in inches.
  *
  * Not a guess: `visioVsdxExporter.ts` pads the sheet by `PAGE_PADDING_IN` on
@@ -1128,6 +1160,59 @@ function wrappedInventoryScenario(): Scenario {
     id: `wie${k}`, source: `wi-${k}`, target: `wi-${k + 1}`, label: 'Replicates',
   } as Edge));
   return { id: 'wrapped-inventory', nodes, edges };
+}
+
+/**
+ * Thirty names whose words defeat ratio wrapping.
+ *
+ * `ceil(width / column)` is exact for CJK and for one over-long token, and a
+ * lower bound for everything else: real text breaks between words and abandons
+ * the rest of the line when the next word will not fit. Three runs each wider
+ * than half the column take three lines where the ratio says two, and the error
+ * compounds down the page. These are the names a platform team actually writes
+ * — service, cluster, environment, region, pool — each run long enough to force
+ * the break.
+ */
+function tokenWrapInventoryScenario(): Scenario {
+  const nodes: Node[] = Array.from({ length: 30 }, (_, i) => svc(
+    `tw-${i}`,
+    `Azure Kubernetes Service aks${String(i).padStart(3, '0')}contosoplatformprodeastus2 `
+    + `nodepool${String(i).padStart(3, '0')}systemsurgeeastus2`,
+    (i % 6) * 320,
+    Math.floor(i / 6) * 200,
+  ));
+  const edges: Edge[] = Array.from({ length: 4 }, (_, k) => ({
+    id: `twe${k}`, source: `tw-${k}`, target: `tw-${k + 1}`, label: 'Scales',
+  } as Edge));
+  return { id: 'token-wrap-inventory', nodes, edges };
+}
+
+/**
+ * Forty workflow steps of long prose, which is what the customer deck's
+ * workflow slide never had to survive.
+ *
+ * The slide paginated on a row *count* and sized its type off the resulting
+ * pitch, so nineteen rows of ordinary description overlapped by a fifth of
+ * their pitch and the top row printed over the header bar. Long descriptions
+ * are the normal case for a generated dataflow, not an extreme one.
+ */
+function longWorkflowScenario(): Scenario {
+  // The chain topology `workflow-long-prose` already proves is clean, extended
+  // to twenty-four hops. The diagram is deliberately unremarkable: what is
+  // under test is the twenty-four rows of prose the workflow slide has to lay
+  // out from it. Below about fifteen the rows still clear each other, which is
+  // why the existing twelve-hop fixture never caught this.
+  const nodes: Node[] = [];
+  for (let i = 0; i < 25; i += 1) {
+    nodes.push(svc(`lw${i}`, `Workflow service ${i}`, (i % 6) * 220, Math.floor(i / 6) * 150));
+  }
+  const edges: Edge[] = [];
+  for (let i = 0; i < 24; i += 1) {
+    edges.push({
+      id: `lwe${i}`, source: `lw${i}`, target: `lw${i + 1}`, label: '手順を引き渡す',
+    } as Edge);
+  }
+  return { id: 'workflow-long-rows', nodes, edges };
 }
 
 /**
@@ -2638,6 +2723,90 @@ async function auditCustomerDeck(scenario: Scenario): Promise<string[]> {
         group: (parentId ? groupLabels.get(parentId) : undefined) || undefined,
       };
     });
+  // The deck's workflow, validation, findings and cost slides are all gated on
+  // an option this audit never passed, so four of its eight slide types were
+  // never built here at all — and a row-overlap defect on the workflow slide
+  // shipped because of it. These are synthesised the way `App.tsx` does, from
+  // the same scenario, so the gate exercises the whole deck.
+  const nodeLabels = new Map<string, string>(scenario.nodes.map((n) => [
+    n.id,
+    String((n.data as { label?: string } | undefined)?.label ?? n.id),
+  ]));
+  const labelOf = (id: string): string => nodeLabels.get(id) ?? id;
+  const stepText = (edge: { source: string; target: string; label?: unknown; data?: unknown }): string => {
+    // An authored description wins, because that is what the app passes: the
+    // 800-character sentences `workflow-long-prose` carries are the real shape
+    // of Architecture-Center prose, and synthesising over them would test the
+    // synthesiser instead of the slide.
+    const authored = String((edge.data as { stepDescription?: unknown } | undefined)?.stepDescription ?? '').trim();
+    if (authored) return authored;
+    const from = labelOf(edge.source);
+    const to = labelOf(edge.target);
+    const detail = String(edge.label ?? '').trim();
+    // Otherwise full prose, because that is what a generated dataflow produces —
+    // the model writes a sentence per hop, not a caption. A synthesised step
+    // short enough to fit whatever pitch the slide happened to pick would test
+    // nothing about how the slide picks it.
+    return `${from} ${detail ? `sends ${detail} to` : 'calls'} ${to} over the platform's `
+      + 'private network. The call carries an idempotency key, so a retry after a partial '
+      + 'failure is safe, and the response is returned to the caller only once the '
+      + 'downstream write has been acknowledged by every replica in the region.';
+  };
+  const deckWorkflow = scenario.edges.slice(0, 60).map((edge, index) => ({
+    step: index + 1,
+    description: stepText(edge as unknown as { source: string; target: string; label?: unknown; data?: unknown }),
+    services: [labelOf(edge.source), labelOf(edge.target)].filter(Boolean),
+  }));
+  const deckValidation = {
+    overallScore: 72,
+    overallLabel: 'Adequate, with gaps',
+    summary: 'The estate meets the reliability and security baselines, with cost and '
+      + 'operational-excellence gaps that are worth closing before the next release.',
+    pillars: [
+      { pillar: 'Reliability', score: 78, maturity: 'Adequate, with gaps' },
+      { pillar: 'Security', score: 81, maturity: 'Good' },
+      { pillar: 'Cost Optimization', score: 58, maturity: 'Needs work' },
+      { pillar: 'Operational Excellence', score: 66, maturity: 'Adequate, with gaps' },
+      { pillar: 'Performance Efficiency', score: 74, maturity: 'Adequate, with gaps' },
+    ],
+    findings: deckServices.slice(0, 14).map((service, index) => ({
+      severity: (['critical', 'high', 'medium', 'low'] as const)[index % 4],
+      category: service.category || 'Platform',
+      issue: `${service.name} is deployed to a single availability zone, so a zone outage `
+        + 'takes the whole tier offline for the duration of the incident.',
+      recommendation: 'Move to a zone-redundant SKU and spread the instance count across at '
+        + 'least two zones in the primary region.',
+    })),
+    modelUsed: 'audit',
+  };
+  const deckCost = {
+    totalMonthly: 18432.55,
+    annual: 221190.6,
+    currency: 'USD',
+    term: 'monthly',
+    region: 'Japan East',
+    pricesAsOf: '2026-08-01',
+    fixedCost: 12100.2,
+    usageCost: 6332.35,
+    byCategory: [
+      { category: 'Compute', cost: 9210.1, percentage: 50 },
+      { category: 'Databases', cost: 4608.14, percentage: 25 },
+      { category: 'Networking', cost: 2764.88, percentage: 15 },
+      { category: 'Storage', cost: 1849.43, percentage: 10 },
+    ],
+    topServices: deckServices.slice(0, 10).map((service, index) => ({
+      serviceName: service.name,
+      cost: 1800 - index * 120,
+      tier: 'Standard',
+      percentage: 10 - index * 0.5,
+    })),
+    regions: [
+      { name: 'Japan East', flag: '🇯🇵', monthly: 18432.55, annual: 221190.6, isCurrent: true },
+      { name: 'Southeast Asia', flag: '🇸🇬', monthly: 17120.4, annual: 205444.8, isCheapest: true },
+      { name: 'West Europe', flag: '🇳🇱', monthly: 19004.11, annual: 228049.32 },
+      { name: 'East US 2', flag: '🇺🇸', monthly: 17988.02, annual: 215856.24 },
+    ],
+  };
   const pptx = await buildArchitectureDeckPptx(PIXEL_PNG, {
     diagramName: 'Contoso Platform',
     author: 'Audit',
@@ -2646,6 +2815,9 @@ async function auditCustomerDeck(scenario: Scenario): Promise<string[]> {
     diagram: { nodes: scenario.nodes, edges: scenario.edges },
     presetIcons: synthesisedIcons(scenario),
     services: deckServices,
+    workflow: deckWorkflow,
+    validation: deckValidation,
+    cost: deckCost,
   });
   const zip = await JSZip.loadAsync((await pptx.write({ outputType: 'nodebuffer' })) as Buffer);
   const presentation = await zip.file('ppt/presentation.xml')!.async('string');
@@ -2763,21 +2935,86 @@ async function auditCustomerDeck(scenario: Scenario): Promise<string[]> {
         const minH = declared ? +declared[1] / EMU_PER_INCH : 0;
         let lines = 1;
         let cell = 0;
+        // The vertical cell insets PowerPoint charges to the row on top of the
+        // text, read from the row's own `tcPr` rather than assumed. Budgeting
+        // only the text is how a table can be measured onto the page and still
+        // print below it.
+        let insetV = 0;
         for (const tc of row[1].matchAll(/<a:tc[\s\S]*?<\/a:tc>/g)) {
           const text = [...tc[0].matchAll(/<a:t>([^<]*)<\/a:t>/g)].map((m) => m[1]).join('');
           const pt = +(/\bsz="(\d+)"/.exec(tc[0])?.[1] ?? 1200) / 100;
           const usable = Math.max(0.5, (cols[cell] ?? cols[0]) - marginIn);
-          if (text) lines = Math.max(lines, Math.ceil(auditTextWidthIn(text, pt) / usable));
+          if (text) lines = Math.max(lines, auditWrappedLines(text, usable, pt));
+          const marT = +(/<a:tcPr[^>]*\bmarT="(\d+)"/.exec(tc[0])?.[1] ?? 45720);
+          const marB = +(/<a:tcPr[^>]*\bmarB="(\d+)"/.exec(tc[0])?.[1] ?? 45720);
+          insetV = Math.max(insetV, (marT + marB) / EMU_PER_INCH);
           cell += 1;
         }
         const pt = +(/\bsz="(\d+)"/.exec(row[1])?.[1] ?? 1200) / 100;
-        total += Math.max(minH, lines * pt * 1.35 / 72);
+        total += Math.max(minH, lines * pt * 1.35 / 72 + insetV);
       }
       if (top + total > BASE_SLIDE_H_IN + 0.01) {
         issues.push(
           `customer deck: slide ${index + 1}'s table wraps to ${total.toFixed(2)}in from y=${top.toFixed(2)}in `
           + `— ${(top + total - BASE_SLIDE_H_IN).toFixed(2)}in of it is below the bottom of the slide`,
         );
+      }
+    }
+  }
+
+  // The same defect one slide over, in a different shape. A prose slide lays
+  // its rows out on a pitch derived from a *count* — `floor(body / minimum)` —
+  // with nothing measuring the words that go in them. The boxes are
+  // `wrap="square"` with no autofit, so a description longer than its row
+  // renders at full size and spills out of both ends of the box, printing over
+  // the row above and the row below. Nothing in the file is out of place; only
+  // the ink is. So measure the ink: wrap each text box's contents at its own
+  // point size and check that the band it paints stays inside the slide and
+  // clear of the next box's.
+  for (const [index, xml] of slides.entries()) {
+    if (xml.includes('name="service-')) continue; // the drawing, laid out by its own planner
+    const painted = parseShapes(xml)
+      .filter((s) => s.text.trim().length > 0 && !s.name.startsWith('connector-'))
+      .map((s) => {
+        const pt = s.fontSize ?? (s.runs[0]?.sizePt ?? 12);
+        const lines = auditWrappedLines(s.text.trim(), Math.max(0.2, s.w - 0.2), pt);
+        const need = lines * pt * 1.35 / 72;
+        const over = Math.max(0, need - s.h);
+        // `anchor="ctr"` grows the block from the middle, so an overflow spills
+        // equally out of the top and the bottom; a top-anchored box spills down.
+        const top = s.anchor === 'ctr' ? s.y - over / 2 : s.y;
+        return { shape: s, top, bottom: top + Math.max(s.h, need), over };
+      });
+    // Off the sheet is off the sheet whether the box overflowed or the row
+    // pitch simply walked past the bottom — both lose the words either way.
+    for (const p of painted) {
+      if (p.bottom > BASE_SLIDE_H_IN + 0.01 || p.top < -0.01) {
+        issues.push(
+          `customer deck: slide ${index + 1} paints "${p.shape.text.trim().slice(0, 32)}" from `
+          + `y=${p.top.toFixed(2)}in to ${p.bottom.toFixed(2)}in — outside the ${BASE_SLIDE_H_IN}in slide`,
+        );
+      }
+    }
+    // Overlap is only conclusive where the type is bigger than the box that
+    // holds it: two boxes may legitimately be stacked, but ink that has spilled
+    // out of its own box and landed on a neighbour's is never a layout.
+    const spilling = painted.filter((p) => p.over > 0.01);
+    for (let i = 0; i < spilling.length; i += 1) {
+      for (let j = i + 1; j < spilling.length; j += 1) {
+        const a = spilling[i];
+        const b = spilling[j];
+        // Only rows that share a column can collide; two captions side by side
+        // in the same band are a layout, not an overlap.
+        const sharesX = a.shape.x < b.shape.x + b.shape.w - 0.02
+          && b.shape.x < a.shape.x + a.shape.w - 0.02;
+        if (!sharesX) continue;
+        const overlap = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top);
+        if (overlap > 0.02) {
+          issues.push(
+            `customer deck: slide ${index + 1} overlaps "${a.shape.text.trim().slice(0, 24)}" and `
+            + `"${b.shape.text.trim().slice(0, 24)}" by ${overlap.toFixed(2)}in of type`,
+          );
+        }
       }
     }
   }
@@ -4969,6 +5206,8 @@ async function main(): Promise<void> {
     shortTileEstateScenario(),
     compactEstateScenario(),
     wrappedInventoryScenario(),
+    tokenWrapInventoryScenario(),
+    longWorkflowScenario(),
     squeezedBadgeScenario(),
     await generatedScenario(), await groupedGeneratedScenario(),
   ];

@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import JSZip from 'jszip';
 import type { Edge, Node } from 'reactflow';
-import { buildDiagramSlidePptx, legibleScaleFor } from '../src/services/pptxExporter.ts';
+import { buildDiagramSlidePptx, legibleScaleFor, tableRowHeightIn, wrappedLineCount } from '../src/services/pptxExporter.ts';
 import { buildExportRoutes, collectExportBoxes } from '../src/services/diagramExportGeometry.ts';
 import { buildVsdxPackage } from '../src/services/visioVsdxExporter.ts';
 
@@ -1600,6 +1600,90 @@ test('the legibility target never exceeds what the renderer will draw', () => {
       );
       assert.ok(scale > 0, `target ${target}px produced a non-positive scale ${scale}`);
     }
+  }
+});
+
+/**
+ * Wrapping is a *count*, not a ratio, and the difference is what puts a row off
+ * the page.
+ *
+ * `ceil(width / box)` assumes text can break anywhere. It can, in CJK and in a
+ * single over-long token, and for those the two agree. Latin prose breaks
+ * between words and abandons the rest of a line when the next word will not
+ * fit, so the ratio is only ever a lower bound — and a table sized from a lower
+ * bound is a table measured onto the page that prints below it.
+ *
+ * Asserted here rather than through an export because no output statistic can
+ * separate the two: the emitted file records the row heights the exporter
+ * chose, so a rule reading them back agrees with whatever it did.
+ */
+test('a wrapped line count is never below the break-anywhere ratio', () => {
+  const EM = 0.54; // the estimator's average Latin advance
+  const samples = [
+    'Azure Kubernetes Service aks001contosoplatformprodeastus2 nodepool001systemsurgeeastus2',
+    'Azure Database for PostgreSQL Flexible Server (Production, Zone Redundant) 17',
+    'contoso-platform-prod-eastus2-aks-system-nodepool-surge',
+    '受信した注文イベントを検証し、重複を排除したうえで下流の在庫サービスに書き込みます',
+    'Short name',
+    '',
+  ];
+  for (const text of samples) {
+    for (const box of [1, 2.5, 3.3, 5, 11.89]) {
+      for (const pt of [7, 9, 10, 12]) {
+        const lines = wrappedLineCount(text, box, pt);
+        assert.ok(Number.isInteger(lines) && lines >= 1, `"${text.slice(0, 20)}" gave ${lines} lines`);
+        let units = 0;
+        for (const ch of text) {
+          units += /[\u2e80-\u9fff\uac00-\ud7af\uff00-\uff60\uffe0-\uffe6]/.test(ch) ? 1 : EM;
+        }
+        const ratio = Math.max(1, Math.ceil((units * pt / 72) / box));
+        assert.ok(
+          lines >= ratio,
+          `"${text.slice(0, 28)}" at ${pt}pt in ${box}in wraps to ${lines} lines, `
+          + `below the ${ratio} that break-anywhere alone requires`,
+        );
+      }
+    }
+  }
+  // The case the ratio actually gets wrong: three runs each over half the
+  // column. Break-anywhere fits 38 characters into two 2in lines at 12pt;
+  // breaking between words cannot, because the second run will not fit after
+  // the first and the rest of that line is abandoned.
+  const tokens = 'aaaaaaaaaaaa bbbbbbbbbbbb cccccccccccc';
+  const ratio = Math.max(1, Math.ceil((tokens.length * EM * 12 / 72) / 2.0));
+  assert.equal(ratio, 2, 'the fixture must be one the break-anywhere ratio calls two lines');
+  assert.equal(
+    wrappedLineCount(tokens, 2.0, 12), 3,
+    'three runs each over half the column take three lines, not the two the ratio predicts',
+  );
+});
+
+/**
+ * A table row is never budgeted at less than its type plus the insets
+ * PowerPoint charges on top of it.
+ *
+ * None of the deck's tables declares autofit, so `<a:tr h>` is a minimum and
+ * every one of them grows to whatever its contents need — text, plus `marT` and
+ * `marB`, which pptxgenjs emits at 0.05in each. Omitting the insets is 0.1in a
+ * row, and a page of rows of that is a page and a half of table.
+ */
+test('a table row budgets its cell insets as well as its type', () => {
+  const COL_W = [5.2, 3.9, 3.53];
+  const INSET_V = 0.1;
+  for (const pt of [7, 9, 10, 12]) {
+    const single = tableRowHeightIn(['Api', 'Compute', '—'], COL_W, pt);
+    assert.ok(
+      single >= pt * 1.35 / 72 + INSET_V - 1e-9,
+      `a one-line row at ${pt}pt was budgeted ${single}in, below its type plus insets`,
+    );
+    const long = 'Azure Database for PostgreSQL Flexible Server (Production, Zone Redundant) 17';
+    const wrapped = tableRowHeightIn([long, 'Databases', 'Data tier'], COL_W, pt);
+    const lines = wrappedLineCount(long, COL_W[0] - 0.2, pt);
+    assert.ok(
+      wrapped >= lines * pt * 1.35 / 72 + INSET_V - 1e-9,
+      `a ${lines}-line row at ${pt}pt was budgeted ${wrapped}in, below its type plus insets`,
+    );
+    assert.ok(wrapped >= single, 'a wrapped row is never shorter than a single-line row');
   }
 });
 
