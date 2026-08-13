@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { widestGlyphIn, estimateTextWidthIn } from '../src/services/pptxExporter.ts';
-import { hasMeasuredAdvance, advanceTier, drawableInColumn, advanceWidthIn, widestGlyphUpperIn, widestGlyphIn as widestGlyphLowerIn, hasMeasuredCluster } from '../src/services/diagramExportGeometry.ts';
+import { hasMeasuredAdvance, advanceTier, drawableInColumn, advanceWidthIn, widestGlyphUpperIn, widestGlyphIn as widestGlyphLowerIn, hasMeasuredCluster, fitLabelToWidth } from '../src/services/diagramExportGeometry.ts';
 
 /**
  * Real advances for Yu Gothic UI, in em, measured from the installed font with
@@ -472,3 +472,91 @@ test('a variation selector promotes only a base the emoji font can draw', () => 
     assert.ok(Math.abs(advanceWidthIn(`${base}\ufe0f`, 72) - EMOJI_EM) < 1e-9);
   }
 });
+
+test('the same visible name costs the same composed and decomposed', () => {
+  // A combining mark carries no advance: it is drawn over the letter before it.
+  // Both width models summed a cluster's code points, so the decomposed
+  // spelling of a name that draws identically was billed up to 16.2% wider -
+  // and because BOTH models made the same mistake, the gate's divergence rule
+  // agreed with the exporter and stayed silent. NFD is not exotic: it is what
+  // macOS filenames, Finder paths and many clipboards hand over.
+  const names = [
+    'Réseau privé partagé',
+    'Passerelle sécurisée données clés partagées',
+    'Ingestión de datos años atrás',
+    'Contoso Zahlungsverkehr Prüfung München',
+  ];
+  for (const name of names) {
+    const composed = advanceWidthIn(name.normalize('NFC'), 72);
+    const decomposed = advanceWidthIn(name.normalize('NFD'), 72);
+    assert.ok(
+      Math.abs(composed - decomposed) < 1e-9,
+      `"${name}" costs ${decomposed.toFixed(4)} decomposed against ${composed.toFixed(4)} composed`,
+    );
+  }
+});
+
+test('a spacing combining mark still costs its width', () => {
+  // Mn and Me only, never Mc. A Devanagari matra is drawn BESIDE its base and
+  // does take width; charging it nothing would understate the name, which is
+  // the direction that paints outside the tile.
+  const bare = '\u0915';
+  const withMatra = '\u0915\u093e';
+  assert.ok(
+    advanceWidthIn(withMatra, 72) > advanceWidthIn(bare, 72),
+    'a spacing matra was charged nothing',
+  );
+});
+
+test('a byte order mark is not whitespace', () => {
+  // U+FEFF is a member of JavaScript's own \s class, so a whitespace-first
+  // ordering charged an invisible character a full space. Both models had the
+  // identical ordering, so again neither could see it.
+  assert.ok(
+    Math.abs(advanceWidthIn('ab\ufeffcd', 72) - advanceWidthIn('abcd', 72)) < 1e-9,
+    'a byte order mark bought width',
+  );
+});
+
+test('a subdivision flag is one glyph, not seven', () => {
+  // A tag sequence carries no joiner, so every clause that keeps a sequence
+  // together missed it and all six TAG code points were charged the astral
+  // face on top of the base flag: +600% for one drawn glyph.
+  const flag = '\u{1f3f4}\u{e0067}\u{e0062}\u{e0073}\u{e0063}\u{e0074}\u{e007f}';
+  const plain = '\u{1f3f4}';
+  assert.ok(
+    Math.abs(advanceWidthIn(flag, 72) - advanceWidthIn(plain, 72)) < 1e-9,
+    `the Scottish flag costs ${advanceWidthIn(flag, 72).toFixed(4)} against `
+    + `${advanceWidthIn(plain, 72).toFixed(4)} for the black flag it draws as`,
+  );
+});
+
+test('truncation never strands an accent on the ellipsis', () => {
+  // Over-charging does not merely mis-measure a name, it CUTS it, and a cut
+  // between a letter and its accent does not lose the accent - it MOVES it
+  // onto whatever now precedes it. The deck printed an acute stacked on the
+  // ellipsis and nothing could see it, because every code point was still
+  // there and every one of them had been priced.
+  const marks = /[\p{Mn}\p{Me}]/u;
+  const names = [
+    'Réplication accélérée déléguée américaine réservée',
+    'Réseau privé sécurisé européen partagé',
+    'Contrôleur délégué prééminent',
+    'Ingestión de datos años atrás en la región',
+  ].map((name) => name.normalize('NFD'));
+  for (const name of names) {
+    for (let widthIn = 0.2; widthIn <= 3; widthIn += 0.01) {
+      const drawn = fitLabelToWidth(name, widthIn, 9 / 72);
+      const points = [...drawn];
+      for (const [i, point] of points.entries()) {
+        if (!marks.test(point)) continue;
+        const before = i === 0 ? '' : points[i - 1];
+        assert.ok(
+          before !== '' && before !== '\u2026' && !/\s/.test(before),
+          `at ${widthIn.toFixed(2)}in the deck draws ${JSON.stringify(drawn)}`,
+        );
+      }
+    }
+  }
+});
+

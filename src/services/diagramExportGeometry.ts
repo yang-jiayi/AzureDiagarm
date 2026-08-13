@@ -1034,6 +1034,28 @@ const GEOMETRY_EMOJI_BMP_RE = /[\u203c\u2049\u2122\u2139\u2194-\u21aa\u231a\u231
 /** Keycap bases: the one non-emoji character class VS16 legitimately promotes. */
 const GEOMETRY_KEYCAP_RE = /[0-9#*]/;
 
+/**
+ * A mark that is drawn ON the letter before it rather than beside it.
+ *
+ * Nothing in this file used to say so, so a decomposed name was billed for
+ * every mark as though it were a glyph of its own. `Intl.Segmenter` was already
+ * being consulted about where the clusters BEGIN and then ignored about what
+ * they COST, which is the same defect that the transcribed cluster walk had -
+ * one level further down. NFC "Réseau privé partagé" came out 9.2760 em and the
+ * NFD spelling of the same visible name 10.7760 em, 16.2% more, for text that
+ * is drawn identically.
+ *
+ * Mn and Me only. A spacing combining mark (Mc) - a Devanagari matra, say - is
+ * drawn beside its consonant and does take width, and charging it nothing would
+ * under-state the name, which is the direction that paints outside the box.
+ *
+ * TAG characters are the same argument from the other end: a flag such as the
+ * one for Scotland is a base plus six invisible tags plus a terminator, and
+ * because a tag sequence carries no joiner the cluster walk charged each of the
+ * seven the astral fallback and made one glyph 600% over.
+ */
+const GEOMETRY_COMBINING_RE = /[\p{Mn}\p{Me}]|[\u{E0020}-\u{E007F}]/u;
+
 /** Can this code point be part of an emoji cluster at all? */
 function emojiCapable(character: string): boolean {
   const code = character.codePointAt(0) ?? 0;
@@ -1130,13 +1152,18 @@ export function hasMeasuredAdvance(character: string): boolean {
  */
 export function advanceEm(character: string): number {
   const code = character.codePointAt(0) ?? 0;
+  // ZERO WIDTH BEFORE WHITESPACE. U+FEFF is in JavaScript's own `\s` class, so
+  // asking about whitespace first charged a byte order mark the width of a
+  // space - 0.274 em of ink for a character that draws nothing - and the absorb
+  // clause in `advanceClusters` is guarded on `em === 0`, so it could not take
+  // the mark into the cluster before it either.
+  if (GEOMETRY_ZERO_WIDTH_RE.test(character) || GEOMETRY_COMBINING_RE.test(character)) return 0;
   // Whitespace before anything else, but the TABLE before the flat width:
   // U+2000 upward, a space is a typographic quantity with a size of its own -
   // an en space is half an em and an em space is a whole one - and charging
   // every one of them the 0.274 em of a plain space under-stated an em space
   // by 265%, which is the direction that paints a line out past its box.
   if (/\s/.test(character)) return GEOMETRY_MEASURED_EM.get(code) ?? GEOMETRY_SPACE_EM;
-  if (GEOMETRY_ZERO_WIDTH_RE.test(character)) return 0;
   if (GEOMETRY_CJK_RE.test(character)) return 1;
   const extra = GEOMETRY_EXTRA_EM[character];
   if (extra !== undefined) return extra;
@@ -1258,7 +1285,8 @@ function advanceClusters(text: string): Array<{ text: string; em: number; measur
     // A zero-width code point that joins nothing - a lone selector, a combining
     // mark opening a string - still belongs to the cluster it modifies rather
     // than standing alone, but there is nothing before it to attach to.
-    if (em === 0 && last && GEOMETRY_ZERO_WIDTH_RE.test(character)) {
+    if (em === 0 && last
+      && (GEOMETRY_ZERO_WIDTH_RE.test(character) || GEOMETRY_COMBINING_RE.test(character))) {
       last.text += character;
       continue;
     }
@@ -1413,6 +1441,13 @@ export function truncateLabel(text: string, maxWidth: number): string {
 export function labelInkWidthIn(text: string, fontSizeIn: number): number {
   let units = 0;
   for (const character of text) {
+    // A combining mark is drawn on the letter before it and a joiner or a
+    // selector is drawn not at all, so neither is a cell. Counting them as
+    // 0.54 em made the decomposed spelling of a name wider than the composed
+    // one, and it is this width that decides how much of it survives: the same
+    // visible name was cut five characters shorter in NFD, and on a 52x26 tile
+    // it was dropped for a numeric key while the NFC spelling still fitted.
+    if (GEOMETRY_ZERO_WIDTH_RE.test(character) || GEOMETRY_COMBINING_RE.test(character)) continue;
     units += /[\u2e80-\u9fff\uac00-\ud7af\uff00-\uff60\uffe0-\uffe6]/.test(character) ? 1 : 0.54;
   }
   return units * fontSizeIn;
@@ -1438,7 +1473,13 @@ export function fitLabelToWidth(rawText: string, widthIn: number, fontSizeIn: nu
   if (labelInkWidthIn(text, fontSizeIn) <= widthIn) return text;
   const budget = widthIn - labelInkWidthIn('…', fontSizeIn);
   if (budget <= 0) return '…';
-  const chars = [...text];
+  // CUT ON CLUSTER BOUNDARIES, not on code points. A decomposed name is a base
+  // letter followed by its accent, and a cut between the two leaves the accent
+  // stranded on whatever comes next: the same visible name in NFC and in NFD
+  // gave "Passer…ées" and "Passer…́es" on a 60x30 tile, the second an acute
+  // stacked on the ellipsis. Devanagari, Hangul jamo and every emoji cluster
+  // break the same way.
+  const chars = advanceClusters(text).map((cluster) => cluster.text);
   // Keep the end as well as the beginning. Service names are overwhelmingly
   // "<vendor> <family> <qualifier>", so the characters that tell two of them
   // apart are the last ones: cut only from the right and a slide of twenty
@@ -1460,8 +1501,7 @@ export function fitLabelToWidth(rawText: string, widthIn: number, fontSizeIn: nu
     head += character;
   }
   head = head.trimEnd();
-  if (!head) return tail ? `…${tail}` : '…';
-  return `${head}…${tail}`;
+  if (!head) return tail ? `…${tail}` : '…';  return `${head}…${tail}`;
 }
 
 /**

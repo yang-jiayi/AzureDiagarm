@@ -352,6 +352,17 @@ const AUDIT_EMOJI_BMP_RE = /[\u203c\u2049\u2122\u2139\u2194-\u21aa\u231a\u231b\u
 /** Unicode's own grapheme breaker, which is not this file's opinion about text. */
 const AUDIT_GRAPHEMES = new Intl.Segmenter('en', { granularity: 'grapheme' });
 
+/**
+ * Drawn ON the code point before it, so it adds nothing to the run's advance.
+ *
+ * Asked of Unicode's general category rather than of a list, because the point
+ * of this side of the gate is to reach an answer the exporter's tables were not
+ * consulted about. Mn and Me are non-spacing and enclosing; a spacing mark (Mc)
+ * is drawn beside its base and is charged. TAG characters are invisible by
+ * definition and terminate a flag sequence.
+ */
+const AUDIT_COMBINING_RE = /[\p{Mn}\p{Me}]|[\u{E0020}-\u{E007F}]/u;
+
 /** Can this code point be part of an emoji cluster at all? */
 function auditEmojiCapable(character: string): boolean {
   const code = character.codePointAt(0) ?? 0;
@@ -401,6 +412,14 @@ function auditClusters(text: string): Array<{ text: string; em: number; measured
     let em = 0;
     let measured = true;
     for (const point of points) {
+      // A COMBINING MARK IS NOT A GLYPH. ICU was already being asked where the
+      // clusters begin and then ignored about what they cost, so the same
+      // visible name spelled in NFD was billed for every accent as though it
+      // stood on its own: "Réseau privé partagé" measured 16.2% wider
+      // decomposed than composed. Both models made the identical mistake, which
+      // is why the divergence rule could not see it - a second implementation
+      // that shares the first's pricing model is not a second opinion.
+      if (AUDIT_COMBINING_RE.test(point)) continue;
       em += measuredAdvanceEm(point);
       if (!hasAuditAdvance(point)) measured = false;
     }
@@ -443,8 +462,13 @@ function hasAuditAdvance(character: string): boolean {
  */
 function measuredAdvanceEm(character: string): number {
   const code = character.codePointAt(0) ?? 0;
-  if (/\s/.test(character)) return AUDIT_MEASURED_EM.get(code) ?? AUDIT_SPACE_EM;
+  // ZERO WIDTH IS TESTED FIRST, and the order is the whole point. U+FEFF is a
+  // member of JavaScript's own \s class, so asking "is it whitespace?" first
+  // answered yes for a character that has no advance at all and charged a byte
+  // order mark a full space. A BOM is what a UTF-8 file pasted into a name
+  // brings with it, it is invisible on the slide, and it was buying width.
   if (/[\u200b-\u200f\u2060\ufe00-\ufe0f\ufeff]/.test(character)) return 0;
+  if (/\s/.test(character)) return AUDIT_MEASURED_EM.get(code) ?? AUDIT_SPACE_EM;
   if (/[\u2e80-\u9fff\uac00-\ud7af\uff00-\uff60\uffe0-\uffe6]/.test(character)) return 1;
   const extra = YU_GOTHIC_EXTRA_EM[character];
   if (extra !== undefined) return extra;
@@ -1830,6 +1854,16 @@ function emojiClusterScenario(): Scenario {
     // emoji to select. All three were charged the emoji face.
     'Contoso\u2060Platform\u2060ingest\u2060relay\u2060service\u2060tier',
     'Archive\ufe0f tier\ufe0f rotation\ufe0f service',
+    // A subdivision flag carries no joiner at all: it is a base flag followed
+    // by six TAG code points that select "gbsct". Every clause that keeps a
+    // sequence together looked for a joiner, so all seven were billed at the
+    // astral face and one glyph cost seven - the name measured 600% wide and
+    // the deck reserved a strip for it that nothing was ever drawn into.
+    'Region \u{1f3f4}\u{e0067}\u{e0062}\u{e0073}\u{e0063}\u{e0074}\u{e007f} standby',
+    // A byte order mark pasted in from a UTF-8 file. It is zero width, but it
+    // is also inside JavaScript's own \s class, so the whitespace test claimed
+    // it first and charged it a space.
+    'Contoso\ufeff ingest\ufeff relay tier',
   ];
   const nodes: Node[] = names.map((label, i) => ({
     id: `ec${i}`,
@@ -2145,6 +2179,72 @@ function bandFillScenario(): Scenario {
     data: { stepNumber: i + 1, stepDescription: `${i + 1}. Step ${description}` },
   })) as unknown as Edge[];
   return { id: 'probe-band-fill', nodes, edges };
+}
+
+/**
+ * The same visible names, spelled composed and decomposed.
+ *
+ * NFD is not exotic: macOS-authored input, Finder filenames and many clipboard
+ * paths are decomposed by default, and the corpus was entirely Windows-authored
+ * NFC, which is exactly why this was never seen. Both width models charged a
+ * combining mark as though it were a glyph, so "Passerelle securisee" cost
+ * 13.7% more decomposed than composed for text that draws identically - and
+ * because BOTH models made the same mistake the divergence rule was silent and
+ * the coverage rule was satisfied.
+ *
+ * The tiles are small on purpose. Over-charging does not merely mis-measure a
+ * name, it CUTS it: at 60x30 the decomposed spelling was five characters
+ * shorter than the composed one and the cut landed between a letter and its
+ * accent, printing an acute stacked on the ellipsis.
+ */
+function decomposedNameScenario(): Scenario {
+  const icon = '/Azure_Public_Service_Icons/Icons/compute/10029-icon-service-Function-Apps.svg';
+  const names = [
+    'Passerelle sécurisée données clés partagées',
+    'Ingestión de datos años atrás en la región',
+    'Contoso Zahlungsverkehr Prüfung München',
+  ];
+  const labels = names.flatMap((name) => [name.normalize('NFC'), name.normalize('NFD')]);
+  // Four more, decomposed only, at four tile widths. Pricing is one property
+  // and cutting is another: the divergence rule above compares two models
+  // against each other and would stay silent if both were wrong, and a cut
+  // lands wherever the tile happens to be narrow. These names are dense in
+  // accents on purpose, so a code-point cut has nowhere safe to fall.
+  const dense = [
+    'Réplication accélérée déléguée américaine réservée',
+    'Réseau privé sécurisé européen partagé',
+    'Contrôleur délégué prééminent',
+    'Référentiel privé accéléré',
+  ].map((name) => name.normalize('NFD'));
+  const nodes: Node[] = [
+    ...labels.map((label, i) => ({
+      id: `nd${i}`,
+      type: 'azureNode',
+      position: { x: (i % 2) * 220, y: Math.floor(i / 2) * 120 },
+      width: 60,
+      height: 30,
+      data: { label, serviceName: 'Azure Functions', category: 'compute', iconPath: icon },
+    } as unknown as Node)),
+    ...dense.map((label, i) => ({
+      id: `ndd${i}`,
+      type: 'azureNode',
+      position: { x: (i % 2) * 220, y: 380 + Math.floor(i / 2) * 120 },
+      width: [44, 76, 120, 168][i],
+      height: 30,
+      data: { label, serviceName: 'Azure Functions', category: 'compute', iconPath: icon },
+    } as unknown as Node)),
+  ];
+  const edges = [
+    {
+      id: 'nde1', source: 'nd0', target: 'nd1', label: 'réplique',
+      data: { stepNumber: 1, stepDescription: 'La passerelle sécurisée réplique les données vers la région jumelée.'.normalize('NFD') },
+    },
+    {
+      id: 'nde2', source: 'nd2', target: 'nd3', label: 'archiva',
+      data: { stepNumber: 2, stepDescription: 'El proceso archiva la ingestión de años atrás en almacenamiento frío.' },
+    },
+  ] as unknown as Edge[];
+  return { id: 'probe-nfd', nodes, edges };
 }
 
 function briefWorkflowStepsScenario(): Scenario {
@@ -5573,6 +5673,39 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
       + `so one of the two models is wrong about text the reader will see: `
       + [...diverged.entries()].slice(0, 3)
         .map(([run, how]) => `${JSON.stringify(run)} ${how}`).join('; '),
+    );
+  }
+  // AND NO MARK MAY BE LEFT STANDING ON ITS OWN.
+  //
+  // Pricing is one property; cutting is another, and a name is cut by code
+  // point wherever it is too long for its tile. A combining mark carries no
+  // glyph of its own - it is drawn on whatever precedes it - so a cut between a
+  // letter and its accent does not lose an accent, it MOVES it: the decomposed
+  // spelling of "Passerelle securisee ... partagees" came out of a 60x30 tile
+  // as an acute stacked on the ellipsis. Nothing in the deck could see that,
+  // because the string still held every code point the model had priced.
+  //
+  // Asked of what is DRAWN rather than of the truncation routine, so it holds
+  // for every path that shortens a name and for the ones not written yet.
+  const strandedMarks = new Set<string>();
+  for (const slideXml of allSlides) {
+    for (const match of slideXml.matchAll(/<a:t>([\s\S]*?)<\/a:t>/g)) {
+      const run = unescapeXml(match[1]);
+      const points = [...run];
+      for (const [i, point] of points.entries()) {
+        if (!AUDIT_COMBINING_RE.test(point)) continue;
+        const before = i === 0 ? '' : points[i - 1];
+        if (before === '' || before === '\u2026' || /\s/.test(before) || AUDIT_COMBINING_RE.test(before)) {
+          if (before !== '' && AUDIT_COMBINING_RE.test(before)) continue;
+          strandedMarks.add(run.slice(0, 32));
+        }
+      }
+    }
+  }
+  if (strandedMarks.size > 0) {
+    issues.push(
+      `${strandedMarks.size} drawn string(s) put a combining mark on nothing, so it lands on the ellipsis `
+      + `or on the space before it: ${[...strandedMarks].slice(0, 3).map((run) => JSON.stringify(run)).join('; ')}`,
     );
   }
   // The audit ran icon-blind for its whole life: `canRasterize()` is false
@@ -9276,6 +9409,7 @@ async function main(): Promise<void> {
   bimodalWorkflowScenario(),
   bandGapScenario(),
   bandFillScenario(),
+  decomposedNameScenario(),
   collidingStubsScenario(),
   hairlineStubsScenario(),
   emojiClusterScenario(),
@@ -9422,6 +9556,7 @@ main().catch((error) => {
   console.error(error);
   process.exit(1);
 });
+
 
 
 
