@@ -2067,6 +2067,86 @@ function bimodalWorkflowScenario(): Scenario {
   return { id: 'probe-bimodal-workflow', nodes, edges };
 }
 
+/**
+ * A workflow whose connector labels are long enough to change the RESERVATION
+ * without changing the band that is finally drawn.
+ *
+ * The reservation appends every labelled edge's wording to its row, because
+ * whether a label is muted is not decided until the arrows are routed - which
+ * is after the page has been sized. The panel appends it only for the edges
+ * actually muted. So the two are measured over different sentences, and when
+ * the extra wording crosses a line boundary the reservation gains a whole line
+ * per row. Holding everything else fixed and lengthening ONLY the label took
+ * the sheet from 17.09in to 26.39in for a drawing that spans 9.1in, and 4.2in
+ * of the difference was printed as blank paper between the drawing and the
+ * band. Both rules that should have caught it were already correct; nothing in
+ * the corpus reached them.
+ */
+function bandGapScenario(): Scenario {
+  const icon = '/Azure_Public_Service_Icons/Icons/compute/10029-icon-service-Function-Apps.svg';
+  const label = 'hands the settled payload to the downstream reconciliation processor';
+  const description = 'Step validates the payload envelope, resolves the partner tenant against the '
+    + 'corporate directory, writes an immutable audit record, applies the tenant specific throttling '
+    + 'policy, and forwards the request to the downstream settlement processor.';
+  const nodes: Node[] = Array.from({ length: 40 }, (_, i) => ({
+    id: `bg${i}`,
+    type: 'azureNode',
+    position: { x: (i % 8) * 240, y: Math.floor(i / 8) * 200 },
+    width: 150,
+    height: 75,
+    data: { label: `Settlement service ${i}`, serviceName: 'Azure Functions', category: 'compute', iconPath: icon },
+  } as unknown as Node));
+  const edges = Array.from({ length: 30 }, (_, i) => ({
+    id: `bge${i}`,
+    source: `bg${i}`,
+    target: `bg${i + 1}`,
+    label,
+    data: { stepNumber: i + 1, stepDescription: `${i + 1}. ${description}` },
+  })) as unknown as Edge[];
+  return { id: 'probe-band-gap', nodes, edges };
+}
+
+/**
+ * The same defect where SPLITTING CANNOT ABSORB IT.
+ *
+ * `probe-band-gap` is answered by laying the band out in more columns once the
+ * real page width is known, which is the right first answer and shrinks the
+ * sheet from 26.4in to 16.7in. It is not a guarantee: with 79 steps of
+ * 400-character prose the median bound refuses to split any further, so the
+ * whole of the reservation's over-estimate stays in one column and 2.58in of it
+ * was printed as blank paper. The panel filling the height the page reserved
+ * for it is what makes the guarantee structural rather than incidental, and
+ * this is the fixture that reaches it.
+ */
+function bandFillScenario(): Scenario {
+  const icon = '/Azure_Public_Service_Icons/Icons/compute/10029-icon-service-Function-Apps.svg';
+  const label = 'hands the settled payload to the downstream reconciliation and dispute '
+    + 'resolution processor for the tenant of record for the settlement window';
+  const description = 'validates the payload envelope, resolves the partner tenant against the '
+    + 'corporate directory, writes an immutable audit record, applies the tenant specific throttling '
+    + 'policy, forwards the request to the downstream settlement processor over a private endpoint, '
+    + 'and acknowledges the original caller once the ledger has been written, after which the '
+    + 'reconciliation job compares the settled totals against the ledger of record, raises a variance '
+    + 'alert when the two disagree by more than the agreed tolerance, and archives the matched batch '
+    + 'to cold storage under the retention schedule the compliance team publishes each quarter.';
+  const nodes: Node[] = Array.from({ length: 80 }, (_, i) => ({
+    id: `bf${i}`,
+    type: 'azureNode',
+    position: { x: (i % 10) * 240, y: Math.floor(i / 10) * 200 },
+    width: 150,
+    height: 75,
+    data: { label: `Ledger service ${i}`, serviceName: 'Azure Functions', category: 'compute', iconPath: icon },
+  } as unknown as Node));
+  const edges = Array.from({ length: 79 }, (_, i) => ({
+    id: `bfe${i}`,
+    source: `bf${i}`,
+    target: `bf${i + 1}`,
+    label,
+    data: { stepNumber: i + 1, stepDescription: `${i + 1}. Step ${description}` },
+  })) as unknown as Edge[];
+  return { id: 'probe-band-fill', nodes, edges };
+}
+
 function briefWorkflowStepsScenario(): Scenario {
   const icon = '/Azure_Public_Service_Icons/Icons/compute/10029-icon-service-Function-Apps.svg';
   const nodes: Node[] = Array.from({ length: 13 }, (_, i) => ({
@@ -9194,6 +9274,8 @@ async function main(): Promise<void> {
   shrinkableIndexRowsScenario(),
   mixedLengthIndexScenario(),
   bimodalWorkflowScenario(),
+  bandGapScenario(),
+  bandFillScenario(),
   collidingStubsScenario(),
   hairlineStubsScenario(),
   emojiClusterScenario(),

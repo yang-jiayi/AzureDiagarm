@@ -1427,13 +1427,38 @@ function buildWorkflowPanel(
   topY: number,
   width: number,
   columns = 1,
+  minHeightIn = 0,
 ): { shapes: string[]; nextId: number } {
   const shapes: string[] = [];
   let id = startId;
   const cols = Math.max(1, columns);
   const perColumn = Math.ceil(entries.length / cols);
   const colW = width / cols;
-  const boxH = workflowStackIn(entries, cols, colW) + 0.34;
+  // THE PANEL FILLS WHAT THE PAGE RESERVED FOR IT.
+  //
+  // The reservation counts every labelled edge as though its wording will be
+  // handed to the row, because whether a label is muted is not decided until
+  // the arrows are routed - which happens after the page has been sized. The
+  // panel appends the wording only for the edges actually muted. So the two are
+  // measured over different sentences and the reservation is the larger by
+  // construction; the difference is not slack the drawing can have back,
+  // because the drawing was already fitted against the reservation.
+  //
+  // Left alone, that difference came out as a hole in the middle of the sheet.
+  // Lengthening ONLY the connector label - same nodes, same steps, same
+  // descriptions - took a 40-service sheet from 17.09in to 26.39in for a
+  // drawing spanning 9.11in, and 3.51in of it was blank paper between the
+  // drawing and the band.
+  const naturalH = workflowStackIn(entries, cols, colW) + 0.34;
+  const boxH = Math.max(naturalH, minHeightIn);
+  // Spread as LEADING BETWEEN ROWS, never as a margin under the last one. A
+  // deeper empty footer is the same defect moved indoors, and the audit says so
+  // ("the workflow band reserves Xin below its last row"). Charged against the
+  // tallest column, which is the one that sets `boxH`, so that column still
+  // finishes flush with the bottom of the panel and the shorter columns keep
+  // the ragged bottom they already had.
+  const rowsInTallest = Math.max(1, Math.min(perColumn, entries.length));
+  const leadIn = Math.max(0, boxH - naturalH) / rowsInTallest;
   const originY = topY - boxH;
   shapes.push(`    <Shape ID="${id++}" NameU="Workflow.${startId}" Type="Shape" LineStyle="0" FillStyle="0" TextStyle="0">
       <Cell N="PinX" V="${f(originX + width / 2)}"/>
@@ -1457,7 +1482,7 @@ ${roundedRectGeometry()}
   const cursor = new Array(cols).fill(0);
   entries.forEach((entry, index) => {
     const column = Math.min(cols - 1, Math.floor(index / perColumn));
-    const rowH = workflowRowHeightIn(entry.description, colW);
+    const rowH = workflowRowHeightIn(entry.description, colW) + leadIn;
     const rowTop = originY + boxH - 0.34 - cursor[column];
     cursor[column] += rowH;
     const colX = originX + column * colW;
@@ -1696,26 +1721,66 @@ export async function buildVsdxPackage(
   // and 1.30in of the page it reserved was printed as blank paper. What the
   // split owns is the DIFFERENCE it makes, which is what this measures - and
   // it is the same test the audit applies to the emitted sheet.
-  const admissibleColumns = (() => {
+  // HOW MANY COLUMNS THE PROSE WILL STAND, asked at the width the band is being
+  // measured for. This used to be decided ONCE, at the reserve width, and for
+  // a good reason: the reservation pass runs at the narrowest page the exporter
+  // emits while the layout pass runs at the real one, a narrow page allows
+  // fewer columns and so reserves a taller band than the wide page goes on to
+  // draw, and that difference was printed as blank paper between the drawing
+  // and the band - 1.30in of it.
+  //
+  // That failure mode no longer exists. The panel is now handed the height the
+  // page reserved and fills it (see `workflowBandIn` below), so a reservation
+  // larger than the drawn stack is leading between rows, never a hole. Pinning
+  // the set to the narrow page therefore bought nothing and cost a great deal:
+  // an 11in page allows 2 columns of 5.15in, which the median bound refuses, so
+  // a 20.26in sheet that could have carried two 7.5in columns was held to one
+  // and its band came out 15.05in tall for a drawing spanning 9.11in.
+  //
+  // A COLUMN TOO NARROW TO READ IS NOT A SHORTER BAND, IT IS A LOST SENTENCE.
+  // The minimiser scores nothing but stack height, and with brief descriptions
+  // the height falls monotonically in the column count, so it took the cap
+  // every time: twelve two-syllable steps were set in columns 0.8583in wide,
+  // leaving 0.2583in of text column - about two characters. Splitting has to
+  // stop while the sentence is still a sentence.
+  //
+  // And the same bound asked the other way. A wide column can still shred long
+  // prose into ribbons, which the width test cannot see and the height score
+  // actively rewards.
+  //
+  // RELATIVE to what one column would have set, not an absolute three. An
+  // 800-character sentence takes six lines in the widest column this page has
+  // to give, so an absolute bound accuses the split of damage the prose did:
+  // it refused to split at all, the band came out 2.98in tall in one column,
+  // and 1.30in of the page it reserved was printed as blank paper. What the
+  // split owns is the DIFFERENCE it makes, which is what this measures - and
+  // it is the same test the audit applies to the emitted sheet.
+  //
+  // The unsplit reference stays at MIN_PAGE_W_IN because it is a READING
+  // MEASURE, not a page measure: `workflowPanelWidthIn(w, 1)` is capped at
+  // 7.5in for every page at or above 8.2in, so it is the same 7.5in column on
+  // both passes and the bound means the same thing on both.
+  const admissibleColumnsAt = (widthIn: number): number => {
     const unsplitColW = workflowPanelWidthIn(MIN_PAGE_W_IN, 1);
     const unsplit = workflowMedianLines(reservedEntries, unsplitColW);
     const bound = Math.max(MAX_WORKFLOW_MEDIAN_LINES, unsplit);
     let last = 1;
     for (let cols = 2; cols <= MAX_WORKFLOW_COLUMNS; cols += 1) {
-      const colW = workflowPanelWidthIn(MIN_PAGE_W_IN, cols) / cols;
+      const colW = workflowPanelWidthIn(widthIn, cols) / cols;
       if (colW < MIN_WORKFLOW_COL_IN) break;
       if (workflowMedianLines(reservedEntries, colW) > bound) break;
       if (workflowTailShredded(reservedEntries, colW, unsplitColW, WORKFLOW_TAIL_MULTIPLE)) break;
       last = cols;
     }
     return last;
-  })();
+  };
   const bandFor = (widthIn: number): { columns: number; height: number } => {
     if (workflowEntries.length === 0) return { columns: 1, height: 0 };
+    const admissible = admissibleColumnsAt(widthIn);
     let columns = 1;
     let shortest = stackFor(1, widthIn);
     if (shortest > bandTargetIn) {
-      for (let cols = 2; cols <= admissibleColumns; cols += 1) {
+      for (let cols = 2; cols <= admissible; cols += 1) {
         const height = stackFor(cols, widthIn);
         if (height < shortest) {
           shortest = height;
@@ -1840,9 +1905,17 @@ export async function buildVsdxPackage(
   //
   // Sizing the page down to the drawn panel instead is the wrong direction: it
   // puts the drawing where the reservation used to be, and on 29 scenarios the
-  // opaque band was then painted straight over the service tiles. So the slack
-  // stays inside the furniture, where it is a slightly deeper white panel
-  // rather than a gap in the middle of the page.
+  // opaque band was then painted straight over the service tiles. It cannot be
+  // made to work, either, because the drawn panel's own height is not known
+  // here - `mutedWording` is filled in during label placement, which needs the
+  // page height this line is computing.
+  //
+  // So the panel is handed this height and spreads the difference as LEADING
+  // BETWEEN ITS ROWS. Not as a deeper footer: that is the same hole moved
+  // indoors and the audit rejects it by name. Holding a 40-service sheet fixed
+  // and lengthening only the connector label used to take it from 17.09in to
+  // 26.39in for a drawing spanning 9.11in, with 3.51in of blank paper in the
+  // middle of it.
   const workflowBandIn = refined.height;
   const pageHeightIn = f(Math.max(contentHIn + PAGE_PADDING_IN * 2 + workflowBandIn + legendBandIn, MIN_PAGE_H_IN));
 
@@ -2138,7 +2211,26 @@ export async function buildVsdxPackage(
   const furnitureRects: Array<{ x: number; y: number; w: number; h: number }> = [];
   if (workflowEntries.length > 0) {
     const bandW = workflowPanelWidthIn(pageWidthIn, workflowColumns);
-    furnitureRects.push({ x: 0.35, y: pageHeightIn - 0.2 - workflowBandIn, w: bandW, h: workflowBandIn });
+    // A LABEL THAT GRAZES THE PANEL IS UNDER IT. The panel used to be drawn at
+    // its own natural height and the strip avoided here is the reservation, so
+    // there was accidental clearance between the two and a label parked flush
+    // under the strip still came out on clear paper. The panel now fills the
+    // reservation, so that slack is gone and flush means covered: `outlier`
+    // put "Managed identity" exactly on the boundary. The clearance has to be
+    // asked for rather than inherited from a sizing bug.
+    //
+    // A HAIR OF IT, not a line of type. Widening the avoided strip by a full
+    // line pitch is not a clearance, it is a smaller page: the search reads the
+    // strip as blocked, the ladder is judged stuck, and five sentences that had
+    // clear paper beside them were muted into the band instead of being drawn
+    // where they belong.
+    const clear = 0.05;
+    furnitureRects.push({
+      x: 0.35,
+      y: pageHeightIn - 0.2 - workflowBandIn - clear,
+      w: bandW,
+      h: workflowBandIn + clear,
+    });
   }
   if (legendEntries.length > 0) {
     furnitureRects.push({ x: 0.35, y: 0.35, w: 2.4, h: 0.24 * legendEntries.length + 0.34 });
@@ -2863,6 +2955,10 @@ export async function buildVsdxPackage(
       // more columns need proportionally more of the sheet, bounded by it.
       workflowPanelWidthIn(pageWidthIn, workflowColumns),
       workflowColumns,
+      // The page was sized and the drawing was offset from `workflowBandIn`, so
+      // that is the height this panel has to occupy - not the height its own
+      // rows happen to need.
+      workflowBandIn,
     );
     nextId = panel.nextId;
     shapes.push(...panel.shapes);
@@ -2925,5 +3021,6 @@ export async function buildVsdxBlob(
     compression: 'DEFLATE',
   });
 }
+
 
 

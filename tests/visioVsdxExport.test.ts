@@ -986,3 +986,60 @@ test('two differently-named services never draw the same string', async () => {
       + 'so neither the tiles nor their index rows can be told apart');
   }
 });
+
+/**
+ * THE SHEET MUST NOT GROW BECAUSE A CONNECTOR LABEL GREW.
+ *
+ * The band reserves page from `reservedEntries`, which appends every labelled
+ * edge's wording to its row because whether a label will be muted is not
+ * decided until the arrows are routed - and that is after the page has been
+ * sized. So a longer label buys a taller reservation whether or not a single
+ * label is finally muted, and the page is sized from the reservation.
+ *
+ * Holding the nodes, the steps and the descriptions fixed and changing ONLY
+ * the label took a 40-service sheet from 17.09in to 26.39in - 54% more paper
+ * for a drawing that spans 9.11in either way, with 3.51in of the difference
+ * printed as blank paper between the drawing and the band.
+ *
+ * A DIFFERENTIAL, deliberately. Any check that recomputes the right band
+ * height here would be the exporter's own arithmetic written twice, and two
+ * copies of one walk agree on every input including the ones it gets wrong.
+ * What the label is allowed to change is the question, and it is answerable
+ * without knowing how the band is laid out at all.
+ */
+test('a longer connector label does not inflate the Visio sheet', async () => {
+  const description = 'Step validates the payload envelope, resolves the partner tenant against the '
+    + 'corporate directory, writes an immutable audit record, applies the tenant specific throttling '
+    + 'policy, and forwards the request to the downstream settlement processor.';
+  const sheetFor = async (label: string): Promise<number> => {
+    const nodes = Array.from({ length: 40 }, (_, i) => ({
+      id: `bg${i}`,
+      type: 'azureNode',
+      position: { x: (i % 8) * 240, y: Math.floor(i / 8) * 200 },
+      width: 150,
+      height: 75,
+      data: { label: `Settlement service ${i}`, serviceName: 'Azure Functions', category: 'compute' },
+    } as unknown as Node));
+    const edges = Array.from({ length: 30 }, (_, i) => ({
+      id: `bge${i}`,
+      source: `bg${i}`,
+      target: `bg${i + 1}`,
+      label,
+      data: { stepNumber: i + 1, stepDescription: `${i + 1}. ${description}` },
+    } as unknown as Edge));
+    const pkg = await buildVsdxPackage(nodes, edges, 'Contoso Platform', new Map());
+    return pkg.pageHeightIn;
+  };
+
+  const terse = await sheetFor('hop');
+  const verbose = await sheetFor('hands the settled payload to the downstream reconciliation processor');
+  const longer = await sheetFor(
+    'hands the settled payload to the downstream reconciliation and dispute resolution processor for the tenant',
+  );
+  for (const [name, taller] of [['verbose', verbose], ['longer', longer]] as const) {
+    assert.ok(taller <= terse * 1.2,
+      `the ${name} connector label took the sheet from ${terse.toFixed(2)}in to ${taller.toFixed(2)}in `
+      + '- the same 40 services, the same 30 steps and the same descriptions, so the extra paper is '
+      + 'reservation the band will not draw into');
+  }
+});
