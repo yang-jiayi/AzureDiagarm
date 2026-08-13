@@ -414,6 +414,60 @@ const WORKFLOW_MIN_PT = 9;
 const SPOILED_CHIP_SQ_IN = 0.015;
 
 /**
+ * Whether a chip at `block` stands on something the reader needs — a name, a
+ * numbered callout, or a service that is not at either end of its own arrow.
+ *
+ * One implementation, called from every place a chip is seated. It used to be
+ * written inline at the first seat only, and the two repair passes that move a
+ * chip afterwards re-ran the placement search without it: a chip rejected for
+ * covering a caption could be moved onto a different caption and kept, because
+ * the only thing the repair asked about the new seat was whether it hit
+ * another chip. That is how a chip came to cover 32% of a tile name on a slide
+ * whose first-pass placement had been correctly refused.
+ *
+ * A chip standing on a service that is not at either end of its own arrow is
+ * the same failure by a different route: the reader takes it for that
+ * service's caption and the hop it actually describes goes unlabelled. The
+ * walk cannot always avoid it — on `meta-subline` and `workflow-prose` every
+ * slot within reach laps a bystander, and weighting them twelve times a tile
+ * moved the chip not at all — so the wording is handed to the step list
+ * exactly as it is when a caption is in the way.
+ *
+ * Priced separately and much more loosely than the caption bar. A chip may
+ * brush a bystander's rim; the export audit allows a fiftieth of a tile, so
+ * this bar sits at exactly that and hands the wording over the moment the
+ * drawing would fail the gate. Priced as a FRACTION of the bystander, exactly
+ * as the audit prices it, so the exporter and the gate can never disagree
+ * about what counts as standing on a stranger. A flat area bar cannot match
+ * it: a fiftieth of a small tile and of a large one are different numbers of
+ * square inches, and the difference is what let a 2% lap ship while a 13% one
+ * was muted.
+ */
+function chipSpoils(
+  block: { x: number; y: number; w: number; h: number },
+  route: { sourceId: string; targetId: string; bundleKey: string },
+  obstacles: readonly Obstacle[],
+): boolean {
+  const STRANGER_TILE_FRACTION = 0.02;
+  const ownEnds = new Set([route.sourceId, route.targetId]);
+  let spoiled = 0;
+  let onStrangers = 0;
+  for (const o of obstacles) {
+    const stranger = !o.annotation && !o.caption
+      && o.node !== undefined && !ownEnds.has(o.node);
+    if (!o.annotation && !o.caption && !stranger) continue;
+    if (o.owner !== undefined && o.owner === route.bundleKey) continue;
+    const dx = Math.min(block.x + block.w, o.x + o.w) - Math.max(block.x, o.x);
+    const dy = Math.min(block.y + block.h, o.y + o.h) - Math.max(block.y, o.y);
+    if (dx > 0 && dy > 0) {
+      if (stranger) onStrangers = Math.max(onStrangers, (dx * dy) / Math.max(1e-6, o.w * o.h));
+      else spoiled += dx * dy;
+    }
+  }
+  return spoiled > SPOILED_CHIP_SQ_IN || onStrangers > STRANGER_TILE_FRACTION;
+}
+
+/**
  * Inches-per-pixel worth splitting the drawing to reach, for a `target`-pixel
  * tile in a `frame`-inch window.
  *
@@ -1681,21 +1735,50 @@ function connectorLabelBox(
   // long step along it, and a search that only walks the diagonal steps
   // straight past it onto the next hop's corner.
   if (siblings <= 1) {
-    for (let ring = 1; bestScore > 0 && ring <= 10; ring += 1) {
-      for (let a = -ring; a <= ring && bestScore > 0; a += 1) {
-        for (let b = -ring; b <= ring; b += 1) {
-          if (Math.max(Math.abs(a), Math.abs(b)) !== ring) continue;
-          const candidate = place(stagger + a * (stepOut / 2), b * (w / 2 + 0.06));
-          if (!inReach(candidate) || !attributable(candidate)) continue;
-          const cost = score(candidate);
-          if (cost < bestScore) {
-            best = candidate;
-            bestScore = cost;
+    const alongStep = stepOut / 2;
+    const acrossStep = w / 2 + 0.06;
+    // Far enough to cross the whole drawing. `ring <= 10` was a budget in units
+    // of the chip's own size, which is the same mistake the ladder search made
+    // and had corrected: a chip that has already failed to place is by
+    // definition surrounded, so the clear paper it needs is rarely within ten
+    // of its own widths, and the walk stopped short of it every time. The
+    // ladder's answer works here unchanged — reach set by the page, and a
+    // coarse pass to find the clear region before a fine one finds the point,
+    // because scanning every lattice point out to the far edge is quadratic.
+    const reach = clampTo
+      ? Math.min(48, Math.ceil(Math.max(
+        clampTo.w / Math.max(alongStep, 0.05),
+        clampTo.h / Math.max(acrossStep, 0.05),
+      )))
+      : 10;
+    const rings = Math.max(10, reach);
+    const pass = (stride: number, centreA: number, centreB: number, span: number): void => {
+      const limit = Math.max(1, Math.ceil(span / stride));
+      for (let ring = 1; bestScore > 0 && ring <= limit; ring += 1) {
+        for (let a = -ring; a <= ring && bestScore > 0; a += 1) {
+          for (let b = -ring; b <= ring; b += 1) {
+            if (Math.max(Math.abs(a), Math.abs(b)) !== ring) continue;
+            const candidate = place(
+              stagger + (centreA + a * stride) * alongStep,
+              (centreB + b * stride) * acrossStep,
+            );
+            if (!inReach(candidate) || !attributable(candidate)) continue;
+            const cost = score(candidate);
+            if (cost < bestScore) {
+              best = candidate;
+              bestScore = cost;
+              bestA = centreA + a * stride;
+              bestB = centreB + b * stride;
+            }
+            if (bestScore <= 0) break;
           }
-          if (bestScore <= 0) break;
         }
       }
-    }
+    };
+    let bestA = 0;
+    let bestB = 0;
+    pass(4, 0, 0, rings);
+    if (bestScore > 0) pass(1, bestA, bestB, 4);
   }
   const badge = badgeD > 0
     ? { x: badgeXAt(best), y: badgeYAt(best.x, best.y), d: badgeD }
@@ -2308,9 +2391,20 @@ function addGroupShape(
   occupied?: readonly { x: number; y: number; w: number; h: number }[],
   /** The other zones, which a title may never be written inside. */
   foreign?: readonly { x: number; y: number; w: number; h: number }[],
+  /**
+   * Where the arrow labels want to sit. Not forbidden — merely expensive.
+   *
+   * A caption and a chip are placed by two searches that ran without knowing
+   * about each other, and both prefer the same clear paper: the corridor
+   * between two rows of tiles. The caption is drawn first, so the chip loses,
+   * and the chip has nowhere to fall back to when its route carries no step
+   * number — the wording would simply be gone. Charging the caption for the
+   * corridor lets it step aside while it still has other rows to take, and
+   * lets it stand its ground when it does not.
+   */
   /** Cut names, spelled out in full on the index slide. */
   truncatedNames?: Set<string>,
-): void {
+): { caption: { x: number; y: number; w: number; h: number } } {
   const topLeft = placeBox(box, transform, clampTo, true);
   const w = topLeft.w;
   const h = topLeft.h;
@@ -2339,7 +2433,15 @@ function addGroupShape(
   // name. Every candidate here keeps the title attached to the fragment; the
   // one that covers the fewest tiles wins, and the top-left band still wins
   // outright whenever it is clear, which is every drawing that is not split.
-  const titleW = Math.max(0.4, w - 0.12);
+  // Never wider than the zone it names. `max(0.4, w - 0.12)` gave a 0.30in
+  // zone a 0.40in band: wider than the box it belongs to, hanging over both
+  // neighbours, and no placement could fix it because the geometry made
+  // overlap compulsory — one scaled row of small zones produced 2385 pairs of
+  // captions written across each other. A floor is worth having, but only up
+  // to the zone's own width; past that the band stops naming this zone and
+  // starts naming the one beside it.
+  const titleW = Math.max(Math.min(0.4, w), w - 0.12);
+  const titleX = topLeft.x + (w - titleW) / 2;
   // What the name will actually take, at the pitch the gate measures painted
   // ink with, so the exporter's budget and the gate's check are one number
   // rather than two guesses that happen to agree today.
@@ -2358,7 +2460,7 @@ function addGroupShape(
     : c);
   const top = topLeft.y + 0.04;
   const foot = topLeft.y + h - titleH - 0.04;
-  const part = (share: number): number => Math.max(0.4, w * share - 0.12);
+  const part = (share: number): number => Math.min(titleW, Math.max(0.4, w * share - 0.12));
   // The bands the tiles actually left free, rather than the fractions of the
   // width somebody guessed at. Fixed shares only work while the row has a
   // quarter of itself spare: fill a subnet — which is what a subnet drawn to
@@ -2367,7 +2469,7 @@ function addGroupShape(
   // no legal placement left to choose. Reading the gaps finds the one the
   // author left, wherever it happens to be.
   const runs = (y: number): Array<{ x: number; y: number; w: number }> => {
-    const lo = topLeft.x + 0.06;
+    const lo = Math.min(titleX, topLeft.x + 0.06);
     const hi = topLeft.x + w - 0.06;
     const blockers = (occupied ?? [])
       .filter((t) => t.y < y + titleH && t.y + t.h > y && t.x + t.w > lo && t.x < hi)
@@ -2396,6 +2498,16 @@ function addGroupShape(
   // paper between every pair of tiles took a 0.40in band standing on a tile
   // while 0.86in of clear width sat one row below. The gaps between a zone's
   // own tiles are exactly the rows it has to give, so offer them.
+  //
+  // They are offered free. The corridor between two rows of tiles is also
+  // where the arrows run and where connector chips are seated, so it is
+  // tempting to charge for it — but a surcharge was measured and it costs more
+  // than it saves: it moved no chip off anything in the corpus, and it took a
+  // flush-to-the-top zone's caption from a 9.26in band down to a 1.50in one.
+  // A caption that gives up characters so a chip can keep its first choice has
+  // traded the zone's name for one hop's verb, which is the wrong way round.
+  // Chips are kept off captions on the chip's side instead, by putting the
+  // chosen band into `chipObstacles`.
   const gapRows: number[] = [];
   {
     const mine = (occupied ?? [])
@@ -2410,18 +2522,18 @@ function addGroupShape(
     if (cursor + titleH <= foot && gapRows.length < 4) gapRows.push(cursor);
   }
   const inside = [
-    { x: topLeft.x + 0.06, y: top, w: titleW },
-    { x: topLeft.x + 0.06, y: foot, w: titleW },
-    ...gapRows.map((y) => ({ x: topLeft.x + 0.06, y, w: titleW })),
+    { x: titleX, y: top, w: titleW },
+    { x: titleX, y: foot, w: titleW },
+    ...gapRows.map((y) => ({ x: titleX, y, w: titleW })),
     ...runs(top),
     ...runs(foot),
     ...gapRows.flatMap((y) => runs(y)),
     { x: topLeft.x + w - part(0.5) - 0.06, y: top, w: part(0.5) },
-    { x: topLeft.x + 0.06, y: top, w: part(0.5) },
+    { x: titleX, y: top, w: part(0.5) },
     { x: topLeft.x + w - part(0.34) - 0.06, y: top, w: part(0.34) },
-    { x: topLeft.x + 0.06, y: top, w: part(0.34) },
+    { x: titleX, y: top, w: part(0.34) },
     { x: topLeft.x + w - part(0.34) - 0.06, y: foot, w: part(0.34) },
-    { x: topLeft.x + 0.06, y: foot, w: part(0.34) },
+    { x: titleX, y: foot, w: part(0.34) },
   ];
   // A fragment is the one exception. Its drawn rectangle is not the zone — it
   // is whatever survived the window cut — so there may be no room inside it at
@@ -2429,8 +2541,8 @@ function addGroupShape(
   // is being shown.
   const outside = clipped
     ? [
-      { x: topLeft.x + 0.06, y: topLeft.y - titleH - 0.02, w: titleW },
-      { x: topLeft.x + 0.06, y: topLeft.y + h + 0.02, w: titleW },
+      { x: titleX, y: topLeft.y - titleH - 0.02, w: titleW },
+      { x: titleX, y: topLeft.y + h + 0.02, w: titleW },
     ].filter((c) => !clampTo || (c.y >= clampTo.y && c.y + titleH <= clampTo.y + clampTo.h))
     : [];
   const candidates = [...inside, ...outside].map(fit);
@@ -2495,7 +2607,7 @@ function addGroupShape(
   let rectH = h;
   let bandH = titleH;
   if (best > 0.2) {
-    const lo = topLeft.x + 0.06;
+    const lo = Math.min(titleX, topLeft.x + 0.06);
     const hi = topLeft.x + w - 0.06;
     // How far the box can grow before it meets something, rather than whether
     // a fixed strip happens to be clear. A subnet stack is drawn with its tiers
@@ -2573,6 +2685,19 @@ function addGroupShape(
     }
   }
 
+  // A band narrower than a single character cannot paint a name inside itself.
+  // PowerPoint does not clip a text box, so what it does instead is print the
+  // glyphs straight across the zones on either side — on a row of 480 subnets
+  // scaled to 0.02in each, every caption was written over nine of its
+  // neighbours' and the reader could not tell which box any of them named.
+  // Silence is the honest answer here, and it is not a loss: an undrawable
+  // zone name goes to the index slide by exactly the route a window-clipped
+  // one already takes.
+  const widest = [...caption].reduce((most, ch) => Math.max(most, estimateTextWidthIn(ch, captionSize)), 0);
+  if (caption && widest > title.w + 0.01) {
+    truncatedNames?.add(box.label);
+    return { caption: { x: title.x, y: title.y, w: 0, h: 0 } };
+  }
   slide.addText(caption, {
     x: title.x,
     y: title.y,
@@ -2588,6 +2713,14 @@ function addGroupShape(
     lineSpacingMultiple: 0.9,
     objectName: `zone-label-${box.id}`,
   });
+  // Hand the band back so the chips can keep off it. A zone caption is drawn
+  // first and a chip is drawn last at 92% opacity, so whatever the chip lands
+  // on is simply gone — and until the gaps between a zone's own tiles became
+  // caption rows, the caption always sat in the zone's margins, where chips do
+  // not go, so the collision was structurally rare. It is now the default
+  // shape of the commonest drawing in the corpus: two tiers of tiles with
+  // edges running between them, in the very corridor both want.
+  return { caption: { x: title.x, y: title.y, w: title.w, h: bandH } };
 }
 
 /** Where the colour key lands, so the drawing can keep out from under it. */
@@ -2676,6 +2809,13 @@ async function addEditableDiagram(
    */
   thumbnail = false,
   presetIcons?: Map<string, RasterizedIcon>,
+  /**
+   * Wording promoted out of a chip that had nowhere legible to stand, by the
+   * step number handed to it. Distinct from `mutedWording`: that trades a chip
+   * for a row the author already wrote, while this one has no row at all until
+   * the caller adds it, because the edge carried a label and no step.
+   */
+  promotedSteps: Map<number, string> = new Map(),
 ): Promise<boolean> {
   const frame = fullFrame;
 
@@ -2854,14 +2994,32 @@ async function addEditableDiagram(
     (group) => zoneMembers(group, shownServices) > 0 || zoneMembers(group, services) === 0,
   );
   const placedZones = new Map(drawnGroups.map((group) => [group.id, placeBox(group, transform, clampTo, true)]));
-  drawnGroups.forEach((group) => addGroupShape(
-    pptx, slide, group, groups.indexOf(group), transform, clampTo,
-    { here: zoneMembers(group, shownServices), all: zoneMembers(group, services) },
-    placedTiles,
-    drawnGroups.filter((other) => other !== group).map((other) => placedZones.get(other.id)!),
-    thumbnail ? undefined : truncatedNames,
-  ));
+  // Where each arrow's label wants to sit, sized as the chip that will be put
+  // there. Approximate on purpose: the chips have not been placed yet and
+  // cannot be, since their own search reads the caption bands this call is
+  // about to produce. The anchor is where `connectorLabelBox` starts its walk,
+  // so it is the best available statement of which paper is spoken for.
+
   const captionBands: Obstacle[] = [];
+  drawnGroups.forEach((group) => {
+    const bands = addGroupShape(
+      pptx, slide, group, groups.indexOf(group), transform, clampTo,
+      { here: zoneMembers(group, shownServices), all: zoneMembers(group, services) },
+      // Captions already chosen are paper too. Nested zones are the case:
+      // `trespass` charges for writing inside a foreign zone, but a zone drawn
+      // inside another one is not trespassing, so two captions on the same
+      // rows scored identically and were written 0.09in apart on top of each
+      // other. The list is live and the loop is sequential, so each zone sees
+      // exactly the bands settled before it.
+      [...placedTiles, ...captionBands.map((band) => ({ x: band.x, y: band.y, w: band.w, h: band.h }))],
+      drawnGroups.filter((other) => other !== group).map((other) => placedZones.get(other.id)!),
+      thumbnail ? undefined : truncatedNames,
+    );
+    // A zone caption is worth exactly what a tile caption is worth: it is the
+    // only thing that says what the box contains, and a chip over it is a
+    // wrong claim rather than a blemish.
+    captionBands.push({ ...bands.caption, weight: 60, caption: true });
+  });
   for (const service of shownServices) {
     const bands = addNodeShape(pptx, slide, service, transform, service.iconPath ? icons.get(service.iconPath) : undefined, px, clampTo, thumbnail);
     // The overview is allowed to clip: every name it clips is drawn in full on
@@ -3074,6 +3232,28 @@ async function addEditableDiagram(
   // deletion.
   const narratedRows = new Map(workflowListFromEdges(diagram.edges ?? []).map((entry) => [entry.step, entry.description]));
   const narratedSteps = new Set(narratedRows.keys());
+  // Numbers a labelled-but-unnarrated edge may be promoted into if its chip
+  // turns out to have nowhere legible to stand. Allocated here, from the whole
+  // edge list rather than the routes this slide happens to show, so an edge
+  // gets the same number on the overview as it does on the slice that promotes
+  // it — the deck would otherwise print two different badges for one hop.
+  const promotable = new Map<string, number>();
+  {
+    let next = 0;
+    for (const edge of diagram.edges ?? []) {
+      const step = (edge.data as { stepNumber?: unknown } | undefined)?.stepNumber;
+      if (typeof step === 'number' && Number.isFinite(step)) next = Math.max(next, step);
+    }
+    const waiting = (diagram.edges ?? [])
+      .filter((edge) => {
+        const data = edge.data as { stepNumber?: unknown } | undefined;
+        const step = data?.stepNumber;
+        return !(typeof step === 'number' && Number.isFinite(step));
+      })
+      .map((edge) => edge.id)
+      .sort();
+    waiting.forEach((id, at) => promotable.set(id, next + 1 + at));
+  }
 
   const ownGapFor = (route: ExportRoute): ((x: number, y: number) => number) | undefined => {
     // Its OWN arrow, not its bundle's. A fan is fanned — `parallelOffset`
@@ -3106,47 +3286,33 @@ async function addEditableDiagram(
       // which is exactly the trade `mutedWording` already implements — so make
       // it per route, not only per fan.
       if (box && route.stepNumber !== undefined && narratedSteps.has(route.stepNumber)) {
-        const b = box.block;
-        let spoiled = 0;
-        // A chip standing on a service that is not at either end of its own
-        // arrow is the same failure by a different route: the reader reads it
-        // as that service's caption and the hop it actually describes goes
-        // unlabelled. The walk cannot always avoid it — on `meta-subline` and
-        // `workflow-prose` every slot within reach laps a bystander, and
-        // weighting them twelve times a tile moved the chip not at all — so
-        // the wording is handed to the step list exactly as it is when a
-        // caption is in the way.
-        //
-        // Priced separately and much more loosely than the caption bar above.
-        // A chip may brush a bystander's rim; the export audit allows a
-        // fiftieth of a tile, so this bar sits at exactly that and hands the
-        // wording over the moment the drawing would fail the gate.
-        // Priced as a FRACTION of the bystander, exactly as the export audit
-        // prices it, so the exporter and the gate can never disagree about
-        // what counts as standing on a stranger. A flat area bar cannot match
-        // it: a fiftieth of a small tile and of a large one are different
-        // numbers of square inches, and the difference is what let a 2% lap
-        // ship while a 13% one was muted.
-        const STRANGER_TILE_FRACTION = 0.02;
-        const ownEnds = new Set([route.sourceId, route.targetId]);
-        let onStrangers = 0;
-        for (const o of chipObstacles) {
-          const stranger = !o.annotation && !o.caption
-            && o.node !== undefined && !ownEnds.has(o.node);
-          if (!o.annotation && !o.caption && !stranger) continue;
-          if (o.owner !== undefined && o.owner === bundleKey(route)) continue;
-          const dx = Math.min(b.x + b.w, o.x + o.w) - Math.max(b.x, o.x);
-          const dy = Math.min(b.y + b.h, o.y + o.h) - Math.max(b.y, o.y);
-          if (dx > 0 && dy > 0) {
-            if (stranger) onStrangers = Math.max(onStrangers, (dx * dy) / Math.max(1e-6, o.w * o.h));
-            else spoiled += dx * dy;
-          }
-        }
-        if (spoiled > SPOILED_CHIP_SQ_IN || onStrangers > STRANGER_TILE_FRACTION) {
+        if (chipSpoils(box.block, { sourceId: route.sourceId, targetId: route.targetId, bundleKey: bundleKey(route) }, chipObstacles)) {
           if (!thumbnail && route.label
             && !carriesWording(narratedRows.get(route.stepNumber) ?? '', route.label)) {
             mutedWording.set(route.stepNumber, route.label);
           }
+          box = null;
+        }
+      } else if (box && chipSpoils(box.block, { sourceId: route.sourceId, targetId: route.targetId, bundleKey: bundleKey(route) }, chipObstacles)) {
+        // A route with no step number has no step list to hand its wording to,
+        // so dropping the chip would simply lose it — which is why this check
+        // was written to run only on narrated routes, and why an un-narrated
+        // chip was free to sit on a name. Free is the wrong answer: an unnamed
+        // tile no longer says which service it is, and that is a worse loss
+        // than a chip that has become a numbered badge.
+        //
+        // The walk cannot be sent further to fix it — `inReach` holds a chip
+        // beside the arrow it labels, and it must, because a chip an inch from
+        // its hop is read, believed and wrong. So build the row that was
+        // missing instead: give the edge the next free number, hand its label
+        // to the workflow slide, and let the badge stand where the chip could
+        // not. That is exactly what `narrateEdgeCallouts` already does for the
+        // members of a deep fan, applied to the other case that has nowhere to
+        // put its words.
+        const step = promotable.get(route.id);
+        if (step !== undefined && !thumbnail) {
+          route.stepNumber = step;
+          promotedSteps.set(step, route.label);
           box = null;
         }
       }
@@ -3687,6 +3853,15 @@ async function addEditableDiagram(
       // beside a different arrow entirely.
       const reach = 1.5 * Math.max(box.w, box.block.h);
       if (Math.hypot(moved.block.x - box.block.x, moved.block.y - box.block.y) > reach) continue;
+      // The repair has to answer the same question the first seat did. It used
+      // to ask only whether the new slot hit another chip, so a chip refused
+      // for standing on a caption could be moved onto a different caption and
+      // kept — the refusal was undone by the fix for a different defect.
+      if (route.stepNumber !== undefined && narratedSteps.has(route.stepNumber)
+        && chipSpoils(moved.block, { sourceId: route.sourceId, targetId: route.targetId, bundleKey: bundleKey(route) },
+          chipObstacles.filter((taken) => taken !== box.block))) {
+        continue;
+      }
       const slot = chipObstacles.indexOf(box.block);
       if (slot >= 0) chipObstacles[slot] = moved.block;
       chips.set(route.id, moved);
@@ -3716,10 +3891,22 @@ async function addEditableDiagram(
       const pool = chipObstacles.filter((taken) => !own.has(taken));
       for (const route of members) {
         const old = chips.get(route.id);
-        const moved = connectorLabelBox(
+        let moved = connectorLabelBox(
           route, transform, labelFontSize, px, labelFrame, pool, bundle,
           undefined, foreignGapFor(route),
         );
+        // The ladder repair re-seats every rung in the bundle, so each new seat
+        // is a fresh placement and owes the same answer as a first one. A rung
+        // that now stands on a name is handed to the step list rather than
+        // drawn, which is the trade the whole chip mechanism is built on.
+        if (moved && route.stepNumber !== undefined && narratedSteps.has(route.stepNumber)
+          && chipSpoils(moved.block, { sourceId: route.sourceId, targetId: route.targetId, bundleKey: key }, pool)) {
+          if (!thumbnail && route.label
+            && !carriesWording(narratedRows.get(route.stepNumber) ?? '', route.label)) {
+            mutedWording.set(route.stepNumber, route.label);
+          }
+          moved = null;
+        }
         chips.set(route.id, moved);
         badges.set(route.id, stepBadgeBox(
           route, transform, px, labelFrame, moved, pool,
@@ -3810,6 +3997,10 @@ export async function buildDiagramSlidePptx(
   // Wording that a muted chip handed to the workflow slide, filled in by the
   // diagram pass and read when that slide is written.
   const mutedWording = new Map<number, string>();
+  // Wording promoted into a numbered step because its chip had nowhere to
+  // stand and its edge carried no step of its own. Unlike a muted chip, there
+  // is no authored row waiting for it, so the workflow list has to grow one.
+  const promotedSteps = new Map<number, string>();
   // Names the tiles had to cut, for the index slide at the end of the deck.
   const truncatedNames = new Set<string>();
 
@@ -3866,7 +4057,7 @@ export async function buildDiagramSlidePptx(
 
     // ── Diagram body — native shapes when available, captured PNG otherwise ───
     renderedNatively = diagram
-      ? await addEditableDiagram(pptx, slide, diagram, geom.frame, isDarkMode, window, mutedWording, truncatedNames, window === undefined && parts.length > 0, options.presetIcons)
+      ? await addEditableDiagram(pptx, slide, diagram, geom.frame, isDarkMode, window, mutedWording, truncatedNames, window === undefined && parts.length > 0, options.presetIcons, promotedSteps)
       : false;
 
     if (!renderedNatively) {
@@ -3919,6 +4110,16 @@ export async function buildDiagramSlidePptx(
     const handed = mutedWording.get(row.step);
     return handed ? { ...row, description: `${row.description}（${handed}）` } : row;
   });
+  // A promoted chip has a badge on the drawing and, until now, nothing to look
+  // it up in: `workflowListFromEdges` builds rows only from edges the author
+  // numbered, and a promoted edge is by definition one they did not. Append
+  // the rows it is owed and keep the list in step order, so the badges read
+  // down the page the way the numbers do.
+  for (const [step, text] of promotedSteps) {
+    if (workflow.some((row) => row.step === step)) continue;
+    workflow.push({ step, description: text });
+  }
+  workflow.sort((a, b) => a.step - b.step);
   if (workflow.length > 0) {
     // Rows stop shrinking at a legible minimum, so a long workflow continues on
     // another slide. Dropping the tail would leave badges on the drawing whose

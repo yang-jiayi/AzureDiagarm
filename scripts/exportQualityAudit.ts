@@ -152,6 +152,13 @@ interface Shape {
   /** True when the body declares `wrap="none"`: one line however wide. */
   wrapNone: boolean;
   /**
+   * Paragraph alignment, read from `<a:pPr algn="…">`. Ink is not always in the
+   * middle of its box: a left-aligned caption in a band twice its width paints
+   * only the left half, so measuring a collision against a centred rect both
+   * misses hits on the left and invents them on the right.
+   */
+  align: string | null;
+  /**
    * Declared line spacing as a multiple, or null when the shape states none.
    * Read so a box sized at the spacing it asked for is measured at it.
    */
@@ -281,6 +288,7 @@ function parseShapes(xml: string): Shape[] {
       insetX,
       insetY,
       wrapNone: /\bwrap="none"/.test(bodyPr),
+      align: /<a:pPr[^>]*\balgn="([^"]+)"/.exec(body)?.[1] ?? null,
       lineSpacing: (() => {
         const pct = /<a:lnSpc>\s*<a:spcPct val="(\d+)"\s*\/>/.exec(body)?.[1];
         return pct === undefined ? null : +pct / 100000;
@@ -412,7 +420,11 @@ function drawnTextRect(shape: Shape, singleLine = false): { x: number; y: number
   const w = lines > 1
     ? shape.w
     : (singleLine ? textWidthIn(text, shape.fontSize) : Math.min(shape.w, textWidthIn(text, shape.fontSize)));
-  const x = shape.x + (shape.w - w) / 2;
+  const x = shape.align === 'l'
+    ? shape.x + shape.insetX / 2
+    : shape.align === 'r'
+      ? shape.x + shape.w - shape.insetX / 2 - w
+      : shape.x + (shape.w - w) / 2;
   const y = shape.anchor === 't'
     ? shape.y
     : shape.anchor === 'b'
@@ -444,7 +456,12 @@ function pathGap(shape: Shape, at: { x: number; y: number }): number {
   }
   return best;
 }
-function overlapArea(a: Shape, b: Shape): number {
+/** Overlapping area of two rectangles. Only the geometry is read, so a bare
+ * rect — an ink box, a panel, a table row — is as good an argument as a shape. */
+function overlapArea(
+  a: { x: number; y: number; w: number; h: number },
+  b: { x: number; y: number; w: number; h: number },
+): number {
   const w = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x);
   const h = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y);
   return w > 0 && h > 0 ? w * h : 0;
@@ -1507,30 +1524,72 @@ function tileNameWithMetaScenario(): Scenario {
  * which compares a cut caption's band against the widest clear strip of its
  * own zone — needs a zone with clear strips to be exercised against at all.
  */
+/**
+ * The reviewer's round-47 ASK-2 geometry, reproduced verbatim: a wide zone whose
+ * top row is 11 tiles with a single 60px gap in it, and whose foot row is three
+ * tiles leaving 1320px clear. Both `runs(top)` and `runs(foot)` produce a band
+ * that covers no tile, so both score zero, and the inter-row gap (0.179in) is
+ * shorter than the caption band (0.240in) so no gapRow is produced either — the
+ * fixture isolates the tie-break and nothing else.
+ *
+ * With the tie-break the foot's 9.424in band wins and all 67 characters survive.
+ * Revert it and `runs(top)` wins on first-seen, giving a 0.431in band and 13
+ * characters. This is the fixture the earlier version of this scenario failed
+ * to be: that one landed in a third-band wide enough for the whole name and so
+ * measured nothing.
+ */
 function flushTopZoneScenario(): Scenario {
   const zone: Node = {
     id: 'ftz',
     type: 'groupNode',
     position: { x: 0, y: 0 },
     width: 1800,
-    height: 360,
-    data: { label: 'Production landing zone with zone redundant ingress, egress control and paired region failover' },
+    height: 184,
+    data: { label: 'Production VNet - Application Subnet (10.0.1.0/24) - Zone Redundant' },
   } as Node;
   const nodes: Node[] = [zone];
-  for (let i = 0; i < 11; i += 1) {
-    nodes.push({
-      ...svc(`ftz${i}`, `Service ${i}`, 10 + i * 160, 0, 'ftz', true, 'compute'),
-      width: 150,
-      height: 300,
-    });
+  [10, 160, 310, 460, 610, 760, 910, 1060, 1210, 1360, 1570].forEach((x, i) => {
+    nodes.push(svc(`ftz${i}`, `Top service ${i}`, x, 4, 'ftz', true, 'compute'));
+  });
+  [10, 170, 330].forEach((x, i) => {
+    nodes.push(svc(`ftzf${i}`, `Foot service ${i}`, x, 104, 'ftz', true, 'compute'));
+  });
+  return { id: 'flush-top-zone', nodes, edges: [] };
+}
+
+/**
+ * The reviewer's round-47 Issue 1 geometry: two tiers of tiles inside one zone
+ * with edges running straight down between them. The corridor between the rows
+ * is the widest clear paper in the zone, so the caption search wants it; it is
+ * also where `connectorLabelBox` seats its chips, and a chip is drawn last at
+ * 92% opacity. Three chips landed on the caption, covering it across its full
+ * height, and nothing fired: chips are exempt from the painted-ink rule, the
+ * pairwise rule only examined shapes that overflowed their own box (the caption
+ * fitted exactly), and the one rule that tests a drawn-last opaque object did
+ * not list zone captions.
+ */
+function zoneCaptionCorridorScenario(): Scenario {
+  const zone: Node = {
+    id: 'zcc',
+    type: 'groupNode',
+    position: { x: 0, y: 0 },
+    width: 900,
+    height: 226,
+    data: { label: 'Production VNet - Application Subnet (10.0.1.0/24)' },
+  } as Node;
+  const nodes: Node[] = [zone];
+  for (let i = 0; i < 3; i += 1) {
+    nodes.push(svc(`zcca${i}`, `Front service ${i}`, 20 + i * 290, 8, 'zcc', true, 'compute'));
+    nodes.push(svc(`zccb${i}`, `Back service ${i}`, 20 + i * 290, 143, 'zcc', true, 'databases'));
   }
-  const edges: Edge[] = Array.from({ length: 10 }, (_, i) => ({
-    id: `ftz-e${i}`,
-    source: `ftz${i}`,
-    target: `ftz${i + 1}`,
-    label: 'calls',
+  const edges: Edge[] = Array.from({ length: 3 }, (_, i) => ({
+    id: `zcc-e${i}`,
+    source: `zcca${i}`,
+    target: `zccb${i}`,
+    label: 'writes order documents',
+    data: { stepNumber: i + 1, stepDescription: `Step ${i + 1}` },
   } as Edge));
-  return { id: 'flush-top-zone', nodes, edges };
+  return { id: 'zone-caption-corridor', nodes, edges };
 }
 
 function visioDefaultTileNamesScenario(): Scenario {
@@ -3550,7 +3609,23 @@ async function auditCustomerDeck(scenario: Scenario): Promise<string[]> {
         // `anchor="ctr"` grows the block from the middle, so an overflow spills
         // equally out of the top and the bottom; a top-anchored box spills down.
         const top = s.anchor === 'ctr' ? s.y - over / 2 : s.y;
-        return { shape: s, top, bottom: top + Math.max(s.h, need), over };
+        // The horizontal extent of the ink, not of the box. A box is as wide
+        // as the row it was sized for; the ink inside it may be a third of
+        // that and sitting at one end. Mixing the two — ink vertically, box
+        // horizontally — is what let a "72 / 100" score readout report 85
+        // collisions between two boxes whose glyphs are 0.2in apart.
+        const drawn = drawnTextRect(s);
+        const left = drawn ? drawn.x : s.x;
+        const right = drawn ? drawn.x + drawn.w : s.x + s.w;
+        // Where the glyphs are vertically, which is not where the box is. A
+        // 58pt "72" centred in a 1.25in box paints about 0.8in in the middle
+        // of it; `max(h, need)` claims the whole 1.25in, which is the right
+        // answer for "did this text spill" and the wrong one for "did these
+        // two collide". Reported 85 collisions between a score and the "/ 100"
+        // beneath it whose glyphs are a fifth of an inch apart.
+        const inkTop = drawn ? drawn.y : top;
+        const inkBottom = drawn ? drawn.y + drawn.h : top + Math.max(s.h, need);
+        return { shape: s, top, bottom: top + Math.max(s.h, need), over, left, right, inkTop, inkBottom };
       });
     // Two invariants that do not re-wrap anything.
     //
@@ -3621,7 +3696,15 @@ async function auditCustomerDeck(scenario: Scenario): Promise<string[]> {
     // legitimate, and the neighbour has no reason to be overflowing too. The
     // stricter pairing missed a Japanese assessment paragraph painting 0.30in
     // over a section heading that fitted its own box perfectly.
-    const spilling = painted.filter((p) => p.over > 0.01);
+    //
+    // That reasoning was half right and shipped a hole. "A collision between
+    // two well-behaved boxes is a layout" is true of boxes placed side by side,
+    // which the shared-column test already excludes — it is not true of two
+    // boxes that were simply put on top of each other, and that is the more
+    // common failure because it needs no arithmetic to go wrong, only a
+    // position. Gating on `over > 0.01` made it unreportable by construction:
+    // a zone caption fitted its band exactly, three chips were drawn over it,
+    // and the pair was never examined.
     const reported = new Set<string>();
     // Tables are opaque blocks of ink drawn from their own frame. Any box whose
     // ink lands inside one is a collision whether or not either overflowed —
@@ -3660,15 +3743,19 @@ async function auditCustomerDeck(scenario: Scenario): Promise<string[]> {
         }
       }
     }
-    for (const a of spilling) {
+    for (const a of painted) {
       for (const b of painted) {
         if (a === b) continue;
         // Only rows that share a column can collide; two captions side by side
         // in the same band are a layout, not an overlap.
-        const sharesX = a.shape.x < b.shape.x + b.shape.w - 0.02
-          && b.shape.x < a.shape.x + a.shape.w - 0.02;
+        const sharesX = a.left < b.right - 0.02 && b.left < a.right - 0.02;
         if (!sharesX) continue;
-        const overlap = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top);
+        // Ink against ink. A box that overflows still paints past its own
+        // bottom, so the spill is folded into the ink extent rather than
+        // dropped: `over` grows the block, `max(h, need)` does not.
+        const aBottom = Math.max(a.inkBottom, a.over > 0.01 ? a.bottom : a.inkBottom);
+        const bBottom = Math.max(b.inkBottom, b.over > 0.01 ? b.bottom : b.inkBottom);
+        const overlap = Math.min(aBottom, bBottom) - Math.max(a.inkTop, b.inkTop);
         if (overlap <= 0.02) continue;
         // Both orderings reach this when two boxes each spill onto the other;
         // report the pair once so a count of issues stays a count of defects.
@@ -3676,8 +3763,8 @@ async function auditCustomerDeck(scenario: Scenario): Promise<string[]> {
         if (reported.has(key)) continue;
         reported.add(key);
         issues.push(
-          `customer deck: slide ${index + 1} overlaps "${a.shape.text.trim().slice(0, 24)}" and `
-          + `"${b.shape.text.trim().slice(0, 24)}" by ${overlap.toFixed(2)}in of type`,
+          `customer deck: slide ${index + 1} overlaps "${a.shape.text.trim().slice(0, 24)}" (${a.shape.name}) and `
+          + `"${b.shape.text.trim().slice(0, 24)}" (${b.shape.name}) by ${overlap.toFixed(2)}in of type`,
         );
       }
     }
@@ -3888,18 +3975,38 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
       // Every horizontal strip of the zone that could seat this band: above the
       // tiles, below them, and in any gap between two rows of them. A strip is
       // usable only if it is at least as tall as the band already drawn.
+      //
+      // And within a strip, the widest *run* clear of tiles, not merely the
+      // strips that are clear from edge to edge. A zone whose foot row carries
+      // three tiles at one end has no full-width clear row at all, yet nine
+      // clear inches beside those tiles — which is exactly the band the search
+      // is supposed to find and exactly the one the earlier version of this
+      // rule could not see. It scored that case as "no clear paper" and passed
+      // a caption cut to 44 of its 76 characters.
       const inZone = tiles.filter((t) => t.x < zone.x + zone.w && zone.x < t.x + t.w
         && t.y < zone.y + zone.h && zone.y < t.y + t.h);
       const edges = [zone.y, zone.y + zone.h, ...inZone.flatMap((t) => [t.y, t.y + t.h])]
         .filter((y) => y >= zone.y - 1e-6 && y <= zone.y + zone.h + 1e-6)
         .sort((a, b) => a - b);
+      // The widest band the exporter is able to build, which is the zone less
+      // the inset it always keeps. Measuring against the raw zone width accuses
+      // it of a choice it was never offered — and on a zone under ~0.6in wide
+      // that inset alone is more than the fifth of slack this rule allows.
+      const reachable = Math.max(0.4, zone.w - 0.12);
       let widest = 0;
       for (let i = 0; i + 1 < edges.length; i += 1) {
         const top = edges[i];
         const bot = edges[i + 1];
         if (bot - top < caption.h - 1e-6) continue;
-        const blocked = inZone.some((t) => t.y < bot - 1e-6 && top < t.y + t.h - 1e-6);
-        if (!blocked) widest = Math.max(widest, zone.w);
+        const across = inZone
+          .filter((t) => t.y < bot - 1e-6 && top < t.y + t.h - 1e-6)
+          .sort((a, b) => a.x - b.x);
+        let cursor = zone.x;
+        for (const tile of across) {
+          widest = Math.max(widest, Math.min(reachable, tile.x - cursor));
+          cursor = Math.max(cursor, tile.x + tile.w);
+        }
+        widest = Math.max(widest, Math.min(reachable, zone.x + zone.w - cursor));
       }
       if (widest > caption.w * 1.25 + 0.01) {
         issues.push(
@@ -4462,10 +4569,40 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
     const legend = slideShapes.find((s) => s.name === 'connection-legend');
     if (!legend) continue;
     for (const other of slideShapes) {
-      if (!/^(connector-label-|connector-step-|service-)/.test(other.name)) continue;
+      if (!/^(connector-label-|connector-step-|service-|zone-label-)/.test(other.name)) continue;
       const hit = overlapArea(legend, other);
       if (hit <= 0.001) continue;
       issues.push(`connection legend covers ${((hit / Math.max(other.w * other.h, 1e-6)) * 100).toFixed(0)}% of "${other.name}"`);
+    }
+  }
+  // A chip is drawn after everything except the colour key and is 92% opaque,
+  // so a caption underneath one is not dimmed, it is gone. The exporter keeps
+  // chips off tile captions by handing every tile's band to the placement
+  // search as an obstacle; zone captions were handed over to nobody, which
+  // did not matter while every candidate band sat in a zone's margin — chips
+  // are seated in the corridors between tile rows, and captions were never
+  // there. Offering those corridors as caption rows put the two in the same
+  // place, so the obstacle has to be real.
+  for (const slideShapes of perSlide) {
+    const chips = slideShapes.filter((s) => s.name.startsWith('connector-label-'));
+    if (chips.length === 0) continue;
+    for (const caption of slideShapes) {
+      if (!/^(zone-label-|service-label-)/.test(caption.name)) continue;
+      // The ink, not the band. A caption is left-aligned in a band sized for
+      // the widest name in its row, so a chip parked over the empty right end
+      // of that band covers no glyph and is not a defect — reporting it would
+      // make the rule fire on layouts that read perfectly and teach the
+      // exporter to move chips away from nothing.
+      const ink = drawnTextRect(caption);
+      if (!ink) continue;
+      for (const chip of chips) {
+        const hit = overlapArea(chip, ink);
+        if (hit <= 0.001) continue;
+        issues.push(
+          `chip "${chip.name}" covers ${((hit / Math.max(ink.w * ink.h, 1e-6)) * 100).toFixed(0)}% `
+          + `of the drawn name "${caption.text.trim().slice(0, 28)}"`,
+        );
+      }
     }
   }
   // Wording may never simply vanish. A label the exporter decided not to draw
@@ -4561,23 +4698,48 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
     (e) => Number.isInteger((e.data as { stepNumber?: number } | undefined)?.stepNumber),
   );
   const badges = shapes.filter((s) => s.name.startsWith('connector-step-'));
-  if (badges.length !== numberedEdges.length) {
-    issues.push(`${badges.length} step badges drawn for ${numberedEdges.length} numbered connectors`);
-  }
+  // A labelled edge the author never numbered may be PROMOTED: when its chip
+  // has nowhere legible to stand, the exporter gives it the next free number
+  // and a workflow row rather than leaving the words on top of a service name.
+  // So the model no longer predicts the badge count exactly — it predicts a
+  // floor, plus the set of arrows allowed to appear above it.
+  const promotableIds = new Set(
+    narrateEdgeCallouts(scenario.edges)
+      .filter((e) => !Number.isInteger((e.data as { stepNumber?: number } | undefined)?.stepNumber)
+        && String((e as { label?: unknown }).label ?? '').trim() !== '')
+      .map((e) => auditStrip(String(e.id))),
+  );
   // Membership alone is permutation-blind: swapping every badge onto the wrong
   // arrow would pass. The object name carries the route id, so check the exact
   // arrow-to-number correspondence instead.
   const expectedByRoute = new Map(
     numberedEdges.map((e) => [auditStrip(String(e.id)), String((e.data as { stepNumber: number }).stepNumber)]),
   );
+  const badgedRoutes = new Set(badges.map((b) => b.name.replace(/^connector-step-/, '')));
+  for (const [routeId, want] of expectedByRoute) {
+    if (!badgedRoutes.has(routeId)) {
+      issues.push(`connector ${routeId} is workflow step ${want} but the drawing has no badge for it`);
+    }
+  }
+  const seenNumbers = new Map<string, string>();
   for (const badge of badges) {
     const routeId = badge.name.replace(/^connector-step-/, '');
     const want = expectedByRoute.get(routeId);
     if (want === undefined) {
-      issues.push(`step badge "${badge.name}" does not belong to any numbered connector`);
+      if (!promotableIds.has(routeId)) {
+        issues.push(`step badge "${badge.name}" does not belong to any numbered connector`);
+      }
     } else if (badge.text !== want) {
       issues.push(`connector ${routeId} is numbered "${badge.text}" but its workflow step is ${want}`);
     }
+    // Two arrows may not read the same digit whatever their provenance: the
+    // workflow list is keyed by number, so a promoted edge that collided with
+    // an authored one would send the reader to somebody else's sentence.
+    const already = seenNumbers.get(badge.text);
+    if (already !== undefined && already !== routeId) {
+      issues.push(`connectors ${already} and ${routeId} both carry the badge "${badge.text}"`);
+    }
+    seenNumbers.set(badge.text, routeId);
   }
 
   // The Workflow list is the prose the reader matches the drawing against, so
@@ -6120,6 +6282,7 @@ async function main(): Promise<void> {
     visioBrokenLabelFanScenario(),
     visioDefaultTileNamesScenario(),
     flushTopZoneScenario(),
+    zoneCaptionCorridorScenario(),
     tileNameWithMetaScenario(),
     zoneCaptionWideEstateScenario(),
     squeezedBadgeScenario(),
