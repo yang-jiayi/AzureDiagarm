@@ -943,6 +943,21 @@ function estimateTextWidthIn(text: string, fontSizePt: number): number {
 export function wrappedLineCount(text: string, widthIn: number, fontSizePt: number): number {
   if (!text) return 1;
   const box = Math.max(0.1, widthIn);
+  // A hard line break is a line, and it is the one break every counter here
+  // used to miss. `\n` survives the sanitiser — which scrubs U+000B but not
+  // U+000A — and pptxgenjs turns each one into a real `<a:p>`, so the renderer
+  // starts a new line where the measurement carried straight on. Splitting on
+  // whitespace only *ends a run* at a newline; it never starts a line. A model
+  // asked for numbered remediation steps writes them one per line, which makes
+  // this the normal case rather than an exotic one, and a sixteen-row table of
+  // four-line names measured 5.83in and drew 10.33in.
+  return text.split(/\r\n|\r|\n/)
+    .reduce((total, paragraph) => total + wrapOneLine(paragraph, box, fontSizePt), 0);
+}
+
+/** One paragraph's worth of wrapping, with no hard breaks left in it. */
+function wrapOneLine(text: string, box: number, fontSizePt: number): number {
+  if (!text) return 1;
   // Breaks are between words, and additionally after any full-width character,
   // which is where CJK is allowed to break.
   const runs = text.split(/(?<=[\s\u2e80-\u9fff\uac00-\ud7af\uff00-\uff60\uffe0-\uffe6])/);
@@ -971,7 +986,14 @@ export function wrappedLineCount(text: string, widthIn: number, fontSizePt: numb
  * for the rest. Used where the tile is too small for the whole name and the
  * only alternatives are unreadable type or an empty box.
  */
-function fitLabelToBox(text: string, widthIn: number, fontSizePt: number): string {
+function fitLabelToBox(rawText: string, widthIn: number, fontSizePt: number): string {
+  // Every caller draws the result on one line in a box sized for one line, so
+  // any hard break in the name has to go: a newline survives the sanitiser and
+  // becomes a real paragraph, and a four-line service name pasted out of a
+  // spreadsheet turned a 0.18in breadcrumb into 0.68in of ink painted over the
+  // row below it. A name is an identifier and reads as one line; prose that
+  // means its line breaks is measured and laid out elsewhere.
+  const text = rawText.replace(/[\r\n]+/g, ' ').replace(/\s{2,}/g, ' ');
   if (estimateTextWidthIn(text, fontSizePt) <= widthIn) return text;
   const budget = widthIn - estimateTextWidthIn('…', fontSizePt);
   if (budget <= 0) return '…';
@@ -4380,6 +4402,35 @@ export function fitTableRows(
   return { rows: count, pt };
 }
 
+/**
+ * A warning banner whose middle is a list of unknown length, fitted to its box.
+ *
+ * These two notices were the last character caps in the file: 120 and 150
+ * characters into boxes that hold neither. A character is not a width — a
+ * Japanese region name is an em wide and a Latin one 0.54 — so the 120-cap
+ * needed 1.125in of a 0.750in box in CJK and the 150-cap bit into the table
+ * beneath it. Shrink first, and only then shorten the list, saying how many
+ * were left out rather than ending on an ellipsis that names nothing.
+ */
+function fitNotice(
+  head: string, list: string, tail: string,
+  boxW: number, boxH: number, startPt: number,
+): { text: string; fontSize: number } {
+  const usable = Math.max(0.4, boxW - 0.2);
+  const fits = (s: string, pt: number): boolean => (wrappedLineCount(s, usable, pt) * pt * 1.22) / 72 <= boxH;
+  for (let pt = startPt; pt >= LEGIBLE_TILE_PT; pt -= 0.5) {
+    if (fits(head + list + tail, pt)) return { text: head + list + tail, fontSize: pt };
+  }
+  const items = list.split(', ').filter(Boolean);
+  for (let keep = items.length - 1; keep >= 1; keep -= 1) {
+    const shortened = `${items.slice(0, keep).join(', ')} +${items.length - keep} more`;
+    if (fits(head + shortened + tail, LEGIBLE_TILE_PT)) {
+      return { text: head + shortened + tail, fontSize: LEGIBLE_TILE_PT };
+    }
+  }
+  return { text: `${head}${items.length} regions${tail}`, fontSize: LEGIBLE_TILE_PT };
+}
+
 /** Slide 4 — service inventory. */
 function addServicesSlide(pptx: PptxGenJS, t: SlideTheme, o: ArchitectureDeckOptions): void {
   if (!o.services.length) return;
@@ -4691,9 +4742,15 @@ function addCostOverviewSlide(pptx: PptxGenJS, t: SlideTheme, o: ArchitectureDec
 
   if (c.regionComparisonIncomplete) {
     const unavailable = c.unavailableRegions?.map(item => item.split(':', 1)[0]).join(', ') || 'one or more regions';
+    const notice = fitNotice(
+      'Regional comparison is partial because selected SKUs are unavailable in: ',
+      unavailable,
+      '. No cheapest-region recommendation is made.',
+      5.2, 0.75, 10,
+    );
     slide.addText(
-      `Regional comparison is partial because selected SKUs are unavailable in: ${truncate(unavailable, 120)}. No cheapest-region recommendation is made.`,
-      { x: 0.37, y: BODY_TOP + 3.15, w: 5.2, h: 0.75, fontSize: 10, bold: true, color: 'b45309', fontFace: 'Yu Gothic UI', wrap: true, valign: 'top' },
+      notice.text,
+      { x: 0.37, y: BODY_TOP + 3.15, w: 5.2, h: 0.75, fontSize: notice.fontSize, bold: true, color: 'b45309', fontFace: 'Yu Gothic UI', wrap: true, valign: 'top' },
     );
   }
 
@@ -4752,9 +4809,15 @@ function addCostRegionsSlide(pptx: PptxGenJS, t: SlideTheme, o: ArchitectureDeck
   const current = c.regions.find(r => r.isCurrent);
   if (!comparisonComplete) {
     const unavailable = c.unavailableRegions?.map(item => item.split(':', 1)[0]).join(', ') || 'one or more regions';
+    const notice = fitNotice(
+      'Partial comparison — unavailable: ',
+      unavailable,
+      '. Values below cover comparable regions only; no global cheapest or savings claim is shown.',
+      W - 0.7, 0.55, 12,
+    );
     slide.addText(
-      `Partial comparison — unavailable: ${truncate(unavailable, 150)}. Values below cover comparable regions only; no global cheapest or savings claim is shown.`,
-      { x: 0.35, y: BODY_TOP, w: W - 0.7, h: 0.55, fontSize: 12, bold: true, color: 'b45309', fontFace: 'Yu Gothic UI', valign: 'middle', wrap: true },
+      notice.text,
+      { x: 0.35, y: BODY_TOP, w: W - 0.7, h: 0.55, fontSize: notice.fontSize, bold: true, color: 'b45309', fontFace: 'Yu Gothic UI', valign: 'middle', wrap: true },
     );
   } else if (cheapest) {
     const onCheapest = current && current.name === cheapest.name;
@@ -4803,10 +4866,88 @@ function addCostRegionsSlide(pptx: PptxGenJS, t: SlideTheme, o: ArchitectureDeck
  * Well-Architected review (summary + findings) and a cost estimate (overview +
  * regional comparison). Split from the download so tests can inspect the deck.
  */
+/**
+ * Collapse a name onto one line.
+ *
+ * A newline survives the XML sanitiser and pptxgenjs turns each one into a real
+ * paragraph, so a service name pasted out of a spreadsheet cell ("Azure SQL
+ * Managed Instance\nProduction ring\nEast US 2") draws as four lines wherever
+ * it appears — doubling a table past the bottom of the slide, squeezing the
+ * icon off its tile, and painting a breadcrumb over the row beneath it. Prose
+ * fields (summary, issue, recommendation, step description) mean their line
+ * breaks and are measured and paginated as written; a *name* is an identifier
+ * and reads as one line, wrapping only because the column is narrow.
+ */
+function singleLine(text: string): string {
+  return text.replace(/[\r\n\t\v\f\u2028\u2029]+/g, ' ').replace(/ {2,}/g, ' ').trim();
+}
+
+/**
+ * Every name-shaped field the deck prints, collapsed onto one line. Applied
+ * once at the entry point rather than at each of the twenty-odd draw sites, so
+ * a slide added later cannot reintroduce the defect by forgetting to call it.
+ */
+function withSingleLineNames(o: ArchitectureDeckOptions): ArchitectureDeckOptions {
+  const cost = o.cost
+    ? {
+      ...o.cost,
+      byCategory: o.cost.byCategory.map((c) => ({ ...c, category: singleLine(c.category) })),
+      topServices: o.cost.topServices.map((s) => ({
+        ...s,
+        serviceName: singleLine(s.serviceName),
+        ...(s.tier ? { tier: singleLine(s.tier) } : {}),
+      })),
+      ...(o.cost.regions ? { regions: o.cost.regions.map((r) => ({ ...r, name: singleLine(r.name) })) } : {}),
+      ...(o.cost.unavailableRegions
+        ? { unavailableRegions: o.cost.unavailableRegions.map(singleLine) }
+        : {}),
+    }
+    : o.cost;
+  const validation = o.validation
+    ? {
+      ...o.validation,
+      ...(o.validation.overallLabel ? { overallLabel: singleLine(o.validation.overallLabel) } : {}),
+      pillars: o.validation.pillars.map((p) => ({
+        ...p,
+        pillar: singleLine(p.pillar),
+        ...(p.maturity ? { maturity: singleLine(p.maturity) } : {}),
+      })),
+      findings: o.validation.findings.map((f) => ({
+        ...f,
+        severity: singleLine(f.severity),
+        category: singleLine(f.category),
+      })),
+    }
+    : o.validation;
+  return {
+    ...o,
+    diagramName: singleLine(o.diagramName),
+    services: o.services.map((s) => ({
+      ...s,
+      name: singleLine(s.name),
+      ...(s.category ? { category: singleLine(s.category) } : {}),
+      ...(s.group ? { group: singleLine(s.group) } : {}),
+    })),
+    // `description` is prose and keeps the line breaks it was written with;
+    // `services` is a breadcrumb of names drawn on one line.
+    ...(o.workflow
+      ? {
+        workflow: o.workflow.map((w) => ({
+          ...w,
+          ...(w.services ? { services: w.services.map(singleLine) } : {}),
+        })),
+      }
+      : {}),
+    cost,
+    validation,
+  };
+}
+
 export async function buildArchitectureDeckPptx(
   imageDataUrl: string,
-  options: ArchitectureDeckOptions,
+  rawOptions: ArchitectureDeckOptions,
 ): Promise<PptxGenJS> {
+  const options = withSingleLineNames(rawOptions);
   const t = options.isDarkMode ? DARK_THEME : LIGHT_THEME;
 
   const pptx = newDeck();

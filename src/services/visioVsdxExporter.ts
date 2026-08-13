@@ -489,7 +489,12 @@ function serviceGroupXml(
   // while the PowerPoint export of the same diagram drew them; below scale
   // 0.2048 the reserved band was taller than the whole tile. The equivalent
   // floor in the deck is written `0.08 * px` and never had the bug.
-  const labelLines = Math.max(1, Math.ceil(estimateTextWidthIn(box.label, fonts.label) / textW));
+  // Measured, not `ceil(width / column)`. The ratio assumes text can break
+  // anywhere, so it under-counts a name made of long tokens — and it never saw
+  // a hard break at all, which is how a four-paragraph name pasted out of a
+  // spreadsheet sized its band for one line. `wrappedLinesIn` breaks between
+  // words and honours newlines, the way Visio actually lays the shape out.
+  const labelLines = wrappedLinesIn(box.label, textW, fonts.label);
   const neededTextH = labelLines * fonts.label * 1.28 + (meta ? fonts.meta * 1.4 : 0) + 0.05 * fonts.scale;
   const maxIcon = iconRelId ? Math.min(rect.h * 0.46, rect.w * 0.5, 0.55 * fonts.scale) : 0;
   const minIcon = Math.min(maxIcon, 0.18 * fonts.scale);
@@ -917,17 +922,32 @@ ${roundedRectGeometry()}
  * roughly a tenth of an inch, invisibly, because the guard used the same ratio.
  */
 function wrappedLinesIn(text: string, widthIn: number, fontSizeIn: number): number {
+  if (!text) return 1;
   const column = Math.max(0.2, widthIn);
-  // Latin breaks at spaces; CJK may break after any full-width code point.
-  const runs = String(text ?? '').match(/[^\s\u2e80-\u9fff\uac00-\ud7af\uff00-\uff60\uffe0-\uffe6]+|[\u2e80-\u9fff\uac00-\ud7af\uff00-\uff60\uffe0-\uffe6]|\s+/g) ?? [];
+  // Hard breaks first: Visio renders a raw newline in `<Text>` as a paragraph
+  // break, and counting it as ordinary whitespace budgeted two lines for rows
+  // that drew three.
+  return String(text).split(/\r\n|\r|\n/)
+    .reduce((total, paragraph) => total + wrapOneLineIn(paragraph, column, fontSizeIn), 0);
+}
+
+/**
+ * One paragraph's worth of wrapping.
+ *
+ * Deliberately the same tokenisation as the PowerPoint exporter's
+ * `wrappedLineCount`: whitespace stays attached to the run in front of it and
+ * every space is charged. The earlier version collapsed a whitespace *run* to a
+ * single space and never charged a trailing space at end of line, which made it
+ * count fewer lines than the PowerPoint side on 15.7% of mixed strings — up to
+ * three fewer. Two exporters drawing the same sentence must agree; it is the
+ * audit's copy that is supposed to be independent.
+ */
+function wrapOneLineIn(text: string, column: number, fontSizeIn: number): number {
+  if (!text) return 1;
+  const runs = text.split(/(?<=[\s\u2e80-\u9fff\uac00-\ud7af\uff00-\uff60\uffe0-\uffe6])/);
   let lines = 1;
   let used = 0;
-  const spaceW = estimateTextWidthIn(' ', fontSizeIn);
   for (const run of runs) {
-    if (/^\s+$/.test(run)) {
-      if (used > 0) used += spaceW;
-      continue;
-    }
     const w = estimateTextWidthIn(run, fontSizeIn);
     if (used > 0 && used + w > column) {
       lines += 1;
@@ -935,9 +955,9 @@ function wrappedLinesIn(text: string, widthIn: number, fontSizeIn: number): numb
     }
     if (w > column) {
       // A single run wider than the box breaks inside itself.
-      const whole = Math.ceil(w / column);
-      lines += whole - 1;
-      used = w - (whole - 1) * column;
+      const inner = Math.ceil(w / column);
+      lines += inner - 1;
+      used = w - (inner - 1) * column;
       continue;
     }
     used += w;

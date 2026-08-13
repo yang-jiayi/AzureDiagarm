@@ -1659,6 +1659,35 @@ test('a wrapped line count is never below the break-anywhere ratio', () => {
 });
 
 /**
+ * A hard line break is a line.
+ *
+ * `\n` survives the XML sanitiser — which scrubs U+000B while reasoning
+ * explicitly about copy-paste, and lets the far commoner U+000A through — and
+ * pptxgenjs turns each one into a real `<a:p>`, so both renderers start a new
+ * line where every counter here used to carry straight on. Splitting on
+ * whitespace *ends a run* at a newline; it never starts a line. A model asked
+ * for numbered remediation steps writes them one per line, which makes this
+ * the normal case, and a sixteen-row table of four-line names measured 5.83in
+ * and drew 10.33in — 3.9in of rows below the sheet.
+ */
+test('a hard line break counts as a line, in the counter and in the row height', () => {
+  assert.equal(
+    wrappedLineCount('Enable zone redundancy.\nAdd a second node pool.\nUpdate the runbook.', 40, 12), 3,
+    'three paragraphs in a box wide enough for any of them is three lines, not one',
+  );
+  assert.equal(
+    wrappedLineCount('a\r\nb\rc\nd', 40, 12), 4,
+    'CR, LF and CRLF all start a line',
+  );
+  const oneLine = tableRowHeightIn(['Azure SQL Managed Instance'], [5.2], 12);
+  const twoLines = tableRowHeightIn(['Azure SQL\nManaged Instance'], [5.2], 12);
+  assert.ok(
+    twoLines > oneLine + 0.1,
+    `a two-paragraph cell must be budgeted taller than a one-line cell (${twoLines} vs ${oneLine})`,
+  );
+});
+
+/**
  * A table row is never budgeted at less than its type plus the insets
  * PowerPoint charges on top of it.
  *

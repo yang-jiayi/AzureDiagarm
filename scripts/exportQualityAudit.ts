@@ -35,6 +35,11 @@ const BASE_SLIDE_H_IN = 7.5;
  * 0.54, which is Segoe UI's average lowercase advance and slightly generous for
  * digits (0.539 measured from the font's own `hmtx`).
  */
+/** Whitespace of any shape, reduced to single spaces, for text comparisons. */
+function collapseWs(text: string): string {
+  return text.replace(/\s+/g, ' ').trim();
+}
+
 function auditTextWidthIn(text: string, fontSizePt: number): number {
   let units = 0;
   for (const character of text) {
@@ -55,6 +60,15 @@ function auditTextWidthIn(text: string, fontSizePt: number): number {
 function auditWrappedLines(text: string, boxIn: number, fontSizePt: number): number {
   if (!text) return 1;
   const box = Math.max(0.1, boxIn);
+  // Hard breaks are lines. Both renderers start a new paragraph at a newline;
+  // splitting on whitespace alone only ends a run at one.
+  return text.split(/\r\n|\r|\n/)
+    .reduce((total, paragraph) => total + auditWrapOne(paragraph, box, fontSizePt), 0);
+}
+
+/** One paragraph of the above, with no hard breaks left in it. */
+function auditWrapOne(text: string, box: number, fontSizePt: number): number {
+  if (!text) return 1;
   const tokens = text.split(/(?<=[\s\u2e80-\u9fff\uac00-\ud7af\uff00-\uff60\uffe0-\uffe6])/);
   let lines = 1;
   let used = 0;
@@ -161,6 +175,13 @@ function parseShapes(xml: string): Shape[] {
     const ext = /<a:ext cx="(\d+)" cy="(\d+)"\/>/.exec(body);
     if (!off || !ext) continue;
     const texts = [...body.matchAll(/<a:t>([\s\S]*?)<\/a:t>/g)].map((t) => t[1]);
+    // Per paragraph, joined with the break the renderer actually draws. Joining
+    // every `<a:t>` with nothing at all made a shape carrying five paragraphs
+    // indistinguishable from one carrying a single line, so no rule in this
+    // file could see a hard break — the exact blind spot that let a sixteen-row
+    // table measure 5.83in and draw 10.33in.
+    const paragraphs = [...body.matchAll(/<a:p>([\s\S]*?)<\/a:p>/g)]
+      .map((p) => [...p[1].matchAll(/<a:t>([\s\S]*?)<\/a:t>/g)].map((t) => t[1]).join(''));
     const sz = /sz="(\d+)"/.exec(body);
     const x = +off[1] / EMU_PER_INCH;
     const y = +off[2] / EMU_PER_INCH;
@@ -207,7 +228,8 @@ function parseShapes(xml: string): Shape[] {
       y,
       w,
       h,
-      text: texts.join('').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>'),
+      text: (paragraphs.length > 0 ? paragraphs.join('\n') : texts.join(''))
+        .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>'),
       fontSize: sz ? +sz[1] / 100 : null,
       anchor: /<a:bodyPr[^>]*\banchor="([^"]+)"/.exec(body)?.[1] ?? null,
       fill,
@@ -1270,6 +1292,41 @@ function visioTokenWorkflowScenario(): Scenario {
     },
   } as Edge));
   return { id: 'visio-token-workflow', nodes, edges };
+}
+
+/**
+ * Sixteen services whose names carry hard line breaks.
+ *
+ * `\n` survives the sanitiser — which scrubs U+000B while reasoning explicitly
+ * about copy-paste, and lets the far commoner U+000A through — and pptxgenjs
+ * turns each one into a real `<a:p>`. Every line counter in the codebase split
+ * on whitespace, so a newline merely ended a run and never started a line, and
+ * the shape scrape joined `<a:t>` with nothing at all so the guard could not
+ * see that paragraphs had existed. The Services table measured 5.83in and drew
+ * 10.33in: 3.9in of rows below the sheet, invisible and unrecoverable.
+ */
+function hardBreakInventoryScenario(): Scenario {
+  const nodes: Node[] = Array.from({ length: 16 }, (_, i) => svc(
+    `hb${i}`,
+    `Azure SQL MI ${i + 1}\nProd ring\nEast US 2\nZone redundant`,
+    (i % 6) * 280,
+    Math.floor(i / 6) * 180,
+  ));
+  const edges: Edge[] = Array.from({ length: 6 }, (_, i) => ({
+    id: `hbe${i}`,
+    source: `hb${i}`,
+    target: `hb${i + 1}`,
+    label: 'Replicates',
+    data: {
+      stepNumber: i + 1,
+      // Visio renders a raw newline in `<Text>` as a paragraph break too, and
+      // the band budgeted two lines for rows that drew three.
+      stepDescription: 'クライアントは Front Door を経由して要求を送信します。\n'
+        + 'ゲートウェイが要求を検証し、認証トークンを確認します。\n'
+        + 'API がバックエンドのサービスを呼び出します。',
+    },
+  } as Edge));
+  return { id: 'hard-break-inventory', nodes, edges };
 }
 
 /**
@@ -2659,7 +2716,11 @@ function auditNativeConversion(
       (s) => s.name.startsWith('service-label-') || s.name.startsWith('service-meta-'),
     )) {
       if (label.text.trim() === '') continue;
-      if (!after.includes(escapeXml(label.text))) {
+      // Per paragraph: the shape scrape now joins `<a:p>` with a newline, and
+      // the emitted XML keeps each paragraph in its own `<a:t>`, so a
+      // whole-string search for a multi-paragraph label can never match.
+      const paragraphs = label.text.split('\n').filter((p) => p.trim() !== '');
+      if (!paragraphs.every((p) => after.includes(escapeXml(p)))) {
         const kind = label.name.startsWith('service-meta-') ? 'service sub-line' : 'service name';
         issues.push(`${where}: conversion lost the ${kind} "${label.text}"`);
       }
@@ -2880,8 +2941,14 @@ async function auditCustomerDeck(scenario: Scenario): Promise<string[]> {
           + '有効化してください。移行に際しては、事前に検証環境で切り替え手順を確認し、'
           + '復旧目標時間と復旧目標地点を関係者間で合意したうえで、手順書として'
           + '文書化されることを推奨いたします。'
-        : 'Move to a zone-redundant SKU and spread the instance count across at '
-          + 'least two zones in the primary region.',
+        // Numbered remediation steps, one per line, which is how a model asked
+        // for steps writes them and what `recommendationSteps()` already
+        // expects. The hard breaks are real paragraphs in the emitted file and
+        // used to be measured as though they were not there at all.
+        : '1. Enable zone redundancy on the tier.\n'
+          + '2. Add a second node pool in another zone.\n'
+          + '3. Update the runbook and re-run the failover drill.\n'
+          + '4. Record the achieved RTO against the agreed target.',
     })),
     modelUsed: 'audit',
   };
@@ -2912,6 +2979,34 @@ async function auditCustomerDeck(scenario: Scenario): Promise<string[]> {
       { name: 'West Europe', flag: '🇳🇱', monthly: 19004.11, annual: 228049.32 },
       { name: 'East US 2', flag: '🇺🇸', monthly: 17988.02, annual: 215856.24 },
     ],
+    // The two partial-comparison banners were the last character caps in the
+    // exporter and no scenario had ever rendered them, in either script. A
+    // Japanese deck gets the incomplete path (the caps were ~2x undersized in
+    // CJK, where a name is a full em wide); a Latin deck keeps the
+    // cheapest-region path, so both branches stay covered.
+    ...(isJa
+      ? {
+        regionComparisonIncomplete: true,
+        // Only the part before the colon is printed, so the names carry the
+        // length. Long enough that a banner which does not shrink runs off its
+        // own box and onto the table beneath it — which is what the 150-char
+        // cap did, and what nothing in the corpus had ever rendered.
+        unavailableRegions: [
+          '東日本 (Japan East) セカンダリ: SKU 未提供',
+          '西日本 (Japan West) プライマリ: SKU 未提供',
+          '東南アジア (Southeast Asia): ゾーン冗長なし',
+          '西ヨーロッパ (West Europe): 価格取得不可',
+          '北ヨーロッパ (North Europe): 階層未提供',
+          '米国東部 2 (East US 2): マネージド未提供',
+          '米国西部 3 (West US 3): 予約価格なし',
+          'オーストラリア東部 (Australia East): 未提供',
+          '韓国中部 (Korea Central): ゾーン冗長なし',
+          'インド中部 (Central India): SKU 未提供',
+          'ブラジル南部 (Brazil South): 価格取得不可',
+          'カナダ中部 (Canada Central): 階層未提供',
+        ],
+      }
+      : {}),
   };
   const pptx = await buildArchitectureDeckPptx(PIXEL_PNG, {
     diagramName: 'Contoso Platform',
@@ -3019,7 +3114,7 @@ async function auditCustomerDeck(scenario: Scenario): Promise<string[]> {
   // stops at row twenty announces sixty components and discharges twenty.
   const deckText = new Set<string>();
   for (const xml of slides) {
-    for (const match of xml.matchAll(/<a:t>([^<]*)<\/a:t>/g)) deckText.add(match[1].trim());
+    for (const match of xml.matchAll(/<a:t>([^<]*)<\/a:t>/g)) deckText.add(collapseWs(match[1]));
   }
   const stranded: string[] = [];
   for (const node of scenario.nodes) {
@@ -3028,7 +3123,13 @@ async function auditCustomerDeck(scenario: Scenario): Promise<string[]> {
     // code point comes back from `auditStrip` with the gap it left, and the
     // deck writes the same name without it; that is the sanitiser working, not
     // a name gone missing.
-    const name = auditStrip(String((node.data as { label?: string } | undefined)?.label ?? '')).trim();
+    //
+    // Whitespace is normalised on both sides for the same reason: the deck
+    // collapses a name onto one line by design, so a name authored with a hard
+    // break is discharged in full when it reads the same. Normalising does not
+    // weaken the rule — the deck side is still one entry per `<a:t>`, so a name
+    // genuinely split across paragraphs still has no entry that holds it whole.
+    const name = collapseWs(auditStrip(String((node.data as { label?: string } | undefined)?.label ?? '')));
     if (name && !deckText.has(name)) stranded.push(name);
   }
   if (stranded.length > 0) {
@@ -3045,11 +3146,13 @@ async function auditCustomerDeck(scenario: Scenario): Promise<string[]> {
   // wraps — one two-line name in eighteen rows is enough to push the last of
   // them off the sheet. Measure the wrap against each column's usable width
   // and add it up.
+  const tableRects = new Map<number, { x: number; y: number; w: number; h: number }[]>();
   for (const [index, xml] of slides.entries()) {
     for (const frame of xml.matchAll(/<p:graphicFrame>([\s\S]*?)<\/p:graphicFrame>/g)) {
       const body = frame[1];
       if (!body.includes('<a:tbl>')) continue;
       const offY = /<a:off[^>]*\by="(-?\d+)"/.exec(body);
+      const offX = /<a:off[^>]*\bx="(-?\d+)"/.exec(body);
       const top = offY ? +offY[1] / EMU_PER_INCH : BASE_SLIDE_H_IN;
       const cols = [...body.matchAll(/<a:gridCol[^>]*\bw="(\d+)"/g)].map((m) => +m[1] / EMU_PER_INCH);
       if (cols.length === 0) continue;
@@ -3066,7 +3169,11 @@ async function auditCustomerDeck(scenario: Scenario): Promise<string[]> {
         // print below it.
         let insetV = 0;
         for (const tc of row[1].matchAll(/<a:tc[\s\S]*?<\/a:tc>/g)) {
-          const text = [...tc[0].matchAll(/<a:t>([^<]*)<\/a:t>/g)].map((m) => m[1]).join('');
+          // Per paragraph, like the shape scrape: a cell whose name carries a
+          // hard break is several lines tall and used to measure as one.
+          const text = [...tc[0].matchAll(/<a:p>([\s\S]*?)<\/a:p>/g)]
+            .map((p) => [...p[1].matchAll(/<a:t>([^<]*)<\/a:t>/g)].map((m) => m[1]).join(''))
+            .join('\n');
           const pt = +(/\bsz="(\d+)"/.exec(tc[0])?.[1] ?? 1200) / 100;
           const usable = Math.max(0.5, (cols[cell] ?? cols[0]) - marginIn);
           if (text) lines = Math.max(lines, auditWrappedLines(text, usable, pt));
@@ -3084,6 +3191,18 @@ async function auditCustomerDeck(scenario: Scenario): Promise<string[]> {
           + `— ${(top + total - BASE_SLIDE_H_IN).toFixed(2)}in of it is below the bottom of the slide`,
         );
       }
+      // Hand the table's footprint to the overlap rule below. A table lives in
+      // a `<p:graphicFrame>` and the shape scrape reads `<p:sp>`/`<p:pic>`, so
+      // the two paths could not see each other at all: a paragraph painting an
+      // inch into a table was unreportable by construction.
+      const rects = tableRects.get(index) ?? [];
+      rects.push({
+        x: offX ? +offX[1] / EMU_PER_INCH : 0,
+        y: top,
+        w: cols.reduce((sum, c) => sum + c, 0),
+        h: total,
+      });
+      tableRects.set(index, rects);
     }
   }
 
@@ -3128,6 +3247,23 @@ async function auditCustomerDeck(scenario: Scenario): Promise<string[]> {
     // over a section heading that fitted its own box perfectly.
     const spilling = painted.filter((p) => p.over > 0.01);
     const reported = new Set<string>();
+    // Tables are opaque blocks of ink drawn from their own frame. Any box whose
+    // ink lands inside one is a collision whether or not either overflowed —
+    // the table is not going to move out of the way.
+    for (const rect of tableRects.get(index) ?? []) {
+      for (const p of painted) {
+        if (p.shape.y >= rect.y - 0.01) continue; // the table's own heading sits above it
+        const sharesX = p.shape.x < rect.x + rect.w - 0.02 && rect.x < p.shape.x + p.shape.w - 0.02;
+        if (!sharesX) continue;
+        const into = p.bottom - rect.y;
+        if (into > 0.02) {
+          issues.push(
+            `customer deck: slide ${index + 1} paints "${p.shape.text.trim().slice(0, 32)}" `
+            + `${into.toFixed(2)}in into a table`,
+          );
+        }
+      }
+    }
     for (const a of spilling) {
       for (const b of painted) {
         if (a === b) continue;
@@ -5365,6 +5501,7 @@ async function main(): Promise<void> {
     tokenWrapInventoryScenario(),
     longWorkflowScenario(),
     visioTokenWorkflowScenario(),
+    hardBreakInventoryScenario(),
     squeezedBadgeScenario(),
     await generatedScenario(), await groupedGeneratedScenario(),
   ];
