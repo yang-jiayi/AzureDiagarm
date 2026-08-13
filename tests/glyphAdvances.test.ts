@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { widestGlyphIn, estimateTextWidthIn } from '../src/services/pptxExporter.ts';
+import { hasMeasuredAdvance } from '../src/services/diagramExportGeometry.ts';
 
 /**
  * Real advances for Yu Gothic UI, in em, measured from the installed font with
@@ -34,6 +35,25 @@ const MEASURED_EM: Record<string, number> = {
   "'": 0.230, '.': 0.217, ',': 0.217, ':': 0.217, ';': 0.217,
   // Full-width: one em by construction, and both estimators agree.
   '注': 1.000, 'あ': 0.816, 'Ａ': 1.000,
+  // Beyond printable ASCII, where both estimators used to fall through to a
+  // flat 0.54. The ellipsis is the one that mattered most: `fitLabelToLines`
+  // appends it at every truncation point, so it is drawn 249 times across the
+  // audit corpus and was charged 26% under its real width every time.
+  '\u2026': 0.733, '\u2192': 1.000, '\u2190': 1.000, '\u2014': 1.000,
+  '\u00d7': 0.684, '\u2013': 0.500, '\u00b7': 0.217, '\u2019': 0.229,
+};
+
+/**
+ * Whitespace, measured the same way. It is kept apart from the table above
+ * because `widestGlyphIn` reports the widest INK in a run and must ignore it,
+ * while every width and wrap decision must charge for it: `wrapOneLine`
+ * accumulates `used += w` across the runs of a line, so a space priced at zero
+ * was free in the middle of a label. Charged nothing, the model bought two
+ * lines for "step 19" in a 0.220in column that really needs three, and the
+ * third line was drawn outside the chip.
+ */
+const MEASURED_WS_EM: Record<string, number> = {
+  ' ': 0.274, '\u00a0': 0.274,
 };
 
 test('widestGlyphIn never reports a glyph narrower than the font actually draws', () => {
@@ -65,4 +85,54 @@ test('widestGlyphIn reports the widest glyph of a run, not its average', () => {
 test('widestGlyphIn ignores whitespace and is zero for an empty run', () => {
   assert.equal(widestGlyphIn('', 9), 0);
   assert.equal(widestGlyphIn('   ', 9), 0);
+});
+
+test('a space is charged the width it draws, not nothing', () => {
+  for (const [glyph, em] of Object.entries(MEASURED_WS_EM)) {
+    const modelled = estimateTextWidthIn(glyph, 100) * 72 / 100;
+    assert.ok(
+      modelled >= em - 0.001,
+      `U+${glyph.codePointAt(0)!.toString(16).toUpperCase().padStart(4, '0')} is modelled at `
+      + `${modelled.toFixed(3)} em against a measured ${em.toFixed(3)}`,
+    );
+  }
+  // The property the corpus failed on: the same letters, one more word break.
+  assert.ok(
+    estimateTextWidthIn('step 19', 9) > estimateTextWidthIn('step19', 9),
+    'a run with an interior space must be wider than the same run without it',
+  );
+});
+
+/**
+ * The oracle this file could not previously provide.
+ *
+ * Every other test here compares the exporter's table against a measured one,
+ * and the audit compares the exporter against its own copy - but neither can
+ * see a character that is MISSING FROM BOTH, and both were missing the same
+ * ones. A shared blind spot is not a disagreement: the ellipsis, the arrows and
+ * the em dash all fell through to a flat average on both sides, so both agreed,
+ * and both were wrong by up to 46%.
+ *
+ * So this asserts COVERAGE rather than agreement. It fails on the commit that
+ * first draws a character nobody has measured, whether or not the two models
+ * still match, and it is the only test here that would have caught the bug
+ * before the deck shipped it.
+ */
+test('every character the exporters draw has a measured advance', () => {
+  // Punctuation and symbols the product itself emits: the ellipsis appended by
+  // every truncation, the arrows and dashes authors put in connector labels,
+  // the separators the meta line is built from, and the quotes a pasted name
+  // arrives with.
+  const drawn = ' !"#$%&\'()*+,-./0123456789:;<=>?@'
+    + 'ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~'
+    + '\u00a0\u00b7\u00d7\u2013\u2014\u2018\u2019\u201c\u201d\u2022\u2026'
+    + '\u2190\u2192\u2194\u21d2\u2212'
+    + '\u6ce8\u3042\uff21';
+  const missing = [...drawn].filter((character) => !hasMeasuredAdvance(character));
+  assert.deepEqual(
+    missing,
+    [],
+    'these characters have no measured advance, so every width and wrap that touches them is a '
+    + `guess: ${missing.map((c) => `U+${c.codePointAt(0)!.toString(16).toUpperCase().padStart(4, '0')}`).join(', ')}`,
+  );
 });

@@ -663,11 +663,96 @@ const GEOMETRY_ADVANCE_EM = [
  * Advance of one character, in em. CJK is a full em by construction; a
  * character outside the measured range falls back to the old flat 0.54.
  */
-export function advanceEm(character: string): number {
-  if (/\s/.test(character)) return 0;
-  if (GEOMETRY_CJK_RE.test(character)) return 1;
+/**
+ * Advances for the non-ASCII characters this product actually emits, in em.
+ *
+ * Measured the same way as the table above. The fallback used to be the flat
+ * 0.54, which is a LOWER bound for anything unusual and therefore the wrong
+ * direction for a sizer: the ellipsis `fitLabelToLines` appends at every
+ * truncation point really advances 0.733 em, and the arrows and dashes that
+ * turn up in connector labels advance a full em. A sizer that believes an
+ * arrow is half an em puts a line of them outside the chip.
+ */
+const GEOMETRY_EXTRA_EM: Record<string, number> = {
+  '\u00a0': 0.274, // no-break space
+  '\u00b7': 0.217, // middle dot
+  '\u00d7': 0.684, // multiplication sign
+  '\u2013': 0.5,   // en dash
+  '\u2014': 1,     // em dash
+  '\u2018': 0.229,
+  '\u2019': 0.229, // right single quote
+  '\u201c': 0.396,
+  '\u201d': 0.396,
+  '\u2026': 0.733, // horizontal ellipsis
+  '\u2190': 1,
+  '\u2192': 1,     // rightwards arrow
+  '\u2194': 1,
+  '\u21d2': 1,
+  '\u2212': 0.684,
+  '\u2022': 0.35,
+};
+
+/**
+ * A space is 0.274 em, not 0.
+ *
+ * Zero is correct only for the whitespace that ENDS a line, which a renderer
+ * hangs past the column rather than wrapping on. Every interior space
+ * advances, and charging them nothing made every multi-word line measure short
+ * by a quarter em per gap. `"step 19"` in a 0.220in column at 9pt is the whole
+ * bug in seven characters: 0.0735 + 0 + 0.135 fits, 0.0735 + 0.0343 + 0.135
+ * does not.
+ *
+ * Callers that need the line-ending behaviour use `trailingWhitespaceIn` to
+ * discount it explicitly, so the discount happens where a renderer applies it
+ * rather than everywhere.
+ */
+const GEOMETRY_SPACE_EM = 0.274;
+
+/**
+ * Emoji, and everything else outside the Basic Multilingual Plane.
+ *
+ * These are not drawn by the label font at all: Windows falls back to Segoe UI
+ * Emoji, whose colour glyphs run from about one em to 1.36 em depending on the
+ * pair. GDI+ reports 1.0 for a rocket, but GDI+ is measuring whatever font it
+ * substituted, which is not necessarily the one PowerPoint or Visio picks, so
+ * the measurement is not authority here the way it is for Yu Gothic UI.
+ *
+ * 1.36 is therefore charged deliberately as an UPPER bound. Over-charging a
+ * width can only shrink type or buy a line that was not needed; under-charging
+ * it paints outside the shape, and the corpus already draws one of these.
+ */
+const GEOMETRY_ASTRAL_EM = 1.36;
+
+/** Zero-width: a variation selector or a joiner styles the glyph before it. */
+const GEOMETRY_ZERO_WIDTH_RE = /[\u200b-\u200f\u2060\ufe00-\ufe0f\ufeff]/;
+
+/** True when `character` has a measured advance rather than the fallback. */
+export function hasMeasuredAdvance(character: string): boolean {
+  if (/\s/.test(character)) return true;
+  if (GEOMETRY_ZERO_WIDTH_RE.test(character)) return true;
+  if (GEOMETRY_CJK_RE.test(character)) return true;
+  if (GEOMETRY_EXTRA_EM[character] !== undefined) return true;
   const code = character.codePointAt(0) ?? 0;
-  return code >= 33 && code <= 126 ? GEOMETRY_ADVANCE_EM[code - 33] : 0.54;
+  if (code >= 0x10000) return true;
+  return code >= 33 && code <= 126;
+}
+
+/**
+ * Advance of one character, in em. CJK is a full em by construction.
+ *
+ * The fallback is 1 em, an UPPER bound, because a character this table has
+ * never heard of is far more likely to be a symbol or a full-width form than a
+ * narrow Latin letter, and a sizer that guesses low paints outside the box.
+ */
+export function advanceEm(character: string): number {
+  if (/\s/.test(character)) return GEOMETRY_SPACE_EM;
+  if (GEOMETRY_ZERO_WIDTH_RE.test(character)) return 0;
+  if (GEOMETRY_CJK_RE.test(character)) return 1;
+  const extra = GEOMETRY_EXTRA_EM[character];
+  if (extra !== undefined) return extra;
+  const code = character.codePointAt(0) ?? 0;
+  if (code >= 0x10000) return GEOMETRY_ASTRAL_EM;
+  return code >= 33 && code <= 126 ? GEOMETRY_ADVANCE_EM[code - 33] : 1;
 }
 
 /**
@@ -679,6 +764,19 @@ export function advanceWidthIn(text: string, fontSizePt: number): number {
   let em = 0;
   for (const character of text) em += advanceEm(character);
   return (em * fontSizePt) / 72;
+}
+
+/**
+ * The width of the whitespace `text` ends with, in inches.
+ *
+ * A renderer decides whether a line fits on its visible ink and lets the
+ * trailing spaces hang, so a wrap tests `width - trailingWhitespaceIn` and
+ * then advances by the full width.
+ */
+export function trailingWhitespaceIn(text: string, fontSizePt: number): number {
+  const trimmed = text.replace(/\s+$/, '');
+  if (trimmed.length === text.length) return 0;
+  return advanceWidthIn(text.slice(trimmed.length), fontSizePt);
 }
 
 /**
@@ -695,7 +793,13 @@ export function advanceWidthIn(text: string, fontSizePt: number): number {
  */
 export function widestGlyphIn(text: string, fontSizePt: number): number {
   let widest = 0;
-  for (const character of text) widest = Math.max(widest, advanceEm(character));
+  for (const character of text) {
+    // Whitespace is not a glyph. It advances 0.274 em, which matters to a
+    // WIDTH, but "the widest thing that has to fit on a line" is about ink and
+    // a column that holds only a space holds nothing.
+    if (/\s/.test(character)) continue;
+    widest = Math.max(widest, advanceEm(character));
+  }
   return (widest * fontSizePt) / 72;
 }
 
@@ -2565,3 +2669,4 @@ export function clampedBoxes(
   }
   return { boxes: moved, bounds: parked };
 }
+

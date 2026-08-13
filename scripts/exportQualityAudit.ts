@@ -58,18 +58,92 @@ const YU_GOTHIC_ADVANCE_EM = [
   0.302, 0.239, 0.302, 0.684,
 ];
 
-/** Measured advance of one character, in em. CJK is a full em by construction. */
-function measuredAdvanceEm(character: string): number {
-  if (/\s/.test(character)) return 0;
-  if (/[\u2e80-\u9fff\uac00-\ud7af\uff00-\uff60\uffe0-\uffe6]/.test(character)) return 1;
+/**
+ * Advances for the non-ASCII characters the exporters actually emit, in em,
+ * measured the same way as the table above.
+ *
+ * The old `: 0.54` fallback was a LOWER bound for anything unusual, which is
+ * the wrong direction for a rule that asks whether text fits. The ellipsis is
+ * the one that mattered: `fitLabelToLines` appends it at every truncation
+ * point, 249 times across the corpus, and it advances 0.733 em rather than
+ * 0.54.
+ */
+const YU_GOTHIC_EXTRA_EM: Record<string, number> = {
+  '\u00a0': 0.274,
+  '\u00b7': 0.217,
+  '\u00d7': 0.684,
+  '\u2013': 0.5,
+  '\u2014': 1,
+  '\u2018': 0.229,
+  '\u2019': 0.229,
+  '\u201c': 0.396,
+  '\u201d': 0.396,
+  '\u2026': 0.733,
+  '\u2190': 1,
+  '\u2192': 1,
+  '\u2194': 1,
+  '\u21d2': 1,
+  '\u2212': 0.684,
+  '\u2022': 0.35,
+};
+
+/**
+ * A space advances 0.274 em. Zero is only correct for the whitespace that ENDS
+ * a line, which `auditLineWidths` discounts explicitly at the point a renderer
+ * discounts it.
+ */
+const AUDIT_SPACE_EM = 0.274;
+
+/** True when `character` has a measured advance rather than the fallback. */
+function hasAuditAdvance(character: string): boolean {
+  if (/\s/.test(character)) return true;
+  if (/[\u200b-\u200f\u2060\ufe00-\ufe0f\ufeff]/.test(character)) return true;
+  if (/[\u2e80-\u9fff\uac00-\ud7af\uff00-\uff60\uffe0-\uffe6]/.test(character)) return true;
+  if (YU_GOTHIC_EXTRA_EM[character] !== undefined) return true;
   const code = character.codePointAt(0) ?? 0;
-  return code >= 33 && code <= 126 ? YU_GOTHIC_ADVANCE_EM[code - 33] : 0.54;
+  if (code >= 0x10000) return true;
+  return code >= 33 && code <= 126;
+}
+
+/**
+ * Measured advance of one character, in em. CJK is a full em by construction;
+ * an unknown character is charged a full em, an UPPER bound, because a rule
+ * that guesses low reports that text fits when it does not.
+ *
+ * Astral characters are emoji in practice, drawn by a substituted colour font
+ * rather than by Yu Gothic UI, so no measurement of the label font can settle
+ * them. 1.36 em is the top of the range those fonts occupy, charged on purpose:
+ * a rule may safely over-reserve, never under-reserve.
+ */
+function measuredAdvanceEm(character: string): number {
+  if (/\s/.test(character)) return AUDIT_SPACE_EM;
+  if (/[\u200b-\u200f\u2060\ufe00-\ufe0f\ufeff]/.test(character)) return 0;
+  if (/[\u2e80-\u9fff\uac00-\ud7af\uff00-\uff60\uffe0-\uffe6]/.test(character)) return 1;
+  const extra = YU_GOTHIC_EXTRA_EM[character];
+  if (extra !== undefined) return extra;
+  const code = character.codePointAt(0) ?? 0;
+  if (code >= 0x10000) return 1.36;
+  return code >= 33 && code <= 126 ? YU_GOTHIC_ADVANCE_EM[code - 33] : 1;
+}
+
+/** The width of the whitespace `text` ends with, in inches. */
+function measuredTrailingWsIn(text: string, fontSizePt: number): number {
+  const trimmed = text.replace(/\s+$/, '');
+  if (trimmed.length === text.length) return 0;
+  let em = 0;
+  for (const character of text.slice(trimmed.length)) em += measuredAdvanceEm(character);
+  return (em * fontSizePt) / 72;
 }
 
 /** Widest character in `text`, in inches, from the measured table. */
 function measuredWidestGlyphIn(text: string, fontSizePt: number): number {
   let widest = 0;
-  for (const character of text) widest = Math.max(widest, measuredAdvanceEm(character));
+  for (const character of text) {
+    // Whitespace is not a glyph: it advances, but a column that holds only a
+    // space holds no ink.
+    if (/\s/.test(character)) continue;
+    widest = Math.max(widest, measuredAdvanceEm(character));
+  }
   return (widest * fontSizePt) / 72;
 }
 
@@ -101,7 +175,10 @@ function measuredWrappedLines(text: string, widthIn: number, fontSizePt: number)
     let used = 0;
     for (const run of runs) {
       const width = measuredTextWidthIn(run, fontSizePt);
-      if (used > 0 && used + width > box) { rows += 1; used = 0; }
+      // Fit on visible ink, advance by the full width: a renderer lets the
+      // run-final spaces hang past the column.
+      const visible = width - measuredTrailingWsIn(run, fontSizePt);
+      if (used > 0 && used + visible > box) { rows += 1; used = 0; }
       if (width > box) {
         // Break inside the run, one character at a time, because that is what
         // the renderer does with a word wider than its column.
@@ -203,16 +280,25 @@ function auditLineWidths(text: string, boxIn: number, fontSizePt: number): numbe
     let used = 0;
     for (const token of tokens) {
       const w = auditTextWidthIn(token, fontSizePt);
-      if (used > 0 && used + w > box) {
+      // Fit on visible ink, advance by the full width: run-final spaces hang
+      // past the column rather than wrapping the line.
+      const visible = w - measuredTrailingWsIn(token, fontSizePt);
+      if (used > 0 && used + visible > box) {
         widths.push(used);
         used = 0;
       }
       if (w > box) {
-        // A single run wider than the box breaks inside itself, filling every
-        // line it crosses.
-        const inner = Math.ceil(w / box);
-        for (let k = 0; k < inner - 1; k += 1) widths.push(box);
-        used = w - (inner - 1) * box;
+        // A single run wider than the box breaks inside itself, one CHARACTER
+        // at a time. `ceil(w / box)` assumes a word packs exactly a boxful per
+        // line, which is only true if a break may fall part-way through a
+        // glyph; breaks fall between glyphs, so the ratio is a lower bound.
+        let row = 0;
+        for (const character of token) {
+          const advance = (measuredAdvanceEm(character) * fontSizePt) / 72;
+          if (row > 0 && row + advance > box) { widths.push(row); row = 0; }
+          row += advance;
+        }
+        used = row;
         continue;
       }
       used += w;
@@ -925,6 +1011,74 @@ function dataLabelPromotionScenario(): Scenario {
  * still has real geometry to measure rather than degenerating into a page of
  * slivers that every other rule skips.
  */
+/**
+ * Connector labels made of the characters the width table used to guess at,
+ * and of ordinary words separated by ordinary spaces.
+ *
+ * Both are the same defect seen from two sides. A space was charged 0 em, so
+ * every interior gap on a line was free and a chip that really wraps to two
+ * lines was measured as one - `"step 19"` in a 0.220in column is the whole bug
+ * in seven characters. And anything outside printable ASCII fell through to a
+ * flat 0.54, so an arrow measured 46% narrow and the ellipsis the exporter
+ * appends at every truncation point measured 26% narrow.
+ *
+ * Neither the exporter nor this audit could see either one, because both sides
+ * were incomplete in exactly the same places.
+ */
+function probeArrowScenario(): Scenario {
+  const icon = '/Azure_Public_Service_Icons/Icons/compute/10029-icon-service-Function-Apps.svg';
+  const labels = [
+    'Ingest \u2192 Transform \u2192 Serve',
+    'Extract \u2014 Load \u2014 Report',
+    'Ingest \u2192 Serve',
+    'validates the request and issues a token',
+    'step 19',
+    'writes the order document to Cosmos DB',
+  ];
+  const nodes: Node[] = [];
+  const edges: Edge[] = [];
+  labels.forEach((label, i) => {
+    nodes.push({
+      id: `pa${i}a`,
+      type: 'azureNode',
+      position: { x: 0, y: i * 230 },
+      width: 110,
+      height: 55,
+      data: { label: 'Azure Data Factory pipeline', serviceName: 'Data Factory', category: 'analytics', iconPath: icon },
+    } as unknown as Node);
+    nodes.push({
+      id: `pa${i}b`,
+      type: 'azureNode',
+      position: { x: 450, y: i * 230 },
+      width: 110,
+      height: 55,
+      data: { label: 'Azure Synapse Analytics workspace', serviceName: 'Synapse', category: 'analytics', iconPath: icon },
+    } as unknown as Node);
+    edges.push({ id: `pae${i}`, source: `pa${i}a`, target: `pa${i}b`, label } as Edge);
+  });
+  // A single unbroken token, several columns wide.
+  //
+  // This is the case that separates character-by-character packing from
+  // `ceil(width / column)`: the ratio assumes a word packs exactly a columnful
+  // per line, which is only true if a break may fall part-way through a glyph.
+  // Breaks fall between glyphs, so it is a lower bound and never a count - and
+  // an Azure resource id is exactly the kind of name that has no space in it
+  // for forty characters. The mutation that put the ratio back survived all 96
+  // files of the corpus until this fixture existed.
+  ['contoso-prod-eastus-vnet-gateway-connection', 'OrderManagementWorkflowOrchestrator']
+    .forEach((label, i) => {
+      nodes.push({
+        id: `pa-token${i}`,
+        type: 'azureNode',
+        position: { x: 900 + i * 200, y: 0 },
+        width: 46,
+        height: 210,
+        data: { label, serviceName: 'Virtual Network', category: 'networking', iconPath: icon },
+      } as unknown as Node);
+    });
+  return { id: 'probe-arrow', nodes, edges };
+}
+
 function hairlineTilesScenario(): Scenario {
   const icon = '/Azure_Public_Service_Icons/Icons/compute/10029-icon-service-Function-Apps.svg';
   const widths = [8, 10, 14, 22, 40, 160, 160, 160];
@@ -3071,17 +3225,21 @@ interface Report {
   issues: string[];
   metrics: Record<string, number>;
   /**
-   * The service names this format actually drew on the sheet.
+   * Every service name each format actually DRAWS, paired with the label it
+   * was authored from.
    *
-   * Not a measurement of either format on its own — it exists so the two can
-   * be compared. PPTX and Visio have now disagreed about the same tile in both
-   * directions in consecutive rounds (Visio drew nothing where PowerPoint drew
-   * a name, then PowerPoint drew a smear where Visio drew nothing), and no
-   * rule inside either auditor could see it: each one only ever reads the
-   * shapes its own exporter emitted, so a name that is missing from one file
-   * is invisible by construction.
+   * A name is compared by presence and by how much of it survives, never by
+   * count: the two formats export at deliberately different page scales, so a
+   * sheet legitimately names more tiles than the deck. What is never
+   * legitimate is a service named in one file and absent from the other, or
+   * one kept whole in one file and cut to a stub in the other.
+   *
+   * It lives on the report rather than inside either auditor because no rule
+   * inside either auditor could see it: each one only ever reads the shapes
+   * its own exporter emitted, so a name that is missing from one file is
+   * invisible by construction.
    */
-  drawnNames?: string[];
+  drawnNames?: { authored: string; drawn: string }[];
 }
 
 /**
@@ -4238,6 +4396,40 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
 
   const issues: string[] = [];
   issues.push(...xmlWellFormednessIssues(await zipXmlParts(zip), ''));
+  // Every character the deck DRAWS must have a measured advance.
+  //
+  // The oracle this file provides is a per-glyph table measured from the font,
+  // and its weakness is not that the exporter might use a different table -
+  // it is that both tables can be INCOMPLETE in the same places. Both fell
+  // back to a flat average for anything outside printable ASCII, so the
+  // ellipsis the exporter appends at every truncation point was charged 0.54
+  // em against a real 0.733, and an arrow in a connector label 0.54 against a
+  // real 1.0. Neither side could see it, because a shared blind spot is not a
+  // disagreement.
+  //
+  // This rule is sound whether or not both sides are correct: it asserts
+  // COVERAGE rather than agreement, and it fails on the commit that first
+  // draws a character nobody has measured.
+  const unmeasured = new Map<string, number>();
+  for (const slideXml of allSlides) {
+    for (const match of slideXml.matchAll(/<a:t>([\s\S]*?)<\/a:t>/g)) {
+      const run = match[1]
+        .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"')
+        .replace(/&#39;/g, "'").replace(/&apos;/g, "'").replace(/&amp;/g, '&');
+      for (const character of run) {
+        if (hasAuditAdvance(character)) continue;
+        unmeasured.set(character, (unmeasured.get(character) ?? 0) + 1);
+      }
+    }
+  }
+  if (unmeasured.size > 0) {
+    const worst = [...unmeasured.entries()].sort((a, b) => b[1] - a[1]).slice(0, 6);
+    issues.push(
+      `the deck draws ${unmeasured.size} character(s) with no measured advance, so every width `
+      + `and wrap that touches them is a guess: `
+      + worst.map(([character, n]) => `U+${(character.codePointAt(0) ?? 0).toString(16).toUpperCase().padStart(4, '0')} x${n}`).join(', '),
+    );
+  }
   // The audit ran icon-blind for its whole life: `canRasterize()` is false
   // under Node, so `rasterizeIcons` returned an empty map and every rule that
   // measures a tile — the caption band's position and height, and therefore
@@ -4576,7 +4768,7 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
       const floorPt = slide.overview ? 6 : 7;
       const column = Math.max(0.05, tile.w - 0.06);
       const lines = measuredWrappedLines(authored, column, floorPt);
-      const needed = (lines * floorPt * 1.22) / 72;
+      const needed = (lines * floorPt * 1.35) / 72;
       const room = tile.h - 0.06 - (iconHeights.get(`${at}:${id}`) ?? 0);
       if (column >= 2 * measuredWidestGlyphIn(authored, floorPt) && needed <= room) {
         issues.push(
@@ -4590,8 +4782,6 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
 
   for (const label of labels) {
     const font = label.fontSize ?? 11;
-    const needed = textWidthIn(label.text, font);
-    const lines = Math.ceil(needed / Math.max(label.w, 0.01));
     // Independent of the exporter's inequality, not a restatement of it.
     //
     // `charsPerLine = w / (pt/72) >= 4` was a TAUTOLOGY: the exporter
@@ -4637,9 +4827,6 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
         + `${label.w.toFixed(3)}in column, needing ${(realLines * lineHeight).toFixed(3)}in `
         + `of a ${label.h.toFixed(3)}in box - ${((realLines * lineHeight) - label.h).toFixed(3)}in is painted below it`,
       );
-    }
-    if (lines * lineHeight > label.h + 0.02) {
-      issues.push(`label "${label.text}" needs ${lines} lines (${(lines * lineHeight).toFixed(2)}in) but has ${label.h.toFixed(2)}in`);
     }
   }
   for (const chip of chips) {
@@ -5616,12 +5803,21 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
     issues,
     drawnNames: (() => {
       const byId = new Map(scenario.nodes.map((n) => [auditStrip(String(n.id)), String(n.data?.label ?? '')]));
-      const ids = new Set(
-        allSlides.flatMap((xml) => parseShapes(xml))
-          .filter((s) => s.name.startsWith('service-label-') && s.text.trim() !== '')
-          .map((s) => s.name.slice('service-label-'.length)),
-      );
-      return [...ids].map((id) => byId.get(id) ?? id).sort();
+      // The LONGEST rendition of each name wins. A tiled deck draws the same
+      // tile twice - small on the overview, in full on its reading slide - and
+      // scoring the overview's stub against Visio's full name would report
+      // every tiled deck as a divergence.
+      const best = new Map<string, string>();
+      for (const shape of allSlides.flatMap((slideXml) => parseShapes(slideXml))) {
+        if (!shape.name.startsWith('service-label-') || shape.text.trim() === '') continue;
+        const id = shape.name.slice('service-label-'.length);
+        const authored = byId.get(id) ?? id;
+        const drawn = shape.text.trim();
+        if ((best.get(authored)?.length ?? -1) < drawn.length) best.set(authored, drawn);
+      }
+      return [...best]
+        .map(([authored, drawn]) => ({ authored, drawn }))
+        .sort((a, b) => a.authored.localeCompare(b.authored));
     })(),
     metrics: {
       slides: slideCount,
@@ -6011,6 +6207,95 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
       ? `smallest Visio font is ${minFontPt}pt (below the 7pt floor the deck enforces)`
       : `smallest Visio font is ${minFontPt}pt on a sheet scaled to ${(sheetScale * 100).toFixed(0)}% `
         + `— type shrunk harder than the drawing it labels (floor ${floorPt.toFixed(2)}pt)`);
+  }
+
+  // The name a Visio tile draws has to fit the tile it names.
+  //
+  // Visio does not clip text to its text block - that is the premise the
+  // connector chip was fixed on - so a text block sized one line short does
+  // not truncate, it paints the surplus lines out through the bottom of the
+  // shape and across whatever is under it. Every rule the sheet had for this
+  // read `TxtHeight` back out of the file, which is the exporter's own answer
+  // to the question and cannot disagree with the exporter about anything.
+  //
+  // This measures the sentence instead, the way the connector rule has since
+  // the painted-ink round, and it is the rule the sheet's line counter needed:
+  // `wrapOneLineIn` broke an over-wide word with `ceil(w / column)`, the third
+  // copy of that defect in the repo, and NOTHING in this file could see it -
+  // the mutation survived all 96 files of the corpus.
+  // Scanned by shape CHUNK, not by one regex across the page. A Service shape
+  // is a Visio group and its icon is a child shape with a `<Text/>` of its
+  // own, so a lazy `[\s\S]*?<Text>` walks straight past the group's own text
+  // into the child's empty one and the rule silently measures nothing. It read
+  // as working because the only tile it had ever fired on was icon-less.
+  // Splitting on the shape tag ends each chunk exactly where its first child
+  // begins.
+  for (const chunk of xml.split('<Shape ID=')) {
+    if (!/NameU="Service\.\d+"/.test(chunk.slice(0, 200))) continue;
+    const label = /Name="([^"]*)"/.exec(chunk)?.[1] ?? '';
+    const cell = (name: string): number => {
+      const hit = new RegExp(`<Cell N="${name}" V="([\\d.-]+)"`).exec(chunk);
+      return hit ? +hit[1] : 0;
+    };
+    const tileH = cell('Height');
+    const txtW = cell('TxtWidth');
+    const txtH = cell('TxtHeight');
+    const txtPinY = cell('TxtPinY');
+    // Each run is drawn at its OWN size: the name and the sub-line are
+    // separate character rows, and measuring both at the name's size reports a
+    // block that is neither.
+    const characterSection = /<Section N="Character">([\s\S]*?)<\/Section>/.exec(chunk)?.[1] ?? '';
+    const sizes = [...characterSection.matchAll(/<Row IX="(\d+)"[^>]*>[\s\S]*?<Cell N="Size" V="([\d.]+)"/g)]
+      .reduce<Record<string, number>>((acc, row) => ({ ...acc, [row[1]]: +row[2] }), {});
+    const textBody = /<Text>([\s\S]*?)<\/Text>/.exec(chunk)?.[1] ?? '';
+    // A tile with no sub-line emits its name as bare text, with no `<cp>` run
+    // marker at all - so a rule that keys on the marker measures nothing on
+    // exactly the tiles that carry only a name.
+    const marked = [...textBody.matchAll(/<cp IX="(\d+)"\/>([\s\S]*?)(?=<cp IX="\d+"\/>|$)/g)]
+      .map((run) => ({ ix: run[1], text: run[2] }));
+    const runs = marked.length > 0 ? marked : [{ ix: '0', text: textBody }];
+    if (runs.length === 0 || txtW <= 0 || tileH <= 0) continue;
+    let inkH = 0;
+    let lineCount = 0;
+    runs.forEach((run, i) => {
+      const fontIn = sizes[run.ix] ?? 0;
+      const text = run.text.replace(/<[^>]*>/g, '').trim();
+      if (!text || fontIn <= 0) return;
+      // The sub-line's own multiple, which is looser than the name's.
+      const multiple = i === 0 ? 1.3 : 1.4;
+      const lines = text.split('\n').reduce(
+        (sum, para) => sum + measuredWrappedLines(para, txtW, fontIn * 72),
+        0,
+      );
+      lineCount += lines;
+      inkH += lines * fontIn * multiple;
+    });
+    if (inkH <= 0) continue;
+    // Two failures, both fatal, and the second is the one a shape can hide.
+    //
+    // The block is centred on `TxtPinY`, so the ink runs half its height
+    // either side of it and anything past the shape is painted on the drawing.
+    // But a tall tile has headroom, and there an under-counted block does not
+    // escape the shape at all - it just paints over the icon and the tile
+    // chrome inside it, which is why the `ceil(width / column)` mutation
+    // survived the whole corpus. So the declared block is checked against the
+    // ink as well: `TxtHeight` is the exporter's own answer to "how tall is
+    // this text?", and a text block shorter than its own text is wrong
+    // wherever it sits.
+    const over = Math.max(txtPinY + inkH / 2 - tileH, inkH / 2 - txtPinY);
+    const short = inkH - txtH;
+    if (over > 0.01 || short > 0.02) {
+      const drawn = textBody.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+      issues.push(
+        `Visio tile "${label}" draws "${drawn.slice(0, 28)}" in a ${txtW.toFixed(3)}in column `
+        + `- ${lineCount} line(s) need ${inkH.toFixed(3)}in, the block is declared `
+        + `${txtH.toFixed(3)}in`
+        + (short > 0.02 ? ` (${short.toFixed(3)}in short of its own text)` : '')
+        + (over > 0.01
+          ? `, and ${over.toFixed(3)}in is painted outside a ${tileH.toFixed(3)}in shape`
+          : ` on a ${tileH.toFixed(3)}in shape`),
+      );
+    }
   }
 
   // The other half of that bargain, and the rule the scaler actually broke: the
@@ -6826,10 +7111,23 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
     scenario: scenario.id,
     format: 'vsdx',
     issues,
-    drawnNames: [...xml.matchAll(/NameU="Service\.\d+" Name="([^"]*)"[\s\S]*?<Text>([\s\S]*?)<\/Text>/g)]
-      .filter((m) => m[2].replace(/<[^>]*>/g, '').trim() !== '')
-      .map((m) => m[1])
-      .sort(),
+    drawnNames: (() => {
+      const unesc = (s: string): string => s
+        .replace(/<[^>]*>/g, '')
+        .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"')
+        .replace(/&#39;/g, "'").replace(/&apos;/g, "'").replace(/&amp;/g, '&')
+        .trim();
+      const best = new Map<string, string>();
+      for (const m of xml.matchAll(/NameU="Service\.\d+" Name="([^"]*)"[\s\S]*?<Text>([\s\S]*?)<\/Text>/g)) {
+        const drawn = unesc(m[2]);
+        if (drawn === '') continue;
+        const authored = unesc(m[1]);
+        if ((best.get(authored)?.length ?? -1) < drawn.length) best.set(authored, drawn);
+      }
+      return [...best]
+        .map(([authored, drawn]) => ({ authored, drawn }))
+        .sort((a, b) => a.authored.localeCompare(b.authored));
+    })(),
     metrics: {
       pageWidthIn: +pkg.pageWidthIn.toFixed(2),
       pageHeightIn: +pkg.pageHeightIn.toFixed(2),
@@ -6979,6 +7277,7 @@ async function main(): Promise<void> {
     unlabelledStepInflationScenario(),
     dataLabelPromotionScenario(),
   hairlineTilesScenario(),
+  probeArrowScenario(),
   tallNarrowTilesScenario(),
     corridorZoneScenario(),
     ladderInGridScenario(), twinLaddersScenario(), strayLadderScenario(), legendCornerScenario(), duplicateStepsScenario(), denseZoneScenario(),
@@ -7066,15 +7365,38 @@ async function main(): Promise<void> {
     // files had drawn perfectly well. That is a difference between the
     // comparison's own two spellings, not between the drawings.
     const key = (s: string): string => stripXmlForbidden(s).replace(/\s+/g, ' ').trim();
-    const pt = new Set(p.drawnNames.map(key));
-    const vt = new Set(v.drawnNames.map(key));
-    for (const name of new Set([...pt, ...vt])) {
-      if (pt.has(name) === vt.has(name)) continue;
-      const missing = pt.has(name) ? 'the Visio drawing' : 'the PowerPoint deck';
-      p.issues.push(
-        `"${name}" is named in the .${pt.has(name) ? 'pptx' : 'vsdx'} and on no shape at all in `
-        + `${missing} — the two exports of one diagram do not name the same services`,
-      );
+    const pt = new Map(p.drawnNames.map((n) => [key(n.authored), key(n.drawn)]));
+    const vt = new Map(v.drawnNames.map((n) => [key(n.authored), key(n.drawn)]));
+    for (const name of new Set([...pt.keys(), ...vt.keys()])) {
+      if (pt.has(name) !== vt.has(name)) {
+        const missing = pt.has(name) ? 'the Visio drawing' : 'the PowerPoint deck';
+        p.issues.push(
+          `"${name}" is named in the .${pt.has(name) ? 'pptx' : 'vsdx'} and on no shape at all in `
+          + `${missing} — the two exports of one diagram do not name the same services`,
+        );
+        continue;
+      }
+      // Presence alone is too weak. Both formats can name a service and still
+      // disagree about it completely: one keeps the whole name, the other cuts
+      // it to a four-character stub. Compare a DIMENSIONLESS quantity - the
+      // fraction of the authored name that survives - so the comparison stays
+      // valid across the two formats' deliberately different page scales.
+      const authoredLen = [...name].length;
+      if (authoredLen === 0) continue;
+      const kept = (drawn: string): number => {
+        const withoutEllipsis = drawn.replace(/[\u2026.]+$/, '');
+        return Math.min(1, [...withoutEllipsis].length / authoredLen);
+      };
+      const kp = kept(pt.get(name) ?? '');
+      const kv = kept(vt.get(name) ?? '');
+      if (Math.abs(kp - kv) > 0.4) {
+        const fuller = kp > kv ? 'deck' : 'sheet';
+        p.issues.push(
+          `"${name}" survives ${(Math.max(kp, kv) * 100).toFixed(0)}% in the ${fuller} but only `
+          + `${(Math.min(kp, kv) * 100).toFixed(0)}% in the other — `
+          + `"${pt.get(name)}" against "${vt.get(name)}"`,
+        );
+      }
     }
   }
   for (const report of reports) {
@@ -7097,3 +7419,5 @@ main().catch((error) => {
   console.error(error);
   process.exit(1);
 });
+
+

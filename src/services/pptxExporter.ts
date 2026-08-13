@@ -125,6 +125,7 @@ import {
   truncateLabel,
   widestGlyphIn,
   advanceWidthIn,
+  trailingWhitespaceIn,
   usedConnectionLegend,
   workflowListFromEdges,
   narrateEdgeCallouts,
@@ -1102,7 +1103,14 @@ function wrapOneLine(text: string, box: number, fontSizePt: number): number {
   let used = 0;
   for (const run of runs) {
     const w = estimateTextWidthIn(run, fontSizePt);
-    if (used > 0 && used + w > box) {
+    // A renderer decides whether a line fits on its visible ink and lets the
+    // run-final spaces hang past the column, so the fit test discounts them
+    // and the advance does not. Charging a space nothing everywhere was the
+    // shortcut that made this look unnecessary, and it made every interior
+    // space free: 1699 emitted boxes in the corpus were a quarter em per gap
+    // short of the wrap they really take.
+    const visible = w - trailingWhitespaceIn(run, fontSizePt);
+    if (used > 0 && used + visible > box) {
       lines += 1;
       used = 0;
     }
@@ -2430,20 +2438,7 @@ function addNodeShape(
   let labelLines = labelLinesFor(label);
   let labelBlockH = (labelLines * fontSize * 1.35) / 72;
 
-  // Which of the three things a tile carries yields when it cannot hold all
-  // three. The subline used to win by default — it is subtracted before the
-  // icon is measured — and on a 1.36x0.68in tile with a two-line name that
-  // left 0.06in for the icon, under the legibility floor, so the icon was
-  // dropped. Twenty-five tiles then shipped as grey boxes of type. That is the
-  // wrong way round: on the Architecture Center the icon is what says which
-  // service this is, and the SKU and the price are supplementary. A tile larger
-  // than one that comfortably draws an icon must not lose it to a subline.
   const iconFloor = 0.08 * px;
-  const roomFor = (band: number): number =>
-    Math.min(h * 0.42, w * 0.34, Math.max(0, h - pad * 2 - band - labelBlockH - 0.02));
-  if (metaBand > 0 && icon && named && roomFor(metaBand) < iconFloor && roomFor(0) >= iconFloor) {
-    metaBand = 0;
-  }
   // And if the name is what is crowding the icon out, the name yields — not the
   // icon. The same reasoning as the sub-line above, one step further: on the
   // Architecture Center the icon is what says which service a tile is, and it
@@ -2459,39 +2454,75 @@ function addNodeShape(
   // Counting the lines honestly is what made this reachable at all: the old
   // ratio under-counted the block, so the icon kept a share of the tile the
   // words were already using.
-  let nameFont = fontSize;
-  if (icon && named && !stub) {
-    while (nameFont > LEGIBLE_TILE_PT && roomFor(metaBand) < iconFloor) {
-      nameFont = Math.max(LEGIBLE_TILE_PT, nameFont - 0.5);
-      label = fitLabelToLines(box.label, innerW, nameFont / 72, nameLines, linesIn);
-      labelLines = Math.max(1, wrappedLineCount(label, innerW, nameFont));
-      labelBlockH = (labelLines * nameFont * 1.35) / 72;
+  const squeeze = (band: number): {
+    font: number; label: string; lines: number; blockH: number; band: number; room: number;
+  } => {
+    let font = fontSize;
+    const asks = Math.max(1, Math.floor((h - pad * 2 - band) / ((fontSize * 1.35) / 72)));
+    let text = fitLabelToLines(box.label, innerW, font / 72, asks, linesIn);
+    let count = Math.max(1, wrappedLineCount(text, innerW, font));
+    let blockH = (count * font * 1.35) / 72;
+    const room = (): number =>
+      Math.min(h * 0.42, w * 0.34, Math.max(0, h - pad * 2 - band - blockH - 0.02));
+    while (font > LEGIBLE_TILE_PT && room() < iconFloor) {
+      font = Math.max(LEGIBLE_TILE_PT, font - 0.5);
+      text = fitLabelToLines(box.label, innerW, font / 72, asks, linesIn);
+      count = Math.max(1, wrappedLineCount(text, innerW, font));
+      blockH = (count * font * 1.35) / 72;
     }
-    // `labelLines` is both the loop's control variable AND re-derived from a
+    // `count` is both the loop's control variable AND re-derived from a
     // measurement inside the body, so the body can put it back UP — and a
     // `while` on a value the body re-measures cannot be proved to terminate.
     // It did not: at the type floor `fitLabelToLines` returns "…", which is
-    // 0.0525in at 7pt and does not fit `innerW`'s own 0.05in floor, so a
+    // 0.0733in at 7pt and does not fit `innerW`'s own 0.06in floor, so a
     // request for ONE line measures as two, and 2 → 1 → 2 → 1 forever. The
-    // exit condition cannot save it either, because `roomFor` is capped by
+    // exit condition cannot save it either, because the room is capped by
     // `w * 0.34`, which does not depend on the font.
     //
-    // This hangs the tab synchronously for any tile narrower than 0.113in at
+    // This hangs the tab synchronously for any tile narrower than 0.133in at
     // 7pt: no error, no watchdog, no way to close the page. File → Load
     // reaches it, because the restore validator never checks `width`.
     //
     // So drive the loop by the REQUEST, which only ever falls, and stop the
     // moment asking for fewer lines stops producing fewer.
-    let asked = labelLines;
-    while (asked > 1 && roomFor(metaBand) < iconFloor) {
+    let asked = count;
+    while (asked > 1 && room() < iconFloor) {
       asked -= 1;
-      const shorter = fitLabelToLines(box.label, innerW, nameFont / 72, asked, linesIn);
-      const measured = Math.max(1, wrappedLineCount(shorter, innerW, nameFont));
-      if (measured >= labelLines) break;
-      label = shorter;
-      labelLines = measured;
-      labelBlockH = (labelLines * nameFont * 1.35) / 72;
+      const shorter = fitLabelToLines(box.label, innerW, font / 72, asked, linesIn);
+      const measured = Math.max(1, wrappedLineCount(shorter, innerW, font));
+      if (measured >= count) break;
+      text = shorter;
+      count = measured;
+      blockH = (count * font * 1.35) / 72;
     }
+    return { font, label: text, lines: count, blockH, band, room: room() };
+  };
+  let nameFont = fontSize;
+  if (icon && named && !stub) {
+    // Which of the three things a tile carries yields when it cannot hold all
+    // three. The sub-line used to be dropped FIRST, at full-size type, on the
+    // reasoning that the icon outranks it — which is true, and was the wrong
+    // conclusion, because it never asked whether the icon needed it. Charging
+    // a space the width it draws made names one line taller across the corpus
+    // and the rule then deleted the SKU and the region from every tile in a
+    // scenario that exists to carry them, while the name sat at full size.
+    //
+    // A name set half a point smaller is still the whole name; a deleted
+    // sub-line is information the tile cannot get back and that nothing else
+    // in the deck carries. So the free move is tried first, and the sub-line
+    // is dropped only when shrinking the name does not save the icon AND
+    // dropping it does.
+    const withMeta = squeeze(metaBand);
+    let chosen = withMeta;
+    if (metaBand > 0 && withMeta.room < iconFloor) {
+      const withoutMeta = squeeze(0);
+      if (withoutMeta.room >= iconFloor) chosen = withoutMeta;
+    }
+    metaBand = chosen.band;
+    nameFont = chosen.font;
+    label = chosen.label;
+    labelLines = chosen.lines;
+    labelBlockH = chosen.blockH;
     drawnFont = nameFont;
   }
 

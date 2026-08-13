@@ -55,6 +55,7 @@ import {
   truncateLabel,
   widestGlyphIn,
   advanceWidthIn,
+  trailingWhitespaceIn,
   partitionBoxes,
   readableTextOn,
   usedConnectionLegend,
@@ -514,12 +515,42 @@ function serviceGroupXml(
   // What the band is allowed to become. Everything below fits *into* this;
   // nothing is permitted to be drawn past it.
   const bandRoom = Math.max(0.16 * fonts.scale, room - minIcon);
+  // What the band may take when the comfortable budget is not enough.
+  //
+  // `minIcon` reserves 0.18in for the picture, and on a tile of the app's own
+  // default proportions that leaves the caption a single line: the name is
+  // then CUT, at full-size type, with an icon sitting above it at more than
+  // twice the size below which this file would not draw an icon at all. The
+  // cross-format rule caught it the day it could see truncation - the deck
+  // spelled "Azure Synapse Analytics workspace" and the sheet spelled
+  // "Azure Synaps...kspace", from the same nodes, on the same tile.
+  //
+  // The trade this file already argues for is icon over name, and that stands:
+  // the band borrows only what the icon can give up while STILL BEING DRAWN,
+  // and only after type has come all the way down to the legibility floor. So
+  // the icon shrinks before a letter is deleted, and a letter is deleted only
+  // when the icon has nothing left to lend.
+  const iconFloor = maxIcon > 0 ? Math.min(maxIcon, 0.085 * fonts.scale) : 0;
+  const bandMax = Math.max(bandRoom, room - iconFloor);
   const lineH = 1.3;
   const floorLabel = Math.min(fonts.label, LEGIBLE_IN * fonts.scale);
   // The sub-line yields before the name does. A band with room for one line of
   // type cannot hold a name *and* a SKU, and of the two it is the name that
   // identifies the tile; the deck makes the same call for the same reason.
-  const showsMeta = !!meta && floorLabel * lineH + fonts.meta * 1.4 <= bandRoom;
+  // The sub-line yields before the name does. A band with room for one line of
+  // type cannot hold a name *and* a SKU, and of the two it is the name that
+  // identifies the tile; the deck makes the same call for the same reason.
+  //
+  // And it is budgeted at ONE line because one line is all it may occupy. The
+  // band reserved `meta * 1.4` unconditionally, so on a 0.30in column
+  // "Premium - japaneast" wrapped to four lines inside a reservation for one
+  // and painted 0.100in out through the bottom of a 1.25in shape. A SKU and a
+  // region are a caption: if the tile is too narrow to set one on a line, the
+  // tile is too narrow to carry it at all, and the whole string is still on
+  // the shape's `Name` attribute and in its shape data, which is the recovery
+  // route this file already documents for a cut name.
+  const metaOneLine = !!meta && wrappedLinesIn(meta, textW, fonts.meta) <= 1;
+  const showsMeta = metaOneLine && floorLabel * lineH + fonts.meta * 1.4 <= bandRoom;
   const metaBand = showsMeta ? fonts.meta * 1.4 : 0;
   //
   // `min(needed, room - minIcon)` was a clamp with nothing behind it. Visio
@@ -555,21 +586,26 @@ function serviceGroupXml(
   // strikes, floored at the sheet's own legibility limit so this can shrink
   // type but never make it unreadable.
   const columnLabel = Math.max(floorLabel, Math.min(fonts.label, textColumn / 4));
-  for (let step = 0; step < 6; step += 1) {
-    const size = columnLabel - ((columnLabel - floorLabel) * step) / 5;
-    labelFont = size;
-    const fits = wrappedLinesIn(box.label, textW, size) * size * lineH + metaBand <= bandRoom;
-    if (fits) {
-      label = box.label;
-      break;
+  let bandUsed = bandRoom;
+  for (const budget of [bandRoom, bandMax]) {
+    bandUsed = budget;
+    for (let step = 0; step < 6; step += 1) {
+      const size = columnLabel - ((columnLabel - floorLabel) * step) / 5;
+      labelFont = size;
+      const fits = wrappedLinesIn(box.label, textW, size) * size * lineH + metaBand <= budget;
+      if (fits) {
+        label = box.label;
+        break;
+      }
+      label = fitLabelToLines(
+        box.label,
+        textW,
+        size,
+        Math.floor((budget - metaBand) / (size * lineH)),
+        wrappedLinesIn,
+      );
     }
-    label = fitLabelToLines(
-      box.label,
-      textW,
-      size,
-      Math.floor((bandRoom - metaBand) / (size * lineH)),
-      wrappedLinesIn,
-    );
+    if (label === box.label) break;
   }
   const labelLines = wrappedLinesIn(label, textW, labelFont);
   // A tile with no column to set the name in draws no name. Visio wraps text
@@ -601,7 +637,7 @@ function serviceGroupXml(
   // is never degenerate, but a collapsed 12px node is 0.125in tall — shorter
   // than one line of legible type — and the floor then declared a band half as
   // tall again as the whole shape.
-  const textH = Math.min(rect.h, Math.max(0.16 * fonts.scale, Math.min(neededTextH, bandRoom)));
+  const textH = Math.min(rect.h, Math.max(0.16 * fonts.scale, Math.min(neededTextH, bandUsed)));
   // Seated 0.06in above the tile's floor, but never pushed out through its
   // ceiling. Positioning the band by its bottom edge alone hung the name of
   // every collapsed tile 0.079in above the shape it names — 85 of them across
@@ -1061,15 +1097,30 @@ function wrapOneLineIn(text: string, column: number, fontSizeIn: number): number
   let used = 0;
   for (const run of runs) {
     const w = estimateTextWidthIn(run, fontSizeIn);
-    if (used > 0 && used + w > column) {
+    // The fit test uses visible ink; the run-final spaces hang past the column
+    // the way a renderer hangs them. See the PowerPoint exporter's copy.
+    const visible = w - trailingWhitespaceIn(run, 72) * fontSizeIn;
+    if (used > 0 && used + visible > column) {
       lines += 1;
       used = 0;
     }
     if (w > column) {
-      // A single run wider than the box breaks inside itself.
-      const inner = Math.ceil(w / column);
-      lines += inner - 1;
-      used = w - (inner - 1) * column;
+      // A single run wider than the box breaks inside itself, one CHARACTER at
+      // a time. `ceil(w / column)` assumes a word packs exactly a columnful per
+      // line, which is only true if a break may fall part-way through a glyph.
+      // Breaks fall between glyphs, so the ratio is a lower bound and never the
+      // count - the same defect the deck's copy carried, in the third copy of
+      // this algorithm in the repo.
+      let lineUsed = used;
+      for (const glyph of run) {
+        const gw = estimateTextWidthIn(glyph, fontSizeIn);
+        if (lineUsed > 0 && lineUsed + gw > column) {
+          lines += 1;
+          lineUsed = 0;
+        }
+        lineUsed += gw;
+      }
+      used = lineUsed;
       continue;
     }
     used += w;
@@ -2429,3 +2480,5 @@ export async function buildVsdxBlob(
     compression: 'DEFLATE',
   });
 }
+
+
