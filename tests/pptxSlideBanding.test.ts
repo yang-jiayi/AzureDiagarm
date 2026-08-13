@@ -1922,3 +1922,116 @@ test('the closed-set tables keep every row they are given', () => {
   );
   assert.equal(regionFit.rows, regionRows.length, 'the region table dropped a region');
 });
+
+/**
+ * Eight instances of one service, authored 12px wide.
+ *
+ * At the old fixed cap of 96 pixels per inch the tile arrived 0.125in wide, a
+ * text column of 0.065in - narrower than two of the digit "1" - so it could
+ * carry no name, no stub and not even a key. Eight identical icons carried
+ * eight identical nothings and the index could only say "(not drawn)" eight
+ * times: eight services on the drawing, not one of them identifiable.
+ *
+ * Asserted HERE rather than in the export corpus because the claim is a
+ * counterfactual - the same file, magnified further than the cap allowed. A
+ * corpus entry can only see the file that was produced, and a file whose tiles
+ * are blank looks exactly like a file whose tiles were never meant to be
+ * captioned. The distinguishing fact is that the frame had the room.
+ */
+test('a drawing authored too small to caption is magnified until its tiles carry a mark', async () => {
+  const suffixes = ['alpha', 'bravo', 'charlie', 'delta', 'echo', 'foxtrot', 'golf', 'hotel'];
+  const nodes = suffixes.map((suffix, i) => ({
+    id: `hs${i}`,
+    type: 'azureNode',
+    position: { x: i * 200, y: (i % 2) * 180 },
+    width: 12,
+    height: 24,
+    data: { label: `Contoso platform shared services region ${suffix}`, serviceName: 'Azure Functions' },
+  } as unknown as Node));
+  const deck = await buildDeck(nodes, []);
+
+  const marks = new Map<string, string>();
+  for (const xml of deck.parts) {
+    for (const shape of xml.matchAll(/name="service-label-([^"]*)"[\s\S]*?<\/p:sp>/g)) {
+      const text = [...shape[0].matchAll(/<a:t>([^<]*)<\/a:t>/g)].map((t) => t[1]).join('').trim();
+      if (text) marks.set(shape[1], text);
+    }
+  }
+  assert.equal(
+    marks.size,
+    nodes.length,
+    `only ${marks.size} of ${nodes.length} tiles carry a mark - the rest are anonymous dots`,
+  );
+  assert.equal(
+    new Set(marks.values()).size,
+    nodes.length,
+    'two tiles carry the same mark, so the reader cannot tell them apart',
+  );
+
+  const rows = deck.slides
+    .flatMap((xml) => [...xml.matchAll(/name="index-name-\d+"[\s\S]*?<\/p:sp>/g)])
+    .map((m) => [...m[0].matchAll(/<a:t>([^<]*)<\/a:t>/g)].map((t) => t[1]).join('').trim());
+  assert.equal(rows.length, nodes.length, 'the index does not carry a row per service');
+  for (const [id, mark] of marks) {
+    const defining = rows.filter((row) => row.split('  =  ')[0].split('  |  ').includes(mark));
+    assert.equal(
+      defining.length,
+      1,
+      `the mark "${mark}" drawn on ${id} is defined by ${defining.length} index rows, not exactly one`,
+    );
+    const label = nodes.find((n) => n.id === id)!.data.label as string;
+    assert.ok(
+      defining[0].endsWith(`  =  ${label}`),
+      `the index row for "${mark}" does not spell out "${label}": ${JSON.stringify(defining[0])}`,
+    );
+  }
+});
+
+/**
+ * A tiled deck draws one service twice - small on the overview and larger on
+ * its reading slide - so one name legitimately shortens to two different stubs.
+ * The index carried only the longer of them, which left the shorter one drawn
+ * on a tile and defined nowhere: the exact defect the index exists to prevent.
+ */
+test('every mark a tile draws is defined by an index row that names one service', async () => {
+  const long = 'Azure Database for PostgreSQL Flexible Server (Business Critical, Zone Redundant HA)';
+  const nodes = Array.from({ length: 12 }, (_, i) => ({
+    id: `wi${i}`,
+    type: 'azureNode',
+    position: { x: (i % 4) * 300, y: Math.floor(i / 4) * 200 },
+    width: 96,
+    height: 60,
+    data: { label: `${long} ${i}`, serviceName: 'Azure Database for PostgreSQL' },
+  } as unknown as Node));
+  const deck = await buildDeck(nodes, []);
+
+  const rows = deck.slides
+    .flatMap((xml) => [...xml.matchAll(/name="index-name-\d+"[\s\S]*?<\/p:sp>/g)])
+    .map((m) => [...m[0].matchAll(/<a:t>([^<]*)<\/a:t>/g)].map((t) => t[1]).join('').trim());
+  const defined = new Map<string, Set<string>>();
+  for (const row of rows) {
+    const cut = row.indexOf('  =  ');
+    if (cut < 0) continue;
+    for (const mark of row.slice(0, cut).split('  |  ')) {
+      if (!defined.has(mark)) defined.set(mark, new Set());
+      defined.get(mark)!.add(row.slice(cut + 5));
+    }
+  }
+  const authored = new Set(nodes.map((n) => n.data.label as string));
+
+  for (const xml of deck.slides) {
+    for (const shape of xml.matchAll(/name="service-label-([^"]*)"[\s\S]*?<\/p:sp>/g)) {
+      const mark = [...shape[0].matchAll(/<a:t>([^<]*)<\/a:t>/g)].map((t) => t[1]).join('').trim();
+      if (!mark || authored.has(mark)) continue;
+      assert.ok(
+        defined.has(mark),
+        `the tile for ${shape[1]} draws "${mark}", which no index row defines`,
+      );
+      assert.equal(
+        defined.get(mark)!.size,
+        1,
+        `"${mark}" is defined against ${defined.get(mark)!.size} services, so it identifies none of them`,
+      );
+    }
+  }
+});

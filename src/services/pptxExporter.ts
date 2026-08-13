@@ -271,6 +271,21 @@ interface DiagramWindow {
 // never finds out, so it is priced above any overlap a walk is likely to see.
 const LEGIBLE_TILE_PT = 7;
 /**
+ * The smallest tile that can carry an identifying mark.
+ *
+ * The tile's text column is `w - 0.06`, and the legibility rule the gate and the
+ * renderer share asks for two of the string's widest glyph. A digit at
+ * `LEGIBLE_TILE_PT` measures 0.0524in, so the column must reach 0.1048in and the
+ * tile 0.1648in, rounded up once to leave the arithmetic room to move.
+ *
+ * WIDTH ONLY, deliberately. The analogous height bar - about 0.375in, the room
+ * one 7pt line needs in a band that is roughly a third of the tile - is reached
+ * by any node under 38px tall, which is an ordinary size rather than a
+ * pathological one, and demanding it moved the transform under scenarios the
+ * planner had already sized correctly. 19.2px wide is not an ordinary size.
+ */
+const MARKABLE_TILE_W_IN = 0.2;
+/**
  * Floor for the SKU / region / price sub-line. Below this the string is there
  * but nobody can read it, which is worse than an honest ellipsis.
  */
@@ -2251,6 +2266,24 @@ function placeBox(
   };
 }
 
+/**
+ * Records that `mark` is what some slide actually drew for the service authored
+ * as `authored`.
+ *
+ * A service can be drawn more than once in a tiled deck - small on the overview
+ * and larger on its reading slide - and the two tiles are different widths, so
+ * the same name legitimately shortens to two different stubs. Keeping only the
+ * longest of them left the other one drawn on a tile and defined nowhere, which
+ * is the exact defect the index exists to prevent. Every distinct stub is
+ * recorded, and the index row lists them all against the one name they mean.
+ */
+function recordMark(into: Map<string, Set<string>> | undefined, authored: string, mark: string): void {
+  if (!into) return;
+  const marks = into.get(authored);
+  if (marks) marks.add(mark);
+  else into.set(authored, new Set([mark]));
+}
+
 function addNodeShape(
   pptx: PptxGenJS,
   slide: Slide,
@@ -2277,6 +2310,8 @@ function addNodeShape(
    * the index slide exactly as any other stub is.
    */
   drawnHere?: Map<string, string>,
+  /** Stable, deck-global ordinals so a key means the same thing on every slide. */
+  keyOrdinal?: Map<string, number>,
 ): {
   /** The box the service NAME is drawn in, not the room left over for it. */
   caption: { x: number; y: number; w: number; h: number } | null;
@@ -2284,6 +2319,8 @@ function addNodeShape(
   meta: { x: number; y: number; w: number; h: number } | null;
   /** The authored name, when the tile could not hold all of it. */
   clipped: string | null;
+  /** What the tile actually drew, which is the key the index is looked up by. */
+  drawn: string;
 } {
   const topLeft = placeBox(box, transform, clampTo);
   const w = topLeft.w;
@@ -2556,17 +2593,49 @@ function addNodeShape(
   // already the fitted string, so the two are equal on exactly the tiles that
   // cut the hardest and the test excluded the only case it was written for.
   const authoredLabel = String(box.label ?? '').trim();
+  // The legibility test has to be applied to the string that is ACTUALLY drawn.
+  // `namedWidth` asks whether the tile can set `box.label`, whose widest glyph
+  // is an ordinary letter; what lands on a hard-cut tile is "…", whose glyph is
+  // 1.0 em - 0.071in against 0.052in - so a column judged wide enough for the
+  // name was 0.045in too narrow for the mark it ended up carrying, and four
+  // tiles drew an ellipsis the gate then reported as illegible. The stub branch
+  // has always been guarded this way; this is the same guard applied to the
+  // final string rather than to one of the two paths that produce it, and it is
+  // placed after the icon-saving squeeze because that squeeze re-picks the
+  // label - anything earlier tests a string that is then thrown away.
+  if (label && innerW < 2 * widestGlyphIn(label, drawnFont)) label = '';
   // A bare ellipsis is not a short name, it is an absent one: it carries no
   // character of the service it stands for, so it is exactly as useful as a
   // blank tile and no more distinguishable. Anything with no letter or digit in
   // it fails as a lookup key for the same reason a repeated one does.
   const informative = /[\p{L}\p{N}]/u.test(label);
   const claimed = drawnHere?.get(label);
+  // Whether the KEY is the only thing this tile will carry. An iconed tile
+  // below the naming floor draws no text at all - the icon and the box are
+  // meant to carry it - which is sound while the icon says something the tile
+  // beside it does not. Eight instances of one service defeat that: eight
+  // identical icons, eight names too long for the column, and nothing on the
+  // drawing to tell any of them from any other. A single digit is not a name
+  // and is not asked to be one; it is the smallest mark that identifies, and
+  // the index defines it.
+  let keyed = false;
   if (drawnHere && label !== authoredLabel
     && (!informative || (claimed !== undefined && claimed !== authoredLabel))) {
-    const key = `${drawnHere.size + 1}`;
-    if (innerW >= 2 * widestGlyphIn(key, drawnFont)) {
+    const key = `${keyOrdinal?.get(String(box.id)) ?? drawnHere.size + 1}`;
+    // TWO of the key's widest glyph, the same bar the gate's legibility rule
+    // uses. Relaxing it to one - on the argument that a single character cannot
+    // stack down the side of a tile - drew digits the gate then reported as
+    // illegible in a 0.065in box, so the renderer and the thing that checks it
+    // disagreed about the same quantity. The narrow tile is fixed where it is
+    // caused instead: `MARKABLE_TILE_W_IN` lifts the transform cap so the tile
+    // arrives wide enough to carry the key in the first place.
+    const room = 2 * widestGlyphIn(key, drawnFont);
+    // And the room to SET it: one line at the floor. Without this the key is
+    // drawn in a box taller than the tile and overhangs its neighbours.
+    const lineH = (drawnFont * 1.35) / 72;
+    if (innerW >= room && h >= lineH) {
       label = key;
+      keyed = !named && !stub;
       labelLines = Math.max(1, labelLinesFor(label));
       labelBlockH = (labelLines * drawnFont * 1.35) / 72;
     }
@@ -2602,7 +2671,7 @@ function addNodeShape(
   const textHeight = Math.max(0.08, topLeft.y + h - pad - metaBand - textTop);
 
   let captionBand: { x: number; y: number; w: number; h: number } | null = null;
-  if ((named || stub) && label !== '') {
+  if ((named || stub || keyed) && label !== '') {
     const boxY = stub ? topLeft.y + pad : textTop;
     const boxH = stub ? Math.max(0.08, h - pad * 2) : textHeight;
     // The box the words are drawn in, not the room left over for them. With no
@@ -2720,6 +2789,13 @@ function addNodeShape(
     // A name the tile refused to set at all is as lost as one it cut, and it is
     // the index slide that gets it back either way.
     clipped: !named && box.label ? box.label : (label === box.label ? null : box.label),
+    // What the tile ACTUALLY drew. Reporting the label the sizing arrived at
+    // made the index define marks that appear on no shape in the file: an
+    // iconed tile below the naming floor emits no text at all, and the index
+    // still printed the string that tile would have drawn if it had. An index
+    // row promising a mark the reader cannot find is worse than one admitting
+    // the name was never drawn, which is what an empty mark prints.
+    drawn: (named || stub || keyed) ? label : '',
   };
 }
 
@@ -2754,7 +2830,7 @@ function addGroupShape(
    * lets it stand its ground when it does not.
    */
   /** Cut names, spelled out in full on the index slide. */
-  truncatedNames?: Set<string>,
+  truncatedNames?: Map<string, Set<string>>,
 ): { caption: { x: number; y: number; w: number; h: number } } {
   const topLeft = placeBox(box, transform, clampTo, true);
   const w = topLeft.w;
@@ -3039,8 +3115,9 @@ function addGroupShape(
       // A zone cut to a sliver by the window gets a caption cut with it, and a
       // box labelled "P…" names nothing. A cut service name has always been
       // spelled out on the index slide; a cut zone name is no different, and
-      // is the only place the reader can now recover it.
-      truncatedNames?.add(box.label);
+      // is the only place the reader can now recover it. The CUT text is the
+      // mark the index row is keyed by, exactly as a tile's stub is.
+      recordMark(truncatedNames, box.label, caption);
     }
   }
 
@@ -3063,7 +3140,9 @@ function addGroupShape(
   // box it names.
   const needs = caption.length > 1 ? widest * 2 : widest;
   if (caption && needs > captionColumn(title.w) + 0.01) {
-    truncatedNames?.add(box.label);
+    // A zone whose caption cannot be drawn at all has NO mark to look up by,
+    // so its row keys on the empty string and the index prints "(not drawn)".
+    recordMark(truncatedNames, box.label, '');
     return { caption: { x: title.x, y: title.y, w: 0, h: 0 } };
   }
   slide.addText(caption, {
@@ -3170,7 +3249,7 @@ async function addEditableDiagram(
    * them on an index slide, because a name clipped on the drawing and written
    * down nowhere else has been thrown away.
    */
-  truncatedNames: Set<string> = new Set(),
+  truncatedNames: Map<string, Set<string>> = new Map(),
   /**
    * This is the whole drawing shown small ahead of the readable slices of it,
    * so anything that would land under the resolvable floor is left to them.
@@ -3184,6 +3263,10 @@ async function addEditableDiagram(
    * the caller adds it, because the edge carried a label and no step.
    */
   promotedSteps: Map<number, string> = new Map(),
+  /** The mark each service draws, shared by every slide in the deck. */
+  drawnHere: Map<string, string> = new Map(),
+  /** Stable, deck-global ordinals for the numeric key fallback. */
+  keyOrdinal: Map<string, number> = new Map(),
 ): Promise<boolean> {
   const frame = fullFrame;
 
@@ -3251,7 +3334,24 @@ async function addEditableDiagram(
     }), acc),
     view,
   );
-  const transform = computeFitTransform(drawnView, frame, { maxScale: 1 / PX_PER_IN });
+  // The cap is a DENSITY, and a density is the wrong thing to cap when the
+  // drawing itself was authored small. At 96 px per inch a 12px node is drawn
+  // 0.125in wide, whose text column is 0.065in - narrower than two of the
+  // digit "1" - so the tile can carry no name, no stub and not even a key, and
+  // eight instances of one service came out as eight anonymous dots with an
+  // index that could only say "(not drawn)" eight times. The cap exists to stop
+  // a two-node diagram being blown up to absurd tiles, and it still does: this
+  // only RAISES it, only for a drawing whose smallest tile cannot carry a mark,
+  // and only far enough to reach that bar. Every drawing already above it keeps
+  // the identical transform, so the geometry of the rest of the corpus is
+  // untouched by construction. The frame terms of `computeFitTransform` still
+  // bind, so nothing is magnified past the page.
+  const minBoxW = Math.min(...services.map((b) => b.w), Infinity);
+  const maxScale = Math.max(
+    1 / PX_PER_IN,
+    Number.isFinite(minBoxW) && minBoxW > 0 ? MARKABLE_TILE_W_IN / minBoxW : 0,
+  );
+  const transform = computeFitTransform(drawnView, frame, { maxScale });
   const clampTo = clamped || banded ? frame : undefined;
   // A tile is drawn where the drawing says; a chip is drawn *around* its arrow
   // and is therefore the one shape that can be pushed off the sheet by its own
@@ -3390,12 +3490,24 @@ async function addEditableDiagram(
   });
   // Per SLIDE, not per deck: the reader looks at one slide at a time, so the
   // keys only have to be distinguishable among the tiles they are drawn beside.
-  const drawnHere = new Map<string, string>();
   for (const service of shownServices) {
-    const bands = addNodeShape(pptx, slide, service, transform, service.iconPath ? icons.get(service.iconPath) : undefined, px, clampTo, thumbnail, drawnHere);
+    const bands = addNodeShape(
+      pptx, slide, service, transform,
+      service.iconPath ? icons.get(service.iconPath) : undefined,
+      px, clampTo, thumbnail, drawnHere, keyOrdinal,
+    );
     // The overview is allowed to clip: every name it clips is drawn in full on
     // the slice that follows. Only a window slide's clipping is a real loss.
-    if (bands.clipped && !thumbnail) truncatedNames.add(bands.clipped);
+    //
+    // The MARK goes with it. An index that prints only the full name leaves the
+    // reader holding a tile marked "3" and a list of sentences, none of which
+    // contains a 3; the row has to define the mark it is looked up by. EVERY
+    // distinct mark is kept: two slides draw the same service at two widths,
+    // and quoting only the longer one left the shorter one drawn on a tile and
+    // defined nowhere - the very thing the index exists to prevent.
+    if (bands.clipped && !thumbnail) {
+      recordMark(truncatedNames, bands.clipped, bands.drawn ?? '');
+    }
     // A tile can be leaned on: the reader still sees which service it is. Its
     // name cannot, because the name is the only thing that says so, and a chip
     // is drawn over it at 92% opacity. Weighted far above a tile so that even
@@ -4442,7 +4554,30 @@ export async function buildDiagramSlidePptx(
   // is no authored row waiting for it, so the workflow list has to grow one.
   const promotedSteps = new Map<number, string>();
   // Names the tiles had to cut, for the index slide at the end of the deck.
-  const truncatedNames = new Set<string>();
+  //
+  // A MAP, because the index has to print the pair. A shortened name stops
+  // being a name and becomes a lookup key, and a key the index never defines is
+  // not a key at all - the reader sees a tile marked "3" and an index of
+  // sentences, none of which contains a 3. Keyed by the AUTHORED name so a
+  // service drawn on the overview and again on its own window slide occupies
+  // one row, not two.
+  const truncatedNames = new Map<string, Set<string>>();
+  // The mark each service draws, shared by every slide in the deck.
+  //
+  // Per-slide, this counter restarted: two window slides issued the same four
+  // keys to eight different services, and a service was "5" on the overview and
+  // "1" on its own slide. A mark has to mean one thing in one file, so both the
+  // collision test and the key it falls back to are deck-global.
+  const drawnHere = new Map<string, string>();
+  // Assigned once, from a stable sort of the node ids, so adding a node does
+  // not renumber the ones already there. Digits are the narrowest glyphs in the
+  // model - "123" is 0.1572in against 0.2379in for a two-letter stub - so a
+  // stable key still fits every column a positional one did.
+  const keyOrdinal = new Map<string, number>();
+  [...(diagram?.nodes ?? [])]
+    .map((node) => String(node.id))
+    .sort((a, b) => a.localeCompare(b))
+    .forEach((nodeId, i) => keyOrdinal.set(nodeId, i + 1));
 
   for (const [index, window] of windows.entries()) {
     const slide = pptx.addSlide();
@@ -4497,7 +4632,7 @@ export async function buildDiagramSlidePptx(
 
     // ── Diagram body — native shapes when available, captured PNG otherwise ───
     renderedNatively = diagram
-      ? await addEditableDiagram(pptx, slide, diagram, geom.frame, isDarkMode, window, mutedWording, truncatedNames, window === undefined && parts.length > 0, options.presetIcons, promotedSteps)
+      ? await addEditableDiagram(pptx, slide, diagram, geom.frame, isDarkMode, window, mutedWording, truncatedNames, window === undefined && parts.length > 0, options.presetIcons, promotedSteps, drawnHere, keyOrdinal)
       : false;
 
     if (!renderedNatively) {
@@ -4672,7 +4807,28 @@ export async function buildDiagramSlidePptx(
   // "export it and then retype it by hand" outcome this exporter exists to
   // avoid. Columns are sized from the longest name so nothing is clipped twice.
   if (truncatedNames.size > 0) {
-    const names = [...truncatedNames].sort((a, b) => a.localeCompare(b));
+    // THE PAIR, in the same format the Visio index uses: "<mark>  =  <name>".
+    // A tile drew a mark and the reader has nothing but that mark to look the
+    // service up by, so a row printing the name alone defines nothing. An empty
+    // mark - a name the slide could not draw at all - reads "(not drawn)".
+    // ALL of a service's marks are listed, because the overview and the reading
+    // slide shorten one name to two different widths; a row quoting one of them
+    // leaves the other drawn on a tile and defined nowhere. Separated by
+    // "  |  " rather than by a comma: a cut name routinely contains a comma
+    // ("... (Production, Zone Redundant)"), and splitting a row on one shredded
+    // the mark into fragments that matched no tile. Two spaces on each side,
+    // which no drawn string can contain - singleLineName collapses every run of
+    // spaces before a label is ever measured - so this separator is unambiguous
+    // for exactly the reason "  =  " is.
+    const names = [...truncatedNames]
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([authored, marks]) => {
+        const printed = [...marks]
+          .map((m) => (m === '' ? '(not drawn)' : m))
+          .sort((a, b) => a.localeCompare(b))
+          .join('  |  ');
+        return `${printed}  =  ${authored}`;
+      });
     const listTop = IMAGE_Y + 0.1;
     const available = Math.max(0.3, geom.footerY - 0.1 - listTop);
     const INDEX_PT = 10;

@@ -1716,6 +1716,32 @@ function collidingStubsScenario(): Scenario {
   return { id: 'probe-colliding-stubs', nodes, edges: [] };
 }
 
+function hairlineStubsScenario(): Scenario {
+  const icon = '/Azure_Public_Service_Icons/Icons/compute/10029-icon-service-Function-Apps.svg';
+  const suffixes = ['alpha', 'bravo', 'charlie', 'delta', 'echo', 'foxtrot', 'golf', 'hotel'];
+  // The same eight colliding names as `probe-colliding-stubs`, on tiles a third
+  // the width. The numeric key that fixture proved out is refused here: the
+  // fallback asked for room for TWO of the key's widest glyph, and a one-digit
+  // key never stacks, so the test bought nothing and cost every one of these
+  // eight tiles its mark. All eight index rows then read "(not drawn)" - eight
+  // services on the drawing, not one of them identifiable, which is the very
+  // collision the key was introduced to end, one page over.
+  const nodes: Node[] = suffixes.map((suffix, i) => ({
+    id: `hs${i}`,
+    type: 'azureNode',
+    position: { x: i * 200, y: (i % 2) * 180 },
+    width: 12,
+    height: 24,
+    data: {
+      label: `Contoso platform shared services region ${suffix}`,
+      serviceName: 'Azure Functions',
+      category: 'compute',
+      iconPath: icon,
+    },
+  } as unknown as Node));
+  return { id: 'probe-hairline-stubs', nodes, edges: [] };
+}
+
 function longIndexRowsScenario(): Scenario {
   const icon = '/Azure_Public_Service_Icons/Icons/compute/10029-icon-service-Function-Apps.svg';
   const names = [
@@ -6131,10 +6157,27 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
   // Truncation is only acceptable when the full wording survives somewhere the
   // reader can reach. A chip clipped to 42 cells with no workflow row carrying
   // the rest has silently thrown away what the author wrote.
-  const indexed = new Set(
-    shapes.filter((s) => s.name.startsWith('index-name-')).map((s) => s.text.trim()),
+  // An index row is now "<mark>  =  <full name>", the same pair the Visio index
+  // prints, so membership is tested by SUFFIX rather than by equality. Matched
+  // on the suffix and not by splitting on the separator, because a name may
+  // contain the separator itself and an undrawable name leaves an empty mark.
+  const indexRows = shapes
+    .filter((s) => s.name.startsWith('index-name-'))
+    .map((s) => s.text.trim());
+  const indexed = {
+    has: (name: string): boolean => indexRows.some(
+      (row) => row === name || row.endsWith(`  =  ${name}`) || row.endsWith(`=  ${name}`),
+    ),
+  };
+  // An index row now QUOTES the mark, and the mark is a cut string, so the row
+  // legitimately contains an ellipsis - "Az…  =  Azure Firewall Premium". It is
+  // the recovery route, not a label that lost its tail, and counting it as one
+  // made the index slide report itself as damage in 17 corpus scenarios. What
+  // must never be cut is the NAME half, and that is checked below against the
+  // authored strings rather than by looking for an ellipsis anywhere in the row.
+  const truncated = shapes.filter(
+    (s) => s.text.includes('…') && !s.name.startsWith('index-name-'),
   );
-  const truncated = shapes.filter((s) => s.text.includes('…'));
   const stranded = truncated.filter((s) => {
     const svcId = /^service-label-(.*)$/.exec(s.name)?.[1];
     if (svcId !== undefined) {
@@ -6410,6 +6453,127 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
       );
     }
   }
+  // DISTINCTNESS WAS ONLY A PROXY FOR RESOLVABILITY. The rule above asks
+  // whether two services look different; it cannot ask whether either of them
+  // means anything. When the exporter started drawing a numeric key on a tile
+  // it could not name, the strings became distinct and this rule fell silent -
+  // and the deck now carried marks like "3" that the index slide never defined,
+  // so the reader held a box marked 3 and a list of sentences containing no 3.
+  // Fixing a proxy is how a caught defect becomes an uncaught one.
+  //
+  // The bar: every string a tile draws must resolve to exactly one service
+  // somewhere in the same FILE - either by being the authored name itself, or
+  // by being defined on the index slide as "<mark>  =  <name>".
+  const indexRowText = shapes
+    .filter((s) => s.name.startsWith('index-name-'))
+    .map((s) => s.text.trim());
+  const definedMarks = new Map<string, Set<string>>();
+  for (const row of indexRowText) {
+    const cut = row.indexOf('  =  ');
+    if (cut < 0) continue;
+    // The mark half is a LIST. One service drawn on two slides at two widths
+    // shortens to two stubs, and the row defines both against the one name.
+    // Split on "  |  ", not on a comma: cut names contain commas, and splitting
+    // on one shredded "…n, Zone Redundant) 0" into fragments matching no tile.
+    const marks = row.slice(0, cut).split('  |  ').map((m) => m.trim()).filter(Boolean);
+    const authoredName = row.slice(cut + 5).trim();
+    for (const mark of marks) {
+      if (!definedMarks.has(mark)) definedMarks.set(mark, new Set());
+      definedMarks.get(mark)!.add(authoredName);
+    }
+  }
+  // Compared through the two functions the EXPORTER runs every label through,
+  // in the order it runs them. A label carrying a tab, a hard break, a control
+  // character or a lone surrogate is authored one way and drawn another, and
+  // comparing the raw strings reported a tile drawing its own name in full as a
+  // mark standing for nothing. Calling the real functions rather than copying
+  // their regexes, so this cannot drift from what the file actually contains.
+  const drawnForm = (text: string): string => singleLineName(stripXmlForbidden(text));
+  const authoredSet = new Set([...authoredNames.values()].map(drawnForm));
+  const undefinedMarks = new Map<string, string>();
+  const ambiguousMarks = new Map<string, number>();
+  for (const shape of shapes) {
+    if (!shape.name.startsWith('service-label-')) continue;
+    const mark = shape.text.trim();
+    if (!mark) continue;
+    const owner = authoredNames.get(shape.name.slice('service-label-'.length)) ?? '';
+    if (mark === drawnForm(owner) || authoredSet.has(mark)) continue;
+    const defined = definedMarks.get(mark);
+    if (!defined) undefinedMarks.set(mark, owner);
+  }
+  // AMBIGUITY IS READ OFF THE INDEX, not off the tiles. Asking only about marks
+  // a tile draws cannot see a mark standing for two services while only one of
+  // them is on the slide in front of the reader; the index is the one place
+  // both are written down.
+  //
+  // "(not drawn)" is excluded because it is not a mark - it is the row admitting
+  // this name reached no shape at all, and several such rows are several
+  // admissions rather than one ambiguous key. The condition it stands for is
+  // fixed where it is caused: `MARKABLE_TILE_W_IN` lifts the transform cap so a
+  // tile arrives wide enough to carry a key, and `probe-hairline-stubs` holds
+  // the geometry that used to produce eight of these rows.
+  for (const [mark, names] of definedMarks) {
+    if (mark !== '(not drawn)' && names.size > 1) ambiguousMarks.set(mark, names.size);
+  }
+  if (undefinedMarks.size > 0) {
+    issues.push(
+      `${undefinedMarks.size} mark(s) drawn on tiles are defined nowhere in the deck, so the reader has no `
+      + `way to tell what they stand for: `
+      + `${[...undefinedMarks].slice(0, 3).map(([m, o]) => `${JSON.stringify(m)} (${o})`).join('; ')}`,
+    );
+  }
+  if (ambiguousMarks.size > 0) {
+    issues.push(
+      `${ambiguousMarks.size} mark(s) stand for more than one service in the deck: `
+      + `${[...ambiguousMarks].slice(0, 3).map(([m, n]) => `${JSON.stringify(m)} for ${n} names`).join('; ')}`,
+    );
+  }
+  // AND THE CONVERSE. A row promising a mark the reader cannot find anywhere on
+  // the drawing sends them hunting for a shape that does not exist, which is
+  // worse than a row admitting the name was never drawn - "(not drawn)" at
+  // least tells the truth. The exporter reported the label its sizing arrived
+  // at rather than the one it emitted, and an iconed tile below the naming
+  // floor draws no text at all, so eight rows named eight marks and eight tiles
+  // carried none of them.
+  const drawnMarks = new Set(
+    shapes
+      .filter((s) => s.name.startsWith('service-label-') || s.name.startsWith('zone-label-'))
+      .map((s) => s.text.trim())
+      .filter(Boolean),
+  );
+  const phantomMarks = [...definedMarks.keys()]
+    .filter((mark) => mark !== '(not drawn)' && !drawnMarks.has(mark));
+  if (phantomMarks.length > 0) {
+    issues.push(
+      `${phantomMarks.length} index row(s) define a mark that is drawn on no shape in the deck, so the `
+      + `reader is sent looking for something that is not there: `
+      + `${phantomMarks.slice(0, 3).map((m) => JSON.stringify(m)).join('; ')}`,
+    );
+  }
+  // The NAME half of an index row is the last copy of the wording in the file.
+  // A mark is a cut string by design, so the generic truncation rule cannot look
+  // for an ellipsis in these rows; this asks the stronger question instead - the
+  // half after the separator must BE an authored name, character for character.
+  // An index that abbreviates is an index that recovers nothing.
+  // Every authored label in the diagram, zones included: a zone whose band
+  // cannot hold its caption is spelled out on this same index, so a set built
+  // from services alone reported every zone row as a cut name.
+  const allAuthored = new Set(
+    scenario.nodes
+      .map((n) => drawnForm(String((n.data as { label?: string } | undefined)?.label ?? '')))
+      .filter(Boolean),
+  );
+  const cutIndexNames = indexRowText
+    .filter((row) => row.includes('  =  '))
+    .map((row) => row.slice(row.indexOf('  =  ') + 5).trim())
+    .filter((name) => name !== '' && !allAuthored.has(name));
+  if (cutIndexNames.length > 0) {
+    issues.push(
+      `${cutIndexNames.length} index row(s) do not spell a service name out in full, so the one place `
+      + `the reader can recover the wording has lost it too: `
+      + `${cutIndexNames.slice(0, 3).map((n) => JSON.stringify(n)).join('; ')}`,
+    );
+  }
   for (const [name, count] of countByName(badges)) {
     if (count > 1) issues.push(`step badge "${name}" is drawn ${count} times`);
   }
@@ -6543,12 +6707,19 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
       // shape on the sheet and were never in this comparison - register as
       // service names, and the rule reported 565 phantom divergences.
       const INDEX_MARKER = 'Names shortened on the drawing, in full.';
-      const indexed = new Set(
-        allSlides
-          .filter((slideXml) => slideXml.includes(INDEX_MARKER))
-          .flatMap((slideXml) => parseShapes(slideXml))
-          .map((s) => s.text.trim()),
-      );
+      // An index row is now "<mark>  =  <full name>", the same pair the Visio
+      // index prints, so this matches by SUFFIX rather than by set membership -
+      // and by suffix rather than by splitting on the separator, because a name
+      // may contain the separator and an undrawable name leaves an empty mark.
+      const indexRows = allSlides
+        .filter((slideXml) => slideXml.includes(INDEX_MARKER))
+        .flatMap((slideXml) => parseShapes(slideXml))
+        .map((s) => s.text.trim());
+      const indexed = {
+        has: (name: string): boolean => indexRows.some(
+          (row) => row === name || row.endsWith(`  =  ${name}`) || row.endsWith(`=  ${name}`),
+        ),
+      };
       // Normalised the way the EXPORTERS normalise, by calling the function they
       // call. The raw label is not what either file contains: collectExportBoxes
       // runs every name through singleLineName, so a label with a newline, a
@@ -8428,6 +8599,7 @@ async function main(): Promise<void> {
   briefWorkflowStepsScenario(),
   longIndexRowsScenario(),
   collidingStubsScenario(),
+  hairlineStubsScenario(),
   tallNarrowTilesScenario(),
     corridorZoneScenario(),
     ladderInGridScenario(), twinLaddersScenario(), strayLadderScenario(), legendCornerScenario(), duplicateStepsScenario(), denseZoneScenario(),
