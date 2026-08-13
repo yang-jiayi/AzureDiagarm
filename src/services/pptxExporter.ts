@@ -186,6 +186,24 @@ const PX_PER_IN = 96;
  * the detail slide that follows.
  */
 const OVERVIEW_LEGIBLE_PT = 6;
+/**
+ * Inset a connector chip reserves on each side, in INCHES.
+ *
+ * The sizer has always modelled 0.06in a side, but the shape was emitted with
+ * pptxgenjs margin: 0.02 — and that option is in POINTS, so the file carried
+ * a 0.0003in inset against a model reserving 0.12in in total. The model was
+ * not wrong, the file was: every wrap decision here assumes this much padding,
+ * so emit it ( * 72 to convert) rather than weaken the model to match a
+ * typo. Text now wraps in PowerPoint where the sizer says it wraps.
+ */
+const CHIP_INSET_IN = 0.06;
+/**
+ * The column a chip's words actually get. Floored at one hair rather than at a
+ * constant 0.05in: a fixed floor on a box that shrinks with the drawing is how
+ * a 0.009in chip was told it had 0.05in of line, counted five of them, and was
+ * emitted 0.6in tall — sixty times the tile it labelled.
+ */
+const chipColumn = (width: number): number => Math.max(0.001, width - CHIP_INSET_IN * 2);
 const BASE_W = 13.333;
 const BASE_H = 7.5;
 const MAX_SLIDE_IN = 56; // PowerPoint's hard page-size limit
@@ -1313,7 +1331,7 @@ function connectorLabelBox(
   // instead and leaves numbered callouts on the arrows. That is what the
   // Architecture Center does with a bundle of parallel flows, and it beats
   // seven chips laid across the services they run between.
-  const text = bundle?.badgesOnly ? '' : truncateLabel(route.label, 42);
+  const wanted = bundle?.badgesOnly ? '' : truncateLabel(route.label, 42);
 
   // Size the chip from the text it actually carries, capped so it can never
   // dwarf the service tiles it sits between (a 150 px tile is 1.56" at 1 : 1).
@@ -1338,6 +1356,23 @@ function connectorLabelBox(
   // label size; the caller works out how far the whole bundle has to shrink so
   // that every rung still fits, which keeps the text intact.
   const fontSize = bundle?.font ?? requestedFontSize;
+  // A chip narrower than one letter of its own type is not a small chip, it is
+  // a broken one: PowerPoint clips nothing, so it stacks the word one glyph per
+  // line and paints the letters out through both sides of the lozenge. On a
+  // heavily scaled overview the box shrinks with the drawing but the font is
+  // held at OVERVIEW_LEGIBLE_PT, so past a certain scale the trade the sizer
+  // thinks it is making is not on offer — 479 chips at 0.009in wide drew a
+  // 0.6in smear of type across the middle of the first slide.
+  //
+  // Where there is no room for the letters, drop the wording rather than
+  // scribble it. The overview is an index, not a reading surface, and the same
+  // words are on the window slide that follows by exactly the route a tile name
+  // too small to draw already takes.
+  const widestGlyph = wanted === ''
+    ? 0
+    : [...wanted].reduce((most, ch) => Math.max(most, estimateTextWidthIn(ch, fontSize)), 0);
+  const minChipW = widestGlyph + CHIP_INSET_IN * 2;
+  const text = wanted;
   // Wide-and-short is the shape that fits a ladder: a fan of six chips each
   // wrapped onto four lines is taller than the slide, and clamping them into
   // the frame one by one just restacks them on the page edge. Letting a chip in
@@ -1368,12 +1403,12 @@ function connectorLabelBox(
   let roomW = maxW;
   if (!alongX && !bare && bundle === undefined && squeezeTo === undefined && gap > 0) {
     const lineH0 = (fontSize * 1.3) / 72;
-    const asIs = Math.max(1, Math.ceil(estimateTextWidthIn(text, fontSize) / Math.max(maxW - 0.12, 0.05)));
+    const asIs = Math.max(1, Math.ceil(estimateTextWidthIn(text, fontSize) / chipColumn(maxW)));
     // Only when the chip does not already fit the band. Widening one that does
     // buys nothing and costs a lean on the columns either side.
     if (asIs * lineH0 + 0.06 > gap) {
       const fits = Math.max(1, Math.floor((gap - 0.06) / lineH0));
-      const needed = estimateTextWidthIn(text, fontSize) / fits + 0.12;
+      const needed = estimateTextWidthIn(text, fontSize) / fits + CHIP_INSET_IN * 2;
       roomW = clamp(Math.max(maxW, needed), 0.34 * px, 1.5 * px);
     }
   } else if (alongX && !bare && bundle === undefined && squeezeTo === undefined && gap > 0) {
@@ -1385,14 +1420,36 @@ function connectorLabelBox(
     const narrowed = clamp(gap, 0.34 * px, 1.5 * px);
     if (narrowed < maxW) {
       const lineH0 = (fontSize * 1.3) / 72;
-      const lineCount = Math.max(1, Math.ceil(estimateTextWidthIn(text, fontSize) / Math.max(narrowed - 0.12, 0.05)));
+      const lineCount = Math.max(1, Math.ceil(estimateTextWidthIn(text, fontSize) / chipColumn(narrowed)));
       if (lineCount * lineH0 + 0.06 <= 0.9 * px) roomW = narrowed;
     }
   }
+  // `roomW` is the last word on how wide this chip may be, so it is the only
+  // place the "no room for a letter" test can be made. Testing against the cap
+  // instead let a chip whose corridor was far narrower than the cap survive it.
+  if (text !== '' && roomW + 0.002 < minChipW) {
+    // Nothing legible can be drawn here. A numbered hop still gets its callout
+    // — the number is one glyph in a circle sized independently — and its
+    // wording is on the workflow slide. An un-numbered one draws nothing at
+    // all, which is what the reader would rather have than a smear.
+    if (badgeD <= 0) return null;
+    return connectorLabelBox(
+      { ...route, label: ' ' }, transform, requestedFontSize, px, clampTo, obstacles,
+      { ...(bundle ?? { count: 1, rung: 0, x: anchor.x, y: anchor.y }), badgesOnly: true },
+      squeezeTo, foreignGap,
+    );
+  }
   const w = bare
     ? badgeD
-    : clamp(naturalW <= roomW ? naturalW : roomW, Math.min(0.34 * px, roomW), roomW);
-  const perLine = Math.max(w - 0.12, 0.05);
+    : clamp(
+      naturalW <= roomW ? naturalW : roomW,
+      // Floored against the TYPE, not against the drawing. `0.34 * px` scales
+      // to nothing, so on a scaled overview it let the box shrink below one
+      // letter while the font stayed at 6pt.
+      Math.min(Math.max(0.34 * px, minChipW), roomW),
+      roomW,
+    );
+  const perLine = chipColumn(w);
   const lineH = (fontSize * 1.3) / 72;
 
   const lines = Math.max(1, Math.ceil(estimateTextWidthIn(text, fontSize) / perLine));
@@ -1846,7 +1903,7 @@ function addConnectorLabel(
     fontFace: 'Yu Gothic UI',
     align: 'center',
     valign: 'middle',
-    margin: 0.02,
+    margin: CHIP_INSET_IN * 72,
     wrap: true,
     objectName: `connector-label-${route.id}`,
   });

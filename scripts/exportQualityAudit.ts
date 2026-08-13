@@ -17,7 +17,7 @@ import { nativizeSlideXml } from '../src/services/pptxNativeShapes.ts';
 import { buildVsdxPackage } from '../src/services/visioVsdxExporter.ts';
 import { WRAP_TRIGGER_RATIO } from '../src/utils/serpentineWrap.ts';
 
-import { narrateEdgeCallouts, CATEGORY_STYLES } from '../src/services/diagramExportGeometry.ts';
+import { narrateEdgeCallouts, readEdgeLabel, CATEGORY_STYLES } from '../src/services/diagramExportGeometry.ts';
 import { readStepNumber } from '../src/utils/workflowStepMapping.ts';
 
 const OUT = path.join(process.cwd(), 'tmp-export-audit');
@@ -779,6 +779,27 @@ function stringStepPromotionScenario(): Scenario {
  * `string-step-promotion` cannot see this, because there the extra numbers
  * happen to land in a gap and collide with nothing.
  */
+/**
+ * The same promotion, with the wording in `data.label` instead of `label`.
+ *
+ * `readEdgeLabel` exists because either field can be the sole carrier — the
+ * editor keeps them in step but the load path does not enforce it, so a saved
+ * or model-authored file reaches the exporter with only the nested one. The
+ * exporter reads both; the gate used to read only the top-level field, so it
+ * called a correctly promoted badge spurious and skipped the very edge the
+ * promotion-ceiling rule was written to watch.
+ */
+function dataLabelPromotionScenario(): Scenario {
+  const base = tightSubnetsScenario();
+  return {
+    id: 'data-label-promotion',
+    nodes: base.nodes,
+    edges: base.edges.map((e) => (e.id === 't1'
+      ? ({ id: 't1', source: 'web-0', target: 'app-0', data: { label: 'Forwards' } } as unknown as Edge)
+      : e)),
+  };
+}
+
 function unlabelledStepInflationScenario(): Scenario {
   const base = tightSubnetsScenario();
   // Deliberately along the same grain as the labelled hops, so the drawing has
@@ -3972,6 +3993,19 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
   const xml = overviewAt < 0 ? allSlides : allSlides.slice(overviewAt + 1);
   const perSlide = xml.map((slideXml) => parseShapes(slideXml));
   const shapes = perSlide.flat();
+  // The overview is excluded from the rules above for a real reason, but the
+  // exclusion is total: it removes slide 1 from `perSlide` AND from `shapes`,
+  // so not one of the ~700 lines of per-slide rules below has ever looked at
+  // it. That is where a whole class hid — 1,523 connector chips emitted
+  // narrower than a single glyph of their own type, on the first slide of
+  // eleven decks, invisible to every rule in this file.
+  //
+  // So the overview gets its own reduced rule set instead of none. It may not
+  // be measured for legibility of *names* — it is deliberately small — but a
+  // box that cannot hold one character of the type inside it is not small, it
+  // is broken: PowerPoint does not clip, so it stacks one letter per line and
+  // spills them sideways out of the shape.
+  const overviewShapes: Shape[] = overviewAt < 0 ? [] : parseShapes(allSlides[overviewAt]);
 
   const issues: string[] = [];
   issues.push(...xmlWellFormednessIssues(await zipXmlParts(zip), ''));
@@ -3995,6 +4029,29 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
   }
   const native = auditNativeConversion(allSlides, scenario.edges);
   issues.push(...native.issues);
+  // A box whose text column cannot hold one glyph of its own type. PowerPoint
+  // clips nothing: it stacks the word one letter per line and paints the tail
+  // outside the shape on every side, so a row of these becomes a smear of type
+  // rather than a set of labels. Scale is not the excuse — the box shrinks with
+  // the drawing but the font does not, so past a certain scale the trade the
+  // exporter thinks it is making is not available.
+  //
+  // Applied to the overview, which no other rule in this file reaches.
+  for (const shape of overviewShapes) {
+    const text = shape.text.trim();
+    const pt = shape.fontSize;
+    if (text === '' || !pt) continue;
+    const widest = [...text].reduce((most, ch) => Math.max(most, auditTextWidthIn(ch, pt)), 0);
+    const column = Math.max(0, shape.w - shape.insetX);
+    // Same 0.01in tolerance the exporter's own guard uses, so the rule and the
+    // thing it measures cannot disagree about the borderline case.
+    if (widest > column + 0.01) {
+      issues.push(
+        `overview draws "${text}" at ${pt}pt in a ${shape.w.toFixed(3)}in box — `
+        + `its widest letter needs ${widest.toFixed(3)}in and the column is ${column.toFixed(3)}in`,
+      );
+    }
+  }
   // The PPTX equivalent of the Visio sheet-size invariant below is unreachable
   // and deliberately absent: the page is clamped to PowerPoint's 56in limit,
   // and the fit only trims outliers once the drawing is already past ~52in, so
@@ -4803,7 +4860,7 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
   const promotableIds = new Set(
     narrateEdgeCallouts(scenario.edges)
       .filter((e) => readStepNumber((e.data as { stepNumber?: unknown } | undefined)?.stepNumber) === undefined
-        && String((e as { label?: unknown }).label ?? '').trim() !== '')
+        && readEdgeLabel(e) !== '')
       .map((e) => auditStrip(String(e.id))),
   );
   // Membership alone is permutation-blind: swapping every badge onto the wrong
@@ -5937,7 +5994,11 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
   // same defect as two chips on the same spot in PowerPoint — and until the
   // exporter emitted an explicit text position, a fan of parallel hops wrote
   // every one of its sentences at the identical midpoint.
-  const labelBoxes: Array<{ text: string; edge: string; x: number; y: number; w: number; h: number }> = [];
+  const labelBoxes: Array<{
+    text: string; edge: string; x: number; y: number; w: number; h: number;
+    /** Painted extent, which on a Visio chip is not the declared box. */
+    inkW: number; inkH: number; cx: number; cy: number;
+  }> = [];
   for (const block of xml.matchAll(/<Shape [^>]*NameU="Connector\.\d+"[\s\S]*?<\/Shape>/g)) {
     const shape = block[0];
     const shown = /<Text>([^<]*)<\/Text>/.exec(shape)?.[1] ?? '';
@@ -6366,7 +6427,12 @@ async function auditDeckGrowth(): Promise<Report> {
     scenario: 'deck-growth',
     format: 'pptx',
     issues,
-    metrics: Object.fromEntries(seen.map((s) => [`n${s.n}`, `${s.slides}sl/${s.font}pt`])),
+    // The type says numbers, and `${slides}sl/${font}pt` is a string that
+    // happened to type-check nowhere because nothing ever compiled this file.
+    // Two numeric keys carry the same information and survive a diff.
+    metrics: Object.fromEntries(
+      seen.flatMap((s) => [[`n${s.n}-slides`, s.slides], [`n${s.n}-pt`, s.font]] as Array<[string, number]>),
+    ),
   };
 }
 
@@ -6392,6 +6458,7 @@ async function main(): Promise<void> {
     midZoneRowScenario(),
     stringStepPromotionScenario(),
     unlabelledStepInflationScenario(),
+    dataLabelPromotionScenario(),
     corridorZoneScenario(),
     ladderInGridScenario(), twinLaddersScenario(), strayLadderScenario(), legendCornerScenario(), duplicateStepsScenario(), denseZoneScenario(),
     metaChipScenario(), gridFanScenario(), gridFan3Scenario(), fan8Tight5x5Scenario(), metaSublineScenario(), grid5x5CaptionScenario(), longNameGridScenario(), longLabelGridScenario(), metaTightScenario(),     longNameFanScenario(), estateChainScenario(), chain24Scenario(), tripleMutedScenario(), estate72Scenario(),     workflowProseScenario(), workflowLongProseScenario(), workflowFanScenario(), workflowWideBandScenario(), allCategoriesScenario(), controlCharScenario(), shortServiceGridScenario(),

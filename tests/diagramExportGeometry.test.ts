@@ -440,7 +440,7 @@ test('a zone drawn around a void shrinks to its contents instead of dragging the
   // moving only its origin would have left it 6000px wider than everything
   // inside it.
   const map = new Map<string, ExportBox>();
-  map.set('azure', { id: 'azure', kind: 'group', label: 'Azure', x: -80, y: -80, w: 7060, h: 400 });
+  map.set('azure', { id: 'azure', kind: 'group', category: '', label: 'Azure', x: -80, y: -80, w: 7060, h: 400 });
   for (const b of [
     box('e0', 0, 0), box('e1', 200, 0), box('e2', 400, 0),
     box('w0', 6000, 0), box('w1', 6200, 0), box('w2', 6400, 0),
@@ -539,7 +539,7 @@ test('a drawing too wide for the format gives up its gaps, never its shapes', ()
 
 test('a drawing that already fits is returned untouched, and a zone keeps its members inside it', () => {
   const map = new Map<string, ExportBox>();
-  map.set('zone', { id: 'zone', kind: 'group', label: 'Zone', x: 0, y: 0, w: 400, h: 300 });
+  map.set('zone', { id: 'zone', kind: 'group', category: '', label: 'Zone', x: 0, y: 0, w: 400, h: 300 });
   map.set('a', box('a', 20, 40));
   map.set('far', box('far', 3000, 40));
 
@@ -606,7 +606,7 @@ test('an empty band drawn over the drawing does not switch gutter compaction off
   // stayed 5,450px apart under a caption that covered neither of them, and the
   // sheet went out at 74.74in for a 16in drawing.
   const map = new Map<string, ExportBox>();
-  map.set('scope', { id: 'scope', kind: 'group', label: 'Sovereign boundary', x: -80, y: -600, w: 7060, h: 400 });
+  map.set('scope', { id: 'scope', kind: 'group', category: '', label: 'Sovereign boundary', x: -80, y: -600, w: 7060, h: 400 });
   for (let i = 0; i < 6; i += 1) map.set(`east${i}`, box(`east${i}`, (i % 3) * 200, Math.floor(i / 3) * 180));
   for (let i = 0; i < 6; i += 1) map.set(`west${i}`, box(`west${i}`, 6000 + (i % 3) * 200, Math.floor(i / 3) * 180));
 
@@ -625,7 +625,7 @@ test('a corridor standing between two regions keeps the band it names', () => {
   // inside this zone and no service overlaps its span on x, so the space it
   // names is the whole point of it and must not be closed.
   const map = new Map<string, ExportBox>();
-  map.set('corridor', { id: 'corridor', kind: 'group', label: 'ExpressRoute circuit', x: 1000, y: -40, w: 3000, h: 400 });
+  map.set('corridor', { id: 'corridor', kind: 'group', category: '', label: 'ExpressRoute circuit', x: 1000, y: -40, w: 3000, h: 400 });
   for (let i = 0; i < 4; i += 1) map.set(`a${i}`, box(`a${i}`, (i % 2) * 200, Math.floor(i / 2) * 180));
   for (let i = 0; i < 4; i += 1) map.set(`b${i}`, box(`b${i}`, 4100 + (i % 2) * 200, Math.floor(i / 2) * 180));
 
@@ -641,7 +641,7 @@ test('a frame drawn around the drawing does not make the fit a no-op', () => {
   // a 40-service cascade 47% of its tile width to the uniform scaler behind it.
   const build = (framed: boolean): Map<string, ExportBox> => {
     const map = new Map<string, ExportBox>();
-    if (framed) map.set('azure', { id: 'azure', kind: 'group', label: 'Azure', x: -80, y: -80, w: 40 * 900 + 160, h: 400 });
+    if (framed) map.set('azure', { id: 'azure', kind: 'group', category: '', label: 'Azure', x: -80, y: -80, w: 40 * 900 + 160, h: 400 });
     for (let i = 0; i < 40; i += 1) map.set(`s${i}`, box(`s${i}`, i * 900, 0));
     return map;
   };
@@ -678,7 +678,7 @@ test('a grid packed tighter than the clearance margin still routes around its ti
   assert.equal(routes.length, 2, 'both hops must be drawn');
   for (const route of routes) {
     const crossed = [...boxes.values()].filter((tile) => {
-      if (tile.id === route.fromId || tile.id === route.toId) return false;
+      if (tile.id === route.sourceId || tile.id === route.targetId) return false;
       for (let i = 1; i < route.points.length; i += 1) {
         const a = route.points[i - 1];
         const b = route.points[i];

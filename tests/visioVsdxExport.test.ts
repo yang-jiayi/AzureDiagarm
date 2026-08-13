@@ -266,7 +266,7 @@ function overlapArea(
 /** A pair of services joined by `count` parallel numbered hops. */
 function parallelHops(count: number): { nodes: Node[]; edges: Edge[] } {
   const fanNodes = [service('src', 'Event Hubs', 0, 0), service('dst', 'Stream Analytics', 460, 0)];
-  const fanEdges = Array.from({ length: count }, (unused, index) => ({
+  const fanEdges = Array.from({ length: count }, (_unused, index) => ({
     id: `p${index}`,
     source: 'src',
     target: 'dst',

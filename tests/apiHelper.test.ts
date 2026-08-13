@@ -98,10 +98,13 @@ test('reasoning Chat Completions uses modern token and reasoning parameters', ()
 
 test('callAzureOpenAIProxy sends BYO credentials only in the server request body', async () => {
   let requestUrl = '';
-  let requestBody: Record<string, unknown> | null = null;
+  // Collected, not assigned: TypeScript's flow analysis cannot see the write
+  // inside the fetch stub, so a `let` initialised to null narrows to `never`
+  // and every assertion below it silently checks nothing.
+  const sent: Array<Record<string, unknown>> = [];
   globalThis.fetch = (async (input, init) => {
     requestUrl = String(input);
-    requestBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    sent.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
     return new Response(JSON.stringify({ output_text: '{"services":[]}' }), {
       status: 200,
       headers: { 'Content-Type': 'application/json' },
@@ -121,7 +124,7 @@ test('callAzureOpenAIProxy sends BYO credentials only in the server request body
 
   assert.equal(result.ok, true);
   assert.equal(requestUrl, '/api/openai');
-  assert.deepEqual(requestBody?.byo, {
+  assert.deepEqual(sent[0]?.byo, {
     provider: 'openai',
     endpoint: 'https://api.openai.com',
     apiKey: 'sk-test-secret-value',
