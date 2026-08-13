@@ -635,7 +635,20 @@ function serviceGroupXml(
   // 0.271in tile: `Camion logistica analisis` was named in the .pptx and drawn
   // on no shape at all in the .vsdx, because one `m` at 0.861 em vetoed it here
   // and nowhere else.
-  const drawsName = drawableInColumn(label, floorLabel * 72, textColumn);
+  // Asked about the column the text is ACTUALLY SET IN, which is `textW` - the
+  // value written to `TxtWidth` a few lines below, and the column every other
+  // question in this function is asked of: the fit loop wraps in it, the line
+  // count measures in it, the sub-line tests against it.
+  //
+  // `textColumn` is that column minus a flat 0.12in inset, and a flat inset
+  // against a variable tile is the same defect the audit's own ratio rule had:
+  // on a 0.1458in tile it leaves 0.0258in, so the decision was taken about a
+  // column 5.6x narrower than the one the shape actually gives the text. The
+  // name was refused for want of room the shape had all along, and on a sheet
+  // there is no index to recover it from - it survives only in `Name`, which
+  // is metadata and is never printed. Four tiles across two corpus scenarios
+  // drew a blank box under an icon for exactly this reason.
+  const drawsName = drawableInColumn(label, floorLabel * 72, textW);
   if (!drawsName) label = '';
   const drawsMeta = showsMeta && drawsName;
   const neededTextH = drawsName
@@ -1079,7 +1092,18 @@ ${roundedRectGeometry()}
  */
 function wrappedLinesIn(text: string, widthIn: number, fontSizeIn: number): number {
   if (!text) return 1;
-  const column = Math.max(0.2, widthIn);
+  // Visio wraps in `TxtWidth` and in nothing else. A floor here budgeted the
+  // lines for a column the shape does not have: on a 0.1042in tile the count
+  // was taken at 0.2in, so the band was sized for 9 lines and the renderer set
+  // 14, painting 0.357in of the name out through the bottom of the tile. The
+  // band above this had exactly the same floor removed for exactly this reason;
+  // the defect survived one level down in the line counter.
+  //
+  // The guard that is actually needed is against a non-positive column. An
+  // overlong run already breaks a glyph at a time in `wrapOneLineIn`, and that
+  // loop advances on every glyph, so a column narrower than one glyph charges
+  // one line per glyph and terminates.
+  const column = Math.max(1e-4, widthIn);
   // Hard breaks first: Visio renders a raw newline in `<Text>` as a paragraph
   // break, and counting it as ordinary whitespace budgeted two lines for rows
   // that drew three.

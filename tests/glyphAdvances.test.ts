@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { widestGlyphIn, estimateTextWidthIn } from '../src/services/pptxExporter.ts';
-import { hasMeasuredAdvance, drawableInColumn, advanceWidthIn } from '../src/services/diagramExportGeometry.ts';
+import { hasMeasuredAdvance, drawableInColumn, advanceWidthIn, widestGlyphUpperIn, widestGlyphIn as widestGlyphLowerIn } from '../src/services/diagramExportGeometry.ts';
 
 /**
  * Real advances for Yu Gothic UI, in em, measured from the installed font with
@@ -199,4 +199,97 @@ test('an emoji cluster is charged once, not once per code point', () => {
   // joiners: 5.44 em charged against one glyph drawn.
   const family = '\u{1f468}\u200d\u{1f469}\u200d\u{1f467}\u200d\u{1f466}';
   assert.ok(Math.abs(advanceWidthIn(family, 72) - one) < 1e-9);
+});
+
+/**
+ * Round 58: the same independent-measurement discipline, extended past Latin.
+ *
+ * These numbers come from WPF `GlyphTypeface` - `CharacterToGlyphMap` says
+ * exactly which code points the font FILE holds, so there is no fallback
+ * ambiguity, and `AdvanceWidths[glyph]` is the exact em advance. That is a
+ * different API from the GDI+ `MeasureString` used above and from anything the
+ * exporter does; where the two APIs could both be asked they agreed to 0.0004
+ * em over 317 pre-existing entries, which is why a disagreement is worth
+ * chasing. All four disagreements found this round were real defects.
+ *
+ * Where the reviewer's GDI+ reading of the same character is 5% lower, it is
+ * because `MeasureString` was resolving the character through a SUBSTITUTE
+ * font. These are the advances in Yu Gothic UI's own file, which is the font
+ * the exporter names, so they are the ones that govern.
+ */
+const MEASURED_SCRIPT_EM: Record<string, number> = {
+  '\u0430': 0.5088, '\u043d': 0.5771, '\u0435': 0.5229, '\u0441': 0.4619,
+  '\u03b1': 0.6143, '\u03b4': 0.5840, '\u03c9': 0.8081,
+  '\u021b': 0.3510, '\u0219': 0.5070,
+};
+
+test('the measured tables cover the scripts the fallback used to guess at 1 em', () => {
+  for (const [glyph, em] of Object.entries(MEASURED_SCRIPT_EM)) {
+    assert.equal(
+      hasMeasuredAdvance(glyph),
+      true,
+      `U+${glyph.codePointAt(0)!.toString(16)} is still guessed`,
+    );
+    const got = advanceWidthIn(glyph, 72);
+    assert.ok(
+      Math.abs(got - em) <= 0.006,
+      `U+${glyph.codePointAt(0)!.toString(16)}: model ${got.toFixed(4)} vs font ${em}`,
+    );
+  }
+});
+
+test('an unmeasured astral code point is not certified as measured', () => {
+  // The oracle that exists to catch guesses returned true for EVERY astral code
+  // point, so it could not fire on the one range the file documents as guessed.
+  assert.equal(hasMeasuredAdvance('\u{1d400}'), false);
+  assert.equal(hasMeasuredAdvance('\u{20000}'), true);
+  assert.equal(hasMeasuredAdvance('\u{1f600}'), true);
+});
+
+test('an astral CJK ideograph is one em, not the emoji width', () => {
+  assert.ok(Math.abs(advanceWidthIn('\u{20000}', 72) - 1) <= 0.001);
+});
+
+test('two adjacent flags are charged as two clusters', () => {
+  // The join test looked only at the immediately preceding code point, so a
+  // second flag joined the first and a pair was charged for one glyph.
+  const one = advanceWidthIn('\u{1F1FA}\u{1F1F8}', 72);
+  const two = advanceWidthIn('\u{1F1FA}\u{1F1F8}\u{1F1EC}\u{1F1E7}', 72);
+  assert.ok(Math.abs(two - one * 2) <= 0.002, `${two} vs ${one * 2}`);
+});
+
+test('the three hand-set advances cross-measurement corrected', () => {
+  // Found by re-measuring every new entry through the OTHER API: a bullet was
+  // charged 14% under, which is the direction that paints outside the shape.
+  assert.ok(Math.abs(advanceWidthIn('\u2022', 72) - 0.406) <= 0.004);
+  assert.ok(Math.abs(advanceWidthIn('\u201c', 72) - 0.377) <= 0.004);
+  assert.ok(Math.abs(advanceWidthIn('\u201d', 72) - 0.377) <= 0.004);
+});
+
+test('every Unicode space is charged its own width, not the plain space width', () => {
+  // Every space in Unicode took the plain-space advance regardless, so an em
+  // space and an IDEOGRAPHIC space - ordinary punctuation in the Japanese
+  // service names this app draws - were charged 265% under.
+  assert.ok(Math.abs(advanceWidthIn('\u2003', 72) - 1) <= 0.002, 'em space');
+  assert.ok(Math.abs(advanceWidthIn('\u3000', 72) - 1) <= 0.002, 'ideographic space');
+  assert.ok(Math.abs(advanceWidthIn('\u2002', 72) - 0.5) <= 0.002, 'en space');
+  assert.ok(Math.abs(advanceWidthIn('\u2009', 72) - 0.2) <= 0.002, 'thin space');
+  assert.ok(Math.abs(advanceWidthIn('\u200a', 72) - 0.1) <= 0.002, 'hair space');
+});
+
+test('both clauses of the column test take the same bound on an unknown glyph', () => {
+  // A wholly untabled script argued both sides of its own case: the widest
+  // glyph was taken at the lower bound and the mean at the upper, and the upper
+  // bound bound. The name was refused, and on a Visio sheet a refused name is
+  // nowhere on the page.
+  const unknown = '\u{10A00}\u{10A01}\u{10A02}\u{10A03}';
+  assert.equal(drawableInColumn(unknown, 7, 0.05), true);
+});
+
+test('the sizing bound and the drawing bound are different functions', () => {
+  // One caller sizes a chip to hold the widest glyph and needs the UPPER bound;
+  // the rest ask whether a name can be drawn and need the LOWER one. Sharing a
+  // function made one of them wrong whichever way it was written.
+  const unknown = '\u{10A00}';
+  assert.ok(widestGlyphLowerIn(unknown, 7) < widestGlyphUpperIn(unknown, 7));
 });

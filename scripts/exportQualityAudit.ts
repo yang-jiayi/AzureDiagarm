@@ -76,15 +76,15 @@ const YU_GOTHIC_EXTRA_EM: Record<string, number> = {
   '\u2014': 1,
   '\u2018': 0.229,
   '\u2019': 0.229,
-  '\u201c': 0.396,
-  '\u201d': 0.396,
+  '\u201c': 0.377,
+  '\u201d': 0.377,
   '\u2026': 0.733,
   '\u2190': 1,
   '\u2192': 1,
   '\u2194': 1,
   '\u21d2': 1,
   '\u2212': 0.684,
-  '\u2022': 0.35,
+  '\u2022': 0.406,
 };
 
 /**
@@ -131,6 +131,157 @@ const YU_GOTHIC_LATIN_EM = [
 ];
 
 /**
+ * Everything the label font draws above U+017F, and the scripts it does not
+ * draw at all - the gate's own copy, from the gate's own run.
+ *
+ * The round-56 table stopped at U+017F, so Cyrillic, Greek, IPA, combining
+ * marks and the punctuation blocks were still charged a flat one em by BOTH
+ * sides. Both agreeing to guess is the failure mode this file exists to avoid:
+ * a Cyrillic name measured twice its ink, the exporter refused to draw it, and
+ * the gate confirmed the refusal.
+ *
+ * Independence here is in the measurement, not in the typing. The first table
+ * is re-measured through GDI+ string measurement, a different API from the
+ * font metric table the exporter reads, at 200px over 20 repeats: of 533 code
+ * points the two APIs disagree about 4, none by more than 0.06 em, and those
+ * four are recorded as defects rather than smoothed over. The second table
+ * cannot be independent in the same way - the question there is WHICH font the
+ * renderer substitutes, not what that font measures - so it is deliberately
+ * the same source, and its uncertainty is stated where it is defined.
+ */
+const YU_GOTHIC_WIDE_EM: ReadonlyArray<readonly [number, readonly number[]]> = [
+  [0x192, [0.539, 0.728]],
+  [0x1c2, [0.434]],
+  [0x1cd, [0.65, 0.554, 0.298, 0.266, 0.732, 0.559, 0.739, 0.58, 0.739, 0.58, 0.739, 0.58, 0.739, 0.58, 0.739, 0.58]],
+  [0x1f5, [0.547]],
+  [0x1f8, [0.749, 0.58, 0.65, 0.554, 1.012, 0.88, 0.732, 0.559]],
+  [0x218, [0.628, 0.507, 0.626, 0.351]],
+  [0x237, [0.296]],
+  [0x250, [0.554, 0.582, 0.587, 0.576, 0.519, 0.519, 0.577, 0.577, 0.555, 0.555, 0.748, 0.51, 0.51]],
+  [0x25e, [0.57, 0.3, 0.577, 0.577, 0.556, 0.498, 0.488, 0.58, 0.578, 0.578, 0.299]],
+  [0x26a, [0.265]],
+  [0x26c, [0.376, 0.265, 0.605, 0.861, 0.861, 0.861, 0.58, 0.58, 0.583, 0.559, 0.768]],
+  [0x278, [0.604, 0.366, 0.366, 0.366]],
+  [0x27d, [0.366, 0.353]],
+  [0x280, [0.521, 0.521, 0.507, 0.264, 0.3]],
+  [0x288, [0.351, 0.598, 0.559, 0.551, 0.489, 0.774, 0.489, 0.493, 0.455, 0.506, 0.522]],
+  [0x294, [0.502, 0.502]],
+  [0x298, [0.732, 0.546]],
+  [0x29c, [0.586, 0.332]],
+  [0x29f, [0.447]],
+  [0x2a1, [0.502, 0.502]],
+  [0x2a4, [0.925]],
+  [0x2b0, [0.427]],
+  [0x2b2, [0.227]],
+  [0x2b7, [0.539]],
+  [0x2bb, [0.259, 0.259]],
+  [0x2c1, [0.347]],
+  [0x2c6, [0.371, 0.5, 0.213]],
+  [0x2cc, [0.213]],
+  [0x2d0, [0.284, 0.284]],
+  [0x2d8, [0.5, 0.5, 0.5, 0.5, 0.337, 0.5, 0.267]],
+  [0x2e0, [0.345, 0.211]],
+  [0x2e5, [0.401, 0.401, 0.401, 0.401, 0.401]],
+  [0x300, [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5]],
+  [0x30a, [0.5, 0.5, 0.5]],
+  [0x30f, [0.5]],
+  [0x318, [0, 0, 0]],
+  [0x31c, [0, 0, 0, 0, 0]],
+  [0x324, [0, 0]],
+  [0x327, [0.5, 0.5, 0, 0]],
+  [0x32c, [0]],
+  [0x32f, [0, 0]],
+  [0x332, [0.5]],
+  [0x334, [0]],
+  [0x339, [0, 0, 0, 0, 0]],
+  [0x361, [0]],
+  [0x384, [0.273, 0.273, 0.645]],
+  [0x388, [0.57, 0.774, 0.378]],
+  [0x38c, [0.801]],
+  [0x38e, [0.667, 0.826, 0.267, 0.645, 0.573, 0.472, 0.644, 0.506, 0.57, 0.71, 0.754, 0.266, 0.58, 0.629, 0.898, 0.748, 0.51, 0.754, 0.713, 0.56]],
+  [0x3a3, [0.516, 0.524, 0.553, 0.754, 0.59, 0.776, 0.755, 0.266, 0.553, 0.614, 0.438, 0.575, 0.267, 0.553, 0.614, 0.548, 0.519, 0.584, 0.438, 0.442, 0.575, 0.586, 0.267, 0.524, 0.498, 0.577, 0.526, 0.445, 0.586, 0.627, 0.586, 0.46, 0.575, 0.487, 0.553, 0.699, 0.538, 0.75, 0.808, 0.267, 0.553, 0.586, 0.553, 0.808]],
+  [0x3d0, [0.548, 0.591]],
+  [0x3d5, [0.638]],
+  [0x3db, [0.455]],
+  [0x401, [0.506, 0.7, 0.472, 0.617, 0.531, 0.266, 0.266, 0.357, 0.981, 0.983, 0.723, 0.58, 0.749, 0.567, 0.709, 0.645, 0.572, 0.573, 0.472, 0.693, 0.506, 0.867, 0.54, 0.749, 0.749, 0.58, 0.673, 0.898, 0.71, 0.754, 0.713, 0.56, 0.619, 0.524, 0.567, 0.727, 0.59, 0.742, 0.661, 0.949, 0.98, 0.706, 0.783, 0.576, 0.616, 1.019, 0.591, 0.509, 0.579, 0.53, 0.383, 0.547, 0.523, 0.746, 0.446, 0.581, 0.581, 0.497, 0.527, 0.702, 0.577, 0.586, 0.577, 0.588, 0.462, 0.41, 0.484, 0.686, 0.459, 0.6, 0.565, 0.8, 0.824, 0.591, 0.71, 0.504, 0.462, 0.813, 0.503]],
+  [0x451, [0.523, 0.577, 0.383, 0.462, 0.424, 0.242, 0.242, 0.242, 0.79, 0.807, 0.567, 0.497]],
+  [0x45e, [0.484, 0.577]],
+  [0x490, [0.469, 0.391]],
+  [0x9f2, [0.54, 0.596]],
+  [0xe3f, [0.679]],
+  [0x17db, [0.549]],
+  [0x1e3e, [0.919, 0.861]],
+  [0x1e80, [0.93, 0.774, 0.93, 0.774, 0.93, 0.774]],
+  [0x1ebc, [0.618, 0.555]],
+  [0x1ef2, [0.65, 0.489]],
+  [0x1f70, [0.582, 0.582, 0.51, 0.51]],
+  [0x2002, [0.5]],
+  [0x2011, [0.428, 0.5, 0.5]],
+  [0x2018, [0.229, 0.229, 0.229, 0.259, 0.377, 0.377, 0.377, 0.424, 0.375, 0.375, 0.406]],
+  [0x2026, [0.733]],
+  [0x2030, [1.21]],
+  [0x2039, [0.316, 0.316]],
+  [0x203d, [0.527, 0.5, 0.477]],
+  [0x2044, [0.076]],
+  [0x2070, [0.361]],
+  [0x2074, [0.361, 0.361, 0.361, 0.361, 0.361, 0.361]],
+  [0x207f, [0.427, 0.361, 0.361, 0.361, 0.361, 0.361, 0.361, 0.361, 0.361, 0.361, 0.361]],
+  [0x20a0, [0.683, 0.683, 0.683, 0.619, 0.578]],
+  [0x20a6, [0.777, 0.99, 0.895, 0.93, 0.763, 0.578, 0.539]],
+  [0x20ae, [0.626, 0.972, 0.683, 0.74]],
+  [0x20b8, [0.631, 0.589, 0.615]],
+  [0x20e3, [0]],
+  [0x2116, [1.122]],
+  [0x2122, [0.773]],
+  [0x2126, [0.756, 0.756]],
+  [0x212e, [0.832]],
+  [0x2153, [0.798, 0.798, 0.798]],
+  [0x215b, [0.798, 0.798, 0.798, 0.798]],
+  [0x2206, [0.766]],
+  [0x2209, [0.722]],
+  [0x220f, [0.788]],
+  [0x2219, [0.259]],
+  [0x2225, [0.722, 0.722]],
+  [0x223c, [0.704]],
+  [0x2245, [0.722]],
+  [0x2248, [0.722]],
+  [0x2262, [0.722]],
+  [0x2264, [0.722, 0.722]],
+  [0x2276, [0.722, 0.722]],
+  [0x2284, [0.722, 0.722]],
+  [0x228a, [0.722, 0.722]],
+  [0x229e, [0.814]],
+  [0x22da, [0.722, 0.722]],
+  [0x2305, [0.722, 0.722]],
+  [0x2318, [0.924]],
+  [0x2329, [0.5, 0.5]],
+  [0x25ca, [0.632]],
+  [0x2e40, [0.5]],
+  [0xa7b5, [0.583]],
+  [0xab53, [0.524]],
+  [0xfb00, [0.622, 0.538, 0.538, 0.803, 0.803]],
+  [0xff61, [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5]],
+  [0xffe8, [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5]],
+];
+
+const YU_GOTHIC_FALLBACK_EM: ReadonlyArray<readonly [number, readonly number[]]> = [
+  [0x591, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0.4, 0, 0.202, 0, 0, 0.217, 0, 0, 0.399, 0]],
+  [0x5d0, [0.637, 0.57, 0.439, 0.481, 0.678, 0.268, 0.337, 0.674, 0.681, 0.268, 0.559, 0.545, 0.551, 0.694, 0.674, 0.268, 0.399, 0.676, 0.605, 0.611, 0.631, 0.565, 0.585, 0.664, 0.559, 0.785, 0.726]],
+  [0x5ef, [0.542, 0.522, 0.522, 0.522, 0.229, 0.377]],
+  [0x600, [1.227, 0.832, 0.531, 1.522, 1.55, 0, 0.668, 0.668, 0.918, 0.751, 0.918, 0.585, 0.251, 0.334, 1.085, 0.585, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0.251, 0.917, 0.61, 0.501, 0.501, 0.751, 0.417, 0.251, 0.251, 0.501, 0.251, 0.751, 0.251, 0.918, 0.501, 0.918, 0.918, 0.585, 0.585, 0.585, 0.501, 0.501, 0.417, 0.417, 1.169, 1.169, 1.336, 1.336, 0.835, 0.835, 0.501, 0.501, 0.918, 0.918, 0.751, 0.751, 0.751, 0.167]],
+  [0x642, [0.751, 0.835, 0.668, 0.585, 0.668, 0.501, 0.501, 0.751, 0.751, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0.417, 0.251, 0.501, 0.585, 0.417, 0.501, 0.501, 0.585, 0.585, 0.501, 0.585, 0.251, 0.251, 0.389, 0.918, 0.751, 0, 0.251, 0.251, 0.251, 0.251, 0.417, 0.501, 0.501, 0.751, 0.918, 0.918, 0.918, 0.918, 0.918, 0.918, 0.918, 0.918, 0.585, 0.585, 0.585, 0.585, 0.585, 0.585, 0.585, 0.501, 0.501, 0.501, 0.501, 0.501, 0.501, 0.501, 0.501, 0.501, 0.417, 0.417, 0.417, 0.417, 0.501, 0.417, 0.417, 0.417, 0.417, 1.169, 1.169, 1.169, 1.336, 1.336, 0.835, 0.501]],
+  [0x6a7, [0.751, 0.751, 0.918, 1.085, 0.918, 0.835, 0.835, 0.835, 0.918, 0.918, 0.918, 0.918, 0.918, 0.918, 0.668, 0.668, 0.668, 0.668, 0.668, 0.668, 0.668, 0.668, 0.668, 0.751, 0.543, 0.501, 0.501, 0.501, 0.501, 0.501, 0.501, 0.501, 0.501, 0.501, 0.501, 0.501, 0.501, 0.751, 0.835, 0.751, 0.501, 0.751, 0.751, 0.918, 0.918, 0.251, 0.501, 0, 0, 0, 0, 0, 0, 0, 1.123, 1.085, 0, 0, 0, 0, 0, 0, 0.251, 0.417, 0, 0, 0.6, 0, 0, 0, 0, 0.501, 0.417, 0.417, 0.251, 0.501, 0.585, 0.501, 0.585, 0.501, 0.585, 0.585, 0.501, 1.169, 1.336, 0.501, 0.417, 0.585, 0.751]],
+  [0x966, [0.519, 0.461, 0.547, 0.524, 0.588, 0.61, 0.613, 0.656, 0.58, 0.566]],
+  [0xe01, [0.574, 0.603, 0.615, 0.575, 0.575, 0.619, 0.388, 0.509, 0.619, 0.601, 0.608, 0.831, 0.825, 0.598, 0.598, 0.487, 0.679, 0.849, 0.892, 0.575, 0.575, 0.574, 0.59, 0.51, 0.594, 0.569, 0.569, 0.598, 0.598, 0.667, 0.667, 0.598, 0.561, 0.524, 0.429, 0.574, 0.539, 0.598, 0.455, 0.576, 0.59, 0.539, 0.589, 0.669, 0.528, 0.538, 0.505, 0.342, 0, 0.455, 0.455, 0, 0, 0, 0, 0, 0, 0]],
+  [0xe40, [0.266, 0.483, 0.409, 0.391, 0.399, 0.455, 0.444, 0, 0, 0, 0, 0, 0, 0, 0, 0.541, 0.71, 0.768, 0.783, 0.745, 0.725, 0.725, 0.645, 0.881, 0.765, 0.827, 0.646, 0.89]],
+  [0x1e00, [0.645, 0.509, 0.573, 0.588, 0.573, 0.588, 0.573, 0.588, 0.619, 0.462, 0.701, 0.589, 0.701, 0.589, 0.701, 0.589, 0.701, 0.589, 0.701, 0.589, 0.506, 0.523, 0.506, 0.523, 0.506, 0.523, 0.506, 0.523, 0.506, 0.523, 0.488, 0.313, 0.686, 0.589, 0.71, 0.566, 0.71, 0.566, 0.71, 0.566, 0.71, 0.566, 0.71, 0.566, 0.266, 0.242, 0.266, 0.242, 0.58, 0.497, 0.58, 0.497, 0.58, 0.497, 0.471, 0.242, 0.471, 0.242, 0.471, 0.242, 0.471, 0.242]],
+  [0x1e40, [0.898, 0.861, 0.898, 0.861, 0.748, 0.566, 0.748, 0.566, 0.748, 0.566, 0.748, 0.566, 0.754, 0.586, 0.754, 0.586, 0.754, 0.586, 0.754, 0.586, 0.56, 0.588, 0.56, 0.588, 0.598, 0.348, 0.598, 0.348, 0.598, 0.348, 0.598, 0.348, 0.531, 0.424, 0.531, 0.424, 0.531, 0.424, 0.531, 0.424, 0.531, 0.424, 0.524, 0.339, 0.524, 0.339, 0.524, 0.339, 0.524, 0.339, 0.687, 0.566, 0.687, 0.566, 0.687, 0.566, 0.687, 0.566, 0.687, 0.566, 0.621, 0.479, 0.621, 0.479]],
+  [0x1e86, [0.934, 0.723, 0.934, 0.723, 0.59, 0.459, 0.59, 0.459, 0.553, 0.484, 0.57, 0.452, 0.57, 0.452, 0.57, 0.452, 0.566, 0.339, 0.723, 0.484, 0.509, 0.241, 0.313, 0.313, 0.62, 0.584, 0.645, 0.509, 0.645, 0.509, 0.645, 0.509, 0.645, 0.509, 0.645, 0.509, 0.645, 0.509, 0.645, 0.509, 0.645, 0.509, 0.645, 0.509, 0.645, 0.509, 0.645, 0.509, 0.645, 0.509, 0.506, 0.523, 0.506, 0.523]],
+  [0x1ebe, [0.506, 0.523, 0.506, 0.523, 0.506, 0.523, 0.506, 0.523, 0.506, 0.523, 0.266, 0.242, 0.266, 0.242, 0.754, 0.586, 0.754, 0.586, 0.754, 0.586, 0.754, 0.586, 0.754, 0.586, 0.754, 0.586, 0.754, 0.586, 0.763, 0.597, 0.763, 0.597, 0.763, 0.597, 0.763, 0.597, 0.763, 0.597, 0.687, 0.566, 0.687, 0.566, 0.708, 0.588, 0.708, 0.588, 0.708, 0.588, 0.708, 0.588, 0.708, 0.588]],
+  [0x1ef4, [0.553, 0.484, 0.553, 0.484, 0.553, 0.484, 0.646, 0.408, 0.6, 0.516, 0.579, 0.484]],
+];
+
+/**
  * XML entities, undone.
  *
  * Every rule that harvests text back out of an emitted file reads it escaped:
@@ -155,15 +306,56 @@ function unescapeXml(text: string): string {
     .replace(/&amp;/g, '&');
 }
 
-/** True when `character` has a measured advance rather than the fallback. */
+/** Both tables above, flattened once into a lookup. */
+/**
+ * The Unicode spaces, in em. See the exporter's copy: the generator's
+ * "skip anything already one em" filter is right for a glyph and wrong for
+ * whitespace, whose fallback is the plain space width, so it dropped U+2003 and
+ * U+3000 and left them charged 0.274 against a true 1.0.
+ */
+const YU_GOTHIC_SPACE_WIDE_EM: ReadonlyArray<readonly [number, number]> = [
+  [0x2000, 0.5], [0x2001, 1], [0x2002, 0.5], [0x2003, 1],
+  [0x2004, 1 / 3], [0x2005, 0.25], [0x2006, 1 / 6],
+  [0x2007, YU_GOTHIC_ADVANCE_EM['0'.charCodeAt(0) - 33]],
+  [0x2008, YU_GOTHIC_ADVANCE_EM['.'.charCodeAt(0) - 33]],
+  [0x2009, 0.2], [0x200a, 0.1], [0x202f, 0.2], [0x205f, 4 / 18], [0x3000, 1],
+];
+
+const AUDIT_MEASURED_EM: ReadonlyMap<number, number> = (() => {
+  const table = new Map<number, number>();
+  for (const source of [YU_GOTHIC_WIDE_EM, YU_GOTHIC_FALLBACK_EM]) {
+    for (const [start, values] of source) {
+      values.forEach((value, offset) => table.set(start + offset, value));
+    }
+  }
+  for (const [code, value] of YU_GOTHIC_SPACE_WIDE_EM) table.set(code, value);
+  return table;
+})();
+
+/** Astral ideographs are a full em; the emoji blocks are what the font draws. */
+const AUDIT_ASTRAL_CJK_MIN = 0x20000;
+const AUDIT_ASTRAL_CJK_MAX = 0x3ffff;
+const AUDIT_EMOJI_RE = /[\u{1f000}-\u{1faff}]/u;
+
+/**
+ * True when `character` has a measured advance rather than the fallback.
+ *
+ * The coverage rule is the gate's only honest oracle: it reports the characters
+ * the width model is guessing at. It used to answer true for EVERYTHING above
+ * the BMP, so the one rule written to catch a guess could never fire on the one
+ * range documented as guessed - it certified it instead.
+ */
 function hasAuditAdvance(character: string): boolean {
   if (/\s/.test(character)) return true;
   if (/[\u200b-\u200f\u2060\ufe00-\ufe0f\ufeff]/.test(character)) return true;
   if (/[\u2e80-\u9fff\uac00-\ud7af\uff00-\uff60\uffe0-\uffe6]/.test(character)) return true;
   if (YU_GOTHIC_EXTRA_EM[character] !== undefined) return true;
   const code = character.codePointAt(0) ?? 0;
-  if (code >= 0x10000) return true;
+  if (code >= AUDIT_ASTRAL_CJK_MIN && code <= AUDIT_ASTRAL_CJK_MAX) return true;
+  if (AUDIT_EMOJI_RE.test(character)) return true;
+  if (code >= 0x10000) return false;
   if (code >= 0xa1 && code <= 0x17f) return true;
+  if (AUDIT_MEASURED_EM.has(code)) return true;
   return code >= 33 && code <= 126;
 }
 
@@ -172,20 +364,23 @@ function hasAuditAdvance(character: string): boolean {
  * an unknown character is charged a full em, an UPPER bound, because a rule
  * that guesses low reports that text fits when it does not.
  *
- * Astral characters are emoji in practice, drawn by a substituted colour font
- * rather than by Yu Gothic UI, so no measurement of the label font can settle
- * them. 1.36 em is the top of the range those fonts occupy, charged on purpose:
- * a rule may safely over-reserve, never under-reserve.
+ * Astral characters that are not ideographs are drawn by a substituted colour
+ * font rather than by the label font, so no measurement of the label font can
+ * settle them. 1.373 em is the widest glyph in the font Windows substitutes,
+ * charged on purpose: a rule may safely over-reserve, never under-reserve.
  */
 function measuredAdvanceEm(character: string): number {
-  if (/\s/.test(character)) return AUDIT_SPACE_EM;
+  const code = character.codePointAt(0) ?? 0;
+  if (/\s/.test(character)) return AUDIT_MEASURED_EM.get(code) ?? AUDIT_SPACE_EM;
   if (/[\u200b-\u200f\u2060\ufe00-\ufe0f\ufeff]/.test(character)) return 0;
   if (/[\u2e80-\u9fff\uac00-\ud7af\uff00-\uff60\uffe0-\uffe6]/.test(character)) return 1;
   const extra = YU_GOTHIC_EXTRA_EM[character];
   if (extra !== undefined) return extra;
-  const code = character.codePointAt(0) ?? 0;
-  if (code >= 0x10000) return 1.36;
+  if (code >= AUDIT_ASTRAL_CJK_MIN && code <= AUDIT_ASTRAL_CJK_MAX) return 1;
+  if (code >= 0x10000) return 1.373;
   if (code >= 0xa1 && code <= 0x17f) return YU_GOTHIC_LATIN_EM[code - 0xa1];
+  const measured = AUDIT_MEASURED_EM.get(code);
+  if (measured !== undefined) return measured;
   return code >= 33 && code <= 126 ? YU_GOTHIC_ADVANCE_EM[code - 33] : 1;
 }
 
@@ -201,10 +396,12 @@ function measuredTrailingWsIn(text: string, fontSizePt: number): number {
 /**
  * Widest character in `text`, in inches, from the measured table.
  *
- * An unmeasured character is charged the NARROWEST measured advance here, not
- * the widest. This is the one measurement in the gate that decides whether the
- * exporter was entitled to withhold a name, and a rule that guesses high there
- * agrees with the exporter that a column was too narrow when it was not.
+ * An unmeasured character is charged NOTHING here. This is the one measurement
+ * in the gate that decides whether the exporter was entitled to withhold a
+ * name, and a rule that guesses high there agrees with the exporter that a
+ * column was too narrow when it was not. There is no positive lower bound to
+ * use: a combining mark advances 0 and U+2044 advances 0.076, so the 0.205
+ * this carried was a bound over the sample rather than over the repertoire.
  */
 function measuredWidestGlyphIn(text: string, fontSizePt: number): number {
   let widest = 0;
@@ -212,20 +409,43 @@ function measuredWidestGlyphIn(text: string, fontSizePt: number): number {
     // Whitespace is not a glyph: it advances, but a column that holds only a
     // space holds no ink.
     if (/\s/.test(character)) continue;
-    widest = Math.max(widest, hasAuditAdvance(character) ? measuredAdvanceEm(character) : 0.205);
+    widest = Math.max(widest, hasAuditAdvance(character) ? measuredAdvanceEm(character) : 0);
   }
   return (widest * fontSizePt) / 72;
+}
+
+/**
+ * Whether `text` is worth drawing in a column `columnIn` wide - the gate's own
+ * copy of the exporter's two-clause test.
+ *
+ * Both clauses take the LOWER bound on an unmeasured character. They used to
+ * disagree, the widest-glyph clause charging nothing and the mean clause a full
+ * em, so a name in an untabled script was refused by a column more than twice
+ * wide enough for it.
+ */
+function measuredDrawableInColumn(text: string, fontSizePt: number, columnIn: number): boolean {
+  const glyphs = [...text].filter((character) => !/\s/.test(character));
+  if (glyphs.length === 0) return false;
+  if (columnIn < measuredWidestGlyphIn(text, fontSizePt)) return false;
+  let em = 0;
+  for (const glyph of glyphs) em += hasAuditAdvance(glyph) ? measuredAdvanceEm(glyph) : 0;
+  return columnIn >= (2 * em * fontSizePt) / 72 / glyphs.length;
 }
 
 /** Measured width of a run, in inches, from the real advance table. */
 function measuredTextWidthIn(text: string, fontSizePt: number): number {
   let em = 0;
   let previous = '';
+  // Regional indicators come in PAIRS. "an indicator after an indicator is
+  // free" charges two adjacent flags the width of one glyph.
+  let regionalRun = 0;
   for (const character of text) {
+    const regional = /[\u{1f1e6}-\u{1f1ff}]/u.test(character);
+    regionalRun = regional ? regionalRun + 1 : 0;
     // A flag is two regional indicators and a skin tone is a base plus a
     // modifier; both draw as ONE glyph, so only the first is charged.
     const joined = /[\u{1f3fb}-\u{1f3ff}]/u.test(character)
-      || (/[\u{1f1e6}-\u{1f1ff}]/u.test(character) && /[\u{1f1e6}-\u{1f1ff}]/u.test(previous))
+      || (regional && regionalRun % 2 === 0)
       || (previous !== '' && /[\u200b-\u200f\u2060\ufe00-\ufe0f\ufeff]/.test(previous)
         && (character.codePointAt(0) ?? 0) >= 0x10000);
     if (!joined) em += measuredAdvanceEm(character);
@@ -1271,6 +1491,71 @@ function probeAmpScenario(): Scenario {
     { id: 'ampe1', source: 'amp2', target: 'amp3', label: 'audits & logs' } as Edge,
   ];
   return { id: 'probe-amp', nodes, edges };
+}
+
+/**
+ * One narrow tile per script, each paired with the same name in English.
+ *
+ * Round 56 measured Latin-1 and Latin Extended-A and stopped at U+017F. That
+ * left Cyrillic, Greek, Hebrew, Thai and Vietnamese on the 1 em fallback in a
+ * pipeline whose draw/skip test reads that fallback twice with opposite
+ * meanings: the widest-glyph clause charged an unknown character the LOWER
+ * bound and the mean clause the UPPER one, and the mean clause binds. So a
+ * Cyrillic name measured 96% over, first became drawable at 0.1945in against
+ * an honest 0.0993in, and a 95 mil band of ordinary column widths refused it.
+ *
+ * The pairing is what makes this a fixture rather than a demonstration. Both
+ * tiles in a pair are the same size and their names are the same length, so
+ * any rule that reports the English one drawn and the other blank is
+ * describing the width model and nothing else.
+ *
+ * The sheet is the format that matters here. A deck that cannot fit a name
+ * cuts it and the whole name is still on the index slide; Visio has one page,
+ * and a name it declines to draw survives only in the shape's Name attribute,
+ * which is a handle for automation and never appears on paper.
+ */
+function probeScriptScenario(): Scenario {
+  const icon = '/Azure_Public_Service_Icons/Icons/networking/10061-icon-service-Virtual-Networks.svg';
+  const pairs: Array<[string, string]> = [
+    ['\u0412\u0438\u0440\u0442\u0443\u0430\u043b\u044c\u043d\u0430\u044f \u0441\u0435\u0442\u044c', 'Virtual network'],
+    ['\u0395\u03b9\u03ba\u03bf\u03bd\u03b9\u03ba\u03cc \u03b4\u03af\u03ba\u03c4\u03c5\u03bf', 'Virtual network'],
+    ['\u05e8\u05e9\u05ea \u05d5\u05d9\u05e8\u05d8\u05d5\u05d0\u05dc\u05d9\u05ea', 'Virtual network'],
+    ['\u0e40\u0e04\u0e23\u0e37\u0e2d\u0e02\u0e48\u0e32\u0e22\u0e40\u0e2a\u0e21\u0e37\u0e2d\u0e19', 'Virtual network'],
+    ['M\u1ea1ng \u1ea3o ri\u00eang', 'Virtual network'],
+    ['Re\u021bea virtual\u0103', 'Virtual network'],
+  ];
+  const nodes: Node[] = [];
+  pairs.forEach(([foreign, english], i) => {
+    nodes.push({
+      id: `scr${i}a`,
+      type: 'azureNode',
+      position: { x: 0, y: i * 90 },
+      width: 26,
+      height: 60,
+      data: { label: foreign, serviceName: 'Virtual Network', category: 'networking', iconPath: icon },
+    } as unknown as Node);
+    nodes.push({
+      id: `scr${i}b`,
+      type: 'azureNode',
+      position: { x: 200, y: i * 90 },
+      width: 26,
+      height: 60,
+      data: { label: english, serviceName: 'Virtual Network', category: 'networking', iconPath: icon },
+    } as unknown as Node);
+  });
+  // Chips too. The same over-charge sizes an edge label, where a name that
+  // measures twice its ink produces a ribbon twice as wide as it needs to be
+  // lying across the middle of the drawing: this one went from 1.784in of
+  // reserved width to a measured 0.990in. The wording is kept short on
+  // purpose - a fifteen-character sentence between two 26px tiles is
+  // disproportionate in any script, and that is a different rule's business.
+  const edges: Edge[] = pairs.map((_, i) => ({
+    id: `scre${i}`,
+    source: `scr${i}a`,
+    target: `scr${i}b`,
+    label: '\u0434\u0430\u043d\u043d\u044b\u0435',
+  } as Edge));
+  return { id: 'probe-script', nodes, edges };
 }
 
 function hairlineTilesScenario(): Scenario {
@@ -4966,7 +5251,7 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
       const lines = measuredWrappedLines(authored, column, floorPt);
       const needed = (lines * floorPt * 1.35) / 72;
       const room = tile.h - 0.06 - (iconHeights.get(`${at}:${id}`) ?? 0);
-      if (column >= 2 * measuredWidestGlyphIn(authored, floorPt) && needed <= room) {
+      if (measuredDrawableInColumn(authored, floorPt, column) && needed <= room) {
         issues.push(
           `tile "${tile.name}" is ${tile.w.toFixed(3)}x${tile.h.toFixed(3)}in and draws no name — `
           + `"${authored}" wraps to ${lines} line(s) needing ${needed.toFixed(3)}in of the `
@@ -5004,9 +5289,12 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
     // in a column setting 2.8 characters a line.
     const widest = measuredWidestGlyphIn(label.text, font);
     const glyphs = [...label.text].filter((character) => !/\s/.test(character));
-    const mean = glyphs.length > 0
-      ? measuredTextWidthIn(glyphs.join(''), font) / glyphs.length
-      : 0;
+    // The LOWER bound in both clauses. Reading the widest glyph one way and
+    // the mean the other made every character of an untabled script argue
+    // both sides of the same test, and the mean is the binding one.
+    let meanEm = 0;
+    for (const glyph of glyphs) meanEm += hasAuditAdvance(glyph) ? measuredAdvanceEm(glyph) : 0;
+    const mean = glyphs.length > 0 ? (meanEm * font) / 72 / glyphs.length : 0;
     if (label.text && glyphs.length > 0
       && (label.w + 0.005 < widest || label.w + 0.005 < 2 * mean)) {
       const bar = Math.max(widest, 2 * mean);
@@ -6560,6 +6848,73 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
     );
   }
 
+  // The legibility floor both exporters clamp to, in points.
+  const VISIO_FLOOR_PT = 7;
+
+  // The coverage oracle, which for its whole life ran on the deck alone.
+  //
+  // The deck and the sheet share one width model, so a character neither of
+  // them can measure is a guess in BOTH - but the rule that says so was inside
+  // `auditPptx` and had no counterpart here. That is the wrong way round. When
+  // a name is too wide for its column the deck cuts it and keeps the rest on
+  // the index slide, while Visio draws nothing at all and the name survives
+  // only in a Name= attribute that is metadata and never printed. So the
+  // format with no recovery path was the format with no oracle: a Cyrillic
+  // fixture that emptied every tile on the sheet reported PASS here while the
+  // deck, which had at least drawn something, reported the guess.
+  const unmeasuredInk = new Map<string, number>();
+  for (const match of xml.matchAll(/<Text>([\s\S]*?)<\/Text>/g)) {
+    for (const character of unescapeXml(match[1].replace(/<[^>]*>/g, ''))) {
+      if (hasAuditAdvance(character)) continue;
+      unmeasuredInk.set(character, (unmeasuredInk.get(character) ?? 0) + 1);
+    }
+  }
+  if (unmeasuredInk.size > 0) {
+    const worst = [...unmeasuredInk.entries()].sort((a, b) => b[1] - a[1]).slice(0, 6);
+    issues.push(
+      `the sheet draws ${unmeasuredInk.size} character(s) with no measured advance, so every `
+      + `width and wrap that touches them is a guess: `
+      + worst.map(([character, n]) => `U+${(character.codePointAt(0) ?? 0).toString(16).toUpperCase().padStart(4, '0')} x${n}`).join(', '),
+    );
+  }
+
+  // A name the sheet refused to draw is not recoverable the way a cut name is.
+  //
+  // Visio has one page. There is no index behind it, so when `drawsName` says
+  // no the authored name exists nowhere a reader can see - it is left in the
+  // shape's Name attribute, which is a handle for automation and is never put
+  // on paper. The deck's version of this rule can afford to ask only whether
+  // the name FITS; this one has to ask whether it was DROPPED.
+  for (const chunk of xml.split('<Shape ID=')) {
+    const head = chunk.slice(0, 400);
+    if (!/NameU="Service\.\d+"/.test(head)) continue;
+    const named = /\sName="([^"]*)"/.exec(head);
+    const authored = named ? unescapeXml(named[1]) : '';
+    if (!authored) continue;
+    const drawn = [...chunk.matchAll(/<Text>([\s\S]*?)<\/Text>/g)]
+      .map((m) => unescapeXml(m[1].replace(/<[^>]*>/g, '')).trim())
+      .join('');
+    if (drawn !== '') continue;
+    const widthCell = /<Cell N="TxtWidth" V="([-\d.eE]+)"/.exec(chunk);
+    const column = widthCell ? Number(widthCell[1]) : 0;
+    if (!(column > 0)) continue;
+    // What the exporter would actually put in the shape: one real character
+    // and an ellipsis. Asking this of the WHOLE authored name is the wrong
+    // question - the mean advance of thirty glyphs is cheaper than the
+    // ellipsis, so the rule claimed a name was available on a 0.104in column
+    // that holds one ellipsis and nothing else. A tile drawing only "..."
+    // carries no information, and the exporter is right to leave it blank.
+    const shortest = `${[...authored][0] ?? ''}\u2026`;
+    if (measuredDrawableInColumn(shortest, VISIO_FLOOR_PT, column)) {
+      issues.push(
+        `Visio tile "${authored}" draws no text at all, and the name is nowhere on the page - `
+        + `its ${column.toFixed(4)}in column holds the widest glyph `
+        + `(${measuredWidestGlyphIn(authored, VISIO_FLOOR_PT).toFixed(4)}in) and two typical ones at `
+        + `the ${VISIO_FLOOR_PT}pt floor, so a truncated name was available and was not drawn`,
+      );
+    }
+  }
+
   // The other half of that bargain, and the rule the scaler actually broke: the
   // type has to stay in proportion to the tile it labels. Visio wraps a name
   // inside its shape, so holding the point size fixed while the shape shrinks
@@ -7549,6 +7904,7 @@ async function main(): Promise<void> {
   probeArrowScenario(),
   probeAccentScenario(),
   probeAmpScenario(),
+  probeScriptScenario(),
   tallNarrowTilesScenario(),
     corridorZoneScenario(),
     ladderInGridScenario(), twinLaddersScenario(), strayLadderScenario(), legendCornerScenario(), duplicateStepsScenario(), denseZoneScenario(),

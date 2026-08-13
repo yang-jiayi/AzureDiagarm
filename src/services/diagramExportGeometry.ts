@@ -681,15 +681,20 @@ const GEOMETRY_EXTRA_EM: Record<string, number> = {
   '\u2014': 1,     // em dash
   '\u2018': 0.229,
   '\u2019': 0.229, // right single quote
-  '\u201c': 0.396,
-  '\u201d': 0.396,
+  // 0.377, not the 0.396 these carried for dozens of rounds. Two independent
+  // measurements of the font agree on 0.377 and neither has ever answered
+  // 0.396; the old value was a hand-set estimate that no measurement supports.
+  '\u201c': 0.377,
+  '\u201d': 0.377,
   '\u2026': 0.733, // horizontal ellipsis
   '\u2190': 1,
   '\u2192': 1,     // rightwards arrow
   '\u2194': 1,
   '\u21d2': 1,
   '\u2212': 0.684,
-  '\u2022': 0.35,
+  // 0.406. The hand-set 0.35 was 14% LOW, which is the direction that paints
+  // outside the shape rather than the direction that merely wastes a line.
+  '\u2022': 0.406,
 };
 
 /**
@@ -709,19 +714,19 @@ const GEOMETRY_EXTRA_EM: Record<string, number> = {
 const GEOMETRY_SPACE_EM = 0.274;
 
 /**
- * Emoji, and everything else outside the Basic Multilingual Plane.
+ * Astral code points that are neither an ideograph nor an emoji.
  *
- * These are not drawn by the label font at all: Windows falls back to Segoe UI
- * Emoji, whose colour glyphs run from about one em to 1.36 em depending on the
- * pair. GDI+ reports 1.0 for a rocket, but GDI+ is measuring whatever font it
- * substituted, which is not necessarily the one PowerPoint or Visio picks, so
- * the measurement is not authority here the way it is for Yu Gothic UI.
+ * Round 56 charged 1.36 here and said plainly that the number was a guess.
+ * It no longer is: Segoe UI Emoji, which is what Windows substitutes for these,
+ * declares 1.373 for its widest glyph and nothing wider, so 1.373 is a true
+ * upper bound over every glyph in the substitute font rather than a plausible
+ * one. Charged per CLUSTER, not per code point - see `advanceWidthIn`.
  *
- * 1.36 is therefore charged deliberately as an UPPER bound. Over-charging a
- * width can only shrink type or buy a line that was not needed; under-charging
- * it paints outside the shape, and the corpus already draws one of these.
+ * It stays an upper bound because the renderer, not this module, picks the
+ * substitute. `hasMeasuredAdvance` answers false for anything that lands here,
+ * so the audit's coverage rule can say so.
  */
-const GEOMETRY_ASTRAL_EM = 1.36;
+const GEOMETRY_ASTRAL_EM = 1.373;
 
 /**
  * Latin-1 Supplement and Latin Extended-A, U+00A1 to U+017F, measured.
@@ -764,6 +769,230 @@ const GEOMETRY_LATIN_EM = [
   0.57, 0.452, 0.316,
 ];
 
+/**
+ * Every remaining code point the LABEL FONT itself draws, U+0180 upward,
+ * measured from the font rather than guessed.
+ *
+ * Round 56 measured Latin-1 and Latin Extended-A and stopped at U+017F, which
+ * left Cyrillic, Greek, IPA, combining marks, punctuation, currency and the
+ * superscripts on the 1 em unknown-character fallback - in a font that draws
+ * every one of them. The over-charge is not marginal: Cyrillic averages 0.599
+ * em and Greek 0.567, so a name in either measured roughly twice its ink, and
+ * the two clauses of `drawableInColumn` disagreed about which bound to take on
+ * exactly these characters. `Виртуальная сеть` was refused by a 0.19in column
+ * that really needs 0.099in, and Visio draws nothing at all when it is refused.
+ *
+ * Read straight out of the font's own metric table (WPF GlyphTypeface, which
+ * exposes both the code points the file contains and their advance widths), so
+ * these are the file's numbers, not a rendering of them. Cross-checked against
+ * the 317 entries already in this module: every one agrees to within 0.0004 em.
+ * The single exception is U+00AD SOFT HYPHEN, whose entry stays 0 - the font
+ * declares 0.3999 because that is its width AT A LINE BREAK, and mid-line the
+ * renderer draws nothing.
+ *
+ * Only advances that differ from one em are listed. A box-drawing character or
+ * a dingbat really is one em wide, so for those the fallback is already the
+ * right answer and tabling them would add 1000 entries that change nothing.
+ *
+ * Stored as runs of consecutive code points because the covered set is sparse.
+ */
+const GEOMETRY_WIDE_EM: ReadonlyArray<readonly [number, readonly number[]]> = [
+  [0x192, [0.539, 0.728]],
+  [0x1c2, [0.434]],
+  [0x1cd, [0.65, 0.554, 0.298, 0.266, 0.732, 0.559, 0.739, 0.58, 0.739, 0.58, 0.739, 0.58, 0.739, 0.58, 0.739, 0.58]],
+  [0x1f5, [0.547]],
+  [0x1f8, [0.749, 0.58, 0.65, 0.554, 1.012, 0.88, 0.732, 0.559]],
+  [0x218, [0.628, 0.507, 0.626, 0.351]],
+  [0x237, [0.296]],
+  [0x250, [0.554, 0.582, 0.587, 0.576, 0.519, 0.519, 0.577, 0.577, 0.555, 0.555, 0.748, 0.51, 0.51]],
+  [0x25e, [0.57, 0.3, 0.577, 0.577, 0.556, 0.498, 0.488, 0.58, 0.578, 0.578, 0.299]],
+  [0x26a, [0.265]],
+  [0x26c, [0.376, 0.265, 0.605, 0.861, 0.861, 0.861, 0.58, 0.58, 0.583, 0.559, 0.768]],
+  [0x278, [0.604, 0.366, 0.366, 0.366]],
+  [0x27d, [0.366, 0.353]],
+  [0x280, [0.521, 0.521, 0.507, 0.264, 0.3]],
+  [0x288, [0.351, 0.598, 0.559, 0.551, 0.489, 0.774, 0.489, 0.493, 0.455, 0.506, 0.522]],
+  [0x294, [0.502, 0.502]],
+  [0x298, [0.732, 0.546]],
+  [0x29c, [0.586, 0.332]],
+  [0x29f, [0.447]],
+  [0x2a1, [0.502, 0.502]],
+  [0x2a4, [0.925]],
+  [0x2b0, [0.427]],
+  [0x2b2, [0.227]],
+  [0x2b7, [0.539]],
+  [0x2bb, [0.259, 0.259]],
+  [0x2c1, [0.347]],
+  [0x2c6, [0.371, 0.5, 0.213]],
+  [0x2cc, [0.213]],
+  [0x2d0, [0.284, 0.284]],
+  [0x2d8, [0.5, 0.5, 0.5, 0.5, 0.337, 0.5, 0.267]],
+  [0x2e0, [0.345, 0.211]],
+  [0x2e5, [0.401, 0.401, 0.401, 0.401, 0.401]],
+  [0x300, [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5]],
+  [0x30a, [0.5, 0.5, 0.5]],
+  [0x30f, [0.5]],
+  [0x318, [0, 0, 0]],
+  [0x31c, [0, 0, 0, 0, 0]],
+  [0x324, [0, 0]],
+  [0x327, [0.5, 0.5, 0, 0]],
+  [0x32c, [0]],
+  [0x32f, [0, 0]],
+  [0x332, [0.5]],
+  [0x334, [0]],
+  [0x339, [0, 0, 0, 0, 0]],
+  [0x361, [0]],
+  [0x384, [0.273, 0.273, 0.645]],
+  [0x388, [0.57, 0.774, 0.378]],
+  [0x38c, [0.801]],
+  [0x38e, [0.667, 0.826, 0.267, 0.645, 0.573, 0.472, 0.644, 0.506, 0.57, 0.71, 0.754, 0.266, 0.58, 0.629, 0.898, 0.748, 0.51, 0.754, 0.713, 0.56]],
+  [0x3a3, [0.516, 0.524, 0.553, 0.754, 0.59, 0.776, 0.755, 0.266, 0.553, 0.614, 0.438, 0.575, 0.267, 0.553, 0.614, 0.548, 0.519, 0.584, 0.438, 0.442, 0.575, 0.586, 0.267, 0.524, 0.498, 0.577, 0.526, 0.445, 0.586, 0.627, 0.586, 0.46, 0.575, 0.487, 0.553, 0.699, 0.538, 0.75, 0.808, 0.267, 0.553, 0.586, 0.553, 0.808]],
+  [0x3d0, [0.548, 0.591]],
+  [0x3d5, [0.638]],
+  [0x3db, [0.455]],
+  [0x401, [0.506, 0.7, 0.472, 0.617, 0.531, 0.266, 0.266, 0.357, 0.981, 0.983, 0.723, 0.58, 0.749, 0.567, 0.709, 0.645, 0.572, 0.573, 0.472, 0.693, 0.506, 0.867, 0.54, 0.749, 0.749, 0.58, 0.673, 0.898, 0.71, 0.754, 0.713, 0.56, 0.619, 0.524, 0.567, 0.727, 0.59, 0.742, 0.661, 0.949, 0.98, 0.706, 0.783, 0.576, 0.616, 1.019, 0.591, 0.509, 0.579, 0.53, 0.383, 0.547, 0.523, 0.746, 0.446, 0.581, 0.581, 0.497, 0.527, 0.702, 0.577, 0.586, 0.577, 0.588, 0.462, 0.41, 0.484, 0.686, 0.459, 0.6, 0.565, 0.8, 0.824, 0.591, 0.71, 0.504, 0.462, 0.813, 0.503]],
+  [0x451, [0.523, 0.577, 0.383, 0.462, 0.424, 0.242, 0.242, 0.242, 0.79, 0.807, 0.567, 0.497]],
+  [0x45e, [0.484, 0.577]],
+  [0x490, [0.469, 0.391]],
+  [0x9f2, [0.54, 0.596]],
+  [0xe3f, [0.679]],
+  [0x17db, [0.549]],
+  [0x1e3e, [0.919, 0.861]],
+  [0x1e80, [0.93, 0.774, 0.93, 0.774, 0.93, 0.774]],
+  [0x1ebc, [0.618, 0.555]],
+  [0x1ef2, [0.65, 0.489]],
+  [0x1f70, [0.582, 0.582, 0.51, 0.51]],
+  [0x2002, [0.5]],
+  [0x2011, [0.428, 0.5, 0.5]],
+  [0x2018, [0.229, 0.229, 0.229, 0.259, 0.377, 0.377, 0.377, 0.424, 0.375, 0.375, 0.406]],
+  [0x2026, [0.733]],
+  [0x2030, [1.21]],
+  [0x2039, [0.316, 0.316]],
+  [0x203d, [0.527, 0.5, 0.477]],
+  [0x2044, [0.076]],
+  [0x2070, [0.361]],
+  [0x2074, [0.361, 0.361, 0.361, 0.361, 0.361, 0.361]],
+  [0x207f, [0.427, 0.361, 0.361, 0.361, 0.361, 0.361, 0.361, 0.361, 0.361, 0.361, 0.361]],
+  [0x20a0, [0.683, 0.683, 0.683, 0.619, 0.578]],
+  [0x20a6, [0.777, 0.99, 0.895, 0.93, 0.763, 0.578, 0.539]],
+  [0x20ae, [0.626, 0.972, 0.683, 0.74]],
+  [0x20b8, [0.631, 0.589, 0.615]],
+  [0x20e3, [0]],
+  [0x2116, [1.122]],
+  [0x2122, [0.773]],
+  [0x2126, [0.756, 0.756]],
+  [0x212e, [0.832]],
+  [0x2153, [0.798, 0.798, 0.798]],
+  [0x215b, [0.798, 0.798, 0.798, 0.798]],
+  [0x2206, [0.766]],
+  [0x2209, [0.722]],
+  [0x220f, [0.788]],
+  [0x2219, [0.259]],
+  [0x2225, [0.722, 0.722]],
+  [0x223c, [0.704]],
+  [0x2245, [0.722]],
+  [0x2248, [0.722]],
+  [0x2262, [0.722]],
+  [0x2264, [0.722, 0.722]],
+  [0x2276, [0.722, 0.722]],
+  [0x2284, [0.722, 0.722]],
+  [0x228a, [0.722, 0.722]],
+  [0x229e, [0.814]],
+  [0x22da, [0.722, 0.722]],
+  [0x2305, [0.722, 0.722]],
+  [0x2318, [0.924]],
+  [0x2329, [0.5, 0.5]],
+  [0x25ca, [0.632]],
+  [0x2e40, [0.5]],
+  [0xa7b5, [0.583]],
+  [0xab53, [0.524]],
+  [0xfb00, [0.622, 0.538, 0.538, 0.803, 0.803]],
+  [0xff61, [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5]],
+  [0xffe8, [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5]],
+];
+
+/**
+ * Scripts the label font does not contain at all, measured from the font
+ * Windows substitutes for them: Segoe UI for Hebrew, Arabic and Devanagari,
+ * Leelawadee UI for Thai. Latin Extended Additional - which is to say
+ * Vietnamese - is here too.
+ *
+ * Weaker evidence than the table above and deliberately kept separate from it.
+ * The renderer picks the substitute, not this module, and the pick is not fully
+ * predictable: measuring Hebrew through GDI+ selects a font that answers 0.660
+ * where Segoe UI answers 0.637. That 3.6% spread is the honest uncertainty
+ * here - against the 57% the one-em fallback was wrong by for the same
+ * character, which is the reason this table exists rather than being left out
+ * for want of certainty.
+ *
+ * Combining marks measure 0 and are listed as 0: a Hebrew point or a Thai tone
+ * mark draws inside the letter before it and advances nothing, and charging
+ * each one a full em made a pointed Hebrew name measure three times its ink.
+ */
+const GEOMETRY_FALLBACK_EM: ReadonlyArray<readonly [number, readonly number[]]> = [
+  [0x591, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0.4, 0, 0.202, 0, 0, 0.217, 0, 0, 0.399, 0]],
+  [0x5d0, [0.637, 0.57, 0.439, 0.481, 0.678, 0.268, 0.337, 0.674, 0.681, 0.268, 0.559, 0.545, 0.551, 0.694, 0.674, 0.268, 0.399, 0.676, 0.605, 0.611, 0.631, 0.565, 0.585, 0.664, 0.559, 0.785, 0.726]],
+  [0x5ef, [0.542, 0.522, 0.522, 0.522, 0.229, 0.377]],
+  [0x600, [1.227, 0.832, 0.531, 1.522, 1.55, 0, 0.668, 0.668, 0.918, 0.751, 0.918, 0.585, 0.251, 0.334, 1.085, 0.585, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0.251, 0.917, 0.61, 0.501, 0.501, 0.751, 0.417, 0.251, 0.251, 0.501, 0.251, 0.751, 0.251, 0.918, 0.501, 0.918, 0.918, 0.585, 0.585, 0.585, 0.501, 0.501, 0.417, 0.417, 1.169, 1.169, 1.336, 1.336, 0.835, 0.835, 0.501, 0.501, 0.918, 0.918, 0.751, 0.751, 0.751, 0.167]],
+  [0x642, [0.751, 0.835, 0.668, 0.585, 0.668, 0.501, 0.501, 0.751, 0.751, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0.417, 0.251, 0.501, 0.585, 0.417, 0.501, 0.501, 0.585, 0.585, 0.501, 0.585, 0.251, 0.251, 0.389, 0.918, 0.751, 0, 0.251, 0.251, 0.251, 0.251, 0.417, 0.501, 0.501, 0.751, 0.918, 0.918, 0.918, 0.918, 0.918, 0.918, 0.918, 0.918, 0.585, 0.585, 0.585, 0.585, 0.585, 0.585, 0.585, 0.501, 0.501, 0.501, 0.501, 0.501, 0.501, 0.501, 0.501, 0.501, 0.417, 0.417, 0.417, 0.417, 0.501, 0.417, 0.417, 0.417, 0.417, 1.169, 1.169, 1.169, 1.336, 1.336, 0.835, 0.501]],
+  [0x6a7, [0.751, 0.751, 0.918, 1.085, 0.918, 0.835, 0.835, 0.835, 0.918, 0.918, 0.918, 0.918, 0.918, 0.918, 0.668, 0.668, 0.668, 0.668, 0.668, 0.668, 0.668, 0.668, 0.668, 0.751, 0.543, 0.501, 0.501, 0.501, 0.501, 0.501, 0.501, 0.501, 0.501, 0.501, 0.501, 0.501, 0.501, 0.751, 0.835, 0.751, 0.501, 0.751, 0.751, 0.918, 0.918, 0.251, 0.501, 0, 0, 0, 0, 0, 0, 0, 1.123, 1.085, 0, 0, 0, 0, 0, 0, 0.251, 0.417, 0, 0, 0.6, 0, 0, 0, 0, 0.501, 0.417, 0.417, 0.251, 0.501, 0.585, 0.501, 0.585, 0.501, 0.585, 0.585, 0.501, 1.169, 1.336, 0.501, 0.417, 0.585, 0.751]],
+  [0x966, [0.519, 0.461, 0.547, 0.524, 0.588, 0.61, 0.613, 0.656, 0.58, 0.566]],
+  [0xe01, [0.574, 0.603, 0.615, 0.575, 0.575, 0.619, 0.388, 0.509, 0.619, 0.601, 0.608, 0.831, 0.825, 0.598, 0.598, 0.487, 0.679, 0.849, 0.892, 0.575, 0.575, 0.574, 0.59, 0.51, 0.594, 0.569, 0.569, 0.598, 0.598, 0.667, 0.667, 0.598, 0.561, 0.524, 0.429, 0.574, 0.539, 0.598, 0.455, 0.576, 0.59, 0.539, 0.589, 0.669, 0.528, 0.538, 0.505, 0.342, 0, 0.455, 0.455, 0, 0, 0, 0, 0, 0, 0]],
+  [0xe40, [0.266, 0.483, 0.409, 0.391, 0.399, 0.455, 0.444, 0, 0, 0, 0, 0, 0, 0, 0, 0.541, 0.71, 0.768, 0.783, 0.745, 0.725, 0.725, 0.645, 0.881, 0.765, 0.827, 0.646, 0.89]],
+  [0x1e00, [0.645, 0.509, 0.573, 0.588, 0.573, 0.588, 0.573, 0.588, 0.619, 0.462, 0.701, 0.589, 0.701, 0.589, 0.701, 0.589, 0.701, 0.589, 0.701, 0.589, 0.506, 0.523, 0.506, 0.523, 0.506, 0.523, 0.506, 0.523, 0.506, 0.523, 0.488, 0.313, 0.686, 0.589, 0.71, 0.566, 0.71, 0.566, 0.71, 0.566, 0.71, 0.566, 0.71, 0.566, 0.266, 0.242, 0.266, 0.242, 0.58, 0.497, 0.58, 0.497, 0.58, 0.497, 0.471, 0.242, 0.471, 0.242, 0.471, 0.242, 0.471, 0.242]],
+  [0x1e40, [0.898, 0.861, 0.898, 0.861, 0.748, 0.566, 0.748, 0.566, 0.748, 0.566, 0.748, 0.566, 0.754, 0.586, 0.754, 0.586, 0.754, 0.586, 0.754, 0.586, 0.56, 0.588, 0.56, 0.588, 0.598, 0.348, 0.598, 0.348, 0.598, 0.348, 0.598, 0.348, 0.531, 0.424, 0.531, 0.424, 0.531, 0.424, 0.531, 0.424, 0.531, 0.424, 0.524, 0.339, 0.524, 0.339, 0.524, 0.339, 0.524, 0.339, 0.687, 0.566, 0.687, 0.566, 0.687, 0.566, 0.687, 0.566, 0.687, 0.566, 0.621, 0.479, 0.621, 0.479]],
+  [0x1e86, [0.934, 0.723, 0.934, 0.723, 0.59, 0.459, 0.59, 0.459, 0.553, 0.484, 0.57, 0.452, 0.57, 0.452, 0.57, 0.452, 0.566, 0.339, 0.723, 0.484, 0.509, 0.241, 0.313, 0.313, 0.62, 0.584, 0.645, 0.509, 0.645, 0.509, 0.645, 0.509, 0.645, 0.509, 0.645, 0.509, 0.645, 0.509, 0.645, 0.509, 0.645, 0.509, 0.645, 0.509, 0.645, 0.509, 0.645, 0.509, 0.645, 0.509, 0.506, 0.523, 0.506, 0.523]],
+  [0x1ebe, [0.506, 0.523, 0.506, 0.523, 0.506, 0.523, 0.506, 0.523, 0.506, 0.523, 0.266, 0.242, 0.266, 0.242, 0.754, 0.586, 0.754, 0.586, 0.754, 0.586, 0.754, 0.586, 0.754, 0.586, 0.754, 0.586, 0.754, 0.586, 0.763, 0.597, 0.763, 0.597, 0.763, 0.597, 0.763, 0.597, 0.763, 0.597, 0.687, 0.566, 0.687, 0.566, 0.708, 0.588, 0.708, 0.588, 0.708, 0.588, 0.708, 0.588, 0.708, 0.588]],
+  [0x1ef4, [0.553, 0.484, 0.553, 0.484, 0.553, 0.484, 0.646, 0.408, 0.6, 0.516, 0.579, 0.484]],
+];
+
+/**
+ * Both tables above, flattened once into a lookup.
+ *
+ * The runs are the maintainable form - they are diffable against a fresh
+ * metric dump, and a reviewer can read a script's worth of numbers in one
+ * line - but a width is measured per character on every wrap step of every
+ * fit loop, so the search happens once at module load and never again.
+ */
+/**
+ * The Unicode spaces, in em.
+ *
+ * These were excluded from the generated table by the filter that skips
+ * advances already equal to one em - correct for a GLYPH, because the fallback
+ * for an unknown glyph is one em and tabling it changes nothing, but wrong for
+ * WHITESPACE, whose fallback is `GEOMETRY_SPACE_EM` (0.274). The filter
+ * therefore dropped exactly the two entries that mattered most: U+2003 EM SPACE
+ * and U+3000 IDEOGRAPHIC SPACE were charged 0.274 against a true 1.0, a 265%
+ * under-estimate, and U+3000 is ordinary punctuation in the Japanese service
+ * names this app is used to draw.
+ *
+ * Yu Gothic UI contains only U+2002 (0.5000), U+2003 (1.0000) and U+3000
+ * (1.0000); those three are the font's own numbers. The rest are absent from
+ * the file, but a renderer substituting them has nothing to invent - Unicode
+ * DEFINES these characters as fractions of an em, so the fraction is the
+ * measurement and it is font-independent. U+2007 and U+2008 are defined by
+ * reference to this font's digit and period, so they are read from the table
+ * above rather than written down.
+ */
+const GEOMETRY_SPACE_WIDE_EM: ReadonlyArray<readonly [number, number]> = [
+  [0x2000, 0.5], [0x2001, 1], [0x2002, 0.5], [0x2003, 1],
+  [0x2004, 1 / 3], [0x2005, 0.25], [0x2006, 1 / 6],
+  [0x2007, GEOMETRY_ADVANCE_EM['0'.charCodeAt(0) - 33]],
+  [0x2008, GEOMETRY_ADVANCE_EM['.'.charCodeAt(0) - 33]],
+  [0x2009, 0.2], [0x200a, 0.1], [0x202f, 0.2], [0x205f, 4 / 18], [0x3000, 1],
+];
+
+const GEOMETRY_MEASURED_EM: ReadonlyMap<number, number> = (() => {
+  const table = new Map<number, number>();
+  for (const source of [GEOMETRY_WIDE_EM, GEOMETRY_FALLBACK_EM]) {
+    for (const [start, values] of source) {
+      values.forEach((value, offset) => table.set(start + offset, value));
+    }
+  }
+  for (const [code, value] of GEOMETRY_SPACE_WIDE_EM) table.set(code, value);
+  return table;
+})();
+
 /** Zero-width: a variation selector or a joiner styles the glyph before it. */
 const GEOMETRY_ZERO_WIDTH_RE = /[\u200b-\u200f\u2060\ufe00-\ufe0f\ufeff]/;
 
@@ -775,15 +1004,42 @@ const GEOMETRY_ZERO_WIDTH_RE = /[\u200b-\u200f\u2060\ufe00-\ufe0f\ufeff]/;
 const GEOMETRY_MODIFIER_RE = /[\u{1f3fb}-\u{1f3ff}]/u;
 const GEOMETRY_REGIONAL_RE = /[\u{1f1e6}-\u{1f1ff}]/u;
 
-/** True when `character` has a measured advance rather than the fallback. */
+/**
+ * The astral planes the emoji font covers, and the astral planes the CJK font
+ * covers, are two different questions and were being answered as one.
+ *
+ * `code >= 0x10000` used to mean "emoji, charge the fallback". It also caught
+ * CJK Extension B upward - U+20000 to U+2FA1F, which is where the rarer kanji
+ * in Japanese proper nouns live. Those are ideographs: exactly one em, by the
+ * same construction as every other ideograph in this module, and charging them
+ * the emoji width over-stated a name of them by 37%.
+ */
+const GEOMETRY_ASTRAL_CJK_MIN = 0x20000;
+const GEOMETRY_ASTRAL_CJK_MAX = 0x3ffff;
+
+/** The astral blocks Segoe UI Emoji actually draws. */
+const GEOMETRY_EMOJI_RE = /[\u{1f000}-\u{1faff}]/u;
+
+/**
+ * True when `character` has a measured advance rather than the fallback.
+ *
+ * This is the only honest oracle in the pipeline - the audit's coverage rule
+ * exists to report characters the width model is guessing at - so it must not
+ * certify a guess. It used to answer `true` for everything above the BMP,
+ * which meant the one rule written to catch guesses could never fire on the
+ * one range that was openly documented as guessed.
+ */
 export function hasMeasuredAdvance(character: string): boolean {
   if (/\s/.test(character)) return true;
   if (GEOMETRY_ZERO_WIDTH_RE.test(character)) return true;
   if (GEOMETRY_CJK_RE.test(character)) return true;
   if (GEOMETRY_EXTRA_EM[character] !== undefined) return true;
   const code = character.codePointAt(0) ?? 0;
-  if (code >= 0x10000) return true;
+  if (code >= GEOMETRY_ASTRAL_CJK_MIN && code <= GEOMETRY_ASTRAL_CJK_MAX) return true;
+  if (GEOMETRY_EMOJI_RE.test(character)) return true;
+  if (code >= 0x10000) return false;
   if (code >= 0xa1 && code <= 0x17f) return true;
+  if (GEOMETRY_MEASURED_EM.has(code)) return true;
   return code >= 33 && code <= 126;
 }
 
@@ -795,16 +1051,27 @@ export function hasMeasuredAdvance(character: string): boolean {
  * narrow Latin letter, and a sizer that guesses low paints outside the box.
  * That reasoning only holds where the answer sizes a box - see
  * `lowerBoundAdvanceEm` for the one caller where guessing high destroys text.
+ *
+ * With Cyrillic, Greek and the rest now measured, what is left over is symbols
+ * and rare scripts, for which one em is usually right rather than merely safe.
  */
 export function advanceEm(character: string): number {
-  if (/\s/.test(character)) return GEOMETRY_SPACE_EM;
+  const code = character.codePointAt(0) ?? 0;
+  // Whitespace before anything else, but the TABLE before the flat width:
+  // U+2000 upward, a space is a typographic quantity with a size of its own -
+  // an en space is half an em and an em space is a whole one - and charging
+  // every one of them the 0.274 em of a plain space under-stated an em space
+  // by 265%, which is the direction that paints a line out past its box.
+  if (/\s/.test(character)) return GEOMETRY_MEASURED_EM.get(code) ?? GEOMETRY_SPACE_EM;
   if (GEOMETRY_ZERO_WIDTH_RE.test(character)) return 0;
   if (GEOMETRY_CJK_RE.test(character)) return 1;
   const extra = GEOMETRY_EXTRA_EM[character];
   if (extra !== undefined) return extra;
-  const code = character.codePointAt(0) ?? 0;
+  if (code >= GEOMETRY_ASTRAL_CJK_MIN && code <= GEOMETRY_ASTRAL_CJK_MAX) return 1;
   if (code >= 0x10000) return GEOMETRY_ASTRAL_EM;
   if (code >= 0xa1 && code <= 0x17f) return GEOMETRY_LATIN_EM[code - 0xa1];
+  const measured = GEOMETRY_MEASURED_EM.get(code);
+  if (measured !== undefined) return measured;
   return code >= 33 && code <= 126 ? GEOMETRY_ADVANCE_EM[code - 33] : 1;
 }
 
@@ -812,15 +1079,22 @@ export function advanceEm(character: string): number {
  * The narrowest a character could plausibly be, in em.
  *
  * Identical to `advanceEm` for everything measured; the difference is the
- * unknown, which is charged the narrowest advance in the measured table rather
- * than a full em. This exists for `widestGlyphIn` alone, because that is the
- * only place in the pipeline where an over-estimate does not shrink type or
- * buy a line - it WITHHOLDS the name. The wrap that follows still charges the
- * upper bound, so letting a name through on a low guess cannot overflow
- * anything: it only means the name is measured properly instead of discarded
- * on a guess.
+ * unknown, which is charged nothing at all. This exists for `widestGlyphIn`
+ * alone, because that is the only place in the pipeline where an over-estimate
+ * does not shrink type or buy a line - it WITHHOLDS the name. The wrap that
+ * follows still charges the upper bound, so letting a name through on a low
+ * guess cannot overflow anything: it only means the name is measured properly
+ * instead of discarded on a guess.
+ *
+ * Zero rather than a small positive number, because there is no positive lower
+ * bound to have. The value used to be 0.205, chosen as the narrowest advance
+ * in the range that had been measured at the time - which made it a bound over
+ * the sample rather than over the repertoire. U+2044 FRACTION SLASH is 0.076,
+ * and every combining mark in this module's tables is exactly 0. A character
+ * whose width is unknown cannot be shown to need any room, so it is not
+ * allowed to be the reason a name is not drawn.
  */
-const GEOMETRY_NARROWEST_EM = 0.205;
+const GEOMETRY_NARROWEST_EM = 0;
 
 function lowerBoundAdvanceEm(character: string): number {
   return hasMeasuredAdvance(character) ? advanceEm(character) : GEOMETRY_NARROWEST_EM;
@@ -834,13 +1108,20 @@ function lowerBoundAdvanceEm(character: string): number {
 export function advanceWidthIn(text: string, fontSizePt: number): number {
   let em = 0;
   let previous = '';
+  // How many regional indicators the current unbroken run is already carrying.
+  // A flag is a PAIR, so the third indicator in a row opens a second flag: the
+  // rule cannot be "an indicator after an indicator is free" or two adjacent
+  // flags charge one glyph's width and paint over whatever follows them.
+  let regionalRun = 0;
   for (const character of text) {
-    // A flag is two regional indicators and a skin tone is a base plus a
-    // modifier; both render as ONE glyph. Charging each code point 1.36 em
-    // makes a four-person family emoji 5.44 em wide, and an over-charge is
-    // what deletes a name - see `lowerBoundAdvanceEm`.
+    const regional = GEOMETRY_REGIONAL_RE.test(character);
+    regionalRun = regional ? regionalRun + 1 : 0;
+    // A flag is two regional indicators, a skin tone is a base plus a modifier
+    // and a family is four people joined by three joiners; each renders as ONE
+    // glyph. Charging every code point separately made a family 5.44 em wide,
+    // and an over-charge is what deletes a name - see `lowerBoundAdvanceEm`.
     const joined = GEOMETRY_MODIFIER_RE.test(character)
-      || (GEOMETRY_REGIONAL_RE.test(character) && GEOMETRY_REGIONAL_RE.test(previous))
+      || (regional && regionalRun % 2 === 0)
       || (previous !== '' && GEOMETRY_ZERO_WIDTH_RE.test(previous)
         && (character.codePointAt(0) ?? 0) >= 0x10000);
     if (!joined) em += advanceEm(character);
@@ -887,6 +1168,26 @@ export function widestGlyphIn(text: string, fontSizePt: number): number {
 }
 
 /**
+ * The same measurement, taking the UPPER bound on an unmeasured character.
+ *
+ * `widestGlyphIn` answers "is this column too narrow to bother naming", where
+ * a low guess costs nothing. One caller asks the opposite question - the chip
+ * sizer derives a MINIMUM WIDTH from it, and there a low guess draws the chip
+ * too narrow, which is the smear of 479 quarter-inch ribbons the minimum was
+ * introduced to stop. Same measurement, opposite bound, so it is a separate
+ * function rather than a flag: a caller that has to pass `false` to get the
+ * safe behaviour eventually forgets to.
+ */
+export function widestGlyphUpperIn(text: string, fontSizePt: number): number {
+  let widest = 0;
+  for (const character of text) {
+    if (/\s/.test(character)) continue;
+    widest = Math.max(widest, advanceEm(character));
+  }
+  return (widest * fontSizePt) / 72;
+}
+
+/**
  * Whether `text` is worth drawing in a column `columnIn` wide.
  *
  * Two questions, not one. A column narrower than the widest glyph cannot set
@@ -905,13 +1206,24 @@ export function widestGlyphIn(text: string, fontSizePt: number): number {
  * A wide glyph inside an otherwise ordinary name is a HORIZONTAL overflow of
  * one line, which the first clause already answers; it is not evidence that
  * the name has stopped being a name.
+ *
+ * BOTH clauses take the lower bound. They used to disagree: the first went
+ * through `widestGlyphIn`, which charges an unmeasured character the lower
+ * bound, while the second went through `advanceWidthIn`, which charges it a
+ * full em. On a name written wholly in a script the tables did not cover,
+ * every character took both answers at once and the second clause - the
+ * binding one - refused a column that was really more than twice wide enough.
+ * `Виртуальная сеть` first became drawable at 0.1945in against an honest
+ * 0.0993in, so a 95 mil band of columns silently dropped it. Two clauses of
+ * one test have to agree about what they do not know.
  */
 export function drawableInColumn(text: string, fontSizePt: number, columnIn: number): boolean {
   const glyphs = [...text].filter((character) => !/\s/.test(character));
   if (glyphs.length === 0) return false;
   if (columnIn < widestGlyphIn(text, fontSizePt)) return false;
-  const mean = advanceWidthIn(glyphs.join(''), fontSizePt) / glyphs.length;
-  return columnIn >= 2 * mean;
+  let em = 0;
+  for (const glyph of glyphs) em += lowerBoundAdvanceEm(glyph);
+  return columnIn >= (2 * em * fontSizePt) / 72 / glyphs.length;
 }
 
 /**

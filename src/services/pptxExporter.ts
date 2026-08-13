@@ -124,6 +124,7 @@ import {
   stripHash,
   truncateLabel,
   widestGlyphIn,
+  widestGlyphUpperIn,
   drawableInColumn,
   advanceWidthIn,
   trailingWhitespaceIn,
@@ -1454,7 +1455,7 @@ function connectorLabelBox(
   // scribble it. The overview is an index, not a reading surface, and the same
   // words are on the window slide that follows by exactly the route a tile name
   // too small to draw already takes.
-  const widestGlyph = widestGlyphIn(wanted, fontSize);
+  const widestGlyph = widestGlyphUpperIn(wanted, fontSize);
   // TWO of them, not one. "Does a single letter fit?" is a test about the
   // wrong thing: a column that holds exactly one glyph produces a chip that
   // spells its sentence vertically, one character per line, and that is the
