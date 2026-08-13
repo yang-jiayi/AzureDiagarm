@@ -55,12 +55,17 @@ async function buildDeck(nodes: Node[], edges: Edge[]): Promise<Deck> {
   const overview = slides.findIndex((xml) => xml.includes('(Overview)'));
   // The DRAWING's parts, which is what every caller of `parts` means. Two other
   // kinds of slide sit after the overview and carry no tiles by design: the
-  // numbered workflow continuation, and the service-name index - which the deck
-  // now emits far more often, because the overview records the marks it draws
-  // and its tiles are the smallest in the deck. Neither is a part of the
-  // drawing, and counting them as one made "part 6 of 6" a blank slide.
+  // workflow narration, and the service-name index - which the deck now emits
+  // far more often, because the overview records the marks it draws and its
+  // tiles are the smallest in the deck. Neither is a part of the drawing, and
+  // counting them as one made "part 6 of 6" a blank slide.
+  //
+  // Selected by what the slide CONTAINS rather than by its title. Matching
+  // `Workflow (` only caught the CONTINUED form, and a deck whose narration
+  // fits on one slide titles it plain "Workflow" - so the blank part this
+  // filter exists to stop survived for exactly the commonest case.
   const drawingParts = (overview < 0 ? slides : slides.slice(overview + 1))
-    .filter((xml) => !/Workflow \(/.test(xml) && !xml.includes('name="index-name-'));
+    .filter((xml) => xml.includes('name="service-'));
   return { slides, parts: drawingParts };
 }
 
@@ -715,16 +720,23 @@ test('a numbered hop across an empty stretch keeps its label and its callout', (
   // saw it as before its left edge, so neither drew it. The arrow was still
   // drawn (it overlaps both parts) and the Workflow slide still listed the
   // step, leaving an unlabelled, unnumbered connector.
+  //
+  // Twenty services a side, not six. At six the deck does not tile at all, and
+  // the old `parts.length > 1` was satisfied by counting the plain "Workflow"
+  // slide as a drawing part - so the test asserted a split that was not there
+  // and then checked the bridge against a single slide that trivially carries
+  // everything. The premise has to be true for the assertion to mean anything.
   const nodes: Node[] = [];
   const edges: Edge[] = [];
-  for (let i = 0; i < 6; i += 1) nodes.push(service(`l${i}`, `Left Service ${i}`, (i % 2) * 220, Math.floor(i / 2) * 200));
-  for (let i = 0; i < 6; i += 1) nodes.push(service(`r${i}`, `Right Service ${i}`, 3200 + (i % 2) * 220, Math.floor(i / 2) * 200));
-  for (let i = 1; i < 6; i += 1) edges.push({ id: `le${i}`, source: `l${i - 1}`, target: `l${i}`, label: `left hop ${i}`, data: { stepNumber: i } } as Edge);
-  edges.push({ id: 'bridge', source: 'l5', target: 'r0', label: 'private peering', data: { stepNumber: 6 } } as Edge);
-  for (let i = 1; i < 6; i += 1) edges.push({ id: `re${i}`, source: `r${i - 1}`, target: `r${i}`, label: `right hop ${i}`, data: { stepNumber: i + 6 } } as Edge);
+  const PER_SIDE = 20;
+  for (let i = 0; i < PER_SIDE; i += 1) nodes.push(service(`l${i}`, `Left Service ${i}`, (i % 2) * 220, Math.floor(i / 2) * 200));
+  for (let i = 0; i < PER_SIDE; i += 1) nodes.push(service(`r${i}`, `Right Service ${i}`, 14000 + (i % 2) * 220, Math.floor(i / 2) * 200));
+  for (let i = 1; i < PER_SIDE; i += 1) edges.push({ id: `le${i}`, source: `l${i - 1}`, target: `l${i}`, label: `left hop ${i}`, data: { stepNumber: i } } as Edge);
+  edges.push({ id: 'bridge', source: `l${PER_SIDE - 1}`, target: 'r0', label: 'private peering', data: { stepNumber: PER_SIDE } } as Edge);
+  for (let i = 1; i < PER_SIDE; i += 1) edges.push({ id: `re${i}`, source: `r${i - 1}`, target: `r${i}`, label: `right hop ${i}`, data: { stepNumber: i + PER_SIDE } } as Edge);
 
   const deck = await buildDeck(nodes, edges);
-  const parts = deck.parts.filter((slide) => !/Workflow \(/.test(slide));
+  const parts = deck.parts;
   assert.ok(parts.length > 1, `expected a tiled deck, got ${parts.length} part(s)`);
 
   const orphans: string[] = [];
@@ -1459,7 +1471,13 @@ test('a tile that gives up its name still says something', async () => {
   const { nodes, edges } = wideDiagram(72);
   const deck = await buildDeck(nodes, edges);
   assert.ok(deck.parts.length > 1, 'the fixture must tile for there to be an overview at all');
-  const overview = deck.slides[deck.slides.length - deck.parts.length - 1];
+  // By its own title, and ASSERTED. Counting back from the end survived only
+  // because this fixture happens to emit no index slide; its neighbour's
+  // already does, and there the same arithmetic lands on a reading slide whose
+  // three labelled tiles satisfy every assertion below trivially. A test that
+  // can pass on the wrong slide without saying so drifts silently.
+  const overview = deck.slides.find((xml) => xml.includes('(Overview)')) ?? '';
+  assert.ok(overview.includes('(Overview)'), 'located the overview slide');
 
   const named = new Set(
     [...overview.matchAll(/name="service-label-([^"]+)"/g)].map((m) => m[1]),

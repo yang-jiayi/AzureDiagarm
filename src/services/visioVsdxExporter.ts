@@ -163,6 +163,14 @@ const MIN_WORKFLOW_COL_IN = 1.6;
 const MAX_WORKFLOW_MEDIAN_LINES = 3;
 
 /**
+ * How many times its unsplit height a single sentence may be folded.
+ *
+ * One extra fold is the ordinary price of a column; three times over is a
+ * ribbon. Twice is the bar.
+ */
+const WORKFLOW_TAIL_MULTIPLE = 2;
+
+/**
  * Visio font sizes are inches (1 pt = 1/72"). These match the PowerPoint export
  * at 1 : 1 — a 150 px tile is 1.56" wide, so the label reads at ~7.6 pt and the
  * SKU sub-line at ~7 pt instead of the previous near-illegible 6.5/5 pt.
@@ -1262,6 +1270,32 @@ function workflowMedianLines(entries: WorkflowListEntry[], colW: number): number
   return lines.length === 0 ? 0 : lines[Math.floor(lines.length / 2)];
 }
 
+/**
+ * Does any single sentence fold more than `multiple` times as far as one full
+ * column would have folded it?
+ *
+ * A median cannot see the rows the drawing exists to explain. A workflow of 48
+ * one-word acknowledgements and 3 real paragraphs holds its median at ONE
+ * however narrow the column gets - the terse steps were never going to wrap at
+ * any width, so they are not evidence about the column - while the sentences
+ * that carry the architecture are folded into 9-line ribbons. The median stays
+ * quiet through all of it. So the tail is measured too, per entry and against
+ * that same entry unsplit, which keeps a long sentence measured against what it
+ * would have been rather than against a constant no page can satisfy.
+ */
+function workflowTailShredded(
+  entries: WorkflowListEntry[],
+  colW: number,
+  unsplitColW: number,
+  multiple: number,
+): boolean {
+  return entries.some((entry) => {
+    const alone = wrappedLinesIn(entry.description, unsplitColW - 0.6, LEGEND_FONT_IN);
+    const split = wrappedLinesIn(entry.description, colW - 0.6, LEGEND_FONT_IN);
+    return split > Math.max(MAX_WORKFLOW_MEDIAN_LINES, alone * multiple);
+  });
+}
+
 /** The tallest column, which is the height the band has to reserve. */
 function workflowStackIn(entries: WorkflowListEntry[], columns: number, colW: number): number {
   const cols = Math.max(1, columns);
@@ -1663,16 +1697,15 @@ export async function buildVsdxPackage(
   // split owns is the DIFFERENCE it makes, which is what this measures - and
   // it is the same test the audit applies to the emitted sheet.
   const admissibleColumns = (() => {
-    const unsplit = workflowMedianLines(
-      reservedEntries,
-      workflowPanelWidthIn(MIN_PAGE_W_IN, 1),
-    );
+    const unsplitColW = workflowPanelWidthIn(MIN_PAGE_W_IN, 1);
+    const unsplit = workflowMedianLines(reservedEntries, unsplitColW);
     const bound = Math.max(MAX_WORKFLOW_MEDIAN_LINES, unsplit);
     let last = 1;
     for (let cols = 2; cols <= MAX_WORKFLOW_COLUMNS; cols += 1) {
       const colW = workflowPanelWidthIn(MIN_PAGE_W_IN, cols) / cols;
       if (colW < MIN_WORKFLOW_COL_IN) break;
       if (workflowMedianLines(reservedEntries, colW) > bound) break;
+      if (workflowTailShredded(reservedEntries, colW, unsplitColW, WORKFLOW_TAIL_MULTIPLE)) break;
       last = cols;
     }
     return last;
@@ -1700,13 +1733,40 @@ export async function buildVsdxPackage(
   // width is known, is what the page is actually sized and laid out from: on a
   // 21.5in sheet the first pass over-reserved by 2.5in, and every inch of it
   // was drawn as blank paper between the drawing and the band.
-  const reserveBandIn = bandFor(MIN_PAGE_W_IN).height;
   // The colour key is the same construction as the workflow band — opaque white
   // fill, drawn after every service — but it was pinned to the bottom-left
   // corner and reserved nothing, so on any drawing that reached the bottom of
   // its page it was simply painted over a service tile. Give it a strip of its
   // own, the way the band has one at the top.
   const legendBandIn = legendEntries.length > 0 ? 0.24 * legendEntries.length + 0.79 : 0;
+  // Reserved TWICE, for the same reason it is sized twice.
+  //
+  // The first reservation is taken at the narrowest page the exporter emits,
+  // which is the only width known before the drawing is fitted. On a band of a
+  // dozen rows that estimate is within a tenth of an inch of the truth. On a
+  // band of ninety it is not: at MIN_PAGE_W_IN every row wraps its longest, so
+  // the reserve came out 1.48in taller than the band the sheet actually drew,
+  // the drawing was shrunk by all of it, and the whole 1.48in was printed as
+  // blank paper between the drawing and the band.
+  //
+  // So the first fit is used only to learn a page width, and the reserve is
+  // then retaken at that width. It stays an upper bound by construction: a
+  // band's height falls monotonically as its column widens, and this width is
+  // itself a lower bound on the final one (a smaller reserve leaves a larger
+  // drawing, and a larger drawing only widens the page), so the band measured
+  // here can only be taller than the band finally drawn, never shorter.
+  const pageWidthForBand = (reserveIn: number): number => {
+    const probe = scaleBoxesWithin(
+      fitBoxesWithin(drawing, limitPx, limitPx - (reserveIn + legendBandIn) * PX_PER_INCH),
+      limitPx,
+      limitPx - (reserveIn + legendBandIn) * PX_PER_INCH,
+    );
+    const b = computeBounds(probe.values());
+    return Math.max(Math.max(b.maxX - b.minX, 1) / PX_PER_INCH + PAGE_PADDING_IN * 2, MIN_PAGE_W_IN);
+  };
+  const reserveBandIn = workflowEntries.length === 0
+    ? 0
+    : bandFor(pageWidthForBand(bandFor(MIN_PAGE_W_IN).height)).height;
   const fitted = fitBoxesWithin(
     drawing,
     limitPx,
@@ -1768,6 +1828,21 @@ export async function buildVsdxPackage(
   // 0.03in shorter than the one drawn, and a badge stepped clear of the model
   // still had a sliver under the panel. The band drawn is the band at this
   // width; the reservation only ever has to be an upper bound of it.
+  // The reservation is what the page is sized from, so the panel must FILL it.
+  //
+  // The two are measured over different sentence sets and always will be: the
+  // reservation counts every labelled edge as if its wording will be handed to
+  // the row, because whether a label is muted is not decided until the arrows
+  // are routed, which is after the page is sized. On a 91-row band that made
+  // the reservation 1.48in taller than the panel drawn, and because the panel
+  // hangs from the top of the sheet the whole 1.48in came out as blank paper
+  // between the drawing and the band.
+  //
+  // Sizing the page down to the drawn panel instead is the wrong direction: it
+  // puts the drawing where the reservation used to be, and on 29 scenarios the
+  // opaque band was then painted straight over the service tiles. So the slack
+  // stays inside the furniture, where it is a slightly deeper white panel
+  // rather than a gap in the middle of the page.
   const workflowBandIn = refined.height;
   const pageHeightIn = f(Math.max(contentHIn + PAGE_PADDING_IN * 2 + workflowBandIn + legendBandIn, MIN_PAGE_H_IN));
 

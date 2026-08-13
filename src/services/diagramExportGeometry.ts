@@ -484,7 +484,7 @@ export function workflowListFromEdges(edges: Edge[]): WorkflowListEntry[] {
     const data = edge.data as { stepNumber?: unknown; stepDescription?: unknown } | undefined;
     const step = readStepValue(data?.stepNumber);
     if (step === undefined) continue;
-    const description = typeof data?.stepDescription === 'string' ? data.stepDescription.trim() : '';
+    const description = typeof data?.stepDescription === 'string' ? sanitisedProse(data.stepDescription) : '';
     if (!description || byStep.has(step)) continue;
     byStep.set(step, description);
   }
@@ -571,7 +571,7 @@ export function narrateEdgeCallouts(edges: Edge[], minFanSize = 5): Edge[] {
     if (!label) return edge;
     const data = edge.data as { stepNumber?: unknown; stepDescription?: unknown } | undefined;
     const step = readStepValue(data?.stepNumber);
-    const description = typeof data?.stepDescription === 'string' ? data.stepDescription.trim() : '';
+    const description = typeof data?.stepDescription === 'string' ? sanitisedProse(data.stepDescription) : '';
     const fresh = renumbered.get(edge);
     if (fresh !== undefined) {
       changed = true;
@@ -1665,6 +1665,26 @@ export function singleLineName(text: string): string {
   return stripXmlForbidden(text)
     .replace(/[\r\n\t\v\f\u2028\u2029]+/g, ' ')
     .replace(/ {2,}/g, ' ')
+    .trim();
+}
+
+/**
+ * The same repair for prose, which keeps the lines the author wrote.
+ *
+ * A workflow sentence is a *sentence*: its hard breaks are meaningful and the
+ * band paginates on them, so it must not go through `singleLineName`. But it
+ * is drawn through the same `stripXmlForbidden`, which turns a control
+ * character into a space, so it had the same defect - a step authored
+ * `"Validate \u0001=\u0001 the envelope"` drew as `"Validate  =  the
+ * envelope"`. Nothing harvests a workflow row into the index today, so this
+ * was not the way a mark got mis-parsed; it is here so the invariant holds for
+ * every drawn string rather than for the ones that happen to reach the index.
+ */
+export function sanitisedProse(text: string): string {
+  return stripXmlForbidden(text)
+    .replace(/[\t\v\f]+/g, ' ')
+    .replace(/ {2,}/g, ' ')
+    .replace(/[ ]*(\r\n|\r|\n)[ ]*/g, '\n')
     .trim();
 }
 
