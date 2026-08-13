@@ -781,7 +781,13 @@ test('a name the tile had to shorten is still spelled out somewhere on the sheet
     id: `hair-e${i}`, source: `hair${i}`, target: `hair${i + 1}`, label: 'invokes',
   } as Edge));
   const pkg = await buildVsdxPackage(hairline, hairlineEdges, 'Hairline tiles', new Map());
-  const xml = pageOfPkg(pkg);
+  // "Somewhere in the DOCUMENT", not "somewhere on page 1": since round 60 the
+  // index is its own page, so a name the tile shortened is spelled out there.
+  // A row reads "<stub>  =  <full name>", so match by suffix.
+  const xml = pkg.parts
+    .filter((part) => /^visio\/pages\/page\d+\.xml$/.test(part.path))
+    .map((part) => part.data as string)
+    .join('');
   const drawn = new Set<string>();
   for (const chunk of xml.split('<Shape ID=')) {
     for (const hit of chunk.matchAll(/<Text>([\s\S]*?)<\/Text>/g)) {
@@ -790,7 +796,96 @@ test('a name the tile had to shorten is still spelled out somewhere on the sheet
     }
   }
   for (const label of authored) {
-    assert.ok(drawn.has(label),
+    assert.ok([...drawn].some((text) => text === label || text.endsWith(label)),
       `"${label}" is nowhere on the sheet in full, so the drawing and the deck name different services`);
   }
+});
+
+// --- Round 60: the index has its own page, and columns stay legible ---
+
+/**
+ * The index used to be drawn ON the sheet, pinned bottom-left over an opaque
+ * white rectangle emitted after every service - the exact mistake the legend
+ * comment warns about. It was reserved only in `furnitureRects`, which keeps
+ * CONNECTOR LABELS off it and has no say in where tiles land, so on a 48-tile
+ * grid it buried 20 tiles outright and clipped 4 more.
+ *
+ * Reserving a strip for it is circular: how many names get shortened depends on
+ * the scale, and the scale depends on the reservation. A second PAGE costs the
+ * drawing nothing and mirrors what the deck already does with its index slide.
+ */
+test('the index of shortened names is on its own page, not on top of the drawing', async () => {
+  // Tiny explicit widths are what SHORTEN a name. 200 chained nodes make a long
+  // page and the names merely WRAP - which is how an earlier version of this
+  // test passed with the panel switched off entirely.
+  const widths = [8, 10, 14, 22, 40, 160, 160, 160];
+  const cramped: Node[] = widths.map((w, i) => ({
+    id: `x${i}`,
+    type: 'azureNode',
+    position: { x: i * 240, y: 0 },
+    width: w,
+    height: 60,
+    data: {
+      label: `Payment reconciliation service number ${i}`,
+      serviceName: 'Azure Functions',
+      category: 'compute',
+    },
+  } as unknown as Node));
+  const pkg = await buildVsdxPackage(cramped, [], 'Index page', new Map());
+
+  const index = pkg.parts.find((part) => part.path === 'visio/pages/page2.xml');
+  assert.ok(index, 'a name the tile had to shorten must be spelled out on an index page');
+
+  const types = pkg.parts.find((part) => part.path === '[Content_Types].xml')?.data as string;
+  assert.ok(types.includes('/visio/pages/page2.xml'),
+    'page2.xml needs its own content-type override or the package will not open');
+  const rels = pkg.parts.find((part) => part.path === 'visio/pages/_rels/pages.xml.rels')?.data as string;
+  assert.ok(/Id="rId2"[^>]*page2\.xml/.test(rels), 'page2.xml must be related as rId2');
+  const pages = pkg.parts.find((part) => part.path === 'visio/pages/pages.xml')?.data as string;
+  assert.ok(/<Rel r:id="rId2"\s*\/>/.test(pages), 'the second Page element must point at rId2');
+
+  // The whole point: page 1 carries the drawing and nothing else.
+  const drawing = pageOfPkg(pkg);
+  assert.ok(!drawing.includes('service-name-'),
+    'the index must not be drawn on the same page as the tiles it would bury');
+
+  // A row is a lookup key, so it prints the STUB the tile drew, then the name.
+  const indexXml = index.data as string;
+  assert.ok(/=/.test(indexXml) && indexXml.includes('Payment reconciliation service number 0'),
+    'the index must spell out the full name beside the stub the sheet actually shows');
+});
+
+/**
+ * Twelve two-syllable steps. The column minimiser scores stack height and
+ * NOTHING ELSE, and with brief descriptions every split shortens the stack, so
+ * it ran straight to its 12-column cap and set each sentence in 0.2583in of
+ * text column - about two characters. A sweep over step COUNT and chain length
+ * never reaches this; it takes step BREVITY.
+ */
+test('a workflow sentence is never set in a column too narrow to read', async () => {
+  const steps: Node[] = Array.from({ length: 13 }, (_, i) => ({
+    id: `b${i}`,
+    type: 'azureNode',
+    position: { x: (i % 3) * 130, y: Math.floor(i / 3) * 90 },
+    width: 90,
+    height: 50,
+    data: { label: `Service ${i}`, serviceName: 'Azure Functions', category: 'compute' },
+  } as unknown as Node));
+  const flow: Edge[] = Array.from({ length: 12 }, (_, k) => ({
+    id: `be${k + 1}`,
+    source: `b${k}`,
+    target: `b${k + 1}`,
+    data: { stepNumber: k + 1, stepDescription: 'ack' },
+  } as unknown as Edge));
+  const pkg = await buildVsdxPackage(steps, flow, 'Brief steps', new Map());
+  const xml = pageOfPkg(pkg);
+  let narrowest = Infinity;
+  for (const chunk of xml.split('<Shape ID=')) {
+    if (!/Name="workflow-text-\d+"/.test(chunk.slice(0, 400))) continue;
+    const hit = /<Cell N="Width" V="([\d.]+)"/.exec(chunk);
+    if (hit) narrowest = Math.min(narrowest, Number(hit[1]));
+  }
+  assert.ok(Number.isFinite(narrowest), 'the workflow band must be drawn');
+  assert.ok(narrowest >= 0.9,
+    `a workflow sentence is set in ${narrowest.toFixed(4)}in, which is a couple of characters wide`);
 });

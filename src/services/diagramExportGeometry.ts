@@ -1561,7 +1561,7 @@ function finiteOr(value: unknown, fallback: number): number {
  * as written. A *name* is an identifier and reads as one line, wrapping only
  * because the tile is narrow.
  */
-function singleLineName(text: string): string {
+export function singleLineName(text: string): string {
   return text.replace(/[\r\n\t\v\f\u2028\u2029]+/g, ' ').replace(/ {2,}/g, ' ').trim();
 }
 

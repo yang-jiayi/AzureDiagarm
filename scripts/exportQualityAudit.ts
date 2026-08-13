@@ -18,7 +18,7 @@ import { nativizeSlideXml } from '../src/services/pptxNativeShapes.ts';
 import { buildVsdxPackage } from '../src/services/visioVsdxExporter.ts';
 import { WRAP_TRIGGER_RATIO } from '../src/utils/serpentineWrap.ts';
 
-import { narrateEdgeCallouts, readEdgeLabel, CATEGORY_STYLES } from '../src/services/diagramExportGeometry.ts';
+import { narrateEdgeCallouts, readEdgeLabel, CATEGORY_STYLES, singleLineName } from '../src/services/diagramExportGeometry.ts';
 import { readStepNumber } from '../src/utils/workflowStepMapping.ts';
 import { stripXmlForbidden } from '../src/utils/xmlText.ts';
 
@@ -1588,6 +1588,113 @@ function scaleDownPipelineScenario(): Scenario {
     target: `ps${i + 1}`,
   } as Edge));
   return { id: 'probe-scaledown', nodes, edges };
+}
+
+/**
+ * Labels that are not what they look like.
+ *
+ * Both exporters run every name through `singleLineName` before drawing it, so
+ * what lands in the file is normalised: newlines and tabs become spaces, runs
+ * of spaces collapse, the ends are trimmed. A gate that compares the RAW label
+ * against the drawn text is therefore comparing two different strings and
+ * matches nothing - the deck side of the cross-format rule went silently empty
+ * and reported three clean names as missing from a deck that spells all three
+ * out. Whitespace in a label is not exotic: it is what a pasted name arrives
+ * with.
+ */
+function whitespaceLabelsScenario(): Scenario {
+  const icon = '/Azure_Public_Service_Icons/Icons/compute/10029-icon-service-Function-Apps.svg';
+  const labels = [
+    'Zephyr order intake function ',
+    'Quartz billing\nreconciliation hub',
+    'Nimbus  telemetry  ingestion',
+    'Cobalt fraud\tscoring service',
+    'Verdant analytics warehouse',
+    'Onyx configuration store',
+  ];
+  const widths = [14, 14, 14, 14, 160, 160];
+  const nodes: Node[] = labels.map((label, i) => ({
+    id: `ws${i}`,
+    type: 'azureNode',
+    position: { x: i * 260, y: (i % 2) * 200 },
+    width: widths[i],
+    height: widths[i] < 60 ? 30 : 110,
+    data: { label, serviceName: 'Azure Functions', category: 'compute', iconPath: icon },
+  } as unknown as Node));
+  const edges: Edge[] = labels.slice(1).map((_, i) => ({
+    id: `ws-e${i}`, source: `ws${i}`, target: `ws${i + 1}`, label: 'invokes',
+  } as Edge));
+  return { id: 'probe-whitespace', nodes, edges };
+}
+
+/**
+ * A drawing that reaches its own bottom-left corner.
+ *
+ * The legend was once painted straight over the tiles for want of a reserved
+ * strip, and the service-name panel repeated the mistake exactly: pinned to the
+ * bottom-left, solid white, emitted after every tile, and reserved only in
+ * `furnitureRects` - which keeps CONNECTOR LABELS off it, not shapes. On this
+ * grid it covered 20 of 48 tiles completely and clipped 4 more, and the whole
+ * corpus still reported clean, because every other fixture is a chain or a
+ * handful of tiles that happen to sit above the corner.
+ */
+function panelBurialScenario(): Scenario {
+  const icon = '/Azure_Public_Service_Icons/Icons/compute/10029-icon-service-Function-Apps.svg';
+  const words = ['Zephyr', 'Quartz', 'Nimbus', 'Cobalt', 'Verdant', 'Onyx', 'Amber', 'Slate'];
+  const nodes: Node[] = [];
+  for (let r = 0; r < 6; r += 1) {
+    for (let c = 0; c < 8; c += 1) {
+      const i = r * 8 + c;
+      nodes.push({
+        id: `pp${i}`,
+        type: 'azureNode',
+        position: { x: c * 120, y: r * 110 },
+        width: 40,
+        height: 60,
+        data: {
+          label: `${words[i % 8]} order intake reconciliation ${i}`,
+          serviceName: 'Azure Functions',
+          category: 'compute',
+          iconPath: icon,
+        },
+      } as unknown as Node);
+    }
+  }
+  const edges: Edge[] = Array.from({ length: nodes.length - 1 }, (_, k) => ({
+    id: `pp-e${k + 1}`, source: `pp${k}`, target: `pp${k + 1}`,
+  } as Edge));
+  return { id: 'probe-panel-burial', nodes, edges };
+}
+
+/**
+ * Twelve numbered steps, each of them two syllables long.
+ *
+ * BREVITY is what makes the column minimiser take its cap: with one-line
+ * descriptions the stack height falls monotonically in the column count, so it
+ * splits all the way to MAX_WORKFLOW_COLUMNS and sets each sentence in a
+ * column a quarter of an inch wide. A sweep over step COUNT and chain length
+ * never finds this - it was the fixture that could not produce the condition,
+ * not the condition that did not exist - and it is the case where the removed
+ * `Math.max(colW - 0.6, 0.4)` floor measured a row at 0.4in while drawing it
+ * in 0.2583in, 1.55 times wider than the column it is set in.
+ */
+function briefWorkflowStepsScenario(): Scenario {
+  const icon = '/Azure_Public_Service_Icons/Icons/compute/10029-icon-service-Function-Apps.svg';
+  const nodes: Node[] = Array.from({ length: 13 }, (_, i) => ({
+    id: `bw${i}`,
+    type: 'azureNode',
+    position: { x: (i % 3) * 130, y: Math.floor(i / 3) * 90 },
+    width: 90,
+    height: 50,
+    data: { label: `Service ${i}`, serviceName: 'Azure Functions', category: 'compute', iconPath: icon },
+  } as unknown as Node));
+  const edges: Edge[] = Array.from({ length: 12 }, (_, k) => ({
+    id: `bw-e${k + 1}`,
+    source: `bw${k}`,
+    target: `bw${k + 1}`,
+    data: { stepNumber: k + 1, stepDescription: 'ack' },
+  } as unknown as Edge));
+  return { id: 'probe-brief-steps', nodes, edges };
 }
 
 function hairlineTilesScenario(): Scenario {
@@ -6382,10 +6489,17 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
           .flatMap((slideXml) => parseShapes(slideXml))
           .map((s) => s.text.trim()),
       );
+      // Normalised the way the EXPORTERS normalise, by calling the function they
+      // call. The raw label is not what either file contains: collectExportBoxes
+      // runs every name through singleLineName, so a label with a newline, a
+      // double space or a trailing space is stored one way and compared another,
+      // and the deck side of this comparison silently matched nothing at all.
+      // Copying the regex here would work until the day someone changed it in
+      // one place.
       const serviceNames = new Set(
         scenario.nodes
           .filter((n) => n.type !== 'groupNode')
-          .map((n) => String(n.data?.label ?? '')),
+          .map((n) => singleLineName(String(n.data?.label ?? ''))),
       );
       for (const authored of serviceNames) {
         if (!authored || !indexed.has(authored)) continue;
@@ -6437,6 +6551,11 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
     '',
   ));
   const pagePart = pkg.parts.find((p) => /page1\.xml$/i.test(p.path));
+  // The index lives on its own PAGE now, so it is a different part. Every rule
+  // below measures the DRAWING and must keep seeing page 1 alone - the index is
+  // read only where the question is "can a reader find this name anywhere".
+  const indexPart = pkg.parts.find((p) => /page2\.xml$/i.test(p.path));
+  const indexXml = typeof indexPart?.data === 'string' ? indexPart.data : '';
   const media = pkg.parts.filter((p) => /\/media\//i.test(p.path));
   const serviceCount = scenario.nodes.filter((n) => n.type !== 'groupNode').length;
   if (iconPaths.size > 0 && media.length === 0) {
@@ -7050,6 +7169,81 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
     issues.push(
       `${overlaps.length} Visio service tile(s) draw the icon on top of the name: `
       + `${overlaps.slice(0, 3).join('; ')}`,
+    );
+  }
+
+  // FURNITURE IS OPAQUE AND FURNITURE IS DRAWN LAST, so anything it lands on is
+  // gone. This has now happened twice for the same reason: the legend was
+  // pinned to the bottom-left corner and painted over the tiles until it was
+  // given a reserved strip, and the service-name panel repeated it exactly -
+  // solid white fill, emitted after every service, and "reserved" only in
+  // `furnitureRects`, which keeps CONNECTOR LABELS off it and has never had
+  // anything to do with where the tiles go. On a 48-tile grid it covered 20
+  // tiles completely.
+  //
+  // Every rule before this one measured a shape against itself or against its
+  // own children, so a shape sitting on top of an unrelated shape was invisible
+  // to all of them. This is the general form: a service tile may not intersect
+  // any piece of page furniture, whichever piece it is.
+  const furnitureRect: Array<{ name: string; x0: number; y0: number; x1: number; y1: number }> = [];
+  const tileRect: Array<{ name: string; x0: number; y0: number; x1: number; y1: number }> = [];
+  for (const chunk of xml.split('<Shape ID=')) {
+    const head = chunk.slice(0, 400);
+    const nameU = /NameU="([^"]+)"/.exec(head)?.[1] ?? '';
+    const isTile = /^Service\.\d+$/.test(nameU);
+    const isFurniture = /^(Legend|Workflow|ServiceNames)\./.test(nameU);
+    if (!isTile && !isFurniture) continue;
+    const num = (cellName: string): number | null => {
+      const hit = new RegExp(`<Cell N="${cellName}" V="([-\\d.eE]+)"`).exec(chunk);
+      return hit ? Number(hit[1]) : null;
+    };
+    const pinX = num('PinX'); const pinY = num('PinY');
+    const w = num('Width'); const h = num('Height');
+    const locX = num('LocPinX') ?? (w === null ? null : w / 2);
+    const locY = num('LocPinY') ?? (h === null ? null : h / 2);
+    if (pinX === null || pinY === null || w === null || h === null || locX === null || locY === null) continue;
+    const rect = { name: nameU, x0: pinX - locX, y0: pinY - locY, x1: pinX - locX + w, y1: pinY - locY + h };
+    (isTile ? tileRect : furnitureRect).push(rect);
+  }
+  const buriedTiles: string[] = [];
+  for (const tile of tileRect) {
+    for (const furniture of furnitureRect) {
+      const ox = Math.min(tile.x1, furniture.x1) - Math.max(tile.x0, furniture.x0);
+      const oy = Math.min(tile.y1, furniture.y1) - Math.max(tile.y0, furniture.y0);
+      if (ox <= 1e-6 || oy <= 1e-6) continue;
+      const tileArea = Math.max(1e-9, (tile.x1 - tile.x0) * (tile.y1 - tile.y0));
+      buriedTiles.push(`${tile.name} is ${((ox * oy / tileArea) * 100).toFixed(0)}% under ${furniture.name}`);
+      break;
+    }
+  }
+  if (buriedTiles.length > 0) {
+    issues.push(
+      `${buriedTiles.length} Visio service tile(s) are drawn underneath opaque page furniture, which is `
+      + `emitted last and so paints over them: ${buriedTiles.slice(0, 3).join('; ')}`,
+    );
+  }
+
+  // A COLUMN TOO NARROW TO READ. The workflow band picks its column count by
+  // minimising stack height and nothing else, so on brief descriptions - where
+  // every split shortens the stack - it ran to its 12 column cap and set each
+  // sentence in 0.2583in of text column, about two characters wide. Every rule
+  // before this one asked whether the text FITS; fitting in two characters is
+  // not the same as being readable, and the band passed all of them.
+  const cramped: string[] = [];
+  for (const chunk of xml.split('<Shape ID=')) {
+    if (!/Name="workflow-text-\d+"/.test(chunk.slice(0, 400))) continue;
+    const w = /<Cell N="Width" V="([\d.]+)"/.exec(chunk);
+    const text = /<Text>([\s\S]*?)<\/Text>/.exec(chunk);
+    if (!w) continue;
+    const widthIn = Number(w[1]);
+    if (widthIn >= 0.9) continue;
+    const body = unescapeXml((text?.[1] ?? '').replace(/<[^>]*>/g, '')).trim();
+    cramped.push(`${widthIn.toFixed(4)}in for ${JSON.stringify(body.slice(0, 28))}`);
+  }
+  if (cramped.length > 0) {
+    issues.push(
+      `${cramped.length} workflow sentence(s) are set in a column too narrow to read: `
+      + `${cramped.slice(0, 3).join('; ')}`,
     );
   }
 
@@ -7886,16 +8080,24 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
         const authored = unesc(m[1]);
         if ((best.get(authored)?.length ?? -1) < drawn.length) best.set(authored, drawn);
       }
-      // The sheet's own index panel names the service too. Mirrors the deck
-      // side exactly - a name printed in the panel is a name a reader can see,
+      // The drawing's own index page names the service too. Mirrors the deck
+      // side exactly - a name printed in the index is a name a reader can see,
       // and refusing to count it would report the sheet as having lost a
-      // service it prints in full.
-      const panelNames = new Set(
-        [...xml.matchAll(/Name="service-name-\d+"[\s\S]*?<Text>([\s\S]*?)<\/Text>/g)].map((m) => unesc(m[1])),
+      // service it prints in full. Read from PAGE 2: the index is not on the
+      // drawing, which is the whole point of it.
+      //
+      // Matched by SUFFIX, not by splitting the row on its separator. A row is
+      // "<stub>  =  <full name>", and a name that was not drawn at all leaves an
+      // empty stub that the XML text trims away - so the separator is not always
+      // where the format says it is, and a name can contain the separator itself.
+      const panelRows = [...indexXml.matchAll(/Name="service-name-\d+"[\s\S]*?<Text>([\s\S]*?)<\/Text>/g)]
+        .map((m) => unesc(m[1]));
+      const namedInIndex = (authored: string): boolean => panelRows.some(
+        (row) => row === authored || row.endsWith(`  =  ${authored}`) || row.endsWith(`=  ${authored}`),
       );
       for (const m of xml.matchAll(/NameU="Service\.\d+" Name="([^"]*)"/g)) {
         const authored = unesc(m[1]);
-        if (!authored || !panelNames.has(authored)) continue;
+        if (!authored || !namedInIndex(authored)) continue;
         // Longest rendition wins, the same rule the tiles use above: the panel
         // prints the name IN FULL, so a tile that could only fit "N..." has not
         // cost the reader the name.
@@ -8059,6 +8261,9 @@ async function main(): Promise<void> {
   probeAmpScenario(),
   probeScriptScenario(),
   scaleDownPipelineScenario(),
+  whitespaceLabelsScenario(),
+  panelBurialScenario(),
+  briefWorkflowStepsScenario(),
   tallNarrowTilesScenario(),
     corridorZoneScenario(),
     ladderInGridScenario(), twinLaddersScenario(), strayLadderScenario(), legendCornerScenario(), duplicateStepsScenario(), denseZoneScenario(),

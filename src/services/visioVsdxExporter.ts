@@ -128,6 +128,21 @@ const WORKFLOW_ROW_IN = 0.26;
 const MAX_WORKFLOW_COLUMNS = 12;
 
 /**
+ * The narrowest column a workflow sentence may be set in.
+ *
+ * The column count is chosen to minimise the band's height, and height is the
+ * only thing that score measures - so with brief descriptions, where splitting
+ * always shortens the stack, it ran straight to the cap and set twelve steps in
+ * columns 0.8583in wide. `workflowRowHeightIn` takes 0.6in of that for the
+ * number and the gutters, which left 0.2583in of text column: about two
+ * characters, wrapping "acknowledged" down twelve lines. Legibility is not
+ * something the height score can see, so it has to be a bound on the search.
+ * 1.6in leaves a 1.0in text column, which is where a short sentence still
+ * reads as one.
+ */
+const MIN_WORKFLOW_COL_IN = 1.6;
+
+/**
  * Visio font sizes are inches (1 pt = 1/72"). These match the PowerPoint export
  * at 1 : 1 — a 150 px tile is 1.56" wide, so the label reads at ~7.6 pt and the
  * SKU sub-line at ~7 pt instead of the previous near-illegible 6.5/5 pt.
@@ -302,6 +317,13 @@ const CONTENT_TYPES = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
   <Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/>
 </Types>`;
 
+/** The same, plus the index page, when the drawing had to shorten a name. */
+const CONTENT_TYPES_WITH_INDEX = CONTENT_TYPES.replace(
+  '  <Override PartName="/visio/windows.xml"',
+  '  <Override PartName="/visio/pages/page2.xml" ContentType="application/vnd.ms-visio.page+xml"/>\n'
+  + '  <Override PartName="/visio/windows.xml"',
+);
+
 const ROOT_RELS = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
   <Relationship Id="rId1" Type="http://schemas.microsoft.com/visio/2010/relationships/document" Target="visio/document.xml"/>
@@ -318,6 +340,12 @@ const DOCUMENT_RELS = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 const PAGES_RELS = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
   <Relationship Id="rId1" Type="http://schemas.microsoft.com/visio/2010/relationships/page" Target="page1.xml"/>
+</Relationships>`;
+
+const PAGES_RELS_WITH_INDEX = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.microsoft.com/visio/2010/relationships/page" Target="page1.xml"/>
+  <Relationship Id="rId2" Type="http://schemas.microsoft.com/visio/2010/relationships/page" Target="page2.xml"/>
 </Relationships>`;
 
 function windowsXml(pageWidthIn: number, pageHeightIn: number): string {
@@ -1240,23 +1268,35 @@ function workflowPanelWidthIn(pageWidthIn: number, columns: number): number {
  *
  * Columns rather than one long list, because a hairline-heavy drawing can
  * shorten dozens of names and a single column would run off the top of the page.
+ *
+ * ON ITS OWN PAGE, which is what the deck does with it and the only arrangement
+ * that cannot go wrong. Drawn on the sheet it has to be reserved for, and the
+ * reservation is circular: how many names get shortened depends on the scale,
+ * and the scale depends on how much room the panel takes. Reserving the worst
+ * case costs the drawing 42% of an 8.5in page on the common run where nothing
+ * is shortened at all, and reserving nothing is what buried 20 of 48 tiles
+ * under an opaque white box that is emitted last.
  */
 function buildServiceNamePanel(
   startId: number,
   entries: Array<{ authored: string; drawn: string }>,
-  originX: number,
-  originY: number,
-  pageHeightIn: number,
-): { shapes: string[]; nextId: number; width: number; height: number } {
+): { shapes: string[]; nextId: number; widthIn: number; heightIn: number } {
   const shapes: string[] = [];
   let id = startId;
   const rowH = 0.2;
-  const colW = 2.6;
-  const perColumn = Math.max(1, Math.floor((pageHeightIn - 1.6) / rowH));
+  const colW = 3.4;
+  // The page is sized to the index, not the index to the page, so there is no
+  // clamp to get wrong and nothing to overflow. Kept near a printable shape by
+  // filling a column to about a Letter page before starting the next one.
+  const perColumn = Math.max(1, Math.min(entries.length, Math.floor((10.0 - 1.0) / rowH)));
   const columns = Math.max(1, Math.ceil(entries.length / perColumn));
   const rows = Math.min(entries.length, perColumn);
   const boxW = colW * columns;
   const boxH = rowH * rows + 0.34;
+  const widthIn = boxW + 0.7;
+  const heightIn = boxH + 0.7;
+  const originX = 0.35;
+  const originY = 0.35;
   shapes.push(`    <Shape ID="${id++}" NameU="ServiceNames.${startId}" Type="Shape" LineStyle="0" FillStyle="0" TextStyle="0">
       <Cell N="PinX" V="${f(originX + boxW / 2)}"/>
       <Cell N="PinY" V="${f(originY + boxH / 2)}"/>
@@ -1277,17 +1317,20 @@ ${roundedRectGeometry()}
   entries.forEach((entry, index) => {
     const column = Math.floor(index / perColumn);
     const row = index % perColumn;
+    // BOTH HALVES. The stub is what the reader sees on the drawing, so it is
+    // the key they look the row up by; printing only the full name leaves them
+    // matching 30-character strings against two letters by eye.
     shapes.push(legendTextXml(
       id++,
       originX + 0.12 + column * colW,
       originY + 0.14 + row * rowH,
       colW - 0.24,
-      entry.authored,
+      `${entry.drawn === '' ? '(not drawn)' : entry.drawn}  =  ${entry.authored}`,
       rowH,
       `service-name-${index}`,
     ));
   });
-  return { shapes, nextId: id, width: boxW, height: boxH };
+  return { shapes, nextId: id, widthIn, heightIn };
 }
 
 function buildWorkflowPanel(
@@ -1337,7 +1380,39 @@ ${roundedRectGeometry()}
   return { shapes, nextId: id };
 }
 
-function pagesXml(pageWidthIn: number, pageHeightIn: number, title: string): string {
+function pagesXml(
+  pageWidthIn: number,
+  pageHeightIn: number,
+  title: string,
+  index?: { widthIn: number; heightIn: number },
+): string {
+  // The index gets its OWN PAGE, which is what the deck does with it and the
+  // only arrangement that cannot go wrong. Put on the drawing it has to be
+  // reserved for, and the reservation is circular - how many names get
+  // shortened depends on the scale, which depends on how much room the panel
+  // takes. Reserving the worst case costs the drawing 42% of an 8.5in page on
+  // the common run where nothing is shortened at all. On its own page it
+  // reserves nothing, buries nothing, and is sized to its own contents.
+  const indexPage = index
+    ? `
+  <Page ID="1" NameU="Service names" Name="Service names" ViewScale="-1" ViewCenterX="${f(index.widthIn / 2)}" ViewCenterY="${f(index.heightIn / 2)}">
+    <PageSheet LineStyle="0" FillStyle="0" TextStyle="0">
+      <Cell N="PageWidth" V="${f(index.widthIn)}"/>
+      <Cell N="PageHeight" V="${f(index.heightIn)}"/>
+      <Cell N="ShdwOffsetX" V="0.06"/>
+      <Cell N="ShdwOffsetY" V="-0.06"/>
+      <Cell N="PageScale" V="1"/>
+      <Cell N="DrawingScale" V="1"/>
+      <Cell N="DrawingSizeType" V="3"/>
+      <Cell N="DrawingScaleType" V="0"/>
+      <Cell N="InhibitSnap" V="0"/>
+      <Cell N="PageLockReplace" V="0"/>
+      <Cell N="PageLockDuplicate" V="0"/>
+      <Cell N="UIVisibility" V="0"/>
+    </PageSheet>
+    <Rel r:id="rId2"/>
+  </Page>`
+    : '';
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Pages xmlns="${VISIO_NS}" xmlns:r="${REL_NS}">
   <Page ID="0" NameU="${esc(title)}" Name="${esc(title)}" ViewScale="-1" ViewCenterX="${f(pageWidthIn / 2)}" ViewCenterY="${f(pageHeightIn / 2)}">
@@ -1361,7 +1436,7 @@ ${layerRow(LAYER_CONNECTIONS, 'Connections')}
       </Section>
     </PageSheet>
     <Rel r:id="rId1"/>
-  </Page>
+  </Page>${indexPage}
 </Pages>`;
 }
 
@@ -1512,6 +1587,14 @@ export async function buildVsdxPackage(
     let shortest = stackFor(1, widthIn);
     if (shortest > bandTargetIn) {
       for (let cols = 2; cols <= MAX_WORKFLOW_COLUMNS; cols += 1) {
+        // A COLUMN TOO NARROW TO READ IS NOT A SHORTER BAND, IT IS A LOST
+        // SENTENCE. The minimiser scores nothing but stack height, and with
+        // brief descriptions the height falls monotonically in the column
+        // count, so it took the cap every time: twelve two-syllable steps were
+        // set in columns 0.8583in wide, leaving 0.2583in of text column - about
+        // two characters. Splitting has to stop while the sentence is still a
+        // sentence.
+        if (workflowPanelWidthIn(widthIn, cols) / cols < MIN_WORKFLOW_COL_IN) break;
         const height = stackFor(cols, widthIn);
         if (height < shortest) {
           shortest = height;
@@ -1859,20 +1942,8 @@ export async function buildVsdxPackage(
   if (legendEntries.length > 0) {
     furnitureRects.push({ x: 0.35, y: 0.35, w: 2.4, h: 0.24 * legendEntries.length + 0.34 });
   }
-  // Reserved before the connector labels are placed, for the same reason the
-  // other two panels are: it is opaque and drawn last, so a label routed under
-  // it is a label the reader never sees.
-  const namePanelX = legendEntries.length > 0 ? 0.35 + 2.4 + 0.25 : 0.35;
-  const namePanelRows = Math.max(1, Math.floor((pageHeightIn - 1.6) / 0.2));
-  const namePanelColumns = Math.max(1, Math.ceil(shortenedNames.length / namePanelRows));
-  if (shortenedNames.length > 0) {
-    furnitureRects.push({
-      x: namePanelX,
-      y: 0.35,
-      w: 2.6 * namePanelColumns,
-      h: 0.2 * Math.min(shortenedNames.length, namePanelRows) + 0.34,
-    });
-  }
+  // The index panel reserves NOTHING here on purpose: it is on its own page, so
+  // there is nothing on this sheet for a connector label to be hidden under.
   const rectAt = (route: ExportRoute, drop: number, along: number): { x: number; y: number; w: number; h: number } => {
     const centre = chordOf(route);
     const n = normalOf(route);
@@ -2563,12 +2634,15 @@ export async function buildVsdxPackage(
     shapes.push(...legend.shapes);
   }
 
-  // The sheet's index. Without it a name the tile could not hold is nowhere on
-  // the page at all, which is the one thing a deck never does to a reader.
+  // The drawing's index, on its own page. Without it a name the tile could not
+  // hold is nowhere a reader can see, which is the one thing a deck never does.
+  // Built here, emitted as page 2 below: it takes no room on the drawing, so it
+  // cannot be painted over a tile and needs no reservation in the fit.
+  let indexPage: { shapes: string[]; widthIn: number; heightIn: number } | null = null;
   if (shortenedNames.length > 0) {
-    const namePanel = buildServiceNamePanel(nextId, shortenedNames, namePanelX, 0.35, pageHeightIn);
+    const namePanel = buildServiceNamePanel(nextId, shortenedNames);
     nextId = namePanel.nextId;
-    shapes.push(...namePanel.shapes);
+    indexPage = { shapes: namePanel.shapes, widthIn: namePanel.widthIn, heightIn: namePanel.heightIn };
   }
 
   // The numbered prose that the connector badges point at.
@@ -2594,17 +2668,29 @@ export async function buildVsdxPackage(
   }
 
   const parts: Array<{ path: string; data: string | Uint8Array }> = [
-    { path: '[Content_Types].xml', data: CONTENT_TYPES },
+    { path: '[Content_Types].xml', data: indexPage ? CONTENT_TYPES_WITH_INDEX : CONTENT_TYPES },
     { path: '_rels/.rels', data: ROOT_RELS },
     { path: 'docProps/core.xml', data: coreXml(diagramName) },
     { path: 'docProps/app.xml', data: APP_XML },
     { path: 'visio/document.xml', data: DOCUMENT_XML },
     { path: 'visio/_rels/document.xml.rels', data: DOCUMENT_RELS },
     { path: 'visio/windows.xml', data: windowsXml(pageWidthIn, pageHeightIn) },
-    { path: 'visio/pages/pages.xml', data: pagesXml(pageWidthIn, pageHeightIn, diagramName) },
-    { path: 'visio/pages/_rels/pages.xml.rels', data: PAGES_RELS },
+    {
+      path: 'visio/pages/pages.xml',
+      data: pagesXml(
+        pageWidthIn,
+        pageHeightIn,
+        diagramName,
+        indexPage ? { widthIn: indexPage.widthIn, heightIn: indexPage.heightIn } : undefined,
+      ),
+    },
+    { path: 'visio/pages/_rels/pages.xml.rels', data: indexPage ? PAGES_RELS_WITH_INDEX : PAGES_RELS },
     { path: 'visio/pages/page1.xml', data: pageContentsXml(shapes, connects) },
   ];
+
+  if (indexPage) {
+    parts.push({ path: 'visio/pages/page2.xml', data: pageContentsXml(indexPage.shapes, []) });
+  }
 
   if (media.length > 0) {
     parts.push({
