@@ -420,3 +420,55 @@ test('a promoted cluster counts as measured, not as an unmeasurable guess', () =
   assert.equal(hasMeasuredCluster('\u{1d400}'), false);
   assert.equal(hasMeasuredCluster(''), false);
 });
+
+test('a joiner welds only what could belong to an emoji cluster', () => {
+  // Removing the astral demand from the joiner clause was right for a health
+  // worker and wrong for everything else. U+200D and U+2060 are ordinary text:
+  // ZWJ forms Indic conjuncts and U+2060 WORD JOINER is the standard invisible
+  // no-break character documentation tooling emits as &NoBreak;. The clause
+  // absorbed the next code point WHATEVER IT WAS at zero width, and because the
+  // joiner is itself absorbed the error compounds.
+  const plain = advanceWidthIn('Contoso Platform', 10);
+  const joined = advanceWidthIn('Contoso\u2060Platform', 10);
+  assert.ok(
+    joined >= plain - advanceWidthIn(' ', 10) - 1e-9,
+    `a word joiner cost ${(plain - joined).toFixed(4)}in of a ${plain.toFixed(4)}in name`,
+  );
+  // Two Ms are two Ms however many joiners sit between them.
+  const mm = advanceWidthIn('MM', 10);
+  assert.ok(Math.abs(advanceWidthIn('M\u2060M', 10) - mm) < 1e-9, 'a word joiner halved "MM"');
+  assert.ok(Math.abs(advanceWidthIn('M\u200dM', 10) - mm) < 1e-9, 'a ZWJ halved "MM"');
+  // Sixteen Ms measured as one glyph, 93.8% under, before this.
+  const sixteen = 'M'.repeat(16);
+  const welded = [...sixteen].join('\u2060');
+  assert.ok(
+    Math.abs(advanceWidthIn(welded, 10) - advanceWidthIn(sixteen, 10)) < 1e-9,
+    `sixteen joined Ms measure ${advanceWidthIn(welded, 10).toFixed(4)}in `
+    + `against ${advanceWidthIn(sixteen, 10).toFixed(4)}in drawn`,
+  );
+  // And a Devanagari conjunct is text, not an emoji.
+  const deva = '\u092a\u094d\u0930\u094b\u0921\u0915\u094d\u0936\u0928';
+  const conjunct = '\u092a\u094d\u200d\u0930\u094b\u0921\u0915\u094d\u200d\u0936\u0928';
+  assert.ok(
+    Math.abs(advanceWidthIn(conjunct, 10) - advanceWidthIn(deva, 10)) < 1e-9,
+    'two ZWJ conjuncts shrank a Devanagari name by a fifth',
+  );
+});
+
+test('a variation selector promotes only a base the emoji font can draw', () => {
+  // `promoted` fired for any non-CJK, non-space base, not only the code points
+  // with a defined emoji variation sequence. A letter came out 204% over, and
+  // an over-charge is what deletes a name.
+  for (const base of ['z', 'A', '-', '@', '~']) {
+    assert.ok(
+      Math.abs(advanceWidthIn(`${base}\ufe0f`, 72) - advanceWidthIn(base, 72)) < 1e-9,
+      `"${base}" with a variation selector charges `
+      + `${advanceWidthIn(`${base}\ufe0f`, 72).toFixed(3)} against ${advanceWidthIn(base, 72).toFixed(3)} drawn`,
+    );
+    assert.equal(hasMeasuredCluster(`${base}\ufe0f`), true, 'a plain letter is tabled');
+  }
+  // The genuine emoji-variation bases still promote.
+  for (const base of ['\u2764', '\u2601', '\u2699', '1']) {
+    assert.ok(Math.abs(advanceWidthIn(`${base}\ufe0f`, 72) - EMOJI_EM) < 1e-9);
+  }
+});

@@ -1016,6 +1016,30 @@ const GEOMETRY_REGIONAL_RE = /[\u{1f1e6}-\u{1f1ff}]/u;
  */
 const GEOMETRY_JOINER_RE = /[\u200d\u2060]/;
 
+/**
+ * The BMP blocks the emoji font draws from.
+ *
+ * Needed because "is this code point part of an emoji cluster" cannot be
+ * answered by "is it astral": the staff of aesculapius in a health worker is
+ * U+2695, squarely in the BMP. But the converse mistake is worse. Treating
+ * every code point after a joiner as part of the cluster charges it nothing,
+ * and U+200D and U+2060 are ordinary text - ZWJ forms Indic conjuncts, and
+ * U+2060 WORD JOINER is the standard invisible no-break character that
+ * documentation tooling emits as &NoBreak;. Because the joiner is itself
+ * absorbed the error compounds: sixteen letter Ms separated by word joiners
+ * measured 0.1247in, the width of one M, against a true 1.9956in.
+ */
+const GEOMETRY_EMOJI_BMP_RE = /[\u203c\u2049\u2122\u2139\u2194-\u21aa\u231a\u231b\u2328\u23cf\u23e9-\u23f3\u23f8-\u23fa\u24c2\u25aa\u25ab\u25b6\u25c0\u25fb-\u25fe\u2600-\u27bf\u2934\u2935\u2b00-\u2bff\u3030\u303d\u3297\u3299]/;
+
+/** Keycap bases: the one non-emoji character class VS16 legitimately promotes. */
+const GEOMETRY_KEYCAP_RE = /[0-9#*]/;
+
+/** Can this code point be part of an emoji cluster at all? */
+function emojiCapable(character: string): boolean {
+  const code = character.codePointAt(0) ?? 0;
+  return code >= 0x10000 || GEOMETRY_EMOJI_BMP_RE.test(character);
+}
+
 /** VARIATION SELECTOR-16: draw the character before me as an emoji. */
 const GEOMETRY_VS16 = '\ufe0f';
 
@@ -1190,11 +1214,18 @@ function advanceClusters(text: string): Array<{ text: string; em: number; measur
     // The joiner test used to demand that what followed be astral. It is the
     // BMP members of these clusters that the demand excluded: the staff of
     // aesculapius in a health worker is U+2695, so "man health worker" was
-    // charged its own glyph on top of the man's and came out 73% over. What a
-    // joiner welds on is part of the cluster whatever plane it lives in.
+    // charged its own glyph on top of the man's and came out 73% over.
+    //
+    // Dropping the demand entirely was worse. It absorbed the NEXT CODE POINT
+    // WHATEVER IT WAS at zero width, and since the joiner is absorbed too the
+    // error compounds: "Contoso\u2060Platform" measured 10.7% under, a Devanagari
+    // name with two ZWJ conjuncts 22.2% under, and sixteen Ms welded by word
+    // joiners came out as one M. What a joiner welds on is part of the cluster
+    // whatever plane it lives in - but only if it could be part of an emoji
+    // cluster in the first place.
     const joined = GEOMETRY_MODIFIER_RE.test(character)
       || (regional && regionalRun % 2 === 0)
-      || (previous !== '' && GEOMETRY_JOINER_RE.test(previous));
+      || (previous !== '' && GEOMETRY_JOINER_RE.test(previous) && emojiCapable(character));
     previous = character;
     const last = clusters[clusters.length - 1];
     if (joined && last) {
@@ -1208,9 +1239,13 @@ function advanceClusters(text: string): Array<{ text: string; em: number; measur
     // is "1" + VS16 + U+20E3, and the digit's 0.539 em made it 61% under.
     // Applying this to ASCII too is what lets U+20E3 stay a 0-width combining
     // mark in the table rather than needing a rule of its own.
+    //
+    // But "not CJK and not a space" is not the emoji-variation set. It fired on
+    // every letter, digit and hyphen: "z\ufe0f" was charged 0.1907in against a
+    // true 0.0628in, 204% over, and an over-charge is what deletes a name. Only
+    // a base the emoji font can actually draw, or a keycap base, is promoted.
     const promoted = characters[index + 1] === GEOMETRY_VS16
-      && !GEOMETRY_CJK_RE.test(character)
-      && !/\s/.test(character);
+      && (emojiCapable(character) || GEOMETRY_KEYCAP_RE.test(character));
     const em = promoted ? GEOMETRY_ASTRAL_EM : advanceEm(character);
     // WHETHER THE CLUSTER IS MEASURED IS A QUESTION ABOUT THE CLUSTER. Asking
     // it of the base code point calls a promoted heart unmeasured forever: no

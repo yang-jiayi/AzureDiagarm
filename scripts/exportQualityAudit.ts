@@ -18,7 +18,7 @@ import { nativizeSlideXml } from '../src/services/pptxNativeShapes.ts';
 import { buildVsdxPackage } from '../src/services/visioVsdxExporter.ts';
 import { WRAP_TRIGGER_RATIO } from '../src/utils/serpentineWrap.ts';
 
-import { narrateEdgeCallouts, readEdgeLabel, CATEGORY_STYLES, singleLineName } from '../src/services/diagramExportGeometry.ts';
+import { narrateEdgeCallouts, readEdgeLabel, CATEGORY_STYLES, singleLineName, advanceWidthIn } from '../src/services/diagramExportGeometry.ts';
 import { readStepNumber } from '../src/utils/workflowStepMapping.ts';
 import { stripXmlForbidden } from '../src/utils/xmlText.ts';
 
@@ -346,44 +346,65 @@ const AUDIT_JOINER_RE = /[\u200d\u2060]/;
 /** VARIATION SELECTOR-16: draw the character before me as an emoji. */
 const AUDIT_VS16 = '\ufe0f';
 
+/** The BMP blocks the emoji font draws from. */
+const AUDIT_EMOJI_BMP_RE = /[\u203c\u2049\u2122\u2139\u2194-\u21aa\u231a\u231b\u2328\u23cf\u23e9-\u23f3\u23f8-\u23fa\u24c2\u25aa\u25ab\u25b6\u25c0\u25fb-\u25fe\u2600-\u27bf\u2934\u2935\u2b00-\u2bff\u3030\u303d\u3297\u3299]/;
+
+/** Unicode's own grapheme breaker, which is not this file's opinion about text. */
+const AUDIT_GRAPHEMES = new Intl.Segmenter('en', { granularity: 'grapheme' });
+
+/** Can this code point be part of an emoji cluster at all? */
+function auditEmojiCapable(character: string): boolean {
+  const code = character.codePointAt(0) ?? 0;
+  return code >= 0x10000 || AUDIT_EMOJI_BMP_RE.test(character);
+}
+
 /**
  * `text` split into rendered clusters, independently of the exporter's walker.
  *
- * The gate's whole value is that it is a SECOND implementation, so this is
- * deliberately its own code rather than an import. It carries the same three
- * corrections because they are corrections of fact, not of style: VS16 promotes
- * its base, a joiner absorbs a BMP code point as readily as an astral one, and
- * a promoted cluster is measured even when its base code point is not.
+ * A DIFFERENT ALGORITHM, not a second transcription of the same one. This used
+ * to be the exporter's forward walk restated statement for statement - the same
+ * `joined` disjunction, the same `promoted` predicate, the same absorb in the
+ * same position - with only the advance tables differing. Two transcriptions of
+ * one walk agree on every input INCLUDING every input on which the walk is
+ * wrong, which is precisely the case a gate exists to catch, so the oracle
+ * could not have disagreed about the joiner and variation-selector defects even
+ * in principle. A gate rule and the code it checks must not be the same
+ * algorithm twice.
+ *
+ * So the clustering is delegated to `Intl.Segmenter`, which is ICU's UAX #29
+ * implementation and knows nothing about this repository: it breaks emoji ZWJ
+ * sequences, regional-indicator pairs, skin-tone modifiers, Indic conjuncts and
+ * combining sequences on the standard's terms. What is left here is only the
+ * width question - is this grapheme drawn from the emoji face, and if not what
+ * do its code points measure - which is the part the tables answer.
  */
 function auditClusters(text: string): Array<{ text: string; em: number; measured: boolean }> {
-  const characters = [...text];
   const clusters: Array<{ text: string; em: number; measured: boolean }> = [];
-  let regionalRun = 0;
-  let previous = '';
-  for (const [index, character] of characters.entries()) {
-    const regional = /[\u{1f1e6}-\u{1f1ff}]/u.test(character);
-    regionalRun = regional ? regionalRun + 1 : 0;
-    // A flag is two regional indicators and a skin tone is a base plus a
-    // modifier; both draw as ONE glyph, so only the first is charged.
-    const joined = /[\u{1f3fb}-\u{1f3ff}]/u.test(character)
-      || (regional && regionalRun % 2 === 0)
-      || (previous !== '' && AUDIT_JOINER_RE.test(previous));
-    previous = character;
-    const last = clusters[clusters.length - 1];
-    if (joined && last) {
-      last.text += character;
+  for (const { segment } of AUDIT_GRAPHEMES.segment(text)) {
+    const points = [...segment];
+    const base = points[0] ?? '';
+    // One glyph from the emoji face, whatever it took to spell it: a selector
+    // over a base the face can draw, a keycap, a skin tone, a flag pair, or a
+    // joined sequence. A joiner over a base the face CANNOT draw is text - a
+    // Devanagari conjunct, or the word joiner documentation tooling emits - and
+    // falls through to be measured code point by code point.
+    const emoji = (points.includes(AUDIT_VS16) && (auditEmojiCapable(base) || /[0-9#*]/.test(base)))
+      || points.some((p) => /[\u{1f3fb}-\u{1f3ff}]/u.test(p))
+      || (points.length > 1
+        && /[\u{1f1e6}-\u{1f1ff}]/u.test(base)
+        && /[\u{1f1e6}-\u{1f1ff}]/u.test(points[1]))
+      || (points.some((p) => AUDIT_JOINER_RE.test(p)) && auditEmojiCapable(base));
+    if (emoji) {
+      clusters.push({ text: segment, em: AUDIT_EMOJI_EM, measured: true });
       continue;
     }
-    const promoted = characters[index + 1] === AUDIT_VS16
-      && !/[\u2e80-\u9fff\uac00-\ud7af\uff00-\uff60\uffe0-\uffe6]/.test(character)
-      && !/\s/.test(character);
-    const em = promoted ? AUDIT_EMOJI_EM : measuredAdvanceEm(character);
-    const measured = promoted || hasAuditAdvance(character);
-    if (em === 0 && last && /[\u200b-\u200f\u2060\ufe00-\ufe0f\ufeff]/.test(character)) {
-      last.text += character;
-      continue;
+    let em = 0;
+    let measured = true;
+    for (const point of points) {
+      em += measuredAdvanceEm(point);
+      if (!hasAuditAdvance(point)) measured = false;
     }
-    clusters.push({ text: character, em, measured });
+    clusters.push({ text: segment, em, measured });
   }
   return clusters;
 }
@@ -1803,6 +1824,12 @@ function emojiClusterScenario(): Scenario {
     'Clinic \u{1f468}\u200d\u2695\ufe0f records service',
     'Warning \u26a0\ufe0f alert router',
     'Region \u{1f1ef}\u{1f1f5}\u{1f1e9}\u{1f1ea} failover pair',
+    // Text that is NOT emoji and was measured as if it were. The word joiner is
+    // what documentation tooling emits for &NoBreak;, the ZWJ here forms a
+    // Devanagari conjunct, and a variation selector over an ASCII base has no
+    // emoji to select. All three were charged the emoji face.
+    'Contoso\u2060Platform\u2060ingest\u2060relay\u2060service\u2060tier',
+    'Archive\ufe0f tier\ufe0f rotation\ufe0f service',
   ];
   const nodes: Node[] = names.map((label, i) => ({
     id: `ec${i}`,
@@ -5430,6 +5457,42 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
       `the deck draws ${unmeasured.size} character(s) with no measured advance, so every width `
       + `and wrap that touches them is a guess: `
       + worst.map(([character, n]) => `U+${(character.codePointAt(0) ?? 0).toString(16).toUpperCase().padStart(4, '0')} x${n}`).join(', '),
+    );
+  }
+  // AND THE TWO MEASUREMENTS MUST AGREE, not merely both exist.
+  //
+  // Coverage is one property and correctness is another. Every string the deck
+  // draws is now priced by both models - the exporter's own walk, and this
+  // file's ICU-segmented one - and a divergence is reported wherever they
+  // disagree by more than rounding. This is the rule that could have caught the
+  // joiner and variation-selector defects on the commit that introduced them:
+  // a word joiner made a 57-character name measure as one glyph, and a
+  // variation selector charged the letter "z" 204% of its width.
+  //
+  // Only meaningful because the two are no longer the same algorithm. While
+  // this file transcribed the exporter's walk, a divergence rule could not have
+  // failed on any input at all.
+  const diverged = new Map<string, string>();
+  for (const slideXml of allSlides) {
+    for (const match of slideXml.matchAll(/<a:t>([\s\S]*?)<\/a:t>/g)) {
+      const run = unescapeXml(match[1]);
+      if (!run.trim()) continue;
+      const mine = auditClusters(run).reduce((sum, c) => sum + c.em, 0);
+      const theirs = advanceWidthIn(run, 72);
+      if (Math.abs(mine - theirs) > Math.max(0.01, mine * 0.02)) {
+        diverged.set(
+          run.slice(0, 32),
+          `${theirs.toFixed(4)} against ${mine.toFixed(4)} em`,
+        );
+      }
+    }
+  }
+  if (diverged.size > 0) {
+    issues.push(
+      `${diverged.size} drawn string(s) are priced differently by the exporter and the gate, `
+      + `so one of the two models is wrong about text the reader will see: `
+      + [...diverged.entries()].slice(0, 3)
+        .map(([run, how]) => `${JSON.stringify(run)} ${how}`).join('; '),
     );
   }
   // The audit ran icon-blind for its whole life: `canRasterize()` is false
