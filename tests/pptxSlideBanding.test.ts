@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import JSZip from 'jszip';
 import type { Edge, Node } from 'reactflow';
 import { buildDiagramSlidePptx, fitTableRows, legibleScaleFor, tableRowHeightIn, wrappedLineCount } from '../src/services/pptxExporter.ts';
-import { buildExportRoutes, collectExportBoxes, fitLabelToLines } from '../src/services/diagramExportGeometry.ts';
+import { buildExportRoutes, collectExportBoxes, fitLabelToLines, fitLabelToWidth } from '../src/services/diagramExportGeometry.ts';
 import { buildVsdxPackage } from '../src/services/visioVsdxExporter.ts';
 
 /**
@@ -1726,6 +1726,54 @@ test('fitLabelToLines never returns a label that needs more lines than it was gi
     fitLabelToLines('Azure Front Door', 2.0, 0.0972, 3, linesOf), 'Azure Front Door',
     'a name that fits its budget must come back whole',
   );
+});
+
+/**
+ * Verifying the answer is not the same as finding a good one.
+ *
+ * The first `fitLabelToLines` bisected the width budget and checked its result
+ * against `linesOf`, so it never returned a label that overran — and still
+ * threw away up to 27% of names it could have kept. `fitLabelToWidth` keeps a
+ * tail of up to a third of the budget, so a wider budget can grow the tail,
+ * shrink the head's share and return a *shorter* string; a bisection reads
+ * that downward step as "too big" and discards the entire upper half.
+ *
+ * So the postcondition test above cannot catch this class of defect. This one
+ * measures against the answer itself: a fine sweep of the same interval, which
+ * is what the search is trying to approximate.
+ */
+test('fitLabelToLines keeps as much of the name as a fine sweep of the same budget', () => {
+  const linesOf = (text: string, columnIn: number, sizeIn: number): number =>
+    wrappedLineCount(text, columnIn, sizeIn * 72);
+  const names = [
+    'Azure Kubernetes Service with Azure CNI overlay networking',
+    'Azure Database for PostgreSQL Flexible Server - Business Critical tier with zone redundant high availability in East US 2',
+    'Production VNet - Application Subnet (10.0.1.0/24) - Zone Redundant',
+    'Azure Database for PostgreSQL フレキシブル サーバー ビジネス クリティカル ゾーン冗長 高可用性 東日本リージョン',
+    'Azure Front Door Premium + Web Application Firewall (Prevention mode)',
+  ];
+  for (const name of names) {
+    for (const column of [0.4, 0.6, 1.23, 3.0]) {
+      for (const sizeIn of [0.0972, 0.125]) {
+        for (const maxLines of [1, 2, 4]) {
+          const fitted = fitLabelToLines(name, column, sizeIn, maxLines, linesOf);
+          let sweep = '…';
+          const top = column * maxLines;
+          for (let k = 1; k <= 600; k += 1) {
+            const candidate = fitLabelToWidth(name, (top * k) / 600, sizeIn);
+            if (linesOf(candidate, column, sizeIn) > maxLines) continue;
+            if ([...candidate].length > [...sweep].length) sweep = candidate;
+          }
+          assert.ok(
+            [...fitted].length >= [...sweep].length,
+            `"${name.slice(0, 24)}" in ${column}in x ${maxLines} at ${sizeIn}in kept `
+            + `${[...fitted].length} chars but a sweep of the same budget kept ${[...sweep].length}: `
+            + `${JSON.stringify(fitted)} vs ${JSON.stringify(sweep)}`,
+          );
+        }
+      }
+    }
+  }
 });
 
 /**

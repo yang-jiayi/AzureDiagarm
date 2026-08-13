@@ -711,9 +711,18 @@ export function fitLabelToWidth(rawText: string, widthIn: number, fontSizeIn: nu
  * Fitting to `columnIn * maxLines` of ink is not the same thing and is the
  * weaker check: word wrap abandons the tail of a line whenever the next word
  * will not fit, so a name whose total ink fits three lines can still draw four.
- * The budget is searched rather than derived, and — this is the part that
- * matters — the answer is *verified* against `linesOf` before it is returned,
- * so the result cannot exceed `maxLines` even if the search misses.
+ *
+ * The budget cannot be bisected. `fitLabelToWidth` keeps a tail of up to a
+ * third of the budget, so when the budget crosses a tail-growth step the tail
+ * gains a character, the head's share *drops*, and the answer gets shorter as
+ * the budget gets longer. A bisection reads one of those downward steps as
+ * "too big", discards the whole upper half, and throws away up to 27% of a name
+ * that provably fits — with the postcondition satisfied the whole time, which
+ * is exactly why verifying the answer does not save you here.
+ *
+ * So the steps are enumerated instead of searched. The tail grows at known
+ * widths and nowhere else, which makes the set of achievable answers small and
+ * finite; each one is measured, and the longest that verifies wins.
  */
 export function fitLabelToLines(
   rawText: string,
@@ -725,19 +734,67 @@ export function fitLabelToLines(
   const lines = Math.max(1, Math.floor(maxLines));
   const whole = rawText.replace(/[\r\n]+/g, ' ').replace(/\s{2,}/g, ' ');
   if (linesOf(whole, columnIn, fontSizeIn) <= lines) return whole;
-  let low = 0;
-  let high = columnIn * lines;
-  // '…' is one glyph and always fits, so the search starts from an answer that
+  const maxBudget = columnIn * lines;
+  const chars = [...whole];
+  const ellipsis = labelInkWidthIn('…', fontSizeIn);
+  // Where the answer can change at all: the tail gains a character exactly when
+  // the width reaches three times that character's cumulative ink plus the
+  // ellipsis the tail is measured against, and between two such crossings the
+  // tail is fixed and the head only grows.
+  const bounds = [0];
+  let tail = '';
+  for (let i = chars.length - 1; i >= 0; i -= 1) {
+    tail = chars[i] + tail;
+    const step = 3 * labelInkWidthIn(tail, fontSizeIn) + ellipsis;
+    if (step >= maxBudget) break;
+    bounds.push(step);
+  }
+  bounds.push(maxBudget);
+  // '…' is one glyph and always fits, so the walk starts from an answer that
   // already satisfies the postcondition and only ever improves on it.
   let best = '…';
-  for (let step = 0; step < 24; step += 1) {
-    const mid = (low + high) / 2;
-    const candidate = fitLabelToWidth(whole, mid, fontSizeIn);
-    if (linesOf(candidate, columnIn, fontSizeIn) <= lines) {
+  let bestChars = 1;
+  let bestInk = 0;
+  const consider = (candidate: string): void => {
+    const kept = [...candidate].length;
+    const ink = labelInkWidthIn(candidate, fontSizeIn);
+    if (kept > bestChars || (kept === bestChars && ink > bestInk)) {
       best = candidate;
-      low = mid;
-    } else {
-      high = mid;
+      bestChars = kept;
+      bestInk = ink;
+    }
+  };
+  for (let r = 0; r < bounds.length - 1; r += 1) {
+    let low = bounds[r];
+    // Ranges are half-open — the tail grows *at* a boundary, so the boundary
+    // belongs to the range above it — except the last, whose top is the whole
+    // budget and is the single point at which the longest answer often lives.
+    let high = r === bounds.length - 2 ? bounds[r + 1] : bounds[r + 1] - 1e-9;
+    if (high <= 0) continue;
+    // Inside a range the head grows with the budget and the line count grows
+    // with the head, so the range's best answer is the largest budget in it
+    // that still verifies — which is the top of the range when the top fits,
+    // and otherwise a boundary this bisection is entitled to find, because
+    // here the function really is monotone.
+    const top = fitLabelToWidth(whole, high, fontSizeIn);
+    if (linesOf(top, columnIn, fontSizeIn) <= lines) {
+      consider(top);
+      continue;
+    }
+    // The boundary itself belongs to this range — the tail grows *at* it — and
+    // rounding can put it either side of `high`, so measure it directly rather
+    // than trusting the bisection to walk back onto it.
+    const floorCandidate = fitLabelToWidth(whole, low, fontSizeIn);
+    if (linesOf(floorCandidate, columnIn, fontSizeIn) <= lines) consider(floorCandidate);
+    for (let step = 0; step < 18; step += 1) {
+      const mid = (low + high) / 2;
+      const candidate = fitLabelToWidth(whole, mid, fontSizeIn);
+      if (linesOf(candidate, columnIn, fontSizeIn) <= lines) {
+        consider(candidate);
+        low = mid;
+      } else {
+        high = mid;
+      }
     }
   }
   return best;

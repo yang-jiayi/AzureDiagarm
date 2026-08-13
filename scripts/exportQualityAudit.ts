@@ -1408,6 +1408,54 @@ function visioDefaultTileNamesScenario(): Scenario {
 }
 
 /**
+ * Four wide zones, laid out by the app itself, whose names do not fit.
+ *
+ * Nothing here is authored to break anything: four groups of six services at
+ * the sizes the layout engine emits, with a subnet name of the length a real
+ * network diagram carries. The estate is wider than a slide, so the deck tiles
+ * it — and a window cut a zone down to a 0.924in band while leaving its
+ * caption the full 60 characters the exporter's cell-count cap had
+ * "shortened" it to. A cell count is not a width: those 60 characters wrapped
+ * to 7 lines and painted 0.810in outside a 0.240in band, over the tiles below.
+ *
+ * The uncut zones overflowed too, by 0.060in each, so every zone caption on
+ * the drawing was outside its band. None of it was visible to the gate, which
+ * skipped any slide holding a service tile — one `continue` that exempted
+ * every drawing in the corpus from the entire painted-ink apparatus.
+ */
+function zoneCaptionWideEstateScenario(): Scenario {
+  const name = 'Production VNet - Application Subnet (10.0.1.0/24) - Zone Redundant';
+  const nodes: Node[] = [];
+  const edges: Edge[] = [];
+  for (let g = 0; g < 4; g += 1) {
+    const gx = g * (40 + 6 * 200 + 40 + 90);
+    nodes.push({
+      id: `zc${g}`,
+      type: 'groupNode',
+      position: { x: gx, y: 0 },
+      style: { width: 40 + 6 * 200 + 40, height: 90 + 75 + 40 },
+      data: { label: `${name} ${g + 1}` },
+    } as unknown as Node);
+    for (let i = 0; i < 6; i += 1) {
+      nodes.push({
+        ...svc(`zc${g}_${i}`, `Azure Service ${g}-${i}`, 40 + i * 200, 90, `zc${g}`, true, 'compute'),
+        width: 150,
+        height: 75,
+      });
+      if (i) {
+        edges.push({
+          id: `zc-e${g}_${i}`,
+          source: `zc${g}_${i - 1}`,
+          target: `zc${g}_${i}`,
+          label: 'calls',
+        } as Edge);
+      }
+    }
+  }
+  return { id: 'zone-caption-wide-estate', nodes, edges };
+}
+
+/**
  * A 560-service estate under a 500-step CJK workflow.
  *
  * The band is sized twice — once at the narrowest page the exporter emits, to
@@ -3319,9 +3367,18 @@ async function auditCustomerDeck(scenario: Scenario): Promise<string[]> {
   // point size and check that the band it paints stays inside the slide and
   // clear of the next box's.
   for (const [index, xml] of slides.entries()) {
-    if (xml.includes('name="service-')) continue; // the drawing, laid out by its own planner
     const painted = parseShapes(xml)
-      .filter((s) => s.text.trim().length > 0 && !s.name.startsWith('connector-'))
+      // The drawing's tiles are laid out by their own planner and measured by
+      // the tile rules below, which know about the icon they share the box
+      // with. Everything *else* on a drawing slide — the zone captions, the
+      // legend, the workflow band, the step callouts — had no ink measurement
+      // at all, because this loop used to skip any slide that contained a tile.
+      // One whole-slide `continue` exempted the entire apparatus from every
+      // drawing in the corpus, which is how a 0.4x0.24in zone caption came to
+      // paint 22 wrapped lines and 3.3in of ink down the page unnoticed.
+      .filter((s) => s.text.trim().length > 0
+        && !s.name.startsWith('connector-')
+        && !s.name.startsWith('service-'))
       .map((s) => {
         const pt = s.fontSize ?? (s.runs[0]?.sizePt ?? 12);
         const lines = auditWrappedLines(s.text.trim(), Math.max(0.2, s.w - 0.2), pt);
@@ -3372,6 +3429,26 @@ async function auditCustomerDeck(scenario: Scenario): Promise<string[]> {
         issues.push(
           `customer deck: slide ${index + 1} paints "${p.shape.text.trim().slice(0, 32)}" from `
           + `y=${p.top.toFixed(2)}in to ${p.bottom.toFixed(2)}in — outside the ${BASE_SLIDE_H_IN}in slide`,
+        );
+      }
+    }
+    // On a drawing slide the two rules above can both be blind at once. A zone
+    // caption that overruns its band paints down the middle of the page, so it
+    // never leaves the sheet, and everything it lands on is a service tile,
+    // which is measured by the tile rules and not by this loop — so a 0.40in
+    // band holding 3.30in of ink over 22 wrapped lines was invisible to every
+    // check in the file. The band is a box the exporter chose for itself, and
+    // ink outside a box the exporter chose is ink nothing accounted for, so
+    // measure that directly rather than waiting for it to hit something.
+    if (xml.includes('name="service-')) {
+      for (const p of painted) {
+        if (p.over <= 0.02) continue;
+        const pt = p.shape.fontSize ?? (p.shape.runs[0]?.sizePt ?? 12);
+        const drawnLines = auditWrappedLines(p.shape.text.trim(), Math.max(0.2, p.shape.w - 0.2), pt);
+        issues.push(
+          `customer deck: slide ${index + 1} draws "${p.shape.text.trim().slice(0, 32)}" as `
+          + `${drawnLines} line(s) at ${pt}pt in a ${p.shape.w.toFixed(3)}x${p.shape.h.toFixed(3)}in band `
+          + `— ${p.over.toFixed(3)}in of it is outside`,
         );
       }
     }
@@ -4197,6 +4274,12 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
     const label = (node.data as { label?: string } | undefined)?.label;
     if (typeof label === 'string' && label) authoredNames.set(auditStrip(String(node.id)), label);
   }
+  const authoredZones = new Map<string, string>();
+  for (const node of scenario.nodes) {
+    if (node.type === 'azureNode') continue;
+    const label = (node.data as { label?: string } | undefined)?.label;
+    if (typeof label === 'string' && label) authoredZones.set(auditStrip(String(node.id)), label);
+  }
   // Truncation is only acceptable when the full wording survives somewhere the
   // reader can reach. A chip clipped to 42 cells with no workflow row carrying
   // the rest has silently thrown away what the author wrote.
@@ -4210,6 +4293,15 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
       // The deck's index slide spells this one out, so the drawing is free to
       // abbreviate it.
       const name = authoredNames.get(svcId);
+      return !name || !indexed.has(name);
+    }
+    // A zone whose band cannot hold its name is cut like any other label, and
+    // is spelled out in the same place. The band is not negotiable — a window
+    // can cut a zone to a 0.39in sliver — so the index is the only way the
+    // name survives the cut.
+    const zoneId = /^zone-label-(.*)$/.exec(s.name)?.[1];
+    if (zoneId !== undefined) {
+      const name = authoredZones.get(zoneId);
       return !name || !indexed.has(name);
     }
     const id = /^connector-label-(.*)$/.exec(s.name)?.[1];
@@ -5790,6 +5882,7 @@ async function main(): Promise<void> {
     hardBreakInventoryScenario(),
     visioBrokenLabelFanScenario(),
     visioDefaultTileNamesScenario(),
+    zoneCaptionWideEstateScenario(),
     squeezedBadgeScenario(),
     await generatedScenario(), await groupedGeneratedScenario(),
   ];

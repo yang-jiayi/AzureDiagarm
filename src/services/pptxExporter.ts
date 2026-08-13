@@ -117,6 +117,7 @@ import {
   computeBounds,
   computeContentBounds,
   computeFitTransform,
+  fitLabelToLines,
   fitLabelToWidth,
   metaSubline,
   partitionBoxes,
@@ -2261,6 +2262,8 @@ function addGroupShape(
   occupied?: readonly { x: number; y: number; w: number; h: number }[],
   /** The other zones, which a title may never be written inside. */
   foreign?: readonly { x: number; y: number; w: number; h: number }[],
+  /** Cut names, spelled out in full on the index slide. */
+  truncatedNames?: Set<string>,
 ): void {
   const topLeft = placeBox(box, transform, clampTo, true);
   const w = topLeft.w;
@@ -2291,7 +2294,13 @@ function addGroupShape(
   // one that covers the fewest tiles wins, and the top-left band still wins
   // outright whenever it is clear, which is every drawing that is not split.
   const titleW = Math.max(0.4, w - 0.12);
-  // A zone cut to a sliver at the frame edge has less width than its own title
+  // What the name will actually take, at the pitch the gate measures painted
+  // ink with, so the exporter's budget and the gate's check are one number
+  // rather than two guesses that happen to agree today.
+  const captionPt = clamp(Math.round(h * 5), 8, 12);
+  const captionText = `${box.label}${fragment}`;
+  const captionColumn = (width: number): number => Math.max(0.2, width - 0.2);
+  const captionRoom = (band: number, pt: number): number => Math.max(1, Math.floor(band / ((pt * 1.35) / 72)));  // A zone cut to a sliver at the frame edge has less width than its own title
   // needs, so the band has to be pulled back onto the page — placed raw it ran
   // off the slide and PowerPoint dropped it, taking the zone's name with it.
   const fit = <T extends { x: number; y: number; w: number }>(c: T): T => (clampTo
@@ -2378,6 +2387,15 @@ function addGroupShape(
   // have. Both are scored rather than filtered so that when every band
   // trespasses — which is what two overlapping zones give you — the least bad
   // one still wins instead of the first one tried.
+  // A fit term was tried here and removed. The premise — that a clear 0.4in
+  // band can beat a 3.7in one that holds the name — does not survive reading
+  // the candidate order: the full-width band is `inside[0]`, it is scored
+  // first, and the loop only replaces on a strictly better score, so a clear
+  // full-width band always wins outright. The 0.4in band that painted 22 lines
+  // was not chosen over a wider one; it was the only one on offer, because the
+  // window had cut that zone to 0.39in. Scoring fit changed the chosen band in
+  // no fixture in the corpus, and at any weight large enough to change one it
+  // bought a 48% covered band in `flush-subnets`. The cut is the fix.
   const score = (c: { x: number; y: number; w: number }): number => {
     const area = Math.max(1e-6, c.w * titleH);
     return cover(c) / area + 2 * (trespass(c) / area);
@@ -2449,12 +2467,44 @@ function addGroupShape(
     line: { color: border, width: 1, dashType: 'dash' },
     objectName: `zone-${box.id}`,
   });
-  slide.addText(truncateLabel(box.label, 60) + fragment, {
+  // Shrink first, cut last — and cut by measurement, not by counting cells. A
+  // 60-character cap says nothing about how wide those characters are: the
+  // band that failed here was 0.4in holding a name the cap had already
+  // "shortened" to 60 characters, which is 22 wrapped lines of it.
+  let captionSize = captionPt;
+  let caption = captionText;
+  const column = captionColumn(title.w);
+  for (let pt = captionPt; pt >= LEGIBLE_TILE_PT; pt -= 1) {
+    captionSize = pt;
+    if (wrappedLineCount(captionText, column, pt) <= captionRoom(bandH, pt)) break;
+    if (pt - 1 < LEGIBLE_TILE_PT) {
+      const room = captionRoom(bandH, pt);
+      // The fragment marker is never cut. It is the only thing telling the
+      // reader this closed box is a slice of a larger zone, and a box that
+      // silently drops "(3 / 28)" is not abbreviated — it is claiming to hold
+      // everything it names. So the name yields to the marker, down to nothing
+      // if that is what the band affords.
+      caption = fitLabelToLines(
+        box.label,
+        column,
+        pt / 72,
+        room,
+        (text, col, sizeIn) => wrappedLineCount(`${text}${fragment}`, col, sizeIn * 72),
+      ) + fragment;
+      // A zone cut to a sliver by the window gets a caption cut with it, and a
+      // box labelled "P…" names nothing. A cut service name has always been
+      // spelled out on the index slide; a cut zone name is no different, and
+      // is the only place the reader can now recover it.
+      truncatedNames?.add(box.label);
+    }
+  }
+
+  slide.addText(caption, {
     x: title.x,
     y: title.y,
     w: title.w,
     h: bandH,
-    fontSize: clamp(Math.round(h * 5), 8, 12),
+    fontSize: captionSize,
     bold: true,
     color: labelColor,
     fontFace: 'Yu Gothic UI',
@@ -2719,12 +2769,23 @@ async function addEditableDiagram(
     return cx >= group.x && cx <= group.x + group.w && cy >= group.y && cy <= group.y + group.h;
   }).length;
   const placedTiles = shownServices.map((service) => placeBox(service, transform, clampTo));
-  const placedZones = new Map(shownGroups.map((group) => [group.id, placeBox(group, transform, clampTo, true)]));
-  shownGroups.forEach((group) => addGroupShape(
+  // A zone whose members all landed on other slides is not drawn here. The
+  // window can cut a zone to a 0.4in sliver holding none of its services, and
+  // a closed box around nothing, captioned "… (0 / 1)" because 0.2in of column
+  // holds no name, tells the reader nothing and paints its marker outside its
+  // own band doing it. A boundary is a claim about contents; with no contents
+  // on the slide there is no claim to make. Zones the author drew empty are
+  // untouched — they have no members anywhere, so nothing is being hidden.
+  const drawnGroups = shownGroups.filter(
+    (group) => zoneMembers(group, shownServices) > 0 || zoneMembers(group, services) === 0,
+  );
+  const placedZones = new Map(drawnGroups.map((group) => [group.id, placeBox(group, transform, clampTo, true)]));
+  drawnGroups.forEach((group) => addGroupShape(
     pptx, slide, group, groups.indexOf(group), transform, clampTo,
     { here: zoneMembers(group, shownServices), all: zoneMembers(group, services) },
     placedTiles,
-    shownGroups.filter((other) => other !== group).map((other) => placedZones.get(other.id)!),
+    drawnGroups.filter((other) => other !== group).map((other) => placedZones.get(other.id)!),
+    thumbnail ? undefined : truncatedNames,
   ));
   const captionBands: Obstacle[] = [];
   for (const service of shownServices) {
