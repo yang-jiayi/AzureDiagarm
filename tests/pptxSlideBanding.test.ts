@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import JSZip from 'jszip';
 import type { Edge, Node } from 'reactflow';
 import { buildDiagramSlidePptx, fitTableRows, legibleScaleFor, tableRowHeightIn, wrappedLineCount } from '../src/services/pptxExporter.ts';
-import { buildExportRoutes, collectExportBoxes } from '../src/services/diagramExportGeometry.ts';
+import { buildExportRoutes, collectExportBoxes, fitLabelToLines } from '../src/services/diagramExportGeometry.ts';
 import { buildVsdxPackage } from '../src/services/visioVsdxExporter.ts';
 
 /**
@@ -1684,6 +1684,47 @@ test('a hard line break counts as a line, in the counter and in the row height',
   assert.ok(
     twoLines > oneLine + 0.1,
     `a two-paragraph cell must be budgeted taller than a one-line cell (${twoLines} vs ${oneLine})`,
+  );
+});
+
+/**
+ * A name cut to a line budget is *verified* against that budget, not inferred.
+ *
+ * Fitting a name to `column * lines` of ink is the natural thing to write and
+ * is not the same statement: word wrap abandons the tail of a line whenever the
+ * next word will not fit, so a name whose total ink fits three lines can still
+ * draw four. The Visio tile has no room to absorb the fourth — its band is
+ * bounded by the icon below it — so the postcondition has to hold exactly,
+ * which is why `fitLabelToLines` re-measures its own answer before returning
+ * it and cannot exceed the budget even if the search misses.
+ */
+test('fitLabelToLines never returns a label that needs more lines than it was given', () => {
+  const linesOf = (text: string, columnIn: number, sizeIn: number): number =>
+    wrappedLineCount(text, columnIn, sizeIn * 72);
+  const names = [
+    'Azure Database for PostgreSQL Flexible Server - Business Critical tier with zone redundant high availability in East US 2',
+    'Azure Database for PostgreSQL フレキシブル サーバー ビジネス クリティカル ゾーン冗長 高可用性 東日本リージョン',
+    'aaaaaaaaaaaaaaaaaaaa bbbbbbbbbbbbbbbbbbbb cccccccccccccccccccc dddddddddddddddddddd',
+    'Supercalifragilisticexpialidociousness',
+    'one\ntwo\nthree\nfour\nfive\nsix',
+    '',
+  ];
+  for (const name of names) {
+    for (const column of [0.4, 0.9, 1.755, 3.0]) {
+      for (const maxLines of [1, 2, 3, 5]) {
+        const fitted = fitLabelToLines(name, column, 0.0972, maxLines, linesOf);
+        assert.ok(
+          linesOf(fitted, column, 0.0972) <= maxLines,
+          `"${name.slice(0, 24)}" fitted to ${maxLines} line(s) in ${column}in drew `
+          + `${linesOf(fitted, column, 0.0972)}: ${JSON.stringify(fitted)}`,
+        );
+      }
+    }
+  }
+  // A name that already fits is returned untouched, so nothing is cut for show.
+  assert.equal(
+    fitLabelToLines('Azure Front Door', 2.0, 0.0972, 3, linesOf), 'Azure Front Door',
+    'a name that fits its budget must come back whole',
   );
 });
 

@@ -49,6 +49,7 @@ import {
   clampedBoxes,
   computeBounds,
   computeContentBounds,
+  fitLabelToLines,
   metaSubline,
   narrateEdgeCallouts,
   truncateLabel,
@@ -494,12 +495,70 @@ function serviceGroupXml(
   // a hard break at all, which is how a four-paragraph name pasted out of a
   // spreadsheet sized its band for one line. `wrappedLinesIn` breaks between
   // words and honours newlines, the way Visio actually lays the shape out.
-  const labelLines = wrappedLinesIn(box.label, textW, fonts.label);
-  const neededTextH = labelLines * fonts.label * 1.28 + (meta ? fonts.meta * 1.4 : 0) + 0.05 * fonts.scale;
   const maxIcon = iconRelId ? Math.min(rect.h * 0.46, rect.w * 0.5, 0.55 * fonts.scale) : 0;
   const minIcon = Math.min(maxIcon, 0.18 * fonts.scale);
   const room = Math.max(0.2 * fonts.scale, rect.h - 0.19 * fonts.scale);
-  const textH = Math.max(0.16 * fonts.scale, Math.min(neededTextH, room - minIcon));
+  // What the band is allowed to become. Everything below fits *into* this;
+  // nothing is permitted to be drawn past it.
+  const bandRoom = Math.max(0.16 * fonts.scale, room - minIcon);
+  const lineH = 1.3;
+  const floorLabel = Math.min(fonts.label, LEGIBLE_IN * fonts.scale);
+  // The sub-line yields before the name does. A band with room for one line of
+  // type cannot hold a name *and* a SKU, and of the two it is the name that
+  // identifies the tile; the deck makes the same call for the same reason.
+  const showsMeta = !!meta && floorLabel * lineH + fonts.meta * 1.4 <= bandRoom;
+  const metaBand = showsMeta ? fonts.meta * 1.4 : 0;
+  //
+  // `min(needed, room - minIcon)` was a clamp with nothing behind it. Visio
+  // does not clip text to its text block — that is the premise the connector
+  // chip was fixed on — so a name needing five lines in a band cut to three
+  // simply drew the other two below the tile, through the icon and out of the
+  // shape. At the app's own default node size (180x75, and `AzureNode` is not
+  // resizable) a realistic 120-character service name overran by 0.271in and
+  // escaped the tile by 0.076in, while the 77-character name the corpus
+  // happened to exercise cleared it by two thousandths of an inch. The
+  // PowerPoint tile has never had this bug: it measures the name, and what
+  // will not fit is *cut*, visibly, with an ellipsis.
+  //
+  // So the name is made to fit rather than assumed to. Type comes down first,
+  // as far as the drawing's own legibility floor and no further, because a
+  // reader can zoom into small type but cannot recover a letter that was
+  // deleted; only then is the name cut. The icon keeps its floor throughout —
+  // the deck resolves the same squeeze by dropping the icon instead, and on
+  // this input drops three of four, which is the worse of the two trades: the
+  // icon is what says which service a tile is.
+  let labelFont = fonts.label;
+  let label = box.label;
+  for (let step = 0; step < 6; step += 1) {
+    const size = fonts.label - ((fonts.label - floorLabel) * step) / 5;
+    labelFont = size;
+    const fits = wrappedLinesIn(box.label, textW, size) * size * lineH + metaBand <= bandRoom;
+    if (fits) {
+      label = box.label;
+      break;
+    }
+    label = fitLabelToLines(
+      box.label,
+      textW,
+      size,
+      Math.floor((bandRoom - metaBand) / (size * lineH)),
+      wrappedLinesIn,
+    );
+  }
+  const labelLines = wrappedLinesIn(label, textW, labelFont);
+  const neededTextH = labelLines * labelFont * lineH + metaBand + 0.05 * fonts.scale;
+  // Never taller than the tile it sits in. `0.16 * scale` is a floor so a band
+  // is never degenerate, but a collapsed 12px node is 0.125in tall — shorter
+  // than one line of legible type — and the floor then declared a band half as
+  // tall again as the whole shape.
+  const textH = Math.min(rect.h, Math.max(0.16 * fonts.scale, Math.min(neededTextH, bandRoom)));
+  // Seated 0.06in above the tile's floor, but never pushed out through its
+  // ceiling. Positioning the band by its bottom edge alone hung the name of
+  // every collapsed tile 0.079in above the shape it names — 85 of them across
+  // the corpus, each one a caption floating in the gap over its own box.
+  const txtPinY = textH >= rect.h
+    ? rect.h / 2
+    : Math.min(0.06 + textH / 2, rect.h - textH / 2);
   const iconSizeIn = maxIcon > 0 ? Math.max(0, Math.min(maxIcon, room - textH)) : 0;
   const showIcon = iconRelId !== null && iconSizeIn >= 0.08 * fonts.scale;
   const iconChild = showIcon
@@ -528,21 +587,24 @@ function serviceGroupXml(
   // The sub-line colour is resolved against the tile it sits on, not fixed. A
   // flat #64748B reads at 4.26:1 or worse on every lighter category fill, which
   // is under the WCAG AA bar — the PowerPoint path was corrected the same way.
-  const metaColor = meta ? readableTextOn('#64748B', palette.fill) : '#64748B';
+  const metaColor = showsMeta ? readableTextOn('#64748B', palette.fill) : '#64748B';
   // The tile name is drawn in the category's own accent, which on two of the
   // sixteen palettes is unreadable on that category's fill — ai + machine
   // learning at 3.93:1 and identity at 2.49:1. PowerPoint draws the same words
   // at a flat #1F2937, so the two exporters were disagreeing about what is
   // legible. Resolve the accent against the tile the same way the sub-line is.
   const nameColor = readableTextOn(palette.text, palette.fill);
-  const characterRows = meta
-    ? `        <Row IX="0"><Cell N="Font" V="1"/><Cell N="Color" V="${nameColor}"/><Cell N="Size" V="${ff(fonts.label)}"/></Row>
+  const characterRows = showsMeta
+    ? `        <Row IX="0"><Cell N="Font" V="1"/><Cell N="Color" V="${nameColor}"/><Cell N="Size" V="${ff(labelFont)}"/></Row>
         <Row IX="1"><Cell N="Font" V="1"/><Cell N="Color" V="${metaColor}"/><Cell N="Size" V="${ff(fonts.meta)}"/></Row>`
-    : `        <Row IX="0"><Cell N="Font" V="1"/><Cell N="Color" V="${nameColor}"/><Cell N="Size" V="${ff(fonts.label)}"/></Row>`;
-  const textBody = meta
-    ? `<cp IX="0"/>${esc(box.label)}\n<cp IX="1"/>${esc(meta)}`
-    : esc(box.label);
+    : `        <Row IX="0"><Cell N="Font" V="1"/><Cell N="Color" V="${nameColor}"/><Cell N="Size" V="${ff(labelFont)}"/></Row>`;
+  const textBody = showsMeta
+    ? `<cp IX="0"/>${esc(label)}\n<cp IX="1"/>${esc(meta)}`
+    : esc(label);
 
+  // The shape keeps the *whole* name, always. Drawing Explorer lists it, the
+  // shape data carries it, and search finds it — so a name the tile had to cut
+  // is recoverable inside Visio rather than lost with the export.
   return `    <Shape ID="${ids.group}" NameU="Service.${ids.group}" Name="${esc(box.label)}" Type="Group" LineStyle="0" FillStyle="0" TextStyle="0">
       <Cell N="PinX" V="${f(rect.x + rect.w / 2)}"/>
       <Cell N="PinY" V="${f(rect.y + rect.h / 2)}"/>
@@ -558,7 +620,7 @@ function serviceGroupXml(
       <Cell N="TxtWidth" V="${f(textW)}"/>
       <Cell N="TxtHeight" V="${f(textH)}"/>
       <Cell N="TxtPinX" V="${f(rect.w / 2)}"/>
-      <Cell N="TxtPinY" V="${f(0.06 + textH / 2)}"/>
+      <Cell N="TxtPinY" V="${f(txtPinY)}"/>
       <Cell N="TxtLocPinX" V="${f(textW / 2)}"/>
       <Cell N="TxtLocPinY" V="${f(textH / 2)}"/>
       <Cell N="TxtAngle" V="0"/>

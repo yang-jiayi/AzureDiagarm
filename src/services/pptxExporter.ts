@@ -117,6 +117,7 @@ import {
   computeBounds,
   computeContentBounds,
   computeFitTransform,
+  fitLabelToWidth,
   metaSubline,
   partitionBoxes,
   stripHash,
@@ -985,42 +986,12 @@ function wrapOneLine(text: string, box: number, fontSizePt: number): number {
  * As much of `text` as will fit in `widthIn` at `fontSizePt`, with an ellipsis
  * for the rest. Used where the tile is too small for the whole name and the
  * only alternatives are unreadable type or an empty box.
+ *
+ * The policy itself lives in `diagramExportGeometry`, so the sheet cuts a name
+ * exactly where the deck cuts it.
  */
 function fitLabelToBox(rawText: string, widthIn: number, fontSizePt: number): string {
-  // Every caller draws the result on one line in a box sized for one line, so
-  // any hard break in the name has to go: a newline survives the sanitiser and
-  // becomes a real paragraph, and a four-line service name pasted out of a
-  // spreadsheet turned a 0.18in breadcrumb into 0.68in of ink painted over the
-  // row below it. A name is an identifier and reads as one line; prose that
-  // means its line breaks is measured and laid out elsewhere.
-  const text = rawText.replace(/[\r\n]+/g, ' ').replace(/\s{2,}/g, ' ');
-  if (estimateTextWidthIn(text, fontSizePt) <= widthIn) return text;
-  const budget = widthIn - estimateTextWidthIn('…', fontSizePt);
-  if (budget <= 0) return '…';
-  const chars = [...text];
-  // Keep the end as well as the beginning. Service names are overwhelmingly
-  // "<vendor> <family> <qualifier>", so the characters that tell two of them
-  // apart are the last ones: cut only from the right and a slide of twenty
-  // different services becomes twenty tiles reading "Azure Kubernetes Ser…",
-  // which a reader takes for a rendering fault rather than for a name that did
-  // not fit. Head and tail cannot overlap — their combined width is under a
-  // budget the whole string already exceeded.
-  let tail = '';
-  for (let i = chars.length - 1; i >= 0; i -= 1) {
-    const next = chars[i] + tail;
-    if (estimateTextWidthIn(next, fontSizePt) > budget / 3) break;
-    tail = next;
-  }
-  tail = tail.trimStart();
-  const headBudget = budget - estimateTextWidthIn(tail, fontSizePt);
-  let head = '';
-  for (const character of chars) {
-    if (estimateTextWidthIn(head + character, fontSizePt) > headBudget) break;
-    head += character;
-  }
-  head = head.trimEnd();
-  if (!head) return tail ? `…${tail}` : '…';
-  return `${head}…${tail}`;
+  return fitLabelToWidth(rawText, widthIn, fontSizePt / 72);
 }
 
 

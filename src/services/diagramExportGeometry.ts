@@ -642,6 +642,107 @@ export function truncateLabel(text: string, maxWidth: number): string {
   return `${result.trimEnd()}…`;
 }
 
+/**
+ * Ink width of a run, in inches, at a font size given in inches.
+ *
+ * The cell model above answers "how many columns", which is what a plain-text
+ * or HTML export needs. A drawing needs inches: a CJK glyph is one em wide and
+ * Latin averages about 0.54 em. Both exporters carried this same arithmetic
+ * privately — PowerPoint in points, Visio in inches — and one em is one em, so
+ * it lives here once and each caller converts at the door.
+ */
+export function labelInkWidthIn(text: string, fontSizeIn: number): number {
+  let units = 0;
+  for (const character of text) {
+    units += /[\u2e80-\u9fff\uac00-\ud7af\uff00-\uff60\uffe0-\uffe6]/.test(character) ? 1 : 0.54;
+  }
+  return units * fontSizeIn;
+}
+
+/**
+ * As much of `text` as will fit in `widthIn` of ink, with an ellipsis for the
+ * rest. Used where the shape is too small for the whole name and the only
+ * alternatives are unreadable type or an empty box.
+ *
+ * Shared, because a name cut one way in the deck and another way on the sheet
+ * is two different names for one service, and a reader comparing the two
+ * exports of the same drawing has no way to tell that they agree.
+ */
+export function fitLabelToWidth(rawText: string, widthIn: number, fontSizeIn: number): string {
+  // Every caller draws the result in a box sized from this measurement, so any
+  // hard break in the name has to go: a newline survives the sanitiser and
+  // becomes a real paragraph, and a four-line service name pasted out of a
+  // spreadsheet turned a 0.18in breadcrumb into 0.68in of ink painted over the
+  // row below it. A name is an identifier and reads as one line; prose that
+  // means its line breaks is measured and laid out elsewhere.
+  const text = rawText.replace(/[\r\n]+/g, ' ').replace(/\s{2,}/g, ' ');
+  if (labelInkWidthIn(text, fontSizeIn) <= widthIn) return text;
+  const budget = widthIn - labelInkWidthIn('…', fontSizeIn);
+  if (budget <= 0) return '…';
+  const chars = [...text];
+  // Keep the end as well as the beginning. Service names are overwhelmingly
+  // "<vendor> <family> <qualifier>", so the characters that tell two of them
+  // apart are the last ones: cut only from the right and a slide of twenty
+  // different services becomes twenty tiles reading "Azure Kubernetes Ser…",
+  // which a reader takes for a rendering fault rather than for a name that did
+  // not fit. Head and tail cannot overlap — their combined width is under a
+  // budget the whole string already exceeded.
+  let tail = '';
+  for (let i = chars.length - 1; i >= 0; i -= 1) {
+    const next = chars[i] + tail;
+    if (labelInkWidthIn(next, fontSizeIn) > budget / 3) break;
+    tail = next;
+  }
+  tail = tail.trimStart();
+  const headBudget = budget - labelInkWidthIn(tail, fontSizeIn);
+  let head = '';
+  for (const character of chars) {
+    if (labelInkWidthIn(head + character, fontSizeIn) > headBudget) break;
+    head += character;
+  }
+  head = head.trimEnd();
+  if (!head) return tail ? `…${tail}` : '…';
+  return `${head}…${tail}`;
+}
+
+/**
+ * As much of `text` as wraps into `maxLines` lines of a `columnIn`-wide box.
+ *
+ * Fitting to `columnIn * maxLines` of ink is not the same thing and is the
+ * weaker check: word wrap abandons the tail of a line whenever the next word
+ * will not fit, so a name whose total ink fits three lines can still draw four.
+ * The budget is searched rather than derived, and — this is the part that
+ * matters — the answer is *verified* against `linesOf` before it is returned,
+ * so the result cannot exceed `maxLines` even if the search misses.
+ */
+export function fitLabelToLines(
+  rawText: string,
+  columnIn: number,
+  fontSizeIn: number,
+  maxLines: number,
+  linesOf: (text: string, columnIn: number, fontSizeIn: number) => number,
+): string {
+  const lines = Math.max(1, Math.floor(maxLines));
+  const whole = rawText.replace(/[\r\n]+/g, ' ').replace(/\s{2,}/g, ' ');
+  if (linesOf(whole, columnIn, fontSizeIn) <= lines) return whole;
+  let low = 0;
+  let high = columnIn * lines;
+  // '…' is one glyph and always fits, so the search starts from an answer that
+  // already satisfies the postcondition and only ever improves on it.
+  let best = '…';
+  for (let step = 0; step < 24; step += 1) {
+    const mid = (low + high) / 2;
+    const candidate = fitLabelToWidth(whole, mid, fontSizeIn);
+    if (linesOf(candidate, columnIn, fontSizeIn) <= lines) {
+      best = candidate;
+      low = mid;
+    } else {
+      high = mid;
+    }
+  }
+  return best;
+}
+
 /** Wrap into lines of at most `maxWidth` cells, capped at `maxLines`. */
 export function wrapLabel(text: string, maxWidth: number, maxLines = 3): string[] {
   const words = text.split(/\s+/).filter(Boolean);

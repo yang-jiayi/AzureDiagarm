@@ -56,37 +56,51 @@ function auditTextWidthIn(text: string, fontSizePt: number): number {
  * takes more lines than the ratio predicts — which is precisely the case where
  * a table measured onto the page prints below it. Written out here rather than
  * imported, for the same reason as the estimator above.
+ *
+ * Counting is a view of the walk below, not a second walk. Two implementations
+ * of one wrap — however carefully kept in step — is the arrangement that has
+ * hidden every wrapping defect this audit has ever missed.
  */
 function auditWrappedLines(text: string, boxIn: number, fontSizePt: number): number {
   if (!text) return 1;
-  const box = Math.max(0.1, boxIn);
-  // Hard breaks are lines. Both renderers start a new paragraph at a newline;
-  // splitting on whitespace alone only ends a run at one.
-  return text.split(/\r\n|\r|\n/)
-    .reduce((total, paragraph) => total + auditWrapOne(paragraph, box, fontSizePt), 0);
+  return auditLineWidths(text, boxIn, fontSizePt).length;
 }
 
-/** One paragraph of the above, with no hard breaks left in it. */
-function auditWrapOne(text: string, box: number, fontSizePt: number): number {
-  if (!text) return 1;
-  const tokens = text.split(/(?<=[\s\u2e80-\u9fff\uac00-\ud7af\uff00-\uff60\uffe0-\uffe6])/);
-  let lines = 1;
-  let used = 0;
-  for (const token of tokens) {
-    const w = auditTextWidthIn(token, fontSizePt);
-    if (used > 0 && used + w > box) {
-      lines += 1;
-      used = 0;
+/**
+ * The ink width of each line the wrap produces.
+ *
+ * A box's width is what it *may* use; the widest of these is what it *does*
+ * use, and the difference is the padding that decides whether two overlapping
+ * boxes are actually two overlapping sentences.
+ *
+ * Hard breaks are lines: both renderers start a new paragraph at a newline, and
+ * splitting on whitespace alone only ends a run at one.
+ */
+function auditLineWidths(text: string, boxIn: number, fontSizePt: number): number[] {
+  const box = Math.max(0.1, boxIn);
+  const widths: number[] = [];
+  for (const paragraph of String(text ?? '').split(/\r\n|\r|\n/)) {
+    const tokens = paragraph.split(/(?<=[\s\u2e80-\u9fff\uac00-\ud7af\uff00-\uff60\uffe0-\uffe6])/);
+    let used = 0;
+    for (const token of tokens) {
+      const w = auditTextWidthIn(token, fontSizePt);
+      if (used > 0 && used + w > box) {
+        widths.push(used);
+        used = 0;
+      }
+      if (w > box) {
+        // A single run wider than the box breaks inside itself, filling every
+        // line it crosses.
+        const inner = Math.ceil(w / box);
+        for (let k = 0; k < inner - 1; k += 1) widths.push(box);
+        used = w - (inner - 1) * box;
+        continue;
+      }
+      used += w;
     }
-    if (w > box) {
-      const inner = Math.ceil(w / box);
-      lines += inner - 1;
-      used = w - (inner - 1) * box;
-      continue;
-    }
-    used += w;
+    widths.push(used);
   }
-  return Math.max(1, lines);
+  return widths;
 }
 /**
  * Chrome the exporter adds around the drawing, in inches.
@@ -1357,6 +1371,40 @@ function visioBrokenLabelFanScenario(): Scenario {
     data: { stepNumber: i + 1, stepDescription: `Step ${i + 1}.` },
   } as Edge));
   return { id: 'visio-broken-label-fan', nodes, edges };
+}
+
+/**
+ * Realistic service names on the app's own default tile.
+ *
+ * `AzureNode` has no resizer and every layout engine in the repo places nodes
+ * at 180x75, so this is not a stress case — it is what a user gets. The Visio
+ * tile sized its label band with `min(needed, room - minIcon)`, a clamp with no
+ * font reduction and no cut behind it, and Visio does not clip text to a text
+ * block: a 120-character name overran the band by 0.271in and was drawn 0.076in
+ * past the bottom of the tile, through the icon. The 77-character name the rest
+ * of the corpus happens to exercise cleared the clamp by 0.002in, which is why
+ * nothing had ever caught it.
+ *
+ * The names are graded — one that fits, one just over, one well over, and a
+ * Japanese one — so a regression shows up as a step rather than a cliff.
+ */
+function visioDefaultTileNamesScenario(): Scenario {
+  const names = [
+    'Azure Database for PostgreSQL flexible server - Business Critical - East US 2',
+    'Azure Database for PostgreSQL Flexible Server (Business Critical, Zone Redundant HA, East US 2)',
+    'Azure Database for PostgreSQL Flexible Server - Business Critical tier with zone redundant high availability in East US 2',
+    'Azure Database for PostgreSQL フレキシブル サーバー ビジネス クリティカル ゾーン冗長 高可用性 東日本リージョン',
+  ];
+  const nodes: Node[] = names.map((label, i) => ({
+    ...svc(`vdt${i}`, label, (i % 2) * 320, Math.floor(i / 2) * 190, undefined, true, 'databases'),
+    width: 180,
+    height: 75,
+  }));
+  const edges: Edge[] = [
+    { id: 'vdt-e0', source: 'vdt0', target: 'vdt1', label: 'replicates' } as Edge,
+    { id: 'vdt-e1', source: 'vdt2', target: 'vdt3', label: 'fails over to' } as Edge,
+  ];
+  return { id: 'visio-default-tile-names', nodes, edges };
 }
 
 /**
@@ -3358,7 +3406,11 @@ async function auditCustomerDeck(scenario: Scenario): Promise<string[]> {
     // measure, so its own rectangle is the whole story.
     for (const rect of tableRects.get(index) ?? []) {
       for (const pic of parseShapes(xml)) {
-        if (!pic.name.startsWith('icon-') && !pic.name.startsWith('picture-') && pic.text.trim()) continue;
+        // Named as a picture, not merely un-texted. The earlier reading let any
+        // untexted shape through — a background band, a divider, a rule — and
+        // compared it against a table as if it were an icon, which is a false
+        // positive waiting for the first decoration drawn behind a table.
+        if (!pic.name.startsWith('icon-') && !pic.name.startsWith('picture-')) continue;
         const ox = Math.min(pic.x + pic.w, rect.x + rect.w) - Math.max(pic.x, rect.x);
         const oy = Math.min(pic.y + pic.h, rect.y + rect.h) - Math.max(pic.y, rect.y);
         if (ox > 0.02 && oy > 0.02) {
@@ -5065,6 +5117,77 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
     serviceBoxes.push({ x: +pinX - +w / 2, y: +pinY - +h / 2, w: +w, h: +h, name });
   }
 
+  // The tile's *text*, measured — not the height the tile says it reserved.
+  //
+  // `serviceBoxes` above reads `Width`/`Height` and feeds one buried-tile rule;
+  // nothing here had ever looked at what the tile writes in itself. The band is
+  // sized by a clamp, and Visio does not clip text to a text block, so a name
+  // too long for the clamp is drawn straight out of the shape — through the
+  // icon and off the tile. This is the connector chip's defect on the tile, and
+  // it was reachable at the app's own default node size.
+  //
+  // Two rules, deliberately of different kinds:
+  //
+  //   A. A line of type cannot be shorter than its own em. That is not a model
+  //      of a renderer, it is what "font size" means, so `lines x size` is a
+  //      floor no line spacing can argue with. The exporter reserves at 1.3 em
+  //      and this asserts at 1.0, which means the guard shares *no* constant
+  //      with the thing it is checking — the exporter cannot satisfy it by
+  //      agreeing with it.
+  //   B. Ink drawn at the exporter's own spacing must still land on the tile.
+  //      A is about the declared band; B is about the catastrophe the reader
+  //      actually sees, which is words printed over the icon and off the shape.
+  const tileTextIssues: string[] = [];
+  const tileEscapes: string[] = [];
+  for (const m of xml.matchAll(
+    /<Shape [^>]*NameU="Service\.\d+"[\s\S]*?<\/Shape>\s*<\/Shapes>\s*<\/Shape>/g,
+  )) {
+    const shape = m[0];
+    const cell = (n: string): number => {
+      const hit = new RegExp(`<Cell N="${n}" V="([^"]*)"`).exec(shape);
+      return hit ? Number(hit[1]) : NaN;
+    };
+    const body = /<Text>([\s\S]*?)<\/Text>/.exec(shape)?.[1] ?? '';
+    // Written out rather than reusing the `<Text>([^<]*)` scrape below, which
+    // returns '' for any body that opens with a `<cp>` run marker — as every
+    // tile carrying a sub-line does.
+    const drawn = body
+      .replace(/<cp IX="\d+"\/>/g, '')
+      .split('\n')[0]
+      .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"')
+      .replace(/&apos;/g, "'").replace(/&#10;/g, '\n').replace(/&amp;/g, '&');
+    const sizeIn = Number(
+      /<Section N="Character">\s*<Row IX="0">(?:<Cell [^>]*\/>)*?<Cell N="Size" V="([^"]*)"/.exec(shape)?.[1] ?? '0',
+    );
+    const txtW = cell('TxtWidth');
+    const txtH = cell('TxtHeight');
+    const txtPinY = cell('TxtPinY');
+    const tileH = cell('Height');
+    if (!drawn || !(sizeIn > 0) || !(txtW > 0) || Number.isNaN(txtH) || Number.isNaN(txtPinY)) continue;
+    const lines = auditWrappedLines(drawn, txtW, sizeIn * 72);
+    const emFloor = lines * sizeIn;
+    if (emFloor > txtH + 0.005) {
+      tileTextIssues.push(
+        `"${drawn.slice(0, 24)}" needs ${emFloor.toFixed(3)}in for ${lines} line(s) at ${(sizeIn * 72).toFixed(2)}pt in a ${txtH.toFixed(3)}in band`,
+      );
+    }
+    const inkH = lines * sizeIn * 1.3;
+    const overshoot = Math.max(inkH / 2 - txtPinY, txtPinY + inkH / 2 - tileH);
+    if (overshoot > 0.01) {
+      tileEscapes.push(`"${drawn.slice(0, 24)}" by ${overshoot.toFixed(3)}in`);
+    }
+  }
+  if (tileTextIssues.length > 0) {
+    issues.push(
+      `${tileTextIssues.length} Visio service tile(s) write more text than the band they declare: ${tileTextIssues.slice(0, 3).join('; ')}`,
+    );
+  }
+  if (tileEscapes.length > 0) {
+    issues.push(
+      `${tileEscapes.length} Visio service tile(s) draw their name outside the tile: ${tileEscapes.slice(0, 3).join('; ')}`,
+    );
+  }
+
   // Glue. A .vsdx whose connectors are not attached to the shapes they join is
   // a picture, not a diagram, and being editable is the whole reason to export
   // Visio: drag a service in an unglued drawing and the arrows stay behind.
@@ -5233,6 +5356,7 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
     const sizePt = +(/<Cell N="Size" V="([\d.-]+)"\/>/.exec(shape)?.[1] ?? 0) * 72 || 7.2;
     const inkH = (auditWrappedLines(shown, Math.max(0.1, +txt[3] - 0.08), sizePt) * sizePt * 1.35) / 72;
     const boxH = Math.max(+txt[4], inkH);
+    const inkW = Math.max(0, ...auditLineWidths(shown, Math.max(0.1, +txt[3] - 0.08), sizePt));
     labelBoxes.push({
       text: shown,
       edge: /Name="edge-([^"]*)"/.exec(shape)?.[1] ?? '',
@@ -5240,6 +5364,10 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
       y: cy - boxH / 2,
       w: +txt[3],
       h: boxH,
+      inkW,
+      inkH,
+      cx,
+      cy,
     });
   }
   const overlap = (a: { x: number; y: number; w: number; h: number }, b: { x: number; y: number; w: number; h: number }): number => {
@@ -5269,21 +5397,35 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
   // 0.490in against 0.570in of text overlapped by 0.080in: a tenth of the area
   // bar, and every sentence unreadable. This is what the deck's painted-ink
   // rule has caught since it was written, and what the sheet could not.
+  //
+  // This compared *boxes* and excused a share of the narrower one — 0.25 of it,
+  // a number taken from the single scenario that was grazing. Measured, that
+  // scenario's chips carry 0.094in of dead padding a side, so the derivable bar
+  // was 0.188in and the constant was 0.425in: everything between them was glyph
+  // on glyph and silent, a 0.237in window, about six characters at 7.2pt. The
+  // padding is not a constant either — it is whatever the widest drawn line
+  // leaves over — so the rule now builds the ink rectangle each chip actually
+  // paints, centred the way the text is centred, and asks whether those
+  // intersect. No share, no constant, and it subsumes the height arm.
   const bled: string[] = [];
   for (let i = 0; i < labelBoxes.length; i += 1) {
     for (let j = i + 1; j < labelBoxes.length; j += 1) {
       const a = labelBoxes[i];
       const b = labelBoxes[j];
-      const ow = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x);
-      const oh = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y);
-      // A quarter of the narrower chip has to be shared before this is type on
-      // type. A chip's text is centred in it, so two boxes clipping corners by
-      // 0.038in of their 1.7in width — 1% of the area, which is what two hops
-      // crossing at a junction actually do — cannot have glyphs in the same
-      // place. Vertically there is no such slack: the lines are stacked at the
-      // pitch, so 0.02in of shared height is already one line over another.
-      if (ow > 0.25 * Math.min(a.w, b.w) && oh > 0.02) {
-        bled.push(`"${a.text.split('\n')[0].slice(0, 12)}"/"${b.text.split('\n')[0].slice(0, 12)}" by ${oh.toFixed(3)}in`);
+      const ink = (c: typeof a) => ({
+        x: c.cx - c.inkW / 2,
+        y: c.cy - c.inkH / 2,
+        w: c.inkW,
+        h: c.inkH,
+      });
+      const ia = ink(a);
+      const ib = ink(b);
+      const ow = Math.min(ia.x + ia.w, ib.x + ib.w) - Math.max(ia.x, ib.x);
+      const oh = Math.min(ia.y + ia.h, ib.y + ib.h) - Math.max(ia.y, ib.y);
+      if (ow > 0.02 && oh > 0.02) {
+        bled.push(
+          `"${a.text.split('\n')[0].slice(0, 12)}"/"${b.text.split('\n')[0].slice(0, 12)}" by ${ow.toFixed(3)}x${oh.toFixed(3)}in of ink`,
+        );
       }
     }
   }
@@ -5647,6 +5789,7 @@ async function main(): Promise<void> {
     visioTokenWorkflowScenario(),
     hardBreakInventoryScenario(),
     visioBrokenLabelFanScenario(),
+    visioDefaultTileNamesScenario(),
     squeezedBadgeScenario(),
     await generatedScenario(), await groupedGeneratedScenario(),
   ];
