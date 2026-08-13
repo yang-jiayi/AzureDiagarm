@@ -33,9 +33,12 @@ test('deleting a group preserves its child nodes at absolute positions', () => {
 
   assert.deepEqual(result.map(item => item.id), ['service', 'outside']);
   const service = result.find(item => item.id === 'service');
-  assert.deepEqual(service?.position, { x: 290, y: 210 });
-  assert.equal(service?.parentNode, undefined);
-  assert.equal(service?.extent, undefined);
+  // ?.parentNode === undefined passes when the node is missing too, and a
+  // child lost with its group is the defect these lines guard.
+  assert.ok(service, 'the child was deleted with its group');
+  assert.deepEqual(service.position, { x: 290, y: 210 });
+  assert.equal(service.parentNode, undefined);
+  assert.equal(service.extent, undefined);
 });
 
 test('explicitly selected children are still deleted with their group', () => {
@@ -57,10 +60,12 @@ test('nested groups retain their descendants when the outer group is deleted', (
 
   const inner = result.find(item => item.id === 'inner');
   const service = result.find(item => item.id === 'service');
-  assert.deepEqual(inner?.position, { x: 130, y: 140 });
-  assert.equal(inner?.parentNode, undefined);
-  assert.equal(service?.parentNode, 'inner');
-  assert.deepEqual(service?.position, { x: 5, y: 6 });
+  assert.ok(inner, 'the inner group was deleted with the outer one');
+  assert.ok(service, 'the descendant was deleted with the outer group');
+  assert.deepEqual(inner.position, { x: 130, y: 140 });
+  assert.equal(inner.parentNode, undefined);
+  assert.equal(service.parentNode, 'inner');
+  assert.deepEqual(service.position, { x: 5, y: 6 });
 });
 
 test('collectNodeAndDescendantIds includes nested group contents only', () => {
@@ -82,7 +87,8 @@ test('ungrouping a service preserves its absolute position through nested groups
   ], 'service');
 
   const service = result.find(item => item.id === 'service');
-  assert.deepEqual(service?.position, { x: 135, y: 146 });
-  assert.equal(service?.parentNode, undefined);
-  assert.equal(service?.extent, undefined);
+  assert.ok(service, 'the detached node was dropped');
+  assert.deepEqual(service.position, { x: 135, y: 146 });
+  assert.equal(service.parentNode, undefined);
+  assert.equal(service.extent, undefined);
 });

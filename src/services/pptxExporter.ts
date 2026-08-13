@@ -468,22 +468,46 @@ function chipSpoils(
   obstacles: readonly Obstacle[],
 ): boolean {
   const STRANGER_TILE_FRACTION = 0.02;
+  // A label may lean on the two services its own arrow connects — the reader
+  // attributes it correctly, and on a hop shorter than the label there is
+  // nowhere else for it to go. "Lean on" is not "cover": this test excluded
+  // endpoint tiles ENTIRELY, so a chip could bury the icon it was pointing at
+  // and the walk would not move it. Same tenth of the tile the gate allows, so
+  // the placer and the thing that checks it cannot disagree.
+  const OWN_TILE_FRACTION = 0.1;
+  // A caption is judged by how much of ITSELF is gone, not by how many square
+  // inches the overlap is. A sub-line is a 0.02in² sliver: burying 93% of
+  // "Standard_D4s_v5 · japaneast" costs less area than `SPOILED_CHIP_SQ_IN`
+  // allows, so an absolute budget scored total destruction as free — and a
+  // chip that grew a line taller took exactly that free ride, across 45 tiles
+  // in 3 decks.
+  const SPOILED_CAPTION_FRACTION = 0.5;
   const ownEnds = new Set([route.sourceId, route.targetId]);
   let spoiled = 0;
   let onStrangers = 0;
+  let onOwnEnds = 0;
+  let onCaptions = 0;
   for (const o of obstacles) {
-    const stranger = !o.annotation && !o.caption
-      && o.node !== undefined && !ownEnds.has(o.node);
-    if (!o.annotation && !o.caption && !stranger) continue;
+    const tile = !o.annotation && !o.caption && o.node !== undefined;
+    const stranger = tile && !ownEnds.has(o.node as string);
+    if (!o.annotation && !o.caption && !tile) continue;
     if (o.owner !== undefined && o.owner === route.bundleKey) continue;
     const dx = Math.min(block.x + block.w, o.x + o.w) - Math.max(block.x, o.x);
     const dy = Math.min(block.y + block.h, o.y + o.h) - Math.max(block.y, o.y);
     if (dx > 0 && dy > 0) {
-      if (stranger) onStrangers = Math.max(onStrangers, (dx * dy) / Math.max(1e-6, o.w * o.h));
-      else spoiled += dx * dy;
+      const fraction = (dx * dy) / Math.max(1e-6, o.w * o.h);
+      if (stranger) onStrangers = Math.max(onStrangers, fraction);
+      else if (tile) onOwnEnds = Math.max(onOwnEnds, fraction);
+      else {
+        spoiled += dx * dy;
+        if (o.caption) onCaptions = Math.max(onCaptions, fraction);
+      }
     }
   }
-  return spoiled > SPOILED_CHIP_SQ_IN || onStrangers > STRANGER_TILE_FRACTION;
+  return spoiled > SPOILED_CHIP_SQ_IN
+    || onStrangers > STRANGER_TILE_FRACTION
+    || onOwnEnds > OWN_TILE_FRACTION
+    || onCaptions > SPOILED_CAPTION_FRACTION;
 }
 
 /**
@@ -990,15 +1014,53 @@ function planSlideGeometry(diagram?: DiagramShapeSource | null): SlideGeometry {
   };
 }
 
+/** Han, kana, hangul and the fullwidth forms — one em each. */
+const CJK_RE = /[\u2e80-\u9fff\uac00-\ud7af\uff00-\uff60\uffe0-\uffe6]/;
+
+/**
+ * Advance of the WIDEST character in `text`, in inches.
+ *
+ * `estimateTextWidthIn` gives every non-CJK character 0.54 em, which is Segoe
+ * UI's *average lowercase* advance. An average is the right model for the width
+ * of a run and completely the wrong one for `max over characters`: measured
+ * against the installed Yu Gothic UI with GDI+, `@` is 0.955 em, `W` 0.934 and
+ * `M` 0.898 — 77% wider than the estimate. Asking "does one letter fit?" with
+ * the average answered yes for boxes that hold no capital at all, and drew a
+ * 31-character word one letter per line down a 2.55in ribbon.
+ *
+ * The buckets below are the measured maxima of each class, so this never
+ * under-states a glyph. It over-states a narrow one, which is the safe
+ * direction: the cost is dropping wording that would just have fitted, and the
+ * words are carried elsewhere.
+ */
+export function widestGlyphIn(text: string, fontSizePt: number): number {
+  let widest = 0;
+  for (const character of text) {
+    const em = CJK_RE.test(character)
+      ? 1
+      : /[A-Z]/.test(character)
+        ? 0.934
+        : /[a-z]/.test(character)
+          ? 0.861
+          : /[0-9]/.test(character)
+            ? 0.539
+            : /\s/.test(character)
+              ? 0
+              : 0.955;
+    widest = Math.max(widest, em);
+  }
+  return (widest * fontSizePt) / 72;
+}
+
 /**
  * Approximate rendered width of a string in inches. CJK characters occupy a
  * full em, Latin about 0.54 em in Yu Gothic UI — good enough to size a chip so
  * its text is not clipped.
  */
-function estimateTextWidthIn(text: string, fontSizePt: number): number {
+export function estimateTextWidthIn(text: string, fontSizePt: number): number {
   let units = 0;
   for (const character of text) {
-    units += /[\u2e80-\u9fff\uac00-\ud7af\uff00-\uff60\uffe0-\uffe6]/.test(character) ? 1 : 0.54;
+    units += CJK_RE.test(character) ? 1 : 0.54;
   }
   return (units * fontSizePt) / 72;
 }
@@ -1017,7 +1079,14 @@ function estimateTextWidthIn(text: string, fontSizePt: number): number {
  */
 export function wrappedLineCount(text: string, widthIn: number, fontSizePt: number): number {
   if (!text) return 1;
-  const box = Math.max(0.1, widthIn);
+  // Floored at one hair, not at 0.1in. A fixed floor on a column that shrinks
+  // with the drawing is the same lie the audit's own floors told and the same
+  // one `chipColumn` was rewritten to stop telling: an overview chip with a
+  // 0.075in column was measured against 0.1in, counted 3 lines where the text
+  // takes 4, and was emitted a line short — 78 chips across 3 decks, each
+  // painting its last line out through the bottom of the lozenge. Callers that
+  // want a floor must apply their own; this one reports what the column holds.
+  const box = Math.max(0.001, widthIn);
   // A hard line break is a line, and it is the one break every counter here
   // used to miss. `\n` survives the sanitiser — which scrubs U+000B but not
   // U+000A — and pptxgenjs turns each one into a real `<a:p>`, so the renderer
@@ -1368,9 +1437,7 @@ function connectorLabelBox(
   // scribble it. The overview is an index, not a reading surface, and the same
   // words are on the window slide that follows by exactly the route a tile name
   // too small to draw already takes.
-  const widestGlyph = wanted === ''
-    ? 0
-    : [...wanted].reduce((most, ch) => Math.max(most, estimateTextWidthIn(ch, fontSize)), 0);
+  const widestGlyph = widestGlyphIn(wanted, fontSize);
   const minChipW = widestGlyph + CHIP_INSET_IN * 2;
   const text = wanted;
   // Wide-and-short is the shape that fits a ladder: a fan of six chips each
@@ -1452,7 +1519,14 @@ function connectorLabelBox(
   const perLine = chipColumn(w);
   const lineH = (fontSize * 1.3) / 72;
 
-  const lines = Math.max(1, Math.ceil(estimateTextWidthIn(text, fontSize) / perLine));
+  // ceil(ink / column) is the break-anywhere ratio, and wrappedLineCount's
+  // own doc comment says why it is wrong: three tokens each wider than half the
+  // box take three lines where the ratio predicts two. This sizer was the one
+  // consumer in the file that did not use the helper, and the under-count was
+  // masked only for as long as the emitted chip gave the text 0.12in more
+  // column than the model reserved. Closing that gap turned it into overflow —
+  // 317 chips across 18 decks, one of them spilling 47% of its box.
+  const lines = wrappedLineCount(text, perLine, fontSize);
   const h = bare ? 0 : Math.max(0.16 * px, lines * lineH + 0.06);
   const badgeGap = bare ? 0 : 0.03;
 
@@ -2763,7 +2837,7 @@ function addGroupShape(
   // Measured against the COLUMN, not the box. Against the box this fired only
   // below about 0.043in — the one geometry the corpus happened to sample — and
   // was silent across the whole ordinary range of small zones between.
-  const widest = [...caption].reduce((most, ch) => Math.max(most, estimateTextWidthIn(ch, captionSize)), 0);
+  const widest = widestGlyphIn(caption, captionSize);
   if (caption && widest > captionColumn(title.w) + 0.01) {
     truncatedNames?.add(box.label);
     return { caption: { x: title.x, y: title.y, w: 0, h: 0 } };
@@ -3356,6 +3430,30 @@ async function addEditableDiagram(
         route, transform, labelFontSize, px, labelFrame, chipObstacles, bundle,
         undefined, foreignGapFor(route),
       );
+      // The sizer returns null for a labelled hop whose corridor cannot host
+      // one letter, and it is right to: a smear is worse than nothing. But it
+      // decides that against `route.stepNumber`, which is read BEFORE this walk
+      // can promote the route — so an un-numbered labelled edge took the drop
+      // and never reached the promotion branch below, built for exactly this
+      // edge. The wording then appeared on no slide at all: no chip, no badge,
+      // and `workflowListFromEdges` needs a number the edge does not have.
+      //
+      // Promote first, then ask again. The route now has a number, so the sizer
+      // keeps its callout and the sentence goes to the workflow slide.
+      // Membership of `promotable` already means "labelled and un-numbered", so
+      // it is the whole test — the route's own `label` is the resolved one.
+      if (box === null && !bundle?.badgesOnly && !thumbnail
+        && route.stepNumber === undefined) {
+        const step = promotable.get(route.id);
+        if (step !== undefined) {
+          route.stepNumber = step;
+          promotedSteps.set(step, route.label);
+          box = connectorLabelBox(
+            route, transform, labelFontSize, px, labelFrame, chipObstacles, bundle,
+            undefined, foreignGapFor(route),
+          );
+        }
+      }
       // A chip that still lands on a service name or on another callout after
       // the walk has done its best is worse than no chip: it is drawn at 92%
       // opacity over the one thing that says which service this is, or over a
@@ -3597,7 +3695,13 @@ async function addEditableDiagram(
         // by emigrating is recognised as stuck and falls back to bare numbered
         // callouts — which is what the Architecture Center draws for a bundle
         // of parallel flows anyway.
-        else if (rivals.length > 0) {
+        //
+        // Asked of every rung, not only the clean ones. As an `else if` a rung
+        // that was BOTH buried and misattributed counted as dirt alone, and
+        // dirt only mutes a fan of five or more — so a fan of three whose rungs
+        // clipped a tile *and* read as a stranger's label scored `stray = 0`
+        // and was drawn exactly where the reader misreads it.
+        if (rivals.length > 0) {
           const mineSegs = placed[i].own;
           const cx = rect.x + rect.w / 2;
           // The centre alone is not the rung. A numbered callout hangs off the
@@ -3935,9 +4039,14 @@ async function addEditableDiagram(
       // to ask only whether the new slot hit another chip, so a chip refused
       // for standing on a caption could be moved onto a different caption and
       // kept — the refusal was undone by the fix for a different defect.
-      if (route.stepNumber !== undefined && narratedSteps.has(route.stepNumber)
-        && chipSpoils(moved.block, { sourceId: route.sourceId, targetId: route.targetId, bundleKey: bundleKey(route) },
-          chipObstacles.filter((taken) => taken !== box.block))) {
+      //
+      // And it asked it only of narrated routes, so an un-numbered chip could
+      // be moved onto a service tile and kept while the identical numbered one
+      // beside it was refused. `settle` has no such exemption; neither should
+      // its repair. The seat this move came from was already cleared by
+      // `settle`, so refusing the move is always the safe answer.
+      if (chipSpoils(moved.block, { sourceId: route.sourceId, targetId: route.targetId, bundleKey: bundleKey(route) },
+        chipObstacles.filter((taken) => taken !== box.block))) {
         continue;
       }
       const slot = chipObstacles.indexOf(box.block);
@@ -3977,13 +4086,31 @@ async function addEditableDiagram(
         // is a fresh placement and owes the same answer as a first one. A rung
         // that now stands on a name is handed to the step list rather than
         // drawn, which is the trade the whole chip mechanism is built on.
-        if (moved && route.stepNumber !== undefined && narratedSteps.has(route.stepNumber)
-          && chipSpoils(moved.block, { sourceId: route.sourceId, targetId: route.targetId, bundleKey: key }, pool)) {
-          if (!thumbnail && route.label
-            && !carriesWording(narratedRows.get(route.stepNumber) ?? '', route.label)) {
-            mutedWording.set(route.stepNumber, route.label);
+        //
+        // Every rung, not just the narrated ones: a ladder is re-seated as a
+        // unit, so exempting its un-numbered members left them standing on the
+        // tiles the numbered ones had just been moved off. An un-numbered rung
+        // takes the same promotion `settle` gives it — a number, a callout, and
+        // its sentence on the workflow slide.
+        if (moved && chipSpoils(
+          { ...moved.block }, { sourceId: route.sourceId, targetId: route.targetId, bundleKey: key }, pool,
+        )) {
+          if (route.stepNumber !== undefined && narratedSteps.has(route.stepNumber)) {
+            if (!thumbnail && route.label
+              && !carriesWording(narratedRows.get(route.stepNumber) ?? '', route.label)) {
+              mutedWording.set(route.stepNumber, route.label);
+            }
+            moved = null;
+          } else if (route.stepNumber === undefined && !thumbnail) {
+            const step = promotable.get(route.id);
+            if (step !== undefined) {
+              route.stepNumber = step;
+              promotedSteps.set(step, route.label);
+              moved = null;
+            }
+          } else {
+            moved = null;
           }
-          moved = null;
         }
         chips.set(route.id, moved);
         badges.set(route.id, stepBadgeBox(

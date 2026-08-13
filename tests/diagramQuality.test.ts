@@ -99,9 +99,13 @@ test('quality fixes expand labels fit groups and reset custom contrast', () => {
   const fixedChild = fixed.nodes.find(item => item.id === 'child');
   const fixedGroup = fixed.nodes.find(item => item.id === 'group');
 
-  assert.ok(Number(fixedChild?.data.labelMaxWidth) >= 160);
-  assert.equal((fixedChild?.style as Record<string, unknown>)?.color, undefined);
-  assert.ok(Number((fixedGroup?.style as Record<string, unknown>)?.width) > 240);
+  assert.ok(fixedChild, 'the child node was dropped by the fix pass');
+  assert.ok(fixedGroup, 'the group node was dropped by the fix pass');
+  assert.ok(Number(fixedChild.data.labelMaxWidth) >= 160);
+  // A missing node satisfies `?.color === undefined` as readily as a cleared
+  // one; the missing case is the regression.
+  assert.equal((fixedChild.style as Record<string, unknown>)?.color, undefined);
+  assert.ok(Number((fixedGroup.style as Record<string, unknown>)?.width) > 240);
 });
 
 test('quality analysis flags unrecognized services by name', () => {

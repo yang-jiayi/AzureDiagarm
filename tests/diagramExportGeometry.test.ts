@@ -165,7 +165,11 @@ test('the node category drives export colours, with the icon folder as fallback'
   ]);
 
   assert.equal(boxes.get('ai')?.category, 'databases', 'category is normalised to the palette key');
-  assert.equal(boxes.get('ai')?.iconPath, undefined, 'an empty icon path is not treated as a path');
+  // `?.iconPath === undefined` passes just as well when the BOX is missing, so
+  // pin the box first: a dropped tile is exactly the regression being guarded.
+  const ai = boxes.get('ai');
+  assert.ok(ai, 'the tile was dropped from the export');
+  assert.equal(ai.iconPath, undefined, 'an empty icon path is not treated as a path');
   assert.equal(boxes.get('icon-only')?.category, 'networking');
   assert.equal(boxes.get('explicit-wins')?.category, 'compute');
   assert.equal(boxes.get('bare')?.category, 'other');
@@ -180,8 +184,15 @@ test('the canonical service name is carried into exports separately from the lab
 
   assert.equal(boxes.get('renamed')?.serviceName, 'SQL Database');
   assert.equal(boxes.get('renamed')?.label, 'Orders DB', 'the user label is never overwritten');
-  assert.equal(boxes.get('unnamed')?.serviceName, undefined);
-  assert.equal(boxes.get('blank')?.serviceName, undefined, 'whitespace is not a service name');
+  // Both of these claim something about a tile that is present. Written as
+  // `?.serviceName === undefined` they pass identically when the tile is gone,
+  // which is the failure mode, not the success one.
+  const unnamed = boxes.get('unnamed');
+  const blank = boxes.get('blank');
+  assert.ok(unnamed, 'the unnamed tile was dropped from the export');
+  assert.ok(blank, 'the blank-serviceName tile was dropped from the export');
+  assert.equal(unnamed.serviceName, undefined);
+  assert.equal(blank.serviceName, undefined, 'whitespace is not a service name');
 });
 
 /**

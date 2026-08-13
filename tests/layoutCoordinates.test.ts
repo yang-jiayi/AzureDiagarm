@@ -372,7 +372,11 @@ test('radial layout moves top-level groups as units and centers node bounds', as
     { x: 50, y: 80 },
   );
   assert.equal(result.nodes.find(candidate => candidate.id === 'grouped')?.parentNode, 'group');
-  assert.equal(result.nodes.find(candidate => candidate.id === 'free')?.parentNode, undefined);
+  // `?.parentNode === undefined` also passes when the node is GONE, which is
+  // the failure this line exists to catch — the only assertion covering `free`.
+  const free = result.nodes.find(candidate => candidate.id === 'free');
+  assert.ok(free, 'layout dropped the ungrouped node');
+  assert.equal(free.parentNode, undefined);
 });
 
 test('radial layout sizes rings to avoid overlap between large groups', async () => {

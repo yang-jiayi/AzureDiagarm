@@ -28,6 +28,50 @@ const PX_PER_IN = 96;
 const BASE_SLIDE_W_IN = 13.333;
 const BASE_SLIDE_H_IN = 7.5;
 /**
+ * Real per-character advances for Yu Gothic UI, in em, printable ASCII 33–126.
+ *
+ * Measured from the installed font with GDI+ (`Graphics.MeasureString`,
+ * `GenericTypographic`, 20 repeats of each glyph at 100pt to divide out the
+ * fitting error). This is the only number in this file that does not come from
+ * the exporter's own model, and it exists because a shared estimator makes a
+ * width error structurally unobservable: `auditTextWidthIn` is a
+ * character-for-character copy of `estimateTextWidthIn`, so the two agree about
+ * every mistake either of them makes.
+ *
+ * What that hid: both give every non-CJK character 0.54 em, Segoe UI's average
+ * *lowercase* advance. Used as a maximum it understates `@` (0.955), `W`
+ * (0.934) and `M` (0.898) by up to 77%, so the "does one letter fit?" guard
+ * passed boxes that hold no capital at all.
+ */
+const YU_GOTHIC_ADVANCE_EM = [
+  0.284, 0.392, 0.591, 0.539, 0.818, 0.800, 0.230, 0.302, 0.302, 0.417,
+  0.684, 0.217, 0.400, 0.217, 0.390, 0.539, 0.539, 0.539, 0.539, 0.539,
+  0.539, 0.539, 0.539, 0.539, 0.539, 0.217, 0.217, 0.684, 0.684, 0.684,
+  0.448, 0.955, 0.645, 0.573, 0.619, 0.701, 0.506, 0.488, 0.686, 0.710,
+  0.266, 0.357, 0.580, 0.471, 0.898, 0.748, 0.754, 0.560, 0.754, 0.598,
+  0.531, 0.524, 0.687, 0.621, 0.934, 0.590, 0.553, 0.570, 0.302, 0.539,
+  0.302, 0.684, 0.415, 0.268, 0.509, 0.588, 0.462, 0.589, 0.523, 0.313,
+  0.589, 0.566, 0.242, 0.242, 0.497, 0.242, 0.861, 0.566, 0.586, 0.588,
+  0.589, 0.348, 0.424, 0.339, 0.566, 0.479, 0.723, 0.459, 0.484, 0.452,
+  0.302, 0.239, 0.302, 0.684,
+];
+
+/** Measured advance of one character, in em. CJK is a full em by construction. */
+function measuredAdvanceEm(character: string): number {
+  if (/\s/.test(character)) return 0;
+  if (/[\u2e80-\u9fff\uac00-\ud7af\uff00-\uff60\uffe0-\uffe6]/.test(character)) return 1;
+  const code = character.codePointAt(0) ?? 0;
+  return code >= 33 && code <= 126 ? YU_GOTHIC_ADVANCE_EM[code - 33] : 0.54;
+}
+
+/** Widest character in `text`, in inches, from the measured table. */
+function measuredWidestGlyphIn(text: string, fontSizePt: number): number {
+  let widest = 0;
+  for (const character of text) widest = Math.max(widest, measuredAdvanceEm(character));
+  return (widest * fontSizePt) / 72;
+}
+
+/**
  * How wide a run of text is at a point size, measured here rather than imported.
  *
  * The exporter has its own copy of this arithmetic, and a rule that shares the
@@ -4041,7 +4085,7 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
     const text = shape.text.trim();
     const pt = shape.fontSize;
     if (text === '' || !pt) continue;
-    const widest = [...text].reduce((most, ch) => Math.max(most, auditTextWidthIn(ch, pt)), 0);
+    const widest = measuredWidestGlyphIn(text, pt);
     const column = Math.max(0, shape.w - shape.insetX);
     // Same 0.01in tolerance the exporter's own guard uses, so the rule and the
     // thing it measures cannot disagree about the borderline case.
@@ -4050,6 +4094,34 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
         `overview draws "${text}" at ${pt}pt in a ${shape.w.toFixed(3)}in box — `
         + `its widest letter needs ${widest.toFixed(3)}in and the column is ${column.toFixed(3)}in`,
       );
+    }
+  }
+  // A chip whose text takes more lines than its box is tall. Every other rule
+  // that could see this exempts `connector-` (`:3595`, `:3644`), and the
+  // overview slice hid the rest, so 317 chips across 18 decks overflowed in
+  // silence — one of them painting 47% of its box below itself, over the tiles
+  // and arrows it runs between.
+  //
+  // The column is read from the emitted `<a:bodyPr lIns/rIns>`, not from the
+  // exporter's model of it: the two disagreed by 0.12in for the whole life of
+  // this file, and a rule that reads the model cannot see that.
+  for (const [at, slideShapes] of [...perSlide.entries(), [-1, overviewShapes] as [number, Shape[]]]) {
+    for (const chip of slideShapes) {
+      if (!chip.name.startsWith('connector-label-')) continue;
+      const text = chip.text.trim();
+      const pt = chip.fontSize;
+      if (text === '' || !pt) continue;
+      const column = Math.max(MIN_TEXT_COLUMN_IN, chip.w - chip.insetX);
+      const rows = auditWrappedLines(text, column, pt);
+      const need = rows * ((pt * 1.3) / 72);
+      if (need > chip.h + 0.02) {
+        const where = at < 0 ? 'the overview' : `slide ${at + 2}`;
+        issues.push(
+          `${where} draws "${text}" at ${pt}pt in a ${chip.w.toFixed(3)}x${chip.h.toFixed(3)}in chip — `
+          + `${rows} line(s) in a ${column.toFixed(3)}in column need ${need.toFixed(3)}in, `
+          + `so ${(need - chip.h).toFixed(3)}in is painted below it`,
+        );
+      }
     }
   }
   // The PPTX equivalent of the Visio sheet-size invariant below is unreachable
@@ -4781,7 +4853,7 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
     // Both sides sanitised: the deck's chips and badges are keyed by the name
     // the exporter wrote, and its wording is the sanitised wording.
     const eid = auditStrip(String(edge.id));
-    const label = typeof edge.label === 'string' ? auditStrip(edge.label).trim() : '';
+    const label = auditStrip(readEdgeLabel(edge)).trim();
     if (!label || drawnChips.has(eid)) continue;
     const badge = drawnBadges.get(eid);
     if (badge !== undefined && explained.has(badge)) {
@@ -5697,7 +5769,7 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
   };
   const wanted = new Map<string, { need: number; sample: string }>();
   for (const edge of scenario.edges) {
-    const label = typeof edge.label === 'string' ? auditStrip(edge.label).trim() : '';
+    const label = auditStrip(readEdgeLabel(edge)).trim();
     // Truncation is a different rule's business, so compare on a stem short
     // enough that the exporter is always allowed to keep it.
     const stem = foldVsdx(label).slice(0, 12);
