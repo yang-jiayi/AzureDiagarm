@@ -9924,6 +9924,50 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
         + `— type shrunk harder than the drawing it labels (floor ${floorPt.toFixed(2)}pt)`);
   }
 
+  // PROPORTION IS NOT LEGIBILITY, AND THE RULE ABOVE ONLY BUYS PROPORTION.
+  //
+  // `floorPt` scales with the sheet on purpose: past a certain size Visio's own
+  // 200in page limit forces the drawing down, no absolute point size is
+  // reachable, and type shrunk exactly as hard as the drawing is the best the
+  // format allows. Fine - but it means a PASSING sheet can print every one of
+  // its names at 1.22pt, and four in this corpus did: 700 services at 1.22pt,
+  // 480 at 1.78pt, 260 at 3.30pt, 150 at 5.72pt.
+  //
+  // None of them shortened a single name, so the index page was never built -
+  // its trigger asked whether a tile had to CUT a name, not whether a reader
+  // could READ one - and every rule here was satisfied. Seven hundred service
+  // names on a sheet, in full, and not one of them recoverable at any size a
+  // person can read. That is the defect the index page exists to prevent,
+  // reached by the road its trigger did not cover.
+  //
+  // So: below the deck's absolute 7pt floor the drawing no longer counts as
+  // naming anything, and the index has to. The sheet keeps its labels either
+  // way - a Visio page is zoomable and a deleted label is not recoverable at
+  // all - this only requires that a readable copy exists somewhere.
+  if (minFontPt < 7 - 0.01) {
+    const indexRowText = [...indexXml.matchAll(/Name="service-name-\d+"[\s\S]*?<Text>([\s\S]*?)<\/Text>/g)]
+      .map((m) => unescapeXml(m[1].replace(/<[^>]*>/g, '')).trim());
+    // Both row forms. A shortened name is "<stub>  =  <full>"; a name that was
+    // legible-but-tiny was never shortened, so its row is the bare name.
+    const recoverable = (authored: string): boolean => indexRowText.some(
+      (row) => row === authored || row.endsWith(`  =  ${authored}`) || row.endsWith(`=  ${authored}`),
+    );
+    const unreadable: string[] = [];
+    for (const m of xml.matchAll(/NameU="Service\.\d+" Name="([^"]*)"/g)) {
+      const authored = unescapeXml(m[1]);
+      if (!authored || recoverable(authored)) continue;
+      unreadable.push(authored);
+    }
+    if (unreadable.length > 0) {
+      issues.push(
+        `sheet prints its smallest type at ${minFontPt}pt, under the 7pt floor a reader needs, `
+        + `and ${unreadable.length} of its service names are absent from the index page `
+        + `(${indexRowText.length} rows) \u2014 e.g. "${unreadable.slice(0, 3).join('", "')}" `
+        + `appear nowhere in the file at a readable size`,
+      );
+    }
+  }
+
   // The name a Visio tile draws has to fit the tile it names.
   //
   // Visio does not clip text to its text block - that is the premise the

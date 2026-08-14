@@ -1586,6 +1586,7 @@ function workflowPanelWidthIn(pageWidthIn: number, columns: number): number {
 function buildServiceNamePanel(
   startId: number,
   entries: Array<{ authored: string; drawn: string }>,
+  heading = 'Service names shortened on the drawing, in full',
 ): { shapes: string[]; nextId: number; widthIn: number; heightIn: number } {
   const shapes: string[] = [];
   let id = startId;
@@ -1598,9 +1599,17 @@ function buildServiceNamePanel(
   // other, in the panel whose whole purpose is that a shortened name stays
   // readable. Making the row twice as long for ASK-59-C (stub = full name) put
   // the longest string in the file in the only unmeasured box.
-  const rowText = entries.map((entry) => (
-    `${entry.drawn === '' ? '(not drawn)' : entry.drawn}  =  ${entry.authored}`
-  ));
+  //
+  // A name that was never shortened has no stub to look up, and printing
+  // `Azure Front Door  =  Azure Front Door` 700 times turns the one page that
+  // is supposed to rescue the sheet into a wall of doubled text. Those rows
+  // arrive here when the drawing was reduced so far that its labels stopped
+  // being readable rather than because any single tile was too narrow, so the
+  // full name on its own is the whole content of the row.
+  const rowText = entries.map((entry) => {
+    if (entry.drawn === entry.authored) return entry.authored;
+    return `${entry.drawn === '' ? '(not drawn)' : entry.drawn}  =  ${entry.authored}`;
+  });
   const PAD_IN = 0.24;
   // A cap, because one pathological name should not set the width of every
   // column. Rows past it wrap, and the pitch below grows to carry the wrap.
@@ -1651,7 +1660,7 @@ function buildServiceNamePanel(
       <Cell N="Rounding" V="0.04"/>
 ${roundedRectGeometry()}
     </Shape>`);
-  shapes.push(legendTextXml(id++, originX + 0.12, originY + boxH - 0.18, boxW - 0.24, 'Service names shortened on the drawing, in full'));
+  shapes.push(legendTextXml(id++, originX + 0.12, originY + boxH - 0.18, boxW - 0.24, heading));
   entries.forEach((_entry, index) => {
     const column = Math.floor(index / perColumn);
     const row = index % perColumn;
@@ -2253,6 +2262,9 @@ export async function buildVsdxPackage(
   // Names the tiles could not hold in full, for the panel that gives the sheet
   // the recovery route the deck has had all along.
   const shortenedNames: Array<{ authored: string; drawn: string }> = [];
+  // Every drawn name, for the case where the sheet is legible nowhere rather
+  // than on one tile. See the index decision below.
+  const allNames: Array<{ authored: string; drawn: string }> = [];
   const drawnByTile = new Map<string, string>();
   for (const service of services) {
     const rect = toRect(service);
@@ -2357,6 +2369,7 @@ export async function buildVsdxPackage(
       drawnName = readDrawn(tileXml);
     }
     if (drawnName) drawnByTile.set(drawnName, authoredName);
+    if (authoredName) allNames.push({ authored: authoredName, drawn: drawnName });
     if (authoredName && drawnName !== authoredName) {
       shortenedNames.push({ authored: authoredName, drawn: drawnName });
     }
@@ -3220,8 +3233,42 @@ export async function buildVsdxPackage(
   // Built here, emitted as page 2 below: it takes no room on the drawing, so it
   // cannot be painted over a tile and needs no reservation in the fit.
   let indexPage: { shapes: string[]; widthIn: number; heightIn: number } | null = null;
-  if (shortenedNames.length > 0) {
-    const namePanel = buildServiceNamePanel(nextId, shortenedNames);
+  //
+  // THE INDEX ANSWERS "CAN THE READER GET THIS NAME", NOT "WAS IT CUT".
+  //
+  // The trigger used to be `shortenedNames.length > 0`, which reads the wrong
+  // property. A name is out of reach if the tile could not hold it OR if the
+  // sheet prints it too small to read, and only the first of those shortens
+  // anything. Visio refuses a page over 200in on a side, so a drawing that
+  // does not fit is reduced instead, and past a certain size that reduction
+  // takes the type down with it: 700 services came out at 1.22pt, 480 at
+  // 1.78pt, 260 at 3.30pt, 150 at 5.72pt. All four printed every name in full,
+  // so all four had `shortenedNames.length === 0` and emitted NO INDEX PAGE AT
+  // ALL. Seven hundred service names on one sheet at a sixth of a point, and
+  // nowhere in the file a reader could recover a single one of them.
+  //
+  // That is the exact asymmetry this panel was added to close, arriving by the
+  // other road. The comment above still describes it correctly - a name the
+  // sheet cannot show has to exist somewhere a reader can see - the trigger
+  // just tested the one cause that had come up so far.
+  //
+  // The drawing is NOT stripped of its labels to compensate. A deck slide is a
+  // fixed viewing surface, so there the answer is to drop a caption that cannot
+  // be read and list it instead; a Visio page is a canvas the reader zooms, so
+  // 1.22pt type is recoverable in the application and a deleted label is
+  // recoverable nowhere. The sheet keeps its labels and gains the page that
+  // makes them readable on paper too.
+  const labelPt = fonts.label * 72;
+  const tooSmallToRead = labelPt < LEGIBLE_PT - 1e-9;
+  const indexEntries = tooSmallToRead ? allNames : shortenedNames;
+  if (indexEntries.length > 0) {
+    const namePanel = buildServiceNamePanel(
+      nextId,
+      indexEntries,
+      tooSmallToRead
+        ? `Service names in full. The drawing is reduced to ${Math.round(fonts.scale * 100)}% to fit a Visio page, so it prints labels at about ${labelPt.toFixed(1)} pt.`
+        : 'Service names shortened on the drawing, in full',
+    );
     nextId = namePanel.nextId;
     indexPage = { shapes: namePanel.shapes, widthIn: namePanel.widthIn, heightIn: namePanel.heightIn };
   }
