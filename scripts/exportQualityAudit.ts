@@ -4076,6 +4076,29 @@ function overRowScenario(count = 150, id = 'over-row'): Scenario {
 }
 
 /**
+ * The index page's own page size, which nothing has ever measured.
+ *
+ * Page 1 is held under Visio's 200in limit by squeezing gaps and then scaling
+ * the drawing bodily. Page 2's width goes straight from the panel into
+ * `PageWidth` with no clamp, and its width is `colW * ceil(rows / perColumn)`
+ * where `colW` caps at 6.0in for names past about 105 characters and
+ * `perColumn` can be as low as 27. Nothing bounds the row count.
+ *
+ * A HUNDRED LONG NAMES AMONG EIGHT HUNDRED SHORT ONES, deliberately. Only the
+ * long ones get shortened by their tiles, so the index carried 100 rows and
+ * 24.70in before the sheet started listing every name, and 900 rows and
+ * 204.70in after. The mix is what isolates the row count as the cause: the
+ * column width, the row pitch and the page-1 drawing are identical either way.
+ */
+function longNameIndexScenario(count = 900, longOnes = 100, id = 'index-page-limit'): Scenario {
+  const long = 'Azure Synapse Analytics dedicated SQL pool for consolidated enterprise reporting, downstream analytics and regulated financial disclosure workloads';
+  const nodes: Node[] = Array.from({ length: count }, (_, i) => (
+    svc(`x-${i}`, i < longOnes ? `${long} ${i}` : `Svc ${i}`, i * 150, 0)
+  ));
+  return { id, nodes, edges: [] };
+}
+
+/**
  * Deep scale, where the two pieces of drawing furniture that are not tiles get
  * measured: a zone caption and a numbered step badge.
  *
@@ -9730,8 +9753,36 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
   const textCount = (xml.match(/<Text>/g) ?? []).length;
   if (textCount < serviceCount) issues.push(`only ${textCount} text blocks for ${serviceCount} services`);
   // Visio refuses pages larger than 200" on a side.
-  if (pkg.pageWidthIn > 200 || pkg.pageHeightIn > 200) {
-    issues.push(`page ${pkg.pageWidthIn.toFixed(0)}x${pkg.pageHeightIn.toFixed(0)}in exceeds Visio's 200in limit`);
+  //
+  // EVERY PAGE, READ OFF THE FILE. This used to test `pkg.pageWidthIn`, which
+  // is the exporter's own answer for the DRAWING page, so it could neither
+  // disagree with the exporter nor see any other page. The index page's size
+  // is computed inside the panel and written straight into `PageWidth` with
+  // nothing between, and the panel's width is `colW * ceil(rows / perColumn)`
+  // with `colW` capped at 6.0in and `perColumn` as low as 27 - so it grows
+  // without bound in the row count, and the row count became "every service on
+  // the sheet" the moment the index started covering illegible names as well
+  // as shortened ones. 900 services with a hundred long names put page 2 at
+  // 204.70in: unopenable, and the reader loses the DRAWING too, from the page
+  // that exists to rescue the names.
+  //
+  // Meta-rule: every page the exporter emits must be measured by some rule.
+  // Page 2's page size was emitted and measured by nothing.
+  const pagesPart = pkg.parts.find((p) => /\/pages\.xml$/i.test(p.path));
+  const pagesXml = typeof pagesPart?.data === 'string' ? pagesPart.data : '';
+  for (const page of pagesXml.split('<Page ').slice(1)) {
+    const named = /Name="([^"]*)"/.exec(page.slice(0, 300));
+    const wCell = /<Cell N="PageWidth" V="([\d.]+)"\/>/.exec(page);
+    const hCell = /<Cell N="PageHeight" V="([\d.]+)"\/>/.exec(page);
+    if (!wCell || !hCell) continue;
+    const pw = +wCell[1];
+    const ph = +hCell[1];
+    if (pw > 200 || ph > 200) {
+      issues.push(
+        `page "${named?.[1] ?? '?'}" is ${pw.toFixed(2)}x${ph.toFixed(2)}in, over Visio's 200in `
+        + `limit \u2014 Visio refuses to open the file, so the drawing is lost with it`,
+      );
+    }
   }
   // Visio draws 1 : 1, so the sheet is the drawing plus its margins and the
   // workflow band — it can never legitimately be much larger than the drawing
@@ -11818,6 +11869,7 @@ const GOLDEN: Record<string, Golden> = {
   'tight-seam': { minTileIn: 1.563, named: 20, slides: 1 },
   'over-row': { minTileIn: 1.193, named: 150, slides: 23 },
   'over-row-120': { minTileIn: 1.206, named: 120, slides: 19 },
+  'index-page-limit': { minTileIn: 1.175, named: 900, slides: 98 },
   'over-row-700': { minTileIn: 1.17, named: 700, slides: 98 },
   'scaled-zone-row': { minTileIn: 1.175, named: 480, slides: 121 },
   'mid-zone-row': { minTileIn: 1.3, named: 40, slides: 12 },
@@ -11985,6 +12037,7 @@ const VSDX_GOLDEN: Record<string, VsdxGolden> = {
   'tight-seam': { media: 20, textBlocks: 24, minFontPt: 7.2 },
   'over-row': { media: 150, textBlocks: 185, minFontPt: 5.44 },
   'over-row-120': { media: 120, textBlocks: 155, minFontPt: 6.8 },
+  'index-page-limit': { media: 900, textBlocks: 900, minFontPt: 0.99 },
   'over-row-700': { media: 700, textBlocks: 735, minFontPt: 1.17 },
   'scaled-zone-row': { media: 480, textBlocks: 2879, minFontPt: 1.7 },
   'mid-zone-row': { media: 40, textBlocks: 239, minFontPt: 7.2 },
@@ -12189,6 +12242,7 @@ async function main(): Promise<void> {
     diagonalCascadeScenario(52, 'diagonal-cascade-52'),
     bandAboveScenario(), framedCascadeScenario(), tightSeamScenario(), overRowScenario(),
     overRowScenario(120, 'over-row-120'),
+    longNameIndexScenario(),
     // Past where the type floor used to stop tracking the drawing: the ratio
     // rule below was unsatisfiable by construction from about 24% down.
     overRowScenario(700, 'over-row-700'),

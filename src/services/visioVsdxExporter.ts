@@ -1635,7 +1635,26 @@ function buildServiceNamePanel(
   // The page is sized to the index, not the index to the page, so there is no
   // clamp to get wrong and nothing to overflow. Kept near a printable shape by
   // filling a column to about a Letter page before starting the next one.
-  const perColumn = Math.max(1, Math.min(entries.length, Math.floor((10.0 - 1.0) / rowH)));
+  const fillsALetterPage = Math.max(1, Math.min(entries.length, Math.floor((10.0 - 1.0) / rowH)));
+  // AND THEN GROW THE COLUMN UNTIL THE PAGE FITS.
+  //
+  // Filling to about a Letter page is a readability preference; staying under
+  // Visio's 200in page limit is not optional, and only page 1 was ever held to
+  // it. Page 2's width is `colW * ceil(rows / perColumn)`, `colW` caps at 6.0in
+  // for names past about 125 characters, `perColumn` falls to 19 when those
+  // names wrap to three lines, and NOTHING bounded the row count. That was
+  // survivable while the index listed only the names a tile had cut. It stopped
+  // being survivable when the index started listing every name on a sheet whose
+  // type is too small to read: 900 services with a hundred long names went from
+  // 100 rows and 24.70in to 900 rows and 288.70in, and Visio refuses to open the
+  // file at all - so the reader loses the DRAWING as well, from the page that
+  // exists to rescue the names.
+  //
+  // Trade the axis Visio has room on for the one it does not: a taller column
+  // costs scrolling, a wider page costs the file. The same 900 rows come to 33
+  // columns of 28 and a 198.70x14.06in page.
+  const maxColumns = Math.max(1, Math.floor((MAX_VISIO_PAGE_IN - 0.7) / colW));
+  const perColumn = Math.max(fillsALetterPage, Math.ceil(entries.length / maxColumns));
   const columns = Math.max(1, Math.ceil(entries.length / perColumn));
   const rows = Math.min(entries.length, perColumn);
   const boxW = colW * columns;
