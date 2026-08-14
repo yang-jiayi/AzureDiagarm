@@ -3229,6 +3229,64 @@ function touchingBadgeScenario(id: string, pairs: number): Scenario {
   return { id, nodes, edges };
 }
 
+/**
+ * A drawing that fits whole and legibly, carrying one service too narrow to mark.
+ *
+ * The liveness proof for the OTHER empty plan. `planWindowsAtCeiling` returns
+ * an empty window list in two opposite situations, and the planner has always
+ * distinguished them: `legible: false` means no grid in this frame reads, while
+ * `legible: true` means the drawing fits whole at the median and the only open
+ * question is whether to split it anyway to serve a narrower tile.
+ *
+ * Every fixture that reached the empty-baseline path before this one -
+ * `probe-blind-sliver` among them - reached it with `legible: false`, so a
+ * guard written on `windows.length` alone measured as identical to a guard
+ * written on both, and the corpus could not tell which had shipped.
+ *
+ * Eight ordinary services inside a 930x310px box on a 13.33in slide, so the
+ * frame clears the legibility scale outright and the baseline comes back empty
+ * and legible; one 14px sliver, which that same whole-page scale draws far
+ * below the markable width. Splitting is the only way its name gets on the
+ * canvas, and this is the shape that asks whether it may be bought.
+ */
+function fitsWholeSliverScenario(id: string, sliverW: number): Scenario {
+  const icon = '/Azure_Public_Service_Icons/Icons/networking/10061-icon-service-Virtual-Networks.svg';
+  const nodes: Node[] = Array.from({ length: 8 }, (_, i) => ({
+    id: `fw${i}`,
+    type: 'azureNode',
+    position: { x: (i % 4) * 260, y: Math.floor(i / 4) * 200 },
+    width: 150,
+    height: 110,
+    data: {
+      label: `Regional ingress gateway ${i + 1}`,
+      serviceName: 'Application Gateway',
+      category: 'networking',
+      iconPath: icon,
+    },
+  } as unknown as Node));
+  nodes.push({
+    id: 'fw-sliver',
+    type: 'azureNode',
+    position: { x: 200, y: 400 },
+    width: sliverW,
+    height: 110,
+    data: {
+      label: 'Private DNS zone',
+      serviceName: 'DNS Zones',
+      category: 'networking',
+      iconPath: icon,
+    },
+  } as unknown as Node);
+  const chain = ['fw0', 'fw1', 'fw2', 'fw3', 'fw-sliver', 'fw4', 'fw5', 'fw6', 'fw7'];
+  const edges: Edge[] = chain.slice(1).map((target, i) => ({
+    id: `fwe-${i}`,
+    source: chain[i],
+    target,
+    data: { stepNumber: i + 1, stepDescription: `Step ${i + 1} of the ingress path` },
+  } as unknown as Edge));
+  return { id, nodes, edges };
+}
+
 function glyphChainScenario(id: string, glyphW: number): Scenario {
   const icon = '/Azure_Public_Service_Icons/Icons/networking/10061-icon-service-Virtual-Networks.svg';
   const nodes: Node[] = Array.from({ length: 20 }, (_, i) => ({
@@ -11738,6 +11796,7 @@ const GOLDEN: Record<string, Golden> = {
   'probe-glyph16': { minTileIn: 0.168, named: 21, slides: 17 },
   'probe-glyph12': { minTileIn: 0.073, named: 20, slides: 11 },
   'probe-glyph11': { minTileIn: 0.067, named: 20, slides: 11 },
+  'probe-fits-whole-sliver': { minTileIn: 0.218, named: 9, slides: 8 },
   'probe-touching': { minTileIn: 0.205, named: 60, slides: 34 },
   'probe-mix-4': { minTileIn: 0.191, named: 5, slides: 3 },
   'probe-mix-5': { minTileIn: 0.191, named: 6, slides: 3 },
@@ -11903,6 +11962,7 @@ const VSDX_GOLDEN: Record<string, VsdxGolden> = {
   'probe-glyph16': { media: 21, textBlocks: 104, minFontPt: 7 },
   'probe-glyph12': { media: 21, textBlocks: 104, minFontPt: 7 },
   'probe-glyph11': { media: 21, textBlocks: 104, minFontPt: 7 },
+  'probe-fits-whole-sliver': { media: 9, textBlocks: 44, minFontPt: 7 },
   'probe-touching': { media: 60, textBlocks: 183, minFontPt: 7 },
   'probe-mix-4': { media: 5, textBlocks: 24, minFontPt: 7 },
   'probe-mix-5': { media: 6, textBlocks: 29, minFontPt: 7 },
@@ -12107,6 +12167,7 @@ async function main(): Promise<void> {
   glyphChainScenario('probe-glyph16', 16),
   glyphChainScenario('probe-glyph12', 12),
   glyphChainScenario('probe-glyph11', 11),
+  fitsWholeSliverScenario('probe-fits-whole-sliver', 14),
   touchingBadgeScenario('probe-touching', 30),
   mixCountScenario(4),
   mixCountScenario(5),

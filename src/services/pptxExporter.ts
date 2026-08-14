@@ -1021,24 +1021,47 @@ function planDiagramWindows(
   //
   // So the trade is judged on its two honest halves: it has to win a name, and
   // it may not spend most of the deck on slides that win nothing.
+  // A plan carries a baseline when it has windows, or when it has none because
+  // the drawing fits whole and legibly. It carries none when it has none
+  // because nothing fit - and then every number derived from it describes a
+  // page that was rejected.
+  const hasBaseline = (p: { windows: DiagramWindow[]; legible: boolean }): boolean =>
+    p.windows.length > 0 || p.legible;
   const worthTheSplit = (
     plan: { windows: DiagramWindow[] },
-    against: { windows: DiagramWindow[] },
+    against: { windows: DiagramWindow[]; legible: boolean },
   ): boolean => {
-    // An empty `against` is not a baseline of zero names, it is the absence of
-    // a baseline: no windows means the planner could not build at that scale at
-    // all. Read as a number it is the most permissive comparand there is, so
-    // every candidate beats it and the whole test goes vacuous. Measured on
-    // `probe-blind-sliver`, where `raised` comes back with 0 windows: the
-    // escape fired on a trivially true comparison and shipped 10 windows of
-    // 0.182in tiles in place of the 0.313in the deck would otherwise have
-    // drawn, for no names at all - 120 either way. There is nothing here to be
-    // worth more than, so the trade cannot be shown to be worth making.
-    if (plan.windows.length === 0 || against.windows.length === 0) return false;
+    // An empty plan is nothing to ship, and an empty ILLEGIBLE baseline is
+    // nothing to measure against.
+    //
+    // The two empties are opposites and the planner has always said so: an
+    // empty list with `legible: false` means no grid in this frame reads, so
+    // `perInOf` reports the whole-page scale for a page that was rejected - a
+    // phantom. Read as a number it is the most permissive comparand there is,
+    // so every candidate beats it and the test goes vacuous. Measured on
+    // `probe-blind-sliver`: the escape fired on a trivially true comparison and
+    // shipped 10 windows of 0.182in tiles in place of the 0.313in the deck
+    // would otherwise have drawn, for no names at all, 120 either way.
+    //
+    // An empty list with `legible: true` is a real baseline and must be
+    // measured, not refused. The drawing fits whole at that scale, `perInOf`
+    // describes the page that will actually be drawn, and whether to split it
+    // anyway to serve a narrower tile is precisely the question this function
+    // exists to answer. Refusing on `windows.length` alone answered it `no`
+    // unconditionally: measured on `probe-fits-whole-sliver`, the split names 9
+    // services against the baseline's 8 at a 0.200 wasted share, and the
+    // shorter guard threw that name away.
+    if (plan.windows.length === 0) return false;
+    if (against.windows.length === 0 && !against.legible) return false;
     if (markableAt(plan) <= markableAt(against)) return false;
     return wastedShare(plan) <= 0.5;
   };
-  if (bar > 0 && serve > 0 && perInOf(raised) * serve < bar - 1e-6) {
+  // `hasBaseline` before `perInOf`, for the same reason and one level out: on
+  // an empty illegible plan `perInOf` is a phantom, and this test was reading
+  // it to decide whether to enter the escape at all. It was harmless only
+  // because the guard inside `worthTheSplit` caught the value afterwards, which
+  // is two tests deep on one bad number with only the inner one knowing.
+  if (hasBaseline(raised) && bar > 0 && serve > 0 && perInOf(raised) * serve < bar - 1e-6) {
     const forced = planWindowsAtCeiling(
       bounds, services, frame, { ...options, waiveDensity: true }, true, serve,
     );

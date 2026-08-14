@@ -538,6 +538,53 @@ test('closing voids answers the same way however many regions the drawing has', 
   }
 });
 
+test('a void is judged against the box that defines the reach, not the first box on the axis', () => {
+  // The sweep carries TWO pieces of running state, and the fixtures above only
+  // ever exercised one of them. `reach` is where the drawing has got to; the
+  // threshold is `gap + (reachSize + ownSize) / 2`, so `reachSize` has to be
+  // the size of whichever box currently defines that reach. Leaving it at the
+  // first box's size is invisible on every drawing whose boxes are all the same
+  // size - which is every other fixture in this file - and invisible again on
+  // separations far above the threshold, where the term is swamped by the gap.
+  //
+  // It is visible only where the two coincide: a wide box defining the reach, a
+  // narrow one opening the drawing, and a gap placed so that the correct size
+  // clears the bar and the stale one does not. 600 + (2000 + 100) / 2 = 1650 is
+  // over; 600 + (100 + 100) / 2 = 700 is not. Between those two readings sits
+  // the difference between closing this void and leaving it open.
+  const WIDE = 2000;
+  const NARROW = 100;
+  const GAP = 600;
+
+  // Measured, not written down: the module does not export its gutter.
+  const control = compactEmptyGutters(new Map([
+    ['p', box('p', 0, 0)],
+    ['q', box('q', 6000, 0)],
+  ].map(([, b]) => [(b as ExportBox).id, b as ExportBox])));
+  const gutter = control.get('q')!.x - (control.get('p')!.x + control.get('p')!.w);
+  assert.ok(gutter > 0 && gutter < 6000, `the control void really closed (${gutter}px)`);
+
+  const first = box('first', 0, 0, NARROW);
+  const wide = box('wide', 200, 0, WIDE);
+  const far = box('far', wide.x + WIDE + GAP, 0, NARROW);
+  const compact = compactEmptyGutters(new Map([first, wide, far].map((b) => [b.id, b])));
+
+  // The gap behind `wide` is 100px and must stay open: nothing about it is a
+  // void, and closing it would mean the sweep had stopped distinguishing.
+  assert.equal(
+    compact.get('wide')!.x - (compact.get('first')!.x + NARROW),
+    200 - NARROW,
+    'the ordinary gap between the first two boxes is left exactly as authored',
+  );
+  assert.equal(
+    compact.get('far')!.x - (compact.get('wide')!.x + WIDE),
+    gutter,
+    'the void past the wide box is judged against the wide box and closed',
+  );
+  assert.equal(compact.get('wide')!.w, WIDE, 'the wide box keeps its width');
+  assert.equal(compact.get('far')!.w, NARROW, 'the far box keeps its width');
+});
+
 test('an arrow re-anchored onto another side never doubles back through its own tile', () => {
   // A service on the seam of a grid can only be reached by re-anchoring: every
   // lane the router can name finishes inside the neighbour flush against the
