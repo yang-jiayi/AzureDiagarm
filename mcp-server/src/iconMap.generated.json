@@ -2589,5 +2589,2650 @@
     "hasPricingData": false,
     "isUsageBased": false,
     "costRange": "Per-user subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Apps": {
+    "displayName": "Apps",
+    "iconFile": "m365-apps",
+    "category": "microsoft 365",
+    "aliases": [
+      "Apps",
+      "Microsoft 365 Apps",
+      "Office Apps",
+      "アプリ"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Apps List Detail": {
+    "displayName": "Apps List Detail",
+    "iconFile": "m365-apps-list-detail",
+    "category": "microsoft 365",
+    "aliases": [
+      "Apps List Detail"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Arrow Circle Left": {
+    "displayName": "Arrow Circle Left",
+    "iconFile": "m365-arrow-circle-left",
+    "category": "microsoft 365",
+    "aliases": [
+      "Arrow Circle Left"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Arrow Circle Right": {
+    "displayName": "Arrow Circle Right",
+    "iconFile": "m365-arrow-circle-right",
+    "category": "microsoft 365",
+    "aliases": [
+      "Arrow Circle Right"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Arrow Clockwise": {
+    "displayName": "Arrow Clockwise",
+    "iconFile": "m365-arrow-clockwise",
+    "category": "microsoft 365",
+    "aliases": [
+      "Arrow Clockwise"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Arrow Down": {
+    "displayName": "Arrow Down",
+    "iconFile": "m365-arrow-down",
+    "category": "microsoft 365",
+    "aliases": [
+      "Arrow Down"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Arrow Download": {
+    "displayName": "Arrow Download",
+    "iconFile": "m365-arrow-download",
+    "category": "microsoft 365",
+    "aliases": [
+      "Arrow Download"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Arrow Sync": {
+    "displayName": "Arrow Sync",
+    "iconFile": "m365-arrow-sync",
+    "category": "microsoft 365",
+    "aliases": [
+      "Arrow Sync",
+      "Microsoft Entra Connect",
+      "Directory Sync",
+      "同期"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Arrow Upload": {
+    "displayName": "Arrow Upload",
+    "iconFile": "m365-arrow-upload",
+    "category": "microsoft 365",
+    "aliases": [
+      "Arrow Upload"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Attach": {
+    "displayName": "Attach",
+    "iconFile": "m365-attach",
+    "category": "microsoft 365",
+    "aliases": [
+      "Attach"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Book Contacts": {
+    "displayName": "Book Contacts",
+    "iconFile": "m365-book-contacts",
+    "category": "microsoft 365",
+    "aliases": [
+      "Book Contacts",
+      "Exchange Online Address Book",
+      "Microsoft Entra Directory",
+      "アドレス帳"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Bot": {
+    "displayName": "Bot",
+    "iconFile": "m365-bot",
+    "category": "microsoft 365",
+    "aliases": [
+      "Bot",
+      "Microsoft Copilot",
+      "Copilot",
+      "Copilot Studio Agent",
+      "Agent",
+      "コパイロット",
+      "エージェント"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Building": {
+    "displayName": "Building",
+    "iconFile": "m365-building",
+    "category": "microsoft 365",
+    "aliases": [
+      "Building",
+      "On-premises",
+      "Corporate Headquarters",
+      "オンプレミス"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Building Cloud": {
+    "displayName": "Building Cloud",
+    "iconFile": "m365-building-cloud",
+    "category": "microsoft 365",
+    "aliases": [
+      "Building Cloud",
+      "Microsoft 365 Tenant",
+      "Cloud Organization",
+      "テナント"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Building Multiple": {
+    "displayName": "Building Multiple",
+    "iconFile": "m365-building-multiple",
+    "category": "microsoft 365",
+    "aliases": [
+      "Building Multiple",
+      "Multi-tenant Organization",
+      "Multi-geo",
+      "マルチテナント"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Building People": {
+    "displayName": "Building People",
+    "iconFile": "m365-building-people",
+    "category": "microsoft 365",
+    "aliases": [
+      "Building People"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Building Retail": {
+    "displayName": "Building Retail",
+    "iconFile": "m365-building-retail",
+    "category": "microsoft 365",
+    "aliases": [
+      "Building Retail"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Calculator": {
+    "displayName": "Calculator",
+    "iconFile": "m365-calculator",
+    "category": "microsoft 365",
+    "aliases": [
+      "Calculator"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Calendar Month": {
+    "displayName": "Calendar Month",
+    "iconFile": "m365-calendar-month",
+    "category": "microsoft 365",
+    "aliases": [
+      "Calendar Month",
+      "Outlook Calendar",
+      "Microsoft Bookings",
+      "Bookings",
+      "予定表"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Call": {
+    "displayName": "Call",
+    "iconFile": "m365-call",
+    "category": "microsoft 365",
+    "aliases": [
+      "Call",
+      "Microsoft Teams Phone",
+      "Teams Calling",
+      "通話"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Camera": {
+    "displayName": "Camera",
+    "iconFile": "m365-camera",
+    "category": "microsoft 365",
+    "aliases": [
+      "Camera"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Cart": {
+    "displayName": "Cart",
+    "iconFile": "m365-cart",
+    "category": "microsoft 365",
+    "aliases": [
+      "Cart"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Certificate": {
+    "displayName": "Certificate",
+    "iconFile": "m365-certificate",
+    "category": "microsoft 365",
+    "aliases": [
+      "Certificate",
+      "Compliance Certificate",
+      "Microsoft Purview Compliance Manager",
+      "認証"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Chart Multiple": {
+    "displayName": "Chart Multiple",
+    "iconFile": "m365-chart-multiple",
+    "category": "microsoft 365",
+    "aliases": [
+      "Chart Multiple",
+      "Power BI",
+      "Viva Insights",
+      "Microsoft Excel",
+      "分析"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Chat": {
+    "displayName": "Chat",
+    "iconFile": "m365-chat",
+    "category": "microsoft 365",
+    "aliases": [
+      "Chat",
+      "Teams Chat",
+      "Instant Message",
+      "メッセージ"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Chat Multiple": {
+    "displayName": "Chat Multiple",
+    "iconFile": "m365-chat-multiple",
+    "category": "microsoft 365",
+    "aliases": [
+      "Chat Multiple",
+      "Microsoft Teams Chat",
+      "Teams Chat",
+      "チャット"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Check": {
+    "displayName": "Check",
+    "iconFile": "m365-check",
+    "category": "microsoft 365",
+    "aliases": [
+      "Check",
+      "Approval",
+      "Validation",
+      "検証"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Checkmark": {
+    "displayName": "Checkmark",
+    "iconFile": "m365-checkmark",
+    "category": "microsoft 365",
+    "aliases": [
+      "Checkmark"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Checkmark Circle": {
+    "displayName": "Checkmark Circle",
+    "iconFile": "m365-checkmark-circle",
+    "category": "microsoft 365",
+    "aliases": [
+      "Checkmark Circle",
+      "Compliance Check",
+      "Approved",
+      "承認"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Chevron Circle": {
+    "displayName": "Chevron Circle",
+    "iconFile": "m365-chevron-circle",
+    "category": "microsoft 365",
+    "aliases": [
+      "Chevron Circle"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Clipboard": {
+    "displayName": "Clipboard",
+    "iconFile": "m365-clipboard",
+    "category": "microsoft 365",
+    "aliases": [
+      "Clipboard"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Clipboard Task List": {
+    "displayName": "Clipboard Task List",
+    "iconFile": "m365-clipboard-task-list",
+    "category": "microsoft 365",
+    "aliases": [
+      "Clipboard Task List",
+      "Microsoft Planner",
+      "Planner",
+      "To Do",
+      "Microsoft To Do",
+      "タスク"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Clock": {
+    "displayName": "Clock",
+    "iconFile": "m365-clock",
+    "category": "microsoft 365",
+    "aliases": [
+      "Clock",
+      "Microsoft Purview Retention",
+      "Retention",
+      "保持"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Clock Alarm": {
+    "displayName": "Clock Alarm",
+    "iconFile": "m365-clock-alarm",
+    "category": "microsoft 365",
+    "aliases": [
+      "Clock Alarm",
+      "Retention Policy",
+      "Microsoft Purview Retention",
+      "保持期限"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Cloud": {
+    "displayName": "Cloud",
+    "iconFile": "m365-cloud",
+    "category": "microsoft 365",
+    "aliases": [
+      "Cloud"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Cloud Add": {
+    "displayName": "Cloud Add",
+    "iconFile": "m365-cloud-add",
+    "category": "microsoft 365",
+    "aliases": [
+      "Cloud Add"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Cloud Arrow Down": {
+    "displayName": "Cloud Arrow Down",
+    "iconFile": "m365-cloud-arrow-down",
+    "category": "microsoft 365",
+    "aliases": [
+      "Cloud Arrow Down"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Cloud Arrow Up": {
+    "displayName": "Cloud Arrow Up",
+    "iconFile": "m365-cloud-arrow-up",
+    "category": "microsoft 365",
+    "aliases": [
+      "Cloud Arrow Up"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Cloud Beaker": {
+    "displayName": "Cloud Beaker",
+    "iconFile": "m365-cloud-beaker",
+    "category": "microsoft 365",
+    "aliases": [
+      "Cloud Beaker"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Cloud Cube": {
+    "displayName": "Cloud Cube",
+    "iconFile": "m365-cloud-cube",
+    "category": "microsoft 365",
+    "aliases": [
+      "Cloud Cube"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Cloud Database": {
+    "displayName": "Cloud Database",
+    "iconFile": "m365-cloud-database",
+    "category": "microsoft 365",
+    "aliases": [
+      "Cloud Database",
+      "Microsoft Graph",
+      "Microsoft 365 Substrate",
+      "データストア"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Cloud Desktop": {
+    "displayName": "Cloud Desktop",
+    "iconFile": "m365-cloud-desktop",
+    "category": "microsoft 365",
+    "aliases": [
+      "Cloud Desktop",
+      "Windows 365",
+      "Cloud PC",
+      "Azure Virtual Desktop",
+      "クラウド PC"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Code": {
+    "displayName": "Code",
+    "iconFile": "m365-code",
+    "category": "microsoft 365",
+    "aliases": [
+      "Code",
+      "Microsoft Graph API",
+      "Developer",
+      "開発"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Column Arrow Right": {
+    "displayName": "Column Arrow Right",
+    "iconFile": "m365-column-arrow-right",
+    "category": "microsoft 365",
+    "aliases": [
+      "Column Arrow Right"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Comment": {
+    "displayName": "Comment",
+    "iconFile": "m365-comment",
+    "category": "microsoft 365",
+    "aliases": [
+      "Comment"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Comment Multiple": {
+    "displayName": "Comment Multiple",
+    "iconFile": "m365-comment-multiple",
+    "category": "microsoft 365",
+    "aliases": [
+      "Comment Multiple"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Data Area": {
+    "displayName": "Data Area",
+    "iconFile": "m365-data-area",
+    "category": "microsoft 365",
+    "aliases": [
+      "Data Area"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Data Bar Vertical": {
+    "displayName": "Data Bar Vertical",
+    "iconFile": "m365-data-bar-vertical",
+    "category": "microsoft 365",
+    "aliases": [
+      "Data Bar Vertical",
+      "Microsoft Excel",
+      "Excel",
+      "Power BI",
+      "グラフ"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Data Pie": {
+    "displayName": "Data Pie",
+    "iconFile": "m365-data-pie",
+    "category": "microsoft 365",
+    "aliases": [
+      "Data Pie",
+      "Power BI",
+      "Microsoft Excel",
+      "レポート"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Data Trending": {
+    "displayName": "Data Trending",
+    "iconFile": "m365-data-trending",
+    "category": "microsoft 365",
+    "aliases": [
+      "Data Trending"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Data Trending (1)": {
+    "displayName": "Data Trending (1)",
+    "iconFile": "m365-data-trending-1",
+    "category": "microsoft 365",
+    "aliases": [
+      "Data Trending (1)"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Data Trending (2)": {
+    "displayName": "Data Trending (2)",
+    "iconFile": "m365-data-trending-2",
+    "category": "microsoft 365",
+    "aliases": [
+      "Data Trending (2)"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Data Usage": {
+    "displayName": "Data Usage",
+    "iconFile": "m365-data-usage",
+    "category": "microsoft 365",
+    "aliases": [
+      "Data Usage"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Database": {
+    "displayName": "Database",
+    "iconFile": "m365-database",
+    "category": "microsoft 365",
+    "aliases": [
+      "Database"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Deploy": {
+    "displayName": "Deploy",
+    "iconFile": "m365-deploy",
+    "category": "microsoft 365",
+    "aliases": [
+      "Deploy",
+      "Microsoft 365 Deployment",
+      "Rollout",
+      "展開"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Desktop Arrow Down": {
+    "displayName": "Desktop Arrow Down",
+    "iconFile": "m365-desktop-arrow-down",
+    "category": "microsoft 365",
+    "aliases": [
+      "Desktop Arrow Down",
+      "Windows Autopilot",
+      "Microsoft Intune",
+      "プロビジョニング"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Desktop Tower": {
+    "displayName": "Desktop Tower",
+    "iconFile": "m365-desktop-tower",
+    "category": "microsoft 365",
+    "aliases": [
+      "Desktop Tower"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Dismiss Circle": {
+    "displayName": "Dismiss Circle",
+    "iconFile": "m365-dismiss-circle",
+    "category": "microsoft 365",
+    "aliases": [
+      "Dismiss Circle"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Document": {
+    "displayName": "Document",
+    "iconFile": "m365-document",
+    "category": "microsoft 365",
+    "aliases": [
+      "Document"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Document Bullet List": {
+    "displayName": "Document Bullet List",
+    "iconFile": "m365-document-bullet-list",
+    "category": "microsoft 365",
+    "aliases": [
+      "Document Bullet List",
+      "Microsoft Lists",
+      "Lists",
+      "OneNote",
+      "Microsoft OneNote",
+      "リスト"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Document Bullet List Multiple": {
+    "displayName": "Document Bullet List Multiple",
+    "iconFile": "m365-document-bullet-list-multiple",
+    "category": "microsoft 365",
+    "aliases": [
+      "Document Bullet List Multiple"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Document Key": {
+    "displayName": "Document Key",
+    "iconFile": "m365-document-key",
+    "category": "microsoft 365",
+    "aliases": [
+      "Document Key",
+      "Microsoft Purview",
+      "Data Loss Prevention",
+      "DLP",
+      "データ損失防止"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Document Lock": {
+    "displayName": "Document Lock",
+    "iconFile": "m365-document-lock",
+    "category": "microsoft 365",
+    "aliases": [
+      "Document Lock",
+      "Microsoft Purview Information Protection",
+      "Sensitivity Label",
+      "機密ラベル"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Document Multiple": {
+    "displayName": "Document Multiple",
+    "iconFile": "m365-document-multiple",
+    "category": "microsoft 365",
+    "aliases": [
+      "Document Multiple"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Document One Page": {
+    "displayName": "Document One Page",
+    "iconFile": "m365-document-one-page",
+    "category": "microsoft 365",
+    "aliases": [
+      "Document One Page"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Document Text": {
+    "displayName": "Document Text",
+    "iconFile": "m365-document-text",
+    "category": "microsoft 365",
+    "aliases": [
+      "Document Text",
+      "Microsoft Word",
+      "Word",
+      "Loop",
+      "Microsoft Loop",
+      "文書"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Edit": {
+    "displayName": "Edit",
+    "iconFile": "m365-edit",
+    "category": "microsoft 365",
+    "aliases": [
+      "Edit"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Filmstrip Play": {
+    "displayName": "Filmstrip Play",
+    "iconFile": "m365-filmstrip-play",
+    "category": "microsoft 365",
+    "aliases": [
+      "Filmstrip Play",
+      "Microsoft Stream",
+      "Stream",
+      "Clipchamp",
+      "Microsoft Clipchamp",
+      "動画"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Fingerprint": {
+    "displayName": "Fingerprint",
+    "iconFile": "m365-fingerprint",
+    "category": "microsoft 365",
+    "aliases": [
+      "Fingerprint",
+      "Microsoft Entra ID",
+      "Multifactor Authentication",
+      "MFA",
+      "多要素認証"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Flag": {
+    "displayName": "Flag",
+    "iconFile": "m365-flag",
+    "category": "microsoft 365",
+    "aliases": [
+      "Flag",
+      "Microsoft Purview Alert",
+      "Compliance Alert",
+      "アラート"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Folder Multiple": {
+    "displayName": "Folder Multiple",
+    "iconFile": "m365-folder-multiple",
+    "category": "microsoft 365",
+    "aliases": [
+      "Folder Multiple",
+      "SharePoint Document Library",
+      "ドキュメント ライブラリ"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Folder Open": {
+    "displayName": "Folder Open",
+    "iconFile": "m365-folder-open",
+    "category": "microsoft 365",
+    "aliases": [
+      "Folder Open",
+      "OneDrive",
+      "OneDrive for Business",
+      "ファイル"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Folder Open Vertical": {
+    "displayName": "Folder Open Vertical",
+    "iconFile": "m365-folder-open-vertical",
+    "category": "microsoft 365",
+    "aliases": [
+      "Folder Open Vertical"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Folder People": {
+    "displayName": "Folder People",
+    "iconFile": "m365-folder-people",
+    "category": "microsoft 365",
+    "aliases": [
+      "Folder People",
+      "SharePoint",
+      "SharePoint Online",
+      "Team Site",
+      "SharePoint サイト"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Globe": {
+    "displayName": "Globe",
+    "iconFile": "m365-globe",
+    "category": "microsoft 365",
+    "aliases": [
+      "Globe",
+      "Microsoft 365 Multi-Geo",
+      "Internet",
+      "インターネット"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Grid Circles": {
+    "displayName": "Grid Circles",
+    "iconFile": "m365-grid-circles",
+    "category": "microsoft 365",
+    "aliases": [
+      "Grid Circles",
+      "Microsoft 365 App Launcher",
+      "Microsoft 365",
+      "アプリ ランチャー"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Handshake": {
+    "displayName": "Handshake",
+    "iconFile": "m365-handshake",
+    "category": "microsoft 365",
+    "aliases": [
+      "Handshake",
+      "Microsoft Teams External Access",
+      "B2B Collaboration",
+      "外部連携"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Hat Graduation": {
+    "displayName": "Hat Graduation",
+    "iconFile": "m365-hat-graduation",
+    "category": "microsoft 365",
+    "aliases": [
+      "Hat Graduation",
+      "Viva Learning",
+      "Learning",
+      "学習"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Headset": {
+    "displayName": "Headset",
+    "iconFile": "m365-headset",
+    "category": "microsoft 365",
+    "aliases": [
+      "Headset",
+      "Microsoft Teams Phone",
+      "Contact Center",
+      "コールセンター"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Heart": {
+    "displayName": "Heart",
+    "iconFile": "m365-heart",
+    "category": "microsoft 365",
+    "aliases": [
+      "Heart",
+      "Viva Insights Wellbeing",
+      "ウェルビーイング"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Heart Pulse": {
+    "displayName": "Heart Pulse",
+    "iconFile": "m365-heart-pulse",
+    "category": "microsoft 365",
+    "aliases": [
+      "Heart Pulse",
+      "Viva Insights",
+      "Service Health",
+      "正常性"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Image": {
+    "displayName": "Image",
+    "iconFile": "m365-image",
+    "category": "microsoft 365",
+    "aliases": [
+      "Image"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Key": {
+    "displayName": "Key",
+    "iconFile": "m365-key",
+    "category": "microsoft 365",
+    "aliases": [
+      "Key",
+      "Microsoft Entra ID",
+      "Entra ID",
+      "Credential",
+      "資格情報"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Laptop": {
+    "displayName": "Laptop",
+    "iconFile": "m365-laptop",
+    "category": "microsoft 365",
+    "aliases": [
+      "Laptop"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Layer Diagonal": {
+    "displayName": "Layer Diagonal",
+    "iconFile": "m365-layer-diagonal",
+    "category": "microsoft 365",
+    "aliases": [
+      "Layer Diagonal",
+      "Microsoft Graph API",
+      "Service Layer",
+      "レイヤー"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Lightbulb": {
+    "displayName": "Lightbulb",
+    "iconFile": "m365-lightbulb",
+    "category": "microsoft 365",
+    "aliases": [
+      "Lightbulb"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Lightbulb Checkmark": {
+    "displayName": "Lightbulb Checkmark",
+    "iconFile": "m365-lightbulb-checkmark",
+    "category": "microsoft 365",
+    "aliases": [
+      "Lightbulb Checkmark",
+      "Microsoft Copilot",
+      "Copilot Insight",
+      "Recommendation",
+      "提案"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Lock Closed": {
+    "displayName": "Lock Closed",
+    "iconFile": "m365-lock-closed",
+    "category": "microsoft 365",
+    "aliases": [
+      "Lock Closed",
+      "Conditional Access",
+      "Microsoft Entra ID Protection",
+      "条件付きアクセス"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Lock Shield": {
+    "displayName": "Lock Shield",
+    "iconFile": "m365-lock-shield",
+    "category": "microsoft 365",
+    "aliases": [
+      "Lock Shield",
+      "Microsoft Purview",
+      "Microsoft Defender XDR",
+      "Defender",
+      "Information Protection",
+      "情報保護"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Mail": {
+    "displayName": "Mail",
+    "iconFile": "m365-mail",
+    "category": "microsoft 365",
+    "aliases": [
+      "Mail",
+      "Exchange Online",
+      "Outlook",
+      "Microsoft Outlook",
+      "メール"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Mail Alert": {
+    "displayName": "Mail Alert",
+    "iconFile": "m365-mail-alert",
+    "category": "microsoft 365",
+    "aliases": [
+      "Mail Alert",
+      "Exchange Online Protection",
+      "Defender for Office 365",
+      "メール脅威"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Mail Attach": {
+    "displayName": "Mail Attach",
+    "iconFile": "m365-mail-attach",
+    "category": "microsoft 365",
+    "aliases": [
+      "Mail Attach",
+      "Safe Attachments",
+      "Defender for Office 365",
+      "添付ファイル"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Mail Error": {
+    "displayName": "Mail Error",
+    "iconFile": "m365-mail-error",
+    "category": "microsoft 365",
+    "aliases": [
+      "Mail Error",
+      "Quarantine",
+      "Defender for Office 365",
+      "検疫"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Mail Read": {
+    "displayName": "Mail Read",
+    "iconFile": "m365-mail-read",
+    "category": "microsoft 365",
+    "aliases": [
+      "Mail Read",
+      "Outlook",
+      "Exchange Online Mailbox",
+      "メールボックス"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Map": {
+    "displayName": "Map",
+    "iconFile": "m365-map",
+    "category": "microsoft 365",
+    "aliases": [
+      "Map"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Megaphone Loud": {
+    "displayName": "Megaphone Loud",
+    "iconFile": "m365-megaphone-loud",
+    "category": "microsoft 365",
+    "aliases": [
+      "Megaphone Loud",
+      "Viva Connections",
+      "Viva Amplify",
+      "Announcement",
+      "社内発信"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Merge": {
+    "displayName": "Merge",
+    "iconFile": "m365-merge",
+    "category": "microsoft 365",
+    "aliases": [
+      "Merge",
+      "Tenant Migration",
+      "Tenant-to-Tenant",
+      "テナント統合"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Notebook": {
+    "displayName": "Notebook",
+    "iconFile": "m365-notebook",
+    "category": "microsoft 365",
+    "aliases": [
+      "Notebook",
+      "Microsoft OneNote",
+      "OneNote",
+      "ノート"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Number Circle 1": {
+    "displayName": "Number Circle 1",
+    "iconFile": "m365-number-circle-1",
+    "category": "microsoft 365",
+    "aliases": [
+      "Number Circle 1"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Number Circle 2": {
+    "displayName": "Number Circle 2",
+    "iconFile": "m365-number-circle-2",
+    "category": "microsoft 365",
+    "aliases": [
+      "Number Circle 2"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Number Circle 3": {
+    "displayName": "Number Circle 3",
+    "iconFile": "m365-number-circle-3",
+    "category": "microsoft 365",
+    "aliases": [
+      "Number Circle 3"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Number Circle 4": {
+    "displayName": "Number Circle 4",
+    "iconFile": "m365-number-circle-4",
+    "category": "microsoft 365",
+    "aliases": [
+      "Number Circle 4"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Organization": {
+    "displayName": "Organization",
+    "iconFile": "m365-organization",
+    "category": "microsoft 365",
+    "aliases": [
+      "Organization",
+      "Microsoft Entra Administrative Unit",
+      "組織単位"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Organization Horizontal": {
+    "displayName": "Organization Horizontal",
+    "iconFile": "m365-organization-horizontal",
+    "category": "microsoft 365",
+    "aliases": [
+      "Organization Horizontal",
+      "Microsoft Entra Organizational Structure",
+      "組織図"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Panel Left Header": {
+    "displayName": "Panel Left Header",
+    "iconFile": "m365-panel-left-header",
+    "category": "microsoft 365",
+    "aliases": [
+      "Panel Left Header"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Panel Left Header Key": {
+    "displayName": "Panel Left Header Key",
+    "iconFile": "m365-panel-left-header-key",
+    "category": "microsoft 365",
+    "aliases": [
+      "Panel Left Header Key"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Payment": {
+    "displayName": "Payment",
+    "iconFile": "m365-payment",
+    "category": "microsoft 365",
+    "aliases": [
+      "Payment",
+      "Microsoft 365 Licensing",
+      "Subscription",
+      "サブスクリプション"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 People": {
+    "displayName": "People",
+    "iconFile": "m365-people",
+    "category": "microsoft 365",
+    "aliases": [
+      "People"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 People Audience": {
+    "displayName": "People Audience",
+    "iconFile": "m365-people-audience",
+    "category": "microsoft 365",
+    "aliases": [
+      "People Audience"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 People Community": {
+    "displayName": "People Community",
+    "iconFile": "m365-people-community",
+    "category": "microsoft 365",
+    "aliases": [
+      "People Community",
+      "Viva Engage",
+      "Yammer",
+      "Community",
+      "コミュニティ"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 People Settings": {
+    "displayName": "People Settings",
+    "iconFile": "m365-people-settings",
+    "category": "microsoft 365",
+    "aliases": [
+      "People Settings",
+      "Microsoft 365 Admin Center",
+      "Microsoft Entra Group",
+      "グループ管理"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 People Team": {
+    "displayName": "People Team",
+    "iconFile": "m365-people-team",
+    "category": "microsoft 365",
+    "aliases": [
+      "People Team",
+      "Microsoft Teams",
+      "Teams",
+      "Team",
+      "チーム",
+      "Teams チャネル"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Person": {
+    "displayName": "Person",
+    "iconFile": "m365-person",
+    "category": "microsoft 365",
+    "aliases": [
+      "Person"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Person Accounts": {
+    "displayName": "Person Accounts",
+    "iconFile": "m365-person-accounts",
+    "category": "microsoft 365",
+    "aliases": [
+      "Person Accounts",
+      "Microsoft Entra ID",
+      "User Account",
+      "ユーザー アカウント"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Person Desktop": {
+    "displayName": "Person Desktop",
+    "iconFile": "m365-person-desktop",
+    "category": "microsoft 365",
+    "aliases": [
+      "Person Desktop"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Person Settings": {
+    "displayName": "Person Settings",
+    "iconFile": "m365-person-settings",
+    "category": "microsoft 365",
+    "aliases": [
+      "Person Settings",
+      "Microsoft Intune",
+      "Microsoft 365 Admin Center",
+      "Administrator",
+      "管理者"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Person Square": {
+    "displayName": "Person Square",
+    "iconFile": "m365-person-square",
+    "category": "microsoft 365",
+    "aliases": [
+      "Person Square"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Person Wrench": {
+    "displayName": "Person Wrench",
+    "iconFile": "m365-person-wrench",
+    "category": "microsoft 365",
+    "aliases": [
+      "Person Wrench"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Phone": {
+    "displayName": "Phone",
+    "iconFile": "m365-phone",
+    "category": "microsoft 365",
+    "aliases": [
+      "Phone",
+      "Microsoft Teams Phone",
+      "Mobile Device",
+      "モバイル"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Phone Desktop": {
+    "displayName": "Phone Desktop",
+    "iconFile": "m365-phone-desktop",
+    "category": "microsoft 365",
+    "aliases": [
+      "Phone Desktop",
+      "Microsoft Intune",
+      "Intune",
+      "Managed Device",
+      "マネージド デバイス"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Phone Laptop": {
+    "displayName": "Phone Laptop",
+    "iconFile": "m365-phone-laptop",
+    "category": "microsoft 365",
+    "aliases": [
+      "Phone Laptop"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Phone Tablet": {
+    "displayName": "Phone Tablet",
+    "iconFile": "m365-phone-tablet",
+    "category": "microsoft 365",
+    "aliases": [
+      "Phone Tablet"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Phone Update": {
+    "displayName": "Phone Update",
+    "iconFile": "m365-phone-update",
+    "category": "microsoft 365",
+    "aliases": [
+      "Phone Update",
+      "Microsoft Intune",
+      "Windows Autopatch",
+      "デバイス更新"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Presenter": {
+    "displayName": "Presenter",
+    "iconFile": "m365-presenter",
+    "category": "microsoft 365",
+    "aliases": [
+      "Presenter"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Question Circle": {
+    "displayName": "Question Circle",
+    "iconFile": "m365-question-circle",
+    "category": "microsoft 365",
+    "aliases": [
+      "Question Circle",
+      "Microsoft 365 Support",
+      "Help",
+      "ヘルプ"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Radar": {
+    "displayName": "Radar",
+    "iconFile": "m365-radar",
+    "category": "microsoft 365",
+    "aliases": [
+      "Radar",
+      "Microsoft Defender XDR",
+      "Threat Detection",
+      "検出"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Receipt": {
+    "displayName": "Receipt",
+    "iconFile": "m365-receipt",
+    "category": "microsoft 365",
+    "aliases": [
+      "Receipt",
+      "Microsoft 365 Licensing",
+      "Billing",
+      "請求"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Ribbon": {
+    "displayName": "Ribbon",
+    "iconFile": "m365-ribbon",
+    "category": "microsoft 365",
+    "aliases": [
+      "Ribbon"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Ribbon Star": {
+    "displayName": "Ribbon Star",
+    "iconFile": "m365-ribbon-star",
+    "category": "microsoft 365",
+    "aliases": [
+      "Ribbon Star",
+      "Viva Engage Praise",
+      "Recognition",
+      "表彰"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Road Cone": {
+    "displayName": "Road Cone",
+    "iconFile": "m365-road-cone",
+    "category": "microsoft 365",
+    "aliases": [
+      "Road Cone",
+      "Microsoft 365 Roadmap",
+      "Preview",
+      "ロードマップ"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Script": {
+    "displayName": "Script",
+    "iconFile": "m365-script",
+    "category": "microsoft 365",
+    "aliases": [
+      "Script",
+      "Microsoft Graph PowerShell",
+      "PowerShell",
+      "スクリプト"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Search": {
+    "displayName": "Search",
+    "iconFile": "m365-search",
+    "category": "microsoft 365",
+    "aliases": [
+      "Search",
+      "Microsoft Search",
+      "SharePoint Search",
+      "検索"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Select All": {
+    "displayName": "Select All",
+    "iconFile": "m365-select-all",
+    "category": "microsoft 365",
+    "aliases": [
+      "Select All"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Settings": {
+    "displayName": "Settings",
+    "iconFile": "m365-settings",
+    "category": "microsoft 365",
+    "aliases": [
+      "Settings",
+      "Microsoft 365 Admin Center",
+      "Policy",
+      "ポリシー"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Settings Cog Multiple": {
+    "displayName": "Settings Cog Multiple",
+    "iconFile": "m365-settings-cog-multiple",
+    "category": "microsoft 365",
+    "aliases": [
+      "Settings Cog Multiple",
+      "Microsoft 365 Admin Center",
+      "Tenant Settings",
+      "テナント設定"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Shapes Three": {
+    "displayName": "Shapes Three",
+    "iconFile": "m365-shapes-three",
+    "category": "microsoft 365",
+    "aliases": [
+      "Shapes Three"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Share": {
+    "displayName": "Share",
+    "iconFile": "m365-share",
+    "category": "microsoft 365",
+    "aliases": [
+      "Share"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Share Screen Person": {
+    "displayName": "Share Screen Person",
+    "iconFile": "m365-share-screen-person",
+    "category": "microsoft 365",
+    "aliases": [
+      "Share Screen Person",
+      "Microsoft Teams Meeting",
+      "Teams Meeting",
+      "会議"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Share Screen Person Overlay": {
+    "displayName": "Share Screen Person Overlay",
+    "iconFile": "m365-share-screen-person-overlay",
+    "category": "microsoft 365",
+    "aliases": [
+      "Share Screen Person Overlay",
+      "Microsoft Teams Live Event",
+      "Teams Webinar",
+      "ウェビナー"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Shield Error": {
+    "displayName": "Shield Error",
+    "iconFile": "m365-shield-error",
+    "category": "microsoft 365",
+    "aliases": [
+      "Shield Error",
+      "Microsoft Defender for Office 365",
+      "Microsoft Defender XDR",
+      "Threat",
+      "脅威"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Shifts Activity": {
+    "displayName": "Shifts Activity",
+    "iconFile": "m365-shifts-activity",
+    "category": "microsoft 365",
+    "aliases": [
+      "Shifts Activity",
+      "Microsoft Teams Shifts",
+      "Shifts",
+      "シフト"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Shopping Bag": {
+    "displayName": "Shopping Bag",
+    "iconFile": "m365-shopping-bag",
+    "category": "microsoft 365",
+    "aliases": [
+      "Shopping Bag"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Signature": {
+    "displayName": "Signature",
+    "iconFile": "m365-signature",
+    "category": "microsoft 365",
+    "aliases": [
+      "Signature"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Slide Layout": {
+    "displayName": "Slide Layout",
+    "iconFile": "m365-slide-layout",
+    "category": "microsoft 365",
+    "aliases": [
+      "Slide Layout",
+      "Microsoft PowerPoint",
+      "PowerPoint",
+      "Sway",
+      "プレゼンテーション"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Tablet": {
+    "displayName": "Tablet",
+    "iconFile": "m365-tablet",
+    "category": "microsoft 365",
+    "aliases": [
+      "Tablet"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Tablet Laptop": {
+    "displayName": "Tablet Laptop",
+    "iconFile": "m365-tablet-laptop",
+    "category": "microsoft 365",
+    "aliases": [
+      "Tablet Laptop"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Tap": {
+    "displayName": "Tap",
+    "iconFile": "m365-tap",
+    "category": "microsoft 365",
+    "aliases": [
+      "Tap"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Task List LTR": {
+    "displayName": "Task List LTR",
+    "iconFile": "m365-task-list-ltr",
+    "category": "microsoft 365",
+    "aliases": [
+      "Task List LTR"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Task List Square": {
+    "displayName": "Task List Square",
+    "iconFile": "m365-task-list-square",
+    "category": "microsoft 365",
+    "aliases": [
+      "Task List Square",
+      "Microsoft Planner",
+      "Planner",
+      "Microsoft Lists",
+      "Lists",
+      "タスク一覧"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Text Bullet List": {
+    "displayName": "Text Bullet List",
+    "iconFile": "m365-text-bullet-list",
+    "category": "microsoft 365",
+    "aliases": [
+      "Text Bullet List"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Text Bullet List Square": {
+    "displayName": "Text Bullet List Square",
+    "iconFile": "m365-text-bullet-list-square",
+    "category": "microsoft 365",
+    "aliases": [
+      "Text Bullet List Square"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Text First Line": {
+    "displayName": "Text First Line",
+    "iconFile": "m365-text-first-line",
+    "category": "microsoft 365",
+    "aliases": [
+      "Text First Line"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Text Number List": {
+    "displayName": "Text Number List",
+    "iconFile": "m365-text-number-list",
+    "category": "microsoft 365",
+    "aliases": [
+      "Text Number List"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Toolbox": {
+    "displayName": "Toolbox",
+    "iconFile": "m365-toolbox",
+    "category": "microsoft 365",
+    "aliases": [
+      "Toolbox",
+      "Microsoft 365 Admin Center",
+      "Admin Tools",
+      "管理ツール"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Top Speed": {
+    "displayName": "Top Speed",
+    "iconFile": "m365-top-speed",
+    "category": "microsoft 365",
+    "aliases": [
+      "Top Speed",
+      "Microsoft 365 Performance",
+      "Network Optimization",
+      "パフォーマンス"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Video": {
+    "displayName": "Video",
+    "iconFile": "m365-video",
+    "category": "microsoft 365",
+    "aliases": [
+      "Video",
+      "Microsoft Stream",
+      "Teams Meeting Recording",
+      "録画"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Wallet Credit Card": {
+    "displayName": "Wallet Credit Card",
+    "iconFile": "m365-wallet-credit-card",
+    "category": "microsoft 365",
+    "aliases": [
+      "Wallet Credit Card",
+      "Microsoft 365 Licensing",
+      "Subscription",
+      "ライセンス"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Window": {
+    "displayName": "Window",
+    "iconFile": "m365-window",
+    "category": "microsoft 365",
+    "aliases": [
+      "Window"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Window Dev Edit": {
+    "displayName": "Window Dev Edit",
+    "iconFile": "m365-window-dev-edit",
+    "category": "microsoft 365",
+    "aliases": [
+      "Window Dev Edit"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Window Edit": {
+    "displayName": "Window Edit",
+    "iconFile": "m365-window-edit",
+    "category": "microsoft 365",
+    "aliases": [
+      "Window Edit"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Wrench": {
+    "displayName": "Wrench",
+    "iconFile": "m365-wrench",
+    "category": "microsoft 365",
+    "aliases": [
+      "Wrench",
+      "Microsoft 365 Admin Center",
+      "Configuration",
+      "構成"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365": {
+    "displayName": "Microsoft 365",
+    "iconFile": "m365-app-microsoft-365",
+    "category": "microsoft 365",
+    "aliases": [
+      "M365",
+      "Office 365",
+      "O365",
+      "Microsoft 365 Suite",
+      "マイクロソフト365"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Tenant": {
+    "displayName": "Microsoft 365 Tenant",
+    "iconFile": "m365-app-tenant",
+    "category": "microsoft 365",
+    "aliases": [
+      "M365 Tenant",
+      "Office 365 Tenant",
+      "Microsoft 365 Organization",
+      "テナント"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Admin Center": {
+    "displayName": "Microsoft 365 Admin Center",
+    "iconFile": "m365-app-admin-center",
+    "category": "microsoft 365",
+    "aliases": [
+      "M365 Admin Center",
+      "Microsoft 365 Admin Portal",
+      "Office 365 Admin Center",
+      "管理センター"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft 365 Copilot": {
+    "displayName": "Microsoft 365 Copilot",
+    "iconFile": "m365-app-copilot",
+    "category": "microsoft 365",
+    "aliases": [
+      "Microsoft Copilot",
+      "Copilot for Microsoft 365",
+      "M365 Copilot",
+      "Copilot Chat",
+      "Microsoft 365 コパイロット"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft Teams": {
+    "displayName": "Microsoft Teams",
+    "iconFile": "m365-app-teams",
+    "category": "microsoft 365",
+    "aliases": [
+      "Teams",
+      "MS Teams",
+      "Teams Workspace",
+      "チームズ"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft Teams Channel": {
+    "displayName": "Microsoft Teams Channel",
+    "iconFile": "m365-app-teams-channel",
+    "category": "microsoft 365",
+    "aliases": [
+      "Teams Channel",
+      "Teams Team",
+      "Teams チャネル"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft Teams Chat": {
+    "displayName": "Microsoft Teams Chat",
+    "iconFile": "m365-app-teams-chat",
+    "category": "microsoft 365",
+    "aliases": [
+      "Teams Chat",
+      "Teams Messaging",
+      "Teams チャット"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft Teams Meeting": {
+    "displayName": "Microsoft Teams Meeting",
+    "iconFile": "m365-app-teams-meeting",
+    "category": "microsoft 365",
+    "aliases": [
+      "Teams Meeting",
+      "Teams Webinar",
+      "Teams Live Event",
+      "Teams 会議"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft Teams Phone": {
+    "displayName": "Microsoft Teams Phone",
+    "iconFile": "m365-app-teams-phone",
+    "category": "microsoft 365",
+    "aliases": [
+      "Teams Phone",
+      "Teams Calling",
+      "Teams Voice",
+      "Teams 電話"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft Teams Rooms": {
+    "displayName": "Microsoft Teams Rooms",
+    "iconFile": "m365-app-teams-rooms",
+    "category": "microsoft 365",
+    "aliases": [
+      "Teams Room",
+      "Teams Rooms",
+      "MTR",
+      "Teams ルーム"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft Teams Shifts": {
+    "displayName": "Microsoft Teams Shifts",
+    "iconFile": "m365-app-teams-shifts",
+    "category": "microsoft 365",
+    "aliases": [
+      "Shifts",
+      "Teams Shifts",
+      "シフト"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "SharePoint Online": {
+    "displayName": "SharePoint Online",
+    "iconFile": "m365-app-sharepoint",
+    "category": "microsoft 365",
+    "aliases": [
+      "SharePoint",
+      "Microsoft SharePoint",
+      "SharePoint Site",
+      "SharePoint Embedded",
+      "シェアポイント"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "OneDrive for Business": {
+    "displayName": "OneDrive for Business",
+    "iconFile": "m365-app-onedrive",
+    "category": "microsoft 365",
+    "aliases": [
+      "OneDrive",
+      "Microsoft OneDrive",
+      "ワンドライブ"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Exchange Online": {
+    "displayName": "Exchange Online",
+    "iconFile": "m365-app-exchange-online",
+    "category": "microsoft 365",
+    "aliases": [
+      "Exchange",
+      "Microsoft Exchange Online",
+      "Exchange Online Mailbox",
+      "エクスチェンジ"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft Outlook": {
+    "displayName": "Microsoft Outlook",
+    "iconFile": "m365-app-outlook",
+    "category": "microsoft 365",
+    "aliases": [
+      "Outlook",
+      "Outlook on the web",
+      "アウトルック"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft Purview Information Protection": {
+    "displayName": "Microsoft Purview Information Protection",
+    "iconFile": "m365-app-purview-information-protection",
+    "category": "microsoft 365",
+    "aliases": [
+      "Purview Information Protection",
+      "Microsoft Information Protection",
+      "Sensitivity Label",
+      "MIP",
+      "情報保護"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft Purview Data Loss Prevention": {
+    "displayName": "Microsoft Purview Data Loss Prevention",
+    "iconFile": "m365-app-purview-dlp",
+    "category": "microsoft 365",
+    "aliases": [
+      "Purview DLP",
+      "Data Loss Prevention",
+      "DLP",
+      "データ損失防止"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft Purview Compliance Manager": {
+    "displayName": "Microsoft Purview Compliance Manager",
+    "iconFile": "m365-app-purview-compliance-manager",
+    "category": "microsoft 365",
+    "aliases": [
+      "Compliance Manager",
+      "Purview Compliance Manager",
+      "コンプライアンス マネージャー"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft Defender for Office 365": {
+    "displayName": "Microsoft Defender for Office 365",
+    "iconFile": "m365-app-defender-office-365",
+    "category": "microsoft 365",
+    "aliases": [
+      "Defender for Office 365",
+      "MDO",
+      "Office 365 ATP",
+      "Exchange Online Protection"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft Defender XDR": {
+    "displayName": "Microsoft Defender XDR",
+    "iconFile": "m365-app-defender-xdr",
+    "category": "microsoft 365",
+    "aliases": [
+      "Defender XDR",
+      "Microsoft 365 Defender",
+      "M365 Defender",
+      "XDR"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft Intune": {
+    "displayName": "Microsoft Intune",
+    "iconFile": "m365-app-intune",
+    "category": "microsoft 365",
+    "aliases": [
+      "Intune",
+      "Microsoft Endpoint Manager",
+      "Intune Managed Device",
+      "インチューン"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Windows 365": {
+    "displayName": "Windows 365",
+    "iconFile": "m365-app-windows-365",
+    "category": "microsoft 365",
+    "aliases": [
+      "Cloud PC",
+      "Windows 365 Cloud PC",
+      "ウィンドウズ365"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft Viva Connections": {
+    "displayName": "Microsoft Viva Connections",
+    "iconFile": "m365-app-viva-connections",
+    "category": "microsoft 365",
+    "aliases": [
+      "Viva Connections",
+      "Viva Amplify",
+      "ビバ コネクション"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft Viva Engage": {
+    "displayName": "Microsoft Viva Engage",
+    "iconFile": "m365-app-viva-engage",
+    "category": "microsoft 365",
+    "aliases": [
+      "Viva Engage",
+      "Yammer",
+      "Microsoft Yammer",
+      "ビバ エンゲージ"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft Viva Learning": {
+    "displayName": "Microsoft Viva Learning",
+    "iconFile": "m365-app-viva-learning",
+    "category": "microsoft 365",
+    "aliases": [
+      "Viva Learning",
+      "ビバ ラーニング"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft Viva Insights": {
+    "displayName": "Microsoft Viva Insights",
+    "iconFile": "m365-app-viva-insights",
+    "category": "microsoft 365",
+    "aliases": [
+      "Viva Insights",
+      "Workplace Analytics",
+      "ビバ インサイト"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft Planner": {
+    "displayName": "Microsoft Planner",
+    "iconFile": "m365-app-planner",
+    "category": "microsoft 365",
+    "aliases": [
+      "Planner",
+      "Microsoft Planner Plan",
+      "プランナー"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft To Do": {
+    "displayName": "Microsoft To Do",
+    "iconFile": "m365-app-to-do",
+    "category": "microsoft 365",
+    "aliases": [
+      "To Do",
+      "Microsoft ToDo",
+      "To-Do",
+      "トゥドゥ"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft Project": {
+    "displayName": "Microsoft Project",
+    "iconFile": "m365-app-project",
+    "category": "microsoft 365",
+    "aliases": [
+      "Project",
+      "Project for the web",
+      "Project Online",
+      "プロジェクト"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft OneNote": {
+    "displayName": "Microsoft OneNote",
+    "iconFile": "m365-app-onenote",
+    "category": "microsoft 365",
+    "aliases": [
+      "OneNote",
+      "ワンノート"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft Word": {
+    "displayName": "Microsoft Word",
+    "iconFile": "m365-app-word",
+    "category": "microsoft 365",
+    "aliases": [
+      "Word",
+      "ワード"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft Excel": {
+    "displayName": "Microsoft Excel",
+    "iconFile": "m365-app-excel",
+    "category": "microsoft 365",
+    "aliases": [
+      "Excel",
+      "エクセル"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft PowerPoint": {
+    "displayName": "Microsoft PowerPoint",
+    "iconFile": "m365-app-powerpoint",
+    "category": "microsoft 365",
+    "aliases": [
+      "PowerPoint",
+      "パワーポイント"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft Loop": {
+    "displayName": "Microsoft Loop",
+    "iconFile": "m365-app-loop",
+    "category": "microsoft 365",
+    "aliases": [
+      "Loop",
+      "Loop Component",
+      "Loop Workspace",
+      "ループ"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft Lists": {
+    "displayName": "Microsoft Lists",
+    "iconFile": "m365-app-lists",
+    "category": "microsoft 365",
+    "aliases": [
+      "Lists",
+      "SharePoint List",
+      "リスト"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft Forms": {
+    "displayName": "Microsoft Forms",
+    "iconFile": "m365-app-forms",
+    "category": "microsoft 365",
+    "aliases": [
+      "Forms",
+      "フォーム"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft Bookings": {
+    "displayName": "Microsoft Bookings",
+    "iconFile": "m365-app-bookings",
+    "category": "microsoft 365",
+    "aliases": [
+      "Bookings",
+      "Outlook Calendar",
+      "予約"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft Stream": {
+    "displayName": "Microsoft Stream",
+    "iconFile": "m365-app-stream",
+    "category": "microsoft 365",
+    "aliases": [
+      "Stream",
+      "Microsoft Stream on SharePoint",
+      "ストリーム"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft Clipchamp": {
+    "displayName": "Microsoft Clipchamp",
+    "iconFile": "m365-app-clipchamp",
+    "category": "microsoft 365",
+    "aliases": [
+      "Clipchamp",
+      "クリップチャンプ"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft Whiteboard": {
+    "displayName": "Microsoft Whiteboard",
+    "iconFile": "m365-app-whiteboard",
+    "category": "microsoft 365",
+    "aliases": [
+      "Whiteboard",
+      "ホワイトボード"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft Sway": {
+    "displayName": "Microsoft Sway",
+    "iconFile": "m365-app-sway",
+    "category": "microsoft 365",
+    "aliases": [
+      "Sway",
+      "スウェイ"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft Search": {
+    "displayName": "Microsoft Search",
+    "iconFile": "m365-app-search",
+    "category": "microsoft 365",
+    "aliases": [
+      "Microsoft Search in Bing",
+      "SharePoint Search",
+      "M365 検索"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft Graph": {
+    "displayName": "Microsoft Graph",
+    "iconFile": "m365-app-graph",
+    "category": "microsoft 365",
+    "aliases": [
+      "Microsoft Graph API",
+      "Graph API",
+      "Microsoft Graph Connector",
+      "グラフ API"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
+  },
+  "Microsoft Graph PowerShell": {
+    "displayName": "Microsoft Graph PowerShell",
+    "iconFile": "m365-app-graph-powershell",
+    "category": "microsoft 365",
+    "aliases": [
+      "Graph PowerShell",
+      "Microsoft 365 PowerShell",
+      "PowerShell スクリプト"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with a Microsoft 365 subscription (not in Azure pricing)"
   }
 }

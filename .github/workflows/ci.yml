@@ -117,6 +117,19 @@ jobs:
         working-directory: mcp-server
         run: npm run build
 
+      # The build's prebuild step regenerates iconMap/iconSvgs/pricing from the
+      # frontend sources. Those outputs are committed, so adding a frontend icon
+      # without re-running the sync leaves them stale. Only the deploy workflow
+      # used to notice, which turned ordinary drift into a blocked production
+      # deployment after merge. Fail here instead, while it is still a pull request.
+      - name: Verify generated files are current
+        run: |
+          set -Eeuo pipefail
+          if ! git diff --exit-code -- mcp-server/src; then
+            echo "::error::mcp-server generated files are stale. Run 'npm --prefix mcp-server run build' and commit the result."
+            exit 1
+          fi
+
       - name: Test
         working-directory: mcp-server
         run: npm test
