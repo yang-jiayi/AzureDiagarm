@@ -13,7 +13,7 @@ import path from 'node:path';
 import { Worker } from 'node:worker_threads';
 import JSZip from 'jszip';
 import type { Edge, Node } from 'reactflow';
-import { buildDiagramSlidePptx, buildArchitectureDeckPptx, calloutBarClampedFor } from '../src/services/pptxExporter.ts';
+import { buildDiagramSlidePptx, buildArchitectureDeckPptx, calloutPlanFor } from '../src/services/pptxExporter.ts';
 import { nativizeSlideXml } from '../src/services/pptxNativeShapes.ts';
 import { buildVsdxPackage, calloutMagnificationFor } from '../src/services/visioVsdxExporter.ts';
 import { WRAP_TRIGGER_RATIO } from '../src/utils/serpentineWrap.ts';
@@ -1734,6 +1734,30 @@ function whitespaceLabelsScenario(): Scenario {
 }
 
 /**
+ * `probe-whitespace`, numbered.
+ *
+ * The same geometry the planner correctly refuses to split further -
+ * `MIN_SERVICES_PER_TILED_SLIDE` rejects a six-window plan for six services -
+ * but now carrying step callouts. The refusal is right; what was wrong is that
+ * the deck it produces used to fall outside every badge rule, because the
+ * conflict test was gated on the DRAWN tile clearing the markable bar and these
+ * tiles draw at 0.1584in. Three discs shipped at 98% of the services they
+ * number, on a corpus reporting no issues at all.
+ */
+function refusedRaiseScenario(): Scenario {
+  const base = whitespaceLabelsScenario();
+  return {
+    id: 'probe-refused-raise',
+    nodes: base.nodes,
+    edges: base.edges.map((edge, i) => ({
+      ...edge,
+      id: `rr-e${i}`,
+      data: { ...(edge.data ?? {}), stepNumber: i + 1, stepDescription: `Step ${i + 1} of the intake path` },
+    } as unknown as Edge)),
+  };
+}
+
+/**
  * A drawing that reaches its own bottom-left corner.
  *
  * The legend was once painted straight over the tiles for want of a reserved
@@ -2967,6 +2991,154 @@ function mixedSliverScenario(): Scenario {
     data: { stepNumber: i + 1, stepDescription: `Step ${i + 1} of the request path` },
   } as unknown as Edge));
   return { id: 'probe-mixed-sliver', nodes, edges };
+}
+
+/**
+ * Two regions with a wide void between them, numbered.
+ *
+ * The magnifier's paper bound used to be measured on a span that still carried
+ * this void, because gutter compaction ran after it. Above roughly 5754px of
+ * separation `roomK` fell below 1 and the magnifier declined a move it plainly
+ * had - and then compaction deleted the void anyway and shipped a 14.8in sheet
+ * with 45in of the budget unused and seven discs at 77% of their tiles. The
+ * larger the gap, the LESS magnification: 700px of void magnified 1.395, 4000px
+ * magnified 1.282, and 7000px magnified not at all.
+ */
+function gutterRegionScenario(): Scenario {
+  const icon = '/Azure_Public_Service_Icons/Icons/networking/10061-icon-service-Virtual-Networks.svg';
+  const nodes: Node[] = Array.from({ length: 8 }, (_, i) => ({
+    id: `gk${i}`,
+    type: 'azureNode',
+    position: { x: i < 4 ? i * 160 : 7000 + (i - 4) * 160, y: 0 },
+    width: 14,
+    height: 30,
+    data: {
+      label: `Regional endpoint ${i + 1}`,
+      serviceName: 'Virtual Networks',
+      category: 'networking',
+      iconPath: icon,
+    },
+  } as unknown as Node));
+  const edges: Edge[] = Array.from({ length: 7 }, (_, i) => ({
+    id: `gke-${i}`,
+    source: `gk${i}`,
+    target: `gk${i + 1}`,
+    data: { stepNumber: i + 1, stepDescription: `Step ${i + 1} of the cross-region path` },
+  } as unknown as Edge));
+  return { id: 'probe-gutter-region', nodes, edges };
+}
+
+/**
+ * A gutter that is under the void bar when it is measured and over it once the
+ * drawing is magnified.
+ *
+ * `compactEmptyGutters` closes a band wider than `VOID_GUTTER_PX` (320 authored
+ * px). Two clusters 250px apart survive that test, and then the callout
+ * magnifier scales the whole drawing by 1.395 and hands the sheet a 349px void
+ * it would have closed. This is the case the SECOND compaction exists for -
+ * every other numbered fixture magnifies a drawing whose surviving gaps are far
+ * enough under the bar to stay under it.
+ */
+function magnifiedGutterScenario(): Scenario {
+  const icon = '/Azure_Public_Service_Icons/Icons/networking/10061-icon-service-Virtual-Networks.svg';
+  const xs = [0, 160, 320, 584, 744, 904, 1064, 1224];
+  const nodes: Node[] = xs.map((x, i) => ({
+    id: `mg${i}`,
+    type: 'azureNode',
+    position: { x, y: 0 },
+    width: 14,
+    height: 30,
+    data: {
+      label: `Segment endpoint ${i + 1}`,
+      serviceName: 'Virtual Networks',
+      category: 'networking',
+      iconPath: icon,
+    },
+  } as unknown as Node));
+  const edges: Edge[] = Array.from({ length: xs.length - 1 }, (_, i) => ({
+    id: `mge-${i}`,
+    source: `mg${i}`,
+    target: `mg${i + 1}`,
+    data: { stepNumber: i + 1, stepDescription: `Step ${i + 1} of the segment path` },
+  } as unknown as Edge));
+  return { id: 'probe-magnified-gutter', nodes, edges };
+}
+
+/**
+ * The same four services, drawn with and without zone rectangles around them.
+ *
+ * The gate used to take its "did the planner decline to serve this tile"
+ * median over every node in the scenario, groups included, so adding two zones
+ * moved the median from 24px to 150px and silenced a real 56% conflict without
+ * moving one drawn pixel. Both members must report identically.
+ */
+function zoneMedianScenario(zones: number): Scenario {
+  const icon = '/Azure_Public_Service_Icons/Icons/compute/10029-icon-service-Function-Apps.svg';
+  const sizes: Array<[number, number]> = [[150, 96], [24, 24], [24, 24], [24, 24]];
+  const nodes: Node[] = sizes.map(([width, height], i) => ({
+    id: `zm${i}`,
+    type: 'azureNode',
+    position: { x: i * 900, y: 0 },
+    width,
+    height,
+    data: {
+      label: `Workload component ${i + 1}`,
+      serviceName: 'Azure Functions',
+      category: 'compute',
+      iconPath: icon,
+    },
+  } as unknown as Node));
+  for (let z = 0; z < zones; z += 1) {
+    nodes.push({
+      id: `zmz${z}`,
+      type: 'groupNode',
+      position: { x: z * 1800, y: -80 },
+      width: 700,
+      height: 300,
+      data: { label: `Subscription ${z + 1}`, zoneKind: 'subscription' },
+    } as unknown as Node);
+  }
+  const edges: Edge[] = Array.from({ length: 3 }, (_, i) => ({
+    id: `zme-${i}`,
+    source: `zm${i}`,
+    target: `zm${i + 1}`,
+    data: { stepNumber: i + 1, stepDescription: `Step ${i + 1} of the workload path` },
+  } as unknown as Edge));
+  return { id: `probe-zone-median-${zones}`, nodes, edges };
+}
+
+/**
+ * Half the services below the median, numbered.
+ *
+ * The "the planner declined to serve this tile" exemption has no cost term, and
+ * `sorted[floor(n/2)]` puts up to half the drawing below the line by
+ * construction. Here it covered two of four services and all three hops, while
+ * the plan that reaches the bar costs exactly ONE extra window - and widens
+ * every other tile on the deck by 39% in the bargain.
+ */
+function halfTailScenario(): Scenario {
+  const icon = '/Azure_Public_Service_Icons/Icons/compute/10029-icon-service-Function-Apps.svg';
+  const sizes: Array<[number, number]> = [[150, 96], [24, 24], [150, 96], [24, 24]];
+  const nodes: Node[] = sizes.map(([width, height], i) => ({
+    id: `ht${i}`,
+    type: 'azureNode',
+    position: { x: i * 500, y: 0 },
+    width,
+    height,
+    data: {
+      label: `Pipeline stage ${i + 1}`,
+      serviceName: 'Azure Functions',
+      category: 'compute',
+      iconPath: icon,
+    },
+  } as unknown as Node));
+  const edges: Edge[] = Array.from({ length: 3 }, (_, i) => ({
+    id: `hte-${i}`,
+    source: `ht${i}`,
+    target: `ht${i + 1}`,
+    data: { stepNumber: i + 1, stepDescription: `Step ${i + 1} of the pipeline` },
+  } as unknown as Edge));
+  return { id: 'probe-half-tail', nodes, edges };
 }
 
 function bimodalSidecarScenario(): Scenario {
@@ -7146,7 +7318,8 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
   // suppressed the four real conflicts on the same deck. Both bugs are
   // unreachable now: there is one copy of the arithmetic and it is the copy
   // that ran.
-  const calloutBarClamped = calloutBarClampedFor(scenario);
+  const calloutPlan = calloutPlanFor(scenario);
+  const calloutBarClamped = calloutPlan.clamped;
   // The tile the planner was serving, in authored pixels.
   //
   // `planWindowsAtCeiling` targets the MEDIAN service, deliberately and at
@@ -7163,8 +7336,29 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
   // formats' different currencies. A sheet pays for the same fix in INCHES, so
   // `magnifiedForCallouts` now chases the narrowest badged tile and serves
   // exactly these hops. A deck pays in slides, and cannot.
-  const authoredSorted = [...authoredW.values()].sort((a, b) => a - b);
-  const medianAuthoredW = authoredSorted[Math.floor(authoredSorted.length * 0.5)] ?? 0;
+  // ASKED, not replicated, for the second time and the same reason. The gate's
+  // own median spanned every entry in `scenario.nodes` with a positive width,
+  // groups included, while the planner medians over `partitionBoxes(...)
+  // .services`, which excludes `kind === 'group'`. A zone rectangle is wider
+  // than a service, so the gate's median was always the higher of the two and
+  // the divergence was blindness only: drawing two 700px zones around four
+  // services moved the gate's median from 24px to 150px, put every service
+  // below it, and turned a reported 56% conflict into a silent pass without
+  // changing one drawn pixel. On a landing zone diagram, where subscription,
+  // VNet and subnet frames outnumber the services inside them, the gate's
+  // median was a zone width and the rule was off for the whole deck.
+  //
+  // And it is the SERVED width, not the median. The median was a proxy for
+  // "the planner declined to serve this tile" with no cost behind it, and
+  // `sorted[floor(n/2)]` puts up to half a drawing below its own median: on
+  // four services of 150, 24, 150, 24 authored px it excused two of the four
+  // and all three hops when the plan that serves them costs exactly one extra
+  // window. The planner now tries the narrowest badged tile first and keeps
+  // that plan whenever it clears the same density floor that already judges
+  // the median raise, so this number is the outcome of a measurement rather
+  // than an assumption - and where it still sits at the median, the deck
+  // measured the finer plan and could not afford it.
+  const medianAuthoredW = calloutPlan.servedTileW;
   // A label may lean on the two services its own arrow connects. The reader
   // still attributes it correctly — it is touching the very icons it is about
   // — and on a hop shorter than the label there is nowhere else for it to go.
@@ -7449,12 +7643,11 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
               + `${tile.toFixed(4)}in tile — ${((badge.w / tile) * 100).toFixed(0)}% of the `
               + 'service it is calling out');
           } else if (tile * BADGE_SHARE < floor - 1e-6
-            && tile >= MARKABLE_TILE_W_IN - 1e-6
             && !calloutBarClamped
-            && drawn.every((d) => {
+            && (calloutPlan.chaseAffordable || drawn.every((d) => {
               const w = authoredW.get(d.nodeId);
               return w === undefined || w >= medianAuthoredW;
-            })) {
+            }))) {
             // The empty intersection, stated as what it is. A tile this small
             // admits no disc that is both readable and proportionate, so there
             // is nothing the callout can do about it and the fix is a coarser
@@ -10941,6 +11134,12 @@ async function main(): Promise<void> {
   bandEstateScenario(16),
   blindSliverScenario(),
   mixedSliverScenario(),
+  gutterRegionScenario(),
+  magnifiedGutterScenario(),
+  zoneMedianScenario(0),
+  zoneMedianScenario(2),
+  halfTailScenario(),
+  refusedRaiseScenario(),
   longTitleScenario(20),
   longTitleScenario(70),
   longTitleScenario(95),

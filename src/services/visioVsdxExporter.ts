@@ -1891,12 +1891,29 @@ export async function buildVsdxPackage(
     const handed = handableWording.get(entry.step);
     return handed ? { ...entry, description: `${entry.description}（${handed}）` } : entry;
   });
-  // Gutters are closed AFTER the magnifier, not before it. `compactEmptyGutters`
-  // measures a band in authored pixels, so magnifying afterwards reopens every
-  // gap it was willing to leave: one sliver drawing came out with a 21.1in band
-  // carrying nothing, from a gutter that was under the bar when it was measured
-  // and three times over it by the time it was drawn.
-  const drawing = compactEmptyGutters(magnifiedForCallouts(collectExportBoxes(nodes), edges));
+  // Gutters are closed on BOTH sides of the magnifier, for two independent
+  // reasons.
+  //
+  // Before: `calloutMagnificationPlan` divides the room left on the page by the
+  // span it is asked to cover, and that span still contained the voids this
+  // very line deletes. Above roughly 5754px of separation the quotient fell
+  // under 1 and the magnifier declined a free enlargement, shipping a 14.8in
+  // sheet with 45in of the 60in budget unspent. Monotonically wrong: a 700px
+  // gap planned k=1.395, 4000px planned 1.282, 7000px planned 1.000.
+  //
+  // After: `compactEmptyGutters` measures a band in the coordinates it is
+  // handed, so a gap that was under the bar when it was measured can be over it
+  // once the drawing is scaled. That produced a 21.1in band carrying nothing.
+  // No fixture reproduces it today - round 74 moved the magnifier onto the
+  // narrowest BADGED service, which lowered k on every sliver drawing far
+  // enough that no surviving gutter crosses VOID_GUTTER_PX after scaling, and a
+  // purpose-built 250px gutter at k=1.395 measured byte-identical with and
+  // without this call. It is kept as a guard, not as a proven line: the defect
+  // was real, and what removed its reproduction was a change to how k is
+  // chosen, which the next round is free to change back.
+  const drawing = compactEmptyGutters(
+    magnifiedForCallouts(compactEmptyGutters(collectExportBoxes(nodes)), edges),
+  );
   // The band is page furniture, and furniture does not get to evict the thing
   // it describes. `workflowListFromEdges` has no cap, so a fully-meshed
   // architecture produces hundreds of numbered steps and a single-column band
