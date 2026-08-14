@@ -2149,7 +2149,7 @@ function zoneCaptions(slideXml: string): Array<{ text: string; pt: number; w: nu
     const size = /sz="(\d+)"/.exec(shape);
     if (!ext || !size) continue;
     const text = [...shape.matchAll(/<a:t>([\s\S]*?)<\/a:t>/g)]
-      .map((t) => t[1].replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>'))
+      .map((t) => t[1].replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&'))
       .join('');
     // EMU: 914400 per inch.
     out.push({ text, pt: +size[1] / 100, w: +ext[1] / 914400, h: +ext[2] / 914400 });

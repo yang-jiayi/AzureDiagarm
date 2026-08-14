@@ -412,6 +412,20 @@ function visioLinePattern(route: ExportRoute): number {
  * with it: a page 3 gets its override by existing rather than by someone
  * remembering to add a third constant.
  */
+/**
+ * Remove markup, and keep removing until there is none left. One pass of
+ * `/<[^>]*>/g` leaves residue on nested brackets - `<<b>>` becomes `<>` - and
+ * the caller then treats a string that still carries markup as a service name.
+ */
+function stripMarkup(text: string): string {
+  let out = text;
+  for (;;) {
+    const next = out.replace(/<[^>]*>/g, '');
+    if (next === out) return out;
+    out = next;
+  }
+}
+
 function contentTypesXml(pageCount: number): string {
   const pages = Array.from({ length: Math.max(1, pageCount) }, (_, i) => (
     `  <Override PartName="/visio/pages/page${i + 1}.xml" ContentType="application/vnd.ms-visio.page+xml"/>`
@@ -2359,8 +2373,7 @@ export async function buildVsdxPackage(
       fonts,
     );
     const authoredName = String(service.label ?? '').trim();
-    const readDrawn = (src: string): string => (/<Text>([\s\S]*?)<\/Text>/.exec(src)?.[1] ?? '')
-      .replace(/<[^>]*>/g, '')
+    const readDrawn = (src: string): string => stripMarkup(/<Text>([\s\S]*?)<\/Text>/.exec(src)?.[1] ?? '')
       .split('\n')[0]
       .trim()
       .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"')

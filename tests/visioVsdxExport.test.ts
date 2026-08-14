@@ -3,6 +3,20 @@ import assert from 'node:assert/strict';
 import type { Edge, Node } from 'reactflow';
 import { buildVsdxPackage, wrappedLinesIn } from '../src/services/visioVsdxExporter.ts';
 
+/** Strip markup to a fixed point, then unescape with the ampersand LAST. */
+function readXmlText(raw: string): string {
+  let out = raw;
+  for (;;) {
+    const next = out.replace(/<[^>]*>/g, '');
+    if (next === out) break;
+    out = next;
+  }
+  return out
+    .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'").replace(/&amp;/g, '&');
+}
+
+
 /**
  * Minimal well-formedness check: tags must nest and close correctly and text
  * must not contain unescaped markup. Enough to catch the mistakes an XML
@@ -791,8 +805,7 @@ test('a name the tile had to shorten is still spelled out somewhere on the sheet
   const drawn = new Set<string>();
   for (const chunk of xml.split('<Shape ID=')) {
     for (const hit of chunk.matchAll(/<Text>([\s\S]*?)<\/Text>/g)) {
-      drawn.add(hit[1].replace(/<[^>]*>/g, '').replace(/&amp;/g, '&').replace(/&lt;/g, '<')
-        .replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'").trim());
+      drawn.add(readXmlText(hit[1]).trim());
     }
   }
   for (const label of authored) {
@@ -932,9 +945,7 @@ test('an index row is never taller than the box it is drawn in', async () => {
     const text = /<Text>([\s\S]*?)<\/Text>/.exec(chunk);
     if (!w || !h || !text) continue;
     rows += 1;
-    const body = text[1].replace(/<[^>]*>/g, '').replace(/&amp;/g, '&')
-      .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"')
-      .replace(/&apos;/g, "'").trim();
+    const body = readXmlText(text[1]).trim();
     const lines = wrappedLinesIn(body, Number(w[1]), 0.1);
     assert.ok(lines * LINE_IN <= Number(h[1]) + 1e-6,
       `an index row needs ${(lines * LINE_IN).toFixed(4)}in in a ${Number(h[1]).toFixed(4)}in box, `
@@ -973,7 +984,7 @@ test('two differently-named services never draw the same string', async () => {
     const authored = /NameU="Service\.\d+" Name="([^"]*)"/.exec(head);
     const text = /<Text>([\s\S]*?)<\/Text>/.exec(chunk);
     if (!text) continue;
-    const body = text[1].replace(/<[^>]*>/g, '').split('\n')[0].trim();
+    const body = readXmlText(text[1]).split('\n')[0].trim();
     if (!body) continue;
     if (!byString.has(body)) byString.set(body, new Set());
     byString.get(body)!.add(authored?.[1] ?? '');

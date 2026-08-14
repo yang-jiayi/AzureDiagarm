@@ -320,6 +320,24 @@ const YU_GOTHIC_FALLBACK_EM: ReadonlyArray<readonly [number, readonly number[]]>
  * RED rather than misses. On a project where the gate arbitrates every round,
  * a gate that cries defect is as expensive as one that stays quiet.
  */
+/**
+ * Remove markup, and keep removing until there is none left.
+ *
+ * One pass of `/<[^>]*>/g` is not a strip, it is a single round of a game the
+ * input can win: `<<b>>` loses its inner `<b>` and leaves `<>` behind, and the
+ * caller then measures, compares or reports a name that still carries markup.
+ * Everything here reads XML this project wrote, so it is a correctness bug
+ * rather than an injection one, but a name mis-read is a verdict mis-reached.
+ */
+function stripMarkup(text: string): string {
+  let out = text;
+  for (;;) {
+    const next = out.replace(/<[^>]*>/g, '');
+    if (next === out) return out;
+    out = next;
+  }
+}
+
 function unescapeXml(text: string): string {
   return text
     .replace(/&#x([0-9a-fA-F]+);/g, (_m, hex: string) => String.fromCodePoint(parseInt(hex, 16)))
@@ -893,9 +911,8 @@ function parseShapes(xml: string): Shape[] {
       y,
       w,
       h,
-      text: (paragraphs.length > 0 ? paragraphs.join('\n') : texts.join(''))
-        .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>'),
-      paragraphs: paragraphs.map((p) => p.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')),
+      text: unescapeXml(paragraphs.length > 0 ? paragraphs.join('\n') : texts.join('')),
+      paragraphs: paragraphs.map((p) => unescapeXml(p)),
       fontSize: sz ? +sz[1] / 100 : null,
       anchor: /<a:bodyPr[^>]*\banchor="([^"]+)"/.exec(body)?.[1] ?? null,
       fill,
@@ -10271,7 +10288,7 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
   const labelMinPt = labelSizes.length > 0 ? +Math.min(...labelSizes).toFixed(2) : Infinity;
   if (labelMinPt < 7 - 0.01) {
     const indexRowText = [...indexXml.matchAll(/Name="service-name-\d+"[\s\S]*?<Text>([\s\S]*?)<\/Text>/g)]
-      .map((m) => unescapeXml(m[1].replace(/<[^>]*>/g, '')).trim());
+      .map((m) => unescapeXml(stripMarkup(m[1])).trim());
     // Both row forms. A shortened name is "<stub>  =  <full>"; a name that was
     // legible-but-tiny was never shortened, so its row is the bare name.
     const recoverable = (authored: string): boolean => indexRowText.some(
@@ -10364,7 +10381,7 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
     let widestGlyph = 0;
     runs.forEach((run, i) => {
       const fontIn = sizes[run.ix] ?? 0;
-      const text = run.text.replace(/<[^>]*>/g, '').trim();
+      const text = stripMarkup(run.text).trim();
       if (!text || fontIn <= 0) return;
       // The sub-line's own multiple, which is looser than the name's.
       const multiple = i === 0 ? 1.3 : 1.4;
@@ -10423,7 +10440,7 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
   // independent count of how many tiles really carry text.
   const namedTiles = new Set(
     [...xml.matchAll(/NameU="Service\.\d+" Name="([^"]*)"[\s\S]*?<Text>([\s\S]*?)<\/Text>/g)]
-      .filter((m) => m[2].replace(/<[^>]*>/g, '').trim() !== '')
+      .filter((m) => stripMarkup(m[2]).trim() !== '')
       .map((m) => m[1]),
   ).size;
   if (measuredChunks < namedTiles) {
@@ -10450,7 +10467,7 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
   const unmeasuredInk = new Map<string, number>();
   for (const match of xml.matchAll(/<Text>([\s\S]*?)<\/Text>/g)) {
     // By cluster, for the reason the deck's copy of this rule gives.
-    for (const cluster of auditClusters(unescapeXml(match[1].replace(/<[^>]*>/g, '')))) {
+    for (const cluster of auditClusters(unescapeXml(stripMarkup(match[1])))) {
       if (cluster.measured) continue;
       unmeasuredInk.set(cluster.text, (unmeasuredInk.get(cluster.text) ?? 0) + 1);
     }
@@ -10478,7 +10495,7 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
     const authored = named ? unescapeXml(named[1]) : '';
     if (!authored) continue;
     const drawn = [...chunk.matchAll(/<Text>([\s\S]*?)<\/Text>/g)]
-      .map((m) => unescapeXml(m[1].replace(/<[^>]*>/g, '')).trim())
+      .map((m) => unescapeXml(stripMarkup(m[1])).trim())
       .join('');
     if (drawn !== '') continue;
     const widthCell = /<Cell N="TxtWidth" V="([-\d.eE]+)"/.exec(chunk);
@@ -10644,7 +10661,7 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
     const pinX = /<Cell N="PinX" V="([\d.]+)"/.exec(chunk);
     if (pinX) columnXs.add(Number(pinX[1]).toFixed(2));
     workflowColW = Math.max(workflowColW, widthIn);
-    const body = unescapeXml((text?.[1] ?? '').replace(/<[^>]*>/g, '')).trim();
+    const body = unescapeXml(stripMarkup(text?.[1] ?? '')).trim();
     if (widthIn < 0.9) {
       cramped.push(`${widthIn.toFixed(4)}in for ${JSON.stringify(body.slice(0, 28))}`);
     }
@@ -10755,7 +10772,7 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
     if (!w || !h || !text) continue;
     const boxW = Number(w[1]);
     const boxH = Number(h[1]);
-    const body = unescapeXml(text[1].replace(/<[^>]*>/g, '')).trim();
+    const body = unescapeXml(stripMarkup(text[1])).trim();
     const lines = auditWrappedLines(body, boxW, INDEX_FONT_PT);
     const needsIn = lines * (INDEX_FONT_PT / 72) * 1.35;
     if (needsIn > boxH + 1e-6) {
@@ -10817,7 +10834,7 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
     const authoredAttr = /NameU="Service\.\d+" Name="([^"]*)"/.exec(head);
     const text = /<Text>([\s\S]*?)<\/Text>/.exec(chunk);
     if (!text) continue;
-    const body = unescapeXml(text[1].replace(/<[^>]*>/g, '')).split('\n')[0].trim();
+    const body = unescapeXml(stripMarkup(text[1])).split('\n')[0].trim();
     if (!body) continue;
     const authored = unescapeXml(authoredAttr?.[1] ?? '');
     if (!drawnStrings.has(body)) drawnStrings.set(body, new Set());
@@ -10860,8 +10877,7 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
     // carries the whole name whatever the tile does with it — that is how a cut
     // name stays findable in Drawing Explorer — so measuring it reported a
     // ratio for every shape including the ones that draw no text at all.
-    const drawn = unescapeXml(/<Text>([\s\S]*?)<\/Text>/.exec(chunk)?.[1] ?? '')
-      .replace(/<[^>]*>/g, '').trim();
+    const drawn = stripMarkup(unescapeXml(/<Text>([\s\S]*?)<\/Text>/.exec(chunk)?.[1] ?? '')).trim();
     if (!label || !drawn || tileIn <= 0 || fontIn <= 0) continue;
     const ratio = fontIn / tileIn;
     const natural = NATURAL_LABEL_IN / NATURAL_TILE_IN;
@@ -11917,7 +11933,7 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
     format: 'vsdx',
     issues,
     drawnNames: (() => {
-      const unesc = (s: string): string => unescapeXml(s.replace(/<[^>]*>/g, '')).trim();
+      const unesc = (s: string): string => unescapeXml(stripMarkup(s)).trim();
       const best = new Map<string, string>();
       for (const m of xml.matchAll(/NameU="Service\.\d+" Name="([^"]*)"[\s\S]*?<Text>([\s\S]*?)<\/Text>/g)) {
         const drawn = unesc(m[2]);
