@@ -9708,6 +9708,28 @@ function packageInvariantIssues(
     const spread = [...seen].map(([type, who]) => `${who[0]} is "${type || 'untyped'}"`).join(', ');
     issues.push(`${where}: the "${key}" parts are the same kind of part but are not typed the same way (${spread}) \u2014 one of them is wrong and Office rejects the file`);
   }
+  // A RELATIONSHIPS PART IS TYPED BY THE FORMAT, NOT BY THIS PACKAGE.
+  //
+  // The family and manifest loops below both skip `_rels/`. That skip is right
+  // for reachability - nothing points AT a relationships part, so demanding one
+  // would false positive on every one of them - and it was inherited rather
+  // than chosen for typing, where it is wrong. No package emits an Override for
+  // a .rels part, so all of them are typed by the single `Default Extension`
+  // line, which for the drawing lives in this project's own template. Get that
+  // one line wrong and 3 of 10 Visio parts and 13 of 36 deck parts are mistyped
+  // at once, Office rejects the package, and every gate stays green. Removing
+  // the Default is caught, because then nothing covers them; corrupting it is
+  // not, because something still does.
+  //
+  // Deliberately not a manifest row. The family key is directory plus basename,
+  // so these are sixteen separate singleton families and pinning them would be
+  // sixteen lines of table restating one sentence. OPC fixes it globally for
+  // every format that exists, so it is one line of rule instead.
+  const RELATIONSHIPS_TYPE = 'application/vnd.openxmlformats-package.relationships+xml';
+  const mistypedRels = [...paths].filter((one) => /\.rels$/i.test(one) && typeOf(one) !== RELATIONSHIPS_TYPE);
+  if (mistypedRels.length > 0) {
+    issues.push(`${where}: ${mistypedRels.length} relationships part${mistypedRels.length === 1 ? ' is' : 's are'} typed "${typeOf(mistypedRels[0]) || 'untyped'}" (for example "${mistypedRels[0]}") where OPC requires "${RELATIONSHIPS_TYPE}" \u2014 Office rejects the package and nothing else here would say so`);
+  }
   const expected = CONTENT_TYPE_MANIFEST[where] ?? {};
   for (const [key, members] of byFamily) {
     const actual = typeOf(members[0]);
@@ -10177,6 +10199,23 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
   const sheetScale = tileWidths.length > 0
     ? Math.min(1, Math.max(...tileWidths) / (150 / PX_PER_IN))
     : 1;
+  // THIS FLOOR PROTECTS NOTHING BY ITSELF, AND THE THING THAT MAKES IT SAFE IS
+  // NOT IN THIS FILE'S LINE OF SIGHT. `sheetScale` is derived from the drawn
+  // tiles, so the bound moves with the thing it bounds: draw every tile smaller
+  // and the floor shrinks by exactly the same factor, and the rule stays green
+  // no matter how small the type gets. On its own that is a rule that cannot
+  // fail, which is a rule that is not a rule.
+  //
+  // What makes it acceptable is the absolute test added elsewhere: when the
+  // LABEL font falls below 7pt outright, with no scaling allowed for, the sheet
+  // owes the reader a full index page and the recoverability rule reports it.
+  // That bound does not scale, so proportion here plus legibility there is a
+  // real constraint even though neither half is one.
+  //
+  // Written down because two rules that are only jointly load bearing get
+  // deleted one at a time, each commit green, exactly the way the paired
+  // baseline guards in the PowerPoint planner did. Do not relax the absolute
+  // rule on the grounds that this one covers small type. It does not.
   const floorPt = sheetScale >= 0.999 ? 7 : 7 * sheetScale;
   // The floor is PowerPoint's, deliberately. Both exporters draw the same
   // drawing at the same scale, so type that is unreadable in the deck is
@@ -11585,6 +11624,7 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
   // arrow a number belonged to. Both now carry the edge they draw as their
   // shape name, which is also what Visio's Drawing Explorer lists.
   const arrowPaths: Array<{ edge: string; bundle: string; pts: Array<{ x: number; y: number }> }> = [];
+  let endpointDrift: { edge: string; at: string; drift: number; dx: number; dy: number; px: number; py: number } | null = null;
   for (const block of xml.matchAll(/<Shape [^>]*NameU="Connector\.\d+"[\s\S]*?<\/Shape>/g)) {
     const shape = block[0];
     const edge = /Name="edge-([^"]*)"/.exec(shape)?.[1];
@@ -11604,12 +11644,43 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
         };
       });
     if (pts.length < 2) continue;
+    // TWO STATEMENTS OF WHERE THE SAME ARROW GOES, PREVIOUSLY NEVER COMPARED.
+    //
+    // The exporter says it twice. The DECLARED endpoints, BeginX/BeginY and
+    // EndX/EndY, are what the attachment rule reads to ask whether an arrow
+    // touches the tiles it connects. The DRAWN polyline, reconstructed here
+    // from the pin, the angle and the geometry rows, is what the separation
+    // rules read to ask whether two arrows collide. One rule judged the claim
+    // and another judged the ink, and nothing asked whether they agree - so a
+    // routing change that moved the ink and left the claim behind would have
+    // been reported as attached, while the arrow floated away from its tile.
+    //
+    // They agree today by construction: the exporter takes begin and end from
+    // the same points array the geometry rows come from. Recorded as a coverage
+    // gap rather than a live defect, and worth closing anyway, because arrow
+    // routing is where nearly all of this project's geometry work happens and
+    // this is the shape of every routing defect it has had.
+    const cell = (name: string): number => +(new RegExp(`<Cell N="${name}" V="([\\d.-]+)"/>`).exec(shape)?.[1] ?? NaN);
+    const declared = [
+      { at: 'begin', x: cell('BeginX'), y: cell('BeginY'), drawn: pts[0] },
+      { at: 'end', x: cell('EndX'), y: cell('EndY'), drawn: pts[pts.length - 1] },
+    ];
+    for (const one of declared) {
+      if (!Number.isFinite(one.x) || !Number.isFinite(one.y)) continue;
+      const drift = Math.hypot(one.x - one.drawn.x, one.y - one.drawn.y);
+      if (drift > (endpointDrift?.drift ?? 0.01)) {
+        endpointDrift = { edge, at: one.at, drift, dx: one.x, dy: one.y, px: one.drawn.x, py: one.drawn.y };
+      }
+    }
     const model = scenario.edges.find((e) => String(e.id) === edge);
     arrowPaths.push({
       edge,
       bundle: model ? [String(model.source), String(model.target)].sort().join('|') : edge,
       pts,
     });
+  }
+  if (endpointDrift) {
+    issues.push(`Visio connector "${endpointDrift.edge}" says its ${endpointDrift.at} is at (${endpointDrift.dx.toFixed(3)}, ${endpointDrift.dy.toFixed(3)}) but draws it at (${endpointDrift.px.toFixed(3)}, ${endpointDrift.py.toFixed(3)}), ${endpointDrift.drift.toFixed(3)}in away. The attachment rule reads the first and the collision rules read the second, so one of them is judging an arrow that is not on the page.`);
   }
   if (arrowPaths.length > 1) {
     const gapTo = (arrow: { pts: Array<{ x: number; y: number }> }, at: { x: number; y: number }): number => {
