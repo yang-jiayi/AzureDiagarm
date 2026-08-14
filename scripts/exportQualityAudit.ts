@@ -16,7 +16,13 @@ import JSZip from 'jszip';
 // The index row a service gets when its tile is drawn but carries no caption.
 // Shared with the exporter by value; both sides must name the same string or the
 // mark rules stop recognising the row and start reporting it as a lost mark.
-const UNLABELLED_ROW = '(drawn unlabelled)';
+//
+// A PREFIX, because the row now carries the slide and the tile's place in
+// reading order on it - a service drawn dark on two window slides gets two
+// distinct rows, and a rule testing the bare sentinel for equality stopped
+// recognising either of them.
+const UNLABELLED_PREFIX = '(drawn unlabelled';
+const isUnlabelledRow = (mark: string): boolean => mark.startsWith(UNLABELLED_PREFIX);
 import type { Edge, Node } from 'reactflow';
 import { buildDiagramSlidePptx, buildArchitectureDeckPptx, calloutPlanFor } from '../src/services/pptxExporter.ts';
 import { nativizeSlideXml } from '../src/services/pptxNativeShapes.ts';
@@ -8868,7 +8874,7 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
   // tile arrives wide enough to carry a key, and `probe-hairline-stubs` holds
   // the geometry that used to produce eight of these rows.
   for (const [mark, names] of definedMarks) {
-    if (mark !== UNLABELLED_ROW && names.size > 1) ambiguousMarks.set(mark, names.size);
+    if (!isUnlabelledRow(mark) && names.size > 1) ambiguousMarks.set(mark, names.size);
   }
   if (undefinedMarks.size > 0) {
     issues.push(
@@ -8897,7 +8903,7 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
       .filter(Boolean),
   );
   const phantomMarks = [...definedMarks.keys()]
-    .filter((mark) => mark !== UNLABELLED_ROW && !drawnMarks.has(mark));
+    .filter((mark) => !isUnlabelledRow(mark) && !drawnMarks.has(mark));
   if (phantomMarks.length > 0) {
     issues.push(
       `${phantomMarks.length} index row(s) define a mark that is drawn on no shape in the deck, so the `
@@ -9184,6 +9190,62 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
       && !s.name.startsWith('service-meta-')
       && s.w > 0)
     .map((s) => s.name.replace(/^service-/, '')));
+  // A service the drawing cannot name has to be FINDABLE.
+  //
+  // `namedShare` below is the only thing watching this direction and it is far
+  // too coarse to see the case: `probe-farm-13` shipped 10 of 13 named, 77%,
+  // three services dark, and passed. What the reader actually holds is a box
+  // with no mark on it and a numbered arrow leaving it, and until this rule
+  // there was no route from the one to the other - measured on
+  // `probe-glyph12`, the authored name "Private DNS zone" occurred exactly once
+  // in the whole export, in a row reading "(drawn unlabelled)", which is the
+  // same string every other dark service in the deck got.
+  //
+  // Scoped to CITED services, which is not a softening but the difference
+  // between a rule that is true and one that is merely red: measured over the
+  // corpus, unqualified it names 9 services on 5 fixtures, and qualified it
+  // names 1. A box nobody points at is a lesser harm than a box step 7 tells
+  // you to look at and gives you no way to find.
+  //
+  // The route the rule accepts is deliberately NOT a mark on the tile. A 12px
+  // node sharing a drawing with 150px ones cannot carry one at any scale the
+  // planner can afford - `MARKABLE_TILE_W_IN` on 12px is 0.0167 in/px, which
+  // draws the neighbours 2.5in wide and shreds the deck to 24 slides, 19 of
+  // them a single tile, which the deck's own density rule refuses. Requiring
+  // the mark would make this rule unsatisfiable on a drawing that is behaving
+  // correctly. The index row is the route, and it is enough when it says WHICH
+  // slide and WHICH box.
+  const citedServices = new Set<string>();
+  for (const edge of scenario.edges) {
+    const data = edge.data as { stepNumber?: number; stepDescription?: string } | undefined;
+    if (!Number.isInteger(data?.stepNumber) || !data?.stepDescription) continue;
+    citedServices.add(auditStrip(String(edge.source)));
+    citedServices.add(auditStrip(String(edge.target)));
+  }
+  const authoredOf = new Map(scenario.nodes.map((n) => [
+    auditStrip(String(n.id)),
+    singleLineName(String(n.data?.label ?? '')),
+  ]));
+  // A LOCATING row, not merely an unlabelled one. The bare sentinel is what the
+  // deck used to print and it is exactly what this rule exists to reject, so
+  // the comma that introduces the position is load bearing.
+  const locatingRows = perSlide.flat()
+    .filter((sh) => sh.name.startsWith('index-name-')
+      && sh.text.includes(`${UNLABELLED_PREFIX},`));
+  const strandedServices = [...drawnServices]
+    .filter((id) => !namedServices.has(id) && citedServices.has(id))
+    .filter((id) => {
+      const authored = authoredOf.get(id);
+      if (!authored) return true;
+      return !locatingRows.some((row) => row.text.includes(`=  ${authored}`));
+    })
+    .map((id) => authoredOf.get(id) ?? id);
+  if (strandedServices.length > 0) {
+    issues.push(
+      `${strandedServices.length} service(s) drawn with no mark are cited by a numbered step and `
+      + `located nowhere: ${strandedServices.slice(0, 4).map((n) => `"${n}"`).join(', ')}`,
+    );
+  }
   const namedShare = drawnServices.size > 0 ? namedServices.size / drawnServices.size : 1;
   if (slideCount > 2 && drawnServices.size > 0 && namedShare < 0.3) {
     issues.push(

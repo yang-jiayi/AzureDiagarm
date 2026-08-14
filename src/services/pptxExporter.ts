@@ -2944,7 +2944,31 @@ function badgeFontPtFor(stepNumber: number, diameterIn: number): number {
   const digits = String(Math.max(1, Math.abs(Math.trunc(stepNumber)))).length;
   return (diameterIn / badgeDiameterPerIn(digits)) * 72;
 }
-const UNLABELLED_ROW = '(drawn unlabelled)';
+/**
+ * The index row a service gets when its tile is on the canvas and carries no
+ * mark at all.
+ *
+ * A LOCATOR, not just a confession. `(drawn unlabelled)  =  Private DNS zone`
+ * tells the reader that one of the boxes in front of them is this service and
+ * nothing more, and it is the same string for every dark service in the deck,
+ * so on a drawing with several of them it does not even narrow the field. That
+ * is the whole of the reader's route on a 12px node sharing a drawing with
+ * 150px ones: measured on `probe-glyph12`, the authored name "Private DNS zone"
+ * occurs exactly ONCE in the entire export, in that row, while the service is
+ * cited by numbered steps 1 and 2.
+ *
+ * Naming it on the canvas is not available. A mark needs `MARKABLE_TILE_W_IN`,
+ * which for a 12px node is 0.0167 in/px, which draws its 150px neighbours 2.5in
+ * wide and shreds the deck to 24 slides with 19 of them carrying a single tile
+ * - the defect the planner's own bound exists to refuse. So the route is given
+ * where the deck already reserves room for exactly this: the index. The part
+ * label is the one the slide title already shows the reader, and the ordinal is
+ * reading order among the tiles on that slide, so both halves are things the
+ * reader can count off the page they are holding.
+ */
+const UNLABELLED_PREFIX = '(drawn unlabelled';
+const UNLABELLED_ROW = `${UNLABELLED_PREFIX})`;
+const unlabelledRow = (at: string): string => (at ? `${UNLABELLED_PREFIX}, ${at})` : UNLABELLED_ROW);
 
 function stepBadgeDiameterIn(route: ExportRoute, transform: FitTransform, px: number): number {
   const step = route.stepNumber ?? 1;
@@ -4218,6 +4242,12 @@ async function addEditableDiagram(
   drawnHere: Map<string, string> = new Map(),
   /** Stable, deck-global ordinals for the numeric key fallback. */
   keyOrdinal: Map<string, number> = new Map(),
+  /**
+   * How the slide titles itself, e.g. `2 / 3`. Printed in the index row of any
+   * service this slide draws without a mark, so the reader knows which sheet to
+   * turn to. Empty on a one-slide deck, where there is nothing to disambiguate.
+   */
+  slideLabel = '',
 ): Promise<boolean> {
   const frame = fullFrame;
 
@@ -4441,6 +4471,27 @@ async function addEditableDiagram(
     // wrong claim rather than a blemish.
     captionBands.push({ ...bands.caption, weight: 60, caption: true });
   });
+  // Where a dark tile sits, in terms the reader can count off the page.
+  //
+  // Reading order among the tiles THIS slide draws, banded by row: sorting on
+  // `y` alone makes two tiles whose tops differ by a pixel into separate rows,
+  // and sorting on `x` alone interleaves rows. The band is the median tile
+  // height, which is the same quantity the eye uses to decide what is a row.
+  const rowBand = Math.max(
+    1,
+    [...shownServices].map((s) => s.h).sort((a, b) => a - b)[Math.floor(shownServices.length / 2)] ?? 1,
+  );
+  const readingRank = new Map<string, number>(
+    [...shownServices]
+      .sort((a, b) => (Math.round(a.y / rowBand) - Math.round(b.y / rowBand)) || (a.x - b.x))
+      .map((service, i) => [String(service.id), i + 1]),
+  );
+  const locate = (service: ExportBox): string => {
+    const rank = readingRank.get(String(service.id));
+    if (rank === undefined) return slideLabel;
+    const where = `box ${rank} of ${shownServices.length} in reading order`;
+    return slideLabel ? `${slideLabel}, ${where}` : where;
+  };
   // Per SLIDE, not per deck: the reader looks at one slide at a time, so the
   // keys only have to be distinguishable among the tiles they are drawn beside.
   for (const service of shownServices) {
@@ -4469,7 +4520,11 @@ async function addEditableDiagram(
     // Whether the overview's clipping counts as a LOSS is a separate question
     // from whether the mark it draws needs defining; it does.
     if (bands.clipped && (!thumbnail || bands.drawn)) {
-      recordMark(truncatedNames, bands.clipped, bands.drawn ?? '');
+      recordMark(
+        truncatedNames,
+        bands.clipped,
+        bands.drawn || unlabelledRow(locate(service)),
+      );
     }
     // A tile can be leaned on: the reader still sees which service it is. Its
     // name cannot, because the name is the only thing that says so, and a chip
@@ -5557,6 +5612,9 @@ export async function buildDiagramSlidePptx(
       : index === 0
         ? '  (Overview)'
         : `  (${index} / ${parts.length})`;
+    // Quoted from the heading the reader is looking at, not re-derived, so the
+    // index cannot name a sheet the deck does not print.
+    const slideLabel = partOf ? `slide "${partOf.trim().replace(/^\(|\)$/g, '')}"` : '';
 
     // ── Top accent bar (Azure blue) ───────────────────────────────────────────
     slide.addShape(pptx.ShapeType.rect, {
@@ -5604,7 +5662,7 @@ export async function buildDiagramSlidePptx(
 
     // ── Diagram body — native shapes when available, captured PNG otherwise ───
     renderedNatively = diagram
-      ? await addEditableDiagram(pptx, slide, diagram, geom.frame, isDarkMode, window, mutedWording, truncatedNames, window === undefined && parts.length > 0, options.presetIcons, promotedSteps, drawnHere, keyOrdinal)
+      ? await addEditableDiagram(pptx, slide, diagram, geom.frame, isDarkMode, window, mutedWording, truncatedNames, window === undefined && parts.length > 0, options.presetIcons, promotedSteps, drawnHere, keyOrdinal, slideLabel)
       : false;
 
     if (!renderedNatively) {
