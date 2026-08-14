@@ -937,11 +937,16 @@ function planDiagramWindows(
     // - and that deck went on shipping 8 slides, 6 of them a single tile, for
     // a naming gain it could have had on four. The target is a scale now, and
     // a scale is well defined whether or not anything is numbered.
-    if (!(hi > lo) || markableCountAt(lo) >= want) return fine;
-    for (let i = 0; i < 24; i += 1) {
-      const mid = (lo + hi) / 2;
-      if (markableCountAt(mid) >= want) hi = mid; else lo = mid;
+    if (!(hi > lo)) return fine;
+    if (markableCountAt(lo) < want) {
+      for (let i = 0; i < 24; i += 1) {
+        const mid = (lo + hi) / 2;
+        if (markableCountAt(mid) >= want) hi = mid; else lo = mid;
+      }
+    } else {
+      hi = lo;
     }
+    if (hi >= perInOf(fine) - 1e-9) return fine;
     // Built from the PLAIN side and raised to the target, not from the fine
     // side and relaxed toward it. Asking the ceiling-raised planner for a
     // coarser grid gets the raised grid back unchanged - it is already the
@@ -964,8 +969,30 @@ function planDiagramWindows(
   // floor removes the only thing that was watching for this, so the waiver
   // carries its own bound - measured, not assumed: the unbounded form took a
   // 21 service deck to 21 windows with 14 of them carrying a single tile.
-  const lonelyShare = (plan: { windows: DiagramWindow[] }): number => {
+  //
+  // Loneliness alone is not the defect: a window holding one service is exactly
+  // how a name gets bought when the tiles are too small to carry one. What
+  // makes the loneliness wasted is that the drawing has ALREADY reached the
+  // width a mark needs, because past `MARKABLE_TILE_W_IN` there is no further
+  // mark to win at any scale and the extra slides are pagination. Measured, the
+  // two populations do not overlap: the deck that spent thirteen extra windows
+  // to rescue one name sat at 0.204in, and the deck that rescued four sat at
+  // 0.188in.
+  //
+  // Asked of the DRAWING, not of the window. Scale is global, so a window
+  // holding one ordinary 160px service is not evidence of anything - its tile
+  // is metres past the mark bar whatever the plan does, and charging the plan
+  // for it took the deck that needed six windows to name six services back to
+  // 0.113in tiles. The question is whether the narrowest tile on the page still
+  // has something to gain.
+  const narrowestServiceW = Math.min(
+    ...services.map((s) => s.w).filter((w) => w > 0),
+    Infinity,
+  );
+  const wastedShare = (plan: { windows: DiagramWindow[] }): number => {
     if (plan.windows.length === 0) return 0;
+    if (!Number.isFinite(narrowestServiceW)
+      || narrowestServiceW * perInOf(plan) < MARKABLE_TILE_W_IN) return 0;
     const lonely = plan.windows.filter((w) => services.filter((s) => {
       const cx = s.x + s.w / 2;
       const cy = s.y + s.h / 2;
@@ -975,35 +1002,59 @@ function planDiagramWindows(
   };
   // A lonely window is only wasted when it buys no names.
   //
-  // The bound as first written rejected on `lonelyShare` alone, and rejected a
+  // The bound as first written rejected on raw loneliness, and so rejected a
   // plan that named all six services at 0.2829in because all six sat one to a
-  // window - three services lost their names to it. So the two measures are
-  // read together: splitting past the point of enlargement is a defect only
-  // where it is not the thing putting names on the canvas. The gain is counted
-  // as a share of SERVICES, which is the unit the reader experiences, and the
-  // measurements that bracket the threshold are a 4.8% gain on a 21 service
-  // deck that costs 10 extra slides for one name - refused - against a 66.7%
-  // gain on a 6 service deck - taken.
+  // window - three services lost their names to it. `wastedShare` is what that
+  // bound was reaching for: splitting past the point of enlargement is a defect
+  // only where it is not the thing putting names on the canvas.
+  //
+  // There is no PROPORTION of names worth measuring here, in either direction.
+  //
+  // A share of `services.length` prices one name by how many other services
+  // happen to be on the drawing, so the same rescue scored 0.2500 on a twelve
+  // service deck and 0.2308 on a thirteen service one - and appending one
+  // ordinary, perfectly drawn service to a twelve service diagram erased three
+  // other services' names and halved every tile, 0.1896in to 0.0984in. Pricing
+  // it as a share of the names AT RISK instead fixed that and then discriminated
+  // nothing at all: `coarsestNaming` accepts a plan only when it keeps every
+  // name the fine plan had, so the rescued share is pinned at 1, and it measured
+  // exactly 1.0000 on all eight fixtures - including the deck that bought its
+  // single remaining name with thirteen extra slides. A term that is constant
+  // over its whole domain is not a bound.
+  //
+  // So the trade is judged on its two honest halves: it has to win a name, and
+  // it may not spend most of the deck on slides that win nothing.
   const worthTheSplit = (
     plan: { windows: DiagramWindow[] },
     against: { windows: DiagramWindow[] },
   ): boolean => {
-    const gain = (markableAt(plan) - markableAt(against)) / Math.max(1, services.length);
-    return gain >= 0.25 || lonelyShare(plan) <= 0.5;
+    if (markableAt(plan) <= markableAt(against)) return false;
+    return wastedShare(plan) <= 0.5;
   };
   if (bar > 0 && serve > 0 && perInOf(raised) * serve < bar - 1e-6) {
     const forced = planWindowsAtCeiling(
       bounds, services, frame, { ...options, waiveDensity: true }, true, serve,
     );
+    // Eased BEFORE the cost of the trade is judged, because `coarsestNaming`
+    // changes which plan is returned and the bound belongs on the returned
+    // plan. Measured on a thirteen service farm: `forced` is 10 windows at a
+    // 0.700 lonely share and was refused for it, while the plan that would have
+    // shipped is 8 windows at 0.250 - which clears the bound outright, and is
+    // LESS lonely than the twelve service plan the same guard accepts. The
+    // guard was anti-correlated with the quantity it names, and three services
+    // went unnamed for it.
+    //
+    // Whether the chase is worth ATTEMPTING is still asked of `forced`, which
+    // is the finest plan available and therefore the honest answer to "can
+    // this drawing reach the callout line at all". Asking it of the eased plan
+    // instead made the easing veto itself: the eased plan is by construction
+    // coarser, so it fell under the line, the escape refused it, and all three
+    // farms fell back to 0.10in tiles on 5 slides.
+    const eased = forced.windows.length > 0 ? coarsestNaming(forced, raised) : forced;
     if (forced.windows.length > 0
-      && worthTheSplit(forced, raised)
+      && worthTheSplit(eased, raised)
       && (perInOf(forced) * serve >= bar - 1e-6
         || perInOf(forced) * serve >= defectLine - 1e-6)) {
-      // Eased for the same reason the second escape is: reaching a bar is a
-      // threshold, so the deck should buy the cheapest plan that clears it
-      // rather than the finest plan available. Left un-eased here, this escape
-      // shipped 8 slides with 6 of them carrying a single tile.
-      const eased = coarsestNaming(forced, raised);
       return { ...eased, servedW: serve, chaseAffordable: true };
     }
   }
@@ -1116,9 +1167,12 @@ function planDiagramWindows(
   // 1.8% while naming 2 of 6.
   const raisedNames = markableAt(raised);
   const plainNames = markableAt(plain);
-  if (raisedNames > plainNames && worthTheSplit(raised, plain)) {
+  if (raisedNames > plainNames) {
+    // Same order as the escape above: ease first, then judge what ships.
     const eased = coarsestNaming(raised, plain);
-    return { ...eased, servedW: serve, chaseAffordable: true };
+    if (worthTheSplit(eased, plain)) {
+      return { ...eased, servedW: serve, chaseAffordable: true };
+    }
   }
   // Only prefer the unraised plan when it is genuinely cheaper. A refusal that
   // costs the same number of slides buys nothing and loses the marks.

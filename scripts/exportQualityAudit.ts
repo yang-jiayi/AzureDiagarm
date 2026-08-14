@@ -1759,6 +1759,52 @@ function whitespaceLabelsScenario(): Scenario {
  * builds, and my own "every fingerprint byte-identical" claim was true and
  * worthless because the width that moved was not a fixture.
  */
+/**
+ * A chain of ordinary services with three authored slivers at its head.
+ *
+ * Sized to straddle the naming trade. Adding one perfectly-drawn 160x110px
+ * service to the twelve-service form erased three other services' names and
+ * halved every tile - 0.1896in to 0.0984in - because the cost half of that
+ * trade was measured on a candidate the exporter discards. The three services
+ * that lost their names are the ones the author cannot fix by editing them:
+ * they are collateral of a node added somewhere else entirely.
+ */
+function serviceFarmScenario(n: number): Scenario {
+  const icon = '/Azure_Public_Service_Icons/Icons/networking/10061-icon-service-Virtual-Networks.svg';
+  const words = [
+    'Zephyr order intake function', 'Quartz billing reconciliation hub',
+    'Nimbus telemetry ingestion tier', 'Cobalt fraud scoring service', 'Verdant analytics warehouse',
+    'Onyx configuration store', 'Marigold session cache', 'Basalt document vault', 'Cedar identity broker',
+    'Larkspur queue relay', 'Ferrous export gateway', 'Halcyon policy engine', 'Indigo audit sink',
+    'Juniper schema registry', 'Kestrel routing mesh',
+  ];
+  const nodes: Node[] = [];
+  const edges: Edge[] = [];
+  for (let i = 0; i < n; i += 1) {
+    const sliver = i < 3;
+    nodes.push({
+      id: `f${i}`,
+      type: 'azureNode',
+      position: { x: i * 260, y: (i % 2) * 200 },
+      width: sliver ? 14 : 160,
+      height: sliver ? 30 : 110,
+      data: {
+        label: words[i], serviceName: words[i], category: 'networking', iconPath: icon,
+      },
+    } as unknown as Node);
+    if (i > 0) {
+      edges.push({
+        id: `fe${i}`,
+        source: `f${i - 1}`,
+        target: `f${i}`,
+        label: 'invokes',
+        data: { stepNumber: i, stepDescription: `Step ${i}` },
+      } as unknown as Edge);
+    }
+  }
+  return { id: `probe-farm-${n}`, nodes, edges };
+}
+
 function refusedRaiseAtScenario(ws0: number): Scenario {
   const base = refusedRaiseScenario();
   return {
@@ -11507,6 +11553,9 @@ async function main(): Promise<void> {
   refusedRaiseAtScenario(10),
   refusedRaiseAtScenario(13),
   refusedRaiseAtScenario(15),
+  serviceFarmScenario(12),
+  serviceFarmScenario(13),
+  serviceFarmScenario(14),
   longTitleScenario(20),
   longTitleScenario(70),
   longTitleScenario(95),
