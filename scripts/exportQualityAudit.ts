@@ -2380,6 +2380,175 @@ function slaveredBadgeScenario(): Scenario {
   return { id: 'probe-badge-sliver', nodes, edges };
 }
 
+function threeTierBadgeScenario(): Scenario {
+  // An ORDINARY diagram. Three tiers of six services with four numbered hops,
+  // and one small node - a private DNS zone, which every real Azure landing
+  // zone has - dropped between the tiers.
+  //
+  // Nothing here is adversarial, and that is the point. Deciding which tile a
+  // badge belongs to by asking which tile is nearest looks obviously right and
+  // is false on any hop longer than the gap to a bystander: a hop on this grid
+  // is over three inches, the DNS node sits under one inch from the badge, and
+  // so a disc drawn between two 1.56in tiles was reported as 165% of a 0.146in
+  // tile it has no connection to. A badge belongs to its edge, and the edge
+  // names its own endpoints.
+  const icon = '/Azure_Public_Service_Icons/Icons/networking/10061-icon-service-Virtual-Networks.svg';
+  const tiers = [
+    ['tt-fd', 'Front Door', 0, 0],
+    ['tt-app', 'App Service plan', 800, 0],
+    ['tt-sql', 'Azure SQL Database', 1600, 0],
+    ['tt-waf', 'Web Application Firewall', 0, 260],
+    ['tt-fn', 'Function App', 800, 260],
+    ['tt-blob', 'Blob Storage account', 1600, 260],
+  ] as const;
+  const nodes: Node[] = tiers.map(([id, label, x, y]) => ({
+    id,
+    type: 'azureNode',
+    position: { x, y },
+    width: 150,
+    height: 96,
+    data: { label, serviceName: label, category: 'networking', iconPath: icon },
+  } as unknown as Node));
+  nodes.push({
+    id: 'tt-dns',
+    type: 'azureNode',
+    position: { x: 400, y: 130 },
+    width: 14,
+    height: 16,
+    data: {
+      label: 'Private DNS zone',
+      serviceName: 'Private DNS zone',
+      category: 'networking',
+      iconPath: icon,
+    },
+  } as unknown as Node);
+  const edges = [
+    ['tt-fd', 'tt-app', 1],
+    ['tt-waf', 'tt-fn', 2],
+    ['tt-app', 'tt-sql', 3],
+    ['tt-fn', 'tt-blob', 4],
+  ].map(([source, target, step], i) => ({
+    id: `tte${i}`,
+    source,
+    target,
+    data: { stepNumber: step, stepDescription: `Step ${step} of the request path` },
+  })) as unknown as Edge[];
+  return { id: 'probe-three-tier', nodes, edges };
+}
+
+function twoChainBadgeScenario(): Scenario {
+  // Two numbered chains on one sheet, at different sizes: a three service
+  // cloud pipeline and a six sensor field bus drawn small.
+  //
+  // A ceiling taken over "the tiles at the ends of the numbered connectors" is
+  // still a statistic over the whole sheet, and this is the deck that shows
+  // it. Numbering the sensors dragged the pipeline's discs from 0.2400in to
+  // 0.1375in - 43% off three badges because of six shapes on the other side of
+  // the page - and BOTH badge rules stayed silent, because a ceiling bound
+  // badge beside the tile that set it is 55% of it by construction, exactly
+  // the bar the oversize rule uses. The ceiling has to be per connector.
+  const icon = '/Azure_Public_Service_Icons/Icons/compute/10029-icon-service-Function-Apps.svg';
+  const nodes: Node[] = [];
+  for (let i = 0; i < 3; i += 1) {
+    nodes.push({
+      id: `tc-c${i}`,
+      type: 'azureNode',
+      position: { x: i * 500, y: 0 },
+      width: 150,
+      height: 96,
+      data: {
+        label: `Cloud pipeline stage ${i + 1}`,
+        serviceName: 'Azure Functions',
+        category: 'compute',
+        iconPath: icon,
+      },
+    } as unknown as Node);
+  }
+  for (let i = 0; i < 6; i += 1) {
+    nodes.push({
+      id: `tc-d${i}`,
+      type: 'azureNode',
+      position: { x: i * 140, y: 700 },
+      width: 24,
+      height: 96,
+      data: {
+        label: `Field sensor ${i + 1}`,
+        serviceName: 'Azure Functions',
+        category: 'compute',
+        iconPath: icon,
+      },
+    } as unknown as Node);
+  }
+  const edges: Edge[] = [];
+  for (let i = 0; i < 5; i += 1) {
+    edges.push({
+      id: `tcd${i}`,
+      source: `tc-d${i}`,
+      target: `tc-d${i + 1}`,
+      data: { stepNumber: i + 1, stepDescription: `Sensor ${i + 1} forwards its reading` },
+    } as unknown as Edge);
+  }
+  for (let i = 0; i < 2; i += 1) {
+    edges.push({
+      id: `tcc${i}`,
+      source: `tc-c${i}`,
+      target: `tc-c${i + 1}`,
+      data: { stepNumber: 6 + i, stepDescription: `Pipeline stage ${i + 1} hands off` },
+    } as unknown as Edge);
+  }
+  return { id: 'probe-two-chains', nodes, edges };
+}
+
+function bimodalSidecarScenario(): Scenario {
+  // Six services at a normal size with a sidecar of twenty four tiny ones.
+  //
+  // The sidecar is the majority, so a width taken as an extreme over the sheet
+  // reads 14px and a width taken as a median reads 14px too - what separates
+  // them is that the median is not moved by a single node, and this deck is
+  // here to hold the median honest. Before the planner learned to raise its
+  // own ceiling this drew 10 slides with 6 of 30 services named; it now draws
+  // 18 with all 30 named, and the density floor accepts the raise at 1.875
+  // services a window.
+  const icon = '/Azure_Public_Service_Icons/Icons/compute/10029-icon-service-Function-Apps.svg';
+  const nodes: Node[] = [];
+  for (let i = 0; i < 6; i += 1) {
+    nodes.push({
+      id: `bs-big${i}`,
+      type: 'azureNode',
+      position: { x: (i % 3) * 400, y: Math.floor(i / 3) * 300 },
+      width: 150,
+      height: 96,
+      data: {
+        label: `Core platform service ${i + 1}`,
+        serviceName: 'Azure Functions',
+        category: 'compute',
+        iconPath: icon,
+      },
+    } as unknown as Node);
+  }
+  for (let i = 0; i < 24; i += 1) {
+    nodes.push({
+      id: `bs-tiny${i}`,
+      type: 'azureNode',
+      position: { x: 1600 + (i % 6) * 260, y: Math.floor(i / 6) * 260 },
+      width: 14,
+      height: 16,
+      data: {
+        label: `Sidecar collector ${i + 1}`,
+        serviceName: 'Azure Functions',
+        category: 'compute',
+        iconPath: icon,
+      },
+    } as unknown as Node);
+  }
+  const edges = Array.from({ length: 5 }, (_, i) => ({
+    id: `bse${i}`,
+    source: `bs-big${i}`,
+    target: `bs-big${i + 1}`,
+  })) as unknown as Edge[];
+  return { id: 'probe-bimodal-sidecar', nodes, edges };
+}
+
 function decomposedNameScenario(): Scenario {
   const icon = '/Azure_Public_Service_Icons/Icons/compute/10029-icon-service-Function-Apps.svg';
   const dense = [
@@ -8859,68 +9028,121 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
         + `— ${((blockIn / zoneH) * 100).toFixed(0)}% of the box it names, so it covers what is inside it`);
     }
   }
-  // Both badge rules measure a disc against the tile it is ACTUALLY drawn
-  // beside, found by position, not against a statistic over the whole sheet.
+  // Both badge rules measure a disc against the two tiles it is drawn BETWEEN,
+  // resolved by identity, not by position and not by any statistic.
   //
-  // Every sheet-wide statistic tried here was one node from wrong. The minimum
-  // let a parked 14px sliver decide that a 0.240in disc between 1.56in tiles
-  // was 165% oversized. The median survived that and then failed the parity
-  // flip - four large tiles beside five slivers has a sliver for a median, so
-  // the same correct disc read as 165% again. A badge is drawn on one arrow
-  // between two tiles; the nearest tile is the one it is calling out, and no
-  // other shape on the page has any bearing on whether it dwarfs or vanishes.
-  const shapeGeom = (nameU: RegExp): Array<{ x: number; y: number; w: number }> => {
-    const out: Array<{ x: number; y: number; w: number }> = [];
+  // Four attempts got here. Minimum over the sheet let a parked 14px sliver
+  // decide that a 0.240in disc between 1.56in tiles was 165% oversized. Median
+  // over the sheet failed the parity flip. Median over badged endpoints failed
+  // as soon as a sheet carried two numbered chains. Nearest tile by position
+  // failed an ordinary three-tier diagram, because a hop is 3in long and any
+  // small node dropped in the middle of the page is nearer to the badge than
+  // either tile the badge belongs to - it reported the same "165% on a 0.146in
+  // tile" for a Private DNS zone node that had nothing to do with the arrow.
+  //
+  // The identity was in the file the whole time: `stepBadgeXml` writes
+  // `Name="step-<edgeId>"` and the scenario names that edge's endpoints.
+  const shapeGeom = (nameU: RegExp): Array<{ name: string; w: number }> => {
+    const out: Array<{ name: string; w: number }> = [];
     for (const chunk of xml.split('<Shape ID=')) {
-      if (!nameU.test(chunk.slice(0, 400))) continue;
+      const head = chunk.slice(0, 400);
+      if (!nameU.test(head)) continue;
       const w = /<Cell N="Width" V="([\d.]+)"/.exec(chunk);
-      const x = /<Cell N="PinX" V="([\d.-]+)"/.exec(chunk);
-      const y = /<Cell N="PinY" V="([\d.-]+)"/.exec(chunk);
-      if (w && x && y) out.push({ x: +x[1], y: +y[1], w: +w[1] });
+      const name = /\sName="([^"]*)"/.exec(head);
+      if (w) out.push({ name: unescapeXml(name?.[1] ?? ''), w: +w[1] });
     }
     return out;
   };
   const badgeGeom = shapeGeom(/NameU="StepBadge\.\d+"/);
   const tileGeom = shapeGeom(/NameU="Service\.\d+"/);
+  // A tile is named for its service, so two nodes of the same service cannot
+  // be told apart here. They are dropped rather than guessed at: a rule that
+  // reports the wrong tile is worse than one that reports nothing.
+  const tileByName = new Map<string, number>();
+  const ambiguousTiles = new Set<string>();
+  for (const t of tileGeom) {
+    if (tileByName.has(t.name)) ambiguousTiles.add(t.name);
+    tileByName.set(t.name, t.w);
+  }
+  const labelOfNode = new Map<string, string[]>();
+  for (const node of scenario.nodes) {
+    const data = (node as unknown as { data?: { label?: string; serviceName?: string } }).data;
+    // The tile is named for `box.label`, which is the node's own label where it
+    // has one and its service otherwise, so both are offered and the one the
+    // drawing actually used wins.
+    labelOfNode.set(node.id, [data?.label ?? '', data?.serviceName ?? ''].filter(Boolean));
+  }
+  const tileFor = (nodeId: string): number | undefined => {
+    for (const name of labelOfNode.get(nodeId) ?? []) {
+      if (ambiguousTiles.has(name)) return undefined;
+      const w = tileByName.get(name);
+      if (w) return w;
+    }
+    return undefined;
+  };
+  const endsOfEdge = new Map<string, [string, string]>();
+  const stepOfEdge = new Map<string, number>();
+  for (const edge of scenario.edges) {
+    endsOfEdge.set(edge.id, [edge.source, edge.target]);
+    const step = (edge as unknown as { data?: { stepNumber?: number | string } }).data?.stepNumber;
+    stepOfEdge.set(edge.id, Number(step) || 1);
+  }
+  // The exporter's own documented floor, `badgeMinDiameterIn`, at the largest
+  // font floor it can use. A sheet that has been scaled down uses a smaller
+  // font and therefore a smaller floor, so this over-estimates on those - and
+  // it is the exemption side, so over-estimating only ever costs a report,
+  // never invents one.
+  const badgeFloorIn = (stepNumber: number): number => {
+    const pt = 0.0973;
+    const digits = String(Math.max(1, Math.abs(Math.trunc(stepNumber)))).length;
+    return Math.max(pt * 1.15, Math.hypot(digits * pt * 0.55, pt * 0.7) + 0.02);
+  };
   if (badgeGeom.length > 0 && tileGeom.length > 0) {
-    const ratios: number[] = [];
+    const ratios: Array<{ ratio: number; floored: boolean }> = [];
     for (const badge of badgeGeom) {
-      let near = tileGeom[0];
-      let best = Infinity;
-      for (const t of tileGeom) {
-        const d = (t.x - badge.x) ** 2 + (t.y - badge.y) ** 2;
-        if (d < best) { best = d; near = t; }
-      }
-      if (near.w <= 0) continue;
-      ratios.push(badge.w / near.w);
-      if (badge.w > near.w * 0.55) {
-        issues.push(`a step badge is ${badge.w.toFixed(3)}in across on a ${near.w.toFixed(3)}in tile `
-          + `— ${((badge.w / near.w) * 100).toFixed(0)}% of the service it is calling out`);
+      const edgeId = /^step-(.*)$/.exec(badge.name)?.[1];
+      const ends = edgeId ? endsOfEdge.get(edgeId) : undefined;
+      if (!ends || !edgeId) continue;
+      const widths = ends.map(tileFor).filter((w): w is number => !!w && w > 0);
+      if (widths.length === 0) continue;
+      // The narrower end, matching the exporter's own ceiling: a disc that is
+      // proportionate to one tile and swamps the other is still swamping one.
+      const tile = Math.min(...widths);
+      const floor = badgeFloorIn(stepOfEdge.get(edgeId) ?? 1);
+      ratios.push({ ratio: badge.w / tile, floored: badge.w <= floor + 1e-4 });
+      // A hair of slack, because the ceiling IS `tile * 0.55`, so a capped
+      // badge sits exactly on this bar and the verdict would otherwise be
+      // decided by the binary rounding of the decimals written into the XML -
+      // measured, the same drawing fired at 20px, passed at 24px and fired
+      // again at 30px, printing 55.0% every time.
+      if (badge.w > tile * 0.55 + 1e-6) {
+        issues.push(`a step badge is ${badge.w.toFixed(3)}in across on a ${tile.toFixed(3)}in tile `
+          + `— ${((badge.w / tile) * 100).toFixed(0)}% of the service it is calling out`);
         break;
       }
     }
-    // And the converse, which nothing measured. A ceiling read off the wrong
-    // tile does not only oversize a badge; read off the wrong statistic it
-    // UNDERSIZES it, and discs collapsed from 0.240in to the 0.1119in floor
-    // beside 1.563in tiles are specks the reader has to hunt for before the
-    // numbered order means anything.
+    // And the converse, which nothing measured. A badge that has been cut to a
+    // speck beside the tile it numbers is one the reader has to hunt for
+    // before the numbered order means anything.
     //
-    // The TYPICAL badge is not the test either, and it took a second
-    // measurement to learn it. One disc too large is a defect wherever it is;
-    // one disc too small is the placement search doing its documented job,
-    // shrinking a badge so it can sit on its own arrow instead of being pushed
-    // onto the next hop's - an ordinary sheet has one such badge in twenty,
-    // and a dense hub-and-spoke has most of them, which is why the median
-    // failed here too. What a ceiling read off the wrong tile does is cap the
-    // whole sheet, so NO badge on it reaches natural size. The widest badge
-    // therefore answers the question exactly: if even that one is a speck, the
-    // ceiling is wrong; if it is not, the small ones were placed, not capped.
-    if (ratios.length > 0) {
-      const best = ratios.reduce((hi, r) => Math.max(hi, r), 0);
-      if (best < 0.1) {
-        issues.push(`the widest of ${ratios.length} step badge(s) is only ${(best * 100).toFixed(1)}% `
-          + 'of the tile it numbers — the whole sheet is capped too small to find');
-      }
+    // Per badge, now that each one is measured against its own endpoints. The
+    // sheet-wide form of this test could not see the fault it was written for:
+    // when a ceiling binds, the badges beside the tiles that set it are at
+    // exactly 55% by construction, so the widest ratio reads 55.0% while the
+    // badges on the OTHER chain sit at 8.8% - and numbering six sensors cut an
+    // unrelated pipeline's discs by 43% with the gate silent.
+    //
+    // Badges sitting ON the documented minimum are exempt, because that is the
+    // placement search doing its job: squeezing a disc into a gap so it can
+    // sit on its own arrow rather than being pushed onto the next hop's. Four
+    // ordinary sheets have such a badge. A foreign ceiling does not land on
+    // that floor - the two-chain fault caps at 0.1375in, well clear of the
+    // 0.1119in floor - so the exemption costs this rule nothing it was for.
+    for (const [at, seen] of ratios.entries()) {
+      if (seen.ratio >= 0.1 || seen.floored) continue;
+      issues.push(`step badge ${at + 1} of ${ratios.length} is only ${(seen.ratio * 100).toFixed(1)}% `
+        + 'of the tile it numbers — too small to find');
+      break;
     }
   }
   // A callout is a white number on a dark disc, and the disc is the only thing
@@ -9870,6 +10092,9 @@ async function main(): Promise<void> {
   tinyTileSpreadScenario(),
   widthCliffScenario(),
   slaveredBadgeScenario(),
+  threeTierBadgeScenario(),
+  twoChainBadgeScenario(),
+  bimodalSidecarScenario(),
   longTitleScenario(20),
   longTitleScenario(70),
   longTitleScenario(95),

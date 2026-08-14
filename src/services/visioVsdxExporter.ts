@@ -201,17 +201,6 @@ interface VisioFonts {
   zone: number;
   badge: number;
   /**
-   * The widest a step badge may be drawn on this sheet.
-   *
-   * `scale` is the page-fit factor, and for years the badge scaled by that
-   * alone. That covers a big drawing squeezed onto a page, and misses the
-   * other way a tile gets small: a reader who simply drew small nodes. Then
-   * `scale` is 1, the badge stays a quarter inch, and it is 165% of the
-   * service it is numbering - a callout larger than the thing called out,
-   * which is the exact failure the badge's own comment claims to prevent.
-   */
-  badgeMaxIn: number;
-  /**
    * The heaviest a drawing pen may be on this sheet.
    *
    * Same blind spot as the badge, same cause: `scale` only knows about the
@@ -229,7 +218,6 @@ const NATURAL_FONTS: VisioFonts = {
   zone: ZONE_TITLE_FONT_IN,
   badge: BADGE_FONT_IN,
   // No tiles have been measured yet, so nothing is capped yet.
-  badgeMaxIn: Infinity,
   penMaxIn: Infinity,
 };
 
@@ -265,7 +253,6 @@ function fontsForScale(scale: number): VisioFonts {
     connector: CONNECTOR_FONT_IN * k,
     zone: ZONE_TITLE_FONT_IN * k,
     badge: BADGE_FONT_IN * k,
-    badgeMaxIn: Infinity,
     penMaxIn: Infinity,
   };
 }
@@ -290,32 +277,16 @@ function fontsForScale(scale: number): VisioFonts {
  * a workflow that runs entirely among the 2in tiles.
  */
 /**
- * The tiles a step badge is actually drawn between.
+ * The same fonts, with the pen held to the tiles it will be drawn among.
  *
- * A badge sits on a numbered connector, so the shapes it can dwarf or vanish
- * beside are the ones at that connector's ends. Everything else on the sheet
- * is scenery as far as this one measurement goes.
+ * Separate from `fontsForScale` because it needs the laid-out boxes, which
+ * that function has no business knowing. The typical tile is the median, not
+ * the smallest: one deliberately tiny node should not thin every line on the
+ * sheet, but a page made of tiny nodes should.
  */
-function badgedEndpointBoxes(
-  edges: Edge[],
-  boxes: Map<string, { w: number; h: number }>,
-): Array<{ w: number; h: number }> {
-  const out: Array<{ w: number; h: number }> = [];
-  for (const edge of edges) {
-    const step = (edge.data as { stepNumber?: unknown } | undefined)?.stepNumber;
-    if (step === undefined || step === null || step === '') continue;
-    for (const id of [edge.source, edge.target]) {
-      const box = boxes.get(id);
-      if (box) out.push(box);
-    }
-  }
-  return out;
-}
-
 function withDrawingCeilings(
   fonts: VisioFonts,
   boxes: Iterable<{ w: number; h: number }>,
-  badgeBoxes: Iterable<{ w: number; h: number }> = boxes,
 ): VisioFonts {
   const all = [...boxes].filter((b) => b.w > 0 && b.h > 0);
   if (all.length === 0) return fonts;
@@ -323,24 +294,17 @@ function withDrawingCeilings(
     const s = [...xs].sort((a, b) => a - b);
     return s[Math.floor(s.length / 2)];
   };
-  const badged = [...badgeBoxes].filter((b) => b.w > 0 && b.h > 0);
-  const tileWIn = median((badged.length > 0 ? badged : all).map((b) => b.w)) / PX_PER_INCH;
   const tileHIn = median(all.map((b) => b.h)) / PX_PER_INCH;
   return {
     ...fonts,
-    // Just over half the typical tile. Past that the disc reads as the
-    // subject and the service it numbers reads as its shadow.
-    //
-    // The median, for the same reason the pen below uses it, and it took a
-    // measurement to learn it: taken from the NARROWEST tile, one unconnected
-    // 14px sliver parked in a corner cut every badge on the sheet from
-    // 0.240in to 0.1119in - 53% off seven discs drawn between 2in tiles
-    // nowhere near it. The threshold was about 42px, and an ordinary small
-    // node clears that by a pixel.
-    badgeMaxIn: tileWIn * 0.55,
     // A sixteenth is where an outline stops being a border and starts being
     // the shape. `penIn` still applies Visio's hairline underneath this, so
     // the line never thins into nothing.
+    //
+    // The badge used to be capped here too, from the same box list. It is not
+    // any more: a pen is drawn everywhere on the sheet, so a sheet-wide
+    // statistic answers the question about it, and a badge is drawn on one
+    // arrow, so no sheet-wide statistic ever could. See `badgeCeilingIn`.
     penMaxIn: tileHIn / 16,
   };
 }
@@ -1092,6 +1056,33 @@ function badgeMinDiameterIn(stepNumber: number, fonts: VisioFonts): number {
 }
 
 /**
+ * The widest a badge for this route may be drawn, from the two tiles it is
+ * actually drawn between.
+ *
+ * Three sheet-wide statistics were tried here and all three failed, which was
+ * the lesson: the property that kept breaking was not which statistic, it was
+ * that a statistic over the sheet answers a question about one connector. The
+ * minimum let a parked sliver cap every disc. The median failed the parity
+ * flip. The median over badged endpoints failed as soon as a sheet carried two
+ * numbered chains - numbering six sensors cut an unrelated cloud pipeline's
+ * badges by 43%, to 8.8% of the tiles they number, purely by moving the median
+ * of a set they had no part in. A badge is drawn on one arrow between two
+ * tiles, and those two tiles are the whole of what it can dwarf.
+ */
+function badgeCeilingIn(
+  route: { sourceId: string; targetId: string },
+  boxes: Map<string, { w: number }>,
+): number {
+  const a = boxes.get(route.sourceId)?.w;
+  const b = boxes.get(route.targetId)?.w;
+  const ends = [a, b].filter((w): w is number => typeof w === 'number' && w > 0);
+  if (ends.length === 0) return Infinity;
+  // The narrower end, not the average. A disc that is proportionate to one
+  // tile and swamps the other is still swamping a tile.
+  return (Math.min(...ends) / PX_PER_INCH) * 0.55;
+}
+
+/**
  * The diameter a badge for this step will actually be drawn at.
  *
  * One expression, because the layout reserves room for a badge and the
@@ -1102,10 +1093,10 @@ function badgeMinDiameterIn(stepNumber: number, fonts: VisioFonts): number {
  * the disc came out 39.5% wider than the space held for it, and 104% wider
  * with two-digit steps.
  */
-function badgeDiameterIn(stepNumber: number, fonts: VisioFonts): number {
+function badgeDiameterIn(stepNumber: number, fonts: VisioFonts, maxIn = Infinity): number {
   return Math.max(
     badgeMinDiameterIn(stepNumber, fonts),
-    Math.min(STEP_BADGE_IN * fonts.scale, fonts.badgeMaxIn),
+    Math.min(STEP_BADGE_IN * fonts.scale, maxIn),
   );
 }
 
@@ -1123,11 +1114,13 @@ function stepBadgeXml(  id: number,
    * arrow says the right thing; a full-size one parked on a stranger does not.
    */
   diameterIn?: number,
+  /** The ceiling from this badge's own two endpoint tiles. */
+  ceilingIn = Infinity,
 ): string {
   // A badge is drawn on the arrows, between the tiles, so it scales with them.
   // Held at its natural size it was 109% of a whole service tile once the
   // sheet was down to a seventh: a callout larger than the thing it calls out.
-  const natural = badgeDiameterIn(stepNumber, fonts);
+  const natural = badgeDiameterIn(stepNumber, fonts, ceilingIn);
   const floor = badgeMinDiameterIn(stepNumber, fonts);
   const d = diameterIn !== undefined && diameterIn > 0
     ? Math.min(natural, Math.max(floor, diameterIn))
@@ -1978,7 +1971,6 @@ export async function buildVsdxPackage(
   const fonts = withDrawingCeilings(
     fontsForScale(boxScaleWithin(fitted, limitPx, limitPx - (reserveBandIn + legendBandIn) * PX_PER_INCH)),
     raw.values(),
-    badgedEndpointBoxes(edges, raw),
   );
   // Match the PowerPoint strategy: draw 1 : 1 from the full bounds whenever the
   // page stays a sensible size, and only fall back to the dense-cluster bounds
@@ -2234,8 +2226,14 @@ export async function buildVsdxPackage(
   // Taken at the highest step on the sheet, because the digits are what a
   // badge cannot give up and a three-digit disc is the widest one that will
   // be drawn - the reservation has to bound every badge, not the median one.
+  // Taken as the widest badge any route on the sheet will actually be drawn
+  // at, because the reservation has to bound every badge and each one is now
+  // capped by its own two endpoint tiles rather than by one sheet-wide figure.
   const highestStep = routes.reduce((hi, r) => Math.max(hi, r.stepNumber ?? 0), 1);
-  const badgeIn = badgeDiameterIn(highestStep, fonts);
+  const badgeIn = (routes as ExportRoute[]).reduce(
+    (hi, r) => Math.max(hi, badgeDiameterIn(r.stepNumber ?? highestStep, fonts, badgeCeilingIn(r, boxes))),
+    badgeDiameterIn(highestStep, fonts, 0),
+  );
   const labelSize = (label: string): { w: number; h: number } => {
     // `natural` is a width and a hard break contributes nothing to it, so the
     // chip is only ever as wide as the longest single line — which is right.
@@ -3051,7 +3049,9 @@ export async function buildVsdxPackage(
       // Resolved with the reservation, so the seat that was scored against the
       // panels, the tiles and every other arrow is the seat that gets drawn.
       const at = badgeAt.get(route.id) ?? badgeSeatFor(route, seat);
-      shapes.push(stepBadgeXml(nextId++, at, route.stepNumber, fonts, route.id, at.d));
+      shapes.push(stepBadgeXml(
+        nextId++, at, route.stepNumber, fonts, route.id, at.d, badgeCeilingIn(route, boxes),
+      ));
     }
   }
 
