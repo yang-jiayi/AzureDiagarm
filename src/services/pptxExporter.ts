@@ -263,8 +263,6 @@ interface SlideGeometry {
    * carry a proportionate callout on at any grid, in pixels.
    */
   reachableTileW: number;
-  /** See {@link calloutPlanFor}. Whether a finer plan was available and affordable. */
-  chaseAffordable: boolean;
   /**
    * Tiles of the drawing, one per slide. A single entry (the usual case) means
    * the whole architecture fits on one legible page. More than one means the
@@ -828,7 +826,7 @@ function planDiagramWindows(
   services: ExportBox[],
   frame: DiagramFrame,
   options: { mustTile?: boolean; markIn?: number; serveW?: number } = {},
-): { windows: DiagramWindow[]; legible: boolean; servedW: number; chaseAffordable: boolean } {
+): { windows: DiagramWindow[]; legible: boolean; servedW: number } {
   const affordable = (plan: { windows: DiagramWindow[] }): boolean => plan.windows.length > 0
     && services.length / plan.windows.length >= MIN_SERVICES_PER_TILED_SLIDE;
   const widths = services.map((box) => box.w).filter((w) => w > 0).sort((a, b) => a - b);
@@ -962,7 +960,6 @@ function planDiagramWindows(
       ? eased
       : fine;
   };
-  const defectLine = bar * BADGE_TILE_SHARE;
   // A plan that puts most of its slides on one service each has stopped buying
   // anything: splitting enlarges a tile by giving it more of the frame, and a
   // tile alone on a slide is already at its natural width. Waiving the density
@@ -1028,6 +1025,16 @@ function planDiagramWindows(
     plan: { windows: DiagramWindow[] },
     against: { windows: DiagramWindow[] },
   ): boolean => {
+    // An empty `against` is not a baseline of zero names, it is the absence of
+    // a baseline: no windows means the planner could not build at that scale at
+    // all. Read as a number it is the most permissive comparand there is, so
+    // every candidate beats it and the whole test goes vacuous. Measured on
+    // `probe-blind-sliver`, where `raised` comes back with 0 windows: the
+    // escape fired on a trivially true comparison and shipped 10 windows of
+    // 0.182in tiles in place of the 0.313in the deck would otherwise have
+    // drawn, for no names at all - 120 either way. There is nothing here to be
+    // worth more than, so the trade cannot be shown to be worth making.
+    if (plan.windows.length === 0 || against.windows.length === 0) return false;
     if (markableAt(plan) <= markableAt(against)) return false;
     return wastedShare(plan) <= 0.5;
   };
@@ -1051,11 +1058,39 @@ function planDiagramWindows(
     // coarser, so it fell under the line, the escape refused it, and all three
     // farms fell back to 0.10in tiles on 5 slides.
     const eased = forced.windows.length > 0 ? coarsestNaming(forced, raised) : forced;
-    if (forced.windows.length > 0
-      && worthTheSplit(eased, raised)
-      && (perInOf(forced) * serve >= bar - 1e-6
-        || perInOf(forced) * serve >= defectLine - 1e-6)) {
-      return { ...eased, servedW: serve, chaseAffordable: true };
+    // The trigger asks ONE question, and it is the naming question.
+    //
+    // It used to carry a second conjunct requiring the FINEST available plan to
+    // reach the callout floor before the escape could fire at all. A disc
+    // proportion has no bearing on whether a slide may be spent to give three
+    // services their names, so that conjunct was a proportion rule holding a
+    // veto over naming.
+    //
+    // It was also load-bearing, which is why removing it needed the sentence
+    // above it repaired first. On `probe-blind-sliver` the floor is 0.24514in
+    // against a finest plan at 0.20028in, so the proportion veto refused the
+    // escape - and it was the only thing refusing it, because the ship gate was
+    // passing vacuously on an empty comparand. Deleting the veto on its own
+    // exposed that: tiles fell 0.313in to 0.182in for no names. The veto was
+    // masking the defect, not preventing it.
+    //
+    // Bounding the naming bisection below by the floor instead - so the plan
+    // that SHIPS clears it - is worse, and that is a proof rather than a
+    // preference. The bound leaves the bisection no admissible scale, so it
+    // returns the finest plan, which on a thirteen service farm is 10 windows
+    // at a 0.700 lonely share; `worthTheSplit` then refuses that, and the deck
+    // falls back past both to 0.098in tiles with three services unnamed. The
+    // floor cannot be a ship requirement here, because requiring it costs the
+    // very names the escape exists to buy.
+    //
+    // The harms are not comparable either. A disc that is large next to its
+    // service is a defect only where it TOUCHES it - measured 0% contact at
+    // pitch 260 and 16% at pitch 172, and that 16% is on the 2.1in neighbours,
+    // never on the sliver - while a deck of single-tile slides is bad on sight.
+    // So the proportion preference may be a tie-break between plans that name
+    // equally. It may not be a veto on names.
+    if (forced.windows.length > 0 && worthTheSplit(eased, raised)) {
+      return { ...eased, servedW: serve };
     }
   }
   // An empty window list with `legible: false` is not "the drawing fits", it is
@@ -1069,7 +1104,7 @@ function planDiagramWindows(
   // An empty list with `legible: true` is the opposite case and must fall
   // through: the drawing fits whole at the median, and whether it should be
   // split anyway to serve a narrower tile is exactly the question below.
-  if (raised.windows.length === 0 && !raised.legible) return { ...raised, servedW: medianW, chaseAffordable: false };
+  if (raised.windows.length === 0 && !raised.legible) return { ...raised, servedW: medianW };
   // Accepted only where it is genuinely FINER, as well as affordable. Asking
   // for a scale no grid inside the slide budget can deliver does not make
   // `planWindowsAtCeiling` try harder, it makes it bail to a coarse fallback -
@@ -1078,7 +1113,6 @@ function planDiagramWindows(
   // sliver across a 120 node estate bailed to 21 windows of 0.2003in tiles
   // where the median plan gave 53 windows of 0.3130in, cleared the floor at 5.7
   // services a window, and shipped 90 discs at 97% of the services they number.
-  let chaseAffordable = false;
   // Attempted whenever the chase would BUY something, not when the narrowest
   // badged tile happens to beat an order statistic.
   //
@@ -1129,17 +1163,20 @@ function planDiagramWindows(
       line > 0 && perInOf(p) * (options.serveW ?? 0) >= line - 1e-6;
     const mustChase = (!reaches(raised, bar) && reaches(finest, bar))
       || (!reaches(raised, bar * BADGE_TILE_SHARE) && reaches(finest, bar * BADGE_TILE_SHARE));
-    // Recorded whether or not it is taken, because the audit has to distinguish
-    // a callout the deck COULD have served from one it could not, and a flag
-    // read off the plan that was chosen moves with any mutation that changes
-    // the choice - which is exactly how the Visio magnifier went blind on its
-    // own revert one round ago. This is the bound; servedW is the outcome.
-    chaseAffordable = finest.windows.length >= raised.windows.length
+    // Local to the decision it makes. This used to be recorded on every plan
+    // the planner could return, so that the audit could tell a callout the deck
+    // COULD have served from one it could not. That consumer was retired, and
+    // the flag outlived it by several rounds - an invariant maintained for
+    // nobody, which is worse than no invariant, because it reads as a
+    // guarantee. If an exemption is wanted again it must be rebuilt from the
+    // candidates the planner CONSTRUCTS, never from a flag the selection stamps
+    // on its own verdict.
+    const chaseAffordable = finest.windows.length >= raised.windows.length
       && (affordable(finest) || mustChase);
-    if (chaseAffordable) return { ...finest, servedW: options.serveW, chaseAffordable };
+    if (chaseAffordable) return { ...finest, servedW: options.serveW };
   }
-  if (raised.windows.length === 0) return { ...raised, servedW: medianW, chaseAffordable };
-  if (affordable(raised)) return { ...raised, servedW: medianW, chaseAffordable };
+  if (raised.windows.length === 0) return { ...raised, servedW: medianW };
+  if (affordable(raised)) return { ...raised, servedW: medianW };
   const plain = planWindowsAtCeiling(bounds, services, frame, options, false);
   // The density floor may not throw away a plan BECAUSE it is good.
   //
@@ -1171,7 +1208,7 @@ function planDiagramWindows(
     // Same order as the escape above: ease first, then judge what ships.
     const eased = coarsestNaming(raised, plain);
     if (worthTheSplit(eased, plain)) {
-      return { ...eased, servedW: serve, chaseAffordable: true };
+      return { ...eased, servedW: serve };
     }
   }
   // Only prefer the unraised plan when it is genuinely cheaper. A refusal that
@@ -1185,8 +1222,8 @@ function planDiagramWindows(
   // that is what it reports, and the exemption covers what it is documented to
   // cover: endpoints below the tile the planner actually served.
   return plain.windows.length < raised.windows.length
-    ? { ...plain, servedW: medianW, chaseAffordable }
-    : { ...raised, servedW: medianW, chaseAffordable };
+    ? { ...plain, servedW: medianW }
+    : { ...raised, servedW: medianW };
 }
 
 function planWindowsAtCeiling(
@@ -1468,9 +1505,9 @@ function planWindowsAtCeiling(
   // Measured on one drawing at five, six and seven services in an identical
   // bounding box: the sixth service crossed `MIN_SERVICES_PER_SLIDE`, so the
   // short-circuit engaged, the sliver's tile went 0.2030in to 0.1906in, its
-  // disc went 77% to 82% of the service it numbers, and `chaseAffordable` -
-  // which the audit reads as "the deck measured the finer plan and could not
-  // afford it" - flipped from true to false without any plan being measured.
+  // disc went 77% to 82% of the service it numbers, and the planner's record
+  // of whether it could afford the finer plan flipped from true to false
+  // without any plan being measured.
   // Adding an ordinary service made the drawing worse and the gate quieter.
   const comfortableReads = !!comfortable
     && (!floor || scaleOf(comfortable.cols, comfortable.rows) >= legibleScale);
@@ -1654,7 +1691,6 @@ function planSlideGeometry(diagram?: DiagramShapeSource | null): SlideGeometry {
   let usedFrame: DiagramFrame | null = null;
   let medians: { w: number; h: number } | null = null;
   let servedW = Infinity;
-  let chaseAffordable = false;
 
   const nodes = diagram?.nodes ?? [];
   let windows: DiagramWindow[] = [];
@@ -1705,7 +1741,6 @@ function planSlideGeometry(diagram?: DiagramShapeSource | null): SlideGeometry {
       usedFrame = frameFor(BASE_W, BASE_H);
       medians = medianExtent(services);
       servedW = standard.servedW;
-      chaseAffordable = standard.chaseAffordable;
       // `legible: false` is a request to grow the page, not a verdict that the
       // drawing cannot be tiled. A sparse architecture — the hub-and-spoke
       // every Architecture Center reference draws — defeats the
@@ -1727,7 +1762,6 @@ function planSlideGeometry(diagram?: DiagramShapeSource | null): SlideGeometry {
         // time, because a reader can at least present the deck.
         windows = forced.windows;
         servedW = forced.servedW;
-        chaseAffordable = forced.chaseAffordable;
       } else {
         // Only a genuinely enormous drawing gets here — one that cannot be read
         // on nine standard slides. Grow the page for it, then tile that page
@@ -1746,7 +1780,6 @@ function planSlideGeometry(diagram?: DiagramShapeSource | null): SlideGeometry {
         usedFrame = frameFor(w, h);
         windows = grown.windows;
         servedW = grown.servedW;
-        chaseAffordable = grown.chaseAffordable;
         // Splitting restores legibility, so the "scaled down to fit" warning no
         // longer applies — the drawing is now at its readable size.
         if (windows.length > 1) overflow = false;
@@ -1799,7 +1832,6 @@ function planSlideGeometry(diagram?: DiagramShapeSource | null): SlideGeometry {
       ? markIn / (Math.min(usedFrame.w, usedFrame.h)
         / (WINDOW_BLEED_PX * 2 + Math.max(1, medians.h)))
       : 0,
-    chaseAffordable,
   };
 }
 
@@ -1836,16 +1868,6 @@ export function calloutPlanFor(diagram?: DiagramShapeSource | null): {
    * sliver cannot exempt a deck.
    */
   reachableTileW: number;
-  /**
-   * Whether a plan serving the narrowest badged tile was BOTH finer than the
-   * chosen one and inside the density floor.
-   *
-   * The bound behind servedTileW, kept separately because an exemption read
-   * off the plan that was chosen goes blind on any mutation that changes the
-   * choice. Where this is true and a callout is still disproportionate, the
-   * deck had a move and did not take it.
-   */
-  chaseAffordable: boolean;
 } {
   const geometry = planSlideGeometry(diagram);
   return {
@@ -1853,7 +1875,6 @@ export function calloutPlanFor(diagram?: DiagramShapeSource | null): {
     medianServiceW: geometry.medianServiceW,
     servedTileW: geometry.servedTileW,
     reachableTileW: geometry.reachableTileW,
-    chaseAffordable: geometry.chaseAffordable,
   };
 }
 

@@ -7722,9 +7722,10 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
   // The served width is no longer consulted directly. A width is the wrong
   // question: read deck-wide it exempted every hop at once when it came back
   // as a sentinel, and read per hop it exempts exactly the glyph-sized service
-  // that most needs the callout to be proportionate. What the rule asks for
-  // instead is `chaseAffordable`, the RESULT of the chase the planner actually
-  // ran, which cannot be true for a plan that was never attempted.
+  // that most needs the callout to be proportionate. Its replacement - a flag
+  // recording the RESULT of the chase the planner actually ran - was retired in
+  // turn once contact became part of the claim below, and has since been
+  // deleted from the exporter: the rule now asks for no exemption at all.
   // A label may lean on the two services its own arrow connects. The reader
   // still attributes it correctly — it is touching the very icons it is about
   // — and on a hop shorter than the label there is nowhere else for it to go.
@@ -8028,10 +8029,10 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
           // was a disc drawn ON TOP of an icon. So contact is now part of the
           // claim. It also retires an exemption: with contact required, the
           // rule goes quiet on that deck on its MERITS, and the exporter's
-          // `chaseAffordable` - which was the median order statistic re-entering
-          // one level down, false on every drawing whose narrowest badged tile
-          // ties the median, with no plan measured at all - is no longer needed
-          // to silence it. Occlusion past 70% stays with the buried rule; this
+          // affordability flag - which was the median order statistic
+          // re-entering one level down, false on every drawing whose narrowest
+          // badged tile ties the median, with no plan measured at all - was no
+          // longer needed to silence it, and has since been deleted. Occlusion past 70% stays with the buried rule; this
           // one owns the band where a disc touches an icon it dwarfs.
           const touches = drawn.some((d) => overlapArea(badge, d.shape) > 0);
           if (tile * BADGE_SHARE >= floor - 1e-6 && badge.w > tile * BADGE_SHARE + 2e-4) {
@@ -11736,6 +11737,7 @@ const GOLDEN: Record<string, Golden> = {
   'probe-offrow': { minTileIn: 0.283, named: 7, slides: 8 },
   'probe-glyph16': { minTileIn: 0.168, named: 21, slides: 17 },
   'probe-glyph12': { minTileIn: 0.073, named: 20, slides: 11 },
+  'probe-glyph11': { minTileIn: 0.067, named: 20, slides: 11 },
   'probe-touching': { minTileIn: 0.205, named: 60, slides: 34 },
   'probe-mix-4': { minTileIn: 0.191, named: 5, slides: 3 },
   'probe-mix-5': { minTileIn: 0.191, named: 6, slides: 3 },
@@ -11900,6 +11902,7 @@ const VSDX_GOLDEN: Record<string, VsdxGolden> = {
   'probe-offrow': { media: 7, textBlocks: 34, minFontPt: 7 },
   'probe-glyph16': { media: 21, textBlocks: 104, minFontPt: 7 },
   'probe-glyph12': { media: 21, textBlocks: 104, minFontPt: 7 },
+  'probe-glyph11': { media: 21, textBlocks: 104, minFontPt: 7 },
   'probe-touching': { media: 60, textBlocks: 183, minFontPt: 7 },
   'probe-mix-4': { media: 5, textBlocks: 24, minFontPt: 7 },
   'probe-mix-5': { media: 6, textBlocks: 29, minFontPt: 7 },
@@ -11985,7 +11988,8 @@ const VSDX_GOLDEN: Record<string, VsdxGolden> = {
 
 function vsdxGoldenDrift(id: string, metrics: Record<string, number>): string[] {
   const want = VSDX_GOLDEN[id];
-  if (!want) return [];
+  if (!want) return [blessing ? [] : ['sheet is not blessed: no golden row, so none of its'
+    + ' numbers are pinned and any drift in them is invisible']].flat();
   const out: string[] = [];
   const pairs: [string, number, number][] = [
     ['embedded icon parts', want.media, metrics.mediaParts],
@@ -12001,9 +12005,19 @@ function vsdxGoldenDrift(id: string, metrics: Record<string, number>): string[] 
   return out;
 }
 
+// A scenario the table does not know is a scenario the table does not defend,
+// and silence is the wrong answer to it - that is how the last gap arrived: a
+// width moved on a fixture nobody had registered and the run stayed green. The
+// dual of the `locate` hole, and it gets the same treatment: fail closed.
+//
+// Only `--bless` may see an unblessed scenario without complaint, because
+// producing the missing row is exactly what that run is for.
+let blessing = false;
+
 function goldenDrift(id: string, metrics: Record<string, number>): string[] {
   const want = GOLDEN[id];
-  if (!want) return [];
+  if (!want) return [blessing ? [] : ['deck is not blessed: no golden row, so none of its'
+    + ' numbers are pinned and any drift in them is invisible']].flat();
   const out: string[] = [];
   const got = {
     minTileIn: metrics.minTileWidthIn,
@@ -12092,6 +12106,7 @@ async function main(): Promise<void> {
   spreadGlyphScenario('probe-offrow', 290, 440, 400),
   glyphChainScenario('probe-glyph16', 16),
   glyphChainScenario('probe-glyph12', 12),
+  glyphChainScenario('probe-glyph11', 11),
   touchingBadgeScenario('probe-touching', 30),
   mixCountScenario(4),
   mixCountScenario(5),
@@ -12159,6 +12174,7 @@ async function main(): Promise<void> {
   // CI and `npm test` pass no argument and so always run everything.
   const only = process.argv.slice(2).filter((a) => !a.startsWith('-')).flatMap((a) => a.split(','));
   const bless = process.argv.includes('--bless');
+  blessing = bless;
   const selected = only.length > 0 ? scenarios.filter((s) => only.includes(s.id)) : scenarios;
   // `deck-growth` is a family comparison, not a scenario: it exports the same
   // drawing at several sizes and judges the differences between them, so it has
@@ -12187,6 +12203,25 @@ async function main(): Promise<void> {
       sheet.issues.push(...vsdxGoldenDrift(scenario.id, sheet.metrics));
     }
     reports.push(sheet);
+  }
+  // A pin with nothing under it. A golden row whose scenario has been renamed
+  // or removed can never fire again, and it goes on being counted as a row -
+  // so the table reads as coverage it does not provide. Full runs only: a
+  // filtered run legitimately leaves almost every row unvisited.
+  if (!bless && only.length === 0) {
+    const live = new Set(scenarios.map((sc) => sc.id));
+    const stale = [
+      ...Object.keys(GOLDEN).filter((k) => !live.has(k)).map((k) => `pptx ${k}`),
+      ...Object.keys(VSDX_GOLDEN).filter((k) => !live.has(k)).map((k) => `vsdx ${k}`),
+    ];
+    if (stale.length > 0) {
+      reports.push({
+        scenario: 'golden-table', format: 'pptx',
+        issues: stale.map((k) => `golden row ${k} pins a scenario that no longer exists,`
+          + ' so it can never fire and is counted as coverage it does not provide'),
+        metrics: {},
+      } as Report);
+    }
   }
   if (bless) {
     console.log('\nconst GOLDEN: Record<string, Golden> = {');

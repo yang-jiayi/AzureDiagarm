@@ -468,6 +468,76 @@ test('a zone drawn around a void shrinks to its contents instead of dragging the
   );
 });
 
+test('closing voids answers the same way however many regions the drawing has', () => {
+  // Every fixture above pins one shape of drawing: two regions, one hub, one
+  // frame. A rule read on a single k cannot see a k-dependent answer, and the
+  // void scan carries running state across the sweep - `reach` and `reachSize`
+  // are updated inside the loop - so the second void is the first one that can
+  // be computed from stale state, and no test had a second void.
+  //
+  // The gutter is measured from the two-region case rather than written down,
+  // so this asserts what it means to say the answer is the same, without
+  // copying a constant the module does not export.
+  const PITCH = 220;
+  const TILE = 150;
+  const REGION_W = PITCH + TILE;
+  const SEPARATION = 6000;
+
+  const regions = (k: number): Map<string, ExportBox> => {
+    const map = new Map<string, ExportBox>();
+    for (let r = 0; r < k; r += 1) {
+      for (let i = 0; i < 4; i += 1) {
+        const b = box(`r${r}s${i}`, r * SEPARATION + (i % 2) * PITCH, Math.floor(i / 2) * 180);
+        map.set(b.id, b);
+      }
+    }
+    return map;
+  };
+  const leftOf = (m: Map<string, ExportBox>, r: number): number => Math.min(
+    ...[...m.values()].filter((b) => b.id.startsWith(`r${r}s`)).map((b) => b.x),
+  );
+  const rightOf = (m: Map<string, ExportBox>, r: number): number => Math.max(
+    ...[...m.values()].filter((b) => b.id.startsWith(`r${r}s`)).map((b) => b.x + b.w),
+  );
+
+  const two = compactEmptyGutters(regions(2));
+  const gutter = leftOf(two, 1) - rightOf(two, 0);
+  assert.ok(gutter > 0 && gutter < SEPARATION, `the two-region void really closed (${gutter}px)`);
+
+  for (let k = 2; k <= 7; k += 1) {
+    const before = regions(k);
+    const compact = compactEmptyGutters(before);
+    const tall = computeBounds(before.values());
+    const flat = computeBounds(compact.values());
+
+    for (let r = 1; r < k; r += 1) {
+      assert.equal(
+        leftOf(compact, r) - rightOf(compact, r - 1),
+        gutter,
+        `k=${k}: every void closes to the same gutter, including void ${r}`,
+      );
+    }
+    for (let r = 0; r < k; r += 1) {
+      assert.equal(
+        compact.get(`r${r}s1`)!.x - compact.get(`r${r}s0`)!.x,
+        PITCH,
+        `k=${k}: spacing the author chose inside region ${r} is untouched`,
+      );
+      assert.equal(compact.get(`r${r}s0`)!.w, TILE, `k=${k}: no tile in region ${r} is compacted away`);
+    }
+    assert.equal(
+      flat.maxX - flat.minX,
+      k * REGION_W + (k - 1) * gutter,
+      `k=${k}: the drawing is its regions plus one gutter between each pair`,
+    );
+    assert.equal(
+      flat.maxY - flat.minY,
+      tall.maxY - tall.minY,
+      `k=${k}: the axis with no void is left alone`,
+    );
+  }
+});
+
 test('an arrow re-anchored onto another side never doubles back through its own tile', () => {
   // A service on the seam of a grid can only be reached by re-anchoring: every
   // lane the router can name finishes inside the neighbour flush against the
