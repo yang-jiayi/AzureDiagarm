@@ -6571,6 +6571,7 @@ async function auditCustomerDeck(scenario: Scenario): Promise<string[]> {
   const pageH = sldSz ? +sldSz[2] / EMU_PER_INCH : BASE_SLIDE_H_IN;
 
   const issues: string[] = [];
+  issues.push(...await zipPackageInvariantIssues(zip, 'pptx'));
   issues.push(...xmlWellFormednessIssues(await zipXmlParts(zip), 'customer deck: '));
   if (pageW > BASE_SLIDE_W_IN + 0.01 || pageH > BASE_SLIDE_H_IN + 0.01) {
     issues.push(`customer deck: page is ${pageW.toFixed(2)}x${pageH.toFixed(2)}in — every other slide in this deck is laid out for ${BASE_SLIDE_W_IN}x${BASE_SLIDE_H_IN}in`);
@@ -7085,6 +7086,7 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
   const overviewShapes: Shape[] = overviewAt < 0 ? [] : parseShapes(allSlides[overviewAt]);
 
   const issues: string[] = [];
+  issues.push(...await zipPackageInvariantIssues(zip, 'pptx'));
   issues.push(...xmlWellFormednessIssues(await zipXmlParts(zip), ''));
   // The header band, on the path most users actually take.
   //
@@ -9551,6 +9553,138 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
   };
 }
 
+/** Resolve a relationship Target against the folder its .rels lives beside. */
+function resolvePartPath(base: string, target: string): string {
+  const out: string[] = [];
+  for (const seg of `${base}${target}`.split('/')) {
+    if (seg === '' || seg === '.') continue;
+    if (seg === '..') { out.pop(); continue; }
+    out.push(seg);
+  }
+  return out.join('/');
+}
+
+/**
+ * THE THREE THINGS THAT DECIDE WHETHER THE FILE OPENS AT ALL.
+ *
+ * Every rule in this audit judges a drawing. None of them judges the PACKAGE
+ * the drawing arrives in, and a package defect does not degrade an export, it
+ * deletes it: Office rejects the whole file and the reader gets nothing.
+ *
+ * The case that prompted this: the Visio index page used to get its content
+ * type from a `String.replace()` over a literal marker carrying its own two
+ * spaces of indentation. `.replace` returns the subject unchanged on a miss and
+ * reports nothing, so reindenting a block of XML would have shipped page 2
+ * present in the package, listed in `pages.xml` and resolving cleanly through
+ * `pages.xml.rels`, with no content type - and every gate green, because the
+ * file is still well formed. `[Content_Types].xml` had only ever been passed
+ * through the well-formedness check.
+ *
+ * Stated over the package rather than over the instance, so a future page 3, a
+ * slide written but never listed, or a media part whose relationship is dropped
+ * are all the same finding and none of them needs anyone to have thought of it:
+ *
+ *   1. every part carries a content type, by Default extension or Override;
+ *   2. every internal relationship Target resolves to a part that was emitted;
+ *   3. every content part is reachable from some relationship.
+ */
+function packageInvariantIssues(
+  allPaths: string[],
+  textByPath: Map<string, string>,
+  where: string,
+): string[] {
+  const issues: string[] = [];
+  const paths = new Set(allPaths.map((one) => one.replace(/^\/+/, '')).filter((one) => one !== '' && !one.endsWith('/')));
+  const isContentTypes = (one: string): boolean => /^\[Content_Types\]\.xml$/i.test(one);
+  const ctKey = [...paths].find(isContentTypes);
+  const ctXml = ctKey ? textByPath.get(ctKey) ?? '' : '';
+  if (ctXml === '') {
+    issues.push(`${where}: no readable [Content_Types].xml, so not one part in the package has a declared type`);
+    return issues;
+  }
+  const defaultType = new Map(
+    [...ctXml.matchAll(/<Default\s+Extension="([^"]+)"\s+ContentType="([^"]+)"/g)]
+      .map((m) => [m[1].toLowerCase(), m[2]] as const),
+  );
+  const defaults = new Set(defaultType.keys());
+  const overrideType = new Map(
+    [...ctXml.matchAll(/<Override\s+PartName="([^"]+)"\s+ContentType="([^"]+)"/g)]
+      .map((m) => [m[1].replace(/^\/+/, ''), m[2]] as const),
+  );
+  const overrides = new Set(overrideType.keys());
+  for (const one of paths) {
+    if (isContentTypes(one)) continue;
+    const ext = one.includes('.') ? one.slice(one.lastIndexOf('.') + 1).toLowerCase() : '';
+    if (overrides.has(one) || defaults.has(ext)) continue;
+    issues.push(`${where}: part "${one}" has no content type, by extension or override \u2014 Office rejects the whole file, so the drawing goes with it`);
+  }
+  // COVERAGE IS NOT CORRECTNESS, and the defect that prompted these invariants
+  // proves it: OPC declares `Default Extension="xml"`, so a page that loses its
+  // Override is not an UNCOVERED part, it is a MISTYPED one - it ships as plain
+  // `application/xml` instead of a Visio page, and the check above stays quiet.
+  //
+  // The audit cannot know which type is right without learning every part in
+  // both formats. It does not have to. Parts in the same family are the same
+  // KIND of thing, so whatever page 1 is, page 2 is too; if their types differ,
+  // one of them is wrong and no per-part knowledge was needed to say so. A page
+  // 3, a slide, a media part all get this by existing.
+  const family = (one: string): string => {
+    const cut = one.lastIndexOf('/');
+    return `${one.slice(0, cut + 1)}${one.slice(cut + 1).replace(/\d+/g, '#')}`;
+  };
+  const typeOf = (one: string): string => {
+    const ext = one.includes('.') ? one.slice(one.lastIndexOf('.') + 1).toLowerCase() : '';
+    return overrideType.get(one) ?? defaultType.get(ext) ?? '';
+  };
+  const byFamily = new Map<string, string[]>();
+  for (const one of paths) {
+    if (isContentTypes(one) || /(^|\/)_rels\//i.test(one)) continue;
+    const key = family(one);
+    byFamily.set(key, [...(byFamily.get(key) ?? []), one]);
+  }
+  for (const [key, members] of byFamily) {
+    if (members.length < 2) continue;
+    const seen = new Map<string, string[]>();
+    for (const one of members) seen.set(typeOf(one), [...(seen.get(typeOf(one)) ?? []), one]);
+    if (seen.size < 2) continue;
+    const spread = [...seen].map(([type, who]) => `${who[0]} is "${type || 'untyped'}"`).join(', ');
+    issues.push(`${where}: the "${key}" parts are the same kind of part but are not typed the same way (${spread}) \u2014 one of them is wrong and Office rejects the file`);
+  }
+  const referenced = new Set<string>();
+  for (const one of paths) {
+    if (!/(^|\/)_rels\/[^/]*\.rels$/i.test(one)) continue;
+    const text = textByPath.get(one) ?? '';
+    const base = one.replace(/_rels\/[^/]*\.rels$/i, '');
+    for (const m of text.matchAll(/<Relationship\b[^>]*>/g)) {
+      if (/TargetMode="External"/i.test(m[0])) continue;
+      const target = /Target="([^"]+)"/.exec(m[0]);
+      if (!target) continue;
+      const resolved = resolvePartPath(base, target[1]);
+      referenced.add(resolved);
+      if (!paths.has(resolved)) {
+        issues.push(`${where}: "${one}" points at "${target[1]}", which resolves to "${resolved}" and is not in the package`);
+      }
+    }
+  }
+  for (const one of paths) {
+    if (isContentTypes(one) || /(^|\/)_rels\//i.test(one)) continue;
+    if (referenced.has(one)) continue;
+    issues.push(`${where}: part "${one}" is written into the package but no relationship points at it, so nothing can reach it`);
+  }
+  return issues;
+}
+
+/** The same three invariants, read off a real zip instead of a part list. */
+async function zipPackageInvariantIssues(zip: JSZip, where: string): Promise<string[]> {
+  const names = Object.keys(zip.files).filter((name) => !zip.files[name].dir);
+  const textByPath = new Map<string, string>();
+  for (const name of names) {
+    if (!/\.rels$/i.test(name) && !/^\[Content_Types\]\.xml$/i.test(name)) continue;
+    textByPath.set(name, await zip.file(name)!.async('string'));
+  }
+  return packageInvariantIssues(names, textByPath, where);
+}
+
 async function auditVsdx(scenario: Scenario): Promise<Report> {
   // The drawing a user receives, not the one Node happens to be able to build.
   // Rasterisation needs a DOM, so every icon silently resolved to nothing and
@@ -9570,6 +9704,13 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
       .filter((p) => typeof p.data === 'string' && /\.(xml|rels)$/i.test(p.path))
       .map((p) => ({ path: p.path, text: p.data as string })),
     '',
+  ));
+  issues.push(...packageInvariantIssues(
+    pkg.parts.map((p) => p.path),
+    new Map(pkg.parts
+      .filter((p) => typeof p.data === 'string')
+      .map((p) => [p.path.replace(/^\/+/, ''), p.data as string])),
+    'vsdx',
   ));
   const pagePart = pkg.parts.find((p) => /page1\.xml$/i.test(p.path));
   // The index lives on its own PAGE now, so it is a different part. Every rule

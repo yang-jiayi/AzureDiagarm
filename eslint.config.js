@@ -57,4 +57,22 @@ export default [
       ],
     },
   },
+  {
+    // `no-restricted-globals` above does not cover `console`, and `console` IS
+    // defined in the browser - so a debug probe left in an exporter does not
+    // throw, it just prints, on every export, in every user's console, forever.
+    // One of exactly that shape passed all six gates during this work: type
+    // check, script type check, unit tests, the export audit, lint and build.
+    //
+    // Scoped to the two exporters rather than to `src/**` on purpose. Twelve
+    // other services carry deliberate diagnostic logging that predates this
+    // rule; widening the scope would either turn lint red on untouched files or
+    // force a sweep of disable comments, and neither buys anything here. These
+    // two files are where instrumentation is written while chasing a geometry
+    // bug, which is the only place the mistake has actually been made.
+    files: ['src/services/pptxExporter.ts', 'src/services/visioVsdxExporter.ts'],
+    rules: {
+      'no-console': ['error', { allow: ['warn', 'error'] }],
+    },
+  },
 ];

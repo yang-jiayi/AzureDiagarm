@@ -395,26 +395,40 @@ function visioLinePattern(route: ExportRoute): number {
 
 // ─── OPC static parts ────────────────────────────────────────────────────────
 
-const CONTENT_TYPES = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+/**
+ * Content types, generated from the page count rather than patched into.
+ *
+ * A part with no content type is not a missing feature, it is a REJECTED FILE:
+ * Visio refuses the whole package, so the reader loses the drawing as well as
+ * the index. This used to be two constants, the second built by running
+ * `.replace()` over the first with a literal marker that carried its own two
+ * spaces of indentation. `String.replace` returns the subject UNCHANGED when
+ * the pattern does not match, and says nothing. Reindent the block, reorder
+ * its overrides, or rename the part, and the package ships page 2 present in
+ * `parts`, listed in `pages.xml` and resolving through `pages.xml.rels` - with
+ * no content type, and every gate green, because the file is still well formed.
+ *
+ * Generating from the page count removes the marker, and removes the ceiling
+ * with it: a page 3 gets its override by existing rather than by someone
+ * remembering to add a third constant.
+ */
+function contentTypesXml(pageCount: number): string {
+  const pages = Array.from({ length: Math.max(1, pageCount) }, (_, i) => (
+    `  <Override PartName="/visio/pages/page${i + 1}.xml" ContentType="application/vnd.ms-visio.page+xml"/>`
+  )).join('\n');
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
   <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
   <Default Extension="xml" ContentType="application/xml"/>
   <Default Extension="png" ContentType="image/png"/>
   <Override PartName="/visio/document.xml" ContentType="application/vnd.ms-visio.drawing.main+xml"/>
   <Override PartName="/visio/pages/pages.xml" ContentType="application/vnd.ms-visio.pages+xml"/>
-  <Override PartName="/visio/pages/page1.xml" ContentType="application/vnd.ms-visio.page+xml"/>
+${pages}
   <Override PartName="/visio/windows.xml" ContentType="application/vnd.ms-visio.windows+xml"/>
   <Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>
   <Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/>
 </Types>`;
-
-/** The same, plus the index page, when the drawing had to shorten a name. */
-const CONTENT_TYPES_WITH_INDEX = CONTENT_TYPES.replace(
-  '  <Override PartName="/visio/windows.xml"',
-  '  <Override PartName="/visio/pages/page2.xml" ContentType="application/vnd.ms-visio.page+xml"/>\n'
-  + '  <Override PartName="/visio/windows.xml"',
-);
-
+}
 const ROOT_RELS = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
   <Relationship Id="rId1" Type="http://schemas.microsoft.com/visio/2010/relationships/document" Target="visio/document.xml"/>
@@ -3319,7 +3333,7 @@ export async function buildVsdxPackage(
   }
 
   const parts: Array<{ path: string; data: string | Uint8Array }> = [
-    { path: '[Content_Types].xml', data: indexPage ? CONTENT_TYPES_WITH_INDEX : CONTENT_TYPES },
+    { path: '[Content_Types].xml', data: contentTypesXml(indexPage ? 2 : 1) },
     { path: '_rels/.rels', data: ROOT_RELS },
     { path: 'docProps/core.xml', data: coreXml(diagramName) },
     { path: 'docProps/app.xml', data: APP_XML },
