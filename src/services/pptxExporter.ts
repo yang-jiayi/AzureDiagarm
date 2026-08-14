@@ -258,6 +258,11 @@ interface SlideGeometry {
   medianServiceW: number;
   /** See {@link calloutPlanFor}. The width the winning plan served, in pixels. */
   servedTileW: number;
+  /**
+   * See {@link calloutPlanFor}. The narrowest authored tile this frame can
+   * carry a proportionate callout on at any grid, in pixels.
+   */
+  reachableTileW: number;
   /** See {@link calloutPlanFor}. Whether a finer plan was available and affordable. */
   chaseAffordable: boolean;
   /**
@@ -844,7 +849,53 @@ function planDiagramWindows(
   // finer plan clears the floor the deck pays and the callouts fit; where it
   // does not - `probe-whitespace` numbered, six services over six windows - the
   // refusal stands, and now stands on a measurement.
+  // The scale a plan actually delivers, read off the plan rather than
+  // recomputed from a grid this function never sees.
+  //
+  // Every window renders `fit` plus the same bleed on all four sides and the
+  // whole deck shares one scale, so the binding window is the largest one and
+  // the binding axis is whichever fits worst - the same expression
+  // `planWindowsAtCeiling` uses internally, evaluated on its output.
+  const perInOf = (plan: { windows: DiagramWindow[] }): number => {    if (plan.windows.length === 0) {
+      return Math.min(
+        frame.w / Math.max(1, bounds.maxX - bounds.minX),
+        frame.h / Math.max(1, bounds.maxY - bounds.minY),
+      );
+    }
+    const spanW = Math.max(...plan.windows.map((w) => w.fit.maxX - w.fit.minX));
+    const spanH = Math.max(...plan.windows.map((w) => w.fit.maxY - w.fit.minY));
+    return Math.min(
+      frame.w / (spanW + WINDOW_BLEED_PX * 2),
+      frame.h / (spanH + WINDOW_BLEED_PX * 2),
+    );
+  };
   const raised = planWindowsAtCeiling(bounds, services, frame, options, true);
+  // The density floor may not choose a swamped icon, even when there is
+  // nothing NARROWER to chase.
+  //
+  // `MIN_SERVICES_PER_TILED_SLIDE` refuses a plan that carries too few services
+  // a window, and that is the right call between two readable decks. On a
+  // drawing whose numbered tiles are all the same width it was also deciding
+  // whether the callout swamps its service, which it has nothing to say about:
+  // six services over six windows is 1.0, under the floor, so the plan that
+  // reaches the bar was thrown away and four discs shipped at 98% of the
+  // services they number.
+  //
+  // Taken only when the frame can actually deliver the bar and the forced plan
+  // actually reaches it, so the deck never buys windows for a target it still
+  // misses. `MAX_TILED_SLIDES` still caps the result, and the requirement is
+  // strictly FINER - which is what keeps this clear of the coarse bail-out that
+  // took a 120 node estate from 53 windows of 0.3130in to 21 of 0.2003in.
+  const bar = options.markIn ?? 0;
+  const serve = options.serveW ?? 0;
+  if (bar > 0 && serve > 0 && perInOf(raised) * serve < bar - 1e-6) {
+    const forced = planWindowsAtCeiling(
+      bounds, services, frame, { ...options, waiveDensity: true }, true, serve,
+    );
+    if (forced.windows.length > 0 && perInOf(forced) * serve >= bar - 1e-6) {
+      return { ...forced, servedW: serve, chaseAffordable: true };
+    }
+  }
   // An empty window list with `legible: false` is not "the drawing fits", it is
   // "no grid in this frame reads" - the caller answers that by tiling under
   // `mustTile` or by growing the page, and a finer target belongs to that call,
@@ -868,12 +919,32 @@ function planDiagramWindows(
   let chaseAffordable = false;
   if (options.serveW !== undefined && options.serveW > 0 && options.serveW < medianW) {
     const finest = planWindowsAtCeiling(bounds, services, frame, options, true, options.serveW);
+    // The density floor does not get to choose a swamped icon.
+    //
+    // `MIN_SERVICES_PER_TILED_SLIDE` exists to stop a deck degenerating into a
+    // flip-book, and that is a preference between two readable decks. It was
+    // also deciding a case it has nothing to say about: where refusing the
+    // finer plan leaves the narrowest numbered tile under `markIn` - the width
+    // at which a disc can be both readable and no wider than its service - the
+    // refusal does not buy a denser deck, it buys a disc drawn OVER the icon it
+    // points at. Measured on six ordinary services and a glyph-sized DNS zone:
+    // refused at 1.4 services a window, the zone came out 0.1293in under a
+    // 0.1556in disc, 120% of itself, and off the row 132%.
+    //
+    // Waived only when the finer plan actually resolves it, so the deck never
+    // pays windows for a target it still misses, and only for the narrowest
+    // BADGED tile, so an unnumbered sliver buys nothing.
+    const bar = options.markIn ?? 0;
+    const mustChase = bar > 0
+      && perInOf(raised) * options.serveW < bar - 1e-6
+      && perInOf(finest) * options.serveW >= bar - 1e-6;
     // Recorded whether or not it is taken, because the audit has to distinguish
     // a callout the deck COULD have served from one it could not, and a flag
     // read off the plan that was chosen moves with any mutation that changes
     // the choice - which is exactly how the Visio magnifier went blind on its
     // own revert one round ago. This is the bound; servedW is the outcome.
-    chaseAffordable = finest.windows.length >= raised.windows.length && affordable(finest);
+    chaseAffordable = finest.windows.length >= raised.windows.length
+      && (affordable(finest) || mustChase);
     if (chaseAffordable) return { ...finest, servedW: options.serveW, chaseAffordable };
   }
   if (raised.windows.length === 0) return { ...raised, servedW: medianW, chaseAffordable };
@@ -881,8 +952,16 @@ function planDiagramWindows(
   const plain = planWindowsAtCeiling(bounds, services, frame, options, false);
   // Only prefer the unraised plan when it is genuinely cheaper. A refusal that
   // costs the same number of slides buys nothing and loses the marks.
+  // The refusal is about the RAISE, not about every hop on the deck.
+  //
+  // This branch used to report `servedW: Infinity`, and the audit's exemption
+  // reads `authoredW >= servedTileW` - false for every finite width - so one
+  // refusal switched the callout rule off for the whole deck, hops between
+  // 160px tiles drawn at 1.81in included. The plain plan serves the median, so
+  // that is what it reports, and the exemption covers what it is documented to
+  // cover: endpoints below the tile the planner actually served.
   return plain.windows.length < raised.windows.length
-    ? { ...plain, servedW: Infinity, chaseAffordable }
+    ? { ...plain, servedW: medianW, chaseAffordable }
     : { ...raised, servedW: medianW, chaseAffordable };
 }
 
@@ -890,7 +969,7 @@ function planWindowsAtCeiling(
   bounds: Bounds,
   services: ExportBox[],
   frame: DiagramFrame,
-  options: { mustTile?: boolean; markIn?: number; serveW?: number } = {},
+  options: { mustTile?: boolean; markIn?: number; serveW?: number; waiveDensity?: boolean } = {},
   raiseCeiling = true,
   serveW?: number,
 ): { windows: DiagramWindow[]; legible: boolean } {
@@ -1152,7 +1231,27 @@ function planWindowsAtCeiling(
 
   const comfortable = gridFor(COMFORTABLE_TILE_PT / 12 / target);
   const floor = gridFor(legibleScale);
+  // Comfort is a preference and legibility is not, so the comfortable grid may
+  // only be preferred when it ALREADY reads.
+  //
+  // `comfortable` is derived from the median tile's height alone. When the
+  // legibility floor demands a finer grid than comfort does - which is the
+  // whole point of the markable raise, and the case every sliver drawing is in
+  // - taking `comfortable` abandons `legibleScale` silently, and the function
+  // then returns `{ windows: [], legible: true }`, "it fits whole", for a scale
+  // it computed two lines earlier and found did not fit.
+  //
+  // Measured on one drawing at five, six and seven services in an identical
+  // bounding box: the sixth service crossed `MIN_SERVICES_PER_SLIDE`, so the
+  // short-circuit engaged, the sliver's tile went 0.2030in to 0.1906in, its
+  // disc went 77% to 82% of the service it numbers, and `chaseAffordable` -
+  // which the audit reads as "the deck measured the finer plan and could not
+  // afford it" - flipped from true to false without any plan being measured.
+  // Adding an ordinary service made the drawing worse and the gate quieter.
+  const comfortableReads = !!comfortable
+    && (!floor || scaleOf(comfortable.cols, comfortable.rows) >= legibleScale);
   const worthIt = comfortable
+    && comfortableReads
     && comfortable.slides <= MAX_DIAGRAM_SLIDES
     && services.length / comfortable.slides >= MIN_SERVICES_PER_SLIDE;
   const grid = worthIt ? comfortable : floor;
@@ -1173,10 +1272,19 @@ function planWindowsAtCeiling(
   // still has to be a deck: sheets that carry barely a tile each are a
   // flip-book, and a drawing needing more than the hard ceiling really is a
   // plotter drawing.
-  if (cols * rows > MAX_TILED_SLIDES) return { windows: [], legible: false };
+  // Charge WINDOWS, not grid cells. `tile()` drops cells that hold nothing, so
+  // a 4x3 grid over an L-shaped drawing is five slides and not twelve, and the
+  // paragraph above says so in as many words: empty cells cost nothing, a
+  // reader counts slides. Both bail-outs here charged cells anyway, while the
+  // `mustTile` path charges `slidesFor` - so the density test on one drawing
+  // divided by 12 and got 0.58 where the reader sees five windows and 1.4.
+  // The cheaper the grid's shape, the likelier the deck was refused for it.
+  const slides = slidesFor(cols, rows);
+  if (slides > MAX_TILED_SLIDES) return { windows: [], legible: false };
   if (
-    cols * rows > MAX_DIAGRAM_SLIDES
-    && services.length / (cols * rows) < MIN_SERVICES_PER_TILED_SLIDE
+    !options.waiveDensity
+    && slides > MAX_DIAGRAM_SLIDES
+    && services.length / slides < MIN_SERVICES_PER_TILED_SLIDE
   ) {
     return { windows: [], legible: false };
   }
@@ -1431,6 +1539,29 @@ function planSlideGeometry(diagram?: DiagramShapeSource | null): SlideGeometry {
       && !calloutBarReachable(medians.h, usedFrame, medians.w, markIn),
     medianServiceW: medians && Number.isFinite(medians.w) ? medians.w : 0,
     servedTileW: servedW,
+    // The narrowest authored tile this FRAME can ever carry a proportionate
+    // callout on, in pixels, whatever the plan.
+    //
+    // `finestPerIn` is what the finest grid returns before the bleed alone
+    // fills the window, so `markIn / finestPerIn` is the authored width below
+    // which no split reaches the bar. Below it the deck has no move and the
+    // gate must not demand one; above it a miss is a real miss.
+    //
+    // Per hop and not per deck, deliberately. `calloutBarClamped` answers the
+    // same question about the MEDIAN, and reading a deck-wide answer here is
+    // the mistake `servedW: Infinity` made one round ago: one 14px sliver
+    // would switch the rule off for hops between 160px tiles drawn at 1.81in.
+    // The gate compares each hop's own endpoints against this.
+    //
+    // It is a bound on the frame and not a fact about the drawing, so it moves
+    // only when the frame or the bleed does - which is exactly what makes it
+    // the number to watch when `WINDOW_BLEED_PX` becomes proportional: at a
+    // flat 100px the bar is out of reach below 14.5 authored px, and a
+    // proportional bleed retires most of this exemption by construction.
+    reachableTileW: usedFrame && medians && markIn > 0
+      ? markIn / (Math.min(usedFrame.w, usedFrame.h)
+        / (WINDOW_BLEED_PX * 2 + Math.max(1, medians.h)))
+      : 0,
     chaseAffordable,
   };
 }
@@ -1459,6 +1590,16 @@ export function calloutPlanFor(diagram?: DiagramShapeSource | null): {
    */
   servedTileW: number;
   /**
+   * The narrowest authored tile this FRAME can carry a proportionate callout
+   * on at any grid, in pixels.
+   *
+   * A frame bound and not a plan outcome: below it no split reaches the bar,
+   * so the deck has no move and a disproportionate disc is the page's fault
+   * and not the planner's. Compared against each hop's OWN endpoints, so one
+   * sliver cannot exempt a deck.
+   */
+  reachableTileW: number;
+  /**
    * Whether a plan serving the narrowest badged tile was BOTH finer than the
    * chosen one and inside the density floor.
    *
@@ -1474,6 +1615,7 @@ export function calloutPlanFor(diagram?: DiagramShapeSource | null): {
     clamped: geometry.calloutBarClamped,
     medianServiceW: geometry.medianServiceW,
     servedTileW: geometry.servedTileW,
+    reachableTileW: geometry.reachableTileW,
     chaseAffordable: geometry.chaseAffordable,
   };
 }
@@ -2628,6 +2770,13 @@ function stepBadgeBox(
   // exists so the reader can see where each part sits in the whole - and the
   // numbered story is told on the reading windows, which is also where the
   // rule requiring every cited step to be findable does its counting.
+  //
+  // Tried and reverted: dropping it on reading windows too, where the planner
+  // has refused the split and the disc comes out wider than its tile. That
+  // trades a swamped icon for a broken workflow band - the audit reported 20
+  // issues of the form "workflow cites steps 2, 3 with no callout on the
+  // canvas" - and a step the reader cannot locate at all is worse than one
+  // drawn too large. The fix has to be in the plan, not in the disc.
   if (thumbnail && stepBadgeConflicts(route, transform)) return null;
 
   // No chip to hang off: either an unlabelled but numbered hop, or one whose

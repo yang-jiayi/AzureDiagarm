@@ -2994,6 +2994,120 @@ function mixedSliverScenario(): Scenario {
 }
 
 /**
+ * A glyph-sized service in a numbered chain of ordinary ones, at three pitches
+ * and two rows.
+ *
+ * The shape the Architecture Center draws constantly - six services in a row
+ * and a private DNS zone sized like the glyph it is - and the deck draws the
+ * zone's step disc WIDER THAN THE ZONE. At a 290px pitch the tile comes out
+ * 0.1293in under a 0.1556in disc, 120% of the thing it numbers; move the same
+ * zone off the row to x=1740 and it is 0.1178in under the same disc, 132%.
+ *
+ * Every gate rule missed it. The proportionality rule cannot arm, because a
+ * tile that small can never satisfy `tile * BADGE_SHARE >= floor`. The conflict
+ * rule armed and was then exempted, because the zone is narrower than the
+ * planner's served tile.
+ *
+ * A plan exists and costs four slides: `probe-inline` is the same seven
+ * services at the same pitch with the zone on the row, and it reaches 0.2829in
+ * with its worst disc at 16%. Visio draws every one of these correctly at 55%.
+ */
+function spreadGlyphScenario(id: string, pitch: number, dnsX: number, dnsY: number): Scenario {
+  const icon = '/Azure_Public_Service_Icons/Icons/networking/10061-icon-service-Virtual-Networks.svg';
+  const names = ['Azure Front Door', 'Azure App Service', 'Azure SQL Database',
+    'Azure Key Vault', 'Azure Blob Storage', 'Azure Monitor'];
+  const nodes: Node[] = names.map((label, i) => ({
+    id: `sv${i}`,
+    type: 'azureNode',
+    position: { x: i * pitch, y: 0 },
+    width: 150,
+    height: 96,
+    data: { label, serviceName: label, category: 'networking', iconPath: icon },
+  } as unknown as Node));
+  nodes.push({
+    id: 'sv-dns',
+    type: 'azureNode',
+    position: { x: dnsX, y: dnsY },
+    width: 16,
+    height: 96,
+    data: {
+      label: 'Private DNS zone',
+      serviceName: 'DNS Zones',
+      category: 'networking',
+      iconPath: icon,
+    },
+  } as unknown as Node);
+  const chain = ['sv0', 'sv1', 'sv-dns', 'sv2', 'sv3', 'sv4', 'sv5'];
+  const edges: Edge[] = chain.slice(1).map((target, i) => ({
+    id: `sve-${i}`,
+    source: chain[i],
+    target,
+    data: { stepNumber: i + 1, stepDescription: `Step ${i + 1} of the request path` },
+  } as unknown as Edge));
+  return { id, nodes, edges };
+}
+
+/**
+ * The same drawing at five, six and seven services.
+ *
+ * `planWindowsAtCeiling` prefers the COMFORTABLE grid whenever the deck can
+ * afford it and it carries `MIN_SERVICES_PER_SLIDE` services, and the
+ * comfortable grid is derived from the median tile's HEIGHT alone. So a drawing
+ * whose legibility floor demands a finer grid than comfort does gets the coarse
+ * one anyway - and then returns `{ windows: [], legible: true }`, "it fits
+ * whole", for a scale it decided two lines earlier does not fit.
+ *
+ * The bounding box, the node sizes and the sliver are identical across all
+ * three; only the count of ordinary services changes, and it crosses
+ * `MIN_SERVICES_PER_SLIDE` between the first and the second. Adding one
+ * ordinary service makes the sliver's tile narrower, its disc worse, and
+ * switches the planner's own report of affordability from true to false.
+ */
+function mixCountScenario(bigCount: number): Scenario {
+  const icon = '/Azure_Public_Service_Icons/Icons/networking/10061-icon-service-Virtual-Networks.svg';
+  const nodes: Node[] = [];
+  const ids: string[] = [];
+  for (let i = 0; i < bigCount; i += 1) {
+    const x = bigCount > 1 ? Math.round(((950 - 150) * i) / (bigCount - 1)) : 0;
+    nodes.push({
+      id: `mc${i}`,
+      type: 'azureNode',
+      position: { x, y: 0 },
+      width: 150,
+      height: 96,
+      data: {
+        label: `Regional service ${i + 1}`,
+        serviceName: 'Virtual Networks',
+        category: 'networking',
+        iconPath: icon,
+      },
+    } as unknown as Node);
+    ids.push(`mc${i}`);
+  }
+  nodes.push({
+    id: 'mc-dns',
+    type: 'azureNode',
+    position: { x: bigCount > 1 ? Math.round((950 - 150) / (bigCount - 1) / 2) : 60, y: 300 },
+    width: 14,
+    height: 96,
+    data: {
+      label: 'Private DNS zone',
+      serviceName: 'DNS Zones',
+      category: 'networking',
+      iconPath: icon,
+    },
+  } as unknown as Node);
+  const chain = [...ids.slice(0, 1), 'mc-dns', ...ids.slice(1)];
+  const edges: Edge[] = chain.slice(1).map((target, i) => ({
+    id: `mce-${i}`,
+    source: chain[i],
+    target,
+    data: { stepNumber: i + 1, stepDescription: `Step ${i + 1} of the request path` },
+  } as unknown as Edge));
+  return { id: `probe-mix-${bigCount}`, nodes, edges };
+}
+
+/**
  * Two regions with a wide void between them, numbered.
  *
  * The magnifier's paper bound used to be measured on a span that still carried
@@ -7358,7 +7472,13 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
   // the median raise, so this number is the outcome of a measurement rather
   // than an assumption - and where it still sits at the median, the deck
   // measured the finer plan and could not afford it.
-  const medianAuthoredW = calloutPlan.servedTileW;
+  //
+  // The served width is no longer consulted directly. A width is the wrong
+  // question: read deck-wide it exempted every hop at once when it came back
+  // as a sentinel, and read per hop it exempts exactly the glyph-sized service
+  // that most needs the callout to be proportionate. What the rule asks for
+  // instead is `chaseAffordable`, the RESULT of the chase the planner actually
+  // ran, which cannot be true for a plan that was never attempted.
   // A label may lean on the two services its own arrow connects. The reader
   // still attributes it correctly — it is touching the very icons it is about
   // — and on a hop shorter than the label there is nowhere else for it to go.
@@ -7619,9 +7739,20 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
           .map((nodeId) => ({ nodeId, w: slideTiles.find((t) => t.name.slice('service-'.length) === nodeId)?.w }))
           .filter((d): d is { nodeId: string; w: number } => typeof d.w === 'number' && d.w > 0);
         const widths = drawn.map((d) => d.w);
-        // Both ends or neither: a window may hold one end of a hop and not the
-        // other, and the end that was cut is not evidence about the end drawn.
-        if (widths.length === ends.length) {
+        // Measure against the ends that ARE drawn; skip only when neither is.
+        //
+        // This used to require both ends, on the reasoning that "the end that
+        // was cut is not evidence about the end drawn". True for a rule about
+        // the hop, false for this one: the disc and the tile are both drawn on
+        // this slide, and that pair is the entire measurement. The consequence
+        // was perverse, because splitting the deck is the exporter's remedy for
+        // a tile too small, and splitting is exactly what puts a hop's two ends
+        // on different windows - so the better the chase worked, the blinder
+        // the gate got. Measured on one drawing, all four badges were outside
+        // the field of view and one of them satisfied the conflict predicate
+        // exactly, at 77% of the service it numbers; across the shipping corpus
+        // 34 badges were invisible for this reason alone.
+        if (widths.length > 0) {
           const tile = Math.min(...widths);
           // Only where a proportionate disc could also have been a legible one.
           //
@@ -7642,12 +7773,51 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
             issues.push(`step badge "${badge.name}" is ${badge.w.toFixed(4)}in across on a `
               + `${tile.toFixed(4)}in tile — ${((badge.w / tile) * 100).toFixed(0)}% of the `
               + 'service it is calling out');
+          } else if (badge.w > tile + 1e-6 && drawn.every((d) => {
+            const w = authoredW.get(d.nodeId);
+            return w === undefined || w >= calloutPlan.reachableTileW - 1e-9;
+          })) {
+            // A disc WIDER THAN THE SERVICE IT NUMBERS, reported ahead of every
+            // exemption that is about the plan.
+            //
+            // There is no reading of a deck in which this is acceptable, so it
+            // is tested before the served-tile and affordability clauses, which
+            // all ask whether the exporter had a better PLAN available. This one
+            // does not care. Measured on six ordinary services and one
+            // glyph-sized DNS zone - the commonest shape the Architecture
+            // Center draws - the zone came out 0.1293in under a 0.1556in disc
+            // at a 290px pitch and 0.1178in off the row: 120% and 132% of the
+            // thing being pointed at, with the gate silent, because every rule
+            // was keyed on the tile the planner served and the zone is narrower
+            // than that by construction.
+            //
+            // The one condition is a bound on the FRAME, not on the plan. Below
+            // `reachableTileW` the bleed alone fills the window before the bar
+            // is met, so no split reaches it and the page size is the only
+            // remedy - which is why Visio draws these same drawings correctly.
+            // It is per hop, against this hop's own endpoints. Applying it
+            // caught a shipped defect the round it was written: 120 sensors of
+            // 14 authored px number 119 hops, and three-digit discs came out
+            // 0.2451in on 0.2006in tiles, 122%, on a corpus reporting clean.
+            // That deck needs a 16.7px tile for a proportionate disc and has
+            // 14, so it is exempt here and reported nowhere - the honest next
+            // move is to let a callout's digits take the same 7pt floor its
+            // tiles already take, which would size that disc 0.1907in.
+            conflicts.push({ name: badge.name, tile, floor, ratio: badge.w / tile });
           } else if (tile * BADGE_SHARE < floor - 1e-6
             && !calloutBarClamped
-            && (calloutPlan.chaseAffordable || drawn.every((d) => {
+            // Only where this FRAME can deliver the bar for this hop's own
+            // tiles. Below `reachableTileW` no split reaches it - the bleed
+            // alone fills the window first - so the deck has no move and the
+            // page size is the only remedy, which is why Visio draws these
+            // same drawings at 55%. Per hop, against its own endpoints: read
+            // deck-wide it would repeat the `servedW: Infinity` defect and
+            // exempt hops between tiles ten times wider.
+            && drawn.every((d) => {
               const w = authoredW.get(d.nodeId);
-              return w === undefined || w >= medianAuthoredW;
-            }))) {
+              return w === undefined || w >= calloutPlan.reachableTileW - 1e-9;
+            })
+            && calloutPlan.chaseAffordable) {
             // The empty intersection, stated as what it is. A tile this small
             // admits no disc that is both readable and proportionate, so there
             // is nothing the callout can do about it and the fix is a coarser
@@ -11136,6 +11306,12 @@ async function main(): Promise<void> {
   mixedSliverScenario(),
   gutterRegionScenario(),
   magnifiedGutterScenario(),
+  spreadGlyphScenario('probe-tight', 200, 300, 200),
+  spreadGlyphScenario('probe-spread', 290, 440, 200),
+  spreadGlyphScenario('probe-offrow', 290, 440, 400),
+  mixCountScenario(4),
+  mixCountScenario(5),
+  mixCountScenario(6),
   zoneMedianScenario(0),
   zoneMedianScenario(2),
   halfTailScenario(),
