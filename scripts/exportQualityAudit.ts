@@ -2308,32 +2308,70 @@ function tinyTileSpreadScenario(): Scenario {
   return { id: 'probe-tiny-spread', nodes, edges };
 }
 
-function slaveredBadgeScenario(): Scenario {
-  // One realistic workflow at a realistic size, with one unconnected sliver
-  // parked far away from it.
+function widthCliffScenario(): Scenario {
+  // The one-pixel cliff, kept where it can be measured.
   //
-  // The sliver takes no part in the workflow and carries no badge of its own,
-  // but the drawing ceiling that keeps a badge from dwarfing its tile was read
-  // off the NARROWEST tile on the sheet, so this one 14px node cut every badge
-  // in the chain from 0.240in to 0.1119in - a 53% collapse driven by a shape
-  // that none of them is anywhere near. The ceiling is a statement about the
-  // tiles a badge is drawn among, so it is read off the median, exactly as the
-  // pen weight ceiling two lines below it already was.
+  // Sixty tiles of 14px with a single 57px node among them. Under the
+  // max-over-min ratio that once decided whether to raise the drawing ceiling
+  // this reads 4.07 and the raise is refused, so 59 of 60 services come out
+  // anonymous across 26 slides - and at 56px the same drawing reads 4.00, the
+  // raise is allowed, and all 60 are named. One pixel on one node out of sixty
+  // decided the whole deck, which is what an extremum-over-extremum statistic
+  // does and is why the width now takes the median, as the height target
+  // beside it already did.
   const icon = '/Azure_Public_Service_Icons/Icons/compute/10029-icon-service-Function-Apps.svg';
-  const nodes: Node[] = Array.from({ length: 9 }, (_, i) => ({
-    id: `sb${i}`,
+  const nodes: Node[] = Array.from({ length: 60 }, (_, i) => ({
+    id: `wc${i}`,
     type: 'azureNode',
-    position: i === 8 ? { x: 2600, y: 1900 } : { x: (i % 3) * 300, y: Math.floor(i / 3) * 240 },
-    width: i === 8 ? 14 : 150,
-    height: i === 8 ? 16 : 96,
+    position: { x: (i % 10) * 420, y: Math.floor(i / 10) * 430 },
+    width: i === 59 ? 57 : 14,
+    height: i === 59 ? 65 : 16,
     data: {
-      label: i === 8 ? 'Retired probe' : `Order pipeline stage ${i + 1}`,
+      label: `Regional ingest worker ${i + 1}`,
       serviceName: 'Azure Functions',
       category: 'compute',
       iconPath: icon,
     },
   } as unknown as Node));
-  const edges = Array.from({ length: 7 }, (_, i) => ({
+  const edges = Array.from({ length: 8 }, (_, i) => ({
+    id: `wce${i}`,
+    source: `wc${i}`,
+    target: `wc${i + 10}`,
+  })) as unknown as Edge[];
+  return { id: 'probe-width-cliff', nodes, edges };
+}
+
+function slaveredBadgeScenario(): Scenario {
+  // One realistic workflow at a realistic size, with the slivers OUTNUMBERING
+  // the tiles the workflow runs among.
+  //
+  // The first version of this fixture parked one 14px node beside an eight
+  // stage chain, because reading the badge ceiling off the narrowest tile on
+  // the sheet let that one node cut every badge in the chain from 0.240in to
+  // 0.1119in - 53% off seven discs drawn between tiles nowhere near it. The
+  // median fixed that and then had the same defect one node further out: four
+  // large tiles beside five slivers has a sliver for a median, so the discs
+  // collapse again, and the gate reports it as the OPPOSITE fault because the
+  // badge is now 76.7% of a tile it is not drawn near. So the ceiling is taken
+  // over the tiles at the ends of the numbered connectors, which is the only
+  // set the measurement was ever about.
+  const icon = '/Azure_Public_Service_Icons/Icons/compute/10029-icon-service-Function-Apps.svg';
+  const nodes: Node[] = Array.from({ length: 9 }, (_, i) => ({
+    id: `sb${i}`,
+    type: 'azureNode',
+    position: i >= 4
+      ? { x: 2600 + (i - 4) * 90, y: 1900 }
+      : { x: (i % 2) * 400, y: Math.floor(i / 2) * 320 },
+    width: i >= 4 ? 14 : 200,
+    height: i >= 4 ? 16 : 128,
+    data: {
+      label: i >= 4 ? `Retired probe ${i - 3}` : `Order pipeline stage ${i + 1}`,
+      serviceName: 'Azure Functions',
+      category: 'compute',
+      iconPath: icon,
+    },
+  } as unknown as Node));
+  const edges = Array.from({ length: 3 }, (_, i) => ({
     id: `sbe${i}`,
     source: `sb${i}`,
     target: `sb${i + 1}`,
@@ -7658,16 +7696,29 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
   // deck with 120 tiles, none of them carrying any type and all 60 index rows
   // reading "(not drawn)", passed clean, because each individual rule was
   // satisfied by a drawing with nothing on it.
-  const namedTileShapes = perSlide.flat().filter((s) => s.name.startsWith('service-label-')
-    && s.text.trim().length > 0).length;
-  const drawnTileShapes = perSlide.flat().filter((s) => s.name.startsWith('service-')
-    && !s.name.startsWith('service-label-')
-    && !s.name.startsWith('service-meta-')
-    && s.w > 0).length;
-  if (slideCount > 2 && drawnTileShapes > 0 && namedTileShapes === 0) {
+  //
+  // The bar is 30% of DISTINCT services, both parts measured rather than
+  // chosen. Instrumenting all 125 pptx runs put 120 of them at 100% named and
+  // the remaining five at 88.9, 75, 70, 62.5 and 33.3, while two decks built
+  // to defeat a zero-threshold rule sat at 20.0 and 1.7 - an empty gap, and 30
+  // leaves the lowest legitimate deck passing on the strength of its index.
+  // Distinct services rather than label shapes because one service drawn on
+  // twelve windows is one name to a reader, and counting instances inflates
+  // with the very split the rule exists to judge.
+  const namedServices = new Set(perSlide.flat()
+    .filter((s) => s.name.startsWith('service-label-') && s.text.trim().length > 0)
+    .map((s) => s.name.slice('service-label-'.length)));
+  const drawnServices = new Set(perSlide.flat()
+    .filter((s) => s.name.startsWith('service-')
+      && !s.name.startsWith('service-label-')
+      && !s.name.startsWith('service-meta-')
+      && s.w > 0)
+    .map((s) => s.name.replace(/^service-/, '')));
+  const namedShare = drawnServices.size > 0 ? namedServices.size / drawnServices.size : 1;
+  if (slideCount > 2 && drawnServices.size > 0 && namedShare < 0.3) {
     issues.push(
-      `${slideCount} slides carry ${drawnTileShapes} service tile(s) and not one of them draws a name `
-      + '— the deck spent every slide on an unlabelled drawing it captions as readable',
+      `${slideCount} slides draw ${drawnServices.size} service(s) and name only ${namedServices.size} `
+      + `of them — ${(namedShare * 100).toFixed(1)}% named on a deck captioned as readable`,
     );
   }
   for (const [name, count] of countByName(chips)) {
@@ -8808,33 +8859,68 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
         + `— ${((blockIn / zoneH) * 100).toFixed(0)}% of the box it names, so it covers what is inside it`);
     }
   }
-  const badges = [...xml.matchAll(/NameU="StepBadge\.\d+"[\s\S]*?<Cell N="Width" V="([\d.]+)"/g)].map((m) => +m[1]);
-  if (badges.length > 0 && tileWidths.length > 0) {
-    const widest = Math.max(...badges);
-    // The typical tile, not the narrowest one. A badge is drawn on an arrow
-    // between two tiles, so what it can dwarf is the tiles it sits among - and
-    // this rule read the narrowest shape anywhere on the sheet, which let one
-    // parked 14px node that carries no badge and touches no arrow decide that
-    // a 0.240in disc on a 1.56in tile was 165% oversized. The exporter's own
-    // ceiling had the same defect and was corrected the same way, so a rule
-    // still reading the minimum would have gone on failing the corrected
-    // exporter for the shape it was right to ignore.
-    const sorted = [...tileWidths].sort((a, b) => a - b);
-    const tile = sorted[Math.floor(sorted.length / 2)];
-    if (widest > tile * 0.55) {
-      issues.push(`a step badge is ${widest.toFixed(3)}in across on a ${tile.toFixed(3)}in tile `
-        + `— ${((widest / tile) * 100).toFixed(0)}% of the service it is calling out`);
+  // Both badge rules measure a disc against the tile it is ACTUALLY drawn
+  // beside, found by position, not against a statistic over the whole sheet.
+  //
+  // Every sheet-wide statistic tried here was one node from wrong. The minimum
+  // let a parked 14px sliver decide that a 0.240in disc between 1.56in tiles
+  // was 165% oversized. The median survived that and then failed the parity
+  // flip - four large tiles beside five slivers has a sliver for a median, so
+  // the same correct disc read as 165% again. A badge is drawn on one arrow
+  // between two tiles; the nearest tile is the one it is calling out, and no
+  // other shape on the page has any bearing on whether it dwarfs or vanishes.
+  const shapeGeom = (nameU: RegExp): Array<{ x: number; y: number; w: number }> => {
+    const out: Array<{ x: number; y: number; w: number }> = [];
+    for (const chunk of xml.split('<Shape ID=')) {
+      if (!nameU.test(chunk.slice(0, 400))) continue;
+      const w = /<Cell N="Width" V="([\d.]+)"/.exec(chunk);
+      const x = /<Cell N="PinX" V="([\d.-]+)"/.exec(chunk);
+      const y = /<Cell N="PinY" V="([\d.-]+)"/.exec(chunk);
+      if (w && x && y) out.push({ x: +x[1], y: +y[1], w: +w[1] });
+    }
+    return out;
+  };
+  const badgeGeom = shapeGeom(/NameU="StepBadge\.\d+"/);
+  const tileGeom = shapeGeom(/NameU="Service\.\d+"/);
+  if (badgeGeom.length > 0 && tileGeom.length > 0) {
+    const ratios: number[] = [];
+    for (const badge of badgeGeom) {
+      let near = tileGeom[0];
+      let best = Infinity;
+      for (const t of tileGeom) {
+        const d = (t.x - badge.x) ** 2 + (t.y - badge.y) ** 2;
+        if (d < best) { best = d; near = t; }
+      }
+      if (near.w <= 0) continue;
+      ratios.push(badge.w / near.w);
+      if (badge.w > near.w * 0.55) {
+        issues.push(`a step badge is ${badge.w.toFixed(3)}in across on a ${near.w.toFixed(3)}in tile `
+          + `— ${((badge.w / near.w) * 100).toFixed(0)}% of the service it is calling out`);
+        break;
+      }
     }
     // And the converse, which nothing measured. A ceiling read off the wrong
-    // tile does not only oversize a badge; read off the narrowest shape on the
-    // sheet it UNDERSIZES every other one, and a disc collapsed from 0.240in
-    // to 0.1119in on a 1.563in tile is a speck the reader has to hunt for
-    // before the numbered order means anything. A badge drawn at its natural
-    // size sits at about 15% of the tile it numbers and the floor only ever
-    // raises it, so nothing legitimate approaches this bar from above.
-    if (widest < tile * 0.1) {
-      issues.push(`a step badge is only ${widest.toFixed(4)}in across beside a ${tile.toFixed(3)}in tile `
-        + `— ${((widest / tile) * 100).toFixed(1)}% of the service it numbers, too small to find`);
+    // tile does not only oversize a badge; read off the wrong statistic it
+    // UNDERSIZES it, and discs collapsed from 0.240in to the 0.1119in floor
+    // beside 1.563in tiles are specks the reader has to hunt for before the
+    // numbered order means anything.
+    //
+    // The TYPICAL badge is not the test either, and it took a second
+    // measurement to learn it. One disc too large is a defect wherever it is;
+    // one disc too small is the placement search doing its documented job,
+    // shrinking a badge so it can sit on its own arrow instead of being pushed
+    // onto the next hop's - an ordinary sheet has one such badge in twenty,
+    // and a dense hub-and-spoke has most of them, which is why the median
+    // failed here too. What a ceiling read off the wrong tile does is cap the
+    // whole sheet, so NO badge on it reaches natural size. The widest badge
+    // therefore answers the question exactly: if even that one is a speck, the
+    // ceiling is wrong; if it is not, the small ones were placed, not capped.
+    if (ratios.length > 0) {
+      const best = ratios.reduce((hi, r) => Math.max(hi, r), 0);
+      if (best < 0.1) {
+        issues.push(`the widest of ${ratios.length} step badge(s) is only ${(best * 100).toFixed(1)}% `
+          + 'of the tile it numbers — the whole sheet is capped too small to find');
+      }
     }
   }
   // A callout is a white number on a dark disc, and the disc is the only thing
@@ -9782,6 +9868,7 @@ async function main(): Promise<void> {
   decomposedNameScenario(),
   normFormScenario(),
   tinyTileSpreadScenario(),
+  widthCliffScenario(),
   slaveredBadgeScenario(),
   longTitleScenario(20),
   longTitleScenario(70),

@@ -569,18 +569,6 @@ export function narrowestBoxW(boxes: readonly { w: number }[]): number {
   return narrowest;
 }
 
-/**
- * How much wider than the narrowest tile the widest may be before the drawing
- * stops counting as uniformly small.
- *
- * Four, because the interesting cases sit far from it in both directions: a
- * grid of equal tiles is 1.0 and a drawing with a deliberate sliver in it was
- * 11.4. Anything in between is a judgement, and this one errs toward NOT
- * raising, because the cost of raising wrongly is slides spent on lone tiles
- * while the cost of not raising is marks the index still carries.
- */
-const UNIFORM_TILE_RATIO = 4;
-
 function rendererMaxScale(minBoxW: number): number {
   return Math.max(
     1 / PX_PER_IN,
@@ -648,11 +636,45 @@ export function legibleScaleFor(
  * all — either whole or tiled. When it cannot, the caller grows the page
  * instead, because splitting further only multiplies slides.
  */
+/**
+ * Plan the windows, then check that the raise paid for itself.
+ *
+ * The ceiling is raised so that a drawing of small tiles can be split until
+ * its tiles reach the markable bar. What it must not do is split a drawing
+ * until each slide holds one tile: `probe-whitespace` chases four slivers and
+ * drags their 160px neighbours to 2.3in each, ending with six of eight slides
+ * carrying a single service. Both harms are real, and only one of them was
+ * ever visible to the gate, so the earlier attempt to tell them apart by a
+ * max-over-min ratio chose the invisible one - and a sweep found the ratio has
+ * a one pixel cliff, where widening one node of sixty from 56px to 57px took
+ * the deck from sixty named services to one.
+ *
+ * So the raise is not predicted from a proxy, it is measured on the plan it
+ * produces. If the raised grid averages fewer than `MIN_SERVICES_PER_TILED_SLIDE`
+ * services per window - the constant the fixed-page path already uses for
+ * exactly this judgement - the raise is refused and the unraised plan stands.
+ */
 function planDiagramWindows(
   bounds: Bounds,
   services: ExportBox[],
   frame: DiagramFrame,
   options: { mustTile?: boolean } = {},
+): { windows: DiagramWindow[]; legible: boolean } {
+  const raised = planWindowsAtCeiling(bounds, services, frame, options, true);
+  if (raised.windows.length === 0) return raised;
+  if (services.length / raised.windows.length >= MIN_SERVICES_PER_TILED_SLIDE) return raised;
+  const plain = planWindowsAtCeiling(bounds, services, frame, options, false);
+  // Only prefer the unraised plan when it is genuinely cheaper. A refusal that
+  // costs the same number of slides buys nothing and loses the marks.
+  return plain.windows.length < raised.windows.length ? plain : raised;
+}
+
+function planWindowsAtCeiling(
+  bounds: Bounds,
+  services: ExportBox[],
+  frame: DiagramFrame,
+  options: { mustTile?: boolean } = {},
+  raiseCeiling = true,
 ): { windows: DiagramWindow[]; legible: boolean } {
   const contentW = Math.max(1, bounds.maxX - bounds.minX);
   const contentH = Math.max(1, bounds.maxY - bounds.minY);
@@ -710,14 +732,20 @@ function planDiagramWindows(
   // has a sliver in it. `probe-whitespace` is four 14px tiles beside two 160px
   // ones, and chasing the 14px one there drags the 160px ones to 2.3in each,
   // which puts one tile on a slide and spends eight of them to show a single
-  // character per sliver - the same bad trade in the other direction. A tile
-  // eleven times narrower than its neighbour is what the index exists for. So
-  // the ceiling is only raised when the drawing is uniform enough that lifting
-  // the narrowest tile lifts the drawing rather than exploding it.
-  const narrowest = narrowestBoxW(services);
-  const widest = services.reduce((wide, box) => Math.max(wide, box.w), 0);
-  const uniformlySmall = widest <= narrowest * UNIFORM_TILE_RATIO;
-  const legibleScale = legibleScaleFor(target, frame, uniformlySmall ? narrowest : Infinity);
+  // character per sliver - the same bad trade in the other direction.
+  //
+  // The width therefore takes the median, for the same reason the height
+  // target twelve lines above it does, and the argument written there applies
+  // here unchanged: an extremum has a neighbour, so one node decides the deck.
+  // A max-over-min ratio is strictly worse than the low percentile that
+  // paragraph rejects - measured, one node of sixty widening from 56px to 57px
+  // moved the deck from sixty named services to one. Half the sheet has to be
+  // small before the median moves, and on a uniform drawing the median IS the
+  // minimum, so `probe-tiny-spread` is unaffected. Whether the raise was worth
+  // its slides is then measured on the resulting plan, not predicted here.
+  const widths = services.map((box) => box.w).filter((w) => w > 0).sort((a, b) => a - b);
+  const typicalW = widths[Math.floor(widths.length * 0.5)] ?? Infinity;
+  const legibleScale = legibleScaleFor(target, frame, raiseCeiling ? typicalW : Infinity);
   if (Math.min(frame.w / contentW, frame.h / contentH) >= legibleScale) return whole;
 
   // Splitting on one axis only is why a tall drawing used to grow the page

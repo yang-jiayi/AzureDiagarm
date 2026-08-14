@@ -278,15 +278,53 @@ function fontsForScale(scale: number): VisioFonts {
  * that function has no business knowing. The typical tile is the median, not
  * the smallest: one deliberately tiny node should not thin every line on the
  * sheet, but a page made of tiny nodes should.
+ *
+ * `badgeBoxes` is narrower than `boxes` on purpose. A pen is drawn everywhere,
+ * so its ceiling is a statement about the whole sheet; a badge is drawn on a
+ * numbered arrow, so its ceiling is a statement about the tiles at the ends of
+ * those arrows and about nothing else. Taking the badge median over every
+ * shape left the statistic one node from wrong in the other direction: five
+ * 200px tiles beside four slivers gives a 2.08in median and a correct 0.240in
+ * disc, and moving a single node to make it five slivers gives a 0.146in
+ * median, collapses the same seven discs to the 0.1119in floor, and does it to
+ * a workflow that runs entirely among the 2in tiles.
  */
-function withDrawingCeilings(fonts: VisioFonts, boxes: Iterable<{ w: number; h: number }>): VisioFonts {
+/**
+ * The tiles a step badge is actually drawn between.
+ *
+ * A badge sits on a numbered connector, so the shapes it can dwarf or vanish
+ * beside are the ones at that connector's ends. Everything else on the sheet
+ * is scenery as far as this one measurement goes.
+ */
+function badgedEndpointBoxes(
+  edges: Edge[],
+  boxes: Map<string, { w: number; h: number }>,
+): Array<{ w: number; h: number }> {
+  const out: Array<{ w: number; h: number }> = [];
+  for (const edge of edges) {
+    const step = (edge.data as { stepNumber?: unknown } | undefined)?.stepNumber;
+    if (step === undefined || step === null || step === '') continue;
+    for (const id of [edge.source, edge.target]) {
+      const box = boxes.get(id);
+      if (box) out.push(box);
+    }
+  }
+  return out;
+}
+
+function withDrawingCeilings(
+  fonts: VisioFonts,
+  boxes: Iterable<{ w: number; h: number }>,
+  badgeBoxes: Iterable<{ w: number; h: number }> = boxes,
+): VisioFonts {
   const all = [...boxes].filter((b) => b.w > 0 && b.h > 0);
   if (all.length === 0) return fonts;
   const median = (xs: number[]): number => {
     const s = [...xs].sort((a, b) => a - b);
     return s[Math.floor(s.length / 2)];
   };
-  const tileWIn = median(all.map((b) => b.w)) / PX_PER_INCH;
+  const badged = [...badgeBoxes].filter((b) => b.w > 0 && b.h > 0);
+  const tileWIn = median((badged.length > 0 ? badged : all).map((b) => b.w)) / PX_PER_INCH;
   const tileHIn = median(all.map((b) => b.h)) / PX_PER_INCH;
   return {
     ...fonts,
@@ -1940,6 +1978,7 @@ export async function buildVsdxPackage(
   const fonts = withDrawingCeilings(
     fontsForScale(boxScaleWithin(fitted, limitPx, limitPx - (reserveBandIn + legendBandIn) * PX_PER_INCH)),
     raw.values(),
+    badgedEndpointBoxes(edges, raw),
   );
   // Match the PowerPoint strategy: draw 1 : 1 from the full bounds whenever the
   // page stays a sensible size, and only fall back to the dense-cluster bounds
