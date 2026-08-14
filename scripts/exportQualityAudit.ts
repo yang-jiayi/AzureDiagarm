@@ -9553,10 +9553,68 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
   };
 }
 
+/**
+ * WHAT EACH KIND OF PART IS SUPPOSED TO BE. A SPECIFICATION, NOT A MEASUREMENT.
+ *
+ * The rules below ask whether the package is internally consistent. That is a
+ * strictly weaker question than whether it is right, and the gap is not small:
+ * a rule that only compares family members against each other can never see an
+ * error they all share. Every page override can carry the same typo, or the
+ * masters type, or be absent with `Default Extension="xml"` quietly typing them
+ * all as plain `application/xml`. Consistent, wrong, and green.
+ *
+ * The refactor that removed the fragile `String.replace` moved the failure mode
+ * INTO that blind spot. Two hand-maintained constants could disagree, and
+ * disagreement is what a consistency rule sees. One generator emitting every
+ * override from a single template literal cannot disagree with itself: its
+ * errors are uniform by construction. The mutation that proved the family rule
+ * - drop page 2's override alone - is a mutation the exporter can no longer
+ * make. And a drawing that does not trigger the index has ONE page part, so the
+ * family has one member, so the content type of the drawing page itself, the
+ * part whose missing override started all of this, was guarded by nothing.
+ *
+ * So the knowledge lives here, in a table, where a specification belongs and a
+ * reviewer can read it. Digit runs are already collapsed by the family key, so
+ * `page#` covers pages 1..n and a page 3 needs no edit. A family that is absent
+ * is allowed: not every drawing embeds media and not every deck has notes. A
+ * family that is PRESENT must be what this table says it is, and a family this
+ * table has never heard of has to be added on purpose.
+ */
+const CONTENT_TYPE_MANIFEST: Record<string, Record<string, string>> = {
+  vsdx: {
+    'docProps/app.xml': 'application/vnd.openxmlformats-officedocument.extended-properties+xml',
+    'docProps/core.xml': 'application/vnd.openxmlformats-package.core-properties+xml',
+    'visio/document.xml': 'application/vnd.ms-visio.drawing.main+xml',
+    'visio/media/image#.png': 'image/png',
+    'visio/pages/page#.xml': 'application/vnd.ms-visio.page+xml',
+    'visio/pages/pages.xml': 'application/vnd.ms-visio.pages+xml',
+    'visio/windows.xml': 'application/vnd.ms-visio.windows+xml',
+  },
+  pptx: {
+    'docProps/app.xml': 'application/vnd.openxmlformats-officedocument.extended-properties+xml',
+    'docProps/core.xml': 'application/vnd.openxmlformats-package.core-properties+xml',
+    'ppt/media/image-#-#.png': 'image/png',
+    'ppt/notesMasters/notesMaster#.xml': 'application/vnd.openxmlformats-officedocument.presentationml.notesMaster+xml',
+    'ppt/notesSlides/notesSlide#.xml': 'application/vnd.openxmlformats-officedocument.presentationml.notesSlide+xml',
+    'ppt/presProps.xml': 'application/vnd.openxmlformats-officedocument.presentationml.presProps+xml',
+    'ppt/presentation.xml': 'application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml',
+    'ppt/slideLayouts/slideLayout#.xml': 'application/vnd.openxmlformats-officedocument.presentationml.slideLayout+xml',
+    'ppt/slideMasters/slideMaster#.xml': 'application/vnd.openxmlformats-officedocument.presentationml.slideMaster+xml',
+    'ppt/slides/slide#.xml': 'application/vnd.openxmlformats-officedocument.presentationml.slide+xml',
+    'ppt/tableStyles.xml': 'application/vnd.openxmlformats-officedocument.presentationml.tableStyles+xml',
+    'ppt/theme/theme#.xml': 'application/vnd.openxmlformats-officedocument.theme+xml',
+    'ppt/viewProps.xml': 'application/vnd.openxmlformats-officedocument.presentationml.viewProps+xml',
+  },
+};
+
 /** Resolve a relationship Target against the folder its .rels lives beside. */
 function resolvePartPath(base: string, target: string): string {
+  // A Target beginning with "/" is package absolute, which OPC allows and
+  // several writers emit. Concatenating it onto the base turns a correct file
+  // into a red gate, and a rule that cries wolf is a rule someone switches off.
+  const from = target.startsWith('/') ? '' : base;
   const out: string[] = [];
-  for (const seg of `${base}${target}`.split('/')) {
+  for (const seg of `${from}${target}`.split('/')) {
     if (seg === '' || seg === '.') continue;
     if (seg === '..') { out.pop(); continue; }
     out.push(seg);
@@ -9649,6 +9707,16 @@ function packageInvariantIssues(
     if (seen.size < 2) continue;
     const spread = [...seen].map(([type, who]) => `${who[0]} is "${type || 'untyped'}"`).join(', ');
     issues.push(`${where}: the "${key}" parts are the same kind of part but are not typed the same way (${spread}) \u2014 one of them is wrong and Office rejects the file`);
+  }
+  const expected = CONTENT_TYPE_MANIFEST[where] ?? {};
+  for (const [key, members] of byFamily) {
+    const actual = typeOf(members[0]);
+    const want = expected[key];
+    if (want === undefined) {
+      issues.push(`${where}: "${key}" is a kind of part the content type manifest has never seen, so nothing says what it should be typed as (it is "${actual || 'untyped'}")`);
+    } else if (actual !== want) {
+      issues.push(`${where}: the "${key}" parts are typed "${actual || 'untyped'}" but a ${where} reader expects "${want}" \u2014 consistently wrong is still wrong, and Office rejects the file`);
+    }
   }
   const referenced = new Set<string>();
   for (const one of paths) {
@@ -11398,6 +11466,29 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
     const ly = +txt[2];
     const cx = +pin[1] + lx * Math.cos(theta) - ly * Math.sin(theta);
     const cy = +pin[2] + lx * Math.sin(theta) + ly * Math.cos(theta);
+    // AN ASSUMED INPUT IS NOT A MEASURED ONE.
+    //
+    // `cx, cy` is the CENTRE of the label only because the exporter sets
+    // `TxtLocPin` to half the text box and centres the paragraph. Nothing above
+    // reads either. Change them and every connector label overlap verdict below
+    // shifts by up to half a chip, by an amount that varies with the hop angle,
+    // silently, on all 164 fixtures, with every gate still green - because the
+    // shape, its endpoints, its Connects row and its text all still pass.
+    //
+    // Asserted rather than consumed, on purpose. Feeding `TxtLocPinX` into the
+    // reconstruction would make the audit track the exporter and stay green on
+    // a drawing whose labels had all moved, which is meta-rule 6: an exemption
+    // keyed on what the exporter produced goes blind to the mutation it exists
+    // to catch. Holding the model fixed makes the exporter justify the change.
+    const locPin = /<Cell N="TxtLocPinX" V="([\d.-]+)"\/>\s*<Cell N="TxtLocPinY" V="([\d.-]+)"\/>/.exec(shape);
+    const horz = /<Cell N="HorzAlign" V="([\d.-]+)"\/>/.exec(shape);
+    const centred = locPin
+      ? Math.abs(+locPin[1] - +txt[3] / 2) < 0.003 && Math.abs(+locPin[2] - +txt[4] / 2) < 0.003
+      : false;
+    const ASSUMED = 'Visio connector labels are no longer positioned the way the overlap rules reconstruct them';
+    if ((!centred || (horz !== null && horz[1] !== '1')) && !issues.some((one) => one.startsWith(ASSUMED))) {
+      issues.push(`${ASSUMED}: TxtLocPin is ${locPin ? `(${locPin[1]}, ${locPin[2]})` : 'absent'} where the centre of a ${(+txt[3]).toFixed(3)}x${(+txt[4]).toFixed(3)}in box is (${(+txt[3] / 2).toFixed(3)}, ${(+txt[4] / 2).toFixed(3)}), HorzAlign is ${horz?.[1] ?? 'absent'} where centred is 1. Every label overlap verdict below is offset by an amount that varies with the hop angle, and nothing else would report it.`);
+    }
     // The ink, not the box the exporter declared for it.
     //
     // `TxtHeight` is the exporter's own answer to "how tall is this text?", so
