@@ -1811,6 +1811,59 @@ function serviceFarmScenario(n: number): Scenario {
   return { id: `probe-farm-${n}`, nodes, edges };
 }
 
+/**
+ * One narrow service among many ordinary ones, at a controllable pitch.
+ *
+ * `serviceFarmScenario` carries three slivers, so the naming escape is chasing
+ * a population and the plan it settles on is an average over them. This carries
+ * exactly one, which is the case the callout line was written for: a single
+ * service too narrow to sit beside its own disc, with everything else on the
+ * drawing already comfortable. `pitch` sets the horizontal spacing, and so the
+ * aspect of the bounding box, which is what decides how much the planner can
+ * win by splitting.
+ */
+function soloScenario(n: number, pitch = 260): Scenario {
+  const icon = '/Azure_Public_Service_Icons/Icons/networking/10061-icon-service-Virtual-Networks.svg';
+  const stems = [
+    'Zephyr order intake', 'Quartz billing reconciliation', 'Nimbus telemetry ingestion',
+    'Cobalt fraud scoring', 'Verdant analytics warehouse', 'Onyx configuration store',
+    'Marigold session cache', 'Basalt document vault', 'Cedar identity broker',
+    'Larkspur queue relay', 'Ferrous export gateway', 'Halcyon policy engine',
+    'Indigo audit sink', 'Juniper schema registry', 'Kestrel routing mesh',
+    'Lupine transfer bridge', 'Mallow retention tier', 'Nettle dispatch planner',
+    'Opaline lineage tracker', 'Petrel replay buffer', 'Quillon secret rotator',
+    'Rosalind trace collector', 'Sorrel quota broker', 'Thistle backfill runner',
+  ];
+  const nodes: Node[] = [];
+  const edges: Edge[] = [];
+  for (let i = 0; i < n; i += 1) {
+    const sliver = i === 0;
+    nodes.push({
+      id: `s${i}`,
+      type: 'azureNode',
+      position: { x: i * pitch, y: (i % 2) * 200 },
+      width: sliver ? 14 : 160,
+      height: sliver ? 30 : 110,
+      data: {
+        label: stems[i % stems.length],
+        serviceName: stems[i % stems.length],
+        category: 'networking',
+        iconPath: icon,
+      },
+    } as unknown as Node);
+    if (i > 0) {
+      edges.push({
+        id: `se${i}`,
+        source: `s${i - 1}`,
+        target: `s${i}`,
+        label: 'invokes',
+        data: { stepNumber: i, stepDescription: `Step ${i}` },
+      } as unknown as Edge);
+    }
+  }
+  return { id: `probe-solo-${n}`, nodes, edges };
+}
+
 function refusedRaiseAtScenario(ws0: number): Scenario {
   const base = refusedRaiseScenario();
   return {
@@ -9400,6 +9453,8 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
       pageWidthIn: +pageW.toFixed(3),
       pageHeightIn: +pageH.toFixed(3),
       minTileWidthIn: +minTileW.toFixed(3),
+      namedServices: namedServices.size,
+      drawnServices: drawnServices.size,
       minFontPt: minFont,
       overviewMinFontPt: overviewMinFont,
       overviewEmptyTiles,
@@ -11539,6 +11594,439 @@ function stopWatchdog(): void {
   watchdog = null;
 }
 
+interface Golden {
+  minTileIn: number;
+  named: number;
+  slides: number;
+}
+
+/**
+ * The Visio half of the same idea, in the terms that file is made of.
+ *
+ * A .vsdx has no slides and no tile grid, so the deck's three numbers do not
+ * transfer. What it does have is the two things the original complaint was
+ * about - "the icons are gone" and "the text is gone" - and both are countable
+ * in the package itself: `media` is the embedded image parts, `textBlocks` the
+ * shapes carrying type. An exporter change that silently stops emitting icons
+ * or captions moves these and nothing else in the audit would notice, because
+ * every Visio rule judges the shapes that ARE there.
+ */
+interface VsdxGolden {
+  media: number;
+  textBlocks: number;
+  minFontPt: number;
+}
+
+/**
+ * What each fixture shipped when its numbers were last read and blessed.
+ *
+ * Every other rule in this file states a property that ought to hold of any
+ * deck. That is the right shape for a rule and it has a blind spot no rule can
+ * cover: a change that makes a deck WORSE without breaking any stated property
+ * is invisible. Three naming regressions in five rounds went out this way, and
+ * the mutation that proved each fix was afterwards found to leave the gate at
+ * zero issues - the fix was real, the protection was not.
+ *
+ * The property those regressions violate is "the deck ships worse numbers than
+ * it used to", which is a relation between the artefact and its own history.
+ * The artefact holds one half of it, so it is recorded here rather than
+ * derived. Three numbers, all read straight off the emitted deck:
+ *
+ *   minTileIn  the narrowest tile drawn, in inches. Moves on any change to the
+ *              scale the planner settles on, which is what every one of those
+ *              regressions changed.
+ *   named      distinct services carrying a drawn label. The outcome the
+ *              regressions actually cost the reader.
+ *   slides     what the deck spent to get there, so a gain in the first two
+ *              cannot be banked without disclosing its price.
+ *
+ * Deliberately NOT a threshold. A constant fitted across fixtures would have to
+ * pass `probe-glyph12` at 0.073in, which is correct and permanent for that
+ * drawing, and would then be too loose to catch `probe-farm-13` falling from
+ * 0.178in to 0.098in. Each fixture asserts only itself, so there is no constant
+ * to fit and no fixture can make another one lie.
+ *
+ * Two limits, and they are the price of the mechanism rather than defects in
+ * it. These pin BEHAVIOUR, not correctness: a deck that is wrong today is
+ * pinned wrong, so the numbers have to be read before they are blessed, never
+ * captured blind. And a golden converts a silent regression into a diff line
+ * somebody has to justify - that friction IS the mechanism, and it stops
+ * working on the day re-blessing becomes routine. Regenerate with
+ * `npx tsx scripts/exportQualityAudit.ts --bless`, then read what moved and
+ * why before committing it.
+ */
+const GOLDEN: Record<string, Golden> = {
+  'compact': { minTileIn: 1.563, named: 2, slides: 1 },
+  'wide': { minTileIn: 1.413, named: 12, slides: 8 },
+  'oversize': { minTileIn: 1.305, named: 40, slides: 17 },
+  'outlier': { minTileIn: 1.332, named: 9, slides: 2 },
+  'banded': { minTileIn: 1.267, named: 31, slides: 16 },
+  'narrative': { minTileIn: 1.563, named: 21, slides: 7 },
+  'barbell': { minTileIn: 1.563, named: 12, slides: 2 },
+  'hub-fan': { minTileIn: 1.174, named: 7, slides: 4 },
+  'shared-service': { minTileIn: 1.251, named: 7, slides: 9 },
+  'tight-grid': { minTileIn: 1.563, named: 24, slides: 3 },
+  'banded-two-strays': { minTileIn: 1.267, named: 32, slides: 17 },
+  'wide-chain': { minTileIn: 1.563, named: 48, slides: 12 },
+  'grid5x5-tight': { minTileIn: 1.563, named: 25, slides: 3 },
+  'parallel': { minTileIn: 1.563, named: 2, slides: 2 },
+  'opposite-strays': { minTileIn: 1.282, named: 10, slides: 4 },
+  'corner-strays': { minTileIn: 1.471, named: 11, slides: 7 },
+  'symmetric-strays': { minTileIn: 1.205, named: 6, slides: 2 },
+  'hub-spoke': { minTileIn: 1.274, named: 9, slides: 8 },
+  'scope-zone': { minTileIn: 1.32, named: 9, slides: 2 },
+  'stray-zone-pair': { minTileIn: 1.563, named: 16, slides: 5 },
+  'pipeline-region': { minTileIn: 1.174, named: 74, slides: 9 },
+  'boundary-void': { minTileIn: 1.236, named: 12, slides: 3 },
+  'stacked-subnets': { minTileIn: 1.563, named: 6, slides: 1 },
+  'tight-subnets': { minTileIn: 1.563, named: 11, slides: 3 },
+  'flush-subnets': { minTileIn: 1.563, named: 9, slides: 2 },
+  'diagonal-cascade': { minTileIn: 1.201, named: 16, slides: 17 },
+  'diagonal-cascade-27': { minTileIn: 1.17, named: 27, slides: 28 },
+  'diagonal-cascade-52': { minTileIn: 1.174, named: 52, slides: 53 },
+  'band-above': { minTileIn: 1.379, named: 12, slides: 3 },
+  'framed-cascade': { minTileIn: 1.178, named: 40, slides: 42 },
+  'tight-seam': { minTileIn: 1.563, named: 20, slides: 1 },
+  'over-row': { minTileIn: 1.193, named: 150, slides: 23 },
+  'over-row-700': { minTileIn: 1.17, named: 700, slides: 98 },
+  'scaled-zone-row': { minTileIn: 1.175, named: 480, slides: 121 },
+  'mid-zone-row': { minTileIn: 1.3, named: 40, slides: 12 },
+  'string-step-promotion': { minTileIn: 1.563, named: 11, slides: 3 },
+  'unlabelled-step-inflation': { minTileIn: 1.563, named: 11, slides: 3 },
+  'data-label-promotion': { minTileIn: 1.563, named: 11, slides: 3 },
+  'hairline-tiles': { minTileIn: 0.087, named: 5, slides: 4 },
+  'probe-arrow': { minTileIn: 0.479, named: 14, slides: 7 },
+  'probe-accent': { minTileIn: 0.194, named: 9, slides: 2 },
+  'probe-amp': { minTileIn: 1.563, named: 4, slides: 1 },
+  'probe-script': { minTileIn: 0.271, named: 12, slides: 2 },
+  'probe-scaledown': { minTileIn: 1.194, named: 260, slides: 32 },
+  'probe-whitespace': { minTileIn: 0.195, named: 6, slides: 6 },
+  'probe-panel-burial': { minTileIn: 0.417, named: 48, slides: 5 },
+  'probe-brief-steps': { minTileIn: 0.938, named: 13, slides: 2 },
+  'probe-long-index': { minTileIn: 0.095, named: 6, slides: 4 },
+  'probe-overlong-index': { minTileIn: 0.271, named: 6, slides: 2 },
+  'probe-shrinkable-index': { minTileIn: 0.271, named: 6, slides: 2 },
+  'probe-mixed-index': { minTileIn: 0.271, named: 45, slides: 7 },
+  'probe-bimodal-workflow': { minTileIn: 1.051, named: 92, slides: 16 },
+  'probe-band-gap': { minTileIn: 1.563, named: 40, slides: 10 },
+  'probe-band-fill': { minTileIn: 1.251, named: 80, slides: 17 },
+  'probe-nfd': { minTileIn: 0.458, named: 12, slides: 5 },
+  'probe-normform': { minTileIn: 1.282, named: 7, slides: 2 },
+  'probe-tiny-spread': { minTileIn: 0.2, named: 60, slides: 38 },
+  'probe-width-cliff': { minTileIn: 0.2, named: 60, slides: 38 },
+  'probe-badge-sliver': { minTileIn: 0.283, named: 9, slides: 8 },
+  'probe-three-tier': { minTileIn: 0.103, named: 6, slides: 3 },
+  'probe-two-chains': { minTileIn: 0.283, named: 9, slides: 7 },
+  'probe-bimodal-sidecar': { minTileIn: 0.2, named: 30, slides: 18 },
+  'probe-numbered-spread': { minTileIn: 0.353, named: 60, slides: 18 },
+  'probe-numbered-mid': { minTileIn: 0.396, named: 24, slides: 4 },
+  'probe-dup-fan': { minTileIn: 0.396, named: 5, slides: 3 },
+  'probe-hub-spoke': { minTileIn: 0.289, named: 9, slides: 5 },
+  'probe-estate-120': { minTileIn: 1.178, named: 120, slides: 24 },
+  'probe-wide-hub': { minTileIn: 0.496, named: 7, slides: 4 },
+  'probe-sliver-120': { minTileIn: 0.201, named: 120, slides: 21 },
+  'probe-band-15': { minTileIn: 0.215, named: 120, slides: 21 },
+  'probe-band-16': { minTileIn: 0.208, named: 120, slides: 19 },
+  'probe-blind-sliver': { minTileIn: 0.313, named: 120, slides: 53 },
+  'probe-mixed-sliver': { minTileIn: 0.191, named: 7, slides: 3 },
+  'probe-gutter-region': { minTileIn: 0.283, named: 8, slides: 6 },
+  'probe-magnified-gutter': { minTileIn: 0.283, named: 8, slides: 6 },
+  'probe-tight': { minTileIn: 0.18, named: 7, slides: 3 },
+  'probe-spread': { minTileIn: 0.283, named: 7, slides: 8 },
+  'probe-offrow': { minTileIn: 0.283, named: 7, slides: 8 },
+  'probe-glyph16': { minTileIn: 0.168, named: 21, slides: 17 },
+  'probe-glyph12': { minTileIn: 0.073, named: 20, slides: 11 },
+  'probe-touching': { minTileIn: 0.205, named: 60, slides: 34 },
+  'probe-mix-4': { minTileIn: 0.191, named: 5, slides: 3 },
+  'probe-mix-5': { minTileIn: 0.191, named: 6, slides: 3 },
+  'probe-mix-6': { minTileIn: 0.191, named: 7, slides: 3 },
+  'probe-zone-median-0': { minTileIn: 0.28, named: 4, slides: 6 },
+  'probe-zone-median-2': { minTileIn: 0.277, named: 4, slides: 6 },
+  'probe-half-tail': { minTileIn: 0.204, named: 4, slides: 3 },
+  'probe-refused-raise': { minTileIn: 0.195, named: 6, slides: 7 },
+  'probe-rr-10': { minTileIn: 0.188, named: 6, slides: 9 },
+  'probe-rr-13': { minTileIn: 0.181, named: 6, slides: 7 },
+  'probe-rr-15': { minTileIn: 0.195, named: 6, slides: 7 },
+  'probe-solo-14': { minTileIn: 0.167, named: 14, slides: 11 },
+  'probe-solo-16': { minTileIn: 0.179, named: 16, slides: 13 },
+  'probe-solo-18': { minTileIn: 0.188, named: 18, slides: 15 },
+  'probe-solo-20': { minTileIn: 0.172, named: 20, slides: 16 },
+  'probe-solo-22': { minTileIn: 0.181, named: 22, slides: 18 },
+  'probe-farm-12': { minTileIn: 0.19, named: 12, slides: 11 },
+  'probe-farm-13': { minTileIn: 0.178, named: 13, slides: 11 },
+  'probe-farm-14': { minTileIn: 0.167, named: 14, slides: 11 },
+  'probe-title-20': { minTileIn: 2.083, named: 2, slides: 2 },
+  'probe-title-70': { minTileIn: 2.083, named: 2, slides: 2 },
+  'probe-title-95': { minTileIn: 2.083, named: 2, slides: 2 },
+  'probe-title-130': { minTileIn: 2.083, named: 2, slides: 2 },
+  'probe-colliding-stubs': { minTileIn: 0.2, named: 8, slides: 4 },
+  'probe-hairline-stubs': { minTileIn: 0.171, named: 8, slides: 4 },
+  'probe-emoji-clusters': { minTileIn: 1.189, named: 10, slides: 3 },
+  'probe-brief-workflow': { minTileIn: 1.563, named: 13, slides: 2 },
+  'probe-shredded-workflow': { minTileIn: 1.563, named: 13, slides: 3 },
+  'tall-narrow-tiles': { minTileIn: 0.044, named: 7, slides: 2 },
+  'corridor-zone': { minTileIn: 1.276, named: 12, slides: 3 },
+  'ladder-in-grid': { minTileIn: 1.367, named: 20, slides: 3 },
+  'twin-ladders': { minTileIn: 1.367, named: 20, slides: 3 },
+  'stray-ladder': { minTileIn: 1.563, named: 12, slides: 2 },
+  'legend-corner': { minTileIn: 1.338, named: 24, slides: 3 },
+  'duplicate-steps': { minTileIn: 1.563, named: 5, slides: 2 },
+  'dense-zone': { minTileIn: 1.386, named: 28, slides: 9 },
+  'meta-chip': { minTileIn: 1.563, named: 8, slides: 2 },
+  'grid-fan': { minTileIn: 1.563, named: 9, slides: 2 },
+  'grid3x3-fan3-JA': { minTileIn: 1.563, named: 9, slides: 2 },
+  'fan8-5x5-tight': { minTileIn: 1.282, named: 25, slides: 4 },
+  'meta-subline': { minTileIn: 1.563, named: 9, slides: 2 },
+  'grid5x5-captions': { minTileIn: 1.363, named: 25, slides: 4 },
+  'long-names-tight': { minTileIn: 1.563, named: 16, slides: 3 },
+  'long-label-grid': { minTileIn: 1.363, named: 25, slides: 4 },
+  'meta-tight': { minTileIn: 1.363, named: 25, slides: 4 },
+  'long-name-fan': { minTileIn: 1.363, named: 25, slides: 4 },
+  'estate-chain': { minTileIn: 1.563, named: 40, slides: 10 },
+  'chain24-en': { minTileIn: 1.305, named: 24, slides: 3 },
+  'triple-muted': { minTileIn: 1.518, named: 16, slides: 4 },
+  'estate72': { minTileIn: 1.563, named: 72, slides: 9 },
+  'workflow-prose': { minTileIn: 1.552, named: 24, slides: 3 },
+  'workflow-long-prose': { minTileIn: 1.552, named: 13, slides: 3 },
+  'workflow-fan': { minTileIn: 1.563, named: 9, slides: 2 },
+  'workflow-wide-band': { minTileIn: 1.189, named: 560, slides: 143 },
+  'all-categories': { minTileIn: 1.435, named: 16, slides: 2 },
+  'control-chars': { minTileIn: 1.563, named: 4, slides: 2 },
+  'short-service-grid': { minTileIn: 1.183, named: 82, slides: 7 },
+  'cascade': { minTileIn: 1.17, named: 200, slides: 34 },
+  'shared-prefix-estate': { minTileIn: 1.175, named: 400, slides: 242 },
+  'short-tile-estate': { minTileIn: 1.563, named: 60, slides: 25 },
+  'compact-estate': { minTileIn: 1.563, named: 18, slides: 4 },
+  'wrapped-inventory': { minTileIn: 1.174, named: 34, slides: 7 },
+  'token-wrap-inventory': { minTileIn: 1.358, named: 30, slides: 7 },
+  'workflow-long-rows': { minTileIn: 1.249, named: 25, slides: 1 },
+  'visio-token-workflow': { minTileIn: 1.437, named: 10, slides: 2 },
+  'hard-break-inventory': { minTileIn: 1.252, named: 16, slides: 2 },
+  'visio-broken-label-fan': { minTileIn: 1.563, named: 2, slides: 2 },
+  'visio-default-tile-names': { minTileIn: 1.875, named: 4, slides: 2 },
+  'flush-top-zone': { minTileIn: 1.563, named: 14, slides: 3 },
+  'zone-caption-corridor': { minTileIn: 1.563, named: 6, slides: 2 },
+  'tile-name-with-meta': { minTileIn: 1.667, named: 6, slides: 1 },
+  'zone-caption-wide-estate': { minTileIn: 1.254, named: 24, slides: 6 },
+  'squeezed-badges': { minTileIn: 1.563, named: 12, slides: 2 },
+  'generated': { minTileIn: 1.385, named: 12, slides: 2 },
+  'grouped-generated': { minTileIn: 1.302, named: 11, slides: 7 },
+  'dense-zone-dark': { minTileIn: 1.386, named: 28, slides: 9 },
+  'narrative-dark': { minTileIn: 1.563, named: 21, slides: 7 },
+  'legend-corner-dark': { minTileIn: 1.338, named: 24, slides: 3 },
+  'meta-subline-dark': { minTileIn: 1.563, named: 9, slides: 2 },
+  'grid5x5-captions-dark': { minTileIn: 1.363, named: 25, slides: 4 },
+  'generated-dark': { minTileIn: 1.385, named: 12, slides: 2 },
+};
+
+const VSDX_GOLDEN: Record<string, VsdxGolden> = {
+  'compact': { media: 2, textBlocks: 6, minFontPt: 7.2 },
+  'wide': { media: 12, textBlocks: 48, minFontPt: 7.2 },
+  'oversize': { media: 40, textBlocks: 81, minFontPt: 7.2 },
+  'outlier': { media: 9, textBlocks: 20, minFontPt: 7.2 },
+  'banded': { media: 31, textBlocks: 87, minFontPt: 7.01 },
+  'narrative': { media: 21, textBlocks: 104, minFontPt: 7.01 },
+  'barbell': { media: 12, textBlocks: 59, minFontPt: 7.01 },
+  'hub-fan': { media: 7, textBlocks: 34, minFontPt: 7.2 },
+  'shared-service': { media: 7, textBlocks: 34, minFontPt: 7.2 },
+  'tight-grid': { media: 24, textBlocks: 119, minFontPt: 7.01 },
+  'banded-two-strays': { media: 32, textBlocks: 92, minFontPt: 7.01 },
+  'wide-chain': { media: 48, textBlocks: 239, minFontPt: 7.2 },
+  'grid5x5-tight': { media: 25, textBlocks: 124, minFontPt: 7.01 },
+  'parallel': { media: 2, textBlocks: 29, minFontPt: 7.2 },
+  'opposite-strays': { media: 10, textBlocks: 21, minFontPt: 7.01 },
+  'corner-strays': { media: 11, textBlocks: 27, minFontPt: 7.01 },
+  'symmetric-strays': { media: 6, textBlocks: 21, minFontPt: 7.2 },
+  'hub-spoke': { media: 9, textBlocks: 32, minFontPt: 7.01 },
+  'scope-zone': { media: 9, textBlocks: 30, minFontPt: 7.2 },
+  'stray-zone-pair': { media: 16, textBlocks: 23, minFontPt: 7.2 },
+  'pipeline-region': { media: 74, textBlocks: 92, minFontPt: 7.2 },
+  'boundary-void': { media: 12, textBlocks: 18, minFontPt: 7.2 },
+  'stacked-subnets': { media: 6, textBlocks: 14, minFontPt: 7.2 },
+  'tight-subnets': { media: 11, textBlocks: 19, minFontPt: 7.2 },
+  'flush-subnets': { media: 9, textBlocks: 16, minFontPt: 7.2 },
+  'diagonal-cascade': { media: 16, textBlocks: 33, minFontPt: 7.2 },
+  'diagonal-cascade-27': { media: 27, textBlocks: 55, minFontPt: 7.2 },
+  'diagonal-cascade-52': { media: 52, textBlocks: 105, minFontPt: 7.2 },
+  'band-above': { media: 12, textBlocks: 18, minFontPt: 7.2 },
+  'framed-cascade': { media: 40, textBlocks: 82, minFontPt: 7.2 },
+  'tight-seam': { media: 20, textBlocks: 24, minFontPt: 7.2 },
+  'over-row': { media: 150, textBlocks: 185, minFontPt: 5.44 },
+  'over-row-700': { media: 700, textBlocks: 735, minFontPt: 1.17 },
+  'scaled-zone-row': { media: 480, textBlocks: 2879, minFontPt: 1.7 },
+  'mid-zone-row': { media: 40, textBlocks: 239, minFontPt: 7.2 },
+  'string-step-promotion': { media: 11, textBlocks: 24, minFontPt: 7.2 },
+  'unlabelled-step-inflation': { media: 11, textBlocks: 23, minFontPt: 7.2 },
+  'data-label-promotion': { media: 11, textBlocks: 19, minFontPt: 7.2 },
+  'hairline-tiles': { media: 8, textBlocks: 17, minFontPt: 7 },
+  'probe-arrow': { media: 14, textBlocks: 22, minFontPt: 7 },
+  'probe-accent': { media: 9, textBlocks: 15, minFontPt: 7 },
+  'probe-amp': { media: 4, textBlocks: 8, minFontPt: 7 },
+  'probe-script': { media: 12, textBlocks: 20, minFontPt: 7 },
+  'probe-scaledown': { media: 260, textBlocks: 521, minFontPt: 3.3 },
+  'probe-whitespace': { media: 6, textBlocks: 13, minFontPt: 7 },
+  'probe-panel-burial': { media: 48, textBlocks: 97, minFontPt: 7 },
+  'probe-brief-steps': { media: 13, textBlocks: 64, minFontPt: 7.2 },
+  'probe-long-index': { media: 8, textBlocks: 8, minFontPt: 7 },
+  'probe-overlong-index': { media: 6, textBlocks: 6, minFontPt: 7 },
+  'probe-shrinkable-index': { media: 6, textBlocks: 6, minFontPt: 7 },
+  'probe-mixed-index': { media: 45, textBlocks: 45, minFontPt: 7 },
+  'probe-bimodal-workflow': { media: 92, textBlocks: 459, minFontPt: 7.2 },
+  'probe-band-gap': { media: 40, textBlocks: 163, minFontPt: 7.01 },
+  'probe-band-fill': { media: 80, textBlocks: 399, minFontPt: 7.01 },
+  'probe-nfd': { media: 12, textBlocks: 23, minFontPt: 7 },
+  'probe-normform': { media: 7, textBlocks: 18, minFontPt: 7.2 },
+  'probe-tiny-spread': { media: 60, textBlocks: 70, minFontPt: 7 },
+  'probe-width-cliff': { media: 60, textBlocks: 70, minFontPt: 7 },
+  'probe-badge-sliver': { media: 9, textBlocks: 24, minFontPt: 7 },
+  'probe-three-tier': { media: 7, textBlocks: 26, minFontPt: 7 },
+  'probe-two-chains': { media: 9, textBlocks: 40, minFontPt: 7 },
+  'probe-bimodal-sidecar': { media: 30, textBlocks: 37, minFontPt: 7 },
+  'probe-numbered-spread': { media: 60, textBlocks: 299, minFontPt: 7 },
+  'probe-numbered-mid': { media: 24, textBlocks: 119, minFontPt: 7 },
+  'probe-dup-fan': { media: 5, textBlocks: 24, minFontPt: 7 },
+  'probe-hub-spoke': { media: 9, textBlocks: 44, minFontPt: 7 },
+  'probe-estate-120': { media: 120, textBlocks: 599, minFontPt: 7.2 },
+  'probe-wide-hub': { media: 7, textBlocks: 34, minFontPt: 7.2 },
+  'probe-sliver-120': { media: 120, textBlocks: 599, minFontPt: 7 },
+  'probe-band-15': { media: 120, textBlocks: 599, minFontPt: 7 },
+  'probe-band-16': { media: 120, textBlocks: 599, minFontPt: 7 },
+  'probe-blind-sliver': { media: 120, textBlocks: 599, minFontPt: 7 },
+  'probe-mixed-sliver': { media: 7, textBlocks: 34, minFontPt: 7 },
+  'probe-gutter-region': { media: 8, textBlocks: 39, minFontPt: 7 },
+  'probe-magnified-gutter': { media: 8, textBlocks: 39, minFontPt: 7 },
+  'probe-tight': { media: 7, textBlocks: 34, minFontPt: 7 },
+  'probe-spread': { media: 7, textBlocks: 34, minFontPt: 7 },
+  'probe-offrow': { media: 7, textBlocks: 34, minFontPt: 7 },
+  'probe-glyph16': { media: 21, textBlocks: 104, minFontPt: 7 },
+  'probe-glyph12': { media: 21, textBlocks: 104, minFontPt: 7 },
+  'probe-touching': { media: 60, textBlocks: 183, minFontPt: 7 },
+  'probe-mix-4': { media: 5, textBlocks: 24, minFontPt: 7 },
+  'probe-mix-5': { media: 6, textBlocks: 29, minFontPt: 7 },
+  'probe-mix-6': { media: 7, textBlocks: 34, minFontPt: 7 },
+  'probe-zone-median-0': { media: 4, textBlocks: 19, minFontPt: 7 },
+  'probe-zone-median-2': { media: 4, textBlocks: 21, minFontPt: 7 },
+  'probe-half-tail': { media: 4, textBlocks: 19, minFontPt: 7 },
+  'probe-refused-raise': { media: 6, textBlocks: 29, minFontPt: 7 },
+  'probe-rr-10': { media: 6, textBlocks: 29, minFontPt: 7 },
+  'probe-rr-13': { media: 6, textBlocks: 29, minFontPt: 7 },
+  'probe-rr-15': { media: 6, textBlocks: 29, minFontPt: 7 },
+  'probe-solo-14': { media: 14, textBlocks: 69, minFontPt: 7 },
+  'probe-solo-16': { media: 16, textBlocks: 79, minFontPt: 7 },
+  'probe-solo-18': { media: 18, textBlocks: 89, minFontPt: 7 },
+  'probe-solo-20': { media: 20, textBlocks: 99, minFontPt: 7 },
+  'probe-solo-22': { media: 22, textBlocks: 109, minFontPt: 7 },
+  'probe-farm-12': { media: 12, textBlocks: 59, minFontPt: 7 },
+  'probe-farm-13': { media: 13, textBlocks: 64, minFontPt: 7 },
+  'probe-farm-14': { media: 14, textBlocks: 69, minFontPt: 7 },
+  'probe-title-20': { media: 2, textBlocks: 9, minFontPt: 7.2 },
+  'probe-title-70': { media: 2, textBlocks: 9, minFontPt: 7.2 },
+  'probe-title-95': { media: 2, textBlocks: 9, minFontPt: 7.2 },
+  'probe-title-130': { media: 2, textBlocks: 9, minFontPt: 7.2 },
+  'probe-colliding-stubs': { media: 8, textBlocks: 8, minFontPt: 7 },
+  'probe-hairline-stubs': { media: 8, textBlocks: 8, minFontPt: 7 },
+  'probe-emoji-clusters': { media: 10, textBlocks: 21, minFontPt: 7.2 },
+  'probe-brief-workflow': { media: 13, textBlocks: 64, minFontPt: 7.2 },
+  'probe-shredded-workflow': { media: 13, textBlocks: 64, minFontPt: 7.2 },
+  'tall-narrow-tiles': { media: 4, textBlocks: 21, minFontPt: 7 },
+  'corridor-zone': { media: 12, textBlocks: 18, minFontPt: 7.2 },
+  'ladder-in-grid': { media: 20, textBlocks: 127, minFontPt: 7.2 },
+  'twin-ladders': { media: 20, textBlocks: 155, minFontPt: 7.2 },
+  'stray-ladder': { media: 12, textBlocks: 83, minFontPt: 7.2 },
+  'legend-corner': { media: 24, textBlocks: 109, minFontPt: 7.2 },
+  'duplicate-steps': { media: 5, textBlocks: 28, minFontPt: 7.2 },
+  'dense-zone': { media: 28, textBlocks: 140, minFontPt: 7.2 },
+  'meta-chip': { media: 8, textBlocks: 27, minFontPt: 7.2 },
+  'grid-fan': { media: 9, textBlocks: 80, minFontPt: 7.2 },
+  'grid3x3-fan3-JA': { media: 9, textBlocks: 72, minFontPt: 7.2 },
+  'fan8-5x5-tight': { media: 25, textBlocks: 220, minFontPt: 7.2 },
+  'meta-subline': { media: 9, textBlocks: 44, minFontPt: 7 },
+  'grid5x5-captions': { media: 25, textBlocks: 188, minFontPt: 7.2 },
+  'long-names-tight': { media: 16, textBlocks: 115, minFontPt: 7.01 },
+  'long-label-grid': { media: 25, textBlocks: 188, minFontPt: 7.2 },
+  'meta-tight': { media: 25, textBlocks: 220, minFontPt: 7.01 },
+  'long-name-fan': { media: 25, textBlocks: 220, minFontPt: 7.01 },
+  'estate-chain': { media: 40, textBlocks: 199, minFontPt: 7.01 },
+  'chain24-en': { media: 24, textBlocks: 119, minFontPt: 7.01 },
+  'triple-muted': { media: 16, textBlocks: 175, minFontPt: 7.2 },
+  'estate72': { media: 72, textBlocks: 145, minFontPt: 7.2 },
+  'workflow-prose': { media: 24, textBlocks: 119, minFontPt: 7.2 },
+  'workflow-long-prose': { media: 13, textBlocks: 64, minFontPt: 7.2 },
+  'workflow-fan': { media: 9, textBlocks: 76, minFontPt: 7.01 },
+  'workflow-wide-band': { media: 560, textBlocks: 2563, minFontPt: 7.2 },
+  'all-categories': { media: 16, textBlocks: 79, minFontPt: 7.2 },
+  'control-chars': { media: 4, textBlocks: 19, minFontPt: 7.2 },
+  'short-service-grid': { media: 82, textBlocks: 92, minFontPt: 7.2 },
+  'cascade': { media: 200, textBlocks: 221, minFontPt: 7.2 },
+  'shared-prefix-estate': { media: 400, textBlocks: 413, minFontPt: 7.2 },
+  'short-tile-estate': { media: 60, textBlocks: 73, minFontPt: 7.2 },
+  'compact-estate': { media: 18, textBlocks: 25, minFontPt: 7.2 },
+  'wrapped-inventory': { media: 34, textBlocks: 41, minFontPt: 7.2 },
+  'token-wrap-inventory': { media: 30, textBlocks: 36, minFontPt: 7 },
+  'workflow-long-rows': { media: 25, textBlocks: 51, minFontPt: 7.2 },
+  'visio-token-workflow': { media: 10, textBlocks: 49, minFontPt: 7.2 },
+  'hard-break-inventory': { media: 16, textBlocks: 43, minFontPt: 7.2 },
+  'visio-broken-label-fan': { media: 2, textBlocks: 21, minFontPt: 7.2 },
+  'visio-default-tile-names': { media: 4, textBlocks: 8, minFontPt: 7 },
+  'flush-top-zone': { media: 14, textBlocks: 15, minFontPt: 7.56 },
+  'zone-caption-corridor': { media: 6, textBlocks: 22, minFontPt: 7.01 },
+  'tile-name-with-meta': { media: 6, textBlocks: 13, minFontPt: 7 },
+  'zone-caption-wide-estate': { media: 24, textBlocks: 50, minFontPt: 7.2 },
+  'squeezed-badges': { media: 12, textBlocks: 59, minFontPt: 7.01 },
+  'generated': { media: 12, textBlocks: 59, minFontPt: 7.2 },
+  'grouped-generated': { media: 11, textBlocks: 58, minFontPt: 7.01 },
+  'dense-zone-dark': { media: 28, textBlocks: 140, minFontPt: 7.2 },
+  'narrative-dark': { media: 21, textBlocks: 104, minFontPt: 7.01 },
+  'legend-corner-dark': { media: 24, textBlocks: 109, minFontPt: 7.2 },
+  'meta-subline-dark': { media: 9, textBlocks: 44, minFontPt: 7 },
+  'grid5x5-captions-dark': { media: 25, textBlocks: 188, minFontPt: 7.2 },
+  'generated-dark': { media: 12, textBlocks: 59, minFontPt: 7.2 },
+};
+
+function vsdxGoldenDrift(id: string, metrics: Record<string, number>): string[] {
+  const want = VSDX_GOLDEN[id];
+  if (!want) return [];
+  const out: string[] = [];
+  const pairs: [string, number, number][] = [
+    ['embedded icon parts', want.media, metrics.mediaParts],
+    ['text blocks', want.textBlocks, metrics.textBlocks],
+    ['smallest type in points', want.minFontPt, metrics.minFontPt],
+  ];
+  for (const [what, wanted, got] of pairs) {
+    if (got !== wanted) {
+      out.push(`${what} moved ${wanted} -> ${got} `
+        + `(${got < wanted ? 'fewer' : 'more'} than the blessed sheet)`);
+    }
+  }
+  return out;
+}
+
+function goldenDrift(id: string, metrics: Record<string, number>): string[] {
+  const want = GOLDEN[id];
+  if (!want) return [];
+  const out: string[] = [];
+  const got = {
+    minTileIn: metrics.minTileWidthIn,
+    named: metrics.namedServices,
+    slides: metrics.slides,
+  };
+  // The tile width is already rounded to three places by `metrics`, so an
+  // exact comparison is stable across runs and there is no tolerance to tune.
+  if (got.minTileIn !== want.minTileIn) {
+    out.push(`narrowest tile moved ${want.minTileIn.toFixed(3)}in -> ${got.minTileIn.toFixed(3)}in `
+      + `(${got.minTileIn < want.minTileIn ? 'smaller' : 'larger'} than the blessed deck)`);
+  }
+  if (got.named !== want.named) {
+    out.push(`named services moved ${want.named} -> ${got.named} `
+      + `(${got.named < want.named ? 'fewer' : 'more'} than the blessed deck)`);
+  }
+  if (got.slides !== want.slides) {
+    out.push(`slide count moved ${want.slides} -> ${got.slides} `
+      + `(${got.slides > want.slides ? 'more' : 'fewer'} than the blessed deck)`);
+  }
+  return out;
+}
+
 async function main(): Promise<void> {
   mkdirSync(OUT, { recursive: true });
   const base = [
@@ -11615,6 +12103,11 @@ async function main(): Promise<void> {
   refusedRaiseAtScenario(10),
   refusedRaiseAtScenario(13),
   refusedRaiseAtScenario(15),
+  soloScenario(14),
+  soloScenario(16),
+  soloScenario(18),
+  soloScenario(20),
+  soloScenario(22),
   serviceFarmScenario(12),
   serviceFarmScenario(13),
   serviceFarmScenario(14),
@@ -11665,6 +12158,7 @@ async function main(): Promise<void> {
   // corpus takes minutes, which makes an iterate-on-one-fixture loop painful;
   // CI and `npm test` pass no argument and so always run everything.
   const only = process.argv.slice(2).filter((a) => !a.startsWith('-')).flatMap((a) => a.split(','));
+  const bless = process.argv.includes('--bless');
   const selected = only.length > 0 ? scenarios.filter((s) => only.includes(s.id)) : scenarios;
   // `deck-growth` is a family comparison, not a scenario: it exports the same
   // drawing at several sizes and judges the differences between them, so it has
@@ -11673,10 +12167,34 @@ async function main(): Promise<void> {
   if (only.length > 0 && selected.length === 0 && !growth) {
     throw new Error(`no scenario matched ${only.join(', ')}; known: deck-growth, ${scenarios.map((s) => s.id).join(', ')}`);
   }
+  const blessed: string[] = [];
+  const blessedVsdx: string[] = [];
   for (const scenario of selected) {
     beat(scenario.id);
-    reports.push(await auditPptx(scenario));
-    reports.push(await auditVsdx(scenario));
+    const deck = await auditPptx(scenario);
+    if (bless) {
+      blessed.push(`  '${scenario.id}': { minTileIn: ${deck.metrics.minTileWidthIn}, `
+        + `named: ${deck.metrics.namedServices}, slides: ${deck.metrics.slides} },`);
+    } else {
+      deck.issues.push(...goldenDrift(scenario.id, deck.metrics));
+    }
+    reports.push(deck);
+    const sheet = await auditVsdx(scenario);
+    if (bless) {
+      blessedVsdx.push(`  '${scenario.id}': { media: ${sheet.metrics.mediaParts}, `
+        + `textBlocks: ${sheet.metrics.textBlocks}, minFontPt: ${sheet.metrics.minFontPt} },`);
+    } else {
+      sheet.issues.push(...vsdxGoldenDrift(scenario.id, sheet.metrics));
+    }
+    reports.push(sheet);
+  }
+  if (bless) {
+    console.log('\nconst GOLDEN: Record<string, Golden> = {');
+    blessed.forEach((line) => console.log(line));
+    console.log('};');
+    console.log('\nconst VSDX_GOLDEN: Record<string, VsdxGolden> = {');
+    blessedVsdx.forEach((line) => console.log(line));
+    console.log('};');
   }
   beat('deck-growth');
   if (growth) reports.push(await auditDeckGrowth());

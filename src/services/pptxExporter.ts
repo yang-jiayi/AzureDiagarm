@@ -4488,8 +4488,21 @@ async function addEditableDiagram(
   );
   const locate = (service: ExportBox): string => {
     const rank = readingRank.get(String(service.id));
-    if (rank === undefined) return slideLabel;
-    const where = `box ${rank} of ${shownServices.length} in reading order`;
+    // Fails CLOSED. Returning the bare slide label here would still produce a
+    // row containing the locating prefix, so the audit's stranded-service rule
+    // would accept "(drawn unlabelled, slide 1 / 7)" - a row that names a slide
+    // and then leaves the reader to search it. Returning nothing produces the
+    // bare sentinel instead, which that rule fails on. Unreachable while the
+    // rank map is built from the very list being iterated, and the point is
+    // that it stays a failure if some later caller changes that.
+    if (rank === undefined) return '';
+    // "service box", not "box". The rank is taken over `shownServices` alone,
+    // so on a slide that also draws zone or group rectangles the reader is
+    // looking at more boxes than the count admits and nothing on the page says
+    // which ones to skip. Naming what is being counted costs one word and makes
+    // the row correct on every slide rather than on the slides that happen to
+    // have no frames.
+    const where = `service box ${rank} of ${shownServices.length} in reading order`;
     return slideLabel ? `${slideLabel}, ${where}` : where;
   };
   // Per SLIDE, not per deck: the reader looks at one slide at a time, so the
