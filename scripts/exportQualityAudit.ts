@@ -2308,6 +2308,40 @@ function tinyTileSpreadScenario(): Scenario {
   return { id: 'probe-tiny-spread', nodes, edges };
 }
 
+function slaveredBadgeScenario(): Scenario {
+  // One realistic workflow at a realistic size, with one unconnected sliver
+  // parked far away from it.
+  //
+  // The sliver takes no part in the workflow and carries no badge of its own,
+  // but the drawing ceiling that keeps a badge from dwarfing its tile was read
+  // off the NARROWEST tile on the sheet, so this one 14px node cut every badge
+  // in the chain from 0.240in to 0.1119in - a 53% collapse driven by a shape
+  // that none of them is anywhere near. The ceiling is a statement about the
+  // tiles a badge is drawn among, so it is read off the median, exactly as the
+  // pen weight ceiling two lines below it already was.
+  const icon = '/Azure_Public_Service_Icons/Icons/compute/10029-icon-service-Function-Apps.svg';
+  const nodes: Node[] = Array.from({ length: 9 }, (_, i) => ({
+    id: `sb${i}`,
+    type: 'azureNode',
+    position: i === 8 ? { x: 2600, y: 1900 } : { x: (i % 3) * 300, y: Math.floor(i / 3) * 240 },
+    width: i === 8 ? 14 : 150,
+    height: i === 8 ? 16 : 96,
+    data: {
+      label: i === 8 ? 'Retired probe' : `Order pipeline stage ${i + 1}`,
+      serviceName: 'Azure Functions',
+      category: 'compute',
+      iconPath: icon,
+    },
+  } as unknown as Node));
+  const edges = Array.from({ length: 7 }, (_, i) => ({
+    id: `sbe${i}`,
+    source: `sb${i}`,
+    target: `sb${i + 1}`,
+    data: { stepNumber: i + 1, stepDescription: `Stage ${i + 1} hands off to stage ${i + 2}` },
+  })) as unknown as Edge[];
+  return { id: 'probe-badge-sliver', nodes, edges };
+}
+
 function decomposedNameScenario(): Scenario {
   const icon = '/Azure_Public_Service_Icons/Icons/compute/10029-icon-service-Function-Apps.svg';
   const dense = [
@@ -7580,6 +7614,21 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
       ]),
   );
   let lonelyWindows = 0;
+  // "As large as this can get" is the renderer's ceiling, not natural width.
+  // The rule used to count a lone tile drawn at 99% of its authored size, and
+  // on a drawing of sub-19.2px tiles that is simply wrong: the renderer lifts
+  // such a tile above natural to reach the markable bar, so a lone tile at
+  // 1.03x natural still has 1.37x available and splitting further genuinely
+  // does enlarge it. Measuring against natural width made the rule fire on
+  // exactly the decks that had further to go, and stay silent on the deck that
+  // had spent 24 slides to draw nothing.
+  const authoredNarrowest = Math.min(
+    ...[...authoredWidths.values()].filter((w) => w > 0),
+    Infinity,
+  );
+  const ceilingInPerPx = Math.max(1 / 96, Number.isFinite(authoredNarrowest) && authoredNarrowest > 0
+    ? 0.2 / authoredNarrowest
+    : 0);
   for (const slideShapes of perSlide) {
     const slideTiles = slideShapes.filter(
       (s) => s.name.startsWith('service-')
@@ -7588,8 +7637,8 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
         && s.w > 0,
     );
     if (slideTiles.length !== 1) continue;
-    const authoredIn = (authoredWidths.get(slideTiles[0].name.replace(/^service-/, '')) ?? 150) / 96;
-    if (slideTiles[0].w >= authoredIn * 0.99) lonelyWindows += 1;
+    const authoredPx = authoredWidths.get(slideTiles[0].name.replace(/^service-/, '')) ?? 150;
+    if (slideTiles[0].w >= authoredPx * ceilingInPerPx * 0.99) lonelyWindows += 1;
   }
   // One lone tile is ordinary — a drawing whose last window holds the remainder
   // will have exactly that. A deck built out of them is the defect.
@@ -7597,6 +7646,28 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
     issues.push(
       `${lonelyWindows} of ${slideCount} slides carry a single service tile already at natural `
       + `width — the deck split past the point where splitting can enlarge anything`,
+    );
+  }
+  // A deck of anonymous dots that promises otherwise.
+  //
+  // Every continuation slide is captioned "this architecture needs more than
+  // one readable slide, so it continues across N of them". The gate measured
+  // whether the tiles were large enough, whether the names that WERE drawn
+  // fitted, and whether the index carried the rest - but never whether the
+  // slides the caption was written for drew a single character. A 26 slide
+  // deck with 120 tiles, none of them carrying any type and all 60 index rows
+  // reading "(not drawn)", passed clean, because each individual rule was
+  // satisfied by a drawing with nothing on it.
+  const namedTileShapes = perSlide.flat().filter((s) => s.name.startsWith('service-label-')
+    && s.text.trim().length > 0).length;
+  const drawnTileShapes = perSlide.flat().filter((s) => s.name.startsWith('service-')
+    && !s.name.startsWith('service-label-')
+    && !s.name.startsWith('service-meta-')
+    && s.w > 0).length;
+  if (slideCount > 2 && drawnTileShapes > 0 && namedTileShapes === 0) {
+    issues.push(
+      `${slideCount} slides carry ${drawnTileShapes} service tile(s) and not one of them draws a name `
+      + '— the deck spent every slide on an unlabelled drawing it captions as readable',
     );
   }
   for (const [name, count] of countByName(chips)) {
@@ -8740,10 +8811,30 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
   const badges = [...xml.matchAll(/NameU="StepBadge\.\d+"[\s\S]*?<Cell N="Width" V="([\d.]+)"/g)].map((m) => +m[1]);
   if (badges.length > 0 && tileWidths.length > 0) {
     const widest = Math.max(...badges);
-    const tile = Math.min(...tileWidths);
+    // The typical tile, not the narrowest one. A badge is drawn on an arrow
+    // between two tiles, so what it can dwarf is the tiles it sits among - and
+    // this rule read the narrowest shape anywhere on the sheet, which let one
+    // parked 14px node that carries no badge and touches no arrow decide that
+    // a 0.240in disc on a 1.56in tile was 165% oversized. The exporter's own
+    // ceiling had the same defect and was corrected the same way, so a rule
+    // still reading the minimum would have gone on failing the corrected
+    // exporter for the shape it was right to ignore.
+    const sorted = [...tileWidths].sort((a, b) => a - b);
+    const tile = sorted[Math.floor(sorted.length / 2)];
     if (widest > tile * 0.55) {
       issues.push(`a step badge is ${widest.toFixed(3)}in across on a ${tile.toFixed(3)}in tile `
         + `— ${((widest / tile) * 100).toFixed(0)}% of the service it is calling out`);
+    }
+    // And the converse, which nothing measured. A ceiling read off the wrong
+    // tile does not only oversize a badge; read off the narrowest shape on the
+    // sheet it UNDERSIZES every other one, and a disc collapsed from 0.240in
+    // to 0.1119in on a 1.563in tile is a speck the reader has to hunt for
+    // before the numbered order means anything. A badge drawn at its natural
+    // size sits at about 15% of the tile it numbers and the floor only ever
+    // raises it, so nothing legitimate approaches this bar from above.
+    if (widest < tile * 0.1) {
+      issues.push(`a step badge is only ${widest.toFixed(4)}in across beside a ${tile.toFixed(3)}in tile `
+        + `— ${((widest / tile) * 100).toFixed(1)}% of the service it numbers, too small to find`);
     }
   }
   // A callout is a white number on a dark disc, and the disc is the only thing
@@ -9691,6 +9782,7 @@ async function main(): Promise<void> {
   decomposedNameScenario(),
   normFormScenario(),
   tinyTileSpreadScenario(),
+  slaveredBadgeScenario(),
   longTitleScenario(20),
   longTitleScenario(70),
   longTitleScenario(95),

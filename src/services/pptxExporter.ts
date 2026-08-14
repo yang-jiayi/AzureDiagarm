@@ -569,6 +569,18 @@ export function narrowestBoxW(boxes: readonly { w: number }[]): number {
   return narrowest;
 }
 
+/**
+ * How much wider than the narrowest tile the widest may be before the drawing
+ * stops counting as uniformly small.
+ *
+ * Four, because the interesting cases sit far from it in both directions: a
+ * grid of equal tiles is 1.0 and a drawing with a deliberate sliver in it was
+ * 11.4. Anything in between is a judgement, and this one errs toward NOT
+ * raising, because the cost of raising wrongly is slides spent on lone tiles
+ * while the cost of not raising is marks the index still carries.
+ */
+const UNIFORM_TILE_RATIO = 4;
+
 function rendererMaxScale(minBoxW: number): number {
   return Math.max(
     1 / PX_PER_IN,
@@ -677,21 +689,35 @@ function planDiagramWindows(
   // Inches-per-pixel worth splitting to reach for a representative tile. Both
   // ceilings and the reasoning behind them live on `legibleScaleFor`, which is
   // exported so the invariant can be asserted on the function rather than
-  // inferred from the deck it produces.
+  // inferred from the deck it produces. The narrowest tile goes in because the
+  // renderer's ceiling depends on it, and a planner that stops splitting below
+  // the ceiling the renderer will use leaves tiles under the markable bar with
+  // slides already spent.
   //
-  // The renderer's ceiling rises above natural width for a drawing whose
-  // narrowest tile cannot hold a mark, and it was tempting to make the planner
-  // split until it reached that same ceiling - the two were out of step, which
-  // is a real defect and is now fixed by sharing `rendererMaxScale`. But the
-  // planner must not CHASE the raised ceiling, only respect it. Splitting
-  // cannot enlarge a tile past natural width; only the renderer's per-window
-  // magnification can, and it does that without spending a slide. Measured:
-  // targeting the raised ceiling here split `hairline-tiles` into 11 slides of
-  // which 8 held a single tile already at natural width, and did the same to
-  // `probe-whitespace` and `probe-long-index`. A deck of one-tile slides is
-  // worse than the slightly-small tiles it was buying, so the planner keeps
-  // the natural-width cap and lets the renderer rescue the slivers.
-  const legibleScale = legibleScaleFor(target, frame);
+  // I argued the other way once and the measurements refuted it. The claim was
+  // that splitting cannot enlarge a tile past natural width, so the raised
+  // ceiling is the renderer's business alone. Both halves are false on a
+  // drawing of 14px tiles: the split windows draw at 1.034x natural, which is
+  // the raised ceiling engaging and could only happen because of the split,
+  // and the renderer rescues nothing on its own because frame-over-content
+  // binds far below the ceiling - it would have allowed 1.371x and the planner
+  // stopped asking at 1.034x. The deck that came out had 24 continuation
+  // slides, 120 tiles and not one character of type on any of them, each slide
+  // captioned as a readable part of a whole. The slides were spent either way;
+  // they simply bought nothing.
+  //
+  // The raise is for a drawing that is SMALL, though, not for a drawing that
+  // has a sliver in it. `probe-whitespace` is four 14px tiles beside two 160px
+  // ones, and chasing the 14px one there drags the 160px ones to 2.3in each,
+  // which puts one tile on a slide and spends eight of them to show a single
+  // character per sliver - the same bad trade in the other direction. A tile
+  // eleven times narrower than its neighbour is what the index exists for. So
+  // the ceiling is only raised when the drawing is uniform enough that lifting
+  // the narrowest tile lifts the drawing rather than exploding it.
+  const narrowest = narrowestBoxW(services);
+  const widest = services.reduce((wide, box) => Math.max(wide, box.w), 0);
+  const uniformlySmall = widest <= narrowest * UNIFORM_TILE_RATIO;
+  const legibleScale = legibleScaleFor(target, frame, uniformlySmall ? narrowest : Infinity);
   if (Math.min(frame.w / contentW, frame.h / contentH) >= legibleScale) return whole;
 
   // Splitting on one axis only is why a tall drawing used to grow the page

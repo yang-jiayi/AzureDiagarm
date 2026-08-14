@@ -286,15 +286,19 @@ function withDrawingCeilings(fonts: VisioFonts, boxes: Iterable<{ w: number; h: 
     const s = [...xs].sort((a, b) => a - b);
     return s[Math.floor(s.length / 2)];
   };
-  const tileWIn = Math.min(...all.map((b) => b.w)) / PX_PER_INCH;
+  const tileWIn = median(all.map((b) => b.w)) / PX_PER_INCH;
   const tileHIn = median(all.map((b) => b.h)) / PX_PER_INCH;
   return {
     ...fonts,
-    // Just over half the narrowest tile. Past that the disc reads as the
-    // subject and the service it numbers reads as its shadow. Measured
-    // against the narrowest and not the median because a badge lands wherever
-    // its arrow lands, so the smallest tile on the sheet is the one it will
-    // be seen next to.
+    // Just over half the typical tile. Past that the disc reads as the
+    // subject and the service it numbers reads as its shadow.
+    //
+    // The median, for the same reason the pen below uses it, and it took a
+    // measurement to learn it: taken from the NARROWEST tile, one unconnected
+    // 14px sliver parked in a corner cut every badge on the sheet from
+    // 0.240in to 0.1119in - 53% off seven discs drawn between 2in tiles
+    // nowhere near it. The threshold was about 42px, and an ordinary small
+    // node clears that by a pixel.
     badgeMaxIn: tileWIn * 0.55,
     // A sixteenth is where an outline stops being a border and starts being
     // the shape. `penIn` still applies Visio's hairline underneath this, so
@@ -1049,6 +1053,24 @@ function badgeMinDiameterIn(stepNumber: number, fonts: VisioFonts): number {
   return Math.max(pt * 1.15, Math.hypot(digits * pt * 0.55, pt * 0.7) + 0.02);
 }
 
+/**
+ * The diameter a badge for this step will actually be drawn at.
+ *
+ * One expression, because the layout reserves room for a badge and the
+ * renderer draws one, and a reservation that is not an upper bound on the
+ * thing reserved is a collision waiting for a denser fan. The reservation
+ * used to be `min(natural, ceiling)` while the draw was `max(floor,
+ * min(natural, ceiling))`, so on a sheet whose ceiling fell under the floor
+ * the disc came out 39.5% wider than the space held for it, and 104% wider
+ * with two-digit steps.
+ */
+function badgeDiameterIn(stepNumber: number, fonts: VisioFonts): number {
+  return Math.max(
+    badgeMinDiameterIn(stepNumber, fonts),
+    Math.min(STEP_BADGE_IN * fonts.scale, fonts.badgeMaxIn),
+  );
+}
+
 function stepBadgeXml(  id: number,
   centre: Point,
   stepNumber: number,
@@ -1067,10 +1089,7 @@ function stepBadgeXml(  id: number,
   // A badge is drawn on the arrows, between the tiles, so it scales with them.
   // Held at its natural size it was 109% of a whole service tile once the
   // sheet was down to a seventh: a callout larger than the thing it calls out.
-  const natural = Math.max(
-    badgeMinDiameterIn(stepNumber, fonts),
-    Math.min(STEP_BADGE_IN * fonts.scale, fonts.badgeMaxIn),
-  );
+  const natural = badgeDiameterIn(stepNumber, fonts);
   const floor = badgeMinDiameterIn(stepNumber, fonts);
   const d = diameterIn !== undefined && diameterIn > 0
     ? Math.min(natural, Math.max(floor, diameterIn))
@@ -2173,7 +2192,11 @@ export async function buildVsdxPackage(
   // The badge scales with the drawing, so every allowance made for one has
   // to scale too, or the rungs reserve a quarter inch for a mark an eighth of
   // an inch across and the fan is spaced for furniture that is not there.
-  const badgeIn = Math.min(STEP_BADGE_IN * fonts.scale, fonts.badgeMaxIn);
+  // Taken at the highest step on the sheet, because the digits are what a
+  // badge cannot give up and a three-digit disc is the widest one that will
+  // be drawn - the reservation has to bound every badge, not the median one.
+  const highestStep = routes.reduce((hi, r) => Math.max(hi, r.stepNumber ?? 0), 1);
+  const badgeIn = badgeDiameterIn(highestStep, fonts);
   const labelSize = (label: string): { w: number; h: number } => {
     // `natural` is a width and a hard break contributes nothing to it, so the
     // chip is only ever as wide as the longest single line — which is right.
