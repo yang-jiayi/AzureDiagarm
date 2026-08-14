@@ -888,11 +888,36 @@ function planDiagramWindows(
   // took a 120 node estate from 53 windows of 0.3130in to 21 of 0.2003in.
   const bar = options.markIn ?? 0;
   const serve = options.serveW ?? 0;
+  // Two lines here as well, `markIn` as the want and the floor as the
+  // must-not-ship-below. The waiver read `bar` on both tests, which is the
+  // third site of the same 1.82x error: a forced plan reaching 0.20793in for a
+  // 10px tile against a 0.15559in disc has RESOLVED the defect and was thrown
+  // away for missing an ideal it was never required to meet, shipping 0.113in
+  // tiles with four of six services anonymous instead.
+  const defectLine = bar * BADGE_TILE_SHARE;
+  // A plan that puts most of its slides on one service each has stopped buying
+  // anything: splitting enlarges a tile by giving it more of the frame, and a
+  // tile alone on a slide is already at its natural width. Waiving the density
+  // floor removes the only thing that was watching for this, so the waiver
+  // carries its own bound - measured, not assumed: the unbounded form took a
+  // 21 service deck to 21 windows with 14 of them carrying a single tile.
+  const lonelyShare = (plan: { windows: DiagramWindow[] }): number => {
+    if (plan.windows.length === 0) return 0;
+    const lonely = plan.windows.filter((w) => services.filter((s) => {
+      const cx = s.x + s.w / 2;
+      const cy = s.y + s.h / 2;
+      return cx >= w.fit.minX && cx <= w.fit.maxX && cy >= w.fit.minY && cy <= w.fit.maxY;
+    }).length <= 1).length;
+    return lonely / plan.windows.length;
+  };
   if (bar > 0 && serve > 0 && perInOf(raised) * serve < bar - 1e-6) {
     const forced = planWindowsAtCeiling(
       bounds, services, frame, { ...options, waiveDensity: true }, true, serve,
     );
-    if (forced.windows.length > 0 && perInOf(forced) * serve >= bar - 1e-6) {
+    if (forced.windows.length > 0
+      && lonelyShare(forced) <= 0.5
+      && (perInOf(forced) * serve >= bar - 1e-6
+        || perInOf(forced) * serve >= defectLine - 1e-6)) {
       return { ...forced, servedW: serve, chaseAffordable: true };
     }
   }
@@ -979,6 +1004,28 @@ function planDiagramWindows(
   if (raised.windows.length === 0) return { ...raised, servedW: medianW, chaseAffordable };
   if (affordable(raised)) return { ...raised, servedW: medianW, chaseAffordable };
   const plain = planWindowsAtCeiling(bounds, services, frame, options, false);
+  // The density floor may not throw away a plan BECAUSE it is good.
+  //
+  // The escape above can only ever rescue a plan that was already under the
+  // bar, so a raised plan that clears the bar walks past it - and arrives here,
+  // where `affordable()` discards it for scoring 6 services over 6 windows
+  // against a floor of 1.5. Measured on six services with one 14px icon: the
+  // raised plan put the narrowest badged tile at 0.29110in, past the 0.28288
+  // bar, and `plain` shipped at 0.1584in, 46% narrower, with four of the six
+  // services drawn with no name at all. Being good was the only reason it had
+  // no protection. Same shape as round 72's armed-implies-cannot-fire.
+  //
+  // So the comparison is made here, after affordability rather than in a guard
+  // that is false whenever the raised plan is worth keeping, and only where the
+  // unraised plan does NOT clear the same line - a refusal that costs nothing
+  // in quality is still the density floor's to make.
+  const raisedClears = defectLine > 0 && serve > 0
+    && perInOf(raised) * serve >= defectLine - 1e-6;
+  const plainClears = defectLine > 0 && serve > 0
+    && perInOf(plain) * serve >= defectLine - 1e-6;
+  if (raisedClears && !plainClears) {
+    return { ...raised, servedW: serve, chaseAffordable: true };
+  }
   // Only prefer the unraised plan when it is genuinely cheaper. A refusal that
   // costs the same number of slides buys nothing and loses the marks.
   // The refusal is about the RAISE, not about every hop on the deck.
@@ -2736,6 +2783,8 @@ function badgeFontPtFor(stepNumber: number, diameterIn: number): number {
   const digits = String(Math.max(1, Math.abs(Math.trunc(stepNumber)))).length;
   return (diameterIn / badgeDiameterPerIn(digits)) * 72;
 }
+const UNLABELLED_ROW = '(drawn unlabelled)';
+
 function stepBadgeDiameterIn(route: ExportRoute, transform: FitTransform, px: number): number {
   const step = route.stepNumber ?? 1;
   const floor = badgeFloorIn(step, BADGE_LEGIBLE_PT);
@@ -5586,7 +5635,13 @@ export async function buildDiagramSlidePptx(
       .sort((a, b) => a[0].localeCompare(b[0]))
       .map(([authored, marks]) => {
         const printed = [...marks]
-          .map((m) => (m === '' ? '(not drawn)' : m))
+          // "(drawn unlabelled)", not "(not drawn)", because the tile IS on the
+          // canvas. Measured across the corpus, 16 services on 7 drawings emit
+          // a service shape and no caption, and the index told the reader each
+          // one was absent while they were looking straight at it - on
+          // probe-refused-raise, 4 of 6 services, every one of them cited by a
+          // numbered step. A row that denies a drawn shape is worse than no row.
+          .map((m) => (m === '' ? UNLABELLED_ROW : m))
           .sort((a, b) => a.localeCompare(b))
           .join('  |  ');
         return `${printed}  =  ${authored}`;

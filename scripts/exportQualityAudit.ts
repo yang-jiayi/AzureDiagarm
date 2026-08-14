@@ -12,6 +12,11 @@ import { writeFileSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { Worker } from 'node:worker_threads';
 import JSZip from 'jszip';
+
+// The index row a service gets when its tile is drawn but carries no caption.
+// Shared with the exporter by value; both sides must name the same string or the
+// mark rules stop recognising the row and start reporting it as a lost mark.
+const UNLABELLED_ROW = '(drawn unlabelled)';
 import type { Edge, Node } from 'reactflow';
 import { buildDiagramSlidePptx, buildArchitectureDeckPptx, calloutPlanFor } from '../src/services/pptxExporter.ts';
 import { nativizeSlideXml } from '../src/services/pptxNativeShapes.ts';
@@ -8770,7 +8775,7 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
   // tile arrives wide enough to carry a key, and `probe-hairline-stubs` holds
   // the geometry that used to produce eight of these rows.
   for (const [mark, names] of definedMarks) {
-    if (mark !== '(not drawn)' && names.size > 1) ambiguousMarks.set(mark, names.size);
+    if (mark !== UNLABELLED_ROW && names.size > 1) ambiguousMarks.set(mark, names.size);
   }
   if (undefinedMarks.size > 0) {
     issues.push(
@@ -8799,7 +8804,7 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
       .filter(Boolean),
   );
   const phantomMarks = [...definedMarks.keys()]
-    .filter((mark) => mark !== '(not drawn)' && !drawnMarks.has(mark));
+    .filter((mark) => mark !== UNLABELLED_ROW && !drawnMarks.has(mark));
   if (phantomMarks.length > 0) {
     issues.push(
       `${phantomMarks.length} index row(s) define a mark that is drawn on no shape in the deck, so the `
