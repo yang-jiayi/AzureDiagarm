@@ -9671,6 +9671,11 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
     if (!shipped.has(target)) issues.push(`icon relationship points at media/${target}, which is not in the package`);
   }
   const xml = typeof pagePart?.data === 'string' ? pagePart.data : '';
+  // Split so each chunk ends where its first child shape begins, the same way
+  // the tile text rule below scans: a Service group carries its own Character
+  // size before its children, and a lazy match across the page walks into the
+  // icon child's empty text instead.
+  const pageChunks = xml.split('<Shape ID=');
   // Visio text contrast. The Visio path carried its own hard-coded colours and
   // was never measured — the PowerPoint deck had a contrast rule, this one did
   // not, so a fix applied to one exporter could silently miss the other.
@@ -9944,7 +9949,28 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
   // naming anything, and the index has to. The sheet keeps its labels either
   // way - a Visio page is zoomable and a deleted label is not recoverable at
   // all - this only requires that a readable copy exists somewhere.
-  if (minFontPt < 7 - 0.01) {
+  //
+  // MEASURED ON THE LABEL, NOT ON THE SMALLEST TYPE ANYWHERE.
+  //
+  // `minFontPt` is the minimum over every run on the sheet, and the smallest
+  // run is the SKU sub-line, not the name: at sheet scale 1 the sub-line is
+  // 7.0pt while the label is 7.56pt. Keying on the minimum therefore fired the
+  // moment the sheet was scaled AT ALL - `over-row-120` draws a 199.5in page
+  // at scale 0.971, sub-line 6.8pt, labels 7.34pt and entirely readable - and
+  // demanded a 120 row index for a drawing whose names are perfectly legible.
+  // The exporter builds the index from the LABEL font, so the two disagreed
+  // across the whole window from scale 0.926 up to 0.999.
+  //
+  // The question this rule asks is whether the NAMES are readable, so it has
+  // to measure the type the names are set in. Read from the artefact, per
+  // service group, rather than by recomputing the exporter's arithmetic.
+  const labelSizes = pageChunks
+    .filter((chunk) => /NameU="Service\.\d+"/.test(chunk.slice(0, 200)))
+    .map((chunk) => /<Cell N="Size" V="([\d.]+)"\/>/.exec(chunk))
+    .filter((m): m is RegExpExecArray => m !== null)
+    .map((m) => +m[1] * 72);
+  const labelMinPt = labelSizes.length > 0 ? +Math.min(...labelSizes).toFixed(2) : Infinity;
+  if (labelMinPt < 7 - 0.01) {
     const indexRowText = [...indexXml.matchAll(/Name="service-name-\d+"[\s\S]*?<Text>([\s\S]*?)<\/Text>/g)]
       .map((m) => unescapeXml(m[1].replace(/<[^>]*>/g, '')).trim());
     // Both row forms. A shortened name is "<stub>  =  <full>"; a name that was
@@ -9960,7 +9986,7 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
     }
     if (unreadable.length > 0) {
       issues.push(
-        `sheet prints its smallest type at ${minFontPt}pt, under the 7pt floor a reader needs, `
+        `sheet sets its service names at ${labelMinPt}pt, under the 7pt floor a reader needs, `
         + `and ${unreadable.length} of its service names are absent from the index page `
         + `(${indexRowText.length} rows) \u2014 e.g. "${unreadable.slice(0, 3).join('", "')}" `
         + `appear nowhere in the file at a readable size`,
@@ -11791,6 +11817,7 @@ const GOLDEN: Record<string, Golden> = {
   'framed-cascade': { minTileIn: 1.178, named: 40, slides: 42 },
   'tight-seam': { minTileIn: 1.563, named: 20, slides: 1 },
   'over-row': { minTileIn: 1.193, named: 150, slides: 23 },
+  'over-row-120': { minTileIn: 1.206, named: 120, slides: 19 },
   'over-row-700': { minTileIn: 1.17, named: 700, slides: 98 },
   'scaled-zone-row': { minTileIn: 1.175, named: 480, slides: 121 },
   'mid-zone-row': { minTileIn: 1.3, named: 40, slides: 12 },
@@ -11957,6 +11984,7 @@ const VSDX_GOLDEN: Record<string, VsdxGolden> = {
   'framed-cascade': { media: 40, textBlocks: 82, minFontPt: 7.2 },
   'tight-seam': { media: 20, textBlocks: 24, minFontPt: 7.2 },
   'over-row': { media: 150, textBlocks: 185, minFontPt: 5.44 },
+  'over-row-120': { media: 120, textBlocks: 155, minFontPt: 6.8 },
   'over-row-700': { media: 700, textBlocks: 735, minFontPt: 1.17 },
   'scaled-zone-row': { media: 480, textBlocks: 2879, minFontPt: 1.7 },
   'mid-zone-row': { media: 40, textBlocks: 239, minFontPt: 7.2 },
@@ -12160,6 +12188,7 @@ async function main(): Promise<void> {
     // 6.31pt, and 90 at 4.00pt, on exactly forty-eight slides either way.
     diagonalCascadeScenario(52, 'diagonal-cascade-52'),
     bandAboveScenario(), framedCascadeScenario(), tightSeamScenario(), overRowScenario(),
+    overRowScenario(120, 'over-row-120'),
     // Past where the type floor used to stop tracking the drawing: the ratio
     // rule below was unsatisfiable by construction from about 24% down.
     overRowScenario(700, 'over-row-700'),
