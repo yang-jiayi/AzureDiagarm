@@ -36,12 +36,20 @@ export const AVAILABLE_REGIONS: RegionInfo[] = [
 interface RegionalPricingData {
   BillingCurrency: string;
   Items: AzureRetailPrice[];
+  /**
+   * The newest meter effective date in the file this data came from, which is
+   * how old the prices actually are. Not the date the file was downloaded: the
+   * corpus spans 2018-02 to 2026-07, so a refresh run in 2026 still ships 2018
+   * meters for the services Azure has not repriced since.
+   */
+  pricesAsOf?: string;
 }
 
 /** Compacted on-disk shape produced by scripts/prep-pricing-data.mjs. */
 interface CompactPricingData {
   BillingCurrency?: string;
   ServiceName?: string;
+  PricesAsOf?: string;
   Items?: Array<Partial<AzureRetailPrice> & Record<string, unknown>>;
 }
 
@@ -113,8 +121,7 @@ function pricingBaseUrl(): string {
  * Restore a compacted pricing file to the shape the parser expects. Mirrors
  * scripts/prep-pricing-data.mjs `expandPricingData` — only fields the runtime
  * reads are reconstructed. Exported for the round-trip test.
- */
-export function expandPricingData(compact: CompactPricingData): RegionalPricingData {
+ */export function expandPricingData(compact: CompactPricingData): RegionalPricingData {
   const serviceName = compact?.ServiceName;
   const items = Array.isArray(compact?.Items) ? compact.Items : [];
   const expanded = items.map((item) => {
@@ -136,6 +143,9 @@ export function expandPricingData(compact: CompactPricingData): RegionalPricingD
   return {
     BillingCurrency: compact?.BillingCurrency ?? 'USD',
     Items: expanded,
+    pricesAsOf: typeof compact?.PricesAsOf === 'string' && ISO_DATE.test(compact.PricesAsOf)
+      ? compact.PricesAsOf
+      : undefined,
   };
 }
 
@@ -320,6 +330,31 @@ export function getRegionInfo(region: AzureRegion): RegionInfo | undefined {
 }
 
 /**
+ * ISO calendar date, which is the only form `PricesAsOf` is written in.
+ *
+ * The vintage used to live in a module-level registry keyed by service name,
+ * written as files were parsed and read back when the breakdown was assembled.
+ * That was wrong in four separate ways, all of them the same mistake — the date
+ * was not attached to the number it described:
+ *
+ *  - it was recorded under the *mapped* Azure name and read back under the raw
+ *    canvas name, so it silently answered "nothing" for the ~half of the
+ *    catalogue where those differ;
+ *  - it was oldest-wins *across regions*, so switching region (or using the
+ *    built-in nine-region comparison) permanently attributed one region's
+ *    vintage to another's prices — the one direction that over-claims;
+ *  - it was recorded when a file *loaded*, not when a meter was *used*, so a
+ *    node priced from the static fallback table still got an attestation that
+ *    Azure had set that price on some date;
+ *  - it lived only in session state, so restoring a saved diagram and exporting
+ *    gave a different answer from exporting after any later pricing fetch.
+ *
+ * The date now rides on the pricing object and is stamped onto the node, so it
+ * is bound to its own number, its own region, and its own provenance.
+ */
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
  * Load pricing data for a specific service in a region
  */
 async function loadServiceData(region: AzureRegion, serviceName: string): Promise<RegionalPricingData | null> {
@@ -337,6 +372,7 @@ async function loadServiceData(region: AzureRegion, serviceName: string): Promis
     return {
       BillingCurrency: fullData.BillingCurrency,
       Items: filteredItems,
+      pricesAsOf: fullData.pricesAsOf,
     };
   }
 
@@ -525,6 +561,10 @@ export async function getRegionalServicePricing(
     tiers,
     calculationType: 'hourly',
     lastUpdated: new Date().toISOString(),
+    // Travels with the tiers it describes, so whoever ends up printing one of
+    // these numbers can say how long Azure has been charging it without
+    // knowing which file, which region or which name it was found under.
+    meterAsOf: data.pricesAsOf && ISO_DATE.test(data.pricesAsOf) ? data.pricesAsOf : undefined,
   };
   
   // Cache the result

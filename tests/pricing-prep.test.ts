@@ -3,7 +3,7 @@
 
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { compactPricingData } from '../scripts/prep-pricing-data.mjs';
@@ -176,4 +176,198 @@ test('real compacted regional files expand and parse to non-empty VM tiers', () 
     );
     assert.deepEqual(reTiers, tiers, `round-trip must be idempotent for ${region}`);
   }
+});
+
+// ---------------------------------------------------------------------------
+// Meter vintage. `PricesAsOf` is the newest meter date in a file, which is not
+// the date the file was downloaded: Azure restates a meter only when it
+// changes, so a refresh run today still returns 2018 meters for services it has
+// not repriced. The shipped corpus spans 2018-02 to 2026-07, so quoting the
+// download date alone tells a customer a deck is current when part of it is
+// eight years old.
+// ---------------------------------------------------------------------------
+
+test('expansion carries the meter vintage off the file', () => {
+  const compact = { BillingCurrency: 'USD', ServiceName: 'Virtual Machines', PricesAsOf: '2018-02-01', Items: [] };
+  assert.equal(expandPricingData(compact as never).pricesAsOf, '2018-02-01');
+});
+
+test('a malformed or missing vintage is dropped rather than reported', () => {
+  // A bad date is worse than no date: it would be printed on a customer deck
+  // verbatim, and it would sort against real dates in the oldest-wins compare.
+  for (const bad of [undefined, '', 'last Tuesday', '2018-2-1', '2018-02-01T00:00:00Z', 42]) {
+    const compact = { BillingCurrency: 'USD', Items: [], PricesAsOf: bad };
+    assert.equal(expandPricingData(compact as never).pricesAsOf, undefined, `rejected: ${String(bad)}`);
+  }
+});
+
+test('every shipped pricing file states a vintage that parses', () => {
+  // The whole feature rests on this field being present and well formed in the
+  // data as shipped; a silent regression in the prep script would otherwise
+  // just make the warning quietly stop appearing.
+  let checked = 0;
+  for (const region of ['japaneast', 'eastus2', 'westeurope']) {
+    for (const entry of readdirSync(join(REGIONS_DIR, region))) {
+      if (!entry.endsWith('.json')) continue;
+      const compact = JSON.parse(readFileSync(join(REGIONS_DIR, region, entry), 'utf8'));
+      if (!Array.isArray(compact.Items) || compact.Items.length === 0) continue;
+      checked += 1;
+      const asOf = expandPricingData(compact).pricesAsOf;
+      assert.ok(asOf, `${region}/${entry} ships meters but states no vintage`);
+      assert.ok(!Number.isNaN(Date.parse(asOf!)), `${region}/${entry} states an unparseable vintage ${asOf}`);
+    }
+  }
+  assert.ok(checked > 50, `expected a real corpus, checked only ${checked} files`);
+});
+
+
+test('the estimate reports how long its longest-standing price has held', async () => {
+  // Azure's retail API returns current prices, so a 2018 meter is genuinely
+  // today's price — it is one Azure has not repriced since. That is not a
+  // staleness warning, it is the answer to "how firm is this number?", and it
+  // is only worth putting on a slide when the price has actually held for a
+  // long time: every meter predates the download by some margin, so reporting
+  // any gap at all would put a second date on every deck that never means
+  // anything.
+  const { calculateCostBreakdown } = await import('../src/services/costEstimationService');
+  const { PRICING_DATA_AS_OF } = await import('../src/data/azurePricing');
+  const node = (id: string, serviceName: string, extra: Record<string, unknown> = {}) => ({
+    id,
+    position: { x: 0, y: 0 },
+    data: {
+      label: serviceName,
+      serviceName,
+      category: 'compute',
+      pricing: { estimatedCost: 10, quantity: 1, tier: 'Standard', region: 'japaneast', ...extra },
+    },
+  });
+
+  const stable = calculateCostBreakdown([
+    node('a', 'Virtual Machines', { meterAsOf: '2018-02-01' }),
+    node('b', 'Storage', { meterAsOf: '2026-07-01' }),
+  ] as never);
+  assert.equal(stable.pricesAsOf, PRICING_DATA_AS_OF, 'the refresh date still says when the data was fetched');
+  assert.equal(stable.oldestMeterAsOf, '2018-02-01', 'the oldest of the two, not the newest');
+
+  // A fortnight is not news. Reporting it would make the line permanent
+  // furniture and therefore invisible when it does matter.
+  const recent = calculateCostBreakdown([node('b', 'Storage', { meterAsOf: '2026-07-01' })] as never);
+  assert.equal(recent.oldestMeterAsOf, undefined);
+
+  // A custom price is a number the user typed; no Azure meter stands behind it,
+  // so it must not drag the reported vintage backwards.
+  const typed = calculateCostBreakdown([
+    node('a', 'Virtual Machines', { meterAsOf: '2018-02-01', isCustom: true }),
+  ] as never);
+  assert.equal(typed.oldestMeterAsOf, undefined);
+
+  // The bar is two years, so a price that moved twenty-three months ago is
+  // still recent enough not to be worth a line on the deck.
+  const under = new Date(Date.parse(`${PRICING_DATA_AS_OF}T00:00:00Z`) - 700 * 86_400_000)
+    .toISOString().slice(0, 10);
+  assert.equal(
+    calculateCostBreakdown([node('a', 'Virtual Machines', { meterAsOf: under })] as never).oldestMeterAsOf,
+    undefined,
+  );
+  const over = new Date(Date.parse(`${PRICING_DATA_AS_OF}T00:00:00Z`) - 760 * 86_400_000)
+    .toISOString().slice(0, 10);
+  assert.equal(
+    calculateCostBreakdown([node('a', 'Virtual Machines', { meterAsOf: over })] as never).oldestMeterAsOf,
+    over,
+  );
+});
+
+test('a price the meters did not set carries no meter date', async () => {
+  // The vintage used to be recorded when a pricing *file* loaded, which meant a
+  // node the static fallback table priced still got an attestation that Azure
+  // had set that number on some date. Both clauses were false: it is not an
+  // Azure price, and Azure did not set it then. Absent is the only honest
+  // answer, and it is now structural — the fallback returns simply do not
+  // carry the field.
+  const { calculateCostBreakdown } = await import('../src/services/costEstimationService');
+  const node = {
+    id: 'a',
+    position: { x: 0, y: 0 },
+    data: {
+      label: 'Machine Learning',
+      serviceName: 'Machine Learning',
+      category: 'ai',
+      // What `initializeNodePricing` returns from its fallback branches: a
+      // complete, usable price with no `meterAsOf` on it.
+      pricing: { estimatedCost: 56, quantity: 1, tier: 'Standard', region: 'japaneast', isCustom: false },
+    },
+  };
+  assert.equal(calculateCostBreakdown([node] as never).oldestMeterAsOf, undefined);
+});
+
+test('the vintage belongs to the region the estimate is in', async () => {
+  // Container Instances is 2024-09 in eastus2 and 2026-07 in australiaeast, and
+  // 30 of the 48 priced services differ by region like this. The vintage used
+  // to be held in a module-level map with oldest-wins applied across every
+  // region ever loaded, so pricing a node in one region and then switching
+  // printed the first region's date beside the second region's money — and the
+  // built-in nine-region comparison triggered it without any user error. Now
+  // that the date rides on the node's own pricing config, a re-price for a new
+  // region replaces it wholesale and no other region can contribute.
+  const { calculateCostBreakdown } = await import('../src/services/costEstimationService');
+  const node = (region: string, meterAsOf: string) => ({
+    id: 'a',
+    position: { x: 0, y: 0 },
+    data: {
+      label: 'Container Instances',
+      serviceName: 'Container Instances',
+      category: 'compute',
+      pricing: { estimatedCost: 10, quantity: 1, tier: 'Standard', region, meterAsOf },
+    },
+  });
+  const east = calculateCostBreakdown([node('eastus2', '2018-02-01')] as never);
+  assert.equal(east.oldestMeterAsOf, '2018-02-01');
+  // The same diagram re-priced for australiaeast, where the meter is recent.
+  const aus = calculateCostBreakdown([node('australiaeast', '2026-07-01')] as never);
+  assert.equal(aus.oldestMeterAsOf, undefined, 'a stale region must not lend its date to a fresh one');
+});
+
+test('the same diagram reports the same vintage every time it is exported', async () => {
+  // The old registry was session state populated as a side effect of fetching,
+  // so exporting right after restoring a saved diagram and exporting again
+  // after any later pricing fetch gave two decks with identical numbers and
+  // contradictory provenance. The date now travels inside the saved node, so
+  // there is nothing left to warm up.
+  const { calculateCostBreakdown } = await import('../src/services/costEstimationService');
+  const restored = {
+    id: 'a',
+    position: { x: 0, y: 0 },
+    data: {
+      label: 'Virtual Machines',
+      serviceName: 'Virtual Machines',
+      category: 'compute',
+      pricing: { estimatedCost: 10, quantity: 1, tier: 'Standard', region: 'japaneast', meterAsOf: '2018-02-01' },
+    },
+  };
+  const first = calculateCostBreakdown([restored] as never);
+  const second = calculateCostBreakdown([restored] as never);
+  assert.equal(first.oldestMeterAsOf, '2018-02-01');
+  assert.equal(second.oldestMeterAsOf, first.oldestMeterAsOf);
+});
+
+test('the vintage is not looked up by a name that has to be mapped first', async () => {
+  // The registry was written under the *mapped* Azure retail name
+  // (`Storage Accounts` → `Storage`, `Function Apps` → `Azure Functions`) and
+  // read back under the raw canvas name, so for the ~half of the catalogue
+  // where those differ the feature silently reported nothing — including the
+  // oldest meters in the whole corpus. There is no key any more, which is the
+  // point: the date is on the node, so a canvas name that does not match any
+  // Azure product name cannot break the lookup.
+  const { calculateCostBreakdown } = await import('../src/services/costEstimationService');
+  const breakdown = calculateCostBreakdown([{
+    id: 'a',
+    position: { x: 0, y: 0 },
+    data: {
+      label: 'Storage Accounts',
+      serviceName: 'Storage Accounts',
+      category: 'storage',
+      pricing: { estimatedCost: 14.6, quantity: 1, tier: 'Hot', region: 'japaneast', meterAsOf: '2018-02-01' },
+    },
+  }] as never);
+  assert.equal(breakdown.oldestMeterAsOf, '2018-02-01');
 });

@@ -24,6 +24,14 @@ const microsoftManifestPath = resolve(
 );
 const microsoftCatalogPath = resolve(repoRoot, 'src', 'data', 'microsoftProductIconCatalog.ts');
 
+// Must stay in step with `FAMILY_CATEGORY` in the catalog and in
+// `scripts/sync-microsoft-icons.mjs`.
+const MICROSOFT_PRODUCT_FAMILY_CATEGORY = {
+  'power-platform': 'power platform',
+  'dynamics-365': 'dynamics 365',
+  'microsoft-365': 'microsoft 365',
+};
+
 function sha256(value) {
   return createHash('sha256').update(value).digest('hex');
 }
@@ -233,7 +241,8 @@ async function verifyMicrosoftProductIcons() {
   const catalogByPath = new Map();
   const serviceNames = new Set();
   for (const entry of catalogEntries) {
-    if (entry.family !== 'power-platform' && entry.family !== 'dynamics-365') {
+    const category = MICROSOFT_PRODUCT_FAMILY_CATEGORY[entry.family];
+    if (!category) {
       throw new Error(`Microsoft product catalog has an unknown family: ${entry.family}`);
     }
     const normalizedServiceName = entry.serviceName.toLocaleLowerCase();
@@ -242,7 +251,6 @@ async function verifyMicrosoftProductIcons() {
     }
     serviceNames.add(normalizedServiceName);
 
-    const category = entry.family === 'power-platform' ? 'power platform' : 'dynamics 365';
     const path = `${category}/${entry.fileName}.svg`;
     if (catalogByPath.has(path)) {
       throw new Error(`Microsoft product catalog has a duplicate icon path: ${path}`);
@@ -298,7 +306,8 @@ async function verifyMicrosoftProductIcons() {
   console.log(
     `[test:icons] Microsoft product icons ${manifest.packageVersion}: all ${manifest.iconCount} `
     + `verified (${counts['power platform'] ?? 0} Power Platform, `
-    + `${counts['dynamics 365'] ?? 0} Dynamics 365)`,
+    + `${counts['dynamics 365'] ?? 0} Dynamics 365, `
+    + `${counts['microsoft 365'] ?? 0} Microsoft 365)`,
   );
 }
 

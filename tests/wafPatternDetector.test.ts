@@ -21,7 +21,7 @@ test('service-specific rules fire for the canonical Azure-prefixed names', () =>
   ];
   for (const item of cases) {
     const result = detectWafPatterns([svc('node-1', item.type)], []);
-    const ids = result.findings.map((finding) => finding.ruleId);
+    const ids = result.findings.map((finding) => finding.ruleId).filter((id): id is string => !!id);
     assert.ok(
       ids.some((id) => id.startsWith(item.expect)),
       `${item.type} produced no ${item.expect}* finding (got: ${ids.join(', ') || 'none'})`,
@@ -44,7 +44,7 @@ test('an internet-facing app with no WAF is still flagged behind Front Door', ()
     [],
   );
   assert.ok(
-    result.findings.some((finding) => /waf/i.test(finding.ruleId)),
+    result.findings.some((finding) => /waf/i.test(finding.ruleId ?? '')),
     'Front Door presence must not silently clear the missing-WAF advisory',
   );
 });

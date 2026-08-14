@@ -464,7 +464,7 @@ const IconPalette: React.FC<IconPaletteProps> = ({ forceCollapsed, openSignal, o
       <div
         className={`icon-palette palette-layout-${layout} ${isCollapsed ? 'collapsed' : ''}`}
         role="region"
-        aria-label={t('Azure Services')}
+        aria-label={t('Microsoft Services')}
       >
       {isCollapsed ? (
         <button
@@ -484,7 +484,7 @@ const IconPalette: React.FC<IconPaletteProps> = ({ forceCollapsed, openSignal, o
           <div className="palette-header">
             <div className="palette-title-row">
               <div>
-                <h2>{t('Azure Services')}</h2>
+                <h2>{t('Microsoft Services')}</h2>
               </div>
               <button
                 type="button"
@@ -504,8 +504,8 @@ const IconPalette: React.FC<IconPaletteProps> = ({ forceCollapsed, openSignal, o
               <input
                 type="search"
                 placeholder={localize(language, {
-                  en: 'Search Azure services...',
-                  ja: 'Azure サービスを検索...',
+                  en: 'Search Azure, Fabric, Microsoft 365, Copilot...',
+                  ja: 'Azure、Fabric、Microsoft 365、Copilotを検索...',
                 })}
                 aria-label={t('palette.searchLabel')}
                 value={searchTerm}
@@ -831,7 +831,7 @@ const IconPalette: React.FC<IconPaletteProps> = ({ forceCollapsed, openSignal, o
         placement="left"
         className="palette-drawer-shell"
         backdropClassName="palette-backdrop"
-        ariaLabel={t('Azure Services')}
+        ariaLabel={t('Microsoft Services')}
         onClose={() => setIsCollapsed(true)}
         backgroundSelectors={[
           '.app > .app-header',

@@ -21,8 +21,10 @@ export type IconPaletteCategoryId =
   | 'storage'
   | 'migration'
   | 'fabric'
+  | 'microsoft-copilot'
   | 'power-platform'
   | 'dynamics-365'
+  | 'microsoft-365'
   | 'general'
   | 'specialized';
 
@@ -206,13 +208,22 @@ export const iconPaletteCategories: IconPaletteCategory[] = [
     keywords: ['fabric', 'onelake', 'lakehouse', 'warehouse', 'power bi', 'semantic model', 'eventhouse', 'ファブリック'],
   },
   {
-    id: 'power-platform',
-    label: { en: 'Power Platform & Copilot Studio', ja: 'Power Platform・Copilot Studio' },
+    id: 'microsoft-copilot',
+    label: { en: 'Microsoft Copilot', ja: 'Microsoft Copilot' },
     description: {
-      en: 'Power Apps, Power Automate, Power Pages, Dataverse, AI Builder, Copilot Studio, and Agent 365',
-      ja: 'Power Apps、Power Automate、Power Pages、Dataverse、AI Builder、Copilot Studio、Agent 365',
+      en: 'Microsoft 365 Copilot, Copilot Studio, Agent 365, Foundry Agent Service, Bot Service, Copilot in Fabric, and data agents',
+      ja: 'Microsoft 365 Copilot、Copilot Studio、Agent 365、Foundry Agent Service、Bot Service、Copilot in Fabric、データ エージェント',
     },
-    keywords: ['power platform', 'power apps', 'powerapps', 'power automate', 'power pages', 'dataverse', 'ai builder', 'copilot studio', 'power virtual agents', 'agent 365', 'low code', 'ローコード', 'パワープラットフォーム', 'コパイロットスタジオ'],
+    keywords: ['copilot', 'microsoft copilot', 'microsoft 365 copilot', 'm365 copilot', 'copilot studio', 'agent', 'agents', 'agentic', 'agent 365', 'bot', 'chatbot', 'assistant', 'foundry agent service', 'data agent', 'orchestrator', 'コパイロット', 'コパイロットスタジオ', 'エージェント', 'ボット', 'アシスタント', '生成AI'],
+  },
+  {
+    id: 'power-platform',
+    label: { en: 'Power Platform', ja: 'Power Platform' },
+    description: {
+      en: 'Power Apps, Power Automate, Power Pages, Power BI, Dataverse, and AI Builder',
+      ja: 'Power Apps、Power Automate、Power Pages、Power BI、Dataverse、AI Builder',
+    },
+    keywords: ['power platform', 'power apps', 'powerapps', 'power automate', 'power pages', 'power bi', 'dataverse', 'ai builder', 'power fx', 'low code', 'no code', 'ローコード', 'ノーコード', 'パワープラットフォーム', 'パワーアップス', 'パワーオートメイト'],
   },
   {
     id: 'dynamics-365',
@@ -222,6 +233,15 @@ export const iconPaletteCategories: IconPaletteCategory[] = [
       ja: 'Sales、Customer Service、Field Service、Finance、Supply Chain、Commerce、Business Central',
     },
     keywords: ['dynamics', 'dynamics 365', 'd365', 'crm', 'erp', 'sales', 'customer service', 'field service', 'finance', 'supply chain', 'commerce', 'business central', 'customer insights', 'ダイナミクス', '業務アプリ'],
+  },
+  {
+    id: 'microsoft-365',
+    label: { en: 'Microsoft 365', ja: 'Microsoft 365' },
+    description: {
+      en: 'Official Microsoft 365 architecture symbols for Teams, SharePoint, Exchange, OneDrive, Purview, Defender, Intune, and Viva',
+      ja: 'Teams、SharePoint、Exchange、OneDrive、Purview、Defender、Intune、Vivaを描くための公式Microsoft 365アーキテクチャ シンボル',
+    },
+    keywords: ['microsoft 365', 'm365', 'office 365', 'o365', 'teams', 'sharepoint', 'exchange', 'outlook', 'onedrive', 'purview', 'defender', 'intune', 'entra', 'viva', 'planner', 'stream', 'loop', 'lists', 'onenote', 'word', 'excel', 'powerpoint', 'windows 365', 'マイクロソフト365', 'オフィス', 'チーム', 'シェアポイント'],
   },
   {
     id: 'general',
@@ -271,6 +291,7 @@ const directCategoryMap: Record<string, IconPaletteCategoryId> = {
   fabric: 'fabric',
   'power platform': 'power-platform',
   'dynamics 365': 'dynamics-365',
+  'microsoft 365': 'microsoft-365',
   general: 'general',
   menu: 'general',
   blockchain: 'specialized',
@@ -296,11 +317,31 @@ const semanticRules: Array<[IconPaletteCategoryId, RegExp]> = [
   ['migration', /\b(migrate|migration|mover|transfer)\b/i],
 ];
 
+/**
+ * Copilot and agent assets ship inside the Power Platform, Fabric, Microsoft 365,
+ * and Azure AI packages, so they cannot be routed by source folder. Listing them
+ * explicitly keeps the Copilot category accurate as those packages grow.
+ */
+const copilotIconIds = new Set<string>([
+  'power platform/copilot-studio',
+  'power platform/agent-365',
+  'fabric/fabric-workload-copilot',
+  'fabric/fabric-data-agent',
+  'fabric/fabric-item-operations-agent',
+  'microsoft 365/m365-app-copilot',
+  'microsoft 365/m365-bot',
+  'ai + machine learning/038470523-icon-service-Foundry-Agent-Service',
+  'ai + machine learning/10165-icon-service-Bot-Services',
+  'new icons/034296882-icon-service-Agentic-Web-Apps',
+]);
+
 export function classifyIconPaletteCategory(
   sourceCategory: string,
   displayName: string,
   fileName: string,
 ): IconPaletteCategoryId {
+  if (copilotIconIds.has(`${sourceCategory}/${fileName}`)) return 'microsoft-copilot';
+
   const direct = directCategoryMap[sourceCategory];
   if (direct) return direct;
 

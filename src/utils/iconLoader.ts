@@ -35,6 +35,8 @@ export interface AzureIcon {
   path: string;
   searchTerms: string[];
   source: PaletteIconSource;
+  /** Reusable concept shape rather than a named product. */
+  generic?: boolean;
 }
 
 export interface IconLibraryStats {
@@ -43,6 +45,7 @@ export interface IconLibraryStats {
   fabricIcons: number;
   powerPlatformIcons: number;
   dynamics365Icons: number;
+  microsoft365Icons: number;
   searchableIcons: number;
 }
 
@@ -213,6 +216,7 @@ function getIconMetadataCache(): IconMetadataCache {
       : undefined;
     const microsoftProductDefinition = sourceCategory === 'power platform'
       || sourceCategory === 'dynamics 365'
+      || sourceCategory === 'microsoft 365'
       ? getMicrosoftProductIconByFileName(fileNameWithoutExtension)
       : undefined;
     const name = getCurrentIconDisplayName(
@@ -272,6 +276,7 @@ function getIconMetadataCache(): IconMetadataCache {
           : microsoftProductDefinition
             ? microsoftProductDefinition.family
             : 'supplemental',
+      generic: microsoftProductDefinition?.kind === 'symbol',
     };
 
     all.push(icon);
@@ -320,6 +325,7 @@ export function getIconLibraryStats(): IconLibraryStats {
     fabricIcons: all.filter(icon => icon.source === 'fabric').length,
     powerPlatformIcons: all.filter(icon => icon.source === 'power-platform').length,
     dynamics365Icons: all.filter(icon => icon.source === 'dynamics-365').length,
+    microsoft365Icons: all.filter(icon => icon.source === 'microsoft-365').length,
     searchableIcons: all.length,
   };
 }

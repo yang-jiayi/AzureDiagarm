@@ -12,6 +12,7 @@
  */
 
 import PptxGenJS from 'pptxgenjs';
+import JSZip from 'jszip';
 import type { Edge, Node } from 'reactflow';
 
 /**
@@ -21,24 +22,120 @@ import type { Edge, Node } from 'reactflow';
  */
 const PptxCtor = (PptxGenJS as unknown as { default?: typeof PptxGenJS }).default ?? PptxGenJS;
 
+/**
+ * A deck whose every slide sanitises the text put on it.
+ *
+ * XML 1.0 forbids the C0 control characters outright, and no escaping helps —
+ * `&#11;` is exactly as illegal as a raw U+000B. A single one anywhere in
+ * `ppt/slides/*.xml` makes PowerPoint refuse to open the file, and the export
+ * itself succeeds silently, so the first anyone hears of it is the recipient
+ * reporting a corrupt deck. They are not exotic: U+000B is Word and
+ * PowerPoint's own manual line break, so it arrives by copy-paste, and it is a
+ * legal JSON escape, so it survives an IaC or prototype import untouched.
+ *
+ * Wrapped at the slide factory rather than at the forty-odd `addText` calls,
+ * because the interesting failure is the call site nobody remembered.
+ */
+function newDeck(): PptxGenJS {
+  const pptx = new PptxCtor();
+  const addSlide = pptx.addSlide.bind(pptx);
+  pptx.addSlide = ((...args: Parameters<typeof pptx.addSlide>) => {
+    const slide = addSlide(...args);
+    // Every writer, and every argument of it. Sanitising only the text argument
+    // of `addText` left two ways through: the options bag was passed on
+    // untouched, and `objectName` in it becomes the `name` attribute of
+    // `<p:cNvPr>` carrying a node, group or edge id straight from the diagram;
+    // and `addShape`/`addImage` were not wrapped at all, which is where the
+    // icon and tile ids go. A shape name is as fatal to the parse as a caption.
+    for (const key of ['addText', 'addTable', 'addShape', 'addImage', 'addChart', 'addMedia', 'addNotes'] as const) {
+      const fn = (slide as unknown as Record<string, unknown>)[key];
+      if (typeof fn !== 'function') continue;
+      const bound = (fn as (...a: unknown[]) => unknown).bind(slide);
+      (slide as unknown as Record<string, unknown>)[key] = (...args: unknown[]) => bound(...args.map(cleanText));
+    }
+    return slide;
+  }) as typeof pptx.addSlide;
+
+  // `docProps/core.xml` is written from these, and a deck whose metadata is
+  // ill-formed is just as unopenable as one whose slides are — the caller
+  // passes the diagram name and the author's name straight through, and both
+  // are free text a user typed or pasted.
+  for (const key of ['author', 'company', 'revision', 'subject', 'title'] as const) {
+    let holder: object | null = pptx;
+    let desc: PropertyDescriptor | undefined;
+    while (holder && !desc) {
+      desc = Object.getOwnPropertyDescriptor(holder, key);
+      holder = Object.getPrototypeOf(holder) as object | null;
+    }
+    if (!desc?.set) continue;
+    const { get, set } = desc;
+    Object.defineProperty(pptx, key, {
+      configurable: true,
+      get: get ? () => get.call(pptx) : undefined,
+      set: (value: unknown) => set.call(pptx, cleanText(value)),
+    });
+  }
+  return pptx;
+}
+
+/** Strip XML-forbidden code points wherever text hides in a pptxgenjs argument. */
+function cleanText(value: unknown): unknown {
+  if (typeof value === 'string') return stripXmlForbidden(value);
+  if (Array.isArray(value)) return value.map(cleanText);
+  if (value && typeof value === 'object') {
+    const source = value as Record<string, unknown>;
+    // `text` is the only string pptxgenjs renders, but it is not the only one
+    // it writes. `objectName` becomes the `name` attribute of `<p:cNvPr>`, and
+    // it is built from diagram ids rather than typed prose, which is exactly
+    // why it was missed: ids look like they came from us. They did not — an
+    // imported template or a model response names its own nodes.
+    //
+    // Everything else in an options bag is a colour, a size, a font name or a
+    // base64 image, and rewriting those would be a different kind of bug, so
+    // this deliberately does not recurse into values it was not asked about.
+    const hasText = 'text' in source;
+    const hasName = typeof source.objectName === 'string';
+    if (!hasText && !hasName) return value;
+    const out = { ...source };
+    if (hasText) out.text = cleanText(source.text);
+    if (hasName) out.objectName = stripXmlForbidden(source.objectName as string);
+    return out;
+  }
+  return value;
+}
+
 import { generateModelFilename } from '../utils/modelNaming';
 import { rasterizeIcons, type RasterizedIcon } from '../utils/exportIconRaster';
+import { stripXmlForbidden } from '../utils/xmlText';
+import { nativizePackage } from './pptxNativeShapes';
 import {
   buildExportRoutes,
   categoryStyle,
   collectExportBoxes,
+  compactEmptyGutters,
+  clampedBoxes,
   computeBounds,
   computeContentBounds,
   computeFitTransform,
+  fitLabelToLines,
+  fitLabelToWidth,
   metaSubline,
   partitionBoxes,
   stripHash,
   truncateLabel,
+  widestGlyphIn,
+  widestGlyphUpperIn,
+  drawableInColumn,
+  advanceWidthIn,
+  trailingWhitespaceIn,
   usedConnectionLegend,
   workflowListFromEdges,
   narrateEdgeCallouts,
+  readEdgeLabel,
   zoneStyleFor,
+  readableTextOn,
   carriesWording,
+  singleLineName,
   type Bounds,
   type ExportBox,
   type ExportRoute,
@@ -64,7 +161,9 @@ const DARK_THEME: SlideTheme = {
   accent: '0078d4',   // Azure blue
   titleText: 'ffffff',
   metaText: '94a3b8', // slate-400
-  footerText: '475569', // slate-600
+  // slate-400: slate-600 read at 1.93:1 on this background, so the attribution
+  // line was effectively invisible in the exported deck.
+  footerText: '94a3b8',
 };
 
 const LIGHT_THEME: SlideTheme = {
@@ -73,7 +172,8 @@ const LIGHT_THEME: SlideTheme = {
   accent: '0078d4',   // Azure blue
   titleText: '0f172a', // slate-900
   metaText: '475569',  // slate-600
-  footerText: '94a3b8', // slate-400
+  // slate-500: slate-400 read at 2.45:1 here, well under the WCAG AA bar.
+  footerText: '64748b',
 };
 
 // ─── Slide layout (inches) ───────────────────────────────────────────────────
@@ -92,6 +192,24 @@ const PX_PER_IN = 96;
  * the detail slide that follows.
  */
 const OVERVIEW_LEGIBLE_PT = 6;
+/**
+ * Inset a connector chip reserves on each side, in INCHES.
+ *
+ * The sizer has always modelled 0.06in a side, but the shape was emitted with
+ * pptxgenjs margin: 0.02 — and that option is in POINTS, so the file carried
+ * a 0.0003in inset against a model reserving 0.12in in total. The model was
+ * not wrong, the file was: every wrap decision here assumes this much padding,
+ * so emit it ( * 72 to convert) rather than weaken the model to match a
+ * typo. Text now wraps in PowerPoint where the sizer says it wraps.
+ */
+const CHIP_INSET_IN = 0.06;
+/**
+ * The column a chip's words actually get. Floored at one hair rather than at a
+ * constant 0.05in: a fixed floor on a box that shrinks with the drawing is how
+ * a 0.009in chip was told it had 0.05in of line, counted five of them, and was
+ * emitted 0.6in tall — sixty times the tile it labelled.
+ */
+const chipColumn = (width: number): number => Math.max(0.001, width - CHIP_INSET_IN * 2);
 const BASE_W = 13.333;
 const BASE_H = 7.5;
 const MAX_SLIDE_IN = 56; // PowerPoint's hard page-size limit
@@ -119,6 +237,32 @@ interface SlideGeometry {
   overflow: boolean;
   /** True when far-placed nodes were pulled back onto the page to stay visible. */
   outliersClamped: boolean;
+  /**
+   * True when the callout bar this drawing's step numbers ask for is out of
+   * reach in this frame, so the planner fell back to {@link MARKABLE_TILE_W_IN}.
+   * See {@link calloutBarReachable}.
+   */
+  calloutBarClamped: boolean;
+  /**
+   * The median authored service width the planner aimed at, in pixels.
+   *
+   * Exported alongside the clamp for the same reason it is: the gate's own
+   * median spanned every node in the scenario, groups included, while this one
+   * comes from `partitionBoxes(...).services`. A zone rectangle is wider than
+   * a service, so two of them dragged the gate's median above every tile on the
+   * drawing and switched the callout rule off deck-wide - and on a landing zone
+   * diagram, where subscription, VNet and subnet frames outnumber the services
+   * inside them, the gate's median was a zone width and every service was
+   * "below the median".
+   */
+  medianServiceW: number;
+  /** See {@link calloutPlanFor}. The width the winning plan served, in pixels. */
+  servedTileW: number;
+  /**
+   * See {@link calloutPlanFor}. The narrowest authored tile this frame can
+   * carry a proportionate callout on at any grid, in pixels.
+   */
+  reachableTileW: number;
   /**
    * Tiles of the drawing, one per slide. A single entry (the usual case) means
    * the whole architecture fits on one legible page. More than one means the
@@ -153,6 +297,26 @@ interface DiagramWindow {
 // untidy one: the reader silently attaches the wording to the wrong arrow and
 // never finds out, so it is priced above any overlap a walk is likely to see.
 const LEGIBLE_TILE_PT = 7;
+/**
+ * The smallest tile that can carry an identifying mark.
+ *
+ * The tile's text column is `w - 0.06`, and the legibility rule the gate and the
+ * renderer share asks for two of the string's widest glyph. A digit at
+ * `LEGIBLE_TILE_PT` measures 0.0524in, so the column must reach 0.1048in and the
+ * tile 0.1648in, rounded up once to leave the arithmetic room to move.
+ *
+ * WIDTH ONLY, deliberately. The analogous height bar - about 0.375in, the room
+ * one 7pt line needs in a band that is roughly a third of the tile - is reached
+ * by any node under 38px tall, which is an ordinary size rather than a
+ * pathological one, and demanding it moved the transform under scenarios the
+ * planner had already sized correctly. 19.2px wide is not an ordinary size.
+ */
+const MARKABLE_TILE_W_IN = 0.2;
+/**
+ * Floor for the SKU / region / price sub-line. Below this the string is there
+ * but nobody can read it, which is worse than an honest ellipsis.
+ */
+const META_LEGIBLE_PT = 5;
 
 /**
  * The label size tiling actually aims for.
@@ -190,6 +354,48 @@ const MAX_DIAGRAM_SLIDES = 9;
  * page grows for it.
  */
 const MAX_TILED_SLIDES = 24;
+
+/**
+ * The same ceiling for a deck whose page size is fixed, where the alternative
+ * to another slide is not a bigger sheet but smaller type.
+ *
+ * Counted in slides actually emitted, not grid cells: a sparse drawing needs a
+ * fine grid to reach seven points but fills few of its cells, and charging it
+ * for the empty ones is what refused a readable thirteen-slide deck in favour
+ * of an unreadable one.
+ *
+ * Deliberately high. Nobody wants forty slides of one diagram, but everybody
+ * would rather have forty they can read than twenty-four they cannot, and the
+ * only drawings that get anywhere near this are the ones that would otherwise
+ * have shipped at four points.
+ */
+const MAX_LEGIBLE_TILED_SLIDES = 48;
+
+/**
+ * And the length past which a deck has stopped being a deck at all, applied
+ * only once legibility has already been given its way.
+ *
+ * The ceiling above is a preference — it yields to type that reads. This one
+ * does not, because at some size a drawing is simply too large for a fixed
+ * page and the honest answer is the most readable deck of a finite length,
+ * not an unbounded one. Set where a reader would abandon the deck rather than
+ * where a designer would.
+ */
+const MAX_FIXED_PAGE_SLIDES = 120;
+
+/**
+ * And a bound on the grid itself, so the search for a grid that fits the deck
+ * ceiling cannot walk a pathological one.
+ *
+ * This is a bound on the *search*, not a judgement about the drawing, and
+ * setting it as if it were the latter is what pinned a 27-service cascade to a
+ * 56in page: a diagonal occupies one cell per service, so it needs an n x n
+ * grid to be read at all, and 400 cells ran out at 20. Emitted slides are what
+ * a reader counts and `MAX_LEGIBLE_TILED_SLIDES` is what limits them; empty
+ * cells cost nothing but the cost of enumerating them, which is what this
+ * number is actually for.
+ */
+const MAX_TILED_CELLS = 22500;
 
 /**
  * A sheet has to carry a piece of the architecture, not a lone tile floating
@@ -243,10 +449,14 @@ interface Obstacle {
   w: number;
   h: number;
   annotation?: boolean;
+  /** A service name. Covering one is a different kind of damage from a tile. */
+  caption?: boolean;
   /** Bundle this obstacle belongs to; its own labels ignore it. */
   owner?: string;
   /** Cost multiplier per square inch covered; defaults to a tile's 1. */
   weight?: number;
+  /** Service this obstacle is part of, so a label can tell whose tile it is. */
+  node?: string;
 }
 
 /**
@@ -254,7 +464,333 @@ interface Obstacle {
  * stop shrinking here and the list continues on another slide instead.
  */
 const MIN_WORKFLOW_ROW_IN = 0.34;
+// The workflow list's preferred and floor type sizes. A step sentence shrinks
+// between them to fit its row rather than spilling out of it.
+const WORKFLOW_ROW_PT = 12;
+const WORKFLOW_MIN_PT = 9;
 
+/**
+ * How much of a chip may end up over a service name or another callout before
+ * the chip is dropped in favour of a numbered callout plus a step-list row.
+ *
+ * Set just under the smallest overlap the export audit reports (0.018 sq in),
+ * so a chip is handed over before it is drawn on top of something the reader
+ * needs rather than after.
+ */
+const SPOILED_CHIP_SQ_IN = 0.015;
+
+/**
+ * Whether a chip at `block` stands on something the reader needs — a name, a
+ * numbered callout, or a service that is not at either end of its own arrow.
+ *
+ * One implementation, called from every place a chip is seated. It used to be
+ * written inline at the first seat only, and the two repair passes that move a
+ * chip afterwards re-ran the placement search without it: a chip rejected for
+ * covering a caption could be moved onto a different caption and kept, because
+ * the only thing the repair asked about the new seat was whether it hit
+ * another chip. That is how a chip came to cover 32% of a tile name on a slide
+ * whose first-pass placement had been correctly refused.
+ *
+ * A chip standing on a service that is not at either end of its own arrow is
+ * the same failure by a different route: the reader takes it for that
+ * service's caption and the hop it actually describes goes unlabelled. The
+ * walk cannot always avoid it — on `meta-subline` and `workflow-prose` every
+ * slot within reach laps a bystander, and weighting them twelve times a tile
+ * moved the chip not at all — so the wording is handed to the step list
+ * exactly as it is when a caption is in the way.
+ *
+ * Priced separately and much more loosely than the caption bar. A chip may
+ * brush a bystander's rim; the export audit allows a fiftieth of a tile, so
+ * this bar sits at exactly that and hands the wording over the moment the
+ * drawing would fail the gate. Priced as a FRACTION of the bystander, exactly
+ * as the audit prices it, so the exporter and the gate can never disagree
+ * about what counts as standing on a stranger. A flat area bar cannot match
+ * it: a fiftieth of a small tile and of a large one are different numbers of
+ * square inches, and the difference is what let a 2% lap ship while a 13% one
+ * was muted.
+ */
+function chipSpoils(
+  block: { x: number; y: number; w: number; h: number },
+  route: { sourceId: string; targetId: string; bundleKey: string },
+  obstacles: readonly Obstacle[],
+): boolean {
+  const STRANGER_TILE_FRACTION = 0.02;
+  // A label may lean on the two services its own arrow connects — the reader
+  // attributes it correctly, and on a hop shorter than the label there is
+  // nowhere else for it to go. "Lean on" is not "cover": this test excluded
+  // endpoint tiles ENTIRELY, so a chip could bury the icon it was pointing at
+  // and the walk would not move it. Same tenth of the tile the gate allows, so
+  // the placer and the thing that checks it cannot disagree.
+  const OWN_TILE_FRACTION = 0.1;
+  // A caption is judged by how much of ITSELF is gone, not by how many square
+  // inches the overlap is. A sub-line is a 0.02in² sliver: burying 93% of
+  // "Standard_D4s_v5 · japaneast" costs less area than `SPOILED_CHIP_SQ_IN`
+  // allows, so an absolute budget scored total destruction as free — and a
+  // chip that grew a line taller took exactly that free ride, across 45 tiles
+  // in 3 decks.
+  const SPOILED_CAPTION_FRACTION = 0.5;
+  const ownEnds = new Set([route.sourceId, route.targetId]);
+  let spoiled = 0;
+  let onStrangers = 0;
+  let onOwnEnds = 0;
+  let onCaptions = 0;
+  for (const o of obstacles) {
+    const tile = !o.annotation && !o.caption && o.node !== undefined;
+    const stranger = tile && !ownEnds.has(o.node as string);
+    if (!o.annotation && !o.caption && !tile) continue;
+    if (o.owner !== undefined && o.owner === route.bundleKey) continue;
+    const dx = Math.min(block.x + block.w, o.x + o.w) - Math.max(block.x, o.x);
+    const dy = Math.min(block.y + block.h, o.y + o.h) - Math.max(block.y, o.y);
+    if (dx > 0 && dy > 0) {
+      const fraction = (dx * dy) / Math.max(1e-6, o.w * o.h);
+      if (stranger) onStrangers = Math.max(onStrangers, fraction);
+      else if (tile) onOwnEnds = Math.max(onOwnEnds, fraction);
+      else {
+        spoiled += dx * dy;
+        if (o.caption) onCaptions = Math.max(onCaptions, fraction);
+      }
+    }
+  }
+  return spoiled > SPOILED_CHIP_SQ_IN
+    || onStrangers > STRANGER_TILE_FRACTION
+    || onOwnEnds > OWN_TILE_FRACTION
+    || onCaptions > SPOILED_CAPTION_FRACTION;
+}
+
+/**
+ * The largest inches-per-pixel the renderer will actually draw a window at.
+ *
+ * The natural cap is one authored pixel to one screen pixel: a two-node
+ * diagram must not be blown up to absurd tiles. But a density is the wrong
+ * thing to cap when the drawing itself was authored small, so a drawing whose
+ * narrowest tile cannot carry a mark at all raises the cap far enough to reach
+ * that bar and no further. Every drawing already above it keeps the identical
+ * transform.
+ *
+ * One function because there were two copies of this expression and they had
+ * already diverged: the planner still capped at `1 / PX_PER_IN` and its comment
+ * asserted the renderer did too, while the renderer had been raising it for
+ * sub-19.2px tiles. `Infinity` for "no tile to protect" - the caller has no
+ * services - reduces to the natural cap.
+ */
+/**
+ * The narrowest tile that will actually be drawn, in authored pixels.
+ *
+ * Written once and called from both the planner and the renderer because
+ * they have to agree: the ceiling one of them raises is the ceiling the other
+ * one plans against, and two spellings of "narrowest" is exactly how they
+ * drifted apart the first time. Zero-width boxes are skipped rather than
+ * treated as the minimum - a box with no width is not a tile a mark has to
+ * fit inside, and counting it would pin the ceiling to a shape nobody sees.
+ *
+ * A loop, not `Math.min(...boxes)`: spreading an array into a call is limited
+ * by the engine's argument count, and this list is one per service on the
+ * diagram, so a large estate would throw where a small one worked.
+ */
+export function narrowestBoxW(boxes: readonly { w: number }[]): number {
+  let narrowest = Infinity;
+  for (const box of boxes) {
+    if (box.w > 0 && box.w < narrowest) narrowest = box.w;
+  }
+  return narrowest;
+}
+
+function rendererMaxScale(minBoxW: number, markIn: number = MARKABLE_TILE_W_IN): number {
+  return Math.max(
+    1 / PX_PER_IN,
+    Number.isFinite(minBoxW) && minBoxW > 0 ? markIn / minBoxW : 0,
+  );
+}
+
+/**
+ * The median width and height of a set of tiles, in authored pixels.
+ *
+ * One expression, because the planner's two targets and the reachability
+ * predicate below all need the same statistic and a second copy of it is what
+ * let the gate mirror the planner with a MINIMUM while the planner used a
+ * median - a disagreement that made the gate accuse a correct 53 slide plan of
+ * chasing a bar it had already reached.
+ */
+function medianExtent(boxes: readonly { w: number; h: number }[]): { w: number; h: number } {
+  const widths = boxes.map((b) => b.w).filter((w) => w > 0).sort((a, b) => a - b);
+  const heights = boxes.map((b) => b.h).filter((h) => h > 0).sort((a, b) => a - b);
+  return {
+    w: widths[Math.floor(widths.length * 0.5)] ?? Infinity,
+    h: heights[Math.floor(heights.length * 0.5)] ?? Infinity,
+  };
+}
+
+/**
+ * Whether `markIn` is a tile width some grid in this frame can actually reach.
+ *
+ * `legibleScaleFor` returns at most `finestPerIn`, so a demand above it is
+ * unreachable by that function's own return value, whatever grid is tried.
+ * This is the exact bound and not a bound on it: an earlier form compared
+ * against the same expression with the `target` term dropped, which is larger
+ * by `(2 * WINDOW_BLEED_PX + target) / (2 * WINDOW_BLEED_PX)`, and left a band
+ * about one authored pixel wide in which the bar is unreachable and unclamped.
+ * Measured at every digit count - 10px, 13px and 16px - and the three-digit
+ * case tripled a deck: 15px planned 21 slides, 16px planned 64, and the tile
+ * 16px bought was 0.4274in against the 0.4457in bar it was spent chasing.
+ */
+function calloutBarReachable(
+  target: number,
+  frame: { w: number; h: number },
+  minBoxW: number,
+  markIn: number,
+): boolean {
+  const finestPerIn = Math.min(frame.w, frame.h) / (WINDOW_BLEED_PX * 2 + Math.max(1, target));
+  return rendererMaxScale(minBoxW, markIn) <= finestPerIn;
+}
+
+/**
+ * The tile width the planner should aim for, given what the drawing carries.
+ *
+ * `MARKABLE_TILE_W_IN` is the bar for a tile that can hold an identifying
+ * mark, and for an unnumbered drawing that is the whole requirement. A
+ * NUMBERED drawing has a second one: every hop carries a disc that must be
+ * readable and must not swamp the service it points at, and those two
+ * demands only intersect above `floor / 0.55`. Below it the exporter has no
+ * move left - it draws the floor and the disc is disproportionate whatever it
+ * chooses - so the planner's own success condition was the badge rule's
+ * failure condition, and a deck could sit exactly on the markable bar with
+ * every callout at 97% of its tile and pass.
+ *
+ * Taken from the LARGEST step number, because a three-digit disc is 58% wider
+ * than a one-digit one and the bar has to hold for the widest number drawn.
+ *
+ * This only binds on a drawing authored small: `rendererMaxScale` is the
+ * larger of this and natural size, so it moves nothing until the median tile
+ * is under `96 * markIn` pixels - about 34px for a two-digit deck, against
+ * 19.2px before.
+ */
+function markableTileWIn(steps: Iterable<number | undefined | null>): number {
+  let widest = 0;
+  for (const raw of steps) {
+    const step = Number(raw);
+    if (Number.isFinite(step) && step > widest) widest = step;
+  }
+  if (widest <= 0) return MARKABLE_TILE_W_IN;
+  return Math.max(
+    MARKABLE_TILE_W_IN,
+    badgeFloorIn(widest, BADGE_LEGIBLE_PT) / BADGE_TILE_SHARE,
+  );
+}
+
+/** The step numbers a drawing's edges carry, for {@link markableTileWIn}. */
+function stepNumbersOf(
+  edges: readonly { data?: { stepNumber?: unknown } }[],
+): (number | undefined)[] {
+  return edges.map((edge) => {
+    const step = Number(edge?.data?.stepNumber);
+    return Number.isFinite(step) ? step : undefined;
+  });
+}
+
+/**
+ * Inches-per-pixel worth splitting the drawing to reach, for a `target`-pixel
+ * tile in a `frame`-inch window.
+ *
+ * Two ceilings, and getting either wrong has produced the same catastrophe from
+ * opposite directions, because both coarsening loops break on
+ * `scaleOf(c, r) >= legibleScale && scaleOf(next) < legibleScale`. If nothing
+ * reachable ever reaches `legibleScale`, the left conjunct is false at every
+ * step, the break never fires, and the loop walks past every grid that reads —
+ * so a demand that cannot be met is not a legibility floor, it is a way of
+ * switching the floor off.
+ *
+ * `finestPerIn` is what this *frame* can deliver: `gridFor` returns null the
+ * moment the bleed alone fills the window, and a null grid sends the planner to
+ * `capped(150, 150)`. Missing it, 400 services came out as 49 slides on which
+ * every tile read "Azure…".
+ *
+ * `1 / PX_PER_IN` is what the *renderer* will: every window is drawn through
+ * `computeFitTransform(..., { maxScale: 1 / PX_PER_IN })`, so a tile can never
+ * be larger than the size it was authored at, while `LEGIBLE_TILE_PT / 12 /
+ * target` exceeds that for any tile under 56px. Missing it, 60 services
+ * authored 20px tall came out as 61 slides carrying one tile each on a page
+ * 0.3% inked — with tiles no wider, type no larger and no name any more
+ * complete than the 25 slides they needed.
+ *
+ * That ceiling is not a constant, and the comment above asserting it was one
+ * went stale the day the renderer started raising it for drawings authored too
+ * small to carry a mark. The planner then stopped splitting at a scale the
+ * renderer would have exceeded, which is the same defect in the opposite
+ * direction: tiles under the markable bar on a deck that had slides to spare.
+ * Both now read `rendererMaxScale`, so there is one expression and no second
+ * place to update.
+ *
+ * Exported so the invariant can be asserted directly. The end-to-end audit can
+ * only see the catastrophic end of this: between 40 and 55 authored pixels the
+ * deck over-tiles by 24-48% while every window still carries two tiles, and no
+ * property of the emitted file distinguishes that from a small correct deck.
+ * The distinguishing fact is a counterfactual — a coarser split would have
+ * produced identical tiles — so it has to be checked here, on the function.
+ */
+export function legibleScaleFor(
+  target: number,
+  frame: { w: number; h: number },
+  minBoxW: number = Infinity,
+  markIn: number = MARKABLE_TILE_W_IN,
+): number {
+  const finestPerIn = Math.min(frame.w, frame.h) / (WINDOW_BLEED_PX * 2 + Math.max(1, target));
+  // Chase the callout bar only while the frame can actually deliver it.
+  //
+  // `finestPerIn` is what this frame can return, so a demand above it is met by
+  // no grid at all - and since both coarsening loops break on
+  // `scaleOf(c, r) >= legibleScale`, a demand that is never met is not a floor,
+  // it is a way of switching the floor off: the loop walks past every grid that
+  // reads and stops only when it runs out of columns.
+  //
+  // Measured, this is what made numbering cost 4.6x the slides. One drawing of
+  // 14px tiles needed 12 windows unnumbered, 33 at one digit, 44 at two and 55
+  // at three - the architecture never changed, the step numbers did - and at
+  // the end of all that spending the tile was 0.3740in against a 0.4457in bar,
+  // so the deck paid 43 extra windows for a target it was never going to reach,
+  // and missed it anyway.
+  //
+  // When the callout bar is out of reach, fall back to the bar that predates
+  // numbering: a tile wide enough to carry an identifying mark. That is
+  // reachable, so the break fires, and the deck spends what an unnumbered
+  // drawing of the same architecture spends. The disc is then disproportionate
+  // - there is no scale at which it is not - but the reader gets the same
+  // number of legible sheets instead of 4.6 times as many illegible ones.
+  const barIn = calloutBarReachable(target, frame, minBoxW, markIn)
+    ? markIn
+    : MARKABLE_TILE_W_IN;
+  const demand = rendererMaxScale(minBoxW, barIn);
+  // The type ceiling does not get to cancel the markable bar: they measure
+  // different axes.
+  //
+  // `LEGIBLE_TILE_PT / 12 / target` is derived from the median tile's HEIGHT
+  // and says only that a taller tile's caption gains nothing from a finer
+  // grid. The markable demand is derived from its WIDTH and says the tile
+  // cannot carry a mark at all. Combining them with `min` made the height term
+  // veto the width one on every tall narrow tile - and that is precisely the
+  // shape the markable raise exists for. Measured on a deck of 24x96 sensors,
+  // `min` returned 0.006076 in/px for a 0.2829in bar and for a 0.2000in bar
+  // alike, an identical answer to two different questions: the tile drew
+  // 0.1458in wide and carried a disc at 89% of itself, while the very same
+  // 24px tile reached exactly 0.2829in on decks whose tiles were not tall.
+  // The renderer's ceiling had the room the whole time; the `min` threw it out.
+  //
+  // Still bounded above by `demand` and `finestPerIn`, which are true ceilings,
+  // so nothing here can chase a scale the renderer or the frame would refuse.
+  // And narrow by construction, in two independent ways. It is zero unless the
+  // renderer actually RAISED its ceiling for this tile - a tile already wide
+  // enough to carry a mark asks for nothing here, so passing `minBoxW` in can
+  // never move an answer the planner would have given without it, which
+  // `pptxSlideBanding` asserts directly across a 400-target sweep. And even
+  // when it is non-zero the max only binds on a tile roughly three times taller
+  // than it is wide, so ordinary drawings plan exactly as before.
+  const markableDemand = Number.isFinite(minBoxW)
+    && minBoxW > 0
+    && minBoxW < barIn * PX_PER_IN - 1e-9
+    ? barIn / minBoxW
+    : 0;
+  const typeCeiling = LEGIBLE_TILE_PT / 12 / Math.max(1, target);
+  return Math.min(finestPerIn, demand, Math.max(typeCeiling, markableDemand));
+}
 /**
  * Split the drawing into as few standard-slide windows as keep tiles legible.
  *
@@ -267,10 +803,495 @@ const MIN_WORKFLOW_ROW_IN = 0.34;
  * all — either whole or tiled. When it cannot, the caller grows the page
  * instead, because splitting further only multiplies slides.
  */
+/**
+ * Plan the windows, then check that the raise paid for itself.
+ *
+ * The ceiling is raised so that a drawing of small tiles can be split until
+ * its tiles reach the markable bar. What it must not do is split a drawing
+ * until each slide holds one tile: `probe-whitespace` chases four slivers and
+ * drags their 160px neighbours to 2.3in each, ending with six of eight slides
+ * carrying a single service. Both harms are real, and only one of them was
+ * ever visible to the gate, so the earlier attempt to tell them apart by a
+ * max-over-min ratio chose the invisible one - and a sweep found the ratio has
+ * a one pixel cliff, where widening one node of sixty from 56px to 57px took
+ * the deck from sixty named services to one.
+ *
+ * So the raise is not predicted from a proxy, it is measured on the plan it
+ * produces. If the raised grid averages fewer than `MIN_SERVICES_PER_TILED_SLIDE`
+ * services per window - the constant the fixed-page path already uses for
+ * exactly this judgement - the raise is refused and the unraised plan stands.
+ */
 function planDiagramWindows(
   bounds: Bounds,
   services: ExportBox[],
   frame: DiagramFrame,
+  options: { mustTile?: boolean; markIn?: number; serveW?: number } = {},
+): { windows: DiagramWindow[]; legible: boolean; servedW: number } {
+  const affordable = (plan: { windows: DiagramWindow[] }): boolean => plan.windows.length > 0
+    && services.length / plan.windows.length >= MIN_SERVICES_PER_TILED_SLIDE;
+  const widths = services.map((box) => box.w).filter((w) => w > 0).sort((a, b) => a - b);
+  const medianW = widths[Math.floor(widths.length * 0.5)] ?? Infinity;
+  // Serve the NARROWEST numbered tile first, when the deck can afford to.
+  //
+  // The median is the right target for a drawing at large - an extremum has a
+  // neighbour, and the paragraphs in `planWindowsAtCeiling` are the record of
+  // what taking one costs. But "the planner declined to serve this tile" was
+  // being used to excuse every disproportionate callout below the median, and
+  // `sorted[floor(n/2)]` puts up to HALF the drawing below that line by
+  // construction: on four services of 150, 24, 150, 24 authored px it excused
+  // two of the four and all three hops, when serving the 24px tiles cost
+  // exactly one extra window and widened every other tile on the deck by 39%.
+  //
+  // So the cost is measured rather than assumed, on the same density floor that
+  // already decides whether the median raise was worth its slides. Where the
+  // finer plan clears the floor the deck pays and the callouts fit; where it
+  // does not - `probe-whitespace` numbered, six services over six windows - the
+  // refusal stands, and now stands on a measurement.
+  // The scale a plan actually delivers, read off the plan rather than
+  // recomputed from a grid this function never sees.
+  //
+  // Every window renders `fit` plus the same bleed on all four sides and the
+  // whole deck shares one scale, so the binding window is the largest one and
+  // the binding axis is whichever fits worst - the same expression
+  // `planWindowsAtCeiling` uses internally, evaluated on its output.
+  const perInOf = (plan: { windows: DiagramWindow[] }): number => {    if (plan.windows.length === 0) {
+      return Math.min(
+        frame.w / Math.max(1, bounds.maxX - bounds.minX),
+        frame.h / Math.max(1, bounds.maxY - bounds.minY),
+      );
+    }
+    const spanW = Math.max(...plan.windows.map((w) => w.fit.maxX - w.fit.minX));
+    const spanH = Math.max(...plan.windows.map((w) => w.fit.maxY - w.fit.minY));
+    return Math.min(
+      frame.w / (spanW + WINDOW_BLEED_PX * 2),
+      frame.h / (spanH + WINDOW_BLEED_PX * 2),
+    );
+  };
+  const raised = planWindowsAtCeiling(bounds, services, frame, options, true);
+  // The density floor may not choose a swamped icon, even when there is
+  // nothing NARROWER to chase.
+  //
+  // `MIN_SERVICES_PER_TILED_SLIDE` refuses a plan that carries too few services
+  // a window, and that is the right call between two readable decks. On a
+  // drawing whose numbered tiles are all the same width it was also deciding
+  // whether the callout swamps its service, which it has nothing to say about:
+  // six services over six windows is 1.0, under the floor, so the plan that
+  // reaches the bar was thrown away and four discs shipped at 98% of the
+  // services they number.
+  //
+  // Taken only when the frame can actually deliver the bar and the forced plan
+  // actually reaches it, so the deck never buys windows for a target it still
+  // misses. `MAX_TILED_SLIDES` still caps the result, and the requirement is
+  // strictly FINER - which is what keeps this clear of the coarse bail-out that
+  // took a 120 node estate from 53 windows of 0.3130in to 21 of 0.2003in.
+  const bar = options.markIn ?? 0;
+  const serve = options.serveW ?? 0;
+  // Two lines here as well, `markIn` as the want and the floor as the
+  // must-not-ship-below. The waiver read `bar` on both tests, which is the
+  // third site of the same 1.82x error: a forced plan reaching 0.20793in for a
+  // 10px tile against a 0.15559in disc has RESOLVED the defect and was thrown
+  // away for missing an ideal it was never required to meet, shipping 0.113in
+  // tiles with four of six services anonymous instead.
+  // How many services can draw a MARK at this plan's scale.
+  //
+  // The escapes below used to compare disc proportion, which is a fact about a
+  // callout, to decide a question whose visible consequence is whether services
+  // have names at all. On six services with one 14px icon the unraised plan
+  // cleared the disc line by 0.0028in - 1.8% - and four services went anonymous
+  // on that margin, while the raised plan named all six. The mark bar for a
+  // one-character key sits between a 0.1584in tile and a 0.1697in one, so the
+  // deck needed 7% more scale and the only alternative on the menu was 84%
+  // more; nothing ever asked for the coarsest grid that clears the bar. This
+  // asks the machinery that actually decides - the same `drawableInColumn`
+  // against the same column inset the tile itself uses - so there is no new
+  // constant and no third copy of the bar.
+  const markableCountAt = (perIn: number): number => services.filter((s) => drawableInColumn(
+    '1',
+    LEGIBLE_TILE_PT,
+    Math.max(0.05, s.w * perIn - 0.06),
+  )).length;
+  const markableAt = (plan: { windows: DiagramWindow[] }): number => markableCountAt(perInOf(plan));
+  // The coarsest plan that still names as many services as the fine one.
+  //
+  // The two candidates on the menu are extremes - measured at 0.011314 and
+  // 0.020793 in/px, 84% apart - and the deck that lost four names to the gap
+  // needed 7.1%. Nothing ever asked for the scale in between, so "name the
+  // services" and "do not shred the deck into one tile a slide" looked like
+  // opposites: taking the fine plan named all six and cost 9 slides, 6 of them
+  // single-tile, 5 oversized edge chips and a label cut to "Ze...". They are
+  // not opposites. `perIn` is continuous and the mark bar is a threshold on it,
+  // so the cheapest plan that clears the threshold is found by bisecting the
+  // scale, not by choosing an end.
+  const coarsestNaming = (
+    fine: { windows: DiagramWindow[]; legible: boolean },
+    floorPlan: { windows: DiagramWindow[] },
+  ): { windows: DiagramWindow[]; legible: boolean } => {
+    const want = markableAt(fine);
+    let lo = perInOf(floorPlan);
+    let hi = perInOf(fine);
+    // No badge in the drawing is not a reason to buy the expensive plan. The
+    // first draft asked the planner for a tile WIDTH, which had to be derived
+    // from the callout bar, so it stood down on a deck with no callouts at all
+    // - and that deck went on shipping 8 slides, 6 of them a single tile, for
+    // a naming gain it could have had on four. The target is a scale now, and
+    // a scale is well defined whether or not anything is numbered.
+    if (!(hi > lo)) return fine;
+    if (markableCountAt(lo) < want) {
+      for (let i = 0; i < 24; i += 1) {
+        const mid = (lo + hi) / 2;
+        if (markableCountAt(mid) >= want) hi = mid; else lo = mid;
+      }
+    } else {
+      hi = lo;
+    }
+    if (hi >= perInOf(fine) - 1e-9) return fine;
+    // Built from the PLAIN side and raised to the target, not from the fine
+    // side and relaxed toward it. Asking the ceiling-raised planner for a
+    // coarser grid gets the raised grid back unchanged - it is already the
+    // finest rung - so the whole bisection returned the extreme it was written
+    // to avoid. The cheap plan is the one that needs 4% more scale.
+    const eased = planWindowsAtCeiling(bounds, services, frame, { ...options, namePerIn: hi }, false);
+    // Accepted only when it keeps every name AND costs less than the extreme.
+    // A bisection on scale says nothing about what grid the planner can build
+    // at that scale, so the plan it returns has to be re-measured, not assumed.
+    //
+    // `eased.legible` is deliberately NOT one of these tests, and the reason is
+    // measured rather than assumed. Across the corpus this function returns 59
+    // plans and not one of them is illegible. `eased` itself IS illegible four
+    // times, so the situation is reachable rather than hypothetical, but on
+    // every one of those it comes back with ZERO windows - `easedWin=0,
+    // fineWin=20` - so the `windows.length > 0` test below already excludes it
+    // and a legibility test would be a second name for the same rejection.
+    //
+    // That coincidence is a fact about this corpus, not an invariant. `capped`
+    // returns `{ windows: tile(c, r), legible: achieved >= legibleScale }`, a
+    // NON-EMPTY list with a flag that can be false, reachable when `mustTile`
+    // is set and the drawing is too large to read at any grid the cell cap
+    // allows. No fixture reaches it - the probe counted zero - so adding the
+    // conjunct today would pin nothing and could be deleted by anyone without
+    // a gate noticing.
+    //
+    // Which is the whole point: the conjunct is missing ON PURPOSE, and what
+    // would make it necessary is a `mustTile` deck whose finest permitted grid
+    // still does not read. If that fixture ever exists, add the test with it.
+    return eased.windows.length > 0
+      && eased.windows.length <= fine.windows.length
+      && markableAt(eased) >= want
+      ? eased
+      : fine;
+  };
+  // A plan that puts most of its slides on one service each has stopped buying
+  // anything: splitting enlarges a tile by giving it more of the frame, and a
+  // tile alone on a slide is already at its natural width. Waiving the density
+  // floor removes the only thing that was watching for this, so the waiver
+  // carries its own bound - measured, not assumed: the unbounded form took a
+  // 21 service deck to 21 windows with 14 of them carrying a single tile.
+  //
+  // Loneliness alone is not the defect: a window holding one service is exactly
+  // how a name gets bought when the tiles are too small to carry one. What
+  // makes the loneliness wasted is that the drawing has ALREADY reached the
+  // width a mark needs, because past `MARKABLE_TILE_W_IN` there is no further
+  // mark to win at any scale and the extra slides are pagination. Measured, the
+  // two populations do not overlap: the deck that spent thirteen extra windows
+  // to rescue one name sat at 0.204in, and the deck that rescued four sat at
+  // 0.188in.
+  //
+  // Asked of the DRAWING, not of the window. Scale is global, so a window
+  // holding one ordinary 160px service is not evidence of anything - its tile
+  // is metres past the mark bar whatever the plan does, and charging the plan
+  // for it took the deck that needed six windows to name six services back to
+  // 0.113in tiles. The question is whether the narrowest tile on the page still
+  // has something to gain.
+  const narrowestServiceW = Math.min(
+    ...services.map((s) => s.w).filter((w) => w > 0),
+    Infinity,
+  );
+  const wastedShare = (plan: { windows: DiagramWindow[] }): number => {
+    if (plan.windows.length === 0) return 0;
+    if (!Number.isFinite(narrowestServiceW)
+      || narrowestServiceW * perInOf(plan) < MARKABLE_TILE_W_IN) return 0;
+    const lonely = plan.windows.filter((w) => services.filter((s) => {
+      const cx = s.x + s.w / 2;
+      const cy = s.y + s.h / 2;
+      return cx >= w.fit.minX && cx <= w.fit.maxX && cy >= w.fit.minY && cy <= w.fit.maxY;
+    }).length <= 1).length;
+    return lonely / plan.windows.length;
+  };
+  // A lonely window is only wasted when it buys no names.
+  //
+  // The bound as first written rejected on raw loneliness, and so rejected a
+  // plan that named all six services at 0.2829in because all six sat one to a
+  // window - three services lost their names to it. `wastedShare` is what that
+  // bound was reaching for: splitting past the point of enlargement is a defect
+  // only where it is not the thing putting names on the canvas.
+  //
+  // There is no PROPORTION of names worth measuring here, in either direction.
+  //
+  // A share of `services.length` prices one name by how many other services
+  // happen to be on the drawing, so the same rescue scored 0.2500 on a twelve
+  // service deck and 0.2308 on a thirteen service one - and appending one
+  // ordinary, perfectly drawn service to a twelve service diagram erased three
+  // other services' names and halved every tile, 0.1896in to 0.0984in. Pricing
+  // it as a share of the names AT RISK instead fixed that and then discriminated
+  // nothing at all: `coarsestNaming` accepts a plan only when it keeps every
+  // name the fine plan had, so the rescued share is pinned at 1, and it measured
+  // exactly 1.0000 on all eight fixtures - including the deck that bought its
+  // single remaining name with thirteen extra slides. A term that is constant
+  // over its whole domain is not a bound.
+  //
+  // So the trade is judged on its two honest halves: it has to win a name, and
+  // it may not spend most of the deck on slides that win nothing.
+  // A plan carries a baseline when it has windows, or when it has none because
+  // the drawing fits whole and legibly. It carries none when it has none
+  // because nothing fit - and then every number derived from it describes a
+  // page that was rejected.
+  const hasBaseline = (p: { windows: DiagramWindow[]; legible: boolean }): boolean =>
+    p.windows.length > 0 || p.legible;
+  const worthTheSplit = (
+    plan: { windows: DiagramWindow[] },
+    against: { windows: DiagramWindow[]; legible: boolean },
+  ): boolean => {
+    // An empty plan is nothing to ship, and an empty ILLEGIBLE baseline is
+    // nothing to measure against.
+    //
+    // The two empties are opposites and the planner has always said so: an
+    // empty list with `legible: false` means no grid in this frame reads, so
+    // `perInOf` reports the whole-page scale for a page that was rejected - a
+    // phantom. Read as a number it is the most permissive comparand there is,
+    // so every candidate beats it and the test goes vacuous. Measured on
+    // `probe-blind-sliver`: the escape fired on a trivially true comparison and
+    // shipped 10 windows of 0.182in tiles in place of the 0.313in the deck
+    // would otherwise have drawn, for no names at all, 120 either way.
+    //
+    // An empty list with `legible: true` is a real baseline and must be
+    // measured, not refused. The drawing fits whole at that scale, `perInOf`
+    // describes the page that will actually be drawn, and whether to split it
+    // anyway to serve a narrower tile is precisely the question this function
+    // exists to answer. Refusing on `windows.length` alone answered it `no`
+    // unconditionally: measured on `probe-fits-whole-sliver`, the split names 9
+    // services against the baseline's 8 at a 0.200 wasted share, and the
+    // shorter guard threw that name away.
+    //
+    // DELIBERATELY REDUNDANT with the `hasBaseline` test that guards the escape
+    // trigger. Removing either one alone leaves the whole corpus green, because
+    // the other still refuses the phantom; only removing BOTH moves anything,
+    // and then `probe-blind-sliver` falls from 0.313in tiles on 53 slides to
+    // 0.182in on 19. Two guards that are each individually invisible can be
+    // deleted one commit at a time, each commit green, with the defect landing
+    // on the second and nothing pointing at the first. Delete the pair or
+    // neither.
+    if (plan.windows.length === 0) return false;
+    if (against.windows.length === 0 && !against.legible) return false;
+    if (markableAt(plan) <= markableAt(against)) return false;
+    return wastedShare(plan) <= 0.5;
+  };
+  // `hasBaseline` before `perInOf`, for the same reason and one level out: on
+  // an empty illegible plan `perInOf` is a phantom, and this test was reading
+  // it to decide whether to enter the escape at all. It was harmless only
+  // because the guard inside `worthTheSplit` caught the value afterwards, which
+  // is two tests deep on one bad number with only the inner one knowing.
+  //
+  // DELIBERATELY REDUNDANT with the baseline guard in `worthTheSplit`, and the
+  // corpus cannot see that. Removing either one alone leaves every fixture
+  // green, because the other still refuses the phantom; removing BOTH takes
+  // `probe-blind-sliver` from 0.313in tiles on 53 slides to 0.182in on 19. So
+  // a green run is not evidence that this line is unnecessary - it is evidence
+  // that its partner is still there. Delete the pair or neither.
+  if (hasBaseline(raised) && bar > 0 && serve > 0 && perInOf(raised) * serve < bar - 1e-6) {
+    const forced = planWindowsAtCeiling(
+      bounds, services, frame, { ...options, waiveDensity: true }, true, serve,
+    );
+    // Eased BEFORE the cost of the trade is judged, because `coarsestNaming`
+    // changes which plan is returned and the bound belongs on the returned
+    // plan. Measured on a thirteen service farm: `forced` is 10 windows at a
+    // 0.700 lonely share and was refused for it, while the plan that would have
+    // shipped is 8 windows at 0.250 - which clears the bound outright, and is
+    // LESS lonely than the twelve service plan the same guard accepts. The
+    // guard was anti-correlated with the quantity it names, and three services
+    // went unnamed for it.
+    //
+    // Whether the chase is worth ATTEMPTING is still asked of `forced`, which
+    // is the finest plan available and therefore the honest answer to "can
+    // this drawing reach the callout line at all". Asking it of the eased plan
+    // instead made the easing veto itself: the eased plan is by construction
+    // coarser, so it fell under the line, the escape refused it, and all three
+    // farms fell back to 0.10in tiles on 5 slides.
+    const eased = forced.windows.length > 0 ? coarsestNaming(forced, raised) : forced;
+    // The trigger asks ONE question, and it is the naming question.
+    //
+    // It used to carry a second conjunct requiring the FINEST available plan to
+    // reach the callout floor before the escape could fire at all. A disc
+    // proportion has no bearing on whether a slide may be spent to give three
+    // services their names, so that conjunct was a proportion rule holding a
+    // veto over naming.
+    //
+    // It was also load-bearing, which is why removing it needed the sentence
+    // above it repaired first. On `probe-blind-sliver` the floor is 0.24514in
+    // against a finest plan at 0.20028in, so the proportion veto refused the
+    // escape - and it was the only thing refusing it, because the ship gate was
+    // passing vacuously on an empty comparand. Deleting the veto on its own
+    // exposed that: tiles fell 0.313in to 0.182in for no names. The veto was
+    // masking the defect, not preventing it.
+    //
+    // Bounding the naming bisection below by the floor instead - so the plan
+    // that SHIPS clears it - is worse, and that is a proof rather than a
+    // preference. The bound leaves the bisection no admissible scale, so it
+    // returns the finest plan, which on a thirteen service farm is 10 windows
+    // at a 0.700 lonely share; `worthTheSplit` then refuses that, and the deck
+    // falls back past both to 0.098in tiles with three services unnamed. The
+    // floor cannot be a ship requirement here, because requiring it costs the
+    // very names the escape exists to buy.
+    //
+    // The harms are not comparable either. A disc that is large next to its
+    // service is a defect only where it TOUCHES it - measured 0% contact at
+    // pitch 260 and 16% at pitch 172, and that 16% is on the 2.1in neighbours,
+    // never on the sliver - while a deck of single-tile slides is bad on sight.
+    // So the proportion preference may be a tie-break between plans that name
+    // equally. It may not be a veto on names.
+    if (forced.windows.length > 0 && worthTheSplit(eased, raised)) {
+      return { ...eased, servedW: serve };
+    }
+  }
+  // An empty window list with `legible: false` is not "the drawing fits", it is
+  // "no grid in this frame reads" - the caller answers that by tiling under
+  // `mustTile` or by growing the page, and a finer target belongs to that call,
+  // not this one. Measured against it, a 12 window chase looked like an
+  // improvement on nothing and pre-empted the 44 window forced plan that was
+  // coming, taking a 120 node estate from 53 windows of 0.3130in tiles to 21
+  // of 0.2003in and shipping 90 discs at 97% of the services they number.
+  //
+  // An empty list with `legible: true` is the opposite case and must fall
+  // through: the drawing fits whole at the median, and whether it should be
+  // split anyway to serve a narrower tile is exactly the question below.
+  if (raised.windows.length === 0 && !raised.legible) return { ...raised, servedW: medianW };
+  // Accepted only where it is genuinely FINER, as well as affordable. Asking
+  // for a scale no grid inside the slide budget can deliver does not make
+  // `planWindowsAtCeiling` try harder, it makes it bail to a coarse fallback -
+  // and the density floor is delighted to accept one, because a coarse plan has
+  // the best services-per-window ratio on the sheet. Measured: chasing a 14px
+  // sliver across a 120 node estate bailed to 21 windows of 0.2003in tiles
+  // where the median plan gave 53 windows of 0.3130in, cleared the floor at 5.7
+  // services a window, and shipped 90 discs at 97% of the services they number.
+  // Attempted whenever the chase would BUY something, not when the narrowest
+  // badged tile happens to beat an order statistic.
+  //
+  // The trigger was `serveW < medianW`, a strict comparison against
+  // `sorted[floor(n/2)]`, so on any drawing where the narrowest badged tile
+  // ties the median no finer plan was ever considered - and a step function on
+  // an order statistic flips on a one-pixel authoring edit. Measured on the
+  // same six services: widths [14,14,14,14,160,160] tie at 14 and plan 5 slides
+  // at 0.158in; shaving ONE pixel off ONE icon to [13,14,...] plans 9 slides at
+  // 0.283in, with five oversized edge chips and a label cut to "Ze...". Same
+  // drawing to a reader, 1.8x the deck. The condition now asks whether the
+  // raised plan already serves the bar for this tile, which is continuous in
+  // the thing that matters and does not care where the median sits.
+  const chaseWorthTrying = options.serveW !== undefined
+    && options.serveW > 0
+    && bar > 0
+    && perInOf(raised) * options.serveW < bar * BADGE_TILE_SHARE - 1e-6;
+  if (chaseWorthTrying && options.serveW !== undefined) {
+    const finest = planWindowsAtCeiling(bounds, services, frame, options, true, options.serveW);
+    // The density floor does not get to choose a swamped icon.
+    //
+    // `MIN_SERVICES_PER_TILED_SLIDE` exists to stop a deck degenerating into a
+    // flip-book, and that is a preference between two readable decks. It was
+    // also deciding a case it has nothing to say about: where refusing the
+    // finer plan leaves the narrowest numbered tile under `markIn` - the width
+    // at which a disc can be both readable and no wider than its service - the
+    // refusal does not buy a denser deck, it buys a disc drawn as much as
+    // twice the width of the icon it points at. Measured on twenty ordinary
+    // services and one glyph on the chain: a 16px zone drew 0.0975in under a
+    // 0.1556in disc, 160%, and a 12px one 213%, both refused by the density
+    // floor while the frame was reaching 0.2978in and 0.2233in - roughly twice
+    // what the disc needed. The page was never the constraint.
+    //
+    // Waived only when the finer plan actually resolves it, so the deck never
+    // pays windows for a target it still misses, and only for the narrowest
+    // BADGED tile, so an unnumbered sliver buys nothing.
+    // Two lines, not one. `bar` is `markIn`, the width at which a disc can be
+    // both readable and a proportionate 55% of its tile - what the deck WANTS.
+    // `bar * BADGE_TILE_SHARE` is the floor itself, the width at which the disc
+    // merely stops being wider than the service it numbers - what the deck must
+    // not ship below. Keying the waiver on the first alone made it 1.82x too
+    // strict and it refused every case it was written for: a 16px zone needed
+    // 0.3528in of reach to satisfy `markIn` and the frame gave 0.2978in, so the
+    // waiver said no - while the tile only needed 0.1556in to stop being
+    // dwarfed, which that same frame cleared twice over. The identical
+    // off-by-BADGE_TILE_SHARE error was live in the gate's exempt band.
+    const reaches = (p: { windows: DiagramWindow[] }, line: number): boolean =>
+      line > 0 && perInOf(p) * (options.serveW ?? 0) >= line - 1e-6;
+    const mustChase = (!reaches(raised, bar) && reaches(finest, bar))
+      || (!reaches(raised, bar * BADGE_TILE_SHARE) && reaches(finest, bar * BADGE_TILE_SHARE));
+    // Local to the decision it makes. This used to be recorded on every plan
+    // the planner could return, so that the audit could tell a callout the deck
+    // COULD have served from one it could not. That consumer was retired, and
+    // the flag outlived it by several rounds - an invariant maintained for
+    // nobody, which is worse than no invariant, because it reads as a
+    // guarantee. If an exemption is wanted again it must be rebuilt from the
+    // candidates the planner CONSTRUCTS, never from a flag the selection stamps
+    // on its own verdict.
+    const chaseAffordable = finest.windows.length >= raised.windows.length
+      && (affordable(finest) || mustChase);
+    if (chaseAffordable) return { ...finest, servedW: options.serveW };
+  }
+  if (raised.windows.length === 0) return { ...raised, servedW: medianW };
+  if (affordable(raised)) return { ...raised, servedW: medianW };
+  const plain = planWindowsAtCeiling(bounds, services, frame, options, false);
+  // The density floor may not throw away a plan BECAUSE it is good.
+  //
+  // The escape above can only ever rescue a plan that was already under the
+  // bar, so a raised plan that clears the bar walks past it - and arrives here,
+  // where `affordable()` discards it for scoring 6 services over 6 windows
+  // against a floor of 1.5. Measured on six services with one 14px icon: the
+  // raised plan put the narrowest badged tile at 0.29110in, past the 0.28288
+  // bar, and `plain` shipped at 0.1584in, 46% narrower, with four of the six
+  // services drawn with no name at all. Being good was the only reason it had
+  // no protection. Same shape as round 72's armed-implies-cannot-fire.
+  //
+  // So the comparison is made here, after affordability rather than in a guard
+  // that is false whenever the raised plan is worth keeping, and only where the
+  // unraised plan does NOT clear the same line - a refusal that costs nothing
+  // in quality is still the density floor's to make.
+  // The second escape reads the SAME two measures as the first.
+  //
+  // It sat after `affordable()`, so it fires only on plans already under the
+  // density floor - exactly the population the first escape's bound polices -
+  // and it had no bound at all, which made that bound decorative: a 6 window
+  // all-lonely plan the first escape refused was handed back here unchanged.
+  // It also asked the disc question, and the disc question is why a deck with
+  // four anonymous services passed: the unraised plan cleared the disc line by
+  // 1.8% while naming 2 of 6.
+  const raisedNames = markableAt(raised);
+  const plainNames = markableAt(plain);
+  if (raisedNames > plainNames) {
+    // Same order as the escape above: ease first, then judge what ships.
+    const eased = coarsestNaming(raised, plain);
+    if (worthTheSplit(eased, plain)) {
+      return { ...eased, servedW: serve };
+    }
+  }
+  // Only prefer the unraised plan when it is genuinely cheaper. A refusal that
+  // costs the same number of slides buys nothing and loses the marks.
+  // The refusal is about the RAISE, not about every hop on the deck.
+  //
+  // This branch used to report `servedW: Infinity`, and the audit's exemption
+  // reads `authoredW >= servedTileW` - false for every finite width - so one
+  // refusal switched the callout rule off for the whole deck, hops between
+  // 160px tiles drawn at 1.81in included. The plain plan serves the median, so
+  // that is what it reports, and the exemption covers what it is documented to
+  // cover: endpoints below the tile the planner actually served.
+  return plain.windows.length < raised.windows.length
+    ? { ...plain, servedW: medianW }
+    : { ...raised, servedW: medianW };
+}
+
+function planWindowsAtCeiling(
+  bounds: Bounds,
+  services: ExportBox[],
+  frame: DiagramFrame,
+  options: { mustTile?: boolean; markIn?: number; serveW?: number; waiveDensity?: boolean; namePerIn?: number } = {},
+  raiseCeiling = true,
+  serveW?: number,
 ): { windows: DiagramWindow[]; legible: boolean } {
   const contentW = Math.max(1, bounds.maxX - bounds.minX);
   const contentH = Math.max(1, bounds.maxY - bounds.minY);
@@ -280,8 +1301,74 @@ function planDiagramWindows(
   const shortest = Math.min(...services.map((box) => box.h).filter((h) => h > 0));
   if (!Number.isFinite(shortest) || shortest <= 0) return whole;
 
-  // Inches-per-pixel needed for the shortest tile to keep a readable label.
-  const legibleScale = LEGIBLE_TILE_PT / 12 / shortest;
+  // The strict minimum is the wrong statistic for a *target*. One sliver among
+  // eighty-one ordinary tiles asks for a grid 3.75x finer than the rest of the
+  // sheet needs; no grid within the slide budget delivers it, so `legible` came
+  // back false at every stage and the drawing fell through to the one outcome
+  // worse than either — a plotter page tiled into twenty plotter pages.
+  //
+  // What makes ignoring the outlier honest is that the renderer now floors a
+  // window tile's type at `LEGIBLE_TILE_PT` whatever its height, so the sliver
+  // reads either way. That splits one contract cleanly in two: the renderer
+  // guarantees the floor, the planner optimises for it, and the planner
+  // optimises for the tiles that stand to gain. When tiles are uniform, or when
+  // the whole sheet is short, this is exactly the minimum and nothing moves.
+  // The median, not the minimum and not a low percentile. The renderer floors a
+  // window tile's type at the legibility limit however short the tile is, so
+  // the planner's job is to pick the grid that serves the tiles that stand to
+  // gain, and that is the typical tile. A low percentile only moved the cliff:
+  // at 40 collapsed nodes in 400 the tenth percentile is still 75px and the
+  // deck is ordinary, at 45 it is 12px and the deck collapsed to one string for
+  // four hundred services. The median has no such neighbour — half the sheet
+  // has to be collapsed before it moves, and when tiles are uniform it is the
+  // minimum, so nothing moves on an ordinary drawing.
+  const heights = services.map((box) => box.h).filter((h) => h > 0).sort((a, b) => a - b);
+  const target = heights[Math.floor(heights.length * 0.5)] ?? shortest;
+
+  // Inches-per-pixel worth splitting to reach for a representative tile. Both
+  // ceilings and the reasoning behind them live on `legibleScaleFor`, which is
+  // exported so the invariant can be asserted on the function rather than
+  // inferred from the deck it produces. The narrowest tile goes in because the
+  // renderer's ceiling depends on it, and a planner that stops splitting below
+  // the ceiling the renderer will use leaves tiles under the markable bar with
+  // slides already spent.
+  //
+  // I argued the other way once and the measurements refuted it. The claim was
+  // that splitting cannot enlarge a tile past natural width, so the raised
+  // ceiling is the renderer's business alone. Both halves are false on a
+  // drawing of 14px tiles: the split windows draw at 1.034x natural, which is
+  // the raised ceiling engaging and could only happen because of the split,
+  // and the renderer rescues nothing on its own because frame-over-content
+  // binds far below the ceiling - it would have allowed 1.371x and the planner
+  // stopped asking at 1.034x. The deck that came out had 24 continuation
+  // slides, 120 tiles and not one character of type on any of them, each slide
+  // captioned as a readable part of a whole. The slides were spent either way;
+  // they simply bought nothing.
+  //
+  // The raise is for a drawing that is SMALL, though, not for a drawing that
+  // has a sliver in it. `probe-whitespace` is four 14px tiles beside two 160px
+  // ones, and chasing the 14px one there drags the 160px ones to 2.3in each,
+  // which puts one tile on a slide and spends eight of them to show a single
+  // character per sliver - the same bad trade in the other direction.
+  //
+  // The width therefore takes the median, for the same reason the height
+  // target twelve lines above it does, and the argument written there applies
+  // here unchanged: an extremum has a neighbour, so one node decides the deck.
+  // A max-over-min ratio is strictly worse than the low percentile that
+  // paragraph rejects - measured, one node of sixty widening from 56px to 57px
+  // moved the deck from sixty named services to one. Half the sheet has to be
+  // small before the median moves, and on a uniform drawing the median IS the
+  // minimum, so `probe-tiny-spread` is unaffected. Whether the raise was worth
+  // its slides is then measured on the resulting plan, not predicted here.
+  const widths = services.map((box) => box.w).filter((w) => w > 0).sort((a, b) => a - b);
+  const typicalW = widths[Math.floor(widths.length * 0.5)] ?? Infinity;
+  const servedW = serveW !== undefined && serveW > 0 ? Math.min(serveW, typicalW) : typicalW;
+  const legibleScale = legibleScaleFor(
+    target,
+    frame,
+    raiseCeiling ? servedW : Infinity,
+    options.markIn ?? MARKABLE_TILE_W_IN,
+  );
   if (Math.min(frame.w / contentW, frame.h / contentH) >= legibleScale) return whole;
 
   // Splitting on one axis only is why a tall drawing used to grow the page
@@ -301,87 +1388,247 @@ function planDiagramWindows(
     return { cols, rows, slides: cols * rows };
   };
 
+  const tile = (cols: number, rows: number): DiagramWindow[] => {
+    const stepX = contentW / cols;
+    const stepY = contentH / rows;
+    const cellX = (col: number) => ({
+      minX: bounds.minX + stepX * col,
+      maxX: col === cols - 1 ? bounds.maxX : bounds.minX + stepX * (col + 1),
+    });
+    const cellY = (row: number) => ({
+      minY: bounds.minY + stepY * row,
+      maxY: row === rows - 1 ? bounds.maxY : bounds.minY + stepY * (row + 1),
+    });
+    // `windowOwnsPoint` is a partition, so every service centre falls in
+    // exactly one cell and that cell can be computed directly. Asking each of
+    // the cells whether any service lands in it is the same answer for
+    // `cols * rows * services` work, which is what made the search for a
+    // readable grid unaffordable on the sparse drawings that need the finest
+    // ones: `shrinkToFit` walks a few hundred grids, so a 150 x 150 search over
+    // 140 services is hundreds of millions of point tests before a single slide
+    // is written.
+    const cellOf = (v: number, lo: number, step: number, n: number): number => (
+      step > 0 ? Math.min(n - 1, Math.max(0, Math.floor((v - lo) / step))) : 0
+    );
+    const occupied = new Set<number>();
+    for (const box of services) {
+      const col = cellOf(box.x + box.w / 2, bounds.minX, stepX, cols);
+      const row = cellOf(box.y + box.h / 2, bounds.minY, stepY, rows);
+      occupied.add(row * cols + col);
+    }
+    const holds = (col: number, row: number): boolean => occupied.has(row * cols + col);
+
+    // An architecture is not a filled rectangle, so a cell of the grid can own
+    // no services at all — and one was being emitted as a numbered part
+    // carrying two zone outlines and three arrows whose endpoints are both on
+    // other slides.
+    //
+    // An empty cell is not simply deleted, though: ownership has to stay a
+    // partition of the whole drawing, or a connector label anchored in the gap
+    // an empty cell used to cover belongs to no part and is silently dropped
+    // from the deck — arrow drawn, number missing, and the workflow list still
+    // citing it. The surviving neighbours absorb the vacated bands instead,
+    // keeping the *fitted* cell — and therefore the scale — identical on every
+    // part.
+    const keptRows: number[] = [];
+    for (let row = 0; row < rows; row += 1) {
+      if (Array.from({ length: cols }, (_, col) => col).some((col) => holds(col, row))) keptRows.push(row);
+    }
+    if (keptRows.length === 0) return [];
+
+    const spans = (kept: number[], lo: (i: number) => number, hi: (i: number) => number, min: number, max: number) =>
+      kept.map((index, i) => ({
+        lo: i === 0 ? min : (hi(kept[i - 1]) + lo(index)) / 2,
+        hi: i === kept.length - 1 ? max : (hi(index) + lo(kept[i + 1])) / 2,
+      }));
+
+    const rowOwn = spans(keptRows, (r) => cellY(r).minY, (r) => cellY(r).maxY, bounds.minY, bounds.maxY);
+    const windows: DiagramWindow[] = [];
+    keptRows.forEach((row, r) => {
+      const keptCols: number[] = [];
+      for (let col = 0; col < cols; col += 1) if (holds(col, row)) keptCols.push(col);
+      const colOwn = spans(keptCols, (c) => cellX(c).minX, (c) => cellX(c).maxX, bounds.minX, bounds.maxX);
+      keptCols.forEach((col, c) => {
+        windows.push({
+          fit: { ...cellX(col), ...cellY(row) },
+          own: { minX: colOwn[c].lo, maxX: colOwn[c].hi, minY: rowOwn[r].lo, maxY: rowOwn[r].hi },
+        });
+      });
+    });
+    return windows;
+  };
+
   // Take the coarsest grid that still reads well: aim for comfortable labels,
   // but never split so finely that a sheet stops carrying a meaningful piece
   // of the architecture. Eight sheets for a twelve-service diagram is not a
   // deck, it is a flip-book; that trade only pays on a genuinely large drawing.
-  const comfortable = gridFor(COMFORTABLE_TILE_PT / 12 / shortest);
+  // "This frame cannot show the drawing readably at any grid" has two answers.
+  // A deck that can grow its page takes that one, and every bail-out below
+  // hands it the decision. A deck whose page is fixed has no such option: its
+  // only alternatives are more slides or unreadable type, and more slides
+  // always wins. `mustTile` callers therefore get the finest grid the ceiling
+  // allows instead of an empty plan — reading `windows: []` as "it already
+  // fits" is what put 4pt type on the shipping deck for every drawing sparse
+  // enough to defeat the services-per-slide floors.
+  const mustTile = options.mustTile === true;
+  // Empty cells cost nothing. A reader counts slides, and a sparse drawing's
+  // grid is mostly cells no service falls in — the diagonal cascade needs a
+  // 10 x 13 grid to reach seven points and emits thirteen slides from it.
+  // Capping the grid instead of the deck therefore refused a thirteen-slide
+  // readable deck in favour of a twenty-four-cell one at four points.
+  const slidesFor = (c: number, r: number): number => tile(c, r).length;
+  // The scale a reader actually gets from a grid: each window covers
+  // `content / n` of the drawing, so a finer grid is a bigger drawing, and the
+  // binding axis is whichever fits worst.
+  const scaleOf = (c: number, r: number): number => Math.min(
+    frame.w / (contentW / c + WINDOW_BLEED_PX * 2),
+    frame.h / (contentH / r + WINDOW_BLEED_PX * 2),
+  );
+  // Coarsening an axis costs scale along that axis alone, and the scale the
+  // reader gets is the smaller of the two. Spending that cost on the axis that
+  // already binds therefore shrinks the type for nothing, while the other axis
+  // sits on slack it is not using — which is what stepping toward a square did
+  // to every long drawing: a diagonal cascade lost the axis it was long in and
+  // came out at 6.0pt on *fewer* slides than the same drawing one service
+  // smaller, so adding a service made the deck shorter and less readable.
+  const drop = (c: number, r: number): { c: number; r: number } => {
+    if (c <= 1) return { c, r: Math.max(1, r - 1) };
+    if (r <= 1) return { c: Math.max(1, c - 1), r };
+    const scaleX = frame.w / (contentW / c + WINDOW_BLEED_PX * 2);
+    const scaleY = frame.h / (contentH / r + WINDOW_BLEED_PX * 2);
+    return scaleX > scaleY ? { c: c - 1, r } : { c, r: r - 1 };
+  };
+  const shrinkToFit = (cols: number, rows: number): { c: number; r: number } => {
+    let c = Math.max(1, cols);
+    let r = Math.max(1, rows);
+    // A grid this fine is a plotter drawing however it is counted, and the
+    // bound also keeps the search below from walking a pathological grid.
+    while (c * r > MAX_TILED_CELLS) ({ c, r } = drop(c, r));
+    // Coarsen toward the deck ceiling — but the ceiling is a preference and
+    // legibility is not. Every drop buys a shorter deck with smaller type, so
+    // a drawing sparse enough to need more than the ceiling's worth of windows
+    // used to be coarsened right past the point where its labels stopped
+    // reading: a fifty-two service cascade came out at 6.31pt and a ninety at
+    // 4.00pt, on exactly forty-eight slides either way. Nobody wants ninety
+    // slides of one diagram, but the alternative here is not fewer slides, it
+    // is the same diagram nobody can read. Stop at the last grid that reads.
+    while (c * r > 1 && slidesFor(c, r) > MAX_LEGIBLE_TILED_SLIDES) {
+      const next = drop(c, r);
+      if (scaleOf(c, r) >= legibleScale && scaleOf(next.c, next.r) < legibleScale) break;
+      ({ c, r } = next);
+    }
+    // Nothing reads at any grid, or it reads and runs long. Either way the
+    // deck still has to be a deck, so cap it — this is the point at which a
+    // drawing is genuinely too large for a fixed page and the honest answer is
+    // the most readable deck of a finite length.
+    //
+    // The cap is still a preference and legibility is still not. A cascade
+    // needs one window per service to read, so no grid satisfies the cap at
+    // all, and chasing it walked the grid down to nothing and fell through to a
+    // single untiled slide: at 120 services the deck was 121 slides at 7.03pt
+    // and at 121 it was one slide at 4pt. One service more turned a deck that
+    // reads into a slide that does not.
+    while (c * r > 1 && slidesFor(c, r) > MAX_FIXED_PAGE_SLIDES) {
+      const next = drop(c, r);
+      if (scaleOf(c, r) >= legibleScale && scaleOf(next.c, next.r) < legibleScale) break;
+      ({ c, r } = next);
+    }
+    return { c, r };
+  };
+  const capped = (cols: number, rows: number): { windows: DiagramWindow[]; legible: boolean } | null => {
+    if (!mustTile) return null;
+    const { c, r } = shrinkToFit(cols, rows);
+    if (c * r <= 1) return whole;
+    // Report honestly whether the grid clears the legibility floor. A deck that
+    // can grow its page only prefers these windows when they read; one that
+    // cannot takes them either way, because its alternative is worse.
+    const achieved = Math.min(
+      frame.w / (contentW / c + WINDOW_BLEED_PX * 2),
+      frame.h / (contentH / r + WINDOW_BLEED_PX * 2),
+    );
+    return { windows: tile(c, r), legible: achieved >= legibleScale };
+  };
+
+  const comfortable = gridFor(COMFORTABLE_TILE_PT / 12 / target);
   const floor = gridFor(legibleScale);
+  // Comfort is a preference and legibility is not, so the comfortable grid may
+  // only be preferred when it ALREADY reads.
+  //
+  // `comfortable` is derived from the median tile's height alone. When the
+  // legibility floor demands a finer grid than comfort does - which is the
+  // whole point of the markable raise, and the case every sliver drawing is in
+  // - taking `comfortable` abandons `legibleScale` silently, and the function
+  // then returns `{ windows: [], legible: true }`, "it fits whole", for a scale
+  // it computed two lines earlier and found did not fit.
+  //
+  // Measured on one drawing at five, six and seven services in an identical
+  // bounding box: the sixth service crossed `MIN_SERVICES_PER_SLIDE`, so the
+  // short-circuit engaged, the sliver's tile went 0.2030in to 0.1906in, its
+  // disc went 77% to 82% of the service it numbers, and the planner's record
+  // of whether it could afford the finer plan flipped from true to false
+  // without any plan being measured.
+  // Adding an ordinary service made the drawing worse and the gate quieter.
+  const comfortableReads = !!comfortable
+    && (!floor || scaleOf(comfortable.cols, comfortable.rows) >= legibleScale);
   const worthIt = comfortable
+    && comfortableReads
     && comfortable.slides <= MAX_DIAGRAM_SLIDES
     && services.length / comfortable.slides >= MIN_SERVICES_PER_SLIDE;
-  const grid = worthIt ? comfortable : floor;
-  if (!grid) return { windows: [], legible: false };
+  // A caller may ask for a SCALE, not only for a tile width to serve.
+  //
+  // `serveW` is clamped to `typicalW` one screen up, so it can only ever ask
+  // for a finer plan than the median already gives; there was no way to say
+  // "coarser than the finest, finer than the median". That is why the two
+  // candidates the deck chose between measured 0.011314 and 0.020793 in/px on
+  // a drawing that needed 0.011772: the 4% rung existed - `gridFor` returns it
+  // - and nothing could name it. Bounded below by the grid legibility already
+  // demands, so this can raise a deck's scale and never lower it.
+  const naming = options.namePerIn !== undefined && options.namePerIn > 0
+    ? gridFor(options.namePerIn)
+    : null;
+  const preferred = worthIt ? comfortable : floor;
+  const grid = naming && (!preferred || naming.slides > preferred.slides) ? naming : preferred;
+  if (!grid) {
+    return capped(Math.ceil(Math.sqrt(MAX_TILED_CELLS)), Math.ceil(Math.sqrt(MAX_TILED_CELLS)))
+      ?? { windows: [], legible: false };
+  }
   const { cols, rows } = grid;
   if (cols * rows <= 1) return whole;
+  // A fixed-page deck has no third option, so it never bails out here: both
+  // the flip-book floor and the deck ceiling below exist to protect a deck
+  // that could instead grow its page, and applying them to one that cannot is
+  // what put four-point type on the shipping deck.
+  if (mustTile) return capped(cols, rows) ?? { windows: [], legible: false };
   // Past the comfortable grid the choice is not "more slides or one nice page",
   // it is "more standard slides or a plotter sheet the whole deck inherits", so
   // the tiled deck is allowed to run well past the comfortable ceiling. It
   // still has to be a deck: sheets that carry barely a tile each are a
   // flip-book, and a drawing needing more than the hard ceiling really is a
   // plotter drawing.
-  if (cols * rows > MAX_TILED_SLIDES) return { windows: [], legible: false };
+  // Charge WINDOWS, not grid cells. `tile()` drops cells that hold nothing, so
+  // a 4x3 grid over an L-shaped drawing is five slides and not twelve, and the
+  // paragraph above says so in as many words: empty cells cost nothing, a
+  // reader counts slides. Both bail-outs here charged cells anyway, while the
+  // `mustTile` path charges `slidesFor` - so the density test on one drawing
+  // divided by 12 and got 0.58 where the reader sees five windows and 1.4.
+  // The cheaper the grid's shape, the likelier the deck was refused for it.
+  const slides = slidesFor(cols, rows);
+  if (slides > MAX_TILED_SLIDES) return { windows: [], legible: false };
   if (
-    cols * rows > MAX_DIAGRAM_SLIDES
-    && services.length / (cols * rows) < MIN_SERVICES_PER_TILED_SLIDE
-  ) return { windows: [], legible: false };
-
-  const stepX = contentW / cols;
-  const stepY = contentH / rows;
-  const cellX = (col: number) => ({
-    minX: bounds.minX + stepX * col,
-    maxX: col === cols - 1 ? bounds.maxX : bounds.minX + stepX * (col + 1),
-  });
-  const cellY = (row: number) => ({
-    minY: bounds.minY + stepY * row,
-    maxY: row === rows - 1 ? bounds.maxY : bounds.minY + stepY * (row + 1),
-  });
-  const holds = (col: number, row: number): boolean => {
-    const cell = { ...cellX(col), ...cellY(row) };
-    return services.some((box) => windowOwnsPoint(cell, bounds, box.x + box.w / 2, box.y + box.h / 2));
-  };
-
-  // An architecture is not a filled rectangle, so a cell of the grid can own no
-  // services at all — and one was being emitted as a numbered part carrying two
-  // zone outlines and three arrows whose endpoints are both on other slides.
-  //
-  // An empty cell is not simply deleted, though: ownership has to stay a
-  // partition of the whole drawing, or a connector label anchored in the gap an
-  // empty cell used to cover belongs to no part and is silently dropped from
-  // the deck — arrow drawn, number missing, and the workflow list still citing
-  // it. The surviving neighbours absorb the vacated bands instead, keeping the
-  // *fitted* cell — and therefore the scale — identical on every part.
-  const keptRows: number[] = [];
-  for (let row = 0; row < rows; row += 1) {
-    if (Array.from({ length: cols }, (_, col) => col).some((col) => holds(col, row))) keptRows.push(row);
+    !options.waiveDensity
+    && slides > MAX_DIAGRAM_SLIDES
+    && services.length / slides < MIN_SERVICES_PER_TILED_SLIDE
+  ) {
+    return { windows: [], legible: false };
   }
-  if (keptRows.length === 0) return whole;
-
-  const spans = (kept: number[], lo: (i: number) => number, hi: (i: number) => number, min: number, max: number) =>
-    kept.map((index, i) => ({
-      lo: i === 0 ? min : (hi(kept[i - 1]) + lo(index)) / 2,
-      hi: i === kept.length - 1 ? max : (hi(index) + lo(kept[i + 1])) / 2,
-    }));
-
-  const rowOwn = spans(keptRows, (r) => cellY(r).minY, (r) => cellY(r).maxY, bounds.minY, bounds.maxY);
-  const windows: DiagramWindow[] = [];
-  keptRows.forEach((row, r) => {
-    const keptCols: number[] = [];
-    for (let col = 0; col < cols; col += 1) if (holds(col, row)) keptCols.push(col);
-    const colOwn = spans(keptCols, (c) => cellX(c).minX, (c) => cellX(c).maxX, bounds.minX, bounds.maxX);
-    keptCols.forEach((col, c) => {
-      windows.push({
-        fit: { ...cellX(col), ...cellY(row) },
-        own: { minX: colOwn[c].lo, maxX: colOwn[c].hi, minY: rowOwn[r].lo, maxY: rowOwn[r].hi },
-      });
-    });
-  });
+  const windows = tile(cols, rows);
   // A single surviving cell means the drawing cannot be tiled at all. Saying it
   // is legible would pin an over-large drawing to one standard slide at a scale
   // that already failed the legibility test above; let the page grow instead.
-  if (windows.length <= 1) return { windows: [], legible: false };
+  if (windows.length <= 1) return mustTile ? whole : { windows: [], legible: false };
   return { windows, legible: true };
 }
+
 
 /**
  * Does this window own the point, and therefore the shape centred on it?
@@ -430,6 +1677,52 @@ function chooseExportBounds(boxes: Iterable<ExportBox>): { bounds: Bounds; clamp
 }
 
 /**
+ * The parked layout every part of the pipeline must agree on: bounds that the
+ * page is sized from, boxes the shapes and the routes are both planned from.
+ *
+ * Trimming far-placed nodes out of the fit is only half a decision — the strays
+ * still have to be drawn somewhere, and unless the same answer reaches the page
+ * sizer, the window planner, the renderer and the router, a stray tile, the
+ * arrow aimed at it and the slide that claims it each pick a different one.
+ */
+function parkedLayout(nodes: Node[]): { boxes: Map<string, ExportBox>; bounds: Bounds; clamped: boolean } {
+  // Empty space is closed before anything is measured, so the page sizer, the
+  // window planner and the trim all see the drawing rather than the void
+  // around it.
+  const raw = compactEmptyGutters(collectExportBoxes(nodes));
+  const { bounds: fitted, clamped } = chooseExportBounds(raw.values());
+  const parked = clamped ? clampedBoxes(raw, fitted) : { boxes: raw, bounds: fitted };
+  return { ...parked, clamped };
+}
+
+/**
+ * Windows for a deck whose page size is fixed.
+ *
+ * The customer deck carries title, workflow, services, review and cost slides
+ * all designed for a standard 16:9 page, and PowerPoint gives a deck exactly
+ * one page size, so a large architecture cannot buy legibility by growing the
+ * sheet the way the diagram-only deck does. It tiles instead, and it tiles even
+ * when the planner reports the drawing cannot be shown legibly at any grid:
+ * that verdict exists so a deck that *can* grow its page does, and reading it
+ * as "no windows needed" put 4pt type on every drawing sparse enough to defeat
+ * the services-per-slide floors — a hub with four spokes at 1400px, the most
+ * ordinary shape in the Architecture Center, among them. Returns an empty list
+ * only when the drawing already fits, which keeps the common path unchanged.
+ */
+function planFixedPageWindows(diagram: DiagramShapeSource, frame: DiagramFrame): DiagramWindow[] {
+  const nodes = diagram.nodes ?? [];
+  if (nodes.length === 0) return [];
+  const { boxes, bounds } = parkedLayout(nodes);
+  if (boxes.size === 0) return [];
+  const { services } = partitionBoxes(boxes);
+  if (services.length === 0) return [];
+  return planDiagramWindows(bounds, services, frame, {
+    mustTile: true,
+    markIn: markableTileWIn(stepNumbersOf(diagram.edges ?? [])),
+  }).windows;
+}
+
+/**
  * Pick the slide size. Grows the page (never the shrink factor) so a wide
  * architecture keeps 1 : 1 geometry; only diagrams larger than the 56" page
  * limit are scaled down, and then every dimension scales together.
@@ -443,6 +1736,9 @@ function planSlideGeometry(diagram?: DiagramShapeSource | null): SlideGeometry {
   // renderer, so the tiler plans legibility against the height the drawing will
   // actually get: reserved later, the two disagreed and tiles slid under 7pt.
   const legendH = usedConnectionLegend(diagram?.edges ?? []).length > 0 ? 0.24 + 0.03 : 0;
+  // A numbered drawing has to reach a tile that can carry its callout, not
+  // merely one that can carry a mark. See `markableTileWIn`.
+  const markIn = markableTileWIn(stepNumbersOf(diagram?.edges ?? []));
   const frameFor = (pageW: number, pageH: number): DiagramFrame => {
     const footer = pageH - FOOTER_H - 0.08;
     return { x: IMAGE_X, y: IMAGE_Y, w: pageW - IMAGE_X * 2, h: footer - IMAGE_Y - 0.1 - legendH };
@@ -451,15 +1747,43 @@ function planSlideGeometry(diagram?: DiagramShapeSource | null): SlideGeometry {
   let h = BASE_H;
   let overflow = false;
   let outliersClamped = false;
+  let usedFrame: DiagramFrame | null = null;
+  let medians: { w: number; h: number } | null = null;
+  let servedW = Infinity;
 
   const nodes = diagram?.nodes ?? [];
   let windows: DiagramWindow[] = [];
   if (nodes.length > 0) {
-    const boxes = collectExportBoxes(nodes);
-    if (boxes.size > 0) {
-      const { bounds, clamped } = chooseExportBounds(boxes.values());
-      outliersClamped = clamped;
+    const parked = parkedLayout(nodes);
+    if (parked.boxes.size > 0) {
+      outliersClamped = parked.clamped;
+      // Plan the windows against the drawing the slides will actually carry.
+      // Parking a stray widens the drawing by the strip it sits in, and a
+      // window plan made from the pre-parking bounds leaves that strip
+      // belonging to no window at all — the stray, and every hop touching it,
+      // is then drawn on no slide.
+      const boxes = parked.boxes;
+      const bounds = parked.bounds;
       const { services } = partitionBoxes(boxes);
+      // The narrowest tile a step callout actually lands on.
+      //
+      // Badged, not narrowest outright, for the reason the Visio magnifier
+      // takes the same filter: a sliver with no numbered arrow touching it has
+      // no disc to be dwarfed by, so chasing it buys nothing and costs the
+      // slides `probe-whitespace` measures.
+      const badged = new Set<string>();
+      for (const edge of diagram?.edges ?? []) {
+        const step = Number((edge as unknown as { data?: { stepNumber?: unknown } }).data?.stepNumber);
+        if (!Number.isFinite(step) || step <= 0) continue;
+        badged.add(String(edge.source));
+        badged.add(String(edge.target));
+      }
+      let narrowestBadgedW = Infinity;
+      for (const [id, box] of boxes) {
+        if (box.kind !== 'service' || !(box.w > 0) || !badged.has(id)) continue;
+        if (box.w < narrowestBadgedW) narrowestBadgedW = box.w;
+      }
+      const serveW = Number.isFinite(narrowestBadgedW) ? narrowestBadgedW : undefined;
       const contentW = Math.max(1, bounds.maxX - bounds.minX) / PX_PER_IN;
       const contentH = Math.max(1, bounds.maxY - bounds.minY) / PX_PER_IN;
       // Room for the connection legend plus breathing space around the drawing.
@@ -472,9 +1796,31 @@ function planSlideGeometry(diagram?: DiagramShapeSource | null): SlideGeometry {
       // demands. Prefer standard slides: shrink onto one while the labels stay
       // above the legibility floor, tile across several when they would not,
       // and only grow the page when even the slide budget is exceeded.
-      const standard = planDiagramWindows(bounds, services, frameFor(BASE_W, BASE_H));
+      const standard = planDiagramWindows(bounds, services, frameFor(BASE_W, BASE_H), { markIn, serveW });
+      usedFrame = frameFor(BASE_W, BASE_H);
+      medians = medianExtent(services);
+      servedW = standard.servedW;
+      // `legible: false` is a request to grow the page, not a verdict that the
+      // drawing cannot be tiled. A sparse architecture — the hub-and-spoke
+      // every Architecture Center reference draws — defeats the
+      // services-per-slide floors purely by having whitespace between its
+      // parts, and was handed a 31x32in plotter page nobody can open. Ask the
+      // planner for the finest grid the slide budget allows before giving up on
+      // ordinary slides; the 7pt floor still governs whether the result is
+      // readable, and every part still shares one scale.
+      const forced = standard.legible ? null : planDiagramWindows(bounds, services, frameFor(BASE_W, BASE_H), { mustTile: true, markIn, serveW });
       if (standard.legible) {
         windows = standard.windows;
+      } else if (forced && forced.windows.length > 1) {
+        // Not `forced.legible`. That test asked the planner whether the tiles
+        // land at their natural size, and used the answer to decide something
+        // else entirely: standard slides versus a page nobody can open. Now
+        // that the renderer floors a window tile's type at the legibility limit
+        // whatever the grid, the honest comparison is between a deck of
+        // ordinary slides and a 56in plotter sheet — and the sheet loses every
+        // time, because a reader can at least present the deck.
+        windows = forced.windows;
+        servedW = forced.servedW;
       } else {
         // Only a genuinely enormous drawing gets here — one that cannot be read
         // on nine standard slides. Grow the page for it, then tile that page
@@ -483,8 +1829,16 @@ function planSlideGeometry(diagram?: DiagramShapeSource | null): SlideGeometry {
         overflow = wantW > MAX_SLIDE_IN || wantH > MAX_SLIDE_IN;
         w = clamp(wantW, BASE_W, MAX_SLIDE_IN);
         h = clamp(wantH, BASE_H, MAX_SLIDE_IN);
-        const grown = planDiagramWindows(bounds, services, frameFor(w, h));
+        // `mustTile` is what makes the sentence above true. Without it the
+        // planner still weighs these windows against the option of growing the
+        // page — and this page has already grown to the maximum, so there is no
+        // such option left; the bail-outs it takes on that assumption returned
+        // no windows at all and left a 200-service estate as a single 56x39.87in
+        // sheet, which is the one outcome this branch exists to avoid.
+        const grown = planDiagramWindows(bounds, services, frameFor(w, h), { mustTile: true, markIn, serveW });
+        usedFrame = frameFor(w, h);
         windows = grown.windows;
+        servedW = grown.servedW;
         // Splitting restores legibility, so the "scaled down to fit" warning no
         // longer applies — the drawing is now at its readable size.
         if (windows.length > 1) overflow = false;
@@ -501,36 +1855,222 @@ function planSlideGeometry(diagram?: DiagramShapeSource | null): SlideGeometry {
     outliersClamped,
     windows,
     frame: frameFor(w, h),
+    // Recorded rather than recomputed by whoever wants to know. The gate used
+    // to mirror this from the scenario and got both statistics wrong: it read
+    // a frame with no connection legend in it, 6.04in against the 5.77in a
+    // numbered drawing actually gets, and it took the NARROWEST node where the
+    // planner takes the median. The first made it fail a correctly clamped
+    // 21 slide deck 98 times; the second made it accuse a correct 53 slide
+    // plan of chasing a bar it had already reached, while suppressing the four
+    // real conflicts on that same deck. There is one copy now, and it is the
+    // copy that ran.
+    calloutBarClamped: !!usedFrame && !!medians && markIn > MARKABLE_TILE_W_IN
+      && !calloutBarReachable(medians.h, usedFrame, medians.w, markIn),
+    medianServiceW: medians && Number.isFinite(medians.w) ? medians.w : 0,
+    servedTileW: servedW,
+    // The narrowest authored tile this FRAME can ever carry a proportionate
+    // callout on, in pixels, whatever the plan.
+    //
+    // `finestPerIn` is what the finest grid returns before the bleed alone
+    // fills the window, so `markIn / finestPerIn` is the authored width below
+    // which no split reaches the bar. Below it the deck has no move and the
+    // gate must not demand one; above it a miss is a real miss.
+    //
+    // Per hop and not per deck, deliberately. `calloutBarClamped` answers the
+    // same question about the MEDIAN, and reading a deck-wide answer here is
+    // the mistake `servedW: Infinity` made one round ago: one 14px sliver
+    // would switch the rule off for hops between 160px tiles drawn at 1.81in.
+    // The gate compares each hop's own endpoints against this.
+    //
+    // It is a bound on the frame and not a fact about the drawing, so it moves
+    // only when the frame or the bleed does - which is exactly what makes it
+    // the number to watch when `WINDOW_BLEED_PX` becomes proportional: at a
+    // flat 100px the bar is out of reach below 14.5 authored px, and a
+    // proportional bleed retires most of this exemption by construction.
+    reachableTileW: usedFrame && medians && markIn > 0
+      ? markIn / (Math.min(usedFrame.w, usedFrame.h)
+        / (WINDOW_BLEED_PX * 2 + Math.max(1, medians.h)))
+      : 0,
   };
 }
 
 /**
- * Approximate rendered width of a string in inches. CJK characters occupy a
- * full em, Latin about 0.54 em in Yu Gothic UI — good enough to size a chip so
- * its text is not clipped.
+ * What the window planner decided about this drawing's callouts.
+ *
+ * Exported for the export audit, which has to know whether a callout that is
+ * disproportionate to its tile is a defect or the documented consequence of a
+ * bar no grid in the frame can reach - and, since the planner deliberately
+ * serves the MEDIAN service rather than the narrowest, which tiles it declined
+ * to serve at all. Both are asked for rather than replicated: the gate's own
+ * copy of each disagreed with this one, in opposite directions, and shipped.
  */
-function estimateTextWidthIn(text: string, fontSizePt: number): number {
-  let units = 0;
-  for (const character of text) {
-    units += /[\u2e80-\u9fff\uac00-\ud7af\uff00-\uff60\uffe0-\uffe6]/.test(character) ? 1 : 0.54;
+export function calloutPlanFor(diagram?: DiagramShapeSource | null): {
+  clamped: boolean;
+  medianServiceW: number;
+  /**
+   * The narrowest authored width the winning plan actually served, in pixels.
+   *
+   * Not the median, and not the narrowest badged tile either: it is whichever
+   * of the two the density floor let the deck pay for. A tile narrower than
+   * this one is a tile the planner MEASURED the cost of serving and declined,
+   * so a callout that is disproportionate on it has no move behind it. A tile
+   * at or above it was served, so a disproportionate callout on it is a defect.
+   */
+  servedTileW: number;
+  /**
+   * The narrowest authored tile this FRAME can carry a proportionate callout
+   * on at any grid, in pixels.
+   *
+   * A frame bound and not a plan outcome: below it no split reaches the bar,
+   * so the deck has no move and a disproportionate disc is the page's fault
+   * and not the planner's. Compared against each hop's OWN endpoints, so one
+   * sliver cannot exempt a deck.
+   */
+  reachableTileW: number;
+} {
+  const geometry = planSlideGeometry(diagram);
+  return {
+    clamped: geometry.calloutBarClamped,
+    medianServiceW: geometry.medianServiceW,
+    servedTileW: geometry.servedTileW,
+    reachableTileW: geometry.reachableTileW,
+  };
+}
+
+/**
+ * Advance of the WIDEST character in `text`, in inches.
+ *
+ * `estimateTextWidthIn` gives every non-CJK character 0.54 em, which is Segoe
+ * UI's *average lowercase* advance. An average is the right model for the width
+ * of a run and completely the wrong one for `max over characters`: measured
+ * against the installed Yu Gothic UI with GDI+, `@` is 0.955 em, `W` 0.934 and
+ * `M` 0.898 — 77% wider than the estimate. Asking "does one letter fit?" with
+ * the average answered yes for boxes that hold no capital at all, and drew a
+ * 31-character word one letter per line down a 2.55in ribbon.
+ *
+ * The buckets are the measured maxima of each class, so this never under-states
+ * a glyph. It over-states a narrow one, which is the safe direction: the cost
+ * is dropping wording that would just have fitted, and the words are carried
+ * elsewhere.
+ *
+ * Re-exported from the shared geometry module, where it now lives so the Visio
+ * exporter can decide "is this still a name?" with the same rule the deck uses.
+ */
+export { widestGlyphIn };
+
+/**
+ * Approximate rendered width of a string in inches, from the measured Yu
+ * Gothic UI advances in `diagramExportGeometry`.
+ *
+ * This used to charge a flat 0.54 em for everything non-CJK - the average
+ * LOWERCASE advance - so a name written in title case measured about 8% narrow.
+ * That is the width `wrappedLineCount` and `fitLabelToLines` divide a column
+ * by, so the error surfaced as a LINE: a name cut to the five lines its tile
+ * had room for really wrapped to six, and the sixth was painted 0.079in below
+ * the box it was measured in.
+ *
+ * A class-wise bucket was tried first and rejected. A bucket is only an upper
+ * bound if it carries its class maximum, and charging every lowercase letter
+ * the width of `m` inflates ordinary prose by about 60%, which shrinks type and
+ * cuts names that would have fitted. Measured advances are neither short nor
+ * fat.
+ */
+export function estimateTextWidthIn(text: string, fontSizePt: number): number {
+  return advanceWidthIn(text, fontSizePt);
+}
+
+/**
+ * How many lines `text` takes in a box `widthIn` wide, wrapping the way
+ * PowerPoint wraps.
+ *
+ * `ceil(width / widthIn)` is exact only for text that can break anywhere — CJK,
+ * or a single token long enough that PowerPoint breaks it mid-run. Real prose
+ * breaks between words and throws away the remainder of a line whenever the
+ * next word will not fit, so three tokens each wider than half the box take
+ * three lines where the ratio predicts two. A resource name that spells out its
+ * environment and region is exactly that shape, and under-counting it is how a
+ * table budgeted for the page ends up printing below it.
+ */
+export function wrappedLineCount(text: string, widthIn: number, fontSizePt: number): number {
+  if (!text) return 1;
+  // Floored at one hair, not at 0.1in. A fixed floor on a column that shrinks
+  // with the drawing is the same lie the audit's own floors told and the same
+  // one `chipColumn` was rewritten to stop telling: an overview chip with a
+  // 0.075in column was measured against 0.1in, counted 3 lines where the text
+  // takes 4, and was emitted a line short — 78 chips across 3 decks, each
+  // painting its last line out through the bottom of the lozenge. Callers that
+  // want a floor must apply their own; this one reports what the column holds.
+  const box = Math.max(0.001, widthIn);
+  // A hard line break is a line, and it is the one break every counter here
+  // used to miss. `\n` survives the sanitiser — which scrubs U+000B but not
+  // U+000A — and pptxgenjs turns each one into a real `<a:p>`, so the renderer
+  // starts a new line where the measurement carried straight on. Splitting on
+  // whitespace only *ends a run* at a newline; it never starts a line. A model
+  // asked for numbered remediation steps writes them one per line, which makes
+  // this the normal case rather than an exotic one, and a sixteen-row table of
+  // four-line names measured 5.83in and drew 10.33in.
+  return text.split(/\r\n|\r|\n/)
+    .reduce((total, paragraph) => total + wrapOneLine(paragraph, box, fontSizePt), 0);
+}
+
+/** One paragraph's worth of wrapping, with no hard breaks left in it. */
+function wrapOneLine(text: string, box: number, fontSizePt: number): number {
+  if (!text) return 1;
+  // Breaks are between words, and additionally after any full-width character,
+  // which is where CJK is allowed to break.
+  const runs = text.split(/(?<=[\s\u2e80-\u9fff\uac00-\ud7af\uff00-\uff60\uffe0-\uffe6])/);
+  let lines = 1;
+  let used = 0;
+  for (const run of runs) {
+    const w = estimateTextWidthIn(run, fontSizePt);
+    // A renderer decides whether a line fits on its visible ink and lets the
+    // run-final spaces hang past the column, so the fit test discounts them
+    // and the advance does not. Charging a space nothing everywhere was the
+    // shortcut that made this look unnecessary, and it made every interior
+    // space free: 1699 emitted boxes in the corpus were a quarter em per gap
+    // short of the wrap they really take.
+    const visible = w - trailingWhitespaceIn(run, fontSizePt);
+    if (used > 0 && used + visible > box) {
+      lines += 1;
+      used = 0;
+    }
+    // A single run wider than the whole box breaks inside itself, one
+    // CHARACTER at a time.
+    //
+    // `ceil(w / box)` assumes the word packs exactly a boxful per line, which
+    // is only true if a break may fall part-way through a glyph. Breaks fall
+    // between glyphs, so every line but the last ends short of the column and
+    // the ratio is a lower bound, never the count. On a 0.204in column that is
+    // one whole line: a name cut to the five lines its tile has room for
+    // really wrapped to six, and the sixth was painted 0.079in below the box.
+    if (w > box) {
+      let lineUsed = used;
+      for (const glyph of run) {
+        const gw = estimateTextWidthIn(glyph, fontSizePt);
+        if (lineUsed > 0 && lineUsed + gw > box) {
+          lines += 1;
+          lineUsed = 0;
+        }
+        lineUsed += gw;
+      }
+      used = lineUsed;
+      continue;
+    }
+    used += w;
   }
-  return (units * fontSizePt) / 72;
+  return Math.max(1, lines);
 }
 
 /**
  * As much of `text` as will fit in `widthIn` at `fontSizePt`, with an ellipsis
  * for the rest. Used where the tile is too small for the whole name and the
  * only alternatives are unreadable type or an empty box.
+ *
+ * The policy itself lives in `diagramExportGeometry`, so the sheet cuts a name
+ * exactly where the deck cuts it.
  */
-function fitLabelToBox(text: string, widthIn: number, fontSizePt: number): string {
-  if (estimateTextWidthIn(text, fontSizePt) <= widthIn) return text;
-  const budget = widthIn - estimateTextWidthIn('…', fontSizePt);
-  let out = '';
-  for (const character of text) {
-    if (estimateTextWidthIn(out + character, fontSizePt) > budget) break;
-    out += character;
-  }
-  return out.trimEnd() === '' ? '…' : `${out.trimEnd()}…`;
+function fitLabelToBox(rawText: string, widthIn: number, fontSizePt: number): string {
+  return fitLabelToWidth(rawText, widthIn, fontSizePt / 72);
 }
 
 
@@ -548,6 +2088,15 @@ export interface PptxExportOptions {
    * captured PNG is only used as a fallback when no shapes can be produced.
    */
   diagram?: DiagramShapeSource | null;
+  /**
+   * Pre-rasterised icons, bypassing the DOM-only rasteriser. `canRasterize()`
+   * is false under Node, so an offline harness draws every tile with no icon
+   * at all — a different tile interior, with the caption band 2.1x too tall
+   * and a third of an inch out of position, which is what the chip walk and
+   * every contrast composite are then tuned against. Visio already had this
+   * escape hatch; PowerPoint did not.
+   */
+  presetIcons?: Map<string, RasterizedIcon>;
 }
 
 export interface DiagramShapeSource {
@@ -596,6 +2145,97 @@ function pptxDashType(route: ExportRoute): 'solid' | 'dash' | 'sysDot' | 'dashDo
   }
 }
 
+/**
+ * The part of a polyline that is actually on this window's paper.
+ *
+ * Off-window points used to be CLAMPED onto the frame border, which turns a leg
+ * running somewhere else on the drawing into a line along the edge of the
+ * slide. It is not where the arrow goes, and — because every clamped route is
+ * flattened onto the same border — two of them end up drawn exactly on top of
+ * each other: on a 72-service estate two wrap-around hops shared 10.39in of a
+ * 10.51in line.
+ *
+ * Clipping instead of clamping draws the hop where it really is and simply
+ * stops it at the paper's edge, which is what a reader expects at a seam. A
+ * route that lies wholly inside the frame comes back untouched, so the
+ * overwhelming majority of arrows are byte-identical to before.
+ *
+ * Discarding the hop instead was tried and is wrong: nothing guarantees another
+ * window draws it. A single-window clamped deck, or a hop spanning two windows
+ * and contained by neither, loses the arrow from the deck ENTIRELY while its
+ * chip and numbered callout stay behind pointing at blank paper.
+ */
+function clipToFrame(
+  points: readonly { x: number; y: number }[],
+  frame: DiagramFrame,
+): { x: number; y: number }[] {
+  const x0 = frame.x;
+  const x1 = frame.x + frame.w;
+  const y0 = frame.y;
+  const y1 = frame.y + frame.h;
+  const eps = 1e-6;
+  const inside = (p: { x: number; y: number }): boolean => p.x >= x0 - eps && p.x <= x1 + eps
+    && p.y >= y0 - eps && p.y <= y1 + eps;
+  if (points.every(inside)) return [...points];
+
+  // Liang-Barsky, run per segment so an axis-aligned leg keeps exact endpoints.
+  const clipSegment = (
+    a: { x: number; y: number },
+    b: { x: number; y: number },
+  ): [{ x: number; y: number }, { x: number; y: number }] | null => {
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    let t0 = 0;
+    let t1 = 1;
+    const edges: Array<[number, number]> = [[-dx, a.x - x0], [dx, x1 - a.x], [-dy, a.y - y0], [dy, y1 - a.y]];
+    for (const [p, q] of edges) {
+      if (Math.abs(p) < eps) {
+        if (q < -eps) return null;
+      } else {
+        const r = q / p;
+        if (p < 0) {
+          if (r > t1) return null;
+          if (r > t0) t0 = r;
+        } else {
+          if (r < t0) return null;
+          if (r < t1) t1 = r;
+        }
+      }
+    }
+    const at = (t: number): { x: number; y: number } => (t <= 0 ? a : t >= 1 ? b : { x: a.x + dx * t, y: a.y + dy * t });
+    return [at(t0), at(t1)];
+  };
+
+  const runs: Array<{ x: number; y: number }[]> = [];
+  let current: { x: number; y: number }[] = [];
+  const near = (a: { x: number; y: number }, b: { x: number; y: number }): boolean => Math.abs(a.x - b.x) < 1e-4 && Math.abs(a.y - b.y) < 1e-4;
+  for (let i = 1; i < points.length; i += 1) {
+    const piece = clipSegment(points[i - 1], points[i]);
+    if (!piece) {
+      if (current.length >= 2) runs.push(current);
+      current = [];
+      continue;
+    }
+    const [from, to] = piece;
+    if (current.length === 0) current = [from, to];
+    else if (near(current[current.length - 1], from)) current.push(to);
+    else {
+      if (current.length >= 2) runs.push(current);
+      current = [from, to];
+    }
+  }
+  if (current.length >= 2) runs.push(current);
+  if (runs.length === 0) return [];
+
+  // The longest surviving run: one arrow per hop per slide, and the shape that
+  // carries the arrowhead should be the piece the reader actually follows.
+  const length = (run: { x: number; y: number }[]): number => run.reduce(
+    (sum, point, i) => (i === 0 ? 0 : sum + Math.hypot(point.x - run[i - 1].x, point.y - run[i - 1].y)),
+    0,
+  );
+  return runs.reduce((best, run) => (length(run) > length(best) ? run : best), runs[0]);
+}
+
 function addConnector(
   pptx: PptxGenJS,
   slide: Slide,
@@ -603,14 +2243,8 @@ function addConnector(
   transform: FitTransform,
   clampTo?: DiagramFrame,
 ): void {
-  const points = route.points
-    .map((point) => toInches(point, transform))
-    .map((point) => (clampTo
-      ? {
-        x: clamp(point.x, clampTo.x, clampTo.x + clampTo.w),
-        y: clamp(point.y, clampTo.y, clampTo.y + clampTo.h),
-      }
-      : point));
+  const raw = route.points.map((point) => toInches(point, transform));
+  const points = clampTo ? clipToFrame(raw, clampTo) : raw;
   if (points.length < 2) return;
 
   const lineProps = {
@@ -702,7 +2336,7 @@ function connectorLabelBox(
   // instead and leaves numbered callouts on the arrows. That is what the
   // Architecture Center does with a bundle of parallel flows, and it beats
   // seven chips laid across the services they run between.
-  const text = bundle?.badgesOnly ? '' : truncateLabel(route.label, 42);
+  const wanted = bundle?.badgesOnly ? '' : truncateLabel(route.label, 42);
 
   // Size the chip from the text it actually carries, capped so it can never
   // dwarf the service tiles it sits between (a 150 px tile is 1.56" at 1 : 1).
@@ -727,6 +2361,29 @@ function connectorLabelBox(
   // label size; the caller works out how far the whole bundle has to shrink so
   // that every rung still fits, which keeps the text intact.
   const fontSize = bundle?.font ?? requestedFontSize;
+  // A chip narrower than one letter of its own type is not a small chip, it is
+  // a broken one: PowerPoint clips nothing, so it stacks the word one glyph per
+  // line and paints the letters out through both sides of the lozenge. On a
+  // heavily scaled overview the box shrinks with the drawing but the font is
+  // held at OVERVIEW_LEGIBLE_PT, so past a certain scale the trade the sizer
+  // thinks it is making is not on offer — 479 chips at 0.009in wide drew a
+  // 0.6in smear of type across the middle of the first slide.
+  //
+  // Where there is no room for the letters, drop the wording rather than
+  // scribble it. The overview is an index, not a reading surface, and the same
+  // words are on the window slide that follows by exactly the route a tile name
+  // too small to draw already takes.
+  const widestGlyph = widestGlyphUpperIn(wanted, fontSize);
+  // TWO of them, not one. "Does a single letter fit?" is a test about the
+  // wrong thing: a column that holds exactly one glyph produces a chip that
+  // spells its sentence vertically, one character per line, and that is the
+  // artefact the guard exists to prevent — not a narrower version of it. It
+  // let 97 chips through at 1.8 characters per line, the worst of them 29
+  // copies of a 0.200 x 1.252in ribbon down the middle of the first slide,
+  // passing by 0.0022in. Room for two of the widest glyph is the least that
+  // can be called a line of text.
+  const minChipW = widestGlyph * 2 + CHIP_INSET_IN * 2;
+  const text = wanted;
   // Wide-and-short is the shape that fits a ladder: a fan of six chips each
   // wrapped onto four lines is taller than the slide, and clamping them into
   // the frame one by one just restacks them on the page edge. Letting a chip in
@@ -742,19 +2399,106 @@ function connectorLabelBox(
       ? clamp(squeezeTo, 0.34 * px, 1.5 * px)
       : clamp(Math.max(gap, prefer * px), 0.34 * px, 1.5 * px);
   const naturalW = estimateTextWidthIn(text, fontSize) + 0.14;
-  const badgeD = route.stepNumber === undefined ? 0 : clamp(0.26 * px, 0.18, 0.42);
-  // A muted rung carries no wording, so it is exactly its callout. Reserving an
+  const badgeD = route.stepNumber === undefined ? 0 : stepBadgeDiameterIn(route, transform, px);  // A muted rung carries no wording, so it is exactly its callout. Reserving an
   // empty text box above the number anyway made every rung ~40% taller and a
   // third wider than the thing it draws, which is what pushed a deep fan's end
   // callouts onto the tiles it runs between.
   const bare = text === '' && badgeD > 0;
+  // A hop that runs down the page has to fit its chip into the band between two
+  // rows. `gap` is that band's height, but it is being used as a WIDTH cap, so
+  // a long sentence is wrapped onto more lines until the chip is taller than
+  // the corridor it has to sit in — and then no position clears the service it
+  // labels. The band is short but wide, so widen the chip, by exactly enough to
+  // shed the lines that do not fit and no more: widening further only pushes it
+  // into the columns either side.
+  let roomW = maxW;
+  if (!alongX && !bare && bundle === undefined && squeezeTo === undefined && gap > 0) {
+    const lineH0 = (fontSize * 1.3) / 72;
+    const asIs = Math.max(1, Math.ceil(estimateTextWidthIn(text, fontSize) / chipColumn(maxW)));
+    // Only when the chip does not already fit the band. Widening one that does
+    // buys nothing and costs a lean on the columns either side.
+    if (asIs * lineH0 + 0.06 > gap) {
+      const fits = Math.max(1, Math.floor((gap - 0.06) / lineH0));
+      const needed = estimateTextWidthIn(text, fontSize) / fits + CHIP_INSET_IN * 2;
+      roomW = clamp(Math.max(maxW, needed), 0.34 * px, 1.5 * px);
+    }
+  } else if (alongX && !bare && bundle === undefined && squeezeTo === undefined && gap > 0) {
+    // The mirror case. The band between two columns is narrow but tall, so a
+    // chip wider than the hop leans on the services either side of it. Narrow
+    // it to the corridor — but only while the result stays a chip: squeezing
+    // every label to the hop width is what once produced a 0.34" ribbon inches
+    // tall, which `prefer` exists to prevent.
+    const narrowed = clamp(gap, 0.34 * px, 1.5 * px);
+    if (narrowed < maxW) {
+      const lineH0 = (fontSize * 1.3) / 72;
+      const lineCount = Math.max(1, Math.ceil(estimateTextWidthIn(text, fontSize) / chipColumn(narrowed)));
+      if (lineCount * lineH0 + 0.06 <= 0.9 * px) roomW = narrowed;
+    }
+  }
+  // `roomW` is the last word on how wide this chip may be, so it is the only
+  // place the "no room for a letter" test can be made. Testing against the cap
+  // instead let a chip whose corridor was far narrower than the cap survive it.
+  if (text !== '' && roomW + 0.002 < minChipW) {
+    // The bar is about the room this column has AT THIS SIZE, and smaller type
+    // needs a narrower column: `minChipW` scales with the font while `roomW`
+    // is floored at `0.34 * px`, which does not. So come down half a point at
+    // a time to the legibility floor before concluding that nothing can be
+    // drawn here — a fan whose rungs refuse the sentence at 8.4pt sets it
+    // perfectly well at 7pt, and dropping it instead loses seven labels that
+    // the reader could have read. Terminates: the size strictly decreases by
+    // half a point toward a fixed floor, and the floor never retries.
+    // Only for a ladder. A bundle is laid out at whatever size makes its rungs
+    // fit, so trading type size for room is already its contract; an ordinary
+    // chip's size is the reader's floor and shrinking it to win a placement
+    // moves the chip nearer a stranger's arrow than its own.
+    // Floored at the READING slide's legibility floor, not the overview's.
+    // `Math.min(OVERVIEW_LEGIBLE_PT, requestedFontSize)` resolved to 6 on every
+    // reading slide, because the requested size there is already >= 7 — so a
+    // ladder could step down to 6.0pt on a full-size slide, under the floor
+    // `labelFontSize` itself enforces and under the gate's `minFont < 7` rule.
+    // On the overview the requested size is the overview's own floor, so taking
+    // the minimum of the two keeps that case unchanged.
+    const floor = Math.min(requestedFontSize, LEGIBLE_TILE_PT);
+    if (bundle && !bundle.badgesOnly && fontSize > floor + 0.01) {
+      const smaller = Math.max(floor, fontSize - 0.5);
+      const retry = connectorLabelBox(
+        route, transform, requestedFontSize, px, clampTo, obstacles,
+        { ...bundle, font: smaller }, squeezeTo, foreignGap,
+      );
+      if (retry) return retry;
+    }
+    // Nothing legible can be drawn here. A numbered hop still gets its callout
+    // — the number is one glyph in a circle sized independently — and its
+    // wording is on the workflow slide. An un-numbered one draws nothing at
+    // all, which is what the reader would rather have than a smear.
+    if (badgeD <= 0) return null;
+    return connectorLabelBox(
+      { ...route, label: ' ' }, transform, requestedFontSize, px, clampTo, obstacles,
+      { ...(bundle ?? { count: 1, rung: 0, x: anchor.x, y: anchor.y }), badgesOnly: true },
+      squeezeTo, foreignGap,
+    );
+  }
   const w = bare
     ? badgeD
-    : clamp(naturalW <= maxW ? naturalW : maxW, Math.min(0.34 * px, maxW), maxW);
-  const perLine = Math.max(w - 0.12, 0.05);
+    : clamp(
+      naturalW <= roomW ? naturalW : roomW,
+      // Floored against the TYPE, not against the drawing. `0.34 * px` scales
+      // to nothing, so on a scaled overview it let the box shrink below one
+      // letter while the font stayed at 6pt.
+      Math.min(Math.max(0.34 * px, minChipW), roomW),
+      roomW,
+    );
+  const perLine = chipColumn(w);
   const lineH = (fontSize * 1.3) / 72;
 
-  const lines = Math.max(1, Math.ceil(estimateTextWidthIn(text, fontSize) / perLine));
+  // ceil(ink / column) is the break-anywhere ratio, and wrappedLineCount's
+  // own doc comment says why it is wrong: three tokens each wider than half the
+  // box take three lines where the ratio predicts two. This sizer was the one
+  // consumer in the file that did not use the helper, and the under-count was
+  // masked only for as long as the emitted chip gave the text 0.12in more
+  // column than the model reserved. Closing that gap turned it into overflow —
+  // 317 chips across 18 decks, one of them spilling 47% of its box.
+  const lines = wrappedLineCount(text, perLine, fontSize);
   const h = bare ? 0 : Math.max(0.16 * px, lines * lineH + 0.06);
   const badgeGap = bare ? 0 : 0.03;
 
@@ -837,11 +2581,134 @@ function connectorLabelBox(
     }
     return { x, y, clamped: x !== rawX || y !== rawY };
   };
+  // Where the arrow this chip labels actually runs. Declared up here, ahead of
+  // the cost functions, because the numbered disc's cost depends on which end
+  // of the block the disc hangs from — leaving these below `covered` worked
+  // only because nothing happened to call it early enough to trip the
+  // temporal dead zone.
+  const ownSegments: { ax: number; ay: number; bx: number; by: number }[] = [];
+  for (let i = 1; i < route.points.length; i += 1) {
+    const a = toInches(route.points[i - 1], transform);
+    const b = toInches(route.points[i], transform);
+    ownSegments.push({ ax: a.x, ay: a.y, bx: b.x, by: b.y });
+  }
+  const toOwn = (cx: number, cy: number): number => {
+    let bestGap = Number.POSITIVE_INFINITY;
+    for (const seg of ownSegments) {
+      const dx = seg.bx - seg.ax;
+      const dy = seg.by - seg.ay;
+      const len = dx * dx + dy * dy;
+      const t = len > 0 ? Math.max(0, Math.min(1, ((cx - seg.ax) * dx + (cy - seg.ay) * dy) / len)) : 0;
+      bestGap = Math.min(bestGap, Math.hypot(cx - (seg.ax + t * dx), cy - (seg.ay + t * dy)));
+    }
+    return bestGap;
+  };
+  // Which end of the block the numbered callout hangs from. It used to be
+  // always the bottom, which on a chip that hangs BELOW its arrow puts the one
+  // mark a reader uses to identify the hop as far from that hop as the block
+  // allows — on a stack of parallel rows, nearer the next row's arrow than its
+  // own. The Architecture Center draws the number against the arrow it
+  // numbers, so hang it from whichever end of the block faces that arrow.
+  const badgeAtTopAt = (x: number, y: number): boolean => {
+    if (badgeD <= 0 || bare) return false;
+    const cx = x + w / 2;
+    const topY = y + badgeD / 2;
+    const botY = y + blockH - badgeD / 2;
+    const top = toOwn(cx, topY);
+    const bot = toOwn(cx, botY);
+    // A polyline that doubles back puts both ends of the block the same
+    // distance from the arrow by construction — `toOwn` takes the minimum over
+    // every segment, so the two tie. Neither end is then better for reading the
+    // number against its own hop, and the question that still has an answer is
+    // which end is furthest from somebody else's.
+    if (Math.abs(top - bot) < 0.01) {
+      return foreignGap ? foreignGap(cx, topY) > foreignGap(cx, botY) : false;
+    }
+    return top < bot;
+  };
+  const badgeYAt = (x: number, y: number): number => (badgeAtTopAt(x, y) ? y : y + h + badgeGap);
+  const textYAt = (x: number, y: number): number => (badgeAtTopAt(x, y) ? y + badgeD + badgeGap : y);
+  // Where along the edge it hangs from the disc sits.
+  //
+  // Nailed to the middle of the chip it is the one part of the block that
+  // cannot be moved off a tile: the walk can only take the whole block with it,
+  // the wording is several times wider than the disc, so the block comes to
+  // rest where the WORDING fits and drags the number onto a service. A chip
+  // squeezed into a corridor narrower than itself has to overlap something —
+  // but the 0.21in disc almost always has somewhere clear to be along the
+  // 0.67in edge it hangs from. Sliding it there keeps it touching its own chip,
+  // so it still reads as that hop's number, and takes it off the icon.
+  //
+  // The centre is preferred outright on a tie, so every placement that was
+  // already clear is unchanged.
+  const badgeXAt = (at: { x: number; y: number }): number => {
+    const centre = at.x + w / 2 - badgeD / 2;
+    if (bare || w <= badgeD + 0.02) return centre;
+    const by = badgeYAt(at.x, at.y);
+    const costAt = (bx: number): number => seen.reduce((sum, tile) => {
+      const dx = Math.min(bx + badgeD, tile.x + tile.w) - Math.max(bx, tile.x);
+      const dy = Math.min(by + badgeD, tile.y + tile.h) - Math.max(by, tile.y);
+      return dx > 0 && dy > 0 ? sum + dx * dy * (tile.annotation ? ANNOTATION_WEIGHT : tile.weight ?? 1) : sum;
+    }, 0);
+    let bestX = centre;
+    let bestCost = costAt(centre);
+    // Sliding is only ever worth it while the disc still reads as this hop's
+    // number. Moved along the edge it can end up nearer a different arrow than
+    // its own, which trades a hidden number for a number attached to the wrong
+    // sentence — strictly the worse of the two.
+    const attrAt = (bx: number): number => {
+      if (!foreignGap) return Number.POSITIVE_INFINITY;
+      return foreignGap(bx + badgeD / 2, by + badgeD / 2) - toOwn(bx + badgeD / 2, by + badgeD / 2);
+    };
+    const floor = Math.min(attrAt(centre), 0) - 0.001;
+    const slots = 8;
+    for (let i = 0; i <= slots && bestCost > 0; i += 1) {
+      const bx = at.x + (i / slots) * (w - badgeD);
+      const cost = costAt(bx);
+      if (cost < bestCost - 0.0001 && attrAt(bx) >= floor) {
+        bestX = bx;
+        bestCost = cost;
+      }
+    }
+    return bestX;
+  };
+  // The wording has an opaque chip behind it and is expected to stand in the
+  // corridors between tiles, so a graze costs it little. The number does not:
+  // it is a small solid disc, and dropped on a tile it hides part of an icon
+  // and is the one mark the workflow list cannot be read without. Charged only
+  // as block area it is cheap to sacrifice — the walk will happily park the
+  // disc dead centre on a service to keep the much larger text clear, which is
+  // how a wrap-around hop's callout came to sit 100% inside a stranger's tile.
+  // So the disc is priced on its own footprint.
+  //
+  // It carried a x4 premium for several rounds. That premium is now inert:
+  // annotation overlap is priced at x8 and a swallowed disc leaves its chip
+  // altogether, so an A/B at 4 and at 0 across five grid pitches was
+  // byte-identical on four of them and moved 0.5% of one disc's ink on the
+  // fifth, whose worst burial was unchanged. An untested constant is worse
+  // than no constant, so it is gone rather than gated.
+  const badgeCovered = (at: { x: number; y: number }): number => {
+    if (badgeD <= 0 || blockH <= h + 0.01) return 0;
+    // Measured at the centre of the edge, not at the slid position. The slide
+    // is a repair applied once the block has come to rest; letting the walk
+    // count on it makes the cost optimistic, and the block then settles
+    // somewhere the wording is worse off for the sake of a disc that had
+    // somewhere to go anyway.
+    const bx = at.x + w / 2 - badgeD / 2;
+    const by = badgeYAt(at.x, at.y);
+    return seen.reduce((sum, tile) => {
+      if (tile.annotation) return sum;
+      const dx = Math.min(bx + badgeD, tile.x + tile.w) - Math.max(bx, tile.x);
+      const dy = Math.min(by + badgeD, tile.y + tile.h) - Math.max(by, tile.y);
+      return dx > 0 && dy > 0 ? sum + dx * dy * (tile.weight ?? 1) : sum;
+    }, 0);
+  };
   const covered = (at: { x: number; y: number }): number => seen.reduce((sum, tile) => {
     const dx = Math.min(at.x + w, tile.x + tile.w) - Math.max(at.x, tile.x);
     const dy = Math.min(at.y + blockH, tile.y + tile.h) - Math.max(at.y, tile.y);
     return dx > 0 && dy > 0 ? sum + dx * dy * (tile.annotation ? ANNOTATION_WEIGHT : tile.weight ?? 1) : sum;
-  }, 0);  const onLabel = (at: { x: number; y: number }): number => seen.reduce((sum, tile) => {
+  }, 0) + badgeCovered(at);
+  const onLabel = (at: { x: number; y: number }): number => seen.reduce((sum, tile) => {
     if (!tile.annotation) return sum;
     const dx = Math.min(at.x + w, tile.x + tile.w) - Math.max(at.x, tile.x);
     const dy = Math.min(at.y + blockH, tile.y + tile.h) - Math.max(at.y, tile.y);
@@ -889,27 +2756,11 @@ function connectorLabelBox(
   // which on a grid is the wrong shape: a clear slot a row away is well inside
   // it and sits right beside a different hop. So a candidate also has to stay
   // nearer its own line than anybody else's, which is exactly what a reader
-  // does when they match a chip to an arrow.
-  const ownSegments: { ax: number; ay: number; bx: number; by: number }[] = [];
-  for (let i = 1; i < route.points.length; i += 1) {
-    const a = toInches(route.points[i - 1], transform);
-    const b = toInches(route.points[i], transform);
-    ownSegments.push({ ax: a.x, ay: a.y, bx: b.x, by: b.y });
-  }
+  // does when they match a chip to an arrow. `ownSegments` and `toOwn` are
+  // declared with the cost functions above, which need them too.
   const nearby = obstacles.filter((tile) => tile.owner !== undefined && tile.owner !== ownerKey
     && tile.x - (limit + w) <= home.x + w && tile.x + tile.w + limit + w >= home.x
     && tile.y - (limit + blockH) <= home.y + blockH && tile.y + tile.h + limit + blockH >= home.y);
-  const toOwn = (cx: number, cy: number): number => {
-    let bestGap = Number.POSITIVE_INFINITY;
-    for (const seg of ownSegments) {
-      const dx = seg.bx - seg.ax;
-      const dy = seg.by - seg.ay;
-      const len = dx * dx + dy * dy;
-      const t = len > 0 ? Math.max(0, Math.min(1, ((cx - seg.ax) * dx + (cy - seg.ay) * dy) / len)) : 0;
-      bestGap = Math.min(bestGap, Math.hypot(cx - (seg.ax + t * dx), cy - (seg.ay + t * dy)));
-    }
-    return bestGap;
-  };
   const attributable = (at: { x: number; y: number }): boolean => {
     if (ownSegments.length === 0) return true;
     const cx = at.x + w / 2;
@@ -919,7 +2770,7 @@ function connectorLabelBox(
     // contains both belongs to neither, and on a chip with a badge it sits a
     // quarter inch below the text it is supposed to stand for.
     const sampleYs = blockH > h + 0.01
-      ? [at.y + h / 2, at.y + blockH - Math.min(0.1, blockH / 2)]
+      ? [textYAt(at.x, at.y) + h / 2, badgeYAt(at.x, at.y) + badgeD / 2]
       : [at.y + h / 2];
     for (const cy of sampleYs) {
       const mine = toOwn(cx, cy);
@@ -988,24 +2839,53 @@ function connectorLabelBox(
   // long step along it, and a search that only walks the diagonal steps
   // straight past it onto the next hop's corner.
   if (siblings <= 1) {
-    for (let ring = 1; bestScore > 0 && ring <= 10; ring += 1) {
-      for (let a = -ring; a <= ring && bestScore > 0; a += 1) {
-        for (let b = -ring; b <= ring; b += 1) {
-          if (Math.max(Math.abs(a), Math.abs(b)) !== ring) continue;
-          const candidate = place(stagger + a * (stepOut / 2), b * (w / 2 + 0.06));
-          if (!inReach(candidate) || !attributable(candidate)) continue;
-          const cost = score(candidate);
-          if (cost < bestScore) {
-            best = candidate;
-            bestScore = cost;
+    const alongStep = stepOut / 2;
+    const acrossStep = w / 2 + 0.06;
+    // Far enough to cross the whole drawing. `ring <= 10` was a budget in units
+    // of the chip's own size, which is the same mistake the ladder search made
+    // and had corrected: a chip that has already failed to place is by
+    // definition surrounded, so the clear paper it needs is rarely within ten
+    // of its own widths, and the walk stopped short of it every time. The
+    // ladder's answer works here unchanged — reach set by the page, and a
+    // coarse pass to find the clear region before a fine one finds the point,
+    // because scanning every lattice point out to the far edge is quadratic.
+    const reach = clampTo
+      ? Math.min(48, Math.ceil(Math.max(
+        clampTo.w / Math.max(alongStep, 0.05),
+        clampTo.h / Math.max(acrossStep, 0.05),
+      )))
+      : 10;
+    const rings = Math.max(10, reach);
+    const pass = (stride: number, centreA: number, centreB: number, span: number): void => {
+      const limit = Math.max(1, Math.ceil(span / stride));
+      for (let ring = 1; bestScore > 0 && ring <= limit; ring += 1) {
+        for (let a = -ring; a <= ring && bestScore > 0; a += 1) {
+          for (let b = -ring; b <= ring; b += 1) {
+            if (Math.max(Math.abs(a), Math.abs(b)) !== ring) continue;
+            const candidate = place(
+              stagger + (centreA + a * stride) * alongStep,
+              (centreB + b * stride) * acrossStep,
+            );
+            if (!inReach(candidate) || !attributable(candidate)) continue;
+            const cost = score(candidate);
+            if (cost < bestScore) {
+              best = candidate;
+              bestScore = cost;
+              bestA = centreA + a * stride;
+              bestB = centreB + b * stride;
+            }
+            if (bestScore <= 0) break;
           }
-          if (bestScore <= 0) break;
         }
       }
-    }
+    };
+    let bestA = 0;
+    let bestB = 0;
+    pass(4, 0, 0, rings);
+    if (bestScore > 0) pass(1, bestA, bestB, 4);
   }
   const badge = badgeD > 0
-    ? { x: best.x + w / 2 - badgeD / 2, y: best.y + h + badgeGap, d: badgeD }
+    ? { x: badgeXAt(best), y: badgeYAt(best.x, best.y), d: badgeD }
     : null;
   // Still standing on something. A chip is allowed to be wider than the gap it
   // labels, but when that width is the reason it has nowhere to go, wrapping it
@@ -1039,7 +2919,7 @@ function connectorLabelBox(
   // sentence against the same number — and that is strictly better than parking
   // it where it will be read as the label of a different arrow.
 
-  return { x: best.x, y: best.y, w, h, text, badge, block: { x: best.x, y: best.y, w, h: blockH, annotation: true }, alongX, fontSize, stuck: bestScore };
+  return { x: best.x, y: textYAt(best.x, best.y), w, h, text, badge, block: { x: best.x, y: best.y, w, h: blockH, annotation: true }, alongX, fontSize, stuck: bestScore };
 }
 
 function addConnectorLabel(
@@ -1059,15 +2939,146 @@ function addConnectorLabel(
     rectRadius: 0.03,
     fill: { color: 'FEF9C3', transparency: 8 },
     line: { color: 'FDE68A', width: 0.5 },
-    color: 'B45309',
+    // Amber-800, not amber-700. The chip is a fixed light yellow in both
+    // themes, but it is 8% translucent — so on a dark slide the backdrop
+    // darkens it to about #ECE8B8 and amber-700 lands at 4.02:1, under the
+    // WCAG AA bar. One step darker clears both composites with margin and is
+    // indistinguishable on the light one.
+    color: '92400E',
     fontSize,
     fontFace: 'Yu Gothic UI',
     align: 'center',
     valign: 'middle',
-    margin: 0.02,
+    margin: CHIP_INSET_IN * 72,
     wrap: true,
     objectName: `connector-label-${route.id}`,
   });
+}
+
+/**
+ * The widest a numbered callout may be drawn, from the two tiles the arrow it
+ * sits on runs between.
+ *
+ * PowerPoint sized its disc as `clamp(0.26 * px, 0.18, 0.42)`, which has a
+ * floor and a ceiling in absolute inches and no reference to the tile at all.
+ * `px` is the drawn width of 96 authored pixels, so on a tile of W authored px
+ * the ratio is `0.26 * 96 / W` and does not move with the scale: a 14px node
+ * drew a 0.3566in disc on a 0.2000in tile, 178% of the service it was calling
+ * out, and a 24px node drew one 104% of its tile. This is the same defect the
+ * drawing exporter was corrected for four times over, and it was live in the
+ * primary output format the whole time.
+ *
+ * Returns the legibility floor when a legible disc cannot also be a
+ * proportionate one. That case is real - the smallest circle that holds a
+ * readable digit is 0.18in, so a tile under about 0.33in drawn has no diameter
+ * that is both - and the answer is not to drop the callout: the workflow slide
+ * cites step numbers and every one of them has to be findable on the canvas,
+ * which is a promise the deck keeps and a rule the gate already enforces. The
+ * disc goes to the floor, and where even the floor is over the ceiling the
+ * gate reports the empty intersection against the TILE, which is the only
+ * object in that picture behaving badly.
+ */
+const BADGE_TILE_SHARE = 0.55;
+/**
+ * The smallest type a callout may be set in, in points.
+ *
+ * The deck's own legibility floor, the same constant the tile labels use. It
+ * is here rather than inline because the disc's floor is derived from it and
+ * the two must not drift.
+ */
+const BADGE_LEGIBLE_PT = LEGIBLE_TILE_PT;
+/**
+ * Diameter per inch of type, for a number of this many digits.
+ *
+ * PowerPoint lays a callout out as a text box centred in an ellipse, so the
+ * thing that has to fit is a box of `digits * 0.62` by `1.3` ems - the same
+ * model the gate's own bubble rule uses, and the line height is why this is
+ * not the drawing exporter's chord formula. The box is inscribed rather than
+ * merely contained, because a box that fits the bounding SQUARE still pushes
+ * its corners through the circle, and a tenth of the disc is kept as a ring
+ * because a white number with no dark disc behind it is not a callout.
+ *
+ * What this replaces is a FLAT 0.18in floor. A floor that does not move with
+ * the type it holds is not a legibility floor, it is a magic number that
+ * happens to be safe: for a 7pt digit the drawing exporter derived 0.1119in
+ * and PowerPoint used 0.18in, 61% larger, and that one constant was the whole
+ * of the 93%-versus-55% disagreement between the two formats on the same
+ * nine-node diagram.
+ */
+function badgeDiameterPerIn(digits: number): number {
+  return Math.hypot(Math.max(1, digits) * 0.62, 1.3) / 0.9;
+}
+function badgeFloorIn(stepNumber: number, fontPt: number): number {
+  const digits = String(Math.max(1, Math.abs(Math.trunc(stepNumber)))).length;
+  return (fontPt / 72) * badgeDiameterPerIn(digits);
+}
+/**
+ * The largest type that fits inside a disc of this diameter.
+ *
+ * The disc is sized by the tile and the type is then sized by the disc, so the
+ * two can never disagree. Before this the type was chosen from the chip beside
+ * it and the disc from a constant, which is why the file needs a rule watching
+ * for numbers that run outside their own bubble at all.
+ */
+function badgeFontPtFor(stepNumber: number, diameterIn: number): number {
+  const digits = String(Math.max(1, Math.abs(Math.trunc(stepNumber)))).length;
+  return (diameterIn / badgeDiameterPerIn(digits)) * 72;
+}
+/**
+ * The index row a service gets when its tile is on the canvas and carries no
+ * mark at all.
+ *
+ * A LOCATOR, not just a confession. `(drawn unlabelled)  =  Private DNS zone`
+ * tells the reader that one of the boxes in front of them is this service and
+ * nothing more, and it is the same string for every dark service in the deck,
+ * so on a drawing with several of them it does not even narrow the field. That
+ * is the whole of the reader's route on a 12px node sharing a drawing with
+ * 150px ones: measured on `probe-glyph12`, the authored name "Private DNS zone"
+ * occurs exactly ONCE in the entire export, in that row, while the service is
+ * cited by numbered steps 1 and 2.
+ *
+ * Naming it on the canvas is not available. A mark needs `MARKABLE_TILE_W_IN`,
+ * which for a 12px node is 0.0167 in/px, which draws its 150px neighbours 2.5in
+ * wide and shreds the deck to 24 slides with 19 of them carrying a single tile
+ * - the defect the planner's own bound exists to refuse. So the route is given
+ * where the deck already reserves room for exactly this: the index. The part
+ * label is the one the slide title already shows the reader, and the ordinal is
+ * reading order among the tiles on that slide, so both halves are things the
+ * reader can count off the page they are holding.
+ */
+const UNLABELLED_PREFIX = '(drawn unlabelled';
+const UNLABELLED_ROW = `${UNLABELLED_PREFIX})`;
+const unlabelledRow = (at: string): string => (at ? `${UNLABELLED_PREFIX}, ${at})` : UNLABELLED_ROW);
+
+function stepBadgeDiameterIn(route: ExportRoute, transform: FitTransform, px: number): number {
+  const step = route.stepNumber ?? 1;
+  const floor = badgeFloorIn(step, BADGE_LEGIBLE_PT);
+  const natural = clamp(0.26 * px, floor, 0.42);
+  const ends = [route.sourceW, route.targetW]
+    .filter((w) => typeof w === 'number' && w > 0)
+    .map((w) => w * transform.scale);
+  if (ends.length === 0) return natural;
+  // The narrower end, not the average. A disc that is proportionate to one tile
+  // and swamps the other is still swamping a tile.
+  const ceiling = Math.min(...ends) * BADGE_TILE_SHARE;
+  return Math.max(floor, Math.min(natural, ceiling));
+}
+
+/**
+ * Whether this hop's tiles admit no callout at all.
+ *
+ * Under `floor / 0.55` the legible diameter and the proportionate one do not
+ * intersect, so whatever is drawn is either unreadable or swamps the service
+ * it points at. Every slide but the overview can answer that by splitting
+ * further; the overview cannot, so it is the one place the callout is dropped.
+ */
+function stepBadgeConflicts(route: ExportRoute, transform: FitTransform): boolean {
+  const ends = [route.sourceW, route.targetW]
+    .filter((w) => typeof w === 'number' && w > 0)
+    .map((w) => w * transform.scale);
+  if (ends.length === 0) return false;
+  return Math.min(...ends) * BADGE_TILE_SHARE
+    < badgeFloorIn(route.stepNumber ?? 1, BADGE_LEGIBLE_PT) - 1e-6;
 }
 
 /**
@@ -1087,9 +3098,29 @@ function stepBadgeBox(
   obstacles: readonly Obstacle[] = [],
   ownGap?: (x: number, y: number) => number,
   foreignGap?: (x: number, y: number) => number,
+  thumbnail = false,
 ): { x: number; y: number; d: number } | null {
   if (route.stepNumber === undefined) return null;
-  if (chip?.badge) return chip.badge;
+  // Not on the overview, when the tile cannot carry one.
+  //
+  // The overview is the whole drawing shown small on one slide, so its tiles
+  // shrink with the size of the estate and no scale choice can rescue them: at
+  // 120 services the disc drew 56% of its tile, at 240 it drew 78%, and the
+  // trend has no end. Every other slide can be split until the tile is big
+  // enough; this one cannot, by construction.
+  //
+  // Dropping it costs nothing the reader needs. The overview is a locator - it
+  // exists so the reader can see where each part sits in the whole - and the
+  // numbered story is told on the reading windows, which is also where the
+  // rule requiring every cited step to be findable does its counting.
+  //
+  // Tried and reverted: dropping it on reading windows too, where the planner
+  // has refused the split and the disc comes out wider than its tile. That
+  // trades a swamped icon for a broken workflow band - the audit reported 20
+  // issues of the form "workflow cites steps 2, 3 with no callout on the
+  // canvas" - and a step the reader cannot locate at all is worse than one
+  // drawn too large. The fix has to be in the plan, not in the disc.
+  if (thumbnail && stepBadgeConflicts(route, transform)) return null;
 
   // No chip to hang off: either an unlabelled but numbered hop, or one whose
   // wording was muted because it had nowhere legible to stand. The anchor is
@@ -1098,20 +3129,69 @@ function stepBadgeBox(
   // icon is the one thing on the slide the workflow list cannot survive
   // without. So walk outwards for a clear slot the way a chip does.
   const anchor = toInches(route.labelAnchor, transform);
-  const d = clamp(0.26 * px, 0.18, 0.42);
+  const d = stepBadgeDiameterIn(route, transform, px);
   const fit = (x: number, y: number): { x: number; y: number } => (clampTo
     ? {
       x: clamp(x, clampTo.x, Math.max(clampTo.x, clampTo.x + clampTo.w - d)),
       y: clamp(y, clampTo.y, Math.max(clampTo.y, clampTo.y + clampTo.h - d)),
     }
     : { x, y });
+  // A number printed over another number cannot be read at all, while a number
+  // over the corner of a tile can. So overlapping an existing annotation — a
+  // chip block or an already-placed callout — is priced far above overlapping
+  // a service. Without this the walk's own lattice, which is finer than the
+  // disc it places, let a muted fan stack two callouts on each other: the
+  // overlap was real but cost less than the clear slot further out.
+  const ANNOTATION_OVERLAP_WEIGHT = 8;
+  // A disc entirely inside one tile is not a callout any more — it reads as
+  // that service's own badge, and the step list then describes a hop the
+  // reader cannot find. A disc straddling the gutter between two tiles covers
+  // almost the same area but is still unmistakably a callout, so plain area is
+  // blind to the difference that matters. On a dense grid there is no clear
+  // paper within reach at all, so without this the walk had no reason to move
+  // and left the number in the middle of a service. Priced under the
+  // misattribution penalty below: a number swallowed whole by a tile is *also*
+  // misattributed — it reads as that service's own badge — so escaping is worth
+  // slightly more than the price of landing near a stranger's arrow, where at
+  // least the digit is still legible.
+  const FULL_BURIAL_WEIGHT = 5;
+  const deepest = (at: { x: number; y: number }, dd: number): number => {
+    let worst = 0;
+    for (const other of obstacles) {
+      if (other.annotation) continue;
+      const dx = Math.min(at.x + dd, other.x + other.w) - Math.max(at.x, other.x);
+      const dy = Math.min(at.y + dd, other.y + other.h) - Math.max(at.y, other.y);
+      if (dx > 0 && dy > 0) worst = Math.max(worst, (dx * dy) / (dd * dd));
+    }
+    return worst;
+  };
+  // A number hanging off its own chip is the best outcome there is, so the
+  // chip's placement is taken whenever it is legible. But the disc is nailed
+  // to the chip and can only slide along it, so on a grid whose gutters are
+  // narrower than the disc the block comes to rest where the WORDING fits and
+  // the number ends up buried in a tile — where it reads as that service's own
+  // badge and the step list describes a hop the reader cannot find. A buried
+  // disc is worth less than a free-standing one, so it falls through to the
+  // walk below, which prices burial and misattribution against each other
+  // instead of being unable to move at all.
+  //
+  // The bar is 0.7, not the 0.9 the walk itself uses. The two are asking
+  // different questions. The walk's is "is this candidate slot ruined", and it
+  // is choosing between real alternatives, so a near-miss there is genuinely
+  // survivable. This one is "is the chip's slot so much better than anything
+  // the walk could find that the walk need not even run", and 87% inside a
+  // tile — the residue a grid one node wider than `tight-grid` leaves — is not.
+  // Falling through does not commit the disc to moving: the walk keeps it
+  // where it is unless it finds something better.
+  if (chip?.badge && deepest(chip.badge, chip.badge.d) < 0.7) return chip.badge;
   const cover = (at: { x: number; y: number }): number => {
     let sum = 0;
     for (const other of obstacles) {
       const dx = Math.min(at.x + d, other.x + other.w) - Math.max(at.x, other.x);
       const dy = Math.min(at.y + d, other.y + other.h) - Math.max(at.y, other.y);
-      if (dx > 0 && dy > 0) sum += dx * dy;
+      if (dx > 0 && dy > 0) sum += dx * dy * (other.annotation ? ANNOTATION_OVERLAP_WEIGHT : 1);
     }
+    sum += deepest(at, d) >= 0.9 ? FULL_BURIAL_WEIGHT * d * d : 0;
     return sum;
   };
   // A muted hop has nothing left but this number, so where it lands decides
@@ -1126,8 +3206,15 @@ function stepBadgeBox(
     if (!ownGap || !foreignGap) return 0;
     const cx = at.x + d / 2;
     const cy = at.y + d / 2;
-    return foreignGap(cx, cy) < ownGap(cx, cy) - 0.1 ? 0.5 * d * d : 0;
+    if (foreignGap(cx, cy) >= ownGap(cx, cy) - 0.1) return 0;
+    // For a hop whose wording was muted this number is the whole label: the
+    // step list describes an arrow, and if the number sits nearer a different
+    // one the sentence is simply attached to the wrong hop. There is no chip
+    // beside it to say otherwise, so for a bare callout misattribution is
+    // priced above being covered rather than at half of it.
+    return (chip ? 0.5 : 4) * d * d;
   };
+
   const cost = (at: { x: number; y: number }): number => cover(at) + misread(at);
   let spot = fit(anchor.x - d / 2, anchor.y - d / 2);
   let spotCover = cost(spot);
@@ -1146,9 +3233,12 @@ function stepBadgeBox(
       }
     }
   }
+  // Falling through is not the same as leaving. If the walk cannot better the
+  // chip's own slot — which on a drawing with no clear paper at all is the
+  // usual outcome — the disc stays where it belongs, beside its wording.
+  if (chip?.badge && cost(chip.badge) <= spotCover) return chip.badge;
   return { x: spot.x, y: spot.y, d };
 }
-
 function addStepBadge(
   slide: Slide,
   route: ExportRoute,
@@ -1157,6 +3247,11 @@ function addStepBadge(
 ): void {
   if (!box) return;
   const { x, y, d } = box;
+  // Sized by the disc, not by the chip beside it. The disc is sized by the
+  // tile, so a callout on a small service gets a small disc, and type chosen
+  // independently of it is type that runs to the rim or over it. Never larger
+  // than asked for, so an ordinary deck is byte-identical.
+  const fits = Math.min(fontSize, badgeFontPtFor(route.stepNumber ?? 1, d));
 
   slide.addText(String(route.stepNumber), {
     x,
@@ -1168,7 +3263,7 @@ function addStepBadge(
     line: { color: 'FFFFFF', width: 1.25 },
     color: 'FFFFFF',
     bold: true,
-    fontSize,
+    fontSize: fits,
     fontFace: 'Yu Gothic UI',
     align: 'center',
     valign: 'middle',
@@ -1226,6 +3321,24 @@ function placeBox(
   };
 }
 
+/**
+ * Records that `mark` is what some slide actually drew for the service authored
+ * as `authored`.
+ *
+ * A service can be drawn more than once in a tiled deck - small on the overview
+ * and larger on its reading slide - and the two tiles are different widths, so
+ * the same name legitimately shortens to two different stubs. Keeping only the
+ * longest of them left the other one drawn on a tile and defined nowhere, which
+ * is the exact defect the index exists to prevent. Every distinct stub is
+ * recorded, and the index row lists them all against the one name they mean.
+ */
+function recordMark(into: Map<string, Set<string>> | undefined, authored: string, mark: string): void {
+  if (!into) return;
+  const marks = into.get(authored);
+  if (marks) marks.add(mark);
+  else into.set(authored, new Set([mark]));
+}
+
 function addNodeShape(
   pptx: PptxGenJS,
   slide: Slide,
@@ -1239,7 +3352,31 @@ function addNodeShape(
    * are carried by those slices, so the thumbnail shows the shapes.
    */
   thumbnail = false,
-): void {
+  /**
+   * The strings already drawn on THIS slide.
+   *
+   * A shortened name is a lookup key into the index slide, and the reader
+   * cannot see the index and the drawing at the same time, so the drawing has
+   * to be self-consistent on its own. Eight services sharing a long prefix on
+   * narrow tiles all cut to the same stub, and four of them cut all the way to
+   * a bare ellipsis, which tells the reader nothing and leaves four index rows
+   * unmatchable. Passing what has already been drawn lets a colliding tile fall
+   * back to a numeric key: unique, narrower than most letters, and resolved on
+   * the index slide exactly as any other stub is.
+   */
+  drawnHere?: Map<string, string>,
+  /** Stable, deck-global ordinals so a key means the same thing on every slide. */
+  keyOrdinal?: Map<string, number>,
+): {
+  /** The box the service NAME is drawn in, not the room left over for it. */
+  caption: { x: number; y: number; w: number; h: number } | null;
+  /** The box the SKU / region / price sub-line is drawn in, when it is shown. */
+  meta: { x: number; y: number; w: number; h: number } | null;
+  /** The authored name, when the tile could not hold all of it. */
+  clipped: string | null;
+  /** What the tile actually drew, which is the key the index is looked up by. */
+  drawn: string;
+} {
   const topLeft = placeBox(box, transform, clampTo);
   const w = topLeft.w;
   const h = topLeft.h;
@@ -1267,7 +3404,19 @@ function addNodeShape(
   const pad = Math.min(0.06, h * 0.09);
   // Every typographic dimension is proportional to the drawing scale, so the
   // number of wrapped lines is identical whatever size the diagram is drawn at.
-  const fontSize = clamp(h * 12, 4, 13);
+  //
+  // The floor differs by what the slide is for. A thumbnail may go below the
+  // legibility floor because the `named` test below then takes the name off it
+  // entirely and the slice that follows carries it in full. A window slide has
+  // no later slice — it *is* the readable view — so a tile too short for
+  // legible type must still get legible type. The planner's whole contract is
+  // that the grid it picks clears `LEGIBLE_TILE_PT` for the shortest service on
+  // the sheet, but when no grid can (one 20px node among eighty-one ordinary
+  // ones is enough, because the shortest tile sets the target for all of them)
+  // it returns the best grid it found and this clamp quietly drew that tile's
+  // name at four points. Two floors for one contract, and only the planner's
+  // was ever checked.
+  const heightFontSize = clamp(h * 12, thumbnail ? 4 : LEGIBLE_TILE_PT, 13);
   // At 72 services the overview clamps this to 4pt, which is not small type —
   // it is grey ink the reader cannot resolve, and it makes the thumbnail
   // harder to read rather than more informative. The overview exists to show
@@ -1275,28 +3424,278 @@ function addNodeShape(
   // slices of it, and every one of those names appears in full on the slice
   // that follows, so below the resolvable floor the thumbnail draws the icon
   // and the tile and leaves the naming to them.
-  const named = !thumbnail || h * 12 >= OVERVIEW_LEGIBLE_PT;
+  // Width, as well as height, and on every slide rather than only the overview.
+  // The height test asks whether the type would be resolvable; this asks
+  // whether the tile has a column to set it in. A tile 0.08in wide draws "…",
+  // which names nothing — the same empty claim a zone caption cut to "P…"
+  // makes, and it is refused one function below for exactly that reason.
+  //
+  // Four characters is the bar the gate uses (`charsPerLine < 4`), so the
+  // drawing and the thing that checks it cannot disagree about when a name has
+  // stopped being a name. Below it the tile is icon-and-box, and `clipped`
+  // sends the full name to the index slide, which is where a cut tile name has
+  // always been recoverable.
+  //
+  // Measured against the SMALLEST font the tile is willing to draw, not the
+  // one its height implies. `fontSize` comes from the height, so testing the
+  // width against it made a taller tile demand a wider column: past
+  // h = 1.0833in the bar saturates at 4 x 13/72 = 0.7222in and every tile
+  // narrower than 0.7822in lost its name however tall it was. A 0.7813 x
+  // 3.1250in tile — 2.44 square inches — missed by 0.0009in and drew no text
+  // at all, while at 7pt the same column sets 7.9 capitals per line with 33
+  // lines of room. That is the "this size doesn't fit" mistake rather than
+  // "no legible size fits"; the name shrink loop below is what comes down to
+  // meet it, exactly as the Visio exporter already does.
+  const nameFloorPt = thumbnail ? OVERVIEW_LEGIBLE_PT : LEGIBLE_TILE_PT;
+  const nameColumn = Math.max(0.05, w - 0.06);
+  // Two of the widest glyph the name actually contains, which is the same bar
+  // the stub below and the connector chips already use.
+  //
+  // "Four characters" charged a flat 1 em to every glyph, so it was strictly
+  // harsher than any real string except solid CJK, and it disagreed with the
+  // stub bar sitting a few lines away: at a 0.377in width an ICON-LESS tile
+  // drew its name in full while an ICONED one of the same size drew nothing —
+  // even though the iconed tile passes the two-glyph test with room for 3.8
+  // characters a line. The cross-format rule caught it as a divergence from
+  // Visio, which named both; two tiles of 0.57 square inches were losing their
+  // names to an arithmetic accident rather than to a legibility limit.
+  const namedWidth = drawableInColumn(box.label, nameFloorPt, nameColumn);
+  // And once the tile is allowed to draw its name, the name is set at a size
+  // the COLUMN can hold, not only one the height implies. A 0.78in-wide tile
+  // is 13pt tall enough and 2.9 characters wide, so the height-derived size
+  // set "Azure Firewall Premium" three characters to a line down a shape that
+  // had room for eight at the floor. This is the same shrink Visio does before
+  // it decides whether to draw at all.
+  const fontSize = Math.max(
+    nameFloorPt,
+    Math.min(heightFontSize, Math.floor((nameColumn / 4) * 72 * 10) / 10),
+  );
+  const named = (!thumbnail || h * 12 >= OVERVIEW_LEGIBLE_PT) && namedWidth;
   // Giving up the name only works when the icon is left to carry the tile. A
   // service with no icon would otherwise be drawn as an empty grey box, which
   // says strictly less than type that is merely small. So the name comes back
   // at exactly the floor, cut to what the tile can hold: a short legible word
   // beats both an empty box and a paragraph of grey mush.
   const stub = !named && !icon;
-  const drawnFont = named ? fontSize : OVERVIEW_LEGIBLE_PT;
+  // Reassigned below when the name has to give type size back to the icon.
+  // The floor is the slide's own, not the overview's: handing a reading slide
+  // OVERVIEW_LEGIBLE_PT drew stub names at 6pt, under the 7pt floor the line
+  // above enforces and under the gate's own `minFont < 7` rule.
+  let drawnFont = named ? fontSize : nameFloorPt;
   const meta = metaSubline(box);
   const metaFontSize = clamp(fontSize - 2, 3.5, 9);
-  const metaBand = named && showsMeta(h, px) && !!meta ? fontSize * 1.55 / 72 + 0.03 : 0;
+  // Sized from the sub-line's own font, not the name's. Deriving the band from
+  // `fontSize` reserved 0.232in for a line needing 0.117in on every tile in the
+  // corpus, and on a tight deck that phantom 0.05-0.09in was the whole reason
+  // the icon did not fit and was dropped.
+  let metaBand = named && showsMeta(h, px) && !!meta ? metaFontSize * 1.55 / 72 + 0.03 : 0;
 
-  const innerW = Math.max(0.05, w - 0.06);
-  const full = truncateLabel(box.label, 40);
+  // Floored above one ellipsis at the 7pt type floor (0.0525in), not at an
+  // arbitrary 0.05in: below that the fitter's own last resort does not fit the
+  // column it is being fitted to, which is a contradiction the shrink loop
+  // used to spin on.
+  const innerW = Math.max(0.06, w - 0.06);
+  // How much of the name the tile can actually hold, rather than a flat 40
+  // cells. The flat cap clipped names a three-line tile had ample room for —
+  // "Azure Database for PostgreSQL フレキシ…" on a tile that fits the whole
+  // thing — and what it cut was not written down anywhere, so the reader had
+  // no way to recover it. Cut to the tile, and only when the tile is really
+  // too small.
+  //
+  // Fitted to the *lines* the tile has, not to `innerW * nameLines` of total
+  // ink. Word wrap abandons the tail of a line whenever the next word will not
+  // fit, so a name whose ink fits three lines routinely draws four or five:
+  // "Azure Kubernetes Service Automatic cluster" was admitted whole at 13pt on
+  // a 160x110 tile, drew 5 lines of a 3-line box, and painted 0.224in — all of
+  // it — straight through the "P1v3 · eastus" sub-line below.
+  const nameLines = Math.max(1, Math.floor((h - pad * 2 - metaBand) / ((fontSize * 1.35) / 72)));
+  const linesIn = (text: string, columnIn: number, sizeIn: number): number => wrappedLineCount(text, columnIn, sizeIn * 72);
+  const full = fitLabelToLines(box.label, innerW, fontSize / 72, nameLines, linesIn);
   // A stub gets as much of the name as fits the tile at the floor size, on as
   // many lines as the tile is tall enough for, and an ellipsis for the rest.
+  //
+  // Measured at the size it is PAINTED at. `drawnFont` moved to the reading
+  // slide's 7pt floor last round and these two measurements did not, so the
+  // string was fitted at 6pt and drawn at 7 — 16.7% under-measured in width,
+  // in line height and in the line count. A 0.177 x 0.965in tile kept 14
+  // characters where 6pt fitting said 8 lines would fit and only 7 do, and
+  // painted 0.104in — one whole line — below its own box and 0.044in past the
+  // bottom of the tile.
   const stubLines = stub
-    ? Math.max(1, Math.floor((h - pad * 2) / ((OVERVIEW_LEGIBLE_PT * 1.22) / 72)))
+    ? Math.max(1, Math.floor((h - pad * 2) / ((drawnFont * 1.35) / 72)))
     : 0;
-  const label = stub ? fitLabelToBox(full, innerW * stubLines, OVERVIEW_LEGIBLE_PT) : full;
-  const labelLines = named ? Math.max(1, Math.ceil(estimateTextWidthIn(label, fontSize) / innerW)) : 0;
-  const labelBlockH = (labelLines * fontSize * 1.22) / 72;
+  const labelLinesFor = (text: string): number => (named ? wrappedLineCount(text, innerW, fontSize) : 0);
+  let label = stub ? fitLabelToLines(full, innerW, drawnFont / 72, stubLines, linesIn) : full;
+  // And a stub whose column cannot hold two of its own widest glyph draws
+  // nothing at all. `namedWidth` has just decided this column is too narrow
+  // for a name; drawing one anyway with no column test at all was the same
+  // "a chip narrower than one letter is not a small chip, it is a broken one"
+  // artefact, one function away. At 0.080in and 0.060in the widest glyph in
+  // the drawn string is the ellipsis — 1.0 em, WIDER than the whole column —
+  // so nothing can set on one line and PowerPoint centres each glyph and
+  // overflows both sides. The premise that an icon-less tile says less than
+  // small type fails once no glyph fits at all, and the whole name is already
+  // on the index slide by the route `clipped` takes.
+  if (stub && innerW < 2 * widestGlyphIn(label, drawnFont)) label = '';
+  // Counted by wrapping, not by dividing total ink by the column. The ratio is
+  // the break-anywhere assumption: it says how many lines the ink would need if
+  // words could be split at any character, which is a lower bound and never the
+  // answer. `labelBlockH` feeds the icon size and the top-aligned text box, so
+  // under-counting here is what let the surplus lines out of the box.
+  let labelLines = labelLinesFor(label);
+  let labelBlockH = (labelLines * fontSize * 1.35) / 72;
+
+  const iconFloor = 0.08 * px;
+  // And if the name is what is crowding the icon out, the name yields — not the
+  // icon. The same reasoning as the sub-line above, one step further: on the
+  // Architecture Center the icon is what says which service a tile is, and it
+  // is the one thing on the tile that cannot be recovered anywhere else. A tile
+  // that loses its icon is a grey box of type; a name set two points smaller is
+  // still the whole name.
+  //
+  // Type size first, and characters only if that is not enough. Dropping a line
+  // outright looks equivalent — both free the same room — but it is not: on an
+  // inventory of names that differ only in their last token it cut six
+  // distinct services down to one drawn string, which is a worse failure than
+  // either a small name or a missing icon. Shrinking keeps every character.
+  // Counting the lines honestly is what made this reachable at all: the old
+  // ratio under-counted the block, so the icon kept a share of the tile the
+  // words were already using.
+  const squeeze = (band: number): {
+    font: number; label: string; lines: number; blockH: number; band: number; room: number;
+  } => {
+    let font = fontSize;
+    const asks = Math.max(1, Math.floor((h - pad * 2 - band) / ((fontSize * 1.35) / 72)));
+    let text = fitLabelToLines(box.label, innerW, font / 72, asks, linesIn);
+    let count = Math.max(1, wrappedLineCount(text, innerW, font));
+    let blockH = (count * font * 1.35) / 72;
+    const room = (): number =>
+      Math.min(h * 0.42, w * 0.34, Math.max(0, h - pad * 2 - band - blockH - 0.02));
+    while (font > LEGIBLE_TILE_PT && room() < iconFloor) {
+      font = Math.max(LEGIBLE_TILE_PT, font - 0.5);
+      text = fitLabelToLines(box.label, innerW, font / 72, asks, linesIn);
+      count = Math.max(1, wrappedLineCount(text, innerW, font));
+      blockH = (count * font * 1.35) / 72;
+    }
+    // `count` is both the loop's control variable AND re-derived from a
+    // measurement inside the body, so the body can put it back UP — and a
+    // `while` on a value the body re-measures cannot be proved to terminate.
+    // It did not: at the type floor `fitLabelToLines` returns "…", which is
+    // 0.0733in at 7pt and does not fit `innerW`'s own 0.06in floor, so a
+    // request for ONE line measures as two, and 2 → 1 → 2 → 1 forever. The
+    // exit condition cannot save it either, because the room is capped by
+    // `w * 0.34`, which does not depend on the font.
+    //
+    // This hangs the tab synchronously for any tile narrower than 0.133in at
+    // 7pt: no error, no watchdog, no way to close the page. File → Load
+    // reaches it, because the restore validator never checks `width`.
+    //
+    // So drive the loop by the REQUEST, which only ever falls, and stop the
+    // moment asking for fewer lines stops producing fewer.
+    let asked = count;
+    while (asked > 1 && room() < iconFloor) {
+      asked -= 1;
+      const shorter = fitLabelToLines(box.label, innerW, font / 72, asked, linesIn);
+      const measured = Math.max(1, wrappedLineCount(shorter, innerW, font));
+      if (measured >= count) break;
+      text = shorter;
+      count = measured;
+      blockH = (count * font * 1.35) / 72;
+    }
+    return { font, label: text, lines: count, blockH, band, room: room() };
+  };
+  let nameFont = fontSize;
+  if (icon && named && !stub) {
+    // Which of the three things a tile carries yields when it cannot hold all
+    // three. The sub-line used to be dropped FIRST, at full-size type, on the
+    // reasoning that the icon outranks it — which is true, and was the wrong
+    // conclusion, because it never asked whether the icon needed it. Charging
+    // a space the width it draws made names one line taller across the corpus
+    // and the rule then deleted the SKU and the region from every tile in a
+    // scenario that exists to carry them, while the name sat at full size.
+    //
+    // A name set half a point smaller is still the whole name; a deleted
+    // sub-line is information the tile cannot get back and that nothing else
+    // in the deck carries. So the free move is tried first, and the sub-line
+    // is dropped only when shrinking the name does not save the icon AND
+    // dropping it does.
+    const withMeta = squeeze(metaBand);
+    let chosen = withMeta;
+    if (metaBand > 0 && withMeta.room < iconFloor) {
+      const withoutMeta = squeeze(0);
+      if (withoutMeta.room >= iconFloor) chosen = withoutMeta;
+    }
+    metaBand = chosen.band;
+    nameFont = chosen.font;
+    label = chosen.label;
+    labelLines = chosen.lines;
+    labelBlockH = chosen.blockH;
+    drawnFont = nameFont;
+  }
+
+  // A KEY THAT REPEATS IS NOT A KEY, and this is the LAST word on what the tile
+  // draws - the squeeze above re-picks the label to save the icon, so checking
+  // any earlier reads a string that is then thrown away. Everything above
+  // decides what THIS tile can hold; none of it can see what the tile beside it
+  // drew. Once a name is shortened it stops being a name and becomes a lookup
+  // key into the index slide, and two tiles holding the same key - or holding
+  // none at all - are indistinguishable to a reader who cannot see the index
+  // and the drawing at the same time. Eight services sharing a long prefix cut
+  // to a bare ellipsis and four of them landed on one slide. Lengthening is not
+  // always available: a column with room for 1.79 characters has nothing to
+  // lengthen into. A number is, and it is narrower than most letters.
+  // Compared against the AUTHORED name, not against `full` - `full` is itself
+  // already the fitted string, so the two are equal on exactly the tiles that
+  // cut the hardest and the test excluded the only case it was written for.
+  const authoredLabel = String(box.label ?? '').trim();
+  // The legibility test has to be applied to the string that is ACTUALLY drawn.
+  // `namedWidth` asks whether the tile can set `box.label`, whose widest glyph
+  // is an ordinary letter; what lands on a hard-cut tile is "…", whose glyph is
+  // 1.0 em - 0.071in against 0.052in - so a column judged wide enough for the
+  // name was 0.045in too narrow for the mark it ended up carrying, and four
+  // tiles drew an ellipsis the gate then reported as illegible. The stub branch
+  // has always been guarded this way; this is the same guard applied to the
+  // final string rather than to one of the two paths that produce it, and it is
+  // placed after the icon-saving squeeze because that squeeze re-picks the
+  // label - anything earlier tests a string that is then thrown away.
+  if (label && innerW < 2 * widestGlyphIn(label, drawnFont)) label = '';
+  // A bare ellipsis is not a short name, it is an absent one: it carries no
+  // character of the service it stands for, so it is exactly as useful as a
+  // blank tile and no more distinguishable. Anything with no letter or digit in
+  // it fails as a lookup key for the same reason a repeated one does.
+  const informative = /[\p{L}\p{N}]/u.test(label);
+  const claimed = drawnHere?.get(label);
+  // Whether the KEY is the only thing this tile will carry. An iconed tile
+  // below the naming floor draws no text at all - the icon and the box are
+  // meant to carry it - which is sound while the icon says something the tile
+  // beside it does not. Eight instances of one service defeat that: eight
+  // identical icons, eight names too long for the column, and nothing on the
+  // drawing to tell any of them from any other. A single digit is not a name
+  // and is not asked to be one; it is the smallest mark that identifies, and
+  // the index defines it.
+  let keyed = false;
+  if (drawnHere && label !== authoredLabel
+    && (!informative || (claimed !== undefined && claimed !== authoredLabel))) {
+    const key = `${keyOrdinal?.get(String(box.id)) ?? drawnHere.size + 1}`;
+    // TWO of the key's widest glyph, the same bar the gate's legibility rule
+    // uses. Relaxing it to one - on the argument that a single character cannot
+    // stack down the side of a tile - drew digits the gate then reported as
+    // illegible in a 0.065in box, so the renderer and the thing that checks it
+    // disagreed about the same quantity. The narrow tile is fixed where it is
+    // caused instead: `MARKABLE_TILE_W_IN` lifts the transform cap so the tile
+    // arrives wide enough to carry the key in the first place.
+    const room = 2 * widestGlyphIn(key, drawnFont);
+    // And the room to SET it: one line at the floor. Without this the key is
+    // drawn in a box taller than the tile and overhangs its neighbours.
+    const lineH = (drawnFont * 1.35) / 72;
+    if (innerW >= room && h >= lineH) {
+      label = key;
+      keyed = !named && !stub;
+      labelLines = Math.max(1, labelLinesFor(label));
+      labelBlockH = (labelLines * drawnFont * 1.35) / 72;
+    }
+  }
+  if (drawnHere && label) drawnHere.set(label, authoredLabel);
 
   // Fit the icon into whatever vertical room the label does not need, instead
   // of forcing a minimum that pushes the text out of the tile.
@@ -1326,12 +3725,44 @@ function addNodeShape(
   const textTop = iconSize > 0 ? topLeft.y + pad + iconSize + 0.02 : topLeft.y + pad;
   const textHeight = Math.max(0.08, topLeft.y + h - pad - metaBand - textTop);
 
-  if (named || stub) {
+  let captionBand: { x: number; y: number; w: number; h: number } | null = null;
+  if ((named || stub || keyed) && label !== '') {
+    const boxY = stub ? topLeft.y + pad : textTop;
+    const boxH = stub ? Math.max(0.08, h - pad * 2) : textHeight;
+    // The box the words are drawn in, not the room left over for them. With no
+    // icon the leftover room is nearly the whole tile, and a caption box that
+    // claims the whole tile tells every later pass nothing: a chip weighed
+    // against it is weighed against the tile it already knew about, and a rule
+    // measuring "how much of the name is covered" is really measuring the tile.
+    // Vertically centred text inside a shrunk, centred box draws in exactly the
+    // same place, so this describes the caption without moving it.
+    //
+    // The band is what the type needs, not what the tile has. Clamping it to
+    // the tile was right while type was derived from the tile, because then it
+    // always fit; now that a window tile's type is floored at the legibility
+    // limit however short the tile is, a collapsed node's 0.08in box carries a
+    // 7pt line needing 0.12in, and clamping described a line that reaches past
+    // the band it was measured in. On every ordinary tile the type still fits
+    // and this is exactly the old value.
+    const needH = Math.max(0.08, (Math.max(1, labelLines) * drawnFont * 1.35) / 72);
+    const drawnH = needH;
+    // Growing the band grows the box the words are actually drawn in, kept
+    // centred on the tile so a sliver's name overhangs evenly instead of
+    // hanging off one edge. Identical to `boxY`/`boxH` whenever the type fits.
+    const textBoxH = Math.max(boxH, needH);
+    const textBoxY = boxY - (textBoxH - boxH) / 2;
+    const topAligned = !stub && iconSize > 0;
+    captionBand = {
+      x: topLeft.x + 0.03,
+      y: topAligned ? boxY : textBoxY + (textBoxH - drawnH) / 2,
+      w: innerW,
+      h: drawnH,
+    };
     slide.addText(label, {
       x: topLeft.x + 0.03,
-      y: stub ? topLeft.y + pad : textTop,
+      y: topAligned ? boxY : textBoxY,
       w: innerW,
-      h: stub ? Math.max(0.08, h - pad * 2) : textHeight,
+      h: topAligned ? boxH : textBoxH,
       fontSize: drawnFont,
       color: '1F2937',
       fontFace: 'Yu Gothic UI',
@@ -1343,14 +3774,62 @@ function addNodeShape(
       objectName: `service-label-${box.id}`,
     });
   }
+  let metaBandRect: { x: number; y: number; w: number; h: number } | null = null;
   if (metaBand > 0 && meta) {
-    slide.addText(truncateLabel(meta, 44), {
+    // Fitted to the tile, not to a flat 44 characters. This line is
+    // `wrap: false`, so a string the tile cannot hold does not wrap or clip —
+    // it is drawn centred at its full natural width and spills out of both
+    // sides of the tile, over whatever the neighbours put there. A count of
+    // characters cannot know that: "P1v3 · japaneast · $9.60/mo" and
+    // "Standard_D4s_v5 · japaneast · $128.40/mo" are both under 44 and only
+    // one of them fits.
+    //
+    // Shrink before cutting. Every character of a SKU, a region and a price is
+    // load-bearing and none of it is recoverable from an ellipsis, so a point
+    // of type is a far better trade than the end of the string.
+    let metaPt = metaFontSize;
+    while (metaPt > META_LEGIBLE_PT && estimateTextWidthIn(meta, metaPt) > innerW) {
+      metaPt = Math.max(META_LEGIBLE_PT, metaPt - 0.5);
+    }
+    // Still too wide at the smallest legible size. Drop whole facts from the
+    // least essential end rather than cutting mid-token: "Standard_D4s_v…" is
+    // a SKU nobody can look up, while "Standard_D4s_v5 · japaneast" is two
+    // true statements and the price it dropped is on the cost slides. A tile
+    // too small for even one whole fact carries none — an ellipsis there would
+    // only claim to say something it does not.
+    let shown = meta;
+    if (estimateTextWidthIn(shown, metaPt) > innerW) {
+      const facts = meta.split(' · ');
+      shown = '';
+      while (facts.length > 1) {
+        facts.pop();
+        const candidate = facts.join(' · ');
+        if (estimateTextWidthIn(candidate, metaPt) <= innerW) { shown = candidate; break; }
+      }
+      if (shown === '' && facts.length === 1 && estimateTextWidthIn(facts[0], metaPt) <= innerW) shown = facts[0];
+    }
+    const drawnW = Math.min(innerW, estimateTextWidthIn(shown, metaPt));
+    // The height of the glyphs, not of the band. The line is bottom-aligned in
+    // a band sized for the tile, so the room above the words holds nothing —
+    // and an obstacle that claims it makes every "how deep is this bite" test
+    // read shallower than what is actually drawn.
+    const drawnH = Math.min(metaBand, (metaPt * 1.35) / 72);
+    metaBandRect = {
+      x: topLeft.x + 0.03 + (innerW - drawnW) / 2,
+      y: topLeft.y + h - pad - drawnH,
+      w: drawnW,
+      h: drawnH,
+    };
+    if (shown === '') metaBandRect = null;
+    else slide.addText(shown, {
       x: topLeft.x + 0.03,
       y: topLeft.y + h - pad - metaBand,
       w: innerW,
       h: metaBand,
-      fontSize: metaFontSize,
-      color: '64748B',
+      fontSize: metaPt,
+      // The tile fill is category-dependent, so a fixed grey reads at 4.26:1 on
+      // the lighter categories. Derive it from the panel it is printed on.
+      color: stripHash(readableTextOn('#64748B', `#${stripHash(palette.bg)}`)),
       fontFace: 'Yu Gothic UI',
       align: 'center',
       valign: 'bottom',
@@ -1359,6 +3838,20 @@ function addNodeShape(
       objectName: `service-meta-${box.id}`,
     });
   }
+  return {
+    caption: captionBand,
+    meta: metaBandRect,
+    // A name the tile refused to set at all is as lost as one it cut, and it is
+    // the index slide that gets it back either way.
+    clipped: !named && box.label ? box.label : (label === box.label ? null : box.label),
+    // What the tile ACTUALLY drew. Reporting the label the sizing arrived at
+    // made the index define marks that appear on no shape in the file: an
+    // iconed tile below the naming floor emits no text at all, and the index
+    // still printed the string that tile would have drawn if it had. An index
+    // row promising a mark the reader cannot find is worse than one admitting
+    // the name was never drawn, which is what an empty mark prints.
+    drawn: (named || stub || keyed) ? label : '',
+  };
 }
 
 /** The SKU · region · cost sub-line only earns its space on a legible tile. */
@@ -1376,24 +3869,39 @@ function addGroupShape(
   clampTo?: DiagramFrame,
   /** Members of this zone on this slide, and in the drawing as a whole. */
   held?: { here: number; all: number },
-): void {
+  /** Where the tiles already landed, so a title is not written on top of one. */
+  occupied?: readonly { x: number; y: number; w: number; h: number }[],
+  /** The other zones, which a title may never be written inside. */
+  foreign?: readonly { x: number; y: number; w: number; h: number }[],
+  /**
+   * Where the arrow labels want to sit. Not forbidden — merely expensive.
+   *
+   * A caption and a chip are placed by two searches that ran without knowing
+   * about each other, and both prefer the same clear paper: the corridor
+   * between two rows of tiles. The caption is drawn first, so the chip loses,
+   * and the chip has nowhere to fall back to when its route carries no step
+   * number — the wording would simply be gone. Charging the caption for the
+   * corridor lets it step aside while it still has other rows to take, and
+   * lets it stand its ground when it does not.
+   */
+  /** Cut names, spelled out in full on the index slide. */
+  truncatedNames?: Map<string, Set<string>>,
+): { caption: { x: number; y: number; w: number; h: number } } {
   const topLeft = placeBox(box, transform, clampTo, true);
   const w = topLeft.w;
   const h = topLeft.h;
+  // Whether the window cut this zone, which decides whether the drawn
+  // rectangle is the zone or only the part of it that survived the cut.
+  const uncut = placeBox(box, transform);
+  const clipped = Math.abs(uncut.w - w) > 1e-6 || Math.abs(uncut.h - h) > 1e-6;
   const palette = zoneStyleFor(box, index);
   const bg = stripHash(palette.bg);
   const border = stripHash(palette.border);
+  // The border colour is tuned to be seen as a 1pt line, not read as words: on
+  // the light slide it lands at 2.6-4.4:1, below the WCAG AA bar. The palette
+  // already carries a text colour chosen for reading; use it.
+  const labelColor = stripHash(palette.text);
 
-  slide.addShape(pptx.ShapeType.roundRect, {
-    x: topLeft.x,
-    y: topLeft.y,
-    w,
-    h,
-    rectRadius: 0.06,
-    fill: { color: bg, transparency: 15 },
-    line: { color: border, width: 1, dashType: 'dash' },
-    objectName: `zone-${box.id}`,
-  });
   // Let a long zone title wrap to two lines instead of clipping at a fixed band.
   const titleH = clamp(h * 0.16, 0.24, 0.5);
   // A closed box says "these are all of them". When a drawing is split across
@@ -1401,14 +3909,305 @@ function addGroupShape(
   // appear as a closed box around 3 with nothing to tell the reader it is a
   // fragment. Say so in the title, the way a split reference architecture does.
   const fragment = held && held.all > held.here ? ` (${held.here} / ${held.all})` : '';
-  slide.addText(truncateLabel(box.label, 60) + fragment, {
-    x: topLeft.x + 0.06,
-    y: topLeft.y + 0.04,
-    w: Math.max(0.4, w - 0.12),
-    h: titleH,
-    fontSize: clamp(Math.round(h * 5), 8, 12),
+  // A zone's title band is empty because the author left it empty — and a
+  // window that cuts the zone's top away takes that room with it, so the band
+  // lands on whatever tiles are nearest the cut and the fragment loses its
+  // name. Every candidate here keeps the title attached to the fragment; the
+  // one that covers the fewest tiles wins, and the top-left band still wins
+  // outright whenever it is clear, which is every drawing that is not split.
+  // Never wider than the zone it names. `max(0.4, w - 0.12)` gave a 0.30in
+  // zone a 0.40in band: wider than the box it belongs to, hanging over both
+  // neighbours, and no placement could fix it because the geometry made
+  // overlap compulsory — one scaled row of small zones produced 2385 pairs of
+  // captions written across each other. A floor is worth having, but only up
+  // to the zone's own width; past that the band stops naming this zone and
+  // starts naming the one beside it.
+  const titleW = Math.max(Math.min(0.4, w), w - 0.12);
+  const titleX = topLeft.x + (w - titleW) / 2;
+  // What the name will actually take, at the pitch the gate measures painted
+  // ink with, so the exporter's budget and the gate's check are one number
+  // rather than two guesses that happen to agree today.
+  const captionPt = clamp(Math.round(h * 5), 8, 12);
+  const captionText = `${box.label}${fragment}`;
+  // PowerPoint applies a 0.1in inset on each side of a text box that declares
+  // no margin, so `width - 0.2` is the column the words actually get. The
+  // `max(0.2, …)` floor that used to sit here was a lie the fitter believed:
+  // on a band narrower than 0.4in it promised 0.2in of line that does not
+  // exist, so the name was fitted onto one line and PowerPoint stacked it one
+  // letter per line, running out of the bottom of the band. Zero is the honest
+  // answer for a band that has no column at all; the guard below stops before
+  // anything is drawn into it.
+  const captionColumn = (width: number): number => Math.max(0, width - 0.2);
+  const captionRoom = (band: number, pt: number): number => Math.max(1, Math.floor(band / ((pt * 1.35) / 72)));  // A zone cut to a sliver at the frame edge has less width than its own title
+  // needs, so the band has to be pulled back onto the page — placed raw it ran
+  // off the slide and PowerPoint dropped it, taking the zone's name with it.
+  const fit = <T extends { x: number; y: number; w: number }>(c: T): T => (clampTo
+    ? {
+      ...c,
+      x: clamp(c.x, clampTo.x, Math.max(clampTo.x, clampTo.x + clampTo.w - c.w)),
+      y: clamp(c.y, clampTo.y, Math.max(clampTo.y, clampTo.y + clampTo.h - titleH)),
+    }
+    : c);
+  const top = topLeft.y + 0.04;
+  const foot = topLeft.y + h - titleH - 0.04;
+  const part = (share: number): number => Math.min(titleW, Math.max(0.4, w * share - 0.12));
+  // The bands the tiles actually left free, rather than the fractions of the
+  // width somebody guessed at. Fixed shares only work while the row has a
+  // quarter of itself spare: fill a subnet — which is what a subnet drawn to
+  // scale looks like — and every band on offer, full width, half or third,
+  // lands on the same tiles, so a rule that fails a title at 25% coverage had
+  // no legal placement left to choose. Reading the gaps finds the one the
+  // author left, wherever it happens to be.
+  const runs = (y: number): Array<{ x: number; y: number; w: number }> => {
+    const lo = Math.min(titleX, topLeft.x + 0.06);
+    const hi = topLeft.x + w - 0.06;
+    const blockers = (occupied ?? [])
+      .filter((t) => t.y < y + titleH && t.y + t.h > y && t.x + t.w > lo && t.x < hi)
+      .map((t) => [Math.max(lo, t.x), Math.min(hi, t.x + t.w)] as [number, number])
+      .sort((a, b) => a[0] - b[0]);
+    const out: Array<{ x: number; y: number; w: number }> = [];
+    let cursor = lo;
+    for (const [from, to] of blockers) {
+      if (from - cursor >= 0.35) out.push({ x: cursor, y, w: Math.min(titleW, from - cursor) });
+      cursor = Math.max(cursor, to);
+    }
+    if (hi - cursor >= 0.35) out.push({ x: cursor, y, w: Math.min(titleW, hi - cursor) });
+    return out.sort((a, b) => b.w - a.w);
+  };
+  // Inside the box it names, always — a name is a claim about what the box
+  // contains, and a name printed anywhere else is a different claim. When the
+  // full-width band across the top is standing on the zone's own tiles, the
+  // answer is a narrower band in the part of the zone the tiles left free, not
+  // a clear band belonging to somebody else: a subnet stack drawn tight has no
+  // room above any box except the box above it, and "Data subnet" printed
+  // there says the data tier is part of the application tier.
+  //
+  // Rows, plural. Every candidate used to sit at either `top` or `foot`, so a
+  // zone whose tiles are stacked down its length was offered nothing but the
+  // two rows its tiles are thickest in — and a tall narrow zone with clear
+  // paper between every pair of tiles took a 0.40in band standing on a tile
+  // while 0.86in of clear width sat one row below. The gaps between a zone's
+  // own tiles are exactly the rows it has to give, so offer them.
+  //
+  // They are offered free. The corridor between two rows of tiles is also
+  // where the arrows run and where connector chips are seated, so it is
+  // tempting to charge for it — but a surcharge was measured and it costs more
+  // than it saves: it moved no chip off anything in the corpus, and it took a
+  // flush-to-the-top zone's caption from a 9.26in band down to a 1.50in one.
+  // A caption that gives up characters so a chip can keep its first choice has
+  // traded the zone's name for one hop's verb, which is the wrong way round.
+  // Chips are kept off captions on the chip's side instead, by putting the
+  // chosen band into `chipObstacles`.
+  const gapRows: number[] = [];
+  {
+    const mine = (occupied ?? [])
+      .filter((t) => t.x < topLeft.x + w && topLeft.x < t.x + t.w
+        && t.y < topLeft.y + h && topLeft.y < t.y + t.h)
+      .sort((a, b) => a.y - b.y);
+    let cursor = top;
+    for (const tile of mine) {
+      if (tile.y - cursor >= titleH && gapRows.length < 4) gapRows.push(cursor);
+      cursor = Math.max(cursor, tile.y + tile.h + 0.02);
+    }
+    if (cursor + titleH <= foot && gapRows.length < 4) gapRows.push(cursor);
+  }
+  const inside = [
+    { x: titleX, y: top, w: titleW },
+    { x: titleX, y: foot, w: titleW },
+    ...gapRows.map((y) => ({ x: titleX, y, w: titleW })),
+    ...runs(top),
+    ...runs(foot),
+    ...gapRows.flatMap((y) => runs(y)),
+    { x: topLeft.x + Math.max(0, w - part(0.5) - 0.06), y: top, w: part(0.5) },
+    { x: titleX, y: top, w: part(0.5) },
+    { x: topLeft.x + Math.max(0, w - part(0.34) - 0.06), y: top, w: part(0.34) },
+    { x: titleX, y: top, w: part(0.34) },
+    { x: topLeft.x + Math.max(0, w - part(0.34) - 0.06), y: foot, w: part(0.34) },
+    { x: titleX, y: foot, w: part(0.34) },
+  ];
+  // A fragment is the one exception. Its drawn rectangle is not the zone — it
+  // is whatever survived the window cut — so there may be no room inside it at
+  // all, and the band just outside the cut is still inside the zone the reader
+  // is being shown.
+  const outside = clipped
+    ? [
+      { x: titleX, y: topLeft.y - titleH - 0.02, w: titleW },
+      { x: titleX, y: topLeft.y + h + 0.02, w: titleW },
+    ].filter((c) => !clampTo || (c.y >= clampTo.y && c.y + titleH <= clampTo.y + clampTo.h))
+    : [];
+  const candidates = [...inside, ...outside].map(fit);
+  const cover = (c: { x: number; y: number; w: number }): number => (occupied ?? []).reduce((sum, tile) => {
+    const ox = Math.max(0, Math.min(c.x + c.w, tile.x + tile.w) - Math.max(c.x, tile.x));
+    const oy = Math.max(0, Math.min(c.y + titleH, tile.y + tile.h) - Math.max(c.y, tile.y));
+    return sum + ox * oy;
+  }, 0);
+  // Whatever the band gains in clear space it must not buy from a neighbour.
+  const trespass = (c: { x: number; y: number; w: number }): number => (foreign ?? []).reduce((sum, zone) => {
+    const ox = Math.max(0, Math.min(c.x + c.w, zone.x + zone.w) - Math.max(c.x, zone.x));
+    const oy = Math.max(0, Math.min(c.y + titleH, zone.y + zone.h) - Math.max(c.y, zone.y));
+    return Math.max(sum, ox * oy);
+  }, 0);
+  // Scored as a fraction of the band, not as absolute area: a narrower band
+  // covers less simply by being narrower, so absolute area would always prefer
+  // the smallest one on offer even when the widest is completely clear.
+  //
+  // Trespass is weighted above coverage because the two failures are not
+  // comparable. A name lying over its own icon is crowded; a name lying inside
+  // a different zone's box asserts a containment the architecture does not
+  // have. Both are scored rather than filtered so that when every band
+  // trespasses — which is what two overlapping zones give you — the least bad
+  // one still wins instead of the first one tried.
+  // A fit term was tried here and removed. The premise as first stated — that a
+  // clear 0.4in band can beat a 3.7in one on score — does not survive reading
+  // the candidate order: the full-width band is `inside[0]`, it is scored
+  // first, and the loop only replaces on a strictly better score, so a clear
+  // full-width band always wins on score. Scoring fit changed the chosen band
+  // in no fixture in the corpus, and at any weight large enough to change one
+  // it bought a 48% covered band in `flush-subnets`.
+  //
+  // The defect was in the *tie-break*, not the score. Two candidates that are
+  // both completely clear both score 0, and `if (best <= 0.01) break` stopped
+  // at whichever came first in the array — so a zone with its tiles flush to
+  // the top handed its caption to the 0.43in gap above them and never looked at
+  // the 9.35in of clear paper below, drawing "Producti…dant" for want of a
+  // comparison it had already decided not to make. Score all of them, and when
+  // the score cannot separate two bands, take the wider one: it holds more of
+  // the name for exactly the same cost.
+  const score = (c: { x: number; y: number; w: number }): number => {
+    const area = Math.max(1e-6, c.w * titleH);
+    return cover(c) / area + 2 * (trespass(c) / area);
+  };
+  let title = candidates[0];
+  let best = score(title);
+  for (const candidate of candidates.slice(1)) {
+    const next = score(candidate);
+    if (next < best - 1e-6 || (Math.abs(next - best) <= 1e-6 && candidate.w > title.w + 1e-6)) {
+      best = next;
+      title = candidate;
+    }
+  }
+  // A full box has no gap to give, and every band inside it is standing on a
+  // tile. The answer a container diagram has always used is a header strip:
+  // the name lives in a band that is part of the box, above the things the box
+  // holds. The author drew the rectangle around their tiles, so the strip is
+  // taken from just outside it and the drawn rectangle grows to include it —
+  // the title is then inside the boundary it names, covering nothing, which is
+  // what both rules ask for and what neither could otherwise be given.
+  let rectY = topLeft.y;
+  let rectH = h;
+  let bandH = titleH;
+  if (best > 0.2) {
+    const lo = Math.min(titleX, topLeft.x + 0.06);
+    const hi = topLeft.x + w - 0.06;
+    // How far the box can grow before it meets something, rather than whether
+    // a fixed strip happens to be clear. A subnet stack is drawn with its tiers
+    // close together — the gap between two of them is the gap, not a
+    // negotiation — and asking for a comfortable strip meant the middle tier of
+    // three got none at all while its neighbours, which had the page edge to
+    // grow into, got theirs. The band only has to hold one line.
+    const blockers = [...(occupied ?? []), ...(foreign ?? [])].filter((r) => r.x < hi && r.x + r.w > lo);
+    const ceiling = clampTo ? clampTo.y : topLeft.y - titleH - 0.1;
+    const floorY = clampTo ? clampTo.y + clampTo.h : topLeft.y + h + titleH + 0.1;
+    const roomAbove = topLeft.y - Math.max(
+      ceiling,
+      ...blockers.filter((r) => r.y + r.h <= topLeft.y + 1e-6).map((r) => r.y + r.h),
+    );
+    const roomBelow = Math.min(
+      floorY,
+      ...blockers.filter((r) => r.y >= topLeft.y + h - 1e-6).map((r) => r.y),
+    ) - (topLeft.y + h);
+    const fits = (available: number): number => Math.min(titleH, available - 0.015);
+    const above = fits(roomAbove);
+    const below = fits(roomBelow);
+    // One line of the smallest type this title is ever set in, plus its margin.
+    const MIN_STRIP = 0.16;
+    if (above >= MIN_STRIP && above >= below) {
+      bandH = above;
+      rectY = topLeft.y - above;
+      rectH = h + above;
+      title = { x: lo, y: rectY + 0.005, w: titleW };
+    } else if (below >= MIN_STRIP) {
+      bandH = below;
+      rectH = h + below;
+      title = { x: lo, y: topLeft.y + h + 0.005, w: titleW };
+    }
+  }
+
+  slide.addShape(pptx.ShapeType.roundRect, {
+    x: topLeft.x,
+    y: rectY,
+    w,
+    h: rectH,
+    rectRadius: 0.06,
+    fill: { color: bg, transparency: 15 },
+    line: { color: border, width: 1, dashType: 'dash' },
+    objectName: `zone-${box.id}`,
+  });
+  // Shrink first, cut last — and cut by measurement, not by counting cells. A
+  // 60-character cap says nothing about how wide those characters are: the
+  // band that failed here was 0.4in holding a name the cap had already
+  // "shortened" to 60 characters, which is 22 wrapped lines of it.
+  let captionSize = captionPt;
+  let caption = captionText;
+  const column = captionColumn(title.w);
+  for (let pt = captionPt; pt >= LEGIBLE_TILE_PT; pt -= 1) {
+    captionSize = pt;
+    if (wrappedLineCount(captionText, column, pt) <= captionRoom(bandH, pt)) break;
+    if (pt - 1 < LEGIBLE_TILE_PT) {
+      const room = captionRoom(bandH, pt);
+      // The fragment marker is never cut. It is the only thing telling the
+      // reader this closed box is a slice of a larger zone, and a box that
+      // silently drops "(3 / 28)" is not abbreviated — it is claiming to hold
+      // everything it names. So the name yields to the marker, down to nothing
+      // if that is what the band affords.
+      caption = fitLabelToLines(
+        box.label,
+        column,
+        pt / 72,
+        room,
+        (text, col, sizeIn) => wrappedLineCount(`${text}${fragment}`, col, sizeIn * 72),
+      ) + fragment;
+      // A zone cut to a sliver by the window gets a caption cut with it, and a
+      // box labelled "P…" names nothing. A cut service name has always been
+      // spelled out on the index slide; a cut zone name is no different, and
+      // is the only place the reader can now recover it. The CUT text is the
+      // mark the index row is keyed by, exactly as a tile's stub is.
+      recordMark(truncatedNames, box.label, caption);
+    }
+  }
+
+  // A column narrower than a single character cannot paint a name inside the
+  // band. PowerPoint does not clip a text box, so what it does instead is stack
+  // the word one letter per line and print the tail below the band and across
+  // the zones on either side — on a row of subnets scaled small, every caption
+  // was written over its neighbours' and the reader could not tell which box
+  // any of them named. Silence is the honest answer here, and it is not a loss:
+  // an undrawable zone name goes to the index slide by exactly the route a
+  // window-clipped one already takes.
+  //
+  // Measured against the COLUMN, not the box. Against the box this fired only
+  // below about 0.043in — the one geometry the corpus happened to sample — and
+  // was silent across the whole ordinary range of small zones between.
+  const widest = widestGlyphIn(caption, captionSize);
+  // Two of them for a caption of more than one character, for the reason the
+  // chip guard has: a column that holds one glyph draws the zone's name down
+  // the side of it, one letter per line, which no reader follows back to the
+  // box it names.
+  const needs = caption.length > 1 ? widest * 2 : widest;
+  if (caption && needs > captionColumn(title.w) + 0.01) {
+    // A zone whose caption cannot be drawn at all has NO mark to look up by,
+    // so its row keys on the empty string and the index prints "(not drawn)".
+    recordMark(truncatedNames, box.label, '');
+    return { caption: { x: title.x, y: title.y, w: 0, h: 0 } };
+  }
+  slide.addText(caption, {
+    x: title.x,
+    y: title.y,
+    w: title.w,
+    h: bandH,
+    fontSize: captionSize,
     bold: true,
-    color: border,
+    color: labelColor,
     fontFace: 'Yu Gothic UI',
     align: 'left',
     valign: 'top',
@@ -1416,6 +4215,14 @@ function addGroupShape(
     lineSpacingMultiple: 0.9,
     objectName: `zone-label-${box.id}`,
   });
+  // Hand the band back so the chips can keep off it. A zone caption is drawn
+  // first and a chip is drawn last at 92% opacity, so whatever the chip lands
+  // on is simply gone — and until the gaps between a zone's own tiles became
+  // caption rows, the caption always sat in the zone's margins, where chips do
+  // not go, so the collision was structurally rare. It is now the default
+  // shape of the commonest drawing in the corpus: two tiers of tiles with
+  // edges running between them, in the very corridor both want.
+  return { caption: { x: title.x, y: title.y, w: title.w, h: bandH } };
 }
 
 /** Where the colour key lands, so the drawing can keep out from under it. */
@@ -1493,22 +4300,51 @@ async function addEditableDiagram(
    */
   mutedWording: Map<number, string> = new Map(),
   /**
+   * Names the tiles had to cut, filled in as they are drawn. The caller lists
+   * them on an index slide, because a name clipped on the drawing and written
+   * down nowhere else has been thrown away.
+   */
+  truncatedNames: Map<string, Set<string>> = new Map(),
+  /**
    * This is the whole drawing shown small ahead of the readable slices of it,
    * so anything that would land under the resolvable floor is left to them.
    */
   thumbnail = false,
+  presetIcons?: Map<string, RasterizedIcon>,
+  /**
+   * Wording promoted out of a chip that had nowhere legible to stand, by the
+   * step number handed to it. Distinct from `mutedWording`: that trades a chip
+   * for a row the author already wrote, while this one has no row at all until
+   * the caller adds it, because the edge carried a label and no step.
+   */
+  promotedSteps: Map<number, string> = new Map(),
+  /** The mark each service draws, shared by every slide in the deck. */
+  drawnHere: Map<string, string> = new Map(),
+  /** Stable, deck-global ordinals for the numeric key fallback. */
+  keyOrdinal: Map<string, number> = new Map(),
+  /**
+   * How the slide titles itself, e.g. `2 / 3`. Printed in the index row of any
+   * service this slide draws without a mark, so the reader knows which sheet to
+   * turn to. Empty on a one-slide deck, where there is nothing to disambiguate.
+   */
+  slideLabel = '',
 ): Promise<boolean> {
-  const boxes = collectExportBoxes(diagram.nodes ?? []);
-  if (boxes.size === 0) return false;
-  const { groups, services } = partitionBoxes(boxes);
-  if (services.length === 0) return false;
   const frame = fullFrame;
 
   // Size and draw from the SAME bounds. Sizing the page for the dense cluster
   // while drawing every box is what silently pushed far-placed services off
   // the slide, so when outliers are excluded from the fit they are clamped
   // back onto the page instead of being drawn into the void.
-  const { bounds, clamped } = chooseExportBounds(boxes.values());
+  //
+  // Parked once, by the shared helper, so the whole slide pipeline — page
+  // sizing, window planning, routing, drawing — agrees on where a stray ended
+  // up. Doing it inside `placeBox` on each slide meant the tile, the arrow
+  // aimed at it and the window that claimed it could each pick a different
+  // answer.
+  const { boxes, bounds, clamped } = parkedLayout(diagram.nodes ?? []);
+  if (boxes.size === 0) return false;
+  const { groups, services } = partitionBoxes(boxes);
+  if (services.length === 0) return false;
   // A banded slide is sized from its own tile, which is what buys back the
   // legible scale; the tile is then clamped so a shape straddling the seam is
   // cut at the page edge instead of spilling into the void.
@@ -1531,7 +4367,54 @@ async function addEditableDiagram(
       maxY: fitBounds.maxY + WINDOW_BLEED_PX,
     }
     : fitBounds;
-  const transform = computeFitTransform(view, frame, { maxScale: 1 / PX_PER_IN });
+  // Routes are planned from where the tiles are, and on a clamped drawing that
+  // is where `clampedBoxes` above put them — miles from the node's declared
+  // position. Planning from the declared position aimed every hop touching a
+  // stray off the sheet, where the clip then threw it away: the arrow vanished
+  // while its chip, its numbered callout and its line in the step list all
+  // stayed behind.
+  const routes = buildExportRoutes(diagram.edges ?? [], boxes);
+  // An arrow is drawn as surely as a tile is, and a detour lane placed just
+  // past the last obstacle is frequently just past the last tile as well. The
+  // page was sized from the boxes alone, so those few pixels fell outside the
+  // frame and the clip cut the hop down to whichever fragment survived — one
+  // that stood nearly two inches from the service it names, with no arrowhead.
+  // So the view is the union of everything drawn, not of the boxes alone.
+  // Routing is untouched by this, and wherever the drawing is smaller than the
+  // frame the scale cap absorbs the extra room without changing anything.
+  //
+  // Slices keep exactly their own window: every window is the same size so that
+  // every slide renders at one scale, and the overview covers the whole drawing
+  // anyway.
+  const drawnView = banded ? view : routes.reduce(
+    (acc, route) => route.points.reduce((box, point) => ({
+      minX: Math.min(box.minX, point.x),
+      maxX: Math.max(box.maxX, point.x),
+      minY: Math.min(box.minY, point.y),
+      maxY: Math.max(box.maxY, point.y),
+    }), acc),
+    view,
+  );
+  // The cap is a DENSITY, and a density is the wrong thing to cap when the
+  // drawing itself was authored small. At 96 px per inch a 12px node is drawn
+  // 0.125in wide, whose text column is 0.065in - narrower than two of the
+  // digit "1" - so the tile can carry no name, no stub and not even a key, and
+  // eight instances of one service came out as eight anonymous dots with an
+  // index that could only say "(not drawn)" eight times. The cap exists to stop
+  // a two-node diagram being blown up to absurd tiles, and it still does: this
+  // only RAISES it, only for a drawing whose smallest tile cannot carry a mark,
+  // and only far enough to reach that bar. Every drawing already above it keeps
+  // the identical transform, so the geometry of the rest of the corpus is
+  // untouched by construction. The frame terms of `computeFitTransform` still
+  // bind, so nothing is magnified past the page. The expression itself lives on
+  // `rendererMaxScale`, which the planner reads too - the two had diverged.
+  const minBoxW = narrowestBoxW(services);
+  // The same bar the planner used. A renderer that stops magnifying below the
+  // scale the planner split to leaves tiles under the bar with the slides
+  // already spent, which is the divergence this expression was pulled into
+  // `rendererMaxScale` to prevent - and a numbered drawing moves the bar.
+  const maxScale = rendererMaxScale(minBoxW, markableTileWIn(routes.map((r) => r.stepNumber)));
+  const transform = computeFitTransform(drawnView, frame, { maxScale });
   const clampTo = clamped || banded ? frame : undefined;
   // A tile is drawn where the drawing says; a chip is drawn *around* its arrow
   // and is therefore the one shape that can be pushed off the sheet by its own
@@ -1540,7 +4423,6 @@ async function addEditableDiagram(
   // badges are always held inside the frame, on every slide, banded or not.
   const labelFrame = clampTo ?? frame;
   const px = transform.scale * PX_PER_IN;
-  const routes = buildExportRoutes(diagram.edges ?? [], boxes);
   const first = { x: fitBounds.minX <= bounds.minX + 0.5, y: fitBounds.minY <= bounds.minY + 0.5 };
   const last = { x: fitBounds.maxX >= bounds.maxX - 0.5, y: fitBounds.maxY >= bounds.maxY - 0.5 };
 
@@ -1572,14 +4454,57 @@ async function addEditableDiagram(
     if (route.points.length === 0) return owns(route.labelAnchor.x, route.labelAnchor.y);
     const xs = route.points.map((point) => point.x);
     const ys = route.points.map((point) => point.y);
-    return overlapsAxis(Math.min(...xs), Math.max(...xs), view.minX, view.maxX, first.x, last.x)
-      && overlapsAxis(Math.min(...ys), Math.max(...ys), view.minY, view.maxY, first.y, last.y);
+    if (!(overlapsAxis(Math.min(...xs), Math.max(...xs), view.minX, view.maxX, first.x, last.x)
+      && overlapsAxis(Math.min(...ys), Math.max(...ys), view.minY, view.maxY, first.y, last.y))) return false;
+    // Bounding-box overlap alone lets a hop that merely clips a corner of this
+    // window be drawn as a stub at the seam. Several wrap-arounds leaving the
+    // same edge reduce to the same stub, so the reader sees one short line
+    // standing for three hops that go somewhere else entirely. A quarter of the
+    // hop has to be on this paper for the fragment to be worth drawing.
+    //
+    // Safe to drop because a banded deck always opens with an overview slide
+    // covering the whole drawing, so every route that meets the fitted bounds
+    // is drawn there whatever the slices decide — and the audit fails any deck
+    // with an edge drawn on no slide at all.
+    let total = 0;
+    let inView = 0;
+    for (let i = 1; i < route.points.length; i += 1) {
+      const a = route.points[i - 1];
+      const b = route.points[i];
+      const len = Math.hypot(b.x - a.x, b.y - a.y);
+      total += len;
+      const steps = Math.max(1, Math.ceil(len / 8));
+      for (let s = 0; s < steps; s += 1) {
+        const t = (s + 0.5) / steps;
+        const x = a.x + (b.x - a.x) * t;
+        const y = a.y + (b.y - a.y) * t;
+        if (x >= view.minX && x <= view.maxX && y >= view.minY && y <= view.maxY) inView += len / steps;
+      }
+    }
+    // A share alone is backwards for exactly the hops that matter most. The
+    // longer a hop is, the smaller its share of any one window — so a pure
+    // fraction suppresses hardest the wrap-around that explains how one row
+    // reaches the next. On a 24-wide chain the row-turn hop had 17% of itself
+    // on every window and was dropped from all seven, although the visible
+    // piece was longer than the window is wide. So a fragment also earns its
+    // place by absolute length: more than half a window of arrow is never a
+    // meaningless stub, whatever fraction of the whole it happens to be.
+    const span = Math.max(view.maxX - view.minX, view.maxY - view.minY);
+    return total <= 0 || inView >= 0.25 * total || inView >= 0.6 * span;
   };
   const shownGroups = groups.filter(visibleGroup);
   const shownServices = services.filter(visibleBox);
   const shownRoutes = routes.filter(visibleRoute);
-  const annotatedRoutes = shownRoutes.filter((route) => owns(route.labelAnchor.x, route.labelAnchor.y));
-  const icons = await rasterizeIcons(shownServices.map((service) => service.iconPath), 128);
+  // Ownership of a label and visibility of its arrow were decided by two
+  // different tests, so a long diagonal hop could have its midpoint owned by a
+  // window that carried too little of the arrow to draw it, while the windows
+  // that did draw it owned no part of the label. The wording was then written
+  // on no slide at all. The window holding the anchor draws the hop, whatever
+  // fraction of it lands there: exactly one window owns any point, so this adds
+  // an arrow, never a duplicate.
+  const annotatedRoutes = routes.filter((route) => owns(route.labelAnchor.x, route.labelAnchor.y));
+  for (const route of annotatedRoutes) if (!shownRoutes.includes(route)) shownRoutes.push(route);
+  const icons = presetIcons ?? await rasterizeIcons(shownServices.map((service) => service.iconPath), 128);
 
   // Index by the full group list so a zone keeps its palette colour on every
   // slice it appears on.
@@ -1588,26 +4513,151 @@ async function addEditableDiagram(
     const cy = service.y + service.h / 2;
     return cx >= group.x && cx <= group.x + group.w && cy >= group.y && cy <= group.y + group.h;
   }).length;
-  shownGroups.forEach((group) => addGroupShape(
-    pptx, slide, group, groups.indexOf(group), transform, clampTo,
-    { here: zoneMembers(group, shownServices), all: zoneMembers(group, services) },
-  ));
+  const placedTiles = shownServices.map((service) => placeBox(service, transform, clampTo));
+  // A zone whose members all landed on other slides is not drawn here. The
+  // window can cut a zone to a 0.4in sliver holding none of its services, and
+  // a closed box around nothing, captioned "… (0 / 1)" because 0.2in of column
+  // holds no name, tells the reader nothing and paints its marker outside its
+  // own band doing it. A boundary is a claim about contents; with no contents
+  // on the slide there is no claim to make. Zones the author drew empty are
+  // untouched — they have no members anywhere, so nothing is being hidden.
+  const drawnGroups = shownGroups.filter(
+    (group) => zoneMembers(group, shownServices) > 0 || zoneMembers(group, services) === 0,
+  );
+  const placedZones = new Map(drawnGroups.map((group) => [group.id, placeBox(group, transform, clampTo, true)]));
+  // Where each arrow's label wants to sit, sized as the chip that will be put
+  // there. Approximate on purpose: the chips have not been placed yet and
+  // cannot be, since their own search reads the caption bands this call is
+  // about to produce. The anchor is where `connectorLabelBox` starts its walk,
+  // so it is the best available statement of which paper is spoken for.
+
+  const captionBands: Obstacle[] = [];
+  drawnGroups.forEach((group) => {
+    const bands = addGroupShape(
+      pptx, slide, group, groups.indexOf(group), transform, clampTo,
+      { here: zoneMembers(group, shownServices), all: zoneMembers(group, services) },
+      // Captions already chosen are paper too. Nested zones are the case:
+      // `trespass` charges for writing inside a foreign zone, but a zone drawn
+      // inside another one is not trespassing, so two captions on the same
+      // rows scored identically and were written 0.09in apart on top of each
+      // other. The list is live and the loop is sequential, so each zone sees
+      // exactly the bands settled before it.
+      [...placedTiles, ...captionBands.map((band) => ({ x: band.x, y: band.y, w: band.w, h: band.h }))],
+      drawnGroups.filter((other) => other !== group).map((other) => placedZones.get(other.id)!),
+      thumbnail ? undefined : truncatedNames,
+    );
+    // A zone caption is worth exactly what a tile caption is worth: it is the
+    // only thing that says what the box contains, and a chip over it is a
+    // wrong claim rather than a blemish.
+    captionBands.push({ ...bands.caption, weight: 60, caption: true });
+  });
+  // Where a dark tile sits, in terms the reader can count off the page.
+  //
+  // Reading order among the tiles THIS slide draws, banded by row: sorting on
+  // `y` alone makes two tiles whose tops differ by a pixel into separate rows,
+  // and sorting on `x` alone interleaves rows. The band is the median tile
+  // height, which is the same quantity the eye uses to decide what is a row.
+  const rowBand = Math.max(
+    1,
+    [...shownServices].map((s) => s.h).sort((a, b) => a - b)[Math.floor(shownServices.length / 2)] ?? 1,
+  );
+  const readingRank = new Map<string, number>(
+    [...shownServices]
+      .sort((a, b) => (Math.round(a.y / rowBand) - Math.round(b.y / rowBand)) || (a.x - b.x))
+      .map((service, i) => [String(service.id), i + 1]),
+  );
+  const locate = (service: ExportBox): string => {
+    const rank = readingRank.get(String(service.id));
+    // Fails CLOSED. Returning the bare slide label here would still produce a
+    // row containing the locating prefix, so the audit's stranded-service rule
+    // would accept "(drawn unlabelled, slide 1 / 7)" - a row that names a slide
+    // and then leaves the reader to search it. Returning nothing produces the
+    // bare sentinel instead, which that rule fails on. Unreachable while the
+    // rank map is built from the very list being iterated, and the point is
+    // that it stays a failure if some later caller changes that.
+    if (rank === undefined) return '';
+    // "service box", not "box". The rank is taken over `shownServices` alone,
+    // so on a slide that also draws zone or group rectangles the reader is
+    // looking at more boxes than the count admits and nothing on the page says
+    // which ones to skip. Naming what is being counted costs one word and makes
+    // the row correct on every slide rather than on the slides that happen to
+    // have no frames.
+    const where = `service box ${rank} of ${shownServices.length} in reading order`;
+    return slideLabel ? `${slideLabel}, ${where}` : where;
+  };
+  // Per SLIDE, not per deck: the reader looks at one slide at a time, so the
+  // keys only have to be distinguishable among the tiles they are drawn beside.
   for (const service of shownServices) {
-    addNodeShape(pptx, slide, service, transform, service.iconPath ? icons.get(service.iconPath) : undefined, px, clampTo, thumbnail);
+    const bands = addNodeShape(
+      pptx, slide, service, transform,
+      service.iconPath ? icons.get(service.iconPath) : undefined,
+      px, clampTo, thumbnail, drawnHere, keyOrdinal,
+    );
+    // The overview is allowed to clip: every name it clips is drawn in full on
+    // the slice that follows. Only a window slide's clipping is a real loss.
+    //
+    // The MARK is not allowed to go with it. An index that prints only the full
+    // name leaves the reader holding a tile marked "3" and a list of sentences,
+    // none of which contains a 3; the row has to define the mark it is looked
+    // up by. EVERY distinct mark is kept: two slides draw the same service at
+    // two widths, and quoting only the longer one left the shorter one drawn on
+    // a tile and defined nowhere - the very thing the index exists to prevent.
+    //
+    // AND EVERY SLIDE THAT DRAWS ONE, INCLUDING THE OVERVIEW. Gating the
+    // recording on `!thumbnail` alongside the clipping made the gap structural:
+    // the overview is where tiles are smallest, so it is where keys are most
+    // often needed, and it was the one slide guaranteed to define none of them.
+    // `wide-chain` shipped an overview covered in 38 bare integers in a deck
+    // with no index slide at all, in a drawing whose workflow numbers its own
+    // steps with bare integers - and "3" sat on the tile for Service 10.
+    // Whether the overview's clipping counts as a LOSS is a separate question
+    // from whether the mark it draws needs defining; it does.
+    if (bands.clipped && (!thumbnail || bands.drawn)) {
+      recordMark(
+        truncatedNames,
+        bands.clipped,
+        bands.drawn || unlabelledRow(locate(service)),
+      );
+    }
+    // A tile can be leaned on: the reader still sees which service it is. Its
+    // name cannot, because the name is the only thing that says so, and a chip
+    // is drawn over it at 92% opacity. Weighted far above a tile so that even
+    // a chip allowed to touch its own endpoint is pushed off the words.
+    if (bands.caption) captionBands.push({ ...bands.caption, weight: 60, caption: true });
+    // The sub-line deliberately gets no obstacle of its own. It is drawn INSIDE
+    // the tile, and the tile is already an obstacle, so the only way a chip
+    // could ever reach it was by the sub-line escaping the tile — which is what
+    // a `wrap="none"` line wider than its box did. Fitting it to the tile
+    // closes that, and an extra band here proved indistinguishable from nothing
+    // across every fixture and every row spacing tried. The audit measures it
+    // regardless, which is what keeps this honest.
   }
 
   for (const route of shownRoutes) addConnector(pptx, slide, route, transform, clampTo);
   // Labels are drawn after every connector so a chip is never hidden by a line
   // that is rendered later.
-  const labelFontSize = clamp(9 * px, 4, 10);
+  //
+  // The floor is the tiles' floor, deliberately. A chip was allowed down to 4pt
+  // while a tile name stopped at 7, so a window slide wrote its arrow labels at
+  // 6.74pt beside tile names held at 7.04 — grey mush on a projector, and the
+  // one piece of text on the slide that says *why* two services are connected.
+  // A chip that cannot be written legibly has somewhere better to go:
+  // `connectorLabelBox` drops it and the workflow list on the slide still
+  // carries the sentence against the same step number. Smaller-but-drawn is the
+  // worse of the two outcomes.
+  //
+  // The overview keeps its own, lower floor. It is a map rather than a reading
+  // surface, its names are carried by the slides that follow, and forcing its
+  // chips up to reading size would only crowd the picture it exists to give.
+  const labelFontSize = clamp(9 * px, thumbnail ? OVERVIEW_LEGIBLE_PT : LEGIBLE_TILE_PT, 10);
   // Chips and numbers dodge the tiles that are actually on this slide, so a
   // label on a short hop is pushed clear instead of covering a service.
-  const tileRects = shownServices.map((service) => placeBox(service, transform, clampTo));
+  const tileRects = shownServices.map((service) => ({ ...placeBox(service, transform, clampTo), node: service.id }));
   // Place every chip before drawing any of them, adding each to the obstacle
   // list as it is settled. Parallel edges between the same pair are staggered,
   // but the tile-avoidance walk could drag two of them back onto the same spot
   // because a chip could not see the chips already placed.
-  const chipObstacles: Obstacle[] = [...tileRects];
+  const chipObstacles: Obstacle[] = [...tileRects, ...captionBands];
   // The colour key is drawn last and is all but opaque, so anything it lands on
   // is simply gone: a numbered callout under it leaves the workflow band citing
   // a step the reader cannot find. Reserve whichever corner it will take.
@@ -1652,6 +4702,7 @@ async function addEditableDiagram(
     maxWidth?: number;
     badgesOnly?: boolean;
     dirty?: number;
+    stray?: number;
   }>();
   const shapes = new Map<string, { w: number; h: number; alongX: boolean }>();
   for (const route of annotatedRoutes) {
@@ -1746,6 +4797,13 @@ async function addEditableDiagram(
   // will sit on a corner rather than walk to a clean slot beside a stranger,
   // and not so much that it refuses to move when there is nowhere else at all.
   const DIRTY_RUNG_COST = 0.5;
+  // What one MISREAD rung is worth. Dearer than a clipped one, and dearer than
+  // a whole covered tile: a rung clipping a corner is untidy and the reader
+  // still knows what it says about which arrow, but a rung parked beside a
+  // stranger's hop is read, believed, and wrong. Kept apart from the clipping
+  // count because the two have different cures — a clip usually moves away,
+  // and a misread often cannot move anywhere at all.
+  const STRAY_RUNG_COST = 1.5;
   // The arrows a given hop's own label could be mistaken for: every bundle but
   // its own, near enough to compete. Cached, because the walk asks per
   // candidate position and a wide estate has hundreds of segments.
@@ -1763,6 +4821,42 @@ async function addEditableDiagram(
     }
     return rivals.length ? (x: number, y: number) => gapToSegs(x, y, rivals) : undefined;
   };
+  // Which step numbers the workflow slide will actually narrate. Dropping a
+  // chip is only ever a trade against that list; with no row to read it is a
+  // deletion.
+  const narratedRows = new Map(workflowListFromEdges(diagram.edges ?? []).map((entry) => [entry.step, entry.description]));
+  const narratedSteps = new Set(narratedRows.keys());
+  // Numbers a labelled-but-unnarrated edge may be promoted into if its chip
+  // turns out to have nowhere legible to stand. Allocated here, from the whole
+  // edge list rather than the routes this slide happens to show, so an edge
+  // gets the same number on the overview as it does on the slice that promotes
+  // it — the deck would otherwise print two different badges for one hop.
+  const promotable = new Map<string, number>();
+  {
+    let next = 0;
+    for (const edge of diagram.edges ?? []) {
+      // `readStepValue` is the one predicate every other reader of this field
+      // uses. A model emits `"1"` about as often as `1`, and the load path
+      // never coerces it, so reading the raw field here disagreed with the
+      // workflow list in both directions: it skipped an authored `"2"` (then
+      // handed 2 out again to a promoted edge, whose row the list dropped as a
+      // duplicate — losing exactly the label promotion exists to carry) and it
+      // accepted a `2.5` that no list row can match.
+      const step = readStepValue((edge.data as { stepNumber?: unknown } | undefined)?.stepNumber);
+      if (step !== undefined) next = Math.max(next, step);
+    }
+    const waiting = (diagram.edges ?? [])
+      // Only an edge with a label has anything to promote. Counting the
+      // unlabelled ones spent numbers on rows that will never exist, so a deck
+      // with three authored steps and twelve plain connectors numbered its one
+      // promoted hop 16 and read 1, 2, 3, 16.
+      .filter((edge) => readStepValue((edge.data as { stepNumber?: unknown } | undefined)?.stepNumber) === undefined
+        && readEdgeLabel(edge) !== '')
+      .map((edge) => edge.id)
+      .sort();
+    waiting.forEach((id, at) => promotable.set(id, next + 1 + at));
+  }
+
   const ownGapFor = (route: ExportRoute): ((x: number, y: number) => number) | undefined => {
     // Its OWN arrow, not its bundle's. A fan is fanned — `parallelOffset`
     // spreads the members apart — so "nearest arrow in my bundle" is a much
@@ -1782,18 +4876,95 @@ async function addEditableDiagram(
       // belongs to, which is what the Architecture Center draws, and it is then
       // placed one at a time against the same attribution test as everything
       // else.
-      const box = bundle?.badgesOnly ? null : connectorLabelBox(
+      let box = bundle?.badgesOnly ? null : connectorLabelBox(
         route, transform, labelFontSize, px, labelFrame, chipObstacles, bundle,
         undefined, foreignGapFor(route),
       );
+      // The sizer returns null for a labelled hop whose corridor cannot host
+      // one letter, and it is right to: a smear is worse than nothing. But it
+      // decides that against `route.stepNumber`, which is read BEFORE this walk
+      // can promote the route — so an un-numbered labelled edge took the drop
+      // and never reached the promotion branch below, built for exactly this
+      // edge. The wording then appeared on no slide at all: no chip, no badge,
+      // and `workflowListFromEdges` needs a number the edge does not have.
+      //
+      // Promote first, then ask again. The route now has a number, so the sizer
+      // keeps its callout and the sentence goes to the workflow slide.
+      // Membership of `promotable` already means "labelled and un-numbered", so
+      // it is the whole test — the route's own `label` is the resolved one.
+      //
+      // Reachability, measured: every assignment to the sizer's `roomW` is
+      // clamped with lower bound `0.34 * px`, and the chip font is
+      // `clamp(9 * px, 7, 10)`. Since the bar became TWO of the widest glyph
+      // the drop needs `0.34*px + 0.002 < 2*widestGlyph + 0.12`, which fires
+      // well inside the corpus range (min px 0.7473 over 3,124 non-thumbnail
+      // samples) — before the two-glyph bar it needed px < 0.633 and was dead
+      // code. Kept, and now live.
+      if (box === null && !bundle?.badgesOnly && !thumbnail
+        && route.stepNumber === undefined) {
+        const step = promotable.get(route.id);
+        if (step !== undefined) {
+          route.stepNumber = step;
+          promotedSteps.set(step, route.label);
+          box = connectorLabelBox(
+            route, transform, labelFontSize, px, labelFrame, chipObstacles, bundle,
+            undefined, foreignGapFor(route),
+          );
+        }
+      }
+      // A chip that still lands on a service name or on another callout after
+      // the walk has done its best is worse than no chip: it is drawn at 92%
+      // opacity over the one thing that says which service this is, or over a
+      // step number. On a slide this crowded the Architecture Center leaves a
+      // numbered callout on the arrow and puts the sentence in the step list,
+      // which is exactly the trade `mutedWording` already implements — so make
+      // it per route, not only per fan.
+      if (box && route.stepNumber !== undefined && narratedSteps.has(route.stepNumber)) {
+        if (chipSpoils(box.block, { sourceId: route.sourceId, targetId: route.targetId, bundleKey: bundleKey(route) }, chipObstacles)) {
+          if (!thumbnail && route.label
+            && !carriesWording(narratedRows.get(route.stepNumber) ?? '', route.label)) {
+            mutedWording.set(route.stepNumber, route.label);
+          }
+          box = null;
+        }
+      } else if (box && chipSpoils(box.block, { sourceId: route.sourceId, targetId: route.targetId, bundleKey: bundleKey(route) }, chipObstacles)) {
+        // A route with no step number has no step list to hand its wording to,
+        // so dropping the chip would simply lose it — which is why this check
+        // was written to run only on narrated routes, and why an un-narrated
+        // chip was free to sit on a name. Free is the wrong answer: an unnamed
+        // tile no longer says which service it is, and that is a worse loss
+        // than a chip that has become a numbered badge.
+        //
+        // The walk cannot be sent further to fix it — `inReach` holds a chip
+        // beside the arrow it labels, and it must, because a chip an inch from
+        // its hop is read, believed and wrong. So build the row that was
+        // missing instead: give the edge the next free number, hand its label
+        // to the workflow slide, and let the badge stand where the chip could
+        // not. That is exactly what `narrateEdgeCallouts` already does for the
+        // members of a deep fan, applied to the other case that has nowhere to
+        // put its words.
+        const step = promotable.get(route.id);
+        if (step !== undefined && !thumbnail) {
+          route.stepNumber = step;
+          promotedSteps.set(step, route.label);
+          box = null;
+        }
+      }
       chips.set(route.id, box);
       if (box) chipObstacles.push(box.block);
       const badge = stepBadgeBox(
         route, transform, px, labelFrame, box, chipObstacles,
-        ownGapFor(route), foreignGapFor(route),
+        ownGapFor(route), foreignGapFor(route), thumbnail,
       );
       badges.set(route.id, badge);
-      if (badge && !box) chipObstacles.push({ x: badge.x, y: badge.y, w: badge.d, h: badge.d, annotation: true });
+      // The chip reserves room for its own badge inside its block, so a badge
+      // still sitting there needs no obstacle of its own. One that left — the
+      // walk moves it when the chip's slot is buried — is outside that block
+      // and invisible to every annotation placed afterwards, which is how a
+      // callout came to be covered by a chip settled six hops later.
+      if (badge && badge !== box?.badge) {
+        chipObstacles.push({ x: badge.x, y: badge.y, w: badge.d, h: badge.d, annotation: true });
+      }
     }
   };
   settle(ordered.filter((route) => !bundles.has(bundleKey(route))));
@@ -1908,17 +5079,25 @@ async function addEditableDiagram(
     });
     const stamp = new Int32Array(taken.length);
     let visit = 0;
-    const cost = (shift: number, across: number): { total: number; onLabel: number; overlap: number; dirty: number } => {
-      const placed: Block[] = [];
+    const cost = (shift: number, across: number): { total: number; onLabel: number; overlap: number; dirty: number; stray: number } => {
+      // Each rung paired with the segments of the ONE arrow it labels. A fan is
+      // fanned, so the bundle's nearest segment to a given rung is usually a
+      // sibling's arrow rather than its own, and scoring attribution against
+      // the bundle lets a rung drift onto a stranger's hop while still reading
+      // as correctly attributed. Carried alongside the block because a rung
+      // that fails to measure is skipped, and a bare index would then pair
+      // every later rung with the wrong arrow.
+      const placed: { block: Block; own: Seg[] }[] = [];
       if (translatable) {
-        for (const box of measured) {
+        for (let i = 0; i < measured.length; i += 1) {
+          const box = measured[i];
           const moved = {
             ...box.block,
             x: box.block.x + (box.alongX ? across : shift),
             y: box.block.y + (box.alongX ? shift : across),
           };
           if (!free(moved)) { placed.length = 0; break; }
-          placed.push(moved);
+          placed.push({ block: moved, own: segsByRoute.get(members[i].id) ?? ownSegs });
         }
       }
       if (placed.length !== members.length) {
@@ -1927,7 +5106,7 @@ async function addEditableDiagram(
           const box = connectorLabelBox(
             member, transform, labelFontSize, px, labelFrame, [], { ...bundle, shift, across },
           );
-          if (box) placed.push(box.block);
+          if (box) placed.push({ block: box.block, own: segsByRoute.get(member.id) ?? ownSegs });
         }
       }
       // Anything the ladder lands on, plus any rung the frame clamp has stacked
@@ -1941,23 +5120,29 @@ async function addEditableDiagram(
       // buried under a tile with eight clean ones is a different picture from
       // nine chips each clipping a corner.
       let dirty = 0;
+      // Rungs a reader would credit to the wrong arrow. Counted apart from the
+      // clipped ones because it is the only kind of dirt a ladder cannot always
+      // walk away from, and that is what decides whether it should stop being a
+      // ladder at all.
+      let stray = 0;
       for (let i = 0; i < placed.length; i += 1) {
-        const own = Math.max(0.0001, placed[i].w * placed[i].h);
+        const rect = placed[i].block;
+        const own = Math.max(0.0001, rect.w * rect.h);
         let mine = 0;
         visit += 1;
-        for (const cell of cellsOf(placed[i])) {
+        for (const cell of cellsOf(rect)) {
           for (const index of buckets.get(cell) ?? []) {
             if (stamp[index] === visit) continue;
             stamp[index] = visit;
             const other = taken[index];
-            const hit = area(placed[i], other);
+            const hit = area(rect, other);
             if (hit <= 0) continue;
             if (other.annotation) labels += hit; else tiles += hit * (other.weight ?? 1);
             mine += other.annotation ? hit * 4 : hit * (other.weight ?? 1);
           }
         }
         for (let j = 0; j < i; j += 1) {
-          const hit = area(placed[i], placed[j]);
+          const hit = area(rect, placed[j].block);
           labels += hit;
           mine += hit * 4;
         }
@@ -1968,19 +5153,26 @@ async function addEditableDiagram(
         // by emigrating is recognised as stuck and falls back to bare numbered
         // callouts — which is what the Architecture Center draws for a bundle
         // of parallel flows anyway.
-        else if (rivals.length > 0) {
-          const cx = placed[i].x + placed[i].w / 2;
+        //
+        // Asked of every rung, not only the clean ones. As an `else if` a rung
+        // that was BOTH buried and misattributed counted as dirt alone, and
+        // dirt only mutes a fan of five or more — so a fan of three whose rungs
+        // clipped a tile *and* read as a stranger's label scored `stray = 0`
+        // and was drawn exactly where the reader misreads it.
+        if (rivals.length > 0) {
+          const mineSegs = placed[i].own;
+          const cx = rect.x + rect.w / 2;
           // The centre alone is not the rung. A numbered callout hangs off the
           // bottom of the block, so a rung whose centre reads correctly can
           // still have its badge sitting on somebody else's arrow — and after a
           // fan mutes, the badge is the ONLY thing tying a sentence to a hop.
           const ys = [
-            placed[i].y + placed[i].h / 2,
-            placed[i].y + Math.min(0.08, placed[i].h / 2),
-            placed[i].y + placed[i].h - Math.min(0.08, placed[i].h / 2),
+            rect.y + rect.h / 2,
+            rect.y + Math.min(0.08, rect.h / 2),
+            rect.y + rect.h - Math.min(0.08, rect.h / 2),
           ];
-          if (ys.some((cy) => gapToSegs(cx, cy, rivals) < gapToSegs(cx, cy, ownSegs) - CONFUSION_SLACK)) {
-            dirty += 1;
+          if (ys.some((cy) => gapToSegs(cx, cy, rivals) < gapToSegs(cx, cy, mineSegs) - CONFUSION_SLACK)) {
+            stray += 1;
           }
         }
       }
@@ -1989,10 +5181,11 @@ async function addEditableDiagram(
       // could not afford to step off a tile it was completely covering.
       const drift = DRIFT_COST_PER_IN * Math.hypot(shift, across);
       return {
-        total: tiles + labels * ANNOTATION_WEIGHT + dirty * DIRTY_RUNG_COST + drift,
+        total: tiles + labels * ANNOTATION_WEIGHT + dirty * DIRTY_RUNG_COST + stray * STRAY_RUNG_COST + drift,
         onLabel: labels,
         overlap: tiles + labels * ANNOTATION_WEIGHT,
         dirty,
+        stray,
       };
     };
     // Search along the ladder AND across it. A ladder is far taller than one
@@ -2010,7 +5203,7 @@ async function addEditableDiagram(
       6,
       Math.min(48, Math.ceil(Math.max(labelFrame.w / Math.max(acrossStep, 0.05), labelFrame.h / Math.max(alongStep, 0.05)))),
     );
-    const sweep = (acrossLimit: number, shiftLimit: number): { shift: number; across: number; cost: number; onLabel: number; overlap: number; dirty: number } => {
+    const sweep = (acrossLimit: number, shiftLimit: number): { shift: number; across: number; cost: number; onLabel: number; overlap: number; dirty: number; stray: number } => {
       let best = { shift: bundle.shift ?? 0, across: bundle.across ?? 0 };
       let at = cost(best.shift, best.across);
       // Coarse to fine. Scanning every lattice point out to the far side of the
@@ -2039,7 +5232,7 @@ async function addEditableDiagram(
       };
       pass(4, 0, 0, rings);
       if (at.total > 0) pass(1, best.shift, best.across, 4);
-      return { ...best, cost: at.total, onLabel: at.onLabel, overlap: at.overlap, dirty: at.dirty };
+      return { ...best, cost: at.total, onLabel: at.onLabel, overlap: at.overlap, dirty: at.dirty, stray: at.stray };
     };
     // The ladder steps across its arrows freely — that is how it dodges the
     // tiles — but sliding it along them past the hop's own ends parks the whole
@@ -2063,7 +5256,9 @@ async function addEditableDiagram(
           const across = picked.across + dy * frac * acrossStep;
           const c = cost(shift, across);
           if (c.total < picked.cost) {
-            picked = { shift, across, cost: c.total, onLabel: c.onLabel, overlap: c.overlap, dirty: c.dirty };
+            picked = {
+              shift, across, cost: c.total, onLabel: c.onLabel, overlap: c.overlap, dirty: c.dirty, stray: c.stray,
+            };
           }
         }
       }
@@ -2071,6 +5266,7 @@ async function addEditableDiagram(
     bundle.shift = picked.shift;
     bundle.across = picked.across;
     bundle.dirty = picked.dirty;
+    bundle.stray = picked.stray;
     // Covered area PLUS the rungs a reader would credit to the wrong arrow, and
     // never the drift tie-breaker (which is never zero, so a total would report
     // every bundle as unplaceable). Returning area alone made the confusion
@@ -2078,14 +5274,12 @@ async function addEditableDiagram(
     // beside a foreign hop scored 0, so the caller skipped the retry and the
     // mute, and drew every rung beside the wrong arrow. That is the one case
     // the rule exists to catch.
-    return picked.overlap + picked.dirty * DIRTY_RUNG_COST;
+    return picked.overlap + picked.dirty * DIRTY_RUNG_COST + picked.stray * STRAY_RUNG_COST;
   };
 
   // Which step numbers the workflow slide will actually narrate. Dropping a
   // chip is only ever a trade against that list; with no row to read it is a
   // deletion.
-  const narratedRows = new Map(workflowListFromEdges(diagram.edges ?? []).map((entry) => [entry.step, entry.description]));
-  const narratedSteps = new Set(narratedRows.keys());
 
   for (const [key, bundle] of bundles) {
     const shape = shapes.get(key);
@@ -2148,7 +5342,7 @@ async function addEditableDiagram(
     // between the two services and look again: a fan wrapped onto more lines
     // fits the gap it belongs in, where at full width it can only stand on the
     // tiles either side of that gap.
-    const wide = { rung: bundle.rung, font: bundle.font, perCol: bundle.perCol, shift: bundle.shift, across: bundle.across, w: shape.w, h: shape.h, dirty: bundle.dirty };
+    const wide = { rung: bundle.rung, font: bundle.font, perCol: bundle.perCol, shift: bundle.shift, across: bundle.across, w: shape.w, h: shape.h, dirty: bundle.dirty, stray: bundle.stray };
     bundle.maxWidth = Math.max(0.34 * px, ((bundle.span ?? 0) - 0.16) || 0.34 * px);
     bundle.shift = undefined;
     bundle.across = undefined;
@@ -2165,6 +5359,7 @@ async function addEditableDiagram(
       shape.w = wide.w;
       shape.h = wide.h;
       bundle.dirty = wide.dirty;
+      bundle.stray = wide.stray;
     }
     // Still nothing. A deep fan across a crowded drawing has no honest inline
     // position left: every slot it can reach is on top of a service or another
@@ -2186,7 +5381,22 @@ async function addEditableDiagram(
     // measured against one chip a whole fan was erased for clipping a sixth of
     // one tile.
     const soiled = Math.max(2, Math.ceil(0.35 * bundle.count));
-    if (carried && bundle.count >= 5 && (bundle.dirty ?? 0) >= soiled) {
+    // Two different reasons to stop being a ladder.
+    //
+    // Deep and clipped: a big fan that lands on tiles wherever it stands. The
+    // depth gate is what keeps a shallow fan from losing every label because
+    // one rung clips a corner.
+    const clipped = bundle.count >= 5 && (bundle.dirty ?? 0) + (bundle.stray ?? 0) >= soiled;
+    // Or misread anywhere it can reach. The search has already swept the whole
+    // frame and this is the best it found, so a rung still credited to a
+    // stranger's arrow is not a placement the ladder can improve on — it is
+    // proof that no honest position exists for an object this shape. Depth is
+    // beside the point: a fan of three that reads as belonging to the wrong hop
+    // is wrong at every depth, and unlike a clip it cannot be walked away from.
+    // Muting is not a loss here, because `carried` has already established that
+    // every rung's sentence reaches the workflow slide.
+    const misread = bundle.count >= 3 && (bundle.stray ?? 0) > 0;
+    if (carried && (clipped || misread)) {
       bundle.badgesOnly = true;
       // A row that exists is still not a row that says anything. An author who
       // writes both a terse description ("Step 13") and a real label loses the
@@ -2223,7 +5433,7 @@ async function addEditableDiagram(
       ]);
       for (let cols = 1; cols <= 6; cols += 1) shapesToTry.add(Math.max(1, Math.ceil(bundle.count / cols)));
       let bestScore = Number.POSITIVE_INFINITY;
-      let bestShape: { perCol: number; shift?: number; across?: number; w: number; h: number; dirty?: number } | null = null;
+      let bestShape: { perCol: number; shift?: number; across?: number; w: number; h: number; dirty?: number; stray?: number } | null = null;
       for (const perCol of shapesToTry) {
         bundle.perCol = perCol;
         bundle.shift = undefined;
@@ -2234,7 +5444,7 @@ async function addEditableDiagram(
         if (score < bestScore) {
           bestScore = score;
           bestShape = {
-            perCol, shift: bundle.shift, across: bundle.across, w: shape.w, h: shape.h, dirty: bundle.dirty,
+            perCol, shift: bundle.shift, across: bundle.across, w: shape.w, h: shape.h, dirty: bundle.dirty, stray: bundle.stray,
           };
         }
         if (bestScore <= 0) break;
@@ -2246,6 +5456,7 @@ async function addEditableDiagram(
         bundle.shift = bestShape.shift;
         bundle.across = bestShape.across;
         bundle.dirty = bestShape.dirty;
+        bundle.stray = bestShape.stray;
         shape.w = bestShape.w;
         shape.h = bestShape.h;
       }
@@ -2282,12 +5493,26 @@ async function addEditableDiagram(
       // beside a different arrow entirely.
       const reach = 1.5 * Math.max(box.w, box.block.h);
       if (Math.hypot(moved.block.x - box.block.x, moved.block.y - box.block.y) > reach) continue;
+      // The repair has to answer the same question the first seat did. It used
+      // to ask only whether the new slot hit another chip, so a chip refused
+      // for standing on a caption could be moved onto a different caption and
+      // kept — the refusal was undone by the fix for a different defect.
+      //
+      // And it asked it only of narrated routes, so an un-numbered chip could
+      // be moved onto a service tile and kept while the identical numbered one
+      // beside it was refused. `settle` has no such exemption; neither should
+      // its repair. The seat this move came from was already cleared by
+      // `settle`, so refusing the move is always the safe answer.
+      if (chipSpoils(moved.block, { sourceId: route.sourceId, targetId: route.targetId, bundleKey: bundleKey(route) },
+        chipObstacles.filter((taken) => taken !== box.block))) {
+        continue;
+      }
       const slot = chipObstacles.indexOf(box.block);
       if (slot >= 0) chipObstacles[slot] = moved.block;
       chips.set(route.id, moved);
       badges.set(route.id, stepBadgeBox(
         route, transform, px, labelFrame, moved, chipObstacles,
-        ownGapFor(route), foreignGapFor(route),
+        ownGapFor(route), foreignGapFor(route), thumbnail,
       ));
       repaired += 1;
     }
@@ -2311,14 +5536,44 @@ async function addEditableDiagram(
       const pool = chipObstacles.filter((taken) => !own.has(taken));
       for (const route of members) {
         const old = chips.get(route.id);
-        const moved = connectorLabelBox(
+        let moved = connectorLabelBox(
           route, transform, labelFontSize, px, labelFrame, pool, bundle,
           undefined, foreignGapFor(route),
         );
+        // The ladder repair re-seats every rung in the bundle, so each new seat
+        // is a fresh placement and owes the same answer as a first one. A rung
+        // that now stands on a name is handed to the step list rather than
+        // drawn, which is the trade the whole chip mechanism is built on.
+        //
+        // Every rung, not just the narrated ones: a ladder is re-seated as a
+        // unit, so exempting its un-numbered members left them standing on the
+        // tiles the numbered ones had just been moved off. An un-numbered rung
+        // takes the same promotion `settle` gives it — a number, a callout, and
+        // its sentence on the workflow slide.
+        if (moved && chipSpoils(
+          { ...moved.block }, { sourceId: route.sourceId, targetId: route.targetId, bundleKey: key }, pool,
+        )) {
+          if (route.stepNumber !== undefined && narratedSteps.has(route.stepNumber)) {
+            if (!thumbnail && route.label
+              && !carriesWording(narratedRows.get(route.stepNumber) ?? '', route.label)) {
+              mutedWording.set(route.stepNumber, route.label);
+            }
+            moved = null;
+          } else if (route.stepNumber === undefined && !thumbnail) {
+            const step = promotable.get(route.id);
+            if (step !== undefined) {
+              route.stepNumber = step;
+              promotedSteps.set(step, route.label);
+              moved = null;
+            }
+          } else {
+            moved = null;
+          }
+        }
         chips.set(route.id, moved);
         badges.set(route.id, stepBadgeBox(
           route, transform, px, labelFrame, moved, pool,
-          ownGapFor(route), foreignGapFor(route),
+          ownGapFor(route), foreignGapFor(route), thumbnail,
         ));
         const slot = old?.block ? chipObstacles.indexOf(old.block) : -1;
         if (moved) {
@@ -2370,7 +5625,14 @@ export async function buildDiagramSlidePptx(
   imageDataUrl: string,
   options: PptxExportOptions,
 ): Promise<PptxGenJS> {
-  const { diagramName, author, date, isDarkMode } = options;
+  const { diagramName: rawDiagramName, author: rawAuthor, date: rawDate, isDarkMode } = options;
+  // The header triple is drawn on every slide and is free text the user
+  // typed, so it goes through the same single-line composition as every other
+  // drawn string. Without it an NFD name measures wider than the NFC one that
+  // means the same thing, and the header fitter shrinks the two differently.
+  const diagramName = singleLineName(rawDiagramName);
+  const author = singleLineName(rawAuthor);
+  const date = singleLineName(rawDate);
   const t = isDarkMode ? DARK_THEME : LIGHT_THEME;
   // Number the callouts before anything measures them, so the drawing, the
   // badges and the workflow list are all built from the same edges.
@@ -2378,7 +5640,7 @@ export async function buildDiagramSlidePptx(
     ? { ...options.diagram, edges: narrateEdgeCallouts(options.diagram.edges ?? []) }
     : options.diagram;
 
-  const pptx = new PptxCtor();
+  const pptx = newDeck();
   const geom = planSlideGeometry(diagram);
   if (geom.w > BASE_W + 0.001 || geom.h > BASE_H + 0.001) {
     // A custom page keeps every shape at its true size instead of squeezing a
@@ -2405,6 +5667,35 @@ export async function buildDiagramSlidePptx(
   // Wording that a muted chip handed to the workflow slide, filled in by the
   // diagram pass and read when that slide is written.
   const mutedWording = new Map<number, string>();
+  // Wording promoted into a numbered step because its chip had nowhere to
+  // stand and its edge carried no step of its own. Unlike a muted chip, there
+  // is no authored row waiting for it, so the workflow list has to grow one.
+  const promotedSteps = new Map<number, string>();
+  // Names the tiles had to cut, for the index slide at the end of the deck.
+  //
+  // A MAP, because the index has to print the pair. A shortened name stops
+  // being a name and becomes a lookup key, and a key the index never defines is
+  // not a key at all - the reader sees a tile marked "3" and an index of
+  // sentences, none of which contains a 3. Keyed by the AUTHORED name so a
+  // service drawn on the overview and again on its own window slide occupies
+  // one row, not two.
+  const truncatedNames = new Map<string, Set<string>>();
+  // The mark each service draws, shared by every slide in the deck.
+  //
+  // Per-slide, this counter restarted: two window slides issued the same four
+  // keys to eight different services, and a service was "5" on the overview and
+  // "1" on its own slide. A mark has to mean one thing in one file, so both the
+  // collision test and the key it falls back to are deck-global.
+  const drawnHere = new Map<string, string>();
+  // Assigned once, from a stable sort of the node ids, so adding a node does
+  // not renumber the ones already there. Digits are the narrowest glyphs in the
+  // model - "123" is 0.1572in against 0.2379in for a two-letter stub - so a
+  // stable key still fits every column a positional one did.
+  const keyOrdinal = new Map<string, number>();
+  [...(diagram?.nodes ?? [])]
+    .map((node) => String(node.id))
+    .sort((a, b) => a.localeCompare(b))
+    .forEach((nodeId, i) => keyOrdinal.set(nodeId, i + 1));
 
   for (const [index, window] of windows.entries()) {
     const slide = pptx.addSlide();
@@ -2414,6 +5705,9 @@ export async function buildDiagramSlidePptx(
       : index === 0
         ? '  (Overview)'
         : `  (${index} / ${parts.length})`;
+    // Quoted from the heading the reader is looking at, not re-derived, so the
+    // index cannot name a sheet the deck does not print.
+    const slideLabel = partOf ? `slide "${partOf.trim().replace(/^\(|\)$/g, '')}"` : '';
 
     // ── Top accent bar (Azure blue) ───────────────────────────────────────────
     slide.addShape(pptx.ShapeType.rect, {
@@ -2430,9 +5724,11 @@ export async function buildDiagramSlidePptx(
     });
 
     // ── Diagram title ─────────────────────────────────────────────────────────
-    slide.addText(`${diagramName}${partOf}`, {
-      x: 0.35, y: ACCENT_H + 0.05, w: Math.max(3, W - 3.85), h: HEADER_H - 0.1,
-      fontSize: 24,
+    const titleW = Math.max(3, W - 3.85);
+    const head = fitHeadingToBox(`${diagramName}${partOf}`, titleW, HEADER_H - 0.1, 24);
+    slide.addText(head.body, {
+      x: 0.35, y: ACCENT_H + 0.05, w: titleW, h: HEADER_H - 0.1,
+      fontSize: head.fontSize,
       bold: true,
       color: t.titleText,
       fontFace: 'Yu Gothic UI',
@@ -2459,7 +5755,7 @@ export async function buildDiagramSlidePptx(
 
     // ── Diagram body — native shapes when available, captured PNG otherwise ───
     renderedNatively = diagram
-      ? await addEditableDiagram(pptx, slide, diagram, geom.frame, isDarkMode, window, mutedWording, window === undefined && parts.length > 0)
+      ? await addEditableDiagram(pptx, slide, diagram, geom.frame, isDarkMode, window, mutedWording, truncatedNames, window === undefined && parts.length > 0, options.presetIcons, promotedSteps, drawnHere, keyOrdinal, slideLabel)
       : false;
 
     if (!renderedNatively) {
@@ -2489,7 +5785,7 @@ export async function buildDiagramSlidePptx(
         x: 0.35, y: FOOTER_Y - 0.26, w: W - 0.7, h: 0.24,
         fontSize: 9,
         bold: true,
-        color: 'B45309',
+        color: stripHash(readableTextOn('#B45309', `#${stripHash(t.bg)}`)),
         fontFace: 'Yu Gothic UI',
         valign: 'middle',
       });
@@ -2512,13 +5808,47 @@ export async function buildDiagramSlidePptx(
     const handed = mutedWording.get(row.step);
     return handed ? { ...row, description: `${row.description}（${handed}）` } : row;
   });
+  // A promoted chip has a badge on the drawing and, until now, nothing to look
+  // it up in: `workflowListFromEdges` builds rows only from edges the author
+  // numbered, and a promoted edge is by definition one they did not. Append
+  // the rows it is owed and keep the list in step order, so the badges read
+  // down the page the way the numbers do.
+  for (const [step, text] of promotedSteps) {
+    if (workflow.some((row) => row.step === step)) continue;
+    workflow.push({ step, description: text });
+  }
+  workflow.sort((a, b) => a.step - b.step);
   if (workflow.length > 0) {
     // Rows stop shrinking at a legible minimum, so a long workflow continues on
     // another slide. Dropping the tail would leave badges on the drawing whose
     // sentence appears nowhere in the deck.
     const listTop = IMAGE_Y + 0.1;
     const available = Math.max(MIN_WORKFLOW_ROW_IN, geom.footerY - 0.1 - listTop);
-    const perSlide = Math.max(1, Math.floor(available / MIN_WORKFLOW_ROW_IN));
+    // The sentence column, measured against the widest the badge is ever
+    // allowed to be so the estimate is never optimistic.
+    const rowTextW = Math.max(1, W - (0.42 + 0.34 + 0.16) - 0.42 - 0.2);
+    const rowHeightIn = (text: string, pt: number): number => {
+      // 1.35, matching every other line-height in this file: `Yu Gothic UI`'s
+      // own hhea and OS/2 win metrics give 1.3301, and the same face carries
+      // the Latin and the CJK. 1.25 was 6% optimistic, which the row slack
+      // absorbed only up to about six lines. And measure the wrap the way a
+      // renderer wraps it — the ratio is a lower bound for text that breaks
+      // between words. The 0.2in off the column and 0.1in on the row are the
+      // text box's own insets, which come out of the room the words get.
+      const lines = wrappedLineCount(text, rowTextW, pt);
+      return lines * pt * 1.35 / 72 + 0.1;
+    };
+    // Paginating on a flat 0.34in assumed every step was one line. Real
+    // Architecture-Center prose wraps to two or three, and PowerPoint does not
+    // clip a `valign: middle` box — it spills symmetrically — so a wrapped row
+    // ran into the rows above and below it. Give each slide as many rows as
+    // actually fit once the longest sentence is allowed to wrap at the smallest
+    // size still worth reading.
+    const neededRow = Math.max(
+      MIN_WORKFLOW_ROW_IN,
+      ...workflow.map(entry => rowHeightIn(entry.description, WORKFLOW_MIN_PT) + 0.06),
+    );
+    const perSlide = Math.max(1, Math.floor(available / neededRow));
     const parts = Math.ceil(workflow.length / perSlide);
 
     for (let part = 0; part < parts; part += 1) {
@@ -2545,8 +5875,25 @@ export async function buildDiagramSlidePptx(
 
       // The badge colour and shape repeat here so a reader can match a number on
       // the drawing to its row without hunting.
-      const rowGap = Math.min(0.62, Math.max(MIN_WORKFLOW_ROW_IN, available / rows.length));
+      // The 0.62in cap keeps a short list from turning into widely-spaced
+      // bullets — but pagination has just reserved `neededRow` per row for the
+      // longest sentence at the 9pt floor, and capping below that threw the
+      // reservation away and printed the text outside its own box. Never
+      // shrink a row below what the pagination promised it.
+      const rowGap = Math.max(
+        neededRow,
+        Math.min(0.62, Math.max(MIN_WORKFLOW_ROW_IN, available / rows.length)),
+      );
       const badge = Math.min(0.34, rowGap - 0.06);
+      // Pagination already reserved room for the longest sentence at the floor
+      // size; this hands every shorter row the largest size that still fits its
+      // own box, so only the sentences that need to shrink do.
+      const rowFontPt = (text: string, boxH: number): number => {
+        for (let pt = WORKFLOW_ROW_PT; pt > WORKFLOW_MIN_PT; pt -= 0.5) {
+          if (rowHeightIn(text, pt) <= boxH) return pt;
+        }
+        return WORKFLOW_MIN_PT;
+      };
       rows.forEach((entry, index) => {
         const y = listTop + index * rowGap;
         slide.addText(String(entry.step), {
@@ -2562,7 +5909,8 @@ export async function buildDiagramSlidePptx(
         slide.addText(entry.description, {
           objectName: `workflow-text-${entry.step}`,
           x: 0.42 + badge + 0.16, y, w: W - (0.42 + badge + 0.16) - 0.42, h: rowGap - 0.04,
-          fontSize: 12, color: t.titleText, fontFace: 'Yu Gothic UI',
+          fontSize: rowFontPt(entry.description, rowGap - 0.04),
+          color: t.titleText, fontFace: 'Yu Gothic UI',
           valign: 'middle', wrap: true,
         });
       });
@@ -2573,7 +5921,215 @@ export async function buildDiagramSlidePptx(
     }
   }
 
+  // Every name the drawing had to cut, spelled out.
+  //
+  // A tile too small for its name is a fact of any large estate — the drawing
+  // is a map, and a map abbreviates. Throwing the name away is not. Without
+  // this slide the reader of a 400-service deck meets rows of
+  // "Azure Kubernetes Ser…" and has nowhere to go, which is precisely the
+  // "export it and then retype it by hand" outcome this exporter exists to
+  // avoid. Columns are sized from the longest name so nothing is clipped twice.
+  if (truncatedNames.size > 0) {
+    // THE PAIR, in the same format the Visio index uses: "<mark>  =  <name>".
+    // A tile drew a mark and the reader has nothing but that mark to look the
+    // service up by, so a row printing the name alone defines nothing. An empty
+    // mark - a name the slide could not draw at all - reads "(not drawn)".
+    // ALL of a service's marks are listed, because the overview and the reading
+    // slide shorten one name to two different widths; a row quoting one of them
+    // leaves the other drawn on a tile and defined nowhere. Separated by
+    // "  |  " rather than by a comma: a cut name routinely contains a comma
+    // ("... (Production, Zone Redundant)"), and splitting a row on one shredded
+    // the mark into fragments that matched no tile. Two spaces on each side,
+    // which no drawn string can contain - singleLineName collapses every run of
+    // spaces before a label is ever measured - so this separator is unambiguous
+    // for exactly the reason "  =  " is.
+    const names = [...truncatedNames]
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([authored, marks]) => {
+        const printed = [...marks]
+          // "(drawn unlabelled)", not "(not drawn)", because the tile IS on the
+          // canvas. Measured across the corpus, 16 services on 7 drawings emit
+          // a service shape and no caption, and the index told the reader each
+          // one was absent while they were looking straight at it - on
+          // probe-refused-raise, 4 of 6 services, every one of them cited by a
+          // numbered step. A row that denies a drawn shape is worse than no row.
+          .map((m) => (m === '' ? UNLABELLED_ROW : m))
+          .sort((a, b) => a.localeCompare(b))
+          .join('  |  ');
+        return `${printed}  =  ${authored}`;
+      });
+    const listTop = IMAGE_Y + 0.1;
+    // The note that heads the list is drawn 0.24in below `listTop` and the
+    // first row starts under it, so the rows have 0.24in less room than the
+    // page does. Fitting the grid to the page and then placing it 0.24in lower
+    // pushed the last row of every column into the footer band: 0.0403in in
+    // seven shipped scenarios, and up to 0.1309in - two thirds of the row -
+    // once the fit loop made the pitch a variable.
+    const INDEX_NOTE_H = 0.24;
+    const available = Math.max(0.3, geom.footerY - 0.1 - listTop - INDEX_NOTE_H);
+    // THE INDEX IS THE ONE PAGE A READER OPENS WHEN A MARK MEANS NOTHING TO
+    // THEM, so a row that runs off the sheet defeats the entire page. At a
+    // fixed 10pt with `wrap: false`, PowerPoint neither clips the row nor
+    // complains: it simply paints past the slide edge and the characters are
+    // gone. A 130-character pair drew 0.140in past the edge and a 175-character
+    // pair drew 3.127in past it, losing about 45 characters, and the corpus was
+    // already inside 0.040in of the margin - so this was one long service name
+    // away from shipping. The type shrinks to fit its column first, and what
+    // still will not fit at the floor WRAPS and takes the height it needs,
+    // which is the same remedy the Visio index was given.
+    const INDEX_MAX_PT = 10;
+    const INDEX_MIN_PT = 7;
+    let indexPt = INDEX_MAX_PT;
+    let cols = 1;
+    let colW = W - 0.7;
+    // A SHRINK IS ONLY WORTH WHAT IT BUYS. The loop stepped the type down half
+    // a point at a time until the widest name fitted its column on one line,
+    // but it also stopped at the 7pt floor - and a name too long for a
+    // full-width column at 10pt is still too long at 7pt. `probe-overlong-index`
+    // walked all the way down and wrapped anyway: the reader was handed 7pt
+    // type AND the wrapping the shrink existed to prevent. Three points of
+    // legibility spent on nothing, on the one page a reader opens precisely
+    // because a mark on the drawing meant nothing to them.
+    //
+    // So the size is chosen rather than walked into. Take the largest size that
+    // actually fits; if none does, keep the largest size and let the rows wrap.
+    // Where the shrink pays - `probe-shrinkable-index` - the answer is
+    // unchanged, because the first size that fits is the one the walk reached.
+    const indexFitAt = (pt: number) => {
+      const widest = Math.max(...names.map((n) => estimateTextWidthIn(n, pt)));
+      const rowsPer = Math.max(1, Math.floor(available / (pt * 1.45 / 72)));
+      const at = Math.max(1, Math.min(
+        Math.floor((W - 0.7) / (widest + 0.25)),
+        Math.ceil(names.length / rowsPer),
+      ));
+      const width = (W - 0.7) / at;
+      return { cols: at, colW: width, fits: widest <= width - 0.15 };
+    };
+    let indexFit = indexFitAt(INDEX_MAX_PT);
+    for (let pt = INDEX_MAX_PT; pt >= INDEX_MIN_PT - 1e-9; pt -= 0.5) {
+      const at = indexFitAt(pt);
+      if (!at.fits) continue;
+      indexPt = pt;
+      indexFit = at;
+      break;
+    }
+    cols = indexFit.cols;
+    colW = indexFit.colW;
+    const lineH = indexPt * 1.45 / 72;
+    const indexTextW = Math.max(0.05, colW - 0.15);
+    // EACH ROW TAKES ITS OWN HEIGHT, and the rows are packed by accumulated
+    // height rather than laid on a fixed grid. Giving every row the tallest
+    // row's pitch made one long name re-pitch the whole page: 44 rows of
+    // 0.1410in ink were each given 0.2819in, which stranded half the sheet and
+    // cost a whole extra index page. It also put the column count and the row
+    // count permanently out of step - the columns were chosen assuming
+    // single-line rows and the rows counted at the grown pitch, so a page held
+    // a fraction of what it was sized for.
+    const indexRows = names.map((text) => {
+      const lines = wrappedLineCount(text, indexTextW, indexPt);
+      return { text, lines, h: lineH * lines };
+    });
+    type PlacedRow = { text: string; lines: number; h: number; col: number; top: number };
+    const indexPages: PlacedRow[][] = [];
+    {
+      let current: PlacedRow[] = [];
+      let col = 0;
+      let cursor = 0;
+      for (const row of indexRows) {
+        if (cursor > 0 && cursor + row.h > available + 1e-6) {
+          col += 1;
+          cursor = 0;
+        }
+        if (col >= cols) {
+          indexPages.push(current);
+          current = [];
+          col = 0;
+          cursor = 0;
+        }
+        current.push({ ...row, col, top: cursor });
+        cursor += row.h;
+      }
+      if (current.length > 0) indexPages.push(current);
+    }
+    const pages = indexPages.length;
+
+    let indexOrdinal = 0;
+    for (let page = 0; page < pages; page += 1) {
+      const slice = indexPages[page];
+      const slide = pptx.addSlide();
+      slide.background = { color: t.bg };
+      addChrome(
+        pptx, slide, t,
+        pages > 1 ? `Service names (${page + 1} / ${pages})` : 'Service names',
+        `${author}  ·  ${date}`,
+      );
+      slide.addText(
+        'Names shortened on the drawing, in full.',
+        {
+          objectName: 'index-note',
+          x: 0.35, y: HEADER_END + SEP_H + 0.04, w: W - 0.7, h: 0.22,
+          fontSize: 9, color: t.metaText, fontFace: 'Yu Gothic UI', valign: 'middle',
+        },
+      );
+      slice.forEach((row) => {
+        slide.addText(row.text, {
+          objectName: `index-name-${indexOrdinal}`,
+          x: 0.35 + row.col * colW,
+          y: listTop + INDEX_NOTE_H + row.top,
+          w: indexTextW,
+          h: row.h,
+          fontSize: indexPt,
+          color: t.titleText,
+          fontFace: 'Yu Gothic UI',
+          valign: 'middle',
+          wrap: row.lines > 1,
+        });
+        indexOrdinal += 1;
+      });
+      slide.addText('Generated by Microsoft Product Architecture Diagram Builder  ·  Swarm Data SE, Jiayi Yang', {
+        x: 0.35, y: FOOTER_Y, w: W - 0.7, h: FOOTER_H,
+        fontSize: 8, color: t.footerText, fontFace: 'Yu Gothic UI', valign: 'middle',
+      });
+    }
+  }
+
   return pptx;
+}
+
+/**
+ * Write the deck out after repairing it into shapes PowerPoint treats as its
+ * own — real connectors glued to the services they join, service names living
+ * inside their tiles, and each tile grouped with its icon.
+ *
+ * pptxgenjs cannot emit any of that, so it is done on the finished package.
+ * If anything goes wrong the untouched deck is still downloaded: a deck that
+ * is harder to edit is very much better than no deck at all.
+ */
+async function downloadNativePptx(pptx: PptxGenJS, fileName: string): Promise<void> {
+  try {
+    const blob = (await pptx.write({ outputType: 'blob' })) as Blob;
+    const zip = await nativizePackage(await JSZip.loadAsync(blob));
+    const repaired = await zip.generateAsync({
+      type: 'blob',
+      mimeType: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+      // pptxgenjs writes the package uncompressed. Once this path owns the
+      // write it may as well deflate it: measured ~9x smaller (425KB -> 46KB),
+      // which is the difference between a deck that mails and one that bounces.
+      compression: 'DEFLATE',
+      compressionOptions: { level: 6 },
+    });
+    const url = URL.createObjectURL(repaired);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = fileName;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  } catch (error) {
+    console.warn('PowerPoint shape conversion failed; exporting the unconverted deck.', error);
+    await pptx.writeFile({ fileName });
+  }
 }
 
 /**
@@ -2590,7 +6146,7 @@ export async function exportDiagramAsPptx(
 ): Promise<string> {
   const pptx = await buildDiagramSlidePptx(imageDataUrl, options);
   const fileName = generateModelFilename('azure-diagram-slide', 'pptx');
-  await pptx.writeFile({ fileName });
+  await downloadNativePptx(pptx, fileName);
   return fileName;
 }
 
@@ -2648,6 +6204,13 @@ export interface DeckCost {
   term?: string;
   region?: string;
   pricesAsOf?: string;
+  /**
+   * The oldest still-unchanged price behind this estimate, when it has held for
+   * over a year. Not a staleness warning — these are current Azure prices — but
+   * a customer asking "how firm is this number?" is asking a fair question and
+   * the deck should answer it.
+   */
+  oldestMeterAsOf?: string;
   /** Fixed (predictable) vs usage-based split, when derivable. */
   fixedCost?: number;
   usageCost?: number;
@@ -2701,9 +6264,6 @@ function severityColor(sev: string): string {
   const s = sev.toLowerCase();
   return s === 'critical' || s === 'high' ? 'dc2626' : s === 'medium' ? 'f59e0b' : '0078d4';
 }
-function truncate(s: string, n: number): string {
-  return s.length > n ? s.slice(0, n - 1).trimEnd() + '…' : s;
-}
 function money(n: number, currency: string): string {
   const sym = currency === 'USD' ? '$' : '';
   return `${sym}${n.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
@@ -2714,12 +6274,77 @@ function addChrome(pptx: PptxGenJS, slide: Slide, t: SlideTheme, title: string, 
   slide.background = { color: t.bg };
   slide.addShape(pptx.ShapeType.rect, { x: 0, y: 0, w: W, h: ACCENT_H, fill: { color: t.accent }, line: { color: t.accent, width: 0 } });
   slide.addShape(pptx.ShapeType.rect, { x: 0, y: ACCENT_H, w: W, h: HEADER_H, fill: { color: t.headerBg }, line: { color: t.headerBg, width: 0 } });
-  slide.addText(title, { x: 0.35, y: ACCENT_H + 0.05, w: 9.5, h: HEADER_H - 0.1, fontSize: 22, bold: true, color: t.titleText, fontFace: 'Yu Gothic UI', valign: 'middle', wrap: true });
+  const head = fitHeadingToBox(title, 9.5, HEADER_H - 0.1, 22);
+  slide.addText(head.body, { x: 0.35, y: ACCENT_H + 0.05, w: 9.5, h: HEADER_H - 0.1, fontSize: head.fontSize, bold: true, color: t.titleText, fontFace: 'Yu Gothic UI', valign: 'middle', wrap: true });
   if (meta) {
     slide.addText(meta, { x: 9.9, y: ACCENT_H + 0.05, w: 3.08, h: HEADER_H - 0.1, fontSize: 10, color: t.metaText, fontFace: 'Yu Gothic UI', align: 'right', valign: 'middle' });
   }
   slide.addShape(pptx.ShapeType.rect, { x: 0, y: HEADER_END, w: W, h: SEP_H, fill: { color: t.accent }, line: { color: t.accent, width: 0 } });
   slide.addText('Generated by Microsoft Product Architecture Diagram Builder  ·  Swarm Data SE, Jiayi Yang', { x: 0.35, y: FOOTER_Y, w: W - 0.7, h: FOOTER_H, fontSize: 8, color: t.footerText, fontFace: 'Yu Gothic UI', valign: 'middle' });
+}
+
+/**
+ * Prose fitted to a fixed box: shrink first, and trim by measurement only when
+ * shrinking has run out.
+ *
+ * A character cap stopped bounding height the moment a hard break became a real
+ * paragraph — a twenty-line bulleted brief of 213 characters, half of the 420
+ * the cap allowed, drew 4.875in in a 1.700in box: 1.725in off the bottom of the
+ * sheet and straight through the model credit. Characters never bounded width
+ * either; 420 of them is 0.98in of ASCII and 1.71in of Japanese.
+ */
+function fitProseToBox(
+  prefix: string, body: string, boxW: number, boxH: number, startPt: number,
+  /**
+   * The smallest size this text may shrink to before it is trimmed instead.
+   *
+   * Prose keeps the 7pt legibility floor: a brief that has to be read closely
+   * is still worth more small than absent. A heading does not - a 40pt cover
+   * title that shrank to 7pt has stopped being a title, and the reader is
+   * better served by a large name with an ellipsis than by a paragraph where
+   * the name should be. So headings pass a floor of their own and reach the
+   * trimming path far sooner.
+   */
+  minPt: number = LEGIBLE_TILE_PT,
+): { body: string; fontSize: number } {
+  const usable = Math.max(0.4, boxW - 0.2);
+  const floorPt = Math.max(LEGIBLE_TILE_PT, Math.min(minPt, startPt));
+  const fits = (s: string, pt: number): boolean => (wrappedLineCount(prefix + s, usable, pt) * pt * 1.35) / 72 <= boxH;
+  for (let pt = startPt; pt >= floorPt; pt -= 0.5) {
+    if (fits(body, pt)) return { body, fontSize: pt };
+  }
+  const chars = [...body];
+  let lo = 0;
+  let hi = chars.length;
+  while (lo < hi) {
+    const mid = Math.ceil((lo + hi) / 2);
+    if (fits(`${chars.slice(0, mid).join('')}…`, floorPt)) lo = mid;
+    else hi = mid - 1;
+  }
+  return { body: `${chars.slice(0, lo).join('').trimEnd()}…`, fontSize: floorPt };
+}
+
+/**
+ * A heading fitted to the band that was reserved for it.
+ *
+ * The cover title, the section headers and the diagram slide header were all
+ * drawn at a fixed point size with `wrap: true` and no autofit, so PowerPoint
+ * wrapped them to as many lines as they needed and grew the block out of the
+ * box - upward too, at `anchor="ctr"`, which put a three-line header above
+ * the top edge of the slide. Nothing in the deck bounded the name, because
+ * the name is free text the user types.
+ *
+ * Same two-stage answer as the index panel: take the largest size that fits,
+ * and only when the floor is reached trim by measurement. `TITLE_FLOOR_PT`
+ * ratios rather than absolute sizes so each of the three keeps its place in
+ * the hierarchy - a shrunk cover title is still bigger than a section header.
+ */
+const TITLE_FLOOR_RATIO = 0.5;
+
+function fitHeadingToBox(
+  text: string, boxW: number, boxH: number, startPt: number,
+): { body: string; fontSize: number } {
+  return fitProseToBox('', text, boxW, boxH, startPt, startPt * TITLE_FLOOR_RATIO);
 }
 
 /** Slide 1 — title / cover. */
@@ -2729,34 +6354,71 @@ function addTitleSlide(pptx: PptxGenJS, t: SlideTheme, o: ArchitectureDeckOption
   // Left accent band
   slide.addShape(pptx.ShapeType.rect, { x: 0, y: 0, w: 0.28, h: 7.5, fill: { color: t.accent }, line: { color: t.accent, width: 0 } });
   slide.addText('AZURE ARCHITECTURE', { x: 0.9, y: 1.5, w: 11.5, h: 0.4, fontSize: 14, bold: true, color: t.accent, fontFace: 'Yu Gothic UI', charSpacing: 3 });
-  slide.addText(o.diagramName, { x: 0.9, y: 2.0, w: 11.5, h: 1.6, fontSize: 40, bold: true, color: t.titleText, fontFace: 'Yu Gothic UI', valign: 'top', wrap: true });
+  const cover = fitHeadingToBox(o.diagramName, 11.5, 1.6, 40);
+  slide.addText(cover.body, { x: 0.9, y: 2.0, w: 11.5, h: 1.6, fontSize: cover.fontSize, bold: true, color: t.titleText, fontFace: 'Yu Gothic UI', valign: 'top', wrap: true });
   slide.addText(`${o.author}   ·   ${o.date}`, { x: 0.9, y: 3.7, w: 11.5, h: 0.4, fontSize: 14, color: t.metaText, fontFace: 'Yu Gothic UI' });
   if (o.prompt) {
+    const brief = fitProseToBox('Brief:  ', o.prompt, 11.5, 1.7, 13);
     slide.addText([
       { text: 'Brief:  ', options: { bold: true, color: t.metaText } },
-      { text: truncate(o.prompt, 420), options: { color: t.metaText } },
-    ], { x: 0.9, y: 4.35, w: 11.5, h: 1.7, fontSize: 13, fontFace: 'Yu Gothic UI', valign: 'top', italic: true });
+      { text: brief.body, options: { color: t.metaText } },
+    ], { x: 0.9, y: 4.35, w: 11.5, h: 1.7, fontSize: brief.fontSize, fontFace: 'Yu Gothic UI', valign: 'top', italic: true });
   }
   if (o.model) {
     slide.addText(`Generated with ${o.model}`, { x: 0.9, y: 6.6, w: 11.5, h: 0.35, fontSize: 10, color: t.footerText, fontFace: 'Yu Gothic UI' });
   }
 }
 
-/** Slide 2 — the diagram, drawn with native (editable) PowerPoint shapes. */
+/**
+ * Slide 2 — the diagram, drawn with native (editable) PowerPoint shapes.
+ *
+ * This deck carries title, workflow, services, review and cost slides that are
+ * all designed for a standard 16:9 page, so unlike {@link buildDiagramSlidePptx}
+ * it cannot grow the page for a large drawing — PowerPoint gives a deck exactly
+ * one page size. It tiles instead: an overview, then one slide per readable
+ * window, exactly as the diagram-only deck does when the page has stopped
+ * growing. Squeezing the whole drawing onto the single fixed slide is what
+ * produced 0.05in tiles and 4pt type on the deck the export button actually
+ * ships, while the audited deck showed 0.44in tiles for the same architecture.
+ */
 async function addDiagramSlide(pptx: PptxGenJS, t: SlideTheme, imageDataUrl: string, o: ArchitectureDeckOptions): Promise<void> {
-  const slide = pptx.addSlide();
-  addChrome(pptx, slide, t, o.diagramName, `${o.author}  ·  ${o.date}`);
-  const renderedNatively = o.diagram
-    ? await addEditableDiagram(
-      pptx,
-      slide,
-      o.diagram,
-      { x: IMAGE_X, y: IMAGE_Y, w: IMAGE_W, h: IMAGE_H },
-      o.isDarkMode,
-    )
-    : false;
-  if (!renderedNatively) {
-    slide.addImage({ data: imageDataUrl, x: IMAGE_X, y: IMAGE_Y, w: IMAGE_W, h: IMAGE_H, sizing: { type: 'contain', w: IMAGE_W, h: IMAGE_H } });
+  // The colour key is seated just below the drawing frame, so the frame has to
+  // give up that strip first. `planSlideGeometry` does exactly this for the
+  // single-slide export; the deck used the raw constant and so seated the key
+  // 0.27in lower — 7.07in to 7.31in on a 7.5in page, straight through the top
+  // of the footer band at 7.14in. It overflowed nothing and left nothing off
+  // the sheet, so it was a pure position defect on every drawing slide of
+  // every scenario in the corpus.
+  const legendH = usedConnectionLegend(o.diagram?.edges ?? []).length > 0 ? 0.24 + 0.03 : 0;
+  const frame = { x: IMAGE_X, y: IMAGE_Y, w: IMAGE_W, h: IMAGE_H - legendH };
+  const parts = o.diagram ? planFixedPageWindows(o.diagram, frame) : [];
+  const windows: (DiagramWindow | undefined)[] = parts.length > 0 ? [undefined, ...parts] : [undefined];
+  for (const [index, window] of windows.entries()) {
+    const slide = pptx.addSlide();
+    const partOf = parts.length === 0
+      ? ''
+      : index === 0
+        ? '  (Overview)'
+        : `  (${index} / ${parts.length})`;
+    addChrome(pptx, slide, t, `${o.diagramName}${partOf}`, `${o.author}  ·  ${o.date}`);
+    const renderedNatively = o.diagram
+      ? await addEditableDiagram(
+        pptx,
+        slide,
+        o.diagram,
+        frame,
+        o.isDarkMode,
+        window,
+        undefined,
+        undefined,
+        window === undefined && parts.length > 0,
+        o.presetIcons,
+      )
+      : false;
+    if (!renderedNatively) {
+      slide.addImage({ data: imageDataUrl, x: IMAGE_X, y: IMAGE_Y, w: IMAGE_W, h: IMAGE_H, sizing: { type: 'contain', w: IMAGE_W, h: IMAGE_H } });
+      return;
+    }
   }
 }
 
@@ -2767,88 +6429,280 @@ async function addDiagramSlide(pptx: PptxGenJS, t: SlideTheme, imageDataUrl: str
  * architecture: each numbered paragraph corresponds to the callout drawn on the
  * matching arrow of the diagram slide. Emitted only when the architecture
  * actually has a workflow, so a topology-only diagram gains no empty slide.
+ *
+ * Continues onto further slides rather than stopping at a fixed count. A flat
+ * cap of twelve turned a sixteen-step architecture into a drawing carrying
+ * callouts 13 to 16 that the deck then never explained, and the reader had no
+ * way to find out what they meant — the wording was not truncated, it was
+ * discarded. The diagram deck has always paginated its workflow; this is the
+ * same rule applied to the deck the customer is actually sent.
  */
 function addWorkflowSlide(pptx: PptxGenJS, t: SlideTheme, o: ArchitectureDeckOptions): void {
-  const steps = (o.workflow ?? [])
+  const authored = (o.workflow ?? [])
     .filter((entry) => entry && readStepValue(entry.step) !== undefined && !!entry.description)
     .sort((a, b) => a.step - b.step);
-  if (steps.length === 0) return;
+  if (authored.length === 0) return;
 
-  const MAX_ROWS = 12;
-  const shown = steps.slice(0, MAX_ROWS);
-  const slide = pptx.addSlide();
-  addChrome(pptx, slide, t, 'Workflow', `${steps.length} step${steps.length === 1 ? '' : 's'}`);
-
-  // The "+ N more" note is drawn last and used to paint over the final row, so
-  // the rows only ever get the space left after reserving it.
-  const overflowH = steps.length > MAX_ROWS ? 0.34 : 0;
-  const rowH = Math.min(0.62, (BODY_H - overflowH) / shown.length);
-  // Long descriptions have to shrink rather than overflow the slide.
-  const fontSize = rowH >= 0.5 ? 13 : rowH >= 0.38 ? 11 : 10;
-  const badgeD = Math.min(0.34, rowH - 0.06);
-
-  shown.forEach((entry, index) => {
-    const y = BODY_TOP + index * rowH;
-    slide.addShape(pptx.ShapeType.ellipse, {
-      x: 0.4, y: y + (rowH - badgeD) / 2, w: badgeD, h: badgeD,
-      fill: { color: t.accent }, line: { color: t.accent, width: 0 },
-    });
-    slide.addText(String(entry.step), {
-      x: 0.4, y: y + (rowH - badgeD) / 2, w: badgeD, h: badgeD,
-      fontSize: Math.max(8, Math.round(fontSize * 0.8)), bold: true, color: 'ffffff',
-      fontFace: 'Yu Gothic UI', align: 'center', valign: 'middle',
-    });
-    // A wrapped two-line description used to run straight through the services
-    // strip, so the strip is reserved out of the description box's height.
-    const services = (entry.services ?? []).filter(Boolean);
-    const showsServices = services.length > 0 && rowH >= 0.5;
-    slide.addText(truncate(entry.description, 240), {
-      x: 0.4 + badgeD + 0.16, y, w: W - 1.1 - badgeD, h: showsServices ? rowH - 0.2 : rowH,
-      fontSize, color: t.titleText, fontFace: 'Yu Gothic UI', valign: 'middle', wrap: true,
-    });
-    if (showsServices) {
-      slide.addText(services.join('  →  '), {
-        x: 0.4 + badgeD + 0.16, y: y + rowH - 0.2, w: W - 1.1 - badgeD, h: 0.18,
-        fontSize: 9, color: t.metaText, fontFace: 'Yu Gothic UI', valign: 'middle',
-      });
+  // The smallest row still worth reading, which used to be all that set how
+  // many fit — a row *count*, with nothing measuring the words in it. The box
+  // is `wrap="square"` with no autofit, so a description longer than its row
+  // renders at full size and spills symmetrically out of both ends: at nineteen
+  // steps of ordinary prose the rows overlap by a fifth of their pitch, at
+  // CJK lengths by four fifths, and the top row prints over the header bar.
+  // This is the same defect the diagram deck's workflow band was rewritten to
+  // fix, and it takes the same answer — measure the wrap, then paginate on it.
+  const MIN_ROW_IN = 0.3;
+  const FLOOR_PT = 10;
+  const ROW_SLACK_IN = 0.06;
+  // A text box has insets of its own — pptxgenjs emits 0.1in left and right,
+  // 0.05in top and bottom — and they come out of the room the words get. The
+  // column is therefore 0.2in narrower than the box, and the row 0.1in taller
+  // than its type. Measuring the box instead of the column under-counts the
+  // wrap by a line exactly where the line is expensive.
+  const TEXT_INSET_H_IN = 0.2;
+  const TEXT_INSET_V_IN = 0.1;
+  const descW = W - 1.1 - 0.34 - TEXT_INSET_H_IN;
+  const needsFor = (text: string, hasServices: boolean, pt: number): number =>
+    wrappedLineCount(text, descW, pt) * pt * 1.35 / 72 + TEXT_INSET_V_IN
+    + (hasServices ? 0.2 : 0) + ROW_SLACK_IN;
+  // A flat 240-character cap cut roughly a sentence off every generated step
+  // and put it nowhere else in the deck — the same "truncated with no
+  // discharge" defect the callout convention exists to prevent. Now that the
+  // slide paginates on measured height there is no reason for a cap short of
+  // the physical one: a step is shortened only when it could not fit a whole
+  // page at the legibility floor, which generated prose never reaches.
+  const steps = authored.map((entry) => {
+    const hasServices = (entry.services ?? []).filter(Boolean).length > 0;
+    let text = entry.description;
+    while (text.length > 40 && needsFor(text, hasServices, FLOOR_PT) > BODY_H) {
+      text = text.slice(0, Math.max(40, Math.floor(text.length * 0.9)));
     }
+    return {
+      entry,
+      hasServices,
+      description: text === entry.description ? text : `${text.trimEnd()}…`,
+    };
   });
+  const rowNeeds = (s: typeof steps[number], pt: number): number =>
+    needsFor(s.description, s.hasServices, pt);
+  const neededRow = Math.max(MIN_ROW_IN, ...steps.map((s) => rowNeeds(s, FLOOR_PT)));
+  const perSlide = Math.max(1, Math.floor(BODY_H / neededRow));
+  const pages = Math.ceil(steps.length / perSlide);
 
-  if (steps.length > MAX_ROWS) {
-    slide.addText(`+ ${steps.length - MAX_ROWS} more steps`, {
-      x: 0.4, y: BODY_TOP + shown.length * rowH + 0.04, w: 6, h: 0.3,
-      fontSize: 10, italic: true, color: t.footerText, fontFace: 'Yu Gothic UI',
+  for (let page = 0; page < pages; page += 1) {
+    const shown = steps.slice(page * perSlide, (page + 1) * perSlide);
+    const slide = pptx.addSlide();
+    addChrome(
+      pptx, slide, t,
+      pages > 1 ? `Workflow (${page + 1} / ${pages})` : 'Workflow',
+      `${steps.length} step${steps.length === 1 ? '' : 's'}`,
+    );
+
+    const rowH = Math.min(0.62, BODY_H / shown.length);
+    // The type a row can carry without spilling out of it, not the type its
+    // pitch suggests. A ladder of `rowH >= 0.5 ? 13 : …` reads the row's height
+    // and ignores its contents, so a tall row full of prose still overflowed.
+    const pitch = Math.max(rowH, ...shown.map((entry) => rowNeeds(entry, FLOOR_PT)));
+    let fontSize = rowH >= 0.5 ? 13 : rowH >= 0.38 ? 11 : 10;
+    while (fontSize > FLOOR_PT
+      && shown.some((entry) => rowNeeds(entry, fontSize) > pitch)) {
+      fontSize -= 0.5;
+    }
+    const badgeD = Math.min(0.34, pitch - 0.06);
+
+    shown.forEach((s, index) => {
+      const entry = s.entry;
+      const y = BODY_TOP + index * pitch;
+      slide.addShape(pptx.ShapeType.ellipse, {
+        x: 0.4, y: y + (pitch - badgeD) / 2, w: badgeD, h: badgeD,
+        fill: { color: t.accent }, line: { color: t.accent, width: 0 },
+      });
+      slide.addText(String(entry.step), {
+        x: 0.4, y: y + (pitch - badgeD) / 2, w: badgeD, h: badgeD,
+        fontSize: Math.max(8, Math.round(fontSize * 0.8)), bold: true, color: 'ffffff',
+        fontFace: 'Yu Gothic UI', align: 'center', valign: 'middle',
+      });
+      // A wrapped two-line description used to run straight through the services
+      // strip, so the strip is reserved out of the description box's height.
+      const services = (entry.services ?? []).filter(Boolean);
+      const showsServices = services.length > 0 && pitch >= 0.5;
+      slide.addText(s.description, {
+        x: 0.4 + badgeD + 0.16, y, w: W - 1.1 - badgeD, h: showsServices ? pitch - 0.2 : pitch,
+        fontSize, color: t.titleText, fontFace: 'Yu Gothic UI', valign: 'middle', wrap: true,
+      });
+      if (showsServices) {
+        // One line, fitted. The strip is a breadcrumb under a sentence that
+        // already names the same services, and it was given a flat 0.18in with
+        // nothing measuring what went in it — two long resource names joined by
+        // an arrow wrap to two lines and the second is painted over the row
+        // below. Every name here is spelled out in full on the Services slide,
+        // so shortening this one is a shortening, not a loss.
+        const stripW = W - 1.1 - badgeD;
+        slide.addText(fitLabelToBox(services.join('  →  '), stripW - 0.2, 9), {
+          x: 0.4 + badgeD + 0.16, y: y + pitch - 0.2, w: stripW, h: 0.18,
+          fontSize: 9, color: t.metaText, fontFace: 'Yu Gothic UI', valign: 'middle',
+        });
+      }
     });
   }
+}
+
+/**
+ * The height a table row occupies once PowerPoint has wrapped it.
+ *
+ * `rowH` is a *minimum*, not a height: none of these tables declares autofit,
+ * so PowerPoint grows any row whose text wraps and the table quietly gets
+ * taller than the slide. Anything sizing a table has to measure the words —
+ * including the vertical cell insets, which pptxgenjs emits (`marT`/`marB`,
+ * 0.05in each) and which are charged to the row on top of the type.
+ */
+const TABLE_CELL_MARGIN_IN = 0.2; // marL + marR
+const TABLE_CELL_INSET_V_IN = 0.1; // marT + marB
+const TABLE_MIN_ROW_H = 0.325;
+export function tableRowHeightIn(cells: string[], colW: number[], pt: number): number {
+  const lines = Math.max(...cells.map((text, i) => wrappedLineCount(
+    text, Math.max(0.5, (colW[i] ?? colW[0]) - TABLE_CELL_MARGIN_IN), pt,
+  )));
+  return Math.max(TABLE_MIN_ROW_H, lines * pt * 1.35 / 72 + TABLE_CELL_INSET_V_IN);
+}
+
+/**
+ * As many rows as fit in `availableIn`, and the type they fit at.
+ *
+ * Used where the table cannot paginate — a summary slide shows the top N and
+ * the tail is genuinely optional — so the answer to "too tall" is smaller type
+ * first, down to the deck's legibility floor, and only then fewer rows. A
+ * caller that drops rows has to say so; silently listing eight of ten cost
+ * drivers under a heading that says ten is the same defect as a truncated
+ * inventory.
+ */
+export function fitTableRows(
+  rows: string[][], header: string[], colW: number[], availableIn: number, startPt: number,
+): { rows: number; pt: number } {
+  let pt = startPt;
+  const heightAt = (p: number, count: number): number => tableRowHeightIn(header, colW, p)
+    + rows.slice(0, count).reduce((sum, r) => sum + tableRowHeightIn(r, colW, p), 0);
+  while (pt > LEGIBLE_TILE_PT && heightAt(pt, rows.length) > availableIn) pt -= 0.5;
+  pt = Math.max(LEGIBLE_TILE_PT, pt);
+  let count = rows.length;
+  while (count > 1 && heightAt(pt, count) > availableIn) count -= 1;
+  return { rows: count, pt };
+}
+
+/**
+ * A warning banner whose middle is a list of unknown length, fitted to its box.
+ *
+ * These two notices were the last character caps in the file: 120 and 150
+ * characters into boxes that hold neither. A character is not a width — a
+ * Japanese region name is an em wide and a Latin one 0.54 — so the 120-cap
+ * needed 1.125in of a 0.750in box in CJK and the 150-cap bit into the table
+ * beneath it. Shrink first, and only then shorten the list, saying how many
+ * were left out rather than ending on an ellipsis that names nothing.
+ */
+function fitNotice(
+  head: string, list: string, tail: string,
+  boxW: number, boxH: number, startPt: number,
+): { text: string; fontSize: number } {
+  const usable = Math.max(0.4, boxW - 0.2);
+  const fits = (s: string, pt: number): boolean => (wrappedLineCount(s, usable, pt) * pt * 1.35) / 72 <= boxH;
+  for (let pt = startPt; pt >= LEGIBLE_TILE_PT; pt -= 0.5) {
+    if (fits(head + list + tail, pt)) return { text: head + list + tail, fontSize: pt };
+  }
+  const items = list.split(', ').filter(Boolean);
+  for (let keep = items.length - 1; keep >= 1; keep -= 1) {
+    const shortened = `${items.slice(0, keep).join(', ')} +${items.length - keep} more`;
+    if (fits(head + shortened + tail, LEGIBLE_TILE_PT)) {
+      return { text: head + shortened + tail, fontSize: LEGIBLE_TILE_PT };
+    }
+  }
+  return { text: `${head}${items.length} regions${tail}`, fontSize: LEGIBLE_TILE_PT };
 }
 
 /** Slide 4 — service inventory. */
 function addServicesSlide(pptx: PptxGenJS, t: SlideTheme, o: ArchitectureDeckOptions): void {
   if (!o.services.length) return;
-  const slide = pptx.addSlide();
-  addChrome(pptx, slide, t, `Services  ·  ${o.services.length} components`);
 
-  const MAX_ROWS = 20;
-  const shown = o.services.slice(0, MAX_ROWS);
-  const header = [
-    { text: 'Service', options: { bold: true, color: 'ffffff', fill: { color: t.accent } } },
-    { text: 'Category', options: { bold: true, color: 'ffffff', fill: { color: t.accent } } },
-    { text: 'Zone / Group', options: { bold: true, color: 'ffffff', fill: { color: t.accent } } },
-  ];
-  const rows = shown.map((s) => [
-    { text: s.name, options: { color: t.titleText } },
-    { text: s.category || '—', options: { color: t.metaText } },
-    { text: s.group || '—', options: { color: t.metaText } },
-  ]);
-  slide.addTable([header, ...rows], {
-    x: 0.35, y: BODY_TOP, w: W - 0.7, h: BODY_H,
-    colW: [5.2, 3.9, 3.53],
-    fontSize: 12, fontFace: 'Yu Gothic UI',
-    border: { type: 'solid', color: t.headerBg, pt: 1 },
-    valign: 'middle', rowH: 0.32,
-  });
-  if (o.services.length > MAX_ROWS) {
-    slide.addText(`+ ${o.services.length - MAX_ROWS} more services`, { x: 0.35, y: FOOTER_Y - 0.32, w: 6, h: 0.3, fontSize: 10, italic: true, color: t.footerText, fontFace: 'Yu Gothic UI' });
+  // An inventory that omits its own contents is not an inventory. The heading
+  // counted every service while the table stopped at twenty, so a deck for a
+  // sixty-service estate announced sixty components and listed a third of them.
+  //
+  // Paginating on a flat row height then reintroduced the same defect one level
+  // down. This table declares no autofit, so PowerPoint treats `<a:tr h>` as a
+  // minimum and grows any row whose text wraps — and a name that wraps to two
+  // lines is 0.45in against the 0.32in it was budgeted. Eighteen rows of that
+  // put the last of them 1.6in below the bottom of the slide, still present in
+  // the file and readable by any rule that greps the XML, and invisible to the
+  // reader. Since this table is where every name the drawing shortened is
+  // spelled out, a row off the page is a name lost after all. Measure the wrap
+  // and pack rows by their real height.
+  const FONT_PT = 12;
+  const COL_W = [5.2, 3.9, 3.53];
+  const cellsOf = (s: DeckService): string[] => [s.name, s.category || '—', s.group || '—'];
+  const heightOf = (cells: string[], pt: number): number => tableRowHeightIn(cells, COL_W, pt);
+
+  // A page's type shrinks only for the row that cannot otherwise fit, and never
+  // below the deck's legibility floor. One name long enough to fill a page on
+  // its own is not something an architecture produces, but a table that grows
+  // silently past the slide is exactly the defect above, so it gets an answer
+  // rather than an assumption.
+  const pageFontFor = (services: DeckService[]): number => {
+    let pt = FONT_PT;
+    while (pt > LEGIBLE_TILE_PT) {
+      const header = heightOf(['Service', 'Category', 'Zone / Group'], pt);
+      const tallest = Math.max(...services.map((s) => heightOf(cellsOf(s), pt)));
+      if (header + tallest <= BODY_H) break;
+      pt -= 0.5;
+    }
+    return Math.max(LEGIBLE_TILE_PT, pt);
+  };
+
+  const pageSlices: DeckService[][] = [];
+  let current: DeckService[] = [];
+  let used = heightOf(['Service', 'Category', 'Zone / Group'], FONT_PT);
+  for (const service of o.services) {
+    const h = heightOf(cellsOf(service), FONT_PT);
+    if (current.length > 0 && used + h > BODY_H) {
+      pageSlices.push(current);
+      current = [];
+      used = heightOf(['Service', 'Category', 'Zone / Group'], FONT_PT);
+    }
+    current.push(service);
+    used += h;
+  }
+  if (current.length > 0) pageSlices.push(current);
+  const pages = pageSlices.length;
+
+  for (let page = 0; page < pages; page += 1) {
+    const shown = pageSlices[page];
+    const pagePt = pageFontFor(shown);
+    const headerH = heightOf(['Service', 'Category', 'Zone / Group'], pagePt);
+    const slide = pptx.addSlide();
+    addChrome(
+      pptx, slide, t,
+      pages > 1
+        ? `Services  ·  ${o.services.length} components  (${page + 1} / ${pages})`
+        : `Services  ·  ${o.services.length} components`,
+    );
+
+    const header = [
+      { text: 'Service', options: { bold: true, color: 'ffffff', fill: { color: t.accent } } },
+      { text: 'Category', options: { bold: true, color: 'ffffff', fill: { color: t.accent } } },
+      { text: 'Zone / Group', options: { bold: true, color: 'ffffff', fill: { color: t.accent } } },
+    ];
+    const rows = shown.map((s) => [
+      { text: s.name, options: { color: t.titleText } },
+      { text: s.category || '—', options: { color: t.metaText } },
+      { text: s.group || '—', options: { color: t.metaText } },
+    ]);
+    const rowHeights = [headerH, ...shown.map((s) => heightOf(cellsOf(s), pagePt))];
+    slide.addTable([header, ...rows], {
+      x: 0.35, y: BODY_TOP, w: W - 0.7,
+      h: rowHeights.reduce((sum, h) => sum + h, 0),
+      colW: COL_W,
+      fontSize: pagePt, fontFace: 'Yu Gothic UI',
+      border: { type: 'solid', color: t.headerBg, pt: 1 },
+      valign: 'middle', rowH: rowHeights,
+    });
   }
 }
 
@@ -2867,10 +6721,31 @@ function addValidationSummarySlide(pptx: PptxGenJS, t: SlideTheme, o: Architectu
 
   // Executive summary text (right of score block)
   if (v.summary) {
+    // 620 characters is about seven lines of English in this column and
+    // thirteen of Japanese, and the box holds ten — so the tail of a Japanese
+    // assessment printed straight over the "Pillar maturity" heading below it.
+    // Shrink the type to what the box can hold rather than cap the characters:
+    // a character cap discharges nothing, and it is wrong by roughly 2x
+    // depending on the script.
+    const SUMMARY_H = 2.35;
+    const summaryW = W - 3.7 - 0.35 - 0.2; // less the box's own insets
+    const text = `Assessment.  ${v.summary}`;
+    let summaryPt = 12.5;
+    while (summaryPt > LEGIBLE_TILE_PT
+      && wrappedLineCount(text, summaryW, summaryPt) * summaryPt * 1.35 / 72 + 0.1 > SUMMARY_H) {
+      summaryPt -= 0.5;
+    }
+    // Only if it still will not fit at the floor is anything cut, and then by
+    // measurement rather than by a character count.
+    let body = v.summary;
+    while (body.length > 40
+      && wrappedLineCount(`Assessment.  ${body}`, summaryW, summaryPt) * summaryPt * 1.35 / 72 + 0.1 > SUMMARY_H) {
+      body = body.slice(0, Math.max(40, Math.floor(body.length * 0.9)));
+    }
     slide.addText([
       { text: 'Assessment.  ', options: { bold: true, color: t.titleText } },
-      { text: truncate(v.summary, 620), options: { color: t.metaText } },
-    ], { x: 3.7, y: BODY_TOP, w: W - 3.7 - 0.35, h: 2.35, fontSize: 12.5, fontFace: 'Yu Gothic UI', valign: 'top', wrap: true });
+      { text: body === v.summary ? body : `${body.trimEnd()}…`, options: { color: t.metaText } },
+    ], { x: 3.7, y: BODY_TOP, w: W - 3.7 - 0.35, h: SUMMARY_H, fontSize: summaryPt, fontFace: 'Yu Gothic UI', valign: 'top', wrap: true });
   }
 
   // Pillar maturity table (full width, below)
@@ -2882,16 +6757,27 @@ function addValidationSummarySlide(pptx: PptxGenJS, t: SlideTheme, o: Architectu
     { text: 'Maturity', options: { bold: true, color: 'ffffff', fill: { color: t.accent } } },
     { text: 'Score', options: { bold: true, color: 'ffffff', fill: { color: t.accent }, align: 'right' as const } },
   ];
-  const rows = pillars.map((p) => [
+  const PILLAR_COL_W = [4.2, 6.6, 1.83];
+  const pillarCells = pillars.map((p) => [
+    p.pillar, p.maturity || scoreBand(p.score), `${Math.round(p.score)} / 100`,
+  ]);
+  // Same contract as every other table in this deck: no autofit is declared, so
+  // a long maturity label wraps and grows its row. This one starts 2.65in down
+  // the body, so it has that much less room to grow into.
+  const pillarFit = fitTableRows(
+    pillarCells, ['Pillar', 'Maturity', 'Score'], PILLAR_COL_W,
+    Math.max(TABLE_MIN_ROW_H * 2, FOOTER_Y - (pTop + 0.36) - 0.1), 12,
+  );
+  const rows = pillars.slice(0, pillarFit.rows).map((p) => [
     { text: p.pillar, options: { color: t.titleText } },
     { text: p.maturity || scoreBand(p.score), options: { color: t.metaText } },
     { text: `${Math.round(p.score)} / 100`, options: { color: scoreColor(p.score), bold: true, align: 'right' as const } },
   ]);
   slide.addTable([header, ...rows], {
     x: 0.35, y: pTop + 0.36, w: W - 0.7,
-    colW: [4.2, 6.6, 1.83],
-    fontSize: 12, fontFace: 'Yu Gothic UI',
-    border: { type: 'solid', color: t.headerBg, pt: 1 }, valign: 'middle', rowH: 0.34,
+    colW: PILLAR_COL_W,
+    fontSize: pillarFit.pt, fontFace: 'Yu Gothic UI',
+    border: { type: 'solid', color: t.headerBg, pt: 1 }, valign: 'middle', rowH: TABLE_MIN_ROW_H,
   });
 }
 
@@ -2899,26 +6785,109 @@ function addValidationSummarySlide(pptx: PptxGenJS, t: SlideTheme, o: Architectu
 function addValidationFindingsSlide(pptx: PptxGenJS, t: SlideTheme, o: ArchitectureDeckOptions): void {
   const v = o.validation;
   if (!v || !v.findings.length) return;
-  const slide = pptx.addSlide();
-  addChrome(pptx, slide, t, 'Key findings & recommendations');
 
-  const findings = v.findings.slice(0, 5);
-  const rowH = (FOOTER_Y - BODY_TOP - 0.1) / findings.length;
-  findings.forEach((f, i) => {
-    const y = BODY_TOP + i * rowH;
-    // Severity chip
-    slide.addText(f.severity.toUpperCase(), { x: 0.35, y: y + 0.05, w: 1.05, h: 0.34, fontSize: 9, bold: true, color: 'ffffff', fill: { color: severityColor(f.severity) }, align: 'center', valign: 'middle', fontFace: 'Yu Gothic UI' });
-    // Issue + recommendation
-    slide.addText([
-      { text: `${f.category}. `, options: { bold: true, color: t.titleText } },
-      { text: truncate(f.issue, 170), options: { color: t.metaText } },
-    ], { x: 1.55, y: y + 0.02, w: W - 1.95, h: rowH * 0.5, fontSize: 12, fontFace: 'Yu Gothic UI', valign: 'top', wrap: true });
-    if (f.recommendation) {
-      slide.addText([
-        { text: '→ Fix:  ', options: { bold: true, color: t.accent } },
-        { text: truncate(f.recommendation, 220), options: { color: t.metaText, italic: true } },
-      ], { x: 1.55, y: y + rowH * 0.5, w: W - 1.95, h: rowH * 0.46, fontSize: 11, fontFace: 'Yu Gothic UI', valign: 'top', wrap: true });
+  // Every other prose surface in this deck is paginated on measured height.
+  // This one divided the body by a row *count* and capped its contents by
+  // character count — and 170 characters is about two lines of English but
+  // four of Japanese, which the model is explicitly instructed to write. At the
+  // five findings the app always sends, the issue painted over its own Fix, the
+  // Fix over the next issue, and the last Fix over the footer: nine collisions
+  // on one slide, in the only case that occurs.
+  const ISSUE_PT = 12;
+  const FIX_PT = 11;
+  const COL_W = W - 1.95 - 0.2; // the box, less its own left/right insets
+  const GAP_IN = 0.12;
+  const INSET_V_IN = 0.1;
+  const available = FOOTER_Y - BODY_TOP - 0.1;
+  const blockFor = (f: DeckFinding, issuePt: number, fixPt: number) => {
+    const issueH = wrappedLineCount(`${f.category}. ${f.issue}`, COL_W, issuePt)
+      * issuePt * 1.35 / 72 + INSET_V_IN;
+    const fixH = f.recommendation
+      ? wrappedLineCount(`→ Fix:  ${f.recommendation}`, COL_W, fixPt) * fixPt * 1.35 / 72 + INSET_V_IN
+      : 0;
+    return { issueH, fixH, total: issueH + fixH + GAP_IN };
+  };
+  // Shrink before splitting, so a page holds as many findings as it can read.
+  let issuePt = ISSUE_PT;
+  let fixPt = FIX_PT;
+  while (issuePt > LEGIBLE_TILE_PT
+    && Math.max(...v.findings.map((f) => blockFor(f, issuePt, fixPt).total)) > available) {
+    issuePt -= 0.5;
+    fixPt = Math.max(LEGIBLE_TILE_PT, fixPt - 0.5);
+  }
+
+  // A finding that still will not fit a whole page at the legible floor is the
+  // one case shrinking cannot answer, and the packer below always places at
+  // least one block per page — so without this it would be placed anyway and
+  // painted straight off the slide. Cut it physically, by measurement, and only
+  // as far as it takes: a character cap is what this slide was just fixed for.
+  const shortened = new Map<DeckFinding, DeckFinding>();
+  const fitToPage = (f: DeckFinding): DeckFinding => {
+    if (blockFor(f, issuePt, fixPt).total <= available) return f;
+    let issue = f.issue;
+    let recommendation = f.recommendation ?? '';
+    while (blockFor({ ...f, issue, recommendation }, issuePt, fixPt).total > available) {
+      // Take from whichever half is longer, so neither is starved to keep the
+      // other whole.
+      if (recommendation.length > issue.length && recommendation.length > 24) {
+        recommendation = recommendation.slice(0, Math.floor(recommendation.length * 0.9));
+      } else if (issue.length > 24) {
+        issue = issue.slice(0, Math.floor(issue.length * 0.9));
+      } else break;
     }
+    return {
+      ...f,
+      issue: issue === f.issue ? issue : `${issue.trimEnd()}…`,
+      recommendation: recommendation === (f.recommendation ?? '') ? f.recommendation : `${recommendation.trimEnd()}…`,
+    };
+  };
+  for (const f of v.findings) shortened.set(f, fitToPage(f));
+
+  // Pack by measured height rather than dropping the tail. The app sends the
+  // top six by severity and this slide drew five; the sixth appeared nowhere
+  // else in the deck, which is the same silent truncation the cost table and
+  // the services table were both fixed for.
+  const pages: DeckFinding[][] = [];
+  let current: DeckFinding[] = [];
+  let used = 0;
+  for (const authored of v.findings) {
+    const f = shortened.get(authored)!;
+    const h = blockFor(f, issuePt, fixPt).total;
+    if (current.length > 0 && used + h > available) {
+      pages.push(current);
+      current = [];
+      used = 0;
+    }
+    current.push(f);
+    used += h;
+  }
+  if (current.length > 0) pages.push(current);
+
+  pages.forEach((shown, page) => {
+    const slide = pptx.addSlide();
+    addChrome(
+      pptx, slide, t,
+      pages.length > 1 ? `Key findings & recommendations (${page + 1} / ${pages.length})` : 'Key findings & recommendations',
+      `${v.findings.length} finding${v.findings.length === 1 ? '' : 's'}`,
+    );
+    let y = BODY_TOP;
+    shown.forEach((f) => {
+      const block = blockFor(f, issuePt, fixPt);
+      // Severity chip
+      slide.addText(f.severity.toUpperCase(), { x: 0.35, y: y + 0.05, w: 1.05, h: 0.34, fontSize: 9, bold: true, color: 'ffffff', fill: { color: severityColor(f.severity) }, align: 'center', valign: 'middle', fontFace: 'Yu Gothic UI' });
+      // Issue + recommendation
+      slide.addText([
+        { text: `${f.category}. `, options: { bold: true, color: t.titleText } },
+        { text: f.issue, options: { color: t.metaText } },
+      ], { x: 1.55, y, w: W - 1.95, h: block.issueH, fontSize: issuePt, fontFace: 'Yu Gothic UI', valign: 'top', wrap: true });
+      if (f.recommendation) {
+        slide.addText([
+          { text: '→ Fix:  ', options: { bold: true, color: t.accent } },
+          { text: f.recommendation, options: { color: t.metaText, italic: true } },
+        ], { x: 1.55, y: y + block.issueH, w: W - 1.95, h: block.fixH, fontSize: fixPt, fontFace: 'Yu Gothic UI', valign: 'top', wrap: true });
+      }
+      y += block.total;
+    });
   });
 }
 
@@ -2927,7 +6896,12 @@ function addCostOverviewSlide(pptx: PptxGenJS, t: SlideTheme, o: ArchitectureDec
   const c = o.cost;
   if (!c) return;
   const slide = pptx.addSlide();
-  const meta = [c.term, c.region, c.pricesAsOf ? `prices as of ${c.pricesAsOf}` : undefined].filter(Boolean).join('  ·  ');
+  const meta = [
+    c.term,
+    c.region,
+    c.pricesAsOf ? `prices as of ${c.pricesAsOf}` : undefined,
+    c.oldestMeterAsOf ? `unchanged since ${c.oldestMeterAsOf}` : undefined,
+  ].filter(Boolean).join('  ·  ');
   addChrome(pptx, slide, t, 'Estimated cost', meta || undefined);
 
   // Headline monthly + annual
@@ -2955,9 +6929,15 @@ function addCostOverviewSlide(pptx: PptxGenJS, t: SlideTheme, o: ArchitectureDec
 
   if (c.regionComparisonIncomplete) {
     const unavailable = c.unavailableRegions?.map(item => item.split(':', 1)[0]).join(', ') || 'one or more regions';
+    const notice = fitNotice(
+      'Regional comparison is partial because selected SKUs are unavailable in: ',
+      unavailable,
+      '. No cheapest-region recommendation is made.',
+      5.2, 0.75, 10,
+    );
     slide.addText(
-      `Regional comparison is partial because selected SKUs are unavailable in: ${truncate(unavailable, 120)}. No cheapest-region recommendation is made.`,
-      { x: 0.37, y: BODY_TOP + 3.15, w: 5.2, h: 0.75, fontSize: 10, bold: true, color: 'b45309', fontFace: 'Yu Gothic UI', wrap: true, valign: 'top' },
+      notice.text,
+      { x: 0.37, y: BODY_TOP + 3.15, w: 5.2, h: 0.75, fontSize: notice.fontSize, bold: true, color: 'b45309', fontFace: 'Yu Gothic UI', wrap: true, valign: 'top' },
     );
   }
 
@@ -2966,13 +6946,27 @@ function addCostOverviewSlide(pptx: PptxGenJS, t: SlideTheme, o: ArchitectureDec
   // Top cost drivers table (right)
   const svcs = c.topServices.slice(0, 10);
   if (svcs.length) {
+    const COST_COL_W = [3.3, 1.85, 1.15, 0.78];
+    const headerCells = ['Top cost drivers', 'Tier', 'Monthly', 'Share'];
+    const rowCells = svcs.map((s) => [
+      s.serviceName,
+      s.tier || '—',
+      money(s.cost, c.currency),
+      s.percentage != null ? `${Math.round(s.percentage)}%` : '—',
+    ]);
+    // Ten rows at a declared 0.32in is a row *count*, and this table declares
+    // no autofit — a service name that wraps in a 3.3in column grows its row,
+    // and ten of those ran two inches past the bottom of the slide. Measure the
+    // wrap, shrink the type, and only then show fewer drivers.
+    const fitted = fitTableRows(rowCells, headerCells, COST_COL_W, BODY_H, 12);
+    const shown = svcs.slice(0, fitted.rows);
     const header = [
-      { text: 'Top cost drivers', options: { bold: true, color: 'ffffff', fill: { color: t.accent } } },
+      { text: `Top cost drivers${shown.length < svcs.length ? ` (top ${shown.length})` : ''}`, options: { bold: true, color: 'ffffff', fill: { color: t.accent } } },
       { text: 'Tier', options: { bold: true, color: 'ffffff', fill: { color: t.accent } } },
       { text: 'Monthly', options: { bold: true, color: 'ffffff', fill: { color: t.accent }, align: 'right' as const } },
       { text: 'Share', options: { bold: true, color: 'ffffff', fill: { color: t.accent }, align: 'right' as const } },
     ];
-    const rows = svcs.map((s) => [
+    const rows = shown.map((s) => [
       { text: s.serviceName, options: { color: t.titleText } },
       { text: s.tier || '—', options: { color: t.metaText } },
       { text: money(s.cost, c.currency), options: { color: t.metaText, align: 'right' as const } },
@@ -2980,9 +6974,9 @@ function addCostOverviewSlide(pptx: PptxGenJS, t: SlideTheme, o: ArchitectureDec
     ]);
     slide.addTable([header, ...rows], {
       x: 5.9, y: BODY_TOP, w: W - 5.9 - 0.35,
-      colW: [3.3, 1.85, 1.15, 0.78],
-      fontSize: 12, fontFace: 'Yu Gothic UI',
-      border: { type: 'solid', color: t.headerBg, pt: 1 }, valign: 'middle', rowH: 0.32,
+      colW: COST_COL_W,
+      fontSize: fitted.pt, fontFace: 'Yu Gothic UI',
+      border: { type: 'solid', color: t.headerBg, pt: 1 }, valign: 'middle', rowH: TABLE_MIN_ROW_H,
     });
   }
 }
@@ -3002,9 +6996,15 @@ function addCostRegionsSlide(pptx: PptxGenJS, t: SlideTheme, o: ArchitectureDeck
   const current = c.regions.find(r => r.isCurrent);
   if (!comparisonComplete) {
     const unavailable = c.unavailableRegions?.map(item => item.split(':', 1)[0]).join(', ') || 'one or more regions';
+    const notice = fitNotice(
+      'Partial comparison — unavailable: ',
+      unavailable,
+      '. Values below cover comparable regions only; no global cheapest or savings claim is shown.',
+      W - 0.7, 0.55, 12,
+    );
     slide.addText(
-      `Partial comparison — unavailable: ${truncate(unavailable, 150)}. Values below cover comparable regions only; no global cheapest or savings claim is shown.`,
-      { x: 0.35, y: BODY_TOP, w: W - 0.7, h: 0.55, fontSize: 12, bold: true, color: 'b45309', fontFace: 'Yu Gothic UI', valign: 'middle', wrap: true },
+      notice.text,
+      { x: 0.35, y: BODY_TOP, w: W - 0.7, h: 0.55, fontSize: notice.fontSize, bold: true, color: 'b45309', fontFace: 'Yu Gothic UI', valign: 'middle', wrap: true },
     );
   } else if (cheapest) {
     const onCheapest = current && current.name === cheapest.name;
@@ -3027,17 +7027,23 @@ function addCostRegionsSlide(pptx: PptxGenJS, t: SlideTheme, o: ArchitectureDeck
       { text: vsBaseline, options: { color: t.metaText, align: 'right' as const } },
     ];
   });
+  const regionCells = rows.map((r) => r.map((cell) => cell.text));
   const header = [
     { text: 'Region', options: { bold: true, color: 'ffffff', fill: { color: t.accent } } },
     { text: 'Monthly', options: { bold: true, color: 'ffffff', fill: { color: t.accent }, align: 'right' as const } },
     { text: 'Annual', options: { bold: true, color: 'ffffff', fill: { color: t.accent }, align: 'right' as const } },
     { text: comparisonComplete ? 'vs cheapest' : 'vs lowest shown', options: { bold: true, color: 'ffffff', fill: { color: t.accent }, align: 'right' as const } },
   ];
-  slide.addTable([header, ...rows], {
+  const REGION_COL_W = [6.13, 2.0, 2.0, 1.5];
+  const regionFit = fitTableRows(
+    regionCells, ['Region', 'Monthly', 'Annual', 'vs cheapest'], REGION_COL_W,
+    Math.max(TABLE_MIN_ROW_H * 2, FOOTER_Y - (BODY_TOP + 0.6) - 0.1), 12,
+  );
+  slide.addTable([header, ...rows.slice(0, regionFit.rows)], {
     x: 0.35, y: BODY_TOP + 0.6, w: W - 0.7,
-    colW: [6.13, 2.0, 2.0, 1.5],
-    fontSize: 12, fontFace: 'Yu Gothic UI',
-    border: { type: 'solid', color: t.headerBg, pt: 1 }, valign: 'middle', rowH: 0.36,
+    colW: REGION_COL_W,
+    fontSize: regionFit.pt, fontFace: 'Yu Gothic UI',
+    border: { type: 'solid', color: t.headerBg, pt: 1 }, valign: 'middle', rowH: TABLE_MIN_ROW_H,
   });
 }
 
@@ -3047,13 +7053,126 @@ function addCostRegionsSlide(pptx: PptxGenJS, t: SlideTheme, o: ArchitectureDeck
  * Well-Architected review (summary + findings) and a cost estimate (overview +
  * regional comparison). Split from the download so tests can inspect the deck.
  */
+/**
+ * Collapse a name onto one line.
+ *
+ * A newline survives the XML sanitiser and pptxgenjs turns each one into a real
+ * paragraph, so a service name pasted out of a spreadsheet cell ("Azure SQL
+ * Managed Instance\nProduction ring\nEast US 2") draws as four lines wherever
+ * it appears — doubling a table past the bottom of the slide, squeezing the
+ * icon off its tile, and painting a breadcrumb over the row beneath it. Prose
+ * fields (summary, issue, recommendation, step description) mean their line
+ * breaks and are measured and paginated as written; a *name* is an identifier
+ * and reads as one line, wrapping only because the column is narrow.
+ */
+function singleLine(text: string): string {
+  // Composed, for the same reason the drawing composes: the deck writes a
+  // name in two places, and if the two spellings differ the reader searching
+  // the inventory for the name on the tile finds nothing. The tile side goes
+  // through `singleLineName`, which composes; this side did not, so seven
+  // Vietnamese and Turkish services were drawn on the diagram slide and
+  // absent from the inventory that is supposed to spell them out in full.
+  return text.replace(/[\r\n\t\v\f\u2028\u2029]+/g, ' ').replace(/ {2,}/g, ' ').trim().normalize('NFC');
+}
+
+/**
+ * Prose, composed but otherwise untouched.
+ *
+ * A sentence keeps its line breaks - that is the whole difference between it
+ * and a name - but it must not keep a decomposed spelling, because every
+ * measurement in this file prices a combining mark at nothing and the two
+ * spellings would then be drawn at two different widths. Composing here, at
+ * the entry point, means every box in the deck is measured against the string
+ * that will actually be written into it.
+ */
+function composedProse(text: string): string {
+  return text.normalize('NFC');
+}
+
+/**
+ * Every name-shaped field the deck prints, collapsed onto one line. Applied
+ * once at the entry point rather than at each of the twenty-odd draw sites, so
+ * a slide added later cannot reintroduce the defect by forgetting to call it.
+ */
+function withSingleLineNames(o: ArchitectureDeckOptions): ArchitectureDeckOptions {
+  const cost = o.cost
+    ? {
+      ...o.cost,
+      byCategory: o.cost.byCategory.map((c) => ({ ...c, category: singleLine(c.category) })),
+      topServices: o.cost.topServices.map((s) => ({
+        ...s,
+        serviceName: singleLine(s.serviceName),
+        ...(s.tier ? { tier: singleLine(s.tier) } : {}),
+      })),
+      ...(o.cost.regions ? { regions: o.cost.regions.map((r) => ({ ...r, name: singleLine(r.name) })) } : {}),
+      ...(o.cost.term ? { term: singleLine(o.cost.term) } : {}),
+      ...(o.cost.region ? { region: singleLine(o.cost.region) } : {}),
+      ...(o.cost.unavailableRegions
+        ? { unavailableRegions: o.cost.unavailableRegions.map(singleLine) }
+        : {}),
+    }
+    : o.cost;
+  const validation = o.validation
+    ? {
+      ...o.validation,
+      ...(o.validation.overallLabel ? { overallLabel: singleLine(o.validation.overallLabel) } : {}),
+      pillars: o.validation.pillars.map((p) => ({
+        ...p,
+        pillar: singleLine(p.pillar),
+        ...(p.maturity ? { maturity: singleLine(p.maturity) } : {}),
+      })),
+      findings: o.validation.findings.map((f) => ({
+        ...f,
+        severity: singleLine(f.severity),
+        category: singleLine(f.category),
+        issue: composedProse(f.issue),
+        ...(f.recommendation ? { recommendation: composedProse(f.recommendation) } : {}),
+      })),
+      ...(o.validation.summary ? { summary: composedProse(o.validation.summary) } : {}),
+      ...(o.validation.modelUsed ? { modelUsed: singleLine(o.validation.modelUsed) } : {}),
+    }
+    : o.validation;
+  return {
+    ...o,
+    diagramName: singleLine(o.diagramName),
+    // The other two thirds of the header triple. Left uncomposed they were
+    // invisible only because nothing fitted them; the cover title now has a
+    // fitter, so an NFD name measures differently from the NFC one that means
+    // the same thing and the two shrink to different sizes.
+    author: singleLine(o.author),
+    date: singleLine(o.date),
+    ...(o.prompt ? { prompt: composedProse(o.prompt) } : {}),
+    ...(o.model ? { model: singleLine(o.model) } : {}),
+    services: o.services.map((s) => ({
+      ...s,
+      name: singleLine(s.name),
+      ...(s.category ? { category: singleLine(s.category) } : {}),
+      ...(s.group ? { group: singleLine(s.group) } : {}),
+    })),
+    // `description` is prose and keeps the line breaks it was written with;
+    // `services` is a breadcrumb of names drawn on one line.
+    ...(o.workflow
+      ? {
+        workflow: o.workflow.map((w) => ({
+          ...w,
+          description: composedProse(w.description),
+          ...(w.services ? { services: w.services.map(singleLine) } : {}),
+        })),
+      }
+      : {}),
+    cost,
+    validation,
+  };
+}
+
 export async function buildArchitectureDeckPptx(
   imageDataUrl: string,
-  options: ArchitectureDeckOptions,
+  rawOptions: ArchitectureDeckOptions,
 ): Promise<PptxGenJS> {
+  const options = withSingleLineNames(rawOptions);
   const t = options.isDarkMode ? DARK_THEME : LIGHT_THEME;
 
-  const pptx = new PptxCtor();
+  const pptx = newDeck();
   pptx.layout = 'LAYOUT_WIDE';
   pptx.author = options.author;
   pptx.title = options.diagramName;
@@ -3079,7 +7198,7 @@ export async function exportArchitectureDeck(
 ): Promise<string> {
   const pptx = await buildArchitectureDeckPptx(imageDataUrl, options);
   const fileName = generateModelFilename('azure-architecture-deck', 'pptx');
-  await pptx.writeFile({ fileName });
+  await downloadNativePptx(pptx, fileName);
   return fileName;
 }
 

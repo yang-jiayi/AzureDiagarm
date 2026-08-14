@@ -105,7 +105,11 @@ export async function initializeNodePricing(
         isCustom: false,
         isUsageBased: isUsageBased,
         reserved1yrCost: tier.reserved1yrMonthly,
-        reservedIsSavingsPlan: tier.reserved1yrMonthly != null
+        reservedIsSavingsPlan: tier.reserved1yrMonthly != null,
+        // Only this branch. The two fallback returns above and below price the
+        // node from a hand-maintained constant, and stamping a meter date on
+        // one of those would attest that Azure set a price it never set.
+        meterAsOf: pricing.meterAsOf
       };
     } else {
       // Fallback to static data — use the service's default SKU/level
@@ -330,6 +334,25 @@ export async function getAvailableTiers(
 export type PricingMode = 'payg' | 'reserved1yr';
 
 /**
+ * How long a price must have held before its age is worth reporting.
+ *
+ * Set from the shipped corpus, not from intuition: at a year, 48% of services
+ * qualify and the line appears on nearly every deck, which makes it furniture.
+ * At two years it is 33%, and the services it picks out are the ones the claim
+ * is actually interesting for — Log Analytics, Application Insights, IoT Hub,
+ * Azure ML, Data Factory, all repriced more than five years ago.
+ */
+const STABLE_PRICE_DAYS = 730;
+
+/** Whole days between two ISO calendar dates, or 0 if either is unusable. */
+function ageInDays(from: string, to: string): number {
+  const a = Date.parse(`${from}T00:00:00Z`);
+  const b = Date.parse(`${to}T00:00:00Z`);
+  if (Number.isNaN(a) || Number.isNaN(b)) return 0;
+  return Math.floor((b - a) / 86_400_000);
+}
+
+/**
  * Calculate total cost breakdown for all nodes
  */
 export function calculateCostBreakdown(
@@ -355,6 +378,12 @@ export function calculateCostBreakdown(
   const groupCosts = new Map<string, { label: string; cost: number; count: number }>();
   const categoryCosts = new Map<string, number>();
   const pricingRegions = new Set<string>();
+  // The oldest meter behind any number on this page. Read off the nodes, not
+  // from a name lookup: the date was stamped on the pricing config by whichever
+  // load produced the figure, so it is already the right region's, it is
+  // already absent for anything the static fallback priced, and it survives
+  // save and restore along with the estimate it belongs to.
+  let oldestMeterAsOf: string | undefined;
 
   // Calculate per-service costs
   const unpricedServices: { nodeId: string; serviceName: string }[] = [];
@@ -368,6 +397,13 @@ export function calculateCostBreakdown(
     }
     const pricingRegion = typeof pricing.region === 'string' ? pricing.region.trim() : '';
     pricingRegions.add(pricingRegion || 'Unknown');
+    // A custom price is a number the user typed, so no Azure meter stands
+    // behind it and it must not drag the reported vintage backwards.
+    if (!pricing.isCustom && pricing.meterAsOf) {
+      if (oldestMeterAsOf === undefined || pricing.meterAsOf < oldestMeterAsOf) {
+        oldestMeterAsOf = pricing.meterAsOf;
+      }
+    }
 
     let cost = pricing.estimatedCost * pricing.quantity;
     // Apply the 1-year commitment to reservation-eligible, non-usage-based
@@ -440,6 +476,23 @@ export function calculateCostBreakdown(
 
   if (unpricedServices.length > 0) breakdown.unpricedServices = unpricedServices;
 
+  // Only worth saying when the prices have actually held for a long time. Every
+  // meter predates the download by some margin, so reporting any gap at all
+  // would put a second date on every slide that never means anything.
+  //
+  // Measured over all 403 non-empty pricing files, the share that clears each
+  // bar is: 30d 85%, 90d 68%, 180d 60%, 365d 37%, 730d 23% (per service, of 48
+  // distinct: 92 / 75 / 67 / 48 / 33%). A year sounds like the natural line but
+  // at ~48% per service it still fires on nearly every deck — `virtual_network`
+  // and `key_vault` are on almost every diagram and both clear it — so the line
+  // would be furniture again. Two years is the bar that isolates the cases this
+  // is for: Log Analytics, Application Insights, IoT Hub, Azure ML and Data
+  // Factory, all repriced somewhere between five and eight years ago.
+  const oldest = oldestMeterAsOf;
+  if (oldest && ageInDays(oldest, PRICING_DATA_AS_OF) > STABLE_PRICE_DAYS) {
+    breakdown.oldestMeterAsOf = oldest;
+  }
+
   return breakdown;
 }
 
@@ -501,6 +554,10 @@ export function getCostSummaryText(breakdown: CostBreakdown): string {
     const f = getPricingFreshness(breakdown.pricesAsOf);
     lines.push(`Prices as of: ${breakdown.pricesAsOf}${f.isStale ? ` (⚠️ ${f.ageLabel} — refresh with "npm run pricing:refresh")` : ''}`);
   }
+  if (breakdown.oldestMeterAsOf) {
+    lines.push(`Oldest unchanged price: ${breakdown.oldestMeterAsOf} `
+      + '(these are current Azure prices; the date is when Azure last changed the longest-standing one)');
+  }
   lines.push(`Last Updated: ${new Date(breakdown.lastCalculated).toLocaleString()}`);
   lines.push('');
   
@@ -554,6 +611,7 @@ export function getCostSummaryMarkdown(breakdown: CostBreakdown): string {
   lines.push(`| Currency | ${breakdown.currency} |`);
   if (breakdown.pricingTerm) lines.push(`| Pricing term | ${breakdown.pricingTerm} |`);
   if (breakdown.pricesAsOf) lines.push(`| Prices as of | ${breakdown.pricesAsOf} |`);
+  if (breakdown.oldestMeterAsOf) lines.push(`| Oldest unchanged price | ${breakdown.oldestMeterAsOf} |`);
   lines.push(`| Last updated | ${new Date(breakdown.lastCalculated).toLocaleString()} |`);
   lines.push('');
 
@@ -614,6 +672,7 @@ export function exportCostBreakdownCSV(breakdown: CostBreakdown, nodes?: Node[])
   lines.push(`Region,${csvTextCell(breakdown.region)}`);
   if (breakdown.pricingTerm) lines.push(`Pricing Term,${csvTextCell(breakdown.pricingTerm)}`);
   if (breakdown.pricesAsOf) lines.push(`Prices As Of,${csvTextCell(breakdown.pricesAsOf)}`);
+  if (breakdown.oldestMeterAsOf) lines.push(`Oldest Unchanged Price,${csvTextCell(breakdown.oldestMeterAsOf)}`);
   lines.push(`Date,${csvTextCell(new Date(breakdown.lastCalculated).toLocaleDateString())}`);
   lines.push('');
   

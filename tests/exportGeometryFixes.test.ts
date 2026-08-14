@@ -9,6 +9,7 @@ import {
   computeContentBounds,
   computeFitTransform,
   connectionStyleFor,
+  contrastRatio,
   metaSubline,
   routeOrthogonal,
   truncateLabel,
@@ -122,7 +123,14 @@ test('fix 6: customColor is plumbed into the box and drives the zone style', () 
   assert.equal(box0.customColor?.border, '#dc2626');
   const style = zoneStyleFor(box0, 0);
   assert.equal(style.border, '#dc2626');
-  assert.equal(style.text, '#dc2626');
+  // The label is NOT the border colour verbatim. #dc2626 on the zone's own
+  // tint reads at 4.0:1, under the 4.5:1 WCAG AA floor, so the label is
+  // darkened until it passes while staying the user's hue.
+  assert.notEqual(style.text, style.bg);
+  assert.ok(contrastRatio(style.text, style.bg) >= 4.5,
+    `zone label is legible (${contrastRatio(style.text, style.bg).toFixed(2)}:1)`);
+  const [r, g, b] = [1, 3, 5].map((i) => parseInt(style.text.slice(i, i + 2), 16));
+  assert.ok(r > g && r > b, 'the label keeps the red the user picked');
 });
 
 test('fix 6: zones without a custom colour share one deterministic palette', () => {

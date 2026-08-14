@@ -134,6 +134,7 @@ export const translationKeys = [
   "Azure OpenAI is not configured.",
   "Azure region",
   "Azure Services",
+  "Microsoft Services",
   "Azure Well-Architected Framework",
   "Best Score",
   "BETA",

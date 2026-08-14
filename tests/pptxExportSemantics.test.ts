@@ -43,7 +43,12 @@ test('PPTX colour-codes a security connector and renders a connection legend (fi
   const xml = (await slideXml(nodes, edges)).toLowerCase();
   // Security connectors are red (#dc2626) — not the old flat slate grey.
   assert.ok(xml.includes('dc2626'), 'security connector uses the canonical red');
-  assert.ok(!xml.includes('64748b'), 'no leftover flat-grey connector colour');
+  // Scoped to the connector's own line. `64748b` is also the footer's text
+  // colour — it was lifted to slate-500 so the credit line clears WCAG AA —
+  // so a whole-document search now proves nothing about the connector.
+  const connector = /<p:(?:sp|cxnsp)>(?:(?!<\/p:(?:sp|cxnsp)>)[\s\S])*name="connector-sec"[\s\S]*?<\/p:(?:sp|cxnsp)>/.exec(xml);
+  assert.ok(connector, 'the security connector shape is emitted');
+  assert.ok(!connector![0].includes('64748b'), 'no leftover flat-grey connector colour');
   // The legend shape and its label are present.
   assert.ok(xml.includes('connection-legend'), 'a connection legend shape is emitted');
   assert.ok(xml.includes('security'), 'the legend names the security connection type');

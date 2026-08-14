@@ -33,6 +33,7 @@ const PACKAGES = [
     sourcePage: 'https://learn.microsoft.com/en-us/power-platform/guidance/icons',
     url: 'https://download.microsoft.com/download/498606aa-6d27-4f13-aa5c-1401078c153b/Power-Platform-icons-scalable.zip',
     sha256: 'd5abafebbce553690caf7b42dd14b8335bf2c0dfc09f46bd9ac8041187da2c3a',
+    released: '2025-12',
   },
   {
     family: 'dynamics-365',
@@ -40,8 +41,27 @@ const PACKAGES = [
     sourcePage: 'https://learn.microsoft.com/en-us/dynamics365/get-started/icons',
     url: 'https://download.microsoft.com/download/498606aa-6d27-4f13-aa5c-1401078c153b/Dynamics-365-icons-scalable.zip',
     sha256: 'f5f4d96aaa637b71e47136cc74e9a4a69b8a81f7e43c1c5756f00b5cea9ffe02',
+    released: '2025-12',
+  },
+  {
+    family: 'microsoft-365',
+    fileName: 'Microsoft-365-architecture-icons.zip',
+    sourcePage:
+      'https://learn.microsoft.com/en-us/previous-versions/microsoft-365/solutions/architecture-icons-templates',
+    // `go.microsoft.com/fwlink/?linkid=869455` is the download link published on
+    // the source page. It redirects, so the digest below is what actually pins
+    // the content.
+    url: 'https://go.microsoft.com/fwlink/?linkid=869455',
+    sha256: '522c4d43cf98a00380b0836f9ec6e06d81fb99758b258c49b6e5f385c05c547a',
+    released: '2024-04',
   },
 ];
+
+const FAMILY_CATEGORY = {
+  'power-platform': 'power platform',
+  'dynamics-365': 'dynamics 365',
+  'microsoft-365': 'microsoft 365',
+};
 
 const MAX_PACKAGE_BYTES = 16 * 1024 * 1024;
 
@@ -210,7 +230,10 @@ async function main() {
       continue;
     }
 
-    const category = entry.family === 'power-platform' ? 'power platform' : 'dynamics 365';
+    const category = FAMILY_CATEGORY[entry.family];
+    if (!category) {
+      throw new Error(`No icon category is defined for family ${entry.family}`);
+    }
     const content = Buffer.from(await asset.async('uint8array'));
     if (!content.toString('utf8').trimStart().startsWith('<')) {
       throw new Error(`${entry.sourceAsset} is not an SVG document`);
@@ -244,7 +267,7 @@ async function main() {
     });
   }
 
-  const unusedAssets = [];
+  const unusedAssets = new Map();
   for (const pkg of packages.values()) {
     const used = new Set(
       entries
@@ -252,7 +275,9 @@ async function main() {
         .map(entry => entry.sourceAsset.toLocaleLowerCase()),
     );
     for (const key of pkg.assets.keys()) {
-      if (!used.has(key)) unusedAssets.push(`${pkg.family}: ${pkg.assets.get(key).name}`);
+      if (!used.has(key)) {
+        unusedAssets.set(pkg.family, (unusedAssets.get(pkg.family) ?? 0) + 1);
+      }
     }
   }
 
@@ -266,6 +291,7 @@ async function main() {
     packages: PACKAGES.map(pkg => ({
       family: pkg.family,
       sourcePage: pkg.sourcePage,
+      released: pkg.released,
       packageUrl: pkg.url,
       packageSha256: sha256(packages.get(pkg.family).archive),
     })),
@@ -285,11 +311,15 @@ async function main() {
     await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
   }
 
-  if (unusedAssets.length > 0) {
-    console.warn(
-      `[icons:sync:microsoft] ${unusedAssets.length} package asset(s) are not in the catalog:\n`
-      + `  - ${unusedAssets.join('\n  - ')}`,
-    );
+  if (unusedAssets.size > 0) {
+    // The Microsoft 365 package ships every symbol in six colour treatments and
+    // the catalog keeps one per symbol, so a large unused count is expected
+    // there. A non-zero count for the logo packages means a real omission.
+    const summary = [...unusedAssets.entries()]
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([family, count]) => `${family}: ${count}`)
+      .join(', ');
+    console.warn(`[icons:sync:microsoft] package assets not in the catalog (${summary})`);
   }
 
   console.log(

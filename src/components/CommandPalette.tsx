@@ -182,8 +182,8 @@ export default function CommandPalette({
           }}
           onKeyDown={handleInputKeyDown}
           placeholder={localize(language, {
-            en: 'Search commands or Azure services...',
-            ja: 'コマンドまたは Azure サービスを検索...',
+            en: 'Search commands or Microsoft services...',
+            ja: 'コマンドまたは Microsoft サービスを検索...',
           })}
           aria-label={localize(language, {
             en: 'Search commands and services',
@@ -237,8 +237,8 @@ export default function CommandPalette({
                   </strong>
                   <small>
                     {localize(language, {
-                      en: `Add Azure service · ${result.icon.category}`,
-                      ja: `Azure サービスを追加 · ${result.icon.category}`,
+                      en: `Add Microsoft service · ${result.icon.category}`,
+                      ja: `Microsoft サービスを追加 · ${result.icon.category}`,
                     })}
                   </small>
                 </span>

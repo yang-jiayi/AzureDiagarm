@@ -1,0 +1,29 @@
+{
+  /*
+   * Type-checking for everything OUTSIDE `src`.
+   *
+   * `tsconfig.json` includes `src` only, and the harness runs under `tsx`,
+   * which strips types without checking them. So the export quality gate — the
+   * ~6,400 lines that decide whether a deck ships — was the one part of this
+   * repository no compiler had ever read. That is how a rule body ended up
+   * nested inside the wrong function and sat there dead for months: nothing
+   * complained, because nothing was looking.
+   *
+   * Wired into `test:core` as `typecheck:scripts`, so it runs where it will be
+   * noticed rather than where someone has to remember it.
+   */
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "types": ["node", "vite/client"],
+    "lib": ["ES2022", "DOM", "DOM.Iterable"]
+  },
+  "include": ["scripts", "tests"],
+  /*
+   * Playwright specs import through the dev server ("/src/...") and run in a
+   * browser, so their module specifiers are not resolvable from disk and their
+   * runner is not `test:core`. Checking them here would only produce noise.
+   */
+  "exclude": ["tests/e2e"],
+  "references": []
+}

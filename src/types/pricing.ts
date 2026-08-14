@@ -90,6 +90,13 @@ export interface ServicePricing {
   calculationType: 'hourly' | 'monthly' | 'usage'; // How to calculate cost
   sourceUrl?: string;                     // Link to official pricing page
   lastUpdated: string;                    // ISO timestamp
+  /**
+   * The date of the newest meter in the file these tiers were parsed from, so
+   * "how long has this price held?" can be answered from the price itself
+   * rather than from session state. Absent when the tiers did not come from a
+   * priced meter file.
+   */
+  meterAsOf?: string;
 }
 
 /**
@@ -115,6 +122,16 @@ export interface NodePricingConfig {
   reserved1yrCost?: number;
   /** True when reserved1yrCost came from a real savings-plan meter (not the % fallback). */
   reservedIsSavingsPlan?: boolean;
+  /**
+   * When Azure last restated the meter this price came from.
+   *
+   * Carried on the node rather than looked up from a registry so that it is
+   * bound to the number it describes: it is stamped only when the figure came
+   * from a real meter (never from the static fallback table), it belongs to the
+   * region in `region` above, and it survives save and restore, so the same
+   * diagram exports the same provenance twice running.
+   */
+  meterAsOf?: string;
   usageEstimate?: {           // For usage-based services
     type: 'light' | 'medium' | 'heavy';
     description: string;
@@ -166,6 +183,19 @@ export interface CostBreakdown {
   unpricedServices?: { nodeId: string; serviceName: string }[];
   /** Date the underlying pricing data was last refreshed (YYYY-MM-DD). */
   pricesAsOf?: string;
+  /**
+   * The oldest meter date behind the services in this estimate (YYYY-MM-DD),
+   * when the prices have been unchanged for long enough to be worth saying.
+   *
+   * Not a staleness warning. Azure's retail API returns current prices, so a
+   * 2018 meter is genuinely today's price — it is simply one Azure has not
+   * repriced since. `pricesAsOf` says when the data was fetched, which answers
+   * "is this current?"; this answers the different question a customer asks in
+   * the room, "how firm is this number?" The shipped corpus spans 2018-02 to
+   * 2026-07, and a price that has held for eight years is a materially
+   * different planning input from one that moved last month.
+   */
+  oldestMeterAsOf?: string;
   /** Billing term the costs reflect (e.g. "Pay-as-you-go", "Savings Plan (1-year)"). */
   pricingTerm?: string;
 }

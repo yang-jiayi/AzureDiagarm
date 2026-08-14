@@ -2,8 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import JSZip from 'jszip';
 import type { Edge, Node } from 'reactflow';
-import { buildDiagramSlidePptx } from '../src/services/pptxExporter.ts';
-import { buildExportRoutes, collectExportBoxes } from '../src/services/diagramExportGeometry.ts';
+import { buildDiagramSlidePptx, estimateTextWidthIn, fitTableRows, legibleScaleFor, narrowestBoxW, tableRowHeightIn, wrappedLineCount } from '../src/services/pptxExporter.ts';
+import { buildExportRoutes, collectExportBoxes, fitLabelToLines, fitLabelToWidth } from '../src/services/diagramExportGeometry.ts';
 import { buildVsdxPackage } from '../src/services/visioVsdxExporter.ts';
 
 /**
@@ -53,7 +53,20 @@ async function buildDeck(nodes: Node[], edges: Edge[]): Promise<Deck> {
     .sort((a, b) => +a.replace(/\D/g, '') - +b.replace(/\D/g, ''));
   const slides = await Promise.all(names.map((name) => zip.file(name)!.async('string')));
   const overview = slides.findIndex((xml) => xml.includes('(Overview)'));
-  return { slides, parts: overview < 0 ? slides : slides.slice(overview + 1) };
+  // The DRAWING's parts, which is what every caller of `parts` means. Two other
+  // kinds of slide sit after the overview and carry no tiles by design: the
+  // workflow narration, and the service-name index - which the deck now emits
+  // far more often, because the overview records the marks it draws and its
+  // tiles are the smallest in the deck. Neither is a part of the drawing, and
+  // counting them as one made "part 6 of 6" a blank slide.
+  //
+  // Selected by what the slide CONTAINS rather than by its title. Matching
+  // `Workflow (` only caught the CONTINUED form, and a deck whose narration
+  // fits on one slide titles it plain "Workflow" - so the blank part this
+  // filter exists to stop survived for exactly the commonest case.
+  const drawingParts = (overview < 0 ? slides : slides.slice(overview + 1))
+    .filter((xml) => xml.includes('name="service-'));
+  return { slides, parts: drawingParts };
 }
 
 /** Font sizes carried by the service label text runs, in points. */
@@ -485,6 +498,7 @@ test('a trimmed outlier zone is clamped back onto the page, not cut to a hairlin
   const pageH = +/<p:sldSz[^>]*cy="(\d+)"/.exec(pres)![1] / EMU;
 
   let seen = 0;
+  let onWindows = 0;
   for (const name of Object.keys(zip.files).filter((n) => /^ppt\/slides\/slide\d+\.xml$/.test(n))) {
     const xml = await zip.file(name)!.async('string');
     const at = xml.indexOf('name="zone-zFar"');
@@ -492,13 +506,20 @@ test('a trimmed outlier zone is clamped back onto the page, not cut to a hairlin
     const m = /<a:off x="(-?[\d.]+)" y="(-?[\d.]+)"\s*\/>\s*<a:ext cx="([\d.]+)" cy="([\d.]+)"/.exec(xml.slice(at, at + 400))!;
     const [x, y, w, h] = [+m[1] / EMU, +m[2] / EMU, +m[3] / EMU, +m[4] / EMU];
     seen += 1;
+    if (!xml.includes('(Overview)')) onWindows += 1;
     assert.ok(w > 0.2 && h > 0.2, `trimmed zone collapsed to ${w.toFixed(3)}x${h.toFixed(3)}in on ${name}`);
     assert.ok(
       x >= -0.01 && y >= -0.01 && x + w <= pageW + 0.01 && y + h <= pageH + 0.01,
       `trimmed zone sits at ${x.toFixed(2)},${y.toFixed(2)} ${w.toFixed(2)}x${h.toFixed(2)}in off a ${pageW.toFixed(2)}x${pageH.toFixed(2)}in ${name}`,
     );
   }
-  assert.equal(seen, 1, 'the outlier zone was not drawn at all');
+  // Bringing a 6.25in remote zone back beside a 10.7in drawing makes a 17.6in
+  // drawing, which cannot be shown on one standard slide above 6.7pt — so this
+  // deck is tiled, and a tiled deck opens with an overview that redraws
+  // everything. What must hold is the audit's own rule: exactly one *window*
+  // carries the zone, so it is neither dropped nor drawn twice.
+  assert.ok(seen >= 1, 'the outlier zone was not drawn at all');
+  assert.equal(onWindows, 1, 'the outlier zone must belong to exactly one window');
 });
 
 /** Slide-space rectangles for every shape whose objectName matches a prefix. */
@@ -699,16 +720,23 @@ test('a numbered hop across an empty stretch keeps its label and its callout', (
   // saw it as before its left edge, so neither drew it. The arrow was still
   // drawn (it overlaps both parts) and the Workflow slide still listed the
   // step, leaving an unlabelled, unnumbered connector.
+  //
+  // Twenty services a side, not six. At six the deck does not tile at all, and
+  // the old `parts.length > 1` was satisfied by counting the plain "Workflow"
+  // slide as a drawing part - so the test asserted a split that was not there
+  // and then checked the bridge against a single slide that trivially carries
+  // everything. The premise has to be true for the assertion to mean anything.
   const nodes: Node[] = [];
   const edges: Edge[] = [];
-  for (let i = 0; i < 6; i += 1) nodes.push(service(`l${i}`, `Left Service ${i}`, (i % 2) * 220, Math.floor(i / 2) * 200));
-  for (let i = 0; i < 6; i += 1) nodes.push(service(`r${i}`, `Right Service ${i}`, 3200 + (i % 2) * 220, Math.floor(i / 2) * 200));
-  for (let i = 1; i < 6; i += 1) edges.push({ id: `le${i}`, source: `l${i - 1}`, target: `l${i}`, label: `left hop ${i}`, data: { stepNumber: i } } as Edge);
-  edges.push({ id: 'bridge', source: 'l5', target: 'r0', label: 'private peering', data: { stepNumber: 6 } } as Edge);
-  for (let i = 1; i < 6; i += 1) edges.push({ id: `re${i}`, source: `r${i - 1}`, target: `r${i}`, label: `right hop ${i}`, data: { stepNumber: i + 6 } } as Edge);
+  const PER_SIDE = 20;
+  for (let i = 0; i < PER_SIDE; i += 1) nodes.push(service(`l${i}`, `Left Service ${i}`, (i % 2) * 220, Math.floor(i / 2) * 200));
+  for (let i = 0; i < PER_SIDE; i += 1) nodes.push(service(`r${i}`, `Right Service ${i}`, 14000 + (i % 2) * 220, Math.floor(i / 2) * 200));
+  for (let i = 1; i < PER_SIDE; i += 1) edges.push({ id: `le${i}`, source: `l${i - 1}`, target: `l${i}`, label: `left hop ${i}`, data: { stepNumber: i } } as Edge);
+  edges.push({ id: 'bridge', source: `l${PER_SIDE - 1}`, target: 'r0', label: 'private peering', data: { stepNumber: PER_SIDE } } as Edge);
+  for (let i = 1; i < PER_SIDE; i += 1) edges.push({ id: `re${i}`, source: `r${i - 1}`, target: `r${i}`, label: `right hop ${i}`, data: { stepNumber: i + PER_SIDE } } as Edge);
 
   const deck = await buildDeck(nodes, edges);
-  const parts = deck.parts.filter((slide) => !/Workflow \(/.test(slide));
+  const parts = deck.parts;
   assert.ok(parts.length > 1, `expected a tiled deck, got ${parts.length} part(s)`);
 
   const orphans: string[] = [];
@@ -797,10 +825,17 @@ test('a shrunken fan is drawn at the size its chips were measured at', () => Pro
   // Handing the draw call the ordinary size instead leaves the text spilling out
   // of its own chip and over its own numbered callout - invisible to any test
   // that only compares shape rectangles, because the rectangles do not move.
+  //
+  // A rung this narrow may legitimately refuse the sentence rather than set it
+  // one glyph per line — but refusing is not the same as losing it. The ladder
+  // trades type size for room first and only then hands the wording to the
+  // workflow slide, so every hop still arrives as a chip or as a numbered
+  // callout.
   for (const count of [7, 8, 14]) {
     const { nodes, edges } = fan(count, (i) => `${FAN_LABEL} ${i + 1}`);
     const deck = await buildDeck(nodes, edges);
-    const chips = deck.slides.flatMap(annotationBoxes).filter((box) => box.name.startsWith('connector-label-'));
+    const shapes = deck.slides.flatMap(annotationBoxes);
+    const chips = shapes.filter((box) => box.name.startsWith('connector-label-'));
     assert.equal(chips.length, count, `fan of ${count} lost a label`);
     for (const chip of chips) {
       assert.ok(chip.pt >= 7, `${chip.name} is drawn at ${chip.pt}pt, below the legibility floor`);
@@ -815,8 +850,29 @@ test('a shrunken fan is drawn at the size its chips were measured at', () => Pro
   }
 }));
 
-test('a fan whose first label is short still lays out on one lattice', () => Promise.resolve().then(async () => {
-  // The rung height is the tallest chip in the bundle. Re-measuring only the
+test('no drawn chip sets its sentence one glyph per line', () => Promise.resolve().then(async () => {
+  // The drop guard used to ask "does a single letter fit?", which is a test
+  // about the wrong thing: a column that holds exactly one glyph draws the
+  // sentence vertically, one character per line. 97 chips cleared it, the worst
+  // by 0.0022in. A line of text means room for at least two of the widest glyph
+  // the run contains.
+  for (const count of [3, 7, 14]) {
+    const { nodes, edges } = fan(count, (i) => `${FAN_LABEL} ${i + 1}`);
+    const deck = await buildDeck(nodes, edges);
+    for (const chip of deck.slides.flatMap(annotationBoxes)) {
+      if (!chip.name.startsWith('connector-label-')) continue;
+      const glyph = (chip.pt * 1.0) / 72;
+      const column = chip.w - 0.12;
+      assert.ok(
+        column + 0.01 >= glyph * 2,
+        `${chip.name} is a ${chip.w.toFixed(3)}in ribbon at ${chip.pt}pt — `
+        + `its ${column.toFixed(3)}in column holds ${(column / glyph).toFixed(2)} glyph(s)`,
+      );
+    }
+  }
+}));
+
+test('a fan whose first label is short still lays out on one lattice', () => Promise.resolve().then(async () => {  // The rung height is the tallest chip in the bundle. Re-measuring only the
   // first route after a shrink reads a short label's height, the lattice
   // collapses below its own step, and the long siblings overlap.
   for (const count of [11, 12, 14, 20]) {
@@ -1384,7 +1440,10 @@ test('the overview thumbnail never draws type the reader cannot resolve', async 
   const { nodes, edges } = wideDiagram(40);
   const deck = await buildDeck(nodes, edges);
   assert.ok(deck.parts.length > 1, 'the fixture must tile for there to be an overview at all');
-  const overview = deck.slides[deck.slides.length - deck.parts.length - 1];
+  // Found by its own title rather than by counting back from the end. `parts`
+  // no longer includes the index and workflow slides, so an offset from the
+  // end lands on a different slide than it used to.
+  const overview = deck.slides.find((xml) => xml.includes('(Overview)')) ?? '';
   assert.ok(overview.includes('(Overview)'), 'located the overview slide');
 
   const RESOLVABLE_PT = 6;
@@ -1412,7 +1471,13 @@ test('a tile that gives up its name still says something', async () => {
   const { nodes, edges } = wideDiagram(72);
   const deck = await buildDeck(nodes, edges);
   assert.ok(deck.parts.length > 1, 'the fixture must tile for there to be an overview at all');
-  const overview = deck.slides[deck.slides.length - deck.parts.length - 1];
+  // By its own title, and ASSERTED. Counting back from the end survived only
+  // because this fixture happens to emit no index slide; its neighbour's
+  // already does, and there the same arithmetic lands on a reading slide whose
+  // three labelled tiles satisfy every assertion below trivially. A test that
+  // can pass on the wrong slide without saying so drifts silently.
+  const overview = deck.slides.find((xml) => xml.includes('(Overview)')) ?? '';
+  assert.ok(overview.includes('(Overview)'), 'located the overview slide');
 
   const named = new Set(
     [...overview.matchAll(/name="service-label-([^"]+)"/g)].map((m) => m[1]),
@@ -1420,8 +1485,36 @@ test('a tile that gives up its name still says something', async () => {
   const iconed = new Set([...overview.matchAll(/name="icon-([^"]+)"/g)].map((m) => m[1]));
   const tiles = [...overview.matchAll(/name="service-((?!label-|meta-)[^"]+)"/g)].map((m) => m[1]);
   assert.ok(tiles.length > 0, 'the overview draws tiles');
-  const blank = tiles.filter((id) => !named.has(id) && !iconed.has(id));
-  assert.deepEqual(blank, [], `${blank.length} of ${tiles.length} overview tiles carry neither a name nor an icon`);
+
+  // A blank tile is allowed only where the name is genuinely unwritable, and
+  // only because the reading slides carry it.
+  //
+  // The rule this used to state - that an overview tile must always show a
+  // name or an icon - rested on "an empty grey box says less than type that is
+  // merely small". That premise fails at the bottom: these tiles are 0.104in
+  // wide, so the column is 0.050in and the widest glyph of "Copilot Studio" at
+  // the 6pt floor is 0.078in. Not one letter fits. What was drawn there was
+  // not small type, it was a column of fragments spilling out of both sides of
+  // the box, and the honest answer is to draw nothing.
+  //
+  // So the test now asks the question it always meant to ask: is anything
+  // LOST? Every tile the overview leaves blank must be drawn with its name, in
+  // full, on one of the reading slides that follow.
+  const partNamed = new Set<string>();
+  for (const part of deck.parts) {
+    for (const shape of part.matchAll(/<p:sp>[\s\S]*?<\/p:sp>/g)) {
+      const id = /name="service-label-([^"]+)"/.exec(shape[0])?.[1];
+      if (!id) continue;
+      const text = [...shape[0].matchAll(/<a:t>([^<]*)<\/a:t>/g)].map((m) => m[1]).join('').trim();
+      if (text !== '') partNamed.add(id);
+    }
+  }
+  const lost = tiles.filter((id) => !named.has(id) && !iconed.has(id) && !partNamed.has(id));
+  assert.deepEqual(
+    lost,
+    [],
+    `${lost.length} of ${tiles.length} overview tiles are blank and are not named on any reading slide either`,
+  );
 
   // and what it does say is still above the floor
   for (const shape of overview.matchAll(/<p:sp>[\s\S]*?<\/p:sp>/g)) {
@@ -1431,4 +1524,795 @@ test('a tile that gives up its name still says something', async () => {
       assert.ok(+size[1] / 100 >= 6, `"${text}" drawn at ${+size[1] / 100}pt on the overview`);
     }
   }
+});
+
+
+/**
+ * A fan of parallel hops is drawn as a rigid ladder: one offset moves every
+ * rung together. On a crowded drawing there is sometimes no offset at all that
+ * puts every rung nearer its own arrow than anybody else's — not a position the
+ * search can improve on, but proof that no honest position exists for an object
+ * that shape. The escape is the one the Architecture Center itself uses for a
+ * bundle of parallel flows: number the arrows and let the workflow list carry
+ * the sentences.
+ *
+ * This used to be gated on the fan being at least five deep, so a shallow fan
+ * with nowhere honest to stand simply shipped a rung parked beside a stranger's
+ * hop — read, believed, and wrong.
+ */
+test('a ladder with nowhere honest to stand becomes numbers rather than lie', async () => {
+  const nodes: Node[] = [];
+  for (let r = 0; r < 3; r += 1) {
+    for (let c = 0; c < 3; c += 1) nodes.push(service(`g${r}${c}`, `Azure Service ${r}${c}`, c * 300, r * 200));
+  }
+  const wording = '注文ドキュメントを Cosmos DB に書き込みます';
+  const edges: Edge[] = [];
+  let step = 0;
+  for (let r = 0; r < 3; r += 1) {
+    for (let c = 0; c + 1 < 3; c += 1) {
+      step += 1;
+      edges.push({ id: `h${r}${c}`, source: `g${r}${c}`, target: `g${r}${c + 1}`, label: wording, data: { stepNumber: step, stepDescription: `手順 ${step}` } } as Edge);
+    }
+  }
+  for (let r = 0; r + 1 < 3; r += 1) {
+    for (let c = 0; c < 3; c += 1) {
+      step += 1;
+      edges.push({ id: `v${r}${c}`, source: `g${r}${c}`, target: `g${r + 1}${c}`, label: wording, data: { stepNumber: step, stepDescription: `手順 ${step}` } } as Edge);
+    }
+  }
+  for (let i = 0; i < 3; i += 1) {
+    step += 1;
+    edges.push({ id: `f${i}`, source: 'g11', target: 'g12', label: `${wording} ${i}`, data: { stepNumber: step, stepDescription: `手順 ${step}` } } as Edge);
+  }
+
+  const deck = await buildDeck(nodes, edges);
+  const slide = deck.slides[0];
+
+  // Every drawn chip has to read as belonging to the arrow it names, measured
+  // the same way a reader would: against the nearest arrow of any other hop.
+  const shapes = [...slide.matchAll(/<p:sp>[\s\S]*?<\/p:sp>/g)].map((m) => m[0]);
+  const box = (xml: string): { x: number; y: number; w: number; h: number } | null => {
+    const off = /<a:off x="(-?\d+)" y="(-?\d+)"\/>/.exec(xml);
+    const ext = /<a:ext cx="(\d+)" cy="(\d+)"\/>/.exec(xml);
+    return off && ext
+      ? { x: +off[1] / 914400, y: +off[2] / 914400, w: +ext[1] / 914400, h: +ext[2] / 914400 }
+      : null;
+  };
+  const named = shapes
+    .map((xml) => ({ name: /name="([^"]+)"/.exec(xml)?.[1] ?? '', rect: box(xml) }))
+    .filter((s): s is { name: string; rect: NonNullable<ReturnType<typeof box>> } => s.rect !== null);
+  const arrows = named.filter((s) => s.name.startsWith('connector-') && !/^connector-(label|step)-/.test(s.name));
+  assert.ok(arrows.length > 0, 'the fixture draws arrows');
+
+  // Distance from a point to an arrow's bounding segment, which is how the
+  // exporter and the audit both measure it.
+  const gap = (r: { x: number; y: number; w: number; h: number }, p: { x: number; y: number }): number => {
+    const ax = r.x;
+    const ay = r.y;
+    const bx = r.x + r.w;
+    const by = r.y + r.h;
+    const dx = bx - ax;
+    const dy = by - ay;
+    const len = dx * dx + dy * dy;
+    const t = len === 0 ? 0 : Math.max(0, Math.min(1, ((p.x - ax) * dx + (p.y - ay) * dy) / len));
+    return Math.hypot(p.x - (ax + t * dx), p.y - (ay + t * dy));
+  };
+
+  let checked = 0;
+  for (const chip of named.filter((s) => s.name.startsWith('connector-label-'))) {
+    const own = arrows.find((a) => a.name === `connector-${chip.name.replace('connector-label-', '')}`);
+    if (!own) continue;
+    const at = { x: chip.rect.x + chip.rect.w / 2, y: chip.rect.y + chip.rect.h / 2 };
+    const mine = gap(own.rect, at);
+    const nearest = arrows.reduce((best, a) => (gap(a.rect, at) < gap(best.rect, at) ? a : best), arrows[0]);
+    checked += 1;
+    assert.ok(
+      nearest.name === own.name || gap(nearest.rect, at) >= mine - 0.25,
+      `${chip.name} is ${gap(nearest.rect, at).toFixed(2)}in from ${nearest.name} but ${mine.toFixed(2)}in from its own arrow`,
+    );
+  }
+  assert.ok(checked > 0, 'the fixture must draw chips for the rule to mean anything');
+
+  // Muting is only honest if the sentence survives somewhere the reader can
+  // reach, so whatever the fan gave up has to appear in the deck's text.
+  const text = deck.slides.join('');
+  for (let i = 0; i < 3; i += 1) {
+    assert.ok(text.includes(`${wording} ${i}`.slice(0, 12)), `the wording of fan member ${i} left the deck entirely`);
+  }
+});
+
+test('a name the tile can hold is not cut short', async () => {
+  // The cap used to be a flat 40 cells regardless of the tile, so a roomy tile
+  // showed "Azure Database for PostgreSQL フレキシ…" and the rest of the name
+  // was written down nowhere at all. A tile is allowed to clip a name only
+  // when the tile genuinely cannot hold it.
+  const names = [
+    'Azure Kubernetes Service 本番クラスター',
+    'Azure Database for PostgreSQL フレキシブル サーバー',
+    'Azure Container Registry プレミアム',
+  ];
+  const nodes = names.map((name, i) => service(`s${i}`, name, i * 260, 0));
+  const edges = names.slice(1).map((_, i) => (
+    { id: `e${i}`, source: `s${i}`, target: `s${i + 1}`, label: '書き込み' } as Edge
+  ));
+  const deck = await buildDeck(nodes, edges);
+  const drawn = deck.slides
+    .flatMap((xml) => [...xml.matchAll(/<p:sp>[\s\S]*?<\/p:sp>/g)].map((m) => m[0]))
+    .filter((sp) => /name="service-label-/.test(sp))
+    .map((sp) => [...sp.matchAll(/<a:t>([\s\S]*?)<\/a:t>/g)].map((t) => t[1]).join(''));
+  assert.ok(drawn.length >= names.length, `expected a caption per service, saw ${drawn.length}`);
+  for (const name of names) {
+    assert.ok(
+      drawn.some((text) => text === name),
+      `"${name}" is not written in full anywhere; captions were ${JSON.stringify(drawn)}`,
+    );
+  }
+});
+
+/**
+ * Splitting has to be able to stop.
+ *
+ * Both coarsening loops in `planDiagramWindows` break on
+ * `scaleOf(c, r) >= legibleScale && scaleOf(next) < legibleScale`, so a
+ * `legibleScale` no reachable grid ever attains makes the left conjunct false
+ * at every step and the break never fires — the loop coarsens past every grid
+ * that reads. That has produced two separate catastrophes from opposite
+ * directions: a demand the frame could not meet gave 400 services 49 slides
+ * reading "Azure…", and a demand the renderer would not grant gave 60
+ * short-tile services 61 slides carrying one tile each.
+ *
+ * The end-to-end audit only sees the second one when the deck collapses all the
+ * way to one tile per slide. Between 40 and 55 authored pixels the deck
+ * over-tiles by 24-48% while every window still carries two tiles, and no
+ * property of the emitted file separates that from a small correct deck — the
+ * distinguishing fact is a counterfactual. So it is asserted here instead, on
+ * the function, where it is true by construction or not at all.
+ */
+test('the legibility target never exceeds what the renderer will draw', () => {
+  const NATURAL_PER_IN = 1 / 96;
+  // The renderer's own ceiling, which is not a constant: a drawing whose
+  // narrowest tile cannot carry a mark is allowed past the natural cap, far
+  // enough to reach the 0.2in markable bar and no further. Asserting the
+  // constant instead is what let the two ceilings drift apart - the planner
+  // stopped splitting at 1/96 while the renderer would have drawn coarser, so
+  // tiles came out under the markable bar with slides still in the budget.
+  const MARKABLE_TILE_W_IN = 0.2;
+  const rendererCap = (minBoxW: number): number => Math.max(NATURAL_PER_IN, MARKABLE_TILE_W_IN / minBoxW);
+  const frames = [
+    { w: 12.63, h: 5.78 },   // the standard 16:9 window
+    { w: 4, h: 2 },          // a frame small enough for its own ceiling to bind
+    { w: 40, h: 20 },        // a grown page
+  ];
+  for (const frame of frames) {
+    for (let target = 1; target <= 400; target += 1) {
+      // 12px is under the markable bar, 19.2px is exactly on it, 90px is over.
+      for (const minBoxW of [12, 19.2, 24, 90, Infinity]) {
+        const scale = legibleScaleFor(target, frame, minBoxW);
+        const cap = rendererCap(minBoxW);
+        assert.ok(
+          scale <= cap + 1e-12,
+          `target ${target}px in a ${frame.w}x${frame.h}in frame with a ${minBoxW}px tile asks for `
+          + `${scale} in/px, but the renderer caps that window at ${cap} in/px`,
+        );
+        assert.ok(scale > 0, `target ${target}px produced a non-positive scale ${scale}`);
+      }
+    }
+  }
+});
+
+/**
+ * The other half of the same invariant: the planner must not stop SHORT of the
+ * renderer's ceiling either.
+ *
+ * Capping below what the renderer will draw is not conservative, it is the
+ * same defect mirrored. The planner breaks out of its coarsening loop at
+ * `legibleScale`, so a ceiling under the renderer's leaves the drawing split
+ * finer than it needed to be at tiles the renderer would have drawn larger -
+ * and on a drawing authored small enough for the raised cap to bind, those are
+ * exactly the tiles that were under the markable bar to begin with.
+ */
+test('the legibility target reaches the renderer cap when the frame allows it', () => {
+  const NATURAL_PER_IN = 1 / 96;
+  const frame = { w: 40, h: 20 };
+  // A 12px tile is drawn 0.125in at the natural cap, under the 0.2in bar, so
+  // the renderer raises its ceiling to 0.2/12 and the planner must follow.
+  const raised = legibleScaleFor(12, frame, 12);
+  assert.ok(
+    raised > NATURAL_PER_IN,
+    `a 12px tile needs the raised ceiling, but the planner stopped at ${raised} in/px`,
+  );
+  assert.ok(Math.abs(raised - 0.2 / 12) < 1e-12, `expected ${0.2 / 12} in/px, got ${raised}`);
+  // And nothing else moves. A tile at or above the markable bar leaves the
+  // renderer's ceiling at the natural cap, so the planner must return exactly
+  // what it returned before the ceiling was passed in at all - for every
+  // target, not just the one that happens to be capped.
+  for (const frameUnderTest of [{ w: 12.63, h: 5.78 }, { w: 4, h: 2 }, { w: 40, h: 20 }]) {
+    for (let target = 1; target <= 400; target += 1) {
+      for (const minBoxW of [19.2, 24, 90, 400, Infinity]) {
+        // A tolerance, not equality: 0.2 / 19.2 and 1 / 96 are the same number
+        // and do not have the same double, and a tile exactly on the bar is
+        // the case most worth keeping in the sweep.
+        assert.ok(
+          Math.abs(legibleScaleFor(target, frameUnderTest, minBoxW)
+            - legibleScaleFor(target, frameUnderTest)) < 1e-12,
+          `a ${minBoxW}px tile is at or over the markable bar, so target ${target}px `
+          + `in a ${frameUnderTest.w}x${frameUnderTest.h}in frame must not move`,
+        );
+      }
+    }
+  }
+});
+
+/**
+ * Wrapping is a *count*, not a ratio, and the difference is what puts a row off
+ * the page.
+ *
+ * `ceil(width / box)` assumes text can break anywhere. It can, in CJK and in a
+ * single over-long token, and for those the two agree. Latin prose breaks
+ * between words and abandons the rest of a line when the next word will not
+ * fit, so the ratio is only ever a lower bound — and a table sized from a lower
+ * bound is a table measured onto the page that prints below it.
+ *
+ * Asserted here rather than through an export because no output statistic can
+ * separate the two: the emitted file records the row heights the exporter
+ * chose, so a rule reading them back agrees with whatever it did.
+ */
+test('a wrapped line count is never below the break-anywhere ratio', () => {
+  const samples = [
+    'Azure Kubernetes Service aks001contosoplatformprodeastus2 nodepool001systemsurgeeastus2',
+    'Azure Database for PostgreSQL Flexible Server (Production, Zone Redundant) 17',
+    'contoso-platform-prod-eastus2-aks-system-nodepool-surge',
+    '受信した注文イベントを検証し、重複を排除したうえで下流の在庫サービスに書き込みます',
+    'Short name',
+    '',
+  ];
+  for (const text of samples) {
+    for (const box of [1, 2.5, 3.3, 5, 11.89]) {
+      for (const pt of [7, 9, 10, 12]) {
+        const lines = wrappedLineCount(text, box, pt);
+        assert.ok(Number.isInteger(lines) && lines >= 1, `"${text.slice(0, 20)}" gave ${lines} lines`);
+        // The ratio is deliberately computed from the estimator the wrap
+        // itself uses. `lines >= ink / box` is an identity about the WRAP -
+        // greedy packing never fits more ink on a line than the line is wide -
+        // so it only says something about wrapping when both sides measure the
+        // ink the same way. Building it on a hard-coded 0.54 em turned it into
+        // a width test that failed the moment the estimator started measuring
+        // real advances, because 0.54 over-states lowercase prose by about 8%
+        // and the "lower bound" rose above the true count. Widths are the
+        // subject of tests/glyphAdvances.test.ts; this one is about the wrap.
+        const ratio = Math.max(1, Math.ceil(estimateTextWidthIn(text, pt) / box));
+        assert.ok(
+          lines >= ratio,
+          `"${text.slice(0, 28)}" at ${pt}pt in ${box}in wraps to ${lines} lines, `
+          + `below the ${ratio} that break-anywhere alone requires`,
+        );
+      }
+    }
+  }
+  // The case the ratio actually gets wrong: three runs each over half the
+  // column. Break-anywhere fits 38 characters into two 2in lines at 12pt;
+  // breaking between words cannot, because the second run will not fit after
+  // the first and the rest of that line is abandoned.
+  const tokens = 'aaaaaaaaaaaa bbbbbbbbbbbb cccccccccccc';
+  const ratio = Math.max(1, Math.ceil(estimateTextWidthIn(tokens, 12) / 2.0));
+  assert.equal(ratio, 2, 'the fixture must be one the break-anywhere ratio calls two lines');
+  assert.equal(
+    wrappedLineCount(tokens, 2.0, 12), 3,
+    'three runs each over half the column take three lines, not the two the ratio predicts',
+  );
+});
+
+/**
+ * A hard line break is a line.
+ *
+ * `\n` survives the XML sanitiser — which scrubs U+000B while reasoning
+ * explicitly about copy-paste, and lets the far commoner U+000A through — and
+ * pptxgenjs turns each one into a real `<a:p>`, so both renderers start a new
+ * line where every counter here used to carry straight on. Splitting on
+ * whitespace *ends a run* at a newline; it never starts a line. A model asked
+ * for numbered remediation steps writes them one per line, which makes this
+ * the normal case, and a sixteen-row table of four-line names measured 5.83in
+ * and drew 10.33in — 3.9in of rows below the sheet.
+ */
+test('a hard line break counts as a line, in the counter and in the row height', () => {
+  assert.equal(
+    wrappedLineCount('Enable zone redundancy.\nAdd a second node pool.\nUpdate the runbook.', 40, 12), 3,
+    'three paragraphs in a box wide enough for any of them is three lines, not one',
+  );
+  assert.equal(
+    wrappedLineCount('a\r\nb\rc\nd', 40, 12), 4,
+    'CR, LF and CRLF all start a line',
+  );
+  const oneLine = tableRowHeightIn(['Azure SQL Managed Instance'], [5.2], 12);
+  const twoLines = tableRowHeightIn(['Azure SQL\nManaged Instance'], [5.2], 12);
+  assert.ok(
+    twoLines > oneLine + 0.1,
+    `a two-paragraph cell must be budgeted taller than a one-line cell (${twoLines} vs ${oneLine})`,
+  );
+});
+
+/**
+ * A name cut to a line budget is *verified* against that budget, not inferred.
+ *
+ * Fitting a name to `column * lines` of ink is the natural thing to write and
+ * is not the same statement: word wrap abandons the tail of a line whenever the
+ * next word will not fit, so a name whose total ink fits three lines can still
+ * draw four. The Visio tile has no room to absorb the fourth — its band is
+ * bounded by the icon below it — so the postcondition has to hold exactly,
+ * which is why `fitLabelToLines` re-measures its own answer before returning
+ * it and cannot exceed the budget even if the search misses.
+ */
+test('fitLabelToLines never returns a label that needs more lines than it was given', () => {
+  const linesOf = (text: string, columnIn: number, sizeIn: number): number =>
+    wrappedLineCount(text, columnIn, sizeIn * 72);
+  const names = [
+    'Azure Database for PostgreSQL Flexible Server - Business Critical tier with zone redundant high availability in East US 2',
+    'Azure Database for PostgreSQL フレキシブル サーバー ビジネス クリティカル ゾーン冗長 高可用性 東日本リージョン',
+    'aaaaaaaaaaaaaaaaaaaa bbbbbbbbbbbbbbbbbbbb cccccccccccccccccccc dddddddddddddddddddd',
+    'Supercalifragilisticexpialidociousness',
+    'one\ntwo\nthree\nfour\nfive\nsix',
+    '',
+  ];
+  for (const name of names) {
+    for (const column of [0.4, 0.9, 1.755, 3.0]) {
+      for (const maxLines of [1, 2, 3, 5]) {
+        const fitted = fitLabelToLines(name, column, 0.0972, maxLines, linesOf);
+        assert.ok(
+          linesOf(fitted, column, 0.0972) <= maxLines,
+          `"${name.slice(0, 24)}" fitted to ${maxLines} line(s) in ${column}in drew `
+          + `${linesOf(fitted, column, 0.0972)}: ${JSON.stringify(fitted)}`,
+        );
+      }
+    }
+  }
+  // A name that already fits is returned untouched, so nothing is cut for show.
+  assert.equal(
+    fitLabelToLines('Azure Front Door', 2.0, 0.0972, 3, linesOf), 'Azure Front Door',
+    'a name that fits its budget must come back whole',
+  );
+});
+
+/**
+ * Verifying the answer is not the same as finding a good one.
+ *
+ * The first `fitLabelToLines` bisected the width budget and checked its result
+ * against `linesOf`, so it never returned a label that overran — and still
+ * threw away up to 27% of names it could have kept. `fitLabelToWidth` keeps a
+ * tail of up to a third of the budget, so a wider budget can grow the tail,
+ * shrink the head's share and return a *shorter* string; a bisection reads
+ * that downward step as "too big" and discards the entire upper half.
+ *
+ * So the postcondition test above cannot catch this class of defect. This one
+ * measures against the answer itself: a fine sweep of the same interval, which
+ * is what the search is trying to approximate.
+ */
+test('fitLabelToLines keeps as much of the name as a fine sweep of the same budget', () => {
+  const linesOf = (text: string, columnIn: number, sizeIn: number): number =>
+    wrappedLineCount(text, columnIn, sizeIn * 72);
+  const names = [
+    'Azure Kubernetes Service with Azure CNI overlay networking',
+    'Azure Database for PostgreSQL Flexible Server - Business Critical tier with zone redundant high availability in East US 2',
+    'Production VNet - Application Subnet (10.0.1.0/24) - Zone Redundant',
+    'Azure Database for PostgreSQL フレキシブル サーバー ビジネス クリティカル ゾーン冗長 高可用性 東日本リージョン',
+    'Azure Front Door Premium + Web Application Firewall (Prevention mode)',
+  ];
+  for (const name of names) {
+    for (const column of [0.4, 0.6, 1.23, 3.0]) {
+      for (const sizeIn of [0.0972, 0.125]) {
+        for (const maxLines of [1, 2, 4]) {
+          const fitted = fitLabelToLines(name, column, sizeIn, maxLines, linesOf);
+          let sweep = '…';
+          const top = column * maxLines;
+          for (let k = 1; k <= 600; k += 1) {
+            const candidate = fitLabelToWidth(name, (top * k) / 600, sizeIn);
+            if (linesOf(candidate, column, sizeIn) > maxLines) continue;
+            if ([...candidate].length > [...sweep].length) sweep = candidate;
+          }
+          assert.ok(
+            [...fitted].length >= [...sweep].length,
+            `"${name.slice(0, 24)}" in ${column}in x ${maxLines} at ${sizeIn}in kept `
+            + `${[...fitted].length} chars but a sweep of the same budget kept ${[...sweep].length}: `
+            + `${JSON.stringify(fitted)} vs ${JSON.stringify(sweep)}`,
+          );
+        }
+      }
+    }
+  }
+});
+
+/**
+ * A table row is never budgeted at less than its type plus the insets
+ * PowerPoint charges on top of it.
+ *
+ * None of the deck's tables declares autofit, so `<a:tr h>` is a minimum and
+ * every one of them grows to whatever its contents need — text, plus `marT` and
+ * `marB`, which pptxgenjs emits at 0.05in each. Omitting the insets is 0.1in a
+ * row, and a page of rows of that is a page and a half of table.
+ */
+test('a table row budgets its cell insets as well as its type', () => {
+  const COL_W = [5.2, 3.9, 3.53];
+  const INSET_V = 0.1;
+  for (const pt of [7, 9, 10, 12]) {
+    const single = tableRowHeightIn(['Api', 'Compute', '—'], COL_W, pt);
+    assert.ok(
+      single >= pt * 1.35 / 72 + INSET_V - 1e-9,
+      `a one-line row at ${pt}pt was budgeted ${single}in, below its type plus insets`,
+    );
+    const long = 'Azure Database for PostgreSQL Flexible Server (Production, Zone Redundant) 17';
+    const wrapped = tableRowHeightIn([long, 'Databases', 'Data tier'], COL_W, pt);
+    const lines = wrappedLineCount(long, COL_W[0] - 0.2, pt);
+    assert.ok(
+      wrapped >= lines * pt * 1.35 / 72 + INSET_V - 1e-9,
+      `a ${lines}-line row at ${pt}pt was budgeted ${wrapped}in, below its type plus insets`,
+    );
+    assert.ok(wrapped >= single, 'a wrapped row is never shorter than a single-line row');
+  }
+});
+
+/**
+ * The frame ceiling still has to bind when it is the tighter of the two, or the
+ * first catastrophe comes back: `gridFor` returns null the moment the window
+ * bleed alone fills the frame, and a null grid sends the planner to a fixed
+ * fallback grid the coarsening loops then walk straight past.
+ */
+test('the legibility target never exceeds what the frame can deliver', () => {
+  const BLEED_PX = 18;
+  for (const frame of [{ w: 12.63, h: 5.78 }, { w: 2, h: 1 }, { w: 40, h: 20 }]) {
+    for (let target = 1; target <= 400; target += 1) {
+      const finest = Math.min(frame.w, frame.h) / (BLEED_PX * 2 + target);
+      assert.ok(
+        legibleScaleFor(target, frame) <= finest + 1e-12,
+        `target ${target}px in a ${frame.w}x${frame.h}in frame asks for more than the `
+        + `${finest} in/px the frame can hold`,
+      );
+    }
+  }
+});
+
+/**
+ * The WAF pillar and regional-comparison tables must never silently drop a row.
+ *
+ * `fitTableRows` shrinks the type first and only then discards rows, and on
+ * these two the contents are closed sets — five fixed WAF pillar names against
+ * a 2.91in budget, and the shipped region list against 5.32in — so the
+ * row-dropping arm should be unreachable. "Should be unreachable" is worth
+ * pinning: it is reachable the moment either budget is tightened or either
+ * label grows, and the failure is silent by construction.
+ */
+test('the closed-set tables keep every row they are given', () => {
+  const PILLARS = [
+    'Reliability', 'Security', 'Cost Optimization',
+    'Operational Excellence', 'Performance Efficiency',
+  ];
+  const pillarRows = PILLARS.map((p) => [p, 'Adequate, with gaps', '72 / 100']);
+  const pillarFit = fitTableRows(
+    pillarRows,
+    ['Pillar', 'Maturity', 'Score'],
+    [4.2, 6.6, 1.83],
+    2.91,
+    12,
+  );
+  assert.equal(pillarFit.rows, pillarRows.length, 'the pillar table dropped a WAF pillar');
+
+  const regionRows = Array.from({ length: 9 }, (_, i) => [
+    `East US ${i} (Zone redundant)`, '$12,345', '+4.2%', 'Comparable to baseline',
+  ]);
+  const regionFit = fitTableRows(
+    regionRows,
+    ['Region', 'Monthly', 'Delta', 'Notes'],
+    [3.4, 2.4, 2.0, 4.8],
+    5.32,
+    12,
+  );
+  assert.equal(regionFit.rows, regionRows.length, 'the region table dropped a region');
+});
+
+/**
+ * Eight instances of one service, authored 12px wide.
+ *
+ * At the old fixed cap of 96 pixels per inch the tile arrived 0.125in wide, a
+ * text column of 0.065in - narrower than two of the digit "1" - so it could
+ * carry no name, no stub and not even a key. Eight identical icons carried
+ * eight identical nothings and the index could only say "(not drawn)" eight
+ * times: eight services on the drawing, not one of them identifiable.
+ *
+ * Asserted HERE rather than in the export corpus because the claim is a
+ * counterfactual - the same file, magnified further than the cap allowed. A
+ * corpus entry can only see the file that was produced, and a file whose tiles
+ * are blank looks exactly like a file whose tiles were never meant to be
+ * captioned. The distinguishing fact is that the frame had the room.
+ */
+test('a drawing authored too small to caption is magnified until its tiles carry a mark', async () => {
+  const suffixes = ['alpha', 'bravo', 'charlie', 'delta', 'echo', 'foxtrot', 'golf', 'hotel'];
+  const nodes = suffixes.map((suffix, i) => ({
+    id: `hs${i}`,
+    type: 'azureNode',
+    position: { x: i * 200, y: (i % 2) * 180 },
+    width: 12,
+    height: 24,
+    data: { label: `Contoso platform shared services region ${suffix}`, serviceName: 'Azure Functions' },
+  } as unknown as Node));
+  const deck = await buildDeck(nodes, []);
+
+  const marks = new Map<string, string>();
+  for (const xml of deck.parts) {
+    for (const shape of xml.matchAll(/name="service-label-([^"]*)"[\s\S]*?<\/p:sp>/g)) {
+      const text = [...shape[0].matchAll(/<a:t>([^<]*)<\/a:t>/g)].map((t) => t[1]).join('').trim();
+      if (text) marks.set(shape[1], text);
+    }
+  }
+  assert.equal(
+    marks.size,
+    nodes.length,
+    `only ${marks.size} of ${nodes.length} tiles carry a mark - the rest are anonymous dots`,
+  );
+  assert.equal(
+    new Set(marks.values()).size,
+    nodes.length,
+    'two tiles carry the same mark, so the reader cannot tell them apart',
+  );
+
+  const rows = deck.slides
+    .flatMap((xml) => [...xml.matchAll(/name="index-name-\d+"[\s\S]*?<\/p:sp>/g)])
+    .map((m) => [...m[0].matchAll(/<a:t>([^<]*)<\/a:t>/g)].map((t) => t[1]).join('').trim());
+  assert.equal(rows.length, nodes.length, 'the index does not carry a row per service');
+  for (const [id, mark] of marks) {
+    const defining = rows.filter((row) => row.split('  =  ')[0].split('  |  ').includes(mark));
+    assert.equal(
+      defining.length,
+      1,
+      `the mark "${mark}" drawn on ${id} is defined by ${defining.length} index rows, not exactly one`,
+    );
+    const label = nodes.find((n) => n.id === id)!.data.label as string;
+    assert.ok(
+      defining[0].endsWith(`  =  ${label}`),
+      `the index row for "${mark}" does not spell out "${label}": ${JSON.stringify(defining[0])}`,
+    );
+  }
+});
+
+/**
+ * A tiled deck draws one service twice - small on the overview and larger on
+ * its reading slide - so one name legitimately shortens to two different stubs.
+ * The index carried only the longer of them, which left the shorter one drawn
+ * on a tile and defined nowhere: the exact defect the index exists to prevent.
+ */
+test('every mark a tile draws is defined by an index row that names one service', async () => {
+  const long = 'Azure Database for PostgreSQL Flexible Server (Business Critical, Zone Redundant HA)';
+  const nodes = Array.from({ length: 12 }, (_, i) => ({
+    id: `wi${i}`,
+    type: 'azureNode',
+    position: { x: (i % 4) * 300, y: Math.floor(i / 4) * 200 },
+    width: 96,
+    height: 60,
+    data: { label: `${long} ${i}`, serviceName: 'Azure Database for PostgreSQL' },
+  } as unknown as Node));
+  const deck = await buildDeck(nodes, []);
+
+  const rows = deck.slides
+    .flatMap((xml) => [...xml.matchAll(/name="index-name-\d+"[\s\S]*?<\/p:sp>/g)])
+    .map((m) => [...m[0].matchAll(/<a:t>([^<]*)<\/a:t>/g)].map((t) => t[1]).join('').trim());
+  const defined = new Map<string, Set<string>>();
+  for (const row of rows) {
+    const cut = row.indexOf('  =  ');
+    if (cut < 0) continue;
+    for (const mark of row.slice(0, cut).split('  |  ')) {
+      if (!defined.has(mark)) defined.set(mark, new Set());
+      defined.get(mark)!.add(row.slice(cut + 5));
+    }
+  }
+  const authored = new Set(nodes.map((n) => n.data.label as string));
+
+  for (const xml of deck.slides) {
+    for (const shape of xml.matchAll(/name="service-label-([^"]*)"[\s\S]*?<\/p:sp>/g)) {
+      const mark = [...shape[0].matchAll(/<a:t>([^<]*)<\/a:t>/g)].map((t) => t[1]).join('').trim();
+      if (!mark || authored.has(mark)) continue;
+      assert.ok(
+        defined.has(mark),
+        `the tile for ${shape[1]} draws "${mark}", which no index row defines`,
+      );
+      assert.equal(
+        defined.get(mark)!.size,
+        1,
+        `"${mark}" is defined against ${defined.get(mark)!.size} services, so it identifies none of them`,
+      );
+    }
+  }
+});
+
+/**
+ * ASK-61-D: a zone caption fits the band the exporter draws it into.
+ *
+ * The caption fitter shrinks, then cuts, then blanks - three escape hatches,
+ * each of which can be reached with the previous one having done nothing. A
+ * corpus scenario cannot pin this, because it samples ONE geometry: the guard
+ * that measured the caption against the box instead of the column fired only
+ * below about 0.043in, which is the single width the corpus happened to hold,
+ * and was silent across the whole ordinary range of small zones between.
+ *
+ * So this sweeps the geometry instead. For every zone the sweep produces, the
+ * claim is the same one the reader cares about: the lines the caption wraps to,
+ * at the size it is set in, in the column it is given, take no more height than
+ * the band. PowerPoint does not clip a text box - it prints the overflow below
+ * the band and across whatever is there, which on a row of subnets is the
+ * neighbouring zones' captions.
+ */
+const ZONE_LINE_PITCH = 1.35;
+
+/** Every zone caption the deck emitted, with the box it was emitted into. */
+function zoneCaptions(slideXml: string): Array<{ text: string; pt: number; w: number; h: number }> {
+  const out: Array<{ text: string; pt: number; w: number; h: number }> = [];
+  for (const match of slideXml.matchAll(/<p:sp>[\s\S]*?<\/p:sp>/g)) {
+    const shape = match[0];
+    if (!/name="zone-label-/.test(shape)) continue;
+    const ext = /<a:ext cx="(\d+)" cy="(\d+)"\/>/.exec(shape);
+    const size = /sz="(\d+)"/.exec(shape);
+    if (!ext || !size) continue;
+    const text = [...shape.matchAll(/<a:t>([\s\S]*?)<\/a:t>/g)]
+      .map((t) => t[1].replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&'))
+      .join('');
+    // EMU: 914400 per inch.
+    out.push({ text, pt: +size[1] / 100, w: +ext[1] / 914400, h: +ext[2] / 914400 });
+  }
+  return out;
+}
+
+test('a zone caption never needs more lines than its band can hold', async () => {
+  // Widths and heights across the range a real drawing produces, including the
+  // slivers a window cut leaves behind, crossed with captions short enough to
+  // fit outright and long enough to force every hatch in turn.
+  const labels = [
+    'DMZ',
+    'Production VNet',
+    'Production landing zone - shared services subnet (EMEA)',
+    'Zone d\u2019atterrissage de production pour les services partag\u00e9s r\u00e9gionaux',
+  ];
+  const widths = [40, 90, 150, 260, 420, 700];
+  const heights = [60, 110, 200, 380];
+  const nodes: Node[] = [];
+  let i = 0;
+  let x = 0;
+  for (const label of labels) {
+    for (const w of widths) {
+      for (const h of heights) {
+        const zoneId = `zs-${i}`;
+        nodes.push({
+          id: zoneId,
+          type: 'groupNode',
+          position: { x, y: 0 },
+          style: { width: w, height: h },
+          data: { label },
+        } as Node);
+        nodes.push({
+          id: `zsn-${i}`,
+          type: 'azureNode',
+          parentNode: zoneId,
+          position: { x: x + 8, y: 8 },
+          width: Math.max(20, w - 16),
+          height: Math.max(20, h - 16),
+          data: { label: 'Azure Functions', serviceName: 'Azure Functions' },
+        } as Node);
+        x += w + 140;
+        i += 1;
+      }
+    }
+  }
+
+  const { slides } = await buildDeck(nodes, []);
+  const failures: string[] = [];
+  let checked = 0;
+  for (const xml of slides) {
+    for (const caption of zoneCaptions(xml)) {
+      // A blanked caption is the honest third hatch, not a violation.
+      if (!caption.text || caption.w <= 0 || caption.h <= 0) continue;
+      checked += 1;
+      // The column PowerPoint actually gives the words: a text box that
+      // declares no margin still takes a 0.1in inset on each side.
+      const column = Math.max(0, caption.w - 0.2);
+      const lines = wrappedLineCount(caption.text, column, caption.pt);
+      const needs = (lines * caption.pt * ZONE_LINE_PITCH) / 72;
+      if (needs > caption.h + 0.005) {
+        failures.push(
+          `"${caption.text}" at ${caption.pt}pt wraps to ${lines} line(s) in a `
+          + `${column.toFixed(3)}in column, needing ${needs.toFixed(3)}in of a `
+          + `${caption.h.toFixed(3)}in band - ${(needs - caption.h).toFixed(3)}in prints below it`,
+        );
+      }
+    }
+  }
+  assert.ok(checked >= 40, `the sweep only produced ${checked} drawn captions, so it proves little`);
+  assert.deepEqual(failures.slice(0, 6), [], failures.slice(0, 6).join('\n'));
+});
+
+test('a zone caption is never wider than the zone it names', async () => {
+  // A band wider than its own box hangs over both neighbours, and no placement
+  // can fix that: the geometry makes the overlap compulsory. One scaled row of
+  // small zones produced 2385 pairs of captions written across each other.
+  const nodes: Node[] = [];
+  const sizes = [30, 45, 60, 80, 120, 200];
+  let x = 0;
+  for (const [i, w] of sizes.entries()) {
+    nodes.push({
+      id: `zw-${i}`,
+      type: 'groupNode',
+      position: { x, y: 0 },
+      style: { width: w, height: 70 },
+      data: { label: 'Shared services perimeter' },
+    } as Node);
+    nodes.push({
+      id: `zwn-${i}`,
+      type: 'azureNode',
+      parentNode: `zw-${i}`,
+      position: { x: x + 6, y: 6 },
+      width: Math.max(16, w - 12),
+      height: 50,
+      data: { label: 'Azure Functions', serviceName: 'Azure Functions' },
+    } as Node);
+    x += w + 160;
+  }
+
+  const { slides } = await buildDeck(nodes, []);
+  const zones = new Map<string, number>();
+  for (const xml of slides) {
+    for (const match of xml.matchAll(/<p:sp>[\s\S]*?<\/p:sp>/g)) {
+      const id = /name="zone-(zw-\d+)"/.exec(match[0]);
+      const ext = /<a:ext cx="(\d+)" cy="(\d+)"\/>/.exec(match[0]);
+      if (id && ext) zones.set(id[1], +ext[1] / 914400);
+    }
+  }
+  assert.ok(zones.size > 0, 'the sweep drew no zone boxes at all');
+  for (const xml of slides) {
+    for (const match of xml.matchAll(/<p:sp>[\s\S]*?<\/p:sp>/g)) {
+      const id = /name="zone-label-(zw-\d+)"/.exec(match[0]);
+      const ext = /<a:ext cx="(\d+)" cy="(\d+)"\/>/.exec(match[0]);
+      if (!id || !ext) continue;
+      const bandW = +ext[1] / 914400;
+      const zoneW = zones.get(id[1]);
+      if (zoneW === undefined) continue;
+      assert.ok(
+        bandW <= zoneW + 0.005,
+        `${id[1]}: a ${bandW.toFixed(3)}in caption band on a ${zoneW.toFixed(3)}in zone `
+        + 'hangs over the zones on either side',
+      );
+    }
+  }
+});
+
+test('the narrowest tile survives an estate too large to spread into a call', () => {
+  // `Math.min(...boxes)` throws RangeError somewhere above 100k arguments in
+  // V8, and both the planner and the renderer used to be written that way. The
+  // count here is past that edge on purpose: a diagram this size is absurd,
+  // but the failure mode is a thrown exception and no export at all, not a
+  // worse-looking slide, so the boundary is worth pinning.
+  const many = Array.from({ length: 200_000 }, (_, i) => ({ w: 40 + (i % 97) }));
+  many[123_456] = { w: 11 };
+  assert.equal(narrowestBoxW(many), 11);
+});
+
+test('a zero width box is not the narrowest tile', () => {
+  // The planner filtered these out and the renderer did not, which made the
+  // renderer read a ceiling of 1/96 where the planner read 0.2/12 - the exact
+  // shape of the drift the shared helper exists to prevent.
+  assert.equal(narrowestBoxW([{ w: 0 }, { w: 12 }, { w: 90 }]), 12);
+  assert.equal(narrowestBoxW([{ w: 0 }]), Infinity);
+  assert.equal(narrowestBoxW([]), Infinity);
+});
+
+test('the planner and the renderer read the narrowest tile off the same boxes', () => {
+  // The reviewer's question: the planner takes `narrowest` from the boxes it
+  // is about to plan windows for, and the renderer takes `minBoxW` from the
+  // boxes it is about to draw. If those two lists were ever in different
+  // units the two would disagree again, one abstraction down. They are the
+  // same list, so the guarantee to assert is that the helper is a pure
+  // function of it - the same boxes in any order give the same answer.
+  const boxes = [{ w: 90 }, { w: 19.2 }, { w: 12 }, { w: 240 }];
+  const shuffled = [...boxes].reverse();
+  assert.equal(narrowestBoxW(boxes), narrowestBoxW(shuffled));
+  assert.equal(narrowestBoxW(boxes), 12);
+  // And that the ceiling it feeds is the legibility cap, not the natural one.
+  // A small target on purpose: above about 35 the 7pt legibility term is the
+  // binding one and the cap makes no difference either way, so a large target
+  // would assert nothing.
+  assert.ok(legibleScaleFor(30, { w: 12.63, h: 5.78 }, narrowestBoxW(boxes))
+    > legibleScaleFor(30, { w: 12.63, h: 5.78 }, Infinity));
 });
