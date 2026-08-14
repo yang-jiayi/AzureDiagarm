@@ -894,6 +894,69 @@ function planDiagramWindows(
   // 10px tile against a 0.15559in disc has RESOLVED the defect and was thrown
   // away for missing an ideal it was never required to meet, shipping 0.113in
   // tiles with four of six services anonymous instead.
+  // How many services can draw a MARK at this plan's scale.
+  //
+  // The escapes below used to compare disc proportion, which is a fact about a
+  // callout, to decide a question whose visible consequence is whether services
+  // have names at all. On six services with one 14px icon the unraised plan
+  // cleared the disc line by 0.0028in - 1.8% - and four services went anonymous
+  // on that margin, while the raised plan named all six. The mark bar for a
+  // one-character key sits between a 0.1584in tile and a 0.1697in one, so the
+  // deck needed 7% more scale and the only alternative on the menu was 84%
+  // more; nothing ever asked for the coarsest grid that clears the bar. This
+  // asks the machinery that actually decides - the same `drawableInColumn`
+  // against the same column inset the tile itself uses - so there is no new
+  // constant and no third copy of the bar.
+  const markableCountAt = (perIn: number): number => services.filter((s) => drawableInColumn(
+    '1',
+    LEGIBLE_TILE_PT,
+    Math.max(0.05, s.w * perIn - 0.06),
+  )).length;
+  const markableAt = (plan: { windows: DiagramWindow[] }): number => markableCountAt(perInOf(plan));
+  // The coarsest plan that still names as many services as the fine one.
+  //
+  // The two candidates on the menu are extremes - measured at 0.011314 and
+  // 0.020793 in/px, 84% apart - and the deck that lost four names to the gap
+  // needed 7.1%. Nothing ever asked for the scale in between, so "name the
+  // services" and "do not shred the deck into one tile a slide" looked like
+  // opposites: taking the fine plan named all six and cost 9 slides, 6 of them
+  // single-tile, 5 oversized edge chips and a label cut to "Ze...". They are
+  // not opposites. `perIn` is continuous and the mark bar is a threshold on it,
+  // so the cheapest plan that clears the threshold is found by bisecting the
+  // scale, not by choosing an end.
+  const coarsestNaming = (
+    fine: { windows: DiagramWindow[]; legible: boolean },
+    floorPlan: { windows: DiagramWindow[] },
+  ): { windows: DiagramWindow[]; legible: boolean } => {
+    const want = markableAt(fine);
+    let lo = perInOf(floorPlan);
+    let hi = perInOf(fine);
+    // No badge in the drawing is not a reason to buy the expensive plan. The
+    // first draft asked the planner for a tile WIDTH, which had to be derived
+    // from the callout bar, so it stood down on a deck with no callouts at all
+    // - and that deck went on shipping 8 slides, 6 of them a single tile, for
+    // a naming gain it could have had on four. The target is a scale now, and
+    // a scale is well defined whether or not anything is numbered.
+    if (!(hi > lo) || markableCountAt(lo) >= want) return fine;
+    for (let i = 0; i < 24; i += 1) {
+      const mid = (lo + hi) / 2;
+      if (markableCountAt(mid) >= want) hi = mid; else lo = mid;
+    }
+    // Built from the PLAIN side and raised to the target, not from the fine
+    // side and relaxed toward it. Asking the ceiling-raised planner for a
+    // coarser grid gets the raised grid back unchanged - it is already the
+    // finest rung - so the whole bisection returned the extreme it was written
+    // to avoid. The cheap plan is the one that needs 4% more scale.
+    const eased = planWindowsAtCeiling(bounds, services, frame, { ...options, namePerIn: hi }, false);
+    // Accepted only when it keeps every name AND costs less than the extreme.
+    // A bisection on scale says nothing about what grid the planner can build
+    // at that scale, so the plan it returns has to be re-measured, not assumed.
+    return eased.windows.length > 0
+      && eased.windows.length <= fine.windows.length
+      && markableAt(eased) >= want
+      ? eased
+      : fine;
+  };
   const defectLine = bar * BADGE_TILE_SHARE;
   // A plan that puts most of its slides on one service each has stopped buying
   // anything: splitting enlarges a tile by giving it more of the frame, and a
@@ -910,15 +973,38 @@ function planDiagramWindows(
     }).length <= 1).length;
     return lonely / plan.windows.length;
   };
+  // A lonely window is only wasted when it buys no names.
+  //
+  // The bound as first written rejected on `lonelyShare` alone, and rejected a
+  // plan that named all six services at 0.2829in because all six sat one to a
+  // window - three services lost their names to it. So the two measures are
+  // read together: splitting past the point of enlargement is a defect only
+  // where it is not the thing putting names on the canvas. The gain is counted
+  // as a share of SERVICES, which is the unit the reader experiences, and the
+  // measurements that bracket the threshold are a 4.8% gain on a 21 service
+  // deck that costs 10 extra slides for one name - refused - against a 66.7%
+  // gain on a 6 service deck - taken.
+  const worthTheSplit = (
+    plan: { windows: DiagramWindow[] },
+    against: { windows: DiagramWindow[] },
+  ): boolean => {
+    const gain = (markableAt(plan) - markableAt(against)) / Math.max(1, services.length);
+    return gain >= 0.25 || lonelyShare(plan) <= 0.5;
+  };
   if (bar > 0 && serve > 0 && perInOf(raised) * serve < bar - 1e-6) {
     const forced = planWindowsAtCeiling(
       bounds, services, frame, { ...options, waiveDensity: true }, true, serve,
     );
     if (forced.windows.length > 0
-      && lonelyShare(forced) <= 0.5
+      && worthTheSplit(forced, raised)
       && (perInOf(forced) * serve >= bar - 1e-6
         || perInOf(forced) * serve >= defectLine - 1e-6)) {
-      return { ...forced, servedW: serve, chaseAffordable: true };
+      // Eased for the same reason the second escape is: reaching a bar is a
+      // threshold, so the deck should buy the cheapest plan that clears it
+      // rather than the finest plan available. Left un-eased here, this escape
+      // shipped 8 slides with 6 of them carrying a single tile.
+      const eased = coarsestNaming(forced, raised);
+      return { ...eased, servedW: serve, chaseAffordable: true };
     }
   }
   // An empty window list with `legible: false` is not "the drawing fits", it is
@@ -1019,12 +1105,20 @@ function planDiagramWindows(
   // that is false whenever the raised plan is worth keeping, and only where the
   // unraised plan does NOT clear the same line - a refusal that costs nothing
   // in quality is still the density floor's to make.
-  const raisedClears = defectLine > 0 && serve > 0
-    && perInOf(raised) * serve >= defectLine - 1e-6;
-  const plainClears = defectLine > 0 && serve > 0
-    && perInOf(plain) * serve >= defectLine - 1e-6;
-  if (raisedClears && !plainClears) {
-    return { ...raised, servedW: serve, chaseAffordable: true };
+  // The second escape reads the SAME two measures as the first.
+  //
+  // It sat after `affordable()`, so it fires only on plans already under the
+  // density floor - exactly the population the first escape's bound polices -
+  // and it had no bound at all, which made that bound decorative: a 6 window
+  // all-lonely plan the first escape refused was handed back here unchanged.
+  // It also asked the disc question, and the disc question is why a deck with
+  // four anonymous services passed: the unraised plan cleared the disc line by
+  // 1.8% while naming 2 of 6.
+  const raisedNames = markableAt(raised);
+  const plainNames = markableAt(plain);
+  if (raisedNames > plainNames && worthTheSplit(raised, plain)) {
+    const eased = coarsestNaming(raised, plain);
+    return { ...eased, servedW: serve, chaseAffordable: true };
   }
   // Only prefer the unraised plan when it is genuinely cheaper. A refusal that
   // costs the same number of slides buys nothing and loses the marks.
@@ -1045,7 +1139,7 @@ function planWindowsAtCeiling(
   bounds: Bounds,
   services: ExportBox[],
   frame: DiagramFrame,
-  options: { mustTile?: boolean; markIn?: number; serveW?: number; waiveDensity?: boolean } = {},
+  options: { mustTile?: boolean; markIn?: number; serveW?: number; waiveDensity?: boolean; namePerIn?: number } = {},
   raiseCeiling = true,
   serveW?: number,
 ): { windows: DiagramWindow[]; legible: boolean } {
@@ -1330,7 +1424,20 @@ function planWindowsAtCeiling(
     && comfortableReads
     && comfortable.slides <= MAX_DIAGRAM_SLIDES
     && services.length / comfortable.slides >= MIN_SERVICES_PER_SLIDE;
-  const grid = worthIt ? comfortable : floor;
+  // A caller may ask for a SCALE, not only for a tile width to serve.
+  //
+  // `serveW` is clamped to `typicalW` one screen up, so it can only ever ask
+  // for a finer plan than the median already gives; there was no way to say
+  // "coarser than the finest, finer than the median". That is why the two
+  // candidates the deck chose between measured 0.011314 and 0.020793 in/px on
+  // a drawing that needed 0.011772: the 4% rung existed - `gridFor` returns it
+  // - and nothing could name it. Bounded below by the grid legibility already
+  // demands, so this can raise a deck's scale and never lower it.
+  const naming = options.namePerIn !== undefined && options.namePerIn > 0
+    ? gridFor(options.namePerIn)
+    : null;
+  const preferred = worthIt ? comfortable : floor;
+  const grid = naming && (!preferred || naming.slides > preferred.slides) ? naming : preferred;
   if (!grid) {
     return capped(Math.ceil(Math.sqrt(MAX_TILED_CELLS)), Math.ceil(Math.sqrt(MAX_TILED_CELLS)))
       ?? { windows: [], legible: false };

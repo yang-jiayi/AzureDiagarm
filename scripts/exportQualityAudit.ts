@@ -1749,6 +1749,27 @@ function whitespaceLabelsScenario(): Scenario {
  * tiles draw at 0.1584in. Three discs shipped at 98% of the services they
  * number, on a corpus reporting no issues at all.
  */
+/**
+ * The same intake path with its first service resized, one authored pixel apart.
+ *
+ * The planner picks between two candidate scales that are 84% apart when the
+ * deck needs 7%, and which one it picks used to turn on a disc-proportion test
+ * that cleared by 1.8% while four of six services went unnamed. Registering the
+ * sweep is the point: the review that caught this ran it by hand against two
+ * builds, and my own "every fingerprint byte-identical" claim was true and
+ * worthless because the width that moved was not a fixture.
+ */
+function refusedRaiseAtScenario(ws0: number): Scenario {
+  const base = refusedRaiseScenario();
+  return {
+    ...base,
+    id: `probe-rr-${ws0}`,
+    nodes: base.nodes.map((node, i) => (i === 0
+      ? { ...node, width: ws0, height: ws0 < 60 ? 30 : 110 } as unknown as Node
+      : node)),
+  };
+}
+
 function refusedRaiseScenario(): Scenario {
   const base = whitespaceLabelsScenario();
   return {
@@ -7289,7 +7310,33 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
   const chips = shapes.filter((s) => s.name.startsWith('connector-label-'));
 
   const minTileW = Math.min(...tiles.map((t) => t.w));
-  const namedTiles = new Set(labels.map((l) => l.name.replace('service-label-', '')));
+  // A shape that draws a MARK is not a name, whether the mark is a digit or a
+  // two-letter stub.
+  //
+  // The clause above excludes a tile whose label box came out empty because
+  // the fitter found no room for two glyphs. A tile drawing "1", or "Ni…" for
+  // "Nimbus telemetry ingestion", is the same finding one rung up: the fitter
+  // decided the name did not fit and substituted a reference, and the exporter
+  // says so itself by passing both through `recordMark` to be defined on the
+  // index. Such a tile is equally not "the size of a service" for a chip to be
+  // measured against. Letting marks in moved the median tile from the 160px
+  // services to the 14px slivers and reported five ordinary connector chips as
+  // 3.1x oversized, on a deck whose only change was that those slivers stopped
+  // being anonymous.
+  //
+  // Bounded by the four-character bar the exporter and the gate already share,
+  // so an ordinary long name cut on a large tile still counts as a name: "Ni…"
+  // keeps two characters and is a reference, while "Azure Database for
+  // PostgreSQL フレキシ…" keeps thirty-three and is a name that ran long.
+  const markOnly = (text: string): boolean => {
+    const t = text.trim();
+    if (/^\d{1,3}$/.test(t)) return true;
+    const kept = t.replace(/[\u2026.]+$/, '');
+    return t !== kept && [...kept].length < 4;
+  };
+  const namedTiles = new Set(labels
+    .filter((l) => !markOnly(l.text))
+    .map((l) => l.name.replace('service-label-', '')));
   const namedBoxes = tiles.filter((t) => namedTiles.has(t.name.replace('service-', '')));
   const namedWidths = namedBoxes.map((t) => t.w).sort((a, b) => a - b);
   // The MEDIAN named tile, not the narrowest. "Wider than the smallest tile"
@@ -9164,7 +9211,20 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
     format: 'pptx',
     issues,
     drawnNames: (() => {
-      const byId = new Map(scenario.nodes.map((n) => [auditStrip(String(n.id)), String(n.data?.label ?? '')]));
+      // Both halves of this map key a service the SAME way.
+      //
+      // The tile scan keyed by the raw authored label and the index scan below
+      // keyed by `singleLineName(...)` of it, so a name carrying a trailing
+      // space, a newline or a tab produced two entries for one service - and
+      // since the pair collapses to one key downstream, the tile's rendition
+      // overwrote the index's. The deck was crediting the index correctly and
+      // then throwing the credit away: a service drawn as the mark "1" with
+      // "1  =  Zephyr order intake function" printed on the index reported as
+      // surviving 4% against Visio's 100%, a divergence that was not there.
+      const byId = new Map(scenario.nodes.map((n) => [
+        auditStrip(String(n.id)),
+        singleLineName(String(n.data?.label ?? '')),
+      ]));
       // The LONGEST rendition of each name wins. A tiled deck draws the same
       // tile twice - small on the overview, in full on its reading slide - and
       // scoring the overview's stub against Visio's full name would report
@@ -11444,6 +11504,9 @@ async function main(): Promise<void> {
   zoneMedianScenario(2),
   halfTailScenario(),
   refusedRaiseScenario(),
+  refusedRaiseAtScenario(10),
+  refusedRaiseAtScenario(13),
+  refusedRaiseAtScenario(15),
   longTitleScenario(20),
   longTitleScenario(70),
   longTitleScenario(95),
