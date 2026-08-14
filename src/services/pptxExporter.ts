@@ -954,6 +954,26 @@ function planDiagramWindows(
     // Accepted only when it keeps every name AND costs less than the extreme.
     // A bisection on scale says nothing about what grid the planner can build
     // at that scale, so the plan it returns has to be re-measured, not assumed.
+    //
+    // `eased.legible` is deliberately NOT one of these tests, and the reason is
+    // measured rather than assumed. Across the corpus this function returns 59
+    // plans and not one of them is illegible. `eased` itself IS illegible four
+    // times, so the situation is reachable rather than hypothetical, but on
+    // every one of those it comes back with ZERO windows - `easedWin=0,
+    // fineWin=20` - so the `windows.length > 0` test below already excludes it
+    // and a legibility test would be a second name for the same rejection.
+    //
+    // That coincidence is a fact about this corpus, not an invariant. `capped`
+    // returns `{ windows: tile(c, r), legible: achieved >= legibleScale }`, a
+    // NON-EMPTY list with a flag that can be false, reachable when `mustTile`
+    // is set and the drawing is too large to read at any grid the cell cap
+    // allows. No fixture reaches it - the probe counted zero - so adding the
+    // conjunct today would pin nothing and could be deleted by anyone without
+    // a gate noticing.
+    //
+    // Which is the whole point: the conjunct is missing ON PURPOSE, and what
+    // would make it necessary is a `mustTile` deck whose finest permitted grid
+    // still does not read. If that fixture ever exists, add the test with it.
     return eased.windows.length > 0
       && eased.windows.length <= fine.windows.length
       && markableAt(eased) >= want
@@ -1051,6 +1071,15 @@ function planDiagramWindows(
     // unconditionally: measured on `probe-fits-whole-sliver`, the split names 9
     // services against the baseline's 8 at a 0.200 wasted share, and the
     // shorter guard threw that name away.
+    //
+    // DELIBERATELY REDUNDANT with the `hasBaseline` test that guards the escape
+    // trigger. Removing either one alone leaves the whole corpus green, because
+    // the other still refuses the phantom; only removing BOTH moves anything,
+    // and then `probe-blind-sliver` falls from 0.313in tiles on 53 slides to
+    // 0.182in on 19. Two guards that are each individually invisible can be
+    // deleted one commit at a time, each commit green, with the defect landing
+    // on the second and nothing pointing at the first. Delete the pair or
+    // neither.
     if (plan.windows.length === 0) return false;
     if (against.windows.length === 0 && !against.legible) return false;
     if (markableAt(plan) <= markableAt(against)) return false;
@@ -1061,6 +1090,13 @@ function planDiagramWindows(
   // it to decide whether to enter the escape at all. It was harmless only
   // because the guard inside `worthTheSplit` caught the value afterwards, which
   // is two tests deep on one bad number with only the inner one knowing.
+  //
+  // DELIBERATELY REDUNDANT with the baseline guard in `worthTheSplit`, and the
+  // corpus cannot see that. Removing either one alone leaves every fixture
+  // green, because the other still refuses the phantom; removing BOTH takes
+  // `probe-blind-sliver` from 0.313in tiles on 53 slides to 0.182in on 19. So
+  // a green run is not evidence that this line is unnecessary - it is evidence
+  // that its partner is still there. Delete the pair or neither.
   if (hasBaseline(raised) && bar > 0 && serve > 0 && perInOf(raised) * serve < bar - 1e-6) {
     const forced = planWindowsAtCeiling(
       bounds, services, frame, { ...options, waiveDensity: true }, true, serve,
