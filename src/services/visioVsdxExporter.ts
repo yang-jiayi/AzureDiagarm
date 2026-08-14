@@ -1086,42 +1086,102 @@ function badgeMinDiameterIn(stepNumber: number, fonts: VisioFonts): number {
  * which is the same limit the outlier trim uses, so a sheet that was already
  * at the edge of useful is left alone rather than pushed over it.
  *
- * The median tile, for the reason the PowerPoint planner takes the median: an
- * extremum has a neighbour, so one sliver among eighty would decide the sheet.
+ * The narrowest tile that carries a numbered hop, not the median of all
+ * services. The median was borrowed from the PowerPoint planner, where chasing
+ * an extremum costs SLIDES and `probe-whitespace` proves that trade is bad -
+ * four slivers there drag their 160px neighbours to 2.3in each and put one
+ * tile on a slide. On a sheet the cost is inches, `roomK` already bounds them,
+ * and the argument does not transfer. Measured, the median declined an
+ * available move on an ordinary seven-node diagram: six 150px services and one
+ * 14px private DNS zone in the numbered flow left two discs at 77% of the zone
+ * they point at with `k = 1`, when `k = 1.395` was free - an 11.1 x 8.5in sheet
+ * becoming 15.5 x 11.9in against a 60in bound.
+ *
+ * Only tiles that carry a hop, because a callout sits on an arrow: a sliver
+ * with no numbered edge touching it has no disc to be dwarfed by, and letting
+ * it set the scale would be chasing an extremum for nothing.
  */
 function magnifiedForCallouts(
   boxes: Map<string, ExportBox>,
   edges: readonly Edge[],
 ): Map<string, ExportBox> {
-  if (boxes.size === 0) return boxes;
-  let widestStep = 0;
-  for (const edge of edges) {
-    const step = Number((edge as unknown as { data?: { stepNumber?: unknown } }).data?.stepNumber);
-    if (Number.isFinite(step) && step > widestStep) widestStep = step;
-  }
-  if (widestStep <= 0) return boxes;
-  const services = [...boxes.values()].filter((box) => box.kind === 'service' && box.w > 0);
-  if (services.length === 0) return boxes;
-  const widths = services.map((box) => box.w).sort((a, b) => a - b);
-  const typicalW = widths[Math.floor(widths.length * 0.5)];
-  if (!typicalW || typicalW <= 0) return boxes;
-  const wantedPx = (badgeMinDiameterIn(widestStep, NATURAL_FONTS) / 0.55) * PX_PER_INCH;
+  const plan = calloutMagnificationPlan(boxes, edges);
+  if (plan.k <= 1.001) return boxes;
   const bounds = computeBounds(boxes.values());
-  const spanPx = Math.max(bounds.maxX - bounds.minX, bounds.maxY - bounds.minY, 1);
-  const roomK = (MAX_USEFUL_PAGE_IN * PX_PER_INCH) / spanPx;
-  const k = Math.min(wantedPx / typicalW, roomK);
-  if (!Number.isFinite(k) || k <= 1.001) return boxes;
   const out = new Map<string, ExportBox>();
   for (const [id, box] of boxes) {
     out.set(id, {
       ...box,
-      x: bounds.minX + (box.x - bounds.minX) * k,
-      y: bounds.minY + (box.y - bounds.minY) * k,
-      w: box.w * k,
-      h: box.h * k,
+      x: bounds.minX + (box.x - bounds.minX) * plan.k,
+      y: bounds.minY + (box.y - bounds.minY) * plan.k,
+      w: box.w * plan.k,
+      h: box.h * plan.k,
     });
   }
   return out;
+}
+
+/**
+ * What the magnifier will do and why, without doing it.
+ *
+ * Split out so that `wantedK` and `roomK` survive the decision. The audit has
+ * to tell a callout that is disproportionate because the sheet ran out of paper
+ * from one that is disproportionate because the exporter left paper unused, and
+ * a plan that reports only the `k` it settled on cannot: reverting the target
+ * from the narrowest badged tile to the median made the magnifier decline an
+ * available move entirely, and an exemption keyed on the result rather than on
+ * the bound went blind on exactly that.
+ */
+function calloutMagnificationPlan(
+  boxes: Map<string, ExportBox>,
+  edges: readonly Edge[],
+): { k: number; wantedK: number; roomK: number; barIn: number } {
+  const inert = { k: 1, wantedK: 1, roomK: Infinity, barIn: 0 };
+  if (boxes.size === 0) return inert;
+  let widestStep = 0;
+  const badged = new Set<string>();
+  for (const edge of edges) {
+    const step = Number((edge as unknown as { data?: { stepNumber?: unknown } }).data?.stepNumber);
+    if (!Number.isFinite(step) || step <= 0) continue;
+    if (step > widestStep) widestStep = step;
+    badged.add(edge.source);
+    badged.add(edge.target);
+  }
+  if (widestStep <= 0) return inert;
+  const services = [...boxes.entries()]
+    .filter(([id, box]) => box.kind === 'service' && box.w > 0 && badged.has(id))
+    .map(([, box]) => box);
+  if (services.length === 0) return inert;
+  const typicalW = Math.min(...services.map((box) => box.w));
+  if (!typicalW || typicalW <= 0) return inert;
+  const barIn = badgeMinDiameterIn(widestStep, NATURAL_FONTS) / 0.55;
+  const bounds = computeBounds(boxes.values());
+  const spanPx = Math.max(bounds.maxX - bounds.minX, bounds.maxY - bounds.minY, 1);
+  const roomK = (MAX_USEFUL_PAGE_IN * PX_PER_INCH) / spanPx;
+  const wantedK = (barIn * PX_PER_INCH) / typicalW;
+  const k = Math.min(wantedK, roomK);
+  return { k: Number.isFinite(k) && k > 1.001 ? k : 1, wantedK, roomK, barIn };
+}
+
+/**
+ * What {@link magnifiedForCallouts} did to a drawing, and whether the sheet ran
+ * out of paper before it was done.
+ *
+ * Exported for the export audit, which has to tell a callout that is
+ * disproportionate because there was no move left from one that is
+ * disproportionate because the exporter did not make the move it had. Asked
+ * rather than replicated, for the reason `calloutBarClampedFor` is: a second
+ * copy of this arithmetic in the gate would drift from this one, and did.
+ */
+export function calloutMagnificationFor(
+  nodes: readonly Node[],
+  edges: readonly Edge[],
+): { k: number; paperBound: boolean } {
+  const plan = calloutMagnificationPlan(
+    compactEmptyGutters(collectExportBoxes([...nodes])),
+    edges,
+  );
+  return { k: plan.k, paperBound: plan.wantedK > plan.roomK + 1e-9 };
 }
 
 /**

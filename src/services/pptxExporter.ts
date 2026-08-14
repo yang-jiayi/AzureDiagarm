@@ -238,6 +238,12 @@ interface SlideGeometry {
   /** True when far-placed nodes were pulled back onto the page to stay visible. */
   outliersClamped: boolean;
   /**
+   * True when the callout bar this drawing's step numbers ask for is out of
+   * reach in this frame, so the planner fell back to {@link MARKABLE_TILE_W_IN}.
+   * See {@link calloutBarReachable}.
+   */
+  calloutBarClamped: boolean;
+  /**
    * Tiles of the drawing, one per slide. A single entry (the usual case) means
    * the whole architecture fits on one legible page. More than one means the
    * drawing was too large to stay readable and was split the way a printed
@@ -577,6 +583,47 @@ function rendererMaxScale(minBoxW: number, markIn: number = MARKABLE_TILE_W_IN):
 }
 
 /**
+ * The median width and height of a set of tiles, in authored pixels.
+ *
+ * One expression, because the planner's two targets and the reachability
+ * predicate below all need the same statistic and a second copy of it is what
+ * let the gate mirror the planner with a MINIMUM while the planner used a
+ * median - a disagreement that made the gate accuse a correct 53 slide plan of
+ * chasing a bar it had already reached.
+ */
+function medianExtent(boxes: readonly { w: number; h: number }[]): { w: number; h: number } {
+  const widths = boxes.map((b) => b.w).filter((w) => w > 0).sort((a, b) => a - b);
+  const heights = boxes.map((b) => b.h).filter((h) => h > 0).sort((a, b) => a - b);
+  return {
+    w: widths[Math.floor(widths.length * 0.5)] ?? Infinity,
+    h: heights[Math.floor(heights.length * 0.5)] ?? Infinity,
+  };
+}
+
+/**
+ * Whether `markIn` is a tile width some grid in this frame can actually reach.
+ *
+ * `legibleScaleFor` returns at most `finestPerIn`, so a demand above it is
+ * unreachable by that function's own return value, whatever grid is tried.
+ * This is the exact bound and not a bound on it: an earlier form compared
+ * against the same expression with the `target` term dropped, which is larger
+ * by `(2 * WINDOW_BLEED_PX + target) / (2 * WINDOW_BLEED_PX)`, and left a band
+ * about one authored pixel wide in which the bar is unreachable and unclamped.
+ * Measured at every digit count - 10px, 13px and 16px - and the three-digit
+ * case tripled a deck: 15px planned 21 slides, 16px planned 64, and the tile
+ * 16px bought was 0.4274in against the 0.4457in bar it was spent chasing.
+ */
+function calloutBarReachable(
+  target: number,
+  frame: { w: number; h: number },
+  minBoxW: number,
+  markIn: number,
+): boolean {
+  const finestPerIn = Math.min(frame.w, frame.h) / (WINDOW_BLEED_PX * 2 + Math.max(1, target));
+  return rendererMaxScale(minBoxW, markIn) <= finestPerIn;
+}
+
+/**
  * The tile width the planner should aim for, given what the drawing carries.
  *
  * `MARKABLE_TILE_W_IN` is the bar for a tile that can hold an identifying
@@ -669,21 +716,18 @@ export function legibleScaleFor(
   const finestPerIn = Math.min(frame.w, frame.h) / (WINDOW_BLEED_PX * 2 + Math.max(1, target));
   // Chase the callout bar only while the frame can actually deliver it.
   //
-  // `finestPerIn` grows as the grid is refined, but only towards
-  // `min(frame) / (2 * WINDOW_BLEED_PX)` - the bleed is a fixed number of
-  // authored pixels, so it is what is left when the tiles themselves have
-  // shrunk to nothing. A demand above that asymptote is met by no grid at all,
-  // and since both coarsening loops break on `scaleOf(c, r) >= legibleScale`,
-  // a demand that is never met is not a floor, it is a way of switching the
-  // floor off: the loop walks past every grid that reads and stops only when
-  // it runs out of columns.
+  // `finestPerIn` is what this frame can return, so a demand above it is met by
+  // no grid at all - and since both coarsening loops break on
+  // `scaleOf(c, r) >= legibleScale`, a demand that is never met is not a floor,
+  // it is a way of switching the floor off: the loop walks past every grid that
+  // reads and stops only when it runs out of columns.
   //
   // Measured, this is what made numbering cost 4.6x the slides. One drawing of
   // 14px tiles needed 12 windows unnumbered, 33 at one digit, 44 at two and 55
   // at three - the architecture never changed, the step numbers did - and at
   // the end of all that spending the tile was 0.3740in against a 0.4457in bar,
-  // so the deck paid 43 extra windows for a target it was never going to
-  // reach, and missed it anyway.
+  // so the deck paid 43 extra windows for a target it was never going to reach,
+  // and missed it anyway.
   //
   // When the callout bar is out of reach, fall back to the bar that predates
   // numbering: a tile wide enough to carry an identifying mark. That is
@@ -691,9 +735,9 @@ export function legibleScaleFor(
   // drawing of the same architecture spends. The disc is then disproportionate
   // - there is no scale at which it is not - but the reader gets the same
   // number of legible sheets instead of 4.6 times as many illegible ones.
-  const reachablePerIn = Math.min(frame.w, frame.h) / (WINDOW_BLEED_PX * 2);
-  let demand = rendererMaxScale(minBoxW, markIn);
-  if (demand > reachablePerIn) demand = rendererMaxScale(minBoxW, MARKABLE_TILE_W_IN);
+  const demand = calloutBarReachable(target, frame, minBoxW, markIn)
+    ? rendererMaxScale(minBoxW, markIn)
+    : rendererMaxScale(minBoxW, MARKABLE_TILE_W_IN);
   return Math.min(LEGIBLE_TILE_PT / 12 / Math.max(1, target), finestPerIn, demand);
 }
 /**
@@ -1159,6 +1203,8 @@ function planSlideGeometry(diagram?: DiagramShapeSource | null): SlideGeometry {
   let h = BASE_H;
   let overflow = false;
   let outliersClamped = false;
+  let usedFrame: DiagramFrame | null = null;
+  let medians: { w: number; h: number } | null = null;
 
   const nodes = diagram?.nodes ?? [];
   let windows: DiagramWindow[] = [];
@@ -1187,6 +1233,8 @@ function planSlideGeometry(diagram?: DiagramShapeSource | null): SlideGeometry {
       // above the legibility floor, tile across several when they would not,
       // and only grow the page when even the slide budget is exceeded.
       const standard = planDiagramWindows(bounds, services, frameFor(BASE_W, BASE_H), { markIn });
+      usedFrame = frameFor(BASE_W, BASE_H);
+      medians = medianExtent(services);
       // `legible: false` is a request to grow the page, not a verdict that the
       // drawing cannot be tiled. A sparse architecture — the hub-and-spoke
       // every Architecture Center reference draws — defeats the
@@ -1222,6 +1270,7 @@ function planSlideGeometry(diagram?: DiagramShapeSource | null): SlideGeometry {
         // no windows at all and left a 200-service estate as a single 56x39.87in
         // sheet, which is the one outcome this branch exists to avoid.
         const grown = planDiagramWindows(bounds, services, frameFor(w, h), { mustTile: true, markIn });
+        usedFrame = frameFor(w, h);
         windows = grown.windows;
         // Splitting restores legibility, so the "scaled down to fit" warning no
         // longer applies — the drawing is now at its readable size.
@@ -1239,7 +1288,29 @@ function planSlideGeometry(diagram?: DiagramShapeSource | null): SlideGeometry {
     outliersClamped,
     windows,
     frame: frameFor(w, h),
+    // Recorded rather than recomputed by whoever wants to know. The gate used
+    // to mirror this from the scenario and got both statistics wrong: it read
+    // a frame with no connection legend in it, 6.04in against the 5.77in a
+    // numbered drawing actually gets, and it took the NARROWEST node where the
+    // planner takes the median. The first made it fail a correctly clamped
+    // 21 slide deck 98 times; the second made it accuse a correct 53 slide
+    // plan of chasing a bar it had already reached, while suppressing the four
+    // real conflicts on that same deck. There is one copy now, and it is the
+    // copy that ran.
+    calloutBarClamped: !!usedFrame && !!medians && markIn > MARKABLE_TILE_W_IN
+      && !calloutBarReachable(medians.h, usedFrame, medians.w, markIn),
   };
+}
+
+/**
+ * Whether the window planner gave up on this drawing's callout bar.
+ *
+ * Exported for the export audit, which has to know whether a callout that is
+ * disproportionate to its tile is a defect or the documented consequence of a
+ * bar no grid in the frame can reach.
+ */
+export function calloutBarClampedFor(diagram?: DiagramShapeSource | null): boolean {
+  return planSlideGeometry(diagram).calloutBarClamped;
 }
 
 /**

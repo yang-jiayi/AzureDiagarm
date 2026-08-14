@@ -13,9 +13,9 @@ import path from 'node:path';
 import { Worker } from 'node:worker_threads';
 import JSZip from 'jszip';
 import type { Edge, Node } from 'reactflow';
-import { buildDiagramSlidePptx, buildArchitectureDeckPptx } from '../src/services/pptxExporter.ts';
+import { buildDiagramSlidePptx, buildArchitectureDeckPptx, calloutBarClampedFor } from '../src/services/pptxExporter.ts';
 import { nativizeSlideXml } from '../src/services/pptxNativeShapes.ts';
-import { buildVsdxPackage } from '../src/services/visioVsdxExporter.ts';
+import { buildVsdxPackage, calloutMagnificationFor } from '../src/services/visioVsdxExporter.ts';
 import { WRAP_TRIGGER_RATIO } from '../src/utils/serpentineWrap.ts';
 
 import { narrateEdgeCallouts, readEdgeLabel, CATEGORY_STYLES, singleLineName, advanceWidthIn } from '../src/services/diagramExportGeometry.ts';
@@ -2838,6 +2838,137 @@ function sliverEstateScenario(): Scenario {
   return { id: 'probe-sliver-120', nodes, edges };
 }
 
+/**
+ * The same estate one authored pixel wider, and one wider again.
+ *
+ * Round 74 found two separate cliffs in that pixel. `probe-band-15` is where
+ * the exporter clamps and a gate that modelled the frame without its
+ * connection legend did not, failing a correct 21 slide deck 98 times.
+ * `probe-band-16` is where the clamp itself used to miss: it compared against
+ * the asymptote instead of `finestPerIn`, leaving a band about one pixel wide
+ * in which the bar is unreachable and unclamped - 15px planned 21 slides, 16px
+ * planned 64, and the 0.4274in tile that bought was still short of the
+ * 0.4457in bar it was spent chasing.
+ */
+function bandEstateScenario(px: number): Scenario {
+  const icon = '/Azure_Public_Service_Icons/Icons/compute/10029-icon-service-Function-Apps.svg';
+  const nodes: Node[] = [];
+  const edges: Edge[] = [];
+  const cols = 11;
+  for (let i = 0; i < 120; i += 1) {
+    nodes.push({
+      id: `bd${i}`,
+      type: 'azureNode',
+      position: { x: (i % cols) * 120, y: Math.floor(i / cols) * 120 },
+      width: px,
+      height: 16,
+      data: {
+        label: `Edge sensor ${i + 1}`,
+        serviceName: 'Azure Functions',
+        category: 'compute',
+        iconPath: icon,
+      },
+    } as unknown as Node);
+    if (i > 0) {
+      edges.push({
+        id: `bde-${i}`,
+        source: `bd${i - 1}`,
+        target: `bd${i}`,
+        data: { stepNumber: i, stepDescription: `Sensor ${i} forwards to sensor ${i + 1}` },
+      } as unknown as Edge);
+    }
+  }
+  return { id: `probe-band-${px}`, nodes, edges };
+}
+
+/**
+ * A bimodal estate: 20px tiles with a 14px sliver every thirtieth node.
+ *
+ * The gate used to mirror the planner's clamp with a MINIMUM where the planner
+ * uses a MEDIAN, and on this drawing the two disagree: the median tile clears
+ * its bar at 0.4471in, the plan is correct at 53 slides, and the gate accused
+ * it of chasing a bar it had already reached while suppressing the four real
+ * conflicts on the 0.3130in slivers. It is also the fixture on which the Visio
+ * magnifier's own median declined half an available move.
+ */
+function blindSliverScenario(): Scenario {
+  const icon = '/Azure_Public_Service_Icons/Icons/compute/10029-icon-service-Function-Apps.svg';
+  const nodes: Node[] = [];
+  const edges: Edge[] = [];
+  const cols = 11;
+  for (let i = 0; i < 120; i += 1) {
+    const sliver = i % 30 === 0;
+    nodes.push({
+      id: `bs${i}`,
+      type: 'azureNode',
+      position: { x: (i % cols) * 120, y: Math.floor(i / cols) * 120 },
+      width: sliver ? 14 : 20,
+      height: sliver ? 16 : 20,
+      data: {
+        label: `Edge sensor ${i + 1}`,
+        serviceName: 'Azure Functions',
+        category: 'compute',
+        iconPath: icon,
+      },
+    } as unknown as Node);
+    if (i > 0) {
+      edges.push({
+        id: `bse-${i}`,
+        source: `bs${i - 1}`,
+        target: `bs${i}`,
+        data: { stepNumber: i, stepDescription: `Sensor ${i} forwards to sensor ${i + 1}` },
+      } as unknown as Edge);
+    }
+  }
+  return { id: 'probe-blind-sliver', nodes, edges };
+}
+
+/**
+ * Six ordinary services and one small icon in the numbered flow.
+ *
+ * The shape every Architecture Center reference draws, with a private DNS zone
+ * sized like the glyph it is. The Visio magnifier's median is 150px here, so
+ * it declined to move at all and left two discs at 77% of the zone they point
+ * at, when the move it needed was a 15.5in sheet instead of an 11.1in one.
+ */
+function mixedSliverScenario(): Scenario {
+  const icon = '/Azure_Public_Service_Icons/Icons/compute/10029-icon-service-Function-Apps.svg';
+  const names = ['Azure Front Door', 'Azure App Service', 'Azure SQL Database',
+    'Azure Key Vault', 'Azure Blob Storage', 'Azure Monitor'];
+  const nodes: Node[] = names.map((label, i) => ({
+    id: `mx${i}`,
+    type: 'azureNode',
+    position: { x: (i % 3) * 400, y: Math.floor(i / 3) * 300 },
+    width: 150,
+    height: 96,
+    data: { label, serviceName: label, category: 'networking', iconPath: icon },
+  } as unknown as Node));
+  nodes.push({
+    id: 'mx-dns',
+    type: 'azureNode',
+    position: { x: 200, y: 160 },
+    width: 14,
+    height: 16,
+    data: {
+      label: 'Private DNS zone',
+      serviceName: 'DNS Zones',
+      category: 'networking',
+      iconPath: icon,
+    },
+  } as unknown as Node);
+  const hops: Array<[string, string]> = [
+    ['mx0', 'mx1'], ['mx1', 'mx-dns'], ['mx-dns', 'mx2'],
+    ['mx2', 'mx3'], ['mx3', 'mx4'], ['mx4', 'mx5'],
+  ];
+  const edges: Edge[] = hops.map(([source, target], i) => ({
+    id: `mxe-${i}`,
+    source,
+    target,
+    data: { stepNumber: i + 1, stepDescription: `Step ${i + 1} of the request path` },
+  } as unknown as Edge));
+  return { id: 'probe-mixed-sliver', nodes, edges };
+}
+
 function bimodalSidecarScenario(): Scenario {
   // Six services at a normal size with a sidecar of twenty four tiny ones.
   //
@@ -5599,42 +5730,6 @@ function drawingSpanIn(scenario: Scenario): { w: number; h: number } {
   return { w: (maxX - minX) / PX_PER_IN, h: (maxY - minY) / PX_PER_IN };
 }
 
-/**
- * The factor `magnifiedForCallouts` grew this drawing by, replicated.
- *
- * A Visio sheet cannot spend windows, so the only room it has to reach a tile
- * wide enough to carry a callout is paper. The exporter therefore scales a
- * numbered drawing authored small until its median tile reaches
- * `badgeFloor / 0.55`, bounded by `MAX_USEFUL_PAGE_IN`. Returns 1 for every
- * unnumbered drawing and for every drawing already above the bar, which is all
- * of the corpus authored at 150px.
- */
-function calloutMagnification(scenario: Scenario): { k: number; medianTileIn: number; barIn: number } {
-  const inert = { k: 1, medianTileIn: Infinity, barIn: 0 };
-  let widestStep = 0;
-  for (const edge of scenario.edges) {
-    const step = Number((edge as unknown as { data?: { stepNumber?: unknown } }).data?.stepNumber);
-    if (Number.isFinite(step) && step > widestStep) widestStep = step;
-  }
-  if (widestStep <= 0) return inert;
-  const widths = scenario.nodes
-    .filter((node) => node.type !== 'groupNode')
-    .map((node) => Number(node.width ?? (node.style?.width as number | undefined) ?? 150))
-    .filter((w) => Number.isFinite(w) && w > 0)
-    .sort((a, b) => a - b);
-  if (widths.length === 0) return inert;
-  const typicalW = widths[Math.floor(widths.length * 0.5)];
-  const pt = 0.0973;
-  const digits = String(widestStep).length;
-  const floor = Math.max(pt * 1.15, Math.hypot(digits * pt * 0.66, pt * 0.7) / 0.9);
-  const barIn = floor / 0.55;
-  const wantedPx = barIn * PX_PER_IN;
-  const span = drawingSpanIn(scenario);
-  const roomK = 60 / Math.max(span.w, span.h, 1 / PX_PER_IN);
-  const raw = Math.min(wantedPx / typicalW, roomK);
-  const k = Number.isFinite(raw) && raw > 1.001 ? raw : 1;
-  return { k, medianTileIn: (typicalW * k) / PX_PER_IN, barIn };
-}
 
 /**
  * The deck the export button actually produces.
@@ -7032,49 +7127,44 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
     const w = Number((node as unknown as { width?: number }).width);
     if (Number.isFinite(w) && w > 0) authoredW.set(auditStrip(String(node.id)), w);
   }
-  // The widest tile any number of windows could put on a slide.
-  //
-  // `legibleScaleFor` caps the transform at `min(frame) / (2 * WINDOW_BLEED_PX
-  // + target)`, and as the grid is refined `contentW / c` goes to zero, so the
-  // scale approaches `min(frame) / (2 * WINDOW_BLEED_PX)` and no further. A
-  // flat 100px bleed is half a chip's width at an ordinary scale and seven
-  // tiles at a sliver's, and on a 14px drawing it is the sole binding
-  // constraint: the tile saturates at 0.42in however many windows are spent,
-  // while a three-digit callout needs 0.4457in.
-  //
-  // Replicated constants, like the rest of this file's exporter arithmetic,
-  // and deliberately GENEROUS: the frame is taken with no connection legend
-  // and the bound is the asymptote rather than any grid that exists, so the
-  // exemption only fires where even the most favourable reading says the tile
-  // is out of reach. Measured, this exempts at 14 authored px and stays armed
-  // at 16, where the planner spends thirty windows and still misses.
-  const FRAME_H_IN = pageH - 0.28 - 0.08 - 1.0 - 0.1;
-  const FRAME_W_IN = pageW - 0.2 * 2;
-  const reachableTileIn = (authoredWidth: number): number =>
-    (authoredWidth * Math.min(FRAME_W_IN, FRAME_H_IN)) / (2 * 100);
   // Whether the planner gave the callout bar up for this whole drawing.
   //
   // `legibleScaleFor` chases `markableTileWIn(widest step)` only while that bar
-  // is reachable, and falls back to the plain markable bar when it is not,
-  // because a target no grid can hit does not raise the floor, it switches the
-  // floor off - the coarsening loops break on `scaleOf >= legibleScale` and an
-  // unreachable `legibleScale` is never met. So the clamp is one decision taken
-  // once for the drawing, from the NARROWEST box and the WIDEST step, and when
-  // it engages every tile on every sheet is planned to the plain bar.
+  // is below `finestPerIn`, and falls back to the plain markable bar when it is
+  // not, because a target no grid can hit does not raise the floor, it switches
+  // the floor off. So the clamp is one decision taken once for the drawing, and
+  // when it engages every tile on every sheet is planned to the plain bar.
   //
-  // The gate has to read it the same way round. Asking per hop instead would
-  // arm on the wide hops of a clamped drawing and report them for missing a
-  // bar the exporter had already, correctly, stopped chasing.
-  let widestStep = 0;
-  for (const edge of scenario.edges) {
-    const step = Number((edge as unknown as { data?: { stepNumber?: unknown } }).data?.stepNumber);
-    if (Number.isFinite(step) && step > widestStep) widestStep = step;
-  }
-  let narrowestAuthored = Infinity;
-  for (const w of authoredW.values()) narrowestAuthored = Math.min(narrowestAuthored, w);
-  const calloutBarClamped = widestStep > 0
-    && Number.isFinite(narrowestAuthored)
-    && reachableTileIn(narrowestAuthored) < badgeFloorIn(widestStep, 7) / BADGE_SHARE;
+  // ASKED, not replicated. The replicated form disagreed with the exporter on
+  // two independent statistics and was wrong in both directions: it modelled a
+  // 6.04in frame where a numbered drawing gets 5.77in - the connection legend
+  // is 0.24 + 0.03in of it - and so failed a correctly clamped 21 slide deck 98
+  // times at 15 authored px; and it took the NARROWEST node where the planner
+  // takes the MEDIAN, so on a drawing of 20px tiles with a 14px sliver every
+  // thirtieth node it declared a clamp the exporter never made, accused a
+  // correct 53 slide plan of chasing a bar it had already reached, and
+  // suppressed the four real conflicts on the same deck. Both bugs are
+  // unreachable now: there is one copy of the arithmetic and it is the copy
+  // that ran.
+  const calloutBarClamped = calloutBarClampedFor(scenario);
+  // The tile the planner was serving, in authored pixels.
+  //
+  // `planWindowsAtCeiling` targets the MEDIAN service, deliberately and at
+  // length: an extremum has a neighbour, so one sliver among eighty would
+  // otherwise decide the deck, and `probe-whitespace` measures that trade as
+  // four slivers dragging their 160px neighbours to 2.3in each and putting one
+  // tile on a slide. A tile below the median is therefore one the planner
+  // declined to serve, and the deck has no move for it that does not cost more
+  // than it buys - chasing the 14px slivers on `probe-blind-sliver` is
+  // reachable, so the clamp would not even stop it, and it would take a correct
+  // 53 slide deck past 80 to serve three discs out of 119.
+  //
+  // Note the asymmetry with Visio, which is not an inconsistency but the two
+  // formats' different currencies. A sheet pays for the same fix in INCHES, so
+  // `magnifiedForCallouts` now chases the narrowest badged tile and serves
+  // exactly these hops. A deck pays in slides, and cannot.
+  const authoredSorted = [...authoredW.values()].sort((a, b) => a - b);
+  const medianAuthoredW = authoredSorted[Math.floor(authoredSorted.length * 0.5)] ?? 0;
   // A label may lean on the two services its own arrow connects. The reader
   // still attributes it correctly — it is touching the very icons it is about
   // — and on a hop shorter than the label there is nowhere else for it to go.
@@ -7360,7 +7450,11 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
               + 'service it is calling out');
           } else if (tile * BADGE_SHARE < floor - 1e-6
             && tile >= MARKABLE_TILE_W_IN - 1e-6
-            && !calloutBarClamped) {
+            && !calloutBarClamped
+            && drawn.every((d) => {
+              const w = authoredW.get(d.nodeId);
+              return w === undefined || w >= medianAuthoredW;
+            })) {
             // The empty intersection, stated as what it is. A tile this small
             // admits no disc that is both readable and proportionate, so there
             // is nothing the callout can do about it and the fix is a coarser
@@ -8882,7 +8976,7 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
   // measured off the page, because the whole point of this rule is that it
   // reads the AUTHORED drawing: a parked stray is drawn where the sheet says
   // it is, so a drawn span would grow with the fault and go blind on it.
-  const calloutK = calloutMagnification(scenario).k;
+  const calloutK = calloutMagnificationFor(scenario.nodes, scenario.edges).k;
   // The numbered workflow gets its own band across the top of the sheet, the
   // colour key gets a strip at the bottom, and the sheet has a minimum size;
   // none of that is outlier growth. Read from the panels the exporter drew
@@ -9767,8 +9861,8 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
     // until the median tile clears the bar. Exempt only where that ran out of
     // paper at `MAX_USEFUL_PAGE_IN`, which is the sheet's equivalent of the
     // deck's bleed asymptote - past it there is no move left.
-    const magnified = calloutMagnification(scenario);
-    const paperBound = magnified.medianTileIn < magnified.barIn - 1e-6;
+    const magnified = calloutMagnificationFor(scenario.nodes, scenario.edges);
+    const paperBound = magnified.paperBound;
     for (const badge of badgeGeom) {
       const edgeId = /^step-(.*)$/.exec(badge.name)?.[1];
       const ends = edgeId ? endsOfEdge.get(edgeId) : undefined;
@@ -10843,6 +10937,10 @@ async function main(): Promise<void> {
   numberedEstateScenario(),
   wideHubCalloutScenario(),
   sliverEstateScenario(),
+  bandEstateScenario(15),
+  bandEstateScenario(16),
+  blindSliverScenario(),
+  mixedSliverScenario(),
   longTitleScenario(20),
   longTitleScenario(70),
   longTitleScenario(95),
