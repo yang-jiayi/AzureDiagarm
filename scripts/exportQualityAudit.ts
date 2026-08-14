@@ -2736,6 +2736,108 @@ function numberedEstateScenario(): Scenario {
   return { id: 'probe-estate-120', nodes, edges };
 }
 
+/**
+ * One wide service beside six ordinary narrow ones, every hop numbered.
+ *
+ * Round 73's refutation of my claim that the `max`-denominator undersize rule
+ * was inert. It is not inert, it is wrong: every disc here is drawn at its
+ * NATURAL size - 0.2063in, strictly between a 0.1556in floor and a 0.2728in
+ * ceiling - and the rule reported three of them at 7.8% because a DIFFERENT
+ * shape on the same slide is wide.
+ *
+ * The trigger is scale-free, which is the same shape of law as the vacuous bar
+ * round 72 removed: `natural = 0.26 * px` and `px = 96 * scale`, so
+ * `badge / widest = 24.96 / Wmax` in authored pixels whatever the transform
+ * does. It crosses 10% at 250 authored px. A full-width Front Door or
+ * Application Gateway banner beside 180px services is an ordinary Architecture
+ * Center shape, so the false positive was one wide node away on real input.
+ */
+function wideHubCalloutScenario(): Scenario {
+  const icon = '/Azure_Public_Service_Icons/Icons/networking/10076-icon-service-Application-Gateways.svg';
+  const nodes: Node[] = [{
+    id: 'wh-hub',
+    type: 'azureNode',
+    position: { x: 600, y: 400 },
+    width: 320,
+    height: 96,
+    data: {
+      label: 'Contoso edge application gateway',
+      serviceName: 'Azure Application Gateway',
+      category: 'networking',
+      iconPath: icon,
+    },
+  } as unknown as Node];
+  const edges: Edge[] = [];
+  for (let i = 0; i < 6; i += 1) {
+    nodes.push({
+      id: `wh-sp-${i}`,
+      type: 'azureNode',
+      position: { x: (i % 3) * 420, y: i < 3 ? 0 : 900 },
+      width: 60,
+      height: 96,
+      data: {
+        label: `Workload ${i + 1}`,
+        serviceName: 'Azure Functions',
+        category: 'compute',
+        iconPath: icon,
+      },
+    } as unknown as Node);
+    edges.push({
+      id: `whe-${i}`,
+      source: 'wh-hub',
+      target: `wh-sp-${i}`,
+      data: { stepNumber: i + 1, stepDescription: `Route ${i + 1} leaves the gateway` },
+    } as unknown as Edge);
+  }
+  return { id: 'probe-wide-hub', nodes, edges };
+}
+
+/**
+ * A hundred and twenty slivers on an ordinary grid, numbered past a hundred.
+ *
+ * Round 73's second refutation. The callout bar `markableTileWIn` raises the
+ * planner to is not reachable below about 17 authored pixels, because
+ * `legibleScaleFor` takes `finestPerIn = min(frame) / (2 * WINDOW_BLEED_PX +
+ * target)` and a flat 100px bleed caps a 14px tile at 0.3740in however many
+ * windows are spent. A three-digit callout needs 0.4457in. So the planner
+ * spends 55 windows, saturates below the bar, and the gate reports the
+ * shortfall as though a coarser split were available.
+ *
+ * The step numbers are the only thing that changes: unnumbered this drawing is
+ * 14 slides of 0.2000in tiles, one-digit 37 slides, two-digit 53, three-digit
+ * 65 - and only the last one failed, on the edge that crosses from 99 to 100.
+ */
+function sliverEstateScenario(): Scenario {
+  const icon = '/Azure_Public_Service_Icons/Icons/compute/10029-icon-service-Function-Apps.svg';
+  const nodes: Node[] = [];
+  const edges: Edge[] = [];
+  const cols = 11;
+  for (let i = 0; i < 120; i += 1) {
+    nodes.push({
+      id: `sv${i}`,
+      type: 'azureNode',
+      position: { x: (i % cols) * 120, y: Math.floor(i / cols) * 120 },
+      width: 14,
+      height: 16,
+      data: {
+        label: `Edge sensor ${i + 1}`,
+        serviceName: 'Azure Functions',
+        category: 'compute',
+        iconPath: icon,
+      },
+    } as unknown as Node);
+    if (i > 0) {
+      edges.push({
+        id: `sve-${i}`,
+        source: `sv${i - 1}`,
+        target: `sv${i}`,
+        data: { stepNumber: i, stepDescription: `Sensor ${i} forwards to sensor ${i + 1}` },
+      } as unknown as Edge);
+    }
+  }
+  return { id: 'probe-sliver-120', nodes, edges };
+}
+
 function bimodalSidecarScenario(): Scenario {
   // Six services at a normal size with a sidecar of twenty four tiny ones.
   //
@@ -5498,6 +5600,43 @@ function drawingSpanIn(scenario: Scenario): { w: number; h: number } {
 }
 
 /**
+ * The factor `magnifiedForCallouts` grew this drawing by, replicated.
+ *
+ * A Visio sheet cannot spend windows, so the only room it has to reach a tile
+ * wide enough to carry a callout is paper. The exporter therefore scales a
+ * numbered drawing authored small until its median tile reaches
+ * `badgeFloor / 0.55`, bounded by `MAX_USEFUL_PAGE_IN`. Returns 1 for every
+ * unnumbered drawing and for every drawing already above the bar, which is all
+ * of the corpus authored at 150px.
+ */
+function calloutMagnification(scenario: Scenario): { k: number; medianTileIn: number; barIn: number } {
+  const inert = { k: 1, medianTileIn: Infinity, barIn: 0 };
+  let widestStep = 0;
+  for (const edge of scenario.edges) {
+    const step = Number((edge as unknown as { data?: { stepNumber?: unknown } }).data?.stepNumber);
+    if (Number.isFinite(step) && step > widestStep) widestStep = step;
+  }
+  if (widestStep <= 0) return inert;
+  const widths = scenario.nodes
+    .filter((node) => node.type !== 'groupNode')
+    .map((node) => Number(node.width ?? (node.style?.width as number | undefined) ?? 150))
+    .filter((w) => Number.isFinite(w) && w > 0)
+    .sort((a, b) => a - b);
+  if (widths.length === 0) return inert;
+  const typicalW = widths[Math.floor(widths.length * 0.5)];
+  const pt = 0.0973;
+  const digits = String(widestStep).length;
+  const floor = Math.max(pt * 1.15, Math.hypot(digits * pt * 0.66, pt * 0.7) / 0.9);
+  const barIn = floor / 0.55;
+  const wantedPx = barIn * PX_PER_IN;
+  const span = drawingSpanIn(scenario);
+  const roomK = 60 / Math.max(span.w, span.h, 1 / PX_PER_IN);
+  const raw = Math.min(wantedPx / typicalW, roomK);
+  const k = Number.isFinite(raw) && raw > 1.001 ? raw : 1;
+  return { k, medianTileIn: (typicalW * k) / PX_PER_IN, barIn };
+}
+
+/**
  * The deck the export button actually produces.
  *
  * `buildDiagramSlidePptx` is a diagram-only deck that may grow its page for a
@@ -6885,6 +7024,57 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
     return (fontPt / 72) * (Math.hypot(digits * 0.62, 1.3) / 0.9);
   };
   const conflicts: Array<{ name: string; tile: number; floor: number; ratio: number }> = [];
+  // Authored widths, for the two rules that have to reason about the transform
+  // the gate cannot see: what diameter the sizing model would have chosen, and
+  // what tile width the window planner could ever have delivered.
+  const authoredW = new Map<string, number>();
+  for (const node of scenario.nodes) {
+    const w = Number((node as unknown as { width?: number }).width);
+    if (Number.isFinite(w) && w > 0) authoredW.set(auditStrip(String(node.id)), w);
+  }
+  // The widest tile any number of windows could put on a slide.
+  //
+  // `legibleScaleFor` caps the transform at `min(frame) / (2 * WINDOW_BLEED_PX
+  // + target)`, and as the grid is refined `contentW / c` goes to zero, so the
+  // scale approaches `min(frame) / (2 * WINDOW_BLEED_PX)` and no further. A
+  // flat 100px bleed is half a chip's width at an ordinary scale and seven
+  // tiles at a sliver's, and on a 14px drawing it is the sole binding
+  // constraint: the tile saturates at 0.42in however many windows are spent,
+  // while a three-digit callout needs 0.4457in.
+  //
+  // Replicated constants, like the rest of this file's exporter arithmetic,
+  // and deliberately GENEROUS: the frame is taken with no connection legend
+  // and the bound is the asymptote rather than any grid that exists, so the
+  // exemption only fires where even the most favourable reading says the tile
+  // is out of reach. Measured, this exempts at 14 authored px and stays armed
+  // at 16, where the planner spends thirty windows and still misses.
+  const FRAME_H_IN = pageH - 0.28 - 0.08 - 1.0 - 0.1;
+  const FRAME_W_IN = pageW - 0.2 * 2;
+  const reachableTileIn = (authoredWidth: number): number =>
+    (authoredWidth * Math.min(FRAME_W_IN, FRAME_H_IN)) / (2 * 100);
+  // Whether the planner gave the callout bar up for this whole drawing.
+  //
+  // `legibleScaleFor` chases `markableTileWIn(widest step)` only while that bar
+  // is reachable, and falls back to the plain markable bar when it is not,
+  // because a target no grid can hit does not raise the floor, it switches the
+  // floor off - the coarsening loops break on `scaleOf >= legibleScale` and an
+  // unreachable `legibleScale` is never met. So the clamp is one decision taken
+  // once for the drawing, from the NARROWEST box and the WIDEST step, and when
+  // it engages every tile on every sheet is planned to the plain bar.
+  //
+  // The gate has to read it the same way round. Asking per hop instead would
+  // arm on the wide hops of a clamped drawing and report them for missing a
+  // bar the exporter had already, correctly, stopped chasing.
+  let widestStep = 0;
+  for (const edge of scenario.edges) {
+    const step = Number((edge as unknown as { data?: { stepNumber?: unknown } }).data?.stepNumber);
+    if (Number.isFinite(step) && step > widestStep) widestStep = step;
+  }
+  let narrowestAuthored = Infinity;
+  for (const w of authoredW.values()) narrowestAuthored = Math.min(narrowestAuthored, w);
+  const calloutBarClamped = widestStep > 0
+    && Number.isFinite(narrowestAuthored)
+    && reachableTileIn(narrowestAuthored) < badgeFloorIn(widestStep, 7) / BADGE_SHARE;
   // A label may lean on the two services its own arrow connects. The reader
   // still attributes it correctly — it is touching the very icons it is about
   // — and on a hop shorter than the label there is nowhere else for it to go.
@@ -7141,9 +7331,10 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
       const routeId = badge.name.slice('connector-step-'.length);
       const ends = endsOfRoute.get(routeId);
       if (ends) {
-        const widths = ends
-          .map((nodeId) => slideTiles.find((t) => t.name.slice('service-'.length) === nodeId)?.w)
-          .filter((w): w is number => typeof w === 'number' && w > 0);
+        const drawn = ends
+          .map((nodeId) => ({ nodeId, w: slideTiles.find((t) => t.name.slice('service-'.length) === nodeId)?.w }))
+          .filter((d): d is { nodeId: string; w: number } => typeof d.w === 'number' && d.w > 0);
+        const widths = drawn.map((d) => d.w);
         // Both ends or neither: a window may hold one end of a hop and not the
         // other, and the end that was cut is not evidence about the end drawn.
         if (widths.length === ends.length) {
@@ -7167,7 +7358,9 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
             issues.push(`step badge "${badge.name}" is ${badge.w.toFixed(4)}in across on a `
               + `${tile.toFixed(4)}in tile — ${((badge.w / tile) * 100).toFixed(0)}% of the `
               + 'service it is calling out');
-          } else if (tile * BADGE_SHARE < floor - 1e-6 && tile >= MARKABLE_TILE_W_IN - 1e-6) {
+          } else if (tile * BADGE_SHARE < floor - 1e-6
+            && tile >= MARKABLE_TILE_W_IN - 1e-6
+            && !calloutBarClamped) {
             // The empty intersection, stated as what it is. A tile this small
             // admits no disc that is both readable and proportionate, so there
             // is nothing the callout can do about it and the fix is a coarser
@@ -7185,26 +7378,59 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
             //
             // At and above the bar the planner met its old contract and this is
             // a stricter one, which is exactly what `markableTileWIn` raises.
+            //
+            // And only where the stricter one is REACHABLE. Round 73 measured
+            // a deck where it is not: 120 nodes of 14 authored px saturate at
+            // 0.42in against a 0.4457in three-digit bar, and the same drawing
+            // was clean at 99 steps and failed at 100 - a labelling act with no
+            // geometric content. The premise written above, that at and above
+            // the bar the stricter contract can be met, is simply false in that
+            // region, so the rule now says so instead of asserting it.
+            //
+            // Read from `calloutBarClamped`, which is the exporter's own
+            // decision and not a second opinion about it: exactly where the
+            // planner stops chasing the callout bar, the gate stops requiring
+            // it. Every other drawing stays armed, including one authored at
+            // 16px, where the bar is reachable and a miss is a real miss.
             conflicts.push({ name: badge.name, tile, floor, ratio: badge.w / tile });
           }
           // The reader hunts a callout against the LARGEST thing beside it, not
           // the smallest, so the undersize test takes the other denominator
           // from the ceiling.
           //
-          // Exempt at either bound, because at a bound the disc is already as
-          // big as it is allowed to be and the fault, if there is one, is not
-          // the disc's. On a hub with 40px spokes a disc at its own ceiling is
-          // 5.5% of the hub and there is no larger diameter that does not
-          // swamp the spoke; reporting that would be the same unfixable bar
-          // this round removed, pointing the other way. What the rule is FOR
-          // is a disc cut below its own ceiling by something that is not its
-          // own tile - the two-chain fault capped discs at 0.1375in with a
-          // 0.24in ceiling and a 0.1119in floor, clear of both.
+          // Exempt at every value the sizing model can produce, which is all
+          // three of `max(floor, min(natural, ceiling))`. At any of them the
+          // disc is exactly what the model asked for and the fault, if there is
+          // one, is not the disc's.
+          //
+          // Round 73 shipped this rule with only two of the three and it
+          // false-positived at once. `probe-wide-hub` draws every callout at
+          // its natural 0.2063in, between a 0.1556in floor and a 0.2728in
+          // ceiling, and three of them were reported at 7.8% because ONE OTHER
+          // SHAPE on the slide is 320 authored px wide. The trigger is
+          // scale-free - `natural / maxTile = 24.96 / Wmax` whatever the
+          // transform does - so it crosses 10% at 250 authored px and a
+          // full-width gateway banner beside ordinary services was enough.
+          //
+          // What is left is a disc at none of the three: one cut by something
+          // that is not its own hop. That is the two-chain fault, where a
+          // sheet-wide ceiling capped discs at 0.1375in with a 0.24in ceiling,
+          // a 0.1119in floor and a 0.26in natural size - clear of all of them.
+          //
+          // `natural` is recovered from the drawing rather than assumed,
+          // because the gate cannot see the transform: every tile on a slide
+          // shares one scale, so `scale = drawn / authored` on any endpoint and
+          // `natural = 0.26 * 96 * scale`.
           const widest = Math.max(...widths);
           const ceiling = tile * BADGE_SHARE;
+          const authored = authoredW.get(drawn[0].nodeId);
+          const natural = authored && authored > 0
+            ? Math.min(0.42, Math.max(floor, 0.26 * 96 * (drawn[0].w / authored)))
+            : NaN;
           if (badge.w < widest * 0.1
             && badge.w < ceiling - 1e-4
-            && badge.w > floor + 1e-4) {
+            && badge.w > floor + 1e-4
+            && !(Number.isFinite(natural) && Math.abs(badge.w - natural) <= 1e-3)) {
             issues.push(`step badge "${badge.name}" is ${badge.w.toFixed(4)}in across beside a `
               + `${widest.toFixed(4)}in tile — ${((badge.w / widest) * 100).toFixed(1)}% of it, `
               + 'too small to find on the hop it numbers');
@@ -7246,6 +7472,24 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
       + `${(worst.tile * BADGE_SHARE).toFixed(4)}in to stay proportionate on its `
       + `${worst.tile.toFixed(4)}in tile, so it draws at ${(worst.ratio * 100).toFixed(0)}% of `
       + 'the service it is calling out');
+  }
+  // A target the frame cannot reach must not be paid for anyway.
+  //
+  // Where `calloutBarClamped` holds, `legibleScaleFor` has stopped chasing the
+  // callout bar and fallen back to the markable one, so the deck should cost
+  // what the same architecture costs unnumbered. Under the mutation that
+  // removes the clamp it does not: 120 nodes of 14 authored px came out as 64
+  // slides at a 0.374in tile, against 21 slides at 0.201in with the clamp in
+  // place - three times the deck, bought by chasing a 0.4457in bar that
+  // saturates at 0.42in and is missed either way.
+  //
+  // Stated as the tile, because that is what the extra windows were spent on
+  // and it is the one number the file carries. A clamped plan lands ON the
+  // markable bar by construction; half as much again is not a rounding.
+  if (calloutBarClamped && slideCount > 1 && minTileW > MARKABLE_TILE_W_IN * 1.5) {
+    issues.push(`the callout bar is out of reach for this drawing, so the plan should stop at the `
+      + `${MARKABLE_TILE_W_IN.toFixed(2)}in markable bar — instead ${slideCount} slides were spent `
+      + `reaching a ${minTileW.toFixed(3)}in tile that still cannot carry its callout`);
   }
   // A shape reduced to a hairline is worse than one drawn too big: the reader
   // cannot see that anything is missing — the band is simply gone, and so is
@@ -8629,6 +8873,16 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
   // this catches the whole class, and unlike that rule it has no constant to
   // tune — the bar is the drawing itself.
   const span = drawingSpanIn(scenario);
+  // Scaled by whatever `magnifiedForCallouts` did, because that growth is not
+  // outlier growth either.
+  //
+  // A sheet cannot split, so the only way it can reach a tile wide enough to
+  // carry its callout is to be printed bigger, and the exporter now does that
+  // for a numbered drawing authored small. Replicated here rather than
+  // measured off the page, because the whole point of this rule is that it
+  // reads the AUTHORED drawing: a parked stray is drawn where the sheet says
+  // it is, so a drawn span would grow with the fault and go blind on it.
+  const calloutK = calloutMagnification(scenario).k;
   // The numbered workflow gets its own band across the top of the sheet, the
   // colour key gets a strip at the bottom, and the sheet has a minimum size;
   // none of that is outlier growth. Read from the panels the exporter drew
@@ -8640,13 +8894,13 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
   const BAND_RESERVE_SLACK_IN = 1.2;
   const bandIn = (drawnBand ? +drawnBand[1] + 0.24 + BAND_RESERVE_SLACK_IN : 0)
     + (drawnLegend ? +drawnLegend[1] + 0.45 : 0);
-  const allowedW = Math.max(11, span.w + PAGE_CHROME_SLACK_IN);
-  const allowedH = Math.max(8.5, span.h + PAGE_CHROME_SLACK_IN + bandIn);
+  const allowedW = Math.max(11, span.w * calloutK + PAGE_CHROME_SLACK_IN);
+  const allowedH = Math.max(8.5, span.h * calloutK + PAGE_CHROME_SLACK_IN + bandIn);
   if (pkg.pageWidthIn > allowedW) {
-    issues.push(`Visio sheet is ${pkg.pageWidthIn.toFixed(1)}in wide for a drawing that spans ${span.w.toFixed(1)}in — trimming outliers must shrink the sheet, never grow it`);
+    issues.push(`Visio sheet is ${pkg.pageWidthIn.toFixed(1)}in wide for a drawing that spans ${(span.w * calloutK).toFixed(1)}in — trimming outliers must shrink the sheet, never grow it`);
   }
   if (pkg.pageHeightIn > allowedH) {
-    issues.push(`Visio sheet is ${pkg.pageHeightIn.toFixed(1)}in tall for a drawing that spans ${span.h.toFixed(1)}in — trimming outliers must shrink the sheet, never grow it`);
+    issues.push(`Visio sheet is ${pkg.pageHeightIn.toFixed(1)}in tall for a drawing that spans ${(span.h * calloutK).toFixed(1)}in — trimming outliers must shrink the sheet, never grow it`);
   }
 
   // Every service group must sit on the page, or Visio simply shows nothing
@@ -9478,8 +9732,43 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
     const digits = String(Math.max(1, Math.abs(Math.trunc(stepNumber)))).length;
     return Math.max(pt * 1.15, Math.hypot(digits * pt * 0.66, pt * 0.7) / 0.9);
   };
+  // The exporter's `STEP_BADGE_IN * fonts.scale`, recovered from the sheet.
+  //
+  // Every box on a Visio page shares one scale factor, and `fontsForScale`
+  // returns natural fonts at or above 0.999, so `scale = min(1, drawn * 96 /
+  // authored)` on any endpoint whose authored width is known. Returns NaN when
+  // it is not, which fails the comparison and leaves the rule armed.
+  const authoredVisioW = new Map<string, number>();
+  for (const node of scenario.nodes) {
+    const w = Number((node as unknown as { width?: number }).width);
+    if (Number.isFinite(w) && w > 0) authoredVisioW.set(String(node.id), w);
+  }
+  const naturalBadgeIn = (
+    ends: readonly string[],
+    widthOf: (id: string) => number | undefined,
+  ): number => {
+    for (const id of ends) {
+      const authored = authoredVisioW.get(id);
+      const drawnIn = widthOf(id);
+      if (!authored || !drawnIn) continue;
+      return 0.24 * Math.min(1, (drawnIn * 96) / authored);
+    }
+    return NaN;
+  };
   if (badgeGeom.length > 0 && tileGeom.length > 0) {
     const ratios: Array<{ ratio: number; floored: boolean }> = [];
+    // The same empty intersection PowerPoint reports, which this side had been
+    // passing over in silence. Round 73 measured one drawing at 66% in the deck
+    // and 156% on the sheet, from identical input, and only the deck said so -
+    // and the sheet is the format that cannot split its way out of it.
+    const vsdxConflicts: Array<{ tile: number; floor: number; ratio: number }> = [];
+    // Visio has no windows to spend, so its way to a tile that can carry a
+    // callout is paper: `magnifiedForCallouts` prints the whole drawing bigger
+    // until the median tile clears the bar. Exempt only where that ran out of
+    // paper at `MAX_USEFUL_PAGE_IN`, which is the sheet's equivalent of the
+    // deck's bleed asymptote - past it there is no move left.
+    const magnified = calloutMagnification(scenario);
+    const paperBound = magnified.medianTileIn < magnified.barIn - 1e-6;
     for (const badge of badgeGeom) {
       const edgeId = /^step-(.*)$/.exec(badge.name)?.[1];
       const ends = edgeId ? endsOfEdge.get(edgeId) : undefined;
@@ -9506,12 +9795,23 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
       // is 76.7% of the spoke and 2.7% of the hub.
       ratios.push({
         ratio: badge.w / Math.max(...widths),
-        // Exempt at either bound. On the floor that is the placement search
-        // squeezing a disc into a gap so the number sits on its own arrow;
-        // on the ceiling there is simply no larger diameter that leaves the
-        // narrow end unswamped. What is left is a disc cut by something that
-        // is not its own tile, which is the fault this rule was written for.
-        floored: badge.w <= floor + 1e-4 || badge.w >= tile * 0.55 - 1e-4,
+        // Exempt at every value the sizing model can produce, which is all
+        // three of `max(minDiameter, min(natural, ceiling))`.
+        //
+        // On the floor that is the placement search squeezing a disc into a
+        // gap so the number sits on its own arrow; on the ceiling there is no
+        // larger diameter that leaves the narrow end unswamped; at natural
+        // size nothing has happened to the disc at all. Round 73 shipped this
+        // with the third missing and `probe-wide-hub` reported its natural
+        // 0.24in disc at 7.2% because one other shape on the sheet is 320
+        // authored px wide.
+        //
+        // What is left is a disc cut by something that is not its own hop,
+        // which is the fault this rule was written for: a sheet-wide ceiling
+        // caps at 0.1375in with a 0.24in natural size and a 0.1119in floor.
+        floored: badge.w <= floor + 1e-4
+          || badge.w >= tile * 0.55 - 1e-4
+          || Math.abs(badge.w - naturalBadgeIn(ends, tileFor)) <= 1e-3,
       });
       // A hair of slack, because the ceiling IS `tile * 0.55`, so a capped
       // badge sits exactly on this bar and the verdict would otherwise be
@@ -9537,6 +9837,30 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
           + `— ${((badge.w / tile) * 100).toFixed(0)}% of the service it is calling out`);
         break;
       }
+      // Same rounding slack as the ceiling test above, and for the same reason
+      // with more force: `magnifiedForCallouts` aims the median tile at exactly
+      // `floor / 0.55`, so a magnified sheet lands ON this bar by construction
+      // and the verdict would be decided by the fourth decimal the XML carries.
+      // Measured, 20 hops read "needs 0.2270in, permits 0.2270in".
+      //
+      // Measured against the DRAWN disc and not against `floor` alone, because
+      // `floor` here is deliberately an over-estimate - it assumes the largest
+      // font the exporter can use, and a sheet scaled down uses a smaller one.
+      // That was safe while it only ever exempted; used to report, it invented
+      // 380 of them on `scaled-zone-row`, where the discs sit at 16% of their
+      // tiles and are not swamping anything. The fault this rule is for is a
+      // disc that had to breach proportionality to stay legible, so the drawn
+      // breach is the evidence and the floor is only the explanation.
+      if (tile * 0.55 < floor - 2e-4 && badge.w > tile * 0.55 + 2e-4 && !paperBound) {
+        vsdxConflicts.push({ tile, floor, ratio: badge.w / tile });
+      }
+    }
+    if (vsdxConflicts.length > 0) {
+      const worst = vsdxConflicts.reduce((a, b) => (b.ratio > a.ratio ? b : a));
+      issues.push(`${vsdxConflicts.length} step callout(s) sit on a tile too small to carry one: `
+        + `a callout needs at least ${worst.floor.toFixed(4)}in to stay readable and at most `
+        + `${(worst.tile * 0.55).toFixed(4)}in to stay proportionate on its ${worst.tile.toFixed(4)}in `
+        + `tile, so it draws at ${(worst.ratio * 100).toFixed(0)}% of the service it is calling out`);
     }
     // And the converse, which nothing measured. A badge that has been cut to a
     // speck beside the tile it numbers is one the reader has to hunt for
@@ -10517,6 +10841,8 @@ async function main(): Promise<void> {
   duplicateLabelFanScenario(),
   hubSpokeCalloutScenario(),
   numberedEstateScenario(),
+  wideHubCalloutScenario(),
+  sliverEstateScenario(),
   longTitleScenario(20),
   longTitleScenario(70),
   longTitleScenario(95),

@@ -667,7 +667,34 @@ export function legibleScaleFor(
   markIn: number = MARKABLE_TILE_W_IN,
 ): number {
   const finestPerIn = Math.min(frame.w, frame.h) / (WINDOW_BLEED_PX * 2 + Math.max(1, target));
-  return Math.min(LEGIBLE_TILE_PT / 12 / Math.max(1, target), finestPerIn, rendererMaxScale(minBoxW, markIn));
+  // Chase the callout bar only while the frame can actually deliver it.
+  //
+  // `finestPerIn` grows as the grid is refined, but only towards
+  // `min(frame) / (2 * WINDOW_BLEED_PX)` - the bleed is a fixed number of
+  // authored pixels, so it is what is left when the tiles themselves have
+  // shrunk to nothing. A demand above that asymptote is met by no grid at all,
+  // and since both coarsening loops break on `scaleOf(c, r) >= legibleScale`,
+  // a demand that is never met is not a floor, it is a way of switching the
+  // floor off: the loop walks past every grid that reads and stops only when
+  // it runs out of columns.
+  //
+  // Measured, this is what made numbering cost 4.6x the slides. One drawing of
+  // 14px tiles needed 12 windows unnumbered, 33 at one digit, 44 at two and 55
+  // at three - the architecture never changed, the step numbers did - and at
+  // the end of all that spending the tile was 0.3740in against a 0.4457in bar,
+  // so the deck paid 43 extra windows for a target it was never going to
+  // reach, and missed it anyway.
+  //
+  // When the callout bar is out of reach, fall back to the bar that predates
+  // numbering: a tile wide enough to carry an identifying mark. That is
+  // reachable, so the break fires, and the deck spends what an unnumbered
+  // drawing of the same architecture spends. The disc is then disproportionate
+  // - there is no scale at which it is not - but the reader gets the same
+  // number of legible sheets instead of 4.6 times as many illegible ones.
+  const reachablePerIn = Math.min(frame.w, frame.h) / (WINDOW_BLEED_PX * 2);
+  let demand = rendererMaxScale(minBoxW, markIn);
+  if (demand > reachablePerIn) demand = rendererMaxScale(minBoxW, MARKABLE_TILE_W_IN);
+  return Math.min(LEGIBLE_TILE_PT / 12 / Math.max(1, target), finestPerIn, demand);
 }
 /**
  * Split the drawing into as few standard-slide windows as keep tiles legible.

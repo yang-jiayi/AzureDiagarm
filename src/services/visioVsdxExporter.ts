@@ -1063,6 +1063,68 @@ function badgeMinDiameterIn(stepNumber: number, fonts: VisioFonts): number {
 }
 
 /**
+ * Grow a drawing whose tiles are too small to carry the callout it asks for.
+ *
+ * PowerPoint answers this by splitting: `markableTileWIn` raises the planner's
+ * target to `floor / 0.55` and the deck spends windows until the tile reaches
+ * it. A sheet has no windows to spend, and `fontsForScale` returns natural
+ * fonts at or above 0.999, so this exporter could only ever shrink. On a
+ * drawing of 14px tiles numbered past a hundred that left a disc 156% of the
+ * service it points at - half again wider than the thing it calls out - while
+ * the same input came out of PowerPoint at 66% and was reported. The silent
+ * format was the one that could not split its way out.
+ *
+ * What a sheet has instead is paper. A Visio page is sized to its drawing, so
+ * scaling the whole drawing up costs nothing but inches, and inches are the
+ * one resource this format has. Everything moves together, so no relationship
+ * in the picture changes: only the sheet it is printed on gets bigger.
+ *
+ * Bounded three ways. It never shrinks (`k >= 1`), so an ordinary drawing is
+ * returned untouched and byte-identical - a 150px tile already clears the bar
+ * for a three-digit callout by a factor of four. It never asks for more than
+ * the callout needs. And it never grows the drawing past `MAX_USEFUL_PAGE_IN`,
+ * which is the same limit the outlier trim uses, so a sheet that was already
+ * at the edge of useful is left alone rather than pushed over it.
+ *
+ * The median tile, for the reason the PowerPoint planner takes the median: an
+ * extremum has a neighbour, so one sliver among eighty would decide the sheet.
+ */
+function magnifiedForCallouts(
+  boxes: Map<string, ExportBox>,
+  edges: readonly Edge[],
+): Map<string, ExportBox> {
+  if (boxes.size === 0) return boxes;
+  let widestStep = 0;
+  for (const edge of edges) {
+    const step = Number((edge as unknown as { data?: { stepNumber?: unknown } }).data?.stepNumber);
+    if (Number.isFinite(step) && step > widestStep) widestStep = step;
+  }
+  if (widestStep <= 0) return boxes;
+  const services = [...boxes.values()].filter((box) => box.kind === 'service' && box.w > 0);
+  if (services.length === 0) return boxes;
+  const widths = services.map((box) => box.w).sort((a, b) => a - b);
+  const typicalW = widths[Math.floor(widths.length * 0.5)];
+  if (!typicalW || typicalW <= 0) return boxes;
+  const wantedPx = (badgeMinDiameterIn(widestStep, NATURAL_FONTS) / 0.55) * PX_PER_INCH;
+  const bounds = computeBounds(boxes.values());
+  const spanPx = Math.max(bounds.maxX - bounds.minX, bounds.maxY - bounds.minY, 1);
+  const roomK = (MAX_USEFUL_PAGE_IN * PX_PER_INCH) / spanPx;
+  const k = Math.min(wantedPx / typicalW, roomK);
+  if (!Number.isFinite(k) || k <= 1.001) return boxes;
+  const out = new Map<string, ExportBox>();
+  for (const [id, box] of boxes) {
+    out.set(id, {
+      ...box,
+      x: bounds.minX + (box.x - bounds.minX) * k,
+      y: bounds.minY + (box.y - bounds.minY) * k,
+      w: box.w * k,
+      h: box.h * k,
+    });
+  }
+  return out;
+}
+
+/**
  * The widest a badge for this route may be drawn, from the two tiles it is
  * actually drawn between.
  *
@@ -1769,7 +1831,12 @@ export async function buildVsdxPackage(
     const handed = handableWording.get(entry.step);
     return handed ? { ...entry, description: `${entry.description}（${handed}）` } : entry;
   });
-  const drawing = compactEmptyGutters(collectExportBoxes(nodes));
+  // Gutters are closed AFTER the magnifier, not before it. `compactEmptyGutters`
+  // measures a band in authored pixels, so magnifying afterwards reopens every
+  // gap it was willing to leave: one sliver drawing came out with a 21.1in band
+  // carrying nothing, from a gutter that was under the bar when it was measured
+  // and three times over it by the time it was drawn.
+  const drawing = compactEmptyGutters(magnifiedForCallouts(collectExportBoxes(nodes), edges));
   // The band is page furniture, and furniture does not get to evict the thing
   // it describes. `workflowListFromEdges` has no cap, so a fully-meshed
   // architecture produces hundreds of numbered steps and a single-column band
