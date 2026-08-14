@@ -1621,7 +1621,7 @@ function connectorLabelBox(
       ? clamp(squeezeTo, 0.34 * px, 1.5 * px)
       : clamp(Math.max(gap, prefer * px), 0.34 * px, 1.5 * px);
   const naturalW = estimateTextWidthIn(text, fontSize) + 0.14;
-  const badgeD = route.stepNumber === undefined ? 0 : clamp(0.26 * px, 0.18, 0.42);  // A muted rung carries no wording, so it is exactly its callout. Reserving an
+  const badgeD = route.stepNumber === undefined ? 0 : stepBadgeDiameterIn(route, transform, px);  // A muted rung carries no wording, so it is exactly its callout. Reserving an
   // empty text box above the number anyway made every rung ~40% taller and a
   // third wider than the thing it draws, which is what pushed a deep fan's end
   // callouts onto the tiles it runs between.
@@ -2178,6 +2178,44 @@ function addConnectorLabel(
 }
 
 /**
+ * The widest a numbered callout may be drawn, from the two tiles the arrow it
+ * sits on runs between.
+ *
+ * PowerPoint sized its disc as `clamp(0.26 * px, 0.18, 0.42)`, which has a
+ * floor and a ceiling in absolute inches and no reference to the tile at all.
+ * `px` is the drawn width of 96 authored pixels, so on a tile of W authored px
+ * the ratio is `0.26 * 96 / W` and does not move with the scale: a 14px node
+ * drew a 0.3566in disc on a 0.2000in tile, 178% of the service it was calling
+ * out, and a 24px node drew one 104% of its tile. This is the same defect the
+ * drawing exporter was corrected for four times over, and it was live in the
+ * primary output format the whole time.
+ *
+ * Returns the legibility floor when a legible disc cannot also be a
+ * proportionate one. That case is real - the smallest circle that holds a
+ * readable digit is 0.18in, so a tile under about 0.33in drawn has no diameter
+ * that is both - and the answer is not to drop the callout: the workflow slide
+ * cites step numbers and every one of them has to be findable on the canvas,
+ * which is a promise the deck keeps and a rule the gate already enforces. The
+ * disc goes to the floor, matching the drawing exporter exactly, and the
+ * remaining disproportion is a fact about the TILE, not about the disc. It is
+ * disclosed rather than gated, because the only fix is a coarser split and
+ * that trade is owned by the planner.
+ */
+const BADGE_TILE_SHARE = 0.55;
+const BADGE_LEGIBLE_IN = 0.18;
+function stepBadgeDiameterIn(route: ExportRoute, transform: FitTransform, px: number): number {
+  const natural = clamp(0.26 * px, BADGE_LEGIBLE_IN, 0.42);
+  const ends = [route.sourceW, route.targetW]
+    .filter((w) => typeof w === 'number' && w > 0)
+    .map((w) => w * transform.scale);
+  if (ends.length === 0) return natural;
+  // The narrower end, not the average. A disc that is proportionate to one tile
+  // and swamps the other is still swamping a tile.
+  const ceiling = Math.min(...ends) * BADGE_TILE_SHARE;
+  return Math.max(BADGE_LEGIBLE_IN, Math.min(natural, ceiling));
+}
+
+/**
  * Numbered callout on a connector, matching the workflow list.
  *
  * Reference architectures on the Azure Architecture Center number every arrow
@@ -2204,7 +2242,7 @@ function stepBadgeBox(
   // icon is the one thing on the slide the workflow list cannot survive
   // without. So walk outwards for a clear slot the way a chip does.
   const anchor = toInches(route.labelAnchor, transform);
-  const d = clamp(0.26 * px, 0.18, 0.42);
+  const d = stepBadgeDiameterIn(route, transform, px);
   const fit = (x: number, y: number): { x: number; y: number } => (clampTo
     ? {
       x: clamp(x, clampTo.x, Math.max(clampTo.x, clampTo.x + clampTo.w - d)),

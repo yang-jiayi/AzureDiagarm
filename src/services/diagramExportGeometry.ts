@@ -115,6 +115,19 @@ export interface ExportRoute {
   /** 0-based index among parallel edges sharing the same endpoint pair. */
   ordinal: number;
   /**
+   * Authored widths, in pixels, of the two boxes this route runs between.
+   *
+   * Carried on the route because a callout drawn ON an arrow is sized by the
+   * two tiles that arrow connects, and every exporter needs that pair at a
+   * point where it holds the route and not the boxes. Reading it off a
+   * statistic over the drawing instead was wrong four separate ways - the
+   * narrowest tile, the median tile, the median badged endpoint, and the
+   * nearest tile by position - because each of them answers a question about
+   * the sheet when the question is about one arrow.
+   */
+  sourceW: number;
+  targetW: number;
+  /**
    * Perpendicular offset, in pixels, this route was fanned by. The fan
    * alternates about the centre (0, +16, -16 …), so a label ladder ordered by
    * `ordinal` runs in a different order from the arrows themselves and every
@@ -3144,6 +3157,8 @@ export function buildExportRoutes(
       dashPattern: dashed ? (style.dashPattern ?? '6, 4') : undefined,
       opacity: style.opacity,
       ordinal,
+      sourceW: source.w,
+      targetW: target.w,
       fanOffset,
       bidirectional,
       isSelfLoop: source.id === target.id,

@@ -1048,11 +1048,18 @@ function badgeFontFloorIn(fonts: VisioFonts): number {
  * leaves the ends of a two-digit number outside the disc even though the
  * arithmetic says it fits. The old form cleared its own test by 1.4%, which is
  * to say it did not clear the real one at all.
+ *
+ * And a tenth of the disc is kept as a ring, rather than a flat 0.02in. The
+ * flat pad is a tenth of a one-digit disc and a twenty-fifth of a two-digit
+ * one, so the moment a ceiling actually pushed a two-digit badge down to this
+ * floor, all fourteen of them drew their number across 96% of the disc, into
+ * the rim: white ink with nothing dark behind it. The ring has to scale with
+ * the number it surrounds.
  */
 function badgeMinDiameterIn(stepNumber: number, fonts: VisioFonts): number {
   const pt = badgeFontFloorIn(fonts);
   const digits = String(Math.max(1, Math.abs(Math.trunc(stepNumber)))).length;
-  return Math.max(pt * 1.15, Math.hypot(digits * pt * 0.55, pt * 0.7) + 0.02);
+  return Math.max(pt * 1.15, Math.hypot(digits * pt * 0.66, pt * 0.7) / 0.9);
 }
 
 /**
