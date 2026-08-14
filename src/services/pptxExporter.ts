@@ -917,7 +917,24 @@ function planDiagramWindows(
   // where the median plan gave 53 windows of 0.3130in, cleared the floor at 5.7
   // services a window, and shipped 90 discs at 97% of the services they number.
   let chaseAffordable = false;
-  if (options.serveW !== undefined && options.serveW > 0 && options.serveW < medianW) {
+  // Attempted whenever the chase would BUY something, not when the narrowest
+  // badged tile happens to beat an order statistic.
+  //
+  // The trigger was `serveW < medianW`, a strict comparison against
+  // `sorted[floor(n/2)]`, so on any drawing where the narrowest badged tile
+  // ties the median no finer plan was ever considered - and a step function on
+  // an order statistic flips on a one-pixel authoring edit. Measured on the
+  // same six services: widths [14,14,14,14,160,160] tie at 14 and plan 5 slides
+  // at 0.158in; shaving ONE pixel off ONE icon to [13,14,...] plans 9 slides at
+  // 0.283in, with five oversized edge chips and a label cut to "Ze...". Same
+  // drawing to a reader, 1.8x the deck. The condition now asks whether the
+  // raised plan already serves the bar for this tile, which is continuous in
+  // the thing that matters and does not care where the median sits.
+  const chaseWorthTrying = options.serveW !== undefined
+    && options.serveW > 0
+    && bar > 0
+    && perInOf(raised) * options.serveW < bar * BADGE_TILE_SHARE - 1e-6;
+  if (chaseWorthTrying && options.serveW !== undefined) {
     const finest = planWindowsAtCeiling(bounds, services, frame, options, true, options.serveW);
     // The density floor does not get to choose a swamped icon.
     //
@@ -926,18 +943,30 @@ function planDiagramWindows(
     // also deciding a case it has nothing to say about: where refusing the
     // finer plan leaves the narrowest numbered tile under `markIn` - the width
     // at which a disc can be both readable and no wider than its service - the
-    // refusal does not buy a denser deck, it buys a disc drawn OVER the icon it
-    // points at. Measured on six ordinary services and a glyph-sized DNS zone:
-    // refused at 1.4 services a window, the zone came out 0.1293in under a
-    // 0.1556in disc, 120% of itself, and off the row 132%.
+    // refusal does not buy a denser deck, it buys a disc drawn as much as
+    // twice the width of the icon it points at. Measured on twenty ordinary
+    // services and one glyph on the chain: a 16px zone drew 0.0975in under a
+    // 0.1556in disc, 160%, and a 12px one 213%, both refused by the density
+    // floor while the frame was reaching 0.2978in and 0.2233in - roughly twice
+    // what the disc needed. The page was never the constraint.
     //
     // Waived only when the finer plan actually resolves it, so the deck never
     // pays windows for a target it still misses, and only for the narrowest
     // BADGED tile, so an unnumbered sliver buys nothing.
-    const bar = options.markIn ?? 0;
-    const mustChase = bar > 0
-      && perInOf(raised) * options.serveW < bar - 1e-6
-      && perInOf(finest) * options.serveW >= bar - 1e-6;
+    // Two lines, not one. `bar` is `markIn`, the width at which a disc can be
+    // both readable and a proportionate 55% of its tile - what the deck WANTS.
+    // `bar * BADGE_TILE_SHARE` is the floor itself, the width at which the disc
+    // merely stops being wider than the service it numbers - what the deck must
+    // not ship below. Keying the waiver on the first alone made it 1.82x too
+    // strict and it refused every case it was written for: a 16px zone needed
+    // 0.3528in of reach to satisfy `markIn` and the frame gave 0.2978in, so the
+    // waiver said no - while the tile only needed 0.1556in to stop being
+    // dwarfed, which that same frame cleared twice over. The identical
+    // off-by-BADGE_TILE_SHARE error was live in the gate's exempt band.
+    const reaches = (p: { windows: DiagramWindow[] }, line: number): boolean =>
+      line > 0 && perInOf(p) * (options.serveW ?? 0) >= line - 1e-6;
+    const mustChase = (!reaches(raised, bar) && reaches(finest, bar))
+      || (!reaches(raised, bar * BADGE_TILE_SHARE) && reaches(finest, bar * BADGE_TILE_SHARE));
     // Recorded whether or not it is taken, because the audit has to distinguish
     // a callout the deck COULD have served from one it could not, and a flag
     // read off the plan that was chosen moves with any mutation that changes

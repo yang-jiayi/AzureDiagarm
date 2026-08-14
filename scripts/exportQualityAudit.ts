@@ -3048,6 +3048,95 @@ function spreadGlyphScenario(id: string, pitch: number, dnsX: number, dnsY: numb
 }
 
 /**
+ * Twenty ordinary services and one glyph, on a chain that runs THROUGH it.
+ *
+ * The reviewer's isolation of the exempt-band defect, kept because it is the
+ * only shape in the corpus that puts a callout beside a service two orders of
+ * magnitude narrower than its neighbours without tripping any other rule -
+ * twenty full-size tiles keep the naming rule and the density rules quiet, so
+ * whatever the callout rule says here is the callout rule's own verdict.
+ *
+ * `reachableTileW` was derived from `markIn` and then used to guard a clause
+ * that fires on `floor`, and `markIn = floor / BADGE_SHARE`, so the bound came
+ * out 1.82x too generous: every authored width in the top 45% of the exempt
+ * band was waved through while the frame was demonstrably drawing that tile
+ * wider than the disc. At 16 authored px the frame reaches 0.2978in against a
+ * 0.1556in disc, 1.91x the headroom needed, and the plan that would have taken
+ * it was refused by the density floor rather than by the page.
+ */
+/**
+ * Two glyph-sized services a hair apart, so the callout lands ON them.
+ *
+ * The liveness proof for the contact term. Every other fixture that satisfies
+ * `badge.w > tile` draws its disc in clear space between two icons, which is
+ * why requiring contact silenced them; this one puts the hop so short that the
+ * disc has nowhere to sit but on top of the services it numbers, which is the
+ * shape round 71 was opened for - a disc drawn OVER the icon at 178%. Without
+ * it the contact term would be indistinguishable from switching the rule off.
+ */
+function touchingBadgeScenario(id: string, pairs: number): Scenario {
+  const icon = '/Azure_Public_Service_Icons/Icons/networking/10061-icon-service-Virtual-Networks.svg';
+  const nodes: Node[] = Array.from({ length: pairs * 2 }, (_, i) => ({
+    id: `tb${i}`,
+    type: 'azureNode',
+    position: { x: (i % 2) * 34 + Math.floor(i / 2) * 900, y: Math.floor(i / 2) * 260 },
+    width: 18,
+    height: 150,
+    data: {
+      label: `Edge relay probe ${i + 1}`,
+      serviceName: 'Traffic Manager',
+      category: 'networking',
+      iconPath: icon,
+    },
+  } as unknown as Node));
+  const edges: Edge[] = Array.from({ length: pairs }, (_, i) => ({
+    id: `tbe-${i}`,
+    source: `tb${i * 2}`,
+    target: `tb${i * 2 + 1}`,
+    data: { stepNumber: i + 1, stepDescription: `Step ${i + 1} of the relay path` },
+  } as unknown as Edge));
+  return { id, nodes, edges };
+}
+
+function glyphChainScenario(id: string, glyphW: number): Scenario {
+  const icon = '/Azure_Public_Service_Icons/Icons/networking/10061-icon-service-Virtual-Networks.svg';
+  const nodes: Node[] = Array.from({ length: 20 }, (_, i) => ({
+    id: `rg${i}`,
+    type: 'azureNode',
+    position: { x: i * 700, y: 0 },
+    width: 150,
+    height: 110,
+    data: {
+      label: `Azure regional gateway ${i + 1}`,
+      serviceName: 'Application Gateway',
+      category: 'networking',
+      iconPath: icon,
+    },
+  } as unknown as Node));
+  nodes.push({
+    id: 'rg-dns',
+    type: 'azureNode',
+    position: { x: 350, y: 0 },
+    width: glyphW,
+    height: 110,
+    data: {
+      label: 'Private DNS zone',
+      serviceName: 'DNS Zones',
+      category: 'networking',
+      iconPath: icon,
+    },
+  } as unknown as Node);
+  const chain = ['rg0', 'rg-dns', ...Array.from({ length: 19 }, (_, i) => `rg${i + 1}`)];
+  const edges: Edge[] = chain.slice(1).map((target, i) => ({
+    id: `rge-${i}`,
+    source: chain[i],
+    target,
+    data: { stepNumber: i + 1, stepDescription: `Step ${i + 1} of the regional path` },
+  } as unknown as Edge));
+  return { id, nodes, edges };
+}
+
+/**
  * The same drawing at five, six and seven services.
  *
  * `planWindowsAtCeiling` prefers the COMFORTABLE grid whenever the deck can
@@ -7736,8 +7825,9 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
       const ends = endsOfRoute.get(routeId);
       if (ends) {
         const drawn = ends
-          .map((nodeId) => ({ nodeId, w: slideTiles.find((t) => t.name.slice('service-'.length) === nodeId)?.w }))
-          .filter((d): d is { nodeId: string; w: number } => typeof d.w === 'number' && d.w > 0);
+          .map((nodeId) => ({ nodeId, tile: slideTiles.find((t) => t.name.slice('service-'.length) === nodeId) }))
+          .filter((d): d is { nodeId: string; tile: typeof slideTiles[number] } => !!d.tile && d.tile.w > 0)
+          .map((d) => ({ nodeId: d.nodeId, w: d.tile.w, shape: d.tile }));
         const widths = drawn.map((d) => d.w);
         // Measure against the ends that ARE drawn; skip only when neither is.
         //
@@ -7769,13 +7859,31 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
           // ceiling: restore the tile-blind clamp and it fires on every
           // ordinary numbered deck.
           const floor = badgeFloorIn(stepOfRoute.get(routeId) ?? 1, 7);
+          // Does the disc actually MEET a service it numbers?
+          //
+          // Six rounds of this rule family compared a diameter to a width and
+          // called the ratio a defect. Measured on the emitted slides, the four
+          // discs it was still reporting at 98% lay entirely off their icons -
+          // `overlapArea` zero for every one - at the author's own faithful
+          // proportion, 14/160 authored and 0.1584/1.81 drawn, both 8.75%. A
+          // number that never comes near the thing it numbers is not competing
+          // with it, and the failure this family exists for, round 71's 178%,
+          // was a disc drawn ON TOP of an icon. So contact is now part of the
+          // claim. It also retires an exemption: with contact required, the
+          // rule goes quiet on that deck on its MERITS, and the exporter's
+          // `chaseAffordable` - which was the median order statistic re-entering
+          // one level down, false on every drawing whose narrowest badged tile
+          // ties the median, with no plan measured at all - is no longer needed
+          // to silence it. Occlusion past 70% stays with the buried rule; this
+          // one owns the band where a disc touches an icon it dwarfs.
+          const touches = drawn.some((d) => overlapArea(badge, d.shape) > 0);
           if (tile * BADGE_SHARE >= floor - 1e-6 && badge.w > tile * BADGE_SHARE + 2e-4) {
             issues.push(`step badge "${badge.name}" is ${badge.w.toFixed(4)}in across on a `
               + `${tile.toFixed(4)}in tile — ${((badge.w / tile) * 100).toFixed(0)}% of the `
               + 'service it is calling out');
-          } else if (badge.w > tile + 1e-6 && drawn.every((d) => {
+          } else if (badge.w > tile + 1e-6 && touches && drawn.every((d) => {
             const w = authoredW.get(d.nodeId);
-            return w === undefined || w >= calloutPlan.reachableTileW - 1e-9;
+            return w === undefined || w >= calloutPlan.reachableTileW * BADGE_SHARE - 1e-9;
           })) {
             // A disc WIDER THAN THE SERVICE IT NUMBERS, reported ahead of every
             // exemption that is about the plan.
@@ -7815,9 +7923,9 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
             // exempt hops between tiles ten times wider.
             && drawn.every((d) => {
               const w = authoredW.get(d.nodeId);
-              return w === undefined || w >= calloutPlan.reachableTileW - 1e-9;
+              return w === undefined || w >= calloutPlan.reachableTileW * BADGE_SHARE - 1e-9;
             })
-            && calloutPlan.chaseAffordable) {
+            && touches) {
             // The empty intersection, stated as what it is. A tile this small
             // admits no disc that is both readable and proportionate, so there
             // is nothing the callout can do about it and the fix is a coarser
@@ -9188,9 +9296,21 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
   const ICON_MIN_PX = 0.43 * 96;
   const wantIcons = scenario.nodes.filter((n) => {
     const styled = (n.style as { height?: number } | undefined)?.height;
+    const styledW = (n.style as { width?: number } | undefined)?.width;
     return n.type !== 'groupNode'
       && Boolean((n.data as { iconPath?: string } | undefined)?.iconPath)
-      && (n.height ?? styled ?? 75) >= ICON_MIN_PX;
+      && (n.height ?? styled ?? 75) >= ICON_MIN_PX
+      // Width as well as height, for the same reason height is here at all.
+      //
+      // The test asked only whether a node was TALL enough to host an icon,
+      // which counts a 12px-wide glyph as owing one. It cannot carry one at any
+      // scale: the exporter sizes the square by `min(h * 0.42, w * 0.34, ...)`
+      // and drops it below `0.08 * px` as unreadable, so on a 0.0732in tile the
+      // icon comes out 0.0249in against a 0.0468in floor and the words are kept
+      // instead - the correct call, reported as a missing icon. The authored
+      // aspect is the author's, not the exporter's, and this rule exists to
+      // catch icons LOST in export, not icons that never had room.
+      && (n.width ?? styledW ?? 75) >= ICON_MIN_PX;
   }).length;
   if (wantIcons > 0 && drawnIcons < wantIcons) {
     issues.push(`${wantIcons - drawnIcons} of ${wantIcons} service icon(s) are embedded but never drawn on the sheet`);
@@ -11309,6 +11429,9 @@ async function main(): Promise<void> {
   spreadGlyphScenario('probe-tight', 200, 300, 200),
   spreadGlyphScenario('probe-spread', 290, 440, 200),
   spreadGlyphScenario('probe-offrow', 290, 440, 400),
+  glyphChainScenario('probe-glyph16', 16),
+  glyphChainScenario('probe-glyph12', 12),
+  touchingBadgeScenario('probe-touching', 30),
   mixCountScenario(4),
   mixCountScenario(5),
   mixCountScenario(6),
