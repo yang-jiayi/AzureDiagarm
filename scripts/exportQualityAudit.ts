@@ -269,6 +269,14 @@ const YU_GOTHIC_FALLBACK_EM: ReadonlyArray<readonly [number, readonly number[]]>
   // off this table's own toned forms at 0x1ee8 and 0x1eda rather than measured
   // afresh, because a tone mark adds no advance and `ư` must not be priced
   // differently from `ứ`. See the twin note in `diagramExportGeometry.ts`.
+  //
+  // Devanagari is the sharp edge of what this table does NOT cover. Only the
+  // digits at 0x966 are here; every consonant falls back to a flat 1.0 em -
+  // and so does the exporter's table, from its own identical gap. So on an
+  // Indic name the divergence rule is not merely silent, the two models AGREE
+  // ON A GUESS, which is the one failure this file's whole two-model design
+  // was meant to make impossible. Only the coverage rule stands between that
+  // and a whole script, and the coverage rule reports rather than blocks.
   [0x1a0, [0.763, 0.597]],
   [0x1af, [0.708, 0.588]],
   [0x591, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0.4, 0, 0.202, 0, 0, 0.217, 0, 0, 0.399, 0]],
@@ -1079,6 +1087,17 @@ interface Scenario {
    * light theme, so no colour the dark deck uses had ever been measured.
    */
   dark?: boolean;
+  /**
+   * The header triple, when the scenario is about it.
+   *
+   * Every run priced the same 16-character name, 5-character author and
+   * 10-character date, hardcoded at the two call sites - so the cover title,
+   * the section headers and the diagram slide header were outside every
+   * rule's field of view on every scenario, by construction. The name is free
+   * text the user types and nothing on the path caps it.
+   */
+  title?: string;
+  author?: string;
 }
 
 /**
@@ -2203,6 +2222,92 @@ function bandFillScenario(): Scenario {
  * happens to be narrow - at one width a code-point cut printed a mark stacked
  * on the ellipsis, and at the next width it did not.
  */
+/**
+ * A drawing authored too small to carry a mark, spread wide enough that the
+ * SPLIT is what binds and not the cap.
+ *
+ * The planner and the renderer each hold a ceiling on how coarse a window may
+ * be drawn, and they had drifted: the planner still capped at one authored
+ * pixel per screen pixel while the renderer had started raising that for tiles
+ * narrower than 19.2px, which cannot carry so much as a key at the natural
+ * cap. A planner that stops splitting below the ceiling the renderer will
+ * actually use leaves tiles under the markable bar with slides still in the
+ * budget, and the deck then draws anonymous dots and an index that can only
+ * say "(not drawn)".
+ *
+ * Sixty 14x10px tiles over a 4200x2600px sheet: small enough for the raised
+ * ceiling to bind, large enough that the window fit decides the grid.
+ */
+/**
+ * The header triple at four lengths.
+ *
+ * The gate had priced one 16-character name on all 227 runs, so the cover
+ * title, the section headers and the diagram slide header had never been
+ * measured against anything. The lengths are the ones where the behaviour
+ * changes: 20 fits at full size, 70 crosses the two-line boundary on the
+ * 22pt section header, 95 crosses it on the 40pt cover, and 130 reached
+ * three lines and painted the content header off the top of the slide.
+ *
+ * The names are plausible rather than padded. A diagram called "Contoso
+ * Global Retail Platform - Production Landing Zone with Paired Region
+ * Disaster Recovery" is shorter than several service names already in the
+ * corpus, and the field is free text with no cap anywhere on the path.
+ */
+function longTitleScenario(chars: number): Scenario {
+  const full = 'Contoso Global Retail Platform - Production Landing Zone with '
+    + 'Paired Region Disaster Recovery and Zone Redundant Ingestion Tier';
+  const icon = '/Azure_Public_Service_Icons/Icons/compute/10029-icon-service-Function-Apps.svg';
+  const nodes: Node[] = [
+    { id: 'lt1', type: 'azureNode', position: { x: 0, y: 0 }, width: 200, height: 120,
+      data: { label: 'Ingestion function', serviceName: 'Azure Functions', category: 'compute', iconPath: icon } },
+    { id: 'lt2', type: 'azureNode', position: { x: 420, y: 0 }, width: 200, height: 120,
+      data: { label: 'Analytics store', serviceName: 'Azure Functions', category: 'compute', iconPath: icon } },
+  ] as unknown as Node[];
+  const edges = [
+    { id: 'lte1', source: 'lt1', target: 'lt2', label: 'writes', data: { stepNumber: 1, stepDescription: 'The function writes each batch to the analytics store.' } },
+  ] as unknown as Edge[];
+  return {
+    id: `probe-title-${chars}`,
+    nodes,
+    edges,
+    title: full.slice(0, chars).trimEnd(),
+    // Long enough to be a real person and a real team, which is what the
+    // field holds in practice - "Audit" was five characters and never met
+    // the right edge of the band it shares with the date.
+    author: chars >= 95 ? 'Swarm Data SE, Jiayi Yang' : 'Audit',
+  };
+}
+
+function tinyTileSpreadScenario(): Scenario {
+  const icon = '/Azure_Public_Service_Icons/Icons/compute/10029-icon-service-Function-Apps.svg';
+  const nodes: Node[] = Array.from({ length: 60 }, (_, i) => ({
+    id: `tt${i}`,
+    type: 'azureNode',
+    position: { x: (i % 10) * 420, y: Math.floor(i / 10) * 430 },
+    width: 14,
+    height: 16,
+    data: {
+      label: `Regional ingest worker ${i + 1}`,
+      serviceName: 'Azure Functions',
+      category: 'compute',
+      iconPath: icon,
+    },
+  } as unknown as Node));
+  // No step numbers and no edge labels. A chip carrying even a five letter
+  // word is wider than a 14px tile, and the smallest disc that still holds a
+  // legible digit is wider still - so on this sheet a badge cannot be both
+  // readable and smaller than the service it numbers. Those are real limits
+  // and they are covered elsewhere at realistic sizes; this fixture is about
+  // how small a TILE may become before the planner has to stop shrinking, and
+  // it keeps that one variable moving on its own.
+  const edges = Array.from({ length: 8 }, (_, i) => ({
+    id: `tte${i}`,
+    source: `tt${i}`,
+    target: `tt${i + 10}`,
+  })) as unknown as Edge[];
+  return { id: 'probe-tiny-spread', nodes, edges };
+}
+
 function decomposedNameScenario(): Scenario {
   const icon = '/Azure_Public_Service_Icons/Icons/compute/10029-icon-service-Function-Apps.svg';
   const dense = [
@@ -2224,12 +2329,21 @@ function decomposedNameScenario(): Scenario {
     'Ìṣàkóso ìpamọ́ dátà',
     'Ẹ̀rọ ìdánilójú ààbọ̀',
     'Ìtọ́jú ìwọ̀n ìlànà',
+    // Cyrillic with the stress mark, the same class and a commoner one. U+0301
+    // has no precomposed form on any Cyrillic base, so `Москва́` survives NFC
+    // exactly as the Yoruba does. The class is broader than either: Lithuanian
+    // and Navajo `ą́ ę́ į́ ǫ́`, Igbo `ị́ ọ́ ụ́`, and any triple-mark stack. All of
+    // them are priced correctly by construction, because a mark costs zero and
+    // the base is tabled - so the fixture's job is only to keep that path
+    // reachable, and two scripts do it more convincingly than one.
+    'Москва́ регион узел',
+    'Хранилище да́нных',
   ];
   const nodes: Node[] = dense.map((label, i) => ({
     id: `nd${i}`,
     type: 'azureNode',
     position: { x: (i % 2) * 220, y: Math.floor(i / 2) * 120 },
-    width: [44, 60, 76, 104, 132, 168, 52, 68, 92, 120][i],
+    width: [44, 60, 76, 104, 132, 168, 52, 68, 92, 120, 84, 112][i],
     height: 30,
     data: { label, serviceName: 'Azure Functions', category: 'compute', iconPath: icon },
   } as unknown as Node));
@@ -2288,18 +2402,24 @@ function normFormScenario(): Scenario {
   const nodes: Node[] = labels.map((label, i) => ({
     id: `nf${i}`,
     type: 'azureNode',
-    position: { x: (i % 2) * 180, y: Math.floor(i / 2) * 115 },
-    width: 48,
-    height: 24,
+    position: { x: (i % 2) * 420, y: Math.floor(i / 2) * 260 },
+    // Wide enough that a realistic two-word edge label is not automatically
+    // dominant. The tiles were 48x24 and the labels were cut to three letters
+    // to stop the dominance rule firing - which is the one change that stops
+    // this fixture exercising the thing it exists for, since the subject here
+    // is how a name is SPELLED, not how small a tile can get. Widen the tile
+    // and keep the real label instead.
+    width: 200,
+    height: 120,
     data: { label, serviceName: 'Virtual Network', category: 'networking', iconPath: icon },
   } as unknown as Node));
   const edges = [
     {
-      id: 'nfe1', source: 'nf0', target: 'nf1', label: 'bağ'.normalize('NFD'),
+      id: 'nfe1', source: 'nf0', target: 'nf1', label: 'veri aktarımı'.normalize('NFD'),
       data: { stepNumber: 1, stepDescription: 'Şirket şubesi şifreleme şemasını paylaşır.'.normalize('NFD') },
     },
     {
-      id: 'nfe2', source: 'nf4', target: 'nf5', label: 'lưu'.normalize('NFD'),
+      id: 'nfe2', source: 'nf4', target: 'nf5', label: 'sao lưu dữ liệu'.normalize('NFD'),
       data: { stepNumber: 2, stepDescription: 'Dịch vụ lưu trữ đối tượng ghi dữ liệu vào vùng lưu trữ lạnh.' },
     },
   ] as unknown as Edge[];
@@ -5121,8 +5241,8 @@ async function auditCustomerDeck(scenario: Scenario): Promise<string[]> {
     'Zone redundancy across three availability zones', 'Paired-region disaster recovery',
   ].join('\n');
   const pptx = await buildArchitectureDeckPptx(PIXEL_PNG, {
-    diagramName: 'Contoso Platform',
-    author: 'Audit',
+    diagramName: scenario.title ?? 'Contoso Platform',
+    author: scenario.author ?? 'Audit',
     date: '2026-08-10',
     prompt: isJa
       ? ['フロント ドアと WAF を前段に配置します。', 'コンテナー アプリでアプリケーションを実行します。',
@@ -5615,8 +5735,8 @@ async function zipXmlParts(zip: JSZip): Promise<Array<{ path: string; text: stri
 
 async function auditPptx(scenario: Scenario): Promise<Report> {
   const pptx = await buildDiagramSlidePptx(PIXEL_PNG, {
-    diagramName: 'Contoso Platform',
-    author: 'Audit',
+    diagramName: scenario.title ?? 'Contoso Platform',
+    author: scenario.author ?? 'Audit',
     date: '2026-08-10',
     isDarkMode: scenario.dark === true,
     diagram: { nodes: scenario.nodes, edges: scenario.edges },
@@ -5667,6 +5787,31 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
 
   const issues: string[] = [];
   issues.push(...xmlWellFormednessIssues(await zipXmlParts(zip), ''));
+  // The header band, on the path most users actually take.
+  //
+  // Every containment rule in this file lived inside the customer-deck audit,
+  // so the main export path's own title had never been measured - and it is
+  // the one string on the slide that is free text the user typed, with no cap
+  // anywhere between the name box and the XML. At three wrapped lines a 24pt
+  // header centred in a 0.730in band paints above the top edge of the slide.
+  // Restricted to the band because everything below it is a tile, a chip or a
+  // caption with rules of its own; this is about the furniture at the top.
+  for (const [index, shapesOnSlide] of perSlide.entries()) {
+    for (const shape of shapesOnSlide) {
+      const text = shape.text.trim();
+      if (text.length === 0 || shape.y > 1.0 || shape.h <= 0) continue;
+      if (shape.name.startsWith('service-') || shape.name.startsWith('connector-')) continue;
+      const pt = shape.fontSize ?? (shape.runs[0]?.sizePt ?? 12);
+      const lines = auditWrappedLines(text, textColumnIn(shape), pt);
+      const blockIn = (lines * pt * 1.35) / 72;
+      if (blockIn > shape.h + 0.02) {
+        issues.push(
+          `slide ${index + 1} header "${text.slice(0, 32)}" draws ${lines} line(s) at ${pt}pt `
+          + `— ${blockIn.toFixed(3)}in of type in a ${shape.h.toFixed(3)}in band, so it grows out of it`,
+        );
+      }
+    }
+  }
   // Every character the deck DRAWS must have a measured advance.
   //
   // The oracle this file provides is a per-glyph table measured from the font,
@@ -9545,6 +9690,11 @@ async function main(): Promise<void> {
   bandFillScenario(),
   decomposedNameScenario(),
   normFormScenario(),
+  tinyTileSpreadScenario(),
+  longTitleScenario(20),
+  longTitleScenario(70),
+  longTitleScenario(95),
+  longTitleScenario(130),
   collidingStubsScenario(),
   hairlineStubsScenario(),
   emojiClusterScenario(),

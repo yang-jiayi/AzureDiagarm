@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import JSZip from 'jszip';
 import type { Edge, Node } from 'reactflow';
-import { buildDiagramSlidePptx, estimateTextWidthIn, fitTableRows, legibleScaleFor, tableRowHeightIn, wrappedLineCount } from '../src/services/pptxExporter.ts';
+import { buildDiagramSlidePptx, estimateTextWidthIn, fitTableRows, legibleScaleFor, narrowestBoxW, tableRowHeightIn, wrappedLineCount } from '../src/services/pptxExporter.ts';
 import { buildExportRoutes, collectExportBoxes, fitLabelToLines, fitLabelToWidth } from '../src/services/diagramExportGeometry.ts';
 import { buildVsdxPackage } from '../src/services/visioVsdxExporter.ts';
 
@@ -1670,6 +1670,14 @@ test('a name the tile can hold is not cut short', async () => {
  */
 test('the legibility target never exceeds what the renderer will draw', () => {
   const NATURAL_PER_IN = 1 / 96;
+  // The renderer's own ceiling, which is not a constant: a drawing whose
+  // narrowest tile cannot carry a mark is allowed past the natural cap, far
+  // enough to reach the 0.2in markable bar and no further. Asserting the
+  // constant instead is what let the two ceilings drift apart - the planner
+  // stopped splitting at 1/96 while the renderer would have drawn coarser, so
+  // tiles came out under the markable bar with slides still in the budget.
+  const MARKABLE_TILE_W_IN = 0.2;
+  const rendererCap = (minBoxW: number): number => Math.max(NATURAL_PER_IN, MARKABLE_TILE_W_IN / minBoxW);
   const frames = [
     { w: 12.63, h: 5.78 },   // the standard 16:9 window
     { w: 4, h: 2 },          // a frame small enough for its own ceiling to bind
@@ -1677,13 +1685,60 @@ test('the legibility target never exceeds what the renderer will draw', () => {
   ];
   for (const frame of frames) {
     for (let target = 1; target <= 400; target += 1) {
-      const scale = legibleScaleFor(target, frame);
-      assert.ok(
-        scale <= NATURAL_PER_IN + 1e-12,
-        `target ${target}px in a ${frame.w}x${frame.h}in frame asks for ${scale} in/px, `
-        + `but the renderer caps every window at ${NATURAL_PER_IN} in/px`,
-      );
-      assert.ok(scale > 0, `target ${target}px produced a non-positive scale ${scale}`);
+      // 12px is under the markable bar, 19.2px is exactly on it, 90px is over.
+      for (const minBoxW of [12, 19.2, 24, 90, Infinity]) {
+        const scale = legibleScaleFor(target, frame, minBoxW);
+        const cap = rendererCap(minBoxW);
+        assert.ok(
+          scale <= cap + 1e-12,
+          `target ${target}px in a ${frame.w}x${frame.h}in frame with a ${minBoxW}px tile asks for `
+          + `${scale} in/px, but the renderer caps that window at ${cap} in/px`,
+        );
+        assert.ok(scale > 0, `target ${target}px produced a non-positive scale ${scale}`);
+      }
+    }
+  }
+});
+
+/**
+ * The other half of the same invariant: the planner must not stop SHORT of the
+ * renderer's ceiling either.
+ *
+ * Capping below what the renderer will draw is not conservative, it is the
+ * same defect mirrored. The planner breaks out of its coarsening loop at
+ * `legibleScale`, so a ceiling under the renderer's leaves the drawing split
+ * finer than it needed to be at tiles the renderer would have drawn larger -
+ * and on a drawing authored small enough for the raised cap to bind, those are
+ * exactly the tiles that were under the markable bar to begin with.
+ */
+test('the legibility target reaches the renderer cap when the frame allows it', () => {
+  const NATURAL_PER_IN = 1 / 96;
+  const frame = { w: 40, h: 20 };
+  // A 12px tile is drawn 0.125in at the natural cap, under the 0.2in bar, so
+  // the renderer raises its ceiling to 0.2/12 and the planner must follow.
+  const raised = legibleScaleFor(12, frame, 12);
+  assert.ok(
+    raised > NATURAL_PER_IN,
+    `a 12px tile needs the raised ceiling, but the planner stopped at ${raised} in/px`,
+  );
+  assert.ok(Math.abs(raised - 0.2 / 12) < 1e-12, `expected ${0.2 / 12} in/px, got ${raised}`);
+  // And nothing else moves. A tile at or above the markable bar leaves the
+  // renderer's ceiling at the natural cap, so the planner must return exactly
+  // what it returned before the ceiling was passed in at all - for every
+  // target, not just the one that happens to be capped.
+  for (const frameUnderTest of [{ w: 12.63, h: 5.78 }, { w: 4, h: 2 }, { w: 40, h: 20 }]) {
+    for (let target = 1; target <= 400; target += 1) {
+      for (const minBoxW of [19.2, 24, 90, 400, Infinity]) {
+        // A tolerance, not equality: 0.2 / 19.2 and 1 / 96 are the same number
+        // and do not have the same double, and a tile exactly on the bar is
+        // the case most worth keeping in the sweep.
+        assert.ok(
+          Math.abs(legibleScaleFor(target, frameUnderTest, minBoxW)
+            - legibleScaleFor(target, frameUnderTest)) < 1e-12,
+          `a ${minBoxW}px tile is at or over the markable bar, so target ${target}px `
+          + `in a ${frameUnderTest.w}x${frameUnderTest.h}in frame must not move`,
+        );
+      }
     }
   }
 });
@@ -2221,4 +2276,43 @@ test('a zone caption is never wider than the zone it names', async () => {
       );
     }
   }
+});
+
+test('the narrowest tile survives an estate too large to spread into a call', () => {
+  // `Math.min(...boxes)` throws RangeError somewhere above 100k arguments in
+  // V8, and both the planner and the renderer used to be written that way. The
+  // count here is past that edge on purpose: a diagram this size is absurd,
+  // but the failure mode is a thrown exception and no export at all, not a
+  // worse-looking slide, so the boundary is worth pinning.
+  const many = Array.from({ length: 200_000 }, (_, i) => ({ w: 40 + (i % 97) }));
+  many[123_456] = { w: 11 };
+  assert.equal(narrowestBoxW(many), 11);
+});
+
+test('a zero width box is not the narrowest tile', () => {
+  // The planner filtered these out and the renderer did not, which made the
+  // renderer read a ceiling of 1/96 where the planner read 0.2/12 - the exact
+  // shape of the drift the shared helper exists to prevent.
+  assert.equal(narrowestBoxW([{ w: 0 }, { w: 12 }, { w: 90 }]), 12);
+  assert.equal(narrowestBoxW([{ w: 0 }]), Infinity);
+  assert.equal(narrowestBoxW([]), Infinity);
+});
+
+test('the planner and the renderer read the narrowest tile off the same boxes', () => {
+  // The reviewer's question: the planner takes `narrowest` from the boxes it
+  // is about to plan windows for, and the renderer takes `minBoxW` from the
+  // boxes it is about to draw. If those two lists were ever in different
+  // units the two would disagree again, one abstraction down. They are the
+  // same list, so the guarantee to assert is that the helper is a pure
+  // function of it - the same boxes in any order give the same answer.
+  const boxes = [{ w: 90 }, { w: 19.2 }, { w: 12 }, { w: 240 }];
+  const shuffled = [...boxes].reverse();
+  assert.equal(narrowestBoxW(boxes), narrowestBoxW(shuffled));
+  assert.equal(narrowestBoxW(boxes), 12);
+  // And that the ceiling it feeds is the legibility cap, not the natural one.
+  // A small target on purpose: above about 35 the 7pt legibility term is the
+  // binding one and the cap makes no difference either way, so a large target
+  // would assert nothing.
+  assert.ok(legibleScaleFor(30, { w: 12.63, h: 5.78 }, narrowestBoxW(boxes))
+    > legibleScaleFor(30, { w: 12.63, h: 5.78 }, Infinity));
 });

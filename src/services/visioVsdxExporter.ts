@@ -112,8 +112,8 @@ const HAIRLINE_IN = 0.0035;
  * this. Those panels are drawn at natural size on the sheet whatever the drawing
  * inside is reduced to, so their pen is already in the right proportion to them.
  */
-function penIn(natural: number, scale: number): number {
-  return Math.max(HAIRLINE_IN, natural * scale);
+function penIn(natural: number, scale: number, maxIn = Infinity): number {
+  return Math.max(HAIRLINE_IN, Math.min(natural * scale, maxIn));
 }
 
 /** Height of one numbered row in the workflow band. */
@@ -200,6 +200,25 @@ interface VisioFonts {
   connector: number;
   zone: number;
   badge: number;
+  /**
+   * The widest a step badge may be drawn on this sheet.
+   *
+   * `scale` is the page-fit factor, and for years the badge scaled by that
+   * alone. That covers a big drawing squeezed onto a page, and misses the
+   * other way a tile gets small: a reader who simply drew small nodes. Then
+   * `scale` is 1, the badge stays a quarter inch, and it is 165% of the
+   * service it is numbering - a callout larger than the thing called out,
+   * which is the exact failure the badge's own comment claims to prevent.
+   */
+  badgeMaxIn: number;
+  /**
+   * The heaviest a drawing pen may be on this sheet.
+   *
+   * Same blind spot as the badge, same cause: `scale` only knows about the
+   * page fit. A tile drawn small by hand kept a 0.0125in border, and at that
+   * size the border is the shape.
+   */
+  penMaxIn: number;
 }
 
 const NATURAL_FONTS: VisioFonts = {
@@ -209,6 +228,9 @@ const NATURAL_FONTS: VisioFonts = {
   connector: CONNECTOR_FONT_IN,
   zone: ZONE_TITLE_FONT_IN,
   badge: BADGE_FONT_IN,
+  // No tiles have been measured yet, so nothing is capped yet.
+  badgeMaxIn: Infinity,
+  penMaxIn: Infinity,
 };
 
 /**
@@ -243,6 +265,41 @@ function fontsForScale(scale: number): VisioFonts {
     connector: CONNECTOR_FONT_IN * k,
     zone: ZONE_TITLE_FONT_IN * k,
     badge: BADGE_FONT_IN * k,
+    badgeMaxIn: Infinity,
+    penMaxIn: Infinity,
+  };
+}
+
+/**
+ * The same fonts, with the badge and the pen held to the tiles they will be
+ * drawn among.
+ *
+ * Separate from `fontsForScale` because it needs the laid-out boxes, which
+ * that function has no business knowing. The typical tile is the median, not
+ * the smallest: one deliberately tiny node should not thin every line on the
+ * sheet, but a page made of tiny nodes should.
+ */
+function withDrawingCeilings(fonts: VisioFonts, boxes: Iterable<{ w: number; h: number }>): VisioFonts {
+  const all = [...boxes].filter((b) => b.w > 0 && b.h > 0);
+  if (all.length === 0) return fonts;
+  const median = (xs: number[]): number => {
+    const s = [...xs].sort((a, b) => a - b);
+    return s[Math.floor(s.length / 2)];
+  };
+  const tileWIn = Math.min(...all.map((b) => b.w)) / PX_PER_INCH;
+  const tileHIn = median(all.map((b) => b.h)) / PX_PER_INCH;
+  return {
+    ...fonts,
+    // Just over half the narrowest tile. Past that the disc reads as the
+    // subject and the service it numbers reads as its shadow. Measured
+    // against the narrowest and not the median because a badge lands wherever
+    // its arrow lands, so the smallest tile on the sheet is the one it will
+    // be seen next to.
+    badgeMaxIn: tileWIn * 0.55,
+    // A sixteenth is where an outline stops being a border and starts being
+    // the shape. `penIn` still applies Visio's hairline underneath this, so
+    // the line never thins into nothing.
+    penMaxIn: tileHIn / 16,
   };
 }
 
@@ -509,7 +566,7 @@ function zoneShapeXml(
       <Cell N="FillForegnd" V="${palette.fill}"/>
       <Cell N="FillPattern" V="1"/>
       <Cell N="LineColor" V="${palette.line}"/>
-      <Cell N="LineWeight" V="${f(penIn(0.0125, fonts.scale))}"/>
+      <Cell N="LineWeight" V="${f(penIn(0.0125, fonts.scale, fonts.penMaxIn))}"/>
       <Cell N="LinePattern" V="2"/>
       <Cell N="Rounding" V="${f(CORNER_ROUNDING_IN * 1.5 * fonts.scale)}"/>
       <Cell N="TxtWidth" V="${f(titleW)}"/>
@@ -828,7 +885,7 @@ ${properties.map((property, index) => propertyRow(property.name, property.label,
           <Cell N="FillForegnd" V="${palette.fill}"/>
           <Cell N="FillPattern" V="1"/>
           <Cell N="LineColor" V="${palette.line}"/>
-          <Cell N="LineWeight" V="${f(penIn(0.0125, fonts.scale))}"/>
+          <Cell N="LineWeight" V="${f(penIn(0.0125, fonts.scale, fonts.penMaxIn))}"/>
           <Cell N="LinePattern" V="1"/>
           <Cell N="Rounding" V="${f(CORNER_ROUNDING_IN * fonts.scale)}"/>
           <Cell N="ShdwPattern" V="1"/>
@@ -917,7 +974,7 @@ function connectorShapeXml(
       <Cell N="ConLineRouteExt" V="0"/>
       <Cell N="LayerMember" V="${LAYER_CONNECTIONS}"/>
       <Cell N="LineColor" V="${color}"/>
-      <Cell N="LineWeight" V="${f(penIn(0.0125, fonts.scale))}"/>
+      <Cell N="LineWeight" V="${f(penIn(0.0125, fonts.scale, fonts.penMaxIn))}"/>
       <Cell N="LinePattern" V="${linePattern}"/>${transCell}
       <Cell N="Rounding" V="${f(0.0625 * fonts.scale)}"/>
       <Cell N="BeginArrow" V="${bidirectional ? 4 : 0}"/>
@@ -992,8 +1049,7 @@ function badgeMinDiameterIn(stepNumber: number, fonts: VisioFonts): number {
   return Math.max(pt * 1.15, Math.hypot(digits * pt * 0.55, pt * 0.7) + 0.02);
 }
 
-function stepBadgeXml(
-  id: number,
+function stepBadgeXml(  id: number,
   centre: Point,
   stepNumber: number,
   fonts: VisioFonts = NATURAL_FONTS,
@@ -1011,7 +1067,10 @@ function stepBadgeXml(
   // A badge is drawn on the arrows, between the tiles, so it scales with them.
   // Held at its natural size it was 109% of a whole service tile once the
   // sheet was down to a seventh: a callout larger than the thing it calls out.
-  const natural = STEP_BADGE_IN * fonts.scale;
+  const natural = Math.max(
+    badgeMinDiameterIn(stepNumber, fonts),
+    Math.min(STEP_BADGE_IN * fonts.scale, fonts.badgeMaxIn),
+  );
   const floor = badgeMinDiameterIn(stepNumber, fonts);
   const d = diameterIn !== undefined && diameterIn > 0
     ? Math.min(natural, Math.max(floor, diameterIn))
@@ -1032,7 +1091,7 @@ function stepBadgeXml(
       <Cell N="FillForegnd" V="#1F2937"/>
       <Cell N="FillPattern" V="1"/>
       <Cell N="LineColor" V="#FFFFFF"/>
-      <Cell N="LineWeight" V="${f(penIn(0.0125, fonts.scale))}"/>
+      <Cell N="LineWeight" V="${f(penIn(0.0125, fonts.scale, fonts.penMaxIn))}"/>
       <Cell N="LinePattern" V="1"/>
       <Section N="Character">
         <Row IX="0"><Cell N="Font" V="1"/><Cell N="Color" V="#FFFFFF"/><Cell N="Size" V="${ff(size)}"/><Cell N="Style" V="1"/></Row>
@@ -1859,7 +1918,10 @@ export async function buildVsdxPackage(
   // Take the type down with the drawing. Holding it fixed does not rescue the
   // words on a tile an eighth of an inch wide, it prints each name over its
   // neighbours and loses the structure as well as the labels.
-  const fonts = fontsForScale(boxScaleWithin(fitted, limitPx, limitPx - (reserveBandIn + legendBandIn) * PX_PER_INCH));
+  const fonts = withDrawingCeilings(
+    fontsForScale(boxScaleWithin(fitted, limitPx, limitPx - (reserveBandIn + legendBandIn) * PX_PER_INCH)),
+    raw.values(),
+  );
   // Match the PowerPoint strategy: draw 1 : 1 from the full bounds whenever the
   // page stays a sensible size, and only fall back to the dense-cluster bounds
   // (clamping the strays back on) when a far-placed node would otherwise blow
@@ -2111,7 +2173,7 @@ export async function buildVsdxPackage(
   // The badge scales with the drawing, so every allowance made for one has
   // to scale too, or the rungs reserve a quarter inch for a mark an eighth of
   // an inch across and the fan is spaced for furniture that is not there.
-  const badgeIn = STEP_BADGE_IN * fonts.scale;
+  const badgeIn = Math.min(STEP_BADGE_IN * fonts.scale, fonts.badgeMaxIn);
   const labelSize = (label: string): { w: number; h: number } => {
     // `natural` is a width and a hard break contributes nothing to it, so the
     // chip is only ever as wide as the longest single line — which is right.

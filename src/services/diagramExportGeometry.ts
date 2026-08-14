@@ -940,6 +940,13 @@ const GEOMETRY_FALLBACK_EM: ReadonlyArray<readonly [number, readonly number[]]> 
   // and truncated early. The numbers are not new measurements: they are read
   // off this table's own toned forms, because a tone mark adds no advance, and
   // taking them from anywhere else would price `ư` and `ứ` differently.
+  //
+  // The residual risk, which no rule here can see: these numbers are only
+  // right if the renderer actually HAS these glyphs in Yu Gothic UI. Under
+  // font substitution the real advance is something else entirely, and both
+  // this table and the audit's copy are wrong together - so the divergence
+  // check, which compares the two models, stays silent. That is a known limit
+  // of measuring a font by table, not a defect in the table.
   [0x1a0, [0.763, 0.597]],
   [0x1af, [0.708, 0.588]],
   [0x591, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0.4, 0, 0.202, 0, 0, 0.217, 0, 0, 0.399, 0]],

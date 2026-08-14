@@ -135,6 +135,7 @@ import {
   zoneStyleFor,
   readableTextOn,
   carriesWording,
+  singleLineName,
   type Bounds,
   type ExportBox,
   type ExportRoute,
@@ -531,6 +532,51 @@ function chipSpoils(
 }
 
 /**
+ * The largest inches-per-pixel the renderer will actually draw a window at.
+ *
+ * The natural cap is one authored pixel to one screen pixel: a two-node
+ * diagram must not be blown up to absurd tiles. But a density is the wrong
+ * thing to cap when the drawing itself was authored small, so a drawing whose
+ * narrowest tile cannot carry a mark at all raises the cap far enough to reach
+ * that bar and no further. Every drawing already above it keeps the identical
+ * transform.
+ *
+ * One function because there were two copies of this expression and they had
+ * already diverged: the planner still capped at `1 / PX_PER_IN` and its comment
+ * asserted the renderer did too, while the renderer had been raising it for
+ * sub-19.2px tiles. `Infinity` for "no tile to protect" - the caller has no
+ * services - reduces to the natural cap.
+ */
+/**
+ * The narrowest tile that will actually be drawn, in authored pixels.
+ *
+ * Written once and called from both the planner and the renderer because
+ * they have to agree: the ceiling one of them raises is the ceiling the other
+ * one plans against, and two spellings of "narrowest" is exactly how they
+ * drifted apart the first time. Zero-width boxes are skipped rather than
+ * treated as the minimum - a box with no width is not a tile a mark has to
+ * fit inside, and counting it would pin the ceiling to a shape nobody sees.
+ *
+ * A loop, not `Math.min(...boxes)`: spreading an array into a call is limited
+ * by the engine's argument count, and this list is one per service on the
+ * diagram, so a large estate would throw where a small one worked.
+ */
+export function narrowestBoxW(boxes: readonly { w: number }[]): number {
+  let narrowest = Infinity;
+  for (const box of boxes) {
+    if (box.w > 0 && box.w < narrowest) narrowest = box.w;
+  }
+  return narrowest;
+}
+
+function rendererMaxScale(minBoxW: number): number {
+  return Math.max(
+    1 / PX_PER_IN,
+    Number.isFinite(minBoxW) && minBoxW > 0 ? MARKABLE_TILE_W_IN / minBoxW : 0,
+  );
+}
+
+/**
  * Inches-per-pixel worth splitting the drawing to reach, for a `target`-pixel
  * tile in a `frame`-inch window.
  *
@@ -555,6 +601,14 @@ function chipSpoils(
  * 0.3% inked — with tiles no wider, type no larger and no name any more
  * complete than the 25 slides they needed.
  *
+ * That ceiling is not a constant, and the comment above asserting it was one
+ * went stale the day the renderer started raising it for drawings authored too
+ * small to carry a mark. The planner then stopped splitting at a scale the
+ * renderer would have exceeded, which is the same defect in the opposite
+ * direction: tiles under the markable bar on a deck that had slides to spare.
+ * Both now read `rendererMaxScale`, so there is one expression and no second
+ * place to update.
+ *
  * Exported so the invariant can be asserted directly. The end-to-end audit can
  * only see the catastrophic end of this: between 40 and 55 authored pixels the
  * deck over-tiles by 24-48% while every window still carries two tiles, and no
@@ -562,9 +616,13 @@ function chipSpoils(
  * The distinguishing fact is a counterfactual — a coarser split would have
  * produced identical tiles — so it has to be checked here, on the function.
  */
-export function legibleScaleFor(target: number, frame: { w: number; h: number }): number {
+export function legibleScaleFor(
+  target: number,
+  frame: { w: number; h: number },
+  minBoxW: number = Infinity,
+): number {
   const finestPerIn = Math.min(frame.w, frame.h) / (WINDOW_BLEED_PX * 2 + Math.max(1, target));
-  return Math.min(LEGIBLE_TILE_PT / 12 / Math.max(1, target), finestPerIn, 1 / PX_PER_IN);
+  return Math.min(LEGIBLE_TILE_PT / 12 / Math.max(1, target), finestPerIn, rendererMaxScale(minBoxW));
 }
 /**
  * Split the drawing into as few standard-slide windows as keep tiles legible.
@@ -620,6 +678,19 @@ function planDiagramWindows(
   // ceilings and the reasoning behind them live on `legibleScaleFor`, which is
   // exported so the invariant can be asserted on the function rather than
   // inferred from the deck it produces.
+  //
+  // The renderer's ceiling rises above natural width for a drawing whose
+  // narrowest tile cannot hold a mark, and it was tempting to make the planner
+  // split until it reached that same ceiling - the two were out of step, which
+  // is a real defect and is now fixed by sharing `rendererMaxScale`. But the
+  // planner must not CHASE the raised ceiling, only respect it. Splitting
+  // cannot enlarge a tile past natural width; only the renderer's per-window
+  // magnification can, and it does that without spending a slide. Measured:
+  // targeting the raised ceiling here split `hairline-tiles` into 11 slides of
+  // which 8 held a single tile already at natural width, and did the same to
+  // `probe-whitespace` and `probe-long-index`. A deck of one-tile slides is
+  // worse than the slightly-small tiles it was buying, so the planner keeps
+  // the natural-width cap and lets the renderer rescue the slivers.
   const legibleScale = legibleScaleFor(target, frame);
   if (Math.min(frame.w / contentW, frame.h / contentH) >= legibleScale) return whole;
 
@@ -3345,12 +3416,10 @@ async function addEditableDiagram(
   // and only far enough to reach that bar. Every drawing already above it keeps
   // the identical transform, so the geometry of the rest of the corpus is
   // untouched by construction. The frame terms of `computeFitTransform` still
-  // bind, so nothing is magnified past the page.
-  const minBoxW = Math.min(...services.map((b) => b.w), Infinity);
-  const maxScale = Math.max(
-    1 / PX_PER_IN,
-    Number.isFinite(minBoxW) && minBoxW > 0 ? MARKABLE_TILE_W_IN / minBoxW : 0,
-  );
+  // bind, so nothing is magnified past the page. The expression itself lives on
+  // `rendererMaxScale`, which the planner reads too - the two had diverged.
+  const minBoxW = narrowestBoxW(services);
+  const maxScale = rendererMaxScale(minBoxW);
   const transform = computeFitTransform(drawnView, frame, { maxScale });
   const clampTo = clamped || banded ? frame : undefined;
   // A tile is drawn where the drawing says; a chip is drawn *around* its arrow
@@ -4524,7 +4593,14 @@ export async function buildDiagramSlidePptx(
   imageDataUrl: string,
   options: PptxExportOptions,
 ): Promise<PptxGenJS> {
-  const { diagramName, author, date, isDarkMode } = options;
+  const { diagramName: rawDiagramName, author: rawAuthor, date: rawDate, isDarkMode } = options;
+  // The header triple is drawn on every slide and is free text the user
+  // typed, so it goes through the same single-line composition as every other
+  // drawn string. Without it an NFD name measures wider than the NFC one that
+  // means the same thing, and the header fitter shrinks the two differently.
+  const diagramName = singleLineName(rawDiagramName);
+  const author = singleLineName(rawAuthor);
+  const date = singleLineName(rawDate);
   const t = isDarkMode ? DARK_THEME : LIGHT_THEME;
   // Number the callouts before anything measures them, so the drawing, the
   // badges and the workflow list are all built from the same edges.
@@ -4613,9 +4689,11 @@ export async function buildDiagramSlidePptx(
     });
 
     // ── Diagram title ─────────────────────────────────────────────────────────
-    slide.addText(`${diagramName}${partOf}`, {
-      x: 0.35, y: ACCENT_H + 0.05, w: Math.max(3, W - 3.85), h: HEADER_H - 0.1,
-      fontSize: 24,
+    const titleW = Math.max(3, W - 3.85);
+    const head = fitHeadingToBox(`${diagramName}${partOf}`, titleW, HEADER_H - 0.1, 24);
+    slide.addText(head.body, {
+      x: 0.35, y: ACCENT_H + 0.05, w: titleW, h: HEADER_H - 0.1,
+      fontSize: head.fontSize,
       bold: true,
       color: t.titleText,
       fontFace: 'Yu Gothic UI',
@@ -5155,7 +5233,8 @@ function addChrome(pptx: PptxGenJS, slide: Slide, t: SlideTheme, title: string, 
   slide.background = { color: t.bg };
   slide.addShape(pptx.ShapeType.rect, { x: 0, y: 0, w: W, h: ACCENT_H, fill: { color: t.accent }, line: { color: t.accent, width: 0 } });
   slide.addShape(pptx.ShapeType.rect, { x: 0, y: ACCENT_H, w: W, h: HEADER_H, fill: { color: t.headerBg }, line: { color: t.headerBg, width: 0 } });
-  slide.addText(title, { x: 0.35, y: ACCENT_H + 0.05, w: 9.5, h: HEADER_H - 0.1, fontSize: 22, bold: true, color: t.titleText, fontFace: 'Yu Gothic UI', valign: 'middle', wrap: true });
+  const head = fitHeadingToBox(title, 9.5, HEADER_H - 0.1, 22);
+  slide.addText(head.body, { x: 0.35, y: ACCENT_H + 0.05, w: 9.5, h: HEADER_H - 0.1, fontSize: head.fontSize, bold: true, color: t.titleText, fontFace: 'Yu Gothic UI', valign: 'middle', wrap: true });
   if (meta) {
     slide.addText(meta, { x: 9.9, y: ACCENT_H + 0.05, w: 3.08, h: HEADER_H - 0.1, fontSize: 10, color: t.metaText, fontFace: 'Yu Gothic UI', align: 'right', valign: 'middle' });
   }
@@ -5175,10 +5254,22 @@ function addChrome(pptx: PptxGenJS, slide: Slide, t: SlideTheme, title: string, 
  */
 function fitProseToBox(
   prefix: string, body: string, boxW: number, boxH: number, startPt: number,
+  /**
+   * The smallest size this text may shrink to before it is trimmed instead.
+   *
+   * Prose keeps the 7pt legibility floor: a brief that has to be read closely
+   * is still worth more small than absent. A heading does not - a 40pt cover
+   * title that shrank to 7pt has stopped being a title, and the reader is
+   * better served by a large name with an ellipsis than by a paragraph where
+   * the name should be. So headings pass a floor of their own and reach the
+   * trimming path far sooner.
+   */
+  minPt: number = LEGIBLE_TILE_PT,
 ): { body: string; fontSize: number } {
   const usable = Math.max(0.4, boxW - 0.2);
+  const floorPt = Math.max(LEGIBLE_TILE_PT, Math.min(minPt, startPt));
   const fits = (s: string, pt: number): boolean => (wrappedLineCount(prefix + s, usable, pt) * pt * 1.35) / 72 <= boxH;
-  for (let pt = startPt; pt >= LEGIBLE_TILE_PT; pt -= 0.5) {
+  for (let pt = startPt; pt >= floorPt; pt -= 0.5) {
     if (fits(body, pt)) return { body, fontSize: pt };
   }
   const chars = [...body];
@@ -5186,10 +5277,33 @@ function fitProseToBox(
   let hi = chars.length;
   while (lo < hi) {
     const mid = Math.ceil((lo + hi) / 2);
-    if (fits(`${chars.slice(0, mid).join('')}…`, LEGIBLE_TILE_PT)) lo = mid;
+    if (fits(`${chars.slice(0, mid).join('')}…`, floorPt)) lo = mid;
     else hi = mid - 1;
   }
-  return { body: `${chars.slice(0, lo).join('').trimEnd()}…`, fontSize: LEGIBLE_TILE_PT };
+  return { body: `${chars.slice(0, lo).join('').trimEnd()}…`, fontSize: floorPt };
+}
+
+/**
+ * A heading fitted to the band that was reserved for it.
+ *
+ * The cover title, the section headers and the diagram slide header were all
+ * drawn at a fixed point size with `wrap: true` and no autofit, so PowerPoint
+ * wrapped them to as many lines as they needed and grew the block out of the
+ * box - upward too, at `anchor="ctr"`, which put a three-line header above
+ * the top edge of the slide. Nothing in the deck bounded the name, because
+ * the name is free text the user types.
+ *
+ * Same two-stage answer as the index panel: take the largest size that fits,
+ * and only when the floor is reached trim by measurement. `TITLE_FLOOR_PT`
+ * ratios rather than absolute sizes so each of the three keeps its place in
+ * the hierarchy - a shrunk cover title is still bigger than a section header.
+ */
+const TITLE_FLOOR_RATIO = 0.5;
+
+function fitHeadingToBox(
+  text: string, boxW: number, boxH: number, startPt: number,
+): { body: string; fontSize: number } {
+  return fitProseToBox('', text, boxW, boxH, startPt, startPt * TITLE_FLOOR_RATIO);
 }
 
 /** Slide 1 — title / cover. */
@@ -5199,7 +5313,8 @@ function addTitleSlide(pptx: PptxGenJS, t: SlideTheme, o: ArchitectureDeckOption
   // Left accent band
   slide.addShape(pptx.ShapeType.rect, { x: 0, y: 0, w: 0.28, h: 7.5, fill: { color: t.accent }, line: { color: t.accent, width: 0 } });
   slide.addText('AZURE ARCHITECTURE', { x: 0.9, y: 1.5, w: 11.5, h: 0.4, fontSize: 14, bold: true, color: t.accent, fontFace: 'Yu Gothic UI', charSpacing: 3 });
-  slide.addText(o.diagramName, { x: 0.9, y: 2.0, w: 11.5, h: 1.6, fontSize: 40, bold: true, color: t.titleText, fontFace: 'Yu Gothic UI', valign: 'top', wrap: true });
+  const cover = fitHeadingToBox(o.diagramName, 11.5, 1.6, 40);
+  slide.addText(cover.body, { x: 0.9, y: 2.0, w: 11.5, h: 1.6, fontSize: cover.fontSize, bold: true, color: t.titleText, fontFace: 'Yu Gothic UI', valign: 'top', wrap: true });
   slide.addText(`${o.author}   ·   ${o.date}`, { x: 0.9, y: 3.7, w: 11.5, h: 0.4, fontSize: 14, color: t.metaText, fontFace: 'Yu Gothic UI' });
   if (o.prompt) {
     const brief = fitProseToBox('Brief:  ', o.prompt, 11.5, 1.7, 13);
@@ -5979,6 +6094,12 @@ function withSingleLineNames(o: ArchitectureDeckOptions): ArchitectureDeckOption
   return {
     ...o,
     diagramName: singleLine(o.diagramName),
+    // The other two thirds of the header triple. Left uncomposed they were
+    // invisible only because nothing fitted them; the cover title now has a
+    // fitter, so an NFD name measures differently from the NFC one that means
+    // the same thing and the two shrink to different sizes.
+    author: singleLine(o.author),
+    date: singleLine(o.date),
     ...(o.prompt ? { prompt: composedProse(o.prompt) } : {}),
     ...(o.model ? { model: singleLine(o.model) } : {}),
     services: o.services.map((s) => ({
