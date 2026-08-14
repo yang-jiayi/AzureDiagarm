@@ -2634,6 +2634,108 @@ function duplicateLabelFanScenario(): Scenario {
   return { id: 'probe-dup-fan', nodes, edges };
 }
 
+function hubSpokeCalloutScenario(): Scenario {
+  // One wide hub with eight narrow workers hanging off it, every hop numbered.
+  //
+  // This is the deck the badge rules could not see. Both exporters cap a disc
+  // at 55% of the narrower end and raise it to a legibility floor when 55% is
+  // under that floor, and both gates then decline to measure any badge sitting
+  // on the floor. That pair is not a narrow window, it is an identity: a disc
+  // can only exceed the bar by being on the floor, and being on the floor is
+  // the exemption. Measured here before the fix, with the gate reporting PASS:
+  // 93% of the tile on the overview and 62% on both reading windows, and the
+  // Visio sheet at 55% on the same input - the two formats disagreeing by 31
+  // points on the slides a reader actually reads.
+  //
+  // It reaches the other half of the question too. The badge is measured
+  // against the NARROWER end, which is the spoke; against the hub it is 9.3%,
+  // and with 14px spokes the drawing's disc is 2.7% of the hub and exempted
+  // as floored on top. A callout on a hop into a 4.17in tile that is a tenth
+  // of an inch across is not proportionate, it is lost.
+  const icon = '/Azure_Public_Service_Icons/Icons/compute/10029-icon-service-Function-Apps.svg';
+  const nodes: Node[] = [{
+    id: 'hsc-hub',
+    type: 'azureNode',
+    position: { x: 900, y: 500 },
+    width: 400,
+    height: 96,
+    data: {
+      label: 'Azure Front Door',
+      serviceName: 'Azure Front Door',
+      category: 'networking',
+      iconPath: icon,
+    },
+  } as unknown as Node];
+  const edges: Edge[] = [];
+  for (let i = 0; i < 8; i += 1) {
+    nodes.push({
+      id: `hsc-sp${i}`,
+      type: 'azureNode',
+      position: { x: (i % 4) * 500, y: i < 4 ? 0 : 1100 },
+      width: 40,
+      height: 96,
+      data: {
+        label: `Regional worker ${i + 1}`,
+        serviceName: 'Azure Functions',
+        category: 'compute',
+        iconPath: icon,
+      },
+    } as unknown as Node);
+    edges.push({
+      id: `hsce${i}`,
+      source: 'hsc-hub',
+      target: `hsc-sp${i}`,
+      data: { stepNumber: i + 1, stepDescription: `Front Door routes to worker ${i + 1}` },
+    } as unknown as Edge);
+  }
+  return { id: 'probe-hub-spoke', nodes, edges };
+}
+
+function numberedEstateScenario(): Scenario {
+  // A hundred and twenty ordinary services, ordinary size, every hop numbered.
+  //
+  // Nothing about this deck is a probe: 150x75 tiles on a 400x260 grid is what
+  // the app's own layout engines author. What it exposes is the overview. The
+  // badge block reads `perSlide`, which is `allSlides.slice(overviewAt + 1)`,
+  // so the first slide of every tiled deck has never been inside it - and the
+  // overview is where the tiles get small. Measured before the fix, gate
+  // reporting PASS: the overview drew its discs at 56% of a tile at 120
+  // services, 67% at 160 and 78% at 240, growing without bound because the
+  // disc is pinned to the legibility floor while the tile shrinks with N.
+  //
+  // The deck's own headline metric missed it by the same slice:
+  // `minTileWidthIn` reported 1.178in while the smallest tile the reader is
+  // handed is 0.319in, on slide one.
+  const icon = '/Azure_Public_Service_Icons/Icons/compute/10029-icon-service-Function-Apps.svg';
+  const nodes: Node[] = [];
+  const edges: Edge[] = [];
+  const cols = 11;
+  for (let i = 0; i < 120; i += 1) {
+    nodes.push({
+      id: `es${i}`,
+      type: 'azureNode',
+      position: { x: (i % cols) * 400, y: Math.floor(i / cols) * 260 },
+      width: 150,
+      height: 75,
+      data: {
+        label: `Contoso platform service ${i + 1}`,
+        serviceName: 'Azure Functions',
+        category: 'compute',
+        iconPath: icon,
+      },
+    } as unknown as Node);
+    if (i > 0) {
+      edges.push({
+        id: `ese${i}`,
+        source: `es${i - 1}`,
+        target: `es${i}`,
+        data: { stepNumber: i, stepDescription: `Stage ${i} hands off to stage ${i + 1}` },
+      } as unknown as Edge);
+    }
+  }
+  return { id: 'probe-estate-120', nodes, edges };
+}
+
 function bimodalSidecarScenario(): Scenario {
   // Six services at a normal size with a sidecar of twenty four tiny ones.
   //
@@ -6761,12 +6863,51 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
   // can be measured against the tiles it actually calls out rather than
   // against a statistic over the slide.
   const endsOfRoute = new Map<string, [string, string]>();
+  const stepOfRoute = new Map<string, number>();
   for (const edge of scenario.edges) {
     endsOfRoute.set(auditStrip(String(edge.id)), [
       auditStrip(String(edge.source)),
       auditStrip(String(edge.target)),
     ]);
+    const step = (edge as unknown as { data?: { stepNumber?: number | string } }).data?.stepNumber;
+    stepOfRoute.set(auditStrip(String(edge.id)), Number(step) || 1);
   }
+  // The exporter's own derived floor, at the smallest type a callout may be set
+  // in. Replicated rather than imported because this file measures the FILE and
+  // must keep working if the exporter's arithmetic changes underneath it.
+  const BADGE_SHARE = 0.55;
+  // The planner's own bar for a tile worth chasing, replicated for the same
+  // reason. Below it the exporter has already decided the tile is an authored
+  // sliver and left it to the renderer's type floor.
+  const MARKABLE_TILE_W_IN = 0.2;
+  const badgeFloorIn = (stepNumber: number, fontPt: number): number => {
+    const digits = String(Math.max(1, Math.abs(Math.trunc(stepNumber)))).length;
+    return (fontPt / 72) * (Math.hypot(digits * 0.62, 1.3) / 0.9);
+  };
+  const conflicts: Array<{ name: string; tile: number; floor: number; ratio: number }> = [];
+  // A label may lean on the two services its own arrow connects. The reader
+  // still attributes it correctly — it is touching the very icons it is about
+  // — and on a hop shorter than the label there is nowhere else for it to go.
+  // Leaning on a THIRD service is a different thing entirely: it hides an
+  // unrelated icon and reads as that service's caption. So the bar for a
+  // stranger's tile stays at a couple of percent, and an endpoint of the
+  // arrow itself is allowed a tenth of its area before it counts as hidden.
+  //
+  // Hoisted out of the per-slide loop, which recomputed all three from the
+  // scenario on every sheet, so that the badge loop below can share them.
+  const membersOfZone = new Map<string, number>();
+  for (const node of scenario.nodes) {
+    if (!node.parentNode) continue;
+    membersOfZone.set(node.parentNode, (membersOfZone.get(node.parentNode) ?? 0) + 1);
+  }
+  const annotationEnds = new Map<string, Set<string>>();
+  for (const edge of scenario.edges) {
+    annotationEnds.set(edge.id, new Set([`service-${edge.source}`, `service-${edge.target}`]));
+  }
+  const tileBudget = (annotation: string, tile: Shape): number => {
+    const routeId = annotation.replace(/^connector-(label|step)-/, '');
+    return annotationEnds.get(routeId)?.has(tile.name) ? 0.1 : 0.02;
+  };
   // Collisions are only real between shapes printed on the same sheet. Reading
   // every slide as one pile reported a chip on part 1 as covering a tile on
   // part 3, which turned every tiled deck into a wall of phantom issues and
@@ -6774,26 +6915,6 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
   for (const slideShapes of perSlide) {
     const slideTiles = slideShapes.filter((s) => s.name.startsWith('service-') && !s.name.includes('label') && !s.name.includes('meta'));
     const slideChips = slideShapes.filter((s) => s.name.startsWith('connector-label-'));
-    // A label may lean on the two services its own arrow connects. The reader
-    // still attributes it correctly — it is touching the very icons it is about
-    // — and on a hop shorter than the label there is nowhere else for it to go.
-    // Leaning on a THIRD service is a different thing entirely: it hides an
-    // unrelated icon and reads as that service's caption. So the bar for a
-    // stranger's tile stays at a couple of percent, and an endpoint of the
-    // arrow itself is allowed a tenth of its area before it counts as hidden.
-    const membersOfZone = new Map<string, number>();
-    for (const node of scenario.nodes) {
-      if (!node.parentNode) continue;
-      membersOfZone.set(node.parentNode, (membersOfZone.get(node.parentNode) ?? 0) + 1);
-    }
-    const endpointsOf = new Map<string, Set<string>>();
-    for (const edge of scenario.edges) {
-      endpointsOf.set(edge.id, new Set([`service-${edge.source}`, `service-${edge.target}`]));
-    }
-    const tileBudget = (annotation: string, tile: Shape): number => {
-      const routeId = annotation.replace(/^connector-(label|step)-/, '');
-      return endpointsOf.get(routeId)?.has(tile.name) ? 0.1 : 0.02;
-    };
     for (const chip of slideChips) {
       for (const tile of slideTiles) {
         const area = overlapArea(chip, tile);
@@ -6937,6 +7058,27 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
         }
       }
     }
+  }
+  // The badge rules run over one more sheet than the collision rules above:
+  // the overview.
+  //
+  // Its exclusion from `perSlide` is structural - that array is
+  // `allSlides.slice(overviewAt + 1)` - and it is right for every rule in the
+  // loop above, which measure whether shapes collide. The overview is a dense
+  // index by design; measuring chip-against-tile there reported four phantom
+  // overlaps on `pipeline-region` the moment this loop was widened, which is
+  // how the separation earned its own loop rather than a shared one.
+  //
+  // It is exactly wrong for badge proportion, because the overview is where
+  // the tiles are SMALL: on a 120-service estate the discs drew at 56% of a
+  // tile, 67% at 160 and 78% at 240, growing without bound as the tile shrinks
+  // with N, while the reading windows never moved off 18-20%. The rule was
+  // armed on the slides where nothing can go wrong and blind on the one slide
+  // where it does.
+  const badgeSlides = overviewShapes.length > 0 ? [...perSlide, overviewShapes] : perSlide;
+  for (const slideShapes of badgeSlides) {
+    const slideTiles = slideShapes.filter((s) => s.name.startsWith('service-') && !s.name.includes('label') && !s.name.includes('meta'));
+    const slideChips = slideShapes.filter((s) => s.name.startsWith('connector-label-'));
     for (const badge of slideShapes.filter((s) => s.name.startsWith('connector-step-'))) {
       let buried = 0;
       for (const tile of slideTiles) {
@@ -7007,14 +7149,65 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
         if (widths.length === ends.length) {
           const tile = Math.min(...widths);
           // Only where a proportionate disc could also have been a legible one.
-          // Below a 0.327in tile, 55% of it is narrower than the 0.18in floor
-          // that holds a digit, so no diameter satisfies both and the defect is
-          // the tile size rather than the callout. The drawing exporter's rule
-          // carries the same precondition, for the same reason.
-          if (tile * 0.55 >= 0.18 - 1e-6 && badge.w > tile * 0.55 + 2e-4) {
+          //
+          // Round 72 established that this precondition is not a narrow window,
+          // it is the exact complement of the rule: the exporter emits
+          // `max(floor, min(natural, 0.55 * tile))`, so the bar can only be
+          // exceeded by a disc sitting on the floor, and a disc on the floor is
+          // what the precondition exempts. Armed implies cannot fire. So this
+          // clause stays - measuring the disc there points at the only object
+          // in the picture that is behaving correctly - and the conflict itself
+          // is reported below, against the tile, where it can be acted on.
+          //
+          // The clause is not dead weight. It is the mutation guard on the
+          // ceiling: restore the tile-blind clamp and it fires on every
+          // ordinary numbered deck.
+          const floor = badgeFloorIn(stepOfRoute.get(routeId) ?? 1, 7);
+          if (tile * BADGE_SHARE >= floor - 1e-6 && badge.w > tile * BADGE_SHARE + 2e-4) {
             issues.push(`step badge "${badge.name}" is ${badge.w.toFixed(4)}in across on a `
               + `${tile.toFixed(4)}in tile — ${((badge.w / tile) * 100).toFixed(0)}% of the `
               + 'service it is calling out');
+          } else if (tile * BADGE_SHARE < floor - 1e-6 && tile >= MARKABLE_TILE_W_IN - 1e-6) {
+            // The empty intersection, stated as what it is. A tile this small
+            // admits no disc that is both readable and proportionate, so there
+            // is nothing the callout can do about it and the fix is a coarser
+            // split or no callout on this slide at all.
+            //
+            // Only above the markable bar, which is the line between a tile the
+            // planner chases and a tile it has already declined to. Below it
+            // sits an authored sliver: `probe-two-chains` numbers six 24px
+            // sensors, and no split widens them, because a 24x96 node is capped
+            // by the type ceiling at a scale set by its HEIGHT - the aspect is
+            // the author's and the plan cannot touch it. The renderer floors
+            // such a tile's type at 7pt regardless, so the sliver reads; what
+            // it cannot do is carry a proportionate disc, and reporting that
+            // would be another bar with no move behind it.
+            //
+            // At and above the bar the planner met its old contract and this is
+            // a stricter one, which is exactly what `markableTileWIn` raises.
+            conflicts.push({ name: badge.name, tile, floor, ratio: badge.w / tile });
+          }
+          // The reader hunts a callout against the LARGEST thing beside it, not
+          // the smallest, so the undersize test takes the other denominator
+          // from the ceiling.
+          //
+          // Exempt at either bound, because at a bound the disc is already as
+          // big as it is allowed to be and the fault, if there is one, is not
+          // the disc's. On a hub with 40px spokes a disc at its own ceiling is
+          // 5.5% of the hub and there is no larger diameter that does not
+          // swamp the spoke; reporting that would be the same unfixable bar
+          // this round removed, pointing the other way. What the rule is FOR
+          // is a disc cut below its own ceiling by something that is not its
+          // own tile - the two-chain fault capped discs at 0.1375in with a
+          // 0.24in ceiling and a 0.1119in floor, clear of both.
+          const widest = Math.max(...widths);
+          const ceiling = tile * BADGE_SHARE;
+          if (badge.w < widest * 0.1
+            && badge.w < ceiling - 1e-4
+            && badge.w > floor + 1e-4) {
+            issues.push(`step badge "${badge.name}" is ${badge.w.toFixed(4)}in across beside a `
+              + `${widest.toFixed(4)}in tile — ${((badge.w / widest) * 100).toFixed(1)}% of it, `
+              + 'too small to find on the hop it numbers');
           }
         }
       }
@@ -7034,6 +7227,25 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
         );
       }
     }
+  }
+  // The empty intersection, reported once per deck rather than once per disc.
+  //
+  // A tile under `floor / 0.55` admits no diameter that is both readable and
+  // proportionate, so the exporter draws the floor and the ratio rule above
+  // correctly declines to blame the disc. Something still has to be said, or
+  // the deck ships callouts at 62% and 78% of the services they number with a
+  // clean gate - which is exactly what rounds 68 to 71 did. This is the rule
+  // that can actually fire on exporter output, and it points at the tile.
+  //
+  // Worst first, and capped, because one bad plan produces one line per hop
+  // and the number of hops is not information.
+  if (conflicts.length > 0) {
+    const worst = conflicts.sort((a, b) => b.ratio - a.ratio)[0];
+    issues.push(`${conflicts.length} step callout(s) sit on a tile too small to carry one: `
+      + `"${worst.name}" needs at least ${worst.floor.toFixed(4)}in to stay readable and at most `
+      + `${(worst.tile * BADGE_SHARE).toFixed(4)}in to stay proportionate on its `
+      + `${worst.tile.toFixed(4)}in tile, so it draws at ${(worst.ratio * 100).toFixed(0)}% of `
+      + 'the service it is calling out');
   }
   // A shape reduced to a hairline is worse than one drawn too big: the reader
   // cannot see that anything is missing — the band is simply gone, and so is
@@ -9282,7 +9494,25 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
       // proportionate to one tile and swamps the other is still swamping one.
       const tile = Math.min(...widths);
       const floor = badgeFloorIn(stepOfEdge.get(edgeId) ?? 1);
-      ratios.push({ ratio: badge.w / tile, floored: badge.w <= floor + 1e-4 });
+      // Two denominators, because the two rules ask different questions.
+      //
+      // The CEILING asks whether the disc swamps a service, and a disc that is
+      // proportionate to one end and swamps the other is still swamping one,
+      // so that is the narrower end. The undersize rule asks whether a reader
+      // can FIND the disc, and a reader hunts it against the largest thing
+      // beside it: on a hub with narrow spokes, 55% of the spoke is 5.5% of
+      // the hub, and the same disc is proportionate by one measure and a speck
+      // by the other. Measured on `probe-hub-spoke` with 14px spokes, the disc
+      // is 76.7% of the spoke and 2.7% of the hub.
+      ratios.push({
+        ratio: badge.w / Math.max(...widths),
+        // Exempt at either bound. On the floor that is the placement search
+        // squeezing a disc into a gap so the number sits on its own arrow;
+        // on the ceiling there is simply no larger diameter that leaves the
+        // narrow end unswamped. What is left is a disc cut by something that
+        // is not its own tile, which is the fault this rule was written for.
+        floored: badge.w <= floor + 1e-4 || badge.w >= tile * 0.55 - 1e-4,
+      });
       // A hair of slack, because the ceiling IS `tile * 0.55`, so a capped
       // badge sits exactly on this bar and the verdict would otherwise be
       // decided by the rounding of the decimals written into the XML -
@@ -9328,7 +9558,7 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
     for (const [at, seen] of ratios.entries()) {
       if (seen.ratio >= 0.1 || seen.floored) continue;
       issues.push(`step badge ${at + 1} of ${ratios.length} is only ${(seen.ratio * 100).toFixed(1)}% `
-        + 'of the tile it numbers — too small to find');
+        + 'of the widest tile it sits beside — too small to find');
       break;
     }
   }
@@ -10285,6 +10515,8 @@ async function main(): Promise<void> {
   numberedSpreadScenario(),
   numberedMidSpreadScenario(),
   duplicateLabelFanScenario(),
+  hubSpokeCalloutScenario(),
+  numberedEstateScenario(),
   longTitleScenario(20),
   longTitleScenario(70),
   longTitleScenario(95),

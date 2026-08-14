@@ -569,11 +569,55 @@ export function narrowestBoxW(boxes: readonly { w: number }[]): number {
   return narrowest;
 }
 
-function rendererMaxScale(minBoxW: number): number {
+function rendererMaxScale(minBoxW: number, markIn: number = MARKABLE_TILE_W_IN): number {
   return Math.max(
     1 / PX_PER_IN,
-    Number.isFinite(minBoxW) && minBoxW > 0 ? MARKABLE_TILE_W_IN / minBoxW : 0,
+    Number.isFinite(minBoxW) && minBoxW > 0 ? markIn / minBoxW : 0,
   );
+}
+
+/**
+ * The tile width the planner should aim for, given what the drawing carries.
+ *
+ * `MARKABLE_TILE_W_IN` is the bar for a tile that can hold an identifying
+ * mark, and for an unnumbered drawing that is the whole requirement. A
+ * NUMBERED drawing has a second one: every hop carries a disc that must be
+ * readable and must not swamp the service it points at, and those two
+ * demands only intersect above `floor / 0.55`. Below it the exporter has no
+ * move left - it draws the floor and the disc is disproportionate whatever it
+ * chooses - so the planner's own success condition was the badge rule's
+ * failure condition, and a deck could sit exactly on the markable bar with
+ * every callout at 97% of its tile and pass.
+ *
+ * Taken from the LARGEST step number, because a three-digit disc is 58% wider
+ * than a one-digit one and the bar has to hold for the widest number drawn.
+ *
+ * This only binds on a drawing authored small: `rendererMaxScale` is the
+ * larger of this and natural size, so it moves nothing until the median tile
+ * is under `96 * markIn` pixels - about 34px for a two-digit deck, against
+ * 19.2px before.
+ */
+function markableTileWIn(steps: Iterable<number | undefined | null>): number {
+  let widest = 0;
+  for (const raw of steps) {
+    const step = Number(raw);
+    if (Number.isFinite(step) && step > widest) widest = step;
+  }
+  if (widest <= 0) return MARKABLE_TILE_W_IN;
+  return Math.max(
+    MARKABLE_TILE_W_IN,
+    badgeFloorIn(widest, BADGE_LEGIBLE_PT) / BADGE_TILE_SHARE,
+  );
+}
+
+/** The step numbers a drawing's edges carry, for {@link markableTileWIn}. */
+function stepNumbersOf(
+  edges: readonly { data?: { stepNumber?: unknown } }[],
+): (number | undefined)[] {
+  return edges.map((edge) => {
+    const step = Number(edge?.data?.stepNumber);
+    return Number.isFinite(step) ? step : undefined;
+  });
 }
 
 /**
@@ -620,9 +664,10 @@ export function legibleScaleFor(
   target: number,
   frame: { w: number; h: number },
   minBoxW: number = Infinity,
+  markIn: number = MARKABLE_TILE_W_IN,
 ): number {
   const finestPerIn = Math.min(frame.w, frame.h) / (WINDOW_BLEED_PX * 2 + Math.max(1, target));
-  return Math.min(LEGIBLE_TILE_PT / 12 / Math.max(1, target), finestPerIn, rendererMaxScale(minBoxW));
+  return Math.min(LEGIBLE_TILE_PT / 12 / Math.max(1, target), finestPerIn, rendererMaxScale(minBoxW, markIn));
 }
 /**
  * Split the drawing into as few standard-slide windows as keep tiles legible.
@@ -658,7 +703,7 @@ function planDiagramWindows(
   bounds: Bounds,
   services: ExportBox[],
   frame: DiagramFrame,
-  options: { mustTile?: boolean } = {},
+  options: { mustTile?: boolean; markIn?: number } = {},
 ): { windows: DiagramWindow[]; legible: boolean } {
   const raised = planWindowsAtCeiling(bounds, services, frame, options, true);
   if (raised.windows.length === 0) return raised;
@@ -673,7 +718,7 @@ function planWindowsAtCeiling(
   bounds: Bounds,
   services: ExportBox[],
   frame: DiagramFrame,
-  options: { mustTile?: boolean } = {},
+  options: { mustTile?: boolean; markIn?: number } = {},
   raiseCeiling = true,
 ): { windows: DiagramWindow[]; legible: boolean } {
   const contentW = Math.max(1, bounds.maxX - bounds.minX);
@@ -745,7 +790,12 @@ function planWindowsAtCeiling(
   // its slides is then measured on the resulting plan, not predicted here.
   const widths = services.map((box) => box.w).filter((w) => w > 0).sort((a, b) => a - b);
   const typicalW = widths[Math.floor(widths.length * 0.5)] ?? Infinity;
-  const legibleScale = legibleScaleFor(target, frame, raiseCeiling ? typicalW : Infinity);
+  const legibleScale = legibleScaleFor(
+    target,
+    frame,
+    raiseCeiling ? typicalW : Infinity,
+    options.markIn ?? MARKABLE_TILE_W_IN,
+  );
   if (Math.min(frame.w / contentW, frame.h / contentH) >= legibleScale) return whole;
 
   // Splitting on one axis only is why a tall drawing used to grow the page
@@ -1051,7 +1101,10 @@ function planFixedPageWindows(diagram: DiagramShapeSource, frame: DiagramFrame):
   if (boxes.size === 0) return [];
   const { services } = partitionBoxes(boxes);
   if (services.length === 0) return [];
-  return planDiagramWindows(bounds, services, frame, { mustTile: true }).windows;
+  return planDiagramWindows(bounds, services, frame, {
+    mustTile: true,
+    markIn: markableTileWIn(stepNumbersOf(diagram.edges ?? [])),
+  }).windows;
 }
 
 /**
@@ -1068,6 +1121,9 @@ function planSlideGeometry(diagram?: DiagramShapeSource | null): SlideGeometry {
   // renderer, so the tiler plans legibility against the height the drawing will
   // actually get: reserved later, the two disagreed and tiles slid under 7pt.
   const legendH = usedConnectionLegend(diagram?.edges ?? []).length > 0 ? 0.24 + 0.03 : 0;
+  // A numbered drawing has to reach a tile that can carry its callout, not
+  // merely one that can carry a mark. See `markableTileWIn`.
+  const markIn = markableTileWIn(stepNumbersOf(diagram?.edges ?? []));
   const frameFor = (pageW: number, pageH: number): DiagramFrame => {
     const footer = pageH - FOOTER_H - 0.08;
     return { x: IMAGE_X, y: IMAGE_Y, w: pageW - IMAGE_X * 2, h: footer - IMAGE_Y - 0.1 - legendH };
@@ -1103,7 +1159,7 @@ function planSlideGeometry(diagram?: DiagramShapeSource | null): SlideGeometry {
       // demands. Prefer standard slides: shrink onto one while the labels stay
       // above the legibility floor, tile across several when they would not,
       // and only grow the page when even the slide budget is exceeded.
-      const standard = planDiagramWindows(bounds, services, frameFor(BASE_W, BASE_H));
+      const standard = planDiagramWindows(bounds, services, frameFor(BASE_W, BASE_H), { markIn });
       // `legible: false` is a request to grow the page, not a verdict that the
       // drawing cannot be tiled. A sparse architecture — the hub-and-spoke
       // every Architecture Center reference draws — defeats the
@@ -1112,7 +1168,7 @@ function planSlideGeometry(diagram?: DiagramShapeSource | null): SlideGeometry {
       // planner for the finest grid the slide budget allows before giving up on
       // ordinary slides; the 7pt floor still governs whether the result is
       // readable, and every part still shares one scale.
-      const forced = standard.legible ? null : planDiagramWindows(bounds, services, frameFor(BASE_W, BASE_H), { mustTile: true });
+      const forced = standard.legible ? null : planDiagramWindows(bounds, services, frameFor(BASE_W, BASE_H), { mustTile: true, markIn });
       if (standard.legible) {
         windows = standard.windows;
       } else if (forced && forced.windows.length > 1) {
@@ -1138,7 +1194,7 @@ function planSlideGeometry(diagram?: DiagramShapeSource | null): SlideGeometry {
         // such option left; the bail-outs it takes on that assumption returned
         // no windows at all and left a 200-service estate as a single 56x39.87in
         // sheet, which is the one outcome this branch exists to avoid.
-        const grown = planDiagramWindows(bounds, services, frameFor(w, h), { mustTile: true });
+        const grown = planDiagramWindows(bounds, services, frameFor(w, h), { mustTile: true, markIn });
         windows = grown.windows;
         // Splitting restores legibility, so the "scaled down to fit" warning no
         // longer applies — the drawing is now at its readable size.
@@ -2196,15 +2252,60 @@ function addConnectorLabel(
  * that is both - and the answer is not to drop the callout: the workflow slide
  * cites step numbers and every one of them has to be findable on the canvas,
  * which is a promise the deck keeps and a rule the gate already enforces. The
- * disc goes to the floor, matching the drawing exporter exactly, and the
- * remaining disproportion is a fact about the TILE, not about the disc. It is
- * disclosed rather than gated, because the only fix is a coarser split and
- * that trade is owned by the planner.
+ * disc goes to the floor, and where even the floor is over the ceiling the
+ * gate reports the empty intersection against the TILE, which is the only
+ * object in that picture behaving badly.
  */
 const BADGE_TILE_SHARE = 0.55;
-const BADGE_LEGIBLE_IN = 0.18;
+/**
+ * The smallest type a callout may be set in, in points.
+ *
+ * The deck's own legibility floor, the same constant the tile labels use. It
+ * is here rather than inline because the disc's floor is derived from it and
+ * the two must not drift.
+ */
+const BADGE_LEGIBLE_PT = LEGIBLE_TILE_PT;
+/**
+ * Diameter per inch of type, for a number of this many digits.
+ *
+ * PowerPoint lays a callout out as a text box centred in an ellipse, so the
+ * thing that has to fit is a box of `digits * 0.62` by `1.3` ems - the same
+ * model the gate's own bubble rule uses, and the line height is why this is
+ * not the drawing exporter's chord formula. The box is inscribed rather than
+ * merely contained, because a box that fits the bounding SQUARE still pushes
+ * its corners through the circle, and a tenth of the disc is kept as a ring
+ * because a white number with no dark disc behind it is not a callout.
+ *
+ * What this replaces is a FLAT 0.18in floor. A floor that does not move with
+ * the type it holds is not a legibility floor, it is a magic number that
+ * happens to be safe: for a 7pt digit the drawing exporter derived 0.1119in
+ * and PowerPoint used 0.18in, 61% larger, and that one constant was the whole
+ * of the 93%-versus-55% disagreement between the two formats on the same
+ * nine-node diagram.
+ */
+function badgeDiameterPerIn(digits: number): number {
+  return Math.hypot(Math.max(1, digits) * 0.62, 1.3) / 0.9;
+}
+function badgeFloorIn(stepNumber: number, fontPt: number): number {
+  const digits = String(Math.max(1, Math.abs(Math.trunc(stepNumber)))).length;
+  return (fontPt / 72) * badgeDiameterPerIn(digits);
+}
+/**
+ * The largest type that fits inside a disc of this diameter.
+ *
+ * The disc is sized by the tile and the type is then sized by the disc, so the
+ * two can never disagree. Before this the type was chosen from the chip beside
+ * it and the disc from a constant, which is why the file needs a rule watching
+ * for numbers that run outside their own bubble at all.
+ */
+function badgeFontPtFor(stepNumber: number, diameterIn: number): number {
+  const digits = String(Math.max(1, Math.abs(Math.trunc(stepNumber)))).length;
+  return (diameterIn / badgeDiameterPerIn(digits)) * 72;
+}
 function stepBadgeDiameterIn(route: ExportRoute, transform: FitTransform, px: number): number {
-  const natural = clamp(0.26 * px, BADGE_LEGIBLE_IN, 0.42);
+  const step = route.stepNumber ?? 1;
+  const floor = badgeFloorIn(step, BADGE_LEGIBLE_PT);
+  const natural = clamp(0.26 * px, floor, 0.42);
   const ends = [route.sourceW, route.targetW]
     .filter((w) => typeof w === 'number' && w > 0)
     .map((w) => w * transform.scale);
@@ -2212,7 +2313,24 @@ function stepBadgeDiameterIn(route: ExportRoute, transform: FitTransform, px: nu
   // The narrower end, not the average. A disc that is proportionate to one tile
   // and swamps the other is still swamping a tile.
   const ceiling = Math.min(...ends) * BADGE_TILE_SHARE;
-  return Math.max(BADGE_LEGIBLE_IN, Math.min(natural, ceiling));
+  return Math.max(floor, Math.min(natural, ceiling));
+}
+
+/**
+ * Whether this hop's tiles admit no callout at all.
+ *
+ * Under `floor / 0.55` the legible diameter and the proportionate one do not
+ * intersect, so whatever is drawn is either unreadable or swamps the service
+ * it points at. Every slide but the overview can answer that by splitting
+ * further; the overview cannot, so it is the one place the callout is dropped.
+ */
+function stepBadgeConflicts(route: ExportRoute, transform: FitTransform): boolean {
+  const ends = [route.sourceW, route.targetW]
+    .filter((w) => typeof w === 'number' && w > 0)
+    .map((w) => w * transform.scale);
+  if (ends.length === 0) return false;
+  return Math.min(...ends) * BADGE_TILE_SHARE
+    < badgeFloorIn(route.stepNumber ?? 1, BADGE_LEGIBLE_PT) - 1e-6;
 }
 
 /**
@@ -2232,8 +2350,22 @@ function stepBadgeBox(
   obstacles: readonly Obstacle[] = [],
   ownGap?: (x: number, y: number) => number,
   foreignGap?: (x: number, y: number) => number,
+  thumbnail = false,
 ): { x: number; y: number; d: number } | null {
   if (route.stepNumber === undefined) return null;
+  // Not on the overview, when the tile cannot carry one.
+  //
+  // The overview is the whole drawing shown small on one slide, so its tiles
+  // shrink with the size of the estate and no scale choice can rescue them: at
+  // 120 services the disc drew 56% of its tile, at 240 it drew 78%, and the
+  // trend has no end. Every other slide can be split until the tile is big
+  // enough; this one cannot, by construction.
+  //
+  // Dropping it costs nothing the reader needs. The overview is a locator - it
+  // exists so the reader can see where each part sits in the whole - and the
+  // numbered story is told on the reading windows, which is also where the
+  // rule requiring every cited step to be findable does its counting.
+  if (thumbnail && stepBadgeConflicts(route, transform)) return null;
 
   // No chip to hang off: either an unlabelled but numbered hop, or one whose
   // wording was muted because it had nowhere legible to stand. The anchor is
@@ -2360,6 +2492,11 @@ function addStepBadge(
 ): void {
   if (!box) return;
   const { x, y, d } = box;
+  // Sized by the disc, not by the chip beside it. The disc is sized by the
+  // tile, so a callout on a small service gets a small disc, and type chosen
+  // independently of it is type that runs to the rim or over it. Never larger
+  // than asked for, so an ordinary deck is byte-identical.
+  const fits = Math.min(fontSize, badgeFontPtFor(route.stepNumber ?? 1, d));
 
   slide.addText(String(route.stepNumber), {
     x,
@@ -2371,7 +2508,7 @@ function addStepBadge(
     line: { color: 'FFFFFF', width: 1.25 },
     color: 'FFFFFF',
     bold: true,
-    fontSize,
+    fontSize: fits,
     fontFace: 'Yu Gothic UI',
     align: 'center',
     valign: 'middle',
@@ -3511,7 +3648,11 @@ async function addEditableDiagram(
   // bind, so nothing is magnified past the page. The expression itself lives on
   // `rendererMaxScale`, which the planner reads too - the two had diverged.
   const minBoxW = narrowestBoxW(services);
-  const maxScale = rendererMaxScale(minBoxW);
+  // The same bar the planner used. A renderer that stops magnifying below the
+  // scale the planner split to leaves tiles under the bar with the slides
+  // already spent, which is the divergence this expression was pulled into
+  // `rendererMaxScale` to prevent - and a numbered drawing moves the bar.
+  const maxScale = rendererMaxScale(minBoxW, markableTileWIn(routes.map((r) => r.stepNumber)));
   const transform = computeFitTransform(drawnView, frame, { maxScale });
   const clampTo = clamped || banded ? frame : undefined;
   // A tile is drawn where the drawing says; a chip is drawn *around* its arrow
@@ -4014,7 +4155,7 @@ async function addEditableDiagram(
       if (box) chipObstacles.push(box.block);
       const badge = stepBadgeBox(
         route, transform, px, labelFrame, box, chipObstacles,
-        ownGapFor(route), foreignGapFor(route),
+        ownGapFor(route), foreignGapFor(route), thumbnail,
       );
       badges.set(route.id, badge);
       // The chip reserves room for its own badge inside its block, so a badge
@@ -4572,7 +4713,7 @@ async function addEditableDiagram(
       chips.set(route.id, moved);
       badges.set(route.id, stepBadgeBox(
         route, transform, px, labelFrame, moved, chipObstacles,
-        ownGapFor(route), foreignGapFor(route),
+        ownGapFor(route), foreignGapFor(route), thumbnail,
       ));
       repaired += 1;
     }
@@ -4633,7 +4774,7 @@ async function addEditableDiagram(
         chips.set(route.id, moved);
         badges.set(route.id, stepBadgeBox(
           route, transform, px, labelFrame, moved, pool,
-          ownGapFor(route), foreignGapFor(route),
+          ownGapFor(route), foreignGapFor(route), thumbnail,
         ));
         const slot = old?.block ? chipObstacles.indexOf(old.block) : -1;
         if (moved) {
