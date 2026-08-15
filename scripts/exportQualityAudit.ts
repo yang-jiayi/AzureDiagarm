@@ -7088,7 +7088,7 @@ async function zipXmlParts(zip: JSZip): Promise<Array<{ path: string; text: stri
  * holds it to that, so measuring them on `authored` stays sound.
  */
 async function pptxBuffers(pptx: {
-  write(opts: { outputType: string }): Promise<unknown>;
+  write(opts: { outputType: 'nodebuffer' }): Promise<unknown>;
 }): Promise<{ authored: Buffer; delivered: Buffer }> {
   const authored = (await pptx.write({ outputType: 'nodebuffer' })) as Buffer;
   const zip = await nativizePackage(await JSZip.loadAsync(authored));
