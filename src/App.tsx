@@ -20,6 +20,7 @@ import ReactFlow, {
 import 'reactflow/dist/style.css';
 import type { CaptureOptions } from './utils/captureCanvas';
 import { type ExportBackground } from './utils/captureCanvas';
+import { dataUrlToBlob } from './utils/assetSource';
 import { animateEdgeFlow } from './utils/animateEdges';
 import { sequenceWorkflowSvg } from './utils/sequenceWorkflow';
 import { buildWorkflowMarkdown } from './services/workflowNarrativeExporter';
@@ -3200,8 +3201,11 @@ function App() {
         reactFlowWrapper.current,
         createDiagramCaptureOptions(false),
       );
-      const res = await fetch(dataUrl);
-      const blob = await res.blob();
+      // Not `fetch(dataUrl)`: a data URL is governed by CSP `connect-src`,
+      // which this app deliberately restricts, so fetching it threw in
+      // production and the export delivered nothing at all.
+      const blob = dataUrlToBlob(dataUrl);
+      if (!blob) throw new Error('the captured PNG could not be decoded');
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
       const fileName = generateModelFilename('azure-diagram', 'png');

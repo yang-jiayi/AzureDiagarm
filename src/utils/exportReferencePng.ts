@@ -19,6 +19,7 @@ import type { ReferenceArchitecture } from '../services/referenceArchitectureAI'
 import { captureDiagramAsPng } from './captureCanvas';
 import { getServiceIconMapping } from '../data/serviceIconMapping';
 import { loadIcon } from './iconLoader';
+import { readTextAsset, svgToDataUrl } from './assetSource';
 import { calculateReferenceCanvasWidth } from './publicationLayout';
 
 export interface ExportReferencePngOptions {
@@ -163,17 +164,18 @@ async function preloadActorIcon(): Promise<string | undefined> {
 }
 
 /**
- * Fetch an SVG asset and convert it to a `data:image/svg+xml;base64,...` URL.
- * Inlining as data URL bypasses any cross-origin / network timing concerns
- * during the html-to-image capture step.
+ * Read an SVG asset and return it as a `data:image/svg+xml;base64,...` URL.
+ *
+ * Inlining as a data URL bypasses cross-origin and network-timing concerns
+ * during the html-to-image capture step. It cannot be a `fetch`: see
+ * `assetSource.ts` -- a production build hands back a `data:` URL for most
+ * icons, and fetching one is refused by the CSP, which dropped every inlined
+ * icon from this export while the catch below made it look successful.
  */
 async function fetchSvgAsDataUrl(url: string): Promise<string> {
-  const res = await fetch(url);
-  if (!res.ok) return '';
-  const svg = await res.text();
-  // base64 encode (handles UTF-8 safely)
-  const encoded = btoa(unescape(encodeURIComponent(svg)));
-  return `data:image/svg+xml;base64,${encoded}`;
+  const svg = await readTextAsset(url);
+  if (!svg) return '';
+  return svgToDataUrl(svg);
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────

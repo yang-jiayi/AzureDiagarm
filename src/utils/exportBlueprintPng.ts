@@ -18,6 +18,7 @@ import { captureDiagramAsPng } from './captureCanvas';
 import { getServiceIconMapping } from '../data/serviceIconMapping';
 import { resolveServiceIconLoose } from './serviceIconFuzzy';
 import { loadIcon } from './iconLoader';
+import { readTextAsset, svgToDataUrl } from './assetSource';
 import { getModelSuffix } from './modelNaming';
 import {
   calculateBlueprintContentFrame,
@@ -167,12 +168,15 @@ async function preloadPersonaIcon(): Promise<string | undefined> {
   }
 }
 
+/**
+ * Read an SVG asset as a data URL. Not a `fetch`: see `assetSource.ts` -- a
+ * production build inlines most icons as `data:` URLs, and fetching one is
+ * refused by the CSP, which silently stripped them from this export.
+ */
 async function fetchSvgAsDataUrl(url: string): Promise<string> {
-  const res = await fetch(url);
-  if (!res.ok) return '';
-  const svg = await res.text();
-  const encoded = btoa(unescape(encodeURIComponent(svg)));
-  return `data:image/svg+xml;base64,${encoded}`;
+  const svg = await readTextAsset(url);
+  if (!svg) return '';
+  return svgToDataUrl(svg);
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────

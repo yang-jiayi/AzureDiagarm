@@ -15,6 +15,7 @@
 
 import { Node, Edge } from 'reactflow';
 import { generateModelFilename } from '../utils/modelNaming';
+import { readTextAsset, svgToDataUrl } from '../utils/assetSource';
 import {
   buildExportRoutes,
   categoryStyle,
@@ -32,43 +33,34 @@ import {
 /** Trim coordinates to 2dp so the XML stays compact and deterministic. */
 const f = (n: number): number => +n.toFixed(2);
 
-// Load SVG icon and convert to Base64 data URI for Draw.io
+/**
+ * Load a service icon as a data URI Draw.io can render.
+ *
+ * Two things were wrong here and both had to be fixed for an icon to appear:
+ *
+ * `fetch(iconPath)` asked the server for the raw `/Azure_Public_Service_Icons/`
+ * path. That path exists only under the dev server; a build bundles the icons
+ * and emits nothing at that URL, so in production every request 404'd and every
+ * tile exported without its icon. Going through `loadIcon` gets the URL the
+ * build actually produced, and `readTextAsset` reads it whether that is a file
+ * or an inlined `data:` URL (see `assetSource.ts`).
+ *
+ * The returned URI also omitted the `;base64` marker, so consumers percent-
+ * decoded a base64 payload and got the literal base64 text instead of SVG. The
+ * image never rendered anywhere, including in dev.
+ */
 async function loadIconAsBase64(iconPath: string): Promise<string | null> {
-  if (!iconPath) {
-    console.log('[Draw.io Export] No icon path provided');
-    return null;
-  }
-  
+  if (!iconPath) return null;
+
   try {
-    console.log('[Draw.io Export] Loading icon:', iconPath);
-    
-    // Fetch the SVG file
-    const response = await fetch(iconPath);
-    if (!response.ok) {
-      console.warn(`[Draw.io Export] Failed to load icon (${response.status}): ${iconPath}`);
-      return null;
-    }
-    
-    const svgText = await response.text();
-    console.log('[Draw.io Export] Icon loaded, size:', svgText.length, 'bytes');
-    
-    // Convert to Base64 using modern approach
-    const encoder = new TextEncoder();
-    const data = encoder.encode(svgText);
-    let binary = '';
-    const len = data.byteLength;
-    for (let i = 0; i < len; i++) {
-      binary += String.fromCharCode(data[i]);
-    }
-    const base64 = btoa(binary);
-    
-    console.log('[Draw.io Export] Base64 encoded, size:', base64.length, 'chars');
-    
-    // Return as data URI - Draw.io format: data:image/svg+xml,BASE64
-    // Note: Draw.io uses comma separator, not semicolon+base64
-    return `data:image/svg+xml,${base64}`;
+    const { loadIcon } = await import('../utils/iconLoader');
+    const url = await loadIcon(iconPath);
+    if (!url) return null;
+    const svg = await readTextAsset(url);
+    if (!svg) return null;
+    return svgToDataUrl(svg);
   } catch (error) {
-    console.error(`[Draw.io Export] Error loading icon ${iconPath}:`, error);
+    console.warn(`[Draw.io Export] Could not load icon ${iconPath}:`, error);
     return null;
   }
 }
