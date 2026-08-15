@@ -74,6 +74,12 @@ jobs:
       - name: Install Playwright browser
         run: npx playwright install --with-deps chromium
 
+      # The production-export gate reads dist/ and skips without it. A skipped
+      # gate reports green, and the bug it guards against only exists in a real
+      # build, so CI has to produce one.
+      - name: Build application
+        run: npm run build
+
       - name: Test critical flows
         run: npm run test:e2e
 

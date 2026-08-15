@@ -47,6 +47,11 @@ let origin = '';
 
 test.beforeAll(async () => {
   const built = await stat(path.join(DIST, 'index.html')).catch(() => null);
+  // Skipping locally is a convenience; skipping in CI would report green for
+  // the one check that covers the shipped bundle, so there it is a failure.
+  if (!built && process.env.CI) {
+    throw new Error('dist/index.html is missing: CI must build before running the export gate');
+  }
   test.skip(!built, 'run `npm run build` first: this gate is about the production bundle');
 
   server = createServer((request, response) => {
