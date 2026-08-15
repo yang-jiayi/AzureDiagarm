@@ -126,3 +126,36 @@ export function inferConnectionType(hints: ConnectionSemanticHints): DiagramConn
   }
   return 'sync';
 }
+
+/**
+ * The per-edge animation intent, independent of the global toggle.
+ *
+ * `flowAnimated` on a live edge is a *product*: the user's intent for this
+ * edge AND the app-wide "animate connections" switch. Only the product is
+ * serialised, and the switch itself lives in localStorage rather than the
+ * file, so save-time and open-time global state legitimately differ. Reading
+ * the stored product back as if it were the intent is what made a diagram
+ * saved with animation off come back permanently static -- every edge carried
+ * `flowAnimated: false`, which masked its own `baseFlowAnimated: true`.
+ *
+ * `baseFlowAnimated` is the intent, and it is the only field a restore may
+ * trust. The stored product is read only for files written before the field
+ * existed, where it is the best evidence available.
+ */
+export function edgeAnimationIntent(
+  data: { baseFlowAnimated?: unknown; flowAnimated?: unknown } | undefined,
+  fallback: boolean,
+): boolean {
+  if (typeof data?.baseFlowAnimated === 'boolean') return data.baseFlowAnimated;
+  if (typeof data?.flowAnimated === 'boolean') return data.flowAnimated;
+  return fallback;
+}
+
+/** Whether an edge animates right now: its own intent, gated by the global switch. */
+export function resolveFlowAnimated(
+  data: { baseFlowAnimated?: unknown; flowAnimated?: unknown } | undefined,
+  fallback: boolean,
+  animationsEnabled: boolean,
+): boolean {
+  return animationsEnabled && edgeAnimationIntent(data, fallback);
+}

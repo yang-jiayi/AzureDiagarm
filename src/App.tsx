@@ -198,6 +198,7 @@ import {
 } from './utils/diagramQuality';
 import {
   getConnectionPresentation,
+  edgeAnimationIntent,
   normalizeConnectionType,
   type DiagramConnectionType,
 } from './utils/edgePresentation';
@@ -2034,21 +2035,17 @@ function App() {
       if (next.markerStart && typeof next.markerStart === 'object') {
         next.markerStart = { ...next.markerStart, color: presentation.stroke };
       }
-      const baseFlowAnimated = Boolean(
-        next.data?.baseFlowAnimated
-        ?? next.data?.flowAnimated
-        ?? presentation.baseFlowAnimated,
+      const baseFlowAnimated = edgeAnimationIntent(
+        next.data as { baseFlowAnimated?: unknown; flowAnimated?: unknown } | undefined,
+        presentation.baseFlowAnimated,
       );
-      const edgeAnimationPreference = typeof next.data?.flowAnimated === 'boolean'
-        ? next.data.flowAnimated
-        : baseFlowAnimated;
       const labelOffsetX = Number(next.data?.labelOffsetX) || 0;
       const labelOffsetY = Number(next.data?.labelOffsetY) || 0;
       next.data = {
         ...next.data,
         connectionType: presentation.type,
         baseFlowAnimated,
-        flowAnimated: animateConnections && edgeAnimationPreference,
+        flowAnimated: animateConnections && baseFlowAnimated,
         pathStyle: normalizeLayoutEdgeStyle(next.data?.pathStyle ?? layoutEdgeStyle),
         labelOffsetAuto: typeof next.data?.labelOffsetAuto === 'boolean'
           ? next.data.labelOffsetAuto
@@ -2897,11 +2894,7 @@ function App() {
     setAnimateConnections(enabled);
     setEdges((currentEdges) => currentEdges.map((edge) => {
       const presentation = getConnectionPresentation(edge.data?.connectionType);
-      const baseFlowAnimated = Boolean(
-        edge.data?.baseFlowAnimated
-        ?? edge.data?.flowAnimated
-        ?? presentation.baseFlowAnimated,
-      );
+      const baseFlowAnimated = edgeAnimationIntent(edge.data, presentation.baseFlowAnimated);
       return {
         ...edge,
         animated: false,
@@ -2925,9 +2918,12 @@ function App() {
         animated: false,
         data: {
           ...edge.data,
-          baseFlowAnimated: flowAnimated
-            ? true
-            : Boolean(edge.data?.baseFlowAnimated ?? true),
+          // Record the pause as the edge's own intent, not just as the current
+          // resolved state. Keeping the intent `true` while pausing meant any
+          // touch of the global switch -- which recomputes from the intent --
+          // silently resurrected an edge the user had deliberately stopped,
+          // and a save/reopen did the same.
+          baseFlowAnimated: flowAnimated,
           flowAnimated,
           onLabelChange: handleEdgeLabelChange,
           onLabelOffsetChange: handleEdgeLabelOffsetChange,
@@ -2942,8 +2938,9 @@ function App() {
       if (edge.id === edgeId) {
         let markerEnd: any = undefined;
         let markerStart: any = undefined;
-        const markerColor = getConnectionPresentation(edge.data?.connectionType).stroke;
-        const baseFlowAnimated = Boolean(edge.data?.baseFlowAnimated ?? edge.data?.flowAnimated ?? true);
+        const presentation = getConnectionPresentation(edge.data?.connectionType);
+        const markerColor = presentation.stroke;
+        const baseFlowAnimated = edgeAnimationIntent(edge.data, presentation.baseFlowAnimated);
         const flowAnimated = animateConnections && baseFlowAnimated;
         const flowMode = direction === 'bidirectional' ? 'pulse' : 'directional';
         
