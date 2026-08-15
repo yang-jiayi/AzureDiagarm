@@ -34,9 +34,29 @@ export interface WorkflowNarrativeInput {
   region?: string;
 }
 
+/**
+ * Escape user text so Markdown renders it as the characters the user typed.
+ *
+ * Service names and descriptions routinely contain the characters Markdown
+ * treats as syntax. `<...>` is swallowed as unknown HTML, so "Function App
+ * <v2>" simply loses the version. A backtick opens a code span that runs to the
+ * next one, which silently swallows everything between two services. `*` and
+ * `_` around a word turn it italic and disappear, `[a](b)` becomes a link, and
+ * `&copy;` becomes a ©.
+ *
+ * Only the characters that mean something *mid-line* are escaped. Every value
+ * here is interpolated after a heading marker, a list bullet or a table pipe,
+ * never at the start of a line, so `#`, `-`, `+` and `.` cannot start a block
+ * and are left alone — escaping them would litter ordinary product names with
+ * backslashes for no gain.
+ */
+function mdText(value: string): string {
+  return (value || '').replace(/([\\`*_[\]<>|~&])/g, '\\$1');
+}
+
 /** Escape a value for safe use inside a Markdown table cell. */
 function cell(value: string): string {
-  return (value || '').replace(/\|/g, '\\|').replace(/\n+/g, ' ').trim();
+  return mdText(value).replace(/\s*[\r\n]+\s*/g, ' ').trim();
 }
 
 /**
@@ -72,11 +92,11 @@ export function buildWorkflowMarkdown(input: WorkflowNarrativeInput): string {
   const lines: string[] = [];
 
   // ── Header ────────────────────────────────────────────────────────────
-  lines.push(`# ${title.architectureName || 'Untitled Architecture'}`);
+  lines.push(`# ${cell(title.architectureName || '') || 'Untitled Architecture'}`);
   lines.push('');
-  const meta = [`**Author:** ${title.author || 'Azure Architect'}`, `**Version:** ${title.version || '1.0'}`, `**Date:** ${title.date || new Date().toLocaleDateString()}`];
+  const meta = [`**Author:** ${cell(title.author || '') || 'Azure Architect'}`, `**Version:** ${cell(title.version || '') || '1.0'}`, `**Date:** ${cell(title.date || '') || new Date().toLocaleDateString()}`];
   if (model?.name) {
-    meta.push(`**Model:** ${model.name}${model.timeMs ? ` (${(model.timeMs / 1000).toFixed(1)}s)` : ''}`);
+    meta.push(`**Model:** ${cell(model.name)}${model.timeMs ? ` (${(model.timeMs / 1000).toFixed(1)}s)` : ''}`);
   }
   lines.push(meta.join(' · '));
   lines.push('');
@@ -87,7 +107,9 @@ export function buildWorkflowMarkdown(input: WorkflowNarrativeInput): string {
   if (prompt && prompt.trim()) {
     lines.push('## Overview');
     lines.push('');
-    lines.push(prompt.trim());
+    // A prompt is prose the user typed; keep its line breaks but do not let a
+    // stray angle bracket or backtick eat the rest of the paragraph.
+    lines.push(mdText(prompt.trim()));
     lines.push('');
   }
 
@@ -102,11 +124,11 @@ export function buildWorkflowMarkdown(input: WorkflowNarrativeInput): string {
       const groupLabel = (group.data as any)?.label || 'Group';
       const members = serviceNodes.filter((n) => n.parentNode === group.id);
       if (members.length === 0) continue;
-      lines.push(`### ${groupLabel}`);
+      lines.push(`### ${cell(String(groupLabel))}`);
       lines.push('');
       for (const n of members) {
         const desc = (n.data as any)?.description;
-        lines.push(`- **${(n.data as any)?.label ?? 'Service'}**${desc ? ` — ${cell(String(desc))}` : ''}`);
+        lines.push(`- **${cell(String((n.data as any)?.label ?? 'Service'))}**${desc ? ` — ${cell(String(desc))}` : ''}`);
       }
       lines.push('');
     }
@@ -116,14 +138,14 @@ export function buildWorkflowMarkdown(input: WorkflowNarrativeInput): string {
       lines.push('');
       for (const n of ungrouped) {
         const desc = (n.data as any)?.description;
-        lines.push(`- **${(n.data as any)?.label ?? 'Service'}**${desc ? ` — ${cell(String(desc))}` : ''}`);
+        lines.push(`- **${cell(String((n.data as any)?.label ?? 'Service'))}**${desc ? ` — ${cell(String(desc))}` : ''}`);
       }
       lines.push('');
     }
   } else {
     for (const n of serviceNodes) {
       const desc = (n.data as any)?.description;
-      lines.push(`- **${(n.data as any)?.label ?? 'Service'}**${desc ? ` — ${cell(String(desc))}` : ''}`);
+      lines.push(`- **${cell(String((n.data as any)?.label ?? 'Service'))}**${desc ? ` — ${cell(String(desc))}` : ''}`);
     }
     lines.push('');
   }
@@ -137,10 +159,10 @@ export function buildWorkflowMarkdown(input: WorkflowNarrativeInput): string {
   } else {
     const ordered = [...workflow].sort((a, b) => (a.step ?? 0) - (b.step ?? 0));
     for (const s of ordered) {
-      lines.push(`${s.step}. ${s.description}`);
+      lines.push(`${s.step}. ${cell(String(s.description ?? ''))}`);
       if (Array.isArray(s.services) && s.services.length > 0) {
         const names = s.services.map(resolveRef);
-        lines.push(`   - _Services:_ ${names.join(' → ')}`);
+        lines.push(`   - _Services:_ ${names.map((name) => cell(String(name))).join(' → ')}`);
       }
     }
     lines.push('');

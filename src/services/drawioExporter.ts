@@ -219,7 +219,9 @@ function createEdgeCell(
   const offsetX = route.ordinal === 0 ? 0 : (route.ordinal % 2 === 1 ? 1 : -1) * Math.ceil(route.ordinal / 2) * 24;
 
   if (label) {
-    const labelStyle = 'edgeLabel;html=1;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=1;fillColor=#fef9c3;strokeColor=#374151;fontColor=#1f2937;fontStyle=1;fontSize=12;spacingLeft=4;spacingRight=4;spacingTop=2;spacingBottom=2;';
+    // Matches the canvas chip (white, slate border and text) rather than the
+    // amber this used to draw.
+    const labelStyle = 'edgeLabel;html=1;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=1;fillColor=#ffffff;strokeColor=#cbd5e1;fontColor=#334155;fontStyle=1;fontSize=12;spacingLeft=4;spacingRight=4;spacingTop=2;spacingBottom=2;';
     cells += `
       <mxCell id="${edgeCellId}-lbl" value="${escapeXml(labelText)}" style="${labelStyle}" vertex="1" connectable="0" parent="${edgeCellId}">
         <mxGeometry x="0" y="0" width="${wrapWidth}" height="${labelBoxHeight}" relative="1" as="geometry">

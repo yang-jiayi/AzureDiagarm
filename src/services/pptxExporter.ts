@@ -2937,14 +2937,14 @@ function addConnectorLabel(
     h: box.h,
     shape: 'roundRect',
     rectRadius: 0.03,
-    fill: { color: 'FEF9C3', transparency: 8 },
-    line: { color: 'FDE68A', width: 0.5 },
-    // Amber-800, not amber-700. The chip is a fixed light yellow in both
-    // themes, but it is 8% translucent — so on a dark slide the backdrop
-    // darkens it to about #ECE8B8 and amber-700 lands at 4.02:1, under the
-    // WCAG AA bar. One step darker clears both composites with margin and is
-    // indistinguishable on the light one.
-    color: '92400E',
+    // The canvas chip is white with a slate border (App.tsx `labelBgStyle`).
+    // The deck used to draw it amber, which made the same label look like a
+    // different kind of annotation in the file than on screen. 6% translucency
+    // mirrors the canvas's `fillOpacity: 0.94`; even over a dark slide that
+    // composites to ~#F1F1F1, so the slate text stays well clear of AA.
+    fill: { color: 'FFFFFF', transparency: 6 },
+    line: { color: 'CBD5E1', width: 0.5 },
+    color: '334155',
     fontSize,
     fontFace: 'Yu Gothic UI',
     align: 'center',

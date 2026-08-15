@@ -21,6 +21,7 @@ import 'reactflow/dist/style.css';
 import type { CaptureOptions } from './utils/captureCanvas';
 import { type ExportBackground } from './utils/captureCanvas';
 import { dataUrlToBlob } from './utils/assetSource';
+import { csvBlob } from './utils/csvBlob';
 import { animateEdgeFlow } from './utils/animateEdges';
 import { sequenceWorkflowSvg } from './utils/sequenceWorkflow';
 import { buildWorkflowMarkdown } from './services/workflowNarrativeExporter';
@@ -3673,7 +3674,7 @@ function App() {
 
     // Export as CSV
     const csvData = exportCostBreakdownCSV(breakdown, nodes);
-    const blob = new Blob([csvData], { type: 'text/csv;charset=utf-8' });
+    const blob = csvBlob(csvData);
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;

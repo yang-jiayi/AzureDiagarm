@@ -17,31 +17,10 @@ import { useNodeKeyboardInteraction } from '../hooks/useNodeKeyboardInteraction'
 import { usePendingConnection } from '../hooks/useKeyboardConnection';
 import { detachNodeFromGroup } from '../utils/groupUtils';
 import { shallowArrayEqual, shallowEqual } from '../utils/shallowEqual';
+import { categoryAccent } from '../utils/canvasPalette';
 
 // Map categories to colors
-const getCategoryColor = (category: string): string => {
-  const colorMap: { [key: string]: string } = {
-    'compute': '#0078d4',           // Azure blue
-    'containers': '#0078d4',
-    'databases': '#10b981',         // Green
-    'storage': '#10b981',
-    'data layer': '#10b981',
-    'ai + machine learning': '#f59e0b', // Orange
-    'analytics': '#8b5cf6',         // Purple
-    'networking': '#06b6d4',        // Cyan
-    'identity': '#ec4899',          // Pink
-    'security': '#ef4444',          // Red
-    'monitor': '#6366f1',           // Indigo
-    'integration': '#14b8a6',       // Teal
-    'iot': '#f97316',               // Orange
-    'app services': '#3b82f6',      // Blue
-    'web': '#3b82f6',
-    'devops': '#8b5cf6',            // Purple
-  };
-  
-  const normalizedCategory = category?.toLowerCase() || '';
-  return colorMap[normalizedCategory] || '#6b7280'; // Default gray
-};
+const getCategoryColor = (category: string): string => categoryAccent(category);
 
 const AzureNode: React.FC<NodeProps> = memo(({ data, selected, id }) => {
   const { t, language } = useLanguage();

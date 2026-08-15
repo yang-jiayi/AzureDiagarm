@@ -12523,7 +12523,12 @@ const GOLDEN: Record<string, Golden> = {
   'workflow-long-prose': { minTileIn: 1.552, named: 13, slides: 3 },
   'workflow-fan': { minTileIn: 1.563, named: 9, slides: 2 },
   'workflow-wide-band': { minTileIn: 1.189, named: 560, slides: 143 },
-  'all-categories': { minTileIn: 1.435, named: 16, slides: 2 },
+  // 17, not 16: the export palette is now derived from the canvas one, which
+  // carries `data layer` and `devops` and does not carry the synthetic `other`
+  // (the fallback covers that). One more tile is one more named service, and
+  // the extra tile is what pushes the deck from 2 slides to 4 and lets the
+  // narrowest tile grow.
+  'all-categories': { minTileIn: 1.499, named: 17, slides: 4 },
   'control-chars': { minTileIn: 1.563, named: 4, slides: 2 },
   'short-service-grid': { minTileIn: 1.183, named: 82, slides: 7 },
   'cascade': { minTileIn: 1.17, named: 200, slides: 34 },
@@ -12691,7 +12696,9 @@ const VSDX_GOLDEN: Record<string, VsdxGolden> = {
   'workflow-long-prose': { media: 13, textBlocks: 64, minFontPt: 7.2 },
   'workflow-fan': { media: 9, textBlocks: 76, minFontPt: 7.01 },
   'workflow-wide-band': { media: 560, textBlocks: 2563, minFontPt: 7.2 },
-  'all-categories': { media: 16, textBlocks: 79, minFontPt: 7.2 },
+  // 17 icons and 5 more text blocks for the same reason as the deck row above:
+  // the category list gained `data layer` and `devops` and lost `other`.
+  'all-categories': { media: 17, textBlocks: 84, minFontPt: 7.2 },
   'control-chars': { media: 4, textBlocks: 19, minFontPt: 7.2 },
   'short-service-grid': { media: 82, textBlocks: 92, minFontPt: 7.2 },
   'cascade': { media: 200, textBlocks: 221, minFontPt: 7.2 },

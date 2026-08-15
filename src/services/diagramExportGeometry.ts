@@ -21,6 +21,14 @@ import type { Edge, Node } from 'reactflow';
 import { readStepNumber as readStepValue } from '../utils/workflowStepMapping';
 import { stripXmlForbidden } from '../utils/xmlText';
 import {
+  CATEGORY_ACCENTS,
+  DEFAULT_ACCENT,
+  categoryAccent,
+  matchZoneAccent,
+  shade,
+  tint,
+} from '../utils/canvasPalette';
+import {
   getConnectionPresentation,
   normalizeConnectionType,
   type DiagramConnectionType,
@@ -66,6 +74,12 @@ export interface ExportBox {
    * tile, so native exports can render the same sub-line instead of dropping it.
    */
   meta?: BoxMeta;
+  /**
+   * The tag chips shown on the canvas tile, in canvas order. Kept out of
+   * `meta` because they are not a sub-line: Visio exposes them as shape data
+   * rows a reader can filter on, which is what a tag is for.
+   */
+  tags?: string[];
   /**
    * The zone this box declares as its container (`Node.parentNode`), when it
    * has one. Membership has to be declared, not inferred from geometry: an
@@ -255,35 +269,27 @@ export interface CategoryStyle {
 }
 
 /**
- * Azure-category → colour. Hoisted here so PowerPoint, Visio, Draw.io and HTML
- * all tint the same service identically (they had drifted into three different
- * maps). Keys are the normalised icon-folder categories.
+ * Azure-category → colour, derived from the canvas accents.
+ *
+ * This used to be an independent map, and it had drifted: networking was cyan
+ * on screen and orange in the file, identity pink on screen and amber in the
+ * file, and integration and security shared one red even though the canvas
+ * keeps them apart. Deriving the tint from `categoryAccent` means the file can
+ * only ever show the hue the user was looking at.
  */
-export const CATEGORY_STYLES: Record<string, CategoryStyle> = {
-  'ai + machine learning': { bg: '#E8F0FE', border: '#4285F4', text: '#1A73E8' },
-  'app services': { bg: '#E8F4FD', border: '#0078D4', text: '#004578' },
-  compute: { bg: '#E8F4FD', border: '#0078D4', text: '#004578' },
-  databases: { bg: '#E6F4EA', border: '#0B8043', text: '#0B6B3A' },
-  storage: { bg: '#E6F4EA', border: '#137333', text: '#0B6B3A' },
-  networking: { bg: '#FFF3E0', border: '#E65100', text: '#BF360C' },
-  analytics: { bg: '#F3E8FD', border: '#7B1FA2', text: '#6A1B9A' },
-  containers: { bg: '#E0F7FA', border: '#00838F', text: '#006064' },
-  integration: { bg: '#FCE4EC', border: '#C62828', text: '#B71C1C' },
-  identity: { bg: '#FFF8E1', border: '#F9A825', text: '#F57F17' },
-  'management + governance': { bg: '#F1F8E9', border: '#558B2F', text: '#33691E' },
-  iot: { bg: '#E0F2F1', border: '#00695C', text: '#004D40' },
-  monitor: { bg: '#EDE7F6', border: '#5E35B1', text: '#4527A0' },
-  security: { bg: '#FFEBEE', border: '#C62828', text: '#B71C1C' },
-  web: { bg: '#E3F2FD', border: '#1565C0', text: '#0D47A1' },
-  other: { bg: '#F5F5F5', border: '#616161', text: '#424242' },
-};
+function styleFromAccent(accent: string): CategoryStyle {
+  return { bg: tint(accent, 0.9), border: accent, text: shade(accent, 0.45) };
+}
 
-export const DEFAULT_CATEGORY_STYLE: CategoryStyle = CATEGORY_STYLES.other;
+export const CATEGORY_STYLES: Record<string, CategoryStyle> = Object.fromEntries(
+  Object.entries(CATEGORY_ACCENTS).map(([key, accent]) => [key, styleFromAccent(accent)]),
+);
+
+export const DEFAULT_CATEGORY_STYLE: CategoryStyle = styleFromAccent(DEFAULT_ACCENT);
 
 /** Resolve the colour for a service category, falling back to a neutral tint. */
 export function categoryStyle(category?: string): CategoryStyle {
-  const key = typeof category === 'string' ? category.trim().toLowerCase() : '';
-  return CATEGORY_STYLES[key] ?? DEFAULT_CATEGORY_STYLE;
+  return styleFromAccent(categoryAccent(category));
 }
 
 export interface ZoneStyle {
@@ -391,8 +397,13 @@ export function readableTextOn(color: string, background: string, target = 4.5):
 
 /**
  * Resolve the colour for a zone. The user's picked colour wins; otherwise the
- * shared palette is cycled by group index so the fallback is identical in every
- * export.
+ * label decides, exactly as it does on the canvas.
+ *
+ * This used to cycle {@link ZONE_PALETTE} by group index, which had two
+ * consequences: a zone the canvas painted green came out blue, and merely
+ * reordering the zones repainted all of them. The label is what the canvas
+ * reads, so the export reads it too, and `index` is now only a last-resort tie
+ * break for unlabelled zones.
  */
 export function zoneStyleFor(box: ExportBox, index: number): ZoneStyle {
   const border = normalizeHex(box.customColor?.border) ?? normalizeHex(box.customColor?.header);
@@ -403,6 +414,11 @@ export function zoneStyleFor(box: ExportBox, index: number): ZoneStyle {
     // the zone title, which names the tier, becomes the least readable words on
     // the slide. Darken it until it clears AA against its own panel.
     return { bg, border, text: readableTextOn(border, bg) };
+  }
+  const accent = matchZoneAccent(box.label);
+  if (accent) {
+    const bg = mixWithWhite(accent, 0.12);
+    return { bg, border: accent, text: readableTextOn(accent, bg) };
   }
   return ZONE_PALETTE[index % ZONE_PALETTE.length];
 }
@@ -1682,6 +1698,21 @@ export function formatCost(amount: number): string {
   return `$${amount.toFixed(2)}/mo`;
 }
 
+/**
+ * The tag chips on the canvas tile.
+ *
+ * The cap and the filter match `AzureNode` exactly so the export cannot list a
+ * tag the user cannot see, or drop one they can.
+ */
+function readTags(data: Record<string, unknown>): string[] | undefined {
+  if (!Array.isArray(data.tags)) return undefined;
+  const tags = data.tags
+    .filter((tag: unknown): tag is string => typeof tag === 'string' && tag.trim() !== '')
+    .map((tag) => singleLineName(tag))
+    .slice(0, 12);
+  return tags.length > 0 ? tags : undefined;
+}
+
 function readMeta(data: Record<string, unknown>): BoxMeta | undefined {
   const pricing = (data.pricing ?? undefined) as Record<string, unknown> | undefined;
   const sku = firstString(
@@ -1850,6 +1881,7 @@ export function collectExportBoxes(nodes: Node[]): Map<string, ExportBox> {
         : undefined,
       customColor: isGroup ? readCustomColor(data) : undefined,
       meta: isGroup ? undefined : readMeta(data),
+      tags: isGroup ? undefined : readTags(data),
       parent: typeof node.parentNode === 'string' && node.parentNode ? node.parentNode : undefined,
       x: position.x,
       y: position.y,
