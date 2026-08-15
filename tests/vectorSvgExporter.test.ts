@@ -152,10 +152,18 @@ test('background:false leaves the page transparent', async () => {
 });
 
 test('user text is XML-escaped', async () => {
-  const nodes = [service('x', 0, 0, { label: 'A & B <script>' })];
+  // Both spellings, because escaping is case-blind and a test that only knows
+  // the lowercase one cannot tell a working escape from one that happens to
+  // have been written against the same single spelling. The uppercase tag also
+  // covers the whitespace HTML parsers tolerate inside a tag ("< SCRIPT").
+  const nodes = [
+    service('x', 0, 0, { label: 'A & B <script>' }),
+    service('y', 0, 200, { label: '< SCRIPT >' }),
+  ];
   const svg = await exportToSvg(nodes, [], { title: 'T&<>"' });
-  assert.ok(!/<script>/.test(svg), 'raw markup from a label reached the file');
+  assert.ok(!/<\s*\/?\s*script/i.test(svg), 'raw markup from a label reached the file');
   assert.match(svg, /A &amp; B &lt;script&gt;/);
+  assert.match(svg, /&lt; SCRIPT &gt;/);
   assert.match(svg, /<title>T&amp;&lt;&gt;&quot;<\/title>/);
 });
 
