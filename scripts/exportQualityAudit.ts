@@ -750,6 +750,65 @@ const PIXEL_PNG_BYTES = Uint8Array.from(
   Buffer.from(PIXEL_PNG.slice(PIXEL_PNG.indexOf(',') + 1), 'base64'),
 );
 
+/**
+ * Every service tile carries the canvas's category stripe, on its left edge.
+ *
+ * The stripe is what the canvas puts the category colour in — the tile itself
+ * is a neutral card. Because the stripe is a separate shape (PowerPoint has no
+ * per-side border), it is exactly the kind of decoration that can quietly stop
+ * being emitted, or drift off the edge it belongs to, without any other rule
+ * here noticing: no text, no icon, no effect on layout. So it is checked
+ * directly. A tile with no stripe is a tile whose category is no longer
+ * legible at a glance, which is the whole reason the colour is there.
+ */
+function accentStripeIssues(perSlide: Shape[][]): string[] {
+  const issues: string[] = [];
+  for (const [index, shapes] of perSlide.entries()) {
+    const stripes = new Map(
+      shapes.filter((s) => s.name.startsWith('accent-')).map((s) => [s.name.slice('accent-'.length), s]),
+    );
+    const tiles = shapes.filter(
+      (s) => s.name.startsWith('service-') && !s.name.includes('label') && !s.name.includes('meta'),
+    );
+    for (const tile of tiles) {
+      const id = tile.name.slice('service-'.length);
+      const stripe = stripes.get(id);
+      // A tile too short to have a straight edge between its rounded corners
+      // has nowhere to put a stripe, and the exporter correctly draws none.
+      if (!stripe) {
+        if (tile.h > 0.16) {
+          issues.push(
+            `slide ${index + 1} tile "${tile.name}" has no category stripe, so nothing on it `
+            + 'carries the colour the canvas uses to say what kind of service it is',
+          );
+        }
+        continue;
+      }
+      if (Math.abs(stripe.x - tile.x) > 0.01) {
+        issues.push(
+          `slide ${index + 1} stripe "${stripe.name}" starts at ${stripe.x.toFixed(3)}in but its `
+          + `tile starts at ${tile.x.toFixed(3)}in, so it is not on the tile's edge`,
+        );
+      }
+      if (stripe.y < tile.y - 0.01 || stripe.y + stripe.h > tile.y + tile.h + 0.01) {
+        issues.push(
+          `slide ${index + 1} stripe "${stripe.name}" runs outside its own tile vertically`,
+        );
+      }
+      if (stripe.w > tile.w / 3) {
+        issues.push(
+          `slide ${index + 1} stripe "${stripe.name}" is ${stripe.w.toFixed(3)}in wide on a `
+          + `${tile.w.toFixed(3)}in tile — a stripe that wide reads as a fill`,
+        );
+      }
+      if (!stripe.fill) {
+        issues.push(`slide ${index + 1} stripe "${stripe.name}" declares no fill, so it is invisible`);
+      }
+    }
+  }
+  return issues;
+}
+
 interface Shape {
   name: string;
   x: number;
@@ -7344,6 +7403,7 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
   if (synthesisedIcons(scenario).size > 0 && drawnPics === 0 && roomyTile) {
     issues.push(`deck embeds no icon pictures for ${scenario.nodes.length} nodes`);
   }
+  issues.push(...accentStripeIssues(perSlide));
   const native = auditNativeConversion(allSlides, scenario.edges);
   issues.push(...native.issues);
   // A box whose text column cannot hold one glyph of its own type. PowerPoint

@@ -72,6 +72,7 @@ import type { DeploymentGuide } from './services/deploymentGuideGenerator';
 import { generateArchitectureWithAI } from './services/azureOpenAI';
 import { MODEL_CONFIG, getDeploymentNames, type ModelType } from './stores/modelSettingsStore';
 import { usePricingDisplayPrefs } from './stores/pricingDisplayStore';
+import { nodesForExport } from './utils/nodesForExport';
 import {
   useNodePricingEditor,
   closeNodePricingEditor,
@@ -322,14 +323,6 @@ async function captureDiagramAsPng(
 ): Promise<string> {
   const capture = await import('./utils/captureCanvas');
   return capture.captureDiagramAsPng(element, options);
-}
-
-async function captureDiagramAsSvg(
-  element: HTMLElement,
-  options: CaptureOptions,
-): Promise<string> {
-  const capture = await import('./utils/captureCanvas');
-  return capture.captureDiagramAsSvg(element, options);
 }
 
 async function exportReferenceArchitectureAsPng(
@@ -1093,6 +1086,12 @@ function App() {
   });
   // Whether cost estimates are shown at all (persisted, independent of stylePreset).
   const [pricingPrefs, setPricingPrefs] = usePricingDisplayPrefs();
+  // What every export gets handed. A cost the canvas is hiding must not
+  // reappear in the file; see `nodesForExport`.
+  const exportNodes = useMemo(
+    () => nodesForExport(nodes, pricingPrefs.showCostBadges),
+    [nodes, pricingPrefs.showCostBadges],
+  );
   // Node whose per-node cost editor is open (opened from its cost badge).
   const pricingEditorNodeId = useNodePricingEditor();
   const [pricingEditorDraft, setPricingEditorDraft] = useState<{
@@ -3235,10 +3234,12 @@ function App() {
     }
 
     try {
-      const svgText = await captureDiagramAsSvg(
-        reactFlowWrapper.current,
-        createDiagramCaptureOptions(),
-      );
+      const { exportToSvg } = await import('./services/vectorSvgExporter');
+      const svgText = await exportToSvg(exportNodes, edges, {
+        isDarkMode,
+        background: exportBackground,
+        title: titleBlockData.architectureName || 'Architecture diagram',
+      });
       const blob = new Blob([svgText], { type: 'image/svg+xml;charset=utf-8' });
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
@@ -3254,12 +3255,15 @@ function App() {
       alert(t("Failed to export SVG. Please try again."));
     }
   }, [
-    createDiagramCaptureOptions,
+    edges,
     exportBackground,
+    exportNodes,
+    isDarkMode,
     nodes,
     reactFlowInstance,
     recordExport,
     t,
+    titleBlockData.architectureName,
   ]);
 
   // Export the workflow narrative (title, prompt, services, step-by-step flow,
@@ -3309,10 +3313,12 @@ function App() {
     }
 
     try {
-      const svgText = await captureDiagramAsSvg(
-        reactFlowWrapper.current,
-        createDiagramCaptureOptions(),
-      );
+      const { exportToSvg } = await import('./services/vectorSvgExporter');
+      const svgText = await exportToSvg(exportNodes, edges, {
+        isDarkMode,
+        background: exportBackground,
+        title: titleBlockData.architectureName || 'Architecture diagram',
+      });
       const animatedSvg = animateEdgeFlow(svgText);
       const blob = new Blob([animatedSvg], { type: 'image/svg+xml;charset=utf-8' });
       const url = URL.createObjectURL(blob);
@@ -3329,12 +3335,15 @@ function App() {
       alert(t("Failed to export animated SVG. Please try again."));
     }
   }, [
-    createDiagramCaptureOptions,
+    edges,
     exportBackground,
+    exportNodes,
+    isDarkMode,
     nodes,
     reactFlowInstance,
     recordExport,
     t,
+    titleBlockData.architectureName,
   ]);
 
   // Export a SEQUENCED "workflow animation" SVG: plays the diagram's workflow
@@ -3351,10 +3360,12 @@ function App() {
     }
 
     try {
-      const svgText = await captureDiagramAsSvg(
-        reactFlowWrapper.current,
-        createDiagramCaptureOptions(),
-      );
+      const { exportToSvg } = await import('./services/vectorSvgExporter');
+      const svgText = await exportToSvg(exportNodes, edges, {
+        isDarkMode,
+        background: exportBackground,
+        title: titleBlockData.architectureName || 'Architecture diagram',
+      });
       const sequenced = sequenceWorkflowSvg(svgText, { nodes, edges, workflow, stepDurSec: 3 });
       const blob = new Blob([sequenced], { type: 'image/svg+xml;charset=utf-8' });
       const url = URL.createObjectURL(blob);
@@ -3371,13 +3382,15 @@ function App() {
       alert(t("Failed to export workflow animation. Please try again."));
     }
   }, [
-    createDiagramCaptureOptions,
     edges,
     exportBackground,
+    exportNodes,
+    isDarkMode,
     nodes,
     reactFlowInstance,
     recordExport,
     t,
+    titleBlockData.architectureName,
     workflow,
   ]);
 
@@ -3385,14 +3398,14 @@ function App() {
     try {
       const { exportAndDownloadDrawio } = await import('./services/drawioExporter');
       const diagramName = titleBlockData.architectureName || 'Azure Architecture';
-      const fileName = await exportAndDownloadDrawio(nodes, edges, diagramName);
+      const fileName = await exportAndDownloadDrawio(exportNodes, edges, diagramName);
       recordExport('drawio', fileName);
       trackExport('drawio', nodes.filter(n => n.type === 'azureNode').length);
     } catch (err) {
       console.error('Error exporting Draw.io:', err);
       alert(t("Failed to export Draw.io file. Please try again."));
     }
-  }, [nodes, edges, titleBlockData.architectureName, recordExport, t]);
+  }, [nodes, exportNodes, edges, titleBlockData.architectureName, recordExport, t]);
 
   const exportAsVsdx = useCallback(async () => {
     if (nodes.filter(n => n.type === 'azureNode').length === 0) {
@@ -3402,7 +3415,7 @@ function App() {
     try {
       const { buildVsdxBlob } = await import('./services/visioVsdxExporter');
       const diagramName = titleBlockData.architectureName || 'Azure Architecture';
-      const blob = await buildVsdxBlob(nodes, edges, diagramName);
+      const blob = await buildVsdxBlob(exportNodes, edges, diagramName);
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
@@ -3416,13 +3429,13 @@ function App() {
       console.error('Error exporting Visio VSDX:', err);
       alert(t("Failed to export Visio file. Please try again."));
     }
-  }, [nodes, edges, titleBlockData.architectureName, recordExport, t]);
+  }, [nodes, exportNodes, edges, titleBlockData.architectureName, recordExport, t]);
 
   const exportAsHtml = useCallback(async () => {
     try {
       const { exportDiagramAsHtml } = await import('./services/htmlDiagramExporter');
       const diagramName = titleBlockData.architectureName || 'Azure Architecture';
-      await exportDiagramAsHtml(nodes, edges, diagramName);
+      await exportDiagramAsHtml(exportNodes, edges, diagramName);
       const fileName = `${diagramName.replace(/[^a-zA-Z0-9-_ ]/g, '').replace(/\s+/g, '-').toLowerCase()}.html`;
       recordExport('html', fileName);
       trackExport('html', nodes.filter(n => n.type === 'azureNode').length);
@@ -3430,7 +3443,7 @@ function App() {
       console.error('Error exporting HTML diagram:', err);
       alert(t("Failed to export HTML diagram. Please try again."));
     }
-  }, [nodes, edges, titleBlockData.architectureName, recordExport, t]);
+  }, [nodes, exportNodes, edges, titleBlockData.architectureName, recordExport, t]);
 
   const exportAsPptx = useCallback(async () => {
     if (!reactFlowWrapper.current || !reactFlowInstance) return;
@@ -3448,7 +3461,7 @@ function App() {
         isDarkMode,
         // Supplying the canvas turns the slide into native, editable shapes
         // instead of a flat screenshot.
-        diagram: { nodes, edges },
+        diagram: { nodes: exportNodes, edges },
       });
       recordExport('pptx', fileName);
       trackExport('pptx', nodes.filter(n => n.type === 'azureNode').length, exportBackground);
@@ -3460,6 +3473,7 @@ function App() {
     createDiagramCaptureOptions,
     edges,
     exportBackground,
+    exportNodes,
     isDarkMode,
     localeTag,
     nodes,
@@ -3605,7 +3619,7 @@ function App() {
           workflow: Array.isArray(workflow) && workflow.length > 0 ? workflow : null,
           validation,
           cost,
-          diagram: { nodes, edges },
+          diagram: { nodes: exportNodes, edges },
         });
 
         recordExport('pptx', fileName);
@@ -3620,6 +3634,7 @@ function App() {
     currentValidationResult,
     edges,
     exportBackground,
+    exportNodes,
     generatedWithModel,
     isDarkMode,
     localeTag,

@@ -90,7 +90,7 @@ export function sequenceWorkflowSvg(svgText: string, options: SequenceWorkflowOp
       const dMatch = /\bd="([^"]+)"/.exec(open);
       const d = dMatch ? dMatch[1] : "";
       const nums = (d.match(/-?\d*\.?\d+(?:e[-+]?\d+)?/gi) || []).map(Number);
-      const cMatch = /color=#([0-9a-fA-F]{6})/.exec(open);
+      const cMatch = /color=["']?#([0-9a-fA-F]{6})/.exec(open);
       paths.push({
         start: [nums[0], nums[1]],
         end: [nums[nums.length - 2], nums[nums.length - 1]],

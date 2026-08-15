@@ -2106,10 +2106,41 @@ export interface DiagramShapeSource {
 
 // ─── Native (editable) diagram rendering ─────────────────────────────────────
 
-/** Shared category tint (bare hex for pptxgenjs) — one source of truth. */
-function styleForBox(box: ExportBox): { bg: string; border: string; text: string } {
-  const style = categoryStyle(box.category);
-  return { bg: stripHash(style.bg), border: stripHash(style.border), text: stripHash(style.text) };
+/**
+ * The tile, as the canvas draws it.
+ *
+ * The deck used to flood the whole tile with the category tint. The canvas has
+ * never done that: it draws a neutral card and puts the colour in a 4px stripe
+ * down the left edge (`AzureNode` `borderStyle`). Two consequences followed.
+ * The obvious one is that the file simply did not look like the screen. The
+ * worse one is that the tint was hard-coded light, so exporting a dark diagram
+ * produced pale peach tiles scattered over a slate-800 slide — the one case
+ * where "close enough" was not close at all.
+ *
+ * `surface`, `outline` and `text` are the canvas's design tokens for the
+ * theme being exported; `stripe` is the category accent that used to be the
+ * fill. `mutedInk` is the starting point for the SKU/region sub-line, darkened
+ * or lightened against the surface at the point of use.
+ */
+interface TileStyle {
+  surface: string;
+  outline: string;
+  stripe: string;
+  text: string;
+  mutedInk: string;
+}
+
+function styleForBox(box: ExportBox, dark: boolean): TileStyle {
+  return {
+    // --azd-color-surface-elevated
+    surface: dark ? '27333D' : 'FFFFFF',
+    // AzureNode pins this hairline in both themes.
+    outline: 'D8E1EA',
+    stripe: stripHash(categoryStyle(box.category).border),
+    // --azd-color-text
+    text: dark ? 'E5EDF7' : '1F2937',
+    mutedInk: dark ? '94A3B8' : '64748B',
+  };
 }
 
 function clamp(value: number, min: number, max: number): number {
@@ -3367,6 +3398,8 @@ function addNodeShape(
   drawnHere?: Map<string, string>,
   /** Stable, deck-global ordinals so a key means the same thing on every slide. */
   keyOrdinal?: Map<string, number>,
+  /** Which theme's surface the tile is drawn on. */
+  dark = false,
 ): {
   /** The box the service NAME is drawn in, not the room left over for it. */
   caption: { x: number; y: number; w: number; h: number } | null;
@@ -3380,16 +3413,17 @@ function addNodeShape(
   const topLeft = placeBox(box, transform, clampTo);
   const w = topLeft.w;
   const h = topLeft.h;
-  const palette = styleForBox(box);
+  const palette = styleForBox(box, dark);
+  const radius = Math.min(0.08, h / 4);
 
   slide.addShape(pptx.ShapeType.roundRect, {
     x: topLeft.x,
     y: topLeft.y,
     w,
     h,
-    rectRadius: Math.min(0.08, h / 4),
-    fill: { color: palette.bg },
-    line: { color: palette.border, width: 1.25 },
+    rectRadius: radius,
+    fill: { color: palette.surface },
+    line: { color: palette.outline, width: 1.25 },
     shadow: {
       type: 'outer',
       color: '94A3B8',
@@ -3400,6 +3434,30 @@ function addNodeShape(
     },
     objectName: `service-${box.id}`,
   });
+
+  // The canvas's 4px category stripe. PowerPoint has no per-side border, so it
+  // is a second shape: a plain rectangle on the tile's left edge, inset by the
+  // corner radius so it sits on the straight part of the edge and never pokes
+  // out past the rounded corner. 4px at the canvas's 96dpi is 1/24in, scaled
+  // with the drawing, and floored so it stays visible on a shrunken tile —
+  // but the floor is capped at a quarter of the tile, because on the hairline
+  // tiles a dense drawing produces (0.044in wide is real) a 0.03in stripe is
+  // two thirds of the tile and reads as the flood fill this change removes.
+  const stripeW = Math.min(
+    Math.max(0.03, Math.min(0.06, (4 / PX_PER_IN) * transform.scale)),
+    w / 4,
+  );
+  if (h > radius * 2) {
+    slide.addShape(pptx.ShapeType.rect, {
+      x: topLeft.x,
+      y: topLeft.y + radius,
+      w: stripeW,
+      h: h - radius * 2,
+      fill: { color: palette.stripe },
+      line: { color: palette.stripe, width: 0 },
+      objectName: `accent-${box.id}`,
+    });
+  }
 
   const pad = Math.min(0.06, h * 0.09);
   // Every typographic dimension is proportional to the drawing scale, so the
@@ -3764,7 +3822,7 @@ function addNodeShape(
       w: innerW,
       h: topAligned ? boxH : textBoxH,
       fontSize: drawnFont,
-      color: '1F2937',
+      color: palette.text,
       fontFace: 'Yu Gothic UI',
       align: 'center',
       valign: !stub && iconSize > 0 ? 'top' : 'middle',
@@ -3829,7 +3887,10 @@ function addNodeShape(
       fontSize: metaPt,
       // The tile fill is category-dependent, so a fixed grey reads at 4.26:1 on
       // the lighter categories. Derive it from the panel it is printed on.
-      color: stripHash(readableTextOn('#64748B', `#${stripHash(palette.bg)}`)),
+      // The tile is the theme's card surface, so the muted ink has to be
+      // resolved against it rather than fixed: the same grey that reads at
+      // 5.7:1 on white is invisible on the dark card.
+      color: stripHash(readableTextOn(`#${palette.mutedInk}`, `#${palette.surface}`)),
       fontFace: 'Yu Gothic UI',
       align: 'center',
       valign: 'bottom',
@@ -4292,7 +4353,7 @@ async function addEditableDiagram(
   slide: Slide,
   diagram: DiagramShapeSource,
   fullFrame: DiagramFrame,
-  _isDarkMode: boolean,
+  isDarkMode: boolean,
   window?: DiagramWindow,
   /**
    * Wording that a muted chip handed over, by step number. The caller writes
@@ -4591,7 +4652,7 @@ async function addEditableDiagram(
     const bands = addNodeShape(
       pptx, slide, service, transform,
       service.iconPath ? icons.get(service.iconPath) : undefined,
-      px, clampTo, thumbnail, drawnHere, keyOrdinal,
+      px, clampTo, thumbnail, drawnHere, keyOrdinal, isDarkMode,
     );
     // The overview is allowed to clip: every name it clips is drawn in full on
     // the slice that follows. Only a window slide's clipping is a real loss.
