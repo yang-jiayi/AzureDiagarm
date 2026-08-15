@@ -55,6 +55,22 @@ function zone(label: string, id = 'z1'): ExportBox {
   return { id, kind: 'group', label, category: '', x: 0, y: 0, w: 400, h: 300 };
 }
 
+/** What `rgba(accent, alpha)` over `paper` actually resolves to on screen. */
+function composite(accent: string, alpha: number, paper: string): string {
+  const pair = (hex: string, i: number) => parseInt(hex.replace('#', '').slice(i * 2, i * 2 + 2), 16);
+  const mixed = [0, 1, 2]
+    .map((i) => Math.round(pair(accent, i) * alpha + pair(paper, i) * (1 - alpha)))
+    .map((v) => v.toString(16).padStart(2, '0'))
+    .join('');
+  return `#${mixed}`;
+}
+
+/** The worst single-channel gap between two colours, in 0-255 terms. */
+function channelDrift(a: string, b: string): number {
+  const pair = (hex: string, i: number) => parseInt(hex.replace('#', '').slice(i * 2, i * 2 + 2), 16);
+  return Math.max(...[0, 1, 2].map((i) => Math.abs(pair(a, i) - pair(b, i))));
+}
+
 test('every category exports the accent the canvas draws it with', () => {
   for (const category of Object.keys(CATEGORY_ACCENTS)) {
     assert.equal(
@@ -166,5 +182,58 @@ test('zone title text is readable on the zone panel', () => {
       contrast(style.text, style.bg) >= 4.5,
       `${label || '(unlabelled)'}: ${style.text} on ${style.bg}`,
     );
+  }
+});
+
+test('a zone panel is the colour the canvas composites, on dark paper as well as light', () => {
+  // GroupNode fills a zone with `rgba(accent, 0.10)` — matched — or `0.08`
+  // when the keyword table does not know the label. That is *translucent*, so
+  // what the reader sees is the accent over whatever paper the app is on. The
+  // export used to mix toward white unconditionally, which on a light deck is
+  // the same answer by luck, and on a dark deck is an inversion: a barely-there
+  // tint on `#1e293b` came out as `F0F1F2`, a glaring white block on a dark
+  // slide. Reading it back is not a matter of taste — a zone that reads as the
+  // brightest thing on the page tells the reader it is the subject.
+  const paper = [
+    { theme: 'light', bg: '#ffffff' },
+    { theme: 'dark', bg: '#1e293b' },
+  ];
+  const labels = ['Data Tier', 'Security', 'Compute', 'Networking', 'Hub', 'Shared Services'];
+  for (const { theme, bg } of paper) {
+    for (const label of labels) {
+      const accent = zoneAccent(label);
+      const alpha = matchZoneAccent(label) ? 0.1 : 0.08;
+      const style = zoneStyleFor(zone(label), bg);
+      const drift = channelDrift(style.bg, composite(accent, alpha, bg));
+      assert.ok(
+        drift <= 6,
+        `${theme} ${label}: export ${style.bg} vs canvas ${composite(accent, alpha, bg)} `
+        + `(off by ${drift}/255)`,
+      );
+      assert.ok(
+        contrast(style.text, style.bg) >= 4.5,
+        `${theme} ${label}: title ${style.text} on ${style.bg} is `
+        + `${contrast(style.text, style.bg).toFixed(2)}:1`,
+      );
+    }
+  }
+});
+
+test('a zone panel is never more than a slight step away from the paper it is on', () => {
+  // The blunt version of the test above, and the one that would have caught the
+  // original bug on its own without knowing any accent. A fill at 8-10% alpha
+  // cannot be far from what is behind it — that is what low alpha *means*. The
+  // broken dark export put an `F0F1F2` panel on a `1E293B` slide: 14:1 apart,
+  // which is not a tint of anything, it is a new opaque object.
+  for (const paper of ['#ffffff', '#1e293b']) {
+    for (const label of ['Data Tier', 'Security', 'Hub']) {
+      const style = zoneStyleFor(zone(label), paper);
+      const step = contrast(style.bg, paper);
+      assert.ok(
+        step < 1.5,
+        `${label} on ${paper}: panel ${style.bg} is ${step.toFixed(2)}:1 from the paper, `
+        + 'which is an opaque block rather than a tint',
+      );
+    }
   }
 });

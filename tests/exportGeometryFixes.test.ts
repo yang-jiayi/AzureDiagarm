@@ -164,8 +164,65 @@ test('fix 6: an unrecognised zone is grey like the canvas, whatever its index', 
   }
 });
 
-// ─── Fix 7: self-loops and parallel edges must stay visible & distinct ────────
+// The same guarantee for EVERY zone, not just the unmatched one. The first
+// version of the headroom fix pre-shaded only the fallback, which left the
+// `web/frontend/ingress/edge` keyword — whose accent is the same `#6b7280` —
+// still walking up from a hair under the bar: 4.53:1 on its own panel and
+// 4.08:1 once composited inside another zone. Two zones that draw the
+// identical grey must read identically, and a rule stated for one branch of a
+// three-branch function is not a rule.
+//
+// The backdrops are DERIVED, not written down. A zone nests inside a zone, so
+// the set of surfaces a zone title can be drawn on is exactly {the page} plus
+// {every zone panel} — and deriving it means adding a darker zone accent
+// cannot quietly walk past this test the way a hard-coded list would. It also
+// keeps the test honest in the other direction: an invented backdrop darker
+// than anything the exporters paint fails colours that are fine in practice.
+test('every zone title clears AA on the panels zones are really drawn on', () => {
+  const zoneFor = (label: string) => {
+    const zone = box('z', 0, 0);
+    zone.kind = 'group';
+    zone.label = label;
+    return zone;
+  };
+  const labels = [
+    'Web Tier', 'Edge', 'Frontend', 'Ingress',      // the grey keyword
+    'Compute', 'API Layer', 'Data', 'Storage', 'AI', 'Analytics',
+    'IoT Devices', 'Security', 'Identity', 'Monitoring', 'Network',
+    'Container Registry',
+    'Shared Services', 'Hub', 'DMZ', 'Landing Zone', // no keyword at all
+  ];
+  const backdrops = ['#ffffff', ...new Set(labels.map((l) => zoneStyleFor(zoneFor(l)).bg))];
 
+  for (const label of labels) {
+    const style = zoneStyleFor(zoneFor(label));
+    for (const backdrop of backdrops) {
+      const ratio = contrastRatio(style.text, backdrop);
+      assert.ok(ratio >= 4.5, `"${label}" title ${style.text} on ${backdrop} is ${ratio.toFixed(2)}:1`);
+    }
+  }
+
+  // Two zones that paint the same grey must print the same ink, whichever
+  // branch of the function produced it. This is the assertion the keyword
+  // regression would have failed while every ratio above still passed.
+  assert.equal(
+    zoneStyleFor(zoneFor('Web Tier')).text,
+    zoneStyleFor(zoneFor('Shared Services')).text,
+    'a grey zone reads the same whether a keyword matched it or nothing did',
+  );
+
+  // And a user-picked colour goes through the same rule, so picking mid-grey
+  // by hand cannot reach a place the keyword table can no longer reach.
+  const picked = zoneFor('Custom');
+  picked.customColor = { border: '#6b7280' };
+  const style = zoneStyleFor(picked);
+  for (const backdrop of backdrops) {
+    const ratio = contrastRatio(style.text, backdrop);
+    assert.ok(ratio >= 4.5, `picked-grey title ${style.text} on ${backdrop} is ${ratio.toFixed(2)}:1`);
+  }
+});
+
+// ─── Fix 7: self-loops and parallel edges must stay visible & distinct ────────
 test('fix 7: a self-loop becomes a visible multi-point stub', () => {
   const boxes = new Map([['a', box('a', 0, 0)]]);
   const routes = buildExportRoutes([{ id: 'loop', source: 'a', target: 'a' }] as unknown as Edge[], boxes);

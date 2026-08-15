@@ -324,6 +324,18 @@ export function stripHash(color: string): string {
   return color.replace(/^#/, '');
 }
 
+/** Blend `hex` toward `backdrop` by `weight` (0..1 = share of the original). */
+export function mixWith(hex: string, backdrop: string, weight: number): string {
+  const base = normalizeHex(hex) ?? '#f5f5f5';
+  const behind = normalizeHex(backdrop) ?? '#ffffff';
+  const channel = (i: number): string => {
+    const v = parseInt(base.slice(1 + i * 2, 3 + i * 2), 16);
+    const b = parseInt(behind.slice(1 + i * 2, 3 + i * 2), 16);
+    return Math.round(v * weight + b * (1 - weight)).toString(16).padStart(2, '0');
+  };
+  return `#${channel(0)}${channel(1)}${channel(2)}`;
+}
+
 /** Blend `hex` toward white by `weight` (0..1 = share of the original colour). */
 export function mixWithWhite(hex: string, weight: number): string {
   const base = normalizeHex(hex) ?? '#f5f5f5';
@@ -386,6 +398,30 @@ export function readableTextOn(color: string, background: string, target = 4.5):
 }
 
 /**
+ * The ink for a zone title: move the accent away from the surface the way
+ * `styleFromAccent` derives a service category's text, and only then guarantee
+ * AA against the panel.
+ *
+ * Both halves are needed and neither is enough alone. `readableTextOn` walks
+ * until it first clears 4.5:1 and stops there, so a colour that starts a hair
+ * under the bar clears it by a hair — and a zone title is not drawn on its own
+ * panel in general. Nest one zone inside another and the real backdrop
+ * composites away from the `bg` passed here; a title with no headroom then
+ * drops under AA. Saturated accents survive that because the walk has to move
+ * them a long way, which is why this only ever showed up on the greys —
+ * `DEFAULT_ACCENT` and the `web/frontend/ingress/edge` keyword, which share
+ * `#6b7280`. Moving first gives every zone the headroom the saturated ones got
+ * by luck.
+ *
+ * The direction follows the panel: darkening ink on a dark panel is the wrong
+ * way to make it readable, so on a dark theme the accent is lightened instead.
+ */
+function zoneInkOn(accent: string, bg: string): string {
+  const darkPanel = contrastRatio('#000000', bg) < contrastRatio('#ffffff', bg);
+  return readableTextOn(darkPanel ? tint(accent, 0.45) : shade(accent, 0.45), bg);
+}
+
+/**
  * Resolve the colour for a zone. The user's picked colour wins; otherwise the
  * label decides, exactly as it does on the canvas.
  *
@@ -395,35 +431,35 @@ export function readableTextOn(color: string, background: string, target = 4.5):
  * reads it too — including the fallback. `GroupNode` has no index and cannot
  * cycle: an unrecognised label is grey there, so it is grey here. Taking the
  * index away entirely is what makes the old defect unrepresentable.
+ *
+ * `backdrop` is the paper the zone is drawn on, and it is a parameter because
+ * the canvas fill is TRANSLUCENT: `GroupNode` paints `rgba(accent, 0.08–0.10)`,
+ * so what the reader sees is the accent composited over the theme's canvas.
+ * Mixing toward white unconditionally is only right while the paper is white.
+ * On the dark theme it inverted the zone from the barely-there dark tint the
+ * screen shows into a glaring near-white block — with dark tiles sitting inside
+ * it on a dark slide, which is not a subtler version of the screen but the
+ * opposite of it.
  */
-export function zoneStyleFor(box: ExportBox): ZoneStyle {
+export function zoneStyleFor(box: ExportBox, backdrop = '#ffffff'): ZoneStyle {
+  // A picked colour is chosen to look right as a border, where contrast does
+  // not matter. Reused verbatim as label text it routinely lands at 2-3:1 —
+  // the zone title, which names the tier, becomes the least readable words on
+  // the slide.
   const border = normalizeHex(box.customColor?.border) ?? normalizeHex(box.customColor?.header);
   if (border) {
-    const bg = mixWithWhite(border, 0.14);
-    // A picked colour is chosen to look right as a border, where contrast does
-    // not matter. Reused verbatim as label text it routinely lands at 2-3:1 —
-    // the zone title, which names the tier, becomes the least readable words on
-    // the slide. Darken it until it clears AA against its own panel.
-    return { bg, border, text: readableTextOn(border, bg) };
+    const bg = mixWith(border, backdrop, 0.14);
+    return { bg, border, text: zoneInkOn(border, bg) };
   }
   const accent = matchZoneAccent(box.label);
   if (accent) {
-    const bg = mixWithWhite(accent, 0.12);
-    return { bg, border: accent, text: readableTextOn(accent, bg) };
+    const bg = mixWith(accent, backdrop, 0.12);
+    return { bg, border: accent, text: zoneInkOn(accent, bg) };
   }
   // The canvas draws an unmatched zone at a lighter alpha than a matched one
-  // (0.08 vs 0.10 in `GroupNode`), so the opaque mix is lighter to match.
-  //
-  // The title ink is shaded first, exactly as `styleFromAccent` does for a
-  // service category, rather than left to `readableTextOn` alone. A saturated
-  // accent is far from readable on its own tint, so the walk darkens it a long
-  // way and the result clears AA with room to spare; mid-grey starts a hair
-  // under the bar, so the walk stops at the first step and the title has no
-  // headroom for the darker backdrop it is really drawn on — a zone nested in
-  // another zone, say. Shading first gives it that headroom.
-  const bg = mixWithWhite(DEFAULT_ACCENT, 0.1);
-  const ink = shade(DEFAULT_ACCENT, 0.45);
-  return { bg, border: DEFAULT_ACCENT, text: readableTextOn(ink, bg) };
+  // (0.08 vs 0.10 in `GroupNode`), so the opaque mix keeps more of the paper.
+  const bg = mixWith(DEFAULT_ACCENT, backdrop, 0.1);
+  return { bg, border: DEFAULT_ACCENT, text: zoneInkOn(DEFAULT_ACCENT, bg) };
 }
 
 // ─── Connection styling (mirrors the on-canvas / PNG legend) ─────────────────

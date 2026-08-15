@@ -308,7 +308,9 @@ async function loadIconSource(iconPath: string): Promise<string | null> {  if (!
 }
 
 function zoneMarkup(box: ExportBox, theme: Theme): string {
-  const style = zoneStyleFor(box);
+  // The canvas fill is translucent, so the zone is the accent composited over
+  // the paper — which on the dark theme is not white.
+  const style = zoneStyleFor(box, theme.pageBg);
   const accent = style.border;
   const label = box.label?.trim();
   const parts = [

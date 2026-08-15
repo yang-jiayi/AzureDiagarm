@@ -319,6 +319,16 @@ const MARKABLE_TILE_W_IN = 0.2;
 const META_LEGIBLE_PT = 5;
 
 /**
+ * Floor for a tag chip, and it is the deck's own 7pt rather than the sub-line's
+ * 5pt. A SKU shrunk to 5pt is still worth setting because every character of it
+ * is a fact the reader can look up and nothing else on the slide carries it. A
+ * tag is one short word chosen by the author: at 5pt it is a smudge, and the
+ * shape it sits on already carries the service name it belongs to. So a tile
+ * that cannot set a legible chip sets none rather than a small one.
+ */
+const TAG_LEGIBLE_PT = 7;
+
+/**
  * The label size tiling actually aims for.
  *
  * Splitting to exactly the floor leaves the deck permanently at its worst
@@ -3548,6 +3558,29 @@ function addNodeShape(
   // the icon did not fit and was dropped.
   let metaBand = named && showsMeta(h, px) && !!meta ? metaFontSize * 1.55 / 72 + 0.03 : 0;
 
+  // The tag chips `AzureNode` draws under the name.
+  //
+  // React Flow measures the node, so a tile carrying chips arrives here
+  // genuinely taller than the same tile without them and `readSize` passes
+  // that measured height straight through. The strip is therefore drawn in
+  // room the screen already paid for — it is not taken from the icon or the
+  // name — and a tile with no tags reserves nothing at all, so every tile that
+  // renders today is untouched.
+  //
+  // Floored at the deck's own legibility limit rather than shrunk to fit. A
+  // tag is a short word with no redundancy: "pci" set at 5pt is not a smaller
+  // label, it is a smudge, and unlike a SKU it is not recoverable from any
+  // other slide. A tile that cannot afford a legible strip draws none.
+  const tags = box.tags ?? [];
+  const tagPt = clamp(fontSize - 3, TAG_LEGIBLE_PT, 8);
+  const tagStrip = (tagPt * 1.45) / 72 + 0.02;
+  // The name outranks the chips: a tile still has to be able to set one line
+  // of its own name after the strip is taken out, or the strip does not happen.
+  let tagBand = named && tags.length > 0
+    && h - pad * 2 - metaBand - tagStrip >= (fontSize * 1.35) / 72
+    ? tagStrip
+    : 0;
+
   // Floored above one ellipsis at the 7pt type floor (0.0525in), not at an
   // arbitrary 0.05in: below that the fitter's own last resort does not fit the
   // column it is being fitted to, which is a contradiction the shrink loop
@@ -3566,7 +3599,7 @@ function addNodeShape(
   // "Azure Kubernetes Service Automatic cluster" was admitted whole at 13pt on
   // a 160x110 tile, drew 5 lines of a 3-line box, and painted 0.224in — all of
   // it — straight through the "P1v3 · eastus" sub-line below.
-  const nameLines = Math.max(1, Math.floor((h - pad * 2 - metaBand) / ((fontSize * 1.35) / 72)));
+  const nameLines = Math.max(1, Math.floor((h - pad * 2 - metaBand - tagBand) / ((fontSize * 1.35) / 72)));
   const linesIn = (text: string, columnIn: number, sizeIn: number): number => wrappedLineCount(text, columnIn, sizeIn * 72);
   const full = fitLabelToLines(box.label, innerW, fontSize / 72, nameLines, linesIn);
   // A stub gets as much of the name as fits the tile at the floor size, on as
@@ -3677,13 +3710,26 @@ function addNodeShape(
     // in the deck carries. So the free move is tried first, and the sub-line
     // is dropped only when shrinking the name does not save the icon AND
     // dropping it does.
-    const withMeta = squeeze(metaBand);
-    let chosen = withMeta;
-    if (metaBand > 0 && withMeta.room < iconFloor) {
-      const withoutMeta = squeeze(0);
-      if (withoutMeta.room >= iconFloor) chosen = withoutMeta;
+    //
+    // The chips go before the sub-line does. They are the one thing on the
+    // tile that IS recoverable — the shape keeps its tags as text nowhere else
+    // needs, and a tag is an annotation on a service rather than a fact about
+    // it — so when the icon is losing, the strip is the cheapest thing to give
+    // up. The order is therefore icon, name, sub-line, chips.
+    const withAll = squeeze(metaBand + tagBand);
+    let chosen = withAll;
+    let keepTags = tagBand > 0;
+    if (tagBand > 0 && withAll.room < iconFloor) {
+      const withoutTags = squeeze(metaBand);
+      if (withoutTags.room >= iconFloor) { chosen = withoutTags; keepTags = false; }
     }
-    metaBand = chosen.band;
+    if (metaBand > 0 && chosen.room < iconFloor) {
+      const withoutMeta = squeeze(0);
+      if (withoutMeta.room >= iconFloor) { chosen = withoutMeta; keepTags = false; }
+    }
+    // `chosen.band` is the TOTAL reserved strip; split it back into its parts.
+    tagBand = keepTags ? tagBand : 0;
+    metaBand = chosen.band - tagBand;
     nameFont = chosen.font;
     label = chosen.label;
     labelLines = chosen.lines;
@@ -3757,7 +3803,7 @@ function addNodeShape(
 
   // Fit the icon into whatever vertical room the label does not need, instead
   // of forcing a minimum that pushes the text out of the tile.
-  const available = h - pad * 2 - metaBand;
+  const available = h - pad * 2 - metaBand - tagBand;
   let iconSize = 0;
   if (icon) {
     iconSize = clamp(Math.min(h * 0.42, w * 0.34, Math.max(0, available - labelBlockH - 0.02)), 0, 0.6);
@@ -3781,7 +3827,7 @@ function addNodeShape(
   }
 
   const textTop = iconSize > 0 ? topLeft.y + pad + iconSize + 0.02 : topLeft.y + pad;
-  const textHeight = Math.max(0.08, topLeft.y + h - pad - metaBand - textTop);
+  const textHeight = Math.max(0.08, topLeft.y + h - pad - metaBand - tagBand - textTop);
 
   let captionBand: { x: number; y: number; w: number; h: number } | null = null;
   if ((named || stub || keyed) && label !== '') {
@@ -3874,14 +3920,14 @@ function addNodeShape(
     const drawnH = Math.min(metaBand, (metaPt * 1.35) / 72);
     metaBandRect = {
       x: topLeft.x + 0.03 + (innerW - drawnW) / 2,
-      y: topLeft.y + h - pad - drawnH,
+      y: topLeft.y + h - pad - tagBand - drawnH,
       w: drawnW,
       h: drawnH,
     };
     if (shown === '') metaBandRect = null;
     else slide.addText(shown, {
       x: topLeft.x + 0.03,
-      y: topLeft.y + h - pad - metaBand,
+      y: topLeft.y + h - pad - tagBand - metaBand,
       w: innerW,
       h: metaBand,
       fontSize: metaPt,
@@ -3898,6 +3944,89 @@ function addNodeShape(
       wrap: false,
       objectName: `service-meta-${box.id}`,
     });
+  }
+
+  // The chip strip, drawn last so it sits on the tile like the canvas draws it.
+  if (tagBand > 0) {
+    // Exactly what `AzureNode` shows: the first two tags, then a counter for
+    // the rest. Not "as many as fit" — the tile is a summary on both surfaces,
+    // and a deck that listed five tags where the screen showed two and a `+3`
+    // would be a different statement about the service, not a fuller one.
+    const chipPadX = 0.045;
+    const chipGap = 0.03;
+    const widthOf = (text: string): number => estimateTextWidthIn(text, tagPt) + chipPadX * 2;
+    const totalOf = (list: string[]): number =>
+      list.reduce((sum, c) => sum + widthOf(c), 0) + Math.max(0, list.length - 1) * chipGap;
+
+    // Whole chips only — a tag is never cut. The canvas ellipsizes a long tag
+    // (`.node-tags span` is `max-width: 72px` with `text-overflow: ellipsis`),
+    // but it also gives every chip a `title`, so on screen the reader can
+    // always recover the tag the chip abbreviated. A deck has no tooltip, so a
+    // cut tag is a string nothing in the file can complete — and the deck's
+    // standing rule, which the quality gate enforces, is that nothing may be
+    // cut without a recovery route. It is the same trade the sub-line above
+    // already makes when it drops whole facts rather than cutting a SKU:
+    // `+1` is a true and complete statement the reader knows how to act on,
+    // while "data-residency:european-u…" only claims to say something it does
+    // not finish.
+    //
+    // Each chip is drawn at its own natural width, so the only question a
+    // layout has to answer is whether the strip fits the tile. Give up the
+    // last named chip to the counter until it does; at zero the strip is the
+    // counter alone, which still says this service is tagged and how many.
+    const strip = (shownCount: number): string[] => {
+      const rest = tags.length - shownCount;
+      return [...tags.slice(0, shownCount), ...(rest > 0 ? [`+${rest}`] : [])];
+    };
+
+    let chips: string[] = [];
+    for (let shownCount = Math.min(2, tags.length); shownCount >= 0; shownCount -= 1) {
+      const attempt = strip(shownCount);
+      if (attempt.length > 0 && totalOf(attempt) <= innerW) { chips = attempt; break; }
+    }
+
+    if (chips.length > 0) {
+      const total = totalOf(chips);
+      const chipH = (tagPt * 1.45) / 72;
+      const chipY = topLeft.y + h - pad - tagBand + (tagBand - chipH) / 2;
+      // The canvas chips are `--azd-color-brand-subtle` on a border of
+      // `--azd-color-brand-border`, which is the same neutral in both themes;
+      // the ink is resolved against the chip's own fill rather than fixed, for
+      // the reason the sub-line is — a grey that reads on white vanishes on the
+      // dark card.
+      const chipFill = dark ? '1F2A36' : 'EEF3F9';
+      const chipLine = dark ? '3A4B5C' : 'D8E1EA';
+      const chipInk = stripHash(readableTextOn(`#${palette.mutedInk}`, `#${chipFill}`));
+      let cursor = topLeft.x + (w - total) / 2;
+      chips.forEach((text, i) => {
+        const cw = widthOf(text);
+        slide.addShape(pptx.ShapeType.roundRect, {
+          x: cursor,
+          y: chipY,
+          w: cw,
+          h: chipH,
+          fill: { color: chipFill },
+          line: { color: chipLine, width: 0.5 },
+          rectRadius: chipH / 2,
+          objectName: `tag-${box.id}-${i}`,
+        });
+        slide.addText(text, {
+          x: cursor,
+          y: chipY,
+          w: cw,
+          h: chipH,
+          fontSize: tagPt,
+          color: chipInk,
+          fontFace: 'Yu Gothic UI',
+          align: 'center',
+          valign: 'middle',
+          margin: 0,
+          wrap: false,
+          objectName: `tagtext-${box.id}-${i}`,
+        });
+        cursor += cw + chipGap;
+      });
+    }
   }
   return {
     caption: captionBand,
@@ -3946,6 +4075,11 @@ function addGroupShape(
    */
   /** Cut names, spelled out in full on the index slide. */
   truncatedNames?: Map<string, Set<string>>,
+  /**
+   * Which theme's paper the zone is drawn on. The canvas fill is translucent,
+   * so a zone is its accent composited over the slide — not over white.
+   */
+  dark = false,
 ): { caption: { x: number; y: number; w: number; h: number } } {
   const topLeft = placeBox(box, transform, clampTo, true);
   const w = topLeft.w;
@@ -3954,7 +4088,7 @@ function addGroupShape(
   // rectangle is the zone or only the part of it that survived the cut.
   const uncut = placeBox(box, transform);
   const clipped = Math.abs(uncut.w - w) > 1e-6 || Math.abs(uncut.h - h) > 1e-6;
-  const palette = zoneStyleFor(box);
+  const palette = zoneStyleFor(box, `#${(dark ? DARK_THEME : LIGHT_THEME).bg}`);
   const bg = stripHash(palette.bg);
   const border = stripHash(palette.border);
   // The border colour is tuned to be seen as a 1pt line, not read as words: on
@@ -4605,6 +4739,7 @@ async function addEditableDiagram(
       [...placedTiles, ...captionBands.map((band) => ({ x: band.x, y: band.y, w: band.w, h: band.h }))],
       drawnGroups.filter((other) => other !== group).map((other) => placedZones.get(other.id)!),
       thumbnail ? undefined : truncatedNames,
+      isDarkMode,
     );
     // A zone caption is worth exactly what a tile caption is worth: it is the
     // only thing that says what the box contains, and a chip over it is a

@@ -236,6 +236,11 @@ function connectorXml(shape: ShapeXml, tiles: ShapeXml[]): string | null {
   );
 }
 
+/** A node id can contain any character a user can type, including regex ones. */
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 /**
  * Repair one slide. Returns the same XML when there is nothing to convert, so
  * callers can cheaply skip untouched parts.
@@ -258,14 +263,22 @@ export function nativizeSlideXml(slideXml: string): string {
   // category stripe is a separate shape for the same reason the icon is (a
   // rounded rect has no per-side border), so it has to be folded in too or
   // moving a tile leaves a bare coloured bar sitting on the slide.
+  //
+  // Anything drawn ON a tile has to be listed here or it strays, which is why
+  // the tag chips are matched too — and matched by an anchored pattern rather
+  // than a prefix, because there is no separator that cannot occur inside an
+  // id: a bare `startsWith('tag-a-')` also swallows the chips of a node called
+  // `a-1`, silently folding one service's tags into a different service's tile.
   let nextId = Math.max(0, ...shapes.map((s) => s.id)) + 1;
   for (const tile of tiles) {
     const key = tile.name.slice('service-'.length);
+    const chip = new RegExp(`^tag(?:text)?-${escapeRegExp(key)}-\\d+$`);
     const parts = shapes.filter(
       (s) =>
         (s.name === `icon-${key}` ||
           s.name === `service-meta-${key}` ||
-          s.name === `accent-${key}`) &&
+          s.name === `accent-${key}` ||
+          chip.test(s.name)) &&
         s.xfrm,
     );
     if (parts.length === 0 || !tile.xfrm) continue;

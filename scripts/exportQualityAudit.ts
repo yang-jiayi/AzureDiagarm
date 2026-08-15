@@ -4838,6 +4838,41 @@ function zoneCaptionCorridorScenario(): Scenario {
   return { id: 'zone-caption-corridor', nodes, edges };
 }
 
+/**
+ * Tiles carrying the tag chips `AzureNode` draws under the name.
+ *
+ * The heights are the point: React Flow measures the node, so a tile with
+ * chips is genuinely taller on the canvas than the same tile without them, and
+ * `readSize` carries that measured height into the export. The band at the
+ * bottom of these tiles is therefore paid for by the screen — anything drawn
+ * in it is drawn in room the tile already had, and the icon and the name are
+ * not asked to give anything up.
+ *
+ * The four rows are the cases that break a chip strip: one tag, two tags
+ * (the cap), five (so the canvas draws two and `+3`), and a single tag far
+ * longer than the tile is wide. The last is the one that matters — a chip
+ * that cannot be shortened is a chip that overflows its tile.
+ */
+function taggedTilesScenario(): Scenario {
+  const rows: Array<{ tags: string[]; label: string }> = [
+    { tags: ['prod'], label: 'Payments API' },
+    { tags: ['prod', 'pci'], label: 'Ledger Service' },
+    { tags: ['prod', 'pci', 'tier-1', 'eu-only', 'on-call'], label: 'Settlement Worker' },
+    { tags: ['data-residency:european-union-only'], label: 'Reconciliation Store' },
+  ];
+  const nodes: Node[] = rows.map((row, i) => ({
+    ...svc(`tag${i}`, row.label, (i % 2) * 220, Math.floor(i / 2) * 150, undefined, true, 'compute'),
+    // 75 for the tile the canvas draws without chips, plus the strip's own
+    // margin, padding, border and 9px/1.4 line.
+    height: 94,
+    data: {
+      ...(svc(`tag${i}`, row.label, 0, 0, undefined, true, 'compute').data as Record<string, unknown>),
+      tags: row.tags,
+    },
+  } as Node));
+  return { id: 'tagged-tiles', nodes, edges: [] };
+}
+
 function visioDefaultTileNamesScenario(): Scenario {
   const names = [
     'Azure Database for PostgreSQL flexible server - Business Critical - East US 2',
@@ -12956,6 +12991,7 @@ async function main(): Promise<void> {
     visioDefaultTileNamesScenario(),
     flushTopZoneScenario(),
     zoneCaptionCorridorScenario(),
+    taggedTilesScenario(),
     tileNameWithMetaScenario(),
     zoneCaptionWideEstateScenario(),
     squeezedBadgeScenario(),
