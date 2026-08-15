@@ -21,7 +21,7 @@ import 'reactflow/dist/style.css';
 import type { CaptureOptions } from './utils/captureCanvas';
 import { type ExportBackground } from './utils/captureCanvas';
 import { dataUrlToBlob } from './utils/assetSource';
-import { csvBlob } from './utils/csvBlob';
+import { csvBlob, csvText } from './utils/csvBlob';
 import { animateEdgeFlow } from './utils/animateEdges';
 import { sequenceWorkflowSvg } from './utils/sequenceWorkflow';
 import { buildWorkflowMarkdown } from './services/workflowNarrativeExporter';
@@ -3279,7 +3279,11 @@ function App() {
         title: titleBlockData,
         prompt: architecturePrompt,
         model: generatedWithModel,
-        nodes,
+        // The narrative hides whatever the canvas hides: `exportNodes` has no
+        // `data.pricing` when cost badges are off or the preset is
+        // presentation, and the cost section below is gated on exactly that,
+        // so the total never reaches the file the user shares.
+        nodes: exportNodes,
         edges,
         workflow,
         validationScore: currentValidationScore ?? null,
@@ -3301,7 +3305,7 @@ function App() {
       console.error('Error exporting workflow markdown:', err);
       alert(t("Failed to export workflow narrative. Please try again."));
     }
-  }, [nodes, edges, workflow, titleBlockData, architecturePrompt, generatedWithModel, currentValidationScore, pricingMode, recordExport, t]);
+  }, [nodes, exportNodes, edges, workflow, titleBlockData, architecturePrompt, generatedWithModel, currentValidationScore, pricingMode, recordExport, t]);
 
   // Export as an Animated SVG: same vector capture as exportAsSvg, but with
   // flowing data-flow circles injected onto each edge. Pure client-side — the
@@ -3971,7 +3975,7 @@ function App() {
       analysisMd,
     ].join('\n');
 
-    zip.file(`${fileBase}.csv`, exportCostBreakdownCSV(breakdown, nodes));
+    zip.file(`${fileBase}.csv`, csvText(exportCostBreakdownCSV(breakdown, nodes)));
     zip.file(`${fileBase}.json`, exportCostBreakdownJSON(breakdown));
     zip.file(`${fileBase}-summary.md`, summaryMd);
     zip.file(`${fileBase}-analysis.md`, analysisMd);
@@ -4035,7 +4039,7 @@ function App() {
         });
         mrLines.push(`${csvTextCell(svc.serviceName, true)},${csvTextCell(svc.nodeId)},${prices.join(',')}`);
       });
-      zip.file(`${fileBase}-multiregion-comparison.csv`, mrLines.join('\n'));
+      zip.file(`${fileBase}-multiregion-comparison.csv`, csvText(mrLines.join('\n')));
     }
 
     const zipBlob = await zip.generateAsync({ type: 'blob' });

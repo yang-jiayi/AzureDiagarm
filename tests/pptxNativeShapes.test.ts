@@ -127,15 +127,21 @@ test('a service name moves into the tile it names, unchanged', async () => {
   }
 });
 
-test('a tile is grouped with the icon drawn on it', () => {
+test('a tile is grouped with everything drawn on it', () => {
   // Icons only rasterise in a browser, so the group path cannot be reached
   // from a generated deck under Node. It is the path that stops a dragged
-  // service leaving its icon behind, so it is pinned directly.
+  // service leaving its icon behind, so it is pinned directly. The category
+  // stripe is a separate shape for the same reason the icon is — a rounded
+  // rect has no per-side border — so it has to move with the tile too, or
+  // dragging a service leaves a bare coloured bar on the slide.
   const slide =
     '<p:spTree>' +
     '<p:sp><p:nvSpPr><p:cNvPr id="7" name="service-a"></p:cNvPr><p:cNvSpPr/><p:nvPr/></p:nvSpPr>' +
     '<p:spPr><a:xfrm><a:off x="1000000" y="2000000"/><a:ext cx="900000" cy="600000"/></a:xfrm>' +
     '<a:prstGeom prst="roundRect"><a:avLst/></a:prstGeom></p:spPr></p:sp>' +
+    '<p:sp><p:nvSpPr><p:cNvPr id="10" name="accent-a"></p:cNvPr><p:cNvSpPr/><p:nvPr/></p:nvSpPr>' +
+    '<p:spPr><a:xfrm><a:off x="1000000" y="2050000"/><a:ext cx="40000" cy="500000"/></a:xfrm>' +
+    '<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr></p:sp>' +
     '<p:sp><p:nvSpPr><p:cNvPr id="8" name="service-label-a"></p:cNvPr><p:cNvSpPr/><p:nvPr/></p:nvSpPr>' +
     '<p:spPr><a:xfrm><a:off x="1030000" y="2400000"/><a:ext cx="840000" cy="150000"/></a:xfrm>' +
     '<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr>' +
@@ -151,9 +157,16 @@ test('a tile is grouped with the icon drawn on it', () => {
   assert.ok(group, 'the tile is wrapped in a group');
   assert.ok(group.includes('name="service-a"'), 'the group holds the tile');
   assert.ok(group.includes('name="icon-a"'), 'and the icon drawn on it');
+  assert.ok(group.includes('name="accent-a"'), 'and the category stripe drawn on it');
   assert.equal((out.match(/name="icon-a"/g) ?? []).length, 1, 'the icon is moved, not copied');
+  assert.equal((out.match(/name="accent-a"/g) ?? []).length, 1, 'the stripe is moved, not copied');
   assert.ok(out.includes('<a:t>Azure Front Door</a:t>'), 'the name survives');
   assert.equal((out.match(/name="service-label-a"/g) ?? []).length, 0, 'and no longer floats');
+
+  // Nothing belonging to the tile may be left outside the group, or it stays
+  // behind when the tile is dragged.
+  assert.equal(out.slice(0, out.indexOf('<p:grpSp>')).includes('name="accent-a"'), false);
+  assert.equal(out.slice(out.lastIndexOf('</p:grpSp>')).includes('name="accent-a"'), false);
 
   // Child coordinates stay absolute, which is what lets the shapes move in
   // with no rewriting at all.

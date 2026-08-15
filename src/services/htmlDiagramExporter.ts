@@ -200,8 +200,8 @@ function buildLayout(nodes: Node[], edges: Edge[], icons: Map<string, string>): 
     };
   });
 
-  const positionedGroups: PositionedGroup[] = groups.map((box, index) => {
-    const style = zoneStyleFor(box, index);
+  const positionedGroups: PositionedGroup[] = groups.map((box) => {
+    const style = zoneStyleFor(box);
     return {
       id: box.id,
       label: box.label,

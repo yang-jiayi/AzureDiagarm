@@ -17,6 +17,15 @@ import type { Node } from 'reactflow';
  * Applied at the export boundary rather than inside each exporter: there are
  * six of them, the rule is the same for all six, and a seventh added later
  * inherits it for free.
+ *
+ * The whole `pricing` object goes, not just the money in it, and that is
+ * deliberate on two counts. The SKU and region the exports print in the meta
+ * subline are read off `pricing`, but the canvas only ever shows them in a
+ * tooltip — so dropping them moves the file *closer* to the screen, not
+ * further from it. And several cost sections (the workflow narrative's, for
+ * one) are gated on "does any node still carry pricing", so leaving a hollow
+ * `pricing` object behind would switch those sections back on with the total
+ * the user just hid.
  */
 export function nodesForExport(nodes: Node[], showCostBadges: boolean): Node[] {
   return nodes.map((node) => {

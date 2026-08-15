@@ -3925,7 +3925,6 @@ function addGroupShape(
   pptx: PptxGenJS,
   slide: Slide,
   box: ExportBox,
-  index: number,
   transform: FitTransform,
   clampTo?: DiagramFrame,
   /** Members of this zone on this slide, and in the drawing as a whole. */
@@ -3955,7 +3954,7 @@ function addGroupShape(
   // rectangle is the zone or only the part of it that survived the cut.
   const uncut = placeBox(box, transform);
   const clipped = Math.abs(uncut.w - w) > 1e-6 || Math.abs(uncut.h - h) > 1e-6;
-  const palette = zoneStyleFor(box, index);
+  const palette = zoneStyleFor(box);
   const bg = stripHash(palette.bg);
   const border = stripHash(palette.border);
   // The border colour is tuned to be seen as a 1pt line, not read as words: on
@@ -4595,7 +4594,7 @@ async function addEditableDiagram(
   const captionBands: Obstacle[] = [];
   drawnGroups.forEach((group) => {
     const bands = addGroupShape(
-      pptx, slide, group, groups.indexOf(group), transform, clampTo,
+      pptx, slide, group, transform, clampTo,
       { here: zoneMembers(group, shownServices), all: zoneMembers(group, services) },
       // Captions already chosen are paper too. Nested zones are the case:
       // `trespass` charges for writing inside a foreign zone, but a zone drawn

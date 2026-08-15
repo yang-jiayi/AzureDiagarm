@@ -113,8 +113,8 @@ function drawioEdgeStyle(route: ExportRoute): string {
 // Create draw.io mxCell for a group node — absolute geometry, parent="1".
 // Zones and services are siblings on the root layer so a nested zone's absolute
 // position (resolved in the shared layer) is honoured verbatim (fixes 8 & 16).
-function createGroupCell(box: ExportBox, cellId: string, index: number): string {
-  const style = zoneStyleFor(box, index);
+function createGroupCell(box: ExportBox, cellId: string): string {
+  const style = zoneStyleFor(box);
   const label = escapeXml(box.label);
   const cellStyle = `swimlane;whiteSpace=wrap;html=1;fillColor=${style.bg};strokeColor=${style.border};fontColor=${style.text};fontStyle=1;startSize=30;rounded=1;arcSize=6;`;
   return `
@@ -270,10 +270,10 @@ export async function exportToDrawio(
 
   // Groups first so they paint behind the services that sit on top of them.
   const groupCells: string[] = [];
-  groups.forEach((group, index) => {
+  groups.forEach((group) => {
     const cellId = generateCellId();
     nodeIdToCellId.set(group.id, cellId);
-    groupCells.push(createGroupCell(group, cellId, index));
+    groupCells.push(createGroupCell(group, cellId));
   });
 
   // Services (with async icon embedding) — all on the root layer.

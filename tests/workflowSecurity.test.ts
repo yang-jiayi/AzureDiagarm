@@ -41,17 +41,45 @@ test('deployment notifications use OIDC instead of a Communication Services secr
     3,
   );
   assert.equal(
-    Array.from(
-      workflow.matchAll(
-        /uses: azure\/login@532459ea530d8321f2fb9bb10d1e0bcf23869a43/g,
-      ),
-    ).length,
+    Array.from(workflow.matchAll(/uses: azure\/login@[0-9a-f]{40}/g)).length,
     3,
   );
   assert.match(
     workflow,
     /- name: Refresh Azure sign-in for deployment notification[\s\S]*?if: \$\{\{ !cancelled\(\) && steps\.deployment\.outputs\.should_deploy == 'true' \}\}[\s\S]*?- name: Send detailed update email/,
   );
+});
+
+// Third-party actions run with repository credentials, so a moved tag is a
+// supply-chain takeover. Three assertions above happened to spell out SHAs,
+// which meant every Dependabot bump failed CI and left the *other* `uses:`
+// lines unguarded. Enforce the property itself, once, across every workflow.
+test('every workflow action is pinned to a full commit SHA', () => {
+  const workflowsDir = new URL('../.github/workflows/', import.meta.url);
+  const files = readdirSync(workflowsDir).filter(
+    (entry) => entry.endsWith('.yml') || entry.endsWith('.yaml'),
+  );
+
+  assert.ok(files.length > 0, 'expected at least one workflow file');
+
+  const references: string[] = [];
+  for (const file of files) {
+    const source = readFileSync(new URL(file, workflowsDir), 'utf8');
+    for (const match of source.matchAll(/^\s*uses:\s*(\S+)/gm)) {
+      const reference = match[1];
+      // Local composite actions and reusable workflows in this repo are
+      // covered by this repo's own review, not by a third-party tag.
+      if (reference.startsWith('./')) continue;
+      references.push(`${file}: ${reference}`);
+      assert.match(
+        reference,
+        /^[\w.-]+\/[\w.-]+(\/[\w.-]+)*@[0-9a-f]{40}$/,
+        `${file} uses "${reference}", which is not pinned to a full 40-character commit SHA`,
+      );
+    }
+  }
+
+  assert.ok(references.length > 0, 'expected at least one third-party action');
 });
 
 test('the notification helper acquires a scoped token and waits for delivery', () => {
@@ -87,11 +115,11 @@ test('validated upstream publication isolates the main bypass credential', () =>
   );
   assert.match(
     workflow,
-    /merge_validate:[\s\S]*?permissions:\s+contents: read[\s\S]*?artifact_name: \$\{\{ steps\.artifact\.outputs\.name \}\}[\s\S]*?details_file="\$RUNNER_TEMP\/update-details\.txt"[\s\S]*?git merge --no-ff --no-commit upstream\/main[\s\S]*?GIT_AUTHOR_DATE="@\$merge_epoch \+0000"[\s\S]*?\[\[ "\$actual_commit" == "\$expected_commit" \]\][\s\S]*?status --porcelain=v1 --untracked-files=all[\s\S]*?git bundle create[\s\S]*?actions\/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02[\s\S]*?name: \$\{\{ steps\.artifact\.outputs\.name \}\}/,
+    /merge_validate:[\s\S]*?permissions:\s+contents: read[\s\S]*?artifact_name: \$\{\{ steps\.artifact\.outputs\.name \}\}[\s\S]*?details_file="\$RUNNER_TEMP\/update-details\.txt"[\s\S]*?git merge --no-ff --no-commit upstream\/main[\s\S]*?GIT_AUTHOR_DATE="@\$merge_epoch \+0000"[\s\S]*?\[\[ "\$actual_commit" == "\$expected_commit" \]\][\s\S]*?status --porcelain=v1 --untracked-files=all[\s\S]*?git bundle create[\s\S]*?actions\/upload-artifact@[0-9a-f]{40}[\s\S]*?name: \$\{\{ steps\.artifact\.outputs\.name \}\}/,
   );
   assert.match(
     workflow,
-    /stage_validated_merge:[\s\S]*?permissions:\s+contents: write[\s\S]*?actions\/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093[\s\S]*?name: \$\{\{ needs\.merge_validate\.outputs\.artifact_name \}\}[\s\S]*?bundle_commit[\s\S]*?\[\[ "\$bundle_commit" == "\$EXPECTED_COMMIT" \]\][\s\S]*?\[\[ "\$current_main" == "\$BASE_COMMIT" \|\| "\$current_main" == "\$EXPECTED_COMMIT" \]\][\s\S]*?staged_branch="automation\/upstream-sync"[\s\S]*?--force-with-lease="\$staged_ref:\$existing_commit"[\s\S]*?"\$EXPECTED_COMMIT:\$staged_ref"/,
+    /stage_validated_merge:[\s\S]*?permissions:\s+contents: write[\s\S]*?actions\/download-artifact@[0-9a-f]{40}[\s\S]*?name: \$\{\{ needs\.merge_validate\.outputs\.artifact_name \}\}[\s\S]*?bundle_commit[\s\S]*?\[\[ "\$bundle_commit" == "\$EXPECTED_COMMIT" \]\][\s\S]*?\[\[ "\$current_main" == "\$BASE_COMMIT" \|\| "\$current_main" == "\$EXPECTED_COMMIT" \]\][\s\S]*?staged_branch="automation\/upstream-sync"[\s\S]*?--force-with-lease="\$staged_ref:\$existing_commit"[\s\S]*?"\$EXPECTED_COMMIT:\$staged_ref"/,
   );
   assert.match(
     workflow,

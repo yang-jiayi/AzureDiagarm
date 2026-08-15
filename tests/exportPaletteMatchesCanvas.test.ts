@@ -25,6 +25,7 @@ import {
   DEFAULT_ACCENT,
   categoryAccent,
   matchZoneAccent,
+  zoneAccent,
 } from '../src/utils/canvasPalette.ts';
 import {
   categoryStyle,
@@ -102,42 +103,65 @@ test('tile text stays readable on the tile fill it is printed on', () => {
 });
 
 test('a zone takes its colour from its label, not its position in the list', () => {
-  const labels = ['Data Layer', 'Security Perimeter', 'Compute Tier', 'Monitoring'];
+  // `zoneAccent` is what GroupNode paints, keyword hit or not, so it is the
+  // exact oracle. The unmatched labels below are the ones that used to come
+  // out blue/green/orange in the file while the canvas drew them grey — and
+  // that changed colour whenever the zone moved up or down the list.
+  const labels = [
+    'Data Layer',
+    'Security Perimeter',
+    'Compute Tier',
+    'Monitoring',
+    'Hub',
+    'Shared Services',
+    'DMZ',
+    'Landing Zone',
+    'On-Prem',
+  ];
   for (const label of labels) {
-    const first = zoneStyleFor(zone(label), 0);
-    const later = zoneStyleFor(zone(label), 5);
-    assert.deepEqual(first, later, `${label} changed colour when it moved down the list`);
+    const style = zoneStyleFor(zone(label));
     assert.equal(
-      first.border.toLowerCase(),
-      matchZoneAccent(label)?.toLowerCase(),
+      style.border.toLowerCase(),
+      zoneAccent(label).toLowerCase(),
       `${label} exports a different accent than the canvas shows`,
     );
   }
 });
 
+test('two zones the keyword table does not know stay the same colour as each other', () => {
+  // They are indistinguishable to the canvas, so distinguishing them in the
+  // file is an invention — and the only thing that could tell them apart is
+  // the ordering that used to leak in.
+  const hub = zoneStyleFor(zone('Hub', 'a'));
+  const shared = zoneStyleFor(zone('Shared Services', 'b'));
+  assert.equal(matchZoneAccent('Hub'), null);
+  assert.equal(matchZoneAccent('Shared Services'), null);
+  assert.deepEqual(hub, shared);
+});
+
 test('two differently named zones do not borrow each other colours', () => {
-  const data = zoneStyleFor(zone('Data Layer', 'a'), 0);
-  const security = zoneStyleFor(zone('Security Perimeter', 'b'), 1);
+  const data = zoneStyleFor(zone('Data Layer', 'a'));
+  const security = zoneStyleFor(zone('Security Perimeter', 'b'));
   assert.notEqual(data.border, security.border);
 });
 
 test('a picked zone colour still wins over the label', () => {
-  const picked = zoneStyleFor(
-    { ...zone('Data Layer'), customColor: { border: '#8B0000' } },
-    0,
-  );
+  const picked = zoneStyleFor({
+    ...zone('Data Layer'),
+    customColor: { border: '#8B0000' },
+  });
   assert.equal(picked.border.toLowerCase(), '#8b0000');
 });
 
 test('an unlabelled zone still gets a colour rather than nothing', () => {
-  const style = zoneStyleFor(zone(''), 2);
+  const style = zoneStyleFor(zone(''));
   assert.ok(/^#[0-9a-f]{6}$/i.test(style.border));
   assert.ok(contrast(style.text, style.bg) >= 4.5);
 });
 
 test('zone title text is readable on the zone panel', () => {
   for (const label of ['Ingress', 'AI Services', 'IoT Devices', 'Container Registry', '']) {
-    const style = zoneStyleFor(zone(label), 0);
+    const style = zoneStyleFor(zone(label));
     assert.ok(
       contrast(style.text, style.bg) >= 4.5,
       `${label || '(unlabelled)'}: ${style.text} on ${style.bg}`,

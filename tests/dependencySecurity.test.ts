@@ -25,6 +25,12 @@ function probeImageSize(input: Uint8Array): string {
       console.log(error instanceof Error ? error.message : String(error));
     }
   `;
+  // The timeout is a hang guard, not a performance budget: the vulnerability
+  // class here is a parser that loops forever, and a loop that never ends is
+  // caught just as surely at thirty seconds as at one. One second was not,
+  // though, enough to cover Node's own startup and module resolution on a
+  // loaded machine — the probe took 1.1s and this security gate went red for
+  // no reason, which is the fastest way to teach people to ignore it.
   const result = spawnSync(process.execPath, ['--input-type=module', '--eval', source], {
     cwd: process.cwd(),
     encoding: 'utf8',
@@ -32,9 +38,14 @@ function probeImageSize(input: Uint8Array): string {
       ...process.env,
       IMAGE_SIZE_PROBE: Buffer.from(input).toString('base64'),
     },
-    timeout: 1_000,
+    timeout: 30_000,
   });
 
+  assert.notEqual(
+    (result.error as NodeJS.ErrnoException | undefined)?.code,
+    'ETIMEDOUT',
+    'image-size did not terminate — the parser is looping on this input',
+  );
   assert.equal(result.error, undefined, result.error?.message);
   assert.equal(result.status, 0, result.stderr);
   return result.stdout.trim();

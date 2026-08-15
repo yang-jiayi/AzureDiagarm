@@ -298,16 +298,6 @@ export interface ZoneStyle {
   text: string;
 }
 
-/** Fallback zone palette, cycled by group index and identical across formats. */
-export const ZONE_PALETTE: ZoneStyle[] = [
-  { bg: '#F0F6FF', border: '#0078D4', text: '#12395B' },
-  { bg: '#F0FFF4', border: '#00B294', text: '#04463A' },
-  { bg: '#FFFBEB', border: '#D97706', text: '#5A3200' },
-  { bg: '#F8F0FF', border: '#8764B8', text: '#3B2557' },
-  { bg: '#FFF1F2', border: '#D13438', text: '#5A1417' },
-  { bg: '#ECFEFF', border: '#038387', text: '#023B3D' },
-];
-
 // ─── Colour helpers ──────────────────────────────────────────────────────────
 
 /** Normalise `#rgb` / `#rrggbb` / `rgb[a](...)` into `#rrggbb`, else undefined. */
@@ -399,13 +389,14 @@ export function readableTextOn(color: string, background: string, target = 4.5):
  * Resolve the colour for a zone. The user's picked colour wins; otherwise the
  * label decides, exactly as it does on the canvas.
  *
- * This used to cycle {@link ZONE_PALETTE} by group index, which had two
- * consequences: a zone the canvas painted green came out blue, and merely
- * reordering the zones repainted all of them. The label is what the canvas
- * reads, so the export reads it too, and `index` is now only a last-resort tie
- * break for unlabelled zones.
+ * This used to cycle a palette by group index, which had two consequences: a
+ * zone the canvas painted green came out blue, and merely reordering the zones
+ * repainted all of them. The label is what the canvas reads, so the export
+ * reads it too — including the fallback. `GroupNode` has no index and cannot
+ * cycle: an unrecognised label is grey there, so it is grey here. Taking the
+ * index away entirely is what makes the old defect unrepresentable.
  */
-export function zoneStyleFor(box: ExportBox, index: number): ZoneStyle {
+export function zoneStyleFor(box: ExportBox): ZoneStyle {
   const border = normalizeHex(box.customColor?.border) ?? normalizeHex(box.customColor?.header);
   if (border) {
     const bg = mixWithWhite(border, 0.14);
@@ -420,7 +411,19 @@ export function zoneStyleFor(box: ExportBox, index: number): ZoneStyle {
     const bg = mixWithWhite(accent, 0.12);
     return { bg, border: accent, text: readableTextOn(accent, bg) };
   }
-  return ZONE_PALETTE[index % ZONE_PALETTE.length];
+  // The canvas draws an unmatched zone at a lighter alpha than a matched one
+  // (0.08 vs 0.10 in `GroupNode`), so the opaque mix is lighter to match.
+  //
+  // The title ink is shaded first, exactly as `styleFromAccent` does for a
+  // service category, rather than left to `readableTextOn` alone. A saturated
+  // accent is far from readable on its own tint, so the walk darkens it a long
+  // way and the result clears AA with room to spare; mid-grey starts a hair
+  // under the bar, so the walk stops at the first step and the title has no
+  // headroom for the darker backdrop it is really drawn on — a zone nested in
+  // another zone, say. Shading first gives it that headroom.
+  const bg = mixWithWhite(DEFAULT_ACCENT, 0.1);
+  const ink = shade(DEFAULT_ACCENT, 0.45);
+  return { bg, border: DEFAULT_ACCENT, text: readableTextOn(ink, bg) };
 }
 
 // ─── Connection styling (mirrors the on-canvas / PNG legend) ─────────────────

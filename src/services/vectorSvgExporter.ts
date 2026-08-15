@@ -307,8 +307,8 @@ async function loadIconSource(iconPath: string): Promise<string | null> {  if (!
   }
 }
 
-function zoneMarkup(box: ExportBox, index: number, theme: Theme): string {
-  const style = zoneStyleFor(box, index);
+function zoneMarkup(box: ExportBox, theme: Theme): string {
+  const style = zoneStyleFor(box);
   const accent = style.border;
   const label = box.label?.trim();
   const parts = [
@@ -611,7 +611,7 @@ export async function exportToSvg(
     )
     .join('');
 
-  const zoneMarkupParts = groups.map((group, index) => zoneMarkup(group, index, theme));
+  const zoneMarkupParts = groups.map((group) => zoneMarkup(group, theme));
   const serviceParts = services.map((service, index) =>
     serviceMarkup(service, iconSources[index], theme, `s${index}`),
   );

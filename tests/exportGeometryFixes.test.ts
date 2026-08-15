@@ -19,6 +19,7 @@ import {
   zoneStyleFor,
   type ExportBox,
 } from '../src/services/diagramExportGeometry.ts';
+import { DEFAULT_ACCENT, matchZoneAccent } from '../src/utils/canvasPalette.ts';
 
 function box(id: string, x: number, y: number, w = 150, h = 75): ExportBox {
   return { id, kind: 'service', label: id, category: 'other', x, y, w, h };
@@ -121,7 +122,7 @@ test('fix 6: customColor is plumbed into the box and drives the zone style', () 
 
   const box0 = collectExportBoxes(nodes).get('zone')!;
   assert.equal(box0.customColor?.border, '#dc2626');
-  const style = zoneStyleFor(box0, 0);
+  const style = zoneStyleFor(box0);
   assert.equal(style.border, '#dc2626');
   // The label is NOT the border colour verbatim. #dc2626 on the zone's own
   // tint reads at 4.0:1, under the 4.5:1 WCAG AA floor, so the label is
@@ -133,12 +134,34 @@ test('fix 6: customColor is plumbed into the box and drives the zone style', () 
   assert.ok(r > g && r > b, 'the label keeps the red the user picked');
 });
 
-test('fix 6: zones without a custom colour share one deterministic palette', () => {
+// This test used to assert the OPPOSITE — that index 0 and index 1 produced
+// different colours — which is precisely what let the defect survive: an
+// unrecognised zone was painted by its position in the list, so reordering the
+// zones repainted them, and none of the colours matched the grey the canvas
+// actually drew. The real contract is that a zone's colour depends only on the
+// zone.
+test('fix 6: an unrecognised zone is grey like the canvas, whatever its index', () => {
   const plain = box('z', 0, 0);
   plain.kind = 'group';
-  // Same index → same colour in every exporter.
-  assert.deepEqual(zoneStyleFor(plain, 2), zoneStyleFor(plain, 2));
-  assert.notDeepEqual(zoneStyleFor(plain, 0), zoneStyleFor(plain, 1));
+  plain.label = 'Shared Services';
+
+  assert.equal(matchZoneAccent(plain.label), null, 'precondition: no keyword hit');
+  assert.deepEqual(zoneStyleFor(plain), zoneStyleFor(plain));
+  assert.equal(zoneStyleFor(plain).border, DEFAULT_ACCENT);
+
+  // Not just "AA against its own panel". A zone caption is composited over
+  // everything under it — an enclosing zone most of all — so a colour that
+  // only just clears the bar on the panel fails where it is actually drawn.
+  // Grey is the case that bites: it starts a hair under 4.5:1, so a bare
+  // readability walk stops at the first step and leaves no headroom.
+  const style = zoneStyleFor(plain);
+  for (const backdrop of ['#ffffff', '#f0f1f2', '#e5e7eb', '#d1d3d7']) {
+    const ratio = contrastRatio(style.text, backdrop);
+    assert.ok(
+      ratio >= 4.5,
+      `zone title ${style.text} on ${backdrop} is ${ratio.toFixed(2)}:1`,
+    );
+  }
 });
 
 // ─── Fix 7: self-loops and parallel edges must stay visible & distinct ────────

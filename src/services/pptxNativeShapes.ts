@@ -254,12 +254,19 @@ export function nativizeSlideXml(slideXml: string): string {
 
   // A tile and the icon drawn on it are one thing to the reader, so make them
   // one thing to PowerPoint. Without this, dragging a service leaves its icon
-  // behind — which is most of what makes an exported deck unusable.
+  // behind — which is most of what makes an exported deck unusable. The
+  // category stripe is a separate shape for the same reason the icon is (a
+  // rounded rect has no per-side border), so it has to be folded in too or
+  // moving a tile leaves a bare coloured bar sitting on the slide.
   let nextId = Math.max(0, ...shapes.map((s) => s.id)) + 1;
   for (const tile of tiles) {
     const key = tile.name.slice('service-'.length);
     const parts = shapes.filter(
-      (s) => (s.name === `icon-${key}` || s.name === `service-meta-${key}`) && s.xfrm,
+      (s) =>
+        (s.name === `icon-${key}` ||
+          s.name === `service-meta-${key}` ||
+          s.name === `accent-${key}`) &&
+        s.xfrm,
     );
     if (parts.length === 0 || !tile.xfrm) continue;
     const body = replacements.get(tile.id) ?? tile.xml;

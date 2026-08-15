@@ -371,8 +371,8 @@ function paletteForService(box: ExportBox): Palette {
 }
 
 /** Adapt the shared zone style (honours `data.customColor`) to Visio's cells. */
-function paletteForZone(box: ExportBox, index: number): Palette {
-  const style = zoneStyleFor(box, index);
+function paletteForZone(box: ExportBox): Palette {
+  const style = zoneStyleFor(box);
   return { fill: style.bg, line: style.border, text: style.text };
 }
 
@@ -2302,7 +2302,7 @@ export async function buildVsdxPackage(
     const zone = groups[zoneIndex];
     const id = nextId++;
     shapeIdByNode.set(zone.id, id);
-    const palette = paletteForZone(zone, zoneIndex);
+    const palette = paletteForZone(zone);
     shapes.push(zoneShapeXml(id, toRect(zone), zone.label, palette, fonts));
   }
 
