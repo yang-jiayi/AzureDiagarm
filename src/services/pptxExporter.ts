@@ -3574,18 +3574,62 @@ function addNodeShape(
   const tags = box.tags ?? [];
   const tagPt = clamp(fontSize - 3, TAG_LEGIBLE_PT, 8);
   const tagStrip = (tagPt * 1.45) / 72 + 0.02;
-  // The name outranks the chips: a tile still has to be able to set one line
-  // of its own name after the strip is taken out, or the strip does not happen.
-  let tagBand = named && tags.length > 0
-    && h - pad * 2 - metaBand - tagStrip >= (fontSize * 1.35) / 72
-    ? tagStrip
-    : 0;
 
   // Floored above one ellipsis at the 7pt type floor (0.0525in), not at an
   // arbitrary 0.05in: below that the fitter's own last resort does not fit the
   // column it is being fitted to, which is a contradiction the shrink loop
-  // used to spin on.
+  // used to spin on. Hoisted above the tag band because the band cannot be
+  // decided without knowing the width the chips have to fit in.
   const innerW = Math.max(0.06, w - 0.06);
+
+  // Which chips this tile can actually draw, decided here rather than at
+  // drawing time so the reservation and the drawing cannot disagree. They did:
+  // the band was gated on HEIGHT while the chips fit on WIDTH, so a tile
+  // narrow enough that not even the `+N` counter fit still reserved the strip
+  // — and because the icon-squeeze's room is capped by width, dropping the
+  // tags could never win that width back. The tile ended up with an empty
+  // strip along its bottom and one fewer line for its name.
+  const chipPadX = 0.045;
+  const chipGap = 0.03;
+  const widthOf = (text: string): number => estimateTextWidthIn(text, tagPt) + chipPadX * 2;
+  const totalOf = (list: string[]): number =>
+    list.reduce((sum, c) => sum + widthOf(c), 0) + Math.max(0, list.length - 1) * chipGap;
+
+  // Whole chips only — a tag is never cut. The canvas ellipsizes a long tag
+  // (`.node-tags span` is `max-width: 72px` with `text-overflow: ellipsis`),
+  // but it also gives every chip a `title`, so on screen the reader can
+  // always recover the tag the chip abbreviated. A deck has no tooltip, so a
+  // cut tag is a string nothing in the file can complete — and the deck's
+  // standing rule, which the quality gate enforces, is that nothing may be
+  // cut without a recovery route. It is the same trade the sub-line already
+  // makes when it drops whole facts rather than cutting a SKU: `+1` is a true
+  // and complete statement the reader knows how to act on, while
+  // "data-residency:european-u…" only claims to say something it does not
+  // finish.
+  //
+  // Each chip is drawn at its own natural width, so the only question a
+  // layout has to answer is whether the strip fits the tile. Give up the last
+  // named chip to the counter until it does; at zero the strip is the counter
+  // alone, which still says this service is tagged and how many. If even that
+  // does not fit, the tile draws no strip and reserves no room for one.
+  const stripOf = (shownCount: number): string[] => {
+    const rest = tags.length - shownCount;
+    return [...tags.slice(0, shownCount), ...(rest > 0 ? [`+${rest}`] : [])];
+  };
+
+  let chips: string[] = [];
+  for (let shownCount = Math.min(2, tags.length); shownCount >= 0; shownCount -= 1) {
+    const attempt = stripOf(shownCount);
+    if (attempt.length > 0 && totalOf(attempt) <= innerW) { chips = attempt; break; }
+  }
+
+  // The name outranks the chips: a tile still has to be able to set one line
+  // of its own name after the strip is taken out, or the strip does not happen.
+  let tagBand = named && chips.length > 0
+    && h - pad * 2 - metaBand - tagStrip >= (fontSize * 1.35) / 72
+    ? tagStrip
+    : 0;
+
   // How much of the name the tile can actually hold, rather than a flat 40
   // cells. The flat cap clipped names a three-line tile had ample room for —
   // "Azure Database for PostgreSQL フレキシ…" on a tile that fits the whole
@@ -3947,86 +3991,51 @@ function addNodeShape(
   }
 
   // The chip strip, drawn last so it sits on the tile like the canvas draws it.
-  if (tagBand > 0) {
-    // Exactly what `AzureNode` shows: the first two tags, then a counter for
-    // the rest. Not "as many as fit" — the tile is a summary on both surfaces,
-    // and a deck that listed five tags where the screen showed two and a `+3`
-    // would be a different statement about the service, not a fuller one.
-    const chipPadX = 0.045;
-    const chipGap = 0.03;
-    const widthOf = (text: string): number => estimateTextWidthIn(text, tagPt) + chipPadX * 2;
-    const totalOf = (list: string[]): number =>
-      list.reduce((sum, c) => sum + widthOf(c), 0) + Math.max(0, list.length - 1) * chipGap;
-
-    // Whole chips only — a tag is never cut. The canvas ellipsizes a long tag
-    // (`.node-tags span` is `max-width: 72px` with `text-overflow: ellipsis`),
-    // but it also gives every chip a `title`, so on screen the reader can
-    // always recover the tag the chip abbreviated. A deck has no tooltip, so a
-    // cut tag is a string nothing in the file can complete — and the deck's
-    // standing rule, which the quality gate enforces, is that nothing may be
-    // cut without a recovery route. It is the same trade the sub-line above
-    // already makes when it drops whole facts rather than cutting a SKU:
-    // `+1` is a true and complete statement the reader knows how to act on,
-    // while "data-residency:european-u…" only claims to say something it does
-    // not finish.
-    //
-    // Each chip is drawn at its own natural width, so the only question a
-    // layout has to answer is whether the strip fits the tile. Give up the
-    // last named chip to the counter until it does; at zero the strip is the
-    // counter alone, which still says this service is tagged and how many.
-    const strip = (shownCount: number): string[] => {
-      const rest = tags.length - shownCount;
-      return [...tags.slice(0, shownCount), ...(rest > 0 ? [`+${rest}`] : [])];
-    };
-
-    let chips: string[] = [];
-    for (let shownCount = Math.min(2, tags.length); shownCount >= 0; shownCount -= 1) {
-      const attempt = strip(shownCount);
-      if (attempt.length > 0 && totalOf(attempt) <= innerW) { chips = attempt; break; }
-    }
-
-    if (chips.length > 0) {
-      const total = totalOf(chips);
-      const chipH = (tagPt * 1.45) / 72;
-      const chipY = topLeft.y + h - pad - tagBand + (tagBand - chipH) / 2;
-      // The canvas chips are `--azd-color-brand-subtle` on a border of
-      // `--azd-color-brand-border`, which is the same neutral in both themes;
-      // the ink is resolved against the chip's own fill rather than fixed, for
-      // the reason the sub-line is — a grey that reads on white vanishes on the
-      // dark card.
-      const chipFill = dark ? '1F2A36' : 'EEF3F9';
-      const chipLine = dark ? '3A4B5C' : 'D8E1EA';
-      const chipInk = stripHash(readableTextOn(`#${palette.mutedInk}`, `#${chipFill}`));
-      let cursor = topLeft.x + (w - total) / 2;
-      chips.forEach((text, i) => {
-        const cw = widthOf(text);
-        slide.addShape(pptx.ShapeType.roundRect, {
-          x: cursor,
-          y: chipY,
-          w: cw,
-          h: chipH,
-          fill: { color: chipFill },
-          line: { color: chipLine, width: 0.5 },
-          rectRadius: chipH / 2,
-          objectName: `tag-${box.id}-${i}`,
-        });
-        slide.addText(text, {
-          x: cursor,
-          y: chipY,
-          w: cw,
-          h: chipH,
-          fontSize: tagPt,
-          color: chipInk,
-          fontFace: 'Yu Gothic UI',
-          align: 'center',
-          valign: 'middle',
-          margin: 0,
-          wrap: false,
-          objectName: `tagtext-${box.id}-${i}`,
-        });
-        cursor += cw + chipGap;
+  // `chips` was chosen up where the band was reserved, so a tile that reserved
+  // room always has something to put in it.
+  if (tagBand > 0 && chips.length > 0) {
+    const total = totalOf(chips);
+    const chipH = (tagPt * 1.45) / 72;
+    const chipY = topLeft.y + h - pad - tagBand + (tagBand - chipH) / 2;
+    // The canvas chips are `--azd-color-brand-subtle` on a border of
+    // `--azd-color-brand-border` with `--azd-color-text-secondary` ink —
+    // Azure blue, not a neutral, and a different pair per theme. Drawing
+    // them grey was the export inventing a colour the canvas owns. The ink
+    // is still resolved against the chip's own fill rather than taken
+    // literally, for the reason the sub-line is: a value that reads on the
+    // light chip vanishes on the dark one.
+    const chipFill = dark ? '22384A' : 'EFF6FF';
+    const chipLine = dark ? '42657E' : 'BFDBFE';
+    const chipInk = stripHash(readableTextOn(dark ? '#CBD5E1' : '#334155', `#${chipFill}`));
+    let cursor = topLeft.x + (w - total) / 2;
+    chips.forEach((text, i) => {
+      const cw = widthOf(text);
+      slide.addShape(pptx.ShapeType.roundRect, {
+        x: cursor,
+        y: chipY,
+        w: cw,
+        h: chipH,
+        fill: { color: chipFill },
+        line: { color: chipLine, width: 0.5 },
+        rectRadius: chipH / 2,
+        objectName: `tag-${box.id}-${i}`,
       });
-    }
+      slide.addText(text, {
+        x: cursor,
+        y: chipY,
+        w: cw,
+        h: chipH,
+        fontSize: tagPt,
+        color: chipInk,
+        fontFace: 'Yu Gothic UI',
+        align: 'center',
+        valign: 'middle',
+        margin: 0,
+        wrap: false,
+        objectName: `tagtext-${box.id}-${i}`,
+      });
+      cursor += cw + chipGap;
+    });
   }
   return {
     caption: captionBand,

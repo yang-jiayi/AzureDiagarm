@@ -162,3 +162,85 @@ test('tag chips travel with the tile when it is dragged', async () => {
   assert.ok(groupA, "the tile group for `a` exists");
   assert.ok(!groupA.includes('name="tag-a-1-'), "a-1's chips did not leak into a's group");
 });
+test('a tile too narrow for even the +N counter reserves no strip for it', async () => {
+  // The band was gated on the tile's HEIGHT while the chips fit on its WIDTH,
+  // so a tile narrow enough that not even `+3` fitted still gave up a strip
+  // along its bottom — and because the icon-squeeze's room is capped by width,
+  // dropping the tags could never win that width back. The strip stayed empty
+  // and the name lost a line to it. A tagged tile that draws nothing must lay
+  // out exactly as the same tile with no tags at all.
+  //
+  // 24px against a far-away node scales the tile to 0.250in, which is the
+  // widest tile that cannot fit the counter; the measurements come from a
+  // width sweep rather than a guess.
+  const narrow = (tags?: string[]): Node[] => [
+    {
+      id: 'n',
+      type: 'azureNode',
+      position: { x: 0, y: 0 },
+      width: 24,
+      height: 94,
+      data: {
+        label: 'Application Gateway Frontend',
+        serviceName: 'Application Gateway Frontend',
+        ...(tags ? { tags } : {}),
+      },
+    },
+    {
+      id: 'far',
+      type: 'azureNode',
+      position: { x: 9000, y: 4000 },
+      width: 150,
+      height: 75,
+      data: { label: 'Edge', serviceName: 'Edge' },
+    },
+  ] as Node[];
+
+  const labelBox = (xml: string): string => {
+    const shape = /<p:sp>(?:(?!<\/p:sp>)[\s\S])*name="service-label-n"[\s\S]*?<\/p:sp>/.exec(xml);
+    assert.ok(shape, 'the tile draws its name');
+    const ext = /<a:ext cx="\d+" cy="(\d+)"/.exec(shape[0]);
+    assert.ok(ext, 'the name box has a height');
+    return ext[1];
+  };
+
+  const tagged = await slideXml(narrow(['pci', 'hipaa', 'soc2']), []);
+  const plain = await slideXml(narrow(), []);
+
+  assert.equal(
+    (tagged.match(/name="tagtext-n-\d+"/g) ?? []).length,
+    0,
+    'the tile is too narrow to draw any chip',
+  );
+  assert.equal(
+    labelBox(tagged),
+    labelBox(plain),
+    'a tile that draws no chip gives up no room to them',
+  );
+});
+test('tag chips carry the canvas brand colours, not an invented neutral', async () => {
+  // `.node-tags span` is `--azd-color-brand-subtle` on `--azd-color-brand-border`
+  // with `--azd-color-text-secondary` ink. The export drew grey, which is the
+  // same class of defect as the zone panels: a colour the canvas owns being
+  // re-decided in the file. The border is the visible tell — the canvas chip is
+  // ringed in Azure blue.
+  for (const [dark, fill, line] of [
+    [false, 'EFF6FF', 'BFDBFE'],
+    [true, '22384A', '42657E'],
+  ] as const) {
+    const pptx = await buildDiagramSlidePptx(PIXEL_PNG, {
+      diagramName: 'Chips',
+      author: 'Tester',
+      date: '2026-08-10',
+      isDarkMode: dark,
+      diagram: { nodes: [tagged('t', 'Storage', 0, 0, ['prod', 'pci'])], edges: [] },
+    });
+    const buffer = (await pptx.write({ outputType: 'nodebuffer' })) as Buffer;
+    const zip = await JSZip.loadAsync(buffer);
+    const xml = await zip.file('ppt/slides/slide1.xml')!.async('string');
+    const chip = /<p:sp>(?:(?!<\/p:sp>)[\s\S])*name="tag-t-0"[\s\S]*?<\/p:sp>/.exec(xml);
+    assert.ok(chip, `${dark ? 'dark' : 'light'}: the chip shape is emitted`);
+    assert.ok(chip[0].includes(fill), `${dark ? 'dark' : 'light'}: chip fill is ${fill}`);
+    assert.ok(chip[0].includes(line), `${dark ? 'dark' : 'light'}: chip border is ${line}`);
+  }
+});
