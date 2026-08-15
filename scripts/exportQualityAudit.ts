@@ -25,7 +25,7 @@ const UNLABELLED_PREFIX = '(drawn unlabelled';
 const isUnlabelledRow = (mark: string): boolean => mark.startsWith(UNLABELLED_PREFIX);
 import type { Edge, Node } from 'reactflow';
 import { buildDiagramSlidePptx, buildArchitectureDeckPptx, calloutPlanFor } from '../src/services/pptxExporter.ts';
-import { nativizeSlideXml } from '../src/services/pptxNativeShapes.ts';
+import { nativizeSlideXml, nativizePackage } from '../src/services/pptxNativeShapes.ts';
 import { buildVsdxPackage, calloutMagnificationFor } from '../src/services/visioVsdxExporter.ts';
 import { WRAP_TRIGGER_RATIO } from '../src/utils/serpentineWrap.ts';
 
@@ -840,7 +840,14 @@ function textWidthIn(text: string, fontSizePt: number): number {
 
 function parseShapes(xml: string): Shape[] {
   const shapes: Shape[] = [];
-  const spRe = /<p:(sp|pic)>([\s\S]*?)<\/p:\1>/g;
+  // `cxnSp` is not optional here. The deck the user receives has been through
+  // `nativizePackage`, which rewrites every glued straight hop from <p:sp> into
+  // <p:cxnSp>. A parser that knows only <p:sp> therefore stops seeing arrows the
+  // moment they become real connectors, and every rule downstream concludes the
+  // edge was "drawn on no slide" -- reporting the conversion as data loss.
+  // Shapes nested inside a <p:grpSp> still match, because the group only wraps
+  // them; there is nothing extra to do for grouping.
+  const spRe = /<p:(sp|pic|cxnSp)>([\s\S]*?)<\/p:\1>/g;
   let m: RegExpExecArray | null;
   while ((m = spRe.exec(xml))) {
     const body = m[2];
@@ -868,7 +875,7 @@ function parseShapes(xml: string): Shape[] {
     const pts = [...body.matchAll(/<a:pt x="(-?\d+)" y="(-?\d+)"\s*\/>/g)];
     if (/<a:custGeom>/.test(body) && pts.length >= 2) {
       path = pts.map((pt) => ({ x: x + +pt[1] / EMU_PER_INCH, y: y + +pt[2] / EMU_PER_INCH }));
-    } else if (/prst="line"/.test(body)) {
+    } else if (/prst="(line|straightConnector1)"/.test(body)) {
       const flipH = /flipH="1"/.test(body);
       const flipV = /flipV="1"/.test(body);
       path = [
@@ -6129,10 +6136,22 @@ function auditNativeConversion(
       const name = /<p:cNvPr id="\d+" name="(connector-[^"]*)"/.exec(cxn[0])?.[1];
       if (name) nativeById.set(name, cxn[0]);
     }
+    // What the hop was drawn as, before any conversion. Glue is a property of
+    // <p:cxnSp>, and a <p:cxnSp> may not carry <a:custGeom> -- PowerPoint
+    // rejects the entire package for it. So a bent hop is not "missing" its
+    // glue; glue is unavailable to it at any price this exporter can pay, and
+    // demanding it here would be demanding a corrupt file. Only hops drawn as a
+    // preset line are judged.
+    const drawnById = new Map<string, string>();
+    for (const sp of slideXml.matchAll(/<p:sp>[\s\S]*?<\/p:sp>/g)) {
+      const name = /<p:cNvPr id="\d+" name="(connector-[^"]*)"/.exec(sp[0])?.[1];
+      if (name) drawnById.set(name, sp[0]);
+    }
     for (const arrow of before.filter((s) => s.name.startsWith('connector-'))) {
       const path = arrow.path ?? [];
       if (path.length < 2) continue;
       if (!onSite(path[0]) || !onSite(path[path.length - 1])) continue;
+      if (/<a:custGeom>/.test(drawnById.get(arrow.name) ?? '')) continue;
       const xml = nativeById.get(arrow.name);
       if (xml && !(/<a:stCxn /.test(xml) && /<a:endCxn /.test(xml))) {
         issues.push(`${where}: arrow "${arrow.name}" starts and ends on connection sites but is not glued, so it detaches when the reader moves a tile`);
@@ -6581,25 +6600,25 @@ async function auditCustomerDeck(scenario: Scenario): Promise<string[]> {
     validation: deckValidation,
     cost: deckCost,
   });
-  const zip = await JSZip.loadAsync((await pptx.write({ outputType: 'nodebuffer' })) as Buffer);
+  const { authored: authoredBytes, delivered: deliveredBytes } = await pptxBuffers(pptx);
+  const deliveredZip = await JSZip.loadAsync(deliveredBytes);
+  const zip = await JSZip.loadAsync(authoredBytes);
   const presentation = await zip.file('ppt/presentation.xml')!.async('string');
   const sldSz = /<p:sldSz[^>]*cx="(\d+)"[^>]*cy="(\d+)"/.exec(presentation);
   const pageW = sldSz ? +sldSz[1] / EMU_PER_INCH : BASE_SLIDE_W_IN;
   const pageH = sldSz ? +sldSz[2] / EMU_PER_INCH : BASE_SLIDE_H_IN;
 
   const issues: string[] = [];
-  issues.push(...await zipPackageInvariantIssues(zip, 'pptx'));
-  issues.push(...xmlWellFormednessIssues(await zipXmlParts(zip), 'customer deck: '));
+  issues.push(...await zipPackageInvariantIssues(deliveredZip, 'pptx'));
+  issues.push(...xmlWellFormednessIssues(await zipXmlParts(deliveredZip), 'customer deck: '));
   if (pageW > BASE_SLIDE_W_IN + 0.01 || pageH > BASE_SLIDE_H_IN + 0.01) {
     issues.push(`customer deck: page is ${pageW.toFixed(2)}x${pageH.toFixed(2)}in — every other slide in this deck is laid out for ${BASE_SLIDE_W_IN}x${BASE_SLIDE_H_IN}in`);
   }
 
-  const slides = await Promise.all(
-    Object.keys(zip.files)
-      .filter((name) => /^ppt\/slides\/slide\d+\.xml$/.test(name))
-      .sort((a, b) => (+a.replace(/\D/g, '')) - (+b.replace(/\D/g, '')))
-      .map((name) => zip.file(name)!.async('string')),
-  );
+  const slides = await slideXmls(zip);
+  (await slideXmls(deliveredZip)).forEach((slide, at) => {
+    issues.push(...nativizeFidelityIssues(slides[at] ?? '', slide, `customer deck slide ${at + 1}`));
+  });
   // A tiled deck opens with the whole drawing shown small on purpose, so the
   // floors below are about the windows that follow it.
   const drawn = slides.filter((xml) => xml.includes('name="service-'));
@@ -7050,6 +7069,47 @@ async function zipXmlParts(zip: JSZip): Promise<Array<{ path: string; text: stri
   return Promise.all(names.map(async (path) => ({ path, text: await zip.files[path].async('string') })));
 }
 
+/**
+ * The bytes the user actually receives, and the bytes the exporter built.
+ *
+ * `pptx.write()` is only half of the export: `downloadNativePptx` then runs the
+ * package through `nativizePackage` and re-zips it with DEFLATE, and that is
+ * what lands in the download. For most of this harness's life every rule below
+ * measured the half before the rewrite, so an entire transform shipped without
+ * a single fixture ever looking at its output. That is not a gap in coverage,
+ * it is auditing a different file: a bent hop rewritten into a <p:cxnSp> made
+ * PowerPoint refuse the whole deck as "corrupted and unreadable" while this
+ * harness reported 164 fixtures at zero issues.
+ *
+ * Both halves are returned because they answer different questions. Package
+ * legality and openability are properties of `delivered` and of nothing else.
+ * Wrap, contrast and spacing are properties of the authored slide, which the
+ * rewrite is required to leave alone -- and `nativizeFidelityIssues` is what
+ * holds it to that, so measuring them on `authored` stays sound.
+ */
+async function pptxBuffers(pptx: {
+  write(opts: { outputType: string }): Promise<unknown>;
+}): Promise<{ authored: Buffer; delivered: Buffer }> {
+  const authored = (await pptx.write({ outputType: 'nodebuffer' })) as Buffer;
+  const zip = await nativizePackage(await JSZip.loadAsync(authored));
+  const delivered = (await zip.generateAsync({
+    type: 'nodebuffer',
+    compression: 'DEFLATE',
+    compressionOptions: { level: 6 },
+  })) as Buffer;
+  return { authored, delivered };
+}
+
+/** Every `ppt/slides/slideN.xml` in a written deck, in slide order. */
+async function slideXmls(zip: JSZip): Promise<string[]> {
+  return Promise.all(
+    Object.keys(zip.files)
+      .filter((name) => /^ppt\/slides\/slide\d+\.xml$/.test(name))
+      .sort((a, b) => (+a.replace(/\D/g, '')) - (+b.replace(/\D/g, '')))
+      .map((name) => zip.file(name)!.async('string')),
+  );
+}
+
 async function auditPptx(scenario: Scenario): Promise<Report> {
   const pptx = await buildDiagramSlidePptx(PIXEL_PNG, {
     diagramName: scenario.title ?? 'Contoso Platform',
@@ -7059,19 +7119,16 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
     diagram: { nodes: scenario.nodes, edges: scenario.edges },
     presetIcons: synthesisedIcons(scenario),
   });
-  const buffer = (await pptx.write({ outputType: 'nodebuffer' })) as Buffer;
-  writeFileSync(path.join(OUT, `${scenario.id}.pptx`), buffer);
-  const zip = await JSZip.loadAsync(buffer);
+  const { authored: authoredBytes, delivered: deliveredBytes } = await pptxBuffers(pptx);
+  writeFileSync(path.join(OUT, `${scenario.id}.pptx`), deliveredBytes);
+  const deliveredZip = await JSZip.loadAsync(deliveredBytes);
+  const zip = await JSZip.loadAsync(authoredBytes);
   const presentation = await zip.file('ppt/presentation.xml')!.async('string');
   const sldSz = /<p:sldSz[^>]*cx="(\d+)"[^>]*cy="(\d+)"/.exec(presentation);
   const pageW = sldSz ? +sldSz[1] / EMU_PER_INCH : 13.333;
   const pageH = sldSz ? +sldSz[2] / EMU_PER_INCH : 7.5;
-  const allSlides = await Promise.all(
-    Object.keys(zip.files)
-      .filter((name) => /^ppt\/slides\/slide\d+\.xml$/.test(name))
-      .sort((a, b) => (+a.replace(/\D/g, '')) - (+b.replace(/\D/g, '')))
-      .map((name) => zip.file(name)!.async('string')),
-  );
+  const allSlides = await slideXmls(zip);
+  const deliveredSlides = await slideXmls(deliveredZip);
   const slideCount = allSlides.length;
   // The icons have to actually reach the deck. `rasterizeIcons` needs a DOM and
   // returns an empty map under Node, so for most of this audit's life every
@@ -7103,8 +7160,11 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
   const overviewShapes: Shape[] = overviewAt < 0 ? [] : parseShapes(allSlides[overviewAt]);
 
   const issues: string[] = [];
-  issues.push(...await zipPackageInvariantIssues(zip, 'pptx'));
-  issues.push(...xmlWellFormednessIssues(await zipXmlParts(zip), ''));
+  issues.push(...await zipPackageInvariantIssues(deliveredZip, 'pptx'));
+  issues.push(...xmlWellFormednessIssues(await zipXmlParts(deliveredZip), ''));
+  deliveredSlides.forEach((slide, at) => {
+    issues.push(...nativizeFidelityIssues(allSlides[at] ?? '', slide, `slide ${at + 1}`));
+  });
   // The header band, on the path most users actually take.
   //
   // Every containment rule in this file lived inside the customer-deck audit,
@@ -9789,7 +9849,177 @@ async function zipPackageInvariantIssues(zip: JSZip, where: string): Promise<str
     if (!/\.rels$/i.test(name) && !/^\[Content_Types\]\.xml$/i.test(name)) continue;
     textByPath.set(name, await zip.file(name)!.async('string'));
   }
-  return packageInvariantIssues(names, textByPath, where);
+  const issues = packageInvariantIssues(names, textByPath, where);
+  if (where === 'pptx') {
+    for (const name of names.filter((n) => /^ppt\/slides\/slide\d+\.xml$/.test(n))) {
+      issues.push(...presentationShapeLegalityIssues(await zip.file(name)!.async('string'), name));
+    }
+  }
+  return issues;
+}
+
+/**
+ * Shapes PowerPoint will refuse to open the file for.
+ *
+ * Well-formed XML is not the bar. A <p:cxnSp> carrying an <a:custGeom> parses
+ * perfectly, satisfies every structural rule this harness had, and still makes
+ * PowerPoint reject the entire package with "the file is corrupted and
+ * unreadable" -- one bent hop, and the user loses the deck. Verified against
+ * PowerPoint 16.0: the identical deck opens when the geometry is preset, and
+ * opens when the hop stays an ordinary <p:sp>, with or without the glue.
+ *
+ * This rule is about legality, not looks, so it is deliberately phrased as what
+ * the format forbids rather than what this exporter happens to emit today.
+ */
+function presentationShapeLegalityIssues(slideXml: string, where: string): string[] {
+  const issues: string[] = [];
+  const connectors = [...slideXml.matchAll(/<p:cxnSp>[\s\S]*?<\/p:cxnSp>/g)].map((m) => m[0]);
+
+  const custom = connectors.filter((xml) => /<a:custGeom>/.test(xml));
+  if (custom.length > 0) {
+    const named = /name="([^"]*)"/.exec(custom[0])?.[1] ?? 'unnamed';
+    issues.push(
+      `${where}: ${custom.length} connector shape(s) carry <a:custGeom> (e.g. "${named}"). ` +
+        'PowerPoint refuses to open a package whose <p:cxnSp> has custom geometry.',
+    );
+  }
+
+  // A connector must still declare some geometry; an empty one is equally fatal.
+  const geomless = connectors.filter((xml) => !/<a:(prst|cust)Geom/.test(xml));
+  if (geomless.length > 0) {
+    const named = /name="([^"]*)"/.exec(geomless[0])?.[1] ?? 'unnamed';
+    issues.push(`${where}: ${geomless.length} connector shape(s) declare no geometry (e.g. "${named}").`);
+  }
+
+  // Glue that points at a shape the slide does not contain is a dangling
+  // reference; PowerPoint repairs some of these and rejects others, and either
+  // way the arrow is no longer attached to what it claims to be attached to.
+  const ids = new Set([...slideXml.matchAll(/<p:cNvPr id="(\d+)"/g)].map((m) => m[1]));
+  const dangling = [...slideXml.matchAll(/<a:(?:st|end)Cxn id="(\d+)"/g)]
+    .map((m) => m[1])
+    .filter((id) => !ids.has(id));
+  if (dangling.length > 0) {
+    issues.push(`${where}: connector glue references ${dangling.length} shape id(s) not on the slide (e.g. ${dangling[0]}).`);
+  }
+  return issues;
+}
+
+/**
+ * Prove that the rewrite between what the exporter builds and what the user
+ * downloads changes nothing the reader can see.
+ *
+ * The layout rules in this file are written against the authored slide, and
+ * that is the right place for them: they measure wrap, contrast and spacing,
+ * which `nativizePackage` never touches. The danger is the other half -- for
+ * most of this harness's life nothing at all looked at the delivered bytes, so
+ * a post-processing step could drop a caption, move a tile or emit an element
+ * PowerPoint refuses to open and every fixture would still report clean.
+ *
+ * This closes that gap without teaching seven hundred lines of layout rules a
+ * second vocabulary: the authored slide and the delivered slide must draw the
+ * same strings, in the same places, from shapes of the same names. A caption is
+ * allowed to disappear as a shape -- folding it into its container is the whole
+ * point -- but only if the container then draws that exact text in exactly the
+ * rectangle the caption occupied.
+ */
+function nativizeFidelityIssues(authored: string, delivered: string, where: string): string[] {
+  const issues: string[] = [];
+
+  const strings = (xml: string): string[] =>
+    [...xml.matchAll(/<a:t>([\s\S]*?)<\/a:t>/g)].map((m) => unescapeXml(m[1])).sort();
+  const lost = (a: string[], b: string[]): string[] => {
+    const pool = [...b];
+    const missing: string[] = [];
+    for (const s of a) {
+      const at = pool.indexOf(s);
+      if (at < 0) missing.push(s);
+      else pool.splice(at, 1);
+    }
+    return missing;
+  };
+  const dropped = lost(strings(authored), strings(delivered));
+  if (dropped.length > 0) {
+    issues.push(
+      `${where}: the delivered deck no longer draws ${dropped.length} string(s) the exporter built ` +
+        `(e.g. "${dropped[0]}") — the download is not what the screen showed`,
+    );
+  }
+  const invented = lost(strings(delivered), strings(authored));
+  if (invented.length > 0) {
+    issues.push(`${where}: the delivered deck draws ${invented.length} string(s) that were never authored (e.g. "${invented[0]}")`);
+  }
+
+  const before = parseShapes(authored);
+  const after = parseShapes(delivered);
+  const afterByName = new Map(after.map((s) => [s.name, s]));
+  // Read back the container's own text rectangle. Folding records the caption's
+  // position as insets, so the position is recoverable exactly; anything else
+  // means the caption moved when it was folded.
+  const bodyRect = (name: string): { x: number; y: number; w: number; h: number } | null => {
+    const owner = afterByName.get(name);
+    if (!owner) return null;
+    const raw = [...delivered.matchAll(/<p:sp>[\s\S]*?<\/p:sp>/g)]
+      .map((m) => m[0])
+      .find((xml) => new RegExp(`name="${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`).test(xml));
+    const bodyPr = raw ? /<a:bodyPr[^>]*>/.exec(raw)?.[0] : undefined;
+    if (!bodyPr) return null;
+    const ins = (attr: string): number | null => {
+      const v = new RegExp(`\\b${attr}="(-?\\d+)"`).exec(bodyPr)?.[1];
+      return v === undefined ? null : +v / EMU_PER_INCH;
+    };
+    const l = ins('lIns');
+    const t = ins('tIns');
+    const r = ins('rIns');
+    const b = ins('bIns');
+    if (l === null || t === null || r === null || b === null) return null;
+    return { x: owner.x + l, y: owner.y + t, w: owner.w - l - r, h: owner.h - t - b };
+  };
+
+  const slack = 0.002;
+  for (const shape of before) {
+    const still = afterByName.get(shape.name);
+    if (still) {
+      if (
+        Math.abs(still.x - shape.x) > slack || Math.abs(still.y - shape.y) > slack ||
+        Math.abs(still.w - shape.w) > slack || Math.abs(still.h - shape.h) > slack
+      ) {
+        issues.push(
+          `${where}: "${shape.name}" is drawn at ${shape.x.toFixed(3)},${shape.y.toFixed(3)} ` +
+            `${shape.w.toFixed(3)}x${shape.h.toFixed(3)}in but delivered at ${still.x.toFixed(3)},${still.y.toFixed(3)} ` +
+            `${still.w.toFixed(3)}x${still.h.toFixed(3)}in`,
+        );
+      }
+      continue;
+    }
+    // Gone. Legitimate only as a caption folded into the container it sat in.
+    const owner = /^(.*)-label-(.*)$/.exec(shape.name);
+    const into = owner ? `${owner[1]}-${owner[2]}` : null;
+    const host = into ? afterByName.get(into) : undefined;
+    if (!host) {
+      issues.push(`${where}: "${shape.name}" is drawn by the exporter but is on no shape in the delivered deck`);
+      continue;
+    }
+    if (shape.text.trim() !== '' && !host.text.includes(shape.text.trim())) {
+      issues.push(`${where}: caption "${shape.name}" was folded into "${into}" but its text is not drawn there`);
+      continue;
+    }
+    const rect = bodyRect(into!);
+    if (!rect) {
+      issues.push(`${where}: caption "${shape.name}" was folded into "${into}" without recording where it sat`);
+      continue;
+    }
+    if (
+      Math.abs(rect.x - shape.x) > slack || Math.abs(rect.y - shape.y) > slack ||
+      Math.abs(rect.w - shape.w) > slack || Math.abs(rect.h - shape.h) > slack
+    ) {
+      issues.push(
+        `${where}: caption "${shape.name}" sat at ${shape.x.toFixed(3)},${shape.y.toFixed(3)} ` +
+          `${shape.w.toFixed(3)}x${shape.h.toFixed(3)}in but folding moved it to ${rect.x.toFixed(3)},${rect.y.toFixed(3)} ` +
+          `${rect.w.toFixed(3)}x${rect.h.toFixed(3)}in`,
+      );
+    }
+  }
+  return issues;
 }
 
 async function auditVsdx(scenario: Scenario): Promise<Report> {
