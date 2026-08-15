@@ -25,7 +25,10 @@ function service(id: string, label: string, extra: Record<string, unknown> = {})
 interface HtmlLayout {
   nodes: Array<{ id: string; name: string; category: string; color: string; icon: string; meta: string }>;
   edges: Array<{ id: string; label: string; color: string; dashed: boolean; points: Array<{ x: number; y: number }> }>;
-  groups: Array<{ id: string; label: string; color: string; bg: string; textColor: string }>;
+  groups: Array<{
+    id: string; label: string; color: string; bg: string; textColor: string;
+    x: number; y: number; width: number; height: number;
+  }>;
   connectionLegend: Array<{ type: string; label: string; color: string; dashed: boolean }>;
   width: number;
   height: number;
@@ -118,6 +121,49 @@ test('interactive HTML honours a zone custom colour', async () => {
   const zone = layout.groups.find(g => g.id === 'zone-1');
   assert.ok(zone);
   assert.equal(zone!.color.toLowerCase(), '#dc2626');
+  // Carrying the colour and painting with it are different claims: the title
+  // ink sat unused in this same object for as long as the renderer read a
+  // different field. Assert the emitted renderer actually reaches for it.
+  assert.match(
+    html!,
+    /borderColor\s*=\s*g\.color/,
+    'the zone border is not painted from the colour the layout carries',
+  );
+});
+
+test('a zone drawn around another is still visible in the delivered HTML', async () => {
+  // The fill is opaque here -- it is the composited panel colour -- so paint
+  // order is what decides whether a nested zone exists at all. Authoring order
+  // puts the enclosing zone last, which would bury the tier it was drawn
+  // around, label and all.
+  const inner = {
+    id: 'inner', type: 'groupNode', position: { x: 120, y: 120 },
+    style: { width: 160, height: 120 }, data: { label: 'Inner tier' },
+  } as unknown as Node;
+  const outer = {
+    id: 'outer', type: 'groupNode', position: { x: 40, y: 40 },
+    style: { width: 420, height: 340 }, data: { label: 'Outer boundary' },
+  } as unknown as Node;
+  const child = service('c1', 'API');
+  (child as { position?: { x: number; y: number } }).position = { x: 150, y: 150 };
+
+  // Authoring order: the boundary is drawn last, as `addGroupBoxAtPosition` appends.
+  const html = await buildInteractiveDiagramHtml([inner, outer, child], [], 'Nested zones');
+  assert.ok(html);
+  const layout = extractLayout(html);
+  const order = layout.groups.map(g => g.id);
+  assert.deepEqual(order, ['outer', 'inner'], 'the container must be emitted first so it paints behind');
+
+  const encloses = (a: typeof layout.groups[number], b: typeof layout.groups[number]) =>
+    a.x <= b.x && a.y <= b.y && a.x + a.width >= b.x + b.width && a.y + a.height >= b.y + b.height;
+  for (let i = 0; i < layout.groups.length; i++) {
+    for (let j = i + 1; j < layout.groups.length; j++) {
+      assert.ok(
+        !encloses(layout.groups[j], layout.groups[i]),
+        `"${layout.groups[j].label}" is drawn after "${layout.groups[i].label}" and covers it`,
+      );
+    }
+  }
 });
 
 test('interactive HTML returns null when there are no service nodes', async () => {

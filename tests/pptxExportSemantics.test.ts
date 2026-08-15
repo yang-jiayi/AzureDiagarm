@@ -244,3 +244,45 @@ test('tag chips carry the canvas brand colours, not an invented neutral', async 
     assert.ok(chip[0].includes(line), `${dark ? 'dark' : 'light'}: chip border is ${line}`);
   }
 });
+test('a slide that draws no connector carries no colour key', async () => {
+  // A tiled deck used to key every connection type in the *diagram* on every
+  // slide, so a grid whose only two security hops sit in one corner put a
+  // "Security" swatch on nine consecutive slides that drew no line at all --
+  // a key explaining something the reader cannot see, in a strip of space
+  // taken from the drawing to hold it.
+  const nodes: Node[] = [];
+  for (let r = 0; r < 9; r++) {
+    for (let c = 0; c < 12; c++) nodes.push(service(`n${r}-${c}`, `Service ${r}-${c}`, c * 220, r * 130));
+  }
+  const edges = [
+    { id: 'e1', source: 'n0-0', target: 'n0-1', data: { connectionType: 'security' } },
+    { id: 'e2', source: 'n0-1', target: 'n1-1', data: { connectionType: 'security' } },
+  ] as unknown as Edge[];
+
+  const pptx = await buildDiagramSlidePptx(PIXEL_PNG, {
+    diagramName: 'Legend tiling', author: 'Tester', date: '2026-08-10',
+    isDarkMode: false, diagram: { nodes, edges },
+  });
+  const zip = await JSZip.loadAsync((await pptx.write({ outputType: 'nodebuffer' })) as Buffer);
+  const names = Object.keys(zip.files)
+    .filter((n) => /^ppt\/slides\/slide\d+\.xml$/.test(n))
+    .sort((a, b) => +a.replace(/\D/g, '') - +b.replace(/\D/g, ''));
+  assert.ok(names.length > 3, 'the grid should have tiled across several slides');
+
+  let keyed = 0;
+  let withConnectors = 0;
+  for (const name of names) {
+    const xml = await zip.file(name)!.async('string');
+    const hasKey = /name="connection-legend"/.test(xml);
+    const drawsConnector = /name="connector-/.test(xml);
+    if (hasKey) keyed++;
+    if (drawsConnector) withConnectors++;
+    assert.equal(
+      hasKey, drawsConnector,
+      `${name}: colour key ${hasKey ? 'present' : 'absent'} but the slide `
+      + `${drawsConnector ? 'draws' : 'draws no'} connector`,
+    );
+  }
+  assert.ok(withConnectors >= 1, 'the hops must be drawn somewhere');
+  assert.ok(keyed < names.length, 'not every slide should carry the key');
+});

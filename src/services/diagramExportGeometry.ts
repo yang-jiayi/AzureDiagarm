@@ -523,9 +523,24 @@ export const CONNECTION_LEGEND: ConnectionLegendEntry[] = (
 
 /** Which of the five connection types actually appear on these edges. */
 export function usedConnectionLegend(edges: Edge[]): ConnectionLegendEntry[] {
-  const used = new Set<DiagramConnectionType>(
+  return connectionLegendForTypes(
     edges.map((edge) => normalizeConnectionType((edge.data as { connectionType?: unknown } | undefined)?.connectionType)),
   );
+}
+
+/**
+ * The colour key for a given set of connection types, in canvas order.
+ *
+ * Separate from `usedConnectionLegend` because a tiled deck must key the hops
+ * on *this slide*, not in the whole diagram. Routes are culled to the slide's
+ * window before they are drawn, so feeding the legend every edge put a
+ * "Security" swatch on five consecutive slides that painted no connector at
+ * all -- a key explaining a line the reader cannot see.
+ */
+export function connectionLegendForTypes(
+  types: Iterable<DiagramConnectionType>,
+): ConnectionLegendEntry[] {
+  const used = new Set<DiagramConnectionType>(types);
   return CONNECTION_LEGEND.filter((entry) => used.has(entry.type));
 }
 
@@ -3244,6 +3259,17 @@ export function buildExportRoutes(
 /**
  * Split nodes into painting order: groups first (they sit behind), then
  * services. Both lists keep their canvas order so exports stay deterministic.
+ *
+ * Among the groups, the larger one is painted first. A zone fill is a colour
+ * the canvas composites at 8-10% alpha, so on screen a trust boundary drawn
+ * *around* an existing tier lets that tier show through whatever the order.
+ * Exports cannot composite: every format resolves the zone to one opaque
+ * colour, at which point paint order decides what the reader sees, and the
+ * canvas's own order is the wrong one -- `addGroupBoxAtPosition` appends, so
+ * the enclosing zone is authored last and would be painted last, hiding the
+ * zone it was drawn around along with its label. Sorting by area descending
+ * puts every container behind what it contains, which is also how React Flow
+ * stacks a parent group behind its children.
  */
 export function partitionBoxes(boxes: Map<string, ExportBox>): {
   groups: ExportBox[];
@@ -3255,6 +3281,8 @@ export function partitionBoxes(boxes: Map<string, ExportBox>): {
     if (box.kind === 'group') groups.push(box);
     else services.push(box);
   }
+  // Stable: equal-area zones cannot hide one another, so they keep canvas order.
+  groups.sort((a, b) => b.w * b.h - a.w * a.h);
   return { groups, services };
 }
 

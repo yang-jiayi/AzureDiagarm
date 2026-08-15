@@ -128,7 +128,9 @@ import {
   drawableInColumn,
   advanceWidthIn,
   trailingWhitespaceIn,
+  connectionLegendForTypes,
   usedConnectionLegend,
+  type ConnectionLegendEntry,
   workflowListFromEdges,
   narrateEdgeCallouts,
   readEdgeLabel,
@@ -4430,10 +4432,9 @@ function addGroupShape(
 
 /** Where the colour key lands, so the drawing can keep out from under it. */
 function connectionLegendRect(
-  edges: Edge[],
+  entries: ConnectionLegendEntry[],
   frame: DiagramFrame,
 ): { x: number; y: number; w: number; h: number } | null {
-  const entries = usedConnectionLegend(edges);
   if (entries.length === 0) return null;
   // One row of swatches along the bottom rather than a stacked card in a
   // corner. The card was 92% opaque and drawn last, so on a full grid it simply
@@ -4444,15 +4445,20 @@ function connectionLegendRect(
   return { x: frame.x + 0.05, y: frame.y + frame.h + 0.03, w, h };
 }
 
-/** Small colour key so the deck agrees with the PNG's connection legend. */
+/**
+ * Small colour key so the deck agrees with the PNG's connection legend.
+ *
+ * Takes the entries rather than the edges so the caller decides what "used"
+ * means. On a tiled deck that has to be the hops on *this* slide: keying every
+ * type in the diagram put a swatch on slides that drew no connector at all.
+ */
 function addConnectionLegend(
   pptx: PptxGenJS,
   slide: Slide,
-  edges: Edge[],
+  entries: ConnectionLegendEntry[],
   frame: DiagramFrame,
 ): void {
-  const entries = usedConnectionLegend(edges);
-  const seat = connectionLegendRect(edges, frame);
+  const seat = connectionLegendRect(entries, frame);
   if (entries.length === 0 || !seat) return;
 
   const swatchW = 0.3;
@@ -4865,7 +4871,12 @@ async function addEditableDiagram(
   // The colour key is drawn last and is all but opaque, so anything it lands on
   // is simply gone: a numbered callout under it leaves the workflow band citing
   // a step the reader cannot find. Reserve whichever corner it will take.
-  const legendRect = connectionLegendRect(diagram.edges ?? [], frame);
+  //
+  // Built from the routes this slide actually draws, not from the diagram, so
+  // the reservation and the key can never disagree -- a slice with no hop on it
+  // reserves nothing and shows nothing.
+  const slideLegend = connectionLegendForTypes(shownRoutes.map((route) => route.connectionType));
+  const legendRect = connectionLegendRect(slideLegend, frame);
   if (legendRect) chipObstacles.push({ ...legendRect, weight: 4 });
   const chips = new Map<string, ReturnType<typeof connectorLabelBox>>();
   const badges = new Map<string, ReturnType<typeof stepBadgeBox>>();
@@ -5814,7 +5825,7 @@ async function addEditableDiagram(
 
   // Colour key so the deck's connectors agree with the PNG legend. Drawn in the
   // strip reserved for it below the diagram, not over the drawing.
-  addConnectionLegend(pptx, slide, diagram.edges ?? [], fullFrame);
+  addConnectionLegend(pptx, slide, slideLegend, fullFrame);
 
   return true;
 }

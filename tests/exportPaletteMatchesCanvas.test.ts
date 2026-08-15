@@ -19,6 +19,13 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import JSZip from 'jszip';
+import type { Node } from 'reactflow';
+import { buildDiagramSlidePptx } from '../src/services/pptxExporter.ts';
+import { nativizeSlideXml } from '../src/services/pptxNativeShapes.ts';
+
+const PIXEL_PNG =
+  'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
 
 import {
   CATEGORY_ACCENTS,
@@ -235,5 +242,55 @@ test('a zone panel is never more than a slight step away from the paper it is on
         + 'which is an opaque block rather than a tint',
       );
     }
+  }
+});
+
+test('the zone fill PowerPoint actually paints is the colour the canvas shows', async () => {
+  // The two tests above characterise `zoneStyleFor`, which is a claim about a
+  // helper, not about the file. The deck paints `fill: { color: bg,
+  // transparency: 15 }` -- so the pixel a reader sees is that colour at 85%
+  // over the slide, and every assertion above would stay green if
+  // `addGroupShape` stopped calling `zoneStyleFor`, changed the transparency
+  // byte, or the nativizer rewrote the fill. This reads the delivered slide.
+  for (const [themeName, isDark, slidePaper] of [
+    ['light', false, '#ffffff'],
+    ['dark', true, '#1e293b'],
+  ] as const) {
+    const nodes = [
+      { id: 'z', type: 'groupNode', position: { x: 0, y: 0 }, style: { width: 600, height: 400 },
+        data: { label: 'Data Tier' } },
+      { id: 's', type: 'azureNode', position: { x: 80, y: 80 }, width: 150, height: 75,
+        data: { label: 'SQL', serviceName: 'SQL Database' } },
+    ] as unknown as Node[];
+
+    const pptx = await buildDiagramSlidePptx(PIXEL_PNG, {
+      diagramName: 'Zone fill', author: 'Tester', date: '2026-08-10',
+      isDarkMode: isDark, diagram: { nodes, edges: [] },
+    });
+    const zip = await JSZip.loadAsync((await pptx.write({ outputType: 'nodebuffer' })) as Buffer);
+    const xml = nativizeSlideXml(await zip.file('ppt/slides/slide1.xml')!.async('string'));
+
+    const shape = xml.split(/<p:sp>|<p:grpSp>/).find((part) => /name="zone-z"/.test(part));
+    assert.ok(shape, `${themeName}: no zone shape in the delivered slide`);
+    // The first solidFill in a shape can be the outline; drop <a:ln> first.
+    const body = shape.replace(/<a:ln[\s\S]*?<\/a:ln>/g, '');
+    const fill = /<a:solidFill><a:srgbClr val="([0-9A-Fa-f]{6})"(?:[^>]*)>?\s*(?:<a:alpha val="(\d+)"\/>)?/.exec(body);
+    assert.ok(fill, `${themeName}: zone shape carries no solid fill`);
+
+    const declared = `#${fill[1].toLowerCase()}`;
+    const alpha = fill[2] === undefined ? 1 : Number(fill[2]) / 100000;
+    const delivered = composite(declared, alpha, slidePaper);
+
+    const canvas = composite(zoneAccent('Data Tier'), matchZoneAccent('Data Tier') ? 0.1 : 0.08, slidePaper);
+    const drift = channelDrift(delivered, canvas);
+    assert.ok(
+      drift <= 6,
+      `${themeName}: the slide paints ${declared} at ${(alpha * 100).toFixed(0)}% = ${delivered}, `
+      + `but the canvas shows ${canvas} (off by ${drift}/255)`,
+    );
+    assert.ok(
+      contrast(delivered, slidePaper) < 1.5,
+      `${themeName}: the delivered zone reads as an opaque block (${contrast(delivered, slidePaper).toFixed(2)}:1 from the slide)`,
+    );
   }
 });
