@@ -126,3 +126,45 @@ export function inferConnectionType(hints: ConnectionSemanticHints): DiagramConn
   }
   return 'sync';
 }
+
+/**
+ * The per-edge animation intent, independent of the global toggle.
+ *
+ * `flowAnimated` on a live edge is a *product*: the user's intent for this
+ * edge AND the app-wide "animate connections" switch. Only the product is
+ * serialised, and the switch itself lives in localStorage rather than the
+ * file, so save-time and open-time global state legitimately differ. Reading
+ * the stored product back as if it were the intent is what made a diagram
+ * saved with animation off come back permanently static -- every edge carried
+ * `flowAnimated: false`, which masked its own `baseFlowAnimated: true`.
+ *
+ * `baseFlowAnimated` is the intent, and it is the only field a restore may
+ * trust. The stored product is read only for files written before the field
+ * existed, where it is the best evidence available.
+ *
+ * One consequence is unavoidable, and it only affects files saved by older
+ * builds. Those builds recorded a per-edge pause solely in the product, leaving
+ * the intent `true`, so `{ baseFlowAnimated: true, flowAnimated: false }` means
+ * *either* "the user paused this edge" *or* "this was saved while the switch
+ * was off" -- the same bytes, and the switch was never written to the file, so
+ * nothing distinguishes them. Honouring the product to rescue the old pause is
+ * exactly what caused the bug above. Trusting the intent is the right way round;
+ * an individually paused edge in a pre-existing file comes back animated once.
+ */
+export function edgeAnimationIntent(
+  data: { baseFlowAnimated?: unknown; flowAnimated?: unknown } | undefined,
+  fallback: boolean,
+): boolean {
+  if (typeof data?.baseFlowAnimated === 'boolean') return data.baseFlowAnimated;
+  if (typeof data?.flowAnimated === 'boolean') return data.flowAnimated;
+  return fallback;
+}
+
+/** Whether an edge animates right now: its own intent, gated by the global switch. */
+export function resolveFlowAnimated(
+  data: { baseFlowAnimated?: unknown; flowAnimated?: unknown } | undefined,
+  fallback: boolean,
+  animationsEnabled: boolean,
+): boolean {
+  return animationsEnabled && edgeAnimationIntent(data, fallback);
+}

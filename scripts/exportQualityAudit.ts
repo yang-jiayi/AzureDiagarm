@@ -750,6 +750,65 @@ const PIXEL_PNG_BYTES = Uint8Array.from(
   Buffer.from(PIXEL_PNG.slice(PIXEL_PNG.indexOf(',') + 1), 'base64'),
 );
 
+/**
+ * Every service tile carries the canvas's category stripe, on its left edge.
+ *
+ * The stripe is what the canvas puts the category colour in — the tile itself
+ * is a neutral card. Because the stripe is a separate shape (PowerPoint has no
+ * per-side border), it is exactly the kind of decoration that can quietly stop
+ * being emitted, or drift off the edge it belongs to, without any other rule
+ * here noticing: no text, no icon, no effect on layout. So it is checked
+ * directly. A tile with no stripe is a tile whose category is no longer
+ * legible at a glance, which is the whole reason the colour is there.
+ */
+function accentStripeIssues(perSlide: Shape[][]): string[] {
+  const issues: string[] = [];
+  for (const [index, shapes] of perSlide.entries()) {
+    const stripes = new Map(
+      shapes.filter((s) => s.name.startsWith('accent-')).map((s) => [s.name.slice('accent-'.length), s]),
+    );
+    const tiles = shapes.filter(
+      (s) => s.name.startsWith('service-') && !s.name.includes('label') && !s.name.includes('meta'),
+    );
+    for (const tile of tiles) {
+      const id = tile.name.slice('service-'.length);
+      const stripe = stripes.get(id);
+      // A tile too short to have a straight edge between its rounded corners
+      // has nowhere to put a stripe, and the exporter correctly draws none.
+      if (!stripe) {
+        if (tile.h > 0.16) {
+          issues.push(
+            `slide ${index + 1} tile "${tile.name}" has no category stripe, so nothing on it `
+            + 'carries the colour the canvas uses to say what kind of service it is',
+          );
+        }
+        continue;
+      }
+      if (Math.abs(stripe.x - tile.x) > 0.01) {
+        issues.push(
+          `slide ${index + 1} stripe "${stripe.name}" starts at ${stripe.x.toFixed(3)}in but its `
+          + `tile starts at ${tile.x.toFixed(3)}in, so it is not on the tile's edge`,
+        );
+      }
+      if (stripe.y < tile.y - 0.01 || stripe.y + stripe.h > tile.y + tile.h + 0.01) {
+        issues.push(
+          `slide ${index + 1} stripe "${stripe.name}" runs outside its own tile vertically`,
+        );
+      }
+      if (stripe.w > tile.w / 3) {
+        issues.push(
+          `slide ${index + 1} stripe "${stripe.name}" is ${stripe.w.toFixed(3)}in wide on a `
+          + `${tile.w.toFixed(3)}in tile — a stripe that wide reads as a fill`,
+        );
+      }
+      if (!stripe.fill) {
+        issues.push(`slide ${index + 1} stripe "${stripe.name}" declares no fill, so it is invisible`);
+      }
+    }
+  }
+  return issues;
+}
+
 interface Shape {
   name: string;
   x: number;
@@ -4779,6 +4838,41 @@ function zoneCaptionCorridorScenario(): Scenario {
   return { id: 'zone-caption-corridor', nodes, edges };
 }
 
+/**
+ * Tiles carrying the tag chips `AzureNode` draws under the name.
+ *
+ * The heights are the point: React Flow measures the node, so a tile with
+ * chips is genuinely taller on the canvas than the same tile without them, and
+ * `readSize` carries that measured height into the export. The band at the
+ * bottom of these tiles is therefore paid for by the screen — anything drawn
+ * in it is drawn in room the tile already had, and the icon and the name are
+ * not asked to give anything up.
+ *
+ * The four rows are the cases that break a chip strip: one tag, two tags
+ * (the cap), five (so the canvas draws two and `+3`), and a single tag far
+ * longer than the tile is wide. The last is the one that matters — a chip
+ * that cannot be shortened is a chip that overflows its tile.
+ */
+function taggedTilesScenario(): Scenario {
+  const rows: Array<{ tags: string[]; label: string }> = [
+    { tags: ['prod'], label: 'Payments API' },
+    { tags: ['prod', 'pci'], label: 'Ledger Service' },
+    { tags: ['prod', 'pci', 'tier-1', 'eu-only', 'on-call'], label: 'Settlement Worker' },
+    { tags: ['data-residency:european-union-only'], label: 'Reconciliation Store' },
+  ];
+  const nodes: Node[] = rows.map((row, i) => ({
+    ...svc(`tag${i}`, row.label, (i % 2) * 220, Math.floor(i / 2) * 150, undefined, true, 'compute'),
+    // 75 for the tile the canvas draws without chips, plus the strip's own
+    // margin, padding, border and 9px/1.4 line.
+    height: 94,
+    data: {
+      ...(svc(`tag${i}`, row.label, 0, 0, undefined, true, 'compute').data as Record<string, unknown>),
+      tags: row.tags,
+    },
+  } as Node));
+  return { id: 'tagged-tiles', nodes, edges: [] };
+}
+
 function visioDefaultTileNamesScenario(): Scenario {
   const names = [
     'Azure Database for PostgreSQL flexible server - Business Critical - East US 2',
@@ -7344,6 +7438,7 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
   if (synthesisedIcons(scenario).size > 0 && drawnPics === 0 && roomyTile) {
     issues.push(`deck embeds no icon pictures for ${scenario.nodes.length} nodes`);
   }
+  issues.push(...accentStripeIssues(perSlide));
   const native = auditNativeConversion(allSlides, scenario.edges);
   issues.push(...native.issues);
   // A box whose text column cannot hold one glyph of its own type. PowerPoint
@@ -12523,7 +12618,12 @@ const GOLDEN: Record<string, Golden> = {
   'workflow-long-prose': { minTileIn: 1.552, named: 13, slides: 3 },
   'workflow-fan': { minTileIn: 1.563, named: 9, slides: 2 },
   'workflow-wide-band': { minTileIn: 1.189, named: 560, slides: 143 },
-  'all-categories': { minTileIn: 1.435, named: 16, slides: 2 },
+  // 17, not 16: the export palette is now derived from the canvas one, which
+  // carries `data layer` and `devops` and does not carry the synthetic `other`
+  // (the fallback covers that). One more tile is one more named service, and
+  // the extra tile is what pushes the deck from 2 slides to 4 and lets the
+  // narrowest tile grow.
+  'all-categories': { minTileIn: 1.499, named: 17, slides: 4 },
   'control-chars': { minTileIn: 1.563, named: 4, slides: 2 },
   'short-service-grid': { minTileIn: 1.183, named: 82, slides: 7 },
   'cascade': { minTileIn: 1.17, named: 200, slides: 34 },
@@ -12539,6 +12639,7 @@ const GOLDEN: Record<string, Golden> = {
   'visio-default-tile-names': { minTileIn: 1.875, named: 4, slides: 2 },
   'flush-top-zone': { minTileIn: 1.563, named: 14, slides: 3 },
   'zone-caption-corridor': { minTileIn: 1.563, named: 6, slides: 2 },
+  'tagged-tiles': { minTileIn: 1.563, named: 4, slides: 1 },
   'tile-name-with-meta': { minTileIn: 1.667, named: 6, slides: 1 },
   'zone-caption-wide-estate': { minTileIn: 1.254, named: 24, slides: 6 },
   'squeezed-badges': { minTileIn: 1.563, named: 12, slides: 2 },
@@ -12691,7 +12792,9 @@ const VSDX_GOLDEN: Record<string, VsdxGolden> = {
   'workflow-long-prose': { media: 13, textBlocks: 64, minFontPt: 7.2 },
   'workflow-fan': { media: 9, textBlocks: 76, minFontPt: 7.01 },
   'workflow-wide-band': { media: 560, textBlocks: 2563, minFontPt: 7.2 },
-  'all-categories': { media: 16, textBlocks: 79, minFontPt: 7.2 },
+  // 17 icons and 5 more text blocks for the same reason as the deck row above:
+  // the category list gained `data layer` and `devops` and lost `other`.
+  'all-categories': { media: 17, textBlocks: 84, minFontPt: 7.2 },
   'control-chars': { media: 4, textBlocks: 19, minFontPt: 7.2 },
   'short-service-grid': { media: 82, textBlocks: 92, minFontPt: 7.2 },
   'cascade': { media: 200, textBlocks: 221, minFontPt: 7.2 },
@@ -12707,6 +12810,7 @@ const VSDX_GOLDEN: Record<string, VsdxGolden> = {
   'visio-default-tile-names': { media: 4, textBlocks: 8, minFontPt: 7 },
   'flush-top-zone': { media: 14, textBlocks: 15, minFontPt: 7.56 },
   'zone-caption-corridor': { media: 6, textBlocks: 22, minFontPt: 7.01 },
+  'tagged-tiles': { media: 4, textBlocks: 4, minFontPt: 7.56 },
   'tile-name-with-meta': { media: 6, textBlocks: 13, minFontPt: 7 },
   'zone-caption-wide-estate': { media: 24, textBlocks: 50, minFontPt: 7.2 },
   'squeezed-badges': { media: 12, textBlocks: 59, minFontPt: 7.01 },
@@ -12889,6 +12993,7 @@ async function main(): Promise<void> {
     visioDefaultTileNamesScenario(),
     flushTopZoneScenario(),
     zoneCaptionCorridorScenario(),
+    taggedTilesScenario(),
     tileNameWithMetaScenario(),
     zoneCaptionWideEstateScenario(),
     squeezedBadgeScenario(),

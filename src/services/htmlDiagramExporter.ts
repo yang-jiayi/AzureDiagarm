@@ -69,6 +69,7 @@ interface PositionedGroup {
   height: number;
   color: string;
   bg: string;
+  textColor: string;
 }
 
 interface LegendEntry {
@@ -200,8 +201,8 @@ function buildLayout(nodes: Node[], edges: Edge[], icons: Map<string, string>): 
     };
   });
 
-  const positionedGroups: PositionedGroup[] = groups.map((box, index) => {
-    const style = zoneStyleFor(box, index);
+  const positionedGroups: PositionedGroup[] = groups.map((box) => {
+    const style = zoneStyleFor(box);
     return {
       id: box.id,
       label: box.label,
@@ -211,6 +212,7 @@ function buildLayout(nodes: Node[], edges: Edge[], icons: Map<string, string>): 
       height: box.h,
       color: style.border,
       bg: style.bg,
+      textColor: style.text,
     };
   });
 
@@ -382,8 +384,18 @@ function render() {
     el.style.width = (g.width + 24) + 'px';
     el.style.height = (g.height + 44) + 'px';
     el.style.borderColor = g.color;
-    el.style.background = g.bg + '14';
-    el.innerHTML = '<div class="group-label" style="color:' + g.color + '">' + esc(g.label) + '</div>';
+    // g.bg is already the accent composited onto the page by zoneStyleFor.
+    // Appending an alpha byte applied that 8-10% tint a second time, so the
+    // panel came out at well under 1% of the accent: a green zone rendered
+    // #f6f9f9 where the canvas shows #e1f3ee, which is to say the zone tint
+    // the reader picked was invisible in the file.
+    el.style.background = g.bg;
+    // The AA-guaranteed ink, not the raw accent. This label is not the canvas
+    // header: the export drops the group-node-header bar and floats the title
+    // above the panel on the bare page, so the accent has no tinted bar behind
+    // it to read as a header treatment, and amber landed at 2.04:1 and green
+    // at 2.41:1. Every other exporter already draws the title in style.text.
+    el.innerHTML = '<div class="group-label" style="color:' + g.textColor + '">' + esc(g.label) + '</div>';
     canvas.appendChild(el);
   });
 

@@ -371,8 +371,8 @@ function paletteForService(box: ExportBox): Palette {
 }
 
 /** Adapt the shared zone style (honours `data.customColor`) to Visio's cells. */
-function paletteForZone(box: ExportBox, index: number): Palette {
-  const style = zoneStyleFor(box, index);
+function paletteForZone(box: ExportBox): Palette {
+  const style = zoneStyleFor(box);
   return { fill: style.bg, line: style.border, text: style.text };
 }
 
@@ -2302,7 +2302,7 @@ export async function buildVsdxPackage(
     const zone = groups[zoneIndex];
     const id = nextId++;
     shapeIdByNode.set(zone.id, id);
-    const palette = paletteForZone(zone, zoneIndex);
+    const palette = paletteForZone(zone);
     shapes.push(zoneShapeXml(id, toRect(zone), zone.label, palette, fonts));
   }
 
@@ -2356,6 +2356,18 @@ export async function buildVsdxPackage(
     }
     if (service.meta?.costLabel) {
       properties.push({ name: 'MonthlyCost', label: 'Monthly cost', value: service.meta.costLabel });
+    }
+    // Tags are chips on the canvas tile, and they were reaching neither the
+    // drawn text nor the shape data — so a diagram tagged "PCI" exported with
+    // no trace of it. Visio has no chip, but shape data is better: a reader can
+    // filter and report on it. One row per tag keeps each individually
+    // searchable rather than hiding them in one comma-joined string.
+    for (const [index, tag] of (service.tags ?? []).entries()) {
+      properties.push({
+        name: `Tag${index + 1}`,
+        label: (service.tags ?? []).length > 1 ? `Tag ${index + 1}` : 'Tag',
+        value: tag,
+      });
     }
 
     // Read back from the XML that was just emitted, rather than re-deciding.

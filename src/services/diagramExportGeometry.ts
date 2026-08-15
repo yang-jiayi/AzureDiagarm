@@ -21,6 +21,14 @@ import type { Edge, Node } from 'reactflow';
 import { readStepNumber as readStepValue } from '../utils/workflowStepMapping';
 import { stripXmlForbidden } from '../utils/xmlText';
 import {
+  CATEGORY_ACCENTS,
+  DEFAULT_ACCENT,
+  categoryAccent,
+  matchZoneAccent,
+  shade,
+  tint,
+} from '../utils/canvasPalette';
+import {
   getConnectionPresentation,
   normalizeConnectionType,
   type DiagramConnectionType,
@@ -66,6 +74,12 @@ export interface ExportBox {
    * tile, so native exports can render the same sub-line instead of dropping it.
    */
   meta?: BoxMeta;
+  /**
+   * The tag chips shown on the canvas tile, in canvas order. Kept out of
+   * `meta` because they are not a sub-line: Visio exposes them as shape data
+   * rows a reader can filter on, which is what a tag is for.
+   */
+  tags?: string[];
   /**
    * The zone this box declares as its container (`Node.parentNode`), when it
    * has one. Membership has to be declared, not inferred from geometry: an
@@ -255,35 +269,27 @@ export interface CategoryStyle {
 }
 
 /**
- * Azure-category → colour. Hoisted here so PowerPoint, Visio, Draw.io and HTML
- * all tint the same service identically (they had drifted into three different
- * maps). Keys are the normalised icon-folder categories.
+ * Azure-category → colour, derived from the canvas accents.
+ *
+ * This used to be an independent map, and it had drifted: networking was cyan
+ * on screen and orange in the file, identity pink on screen and amber in the
+ * file, and integration and security shared one red even though the canvas
+ * keeps them apart. Deriving the tint from `categoryAccent` means the file can
+ * only ever show the hue the user was looking at.
  */
-export const CATEGORY_STYLES: Record<string, CategoryStyle> = {
-  'ai + machine learning': { bg: '#E8F0FE', border: '#4285F4', text: '#1A73E8' },
-  'app services': { bg: '#E8F4FD', border: '#0078D4', text: '#004578' },
-  compute: { bg: '#E8F4FD', border: '#0078D4', text: '#004578' },
-  databases: { bg: '#E6F4EA', border: '#0B8043', text: '#0B6B3A' },
-  storage: { bg: '#E6F4EA', border: '#137333', text: '#0B6B3A' },
-  networking: { bg: '#FFF3E0', border: '#E65100', text: '#BF360C' },
-  analytics: { bg: '#F3E8FD', border: '#7B1FA2', text: '#6A1B9A' },
-  containers: { bg: '#E0F7FA', border: '#00838F', text: '#006064' },
-  integration: { bg: '#FCE4EC', border: '#C62828', text: '#B71C1C' },
-  identity: { bg: '#FFF8E1', border: '#F9A825', text: '#F57F17' },
-  'management + governance': { bg: '#F1F8E9', border: '#558B2F', text: '#33691E' },
-  iot: { bg: '#E0F2F1', border: '#00695C', text: '#004D40' },
-  monitor: { bg: '#EDE7F6', border: '#5E35B1', text: '#4527A0' },
-  security: { bg: '#FFEBEE', border: '#C62828', text: '#B71C1C' },
-  web: { bg: '#E3F2FD', border: '#1565C0', text: '#0D47A1' },
-  other: { bg: '#F5F5F5', border: '#616161', text: '#424242' },
-};
+function styleFromAccent(accent: string): CategoryStyle {
+  return { bg: tint(accent, 0.9), border: accent, text: shade(accent, 0.45) };
+}
 
-export const DEFAULT_CATEGORY_STYLE: CategoryStyle = CATEGORY_STYLES.other;
+export const CATEGORY_STYLES: Record<string, CategoryStyle> = Object.fromEntries(
+  Object.entries(CATEGORY_ACCENTS).map(([key, accent]) => [key, styleFromAccent(accent)]),
+);
+
+export const DEFAULT_CATEGORY_STYLE: CategoryStyle = styleFromAccent(DEFAULT_ACCENT);
 
 /** Resolve the colour for a service category, falling back to a neutral tint. */
 export function categoryStyle(category?: string): CategoryStyle {
-  const key = typeof category === 'string' ? category.trim().toLowerCase() : '';
-  return CATEGORY_STYLES[key] ?? DEFAULT_CATEGORY_STYLE;
+  return styleFromAccent(categoryAccent(category));
 }
 
 export interface ZoneStyle {
@@ -291,16 +297,6 @@ export interface ZoneStyle {
   border: string;
   text: string;
 }
-
-/** Fallback zone palette, cycled by group index and identical across formats. */
-export const ZONE_PALETTE: ZoneStyle[] = [
-  { bg: '#F0F6FF', border: '#0078D4', text: '#12395B' },
-  { bg: '#F0FFF4', border: '#00B294', text: '#04463A' },
-  { bg: '#FFFBEB', border: '#D97706', text: '#5A3200' },
-  { bg: '#F8F0FF', border: '#8764B8', text: '#3B2557' },
-  { bg: '#FFF1F2', border: '#D13438', text: '#5A1417' },
-  { bg: '#ECFEFF', border: '#038387', text: '#023B3D' },
-];
 
 // ─── Colour helpers ──────────────────────────────────────────────────────────
 
@@ -326,6 +322,18 @@ export function normalizeHex(color?: string): string | undefined {
 /** Drop a leading `#` — PowerPoint/pptxgenjs colours are bare hex. */
 export function stripHash(color: string): string {
   return color.replace(/^#/, '');
+}
+
+/** Blend `hex` toward `backdrop` by `weight` (0..1 = share of the original). */
+export function mixWith(hex: string, backdrop: string, weight: number): string {
+  const base = normalizeHex(hex) ?? '#f5f5f5';
+  const behind = normalizeHex(backdrop) ?? '#ffffff';
+  const channel = (i: number): string => {
+    const v = parseInt(base.slice(1 + i * 2, 3 + i * 2), 16);
+    const b = parseInt(behind.slice(1 + i * 2, 3 + i * 2), 16);
+    return Math.round(v * weight + b * (1 - weight)).toString(16).padStart(2, '0');
+  };
+  return `#${channel(0)}${channel(1)}${channel(2)}`;
 }
 
 /** Blend `hex` toward white by `weight` (0..1 = share of the original colour). */
@@ -390,21 +398,68 @@ export function readableTextOn(color: string, background: string, target = 4.5):
 }
 
 /**
- * Resolve the colour for a zone. The user's picked colour wins; otherwise the
- * shared palette is cycled by group index so the fallback is identical in every
- * export.
+ * The ink for a zone title: move the accent away from the surface the way
+ * `styleFromAccent` derives a service category's text, and only then guarantee
+ * AA against the panel.
+ *
+ * Both halves are needed and neither is enough alone. `readableTextOn` walks
+ * until it first clears 4.5:1 and stops there, so a colour that starts a hair
+ * under the bar clears it by a hair — and a zone title is not drawn on its own
+ * panel in general. Nest one zone inside another and the real backdrop
+ * composites away from the `bg` passed here; a title with no headroom then
+ * drops under AA. Saturated accents survive that because the walk has to move
+ * them a long way, which is why this only ever showed up on the greys —
+ * `DEFAULT_ACCENT` and the `web/frontend/ingress/edge` keyword, which share
+ * `#6b7280`. Moving first gives every zone the headroom the saturated ones got
+ * by luck.
+ *
+ * The direction follows the panel: darkening ink on a dark panel is the wrong
+ * way to make it readable, so on a dark theme the accent is lightened instead.
  */
-export function zoneStyleFor(box: ExportBox, index: number): ZoneStyle {
+function zoneInkOn(accent: string, bg: string): string {
+  const darkPanel = contrastRatio('#000000', bg) < contrastRatio('#ffffff', bg);
+  return readableTextOn(darkPanel ? tint(accent, 0.45) : shade(accent, 0.45), bg);
+}
+
+/**
+ * Resolve the colour for a zone. The user's picked colour wins; otherwise the
+ * label decides, exactly as it does on the canvas.
+ *
+ * This used to cycle a palette by group index, which had two consequences: a
+ * zone the canvas painted green came out blue, and merely reordering the zones
+ * repainted all of them. The label is what the canvas reads, so the export
+ * reads it too — including the fallback. `GroupNode` has no index and cannot
+ * cycle: an unrecognised label is grey there, so it is grey here. Taking the
+ * index away entirely is what makes the old defect unrepresentable.
+ *
+ * `backdrop` is the paper the zone is drawn on, and it is a parameter because
+ * the canvas fill is TRANSLUCENT: `GroupNode` paints `rgba(accent, 0.08–0.10)`,
+ * so what the reader sees is the accent composited over the theme's canvas.
+ * Mixing toward white unconditionally is only right while the paper is white.
+ * On the dark theme it inverted the zone from the barely-there dark tint the
+ * screen shows into a glaring near-white block — with dark tiles sitting inside
+ * it on a dark slide, which is not a subtler version of the screen but the
+ * opposite of it.
+ */
+export function zoneStyleFor(box: ExportBox, backdrop = '#ffffff'): ZoneStyle {
+  // A picked colour is chosen to look right as a border, where contrast does
+  // not matter. Reused verbatim as label text it routinely lands at 2-3:1 —
+  // the zone title, which names the tier, becomes the least readable words on
+  // the slide.
   const border = normalizeHex(box.customColor?.border) ?? normalizeHex(box.customColor?.header);
   if (border) {
-    const bg = mixWithWhite(border, 0.14);
-    // A picked colour is chosen to look right as a border, where contrast does
-    // not matter. Reused verbatim as label text it routinely lands at 2-3:1 —
-    // the zone title, which names the tier, becomes the least readable words on
-    // the slide. Darken it until it clears AA against its own panel.
-    return { bg, border, text: readableTextOn(border, bg) };
+    const bg = mixWith(border, backdrop, 0.14);
+    return { bg, border, text: zoneInkOn(border, bg) };
   }
-  return ZONE_PALETTE[index % ZONE_PALETTE.length];
+  const accent = matchZoneAccent(box.label);
+  if (accent) {
+    const bg = mixWith(accent, backdrop, 0.12);
+    return { bg, border: accent, text: zoneInkOn(accent, bg) };
+  }
+  // The canvas draws an unmatched zone at a lighter alpha than a matched one
+  // (0.08 vs 0.10 in `GroupNode`), so the opaque mix keeps more of the paper.
+  const bg = mixWith(DEFAULT_ACCENT, backdrop, 0.1);
+  return { bg, border: DEFAULT_ACCENT, text: zoneInkOn(DEFAULT_ACCENT, bg) };
 }
 
 // ─── Connection styling (mirrors the on-canvas / PNG legend) ─────────────────
@@ -468,9 +523,24 @@ export const CONNECTION_LEGEND: ConnectionLegendEntry[] = (
 
 /** Which of the five connection types actually appear on these edges. */
 export function usedConnectionLegend(edges: Edge[]): ConnectionLegendEntry[] {
-  const used = new Set<DiagramConnectionType>(
+  return connectionLegendForTypes(
     edges.map((edge) => normalizeConnectionType((edge.data as { connectionType?: unknown } | undefined)?.connectionType)),
   );
+}
+
+/**
+ * The colour key for a given set of connection types, in canvas order.
+ *
+ * Separate from `usedConnectionLegend` because a tiled deck must key the hops
+ * on *this slide*, not in the whole diagram. Routes are culled to the slide's
+ * window before they are drawn, so feeding the legend every edge put a
+ * "Security" swatch on five consecutive slides that painted no connector at
+ * all -- a key explaining a line the reader cannot see.
+ */
+export function connectionLegendForTypes(
+  types: Iterable<DiagramConnectionType>,
+): ConnectionLegendEntry[] {
+  const used = new Set<DiagramConnectionType>(types);
   return CONNECTION_LEGEND.filter((entry) => used.has(entry.type));
 }
 
@@ -1682,6 +1752,21 @@ export function formatCost(amount: number): string {
   return `$${amount.toFixed(2)}/mo`;
 }
 
+/**
+ * The tag chips on the canvas tile.
+ *
+ * The cap and the filter match `AzureNode` exactly so the export cannot list a
+ * tag the user cannot see, or drop one they can.
+ */
+function readTags(data: Record<string, unknown>): string[] | undefined {
+  if (!Array.isArray(data.tags)) return undefined;
+  const tags = data.tags
+    .filter((tag: unknown): tag is string => typeof tag === 'string' && tag.trim() !== '')
+    .map((tag) => singleLineName(tag))
+    .slice(0, 12);
+  return tags.length > 0 ? tags : undefined;
+}
+
 function readMeta(data: Record<string, unknown>): BoxMeta | undefined {
   const pricing = (data.pricing ?? undefined) as Record<string, unknown> | undefined;
   const sku = firstString(
@@ -1850,6 +1935,7 @@ export function collectExportBoxes(nodes: Node[]): Map<string, ExportBox> {
         : undefined,
       customColor: isGroup ? readCustomColor(data) : undefined,
       meta: isGroup ? undefined : readMeta(data),
+      tags: isGroup ? undefined : readTags(data),
       parent: typeof node.parentNode === 'string' && node.parentNode ? node.parentNode : undefined,
       x: position.x,
       y: position.y,
@@ -3173,6 +3259,17 @@ export function buildExportRoutes(
 /**
  * Split nodes into painting order: groups first (they sit behind), then
  * services. Both lists keep their canvas order so exports stay deterministic.
+ *
+ * Among the groups, the larger one is painted first. A zone fill is a colour
+ * the canvas composites at 8-10% alpha, so on screen a trust boundary drawn
+ * *around* an existing tier lets that tier show through whatever the order.
+ * Exports cannot composite: every format resolves the zone to one opaque
+ * colour, at which point paint order decides what the reader sees, and the
+ * canvas's own order is the wrong one -- `addGroupBoxAtPosition` appends, so
+ * the enclosing zone is authored last and would be painted last, hiding the
+ * zone it was drawn around along with its label. Sorting by area descending
+ * puts every container behind what it contains, which is also how React Flow
+ * stacks a parent group behind its children.
  */
 export function partitionBoxes(boxes: Map<string, ExportBox>): {
   groups: ExportBox[];
@@ -3184,6 +3281,8 @@ export function partitionBoxes(boxes: Map<string, ExportBox>): {
     if (box.kind === 'group') groups.push(box);
     else services.push(box);
   }
+  // Stable: equal-area zones cannot hide one another, so they keep canvas order.
+  groups.sort((a, b) => b.w * b.h - a.w * a.h);
   return { groups, services };
 }
 

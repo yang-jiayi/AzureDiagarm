@@ -25,6 +25,7 @@ import {
   formatScenarioCurrency,
 } from '../services/pricingScenarioService';
 import { getPricingFreshness } from '../utils/pricingHelpers';
+import { csvBlob } from '../utils/csvBlob';
 import { useEscapeKey } from '../hooks/useEscapeKey';
 import { useModalFocus } from '../hooks/useModalFocus';
 import { useLanguage } from '../i18n/LanguageContext';
@@ -108,7 +109,7 @@ const PricingScenarioModal: React.FC<PricingScenarioModalProps> = ({
 
   const downloadComparison = () => {
     const csv = exportPricingScenariosCsv(results);
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    const blob = csvBlob(csv);
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;

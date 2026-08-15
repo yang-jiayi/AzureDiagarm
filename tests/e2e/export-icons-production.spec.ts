@@ -133,7 +133,7 @@ test('the production build exports icons under the shipped CSP', async ({ page }
   await expect(page.locator('.react-flow__node-azureNode img.node-icon'))
     .toHaveCount(SERVICES.length);
 
-  const download = async (command: string): Promise<Buffer> => {
+  const download = async (command: string | RegExp): Promise<Buffer> => {
     await page.getByRole('button', { name: 'Export', exact: true }).click();
     const menu = page.getByRole('menu', { name: 'Export options' });
     const pending = page.waitForEvent('download');
@@ -162,5 +162,87 @@ test('the production build exports icons under the shipped CSP', async ({ page }
     .filter((xml) => xml.includes('<a:custGeom>')).length,
   'a <p:cxnSp> with custom geometry makes PowerPoint refuse the file').toBe(0);
 
+  // The primary image export produced no file at all in production: it read the
+  // captured canvas back with `fetch(dataUrl)`, which `connect-src` refuses, so
+  // the user got an error dialog and nothing else.
+  const png = await download('Export PNG');
+  expect(png.subarray(0, 8).toString('hex'), 'Export PNG must deliver a real PNG')
+    .toBe('89504e470d0a1a0a');
+  expect(png.byteLength, 'a three-tile diagram is not a few hundred bytes')
+    .toBeGreaterThan(10_000);
+
+  // Draw.io embedded its icons as `data:image/svg+xml,<base64>` -- without the
+  // `;base64` marker the payload is percent-decoded, so every icon resolved to
+  // the literal base64 text and none of them rendered.
+  const drawio = (await download(/^Export Draw/)).toString('utf8');
+  const embedded = drawio.match(/image=data:image\/svg\+xml;base64,([A-Za-z0-9+/=]+)/g) ?? [];
+  expect(embedded.length, 'every tile must carry an icon Draw.io can decode')
+    .toBeGreaterThanOrEqual(SERVICES.length);
+  for (const token of embedded) {
+    const payload = token.slice(token.indexOf(',') + 1);
+    expect(Buffer.from(payload, 'base64').toString('utf8').trimStart(),
+      'the decoded icon must be SVG source').toMatch(/^<(\?xml|svg)/);
+  }
+
   expect(refusals, 'nothing the exports depend on may be refused by the shipped CSP').toEqual([]);
+});
+
+/**
+ * The SVG export, in the two ways it has been broken.
+ *
+ * It shipped as an `html-to-image` capture, which wraps the whole drawing in a
+ * single `<foreignObject>` of XHTML. Browsers render that, so the file looked
+ * right to everyone who checked it in a browser, and it opened blank in
+ * Inkscape, Illustrator, librsvg, Office and Preview — the tools people pick
+ * SVG in order to use. It is now built from the shared export geometry as real
+ * elements, and this asserts that it stays that way.
+ *
+ * It also has to survive the production CSP, because it reads icon source
+ * through the same loader that emptied the deck and the Visio sheet.
+ */
+test('the SVG export is native vector art carrying real icons', async ({ page }) => {
+  const refusals: string[] = [];
+  page.on('console', (message) => {
+    if (/content security policy|refused to (connect|load)/i.test(message.text())) {
+      refusals.push(message.text());
+    }
+  });
+
+  await page.goto(origin);
+  const canvas = page.getByRole('region', { name: 'Architecture canvas' });
+  await expect(canvas).toBeVisible({ timeout: 30_000 });
+
+  const palette = page.getByTestId('command-palette');
+  const search = palette.getByRole('combobox', { name: 'Search commands and services' });
+  for (const service of SERVICES) {
+    await canvas.focus();
+    await page.keyboard.press('Control+K');
+    await search.fill(service);
+    await palette.getByRole('option', { name: new RegExp(`^${service}`) }).first().click();
+  }
+  await expect(page.locator('.react-flow__node-azureNode')).toHaveCount(SERVICES.length);
+
+  await page.getByRole('button', { name: 'Export', exact: true }).click();
+  const menu = page.getByRole('menu', { name: 'Export options' });
+  const pending = page.waitForEvent('download');
+  await menu.getByRole('menuitem', { name: /^Export SVG/ }).click();
+  const stream = await (await pending).createReadStream();
+  const chunks: Buffer[] = [];
+  for await (const chunk of stream) chunks.push(chunk as Buffer);
+  const svg = Buffer.concat(chunks).toString('utf8');
+
+  expect(svg, 'an SVG only a browser can open is a PNG with extra steps')
+    .not.toMatch(/foreignObject/i);
+  expect(svg, 'the drawing must be real SVG geometry').toMatch(/<path\b/);
+  expect(svg, 'every service needs a tile').toMatch(/data-service=/);
+  expect((svg.match(/data-service=/g) ?? []).length).toBe(SERVICES.length);
+
+  // Icon artwork is inlined as nested <svg>, so this is the check that the
+  // loader got real source through the CSP rather than falling back to nothing.
+  const icons = svg.match(/<svg x="[-\d.]+" y="[-\d.]+"/g) ?? [];
+  expect(icons.length, 'every tile must carry its icon as vector art')
+    .toBe(SERVICES.length);
+
+  expect(refusals, 'nothing the SVG export depends on may be refused by the shipped CSP')
+    .toEqual([]);
 });

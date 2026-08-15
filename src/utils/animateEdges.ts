@@ -4,7 +4,7 @@
 /**
  * animateEdgeFlow — add flowing "data-flow" circles to a captured ReactFlow SVG.
  *
- * Operates purely on the SVG text produced by `captureDiagramAsSvg`. For every
+ * Operates purely on the SVG text produced by `exportToSvg`. For every
  * `<path class="react-flow__edge-path">` it:
  *   1. assigns a unique id,
  *   2. injects two <circle> siblings (a bright head + a fainter tail) that ride
@@ -51,8 +51,11 @@ export function animateEdgeFlow(svgText: string, options: AnimateEdgeFlowOptions
   let i = 0;
   svg = svg.replace(EDGE_RE, (_full, open: string, close: string) => {
     const id = `rfflow-${i}`;
-    // Prefer the arrowhead color encoded in marker-end (e.g. ...color=#0078d4...).
-    const m = /color=#([0-9a-fA-F]{6})/.exec(open);
+    // Prefer the arrowhead colour the edge carries. A captured ReactFlow SVG
+    // encodes it unquoted inside the marker-end url (`...color=#0078d4...`);
+    // the native vector export states it as `data-flow-color="#0078d4"`,
+    // because an SVG marker id cannot contain a `#`. One regex covers both.
+    const m = /color=["']?#([0-9a-fA-F]{6})/.exec(open);
     const color = m ? `#${m[1]}` : palette[i % palette.length];
     const dur = (baseDuration + (i % 4) * 0.35).toFixed(2);
     const begin = (-(i * 0.3)).toFixed(2); // stagger so flows don't pulse in sync

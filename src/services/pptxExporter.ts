@@ -128,7 +128,9 @@ import {
   drawableInColumn,
   advanceWidthIn,
   trailingWhitespaceIn,
+  connectionLegendForTypes,
   usedConnectionLegend,
+  type ConnectionLegendEntry,
   workflowListFromEdges,
   narrateEdgeCallouts,
   readEdgeLabel,
@@ -317,6 +319,16 @@ const MARKABLE_TILE_W_IN = 0.2;
  * but nobody can read it, which is worse than an honest ellipsis.
  */
 const META_LEGIBLE_PT = 5;
+
+/**
+ * Floor for a tag chip, and it is the deck's own 7pt rather than the sub-line's
+ * 5pt. A SKU shrunk to 5pt is still worth setting because every character of it
+ * is a fact the reader can look up and nothing else on the slide carries it. A
+ * tag is one short word chosen by the author: at 5pt it is a smudge, and the
+ * shape it sits on already carries the service name it belongs to. So a tile
+ * that cannot set a legible chip sets none rather than a small one.
+ */
+const TAG_LEGIBLE_PT = 7;
 
 /**
  * The label size tiling actually aims for.
@@ -2106,10 +2118,41 @@ export interface DiagramShapeSource {
 
 // ─── Native (editable) diagram rendering ─────────────────────────────────────
 
-/** Shared category tint (bare hex for pptxgenjs) — one source of truth. */
-function styleForBox(box: ExportBox): { bg: string; border: string; text: string } {
-  const style = categoryStyle(box.category);
-  return { bg: stripHash(style.bg), border: stripHash(style.border), text: stripHash(style.text) };
+/**
+ * The tile, as the canvas draws it.
+ *
+ * The deck used to flood the whole tile with the category tint. The canvas has
+ * never done that: it draws a neutral card and puts the colour in a 4px stripe
+ * down the left edge (`AzureNode` `borderStyle`). Two consequences followed.
+ * The obvious one is that the file simply did not look like the screen. The
+ * worse one is that the tint was hard-coded light, so exporting a dark diagram
+ * produced pale peach tiles scattered over a slate-800 slide — the one case
+ * where "close enough" was not close at all.
+ *
+ * `surface`, `outline` and `text` are the canvas's design tokens for the
+ * theme being exported; `stripe` is the category accent that used to be the
+ * fill. `mutedInk` is the starting point for the SKU/region sub-line, darkened
+ * or lightened against the surface at the point of use.
+ */
+interface TileStyle {
+  surface: string;
+  outline: string;
+  stripe: string;
+  text: string;
+  mutedInk: string;
+}
+
+function styleForBox(box: ExportBox, dark: boolean): TileStyle {
+  return {
+    // --azd-color-surface-elevated
+    surface: dark ? '27333D' : 'FFFFFF',
+    // AzureNode pins this hairline in both themes.
+    outline: 'D8E1EA',
+    stripe: stripHash(categoryStyle(box.category).border),
+    // --azd-color-text
+    text: dark ? 'E5EDF7' : '1F2937',
+    mutedInk: dark ? '94A3B8' : '64748B',
+  };
 }
 
 function clamp(value: number, min: number, max: number): number {
@@ -2937,14 +2980,14 @@ function addConnectorLabel(
     h: box.h,
     shape: 'roundRect',
     rectRadius: 0.03,
-    fill: { color: 'FEF9C3', transparency: 8 },
-    line: { color: 'FDE68A', width: 0.5 },
-    // Amber-800, not amber-700. The chip is a fixed light yellow in both
-    // themes, but it is 8% translucent — so on a dark slide the backdrop
-    // darkens it to about #ECE8B8 and amber-700 lands at 4.02:1, under the
-    // WCAG AA bar. One step darker clears both composites with margin and is
-    // indistinguishable on the light one.
-    color: '92400E',
+    // The canvas chip is white with a slate border (App.tsx `labelBgStyle`).
+    // The deck used to draw it amber, which made the same label look like a
+    // different kind of annotation in the file than on screen. 6% translucency
+    // mirrors the canvas's `fillOpacity: 0.94`; even over a dark slide that
+    // composites to ~#F1F1F1, so the slate text stays well clear of AA.
+    fill: { color: 'FFFFFF', transparency: 6 },
+    line: { color: 'CBD5E1', width: 0.5 },
+    color: '334155',
     fontSize,
     fontFace: 'Yu Gothic UI',
     align: 'center',
@@ -3367,6 +3410,8 @@ function addNodeShape(
   drawnHere?: Map<string, string>,
   /** Stable, deck-global ordinals so a key means the same thing on every slide. */
   keyOrdinal?: Map<string, number>,
+  /** Which theme's surface the tile is drawn on. */
+  dark = false,
 ): {
   /** The box the service NAME is drawn in, not the room left over for it. */
   caption: { x: number; y: number; w: number; h: number } | null;
@@ -3380,16 +3425,17 @@ function addNodeShape(
   const topLeft = placeBox(box, transform, clampTo);
   const w = topLeft.w;
   const h = topLeft.h;
-  const palette = styleForBox(box);
+  const palette = styleForBox(box, dark);
+  const radius = Math.min(0.08, h / 4);
 
   slide.addShape(pptx.ShapeType.roundRect, {
     x: topLeft.x,
     y: topLeft.y,
     w,
     h,
-    rectRadius: Math.min(0.08, h / 4),
-    fill: { color: palette.bg },
-    line: { color: palette.border, width: 1.25 },
+    rectRadius: radius,
+    fill: { color: palette.surface },
+    line: { color: palette.outline, width: 1.25 },
     shadow: {
       type: 'outer',
       color: '94A3B8',
@@ -3400,6 +3446,30 @@ function addNodeShape(
     },
     objectName: `service-${box.id}`,
   });
+
+  // The canvas's 4px category stripe. PowerPoint has no per-side border, so it
+  // is a second shape: a plain rectangle on the tile's left edge, inset by the
+  // corner radius so it sits on the straight part of the edge and never pokes
+  // out past the rounded corner. 4px at the canvas's 96dpi is 1/24in, scaled
+  // with the drawing, and floored so it stays visible on a shrunken tile —
+  // but the floor is capped at a quarter of the tile, because on the hairline
+  // tiles a dense drawing produces (0.044in wide is real) a 0.03in stripe is
+  // two thirds of the tile and reads as the flood fill this change removes.
+  const stripeW = Math.min(
+    Math.max(0.03, Math.min(0.06, (4 / PX_PER_IN) * transform.scale)),
+    w / 4,
+  );
+  if (h > radius * 2) {
+    slide.addShape(pptx.ShapeType.rect, {
+      x: topLeft.x,
+      y: topLeft.y + radius,
+      w: stripeW,
+      h: h - radius * 2,
+      fill: { color: palette.stripe },
+      line: { color: palette.stripe, width: 0 },
+      objectName: `accent-${box.id}`,
+    });
+  }
 
   const pad = Math.min(0.06, h * 0.09);
   // Every typographic dimension is proportional to the drawing scale, so the
@@ -3490,11 +3560,78 @@ function addNodeShape(
   // the icon did not fit and was dropped.
   let metaBand = named && showsMeta(h, px) && !!meta ? metaFontSize * 1.55 / 72 + 0.03 : 0;
 
+  // The tag chips `AzureNode` draws under the name.
+  //
+  // React Flow measures the node, so a tile carrying chips arrives here
+  // genuinely taller than the same tile without them and `readSize` passes
+  // that measured height straight through. The strip is therefore drawn in
+  // room the screen already paid for — it is not taken from the icon or the
+  // name — and a tile with no tags reserves nothing at all, so every tile that
+  // renders today is untouched.
+  //
+  // Floored at the deck's own legibility limit rather than shrunk to fit. A
+  // tag is a short word with no redundancy: "pci" set at 5pt is not a smaller
+  // label, it is a smudge, and unlike a SKU it is not recoverable from any
+  // other slide. A tile that cannot afford a legible strip draws none.
+  const tags = box.tags ?? [];
+  const tagPt = clamp(fontSize - 3, TAG_LEGIBLE_PT, 8);
+  const tagStrip = (tagPt * 1.45) / 72 + 0.02;
+
   // Floored above one ellipsis at the 7pt type floor (0.0525in), not at an
   // arbitrary 0.05in: below that the fitter's own last resort does not fit the
   // column it is being fitted to, which is a contradiction the shrink loop
-  // used to spin on.
+  // used to spin on. Hoisted above the tag band because the band cannot be
+  // decided without knowing the width the chips have to fit in.
   const innerW = Math.max(0.06, w - 0.06);
+
+  // Which chips this tile can actually draw, decided here rather than at
+  // drawing time so the reservation and the drawing cannot disagree. They did:
+  // the band was gated on HEIGHT while the chips fit on WIDTH, so a tile
+  // narrow enough that not even the `+N` counter fit still reserved the strip
+  // — and because the icon-squeeze's room is capped by width, dropping the
+  // tags could never win that width back. The tile ended up with an empty
+  // strip along its bottom and one fewer line for its name.
+  const chipPadX = 0.045;
+  const chipGap = 0.03;
+  const widthOf = (text: string): number => estimateTextWidthIn(text, tagPt) + chipPadX * 2;
+  const totalOf = (list: string[]): number =>
+    list.reduce((sum, c) => sum + widthOf(c), 0) + Math.max(0, list.length - 1) * chipGap;
+
+  // Whole chips only — a tag is never cut. The canvas ellipsizes a long tag
+  // (`.node-tags span` is `max-width: 72px` with `text-overflow: ellipsis`),
+  // but it also gives every chip a `title`, so on screen the reader can
+  // always recover the tag the chip abbreviated. A deck has no tooltip, so a
+  // cut tag is a string nothing in the file can complete — and the deck's
+  // standing rule, which the quality gate enforces, is that nothing may be
+  // cut without a recovery route. It is the same trade the sub-line already
+  // makes when it drops whole facts rather than cutting a SKU: `+1` is a true
+  // and complete statement the reader knows how to act on, while
+  // "data-residency:european-u…" only claims to say something it does not
+  // finish.
+  //
+  // Each chip is drawn at its own natural width, so the only question a
+  // layout has to answer is whether the strip fits the tile. Give up the last
+  // named chip to the counter until it does; at zero the strip is the counter
+  // alone, which still says this service is tagged and how many. If even that
+  // does not fit, the tile draws no strip and reserves no room for one.
+  const stripOf = (shownCount: number): string[] => {
+    const rest = tags.length - shownCount;
+    return [...tags.slice(0, shownCount), ...(rest > 0 ? [`+${rest}`] : [])];
+  };
+
+  let chips: string[] = [];
+  for (let shownCount = Math.min(2, tags.length); shownCount >= 0; shownCount -= 1) {
+    const attempt = stripOf(shownCount);
+    if (attempt.length > 0 && totalOf(attempt) <= innerW) { chips = attempt; break; }
+  }
+
+  // The name outranks the chips: a tile still has to be able to set one line
+  // of its own name after the strip is taken out, or the strip does not happen.
+  let tagBand = named && chips.length > 0
+    && h - pad * 2 - metaBand - tagStrip >= (fontSize * 1.35) / 72
+    ? tagStrip
+    : 0;
+
   // How much of the name the tile can actually hold, rather than a flat 40
   // cells. The flat cap clipped names a three-line tile had ample room for —
   // "Azure Database for PostgreSQL フレキシ…" on a tile that fits the whole
@@ -3508,7 +3645,7 @@ function addNodeShape(
   // "Azure Kubernetes Service Automatic cluster" was admitted whole at 13pt on
   // a 160x110 tile, drew 5 lines of a 3-line box, and painted 0.224in — all of
   // it — straight through the "P1v3 · eastus" sub-line below.
-  const nameLines = Math.max(1, Math.floor((h - pad * 2 - metaBand) / ((fontSize * 1.35) / 72)));
+  const nameLines = Math.max(1, Math.floor((h - pad * 2 - metaBand - tagBand) / ((fontSize * 1.35) / 72)));
   const linesIn = (text: string, columnIn: number, sizeIn: number): number => wrappedLineCount(text, columnIn, sizeIn * 72);
   const full = fitLabelToLines(box.label, innerW, fontSize / 72, nameLines, linesIn);
   // A stub gets as much of the name as fits the tile at the floor size, on as
@@ -3619,13 +3756,26 @@ function addNodeShape(
     // in the deck carries. So the free move is tried first, and the sub-line
     // is dropped only when shrinking the name does not save the icon AND
     // dropping it does.
-    const withMeta = squeeze(metaBand);
-    let chosen = withMeta;
-    if (metaBand > 0 && withMeta.room < iconFloor) {
-      const withoutMeta = squeeze(0);
-      if (withoutMeta.room >= iconFloor) chosen = withoutMeta;
+    //
+    // The chips go before the sub-line does. They are the one thing on the
+    // tile that IS recoverable — the shape keeps its tags as text nowhere else
+    // needs, and a tag is an annotation on a service rather than a fact about
+    // it — so when the icon is losing, the strip is the cheapest thing to give
+    // up. The order is therefore icon, name, sub-line, chips.
+    const withAll = squeeze(metaBand + tagBand);
+    let chosen = withAll;
+    let keepTags = tagBand > 0;
+    if (tagBand > 0 && withAll.room < iconFloor) {
+      const withoutTags = squeeze(metaBand);
+      if (withoutTags.room >= iconFloor) { chosen = withoutTags; keepTags = false; }
     }
-    metaBand = chosen.band;
+    if (metaBand > 0 && chosen.room < iconFloor) {
+      const withoutMeta = squeeze(0);
+      if (withoutMeta.room >= iconFloor) { chosen = withoutMeta; keepTags = false; }
+    }
+    // `chosen.band` is the TOTAL reserved strip; split it back into its parts.
+    tagBand = keepTags ? tagBand : 0;
+    metaBand = chosen.band - tagBand;
     nameFont = chosen.font;
     label = chosen.label;
     labelLines = chosen.lines;
@@ -3699,7 +3849,7 @@ function addNodeShape(
 
   // Fit the icon into whatever vertical room the label does not need, instead
   // of forcing a minimum that pushes the text out of the tile.
-  const available = h - pad * 2 - metaBand;
+  const available = h - pad * 2 - metaBand - tagBand;
   let iconSize = 0;
   if (icon) {
     iconSize = clamp(Math.min(h * 0.42, w * 0.34, Math.max(0, available - labelBlockH - 0.02)), 0, 0.6);
@@ -3723,7 +3873,7 @@ function addNodeShape(
   }
 
   const textTop = iconSize > 0 ? topLeft.y + pad + iconSize + 0.02 : topLeft.y + pad;
-  const textHeight = Math.max(0.08, topLeft.y + h - pad - metaBand - textTop);
+  const textHeight = Math.max(0.08, topLeft.y + h - pad - metaBand - tagBand - textTop);
 
   let captionBand: { x: number; y: number; w: number; h: number } | null = null;
   if ((named || stub || keyed) && label !== '') {
@@ -3764,7 +3914,7 @@ function addNodeShape(
       w: innerW,
       h: topAligned ? boxH : textBoxH,
       fontSize: drawnFont,
-      color: '1F2937',
+      color: palette.text,
       fontFace: 'Yu Gothic UI',
       align: 'center',
       valign: !stub && iconSize > 0 ? 'top' : 'middle',
@@ -3816,26 +3966,77 @@ function addNodeShape(
     const drawnH = Math.min(metaBand, (metaPt * 1.35) / 72);
     metaBandRect = {
       x: topLeft.x + 0.03 + (innerW - drawnW) / 2,
-      y: topLeft.y + h - pad - drawnH,
+      y: topLeft.y + h - pad - tagBand - drawnH,
       w: drawnW,
       h: drawnH,
     };
     if (shown === '') metaBandRect = null;
     else slide.addText(shown, {
       x: topLeft.x + 0.03,
-      y: topLeft.y + h - pad - metaBand,
+      y: topLeft.y + h - pad - tagBand - metaBand,
       w: innerW,
       h: metaBand,
       fontSize: metaPt,
       // The tile fill is category-dependent, so a fixed grey reads at 4.26:1 on
       // the lighter categories. Derive it from the panel it is printed on.
-      color: stripHash(readableTextOn('#64748B', `#${stripHash(palette.bg)}`)),
+      // The tile is the theme's card surface, so the muted ink has to be
+      // resolved against it rather than fixed: the same grey that reads at
+      // 5.7:1 on white is invisible on the dark card.
+      color: stripHash(readableTextOn(`#${palette.mutedInk}`, `#${palette.surface}`)),
       fontFace: 'Yu Gothic UI',
       align: 'center',
       valign: 'bottom',
       margin: 0,
       wrap: false,
       objectName: `service-meta-${box.id}`,
+    });
+  }
+
+  // The chip strip, drawn last so it sits on the tile like the canvas draws it.
+  // `chips` was chosen up where the band was reserved, so a tile that reserved
+  // room always has something to put in it.
+  if (tagBand > 0 && chips.length > 0) {
+    const total = totalOf(chips);
+    const chipH = (tagPt * 1.45) / 72;
+    const chipY = topLeft.y + h - pad - tagBand + (tagBand - chipH) / 2;
+    // The canvas chips are `--azd-color-brand-subtle` on a border of
+    // `--azd-color-brand-border` with `--azd-color-text-secondary` ink —
+    // Azure blue, not a neutral, and a different pair per theme. Drawing
+    // them grey was the export inventing a colour the canvas owns. The ink
+    // is still resolved against the chip's own fill rather than taken
+    // literally, for the reason the sub-line is: a value that reads on the
+    // light chip vanishes on the dark one.
+    const chipFill = dark ? '22384A' : 'EFF6FF';
+    const chipLine = dark ? '42657E' : 'BFDBFE';
+    const chipInk = stripHash(readableTextOn(dark ? '#CBD5E1' : '#334155', `#${chipFill}`));
+    let cursor = topLeft.x + (w - total) / 2;
+    chips.forEach((text, i) => {
+      const cw = widthOf(text);
+      slide.addShape(pptx.ShapeType.roundRect, {
+        x: cursor,
+        y: chipY,
+        w: cw,
+        h: chipH,
+        fill: { color: chipFill },
+        line: { color: chipLine, width: 0.5 },
+        rectRadius: chipH / 2,
+        objectName: `tag-${box.id}-${i}`,
+      });
+      slide.addText(text, {
+        x: cursor,
+        y: chipY,
+        w: cw,
+        h: chipH,
+        fontSize: tagPt,
+        color: chipInk,
+        fontFace: 'Yu Gothic UI',
+        align: 'center',
+        valign: 'middle',
+        margin: 0,
+        wrap: false,
+        objectName: `tagtext-${box.id}-${i}`,
+      });
+      cursor += cw + chipGap;
     });
   }
   return {
@@ -3864,7 +4065,6 @@ function addGroupShape(
   pptx: PptxGenJS,
   slide: Slide,
   box: ExportBox,
-  index: number,
   transform: FitTransform,
   clampTo?: DiagramFrame,
   /** Members of this zone on this slide, and in the drawing as a whole. */
@@ -3886,6 +4086,11 @@ function addGroupShape(
    */
   /** Cut names, spelled out in full on the index slide. */
   truncatedNames?: Map<string, Set<string>>,
+  /**
+   * Which theme's paper the zone is drawn on. The canvas fill is translucent,
+   * so a zone is its accent composited over the slide — not over white.
+   */
+  dark = false,
 ): { caption: { x: number; y: number; w: number; h: number } } {
   const topLeft = placeBox(box, transform, clampTo, true);
   const w = topLeft.w;
@@ -3894,7 +4099,7 @@ function addGroupShape(
   // rectangle is the zone or only the part of it that survived the cut.
   const uncut = placeBox(box, transform);
   const clipped = Math.abs(uncut.w - w) > 1e-6 || Math.abs(uncut.h - h) > 1e-6;
-  const palette = zoneStyleFor(box, index);
+  const palette = zoneStyleFor(box, `#${(dark ? DARK_THEME : LIGHT_THEME).bg}`);
   const bg = stripHash(palette.bg);
   const border = stripHash(palette.border);
   // The border colour is tuned to be seen as a 1pt line, not read as words: on
@@ -4227,10 +4432,9 @@ function addGroupShape(
 
 /** Where the colour key lands, so the drawing can keep out from under it. */
 function connectionLegendRect(
-  edges: Edge[],
+  entries: ConnectionLegendEntry[],
   frame: DiagramFrame,
 ): { x: number; y: number; w: number; h: number } | null {
-  const entries = usedConnectionLegend(edges);
   if (entries.length === 0) return null;
   // One row of swatches along the bottom rather than a stacked card in a
   // corner. The card was 92% opaque and drawn last, so on a full grid it simply
@@ -4241,15 +4445,20 @@ function connectionLegendRect(
   return { x: frame.x + 0.05, y: frame.y + frame.h + 0.03, w, h };
 }
 
-/** Small colour key so the deck agrees with the PNG's connection legend. */
+/**
+ * Small colour key so the deck agrees with the PNG's connection legend.
+ *
+ * Takes the entries rather than the edges so the caller decides what "used"
+ * means. On a tiled deck that has to be the hops on *this* slide: keying every
+ * type in the diagram put a swatch on slides that drew no connector at all.
+ */
 function addConnectionLegend(
   pptx: PptxGenJS,
   slide: Slide,
-  edges: Edge[],
+  entries: ConnectionLegendEntry[],
   frame: DiagramFrame,
 ): void {
-  const entries = usedConnectionLegend(edges);
-  const seat = connectionLegendRect(edges, frame);
+  const seat = connectionLegendRect(entries, frame);
   if (entries.length === 0 || !seat) return;
 
   const swatchW = 0.3;
@@ -4292,7 +4501,7 @@ async function addEditableDiagram(
   slide: Slide,
   diagram: DiagramShapeSource,
   fullFrame: DiagramFrame,
-  _isDarkMode: boolean,
+  isDarkMode: boolean,
   window?: DiagramWindow,
   /**
    * Wording that a muted chip handed over, by step number. The caller writes
@@ -4534,7 +4743,7 @@ async function addEditableDiagram(
   const captionBands: Obstacle[] = [];
   drawnGroups.forEach((group) => {
     const bands = addGroupShape(
-      pptx, slide, group, groups.indexOf(group), transform, clampTo,
+      pptx, slide, group, transform, clampTo,
       { here: zoneMembers(group, shownServices), all: zoneMembers(group, services) },
       // Captions already chosen are paper too. Nested zones are the case:
       // `trespass` charges for writing inside a foreign zone, but a zone drawn
@@ -4545,6 +4754,7 @@ async function addEditableDiagram(
       [...placedTiles, ...captionBands.map((band) => ({ x: band.x, y: band.y, w: band.w, h: band.h }))],
       drawnGroups.filter((other) => other !== group).map((other) => placedZones.get(other.id)!),
       thumbnail ? undefined : truncatedNames,
+      isDarkMode,
     );
     // A zone caption is worth exactly what a tile caption is worth: it is the
     // only thing that says what the box contains, and a chip over it is a
@@ -4591,7 +4801,7 @@ async function addEditableDiagram(
     const bands = addNodeShape(
       pptx, slide, service, transform,
       service.iconPath ? icons.get(service.iconPath) : undefined,
-      px, clampTo, thumbnail, drawnHere, keyOrdinal,
+      px, clampTo, thumbnail, drawnHere, keyOrdinal, isDarkMode,
     );
     // The overview is allowed to clip: every name it clips is drawn in full on
     // the slice that follows. Only a window slide's clipping is a real loss.
@@ -4661,7 +4871,12 @@ async function addEditableDiagram(
   // The colour key is drawn last and is all but opaque, so anything it lands on
   // is simply gone: a numbered callout under it leaves the workflow band citing
   // a step the reader cannot find. Reserve whichever corner it will take.
-  const legendRect = connectionLegendRect(diagram.edges ?? [], frame);
+  //
+  // Built from the routes this slide actually draws, not from the diagram, so
+  // the reservation and the key can never disagree -- a slice with no hop on it
+  // reserves nothing and shows nothing.
+  const slideLegend = connectionLegendForTypes(shownRoutes.map((route) => route.connectionType));
+  const legendRect = connectionLegendRect(slideLegend, frame);
   if (legendRect) chipObstacles.push({ ...legendRect, weight: 4 });
   const chips = new Map<string, ReturnType<typeof connectorLabelBox>>();
   const badges = new Map<string, ReturnType<typeof stepBadgeBox>>();
@@ -5610,7 +5825,7 @@ async function addEditableDiagram(
 
   // Colour key so the deck's connectors agree with the PNG legend. Drawn in the
   // strip reserved for it below the diagram, not over the drawing.
-  addConnectionLegend(pptx, slide, diagram.edges ?? [], fullFrame);
+  addConnectionLegend(pptx, slide, slideLegend, fullFrame);
 
   return true;
 }

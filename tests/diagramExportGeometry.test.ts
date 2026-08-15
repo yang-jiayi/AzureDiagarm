@@ -903,3 +903,46 @@ test('a route to the tile directly below must not leave by the top', () => {
     }
   }
 });
+
+test('a zone drawn around another is painted behind it, not over it', () => {
+  // Authoring order is the trap: `addGroupBoxAtPosition` appends, so a trust
+  // boundary drawn around an existing tier is the LAST node. On the canvas the
+  // 8-10% zone fill lets the inner tier show through regardless; every export
+  // resolves that fill to one opaque colour, so whatever is painted last wins
+  // and the inner zone -- with its label -- would simply disappear.
+  const nodes = [
+    { id: 'inner', type: 'groupNode', position: { x: 120, y: 120 }, style: { width: 160, height: 120 }, data: { label: 'Inner tier' } },
+    { id: 'outer', type: 'groupNode', position: { x: 40, y: 40 }, style: { width: 420, height: 340 }, data: { label: 'Outer boundary' } },
+  ] as unknown as Node[];
+
+  const { groups } = partitionBoxes(collectExportBoxes(nodes));
+  assert.deepEqual(
+    groups.map((entry) => entry.id),
+    ['outer', 'inner'],
+    'the containing zone must be painted first so the zone inside it stays visible',
+  );
+
+  const contains = (o: (typeof groups)[number], i: (typeof groups)[number]) =>
+    o.x <= i.x && o.y <= i.y && o.x + o.w >= i.x + i.w && o.y + o.h >= i.y + i.h;
+  for (let i = 0; i < groups.length; i++) {
+    for (let j = i + 1; j < groups.length; j++) {
+      assert.ok(
+        !contains(groups[j], groups[i]),
+        `"${groups[j].label}" is painted after "${groups[i].label}" and encloses it`,
+      );
+    }
+  }
+});
+
+test('equal-area zones keep their canvas order', () => {
+  // The sort exists only to stop one zone burying another. Zones that cannot
+  // enclose each other must stay in authoring order, or exports stop being
+  // byte-stable across runs for no benefit.
+  const nodes = [
+    { id: 'left', type: 'groupNode', position: { x: 0, y: 0 }, style: { width: 200, height: 100 }, data: { label: 'Left' } },
+    { id: 'right', type: 'groupNode', position: { x: 400, y: 0 }, style: { width: 200, height: 100 }, data: { label: 'Right' } },
+  ] as unknown as Node[];
+
+  const { groups } = partitionBoxes(collectExportBoxes(nodes));
+  assert.deepEqual(groups.map((entry) => entry.id), ['left', 'right']);
+});

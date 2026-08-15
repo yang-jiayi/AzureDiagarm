@@ -21,7 +21,7 @@
  * present.  After capture, all attributes are restored to their original state.
  */
 
-import { toPng, toSvg } from 'html-to-image';
+import { toPng } from 'html-to-image';
 import {
   calculateContentCapturePlan,
   type DiagramContentBounds,
@@ -500,36 +500,18 @@ export async function captureDiagramAsPng(
 }
 
 /**
- * Capture the element as a native SVG text string.
+ * There is deliberately no `captureDiagramAsSvg` here any more.
  *
- * SVG edge styles are pre-inlined so paths are visible in the output.
- * Returns decoded SVG text (ready for `new Blob([...])`).
+ * html-to-image's `toSvg` produces an SVG whose entire content is one
+ * `<foreignObject>` full of XHTML. Browsers render that, so the output looked
+ * correct on the only surface anyone checked, and it opened blank in Inkscape,
+ * in Illustrator, through librsvg, in Office's Insert > Picture and in macOS
+ * Preview. A user who chooses SVG over PNG is nearly always choosing it in
+ * order to open the file somewhere else and edit it, so "renders in a browser"
+ * is not the bar.
+ *
+ * `src/services/vectorSvgExporter.ts` builds the same drawing out of the shared
+ * export geometry as real `<rect>`, `<path>`, `<text>` and nested `<svg>`
+ * elements, which every tool can open and every shape of which is selectable.
+ * Reach for that instead.
  */
-export async function captureDiagramAsSvg(
-  element: HTMLElement,
-  options: CaptureOptions,
-): Promise<string> {
-  const exportBackground = options.exportBackground ?? 'plain';
-  const excludeClasses = captureClasses(options);
-  const prepared = prepareCompositionTarget(element, options);
-  const restore = prepareEdgesForCapture(prepared.target);
-
-  try {
-    const dataUrl = await toSvg(prepared.target, {
-      backgroundColor: options.backgroundColor,
-      pixelRatio: options.pixelRatio ?? 2,
-      width: prepared.width,
-      height: prepared.height,
-      filter: makeFilter(excludeClasses),
-      style: options.composition ? {} : captureStyle(exportBackground),
-      imagePlaceholder:
-        'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
-    });
-    // dataUrl: "data:image/svg+xml;charset=utf-8,<url-encoded-svg>"
-    const encoded = dataUrl.slice(dataUrl.indexOf(',') + 1);
-    return decodeURIComponent(encoded);
-  } finally {
-    restore();
-    prepared.cleanup();
-  }
-}

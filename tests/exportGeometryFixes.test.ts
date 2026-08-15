@@ -19,6 +19,7 @@ import {
   zoneStyleFor,
   type ExportBox,
 } from '../src/services/diagramExportGeometry.ts';
+import { DEFAULT_ACCENT, matchZoneAccent } from '../src/utils/canvasPalette.ts';
 
 function box(id: string, x: number, y: number, w = 150, h = 75): ExportBox {
   return { id, kind: 'service', label: id, category: 'other', x, y, w, h };
@@ -121,7 +122,7 @@ test('fix 6: customColor is plumbed into the box and drives the zone style', () 
 
   const box0 = collectExportBoxes(nodes).get('zone')!;
   assert.equal(box0.customColor?.border, '#dc2626');
-  const style = zoneStyleFor(box0, 0);
+  const style = zoneStyleFor(box0);
   assert.equal(style.border, '#dc2626');
   // The label is NOT the border colour verbatim. #dc2626 on the zone's own
   // tint reads at 4.0:1, under the 4.5:1 WCAG AA floor, so the label is
@@ -133,16 +134,95 @@ test('fix 6: customColor is plumbed into the box and drives the zone style', () 
   assert.ok(r > g && r > b, 'the label keeps the red the user picked');
 });
 
-test('fix 6: zones without a custom colour share one deterministic palette', () => {
+// This test used to assert the OPPOSITE — that index 0 and index 1 produced
+// different colours — which is precisely what let the defect survive: an
+// unrecognised zone was painted by its position in the list, so reordering the
+// zones repainted them, and none of the colours matched the grey the canvas
+// actually drew. The real contract is that a zone's colour depends only on the
+// zone.
+test('fix 6: an unrecognised zone is grey like the canvas, whatever its index', () => {
   const plain = box('z', 0, 0);
   plain.kind = 'group';
-  // Same index → same colour in every exporter.
-  assert.deepEqual(zoneStyleFor(plain, 2), zoneStyleFor(plain, 2));
-  assert.notDeepEqual(zoneStyleFor(plain, 0), zoneStyleFor(plain, 1));
+  plain.label = 'Shared Services';
+
+  assert.equal(matchZoneAccent(plain.label), null, 'precondition: no keyword hit');
+  assert.deepEqual(zoneStyleFor(plain), zoneStyleFor(plain));
+  assert.equal(zoneStyleFor(plain).border, DEFAULT_ACCENT);
+
+  // Not just "AA against its own panel". A zone caption is composited over
+  // everything under it — an enclosing zone most of all — so a colour that
+  // only just clears the bar on the panel fails where it is actually drawn.
+  // Grey is the case that bites: it starts a hair under 4.5:1, so a bare
+  // readability walk stops at the first step and leaves no headroom.
+  const style = zoneStyleFor(plain);
+  for (const backdrop of ['#ffffff', '#f0f1f2', '#e5e7eb', '#d1d3d7']) {
+    const ratio = contrastRatio(style.text, backdrop);
+    assert.ok(
+      ratio >= 4.5,
+      `zone title ${style.text} on ${backdrop} is ${ratio.toFixed(2)}:1`,
+    );
+  }
+});
+
+// The same guarantee for EVERY zone, not just the unmatched one. The first
+// version of the headroom fix pre-shaded only the fallback, which left the
+// `web/frontend/ingress/edge` keyword — whose accent is the same `#6b7280` —
+// still walking up from a hair under the bar: 4.53:1 on its own panel and
+// 4.08:1 once composited inside another zone. Two zones that draw the
+// identical grey must read identically, and a rule stated for one branch of a
+// three-branch function is not a rule.
+//
+// The backdrops are DERIVED, not written down. A zone nests inside a zone, so
+// the set of surfaces a zone title can be drawn on is exactly {the page} plus
+// {every zone panel} — and deriving it means adding a darker zone accent
+// cannot quietly walk past this test the way a hard-coded list would. It also
+// keeps the test honest in the other direction: an invented backdrop darker
+// than anything the exporters paint fails colours that are fine in practice.
+test('every zone title clears AA on the panels zones are really drawn on', () => {
+  const zoneFor = (label: string) => {
+    const zone = box('z', 0, 0);
+    zone.kind = 'group';
+    zone.label = label;
+    return zone;
+  };
+  const labels = [
+    'Web Tier', 'Edge', 'Frontend', 'Ingress',      // the grey keyword
+    'Compute', 'API Layer', 'Data', 'Storage', 'AI', 'Analytics',
+    'IoT Devices', 'Security', 'Identity', 'Monitoring', 'Network',
+    'Container Registry',
+    'Shared Services', 'Hub', 'DMZ', 'Landing Zone', // no keyword at all
+  ];
+  const backdrops = ['#ffffff', ...new Set(labels.map((l) => zoneStyleFor(zoneFor(l)).bg))];
+
+  for (const label of labels) {
+    const style = zoneStyleFor(zoneFor(label));
+    for (const backdrop of backdrops) {
+      const ratio = contrastRatio(style.text, backdrop);
+      assert.ok(ratio >= 4.5, `"${label}" title ${style.text} on ${backdrop} is ${ratio.toFixed(2)}:1`);
+    }
+  }
+
+  // Two zones that paint the same grey must print the same ink, whichever
+  // branch of the function produced it. This is the assertion the keyword
+  // regression would have failed while every ratio above still passed.
+  assert.equal(
+    zoneStyleFor(zoneFor('Web Tier')).text,
+    zoneStyleFor(zoneFor('Shared Services')).text,
+    'a grey zone reads the same whether a keyword matched it or nothing did',
+  );
+
+  // And a user-picked colour goes through the same rule, so picking mid-grey
+  // by hand cannot reach a place the keyword table can no longer reach.
+  const picked = zoneFor('Custom');
+  picked.customColor = { border: '#6b7280' };
+  const style = zoneStyleFor(picked);
+  for (const backdrop of backdrops) {
+    const ratio = contrastRatio(style.text, backdrop);
+    assert.ok(ratio >= 4.5, `picked-grey title ${style.text} on ${backdrop} is ${ratio.toFixed(2)}:1`);
+  }
 });
 
 // ─── Fix 7: self-loops and parallel edges must stay visible & distinct ────────
-
 test('fix 7: a self-loop becomes a visible multi-point stub', () => {
   const boxes = new Map([['a', box('a', 0, 0)]]);
   const routes = buildExportRoutes([{ id: 'loop', source: 'a', target: 'a' }] as unknown as Edge[], boxes);
