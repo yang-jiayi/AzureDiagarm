@@ -26,6 +26,46 @@ function canRasterize(): boolean {
   return typeof document !== 'undefined' && typeof Image !== 'undefined';
 }
 
+/**
+ * Read an icon's SVG source from whatever URL the build handed back.
+ *
+ * `fetch` is not usable here and never was. Vite inlines any asset under
+ * `build.assetsInlineLimit` (4 KB by default) as a `data:` URL, and 1,012 of
+ * this app's 1,114 service icons are under that limit -- so in a production
+ * build `loadIcon` returns a data URL for almost every icon. Fetching a `data:`
+ * URL is a *connection*, governed by CSP `connect-src`, and this app's policy
+ * lists only `'self'` and `blob:`. The browser blocked the request, rasterizing
+ * returned null, and the PowerPoint and Visio exports came out with every icon
+ * missing -- while the canvas still drew them all, because an `<img>` is
+ * governed by `img-src`, which does allow `data:`.
+ *
+ * That is why it never reproduced in dev or under Playwright: the dev server
+ * inlines nothing, so every icon came back as a real URL and fetch was fine.
+ *
+ * A data URL already contains the source, so decode it here instead.
+ */
+async function readSvg(url: string): Promise<string | null> {
+  if (url.startsWith('data:')) {
+    const comma = url.indexOf(',');
+    if (comma < 0) return null;
+    const meta = url.slice(5, comma);
+    const payload = url.slice(comma + 1);
+    try {
+      if (/;base64/i.test(meta)) {
+        const binary = atob(payload);
+        const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+        return new TextDecoder('utf-8').decode(bytes);
+      }
+      return decodeURIComponent(payload);
+    } catch {
+      return null;
+    }
+  }
+  const response = await fetch(url);
+  if (!response.ok) return null;
+  return response.text();
+}
+
 async function rasterize(iconPath: string, sizePx: number): Promise<RasterizedIcon | null> {
   if (!canRasterize()) return null;
   try {
@@ -35,9 +75,8 @@ async function rasterize(iconPath: string, sizePx: number): Promise<RasterizedIc
     const url = await loadIcon(iconPath);
     if (!url) return null;
 
-    const response = await fetch(url);
-    if (!response.ok) return null;
-    let svg = await response.text();
+    let svg = await readSvg(url);
+    if (!svg) return null;
     // Many Azure icon SVGs declare only a viewBox. Without explicit pixel
     // dimensions some browsers rasterize a zero-sized (blank) image.
     if (!/<svg[^>]*\bwidth\s*=/.test(svg)) {
