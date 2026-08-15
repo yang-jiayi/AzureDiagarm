@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { createServer, type Server } from 'node:http';
-import { readFile, stat } from 'node:fs/promises';
+import { readFile, readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import JSZip from 'jszip';
@@ -45,6 +45,26 @@ const SERVICES = ['Applens', 'Azure Chaos Studio', 'Azure Blockchain Service'];
 let server: Server;
 let origin = '';
 
+/**
+ * Every file under dist/, keyed by the URL that should serve it. Reading the
+ * tree once and answering only from this map means no request can name a path:
+ * the URL selects an entry or it selects nothing.
+ */
+async function readBuild(dir: string, prefix = ''): Promise<Map<string, string>> {
+  const served = new Map<string, string>();
+  for (const entry of await readdir(dir, { withFileTypes: true })) {
+    const url = `${prefix}/${entry.name}`;
+    if (entry.isDirectory()) {
+      for (const [key, value] of await readBuild(path.join(dir, entry.name), url)) {
+        served.set(key, value);
+      }
+    } else if (entry.isFile()) {
+      served.set(url, path.join(dir, entry.name));
+    }
+  }
+  return served;
+}
+
 test.beforeAll(async () => {
   const built = await stat(path.join(DIST, 'index.html')).catch(() => null);
   // Skipping locally is a convenience; skipping in CI would report green for
@@ -54,23 +74,23 @@ test.beforeAll(async () => {
   }
   test.skip(!built, 'run `npm run build` first: this gate is about the production bundle');
 
+  const served = await readBuild(DIST);
+  const entry = served.get('/index.html')!;
+
   server = createServer((request, response) => {
     void (async () => {
       const requested = decodeURIComponent((request.url ?? '/').split('?')[0]);
-      const candidate = path.join(DIST, requested);
-      const isFile = candidate.startsWith(DIST)
-        && Boolean((await stat(candidate).catch(() => null))?.isFile());
+      const target = served.get(requested);
       // Anything that is not a built file is either the SPA entry or an API the
       // build does not serve; the app already tolerates the latter being absent.
-      if (!isFile && requested.startsWith('/api/')) {
+      if (!target && requested.startsWith('/api/')) {
         response.writeHead(404, { 'Content-Type': 'application/json' });
         response.end('{}');
         return;
       }
-      const target = isFile ? candidate : path.join(DIST, 'index.html');
-      const body = await readFile(target);
+      const body = await readFile(target ?? entry);
       response.writeHead(200, {
-        'Content-Type': TYPES[path.extname(target)] ?? 'application/octet-stream',
+        'Content-Type': TYPES[path.extname(target ?? entry)] ?? 'application/octet-stream',
         'Content-Security-Policy': CSP,
       });
       response.end(body);
