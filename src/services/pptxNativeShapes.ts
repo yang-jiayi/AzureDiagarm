@@ -91,27 +91,6 @@ function endpoints(f: Xfrm): { x1: number; y1: number; x2: number; y2: number } 
 }
 
 /**
- * The same, for a bent hop. Its path already encodes direction, so there are
- * no flips to undo; the coordinates only have to be scaled out of the path's
- * own space and offset onto the slide.
- */
-function pathEndpoints(xml: string, f: Xfrm): { x1: number; y1: number; x2: number; y2: number } | null {
-  const path = /<a:path w="(\d+)" h="(\d+)">/.exec(xml);
-  const pts = [...xml.matchAll(/<a:pt x="(-?\d+)" y="(-?\d+)"\s*\/>/g)].map((m) => ({ x: +m[1], y: +m[2] }));
-  if (!path || pts.length < 2) return null;
-  const sx = +path[1] > 0 ? f.w / +path[1] : 1;
-  const sy = +path[2] > 0 ? f.h / +path[2] : 1;
-  const first = pts[0];
-  const last = pts[pts.length - 1];
-  return {
-    x1: f.x + first.x * sx,
-    y1: f.y + first.y * sy,
-    x2: f.x + last.x * sx,
-    y2: f.y + last.y * sy,
-  };
-}
-
-/**
  * PowerPoint's four connection sites on a rectangle, in the order the format
  * numbers them. A preset rectangle has exactly these and nothing else, which
  * is why glue is only safe where the drawn endpoint already coincides with one.
@@ -211,37 +190,41 @@ function foldLabels(shapes: ShapeXml[]): Map<number, string> {
 }
 
 /**
- * Rewrite a drawn line as a real PowerPoint connector, glued to the services it
- * joins wherever it already meets them at a connection site.
+ * Rewrite a drawn straight line as a real PowerPoint connector, glued to the
+ * services it joins wherever it already meets them at a connection site.
  *
- * A bent hop keeps its custom geometry verbatim: the point is not to re-derive
- * the route PowerPoint would have drawn, it is to tell PowerPoint which two
- * services the route belongs to. Nothing moves; the arrow simply stops being
- * an orphan when one of its endpoints is dragged.
+ * Nothing moves; the arrow simply stops being an orphan when one of its
+ * endpoints is dragged. A bent hop is deliberately left alone -- see below.
  */
 function connectorXml(shape: ShapeXml, tiles: ShapeXml[]): string | null {
   if (!shape.name.startsWith('connector-') || !shape.xfrm) return null;
   const bent = /<a:custGeom>/.test(shape.xml);
   if (shape.prst !== 'line' && !bent) return null;
-  const ends = bent ? pathEndpoints(shape.xml, shape.xfrm) : endpoints(shape.xfrm);
-  if (!ends) return null;
+  // A connector shape may not carry custom geometry. PowerPoint does not merely
+  // ignore an <a:custGeom> inside <p:cxnSp>: it refuses to open the package at
+  // all, reporting "the file is corrupted and unreadable", so a single bent hop
+  // cost the user the entire deck. Verified against PowerPoint 16.0 -- the same
+  // deck opens once the geometry is preset, and opens once the hop is left as a
+  // plain shape, with or without the glue.
+  //
+  // A bent hop therefore keeps its drawn route and stays an ordinary shape. The
+  // alternative, a preset bentConnector3, would open but would let PowerPoint
+  // re-route the hop, which is exactly the fidelity this exporter is for: what
+  // is on the canvas is what has to come out. Editability is worth having, but
+  // never at the price of the route or of the file.
+  if (bent) return null;
+  const ends = endpoints(shape.xfrm);
   const from = glueFor({ x: ends.x1, y: ends.y1 }, tiles);
   const to = glueFor({ x: ends.x2, y: ends.y2 }, tiles);
   // Tiles that touch exactly share an edge, so both ends of the hop between
   // them land on the same site of the same shape. Gluing that tells PowerPoint
   // the arrow starts and finishes in one place, which it has no sane way to
   // reroute, so leave the hop unglued and let it stay a plain line.
-  const sameSite = from && to && from.id === to.id && from.idx === to.idx;
-  if (sameSite) return null;
-  // An unglued bent hop gains nothing from the conversion and the wrapper is
-  // not free, so leave it exactly as it was.
-  if (bent && !from && !to) return null;
+  if (from && to && from.id === to.id && from.idx === to.idx) return null;
 
   const spPr = /<p:spPr>[\s\S]*<\/p:spPr>/.exec(shape.xml)?.[0];
   if (!spPr) return null;
-  const geom = bent
-    ? spPr
-    : spPr.replace('<a:prstGeom prst="line">', '<a:prstGeom prst="straightConnector1">');
+  const geom = spPr.replace('<a:prstGeom prst="line">', '<a:prstGeom prst="straightConnector1">');
   const style = /<p:style>[\s\S]*?<\/p:style>/.exec(shape.xml)?.[0] ?? '';
   const glue = `${from ? `<a:stCxn id="${from.id}" idx="${from.idx}"/>` : ''}${to ? `<a:endCxn id="${to.id}" idx="${to.idx}"/>` : ''}`;
 

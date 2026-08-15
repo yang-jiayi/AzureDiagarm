@@ -52,17 +52,42 @@ function chain(count: number): { nodes: Node[]; edges: Edge[] } {
   return { nodes, edges };
 }
 
-test('every arrow becomes a connector PowerPoint can keep attached', async () => {
+test('every arrow survives the conversion, and none of them corrupts the deck', async () => {
   const { nodes, edges } = chain(8);
   const slides = await slidesOf(nodes, edges);
   let drawn = 0;
   let connectors = 0;
+  let kept = 0;
   let glued = 0;
+  const named = (xml: string, tag: 'p:sp' | 'p:cxnSp') => [
+    ...xml.matchAll(new RegExp(`<${tag}>[\\s\\S]*?</${tag}>`, 'g')),
+  ].filter((match) => /name="connector-e\d+"/.test(match[0])).map((match) => match[0]);
+
   for (const xml of slides) {
     const out = nativizeSlideXml(xml);
-    drawn += [...xml.matchAll(/<p:sp>[\s\S]*?<\/p:sp>/g)].filter((m) => /name="connector-e\d+"/.test(m[0])).length;
-    connectors += (out.match(/<p:cxnSp>/g) ?? []).length;
+    drawn += named(xml, 'p:sp').length;
+    connectors += named(out, 'p:cxnSp').length;
+    kept += named(out, 'p:sp').length;
     glued += (out.match(/<a:stCxn /g) ?? []).length;
+
+    // PowerPoint refuses the whole package, not the shape, when a <p:cxnSp>
+    // carries its own geometry. So a hop that bends stays a plain shape with
+    // the route it was drawn with, rather than becoming a connector that
+    // PowerPoint would re-route on open.
+    for (const connector of named(out, 'p:cxnSp')) {
+      assert.ok(
+        !connector.includes('<a:custGeom>'),
+        'a connector carrying custom geometry makes PowerPoint reject the file',
+      );
+      assert.match(
+        connector,
+        /<a:prstGeom prst="(straightConnector1|bentConnector3)"/,
+        'a connector needs a preset PowerPoint can re-route',
+      );
+    }
+    for (const arrow of named(out, 'p:sp')) {
+      assert.ok(arrow.includes('<a:custGeom>'), 'an arrow left as a shape keeps its exact route');
+    }
 
     // Glue that points at a shape which is not on the slide makes PowerPoint
     // drop the arrow on open, which is worse than not gluing at all.
@@ -73,7 +98,8 @@ test('every arrow becomes a connector PowerPoint can keep attached', async () =>
     }
   }
   assert.ok(drawn > 0, 'the fixture must draw arrows');
-  assert.equal(connectors, drawn, 'every drawn arrow converts to a connector');
+  assert.equal(connectors + kept, drawn, 'no arrow is lost in the conversion');
+  assert.ok(connectors > 0, 'the hops that run straight become real connectors');
   assert.ok(glued > 0, 'and the ones that meet a tile squarely are glued to it');
 });
 
