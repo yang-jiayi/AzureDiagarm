@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import JSZip from 'jszip';
 import type { Node } from 'reactflow';
-import { buildDiagramSlidePptx } from '../src/services/pptxExporter.ts';
+import { buildDiagramSlidePptx, buildArchitectureDeckPptx } from '../src/services/pptxExporter.ts';
 import { nativizePackage } from '../src/services/pptxNativeShapes.ts';
 import { embedVectorIcons } from '../src/services/pptxVectorIcons.ts';
 
@@ -188,6 +188,44 @@ test('a blip with children still gets its vector original', async () => {
   const xml = (zip as unknown as { files: Record<string, string> }).files['ppt/slides/slide1.xml'];
   assert.match(xml, /<asvg:svgBlip[^>]*r:embed="rId2"/, 'the picture should have been vectorised');
   assert.match(xml, /<a:alphaModFix amt="80000"\/><a:extLst>/, 'the blip\'s own children must survive');
+});
+
+test('the customer deck gets vector icons too, not just the single-slide export', async () => {
+  // The deck reaches `addEditableDiagram` down a different path, with four
+  // parameters skipped to get to the collector. A collector that silently
+  // stayed empty there would ship the customer-facing deck as the only one
+  // still soft at zoom, which is exactly backwards.
+  const vectorIcons = new Map<string, string>();
+  const pptx = await buildArchitectureDeckPptx(PIXEL_PNG, {
+    diagramName: 'Contoso Platform',
+    author: 'Tester',
+    date: '2026-08-10',
+    isDarkMode: false,
+    services: [{ name: 'App Service', category: 'Compute' }],
+    diagram: {
+      nodes: [service('a', 'App Service', 0, '/i/a.svg'), service('b', 'SQL Database', 300, '/i/b.svg')],
+      edges: [],
+    },
+    presetIcons: new Map([
+      ['/i/a.svg', { bytes: PIXEL_BYTES, dataUrl: PIXEL_PNG, sizePx: 128, svg: SVG_A }],
+      ['/i/b.svg', { bytes: PIXEL_BYTES, dataUrl: PIXEL_PNG, sizePx: 128, svg: SVG_B }],
+    ]),
+  }, vectorIcons);
+
+  assert.ok(vectorIcons.size >= 2, `the deck should collect its icons, collected ${vectorIcons.size}`);
+
+  const zip = await nativizePackage(await JSZip.loadAsync((await pptx.write({ outputType: 'nodebuffer' })) as Buffer));
+  await embedVectorIcons(zip, vectorIcons);
+
+  let pics = 0;
+  let svgBlips = 0;
+  for (const name of Object.keys(zip.files).filter((n) => /^ppt\/slides\/slide\d+\.xml$/.test(n))) {
+    const xml = await (zip as JSZip).file(name)!.async('string');
+    pics += (xml.match(/<p:pic>/g) ?? []).length;
+    svgBlips += (xml.match(/<asvg:svgBlip/g) ?? []).length;
+  }
+  assert.ok(pics > 0, 'the deck should draw its icons');
+  assert.equal(svgBlips, pics, 'every icon in the deck should carry its vector original');
 });
 
 test('the icon says what it is, so a screen reader announces a service', async () => {
