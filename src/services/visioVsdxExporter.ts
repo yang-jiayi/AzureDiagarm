@@ -2288,7 +2288,18 @@ export async function buildVsdxPackage(
   // record all agree. The inch-space clamp below stays as a backstop for the
   // workflow band, and is a no-op for a box already inside the drawing.
 
-  const icons = presetIcons ?? await rasterizeIcons(services.map((box) => box.iconPath), 128);
+  // 256px, not the 128 the deck uses. A Visio icon is drawn about 0.36in wide,
+  // so 128px is ~356 dpi: fine printed, but Visio is a *zooming* tool and at
+  // the 400% people actually work at that falls to ~89 dpi, which is visibly
+  // soft. 256px doubles it. Measured cost across 25 distinct icons: 210KB ->
+  // 502KB of PNG, which the package cannot deflate further -- accepted,
+  // because a drawing that goes blurry the moment it is inspected is not
+  // usable, and Visio drawings are inspected closely by definition.
+  //
+  // Not vector, unlike the PowerPoint path: a VSDX carries images as
+  // `ForeignData`, and no Visio is available here to confirm what it accepts,
+  // so this stays a change of degree in a format already proven to render.
+  const icons = presetIcons ?? await rasterizeIcons(services.map((box) => box.iconPath), 256);
 
   const shapes: string[] = [];
   const connects: string[] = [];
