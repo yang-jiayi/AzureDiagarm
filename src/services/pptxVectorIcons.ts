@@ -58,7 +58,10 @@ function picBlocks(slideXml: string): Array<{ start: number; end: number; xml: s
  */
 function maxRelId(relsXml: string): number {
   let max = 0;
-  for (const hit of relsXml.matchAll(/Id="rId(\d+)"/g)) {
+  // Both quote styles, because either is valid XML and reading only one would
+  // report no relationships at all, then mint `rId1` on top of the one that is
+  // already there and silently repoint an existing picture.
+  for (const hit of relsXml.matchAll(/Id=["']rId(\d+)["']/g)) {
     max = Math.max(max, Number(hit[1]));
   }
   return max;
@@ -66,6 +69,26 @@ function maxRelId(relsXml: string): number {
 
 function relsPathFor(slidePath: string): string {
   return slidePath.replace(/([^/]+)$/, '_rels/$1.rels');
+}
+
+/**
+ * Undo the escaping the writer applied to a shape's name.
+ *
+ * The name is written as `encodeXmlEntities(objectName)`, so a service whose id
+ * contains an `&` -- imported templates and model responses name their own
+ * nodes, so this is not hypothetical -- appears in the XML as `&amp;` and would
+ * never match the key it was stored under. It would then silently be the one
+ * icon in the deck still left soft, with nothing to indicate why. Exactly the
+ * five entities that encoding produces are reversed, `&amp;` last so a literal
+ * `&amp;lt;` in an id survives intact.
+ */
+function decodeXmlEntities(value: string): string {
+  return value
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, '&');
 }
 
 /**
@@ -90,7 +113,7 @@ export async function embedVectorIcons<T extends ZipLike>(
     const relsPath = relsPathFor(slidePath);
     const relsEntry = zip.file(relsPath);
     if (!relsEntry || typeof (relsEntry as { async?: unknown }).async !== 'function') continue;
-    let relsXml = await (relsEntry as { async(type: 'string'): Promise<string> }).async('string');
+    const relsXml = await (relsEntry as { async(type: 'string'): Promise<string> }).async('string');
 
     const slideNumber = /slide(\d+)\.xml$/.exec(slidePath)?.[1] ?? '0';
     let nextRel = maxRelId(relsXml);
@@ -99,6 +122,9 @@ export async function embedVectorIcons<T extends ZipLike>(
     // size by the repetition for no gain.
     const relForSvg = new Map<string, string>();
     const added: string[] = [];
+    // Media is staged rather than written as it is found, so a slide that ends
+    // up not being rewritten leaves no unreferenced parts behind it.
+    const staged: Array<{ path: string; svg: string }> = [];
 
     let out = '';
     let cursor = 0;
@@ -106,7 +132,7 @@ export async function embedVectorIcons<T extends ZipLike>(
 
     for (const pic of picBlocks(slideXml)) {
       const name = /<p:cNvPr\b[^>]*\bname="([^"]*)"/.exec(pic.xml)?.[1];
-      const svg = name ? svgByName.get(name) : undefined;
+      const svg = name ? svgByName.get(decodeXmlEntities(name)) : undefined;
       if (!svg) continue;
 
       // The blip is matched *with* whatever it contains, not just when it is
@@ -127,9 +153,9 @@ export async function embedVectorIcons<T extends ZipLike>(
       if (!rel) {
         nextRel += 1;
         rel = `rId${nextRel}`;
-        const target = `../media/vector-${slideNumber}-${relForSvg.size + 1}.svg`;
-        zip.file(`ppt/media/vector-${slideNumber}-${relForSvg.size + 1}.svg`, svg);
-        added.push(`<Relationship Id="${rel}" Type="${IMAGE_REL_TYPE}" Target="${target}"/>`);
+        const file = `vector-${slideNumber}-${relForSvg.size + 1}.svg`;
+        staged.push({ path: `ppt/media/${file}`, svg });
+        added.push(`<Relationship Id="${rel}" Type="${IMAGE_REL_TYPE}" Target="../media/${file}"/>`);
         relForSvg.set(svg, rel);
       }
 
@@ -150,9 +176,22 @@ export async function embedVectorIcons<T extends ZipLike>(
     }
 
     if (!changed) continue;
+    // Write the pair, or neither.
+    //
+    // A slide that gained an `svgBlip` pointing at a relationship that was
+    // never added is a deck PowerPoint offers to repair, and nothing further
+    // down would notice: a zip writer does not validate OOXML, so the
+    // exporter's own fallback would never fire and the user would simply
+    // receive a broken file. The relationship insert is the step that can
+    // silently do nothing -- it matches a literal closing tag -- so it is
+    // checked before either half is committed, and a slide that cannot take
+    // its relationships is left exactly as it was: raster icons, which is what
+    // it had a moment ago, rather than a repair prompt.
+    const withRels = relsXml.replace('</Relationships>', `${added.join('')}</Relationships>`);
+    if (withRels === relsXml) continue;
+    for (const part of staged) zip.file(part.path, part.svg);
     zip.file(slidePath, out + slideXml.slice(cursor));
-    relsXml = relsXml.replace('</Relationships>', `${added.join('')}</Relationships>`);
-    zip.file(relsPath, relsXml);
+    zip.file(relsPath, withRels);
   }
 
   return zip;

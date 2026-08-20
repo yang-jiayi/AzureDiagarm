@@ -26,6 +26,10 @@ const isUnlabelledRow = (mark: string): boolean => mark.startsWith(UNLABELLED_PR
 import type { Edge, Node } from 'reactflow';
 import { buildDiagramSlidePptx, buildArchitectureDeckPptx, calloutPlanFor } from '../src/services/pptxExporter.ts';
 import { nativizeSlideXml, nativizePackage } from '../src/services/pptxNativeShapes.ts';
+import { embedVectorIcons } from '../src/services/pptxVectorIcons.ts';
+
+/** Stands in for a real icon's vector source; the shape does not matter, only that it is there. */
+const SYNTHETIC_ICON_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 18 18"><circle cx="9" cy="9" r="8"/></svg>';
 import { buildVsdxPackage, calloutMagnificationFor } from '../src/services/visioVsdxExporter.ts';
 import { WRAP_TRIGGER_RATIO } from '../src/utils/serpentineWrap.ts';
 
@@ -6399,11 +6403,13 @@ function escapeRe(text: string): string {
  * so the chip walk, the spoiled-chip budget and every contrast composite were
  * being measured against a layout the user never receives.
  */
-function synthesisedIcons(scenario: Scenario): Map<string, { bytes: Uint8Array; dataUrl: string; sizePx: number }> {
-  const icons = new Map<string, { bytes: Uint8Array; dataUrl: string; sizePx: number }>();
+function synthesisedIcons(scenario: Scenario): Map<string, { bytes: Uint8Array; dataUrl: string; sizePx: number; svg: string }> {
+  const icons = new Map<string, { bytes: Uint8Array; dataUrl: string; sizePx: number; svg: string }>();
   for (const node of scenario.nodes) {
     const path = (node.data as { iconPath?: string } | undefined)?.iconPath;
-    if (path) icons.set(path, { bytes: PIXEL_PNG_BYTES, dataUrl: PIXEL_PNG, sizePx: 128 });
+    // Carrying an `svg` matters: without one the delivered deck gains no vector
+    // icons and this harness quietly stops measuring the file the user gets.
+    if (path) icons.set(path, { bytes: PIXEL_PNG_BYTES, dataUrl: PIXEL_PNG, sizePx: 128, svg: SYNTHETIC_ICON_SVG });
   }
   return icons;
 }
@@ -6669,6 +6675,7 @@ async function auditCustomerDeck(scenario: Scenario): Promise<string[]> {
     'Service Bus', 'Azure Functions', 'Event Grid', 'API Management', 'Front-end CDN',
     'Zone redundancy across three availability zones', 'Paired-region disaster recovery',
   ].join('\n');
+  const deckVectorIcons = new Map<string, string>();
   const pptx = await buildArchitectureDeckPptx(PIXEL_PNG, {
     diagramName: scenario.title ?? 'Contoso Platform',
     author: scenario.author ?? 'Audit',
@@ -6693,8 +6700,8 @@ async function auditCustomerDeck(scenario: Scenario): Promise<string[]> {
     workflow: deckWorkflow,
     validation: deckValidation,
     cost: deckCost,
-  });
-  const { authored: authoredBytes, delivered: deliveredBytes } = await pptxBuffers(pptx);
+  }, deckVectorIcons);
+  const { authored: authoredBytes, delivered: deliveredBytes } = await pptxBuffers(pptx, deckVectorIcons);
   const deliveredZip = await JSZip.loadAsync(deliveredBytes);
   const zip = await JSZip.loadAsync(authoredBytes);
   const presentation = await zip.file('ppt/presentation.xml')!.async('string');
@@ -7183,9 +7190,13 @@ async function zipXmlParts(zip: JSZip): Promise<Array<{ path: string; text: stri
  */
 async function pptxBuffers(pptx: {
   write(opts: { outputType: 'nodebuffer' }): Promise<unknown>;
-}): Promise<{ authored: Buffer; delivered: Buffer }> {
+}, vectorIcons?: Map<string, string>): Promise<{ authored: Buffer; delivered: Buffer }> {
   const authored = (await pptx.write({ outputType: 'nodebuffer' })) as Buffer;
   const zip = await nativizePackage(await JSZip.loadAsync(authored));
+  // The download path attaches vector icons here too. Leaving it out made the
+  // "delivered" file this harness measures stop being the file the user
+  // actually receives, which is the one thing this harness exists to prevent.
+  if (vectorIcons?.size) await embedVectorIcons(zip, vectorIcons);
   const delivered = (await zip.generateAsync({
     type: 'nodebuffer',
     compression: 'DEFLATE',
@@ -7194,8 +7205,46 @@ async function pptxBuffers(pptx: {
   return { authored, delivered };
 }
 
-/** Every `ppt/slides/slideN.xml` in a written deck, in slide order. */
-async function slideXmls(zip: JSZip): Promise<string[]> {
+/**
+ * Follow every vector-icon reference in a delivered deck to the part it names.
+ *
+ * A relationship id that resolves to nothing, or to a part that was never
+ * written, is exactly how a deck opens with a repair prompt -- and no zip
+ * writer would object, so nothing else in the pipeline would catch it.
+ */
+async function vectorIconChainIssues(zip: JSZip): Promise<string[]> {
+  const issues: string[] = [];
+  for (const slidePath of Object.keys(zip.files).filter((n) => /^ppt\/slides\/slide\d+\.xml$/.test(n)).sort()) {
+    const xml = await zip.file(slidePath)!.async('string');
+    const refs = [...xml.matchAll(/<asvg:svgBlip[^>]*r:embed="([^"]+)"/g)].map((m) => m[1]);
+    if (refs.length === 0) continue;
+    const relsPath = slidePath.replace(/([^/]+)$/, '_rels/$1.rels');
+    const relsXml = await zip.file(relsPath)?.async('string');
+    if (!relsXml) {
+      issues.push(`${slidePath} references vector icons but has no relationship part`);
+      continue;
+    }
+    const rels = new Map([...relsXml.matchAll(/Id="([^"]+)"[^>]*Target="([^"]+)"/g)].map((m) => [m[1], m[2]]));
+    const ids = [...relsXml.matchAll(/Id="([^"]+)"/g)].map((m) => m[1]);
+    if (new Set(ids).size !== ids.length) issues.push(`${relsPath} declares a duplicate relationship id`);
+    for (const id of new Set(refs)) {
+      const target = rels.get(id);
+      if (!target) {
+        issues.push(`${slidePath} references ${id}, which no relationship declares`);
+        continue;
+      }
+      const stack: string[] = [];
+      for (const segment of `ppt/slides/${target}`.split('/')) {
+        if (segment === '..') stack.pop();
+        else if (segment !== '.' && segment !== '') stack.push(segment);
+      }
+      if (!zip.file(stack.join('/'))) issues.push(`${slidePath} points ${id} at ${target}, which is not in the package`);
+    }
+  }
+  return issues;
+}
+
+/** Every `ppt/slides/slideN.xml` in a written deck, in slide order. */async function slideXmls(zip: JSZip): Promise<string[]> {
   return Promise.all(
     Object.keys(zip.files)
       .filter((name) => /^ppt\/slides\/slide\d+\.xml$/.test(name))
@@ -7205,6 +7254,7 @@ async function slideXmls(zip: JSZip): Promise<string[]> {
 }
 
 async function auditPptx(scenario: Scenario): Promise<Report> {
+  const vectorIcons = new Map<string, string>();
   const pptx = await buildDiagramSlidePptx(PIXEL_PNG, {
     diagramName: scenario.title ?? 'Contoso Platform',
     author: scenario.author ?? 'Audit',
@@ -7212,8 +7262,8 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
     isDarkMode: scenario.dark === true,
     diagram: { nodes: scenario.nodes, edges: scenario.edges },
     presetIcons: synthesisedIcons(scenario),
-  });
-  const { authored: authoredBytes, delivered: deliveredBytes } = await pptxBuffers(pptx);
+  }, vectorIcons);
+  const { authored: authoredBytes, delivered: deliveredBytes } = await pptxBuffers(pptx, vectorIcons);
   writeFileSync(path.join(OUT, `${scenario.id}.pptx`), deliveredBytes);
   const deliveredZip = await JSZip.loadAsync(deliveredBytes);
   const zip = await JSZip.loadAsync(authoredBytes);
@@ -7438,6 +7488,16 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
   if (synthesisedIcons(scenario).size > 0 && drawnPics === 0 && roomyTile) {
     issues.push(`deck embeds no icon pictures for ${scenario.nodes.length} nodes`);
   }
+  // Every drawn icon must reach the user with its vector original attached and
+  // resolvable. Counting pictures alone is what let the raster-only deck ship
+  // unnoticed for as long as it did; a reference that resolves to nothing is
+  // worse still, because that is a deck PowerPoint offers to repair.
+  const deliveredPics = deliveredSlides.reduce((sum, s) => sum + (s.match(/<p:pic>/g) ?? []).length, 0);
+  const deliveredSvgBlips = deliveredSlides.reduce((sum, s) => sum + (s.match(/<asvg:svgBlip/g) ?? []).length, 0);
+  if (deliveredPics > 0 && deliveredSvgBlips !== deliveredPics) {
+    issues.push(`${deliveredPics - deliveredSvgBlips} of ${deliveredPics} icons ship without their vector original`);
+  }
+  issues.push(...(await vectorIconChainIssues(deliveredZip)));
   issues.push(...accentStripeIssues(perSlide));
   const native = auditNativeConversion(allSlides, scenario.edges);
   issues.push(...native.issues);
@@ -9766,6 +9826,7 @@ const CONTENT_TYPE_MANIFEST: Record<string, Record<string, string>> = {
     'docProps/app.xml': 'application/vnd.openxmlformats-officedocument.extended-properties+xml',
     'docProps/core.xml': 'application/vnd.openxmlformats-package.core-properties+xml',
     'ppt/media/image-#-#.png': 'image/png',
+    'ppt/media/vector-#-#.svg': 'image/svg+xml',
     'ppt/notesMasters/notesMaster#.xml': 'application/vnd.openxmlformats-officedocument.presentationml.notesMaster+xml',
     'ppt/notesSlides/notesSlide#.xml': 'application/vnd.openxmlformats-officedocument.presentationml.notesSlide+xml',
     'ppt/presProps.xml': 'application/vnd.openxmlformats-officedocument.presentationml.presProps+xml',
@@ -10197,6 +10258,38 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
   }).length;
   if (wantIcons > 0 && drawnIcons < wantIcons) {
     issues.push(`${wantIcons - drawnIcons} of ${wantIcons} service icon(s) are embedded but never drawn on the sheet`);
+  }
+  // ONE ICON, EMBEDDED ONCE, STILL REACHABLE FROM EVERY TILE IT IS DRAWN ON.
+  //
+  // The sheet used to allocate a media part per service instead of per icon, so
+  // a drawing with forty copies of one service carried forty byte-identical
+  // PNGs. Sharing one part between tiles is the fix, and it is also the way
+  // this can now break silently: every tile points at the same relationship, so
+  // getting that id wrong loses the icon on ALL of them at once rather than
+  // one. Counting shapes cannot see it -- the shapes are still there, pointing
+  // at nothing. Resolve the reference the way Visio does.
+  const iconRefs = [...pageXmlForIcons.matchAll(/<ForeignData\b[^>]*>\s*<Rel\b[^>]*r:id="([^"]+)"/g)]
+    .map((m) => m[1]);
+  if (iconRefs.length > 0) {
+    const pageName = (pagePart?.path ?? '').replace(/^\//, '');
+    const relsPart = pkg.parts.find((p) => p.path.replace(/^\//, '')
+      === pageName.replace(/([^/]+)$/, '_rels/$1.rels'));
+    const relsText = typeof relsPart?.data === 'string' ? relsPart.data : '';
+    const rels = new Map([...relsText.matchAll(/<Relationship\b[^>]*>/g)].map((m) => [
+      /Id="([^"]+)"/.exec(m[0])?.[1] ?? '', /Target="([^"]+)"/.exec(m[0])?.[1] ?? '',
+    ] as const));
+    const partNames = new Set(pkg.parts.map((p) => p.path.replace(/^\//, '')));
+    const dangling = new Set<string>();
+    for (const rid of new Set(iconRefs)) {
+      const target = rels.get(rid);
+      if (!target) { dangling.add(`${rid} (no relationship)`); continue; }
+      const resolved = resolvePartPath(pageName.replace(/[^/]+$/, ''), target);
+      if (!partNames.has(resolved)) dangling.add(`${rid} -> ${target} (no such part)`);
+    }
+    if (dangling.size > 0) {
+      issues.push(`${iconRefs.length} icon reference(s) do not resolve: ${[...dangling].join(', ')}`
+        + ' \u2014 Visio opens the drawing with those icons silently missing');
+    }
   }
   // Ink has to stay in proportion to the shape it outlines. Every LineWeight on
   // the sheet used to be a literal while the geometry around it scaled, so on a
@@ -12653,175 +12746,191 @@ const GOLDEN: Record<string, Golden> = {
   'generated-dark': { minTileIn: 1.385, named: 12, slides: 2 },
 };
 
+/**
+ * `media` counts EMBEDDED PARTS, not tiles wearing an icon.
+ *
+ * It used to be both, because the sheet allocated one part per service; the
+ * numbers here were per-instance counts by accident, and a scenario losing an
+ * icon showed up as the count dropping. Icons are now embedded once per
+ * distinct icon and shared, so every fixture below collapses to 1: they all
+ * draw the same `svc()` icon path. That is a 2x-40x saving on the file the
+ * user opens, and it means this column no longer defends what it used to.
+ *
+ * What replaced it, deliberately, so nothing was traded away: `drawnIcons <
+ * wantIcons` still fails when a tile loses its picture, the reference
+ * resolution rule above still fails when the shared id points at nothing, and
+ * `tests/vsdxIconChain.test.ts` covers the case this corpus structurally cannot
+ * reach -- several DIFFERENT icons, which must stay several parts.
+ */
 const VSDX_GOLDEN: Record<string, VsdxGolden> = {
-  'compact': { media: 2, textBlocks: 6, minFontPt: 7.2 },
-  'wide': { media: 12, textBlocks: 48, minFontPt: 7.2 },
-  'oversize': { media: 40, textBlocks: 81, minFontPt: 7.2 },
-  'outlier': { media: 9, textBlocks: 20, minFontPt: 7.2 },
-  'banded': { media: 31, textBlocks: 87, minFontPt: 7.01 },
-  'narrative': { media: 21, textBlocks: 104, minFontPt: 7.01 },
-  'barbell': { media: 12, textBlocks: 59, minFontPt: 7.01 },
-  'hub-fan': { media: 7, textBlocks: 34, minFontPt: 7.2 },
-  'shared-service': { media: 7, textBlocks: 34, minFontPt: 7.2 },
-  'tight-grid': { media: 24, textBlocks: 119, minFontPt: 7.01 },
-  'banded-two-strays': { media: 32, textBlocks: 92, minFontPt: 7.01 },
-  'wide-chain': { media: 48, textBlocks: 239, minFontPt: 7.2 },
-  'grid5x5-tight': { media: 25, textBlocks: 124, minFontPt: 7.01 },
-  'parallel': { media: 2, textBlocks: 29, minFontPt: 7.2 },
-  'opposite-strays': { media: 10, textBlocks: 21, minFontPt: 7.01 },
-  'corner-strays': { media: 11, textBlocks: 27, minFontPt: 7.01 },
-  'symmetric-strays': { media: 6, textBlocks: 21, minFontPt: 7.2 },
-  'hub-spoke': { media: 9, textBlocks: 32, minFontPt: 7.01 },
-  'scope-zone': { media: 9, textBlocks: 30, minFontPt: 7.2 },
-  'stray-zone-pair': { media: 16, textBlocks: 23, minFontPt: 7.2 },
-  'pipeline-region': { media: 74, textBlocks: 92, minFontPt: 7.2 },
-  'boundary-void': { media: 12, textBlocks: 18, minFontPt: 7.2 },
-  'stacked-subnets': { media: 6, textBlocks: 14, minFontPt: 7.2 },
-  'tight-subnets': { media: 11, textBlocks: 19, minFontPt: 7.2 },
-  'flush-subnets': { media: 9, textBlocks: 16, minFontPt: 7.2 },
-  'diagonal-cascade': { media: 16, textBlocks: 33, minFontPt: 7.2 },
-  'diagonal-cascade-27': { media: 27, textBlocks: 55, minFontPt: 7.2 },
-  'diagonal-cascade-52': { media: 52, textBlocks: 105, minFontPt: 7.2 },
-  'band-above': { media: 12, textBlocks: 18, minFontPt: 7.2 },
-  'framed-cascade': { media: 40, textBlocks: 82, minFontPt: 7.2 },
-  'tight-seam': { media: 20, textBlocks: 24, minFontPt: 7.2 },
-  'over-row': { media: 150, textBlocks: 185, minFontPt: 5.44 },
-  'over-row-120': { media: 120, textBlocks: 155, minFontPt: 6.8 },
-  'index-page-limit': { media: 900, textBlocks: 900, minFontPt: 0.99 },
-  'over-row-700': { media: 700, textBlocks: 735, minFontPt: 1.17 },
-  'scaled-zone-row': { media: 480, textBlocks: 2879, minFontPt: 1.7 },
-  'mid-zone-row': { media: 40, textBlocks: 239, minFontPt: 7.2 },
-  'string-step-promotion': { media: 11, textBlocks: 24, minFontPt: 7.2 },
-  'unlabelled-step-inflation': { media: 11, textBlocks: 23, minFontPt: 7.2 },
-  'data-label-promotion': { media: 11, textBlocks: 19, minFontPt: 7.2 },
-  'hairline-tiles': { media: 8, textBlocks: 17, minFontPt: 7 },
-  'probe-arrow': { media: 14, textBlocks: 22, minFontPt: 7 },
-  'probe-accent': { media: 9, textBlocks: 15, minFontPt: 7 },
-  'probe-amp': { media: 4, textBlocks: 8, minFontPt: 7 },
-  'probe-script': { media: 12, textBlocks: 20, minFontPt: 7 },
-  'probe-scaledown': { media: 260, textBlocks: 521, minFontPt: 3.3 },
-  'probe-whitespace': { media: 6, textBlocks: 13, minFontPt: 7 },
-  'probe-panel-burial': { media: 48, textBlocks: 97, minFontPt: 7 },
-  'probe-brief-steps': { media: 13, textBlocks: 64, minFontPt: 7.2 },
-  'probe-long-index': { media: 8, textBlocks: 8, minFontPt: 7 },
-  'probe-overlong-index': { media: 6, textBlocks: 6, minFontPt: 7 },
-  'probe-shrinkable-index': { media: 6, textBlocks: 6, minFontPt: 7 },
-  'probe-mixed-index': { media: 45, textBlocks: 45, minFontPt: 7 },
-  'probe-bimodal-workflow': { media: 92, textBlocks: 459, minFontPt: 7.2 },
-  'probe-band-gap': { media: 40, textBlocks: 163, minFontPt: 7.01 },
-  'probe-band-fill': { media: 80, textBlocks: 399, minFontPt: 7.01 },
-  'probe-nfd': { media: 12, textBlocks: 23, minFontPt: 7 },
-  'probe-normform': { media: 7, textBlocks: 18, minFontPt: 7.2 },
-  'probe-tiny-spread': { media: 60, textBlocks: 70, minFontPt: 7 },
-  'probe-width-cliff': { media: 60, textBlocks: 70, minFontPt: 7 },
-  'probe-badge-sliver': { media: 9, textBlocks: 24, minFontPt: 7 },
-  'probe-three-tier': { media: 7, textBlocks: 26, minFontPt: 7 },
-  'probe-two-chains': { media: 9, textBlocks: 40, minFontPt: 7 },
-  'probe-bimodal-sidecar': { media: 30, textBlocks: 37, minFontPt: 7 },
-  'probe-numbered-spread': { media: 60, textBlocks: 299, minFontPt: 7 },
-  'probe-numbered-mid': { media: 24, textBlocks: 119, minFontPt: 7 },
-  'probe-dup-fan': { media: 5, textBlocks: 24, minFontPt: 7 },
-  'probe-hub-spoke': { media: 9, textBlocks: 44, minFontPt: 7 },
-  'probe-estate-120': { media: 120, textBlocks: 599, minFontPt: 7.2 },
-  'probe-wide-hub': { media: 7, textBlocks: 34, minFontPt: 7.2 },
-  'probe-sliver-120': { media: 120, textBlocks: 599, minFontPt: 7 },
-  'probe-band-15': { media: 120, textBlocks: 599, minFontPt: 7 },
-  'probe-band-16': { media: 120, textBlocks: 599, minFontPt: 7 },
-  'probe-blind-sliver': { media: 120, textBlocks: 599, minFontPt: 7 },
-  'probe-mixed-sliver': { media: 7, textBlocks: 34, minFontPt: 7 },
-  'probe-gutter-region': { media: 8, textBlocks: 39, minFontPt: 7 },
-  'probe-magnified-gutter': { media: 8, textBlocks: 39, minFontPt: 7 },
-  'probe-tight': { media: 7, textBlocks: 34, minFontPt: 7 },
-  'probe-spread': { media: 7, textBlocks: 34, minFontPt: 7 },
-  'probe-offrow': { media: 7, textBlocks: 34, minFontPt: 7 },
-  'probe-glyph16': { media: 21, textBlocks: 104, minFontPt: 7 },
-  'probe-glyph12': { media: 21, textBlocks: 104, minFontPt: 7 },
-  'probe-glyph11': { media: 21, textBlocks: 104, minFontPt: 7 },
-  'probe-fits-whole-sliver': { media: 9, textBlocks: 44, minFontPt: 7 },
-  'probe-touching': { media: 60, textBlocks: 183, minFontPt: 7 },
-  'probe-mix-4': { media: 5, textBlocks: 24, minFontPt: 7 },
-  'probe-mix-5': { media: 6, textBlocks: 29, minFontPt: 7 },
-  'probe-mix-6': { media: 7, textBlocks: 34, minFontPt: 7 },
-  'probe-zone-median-0': { media: 4, textBlocks: 19, minFontPt: 7 },
-  'probe-zone-median-2': { media: 4, textBlocks: 21, minFontPt: 7 },
-  'probe-half-tail': { media: 4, textBlocks: 19, minFontPt: 7 },
-  'probe-refused-raise': { media: 6, textBlocks: 29, minFontPt: 7 },
-  'probe-rr-10': { media: 6, textBlocks: 29, minFontPt: 7 },
-  'probe-rr-13': { media: 6, textBlocks: 29, minFontPt: 7 },
-  'probe-rr-15': { media: 6, textBlocks: 29, minFontPt: 7 },
-  'probe-solo-14': { media: 14, textBlocks: 69, minFontPt: 7 },
-  'probe-solo-16': { media: 16, textBlocks: 79, minFontPt: 7 },
-  'probe-solo-18': { media: 18, textBlocks: 89, minFontPt: 7 },
-  'probe-solo-20': { media: 20, textBlocks: 99, minFontPt: 7 },
-  'probe-solo-22': { media: 22, textBlocks: 109, minFontPt: 7 },
-  'probe-farm-12': { media: 12, textBlocks: 59, minFontPt: 7 },
-  'probe-farm-13': { media: 13, textBlocks: 64, minFontPt: 7 },
-  'probe-farm-14': { media: 14, textBlocks: 69, minFontPt: 7 },
-  'probe-title-20': { media: 2, textBlocks: 9, minFontPt: 7.2 },
-  'probe-title-70': { media: 2, textBlocks: 9, minFontPt: 7.2 },
-  'probe-title-95': { media: 2, textBlocks: 9, minFontPt: 7.2 },
-  'probe-title-130': { media: 2, textBlocks: 9, minFontPt: 7.2 },
-  'probe-colliding-stubs': { media: 8, textBlocks: 8, minFontPt: 7 },
-  'probe-hairline-stubs': { media: 8, textBlocks: 8, minFontPt: 7 },
-  'probe-emoji-clusters': { media: 10, textBlocks: 21, minFontPt: 7.2 },
-  'probe-brief-workflow': { media: 13, textBlocks: 64, minFontPt: 7.2 },
-  'probe-shredded-workflow': { media: 13, textBlocks: 64, minFontPt: 7.2 },
-  'tall-narrow-tiles': { media: 4, textBlocks: 21, minFontPt: 7 },
-  'corridor-zone': { media: 12, textBlocks: 18, minFontPt: 7.2 },
-  'ladder-in-grid': { media: 20, textBlocks: 127, minFontPt: 7.2 },
-  'twin-ladders': { media: 20, textBlocks: 155, minFontPt: 7.2 },
-  'stray-ladder': { media: 12, textBlocks: 83, minFontPt: 7.2 },
-  'legend-corner': { media: 24, textBlocks: 109, minFontPt: 7.2 },
-  'duplicate-steps': { media: 5, textBlocks: 28, minFontPt: 7.2 },
-  'dense-zone': { media: 28, textBlocks: 140, minFontPt: 7.2 },
-  'meta-chip': { media: 8, textBlocks: 27, minFontPt: 7.2 },
-  'grid-fan': { media: 9, textBlocks: 80, minFontPt: 7.2 },
-  'grid3x3-fan3-JA': { media: 9, textBlocks: 72, minFontPt: 7.2 },
-  'fan8-5x5-tight': { media: 25, textBlocks: 220, minFontPt: 7.2 },
-  'meta-subline': { media: 9, textBlocks: 44, minFontPt: 7 },
-  'grid5x5-captions': { media: 25, textBlocks: 188, minFontPt: 7.2 },
-  'long-names-tight': { media: 16, textBlocks: 115, minFontPt: 7.01 },
-  'long-label-grid': { media: 25, textBlocks: 188, minFontPt: 7.2 },
-  'meta-tight': { media: 25, textBlocks: 220, minFontPt: 7.01 },
-  'long-name-fan': { media: 25, textBlocks: 220, minFontPt: 7.01 },
-  'estate-chain': { media: 40, textBlocks: 199, minFontPt: 7.01 },
-  'chain24-en': { media: 24, textBlocks: 119, minFontPt: 7.01 },
-  'triple-muted': { media: 16, textBlocks: 175, minFontPt: 7.2 },
-  'estate72': { media: 72, textBlocks: 145, minFontPt: 7.2 },
-  'workflow-prose': { media: 24, textBlocks: 119, minFontPt: 7.2 },
-  'workflow-long-prose': { media: 13, textBlocks: 64, minFontPt: 7.2 },
-  'workflow-fan': { media: 9, textBlocks: 76, minFontPt: 7.01 },
-  'workflow-wide-band': { media: 560, textBlocks: 2563, minFontPt: 7.2 },
+  'compact': { media: 1, textBlocks: 6, minFontPt: 7.2 },
+  'wide': { media: 1, textBlocks: 48, minFontPt: 7.2 },
+  'oversize': { media: 1, textBlocks: 81, minFontPt: 7.2 },
+  'outlier': { media: 1, textBlocks: 20, minFontPt: 7.2 },
+  'banded': { media: 1, textBlocks: 87, minFontPt: 7.01 },
+  'narrative': { media: 1, textBlocks: 104, minFontPt: 7.01 },
+  'barbell': { media: 1, textBlocks: 59, minFontPt: 7.01 },
+  'hub-fan': { media: 1, textBlocks: 34, minFontPt: 7.2 },
+  'shared-service': { media: 1, textBlocks: 34, minFontPt: 7.2 },
+  'tight-grid': { media: 1, textBlocks: 119, minFontPt: 7.01 },
+  'banded-two-strays': { media: 1, textBlocks: 92, minFontPt: 7.01 },
+  'wide-chain': { media: 1, textBlocks: 239, minFontPt: 7.2 },
+  'grid5x5-tight': { media: 1, textBlocks: 124, minFontPt: 7.01 },
+  'parallel': { media: 1, textBlocks: 29, minFontPt: 7.2 },
+  'opposite-strays': { media: 1, textBlocks: 21, minFontPt: 7.01 },
+  'corner-strays': { media: 1, textBlocks: 27, minFontPt: 7.01 },
+  'symmetric-strays': { media: 1, textBlocks: 21, minFontPt: 7.2 },
+  'hub-spoke': { media: 1, textBlocks: 32, minFontPt: 7.01 },
+  'scope-zone': { media: 1, textBlocks: 30, minFontPt: 7.2 },
+  'stray-zone-pair': { media: 1, textBlocks: 23, minFontPt: 7.2 },
+  'pipeline-region': { media: 1, textBlocks: 92, minFontPt: 7.2 },
+  'boundary-void': { media: 1, textBlocks: 18, minFontPt: 7.2 },
+  'stacked-subnets': { media: 1, textBlocks: 14, minFontPt: 7.2 },
+  'tight-subnets': { media: 1, textBlocks: 19, minFontPt: 7.2 },
+  'flush-subnets': { media: 1, textBlocks: 16, minFontPt: 7.2 },
+  'diagonal-cascade': { media: 1, textBlocks: 33, minFontPt: 7.2 },
+  'diagonal-cascade-27': { media: 1, textBlocks: 55, minFontPt: 7.2 },
+  'diagonal-cascade-52': { media: 1, textBlocks: 105, minFontPt: 7.2 },
+  'band-above': { media: 1, textBlocks: 18, minFontPt: 7.2 },
+  'framed-cascade': { media: 1, textBlocks: 82, minFontPt: 7.2 },
+  'tight-seam': { media: 1, textBlocks: 24, minFontPt: 7.2 },
+  'over-row': { media: 1, textBlocks: 185, minFontPt: 5.44 },
+  'over-row-120': { media: 1, textBlocks: 155, minFontPt: 6.8 },
+  'index-page-limit': { media: 1, textBlocks: 900, minFontPt: 0.99 },
+  'over-row-700': { media: 1, textBlocks: 735, minFontPt: 1.17 },
+  'scaled-zone-row': { media: 1, textBlocks: 2879, minFontPt: 1.7 },
+  'mid-zone-row': { media: 1, textBlocks: 239, minFontPt: 7.2 },
+  'string-step-promotion': { media: 1, textBlocks: 24, minFontPt: 7.2 },
+  'unlabelled-step-inflation': { media: 1, textBlocks: 23, minFontPt: 7.2 },
+  'data-label-promotion': { media: 1, textBlocks: 19, minFontPt: 7.2 },
+  'hairline-tiles': { media: 1, textBlocks: 17, minFontPt: 7 },
+  'probe-arrow': { media: 1, textBlocks: 22, minFontPt: 7 },
+  'probe-accent': { media: 1, textBlocks: 15, minFontPt: 7 },
+  'probe-amp': { media: 1, textBlocks: 8, minFontPt: 7 },
+  'probe-script': { media: 1, textBlocks: 20, minFontPt: 7 },
+  'probe-scaledown': { media: 1, textBlocks: 521, minFontPt: 3.3 },
+  'probe-whitespace': { media: 1, textBlocks: 13, minFontPt: 7 },
+  'probe-panel-burial': { media: 1, textBlocks: 97, minFontPt: 7 },
+  'probe-brief-steps': { media: 1, textBlocks: 64, minFontPt: 7.2 },
+  'probe-long-index': { media: 1, textBlocks: 8, minFontPt: 7 },
+  'probe-overlong-index': { media: 1, textBlocks: 6, minFontPt: 7 },
+  'probe-shrinkable-index': { media: 1, textBlocks: 6, minFontPt: 7 },
+  'probe-mixed-index': { media: 1, textBlocks: 45, minFontPt: 7 },
+  'probe-bimodal-workflow': { media: 1, textBlocks: 459, minFontPt: 7.2 },
+  'probe-band-gap': { media: 1, textBlocks: 163, minFontPt: 7.01 },
+  'probe-band-fill': { media: 1, textBlocks: 399, minFontPt: 7.01 },
+  'probe-nfd': { media: 1, textBlocks: 23, minFontPt: 7 },
+  'probe-normform': { media: 1, textBlocks: 18, minFontPt: 7.2 },
+  'probe-tiny-spread': { media: 1, textBlocks: 70, minFontPt: 7 },
+  'probe-width-cliff': { media: 1, textBlocks: 70, minFontPt: 7 },
+  'probe-badge-sliver': { media: 1, textBlocks: 24, minFontPt: 7 },
+  'probe-three-tier': { media: 1, textBlocks: 26, minFontPt: 7 },
+  'probe-two-chains': { media: 1, textBlocks: 40, minFontPt: 7 },
+  'probe-bimodal-sidecar': { media: 1, textBlocks: 37, minFontPt: 7 },
+  'probe-numbered-spread': { media: 1, textBlocks: 299, minFontPt: 7 },
+  'probe-numbered-mid': { media: 1, textBlocks: 119, minFontPt: 7 },
+  'probe-dup-fan': { media: 1, textBlocks: 24, minFontPt: 7 },
+  'probe-hub-spoke': { media: 1, textBlocks: 44, minFontPt: 7 },
+  'probe-estate-120': { media: 1, textBlocks: 599, minFontPt: 7.2 },
+  'probe-wide-hub': { media: 1, textBlocks: 34, minFontPt: 7.2 },
+  'probe-sliver-120': { media: 1, textBlocks: 599, minFontPt: 7 },
+  'probe-band-15': { media: 1, textBlocks: 599, minFontPt: 7 },
+  'probe-band-16': { media: 1, textBlocks: 599, minFontPt: 7 },
+  'probe-blind-sliver': { media: 1, textBlocks: 599, minFontPt: 7 },
+  'probe-mixed-sliver': { media: 1, textBlocks: 34, minFontPt: 7 },
+  'probe-gutter-region': { media: 1, textBlocks: 39, minFontPt: 7 },
+  'probe-magnified-gutter': { media: 1, textBlocks: 39, minFontPt: 7 },
+  'probe-tight': { media: 1, textBlocks: 34, minFontPt: 7 },
+  'probe-spread': { media: 1, textBlocks: 34, minFontPt: 7 },
+  'probe-offrow': { media: 1, textBlocks: 34, minFontPt: 7 },
+  'probe-glyph16': { media: 1, textBlocks: 104, minFontPt: 7 },
+  'probe-glyph12': { media: 1, textBlocks: 104, minFontPt: 7 },
+  'probe-glyph11': { media: 1, textBlocks: 104, minFontPt: 7 },
+  'probe-fits-whole-sliver': { media: 1, textBlocks: 44, minFontPt: 7 },
+  'probe-touching': { media: 1, textBlocks: 183, minFontPt: 7 },
+  'probe-mix-4': { media: 1, textBlocks: 24, minFontPt: 7 },
+  'probe-mix-5': { media: 1, textBlocks: 29, minFontPt: 7 },
+  'probe-mix-6': { media: 1, textBlocks: 34, minFontPt: 7 },
+  'probe-zone-median-0': { media: 1, textBlocks: 19, minFontPt: 7 },
+  'probe-zone-median-2': { media: 1, textBlocks: 21, minFontPt: 7 },
+  'probe-half-tail': { media: 1, textBlocks: 19, minFontPt: 7 },
+  'probe-refused-raise': { media: 1, textBlocks: 29, minFontPt: 7 },
+  'probe-rr-10': { media: 1, textBlocks: 29, minFontPt: 7 },
+  'probe-rr-13': { media: 1, textBlocks: 29, minFontPt: 7 },
+  'probe-rr-15': { media: 1, textBlocks: 29, minFontPt: 7 },
+  'probe-solo-14': { media: 1, textBlocks: 69, minFontPt: 7 },
+  'probe-solo-16': { media: 1, textBlocks: 79, minFontPt: 7 },
+  'probe-solo-18': { media: 1, textBlocks: 89, minFontPt: 7 },
+  'probe-solo-20': { media: 1, textBlocks: 99, minFontPt: 7 },
+  'probe-solo-22': { media: 1, textBlocks: 109, minFontPt: 7 },
+  'probe-farm-12': { media: 1, textBlocks: 59, minFontPt: 7 },
+  'probe-farm-13': { media: 1, textBlocks: 64, minFontPt: 7 },
+  'probe-farm-14': { media: 1, textBlocks: 69, minFontPt: 7 },
+  'probe-title-20': { media: 1, textBlocks: 9, minFontPt: 7.2 },
+  'probe-title-70': { media: 1, textBlocks: 9, minFontPt: 7.2 },
+  'probe-title-95': { media: 1, textBlocks: 9, minFontPt: 7.2 },
+  'probe-title-130': { media: 1, textBlocks: 9, minFontPt: 7.2 },
+  'probe-colliding-stubs': { media: 1, textBlocks: 8, minFontPt: 7 },
+  'probe-hairline-stubs': { media: 1, textBlocks: 8, minFontPt: 7 },
+  'probe-emoji-clusters': { media: 1, textBlocks: 21, minFontPt: 7.2 },
+  'probe-brief-workflow': { media: 1, textBlocks: 64, minFontPt: 7.2 },
+  'probe-shredded-workflow': { media: 1, textBlocks: 64, minFontPt: 7.2 },
+  'tall-narrow-tiles': { media: 1, textBlocks: 21, minFontPt: 7 },
+  'corridor-zone': { media: 1, textBlocks: 18, minFontPt: 7.2 },
+  'ladder-in-grid': { media: 1, textBlocks: 127, minFontPt: 7.2 },
+  'twin-ladders': { media: 1, textBlocks: 155, minFontPt: 7.2 },
+  'stray-ladder': { media: 1, textBlocks: 83, minFontPt: 7.2 },
+  'legend-corner': { media: 1, textBlocks: 109, minFontPt: 7.2 },
+  'duplicate-steps': { media: 1, textBlocks: 28, minFontPt: 7.2 },
+  'dense-zone': { media: 1, textBlocks: 140, minFontPt: 7.2 },
+  'meta-chip': { media: 1, textBlocks: 27, minFontPt: 7.2 },
+  'grid-fan': { media: 1, textBlocks: 80, minFontPt: 7.2 },
+  'grid3x3-fan3-JA': { media: 1, textBlocks: 72, minFontPt: 7.2 },
+  'fan8-5x5-tight': { media: 1, textBlocks: 220, minFontPt: 7.2 },
+  'meta-subline': { media: 1, textBlocks: 44, minFontPt: 7 },
+  'grid5x5-captions': { media: 1, textBlocks: 188, minFontPt: 7.2 },
+  'long-names-tight': { media: 1, textBlocks: 115, minFontPt: 7.01 },
+  'long-label-grid': { media: 1, textBlocks: 188, minFontPt: 7.2 },
+  'meta-tight': { media: 1, textBlocks: 220, minFontPt: 7.01 },
+  'long-name-fan': { media: 1, textBlocks: 220, minFontPt: 7.01 },
+  'estate-chain': { media: 1, textBlocks: 199, minFontPt: 7.01 },
+  'chain24-en': { media: 1, textBlocks: 119, minFontPt: 7.01 },
+  'triple-muted': { media: 1, textBlocks: 175, minFontPt: 7.2 },
+  'estate72': { media: 1, textBlocks: 145, minFontPt: 7.2 },
+  'workflow-prose': { media: 1, textBlocks: 119, minFontPt: 7.2 },
+  'workflow-long-prose': { media: 1, textBlocks: 64, minFontPt: 7.2 },
+  'workflow-fan': { media: 1, textBlocks: 76, minFontPt: 7.01 },
+  'workflow-wide-band': { media: 1, textBlocks: 2563, minFontPt: 7.2 },
   // 17 icons and 5 more text blocks for the same reason as the deck row above:
   // the category list gained `data layer` and `devops` and lost `other`.
-  'all-categories': { media: 17, textBlocks: 84, minFontPt: 7.2 },
-  'control-chars': { media: 4, textBlocks: 19, minFontPt: 7.2 },
-  'short-service-grid': { media: 82, textBlocks: 92, minFontPt: 7.2 },
-  'cascade': { media: 200, textBlocks: 221, minFontPt: 7.2 },
-  'shared-prefix-estate': { media: 400, textBlocks: 413, minFontPt: 7.2 },
-  'short-tile-estate': { media: 60, textBlocks: 73, minFontPt: 7.2 },
-  'compact-estate': { media: 18, textBlocks: 25, minFontPt: 7.2 },
-  'wrapped-inventory': { media: 34, textBlocks: 41, minFontPt: 7.2 },
-  'token-wrap-inventory': { media: 30, textBlocks: 36, minFontPt: 7 },
-  'workflow-long-rows': { media: 25, textBlocks: 51, minFontPt: 7.2 },
-  'visio-token-workflow': { media: 10, textBlocks: 49, minFontPt: 7.2 },
-  'hard-break-inventory': { media: 16, textBlocks: 43, minFontPt: 7.2 },
-  'visio-broken-label-fan': { media: 2, textBlocks: 21, minFontPt: 7.2 },
-  'visio-default-tile-names': { media: 4, textBlocks: 8, minFontPt: 7 },
-  'flush-top-zone': { media: 14, textBlocks: 15, minFontPt: 7.56 },
-  'zone-caption-corridor': { media: 6, textBlocks: 22, minFontPt: 7.01 },
-  'tagged-tiles': { media: 4, textBlocks: 4, minFontPt: 7.56 },
-  'tile-name-with-meta': { media: 6, textBlocks: 13, minFontPt: 7 },
-  'zone-caption-wide-estate': { media: 24, textBlocks: 50, minFontPt: 7.2 },
-  'squeezed-badges': { media: 12, textBlocks: 59, minFontPt: 7.01 },
-  'generated': { media: 12, textBlocks: 59, minFontPt: 7.2 },
-  'grouped-generated': { media: 11, textBlocks: 58, minFontPt: 7.01 },
-  'dense-zone-dark': { media: 28, textBlocks: 140, minFontPt: 7.2 },
-  'narrative-dark': { media: 21, textBlocks: 104, minFontPt: 7.01 },
-  'legend-corner-dark': { media: 24, textBlocks: 109, minFontPt: 7.2 },
-  'meta-subline-dark': { media: 9, textBlocks: 44, minFontPt: 7 },
-  'grid5x5-captions-dark': { media: 25, textBlocks: 188, minFontPt: 7.2 },
-  'generated-dark': { media: 12, textBlocks: 59, minFontPt: 7.2 },
+  'all-categories': { media: 1, textBlocks: 84, minFontPt: 7.2 },
+  'control-chars': { media: 1, textBlocks: 19, minFontPt: 7.2 },
+  'short-service-grid': { media: 1, textBlocks: 92, minFontPt: 7.2 },
+  'cascade': { media: 1, textBlocks: 221, minFontPt: 7.2 },
+  'shared-prefix-estate': { media: 1, textBlocks: 413, minFontPt: 7.2 },
+  'short-tile-estate': { media: 1, textBlocks: 73, minFontPt: 7.2 },
+  'compact-estate': { media: 1, textBlocks: 25, minFontPt: 7.2 },
+  'wrapped-inventory': { media: 1, textBlocks: 41, minFontPt: 7.2 },
+  'token-wrap-inventory': { media: 1, textBlocks: 36, minFontPt: 7 },
+  'workflow-long-rows': { media: 1, textBlocks: 51, minFontPt: 7.2 },
+  'visio-token-workflow': { media: 1, textBlocks: 49, minFontPt: 7.2 },
+  'hard-break-inventory': { media: 1, textBlocks: 43, minFontPt: 7.2 },
+  'visio-broken-label-fan': { media: 1, textBlocks: 21, minFontPt: 7.2 },
+  'visio-default-tile-names': { media: 1, textBlocks: 8, minFontPt: 7 },
+  'flush-top-zone': { media: 1, textBlocks: 15, minFontPt: 7.56 },
+  'zone-caption-corridor': { media: 1, textBlocks: 22, minFontPt: 7.01 },
+  'tagged-tiles': { media: 1, textBlocks: 4, minFontPt: 7.56 },
+  'tile-name-with-meta': { media: 1, textBlocks: 13, minFontPt: 7 },
+  'zone-caption-wide-estate': { media: 1, textBlocks: 50, minFontPt: 7.2 },
+  'squeezed-badges': { media: 1, textBlocks: 59, minFontPt: 7.01 },
+  'generated': { media: 1, textBlocks: 59, minFontPt: 7.2 },
+  'grouped-generated': { media: 1, textBlocks: 58, minFontPt: 7.01 },
+  'dense-zone-dark': { media: 1, textBlocks: 140, minFontPt: 7.2 },
+  'narrative-dark': { media: 1, textBlocks: 104, minFontPt: 7.01 },
+  'legend-corner-dark': { media: 1, textBlocks: 109, minFontPt: 7.2 },
+  'meta-subline-dark': { media: 1, textBlocks: 44, minFontPt: 7 },
+  'grid5x5-captions-dark': { media: 1, textBlocks: 188, minFontPt: 7.2 },
+  'generated-dark': { media: 1, textBlocks: 59, minFontPt: 7.2 },
 };
 
 function vsdxGoldenDrift(id: string, metrics: Record<string, number>): string[] {

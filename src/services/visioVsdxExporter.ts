@@ -2308,6 +2308,16 @@ export async function buildVsdxPackage(
   const shapeIdByNode = new Map<string, number>();
   let nextId = 1;
   let mediaIndex = 0;
+  /**
+   * One media part per distinct icon, not per service that draws it.
+   *
+   * A drawing repeats the same service icon constantly, and a part per shape
+   * stored the identical PNG once for every tile: a zip compresses each entry
+   * on its own, so twenty App Service tiles really did carry twenty copies of
+   * the same bytes. Nothing referenced them separately -- a relationship is
+   * just a pointer, and several shapes may share one.
+   */
+  const iconRelByPath = new Map<string, string>();
 
   for (let zoneIndex = 0; zoneIndex < groups.length; zoneIndex += 1) {
     const zone = groups[zoneIndex];
@@ -2336,13 +2346,18 @@ export async function buildVsdxPackage(
       : undefined;
     let relId: string | null = null;
     if (icon) {
-      mediaIndex += 1;
-      const file = `image${mediaIndex}.png`;
-      relId = `rId${mediaIndex}`;
-      media.push({ file, bytes: icon.bytes });
-      pageRels.push(
-        `  <Relationship Id="${relId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/${file}"/>`,
-      );
+      const key = service.iconPath ?? '';
+      relId = iconRelByPath.get(key) ?? null;
+      if (!relId) {
+        mediaIndex += 1;
+        const file = `image${mediaIndex}.png`;
+        relId = `rId${mediaIndex}`;
+        media.push({ file, bytes: icon.bytes });
+        pageRels.push(
+          `  <Relationship Id="${relId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/${file}"/>`,
+        );
+        iconRelByPath.set(key, relId);
+      }
     }
 
     const meta = metaSubline(service);

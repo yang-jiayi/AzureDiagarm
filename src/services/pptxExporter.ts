@@ -3883,7 +3883,7 @@ function addNodeShape(
       // a file name. Say what the picture is instead.
       altText: `${box.serviceName || box.label || 'Service'} icon`,
     });
-    if (icon.svg) vectorIcons?.set(iconName, icon.svg);
+    if (icon.svg) vectorIcons?.set(stripXmlForbidden(iconName), icon.svg);
   }
 
   const textTop = iconSize > 0 ? topLeft.y + pad + iconSize + 0.02 : topLeft.y + pad;

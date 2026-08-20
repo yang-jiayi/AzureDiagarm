@@ -245,6 +245,44 @@ test('the customer deck gets vector icons too, not just the single-slide export'
   assert.equal(svgBlips, pics, 'every icon in the deck should carry its vector original');
 });
 
+test('an id with an XML metacharacter still gets its vector original', async () => {
+  // The shape name is written escaped, so a node called `a&b` appears in the
+  // XML as `icon-a&amp;b`. Matching the raw key would leave that one icon --
+  // and only that one -- soft, with nothing to say why. Imported templates and
+  // model responses name their own nodes, so this is not hypothetical.
+  const zip = await deliver([service('a&b', 'App Service', 0, '/i/a.svg')]);
+  const { xml } = await slide1(zip);
+  assert.match(xml, /name="icon-a&amp;b"/, 'the name should be written escaped');
+  assert.equal((xml.match(/<asvg:svgBlip/g) ?? []).length, (xml.match(/<p:pic>/g) ?? []).length,
+    'the escaped name should still have matched');
+});
+
+test('an id carrying a character XML forbids still gets its vector original', async () => {
+  // The name is sanitised before it is written, so the key has to be sanitised
+  // the same way or the two can never meet.
+  const zip = await deliver([service('cc-db\u000B1', 'App Service', 0, '/i/a.svg')]);
+  const { xml } = await slide1(zip);
+  assert.ok(!xml.includes('\u000B'), 'the forbidden character should not reach the XML');
+  assert.equal((xml.match(/<asvg:svgBlip/g) ?? []).length, (xml.match(/<p:pic>/g) ?? []).length,
+    'the sanitised name should still have matched');
+});
+
+test('a slide whose relationships cannot be extended is left raster, not broken', async () => {
+  // The relationship insert matches a literal closing tag, so it is the step
+  // that can silently do nothing. A slide that gained an `svgBlip` pointing at
+  // a relationship that was never added is a deck PowerPoint offers to repair,
+  // and no zip writer would notice, so the exporter's own fallback would never
+  // fire. Raster icons are what the slide had a moment ago; a repair prompt is
+  // not.
+  const before = `<p:sld>${PIC('icon-a', 'rId1')}</p:sld>`;
+  const zip = fakeZip(before, '<pr:Relationships><pr:Relationship Id="rId1" Target="../media/image1.png"/></pr:Relationships>');
+  await embedVectorIcons(zip, new Map([['icon-a', SVG_A]]));
+
+  const files = (zip as unknown as { files: Record<string, string> }).files;
+  assert.equal(files['ppt/slides/slide1.xml'], before, 'the slide must not reference a relationship that was never added');
+  assert.ok(!Object.keys(files).some((n) => n.endsWith('.svg')), 'and it should leave no orphan media behind');
+});
+
 test('the icon says what it is, so a screen reader announces a service', async () => {
   const zip = await deliver([service('a', 'App Service', 0, '/i/a.svg')]);
   const { xml } = await slide1(zip);
