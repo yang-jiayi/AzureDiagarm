@@ -108,6 +108,7 @@ import { generateModelFilename } from '../utils/modelNaming';
 import { rasterizeIcons, type RasterizedIcon } from '../utils/exportIconRaster';
 import { stripXmlForbidden } from '../utils/xmlText';
 import { nativizePackage } from './pptxNativeShapes';
+import { embedVectorIcons } from './pptxVectorIcons';
 import {
   buildExportRoutes,
   categoryStyle,
@@ -3412,6 +3413,13 @@ function addNodeShape(
   keyOrdinal?: Map<string, number>,
   /** Which theme's surface the tile is drawn on. */
   dark = false,
+  /**
+   * Vector originals of the icons drawn, keyed by the picture's object name and
+   * filled in as they are drawn. The package writer hangs each one off its
+   * raster picture so PowerPoint can draw the icon sharp at any size; see
+   * `pptxVectorIcons.ts`.
+   */
+  vectorIcons?: Map<string, string>,
 ): {
   /** The box the service NAME is drawn in, not the room left over for it. */
   caption: { x: number; y: number; w: number; h: number } | null;
@@ -3862,14 +3870,20 @@ function addNodeShape(
   }
 
   if (iconSize > 0 && icon) {
+    const iconName = `icon-${box.id}`;
     slide.addImage({
       data: icon.dataUrl,
       x: topLeft.x + (w - iconSize) / 2,
       y: named ? topLeft.y + pad : topLeft.y + (h - iconSize) / 2,
       w: iconSize,
       h: iconSize,
-      objectName: `icon-${box.id}`,
+      objectName: iconName,
+      // pptxgenjs writes `preencoded.png` here otherwise, and `descr` is what a
+      // screen reader announces, so every icon in the deck introduced itself as
+      // a file name. Say what the picture is instead.
+      altText: `${box.serviceName || box.label || 'Service'} icon`,
     });
+    if (icon.svg) vectorIcons?.set(stripXmlForbidden(iconName), icon.svg);
   }
 
   const textTop = iconSize > 0 ? topLeft.y + pad + iconSize + 0.02 : topLeft.y + pad;
@@ -4537,6 +4551,13 @@ async function addEditableDiagram(
    * turn to. Empty on a one-slide deck, where there is nothing to disambiguate.
    */
   slideLabel = '',
+  /**
+   * Vector originals of the icons this slide draws, keyed by picture object
+   * name. The caller owns the map across every slide and hands it to the
+   * package writer, which attaches each SVG to its raster picture so the icon
+   * stays sharp however far the reader zooms in.
+   */
+  vectorIcons: Map<string, string> = new Map(),
 ): Promise<boolean> {
   const frame = fullFrame;
 
@@ -4801,7 +4822,7 @@ async function addEditableDiagram(
     const bands = addNodeShape(
       pptx, slide, service, transform,
       service.iconPath ? icons.get(service.iconPath) : undefined,
-      px, clampTo, thumbnail, drawnHere, keyOrdinal, isDarkMode,
+      px, clampTo, thumbnail, drawnHere, keyOrdinal, isDarkMode, vectorIcons,
     );
     // The overview is allowed to clip: every name it clips is drawn in full on
     // the slice that follows. Only a window slide's clipping is a real loss.
@@ -5839,6 +5860,13 @@ async function addEditableDiagram(
 export async function buildDiagramSlidePptx(
   imageDataUrl: string,
   options: PptxExportOptions,
+  /**
+   * Filled in with the vector original of every icon drawn, keyed by picture
+   * object name. Optional so the many callers that only inspect the built deck
+   * stay unchanged; the download path supplies one and hands it to the package
+   * writer.
+   */
+  vectorIcons: Map<string, string> = new Map(),
 ): Promise<PptxGenJS> {
   const { diagramName: rawDiagramName, author: rawAuthor, date: rawDate, isDarkMode } = options;
   // The header triple is drawn on every slide and is free text the user
@@ -5970,7 +5998,7 @@ export async function buildDiagramSlidePptx(
 
     // ── Diagram body — native shapes when available, captured PNG otherwise ───
     renderedNatively = diagram
-      ? await addEditableDiagram(pptx, slide, diagram, geom.frame, isDarkMode, window, mutedWording, truncatedNames, window === undefined && parts.length > 0, options.presetIcons, promotedSteps, drawnHere, keyOrdinal, slideLabel)
+      ? await addEditableDiagram(pptx, slide, diagram, geom.frame, isDarkMode, window, mutedWording, truncatedNames, window === undefined && parts.length > 0, options.presetIcons, promotedSteps, drawnHere, keyOrdinal, slideLabel, vectorIcons)
       : false;
 
     if (!renderedNatively) {
@@ -6320,10 +6348,17 @@ export async function buildDiagramSlidePptx(
  * If anything goes wrong the untouched deck is still downloaded: a deck that
  * is harder to edit is very much better than no deck at all.
  */
-async function downloadNativePptx(pptx: PptxGenJS, fileName: string): Promise<void> {
+async function downloadNativePptx(pptx: PptxGenJS, fileName: string, vectorIcons?: Map<string, string>): Promise<void> {
   try {
     const blob = (await pptx.write({ outputType: 'blob' })) as Blob;
     const zip = await nativizePackage(await JSZip.loadAsync(blob));
+    // Icons are drawn as 128px PNGs, which is ~213 DPI at the largest size a
+    // tile ever gives them: crisp on a projector, visibly soft the moment the
+    // reader zooms in to read a diagram, and softer still if they resize the
+    // shape. The SVG the icon was rasterized from is attached alongside, so
+    // PowerPoint 2016 and later redraws it at whatever size it is shown, while
+    // older versions keep falling back to the raster that is still there.
+    if (vectorIcons?.size) await embedVectorIcons(zip, vectorIcons);
     const repaired = await zip.generateAsync({
       type: 'blob',
       mimeType: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
@@ -6359,9 +6394,10 @@ export async function exportDiagramAsPptx(
   imageDataUrl: string,
   options: PptxExportOptions,
 ): Promise<string> {
-  const pptx = await buildDiagramSlidePptx(imageDataUrl, options);
+  const vectorIcons = new Map<string, string>();
+  const pptx = await buildDiagramSlidePptx(imageDataUrl, options, vectorIcons);
   const fileName = generateModelFilename('azure-diagram-slide', 'pptx');
-  await downloadNativePptx(pptx, fileName);
+  await downloadNativePptx(pptx, fileName, vectorIcons);
   return fileName;
 }
 
@@ -6596,7 +6632,7 @@ function addTitleSlide(pptx: PptxGenJS, t: SlideTheme, o: ArchitectureDeckOption
  * produced 0.05in tiles and 4pt type on the deck the export button actually
  * ships, while the audited deck showed 0.44in tiles for the same architecture.
  */
-async function addDiagramSlide(pptx: PptxGenJS, t: SlideTheme, imageDataUrl: string, o: ArchitectureDeckOptions): Promise<void> {
+async function addDiagramSlide(pptx: PptxGenJS, t: SlideTheme, imageDataUrl: string, o: ArchitectureDeckOptions, vectorIcons: Map<string, string> = new Map()): Promise<void> {
   // The colour key is seated just below the drawing frame, so the frame has to
   // give up that strip first. `planSlideGeometry` does exactly this for the
   // single-slide export; the deck used the raw constant and so seated the key
@@ -6628,6 +6664,11 @@ async function addDiagramSlide(pptx: PptxGenJS, t: SlideTheme, imageDataUrl: str
         undefined,
         window === undefined && parts.length > 0,
         o.presetIcons,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        vectorIcons,
       )
       : false;
     if (!renderedNatively) {
@@ -7383,6 +7424,8 @@ function withSingleLineNames(o: ArchitectureDeckOptions): ArchitectureDeckOption
 export async function buildArchitectureDeckPptx(
   imageDataUrl: string,
   rawOptions: ArchitectureDeckOptions,
+  /** See {@link buildDiagramSlidePptx}: the vector originals of the icons drawn. */
+  vectorIcons: Map<string, string> = new Map(),
 ): Promise<PptxGenJS> {
   const options = withSingleLineNames(rawOptions);
   const t = options.isDarkMode ? DARK_THEME : LIGHT_THEME;
@@ -7395,7 +7438,7 @@ export async function buildArchitectureDeckPptx(
   pptx.company = 'Microsoft Azure';
 
   addTitleSlide(pptx, t, options);
-  await addDiagramSlide(pptx, t, imageDataUrl, options);
+  await addDiagramSlide(pptx, t, imageDataUrl, options, vectorIcons);
   addWorkflowSlide(pptx, t, options);
   addServicesSlide(pptx, t, options);
   addValidationSummarySlide(pptx, t, options);
@@ -7411,9 +7454,10 @@ export async function exportArchitectureDeck(
   imageDataUrl: string,
   options: ArchitectureDeckOptions,
 ): Promise<string> {
-  const pptx = await buildArchitectureDeckPptx(imageDataUrl, options);
+  const vectorIcons = new Map<string, string>();
+  const pptx = await buildArchitectureDeckPptx(imageDataUrl, options, vectorIcons);
   const fileName = generateModelFilename('azure-architecture-deck', 'pptx');
-  await downloadNativePptx(pptx, fileName);
+  await downloadNativePptx(pptx, fileName, vectorIcons);
   return fileName;
 }
 

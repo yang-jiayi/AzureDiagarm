@@ -116,3 +116,51 @@ test('every VSDX icon reference resolves to real image bytes the package declare
   assert.equal(seen.size, ICONS.length,
     'each tile must get its own icon part, not one shared by all');
 });
+
+/**
+ * The same icon drawn n times used to be embedded n times.
+ *
+ * The allocation was keyed on the service, not on the icon, so a drawing with
+ * twenty App Services carried twenty byte-identical PNGs. Nothing caught it:
+ * every reference resolved, every part existed, and the only visible symptom
+ * was a file several times larger than it needed to be -- which got worse, not
+ * better, when the icons were rasterised at a higher resolution. Visio itself
+ * cannot tell the difference, so this is the only place the waste can be seen.
+ */
+test('an icon drawn many times is embedded once, and still shown on every tile', async () => {
+  const REPEATED = '/Azure_Public_Service_Icons/Icons/compute/10021-icon-service-Virtual-Machine.svg';
+  const COUNT = 6;
+  const nodes: Node[] = Array.from({ length: COUNT }, (_, i) => ({
+    id: `vm${i}`,
+    type: 'azureNode',
+    position: { x: (i % 3) * 260, y: Math.floor(i / 3) * 200 },
+    width: 150,
+    height: 75,
+    data: { label: `Virtual Machine ${i}`, serviceName: 'Virtual Machine', iconPath: REPEATED },
+  } as unknown as Node));
+  const presetIcons = new Map([[REPEATED, {
+    bytes: PIXEL_PNG, dataUrl: 'data:image/png;base64,iVBORw0KGgo=', sizePx: 1,
+  }]]);
+
+  const { parts } = await buildVsdxPackage(nodes, [], 'Repeated icon', presetIcons as never);
+  const pagePath = parts
+    .map((p) => p.path.replace(/^\//, ''))
+    .find((p) => /^visio\/pages\/page\d+\.xml$/.test(p))!;
+  const pageXml = textOf(parts as Part[], pagePath);
+  const refs = [...pageXml.matchAll(/<ForeignData\b[^>]*>\s*<Rel\b[^>]*r:id="([^"]+)"/g)].map((m) => m[1]);
+  assert.equal(refs.length, COUNT, 'every tile must still show its icon');
+
+  const relsXml = textOf(parts as Part[], pagePath.replace(/([^/]+)$/, '_rels/$1.rels'));
+  const rels = new Map([...relsXml.matchAll(/<Relationship\b[^>]*>/g)].map((m) => [
+    /Id="([^"]+)"/.exec(m[0])?.[1] ?? '',
+    /Target="([^"]+)"/.exec(m[0])?.[1] ?? '',
+  ] as const));
+  for (const rid of refs) assert.ok(rels.get(rid), `${rid} must resolve`);
+
+  const targets = new Set(refs.map((rid) => rels.get(rid)!));
+  assert.equal(targets.size, 1, `${COUNT} copies of one icon must share one part, got ${targets.size}`);
+
+  const mediaParts = parts.filter((p) => /^\/?visio\/media\//.test(p.path));
+  assert.equal(mediaParts.length, 1,
+    `the package must embed the icon once, not ${mediaParts.length} times`);
+});

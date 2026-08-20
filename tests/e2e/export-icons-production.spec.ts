@@ -158,6 +158,26 @@ test('the production build exports icons under the shipped CSP', async ({ page }
     'the delivered deck must carry the tile icons').toBeGreaterThanOrEqual(SERVICES.length);
   expect((slide.match(/<p:pic>/g) ?? []).length, 'each tile must draw its icon on the slide')
     .toBeGreaterThanOrEqual(SERVICES.length);
+  // A raster-only deck is the one the user called unusable: the icons turn to
+  // mush the moment the slide is projected or printed. The vector original is
+  // attached after pptxgenjs has written the package, keyed on a name that the
+  // writer escapes, so this can fail in production without failing anywhere
+  // else -- and it fails quietly, because the raster is still there and every
+  // count above still passes. Follow it to the part, the way PowerPoint does.
+  const svgRefs = [...slide.matchAll(/<asvg:svgBlip[^>]*r:embed="([^"]+)"/g)].map((m) => m[1]);
+  expect(svgRefs.length, 'every drawn icon must ship its vector original, not just a raster')
+    .toBeGreaterThanOrEqual(SERVICES.length);
+  const slideRels = await pptx.file('ppt/slides/_rels/slide1.xml.rels')?.async('string') ?? '';
+  const relTargets = new Map([...slideRels.matchAll(/Id="([^"]+)"[^>]*Target="([^"]+)"/g)]
+    .map((m) => [m[1], m[2]] as const));
+  for (const id of new Set(svgRefs)) {
+    const target = relTargets.get(id);
+    expect(target, `${id} must resolve through the slide's relationships`).toBeTruthy();
+    const resolved = `ppt/media/${(target ?? '').split('/').pop()}`;
+    expect(pptx.file(resolved), `${id} must point at a part that is in the package`).toBeTruthy();
+    expect(await pptx.file(resolved)?.async('string'), 'the vector original must be real SVG')
+      .toMatch(/<svg[\s>]/);
+  }
   expect((slide.match(/<p:cxnSp>[\s\S]*?<\/p:cxnSp>/g) ?? [])
     .filter((xml) => xml.includes('<a:custGeom>')).length,
   'a <p:cxnSp> with custom geometry makes PowerPoint refuse the file').toBe(0);
