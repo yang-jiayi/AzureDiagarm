@@ -4,11 +4,13 @@
 /**
  * Icon rasterisation for native-shape exports (PowerPoint / Visio).
  *
- * Office formats cannot embed the app's SVG icons directly (Visio needs a
- * bitmap ForeignData part, PowerPoint's image support for SVG is inconsistent
- * across versions), so both exporters embed a PNG rendered from the same SVG
- * the canvas uses. Results are cached per path + size because a diagram often
- * repeats the same service icon.
+ * Visio needs a bitmap ForeignData part, so it gets the PNG. PowerPoint gets
+ * both: OOXML stores a picture as a raster blip with the vector original
+ * hanging off it in an extension, and each version renders whichever it
+ * understands, so a deck can be crisp at any zoom in PowerPoint 2016 and later
+ * without going blank in anything older. `svg` on the result carries that
+ * original; see `pptxVectorIcons.ts`. Results are cached per path + size
+ * because a diagram often repeats the same service icon.
  *
  * Browser-only: returns null in non-DOM environments or on any failure so the
  * caller can fall back to a plain shape.
@@ -22,6 +24,15 @@ export interface RasterizedIcon {
   bytes: Uint8Array;
   dataUrl: string;
   sizePx: number;
+  /**
+   * The icon's original SVG source, when it was available.
+   *
+   * PowerPoint stores a picture as a raster blip with the vector original
+   * hanging off it in an extension, and renders whichever one it understands.
+   * Carrying the source here lets the deck ship both from the one read we
+   * already do, instead of reading every icon a second time at package time.
+   */
+  svg?: string;
 }
 
 function canRasterize(): boolean {
@@ -71,7 +82,7 @@ async function rasterize(iconPath: string, sizePx: number): Promise<RasterizedIc
     const dataUrl = canvas.toDataURL('image/png');
     const blob: Blob | null = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
     if (!blob) return null;
-    return { bytes: new Uint8Array(await blob.arrayBuffer()), dataUrl, sizePx };
+    return { bytes: new Uint8Array(await blob.arrayBuffer()), dataUrl, sizePx, svg };
   } catch {
     return null;
   }
