@@ -60,6 +60,23 @@ async function slide1(zip: JSZip): Promise<{ xml: string; rels: Map<string, stri
   return { xml, rels };
 }
 
+/**
+ * The package part a slide relationship names.
+ *
+ * Targets are relative to the slide's own folder, so this walks the path the
+ * way a consumer does rather than stripping a leading `../`: a target that
+ * climbed twice, or did not climb at all, would otherwise be resolved to a
+ * part that does not exist and the assertion would report the wrong failure.
+ */
+function partFor(target: string): string {
+  const stack: string[] = [];
+  for (const segment of `ppt/slides/${target}`.split('/')) {
+    if (segment === '..') stack.pop();
+    else if (segment !== '.' && segment !== '') stack.push(segment);
+  }
+  return stack.join('/');
+}
+
 test('every icon picture carries its vector original, and it resolves', async () => {
   const zip = await deliver([
     service('a', 'App Service', 0, '/i/a.svg'),
@@ -79,7 +96,7 @@ test('every icon picture carries its vector original, and it resolves', async ()
     const target = rels.get(id);
     assert.ok(target, `${id} is referenced by a picture but declared by no relationship`);
     assert.match(target, /\.svg$/, `${id} should point at an SVG, points at ${target}`);
-    assert.ok(zip.file(`ppt/${target.replace('../', '')}`), `${target} is declared but not in the package`);
+    assert.ok(zip.file(partFor(target)), `${target} is declared but not in the package`);
   }
 });
 
