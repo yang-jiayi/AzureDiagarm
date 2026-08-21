@@ -2358,6 +2358,31 @@ export async function buildVsdxPackage(
   // than on one tile. See the index decision below.
   const allNames: Array<{ authored: string; drawn: string }> = [];
   const drawnByTile = new Map<string, string>();
+  /**
+   * The zone a service is drawn inside, for the shape-data row.
+   *
+   * "Cost by zone" is the first report anyone runs off an exported diagram, and
+   * until now the answer was not in the file: the zone was a rectangle, the
+   * service was a rectangle on top of it, and nothing recorded the relationship
+   * a reader can see at a glance. Visio's grouping does not supply it either —
+   * the zones are on their own layer, so a service is not a child of the box it
+   * sits in.
+   *
+   * Membership is centre-in-rect, the same rule the deck exporter uses to
+   * decide whether a zone still has contents, so the two exports cannot
+   * disagree about which zone a tile is in. Nested zones resolve to the
+   * smallest box that holds the tile, which is the one the reader sees it in.
+   */
+  const zoneLabelOf = (service: ExportBox): string | undefined => {
+    const cx = service.x + service.w / 2;
+    const cy = service.y + service.h / 2;
+    const holding = groups.filter(
+      (zone) => cx >= zone.x && cx <= zone.x + zone.w && cy >= zone.y && cy <= zone.y + zone.h,
+    );
+    if (holding.length === 0) return undefined;
+    const innermost = holding.reduce((best, zone) => (zone.w * zone.h < best.w * best.h ? zone : best));
+    return innermost.label || undefined;
+  };
   for (const service of services) {
     const rect = toRect(service);
     const groupId = nextId++;
@@ -2398,6 +2423,10 @@ export async function buildVsdxPackage(
       },
       { name: 'NodeId', label: 'Diagram node ID', value: service.id },
     ];
+    const zoneLabel = zoneLabelOf(service);
+    if (zoneLabel) {
+      properties.splice(2, 0, { name: 'Zone', label: 'Zone', value: zoneLabel });
+    }
     if (service.meta?.sku) {
       properties.push({ name: 'Sku', label: 'SKU', value: service.meta.sku });
     }

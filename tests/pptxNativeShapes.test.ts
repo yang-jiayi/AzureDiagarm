@@ -116,7 +116,7 @@ test('a service name moves into the tile it names, unchanged', async () => {
       'no service name is left floating beside its tile',
     );
     for (const id of names) {
-      const tile = new RegExp(`<p:cNvPr id="\\d+" name="service-${id}">[\\s\\S]*?</p:sp>`).exec(out)?.[0];
+      const tile = new RegExp(`<p:cNvPr id="\\d+" name="service-${id}"[^>]*>[\\s\\S]*?</p:sp>`).exec(out)?.[0];
       assert.ok(tile, `tile service-${id} survives`);
       assert.ok(/<p:txBody>/.test(tile), `tile service-${id} carries its own name`);
     }

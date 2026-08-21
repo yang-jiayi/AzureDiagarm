@@ -3421,6 +3421,39 @@ function recordMark(into: Map<string, Set<string>> | undefined, authored: string
   else into.set(authored, new Set([mark]));
 }
 
+/**
+ * A way back to the documentation, hung off the tile itself.
+ *
+ * A deck is read months after it is drawn, by someone who does not know what
+ * "Azure Front Door Premium" is, and their next move is to search for it. The
+ * link is to Microsoft Learn's SEARCH, not to a per-service page, because no
+ * per-service URL exists anywhere in this repository and the slugs cannot be
+ * derived from the names — `app-service`, `cosmos-db`, `azure-functions` follow
+ * no rule. A guessed slug produces a 404 in a customer deliverable, which is
+ * worse than no link at all; a search URL is always correct, needs no table to
+ * be maintained, and lands on the page the reader wanted anyway.
+ *
+ * Put on the SHAPE and never on the text. A hyperlink on a text run makes
+ * PowerPoint underline it and repaint it in the theme's link colour, which
+ * would change what the slide looks like — and this exporter's contract is
+ * that the export is what the canvas shows. A shape hyperlink is invisible
+ * until the reader clicks it.
+ */
+function serviceDocsLink(box: ExportBox): { hyperlink?: { url: string; tooltip: string } } {
+  // `cleanText` deliberately does not recurse into an options bag, so the
+  // tooltip -- which becomes an XML ATTRIBUTE on `<a:hlinkClick>` -- has to be
+  // stripped here. A U+0001 in a pasted service name would otherwise make the
+  // deck refuse to open, the exact failure `newDeck` exists to prevent.
+  const name = stripXmlForbidden(box.serviceName ?? box.label ?? '').trim();
+  if (!name) return {};
+  return {
+    hyperlink: {
+      url: `https://learn.microsoft.com/search/?terms=${encodeURIComponent(name)}`,
+      tooltip: `${name} — search Microsoft Learn`,
+    },
+  };
+}
+
 function addNodeShape(
   pptx: PptxGenJS,
   slide: Slide,
@@ -3491,6 +3524,7 @@ function addNodeShape(
       opacity: 0.35,
     },
     objectName: `service-${box.id}`,
+    ...serviceDocsLink(box),
   });
 
   // The canvas's 4px category stripe. PowerPoint has no per-side border, so it
@@ -4498,6 +4532,45 @@ function connectionLegendRect(
 }
 
 /**
+ * The spoken version of a slide.
+ *
+ * The deck is sent to someone who was not in the room, and the drawing alone
+ * does not say which services are on this slide, what they cost, or which
+ * numbered steps its badges refer to — all of which the exporter already knows
+ * and was throwing away. PowerPoint's notes page is where that belongs: it
+ * prints, Presenter View reads it out, and it never touches the drawing.
+ *
+ * Written after the workflow list is assembled rather than during the slide
+ * loop, so the sentence a note quotes is the same sentence the workflow slide
+ * shows. Building it from the raw edges instead would quote the authored
+ * wording while the slide showed the promoted or muted wording.
+ */
+function diagramSlideNotes(
+  title: string,
+  shown: DiagramRender['shown'],
+  workflow: readonly { step: number; description: string }[],
+  note: string,
+): string {
+  const lines: string[] = [title, ''];
+  if (shown.zones.length > 0) lines.push(`Zones: ${shown.zones.join(', ')}`, '');
+  if (shown.services.length > 0) {
+    lines.push(`Services on this slide (${shown.services.length}):`);
+    for (const service of shown.services) {
+      lines.push(service.detail ? `  - ${service.name} — ${service.detail}` : `  - ${service.name}`);
+    }
+    lines.push('');
+  }
+  const spoken = workflow.filter((row) => shown.steps.includes(row.step));
+  if (spoken.length > 0) {
+    lines.push('Numbered steps on this slide:');
+    for (const row of spoken) lines.push(`  ${row.step}. ${row.description}`);
+    lines.push('');
+  }
+  if (note) lines.push(note);
+  return lines.join('\n').trimEnd();
+}
+
+/**
  * Where the footer note sits and at what size, given the colour key already on
  * the slide.
  *
@@ -4610,6 +4683,20 @@ function addConnectionLegend(
 interface DiagramRender {
   /** The colour key's seat, so the footer note can be placed clear of it. */
   legend: { x: number; y: number; w: number; h: number } | null;
+  /**
+   * What this slide ended up showing.
+   *
+   * The notes page is written by the caller, which knows the deck but not the
+   * slide: on a tiled deck the window decides which services survive the cull,
+   * and only the drawing pass sees that result. Reporting it here keeps the
+   * spoken version and the drawn version from disagreeing about what is on the
+   * slide, which is the whole point of a notes page.
+   */
+  shown: {
+    zones: string[];
+    services: { name: string; detail: string }[];
+    steps: number[];
+  };
 }
 
 /**
@@ -5958,7 +6045,23 @@ async function addEditableDiagram(
   // strip reserved for it below the diagram, not over the drawing.
   const legend = addConnectionLegend(pptx, slide, slideLegend, fullFrame);
 
-  return { legend };
+  return {
+    legend,
+    shown: {
+      zones: shownGroups.map((group) => group.label).filter((label) => !!label),
+      services: shownServices.map((service) => ({
+        name: service.serviceName || service.label,
+        detail: [service.meta?.sku, service.meta?.region, service.meta?.costLabel]
+          .filter((part): part is string => !!part)
+          .join(' · '),
+      })),
+      steps: [...new Set(
+        annotatedRoutes
+          .map((route) => route.stepNumber)
+          .filter((step): step is number => step !== undefined),
+      )].sort((a, b) => a - b),
+    },
+  };
 }
 
 /**
@@ -6049,6 +6152,12 @@ export async function buildDiagramSlidePptx(
     .map((node) => String(node.id))
     .sort((a, b) => a.localeCompare(b))
     .forEach((nodeId, i) => keyOrdinal.set(nodeId, i + 1));
+  // Notes pages, held back until the workflow list exists.
+  //
+  // A note that quotes a numbered step has to quote the sentence the deck
+  // prints for it, and that sentence is not settled until the slide loop has
+  // finished handing wording to `mutedWording` and `promotedSteps`.
+  const pendingNotes: { slide: Slide; title: string; shown: DiagramRender['shown']; note: string }[] = [];
 
   for (const [index, window] of windows.entries()) {
     const slide = pptx.addSlide();
@@ -6151,6 +6260,9 @@ export async function buildDiagramSlidePptx(
       fontFace: GEOMETRY_LATIN_FONT,
       valign: 'middle',
     });
+    if (renderedNatively) {
+      pendingNotes.push({ slide, title: `${diagramName}${partOf}`, shown: renderedNatively.shown, note });
+    }
   }
 
   // A numbered callout means nothing without the sentence it points at, so the
@@ -6172,6 +6284,10 @@ export async function buildDiagramSlidePptx(
     workflow.push({ step, description: text });
   }
   workflow.sort((a, b) => a.step - b.step);
+  for (const pending of pendingNotes) {
+    const notes = diagramSlideNotes(pending.title, pending.shown, workflow, pending.note);
+    if (notes) pending.slide.addNotes(notes);
+  }
   if (workflow.length > 0) {
     // Rows stop shrinking at a legible minimum, so a long workflow continues on
     // another slide. Dropping the tail would leave badges on the drawing whose
@@ -6791,6 +6907,14 @@ async function addDiagramSlide(pptx: PptxGenJS, t: SlideTheme, imageDataUrl: str
       slide.addImage({ data: imageDataUrl, x: IMAGE_X, y: IMAGE_Y, w: IMAGE_W, h: IMAGE_H, sizing: { type: 'contain', w: IMAGE_W, h: IMAGE_H } });
       return;
     }
+    // The authored workflow is already settled here, unlike the diagram-only
+    // deck, so the note can be written in the same pass that draws the slide.
+    const workflow = (o.workflow ?? []).flatMap((entry) => {
+      const step = entry ? readStepValue(entry.step) : undefined;
+      return step !== undefined && entry.description ? [{ step, description: entry.description }] : [];
+    });
+    const notes = diagramSlideNotes(`${o.diagramName}${partOf}`, renderedNatively.shown, workflow, '');
+    if (notes) slide.addNotes(notes);
   }
 }
 

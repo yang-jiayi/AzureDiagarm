@@ -267,6 +267,123 @@ function escapeRegExp(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+function decodeXml(text: string): string {
+  return text
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&#(\d+);/g, (_all, code: string) => String.fromCodePoint(+code))
+    .replace(/&amp;/g, '&');
+}
+
+function encodeAttr(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+/** Every run of text in a shape, in reading order. */
+function textOf(xml: string): string {
+  return [...xml.matchAll(/<a:t>([\s\S]*?)<\/a:t>/g)]
+    .map((match) => decodeXml(match[1]))
+    .join(' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/** PowerPoint shows alt text in a small pane; a paragraph in it is unreadable. */
+const ALT_TEXT_MAX = 300;
+
+function clip(text: string): string {
+  return text.length <= ALT_TEXT_MAX ? text : `${text.slice(0, ALT_TEXT_MAX - 1).trimEnd()}…`;
+}
+
+/**
+ * What each shape is, in words, for the accessibility checker and for anyone
+ * reading the deck with a screen reader.
+ *
+ * A drawing made of rectangles and lines is silent: PowerPoint reads out the
+ * text in a shape, so a tile announces its own name, but an arrow has no text
+ * at all and a zone's title is a separate caption. The reader hears a list of
+ * service names in z-order and nothing about how they connect — which is the
+ * entire content of an architecture diagram. Every deck this tool exports also
+ * fails PowerPoint's built-in accessibility check for the same reason.
+ *
+ * Only what can be stated from the drawing is stated. An arrow's endpoints are
+ * named only when it is a straight hop whose ends sit on a connection site,
+ * because that is the only case where the tile it touches is known; a bent hop
+ * carries a bounding box whose corners can land on an unrelated tile, and
+ * naming that tile would be an invented fact, which is worse than silence.
+ */
+function altTextByName(shapes: ShapeXml[], tiles: ShapeXml[]): Map<string, string> {
+  const byName = new Map<string, ShapeXml>();
+  for (const shape of shapes) byName.set(shape.name, shape);
+  const tileName = new Map<number, string>();
+  const alt = new Map<string, string>();
+
+  for (const tile of tiles) {
+    const key = tile.name.slice('service-'.length);
+    const chip = new RegExp(`^tagtext-${escapeRegExp(key)}-\\d+$`);
+    const name = textOf(byName.get(`service-label-${key}`)?.xml ?? '') || textOf(tile.xml);
+    const meta = textOf(byName.get(`service-meta-${key}`)?.xml ?? '');
+    const tags = shapes.filter((s) => chip.test(s.name)).map((s) => textOf(s.xml)).filter(Boolean);
+    tileName.set(tile.id, name);
+    if (!name) continue;
+    const text = clip([`Service: ${name}`, meta, tags.length > 0 ? `Tags: ${tags.join(', ')}` : '']
+      .filter(Boolean)
+      .join('. '));
+    alt.set(tile.name, text);
+    // The group is what a screen reader reaches first once the tile, its icon
+    // and its chips have been folded into one object.
+    alt.set(`node-${key}`, text);
+  }
+
+  for (const zone of shapes) {
+    if (!zone.name.startsWith('zone-') || zone.name.startsWith('zone-label-')) continue;
+    const key = zone.name.slice('zone-'.length);
+    const label = textOf(byName.get(`zone-label-${key}`)?.xml ?? '') || textOf(zone.xml);
+    if (label) alt.set(zone.name, clip(`Zone: ${label}`));
+  }
+
+  for (const line of shapes) {
+    if (!line.name.startsWith('connector-')) continue;
+    if (line.name.startsWith('connector-label-') || line.name.startsWith('connector-step-')) continue;
+    const key = line.name.slice('connector-'.length);
+    const straight = !!line.xfrm && line.prst === 'line' && !/<a:custGeom>/.test(line.xml);
+    const ends = straight && line.xfrm ? endpoints(line.xfrm) : null;
+    const from = ends ? glueFor({ x: ends.x1, y: ends.y1 }, tiles) : null;
+    const to = ends ? glueFor({ x: ends.x2, y: ends.y2 }, tiles) : null;
+    const a = from ? tileName.get(from.id) : undefined;
+    const b = to ? tileName.get(to.id) : undefined;
+    const step = textOf(byName.get(`connector-step-${key}`)?.xml ?? '');
+    const label = textOf(byName.get(`connector-label-${key}`)?.xml ?? '');
+    const text = [
+      step ? `Step ${step}.` : '',
+      a && b && a !== b ? `Connection from ${a} to ${b}` : 'Connection',
+      label ? `: ${label}` : '',
+    ].filter(Boolean).join(' ').replace(' :', ':');
+    alt.set(line.name, clip(text));
+  }
+
+  return alt;
+}
+
+/** Write `descr` on the shapes named in `alt`, leaving any existing one alone. */
+function applyAltText(slideXml: string, alt: Map<string, string>): string {
+  if (alt.size === 0) return slideXml;
+  return slideXml.replace(
+    /<p:cNvPr id="(\d+)" name="([^"]*)"([^>]*?)(\/?)>/g,
+    (all, id: string, name: string, rest: string, close: string) => {
+      if (/\bdescr="/.test(rest)) return all;
+      const text = alt.get(name);
+      return text ? `<p:cNvPr id="${id}" name="${name}" descr="${encodeAttr(text)}"${rest}${close}>` : all;
+    },
+  );
+}
+
 /**
  * Repair one slide. Returns the same XML when there is nothing to convert, so
  * callers can cheaply skip untouched parts.
@@ -322,7 +439,8 @@ export function nativizeSlideXml(slideXml: string): string {
     for (const part of parts) replacements.set(part.id, '');
     nextId += 1;
   }
-  if (replacements.size === 0) return slideXml;
+  const alt = altTextByName(shapes, tiles);
+  if (replacements.size === 0) return applyAltText(slideXml, alt);
 
   let out = '';
   let cursor = 0;
@@ -332,7 +450,7 @@ export function nativizeSlideXml(slideXml: string): string {
     out += slideXml.slice(cursor, shape.start) + replacement;
     cursor = shape.end;
   }
-  return out + slideXml.slice(cursor);
+  return applyAltText(out + slideXml.slice(cursor), alt);
 }
 
 /**
