@@ -62,6 +62,8 @@ import {
   workflowListFromEdges,
   carriesWording,
   zoneStyleFor,
+  GEOMETRY_LATIN_FONT,
+  GEOMETRY_EA_FONT,
   type ConnectionLegendEntry,
   type WorkflowListEntry,
   type ExportBox,
@@ -310,8 +312,8 @@ function withDrawingCeilings(
 }
 
 /**
- * Approximate rendered width in inches, from the measured Yu Gothic UI
- * advances shared with the PowerPoint exporter.
+ * Approximate rendered width in inches, from the label font's own advances,
+ * shared with the PowerPoint exporter and the on-screen canvas.
  *
  * The flat 0.54 em this used to charge is the average LOWERCASE advance, so
  * every title-cased service name measured narrow and the sheet believed a label
@@ -321,6 +323,20 @@ function withDrawingCeilings(
 function estimateTextWidthIn(text: string, fontSizeIn: number): number {
   return advanceWidthIn(text, 72) * fontSizeIn;
 }
+
+/**
+ * The two faces this sheet declares, taken from the shared geometry module.
+ *
+ * Imported rather than restated because the face a shape names and the table
+ * that prices its text have to be the same font. They were not: the sheet said
+ * `Segoe UI` while every width came from another face entirely, and the note
+ * that used to sit on `DOCUMENT_XML` argued the gap was small enough to live
+ * with. It was small for ASCII and unmeasured for everything else, and there
+ * was nothing to stop it growing - which is the actual defect. Now a change of
+ * font in one place moves the declaration and the measurement together.
+ */
+const VISIO_LATIN_FONT = GEOMETRY_LATIN_FONT;
+const VISIO_EA_FONT = GEOMETRY_EA_FONT;
 
 const VISIO_NS = 'http://schemas.microsoft.com/office/visio/2012/main';
 const REL_NS = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
@@ -475,18 +491,24 @@ function windowsXml(pageWidthIn: number, pageHeightIn: number): string {
 }
 
 /**
- * document.xml — DocumentSettings, the Segoe UI face name used by every shape,
- * and the "No Style" stylesheet (ID 0) that pages and shapes reference.
+ * document.xml — DocumentSettings, the face names every shape uses, and the
+ * "No Style" stylesheet (ID 0) that pages and shapes reference.
  *
- * THE DECLARED FACE IS SEGOE UI; THE WIDTH TABLE IS YU GOTHIC UI. That is not
- * a defect and it is not worth "fixing" - it is written down here so nobody
- * loses an afternoon to it a third time. The two faces are close enough that
- * the difference cannot reach a layout decision: over the ASCII range the mean
- * absolute difference is 0.0017 em, the Cyrillic and Greek advances are
- * bit-identical between them, and over the real service names this exporter
- * draws the two models land 0.00% apart. Yu Gothic UI is the table because it
- * is the face that has to carry the Japanese names, and a model that is right
- * about kanji and 0.0017 em out on Latin is the correct trade.
+ * TWO faces, not one, and each shape names both. Visio's Character section has
+ * a separate `AsianFont` cell precisely because one face rarely covers Latin
+ * and CJK, and using only `Font` meant Japanese text was drawn by whatever
+ * Visio picked - measured by nothing.
+ *
+ * The identity attributes are read out of the installed font files by
+ * `scripts/measureFontAdvances.ts --facename`, not typed. The values that were
+ * here before were invented: this file declared `UnicodeRanges="-1 -369098753
+ * 63 0"` for Segoe UI where the shipped font says `-469750017 -1073683329 9 0`,
+ * so Visio's name-fails fallback had wrong coverage data to work from.
+ *
+ * And the declared face used to disagree with the width table outright - it
+ * said Segoe UI while every string was priced from a different font. Both sides
+ * now name Arial, which is also the face the PowerPoint deck and the on-screen
+ * canvas use, so one measurement serves all three.
  */
 const DOCUMENT_XML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <VisioDocument xmlns="${VISIO_NS}" xmlns:r="${REL_NS}">
@@ -501,7 +523,8 @@ const DOCUMENT_XML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
     <ProtectBkgnds>0</ProtectBkgnds>
   </DocumentSettings>
   <FaceNames>
-    <FaceName ID="1" NameU="Segoe UI" UnicodeRanges="-1 -369098753 63 0" CharSets="536871423 0" Panos="2 11 5 2 4 2 4 2 2 3" Flags="325"/>
+    <FaceName ID="1" NameU="${VISIO_LATIN_FONT}" UnicodeRanges="-536858881 -1073711013 9 0" CharSets="1073742335 -65536" Panos="2 11 6 4 2 2 2 2 2 4" Flags="325"/>
+    <FaceName ID="2" NameU="${VISIO_EA_FONT}" UnicodeRanges="-536870145 717749759 22 0" CharSets="537002143 0" Panos="2 11 5 0 0 0 0 0 0 0" Flags="325"/>
   </FaceNames>
   <StyleSheets>
     <StyleSheet ID="0" NameU="No Style" Name="No Style">
@@ -515,6 +538,7 @@ const DOCUMENT_XML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
       <Cell N="FillPattern" V="1"/>
       <Cell N="TextBkgnd" V="0"/>
       <Cell N="Font" V="1"/>
+      <Cell N="AsianFont" V="2"/>
       <Cell N="Size" V="0.1111111111111111"/>
     </StyleSheet>
   </StyleSheets>
@@ -612,7 +636,7 @@ function zoneShapeXml(
       <Cell N="TxtAngle" V="0"/>
 ${roundedRectGeometry()}
       <Section N="Character">
-        <Row IX="0"><Cell N="Font" V="1"/><Cell N="Color" V="${palette.text}"/><Cell N="Size" V="${ff(fonts.zone)}"/><Cell N="Style" V="1"/></Row>
+        <Row IX="0"><Cell N="Font" V="1"/><Cell N="AsianFont" V="2"/><Cell N="Color" V="${palette.text}"/><Cell N="Size" V="${ff(fonts.zone)}"/><Cell N="Style" V="1"/></Row>
       </Section>
       <Section N="Paragraph">
         <Row IX="0"><Cell N="HorzAlign" V="0"/></Row>
@@ -867,9 +891,9 @@ function serviceGroupXml(
   // legible. Resolve the accent against the tile the same way the sub-line is.
   const nameColor = readableTextOn(palette.text, palette.fill);
   const characterRows = drawsMeta
-    ? `        <Row IX="0"><Cell N="Font" V="1"/><Cell N="Color" V="${nameColor}"/><Cell N="Size" V="${ff(labelFont)}"/></Row>
-        <Row IX="1"><Cell N="Font" V="1"/><Cell N="Color" V="${metaColor}"/><Cell N="Size" V="${ff(fonts.meta)}"/></Row>`
-    : `        <Row IX="0"><Cell N="Font" V="1"/><Cell N="Color" V="${nameColor}"/><Cell N="Size" V="${ff(labelFont)}"/></Row>`;
+    ? `        <Row IX="0"><Cell N="Font" V="1"/><Cell N="AsianFont" V="2"/><Cell N="Color" V="${nameColor}"/><Cell N="Size" V="${ff(labelFont)}"/></Row>
+        <Row IX="1"><Cell N="Font" V="1"/><Cell N="AsianFont" V="2"/><Cell N="Color" V="${metaColor}"/><Cell N="Size" V="${ff(fonts.meta)}"/></Row>`
+    : `        <Row IX="0"><Cell N="Font" V="1"/><Cell N="AsianFont" V="2"/><Cell N="Color" V="${nameColor}"/><Cell N="Size" V="${ff(labelFont)}"/></Row>`;
   const textBody = drawsMeta
     ? `<cp IX="0"/>${esc(label)}\n<cp IX="1"/>${esc(meta)}`
     : esc(label);
@@ -981,7 +1005,7 @@ function connectorShapeXml(
       <Cell N="TxtAngle" V="${f(-angle)}"/>`
   : ''}
       <Section N="Character">
-        <Row IX="0"><Cell N="Font" V="1"/><Cell N="Color" V="${CONNECTOR_TEXT}"/><Cell N="Size" V="${ff(fonts.connector)}"/></Row>
+        <Row IX="0"><Cell N="Font" V="1"/><Cell N="AsianFont" V="2"/><Cell N="Color" V="${CONNECTOR_TEXT}"/><Cell N="Size" V="${ff(fonts.connector)}"/></Row>
       </Section>
       <Section N="Paragraph">
         <Row IX="0"><Cell N="HorzAlign" V="1"/></Row>
@@ -1301,7 +1325,7 @@ function stepBadgeXml(  id: number,
       <Cell N="LineWeight" V="${f(penIn(0.0125, fonts.scale, fonts.penMaxIn))}"/>
       <Cell N="LinePattern" V="1"/>
       <Section N="Character">
-        <Row IX="0"><Cell N="Font" V="1"/><Cell N="Color" V="#FFFFFF"/><Cell N="Size" V="${ff(size)}"/><Cell N="Style" V="1"/></Row>
+        <Row IX="0"><Cell N="Font" V="1"/><Cell N="AsianFont" V="2"/><Cell N="Color" V="#FFFFFF"/><Cell N="Size" V="${ff(size)}"/><Cell N="Style" V="1"/></Row>
       </Section>
       <Section N="Paragraph">
         <Row IX="0"><Cell N="HorzAlign" V="1"/></Row>
@@ -1369,7 +1393,7 @@ function legendTextXml(id: number, x: number, y: number, width: number, text: st
       <Cell N="LinePattern" V="0"/>
       <Cell N="FillPattern" V="0"/>
       <Section N="Character">
-        <Row IX="0"><Cell N="Font" V="1"/><Cell N="Color" V="#475569"/><Cell N="Size" V="${LEGEND_FONT_IN}"/></Row>
+        <Row IX="0"><Cell N="Font" V="1"/><Cell N="AsianFont" V="2"/><Cell N="Color" V="#475569"/><Cell N="Size" V="${LEGEND_FONT_IN}"/></Row>
       </Section>
       <Section N="Paragraph">
         <Row IX="0"><Cell N="HorzAlign" V="0"/></Row>

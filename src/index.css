@@ -1,5 +1,17 @@
 :root {
   --app-font-family: 'Yu Gothic UI', YuGothic, 'Yu Gothic', Meiryo, 'Segoe UI', sans-serif;
+  /*
+   * The DIAGRAM font, which is a different question from the app font.
+   *
+   * Chrome is never exported, so it may use whatever reads best on the machine
+   * showing it. Anything on the drawing surface is exported, and an exported
+   * file has to reproduce what was on screen - which means the surface has to
+   * be drawn with the same face the .pptx and .vsdx declare and the same face
+   * the width tables in `diagramExportGeometry.ts` are measured from. Keep this
+   * in step with `GEOMETRY_FONT_STACK`; a diagram styled from `--app-font-family`
+   * is priced in one font and drawn in another.
+   */
+  --diagram-font-family: Arial, Helvetica, 'Yu Gothic UI', 'Hiragino Sans', 'Noto Sans JP', sans-serif;
   font-family: var(--app-font-family);
   text-rendering: optimizeLegibility;
 }

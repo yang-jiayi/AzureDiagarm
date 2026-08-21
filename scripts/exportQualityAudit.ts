@@ -45,32 +45,35 @@ const PX_PER_IN = 96;
 const BASE_SLIDE_W_IN = 13.333;
 const BASE_SLIDE_H_IN = 7.5;
 /**
- * Real per-character advances for Yu Gothic UI, in em, printable ASCII 33–126.
+ * Real per-character advances for Arial, in em, printable ASCII 33–126.
  *
- * Measured from the installed font with GDI+ (`Graphics.MeasureString`,
- * `GenericTypographic`, 20 repeats of each glyph at 100pt to divide out the
- * fitting error). This is the only number in this file that does not come from
- * the exporter's own model, and it exists because a shared estimator makes a
- * width error structurally unobservable: `auditTextWidthIn` is a
- * character-for-character copy of `estimateTextWidthIn`, so the two agree about
- * every mistake either of them makes.
+ * Measured by CHROMIUM, one character at a time with `fontKerning: 'none'`, and
+ * that method is chosen to disagree with the exporter's. This is the only
+ * number in this file that does not come from the exporter's own model, and it
+ * exists because a shared estimator makes a width error structurally
+ * unobservable: `auditTextWidthIn` is a character-for-character copy of
+ * `estimateTextWidthIn`, so the two agree about every mistake either of them
+ * makes. Generating both copies from one measurement would have restored
+ * exactly the blindness this table was added to remove, so the exporter reads
+ * the font file's `hmtx` and the audit asks a browser to lay the character out.
+ * The two engines agree on all 94 of these.
  *
- * What that hid: both give every non-CJK character 0.54 em, Segoe UI's average
- * *lowercase* advance. Used as a maximum it understates `@` (0.955), `W`
- * (0.934) and `M` (0.898) by up to 77%, so the "does one letter fit?" guard
+ * What a shared estimate hid: both once gave every non-CJK character 0.54 em,
+ * an average *lowercase* advance. Used as a maximum it understates `@` (1.015),
+ * `W` (0.944) and `M` (0.833) by up to 88%, so the "does one letter fit?" guard
  * passed boxes that hold no capital at all.
  */
-const YU_GOTHIC_ADVANCE_EM = [
-  0.284, 0.392, 0.591, 0.539, 0.818, 0.800, 0.230, 0.302, 0.302, 0.417,
-  0.684, 0.217, 0.400, 0.217, 0.390, 0.539, 0.539, 0.539, 0.539, 0.539,
-  0.539, 0.539, 0.539, 0.539, 0.539, 0.217, 0.217, 0.684, 0.684, 0.684,
-  0.448, 0.955, 0.645, 0.573, 0.619, 0.701, 0.506, 0.488, 0.686, 0.710,
-  0.266, 0.357, 0.580, 0.471, 0.898, 0.748, 0.754, 0.560, 0.754, 0.598,
-  0.531, 0.524, 0.687, 0.621, 0.934, 0.590, 0.553, 0.570, 0.302, 0.539,
-  0.302, 0.684, 0.415, 0.268, 0.509, 0.588, 0.462, 0.589, 0.523, 0.313,
-  0.589, 0.566, 0.242, 0.242, 0.497, 0.242, 0.861, 0.566, 0.586, 0.588,
-  0.589, 0.348, 0.424, 0.339, 0.566, 0.479, 0.723, 0.459, 0.484, 0.452,
-  0.302, 0.239, 0.302, 0.684,
+const AUDIT_ADVANCE_EM = [
+  0.278, 0.355, 0.556, 0.556, 0.889, 0.667, 0.191, 0.333, 0.333, 0.389,
+  0.584, 0.278, 0.333, 0.278, 0.278, 0.556, 0.556, 0.556, 0.556, 0.556,
+  0.556, 0.556, 0.556, 0.556, 0.556, 0.278, 0.278, 0.584, 0.584, 0.584,
+  0.556, 1.015, 0.667, 0.667, 0.722, 0.722, 0.667, 0.611, 0.778, 0.722,
+  0.278, 0.5, 0.667, 0.556, 0.833, 0.722, 0.778, 0.667, 0.778, 0.722,
+  0.667, 0.611, 0.722, 0.667, 0.944, 0.667, 0.667, 0.611, 0.278, 0.278,
+  0.278, 0.469, 0.556, 0.333, 0.556, 0.556, 0.5, 0.556, 0.556, 0.278,
+  0.556, 0.556, 0.222, 0.222, 0.5, 0.222, 0.833, 0.556, 0.556, 0.556,
+  0.556, 0.333, 0.5, 0.278, 0.556, 0.5, 0.722, 0.5, 0.5, 0.5,
+  0.334, 0.26, 0.334, 0.584,
 ];
 
 /**
@@ -83,66 +86,77 @@ const YU_GOTHIC_ADVANCE_EM = [
  * point, 249 times across the corpus, and it advances 0.733 em rather than
  * 0.54.
  */
-const YU_GOTHIC_EXTRA_EM: Record<string, number> = {
-  '\u00a0': 0.274,
-  '\u00b7': 0.217,
-  '\u00d7': 0.684,
-  '\u2013': 0.5,
+const AUDIT_EXTRA_EM: Record<string, number> = {
+  '\u00a0': 0.278,
+  '\u00b7': 0.333,
+  '\u00d7': 0.584,
+  '\u2013': 0.556,
   '\u2014': 1,
-  '\u2018': 0.229,
-  '\u2019': 0.229,
-  '\u201c': 0.377,
-  '\u201d': 0.377,
-  '\u2026': 0.733,
+  '\u2018': 0.222,
+  '\u2019': 0.222,
+  '\u201c': 0.333,
+  '\u201d': 0.333,
+  '\u2026': 1,
   '\u2190': 1,
   '\u2192': 1,
   '\u2194': 1,
   '\u21d2': 1,
-  '\u2212': 0.684,
-  '\u2022': 0.406,
+  '\u2212': 0.584,
+  '\u2022': 0.35,
 };
 
 /**
- * A space advances 0.274 em. Zero is only correct for the whitespace that ENDS
+ * The two typefaces every exported file must name, hard-coded HERE.
+ *
+ * Not imported from the exporter, for the same reason the width tables are not:
+ * a gate that reads its expectation out of the thing it is checking cannot fail.
+ * Changing the export font therefore has to be done twice, deliberately, and a
+ * one-sided change is caught rather than accepted.
+ */
+const AUDIT_LATIN_FONT = 'Arial';
+const AUDIT_EA_FONT = 'Yu Gothic UI';
+
+/**
+ * A space advances 0.278 em. Zero is only correct for the whitespace that ENDS
  * a line, which `auditLineWidths` discounts explicitly at the point a renderer
  * discounts it.
  */
-const AUDIT_SPACE_EM = 0.274;
+const AUDIT_SPACE_EM = 0.278;
 
 /**
- * Latin-1 Supplement and Latin Extended-A, U+00A1 to U+017F, measured from the
- * installed font with GDI+ - the gate's own copy, taken from its own run.
+ * Latin-1 Supplement and Latin Extended-A, U+00A1 to U+017F, laid out by
+ * Chromium - the gate's own copy, taken from its own run.
  *
- * These fell through to the 1 em unknown fallback, which is 91% over for `é`.
+ * These fell through to the 1 em unknown fallback, which is 80% over for `é`.
  * That made the gate agree with the exporter that a 0.190in column could not
  * hold `Réseau privé sécurisé`, when the widest glyph in that string is an `R`
- * at 0.598 em and the column held it comfortably. A shared blind spot reads
+ * at 0.722 em and the column held it comfortably. A shared blind spot reads
  * exactly like a passing test.
  */
-const YU_GOTHIC_LATIN_EM = [
-  0.284, 0.539, 0.539, 0.556, 0.539, 0.239, 0.448, 0.414, 0.89, 0.392,
-  0.506, 0.684, 0, 0.89, 0.415, 0.377, 0.684, 0.366, 0.366, 0.282,
-  0.577, 0.458, 0.217, 0.205, 0.351, 0.431, 0.506, 0.906, 0.931, 0.952,
-  0.448, 0.645, 0.645, 0.645, 0.645, 0.645, 0.645, 0.86, 0.619, 0.506,
-  0.506, 0.506, 0.506, 0.266, 0.266, 0.266, 0.266, 0.701, 0.748, 0.754,
-  0.754, 0.754, 0.754, 0.754, 0.684, 0.754, 0.687, 0.687, 0.687, 0.687,
-  0.553, 0.56, 0.544, 0.509, 0.509, 0.509, 0.509, 0.509, 0.509, 0.832,
-  0.462, 0.523, 0.523, 0.523, 0.523, 0.242, 0.242, 0.242, 0.242, 0.559,
-  0.566, 0.586, 0.586, 0.586, 0.586, 0.586, 0.684, 0.586, 0.566, 0.566,
-  0.566, 0.566, 0.484, 0.588, 0.484, 0.65, 0.554, 0.65, 0.554, 0.65,
-  0.554, 0.683, 0.519, 0.683, 0.519, 0.683, 0.519, 0.683, 0.519, 0.744,
-  0.672, 0.744, 0.578, 0.618, 0.555, 0.618, 0.555, 0.618, 0.555, 0.618,
-  0.555, 0.618, 0.555, 0.728, 0.547, 0.728, 0.547, 0.728, 0.547, 0.728,
-  0.547, 0.746, 0.58, 0.746, 0.582, 0.298, 0.266, 0.298, 0.266, 0.297,
-  0.266, 0.297, 0.266, 0.298, 0.266, 0.676, 0.542, 0.4, 0.296, 0.691,
-  0.531, 0.531, 0.596, 0.266, 0.596, 0.266, 0.596, 0.358, 0.596, 0.354,
-  0.596, 0.265, 0.749, 0.58, 0.749, 0.58, 0.749, 0.58, 0.641, 0.749,
-  0.58, 0.732, 0.559, 0.732, 0.559, 0.732, 0.559, 0.931, 0.928, 0.671,
-  0.366, 0.671, 0.366, 0.671, 0.366, 0.628, 0.507, 0.628, 0.507, 0.628,
-  0.507, 0.531, 0.424, 0.626, 0.351, 0.626, 0.406, 0.626, 0.35, 0.739,
-  0.58, 0.739, 0.58, 0.739, 0.58, 0.739, 0.58, 0.739, 0.58, 0.74,
-  0.58, 0.93, 0.774, 0.65, 0.489, 0.553, 0.612, 0.455, 0.612, 0.455,
-  0.57, 0.452, 0.316,
+const AUDIT_LATIN_EM = [
+  0.333, 0.556, 0.556, 0.556, 0.556, 0.26, 0.556, 0.333, 0.737, 0.37,
+  0.556, 0.584, 0, 0.737, 0.552, 0.4, 0.549, 0.333, 0.333, 0.333,
+  0.576, 0.537, 0.333, 0.333, 0.333, 0.365, 0.556, 0.834, 0.834, 0.834,
+  0.611, 0.667, 0.667, 0.667, 0.667, 0.667, 0.667, 1, 0.722, 0.667,
+  0.667, 0.667, 0.667, 0.278, 0.278, 0.278, 0.278, 0.722, 0.722, 0.778,
+  0.778, 0.778, 0.778, 0.778, 0.584, 0.778, 0.722, 0.722, 0.722, 0.722,
+  0.667, 0.667, 0.611, 0.556, 0.556, 0.556, 0.556, 0.556, 0.556, 0.889,
+  0.5, 0.556, 0.556, 0.556, 0.556, 0.278, 0.278, 0.278, 0.278, 0.556,
+  0.556, 0.556, 0.556, 0.556, 0.556, 0.556, 0.549, 0.611, 0.556, 0.556,
+  0.556, 0.556, 0.5, 0.556, 0.5, 0.667, 0.556, 0.667, 0.556, 0.667,
+  0.556, 0.722, 0.5, 0.722, 0.5, 0.722, 0.5, 0.722, 0.5, 0.722,
+  0.615, 0.722, 0.556, 0.667, 0.556, 0.667, 0.556, 0.667, 0.556, 0.667,
+  0.556, 0.667, 0.556, 0.778, 0.556, 0.778, 0.556, 0.778, 0.556, 0.778,
+  0.556, 0.722, 0.556, 0.722, 0.556, 0.278, 0.278, 0.278, 0.278, 0.278,
+  0.278, 0.278, 0.222, 0.278, 0.278, 0.735, 0.444, 0.5, 0.222, 0.667,
+  0.5, 0.5, 0.556, 0.222, 0.556, 0.222, 0.556, 0.292, 0.556, 0.334,
+  0.556, 0.222, 0.722, 0.556, 0.722, 0.556, 0.722, 0.556, 0.604, 0.723,
+  0.556, 0.778, 0.556, 0.778, 0.556, 0.778, 0.556, 1, 0.944, 0.722,
+  0.333, 0.722, 0.333, 0.722, 0.333, 0.667, 0.5, 0.667, 0.5, 0.667,
+  0.5, 0.667, 0.5, 0.611, 0.278, 0.611, 0.375, 0.611, 0.278, 0.722,
+  0.556, 0.722, 0.556, 0.722, 0.556, 0.722, 0.556, 0.722, 0.556, 0.722,
+  0.556, 0.944, 0.722, 0.667, 0.5, 0.667, 0.611, 0.5, 0.611, 0.5,
+  0.611, 0.5, 0.222,
 ];
 
 /**
@@ -155,159 +169,175 @@ const YU_GOTHIC_LATIN_EM = [
  * a Cyrillic name measured twice its ink, the exporter refused to draw it, and
  * the gate confirmed the refusal.
  *
- * Independence here is in the measurement, not in the typing. The first table
- * is re-measured through GDI+ string measurement, a different API from the
- * font metric table the exporter reads, at 200px over 20 repeats: of 533 code
- * points the two APIs disagree about 4, none by more than 0.06 em, and those
- * four are recorded as defects rather than smoothed over. The second table
- * cannot be independent in the same way - the question there is WHICH font the
- * renderer substitutes, not what that font measures - so it is deliberately
- * the same source, and its uncertainty is stated where it is defined.
+ * Independence here is in the measurement, not in the typing. This table is
+ * re-measured through Chromium's own layout, a different engine and a different
+ * API from the font metric table the exporter reads: of 1,380 code points the
+ * two methods disagree about 119, and 115 of those are characters neither font
+ * contains, where the disagreement is over WHICH face substitutes rather than
+ * over what a face measures. Among glyphs the label font itself draws the two
+ * disagree about 4 - one spacing modifier and three Arabic heh forms that
+ * Chromium shapes contextually - and those are recorded as defects rather than
+ * smoothed over. Every one of the 94 ASCII advances agrees exactly.
  */
-const YU_GOTHIC_WIDE_EM: ReadonlyArray<readonly [number, readonly number[]]> = [
-  [0x192, [0.539, 0.728]],
-  [0x1c2, [0.434]],
-  [0x1cd, [0.65, 0.554, 0.298, 0.266, 0.732, 0.559, 0.739, 0.58, 0.739, 0.58, 0.739, 0.58, 0.739, 0.58, 0.739, 0.58]],
-  [0x1f5, [0.547]],
-  [0x1f8, [0.749, 0.58, 0.65, 0.554, 1.012, 0.88, 0.732, 0.559]],
-  [0x218, [0.628, 0.507, 0.626, 0.351]],
-  [0x237, [0.296]],
-  [0x250, [0.554, 0.582, 0.587, 0.576, 0.519, 0.519, 0.577, 0.577, 0.555, 0.555, 0.748, 0.51, 0.51]],
-  [0x25e, [0.57, 0.3, 0.577, 0.577, 0.556, 0.498, 0.488, 0.58, 0.578, 0.578, 0.299]],
-  [0x26a, [0.265]],
-  [0x26c, [0.376, 0.265, 0.605, 0.861, 0.861, 0.861, 0.58, 0.58, 0.583, 0.559, 0.768]],
-  [0x278, [0.604, 0.366, 0.366, 0.366]],
-  [0x27d, [0.366, 0.353]],
-  [0x280, [0.521, 0.521, 0.507, 0.264, 0.3]],
-  [0x288, [0.351, 0.598, 0.559, 0.551, 0.489, 0.774, 0.489, 0.493, 0.455, 0.506, 0.522]],
-  [0x294, [0.502, 0.502]],
-  [0x298, [0.732, 0.546]],
-  [0x29c, [0.586, 0.332]],
-  [0x29f, [0.447]],
-  [0x2a1, [0.502, 0.502]],
-  [0x2a4, [0.925]],
-  [0x2b0, [0.427]],
-  [0x2b2, [0.227]],
-  [0x2b7, [0.539]],
-  [0x2bb, [0.259, 0.259]],
-  [0x2c1, [0.347]],
-  [0x2c6, [0.371, 0.5, 0.213]],
-  [0x2cc, [0.213]],
-  [0x2d0, [0.284, 0.284]],
-  [0x2d8, [0.5, 0.5, 0.5, 0.5, 0.337, 0.5, 0.267]],
-  [0x2e0, [0.345, 0.211]],
-  [0x2e5, [0.401, 0.401, 0.401, 0.401, 0.401]],
-  [0x300, [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5]],
-  [0x30a, [0.5, 0.5, 0.5]],
-  [0x30f, [0.5]],
-  [0x318, [0, 0, 0]],
-  [0x31c, [0, 0, 0, 0, 0]],
-  [0x324, [0, 0]],
-  [0x327, [0.5, 0.5, 0, 0]],
-  [0x32c, [0]],
-  [0x32f, [0, 0]],
-  [0x332, [0.5]],
-  [0x334, [0]],
-  [0x339, [0, 0, 0, 0, 0]],
-  [0x361, [0]],
-  [0x384, [0.273, 0.273, 0.645]],
-  [0x388, [0.57, 0.774, 0.378]],
-  [0x38c, [0.801]],
-  [0x38e, [0.667, 0.826, 0.267, 0.645, 0.573, 0.472, 0.644, 0.506, 0.57, 0.71, 0.754, 0.266, 0.58, 0.629, 0.898, 0.748, 0.51, 0.754, 0.713, 0.56]],
-  [0x3a3, [0.516, 0.524, 0.553, 0.754, 0.59, 0.776, 0.755, 0.266, 0.553, 0.614, 0.438, 0.575, 0.267, 0.553, 0.614, 0.548, 0.519, 0.584, 0.438, 0.442, 0.575, 0.586, 0.267, 0.524, 0.498, 0.577, 0.526, 0.445, 0.586, 0.627, 0.586, 0.46, 0.575, 0.487, 0.553, 0.699, 0.538, 0.75, 0.808, 0.267, 0.553, 0.586, 0.553, 0.808]],
-  [0x3d0, [0.548, 0.591]],
-  [0x3d5, [0.638]],
-  [0x3db, [0.455]],
-  [0x401, [0.506, 0.7, 0.472, 0.617, 0.531, 0.266, 0.266, 0.357, 0.981, 0.983, 0.723, 0.58, 0.749, 0.567, 0.709, 0.645, 0.572, 0.573, 0.472, 0.693, 0.506, 0.867, 0.54, 0.749, 0.749, 0.58, 0.673, 0.898, 0.71, 0.754, 0.713, 0.56, 0.619, 0.524, 0.567, 0.727, 0.59, 0.742, 0.661, 0.949, 0.98, 0.706, 0.783, 0.576, 0.616, 1.019, 0.591, 0.509, 0.579, 0.53, 0.383, 0.547, 0.523, 0.746, 0.446, 0.581, 0.581, 0.497, 0.527, 0.702, 0.577, 0.586, 0.577, 0.588, 0.462, 0.41, 0.484, 0.686, 0.459, 0.6, 0.565, 0.8, 0.824, 0.591, 0.71, 0.504, 0.462, 0.813, 0.503]],
-  [0x451, [0.523, 0.577, 0.383, 0.462, 0.424, 0.242, 0.242, 0.242, 0.79, 0.807, 0.567, 0.497]],
-  [0x45e, [0.484, 0.577]],
-  [0x490, [0.469, 0.391]],
-  [0x9f2, [0.54, 0.596]],
-  [0xe3f, [0.679]],
-  [0x17db, [0.549]],
-  [0x1e3e, [0.919, 0.861]],
-  [0x1e80, [0.93, 0.774, 0.93, 0.774, 0.93, 0.774]],
-  [0x1ebc, [0.618, 0.555]],
-  [0x1ef2, [0.65, 0.489]],
-  [0x1f70, [0.582, 0.582, 0.51, 0.51]],
-  [0x2002, [0.5]],
-  [0x2011, [0.428, 0.5, 0.5]],
-  [0x2018, [0.229, 0.229, 0.229, 0.259, 0.377, 0.377, 0.377, 0.424, 0.375, 0.375, 0.406]],
-  [0x2026, [0.733]],
-  [0x2030, [1.21]],
-  [0x2039, [0.316, 0.316]],
-  [0x203d, [0.527, 0.5, 0.477]],
-  [0x2044, [0.076]],
-  [0x2070, [0.361]],
-  [0x2074, [0.361, 0.361, 0.361, 0.361, 0.361, 0.361]],
-  [0x207f, [0.427, 0.361, 0.361, 0.361, 0.361, 0.361, 0.361, 0.361, 0.361, 0.361, 0.361]],
-  [0x20a0, [0.683, 0.683, 0.683, 0.619, 0.578]],
-  [0x20a6, [0.777, 0.99, 0.895, 0.93, 0.763, 0.578, 0.539]],
-  [0x20ae, [0.626, 0.972, 0.683, 0.74]],
-  [0x20b8, [0.631, 0.589, 0.615]],
-  [0x20e3, [0]],
-  [0x2116, [1.122]],
-  [0x2122, [0.773]],
-  [0x2126, [0.756, 0.756]],
-  [0x212e, [0.832]],
-  [0x2153, [0.798, 0.798, 0.798]],
-  [0x215b, [0.798, 0.798, 0.798, 0.798]],
-  [0x2206, [0.766]],
-  [0x2209, [0.722]],
-  [0x220f, [0.788]],
-  [0x2219, [0.259]],
-  [0x2225, [0.722, 0.722]],
-  [0x223c, [0.704]],
-  [0x2245, [0.722]],
-  [0x2248, [0.722]],
-  [0x2262, [0.722]],
-  [0x2264, [0.722, 0.722]],
-  [0x2276, [0.722, 0.722]],
-  [0x2284, [0.722, 0.722]],
-  [0x228a, [0.722, 0.722]],
-  [0x229e, [0.814]],
-  [0x22da, [0.722, 0.722]],
-  [0x2305, [0.722, 0.722]],
-  [0x2318, [0.924]],
-  [0x2329, [0.5, 0.5]],
-  [0x25ca, [0.632]],
-  [0x2e40, [0.5]],
-  [0xa7b5, [0.583]],
-  [0xab53, [0.524]],
-  [0xfb00, [0.622, 0.538, 0.538, 0.803, 0.803]],
-  [0xff61, [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5]],
-  [0xffe8, [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5]],
+const AUDIT_WIDE_EM: ReadonlyArray<readonly [number, readonly number[]]> = [
+  [0x192, [0.556, 0.778]],
+  [0x1a0, [0.857, 0.656]],
+  [0x1af, [0.854, 0.669]],
+  [0x1c2, [0.584]],
+  [0x1cd, [0.667, 0.556, 0.278, 0.222, 0.778, 0.556, 0.722, 0.556, 0.722, 0.556, 0.722, 0.556, 0.722, 0.556, 0.722, 0.556]],
+  [0x1f5, [0.556]],
+  [0x1f8, [0.722, 0.556, 0.667, 0.556, 1, 0.889, 0.778, 0.611]],
+  [0x218, [0.667, 0.5, 0.611, 0.278]],
+  [0x237, [0.222]],
+  [0x250, [0.556, 0.556, 0.556, 0.556, 0.5, 0.5, 0.556, 0.556, 0.556, 0.556, 0.739, 0.458, 0.458]],
+  [0x25e, [0.507, 0.278, 0.556, 0.556, 0.559, 0.501, 0.617, 0.556, 0.556, 0.556, 0.222]],
+  [0x26a, [0.356]],
+  [0x26c, [0.304, 0.222, 0.572, 0.833, 0.833, 0.833, 0.556, 0.556, 0.553, 0.556, 0.791]],
+  [0x278, [0.55, 0.333, 0.333, 0.333]],
+  [0x27d, [0.333, 0.333]],
+  [0x280, [0.542, 0.542, 0.5, 0.222, 0.26]],
+  [0x288, [0.278, 0.556, 0.568, 0.547, 0.5, 0.722, 0.5, 0.52, 0.5, 0.541, 0.545]],
+  [0x294, [0.5, 0.5]],
+  [0x298, [0.778, 0.531]],
+  [0x29c, [0.552, 0.397]],
+  [0x29f, [0.404]],
+  [0x2a1, [0.5, 0.5]],
+  [0x2a4, [0.906]],
+  [0x2b0, [0.383]],
+  [0x2b2, [0.159]],
+  [0x2b7, [0.481]],
+  [0x2bb, [0.222, 0.222]],
+  [0x2c1, [0.349]],
+  [0x2c6, [0.333, 0.333, 0.333]],
+  [0x2cc, [0.333]],
+  [0x2d0, [0.278, 0.278]],
+  [0x2d8, [0.333, 0.333, 0.333, 0.333, 0.333, 0.333, 0]],
+  [0x2e0, [0.322, 0.157]],
+  [0x2e5, [0.383, 0.383, 0.383, 0.383, 0.383]],
+  [0x384, [0.333, 0.333, 0.667]],
+  [0x388, [0.784, 0.838, 0.384]],
+  [0x38c, [0.774]],
+  [0x38e, [0.855, 0.752, 0.222, 0.667, 0.667, 0.551, 0.668, 0.667, 0.611, 0.722, 0.778, 0.278, 0.667, 0.668, 0.833, 0.722, 0.65, 0.778, 0.722, 0.667]],
+  [0x3a3, [0.618, 0.611, 0.667, 0.798, 0.667, 0.835, 0.748, 0.278, 0.667, 0.578, 0.446, 0.556, 0.222, 0.547, 0.578, 0.575, 0.5, 0.557, 0.446, 0.441, 0.556, 0.556, 0.222, 0.5, 0.5, 0.576, 0.5, 0.448, 0.556, 0.69, 0.569, 0.482, 0.617, 0.395, 0.547, 0.648, 0.525, 0.713, 0.781, 0.222, 0.547, 0.556, 0.547, 0.781]],
+  [0x3d0, [0.575, 0.547]],
+  [0x3d5, [0.56]],
+  [0x3db, [0.5]],
+  [0x401, [0.667, 0.865, 0.542, 0.719, 0.667, 0.278, 0.278, 0.5, 1.057, 1.01, 0.854, 0.583, 0.719, 0.635, 0.719, 0.667, 0.656, 0.667, 0.542, 0.677, 0.667, 0.923, 0.604, 0.719, 0.719, 0.583, 0.656, 0.833, 0.722, 0.778, 0.719, 0.667, 0.722, 0.611, 0.635, 0.76, 0.667, 0.74, 0.667, 0.917, 0.938, 0.792, 0.885, 0.656, 0.719, 1.01, 0.722, 0.556, 0.573, 0.531, 0.365, 0.583, 0.556, 0.669, 0.458, 0.559, 0.559, 0.438, 0.583, 0.688, 0.552, 0.556, 0.542, 0.556, 0.5, 0.458, 0.5, 0.823, 0.5, 0.573, 0.521, 0.802, 0.823, 0.625, 0.719, 0.521, 0.51, 0.75, 0.542]],
+  [0x451, [0.556, 0.556, 0.365, 0.51, 0.5, 0.222, 0.278, 0.222, 0.906, 0.813, 0.556, 0.438]],
+  [0x45e, [0.5, 0.552]],
+  [0x490, [0.489, 0.411]],
+  [0x5be, [0.383]],
+  [0x5c0, [0.275]],
+  [0x5c3, [0.278]],
+  [0x5c6, [0.353]],
+  [0x5d0, [0.563, 0.542, 0.399, 0.508, 0.602, 0.247, 0.382, 0.599, 0.59, 0.247, 0.509, 0.461, 0.463, 0.599, 0.601, 0.247, 0.353, 0.574, 0.529, 0.566, 0.546, 0.461, 0.479, 0.55, 0.509, 0.694, 0.643]],
+  [0x5ef, [0.493, 0.493, 0.493, 0.493, 0.236, 0.417]],
+  [0x600, [0.936, 1.3, 0.439, 1.273, 1.3, 0, 0.616, 0.616, 0.755, 0.604, 0.736, 0.263, 0.319, 0.239, 0.657, 0.544]],
+  [0x61b, [0.319, 0, 0.562, 0.289, 0.356, 0.638, 0.413, 0.207, 0.207, 0.432, 0.207, 0.638, 0.207, 0.713, 0.282, 0.713, 0.713, 0.563, 0.563, 0.563, 0.337, 0.337, 0.489, 0.489, 0.821, 0.821, 1.098, 1.098, 0.582, 0.582, 0.544, 0.544, 0.812, 0.812, 0.638, 0.638, 0.638, 0.207]],
+  [0x642, [0.582, 0.601, 0.506, 0.338, 0.526, 0.282, 0.432, 0.638, 0.638]],
+  [0x660, [0.526, 0.526, 0.526, 0.526, 0.526, 0.526, 0.526, 0.526, 0.526, 0.526, 0.526, 0.319, 0.319, 0.526, 0.713, 0.582]],
+  [0x671, [0.207, 0.207, 0.207, 0, 0.207, 0.432, 0.432, 0.638, 0.713, 0.713, 0.713, 0.713, 0.713, 0.713, 0.713, 0.713, 0.563, 0.563, 0.563, 0.563, 0.563, 0.563, 0.563, 0.337, 0.337, 0.337, 0.337, 0.337, 0.337, 0.337, 0.337, 0.337, 0.489, 0.489, 0.489, 0.489, 0.489, 0.489, 0.489, 0.489, 0.489, 0.821, 0.821, 0.821, 1.098, 1.098, 0.582, 0.544]],
+  [0x6a7, [0.582, 0.582, 0.812, 1.155, 0.812, 0.601, 0.601, 0.601, 0.812, 0.812, 0.812, 0.812, 0.812, 0.812, 0.506, 0.506, 0.506, 0.506, 0.526, 0.526, 0.526, 0.526, 0.526, 0.45, 0.563, 0.282, 0.282, 0.282, 0.282, 0.432, 0.432, 0.432, 0.432, 0.432, 0.432, 0.432, 0.432, 0.638, 0.638, 0.638, 0.432, 0.638, 0.638, 0.812, 0.812, 0.207, 0.282]],
+  [0x6dd, [1.123, 1.084]],
+  [0x6e5, [0.194, 0.37]],
+  [0x6e9, [0.6]],
+  [0x6ee, [0.337, 0.489, 0.526, 0.526, 0.526, 0.526, 0.526, 0.526, 0.526, 0.526, 0.526, 0.526, 0.821, 1.098, 0.544, 0.413, 0.338, 0.45]],
+  [0x1e00, [0.667, 0.556, 0.667, 0.556, 0.667, 0.556, 0.667, 0.556, 0.722, 0.5, 0.722, 0.556, 0.722, 0.556, 0.722, 0.556, 0.722, 0.556, 0.722, 0.556, 0.667, 0.556, 0.667, 0.556, 0.667, 0.556, 0.667, 0.556, 0.667, 0.556, 0.611, 0.278, 0.778, 0.556, 0.722, 0.556, 0.722, 0.556, 0.722, 0.556, 0.722, 0.556, 0.722, 0.556, 0.278, 0.222, 0.278, 0.278, 0.667, 0.5, 0.667, 0.5, 0.667, 0.5, 0.556, 0.222, 0.556, 0.222, 0.556, 0.222, 0.556, 0.222, 0.833, 0.833, 0.833, 0.833, 0.833, 0.833, 0.722, 0.556, 0.722, 0.556, 0.722, 0.556, 0.722, 0.556, 0.778, 0.556, 0.778, 0.556, 0.778, 0.556, 0.778, 0.556, 0.667, 0.556, 0.667, 0.556, 0.722, 0.333, 0.722, 0.333, 0.722, 0.333, 0.722, 0.333, 0.667, 0.5, 0.667, 0.5, 0.667, 0.5, 0.667, 0.5, 0.667, 0.5, 0.611, 0.278, 0.611, 0.278, 0.611, 0.278, 0.611, 0.278, 0.722, 0.556, 0.722, 0.556, 0.722, 0.556, 0.722, 0.556, 0.722, 0.556, 0.667, 0.5, 0.667, 0.5, 0.944, 0.722, 0.944, 0.722, 0.944, 0.722, 0.944, 0.722, 0.944, 0.722, 0.667, 0.5, 0.667, 0.5, 0.667, 0.5, 0.611, 0.5, 0.611, 0.5, 0.611, 0.5, 0.556, 0.278, 0.722, 0.5, 0.556, 0.222, 0.278, 0.278, 0.703, 0.557, 0.667, 0.556, 0.667, 0.556, 0.667, 0.556, 0.667, 0.556, 0.667, 0.556, 0.667, 0.556, 0.667, 0.556, 0.667, 0.556, 0.667, 0.556, 0.667, 0.556, 0.667, 0.556, 0.667, 0.556, 0.667, 0.556, 0.667, 0.556, 0.667, 0.556, 0.667, 0.556, 0.667, 0.556, 0.667, 0.556, 0.667, 0.556, 0.667, 0.556, 0.278, 0.222, 0.278, 0.222, 0.778, 0.556, 0.778, 0.556, 0.778, 0.556, 0.778, 0.556, 0.778, 0.556, 0.778, 0.556, 0.778, 0.556, 0.857, 0.656, 0.857, 0.656, 0.857, 0.656, 0.857, 0.656, 0.857, 0.656, 0.722, 0.556, 0.722, 0.556, 0.854, 0.669, 0.854, 0.669, 0.854, 0.669, 0.854, 0.669, 0.854, 0.669, 0.667, 0.5, 0.667, 0.5, 0.667, 0.5, 0.667, 0.5, 0.767, 0.398, 0.591, 0.557, 0.668, 0.576]],
+  [0x1f70, [0.578, 0.578, 0.446, 0.446]],
+  [0x2012, [0.556, 0.556, 1]],
+  [0x2018, [0.222, 0.222, 0.222, 0.222, 0.333, 0.333, 0.333, 0.333, 0.556, 0.556, 0.35]],
+  [0x2026, [1]],
+  [0x2030, [1]],
+  [0x2039, [0.333, 0.333]],
+  [0x203d, [0.556, 0.333]],
+  [0x2044, [0.167]],
+  [0x2070, [0.333]],
+  [0x2074, [0.333, 0.333, 0.333, 0.333, 0.333, 0.333]],
+  [0x207f, [0.365]],
+  [0x20a0, [0.556, 0.722, 0.722, 0.556, 0.556]],
+  [0x20a6, [0.722, 1.094, 1.164, 0.944, 0.815, 0.513, 0.556]],
+  [0x20ae, [0.611, 1, 0.521, 0.667]],
+  [0x20b8, [0.611, 0.556, 0.556]],
+  [0x2116, [1.073]],
+  [0x2122, [1]],
+  [0x2126, [0.768]],
+  [0x212e, [0.6]],
+  [0x2153, [0.834, 0.834]],
+  [0x215b, [0.834, 0.834, 0.834, 0.834]],
+  [0x2190, [1]],
+  [0x2192, [1]],
+  [0x2194, [1]],
+  [0x2206, [0.612]],
+  [0x220f, [0.823]],
+  [0x2212, [0.584]],
+  [0x2219, [0.278]],
+  [0x2248, [0.549]],
+  [0x2264, [0.549, 0.549]],
+  [0x25ca, [0.494]],
+  [0xa7b5, [0.575]],
+  [0xab53, [0.525]],
+  [0xfb00, [0.534, 0.5, 0.5, 0.753, 0.753]],
 ];
 
-const YU_GOTHIC_FALLBACK_EM: ReadonlyArray<readonly [number, readonly number[]]> = [
-  // Latin Extended-B's two horn vowels, the one Latin gap in the dump. Read
-  // off this table's own toned forms at 0x1ee8 and 0x1eda rather than measured
-  // afresh, because a tone mark adds no advance and `ư` must not be priced
-  // differently from `ứ`. See the twin note in `diagramExportGeometry.ts`.
-  //
-  // Devanagari is the sharp edge of what this table does NOT cover. Only the
-  // digits at 0x966 are here; every consonant falls back to a flat 1.0 em -
-  // and so does the exporter's table, from its own identical gap. So on an
-  // Indic name the divergence rule is not merely silent, the two models AGREE
-  // ON A GUESS, which is the one failure this file's whole two-model design
-  // was meant to make impossible. Only the coverage rule stands between that
-  // and a whole script, and the coverage rule reports rather than blocks.
-  [0x1a0, [0.763, 0.597]],
-  [0x1af, [0.708, 0.588]],
-  [0x591, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0.4, 0, 0.202, 0, 0, 0.217, 0, 0, 0.399, 0]],
-  [0x5d0, [0.637, 0.57, 0.439, 0.481, 0.678, 0.268, 0.337, 0.674, 0.681, 0.268, 0.559, 0.545, 0.551, 0.694, 0.674, 0.268, 0.399, 0.676, 0.605, 0.611, 0.631, 0.565, 0.585, 0.664, 0.559, 0.785, 0.726]],
-  [0x5ef, [0.542, 0.522, 0.522, 0.522, 0.229, 0.377]],
-  [0x600, [1.227, 0.832, 0.531, 1.522, 1.55, 0, 0.668, 0.668, 0.918, 0.751, 0.918, 0.585, 0.251, 0.334, 1.085, 0.585, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0.251, 0.917, 0.61, 0.501, 0.501, 0.751, 0.417, 0.251, 0.251, 0.501, 0.251, 0.751, 0.251, 0.918, 0.501, 0.918, 0.918, 0.585, 0.585, 0.585, 0.501, 0.501, 0.417, 0.417, 1.169, 1.169, 1.336, 1.336, 0.835, 0.835, 0.501, 0.501, 0.918, 0.918, 0.751, 0.751, 0.751, 0.167]],
-  [0x642, [0.751, 0.835, 0.668, 0.585, 0.668, 0.501, 0.501, 0.751, 0.751, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0.417, 0.251, 0.501, 0.585, 0.417, 0.501, 0.501, 0.585, 0.585, 0.501, 0.585, 0.251, 0.251, 0.389, 0.918, 0.751, 0, 0.251, 0.251, 0.251, 0.251, 0.417, 0.501, 0.501, 0.751, 0.918, 0.918, 0.918, 0.918, 0.918, 0.918, 0.918, 0.918, 0.585, 0.585, 0.585, 0.585, 0.585, 0.585, 0.585, 0.501, 0.501, 0.501, 0.501, 0.501, 0.501, 0.501, 0.501, 0.501, 0.417, 0.417, 0.417, 0.417, 0.501, 0.417, 0.417, 0.417, 0.417, 1.169, 1.169, 1.169, 1.336, 1.336, 0.835, 0.501]],
-  [0x6a7, [0.751, 0.751, 0.918, 1.085, 0.918, 0.835, 0.835, 0.835, 0.918, 0.918, 0.918, 0.918, 0.918, 0.918, 0.668, 0.668, 0.668, 0.668, 0.668, 0.668, 0.668, 0.668, 0.668, 0.751, 0.543, 0.501, 0.501, 0.501, 0.501, 0.501, 0.501, 0.501, 0.501, 0.501, 0.501, 0.501, 0.501, 0.751, 0.835, 0.751, 0.501, 0.751, 0.751, 0.918, 0.918, 0.251, 0.501, 0, 0, 0, 0, 0, 0, 0, 1.123, 1.085, 0, 0, 0, 0, 0, 0, 0.251, 0.417, 0, 0, 0.6, 0, 0, 0, 0, 0.501, 0.417, 0.417, 0.251, 0.501, 0.585, 0.501, 0.585, 0.501, 0.585, 0.585, 0.501, 1.169, 1.336, 0.501, 0.417, 0.585, 0.751]],
+const AUDIT_FALLBACK_EM: ReadonlyArray<readonly [number, readonly number[]]> = [
+  // drawn by Segoe UI
   [0x966, [0.519, 0.461, 0.547, 0.524, 0.588, 0.61, 0.613, 0.656, 0.58, 0.566]],
-  [0xe01, [0.574, 0.603, 0.615, 0.575, 0.575, 0.619, 0.388, 0.509, 0.619, 0.601, 0.608, 0.831, 0.825, 0.598, 0.598, 0.487, 0.679, 0.849, 0.892, 0.575, 0.575, 0.574, 0.59, 0.51, 0.594, 0.569, 0.569, 0.598, 0.598, 0.667, 0.667, 0.598, 0.561, 0.524, 0.429, 0.574, 0.539, 0.598, 0.455, 0.576, 0.59, 0.539, 0.589, 0.669, 0.528, 0.538, 0.505, 0.342, 0, 0.455, 0.455, 0, 0, 0, 0, 0, 0, 0]],
-  [0xe40, [0.266, 0.483, 0.409, 0.391, 0.399, 0.455, 0.444, 0, 0, 0, 0, 0, 0, 0, 0, 0.541, 0.71, 0.768, 0.783, 0.745, 0.725, 0.725, 0.645, 0.881, 0.765, 0.827, 0.646, 0.89]],
-  [0x1e00, [0.645, 0.509, 0.573, 0.588, 0.573, 0.588, 0.573, 0.588, 0.619, 0.462, 0.701, 0.589, 0.701, 0.589, 0.701, 0.589, 0.701, 0.589, 0.701, 0.589, 0.506, 0.523, 0.506, 0.523, 0.506, 0.523, 0.506, 0.523, 0.506, 0.523, 0.488, 0.313, 0.686, 0.589, 0.71, 0.566, 0.71, 0.566, 0.71, 0.566, 0.71, 0.566, 0.71, 0.566, 0.266, 0.242, 0.266, 0.242, 0.58, 0.497, 0.58, 0.497, 0.58, 0.497, 0.471, 0.242, 0.471, 0.242, 0.471, 0.242, 0.471, 0.242]],
-  [0x1e40, [0.898, 0.861, 0.898, 0.861, 0.748, 0.566, 0.748, 0.566, 0.748, 0.566, 0.748, 0.566, 0.754, 0.586, 0.754, 0.586, 0.754, 0.586, 0.754, 0.586, 0.56, 0.588, 0.56, 0.588, 0.598, 0.348, 0.598, 0.348, 0.598, 0.348, 0.598, 0.348, 0.531, 0.424, 0.531, 0.424, 0.531, 0.424, 0.531, 0.424, 0.531, 0.424, 0.524, 0.339, 0.524, 0.339, 0.524, 0.339, 0.524, 0.339, 0.687, 0.566, 0.687, 0.566, 0.687, 0.566, 0.687, 0.566, 0.687, 0.566, 0.621, 0.479, 0.621, 0.479]],
-  [0x1e86, [0.934, 0.723, 0.934, 0.723, 0.59, 0.459, 0.59, 0.459, 0.553, 0.484, 0.57, 0.452, 0.57, 0.452, 0.57, 0.452, 0.566, 0.339, 0.723, 0.484, 0.509, 0.241, 0.313, 0.313, 0.62, 0.584, 0.645, 0.509, 0.645, 0.509, 0.645, 0.509, 0.645, 0.509, 0.645, 0.509, 0.645, 0.509, 0.645, 0.509, 0.645, 0.509, 0.645, 0.509, 0.645, 0.509, 0.645, 0.509, 0.645, 0.509, 0.506, 0.523, 0.506, 0.523]],
-  [0x1ebe, [0.506, 0.523, 0.506, 0.523, 0.506, 0.523, 0.506, 0.523, 0.506, 0.523, 0.266, 0.242, 0.266, 0.242, 0.754, 0.586, 0.754, 0.586, 0.754, 0.586, 0.754, 0.586, 0.754, 0.586, 0.754, 0.586, 0.754, 0.586, 0.763, 0.597, 0.763, 0.597, 0.763, 0.597, 0.763, 0.597, 0.763, 0.597, 0.687, 0.566, 0.687, 0.566, 0.708, 0.588, 0.708, 0.588, 0.708, 0.588, 0.708, 0.588, 0.708, 0.588]],
-  [0x1ef4, [0.553, 0.484, 0.553, 0.484, 0.553, 0.484, 0.646, 0.408, 0.6, 0.516, 0.579, 0.484]],
+  // drawn by Segoe UI
+  [0x9f2, [0.601, 0.393]],
+  // drawn by Leelawadee UI
+  [0xe01, [0.574, 0.603, 0.615, 0.575, 0.575, 0.619, 0.388, 0.509, 0.619, 0.601, 0.608, 0.831, 0.825, 0.598, 0.598, 0.487, 0.679, 0.849, 0.892, 0.575, 0.575, 0.574, 0.59, 0.51, 0.594, 0.569, 0.569, 0.598, 0.598, 0.667, 0.667, 0.598, 0.561, 0.524, 0.429, 0.574, 0.539, 0.598, 0.455, 0.576, 0.59, 0.539, 0.589, 0.669, 0.528, 0.538, 0.505, 0.342]],
+  // drawn by Leelawadee UI
+  [0xe32, [0.455, 0.455]],
+  // drawn by Segoe UI / Leelawadee UI
+  [0xe3f, [0.54, 0.266, 0.483, 0.409, 0.391, 0.399, 0.455, 0.444]],
+  // drawn by Leelawadee UI / Segoe UI
+  [0xe4f, [0.541, 0.709, 0.768, 0.783, 0.745, 0.725, 0.725, 0.645, 0.881, 0.765, 0.827, 0.646, 0.89]],
+  // drawn by Segoe UI
+  [0x17db, [0.44]],
+  // drawn by Segoe UI
+  [0x2011, [0.4]],
+  // drawn by Yu Gothic UI
+  [0x203f, [0.477]],
+  // drawn by Segoe UI
+  [0x2080, [0.366, 0.351, 0.366, 0.366, 0.351, 0.366, 0.366, 0.366, 0.366, 0.366]],
+  // drawn by Yu Gothic UI
+  [0x2127, [0.756]],
+  // drawn by Segoe UI
+  [0x2155, [0.883]],
+  // drawn by Yu Gothic UI
+  [0x21d2, [1]],
+  // drawn by Yu Gothic UI
+  [0x2209, [0.722]],
+  // drawn by Yu Gothic UI
+  [0x2225, [0.722, 0.722]],
+  // drawn by Yu Gothic UI
+  [0x223c, [0.704]],
+  // drawn by Yu Gothic UI
+  [0x2245, [0.722]],
+  // drawn by Yu Gothic UI
+  [0x2262, [0.722]],
+  // drawn by Yu Gothic UI
+  [0x2276, [0.722, 0.722]],
+  // drawn by Yu Gothic UI
+  [0x2284, [0.722, 0.722]],
+  // drawn by Yu Gothic UI
+  [0x228a, [0.722, 0.722]],
+  // drawn by Yu Gothic UI
+  [0x229e, [0.814]],
+  // drawn by Yu Gothic UI
+  [0x22da, [0.722, 0.722]],
+  // drawn by Yu Gothic UI
+  [0x2305, [0.722, 0.722]],
+  // drawn by Yu Gothic UI
+  [0x2318, [0.924]],
+  // drawn by Yu Gothic UI
+  [0x2329, [0.5, 0.5]],
+  // drawn by Yu Gothic UI
+  [0x2e40, [0.5]],
+  // drawn by Yu Gothic UI
+  [0xff61, [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5]],
+  // drawn by Yu Gothic UI
+  [0xffe8, [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5]],
 ];
 
 /**
@@ -358,24 +388,24 @@ function unescapeXml(text: string): string {
  * The Unicode spaces, in em. See the exporter's copy: the generator's
  * "skip anything already one em" filter is right for a glyph and wrong for
  * whitespace, whose fallback is the plain space width, so it dropped U+2003 and
- * U+3000 and left them charged 0.274 against a true 1.0.
+ * U+3000 and left them charged 0.278 against a true 1.0.
  */
-const YU_GOTHIC_SPACE_WIDE_EM: ReadonlyArray<readonly [number, number]> = [
+const AUDIT_SPACE_WIDE_EM: ReadonlyArray<readonly [number, number]> = [
   [0x2000, 0.5], [0x2001, 1], [0x2002, 0.5], [0x2003, 1],
   [0x2004, 1 / 3], [0x2005, 0.25], [0x2006, 1 / 6],
-  [0x2007, YU_GOTHIC_ADVANCE_EM['0'.charCodeAt(0) - 33]],
-  [0x2008, YU_GOTHIC_ADVANCE_EM['.'.charCodeAt(0) - 33]],
-  [0x2009, 0.2], [0x200a, 0.1], [0x202f, 0.2], [0x205f, 4 / 18], [0x3000, 1],
+  [0x2007, AUDIT_ADVANCE_EM['0'.charCodeAt(0) - 33]],
+  [0x2008, AUDIT_ADVANCE_EM['.'.charCodeAt(0) - 33]],
+  [0x2009, 0.2], [0x200a, 0.083], [0x202f, 0.2], [0x205f, 4 / 18], [0x3000, 1],
 ];
 
 const AUDIT_MEASURED_EM: ReadonlyMap<number, number> = (() => {
   const table = new Map<number, number>();
-  for (const source of [YU_GOTHIC_WIDE_EM, YU_GOTHIC_FALLBACK_EM]) {
+  for (const source of [AUDIT_WIDE_EM, AUDIT_FALLBACK_EM]) {
     for (const [start, values] of source) {
       values.forEach((value, offset) => table.set(start + offset, value));
     }
   }
-  for (const [code, value] of YU_GOTHIC_SPACE_WIDE_EM) table.set(code, value);
+  for (const [code, value] of AUDIT_SPACE_WIDE_EM) table.set(code, value);
   return table;
 })();
 
@@ -486,8 +516,12 @@ function auditClusters(text: string): Array<{ text: string; em: number; measured
 function hasAuditAdvance(character: string): boolean {
   if (/\s/.test(character)) return true;
   if (/[\u200b-\u200f\u2060\ufe00-\ufe0f\ufeff]/.test(character)) return true;
+  // Priced by rule rather than guessed: a non-spacing mark advances 0 in any
+  // font that is not broken, whatever script it belongs to and whether or not
+  // the table below happens to list it.
+  if (AUDIT_COMBINING_RE.test(character)) return true;
   if (/[\u2e80-\u9fff\uac00-\ud7af\uff00-\uff60\uffe0-\uffe6]/.test(character)) return true;
-  if (YU_GOTHIC_EXTRA_EM[character] !== undefined) return true;
+  if (AUDIT_EXTRA_EM[character] !== undefined) return true;
   const code = character.codePointAt(0) ?? 0;
   if (code >= AUDIT_ASTRAL_CJK_MIN && code <= AUDIT_ASTRAL_CJK_MAX) return true;
   if (AUDIT_EMOJI_RE.test(character)) return true;
@@ -506,6 +540,29 @@ function hasAuditAdvance(character: string): boolean {
  * font rather than by the label font, so no measurement of the label font can
  * settle them. 1.373 em is the widest glyph in the font Windows substitutes,
  * charged on purpose: a rule may safely over-reserve, never under-reserve.
+ *
+ * A NON-SPACING MARK IS NOT AN UNKNOWN CHARACTER, and the "guess a full em"
+ * default is not licensed to price one. `auditClusters` already skips Mn/Me,
+ * so the token-level width was mark-free while the per-character walk this
+ * function feeds - the one `auditLineWidths` switches to for any token wider
+ * than its column - charged every mark a full em. The two halves of ONE oracle
+ * priced the same character two ways, and only the harsher half ran on exactly
+ * the strings that overflow.
+ *
+ * Thai is where it surfaced, because Thai spells an ordinary word with marks
+ * and never puts a space in it: "เครือข่ายเสมือน" is one token with three
+ * non-spacing marks, so the intra-token walk charged 3 em it does not have.
+ * The gate then reported the deck's own correct 3-line fit as 5 lines
+ * overflowing its band, and blamed the exporter for arithmetic the exporter
+ * had got right. Every Indic, Hebrew, Arabic and decomposed-Latin name in a
+ * narrow column was mispriced the same way; Thai merely had no space in it to
+ * hide behind.
+ *
+ * Nor is charging high safe here. Over-reserving is the safe direction for a
+ * LAYOUT decision, which can only cost a name that would have fitted; this is
+ * a GATE, where over-reserving manufactures failures against correct output
+ * and buries the real ones. And zero is not a guess: a mark with a non-zero
+ * advance is a broken font, not a case to hedge against.
  */
 function measuredAdvanceEm(character: string): number {
   const code = character.codePointAt(0) ?? 0;
@@ -515,16 +572,17 @@ function measuredAdvanceEm(character: string): number {
   // order mark a full space. A BOM is what a UTF-8 file pasted into a name
   // brings with it, it is invisible on the slide, and it was buying width.
   if (/[\u200b-\u200f\u2060\ufe00-\ufe0f\ufeff]/.test(character)) return 0;
+  if (AUDIT_COMBINING_RE.test(character)) return 0;
   if (/\s/.test(character)) return AUDIT_MEASURED_EM.get(code) ?? AUDIT_SPACE_EM;
   if (/[\u2e80-\u9fff\uac00-\ud7af\uff00-\uff60\uffe0-\uffe6]/.test(character)) return 1;
-  const extra = YU_GOTHIC_EXTRA_EM[character];
+  const extra = AUDIT_EXTRA_EM[character];
   if (extra !== undefined) return extra;
   if (code >= AUDIT_ASTRAL_CJK_MIN && code <= AUDIT_ASTRAL_CJK_MAX) return 1;
   if (code >= 0x10000) return 1.373;
-  if (code >= 0xa1 && code <= 0x17f) return YU_GOTHIC_LATIN_EM[code - 0xa1];
+  if (code >= 0xa1 && code <= 0x17f) return AUDIT_LATIN_EM[code - 0xa1];
   const measured = AUDIT_MEASURED_EM.get(code);
   if (measured !== undefined) return measured;
-  return code >= 33 && code <= 126 ? YU_GOTHIC_ADVANCE_EM[code - 33] : 1;
+  return code >= 33 && code <= 126 ? AUDIT_ADVANCE_EM[code - 33] : 1;
 }
 
 /** The width of the whitespace `text` ends with, in inches. */
@@ -634,9 +692,9 @@ function measuredWrappedLines(text: string, widthIn: number, fontSizePt: number)
  * with the bug.
  *
  * That independence was bought with a flat 0.54 em per non-CJK character, and
- * the price turned out to be accuracy: 0.54 is Yu Gothic UI's average LOWERCASE
- * advance, so it over-states `i` (0.242 measured) by more than a factor of two,
- * under-states `W` (0.934) by 42%, and charges a full 0.54 for a space that
+ * the price turned out to be accuracy: 0.54 is an average LOWERCASE advance,
+ * so it over-states `i` (0.222 measured) by well over a factor of two,
+ * under-states `W` (0.944) by 43%, and charges a full 0.54 for a space that
  * advances 0. Rules built on it reported 770 phantom overlaps and 142 phantom
  * short labels the moment the exporters started measuring for real.
  *
@@ -7124,21 +7182,52 @@ async function auditCustomerDeck(scenario: Scenario): Promise<string[]> {
       }
     }
   }
-  // Every measurement in this file assumes CJK draws at one em. That holds for
-  // Yu Gothic UI and not for the Calibri the theme's minor font falls back to,
-  // whose `ea` is empty — so a run that reached the file without an explicit
-  // East Asian typeface would be measured 60% too wide and every fit above it
-  // would be quietly wrong in the unsafe direction. pptxgenjs writes `<a:ea>`
-  // alongside every `<a:latin>` today, but that is its behaviour, not a
-  // guarantee, so pin it rather than depend on it.
+  // Every measurement in this file assumes CJK draws at one em and Latin draws
+  // at the Arial advances tabled at the top. Neither holds for the Calibri the
+  // theme's minor font falls back to, whose `ea` is empty — so a run that
+  // reached the file without explicit typefaces would be measured up to 60% too
+  // wide and every fit above it would be quietly wrong in the unsafe direction.
+  // pptxgenjs writes `<a:ea>` alongside every `<a:latin>` today, but that is its
+  // behaviour, not a guarantee, so pin it rather than depend on it.
+  //
+  // The NAMES are pinned too, and separately. A deck that declares a typeface
+  // this file has not measured is not a deck this file can make any claim
+  // about: the previous build named `Segoe UI` in the Visio face table while
+  // pricing every string with a different font's widths, and nothing caught it
+  // because only the presence of the tag was ever checked.
   {
-    const latin = slides.reduce((n, xml) => n + (xml.match(/<a:latin\b/g) ?? []).length, 0);
-    const ea = slides.reduce((n, xml) => n + (xml.match(/<a:ea\b/g) ?? []).length, 0);
-    if (ea < latin) {
+    const latinTags = slides.flatMap((xml) => xml.match(/<a:latin[^>]*>/g) ?? []);
+    const eaTags = slides.flatMap((xml) => xml.match(/<a:ea[^>]*>/g) ?? []);
+    if (eaTags.length < latinTags.length) {
       issues.push(
-        `customer deck: ${latin - ea} run(s) declare a Latin typeface with no East Asian `
+        `customer deck: ${latinTags.length - eaTags.length} run(s) declare a Latin typeface with no East Asian `
         + 'typeface, so CJK falls through to the theme font and is measured wrong',
       );
+    }
+    const named = (tags: string[]): string[] => {
+      const out = new Set<string>();
+      for (const tag of tags) out.add(unescapeXml(/typeface="([^"]*)"/.exec(tag)?.[1] ?? ''));
+      return [...out];
+    };
+    // The Latin name is read from the AUTHORED slides and the East Asian name
+    // from the DELIVERED ones, because they are settled at different moments.
+    // pptxgenjs copies one `fontFace` into all three script slots, so `<a:ea>`
+    // says "Arial" until `nativizePackage` repairs it; asserting on the
+    // authored copy would be asserting the bug, and asserting only on the
+    // delivered copy would let the repair cover for an exporter that had
+    // stopped naming a font at all.
+    const deliveredEa = (await slideXmls(deliveredZip)).flatMap((xml) => xml.match(/<a:ea[^>]*>/g) ?? []);
+    for (const [slot, tags, want] of [
+      ['latin', latinTags, AUDIT_LATIN_FONT] as const,
+      ['ea', deliveredEa, AUDIT_EA_FONT] as const,
+    ]) {
+      const wrong = named(tags).filter((name) => name !== want);
+      if (wrong.length > 0) {
+        issues.push(
+          `customer deck: <a:${slot}> declares ${wrong.map((n) => `"${n}"`).join(', ')} `
+          + `but every width in this gate is measured from "${want}"`,
+        );
+      }
     }
   }
 
@@ -7192,7 +7281,10 @@ async function pptxBuffers(pptx: {
   write(opts: { outputType: 'nodebuffer' }): Promise<unknown>;
 }, vectorIcons?: Map<string, string>): Promise<{ authored: Buffer; delivered: Buffer }> {
   const authored = (await pptx.write({ outputType: 'nodebuffer' })) as Buffer;
-  const zip = await nativizePackage(await JSZip.loadAsync(authored));
+  const zip = await nativizePackage(await JSZip.loadAsync(authored), {
+    latin: AUDIT_LATIN_FONT,
+    ea: AUDIT_EA_FONT,
+  });
   // The download path attaches vector icons here too. Leaving it out made the
   // "delivered" file this harness measures stop being the file the user
   // actually receives, which is the one thing this harness exists to prevent.
@@ -7880,7 +7972,7 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
     // A box narrower than the widest glyph cannot set that glyph at all; a box
     // that holds fewer than two of the string's TYPICAL characters spells it
     // one letter per line. The old form asked only `w >= 2 * widest`, which
-    // lets a single `m` at 0.861 em speak for a string whose mean is 0.55 -
+    // lets a single `m` at 0.833 em speak for a string whose mean is 0.55 -
     // and that made this rule report a name the exporter was right to draw,
     // in a column setting 2.8 characters a line.
     const widest = measuredWidestGlyphIn(label.text, font);
@@ -7903,11 +7995,14 @@ async function auditPptx(scenario: Scenario): Promise<Report> {
         + `${(label.w / Math.max(mean, 1e-9)).toFixed(2)} typical characters fit`,
       );
     }
-    // 1.35, matching every other line-height in this file and in the exporter:
-    // `Yu Gothic UI`'s own hhea and OS/2 win metrics give 1.3301. 1.25 was 6%
-    // optimistic and the tile path was reserving at 1.22, 8% optimistic, and
-    // both errors were invisible while the two sides shared a width model that
-    // over-counted lines by more than the shortfall.
+    // 1.35, matching every other line-height in this file and in the exporter.
+    // A line takes the height of the TALLER font on it, so the bound has to be
+    // the CJK face: `Yu Gothic UI` states 1.3301 for both hhea and OS/2 win,
+    // where `Arial` states 1.1499 and 1.1172. 1.25 was 6% optimistic against
+    // the binding face and the tile path was reserving at 1.22, 8% optimistic,
+    // and both errors were invisible while the two sides shared a width model
+    // that over-counted lines by more than the shortfall. Moving the Latin face
+    // to Arial only made 1.35 more conservative, never less.
     const lineHeight = (font * 1.35) / 72;
     // Counted by WRAPPING the string, not by dividing its total ink by the
     // column. `ceil(width / w)` is the break-anywhere assumption: it says how
@@ -12622,7 +12717,13 @@ const GOLDEN: Record<string, Golden> = {
   'probe-whitespace': { minTileIn: 0.195, named: 6, slides: 6 },
   'probe-panel-burial': { minTileIn: 0.417, named: 48, slides: 5 },
   'probe-brief-steps': { minTileIn: 0.938, named: 13, slides: 2 },
-  'probe-long-index': { minTileIn: 0.095, named: 6, slides: 4 },
+  // 6 -> 5: the 14px sliver (0.166in tile, 0.106in column) draws nothing now.
+  // Its name is elided, so the widest glyph in the drawn string is the ellipsis
+  // — 0.733 em in Yu Gothic UI and a FULL EM in Arial — and the stub rule needs
+  // room for two of it. The column holds one glyph per line either way; Arial
+  // merely made that arithmetic visible. The full name is on the index slide,
+  // which is where a cut tile name has always been recoverable.
+  'probe-long-index': { minTileIn: 0.095, named: 5, slides: 4 },
   'probe-overlong-index': { minTileIn: 0.271, named: 6, slides: 2 },
   'probe-shrinkable-index': { minTileIn: 0.271, named: 6, slides: 2 },
   'probe-mixed-index': { minTileIn: 0.271, named: 45, slides: 7 },
@@ -12653,7 +12754,12 @@ const GOLDEN: Record<string, Golden> = {
   'probe-tight': { minTileIn: 0.18, named: 7, slides: 3 },
   'probe-spread': { minTileIn: 0.283, named: 7, slides: 8 },
   'probe-offrow': { minTileIn: 0.283, named: 7, slides: 8 },
-  'probe-glyph16': { minTileIn: 0.168, named: 21, slides: 17 },
+  // Tiles 6% WIDER and one more slide, with every name kept: the planner buying
+  // scale, not losing it. `markableCountAt` asks whether a column can set two
+  // digits at 7pt, and Arial's digit is 0.556 em against Yu Gothic UI's 0.539,
+  // so the bar moved 0.10481in -> 0.10811in. `probe-glyph12` and `-glyph11` did
+  // not move; only the 16px case sat inside those 3.2%.
+  'probe-glyph16': { minTileIn: 0.178, named: 21, slides: 18 },
   'probe-glyph12': { minTileIn: 0.073, named: 20, slides: 11 },
   'probe-glyph11': { minTileIn: 0.067, named: 20, slides: 11 },
   'probe-fits-whole-sliver': { minTileIn: 0.218, named: 9, slides: 8 },
@@ -12668,14 +12774,25 @@ const GOLDEN: Record<string, Golden> = {
   'probe-rr-10': { minTileIn: 0.188, named: 6, slides: 9 },
   'probe-rr-13': { minTileIn: 0.181, named: 6, slides: 7 },
   'probe-rr-15': { minTileIn: 0.195, named: 6, slides: 7 },
-  'probe-solo-14': { minTileIn: 0.167, named: 14, slides: 11 },
+  // 11 slides -> 5, and this is `coarsestNaming` refusing to buy what is no
+  // longer for sale. It shreds the deck only while the fine plan names MORE
+  // than the floor plan; the same 0.10481 -> 0.10811in mark bar puts the 14px
+  // sliver (0.167in tile, 0.107in column) out of reach of BOTH plans, so six
+  // extra slides now buy nothing and the cheap plan wins. What ships is the
+  // better deck: 5 slides of ordinary ~1.05in tiles instead of 11 of 0.167in
+  // slivers, with the unnamed services on the index slide. The neighbours
+  // -12, -13, -16, -18, -20 and -22 are all unmoved: this is one threshold
+  // crossing, not a collapse.
+  'probe-solo-14': { minTileIn: 0.092, named: 13, slides: 5 },
   'probe-solo-16': { minTileIn: 0.179, named: 16, slides: 13 },
   'probe-solo-18': { minTileIn: 0.188, named: 18, slides: 15 },
   'probe-solo-20': { minTileIn: 0.172, named: 20, slides: 16 },
   'probe-solo-22': { minTileIn: 0.181, named: 22, slides: 18 },
   'probe-farm-12': { minTileIn: 0.19, named: 12, slides: 11 },
   'probe-farm-13': { minTileIn: 0.178, named: 13, slides: 11 },
-  'probe-farm-14': { minTileIn: 0.167, named: 14, slides: 11 },
+  // Same crossing as `probe-solo-14` above, and `probe-farm-12`/`-13` are
+  // unmoved for the same reason.
+  'probe-farm-14': { minTileIn: 0.092, named: 11, slides: 5 },
   'probe-title-20': { minTileIn: 2.083, named: 2, slides: 2 },
   'probe-title-70': { minTileIn: 2.083, named: 2, slides: 2 },
   'probe-title-95': { minTileIn: 2.083, named: 2, slides: 2 },

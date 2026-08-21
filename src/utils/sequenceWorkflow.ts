@@ -23,6 +23,7 @@
  */
 
 import { assignWorkflowSteps, orderedWorkflowSteps } from './workflowStepMapping';
+import { GEOMETRY_FONT_STACK } from '../services/diagramExportGeometry';
 
 export interface SequenceWorkflowOptions {
   nodes: any[];
@@ -257,7 +258,7 @@ export function sequenceWorkflowSvg(svgText: string, options: SequenceWorkflowOp
 
   const bandH = 140;
   const bandY = 24;
-  let captions = `<g font-family="Yu Gothic UI, Segoe UI, Arial, sans-serif">`;
+  let captions = `<g font-family="${GEOMETRY_FONT_STACK}">`;
   workflow.forEach((s, k) => {
     const b = k * STEP_DUR;
     const lines = wrap(s.description, 84).slice(0, 3);
@@ -293,7 +294,7 @@ export function sequenceWorkflowSvg(svgText: string, options: SequenceWorkflowOp
   const cx = W - 52;
   const cy = bandY + 30;
   const controls =
-    `<g id="wf-controls" style="cursor:pointer" font-family="Yu Gothic UI, Segoe UI, Arial, sans-serif">` +
+    `<g id="wf-controls" style="cursor:pointer" font-family="${GEOMETRY_FONT_STACK}">` +
     `<text x="${cx - 34}" y="${cy + 5}" text-anchor="end" fill="#93c5fd" font-size="16">Click to pause / resume</text>` +
     `<circle cx="${cx}" cy="${cy}" r="20" fill="#0b1220" stroke="#4dabf7" stroke-width="2"/>` +
     `<g id="wf-pause-icon" fill="#4dabf7"><rect x="${cx - 7}" y="${cy - 10}" width="5" height="20" rx="1.5"/><rect x="${cx + 3}" y="${cy - 10}" width="5" height="20" rx="1.5"/></g>` +

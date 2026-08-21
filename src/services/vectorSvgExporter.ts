@@ -49,6 +49,7 @@ import {
   partitionBoxes,
   readableTextOn,
   zoneStyleFor,
+  GEOMETRY_FONT_STACK,
   type ExportBox,
   type ExportRoute,
 } from './diagramExportGeometry';
@@ -122,8 +123,16 @@ const DARK: Theme = {
   chipText: '#e2e8f0',
 };
 
-const FONT_STACK =
-  "'Segoe UI','Yu Gothic UI','Hiragino Sans','Noto Sans JP',system-ui,-apple-system,sans-serif";
+/**
+ * The shared stack, not a third opinion about the export font.
+ *
+ * This file used to lead with `Segoe UI` while the PowerPoint deck named one
+ * font and the width tables priced a second - three different faces for one
+ * diagram, so an SVG placed beside a deck of the same drawing wrapped its
+ * labels differently. It is now the same stack the canvas draws with and the
+ * same Latin face the deck and the Visio sheet declare.
+ */
+const FONT_STACK = GEOMETRY_FONT_STACK;
 
 const LABEL_PX = 12;
 const META_PX = 9;

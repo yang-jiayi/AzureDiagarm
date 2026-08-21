@@ -200,7 +200,14 @@ export function costReportToHtml(title: string, markdown: string): string {
       border-left: 4px solid #0078d4; border-radius: 4px;
     }
     code {
-      font-family: 'Yu Gothic UI', 'SF Mono', Consolas, 'Courier New', monospace;
+      /* A MONOSPACE STACK MUST NOT LEAD WITH A PROPORTIONAL FACE. 'Yu Gothic UI'
+         is proportional and ships on every Windows machine, so it won this list
+         outright and every command, resource id and JSON fragment in the
+         downloaded report was set in variable-width type - the one place in the
+         document where column alignment is the point. The Japanese faces come
+         after the Latin monos, where per-character fallback reaches them for CJK
+         without taking the Latin text with them. */
+      font-family: 'SF Mono', Consolas, 'Courier New', 'BIZ UDGothic', 'MS Gothic', monospace;
       background: #f0f1f3; padding: .1rem .35rem; border-radius: 4px; font-size: .88em;
     }
     pre.mermaid { text-align: center; margin: 1.5rem 0; }

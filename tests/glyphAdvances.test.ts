@@ -4,43 +4,55 @@ import { widestGlyphIn, estimateTextWidthIn } from '../src/services/pptxExporter
 import { hasMeasuredAdvance, advanceTier, drawableInColumn, advanceWidthIn, widestGlyphUpperIn, widestGlyphIn as widestGlyphLowerIn, hasMeasuredCluster, fitLabelToWidth, singleLineName } from '../src/services/diagramExportGeometry.ts';
 
 /**
- * Real advances for Yu Gothic UI, in em, measured from the installed font with
- * GDI+ (`Graphics.MeasureString`, `GenericTypographic`, 20 repeats of a glyph
- * at 100pt so the fitting error divides out).
+ * Real advances for Arial, in em, measured by laying each character out in
+ * Chromium one at a time with kerning off.
  *
- * This table is the only width number in the repo that does not come from the
- * exporter's own model. It exists because the audit's `auditTextWidthIn` is a
- * character-for-character copy of `estimateTextWidthIn`: a gate that shares its
- * estimator with the thing it gates cannot observe the estimator being wrong,
- * and for the whole life of the file it did not — both gave every non-CJK
- * character 0.54 em, which is Segoe UI's average LOWERCASE advance. Used as a
- * maximum that understates `@` by 77%, and the "does one letter fit?" guard
- * passed a box that holds no capital at all: 39 chips 0.181in wide with 31
- * characters stacked one per line, 2.55in of smear on the first slide.
+ * This table is one of only two width numbers in the repo that do not come from
+ * the exporter's own model. It exists because the audit's `auditTextWidthIn` is
+ * a character-for-character copy of `estimateTextWidthIn`: a gate that shares
+ * its estimator with the thing it gates cannot observe the estimator being
+ * wrong, and for the whole life of the file it did not — both gave every
+ * non-CJK character 0.54 em, an average LOWERCASE advance. Used as a maximum
+ * that understates `@` by 88%, and the "does one letter fit?" guard passed a box
+ * that holds no capital at all: 39 chips 0.181in wide with 31 characters stacked
+ * one per line, 2.55in of smear on the first slide.
+ *
+ * A BROWSER is asked, deliberately, because the exporter's own tables are read
+ * from the font file's `hmtx`. Generating both from one measurement would make
+ * this file agree with the exporter by construction. Kerning is switched off and
+ * characters are measured in isolation because the model prices one glyph at a
+ * time and never charges for a pair: measuring `"f"` repeated turns it into `ﬀ`
+ * ligatures and reports 0.261 em for a glyph that advances 0.278.
  */
 const MEASURED_EM: Record<string, number> = {
-  '@': 0.955, W: 0.934, M: 0.898, m: 0.861, '%': 0.818, '&': 0.800,
-  O: 0.754, Q: 0.754, N: 0.748, w: 0.723, H: 0.710, U: 0.687, G: 0.686,
-  '+': 0.684, '=': 0.684, '<': 0.684, '>': 0.684, '~': 0.684, '^': 0.684,
-  D: 0.701, A: 0.645, V: 0.621, C: 0.619, R: 0.598, '#': 0.591, X: 0.590,
-  d: 0.589, g: 0.589, q: 0.589, o: 0.586, b: 0.588, p: 0.588, K: 0.580,
-  B: 0.573, Z: 0.570, P: 0.560, h: 0.566, n: 0.566, u: 0.566, Y: 0.553,
-  a: 0.509, S: 0.531, T: 0.524, E: 0.506, F: 0.488, y: 0.484, v: 0.479,
-  x: 0.459, z: 0.452, L: 0.471, c: 0.462, k: 0.497, e: 0.523,
-  '0': 0.539, '5': 0.539, '9': 0.539, $: 0.539, '\\': 0.539,
-  '?': 0.448, '_': 0.415, s: 0.424, '*': 0.417, '-': 0.400, '/': 0.390,
-  '"': 0.392, r: 0.348, t: 0.339, f: 0.313, '(': 0.302, ')': 0.302,
-  '[': 0.302, ']': 0.302, '{': 0.302, '}': 0.302, '!': 0.284,
-  '`': 0.268, I: 0.266, i: 0.242, j: 0.242, l: 0.242, '|': 0.239,
-  "'": 0.230, '.': 0.217, ',': 0.217, ':': 0.217, ';': 0.217,
-  // Full-width: one em by construction, and both estimators agree.
+  '@': 1.015, W: 0.944, '%': 0.889, M: 0.833, m: 0.833,
+  O: 0.778, Q: 0.778, G: 0.778,
+  N: 0.722, w: 0.722, H: 0.722, U: 0.722, D: 0.722, C: 0.722, R: 0.722,
+  '&': 0.667, A: 0.667, V: 0.667, X: 0.667, K: 0.667, B: 0.667,
+  P: 0.667, Y: 0.667, S: 0.667, E: 0.667,
+  Z: 0.611, T: 0.611, F: 0.611,
+  '+': 0.584, '=': 0.584, '<': 0.584, '>': 0.584, '~': 0.584,
+  '#': 0.556, d: 0.556, g: 0.556, q: 0.556, o: 0.556, b: 0.556, p: 0.556,
+  h: 0.556, n: 0.556, u: 0.556, a: 0.556, e: 0.556, L: 0.556,
+  '0': 0.556, '5': 0.556, '9': 0.556, $: 0.556, '?': 0.556, '_': 0.556,
+  y: 0.500, v: 0.500, x: 0.500, z: 0.500, c: 0.500, k: 0.500, s: 0.500,
+  '^': 0.469, '*': 0.389, '"': 0.355,
+  '{': 0.334, '}': 0.334,
+  '-': 0.333, r: 0.333, '(': 0.333, ')': 0.333, '`': 0.333,
+  '\\': 0.278, '/': 0.278, t: 0.278, f: 0.278, '[': 0.278, ']': 0.278,
+  '!': 0.278, I: 0.278, '.': 0.278, ',': 0.278, ':': 0.278, ';': 0.278,
+  '|': 0.260, i: 0.222, j: 0.222, l: 0.222, "'": 0.191,
+  // Full-width and kana, which the East Asian face draws. `注` and `Ａ` really
+  // are one em; `あ` is not, and is listed at its true width so the full-em RULE
+  // the model applies is being tested as an upper bound rather than assumed.
   '注': 1.000, 'あ': 0.816, 'Ａ': 1.000,
   // Beyond printable ASCII, where both estimators used to fall through to a
   // flat 0.54. The ellipsis is the one that mattered most: `fitLabelToLines`
   // appends it at every truncation point, so it is drawn 249 times across the
-  // audit corpus and was charged 26% under its real width every time.
-  '\u2026': 0.733, '\u2192': 1.000, '\u2190': 1.000, '\u2014': 1.000,
-  '\u00d7': 0.684, '\u2013': 0.500, '\u00b7': 0.217, '\u2019': 0.229,
+  // audit corpus and was charged 26% under its real width every time — and this
+  // font draws it wider still, at a full em.
+  '\u2026': 1.000, '\u2192': 1.000, '\u2190': 1.000, '\u2014': 1.000,
+  '\u00d7': 0.584, '\u2013': 0.556, '\u00b7': 0.333, '\u2019': 0.222,
 };
 
 /**
@@ -53,7 +65,7 @@ const MEASURED_EM: Record<string, number> = {
  * third line was drawn outside the chip.
  */
 const MEASURED_WS_EM: Record<string, number> = {
-  ' ': 0.274, '\u00a0': 0.274,
+  ' ': 0.278, '\u00a0': 0.278,
 };
 
 test('widestGlyphIn never reports a glyph narrower than the font actually draws', () => {
@@ -147,10 +159,10 @@ test('every character the exporters draw has a measured advance', () => {
  * that drew the unaccented spelling in full.
  */
 const MEASURED_LATIN_EM: Record<string, number> = {
-  '\u00e9': 0.523, '\u00e7': 0.462, '\u00e3': 0.509, '\u00c9': 0.506,
-  '\u00f1': 0.566, '\u00fc': 0.566, '\u00b0': 0.377, '\u0131': 0.266,
-  '\u00df': 0.544, '\u0142': 0.265, '\u0105': 0.554, '\u017e': 0.452,
-  '\u0153': 0.928, '\u00e6': 0.832, '\u00d8': 0.754, '\u016f': 0.580,
+  '\u00e9': 0.556, '\u00e7': 0.500, '\u00e3': 0.556, '\u00c9': 0.667,
+  '\u00f1': 0.556, '\u00fc': 0.556, '\u00b0': 0.400, '\u0131': 0.278,
+  '\u00df': 0.611, '\u0142': 0.222, '\u0105': 0.556, '\u017e': 0.500,
+  '\u0153': 0.944, '\u00e6': 0.889, '\u00d8': 0.778, '\u016f': 0.556,
 };
 
 test('Latin-1 and Latin Extended-A are measured, not guessed at a full em', () => {
@@ -204,23 +216,21 @@ test('an emoji cluster is charged once, not once per code point', () => {
 /**
  * Round 58: the same independent-measurement discipline, extended past Latin.
  *
- * These numbers come from WPF `GlyphTypeface` - `CharacterToGlyphMap` says
- * exactly which code points the font FILE holds, so there is no fallback
- * ambiguity, and `AdvanceWidths[glyph]` is the exact em advance. That is a
- * different API from the GDI+ `MeasureString` used above and from anything the
- * exporter does; where the two APIs could both be asked they agreed to 0.0004
- * em over 317 pre-existing entries, which is why a disagreement is worth
- * chasing. All four disagreements found this round were real defects.
+ * Measured by Chromium, one character at a time with kerning off - a different
+ * engine and a different API from the font-file `hmtx` read the exporter's own
+ * tables come from, so a disagreement here is worth chasing. Over the 1,380
+ * code points the two methods can both be asked about they differ on four that
+ * the label font itself draws; every other divergence is a character neither
+ * font contains, where the question is which face substitutes.
  *
- * Where the reviewer's GDI+ reading of the same character is 5% lower, it is
- * because `MeasureString` was resolving the character through a SUBSTITUTE
- * font. These are the advances in Yu Gothic UI's own file, which is the font
- * the exporter names, so they are the ones that govern.
+ * Hebrew and Arabic used to sit in this file's substituted list and no longer
+ * do: the label font contains them, so the advance is the font's own and the
+ * uncertainty is gone rather than merely restated.
  */
 const MEASURED_SCRIPT_EM: Record<string, number> = {
-  '\u0430': 0.5088, '\u043d': 0.5771, '\u0435': 0.5229, '\u0441': 0.4619,
-  '\u03b1': 0.6143, '\u03b4': 0.5840, '\u03c9': 0.8081,
-  '\u021b': 0.3510, '\u0219': 0.5070,
+  '\u0430': 0.5562, '\u043d': 0.5522, '\u0435': 0.5562, '\u0441': 0.5000,
+  '\u03b1': 0.5781, '\u03b4': 0.5566, '\u03c9': 0.7808,
+  '\u021b': 0.2778, '\u0219': 0.5000, '\u05d0': 0.5630,
 };
 
 test('the measured tables cover the scripts the fallback used to guess at 1 em', () => {
@@ -261,20 +271,22 @@ test('two adjacent flags are charged as two clusters', () => {
 test('the three hand-set advances cross-measurement corrected', () => {
   // Found by re-measuring every new entry through the OTHER API: a bullet was
   // charged 14% under, which is the direction that paints outside the shape.
-  assert.ok(Math.abs(advanceWidthIn('\u2022', 72) - 0.406) <= 0.004);
-  assert.ok(Math.abs(advanceWidthIn('\u201c', 72) - 0.377) <= 0.004);
-  assert.ok(Math.abs(advanceWidthIn('\u201d', 72) - 0.377) <= 0.004);
+  // The numbers moved with the label font; that they are still read from the
+  // file rather than set by hand is the part that matters.
+  assert.ok(Math.abs(advanceWidthIn('\u2022', 72) - 0.35) <= 0.004);
+  assert.ok(Math.abs(advanceWidthIn('\u201c', 72) - 0.333) <= 0.004);
+  assert.ok(Math.abs(advanceWidthIn('\u201d', 72) - 0.333) <= 0.004);
 });
 
 test('every Unicode space is charged its own width, not the plain space width', () => {
   // Every space in Unicode took the plain-space advance regardless, so an em
   // space and an IDEOGRAPHIC space - ordinary punctuation in the Japanese
-  // service names this app draws - were charged 265% under.
+  // service names this app draws - were charged 260% under.
   assert.ok(Math.abs(advanceWidthIn('\u2003', 72) - 1) <= 0.002, 'em space');
   assert.ok(Math.abs(advanceWidthIn('\u3000', 72) - 1) <= 0.002, 'ideographic space');
   assert.ok(Math.abs(advanceWidthIn('\u2002', 72) - 0.5) <= 0.002, 'en space');
   assert.ok(Math.abs(advanceWidthIn('\u2009', 72) - 0.2) <= 0.002, 'thin space');
-  assert.ok(Math.abs(advanceWidthIn('\u200a', 72) - 0.1) <= 0.002, 'hair space');
+  assert.ok(Math.abs(advanceWidthIn('\u200a', 72) - 0.083) <= 0.002, 'hair space');
 });
 
 test('both clauses of the column test take the same bound on an unknown glyph', () => {
@@ -298,20 +310,27 @@ test('the sizing bound and the drawing bound are different functions', () => {
  * ASK-58-A: a measurement has a TIER, and the message has to say which.
  *
  * "Measured" and "measured in a font that is not the label font" are both
- * numbers off a real `hmtx`, but they are different claims. Yu Gothic UI has
- * no Thai, no Hebrew and no precomposed Vietnamese at all, so for those a
- * substitute face is the only measurement that exists - calling them untabled
- * would send someone hunting for a table entry nobody can ever write, and
- * calling them tier 1 would claim a precision the font file does not have.
+ * numbers off a real `hmtx`, but they are different claims. The label font has
+ * no Thai and no emoji, so for those a substitute face is the only measurement
+ * that exists - calling them untabled would send someone hunting for a table
+ * entry nobody can ever write, and calling them tier 1 would claim a precision
+ * the font file does not have. Moving to Arial shrank this tier: 490 code
+ * points that needed a substitute now come from the label font itself.
  */
 test('an advance reports whether it came from the label font or a substitute', () => {
   for (const glyph of ['A', 'e', '9', '\u6ce8', '\u3042', '\u00e9', '\u0430']) {
     assert.equal(advanceTier(glyph), 'label', `${glyph} should be measured in the label font`);
   }
-  // Scripts Yu Gothic UI does not contain, and emoji, which Segoe UI Emoji draws.
-  for (const glyph of ['\u0e01', '\u05d0', '\u1ea1', '\u{1f600}']) {
+  // Scripts the label font does not contain, and emoji, which Segoe UI Emoji
+  // draws. Hebrew and Vietnamese have LEFT this list: Arial contains both, so
+  // they are now priced from the label font's own file.
+  for (const glyph of ['\u0e01', '\u{1f600}']) {
     assert.equal(advanceTier(glyph), 'substitute',
       `${glyph} is drawn by a substitute face, so its tier must say so`);
+  }
+  for (const glyph of ['\u05d0', '\u1ea1']) {
+    assert.equal(advanceTier(glyph), 'label',
+      `the label font contains ${glyph}, so it is no longer a substitute guess`);
   }
   // Genuinely untabled: mathematical alphanumerics are in no face here.
   assert.equal(advanceTier('\u{1d400}'), 'none');
@@ -329,7 +348,7 @@ test('an advance reports whether it came from the label font or a substitute', (
  * the model priced an emoji at its TEXT width. A heart is 1.000 em as a
  * dingbat and 1.373 as an emoji - 27% under - and an ASCII base is far worse,
  * because a keycap is a digit plus the selector plus a zero-width combining
- * enclosure: 0.539 em charged against 1.373 drawn, 61% under. Under-charging
+ * enclosure: 0.556 em charged against 1.373 drawn, 60% under. Under-charging
  * is the direction that paints a line out past its box.
  */
 const EMOJI_EM = 1.373;
@@ -347,15 +366,15 @@ test('a variation selector promotes its base to the emoji advance', () => {
 test('promotion reaches an ASCII base, so a keycap is one emoji wide', () => {
   // The enclosing keycap U+20E3 is already a zero-width combining mark in the
   // table, so this needs no rule of its own ONCE the digit is promoted. Zeroing
-  // the selector alone left the digit at 0.539.
+  // the selector alone left the digit at its own advance.
   for (const cluster of ['1\ufe0f\u20e3', '9\ufe0f\u20e3', '#\ufe0f\u20e3', '*\ufe0f\u20e3']) {
     assert.ok(
       Math.abs(advanceWidthIn(cluster, 72) - EMOJI_EM) < 1e-9,
       `keycap ${cluster} charges ${advanceWidthIn(cluster, 72).toFixed(3)} em, not ${EMOJI_EM}`,
     );
   }
-  // And the bare digit must NOT be promoted: 0.539 is right for a digit.
-  assert.ok(Math.abs(advanceWidthIn('1', 72) - 0.539) < 1e-9);
+  // And the bare digit must NOT be promoted.
+  assert.ok(Math.abs(advanceWidthIn('1', 72) - 0.556) < 1e-9);
 });
 
 test('a joiner welds on what follows it whatever plane it lives in', () => {
