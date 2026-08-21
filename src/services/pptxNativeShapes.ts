@@ -18,6 +18,32 @@
  * appearance and only its editability changes.
  */
 
+/**
+ * Give East Asian text the East Asian face.
+ *
+ * pptxgenjs writes ONE name into all three script slots - `<a:latin>`, `<a:ea>`
+ * and `<a:cs>` all get `opts.fontFace` (pptxgen.cjs.js, `genXmlTextRunProps`) -
+ * and there is no option to separate them. That is fine while the deck names a
+ * face that covers everything, and wrong the moment it names Arial: Arial has
+ * no kana and no kanji, so `<a:ea typeface="Arial"/>` sends every Japanese run
+ * to the theme's `Jpan` fallback, which is plain `Yu Gothic`. That face states
+ * a 1.6021 hhea line height against Yu Gothic UI's 1.3301, i.e. 19% above the
+ * 1.35 factor every line-height rule in the exporters reserves against - so a
+ * Japanese label would silently spill out of a box the sizer had proved it fit.
+ *
+ * `<a:cs>` is deliberately left alone. Arial does contain Arabic and Hebrew,
+ * and the width tables now measure both from Arial, so pointing complex scripts
+ * anywhere else would break the agreement between what is priced and what is
+ * drawn.
+ *
+ * Only the exact Latin name is rewritten, so a run that already carries a
+ * deliberate East Asian face, or a theme reference like `+mn-ea`, is untouched.
+ */
+export function repairEastAsianFont(xml: string, latin: string, ea: string): string {
+  const from = new RegExp(`(<a:ea\\b[^>]*\\btypeface=")${latin.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(")`, 'g');
+  return xml.replace(from, `$1${ea}$2`);
+}
+
 const EMU_PER_IN = 914400;
 /** A tenth of a line width. Endpoints are emitted as integers, so this only
  *  has to absorb rounding, not tolerate a genuinely different position. */
@@ -318,13 +344,14 @@ export async function nativizePackage<T extends {
   files: Record<string, unknown>;
   file(path: string): { async(type: 'string'): Promise<string> } | null;
   file(path: string, data: string): unknown;
-}>(zip: T): Promise<T> {
+}>(zip: T, fonts?: { latin: string; ea: string }): Promise<T> {
   const slides = Object.keys(zip.files).filter((name) => /^ppt\/slides\/slide\d+\.xml$/.test(name));
   for (const name of slides) {
     const entry = zip.file(name);
     if (!entry || typeof (entry as { async?: unknown }).async !== 'function') continue;
     const xml = await (entry as { async(type: 'string'): Promise<string> }).async('string');
-    const fixed = nativizeSlideXml(xml);
+    let fixed = nativizeSlideXml(xml);
+    if (fonts) fixed = repairEastAsianFont(fixed, fonts.latin, fonts.ea);
     if (fixed !== xml) zip.file(name, fixed);
   }
   return zip;

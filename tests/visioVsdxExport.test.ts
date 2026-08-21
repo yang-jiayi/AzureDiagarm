@@ -623,7 +623,7 @@ test('a drawing scaled down to fit the page takes its type down with it', async 
   assert.ok(widths.length > 0, 'the sheet must carry service tiles');
   const tileIn = Math.min(...widths);
 
-  const sizes = [...xml.matchAll(/NameU="Service\.\d+"[\s\S]*?<Row IX="0"><Cell N="Font"[^>]*\/><Cell N="Color"[^>]*\/><Cell N="Size" V="([\d.]+)"/g)]
+  const sizes = [...xml.matchAll(/NameU="Service\.\d+"[\s\S]*?<Row IX="0">[\s\S]*?<Cell N="Size" V="([\d.]+)"/g)]
     .map((m) => Number(m[1]));
   assert.ok(sizes.length > 0, 'the tiles must carry a label size');
   const fontIn = Math.max(...sizes);

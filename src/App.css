@@ -1095,6 +1095,21 @@ body.dark-mode .toolbar-dropdown-separator {
   background-color: var(--azd-color-surface-canvas);
 }
 
+/*
+ * The drawing surface uses the DIAGRAM font, not the app font.
+ *
+ * Everything inside the pane is exported; the chrome around it is not. An
+ * export can only reproduce the screen if the screen is drawn with the face the
+ * exporters declare and the width tables in `diagramExportGeometry.ts` are
+ * measured from, so the pane opts out of `--app-font-family` here rather than
+ * per component. Node labels, zone titles and edge labels all inherit it.
+ */
+.react-flow__node,
+.react-flow__edge-textwrapper,
+.react-flow__edge-text {
+  font-family: var(--diagram-font-family);
+}
+
 .react-flow__node {
   cursor: grab;
 }

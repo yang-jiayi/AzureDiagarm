@@ -128,6 +128,7 @@ import {
   widestGlyphUpperIn,
   drawableInColumn,
   advanceWidthIn,
+  emittableFontPt,
   trailingWhitespaceIn,
   connectionLegendForTypes,
   usedConnectionLegend,
@@ -139,6 +140,8 @@ import {
   readableTextOn,
   carriesWording,
   singleLineName,
+  GEOMETRY_LATIN_FONT,
+  GEOMETRY_EA_FONT,
   type Bounds,
   type ExportBox,
   type ExportRoute,
@@ -213,6 +216,28 @@ const CHIP_INSET_IN = 0.06;
  * emitted 0.6in tall — sixty times the tile it labelled.
  */
 const chipColumn = (width: number): number => Math.max(0.001, width - CHIP_INSET_IN * 2);
+/**
+ * The widest a connector chip may be, in inches at 1 : 1, before the drawing's
+ * own scale is applied.
+ *
+ * ONE SERVICE TILE, and it is written as that rather than as a number. The cap
+ * exists so a caption can never dwarf the boxes it sits between, and the tile
+ * it is measured against is the ordinary 150-authored-pixel service — 1.5625in
+ * at 1 : 1. It was rounded to a flat 1.5 while the sizer's own comment said
+ * 1.56, and the 4% it gave away was invisible only for as long as the font
+ * agreed: Arial sets ordinary lowercase about 4% wider than Yu Gothic UI, so
+ * "writes the order document to Cosmos DB" stopped fitting two lines of a
+ * 1.36in column, wrapped to three, and the chip went from 0.59in^2 to 0.82in^2
+ * against a 0.66in^2 tile — the caption dominating the drawing, which is the
+ * one thing this cap is for. At the tile's real width the same string sets on
+ * two lines again.
+ *
+ * A cap derived from a font's metrics has to be written as that derivation or
+ * re-measured with the font; this one is derived from the TILE instead, which
+ * is why it is now correct for both faces and will stay correct for the next.
+ */
+const ORDINARY_TILE_PX = 150;
+const CHIP_MAX_W_IN = ORDINARY_TILE_PX / PX_PER_IN;
 const BASE_W = 13.333;
 const BASE_H = 7.5;
 const MAX_SLIDE_IN = 56; // PowerPoint's hard page-size limit
@@ -303,10 +328,19 @@ const LEGIBLE_TILE_PT = 7;
 /**
  * The smallest tile that can carry an identifying mark.
  *
- * The tile's text column is `w - 0.06`, and the legibility rule the gate and the
- * renderer share asks for two of the string's widest glyph. A digit at
- * `LEGIBLE_TILE_PT` measures 0.0524in, so the column must reach 0.1048in and the
- * tile 0.1648in, rounded up once to leave the arithmetic room to move.
+ * The tile's text column is `w - TILE_TEXT_INSET_IN`, and the legibility rule
+ * the gate and the renderer share asks for two of the string's widest glyph, so
+ * the bar is `2 * (a digit at LEGIBLE_TILE_PT) + TILE_TEXT_INSET_IN`, rounded up
+ * to the next tenth of an inch to leave the arithmetic room to move.
+ *
+ * DERIVED, not written down, and that is the whole point of this note. The
+ * literal it replaces was 0.2 with a comment deriving it from a digit measuring
+ * 0.0524in — true of the face this file used to name and 3.2% wrong about the
+ * one it names now. Nothing failed, because the rounding absorbed it, which is
+ * the worst way for a constant to be wrong: the comment and the number went on
+ * disagreeing about a bar the planner spends whole slides chasing, and the next
+ * font would have moved it further with the same silence. A bar that is a
+ * function of the font is written as that function.
  *
  * WIDTH ONLY, deliberately. The analogous height bar - about 0.375in, the room
  * one 7pt line needs in a band that is roughly a third of the tile - is reached
@@ -314,7 +348,10 @@ const LEGIBLE_TILE_PT = 7;
  * pathological one, and demanding it moved the transform under scenarios the
  * planner had already sized correctly. 19.2px wide is not an ordinary size.
  */
-const MARKABLE_TILE_W_IN = 0.2;
+const TILE_TEXT_INSET_IN = 0.06;
+const MARKABLE_TILE_W_IN = Math.ceil(
+  (2 * advanceWidthIn('1', LEGIBLE_TILE_PT) + TILE_TEXT_INSET_IN) * 10,
+) / 10;
 /**
  * Floor for the SKU / region / price sub-line. Below this the string is there
  * but nobody can read it, which is worse than an honest ellipsis.
@@ -921,7 +958,7 @@ function planDiagramWindows(
   const markableCountAt = (perIn: number): number => services.filter((s) => drawableInColumn(
     '1',
     LEGIBLE_TILE_PT,
-    Math.max(0.05, s.w * perIn - 0.06),
+    Math.max(0.05, s.w * perIn - TILE_TEXT_INSET_IN),
   )).length;
   const markableAt = (plan: { windows: DiagramWindow[] }): number => markableCountAt(perInOf(plan));
   // The coarsest plan that still names as many services as the fine one.
@@ -1953,13 +1990,13 @@ export function calloutPlanFor(diagram?: DiagramShapeSource | null): {
 /**
  * Advance of the WIDEST character in `text`, in inches.
  *
- * `estimateTextWidthIn` gives every non-CJK character 0.54 em, which is Segoe
- * UI's *average lowercase* advance. An average is the right model for the width
- * of a run and completely the wrong one for `max over characters`: measured
- * against the installed Yu Gothic UI with GDI+, `@` is 0.955 em, `W` 0.934 and
- * `M` 0.898 — 77% wider than the estimate. Asking "does one letter fit?" with
- * the average answered yes for boxes that hold no capital at all, and drew a
- * 31-character word one letter per line down a 2.55in ribbon.
+ * `estimateTextWidthIn` gives every non-CJK character 0.54 em, which is a
+ * typical *average lowercase* advance. An average is the right model for the
+ * width of a run and completely the wrong one for `max over characters`: read
+ * from the label font's own metrics, `@` is 1.015 em, `W` 0.944 and `M` 0.833 —
+ * 88% wider than the estimate. Asking "does one letter fit?" with the average
+ * answered yes for boxes that hold no capital at all, and drew a 31-character
+ * word one letter per line down a 2.55in ribbon.
  *
  * The buckets are the measured maxima of each class, so this never under-states
  * a glyph. It over-states a narrow one, which is the safe direction: the cost
@@ -1972,8 +2009,9 @@ export function calloutPlanFor(diagram?: DiagramShapeSource | null): {
 export { widestGlyphIn };
 
 /**
- * Approximate rendered width of a string in inches, from the measured Yu
- * Gothic UI advances in `diagramExportGeometry`.
+ * Approximate rendered width of a string in inches, from the measured advances
+ * in `diagramExportGeometry` — Arial for Latin, Yu Gothic UI for the East Asian
+ * slot, and the pinned substitution donors for everything neither face draws.
  *
  * This used to charge a flat 0.54 em for everything non-CJK - the average
  * LOWERCASE advance - so a name written in title case measured about 8% narrow.
@@ -2382,8 +2420,8 @@ function connectorLabelBox(
   // seven chips laid across the services they run between.
   const wanted = bundle?.badgesOnly ? '' : truncateLabel(route.label, 42);
 
-  // Size the chip from the text it actually carries, capped so it can never
-  // dwarf the service tiles it sits between (a 150 px tile is 1.56" at 1 : 1).
+  // Size the chip from the text it actually carries, capped at one service tile
+  // (`CHIP_MAX_W_IN`) so it can never dwarf the boxes it sits between.
   // The gap between the two tiles is a *preference*, not a hard cap: squeezing
   // a long label into a 190px hop turned the chip into a 0.34" ribbon several
   // inches tall, and the parallel-edge stagger — which steps by the chip's own
@@ -2393,7 +2431,7 @@ function connectorLabelBox(
   const first = toInches(route.points[0] ?? route.labelAnchor, transform);
   const last = toInches(route.points[route.points.length - 1] ?? route.labelAnchor, transform);
   const span = Math.max(Math.abs(last.x - first.x), Math.abs(last.y - first.y));
-  const gap = span > 0 ? span - 0.08 : 1.5 * px;
+  const gap = span > 0 ? span - 0.08 : CHIP_MAX_W_IN * px;
   // The ladder of parallel chips runs across the edge, so its room is the
   // frame dimension perpendicular to the arrow.
   const alongX = Math.abs(last.x - first.x) >= Math.abs(last.y - first.y);
@@ -2438,10 +2476,10 @@ function connectorLabelBox(
   // a far better trade than parking seven chips on top of the tiles either
   // side, which is what a wide fan does in a dense grid.
   const maxW = bundle?.maxWidth !== undefined
-    ? clamp(bundle.maxWidth, 0.34 * px, 1.5 * px)
+    ? clamp(bundle.maxWidth, 0.34 * px, CHIP_MAX_W_IN * px)
     : squeezeTo !== undefined
-      ? clamp(squeezeTo, 0.34 * px, 1.5 * px)
-      : clamp(Math.max(gap, prefer * px), 0.34 * px, 1.5 * px);
+      ? clamp(squeezeTo, 0.34 * px, CHIP_MAX_W_IN * px)
+      : clamp(Math.max(gap, prefer * px), 0.34 * px, CHIP_MAX_W_IN * px);
   const naturalW = estimateTextWidthIn(text, fontSize) + 0.14;
   const badgeD = route.stepNumber === undefined ? 0 : stepBadgeDiameterIn(route, transform, px);  // A muted rung carries no wording, so it is exactly its callout. Reserving an
   // empty text box above the number anyway made every rung ~40% taller and a
@@ -2464,7 +2502,7 @@ function connectorLabelBox(
     if (asIs * lineH0 + 0.06 > gap) {
       const fits = Math.max(1, Math.floor((gap - 0.06) / lineH0));
       const needed = estimateTextWidthIn(text, fontSize) / fits + CHIP_INSET_IN * 2;
-      roomW = clamp(Math.max(maxW, needed), 0.34 * px, 1.5 * px);
+      roomW = clamp(Math.max(maxW, needed), 0.34 * px, CHIP_MAX_W_IN * px);
     }
   } else if (alongX && !bare && bundle === undefined && squeezeTo === undefined && gap > 0) {
     // The mirror case. The band between two columns is narrow but tall, so a
@@ -2472,7 +2510,7 @@ function connectorLabelBox(
     // it to the corridor — but only while the result stays a chip: squeezing
     // every label to the hop width is what once produced a 0.34" ribbon inches
     // tall, which `prefer` exists to prevent.
-    const narrowed = clamp(gap, 0.34 * px, 1.5 * px);
+    const narrowed = clamp(gap, 0.34 * px, CHIP_MAX_W_IN * px);
     if (narrowed < maxW) {
       const lineH0 = (fontSize * 1.3) / 72;
       const lineCount = Math.max(1, Math.ceil(estimateTextWidthIn(text, fontSize) / chipColumn(narrowed)));
@@ -2990,7 +3028,7 @@ function addConnectorLabel(
     line: { color: 'CBD5E1', width: 0.5 },
     color: '334155',
     fontSize,
-    fontFace: 'Yu Gothic UI',
+    fontFace: GEOMETRY_LATIN_FONT,
     align: 'center',
     valign: 'middle',
     margin: CHIP_INSET_IN * 72,
@@ -3066,7 +3104,7 @@ function badgeFloorIn(stepNumber: number, fontPt: number): number {
  */
 function badgeFontPtFor(stepNumber: number, diameterIn: number): number {
   const digits = String(Math.max(1, Math.abs(Math.trunc(stepNumber)))).length;
-  return (diameterIn / badgeDiameterPerIn(digits)) * 72;
+  return emittableFontPt((diameterIn / badgeDiameterPerIn(digits)) * 72);
 }
 /**
  * The index row a service gets when its tile is on the canvas and carries no
@@ -3308,7 +3346,7 @@ function addStepBadge(
     color: 'FFFFFF',
     bold: true,
     fontSize: fits,
-    fontFace: 'Yu Gothic UI',
+    fontFace: GEOMETRY_LATIN_FONT,
     align: 'center',
     valign: 'middle',
     margin: 0,
@@ -3494,7 +3532,7 @@ function addNodeShape(
   // it returns the best grid it found and this clamp quietly drew that tile's
   // name at four points. Two floors for one contract, and only the planner's
   // was ever checked.
-  const heightFontSize = clamp(h * 12, thumbnail ? 4 : LEGIBLE_TILE_PT, 13);
+  const heightFontSize = emittableFontPt(clamp(h * 12, thumbnail ? 4 : LEGIBLE_TILE_PT, 13));
   // At 72 services the overview clamps this to 4pt, which is not small type —
   // it is grey ink the reader cannot resolve, and it makes the thumbnail
   // harder to read rather than more informative. The overview exists to show
@@ -3561,7 +3599,7 @@ function addNodeShape(
   // above enforces and under the gate's own `minFont < 7` rule.
   let drawnFont = named ? fontSize : nameFloorPt;
   const meta = metaSubline(box);
-  const metaFontSize = clamp(fontSize - 2, 3.5, 9);
+  const metaFontSize = emittableFontPt(clamp(fontSize - 2, 3.5, 9));
   // Sized from the sub-line's own font, not the name's. Deriving the band from
   // `fontSize` reserved 0.232in for a line needing 0.117in on every tile in the
   // corpus, and on a tight deck that phantom 0.05-0.09in was the whole reason
@@ -3582,7 +3620,7 @@ function addNodeShape(
   // label, it is a smudge, and unlike a SKU it is not recoverable from any
   // other slide. A tile that cannot afford a legible strip draws none.
   const tags = box.tags ?? [];
-  const tagPt = clamp(fontSize - 3, TAG_LEGIBLE_PT, 8);
+  const tagPt = emittableFontPt(clamp(fontSize - 3, TAG_LEGIBLE_PT, 8));
   const tagStrip = (tagPt * 1.45) / 72 + 0.02;
 
   // Floored above one ellipsis at the 7pt type floor (0.0525in), not at an
@@ -3929,7 +3967,7 @@ function addNodeShape(
       h: topAligned ? boxH : textBoxH,
       fontSize: drawnFont,
       color: palette.text,
-      fontFace: 'Yu Gothic UI',
+      fontFace: GEOMETRY_LATIN_FONT,
       align: 'center',
       valign: !stub && iconSize > 0 ? 'top' : 'middle',
       margin: 0,
@@ -3997,7 +4035,7 @@ function addNodeShape(
       // resolved against it rather than fixed: the same grey that reads at
       // 5.7:1 on white is invisible on the dark card.
       color: stripHash(readableTextOn(`#${palette.mutedInk}`, `#${palette.surface}`)),
-      fontFace: 'Yu Gothic UI',
+      fontFace: GEOMETRY_LATIN_FONT,
       align: 'center',
       valign: 'bottom',
       margin: 0,
@@ -4043,7 +4081,7 @@ function addNodeShape(
         h: chipH,
         fontSize: tagPt,
         color: chipInk,
-        fontFace: 'Yu Gothic UI',
+        fontFace: GEOMETRY_LATIN_FONT,
         align: 'center',
         valign: 'middle',
         margin: 0,
@@ -4427,7 +4465,7 @@ function addGroupShape(
     fontSize: captionSize,
     bold: true,
     color: labelColor,
-    fontFace: 'Yu Gothic UI',
+    fontFace: GEOMETRY_LATIN_FONT,
     align: 'left',
     valign: 'top',
     wrap: true,
@@ -4460,20 +4498,82 @@ function connectionLegendRect(
 }
 
 /**
+ * Where the footer note sits and at what size, given the colour key already on
+ * the slide.
+ *
+ * The note was drawn at a fixed `FOOTER_Y - 0.26` spanning the whole band,
+ * which is the same strip `connectionLegendRect` reserves for the legend.
+ * Measured across the 186-scenario corpus: 2233 slides carry the note and
+ * 1621 of them painted it straight through the swatches — two runs of bold
+ * text on top of each other, on the majority of every tiled deck.
+ *
+ * The page has no spare band to move it to. `IMAGE_H` and `frameFor` are both
+ * derived from `FOOTER_Y`, so reserving a note band would shrink the drawing
+ * on every slide in the corpus to fix a caption. But the legend never spans
+ * the page: it is capped at `entries.length * 1.55` and there are only five
+ * connection types, so at most 7.75in of a 12.63in band is ever taken. The
+ * note takes what is left of that row, plus the 0.1in gap between the strip
+ * and the footer line that nothing else draws in.
+ *
+ * With no legend on the slide there is no collision to avoid and the note
+ * keeps the full band it always had.
+ *
+ * The box is then shrunk to the height the text actually needs and hung from
+ * the bottom of that band rather than filling it. A footnote belongs directly
+ * above the footer rule, and giving back the top of the band matters: the
+ * overview slide draws its bottom row of tile captions flush with the frame
+ * edge, and they reach about 0.08in past it.
+ */
+export function footerNoteBox(
+  note: string,
+  legend: { x: number; y: number; w: number; h: number } | null,
+  pageW: number,
+): { x: number; y: number; w: number; h: number; pt: number } {
+  const right = pageW - 0.35;
+  const band = legend
+    ? { x: legend.x + legend.w + 0.15, y: legend.y, h: FOOTER_Y - 0.02 - legend.y }
+    : { x: 0.35, y: FOOTER_Y - 0.26, h: 0.24 };
+  const w = Math.max(right - band.x, 0.6);
+  const pt = footerNotePt(note, w, band.h);
+  const h = Math.min(band.h, (wrappedLineCount(note, w, pt) * pt * 1.35) / 72);
+  return { x: band.x, y: band.y + band.h - h, w, h, pt };
+}
+
+/**
+ * The largest of the note's sizes that sets inside the band it was given.
+ *
+ * Beside a five-entry legend the note has 4.4in rather than 12.6in, and the
+ * longest variant is 9.4in of text at 9pt, so a fixed size would push the last
+ * line out through the footer credit. Stepping down is what every other block
+ * in this exporter does; the floor is the deck's `LEGIBLE_TILE_PT`, because a
+ * caption nobody can read is not a caption.
+ */
+function footerNotePt(note: string, widthIn: number, heightIn: number): number {
+  for (const pt of [9, 8, LEGIBLE_TILE_PT]) {
+    if ((wrappedLineCount(note, widthIn, pt) * pt * 1.35) / 72 <= heightIn) return pt;
+  }
+  return LEGIBLE_TILE_PT;
+}
+
+/**
  * Small colour key so the deck agrees with the PNG's connection legend.
  *
  * Takes the entries rather than the edges so the caller decides what "used"
  * means. On a tiled deck that has to be the hops on *this* slide: keying every
  * type in the diagram put a swatch on slides that drew no connector at all.
+ *
+ * Returns the seat it drew in — `null` when it drew nothing — so the footer
+ * note can keep out from under it without recomputing the geometry. Two copies
+ * of that arithmetic is exactly how the note came to be drawn over it.
  */
 function addConnectionLegend(
   pptx: PptxGenJS,
   slide: Slide,
   entries: ConnectionLegendEntry[],
   frame: DiagramFrame,
-): void {
+): { x: number; y: number; w: number; h: number } | null {
   const seat = connectionLegendRect(entries, frame);
-  if (entries.length === 0 || !seat) return;
+  if (entries.length === 0 || !seat) return null;
 
   const swatchW = 0.3;
   const cellW = seat.w / entries.length;
@@ -4499,16 +4599,24 @@ function addConnectionLegend(
       x: cx + swatchW + 0.06, y: seat.y, w: Math.max(cellW - swatchW - 0.2, 0.3), h: seat.h,
       fontSize: 8,
       color: '475569',
-      fontFace: 'Yu Gothic UI',
+      fontFace: GEOMETRY_LATIN_FONT,
       valign: 'middle',
     });
   });
+  return seat;
+}
+
+/** What the drawing pass has already used up, for the slide writer after it. */
+interface DiagramRender {
+  /** The colour key's seat, so the footer note can be placed clear of it. */
+  legend: { x: number; y: number; w: number; h: number } | null;
 }
 
 /**
  * Render the diagram onto `slide` using native PowerPoint shapes.
- * Returns false when there is nothing to draw so callers can fall back to the
- * captured PNG.
+ * Returns null when there is nothing to draw so callers can fall back to the
+ * captured PNG, and otherwise reports what the drawing pass has already put on
+ * the slide so the caller can place the footer note clear of it.
  */
 async function addEditableDiagram(
   pptx: PptxGenJS,
@@ -4558,7 +4666,7 @@ async function addEditableDiagram(
    * stays sharp however far the reader zooms in.
    */
   vectorIcons: Map<string, string> = new Map(),
-): Promise<boolean> {
+): Promise<DiagramRender | null> {
   const frame = fullFrame;
 
   // Size and draw from the SAME bounds. Sizing the page for the dense cluster
@@ -4572,9 +4680,9 @@ async function addEditableDiagram(
   // aimed at it and the window that claimed it could each pick a different
   // answer.
   const { boxes, bounds, clamped } = parkedLayout(diagram.nodes ?? []);
-  if (boxes.size === 0) return false;
+  if (boxes.size === 0) return null;
   const { groups, services } = partitionBoxes(boxes);
-  if (services.length === 0) return false;
+  if (services.length === 0) return null;
   // A banded slide is sized from its own tile, which is what buys back the
   // legible scale; the tile is then clamped so a shape straddling the seam is
   // cut at the page edge instead of spilling into the void.
@@ -4880,7 +4988,9 @@ async function addEditableDiagram(
   // The overview keeps its own, lower floor. It is a map rather than a reading
   // surface, its names are carried by the slides that follow, and forcing its
   // chips up to reading size would only crowd the picture it exists to give.
-  const labelFontSize = clamp(9 * px, thumbnail ? OVERVIEW_LEGIBLE_PT : LEGIBLE_TILE_PT, 10);
+  const labelFontSize = emittableFontPt(
+    clamp(9 * px, thumbnail ? OVERVIEW_LEGIBLE_PT : LEGIBLE_TILE_PT, 10),
+  );
   // Chips and numbers dodge the tiles that are actually on this slide, so a
   // label on a short hop is pushed clear instead of covering a service.
   const tileRects = shownServices.map((service) => ({ ...placeBox(service, transform, clampTo), node: service.id }));
@@ -5846,9 +5956,9 @@ async function addEditableDiagram(
 
   // Colour key so the deck's connectors agree with the PNG legend. Drawn in the
   // strip reserved for it below the diagram, not over the drawing.
-  addConnectionLegend(pptx, slide, slideLegend, fullFrame);
+  const legend = addConnectionLegend(pptx, slide, slideLegend, fullFrame);
 
-  return true;
+  return { legend };
 }
 
 /**
@@ -5906,7 +6016,7 @@ export async function buildDiagramSlidePptx(
   // Center presents one: an overview, then the numbered workflow.
   const parts = geom.windows;
   const windows: (DiagramWindow | undefined)[] = parts.length > 0 ? [undefined, ...parts] : [undefined];
-  let renderedNatively = false;
+  let renderedNatively: DiagramRender | null = null;
   // Wording that a muted chip handed to the workflow slide, filled in by the
   // diagram pass and read when that slide is written.
   const mutedWording = new Map<number, string>();
@@ -5974,7 +6084,7 @@ export async function buildDiagramSlidePptx(
       fontSize: head.fontSize,
       bold: true,
       color: t.titleText,
-      fontFace: 'Yu Gothic UI',
+      fontFace: GEOMETRY_LATIN_FONT,
       valign: 'middle',
       wrap: true,
     });
@@ -5984,7 +6094,7 @@ export async function buildDiagramSlidePptx(
       x: W - 3.43, y: ACCENT_H + 0.05, w: 3.08, h: HEADER_H - 0.1,
       fontSize: 10,
       color: t.metaText,
-      fontFace: 'Yu Gothic UI',
+      fontFace: GEOMETRY_LATIN_FONT,
       align: 'right',
       valign: 'middle',
     });
@@ -5999,7 +6109,7 @@ export async function buildDiagramSlidePptx(
     // ── Diagram body — native shapes when available, captured PNG otherwise ───
     renderedNatively = diagram
       ? await addEditableDiagram(pptx, slide, diagram, geom.frame, isDarkMode, window, mutedWording, truncatedNames, window === undefined && parts.length > 0, options.presetIcons, promotedSteps, drawnHere, keyOrdinal, slideLabel, vectorIcons)
-      : false;
+      : null;
 
     if (!renderedNatively) {
       slide.addImage({
@@ -6023,13 +6133,14 @@ export async function buildDiagramSlidePptx(
           ? 'One or more services sat far outside the main layout. They were moved to the page edge so they remain visible — reposition them on the canvas for an exact layout.'
           : '';
     if (note && renderedNatively) {
+      const seat = footerNoteBox(note, renderedNatively.legend, W);
       slide.addText(note, {
         objectName: 'overflow-note',
-        x: 0.35, y: FOOTER_Y - 0.26, w: W - 0.7, h: 0.24,
-        fontSize: 9,
+        x: seat.x, y: seat.y, w: seat.w, h: seat.h,
+        fontSize: seat.pt,
         bold: true,
         color: stripHash(readableTextOn('#B45309', `#${stripHash(t.bg)}`)),
-        fontFace: 'Yu Gothic UI',
+        fontFace: GEOMETRY_LATIN_FONT,
         valign: 'middle',
       });
     }
@@ -6037,7 +6148,7 @@ export async function buildDiagramSlidePptx(
       x: 0.35, y: FOOTER_Y, w: W - 0.7, h: FOOTER_H,
       fontSize: 8,
       color: t.footerText,
-      fontFace: 'Yu Gothic UI',
+      fontFace: GEOMETRY_LATIN_FONT,
       valign: 'middle',
     });
   }
@@ -6071,13 +6182,15 @@ export async function buildDiagramSlidePptx(
     // allowed to be so the estimate is never optimistic.
     const rowTextW = Math.max(1, W - (0.42 + 0.34 + 0.16) - 0.42 - 0.2);
     const rowHeightIn = (text: string, pt: number): number => {
-      // 1.35, matching every other line-height in this file: `Yu Gothic UI`'s
-      // own hhea and OS/2 win metrics give 1.3301, and the same face carries
-      // the Latin and the CJK. 1.25 was 6% optimistic, which the row slack
-      // absorbed only up to about six lines. And measure the wrap the way a
-      // renderer wraps it — the ratio is a lower bound for text that breaks
-      // between words. The 0.2in off the column and 0.1in on the row are the
-      // text box's own insets, which come out of the room the words get.
+      // 1.35, matching every other line-height in this file. A line takes the
+      // height of the TALLER font on it, so the bound is the CJK face rather
+      // than the Latin one: `Yu Gothic UI` states 1.3301 for both hhea and OS/2
+      // win, where `Arial` states 1.1499 and 1.1172. 1.25 was 6% optimistic,
+      // which the row slack absorbed only up to about six lines. And measure
+      // the wrap the way a renderer wraps it — the ratio is a lower bound for
+      // text that breaks between words. The 0.2in off the column and 0.1in on
+      // the row are the text box's own insets, which come out of the room the
+      // words get.
       const lines = wrappedLineCount(text, rowTextW, pt);
       return lines * pt * 1.35 / 72 + 0.1;
     };
@@ -6109,7 +6222,7 @@ export async function buildDiagramSlidePptx(
       slide.addText(parts > 1 ? `Workflow (${part + 1} / ${parts})` : 'Workflow', {
         objectName: 'workflow-heading',
         x: 0.35, y: ACCENT_H + 0.05, w: Math.max(3, W - 3.85), h: HEADER_H - 0.1,
-        fontSize: 24, bold: true, color: t.titleText, fontFace: 'Yu Gothic UI', valign: 'middle',
+        fontSize: 24, bold: true, color: t.titleText, fontFace: GEOMETRY_LATIN_FONT, valign: 'middle',
       });
       slide.addShape(pptx.ShapeType.rect, {
         x: 0, y: HEADER_END, w: W, h: SEP_H,
@@ -6145,21 +6258,21 @@ export async function buildDiagramSlidePptx(
           x: 0.42, y, w: badge, h: badge,
           fill: { color: t.accent },
           line: { color: 'FFFFFF', width: 1 },
-          fontSize: Math.max(8, badge * 26),
-          bold: true, color: 'FFFFFF', fontFace: 'Yu Gothic UI',
+          fontSize: emittableFontPt(Math.max(8, badge * 26)),
+          bold: true, color: 'FFFFFF', fontFace: GEOMETRY_LATIN_FONT,
           align: 'center', valign: 'middle', margin: 0,
         });
         slide.addText(entry.description, {
           objectName: `workflow-text-${entry.step}`,
           x: 0.42 + badge + 0.16, y, w: W - (0.42 + badge + 0.16) - 0.42, h: rowGap - 0.04,
           fontSize: rowFontPt(entry.description, rowGap - 0.04),
-          color: t.titleText, fontFace: 'Yu Gothic UI',
+          color: t.titleText, fontFace: GEOMETRY_LATIN_FONT,
           valign: 'middle', wrap: true,
         });
       });
       slide.addText('Generated by Microsoft Product Architecture Diagram Builder  ·  Swarm Data SE, Jiayi Yang', {
         x: 0.35, y: FOOTER_Y, w: W - 0.7, h: FOOTER_H,
-        fontSize: 8, color: t.footerText, fontFace: 'Yu Gothic UI', valign: 'middle',
+        fontSize: 8, color: t.footerText, fontFace: GEOMETRY_LATIN_FONT, valign: 'middle',
       });
     }
   }
@@ -6311,7 +6424,7 @@ export async function buildDiagramSlidePptx(
         {
           objectName: 'index-note',
           x: 0.35, y: HEADER_END + SEP_H + 0.04, w: W - 0.7, h: 0.22,
-          fontSize: 9, color: t.metaText, fontFace: 'Yu Gothic UI', valign: 'middle',
+          fontSize: 9, color: t.metaText, fontFace: GEOMETRY_LATIN_FONT, valign: 'middle',
         },
       );
       slice.forEach((row) => {
@@ -6323,7 +6436,7 @@ export async function buildDiagramSlidePptx(
           h: row.h,
           fontSize: indexPt,
           color: t.titleText,
-          fontFace: 'Yu Gothic UI',
+          fontFace: GEOMETRY_LATIN_FONT,
           valign: 'middle',
           wrap: row.lines > 1,
         });
@@ -6331,7 +6444,7 @@ export async function buildDiagramSlidePptx(
       });
       slide.addText('Generated by Microsoft Product Architecture Diagram Builder  ·  Swarm Data SE, Jiayi Yang', {
         x: 0.35, y: FOOTER_Y, w: W - 0.7, h: FOOTER_H,
-        fontSize: 8, color: t.footerText, fontFace: 'Yu Gothic UI', valign: 'middle',
+        fontSize: 8, color: t.footerText, fontFace: GEOMETRY_LATIN_FONT, valign: 'middle',
       });
     }
   }
@@ -6351,7 +6464,10 @@ export async function buildDiagramSlidePptx(
 async function downloadNativePptx(pptx: PptxGenJS, fileName: string, vectorIcons?: Map<string, string>): Promise<void> {
   try {
     const blob = (await pptx.write({ outputType: 'blob' })) as Blob;
-    const zip = await nativizePackage(await JSZip.loadAsync(blob));
+    const zip = await nativizePackage(await JSZip.loadAsync(blob), {
+      latin: GEOMETRY_LATIN_FONT,
+      ea: GEOMETRY_EA_FONT,
+    });
     // Icons are drawn as 128px PNGs, which is ~213 DPI at the largest size a
     // tile ever gives them: crisp on a projector, visibly soft the moment the
     // reader zooms in to read a diagram, and softer still if they resize the
@@ -6526,12 +6642,12 @@ function addChrome(pptx: PptxGenJS, slide: Slide, t: SlideTheme, title: string, 
   slide.addShape(pptx.ShapeType.rect, { x: 0, y: 0, w: W, h: ACCENT_H, fill: { color: t.accent }, line: { color: t.accent, width: 0 } });
   slide.addShape(pptx.ShapeType.rect, { x: 0, y: ACCENT_H, w: W, h: HEADER_H, fill: { color: t.headerBg }, line: { color: t.headerBg, width: 0 } });
   const head = fitHeadingToBox(title, 9.5, HEADER_H - 0.1, 22);
-  slide.addText(head.body, { x: 0.35, y: ACCENT_H + 0.05, w: 9.5, h: HEADER_H - 0.1, fontSize: head.fontSize, bold: true, color: t.titleText, fontFace: 'Yu Gothic UI', valign: 'middle', wrap: true });
+  slide.addText(head.body, { x: 0.35, y: ACCENT_H + 0.05, w: 9.5, h: HEADER_H - 0.1, fontSize: head.fontSize, bold: true, color: t.titleText, fontFace: GEOMETRY_LATIN_FONT, valign: 'middle', wrap: true });
   if (meta) {
-    slide.addText(meta, { x: 9.9, y: ACCENT_H + 0.05, w: 3.08, h: HEADER_H - 0.1, fontSize: 10, color: t.metaText, fontFace: 'Yu Gothic UI', align: 'right', valign: 'middle' });
+    slide.addText(meta, { x: 9.9, y: ACCENT_H + 0.05, w: 3.08, h: HEADER_H - 0.1, fontSize: 10, color: t.metaText, fontFace: GEOMETRY_LATIN_FONT, align: 'right', valign: 'middle' });
   }
   slide.addShape(pptx.ShapeType.rect, { x: 0, y: HEADER_END, w: W, h: SEP_H, fill: { color: t.accent }, line: { color: t.accent, width: 0 } });
-  slide.addText('Generated by Microsoft Product Architecture Diagram Builder  ·  Swarm Data SE, Jiayi Yang', { x: 0.35, y: FOOTER_Y, w: W - 0.7, h: FOOTER_H, fontSize: 8, color: t.footerText, fontFace: 'Yu Gothic UI', valign: 'middle' });
+  slide.addText('Generated by Microsoft Product Architecture Diagram Builder  ·  Swarm Data SE, Jiayi Yang', { x: 0.35, y: FOOTER_Y, w: W - 0.7, h: FOOTER_H, fontSize: 8, color: t.footerText, fontFace: GEOMETRY_LATIN_FONT, valign: 'middle' });
 }
 
 /**
@@ -6604,19 +6720,19 @@ function addTitleSlide(pptx: PptxGenJS, t: SlideTheme, o: ArchitectureDeckOption
   slide.background = { color: t.headerBg };
   // Left accent band
   slide.addShape(pptx.ShapeType.rect, { x: 0, y: 0, w: 0.28, h: 7.5, fill: { color: t.accent }, line: { color: t.accent, width: 0 } });
-  slide.addText('AZURE ARCHITECTURE', { x: 0.9, y: 1.5, w: 11.5, h: 0.4, fontSize: 14, bold: true, color: t.accent, fontFace: 'Yu Gothic UI', charSpacing: 3 });
+  slide.addText('AZURE ARCHITECTURE', { x: 0.9, y: 1.5, w: 11.5, h: 0.4, fontSize: 14, bold: true, color: t.accent, fontFace: GEOMETRY_LATIN_FONT, charSpacing: 3 });
   const cover = fitHeadingToBox(o.diagramName, 11.5, 1.6, 40);
-  slide.addText(cover.body, { x: 0.9, y: 2.0, w: 11.5, h: 1.6, fontSize: cover.fontSize, bold: true, color: t.titleText, fontFace: 'Yu Gothic UI', valign: 'top', wrap: true });
-  slide.addText(`${o.author}   ·   ${o.date}`, { x: 0.9, y: 3.7, w: 11.5, h: 0.4, fontSize: 14, color: t.metaText, fontFace: 'Yu Gothic UI' });
+  slide.addText(cover.body, { x: 0.9, y: 2.0, w: 11.5, h: 1.6, fontSize: cover.fontSize, bold: true, color: t.titleText, fontFace: GEOMETRY_LATIN_FONT, valign: 'top', wrap: true });
+  slide.addText(`${o.author}   ·   ${o.date}`, { x: 0.9, y: 3.7, w: 11.5, h: 0.4, fontSize: 14, color: t.metaText, fontFace: GEOMETRY_LATIN_FONT });
   if (o.prompt) {
     const brief = fitProseToBox('Brief:  ', o.prompt, 11.5, 1.7, 13);
     slide.addText([
       { text: 'Brief:  ', options: { bold: true, color: t.metaText } },
       { text: brief.body, options: { color: t.metaText } },
-    ], { x: 0.9, y: 4.35, w: 11.5, h: 1.7, fontSize: brief.fontSize, fontFace: 'Yu Gothic UI', valign: 'top', italic: true });
+    ], { x: 0.9, y: 4.35, w: 11.5, h: 1.7, fontSize: brief.fontSize, fontFace: GEOMETRY_LATIN_FONT, valign: 'top', italic: true });
   }
   if (o.model) {
-    slide.addText(`Generated with ${o.model}`, { x: 0.9, y: 6.6, w: 11.5, h: 0.35, fontSize: 10, color: t.footerText, fontFace: 'Yu Gothic UI' });
+    slide.addText(`Generated with ${o.model}`, { x: 0.9, y: 6.6, w: 11.5, h: 0.35, fontSize: 10, color: t.footerText, fontFace: GEOMETRY_LATIN_FONT });
   }
 }
 
@@ -6670,7 +6786,7 @@ async function addDiagramSlide(pptx: PptxGenJS, t: SlideTheme, imageDataUrl: str
         undefined,
         vectorIcons,
       )
-      : false;
+      : null;
     if (!renderedNatively) {
       slide.addImage({ data: imageDataUrl, x: IMAGE_X, y: IMAGE_Y, w: IMAGE_W, h: IMAGE_H, sizing: { type: 'contain', w: IMAGE_W, h: IMAGE_H } });
       return;
@@ -6776,7 +6892,7 @@ function addWorkflowSlide(pptx: PptxGenJS, t: SlideTheme, o: ArchitectureDeckOpt
       slide.addText(String(entry.step), {
         x: 0.4, y: y + (pitch - badgeD) / 2, w: badgeD, h: badgeD,
         fontSize: Math.max(8, Math.round(fontSize * 0.8)), bold: true, color: 'ffffff',
-        fontFace: 'Yu Gothic UI', align: 'center', valign: 'middle',
+        fontFace: GEOMETRY_LATIN_FONT, align: 'center', valign: 'middle',
       });
       // A wrapped two-line description used to run straight through the services
       // strip, so the strip is reserved out of the description box's height.
@@ -6784,7 +6900,7 @@ function addWorkflowSlide(pptx: PptxGenJS, t: SlideTheme, o: ArchitectureDeckOpt
       const showsServices = services.length > 0 && pitch >= 0.5;
       slide.addText(s.description, {
         x: 0.4 + badgeD + 0.16, y, w: W - 1.1 - badgeD, h: showsServices ? pitch - 0.2 : pitch,
-        fontSize, color: t.titleText, fontFace: 'Yu Gothic UI', valign: 'middle', wrap: true,
+        fontSize, color: t.titleText, fontFace: GEOMETRY_LATIN_FONT, valign: 'middle', wrap: true,
       });
       if (showsServices) {
         // One line, fitted. The strip is a breadcrumb under a sentence that
@@ -6796,7 +6912,7 @@ function addWorkflowSlide(pptx: PptxGenJS, t: SlideTheme, o: ArchitectureDeckOpt
         const stripW = W - 1.1 - badgeD;
         slide.addText(fitLabelToBox(services.join('  →  '), stripW - 0.2, 9), {
           x: 0.4 + badgeD + 0.16, y: y + pitch - 0.2, w: stripW, h: 0.18,
-          fontSize: 9, color: t.metaText, fontFace: 'Yu Gothic UI', valign: 'middle',
+          fontSize: 9, color: t.metaText, fontFace: GEOMETRY_LATIN_FONT, valign: 'middle',
         });
       }
     });
@@ -6955,7 +7071,7 @@ function addServicesSlide(pptx: PptxGenJS, t: SlideTheme, o: ArchitectureDeckOpt
       x: 0.35, y: BODY_TOP, w: W - 0.7,
       h: rowHeights.reduce((sum, h) => sum + h, 0),
       colW: COL_W,
-      fontSize: pagePt, fontFace: 'Yu Gothic UI',
+      fontSize: pagePt, fontFace: GEOMETRY_LATIN_FONT,
       border: { type: 'solid', color: t.headerBg, pt: 1 },
       valign: 'middle', rowH: rowHeights,
     });
@@ -6971,9 +7087,9 @@ function addValidationSummarySlide(pptx: PptxGenJS, t: SlideTheme, o: Architectu
 
   // Big score block (left)
   slide.addShape(pptx.ShapeType.roundRect, { x: 0.35, y: BODY_TOP, w: 3.0, h: 2.35, fill: { color: t.headerBg }, line: { color: scoreColor(v.overallScore), width: 2 }, rectRadius: 0.08 });
-  slide.addText(`${Math.round(v.overallScore)}`, { x: 0.35, y: BODY_TOP + 0.2, w: 3.0, h: 1.25, fontSize: 58, bold: true, color: scoreColor(v.overallScore), align: 'center', fontFace: 'Yu Gothic UI' });
-  slide.addText('/ 100', { x: 0.35, y: BODY_TOP + 1.42, w: 3.0, h: 0.32, fontSize: 13, color: t.metaText, align: 'center', fontFace: 'Yu Gothic UI' });
-  slide.addText(v.overallLabel || scoreBand(v.overallScore), { x: 0.3, y: BODY_TOP + 1.78, w: 3.1, h: 0.5, fontSize: 13, bold: true, color: scoreColor(v.overallScore), align: 'center', valign: 'middle', fontFace: 'Yu Gothic UI', wrap: true });
+  slide.addText(`${Math.round(v.overallScore)}`, { x: 0.35, y: BODY_TOP + 0.2, w: 3.0, h: 1.25, fontSize: 58, bold: true, color: scoreColor(v.overallScore), align: 'center', fontFace: GEOMETRY_LATIN_FONT });
+  slide.addText('/ 100', { x: 0.35, y: BODY_TOP + 1.42, w: 3.0, h: 0.32, fontSize: 13, color: t.metaText, align: 'center', fontFace: GEOMETRY_LATIN_FONT });
+  slide.addText(v.overallLabel || scoreBand(v.overallScore), { x: 0.3, y: BODY_TOP + 1.78, w: 3.1, h: 0.5, fontSize: 13, bold: true, color: scoreColor(v.overallScore), align: 'center', valign: 'middle', fontFace: GEOMETRY_LATIN_FONT, wrap: true });
 
   // Executive summary text (right of score block)
   if (v.summary) {
@@ -7001,13 +7117,13 @@ function addValidationSummarySlide(pptx: PptxGenJS, t: SlideTheme, o: Architectu
     slide.addText([
       { text: 'Assessment.  ', options: { bold: true, color: t.titleText } },
       { text: body === v.summary ? body : `${body.trimEnd()}…`, options: { color: t.metaText } },
-    ], { x: 3.7, y: BODY_TOP, w: W - 3.7 - 0.35, h: SUMMARY_H, fontSize: summaryPt, fontFace: 'Yu Gothic UI', valign: 'top', wrap: true });
+    ], { x: 3.7, y: BODY_TOP, w: W - 3.7 - 0.35, h: SUMMARY_H, fontSize: summaryPt, fontFace: GEOMETRY_LATIN_FONT, valign: 'top', wrap: true });
   }
 
   // Pillar maturity table (full width, below)
   const pillars = v.pillars.slice(0, 5);
   const pTop = BODY_TOP + 2.65;
-  slide.addText('Pillar maturity', { x: 0.35, y: pTop, w: 6, h: 0.3, fontSize: 13, bold: true, color: t.titleText, fontFace: 'Yu Gothic UI' });
+  slide.addText('Pillar maturity', { x: 0.35, y: pTop, w: 6, h: 0.3, fontSize: 13, bold: true, color: t.titleText, fontFace: GEOMETRY_LATIN_FONT });
   const header = [
     { text: 'Pillar', options: { bold: true, color: 'ffffff', fill: { color: t.accent } } },
     { text: 'Maturity', options: { bold: true, color: 'ffffff', fill: { color: t.accent } } },
@@ -7032,7 +7148,7 @@ function addValidationSummarySlide(pptx: PptxGenJS, t: SlideTheme, o: Architectu
   slide.addTable([header, ...rows], {
     x: 0.35, y: pTop + 0.36, w: W - 0.7,
     colW: PILLAR_COL_W,
-    fontSize: pillarFit.pt, fontFace: 'Yu Gothic UI',
+    fontSize: pillarFit.pt, fontFace: GEOMETRY_LATIN_FONT,
     border: { type: 'solid', color: t.headerBg, pt: 1 }, valign: 'middle', rowH: TABLE_MIN_ROW_H,
   });
 }
@@ -7130,17 +7246,17 @@ function addValidationFindingsSlide(pptx: PptxGenJS, t: SlideTheme, o: Architect
     shown.forEach((f) => {
       const block = blockFor(f, issuePt, fixPt);
       // Severity chip
-      slide.addText(f.severity.toUpperCase(), { x: 0.35, y: y + 0.05, w: 1.05, h: 0.34, fontSize: 9, bold: true, color: 'ffffff', fill: { color: severityColor(f.severity) }, align: 'center', valign: 'middle', fontFace: 'Yu Gothic UI' });
+      slide.addText(f.severity.toUpperCase(), { x: 0.35, y: y + 0.05, w: 1.05, h: 0.34, fontSize: 9, bold: true, color: 'ffffff', fill: { color: severityColor(f.severity) }, align: 'center', valign: 'middle', fontFace: GEOMETRY_LATIN_FONT });
       // Issue + recommendation
       slide.addText([
         { text: `${f.category}. `, options: { bold: true, color: t.titleText } },
         { text: f.issue, options: { color: t.metaText } },
-      ], { x: 1.55, y, w: W - 1.95, h: block.issueH, fontSize: issuePt, fontFace: 'Yu Gothic UI', valign: 'top', wrap: true });
+      ], { x: 1.55, y, w: W - 1.95, h: block.issueH, fontSize: issuePt, fontFace: GEOMETRY_LATIN_FONT, valign: 'top', wrap: true });
       if (f.recommendation) {
         slide.addText([
           { text: '→ Fix:  ', options: { bold: true, color: t.accent } },
           { text: f.recommendation, options: { color: t.metaText, italic: true } },
-        ], { x: 1.55, y: y + block.issueH, w: W - 1.95, h: block.fixH, fontSize: fixPt, fontFace: 'Yu Gothic UI', valign: 'top', wrap: true });
+        ], { x: 1.55, y: y + block.issueH, w: W - 1.95, h: block.fixH, fontSize: fixPt, fontFace: GEOMETRY_LATIN_FONT, valign: 'top', wrap: true });
       }
       y += block.total;
     });
@@ -7161,10 +7277,10 @@ function addCostOverviewSlide(pptx: PptxGenJS, t: SlideTheme, o: ArchitectureDec
   addChrome(pptx, slide, t, 'Estimated cost', meta || undefined);
 
   // Headline monthly + annual
-  slide.addText(money(c.totalMonthly, c.currency), { x: 0.35, y: BODY_TOP, w: 5.2, h: 0.95, fontSize: 46, bold: true, color: t.accent, fontFace: 'Yu Gothic UI' });
-  slide.addText('per month (estimate)', { x: 0.37, y: BODY_TOP + 0.95, w: 5.2, h: 0.32, fontSize: 12, color: t.metaText, fontFace: 'Yu Gothic UI' });
+  slide.addText(money(c.totalMonthly, c.currency), { x: 0.35, y: BODY_TOP, w: 5.2, h: 0.95, fontSize: 46, bold: true, color: t.accent, fontFace: GEOMETRY_LATIN_FONT });
+  slide.addText('per month (estimate)', { x: 0.37, y: BODY_TOP + 0.95, w: 5.2, h: 0.32, fontSize: 12, color: t.metaText, fontFace: GEOMETRY_LATIN_FONT });
   if (c.annual) {
-    slide.addText(`≈ ${money(c.annual, c.currency)} / year`, { x: 0.37, y: BODY_TOP + 1.3, w: 5.2, h: 0.35, fontSize: 15, bold: true, color: t.titleText, fontFace: 'Yu Gothic UI' });
+    slide.addText(`≈ ${money(c.annual, c.currency)} / year`, { x: 0.37, y: BODY_TOP + 1.3, w: 5.2, h: 0.35, fontSize: 15, bold: true, color: t.titleText, fontFace: GEOMETRY_LATIN_FONT });
   }
 
   // Fixed vs usage-based split
@@ -7173,14 +7289,14 @@ function addCostOverviewSlide(pptx: PptxGenJS, t: SlideTheme, o: ArchitectureDec
     const usagePct = 100 - fixedPct;
     const barY = BODY_TOP + 1.95;
     const barW = 5.0;
-    slide.addText('Cost predictability', { x: 0.37, y: barY, w: 5.2, h: 0.3, fontSize: 12, bold: true, color: t.titleText, fontFace: 'Yu Gothic UI' });
+    slide.addText('Cost predictability', { x: 0.37, y: barY, w: 5.2, h: 0.3, fontSize: 12, bold: true, color: t.titleText, fontFace: GEOMETRY_LATIN_FONT });
     // stacked bar
     slide.addShape(pptx.ShapeType.rect, { x: 0.37, y: barY + 0.35, w: barW, h: 0.28, fill: { color: t.headerBg }, line: { width: 0 } });
     slide.addShape(pptx.ShapeType.rect, { x: 0.37, y: barY + 0.35, w: Math.max(0.02, barW * fixedPct / 100), h: 0.28, fill: { color: t.accent }, line: { width: 0 } });
     slide.addText([
       { text: `Fixed ${money(c.fixedCost, c.currency)} (${fixedPct}%)`, options: { color: t.accent, bold: true } },
       { text: `    ·    Usage-based ${money(c.usageCost, c.currency)} (${usagePct}%) — varies`, options: { color: t.metaText } },
-    ], { x: 0.37, y: barY + 0.68, w: 5.2, h: 0.35, fontSize: 10, fontFace: 'Yu Gothic UI' });
+    ], { x: 0.37, y: barY + 0.68, w: 5.2, h: 0.35, fontSize: 10, fontFace: GEOMETRY_LATIN_FONT });
   }
 
   if (c.regionComparisonIncomplete) {
@@ -7193,11 +7309,11 @@ function addCostOverviewSlide(pptx: PptxGenJS, t: SlideTheme, o: ArchitectureDec
     );
     slide.addText(
       notice.text,
-      { x: 0.37, y: BODY_TOP + 3.15, w: 5.2, h: 0.75, fontSize: notice.fontSize, bold: true, color: 'b45309', fontFace: 'Yu Gothic UI', wrap: true, valign: 'top' },
+      { x: 0.37, y: BODY_TOP + 3.15, w: 5.2, h: 0.75, fontSize: notice.fontSize, bold: true, color: 'b45309', fontFace: GEOMETRY_LATIN_FONT, wrap: true, valign: 'top' },
     );
   }
 
-  slide.addText('Estimate only — not a quote. Excludes taxes, egress, support plans and reservations unless modeled.', { x: 0.37, y: FOOTER_Y - 0.5, w: 5.2, h: 0.45, fontSize: 9, italic: true, color: t.footerText, fontFace: 'Yu Gothic UI', wrap: true });
+  slide.addText('Estimate only — not a quote. Excludes taxes, egress, support plans and reservations unless modeled.', { x: 0.37, y: FOOTER_Y - 0.5, w: 5.2, h: 0.45, fontSize: 9, italic: true, color: t.footerText, fontFace: GEOMETRY_LATIN_FONT, wrap: true });
 
   // Top cost drivers table (right)
   const svcs = c.topServices.slice(0, 10);
@@ -7231,7 +7347,7 @@ function addCostOverviewSlide(pptx: PptxGenJS, t: SlideTheme, o: ArchitectureDec
     slide.addTable([header, ...rows], {
       x: 5.9, y: BODY_TOP, w: W - 5.9 - 0.35,
       colW: COST_COL_W,
-      fontSize: fitted.pt, fontFace: 'Yu Gothic UI',
+      fontSize: fitted.pt, fontFace: GEOMETRY_LATIN_FONT,
       border: { type: 'solid', color: t.headerBg, pt: 1 }, valign: 'middle', rowH: TABLE_MIN_ROW_H,
     });
   }
@@ -7260,7 +7376,7 @@ function addCostRegionsSlide(pptx: PptxGenJS, t: SlideTheme, o: ArchitectureDeck
     );
     slide.addText(
       notice.text,
-      { x: 0.35, y: BODY_TOP, w: W - 0.7, h: 0.55, fontSize: notice.fontSize, bold: true, color: 'b45309', fontFace: 'Yu Gothic UI', valign: 'middle', wrap: true },
+      { x: 0.35, y: BODY_TOP, w: W - 0.7, h: 0.55, fontSize: notice.fontSize, bold: true, color: 'b45309', fontFace: GEOMETRY_LATIN_FONT, valign: 'middle', wrap: true },
     );
   } else if (cheapest) {
     const onCheapest = current && current.name === cheapest.name;
@@ -7268,7 +7384,7 @@ function addCostRegionsSlide(pptx: PptxGenJS, t: SlideTheme, o: ArchitectureDeck
       ? `Already on the cheapest region — ${cheapest.flag || ''} ${cheapest.name} at ${money(cheapest.monthly, c.currency)}/mo.`
       : `Cheapest region: ${cheapest.flag || ''} ${cheapest.name} at ${money(cheapest.monthly, c.currency)}/mo` +
         (current ? `  ·  potential saving ${money(current.monthly - cheapest.monthly, c.currency)}/mo` : '');
-    slide.addText(msg, { x: 0.35, y: BODY_TOP, w: W - 0.7, h: 0.45, fontSize: 13, bold: true, color: t.accent, fontFace: 'Yu Gothic UI', valign: 'middle' });
+    slide.addText(msg, { x: 0.35, y: BODY_TOP, w: W - 0.7, h: 0.45, fontSize: 13, bold: true, color: t.accent, fontFace: GEOMETRY_LATIN_FONT, valign: 'middle' });
   }
 
   const rows = c.regions.slice(0, 8).map((r) => {
@@ -7298,7 +7414,7 @@ function addCostRegionsSlide(pptx: PptxGenJS, t: SlideTheme, o: ArchitectureDeck
   slide.addTable([header, ...rows.slice(0, regionFit.rows)], {
     x: 0.35, y: BODY_TOP + 0.6, w: W - 0.7,
     colW: REGION_COL_W,
-    fontSize: regionFit.pt, fontFace: 'Yu Gothic UI',
+    fontSize: regionFit.pt, fontFace: GEOMETRY_LATIN_FONT,
     border: { type: 'solid', color: t.headerBg, pt: 1 }, valign: 'middle', rowH: TABLE_MIN_ROW_H,
   });
 }

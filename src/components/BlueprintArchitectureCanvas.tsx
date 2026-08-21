@@ -32,6 +32,7 @@ import {
   calculateBlueprintContentFrame,
   calculateBlueprintHostWidth,
 } from '../utils/publicationLayout';
+import { GEOMETRY_FONT_STACK } from '../services/diagramExportGeometry';
 import './BlueprintArchitectureCanvas.css';
 import { useLanguage, type TranslationKey } from '../i18n/LanguageContext';
 
@@ -380,7 +381,7 @@ const BlueprintArchitectureCanvas: React.FC<BlueprintArchitectureCanvasProps> = 
     presentation: ConnectionPresentation;
   };
   const placedEdges = useMemo<PlacedEdge[]>(() => {
-    const LABEL_FONT = '14px \"Yu Gothic UI\", Arial, sans-serif';
+    const LABEL_FONT = `14px ${GEOMETRY_FONT_STACK}`;
     const LABEL_H = 18;
 
     // ── Keep-out regions that annotations must never cover ──────────────────
@@ -393,7 +394,7 @@ const BlueprintArchitectureCanvas: React.FC<BlueprintArchitectureCanvasProps> = 
     }));
     // Zone header strips (the uppercase title rendered at the zone's top-left).
     const zoneHeaderRects: Rect[] = (data.zones || []).map((z) => {
-      const w = measureTextWidth((z.label || '').toUpperCase(), '700 13px \"Yu Gothic UI\", Arial, sans-serif');
+      const w = measureTextWidth((z.label || '').toUpperCase(), `700 13px ${GEOMETRY_FONT_STACK}`);
       // letterSpacing 0.08em ≈ 1px per char; pad generously.
       const padded = w + (z.label?.length || 0) + 28;
       return {
