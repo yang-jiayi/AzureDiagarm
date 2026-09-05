@@ -76,6 +76,9 @@ try {
   const feedbackDeletions = [];
   const unexpectedAIRequests = [];
   const startupAttempts = [];
+  const proposalPrompt = 'Workspace regression: add SQL Database to the current diagram';
+  const proposalDeployments = [];
+  let proposal;
   const mockRequest = route => {
     const url = new URL(route.request().url());
     if (url.pathname === '/api/access/me') return route.fulfill({
@@ -104,6 +107,14 @@ try {
     }
     if (url.pathname === '/api/openai') {
       const body = route.request().postData() ?? '';
+      if (proposal && body.includes(proposalPrompt) && body.includes('You are an expert Azure cloud architect.')) {
+        const request = route.request().postDataJSON();
+        proposalDeployments.push({ deployment: request.deployment, model: request.body?.model });
+        return route.fulfill({ json: {
+          output_text: JSON.stringify(proposal),
+          usage: { input_tokens: 10, output_tokens: 20, total_tokens: 30 },
+        } });
+      }
       if (!body.includes('Well-Architected Framework')) {
         unexpectedAIRequests.push(body.slice(0, 150));
         return route.fulfill({ status: 503, json: { error: 'Only explicit mocked validation is allowed' } });
@@ -360,7 +371,7 @@ try {
   await page.keyboard.press('Enter');
   await (await picker).setFiles([]);
 
-  const proposal = {
+  proposal = {
     format: 'azurediagarm-ai-architecture',
     services: [
       { id: 'proposed-web', name: originalServiceType, type: originalServiceType, category: 'other' },
@@ -370,38 +381,51 @@ try {
     groups: [],
     workflow: [{ step: 1, description: 'Query the application database', services: ['proposed-web', 'proposed-db'] }],
   };
-  const loadProposal = () => page.locator('input[type="file"][aria-label="Load diagram"]').setInputFiles({
-    name: 'ai-proposal.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(proposal)),
-  });
-  await loadProposal();
+  const generateProposal = async () => {
+    await openRibbon('create');
+    await page.getByRole('button', { name: 'Generate Diagram', exact: true }).click();
+    await modal.locator('#architecture-description').fill(proposalPrompt);
+    await modal.getByRole('button', { name: 'Continue to output', exact: true }).click();
+    await modal.getByRole('checkbox', { name: 'Auto-save snapshot before regenerating', exact: true }).check();
+    await modal.getByRole('button', { name: 'Generate Architecture', exact: true }).click();
+  };
+  await generateProposal();
   const review = page.getByRole('dialog', { name: 'Review AI changes', exact: true });
   await expect(review).toBeVisible({ timeout: 60000 });
   await expect(page.locator('.node-label').first()).toHaveText('Customer Portal');
   await review.getByRole('button', { name: 'Keep current diagram', exact: true }).click();
   await expect(review).toHaveCount(0);
   await expect(page.locator('.node-label').first()).toHaveText('Customer Portal');
+  await modal.locator('.modal-close').click();
 
-  await loadProposal();
+  await generateProposal();
   await expect(review).toBeVisible({ timeout: 60000 });
   await page.evaluate(() => {
     globalThis.__workspaceOriginalPut = IDBObjectStore.prototype.put;
+    globalThis.__workspaceSnapshotAbortCount = 0;
     IDBObjectStore.prototype.put = function (...args) {
       const request = globalThis.__workspaceOriginalPut.apply(this, args);
       if (this.transaction.db.name === 'AzureDiagramVersions') {
-        request.addEventListener('success', () => this.transaction.abort());
+        request.addEventListener('success', () => {
+          globalThis.__workspaceSnapshotAbortCount += 1;
+          this.transaction.abort();
+        });
       }
       return request;
     };
   });
   await review.getByRole('button', { name: 'Apply selected changes', exact: true }).click();
   await expect(review.getByRole('alert')).toBeVisible();
+  assert.ok(await page.evaluate(() => globalThis.__workspaceSnapshotAbortCount > 0), 'The regeneration snapshot must actually fail before applying changes.');
   await expect(page.locator('.node-label').first()).toHaveText('Customer Portal');
   await page.evaluate(() => {
     IDBObjectStore.prototype.put = globalThis.__workspaceOriginalPut;
     delete globalThis.__workspaceOriginalPut;
+    delete globalThis.__workspaceSnapshotAbortCount;
   });
   await review.getByRole('button', { name: 'Apply selected changes', exact: true }).click();
   await expect(review).toHaveCount(0);
+  await modal.locator('.modal-close').click();
   await expect(page.locator('.azure-node')).toHaveCount(2);
   await expect(page.getByText('Saved on this device', { exact: true })).toBeVisible();
   const acceptedDraft = await readSavedDocument();
@@ -428,13 +452,14 @@ try {
   await expect(page.locator('.node-label').first()).toHaveText('Customer Portal');
   await expect(page.getByText('Saved on this device', { exact: true })).toBeVisible();
 
-  await loadProposal();
+  await generateProposal();
   await expect(review).toBeVisible({ timeout: 60000 });
   await review.getByRole('button', { name: 'Clear selection', exact: true }).click();
   await review.getByRole('group', { name: 'Services and groups', exact: true })
     .getByRole('checkbox', { name: /^Add SQL Database(?:\s|$)/ }).check();
   await review.getByRole('button', { name: 'Apply selected changes', exact: true }).click();
   await expect(review).toHaveCount(0);
+  await modal.locator('.modal-close').click();
   await expect(page.locator('.azure-node')).toHaveCount(2);
   await expect(page.locator(`.react-flow__node[data-id="${originalNodeId}"] .node-label`)).toHaveText('Customer Portal');
   await expect(page.locator('.react-flow__edge')).toHaveCount(0);
@@ -811,6 +836,9 @@ try {
   assert.deepEqual(errors, [], 'Workspace changes must not produce browser exceptions');
   assert.equal(feedbackSubmissions.length, 1, 'Opening full feedback cancels any pending quick-rating submission.');
   assert.deepEqual(unexpectedAIRequests, [], 'Browser checks must only invoke explicitly mocked AI requests');
+  assert.deepEqual(proposalDeployments, Array.from({ length: 3 }, () => ({
+    deployment: 'workspace-test-astra', model: 'workspace-test-astra',
+  })), 'Regeneration and snapshot retries must retain real Astra routing without duplicate generation requests.');
   console.log(JSON.stringify({ storage, startupHydrations: startupAttempts, headerHeight, responsiveHeaderChecks: responsiveHeaderHeights.length, maximumResponsiveHeaderHeight: Math.max(...responsiveHeaderHeights), protectedReloads, undo: true, groupedEdgeDrag: true, draftRecovery: true, modalFocus: true, keyboardImport: true, aiReview: true, snapshotFailure: true, serviceInspector: true, regionalPricing: true, wafReview: true, staleComparison: true, invalidReviewRecovery: true, feedbackPrivacy: true, aiBudget: true, concurrentTabs: true, cloudBindingHistory: true, completeRegionalRanking: true, partialRegionalRankingSuppressed: true }, null, 2));
 } catch (error) {
   console.error('Workspace browser diagnostics:', getBrowserDiagnostics());

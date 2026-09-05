@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 import type { Edge, Node } from 'reactflow';
+import { resolveServiceIconMapping } from '../data/serviceIconMapping';
 import { MAX_PRICING_AMOUNT, MAX_PRICING_QUANTITY } from './pricingConfiguration';
 
 export interface DiagramGraph {
@@ -84,7 +85,6 @@ function merge(previous: any, proposed: any): any {
 const identity = (value: unknown): string =>
   typeof value === 'string' ? value.normalize('NFKC').trim().toLowerCase().replace(/\s+/g, ' ') : '';
 const nodeLabel = (node: Node): string => String(node.data?.label || node.data?.serviceName || node.id);
-const serviceIdentity = (node: Node): string => identity(node.data?.serviceName || node.data?.label);
 const parentId = (node: Node): string | undefined => node.parentNode ?? (node as any).parentId;
 
 function uniqueMatches<T extends { id: string }>(
@@ -151,6 +151,18 @@ function validate(graph: DiagramGraph): void {
 }
 
 function normalizeProposal(before: DiagramGraph, proposed: DiagramGraph): DiagramGraph {
+  const serviceNames = new Map<string, string>();
+  const canonicalServiceName = (value: unknown): string => {
+    const name = identity(value);
+    const cached = serviceNames.get(name);
+    if (cached !== undefined) return cached;
+    const canonical = identity(resolveServiceIconMapping(name)?.serviceName ?? name);
+    serviceNames.set(name, canonical);
+    return canonical;
+  };
+  const serviceIdentity = (node: Node): string => node.type === 'azureNode'
+    ? canonicalServiceName(node.data?.serviceName || node.data?.label)
+    : identity(node.data?.serviceName || node.data?.label);
   const matches = new Map<string, Node>();
   const byId = new Map(before.nodes.map(node => [node.id, node]));
   for (const node of proposed.nodes) {
@@ -180,7 +192,9 @@ function normalizeProposal(before: DiagramGraph, proposed: DiagramGraph): Diagra
     }
     if (next.data && 'parentNode' in next.data) next.data.parentNode = next.parentNode;
     // Generated service names must not erase a user's descriptive instance label.
-    if (previous && identity(node.data?.label) === identity(node.data?.serviceName)
+    if (previous && (node.type === 'azureNode'
+      ? canonicalServiceName(node.data?.label) === canonicalServiceName(node.data?.serviceName)
+      : identity(node.data?.label) === identity(node.data?.serviceName))
       && identity(previous.data?.label) !== identity(previous.data?.serviceName)
       && serviceIdentity(previous) === serviceIdentity(node)) {
       next.data.label = previous.data.label;

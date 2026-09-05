@@ -96,9 +96,11 @@ the source document. The initial Linux container/core and CodeQL gates passed.
 Older cloud test arrangements now explicitly edit metadata before expecting a
 write. Focus-mode recovery waits for a committed draft. All 85 functional browser
 cases and the patched runtime/container checks now pass on Linux. All four
-workflow visual changes have been reviewed against stable Linux artifacts.
-Newly reported dependency advisories have been patched. Fresh complete CI with
-the reviewed baselines remains pending; this status does not authorize deployment.
+reviewed visual baselines also pass. The supplemental workspace harness now
+exercises genuine AI regeneration rather than file import; this exposed and
+fixed canonical service-alias identity handling. All local supplemental browser
+safeguards and 810 unit tests pass. Fresh complete CI for that final correction
+remains pending; this status does not authorize deployment.
 
 - [x] Identify repository, existing workflow, and application boundaries.
 - [x] Preserve the unrelated historical deployment plan below.
@@ -149,7 +151,7 @@ expected frontend assets.
 | Container build context | Allowlist-style `.dockerignore` excludes credentials and unrelated artifacts; root, server, and MCP lockfiles are present. Complete Linux image build and API/MCP readiness smoke passed in required Vite job 101373981082, CI run 33991330053, for release snapshot `bc42a8d`, without Azure credentials or registry publication. Rebuild after dependency patches is required | 2026-09-05 20:56 UTC |
 | Static model RBAC review | Astra template references an existing account and introduces no identities or roles. Existing `infra/openai-role.bicep` scopes Cognitive Services OpenAI User to that account, matching runtime inference operations. No role widening is required | 2026-09-05 |
 | Applicable policy constraints | Inherited deny initiative and actual definitions reviewed. OpenAI policy denies `ProvisionedManaged`, whereas Astra uses `GlobalStandard`; classic-resource, VM, AKS, SQL, and HSM constraints do not match this change. Actual model ARM validation passed without a policy denial | 2026-09-05 |
-| Final static application gates | `npm run lint`, `npm run typecheck:scripts`, and all 807 root unit tests pass on the published repaired source, including the bounded AI queue, cloud hydration/import fixes, and administrator log-privacy contract | 2026-09-05 |
+| Final static application gates | `npm run lint`, `npm run typecheck:scripts`, and all 810 root unit tests pass, including canonical service aliases, the bounded AI queue, cloud hydration/import fixes, and administrator log-privacy contract | 2026-09-05 |
 | Remaining core scripts | Workflow contracts, ARM extraction, layout preservation, icon library, icon workspace, validation freshness, and service-name normalization all pass | 2026-09-05 |
 | Genuine Astra production build | `npm run build` passes with the verified OpenAI endpoint and `VITE_AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA=gpt-6-astra` | 2026-09-05 |
 | Focused browser repairs | Theme/contrast, explicit draft recovery, service-inspector focus, AI cancellation/review, score-zero metadata, modal keyboard safety, and atomic AI import checks pass. The import preserves authoritative IDs/pricing and makes zero writes to the old source document | 2026-09-05 |
@@ -159,6 +161,9 @@ expected frontend assets.
 | Workflow visual review | All four baselines use exact reviewed Linux captures, with byte-identical attempts and unchanged dimensions. Differences reflect approved status-bar separation, shadows, and upper-border positioning. Dark/mobile/forced-colors comparisons are 0 differing pixels against both attempts; forced-color current-step text retains 11.31:1 contrast. The 1% threshold and failure semantics remain unchanged | 2026-09-05 |
 | Initial required CI | Vite/core/container and all three CodeQL analyses passed in runs 33991330053/33991329211. Browser and MCP audit failures block merge until corrected | 2026-09-05 |
 | Repaired required CI | Runs 33995733963/33995732452 pass Vite/core, patched MCP, complete image/startup/readiness, all 85 functional browser cases, and all CodeQL analyses. Only the now-reviewed three visual baselines prevented the full browser job from completing; fresh complete CI remains required | 2026-09-05 |
+| Complete critical/visual browser gate | Run 33996721727 passes all 86 critical and visual cases. Its subsequent workspace harness failed because it used a new-document import as an in-place regeneration proxy; the harness now invokes explicitly mocked genuine Astra generation and proves a real snapshot transaction abort before retry | 2026-09-05 |
+| Regeneration service identities | Two focused tests reproduced lost manual instance IDs and falsely unique aliases. Proposal reconciliation now resolves catalog service aliases before uniqueness checks, preserves custom labels/pricing/connections, and leaves group names and explicit import identities unchanged. All focused and full unit cases pass | 2026-09-05 |
+| Supplemental browser safeguards | Current `test:workspace:browser`, all 85 AI/UI cases, all 16 inspector/review cases, and modal-focus safeguards pass. Regeneration proves retained node/workflow IDs, exactly three genuine Astra requests, snapshot-failure retry without duplicate generation, undo, pricing, and review persistence | 2026-09-05 |
 | Runtime dependency patches | Patched MCP `fast-uri` to 3.1.7 and `qs` to 6.16.0. API Express 4/body-parser restrict `qs` to the vulnerable 6.15 line, so a compatible `qs` override selects 6.16.0 without upgrading Express's major version. Both production audits now report zero vulnerabilities; patched MCP 65 and API 120 tests pass, with generated MCP assets unchanged | 2026-09-05 |
 | Deployment log privacy | Created the `ACCESS_ADMIN_EMAIL` Actions secret from the exact existing administrator value through stdin, without a trailing newline or command-line disclosure. Workflow references use the secret and a quoted environment variable; the administrator and runtime value remain unchanged | 2026-09-05 |
 | Final source review | Read-only review reports no significant findings in normalized cloud baselines, canonical serialization, and their save/copy/conflict interactions. Final lint and script type checks pass; nine deployment workflow security contracts pass | 2026-09-05 |

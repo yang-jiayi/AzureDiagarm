@@ -107,6 +107,47 @@ test('stable IDs win even when labels are swapped', () => {
   assert.deepEqual(set.changes.map(change => [change.kind, change.entityId]), [['change', 'a'], ['change', 'b']]);
 });
 
+test('canonical service aliases retain manual instances, labels, pricing and connections', () => {
+  const pricing = { estimatedCost: 120, quantity: 2, region: 'eastus2', isCustom: true };
+  const before = graph([node('manual-web', 'Customer Portal', {
+    position: { x: 320, y: 240 },
+    data: { label: 'Customer Portal', serviceName: 'App Services', pricing },
+  })]);
+  for (const label of ['App Service', 'Azure App Service']) {
+    const set = buildDiagramChanges(before, graph([
+      node('generated-web', label, { data: { label, serviceName: 'App Service' } }),
+      node('generated-db', 'SQL Database', { data: { label: 'SQL Database', serviceName: 'SQL Database' } }),
+    ], [edge('generated-edge', 'generated-web', 'generated-db')]));
+    const result = applyDiagramChanges(set, all(set));
+    assert.deepEqual(result.nodes.map(item => item.id), ['manual-web', 'generated-db']);
+    assert.equal(result.nodes[0].data.label, 'Customer Portal');
+    assert.deepEqual(result.nodes[0].position, before.nodes[0].position);
+    assert.deepEqual(result.nodes[0].data.pricing, pricing);
+    assert.equal(result.edges[0].source, 'manual-web');
+    assert.equal(before.nodes[0].data.serviceName, 'App Services');
+  }
+});
+
+test('canonical service aliases cannot make multiple instances look unique', () => {
+  const before = graph([
+    node('first', 'First portal', { data: { label: 'First portal', serviceName: 'App Services' } }),
+    node('second', 'Second portal', { data: { label: 'Second portal', serviceName: 'App Service' } }),
+  ]);
+  const set = buildDiagramChanges(before, graph([
+    node('generated', 'App Service', { data: { label: 'App Service', serviceName: 'App Service' } }),
+  ]));
+  assert.equal(set.proposed.nodes[0].id, 'generated');
+  assert.deepEqual(set.changes.filter(change => change.kind === 'delete').map(change => change.entityId), ['first', 'second']);
+});
+
+test('service aliases do not reinterpret group names', () => {
+  const set = buildDiagramChanges(
+    graph([node('old-group', 'App Services', { type: 'groupNode' })]),
+    graph([node('new-group', 'App Service', { type: 'groupNode' })]),
+  );
+  assert.equal(set.proposed.nodes[0].id, 'new-group');
+});
+
 test('imported proposals preserve their own IDs, connections and metadata', () => {
   const before = graph([
     node('old-web', 'Customer portal', {
