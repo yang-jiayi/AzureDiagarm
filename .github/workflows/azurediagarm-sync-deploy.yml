@@ -640,7 +640,7 @@ jobs:
           APP_DEPLOYMENT_MODE: public
           EASY_AUTH_ENABLED: 'true'
           ACCESS_CONTROL_ENABLED: ${{ vars.ACCESS_CONTROL_ENABLED || 'true' }}
-          ACCESS_ADMIN_EMAIL: ${{ vars.ACCESS_ADMIN_EMAIL }}
+          ACCESS_ADMIN_EMAIL: ${{ secrets.ACCESS_ADMIN_EMAIL }}
           AZURE_ACCESS_KEY_VAULT_RESOURCE_ID: ${{ vars.AZURE_ACCESS_KEY_VAULT_RESOURCE_ID }}
           AZURE_TABLES_ACCESS_ENDPOINT: ${{ vars.AZURE_TABLES_ACCESS_ENDPOINT }}
           PUBLIC_URL: ${{ vars.AZURE_APP_URL }}
@@ -962,7 +962,7 @@ jobs:
       - name: Validate mandatory runtime configuration
         env:
           ACCESS_CONTROL_ENABLED: ${{ vars.ACCESS_CONTROL_ENABLED || 'true' }}
-          ACCESS_ADMIN_EMAIL: ${{ vars.ACCESS_ADMIN_EMAIL }}
+          ACCESS_ADMIN_EMAIL: ${{ secrets.ACCESS_ADMIN_EMAIL }}
           AZURE_ACCESS_KEY_VAULT_RESOURCE_ID: ${{ vars.AZURE_ACCESS_KEY_VAULT_RESOURCE_ID }}
           PUBLIC_URL: ${{ vars.AZURE_APP_URL }}
         run: |
@@ -997,7 +997,7 @@ jobs:
           AZURE_CONTAINER_REGISTRY: ${{ vars.AZURE_CONTAINER_REGISTRY }}
           PUBLIC_URL: ${{ vars.AZURE_APP_URL }}
           ACCESS_CONTROL_ENABLED: ${{ vars.ACCESS_CONTROL_ENABLED || 'true' }}
-          ACCESS_ADMIN_EMAIL: ${{ vars.ACCESS_ADMIN_EMAIL }}
+          ACCESS_ADMIN_EMAIL: ${{ secrets.ACCESS_ADMIN_EMAIL }}
           AZURE_ACCESS_KEY_VAULT_RESOURCE_ID: ${{ vars.AZURE_ACCESS_KEY_VAULT_RESOURCE_ID }}
           AZURE_TABLES_ACCESS_ENDPOINT: ${{ vars.AZURE_TABLES_ACCESS_ENDPOINT }}
           AI_BUDGET_STORE: ${{ vars.AI_BUDGET_STORE || 'table' }}
@@ -1348,6 +1348,8 @@ jobs:
 
       - name: Deploy the new Container Apps revision
         if: steps.deployment.outputs.should_deploy == 'true'
+        env:
+          ACCESS_ADMIN_EMAIL: ${{ secrets.ACCESS_ADMIN_EMAIL }}
         run: |
           set -Eeuo pipefail
           deployed_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -1358,7 +1360,7 @@ jobs:
             "EASY_AUTH_ENABLED=true"
             "FRONT_DOOR_ID=${{ steps.frontdoor.outputs.id }}"
             "ACCESS_CONTROL_ENABLED=${{ vars.ACCESS_CONTROL_ENABLED || 'true' }}"
-            "ACCESS_ADMIN_EMAIL=${{ vars.ACCESS_ADMIN_EMAIL }}"
+            "ACCESS_ADMIN_EMAIL=$ACCESS_ADMIN_EMAIL"
             "AZURE_ACCESS_KEY_VAULT_RESOURCE_ID=${{ vars.AZURE_ACCESS_KEY_VAULT_RESOURCE_ID }}"
             "AZURE_TABLES_ACCESS_ENDPOINT=${{ vars.AZURE_TABLES_ACCESS_ENDPOINT }}"
             "AI_BUDGET_STORE=${{ vars.AI_BUDGET_STORE || 'table' }}"

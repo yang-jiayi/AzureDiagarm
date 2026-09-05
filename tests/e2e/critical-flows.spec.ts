@@ -333,6 +333,20 @@ function getCloudWorkspaceButton(page: Page) {
   });
 }
 
+async function editDiagramAuthor(page: Page, author = 'Cloud regression setup') {
+  await expect(page.getByTestId('rf__node-A-node')).toBeVisible();
+  const titleBlock = page.locator('.title-block');
+  await expect(titleBlock).toBeVisible();
+  const toggle = titleBlock.locator('.title-block-toggle');
+  if (await toggle.getAttribute('aria-expanded') === 'false') await toggle.click();
+  await titleBlock.locator('.title-block-display').press('Enter');
+  const authorField = titleBlock.getByLabel('Author:', { exact: true });
+  await expect(authorField).not.toHaveValue(author);
+  await authorField.fill(author);
+  await titleBlock.getByRole('button', { name: 'Save', exact: true }).click();
+  await expect(titleBlock.locator('.title-block-display')).toContainText(author);
+}
+
 test('primary application shell meets WCAG A and AA checks', async ({ page }) => {
   await initializePage(page);
   await page.route('**/api/**', async (route) => {
@@ -401,7 +415,7 @@ test('workflow stepper has stable light, dark, mobile, and forced-colors visuals
   await expect(steps).toHaveCount(4);
   await expect(steps.nth(0)).toHaveAttribute('aria-current', 'step');
   await expect(steps.nth(1)).toBeDisabled();
-  await expect(stepper).toHaveScreenshot('workflow-stepper-light.png', {
+  await expect.soft(stepper).toHaveScreenshot('workflow-stepper-light.png', {
     animations: 'disabled',
     caret: 'hide',
     maxDiffPixelRatio: 0.01,
@@ -412,7 +426,7 @@ test('workflow stepper has stable light, dark, mobile, and forced-colors visuals
   await page.getByRole('tab', { name: 'Home' }).click();
   await page.getByRole('button', { name: 'Switch to Dark Mode' }).click();
   await expect(page.locator('body')).toHaveClass(/dark-mode/);
-  await expect(stepper).toHaveScreenshot('workflow-stepper-dark.png', {
+  await expect.soft(stepper).toHaveScreenshot('workflow-stepper-dark.png', {
     animations: 'disabled',
     caret: 'hide',
     maxDiffPixelRatio: 0.01,
@@ -426,7 +440,7 @@ test('workflow stepper has stable light, dark, mobile, and forced-colors visuals
   await expect.poll(() => stepper.evaluate((element) => (
     element.scrollWidth <= element.clientWidth
   ))).toBe(true);
-  await expect(stepper).toHaveScreenshot('workflow-stepper-mobile.png', {
+  await expect.soft(stepper).toHaveScreenshot('workflow-stepper-mobile.png', {
     animations: 'disabled',
     caret: 'hide',
     maxDiffPixelRatio: 0.01,
@@ -438,7 +452,7 @@ test('workflow stepper has stable light, dark, mobile, and forced-colors visuals
   await page.emulateMedia({ forcedColors: 'active', reducedMotion: 'reduce' });
   expect(await page.evaluate(() => matchMedia('(forced-colors: active)').matches)).toBe(true);
   await expect(steps.nth(0)).toHaveCSS('box-shadow', 'none');
-  await expect(stepper).toHaveScreenshot('workflow-stepper-forced-colors.png', {
+  await expect.soft(stepper).toHaveScreenshot('workflow-stepper-forced-colors.png', {
     animations: 'disabled',
     caret: 'hide',
     maxDiffPixelRatio: 0.01,
@@ -2039,6 +2053,8 @@ test('command palette adds services and focus mode persists until Escape', async
   await palette.getByRole('option', { name: /App Services/ }).click();
   await expect(palette).toBeHidden();
   await expect(page.locator('.react-flow__node-azureNode')).toHaveCount(1);
+  // Recovery requires a committed draft, not just a rendered node.
+  await expect(page.getByRole('status').filter({ hasText: 'Saved on this device' })).toBeVisible();
 
   await canvas.focus();
   await page.keyboard.press('Control+K');
@@ -3253,6 +3269,7 @@ test('metadata success reconciles the current ETag after the modal closes', asyn
   });
 
   await page.goto('/');
+  await editDiagramAuthor(page);
   await expect.poll(() => updateAttempts, { timeout: 5_000 }).toBe(1);
   const cloudButton = getCloudWorkspaceButton(page);
   await cloudButton.click();
@@ -3372,6 +3389,7 @@ test('out-of-order metadata responses cannot roll back the current ETag', async 
   });
 
   await page.goto('/');
+  await editDiagramAuthor(page);
   await expect.poll(() => updateAttempts, { timeout: 5_000 }).toBe(1);
   const cloudButton = getCloudWorkspaceButton(page);
   await cloudButton.click();
@@ -3486,6 +3504,7 @@ test('a stale metadata failure cannot conflict a newer success on the same docum
   });
 
   await page.goto('/');
+  await editDiagramAuthor(page);
   await expect.poll(() => updateAttempts, { timeout: 5_000 }).toBe(1);
   const cloudButton = getCloudWorkspaceButton(page);
   await cloudButton.click();
@@ -3591,6 +3610,7 @@ test('reload cannot clear a newer conflict raised while it is in flight', async 
   });
 
   await page.goto('/');
+  await editDiagramAuthor(page);
   await expect.poll(() => updateAttempts, { timeout: 5_000 }).toBe(1);
   const cloudButton = getCloudWorkspaceButton(page);
   await cloudButton.click();
@@ -3839,6 +3859,7 @@ test('metadata conflict after a prerequisite save uses the saved revision', asyn
   });
 
   await page.goto('/');
+  await editDiagramAuthor(page);
   await expect.poll(() => updateAttempts, { timeout: 5_000 }).toBe(1);
   const nodeTarget = page.locator('[data-testid="rf__node-A-node"] [data-node-keyboard-target]');
   await nodeTarget.focus();
@@ -3863,6 +3884,9 @@ test('metadata action stops when save replaces a remotely deleted document', asy
   let updateAttempts = 0;
   let replacementCreated = 0;
   let commentAttempts = 0;
+  // Keep A current until the metadata action starts, even if autosave runs first.
+  let releaseReplacementSave: () => void = () => {};
+  const replacementSaveGate = new Promise<void>((resolve) => { releaseReplacementSave = resolve; });
 
   await page.route('**/api/**', async (route) => {
     const request = route.request();
@@ -3907,6 +3931,7 @@ test('metadata action stops when save replaces a remotely deleted document', asy
           etag: '"A-2"',
         }, 200, { etag: '"A-2"' });
       } else {
+        await replacementSaveGate;
         await fulfillJson(route, { error: 'Not found' }, 404);
       }
       return;
@@ -3931,6 +3956,7 @@ test('metadata action stops when save replaces a remotely deleted document', asy
   });
 
   await page.goto('/');
+  await editDiagramAuthor(page);
   await expect.poll(() => updateAttempts, { timeout: 5_000 }).toBe(1);
   const nodeTarget = page.locator('[data-testid="rf__node-A-node"] [data-node-keyboard-target]');
   await nodeTarget.focus();
@@ -3940,6 +3966,7 @@ test('metadata action stops when save replaces a remotely deleted document', asy
   const modal = page.locator('.cloud-workspace-modal');
   await modal.getByPlaceholder('Add a review comment...').fill('Do not send to deleted A');
   await modal.getByRole('button', { name: 'Comment', exact: true }).click();
+  releaseReplacementSave();
   await expect.poll(() => replacementCreated, { timeout: 5_000 }).toBe(1);
   expect(commentAttempts).toBe(0);
   await expect.poll(async () => (
@@ -4026,6 +4053,7 @@ test('share refresh failure blocks saves until the ETag is reconciled', async ({
   });
 
   await page.goto('/');
+  await editDiagramAuthor(page);
   await expect.poll(() => initialUpdates, { timeout: 5_000 }).toBe(1);
   const cloudButton = getCloudWorkspaceButton(page);
   await cloudButton.click();
@@ -4239,6 +4267,7 @@ test('current diagram detail 404 enters conflict before navigation', async ({ pa
   });
 
   await page.goto('/');
+  await editDiagramAuthor(page);
   await expect.poll(() => updateAttempts, { timeout: 5_000 }).toBe(1);
   const nodeTarget = page.locator('[data-testid="rf__node-A-node"] [data-node-keyboard-target]');
   await nodeTarget.focus();
@@ -4313,6 +4342,7 @@ test('an in-flight save failure cannot hide a newer detail conflict', async ({ p
   });
 
   await page.goto('/');
+  await editDiagramAuthor(page);
   await expect.poll(() => updateAttempts, { timeout: 5_000 }).toBe(1);
   const nodeTarget = page.locator('[data-testid="rf__node-A-node"] [data-node-keyboard-target]');
   await nodeTarget.focus();
@@ -4528,6 +4558,7 @@ test('remote deletion replacement is not deduplicated after reverting an edit', 
   });
 
   await page.goto('/');
+  await editDiagramAuthor(page);
   await expect.poll(() => updateAttempts, { timeout: 5_000 }).toBe(1);
   const nodeTarget = page.locator('[data-testid="rf__node-A-node"] [data-node-keyboard-target]');
   await nodeTarget.focus();
@@ -4583,6 +4614,7 @@ test('reverting while a save is in flight persists the reverted payload', async 
   });
 
   await page.goto('/');
+  await editDiagramAuthor(page);
   await expect.poll(() => updateAttempts, { timeout: 5_000 }).toBe(1);
   const nodeTarget = page.locator('[data-testid="rf__node-A-node"] [data-node-keyboard-target]');
   await nodeTarget.focus();
@@ -5167,6 +5199,7 @@ test('edits made while snapshot restore verifies are queued', async ({ page }) =
   });
 
   await page.goto('/');
+  await editDiagramAuthor(page);
   await expect.poll(() => revision, { timeout: 5_000 }).toBeGreaterThan(1);
   await getCloudWorkspaceButton(page).click();
   const modal = page.locator('.cloud-workspace-modal');
@@ -5300,6 +5333,7 @@ test('snapshot restore can switch from the current diagram to another diagram', 
   });
 
   await page.goto('/');
+  await editDiagramAuthor(page);
   await expect.poll(() => diagramAUpdates, { timeout: 5_000 }).toBe(1);
   const cloudButton = getCloudWorkspaceButton(page);
   await cloudButton.click();
@@ -5399,6 +5433,7 @@ test('identical cross-document snapshot restore still verifies the target ETag',
   });
 
   await page.goto('/');
+  await editDiagramAuthor(page);
   await expect.poll(() => diagramAUpdates, { timeout: 5_000 }).toBe(1);
   await getCloudWorkspaceButton(page).click();
   const modal = page.locator('.cloud-workspace-modal');
@@ -5507,6 +5542,7 @@ test('snapshot restore keeps a replacement current diagram selected', async ({ p
   });
 
   await page.goto('/');
+  await editDiagramAuthor(page);
   await expect.poll(() => diagramAUpdates, { timeout: 5_000 }).toBe(1);
   await getCloudWorkspaceButton(page).click();
   const modal = page.locator('.cloud-workspace-modal');
@@ -5692,6 +5728,7 @@ test('discarding before snapshot restore cancels the failed save retry', async (
   });
 
   await page.goto('/');
+  await editDiagramAuthor(page);
   await expect.poll(() => updateAttempts, { timeout: 5_000 }).toBe(1);
   const cloudButton = getCloudWorkspaceButton(page);
   await cloudButton.click();
@@ -5876,6 +5913,7 @@ test('opening another diagram verifies unchanged cloud state before discard', as
   });
 
   await page.goto('/');
+  await editDiagramAuthor(page);
   await expect.poll(() => diagramAUpdates, { timeout: 5_000 }).toBe(1);
   const cloudButton = getCloudWorkspaceButton(page);
   await cloudButton.click();
@@ -5970,6 +6008,7 @@ test('discarding a current conflict reloads remote instead of cached content', a
   });
 
   await page.goto('/');
+  await editDiagramAuthor(page);
   await expect.poll(() => updateAttempts, { timeout: 5_000 }).toBe(1);
   const cloudButton = getCloudWorkspaceButton(page);
   await cloudButton.click();

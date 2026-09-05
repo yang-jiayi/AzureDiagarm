@@ -50,6 +50,20 @@ test('deployment notifications use OIDC instead of a Communication Services secr
   );
 });
 
+test('production administrator configuration is masked and not interpolated into shell code', () => {
+  assert.doesNotMatch(workflow, /vars\.ACCESS_ADMIN_EMAIL/);
+  assert.equal(
+    workflow.split('ACCESS_ADMIN_EMAIL: ${{ secrets.ACCESS_ADMIN_EMAIL }}').length - 1,
+    4,
+  );
+  assert.match(
+    workflow,
+    /- name: Deploy the new Container Apps revision[\s\S]*?env:\s+ACCESS_ADMIN_EMAIL: \$\{\{ secrets\.ACCESS_ADMIN_EMAIL \}\}/,
+  );
+  assert.match(workflow, /"ACCESS_ADMIN_EMAIL=\$ACCESS_ADMIN_EMAIL"/);
+  assert.doesNotMatch(workflow, /"ACCESS_ADMIN_EMAIL=\$\{\{/);
+});
+
 // Third-party actions run with repository credentials, so a moved tag is a
 // supply-chain takeover. Three assertions above happened to spell out SHAs,
 // which meant every Dependabot bump failed CI and left the *other* `uses:`

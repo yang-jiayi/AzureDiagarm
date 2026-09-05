@@ -38,6 +38,10 @@ Feature work is preserved in checkpoint `5de4fa2` on
 `release/workspace-quality-20260905`; integrate `origin/main` at `c885477` before
 release. Preserve its newer Office, cloud document, accessibility, authentication,
 and deployment capabilities rather than replacing them with the older checkout.
+Publish the identical integration tree as release snapshot `bc42a8d` on
+`release/astra-workspace-20260905`, PR
+[63](https://github.com/yang-jiayi/AzureDiagarm/pull/63). The original local
+checkpoint and integration commits remain preserved.
 
 The only new Azure resource is the genuine Astra model deployment, represented
 by `infra/gpt6-astra.bicep` under an existing OpenAI account. Validate this actual
@@ -72,6 +76,9 @@ matches the operator and remains allowed. The application email allowlist is
 currently empty: Entra group assignment alone does not authorize other users
 through the application's allowlist. Treat this access-policy transition
 explicitly rather than claiming all prior users retain access.
+The unchanged administrator value is now stored in the like-named Actions
+secret, and the workflow consumes that secret instead of a repository variable
+to prevent public deployment logs from exposing the address.
 
 The existing deployment identity is correctly federated to this repository's
 immutable-ID main-branch subject. The initial legacy-subject comparison was
@@ -85,8 +92,13 @@ hook dependencies, canonical style contracts, theme/contrast repairs, and static
 gates now pass. Focused browser checks cover recovery, modal keyboard safety,
 cancelled AI requests, validation metadata, and atomic import into a new cloud
 document. Cloud hydration now records its normalized baseline without rewriting
-the source document. The complete browser run and required Linux/container CI
-checks remain pending; this status does not authorize deployment.
+the source document. The initial Linux container/core and CodeQL gates passed.
+Older cloud test arrangements now explicitly edit metadata before expecting a
+write. Focus-mode recovery waits for a committed draft. The deterministic light
+workflow visual change has been reviewed against Linux artifacts. Newly reported
+dependency advisories have been patched. Final browser, remaining visual states,
+and patched-container CI checks remain pending; this status does not authorize
+deployment.
 
 - [x] Identify repository, existing workflow, and application boundaries.
 - [x] Preserve the unrelated historical deployment plan below.
@@ -134,7 +146,7 @@ expected frontend assets.
 | Required public access flag | GitHub `ACCESS_CONTROL_ENABLED=true` prepared; the existing live revision is unchanged until release | 2026-09-05 |
 | Core Azure CLI validation | Official `validate-deployment.ps1` helper passed CLI, authentication, Bicep compilation, `az deployment group validate`, and resource-group what-if for `infra/gpt6-astra.bicep` | 2026-09-05 |
 | Structured infrastructure preview | No resource creation or deletion. Astra has one Modify entry for omitted service-reported `properties.currentCapacity`; all other resources are Ignore. The helper's textual Delete count describes property lines, not deleted resources. No template application was performed | 2026-09-05 |
-| Container build context | Allowlist-style `.dockerignore` excludes credentials and unrelated artifacts; root, server, and MCP lockfiles are present. Complete image build and process-readiness smoke added to the existing required Vite CI job, without Azure credentials or registry publication; execution pending | 2026-09-05 |
+| Container build context | Allowlist-style `.dockerignore` excludes credentials and unrelated artifacts; root, server, and MCP lockfiles are present. Complete Linux image build and API/MCP readiness smoke passed in required Vite job 101373981082, CI run 33991330053, for release snapshot `bc42a8d`, without Azure credentials or registry publication. Rebuild after dependency patches is required | 2026-09-05 20:56 UTC |
 | Static model RBAC review | Astra template references an existing account and introduces no identities or roles. Existing `infra/openai-role.bicep` scopes Cognitive Services OpenAI User to that account, matching runtime inference operations. No role widening is required | 2026-09-05 |
 | Applicable policy constraints | Inherited deny initiative and actual definitions reviewed. OpenAI policy denies `ProvisionedManaged`, whereas Astra uses `GlobalStandard`; classic-resource, VM, AKS, SQL, and HSM constraints do not match this change. Actual model ARM validation passed without a policy denial | 2026-09-05 |
 | Final static application gates | `npm run lint`, `npm run typecheck:scripts`, and all 806 root unit tests pass on the integrated source, including the bounded AI queue and cloud hydration/import fixes | 2026-09-05 |
@@ -142,7 +154,13 @@ expected frontend assets.
 | Genuine Astra production build | `npm run build` passes with the verified OpenAI endpoint and `VITE_AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA=gpt-6-astra` | 2026-09-05 |
 | Focused browser repairs | Theme/contrast, explicit draft recovery, service-inspector focus, AI cancellation/review, score-zero metadata, modal keyboard safety, and atomic AI import checks pass. The import preserves authoritative IDs/pricing and makes zero writes to the old source document | 2026-09-05 |
 | AI comparison admission | Shared cancellable budget queue passes 111 focused units and 85 AI/UI checks, including 43 comparison cases; concurrency limits and cancellation assertions remain intact | 2026-09-05 |
-| Expanded browser gate | Complete 85-case nonvisual rerun and required Linux visual/browser CI are pending. No screenshot baselines, contrast thresholds, or source-write assertions have been relaxed | 2026-09-05 |
+| Cloud browser arrangements | Explicit author edits replace 18 incidental hydration-write setups. All 19 focused cases and three replacement-race runs pass. The complete Windows run reaches 84/85; the remaining unchanged keyboard/access-dialog case encountered delayed Vite loading and subsequently passed both keyboard/WCAG control runs. Fresh Linux CI remains required | 2026-09-05 |
+| Focus-mode persistence | Linux traces reloaded before confirmed persistence. The test now waits for `Saved on this device`, retaining every recovery/Escape/focus assertion. Focus-mode and recent-work recovery pass all six repeated local runs | 2026-09-05 |
+| Workflow visual review | The light baseline uses the exact reviewed Linux capture; both attempts are byte-identical. Drift is limited to approved header/status-bar shadow and one-pixel-border changes. Four screenshot assertions remain failing soft assertions, collecting all state mismatches without changing the 1% threshold. Dark/mobile/forced-colors require fresh Linux results | 2026-09-05 |
+| Initial required CI | Vite/core/container and all three CodeQL analyses passed in runs 33991330053/33991329211. Browser and MCP audit failures block merge until corrected | 2026-09-05 |
+| Runtime dependency patches | Patched MCP `fast-uri` to 3.1.7 and `qs` to 6.16.0. API Express 4/body-parser restrict `qs` to the vulnerable 6.15 line, so a compatible `qs` override selects 6.16.0 without upgrading Express's major version. Both production audits now report zero vulnerabilities; patched MCP 65 and API 120 tests pass, with generated MCP assets unchanged | 2026-09-05 |
+| Deployment log privacy | Created the `ACCESS_ADMIN_EMAIL` Actions secret from the exact existing administrator value through stdin, without a trailing newline or command-line disclosure. Workflow references use the secret and a quoted environment variable; the administrator and runtime value remain unchanged | 2026-09-05 |
+| Final source review | Read-only review reports no significant findings in normalized cloud baselines, canonical serialization, and their save/copy/conflict interactions. Final lint and script type checks pass; nine deployment workflow security contracts pass | 2026-09-05 |
 | Remote source currency | Refreshed `origin/main` remains `c885477c799a35a044a73ac05b230aeab7160f95`; no unresolved index entries or whitespace errors | 2026-09-05 |
 
 Policy Insights reports no evaluated rows for the existing Container App; an

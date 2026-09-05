@@ -531,6 +531,12 @@ That workflow validates the application and servers, builds in ACR, creates a
 Container Apps revision with health probes, preserves authentication and origin
 controls, purges Front Door, and verifies the deployed security boundary.
 
+Configure `ACCESS_ADMIN_EMAIL` as a GitHub Actions **secret**, not a repository
+variable, so the administrator address is masked in public workflow logs.
+Existing installations using a variable must copy the same value to the
+like-named secret before deploying; the application administrator does not
+change.
+
 OpenAI proxy quotas use an atomic Azure Table Storage counter when
 `AZURE_TABLES_ENDPOINT` is configured; the production workflow requires this
 shared backend so all Container Apps replicas enforce one per-client limit.
