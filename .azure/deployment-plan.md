@@ -94,11 +94,11 @@ cancelled AI requests, validation metadata, and atomic import into a new cloud
 document. Cloud hydration now records its normalized baseline without rewriting
 the source document. The initial Linux container/core and CodeQL gates passed.
 Older cloud test arrangements now explicitly edit metadata before expecting a
-write. Focus-mode recovery waits for a committed draft. The deterministic light
-workflow visual change has been reviewed against Linux artifacts. Newly reported
-dependency advisories have been patched. Final browser, remaining visual states,
-and patched-container CI checks remain pending; this status does not authorize
-deployment.
+write. Focus-mode recovery waits for a committed draft. All 85 functional browser
+cases and the patched runtime/container checks now pass on Linux. All four
+workflow visual changes have been reviewed against stable Linux artifacts.
+Newly reported dependency advisories have been patched. Fresh complete CI with
+the reviewed baselines remains pending; this status does not authorize deployment.
 
 - [x] Identify repository, existing workflow, and application boundaries.
 - [x] Preserve the unrelated historical deployment plan below.
@@ -149,19 +149,21 @@ expected frontend assets.
 | Container build context | Allowlist-style `.dockerignore` excludes credentials and unrelated artifacts; root, server, and MCP lockfiles are present. Complete Linux image build and API/MCP readiness smoke passed in required Vite job 101373981082, CI run 33991330053, for release snapshot `bc42a8d`, without Azure credentials or registry publication. Rebuild after dependency patches is required | 2026-09-05 20:56 UTC |
 | Static model RBAC review | Astra template references an existing account and introduces no identities or roles. Existing `infra/openai-role.bicep` scopes Cognitive Services OpenAI User to that account, matching runtime inference operations. No role widening is required | 2026-09-05 |
 | Applicable policy constraints | Inherited deny initiative and actual definitions reviewed. OpenAI policy denies `ProvisionedManaged`, whereas Astra uses `GlobalStandard`; classic-resource, VM, AKS, SQL, and HSM constraints do not match this change. Actual model ARM validation passed without a policy denial | 2026-09-05 |
-| Final static application gates | `npm run lint`, `npm run typecheck:scripts`, and all 806 root unit tests pass on the integrated source, including the bounded AI queue and cloud hydration/import fixes | 2026-09-05 |
+| Final static application gates | `npm run lint`, `npm run typecheck:scripts`, and all 807 root unit tests pass on the published repaired source, including the bounded AI queue, cloud hydration/import fixes, and administrator log-privacy contract | 2026-09-05 |
 | Remaining core scripts | Workflow contracts, ARM extraction, layout preservation, icon library, icon workspace, validation freshness, and service-name normalization all pass | 2026-09-05 |
 | Genuine Astra production build | `npm run build` passes with the verified OpenAI endpoint and `VITE_AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA=gpt-6-astra` | 2026-09-05 |
 | Focused browser repairs | Theme/contrast, explicit draft recovery, service-inspector focus, AI cancellation/review, score-zero metadata, modal keyboard safety, and atomic AI import checks pass. The import preserves authoritative IDs/pricing and makes zero writes to the old source document | 2026-09-05 |
 | AI comparison admission | Shared cancellable budget queue passes 111 focused units and 85 AI/UI checks, including 43 comparison cases; concurrency limits and cancellation assertions remain intact | 2026-09-05 |
 | Cloud browser arrangements | Explicit author edits replace 18 incidental hydration-write setups. All 19 focused cases and three replacement-race runs pass. The complete Windows run reaches 84/85; the remaining unchanged keyboard/access-dialog case encountered delayed Vite loading and subsequently passed both keyboard/WCAG control runs. Fresh Linux CI remains required | 2026-09-05 |
 | Focus-mode persistence | Linux traces reloaded before confirmed persistence. The test now waits for `Saved on this device`, retaining every recovery/Escape/focus assertion. Focus-mode and recent-work recovery pass all six repeated local runs | 2026-09-05 |
-| Workflow visual review | The light baseline uses the exact reviewed Linux capture; both attempts are byte-identical. Drift is limited to approved header/status-bar shadow and one-pixel-border changes. Four screenshot assertions remain failing soft assertions, collecting all state mismatches without changing the 1% threshold. Dark/mobile/forced-colors require fresh Linux results | 2026-09-05 |
+| Workflow visual review | All four baselines use exact reviewed Linux captures, with byte-identical attempts and unchanged dimensions. Differences reflect approved status-bar separation, shadows, and upper-border positioning. Dark/mobile/forced-colors comparisons are 0 differing pixels against both attempts; forced-color current-step text retains 11.31:1 contrast. The 1% threshold and failure semantics remain unchanged | 2026-09-05 |
 | Initial required CI | Vite/core/container and all three CodeQL analyses passed in runs 33991330053/33991329211. Browser and MCP audit failures block merge until corrected | 2026-09-05 |
+| Repaired required CI | Runs 33995733963/33995732452 pass Vite/core, patched MCP, complete image/startup/readiness, all 85 functional browser cases, and all CodeQL analyses. Only the now-reviewed three visual baselines prevented the full browser job from completing; fresh complete CI remains required | 2026-09-05 |
 | Runtime dependency patches | Patched MCP `fast-uri` to 3.1.7 and `qs` to 6.16.0. API Express 4/body-parser restrict `qs` to the vulnerable 6.15 line, so a compatible `qs` override selects 6.16.0 without upgrading Express's major version. Both production audits now report zero vulnerabilities; patched MCP 65 and API 120 tests pass, with generated MCP assets unchanged | 2026-09-05 |
 | Deployment log privacy | Created the `ACCESS_ADMIN_EMAIL` Actions secret from the exact existing administrator value through stdin, without a trailing newline or command-line disclosure. Workflow references use the secret and a quoted environment variable; the administrator and runtime value remain unchanged | 2026-09-05 |
 | Final source review | Read-only review reports no significant findings in normalized cloud baselines, canonical serialization, and their save/copy/conflict interactions. Final lint and script type checks pass; nine deployment workflow security contracts pass | 2026-09-05 |
 | Remote source currency | Refreshed `origin/main` remains `c885477c799a35a044a73ac05b230aeab7160f95`; no unresolved index entries or whitespace errors | 2026-09-05 |
+| Refreshed live preflight | Existing healthy revision and rollback image remain unchanged. Astra is Succeeded at the verified model/version and capacity. Without following authentication redirects, public health returns 200, protected root/API/MCP return 401, and the direct origin returns 403. Browser-style requests redirect to Microsoft sign-in, not anonymous API JSON | 2026-09-05 |
 
 Policy Insights reports no evaluated rows for the existing Container App; an
 empty result is not proof of estate-wide compliance. The existing OpenAI account
