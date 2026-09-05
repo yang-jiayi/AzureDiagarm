@@ -65,6 +65,7 @@ OPENAI_DEPLOYMENTS=()
 for var in VITE_AZURE_OPENAI_DEPLOYMENT_GPT51 VITE_AZURE_OPENAI_DEPLOYMENT_GPT52 \
            VITE_AZURE_OPENAI_DEPLOYMENT_GPT52CODEX VITE_AZURE_OPENAI_DEPLOYMENT_GPT53CODEX \
            VITE_AZURE_OPENAI_DEPLOYMENT_GPT54 VITE_AZURE_OPENAI_DEPLOYMENT_GPT54MINI \
+           VITE_AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA \
            VITE_AZURE_OPENAI_DEPLOYMENT_GPT56SOL VITE_AZURE_OPENAI_DEPLOYMENT_GPT56TERRA \
            VITE_AZURE_OPENAI_DEPLOYMENT_GPT56LUNA VITE_AZURE_OPENAI_DEPLOYMENT_DEEPSEEK \
            VITE_AZURE_OPENAI_DEPLOYMENT_DEEPSEEK_V4_PRO VITE_AZURE_OPENAI_DEPLOYMENT_GROK4FAST \
@@ -94,6 +95,28 @@ if [[ ${#FOUNDRY_DEPLOYMENTS[@]} -gt 0 && -z "${VITE_AZURE_FOUNDRY_ENDPOINT:-}" 
     exit 1
 fi
 
+# Every cloud update is public mode. Validate the same controls used at runtime,
+# rather than building an image that can never safely become ready.
+export APP_DEPLOYMENT_MODE=public
+export EASY_AUTH_ENABLED=true
+export ACCESS_CONTROL_ENABLED="${ACCESS_CONTROL_ENABLED:-true}"
+export AI_BUDGET_STORE="${AI_BUDGET_STORE:-$([[ -n "${AZURE_TABLES_BUDGET_ENDPOINT:-${AZURE_TABLES_ENDPOINT:-}}" ]] && echo table || echo cosmos)}"
+if [[ -z "${AZURE_OPENAI_ALLOWED_DEPLOYMENTS:-}" ]]; then
+    AZURE_OPENAI_ALLOWED_DEPLOYMENTS="$(IFS=,; echo "${OPENAI_DEPLOYMENTS[*]}")"
+fi
+export AZURE_OPENAI_ALLOWED_DEPLOYMENTS
+export AZURE_FOUNDRY_ALLOWED_DEPLOYMENTS="${AZURE_FOUNDRY_ALLOWED_DEPLOYMENTS:-$(IFS=,; echo "${FOUNDRY_DEPLOYMENTS[*]}")}"
+node "$(dirname "$0")/../server/deployment-security.js"
+az containerapp auth show --name "$ACA_APP_NAME" --resource-group "$RESOURCE_GROUP" --output json \
+    | node "$(dirname "$0")/../server/deployment-security.js" --verify-auth
+ORIGIN_FQDN="$(az containerapp show --name "$ACA_APP_NAME" --resource-group "$RESOURCE_GROUP" --query properties.configuration.ingress.fqdn -o tsv)"
+ORIGIN_STATUS="$(curl --silent --output /dev/null --write-out '%{http_code}' --connect-timeout 10 --max-time 30 \
+    --header "X-Azure-FDID: $FRONT_DOOR_ID" "https://${ORIGIN_FQDN}/healthz" || true)"
+if [[ "$ORIGIN_STATUS" != "403" ]]; then
+    echo "❌ The origin must reject a direct request even when the Front Door ID is spoofed." >&2
+    exit 1
+fi
+
 # ─── Build arguments ────────────────────────────────────────────────
 # Collect all VITE_ variables as --build-arg flags into a bash array
 # (array avoids eval pitfalls when values contain quotes, $, spaces, etc.)
@@ -112,7 +135,7 @@ APPINSIGHTS_FILE="$SOURCE_DIR/.env.appinsights"
 : > "$APPINSIGHTS_FILE"
 trap 'rm -f "$APPINSIGHTS_FILE"' EXIT
 
-BUILD_ARGS=()
+BUILD_ARGS=(--build-arg "FRONT_DOOR_ID=$FRONT_DOOR_ID")
 while IFS='=' read -r key value; do
     if [[ "$key" == VITE_* && -n "$value" ]]; then
         # Strip surrounding quotes if present in .env
@@ -132,10 +155,6 @@ while IFS='=' read -r key value; do
         BUILD_ARGS+=(--build-arg "$key=$value")
     fi
 done < <(grep -v '^#' "$ENV_FILE" | grep -v '^\s*$')
-
-if [[ -n "${FRONT_DOOR_ID:-}" ]]; then
-    BUILD_ARGS+=(--build-arg "FRONT_DOOR_ID=$FRONT_DOOR_ID")
-fi
 
 IMAGE_TAG="${IMAGE_TAG:-$(date -u +%Y%m%d%H%M%S)-$(git -C "$SOURCE_DIR" rev-parse --short HEAD 2>/dev/null || echo local)}"
 ACR_IMAGE="$ACR_NAME.azurecr.io/$IMAGE_NAME:$IMAGE_TAG"
@@ -175,6 +194,16 @@ bash "$SOURCE_DIR/scripts/ensure-containerapp-probes.sh" \
 PUBLIC_URL="${PUBLIC_URL:-https://$FQDN}"
 RUNTIME_ENV_VARS=(
     "PUBLIC_URL=$PUBLIC_URL"
+    "APP_DEPLOYMENT_MODE=public"
+    "EASY_AUTH_ENABLED=true"
+    "ACCESS_CONTROL_ENABLED=$ACCESS_CONTROL_ENABLED"
+    "FRONT_DOOR_ID=$FRONT_DOOR_ID"
+    "AI_BUDGET_STORE=$AI_BUDGET_STORE"
+    "AI_DAILY_TOKEN_BUDGET=${AI_DAILY_TOKEN_BUDGET:-250000}"
+    "AI_MAX_CONCURRENT_REQUESTS=${AI_MAX_CONCURRENT_REQUESTS:-2}"
+    "FEEDBACK_RETENTION_DAYS=${FEEDBACK_RETENTION_DAYS:-30}"
+    "FEEDBACK_LEGACY_RETENTION_ENABLED=${FEEDBACK_LEGACY_RETENTION_ENABLED:-false}"
+    "AZURE_IMPORT_ENABLED=false"
     "ALLOW_BYO_AI_ENDPOINTS=${ALLOW_BYO_AI_ENDPOINTS:-false}"
     "MCP_ENABLED=${MCP_ENABLED:-false}"
     "MCP_HTTP_STATELESS=${MCP_HTTP_STATELESS:-true}"
@@ -188,18 +217,20 @@ REMOVE_ENV_VARS=()
 
 if [[ ${#OPENAI_DEPLOYMENTS[@]} -gt 0 ]]; then
     RUNTIME_ENV_VARS+=("AZURE_OPENAI_ENDPOINT=${AZURE_OPENAI_ENDPOINT:-$VITE_AZURE_OPENAI_ENDPOINT}")
-    RUNTIME_ENV_VARS+=("AZURE_OPENAI_ALLOWED_DEPLOYMENTS=$(IFS=,; echo "${OPENAI_DEPLOYMENTS[*]}")")
+    RUNTIME_ENV_VARS+=("AZURE_OPENAI_ALLOWED_DEPLOYMENTS=$AZURE_OPENAI_ALLOWED_DEPLOYMENTS")
 else
     REMOVE_ENV_VARS+=("AZURE_OPENAI_ENDPOINT" "AZURE_OPENAI_ALLOWED_DEPLOYMENTS")
 fi
 if [[ ${#FOUNDRY_DEPLOYMENTS[@]} -gt 0 ]]; then
     RUNTIME_ENV_VARS+=("AZURE_FOUNDRY_ENDPOINT=${AZURE_FOUNDRY_ENDPOINT:-$VITE_AZURE_FOUNDRY_ENDPOINT}")
-    RUNTIME_ENV_VARS+=("AZURE_FOUNDRY_ALLOWED_DEPLOYMENTS=$(IFS=,; echo "${FOUNDRY_DEPLOYMENTS[*]}")")
+    RUNTIME_ENV_VARS+=("AZURE_FOUNDRY_ALLOWED_DEPLOYMENTS=$AZURE_FOUNDRY_ALLOWED_DEPLOYMENTS")
 else
     REMOVE_ENV_VARS+=("AZURE_FOUNDRY_ENDPOINT" "AZURE_FOUNDRY_ALLOWED_DEPLOYMENTS")
 fi
 
-for var in AZURE_CLIENT_ID FEEDBACK_EMAIL_ENDPOINT FEEDBACK_EMAIL_SENDER \
+for var in ACCESS_ADMIN_EMAIL AZURE_ACCESS_KEY_VAULT_RESOURCE_ID AZURE_TABLES_ACCESS_ENDPOINT \
+           AZURE_TABLES_BUDGET_ENDPOINT AZURE_TABLES_BUDGET_TABLE COSMOS_BUDGET_CONTAINER_ID \
+           AZURE_CLIENT_ID FEEDBACK_EMAIL_ENDPOINT FEEDBACK_EMAIL_SENDER \
            FEEDBACK_EMAIL_RECIPIENT FEEDBACK_CONTACT_ENABLED \
            AZURE_TABLES_ENDPOINT AZURE_TABLES_FEEDBACK_TABLE \
            AZURE_TABLES_RATE_LIMIT_TABLE \

@@ -201,8 +201,14 @@ jobs:
           npm run build
           npm run lint
           npm test
+          npm run test:exports
+          npm run test:workspace
           npx playwright install --with-deps chromium
           npm run test:e2e
+          npm run test:workspace:browser
+          npm run test:ai-ui
+          npm run test:inspector-ui
+          npm run test:modal-focus
           node --check server/token-server.js
           node --check server/openai-proxy.js
           node --check server/access-control.js
@@ -486,7 +492,7 @@ jobs:
 
       - name: Enforce Front Door timeout and authentication-safe routing
         env:
-          ACCESS_CONTROL_ENABLED: ${{ vars.ACCESS_CONTROL_ENABLED || 'false' }}
+          ACCESS_CONTROL_ENABLED: ${{ vars.ACCESS_CONTROL_ENABLED || 'true' }}
         run: |
           set -Eeuo pipefail
           az afd profile update \
@@ -631,8 +637,27 @@ jobs:
           APP_URL: ${{ vars.AZURE_APP_URL }}
           ENTRA_CLIENT_ID: ${{ vars.AZURE_ENTRA_CLIENT_ID }}
           TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+          APP_DEPLOYMENT_MODE: public
+          EASY_AUTH_ENABLED: 'true'
+          ACCESS_CONTROL_ENABLED: ${{ vars.ACCESS_CONTROL_ENABLED || 'true' }}
+          ACCESS_ADMIN_EMAIL: ${{ vars.ACCESS_ADMIN_EMAIL }}
+          AZURE_ACCESS_KEY_VAULT_RESOURCE_ID: ${{ vars.AZURE_ACCESS_KEY_VAULT_RESOURCE_ID }}
+          AZURE_TABLES_ACCESS_ENDPOINT: ${{ vars.AZURE_TABLES_ACCESS_ENDPOINT }}
+          PUBLIC_URL: ${{ vars.AZURE_APP_URL }}
+          AZURE_OPENAI_ALLOWED_DEPLOYMENTS: ${{ vars.AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA }},${{ vars.AZURE_OPENAI_DEPLOYMENT_GPT56SOL }},${{ vars.AZURE_OPENAI_DEPLOYMENT_GPT56TERRA }},${{ vars.AZURE_OPENAI_DEPLOYMENT_GPT56LUNA }}
+          AZURE_FOUNDRY_ALLOWED_DEPLOYMENTS: ${{ vars.AZURE_FOUNDRY_DEPLOYMENT_CLAUDE_OPUS5 }}
+          AI_BUDGET_STORE: ${{ vars.AI_BUDGET_STORE || 'table' }}
+          AZURE_COSMOS_ENDPOINT: ${{ vars.AZURE_COSMOS_ENDPOINT }}
+          AZURE_TABLES_ENDPOINT: ${{ vars.AZURE_TABLES_ENDPOINT }}
+          AZURE_TABLES_BUDGET_ENDPOINT: ${{ vars.AZURE_TABLES_BUDGET_ENDPOINT }}
+          AI_DAILY_TOKEN_BUDGET: ${{ vars.AI_DAILY_TOKEN_BUDGET || '250000' }}
+          AI_MAX_CONCURRENT_REQUESTS: ${{ vars.AI_MAX_CONCURRENT_REQUESTS || '2' }}
+          FEEDBACK_RETENTION_DAYS: ${{ vars.FEEDBACK_RETENTION_DAYS || '30' }}
+          FEEDBACK_LEGACY_RETENTION_ENABLED: ${{ vars.FEEDBACK_LEGACY_RETENTION_ENABLED || 'false' }}
         run: |
           set -Eeuo pipefail
+          export FRONT_DOOR_ID="$(az afd profile show --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" --profile-name "${{ vars.AZURE_FRONT_DOOR_PROFILE }}" --query frontDoorId --output tsv)"
+          node server/deployment-security.js
           expected_issuer="https://login.microsoftonline.com/${TENANT_ID}/v2.0"
 
           az containerapp auth show \
@@ -648,7 +673,7 @@ jobs:
               .httpSettings.requireHttps == true and
               .globalValidation.unauthenticatedClientAction == "RedirectToLoginPage" and
               .globalValidation.redirectToProvider == "azureactivedirectory" and
-              (.globalValidation.excludedPaths | index("/healthz") != null) and
+              (.globalValidation.excludedPaths | sort) == ["/healthz"] and
               .identityProviders.azureActiveDirectory.registration.clientId == $client and
               .identityProviders.azureActiveDirectory.registration.openIdIssuer == $issuer and
               (.identityProviders.azureActiveDirectory.validation.allowedAudiences | index($client) != null) and
@@ -705,6 +730,29 @@ jobs:
             .properties.policySettings.mode == "Prevention" and
             .properties.provisioningState == "Succeeded"
           ' /tmp/azurediagarm-waf-policy.json > /dev/null
+
+          # TTL and legacy-retention rollout require an explicit archive-impact
+          # review. This deployment only verifies, never enables or changes TTL.
+          if [[ -n "$AZURE_COSMOS_ENDPOINT" ]]; then
+            cosmos_account="${AZURE_COSMOS_ENDPOINT#https://}"
+            cosmos_account="${cosmos_account%%.*}"
+            containers=("${{ vars.COSMOS_FEEDBACK_CONTAINER_ID || 'feedback' }}")
+            if [[ "$AI_BUDGET_STORE" == "cosmos" ]]; then
+              [[ "$(az cosmosdb show --resource-group "${{ vars.AZURE_COSMOS_RESOURCE_GROUP || vars.AZURE_RESOURCE_GROUP }}" --name "$cosmos_account" --query enableMultipleWriteLocations --output tsv)" == "false" ]]
+              containers+=("${{ vars.COSMOS_BUDGET_CONTAINER_ID || vars.COSMOS_FEEDBACK_CONTAINER_ID || 'feedback' }}")
+            fi
+            for container in "${containers[@]}"; do
+              az cosmosdb sql container show \
+                --resource-group "${{ vars.AZURE_COSMOS_RESOURCE_GROUP || vars.AZURE_RESOURCE_GROUP }}" \
+                --account-name "$cosmos_account" \
+                --database-name "${{ vars.COSMOS_DATABASE_ID || 'diagrams' }}" \
+                --name "$container" --query resource --output json \
+                | jq -e '.defaultTtl == -1 and .partitionKey.paths == ["/id"]' > /dev/null || {
+                  echo "::error::Cosmos container $container must have partition /id and item-level TTL (defaultTtl=-1). Review archive impact and configure it explicitly before deployment."
+                  exit 1
+                }
+            done
+          fi
 
       - name: Enforce storage security and verify runtime least privilege
         env:
@@ -913,7 +961,7 @@ jobs:
 
       - name: Validate mandatory runtime configuration
         env:
-          ACCESS_CONTROL_ENABLED: ${{ vars.ACCESS_CONTROL_ENABLED || 'false' }}
+          ACCESS_CONTROL_ENABLED: ${{ vars.ACCESS_CONTROL_ENABLED || 'true' }}
           ACCESS_ADMIN_EMAIL: ${{ vars.ACCESS_ADMIN_EMAIL }}
           AZURE_ACCESS_KEY_VAULT_RESOURCE_ID: ${{ vars.AZURE_ACCESS_KEY_VAULT_RESOURCE_ID }}
           PUBLIC_URL: ${{ vars.AZURE_APP_URL }}
@@ -921,7 +969,8 @@ jobs:
           set -Eeuo pipefail
           shopt -s nocasematch
           if [[ "$ACCESS_CONTROL_ENABLED" != "true" ]]; then
-            exit 0
+            echo "::error::Public deployments require access control."
+            exit 1
           fi
           [[ "$ACCESS_ADMIN_EMAIL" =~ ^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:]@]+$ ]] || {
             echo "::error::ACCESS_ADMIN_EMAIL must be a valid email when access control is enabled."
@@ -939,18 +988,31 @@ jobs:
       - name: Compute desired deployment configuration
         id: desired_config
         env:
-          CONFIG_SCHEMA: '4'
+          CONFIG_SCHEMA: '6'
           FRONT_DOOR_ID: ${{ steps.frontdoor.outputs.id }}
+          APP_DEPLOYMENT_MODE: public
+          EASY_AUTH_ENABLED: 'true'
           AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
           AZURE_CONTAINER_APP: ${{ vars.AZURE_CONTAINER_APP }}
           AZURE_CONTAINER_REGISTRY: ${{ vars.AZURE_CONTAINER_REGISTRY }}
           PUBLIC_URL: ${{ vars.AZURE_APP_URL }}
-          ACCESS_CONTROL_ENABLED: ${{ vars.ACCESS_CONTROL_ENABLED || 'false' }}
+          ACCESS_CONTROL_ENABLED: ${{ vars.ACCESS_CONTROL_ENABLED || 'true' }}
           ACCESS_ADMIN_EMAIL: ${{ vars.ACCESS_ADMIN_EMAIL }}
           AZURE_ACCESS_KEY_VAULT_RESOURCE_ID: ${{ vars.AZURE_ACCESS_KEY_VAULT_RESOURCE_ID }}
+          AZURE_TABLES_ACCESS_ENDPOINT: ${{ vars.AZURE_TABLES_ACCESS_ENDPOINT }}
+          AI_BUDGET_STORE: ${{ vars.AI_BUDGET_STORE || 'table' }}
+          AI_DAILY_TOKEN_BUDGET: ${{ vars.AI_DAILY_TOKEN_BUDGET || '250000' }}
+          AI_MAX_CONCURRENT_REQUESTS: ${{ vars.AI_MAX_CONCURRENT_REQUESTS || '2' }}
+          AZURE_TABLES_BUDGET_ENDPOINT: ${{ vars.AZURE_TABLES_BUDGET_ENDPOINT }}
+          AZURE_TABLES_BUDGET_TABLE: ${{ vars.AZURE_TABLES_BUDGET_TABLE || 'aibudgets' }}
+          COSMOS_BUDGET_CONTAINER_ID: ${{ vars.COSMOS_BUDGET_CONTAINER_ID || vars.COSMOS_FEEDBACK_CONTAINER_ID || 'feedback' }}
+          FEEDBACK_RETENTION_DAYS: ${{ vars.FEEDBACK_RETENTION_DAYS || '30' }}
+          FEEDBACK_LEGACY_RETENTION_ENABLED: ${{ vars.FEEDBACK_LEGACY_RETENTION_ENABLED || 'false' }}
+          AZURE_IMPORT_ENABLED: 'false'
           AZURE_RUNTIME_CLIENT_ID: ${{ vars.AZURE_RUNTIME_CLIENT_ID }}
           AZURE_OPENAI_ENDPOINT: ${{ vars.AZURE_OPENAI_ENDPOINT }}
           ALLOW_BYO_AI_ENDPOINTS: ${{ vars.ALLOW_BYO_AI_ENDPOINTS || 'false' }}
+          AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA: ${{ vars.AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA }}
           AZURE_OPENAI_DEPLOYMENT_GPT56SOL: ${{ vars.AZURE_OPENAI_DEPLOYMENT_GPT56SOL }}
           AZURE_OPENAI_DEPLOYMENT_GPT56TERRA: ${{ vars.AZURE_OPENAI_DEPLOYMENT_GPT56TERRA }}
           AZURE_OPENAI_DEPLOYMENT_GPT56LUNA: ${{ vars.AZURE_OPENAI_DEPLOYMENT_GPT56LUNA }}
@@ -990,9 +1052,14 @@ jobs:
           set -Eeuo pipefail
           keys=(
             CONFIG_SCHEMA FRONT_DOOR_ID AZURE_RESOURCE_GROUP AZURE_CONTAINER_APP
+            APP_DEPLOYMENT_MODE EASY_AUTH_ENABLED AZURE_IMPORT_ENABLED
             AZURE_CONTAINER_REGISTRY PUBLIC_URL ACCESS_CONTROL_ENABLED ACCESS_ADMIN_EMAIL
-            AZURE_ACCESS_KEY_VAULT_RESOURCE_ID AZURE_RUNTIME_CLIENT_ID
+            AZURE_ACCESS_KEY_VAULT_RESOURCE_ID AZURE_TABLES_ACCESS_ENDPOINT AZURE_RUNTIME_CLIENT_ID
+            AI_BUDGET_STORE AI_DAILY_TOKEN_BUDGET AI_MAX_CONCURRENT_REQUESTS
+            AZURE_TABLES_BUDGET_ENDPOINT AZURE_TABLES_BUDGET_TABLE COSMOS_BUDGET_CONTAINER_ID
+            FEEDBACK_RETENTION_DAYS FEEDBACK_LEGACY_RETENTION_ENABLED
             AZURE_OPENAI_ENDPOINT ALLOW_BYO_AI_ENDPOINTS AZURE_OPENAI_DEPLOYMENT_GPT56SOL
+            AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA
             AZURE_OPENAI_DEPLOYMENT_GPT56TERRA AZURE_OPENAI_DEPLOYMENT_GPT56LUNA
             AZURE_FOUNDRY_ENDPOINT AZURE_FOUNDRY_DEPLOYMENT_CLAUDE_OPUS5
             AZURE_SPEECH_REGION AZURE_SPEECH_RESOURCE_ID AZURE_AD_CLIENT_ID
@@ -1015,12 +1082,25 @@ jobs:
 
           runtime_env=(
             "PUBLIC_URL=$PUBLIC_URL"
+            "APP_DEPLOYMENT_MODE=$APP_DEPLOYMENT_MODE"
+            "EASY_AUTH_ENABLED=$EASY_AUTH_ENABLED"
+            "FRONT_DOOR_ID=$FRONT_DOOR_ID"
             "ACCESS_CONTROL_ENABLED=$ACCESS_CONTROL_ENABLED"
             "ACCESS_ADMIN_EMAIL=$ACCESS_ADMIN_EMAIL"
             "AZURE_ACCESS_KEY_VAULT_RESOURCE_ID=$AZURE_ACCESS_KEY_VAULT_RESOURCE_ID"
+            "AZURE_TABLES_ACCESS_ENDPOINT=$AZURE_TABLES_ACCESS_ENDPOINT"
+            "AI_BUDGET_STORE=$AI_BUDGET_STORE"
+            "AI_DAILY_TOKEN_BUDGET=$AI_DAILY_TOKEN_BUDGET"
+            "AI_MAX_CONCURRENT_REQUESTS=$AI_MAX_CONCURRENT_REQUESTS"
+            "AZURE_TABLES_BUDGET_ENDPOINT=$AZURE_TABLES_BUDGET_ENDPOINT"
+            "AZURE_TABLES_BUDGET_TABLE=$AZURE_TABLES_BUDGET_TABLE"
+            "COSMOS_BUDGET_CONTAINER_ID=$COSMOS_BUDGET_CONTAINER_ID"
+            "FEEDBACK_RETENTION_DAYS=$FEEDBACK_RETENTION_DAYS"
+            "FEEDBACK_LEGACY_RETENTION_ENABLED=$FEEDBACK_LEGACY_RETENTION_ENABLED"
+            "AZURE_IMPORT_ENABLED=$AZURE_IMPORT_ENABLED"
             "AZURE_CLIENT_ID=$AZURE_RUNTIME_CLIENT_ID"
             "AZURE_OPENAI_ENDPOINT=$AZURE_OPENAI_ENDPOINT"
-            "AZURE_OPENAI_ALLOWED_DEPLOYMENTS=$AZURE_OPENAI_DEPLOYMENT_GPT56SOL,$AZURE_OPENAI_DEPLOYMENT_GPT56TERRA,$AZURE_OPENAI_DEPLOYMENT_GPT56LUNA"
+            "AZURE_OPENAI_ALLOWED_DEPLOYMENTS=$AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA,$AZURE_OPENAI_DEPLOYMENT_GPT56SOL,$AZURE_OPENAI_DEPLOYMENT_GPT56TERRA,$AZURE_OPENAI_DEPLOYMENT_GPT56LUNA"
             "ALLOW_BYO_AI_ENDPOINTS=$ALLOW_BYO_AI_ENDPOINTS"
             "AZURE_FOUNDRY_ENDPOINT=$AZURE_FOUNDRY_ENDPOINT"
             "AZURE_FOUNDRY_ALLOWED_DEPLOYMENTS=$AZURE_FOUNDRY_DEPLOYMENT_CLAUDE_OPUS5"
@@ -1238,6 +1318,7 @@ jobs:
           build-args: |
             FRONT_DOOR_ID=${{ steps.frontdoor.outputs.id }}
             VITE_AZURE_OPENAI_ENDPOINT=${{ vars.AZURE_OPENAI_ENDPOINT }}
+            VITE_AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA=${{ vars.AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA }}
             VITE_AZURE_OPENAI_DEPLOYMENT_GPT56SOL=${{ vars.AZURE_OPENAI_DEPLOYMENT_GPT56SOL }}
             VITE_AZURE_OPENAI_DEPLOYMENT_GPT56TERRA=${{ vars.AZURE_OPENAI_DEPLOYMENT_GPT56TERRA }}
             VITE_AZURE_OPENAI_DEPLOYMENT_GPT56LUNA=${{ vars.AZURE_OPENAI_DEPLOYMENT_GPT56LUNA }}
@@ -1273,12 +1354,25 @@ jobs:
           revision_suffix="g${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           env_vars=(
             "PUBLIC_URL=${{ vars.AZURE_APP_URL }}"
-            "ACCESS_CONTROL_ENABLED=${{ vars.ACCESS_CONTROL_ENABLED || 'false' }}"
+            "APP_DEPLOYMENT_MODE=public"
+            "EASY_AUTH_ENABLED=true"
+            "FRONT_DOOR_ID=${{ steps.frontdoor.outputs.id }}"
+            "ACCESS_CONTROL_ENABLED=${{ vars.ACCESS_CONTROL_ENABLED || 'true' }}"
             "ACCESS_ADMIN_EMAIL=${{ vars.ACCESS_ADMIN_EMAIL }}"
             "AZURE_ACCESS_KEY_VAULT_RESOURCE_ID=${{ vars.AZURE_ACCESS_KEY_VAULT_RESOURCE_ID }}"
+            "AZURE_TABLES_ACCESS_ENDPOINT=${{ vars.AZURE_TABLES_ACCESS_ENDPOINT }}"
+            "AI_BUDGET_STORE=${{ vars.AI_BUDGET_STORE || 'table' }}"
+            "AI_DAILY_TOKEN_BUDGET=${{ vars.AI_DAILY_TOKEN_BUDGET || '250000' }}"
+            "AI_MAX_CONCURRENT_REQUESTS=${{ vars.AI_MAX_CONCURRENT_REQUESTS || '2' }}"
+            "AZURE_TABLES_BUDGET_ENDPOINT=${{ vars.AZURE_TABLES_BUDGET_ENDPOINT }}"
+            "AZURE_TABLES_BUDGET_TABLE=${{ vars.AZURE_TABLES_BUDGET_TABLE || 'aibudgets' }}"
+            "COSMOS_BUDGET_CONTAINER_ID=${{ vars.COSMOS_BUDGET_CONTAINER_ID || vars.COSMOS_FEEDBACK_CONTAINER_ID || 'feedback' }}"
+            "FEEDBACK_RETENTION_DAYS=${{ vars.FEEDBACK_RETENTION_DAYS || '30' }}"
+            "FEEDBACK_LEGACY_RETENTION_ENABLED=${{ vars.FEEDBACK_LEGACY_RETENTION_ENABLED || 'false' }}"
+            "AZURE_IMPORT_ENABLED=false"
             "AZURE_CLIENT_ID=${{ vars.AZURE_RUNTIME_CLIENT_ID }}"
             "AZURE_OPENAI_ENDPOINT=${{ vars.AZURE_OPENAI_ENDPOINT }}"
-            "AZURE_OPENAI_ALLOWED_DEPLOYMENTS=${{ vars.AZURE_OPENAI_DEPLOYMENT_GPT56SOL }},${{ vars.AZURE_OPENAI_DEPLOYMENT_GPT56TERRA }},${{ vars.AZURE_OPENAI_DEPLOYMENT_GPT56LUNA }}"
+            "AZURE_OPENAI_ALLOWED_DEPLOYMENTS=${{ vars.AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA }},${{ vars.AZURE_OPENAI_DEPLOYMENT_GPT56SOL }},${{ vars.AZURE_OPENAI_DEPLOYMENT_GPT56TERRA }},${{ vars.AZURE_OPENAI_DEPLOYMENT_GPT56LUNA }}"
             "ALLOW_BYO_AI_ENDPOINTS=${{ vars.ALLOW_BYO_AI_ENDPOINTS || 'false' }}"
             "AZURE_FOUNDRY_ENDPOINT=${{ vars.AZURE_FOUNDRY_ENDPOINT }}"
             "AZURE_FOUNDRY_ALLOWED_DEPLOYMENTS=${{ vars.AZURE_FOUNDRY_DEPLOYMENT_CLAUDE_OPUS5 }}"
@@ -1536,7 +1630,7 @@ jobs:
       - name: Verify the production endpoint
         if: steps.deployment.outputs.should_deploy == 'true'
         env:
-          ACCESS_CONTROL_ENABLED: ${{ vars.ACCESS_CONTROL_ENABLED || 'false' }}
+          ACCESS_CONTROL_ENABLED: ${{ vars.ACCESS_CONTROL_ENABLED || 'true' }}
         run: |
           set -Eeuo pipefail
           easy_auth_enabled="$(

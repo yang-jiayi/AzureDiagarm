@@ -35,12 +35,36 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({ compact = false }) => {
   const [settings, updateSettings] = useModelSettings();
   const [showAdvanced, setShowAdvanced] = useState(false);
   const availableModels = getAvailableModels();
+  const recommendedSettings = getRecommendedModelSettings();
+  const features = Object.keys(FEATURE_CONFIG) as FeatureType[];
   
   const currentConfig = MODEL_CONFIG[settings.model];
+  const hasManagedModel = availableModels.includes(settings.model);
   const supportedReasoningEfforts = getSupportedReasoningEfforts(settings.model);
   
   // Check if any feature has overrides
   const hasAnyOverride = (Object.keys(FEATURE_CONFIG) as FeatureType[]).some(hasFeatureOverride);
+
+  const getRecommendedFeatureLabel = (feature: FeatureType) => {
+    const override = recommendedSettings.featureOverrides?.[feature];
+    const config = MODEL_CONFIG[override?.model ?? recommendedSettings.model];
+    const reasoning = override?.reasoningEffort ?? recommendedSettings.reasoningEffort;
+    return `${config.displayName}${config.isReasoning ? ` (${t(getReasoningEffortLabel(reasoning))})` : ''}`;
+  };
+  const recommendationLabels = features.map(getRecommendedFeatureLabel);
+  const recommendedSummary = availableModels.length === 0
+    ? t("No managed models are configured.")
+    : recommendationLabels.every(label => label === recommendationLabels[0])
+      ? `${t("All features:")} ${recommendationLabels[0]}`
+      : features.map(feature => `${translate(FEATURE_CONFIG[feature].displayName)}: ${getRecommendedFeatureLabel(feature)}`).join(' • ');
+  const getModelRoleLabel = (model: ModelType) => {
+    const modelFeatures = features.filter(feature => (recommendedSettings.featureOverrides?.[feature]?.model ?? recommendedSettings.model) === model);
+    return modelFeatures.length === features.length
+      ? t("Recommended for all features")
+      : modelFeatures.length > 0
+        ? modelFeatures.map(feature => translate(FEATURE_CONFIG[feature].displayName)).join(' • ')
+        : t("Alternative model");
+  };
   
   const handleModelChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const model = e.target.value as ModelType;
@@ -82,11 +106,13 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({ compact = false }) => {
   };
 
   const applyRecommendedPortfolio = () => {
-    updateSettings(getRecommendedModelSettings());
+    updateSettings(recommendedSettings);
   };
 
   const getModelIcon = (model: ModelType) => {
     switch (model) {
+      case 'gpt-6-astra':
+        return <Sparkles size={16} />;
       case 'gpt-5.1':
         return <Cpu size={16} />;
       case 'gpt-5.2':
@@ -141,7 +167,7 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({ compact = false }) => {
                 ))}
               </select>
               
-              {currentConfig.isReasoning && (
+              {hasManagedModel && currentConfig.isReasoning && (
                 <select
                   value={settings.reasoningEffort}
                   onChange={handleReasoningChange}
@@ -177,7 +203,7 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({ compact = false }) => {
                   )}
                 </div>
 
-                <button className="recommended-portfolio-compact" onClick={applyRecommendedPortfolio}>
+                <button className="recommended-portfolio-compact" onClick={applyRecommendedPortfolio} disabled={availableModels.length === 0}>
                   <Sparkles size={12} />
                   {t("Use recommended portfolio")}
                 </button>
@@ -198,7 +224,7 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({ compact = false }) => {
                           onChange={(e) => handleFeatureModelChange(feature, e.target.value)}
                           className="compact-feature-select"
                         >
-                          <option value="default">{t("Default (")}{MODEL_CONFIG[settings.model].displayName}{t(")")}</option>
+                          <option value="default">{t("Default (")}{hasManagedModel ? currentConfig.displayName : t("No managed model")}{t(")")}</option>
                           {availableModels.map(model => (
                             <option key={model} value={model}>
                               {MODEL_CONFIG[model].displayName}
@@ -226,7 +252,7 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({ compact = false }) => {
                 
                 <div className="compact-advanced-footer">
                   <span className="compact-hint">
-                    {t("Sol for architecture • Terra for validation and deployment • Luna for blueprints")}
+                    {recommendedSummary}
                   </span>
                 </div>
               </div>
@@ -236,19 +262,20 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({ compact = false }) => {
           <div className="model-help-panel">
             <div className="help-item">
               <span className="help-label">{t("Reasoning:")}</span>
-              <span className="help-text">{t("None = fastest; Low to Max increases reasoning depth")}</span>
+              <span className="help-text">{t("Reasoning options depend on the selected model.")}</span>
             </div>
             <div className="help-item">
               <span className="help-icon"><Settings size={10} /></span>
               <span className="help-text">{t("Click gear for per-feature model overrides")}</span>
             </div>
             <div className="help-divider" />
-            <div className="help-subtitle">{t("Recommended settings (from testing):")}</div>
+            <div className="help-subtitle">{t("Recommended settings for available models:")}</div>
             <div className="help-defaults">
-              <span>{t("• Architecture: GPT-5.6 Sol (low)")}</span>
-              <span>{t("• Validation: GPT-5.6 Terra (low)")}</span>
-              <span>{t("• Deployment: GPT-5.6 Terra (low)")}</span>
-              <span>{t("• Blueprint: GPT-5.6 Luna (low)")}</span>
+              {availableModels.length > 0
+                ? features.map(feature => (
+                  <span key={feature}>• {translate(FEATURE_CONFIG[feature].displayName)}: {getRecommendedFeatureLabel(feature)}</span>
+                ))
+                : <span>{t("No managed models are configured.")}</span>}
             </div>
           </div>
         </div>
@@ -277,17 +304,15 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({ compact = false }) => {
                 {getModelIcon(model)}
                 <span className="model-button-copy">
                   <span>{MODEL_CONFIG[model].displayName}</span>
-                  {MODEL_CONFIG[model].recommendedUse && (
-                    <small>{translate(MODEL_CONFIG[model].recommendedUse)}</small>
-                  )}
+                  <small>{getModelRoleLabel(model)}</small>
                 </span>
               </button>
             ))}
           </div>
-          <p className="model-description">{translate(currentConfig.description)}</p>
+          <p className="model-description">{hasManagedModel ? translate(currentConfig.description) : t("No managed models are configured.")}</p>
         </div>
         
-        {currentConfig.isReasoning && (
+        {hasManagedModel && currentConfig.isReasoning && (
           <div className="model-selector-group">
             <label className="model-label">{t("Default Reasoning Effort")}</label>
             <div className="reasoning-buttons">
@@ -328,7 +353,7 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({ compact = false }) => {
               <p className="advanced-hint">
                 {' '}{t("Override the default model for specific features. Leave as \"Use default\" to use the settings above.")}{' '}</p>
 
-              <button className="recommended-portfolio" onClick={applyRecommendedPortfolio}>
+              <button className="recommended-portfolio" onClick={applyRecommendedPortfolio} disabled={availableModels.length === 0}>
                 <Sparkles size={12} />
                 {t("Use recommended portfolio")}
               </button>
@@ -375,8 +400,9 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({ compact = false }) => {
                       )}
                     </div>
                     <div className="feature-recommended">
-                      {' '}{t("Recommended:")}{' '}{MODEL_CONFIG[featureConfig.recommendedModel].displayName}
-                      {featureConfig.recommendedReasoning && ` (${t(getReasoningEffortLabel(featureConfig.recommendedReasoning))})`}
+                      {availableModels.length > 0
+                        ? <>{t("Recommended:")} {getRecommendedFeatureLabel(feature)}</>
+                        : t("No managed models are configured.")}
                     </div>
                   </div>
                 );

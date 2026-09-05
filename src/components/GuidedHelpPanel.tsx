@@ -12,7 +12,6 @@ import { trackHelpOpened } from '../services/telemetryService';
 import './GuidedHelpPanel.css';
 import { useLanguage } from '../i18n/LanguageContext';
 import { helpJapanese } from '../i18n/helpJapanese';
-import { useEscapeKey } from '../hooks/useEscapeKey';
 import { useModalFocus } from '../hooks/useModalFocus';
 
 interface GuidedHelpPanelProps {
@@ -145,8 +144,7 @@ function readCompletedTour(): Set<string> {
 
 const GuidedHelpPanel: React.FC<GuidedHelpPanelProps> = ({ isOpen, onClose }) => {
   const { language, translate: translateFallback } = useLanguage();
-  const dialogRef = useModalFocus<HTMLDivElement>(isOpen);
-  useEscapeKey(isOpen, onClose);
+  const dialogRef = useModalFocus<HTMLDivElement>(isOpen, onClose);
   const translate = (text: string): string => {
     if (language !== 'ja') return text;
     if (text === STRUCTURED_PROMPT) return STRUCTURED_PROMPT_JA;
@@ -202,16 +200,8 @@ const GuidedHelpPanel: React.FC<GuidedHelpPanelProps> = ({ isOpen, onClose }) =>
   const completedCount = FIRST_TOUR.filter((item) => completedTour.has(item.id)).length;
 
   return (
-    <div
-      ref={dialogRef}
-      className="guided-help-overlay"
-      role="dialog"
-      aria-modal="true"
-      aria-label={translate('Help and Learn')}
-      tabIndex={-1}
-      onClick={onClose}
-    >
-      <div className="guided-help-modal" onClick={(event) => event.stopPropagation()}>
+    <div className="guided-help-overlay" onClick={onClose}>
+      <div className="guided-help-modal" ref={dialogRef} role="dialog" aria-modal="true" aria-label={translate('Help and Learn')} onClick={(event) => event.stopPropagation()}>
         <header className="guided-help-header">
           <div className="guided-help-title">
             <BookOpen size={21} />

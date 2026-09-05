@@ -11,6 +11,7 @@ import {
   ServicePricing, 
   CachedPricing
 } from '../types/pricing';
+import { selectPricingTier, validatePricingQuantity } from './pricingConfiguration';
 import { 
   getRegionalServicePricing, 
   preloadCommonServices as preloadRegionalServices,
@@ -132,20 +133,14 @@ export function calculateMonthlyCost(
   pricing: ServicePricing,
   tier: string,
   quantity: number = 1
-): number {
-  const selectedTier = pricing.tiers.find(t =>
-    t.id === tier || t.skuName === tier || t.name === tier
-  );
-  
+): number | null {
+  validatePricingQuantity(quantity);
+  const selectedTier = selectPricingTier(pricing.tiers, tier);
   if (!selectedTier) {
-    console.warn(`Tier ${tier} not found for ${pricing.serviceType}, using default`);
-    const defaultTier = pricing.tiers.find(t =>
-      t.id === pricing.defaultTier
-      || t.skuName === pricing.defaultTier
-      || t.name === pricing.defaultTier
-    );
-    return (defaultTier?.monthlyPrice || 0) * quantity;
+    return null;
   }
   
-  return selectedTier.monthlyPrice * quantity;
+  return typeof selectedTier.monthlyPrice !== 'number' ||
+    !Number.isFinite(selectedTier.monthlyPrice) || selectedTier.monthlyPrice < 0
+    ? null : selectedTier.monthlyPrice * quantity;
 }

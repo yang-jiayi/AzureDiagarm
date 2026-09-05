@@ -2,7 +2,7 @@
 // Licensed under the MIT License.
 
 import React, { useEffect, useState } from 'react';
-import { X, AlertTriangle, CheckCircle, Info, Download, RefreshCw, Clock, Zap, Database, Cpu, Search, Wrench, ExternalLink, Play } from 'lucide-react';
+import { X, AlertTriangle, CheckCircle, Info, Download, RefreshCw, Clock, Zap, Database, Cpu, LocateFixed, Search, Wrench, ExternalLink, Play } from 'lucide-react';
 import { ArchitectureValidation, ValidationFinding, formatValidationReport } from '../services/architectureValidator';
 import { generateModelFilename } from '../utils/modelNaming';
 import { scoreToBand, summarizeGaps, formatGapsSummary, formatPillarGaps } from '../services/wafMaturity';
@@ -10,13 +10,13 @@ import { useValidationDisplayPrefs } from '../stores/validationDisplayStore';
 import './ValidationModal.css';
 import { useLanguage } from '../i18n/LanguageContext';
 import { localize } from '../i18n/localization';
-import { useEscapeKey } from '../hooks/useEscapeKey';
 import { useModalFocus } from '../hooks/useModalFocus';
+import type { ReviewFinding, ValidationReviewRecord } from '../services/validationReview';
 
 /**
  * Props for ValidationModal component
  */
-interface ValidationModalProps {
+export interface ValidationModalProps {
   validation: ArchitectureValidation | null; // Validation results from GPT-5.2 agent
   isOpen: boolean; // Controls modal visibility
   onClose: () => void; // Handler for closing modal
@@ -24,6 +24,8 @@ interface ValidationModalProps {
   isStale?: boolean; // Previous result no longer matches the modified architecture
   onApplyRecommendations?: (selectedFindings: ValidationFinding[]) => void; // Handler for applying selected recommendations
   onRevalidate?: () => void; // Optional handler to rerun validation
+  onFocusResources?: (resources: string[]) => void;
+  reviewHistory?: ValidationReviewRecord[];
 }
 
 /**
@@ -31,23 +33,48 @@ interface ValidationModalProps {
  * Shows overall score, pillar-specific assessments, findings, and quick wins.
  * Includes download functionality for markdown report.
  */
-const ValidationModal: React.FC<ValidationModalProps> = ({ validation, isOpen, onClose, isLoading, isStale, onApplyRecommendations, onRevalidate }) => {
+const ValidationModal: React.FC<ValidationModalProps> = ({
+  validation, isOpen, onClose, isLoading, onApplyRecommendations, onRevalidate,
+  onFocusResources, isStale = false, reviewHistory = [],
+}) => {
   const { t, translate, language } = useLanguage();
   // Track selected findings for applying recommendations
   const [selectedFindings, setSelectedFindings] = useState<Set<string>>(new Set());
   // Display preference: show the raw 0-100 score alongside the maturity band
   const [displayPrefs, setDisplayPrefs] = useValidationDisplayPrefs();
-  const dialogRef = useModalFocus<HTMLDivElement>(isOpen);
-  useEscapeKey(isOpen, onClose);
+  const scopeRef = useModalFocus(isOpen, onClose);
 
   // Finding keys are positional (`pillar-0-0`), so a selection made against an
   // earlier result would silently carry over to a different finding in the next
   // run. Reset whenever a new validation is shown or the modal is reopened.
   useEffect(() => {
     setSelectedFindings(new Set());
-  }, [validation?.timestamp, isOpen]);
+  }, [validation, isOpen]);
 
   if (!isOpen) return null;
+
+  const notDetected = reviewHistory.filter(record => record.status === 'not-detected');
+  const sourceBadge = (finding: ReviewFinding) => finding.source ? (
+    <span className={`source-badge ${finding.source}`}>
+      {finding.source === 'rule-based' ? <Database size={12} /> : <Cpu size={12} />}
+      {finding.source === 'rule-based' ? localize(language, { en: 'Rule', ja: 'ルール' }) : 'AI'}
+    </span>
+  ) : null;
+  const focusButton = (finding: ReviewFinding) => {
+    if (!onFocusResources) return null;
+    const resources = finding.resourceIds?.length ? finding.resourceIds : finding.resources ?? [];
+    return (
+      <button type="button" className="validation-focus-finding" disabled={!resources.length}
+        title={!resources.length ? localize(language, {
+          en: 'This finding has no identified diagram resources.',
+          ja: 'この指摘には特定された図のリソースがありません。',
+        }) : undefined}
+        onClick={() => { onFocusResources([...resources]); onClose(); }}>
+        <LocateFixed size={14} />
+        {localize(language, { en: 'Show on diagram', ja: '図で表示' })}
+      </button>
+    );
+  };
 
   /**
    * Toggle selection of a finding
@@ -109,9 +136,6 @@ const ValidationModal: React.FC<ValidationModalProps> = ({ validation, isOpen, o
   /**
    * Returns appropriate icon component for finding severity level
    */
-  /**
-   * Returns appropriate icon component for finding severity level
-   */
   const getSeverityIcon = (severity: ValidationFinding['severity']) => {
     switch (severity) {
       case 'critical': return <AlertTriangle className="severity-icon critical" />;
@@ -155,6 +179,7 @@ const ValidationModal: React.FC<ValidationModalProps> = ({ validation, isOpen, o
         </p>
       )}
       <div className="finding-action-row">
+        {focusButton(finding)}
         {finding.referenceUrl && (
           <a href={finding.referenceUrl} target="_blank" rel="noopener noreferrer">
             <ExternalLink size={13} />
@@ -213,8 +238,8 @@ const ValidationModal: React.FC<ValidationModalProps> = ({ validation, isOpen, o
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div
-        ref={dialogRef}
         className="modal-content validation-modal"
+        ref={scopeRef}
         role="dialog"
         aria-modal="true"
         aria-label={t("🔍 Architecture Validation")}
@@ -270,11 +295,18 @@ const ValidationModal: React.FC<ValidationModalProps> = ({ validation, isOpen, o
           <>
             <div className="modal-body">
             {isStale && (
-              <div className="validation-stale-notice" role="status">
+              <div className="validation-stale-warning validation-stale-notice" role="status">
                 <AlertTriangle size={18} />
-                <span>
-                  <strong>{translate('Architecture changed.')}</strong> {translate('These results describe the version before recommendations were applied. Revalidate to assess the updated diagram.')}
-                </span>
+                <div>
+                  <strong>{localize(language, { en: 'This review is out of date.', ja: 'このレビューは最新ではありません。' })}</strong>
+                  <p>{localize(language, {
+                    en: 'The diagram has changed since this review. Re-evaluate before applying recommendations; these findings may no longer describe the current design.',
+                    ja: 'レビュー後に図が変更されました。推奨事項を適用する前に再評価してください。指摘は現在の設計に一致しない場合があります。',
+                  })}</p>
+                  {onRevalidate && <button type="button" className="validation-focus-finding" onClick={onRevalidate}>
+                    <RefreshCw size={14} />{localize(language, { en: 'Re-evaluate now', ja: '今すぐ再評価' })}
+                  </button>}
+                </div>
               </div>
             )}
             {/* Scope note - sets expectations for workshop facilitators and users */}
@@ -387,20 +419,17 @@ const ValidationModal: React.FC<ValidationModalProps> = ({ validation, isOpen, o
                                 checked={isSelected}
                                 onChange={() => toggleFinding(findingKey)}
                                 className="finding-checkbox"
+                                aria-label={localize(language, {
+                                  en: `Select recommendation: ${finding.issue}`,
+                                  ja: `推奨事項を選択: ${finding.issue}`,
+                                })}
                               />
                               {getSeverityIcon(finding.severity)}
                               <span className="finding-category">{finding.category}</span>
                               <span className={`severity-badge ${finding.severity}`}>
                                 {translate(finding.severity)}
                               </span>
-                              {finding.source && (
-                                <span className={`source-badge ${finding.source}`}>
-                                  {finding.source === 'rule-based' ? <Database size={12} /> : <Cpu size={12} />}
-                                  {finding.source === 'rule-based'
-                                    ? localize(language, { en: 'Rule', ja: 'ルール' })
-                                    : 'AI'}
-                                </span>
-                              )}
+                              {sourceBadge(finding)}
                             </div>
                             {renderFindingDetails(finding)}
                           </div>
@@ -421,14 +450,45 @@ const ValidationModal: React.FC<ValidationModalProps> = ({ validation, isOpen, o
                   {validation.quickWins.map((win, index) => (
                     <div key={index} className="quickwin-item">
                       <div className="quickwin-header">
+                        <input type="checkbox" className="finding-checkbox"
+                          checked={selectedFindings.has(`quickwin-${index}`)}
+                          onChange={() => toggleFinding(`quickwin-${index}`)}
+                          aria-label={localize(language, {
+                            en: `Select recommendation: ${win.issue}`,
+                            ja: `推奨事項を選択: ${win.issue}`,
+                          })} />
                         <CheckCircle className="quickwin-icon" />
                         <span className="quickwin-category">{win.category}</span>
+                        {sourceBadge(win)}
                       </div>
                       {renderFindingDetails(win)}
                     </div>
                   ))}
                 </div>
               </div>
+            )}
+
+            {notDetected.length > 0 && (
+              <details className="validation-review-history">
+                <summary>{localize(language, {
+                  en: `Not detected in latest review (${notDetected.length})`,
+                  ja: `最新のレビューで検出されなかった指摘（${notDetected.length}件）`,
+                })}</summary>
+                <p>{localize(language, {
+                  en: 'Absence is not proof of remediation. Findings may change with wording, language, missing resources, or review coverage. Only explicit stable identifiers or exact matches are linked across reviews.',
+                  ja: '未検出は修正の証明ではありません。表現、言語、リソースの欠落、評価範囲によって指摘は変わります。明示的な安定IDまたは完全一致のみをレビュー間で関連付けます。',
+                })}</p>
+                {notDetected.map(record => (
+                  <article key={record.key} className="validation-history-finding">
+                    <div><strong>{record.finding.category}</strong> {sourceBadge(record.finding)}</div>
+                    <p>{record.finding.issue}</p>
+                    <p>{record.finding.recommendation}</p>
+                    {!!record.finding.resources?.length && <p>{record.finding.resources.join(', ')}</p>}
+                    <small>{localize(language, { en: 'Last detected:', ja: '最終検出:' })}{' '}
+                      {new Date(record.lastSeenAt).toLocaleString(language === 'ja' ? 'ja-JP' : 'en-US')}</small>
+                  </article>
+                ))}
+              </details>
             )}
 
           </div>

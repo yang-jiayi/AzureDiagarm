@@ -2058,6 +2058,15 @@ test('command palette adds services and focus mode persists until Escape', async
 
   await page.reload();
   await expect(page.locator('.app')).toHaveClass(/focus-mode/);
+  const recovery = page.getByRole('dialog', { name: 'Resume your saved draft' });
+  await expect(recovery).toBeVisible();
+  await expect(recovery).toHaveAttribute('aria-modal', 'true');
+  await page.keyboard.press('Escape');
+  await expect(recovery).toBeVisible();
+  await expect(page.locator('.app')).toHaveClass(/focus-mode/);
+  await recovery.getByRole('button', { name: 'Restore draft', exact: true }).click();
+  await expect(recovery).toBeHidden();
+  await expect(page.locator('.react-flow__node-azureNode')).toHaveCount(1);
   const exitFocus = page.getByRole('button', { name: 'Exit Focus' });
   await expect(exitFocus).toBeVisible();
   await exitFocus.focus();
@@ -2117,6 +2126,19 @@ test('recent work restores an interrupted local diagram after reload', async ({ 
     sessionStorage.removeItem('azurediagarm.recent-work-session.v1');
   });
   await page.reload();
+  await expect(page.locator('.react-flow__node-azureNode')).toHaveCount(0);
+
+  // Resolve the new autosave prompt explicitly before exercising the separate
+  // recent-work catalog. Discarding the active draft must not erase its archive.
+  const recovery = page.getByRole('dialog', { name: 'Resume your saved draft' });
+  await expect(recovery).toBeVisible();
+  await recovery.getByRole('button', { name: 'Start without this draft' }).click();
+  await expect(recovery.getByRole('button', { name: 'Delete draft and start new' })).toBeVisible();
+  await recovery.getByRole('button', { name: 'Keep draft' }).click();
+  await expect(recovery.getByRole('button', { name: 'Restore draft', exact: true })).toBeEnabled();
+  await recovery.getByRole('button', { name: 'Start without this draft' }).click();
+  await recovery.getByRole('button', { name: 'Delete draft and start new' }).click();
+  await expect(recovery).toBeHidden();
   await expect(page.locator('.react-flow__node-azureNode')).toHaveCount(0);
 
   await page.getByRole('button', { name: 'More' }).click();
@@ -2449,9 +2471,10 @@ test('canvas context menus and modal focus are keyboard safe', async ({ page }) 
   await expect(nodeMenu.getByRole('menuitem', { name: 'Duplicate service' })).toBeFocused();
   await page.keyboard.press('ArrowDown');
   await nodeMenu.getByRole('menuitem', { name: 'Set cost estimate' }).press('Enter');
-  const pricingEditor = page.locator('.npe-modal');
-  await expect(pricingEditor).toBeFocused();
-  await expectNoWcagViolations(page, '.npe-modal');
+  const pricingEditor = page.getByRole('dialog', { name: 'Service inspector' });
+  await expect(pricingEditor.getByLabel('Label', { exact: true })).toBeFocused();
+  await expect(pricingEditor.getByLabel('Quantity')).toBeEnabled();
+  await expectNoWcagViolations(page, '.service-inspector');
   await page.keyboard.press('Escape');
   await expect(pricingEditor).toBeHidden();
   await expect(nodeALabel).toBeFocused();
@@ -2513,7 +2536,7 @@ test('canvas context menus and modal focus are keyboard safe', async ({ page }) 
   const accessButton = page.getByRole('button', { name: 'Access', exact: true });
   await accessButton.click();
   const accessModal = page.locator('.access-modal');
-  await expect(accessModal).toBeFocused();
+  await expect(accessModal.getByRole('button', { name: 'Close', exact: true })).toBeFocused();
   await expectNoWcagViolations(page, '.access-modal');
   await page.keyboard.press('Shift+Tab');
   await expect(accessModal.locator(':focus')).toHaveCount(1);
@@ -2695,8 +2718,8 @@ test('image analysis is single-flight and the reference viewer is keyboard safe'
   await expect(fileInput).toBeDisabled();
   await expect(modal).toHaveAttribute('aria-busy', 'true');
   await expect(modal.locator('.modal-close')).toBeDisabled();
-  await expect(modal.locator('.modal-footer-actions').getByRole('button', { name: 'Cancel' }))
-    .toBeDisabled();
+  await expect(modal.locator('.modal-footer-actions').getByRole('button', { name: 'Cancel request', exact: true }))
+    .toBeEnabled();
   await page.keyboard.press('Escape');
   await expect(modal).toBeVisible();
   await page.locator('.ai-generator-overlay').dispatchEvent('click');
@@ -2718,6 +2741,10 @@ test('image analysis is single-flight and the reference viewer is keyboard safe'
 
   await modal.getByRole('button', { name: 'Continue to output' }).click();
   await modal.getByRole('button', { name: 'Generate Architecture' }).click();
+  const changeReview = page.getByRole('dialog', { name: 'Review AI changes' });
+  await expect(changeReview).toBeVisible();
+  await expect(page.locator('[data-testid="rf__node-web"]')).toHaveCount(0);
+  await changeReview.getByRole('button', { name: 'Apply selected changes' }).click();
   await expect(page.locator('[data-testid="rf__node-web"]')).toBeVisible({ timeout: 10_000 });
   await modal.getByRole('button', { name: '1. Brief' }).click();
   await expect(fileInput).toBeEnabled();
@@ -4803,6 +4830,7 @@ test('metadata, validation, and pricing-only drafts persist with zero nodes', as
   await expect.poll(() => createdPayloads.length, { timeout: 5_000 }).toBe(2);
   expect((createdPayloads[1] as { nodes?: unknown[] }).nodes).toHaveLength(0);
   expect((createdPayloads[1] as { validationScore?: number }).validationScore).toBe(0);
+  expect(createdPayloads[1].validationSourceFingerprint).toBeNull();
 
   await page.locator('input[accept=".json"]').setInputFiles({
     name: 'pricing-only-draft.json',
@@ -6072,13 +6100,11 @@ test('diagram imports are atomic and AI imports save pricing to a new cloud docu
     access: 'owner',
     role: 'owner',
   });
-  const dialogMessages: string[] = [];
   const importedPayloads: Record<string, any>[] = [];
   let sourceUpdateAttempts = 0;
   let importedRevision = 1;
 
   page.on('dialog', async (dialog) => {
-    dialogMessages.push(dialog.message());
     await dialog.accept();
   });
 
@@ -6148,12 +6174,14 @@ test('diagram imports are atomic and AI imports save pricing to a new cloud docu
       edges: 'invalid',
     })),
   });
-  await expect.poll(() => dialogMessages.length).toBe(1);
+  const importError = page.getByRole('alert').filter({ hasText: 'Error loading diagram file' });
+  await expect(importError).toBeVisible();
   await expect(fileInput).toHaveValue('');
-  expect(dialogMessages).toHaveLength(1);
   await expect(sourceNode).toBeVisible();
   await expect(cloudButton).toHaveClass(/btn-active/);
   expect(sourceUpdateAttempts).toBe(0);
+  await importError.getByRole('button', { name: 'Close', exact: true }).click();
+  await expect(importError).toBeHidden();
 
   await fileInput.setInputFiles({
     name: 'invalid-ai-diagram.json',
@@ -6165,12 +6193,13 @@ test('diagram imports are atomic and AI imports save pricing to a new cloud docu
       groups: [],
     })),
   });
-  await expect.poll(() => dialogMessages.length).toBe(2);
+  await expect(importError).toBeVisible();
   await expect(fileInput).toHaveValue('');
-  expect(dialogMessages).toHaveLength(2);
   await expect(sourceNode).toBeVisible();
   await expect(cloudButton).toHaveClass(/btn-active/);
   expect(sourceUpdateAttempts).toBe(0);
+  await importError.getByRole('button', { name: 'Close', exact: true }).click();
+  await expect(importError).toBeHidden();
 
   await fileInput.setInputFiles({
     name: 'valid-ai-diagram.json',
@@ -6191,6 +6220,12 @@ test('diagram imports are atomic and AI imports save pricing to a new cloud docu
     })),
   });
 
+  const changeReview = page.getByRole('dialog', { name: 'Review AI changes' });
+  await expect(changeReview).toBeVisible();
+  await expect(sourceNode).toBeVisible();
+  expect(sourceUpdateAttempts).toBe(0);
+  expect(importedPayloads).toHaveLength(0);
+  await changeReview.getByRole('button', { name: 'Apply selected changes' }).click();
   await expect(page.locator('[data-testid="rf__node-imported-app"]')).toBeVisible({
     timeout: 10_000,
   });

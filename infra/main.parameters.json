@@ -38,9 +38,16 @@
     "azureTablesFeedbackTable": {
       "value": "${AZURE_TABLES_FEEDBACK_TABLE}"
     },
-    "frontDoorId": {
-      "value": "${FRONT_DOOR_ID}"
-    },
+    "frontDoorId": { "value": "${FRONT_DOOR_ID}" },
+    "publicAppUrl": { "value": "${PUBLIC_URL}" },
+    "accessAdminEmail": { "value": "${ACCESS_ADMIN_EMAIL}" },
+    "accessKeyVaultResourceId": { "value": "${AZURE_ACCESS_KEY_VAULT_RESOURCE_ID}" },
+    "accessTablesEndpoint": { "value": "${AZURE_TABLES_ACCESS_ENDPOINT}" },
+    "aiBudgetStore": { "value": "${AI_BUDGET_STORE}" },
+    "aiBudgetTablesEndpoint": { "value": "${AZURE_TABLES_BUDGET_ENDPOINT}" },
+    "aiBudgetTable": { "value": "${AZURE_TABLES_BUDGET_TABLE}" },
+    "easyAuthVerified": { "value": false },
+    "feedbackLegacyRetentionEnabled": { "value": false },
     "openAiDeploymentGpt51": {
       "value": "${AZURE_OPENAI_DEPLOYMENT_NAME}"
     },
@@ -58,6 +65,9 @@
     },
     "openAiDeploymentGpt54Mini": {
       "value": "${AZURE_OPENAI_DEPLOYMENT_GPT54MINI}"
+    },
+    "openAiDeploymentGpt6Astra": {
+      "value": "${AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA}"
     },
     "openAiDeploymentGpt56Sol": {
       "value": "${AZURE_OPENAI_DEPLOYMENT_GPT56SOL}"

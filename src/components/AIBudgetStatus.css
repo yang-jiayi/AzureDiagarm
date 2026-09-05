@@ -1,0 +1,14 @@
+.ai-budget-status {
+  border: 1px solid var(--azd-color-border, #cbd5e1);
+  border-radius: 6px;
+  padding: 4px 8px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 11px;
+  line-height: 1.4;
+  max-width: 100%;
+  cursor: pointer;
+}
+.ai-budget-status:hover { background: var(--azd-color-surface-muted, rgba(128, 128, 128, 0.12)); }
+.ai-budget-status:focus-visible { outline: 2px solid var(--azd-color-focus, #0078d4); outline-offset: 2px; }

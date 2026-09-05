@@ -4,6 +4,7 @@
 const assert = require('node:assert/strict');
 const { test } = require('node:test');
 const express = require('express');
+const { MemoryBudgetStore, createBudgetManager } = require('./ai-budget');
 const {
   createOpenAIProxyRouter,
   isJsonMediaType,
@@ -556,6 +557,95 @@ test('OpenAI proxy enforces trusted model and token limits on successful request
   assert.equal(upstreamBody.max_output_tokens, 32768);
 });
 
+test('budget denial and unavailable storage return actionable errors without dispatch', async (t) => {
+  let dispatched = 0;
+  const server = await startServer({
+    endpoint: 'https://example.openai.azure.com/', apiKey: 'test',
+    allowedDeployments: new Set(['gpt-5.6-sol']),
+    budget: createBudgetManager({ store: new MemoryBudgetStore(), dailyTokens: 100 }),
+    fetchImpl: async () => { dispatched++; return jsonResponse(200, {}); }, logger: silentLogger,
+  });
+  t.after(server.close);
+  const response = await fetch(`${server.baseUrl}/api/openai`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(requestBody()),
+  });
+  assert.equal(response.status, 429);
+  assert.ok(Number(response.headers.get('Retry-After')) > 0);
+  assert.equal((await response.json()).error.code, 'ai_daily_budget_exceeded');
+  assert.equal(dispatched, 0);
+});
+
+test('budget reservations reconcile success and release concurrency after all upstream outcomes', async (t) => {
+  const manager = createBudgetManager({ store: new MemoryBudgetStore(), dailyTokens: 1_000_000 });
+  const outcomes = [
+    () => jsonResponse(200, { usage: { total_tokens: 12 } }),
+    () => jsonResponse(429, { error: { code: 'RateLimitReached' } }),
+    () => { throw new Error('Network down'); },
+    () => ({ ok: true, status: 200, headers: new Headers({ 'content-type': 'application/json' }), text: async () => { throw new Error('Body reset'); } }),
+  ];
+  const server = await startServer({
+    endpoint: 'https://example.openai.azure.com/', apiKey: 'test', budget: manager,
+    allowedDeployments: new Set(['gpt-5.6-sol']),
+    fetchImpl: async () => outcomes.shift()(), logger: silentLogger,
+  });
+  t.after(server.close);
+  for (const expected of [200, 429, 502, 502]) {
+    const response = await fetch(`${server.baseUrl}/api/openai`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(requestBody()),
+    });
+    assert.equal(response.status, expected);
+    await response.text();
+    assert.equal((await manager.status('local-development')).concurrentRequests, 0);
+  }
+  const status = await manager.status('local-development');
+  assert.ok(status.usedTokens > 12, 'unknown transport outcomes retain reservations');
+});
+
+test('timeout and client cancellation abort upstream and release shared concurrency', async (t) => {
+  const manager = createBudgetManager({ store: new MemoryBudgetStore(), dailyTokens: 1_000_000 });
+  let observedAbort = 0;
+  let markStarted;
+  let started = new Promise(resolve => { markStarted = resolve; });
+  const server = await startServer({
+    endpoint: 'https://example.openai.azure.com/', apiKey: 'test', budget: manager, timeoutMs: 100,
+    allowedDeployments: new Set(['gpt-5.6-sol']),
+    fetchImpl: async (_url, init) => new Promise((_resolve, reject) => {
+      markStarted();
+      init.signal.addEventListener('abort', () => { observedAbort++; reject(init.signal.reason); }, { once: true });
+    }), logger: silentLogger,
+  });
+  t.after(server.close);
+  const init = { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(requestBody()) };
+  const response = await fetch(`${server.baseUrl}/api/openai`, init);
+  assert.equal(response.status, 504);
+  assert.equal((await manager.status('local-development')).concurrentRequests, 0);
+  started = new Promise(resolve => { markStarted = resolve; });
+  const controller = new AbortController();
+  const pending = fetch(`${server.baseUrl}/api/openai`, { ...init, signal: controller.signal }).catch(error => error);
+  await started;
+  controller.abort();
+  await pending;
+  for (let count = 0; count < 20 && (await manager.status('local-development')).concurrentRequests; count++) {
+    await new Promise(resolve => setTimeout(resolve, 10));
+  }
+  assert.equal((await manager.status('local-development')).concurrentRequests, 0);
+  assert.equal(observedAbort, 2);
+});
+
+test('public AI proxy requires authenticated identity even when invoked without nginx', async (t) => {
+  const server = await startServer({
+    endpoint: 'https://example.openai.azure.com/', apiKey: 'test', mode: 'public',
+    allowedDeployments: new Set(['gpt-5.6-sol']),
+    budget: createBudgetManager({ store: new MemoryBudgetStore() }), logger: silentLogger,
+    fetchImpl: async () => { throw new Error('Must not dispatch'); },
+  });
+  t.after(server.close);
+  const response = await fetch(`${server.baseUrl}/api/openai`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(requestBody()),
+  });
+  assert.equal(response.status, 401);
+});
+
 test('OpenAI proxy routes Anthropic Messages through Microsoft Foundry', async (t) => {
   let captured;
   let requestedScope;
@@ -696,4 +786,128 @@ test('OpenAI proxy enforces Azure OpenAI rate limit per client key', async (t) =
   assert.equal(r3.headers.get('retry-after'), '60');
   // The rate-limited request must not reach the upstream
   assert.equal(callCount, 2);
+});
+
+test('shared rate limits reject before token reservation or upstream dispatch', async (t) => {
+  let reservations = 0;
+  let calls = 0;
+  const server = await startServer({
+    endpoint: 'https://example.openai.azure.com/', apiKey: 'test',
+    allowedDeployments: new Set(['gpt-5.6-sol']), logger: silentLogger,
+    consumeRateLimit: async () => 5,
+    budget: { async reserve() { reservations++; } },
+    fetchImpl: async () => { calls++; return jsonResponse(200, {}); },
+  });
+  t.after(server.close);
+  const response = await fetch(`${server.baseUrl}/api/openai`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(requestBody()),
+  });
+  assert.equal(response.status, 429);
+  assert.equal(response.headers.get('Retry-After'), '5');
+  assert.equal(reservations, 0);
+  assert.equal(calls, 0);
+});
+
+test('unavailable shared token storage fails closed instead of showing a full or empty budget', async (t) => {
+  let calls = 0;
+  const server = await startServer({
+    endpoint: 'https://example.openai.azure.com/', apiKey: 'test',
+    allowedDeployments: new Set(['gpt-5.6-sol']), logger: silentLogger,
+    budget: createBudgetManager({ store: { async read() { throw new Error('Private storage detail'); } } }),
+    fetchImpl: async () => { calls++; return jsonResponse(200, {}); },
+  });
+  t.after(server.close);
+  const response = await fetch(`${server.baseUrl}/api/openai`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(requestBody()),
+  });
+  assert.equal(response.status, 503);
+  const payload = await response.json();
+  assert.equal(payload.error.code, 'ai_budget_unavailable');
+  assert.doesNotMatch(JSON.stringify(payload), /Private storage detail/);
+  assert.equal(calls, 0);
+});
+
+test('BYO reasoning and Foundry requests share the same budget without losing provider behavior', async (t) => {
+  const budget = createBudgetManager({ store: new MemoryBudgetStore(), dailyTokens: 1_000_000 });
+  const captured = [];
+  const server = await startServer({
+    foundryEndpoint: 'https://example.services.ai.azure.com/', foundryApiKey: 'test',
+    allowedFoundryDeployments: new Set(['claude-opus-5']), allowByoAIEndpoints: true,
+    logger: silentLogger, budget,
+    fetchImpl: async (url, init) => {
+      captured.push({ url, body: JSON.parse(init.body), redirect: init.redirect });
+      return jsonResponse(200, { usage: { input_tokens: 10, output_tokens: 5, cache_read_input_tokens: 20 } });
+    },
+  });
+  t.after(server.close);
+  const requests = [
+    byoRequestBody({
+      apiFormat: 'chat-completions',
+      body: { messages: [{ role: 'user', content: 'test' }], max_completion_tokens: 500.9, reasoning_effort: 'high', n: 100, stream: true },
+    }),
+    anthropicRequestBody(),
+  ];
+  for (const body of requests) {
+    const response = await fetch(`${server.baseUrl}/api/openai`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    });
+    assert.equal(response.status, 200);
+    await response.text();
+  }
+  assert.equal(captured[0].body.max_completion_tokens, 500);
+  assert.equal(captured[0].body.max_tokens, undefined);
+  assert.equal(captured[0].body.n, 1);
+  assert.equal(captured[0].body.store, false);
+  assert.equal(captured[0].body.stream, false);
+  assert.equal(captured[1].body.store, undefined);
+  assert.equal(captured[1].body.stream, false);
+  assert.equal(captured[1].body.max_tokens, 32768);
+  assert.equal(captured.every(request => request.redirect === 'error'), true);
+  assert.equal((await budget.status('local-development')).usedTokens, 70);
+  assert.equal((await budget.status('local-development')).concurrentRequests, 0);
+});
+
+test('configured Astra dispatches the actual deployment while preserving explicit GPT-5.6 fallback', async (t) => {
+  const captured = [];
+  const budget = createBudgetManager({ store: new MemoryBudgetStore(), dailyTokens: 1_000_000 });
+  const server = await startServer({
+    endpoint: 'https://example.openai.azure.com/', apiKey: 'test',
+    allowedDeployments: new Set(['gpt-6-astra', 'gpt-5.6-sol']), budget, logger: silentLogger,
+    fetchImpl: async (url, init) => {
+      captured.push({ url, body: JSON.parse(init.body) });
+      return jsonResponse(200, { usage: { total_tokens: 10 } });
+    },
+  });
+  t.after(server.close);
+  for (const deployment of ['gpt-6-astra', 'gpt-5.6-sol']) {
+    const response = await fetch(`${server.baseUrl}/api/openai`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(requestBody({
+        deployment,
+        body: { model: 'client-supplied-model', input: 'test', max_output_tokens: 100 },
+      })),
+    });
+    assert.equal(response.status, 200);
+    await response.text();
+  }
+  assert.deepEqual(captured.map(request => request.body.model), ['gpt-6-astra', 'gpt-5.6-sol']);
+  assert.equal(captured.every(request => request.url === 'https://example.openai.azure.com/openai/v1/responses'), true);
+  assert.equal((await budget.status('local-development')).usedTokens, 20);
+});
+
+test('an unconfigured Astra deployment is rejected rather than aliased to GPT-5.6', async (t) => {
+  let dispatched = false;
+  const server = await startServer({
+    endpoint: 'https://example.openai.azure.com/', apiKey: 'test',
+    allowedDeployments: new Set(['gpt-5.6-sol']), logger: silentLogger,
+    fetchImpl: async () => { dispatched = true; return jsonResponse(200, {}); },
+  });
+  t.after(server.close);
+  const response = await fetch(`${server.baseUrl}/api/openai`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(requestBody({ deployment: 'gpt-6-astra' })),
+  });
+  assert.equal(response.status, 403);
+  assert.equal((await response.json()).error.code, 'deployment_not_allowed');
+  assert.equal(dispatched, false);
 });

@@ -1,11 +1,13 @@
-# PPTX Export & SVG Edge Rendering Fix
+# PowerPoint / Visio Export Quality and Canvas Capture
 
 ## Overview
 
-This document covers two related changes shipped together:
+Office exports use the diagram model directly, independently of canvas size,
+pan, zoom, selection, and floating UI panels. PNG/SVG capture remains a separate
+path, described in section 2.
 
-1. **Export Diagram as PowerPoint Slide** — new export format using PptxGenJS
-2. **SVG edge rendering fix** — root-cause fix for invisible edges in all export formats (PNG, SVG, PPTX, validation snapshots)
+1. **Native Office exports**: editable PowerPoint and Visio diagrams.
+2. **SVG edge rendering fix**: reliable PNG/SVG and validation snapshots.
 
 ---
 
@@ -13,13 +15,50 @@ This document covers two related changes shipped together:
 
 ### Feature
 
-The **"Export PPTX Slide"** option in the Export dropdown generates a single widescreen (16:9) `.pptx` file containing the current diagram.
+The **"Export PPTX Slide"** option generates a `.pptx` with native shapes,
+text, connectors, and embedded service icons. Small diagrams use a widescreen
+(16:9) slide. Larger diagrams receive readable detail slides or a larger page,
+within PowerPoint's 56-inch limit, instead of shrinking every label illegibly.
+The customer deck keeps its 16:9 page and uses the same renderer with detail
+slides when needed.
 
 ### Implementation
 
-**`src/services/pptxExporter.ts`**
+**Shared implementation**
 
-PptxGenJS v4 is used entirely client-side — no backend, no server-side rendering.
+- `src/services/diagramExportGeometry.ts` resolves nested/negative positions,
+  shares connection semantics and category/zone colors with the canvas, and
+  measures text using the actual Arial and East Asian font metrics. Its routing,
+  gutter compaction, callout numbering, and label-fitting logic are shared by
+  the Office exporters.
+- `src/utils/exportIconRaster.ts` loads bundled SVGs through the existing asset
+  loader and creates bitmap fallbacks. `diagramExportIcons.ts` is a small,
+  strict preloading adapter over that loader; it does not implement a separate
+  icon pipeline. Preloaded icons use the `RasterizedIcon` contract
+  (`bytes`, `dataUrl`, `sizePx`, optional original `svg`).
+- `src/services/pptxNativeShapes.ts` repairs grouping, connection attachments,
+  script-specific fonts, and accessibility descriptions without moving shapes.
+  `pptxVectorIcons.ts` embeds the SVG originals beside their PNG fallbacks.
+  `pptxNativeDiagram.ts` only packages those established transforms; it is not
+  a second diagram renderer. It also repairs duplicate table IDs emitted by
+  PptxGenJS without changing any connector's attached shape ID.
+
+**PowerPoint** (`src/services/pptxExporter.ts`)
+
+PptxGenJS v4 is used entirely client-side. The full model, not the visible
+viewport, supplies the drawing. Service inventories are paginated by measured
+row height rather than cut off after 20 rows. Numbered workflows, service-name
+indexes, speaker notes, tag chips, documentation links, and accessibility
+descriptions remain part of the native output.
+
+Straight routes use preset native PowerPoint connectors, attached where their
+endpoints coincide with real connection sites. Bent routes retain their drawn
+geometry as editable vector shapes rather than being converted into connectors
+that PowerPoint could reroute. Desktop PowerPoint rejects arbitrary custom
+geometry inside a connector element, so that invalid combination is never
+emitted. A bent route must be repositioned separately when rearranging cards.
+An overview can abbreviate wording, while detail, workflow, and index slides
+carry the readable interpretation.
 
 The slide layout:
 
@@ -31,7 +70,7 @@ The slide layout:
 │  Diagram title (bold)       Author · Date  │
 ├─────────────────────────────────────────────┤
 │                                             │
-│         Diagram image (contain)             │
+│         Native diagram (aspect-fit)          │
 │                                             │
 ├─────────────────────────────────────────────┤
 │ Footer text                                 │
@@ -42,33 +81,112 @@ The slide layout:
 
 | Token | Dark mode | Light mode |
 |-------|-----------|------------|
-| `bg` | `1e293b` (slate-900) | `f8fafc` (slate-50) |
-| `headerBg` | `0f172a` (slate-950) | `e2e8f0` (slate-200) |
+| `bg` | `1e293b` (slate-800) | `f8fafc` (slate-50) |
+| `headerBg` | `0f172a` (slate-900) | `e2e8f0` (slate-200) |
 | `accent` | `0078d4` (Azure blue) | `0078d4` (Azure blue) |
 | `titleText` | `ffffff` | `0f172a` |
-| `metaText` | `94a3b8` | `64748b` |
-| `footerText` | `475569` | `94a3b8` |
+| `metaText` | `94a3b8` | `475569` |
+| `footerText` | `94a3b8` | `64748b` |
 
-The diagram image is captured via `captureDiagramAsPng()` (see section 2) which includes the edge fix. The image is placed with PptxGenJS `sizing: { type: 'contain' }` so the aspect ratio is always preserved regardless of diagram dimensions.
+The graph-based APIs do not call `fitView()` or capture the DOM. Existing
+callers that supply an image data URL and `options.diagram` remain supported.
+
+**Visio** (`src/services/visioVsdxExporter.ts`)
+
+The `.vsdx` package contains native service groups (card, icon, text, metadata
+and searchable shape data), editable zone backgrounds, and 1-D connectors glued
+to their endpoint shapes. The routed geometry, connection legend, numbered
+workflow, and full-name index remain intact. Page fitting respects Visio's
+200-inch limit.
+
+Zone backgrounds remain independently editable; they are not automatic Visio
+containers. Embedded PNG icons use the complete `ForeignData` → page
+relationship → media-part chain. Visio retains its print-friendly light palette;
+the optional `isDarkMode` argument is accepted for caller compatibility, not
+as a sheet theme switch. PowerPoint does honor its dark/light theme option.
+Service groups emit child `Shapes` before parent `Text`, as required by the
+[Visio ShapeSheet schema](https://learn.microsoft.com/en-us/office/client-developer/visio/shapesheet_type-complextypevisio-xml).
+
+### Honest pricing disclosures
+
+`pricing.estimatedCost: null` means **Price unavailable**, not **Free**.
+Only an explicitly known zero can be free. Fabric workload items with a
+capacity-covered estimate say **incl. capacity**, not zero dollars; separately
+priced Fabric Capacity and OneLake keep their own estimates. Callers may
+localize these labels with `priceUnavailableLabel` and `capacityLabel`.
+Usage-based positive estimates retain their `~` marker.
+
+Apply `nodesForExport(nodes, showCostBadges)` at the application boundary.
+Removed pricing stays removed: the exporter does not recreate a capacity or
+unpriced disclosure from the service name after the user has hidden pricing.
+
+`DeckCost.unpricedServices?: string[]` makes a customer deck's total a
+**known-cost subtotal (incomplete)**. Every exclusion is listed on additional,
+legible pages, even if a name spans pages. Such a deck makes no cheapest-region
+or savings claim. The existing incomplete-region notices and price-freshness
+fields remain supported separately.
 
 ### Key API
 
 ```ts
 import { exportDiagramAsPptx } from './services/pptxExporter';
+import { buildVsdxBlob } from './services/visioVsdxExporter';
 
-const fileName = await exportDiagramAsPptx(imageDataUrl, {
-  diagramName: string,
-  author: string,
-  date: string,
-  isDarkMode: boolean,
+const fileName = await exportDiagramAsPptx({ nodes, edges }, {
+  diagramName: 'Application architecture',
+  author: 'Architecture team',
+  date: '2026-09-05',
+  isDarkMode: false,
 });
-// Triggers browser download of <diagramName>-<timestamp>.pptx
-// Returns the filename string for export history recording
+// Downloads the PPTX and returns its timestamped/model-suffixed filename.
+
+const drawing = await buildVsdxBlob(nodes, edges, 'Application architecture', {
+  capacityLabel: 'Included in shared capacity',
+  priceUnavailableLabel: 'Price unavailable',
+});
 ```
+
+`buildDiagramPptxBlob(input, options, icons?)` and
+`buildArchitectureDeckBlob(input, options, icons?)` return the same repaired
+native package without downloading it. `input` is `{ nodes, edges }` or the
+legacy image string. `exportArchitectureDeck` accepts both forms too.
+The existing `buildDiagramSlidePptx` / `buildArchitectureDeckPptx` builder APIs
+and `buildVsdxPackage(nodes, edges, name, presetIcons?, pricingOptions?)`
+remain available for package audits.
+
+### Regression coverage
+
+Run `npm run test:exports` for geometry, native PPTX, and VSDX package checks.
+The broader unit suite and `npm run test:export-quality` retain the established
+typography, composition, editability, self-description, and golden audits.
+The Blob APIs are compared with those audited builders, rather than tested
+against a different rendering model. New coverage checks null versus zero,
+capacity disclosures, hidden pricing, and complete exclusion pagination.
+
+`npm run test:exports:browser` builds a production-mode fixture using the existing
+Vite/Playwright dependencies, loads real bundled icons, checks generated XML, and
+exercises both Office formats and all three UI download entry points. Set
+`OFFICE_EXPORT_ARTIFACT_DIR` to a project-local directory to retain sample
+PPTX/VSDX files. Without it, build output and samples are removed after the run.
+Use `OFFICE_EXPORT_BROWSER_CHANNEL=msedge` to use an installed Microsoft Edge.
+For an isolated exporter check while application code is unavailable,
+`OFFICE_EXPORT_FIXTURES_ONLY=1` omits the app build/UI checks and reports
+`uiExports: 0`; it is not a replacement for the full browser test.
+
+On Windows with PowerPoint installed, run
+`npm run test:exports:desktop -- -ArtifactDirectory ".\office-export-artifacts"`
+against those samples. This opens disposable copies within the artifact
+directory, renders PNGs at the presentation's aspect ratio,
+checks actual text bounds and confirms that a moved card retains its native
+connector. It never saves changes to the originals or closes existing user
+presentations. Connector chips and exclusion pages use absolute line spacing;
+chip vertical insets match the fitter's 0.06-inch total allowance. Diagram
+typography retains its measured Arial/Yu Gothic UI font pairing and independent
+quality gates.
 
 ---
 
-## 2. SVG Edge Rendering Fix
+## 2. SVG Edge Rendering Fix (PNG/SVG capture)
 
 ### The Problem
 

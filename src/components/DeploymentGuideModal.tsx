@@ -7,7 +7,6 @@ import { DeploymentGuide, downloadDeploymentGuide, downloadBicepTemplate, downlo
 import './DeploymentGuideModal.css';
 import { useLanguage } from '../i18n/LanguageContext';
 import { localize } from '../i18n/localization';
-import { useEscapeKey } from '../hooks/useEscapeKey';
 import { useModalFocus } from '../hooks/useModalFocus';
 
 interface DeploymentGuideModalProps {
@@ -22,8 +21,7 @@ const DeploymentGuideModal: React.FC<DeploymentGuideModalProps> = ({ guide, isOp
   const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
   const [expandedSections, setExpandedSections] = useState<Set<number>>(new Set([0]));
   const [expandedBicep, setExpandedBicep] = useState<Set<number>>(new Set([0]));
-  const dialogRef = useModalFocus<HTMLDivElement>(isOpen);
-  useEscapeKey(isOpen, onClose);
+  const dialogRef = useModalFocus(isOpen, onClose);
 
   if (!isOpen) return null;
 

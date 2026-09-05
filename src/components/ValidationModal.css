@@ -3,6 +3,49 @@
    Modal displaying Azure Well-Architected Framework validation results
    ========================================================================== */
 
+.validation-modal .validation-stale-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px;
+  margin-bottom: 18px;
+  color: var(--azd-color-warning);
+  background: var(--azd-color-warning-soft);
+  border: 1px solid var(--azd-color-warning);
+  border-radius: 8px;
+}
+.validation-modal .validation-stale-warning > svg { flex-shrink: 0; }
+.validation-modal .validation-stale-warning p { margin: 7px 0; font-size: 14px; }
+.validation-modal .validation-focus-finding {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  padding: 7px 10px;
+  border: 1px solid var(--azd-color-border);
+  border-radius: 5px;
+  background: var(--azd-color-surface);
+  color: var(--azd-color-accent);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.validation-modal .validation-focus-finding:hover:not(:disabled) { background: var(--azd-color-surface-hover); }
+.validation-modal .validation-focus-finding:disabled { color: var(--azd-color-text-muted); opacity: .7; cursor: not-allowed; }
+.validation-modal .validation-review-history {
+  margin: 20px 0;
+  padding: 14px;
+  color: var(--azd-color-text);
+  background: var(--azd-color-surface-muted);
+  border: 1px solid var(--azd-color-border);
+  border-radius: 8px;
+  font-size: 14px;
+}
+.validation-modal .validation-review-history summary { cursor: pointer; font-weight: 600; }
+.validation-modal .validation-history-finding { padding: 12px 0; border-top: 1px solid var(--azd-color-border); overflow-wrap: anywhere; }
+.validation-modal .validation-history-finding p { margin: 6px 0; }
+.validation-modal .validation-history-finding small { color: var(--azd-color-text-muted); }
+.validation-modal :is(button, input, summary):focus-visible { outline: 3px solid var(--azd-color-focus); outline-offset: 2px; }
+
 .validation-stale-notice {
   display: flex;
   align-items: flex-start;
@@ -408,6 +451,7 @@ body.dark-mode .validation-scope-note strong {
   color: #059669;
 }
 
+.source-badge.ai,
 .source-badge.ai-analysis {
   background: #eef2ff;
   color: #6366f1;

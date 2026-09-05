@@ -17,6 +17,7 @@ import {
   updateSharedCloudDiagram,
 } from '../services/cloudDiagramService';
 import { OperationGeneration } from '../utils/operationGeneration';
+import { canonicalStringify } from '../utils/canonicalJson';
 
 const CONTEXT_KEY = 'azurediagarm.cloud-document.v1';
 const SHARE_HASH_PREFIX = '#share-';
@@ -88,7 +89,8 @@ interface UseCloudDiagramSyncOptions {
   diagramName: string;
   payload: CloudDiagramPayload;
   enabled: boolean;
-  onLoad: (payload: CloudDiagramPayload) => void;
+  // Return the normalized editor payload so hydration is not mistaken for an edit.
+  onLoad: (payload: CloudDiagramPayload) => CloudDiagramPayload;
 }
 
 function readStoredContext(): CloudDocumentContext | null {
@@ -173,7 +175,7 @@ export function useCloudDiagramSync({
   const latestRef = useRef({
     diagramName: normalizeDiagramName(diagramName),
     payload,
-    serialized: JSON.stringify(payload),
+    serialized: canonicalStringify(payload),
   });
   const lastSavedDiagramNameRef = useRef('');
   const lastSavedSerializedRef = useRef('');
@@ -194,7 +196,7 @@ export function useCloudDiagramSync({
   const autosaveSuspendedGenerationRef = useRef<number | null>(null);
   const mountedRef = useRef(true);
   const documentGenerationRef = useRef(new OperationGeneration());
-  const serializedPayload = JSON.stringify(payload);
+  const serializedPayload = canonicalStringify(payload);
 
   latestRef.current = {
     diagramName: normalizeDiagramName(diagramName),
@@ -348,13 +350,20 @@ export function useCloudDiagramSync({
       ? normalized.id
       : null;
     lastSavedDiagramNameRef.current = normalized.diagramName;
-    lastSavedSerializedRef.current = JSON.stringify(normalized.payload);
+    lastSavedSerializedRef.current = canonicalStringify(normalized.payload);
     lastSaveErrorRef.current = null;
     conflictRef.current = false;
     setErrorMessage('');
     setLastSavedAt(normalized.updatedAt || new Date().toISOString());
     setStatus(resolvedContext.role === 'viewer' ? 'readonly' : 'saved');
-    if (applyPayload) onLoad(normalized.payload);
+    if (applyPayload) {
+      const appliedPayload = onLoad(normalized.payload);
+      const appliedName = appliedPayload.titleBlockData?.architectureName;
+      lastSavedDiagramNameRef.current = typeof appliedName === 'string'
+        ? normalizeDiagramName(appliedName)
+        : normalized.diagramName;
+      lastSavedSerializedRef.current = canonicalStringify(appliedPayload);
+    }
     return normalized;
   }, [
     beginDocumentGeneration,
@@ -1032,7 +1041,7 @@ export function useCloudDiagramSync({
     clearTimers();
     const normalized = storeDocument(baseDocument, baseContext);
     lastSavedDiagramNameRef.current = normalized.diagramName;
-    lastSavedSerializedRef.current = JSON.stringify(normalized.payload);
+    lastSavedSerializedRef.current = canonicalStringify(normalized.payload);
     pendingSaveRef.current = null;
     lastSaveErrorRef.current = null;
     conflictRef.current = false;
@@ -1042,7 +1051,7 @@ export function useCloudDiagramSync({
     latestRef.current = {
       diagramName: restoredDiagramName,
       payload: version.payload,
-      serialized: JSON.stringify(version.payload),
+      serialized: canonicalStringify(version.payload),
     };
     let restoreWriteBlocker: Promise<void> | null = null;
     let releaseRestoreWrite: (() => void) | null = null;
@@ -1090,7 +1099,7 @@ export function useCloudDiagramSync({
       }
       const verifiedDocument = storeDocument(verified, baseContext);
       lastSavedDiagramNameRef.current = verifiedDocument.diagramName;
-      lastSavedSerializedRef.current = JSON.stringify(verifiedDocument.payload);
+      lastSavedSerializedRef.current = canonicalStringify(verifiedDocument.payload);
       lastSaveErrorRef.current = null;
       setLastSavedAt(verifiedDocument.updatedAt || new Date().toISOString());
       setStatus('saved');
@@ -1149,7 +1158,7 @@ export function useCloudDiagramSync({
     if (!currentContext || nextDocument.id !== currentContext.documentId) return;
     if (conflictRef.current) return;
     const normalized = normalizeDocument(nextDocument, currentContext);
-    const remoteSerialized = JSON.stringify(normalized.payload);
+    const remoteSerialized = canonicalStringify(normalized.payload);
     const currentDocument = documentRef.current;
     if (
       currentDocument
@@ -1163,7 +1172,7 @@ export function useCloudDiagramSync({
       )
     ) return;
     const knownRemoteSerialized = currentDocument
-      ? JSON.stringify(currentDocument.payload)
+      ? canonicalStringify(currentDocument.payload)
       : '';
     if (
       remoteSerialized !== latestRef.current.serialized

@@ -24,6 +24,7 @@ ARG VITE_AZURE_OPENAI_DEPLOYMENT_GPT51
 ARG VITE_AZURE_OPENAI_DEPLOYMENT_GPT52
 ARG VITE_AZURE_OPENAI_DEPLOYMENT_GPT54
 ARG VITE_AZURE_OPENAI_DEPLOYMENT_GPT54MINI
+ARG VITE_AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA
 ARG VITE_AZURE_OPENAI_DEPLOYMENT_GPT56SOL
 ARG VITE_AZURE_OPENAI_DEPLOYMENT_GPT56TERRA
 ARG VITE_AZURE_OPENAI_DEPLOYMENT_GPT56LUNA
@@ -51,6 +52,7 @@ ENV VITE_AZURE_OPENAI_DEPLOYMENT_GPT51=$VITE_AZURE_OPENAI_DEPLOYMENT_GPT51
 ENV VITE_AZURE_OPENAI_DEPLOYMENT_GPT52=$VITE_AZURE_OPENAI_DEPLOYMENT_GPT52
 ENV VITE_AZURE_OPENAI_DEPLOYMENT_GPT54=$VITE_AZURE_OPENAI_DEPLOYMENT_GPT54
 ENV VITE_AZURE_OPENAI_DEPLOYMENT_GPT54MINI=$VITE_AZURE_OPENAI_DEPLOYMENT_GPT54MINI
+ENV VITE_AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA=$VITE_AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA
 ENV VITE_AZURE_OPENAI_DEPLOYMENT_GPT56SOL=$VITE_AZURE_OPENAI_DEPLOYMENT_GPT56SOL
 ENV VITE_AZURE_OPENAI_DEPLOYMENT_GPT56TERRA=$VITE_AZURE_OPENAI_DEPLOYMENT_GPT56TERRA
 ENV VITE_AZURE_OPENAI_DEPLOYMENT_GPT56LUNA=$VITE_AZURE_OPENAI_DEPLOYMENT_GPT56LUNA
@@ -100,7 +102,9 @@ RUN npm run build
 FROM node:22-alpine@sha256:c610fcdfb1d5b4740dd70c284ed3cb16bb857e0f7166196e36a5501df7a3aa32
 
 ARG FRONT_DOOR_ID
-ENV FRONT_DOOR_ID=$FRONT_DOOR_ID
+ENV NODE_ENV=production \
+    APP_DEPLOYMENT_MODE=public \
+    FRONT_DOOR_ID=$FRONT_DOOR_ID
 
 # Install nginx while keeping the runtime Node version aligned with CI/build.
 RUN apk add --no-cache nginx
@@ -109,7 +113,7 @@ RUN apk add --no-cache nginx
 WORKDIR /srv/token-server
 COPY server/package*.json ./
 RUN npm ci --omit=dev && npm cache clean --force
-COPY server/token-server.js server/openai-proxy.js server/rate-limiter.js server/access-control.js server/arm-key-vault-access-store.js server/async-handler.js server/diagram-api.js server/feedback-configuration.js server/graceful-shutdown.js server/readiness.js ./
+COPY server/token-server.js server/openai-proxy.js server/rate-limiter.js server/access-control.js server/arm-key-vault-access-store.js server/async-handler.js server/diagram-api.js server/feedback-configuration.js server/graceful-shutdown.js server/readiness.js server/deployment-security.js server/ai-budget.js server/feedback.js ./
 
 # Set up the MCP HTTP server (streamable HTTP transport on port 3030).
 WORKDIR /srv/mcp-server
@@ -120,11 +124,7 @@ COPY --from=build /app/mcp-server/dist ./dist
 # Copy static build output
 COPY --from=build /app/dist /usr/share/nginx/html
 COPY --from=build /app/Azure_Public_Service_Icons /usr/share/nginx/html/Azure_Public_Service_Icons
-COPY nginx.conf /etc/nginx/http.d/default.conf
-RUN if [ -n "$FRONT_DOOR_ID" ]; then \
-      sed -i "s|#FDID_CHECK#|if (\$http_x_azure_fdid != \"$FRONT_DOOR_ID\") { return 403; }|" /etc/nginx/http.d/default.conf \
-      && grep -q "return 403" /etc/nginx/http.d/default.conf; \
-    fi
+COPY nginx.conf /etc/nginx/http.d/default.conf.template
 
 # Startup: token server + MCP HTTP server in background, nginx in foreground.
 COPY start.sh /start.sh

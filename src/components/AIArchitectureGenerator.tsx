@@ -3,7 +3,7 @@
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Sparkles, X, Loader2, Clock, Zap, Brain, Network, PenTool, Layers } from 'lucide-react';
-import { generateArchitectureWithAI, isAzureOpenAIConfigured, AIMetrics, analyzeArchitectureDiagramImage, ModelOverride } from '../services/azureOpenAI';
+import { generateArchitectureWithAI, isAzureOpenAIConfigured, AIMetrics, analyzeArchitectureDiagramImage, ModelOverride, throwIfGenerationAborted } from '../services/azureOpenAI';
 import { generateReferenceArchitectureWithAI } from '../services/referenceArchitectureAI';
 import { generateBlueprintArchitectureWithAI } from '../services/blueprintArchitectureAI';
 import { generateComponentManifest, ComponentManifest } from '../services/componentManifestAI';
@@ -28,7 +28,7 @@ import {
 } from '../stores/byoAISettingsStore';
 import { useRuntimeConfig } from '../services/runtimeConfig';
 import { trackImageImport } from '../services/telemetryService';
-import { buildModificationPrompt } from '../services/modificationPrompt';
+import { architectureFingerprint, buildModificationPrompt } from '../services/modificationPrompt';
 import './AIArchitectureGenerator.css';
 import { useLanguage } from '../i18n/LanguageContext';
 import { localize, type LocalizedText } from '../i18n/localization';
@@ -56,6 +56,11 @@ const modeRequiresOpenAI = (m: GenerationMode): boolean =>
   m === 'blueprint' || m === 'both';
 
 type GeneratorStep = 'brief' | 'output' | 'review';
+
+interface GeneratorPendingRetry extends PendingRetry {
+  baseRevision?: number;
+  diagramFingerprint: string;
+}
 
 interface PromptCategory {
   category: LocalizedText;
@@ -187,7 +192,7 @@ const CATEGORIZED_PROMPTS: PromptCategory[] = [
 ];
 
 interface AIArchitectureGeneratorProps {
-  onGenerate: (architecture: any, prompt: string, autoSnapshot: boolean, referenceImageUrl?: string) => void | Promise<void>;
+  onGenerate: (architecture: any, prompt: string, autoSnapshot: boolean, referenceImageUrl?: string, baseRevision?: number, signal?: AbortSignal) => boolean | void | Promise<boolean | void>;
   /** Increment to open the modal from another in-product journey control. */
   openSignal?: number;
   /** Render the toolbar trigger. The dialog host can stay mounted elsewhere. */
@@ -213,6 +218,7 @@ interface AIArchitectureGeneratorProps {
     nodes: any[];
     edges: any[];
     architectureName: string;
+    revision?: number;
   };
 }
 
@@ -234,14 +240,10 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
   const [description, setDescription] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
   const [error, setError] = useState('');
+  const [canRetry, setCanRetry] = useState(false);
   // Neutral "Cancelled" notice — a user-initiated abort is not an error, so it
   // gets its own state instead of going through `setError`.
   const [wasCancelled, setWasCancelled] = useState(false);
-  // Controller for the in-flight generation so the Cancel button can abort it.
-  // Only the topology path (which we own) receives the signal; blueprint /
-  // reference / manifest run in unowned services and finish in the background,
-  // but their late results are ignored once the run is aborted.
-  const abortControllerRef = useRef<AbortController | null>(null);
   const [partialWarning, setPartialWarning] = useState('');
   /**
    * Set when exactly one of the two `both`-mode deliverables failed. It carries
@@ -250,7 +252,7 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
    * turn the brief into a MODIFY instruction (the topology has already been
    * applied) and re-running the succeeded half would overwrite it.
    */
-  const [pendingRetry, setPendingRetry] = useState<PendingRetry | null>(null);
+  const [pendingRetry, setPendingRetry] = useState<GeneratorPendingRetry | null>(null);
   const [aiMetrics, setAiMetrics] = useState<AIMetrics | null>(null);
   const [canvasGenerationCompleted, setCanvasGenerationCompleted] = useState(false);
   const [isAnalyzingImage, setIsAnalyzingImage] = useState(false);
@@ -325,6 +327,12 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
   };
 
   const closeTimerRef = useRef<number | null>(null);
+  const requestRef = useRef<AbortController | null>(null);
+  const imageRequestRef = useRef<AbortController | null>(null);
+  const architectureRef = useRef(currentArchitecture);
+  architectureRef.current = currentArchitecture;
+  const openRef = useRef(isOpen);
+  openRef.current = isOpen;
   const cancelScheduledClose = useCallback(() => {
     if (closeTimerRef.current !== null) {
       window.clearTimeout(closeTimerRef.current);
@@ -334,24 +342,46 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
   const clearGenerationResult = useCallback(() => {
     setAiMetrics(null);
     setCanvasGenerationCompleted(false);
-  }, []);  const handleModeChange = useCallback((nextMode: GenerationMode) => {
+  }, []);
+  const cancelRequest = useCallback(() => {
+    const request = requestRef.current;
+    requestRef.current = null;
+    request?.abort();
+    imageRequestRef.current?.abort();
+    imageRequestRef.current = null;
+    setIsGenerating(false);
+    setIsAnalyzingImage(false);
+    if (request) {
+      setCanRetry(true);
+      setWasCancelled(true);
+      setActiveStep('output');
+      setError('');
+      clearGenerationResult();
+    }
+  }, [clearGenerationResult]);
+  const handleModeChange = useCallback((nextMode: GenerationMode) => {
     cancelScheduledClose();
     clearGenerationResult();
     // A retry only makes sense for the `both` run that produced it.
     setPendingRetry(null);
     setPartialWarning('');
+    setCanRetry(false);
+    setWasCancelled(false);
     setMode(nextMode);
     writeLocalStorage('aiGenerator.mode', nextMode);
   }, [cancelScheduledClose, clearGenerationResult]);
   const isBusy = isGenerating || isAnalyzingImage;
   const closeModal = useCallback(() => {
     if (isBusy) return;
+    openRef.current = false;
     cancelScheduledClose();
+    cancelRequest();
     clearGenerationResult();
     setActiveStep('brief');
     setIsOpen(false);
-  }, [cancelScheduledClose, clearGenerationResult, isBusy]);
+  }, [cancelScheduledClose, cancelRequest, clearGenerationResult, isBusy]);
   const handleAnalyzingChange = useCallback((analyzing: boolean) => {
+    if (!openRef.current) return;
     if (analyzing) cancelScheduledClose();
     setIsAnalyzingImage(analyzing);
   }, [cancelScheduledClose]);
@@ -359,6 +389,7 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
     cancelScheduledClose();
     closeTimerRef.current = window.setTimeout(() => {
       closeTimerRef.current = null;
+      openRef.current = false;
       setIsOpen(false);
       clearGenerationResult();
       setUploadedImageUrl(null);
@@ -367,16 +398,19 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
 
   const openGenerator = useCallback(() => {
     cancelScheduledClose();
+    cancelRequest();
     clearGenerationResult();
     setActiveStep('brief');
     setIsOpen(true);
+    openRef.current = true;
     setError('');
     setPartialWarning('');
     setWasCancelled(false);
+    setCanRetry(false);
     setPendingRetry(null);
     setImageAnalyzed(false);
     onOpen?.();
-  }, [onOpen, cancelScheduledClose, clearGenerationResult]);
+  }, [onOpen, cancelScheduledClose, cancelRequest, clearGenerationResult]);
 
   useEffect(() => {
     if (openSignal && openSignal > 0) openGenerator();
@@ -386,9 +420,16 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
   }, [openSignal]);
 
   useEffect(() => cancelScheduledClose, [cancelScheduledClose]);
+  useEffect(() => () => {
+    openRef.current = false;
+    requestRef.current?.abort();
+    requestRef.current = null;
+    imageRequestRef.current?.abort();
+  }, []);
 
   // Handle image analysis result
   const handleImageAnalyzed = (analyzedDescription: string) => {
+    if (!openRef.current || imageRequestRef.current?.signal.aborted) return;
     // Prepend or replace the description with the analyzed content
     const prefix = localize(language, {
       en: '🖼️ [Analyzed from uploaded diagram]\n\n',
@@ -401,7 +442,13 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
 
   // Wrapper to pass to ImageUploader
   const handleAnalyzeImage = async (base64: string, mimeType: string) => {
-    const result = await analyzeArchitectureDiagramImage(base64, mimeType, language);
+    if (!openRef.current) throw new DOMException('Generation cancelled', 'AbortError');
+    cancelScheduledClose();
+    imageRequestRef.current?.abort();
+    const controller = new AbortController();
+    imageRequestRef.current = controller;
+    const result = await analyzeArchitectureDiagramImage(base64, mimeType, language, { signal: controller.signal });
+    throwIfGenerationAborted(controller.signal);
     return { description: result.description };
   };
 
@@ -412,11 +459,7 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
   }));
 
   const handleGenerate = async () => {
-    // Re-entrancy guard — matches ArchitectureChatPanel's `if (isSending) return;`.
-    // The button's `disabled` alone can be bypassed (keyboard, rapid double
-    // activation), which would start two overlapping generations.
-    if (isGenerating) return;
-
+    if (!openRef.current || requestRef.current || isAnalyzingImage) return;
     if (!description.trim()) {
       setError(translate('Please describe your architecture'));
       return;
@@ -433,30 +476,44 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
     // Regenerating cancels any pending auto-close so a stale timer from the
     // previous run can't close the modal mid-generation or stack up.
     cancelScheduledClose();
+    const controller = new AbortController();
+    requestRef.current = controller;
+    const retrySnapshot = pendingRetry?.brief === description ? pendingRetry : null;
+    const baseRevision = retrySnapshot?.baseRevision ?? currentArchitecture?.revision;
+    const baselineFingerprint = retrySnapshot?.diagramFingerprint ?? architectureFingerprint(currentArchitecture);
+    const active = () => openRef.current && requestRef.current === controller && !controller.signal.aborted;
+    const ensureActive = () => {
+      throwIfGenerationAborted(controller.signal);
+      if (!active()) throw new DOMException('Generation cancelled', 'AbortError');
+    };
+    const ensureUnchanged = () => {
+      ensureActive();
+      if (architectureFingerprint(architectureRef.current) !== baselineFingerprint) {
+        throw new Error(localize(language, {
+          en: 'The diagram changed while this request was running. Your edits were preserved. Review the brief and try again.',
+          ja: 'リクエストの実行中に図が変更されました。編集は保持されています。要件を確認して再試行してください。',
+        }));
+      }
+    };
     setIsGenerating(true);
+    setCanRetry(false);
     setError('');
     setWasCancelled(false);
     setPartialWarning('');
-    // Fresh controller for this run so the Cancel button can abort the
-    // in-flight topology request. Stored in a ref so `handleCancel` (and the
-    // finally block) can reach it.
-    const controller = new AbortController();
-    abortControllerRef.current = controller;
     // Snapshot and clear together: the warning and the retry it belongs to must
     // never diverge. If this run throws, the user is left with no warning and
     // no armed retry, so the next press is a clean full run. A partial failure
     // re-arms both at the end.
-    const retrySnapshot = pendingRetry;
     setPendingRetry(null);
     clearGenerationResult();
     
-    const currentModelSettings: ModelOverride = getModelSettingsForFeature('architectureGeneration');
+    const currentModelSettings: ModelOverride = { ...getModelSettingsForFeature('architectureGeneration'), signal: controller.signal };
     console.log(`🎯 Generate clicked: default model=${modelSettings.model}, effective model=${currentModelSettings.model}, reasoning=${currentModelSettings.reasoningEffort}, overrides=${JSON.stringify(modelSettings.featureOverrides)}`);
 
     // Use the same effective feature setting shown in the modal. If a stale
     // setting points to an incompatible model, fall back to the deployed
     // recommendation so blueprint generation still succeeds.
-    const blueprintModelSettings: ModelOverride = (() => {
+    const blueprintModelSettings: ModelOverride = { ...(() => {
       const configured = getModelSettingsForFeature('blueprint');
       if (isBlueprintCapableModel(configured.model)) {
         return {
@@ -475,10 +532,11 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
         };
       }
       return currentModelSettings;
-    })();
+    })(), signal: controller.signal };
     console.log(`📐 Blueprint model: ${blueprintModelSettings.model} (reasoning=${blueprintModelSettings.reasoningEffort})`);
 
     try {
+      ensureUnchanged();
       // ── Reference (Editorial) mode — PNG is the sole deliverable.
       // We deliberately do NOT push a topology onto the canvas: the
       // transformed network-flow view is low fidelity for editorial inputs
@@ -486,19 +544,21 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
       // toolbar “Export Editorial PNG” action, then render + download.
       if (mode === 'reference') {
         const ref = await generateReferenceArchitectureWithAI(description, currentModelSettings, language);
-
-        // Stash the ref for the toolbar re-export button (if App provided it).
-        onReferenceArchitecture?.(ref);
+        ensureActive();
 
         // Always export the PNG — it is the only artifact produced in this mode.
         try {
           const { exportReferenceArchitectureAsPng } = await import('../utils/exportReferencePng');
+          ensureActive();
           await exportReferenceArchitectureAsPng(ref);
         } catch (err) {
+          ensureActive();
           console.warn('Reference architecture PNG export failed:', err);
           throw new Error('PNG export failed. See console for details.');
         }
 
+        ensureActive();
+        onReferenceArchitecture?.(ref);
         if (ref.metrics) setAiMetrics(ref.metrics);
         setCanvasGenerationCompleted(false);
         setActiveStep('review');
@@ -517,17 +577,20 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
           undefined,
           language,
         );
-
-        onBlueprintArchitecture?.(bp);
+        ensureActive();
 
         try {
           const { exportBlueprintArchitectureAsPng } = await import('../utils/exportBlueprintPng');
+          ensureActive();
           await exportBlueprintArchitectureAsPng(bp, { legendPosition });
         } catch (err) {
+          ensureActive();
           console.warn('Blueprint architecture PNG export failed:', err);
           throw new Error('PNG export failed. See console for details.');
         }
 
+        ensureActive();
+        onBlueprintArchitecture?.(bp);
         if (bp.metrics) setAiMetrics(bp.metrics);
         setCanvasGenerationCompleted(false);
         setActiveStep('review');
@@ -587,10 +650,13 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
               `📋 Manifest: ${manifest.components.length} components across ${manifest.zones.length} zones (${manifest.metrics?.totalTokens ?? '?'} tokens, ${Math.round((manifest.metrics?.elapsedTimeMs ?? 0) / 100) / 10}s)`,
             );
           } catch (err) {
+            ensureActive();
+            if (err instanceof Error && err.name === 'AbortError') throw err;
             console.warn('Component manifest pre-pass failed; falling back to independent generation:', err);
             manifest = undefined;
           }
         }
+        ensureActive();
 
         let topoResult: any = null;
         let bpResult: any = null;
@@ -612,23 +678,25 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
             try {
               topoResult = await topoCall(manifest);
             } catch (error) {
+              ensureActive();
+              if (error instanceof Error && error.name === 'AbortError') throw error;
               topoFailure = error;
             }
           }
-          // Stop before paying for the (unowned, non-abortable) blueprint call
-          // if the user already cancelled during the topology request.
-          if (controller.signal.aborted) return;
+          ensureActive();
           if (runBlueprint) {
             try {
               bpResult = await bpCall(manifest);
             } catch (error) {
+              ensureActive();
+              if (error instanceof Error && error.name === 'AbortError') throw error;
               bpFailure = error;
             }
           }
         }
-        // A user cancel aborts the topology half; discard whatever settled so it
-        // is reported as a neutral "Cancelled", not a partial-failure warning.
-        if (controller.signal.aborted) return;
+        ensureActive();
+        if (topoFailure instanceof Error && topoFailure.name === 'AbortError') throw topoFailure;
+        if (bpFailure instanceof Error && bpFailure.name === 'AbortError') throw bpFailure;
         if (!topoResult && !bpResult && !retry) {
           throw topoFailure || bpFailure || new Error('Topology and Blueprint generation failed.');
         }
@@ -658,10 +726,20 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
           }
         }
         let canvasApplied = false;
+        ensureUnchanged();
         if (topoResult) {
-          await onGenerate(topoResult, description, autoSnapshot, uploadedImageUrl || undefined);
+          const applied = await onGenerate(topoResult, description, autoSnapshot, uploadedImageUrl || undefined, baseRevision, controller.signal);
+          ensureActive();
+          if (applied === false) {
+            setCanRetry(true);
+            setActiveStep('output');
+            return;
+          }
           canvasApplied = true;
+          await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+          ensureActive();
         }
+        ensureActive();
         if (bpResult) {
           // Stash blueprint for the toolbar re-export button.
           onBlueprintArchitecture?.(bpResult);
@@ -673,8 +751,10 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
         if (autoSnapshot && bpResult) {
           try {
             const { exportBlueprintArchitectureAsPng } = await import('../utils/exportBlueprintPng');
+            ensureActive();
             await exportBlueprintArchitectureAsPng(bpResult, { legendPosition });
           } catch (err) {
+            ensureActive();
             console.warn('Blueprint architecture PNG export failed:', err);
             blueprintExportError = new Error(
               'Blueprint PNG export failed. See console for details.',
@@ -682,6 +762,7 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
           }
         }
 
+        ensureActive();
         if (combinedMetrics) setAiMetrics(combinedMetrics);
         // A blueprint-only retry does not touch the canvas, but the topology
         // from the original attempt is still there, so the flag must not be
@@ -701,6 +782,10 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
             prompt: bothContextPrompt,
             manifest,
             canvasApplied: canvasApplied || Boolean(retry?.canvasApplied),
+            baseRevision: canvasApplied ? architectureRef.current?.revision : baseRevision,
+            diagramFingerprint: canvasApplied
+              ? architectureFingerprint(architectureRef.current)
+              : baselineFingerprint,
           });
           setPartialWarning(localize(language, {
             en: `${missing === 'topology' ? 'Topology' : 'Blueprint'} generation did not complete, but the other output was created successfully. `
@@ -741,14 +826,16 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
         currentModelSettings,
         undefined,
         language,
-        controller.signal,
+        { signal: controller.signal },
       );
-
-      // A cancel that landed while the request was in flight must not apply a
-      // result or advance the wizard.
-      if (controller.signal.aborted) return;
-      
-      await onGenerate(result, description, autoSnapshot, uploadedImageUrl || undefined);
+      ensureUnchanged();
+      const applied = await onGenerate(result, description, autoSnapshot, uploadedImageUrl || undefined, baseRevision, controller.signal);
+      ensureActive();
+      if (applied === false) {
+        setCanRetry(true);
+        setActiveStep('output');
+        return;
+      }
       if (result.metrics) setAiMetrics(result.metrics);
       setCanvasGenerationCompleted(true);
       setActiveStep('review');
@@ -757,6 +844,8 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
       // Close modal shortly after successful generation
       scheduleClose(); // Give user 45 seconds to review results or type a modification
     } catch (err: any) {
+      if (!active()) return;
+      setCanRetry(true);
       // A user-initiated cancel surfaces as an AbortError (or lands with the
       // controller already aborted). That is not a failure — show a neutral
       // "Cancelled" notice instead of an error banner.
@@ -768,26 +857,12 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
         setActiveStep('output');
       }
     } finally {
-      setIsGenerating(false);
-      if (abortControllerRef.current === controller) abortControllerRef.current = null;
+      if (requestRef.current === controller) {
+        requestRef.current = null;
+        setIsGenerating(false);
+      }
     }
   };
-
-  /**
-   * Abort the in-flight generation. The topology request (which we own) aborts
-   * immediately; unowned blueprint/reference/manifest calls keep running but
-   * their results are discarded once `signal.aborted` is set. `isGenerating` is
-   * cleared here so the UI never sticks on "Generating…".
-   */
-  const handleCancel = useCallback(() => {
-    const controller = abortControllerRef.current;
-    if (!controller) return;
-    controller.abort();
-    abortControllerRef.current = null;
-    setIsGenerating(false);
-    setWasCancelled(true);
-    setError('');
-  }, []);
 
   const applyExample = (example: string) => {
     setDescription(example);
@@ -1009,9 +1084,13 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
 
               <ImageUploader
                 onImageAnalyzed={handleImageAnalyzed}
-                onImageDataUrl={setUploadedImageUrl}
+                onImageDataUrl={(url) => { if (openRef.current) setUploadedImageUrl(url); }}
                 onAnalyzing={handleAnalyzingChange}
-                onError={setError}
+                onError={(message) => {
+                  if (openRef.current && !imageRequestRef.current?.signal.aborted && !/^Generation cancelled\.?$/.test(message)) {
+                    setError(message);
+                  }
+                }}
                 disabled={isGenerating}
                 analyzeImage={handleAnalyzeImage}
               />
@@ -1269,10 +1348,12 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
                     <button
                       type="button"
                       className="azd-button azd-button--secondary"
-                      onClick={closeModal}
-                      disabled={isBusy}
+                      onClick={isAnalyzingImage ? cancelRequest : closeModal}
+                      disabled={isGenerating}
                     >
-                      {t("Cancel")}
+                      {isAnalyzingImage
+                        ? localize(language, { en: 'Cancel request', ja: 'リクエストをキャンセル' })
+                        : t("Cancel")}
                     </button>
                     <button
                       type="button"
@@ -1301,10 +1382,10 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
                   <button
                     type="button"
                     className="azd-button azd-button--secondary"
-                    onClick={handleCancel}
+                    onClick={cancelRequest}
                   >
                     <X size={18} />
-                    {' '}{localize(language, { en: 'Cancel generation', ja: '生成をキャンセル' })}{' '}</button>
+                    {' '}{localize(language, { en: 'Cancel request', ja: 'リクエストをキャンセル' })}{' '}</button>
                 )}
                 <button
                   type="button"
@@ -1322,6 +1403,8 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
                       <Sparkles size={18} />
                       {' '}{partialWarning
                         ? localize(language, { en: 'Retry missing output', ja: '不足分を再生成' })
+                        : canRetry || error
+                          ? localize(language, { en: 'Retry generation', ja: '生成を再試行' })
                         : t("Generate Architecture")}{' '}</>
                   )}
                 </button>

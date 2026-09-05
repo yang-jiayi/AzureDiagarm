@@ -30,6 +30,22 @@ param feedbackContactEnabled bool = false
 param azureTablesEndpoint string = ''
 param azureTablesFeedbackTable string = 'feedback'
 param frontDoorId string = ''
+param publicAppUrl string = ''
+param accessAdminEmail string = ''
+param accessKeyVaultResourceId string = ''
+param accessTablesEndpoint string = ''
+@allowed(['cosmos', 'table'])
+param aiBudgetStore string = 'table'
+param aiBudgetTablesEndpoint string = ''
+param aiBudgetTable string = 'aibudgets'
+param easyAuthVerified bool = false
+@minValue(1)
+param aiDailyTokenBudget int = 250000
+@minValue(1)
+param aiMaxConcurrentRequests int = 2
+@minValue(1)
+param feedbackRetentionDays int = 30
+param feedbackLegacyRetentionEnabled bool = false
 
 // ── Log Analytics ──────────────────────────────────────────────────────────────
 resource logAnalytics 'Microsoft.OperationalInsights/workspaces@2022-10-01' = {
@@ -150,6 +166,7 @@ resource cosmos 'Microsoft.DocumentDB/databaseAccounts@2024-02-15-preview' = if 
       { locationName: location, failoverPriority: 0, isZoneRedundant: false }
     ]
     enableFreeTier: true
+    enableMultipleWriteLocations: false
   }
 }
 
@@ -172,7 +189,7 @@ resource cosmosContainer 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/con
   }
 }
 
-// Dedicated container for in-app user feedback (append-only, low read volume).
+// Feedback and shared AI budget documents use item-level TTL.
 resource cosmosFeedbackContainer 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers@2024-02-15-preview' = if (deployCosmos) {
   parent: cosmosDb
   name: cosmosFeedbackContainerId
@@ -180,6 +197,7 @@ resource cosmosFeedbackContainer 'Microsoft.DocumentDB/databaseAccounts/sqlDatab
     resource: {
       id: cosmosFeedbackContainerId
       partitionKey: { paths: ['/id'], kind: 'Hash' }
+      defaultTtl: -1
     }
   }
 }
@@ -287,6 +305,11 @@ resource diagramRateLimitTable 'Microsoft.Storage/storageAccounts/tableServices/
 resource diagramFeedbackTable 'Microsoft.Storage/storageAccounts/tableServices/tables@2023-05-01' = if (deployDiagramStorage && azureTablesFeedbackTable != diagramRateLimitTableName) {
   parent: diagramTableService
   name: azureTablesFeedbackTable
+}
+
+resource diagramBudgetTable 'Microsoft.Storage/storageAccounts/tableServices/tables@2023-05-01' = if (deployDiagramStorage && aiBudgetStore == 'table' && empty(aiBudgetTablesEndpoint) && empty(azureTablesEndpoint) && aiBudgetTable != diagramRateLimitTableName && aiBudgetTable != azureTablesFeedbackTable) {
+  parent: diagramTableService
+  name: aiBudgetTable
 }
 
 resource diagramStorageRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (deployDiagramStorage) {
@@ -429,6 +452,22 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
             }
           ]
           env: [
+            { name: 'APP_DEPLOYMENT_MODE', value: 'public' }
+            { name: 'EASY_AUTH_ENABLED', value: string(easyAuthVerified) }
+            { name: 'ACCESS_CONTROL_ENABLED', value: 'true' }
+            { name: 'ACCESS_ADMIN_EMAIL', value: accessAdminEmail }
+            { name: 'AZURE_ACCESS_KEY_VAULT_RESOURCE_ID', value: accessKeyVaultResourceId }
+            { name: 'AZURE_TABLES_ACCESS_ENDPOINT', value: accessTablesEndpoint }
+            { name: 'FRONT_DOOR_ID', value: frontDoorId }
+            { name: 'AI_BUDGET_STORE', value: aiBudgetStore }
+            { name: 'AZURE_TABLES_BUDGET_ENDPOINT', value: empty(aiBudgetTablesEndpoint) ? effectiveAzureTablesEndpoint : aiBudgetTablesEndpoint }
+            { name: 'AZURE_TABLES_BUDGET_TABLE', value: aiBudgetTable }
+            { name: 'COSMOS_BUDGET_CONTAINER_ID', value: cosmosFeedbackContainerId }
+            { name: 'AI_DAILY_TOKEN_BUDGET', value: string(aiDailyTokenBudget) }
+            { name: 'AI_MAX_CONCURRENT_REQUESTS', value: string(aiMaxConcurrentRequests) }
+            { name: 'FEEDBACK_RETENTION_DAYS', value: string(feedbackRetentionDays) }
+            { name: 'FEEDBACK_LEGACY_RETENTION_ENABLED', value: string(feedbackLegacyRetentionEnabled) }
+            { name: 'AZURE_IMPORT_ENABLED', value: 'false' }
             // Identity — lets DefaultAzureCredential pick up the managed identity
             { name: 'AZURE_CLIENT_ID', value: appIdentity.properties.clientId }
             { name: 'AZURE_OPENAI_ENDPOINT', value: azureOpenAiEndpoint }
@@ -457,10 +496,10 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
             { name: 'AZURE_BLOB_DIAGRAMS_CONTAINER', value: deployDiagramStorage ? diagramStorageContainerName : '' }
             { name: 'MCP_ENABLED', value: 'true' }
             { name: 'MCP_HTTP_STATELESS', value: 'true' }
-            // Public URL (self-referential — set after first deploy if needed)
+            // Canonical public origin used by the same-origin mutation guard.
             {
               name: 'PUBLIC_URL'
-              value: 'https://${abbrs.appContainerApps}diagram-builder-${resourceToken}.${caEnv.properties.defaultDomain}'
+              value: publicAppUrl
             }
           ]
         }

@@ -1,7 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import type { Edge, Node } from 'reactflow';
-import { buildVsdxPackage, wrappedLinesIn } from '../src/services/visioVsdxExporter.ts';
+import JSZip from 'jszip';
+import { buildVsdxBlob, buildVsdxPackage, wrappedLinesIn } from '../src/services/visioVsdxExporter.ts';
+import { nodesForExport } from '../src/utils/nodesForExport.ts';
 
 /** Strip markup to a fixed point, then unescape with the ampersand LAST. */
 function readXmlText(raw: string): string {
@@ -93,6 +95,30 @@ const edges: Edge[] = [
   { id: 'e2', source: 'web', target: 'monitor', animated: true },
 ];
 
+test('Visio Blob and package APIs share pricing disclosures and the mature native renderer', async () => {
+  const input = [
+    { ...service('unknown', 'Unknown service', 0, 0), data: { label: 'Unknown service', pricing: { estimatedCost: null } } },
+    { ...service('free', 'Free service', 500, 0), data: { label: 'Free service', pricing: { estimatedCost: 0 } } },
+    { ...service('lake', 'Analytics', 1000, 0), data: { label: 'Analytics', serviceName: 'Fabric Lakehouse', pricing: { estimatedCost: 0 } } },
+  ];
+  const before = structuredClone(input);
+  const options = { priceUnavailableLabel: 'Price not known', capacityLabel: 'Shared capacity' };
+  const pkg = await buildVsdxPackage(input, [], 'Pricing disclosure', new Map(), options);
+  const blob = await buildVsdxBlob(input, [], 'Pricing disclosure', { ...options, icons: new Map(), isDarkMode: true });
+  const zip = await JSZip.loadAsync(await blob.arrayBuffer());
+  const page = await zip.file('visio/pages/page1.xml')!.async('string');
+  assert.equal(page, pkg.parts.find(part => part.path === 'visio/pages/page1.xml')!.data);
+  assert.match(page, /N="MonthlyCost"/, 'disclosures remain editable shape data');
+  assert.match(page, /V="Price not known"/);
+  assert.match(page, /V="Shared capacity"/);
+  assert.match(page, /V="Free"/);
+  assert.doesNotMatch(page, /\$0(?:\.00)?\/mo/);
+  assert.deepEqual(input, before);
+  const hidden = await buildVsdxPackage(nodesForExport(input, false), [], 'Hidden');
+  const hiddenPage = hidden.parts.find(part => part.path === 'visio/pages/page1.xml')!.data as string;
+  assert.doesNotMatch(hiddenPage, /N="MonthlyCost"|Price not known|Shared capacity/);
+});
+
 async function pageXml(): Promise<string> {
   const pkg = await buildVsdxPackage(nodes, edges, 'Contoso');
   const page = pkg.parts.find((part) => part.path === 'visio/pages/page1.xml');
@@ -117,6 +143,16 @@ test('services are groups that carry their icon and shape data', async () => {
   assert.ok(xml.includes('N="Category"'));
   assert.ok(xml.includes('App Service'));
   assert.ok(xml.includes('Landing zone'));
+});
+
+test('Visio service groups follow the ShapeSheet schema: child Shapes precede parent Text', async () => {
+  const xml = await pageXml();
+  // https://learn.microsoft.com/en-us/office/client-developer/visio/shapesheet_type-complextypevisio-xml
+  const groups = [...xml.matchAll(/<Shape\b[^>]*Type="Group"[^>]*>[\s\S]*?<\/Shapes>\s*<Text>[\s\S]*?<\/Text>\s*<\/Shape>/g)];
+  assert.equal(groups.length, nodes.filter(node => node.type === 'azureNode').length);
+  for (const group of groups) {
+    assert.ok(group[0].indexOf('<Shapes>') < group[0].indexOf('<Text>'));
+  }
 });
 
 test('edges become glued 1-D connectors with a populated Connects table', async () => {
@@ -978,11 +1014,12 @@ test('two differently-named services never draw the same string', async () => {
   const pkg = await buildVsdxPackage(colliding, [], 'Colliding stubs', new Map());
   const xml = pageOfPkg(pkg);
   const byString = new Map<string, Set<string>>();
-  for (const chunk of xml.split('<Shape ID=')) {
+  const groups = [...xml.matchAll(/<Shape\b[^>]*NameU="Service\.\d+"[^>]*>[\s\S]*?<\/Shapes>\s*<Text>[\s\S]*?<\/Text>\s*<\/Shape>/g)];
+  for (const [chunk] of groups) {
     const head = chunk.slice(0, 400);
     if (!/NameU="Service\.\d+"/.test(head)) continue;
     const authored = /NameU="Service\.\d+" Name="([^"]*)"/.exec(head);
-    const text = /<Text>([\s\S]*?)<\/Text>/.exec(chunk);
+    const text = /<\/Shapes>\s*<Text>([\s\S]*?)<\/Text>/.exec(chunk);
     if (!text) continue;
     const body = readXmlText(text[1]).split('\n')[0].trim();
     if (!body) continue;

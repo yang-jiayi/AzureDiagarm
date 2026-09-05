@@ -423,3 +423,28 @@ body.dark-mode .azure-node.style-presentation {
 body.dark-mode .azure-node.style-presentation .node-label {
   color: var(--azd-color-presentation-text);
 }
+.node-inspect-button {
+  position: absolute;
+  top: -12px;
+  right: -12px;
+  z-index: 6;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--azd-color-control-border);
+  border-radius: 6px;
+  background: var(--azd-color-control-background);
+  color: var(--azd-color-action);
+  cursor: pointer;
+}
+
+.node-inspect-button:focus-visible {
+  outline: 3px solid var(--azd-color-focus);
+  outline-offset: 2px;
+}
+
+.cost-badge--unpriced {
+  --cost-accent: var(--azd-color-text-disabled);
+}

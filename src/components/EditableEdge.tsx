@@ -9,6 +9,7 @@ import {
   getSmoothStepPath,
   EdgeLabelRenderer,
   BaseEdge,
+  useReactFlow,
 } from 'reactflow';
 import { useLanguage } from '../i18n/LanguageContext';
 import { localize } from '../i18n/localization';
@@ -32,6 +33,8 @@ function measureLabelWidthPx(text: string): number {
 
 const EditableEdge: React.FC<EdgeProps> = ({
   id,
+  source,
+  target,
   sourceX,
   sourceY,
   targetX,
@@ -49,7 +52,11 @@ const EditableEdge: React.FC<EdgeProps> = ({
   const [isEditing, setIsEditing] = useState(false);
   const [editLabel, setEditLabel] = useState(label?.toString() || '');
   const [isDragging, setIsDragging] = useState(false);
-  const dragStartRef = useRef<{ x: number; y: number; offsetX: number; offsetY: number } | null>(null);
+  const [dragOffset, setDragOffset] = useState<{ x: number; y: number } | null>(null);
+  const dragStartRef = useRef<{ x: number; y: number; offsetX: number; offsetY: number; zoom: number; source: string } | null>(null);
+  const pendingOffsetRef = useRef<{ x: number; y: number } | null>(null);
+  const cancelEditRef = useRef(false);
+  const { getZoom } = useReactFlow();
 
   React.useEffect(() => {
     if (!isEditing) {
@@ -76,12 +83,25 @@ const EditableEdge: React.FC<EdgeProps> = ({
   } as any);
 
   // Get stored offset from edge data
-  const offsetX = (data as any)?.labelOffsetX ?? 0;
-  const offsetY = (data as any)?.labelOffsetY ?? 0;
+  const offsetX = dragOffset?.x ?? (data as any)?.labelOffsetX ?? 0;
+  const offsetY = dragOffset?.y ?? (data as any)?.labelOffsetY ?? 0;
+  const dragSource = JSON.stringify([
+    id, source, target, label, sourceX, sourceY, targetX, targetY,
+    data?.labelOffsetX, data?.labelOffsetY, pathStyle,
+  ]);
+  React.useEffect(() => {
+    if (dragStartRef.current && dragStartRef.current.source !== dragSource) {
+      dragStartRef.current = null;
+      pendingOffsetRef.current = null;
+      setIsDragging(false);
+      setDragOffset(null);
+    }
+  }, [dragSource]);
 
   const handleLabelDoubleClick = (e: React.MouseEvent) => {
     e.stopPropagation();
     if (!isDragging) {
+      cancelEditRef.current = false;
       setIsEditing(true);
     }
   };
@@ -91,6 +111,10 @@ const EditableEdge: React.FC<EdgeProps> = ({
   };
 
   const handleLabelBlur = () => {
+    if (cancelEditRef.current) {
+      cancelEditRef.current = false;
+      return;
+    }
     setIsEditing(false);
     // Update the edge data
     if (data?.onLabelChange) {
@@ -100,15 +124,19 @@ const EditableEdge: React.FC<EdgeProps> = ({
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter') {
+      e.preventDefault();
       handleLabelBlur();
     } else if (e.key === 'Escape') {
+      e.preventDefault();
+      e.stopPropagation();
+      cancelEditRef.current = true;
       setEditLabel(label?.toString() || '');
       setIsEditing(false);
     }
   };
 
   const handleMouseDown = (e: React.MouseEvent) => {
-    if (isEditing) return;
+    if (isEditing || e.button !== 0) return;
     e.stopPropagation();
     setIsDragging(true);
     dragStartRef.current = {
@@ -116,7 +144,10 @@ const EditableEdge: React.FC<EdgeProps> = ({
       y: e.clientY,
       offsetX,
       offsetY,
+      zoom: getZoom() || 1,
+      source: dragSource,
     };
+    pendingOffsetRef.current = null;
   };
 
   // Add/remove global mouse event listeners
@@ -124,23 +155,41 @@ const EditableEdge: React.FC<EdgeProps> = ({
     if (!isDragging) return;
     const handleMouseMove = (event: MouseEvent) => {
       if (!dragStartRef.current) return;
-      const dx = event.clientX - dragStartRef.current.x;
-      const dy = event.clientY - dragStartRef.current.y;
-      data?.onLabelOffsetChange?.(
-        id,
-        dragStartRef.current.offsetX + dx,
-        dragStartRef.current.offsetY + dy,
-      );
+      const dx = (event.clientX - dragStartRef.current.x) / dragStartRef.current.zoom;
+      const dy = (event.clientY - dragStartRef.current.y) / dragStartRef.current.zoom;
+      const offset = { x: dragStartRef.current.offsetX + dx, y: dragStartRef.current.offsetY + dy };
+      pendingOffsetRef.current = offset;
+      setDragOffset(offset);
     };
     const handleMouseUp = () => {
+      const finalOffset = pendingOffsetRef.current;
+      if (finalOffset) data?.onLabelOffsetChange?.(id, finalOffset.x, finalOffset.y);
       setIsDragging(false);
+      setDragOffset(null);
       dragStartRef.current = null;
+      pendingOffsetRef.current = null;
+    };
+    const cancel = () => {
+      dragStartRef.current = null;
+      pendingOffsetRef.current = null;
+      setIsDragging(false);
+      setDragOffset(null);
+    };
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      event.stopPropagation();
+      cancel();
     };
     document.addEventListener('mousemove', handleMouseMove);
     document.addEventListener('mouseup', handleMouseUp);
+    document.addEventListener('keydown', handleEscape);
+    window.addEventListener('blur', cancel);
     return () => {
       document.removeEventListener('mousemove', handleMouseMove);
       document.removeEventListener('mouseup', handleMouseUp);
+      document.removeEventListener('keydown', handleEscape);
+      window.removeEventListener('blur', cancel);
     };
   }, [data, id, isDragging]);
 
@@ -263,6 +312,7 @@ const EditableEdge: React.FC<EdgeProps> = ({
               onKeyDown={(event) => {
                 if (event.key === 'Enter' || event.key === ' ' || event.key === 'F2') {
                   event.preventDefault();
+                  cancelEditRef.current = false;
                   setIsEditing(true);
                 }
               }}

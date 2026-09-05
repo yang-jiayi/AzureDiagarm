@@ -4,7 +4,36 @@
 
 .feedback-modal {
   max-width: 520px;
+  color: var(--azd-color-text, #1f2937);
 }
+
+.feedback-metadata-choice {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.feedback-payload {
+  margin: 14px 0;
+  font-size: 13px;
+}
+
+.feedback-payload summary { cursor: pointer; }
+.feedback-payload pre {
+  max-height: 180px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  padding: 10px;
+  background: var(--azd-color-surface-muted, rgba(128, 128, 128, 0.1));
+  border-radius: 6px;
+}
+
+.feedback-privacy { font-size: 12px; line-height: 1.6; }
+.feedback-receipt { overflow-wrap: anywhere; }
+.feedback-thanks .azd-button--secondary { margin: 0 8px 12px; }
 
 .feedback-intro {
   margin: 0 0 20px 0;
@@ -178,9 +207,3 @@
   font-size: 14px;
   line-height: 1.5;
 }
-
-/* --------------------------------------------------------------------------
-   Dark mode — header + intro contrast
-   (shared styles dark-ify .modal-content but only recolor .modal-title h2;
-   this modal uses .modal-header h2 and an explicit intro color.)
-   -------------------------------------------------------------------------- */

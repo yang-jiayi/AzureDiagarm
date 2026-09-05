@@ -18,6 +18,7 @@
  */
 
 import type { Edge, Node } from 'reactflow';
+import { isCapacityConsumed } from '../data/serviceIconMapping';
 import { readStepNumber as readStepValue } from '../utils/workflowStepMapping';
 import { stripXmlForbidden } from '../utils/xmlText';
 import {
@@ -103,8 +104,13 @@ export interface BoxMeta {
   region?: string;
   /** Total monthly cost in USD, when priced. */
   cost?: number;
-  /** Pre-formatted cost label, e.g. `$120/mo` / `Free`. */
+  /** Pre-formatted cost or disclosure, e.g. `$120/mo`, `Free`, `Price unavailable`. */
   costLabel?: string;
+}
+
+export interface ExportPricingOptions {
+  capacityLabel?: string;
+  priceUnavailableLabel?: string;
 }
 
 export interface Point {
@@ -1897,8 +1903,10 @@ function readTags(data: Record<string, unknown>): string[] | undefined {
   return tags.length > 0 ? tags : undefined;
 }
 
-function readMeta(data: Record<string, unknown>): BoxMeta | undefined {
-  const pricing = (data.pricing ?? undefined) as Record<string, unknown> | undefined;
+function readMeta(data: Record<string, unknown>, options: ExportPricingOptions): BoxMeta | undefined {
+  const pricing = data.stylePreset !== 'presentation' && data.pricing && typeof data.pricing === 'object'
+    ? data.pricing as Record<string, unknown>
+    : undefined;
   const sku = firstString(
     data.sku,
     data.tier,
@@ -1922,8 +1930,20 @@ function readMeta(data: Record<string, unknown>): BoxMeta | undefined {
     if (Number.isFinite(total)) cost = total;
   }
 
-  if (sku === undefined && region === undefined && cost === undefined) return undefined;
-  return { sku, region, cost, costLabel: cost !== undefined ? formatCost(cost) : undefined };
+  // No pricing object also means "hidden by nodesForExport". Do not infer a
+  // capacity badge from the service name after the caller has removed pricing.
+  const capacity = pricing
+    && (pricing.estimatedCost === 0 || pricing.estimatedCost === null || pricing.estimatedCost === undefined)
+    && isCapacityConsumed(firstString(data.serviceName, data.label) ?? '');
+  const costLabel = capacity
+    ? singleLineName(options.capacityLabel ?? 'incl. capacity')
+    : pricing?.estimatedCost === null
+      ? singleLineName(options.priceUnavailableLabel ?? 'Price unavailable')
+      : cost !== undefined
+        ? `${pricing?.isUsageBased && cost > 0 ? '~' : ''}${formatCost(cost)}`
+        : undefined;
+  if (sku === undefined && region === undefined && costLabel === undefined) return undefined;
+  return { sku, region, cost: capacity ? undefined : cost, costLabel };
 }
 
 /** `SKU · region · $X/mo` sub-line for a box (empty when nothing is known). */
@@ -2041,7 +2061,7 @@ export function sanitisedProse(text: string): string {
   );
 }
 
-export function collectExportBoxes(nodes: Node[]): Map<string, ExportBox> {
+export function collectExportBoxes(nodes: Node[], options: ExportPricingOptions = {}): Map<string, ExportBox> {
   const positions = resolveAbsolutePositions(nodes);
 
   const boxes = new Map<string, ExportBox>();
@@ -2064,7 +2084,7 @@ export function collectExportBoxes(nodes: Node[]): Map<string, ExportBox> {
         ? singleLineName(data.serviceName)
         : undefined,
       customColor: isGroup ? readCustomColor(data) : undefined,
-      meta: isGroup ? undefined : readMeta(data),
+      meta: isGroup ? undefined : readMeta(data, options),
       tags: isGroup ? undefined : readTags(data),
       parent: typeof node.parentNode === 'string' && node.parentNode ? node.parentNode : undefined,
       x: position.x,
@@ -3618,4 +3638,3 @@ export function clampedBoxes(
   }
   return { boxes: moved, bounds: parked };
 }
-

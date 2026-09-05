@@ -15,7 +15,7 @@ const { CosmosClient } = require('@azure/cosmos');
 const { DefaultAzureCredential } = require('@azure/identity');
 
 const ENDPOINT = process.env.AZURE_COSMOS_ENDPOINT;
-const DATABASE_ID = process.env.COSMOS_DATABASE_ID || 'diagrams-db';
+const DATABASE_ID = process.env.COSMOS_DATABASE_ID || 'diagrams';
 const CONTAINER_ID = process.env.COSMOS_FEEDBACK_CONTAINER_ID || 'feedback';
 
 async function main() {
@@ -27,7 +27,7 @@ async function main() {
   const container = client.database(DATABASE_ID).container(CONTAINER_ID);
 
   const { resources } = await container.items
-    .query('SELECT c.id, c.rating, c.category, c.comment, c.contact, c.context, c.createdAt FROM c ORDER BY c.createdAt DESC')
+    .query("SELECT c.id, c.rating, c.category, c.comment, c.contact, c.context, c.createdAt, c.expiresAt FROM c WHERE c.type = 'feedback' ORDER BY c.createdAt DESC")
     .fetchAll();
 
   if (asJson) {

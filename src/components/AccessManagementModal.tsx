@@ -2,6 +2,7 @@ import React, { FormEvent, useCallback, useEffect, useRef, useState } from 'reac
 import { AlertCircle, LogOut, RefreshCw, ShieldCheck, Trash2, UserPlus, X } from 'lucide-react';
 import { useLanguage } from '../i18n/LanguageContext';
 import { localize } from '../i18n/localization';
+import { useModalFocus } from '../hooks/useModalFocus';
 import {
   addAllowedUser,
   listAllowedUsers,
@@ -9,8 +10,6 @@ import {
   type AccessIdentity,
   type AllowedUser,
 } from '../services/accessControlService';
-import { useEscapeKey } from '../hooks/useEscapeKey';
-import { useModalFocus } from '../hooks/useModalFocus';
 import { OperationGeneration } from '../utils/operationGeneration';
 import './AccessManagementModal.css';
 
@@ -39,10 +38,9 @@ const AccessManagementModal: React.FC<AccessManagementModalProps> = ({
   const isOpenRef = useRef(isOpen);
   const loadGenerationRef = useRef(new OperationGeneration());
   const mutationGenerationRef = useRef(new OperationGeneration());
-  const dialogRef = useModalFocus<HTMLElement>(isOpen);
+  const dialogRef = useModalFocus<HTMLElement>(isOpen, onClose, { closeOnEscape: !saving });
 
   isOpenRef.current = isOpen;
-  useEscapeKey(isOpen && !saving, onClose);
 
   const loadUsers = useCallback(async () => {
     const generation = loadGenerationRef.current.advance();

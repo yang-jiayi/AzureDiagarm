@@ -3,6 +3,7 @@
 
 import type { PricingScenario } from '../types/pricing';
 import type { IaCBaseline } from './iacRoundTrip';
+import type { EditorDocument } from './editorHistory';
 
 /**
  * Version Storage Service
@@ -28,6 +29,9 @@ export interface DiagramVersion {
   titleBlockData?: any;
   pricingScenarios?: PricingScenario[];
   iacBaseline?: IaCBaseline | null;
+  settings?: EditorDocument['settings'];
+  reviewHistory?: unknown[];
+  validationSourceFingerprint?: string | null;
 }
 
 const DB_NAME = 'AzureDiagramVersions';
@@ -40,9 +44,21 @@ const DB_VERSION = 1;
 const initDB = (): Promise<IDBDatabase> => {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(DB_NAME, DB_VERSION);
+    let blocked = false;
 
     request.onerror = () => reject(request.error);
-    request.onsuccess = () => resolve(request.result);
+    request.onblocked = () => {
+      blocked = true;
+      reject(new Error('Version storage is blocked by another tab.'));
+    };
+    request.onsuccess = () => {
+      if (blocked) {
+        request.result.close();
+        return;
+      }
+      request.result.onversionchange = () => request.result.close();
+      resolve(request.result);
+    };
 
     request.onupgradeneeded = (event) => {
       const db = (event.target as IDBOpenDBRequest).result;
@@ -56,89 +72,63 @@ const initDB = (): Promise<IDBDatabase> => {
   });
 };
 
+async function versionTransaction<T>(mode: IDBTransactionMode, operation: (store: IDBObjectStore) => IDBRequest<T>): Promise<T> {
+  const db = await initDB();
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(STORE_NAME, mode);
+    let result: T;
+    let request: IDBRequest<T>;
+    try {
+      request = operation(transaction.objectStore(STORE_NAME));
+    } catch (error) {
+      transaction.abort();
+      db.close();
+      reject(error);
+      return;
+    }
+    request.onsuccess = () => { result = request.result; };
+    transaction.oncomplete = () => { db.close(); resolve(result); };
+    transaction.onabort = () => {
+      db.close();
+      reject(transaction.error ?? request.error ?? new Error('Version storage transaction aborted.'));
+    };
+  });
+}
+
 /**
  * Save a new diagram version
  */
 export const saveVersion = async (version: DiagramVersion): Promise<void> => {
-  const db = await initDB();
-  
-  return new Promise((resolve, reject) => {
-    const transaction = db.transaction([STORE_NAME], 'readwrite');
-    const store = transaction.objectStore(STORE_NAME);
-    const request = store.put(version);
-
-    request.onsuccess = () => resolve();
-    request.onerror = () => reject(request.error);
-  });
+  await versionTransaction('readwrite', store => store.put(version));
 };
 
 /**
  * Get all versions sorted by timestamp (newest first)
  */
 export const getAllVersions = async (): Promise<DiagramVersion[]> => {
-  const db = await initDB();
-  
-  return new Promise((resolve, reject) => {
-    const transaction = db.transaction([STORE_NAME], 'readonly');
-    const store = transaction.objectStore(STORE_NAME);
-    const request = store.getAll();
-
-    request.onsuccess = () => {
-      const versions = request.result as DiagramVersion[];
-      // Sort by timestamp descending (newest first)
-      versions.sort((a, b) => b.timestamp - a.timestamp);
-      resolve(versions);
-    };
-    request.onerror = () => reject(request.error);
-  });
+  const versions: DiagramVersion[] = await versionTransaction('readonly', store => store.getAll());
+  return versions.sort((a, b) => b.timestamp - a.timestamp);
 };
 
 /**
  * Get a specific version by ID
  */
 export const getVersion = async (versionId: string): Promise<DiagramVersion | null> => {
-  const db = await initDB();
-  
-  return new Promise((resolve, reject) => {
-    const transaction = db.transaction([STORE_NAME], 'readonly');
-    const store = transaction.objectStore(STORE_NAME);
-    const request = store.get(versionId);
-
-    request.onsuccess = () => resolve(request.result || null);
-    request.onerror = () => reject(request.error);
-  });
+  return await versionTransaction('readonly', store => store.get(versionId)) ?? null;
 };
 
 /**
  * Delete a specific version
  */
 export const deleteVersion = async (versionId: string): Promise<void> => {
-  const db = await initDB();
-  
-  return new Promise((resolve, reject) => {
-    const transaction = db.transaction([STORE_NAME], 'readwrite');
-    const store = transaction.objectStore(STORE_NAME);
-    const request = store.delete(versionId);
-
-    request.onsuccess = () => resolve();
-    request.onerror = () => reject(request.error);
-  });
+  await versionTransaction('readwrite', store => store.delete(versionId));
 };
 
 /**
  * Delete all versions
  */
 export const clearAllVersions = async (): Promise<void> => {
-  const db = await initDB();
-  
-  return new Promise((resolve, reject) => {
-    const transaction = db.transaction([STORE_NAME], 'readwrite');
-    const store = transaction.objectStore(STORE_NAME);
-    const request = store.clear();
-
-    request.onsuccess = () => resolve();
-    request.onerror = () => reject(request.error);
-  });
+  await versionTransaction('readwrite', store => store.clear());
 };
 
 /**
@@ -168,6 +158,9 @@ export const createSnapshot = async (
     titleBlockData?: any;
     pricingScenarios?: PricingScenario[];
     iacBaseline?: IaCBaseline | null;
+    settings?: EditorDocument['settings'];
+    reviewHistory?: unknown[];
+    validationSourceFingerprint?: string | null;
   }
 ): Promise<DiagramVersion> => {
   const version: DiagramVersion = {
@@ -176,7 +169,7 @@ export const createSnapshot = async (
     diagramName,
     nodes: JSON.parse(JSON.stringify(nodes)), // Deep clone
     edges: JSON.parse(JSON.stringify(edges)), // Deep clone
-    ...options
+    ...JSON.parse(JSON.stringify(options ?? {})),
   };
 
   await saveVersion(version);

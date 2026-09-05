@@ -3,7 +3,7 @@
 
 import React, { memo, useEffect, useRef, useState } from 'react';
 import { Handle, Position, NodeProps, useReactFlow, useStore } from 'reactflow';
-import { Zap, Unlink, Layers } from 'lucide-react';
+import { Zap, Unlink, Layers, SlidersHorizontal } from 'lucide-react';
 import { loadIcon, loadIconsFromCategory } from '../utils/iconLoader';
 import { NodePricingConfig } from '../types/pricing';
 import { formatMonthlyCost, getCostColor } from '../utils/pricingHelpers';
@@ -18,6 +18,7 @@ import { usePendingConnection } from '../hooks/useKeyboardConnection';
 import { detachNodeFromGroup } from '../utils/groupUtils';
 import { shallowArrayEqual, shallowEqual } from '../utils/shallowEqual';
 import { categoryAccent } from '../utils/canvasPalette';
+import { getPricingProvenance, MAX_PRICING_QUANTITY } from '../services/pricingConfiguration';
 
 // Map categories to colors
 const getCategoryColor = (category: string): string => categoryAccent(category);
@@ -46,9 +47,11 @@ const AzureNode: React.FC<NodeProps> = memo(({ data, selected, id }) => {
   // Extract pricing data
   const pricing = data.pricing as NodePricingConfig | undefined;
   const hasPricing = !!pricing
-    && Number.isFinite(pricing.estimatedCost)
-    && pricing.estimatedCost >= 0;
-  const totalCost = pricing ? pricing.estimatedCost * pricing.quantity : 0;
+    && typeof pricing.estimatedCost === 'number'
+    && Number.isFinite(pricing.estimatedCost) && pricing.estimatedCost >= 0
+    && Number.isInteger(pricing.quantity) && pricing.quantity >= 1 && pricing.quantity <= MAX_PRICING_QUANTITY;
+  const totalCost = hasPricing ? pricing.estimatedCost! * pricing.quantity : 0;
+  const provenance = getPricingProvenance(pricing);
 
   // Fabric workload items consume Capacity Units from the shared Fabric
   // Capacity rather than billing separately — show an "incl. capacity" badge.
@@ -200,6 +203,14 @@ const AzureNode: React.FC<NodeProps> = memo(({ data, selected, id }) => {
       onFocus={handleNodeFocus}
       data-connect-source={isConnectSource ? 'true' : undefined}
     >
+      {selected && (
+        <button type="button" className="node-inspect-button nodrag nopan"
+          aria-label={localize(language, { en: 'Service settings', ja: 'サービスの詳細設定' })}
+          title={localize(language, { en: 'Edit service properties and pricing', ja: 'サービスのプロパティと価格を編集' })}
+          onClick={event => { event.stopPropagation(); openNodePricingEditor(id); }}>
+          <SlidersHorizontal size={14} aria-hidden="true" />
+        </button>
+      )}
       {parentNode && selected && (
         <button
           type="button"
@@ -272,6 +283,16 @@ const AzureNode: React.FC<NodeProps> = memo(({ data, selected, id }) => {
           >
             <Layers size={12} style={{ marginRight: '2px', display: 'inline-block', verticalAlign: 'middle' }} />
             {' '}{t("incl. capacity")}{' '}</div>
+        )}
+        {!hasPricing && !capacityConsumed && showPricing && (
+          <button type="button" className="cost-badge cost-badge--editable cost-badge--unpriced nodrag nopan"
+            onClick={event => { event.stopPropagation(); openNodePricingEditor(id); }}
+            title={localize(language, {
+              en: `Not included in the estimate. ${provenance.note || 'Set a tier, usage, or a custom estimate.'}`,
+              ja: `見積合計には含まれません。${provenance.note || '料金レベル、使用量、またはカスタム見積もりを設定してください。'}`,
+            })}>
+            {localize(language, { en: 'Not priced', ja: '価格未設定' })}
+          </button>
         )}
         {iconUrl ? (
           <img src={iconUrl} alt={label} className={`node-icon ${stylePreset === 'presentation' ? 'node-icon--presentation' : ''}`} />

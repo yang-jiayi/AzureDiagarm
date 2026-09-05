@@ -848,7 +848,7 @@
 }
 
 .cloud-security-note {
-  color: #64748b;
+  color: var(--azd-color-text-muted);
   font-size: 11px;
 }
 
@@ -913,7 +913,6 @@ body.dark-mode .cloud-document-meta,
 body.dark-mode .cloud-document-counts,
 body.dark-mode .cloud-card-empty,
 body.dark-mode .cloud-share-note,
-body.dark-mode .cloud-security-note,
 body.dark-mode .cloud-comment-list header,
 body.dark-mode .cloud-version-row small {
   color: #94a3b8;

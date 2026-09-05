@@ -24,20 +24,16 @@ import {
   setCustomPricing,
 } from '../services/costEstimationService';
 import { formatMonthlyCost } from '../utils/pricingHelpers';
+import { MAX_PRICING_AMOUNT, MAX_PRICING_QUANTITY } from '../services/pricingConfiguration';
 import { useLanguage } from '../i18n/LanguageContext';
 import { localize } from '../i18n/localization';
 import ModalScaffold from './ModalScaffold';
 import './NodePricingEditor.css';
 
-const MAX_QUANTITY = 100_000;
 const CURRENT_ESTIMATE_TIER = '__azurediagarm_current_estimate__';
 
-function normalizeQuantity(value: number): number {
-  if (!Number.isFinite(value)) return 1;
-  return Math.min(MAX_QUANTITY, Math.max(1, Math.trunc(value)));
-}
-
-function pricesMatch(left: number, right: number): boolean {
+function pricesMatch(left: number | null, right: number | null): boolean {
+  if (left === null || right === null) return left === right;
   return Math.abs(left - right) <= Math.max(0.01, Math.abs(right) * 0.001);
 }
 
@@ -60,7 +56,7 @@ function findCurrentTier(
   if (pricing.tierId && pricing.isCustom) return identityMatches[0];
   if (!pricing.tierId && identityMatches.length !== 1) return undefined;
   return identityMatches.find(tier =>
-    pricing.isCustom || pricesMatch(tier.monthlyPrice, pricing.estimatedCost ?? 0)
+    pricing.isCustom || pricesMatch(tier.monthlyPrice, pricing.estimatedCost)
   );
 }
 
@@ -84,10 +80,10 @@ export default function NodePricingEditor({
   const [tiers, setTiers] = useState<PricingTier[]>([]);
   const [loadingTiers, setLoadingTiers] = useState(true);
   const [tier, setTier] = useState<string>(CURRENT_ESTIMATE_TIER);
-  const [quantity, setQuantity] = useState<number>(() => normalizeQuantity(pricing.quantity));
+  const [quantityText, setQuantityText] = useState(() => String(pricing.quantity));
   const [useCustom, setUseCustom] = useState<boolean>(!!pricing.isCustom);
   const [customPrice, setCustomPrice] = useState<string>(
-    pricing.customPrice != null ? String(pricing.customPrice) : String(pricing.estimatedCost ?? 0),
+    pricing.customPrice != null ? String(pricing.customPrice) : String(pricing.estimatedCost ?? ''),
   );
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState('');
@@ -113,22 +109,26 @@ export default function NodePricingEditor({
           setLoadingTiers(false);
         }
       })
-      .catch(() => {
-        if (!cancelled) setLoadingTiers(false);
+      .catch(error => {
+        console.error(`Failed to load pricing options for ${serviceType}:`, error);
+        if (!cancelled) {
+          setLoadingTiers(false);
+          setSaveError(localize(language, {
+            en: 'Pricing options could not be loaded. Your existing estimate has not changed.',
+            ja: '価格の選択肢を読み込めませんでした。既存の見積もりは変更されていません。',
+          }));
+        }
       });
     return () => {
       cancelled = true;
     };
-  }, [pricing, serviceType]);
+  }, [pricing, serviceType, language]);
 
   // Preview mirrors calculateMonthlyCost: unit price x quantity.
   //
   // Usage-based services are the exception. Their catalog "tiers" are
-  // consumption meters (per 1K tokens, per hour) that carry a $0 monthly
-  // price, while the badge shows a separate consumption fallback estimate.
-  // Presenting those as selectable SKUs would let a user apply one and
-  // silently zero a real estimate, so the tier picker is suppressed and the
-  // existing estimate is kept.
+  // consumption meters without a monthly total until usage is known. Keep
+  // the current consumption estimate rather than replacing it with a raw meter.
   const tiersSelectable = !pricing.isUsageBased && tiers.length > 0;
   const matchingCurrentTier = findCurrentTier(tiers, pricing);
   const showCurrentEstimateOption = tiersSelectable && !matchingCurrentTier;
@@ -136,19 +136,24 @@ export default function NodePricingEditor({
     candidate.id === tier || candidate.skuName === tier || candidate.name === tier
   );
   const parsedCustom = Number.parseFloat(customPrice);
-  const customIsValid = Number.isFinite(parsedCustom) && parsedCustom >= 0;
+  const customIsValid = Number.isFinite(parsedCustom) && parsedCustom >= 0
+    && parsedCustom <= MAX_PRICING_AMOUNT;
+  const quantity = Number(quantityText);
+  const quantityIsValid = quantityText.trim() !== ''
+    && Number.isInteger(quantity) && quantity >= 1 && quantity <= MAX_PRICING_QUANTITY;
   const unitCost = useCustom
-    ? (customIsValid ? parsedCustom : 0)
+    ? (customIsValid ? parsedCustom : null)
     : tiersSelectable
-      ? (selectedTier?.monthlyPrice ?? pricing.estimatedCost ?? 0)
-      : (pricing.estimatedCost ?? 0);
-  const previewTotal = unitCost * (quantity > 0 ? quantity : 1);
+      ? (selectedTier ? selectedTier.monthlyPrice : pricing.estimatedCost)
+      : pricing.estimatedCost;
+  const previewTotal = unitCost === null || !quantityIsValid ? null : unitCost * quantity;
+  const formatCost = (amount: number | null) => formatMonthlyCost(
+    amount, localize(language, { en: 'Unpriced', ja: '価格未設定' }),
+  );
 
   const canApply = !saving
-    && Number.isInteger(quantity)
-    && quantity >= 1
-    && quantity <= MAX_QUANTITY
-    && Number.isFinite(previewTotal)
+    && quantityIsValid
+    && (previewTotal === null || Number.isFinite(previewTotal))
     && (!useCustom || customIsValid);
 
   const handleClose = () => {
@@ -257,12 +262,12 @@ export default function NodePricingEditor({
                     {localize(language, {
                       en: 'Current estimate',
                       ja: '現在の見積もり',
-                    })} — {formatMonthlyCost(pricing.estimatedCost ?? 0)}
+                    })} — {formatCost(pricing.estimatedCost)}
                   </option>
                 )}
                 {tiers.map(t => (
                   <option key={tierValue(t)} value={tierValue(t)}>
-                    {t.name} — {formatMonthlyCost(t.monthlyPrice)} {t.unit ? `(${t.unit})` : ''}
+                    {t.name} — {formatCost(t.monthlyPrice)} {t.unit ? `(${t.unit})` : ''}
                   </option>
                 ))}
               </select>
@@ -291,12 +296,21 @@ export default function NodePricingEditor({
               className="npe-input azd-control"
               type="number"
               min={1}
-              max={MAX_QUANTITY}
+              max={MAX_PRICING_QUANTITY}
               step={1}
-              value={quantity}
+              value={quantityText}
               disabled={saving}
-              onChange={e => setQuantity(normalizeQuantity(Number(e.target.value)))}
+              aria-invalid={!quantityIsValid}
+              onChange={e => setQuantityText(e.target.value)}
             />
+            {!quantityIsValid && (
+              <span className="npe-error azd-field-error">
+                {localize(language, {
+                  en: `Enter an integer between 1 and ${MAX_PRICING_QUANTITY}.`,
+                  ja: `1から${MAX_PRICING_QUANTITY}の整数を入力してください。`,
+                })}
+              </span>
+            )}
           </label>
 
           <label className="npe-checkbox">
@@ -330,6 +344,7 @@ export default function NodePricingEditor({
                 className={`npe-input azd-control${customIsValid ? '' : ' npe-input--invalid'}`}
                 type="number"
                 min={0}
+                max={MAX_PRICING_AMOUNT}
                 step="0.01"
                 value={customPrice}
                 disabled={saving}
@@ -338,8 +353,8 @@ export default function NodePricingEditor({
               {!customIsValid && (
                 <span className="npe-error azd-field-error">
                   {localize(language, {
-                    en: 'Enter a finite number of 0 or more.',
-                    ja: '0以上の有限の数値を入力してください。',
+                    en: `Enter a finite number between 0 and ${MAX_PRICING_AMOUNT}.`,
+                    ja: `0から${MAX_PRICING_AMOUNT}の有限の数値を入力してください。`,
                   })}
                 </span>
               )}
@@ -350,10 +365,10 @@ export default function NodePricingEditor({
             <span className="npe-preview-label">
               {localize(language, { en: 'Estimated monthly cost', ja: '月額参考見積もり' })}
             </span>
-            <span className="npe-preview-value">{formatMonthlyCost(previewTotal)}</span>
-            {quantity > 1 && (
+            <span className="npe-preview-value">{formatCost(previewTotal)}</span>
+            {quantityIsValid && quantity > 1 && (
               <span className="npe-preview-detail">
-                {formatMonthlyCost(unitCost)} × {quantity}
+                {formatCost(unitCost)} × {quantity}
               </span>
             )}
           </div>

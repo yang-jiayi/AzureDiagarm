@@ -47,8 +47,29 @@ param azureTablesEndpoint string = ''
 @description('Azure Table Storage table name for feedback.')
 param azureTablesFeedbackTable string = 'feedback'
 
-@description('Optional Azure Front Door ID embedded in the image origin guard and sent by Container Apps health probes.')
+@description('Existing Front Door identifier; public application ingress must be restricted to that Front Door.')
 param frontDoorId string = ''
+@description('HTTPS public application origin, without a path, query, or fragment.')
+param publicAppUrl string = ''
+@description('Administrator of the existing Easy Auth-backed application access list.')
+param accessAdminEmail string = ''
+param accessKeyVaultResourceId string = ''
+param accessTablesEndpoint string = ''
+@allowed(['cosmos', 'table'])
+param aiBudgetStore string = 'table'
+param aiBudgetTablesEndpoint string = ''
+param aiBudgetTable string = 'aibudgets'
+
+@description('Set true only after verifying preconfigured single-tenant Easy Auth and Front Door origin isolation.')
+param easyAuthVerified bool = false
+@minValue(1)
+param aiDailyTokenBudget int = 250000
+@minValue(1)
+param aiMaxConcurrentRequests int = 2
+@minValue(1)
+param feedbackRetentionDays int = 30
+@description('Explicitly approve retention cleanup of existing pre-expiry feedback after reviewing its impact.')
+param feedbackLegacyRetentionEnabled bool = false
 
 @description('GPT-5.1 deployment name.')
 param openAiDeploymentGpt51 string = ''
@@ -67,6 +88,9 @@ param openAiDeploymentGpt54 string = ''
 
 @description('GPT-5.4 Mini deployment name.')
 param openAiDeploymentGpt54Mini string = ''
+
+@description('Actual GPT-6 Astra deployment name. Configure only after provisioning the genuine gpt-6-astra model.')
+param openAiDeploymentGpt6Astra string = ''
 
 @description('GPT-5.6 Sol deployment name.')
 param openAiDeploymentGpt56Sol string = ''
@@ -119,6 +143,7 @@ var openAiAllowedDeployments = join([
   openAiDeploymentGpt53Codex
   openAiDeploymentGpt54
   openAiDeploymentGpt54Mini
+  openAiDeploymentGpt6Astra
   openAiDeploymentGpt56Sol
   openAiDeploymentGpt56Terra
   openAiDeploymentGpt56Luna
@@ -161,6 +186,18 @@ module resources './resources.bicep' = {
     azureTablesEndpoint: azureTablesEndpoint
     azureTablesFeedbackTable: azureTablesFeedbackTable
     frontDoorId: frontDoorId
+    publicAppUrl: publicAppUrl
+    accessAdminEmail: accessAdminEmail
+    accessKeyVaultResourceId: accessKeyVaultResourceId
+    accessTablesEndpoint: accessTablesEndpoint
+    aiBudgetStore: aiBudgetStore
+    aiBudgetTablesEndpoint: aiBudgetTablesEndpoint
+    aiBudgetTable: aiBudgetTable
+    easyAuthVerified: easyAuthVerified
+    aiDailyTokenBudget: aiDailyTokenBudget
+    aiMaxConcurrentRequests: aiMaxConcurrentRequests
+    feedbackRetentionDays: feedbackRetentionDays
+    feedbackLegacyRetentionEnabled: feedbackLegacyRetentionEnabled
   }
 }
 
@@ -194,7 +231,7 @@ output AZURE_CONTAINER_REGISTRY_ENDPOINT string = resources.outputs.registryLogi
 output AZURE_CONTAINER_REGISTRY_NAME string = resources.outputs.registryName
 
 // Container app — azd locates it by the azd-service-name tag, but the name is
-// also emitted here for reference and for the pre-package hook.
+// also emitted here for reference.
 output SERVICE_APP_NAME string = resources.outputs.containerAppName
 output SERVICE_APP_IDENTITY_PRINCIPAL_ID string = resources.outputs.appIdentityPrincipalId
 
@@ -206,7 +243,7 @@ output SERVICE_MCP_NAME string = resources.outputs.mcpAppName
 output SERVICE_MCP_URL string = 'https://${resources.outputs.mcpAppFqdn}'
 output MCP_ENDPOINT string = 'https://${resources.outputs.mcpAppFqdn}/mcp'
 
-// Azure OpenAI — passed through to build-time Vite variables by the pre-package hook
+// Azure OpenAI — non-secret values available for explicitly configured builds.
 output AZURE_OPENAI_ENDPOINT string = azureOpenAiEndpoint
 output AZURE_OPENAI_DEPLOYMENT_NAME string = openAiDeploymentGpt51
 output AZURE_OPENAI_DEPLOYMENT_GPT52 string = openAiDeploymentGpt52
@@ -214,6 +251,7 @@ output AZURE_OPENAI_DEPLOYMENT_GPT52CODEX string = openAiDeploymentGpt52Codex
 output AZURE_OPENAI_DEPLOYMENT_GPT53CODEX string = openAiDeploymentGpt53Codex
 output AZURE_OPENAI_DEPLOYMENT_GPT54 string = openAiDeploymentGpt54
 output AZURE_OPENAI_DEPLOYMENT_GPT54MINI string = openAiDeploymentGpt54Mini
+output AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA string = openAiDeploymentGpt6Astra
 output AZURE_OPENAI_DEPLOYMENT_GPT56SOL string = openAiDeploymentGpt56Sol
 output AZURE_OPENAI_DEPLOYMENT_GPT56TERRA string = openAiDeploymentGpt56Terra
 output AZURE_OPENAI_DEPLOYMENT_GPT56LUNA string = openAiDeploymentGpt56Luna
@@ -238,5 +276,5 @@ output AZURE_BLOB_ENDPOINT string = resources.outputs.diagramStorageEndpoint
 output AZURE_BLOB_DIAGRAMS_CONTAINER string = resources.outputs.diagramStorageContainer
 output AZURE_TABLES_ENDPOINT string = resources.outputs.tableStorageEndpoint
 
-// App Insights — used by the pre-package hook to write .env.appinsights
+// App Insights — available to explicitly configured builds.
 output APPLICATIONINSIGHTS_CONNECTION_STRING string = resources.outputs.appInsightsConnectionString

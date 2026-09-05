@@ -8,7 +8,6 @@ import { DiagramVersion, getAllVersions, deleteVersion, getVersion } from '../se
 import './VersionHistoryModal.css';
 import { useLanguage } from '../i18n/LanguageContext';
 import { localize } from '../i18n/localization';
-import { useEscapeKey } from '../hooks/useEscapeKey';
 import { useModalFocus } from '../hooks/useModalFocus';
 import { OperationGeneration } from '../utils/operationGeneration';
 import {
@@ -158,7 +157,6 @@ const VersionHistoryModal: React.FC<VersionHistoryModalProps> = ({
   const isOpenRef = useRef(isOpen);
   const loadGenerationRef = useRef(new OperationGeneration());
   const operationGenerationRef = useRef(new OperationGeneration());
-  const dialogRef = useModalFocus<HTMLDivElement>(isOpen);
 
   isOpenRef.current = isOpen;
 
@@ -377,7 +375,7 @@ const VersionHistoryModal: React.FC<VersionHistoryModalProps> = ({
     return formatDate(timestamp);
   };
 
-  useEscapeKey(isOpen, closeModal);
+  const dialogRef = useModalFocus(isOpen, closeModal);
   if (!isOpen) return null;
 
   return (

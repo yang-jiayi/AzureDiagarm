@@ -63,7 +63,10 @@ const ModelSettingsPopover = forwardRef<HTMLDivElement, ModelSettingsPopoverProp
     const byoSnapshot = useBYOAISettings();
     const runtimeConfig = useRuntimeConfig();
     const availableModels = getAvailableModels();
+    const recommendedSettings = getRecommendedModelSettings();
+    const features = Object.keys(FEATURE_CONFIG) as FeatureType[];
     const currentConfig = MODEL_CONFIG[settings.model];
+    const hasManagedModel = availableModels.includes(settings.model);
     const byoConfigured = byoSnapshot.settings.enabled;
     const byoServerAvailable = runtimeConfig.status === 'ready'
       && runtimeConfig.bringYourOwnAI;
@@ -99,6 +102,27 @@ const ModelSettingsPopover = forwardRef<HTMLDivElement, ModelSettingsPopoverProp
     })();
 
     const hasAnyOverride = (Object.keys(FEATURE_CONFIG) as FeatureType[]).some(hasFeatureOverride);
+
+    const getRecommendedFeatureLabel = (feature: FeatureType) => {
+      const override = recommendedSettings.featureOverrides?.[feature];
+      const config = MODEL_CONFIG[override?.model ?? recommendedSettings.model];
+      const reasoning = override?.reasoningEffort ?? recommendedSettings.reasoningEffort;
+      return `${config.displayName}${config.isReasoning ? ` (${t(getReasoningEffortLabel(reasoning))})` : ''}`;
+    };
+    const recommendationLabels = features.map(getRecommendedFeatureLabel);
+    const recommendedSummary = availableModels.length === 0
+      ? t("No managed models are configured.")
+      : recommendationLabels.every(label => label === recommendationLabels[0])
+        ? `${t("All features:")} ${recommendationLabels[0]}`
+        : features.map(feature => `${translate(FEATURE_CONFIG[feature].displayName)}: ${getRecommendedFeatureLabel(feature)}`).join(' • ');
+    const getModelRoleLabel = (model: ModelType) => {
+      const modelFeatures = features.filter(feature => (recommendedSettings.featureOverrides?.[feature]?.model ?? recommendedSettings.model) === model);
+      return modelFeatures.length === features.length
+        ? t("Recommended for all features")
+        : modelFeatures.length > 0
+          ? modelFeatures.map(feature => translate(FEATURE_CONFIG[feature].displayName)).join(' • ')
+          : t("Alternative model");
+    };
 
     const handleModelChange = (model: ModelType) => {
       const config = MODEL_CONFIG[model];
@@ -148,11 +172,13 @@ const ModelSettingsPopover = forwardRef<HTMLDivElement, ModelSettingsPopoverProp
     };
 
     const applyRecommendedPortfolio = () => {
-      updateSettings(getRecommendedModelSettings());
+      updateSettings(recommendedSettings);
     };
 
     const getModelIcon = (model: ModelType) => {
       switch (model) {
+        case 'gpt-6-astra':
+          return <Sparkles size={14} />;
         case 'gpt-5.1':
           return <Cpu size={14} />;
         case 'gpt-5.2':
@@ -210,13 +236,13 @@ const ModelSettingsPopover = forwardRef<HTMLDivElement, ModelSettingsPopoverProp
         >
           {byoConfigured ? <PlugZap size={14} /> : getModelIcon(settings.model)}
           <span className="model-popover-label">
-            {byoConfigured ? `Custom: ${byoSnapshot.settings.model}` : currentConfig.displayName}
+            {byoConfigured ? `Custom: ${byoSnapshot.settings.model}` : hasManagedModel ? currentConfig.displayName : t("No managed model")}
           </span>
           {byoConfigured ? (
             <span className={`model-popover-reasoning model-popover-reasoning--${byoStatus}`}>
               {byoStatusLabel}
             </span>
-          ) : currentConfig.isReasoning && (
+          ) : hasManagedModel && currentConfig.isReasoning && (
             <span className="model-popover-reasoning">{t(getReasoningEffortLabel(settings.reasoningEffort))}</span>
           )}
           {hasAnyOverride && <span className="model-popover-override-dot" />}
@@ -333,17 +359,13 @@ const ModelSettingsPopover = forwardRef<HTMLDivElement, ModelSettingsPopoverProp
                     {getModelIcon(model)}
                     <span>{MODEL_CONFIG[model].displayName}</span>
                   </span>
-                  {MODEL_CONFIG[model].recommendedUse && (
-                    <span className="msp-model-role">
-                      {translate(MODEL_CONFIG[model].recommendedUse)}
-                    </span>
-                  )}
+                  <span className="msp-model-role">{getModelRoleLabel(model)}</span>
                 </button>
               ))}
             </div>
 
             {/* Reasoning effort (only shown when reasoning model selected) */}
-            {currentConfig.isReasoning && (
+            {hasManagedModel && currentConfig.isReasoning && (
               <>
                 <div className="msp-reasoning-row">
                   <span className="msp-reasoning-label">{t("Reasoning")}</span>
@@ -381,13 +403,13 @@ const ModelSettingsPopover = forwardRef<HTMLDivElement, ModelSettingsPopoverProp
                 <div className="msp-portfolio">
                   <div className="msp-portfolio-copy">
                     <strong>{t("Recommended portfolio")}</strong>
-                    <span>{t("Sol for architecture • Terra for validation and deployment • Luna for blueprints")}</span>
+                    <span>{recommendedSummary}</span>
                   </div>
                   <button
                     className="msp-portfolio-btn"
                     onClick={applyRecommendedPortfolio}
                     title={t("Use recommended portfolio")}
-                    disabled={byoConfigured}
+                    disabled={byoConfigured || availableModels.length === 0}
                   >
                     <Sparkles size={12} />
                     {t("Apply")}
@@ -422,8 +444,9 @@ const ModelSettingsPopover = forwardRef<HTMLDivElement, ModelSettingsPopoverProp
                         <div className="msp-feature-info">
                           <span className="msp-feature-name">{translate(featureConfig.displayName)}</span>
                           <span className="msp-feature-effective">
-                            {MODEL_CONFIG[effectiveModel].displayName}
-                            {effectiveReasoning && ` (${t(getReasoningEffortLabel(effectiveReasoning))})`}
+                            {availableModels.includes(effectiveModel)
+                              ? `${MODEL_CONFIG[effectiveModel].displayName}${effectiveReasoning ? ` (${t(getReasoningEffortLabel(effectiveReasoning))})` : ''}`
+                              : t("No managed model")}
                           </span>
                         </div>
                         <div className="msp-feature-controls">
@@ -431,7 +454,7 @@ const ModelSettingsPopover = forwardRef<HTMLDivElement, ModelSettingsPopoverProp
                             value={currentModel}
                             onChange={(e) => handleFeatureModelChange(feature, e.target.value)}
                             className="msp-feature-select"
-                            disabled={byoConfigured}
+                            disabled={byoConfigured || availableModels.length === 0}
                           >
                             <option value="default">{t("Default")}</option>
                             {availableModels.map((model) => (

@@ -49,7 +49,10 @@ export function formatCompactCurrency(
 /**
  * Format monthly cost with /mo suffix
  */
-export function formatMonthlyCost(amount: number): string {
+export function formatMonthlyCost(amount: number | null, unpricedLabel = 'Unpriced'): string {
+  if (amount === null) {
+    return unpricedLabel;
+  }
   if (amount === 0) {
     return 'Free';
   }

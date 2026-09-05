@@ -4,15 +4,13 @@
 /**
  * PowerPoint Export Service
  *
- * Generates a single widescreen (16:9) .pptx slide from the current diagram
- * canvas image.  The slide theme (dark / light) matches the app's current
- * colour mode so the exported slide looks exactly like what the user sees.
+ * Generates editable diagrams and customer decks from the canvas model.
+ * Large diagrams use readable detail slides; legacy image input is supported.
  *
  * Library: PptxGenJS v4 (client-side, no backend required)
  */
 
 import PptxGenJS from 'pptxgenjs';
-import JSZip from 'jszip';
 import type { Edge, Node } from 'reactflow';
 
 /**
@@ -107,8 +105,8 @@ function cleanText(value: unknown): unknown {
 import { generateModelFilename } from '../utils/modelNaming';
 import { rasterizeIcons, type RasterizedIcon } from '../utils/exportIconRaster';
 import { stripXmlForbidden } from '../utils/xmlText';
-import { nativizePackage } from './pptxNativeShapes';
-import { embedVectorIcons } from './pptxVectorIcons';
+import { buildNativePptxBlob } from './pptxNativeDiagram';
+import type { ExportIcons } from './diagramExportIcons';
 import {
   buildExportRoutes,
   categoryStyle,
@@ -141,12 +139,12 @@ import {
   carriesWording,
   singleLineName,
   GEOMETRY_LATIN_FONT,
-  GEOMETRY_EA_FONT,
   type Bounds,
   type ExportBox,
   type ExportRoute,
   type FitTransform,
   type Point,
+  type ExportPricingOptions,
 } from './diagramExportGeometry';
 import { readStepNumber as readStepValue } from '../utils/workflowStepMapping';
 
@@ -1735,11 +1733,11 @@ function chooseExportBounds(boxes: Iterable<ExportBox>): { bounds: Bounds; clamp
  * sizer, the window planner, the renderer and the router, a stray tile, the
  * arrow aimed at it and the slide that claims it each pick a different one.
  */
-function parkedLayout(nodes: Node[]): { boxes: Map<string, ExportBox>; bounds: Bounds; clamped: boolean } {
+function parkedLayout(nodes: Node[], options: ExportPricingOptions = {}): { boxes: Map<string, ExportBox>; bounds: Bounds; clamped: boolean } {
   // Empty space is closed before anything is measured, so the page sizer, the
   // window planner and the trim all see the drawing rather than the void
   // around it.
-  const raw = compactEmptyGutters(collectExportBoxes(nodes));
+  const raw = compactEmptyGutters(collectExportBoxes(nodes, options));
   const { bounds: fitted, clamped } = chooseExportBounds(raw.values());
   const parked = clamped ? clampedBoxes(raw, fitted) : { boxes: raw, bounds: fitted };
   return { ...parked, clamped };
@@ -1762,7 +1760,7 @@ function parkedLayout(nodes: Node[]): { boxes: Map<string, ExportBox>; bounds: B
 function planFixedPageWindows(diagram: DiagramShapeSource, frame: DiagramFrame): DiagramWindow[] {
   const nodes = diagram.nodes ?? [];
   if (nodes.length === 0) return [];
-  const { boxes, bounds } = parkedLayout(nodes);
+  const { boxes, bounds } = parkedLayout(nodes, diagram);
   if (boxes.size === 0) return [];
   const { services } = partitionBoxes(boxes);
   if (services.length === 0) return [];
@@ -1804,7 +1802,7 @@ function planSlideGeometry(diagram?: DiagramShapeSource | null): SlideGeometry {
   const nodes = diagram?.nodes ?? [];
   let windows: DiagramWindow[] = [];
   if (nodes.length > 0) {
-    const parked = parkedLayout(nodes);
+    const parked = parkedLayout(nodes, diagram ?? {});
     if (parked.boxes.size > 0) {
       outliersClamped = parked.clamped;
       // Plan the windows against the drawing the slides will actually carry.
@@ -2127,7 +2125,7 @@ function fitLabelToBox(rawText: string, widthIn: number, fontSizePt: number): st
 
 // ─── Public export function ───────────────────────────────────────────────────
 
-export interface PptxExportOptions {
+export interface PptxExportOptions extends ExportPricingOptions {
   diagramName: string;
   author: string;
   date: string;
@@ -2150,10 +2148,12 @@ export interface PptxExportOptions {
   presetIcons?: Map<string, RasterizedIcon>;
 }
 
-export interface DiagramShapeSource {
+export interface DiagramShapeSource extends ExportPricingOptions {
   nodes: Node[];
   edges: Edge[];
 }
+
+export type PptxDiagramInput = string | DiagramShapeSource;
 
 // ─── Native (editable) diagram rendering ─────────────────────────────────────
 
@@ -3031,7 +3031,11 @@ function addConnectorLabel(
     fontFace: GEOMETRY_LATIN_FONT,
     align: 'center',
     valign: 'middle',
-    margin: CHIP_INSET_IN * 72,
+    // The fitter reserves 0.06in vertically in total, not on each side.
+    // Absolute leading also keeps Office's font metrics on that same budget.
+    // PptxGenJS 4 serializes text margins as [left, right, bottom, top].
+    margin: [CHIP_INSET_IN * 72, CHIP_INSET_IN * 72, 0.03 * 72, 0.03 * 72],
+    lineSpacing: fontSize * 1.3,
     wrap: true,
     objectName: `connector-label-${route.id}`,
   });
@@ -4766,7 +4770,7 @@ async function addEditableDiagram(
   // up. Doing it inside `placeBox` on each slide meant the tile, the arrow
   // aimed at it and the window that claimed it could each pick a different
   // answer.
-  const { boxes, bounds, clamped } = parkedLayout(diagram.nodes ?? []);
+  const { boxes, bounds, clamped } = parkedLayout(diagram.nodes ?? [], diagram);
   if (boxes.size === 0) return null;
   const { groups, services } = partitionBoxes(boxes);
   if (services.length === 0) return null;
@@ -6093,7 +6097,12 @@ export async function buildDiagramSlidePptx(
   // Number the callouts before anything measures them, so the drawing, the
   // badges and the workflow list are all built from the same edges.
   const diagram = options.diagram
-    ? { ...options.diagram, edges: narrateEdgeCallouts(options.diagram.edges ?? []) }
+    ? {
+      ...options.diagram,
+      capacityLabel: options.capacityLabel ?? options.diagram.capacityLabel,
+      priceUnavailableLabel: options.priceUnavailableLabel ?? options.diagram.priceUnavailableLabel,
+      edges: narrateEdgeCallouts(options.diagram.edges ?? []),
+    }
     : options.diagram;
 
   const pptx = newDeck();
@@ -6220,7 +6229,7 @@ export async function buildDiagramSlidePptx(
       ? await addEditableDiagram(pptx, slide, diagram, geom.frame, isDarkMode, window, mutedWording, truncatedNames, window === undefined && parts.length > 0, options.presetIcons, promotedSteps, drawnHere, keyOrdinal, slideLabel, vectorIcons)
       : null;
 
-    if (!renderedNatively) {
+    if (!renderedNatively && imageDataUrl) {
       slide.addImage({
         data: imageDataUrl,
         x: geom.frame.x,
@@ -6579,39 +6588,45 @@ export async function buildDiagramSlidePptx(
  */
 async function downloadNativePptx(pptx: PptxGenJS, fileName: string, vectorIcons?: Map<string, string>): Promise<void> {
   try {
-    const blob = (await pptx.write({ outputType: 'blob' })) as Blob;
-    const zip = await nativizePackage(await JSZip.loadAsync(blob), {
-      latin: GEOMETRY_LATIN_FONT,
-      ea: GEOMETRY_EA_FONT,
-    });
-    // Icons are drawn as 128px PNGs, which is ~213 DPI at the largest size a
-    // tile ever gives them: crisp on a projector, visibly soft the moment the
-    // reader zooms in to read a diagram, and softer still if they resize the
-    // shape. The SVG the icon was rasterized from is attached alongside, so
-    // PowerPoint 2016 and later redraws it at whatever size it is shown, while
-    // older versions keep falling back to the raster that is still there.
-    if (vectorIcons?.size) await embedVectorIcons(zip, vectorIcons);
-    const repaired = await zip.generateAsync({
-      type: 'blob',
-      mimeType: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-      // pptxgenjs writes the package uncompressed. Once this path owns the
-      // write it may as well deflate it: measured ~9x smaller (425KB -> 46KB),
-      // which is the difference between a deck that mails and one that bounces.
-      compression: 'DEFLATE',
-      compressionOptions: { level: 6 },
-    });
+    const repaired = await buildNativePptxBlob(pptx, vectorIcons);
     const url = URL.createObjectURL(repaired);
     const link = document.createElement('a');
     link.href = url;
     link.download = fileName;
     document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
+    try {
+      link.click();
+    } finally {
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 10000);
+    }
   } catch (error) {
     console.warn('PowerPoint shape conversion failed; exporting the unconverted deck.', error);
     await pptx.writeFile({ fileName });
   }
+}
+
+function diagramInput<T extends PptxExportOptions>(
+  input: PptxDiagramInput, options: T, icons?: ExportIcons,
+): { imageDataUrl: string; options: T } {
+  return {
+    imageDataUrl: typeof input === 'string' ? input : '',
+    options: {
+      ...options,
+      ...(typeof input === 'string' ? {} : { diagram: input }),
+      ...(icons ? { presetIcons: new Map(icons) } : {}),
+    },
+  };
+}
+
+/** Build the same repaired, vector-icon package as the native download path. */
+export async function buildDiagramPptxBlob(
+  input: PptxDiagramInput, options: PptxExportOptions, icons?: ExportIcons,
+): Promise<Blob> {
+  const source = diagramInput(input, options, icons);
+  const vectorIcons = new Map<string, string>();
+  const pptx = await buildDiagramSlidePptx(source.imageDataUrl, source.options, vectorIcons);
+  return buildNativePptxBlob(pptx, vectorIcons);
 }
 
 /**
@@ -6623,11 +6638,12 @@ async function downloadNativePptx(pptx: PptxGenJS, fileName: string, vectorIcons
  * Returns the generated filename.
  */
 export async function exportDiagramAsPptx(
-  imageDataUrl: string,
+  input: PptxDiagramInput,
   options: PptxExportOptions,
 ): Promise<string> {
+  const source = diagramInput(input, options);
   const vectorIcons = new Map<string, string>();
-  const pptx = await buildDiagramSlidePptx(imageDataUrl, options, vectorIcons);
+  const pptx = await buildDiagramSlidePptx(source.imageDataUrl, source.options, vectorIcons);
   const fileName = generateModelFilename('azure-diagram-slide', 'pptx');
   await downloadNativePptx(pptx, fileName, vectorIcons);
   return fileName;
@@ -6705,6 +6721,8 @@ export interface DeckCost {
   regionComparisonIncomplete?: boolean;
   /** Regions omitted from the like-for-like comparison, with the reason. */
   unavailableRegions?: string[];
+  /** Services excluded from the subtotal because their prices are unknown, not zero. */
+  unpricedServices?: string[];
 }
 
 export interface DeckWorkflowStep {
@@ -6904,7 +6922,9 @@ async function addDiagramSlide(pptx: PptxGenJS, t: SlideTheme, imageDataUrl: str
       )
       : null;
     if (!renderedNatively) {
-      slide.addImage({ data: imageDataUrl, x: IMAGE_X, y: IMAGE_Y, w: IMAGE_W, h: IMAGE_H, sizing: { type: 'contain', w: IMAGE_W, h: IMAGE_H } });
+      if (imageDataUrl) {
+        slide.addImage({ data: imageDataUrl, x: IMAGE_X, y: IMAGE_Y, w: IMAGE_W, h: IMAGE_H, sizing: { type: 'contain', w: IMAGE_W, h: IMAGE_H } });
+      }
       return;
     }
     // The authored workflow is already settled here, unlike the diagram-only
@@ -7391,6 +7411,8 @@ function addValidationFindingsSlide(pptx: PptxGenJS, t: SlideTheme, o: Architect
 function addCostOverviewSlide(pptx: PptxGenJS, t: SlideTheme, o: ArchitectureDeckOptions): void {
   const c = o.cost;
   if (!c) return;
+  const unpriced = c.unpricedServices ?? [];
+  const partial = unpriced.length > 0;
   const slide = pptx.addSlide();
   const meta = [
     c.term,
@@ -7398,13 +7420,13 @@ function addCostOverviewSlide(pptx: PptxGenJS, t: SlideTheme, o: ArchitectureDec
     c.pricesAsOf ? `prices as of ${c.pricesAsOf}` : undefined,
     c.oldestMeterAsOf ? `unchanged since ${c.oldestMeterAsOf}` : undefined,
   ].filter(Boolean).join('  ·  ');
-  addChrome(pptx, slide, t, 'Estimated cost', meta || undefined);
+  addChrome(pptx, slide, t, partial ? 'Partial cost estimate' : 'Estimated cost', meta || undefined);
 
   // Headline monthly + annual
   slide.addText(money(c.totalMonthly, c.currency), { x: 0.35, y: BODY_TOP, w: 5.2, h: 0.95, fontSize: 46, bold: true, color: t.accent, fontFace: GEOMETRY_LATIN_FONT });
-  slide.addText('per month (estimate)', { x: 0.37, y: BODY_TOP + 0.95, w: 5.2, h: 0.32, fontSize: 12, color: t.metaText, fontFace: GEOMETRY_LATIN_FONT });
+  slide.addText(partial ? 'known-cost subtotal per month (incomplete)' : 'per month (estimate)', { x: 0.37, y: BODY_TOP + 0.95, w: 5.2, h: 0.32, fontSize: 12, color: t.metaText, fontFace: GEOMETRY_LATIN_FONT });
   if (c.annual) {
-    slide.addText(`≈ ${money(c.annual, c.currency)} / year`, { x: 0.37, y: BODY_TOP + 1.3, w: 5.2, h: 0.35, fontSize: 15, bold: true, color: t.titleText, fontFace: GEOMETRY_LATIN_FONT });
+    slide.addText(`≈ ${money(c.annual, c.currency)} / year${partial ? ' (subtotal)' : ''}`, { x: 0.37, y: BODY_TOP + 1.3, w: 5.2, h: 0.35, fontSize: 15, bold: true, color: t.titleText, fontFace: GEOMETRY_LATIN_FONT });
   }
 
   // Fixed vs usage-based split
@@ -7423,6 +7445,19 @@ function addCostOverviewSlide(pptx: PptxGenJS, t: SlideTheme, o: ArchitectureDec
     ], { x: 0.37, y: barY + 0.68, w: 5.2, h: 0.35, fontSize: 10, fontFace: GEOMETRY_LATIN_FONT });
   }
 
+  if (partial) {
+    slide.addText(
+      `${unpriced.length} service(s) have unavailable prices and are excluded, not free. The following pages list every exclusion.`,
+      {
+        objectName: 'unpriced-cost-notice',
+        x: 0.37, y: BODY_TOP + 3.15, w: 5.2, h: 0.65,
+        fontSize: 10, lineSpacing: 13.5, margin: 0,
+        bold: true, color: stripHash(readableTextOn('#B45309', `#${t.bg}`)),
+        fontFace: GEOMETRY_LATIN_FONT, wrap: true, valign: 'top',
+      },
+    );
+  }
+
   if (c.regionComparisonIncomplete) {
     const unavailable = c.unavailableRegions?.map(item => item.split(':', 1)[0]).join(', ') || 'one or more regions';
     const notice = fitNotice(
@@ -7433,7 +7468,7 @@ function addCostOverviewSlide(pptx: PptxGenJS, t: SlideTheme, o: ArchitectureDec
     );
     slide.addText(
       notice.text,
-      { x: 0.37, y: BODY_TOP + 3.15, w: 5.2, h: 0.75, fontSize: notice.fontSize, bold: true, color: 'b45309', fontFace: GEOMETRY_LATIN_FONT, wrap: true, valign: 'top' },
+      { x: 0.37, y: BODY_TOP + (partial ? 4 : 3.15), w: 5.2, h: 0.75, fontSize: notice.fontSize, bold: true, color: 'b45309', fontFace: GEOMETRY_LATIN_FONT, wrap: true, valign: 'top' },
     );
   }
 
@@ -7477,10 +7512,57 @@ function addCostOverviewSlide(pptx: PptxGenJS, t: SlideTheme, o: ArchitectureDec
   }
 }
 
+/** Keep every exclusion legible, including a single name longer than a page. */
+function addUnpricedServicesSlides(pptx: PptxGenJS, t: SlideTheme, o: ArchitectureDeckOptions): void {
+  const services = o.cost?.unpricedServices;
+  if (!services?.length) return;
+  const pt = 12;
+  const lineHeight = pt * 1.35 / 72;
+  const width = W - 0.7;
+  const lines: Array<{ text: string; service: number }> = [];
+  services.forEach((name, service) => {
+    let remaining = Array.from(`${service + 1}. ${name}`);
+    while (remaining.length > 0) {
+      let end = 0;
+      let lastSpace = -1;
+      let text = '';
+      while (end < remaining.length && estimateTextWidthIn(text + remaining[end], pt) <= width - 0.04) {
+        text += remaining[end];
+        if (remaining[end] === ' ') lastSpace = end;
+        end += 1;
+      }
+      if (end < remaining.length && lastSpace > 0) end = lastSpace;
+      end = Math.max(1, end);
+      lines.push({ text: remaining.slice(0, end).join('').trimEnd(), service });
+      remaining = remaining.slice(end);
+      while (remaining[0] === ' ') remaining.shift();
+    }
+  });
+  const perPage = Math.max(1, Math.floor((BODY_H - 0.4) / lineHeight));
+  const pages = Math.ceil(lines.length / perPage);
+  for (let page = 0; page < pages; page += 1) {
+    const slide = pptx.addSlide();
+    addChrome(pptx, slide, t,
+      `Services excluded from the estimate${pages > 1 ? ` (${page + 1} / ${pages})` : ''}`);
+    slide.addText('Prices unavailable — excluded from the subtotal, not free.', {
+      x: 0.35, y: BODY_TOP, w: width, h: 0.3,
+      fontSize: 11, color: t.metaText, fontFace: GEOMETRY_LATIN_FONT, margin: 0,
+    });
+    lines.slice(page * perPage, (page + 1) * perPage).forEach((line, index) => {
+      slide.addText(line.text, {
+        objectName: `unpriced-service-${line.service}-${page * perPage + index}`,
+        x: 0.35, y: BODY_TOP + 0.4 + index * lineHeight, w: width, h: lineHeight,
+        fontSize: pt, lineSpacing: pt * 1.35,
+        color: t.titleText, fontFace: GEOMETRY_LATIN_FONT, margin: 0, wrap: false, valign: 'top',
+      });
+    });
+  }
+}
+
 /** Slide 5b — multi-region cost comparison (only when >1 region computed). */
 function addCostRegionsSlide(pptx: PptxGenJS, t: SlideTheme, o: ArchitectureDeckOptions): void {
   const c = o.cost;
-  if (!c || !c.regions || c.regions.length < 2) return;
+  if (!c || c.unpricedServices?.length || !c.regions || c.regions.length < 2) return;
   const slide = pptx.addSlide();
   addChrome(pptx, slide, t, 'Regional cost comparison', c.term || undefined);
 
@@ -7606,6 +7688,9 @@ function withSingleLineNames(o: ArchitectureDeckOptions): ArchitectureDeckOption
       ...(o.cost.unavailableRegions
         ? { unavailableRegions: o.cost.unavailableRegions.map(singleLine) }
         : {}),
+      ...(o.cost.unpricedServices
+        ? { unpricedServices: o.cost.unpricedServices.map(singleLineName) }
+        : {}),
     }
     : o.cost;
   const validation = o.validation
@@ -7637,6 +7722,13 @@ function withSingleLineNames(o: ArchitectureDeckOptions): ArchitectureDeckOption
     // the same thing and the two shrink to different sizes.
     author: singleLine(o.author),
     date: singleLine(o.date),
+    ...(o.diagram ? {
+      diagram: {
+        ...o.diagram,
+        capacityLabel: o.capacityLabel ?? o.diagram.capacityLabel,
+        priceUnavailableLabel: o.priceUnavailableLabel ?? o.diagram.priceUnavailableLabel,
+      },
+    } : {}),
     ...(o.prompt ? { prompt: composedProse(o.prompt) } : {}),
     ...(o.model ? { model: singleLine(o.model) } : {}),
     services: o.services.map((s) => ({
@@ -7684,21 +7776,30 @@ export async function buildArchitectureDeckPptx(
   addValidationSummarySlide(pptx, t, options);
   addValidationFindingsSlide(pptx, t, options);
   addCostOverviewSlide(pptx, t, options);
+  addUnpricedServicesSlides(pptx, t, options);
   addCostRegionsSlide(pptx, t, options);
 
   return pptx;
 }
 
+export async function buildArchitectureDeckBlob(
+  input: PptxDiagramInput, options: ArchitectureDeckOptions, icons?: ExportIcons,
+): Promise<Blob> {
+  const source = diagramInput(input, options, icons);
+  const vectorIcons = new Map<string, string>();
+  const pptx = await buildArchitectureDeckPptx(source.imageDataUrl, source.options, vectorIcons);
+  return buildNativePptxBlob(pptx, vectorIcons);
+}
+
 /** Build the deck and download it. Returns the generated filename. */
 export async function exportArchitectureDeck(
-  imageDataUrl: string,
+  input: PptxDiagramInput,
   options: ArchitectureDeckOptions,
 ): Promise<string> {
+  const source = diagramInput(input, options);
   const vectorIcons = new Map<string, string>();
-  const pptx = await buildArchitectureDeckPptx(imageDataUrl, options, vectorIcons);
+  const pptx = await buildArchitectureDeckPptx(source.imageDataUrl, source.options, vectorIcons);
   const fileName = generateModelFilename('azure-architecture-deck', 'pptx');
   await downloadNativePptx(pptx, fileName, vectorIcons);
   return fileName;
 }
-
-

@@ -14,6 +14,7 @@
 import type { ReasoningEffort } from '../stores/modelSettingsStore';
 import { getModelSettingsForFeature, type FeatureType } from '../stores/modelSettingsStore';
 import type { RuntimeModelOverride } from './aiModelRuntime';
+import { isAIConcurrencyLimitError } from './aiBudgetQueue';
 
 /** Proxy error codes that represent a transient upstream/edge condition. */
 const RETRYABLE_PROXY_CODES = new Set([
@@ -108,6 +109,9 @@ export function isRetryableAIFailure(error: unknown): boolean {
   // an AbortError (which for an INTERNAL timeout is retryable), so it must be
   // distinguished by an explicit flag, not by the error name.
   if ((error as { userCancelled?: unknown }).userCancelled === true) return false;
+
+  // Capacity contention needs admission/backoff, not a cheaper generation.
+  if (isAIConcurrencyLimitError(error)) return false;
 
   // A truncated or empty JSON payload is exactly what a compact retry fixes;
   // a refusal or otherwise malformed payload is not worth a second charge.
@@ -215,6 +219,7 @@ export async function runWithCompactRetry<T>(options: CompactRetryOptions<T>): P
   try {
     return await attempt(false, override);
   } catch (error) {
+    if (isAIConcurrencyLimitError(error)) throw error;
     if (!isRetryableAIFailure(error) && !isRetryable?.(error)) throw error;
     console.warn(
       `⏱️ ${label} failed with a transient error — retrying once with a compact prompt at low reasoning effort:`,

@@ -38,6 +38,7 @@ import JSZip from 'jszip';
 import type { Node, Edge } from 'reactflow';
 import { rasterizeIcons, type RasterizedIcon } from '../utils/exportIconRaster';
 import { stripXmlForbidden } from '../utils/xmlText';
+import type { ExportIcons } from './diagramExportIcons';
 import {
   buildExportRoutes,
   categoryStyle,
@@ -69,6 +70,7 @@ import {
   type ExportBox,
   type ExportRoute,
   type Point,
+  type ExportPricingOptions,
 } from './diagramExportGeometry';
 
 const PX_PER_INCH = 96;
@@ -929,7 +931,6 @@ ${characterRows}
       <Section N="Property">
 ${properties.map((property, index) => propertyRow(property.name, property.label, property.value, index + 1)).join('\n')}
       </Section>
-      <Text>${textBody}</Text>
       <Shapes>
         <Shape ID="${ids.rect}" NameU="Tile.${ids.rect}" Type="Shape" LineStyle="0" FillStyle="0" TextStyle="0">
           <Cell N="PinX" V="${f(rect.w / 2)}"/>
@@ -951,6 +952,7 @@ ${properties.map((property, index) => propertyRow(property.name, property.label,
 ${roundedRectGeometry()}
         </Shape>${iconChild}
       </Shapes>
+      <Text>${textBody}</Text>
     </Shape>`;
 }
 
@@ -1921,6 +1923,7 @@ export async function buildVsdxPackage(
    * real drawing measured instead.
    */
   presetIcons?: Map<string, RasterizedIcon>,
+  options: ExportPricingOptions = {},
 ): Promise<VsdxPackage> {
   // Empty space is closed on both axes before the sheet is sized: a DR region
   // drawn 6000px east of the primary is a two-region architecture, not an
@@ -1992,7 +1995,7 @@ export async function buildVsdxPackage(
   // was real, and what removed its reproduction was a change to how k is
   // chosen, which the next round is free to change back.
   const drawing = compactEmptyGutters(
-    magnifiedForCallouts(compactEmptyGutters(collectExportBoxes(nodes)), edges),
+    magnifiedForCallouts(compactEmptyGutters(collectExportBoxes(nodes, options)), edges),
   );
   // The band is page furniture, and furniture does not get to evict the thing
   // it describes. `workflowListFromEdges` has no cap, so a fully-meshed
@@ -3477,12 +3480,20 @@ export async function buildVsdxPackage(
 /**
  * Build a .vsdx package for the diagram and return it as a Blob.
  */
+export interface VsdxExportOptions extends ExportPricingOptions {
+  /** Caller compatibility: Visio retains its print-friendly light sheet palette. */
+  isDarkMode?: boolean;
+  icons?: ExportIcons;
+}
+
 export async function buildVsdxBlob(
   nodes: Node[],
   edges: Edge[],
   diagramName = 'Azure Architecture',
+  options: VsdxExportOptions = {},
 ): Promise<Blob> {
-  const { parts } = await buildVsdxPackage(nodes, edges, diagramName);
+  const { parts } = await buildVsdxPackage(nodes, edges, diagramName,
+    options.icons ? new Map(options.icons) : undefined, options);
   const zip = new JSZip();
   for (const part of parts) {
     zip.file(part.path, part.data);
@@ -3493,6 +3504,3 @@ export async function buildVsdxBlob(
     compression: 'DEFLATE',
   });
 }
-
-
-

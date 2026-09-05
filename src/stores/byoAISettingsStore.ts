@@ -56,7 +56,7 @@ export const DEFAULT_BYO_AI_SETTINGS: BYOAISettings = {
   enabled: false,
   provider: 'azure-openai',
   endpoint: '',
-  model: 'gpt-5.6-sol',
+  model: 'gpt-6-astra',
   apiFormat: 'responses',
   reasoningEffort: 'low',
   capabilityMode: 'auto',
@@ -115,7 +115,7 @@ export function inferBYOAICapabilities(model: string): {
   supportsVision: boolean;
 } {
   const normalized = model.trim().toLowerCase();
-  const reasoningModel = /(?:^|[^a-z0-9])(?:o[134]|gpt[-_.]?5)(?:[^a-z0-9]|$)/.test(normalized);
+  const reasoningModel = /(?:^|[^a-z0-9])(?:o[134]|gpt[-_.]?5|gpt[-_.]?6[-_.]?astra)(?:[^a-z0-9]|$)/.test(normalized);
   const visionModel = reasoningModel
     || /(?:^|[^a-z0-9])(?:gpt[-_.]?4o|gpt[-_.]?4[._-]1|vision)(?:[^a-z0-9]|$)/
       .test(normalized);

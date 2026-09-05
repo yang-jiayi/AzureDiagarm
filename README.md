@@ -35,7 +35,7 @@ The latest customization and production hardening were created by **Swarm Data S
 
 ## 📖 Overview
 
-Microsoft Product Architecture Diagram Builder is an enterprise-grade web application that empowers cloud architects to design, visualize, validate, and deploy Azure solutions. Leveraging **15 AI models** across multiple providers — **GPT-5.1, GPT-5.2, GPT-5.4, GPT-5.4 Mini, GPT-5.6 Sol, GPT-5.6 Terra, GPT-5.6 Luna, Claude Opus 5, DeepSeek V3.2 Speciale, DeepSeek V4 Pro, Grok 4.1 Fast, Grok 4.3, Mistral Large 3, Kimi K2.5, and Kimi K2.7 Code** (via Azure OpenAI and Microsoft Foundry model deployments) — it transforms natural language descriptions into professional architecture diagrams while providing real-time cost estimates, Well-Architected Framework validation, multi-model comparison, and Infrastructure as Code generation.
+Microsoft Product Architecture Diagram Builder is an enterprise-grade web application that empowers cloud architects to design, visualize, validate, and deploy Azure solutions. Supporting **16 AI models** across multiple providers — **GPT-6 Astra, GPT-5.1, GPT-5.2, GPT-5.4, GPT-5.4 Mini, GPT-5.6 Sol, GPT-5.6 Terra, GPT-5.6 Luna, Claude Opus 5, DeepSeek V3.2 Speciale, DeepSeek V4 Pro, Grok 4.1 Fast, Grok 4.3, Mistral Large 3, Kimi K2.5, and Kimi K2.7 Code** (via configured Azure OpenAI and Microsoft Foundry model deployments) — it transforms natural language descriptions into professional architecture diagrams while providing real-time cost estimates, Well-Architected Framework validation, multi-model comparison, and Infrastructure as Code generation.
 
 Beyond editable **topology** diagrams, the app can also produce polished, whiteboard-style **Blueprint** diagrams (BETA) as shareable PNGs — ideal for presentations and design reviews.
 
@@ -62,7 +62,7 @@ architect.
 ## ✨ Key Features
 
 ### 🤖 AI-Powered Architecture Generation
-Describe your architecture in plain English and let any of **15 AI models** (GPT-5.1, GPT-5.2, GPT-5.4, GPT-5.4 Mini, GPT-5.6 Sol, GPT-5.6 Terra, GPT-5.6 Luna, Claude Opus 5, DeepSeek V3.2 Speciale, DeepSeek V4 Pro, Grok 4.1 Fast, Grok 4.3, Mistral Large 3, Kimi K2.5, or Kimi K2.7 Code) automatically create a complete, professionally organized diagram with logical service groupings.
+Describe your architecture in plain language to create a complete diagram with logical service groupings. **GPT-6 Astra** is the default for generation, validation, deployment guidance, and blueprints when its deployment is configured. Other configured models remain available for explicit selection and comparison.
 
 **13 curated example prompts** included — from simple web apps to complex enterprise scenarios:
 - Zero Trust enterprise networks with security segmentation
@@ -81,8 +81,8 @@ Refine your diagram through a natural back-and-forth conversation instead of one
 
 - Type changes like *"add Azure Front Door with WAF"* → *"now make it zone-redundant"* → *"add a Redis cache between the API and the database"*
 - Each turn reads the **live canvas** as the source of truth, so follow-up requests naturally build on previous ones
-- The assistant replies with a concise summary of what changed (services added/removed)
-- Every change is **auto-saved to version history**, so you can step back at any time
+- The assistant replies with a concise summary of proposed service and connection changes
+- Review and select changes before applying; accepted edits can be undone. When automatic snapshots are enabled, the pre-apply snapshot must save successfully before changes are applied
 - Suggestion chips help you get started, and the panel shows which model is active
 
 ### ✏️ Blueprint Diagrams (BETA)
@@ -105,7 +105,7 @@ Validate your architecture against all five WAF pillars:
 - **Cost Optimization** — Right-sizing, reserved instances
 - **Operational Excellence** — Monitoring, automation
 
-Select specific recommendations and automatically regenerate an improved architecture. During analysis, a dismiss hint lets you close the panel and return later via the **Validation Score** button in the toolbar.
+Select specific recommendations to generate an improved proposal, then review the changes before applying them. Reviews show available finding sources, link findings to diagram resources, and retain a bounded review history. Edited diagrams and older comparison results are marked as stale; a finding not detected in a later review is not treated as proof of remediation. During analysis, a dismiss hint lets you close the panel and return later via the **Validation Score** button in the toolbar.
 
 ### 🔀 Multi-Model Comparison
 Compare AI output side-by-side across all 15 models:
@@ -115,7 +115,7 @@ Compare AI output side-by-side across all 15 models:
 - **Save All Diagrams** — Download each model's architecture as a separate JSON file
 - **Save Comparison Report** — Download a combined JSON report for offline analysis
 - **Present Critique** — Click "Present" to have a talking avatar narrate the AI ranking with live word-by-word closed captions (requires `VITE_SPEECH_REGION`)
-- **Apply Winner** — Pick the best result and apply it to the canvas with one click
+- **Apply Winner** — Pick a result and review its proposed changes before applying them to the canvas
 
 ### 🎙️ Avatar Presenter
 After completing a model comparison, use **Present Critique** to have a photorealistic talking avatar narrate the AI ranking results aloud — or click **Narrate** in the Workflow Panel to have the avatar walk through every architecture step:
@@ -195,7 +195,7 @@ Design business-application architectures next to Azure and Fabric, using Micros
 An in-app **Help** button opens a centered guide so new users can get productive fast — Quick Start, a feature tour, example prompts, tips & FAQ, and resource links. (Opening it fires a `Help_Opened` telemetry event.)
 
 ### 💬 User Feedback
-A built-in feedback widget captures a rating, category, and optional free-text comment. The token server delivers submissions through **Azure Communication Services Email** and can also archive them in Azure Table Storage or Cosmos DB using managed identity. Application Insights receives rating metadata only; comment text and optional follow-up contact are never used as telemetry fallbacks.
+A built-in feedback widget captures a rating, category, and optional free-text comment. The token server delivers submissions through **Azure Communication Services Email** and can archive them in Azure Table Storage or Cosmos DB using managed identity. Diagnostic metadata is **opt-in**, with a preview of the submitted payload; diagram names, URL paths/queries, and browser details are excluded. Comments, prompts, and optional follow-up contact are never used as telemetry fallbacks. Archived feedback has a configurable retention period, and the submission receipt supports authorized deletion. Sent email copies and storage backups have separate retention policies; deleting an archive entry does not delete those copies.
 
 ### 🧠 Smart Layout Engine
 - **Dagre-based hierarchical layout** with compound node support
@@ -204,11 +204,34 @@ A built-in feedback widget captures a rating, category, and optional free-text c
 - **Resizable group nodes** — drag handles to adjust group boundaries
 
 ### 📸 Auto-Snapshot & Version History
-- Automatically saves a version snapshot before each AI regeneration
+- When automatic snapshots are enabled, the pre-apply snapshot must save before accepted AI changes are applied
 - Save named snapshots with descriptions
 - Browse and restore previous versions
 - Track architecture evolution over time
+- Open stored snapshots in another tab; download JSON for sharing
 - Entra-authenticated cloud autosave with immutable snapshots, comments, optimistic concurrency, and revocable viewer/editor links
+
+### Reversible Editing and Local Drafts
+- **Undo / Redo** covers diagram edits, including service and group labels, colors, connections, and layout changes. Use the toolbar or `Ctrl/Cmd+Z` and `Ctrl/Cmd+Shift+Z`.
+- **Local autosave** keeps the active draft in IndexedDB and reports when a transaction has committed. A recovery prompt lets you restore or download the draft after reopening the page.
+- Local drafts are **browser-local, not cloud backups**; authenticated cloud autosave is a separate feature. Clearing browser data removes local drafts, so use cloud storage or a JSON download for a portable copy. A concurrent tab cannot silently overwrite a newer draft revision.
+- **AI change review** presents additions, removals, and modifications before they reach the canvas. Review selected changes, cancel a proposal, or retry generation without replacing current edits.
+- **Create / Review / Export** tabs keep task-specific controls together. Service settings edit pricing inputs; WAF findings can locate their affected shapes on the canvas.
+
+Workspace regression commands:
+
+```sh
+npm run test:workspace
+npm run test:workspace:browser
+npm run test:ai-ui
+npm run test:inspector-ui
+npm run test:modal-focus
+```
+
+The browser check uses the existing Playwright installation. Set `WORKSPACE_BROWSER_CHANNEL=msedge`
+to use installed Microsoft Edge, and `WORKSPACE_ARTIFACT_DIR` to retain screenshots.
+
+Public deployments fail closed without explicit authentication, ingress, access-list, deployment allowlist, and shared-budget configuration. Per-user daily token reservations and concurrency limits are shared across replicas; local development uses a clearly separate mode. See [runtime controls and privacy](server/SECURITY.md) for required settings, budget accounting, retention, and deletion behavior.
 
 ### 🎨 Professional Diagramming
 - **Complete official Azure V24 icon package** — all 714 SVGs from Microsoft's July 2026 package, hash-verified from a committed manifest, plus the Microsoft Fabric, Power Platform, and Dynamics 365 icon sets
@@ -231,9 +254,9 @@ A built-in feedback widget captures a rating, category, and optional free-text c
 | **Editorial PNG** | Publication-style reference-architecture PNG |
 | **Blueprint PNG** | Hand-drawn, whiteboard-style blueprint PNG (BETA) |
 | **SVG** | Scalable vector graphics (true vector — edges preserved as paths) |
-| **PPTX Slide** | Single PowerPoint slide, dark or light theme matching the canvas |
+| **PPTX Slide** | Editable native PowerPoint shapes/text and embedded icons, with aspect-fitted layout and dark/light theme matching the canvas |
 | **Interactive HTML** | Self-contained HTML with pan, zoom, and tooltips |
-| **Visio (VSDX)** | Native Visio drawing — opens in desktop Visio **and** Visio for the web (and importable into diagrams.net). Embeds Azure service icons, orthogonal connectors, wrapped edge-label chips, and top-titled group zones |
+| **Visio (VSDX)** | Native service groups with embedded icons and editable text, glued connectors preserving arrows/styles, wrapped labels, nested-position support, and dark/light themes |
 | **Draw.io** | Edit in diagrams.net — orthogonal (right-angle) connectors with wrapped, auto-sized edge-label boxes |
 | **Workflow (Markdown)** | The workflow narrative as a `.md` doc — title block, prompt, grouped services, ordered step-by-step flow (service names resolved), connections table, optional WAF score + cost |
 | **JSON** | Backup, version control |
@@ -567,8 +590,10 @@ VITE_AZURE_OPENAI_DEPLOYMENT=your-default-deployment
 # Optional user-owned endpoints. Disabled by default for self-hosted installs.
 ALLOW_BYO_AI_ENDPOINTS=false
 
-# Multi-model deployments (15 models)
-# OpenAI GPT-5.x family
+# Multi-model deployments (16 supported models; configure only real deployments)
+# GPT-6 Astra is the preferred application model
+VITE_AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA=your-gpt6-astra-deployment
+# Optional OpenAI GPT-5.x deployments
 VITE_AZURE_OPENAI_DEPLOYMENT_GPT51=your-gpt51-deployment
 VITE_AZURE_OPENAI_DEPLOYMENT_GPT52=your-gpt52-deployment
 VITE_AZURE_OPENAI_DEPLOYMENT_GPT54=your-gpt54-deployment
@@ -590,7 +615,7 @@ VITE_AZURE_OPENAI_DEPLOYMENT_MISTRALLARGE3=your-mistral-large-3-deployment
 VITE_AZURE_OPENAI_DEPLOYMENT_KIMIK25=your-kimi-k2-5-deployment
 VITE_AZURE_OPENAI_DEPLOYMENT_KIMIK27CODE=your-kimi-k2-7-code-deployment
 
-# Reasoning model configuration (GPT-5.x models)
+# Reasoning model configuration
 VITE_REASONING_EFFORT=medium  # none | low | medium | high
 
 # Optional: Cloud storage for sharing
@@ -609,6 +634,18 @@ VITE_SPEECH_REGION=westus2                 # Build-time: controls visibility of 
 AZURE_SPEECH_REGION=westus2               # Runtime: read by the co-located token server
 AZURE_SPEECH_RESOURCE_ID=/subscriptions/<subscription-id>/resourceGroups/<resource-group>/providers/Microsoft.CognitiveServices/accounts/<speech-account-name>
 ```
+
+`VITE_AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA` must name a real GPT-6 Astra deployment,
+not a renamed GPT-5.6 deployment. Include the same name in the API's managed-model
+allowlist. The deployment-only template `infra/gpt6-astra.bicep` codifies the
+verified model/version and usage-based SKU under an existing OpenAI account;
+it does not recreate the account or modify networking, roles, or legacy models.
+Confirm model availability and quota before applying it in another environment.
+On first use with Astra configured, saved GPT-5.6 selections and
+feature overrides migrate to Astra, preserving supported reasoning levels.
+The migration is persisted and does not repeatedly overwrite later explicit
+model choices. Separate bring-your-own endpoint settings are not migrated.
+Installations without Astra retain their existing configured-model portfolio.
 
 4. **Start the development server**
 ```bash
@@ -691,6 +728,7 @@ docker build -t azure-diagram-builder \
   --build-arg VITE_AZURE_OPENAI_DEPLOYMENT_GPT52="..." \
   --build-arg VITE_AZURE_OPENAI_DEPLOYMENT_GPT54="..." \
   --build-arg VITE_AZURE_OPENAI_DEPLOYMENT_GPT54MINI="..." \
+  --build-arg VITE_AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA="..." \
   --build-arg VITE_AZURE_OPENAI_DEPLOYMENT_GPT56SOL="..." \
   --build-arg VITE_AZURE_OPENAI_DEPLOYMENT_GPT56TERRA="..." \
   --build-arg VITE_AZURE_OPENAI_DEPLOYMENT_GPT56LUNA="..." \
@@ -955,7 +993,7 @@ The Diagram Builder is now an **MCP server** (8 tools: list / validate / estimat
 PAYG ↔ Reserved (1-year) toggle, a “Prices as of” stamp on exports, true per-region meters refreshable with `npm run pricing:refresh`, and corrected OneLake/Fabric rates.
 
 #### 🔒 Security & resilience
-All Azure OpenAI traffic is now **proxied server-side** (`/api/openai`) — the key never reaches the browser. Deployment guides are **grounded in Microsoft Learn** (`/api/docs-search`). A new **Help & Learn** panel and privacy-preserving **User Feedback** delivery round out the release.
+All Azure OpenAI traffic is now **proxied server-side** (`/api/openai`) — the key never reaches the browser. Deployment guides are **grounded in Microsoft Learn** (`/api/docs-search`). A new **Help & Learn** panel and **User Feedback** round out the release; current feedback privacy and retention controls are described above.
 
 ---
 

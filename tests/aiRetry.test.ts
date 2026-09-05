@@ -59,6 +59,22 @@ test('transient HTTP statuses are retryable but client errors are not', () => {
   }
 });
 
+test('capacity contention cannot trigger a compact retry, including a custom payload classifier', async () => {
+  const error = Object.assign(new Error('Wait for AI capacity.'), {
+    code: 'ai_concurrency_limit', status: 429,
+  });
+  assert.equal(isRetryableAIFailure(error), false);
+  let attempts = 0;
+  await assert.rejects(runWithCompactRetry({
+    transportFeature: 'architectureGeneration',
+    label: 'Comparison generation',
+    isRetryable: () => true,
+    attempt: async () => { attempts += 1; throw error; },
+  }), (actual: unknown) => actual === error);
+  assert.equal(attempts, 1);
+  assert.equal('retried' in error, false);
+});
+
 test('the user-visible timeout message is recognised', () => {
   assert.equal(
     isRetryableAIFailure(new Error('The AI provider is taking too long to respond.')),
@@ -338,4 +354,3 @@ test('safeParseModelJson keeps raw parser detail on .detail, never on .message',
     assert.doesNotMatch(error.message, /broken/);
   }
 });
-
