@@ -1,6 +1,158 @@
 # Azure Deployment Plan
 
-> **Status:** Validated
+> **Status:** Approved
+
+Generated: 2026-09-06
+
+## 1. Current Release
+
+Publish the prioritized application repairs in
+[PR #66](https://github.com/yang-jiayi/AzureDiagarm/pull/66) from
+`fix/astra-generation-rate-limits-20260906`, then update the existing production
+AzureDiagarm application. The user requested production/GitHub publication,
+reliable generation, a substantially more compact workspace, and prioritized
+quality improvements using multiple assessment owners.
+
+This is an application release, not another model migration. Genuine GPT-6 Astra
+is already deployed. Do not fall back to GPT-5.6, lower selected generation
+quality, refund unknown usage, or change authentication to conceal a failure.
+
+## 2. Scope and Existing Architecture
+
+The changes cover compact/responsive controls, accessible palette and recovery
+actions, bounded AI retry/admission/error handling, graph and Office export
+fidelity, explicit incomplete-IaC comparisons, measured editor performance, and
+release/standalone-MCP packaging safeguards.
+
+Reuse the existing Container App, registry, Front Door, managed identity,
+storage, OpenAI account and protected-main workflow. No new Azure resources,
+model/SKU/capacity changes, role grants, network changes, data migrations or
+retention-policy changes are part of this release. MCP stays disabled in
+production. The unrelated historical Product Analytics plan below is not in
+scope.
+
+## 3. Release Recipe
+
+`recipe.type: azcli`
+
+Use the existing `.github/workflows/azurediagarm-sync-deploy.yml` push-to-main
+release path after a reviewed, fully checked PR. Do not use manual upstream
+synchronization or a historical workflow rerun as a deployment shortcut.
+The new guard requires the allowed main ref, validated checkout and current
+remote main to agree before Azure access and again before the deployment marker.
+It does not retrofit guards into immutable pre-fix workflow versions.
+
+Azure validation uses the existing group-scoped model template for unchanged
+infrastructure consistency checks; it must not be applied during this app-only
+release. The actual changed application and both container recipes require
+their own complete current-source gates. An unchanged infrastructure preview
+alone is not application validation.
+
+## 4. Production Context
+
+Target the existing `azurediagarm-app` in `AzureDiagarm_rg`, West US, at
+`https://azurediagarm.mssql.biz`, using the same configured subscription and
+GitHub OIDC identity as the successful PR #63 rollout. Production currently
+serves main commit `1521996ba15ca4cbf94e5d186db586090be74e5d`, revision
+`azurediagarm-app--g34002727786-1`. Preserve that healthy application revision
+as this release's rollback baseline.
+
+Keep public deployment mode, Easy Auth, application access control, shared Table
+budget accounting and origin isolation enabled. Existing administrator access
+must remain intact; non-admin users still need application allowlist entries.
+Secrets and operator identity values must not be copied into this plan.
+
+## 5. Preparation and Validation Steps
+
+The user-approved release scope is prepared, but current release validation is
+not complete. The historical Validated record below does not authorize this
+candidate.
+
+- [x] Preserve existing production and local work; publish only completed owned checkpoints.
+- [x] Complete scoped security, maintenance, graph, design and performance assessments.
+- [x] Publish server, release/packaging, graph/IaC and compact-UI checkpoints in draft PR #66.
+- [ ] All validation checks pass.
+  - [x] Core AZCLI validation: authenticated CLI, compile the unchanged scoped template, ARM validation and structured what-if.
+  - [ ] Docker build/context: current-source standalone MCP and complete application images, generated inputs and runtime readiness.
+  - [x] Azure policy validation: unchanged SKU/identity/network scope remains compatible with applicable constraints.
+  - [x] Static role verification: existing account-scoped roles still match application operations; no widening is needed.
+  - [ ] Complete the populated JA/768x720 toolbar correction without raising the existing 220px bound.
+  - [x] Complete real production Worker/CSP/parity/cancellation proof and controlled performance measurements.
+  - [x] Complete AI client signal compatibility and final retry/cancellation/partial-output browser coverage.
+  - [x] Generate current Office fixtures and exercise real PowerPoint opening, text bounds and connector movement.
+  - [ ] Pass the final integrated source, browser, runtime and all six required GitHub checks.
+
+## 6. Deployment Steps
+
+Once every current application and infrastructure preflight gate passes, record
+the exact evidence below and set this release to Validated through azure-validate.
+Then invoke azure-deploy, guard the exact PR head and current main, and use the
+existing permitted PR merge path. Monitor the new main-triggered production
+workflow and confirm its actual commit, image, healthy revision, traffic,
+protected endpoints and fresh frontend/Worker assets.
+
+Do not weaken checks, branch rules, identity boundaries or rollback protection.
+Save in-progress user work before requesting a browser reload.
+
+## 7. Validation Proof
+
+| Check | Current result | Evidence |
+| --- | --- | --- |
+| Server diagnostics/cooldown checkpoint | Passed scoped proxy, budget and rate-limit regressions; no accounting/auth changes | `586e550` |
+| Maintenance checkpoint | Passed Linux core, standalone/complete runtime image builds and browser safeguards | `131ccc3`, CI `34012863530` |
+| Graph/IaC checkpoint | Passed integrated Linux source, Office/core, browser, MCP and runtime gates | `fd2f765`, CI `34015994681` |
+| Compact UI checkpoint | Main critical/visual cases and Vite/MCP/runtime pass; one populated workspace-header case still fails (238px vs unchanged 220px) | `ff4f138`, CI `34016824587` |
+| Populated UI correction | Dated pricing metadata shares the existing 44px row, recovering 47.219px of Japanese width. All 36 unchanged local combinations and 15 focused cases pass; the original Linux-only 238px failure still needs CI confirmation | Local checkpoint `cd1af5c`; no App JSX, control-size, snapshot or 220px-threshold changes |
+| AI client handoff | Signal compatibility and synthetic correlation fixtures are integrated; all 133 targeted units and the complete 93-case browser suite pass. All three Both cancellation cases run without AbortSignal.any, proving active request cancellation and no late output/fan-out | `npx tsx --test` over the six affected AI unit files; `npm run test:ai-ui`; scoped ESLint |
+| AI fixture integration | Full browser coverage exposed two obsolete assumptions: completed manifest scopes need not stay linked to cancellation, and a reasoning-capable Astra report includes its effort suffix. Fixtures now assert exact active-output cancellation, no extra dispatches, and the real reasoning-qualified report key | Seven focused regressions and then all 93 browser cases pass; production comparison/report behavior is unchanged |
+| Performance handoff | Production/CSP and cold-development browser cases each pass 6/6; strict ten-fixture Node/browser parity and all 18 warm output hashes match; source types/lint and 34 focused cases pass | Local checkpoint `c5d1194`; all 12 source hashes match the completed private performance report |
+| Performance measurements | Paired synthetic desktop drag frame-gap p95 improves 70.9 to 50.7 ms at 80 nodes and 203.2 to 135.8 ms at 250 nodes. Warm Worker samples have no main-thread tasks of at least 50 ms. Some layout wall times increase; no small-diagram, 60fps or field-INP claim | Both run orders, four valid 24-transform runs per size/mode; same UI and unchanged layout output |
+| Core Azure consistency | Official helper passes installed/authenticated CLI, Bicep compilation, group ARM validation and what-if. A structured preview has 15 Ignore and one Modify, only omitted service-reported `properties.currentCapacity`; zero resource creates/deletes and no template apply | `validate-deployment.ps1 -Scope group -ResourceGroup AzureDiagarm_rg`, using a hash-matched private copy of `infra/gpt6-astra.bicep`, current subscription and account/capacity parameter file; separate `az deployment group what-if --no-pretty-print` |
+| Actual Astra and runtime preflight | Genuine `gpt-6-astra` v2026-09-03 remains Succeeded at GlobalStandard 50. Current application revision is Running/Succeeded at 1-2 replicas with public/Easy Auth/access control/Table budget enabled and MCP/Azure import disabled | Read-only `az account show`, `az cognitiveservices account deployment show` and an allowlisted `az containerapp show` projection |
+| Applicable Azure policy | Effective assignments and actual deny definitions reviewed. ProvisionedManaged and unrelated classic/VM/AKS/SQL/HSM restrictions do not match this release. Actual model ARM validation passes; no exemptions or assignment changes | Azure MCP `policy_assignment_list`; native Azure CLI policy definition/set-definition reads |
+| Static role verification | Existing templates scope Cognitive Services OpenAI User to its account, Blob/Table data contributor roles to storage and AcrPull to the registry. This app-only release changes no principal, assignment or required data operation | `infra/openai-role.bicep`, `infra/resources.bicep`; live role confirmation remains a post-deployment step |
+| Fresh browser/native Office | Seven fixture files plus three actual UI exports generated from current source. PowerPoint opens/renders all six presentations (16 slides), fits 372 native text blocks, and retains the three role-like-ID groups and connector movement | `npm run test:exports:browser` with an isolated artifact directory, then `npm run test:exports:desktop`; representative rendered slides visually reviewed |
+| Current source build/types | Fresh integrated Vite/application build, script/test type check and final scoped lint pass | `npm run build`, `npm run typecheck:scripts`, scoped `npx eslint` |
+| Final security follow-up | No reportable vulnerabilities in reviewed Worker/Vite/App performance and small AI signal-compatibility changes | Existing read-only security specialist; no complete-security guarantee |
+| Final required GitHub/runtime checks | Pending for the completed integrated candidate | No full current-release completion claim |
+
+Native Visio is not installed on this machine. Browser VSDX/package/relationship
+coverage is not represented as native Visio execution.
+
+The existing OpenAI account still has two audit-only findings: Private Link is
+absent and network access is unrestricted. Fresh Policy Insights results and
+the actual built-in definitions confirm both target the unchanged account, not
+this application revision or child-template consistency check. Do not change
+shared connectivity or create an exemption for this release. A separate network
+migration is needed to address them; no estate-wide compliance claim is made.
+
+### Material provider limitation
+
+Meaningful max-quality Astra generation failed independently of application
+orchestration. A bounded same-model canary did not complete and was removed;
+its quota was restored. The final streaming hypothesis remains untested because
+runtime-console setup and the alternate existing operator credential could not
+establish an authorized inference control. No streaming/configuration switch
+is justified. Private diagnostic/support evidence is retained outside Git.
+
+This release can improve application safeguards and usability without claiming
+that the upstream generation incident has recovered. Any remaining provider
+blocker must be explicit in the production handoff; tiny readiness responses,
+HTTP 200 headers or incomplete output are not proof of architecture generation.
+
+## 8. Rollback and Data Safety
+
+Retain the current healthy PR #63 application image/revision before rollout.
+Use the established guarded rollback path only for this deployment's failure;
+do not rerun an old pre-guard workflow or alter model/auth/budget policy as a
+shortcut. No stored architecture or feedback records are intentionally deleted
+or rewritten by this release.
+
+---
+
+# Historical PR #63 Validation Record
+
+> **Historical status:** Validated
 
 Generated: 2026-09-05
 
