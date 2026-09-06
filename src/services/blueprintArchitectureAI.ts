@@ -293,10 +293,8 @@ export async function generateBlueprintArchitectureWithAI(
     return { bp: parsed, metrics };
   };
 
-  // A single automatic retry covers the dominant failure mode: the editorial
-  // prompt exceeds the proxy's upstream budget and the user sees "The AI
-  // provider is taking too long to respond." The retry runs a compact prompt at
-  // reduced reasoning effort, which finishes well inside the budget.
+  // Preserve requested quality. The legacy wrapper no longer retries with a
+  // smaller prompt or lower reasoning; classified throttles retry in transport.
   const { bp, metrics } = await runWithCompactRetry({
     // `callAzureOpenAI` resolves the `architectureGeneration` model, so the
     // retry must fall back to that same feature rather than the blueprint one.

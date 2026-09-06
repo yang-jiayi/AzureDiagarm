@@ -409,10 +409,8 @@ export async function generateReferenceArchitectureWithAI(
     return ref;
   };
 
-  // One automatic retry with a compact prompt at low reasoning effort: the
-  // editorial prompt plus exemplars is what pushes this past the proxy's
-  // upstream budget and surfaces "The AI provider is taking too long to
-  // respond." to the user.
+  // Preserve requested quality; failures require an explicit user retry.
+  // Classified throttles retry the identical request in the shared transport.
   return runWithCompactRetry({
     transportFeature: 'architectureGeneration',
     override: modelOverride,

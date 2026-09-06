@@ -92,7 +92,11 @@ Generate a hand-drawn, **whiteboard-style blueprint** of your architecture — n
 - **Blueprint** *(BETA)* — a polished whiteboard-style PNG (the PNG is the deliverable; re-download any time via **Export > Export Blueprint PNG**)
 - **Both** *(BETA)* — a deployable topology **and** a Blueprint PNG from the same prompt, optionally generated in parallel
 
-> Blueprint and Both modes require a general-purpose OpenAI model (GPT-5.x). The app auto-switches if a third-party model is selected. A configurable legend position keeps the output presentation-ready.
+> Blueprint and Both modes require a compatible general-purpose OpenAI model, such as GPT-6 Astra or GPT-5.x. The app auto-switches if a third-party model is selected. A configurable legend position keeps the output presentation-ready.
+
+Explicitly identified provider/proxy rate limits can retry automatically with the same prompt, model, reasoning and output limit, up to three HTTP attempts and two minutes of total cooldown. Budget exhaustion, unclassified 429 responses, request timeouts and incomplete output are surfaced instead of silently lowering generation quality. Countdown waits and active requests remain cancellable.
+
+Both mode admits work against the server's concurrency budget. Retrying an incomplete run with the same brief regenerates only the missing deliverable, preserving accepted output and reusing its existing component manifest. Editing the brief starts a new run.
 
 ### 📋 IaC Import, Export & Drift Review
 Import ARM JSON, Bicep, Terraform HCL, or Terraform state and turn the declared resources into an editable diagram. The round-trip workspace preserves the source baseline, compares it with the current canvas, exports Bicep or Terraform starter templates, and summarizes Azure what-if or Terraform plan JSON without ever running an apply operation.

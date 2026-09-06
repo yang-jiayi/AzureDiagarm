@@ -26,6 +26,12 @@ const STANDALONE_AI_ERROR_MESSAGES: readonly string[] = [
   // azureOpenAI.ts — IaC import + image-analysis guards (Issue 4: no interpolation)
   'Failed to parse the template. Please try again.',
   'The selected model does not support image analysis. Choose a vision-capable model in AI settings.',
+  // Shared request admission errors also reach the generator's BOTH mode.
+  'The AI concurrency budget is invalid. Check the server configuration.',
+  'The AI concurrency budget could not be checked. Please try again.',
+  'AI request capacity stayed busy. Try again when capacity is available.',
+  'AI capacity was repeatedly claimed by other requests. Try this model again.',
+  'The AI request timed out after 225 seconds. This timeout was not automatically retried. Try again later; failures with unknown usage may still count toward the application budget.',
 ];
 
 test('every proxy error code produces a message with an exact Japanese entry', () => {

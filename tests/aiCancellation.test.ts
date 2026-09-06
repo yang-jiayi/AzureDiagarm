@@ -42,7 +42,7 @@ const bundled = await build({
           export const getDeploymentName = model => model === 'gpt-6-astra' ? 'gpt-6-astra' : 'test-deployment';
           export const MODEL_CONFIG = {
             'test-model': {displayName:'Test', apiFormat:'responses', isReasoning:false, maxCompletionTokens:1000},
-            'gpt-6-astra': {displayName:'GPT-6 Astra', apiFormat:'responses', isReasoning:true, maxCompletionTokens:1000},
+            'gpt-6-astra': {displayName:'GPT-6 Astra', apiFormat:'responses', isReasoning:true, maxCompletionTokens:32000},
             'grok-4.1-fast': {displayName:'Fast', apiFormat:'chat-completions', isReasoning:false, maxCompletionTokens:1000}
           };
         `, loader: 'js',
@@ -68,6 +68,122 @@ const validationContent = '{"overallScore":80,"summary":"A test review.","pillar
 const validate = (signal?: AbortSignal) => provider.validateArchitecture(
   validationServices, [], undefined, undefined, { ...override, forceManaged: true, signal }, 'en',
 );
+
+test('Astra MAX honors a real 429 Retry-After without changing its prompt, model, or 32K output cap', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const bodies: any[] = [];
+  const waits: unknown[] = [];
+  const controller = new AbortController();
+  t.after(() => controller.abort());
+  t.mock.method(globalThis, 'fetch', async (_url: unknown, options: RequestInit) => {
+    bodies.push(JSON.parse(options.body as string));
+    if (bodies.length === 1) return new Response(JSON.stringify({
+      error: { source: 'azure_openai', code: 'azure_openai_rate_limited' },
+    }), { status: 429, headers: { 'Content-Type': 'application/json', 'Retry-After': '60' } });
+    return response();
+  });
+  const request = provider.generateArchitectureWithAI(
+    'もっともセキュアの構成で、FabricのE2EのArchitecture図を作成してください。',
+    { model: 'gpt-6-astra', reasoningEffort: 'max', signal: controller.signal },
+    undefined, 'ja', { onRetryWait: (wait: unknown) => waits.push(wait) },
+  );
+  void request.catch(() => {});
+  await new Promise<void>(resolve => setImmediate(resolve));
+  assert.equal(bodies.length, 1, '429 must wait instead of immediately replaying at lower quality');
+  assert.equal(waits.length, 1, 'the fifth-argument progress callback must reach the transport');
+  t.mock.timers.tick(59_999);
+  await new Promise<void>(resolve => setImmediate(resolve));
+  assert.equal(bodies.length, 1);
+  t.mock.timers.tick(1);
+  assert.equal((await request).services.length, 1);
+  assert.equal(bodies.length, 2);
+  assert.deepEqual(bodies[1], bodies[0]);
+  assert.equal(bodies[1].deployment, 'gpt-6-astra');
+  assert.equal(bodies[1].body.reasoning.effort, 'max');
+  assert.equal(bodies[1].body.max_output_tokens, 32_000);
+  assert.equal(provider.getTestModelUsage().length, 1);
+  assert.equal(waits.at(-1), null);
+});
+
+test('cancelling an actual blueprint transport during Retry-After prevents replay and success telemetry', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const controller = new AbortController();
+  const waits: unknown[] = [];
+  const fetch = t.mock.method(globalThis, 'fetch', async () => new Response(JSON.stringify({
+    error: { source: 'azure_openai', code: 'azure_openai_rate_limited' },
+  }), { status: 429, headers: { 'Content-Type': 'application/json', 'Retry-After': '60' } }));
+  const request = provider.generateBlueprintArchitectureWithAI('Secure Fabric E2E', {
+    model: 'gpt-6-astra', reasoningEffort: 'max', signal: controller.signal,
+    onRetryWait: (wait: unknown) => waits.push(wait),
+  });
+  const rejection = assert.rejects(request, { name: 'AbortError', userCancelled: true });
+  await new Promise<void>(resolve => setImmediate(resolve));
+  assert.equal(fetch.mock.callCount(), 1);
+  assert.equal(waits.length, 1);
+  controller.abort();
+  await rejection;
+  t.mock.timers.tick(1_000_000);
+  await new Promise<void>(resolve => setImmediate(resolve));
+  assert.equal(fetch.mock.callCount(), 1);
+  assert.equal(provider.getTestModelUsage().length, 0);
+  assert.equal(waits.length, 1, 'cancellation must not publish a resuming event');
+});
+
+for (const [stage, generate] of [
+  ['manifest', provider.generateComponentManifest],
+  ['topology', provider.generateArchitectureWithAI],
+  ['blueprint', provider.generateBlueprintArchitectureWithAI],
+] as const) {
+  test(`${stage} preserves a structured daily-budget rejection without any retry or success`, async t => {
+    const waits: unknown[] = [];
+    const fetch = t.mock.method(globalThis, 'fetch', async () => new Response(JSON.stringify({
+      error: { source: 'budget', code: 'ai_daily_budget_exceeded', requestId: 'budget-rejection-id' },
+    }), { status: 429, headers: { 'Content-Type': 'application/json', 'Retry-After': '5' } }));
+    await assert.rejects(generate('Secure Fabric E2E', {
+      model: 'gpt-6-astra', reasoningEffort: 'max', onRetryWait: (wait: unknown) => waits.push(wait),
+    }), (error: any) => {
+      assert.equal(error.source, 'budget');
+      assert.equal(error.code, 'ai_daily_budget_exceeded');
+      assert.equal(error.status, 429);
+      assert.equal(error.requestId, 'budget-rejection-id');
+      assert.equal(error.retryAfterMs, 5000);
+      assert.match(error.message, /daily AI budget.*midnight UTC/);
+      return true;
+    });
+    assert.equal(fetch.mock.callCount(), 1);
+    assert.equal(waits.length, 0);
+    assert.equal(provider.getTestModelUsage().length, 0);
+  });
+
+  test(`${stage} preserves provider 500 provenance without automatic lower-quality replay`, async t => {
+    const bodies: any[] = [];
+    t.mock.method(globalThis, 'fetch', async (_url: unknown, options: RequestInit) => {
+      bodies.push(JSON.parse(options.body as string));
+      return new Response(JSON.stringify({
+        error: {
+          source: 'azure_openai', code: 'azure_openai_unavailable', requestId: 'proxy-500',
+          upstreamStatus: 500, upstreamCode: 'server_error', upstreamRequestId: 'provider-500',
+        },
+      }), { status: 500, headers: { 'Content-Type': 'application/json' } });
+    });
+    await assert.rejects(generate('Secure Fabric E2E', {
+      model: 'gpt-6-astra', reasoningEffort: 'max',
+    }), (error: any) => {
+      assert.equal(error.source, 'azure_openai');
+      assert.equal(error.code, 'azure_openai_unavailable');
+      assert.equal(error.status, 500);
+      assert.equal(error.upstreamStatus, 500);
+      assert.equal(error.upstreamCode, 'server_error');
+      assert.equal(error.requestId, 'proxy-500');
+      assert.equal(error.upstreamRequestId, 'provider-500');
+      return true;
+    });
+    assert.equal(bodies.length, 1);
+    assert.equal(bodies[0].body.reasoning.effort, 'max');
+    assert.equal(bodies[0].body.max_output_tokens, 32000);
+    assert.equal(provider.getTestModelUsage().length, 0);
+  });
+}
 
 test('already-aborted generation never starts a request', async t => {
   const fetch = t.mock.method(globalThis, 'fetch', async () => response());
@@ -314,7 +430,7 @@ test('legacy direct AbortSignal arguments preserve cancellation and never retry'
   assert.equal(fetch.mock.callCount(), 1);
 });
 
-test('internal timeouts retain the remote compact retry and release caller listeners', async t => {
+test('internal timeouts never replay at lower quality and still release caller listeners', async t => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   let calls = 0;
   const fetch = t.mock.method(globalThis, 'fetch', async (_url: unknown, options: RequestInit) => {
@@ -327,16 +443,22 @@ test('internal timeouts retain the remote compact retry and release caller liste
   const remove = t.mock.method(controller.signal, 'removeEventListener');
   const request = provider.generateArchitectureWithAI('test', override, undefined, 'en', { signal: controller.signal });
   t.mock.timers.tick(225001);
-  assert.equal((await request).services.length, 1);
-  assert.equal(fetch.mock.callCount(), 2);
-  assert.equal(add.mock.callCount(), 2);
-  assert.equal(remove.mock.callCount(), 2);
+  await assert.rejects(request, (error: any) => {
+    assert.equal(error.code, 'ai_client_timeout');
+    assert.equal(error.source, 'client');
+    assert.match(error.message, /timed out after 225 seconds/);
+    return true;
+  });
+  assert.equal(fetch.mock.callCount(), 1);
+  assert.equal(add.mock.callCount(), 1);
+  assert.equal(remove.mock.callCount(), 1);
+  assert.equal(provider.getTestModelUsage().length, 0);
 });
 
-test('empty architectures remain a retryable failure instead of clearing the canvas', async t => {
+test('empty architectures fail without clearing the canvas or replaying a compact request', async t => {
   const fetch = t.mock.method(globalThis, 'fetch', async () => response('{"services":[]}'));
   await assert.rejects(provider.generateArchitectureWithAI('test', override), /empty architecture/);
-  assert.equal(fetch.mock.callCount(), 2);
+  assert.equal(fetch.mock.callCount(), 1);
 });
 
 for (const content of ['{"status":"ok"}', '{"services":{}}']) {

@@ -26,6 +26,8 @@ import {
   runWithCompactRetry,
   safeParseModelJson,
   ModelJsonError,
+  runWithRateLimitRetry,
+  type AIRateLimitRetryOptions,
 } from './aiRetry';
 
 // Token usage metrics returned from Azure OpenAI API
@@ -43,13 +45,22 @@ interface CallResult {
   metrics: AIMetrics;
 }
 
-export interface ModelOverride extends RuntimeModelOverride {
+export interface ModelOverride extends RuntimeModelOverride, AIRateLimitRetryOptions {
   /** Also reaches reference, blueprint and manifest providers using this override. */
   signal?: AbortSignal;
 }
 
-export interface AIGenerationOptions {
-  signal?: AbortSignal;
+export type AIGenerationOptions = AIRateLimitRetryOptions;
+
+export class AIRequestTimeoutError extends Error {
+  readonly source = 'client';
+  readonly code = 'ai_client_timeout';
+  readonly status = 504;
+
+  constructor() {
+    super('The AI request timed out after 225 seconds. This timeout was not automatically retried. Try again later; failures with unknown usage may still count toward the application budget.');
+    this.name = 'TimeoutError';
+  }
 }
 
 export function throwIfGenerationAborted(signal?: AbortSignal): void {
@@ -118,74 +129,67 @@ export async function callAzureOpenAI(messages: any[], modelOverride?: ModelOver
     + ` | max_tokens: ${maxCompletionTokens} | API: ${getApiFormatLabel(apiFormat)}`,
   );
 
-  // Stay below the 240-second Front Door limit while preserving caller cancellation.
-  const lifetime = requestLifetime(signal, 225000);
-  try {
-    const proxyResult = await callAzureOpenAIProxy({
-      apiFormat,
-      deployment,
-      body: requestBody,
-      byo,
-      signal: lifetime.signal,
-    });
-
-    throwIfGenerationAborted(signal);
-    throwIfGenerationAborted(lifetime.signal);
-    
-    // Calculate elapsed time
-    const elapsedTimeMs = Math.round(performance.now() - startTime);
-
-    if (!proxyResult.ok) {
-      console.error('Azure OpenAI API error:', {
-        status: proxyResult.status,
-        code: proxyResult.error?.code,
-        source: proxyResult.error?.source,
-        requestId: proxyResult.error?.requestId,
-        upstreamRequestId: proxyResult.error?.upstreamRequestId,
+  const onRetryWait = ('aborted' in options ? undefined : options.onRetryWait) ?? modelOverride?.onRetryWait;
+  const proxyResult = await runWithRateLimitRetry(async () => {
+    // Keep the existing 225s limit per HTTP request, not across local cooldowns.
+    const lifetime = requestLifetime(signal, 225000);
+    try {
+      const result = await callAzureOpenAIProxy({
+        apiFormat, deployment, body: requestBody, byo, signal: lifetime.signal,
       });
-      throw createOpenAIProxyError(proxyResult);
+      throwIfGenerationAborted(signal);
+      throwIfGenerationAborted(lifetime.signal);
+      if (!result.ok) {
+        console.error('Azure OpenAI API error:', {
+          status: result.status, code: result.error?.code, source: result.error?.source,
+          requestId: result.error?.requestId, upstreamRequestId: result.error?.upstreamRequestId,
+          retryAfterMs: result.error?.retryAfterMs,
+        });
+        throw createOpenAIProxyError(result);
+      }
+      return result;
+    } catch (error) {
+      throwIfGenerationAborted(signal);
+      if (lifetime.timedOut) {
+        throw new AIRequestTimeoutError();
+      }
+      throw error;
+    } finally {
+      lifetime.dispose();
     }
+  }, { signal, onRetryWait });
 
-    // Parse response using the appropriate API format
-    const parsed = parseApiResponse(proxyResult.data, apiFormat);
-    const content = parsed.content;
-    const metrics: AIMetrics = {
-      promptTokens: parsed.promptTokens,
-      completionTokens: parsed.completionTokens,
-      totalTokens: parsed.totalTokens,
-      elapsedTimeMs,
-      model: displayName,
-      reasoningEffort: isReasoning ? reasoningEffort : 'none',
-    };
-    
-    if (!content || content.trim().length === 0) {
-      throw new Error('Empty response from Azure OpenAI. The request may have been too large or complex. Try reducing recommendations or using lower reasoning effort.');
-    }
-    
-    console.log(`API Response: ${content.length} chars | Tokens: ${metrics.promptTokens} in → ${metrics.completionTokens} out (${metrics.totalTokens} total) | Time: ${(metrics.elapsedTimeMs / 1000).toFixed(2)}s | Model: ${displayName}`);
-    
-    // Track model usage telemetry
-    trackAIModelUsage({
-      model: telemetryModel,
-      operation,
-      reasoningEffort: isReasoning ? reasoningEffort : undefined,
-      promptTokens: metrics.promptTokens,
-      completionTokens: metrics.completionTokens,
-      totalTokens: metrics.totalTokens,
-      elapsedTimeMs: metrics.elapsedTimeMs,
-    });
-    
-    return { content, metrics };
-  } catch (error: any) {
-    throwIfGenerationAborted(signal);
-    if (lifetime.timedOut) {
-      throw new Error('Request timed out after 225 seconds. The request may be too complex. Consider simplifying the architecture or reducing the number of recommendations.');
-    }
-    
-    throw error;
-  } finally {
-    lifetime.dispose();
+  throwIfGenerationAborted(signal);
+
+  const elapsedTimeMs = Math.round(performance.now() - startTime);
+  const parsed = parseApiResponse(proxyResult.data, apiFormat);
+  const content = parsed.content;
+  const metrics: AIMetrics = {
+    promptTokens: parsed.promptTokens,
+    completionTokens: parsed.completionTokens,
+    totalTokens: parsed.totalTokens,
+    elapsedTimeMs,
+    model: displayName,
+    reasoningEffort: isReasoning ? reasoningEffort : 'none',
+  };
+
+  if (!content || content.trim().length === 0) {
+    throw new Error('Empty response from Azure OpenAI. The request may have been too large or complex. Try reducing recommendations or using lower reasoning effort.');
   }
+
+  console.log(`API Response: ${content.length} chars | Tokens: ${metrics.promptTokens} in → ${metrics.completionTokens} out (${metrics.totalTokens} total) | Time: ${(metrics.elapsedTimeMs / 1000).toFixed(2)}s | Model: ${displayName}`);
+
+  trackAIModelUsage({
+    model: telemetryModel,
+    operation,
+    reasoningEffort: isReasoning ? reasoningEffort : undefined,
+    promptTokens: metrics.promptTokens,
+    completionTokens: metrics.completionTokens,
+    totalTokens: metrics.totalTokens,
+    elapsedTimeMs: metrics.elapsedTimeMs,
+  });
+
+  return { content, metrics };
 }
 
 // ── Tier 3: change-specific chat follow-up suggestions ──────────────────────
@@ -362,7 +366,9 @@ LAYOUT READABILITY — CRITICAL:
       { role: 'user', content: description },
     ];
 
-    const { content, metrics } = await callAzureOpenAI(messages, override, true, 'architecture_generation', signal);
+    const { content, metrics } = await callAzureOpenAI(messages, override, true, 'architecture_generation', {
+      signal, onRetryWait: 'aborted' in options ? undefined : options.onRetryWait,
+    });
     throwIfGenerationAborted(signal);
 
     console.log(`AI model response [${metrics.model || 'unknown'}]:`, content);
@@ -378,9 +384,7 @@ LAYOUT READABILITY — CRITICAL:
       throw new Error('Invalid response format: missing services array');
     }
 
-    // A model returning {"services": []} previously rendered a blank canvas
-    // with no explanation. Treat it as a retryable failure so the compact
-    // retry gets a chance, then surface a clear, localised error if it persists.
+    // Empty output must never clear the canvas or trigger a hidden lower-quality retry.
     if (parsed.services.length === 0) {
       throw new EmptyArchitectureError(EMPTY_ARCHITECTURE_MESSAGE);
     }
@@ -389,11 +393,8 @@ LAYOUT READABILITY — CRITICAL:
   };
 
   try {
-    // The dominant transient failure on this (primary) path is exceeding the
-    // proxy's 210s upstream budget — surfaced as "The AI provider is taking too
-    // long to respond." One automatic retry with a compact prompt at reduced
-    // reasoning effort finishes well inside the budget. Post-processing runs
-    // once, AFTER the retry settles, so a retried result can never double-apply.
+    // Keep the full requested prompt and reasoning. Only transport-level,
+    // classified throttles are retried automatically, without changing quality.
     const { architecture, metrics } = await runWithCompactRetry({
       transportFeature: 'architectureGeneration',
       override: modelOverride,
@@ -577,6 +578,7 @@ LAYOUT READABILITY — CRITICAL:
     // UI can still classify (OpenAIProxyError.code / ModelJsonError.kind) and
     // localise them.
     if (error instanceof OpenAIProxyError) throw error;
+    if (error instanceof AIRequestTimeoutError) throw error;
     if (error instanceof ModelJsonError) throw error;
     if (error instanceof EmptyArchitectureError) throw error;
 
@@ -1272,6 +1274,7 @@ export async function generateArchitectureFromIaC(input: IaCImportInput, languag
     // them in an unlocalised "Failed to parse … : <raw>" string.
     if (
       error instanceof OpenAIProxyError
+      || error instanceof AIRequestTimeoutError
       || error instanceof ModelJsonError
       || error instanceof EmptyArchitectureError
     ) {

@@ -113,6 +113,9 @@ async function delay(milliseconds: number, signal: AbortSignal): Promise<void> {
   }
 }
 
+// Admission and provider cooldowns share the same cancellable timer cleanup.
+export { delay as waitForAIRetry };
+
 function duration(value: number, name: string): number {
   if (!Number.isSafeInteger(value) || value < 1 || value > 2_147_483_647) {
     throw new AIBudgetQueueError('invalid_configuration', `${name} must be a positive timer-safe integer.`);
@@ -163,7 +166,7 @@ export async function runAIBudgetQueue<T>(
     if (capacityTimer !== undefined) return;
     capacityTimer = setTimeout(() => fail(new AIBudgetQueueError(
       'capacity_timeout',
-      'AI request capacity stayed busy. Try the comparison again when capacity is available.',
+      'AI request capacity stayed busy. Try again when capacity is available.',
     )), capacityWait);
   };
   const publish = (index: number, state: AIQueueTaskState<T>) => {
