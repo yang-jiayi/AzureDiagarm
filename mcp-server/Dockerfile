@@ -3,12 +3,13 @@
 # IMPORTANT: the build context MUST be the repository root, because the MCP
 # build's sync scripts read the web app's data as the single source of truth:
 #   - src/data/serviceIconMapping.ts        (icon map + categories)
-#   - src/data/pricing/regions/**           (distilled to a pricing sidecar)
+#   - src/data/*IconCatalog.ts             (Microsoft product catalogs)
+#   - public/pricing/regions/**            (distilled to a pricing sidecar)
+#   - scripts/prep-pricing-data.mjs        (shared pricing expansion)
 #   - Azure_Public_Service_Icons/Icons/**   (official glyphs, embedded as data URIs)
 #
 # Build locally:
 #   docker build -f mcp-server/Dockerfile -t aadb-mcp .
-# (azd builds it via the 'mcp' service in azure.yaml with docker.context: ".")
 
 # ── Build stage ──────────────────────────────────────────────────────────────
 FROM node:22-alpine@sha256:c610fcdfb1d5b4740dd70c284ed3cb16bb857e0f7166196e36a5501df7a3aa32 AS build
@@ -23,9 +24,10 @@ COPY mcp-server/tsconfig.json ./
 COPY mcp-server/src ./src
 COPY mcp-server/scripts ./scripts
 
-# Web-app data the prebuild sync scripts read (resolved as <repoRoot>/src/data
-# and <repoRoot>/Azure_Public_Service_Icons — i.e. /app/... here).
+# Keep the repository-relative inputs used by both prebuild sync scripts.
 COPY src/data /app/src/data
+COPY scripts/prep-pricing-data.mjs /app/scripts/prep-pricing-data.mjs
+COPY public/pricing/regions /app/public/pricing/regions
 COPY Azure_Public_Service_Icons /app/Azure_Public_Service_Icons
 
 # Runs prebuild (sync:icons + sync:pricing) then tsc, and copies the generated

@@ -203,3 +203,9 @@ jobs:
       - name: Test
         working-directory: mcp-server
         run: npm test
+
+      - name: Build standalone MCP runtime image
+        run: |
+          docker build \
+            --file mcp-server/Dockerfile \
+            --tag azurediagarm-mcp-validation:"${GITHUB_SHA}" .
