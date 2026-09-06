@@ -52,8 +52,65 @@ jobs:
       - name: Test application core
         run: npm test
 
+      - name: Test Office exports
+        run: npm run test:exports
+
+      - name: Test workspace editing
+        run: npm run test:workspace
+
       - name: Test token server
         run: npm --prefix server test
+
+      - name: Build the complete runtime image
+        run: |
+          docker build \
+            --build-arg VITE_AZURE_OPENAI_ENDPOINT=https://container-test.openai.azure.com/ \
+            --build-arg VITE_AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA=gpt-6-astra \
+            --tag azurediagarm-validation:"${GITHUB_SHA}" .
+
+      - name: Start all runtime processes and verify readiness
+        run: |
+          set -Eeuo pipefail
+          container="$(docker run --detach \
+            --publish 127.0.0.1:18080:80 \
+            --env APP_DEPLOYMENT_MODE=local \
+            --env ACCESS_CONTROL_ENABLED=false \
+            --env AI_BUDGET_STORE=memory \
+            --env MCP_ENABLED=true \
+            --env AZURE_OPENAI_ENDPOINT=https://container-test.openai.azure.com/ \
+            --env AZURE_OPENAI_ALLOWED_DEPLOYMENTS=gpt-6-astra \
+            azurediagarm-validation:"${GITHUB_SHA}")"
+          cleanup() {
+            status=$?
+            if [[ "$status" -ne 0 ]]; then docker logs "$container"; fi
+            docker rm --force "$container" >/dev/null
+            exit "$status"
+          }
+          trap cleanup EXIT
+          curl --fail --silent --show-error --max-time 5 \
+            --retry 30 --retry-all-errors --retry-delay 2 \
+            http://127.0.0.1:18080/healthz
+          readiness="$(curl --fail --silent --show-error --max-time 5 \
+            http://127.0.0.1:18080/readyz)"
+          if [[ "$readiness" != "ready" ]]; then
+            echo "::error::API did not report configuration-aware readiness."
+            exit 1
+          fi
+          docker exec "$container" node --input-type=module -e '
+            let lastError;
+            for (let attempt = 0; attempt < 30; attempt++) {
+              try {
+                const response = await fetch("http://127.0.0.1:3030/healthz", { signal: AbortSignal.timeout(2000) });
+                if (!response.ok) throw new Error(`MCP readiness returned ${response.status}`);
+                process.exit(0);
+              } catch (error) {
+                lastError = error;
+              }
+              await new Promise(resolve => setTimeout(resolve, 1000));
+            }
+            console.error(lastError);
+            process.exit(1);
+          '
 
   e2e:
     name: Test critical browser flows
@@ -82,6 +139,13 @@ jobs:
 
       - name: Test critical flows
         run: npm run test:e2e
+
+      - name: Test workspace browser safeguards
+        run: |
+          npm run test:workspace:browser
+          npm run test:ai-ui
+          npm run test:inspector-ui
+          npm run test:modal-focus
 
       # Visual baselines are rendered on Linux, so a Windows or macOS developer
       # cannot reproduce a screenshot diff locally. Publishing the report and

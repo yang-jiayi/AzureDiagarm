@@ -57,5 +57,34 @@ body.dark-mode {
 #root {
   width: 100vw;
   height: 100vh;
+  height: 100dvh;
   overflow: hidden;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+input, textarea, select {
+  accent-color: var(--azd-color-accent);
+}
+
+/* Keep keyboard focus visible even in components with older outline resets. */
+:focus-visible {
+  outline: 3px solid var(--azd-color-focus) !important;
+  outline-offset: 3px;
+}
+
+input::placeholder, textarea::placeholder {
+  color: var(--azd-color-text-muted);
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

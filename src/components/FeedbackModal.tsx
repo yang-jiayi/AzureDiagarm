@@ -3,7 +3,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { X, MessageSquare, Send, CheckCircle2 } from 'lucide-react';
-import { submitFeedback, FeedbackContext } from '../services/feedbackService';
+import { submitFeedback, buildFeedbackPayload, getFeedbackPolicy, deleteFeedback, FeedbackContext, FeedbackPolicy, FeedbackReceipt } from '../services/feedbackService';
 import './FeedbackModal.css';
 import { useLanguage } from '../i18n/LanguageContext';
 import { localize } from '../i18n/localization';
@@ -50,6 +50,28 @@ const FeedbackModal: React.FC<FeedbackModalProps> = ({ isOpen, onClose, context,
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [includeMetadata, setIncludeMetadata] = useState(false);
+  const [policy, setPolicy] = useState<FeedbackPolicy | null>(null);
+  const [receipt, setReceipt] = useState<FeedbackReceipt | null>(null);
+  const [deleted, setDeleted] = useState(false);
+  const contactAvailable = FEEDBACK_CONTACT_ENABLED && policy?.contactEnabled === true;
+  const feedbackInput = {
+    rating: rating ?? 0,
+    category,
+    comment,
+    context,
+    includeMetadata,
+    contact: contactAvailable ? { consent: contactConsent, email: contactEmail } : undefined,
+  };
+
+  useEffect(() => {
+    if (!isOpen) return;
+    setIncludeMetadata(false);
+    setPolicy(null);
+    const controller = new AbortController();
+    getFeedbackPolicy(controller.signal).then(setPolicy).catch(() => { /* Display unavailable policy, not a guessed retention period. */ });
+    return () => controller.abort();
+  }, [isOpen]);
 
   // When the modal is opened from the quick toast, seed the rating the user
   // already gave so they don't have to pick it twice.
@@ -68,14 +90,19 @@ const FeedbackModal: React.FC<FeedbackModalProps> = ({ isOpen, onClose, context,
     setIsSubmitting(false);
     setSubmitted(false);
     setError(null);
+    setIncludeMetadata(false);
+    setReceipt(null);
+    setDeleted(false);
   };
 
   const handleClose = () => {
+    if (isSubmitting) return;
     reset();
     onClose();
   };
 
   const handleSubmit = async () => {
+    if (isSubmitting) return;
     if (rating === null) {
       setError(localize(language, {
         en: 'Please pick a rating so we know how you feel.',
@@ -84,7 +111,7 @@ const FeedbackModal: React.FC<FeedbackModalProps> = ({ isOpen, onClose, context,
       return;
     }
     const normalizedEmail = contactEmail.trim();
-    if (FEEDBACK_CONTACT_ENABLED && contactConsent && (!EMAIL_PATTERN.test(normalizedEmail) || normalizedEmail.length > 254)) {
+    if (contactAvailable && contactConsent && (!EMAIL_PATTERN.test(normalizedEmail) || normalizedEmail.length > 254)) {
       setError(localize(language, {
         en: 'Enter a valid email address so we can follow up.',
         ja: 'フォローアップできるよう、有効なメールアドレスを入力してください。',
@@ -95,15 +122,7 @@ const FeedbackModal: React.FC<FeedbackModalProps> = ({ isOpen, onClose, context,
     setIsSubmitting(true);
 
     try {
-      await submitFeedback({
-        rating,
-        category,
-        comment,
-        context,
-        contact: FEEDBACK_CONTACT_ENABLED
-          ? { consent: contactConsent, email: normalizedEmail }
-          : undefined,
-      });
+      setReceipt(await submitFeedback(feedbackInput));
       setSubmitted(true);
     } catch (submitError) {
       console.error('[feedback] submit failed:', submitError);
@@ -111,6 +130,15 @@ const FeedbackModal: React.FC<FeedbackModalProps> = ({ isOpen, onClose, context,
     } finally {
       setIsSubmitting(false);
     }
+  };
+
+  const handleDelete = async () => {
+    if (!receipt || isSubmitting) return;
+    setError(null);
+    setIsSubmitting(true);
+    try { await deleteFeedback(receipt.id); setDeleted(true); }
+    catch { setError(localize(language, { en: 'Deletion failed. Please retry.', ja: '削除できませんでした。もう一度お試しください。' })); }
+    finally { setIsSubmitting(false); }
   };
 
   if (!isOpen) return null;
@@ -144,13 +172,23 @@ const FeedbackModal: React.FC<FeedbackModalProps> = ({ isOpen, onClose, context,
             <CheckCircle2 size={48} className="feedback-thanks-icon" />
             <h3>{t("Thank you!")}</h3>
             <p>
-              {FEEDBACK_CONTACT_ENABLED && contactConsent
+              {contactAvailable && contactConsent && receipt?.emailDelivered
                 ? translate('Your feedback was saved. The maintainer may contact you about this submission.')
                 : t("Your feedback helps us improve the Microsoft Product Architecture Diagram Builder.")}
             </p>
+            {receipt && <p className="feedback-receipt">
+              {localize(language, { en: 'Feedback ID:', ja: 'フィードバック ID:' })} <code>{receipt.id}</code>
+            </p>}
+            {receipt?.canDelete && !deleted && <button className="azd-button azd-button--secondary" onClick={handleDelete} disabled={isSubmitting}>
+              {localize(language, { en: 'Delete my archived feedback', ja: '保存されたフィードバックを削除' })}
+            </button>}
+            {deleted && <p role="status">{localize(language, { en: 'Deleted from the application archive. Email copies are not deleted.', ja: 'アプリの保存先から削除しました。メールのコピーは削除されません。' })}</p>}
+            {receipt?.emailDelivered && <p>{localize(language, { en: 'A copy was sent by email. Mailbox retention is managed separately.', ja: 'コピーをメールで送信しました。メールの保持期間は別途管理されます。' })}</p>}
+            {error && <div className="feedback-error azd-callout azd-callout--danger" role="alert">{error}</div>}
             <button
               className="azd-button azd-button--primary"
               onClick={handleClose}
+              disabled={isSubmitting}
             >
               {t("Done")}
             </button>
@@ -214,7 +252,7 @@ const FeedbackModal: React.FC<FeedbackModalProps> = ({ isOpen, onClose, context,
                 <div className="character-count azd-character-count">{comment.length}{t("/1000")}</div>
               </div>
 
-              {FEEDBACK_CONTACT_ENABLED && (
+              {contactAvailable && (
                 <div className="feedback-contact">
                   <div className="feedback-contact-heading">{translate('Open to a follow-up?')}</div>
                   <label className="feedback-contact-consent" htmlFor="feedback-contact-consent">
@@ -254,6 +292,33 @@ const FeedbackModal: React.FC<FeedbackModalProps> = ({ isOpen, onClose, context,
                   )}
                 </div>
               )}
+              <label className="feedback-metadata-choice">
+                <input type="checkbox" checked={includeMetadata} disabled={isSubmitting} onChange={event => setIncludeMetadata(event.target.checked)} />
+                {localize(language, {
+                  en: 'Include optional diagnostics: service count, model, and site origin only.',
+                  ja: '任意の診断情報を含める: サービス数、モデル、サイトのオリジンのみ。',
+                })}
+              </label>
+              <details className="feedback-payload">
+                <summary>{localize(language, { en: 'Preview exactly what will be submitted', ja: '送信する内容を確認' })}</summary>
+                <pre>{JSON.stringify(buildFeedbackPayload(feedbackInput), null, 2)}</pre>
+              </details>
+              <p className="feedback-privacy">
+                {policy
+                  ? localize(language, {
+                    en: policy.archiveEnabled
+                      ? `New archived feedback expires after ${policy.retentionDays} days (Table Storage cleanup runs every 15 minutes while the server is running). Signed-in owners and administrators can delete archived feedback.`
+                      : 'No application archive is configured. Email-only feedback cannot be deleted through this app.',
+                    ja: policy.archiveEnabled
+                      ? `新しく保存されるフィードバックは ${policy.retentionDays} 日後に期限切れになります（Table Storage はサーバー稼働中に15分間隔で削除）。サインインした所有者と管理者は保存データを削除できます。`
+                      : 'アプリの保存先が未構成です。メールのみのフィードバックはこのアプリでは削除できません。',
+                  })
+                  : localize(language, { en: 'Retention policy is currently unavailable.', ja: '現在、保持ポリシーを取得できません。' })}
+                {' '}{localize(language, {
+                  en: 'Email and backup retention follow their own policies; app deletion does not delete those copies. Basic rating/category analytics are separate and contain no email, comment or prompt text.',
+                  ja: 'メールとバックアップには個別の保持ポリシーが適用され、アプリでの削除ではそのコピーは削除されません。評価・カテゴリの基本分析は別途記録され、メールアドレス、コメントやプロンプト本文は含まれません。',
+                })}
+              </p>
 
               {error && (
                 <div className="feedback-error azd-callout azd-callout--danger" role="alert">
@@ -262,10 +327,10 @@ const FeedbackModal: React.FC<FeedbackModalProps> = ({ isOpen, onClose, context,
               )}
 
               <div className="feedback-hint azd-callout">
-                {' '}{FEEDBACK_CONTACT_ENABLED
+                {' '}{contactAvailable
                   ? localize(language, {
-                      en: "🔒 Rating and comments help improve the app. If you opt in, your email is stored only with this feedback in Cosmos DB and is not sent to analytics. Don't include other sensitive information.",
-                      ja: '🔒 評価とコメントはアプリの改善に利用します。オプトインした場合、メールアドレスはこのフィードバックとともに Cosmos DB にのみ保存され、分析には送信されません。その他の機微な情報は入力しないでください。',
+                      en: `🔒 Follow-up is optional. With your consent, your address is delivered only by email to the maintainer for follow-up within ${policy?.contactRetentionDays ?? 180} days; the archive stores consent metadata, not your address. It is not sent to analytics. Don't include other sensitive information.`,
+                      ja: `🔒 フォローアップは任意です。同意した場合、${policy?.contactRetentionDays ?? 180} 日以内の連絡のためアドレスを管理者へメールでのみ送信します。アプリにはアドレスではなく同意情報を保存し、分析には送信しません。その他の機微な情報は入力しないでください。`,
                     })
                   : localize(language, {
                       en: "🔒 We collect your rating and comment to improve the app. Don't include sensitive information.",
@@ -274,9 +339,9 @@ const FeedbackModal: React.FC<FeedbackModalProps> = ({ isOpen, onClose, context,
             </div>
 
             <div className="modal-actions">
-              <button className="btn-secondary" onClick={handleClose} disabled={isSubmitting}>
+              <button className="azd-button azd-button--secondary" onClick={handleClose} disabled={isSubmitting}>
                 {' '}{t("Cancel")}{' '}</button>
-              <button className="btn-primary" onClick={handleSubmit} disabled={isSubmitting}>
+              <button className="azd-button azd-button--primary" onClick={handleSubmit} disabled={isSubmitting}>
                 {isSubmitting ? (
                   <>
                     <div className="spinner-small"></div>

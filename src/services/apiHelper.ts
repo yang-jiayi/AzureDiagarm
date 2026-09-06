@@ -6,7 +6,7 @@ import type { ReasoningEffort } from '../stores/modelSettingsStore';
 /**
  * API Format Helper
  * Abstracts the difference between Azure OpenAI Responses API and Chat Completions API.
- * OpenAI models (GPT-5.x) use the Responses API, partner models use Chat
+ * OpenAI models (including GPT-6 Astra) use the Responses API, partner models use Chat
  * Completions, and Anthropic models use the Messages API in Microsoft Foundry.
  */
 
@@ -486,7 +486,7 @@ export function proxyErrorMessageForCode(
     case 'request_too_large':
       return 'The request is too large. Reduce the diagram or image size and try again.';
     case 'image_not_supported':
-      return 'The selected model may not support image analysis. Try using GPT-5.6 Sol.';
+      return 'The selected model may not support image analysis. Try using GPT-6 Astra.';
     case 'content_filtered':
       return 'The AI provider content policy rejected the request. Revise the prompt and try again.';
     case 'invalid_upstream_response':
@@ -496,7 +496,7 @@ export function proxyErrorMessageForCode(
       return 'The application could not reach the Azure OpenAI proxy. Check your connection and try again.';
     case 'invalid_upstream_request':
       return options.vision
-        ? 'The selected model may not support image analysis. Try using GPT-5.6 Sol.'
+        ? 'The selected model may not support image analysis. Try using GPT-6 Astra.'
         : 'The AI provider rejected the request format. Please try again or simplify the request.';
     default:
       return `AI provider request failed (${options.status || 'network error'}). Please try again.`;

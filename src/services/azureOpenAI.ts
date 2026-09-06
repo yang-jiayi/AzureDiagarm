@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-import { getDeploymentName, ModelType } from '../stores/modelSettingsStore';
+import { getDeploymentName, getModelSettingsForFeature, ModelType } from '../stores/modelSettingsStore';
 import { resolveServiceIconMapping, SERVICE_ICON_MAP } from '../data/serviceIconMapping';
 import { trackAIModelUsage } from './telemetryService';
 import {
@@ -9,6 +9,7 @@ import {
   parseApiResponse,
   callAzureOpenAIProxy,
   createOpenAIProxyError,
+  proxyErrorMessageForCode,
   getApiFormatLabel,
   OpenAIProxyError,
 } from './apiHelper';
@@ -42,9 +43,48 @@ interface CallResult {
   metrics: AIMetrics;
 }
 
-export interface ModelOverride extends RuntimeModelOverride {}
+export interface ModelOverride extends RuntimeModelOverride {
+  /** Also reaches reference, blueprint and manifest providers using this override. */
+  signal?: AbortSignal;
+}
 
-export async function callAzureOpenAI(messages: any[], modelOverride?: ModelOverride, jsonOutput = true, operation = 'architecture_generation', signal?: AbortSignal): Promise<CallResult> {
+export interface AIGenerationOptions {
+  signal?: AbortSignal;
+}
+
+export function throwIfGenerationAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) {
+    throw Object.assign(new DOMException('Generation cancelled.', 'AbortError'), { userCancelled: true });
+  }
+}
+
+function generationSignal(
+  options: AIGenerationOptions | AbortSignal,
+  modelOverride?: ModelOverride,
+): AbortSignal | undefined {
+  return ('aborted' in options ? options : options.signal) ?? modelOverride?.signal;
+}
+
+function requestLifetime(signal: AbortSignal | undefined, timeoutMs: number) {
+  throwIfGenerationAborted(signal);
+  const controller = new AbortController();
+  let timedOut = false;
+  const abort = () => controller.abort();
+  signal?.addEventListener('abort', abort, { once: true });
+  const timer = setTimeout(() => { timedOut = true; controller.abort(); }, timeoutMs);
+  return {
+    signal: controller.signal,
+    get timedOut() { return timedOut; },
+    dispose() {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', abort);
+    },
+  };
+}
+
+export async function callAzureOpenAI(messages: any[], modelOverride?: ModelOverride, jsonOutput = true, operation = 'architecture_generation', options: AIGenerationOptions | AbortSignal = {}): Promise<CallResult> {
+  const signal = generationSignal(options, modelOverride);
+  throwIfGenerationAborted(signal);
   const runtime = resolveAIModelRuntime('architectureGeneration', modelOverride);
   const {
     apiFormat,
@@ -58,26 +98,6 @@ export async function callAzureOpenAI(messages: any[], modelOverride?: ModelOver
     telemetryModel,
   } = runtime;
 
-  // Stay below the 240-second Front Door origin limit so the client receives
-  // a controlled timeout instead of an edge-generated 504. A caller-supplied
-  // signal (e.g. a Cancel button) is chained in so aborting it aborts the
-  // in-flight request too; `userCancelled` lets us tell a user cancel apart
-  // from the internal timeout when mapping the resulting AbortError.
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 225000);
-  let userCancelled = false;
-  if (signal) {
-    if (signal.aborted) {
-      userCancelled = true;
-      controller.abort();
-    } else {
-      signal.addEventListener('abort', () => {
-        userCancelled = true;
-        controller.abort();
-      }, { once: true });
-    }
-  }
-  
   // Start timing
   const startTime = performance.now();
 
@@ -98,16 +118,19 @@ export async function callAzureOpenAI(messages: any[], modelOverride?: ModelOver
     + ` | max_tokens: ${maxCompletionTokens} | API: ${getApiFormatLabel(apiFormat)}`,
   );
 
+  // Stay below the 240-second Front Door limit while preserving caller cancellation.
+  const lifetime = requestLifetime(signal, 225000);
   try {
     const proxyResult = await callAzureOpenAIProxy({
       apiFormat,
       deployment,
       body: requestBody,
       byo,
-      signal: controller.signal,
+      signal: lifetime.signal,
     });
 
-    clearTimeout(timeoutId);
+    throwIfGenerationAborted(signal);
+    throwIfGenerationAborted(lifetime.signal);
     
     // Calculate elapsed time
     const elapsedTimeMs = Math.round(performance.now() - startTime);
@@ -154,34 +177,27 @@ export async function callAzureOpenAI(messages: any[], modelOverride?: ModelOver
     
     return { content, metrics };
   } catch (error: any) {
-    clearTimeout(timeoutId);
-
-    if (error.name === 'AbortError') {
-      // A caller cancel is not a failure — surface a neutral, still-AbortError
-      // so the UI can show a "Cancelled" state instead of an error banner. Tag
-      // it explicitly so the retry logic can tell a user cancel (terminal)
-      // apart from an internal timeout (retryable) without guessing from the
-      // AbortError name.
-      if (userCancelled) {
-        const cancelled = new Error('Generation cancelled.') as Error & { userCancelled?: boolean };
-        cancelled.name = 'AbortError';
-        cancelled.userCancelled = true;
-        throw cancelled;
-      }
+    throwIfGenerationAborted(signal);
+    if (lifetime.timedOut) {
       throw new Error('Request timed out after 225 seconds. The request may be too complex. Consider simplifying the architecture or reducing the number of recommendations.');
     }
     
     throw error;
+  } finally {
+    lifetime.dispose();
   }
 }
 
 // ── Tier 3: change-specific chat follow-up suggestions ──────────────────────
-// A lightweight, non-blocking helper that asks a fast model for 3 tailored
+// A non-blocking helper that asks the configured model for 3 tailored
 // "next step" refinements based on the current services and the last change.
 // Failures return [] so the caller falls back to the static (rule-based) chips.
-function pickFastFollowUpModel(): ModelOverride | undefined {
-  // Prefer a cheap/fast model when its deployment is configured; otherwise use
-  // the caller's current model (undefined = no override).
+function pickFollowUpModel(): ModelOverride | undefined {
+  const configured = getModelSettingsForFeature('architectureGeneration');
+  // The Astra default applies to follow-ups too; retain its configured
+  // reasoning policy rather than silently substituting the legacy fast model.
+  if (configured.model === 'gpt-6-astra') return configured;
+  // Keep the legacy fast fallback for installations not using Astra.
   const candidates: ModelType[] = ['grok-4.1-fast'];
   for (const m of candidates) {
     try {
@@ -200,6 +216,7 @@ export async function generateFollowUpSuggestions(input: {
   recentRequests: string[];
   count?: number;
   language?: Language;
+  signal?: AbortSignal;
 }): Promise<string[]> {
   const count = Math.min(Math.max(input.count ?? 3, 1), 5);
   const language = input.language ?? 'en';
@@ -225,9 +242,10 @@ Return ONLY JSON: {"suggestions":["..."]}`;
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userPrompt },
       ],
-      pickFastFollowUpModel(),
+      pickFollowUpModel(),
       true,
       'chat_followups',
+      { signal: input.signal },
     );
 
     const parsed = safeParseModelJson<any>(content, { context: 'follow-up suggestions' });
@@ -236,7 +254,9 @@ Return ONLY JSON: {"suggestions":["..."]}`;
       .map((s: any) => String(s).trim().replace(/[.;]+$/, ''))
       .filter((s: string) => s.length > 0 && s.length <= 80)
       .slice(0, count);
-  } catch {
+  } catch (error) {
+    throwIfGenerationAborted(input.signal);
+    if (error instanceof Error && error.name === 'AbortError') throw error;
     return [];
   }
 }
@@ -271,8 +291,10 @@ export async function generateArchitectureWithAI(
   modelOverride?: ModelOverride,
   manifest?: import('./componentManifestAI').ComponentManifest,
   language: Language = 'en',
-  signal?: AbortSignal,
+  options: AIGenerationOptions | AbortSignal = {},
 ) {
+  const signal = generationSignal(options, modelOverride);
+  throwIfGenerationAborted(signal);
   // Build a compact list of known service display names for the prompt
   const knownServices = Object.entries(SERVICE_ICON_MAP)
     .map(([serviceName, mapping]) => (
@@ -334,12 +356,14 @@ LAYOUT READABILITY — CRITICAL:
 17. **MICROSOFT 365.** When the solution involves collaboration, productivity, endpoint management, or Microsoft 365 data governance, name the workload exactly and give it category "microsoft 365": "Microsoft Teams", "SharePoint Online", "OneDrive for Business", "Exchange Online", "Microsoft Outlook", "Microsoft 365 Copilot", "Microsoft Intune", "Windows 365", "Microsoft Defender for Office 365", "Microsoft Defender XDR", "Microsoft Purview Information Protection", "Microsoft Purview Data Loss Prevention", "Microsoft Viva Engage", "Microsoft Planner", "Microsoft Loop", "Microsoft Lists", "Microsoft Stream", "Microsoft Search", "Microsoft Graph". Use "Microsoft Graph" as the API surface Azure services call to reach Microsoft 365 data, and "Microsoft Entra ID" (category "identity") for the identity they all authenticate against. These are per-user licensed products, so they carry no Azure meter cost.${compact ? '\n\nSPEED MODE — a previous attempt exceeded the time budget. Return the JSON directly without lengthy deliberation: 8-12 services, 2-4 groups, 12-18 connections, 5-8 workflow steps. Prioritise a correct, readable primary flow over exhaustive coverage.' : ''}`;
 
   const attempt = async (compact: boolean, override?: ModelOverride) => {
+    throwIfGenerationAborted(signal);
     const messages = [
       { role: 'system', content: buildSystemPrompt(compact) },
       { role: 'user', content: description },
     ];
 
     const { content, metrics } = await callAzureOpenAI(messages, override, true, 'architecture_generation', signal);
+    throwIfGenerationAborted(signal);
 
     console.log(`AI model response [${metrics.model || 'unknown'}]:`, content);
 
@@ -348,10 +372,16 @@ LAYOUT READABILITY — CRITICAL:
     // truncated output.
     const parsed = safeParseModelJson<any>(content, { context: 'architecture generation' });
 
+    // An acknowledgement or incompatible schema is not an empty architecture.
+    // Fail without a second charge, just as other malformed responses do.
+    if (!parsed || typeof parsed !== 'object' || !Array.isArray(parsed.services)) {
+      throw new Error('Invalid response format: missing services array');
+    }
+
     // A model returning {"services": []} previously rendered a blank canvas
     // with no explanation. Treat it as a retryable failure so the compact
     // retry gets a chance, then surface a clear, localised error if it persists.
-    if (!parsed || typeof parsed !== 'object' || !Array.isArray(parsed.services) || parsed.services.length === 0) {
+    if (parsed.services.length === 0) {
       throw new EmptyArchitectureError(EMPTY_ARCHITECTURE_MESSAGE);
     }
 
@@ -371,6 +401,7 @@ LAYOUT READABILITY — CRITICAL:
       isRetryable: (error) => error instanceof EmptyArchitectureError,
       attempt,
     });
+    throwIfGenerationAborted(signal);
 
     // Post-process: normalize service names and categories against SERVICE_ICON_MAP
     if (architecture.services && Array.isArray(architecture.services)) {
@@ -536,6 +567,8 @@ LAYOUT READABILITY — CRITICAL:
 
     return architecture;
   } catch (error: any) {
+    throwIfGenerationAborted(signal);
+    if (error?.name === 'AbortError') throw error;
     // Keep the raw failure detail in the console only; the user gets a stable,
     // pre-translated message chosen by error type (never the raw internals).
     console.error('Azure OpenAI Error:', error);
@@ -674,7 +707,9 @@ export async function analyzeArchitectureDiagramImage(
   imageBase64: string,
   mimeType: string = 'image/png',
   language: Language = 'en',
+  options: AIGenerationOptions = {},
 ): Promise<{ description: string; metrics: AIMetrics }> {
+  throwIfGenerationAborted(options.signal);
   const runtime = resolveAIModelRuntime('architectureGeneration');
   
   if (!runtime.supportsVision) {
@@ -725,9 +760,6 @@ If you cannot identify a specific Azure service, describe it by its apparent fun
 
 If the image is not an architecture diagram or is unclear, describe what you can see and note any limitations.`;
 
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 120000); // 2 minutes for image analysis
-  
   const startTime = performance.now();
 
   const requestBody = buildRequestBody({
@@ -757,16 +789,18 @@ If the image is not an architecture diagram or is unclear, describe what you can
 
   console.log(`🖼️ Analyzing architecture diagram with ${runtime.displayName}... | API: ${getApiFormatLabel(runtime.apiFormat)}`);
 
+  const lifetime = requestLifetime(options.signal, 120000);
   try {
     const proxyResult = await callAzureOpenAIProxy({
       apiFormat: runtime.apiFormat,
       deployment: runtime.deployment,
       body: requestBody,
       byo: runtime.byo,
-      signal: controller.signal,
+      signal: lifetime.signal,
     });
 
-    clearTimeout(timeoutId);
+    throwIfGenerationAborted(options.signal);
+    throwIfGenerationAborted(lifetime.signal);
     const elapsedTimeMs = Math.round(performance.now() - startTime);
 
     if (!proxyResult.ok) {
@@ -777,7 +811,14 @@ If the image is not an architecture diagram or is unclear, describe what you can
         requestId: proxyResult.error?.requestId,
         upstreamRequestId: proxyResult.error?.upstreamRequestId,
       });
-      throw createOpenAIProxyError(proxyResult, { vision: true });
+      const error = createOpenAIProxyError(proxyResult, { vision: true });
+      if (error.code === 'image_not_supported' || error.code === 'invalid_upstream_request') {
+        error.message = error.message.replace(
+          proxyErrorMessageForCode(error.code, { vision: true, status: error.status }),
+          'The selected model may not support image analysis. Choose a vision-capable model in AI settings.',
+        );
+      }
+      throw error;
     }
     
     const parsed = parseApiResponse(proxyResult.data, runtime.apiFormat);
@@ -800,13 +841,14 @@ If the image is not an architecture diagram or is unclear, describe what you can
     
     return { description: content, metrics };
   } catch (error: any) {
-    clearTimeout(timeoutId);
-    
-    if (error.name === 'AbortError') {
+    throwIfGenerationAborted(options.signal);
+    if (lifetime.timedOut) {
       throw new Error('Image analysis timed out. The image may be too large or complex.');
     }
     
     throw error;
+  } finally {
+    lifetime.dispose();
   }
 }
 

@@ -1,0 +1,90 @@
+.workspace-navigation {
+  grid-area: navigation;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.75rem;
+  min-width: 0;
+}
+
+.workspace-task-tabs {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  gap: 3px;
+  padding: 3px;
+  border: 1px solid var(--azd-color-border);
+  border-radius: 8px;
+  background: var(--azd-color-surface-muted);
+}
+
+.workspace-task-tab {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 5px 14px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--azd-color-text-muted);
+  font: inherit;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.workspace-task-tab:hover {
+  background: var(--azd-color-surface-hover);
+  color: var(--azd-color-text);
+}
+
+.workspace-task-tab[aria-selected='true'] {
+  background: var(--azd-color-surface);
+  color: var(--azd-color-accent);
+  border-color: var(--azd-color-border);
+  box-shadow: inset 0 -2px var(--azd-color-accent);
+}
+
+.workspace-navigation-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+  color: var(--azd-color-text-muted);
+}
+
+.workspace-navigation-actions > button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-width: 32px;
+  min-height: 32px;
+  padding: 5px 8px;
+  border: 1px solid var(--azd-color-border);
+  border-radius: 6px;
+  color: var(--azd-color-text);
+  background: var(--azd-color-surface);
+  font: inherit;
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+
+.workspace-navigation-actions > button:hover:not(:disabled) {
+  background: var(--azd-color-surface-hover);
+}
+
+.workspace-navigation-actions > button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+@media (max-width: 640px) {
+  .workspace-navigation { gap: 0.25rem; }
+  .workspace-task-tab { padding-inline: 10px; }
+  .workspace-navigation-actions { gap: 4px; }
+}

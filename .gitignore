@@ -81,5 +81,3 @@ tmp-export-audit/
 # Local mutation-testing backups
 *.bak
 probe-*.mts
-tmp-export-audit/
-

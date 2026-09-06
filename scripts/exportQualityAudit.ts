@@ -10273,6 +10273,39 @@ function nativizeFidelityIssues(authored: string, delivered: string, where: stri
   return issues;
 }
 
+/**
+ * Each shape's own XML, in document order, excluding its descendants.
+ *
+ * ShapeSheet requires parent Text AFTER child Shapes. Splitting at a child
+ * opening tag loses that text (and gives it to the last child instead).
+ * Read both halves of the parent so containment, coverage and collision checks
+ * still inspect every real caption without borrowing a child's text or size.
+ */
+function ownVisioShapeChunks(xml: string): string[] {
+  const chunks: string[] = [];
+  const stack: Array<{ index: number; cursor: number }> = [];
+  for (const match of xml.matchAll(/<\/?Shape\b[^>]*>/g)) {
+    const end = match.index! + match[0].length;
+    if (match[0].startsWith('</')) {
+      const frame = stack.pop();
+      if (!frame) throw new Error('Unmatched Visio shape closing tag.');
+      chunks[frame.index] += xml.slice(frame.cursor, end);
+      if (stack.length) stack[stack.length - 1].cursor = end;
+    } else {
+      const parent = stack[stack.length - 1];
+      if (parent) chunks[parent.index] += xml.slice(parent.cursor, match.index);
+      const index = chunks.push(match[0]) - 1;
+      if (match[0].endsWith('/>')) {
+        if (parent) parent.cursor = end;
+      } else {
+        stack.push({ index, cursor: end });
+      }
+    }
+  }
+  if (stack.length) throw new Error('Unclosed Visio shape.');
+  return chunks.map(chunk => chunk.replace(/^<Shape ID=/, ''));
+}
+
 async function auditVsdx(scenario: Scenario): Promise<Report> {
   // The drawing a user receives, not the one Node happens to be able to build.
   // Rasterisation needs a DOM, so every icon silently resolved to nothing and
@@ -10455,11 +10488,7 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
     if (!shipped.has(target)) issues.push(`icon relationship points at media/${target}, which is not in the package`);
   }
   const xml = typeof pagePart?.data === 'string' ? pagePart.data : '';
-  // Split so each chunk ends where its first child shape begins, the same way
-  // the tile text rule below scans: a Service group carries its own Character
-  // size before its children, and a lazy match across the page walks into the
-  // icon child's empty text instead.
-  const pageChunks = xml.split('<Shape ID=');
+  const pageChunks = ownVisioShapeChunks(xml);
   // Visio text contrast. The Visio path carried its own hard-coded colours and
   // was never measured — the PowerPoint deck had a contrast rule, this one did
   // not, so a fix applied to one exporter could silently miss the other.
@@ -10837,13 +10866,8 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
   // `wrapOneLineIn` broke an over-wide word with `ceil(w / column)`, the third
   // copy of that defect in the repo, and NOTHING in this file could see it -
   // the mutation survived all 96 files of the corpus.
-  // Scanned by shape CHUNK, not by one regex across the page. A Service shape
-  // is a Visio group and its icon is a child shape with a `<Text/>` of its
-  // own, so a lazy `[\s\S]*?<Text>` walks straight past the group's own text
-  // into the child's empty one and the rule silently measures nothing. It read
-  // as working because the only tile it had ever fired on was icon-less.
-  // Splitting on the shape tag ends each chunk exactly where its first child
-  // begins.
+  // Inspect the parent's own text and Character rows, not a child's or the
+  // next sibling's. The schema puts the group text after its children.
   // A rule that has silently measured NOTHING twice does not get to report
   // zero on trust. Every skip above is a `continue` with no record, so the
   // difference between "all clean" and "the scan matched nothing" is invisible
@@ -10851,7 +10875,7 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
   // marker both read as passing. Count what was reached and say so.
   let serviceChunks = 0;
   let measuredChunks = 0;
-  for (const chunk of xml.split('<Shape ID=')) {
+  for (const chunk of pageChunks) {
     if (!/NameU="Service\.\d+"/.test(chunk.slice(0, 200))) continue;
     serviceChunks += 1;
     const label = /Name="([^"]*)"/.exec(chunk)?.[1] ?? '';
@@ -11001,7 +11025,7 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
   // shape's Name attribute, which is a handle for automation and is never put
   // on paper. The deck's version of this rule can afford to ask only whether
   // the name FITS; this one has to ask whether it was DROPPED.
-  for (const chunk of xml.split('<Shape ID=')) {
+  for (const chunk of pageChunks) {
     const head = chunk.slice(0, 400);
     if (!/NameU="Service\.\d+"/.test(head)) continue;
     const named = /\sName="([^"]*)"/.exec(head);
@@ -11050,7 +11074,7 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
   // which was ALWAYS - so the rule ran on every corpus and could not fire once.
   // Shapes arrive in document order as Service, Tile, Icon, so pair each tile
   // with the next icon before the next service.
-  const vsdxChunks = xml.split('<Shape ID=');
+  const vsdxChunks = pageChunks;
   for (let i = 0; i < vsdxChunks.length; i += 1) {
     const head = vsdxChunks[i].slice(0, 400);
     if (!/NameU="Service\.\d+"/.test(head)) continue;
@@ -11107,7 +11131,7 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
   // any piece of page furniture, whichever piece it is.
   const furnitureRect: Array<{ name: string; x0: number; y0: number; x1: number; y1: number }> = [];
   const tileRect: Array<{ name: string; x0: number; y0: number; x1: number; y1: number }> = [];
-  for (const chunk of xml.split('<Shape ID=')) {
+  for (const chunk of pageChunks) {
     const head = chunk.slice(0, 400);
     const nameU = /NameU="([^"]+)"/.exec(head)?.[1] ?? '';
     const isTile = /^Service\.\d+$/.test(nameU);
@@ -11165,7 +11189,7 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
   const columnXs = new Set<string>();
   let workflowPt = 0;
   let workflowColW = 0;
-  for (const chunk of xml.split('<Shape ID=')) {
+  for (const chunk of pageChunks) {
     if (!/Name="workflow-text-\d+"/.test(chunk.slice(0, 400))) continue;
     const w = /<Cell N="Width" V="([\d.]+)"/.exec(chunk);
     const text = /<Text>([\s\S]*?)<\/Text>/.exec(chunk);
@@ -11341,7 +11365,7 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
   // uniqueness over the strings actually DRAWN, shortened or not - a stub
   // colliding with a name another tile drew in full is the same ambiguity.
   const drawnStrings = new Map<string, Set<string>>();
-  for (const chunk of xml.split('<Shape ID=')) {
+  for (const chunk of pageChunks) {
     const head = chunk.slice(0, 400);
     if (!/NameU="Service\.\d+"/.test(head)) continue;
     const authoredAttr = /NameU="Service\.\d+" Name="([^"]*)"/.exec(head);
@@ -11376,7 +11400,7 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
   // survive any scaling the page limit forces.
   const NATURAL_TILE_IN = 150 / PX_PER_IN;
   const NATURAL_LABEL_IN = 0.105;
-  for (const chunk of xml.split('<Shape ID=')) {
+  for (const chunk of pageChunks) {
     if (!/NameU="Service\.\d+"/.test(chunk.slice(0, 200))) continue;
     const cellOf = (name: string): number => {
       const hit = new RegExp(`<Cell N="${name}" V="([\\d.-]+)"`).exec(chunk);
@@ -11454,7 +11478,7 @@ async function auditVsdx(scenario: Scenario): Promise<Report> {
   // `Name="step-<edgeId>"` and the scenario names that edge's endpoints.
   const shapeGeom = (nameU: RegExp): Array<{ name: string; w: number }> => {
     const out: Array<{ name: string; w: number }> = [];
-    for (const chunk of xml.split('<Shape ID=')) {
+    for (const chunk of pageChunks) {
       const head = chunk.slice(0, 400);
       if (!nameU.test(head)) continue;
       const w = /<Cell N="Width" V="([\d.]+)"/.exec(chunk);
@@ -13396,8 +13420,3 @@ main().catch((error) => {
   console.error(error);
   process.exit(1);
 });
-
-
-
-
-

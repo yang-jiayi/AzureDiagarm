@@ -66,7 +66,7 @@ export interface PricingTier {
   id?: string;
   name: string;           // e.g., "B1 (Basic)", "S1 (Standard)", "P1V2 (Premium)"
   skuName: string;        // e.g., "B1", "S1", "P1V2"
-  monthlyPrice: number;   // Estimated monthly cost in USD
+  monthlyPrice: number | null; // Per-unit USD/month; null when usage is not specified
   hourlyPrice?: number;   // Hourly rate if available
   unit: string;           // e.g., "per instance", "per GB", "per hour"
   description?: string;   // Brief description of tier
@@ -77,6 +77,35 @@ export interface PricingTier {
    * representative discount percentage).
    */
   reserved1yrMonthly?: number;
+  provenance?: PricingProvenance;
+  usage?: PricingUsage;
+  isUsageBased?: boolean;
+}
+
+export interface PricingAssumption {
+  label: string;
+  value: number | string;
+  unit: string;
+}
+
+export interface PricingProvenance {
+  kind: 'official-meter' | 'usage-estimate' | 'fallback-estimate' | 'custom' | 'unpriced' | 'capacity' | 'unknown';
+  source?: 'azure-retail-prices' | 'bundled-fallback' | 'user' | 'legacy';
+  asOf?: string;
+  /** Newest effective date in the regional file, not the selected meter's date. */
+  snapshotAsOf?: string;
+  meterId?: string;
+  meterName?: string;
+  unit: string;
+  assumptions: PricingAssumption[];
+  note?: string;
+}
+
+/** A linear quantity in the meter's own billing units, not guessed GB/tokens. */
+export interface PricingUsage {
+  amount: number | null;
+  unit: string;
+  unitPrice: number;
 }
 
 /**
@@ -103,7 +132,7 @@ export interface ServicePricing {
  * Pricing configuration stored in node data
  */
 export interface NodePricingConfig {
-  estimatedCost: number;      // Monthly cost in USD
+  estimatedCost: number | null; // PER UNIT monthly USD, never multiplied by quantity
   tier: string;               // Selected tier name
   tierId?: string;            // Stable catalog selector for otherwise ambiguous SKU names
   skuName: string;            // SKU identifier
@@ -114,6 +143,8 @@ export interface NodePricingConfig {
   isCustom: boolean;          // Whether user manually set price
   customPrice?: number;       // Custom monthly price if set
   isUsageBased?: boolean;     // Whether pricing is usage-based (consumption)
+  provenance?: PricingProvenance; // Absent on legacy imports: explicitly unknown
+  usage?: PricingUsage;
   /**
    * Real 1-year Savings Plan monthly cost (per unit) for this SKU, when the
    * meter carried a savings-plan rate. Used for the reserved-term estimate in
@@ -152,7 +183,12 @@ export interface RegionPricing {
  * Cost breakdown for estimation panel
  */
 export interface CostBreakdown {
+  /** Backward-compatible numeric subtotal; consult estimateCompleteness before presenting a total. */
   totalMonthlyCost: number;
+  pricedMonthlySubtotal?: number;
+  /** Availability of estimates, not a guarantee that all billable Azure meters are included. */
+  estimateCompleteness?: 'complete' | 'partial' | 'unpriced';
+  missingCapacityEstimate?: boolean;
   byService: {
     serviceName: string;
     serviceType: string;
@@ -180,7 +216,7 @@ export interface CostBreakdown {
    * above excludes them. Surfaced in the UI and the summary export so a
    * partial estimate is never presented as a complete one.
    */
-  unpricedServices?: { nodeId: string; serviceName: string }[];
+  unpricedServices?: { nodeId: string; serviceName: string; reason?: string }[];
   /** Date the underlying pricing data was last refreshed (YYYY-MM-DD). */
   pricesAsOf?: string;
   /**
@@ -198,6 +234,7 @@ export interface CostBreakdown {
   oldestMeterAsOf?: string;
   /** Billing term the costs reflect (e.g. "Pay-as-you-go", "Savings Plan (1-year)"). */
   pricingTerm?: string;
+  capacityServices?: { nodeId: string; serviceName: string }[];
 }
 
 export type PricingCurrency = 'USD' | 'JPY' | 'EUR' | 'GBP';

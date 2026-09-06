@@ -1,6 +1,222 @@
 # Azure Deployment Plan
 
-> **Status:** Deployed
+> **Status:** Validated
+
+Generated: 2026-09-05
+
+## 1. Current Release
+
+Publish the completed AzureDiagarm workspace, Office export, privacy, and runtime
+safeguard improvements to `yang-jiayi/AzureDiagarm`, then update the existing
+production application. The user explicitly requested GitHub publication and
+production deployment. The user also explicitly requested switching the actual
+application inference model, including its picker and persisted selections, from
+GPT-5.6 to GPT-6 Astra. Reuse the existing application, subscription, region, and
+OpenAI account; do not simply relabel an old deployment.
+
+## 2. Scope and Existing Architecture
+
+Modify the existing React/Vite and Node application. Reuse its Container App,
+registry, Front Door, authentication, access-list store, Cosmos account, and
+GitHub OIDC identity. Do not deploy the separate Product Analytics application
+described in the historical plan below.
+
+## 3. Release Recipe
+
+`recipe.type: azcli`
+
+Use Azure CLI through the existing GitHub Actions pipeline, not the retired azd
+hooks. The user's explicit instruction to publish and deploy approves this
+existing-application release; source integration and validation remain required.
+
+Use the existing `.github/workflows/azurediagarm-sync-deploy.yml` push-to-main
+release path. A push deploys the customization commit without merging unrelated
+upstream updates. Do not use manual upstream synchronization for this release.
+
+The initial local checkout was 78 commits behind the existing production branch.
+Feature work is preserved in checkpoint `5de4fa2` on
+`release/workspace-quality-20260905`; integrate `origin/main` at `c885477` before
+release. Preserve its newer Office, cloud document, accessibility, authentication,
+and deployment capabilities rather than replacing them with the older checkout.
+Publish the identical integration tree as release snapshot `bc42a8d` on
+`release/astra-workspace-20260905`, PR
+[63](https://github.com/yang-jiayi/AzureDiagarm/pull/63). The original local
+checkpoint and integration commits remain preserved.
+
+The only new Azure resource is the genuine Astra model deployment, represented
+by `infra/gpt6-astra.bicep` under an existing OpenAI account. Validate this actual
+deployment template and preview it at the production resource-group scope.
+Do not validate/deploy the legacy subscription bootstrap as a substitute for
+the current application's release. Existing bootstrap templates receive static
+compilation checks only. Container build validation runs on the established
+Docker-capable CI runner, with all application gates required before rollout.
+
+## 4. Production Context
+
+The existing production application is `azurediagarm-app` in `AzureDiagarm_rg`,
+West US, at `https://azurediagarm.mssql.biz`. Subscription and identity values
+remain in the existing GitHub variables rather than being copied into source.
+Read-only preflight confirmed the current revision is healthy, origin isolation
+and platform authentication hold, and the runtime identity has registry pull and
+account-scoped Table data access. Rollback image, digest, and revision are recorded
+in the private session state.
+
+The existing OpenAI account now contains genuine `gpt-6-astra`, version
+`2026-09-03`, in West US. The usage-based GlobalStandard deployment reserves
+50K TPM / 50 RPM of the verified available quota, uses `Microsoft.DefaultV2`,
+and retains the existing default-version upgrade policy. Existing GPT-5.6
+deployments remain intact for rollback. Wire
+`VITE_AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA=gpt-6-astra` through the frontend build
+and runtime allowlist; migrate previous managed-model selections only after
+the new deployment is configured. Preserve separate BYO settings.
+
+The existing `ACCESS_CONTROL_ENABLED=false` configuration must become `true`
+for the new public-mode safeguards. The configured application administrator
+matches the operator and remains allowed. The application email allowlist is
+currently empty: Entra group assignment alone does not authorize other users
+through the application's allowlist. Treat this access-policy transition
+explicitly rather than claiming all prior users retain access.
+The unchanged administrator value is now stored in the like-named Actions
+secret, and the workflow consumes that secret instead of a repository variable
+to prevent public deployment logs from exposing the address.
+
+The existing deployment identity is correctly federated to this repository's
+immutable-ID main-branch subject. The initial legacy-subject comparison was
+incorrect; the existing production workflow has already deployed successfully
+using this credential. No federation or branch-protection changes are needed.
+
+## 5. Preparation
+
+Artifacts and the existing release path are prepared. The editor integration,
+hook dependencies, canonical style contracts, theme/contrast repairs, and static
+gates now pass. Focused browser checks cover recovery, modal keyboard safety,
+cancelled AI requests, validation metadata, and atomic import into a new cloud
+document. Cloud hydration now records its normalized baseline without rewriting
+the source document. The initial Linux container/core and CodeQL gates passed.
+Older cloud test arrangements now explicitly edit metadata before expecting a
+write. Focus-mode recovery waits for a committed draft. All 85 functional browser
+cases and the patched runtime/container checks now pass on Linux. All four
+reviewed visual baselines also pass. The supplemental workspace harness now
+exercises genuine AI regeneration rather than file import; this exposed and
+fixed canonical service-alias identity handling. All local supplemental browser
+safeguards and 810 unit tests pass. Linux additionally exposed a two-pixel
+tablet export-header overflow; tablet-only row spacing now reserves additional
+font-metric headroom without changing controls or clipping content. Linux now
+passes the complete critical/visual and workspace harnesses. Its remaining AI/UI
+failure resolved a mocked response before an external prop edit had committed;
+that fixture now explicitly commits those edits while retaining asynchronous
+application callbacks. The complete Linux gate now passes: all 86 critical and
+visual cases, the workspace harness, all 85 AI/UI cases, all 16 inspector/review
+cases, and modal focus. App, MCP, full-container readiness, and all three CodeQL
+checks also pass on `1c84d16535dd374be526a89275a8588638cb5ce7`. The official
+Azure checks and structured infrastructure preview were rerun successfully.
+The validation-record commit must also satisfy the unchanged protected-branch
+checks before the permitted PR merge triggers production deployment.
+
+- [x] Identify repository, existing workflow, and application boundaries.
+- [x] Preserve the unrelated historical deployment plan below.
+- [x] Fetch the current protected production branch and preserve local work in a release checkpoint.
+- [x] Restore dependencies from the merged lockfiles and pass the production dependency audit.
+- [x] Resolve and validate the current-main integration without duplicate editor systems.
+- [x] Resolve production subscription, region, revision, and endpoint.
+- [x] Verify platform authentication, origin protection, runtime Table permissions, and data-retention impact.
+- [x] Reconcile application access-control and deployment federation settings.
+- [x] Verify Astra catalog availability and quota, and provision the actual model.
+- [x] Verify Astra inference capabilities through the authorized runtime identity.
+- [x] Complete and verify build/runtime model configuration and persisted-settings migration.
+- [x] Confirm local source is current with the remote branch.
+- [x] Complete release validation and record evidence.
+- [x] Core Azure validation: CLI/authentication, compile the actual model template, ARM validation, and what-if.
+- [x] Build the final container using a Docker-capable builder and inspect its context.
+- [x] Review applicable Azure policy constraints and unchanged runtime role scopes; record existing account-level audit findings separately.
+- [x] Pass complete application, server, MCP, browser, and required GitHub checks.
+
+## 6. Deployment Steps
+
+Commit the requested source changes with the required coauthor trailer, publish
+the release branch, and open a pull request against protected `main`. Complete
+the required app, MCP, browser, and CodeQL checks and use the repository's existing
+permitted pull-request merge path. Do not change branch rules or rewrite remote
+history. Monitor the production workflow triggered by the resulting main commit.
+Confirm the deployed commit, active revision, health, protected API behavior, and
+expected frontend assets.
+
+## 7. Validation Proof
+
+| Check | Result | Timestamp |
+| --- | --- | --- |
+| Merged dependency restore and production audit | Pass; existing image parser safeguards verified | 2026-09-05 |
+| Read-only production security and health | Healthy, public health 200, protected routes 401, direct origin 403 | 2026-09-05 12:54 UTC |
+| Runtime data permissions | Existing account-scoped Table Data Contributor permits budget-table operations | 2026-09-05 12:54 UTC |
+| Existing feedback retention impact | Fully paginated authorized metadata read found zero feedback rows | 2026-09-05 12:52:55 UTC |
+| Astra model provisioning | Succeeded; actual `gpt-6-astra` v2026-09-03, GlobalStandard 50K TPM, default content filter | 2026-09-05 |
+| Astra authenticated inference | Existing runtime identity returned model `gpt-6-astra`; Responses v1, JSON output, 32K application cap accepted | 2026-09-05 |
+| Astra image and reasoning support | Fresh synthetic 64px red image identified as red; none/low/medium/high/xhigh/max accepted and echoed by actual model | 2026-09-05 |
+| Production deployment trust | Existing immutable-ID repository/main OIDC subject matches; prior workflow run 32490277791 authenticated and deployed | 2026-09-05 |
+| Administrator access | Runtime/GitHub configured administrator matches operator and remains allowed; other users need explicit application authorization | 2026-09-05 |
+| Full Office export corpus | 167 scenarios, 333 checks, zero issues; unchanged golden thresholds | 2026-09-05 |
+| Astra GitHub configuration | `AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA=gpt-6-astra`, following existing repository variable naming | 2026-09-05 |
+| Required public access flag | GitHub `ACCESS_CONTROL_ENABLED=true` prepared; the existing live revision is unchanged until release | 2026-09-05 |
+| Core Azure CLI validation | Official `validate-deployment.ps1` helper passed CLI, authentication, Bicep compilation, `az deployment group validate`, and resource-group what-if for `infra/gpt6-astra.bicep` | 2026-09-05 |
+| Structured infrastructure preview | No resource creation or deletion. Astra has one Modify entry for omitted service-reported `properties.currentCapacity`; all other resources are Ignore. The helper's textual Delete count describes property lines, not deleted resources. No template application was performed | 2026-09-05 |
+| Container build context | Allowlist-style `.dockerignore` excludes credentials and unrelated artifacts; root, server, and MCP lockfiles are present. Complete Linux image build and API/MCP readiness smoke passed in required Vite job 101373981082, CI run 33991330053, for release snapshot `bc42a8d`, without Azure credentials or registry publication. Rebuild after dependency patches is required | 2026-09-05 20:56 UTC |
+| Static model RBAC review | Astra template references an existing account and introduces no identities or roles. Existing `infra/openai-role.bicep` scopes Cognitive Services OpenAI User to that account, matching runtime inference operations. No role widening is required | 2026-09-05 |
+| Applicable policy constraints | Inherited deny initiative and actual definitions reviewed. OpenAI policy denies `ProvisionedManaged`, whereas Astra uses `GlobalStandard`; classic-resource, VM, AKS, SQL, and HSM constraints do not match this change. Actual model ARM validation passed without a policy denial | 2026-09-05 |
+| Final static application gates | `npm run lint`, `npm run typecheck:scripts`, and all 810 root unit tests pass, including canonical service aliases, the bounded AI queue, cloud hydration/import fixes, and administrator log-privacy contract | 2026-09-05 |
+| Remaining core scripts | Workflow contracts, ARM extraction, layout preservation, icon library, icon workspace, validation freshness, and service-name normalization all pass | 2026-09-05 |
+| Genuine Astra production build | `npm run build` passes with the verified OpenAI endpoint and `VITE_AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA=gpt-6-astra` | 2026-09-05 |
+| Focused browser repairs | Theme/contrast, explicit draft recovery, service-inspector focus, AI cancellation/review, score-zero metadata, modal keyboard safety, and atomic AI import checks pass. The import preserves authoritative IDs/pricing and makes zero writes to the old source document | 2026-09-05 |
+| AI comparison admission | Shared cancellable budget queue passes 111 focused units and 85 AI/UI checks, including 43 comparison cases; concurrency limits and cancellation assertions remain intact | 2026-09-05 |
+| Cloud browser arrangements | Explicit author edits replace 18 incidental hydration-write setups. All 19 focused cases and three replacement-race runs pass. The complete Windows run reaches 84/85; the remaining unchanged keyboard/access-dialog case encountered delayed Vite loading and subsequently passed both keyboard/WCAG control runs. Fresh Linux CI remains required | 2026-09-05 |
+| Focus-mode persistence | Linux traces reloaded before confirmed persistence. The test now waits for `Saved on this device`, retaining every recovery/Escape/focus assertion. Focus-mode and recent-work recovery pass all six repeated local runs | 2026-09-05 |
+| Workflow visual review | All four baselines use exact reviewed Linux captures, with byte-identical attempts and unchanged dimensions. Differences reflect approved status-bar separation, shadows, and upper-border positioning. Dark/mobile/forced-colors comparisons are 0 differing pixels against both attempts; forced-color current-step text retains 11.31:1 contrast. The 1% threshold and failure semantics remain unchanged | 2026-09-05 |
+| Initial required CI | Vite/core/container and all three CodeQL analyses passed in runs 33991330053/33991329211. Browser and MCP audit failures block merge until corrected | 2026-09-05 |
+| Repaired required CI | Runs 33995733963/33995732452 pass Vite/core, patched MCP, complete image/startup/readiness, all 85 functional browser cases, and all CodeQL analyses. Only the now-reviewed three visual baselines prevented the full browser job from completing; fresh complete CI remains required | 2026-09-05 |
+| Complete critical/visual browser gate | Run 33996721727 passes all 86 critical and visual cases. Its subsequent workspace harness failed because it used a new-document import as an in-place regeneration proxy; the harness now invokes explicitly mocked genuine Astra generation and proves a real snapshot transaction abort before retry | 2026-09-05 |
+| Regeneration service identities | Two focused tests reproduced lost manual instance IDs and falsely unique aliases. Proposal reconciliation now resolves catalog service aliases before uniqueness checks, preserves custom labels/pricing/connections, and leaves group names and explicit import identities unchanged. All focused and full unit cases pass | 2026-09-05 |
+| Supplemental browser safeguards | Current `test:workspace:browser`, all 85 AI/UI cases, all 16 inspector/review cases, and modal-focus safeguards pass. Regeneration proves retained node/workflow IDs, exactly three genuine Astra requests, snapshot-failure retry without duplicate generation, undo, pricing, and review persistence | 2026-09-05 |
+| Tablet header headroom | Linux reported 221.96875px against the existing 220px bound for JA/EN populated export headers at 768px. A tablet-only row-gap adjustment preserves all 42 control dimensions, passes all 36 local responsive-header cases and both WCAG audits, and passes 17 canonical/contrast cases. Run 34000522676 confirms the full Linux workspace harness passes with maximum header height 213.1875px. Desktop/mobile styles and every threshold remain unchanged | 2026-09-06 |
+| Committed AI baseline fixture | Run 34000522676 passes all 86 critical/visual cases and the workspace harness, but its AI/UI suite reaches 84/85 because an external `root.render` edit had not committed before the mocked response resolved. Only the two edited-baseline arrangements now use explicit `flushSync`; ordinary application callbacks and asynchronous race/cancellation behavior remain unchanged. `npx tsx --test tests\aiGenerationUI.browser.ts` passes all 85 cases; focused ESLint and `npm run typecheck:scripts` pass. Complete Linux confirmation remains required | 2026-09-06 |
+| Final complete Linux application gates | CI run 34001474402 succeeds on `1c84d16535dd374be526a89275a8588638cb5ce7`: Vite/core/Office/server tests, patched MCP audit/build/tests, complete runtime image and API/MCP readiness, all 86 critical/visual cases, workspace browser safeguards, all 85 AI/UI cases, all 16 inspector/review cases, and modal focus. Browser job 101400994008 completes every supplemental command; maximum responsive header height is 213.1875px. No timeout, screenshot threshold, or correctness assertion was weakened | 2026-09-06 00:40 UTC |
+| Final required CodeQL checks | Run 34001472961 succeeds on the same release head for actions, JavaScript/TypeScript, and Python. All six required checks are successful; the existing PR-only owner authorization remains available without changing branch protections | 2026-09-06 |
+| Runtime dependency patches | Patched MCP `fast-uri` to 3.1.7 and `qs` to 6.16.0. API Express 4/body-parser restrict `qs` to the vulnerable 6.15 line, so a compatible `qs` override selects 6.16.0 without upgrading Express's major version. Both production audits now report zero vulnerabilities; patched MCP 65 and API 120 tests pass, with generated MCP assets unchanged | 2026-09-05 |
+| Deployment log privacy | Created the `ACCESS_ADMIN_EMAIL` Actions secret from the exact existing administrator value through stdin, without a trailing newline or command-line disclosure. Workflow references use the secret and a quoted environment variable; the administrator and runtime value remain unchanged | 2026-09-05 |
+| Final source review | Read-only review reports no significant findings in normalized cloud baselines, canonical serialization, and their save/copy/conflict interactions. Final lint and script type checks pass; nine deployment workflow security contracts pass | 2026-09-05 |
+| Remote source currency | Refreshed `origin/main` remains `c885477c799a35a044a73ac05b230aeab7160f95`; no unresolved index entries or whitespace errors | 2026-09-05 |
+| Refreshed live preflight | Existing healthy revision and rollback image remain unchanged. Astra is Succeeded at the verified model/version and capacity. Without following authentication redirects, public health returns 200, protected root/API/MCP return 401, and the direct origin returns 403. Browser-style requests redirect to Microsoft sign-in, not anonymous API JSON | 2026-09-05 |
+| Final official Azure revalidation | `validate-deployment.ps1 -Scope group -ResourceGroup AzureDiagarm_rg -Template infra\gpt6-astra.bicep` with the existing subscription and non-secret account/capacity parameter file again passes CLI/authentication, Bicep compilation, ARM validation, and what-if. A fresh `az deployment group what-if --no-pretty-print` structured preview confirms 15 Ignore and one Modify, with only service-reported `properties.currentCapacity` omitted; zero resource creates/deletes. Generated compilation output was removed | 2026-09-06 |
+
+Policy Insights reports no evaluated rows for the existing Container App; an
+empty result is not proof of estate-wide compliance. The existing OpenAI account
+has two pre-existing audit-only findings: Private Link is absent and network
+access is unrestricted. Both policies target the account, not the child model
+deployment. This release neither replaces nor updates the account's networking.
+Do not silently change its shared connectivity or create policy exemptions to
+clear those findings; they require a separately planned network migration.
+No subscription-wide compliance claim is made.
+
+Integrated-source, genuine Astra, browser, complete-container, required GitHub,
+and official Azure validation are complete. Evidence covers the application at
+`1c84d16535dd374be526a89275a8588638cb5ce7`; the subsequent documentation-only
+validation record must finish the same required checks before merge. Historical
+evidence below does not authorize this release. The operator's direct AI
+data-plane call lacks the required inference permission; model checks instead
+used the existing authorized runtime identity, without granting new roles or
+changing network controls.
+
+## 8. Rollback and Data Safety
+
+Retain the previous healthy image and revision. Do not weaken authentication or
+origin restrictions to make deployment succeed. Determine the effect of feedback
+retention on existing records before enabling any irreversible deletion.
+The preflight found no existing feedback records to delete. New feedback remains
+subject to the explicitly documented retention policy.
+
+---
+
+# Historical Product Analytics Deployment Plan
+
+> **Historical status:** Deployed
 
 Generated: 2026-07-20
 

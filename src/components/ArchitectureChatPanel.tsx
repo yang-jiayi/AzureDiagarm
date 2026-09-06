@@ -3,7 +3,7 @@
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Sparkles, X, Send, Loader2, AlertCircle, MessageSquare, ChevronDown, ChevronUp, Shield, Activity, DollarSign, Wrench, Zap, Lightbulb, type LucideIcon } from 'lucide-react';
-import { generateArchitectureWithAI, generateFollowUpSuggestions, isAzureOpenAIConfigured } from '../services/azureOpenAI';
+import { generateArchitectureWithAI, generateFollowUpSuggestions, isAzureOpenAIConfigured, throwIfGenerationAborted } from '../services/azureOpenAI';
 import { useModelSettings, MODEL_CONFIG } from '../stores/modelSettingsStore';
 import {
   getBYOAIProviderLabel,
@@ -12,17 +12,18 @@ import {
 import { useRuntimeConfig } from '../services/runtimeConfig';
 import {
   buildModificationPrompt,
+  architectureFingerprint,
   summarizeArchitectureChange,
   CurrentArchitecture,
 } from '../services/modificationPrompt';
 import './ArchitectureChatPanel.css';
-import { useMediaQuery } from '../hooks/useMediaQuery';
 import { useLanguage } from '../i18n/LanguageContext';
 import { localize, type LocalizedText } from '../i18n/localization';
 import { OperationGeneration } from '../utils/operationGeneration';
 import { readLocalStorage, writeLocalStorage } from '../utils/safeStorage';
-import { MEDIA_QUERIES } from '../styles/breakpoints';
 import ResponsiveDrawer from './ResponsiveDrawer';
+import { useMediaQuery } from '../hooks/useMediaQuery';
+import { MEDIA_QUERIES } from '../styles/breakpoints';
 
 interface ChatMessage {
   id: string;
@@ -37,7 +38,7 @@ interface ArchitectureChatPanelProps {
   currentArchitecture: CurrentArchitecture;
   diagramKey: string;
   /** Applies a generated architecture to the canvas (App's handleAIGenerate). */
-  onApply: (architecture: any, prompt: string, autoSnapshot?: boolean) => void | Promise<void>;
+  onApply: (architecture: any, prompt: string, autoSnapshot?: boolean, baseRevision?: number, signal?: AbortSignal) => boolean | void | Promise<boolean | void>;
 }
 
 const CHAT_PANEL_WIDTH_KEY = 'azure-diagram-builder.chatPanelWidth.v1';
@@ -205,7 +206,7 @@ const ArchitectureChatPanel: React.FC<ArchitectureChatPanelProps> = ({
   onApply,
 }) => {
   const { t, translate, language } = useLanguage();
-  const isCompactChat = useMediaQuery(MEDIA_QUERIES.workspace);
+  const isCompactWorkspace = useMediaQuery(MEDIA_QUERIES.workspace);
   const [panelWidth, setPanelWidth] = useState(() => {
     const stored = readLocalStorage(CHAT_PANEL_WIDTH_KEY);
     const parsed = stored === null ? Number.NaN : Number(stored);
@@ -257,13 +258,14 @@ const ArchitectureChatPanel: React.FC<ArchitectureChatPanelProps> = ({
   // Suggestions the user has already picked this session, so follow-up chips
   // keep advancing instead of re-offering the same ideas.
   const [usedSuggestions, setUsedSuggestions] = useState<Set<string>>(new Set());
-  // Tier 3: change-specific follow-ups from a fast model, keyed to the assistant
+  // Tier 3: AI-generated, change-specific follow-ups, keyed to the assistant
   // turn they were generated for. Null until (and unless) they arrive.
   const [modelFollowUps, setModelFollowUps] = useState<{ forMsgId: string; items: string[] } | null>(null);
   // Tier 4: loading flags for the background follow-up fetch and the
   // "What would you add?" single-best-recommendation button.
   const [followUpsLoading, setFollowUpsLoading] = useState(false);
   const [askingBest, setAskingBest] = useState(false);
+  const [canRetry, setCanRetry] = useState(false);
   const [modelSettings] = useModelSettings();
   const byoSnapshot = useBYOAISettings();
   const runtimeConfig = useRuntimeConfig();
@@ -274,6 +276,40 @@ const ArchitectureChatPanel: React.FC<ArchitectureChatPanelProps> = ({
   const diagramKeyRef = useRef(diagramKey);
   const sendGenerationRef = useRef(new OperationGeneration());
   const bestSuggestionGenerationRef = useRef(new OperationGeneration());
+  const requestRef = useRef<AbortController | null>(null);
+  const followUpControllerRef = useRef<AbortController | null>(null);
+  const lastPromptRef = useRef('');
+  const architectureRef = useRef(currentArchitecture);
+  architectureRef.current = currentArchitecture;
+  const focusOpenerRef = useRef<Element | null>(null);
+  const openRef = useRef(false);
+  if (isOpen && !openRef.current && typeof document !== 'undefined') {
+    focusOpenerRef.current = document.activeElement;
+  }
+  openRef.current = isOpen;
+  const cancelRequest = useCallback(() => {
+    sendGenerationRef.current.advance();
+    bestSuggestionGenerationRef.current.advance();
+    const active = requestRef.current;
+    requestRef.current = null;
+    active?.abort();
+    followUpControllerRef.current?.abort();
+    followUpControllerRef.current = null;
+    latestFollowUpRequestRef.current = null;
+    setIsSending(false);
+    setAskingBest(false);
+    setFollowUpsLoading(false);
+    if (active && lastPromptRef.current) setCanRetry(true);
+  }, []);
+  useEffect(() => {
+    if (!isOpen) cancelRequest();
+  }, [isOpen, cancelRequest]);
+  useEffect(() => () => {
+    requestRef.current?.abort();
+    requestRef.current = null;
+    followUpControllerRef.current?.abort();
+    latestFollowUpRequestRef.current = null;
+  }, []);
 
   diagramKeyRef.current = diagramKey;
 
@@ -313,8 +349,7 @@ const ArchitectureChatPanel: React.FC<ArchitectureChatPanelProps> = ({
   }, [messages, isSending]);
 
   useEffect(() => {
-    sendGenerationRef.current.advance();
-    bestSuggestionGenerationRef.current.advance();
+    cancelRequest();
     latestFollowUpRequestRef.current = null;
     setMessages([]);
     setInput('');
@@ -324,24 +359,40 @@ const ArchitectureChatPanel: React.FC<ArchitectureChatPanelProps> = ({
     setModelFollowUps(null);
     setFollowUpsLoading(false);
     setAskingBest(false);
-  }, [diagramKey]);
+    setCanRetry(false);
+    lastPromptRef.current = '';
+  }, [diagramKey, cancelRequest]);
 
   // Focus the composer when the panel opens.
   useEffect(() => {
     if (isOpen) {
-      const t = setTimeout(() => inputRef.current?.focus(), 120);
+      const opener = focusOpenerRef.current;
+      const t = setTimeout(() => {
+        if (document.activeElement === opener && !document.querySelector('[aria-modal="true"]')) {
+          inputRef.current?.focus({ preventScroll: true });
+        }
+      }, 120);
       return () => clearTimeout(t);
     }
   }, [isOpen]);
 
   const send = useCallback(
-    async (raw: string) => {
+    async (raw: string, context = currentArchitecture, continuation?: AbortController) => {
       const text = raw.trim();
-      if (!text || isSending) return;
-
+      if (!openRef.current || !text || (requestRef.current && requestRef.current !== continuation)) return;
+      const controller = continuation ?? new AbortController();
+      if (controller.signal.aborted) return;
+      requestRef.current = controller;
       const requestGeneration = sendGenerationRef.current.advance();
       const requestDiagramKey = diagramKey;
-      setInput('');
+      const active = () => openRef.current && requestRef.current === controller && !controller.signal.aborted
+        && diagramKeyRef.current === requestDiagramKey
+        && sendGenerationRef.current.isCurrent(requestGeneration);
+
+      setInput(text);
+      lastPromptRef.current = text;
+      setCanRetry(false);
+      followUpControllerRef.current?.abort();
       latestFollowUpRequestRef.current = null;
       setModelFollowUps(null);
       setFollowUpsLoading(false);
@@ -351,10 +402,12 @@ const ArchitectureChatPanel: React.FC<ArchitectureChatPanelProps> = ({
 
       // Snapshot the canvas state BEFORE applying so we can diff for a summary.
       const before: CurrentArchitecture = {
-        nodes: currentArchitecture.nodes,
-        edges: currentArchitecture.edges,
-        architectureName: currentArchitecture.architectureName,
+        nodes: context.nodes,
+        edges: context.edges,
+        architectureName: context.architectureName,
+        revision: context.revision,
       };
+      const baselineFingerprint = architectureFingerprint(before);
 
       // Recent user instructions help the model resolve references.
       const recentRequests = [...messages, userMsg]
@@ -364,19 +417,32 @@ const ArchitectureChatPanel: React.FC<ArchitectureChatPanelProps> = ({
 
       try {
         const prompt = buildModificationPrompt(before, text, recentRequests.slice(0, -1), language);
-        const result = await generateArchitectureWithAI(prompt, undefined, undefined, language);
-        if (
-          diagramKeyRef.current !== requestDiagramKey
-          || !sendGenerationRef.current.isCurrent(requestGeneration)
-        ) return;
+        const result = await generateArchitectureWithAI(prompt, undefined, undefined, language, { signal: controller.signal });
+        if (!active()) return;
+        if (architectureFingerprint(architectureRef.current) !== baselineFingerprint) {
+          throw new Error(localize(language, {
+            en: 'The diagram changed while this request was running. Your edits were preserved. Review the request and try again.',
+            ja: 'リクエストの実行中に図が変更されました。編集は保持されています。内容を確認して再試行してください。',
+          }));
+        }
 
-        await onApply(result, text, true);
-        if (
-          diagramKeyRef.current !== requestDiagramKey
-          || !sendGenerationRef.current.isCurrent(requestGeneration)
-        ) return;
+        const applied = await onApply(result, text, true, before.revision, controller.signal);
+        if (!active()) return;
+        if (applied === false) {
+          setCanRetry(true);
+          return;
+        }
+        // Let the accepted subset reach props; the proposal may contain
+        // changes the user explicitly rejected in the review dialog.
+        await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+        if (!active()) return;
+        setInput('');
 
-        const summary = summarizeArchitectureChange(before, result, language);
+        const acceptedServices = architectureRef.current.nodes
+          .filter(node => node.type === 'azureNode')
+          .map(node => ({ name: String(node.data?.label || node.data?.serviceName || '').trim() }))
+          .filter(service => service.name);
+        const summary = summarizeArchitectureChange(before, { services: acceptedServices }, language);
         const asstId = uid();
         setMessages((prev) => [
           ...prev,
@@ -385,19 +451,18 @@ const ArchitectureChatPanel: React.FC<ArchitectureChatPanelProps> = ({
 
         // Tier 3: fetch change-specific follow-ups in the background (non-blocking).
         // The static rule-based chips render immediately; these replace them when
-        // they arrive. Uses result.services (post-change) to avoid stale state.
-        const nextServices = Array.isArray((result as any)?.services)
-          ? (result as any).services
-              .map((s: any) => String(s?.label ?? s?.name ?? s?.service ?? '').trim())
-              .filter(Boolean)
-          : [];
+        // they arrive. Use the applied subset, never the unreviewed proposal.
+        const nextServices = acceptedServices.map(service => service.name);
         setModelFollowUps(null);
         setFollowUpsLoading(true);
         latestFollowUpRequestRef.current = asstId;
-        void generateFollowUpSuggestions({ services: nextServices, lastChange: summary, recentRequests, language })
+        const followUpController = new AbortController();
+        followUpControllerRef.current = followUpController;
+        void generateFollowUpSuggestions({ services: nextServices, lastChange: summary, recentRequests, language, signal: followUpController.signal })
           .then((items) => {
             if (
-              diagramKeyRef.current === requestDiagramKey
+              openRef.current && !followUpController.signal.aborted
+              && diagramKeyRef.current === requestDiagramKey
               && sendGenerationRef.current.isCurrent(requestGeneration)
               && latestFollowUpRequestRef.current === asstId
               && items.length
@@ -408,7 +473,8 @@ const ArchitectureChatPanel: React.FC<ArchitectureChatPanelProps> = ({
           .catch(() => { /* fall back to static chips */ })
           .finally(() => {
             if (
-              diagramKeyRef.current === requestDiagramKey
+              openRef.current && !followUpController.signal.aborted
+              && diagramKeyRef.current === requestDiagramKey
               && sendGenerationRef.current.isCurrent(requestGeneration)
               && latestFollowUpRequestRef.current === asstId
             ) {
@@ -416,11 +482,9 @@ const ArchitectureChatPanel: React.FC<ArchitectureChatPanelProps> = ({
             }
           });
       } catch (err: any) {
-        if (
-          diagramKeyRef.current !== requestDiagramKey
-          || !sendGenerationRef.current.isCurrent(requestGeneration)
-          || err?.name === 'CloudDiagramOperationCancelledError'
-        ) return;
+        if (!active()) return;
+        setCanRetry(true);
+        if (err?.name === 'AbortError' || err?.name === 'CloudDiagramOperationCancelledError') return;
         setMessages((prev) => [
           ...prev,
           {
@@ -436,21 +500,23 @@ const ArchitectureChatPanel: React.FC<ArchitectureChatPanelProps> = ({
           },
         ]);
       } finally {
-        if (
-          diagramKeyRef.current === requestDiagramKey
-          && sendGenerationRef.current.isCurrent(requestGeneration)
-        ) {
+        if (requestRef.current === controller) {
+          requestRef.current = null;
           setIsSending(false);
         }
       }
     },
-    [diagramKey, isSending, messages, currentArchitecture, onApply, language, translate],
+    [diagramKey, messages, currentArchitecture, onApply, language, translate],
   );
 
   // Tier 4: "What would you add?" — ask the model for the single highest-impact
   // next step (from the current canvas) and apply it like a chip click.
   const handleAskBest = async () => {
-    if (isSending || askingBest || !configured) return;
+    if (!openRef.current || requestRef.current || !configured) return;
+    const controller = new AbortController();
+    requestRef.current = controller;
+    const before = { ...currentArchitecture };
+    const baselineFingerprint = architectureFingerprint(before);
     const requestGeneration = bestSuggestionGenerationRef.current.advance();
     const requestDiagramKey = diagramKey;
     setAskingBest(true);
@@ -466,17 +532,34 @@ const ArchitectureChatPanel: React.FC<ArchitectureChatPanelProps> = ({
         recentRequests: recent,
         count: 1,
         language,
+        signal: controller.signal,
       });
+      throwIfGenerationAborted(controller.signal);
+      if (requestRef.current !== controller) return;
       if (
         diagramKeyRef.current !== requestDiagramKey
         || !bestSuggestionGenerationRef.current.isCurrent(requestGeneration)
       ) return;
+      if (architectureFingerprint(architectureRef.current) !== baselineFingerprint) {
+        throw new Error('The diagram changed while finding a suggestion.');
+      }
       if (best[0]) {
         markUsed(best[0]);
-        await send(best[0]);
+        await send(best[0], before, controller);
+      }
+    } catch {
+      if (!controller.signal.aborted && requestRef.current === controller) {
+        setMessages(previous => [...previous, {
+          id: uid(), role: 'error', ts: Date.now(),
+          text: localize(language, { en: 'Could not suggest a change. Please try again.', ja: '変更を提案できませんでした。もう一度お試しください。' }),
+        }]);
       }
     } finally {
+      if (requestRef.current === controller) requestRef.current = null;
       if (
+        !controller.signal.aborted
+        && openRef.current
+        &&
         diagramKeyRef.current === requestDiagramKey
         && bestSuggestionGenerationRef.current.isCurrent(requestGeneration)
       ) {
@@ -495,7 +578,7 @@ const ArchitectureChatPanel: React.FC<ArchitectureChatPanelProps> = ({
   return (
     <ResponsiveDrawer
         isOpen={isOpen}
-        modal={isCompactChat}
+        modal={isCompactWorkspace}
         placement="right"
         className="arch-chat-panel"
         role="complementary"
@@ -531,7 +614,7 @@ const ArchitectureChatPanel: React.FC<ArchitectureChatPanelProps> = ({
           <MessageSquare size={18} />
           <span>{t("Architecture Chat")}</span>
         </div>
-        <button className="arch-chat-close" onClick={onClose} title={t("Close chat")} aria-label={t("Close chat")}>
+        <button className="arch-chat-close" onClick={() => { cancelRequest(); onClose(); }} title={t("Close chat")} aria-label={t("Close chat")}>
           <X size={18} />
         </button>
       </div>
@@ -550,13 +633,13 @@ const ArchitectureChatPanel: React.FC<ArchitectureChatPanelProps> = ({
           <div className="arch-chat-empty">
             <p className="arch-chat-empty-title">
               {hasDiagram
-                ? localize(language, { en: 'Describe a change and I’ll update the diagram.', ja: '変更内容を入力すると図を更新します。' })
+                ? localize(language, { en: 'Describe a change and review the proposal before applying it.', ja: '変更内容を入力し、提案を確認してから図に適用できます。' })
                 : localize(language, { en: 'Start by describing what you want to build — I’ll draw the first version, then we refine it together.', ja: '作成したい内容を入力してください。最初の図を作成し、その後一緒に調整できます。' })}
             </p>
             <p className="arch-chat-empty-sub">
               {hasDiagram
-                ? localize(language, { en: 'Every change is saved to version history, so you can experiment freely.', ja: '各変更はバージョン履歴に保存されるため、自由に試せます。' })
-                : localize(language, { en: 'Pick a starter below or type your own. Every step is saved to version history.', ja: '下の例を選ぶか、要件を入力してください。各手順はバージョン履歴に保存されます。' })}
+                ? localize(language, { en: 'Choose which changes to accept. Accepted edits can be undone.', ja: '適用する変更を選択できます。適用した編集は元に戻せます。' })
+                : localize(language, { en: 'Pick a starter below or type your own. Review the generated diagram before applying it.', ja: '下の例を選ぶか、要件を入力してください。生成された図を確認してから適用できます。' })}
             </p>
             <div className="arch-chat-suggestions">
               {(hasDiagram
@@ -618,7 +701,7 @@ const ArchitectureChatPanel: React.FC<ArchitectureChatPanelProps> = ({
           </div>
         )}
 
-        {messages.length > 0 && configured && !isSending && (hasDiagram ? followUps.length > 0 : true) && (
+        {messages.length > 0 && configured && !isSending && !canRetry && (hasDiagram ? followUps.length > 0 : true) && (
           <div className="arch-chat-followups">
             <div className="arch-chat-followups-label">
               <Sparkles size={12} />
@@ -677,6 +760,13 @@ const ArchitectureChatPanel: React.FC<ArchitectureChatPanelProps> = ({
       </div>
 
       <div className="arch-chat-composer">
+        {(isSending || askingBest) && <button type="button" className="btn btn-secondary" onClick={cancelRequest}>
+          {localize(language, { en: 'Cancel request', ja: 'リクエストをキャンセル' })}
+        </button>}
+        {canRetry && !isSending && !askingBest && <button type="button" className="btn btn-secondary"
+          disabled={!configured} onClick={() => void send(input.trim() || lastPromptRef.current)}>
+          {localize(language, { en: 'Retry request', ja: 'リクエストを再試行' })}
+        </button>}
         {!configured && (
           <div className="arch-chat-warning">
             <AlertCircle size={14} /> {' '}
@@ -707,7 +797,10 @@ const ArchitectureChatPanel: React.FC<ArchitectureChatPanelProps> = ({
             {isSending ? <Loader2 size={18} className="spin" /> : <Send size={18} />}
           </button>
         </div>
-        <div className="arch-chat-hint">{t("Enter to send · Shift+Enter for a new line · each change is auto-saved to version history")}</div>
+        <div className="arch-chat-hint">{localize(language, {
+          en: 'Enter to send · Shift+Enter for a new line · Review changes before applying',
+          ja: 'Enterで送信 · Shift+Enterで改行 · 変更は確認してから適用',
+        })}</div>
       </div>
     </ResponsiveDrawer>
   );

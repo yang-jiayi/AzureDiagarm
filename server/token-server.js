@@ -13,27 +13,25 @@ const express = require('express');
 const { DefaultAzureCredential } = require('@azure/identity');
 const { CosmosClient } = require('@azure/cosmos');
 const { TableClient } = require('@azure/data-tables');
-const { EmailClient, KnownEmailSendStatus } = require('@azure/communication-email');
+const { EmailClient } = require('@azure/communication-email');
 const {
   createAccessControlRouter,
   getAccessControlConfiguration,
   getPrincipal,
-  normalizeEmail,
 } = require('./access-control');
 const { ArmKeyVaultAccessStore } = require('./arm-key-vault-access-store');
 const { createOpenAIProxyRouter, logFoundryConfiguration } = require('./openai-proxy');
 const { createFixedWindowRateLimiter, createTableRateLimiter } = require('./rate-limiter');
 const { createDiagramsRouter, createAzureBlobBackend } = require('./diagram-api');
 const { asyncHandler, createErrorHandler } = require('./async-handler');
-const {
-  createArchivedFeedbackContact,
-  hasFeedbackArchiveConfiguration,
-  hasFeedbackContactConfiguration,
-  hasFeedbackDeliveryConfiguration,
-} = require('./feedback-configuration');
+const { deploymentConfig, createOriginGuard } = require('./deployment-security');
+const { MemoryBudgetStore, CosmosBudgetStore, TableBudgetStore, createBudgetManager, budgetIdentity } = require('./ai-budget');
+const { createFeedbackService, createFeedbackRouter } = require('./feedback');
+const { createArchivedFeedbackContact } = require('./feedback-configuration');
 const { createGracefulShutdown } = require('./graceful-shutdown');
 const { createReadinessHandler } = require('./readiness');
-const crypto = require('crypto');
+
+const deployment = deploymentConfig();
 
 const app = express();
 app.disable('x-powered-by');
@@ -98,12 +96,15 @@ app.get('/readyz', createReadinessHandler({
   isConfigured: () => accessControlConfiguration.configured,
 }));
 
-app.use('/api/access', createAccessControlRouter({
+const accessRouter = createAccessControlRouter({
   enabled: ACCESS_CONTROL_ENABLED,
   adminEmail: ACCESS_ADMIN_EMAIL,
   publicAppUrl: PUBLIC_APP_URL,
   table: accessTable,
-}));
+});
+app.use('/api/access', accessRouter);
+// Defense in depth: protected APIs enforce the same cached allowlist as nginx.
+app.use('/api', accessRouter.requireAllowed, createOriginGuard(deployment));
 
 // ── Authenticated diagram persistence ───────────────────────────────────────
 // Stores diagram documents, immutable versions, comments and share tokens in
@@ -236,8 +237,6 @@ if (_RATE_LIMIT_TABLES_ENDPOINT) {
   }
 }
 const consumeUtilityApiRateLimit = createFixedWindowRateLimiter(60 * 60 * 1000, 120);
-// Deliberately tight: the only client is an operator reading the feedback
-// archive, so a low ceiling keeps the shared admin token from being brute-forced.
 const consumeAdminApiRateLimit = createFixedWindowRateLimiter(60 * 60 * 1000, 30);
 
 if (!OPENAI_ENDPOINT) {
@@ -265,15 +264,6 @@ const TABLES_FEEDBACK_TABLE = process.env.AZURE_TABLES_FEEDBACK_TABLE || 'feedba
 const COSMOS_ENDPOINT = process.env.AZURE_COSMOS_ENDPOINT;
 const COSMOS_DATABASE_ID = process.env.COSMOS_DATABASE_ID || 'diagrams';
 const COSMOS_FEEDBACK_CONTAINER_ID = process.env.COSMOS_FEEDBACK_CONTAINER_ID || 'feedback';
-const feedbackConfiguration = {
-  emailEndpoint: FEEDBACK_EMAIL_ENDPOINT,
-  emailSender: FEEDBACK_EMAIL_SENDER,
-  emailRecipient: FEEDBACK_EMAIL_RECIPIENT,
-  contactEnabled: FEEDBACK_CONTACT_ENABLED,
-  tablesEndpoint: TABLES_ENDPOINT,
-  cosmosEndpoint: COSMOS_ENDPOINT,
-};
-
 let feedbackEmailClient = null;
 function getFeedbackEmailClient() {
   if (!FEEDBACK_EMAIL_ENDPOINT || !FEEDBACK_EMAIL_SENDER || !FEEDBACK_EMAIL_RECIPIENT) {
@@ -286,20 +276,11 @@ function getFeedbackEmailClient() {
 }
 
 let feedbackTable = null;
-let feedbackTableReady = null;
-async function getFeedbackTable() {
+function getFeedbackTable() {
   if (!TABLES_ENDPOINT) return null;
   if (!feedbackTable) {
     feedbackTable = new TableClient(TABLES_ENDPOINT, TABLES_FEEDBACK_TABLE, credential);
   }
-  if (!feedbackTableReady) {
-    feedbackTableReady = feedbackTable.createTable().catch((error) => {
-      if (error.statusCode === 409) return;
-      feedbackTableReady = null;
-      throw error;
-    });
-  }
-  await feedbackTableReady;
   return feedbackTable;
 }
 
@@ -317,108 +298,6 @@ function getFeedbackContainer() {
   return feedbackContainer;
 }
 
-async function persistFeedback(item) {
-  const emailClient = getFeedbackEmailClient();
-  const deliveryErrors = [];
-  let emailDelivered = false;
-  if (emailClient) {
-    try {
-      const safeCategory = item.category.replace(/[\r\n]+/g, ' ').slice(0, 100);
-      const message = {
-        senderAddress: FEEDBACK_EMAIL_SENDER,
-        content: {
-          subject: `AzureDiagarm feedback: ${item.rating}/5 - ${safeCategory}`,
-          plainText: [
-            `Rating: ${item.rating}/5`,
-            `Category: ${item.category}`,
-            `Submitted: ${item.createdAt}`,
-            ...(item.contact?.consent ? [
-              `Follow-up contact: ${item.contact.email}`,
-              `Contact consent expires: ${item.contact.expiresAt}`,
-            ] : []),
-            '',
-            'Comment:',
-            item.comment || '(none)',
-            '',
-            'Context:',
-            JSON.stringify(item.context, null, 2),
-            '',
-            `Feedback ID: ${item.id}`,
-          ].join('\n'),
-        },
-        recipients: {
-          to: [{ address: FEEDBACK_EMAIL_RECIPIENT }],
-        },
-      };
-      const poller = await emailClient.beginSend(message);
-      const result = await poller.pollUntilDone();
-      if (result.status !== KnownEmailSendStatus.Succeeded) {
-        throw new Error(`Feedback email delivery failed with status ${result.status}`);
-      }
-      emailDelivered = true;
-    } catch (error) {
-      deliveryErrors.push(error);
-    }
-  }
-
-  // Contact addresses are delivered only through the configured email channel.
-  // Archives retain consent metadata but never the address itself.
-  if (item.contact?.consent && !emailDelivered) {
-    throw deliveryErrors[0] || new Error('Follow-up contact delivery is unavailable');
-  }
-
-  const archiveItem = {
-    ...item,
-    contact: createArchivedFeedbackContact(item.contact),
-  };
-
-  if (TABLES_ENDPOINT) {
-    try {
-      const table = await getFeedbackTable();
-      const reverseTimestamp = String(253402300799999 - Date.now()).padStart(15, '0');
-      await table.createEntity({
-        partitionKey: 'feedback',
-        rowKey: `${reverseTimestamp}-${item.id}`,
-        id: archiveItem.id,
-        rating: archiveItem.rating,
-        category: archiveItem.category,
-        comment: archiveItem.comment,
-        contactJson: JSON.stringify(archiveItem.contact),
-        contextJson: JSON.stringify(archiveItem.context),
-        createdAt: archiveItem.createdAt,
-      });
-      return;
-    } catch (error) {
-      deliveryErrors.push(error);
-      if (emailDelivered) {
-        console.error('[feedback] Table Storage archive error:', error.message);
-        return;
-      }
-    }
-  }
-
-  const container = getFeedbackContainer();
-  if (container) {
-    try {
-      await container.items.create(archiveItem);
-      return;
-    } catch (error) {
-      deliveryErrors.push(error);
-      if (emailDelivered) {
-        console.error('[feedback] Cosmos DB archive error:', error.message);
-        return;
-      }
-    }
-  }
-
-  if (emailDelivered) return;
-  if (deliveryErrors.length === 1) throw deliveryErrors[0];
-  if (deliveryErrors.length > 1) {
-    throw new AggregateError(deliveryErrors, 'Feedback delivery failed in all configured channels');
-  }
-  throw new Error('Feedback storage is not configured');
-}
-
 const FEEDBACK_RATE_LIMIT_WINDOW_MS = 60 * 60 * 1000;
 const FEEDBACK_RATE_LIMIT_MAX = 10;
 const consumeFeedbackRateLimit = createFixedWindowRateLimiter(
@@ -426,62 +305,44 @@ const consumeFeedbackRateLimit = createFixedWindowRateLimiter(
   FEEDBACK_RATE_LIMIT_MAX,
 );
 
-async function readFeedback(limit) {
-  let tableError = null;
-  if (TABLES_ENDPOINT) {
-    try {
-      const table = await getFeedbackTable();
-      const items = [];
-      const entities = table.listEntities({
-        queryOptions: {
-          filter: "PartitionKey eq 'feedback'",
-          select: ['id', 'rating', 'category', 'comment', 'contactJson', 'contextJson', 'createdAt'],
-        },
-      });
+const feedbackService = createFeedbackService({
+  table: getFeedbackTable(), container: getFeedbackContainer(),
+  emailClient: getFeedbackEmailClient(), emailSender: FEEDBACK_EMAIL_SENDER, emailRecipient: FEEDBACK_EMAIL_RECIPIENT,
+  contactEnabled: FEEDBACK_CONTACT_ENABLED,
+  archiveContact: item => createArchivedFeedbackContact(item.contact),
+  retentionDays: deployment.retentionDays,
+  legacyRetentionEnabled: deployment.legacyRetentionEnabled,
+});
+app.use('/api/feedback', createFeedbackRouter({
+  service: feedbackService, mode: deployment.mode, adminEmail: ACCESS_ADMIN_EMAIL,
+  consumeRateLimit: consumeFeedbackRateLimit, localAdminToken: process.env.FEEDBACK_ADMIN_TOKEN || '',
+  consumeAdminRateLimit: consumeAdminApiRateLimit,
+}));
 
-      for await (const entity of entities) {
-        items.push({
-          id: entity.id,
-          rating: entity.rating,
-          category: entity.category,
-          comment: entity.comment,
-          contact: JSON.parse(entity.contactJson || '{"consent":false}'),
-          context: JSON.parse(entity.contextJson || '{}'),
-          createdAt: entity.createdAt,
-        });
-        if (items.length >= limit) break;
-      }
-      return items;
-    } catch (error) {
-      tableError = error;
-      console.error('[feedback] Table Storage read failed; trying Cosmos DB fallback:', error.message);
-    }
-  }
-
-  const container = getFeedbackContainer();
-  if (!container) {
-    if (tableError) throw tableError;
-    return null;
-  }
-
-  try {
-    const { resources } = await container.items
-      .query({
-        query: 'SELECT TOP @limit c.id, c.rating, c.category, c.comment, c.contact, c.context, c.createdAt FROM c WHERE c.type = @type ORDER BY c.createdAt DESC',
-        parameters: [
-          { name: '@limit', value: limit },
-          { name: '@type', value: 'feedback' },
-        ],
-      })
-      .fetchAll();
-    return resources;
-  } catch (error) {
-    if (tableError) {
-      throw new AggregateError([tableError, error], 'Feedback reads failed in Table Storage and Cosmos DB');
-    }
-    throw error;
-  }
+let budgetStore;
+if (deployment.store === 'cosmos') {
+  const client = new CosmosClient({ endpoint: COSMOS_ENDPOINT, aadCredentials: credential });
+  budgetStore = new CosmosBudgetStore(client.database(COSMOS_DATABASE_ID)
+    .container(process.env.COSMOS_BUDGET_CONTAINER_ID || COSMOS_FEEDBACK_CONTAINER_ID), client);
+} else if (deployment.store === 'table') {
+  budgetStore = new TableBudgetStore(new TableClient(
+    process.env.AZURE_TABLES_BUDGET_ENDPOINT || TABLES_ENDPOINT,
+    process.env.AZURE_TABLES_BUDGET_TABLE || 'aibudgets', credential,
+  ));
+} else {
+  budgetStore = new MemoryBudgetStore();
 }
+const aiBudget = createBudgetManager({
+  store: budgetStore, dailyTokens: deployment.dailyTokens, concurrency: deployment.concurrency,
+});
+app.get('/api/ai/budget', asyncHandler(async (req, res) => {
+  try {
+    return res.json({ ...await aiBudget.status(budgetIdentity(req, deployment.mode)), mode: deployment.mode });
+  } catch (error) {
+    res.set('Retry-After', String(error.retryAfter || 5));
+    return res.status(error.status || 503).json({ available: false, error: 'AI budget is unavailable.' });
+  }
+}));
 
 if (!REGION) {
   console.warn('[speech-token] AZURE_SPEECH_REGION is not set. Requests will fail.');
@@ -579,6 +440,8 @@ app.use('/api/openai', createOpenAIProxyRouter({
   allowedFoundryDeployments: FOUNDRY_ALLOWED_DEPLOYMENTS,
   allowByoAIEndpoints: ALLOW_BYO_AI_ENDPOINTS,
   consumeRateLimit: consumeOpenAiRateLimit,
+  budget: aiBudget,
+  mode: deployment.mode,
 }));
 
 // ── Microsoft Learn docs grounding ─────────────────────────────────────────
@@ -695,7 +558,6 @@ app.get('/api/ice-token', asyncHandler(async (req, res) => {
   }
 }));
 
-// ── Feedback (Cosmos DB) ──────────────────────────────────────────────────────
 // ── Azure resource import (Resource Graph) ────────────────────────────────
 // Lets an operator reverse-engineer a live Resource Group into a diagram by
 // querying Azure Resource Graph server-side (via DefaultAzureCredential) and
@@ -803,136 +665,43 @@ app.post('/api/azure/resource-graph', requireAzureImport, asyncHandler(async (re
   }
 }));
 
-app.post('/api/feedback', asyncHandler(async (req, res) => {
-  if (!hasFeedbackDeliveryConfiguration(feedbackConfiguration)) {
-    return res.status(503).json({ error: 'Feedback storage is not configured' });
-  }
-
-  const retryAfter = consumeFeedbackRateLimit(req);
-  if (retryAfter > 0) {
-    res.set('Retry-After', String(retryAfter));
-    return res.status(429).json({ error: 'Too many feedback submissions. Please try again later.' });
-  }
-
-  const body = req.body || {};
-  const rating = Number(body.rating);
-  if (!Number.isInteger(rating) || rating < 1 || rating > 5) {
-    return res.status(400).json({ error: 'rating must be an integer between 1 and 5' });
-  }
-
-  const category = typeof body.category === 'string' ? body.category.slice(0, 100) : 'General';
-  const comment = typeof body.comment === 'string' ? body.comment.slice(0, 1000) : '';
-  const contactConsent = body.contact?.consent === true;
-  if (contactConsent && !FEEDBACK_CONTACT_ENABLED) {
-    return res.status(400).json({ error: 'follow-up contact is not enabled' });
-  }
-  if (contactConsent && !hasFeedbackContactConfiguration(feedbackConfiguration)) {
-    return res.status(503).json({ error: 'follow-up contact delivery is not configured' });
-  }
-  const contactEmail = contactConsent ? normalizeEmail(body.contact?.email) : '';
-  if (contactConsent && !contactEmail) {
-    return res.status(400).json({ error: 'a valid email address is required when contact consent is enabled' });
-  }
-  const ctx = body.context && typeof body.context === 'object' ? body.context : {};
-  const createdAt = new Date();
-  const contactExpiresAt = new Date(createdAt);
-  contactExpiresAt.setUTCDate(contactExpiresAt.getUTCDate() + 180);
-
-  const item = {
-    id: crypto.randomUUID(),
-    type: 'feedback',
-    rating,
-    category,
-    comment,
-    contact: contactConsent ? {
-      consent: true,
-      email: contactEmail,
-      consentAt: createdAt.toISOString(),
-      expiresAt: contactExpiresAt.toISOString(),
-      followUpStatus: 'new',
-    } : {
-      consent: false,
-    },
-    context: {
-      diagramName: typeof ctx.diagramName === 'string' ? ctx.diagramName.slice(0, 200) : '',
-      serviceCount: Number.isFinite(Number(ctx.serviceCount)) ? Number(ctx.serviceCount) : 0,
-      model: typeof ctx.model === 'string' ? ctx.model.slice(0, 100) : '',
-      url: typeof ctx.url === 'string' ? ctx.url.slice(0, 500) : '',
-      userAgent: typeof ctx.userAgent === 'string' ? ctx.userAgent.slice(0, 500) : '',
-    },
-    createdAt: createdAt.toISOString(),
-  };
-
-  try {
-    await persistFeedback(item);
-    res.status(201).json({ ok: true, id: item.id });
-  } catch (err) {
-    console.error('[feedback] error:', err.message);
-    res.status(500).json({ error: 'Failed to store feedback' });
-  }
-}));
-
-// ── Admin: read persisted feedback (protected) ──────────────────────────────
-// Lets an operator read verbatim comments from the configured archive. The
-// route is disabled unless a dedicated token is configured and remains behind
-// the application whitelist enforced by nginx.
-const FEEDBACK_ADMIN_TOKEN = process.env.FEEDBACK_ADMIN_TOKEN || '';
-const FEEDBACK_ADMIN_TOKEN_BYTES = Buffer.from(FEEDBACK_ADMIN_TOKEN, 'utf8');
-
-// Compare raw bytes, not string lengths: two strings of equal character length
-// can encode to buffers of different byte lengths (any non-ASCII input), and
-// crypto.timingSafeEqual throws a RangeError in that case. Inside an async
-// Express 4 handler that RangeError would surface as an unhandled rejection and
-// take the whole container down, so the guard has to be byte-accurate.
-function adminTokenMatches(presented) {
-  if (typeof presented !== 'string' || presented.length === 0) return false;
-  const presentedBytes = Buffer.from(presented, 'utf8');
-  if (presentedBytes.length !== FEEDBACK_ADMIN_TOKEN_BYTES.length) return false;
-  return crypto.timingSafeEqual(presentedBytes, FEEDBACK_ADMIN_TOKEN_BYTES);
-}
-
-app.get('/api/feedback/list', asyncHandler(async (req, res) => {
-  if (!FEEDBACK_ADMIN_TOKEN) {
-    return res.status(503).json({ error: 'Feedback admin endpoint is not configured' });
-  }
-  const retryAfter = consumeAdminApiRateLimit(req);
-  if (retryAfter > 0) {
-    res.set('Retry-After', String(retryAfter));
-    return res.status(429).json({ error: 'Request limit exceeded. Please try again later.' });
-  }
-  const auth = req.get('authorization') || '';
-  const presented = auth.startsWith('Bearer ') ? auth.slice(7) : (req.get('x-admin-token') || '');
-  if (!adminTokenMatches(presented)) {
-    return res.status(401).json({ error: 'unauthorized' });
-  }
-
-  if (!hasFeedbackArchiveConfiguration(feedbackConfiguration)) {
-    return res.status(503).json({ error: 'Feedback archive is not configured' });
-  }
-
-  const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 200, 1), 1000);
-  try {
-    const items = await readFeedback(limit);
-    res.json({ count: items.length, items });
-  } catch (err) {
-    console.error('[feedback/list] error:', err.message);
-    res.status(500).json({ error: 'Failed to read feedback' });
-  }
-}));
-
 // Final safety net: any error forwarded by asyncHandler is logged and answered
 // with a generic 500 instead of escaping to the process and killing the
 // container (start.sh stops the container when this server exits).
 app.use(createErrorHandler(console));
 
 const PORT = parseInt(process.env.TOKEN_SERVER_PORT || '3001', 10);
-const server = app.listen(PORT, '127.0.0.1', () => {
-  console.log(`[speech-token] Listening on 127.0.0.1:${PORT}`);
-});
-const shutdown = createGracefulShutdown(server, { logger: console, timeoutMs: 25_000 });
-for (const signal of ['SIGTERM', 'SIGINT']) {
-  process.once(signal, () => {
-    shuttingDown = true;
-    shutdown(signal);
+async function start() {
+  // Storage/TTL misconfiguration must fail before the public listener is ready.
+  await budgetStore.validate?.();
+  await feedbackService.validate();
+  async function retain() {
+    await feedbackService.sweep();
+    await budgetStore.sweep?.();
+  }
+  try { await retain(); }
+  catch (error) { console.error('[retention] Initial cleanup failed; will retry next interval:', error.name); }
+  let retaining = false;
+  const retentionTimer = setInterval(async () => {
+    if (retaining) return;
+    retaining = true;
+    try { await retain(); }
+    catch (error) { console.error('[retention] Cleanup failed; will retry next interval:', error.name); }
+    finally { retaining = false; }
+  }, 15 * 60 * 1000).unref();
+  const server = app.listen(PORT, '127.0.0.1', () => {
+    console.log(`[server] Listening on 127.0.0.1:${server.address().port}; deployment mode: ${deployment.mode}`);
   });
+  const shutdown = createGracefulShutdown(server, { logger: console, timeoutMs: 25_000 });
+  for (const signal of ['SIGTERM', 'SIGINT']) {
+    process.once(signal, () => {
+      shuttingDown = true;
+      clearInterval(retentionTimer);
+      shutdown(signal);
+    });
+  }
 }
+start().catch(error => {
+  console.error('[server] Startup validation failed:', error.message);
+  process.exitCode = 1;
+});

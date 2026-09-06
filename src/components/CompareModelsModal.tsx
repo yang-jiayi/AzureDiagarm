@@ -1,10 +1,12 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { X, Sparkles, Loader2, Clock, Zap, CheckCircle, AlertCircle, GitCompare, Download, FileJson, FileText, Brain, MonitorPlay, StopCircle } from 'lucide-react';
 import { useDraggableResizable } from '../hooks/useDraggableResizable';
-import { generateArchitectureWithAI, generateCritique, isManagedAIConfigured, AIMetrics, ModelOverride } from '../services/azureOpenAI';
+import { generateArchitectureWithAI, generateCritique, isManagedAIConfigured, throwIfGenerationAborted, AIMetrics, ModelOverride } from '../services/azureOpenAI';
+import { getAIBudget } from '../services/aiBudgetService';
+import { runAIBudgetQueue } from '../services/aiBudgetQueue';
 import { AvatarPresenter, AvatarStatus } from '../services/avatarPresenter';
 import {
   MODEL_CONFIG,
@@ -18,12 +20,12 @@ import {
 } from '../stores/modelSettingsStore';
 import { useLanguage } from '../i18n/LanguageContext';
 import { localize, type LocalizedText } from '../i18n/localization';
-import { useEscapeKey } from '../hooks/useEscapeKey';
 import { useModalFocus } from '../hooks/useModalFocus';
 
 /** Abbreviate model name for filenames */
 function abbreviateModelForFile(model: ModelType): string {
   const map: Record<string, string> = {
+    'gpt-6-astra': 'gpt6astra',
     'gpt-5.1': 'gpt51', 'gpt-5.2': 'gpt52',
     'gpt-5.4': 'gpt54', 'gpt-5.4-mini': 'gpt54mini', 'gpt-5.6-sol': 'gpt56sol',
     'gpt-5.6-terra': 'gpt56terra', 'gpt-5.6-luna': 'gpt56luna',
@@ -116,7 +118,7 @@ interface ComparisonResult {
 interface CompareModelsModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onApply: (architecture: any, prompt: string, sourceModel?: ModelType, sourceReasoningEffort?: ReasoningEffort) => void | Promise<void>;
+  onApply: (architecture: any, prompt: string, sourceModel?: ModelType, sourceReasoningEffort?: ReasoningEffort) => boolean | void | Promise<boolean | void>;
   /**
    * Optional parent-provided batch PNG capture.
    * Modal supplies one item per successful result with the desired filename;
@@ -145,8 +147,10 @@ const CompareModelsModal: React.FC<CompareModelsModalProps> = ({ isOpen, onClose
   const [prompt, setPrompt] = useState('');
   const [isRunning, setIsRunning] = useState(false);
   const [results, setResults] = useState<ComparisonResult[]>([]);
+  const [comparisonError, setComparisonError] = useState<string | null>(null);
   const [criticModel, setCriticModel] = useState<ModelType>(() => {
     const avail = getAvailableModels();
+    if (avail.includes('gpt-6-astra')) return 'gpt-6-astra';
     return avail.includes('gpt-5.6-sol') ? 'gpt-5.6-sol' : (avail[0] ?? currentSettings.model);
   });
   const [critiqueText, setCritiqueText] = useState<string | null>(null);
@@ -154,6 +158,45 @@ const CompareModelsModal: React.FC<CompareModelsModalProps> = ({ isOpen, onClose
   const [isCritiquing, setIsCritiquing] = useState(false);
   const [critiqueError, setCritiqueError] = useState<string | null>(null);
   const [isSavingPngs, setIsSavingPngs] = useState(false);
+  const requestRef = useRef<{ controller: AbortController; kind: 'comparison' | 'critique' } | null>(null);
+  const openRef = useRef(isOpen);
+  openRef.current = isOpen;
+
+  const cancelRequest = useCallback(() => {
+    const request = requestRef.current;
+    if (!request) return;
+    requestRef.current = null;
+    request.controller.abort();
+    if (request.kind === 'comparison') {
+      const message = localize(language, {
+        en: 'Comparison cancelled. Completed results were kept.',
+        ja: '比較をキャンセルしました。完了した結果は保持されています。',
+      });
+      setResults(previous => previous.map(result =>
+        result.status === 'pending' || result.status === 'running'
+          ? { ...result, status: 'error', error: message } : result));
+      setComparisonError(message);
+      setIsRunning(false);
+    } else {
+      setCritiqueError(localize(language, { en: 'Critique cancelled.', ja: '批評をキャンセルしました。' }));
+      setIsCritiquing(false);
+    }
+  }, [language]);
+
+  useEffect(() => {
+    if (!isOpen) cancelRequest();
+  }, [isOpen, cancelRequest]);
+  useEffect(() => () => {
+    requestRef.current?.controller.abort();
+    requestRef.current = null;
+  }, []);
+
+  const isCurrentRequest = (controller: AbortController) =>
+    openRef.current && requestRef.current?.controller === controller && !controller.signal.aborted;
+  const handleClose = () => {
+    cancelRequest();
+    onClose();
+  };
 
   // Avatar presenter state
   const [avatarStatus, setAvatarStatus] = useState<AvatarStatus>('idle');
@@ -265,9 +308,12 @@ const CompareModelsModal: React.FC<CompareModelsModalProps> = ({ isOpen, onClose
 
   const runComparison = async () => {
     if (!prompt.trim() || selectedModels.size === 0) return;
-    if (!isManagedAIConfigured()) return;
+    if (!isManagedAIConfigured() || !openRef.current || requestRef.current) return;
 
+    const controller = new AbortController();
+    requestRef.current = { controller, kind: 'comparison' };
     setIsRunning(true);
+    setComparisonError(null);
     const models = Array.from(selectedModels);
 
     // Initialize results
@@ -280,58 +326,64 @@ const CompareModelsModal: React.FC<CompareModelsModalProps> = ({ isOpen, onClose
     }));
     setResults(initial);
 
-    // Run all models in parallel
-    const promises = models.map(async (model, idx) => {
-      // Mark as running
-      setResults(prev => prev.map((r, i) => i === idx ? { ...r, status: 'running' as const } : r));
-
-      const override: ModelOverride = {
-        model,
-        reasoningEffort: MODEL_CONFIG[model].isReasoning
-          ? normalizeReasoningEffort(model, effectiveReasoningEffort)
-          : 'none',
-        forceManaged: true,
-      };
-
-      try {
-        const result = await generateArchitectureWithAI(prompt, override, undefined, language);
-        const arch = result;
-        const metrics: AIMetrics = result.metrics;
-
-        const serviceCount = arch.services?.length || 0;
-        const connectionCount = arch.connections?.length || 0;
-        const groupCount = arch.groups?.length || 0;
-        const workflowSteps = arch.workflow?.length || 0;
-
-        setResults(prev => prev.map((r, i) => i === idx ? {
-          ...r,
-          status: 'success' as const,
-          architecture: arch,
-          metrics,
-          serviceCount,
-          connectionCount,
-          groupCount,
-          workflowSteps,
-        } : r));
-      } catch (err: any) {
-        setResults(prev => prev.map((r, i) => i === idx ? {
-          ...r,
-          status: 'error' as const,
-          error: err.message || 'Unknown error',
-        } : r));
+    try {
+      await runAIBudgetQueue<ComparisonResult>(models.map((model, index) => async signal => {
+        if (!isCurrentRequest(controller)) controller.abort();
+        throwIfGenerationAborted(signal);
+        const override: ModelOverride = {
+          model,
+          reasoningEffort: initial[index].reasoningEffort,
+          forceManaged: true,
+          signal,
+        };
+        const architecture = await generateArchitectureWithAI(prompt, override, undefined, language);
+        return {
+          ...initial[index],
+          status: 'success',
+          architecture,
+          metrics: architecture.metrics,
+          serviceCount: architecture.services?.length || 0,
+          connectionCount: architecture.connections?.length || 0,
+          groupCount: architecture.groups?.length || 0,
+          workflowSteps: architecture.workflow?.length || 0,
+        };
+      }), {
+        getBudget: getAIBudget,
+        signal: controller.signal,
+        onStateChange: (index, state) => {
+          if (!isCurrentRequest(controller)) return;
+          const entry: ComparisonResult = state.status === 'success' ? state.value : {
+            ...initial[index],
+            status: state.status,
+            ...(state.status === 'error'
+              ? { error: state.error instanceof Error ? translate(state.error.message) : translate('Unknown error') }
+              : {}),
+          };
+          setResults(previous => previous.map((result, i) => i === index ? entry : result));
+        },
+      });
+    } catch (error) {
+      if (!isCurrentRequest(controller)) return;
+      const message = error instanceof Error ? translate(error.message) : translate('Unknown error');
+      setComparisonError(message);
+      setResults(previous => previous.map(result =>
+        result.status === 'pending' || result.status === 'running'
+          ? { ...result, status: 'error', error: message } : result));
+    } finally {
+      if (requestRef.current?.controller === controller) {
+        requestRef.current = null;
+        setIsRunning(false);
       }
-    });
-
-    await Promise.allSettled(promises);
-    setIsRunning(false);
+    }
   };
 
   const handleApply = async (result: ComparisonResult) => {
     if (result.architecture) {
       try {
-        await onApply(result.architecture, prompt, result.model, result.reasoningEffort);
-        onClose();
+        const applied = await onApply(result.architecture, prompt, result.model, result.reasoningEffort);
+        if (applied !== false) handleClose();
       } catch (error) {
+        if (error instanceof Error && (error.name === 'AbortError' || error.name === 'CloudDiagramOperationCancelledError')) return;
         console.error('Failed to apply compared architecture:', error);
         alert(localize(language, {
           en: 'The architecture could not be applied to the canvas.',
@@ -364,23 +416,34 @@ const CompareModelsModal: React.FC<CompareModelsModalProps> = ({ isOpen, onClose
   };
 
   const runCritique = async () => {
+    if (!openRef.current || requestRef.current || !isManagedAIConfigured()) return;
+    const controller = new AbortController();
+    requestRef.current = { controller, kind: 'critique' };
     setCritiqueText(null);
     setCritiqueError(null);
     setIsCritiquing(true);
     const chosenModel = criticModel;
     try {
       const summary = buildCritiqueSummary();
-      const override: ModelOverride = {
-        model: chosenModel,
-        reasoningEffort: MODEL_CONFIG[chosenModel].isReasoning
-          ? normalizeReasoningEffort(chosenModel, effectiveReasoningEffort)
-          : 'none',
-        forceManaged: true,
-      };
-      const { content } = await generateCritique(summary, prompt, override, language);
-      setCritiqueText(content);
+      const [result] = await runAIBudgetQueue([async signal => {
+        if (!isCurrentRequest(controller)) controller.abort();
+        throwIfGenerationAborted(signal);
+        const override: ModelOverride = {
+          model: chosenModel,
+          reasoningEffort: MODEL_CONFIG[chosenModel].isReasoning
+            ? normalizeReasoningEffort(chosenModel, effectiveReasoningEffort)
+            : 'none',
+          forceManaged: true,
+          signal,
+        };
+        return generateCritique(summary, prompt, override, language);
+      }], { getBudget: getAIBudget, signal: controller.signal });
+      if (!isCurrentRequest(controller)) return;
+      if (result.status === 'rejected') throw result.reason;
+      setCritiqueText(result.value.content);
       setCritiqueByModel(chosenModel);
     } catch (err: any) {
+      if (!isCurrentRequest(controller)) return;
       // Keep the raw failure detail in the console only; show the user a
       // stable, localised message. Typed generation errors (OpenAIProxyError /
       // ModelJsonError) already carry a translation-friendly message, so run it
@@ -395,7 +458,10 @@ const CompareModelsModal: React.FC<CompareModelsModalProps> = ({ isOpen, onClose
             }),
       );
     } finally {
-      setIsCritiquing(false);
+      if (requestRef.current?.controller === controller) {
+        requestRef.current = null;
+        setIsCritiquing(false);
+      }
     }
   };
 
@@ -698,12 +764,11 @@ const CompareModelsModal: React.FC<CompareModelsModalProps> = ({ isOpen, onClose
     ? Math.max(...successResults.map(r => (r.serviceCount || 0) + (r.connectionCount || 0) + (r.workflowSteps || 0)))
     : 0;
 
-  const dialogRef = useModalFocus<HTMLDivElement>(isOpen);
-  useEscapeKey(isOpen, onClose);
+  const dialogRef = useModalFocus(isOpen, handleClose);
   if (!isOpen) return null;
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
+    <div className="modal-overlay" onClick={handleClose}>
       <div
         ref={dialogRef}
         className="compare-modal"
@@ -718,12 +783,13 @@ const CompareModelsModal: React.FC<CompareModelsModalProps> = ({ isOpen, onClose
             <GitCompare size={20} />
             <h2>{t("Compare Models")}</h2>
           </div>
-          <button className="modal-close" onClick={onClose} title={t("Close")} aria-label={t("Close")}>
+          <button className="modal-close" onClick={handleClose} title={t("Close")} aria-label={t("Close")}>
             <X size={20} />
           </button>
         </div>
 
         <div className="compare-modal-body">
+          {comparisonError && <p className="error-message" role="alert">{comparisonError}</p>}
           {/* Model Selection */}
           <div className="compare-section">
             <h3 className="compare-section-title">{t("Select Models to Compare")}</h3>
@@ -819,6 +885,9 @@ const CompareModelsModal: React.FC<CompareModelsModalProps> = ({ isOpen, onClose
             <div className="compare-progress">
               <Loader2 size={16} className="spinner" />
               <span>{t("Running")}{' '}{completedCount}{t("/")}{results.length} {' '}{t("models...")}</span>
+              <button className="btn btn-secondary" onClick={cancelRequest}>
+                {localize(language, { en: 'Cancel comparison', ja: '比較をキャンセル' })}
+              </button>
             </div>
           )}
 
@@ -868,7 +937,7 @@ const CompareModelsModal: React.FC<CompareModelsModalProps> = ({ isOpen, onClose
                 {!isRunning && (
                   <button
                     className="compare-rerun-btn"
-                    onClick={() => { setResults([]); setCritiqueText(null); setCritiqueError(null); setCritiqueByModel(null); handleDismissAvatar(); }}
+                    onClick={() => { cancelRequest(); setResults([]); setComparisonError(null); setCritiqueText(null); setCritiqueError(null); setCritiqueByModel(null); handleDismissAvatar(); }}
                     title={t("Clear results and try again")}
                   >
                     {' '}{t("New Comparison")}{' '}</button>
@@ -987,6 +1056,11 @@ const CompareModelsModal: React.FC<CompareModelsModalProps> = ({ isOpen, onClose
                   {isCritiquing ? <Loader2 size={14} className="spinner" /> : <Brain size={14} />}
                   {isCritiquing ? t('Analyzing...') : (critiqueText ? t('Regenerate Critique') : t('Generate AI Critique'))}
                 </button>
+                {isCritiquing && (
+                  <button className="btn btn-secondary" onClick={cancelRequest}>
+                    {localize(language, { en: 'Cancel critique', ja: '批評をキャンセル' })}
+                  </button>
+                )}
                 {critiqueText && !isCritiquing && (
                   <button
                     className="compare-save-btn compare-save-report-btn"
@@ -1013,7 +1087,7 @@ const CompareModelsModal: React.FC<CompareModelsModalProps> = ({ isOpen, onClose
                 )}
               </div>
               {critiqueError && (
-                <div className="compare-critique-error">{critiqueError}</div>
+                <div className="compare-critique-error" role="alert">{critiqueError}</div>
               )}
               {critiqueText && critiqueByModel && (
                 <div className="compare-critique-output">

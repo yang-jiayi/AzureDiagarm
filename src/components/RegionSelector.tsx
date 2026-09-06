@@ -10,42 +10,53 @@ import { useLanguage } from '../i18n/LanguageContext';
 interface RegionSelectorProps {
   isActive?: boolean;
   onRegionChange?: (region: AzureRegion) => void;
+  region?: AzureRegion;
+  isUpdating?: boolean;
 }
 
-const RegionSelector: React.FC<RegionSelectorProps> = ({ isActive = true, onRegionChange }) => {
+const RegionSelector: React.FC<RegionSelectorProps> = ({
+  isActive = true, onRegionChange, region, isUpdating = false,
+}) => {
   const { t, translate } = useLanguage();
   const [selectedRegion, setSelectedRegion] = useState<AzureRegion>(getActiveRegion());
   const [isOpen, setIsOpen] = useState(false);
 
   useEffect(() => {
-    if (!isActive) setIsOpen(false);
-  }, [isActive]);
+    if (!isActive || isUpdating) setIsOpen(false);
+  }, [isActive, isUpdating]);
 
-  const handleRegionSelect = (region: AzureRegion) => {
-    setSelectedRegion(region);
-    setActiveRegion(region);
+  const handleRegionSelect = (nextRegion: AzureRegion) => {
+    if (!isActive || isUpdating) return;
+    if (region === undefined) {
+      setSelectedRegion(nextRegion);
+      setActiveRegion(nextRegion);
+    }
     setIsOpen(false);
-    trackRegionChange(region);
+    trackRegionChange(nextRegion);
     
     if (onRegionChange) {
-      onRegionChange(region);
+      onRegionChange(nextRegion);
     }
   };
 
-  const currentRegionInfo = AVAILABLE_REGIONS.find(r => r.id === selectedRegion);
+  const currentRegion = region ?? selectedRegion;
+  const currentRegionInfo = AVAILABLE_REGIONS.find(r => r.id === currentRegion);
 
   return (
     <div className="region-selector">
       <button 
         type="button"
         className="region-selector-button"
+        disabled={!isActive || isUpdating}
+        aria-busy={isUpdating}
+        aria-expanded={isOpen}
+        aria-controls="pricing-region-options"
         onClick={() => setIsOpen(!isOpen)}
         title={t('pricing.regionDescription')}
         aria-label={t('pricing.regionAriaLabel', {
-          region: currentRegionInfo?.displayName ?? selectedRegion,
+          region: currentRegionInfo?.displayName ?? currentRegion,
         })}
         aria-haspopup="listbox"
-        aria-expanded={isOpen}
       >
         <span className="region-flag">{currentRegionInfo?.flag}</span>
         <span className="region-name">{currentRegionInfo?.displayName}</span>
@@ -53,7 +64,7 @@ const RegionSelector: React.FC<RegionSelectorProps> = ({ isActive = true, onRegi
       </button>
       
       {isOpen && (
-        <div className="region-dropdown" role="listbox" aria-label={t('pricing.regionLabel')}>
+        <div className="region-dropdown" id="pricing-region-options" role="listbox" aria-label={t('pricing.regionLabel')}>
           <div className="region-dropdown-header">
             <strong>{t('pricing.regionLabel')}</strong>
             <span>{t('pricing.regionDescription')}</span>
@@ -62,10 +73,10 @@ const RegionSelector: React.FC<RegionSelectorProps> = ({ isActive = true, onRegi
             <button
               type="button"
               key={region.id}
-              className={`region-option ${selectedRegion === region.id ? 'selected' : ''}`}
+              className={`region-option ${currentRegion === region.id ? 'selected' : ''}`}
               onClick={() => handleRegionSelect(region.id)}
               role="option"
-              aria-selected={selectedRegion === region.id}
+              aria-selected={currentRegion === region.id}
             >
               <span className="region-flag">{region.flag}</span>
               <div className="region-info">
@@ -77,7 +88,7 @@ const RegionSelector: React.FC<RegionSelectorProps> = ({ isActive = true, onRegi
                 </div>
                 <div className="region-location">{translate(region.location)}{t(",")}{' '}{translate(region.geography)}</div>
               </div>
-              {selectedRegion === region.id && <span className="checkmark">{t("✓")}</span>}
+              {currentRegion === region.id && <span className="checkmark">{t("✓")}</span>}
             </button>
           ))}
         </div>

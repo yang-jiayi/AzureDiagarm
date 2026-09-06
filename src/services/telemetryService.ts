@@ -67,6 +67,29 @@ export function redactSensitiveTelemetry(item: ITelemetryItem): void {
   }
 }
 
+export function minimizeTelemetryUrls(item: ITelemetryItem): void {
+  const scrub = (value: unknown): unknown => {
+    if (typeof value === 'string' && /^https?:\/\//i.test(value)) {
+      try { return new URL(value).origin; } catch { return '[invalid URL]'; }
+    }
+    if (typeof value === 'string' && /^(?:\/|#)/.test(value)) return '[same-origin]';
+    return value;
+  };
+  const data = item.baseData;
+  if (!data) return;
+  for (const key of ['uri', 'url', 'refUri', 'data', 'target']) {
+    if (key in data) data[key] = scrub(data[key]);
+  }
+  if (data.properties) {
+    for (const key of Object.keys(data.properties)) data.properties[key] = scrub(data.properties[key]);
+  }
+  if (typeof data.name === 'string') {
+    data.name = data.name
+      .replace(/https?:\/\/\S+/gi, value => String(scrub(value)))
+      .replace(/^([A-Z]+)\s+\/\S*$/, '$1 [same-origin]');
+  }
+}
+
 function getWorkflowId(): string {
   const existing = sessionStorage.getItem(WORKFLOW_ID_KEY);
   if (existing) return existing;
@@ -116,7 +139,7 @@ async function loadAndInitAppInsights(connectionString: string): Promise<void> {
         connectionString,
         enableAutoRouteTracking: true,       // Track SPA page views
         disableFetchTracking: false,         // Track fetch/XHR requests
-        enableCorsCorrelation: true,         // Correlate cross-origin requests
+        enableCorsCorrelation: false,
         enableRequestHeaderTracking: false,
         enableResponseHeaderTracking: false,
         autoTrackPageVisitTime: true,        // Track how long users spend on page
@@ -128,6 +151,8 @@ async function loadAndInitAppInsights(connectionString: string): Promise<void> {
     instance.loadAppInsights();
     instance.addTelemetryInitializer((item) => {
       redactSensitiveTelemetry(item);
+      // Automatic page/dependency URLs may include sign-in parameters.
+      minimizeTelemetryUrls(item);
     });
     instance.trackPageView({ name: 'Microsoft Product Architecture Diagram Builder' });
     appInsights = instance;

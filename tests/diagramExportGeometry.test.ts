@@ -16,7 +16,9 @@ import {
   narrateEdgeCallouts,
   workflowListFromEdges,
   type ExportBox,
+  metaSubline,
 } from '../src/services/diagramExportGeometry.ts';
+import { nodesForExport } from '../src/utils/nodesForExport.ts';
 
 function box(id: string, x: number, y: number, w = 150, h = 75): ExportBox {
   return { id, kind: 'service', label: id, category: 'other', x, y, w, h };
@@ -25,6 +27,57 @@ function box(id: string, x: number, y: number, w = 150, h = 75): ExportBox {
 function node(id: string, data: Record<string, unknown>): Node {
   return { id, type: 'azureNode', position: { x: 0, y: 0 }, data } as unknown as Node;
 }
+
+test('explicit unavailable prices never become free or numeric zero in export metadata', () => {
+  const input = [
+    node('unknown', { label: 'Unknown service', pricing: { estimatedCost: null, quantity: 3 } }),
+    node('free', { label: 'Free service', pricing: { estimatedCost: 0, quantity: 2 } }),
+    node('usage', { label: 'Metered service', pricing: { estimatedCost: 12.5, quantity: 2, isUsageBased: true } }),
+    node('absent', { label: 'Not priced' }),
+    node('invalid', { label: 'Invalid estimate', pricing: { estimatedCost: NaN } }),
+  ];
+  const before = structuredClone(input);
+  const boxes = collectExportBoxes(input, { priceUnavailableLabel: 'Price not known' });
+  assert.equal(boxes.get('unknown')!.meta?.cost, undefined);
+  assert.equal(metaSubline(boxes.get('unknown')!), 'Price not known');
+  assert.equal(boxes.get('free')!.meta?.cost, 0);
+  assert.equal(metaSubline(boxes.get('free')!), 'Free');
+  assert.equal(boxes.get('usage')!.meta?.cost, 25);
+  assert.equal(metaSubline(boxes.get('usage')!), '~$25.00/mo');
+  assert.equal(boxes.get('absent')!.meta, undefined);
+  assert.equal(boxes.get('invalid')!.meta, undefined);
+  assert.deepEqual(input, before);
+});
+
+test('Fabric capacity consumption is disclosed without inventing a zero-cost service', () => {
+  const input = [
+    node('lake', { label: 'Analytics', serviceName: 'Fabric Lakehouse', pricing: { estimatedCost: null } }),
+    node('zero', { label: 'Fabric Lakehouse', pricing: { estimatedCost: 0 } }),
+    node('separate', { label: 'Fabric Lakehouse', pricing: { estimatedCost: 5 } }),
+  ];
+  const boxes = collectExportBoxes(input, { capacityLabel: 'Shared capacity' });
+  for (const id of ['lake', 'zero']) {
+    assert.equal(boxes.get(id)!.meta?.cost, undefined);
+    assert.equal(metaSubline(boxes.get(id)!), 'Shared capacity');
+  }
+  assert.equal(metaSubline(boxes.get('separate')!), '$5.00/mo');
+});
+
+test('hidden pricing remains hidden, including unavailable and capacity disclosures', () => {
+  const input = [
+    node('unknown', { label: 'Unknown service', pricing: { estimatedCost: null } }),
+    node('lake', { label: 'Fabric Lakehouse', pricing: { estimatedCost: 0 } }),
+  ];
+  for (const hidden of [
+    nodesForExport(input, false),
+    input.map(item => ({ ...item, data: { ...item.data, stylePreset: 'presentation' } })),
+  ]) {
+    for (const box of collectExportBoxes(hidden).values()) {
+      assert.equal(metaSubline(box), '');
+      assert.equal(box.meta, undefined);
+    }
+  }
+});
 
 test('child nodes are flattened into absolute page coordinates', () => {
   const nodes = [

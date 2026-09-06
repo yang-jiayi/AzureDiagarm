@@ -8,44 +8,42 @@
   overflow: auto;
 }
 
+/* The model trigger uses the same quiet treatment as other workspace actions. */
 .model-popover-trigger {
   position: relative;
-  gap: var(--azd-space-2) !important;
-  padding: 8px 13px !important;
-  border: 1px solid var(--azd-color-inverse-border) !important;
-  border-radius: var(--azd-radius-md) !important;
-  background: var(--azd-color-inverse-control) !important;
-  color: var(--azd-color-on-brand) !important;
-  transition:
-    background var(--azd-motion-fast),
-    border-color var(--azd-motion-fast),
-    box-shadow var(--azd-motion-fast) !important;
+  gap: 6px;
+  padding: 6px 10px;
+  font-size: 0.8rem;
+  background: var(--azd-color-surface);
+  border: 1px solid var(--azd-color-border);
+  color: var(--azd-color-text);
+  border-radius: 7px;
 }
 
 .model-popover-trigger:hover {
-  border-color: var(--azd-color-text-inverse-muted) !important;
-  background: var(--azd-color-inverse-control-hover) !important;
-  box-shadow: var(--azd-shadow-control) !important;
+  background: var(--azd-color-surface-hover);
+  border-color: var(--azd-color-border-strong);
 }
 
 .model-popover-label {
   max-width: 180px;
   overflow: hidden;
-  color: var(--azd-color-on-brand);
-  font-size: 0.94rem;
-  font-weight: 750;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-weight: 750;
+  font-size: 0.94rem;
+  color: inherit;
 }
 
 .model-popover-reasoning {
-  padding: 2px 7px;
-  border-radius: var(--azd-radius-pill);
-  background: var(--azd-color-inverse-control);
-  color: var(--azd-color-on-brand);
   font-size: 0.7rem;
-  font-weight: 750;
+  opacity: 1;
   text-transform: capitalize;
+  padding: 2px 8px;
+  background: var(--azd-color-accent-soft);
+  border-radius: 4px;
+  font-weight: 700;
+  color: var(--azd-color-accent);
   white-space: nowrap;
 }
 
@@ -260,6 +258,10 @@
   font-weight: 600;
   line-height: 1.2;
   opacity: 0.76;
+}
+
+.msp-model-btn.active .msp-model-role {
+  opacity: 1;
 }
 
 .msp-reasoning-row {

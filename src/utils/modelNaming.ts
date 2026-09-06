@@ -32,6 +32,8 @@ export function clearSourceModel(): void {
 
 function abbreviateModel(model: ModelType): string {
   switch (model) {
+    case 'gpt-6-astra':
+      return 'gpt6astra';
     case 'gpt-5.1':
       return 'gpt51';
     case 'gpt-5.2':
@@ -70,7 +72,7 @@ function abbreviateModel(model: ModelType): string {
 
 /**
  * Get the model abbreviation from current settings (or override)
- * Returns: gpt51, gpt52, gpt52codex, gpt53codex
+ * Returns a stable filename-safe identifier such as gpt6astra.
  */
 export function getModelAbbreviation(): string {
   if (_overrideModel) {
@@ -89,7 +91,7 @@ export function getReasoningEffort(): ReasoningEffort {
 }
 
 /**
- * Check if current model is a reasoning model (GPT-5.2)
+ * Check if the current model supports reasoning.
  */
 export function isReasoningModel(): boolean {
   const model = _overrideModel || getModelSettings().model;

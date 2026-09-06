@@ -21,6 +21,7 @@ import {
 } from './apiHelper';
 import type { Language } from '../i18n/LanguageContext';
 import { getPromptLanguageInstruction } from '../i18n/localization';
+import { normalizeValidationFindingSource } from './validationFindingSource';
 import {
   resolveAIModelRuntime,
   type RuntimeModelOverride,
@@ -30,6 +31,13 @@ import { safeParseModelJson } from './aiRetry';
 export interface ValidationModelOverride extends RuntimeModelOverride {
   model: ModelType;
   reasoningEffort: ReasoningEffort;
+  signal?: AbortSignal;
+}
+
+function throwIfValidationAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) {
+    throw Object.assign(new DOMException('Validation cancelled.', 'AbortError'), { userCancelled: true });
+  }
 }
 
 // Token usage metrics returned from Azure OpenAI API
@@ -47,6 +55,8 @@ interface CallResult {
 }
 
 async function callAzureOpenAI(messages: any[], maxTokens: number = 8000, modelOverride?: ValidationModelOverride): Promise<CallResult> {
+  const signal = modelOverride?.signal;
+  throwIfValidationAborted(signal);
   const runtime = resolveAIModelRuntime('validation', modelOverride);
   console.log(`🌐 Calling AI model service with ${runtime.displayName} | API: ${getApiFormatLabel(runtime.apiFormat)}`);
   
@@ -70,7 +80,10 @@ async function callAzureOpenAI(messages: any[], maxTokens: number = 8000, modelO
   // proxy 210s > Front Door 240s. Without it this path could hang until the
   // platform kills it with an opaque error.
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 225000);
+  const cancel = () => controller.abort();
+  signal?.addEventListener('abort', cancel, { once: true });
+  let timedOut = false;
+  const timeoutId = setTimeout(() => { timedOut = true; controller.abort(); }, 225000);
   let proxyResult;
   try {
     proxyResult = await callAzureOpenAIProxy({
@@ -80,13 +93,17 @@ async function callAzureOpenAI(messages: any[], maxTokens: number = 8000, modelO
       byo: runtime.byo,
       signal: controller.signal,
     });
+    throwIfValidationAborted(signal);
+    if (timedOut) throw new Error('The AI provider is taking too long to respond. Please try again.');
   } catch (error: any) {
-    if (error?.name === 'AbortError') {
+    throwIfValidationAborted(signal);
+    if (timedOut || error?.name === 'AbortError') {
       throw new Error('The AI provider is taking too long to respond. Please try again.');
     }
     throw error;
   } finally {
     clearTimeout(timeoutId);
+    signal?.removeEventListener('abort', cancel);
   }
   
   // Calculate elapsed time
@@ -145,8 +162,11 @@ export interface ValidationFinding {
   issue: string;
   recommendation: string;
   resources?: string[];
+  resourceIds?: string[];
+  id?: string;
+  findingId?: string;
   ruleId?: string;
-  source?: 'rule-based' | 'ai-analysis';
+  source?: 'rule-based' | 'ai';
   evidence?: string[];
   remediation?: string[];
   referenceUrl?: string;
@@ -205,7 +225,7 @@ function normalizeFinding(
   localByRuleId: Map<string, ValidationFinding>,
   serviceNames: Set<string>,
 ): ValidationFinding | null {
-  if (!value || typeof value !== 'object') return null;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const raw = value as Record<string, unknown>;
   const ruleId = boundedString(raw.ruleId, 100);
   const local = ruleId ? localByRuleId.get(ruleId) : undefined;
@@ -217,17 +237,15 @@ function normalizeFinding(
   const recommendation = boundedString(raw.recommendation, 2400)
     || local?.recommendation
     || '';
-  if (!issue || !recommendation) return null;
 
   const resources = boundedStringArray(raw.resources, 50, 200)
     .filter((resource) => serviceNames.has(resource));
   const evidence = boundedStringArray(raw.evidence, 8, 800);
   const remediation = boundedStringArray(raw.remediation, 8, 800);
-  const source = raw.source === 'rule-based' || raw.source === 'ai-analysis'
-    ? raw.source
-    : local
-      ? 'rule-based'
-      : 'ai-analysis';
+  const { source } = normalizeValidationFindingSource({
+    severity, category, issue, recommendation, source: raw.source,
+  });
+  if (!issue || !recommendation) return null;
   const rawAction = raw.applyAction && typeof raw.applyAction === 'object'
     ? raw.applyAction as Record<string, unknown>
     : null;
@@ -252,6 +270,9 @@ function normalizeFinding(
     issue,
     recommendation,
     resources: resources.length > 0 ? resources : local?.resources,
+    ...(raw.id !== undefined ? { id: boundedString(raw.id, 1000) } : {}),
+    ...(raw.findingId !== undefined ? { findingId: boundedString(raw.findingId, 1000) } : {}),
+    ...(raw.resourceIds !== undefined ? { resourceIds: boundedStringArray(raw.resourceIds, 50, 200) } : {}),
     ruleId: ruleId || local?.ruleId,
     source,
     evidence: evidence.length > 0
@@ -288,6 +309,7 @@ export async function validateArchitecture(
   modelOverride?: ValidationModelOverride,
   language: Language = 'en',
 ): Promise<ArchitectureValidation> {
+  throwIfValidationAborted(modelOverride?.signal);
   const runtime = resolveAIModelRuntime('validation', modelOverride);
 
   console.log(`🔍 Starting hybrid WAF validation with ${runtime.displayName}...`);
@@ -348,7 +370,7 @@ SCORING GUIDANCE:
 - A well-connected architecture with appropriate services should score 60-80
 - Only score below 50 for architectures with critical gaps (no auth, no monitoring, single points of failure)
 - Findings are improvement suggestions, not reasons to penalize the score severely
-- Each finding must include concrete "evidence" from the diagram, ordered "remediation" steps, and a "source" field: "rule-based" (from pre-scan) or "ai-analysis" (your addition)
+- Each finding must include concrete "evidence" from the diagram, ordered "remediation" steps, and a "source" field: "rule-based" (from pre-scan) or "ai" (your addition)
 - Preserve the "ruleId" for pre-scan findings. For AI findings, omit ruleId.
 - Use "applyAction" to describe how the diagram can be improved: type is "add-service", "regenerate", or "configure"; include a concise label and optional exact Azure serviceType.
 - Do not claim a runtime setting is disabled when the diagram cannot show it. State that the setting is unverified and requires deployment review.
@@ -389,7 +411,7 @@ Return ONLY valid JSON (no markdown) with this structure:
       "issue": "...",
       "recommendation": "...",
       "resources": ["Azure Functions"],
-      "source": "ai-analysis",
+      "source": "ai",
       "evidence": ["The diagram shows ..."],
       "remediation": ["First action", "Second action"],
       "applyAction": {
@@ -424,6 +446,7 @@ Provide a comprehensive Well-Architected Framework assessment with actionable re
       { role: 'system', content: systemPrompt },
       { role: 'user', content: userPrompt }
     ], 8000, modelOverride);
+    throwIfValidationAborted(modelOverride?.signal);
 
     console.log('✅ Hybrid validation response received:', content.length, 'characters');
 
@@ -497,6 +520,7 @@ Provide a comprehensive Well-Architected Framework assessment with actionable re
     return validation;
 
   } catch (error) {
+    throwIfValidationAborted(modelOverride?.signal);
     console.error('❌ Architecture validation failed:', error);
     throw error;
   }
@@ -586,7 +610,10 @@ export function formatValidationReport(validation: ArchitectureValidation): stri
       if (finding.referenceUrl) {
         report += `**Reference:** ${finding.referenceUrl}\n\n`;
       }
-      report += `**Source:** ${finding.source === 'rule-based' ? `Deterministic rule${finding.ruleId ? ` (${finding.ruleId})` : ''}` : 'AI contextual analysis'}\n\n`;
+      const source = normalizeValidationFindingSource(finding).source;
+      report += `**Source:** ${source === 'rule-based'
+        ? `Deterministic rule${finding.ruleId ? ` (${finding.ruleId})` : ''}`
+        : source === 'ai' ? 'AI contextual analysis' : 'Not specified'}\n\n`;
       report += `---\n\n`;
     });
   });

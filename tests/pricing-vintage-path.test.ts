@@ -103,27 +103,41 @@ test('the vintage the node carries is the one in its own region', async () => {
 });
 
 test('a node priced from the static fallback claims no meter', async () => {
-  // `initializeNodePricing` falls back to a hand-maintained constant whenever
-  // the parsed tier is $0 or no tier parses at all. The number that reaches the
-  // slide then came from no Azure meter, so "Azure last changed this price on
-  // X" is false in both of its clauses. The old code recorded the vintage when
-  // the *file* loaded, so it attested to it anyway.
+  // An unavailable regional file uses the explicitly labelled fallback table.
+  // Unknown usage in an available meter is no longer replaced with that table.
   const { initializeNodePricing } = await import('../src/services/costEstimationService');
-  // All five of these are priced from the hand-maintained table because their
-  // parsed retail tier is $0 — the reviewer's own list, and the reason their
-  // costs looked convincing ($14.60, $159.35, $50.00) while standing behind no
-  // meter at all.
-  for (const serviceType of ['Storage Accounts', 'Function Apps', 'Machine Learning', 'Event Hubs', 'API Management Services']) {
-    const pricing = await initializeNodePricing(serviceType, 'japaneast');
+  for (const [serviceType, usageBased] of [
+    ['Storage Accounts', true], ['Function Apps', true], ['Machine Learning', false],
+    ['Event Hubs', true], ['API Management Services', false],
+  ] as const) {
+    const pricing = await initializeNodePricing(serviceType, 'unavailable-region');
     assert.ok(pricing, `${serviceType} must still price`);
-    assert.ok(pricing.estimatedCost > 0, `${serviceType} must still carry a usable number`);
-    assert.equal(pricing.isUsageBased, true, `${serviceType} no longer takes the fallback path`);
+    assert.ok(pricing.estimatedCost !== null && pricing.estimatedCost > 0, `${serviceType} must still carry a usable number`);
+    assert.equal(pricing.isUsageBased, usageBased, `${serviceType} must retain its catalog billing classification`);
+    assert.equal(pricing.provenance?.kind, 'fallback-estimate');
+    assert.equal(pricing.provenance?.source, 'bundled-fallback');
     assert.equal(
       pricing.meterAsOf,
       undefined,
       `${serviceType} is fallback-priced but claimed Azure set its price on a date`,
     );
   }
+});
+
+test('available consumption meters do not invent monthly usage or a priced vintage', async () => {
+  const { initializeNodePricing, calculateCostBreakdown } = await import('../src/services/costEstimationService');
+  const pricing = await initializeNodePricing('Storage Accounts', 'japaneast');
+  assert.ok(pricing);
+  assert.equal(pricing.estimatedCost, null);
+  assert.equal(pricing.provenance?.kind, 'unpriced');
+  assert.equal(pricing.provenance?.source, 'azure-retail-prices');
+  assert.equal(pricing.provenance?.asOf, undefined);
+  assert.equal(pricing.meterAsOf, undefined);
+  const breakdown = calculateCostBreakdown([{
+    id: 'storage', position: { x: 0, y: 0 }, data: { serviceName: 'Storage Accounts', pricing },
+  }]);
+  assert.equal(breakdown.estimateCompleteness, 'unpriced');
+  assert.equal(breakdown.oldestMeterAsOf, undefined);
 });
 
 test('the vintage survives a round trip through saved node data', async () => {

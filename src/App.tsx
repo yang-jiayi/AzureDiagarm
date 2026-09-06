@@ -16,6 +16,7 @@ import ReactFlow, {
   getNodesBounds,
   type NodeChange,
   type ReactFlowInstance,
+  applyNodeChanges,
 } from 'reactflow';
 import 'reactflow/dist/style.css';
 import type { CaptureOptions } from './utils/captureCanvas';
@@ -62,9 +63,9 @@ import { resolveServiceIconLoose } from './utils/serviceIconFuzzy';
 import { getServiceIconMapping, isCapacityConsumed } from './data/serviceIconMapping';
 import { initializeNodePricing, updateNodePricing, setCustomPricing, calculateCostBreakdown, exportCostBreakdownCSV, exportCostBreakdownJSON, getCostSummaryMarkdown, refreshAllNodePricing, type PricingMode } from './services/costEstimationService';
 import { prefetchCommonServices } from './services/azurePricingService';
-import { preloadCommonServices, getActiveRegion, AzureRegion, AVAILABLE_REGIONS, RegionInfo } from './services/regionalPricingService';
+import { preloadCommonServices, getActiveRegion, setActiveRegion, AzureRegion, AVAILABLE_REGIONS, RegionInfo } from './services/regionalPricingService';
 import { formatMonthlyCost, getPricingFreshness } from './utils/pricingHelpers';
-import { hasPricingData, PRICING_DATA_AS_OF } from './data/azurePricing';
+import { PRICING_DATA_AS_OF } from './data/azurePricing';
 import { costReportToHtml } from './utils/costReportHtml';
 import { validateArchitecture, ArchitectureValidation } from './services/architectureValidator';
 import { bandLabel } from './services/wafMaturity';
@@ -76,10 +77,8 @@ import { nodesForExport } from './utils/nodesForExport';
 import {
   useNodePricingEditor,
   closeNodePricingEditor,
-  getNodePricingEditorStateVersion,
   openNodePricingEditor,
 } from './stores/nodePricingEditorStore';
-import NodePricingEditor from './components/NodePricingEditor';
 import type { NodePricingConfig, PricingScenario } from './types/pricing';
 import {
   DEFAULT_PRICING_SCENARIOS,
@@ -94,18 +93,31 @@ import {
 } from './hooks/useCloudDiagramSync';
 import {
   type CloudCommentAnchor,
+  type CloudDiagramPayload,
   getCloudDiagram,
   type CloudDiagramSummary,
   CloudDiagramDocument,
   CloudDiagramVersion,
 } from './services/cloudDiagramService';
+import { toCloudDiagramPayload } from './services/cloudDiagramPayload';
 import {
   getRecentWorkSessionId,
   saveRecentWork,
   type RecentWorkRecord,
   type RecentWorkSyncState,
 } from './services/recentWorkService';
-import { useDiagramHistory } from './hooks/useDiagramHistory';
+import { useEditorHistory } from './hooks/useEditorHistory';
+import { cloneEditorDocument, editorFingerprint, nodeServiceIdentity, type EditorDocument } from './services/editorHistory';
+import { useDraftAutosave } from './hooks/useDraftAutosave';
+import { DraftStatus, DraftRecoveryDialog } from './components/DraftStatus';
+import { validateEditorSettings, validateRestoredNodes, validateRestoredEdges, validateRestoredWorkflow, type DiagramDraft } from './services/draftStorage';
+import AIChangeReview from './components/AIChangeReview';
+import { buildDiagramChanges, isCompleteDiagramChangeSet, type DiagramGraph, type DiagramChangeSet, type DiagramProposalOptions } from './services/diagramChanges';
+import ServiceInspector from './components/ServiceInspector';
+import NodePricingEditor from './components/NodePricingEditor';
+import AIBudgetStatus from './components/AIBudgetStatus';
+import { parseValidationReview, updateValidationReview, type ValidationReviewRecord } from './services/validationReview';
+import { validatePricingQuantity, validatePricingAmount } from './services/pricingConfiguration';
 import type { DeckService } from './services/pptxExporter';
 import { extractArchitectureFromArm, summarizeCoverage } from './services/armExtractor';
 import {
@@ -176,7 +188,7 @@ import {
 } from './utils/privacyPreflight';
 import { analyzeThreatModel } from './utils/threatModel';
 import { findAvailableServicePosition } from './utils/serviceNodePlacement';
-import { MEDIA_QUERIES } from './styles/breakpoints';
+import { BREAKPOINTS, MEDIA_QUERIES } from './styles/breakpoints';
 import { useMediaQuery } from './hooks/useMediaQuery';
 import {
   applyAutomaticEdgeLabelOffsets,
@@ -499,6 +511,10 @@ function pricingFingerprint(pricing: NodePricingConfig | undefined): string {
     pricing.reservedIsSavingsPlan ?? false,
     pricing.usageEstimate?.type ?? null,
     pricing.usageEstimate?.description ?? null,
+    pricing.tierId ?? null,
+    pricing.customPrice ?? null,
+    pricing.usage ?? null,
+    pricing.provenance ?? null,
   ]);
 }
 
@@ -535,6 +551,7 @@ type RegionalCostResult = {
 type RegionalCostFailure = {
   info: RegionInfo;
   reason: string;
+  breakdown?: ReturnType<typeof calculateCostBreakdown>;
 };
 
 async function calculateRegionalCostComparison(
@@ -548,6 +565,20 @@ async function calculateRegionalCostComparison(
     try {
       const repricedNodes = await refreshAllNodePricing(nodes, info.id);
       const breakdown = calculateCostBreakdown(repricedNodes, info.id, pricingMode);
+      if (breakdown.estimateCompleteness !== 'complete') {
+        const missing = [
+          breakdown.unpricedServices?.length
+            ? `${breakdown.unpricedServices.length} service(s) have no usable monthly estimate`
+            : '',
+          breakdown.missingCapacityEstimate ? 'a shared-capacity estimate is missing' : '',
+        ].filter(Boolean).join('; ');
+        failures.push({
+          info,
+          reason: `Incomplete estimate: ${missing || 'not every service has a usable price'}. Partial subtotals are not ranked.`,
+          breakdown,
+        });
+        continue;
+      }
       results.push({
         info,
         total: breakdown.totalMonthlyCost,
@@ -587,229 +618,38 @@ const normalizeLayoutEdgeStyle = (value: unknown): LayoutEdgeStyle =>
     ? value
     : 'orthogonal';
 
-type RestoredWorkflowStep = Record<string, unknown> & {
-  step: number;
-  description: string;
-  services: string[];
-};
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
-function validateRestoredNodes(restoredNodes: unknown[]): Node[] {
-  const nodeIds = new Set<string>();
-  const nodes = restoredNodes.map((value, index) => {
-    if (!isRecord(value)) {
-      throw new Error(`Invalid node at index ${index}`);
-    }
-    if (typeof value.id !== 'string' || value.id.trim() === '') {
-      throw new Error(`Node at index ${index} must have an id`);
-    }
-    if (nodeIds.has(value.id)) {
-      throw new Error(`Duplicate node id: ${value.id}`);
-    }
-    if (
-      !isRecord(value.position)
-      || !Number.isFinite(value.position.x)
-      || !Number.isFinite(value.position.y)
-    ) {
-      throw new Error(`Node ${value.id} must have a finite position`);
-    }
-    if (!isRecord(value.data)) {
-      throw new Error(`Node ${value.id} must have a data object`);
-    }
-    if (value.type !== undefined && typeof value.type !== 'string') {
-      throw new Error(`Node ${value.id} has an invalid type`);
-    }
-    if (value.parentNode !== undefined && typeof value.parentNode !== 'string') {
-      throw new Error(`Node ${value.id} has an invalid parent`);
-    }
-    // A restored file is the one place a node's size arrives from outside the
-    // editor, where the resize handles bound it. Nothing downstream re-checked
-    // it, so a hand-edited or corrupt file could hand the exporters a tile of
-    // any size at all — and a hairline one used to hang the export in a loop
-    // that could not terminate. That loop is fixed, but the size is still worth
-    // refusing here rather than carrying it into every consumer.
-    for (const field of ['width', 'height'] as const) {
-      const size = value[field];
-      if (size === undefined || size === null) continue;
-      if (typeof size !== 'number' || !Number.isFinite(size) || size <= 0 || size > 100_000) {
-        throw new Error(`Node ${value.id} has an invalid ${field}`);
-      }
-    }
-
-    const data = value.data;
-    const stringDataFields = [
-      'label',
-      'serviceName',
-      'category',
-      'iconPath',
-      'description',
-      'stylePreset',
-      'groupId',
-      'groupLabel',
-    ];
-    for (const field of stringDataFields) {
-      if (data[field] !== undefined && typeof data[field] !== 'string') {
-        throw new Error(`Node ${value.id} has an invalid ${field}`);
-      }
-    }
-    if (
-      data.tags !== undefined
-      && (
-        !Array.isArray(data.tags)
-        || data.tags.length > 12
-        || data.tags.some(tag => typeof tag !== 'string' || tag.length > 40)
-      )
-    ) {
-      throw new Error(`Node ${value.id} has invalid tags`);
-    }
-    if (data.pricing !== undefined && data.pricing !== null) {
-      if (!isRecord(data.pricing)) {
-        throw new Error(`Node ${value.id} has invalid pricing data`);
-      }
-      const pricing = data.pricing;
-      for (const field of ['estimatedCost', 'customPrice', 'reserved1yrCost']) {
-        const amount = pricing[field];
-        if (
-          amount !== undefined
-          && amount !== null
-          && (typeof amount !== 'number' || !Number.isFinite(amount) || amount < 0)
-        ) {
-          throw new Error(`Node ${value.id} has invalid pricing ${field}`);
-        }
-      }
-      const estimatedCost = pricing.estimatedCost;
-      if (
-        typeof estimatedCost !== 'number'
-        || !Number.isFinite(estimatedCost)
-        || estimatedCost < 0
-      ) {
-        throw new Error(`Node ${value.id} has invalid pricing estimatedCost`);
-      }
-      const importedQuantity = pricing.quantity;
-      let quantity = 1;
-      if (importedQuantity === undefined || importedQuantity === null) {
-        pricing.quantity = quantity;
-      } else if (
-        typeof importedQuantity !== 'number'
-        || !Number.isInteger(importedQuantity)
-        || importedQuantity < 1
-        || importedQuantity > 100_000
-      ) {
-        throw new Error(`Node ${value.id} has invalid pricing quantity`);
-      } else {
-        quantity = importedQuantity;
-      }
-      if (!Number.isFinite(estimatedCost * quantity)) {
-        throw new Error(`Node ${value.id} has an invalid total price`);
-      }
-      for (const field of ['isCustom', 'isUsageBased', 'reservedIsSavingsPlan']) {
-        const flag = pricing[field];
-        if (flag !== undefined && flag !== null && typeof flag !== 'boolean') {
-          throw new Error(`Node ${value.id} has invalid pricing ${field}`);
-        }
-      }
-      for (const field of ['tier', 'tierId', 'skuName', 'unit', 'lastUpdated']) {
-        const text = pricing[field];
-        if (text !== undefined && text !== null && typeof text !== 'string') {
-          throw new Error(`Node ${value.id} has invalid pricing ${field}`);
-        }
-      }
-      if (
-        pricing.region === undefined
-        || pricing.region === null
-        || (typeof pricing.region === 'string' && pricing.region.trim() === '')
-      ) {
-        pricing.region = 'Unknown';
-      } else {
-        if (typeof pricing.region !== 'string') {
-          throw new Error(`Node ${value.id} has invalid pricing region`);
-        }
-        const region = pricing.region.trim();
-        if (!/^[A-Za-z0-9][A-Za-z0-9 ._()-]{0,127}$/.test(region)) {
-          throw new Error(`Node ${value.id} has invalid pricing region`);
-        }
-        pricing.region = region;
-      }
-    }
-    if (data.customColor !== undefined && data.customColor !== null) {
-      if (
-        !isRecord(data.customColor)
-        || typeof data.customColor.bg !== 'string'
-        || typeof data.customColor.border !== 'string'
-        || typeof data.customColor.header !== 'string'
-      ) {
-        throw new Error(`Node ${value.id} has invalid custom colors`);
-      }
-    }
-
-    nodeIds.add(value.id);
-    return value as unknown as Node;
-  });
-
-  for (const node of nodes) {
-    if (node.parentNode !== undefined && (!nodeIds.has(node.parentNode) || node.parentNode === node.id)) {
-      throw new Error(`Node ${node.id} references an invalid parent`);
-    }
+function validatePricingRegion(value: unknown): AzureRegion | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'string' || !AVAILABLE_REGIONS.some(region => region.id === value)) {
+    throw new Error('Invalid pricing region in diagram settings');
   }
-  return nodes;
+  return value as AzureRegion;
 }
 
-function validateRestoredEdges(restoredEdges: unknown[], nodeIds: Set<string>): unknown[] {
-  const edgeIds = new Set<string>();
-  return restoredEdges.map((value, index) => {
-    if (!isRecord(value)) {
-      throw new Error(`Invalid edge at index ${index}`);
+async function getDraftScope(identity: AccessIdentity | null, forkId: string | null): Promise<string> {
+  let scope: string;
+  if (identity?.authenticated && identity.email) {
+    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(identity.email.trim().toLowerCase()));
+    scope = `user-${Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('')}`;
+  } else if (identity && !identity.enabled) {
+    scope = 'local-workspace';
+  } else {
+    const key = 'azure-diagram-builder.draftSession.v1';
+    let id = sessionStorage.getItem(key);
+    if (!id) {
+      id = crypto.randomUUID();
+      sessionStorage.setItem(key, id);
     }
-    if (typeof value.id !== 'string' || value.id.trim() === '') {
-      throw new Error(`Edge at index ${index} must have an id`);
-    }
-    if (edgeIds.has(value.id)) {
-      throw new Error(`Duplicate edge id: ${value.id}`);
-    }
-    if (
-      typeof value.source !== 'string'
-      || typeof value.target !== 'string'
-      || !nodeIds.has(value.source)
-      || !nodeIds.has(value.target)
-    ) {
-      throw new Error(`Edge ${value.id} references an unknown node`);
-    }
-    if (value.data !== undefined && value.data !== null && !isRecord(value.data)) {
-      throw new Error(`Edge ${value.id} has invalid data`);
-    }
-    if (value.type !== undefined && typeof value.type !== 'string') {
-      throw new Error(`Edge ${value.id} has an invalid type`);
-    }
-    for (const field of ['sourceHandle', 'targetHandle']) {
-      if (value[field] !== undefined && value[field] !== null && typeof value[field] !== 'string') {
-        throw new Error(`Edge ${value.id} has an invalid ${field}`);
-      }
-    }
-    edgeIds.add(value.id);
-    return value;
-  });
-}
-
-function validateRestoredWorkflow(value: unknown): RestoredWorkflowStep[] {
-  if (value === undefined || value === null) return [];
-  if (!Array.isArray(value) || value.length > 2000) {
-    throw new Error('Invalid workflow in diagram payload');
+    scope = `session-${id}`;
   }
-  return value.map((step, index) => {
-    if (
-      !isRecord(step)
-      || !Number.isFinite(step.step)
-      || typeof step.description !== 'string'
-      || !Array.isArray(step.services)
-      || step.services.some((service: unknown) => typeof service !== 'string')
-    ) {
-      throw new Error(`Invalid workflow step at index ${index}`);
-    }
-    return step as RestoredWorkflowStep;
-  });
+  const branchKey = `azure-diagram-builder.draftBranch.${scope}`;
+  if (forkId) sessionStorage.setItem(branchKey, forkId);
+  const branch = sessionStorage.getItem(branchKey);
+  return branch ? `${scope}:${branch}` : scope;
 }
 
 function fitToolbarMenuToViewport(menu: HTMLElement) {
@@ -957,39 +797,12 @@ function getRenderedEdgeLabelBounds(
     });
 }
 
-interface DiagramHistorySnapshot {
-  nodes: Node[];
-  edges: Edge[];
-  architecturePrompt: string;
-  originalPrompt: string;
-  validationScore?: number;
-  titleBlockData: {
-    architectureName: string;
-    author: string;
-    version: string;
-    date: string;
-  };
-  workflow: any[];
-  pricingScenarios: PricingScenario[];
-  iacBaseline: IaCBaseline | null;
-}
+type DiagramHistorySnapshot = EditorDocument;
 
-function stripTransientNodeState(node: Node): Node {
-  const snapshot = { ...node } as Node & Record<string, unknown>;
-  delete snapshot.selected;
-  delete snapshot.dragging;
-  delete snapshot.width;
-  delete snapshot.height;
-  delete snapshot.positionAbsolute;
-  delete snapshot.measured;
-  delete snapshot.resizing;
-  return snapshot;
-}
-
-function stripTransientEdgeState(edge: Edge): Edge {
-  const snapshot = { ...edge } as Edge & Record<string, unknown>;
-  delete snapshot.selected;
-  return snapshot;
+interface ReviewedDiagram {
+  graph: DiagramGraph;
+  complete: boolean;
+  nodeIds: Map<string, string>;
 }
 
 function App() {
@@ -1006,12 +819,22 @@ function App() {
   const diagramRevisionGenerationRef = useRef(new OperationGeneration());
   const aiGenerationRef = useRef(new OperationGeneration());
   const validationGenerationRef = useRef(new OperationGeneration());
+  const fileLoadGenerationRef = useRef(new OperationGeneration());
+  const cloudLoadGenerationRef = useRef(new OperationGeneration());
   const deploymentGuideGenerationRef = useRef(new OperationGeneration());
   const intentionalLineageTransitionRef = useRef<string | null>(null);
   const [localDiagramLineageId, setLocalDiagramLineageId] = useState(
     () => createLocalDiagramLineageId(),
   );
   const activeDiagramLineageIdRef = useRef(localDiagramLineageId);
+  const localDiagramLineageIdRef = useRef(localDiagramLineageId);
+  localDiagramLineageIdRef.current = localDiagramLineageId;
+  const captureEditorSource = useCallback(() => {
+    const localLineage = localDiagramLineageIdRef.current;
+    const cloudLoadGeneration = cloudLoadGenerationRef.current.current();
+    return () => localDiagramLineageIdRef.current === localLineage
+      && cloudLoadGenerationRef.current.isCurrent(cloudLoadGeneration);
+  }, []);
   const [architecturePrompt, setArchitecturePrompt] = useState<string>('');
   // The FIRST prompt of the current diagram lineage. Unlike architecturePrompt
   // (which each chat refinement overwrites), this is captured once when the
@@ -1020,6 +843,7 @@ function App() {
 
   const [isImportingTemplate, setIsImportingTemplate] = useState(false);
   const templateInputRef = useRef<HTMLInputElement>(null);
+  const diagramInputRef = useRef<HTMLInputElement>(null);
   const [isTemplateGalleryOpen, setIsTemplateGalleryOpen] = useState(false);
   const [isAzureImportOpen, setIsAzureImportOpen] = useState(false);
   // After a delegated sign-in redirect returns, re-open the "Import from Azure"
@@ -1038,6 +862,24 @@ function App() {
   const [importFormatLabel, setImportFormatLabel] = useState('Template');
   const [isApplyingRecommendations, setIsApplyingRecommendations] = useState(false);
   const [reactFlowInstance, setReactFlowInstance] = useState<ReactFlowInstance | null>(null);
+  // A saved viewport takes precedence over React Flow's initial fit-to-view.
+  const [hasRestoredViewport, setHasRestoredViewport] = useState(false);
+  const pendingRestoreViewportRef = useRef<EditorDocument['viewport']>();
+  const restoreViewport = useCallback((viewport: EditorDocument['viewport']) => {
+    pendingRestoreViewportRef.current = viewport;
+    if (viewport) setHasRestoredViewport(true);
+    if (viewport && reactFlowInstance) {
+      pendingRestoreViewportRef.current = undefined;
+      void reactFlowInstance.setViewport(viewport);
+    }
+  }, [reactFlowInstance]);
+  useEffect(() => {
+    const viewport = pendingRestoreViewportRef.current;
+    if (viewport && reactFlowInstance) {
+      pendingRestoreViewportRef.current = undefined;
+      void reactFlowInstance.setViewport(viewport);
+    }
+  }, [reactFlowInstance]);
   const shouldRefreshAutomaticEdgeLabelsRef = useRef(false);
   
   const onNodesChange = useCallback((changes: NodeChange[]) => {
@@ -1071,6 +913,8 @@ function App() {
   // count so a partial estimate is never presented as complete.
   const [unpricedCount, setUnpricedCount] = useState(0);
   const [pricingMode, setPricingMode] = useState<PricingMode>('payg');
+  const [pricingRegion, setPricingRegion] = useState<AzureRegion>(getActiveRegion);
+  const [isUpdatingRegion, setIsUpdatingRegion] = useState(false);
   const [pricingScenarios, setPricingScenarios] = useState<PricingScenario[]>(
     () => loadPricingScenarios(),
   );
@@ -1095,10 +939,15 @@ function App() {
   );
   // Node whose per-node cost editor is open (opened from its cost badge).
   const pricingEditorNodeId = useNodePricingEditor();
-  const [pricingEditorDraft, setPricingEditorDraft] = useState<{
+  const [mobilePricingEditor, setMobilePricingEditor] = useState<{
     nodeId: string;
+    runId: number;
     pricing: NodePricingConfig;
+    assertCurrent: () => void;
   } | null>(null);
+  useEffect(() => {
+    setMobilePricingEditor(current => current?.nodeId === pricingEditorNodeId ? current : null);
+  }, [pricingEditorNodeId]);
   const pricingEditorReturnFocusRef = useRef<{
     runId: number;
     nodeId: string;
@@ -1134,10 +983,6 @@ function App() {
   });
   const latestTitleBlockDataRef = useRef(titleBlockData);
   latestTitleBlockDataRef.current = titleBlockData;
-
-  useEffect(() => {
-    diagramRevisionGenerationRef.current.advance();
-  }, [architecturePrompt, edges, nodes, titleBlockData.architectureName]);
 
   useEffect(() => {
     setTitleBlockData((current) => {
@@ -1185,11 +1030,8 @@ function App() {
   const [validationResult, setValidationResult] = useState<ArchitectureValidation | null>(null);
   const [persistedValidationScore, setPersistedValidationScore] = useState<number | undefined>();
   const [validationNeedsRefresh, setValidationNeedsRefresh] = useState(false);
-  const currentValidationScore = getCurrentValidationScore(
-    validationResult?.overallScore ?? persistedValidationScore,
-    validationNeedsRefresh,
-  );
-  const currentValidationResult = validationNeedsRefresh ? null : validationResult;
+  const [validationSourceFingerprint, setValidationSourceFingerprint] = useState<string | null>(null);
+  const [reviewHistory, setReviewHistory] = useState<ValidationReviewRecord[]>([]);
   const [isValidationModalOpen, setIsValidationModalOpen] = useState(false);
   const [isValidating, setIsValidating] = useState(false);
   const [deploymentGuide, setDeploymentGuide] = useState<DeploymentGuide | null>(null);
@@ -1269,6 +1111,36 @@ function App() {
   const [feedbackPreselectedRating, setFeedbackPreselectedRating] = useState<number | undefined>(undefined);
   const [feedbackFabPulse, setFeedbackFabPulse] = useState(false);
   const [accessIdentity, setAccessIdentity] = useState<AccessIdentity | null>(null);
+  const [draftScope, setDraftScope] = useState<string | null>(null);
+  const [draftScopeError, setDraftScopeError] = useState<Error | null>(null);
+  const [workspaceNotice, setWorkspaceNotice] = useState<string>();
+  const [skipDraftRecovery] = useState(() => /^#(?:version-|share-)/.test(window.location.hash));
+  const [draftForkId] = useState(() => skipDraftRecovery ? crypto.randomUUID() : null);
+  const detachCloudForRecoveryRef = useRef<(() => void) | null>(null);
+  const saveCloudSnapshotRef = useRef<((notes: string) => Promise<unknown>) | null>(null);
+  const [batchPreview, setBatchPreview] = useState<DiagramGraph | null>(null);
+  const batchPreviewRef = useRef<(DiagramGraph & { title?: string }) | null>(null);
+  const onPreviewNodesChange = useCallback((changes: NodeChange[]) => {
+    const preview = batchPreviewRef.current;
+    if (!preview) return;
+    const updated = { ...preview, nodes: applyNodeChanges(changes, preview.nodes) };
+    batchPreviewRef.current = updated;
+    setBatchPreview(updated);
+  }, []);
+  const [isCapturingBatch, setIsCapturingBatch] = useState(false);
+  const highlightTimerRef = useRef<ReturnType<typeof setTimeout>>();
+  const [pendingAIReview, setPendingAIReview] = useState<{
+    changeSet: DiagramChangeSet;
+    baseline: EditorDocument;
+    fingerprint: string;
+    autoSnapshot: boolean;
+    assertCurrent: () => void;
+    finish: (graph: DiagramGraph | null) => void;
+  } | null>(null);
+  const pendingAIReviewRef = useRef<typeof pendingAIReview>(null);
+  const [isApplyingAIReview, setIsApplyingAIReview] = useState(false);
+  const [aiReviewError, setAIReviewError] = useState<string>();
+  const lastAppliedProposalCompleteRef = useRef(true);
   const [isAccessManagementOpen, setIsAccessManagementOpen] = useState(false);
   // Counts successful AI generations this session so we can ask for feedback
   // after a "success moment" (the 2nd diagram) rather than nagging up front.
@@ -1283,14 +1155,24 @@ function App() {
       beforeApply?: () => string | void,
       reportErrors?: boolean,
       preserveValidationForRecheck?: boolean,
-    ) => Promise<void>
+      baseRevision?: number,
+      signal?: AbortSignal,
+      previewOnly?: boolean,
+      proposalOptions?: DiagramProposalOptions,
+    ) => Promise<boolean>
   ) | null>(null);
   const feedbackAfterValidationRef = useRef(false);
   const [referenceImageUrl, setReferenceImageUrl] = useState<string | null>(null);
   const [lastReferenceArchitecture, setLastReferenceArchitecture] = useState<ReferenceArchitecture | null>(null);
   const [lastBlueprintArchitecture, setLastBlueprintArchitecture] = useState<BlueprintArchitecture | null>(null);
   const [panelsCollapsedSignal, setPanelsCollapsedSignal] = useState(0);
+  useEffect(() => {
+    const previous = window.alert;
+    window.alert = message => setWorkspaceNotice(String(message));
+    return () => { window.alert = previous; };
+  }, []);
   const isCompactViewport = useMediaQuery(MEDIA_QUERIES.compact);
+  const isNarrowRibbon = useMediaQuery(`(min-width: ${BREAKPOINTS.compact + 1}px) and ${MEDIA_QUERIES.workspace}`);
   const mobileCanvasFirstActive = isCompactViewport && nodes.length > 0;
   const [isMobileJourneyExpanded, setIsMobileJourneyExpanded] = useState(false);
   const wasMobileCanvasFirstRef = useRef(false);
@@ -1314,6 +1196,12 @@ function App() {
       feedbackAfterValidationRef.current = false;
     }
   }, [nodes.length]);
+  useEffect(() => {
+    if (!isFeedbackModalOpen) return;
+    feedbackAfterValidationRef.current = false;
+    setIsFeedbackToastOpen(false);
+    setFeedbackFabPulse(false);
+  }, [isFeedbackModalOpen]);
   const [focusMode, setFocusMode] = useState<boolean>(() => (
     readBooleanPreference(FOCUS_MODE_STORAGE_KEY, false)
   ));
@@ -1599,16 +1487,25 @@ function App() {
   useEffect(() => {
     let active = true;
     getAccessIdentity()
-      .then((identity) => {
-        if (active) setAccessIdentity(identity);
+      .then(async (identity) => {
+        if (!active) return;
+        setAccessIdentity(identity);
+        const scope = await getDraftScope(identity, draftForkId);
+        if (active) setDraftScope(scope);
       })
-      .catch((error) => {
+      .catch(async (error) => {
         console.error('[access] failed to read current identity:', error);
+        try {
+          const scope = await getDraftScope(null, draftForkId);
+          if (active) setDraftScope(scope);
+        } catch (cause) {
+          if (active) setDraftScopeError(cause instanceof Error ? cause : new Error(String(cause)));
+        }
       });
     return () => {
       active = false;
     };
-  }, []);
+  }, [draftForkId]);
 
   const recordExport = useCallback((kind: ExportHistoryKind, fileName: string) => {
     const id = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -1850,114 +1747,51 @@ function App() {
   const regionPricingRunRef = useRef(0);
   const handleRegionChange = useCallback(async (region: AzureRegion) => {
     cancelPendingPricingEditorOpen();
-    console.log(`🌍 Region changed to ${region}, updating all node pricing...`);
     const runId = ++regionPricingRunRef.current;
-
-    type RegionPricingResult = {
-      nodeId: string;
-      expectedFingerprint: string;
-      pricing: NodePricingConfig | null;
-      failed: boolean;
-    };
-
-    const refreshNodePricing = async (node: Node): Promise<RegionPricingResult | null> => {
-      if (node.type !== 'azureNode') return null;
-
-      const currentPricing = node.data.pricing as NodePricingConfig | undefined;
-      const serviceType = String(node.data.serviceName || node.data.label || '');
-      if (!serviceType) return null;
-      const expectedFingerprint = nodePricingFingerprint(node);
-      try {
-        const newPricing = currentPricing
-          ? currentPricing.isCustom
-            ? {
-                ...currentPricing,
-                region,
-                lastUpdated: new Date().toISOString(),
-              }
-            : await updateNodePricing(
-                serviceType,
-                currentPricing,
-                currentPricing.tierId || currentPricing.skuName || currentPricing.tier,
-                currentPricing.quantity,
-                region,
-              )
-          : await initializeNodePricing(serviceType, region);
-
-        return {
-          nodeId: node.id,
-          expectedFingerprint,
-          pricing: newPricing,
-          failed: false,
-        };
-      } catch (error) {
-        console.error(`Failed to refresh pricing for ${serviceType}:`, error);
-        return {
-          nodeId: node.id,
-          expectedFingerprint,
-          pricing: null,
-          failed: true,
-        };
+    const isSourceCurrent = captureEditorSource();
+    const isCurrent = () => runId === regionPricingRunRef.current && isSourceCurrent();
+    setIsUpdatingRegion(true);
+    try {
+      const refresh = async (source: Node[]) => {
+        const refreshed = await refreshAllNodePricing(source, region);
+        return Promise.all(refreshed.map(async node => {
+          if (node.type !== 'azureNode' || node.data.pricing) return node;
+          const pricing = await initializeNodePricing(String(node.data.serviceName || node.data.label || ''), region);
+          return pricing ? { ...node, data: { ...node.data, pricing } } : node;
+        }));
+      };
+      let baseline = latestNodesRef.current;
+      let updated = await refresh(baseline);
+      if (!isCurrent()) return;
+      let expected = new Map(baseline.map(node => [node.id, nodePricingFingerprint(node)]));
+      const changed = () => latestNodesRef.current.some(node => node.type === 'azureNode'
+        && nodePricingFingerprint(node) !== expected.get(node.id));
+      if (changed()) {
+        baseline = latestNodesRef.current;
+        updated = await refresh(baseline);
+        expected = new Map(baseline.map(node => [node.id, nodePricingFingerprint(node)]));
       }
-    };
-
-    const initialResults = (await Promise.all(nodes.map(refreshNodePricing)))
-      .filter((result): result is RegionPricingResult => result !== null);
-
-    if (runId !== regionPricingRunRef.current) return;
-
-    // If a user edited a node while regional prices were loading, reprice the
-    // latest configuration once instead of overwriting it with the stale
-    // result calculated from the original snapshot.
-    const resultsByNodeId = new Map(initialResults.map(result => [result.nodeId, result]));
-    const retryNodes = latestNodesRef.current.filter((node) => {
-      const result = resultsByNodeId.get(node.id);
-      return result && nodePricingFingerprint(node) !== result.expectedFingerprint;
-    });
-    if (retryNodes.length > 0) {
-      const retryResults = (await Promise.all(retryNodes.map(refreshNodePricing)))
-        .filter((result): result is RegionPricingResult => result !== null);
-      retryResults.forEach(result => resultsByNodeId.set(result.nodeId, result));
+      if (!isCurrent()) return;
+      if (changed()) throw new Error(localize(language, {
+        en: 'Pricing changed while loading the new region. Your edits and original region were kept; try again.',
+        ja: 'リージョンの読み込み中に価格設定が変更されました。編集内容と元のリージョンを保持しました。再試行してください。',
+      }));
+      const results = new Map(updated.map(node => [node.id, node.data?.pricing]));
+      // Selecting a region and committing its estimates is a single editor
+      // transaction. The selector never changes the global region ahead of it.
+      setActiveRegion(region);
+      setPricingRegion(region);
+      setNodes(current => current.map(node => (
+        node.type === 'azureNode' && results.has(node.id) && expected.get(node.id) === nodePricingFingerprint(node)
+          ? { ...node, data: { ...node.data, pricing: results.get(node.id) } }
+          : node
+      )));
+    } catch (error) {
+      if (isCurrent()) alert(error instanceof Error ? error.message : String(error));
+    } finally {
+      if (isCurrent()) setIsUpdatingRegion(false);
     }
-
-    if (runId !== regionPricingRunRef.current) return;
-
-    const results = [...resultsByNodeId.values()];
-    const currentNodesById = new Map(latestNodesRef.current.map(node => [node.id, node]));
-    const skippedForConcurrentEdits = results.filter((result) => {
-      const currentNode = currentNodesById.get(result.nodeId);
-      return currentNode
-        && nodePricingFingerprint(currentNode) !== result.expectedFingerprint;
-    }).length;
-
-    setNodes((currentNodes) => currentNodes.map((node) => {
-      const result = resultsByNodeId.get(node.id);
-      if (
-        !result?.pricing
-        || nodePricingFingerprint(node) !== result.expectedFingerprint
-      ) {
-        return node;
-      }
-      return { ...node, data: { ...node.data, pricing: result.pricing } };
-    }));
-
-    const failedCount = results.filter(result => result.failed).length;
-    if (failedCount > 0 || skippedForConcurrentEdits > 0) {
-      const failedMessage = failedCount > 0
-        ? localize(language, {
-            en: `${failedCount} service price${failedCount === 1 ? '' : 's'} could not be matched in the selected region. Existing estimates keep their original region.`,
-            ja: `${failedCount} 件のサービス価格を選択したリージョンで特定できなかったため、既存の見積もりと元のリージョンを保持しました。`,
-          })
-        : '';
-      const skippedMessage = skippedForConcurrentEdits > 0
-        ? localize(language, {
-            en: `${skippedForConcurrentEdits} concurrent pricing edit${skippedForConcurrentEdits === 1 ? ' was' : 's were'} preserved.`,
-            ja: `更新中に行われた ${skippedForConcurrentEdits} 件の価格編集を保持しました。`,
-          })
-        : '';
-      alert([failedMessage, skippedMessage].filter(Boolean).join('\n'));
-    }
-  }, [cancelPendingPricingEditorOpen, language, nodes, setNodes]);
+  }, [cancelPendingPricingEditorOpen, captureEditorSource, language, setNodes]);
 
   const handleEdgeLabelChange = useCallback((edgeId: string, newLabel: string) => {
     setEdges((eds) =>
@@ -1999,7 +1833,12 @@ function App() {
     );
   }, [setEdges, handleEdgeLabelChange]);
 
-  const normalizeRestoredEdges = useCallback((restoredEdges: unknown[]): Edge[] => {
+  const edgeDefaultsRef = useRef({ animateConnections, edgeStyle: layoutEdgeStyle });
+  edgeDefaultsRef.current = { animateConnections, edgeStyle: layoutEdgeStyle };
+  const normalizeRestoredEdges = useCallback((
+    restoredEdges: unknown[],
+    settings = edgeDefaultsRef.current,
+  ): Edge[] => {
     const SRC_FIX: Record<string, string> = { top: 'top-source', left: 'left-source' };
     const TGT_FIX: Record<string, string> = { bottom: 'bottom-target', right: 'right-target' };
     return restoredEdges.map((edge) => {
@@ -2045,8 +1884,8 @@ function App() {
         ...next.data,
         connectionType: presentation.type,
         baseFlowAnimated,
-        flowAnimated: animateConnections && baseFlowAnimated,
-        pathStyle: normalizeLayoutEdgeStyle(next.data?.pathStyle ?? layoutEdgeStyle),
+        flowAnimated: settings.animateConnections && baseFlowAnimated,
+        pathStyle: normalizeLayoutEdgeStyle(next.data?.pathStyle ?? settings.edgeStyle),
         labelOffsetAuto: typeof next.data?.labelOffsetAuto === 'boolean'
           ? next.data.labelOffsetAuto
           : labelOffsetX === 0 && labelOffsetY === 0,
@@ -2055,11 +1894,11 @@ function App() {
       };
       return next;
     });
-  }, [handleEdgeLabelChange, handleEdgeLabelOffsetChange, animateConnections, layoutEdgeStyle]);
+  }, [handleEdgeLabelChange, handleEdgeLabelOffsetChange]);
 
   const onConnect = useCallback(
-    (params: Connection | Edge) => setEdges((eds) => addEdge({ 
-      ...params, 
+    (params: Connection | Edge) => setEdges((eds) => addEdge({
+      ...params,
       animated: false,
       type: 'editableEdge',
       label: '',
@@ -2148,18 +1987,28 @@ function App() {
   }, [language, onConnect, reactFlowInstance]);
 
   const diagramHistoryState = useMemo<DiagramHistorySnapshot>(() => ({
-    nodes: nodes.map(stripTransientNodeState),
-    edges: edges.map(stripTransientEdgeState),
+    nodes,
+    edges,
     architecturePrompt,
     originalPrompt,
-    validationScore: currentValidationScore,
+    validationScore: persistedValidationScore,
+    validationSourceFingerprint,
+    reviewHistory,
     titleBlockData,
     workflow,
     pricingScenarios,
     iacBaseline,
+    lineageId: localDiagramLineageId,
+    settings: {
+      pricingMode, pricingRegion, stylePreset, edgeStyle: layoutEdgeStyle,
+      animateConnections, showCostBadges: pricingPrefs.showCostBadges,
+      layoutPreset, layoutSpacing, layoutEngine, emphasizePrimaryPath: layoutEmphasizePrimaryPath,
+    },
   }), [
     architecturePrompt,
-    currentValidationScore,
+    persistedValidationScore,
+    validationSourceFingerprint,
+    reviewHistory,
     edges,
     iacBaseline,
     nodes,
@@ -2167,33 +2016,121 @@ function App() {
     pricingScenarios,
     titleBlockData,
     workflow,
+    localDiagramLineageId,
+    pricingMode, pricingRegion, stylePreset, layoutEdgeStyle, animateConnections,
+    pricingPrefs.showCostBadges, layoutPreset, layoutSpacing, layoutEngine, layoutEmphasizePrimaryPath,
   ]);
-  const diagramHistoryStateRef = useRef(diagramHistoryState);
-  diagramHistoryStateRef.current = diagramHistoryState;
+  const liveDocumentRef = useRef(diagramHistoryState);
+  liveDocumentRef.current = diagramHistoryState;
+  const snapshotMetadata = useMemo(() => ({
+    settings: diagramHistoryState.settings, reviewHistory, validationSourceFingerprint,
+  }), [diagramHistoryState.settings, reviewHistory, validationSourceFingerprint]);
+  const currentDiagramFingerprint = editorFingerprint(diagramHistoryState);
+  const validationIsStale = validationNeedsRefresh
+    || ((validationResult !== null || persistedValidationScore !== undefined)
+      && validationSourceFingerprint !== currentDiagramFingerprint);
+  // Preserve historical data in cloud storage without treating stale scores as current.
+  const recordedValidationScore = validationResult?.overallScore ?? persistedValidationScore;
+  const currentValidationScore = getCurrentValidationScore(
+    recordedValidationScore, validationIsStale,
+  );
+  const currentValidationResult = validationIsStale ? null : validationResult;
+
+  useLayoutEffect(() => {
+    diagramRevisionGenerationRef.current.advance();
+  }, [currentDiagramFingerprint]);
+
+  const captureDocumentMutationGuard = useCallback(() => {
+    const isSourceCurrent = captureEditorSource();
+    const generation = diagramRevisionGenerationRef.current.current();
+    const fingerprint = editorFingerprint(liveDocumentRef.current);
+    return () => {
+      if (!isSourceCurrent()
+        || !diagramRevisionGenerationRef.current.isCurrent(generation)
+        || editorFingerprint(liveDocumentRef.current) !== fingerprint) {
+        throw new Error(localize(language, {
+          en: 'The diagram changed while this operation was running. Your latest edits were kept; retry against the current diagram.',
+          ja: '処理中に図が変更されました。最新の編集内容は維持されています。現在の図で再試行してください。',
+        }));
+      }
+    };
+  }, [captureEditorSource, language]);
+
+  const restoreEditorSettings = useCallback((settings: EditorDocument['settings']) => {
+    const region = validatePricingRegion(settings.pricingRegion) ?? getActiveRegion();
+    regionPricingRunRef.current += 1;
+    aiPricingRunRef.current += 1;
+    setActiveRegion(region);
+    setPricingRegion(region);
+    setIsUpdatingRegion(false);
+    setPricingMode(settings.pricingMode);
+    setStylePreset(settings.stylePreset);
+    setLayoutEdgeStyle(settings.edgeStyle);
+    if (settings.animateConnections !== undefined) setAnimateConnections(settings.animateConnections);
+    if (settings.showCostBadges !== undefined) setPricingPrefs({ showCostBadges: settings.showCostBadges });
+    if (settings.layoutPreset) setLayoutPreset(settings.layoutPreset as LayoutPreset);
+    if (settings.layoutSpacing) setLayoutSpacing(settings.layoutSpacing as LayoutSpacing);
+    if (settings.layoutEngine) setLayoutEngine(settings.layoutEngine);
+    if (settings.emphasizePrimaryPath !== undefined) setLayoutEmphasizePrimaryPath(settings.emphasizePrimaryPath);
+  }, [setPricingPrefs]);
 
   const restoreDiagramHistory = useCallback((snapshot: DiagramHistorySnapshot) => {
-    setNodes(snapshot.nodes);
-    setEdges(normalizeRestoredEdges(snapshot.edges));
+    const restoredNodes = validateRestoredNodes(snapshot.nodes);
+    const restoredEdges = validateRestoredEdges(snapshot.edges, new Set(restoredNodes.map(node => node.id)));
+    const restoredWorkflow = validateRestoredWorkflow(snapshot.workflow);
+    const restoredReview = parseValidationReview(snapshot.reviewHistory);
+    const settings = validateEditorSettings(snapshot.settings, liveDocumentRef.current.settings);
+    validatePricingRegion(settings.pricingRegion);
+    const baseline = restoreIaCBaseline(snapshot.iacBaseline);
+    const scenarios = normalizePricingScenarios(snapshot.pricingScenarios);
+    restoreEditorSettings(settings);
+    setNodes(restoredNodes);
+    setEdges(normalizeRestoredEdges(restoredEdges, {
+      animateConnections: settings.animateConnections ?? edgeDefaultsRef.current.animateConnections,
+      edgeStyle: settings.edgeStyle,
+    }));
     setArchitecturePrompt(snapshot.architecturePrompt);
     setOriginalPrompt(snapshot.originalPrompt);
     setTitleBlockData(snapshot.titleBlockData);
-    setWorkflow(snapshot.workflow);
-    setPricingScenarios(snapshot.pricingScenarios);
-    setIaCBaseline(snapshot.iacBaseline);
+    setWorkflow(restoredWorkflow);
+    setPricingScenarios(scenarios);
+    setIaCBaseline(baseline);
     setDriftPlanSummary(null);
     setValidationResult(null);
     setPersistedValidationScore(snapshot.validationScore);
+    setValidationSourceFingerprint(snapshot.validationSourceFingerprint ?? null);
+    setReviewHistory(restoredReview);
     setValidationNeedsRefresh(false);
     setValidationHandoff(null);
-    feedbackAfterValidationRef.current = false;
     setDeploymentGuide(null);
     setReferenceImageUrl(null);
     setLastReferenceArchitecture(null);
     setLastBlueprintArchitecture(null);
+    setGeneratedWithModel(null);
+    clearSourceModel();
+    setAllGroupsCollapsed(false);
+    preCollapseGroupLayout.current = new Map();
+    restoreViewport(snapshot.viewport);
     window.requestAnimationFrame(() => {
       reactFlowWrapper.current?.focus();
     });
-  }, [normalizeRestoredEdges, setEdges, setNodes]);
+  }, [normalizeRestoredEdges, restoreEditorSettings, restoreViewport, setEdges, setNodes]);
+
+  const restoreLocalDraft = useCallback((snapshot: EditorDocument) => {
+    restoreDiagramHistory(snapshot);
+    detachCloudForRecoveryRef.current?.();
+    setLocalDiagramLineageId(snapshot.lineageId || createLocalDiagramLineageId('recovered'));
+  }, [restoreDiagramHistory]);
+
+  const draft = useDraftAutosave(diagramHistoryState, restoreLocalDraft, {
+    key: draftScope ?? 'pending',
+    enabled: draftScope !== null,
+    skipRecovery: skipDraftRecovery,
+  });
+  const { flush: flushDraft } = draft;
+  const editorHistory = useEditorHistory(
+    diagramHistoryState, restoreDiagramHistory, draft.ready || draftScopeError !== null, isCapturingBatch,
+  );
 
   const {
     canUndo: canUndoDiagram,
@@ -2201,10 +2138,110 @@ function App() {
     undo: undoDiagram,
     redo: redoDiagram,
     reset: resetDiagramHistory,
-  } = useDiagramHistory(diagramHistoryState, restoreDiagramHistory, {
-    delayMs: 250,
-    limit: 50,
-  });
+    enrichPricing: enrichHistoryPricing,
+  } = editorHistory;
+  const historyRevisionRef = useRef(editorHistory.revision);
+  historyRevisionRef.current = editorHistory.revision;
+
+  const requestDiagramReview = useCallback((
+    baseline: EditorDocument, proposed: DiagramGraph, autoSnapshot: boolean,
+    assertCurrent: () => void, signal?: AbortSignal, proposalOptions?: DiagramProposalOptions,
+  ): Promise<ReviewedDiagram | null> => {
+    if (pendingAIReviewRef.current) throw new Error(localize(language, {
+      en: 'Finish the current change review before generating another proposal.',
+      ja: '現在の変更確認を完了してから、別の案を生成してください。',
+    }));
+    if (signal?.aborted) return Promise.resolve(null);
+    const changeSet = buildDiagramChanges(baseline, proposed, proposalOptions);
+    const nodeIds = new Map(proposed.nodes.map((node, index) => [node.id, changeSet.proposed.nodes[index].id]));
+    return new Promise(resolve => {
+      const abort = () => finish(null);
+      const finish = (graph: DiagramGraph | null) => {
+        signal?.removeEventListener('abort', abort);
+        if (pendingAIReviewRef.current?.finish !== finish) return;
+        pendingAIReviewRef.current = null;
+        setPendingAIReview(null);
+        setAIReviewError(undefined);
+        resolve(graph ? { graph, complete: isCompleteDiagramChangeSet(changeSet, graph), nodeIds } : null);
+      };
+      const review = { changeSet, baseline, fingerprint: editorFingerprint(baseline), autoSnapshot, assertCurrent, finish };
+      pendingAIReviewRef.current = review;
+      setPendingAIReview(review);
+      setAIReviewError(undefined);
+      signal?.addEventListener('abort', abort, { once: true });
+    });
+  }, [language]);
+
+  useEffect(() => () => {
+    pendingAIReviewRef.current?.finish(null);
+    clearTimeout(highlightTimerRef.current);
+  }, []);
+
+  const acceptDiagramReview = useCallback(async (graph: DiagramGraph) => {
+    const review = pendingAIReviewRef.current;
+    if (!review || isApplyingAIReview) return;
+    setIsApplyingAIReview(true);
+    setAIReviewError(undefined);
+    try {
+      const ensureCurrent = () => {
+        review.assertCurrent();
+        if (pendingAIReviewRef.current !== review || editorFingerprint(liveDocumentRef.current) !== review.fingerprint) {
+          throw new Error(localize(language, {
+            en: 'The diagram changed while preparing this proposal. Cancel and generate again; your edits have been kept.',
+            ja: '提案の準備中に図が変更されました。キャンセルして再生成してください。編集内容は維持されています。',
+          }));
+        }
+      };
+      ensureCurrent();
+      const validatedNodes = validateRestoredNodes(graph.nodes);
+      validateRestoredEdges(graph.edges, new Set(validatedNodes.map(node => node.id)));
+      if (review.autoSnapshot && review.baseline.nodes.length > 0) {
+        const snapshot = review.baseline;
+        await createSnapshot(snapshot.nodes, snapshot.edges, snapshot.titleBlockData.architectureName, {
+          lineageId: activeDiagramLineageIdRef.current,
+          architecturePrompt: snapshot.architecturePrompt, originalPrompt: snapshot.originalPrompt,
+          titleBlockData: snapshot.titleBlockData, workflow: snapshot.workflow,
+          settings: snapshot.settings, reviewHistory: snapshot.reviewHistory,
+          validationScore: snapshot.validationScore, validationSourceFingerprint: snapshot.validationSourceFingerprint,
+          pricingScenarios: snapshot.pricingScenarios, iacBaseline: snapshot.iacBaseline,
+          notes: 'Saved before applying reviewed AI changes',
+        });
+        ensureCurrent();
+        try {
+          await saveCloudSnapshotRef.current?.('Saved before applying reviewed AI changes');
+        } catch (error) {
+          console.warn('Cloud snapshot unavailable; the committed local snapshot is preserved:', error);
+        }
+      }
+      ensureCurrent();
+      review.finish(graph);
+    } catch (error) {
+      setAIReviewError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setIsApplyingAIReview(false);
+    }
+  }, [isApplyingAIReview, language]);
+
+  const focusValidationResources = useCallback((resources: string[]) => {
+    const requested = new Set(resources.map(resource => resource.trim().toLocaleLowerCase()));
+    const matched = latestNodesRef.current.filter(node => requested.has(node.id.toLocaleLowerCase())
+      || requested.has(String(node.data?.label || '').trim().toLocaleLowerCase())
+      || requested.has(String(node.data?.serviceName || '').trim().toLocaleLowerCase()));
+    if (!matched.length) {
+      announce(localize(language, { en: 'These resources are no longer on this diagram.', ja: '対象のリソースは現在の図にありません。' }));
+      return;
+    }
+    const ids = new Set(matched.map(node => node.id));
+    setNodes(current => current.map(node => ({ ...node, selected: ids.has(node.id) })));
+    setEdges(current => current.map(edge => ({ ...edge, selected: false })));
+    setHighlightedServices([...ids]);
+    clearTimeout(highlightTimerRef.current);
+    highlightTimerRef.current = setTimeout(() => setHighlightedServices([]), 4500);
+    window.requestAnimationFrame(() => {
+      void reactFlowInstance?.fitView({ nodes: matched, padding: 0.35, duration: 350, maxZoom: 1.35 });
+      reactFlowWrapper.current?.focus();
+    });
+  }, [language, reactFlowInstance, setEdges, setNodes]);
 
   // Keyboard shortcuts: undo/redo, delete, and duplicate.
   useEffect(() => {
@@ -2748,9 +2785,8 @@ function App() {
     closeNodeContextMenu();
   }, [closeNodeContextMenu, setEdges, setNodes]);
 
-  const editContextNodePricing = useCallback(async (nodeId: string) => {
+  const editContextNodePricing = useCallback(async (nodeId: string, mobileCost = false) => {
     const runId = ++pricingEditorOpenRunRef.current;
-    const editorStateVersion = getNodePricingEditorStateVersion();
     const node = latestNodesRef.current.find(candidate => candidate.id === nodeId);
     if (!node || node.type !== 'azureNode') {
       closeNodeContextMenu();
@@ -2759,60 +2795,49 @@ function App() {
     pricingEditorReturnFocusRef.current = {
       runId,
       nodeId,
-      element: nodeContextMenuReturnFocusRef.current,
+      element: mobileCost
+        ? document.querySelector<HTMLElement>('.mobile-node-inspector-launcher')
+        : nodeContextMenuReturnFocusRef.current,
     };
+    setMobilePricingEditor(mobileCost ? {
+      nodeId,
+      runId,
+      assertCurrent: captureDocumentMutationGuard(),
+      pricing: node.data.pricing ? structuredClone(node.data.pricing as NodePricingConfig) : {
+        estimatedCost: null,
+        tier: '',
+        skuName: '',
+        quantity: 1,
+        region: pricingRegion,
+        unit: 'USD/unit/month',
+        lastUpdated: new Date().toISOString(),
+        isCustom: false,
+        provenance: { kind: 'unpriced', unit: 'USD/unit/month', assumptions: [] },
+      },
+    } : null);
     closeNodeContextMenu();
 
-    const storedPricing = node.data?.pricing as NodePricingConfig | undefined;
-    if (storedPricing) {
-      setPricingEditorDraft(null);
-      openNodePricingEditor(nodeId);
-      return;
-    }
-
-    const serviceType = String(node.data?.serviceName || node.data?.label || '');
-    const region = getActiveRegion();
-    const initializedPricing = serviceType && hasPricingData(serviceType)
-      ? await initializeNodePricing(serviceType, region)
-      : null;
-    if (
-      runId !== pricingEditorOpenRunRef.current
-      || editorStateVersion !== getNodePricingEditorStateVersion()
-      || getActiveRegion() !== region
-    ) {
-      if (pricingEditorReturnFocusRef.current?.runId === runId) {
-        pricingEditorReturnFocusRef.current = null;
-      }
-      return;
-    }
-
-    const latestNode = latestNodesRef.current.find(candidate => candidate.id === nodeId);
-    const latestServiceType = String(
-      latestNode?.data?.serviceName || latestNode?.data?.label || '',
-    );
-    if (!latestNode || latestNode.type !== 'azureNode' || latestServiceType !== serviceType) {
-      if (pricingEditorReturnFocusRef.current?.runId === runId) {
-        pricingEditorReturnFocusRef.current = null;
-      }
-      return;
-    }
-
-    const latestPricing = latestNode.data?.pricing as NodePricingConfig | undefined;
-    setPricingEditorDraft(latestPricing
-      ? null
-      : {
-          nodeId,
-          pricing: initializedPricing ?? createCustomPricingDraft(region),
-        });
+    // Prices are loaded into the modal's private draft, never into the canvas
+    // merely because a user opened a service's settings.
     openNodePricingEditor(nodeId);
-  }, [closeNodeContextMenu]);
+  }, [captureDocumentMutationGuard, closeNodeContextMenu, pricingRegion]);
 
   const closePricingEditor = useCallback(() => {
+    const returnTarget = pricingEditorReturnFocusRef.current?.element;
     cancelPendingPricingEditorOpen();
-    setPricingEditorDraft(null);
     closeNodePricingEditor();
+    setMobilePricingEditor(null);
     pricingEditorReturnFocusRef.current = null;
+    window.requestAnimationFrame(() => {
+      if (returnTarget?.isConnected && returnTarget.getClientRects().length) returnTarget.focus();
+    });
   }, [cancelPendingPricingEditorOpen]);
+
+  useEffect(() => {
+    if (pricingEditorNodeId && !nodes.some(node => node.id === pricingEditorNodeId && node.type === 'azureNode')) {
+      closePricingEditor();
+    }
+  }, [closePricingEditor, nodes, pricingEditorNodeId]);
 
   const fitContextGroupToContent = useCallback((groupId: string) => {
     setNodes((currentNodes) => fitGroupToContent(currentNodes, groupId) ?? currentNodes);
@@ -3006,6 +3031,7 @@ function App() {
         serviceName: service.serviceName,
         category: service.category,
         iconPath: service.iconPath,
+        stylePreset,
       },
     };
 
@@ -3041,17 +3067,19 @@ function App() {
     });
 
     const currentRegion = getActiveRegion();
+    const isSourceCurrent = captureEditorSource();
     void initializeNodePricing(service.serviceName, currentRegion)
       .then((pricing) => {
-        if (!pricing) return;
+        if (!pricing || getActiveRegion() !== currentRegion || !isSourceCurrent()) return;
+        enrichHistoryPricing(newNode, pricing);
         setNodes((current) => current.map((node) => (
-          node.id === nodeId && !node.data.pricing
+          node.id === nodeId && !node.data.pricing && nodeServiceIdentity(node) === nodeServiceIdentity(newNode)
             ? { ...node, data: { ...node.data, pricing } }
             : node
         )));
       })
       .catch((error) => console.warn('Failed to initialize pricing:', error));
-  }, [reactFlowInstance, setNodes]);
+  }, [captureEditorSource, enrichHistoryPricing, reactFlowInstance, setNodes, stylePreset]);
 
   const handleAddService = useCallback((icon: AzureIcon) => {
     if (!reactFlowInstance || !reactFlowWrapper.current) return;
@@ -3073,7 +3101,7 @@ function App() {
   // Handle node deletion - convert child nodes to absolute positions when parent group is deleted
   const onNodesDelete = useCallback((deleted: any[]) => {
     const deletedGroupIds = deleted.filter(n => n.type === 'groupNode').map(n => n.id);
-    
+
     if (deletedGroupIds.length > 0) {
       setNodes((nds) => detachChildrenFromGroups(nds, deletedGroupIds));
     }
@@ -3104,7 +3132,8 @@ function App() {
   );
 
   const createDiagramCaptureOptions = useCallback((excludePanels = true): CaptureOptions => {
-    const visibleNodes = latestNodesRef.current.filter(node => !node.hidden);
+    const preview = batchPreviewRef.current;
+    const visibleNodes = (preview?.nodes ?? latestNodesRef.current).filter(node => !node.hidden);
     const bounds = expandDiagramContentBounds(
       getNodesBounds(visibleNodes),
       getRenderedEdgeLabelBounds(reactFlowWrapper.current, reactFlowInstance),
@@ -3117,7 +3146,7 @@ function App() {
     const security = getConnectionPresentation('security');
     const telemetry = getConnectionPresentation('telemetry');
     const usedConnectionTypes = new Set<DiagramConnectionType>(
-      latestEdgesRef.current
+      (preview?.edges ?? latestEdgesRef.current)
         .filter(edge => !edge.hidden)
         .map(edge => normalizeConnectionType(edge.data?.connectionType)),
     );
@@ -3167,7 +3196,7 @@ function App() {
       exportBackground,
       composition: {
         bounds,
-        title: latestTitle.architectureName || 'Azure Architecture',
+        title: preview?.title || latestTitle.architectureName || 'Azure Architecture',
         subtitle: [
           latestTitle.author,
           latestTitle.date,
@@ -3588,6 +3617,12 @@ function App() {
           region: breakdown.region,
           pricesAsOf: breakdown.pricesAsOf,
           oldestMeterAsOf: breakdown.oldestMeterAsOf,
+          unpricedServices: [
+            ...(breakdown.unpricedServices ?? []).map(service => service.serviceName),
+            ...(breakdown.missingCapacityEstimate
+              ? (breakdown.capacityServices ?? []).map(service => `${service.serviceName} (shared capacity not priced)`)
+              : []),
+          ],
           fixedCost,
           usageCost: breakdown.totalMonthlyCost - fixedCost,
           byCategory: breakdown.byCategory
@@ -3655,6 +3690,8 @@ function App() {
     const flow = reactFlowInstance?.toObject();
     const diagramData = {
       ...flow,
+      nodes,
+      edges,
       metadata: {
         ...titleBlockData,
         savedAt: new Date().toISOString(),
@@ -3665,6 +3702,10 @@ function App() {
       originalPrompt: originalPrompt || architecturePrompt || undefined,
       iacBaseline,
       validationScore: currentValidationScore,
+      settings: diagramHistoryState.settings,
+      reviewHistory,
+      validationSourceFingerprint,
+      lineageId: activeDiagramLineageIdRef.current,
     };
     const dataStr = JSON.stringify(diagramData, null, 2);
     const dataUri = 'data:application/json;charset=utf-8,' + encodeURIComponent(dataStr);
@@ -3676,7 +3717,7 @@ function App() {
     link.click();
     recordExport('json', fileName);
     trackExport('json', nodes.filter(n => n.type === 'azureNode').length);
-  }, [reactFlowInstance, recordExport, titleBlockData, workflow, pricingScenarios, architecturePrompt, originalPrompt, nodes, iacBaseline, currentValidationScore]);
+  }, [reactFlowInstance, recordExport, titleBlockData, workflow, pricingScenarios, architecturePrompt, originalPrompt, nodes, edges, iacBaseline, currentValidationScore, diagramHistoryState.settings, reviewHistory, validationSourceFingerprint]);
 
   const exportCostBreakdown = useCallback(() => {
     // Calculate the cost breakdown
@@ -3719,6 +3760,7 @@ function App() {
     const regionResults = comparison.results;
     const regionFailures = comparison.failures;
     const regionalComparisonComplete = regionFailures.length === 0;
+    const estimateComplete = breakdown.estimateCompleteness === 'complete';
     const lowestComparable = regionResults[0];
     const highestComparable = regionResults[regionResults.length - 1];
     const cheapest = regionalComparisonComplete ? lowestComparable : undefined;
@@ -3760,7 +3802,10 @@ function App() {
 
     // TL;DR callout
     analysisLines.push('> **TL;DR**');
-    analysisLines.push(`> Estimated **$${breakdown.totalMonthlyCost.toFixed(2)}/mo** (**$${annual.toFixed(2)}/yr**).`);
+    analysisLines.push(`> ${estimateComplete ? 'Estimated' : 'Priced subtotal'} **$${breakdown.totalMonthlyCost.toFixed(2)}/mo** (**$${annual.toFixed(2)}/yr**).`);
+    if (!estimateComplete) {
+      analysisLines.push(`> **Incomplete estimate:** ${breakdown.unpricedServices?.length ?? 0} unpriced service(s) excluded${breakdown.missingCapacityEstimate ? '; shared-capacity estimate missing' : ''}. Unknown prices are not free.`);
+    }
     if (cheapest) {
       analysisLines.push(`> Cheapest region: **${cheapest.info.flag} ${cheapest.info.displayName}** at $${cheapest.total.toFixed(2)}/mo.`);
     } else if (regionFailures.length > 0) {
@@ -3784,8 +3829,8 @@ function App() {
     analysisLines.push('');
     analysisLines.push('| Metric | Value |');
     analysisLines.push('| --- | ---: |');
-    analysisLines.push(`| Monthly estimate | **$${breakdown.totalMonthlyCost.toFixed(2)}** |`);
-    analysisLines.push(`| Annual projection | $${annual.toFixed(2)} |`);
+    analysisLines.push(`| ${estimateComplete ? 'Monthly estimate' : 'Priced monthly subtotal'} | **$${breakdown.totalMonthlyCost.toFixed(2)}** |`);
+    analysisLines.push(`| ${estimateComplete ? 'Annual projection' : 'Annualized priced subtotal'} | $${annual.toFixed(2)} |`);
     analysisLines.push(`| Fixed costs | $${fixedCost.toFixed(2)}/mo (${fixedPct}%) |`);
     analysisLines.push(`| Usage-based costs | $${usageCost.toFixed(2)}/mo (${usagePct}%) — actual may vary |`);
     analysisLines.push('');
@@ -3793,7 +3838,7 @@ function App() {
     // Top cost drivers
     analysisLines.push('## Top cost drivers');
     analysisLines.push('');
-    analysisLines.push('| # | Service | Monthly cost | Share | |');
+    analysisLines.push(`| # | Service | Monthly cost | ${estimateComplete ? 'Share' : 'Share of subtotal'} | |`);
     analysisLines.push('| ---: | --- | ---: | ---: | --- |');
     topDrivers.forEach((svc, i) => {
       const pct = breakdown.totalMonthlyCost > 0 ? (svc.cost / breakdown.totalMonthlyCost) * 100 : 0;
@@ -3827,7 +3872,7 @@ function App() {
     analysisLines.push('');
     let hasFlags = false;
     if (topServicePct > 50) {
-      analysisLines.push(`- ⚠️ **Cost concentration:** "${topService.serviceName}" is ${topServicePct.toFixed(0)}% of total. Consider reviewing tier/quantity or splitting the workload.`);
+      analysisLines.push(`- ⚠️ **Cost concentration:** "${topService.serviceName}" is ${topServicePct.toFixed(0)}% of ${estimateComplete ? 'total' : 'the priced subtotal'}. Consider reviewing tier/quantity or splitting the workload.`);
       hasFlags = true;
     }
     if (usageBasedCount > 0) {
@@ -3850,7 +3895,7 @@ function App() {
     analysisLines.push('## Multi-region cost comparison');
     analysisLines.push('');
     if (regionResults.length === 0) {
-      analysisLines.push('_No region could preserve every selected SKU, so a like-for-like comparison is unavailable._');
+      analysisLines.push('_No region has a complete, like-for-like estimate for every selected service and required capacity. Partial subtotals are not ranked._');
       if (regionFailures.length > 0) {
         analysisLines.push('');
         analysisLines.push('**Unavailable regions**');
@@ -3862,7 +3907,7 @@ function App() {
     } else {
       analysisLines.push(`| Rank | Region | Monthly | Annual | ${regionalComparisonComplete ? 'vs Cheapest' : 'vs Lowest shown'} | ${currentRegionId ? 'vs Current' : 'vs Diagram estimate'} |`);
       analysisLines.push('| ---: | --- | ---: | ---: | ---: | ---: |');
-      const currentTotal = breakdown.totalMonthlyCost;
+      const currentTotal = estimateComplete ? breakdown.totalMonthlyCost : null;
       regionResults.forEach((r, idx) => {
         const isCurrent = currentRegionId !== undefined && r.info.id === currentRegionId;
         const isLowestShown = idx === 0;
@@ -3873,9 +3918,11 @@ function App() {
             : '—';
         const vsCurrent = isCurrent
           ? 'current'
-          : r.total < currentTotal
-            ? `−${(((currentTotal - r.total) / currentTotal) * 100).toFixed(1)}% 💰`
-            : `+${(((r.total - currentTotal) / currentTotal) * 100).toFixed(1)}%`;
+          : currentTotal !== null && currentTotal > 0
+            ? r.total < currentTotal
+              ? `−${(((currentTotal - r.total) / currentTotal) * 100).toFixed(1)}% 💰`
+              : `+${(((r.total - currentTotal) / currentTotal) * 100).toFixed(1)}%`
+            : '—';
         const marker = regionalComparisonComplete && isLowestShown ? ' ★' : isCurrent ? ' ◀' : '';
         analysisLines.push(`| ${idx + 1}${marker} | ${r.info.flag} ${r.info.displayName} (\`${r.info.id}\`) | $${r.total.toFixed(2)} | $${r.annual.toFixed(2)} | ${vsLowest} | ${vsCurrent} |`);
       });
@@ -4014,7 +4061,7 @@ function App() {
         const vsLowest = lowestComparable && lowestComparable.total > 0
           ? r.info.id === lowestComparable.info.id ? '0.00' : (((r.total - lowestComparable.total) / lowestComparable.total) * 100).toFixed(2)
           : '';
-        const vsCurrent = currentTotal > 0
+        const vsCurrent = estimateComplete && currentTotal > 0
           ? currentRegionId && r.info.id === currentRegionId
             ? '0.00'
             : (((r.total - currentTotal) / currentTotal) * 100).toFixed(2)
@@ -4022,16 +4069,19 @@ function App() {
         mrLines.push(`${csvTextCell(r.info.displayName, true)},${csvTextCell(r.info.id)},${csvTextCell(r.info.geography, true)},${csvTextCell(r.info.flag)},${csvTextCell(r.info.regionType)},${r.total.toFixed(2)},${r.annual.toFixed(2)},${vsLowest},${vsCurrent},Comparable,`);
       });
       regionFailures.forEach(failure => {
-        mrLines.push(`${csvTextCell(failure.info.displayName, true)},${csvTextCell(failure.info.id)},${csvTextCell(failure.info.geography, true)},${csvTextCell(failure.info.flag)},${csvTextCell(failure.info.regionType)},,,,,Unavailable,${csvTextCell(failure.reason, true)}`);
+        mrLines.push(`${csvTextCell(failure.info.displayName, true)},${csvTextCell(failure.info.id)},${csvTextCell(failure.info.geography, true)},${csvTextCell(failure.info.flag)},${csvTextCell(failure.info.regionType)},,,,,${failure.breakdown ? 'Incomplete estimate' : 'Unavailable'},${csvTextCell(failure.reason, true)}`);
       });
       // Per-service per-region detail sheet
       mrLines.push('');
       mrLines.push('Service,Node ID,' + AVAILABLE_REGIONS.map(r => r.displayName).join(','));
-      const resultsByRegionId = new Map(regionResults.map(result => [result.info.id, result]));
+      const breakdownsByRegionId = new Map([
+        ...regionResults.map(result => [result.info.id, result.breakdown] as const),
+        ...regionFailures.flatMap(failure => failure.breakdown ? [[failure.info.id, failure.breakdown] as const] : []),
+      ]);
       breakdown.byService.forEach(svc => {
         const prices = AVAILABLE_REGIONS.map(region => {
-          const result = resultsByRegionId.get(region.id);
-          const match = result?.breakdown.byService.find(s => s.nodeId === svc.nodeId);
+          const result = breakdownsByRegionId.get(region.id);
+          const match = result?.byService.find(s => s.nodeId === svc.nodeId);
           return match ? match.cost.toFixed(2) : '';
         });
         mrLines.push(`${csvTextCell(svc.serviceName, true)},${csvTextCell(svc.nodeId)},${prices.join(',')}`);
@@ -4065,6 +4115,18 @@ function App() {
       const nodeIds = new Set(restoredNodes.map((node) => node.id));
       const restoredEdges = validateRestoredEdges(flow.edges, nodeIds);
       const restoredWorkflow = validateRestoredWorkflow(flow.workflow);
+      const legacyMetadata = isRecord(flow.metadata) ? flow.metadata : {};
+      const currentSettings = liveDocumentRef.current.settings;
+      const settings = {
+        ...currentSettings,
+        ...validateEditorSettings(flow.settings ?? legacyMetadata.settings, currentSettings),
+      };
+      validatePricingRegion(settings.pricingRegion);
+      const restoredReview = parseValidationReview(flow.reviewHistory ?? legacyMetadata.reviewHistory);
+      const sourceFingerprint = flow.validationSourceFingerprint ?? legacyMetadata.validationSourceFingerprint;
+      if (sourceFingerprint !== undefined && sourceFingerprint !== null && typeof sourceFingerprint !== 'string') {
+        throw new Error('Invalid validation provenance in diagram payload');
+      }
       let restoredViewport: { x: number; y: number; zoom: number } | undefined;
       if (flow.viewport !== undefined && flow.viewport !== null) {
         const viewport = flow.viewport;
@@ -4094,7 +4156,10 @@ function App() {
       // sourceHandle "top"/"left" or targetHandle "bottom"/"right" points at a
       // non-existent handle, so the edge silently fails to render. Remap the
       // invalid bare names to the correct handle id (valid ids pass through).
-      const fixedEdges = normalizeRestoredEdges(restoredEdges);
+      const fixedEdges = normalizeRestoredEdges(restoredEdges, {
+        animateConnections: settings.animateConnections ?? edgeDefaultsRef.current.animateConnections,
+        edgeStyle: settings.edgeStyle,
+      });
 
       // Restore metadata if present
       const restoredTitle = isRecord(flow.titleBlockData)
@@ -4140,6 +4205,9 @@ function App() {
         validationScore,
         architecturePrompt: restoredPrompt,
         originalPrompt: restoredOriginalPrompt,
+        settings,
+        reviewHistory: restoredReview,
+        validationSourceFingerprint: sourceFingerprint as string | null | undefined,
       };
     },
     [localeTag, normalizeRestoredEdges],
@@ -4147,12 +4215,11 @@ function App() {
 
   const applyPreparedFlowObject = useCallback(
     (restored: ReturnType<typeof prepareFlowObject>) => {
+      restoreEditorSettings(restored.settings);
       setNodes(restored.nodes);
       setEdges(restored.edges);
 
-      if (restored.viewport && reactFlowInstance?.setViewport) {
-        reactFlowInstance.setViewport(restored.viewport);
-      }
+      restoreViewport(restored.viewport);
 
       setTitleBlockData(restored.titleBlockData);
 
@@ -4163,6 +4230,8 @@ function App() {
       setDriftPlanSummary(null);
       setValidationResult(null);
       setPersistedValidationScore(restored.validationScore);
+      setValidationSourceFingerprint(restored.validationSourceFingerprint ?? null);
+      setReviewHistory(restored.reviewHistory);
       setValidationNeedsRefresh(false);
       setValidationHandoff(null);
       feedbackAfterValidationRef.current = false;
@@ -4175,7 +4244,7 @@ function App() {
       setLastReferenceArchitecture(null);
       setLastBlueprintArchitecture(null);
     },
-    [reactFlowInstance, setEdges, setNodes],
+    [restoreEditorSettings, restoreViewport, setEdges, setNodes],
   );
 
   const applyFlowObject = useCallback(
@@ -4184,6 +4253,8 @@ function App() {
     },
     [applyPreparedFlowObject, prepareFlowObject],
   );
+  const flowRestorationRef = useRef({ prepare: prepareFlowObject, apply: applyPreparedFlowObject });
+  flowRestorationRef.current = { prepare: prepareFlowObject, apply: applyPreparedFlowObject };
 
   const cloudValidationScore = currentValidationScore;
   const hasCustomizedPricingScenarios = useMemo(
@@ -4191,27 +4262,10 @@ function App() {
     [pricingScenarios],
   );
 
-  const cloudDiagramPayload = useMemo(() => ({
-    nodes,
-    edges,
-    architecturePrompt,
-    originalPrompt: originalPrompt || architecturePrompt || undefined,
-    validationScore: cloudValidationScore,
-    titleBlockData,
-    workflow,
-    pricingScenarios,
-    iacBaseline,
-  }), [
-    nodes,
-    edges,
-    architecturePrompt,
-    originalPrompt,
-    cloudValidationScore,
-    titleBlockData,
-    workflow,
-    pricingScenarios,
-    iacBaseline,
-  ]);
+  const cloudDiagramPayload = useMemo(() => toCloudDiagramPayload({
+    ...diagramHistoryState,
+    validationScore: recordedValidationScore,
+  }), [diagramHistoryState, recordedValidationScore]);
   const cloudDiagramPayloadRef = useRef(cloudDiagramPayload);
   cloudDiagramPayloadRef.current = cloudDiagramPayload;
   // Only scan for sensitive data while a privacy or cloud dialog is open. The
@@ -4256,7 +4310,7 @@ function App() {
       || architecturePrompt.trim().length > 0
       || originalPrompt.trim().length > 0
       || workflow.length > 0
-      || cloudValidationScore !== undefined
+      || recordedValidationScore !== undefined
       || hasCustomizedPricingScenarios
       || iacBaseline !== null
       || hasCustomizedTitle
@@ -4269,21 +4323,31 @@ function App() {
     nodes.length,
     originalPrompt,
     titleBlockData,
-    cloudValidationScore,
+    recordedValidationScore,
     hasCustomizedPricingScenarios,
     workflow.length,
   ]);
 
+  const applyCloudFlowObject = useCallback((payload: CloudDiagramPayload) => {
+    // UI locale and React Flow readiness must not restart cloud hydration.
+    const restoration = flowRestorationRef.current;
+    const prepared = restoration.prepare(payload);
+    cloudLoadGenerationRef.current.advance();
+    restoration.apply(prepared);
+    return toCloudDiagramPayload(prepared);
+  }, []);
   const cloudSync = useCloudDiagramSync({
     diagramName: titleBlockData.architectureName,
     payload: cloudDiagramPayload,
-    enabled: cloudDraftHasContent,
-    onLoad: applyFlowObject,
+    enabled: cloudDraftHasContent && draft.ready,
+    onLoad: applyCloudFlowObject,
   });
   const activeDiagramLineageId = cloudSync.context?.documentId
     ? `cloud:${cloudSync.context.documentId}`
     : localDiagramLineageId;
   activeDiagramLineageIdRef.current = activeDiagramLineageId;
+  detachCloudForRecoveryRef.current = cloudSync.reset;
+  saveCloudSnapshotRef.current = cloudSync.saveSnapshot;
 
   const recentWorkSyncState: RecentWorkSyncState = (() => {
     if (!cloudSync.context) return 'local';
@@ -4302,68 +4366,73 @@ function App() {
     }
   })();
 
-  const saveCurrentRecovery = useCallback(async (): Promise<RecentWorkRecord | null> => {
-    if (!cloudDraftHasContent) return null;
+  const recentProjectionChainRef = useRef<Promise<unknown>>(Promise.resolve());
+  const archiveCommittedDraft = useCallback(async (
+    committed: DiagramDraft,
+  ): Promise<RecentWorkRecord | null> => {
+    if (committed.document.lineageId !== localDiagramLineageId) return null;
     const recoveryPayload = JSON.parse(JSON.stringify({
-      ...cloudDiagramPayload,
+      ...committed.document,
       viewport: reactFlowInstance?.getViewport(),
     })) as RecentWorkRecord['payload'];
     const recoveryRecord: RecentWorkRecord = {
       id: activeDiagramLineageId.slice(0, 320),
       lineageId: activeDiagramLineageId.slice(0, 320),
       sessionId: recentWorkSessionId,
-      diagramName: (titleBlockData.architectureName.trim() || 'Untitled Architecture').slice(0, 200),
-      updatedAt: Date.now(),
+      diagramName: (committed.document.titleBlockData.architectureName.trim() || 'Untitled Architecture').slice(0, 200),
+      updatedAt: committed.updatedAt,
       payload: recoveryPayload,
       syncState: recentWorkSyncState,
       cloudDocumentId: cloudSync.context?.documentId,
       cloudRevision: cloudSync.document?.revision,
     };
-    await saveRecentWork(recoveryRecord);
+    const projection = recentProjectionChainRef.current.catch(() => undefined).then(() => saveRecentWork(recoveryRecord));
+    recentProjectionChainRef.current = projection;
+    await projection;
     return recoveryRecord;
   }, [
     activeDiagramLineageId,
-    cloudDiagramPayload,
-    cloudDraftHasContent,
+    localDiagramLineageId,
     cloudSync.context?.documentId,
     cloudSync.document?.revision,
     reactFlowInstance,
     recentWorkSessionId,
     recentWorkSyncState,
-    titleBlockData.architectureName,
   ]);
 
+  const lastProjectedDraftRef = useRef<string>();
   useEffect(() => {
-    if (!cloudDraftHasContent) return;
-    const timeout = window.setTimeout(() => {
-      void saveCurrentRecovery().catch((error) => {
-        console.error('Failed to preserve recent work locally:', error);
-      });
-    }, 650);
-    return () => window.clearTimeout(timeout);
-  }, [cloudDraftHasContent, saveCurrentRecovery]);
+    const saved = draft.savedDraft;
+    if (!saved || saved.document.lineageId !== localDiagramLineageId) return;
+    const revisionKey = `${saved.id}:${saved.revision}:${activeDiagramLineageId}`;
+    if (lastProjectedDraftRef.current === revisionKey) return;
+    lastProjectedDraftRef.current = revisionKey;
+    // Recent work is a catalog of committed autosaves, not a second writer
+    // taking unversioned snapshots of whichever canvas happens to be visible.
+    void archiveCommittedDraft(saved).catch(error => {
+      console.error('Failed to update the recent-work catalog:', error);
+    });
+  }, [activeDiagramLineageId, archiveCommittedDraft, draft.savedDraft, localDiagramLineageId]);
 
-  useEffect(() => {
-    const preserveWhenHidden = () => {
-      if (document.visibilityState !== 'hidden') return;
-      void saveCurrentRecovery().catch((error) => {
-        console.error('Failed to preserve recent work while leaving the page:', error);
-      });
-    };
-    const preserveOnPageHide = () => {
-      void saveCurrentRecovery().catch((error) => {
-        console.error('Failed to preserve recent work during page hide:', error);
-      });
-    };
-    document.addEventListener('visibilitychange', preserveWhenHidden);
-    window.addEventListener('pagehide', preserveOnPageHide);
-    return () => {
-      document.removeEventListener('visibilitychange', preserveWhenHidden);
-      window.removeEventListener('pagehide', preserveOnPageHide);
-    };
-  }, [saveCurrentRecovery]);
+  const saveCurrentRecovery = useCallback(async (): Promise<RecentWorkRecord | null> => {
+    const saved = await flushDraft();
+    return saved ? archiveCommittedDraft(saved) : null;
+  }, [archiveCommittedDraft, flushDraft]);
 
+  const previousLineageRef = useRef<{
+    active: string; local: string; cloudLoadGeneration: number;
+  } | null>(null);
+  const cloudLoadGeneration = cloudLoadGenerationRef.current.current();
   useEffect(() => {
+    const previous = previousLineageRef.current;
+    previousLineageRef.current = {
+      active: activeDiagramLineageId, local: localDiagramLineageId, cloudLoadGeneration,
+    };
+    // A cloud binding/copy or offline fallback is not a new editing session.
+    // Explicit document loads advance the load generation or local lineage.
+    if (previous && previous.local === localDiagramLineageId
+      && (previous.active === activeDiagramLineageId
+        || previous.cloudLoadGeneration === cloudLoadGeneration)) return;
     if (intentionalLineageTransitionRef.current === activeDiagramLineageId) {
       intentionalLineageTransitionRef.current = null;
     } else {
@@ -4371,12 +4440,16 @@ function App() {
     }
     validationGenerationRef.current.advance();
     deploymentGuideGenerationRef.current.advance();
+    regionPricingRunRef.current += 1;
+    setIsUpdatingRegion(false);
+    pendingAIReviewRef.current?.finish(null);
     setIsValidating(false);
     setIsGeneratingGuide(false);
     setIsValidationModalOpen(false);
     setIsDeploymentGuideModalOpen(false);
-    resetDiagramHistory(diagramHistoryStateRef.current);
-  }, [activeDiagramLineageId, resetDiagramHistory]);
+    closePricingEditor();
+    resetDiagramHistory(liveDocumentRef.current);
+  }, [activeDiagramLineageId, closePricingEditor, cloudLoadGeneration, localDiagramLineageId, resetDiagramHistory]);
 
   const requestPrivacyAction = useCallback((
     purpose: PrivacyRequest['purpose'],
@@ -4473,6 +4546,7 @@ function App() {
         : '新しい図面を作成しますか？現在のクラウド図面は保存されたまま残り、キャンバスがクリアされます。',
     }));
     if (!confirmed) return false;
+    const assertCurrent = captureDocumentMutationGuard();
     try {
       await saveCurrentRecovery();
     } catch (error) {
@@ -4496,9 +4570,16 @@ function App() {
       }));
       if (!discardUnsavedChanges) return false;
     }
+    try {
+      assertCurrent();
+    } catch (error) {
+      alert(error instanceof Error ? error.message : String(error));
+      return false;
+    }
     trackStartFresh();
     cloudSync.reset();
     setLocalDiagramLineageId(createLocalDiagramLineageId());
+    pendingRestoreViewportRef.current = undefined;
     setNodes([]);
     setEdges([]);
     setArchitecturePrompt('');
@@ -4510,6 +4591,8 @@ function App() {
     setGeneratedWithModel(null);
     setValidationResult(null);
     setPersistedValidationScore(undefined);
+    setValidationSourceFingerprint(null);
+    setReviewHistory([]);
     setValidationNeedsRefresh(false);
     setDeploymentGuide(null);
     setIaCBaseline(null);
@@ -4530,6 +4613,7 @@ function App() {
     cloudDraftHasContent,
     language,
     saveCurrentRecovery,
+    captureDocumentMutationGuard,
     setEdges,
     setNodes,
     translate,
@@ -4537,6 +4621,7 @@ function App() {
 
   const confirmRecentWorkReplacement = useCallback(async (targetName: string) => {
     if (!cloudDraftHasContent) return true;
+    const assertCurrent = captureDocumentMutationGuard();
     try {
       await saveCurrentRecovery();
     } catch (error) {
@@ -4547,21 +4632,28 @@ function App() {
       }));
       if (!continueWithoutRecovery) return false;
     }
+    try {
+      assertCurrent();
+    } catch (error) {
+      alert(error instanceof Error ? error.message : String(error));
+      return false;
+    }
     return window.confirm(localize(language, {
       en: `Open "${targetName}"? The current canvas will be replaced, and its latest local recovery copy will remain in Recent work.`,
       ja: `「${targetName}」を開きますか？ 現在のキャンバスは置き換えられ、最新のローカル復旧コピーは「最近の作業」に残ります。`,
     }));
-  }, [cloudDraftHasContent, language, saveCurrentRecovery]);
+  }, [captureDocumentMutationGuard, cloudDraftHasContent, language, saveCurrentRecovery]);
 
   const resumeRecentLocalWork = useCallback(async (record: RecentWorkRecord) => {
     if (record.lineageId === activeDiagramLineageId) return true;
     if (!await confirmRecentWorkReplacement(record.diagramName)) return false;
     try {
+      const prepared = prepareFlowObject(record.payload);
       cloudSync.reset();
       setLocalDiagramLineageId(createLocalDiagramLineageId(
         `recovered-${record.lineageId}`,
       ));
-      applyFlowObject(record.payload);
+      applyPreparedFlowObject(prepared);
       window.setTimeout(() => {
         void reactFlowInstance?.fitView({
           padding: 0.2,
@@ -4580,7 +4672,8 @@ function App() {
     }
   }, [
     activeDiagramLineageId,
-    applyFlowObject,
+    applyPreparedFlowObject,
+    prepareFlowObject,
     cloudSync,
     confirmRecentWorkReplacement,
     language,
@@ -4590,8 +4683,11 @@ function App() {
   const openRecentCloudWork = useCallback(async (summary: CloudDiagramSummary) => {
     if (cloudSync.document?.id === summary.id) return true;
     if (!await confirmRecentWorkReplacement(summary.diagramName)) return false;
+    const assertCurrent = captureDocumentMutationGuard();
     try {
       const document = await getCloudDiagram(summary.id);
+      prepareFlowObject(document.payload);
+      assertCurrent();
       cloudSync.openDocument(document, {
         documentId: document.id,
         access: 'owner',
@@ -4610,8 +4706,10 @@ function App() {
     }
   }, [
     cloudSync,
+    captureDocumentMutationGuard,
     confirmRecentWorkReplacement,
     language,
+    prepareFlowObject,
   ]);
 
   const applyArchitectureTemplate = useCallback(async (template: ArchitectureTemplate) => {
@@ -4724,21 +4822,14 @@ function App() {
         getVersion(versionId)
           .then((version) => {
             if (!version) throw new Error('Version not found');
+            const prepared = prepareFlowObject({
+              ...version,
+              titleBlockData: version.titleBlockData || version.metadata,
+            });
             setLocalDiagramLineageId(createLocalDiagramLineageId(
               `restored-${version.lineageId || version.versionId}`,
             ));
-            applyFlowObject({
-              nodes: version.nodes,
-              edges: version.edges,
-              metadata: version.metadata,
-              workflow: version.workflow,
-              architecturePrompt: version.architecturePrompt,
-              originalPrompt: version.originalPrompt,
-              validationScore: version.validationScore,
-              titleBlockData: version.titleBlockData,
-              pricingScenarios: version.pricingScenarios,
-              iacBaseline: version.iacBaseline,
-            });
+            applyPreparedFlowObject(prepared);
             clearVersionHash();
           })
           .catch((error) => {
@@ -4754,10 +4845,11 @@ function App() {
         const encodedData = hash.substring(9); // Remove '#version-'
         const decodedData = decodeUtf8Base64(encodedData);
         const diagramData = JSON.parse(decodedData);
+        const prepared = prepareFlowObject(diagramData);
         
         // Apply the diagram data
         setLocalDiagramLineageId(createLocalDiagramLineageId('restored-legacy'));
-        applyFlowObject(diagramData);
+        applyPreparedFlowObject(prepared);
         
         // Clear the hash
         clearVersionHash();
@@ -4766,7 +4858,7 @@ function App() {
         clearVersionHash();
       }
     }
-  }, [applyFlowObject]);
+  }, [applyPreparedFlowObject, prepareFlowObject]);
 
 
 
@@ -4783,9 +4875,17 @@ function App() {
       return;
     }
 
+    const loadGeneration = fileLoadGenerationRef.current.advance();
+    const assertCurrent = captureDocumentMutationGuard();
+    const baseRevision = historyRevisionRef.current;
+    const sourceFingerprint = editorFingerprint(liveDocumentRef.current);
     const reader = new FileReader();
     reader.onload = async (e) => {
       try {
+        if (!fileLoadGenerationRef.current.isCurrent(loadGeneration)
+          || editorFingerprint(liveDocumentRef.current) !== sourceFingerprint) {
+          throw new CloudDiagramOperationCancelledError();
+        }
         const flow = JSON.parse(e.target?.result as string);
         if (
           flow?.format === 'azurediagarm-ai-architecture'
@@ -4795,21 +4895,34 @@ function App() {
           if (!handleAIGenerateRef.current) {
             throw new Error('The architecture renderer is not ready');
           }
+          if (cloudDraftHasContent) await saveCurrentRecovery();
+          assertCurrent();
+          if (!fileLoadGenerationRef.current.isCurrent(loadGeneration)) throw new CloudDiagramOperationCancelledError();
           await handleAIGenerateRef.current(
             flow,
             typeof flow.metadata?.prompt === 'string' ? flow.metadata.prompt : file.name,
             false,
             false,
             () => {
-              const lineageId = createLocalDiagramLineageId('loaded');
+              assertCurrent();
+              if (!fileLoadGenerationRef.current.isCurrent(loadGeneration)) throw new CloudDiagramOperationCancelledError();
+              const lineageId = createLocalDiagramLineageId('loaded-ai');
               cloudSync.reset();
               setLocalDiagramLineageId(lineageId);
               return lineageId;
             },
             false,
+            false,
+            baseRevision,
+            undefined,
+            false,
+            { reconcile: false },
           );
         } else {
           const preparedFlow = prepareFlowObject(flow);
+          if (cloudDraftHasContent) await saveCurrentRecovery();
+          assertCurrent();
+          if (!fileLoadGenerationRef.current.isCurrent(loadGeneration)) throw new CloudDiagramOperationCancelledError();
           cloudSync.reset();
           setLocalDiagramLineageId(createLocalDiagramLineageId('loaded'));
           applyPreparedFlowObject(preparedFlow);
@@ -4828,28 +4941,24 @@ function App() {
       input.value = '';
     };
     reader.readAsText(file);
-  }, [applyPreparedFlowObject, cloudSync, language, prepareFlowObject, t]);
+  }, [applyPreparedFlowObject, captureDocumentMutationGuard, cloudDraftHasContent, cloudSync, language, prepareFlowObject, saveCurrentRecovery, t]);
 
   // Restore a version from history
   const restoreVersion = useCallback((version: DiagramVersion, restoreAsCopy: boolean) => {
     try {
+      const prepared = prepareFlowObject({
+        ...version,
+        titleBlockData: version.titleBlockData || version.metadata,
+        settings: version.settings ?? version.metadata?.settings,
+        reviewHistory: version.reviewHistory ?? version.metadata?.reviewHistory,
+      });
       if (restoreAsCopy) {
         cloudSync.reset();
         setLocalDiagramLineageId(createLocalDiagramLineageId(
           `restored-${version.lineageId || version.versionId}`,
         ));
       }
-      applyFlowObject({
-        nodes: version.nodes,
-        edges: version.edges,
-        titleBlockData: version.titleBlockData || version.metadata,
-        workflow: version.workflow || [],
-        pricingScenarios: version.pricingScenarios,
-        architecturePrompt: version.architecturePrompt || '',
-        originalPrompt: version.originalPrompt || version.architecturePrompt || '',
-        validationScore: version.validationScore,
-        iacBaseline: version.iacBaseline,
-      });
+      applyPreparedFlowObject(prepared);
       
       console.log('✅ Version restored successfully');
       trackVersionOperation('restore');
@@ -4857,14 +4966,17 @@ function App() {
       console.error('Failed to restore version:', error);
       alert(t("Failed to restore version"));
     }
-  }, [applyFlowObject, cloudSync, t]);
+  }, [applyPreparedFlowObject, prepareFlowObject, cloudSync, t]);
 
   const restoreSelectedVersionChanges = useCallback(async (
     version: DiagramVersion,
     selectedKeys: string[],
   ): Promise<boolean> => {
     if (selectedKeys.length === 0) return false;
+    const assertCurrent = captureDocumentMutationGuard();
     try {
+      const versionNodes = validateRestoredNodes(version.nodes);
+      const versionEdges = validateRestoredEdges(version.edges, new Set(versionNodes.map(node => node.id)));
       await createSnapshot(
         nodes,
         edges,
@@ -4878,12 +4990,14 @@ function App() {
             en: 'Automatic backup before selective version restore',
             ja: 'バージョンの選択復元前の自動バックアップ',
           }),
+          ...snapshotMetadata,
           titleBlockData,
           workflow,
           pricingScenarios,
           iacBaseline,
         },
       );
+      assertCurrent();
       try {
         await cloudSync.saveSnapshot(localize(language, {
           en: 'Automatic backup before selective version restore',
@@ -4892,12 +5006,13 @@ function App() {
       } catch (cloudError) {
         console.warn('Cloud backup was unavailable before selective restore:', cloudError);
       }
+      assertCurrent();
 
       const restored = applySelectedVersionChanges(
         nodes,
         edges,
-        version.nodes,
-        version.edges,
+        versionNodes,
+        versionEdges,
         selectedKeys,
       );
       if (restored.appliedKeys.length === 0) {
@@ -4908,8 +5023,13 @@ function App() {
         return false;
       }
 
-      setNodes(restored.nodes);
-      setEdges(applyAutomaticEdgeLabelOffsets(restored.nodes, restored.edges));
+      const restoredNodes = validateRestoredNodes(restored.nodes);
+      const restoredEdges = normalizeRestoredEdges(validateRestoredEdges(restored.edges, new Set(restoredNodes.map(node => node.id))));
+      setNodes(restoredNodes);
+      setEdges(applyAutomaticEdgeLabelOffsets(restoredNodes, restoredEdges));
+      setWorkflow(current => current.filter(step => step.services.every((service: string) => restoredNodes.some(
+        node => node.id === service || node.data.label === service,
+      ))));
       if (validationResult || persistedValidationScore !== undefined) {
         setValidationNeedsRefresh(true);
       }
@@ -4968,6 +5088,9 @@ function App() {
     titleBlockData,
     validationResult,
     workflow,
+    snapshotMetadata,
+    captureDocumentMutationGuard,
+    normalizeRestoredEdges,
   ]);
 
   const locateQualityFinding = useCallback((finding: DiagramQualityFinding) => {
@@ -5002,6 +5125,7 @@ function App() {
 
   const applyQualityDoctorFixes = useCallback(async (findingIds: string[]) => {
     if (findingIds.length === 0) return;
+    const assertCurrent = captureDocumentMutationGuard();
     try {
       const report = analyzeDiagramQuality(nodes, edges);
       const backupNotes = localize(language, {
@@ -5019,17 +5143,20 @@ function App() {
           originalPrompt: originalPrompt || architecturePrompt || undefined,
           validationScore: cloudValidationScore,
           notes: backupNotes,
+          ...snapshotMetadata,
           titleBlockData,
           workflow,
           pricingScenarios,
           iacBaseline,
         },
       );
+      assertCurrent();
       try {
         await cloudSync.saveSnapshot(backupNotes);
       } catch (cloudError) {
         console.warn('Cloud backup was unavailable before quality fixes:', cloudError);
       }
+      assertCurrent();
 
       const fixed = applyDiagramQualityFixes(
         nodes,
@@ -5063,6 +5190,7 @@ function App() {
         nextEdges = layoutResult.edges;
       }
       nextEdges = applyAutomaticEdgeLabelOffsets(nextNodes, nextEdges);
+      assertCurrent();
 
       setNodes(nextNodes);
       setEdges(nextEdges);
@@ -5109,6 +5237,8 @@ function App() {
     titleBlockData,
     validationResult,
     workflow,
+    snapshotMetadata,
+    captureDocumentMutationGuard,
   ]);
 
   // Manual snapshot save handler
@@ -5130,6 +5260,7 @@ function App() {
           originalPrompt: originalPrompt || architecturePrompt || undefined,
           validationScore: cloudValidationScore,
           notes: snapshotNotes,
+          ...snapshotMetadata,
           titleBlockData,
           workflow,
           pricingScenarios,
@@ -5154,6 +5285,7 @@ function App() {
     pricingScenarios,
     cloudSync,
     iacBaseline,
+    snapshotMetadata,
   ]);
 
   const handleAIGenerate = useCallback(async (
@@ -5164,21 +5296,41 @@ function App() {
     beforeApply?: () => string | void,
     reportErrors: boolean = true,
     preserveValidationForRecheck: boolean = false,
-  ) => {
+    baseRevision?: number,
+    signal?: AbortSignal,
+    previewOnly: boolean = false,
+    proposalOptions?: DiagramProposalOptions,
+  ): Promise<boolean> => {
+    if (signal?.aborted) return false;
+    if (pendingAIReviewRef.current) throw new Error(localize(language, {
+      en: 'Finish the current change review before preparing another proposal.',
+      ja: '現在の変更確認を完了してから、別の案を作成してください。',
+    }));
+    if (baseRevision !== undefined && baseRevision !== historyRevisionRef.current) {
+      throw new Error(localize(language, {
+        en: 'The diagram changed while AI was working. Generate again to include your latest edits.',
+        ja: 'AI の処理中に図が変更されました。最新の編集内容を含めて再生成してください。',
+      }));
+    }
+    const baseline = cloneEditorDocument(liveDocumentRef.current);
+    const baselineFingerprint = editorFingerprint(baseline);
     const operationGeneration = aiGenerationRef.current.advance();
     const sourceLineageId = activeDiagramLineageIdRef.current;
+    const isSourceCurrent = captureEditorSource();
     const sourceDiagramRevision = diagramRevisionGenerationRef.current.current();
     const assertIntentCurrent = () => {
       if (
         !aiGenerationRef.current.isCurrent(operationGeneration)
-        || activeDiagramLineageIdRef.current !== sourceLineageId
+        || !isSourceCurrent()
+        || signal?.aborted
       ) {
         throw new CloudDiagramOperationCancelledError();
       }
     };
     const assertSourceCurrent = () => {
       assertIntentCurrent();
-      if (!diagramRevisionGenerationRef.current.isCurrent(sourceDiagramRevision)) {
+      if (!diagramRevisionGenerationRef.current.isCurrent(sourceDiagramRevision)
+        || editorFingerprint(liveDocumentRef.current) !== baselineFingerprint) {
         throw new CloudDiagramOperationCancelledError();
       }
     };
@@ -5186,8 +5338,10 @@ function App() {
       assertSourceCurrent();
       console.log('Generating architecture from:', architecture);
       const isRefinement = preserveExistingLayout && nodes.length > 0;
-      const { services, connections, workflow: workflowSteps } = architecture;
-      let { groups } = architecture;
+      const services = Array.isArray(architecture.services) ? architecture.services.map((service: any) => ({ ...service })) : architecture.services;
+      const connections = architecture.connections;
+      const workflowSteps = validateRestoredWorkflow(architecture.workflow);
+      let groups = Array.isArray(architecture.groups) ? architecture.groups.map((group: any) => ({ ...group })) : architecture.groups;
       
       if (!Array.isArray(services) || services.length === 0) {
         throw new Error(t("No services were identified in your description. Please try a more detailed description."));
@@ -5221,44 +5375,6 @@ function App() {
       }
 
       console.log(`Processing ${services.length} services, ${connections?.length || 0} connections, ${groups?.length || 0} groups`);
-
-      // Auto-save snapshot before regenerating (if enabled and there are existing nodes)
-      if (autoSnapshot && nodes.length > 0) {
-        console.log('📸 Auto-saving snapshot before regeneration...');
-        console.log(`Current state: ${nodes.length} nodes, ${edges.length} edges, name: "${titleBlockData.architectureName}"`);
-        try {
-          await createSnapshot(
-            nodes,
-            edges,
-            titleBlockData.architectureName,
-            {
-              lineageId: activeDiagramLineageId,
-              architecturePrompt: architecturePrompt || 'Previous version',
-              originalPrompt: originalPrompt || architecturePrompt || undefined,
-              validationScore: cloudValidationScore,
-              notes: 'Auto-saved before AI regeneration',
-              titleBlockData,
-              workflow,
-              pricingScenarios,
-              iacBaseline,
-            }
-          );
-          assertSourceCurrent();
-          try {
-            await cloudSync.saveSnapshot('Auto-saved before AI regeneration');
-            assertSourceCurrent();
-          } catch (cloudError) {
-            if (cloudError instanceof CloudDiagramOperationCancelledError) throw cloudError;
-            console.warn('Cloud snapshot was unavailable; the local snapshot was preserved:', cloudError);
-          }
-          console.log('✅ Snapshot saved successfully!');
-        } catch (err) {
-          if (err instanceof CloudDiagramOperationCancelledError) throw err;
-          console.error('❌ Failed to save snapshot:', err);
-        }
-      } else {
-        console.log('ℹ️ No existing nodes to snapshot');
-      }
 
       // Pick up an architecture name from the AI payload (manifest.title in
       // Both mode) or derive a short title from the prompt so the banner
@@ -5467,6 +5583,7 @@ function App() {
           serviceName: service.type || service.name,
           category: icon?.category || service.category,
           iconPath: icon?.path || '',
+          stylePreset,
         },
         parentNode: service.groupId || undefined,  // Link to group if exists
         extent: service.groupId ? 'parent' : undefined,  // Keep within parent bounds
@@ -5598,16 +5715,49 @@ function App() {
     });
     const newEdges = applyAutomaticEdgeLabelOffsets(finalNodes, generatedEdges);
 
-    // Add the new nodes and edges
-    console.log(`Setting ${finalNodes.length} nodes and ${newEdges.length} edges`);
     assertSourceCurrent();
+    const normalized = buildDiagramChanges(
+      previewOnly ? { nodes: [], edges: [] } : baseline, { nodes: finalNodes, edges: newEdges },
+      proposalOptions,
+    ).proposed;
+    const proposalNodeIds = new Map(finalNodes.map((node, index) => [node.id, normalized.nodes[index].id]));
+    const proposedRegion = getActiveRegion();
+    const pricedNodes = await Promise.all(normalized.nodes.map(async node => {
+      if (node.type !== 'azureNode' || node.data.pricing) return node;
+      const pricing = await initializeNodePricing(String(node.data.serviceName || node.data.label || ''), proposedRegion);
+      return pricing ? { ...node, data: { ...node.data, pricing } } : node;
+    }));
+    assertSourceCurrent();
+    if (previewOnly) {
+      const preview = { nodes: pricedNodes, edges: normalized.edges, title: incomingName };
+      batchPreviewRef.current = preview;
+      setBatchPreview(preview);
+      return true;
+    }
+    const reviewed = await requestDiagramReview(
+      baseline, { nodes: pricedNodes, edges: normalized.edges }, autoSnapshot, assertSourceCurrent, signal,
+      proposalOptions,
+    );
+    if (!reviewed || signal?.aborted) return false;
+    assertSourceCurrent();
+    const accepted = reviewed.graph;
+    const acceptedIds = new Set(accepted.nodes.map(node => node.id));
+    const acceptedLabels = new Set(accepted.nodes.map(node => String(node.data.label || '')));
+    const remappedWorkflow = workflowSteps.map(step => ({
+      ...step, services: step.services.map(service => proposalNodeIds.get(service) ?? service),
+    })).filter(step => step.services.every(service => acceptedIds.has(service) || acceptedLabels.has(service)));
+    const acceptedEdges = reviewed.complete ? accepted.edges : accepted.edges.map(edge => {
+      const { stepNumber, stepDescription, ...data } = edge.data ?? {};
+      return { ...edge, data };
+    });
+    lastAppliedProposalCompleteRef.current = reviewed.complete;
     const transitionedLineageId = beforeApply?.();
-    const appliedLineageId = transitionedLineageId || sourceLineageId;
+    const appliedLineageId = transitionedLineageId || activeDiagramLineageIdRef.current;
     if (transitionedLineageId && transitionedLineageId !== sourceLineageId) {
       intentionalLineageTransitionRef.current = transitionedLineageId;
       activeDiagramLineageIdRef.current = transitionedLineageId;
     }
-    const pricingRunId = ++aiPricingRunRef.current;
+    aiPricingRunRef.current += 1;
     const validationTransition = resolveValidationFreshness(
       validationResult !== null,
       preserveValidationForRecheck,
@@ -5615,16 +5765,17 @@ function App() {
     if (!validationTransition.keepResult) {
       setValidationResult(null);
       setPersistedValidationScore(undefined);
+      setValidationSourceFingerprint(null);
     }
     setValidationNeedsRefresh(validationTransition.needsRefresh);
     setValidationHandoff(null);
     feedbackAfterValidationRef.current = false;
-    setLastReferenceArchitecture(architecture?.__referenceArchitecture ?? null);
-    setNodes(finalNodes);
-    setEdges(newEdges);
+    setLastReferenceArchitecture(reviewed.complete ? architecture?.__referenceArchitecture ?? null : null);
+    setNodes(accepted.nodes);
+    setEdges(normalizeRestoredEdges(acceptedEdges));
     setArchitecturePrompt(prompt);
     if (!isRefinement) setOriginalPrompt(prompt);
-    setWorkflow(Array.isArray(workflowSteps) ? workflowSteps : []);
+    setWorkflow(reviewed.complete ? remappedWorkflow : []);
     if (incomingName && incomingName !== 'Untitled Architecture') {
       setTitleBlockData((prev) => ({ ...prev, architectureName: incomingName }));
     }
@@ -5642,52 +5793,6 @@ function App() {
     } else {
       setGeneratedWithModel(null);
     }
-
-    // Initialize only nodes that do not already carry editor-owned pricing.
-    const currentRegion = getActiveRegion();
-    const finalNodesById = new Map(finalNodes.map(node => [node.id, node]));
-    const pricingTargets = services.filter(
-      (service: any) => !finalNodesById.get(service.id)?.data?.pricing,
-    );
-    console.log(`💰 Initializing pricing for ${pricingTargets.length} services in region: ${currentRegion}`);
-
-    const pricingPromises = pricingTargets.map(async (service: any) => {
-      const serviceType = String(service.type || service.name);
-      console.log(`  → Fetching pricing for: ${service.name} (type: ${service.type}, ID: ${service.id})`);
-      const pricing = await initializeNodePricing(serviceType, currentRegion);
-      console.log(`  ${pricing ? '✅' : '❌'} Pricing result for ${service.name}:`, pricing ? 'Found' : 'Not found');
-      return { id: service.id, serviceType, pricing };
-    });
-    
-    Promise.all(pricingPromises)
-      .then(pricingResults => {
-        if (
-          pricingRunId !== aiPricingRunRef.current
-          || !aiGenerationRef.current.isCurrent(operationGeneration)
-          || activeDiagramLineageIdRef.current !== appliedLineageId
-        ) return;
-        console.log(`📊 Pricing results ready, updating ${pricingResults.length} nodes`);
-        const resultsWithPricing = pricingResults.filter(r => r.pricing);
-        console.log(`  → ${resultsWithPricing.length}/${pricingResults.length} nodes have pricing data`);
-        
-        setNodes((nds) => 
-          nds.map(node => {
-            const result = pricingResults.find(r => r.id === node.id);
-            const currentServiceType = String(node.data.serviceName || node.data.label || '');
-            if (
-              result?.pricing
-              && !node.data.pricing
-              && currentServiceType === result.serviceType
-            ) {
-              console.log(`  💵 Adding pricing to node ${node.id}:`, result.pricing.estimatedCost);
-              return { ...node, data: { ...node.data, pricing: result.pricing } };
-            }
-            return node;
-          })
-        );
-        console.log(`✅ Pricing initialization complete`);
-      })
-      .catch(err => console.error('❌ Failed to initialize pricing for AI nodes:', err));
 
     // Collapse all panels to maximize diagram view
     setPanelsCollapsedSignal(prev => prev + 1);
@@ -5713,7 +5818,7 @@ function App() {
 
     const handoffContext = {
       source: isRefinement ? 'modification' as const : 'generation' as const,
-      serviceCount: services.length,
+      serviceCount: accepted.nodes.filter(node => node.type === 'azureNode').length,
     };
     setValidationHandoff(handoffContext);
 
@@ -5740,7 +5845,7 @@ function App() {
       /* sessionStorage unavailable — ignore */
     }
     if (!feedbackAlreadyDone && generationCountRef.current === 2 && !isFeedbackModalOpen) {
-      setIsFeedbackToastOpen(true);
+      feedbackAfterValidationRef.current = true;
     }
 
     // A refinement keeps the user's pan/zoom. Only frame a newly generated
@@ -5749,12 +5854,13 @@ function App() {
       setTimeout(() => {
         if (
           aiGenerationRef.current.isCurrent(operationGeneration)
-          && activeDiagramLineageIdRef.current === appliedLineageId
+          && (activeDiagramLineageIdRef.current === appliedLineageId || isSourceCurrent())
         ) {
           reactFlowInstance?.fitView({ padding: 0.2, maxZoom: 1.2 });
         }
       }, 100);
     }
+    return true;
     } catch (error) {
       if (error instanceof CloudDiagramOperationCancelledError) throw error;
       console.error('Error in handleAIGenerate:', error);
@@ -5768,29 +5874,23 @@ function App() {
       throw error;
     }
   }, [
-    activeDiagramLineageId,
+    captureEditorSource,
     animateConnections,
-    architecturePrompt,
-    cloudSync,
-    edges,
     handleEdgeLabelChange,
     handleEdgeLabelOffsetChange,
-    iacBaseline,
     isFeedbackModalOpen,
     language,
     layoutEdgeStyle,
     layoutEngine,
     nodes,
-    originalPrompt,
-    pricingScenarios,
     reactFlowInstance,
     setEdges,
     setNodes,
     t,
-    titleBlockData,
-    cloudValidationScore,
     validationResult,
-    workflow,
+    requestDiagramReview,
+    normalizeRestoredEdges,
+    stylePreset,
   ]);
   handleAIGenerateRef.current = handleAIGenerate;
 
@@ -5869,6 +5969,7 @@ function App() {
       return;
     }
 
+    const baseRevision = historyRevisionRef.current;
     setIsImportingTemplate(true);
 
     try {
@@ -5909,10 +6010,11 @@ function App() {
         const template = JSON.parse(fileContents[0].text);
         const { architecture, coverage } = extractArchitectureFromArm(template);
         if (architecture.services.length > 0) {
-          clearSourceModel();
           const promptLabel = `ARM Template: ${filenames[0]}${extraCount} — ${summarizeCoverage(coverage)}`;
           trackTemplateImport('arm', filenames[0], filenames.length);
-          await handleAIGenerate(architecture, promptLabel);
+          const applied = await handleAIGenerate(architecture, promptLabel, true, false, undefined, true, false, baseRevision);
+          if (!applied) return;
+          clearSourceModel();
           setIaCBaseline(baseline);
           setDriftPlanSummary(null);
           return;
@@ -5939,8 +6041,6 @@ function App() {
         filenames,
       }, language);
 
-      clearSourceModel();
-
       // Build descriptive prompt label
       const promptLabel = localize(language, {
         en: `${detection.label} Template: ${filenames[0]}${extraCount}`,
@@ -5948,7 +6048,9 @@ function App() {
       });
 
       trackTemplateImport(detection.format, filenames[0], filenames.length);
-      await handleAIGenerate(result, promptLabel);
+      const applied = await handleAIGenerate(result, promptLabel, true, false, undefined, true, false, baseRevision);
+      if (!applied) return;
+      clearSourceModel();
       setIaCBaseline(baseline);
       setDriftPlanSummary(null);
     } catch (error: any) {
@@ -5969,6 +6071,7 @@ function App() {
   // Edges are inferred from resource IDs embedded in properties. The same
   // deterministic mapping is used as the file-based ARM import.
   const importFromAzure = useCallback(async (subscriptionId: string, resourceGroup: string) => {
+    const baseRevision = historyRevisionRef.current;
     const resources = await getAzureResources(subscriptionId, resourceGroup);
     const { architecture, coverage } = buildArchitectureFromResources(resources);
     if (architecture.services.length === 0) {
@@ -5977,13 +6080,14 @@ function App() {
         ja: 'このResource Groupには図に変換できるAzureリソースが見つかりませんでした。',
       }));
     }
-    clearSourceModel();
     const promptLabel = localize(language, {
       en: `Azure Resource Group: ${resourceGroup} — ${summarizeCoverage(coverage)}`,
       ja: `Azure Resource Group: ${resourceGroup} — ${summarizeCoverage(coverage)}`,
     });
     trackTemplateImport('arm', `rg:${resourceGroup}`, 1);
-    await handleAIGenerate(architecture, promptLabel);
+    const applied = await handleAIGenerate(architecture, promptLabel, true, false, undefined, true, false, baseRevision);
+    if (!applied) return;
+    clearSourceModel();
     setIaCBaseline(null);
     setDriftPlanSummary(null);
   }, [handleAIGenerate, language]);
@@ -5995,6 +6099,7 @@ function App() {
   const handleBulkEdit = useCallback(async (
     request: BulkEditRequest,
   ): Promise<BulkEditResult> => {
+    const assertCurrent = captureDocumentMutationGuard();
     const sourceNodes = latestNodesRef.current;
     const selectedNodes = sourceNodes.filter(node => node.selected);
     const selectedNodeIds = new Set(selectedNodes.map(node => node.id));
@@ -6014,32 +6119,8 @@ function App() {
         ja: '選択した移動先グループは存在しません。',
       }));
     }
-    if (
-      request.quantity !== undefined
-      && (
-        !Number.isInteger(request.quantity)
-        || request.quantity < 1
-        || request.quantity > 100_000
-      )
-    ) {
-      throw new Error(localize(language, {
-        en: 'Quantity must be a whole number from 1 to 100,000.',
-        ja: '数量は1から100,000までの整数で指定してください。',
-      }));
-    }
-    if (
-      request.customPrice !== undefined
-      && (
-        !Number.isFinite(request.customPrice)
-        || request.customPrice < 0
-        || request.customPrice > 1_000_000_000
-      )
-    ) {
-      throw new Error(localize(language, {
-        en: 'Custom monthly price must be between 0 and 1,000,000,000.',
-        ja: '独自の月額単価は0から1,000,000,000の範囲で指定してください。',
-      }));
-    }
+    if (request.quantity !== undefined) validatePricingQuantity(request.quantity);
+    if (request.customPrice !== undefined) validatePricingAmount(request.customPrice);
 
     const pricingByNodeId = new Map<string, NodePricingConfig>();
     let pricingFailureCount = 0;
@@ -6110,8 +6191,9 @@ function App() {
       }));
     }
 
-    setNodes(currentNodes => applyBulkNodeEdits(
-      currentNodes,
+    assertCurrent();
+    const updatedNodes = applyBulkNodeEdits(
+      latestNodesRef.current,
       selectedNodeIds,
       {
         targetGroupId: request.targetGroupId,
@@ -6120,7 +6202,8 @@ function App() {
         tags: request.tags,
         pricingByNodeId,
       },
-    ));
+    );
+    setNodes(validateRestoredNodes(updatedNodes));
     if (validationResult || persistedValidationScore !== undefined) {
       setValidationNeedsRefresh(true);
     }
@@ -6131,6 +6214,7 @@ function App() {
       pricingFailureCount,
     };
   }, [
+    captureDocumentMutationGuard,
     language,
     persistedValidationScore,
     setNodes,
@@ -6147,12 +6231,11 @@ function App() {
     }
 
     const requestGeneration = validationGenerationRef.current.advance();
-    const diagramGeneration = diagramRevisionGenerationRef.current.current();
-    const lineageId = activeDiagramLineageIdRef.current;
+    const assessedFingerprint = editorFingerprint(liveDocumentRef.current);
+    const isSourceCurrent = captureEditorSource();
     const isCurrentValidation = () => (
       validationGenerationRef.current.isCurrent(requestGeneration)
-      && diagramRevisionGenerationRef.current.isCurrent(diagramGeneration)
-      && activeDiagramLineageIdRef.current === lineageId
+      && isSourceCurrent()
     );
     setValidationHandoff(null);
 
@@ -6174,7 +6257,6 @@ function App() {
     if (!isCurrentValidation()) return;
 
     // Now show the modal and start validation
-    setValidationResult(null);
     setIsValidating(true);
     setIsValidationModalOpen(true);
 
@@ -6216,12 +6298,21 @@ function App() {
       if (!isCurrentValidation()) return;
 
       // Attach diagram snapshot to results
-      if (diagramImageDataUrl) {
+      const isCurrentReview = editorFingerprint(liveDocumentRef.current) === assessedFingerprint;
+      if (diagramImageDataUrl && isCurrentReview) {
         result.diagramImageDataUrl = diagramImageDataUrl;
       }
+      // Validate the entire observation first, including stale reports. Never
+      // leave a result visible if its history transaction could not be built.
+      const nextReview = updateValidationReview(
+        isCurrentReview ? parseValidationReview(liveDocumentRef.current.reviewHistory) : [],
+        result,
+      );
       setValidationResult(result);
+      setValidationSourceFingerprint(assessedFingerprint);
       setPersistedValidationScore(result.overallScore);
-      setValidationNeedsRefresh(false);
+      setValidationNeedsRefresh(!isCurrentReview);
+      if (isCurrentReview) setReviewHistory(nextReview);
       trackValidation({
         model: result.metrics?.model,
         overallScore: result.overallScore,
@@ -6238,6 +6329,10 @@ function App() {
       });
       // Collapse panels to maximize diagram view
       setPanelsCollapsedSignal(prev => prev + 1);
+      if (feedbackAfterValidationRef.current && !isFeedbackModalOpen) {
+        feedbackAfterValidationRef.current = false;
+        setIsFeedbackToastOpen(true);
+      }
     } catch (error: any) {
       if (!isCurrentValidation()) return;
       console.error('Validation error:', error);
@@ -6252,7 +6347,7 @@ function App() {
         if (!isCurrentValidation()) setIsValidationModalOpen(false);
       }
     }
-  }, [nodes, edges, architecturePrompt, titleBlockData.architectureName, createDiagramCaptureOptions, t, language]);
+  }, [nodes, edges, architecturePrompt, titleBlockData.architectureName, captureEditorSource, createDiagramCaptureOptions, isFeedbackModalOpen, t, language]);
 
   const handleValidationHandoffStart = useCallback(() => {
     if (!validationHandoff) return;
@@ -6281,11 +6376,11 @@ function App() {
 
     const requestGeneration = deploymentGuideGenerationRef.current.advance();
     const diagramGeneration = diagramRevisionGenerationRef.current.current();
-    const lineageId = activeDiagramLineageIdRef.current;
+    const isSourceCurrent = captureEditorSource();
     const isCurrentGuide = () => (
       deploymentGuideGenerationRef.current.isCurrent(requestGeneration)
       && diagramRevisionGenerationRef.current.isCurrent(diagramGeneration)
-      && activeDiagramLineageIdRef.current === lineageId
+      && isSourceCurrent()
     );
     setDeploymentGuide(null);
     setIsGeneratingGuide(true);
@@ -6347,7 +6442,7 @@ function App() {
         if (!isCurrentGuide()) setIsDeploymentGuideModalOpen(false);
       }
     }
-  }, [nodes, edges, architecturePrompt, titleBlockData.architectureName, totalMonthlyCost, t, language]);
+  }, [nodes, edges, architecturePrompt, titleBlockData.architectureName, captureEditorSource, totalMonthlyCost, t, language]);
 
   const toggleToolbarSection = useCallback((sectionId: ToolbarSectionId) => {
     if (sectionId === 'create') setIsModelSettingsOpen(false);
@@ -6431,10 +6526,13 @@ function App() {
 
   const toolbarSectionHeading = (sectionId: ToolbarSectionId, label: string) => {
     const isCollapsed = collapsedToolbarSections.has(sectionId);
+    const compactHeading = isNarrowRibbon && !isCollapsed;
     return (
       <button
         type="button"
         className="toolbar-group-label"
+        style={compactHeading ? { position: 'static', flex: '0 0 24px', width: 24, minHeight: 36, padding: 0 } : undefined}
+        aria-label={compactHeading ? label : undefined}
         aria-expanded={!isCollapsed}
         onClick={() => toggleToolbarSection(sectionId)}
         title={localize(language, {
@@ -6443,10 +6541,13 @@ function App() {
         })}
       >
         {isCollapsed ? <ChevronRight size={12} aria-hidden="true" /> : <ChevronDown size={12} aria-hidden="true" />}
-        <span>{label}</span>
+        <span hidden={compactHeading}>{label}</span>
       </button>
     );
   };
+  const ribbonGroupStyle = (sectionId: ToolbarSectionId): React.CSSProperties | undefined => (
+    isNarrowRibbon ? { display: collapsedToolbarSections.has(sectionId) ? 'flex' : 'contents' } : undefined
+  );
 
   const contextMenuEdge = edgeContextMenu
     ? edges.find((edge) => edge.id === edgeContextMenu.edgeId)
@@ -6782,22 +6883,25 @@ function App() {
         });
         generatorOpenSourceRef.current = 'toolbar';
       }}
-      onGenerate={async (arch, prompt, autoSnap, refImageUrl) => {
-        await handleAIGenerate(arch, prompt, autoSnap, nodes.length > 0);
+      onGenerate={async (arch, prompt, autoSnap, refImageUrl, baseRevision, signal) => {
+        const applied = await handleAIGenerate(arch, prompt, autoSnap, nodes.length > 0, undefined, true, false, baseRevision, signal);
+        if (!applied) return false;
         clearSourceModel();
-        setReferenceImageUrl(refImageUrl ?? null);
+        setReferenceImageUrl(lastAppliedProposalCompleteRef.current ? refImageUrl ?? null : null);
         setLastBlueprintArchitecture(null);
+        return true;
       }}
       onReferenceArchitecture={(ref) => {
-        setLastReferenceArchitecture(ref ?? null);
+        setLastReferenceArchitecture(lastAppliedProposalCompleteRef.current ? ref ?? null : null);
       }}
       onBlueprintArchitecture={(bp) => {
-        setLastBlueprintArchitecture(bp ?? null);
+        setLastBlueprintArchitecture(lastAppliedProposalCompleteRef.current ? bp ?? null : null);
       }}
       currentArchitecture={{
         nodes,
         edges,
         architectureName: titleBlockData.architectureName,
+        revision: editorHistory.revision,
       }}
       onContinueInChat={() => {
         trackGuidedJourney({ action: 'post-generation-action', step: 'refine', path: 'guided-chat', source: 'generator-success', hasDiagram: true });
@@ -6892,12 +6996,15 @@ function App() {
               <div
                 hidden={activeRibbonTab !== 'home'}
                 className={`toolbar-group toolbar-group--labeled${collapsedToolbarSections.has('context') ? ' toolbar-group-collapsed' : ''}`}
+                style={ribbonGroupStyle('context')}
                 data-label={localize(language, { en: 'Pricing estimate region', ja: '料金見積リージョン' })}
                 role="group"
                 aria-label={localize(language, { en: 'Pricing estimate settings', ja: '料金見積の設定' })}
               >
                 {toolbarSectionHeading('context', t('pricing.regionLabel'))}
                 <RegionSelector
+                  region={pricingRegion}
+                  isUpdating={isUpdatingRegion}
                   isActive={
                     activeRibbonTab === 'home'
                     && !isHeaderCollapsed
@@ -7000,6 +7107,7 @@ function App() {
               <div
                 hidden={activeRibbonTab !== 'create'}
                 className={`toolbar-group toolbar-group--labeled${collapsedToolbarSections.has('create') ? ' toolbar-group-collapsed' : ''}`}
+                style={ribbonGroupStyle('create')}
                 data-label={localize(language, { en: 'Create & AI', ja: '作成・AI' })}
                 role="group"
                 aria-label={localize(language, { en: 'Create and AI tools', ja: '作成とAIツール' })}
@@ -7073,6 +7181,7 @@ function App() {
               <div
                 hidden={activeRibbonTab !== 'create'}
                 className={`toolbar-group toolbar-group--labeled${collapsedToolbarSections.has('import') ? ' toolbar-group-collapsed' : ''}`}
+                style={ribbonGroupStyle('import')}
                 data-label={localize(language, { en: 'Import', ja: 'インポート' })}
                 role="group"
                 aria-label={localize(language, { en: 'Import architecture', ja: 'アーキテクチャのインポート' })}
@@ -7110,6 +7219,7 @@ function App() {
               <div
                 hidden={activeRibbonTab !== 'home'}
                 className={`toolbar-group toolbar-group--labeled${collapsedToolbarSections.has('file') ? ' toolbar-group-collapsed' : ''}`}
+                style={ribbonGroupStyle('file')}
                 data-label={localize(language, { en: 'File & export', ja: 'ファイル・出力' })}
                 role="group"
                 aria-label={localize(language, { en: 'File and export actions', ja: 'ファイルと出力操作' })}
@@ -7119,15 +7229,13 @@ function App() {
                   <Save size={18} />
                   {' '}{t("Save")}{' '}</button>
 
-                <label className="btn btn-secondary" title={t("Load diagram")}>
+                <button type="button" className="btn btn-secondary" title={t("Load diagram")}
+                  onClick={() => diagramInputRef.current?.click()}>
                   <Upload size={18} />
-                  {' '}{t("Load")}{' '}<input
-                    type="file"
-                    accept=".json"
-                    onChange={loadDiagram}
-                    style={{ display: 'none' }}
-                  />
-                </label>
+                  {' '}{t("Load")}{' '}
+                </button>
+                <input ref={diagramInputRef} type="file" accept=".json"
+                  onChange={loadDiagram} aria-label={t("Load diagram")} style={{ display: 'none' }} />
                 <div className="toolbar-dropdown" ref={exportMenuRef}>
                   <button
                     onClick={() => setIsExportMenuOpen((v) => !v)}
@@ -7402,6 +7510,7 @@ function App() {
               <div
                 hidden={activeRibbonTab !== 'home'}
                 className={`toolbar-group toolbar-group--labeled${collapsedToolbarSections.has('workspace') ? ' toolbar-group-collapsed' : ''}`}
+                style={ribbonGroupStyle('workspace')}
                 data-label={localize(language, { en: 'Workspace', ja: '表示・操作' })}
                 role="group"
                 aria-label={localize(language, { en: 'Workspace and help actions', ja: '表示・操作とヘルプ' })}
@@ -7448,6 +7557,7 @@ function App() {
               <div
                 hidden={activeRibbonTab !== 'review'}
                 className={`toolbar-group toolbar-group--labeled${collapsedToolbarSections.has('history') ? ' toolbar-group-collapsed' : ''}`}
+                style={ribbonGroupStyle('history')}
                 data-label={localize(language, { en: 'History', ja: '履歴' })}
                 role="group"
                 aria-label={localize(language, { en: 'History and snapshots', ja: '履歴とスナップショット' })}
@@ -7490,6 +7600,7 @@ function App() {
               <div
                 hidden={activeRibbonTab !== 'design'}
                 className={`toolbar-group toolbar-group--labeled${collapsedToolbarSections.has('arrange') ? ' toolbar-group-collapsed' : ''}`}
+                style={ribbonGroupStyle('arrange')}
                 data-label={localize(language, { en: 'Arrange', ja: '配置・選択' })}
                 role="group"
                 aria-label={localize(language, { en: 'Arrange, select, and style', ja: '配置、選択、スタイル' })}
@@ -7787,6 +7898,7 @@ function App() {
               <div
                 hidden={activeRibbonTab !== 'review'}
                 className={`toolbar-group toolbar-group--labeled${collapsedToolbarSections.has('review') ? ' toolbar-group-collapsed' : ''}`}
+                style={ribbonGroupStyle('review')}
                 data-label={localize(language, { en: 'Review', ja: 'レビュー・ガイド' })}
                 role="group"
                 aria-label={localize(language, { en: 'Architecture review and guides', ja: 'アーキテクチャのレビューとガイド' })}
@@ -7842,15 +7954,15 @@ function App() {
                   <button
                     onClick={() => setIsValidationModalOpen(true)}
                     className="btn btn-secondary"
-                    title={validationNeedsRefresh
+                    title={validationIsStale
                       ? localize(language, {
                           en: 'Architecture changed after recommendations. Open the previous results and revalidate.',
                           ja: '推奨事項の適用後にアーキテクチャが変更されました。以前の結果を開いて再検証してください。',
                         })
                       : t("Open last validation results")}
                   >
-                    {validationNeedsRefresh ? <RefreshCw size={18} /> : <Shield size={18} />}
-                    {validationNeedsRefresh
+                    {validationIsStale ? <RefreshCw size={18} /> : <Shield size={18} />}
+                    {validationIsStale
                       ? localize(language, { en: 'Revalidate Needed', ja: '再検証が必要' })
                       : (<>{' '}{t("Validation:")}{' '}{translate(bandLabel(validationResult.overallScore))}</>)}
                   </button>
@@ -7949,6 +8061,21 @@ function App() {
           </button>
         </div>
       </header>
+      {!focusMode && (
+        <div className="workspace-status-bar" aria-label={localize(language, { en: 'Workspace status', ja: 'ワークスペースの状態' })}>
+          <DraftStatus status={draftScopeError ? 'error' : draft.status} savedAt={draft.savedAt}
+            error={draft.error ?? draftScopeError} onRetry={draft.retry} />
+          <AIBudgetStatus />
+        </div>
+      )}
+      {workspaceNotice && (
+        <div className="workspace-notice" role="alert">
+          <span>{workspaceNotice}</span>
+          <button type="button" onClick={() => setWorkspaceNotice(undefined)}>
+            {localize(language, { en: 'Close', ja: '閉じる' })}
+          </button>
+        </div>
+      )}
 
       {aiGeneratorHost}
 
@@ -7995,10 +8122,10 @@ function App() {
           onContextMenuCapture={handleCanvasContextMenuCapture}
         >
           <ReactFlow
-            nodes={nodes}
-            edges={edges}
-            onNodesChange={onNodesChange}
-            onEdgesChange={onEdgesChange}
+            nodes={batchPreview?.nodes ?? nodes}
+            edges={batchPreview?.edges ?? edges}
+            onNodesChange={batchPreview ? onPreviewNodesChange : onNodesChange}
+            onEdgesChange={batchPreview ? undefined : onEdgesChange}
             onNodesDelete={onNodesDelete}
             onConnect={onConnect}
             onReconnect={onReconnect}
@@ -8013,7 +8140,7 @@ function App() {
             edgeTypes={edgeTypes}
             nodesFocusable={false}
             deleteKeyCode={null}
-            fitView
+            fitView={!hasRestoredViewport}
             fitViewOptions={{ padding: 0.2, maxZoom: 1.2 }}
             snapToGrid={true}
             snapGrid={[20, 20]}
@@ -8070,8 +8197,8 @@ function App() {
               onExitFocus={exitFocusMode}
             />
             <style>
-              {highlightedServices.map(id => 
-                `.react-flow__node[data-id="${id}"] {
+              {highlightedServices.map(id =>
+                `.react-flow__node[data-id="${CSS.escape(id)}"] {
                   filter: drop-shadow(0 0 12px rgba(96, 165, 250, 1)) drop-shadow(0 0 24px rgba(96, 165, 250, 0.9)) drop-shadow(0 0 36px rgba(96, 165, 250, 0.6)) !important;
                   z-index: 1000 !important;
                   animation: pulse-glow 1.5s ease-in-out infinite;
@@ -8081,7 +8208,7 @@ function App() {
                   50% { filter: drop-shadow(0 0 18px rgba(96, 165, 250, 1)) drop-shadow(0 0 32px rgba(96, 165, 250, 1)) drop-shadow(0 0 48px rgba(96, 165, 250, 0.8)); }
                 }
                 
-                body:not(.dark-mode) .react-flow__node[data-id="${id}"] {
+                body:not(.dark-mode) .react-flow__node[data-id="${CSS.escape(id)}"] {
                   filter: drop-shadow(0 0 8px rgba(0, 120, 212, 1)) drop-shadow(0 0 16px rgba(0, 120, 212, 0.8)) !important;
                 }
                 body:not(.dark-mode) @keyframes pulse-glow {
@@ -8445,7 +8572,7 @@ function App() {
         }}
         onDelete={(nodeId) => deleteCanvasNodes([nodeId])}
         onOpenPricing={(nodeId) => {
-          void editContextNodePricing(nodeId);
+          void editContextNodePricing(nodeId, true);
         }}
       />
 
@@ -8462,9 +8589,14 @@ function App() {
         isOpen={isValidationModalOpen}
         onClose={() => setIsValidationModalOpen(false)}
         isLoading={isValidating}
-        isStale={validationNeedsRefresh}
+        isStale={validationIsStale}
+        reviewHistory={reviewHistory}
+        onFocusResources={focusValidationResources}
         onRevalidate={handleValidateArchitecture}
         onApplyRecommendations={async (selectedFindings) => {
+          if (validationIsStale) return;
+          const baseRevision = historyRevisionRef.current;
+          const isSourceCurrent = captureEditorSource();
           console.log('📝 User selected recommendations to apply:', selectedFindings);
           
           // Close validation modal and show loading state
@@ -8579,18 +8711,24 @@ Return the IMPROVED architecture in the same JSON format as before with proper g
               
               // Build descriptive banner text
               let bannerText = localize(language, {
-                en: `Original architecture improved with ${selectedFindings.length} WAF recommendation${selectedFindings.length > 1 ? 's' : ''}`,
-                ja: `元のアーキテクチャへ${selectedFindings.length}件のWAF推奨事項を適用`,
+                en: `Requested improvements for ${selectedFindings.length} WAF recommendation${selectedFindings.length > 1 ? 's' : ''}; applied changes are subject to review and revalidation`,
+                ja: `${selectedFindings.length}件のWAF推奨事項に対する改善を要求。適用した変更は確認と再検証が必要です`,
               });
               if (newServices.length > 0) {
                 bannerText += localize(language, {
-                  en: `. Added: ${newServices.join(', ')}`,
-                  ja: `。追加: ${newServices.join('、')}`,
+                  en: `. Proposed services: ${newServices.join(', ')}`,
+                  ja: `。提案されたサービス: ${newServices.join('、')}`,
                 });
               }
               
-              // Apply the improved architecture
-              await handleAIGenerate(
+              if (!isSourceCurrent() || historyRevisionRef.current !== baseRevision) {
+                setWorkspaceNotice(localize(language, {
+                  en: 'The diagram changed while recommendations were being prepared. Your edits were kept; revalidate and try again.',
+                  ja: '推奨事項の準備中に図が変更されました。編集内容は維持されています。再検証してから再試行してください。',
+                }));
+                return;
+              }
+              const applied = await handleAIGenerate(
                 improvedArchitecture,
                 bannerText,
                 true,
@@ -8599,18 +8737,24 @@ Return the IMPROVED architecture in the same JSON format as before with proper g
                 true,
                 true,
               );
-              trackRecommendationsApplied(selectedFindings.length);
+              if (!applied) return;
+              if (lastAppliedProposalCompleteRef.current) trackRecommendationsApplied(selectedFindings.length);
               
               setIsApplyingRecommendations(false);
-              alert(localize(language, {
-                en: `✅ Architecture regenerated successfully!\n\nApplied ${selectedFindings.length} recommendations.\n${newServices.length > 0 ? `\nAdded ${newServices.length} new services: ${newServices.join(', ')}` : ''}`,
-                ja: `✅ アーキテクチャを再生成しました。\n\n${selectedFindings.length}件の推奨事項を適用しました。\n${newServices.length > 0 ? `\n${newServices.length}件の新しいサービスを追加: ${newServices.join('、')}` : ''}`,
+              alert(lastAppliedProposalCompleteRef.current ? localize(language, {
+                en: `Applied the reviewed proposal for ${selectedFindings.length} recommendations. Revalidate the diagram to check the results.${newServices.length > 0 ? `\nAdded ${newServices.length} new services: ${newServices.join(', ')}` : ''}`,
+                ja: `${selectedFindings.length}件の推奨事項に対して確認済みの案を適用しました。図を再検証して結果を確認してください。${newServices.length > 0 ? `\n${newServices.length}件の新しいサービスを追加: ${newServices.join('、')}` : ''}`,
+              }) : localize(language, {
+                en: 'Applied only the changes selected in review. Some recommendations may remain unresolved; revalidate the diagram.',
+                ja: '確認画面で選択した変更のみを適用しました。未対応の推奨事項が残る可能性があるため、図を再検証してください。',
               }));
             }
           } catch (error) {
             console.error('❌ Failed to regenerate architecture:', error);
             setIsApplyingRecommendations(false);
             alert(t("Failed to regenerate architecture. Please try again."));
+          } finally {
+            setIsApplyingRecommendations(false);
           }
         }}
       />
@@ -8668,7 +8812,7 @@ Return the IMPROVED architecture in the same JSON format as before with proper g
         onLocateReviewAnchor={locateReviewAnchor}
       />
       <RecentWorkModal
-        isOpen={isRecentWorkOpen}
+        isOpen={isRecentWorkOpen && !draft.recovery}
         currentSessionId={recentWorkSessionId}
         currentLineageId={activeDiagramLineageId}
         onClose={() => setIsRecentWorkOpen(false)}
@@ -8718,50 +8862,64 @@ Return the IMPROVED architecture in the same JSON format as before with proper g
         isOpen={isCompareModelsOpen}
         onClose={() => setIsCompareModelsOpen(false)}
         onApply={async (architecture, prompt, sourceModel, sourceReasoningEffort) => {
+          const applied = await handleAIGenerate(architecture, prompt, true, false);
+          if (!applied) throw new DOMException('The proposal review was cancelled.', 'AbortError');
           trackModelComparison({ selectedModel: sourceModel });
           if (sourceModel && sourceReasoningEffort) {
             setSourceModel(sourceModel, sourceReasoningEffort);
           }
-          await handleAIGenerate(architecture, prompt, true, false);
         }}
         onCaptureBatch={async (items) => {
-          // Render each architecture on the main canvas in turn, capture as PNG,
-          // and trigger a download. Filenames are supplied by the modal so the
-          // PNG file always pairs 1:1 with the JSON saved via "Save All Diagrams".
-          for (let i = 0; i < items.length; i++) {
-            const item = items[i];
-            try {
-              // Apply this architecture to the canvas (no auto-snapshot to
-              // avoid spamming the snapshot history with N intermediate states).
-              await handleAIGenerate(item.architecture, item.prompt, false, false);
-              // Give icons and layout a moment to settle before cloning the viewport.
-              await new Promise(res => setTimeout(res, 1500));
-              if (!reactFlowWrapper.current) continue;
-              const dataUrl = await captureDiagramAsPng(
-                reactFlowWrapper.current,
-                createDiagramCaptureOptions(),
-              );
-              const a = document.createElement('a');
-              a.href = dataUrl;
-              a.download = item.filename;
-              a.click();
-              // Small gap so the browser doesn't throttle / merge downloads.
-              await new Promise(res => setTimeout(res, 350));
-            } catch (err) {
-              console.error(`Failed to capture PNG for ${item.filename}:`, err);
+          if (isCapturingBatch || pendingAIReviewRef.current) return;
+          const viewport = reactFlowInstance?.getViewport();
+          setIsCapturingBatch(true);
+          try {
+            // Preview-only nodes never enter document state, either autosave
+            // writer, the undo history, or the current document's lineage.
+            for (const item of items) {
+              await handleAIGenerate(item.architecture, item.prompt, false, false, undefined, false, false, undefined, undefined, true);
+              await new Promise(resolve => setTimeout(resolve, 1500));
+              await reactFlowInstance?.fitView({ padding: 0.2, maxZoom: 1.2 });
+              if (!reactFlowWrapper.current) throw new Error('The canvas is unavailable for capture.');
+              const dataUrl = await captureDiagramAsPng(reactFlowWrapper.current, createDiagramCaptureOptions());
+              const link = document.createElement('a');
+              link.href = dataUrl;
+              link.download = item.filename;
+              link.click();
+              await new Promise(resolve => setTimeout(resolve, 350));
             }
+          } finally {
+            batchPreviewRef.current = null;
+            setBatchPreview(null);
+            setIsCapturingBatch(false);
+            window.requestAnimationFrame(() => { if (viewport) reactFlowInstance?.setViewport(viewport); });
           }
         }}
       />
       <CompareValidationModal
         isOpen={isCompareValidationOpen}
         onClose={() => setIsCompareValidationOpen(false)}
-        onApply={(validation) => {
-          setValidationResult(validation);
-          setPersistedValidationScore(validation.overallScore);
-          setValidationNeedsRefresh(false);
-          setIsValidationModalOpen(true);
-          setPanelsCollapsedSignal(prev => prev + 1);
+        diagramFingerprint={currentDiagramFingerprint}
+        onApply={(validation, sourceFingerprint) => {
+          try {
+            const isCurrentReview = sourceFingerprint !== undefined
+              && sourceFingerprint === editorFingerprint(liveDocumentRef.current);
+            const nextReview = updateValidationReview(
+              isCurrentReview ? parseValidationReview(liveDocumentRef.current.reviewHistory) : [], validation,
+            );
+            setValidationResult(validation);
+            setPersistedValidationScore(validation.overallScore);
+            setValidationSourceFingerprint(sourceFingerprint ?? null);
+            setValidationNeedsRefresh(!isCurrentReview);
+            if (isCurrentReview) setReviewHistory(nextReview);
+            setIsValidationModalOpen(true);
+            setPanelsCollapsedSignal(prev => prev + 1);
+            return true;
+          } catch (error) {
+            console.error('Invalid comparison report was not applied:', error);
+            alert(localize(language, { en: 'The validation report is invalid and was not applied.', ja: '検証レポートが無効なため、適用しませんでした。' }));
+            return false;
+          }
         }}
         services={nodes
           .filter(n => n.type === 'azureNode')
@@ -8809,9 +8967,10 @@ Return the IMPROVED architecture in the same JSON format as before with proper g
           nodes,
           edges,
           architectureName: titleBlockData.architectureName,
+          revision: editorHistory.revision,
         }}
-        onApply={(architecture, prompt, autoSnapshot) => (
-          handleAIGenerate(architecture, prompt, autoSnapshot, nodes.length > 0)
+        onApply={(architecture, prompt, autoSnapshot, baseRevision, signal) => (
+          handleAIGenerate(architecture, prompt, autoSnapshot, nodes.length > 0, undefined, true, false, baseRevision, signal)
         )}
       />
       <HelpLearnPanel
@@ -8826,7 +8985,16 @@ Return the IMPROVED architecture in the same JSON format as before with proper g
         isOpen={isBYOAISettingsOpen}
         onClose={() => setIsBYOAISettingsOpen(false)}
       />
-      <FeedbackToast
+      {draft.recovery && (
+        <DraftRecoveryDialog draft={draft.recovery} error={draft.error}
+          onRestore={draft.restoreDraft} onDiscard={draft.startFresh} />
+      )}
+      {pendingAIReview && (
+        <AIChangeReview changeSet={pendingAIReview.changeSet}
+          onApply={acceptDiagramReview} onCancel={() => pendingAIReviewRef.current?.finish(null)}
+          isApplying={isApplyingAIReview} error={aiReviewError} />
+      )}
+      {isFeedbackToastOpen && !isFeedbackModalOpen && <FeedbackToast
         isOpen={isFeedbackToastOpen}
         onClose={() => setIsFeedbackToastOpen(false)}
         onAddComment={(rating) => {
@@ -8839,7 +9007,7 @@ Return the IMPROVED architecture in the same JSON format as before with proper g
           serviceCount: nodes.filter(n => n.type === 'azureNode').length,
           model: generatedWithModel?.name,
         }}
-      />
+      />}
       <FeedbackModal
         isOpen={isFeedbackModalOpen}
         onClose={() => {
@@ -8894,30 +9062,42 @@ Return the IMPROVED architecture in the same JSON format as before with proper g
       {(() => {
         if (!pricingEditorNodeId) return null;
         const node = nodes.find(n => n.id === pricingEditorNodeId);
-        const storedPricing = node?.data?.pricing as NodePricingConfig | undefined;
-        const nodePricing = pricingEditorDraft?.nodeId === pricingEditorNodeId
-          ? pricingEditorDraft.pricing
-          : storedPricing;
-        if (!node || !nodePricing) return null;
+        if (!node || node.type !== 'azureNode') return null;
+        const mobileEditor = mobilePricingEditor;
+        if (mobileEditor?.nodeId === node.id) {
+          return (
+            <NodePricingEditor
+              key={`mobile-cost:${mobileEditor.runId}:${node.id}`}
+              serviceType={String(node.data.serviceName || node.data.label || 'Unknown')}
+              pricing={mobileEditor.pricing}
+              returnFocusTarget={pricingEditorReturnFocusRef.current?.element}
+              onClose={closePricingEditor}
+              onApply={(pricing) => {
+                mobileEditor.assertCurrent();
+                const updated = validateRestoredNodes([{
+                  ...node, parentNode: undefined, data: { ...node.data, pricing },
+                }])[0];
+                setNodes(current => current.map(candidate => (
+                  candidate.id === node.id && nodeServiceIdentity(candidate) === nodeServiceIdentity(node)
+                    ? { ...candidate, data: { ...candidate.data, pricing: updated.data.pricing } }
+                    : candidate
+                )));
+              }}
+            />
+          );
+        }
         return (
-          <NodePricingEditor
-            serviceType={String(node.data.serviceName || node.data.label || 'Unknown')}
-            pricing={nodePricing}
-            returnFocusTarget={
-              pricingEditorReturnFocusRef.current?.nodeId === pricingEditorNodeId
-                ? pricingEditorReturnFocusRef.current.element
-                : null
-            }
+          <ServiceInspector
+            key={node.id}
+            node={node}
             onClose={closePricingEditor}
-            onApply={(updated) => {
-              // Total cost recalculates from `nodes` via the existing effect.
-              setNodes(nds =>
-                nds.map(n =>
-                  n.id === pricingEditorNodeId
-                    ? { ...n, data: { ...n.data, pricing: updated } }
-                    : n,
-                ),
-              );
+            onUpdateNode={(nodeId, mergedData) => {
+              const updated = validateRestoredNodes([{ ...node, parentNode: undefined, data: mergedData }])[0];
+              setNodes(current => current.map(candidate => (
+                candidate.id === nodeId && nodeServiceIdentity(candidate) === nodeServiceIdentity(node)
+                  ? { ...candidate, data: { ...updated.data } }
+                  : candidate
+              )));
             }}
           />
         );

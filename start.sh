@@ -1,5 +1,13 @@
 #!/bin/sh
 set -eu
+node /srv/token-server/deployment-security.js
+cp /etc/nginx/http.d/default.conf.template /etc/nginx/http.d/default.conf
+if [ "${APP_DEPLOYMENT_MODE:-public}" = "public" ]; then
+  # The preflight validates the identifier before it is interpolated into nginx.
+  sed -i "s|#FDID_CHECK#|if (\$http_x_azure_fdid != \"$FRONT_DOOR_ID\") { return 403; }|" /etc/nginx/http.d/default.conf
+  grep -Fq "$FRONT_DOOR_ID" /etc/nginx/http.d/default.conf
+fi
+nginx -t
 # Start background services, then run nginx in the foreground.
 #
 # 1. Speech token server (port 3001)
@@ -9,10 +17,27 @@ set -eu
 # 2. MCP HTTP server (port 3030, internal — exposed via nginx at /mcp)
 #    Streamable HTTP transport for MCP clients (M365 Copilot, hosted agents,
 #    Azure SRE Agent, VS Code with remote MCP). Health probe: GET /healthz.
-#    Set MCP_AUTH_TOKEN on the Container App to require `Authorization: Bearer
-#    <token>` on /mcp (recommended for any public ingress). If unset, /mcp is open.
+#    Public ingress always requires verified Easy Auth and the access list.
+#    MCP_AUTH_TOKEN adds the MCP server's own bearer-token gate.
 node /srv/token-server/token-server.js &
 TOKEN_SERVER_PID=$!
+if ! node -e '
+  const end = Date.now() + 120000;
+  (async () => {
+    while (Date.now() < end) {
+      try {
+        const response = await fetch("http://127.0.0.1:3001/readyz", { signal: AbortSignal.timeout(2000) });
+        if (response.ok && (await response.text()).trim() === "ready") return;
+      } catch {}
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+    process.exit(1);
+  })();
+'; then
+  echo "API startup/storage validation failed; refusing to expose nginx." >&2
+  kill "$TOKEN_SERVER_PID" 2>/dev/null || true
+  exit 1
+fi
 
 MCP_SERVER_PID=''
 if [ "${MCP_ENABLED:-false}" = "true" ] || [ -n "${MCP_AUTH_TOKEN:-}" ]; then

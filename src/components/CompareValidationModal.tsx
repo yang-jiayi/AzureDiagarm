@@ -1,9 +1,11 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-import React, { useState, useRef, useEffect, useMemo } from 'react';
+import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { X, Loader2, Clock, Zap, CheckCircle, AlertCircle, GitCompare, FileJson, FileText, Shield, AlertTriangle, Info, Brain, MonitorPlay, StopCircle } from 'lucide-react';
-import { isManagedAIConfigured, generateValidationCritique, ModelOverride } from '../services/azureOpenAI';
+import { isManagedAIConfigured, generateValidationCritique, throwIfGenerationAborted, ModelOverride } from '../services/azureOpenAI';
+import { getAIBudget } from '../services/aiBudgetService';
+import { runAIBudgetQueue } from '../services/aiBudgetQueue';
 import { validateArchitecture, ArchitectureValidation, ValidationModelOverride, AIMetrics } from '../services/architectureValidator';
 import { buildValidationConsensus, renderConsensusMarkdown, ConsensusResult } from '../services/validationConsensus';
 import { trackValidationCompared, trackValidationCritiqueRanked, trackValidationFindings } from '../services/telemetryService';
@@ -20,7 +22,6 @@ function parseCritiqueWinner(text: string): string | null {
 import { bandLabel, scoreToBand } from '../services/wafMaturity';
 import { useValidationDisplayPrefs } from '../stores/validationDisplayStore';
 import { useDraggableResizable } from '../hooks/useDraggableResizable';
-import { useEscapeKey } from '../hooks/useEscapeKey';
 import { useModalFocus } from '../hooks/useModalFocus';
 import { AvatarPresenter, AvatarStatus } from '../services/avatarPresenter';
 import {
@@ -40,6 +41,7 @@ import './CompareModelsModal.css';
 /** Abbreviate model name for filenames */
 function abbreviateModelForFile(model: ModelType): string {
   const map: Record<string, string> = {
+    'gpt-6-astra': 'gpt6astra',
     'gpt-5.1': 'gpt51', 'gpt-5.2': 'gpt52',
     'gpt-5.4': 'gpt54', 'gpt-5.4-mini': 'gpt54mini', 'gpt-5.6-sol': 'gpt56sol',
     'gpt-5.6-terra': 'gpt56terra', 'gpt-5.6-luna': 'gpt56luna',
@@ -71,12 +73,14 @@ interface ValidationComparisonResult {
   lowCount?: number;
   pillarScores?: { pillar: string; score: number }[];
   quickWinCount?: number;
+  diagramFingerprint?: string;
 }
 
 interface CompareValidationModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onApply: (validation: ArchitectureValidation) => void;
+  onApply: (validation: ArchitectureValidation, diagramFingerprint?: string) => boolean | void;
+  diagramFingerprint?: string;
   /** Current architecture data to validate */
   services: Array<{ name: string; type: string; category: string; description?: string }>;
   connections: Array<{ from: string; to: string; label: string }>;
@@ -85,9 +89,10 @@ interface CompareValidationModalProps {
 }
 
 const CompareValidationModal: React.FC<CompareValidationModalProps> = ({
-  isOpen, onClose, onApply, services, connections, groups, architectureDescription,
+  isOpen, onClose, onApply, services, connections, groups, architectureDescription, diagramFingerprint,
 }) => {
   const { t, translate, language } = useLanguage();
+  const [applyError, setApplyError] = useState('');
   const availableModels = getAvailableModels();
   const currentSettings = getModelSettings();
   const managedAIConfigured = isManagedAIConfigured();
@@ -104,6 +109,7 @@ const CompareValidationModal: React.FC<CompareValidationModalProps> = ({
     : (commonReasoningEfforts[commonReasoningEfforts.length - 1] ?? reasoningEffort);
   const [isRunning, setIsRunning] = useState(false);
   const [results, setResults] = useState<ValidationComparisonResult[]>([]);
+  const [comparisonError, setComparisonError] = useState<string | null>(null);
 
   // Display preference: show raw 0-100 scores alongside maturity bands.
   // Shared with the single-model ValidationModal so the choice is consistent
@@ -114,12 +120,52 @@ const CompareValidationModal: React.FC<CompareValidationModalProps> = ({
   // --- AI Critique state ---
   const [criticModel, setCriticModel] = useState<ModelType>(() => {
     const avail = getAvailableModels();
+    if (avail.includes('gpt-6-astra')) return 'gpt-6-astra';
     return avail.includes('gpt-5.6-sol') ? 'gpt-5.6-sol' : (avail[0] ?? currentSettings.model);
   });
   const [critiqueText, setCritiqueText] = useState<string | null>(null);
   const [critiqueByModel, setCritiqueByModel] = useState<ModelType | null>(null);
   const [isCritiquing, setIsCritiquing] = useState(false);
   const [critiqueError, setCritiqueError] = useState<string | null>(null);
+  const requestRef = useRef<{ controller: AbortController; kind: 'comparison' | 'critique' } | null>(null);
+  const openRef = useRef(isOpen);
+  openRef.current = isOpen;
+
+  const cancelRequest = useCallback(() => {
+    const request = requestRef.current;
+    if (!request) return;
+    requestRef.current = null;
+    request.controller.abort();
+    if (request.kind === 'comparison') {
+      const message = localize(language, {
+        en: 'Comparison cancelled. Completed results were kept.',
+        ja: '比較をキャンセルしました。完了した結果は保持されています。',
+      });
+      setResults(previous => previous.map(result =>
+        result.status === 'pending' || result.status === 'running'
+          ? { ...result, status: 'error', error: message } : result));
+      setComparisonError(message);
+      setIsRunning(false);
+    } else {
+      setCritiqueError(localize(language, { en: 'Critique cancelled.', ja: '批評をキャンセルしました。' }));
+      setIsCritiquing(false);
+    }
+  }, [language]);
+
+  useEffect(() => {
+    if (!isOpen) cancelRequest();
+  }, [isOpen, cancelRequest]);
+  useEffect(() => () => {
+    requestRef.current?.controller.abort();
+    requestRef.current = null;
+  }, []);
+
+  const isCurrentRequest = (controller: AbortController) =>
+    openRef.current && requestRef.current?.controller === controller && !controller.signal.aborted;
+  const handleClose = () => {
+    cancelRequest();
+    onClose();
+  };
 
   // --- Avatar presenter state ---
   const [avatarStatus, setAvatarStatus] = useState<AvatarStatus>('idle');
@@ -226,9 +272,13 @@ const CompareValidationModal: React.FC<CompareValidationModalProps> = ({
 
   const runComparison = async () => {
     if (selectedModels.size === 0 || services.length === 0) return;
-    if (!isManagedAIConfigured()) return;
+    if (!isManagedAIConfigured() || !openRef.current || requestRef.current) return;
 
+    const controller = new AbortController();
+    requestRef.current = { controller, kind: 'comparison' };
     setIsRunning(true);
+    setApplyError('');
+    setComparisonError(null);
     const models = Array.from(selectedModels);
 
     const initial: ValidationComparisonResult[] = models.map(m => ({
@@ -237,22 +287,21 @@ const CompareValidationModal: React.FC<CompareValidationModalProps> = ({
         ? normalizeReasoningEffort(m, effectiveReasoningEffort)
         : 'none',
       status: 'pending',
+      diagramFingerprint,
     }));
     setResults(initial);
     const collected: ValidationComparisonResult[] = [...initial];
 
-    const promises = models.map(async (model, idx) => {
-      setResults(prev => prev.map((r, i) => i === idx ? { ...r, status: 'running' as const } : r));
-
-      const override: ValidationModelOverride = {
-        model,
-        reasoningEffort: MODEL_CONFIG[model].isReasoning
-          ? normalizeReasoningEffort(model, effectiveReasoningEffort)
-          : 'none',
-        forceManaged: true,
-      };
-
-      try {
+    try {
+      await runAIBudgetQueue<ValidationComparisonResult>(models.map((model, index) => async signal => {
+        if (!isCurrentRequest(controller)) controller.abort();
+        throwIfGenerationAborted(signal);
+        const override: ValidationModelOverride = {
+          model,
+          reasoningEffort: initial[index].reasoningEffort,
+          forceManaged: true,
+          signal,
+        };
         const result = await validateArchitecture(
           services,
           connections,
@@ -278,8 +327,8 @@ const CompareValidationModal: React.FC<CompareValidationModalProps> = ({
 
         const totalFindings = criticalCount + highCount + mediumCount + lowCount;
 
-        const entry: ValidationComparisonResult = {
-          ...initial[idx],
+        return {
+          ...initial[index],
           status: 'success',
           validation: result,
           metrics: result.metrics,
@@ -292,67 +341,90 @@ const CompareValidationModal: React.FC<CompareValidationModalProps> = ({
           pillarScores,
           quickWinCount: result.quickWins?.length || 0,
         };
-        collected[idx] = entry;
-        setResults(prev => prev.map((r, i) => i === idx ? entry : r));
-      } catch (err: any) {
-        const entry: ValidationComparisonResult = {
-          ...initial[idx],
-          status: 'error',
-          error: err.message || 'Unknown error',
-        };
-        collected[idx] = entry;
-        setResults(prev => prev.map((r, i) => i === idx ? entry : r));
-      }
-    });
+      }), {
+        getBudget: getAIBudget,
+        signal: controller.signal,
+        onStateChange: (index, state) => {
+          if (!isCurrentRequest(controller)) return;
+          const entry: ValidationComparisonResult = state.status === 'success' ? state.value : {
+            ...initial[index],
+            status: state.status,
+            ...(state.status === 'error'
+              ? { error: state.error instanceof Error ? translate(state.error.message) : translate('Unknown error') }
+              : {}),
+          };
+          collected[index] = entry;
+          setResults(previous => previous.map((result, i) => i === index ? entry : result));
+        },
+      });
+      if (!isCurrentRequest(controller)) return;
 
-    await Promise.allSettled(promises);
-    setIsRunning(false);
-
-    // Telemetry: the model-leaderboard flywheel.
-    try {
-      const ok = collected.filter(r => r.status === 'success' && r.validation);
-      if (ok.length >= 2) {
-        const cons = buildValidationConsensus(
-          ok.map(r => ({ modelLabel: MODEL_CONFIG[r.model].displayName, validation: r.validation as ArchitectureValidation })),
-        );
-        const best = ok.reduce((a, b) => (b.overallScore ?? 0) > (a.overallScore ?? 0) ? b : a);
-        trackValidationCompared({
-          modelCount: ok.length,
-          serviceCount: services.length,
-          connectionCount: connections.length,
-          reasoningEffort: effectiveReasoningEffort,
-          perModel: ok.map(r => ({
-            model: MODEL_CONFIG[r.model].displayName,
-            score: r.overallScore ?? 0,
-            findings: r.totalFindings ?? 0,
-            high: r.highCount ?? 0,
-            critical: r.criticalCount ?? 0,
-            timeMs: r.metrics?.elapsedTimeMs ?? 0,
-            tokens: r.metrics?.totalTokens ?? 0,
-          })),
-          consensusTotal: cons.findings.length,
-          consensusHighConfidence: cons.highConfidenceCount,
-          bestModel: MODEL_CONFIG[best.model].displayName,
-          bestScore: best.overallScore ?? 0,
-        });
-        // Product-analytics signal: the consensus-confirmed gap topics.
-        trackValidationFindings({
-          source: 'consensus',
-          model: 'multi',
-          overallScore: best.overallScore ?? 0,
-          serviceCount: services.length,
-          topics: cons.findings
-            .filter(f => f.confidenceBand !== 'exploratory')
-            .map(f => ({ id: f.topicId, label: f.label, pillar: f.pillar, severity: f.severity })),
-        });
+      // Telemetry: the model-leaderboard flywheel.
+      try {
+        const ok = collected.filter(r => r.status === 'success' && r.validation);
+        if (ok.length >= 2) {
+          const cons = buildValidationConsensus(
+            ok.map(r => ({ modelLabel: MODEL_CONFIG[r.model].displayName, validation: r.validation as ArchitectureValidation })),
+          );
+          const best = ok.reduce((a, b) => (b.overallScore ?? 0) > (a.overallScore ?? 0) ? b : a);
+          trackValidationCompared({
+            modelCount: ok.length,
+            serviceCount: services.length,
+            connectionCount: connections.length,
+            reasoningEffort: effectiveReasoningEffort,
+            perModel: ok.map(r => ({
+              model: MODEL_CONFIG[r.model].displayName,
+              score: r.overallScore ?? 0,
+              findings: r.totalFindings ?? 0,
+              high: r.highCount ?? 0,
+              critical: r.criticalCount ?? 0,
+              timeMs: r.metrics?.elapsedTimeMs ?? 0,
+              tokens: r.metrics?.totalTokens ?? 0,
+            })),
+            consensusTotal: cons.findings.length,
+            consensusHighConfidence: cons.highConfidenceCount,
+            bestModel: MODEL_CONFIG[best.model].displayName,
+            bestScore: best.overallScore ?? 0,
+          });
+          // Product-analytics signal: the consensus-confirmed gap topics.
+          trackValidationFindings({
+            source: 'consensus',
+            model: 'multi',
+            overallScore: best.overallScore ?? 0,
+            serviceCount: services.length,
+            topics: cons.findings
+              .filter(f => f.confidenceBand !== 'exploratory')
+              .map(f => ({ id: f.topicId, label: f.label, pillar: f.pillar, severity: f.severity })),
+          });
+        }
+      } catch { /* telemetry must never break the UX */ }
+    } catch (error) {
+      if (!isCurrentRequest(controller)) return;
+      const message = error instanceof Error ? translate(error.message) : translate('Unknown error');
+      setComparisonError(message);
+      setResults(previous => previous.map(result =>
+        result.status === 'pending' || result.status === 'running'
+          ? { ...result, status: 'error', error: message } : result));
+    } finally {
+      if (requestRef.current?.controller === controller) {
+        requestRef.current = null;
+        setIsRunning(false);
       }
-    } catch { /* telemetry must never break the UX */ }
+    }
   };
 
   const handleApply = (result: ValidationComparisonResult) => {
     if (result.validation) {
-      onApply(result.validation);
-      onClose();
+      setApplyError('');
+      try {
+        if (onApply(result.validation, result.diagramFingerprint) !== false) handleClose();
+        else setApplyError(localize(language, {
+          en: 'This review could not be applied. The current diagram and review history were preserved.',
+          ja: 'このレビューを適用できませんでした。現在の図とレビュー履歴は維持されています。',
+        }));
+      } catch (error) {
+        setApplyError(error instanceof Error ? error.message : String(error));
+      }
     }
   };
 
@@ -408,25 +480,36 @@ const CompareValidationModal: React.FC<CompareValidationModalProps> = ({
   };
 
   const runCritique = async () => {
+    if (!openRef.current || requestRef.current || !isManagedAIConfigured()) return;
+    const controller = new AbortController();
+    requestRef.current = { controller, kind: 'critique' };
     setCritiqueText(null);
     setCritiqueError(null);
     setIsCritiquing(true);
     const chosenModel = criticModel;
     try {
       const summary = buildCritiqueSummary();
-      const override: ModelOverride = {
-        model: chosenModel,
-        reasoningEffort: MODEL_CONFIG[chosenModel].isReasoning
-          ? normalizeReasoningEffort(chosenModel, effectiveReasoningEffort)
-          : 'none',
-        forceManaged: true,
-      };
-      const { content } = await generateValidationCritique(
-        summary,
-        architectureDescription || '',
-        override,
-        language,
-      );
+      const [result] = await runAIBudgetQueue([async signal => {
+        if (!isCurrentRequest(controller)) controller.abort();
+        throwIfGenerationAborted(signal);
+        const override: ModelOverride = {
+          model: chosenModel,
+          reasoningEffort: MODEL_CONFIG[chosenModel].isReasoning
+            ? normalizeReasoningEffort(chosenModel, effectiveReasoningEffort)
+            : 'none',
+          forceManaged: true,
+          signal,
+        };
+        return generateValidationCritique(
+          summary,
+          architectureDescription || '',
+          override,
+          language,
+        );
+      }], { getBudget: getAIBudget, signal: controller.signal });
+      if (!isCurrentRequest(controller)) return;
+      if (result.status === 'rejected') throw result.reason;
+      const { content } = result.value;
       setCritiqueText(content);
       setCritiqueByModel(chosenModel);
       try {
@@ -437,9 +520,13 @@ const CompareValidationModal: React.FC<CompareValidationModalProps> = ({
         });
       } catch { /* telemetry must never break the UX */ }
     } catch (err: any) {
-      setCritiqueError(err.message || 'Failed to generate critique');
+      if (!isCurrentRequest(controller)) return;
+      setCritiqueError(translate(err.message || 'Failed to generate critique'));
     } finally {
-      setIsCritiquing(false);
+      if (requestRef.current?.controller === controller) {
+        requestRef.current = null;
+        setIsCritiquing(false);
+      }
     }
   };
 
@@ -669,8 +756,7 @@ const CompareValidationModal: React.FC<CompareValidationModalProps> = ({
     return inputs.length >= 2 ? buildValidationConsensus(inputs) : null;
   }, [results]);
 
-  const dialogRef = useModalFocus<HTMLDivElement>(isOpen);
-  useEscapeKey(isOpen, onClose);
+  const dialogRef = useModalFocus(isOpen, handleClose);
   if (!isOpen) return null;
 
   const scoreColor = (score: number) => {
@@ -686,7 +772,7 @@ const CompareValidationModal: React.FC<CompareValidationModalProps> = ({
   };
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
+    <div className="modal-overlay" onClick={handleClose}>
       <div
         ref={dialogRef}
         className="compare-modal cv-modal"
@@ -710,13 +796,15 @@ const CompareValidationModal: React.FC<CompareValidationModalProps> = ({
               />
               <span>{t("Show numeric score")}</span>
             </label>
-            <button className="modal-close" onClick={onClose} title={t("Close")} aria-label={t("Close")}>
+            <button className="modal-close" onClick={handleClose} title={t("Close")} aria-label={t("Close")}>
               <X size={20} />
             </button>
           </div>
         </div>
 
         <div className="compare-modal-body">
+          {applyError && <p className="error-message" role="alert">{applyError}</p>}
+          {comparisonError && <p className="error-message" role="alert">{comparisonError}</p>}
           {/* Architecture summary */}
           <div className="compare-section cv-arch-summary">
             <h3 className="compare-section-title">
@@ -819,6 +907,9 @@ const CompareValidationModal: React.FC<CompareValidationModalProps> = ({
             <div className="compare-progress">
               <Loader2 size={16} className="spinner" />
               <span>{t("Validating with")}{' '}{completedCount}{t("/")}{results.length} {' '}{t("models...")}</span>
+              <button className="btn btn-secondary" onClick={cancelRequest}>
+                {localize(language, { en: 'Cancel comparison', ja: '比較をキャンセル' })}
+              </button>
             </div>
           )}
 
@@ -848,7 +939,9 @@ const CompareValidationModal: React.FC<CompareValidationModalProps> = ({
                   <button
                     className="compare-rerun-btn"
                     onClick={() => {
+                      cancelRequest();
                       setResults([]);
+                      setComparisonError(null);
                       setCritiqueText(null);
                       setCritiqueError(null);
                       setCritiqueByModel(null);
@@ -1051,6 +1144,11 @@ const CompareValidationModal: React.FC<CompareValidationModalProps> = ({
                   {isCritiquing ? <Loader2 size={14} className="spinner" /> : <Brain size={14} />}
                   {isCritiquing ? t('Analyzing...') : (critiqueText ? t('Regenerate Critique') : t('Generate AI Critique'))}
                 </button>
+                {isCritiquing && (
+                  <button className="btn btn-secondary" onClick={cancelRequest}>
+                    {localize(language, { en: 'Cancel critique', ja: '批評をキャンセル' })}
+                  </button>
+                )}
                 {critiqueText && !isCritiquing && (
                   <button
                     className="compare-save-btn compare-save-report-btn"
@@ -1077,7 +1175,7 @@ const CompareValidationModal: React.FC<CompareValidationModalProps> = ({
                 )}
               </div>
               {critiqueError && (
-                <div className="compare-critique-error">{critiqueError}</div>
+                <div className="compare-critique-error" role="alert">{critiqueError}</div>
               )}
               {critiqueText && critiqueByModel && (
                 <div className="compare-critique-output">

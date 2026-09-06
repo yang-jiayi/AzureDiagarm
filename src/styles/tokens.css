@@ -1,0 +1,26 @@
+/* Compatibility names for safe-editing surfaces share the app's design system. */
+:root,
+body.dark-mode {
+  --azd-color-background: var(--azd-color-surface-app);
+  --azd-color-canvas: var(--azd-color-surface-canvas);
+  --azd-color-surface: var(--azd-color-surface-elevated);
+  --azd-color-surface-muted: var(--azd-color-surface-subtle);
+  --azd-color-surface-raised: var(--azd-color-surface-elevated);
+  --azd-color-accent: var(--azd-color-action);
+  --azd-color-accent-hover: var(--azd-color-action-hover);
+  --azd-color-accent-soft: var(--azd-color-brand-soft);
+  --azd-color-on-accent: var(--azd-color-on-brand);
+  --azd-color-overlay: var(--azd-color-overlay-scrim);
+  --azd-color-primary: var(--azd-color-accent);
+  --azd-shadow-dialog: var(--azd-shadow-overlay);
+}
+
+body.dark-mode {
+  --azd-color-on-accent: #102337;
+}
+
+@media (forced-colors: active) {
+  :root, body.dark-mode {
+    --azd-color-on-accent: HighlightText;
+  }
+}

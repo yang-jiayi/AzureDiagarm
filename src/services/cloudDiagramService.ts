@@ -3,6 +3,7 @@
 
 import type { PricingScenario } from '../types/pricing';
 import type { IaCBaseline } from './iacRoundTrip';
+import type { EditorDocument } from './editorHistory';
 
 export type CloudDiagramAccess = 'owner' | 'shared';
 export type CloudDiagramRole = 'owner' | 'viewer' | 'editor';
@@ -17,6 +18,9 @@ export interface CloudDiagramPayload {
   workflow?: any[];
   pricingScenarios?: PricingScenario[];
   iacBaseline?: IaCBaseline | null;
+  settings?: EditorDocument['settings'];
+  reviewHistory?: unknown[];
+  validationSourceFingerprint?: string | null;
 }
 
 export interface CloudDiagramOwner {

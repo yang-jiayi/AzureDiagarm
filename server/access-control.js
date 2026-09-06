@@ -220,9 +220,25 @@ function createAccessControlRouter(options = {}) {
     if (principal.email !== adminEmail) {
       return res.status(403).json({ error: 'Administrator access is required.' });
     }
+
     req.accessPrincipal = principal;
     next();
   }
+
+  router.requireAllowed = asyncHandler(async (req, res, next) => {
+    if (!enabled) return next();
+    if (!configured) return configurationUnavailable(res);
+    const principal = getPrincipal(req);
+    if (!principal) return res.status(401).json({ error: 'Authentication is required.' });
+    try {
+      if (!await accessAllowed(principal.email)) return res.status(403).json({ error: 'This account is not on the access list.' });
+      req.accessPrincipal = principal;
+      next();
+    } catch (error) {
+      logger.error('[access] authorization unavailable:', error.name);
+      return res.status(503).json({ error: 'Access control is temporarily unavailable.' });
+    }
+  });
 
   router.get('/check', asyncHandler(async (req, res) => {
     if (!enabled) return res.status(204).end();
@@ -371,4 +387,5 @@ module.exports = {
   normalizeEmail,
   normalizePrincipalEmail,
   rowKeyForEmail,
+  getPrincipal,
 };

@@ -4,6 +4,7 @@
 const crypto = require('crypto');
 const express = require('express');
 const { asyncHandler } = require('./async-handler');
+const { budgetIdentity, reservationTokens, actualUsage, hasUnmeteredInput } = require('./ai-budget');
 
 const DEPLOYMENT_NAME_RE = /^[A-Za-z0-9._-]{1,64}$/;
 const BYO_MODEL_NAME_RE = /^(?=.{1,128}$)(?=.*[A-Za-z0-9])[A-Za-z0-9._:-]+$/;
@@ -352,6 +353,8 @@ function createOpenAIProxyRouter(options) {
     fetchImpl = globalThis.fetch,
     timeoutMs = DEFAULT_TIMEOUT_MS,
     consumeRateLimit = () => 0,
+    budget,
+    mode = 'local',
     allowByoAIEndpoints = false,
     logger = console,
   } = options;
@@ -465,27 +468,39 @@ function createOpenAIProxyRouter(options) {
     }
 
     const upstreamBody = { ...body };
+    // This application consumes complete responses. Background jobs, stored
+    // conversations and remote tools have unbounded/unobservable input usage.
+    if (body.background || body.previous_response_id || body.conversation
+      || body.tools?.length || body.mcp_servers?.length || body.container
+      || body.prompt || hasUnmeteredInput(body)) {
+      return sendError(res, 400, requestId, {
+        source: 'proxy', code: 'unsupported_request_mode',
+        message: 'Use a complete, non-streaming request with inline text/images, without stored inputs or remote tools.',
+      });
+    }
+    if (!isAnthropic) upstreamBody.store = false;
+    else delete upstreamBody.store;
+    upstreamBody.stream = false;
     if (apiFormat === 'responses') {
       upstreamBody.model = deployment;
       upstreamBody.store = false;
-      upstreamBody.max_output_tokens = Math.min(
+      upstreamBody.max_output_tokens = Math.floor(Math.min(
         Math.max(Number(upstreamBody.max_output_tokens) || 1, 1),
         32768,
-      );
+      ));
     } else if (apiFormat === 'chat-completions') {
-      if (byoConfig) {
-        upstreamBody.model = deployment;
-      }
+      upstreamBody.model = deployment;
+      upstreamBody.n = 1;
       const isReasoningRequest = upstreamBody.reasoning_effort !== undefined;
       const usesCompletionTokenLimit = upstreamBody.max_completion_tokens !== undefined
         || isReasoningRequest;
       const requestedTokenLimit = usesCompletionTokenLimit
         ? (upstreamBody.max_completion_tokens ?? upstreamBody.max_tokens)
         : upstreamBody.max_tokens;
-      const boundedTokenLimit = Math.min(
+      const boundedTokenLimit = Math.floor(Math.min(
         Math.max(Number(requestedTokenLimit) || 1, 1),
         32768,
-      );
+      ));
       if (usesCompletionTokenLimit) {
         upstreamBody.max_completion_tokens = boundedTokenLimit;
         delete upstreamBody.max_tokens;
@@ -528,10 +543,10 @@ function createOpenAIProxyRouter(options) {
         ? requestedEffort
         : 'low';
       upstreamBody.model = deployment;
-      upstreamBody.max_tokens = Math.min(
+      upstreamBody.max_tokens = Math.floor(Math.min(
         Math.max(Number(upstreamBody.max_tokens) || 1, 1),
         32768,
-      );
+      ));
       upstreamBody.thinking = { type: 'adaptive' };
       upstreamBody.output_config = { effort };
       upstreamBody.stream = false;
@@ -578,6 +593,40 @@ function createOpenAIProxyRouter(options) {
       headers['anthropic-version'] = anthropicVersion;
     }
 
+    let identity;
+    let lease;
+    let usage;
+    let dispatched = false;
+    const controller = new AbortController();
+    const cancel = () => { if (!res.writableEnded) controller.abort(); };
+    req.once('aborted', cancel);
+    res.once('close', cancel);
+    const deadline = setTimeout(() => controller.abort(new DOMException('Timed out', 'TimeoutError')), timeoutMs);
+    deadline.unref?.();
+    try {
+      if (budget) {
+        try {
+          identity = budgetIdentity(req, mode);
+          lease = await budget.reserve(identity, reservationTokens(upstreamBody, apiFormat));
+        } catch (error) {
+          res.set('Retry-After', String(error.retryAfter || 5));
+          return sendError(res, error.status || 503, requestId, {
+            source: 'budget', code: error.code || 'ai_budget_unavailable',
+            message: error.status ? error.message : 'AI budget is unavailable. Try again shortly.',
+          });
+        }
+      } else if (mode === 'public') {
+        return sendError(res, 503, requestId, {
+          source: 'budget', code: 'ai_budget_unavailable', message: 'AI budget is not configured.',
+        });
+      }
+      if (res.destroyed) return;
+      if (controller.signal.aborted) {
+        return sendError(res, 504, requestId, {
+          source: 'budget', code: 'ai_budget_timeout',
+          message: 'The request timed out while reserving its AI budget. Try again shortly.',
+        });
+      }
     let upstream;
     try {
       const upstreamUrl = byoConfig
@@ -585,11 +634,12 @@ function createOpenAIProxyRouter(options) {
         : buildOpenAIUrl(upstreamEndpoint, deployment, apiFormat, apiVersion);
       // BYO URLs are rebuilt only after HTTPS origin allowlisting, path/query
       // rejection, fixed API routes, and redirect blocking.
+      dispatched = true;
       upstream = await fetchImpl(upstreamUrl, {
         method: 'POST',
         headers,
         body: JSON.stringify(upstreamBody),
-        signal: AbortSignal.timeout(timeoutMs),
+        signal: controller.signal,
         redirect: 'error',
       });
     } catch (error) {
@@ -667,6 +717,9 @@ function createOpenAIProxyRouter(options) {
       });
     }
     if (!upstream.ok) {
+      // A rejected request has no successful generation to charge.
+      // 5xx/timeout outcomes remain reserved because usage may be unknown.
+      if ([400, 401, 403, 404, 413, 422, 429].includes(upstream.status)) usage = 0;
       const { code: upstreamCode, message: upstreamMessage } = parseUpstreamError(text);
       const baseClassification = classifyUpstreamError(
         upstream.status,
@@ -722,6 +775,7 @@ function createOpenAIProxyRouter(options) {
       });
     }
 
+    try { usage = actualUsage(JSON.parse(text)); } catch { /* Keep reservation for unknown usage. */ }
     logEvent(logger, 'info', {
       event: 'request_succeeded',
       requestId,
@@ -735,6 +789,19 @@ function createOpenAIProxyRouter(options) {
     res.status(upstream.status);
     res.set('Content-Type', contentType);
     return res.send(text);
+    } finally {
+      clearTimeout(deadline);
+      req.off('aborted', cancel);
+      res.off('close', cancel);
+      if (lease) {
+        try { await budget.settle(identity, lease, dispatched ? usage : 0); }
+        catch (error) {
+          // Do not refund uncertain usage. The expiring shared lease releases
+          // concurrency even if storage is unavailable or this replica dies.
+          logEvent(logger, 'error', { event: 'ai_budget_settlement_failed', requestId, errorName: error?.name || 'Error' });
+        }
+      }
+    }
   }));
 
   return router;

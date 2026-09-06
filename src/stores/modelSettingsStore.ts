@@ -10,7 +10,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 
-export type ModelType = 'gpt-5.1' | 'gpt-5.2' | 'gpt-5.4' | 'gpt-5.4-mini' | 'gpt-5.6-sol' | 'gpt-5.6-terra' | 'gpt-5.6-luna' | 'claude-opus-5' | 'deepseek-v3.2-speciale' | 'deepseek-v4-pro' | 'grok-4.1-fast' | 'grok-4.3' | 'mistral-large-3' | 'kimi-k2-5' | 'kimi-k2-7-code';
+export type ModelType = 'gpt-6-astra' | 'gpt-5.1' | 'gpt-5.2' | 'gpt-5.4' | 'gpt-5.4-mini' | 'gpt-5.6-sol' | 'gpt-5.6-terra' | 'gpt-5.6-luna' | 'claude-opus-5' | 'deepseek-v3.2-speciale' | 'deepseek-v4-pro' | 'grok-4.1-fast' | 'grok-4.3' | 'mistral-large-3' | 'kimi-k2-5' | 'kimi-k2-7-code';
 export const REASONING_EFFORT_OPTIONS = [
   { value: 'none', label: 'None' },
   { value: 'minimal', label: 'Minimal' },
@@ -24,7 +24,7 @@ export type ReasoningEffort = (typeof REASONING_EFFORT_OPTIONS)[number]['value']
 
 const STANDARD_REASONING_EFFORTS = ['none', 'low', 'medium', 'high'] as const;
 const EXTENDED_REASONING_EFFORTS = [...STANDARD_REASONING_EFFORTS, 'xhigh'] as const;
-const GPT_56_REASONING_EFFORTS = [...EXTENDED_REASONING_EFFORTS, 'max'] as const;
+const FRONTIER_REASONING_EFFORTS = [...EXTENDED_REASONING_EFFORTS, 'max'] as const;
 const CLAUDE_REASONING_EFFORTS = ['low', 'medium', 'high', 'max'] as const;
 
 /**
@@ -49,10 +49,11 @@ export interface ModelSettings {
 }
 
 const STORAGE_KEY = 'azure-diagrams-model-settings';
-const STORAGE_VERSION = 2;
+const STORAGE_VERSION = 3;
+const ASTRA_MIGRATION_VERSION = 1;
 
 const DEFAULT_SETTINGS: ModelSettings = {
-  model: 'gpt-5.6-sol',
+  model: 'gpt-6-astra',
   reasoningEffort: 'low',
   featureOverrides: {}
 };
@@ -69,27 +70,34 @@ export const FEATURE_CONFIG: Record<FeatureType, {
   architectureGeneration: {
     displayName: 'Architecture Generation',
     description: 'Creating Azure architecture diagrams',
-    recommendedModel: 'gpt-5.6-sol',
+    recommendedModel: 'gpt-6-astra',
     recommendedReasoning: 'low'
   },
   validation: {
     displayName: 'Architecture Validation',
     description: 'WAF validation and security analysis',
-    recommendedModel: 'gpt-5.6-terra',
+    recommendedModel: 'gpt-6-astra',
     recommendedReasoning: 'low'
   },
   deploymentGuide: {
     displayName: 'Deployment Guide & Bicep',
     description: 'Generating deployment guides and IaC templates',
-    recommendedModel: 'gpt-5.6-terra',
+    recommendedModel: 'gpt-6-astra',
     recommendedReasoning: 'low'
   },
   blueprint: {
     displayName: 'Blueprint Diagrams',
     description: 'Whiteboard-style blueprint sketches (fast, cost-efficient)',
-    recommendedModel: 'gpt-5.6-luna',
+    recommendedModel: 'gpt-6-astra',
     recommendedReasoning: 'low'
   }
+};
+
+const LEGACY_FEATURE_MODELS: Record<FeatureType, ModelType> = {
+  architectureGeneration: 'gpt-5.6-sol',
+  validation: 'gpt-5.6-terra',
+  deploymentGuide: 'gpt-5.6-terra',
+  blueprint: 'gpt-5.6-luna',
 };
 
 /**
@@ -107,6 +115,18 @@ export const MODEL_CONFIG: Record<ModelType, {
   apiFormat?: 'responses' | 'chat-completions' | 'anthropic-messages'; // defaults to 'responses'
   supportsVision?: boolean; // defaults to true
 }> = {
+  'gpt-6-astra': {
+    displayName: 'GPT-6 Astra',
+    deploymentEnvVar: 'VITE_AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA',
+    isReasoning: true,
+    maxCompletionTokens: 32000,
+    description: 'Azure OpenAI model for architecture design, validation, and deployment guidance',
+    recommendedUse: 'Recommended for all features',
+    defaultReasoningEffort: 'low',
+    supportedReasoningEfforts: FRONTIER_REASONING_EFFORTS,
+    apiFormat: 'responses',
+    supportsVision: true,
+  },
   'gpt-5.1': {
     displayName: 'GPT-5.1',
     deploymentEnvVar: 'VITE_AZURE_OPENAI_DEPLOYMENT_GPT51',
@@ -146,10 +166,10 @@ export const MODEL_CONFIG: Record<ModelType, {
     deploymentEnvVar: 'VITE_AZURE_OPENAI_DEPLOYMENT_GPT56SOL',
     isReasoning: true,
     maxCompletionTokens: 32000,
-    description: 'Newest frontier reasoning model - top-tier quality for complex architectures',
-    recommendedUse: 'Highest quality',
+    description: 'Previous-generation reasoning model for complex architectures',
+    recommendedUse: 'Alternative model',
     defaultReasoningEffort: 'low',
-    supportedReasoningEfforts: GPT_56_REASONING_EFFORTS,
+    supportedReasoningEfforts: FRONTIER_REASONING_EFFORTS,
   },
   'gpt-5.6-terra': {
     displayName: 'GPT-5.6 Terra',
@@ -159,7 +179,7 @@ export const MODEL_CONFIG: Record<ModelType, {
     description: 'Frontier reasoning model - grounded, thorough analysis for complex architectures',
     recommendedUse: 'Validation + deployment',
     defaultReasoningEffort: 'low',
-    supportedReasoningEfforts: GPT_56_REASONING_EFFORTS,
+    supportedReasoningEfforts: FRONTIER_REASONING_EFFORTS,
   },
   'gpt-5.6-luna': {
     displayName: 'GPT-5.6 Luna',
@@ -169,7 +189,7 @@ export const MODEL_CONFIG: Record<ModelType, {
     description: 'Frontier reasoning model - fast, creative reasoning for architecture design',
     recommendedUse: 'Fast blueprints',
     defaultReasoningEffort: 'low',
-    supportedReasoningEfforts: GPT_56_REASONING_EFFORTS,
+    supportedReasoningEfforts: FRONTIER_REASONING_EFFORTS,
   },
   'claude-opus-5': {
     displayName: 'Claude Opus 5',
@@ -257,6 +277,10 @@ export function isReasoningEffort(value: unknown): value is ReasoningEffort {
   return REASONING_EFFORT_OPTIONS.some(option => option.value === value);
 }
 
+function isModelType(value: unknown): value is ModelType {
+  return typeof value === 'string' && Object.prototype.hasOwnProperty.call(MODEL_CONFIG, value);
+}
+
 export function getSupportedReasoningEfforts(model: ModelType): readonly ReasoningEffort[] {
   const config = MODEL_CONFIG[model];
   return config.isReasoning
@@ -292,16 +316,21 @@ export function normalizeReasoningEffort(model: ModelType, effort: unknown): Rea
 
 function normalizeFeatureOverrides(
   value: unknown,
+  migrateToAstra = false,
 ): Partial<Record<FeatureType, FeatureModelOverride>> {
   if (!value || typeof value !== 'object') return {};
 
   const normalized: Partial<Record<FeatureType, FeatureModelOverride>> = {};
   for (const [feature, rawOverride] of Object.entries(value)) {
+    if (!Object.prototype.hasOwnProperty.call(FEATURE_CONFIG, feature)) continue;
     if (!rawOverride || typeof rawOverride !== 'object' || !('model' in rawOverride)) continue;
-    const model = (rawOverride as FeatureModelOverride).model;
-    if (!MODEL_CONFIG[model] || !isModelAvailable(model)) continue;
+    if (!isModelType(rawOverride.model)) continue;
+    const model = migrateToAstra && rawOverride.model.startsWith('gpt-5.6-')
+      ? 'gpt-6-astra'
+      : rawOverride.model;
+    if (!isModelAvailable(model)) continue;
 
-    const rawEffort = (rawOverride as FeatureModelOverride).reasoningEffort;
+    const rawEffort = 'reasoningEffort' in rawOverride ? rawOverride.reasoningEffort : undefined;
     normalized[feature as FeatureType] = {
       model,
       reasoningEffort: rawEffort === undefined
@@ -333,6 +362,7 @@ export function getDeploymentNames(): Record<ModelType, string | undefined> {
   }
   try {
     deploymentNamesCache = {
+      'gpt-6-astra': import.meta.env.VITE_AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA,
       'gpt-5.1': import.meta.env.VITE_AZURE_OPENAI_DEPLOYMENT_GPT51,
       'gpt-5.2': import.meta.env.VITE_AZURE_OPENAI_DEPLOYMENT_GPT52,
       'gpt-5.4': import.meta.env.VITE_AZURE_OPENAI_DEPLOYMENT_GPT54,
@@ -376,11 +406,20 @@ export function getDeploymentName(model: ModelType): string {
 
 /**
  * Build the recommended application portfolio from models that are actually deployed.
- * Sol remains the default, while Terra and Luna are assigned to their strongest features.
+ * Prefer Astra throughout; retain the existing portfolio on installations without it.
  */
 export function getRecommendedModelSettings(): ModelSettings {
   const availableModels = getAvailableModels();
-  const architectureRecommendation = FEATURE_CONFIG.architectureGeneration;
+  const recommendationFor = (feature: FeatureType) => {
+    const recommendation = FEATURE_CONFIG[feature];
+    return {
+      ...recommendation,
+      recommendedModel: availableModels.includes(recommendation.recommendedModel)
+        ? recommendation.recommendedModel
+        : LEGACY_FEATURE_MODELS[feature],
+    };
+  };
+  const architectureRecommendation = recommendationFor('architectureGeneration');
   const defaultModel = availableModels.includes(architectureRecommendation.recommendedModel)
     ? architectureRecommendation.recommendedModel
     : (availableModels[0] || DEFAULT_SETTINGS.model);
@@ -393,7 +432,7 @@ export function getRecommendedModelSettings(): ModelSettings {
   const featureOverrides: Partial<Record<FeatureType, FeatureModelOverride>> = {};
 
   (Object.keys(FEATURE_CONFIG) as FeatureType[]).forEach((feature) => {
-    const recommendation = FEATURE_CONFIG[feature];
+    const recommendation = recommendationFor(feature);
     if (!availableModels.includes(recommendation.recommendedModel)) return;
 
     const reasoningEffort = normalizeReasoningEffort(
@@ -433,29 +472,46 @@ function loadSettings(): ModelSettings {
   try {
     const stored = typeof localStorage === 'undefined' ? null : localStorage.getItem(STORAGE_KEY);
     if (stored) {
-      const parsed = JSON.parse(stored);
-      // Validate model type
-      if (parsed.model && MODEL_CONFIG[parsed.model as ModelType]) {
-        const storedModel = parsed.model as ModelType;
+      const parsed: unknown = JSON.parse(stored);
+      if (parsed && typeof parsed === 'object' && 'model' in parsed && isModelType(parsed.model)) {
+        const storedVersion = 'version' in parsed && Number.isInteger(parsed.version)
+          ? Number(parsed.version)
+          : 1;
+        // Record adoption only when Astra is deployed, so later configuration changes
+        // still migrate old selections without overriding subsequent explicit choices.
+        const astraMigrationApplied = 'astraMigrationVersion' in parsed
+          && Number.isInteger(parsed.astraMigrationVersion)
+          && Number(parsed.astraMigrationVersion) >= ASTRA_MIGRATION_VERSION;
+        const migrateToAstra = isModelAvailable('gpt-6-astra')
+          && storedVersion <= STORAGE_VERSION && !astraMigrationApplied;
+        const storedModel = migrateToAstra && parsed.model.startsWith('gpt-5.6-')
+          ? 'gpt-6-astra'
+          : parsed.model;
         const selectedModel = isModelAvailable(storedModel) ? storedModel : fallbackModel;
-        const reasoningEffort = normalizeReasoningEffort(selectedModel, parsed.reasoningEffort);
-        const featureOverrides = normalizeFeatureOverrides(parsed.featureOverrides);
-        const storedVersion = Number.isInteger(parsed.version) ? parsed.version : 1;
-
-        if (
-          storedVersion < STORAGE_VERSION
-          && selectedModel === DEFAULT_SETTINGS.model
-          && reasoningEffort === DEFAULT_SETTINGS.reasoningEffort
-          && Object.keys(featureOverrides).length === 0
-        ) {
-          return getRecommendedModelSettings();
-        }
-
-        return {
+        const reasoningEffort = normalizeReasoningEffort(
+          selectedModel, 'reasoningEffort' in parsed ? parsed.reasoningEffort : undefined,
+        );
+        const featureOverrides = normalizeFeatureOverrides(
+          'featureOverrides' in parsed ? parsed.featureOverrides : undefined, migrateToAstra,
+        );
+        const recommended = getRecommendedModelSettings();
+        let settings: ModelSettings = {
           model: selectedModel,
           reasoningEffort,
           featureOverrides,
         };
+
+        if (
+          storedVersion < 2
+          && selectedModel === recommended.model
+          && reasoningEffort === recommended.reasoningEffort
+          && Object.keys(featureOverrides).length === 0
+        ) {
+          settings = recommended;
+        }
+
+        if (migrateToAstra) saveSettings(settings);
+        return settings;
       }
     }
   } catch (e) {
@@ -472,6 +528,7 @@ function saveSettings(settings: ModelSettings): void {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({
       version: STORAGE_VERSION,
+      ...(isModelAvailable('gpt-6-astra') ? { astraMigrationVersion: ASTRA_MIGRATION_VERSION } : {}),
       ...settings,
     }));
   } catch (e) {

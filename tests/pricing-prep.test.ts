@@ -45,7 +45,8 @@ function rawItem(overrides: Partial<AzureRetailPrice>): AzureRetailPrice {
   };
 }
 
-// Compaction → expansion must preserve the parsed pricing tiers exactly.
+// Rates, SKU identity and assumptions survive compaction; omitted per-meter
+// identifiers/dates must remain unknown instead of borrowing the file vintage.
 function assertTiersPreserved(
   raw: { BillingCurrency: string; Items: AzureRetailPrice[] },
   serviceName: string,
@@ -58,7 +59,13 @@ function assertTiersPreserved(
     filterPricingItems(expanded.Items, serviceName),
     serviceName,
   );
-  assert.deepEqual(expandedTiers, rawTiers);
+  assert.deepEqual(expandedTiers, rawTiers.map(tier => ({
+    ...tier,
+    provenance: { ...tier.provenance!, asOf: undefined, meterId: undefined },
+  })));
+  assert.ok(rawTiers.every(tier => tier.provenance?.meterId && tier.provenance.asOf));
+  assert.ok(expandedTiers.every(tier => tier.provenance?.meterId === undefined && tier.provenance.asOf === undefined));
+  assert.equal(expanded.pricesAsOf, '2021-11-01');
   return { rawTiers, compact };
 }
 
@@ -77,7 +84,7 @@ test('compaction preserves Virtual Machines tiers (skuName/armSkuName/savingsPla
           { term: '3 Years', retailPrice: 0.04, unitPrice: 0.04 },
         ],
       }),
-      // retailPrice 0 → unitPrice must survive compaction and drive the tier.
+      // A genuine retail zero must not be replaced by the nonzero unitPrice.
       rawItem({
         meterName: 'D4 v5 Spot',
         skuName: 'Standard_D4_v5 Spot',
@@ -105,6 +112,7 @@ test('compaction preserves Virtual Machines tiers (skuName/armSkuName/savingsPla
 
   const { rawTiers, compact } = assertTiersPreserved(raw, 'Virtual Machines', false);
   assert.ok(rawTiers.length >= 3, 'expected VM tiers to be parsed');
+  assert.equal(rawTiers.find(tier => tier.skuName === 'Standard_D4_v5 Spot')?.monthlyPrice, 0);
   // serviceName/type were hoisted; verify per-item copies were dropped.
   assert.equal((compact as { ServiceName?: string }).ServiceName, 'Virtual Machines');
   assert.equal((compact as { Items: Array<Record<string, unknown>> }).Items[0].serviceName, undefined);

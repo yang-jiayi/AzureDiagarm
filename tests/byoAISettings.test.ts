@@ -167,6 +167,12 @@ test('BYO validation accepts official Azure and Foundry origins and rejects unsa
 });
 
 test('automatic BYO capability detection is conservative for custom deployment aliases', () => {
+  for (const model of ['gpt-6-astra', 'production-gpt6astra', 'gpt-6-astra-2026-09-03']) {
+    assert.deepEqual(inferBYOAICapabilities(model), {
+      isReasoning: true,
+      supportsVision: true,
+    });
+  }
   assert.deepEqual(inferBYOAICapabilities('gpt-5.6-sol'), {
     isReasoning: true,
     supportsVision: true,
@@ -179,4 +185,21 @@ test('automatic BYO capability detection is conservative for custom deployment a
     isReasoning: false,
     supportsVision: false,
   });
+  assert.deepEqual(inferBYOAICapabilities('gpt-60'), {
+    isReasoning: false,
+    supportsVision: false,
+  });
+});
+
+test('new BYO configuration suggests Astra without migrating an existing personal deployment', () => {
+  assert.equal(DEFAULT_BYO_AI_SETTINGS.model, 'gpt-6-astra');
+  saveBYOAIConfiguration({
+    ...DEFAULT_BYO_AI_SETTINGS,
+    enabled: true,
+    endpoint: 'https://contoso.openai.azure.com',
+    model: 'personal-gpt-5.6-sol',
+  }, 'synthetic-key-for-test');
+  reloadBYOAISettings();
+  assert.equal(getBYOAISettings().model, 'personal-gpt-5.6-sol');
+  assert.equal(getBYOAISettings().enabled, true);
 });

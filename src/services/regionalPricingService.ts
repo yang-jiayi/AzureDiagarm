@@ -7,6 +7,10 @@
  */
 
 import { AzureRetailPrice, ServicePricing, PricingTier } from '../types/pricing';
+import { meterProvenance, parsePricingTiers } from './pricingMeters';
+import { FABRIC_CAPACITY_SKUS } from '../data/azurePricing';
+
+export { parsePricingTiers } from './pricingMeters';
 
 export type AzureRegion = 'eastus2' | 'swedencentral' | 'westeurope' | 'canadacentral' | 'brazilsouth' | 'australiaeast' | 'southeastasia' | 'mexicocentral' | 'japaneast';
 
@@ -121,7 +125,8 @@ function pricingBaseUrl(): string {
  * Restore a compacted pricing file to the shape the parser expects. Mirrors
  * scripts/prep-pricing-data.mjs `expandPricingData` — only fields the runtime
  * reads are reconstructed. Exported for the round-trip test.
- */export function expandPricingData(compact: CompactPricingData): RegionalPricingData {
+ */
+export function expandPricingData(compact: CompactPricingData): RegionalPricingData {
   const serviceName = compact?.ServiceName;
   const items = Array.isArray(compact?.Items) ? compact.Items : [];
   const expanded = items.map((item) => {
@@ -253,21 +258,30 @@ async function getFabricRegionalPricing(
   }
 
   if (isFabricCapacityService(serviceName)) {
-    const rates = data.Items
+    const meters = data.Items
       .filter(i => i.type === 'Consumption'
-        && (i as any).unitOfMeasure === '1 Hour'
-        && /Capacity Usage CU/i.test(i.meterName))
-      .map(i => i.retailPrice || i.unitPrice)
-      .filter(r => r > 0);
-    const rate = modeOrDefault(rates, 0.18);
-    const skus: Array<[string, number]> = [['F2', 2], ['F8', 8], ['F64', 64]];
+        && i.unitOfMeasure === '1 Hour'
+        && /Capacity Usage CU/i.test(i.meterName));
+    const rates = meters.map(i => i.retailPrice ?? i.unitPrice)
+      .filter(r => Number.isFinite(r) && r > 0);
+    if (!rates.length) return null;
+    const rate = modeOrDefault(rates, rates[0]);
+    const meter = meters.find(item => (item.retailPrice ?? item.unitPrice) === rate)!;
+    const skus = Object.entries(FABRIC_CAPACITY_SKUS).map(([name, sku]) => [name, sku.cu] as const);
     const tiers: PricingTier[] = skus.map(([name, cu]) => ({
       name,
       skuName: name,
       monthlyPrice: parseFloat((rate * cu * 730).toFixed(2)),
       hourlyPrice: parseFloat((rate * cu).toFixed(4)),
       unit: 'per capacity/month',
-      description: `${name} — ${cu} CU @ $${rate}/CU-hour (${region})`
+      description: `${name} — ${cu} CU @ $${rate}/CU-hour (${region})`,
+      provenance: {
+        ...meterProvenance(meter), kind: 'capacity',
+        assumptions: [
+          { label: 'Capacity', value: cu, unit: 'CU' },
+          { label: 'Monthly operation', value: 730, unit: 'hours/month' },
+        ],
+      },
     }));
     return {
       serviceType: serviceName,
@@ -276,21 +290,29 @@ async function getFabricRegionalPricing(
       tiers,
       calculationType: 'hourly',
       lastUpdated: new Date().toISOString(),
+      meterAsOf: data.pricesAsOf,
     };
   }
 
   if (isOneLakeService(serviceName)) {
     const hot = data.Items.find(i =>
-      i.type === 'Consumption' && /OneLake Storage Hot Data Stored/i.test(i.meterName));
-    const perGB = (hot?.retailPrice ?? hot?.unitPrice) || 0.023;
+      i.type === 'Consumption' && /OneLake Storage Hot Data Stored/i.test(i.meterName) &&
+      /^1\s*GB\/Month$/i.test(i.unitOfMeasure));
+    if (!hot) return null;
+    const perGB = hot.retailPrice ?? hot.unitPrice;
+    if (!Number.isFinite(perGB) || perGB < 0) return null;
     const sizes: Array<[string, number]> = [['~200 GB', 200], ['~1 TB', 1000], ['~10 TB', 10000]];
     const tiers: PricingTier[] = sizes.map(([name, gb]) => ({
       name,
       skuName: name,
       monthlyPrice: parseFloat((perGB * gb).toFixed(2)),
-      hourlyPrice: perGB,
       unit: 'per month (storage)',
-      description: `${gb} GB Hot @ $${perGB}/GB (${region})`
+      description: `${gb} GB Hot @ $${perGB}/GB (${region})`,
+      usage: { amount: gb, unit: hot.unitOfMeasure, unitPrice: perGB },
+      provenance: {
+        ...meterProvenance(hot), kind: 'usage-estimate',
+        assumptions: [{ label: 'Monthly usage', value: gb, unit: hot.unitOfMeasure }],
+      },
     }));
     return {
       serviceType: serviceName,
@@ -299,6 +321,7 @@ async function getFabricRegionalPricing(
       tiers,
       calculationType: 'usage',
       lastUpdated: new Date().toISOString(),
+      meterAsOf: data.pricesAsOf,
     };
   }
 
@@ -367,7 +390,7 @@ async function loadServiceData(region: AzureRegion, serviceName: string): Promis
       return null;
     }
     const filteredItems = fullData.Items.filter(item =>
-      (item as any).productName === aiMapping.productName
+      item.productName === aiMapping.productName
     );
     return {
       BillingCurrency: fullData.BillingCurrency,
@@ -415,7 +438,9 @@ export function filterPricingItems(
 ): AzureRetailPrice[] {
   const filtered = items.filter(item => {
     // Match service name (case insensitive)
-    const matches = item.serviceName.toLowerCase() === serviceName.toLowerCase();
+    const matches = typeof item.serviceName === 'string' &&
+      (item.serviceName.toLowerCase() === serviceName.toLowerCase() ||
+        (isAIService(serviceName) && item.productName === AI_SERVICE_PRODUCT_MAP[serviceName].productName));
     if (!matches) return false;
     
     // Only consumption pricing (not reservations or spot)
@@ -436,68 +461,6 @@ export function filterPricingItems(
   
   console.log(`🔍 Filtered ${filtered.length} items for ${serviceName} from ${items.length} total`);
   return filtered;
-}
-
-/**
- * Parse pricing items into tiers
- */
-export function parsePricingTiers(items: AzureRetailPrice[], serviceName: string): PricingTier[] {
-  const tierMap = new Map<string, PricingTier>();
-  const isAppService = serviceName.toLowerCase() === 'azure app service';
-
-  // Convert a per-unit rate into a monthly cost given the meter's unit-of-measure.
-  const toMonthly = (rate: number, unitOfMeasure: string): number => {
-    const normalizedUnit = unitOfMeasure.toLowerCase();
-    if (normalizedUnit.includes('/month')) return rate;
-    if (normalizedUnit.includes('/year')) return rate / 12;
-    if (normalizedUnit.includes('/day')) return rate * 30;
-    if (normalizedUnit === '1k' || normalizedUnit.includes('1000')) return rate * 100;
-    return rate * 730; // default: hourly × 730 hours/month
-  };
-
-  items.forEach(item => {
-    const skuName = item.skuName || item.armSkuName;
-    if (!skuName) return;
-    const tierId = isAppService
-      ? `${item.productName}::${skuName}`
-      : skuName;
-    const displayName = isAppService
-      ? `${skuName} (${/- Linux$/i.test(item.productName) ? 'Linux' : 'Windows'})`
-      : skuName;
-    
-    // Handle different billing units for AI services
-    const unitOfMeasure = (item as any).unitOfMeasure || '1 Hour';
-    const hourlyPrice = item.retailPrice || item.unitPrice;
-    const monthlyPrice = toMonthly(hourlyPrice, unitOfMeasure);
-
-    // Real 1-year Savings Plan monthly, when the meter carries a savings-plan rate.
-    let reserved1yrMonthly: number | undefined;
-    const oneYear = Array.isArray(item.savingsPlan)
-      ? item.savingsPlan.find(p => /1\s*year/i.test(p.term || ''))
-      : undefined;
-    if (oneYear) {
-      const spRate = oneYear.retailPrice || oneYear.unitPrice;
-      if (spRate > 0) reserved1yrMonthly = toMonthly(spRate, unitOfMeasure);
-    }
-
-    // Only add if we don't have this SKU yet, or if this is cheaper
-    if (!tierMap.has(tierId) || tierMap.get(tierId)!.monthlyPrice > monthlyPrice) {
-      tierMap.set(tierId, {
-        id: tierId,
-        name: displayName,
-        skuName: skuName,
-        monthlyPrice: monthlyPrice,
-        hourlyPrice: hourlyPrice,
-        unit: item.unitOfMeasure,
-        description: item.meterName,
-        reserved1yrMonthly
-      });
-    }
-  });
-  
-  const tiers = Array.from(tierMap.values()).sort((a, b) => a.monthlyPrice - b.monthlyPrice);
-  console.log(`📊 Parsed ${tiers.length} pricing tiers. First few:`, tiers.slice(0, 3).map(t => ({ name: t.name, monthly: t.monthlyPrice })));
-  return tiers;
 }
 
 /**
