@@ -2617,6 +2617,26 @@ body.dark-mode .ribbon-command-strip .pricing-mode-btn.active {
     padding-inline: 6px !important;
   }
 
+  .ribbon-command-strip .pricing-freshness:has(.pricing-freshness-age) {
+    display: grid;
+    grid-template-areas: 'warning date' 'warning age';
+    grid-template-columns: auto auto;
+    align-content: center;
+    gap: 2px 4px;
+  }
+
+  .ribbon-command-strip .pricing-freshness > [aria-hidden='true'] {
+    grid-area: warning;
+  }
+
+  .ribbon-command-strip .pricing-freshness-label {
+    grid-area: date;
+  }
+
+  .ribbon-command-strip .pricing-freshness-age {
+    grid-area: age;
+  }
+
   .ribbon-command-strip .toolbar-group.toolbar-group--labeled,
   .ribbon-command-strip .toolbar-group.toolbar-group--labeled + .toolbar-group.toolbar-group--labeled {
     max-width: 100%;

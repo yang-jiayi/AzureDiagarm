@@ -2,6 +2,7 @@ import { expect, test, type Locator, type Page, type Route } from '@playwright/t
 import AxeBuilder from '@axe-core/playwright';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
+import { PRICING_DATA_AS_OF } from '../../src/data/azurePricing';
 import type { CloudDiagramDocument } from '../../src/services/cloudDiagramService';
 
 const now = '2026-08-02T00:00:00.000Z';
@@ -629,6 +630,79 @@ test('compact workspace chrome preserves canvas space and visible mobile command
     (await page.locator('.canvas-container').boundingBox())?.y ?? Infinity
   )).toBeLessThan(235);
 });
+
+for (const touch of [false, true]) {
+  test.describe(`populated pricing toolbar ${touch ? 'touch' : 'desktop'}`, () => {
+    test.use({ hasTouch: touch, viewport: { width: 1280, height: 720 } });
+
+    test('retains compact dated pricing and primary commands in Japanese and English', async ({ page }) => {
+      await initializePage(page);
+      await page.clock.setFixedTime(new Date(
+        Date.parse(`${PRICING_DATA_AS_OF}T00:00:00Z`) + 53 * 86_400_000,
+      ));
+      await page.route('**/api/**', async route => {
+        const access = new URL(route.request().url()).pathname === '/api/access/me';
+        await fulfillJson(route, access
+          ? { enabled: false, authenticated: false, allowed: true, isAdmin: false }
+          : { error: 'Not found' }, access ? 200 : 404);
+      });
+      await page.goto('/');
+      await page.locator('.search-box input').fill('App Services');
+      await page.getByRole('button', { name: /Add App Services to the canvas/i }).click();
+      await page.locator('#ribbon-tab-create').click();
+      await page.locator('.azure-node').click();
+      await page.getByRole('button', { name: 'Service settings', exact: true }).click();
+      const inspector = page.getByRole('dialog', { name: 'Service inspector', exact: true });
+      await inspector.getByRole('spinbutton', { name: 'Quantity (instances / units)', exact: true }).fill('3');
+      await inspector.getByRole('checkbox', { name: 'Use a custom monthly estimate', exact: true }).check();
+      await inspector.getByRole('spinbutton', { name: 'USD per unit / month', exact: true }).fill('120');
+      await inspector.getByRole('button', { name: 'Apply', exact: true }).click();
+      await expect(inspector).toBeHidden();
+      await expect(page.locator('.cost-badge')).toContainText('$360');
+      await page.locator('#ribbon-tab-home').click();
+      await page.locator('.region-selector-button').click();
+      await page.locator('.region-option').filter({ hasText: 'Japan East' }).click();
+
+      for (const language of ['ja', 'en']) {
+        await page.locator('.header-utility-menu > button').click();
+        await page.locator('.language-switch').getByRole('button', {
+          name: language === 'ja' ? '日本語' : /^EN\b/, exact: true,
+        }).click();
+        await page.keyboard.press('Escape');
+        for (const width of [900, 768]) {
+          await page.setViewportSize({ width, height: 720 });
+          await page.locator('#ribbon-tab-home').click();
+          await expect(page.locator('.cost-indicator')).toContainText('$360.00/mo');
+          await expect(page.locator('.pricing-scenario-launch')).toBeVisible();
+          await expect(page.locator('.pricing-mode-btn')).toHaveCount(2);
+          const stamp = page.locator('.pricing-freshness');
+          const date = stamp.locator('.pricing-freshness-label');
+          const age = stamp.locator('.pricing-freshness-age');
+          await expect(date).toBeVisible();
+          await expect(age).toContainText(language === 'ja' ? '53日前' : '53 days old');
+          const [dateBounds, ageBounds, stampBounds, headerBounds] = await Promise.all(
+            [date, age, stamp, page.locator('.app-header')].map(locator => locator.boundingBox()),
+          );
+          expect(ageBounds!.y).toBeGreaterThanOrEqual(dateBounds!.y + dateBounds!.height);
+          expect(stampBounds!.height).toBeLessThanOrEqual(44);
+          expect(headerBounds!.height).toBeLessThanOrEqual(220);
+          expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
+          const controls = await page.locator(
+            '.ribbon-command-strip .btn:visible, .ribbon-command-strip .region-selector-button:visible, .ribbon-command-strip .cost-visibility-toggle:visible',
+          ).evaluateAll(elements => elements.map(element => {
+            const bounds = element.getBoundingClientRect();
+            return { width: bounds.width, height: bounds.height };
+          }));
+          expect(controls.length).toBeGreaterThanOrEqual(8);
+          expect(controls.every(control => control.width >= 44 && control.height >= 44)).toBe(true);
+          if (width === 768) await expectNoWcagViolations(page, '.pricing-freshness');
+        }
+      }
+      await page.getByRole('button', { name: 'Switch to Dark Mode', exact: true }).click();
+      await expectNoWcagViolations(page, '.pricing-freshness');
+    });
+  });
+}
 
 test('workflow sidebar follows workspace bounds and defaults closed on narrow screens', async ({ page }) => {
   const base = interactionCloudDocument();
