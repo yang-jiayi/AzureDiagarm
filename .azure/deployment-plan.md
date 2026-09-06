@@ -1,6 +1,6 @@
 # Azure Deployment Plan
 
-> **Status:** Validated
+> **Status:** Deployed
 
 Generated: 2026-09-06
 
@@ -52,10 +52,10 @@ alone is not application validation.
 
 Target the existing `azurediagarm-app` in `AzureDiagarm_rg`, West US, at
 `https://azurediagarm.mssql.biz`, using the same configured subscription and
-GitHub OIDC identity as the successful PR #63 rollout. Production currently
-serves main commit `1521996ba15ca4cbf94e5d186db586090be74e5d`, revision
-`azurediagarm-app--g34002727786-1`. Preserve that healthy application revision
-as this release's rollback baseline.
+GitHub OIDC identity as the successful PR #63 rollout. Before this release,
+production served main commit `1521996ba15ca4cbf94e5d186db586090be74e5d`, revision
+`azurediagarm-app--g34002727786-1`. That revision remains the rollback baseline.
+The completed deployment is recorded in Section 9.
 
 Keep public deployment mode, Easy Auth, application access control, shared Table
 budget accounting and origin isolation enabled. Existing administrator access
@@ -68,8 +68,9 @@ The user-approved application release is validated against source commit
 `95968aff1777e501756888f54797d497929e6acf`. Complete Linux application, browser,
 standalone/combined-runtime and required CodeQL checks now pass, together with
 the recorded native Office and Azure preflight evidence. The subsequent
-documentation-only validation record must satisfy the same protected-branch
-checks before merge. Historical records below do not authorize this candidate.
+documentation-only validation record `bf03d16` passed the same protected-branch
+checks before PR #66 merged. Historical records below do not authorize this
+candidate.
 
 - [x] Preserve existing production and local work; publish only completed owned checkpoints.
 - [x] Complete scoped security, maintenance, graph, design and performance assessments.
@@ -153,11 +154,52 @@ HTTP 200 headers or incomplete output are not proof of architecture generation.
 
 ## 8. Rollback and Data Safety
 
-Retain the current healthy PR #63 application image/revision before rollout.
+Retain the previous healthy PR #63 application image/revision.
 Use the established guarded rollback path only for this deployment's failure;
 do not rerun an old pre-guard workflow or alter model/auth/budget policy as a
 shortcut. No stored architecture or feedback records are intentionally deleted
 or rewritten by this release.
+
+## 9. Deployment Result
+
+The application release completed successfully on 2026-09-06. This operational
+receipt is recorded after deployment; the running application source remains
+the immutable main commit below.
+
+| Item | Result |
+| --- | --- |
+| Application | https://azurediagarm.mssql.biz |
+| GitHub release | [PR #66](https://github.com/yang-jiayi/AzureDiagarm/pull/66), merged at 09:30:59 UTC |
+| Main source | `a72e702f4dce07781b3a68a246fa6359fbe58d42`; tree identical to checked head `bf03d16816592a162d195a677dbcd53b1779715a` |
+| Production workflow | [34024872580](https://github.com/yang-jiayi/AzureDiagarm/actions/runs/34024872580), ordinary main push, successful at 09:59:53 UTC |
+| Final record / main CI | `34024198379` passes on `bf03d16`; main CI `34024872548` and CodeQL `34024872397` pass on `a72e702` |
+| Active revision | `azurediagarm-app--g34024872580-1`, Running/Succeeded, latest ready revision, 100% production traffic |
+| Runtime image | `sqlserverevoacr.azurecr.io/azurediagarm/app:u71ef7e82e354-ca72e702f4dce-20260906094914` |
+| Immutable image digest | `sha256:7fd78f7cc8d2e698d0ddf046d22f3775aa600d3292cdca439ef040fe57f26684`; registry metadata matches the production build output |
+| Frontend / Worker | Production build includes `elk-worker.min-DGCccKuH.js`; the build uses genuine Astra deployment settings. No unauthenticated access to protected frontend assets is claimed |
+| Runtime safeguards | Public mode, Easy Auth, access control and shared Table budget enabled; MCP and Azure import disabled; 1-2 replicas retained |
+| Live HTTP boundaries | `/healthz` returns 200 and `ok`, with noindex and same-origin Worker CSP; root, access API and MCP return 401 anonymously; direct origin returns 403 even with a spoofed Front Door header |
+| Genuine model | `gpt-6-astra` v2026-09-03 remains Succeeded at unchanged GlobalStandard 50 capacity; no new inference request was made for these post-deployment checks |
+| Rollback baseline | Previous `azurediagarm-app--g34002727786-1` and its `c1521996ba15c` image remain retained; revision is inactive, not deleted |
+
+### Live Role Verification
+
+Read-only `az containerapp show`, `az role assignment list --assignee ... --scope ...`
+and `az acr manifest show-metadata` confirm the existing user-assigned identity
+and these resource-scoped permissions after deployment:
+
+| Operation | Live role and scope |
+| --- | --- |
+| Pull application image | AcrPull on the existing registry |
+| Read/write diagrams | Storage Blob Data Contributor on the existing storage account |
+| Shared budget/access/rate-limit data | Storage Table Data Contributor on that storage account |
+| OpenAI inference authorization | Cognitive Services OpenAI User on the existing OpenAI account |
+
+No role grants, identity changes, quota refunds/increases, model downgrades or
+authentication bypasses were introduced. The meaningful Astra generation
+incident remains the explicitly disclosed external blocker in Section 7;
+successful application deployment and model provisioning do not establish its
+recovery.
 
 ---
 
