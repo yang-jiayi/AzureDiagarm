@@ -82,12 +82,17 @@ try {
             }
             if ($file.Name -eq 'simple-light.pptx') {
                 $slide = $presentation.Slides.Item(1)
+                foreach ($id in @('api', 'meta-api', 'label-api')) {
+                    if ($slide.Shapes.Item("node-$id").Type -ne 6) {
+                        throw "The role-like ID $id lost its independent native service group."
+                    }
+                }
                 $connector = $slide.Shapes.Item('connector-e1')
                 if ($connector.ConnectorFormat.BeginConnected -ne -1 -or $connector.ConnectorFormat.EndConnected -ne -1) {
                     throw 'The native connector lost its shape attachments.'
                 }
                 $rightBefore = $connector.Left + $connector.Width
-                $card = $slide.Shapes.Item('node-b')
+                $card = $slide.Shapes.Item('node-meta-api')
                 $card.Left += 36
                 $card.Top += 18
                 Start-Sleep -Milliseconds 150
