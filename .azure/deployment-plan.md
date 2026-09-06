@@ -1,6 +1,6 @@
 # Azure Deployment Plan
 
-> **Status:** Ready for Validation
+> **Status:** Validated
 
 Generated: 2026-09-05
 
@@ -105,8 +105,13 @@ font-metric headroom without changing controls or clipping content. Linux now
 passes the complete critical/visual and workspace harnesses. Its remaining AI/UI
 failure resolved a mocked response before an external prop edit had committed;
 that fixture now explicitly commits those edits while retaining asynchronous
-application callbacks. All 85 local AI/UI cases pass. Fresh complete CI remains
-pending; this status does not authorize deployment.
+application callbacks. The complete Linux gate now passes: all 86 critical and
+visual cases, the workspace harness, all 85 AI/UI cases, all 16 inspector/review
+cases, and modal focus. App, MCP, full-container readiness, and all three CodeQL
+checks also pass on `1c84d16535dd374be526a89275a8588638cb5ce7`. The official
+Azure checks and structured infrastructure preview were rerun successfully.
+The validation-record commit must also satisfy the unchanged protected-branch
+checks before the permitted PR merge triggers production deployment.
 
 - [x] Identify repository, existing workflow, and application boundaries.
 - [x] Preserve the unrelated historical deployment plan below.
@@ -120,11 +125,11 @@ pending; this status does not authorize deployment.
 - [x] Verify Astra inference capabilities through the authorized runtime identity.
 - [x] Complete and verify build/runtime model configuration and persisted-settings migration.
 - [x] Confirm local source is current with the remote branch.
-- [ ] Complete release validation and record evidence.
+- [x] Complete release validation and record evidence.
 - [x] Core Azure validation: CLI/authentication, compile the actual model template, ARM validation, and what-if.
-- [ ] Build the final container using a Docker-capable builder and inspect its context.
+- [x] Build the final container using a Docker-capable builder and inspect its context.
 - [x] Review applicable Azure policy constraints and unchanged runtime role scopes; record existing account-level audit findings separately.
-- [ ] Pass complete application, server, MCP, browser, and required GitHub checks.
+- [x] Pass complete application, server, MCP, browser, and required GitHub checks.
 
 ## 6. Deployment Steps
 
@@ -172,12 +177,14 @@ expected frontend assets.
 | Supplemental browser safeguards | Current `test:workspace:browser`, all 85 AI/UI cases, all 16 inspector/review cases, and modal-focus safeguards pass. Regeneration proves retained node/workflow IDs, exactly three genuine Astra requests, snapshot-failure retry without duplicate generation, undo, pricing, and review persistence | 2026-09-05 |
 | Tablet header headroom | Linux reported 221.96875px against the existing 220px bound for JA/EN populated export headers at 768px. A tablet-only row-gap adjustment preserves all 42 control dimensions, passes all 36 local responsive-header cases and both WCAG audits, and passes 17 canonical/contrast cases. Run 34000522676 confirms the full Linux workspace harness passes with maximum header height 213.1875px. Desktop/mobile styles and every threshold remain unchanged | 2026-09-06 |
 | Committed AI baseline fixture | Run 34000522676 passes all 86 critical/visual cases and the workspace harness, but its AI/UI suite reaches 84/85 because an external `root.render` edit had not committed before the mocked response resolved. Only the two edited-baseline arrangements now use explicit `flushSync`; ordinary application callbacks and asynchronous race/cancellation behavior remain unchanged. `npx tsx --test tests\aiGenerationUI.browser.ts` passes all 85 cases; focused ESLint and `npm run typecheck:scripts` pass. Complete Linux confirmation remains required | 2026-09-06 |
+| Final complete Linux application gates | CI run 34001474402 succeeds on `1c84d16535dd374be526a89275a8588638cb5ce7`: Vite/core/Office/server tests, patched MCP audit/build/tests, complete runtime image and API/MCP readiness, all 86 critical/visual cases, workspace browser safeguards, all 85 AI/UI cases, all 16 inspector/review cases, and modal focus. Browser job 101400994008 completes every supplemental command; maximum responsive header height is 213.1875px. No timeout, screenshot threshold, or correctness assertion was weakened | 2026-09-06 00:40 UTC |
+| Final required CodeQL checks | Run 34001472961 succeeds on the same release head for actions, JavaScript/TypeScript, and Python. All six required checks are successful; the existing PR-only owner authorization remains available without changing branch protections | 2026-09-06 |
 | Runtime dependency patches | Patched MCP `fast-uri` to 3.1.7 and `qs` to 6.16.0. API Express 4/body-parser restrict `qs` to the vulnerable 6.15 line, so a compatible `qs` override selects 6.16.0 without upgrading Express's major version. Both production audits now report zero vulnerabilities; patched MCP 65 and API 120 tests pass, with generated MCP assets unchanged | 2026-09-05 |
 | Deployment log privacy | Created the `ACCESS_ADMIN_EMAIL` Actions secret from the exact existing administrator value through stdin, without a trailing newline or command-line disclosure. Workflow references use the secret and a quoted environment variable; the administrator and runtime value remain unchanged | 2026-09-05 |
 | Final source review | Read-only review reports no significant findings in normalized cloud baselines, canonical serialization, and their save/copy/conflict interactions. Final lint and script type checks pass; nine deployment workflow security contracts pass | 2026-09-05 |
 | Remote source currency | Refreshed `origin/main` remains `c885477c799a35a044a73ac05b230aeab7160f95`; no unresolved index entries or whitespace errors | 2026-09-05 |
 | Refreshed live preflight | Existing healthy revision and rollback image remain unchanged. Astra is Succeeded at the verified model/version and capacity. Without following authentication redirects, public health returns 200, protected root/API/MCP return 401, and the direct origin returns 403. Browser-style requests redirect to Microsoft sign-in, not anonymous API JSON | 2026-09-05 |
-| Final official Azure revalidation | The official PowerShell helper again passes CLI/authentication, Bicep compilation, ARM validation, and what-if for the actual Astra template. Structured preview confirms 15 Ignore and one Modify, with only service-reported `properties.currentCapacity` omitted; zero resource creates/deletes. Generated compilation output was removed | 2026-09-05 |
+| Final official Azure revalidation | `validate-deployment.ps1 -Scope group -ResourceGroup AzureDiagarm_rg -Template infra\gpt6-astra.bicep` with the existing subscription and non-secret account/capacity parameter file again passes CLI/authentication, Bicep compilation, ARM validation, and what-if. A fresh `az deployment group what-if --no-pretty-print` structured preview confirms 15 Ignore and one Modify, with only service-reported `properties.currentCapacity` omitted; zero resource creates/deletes. Generated compilation output was removed | 2026-09-06 |
 
 Policy Insights reports no evaluated rows for the existing Container App; an
 empty result is not proof of estate-wide compliance. The existing OpenAI account
@@ -188,11 +195,14 @@ Do not silently change its shared connectivity or create policy exemptions to
 clear those findings; they require a separately planned network migration.
 No subscription-wide compliance claim is made.
 
-Integrated-source static validation and the Astra build are complete; full
-browser and container/required CI validation remain pending. Historical evidence
-below does not authorize this release. The operator's direct AI data-plane call lacks the
-required inference permission; model checks instead used the existing authorized
-runtime identity, without granting new roles or changing network controls.
+Integrated-source, genuine Astra, browser, complete-container, required GitHub,
+and official Azure validation are complete. Evidence covers the application at
+`1c84d16535dd374be526a89275a8588638cb5ce7`; the subsequent documentation-only
+validation record must finish the same required checks before merge. Historical
+evidence below does not authorize this release. The operator's direct AI
+data-plane call lacks the required inference permission; model checks instead
+used the existing authorized runtime identity, without granting new roles or
+changing network controls.
 
 ## 8. Rollback and Data Safety
 
