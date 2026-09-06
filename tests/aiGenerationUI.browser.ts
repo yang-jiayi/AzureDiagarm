@@ -81,6 +81,7 @@ before(async () => {
       contents: `
         import React from 'react';
         import {createRoot} from 'react-dom/client';
+        import {flushSync} from 'react-dom';
         import Generator from './src/components/AIArchitectureGenerator';
         import Chat from './src/components/ArchitectureChatPanel';
         import Review from './src/components/AIChangeReview';
@@ -153,6 +154,7 @@ before(async () => {
           } else root.render(<Generator onGenerate={apply} currentArchitecture={currentArchitecture}
             onReferenceArchitecture={()=>h.references++} onBlueprintArchitecture={()=>h.blueprints++}/>);
         };
+        h.commitRender = () => flushSync(h.render);
         h.unmount = () => root.unmount();
         h.render();
       `, resolveDir: process.cwd(), loader: 'tsx',
@@ -447,7 +449,7 @@ test('generator rejects an edited baseline but ignores selection and measurement
   await page.evaluate(() => {
     const h = (window as any).h;
     h.nodes = h.nodes.map((node: any) => ({ ...node, selected: true, width: 180, height: 80 }));
-    h.render();
+    h.commitRender();
   });
   await finish(page, 'topology');
   await page.getByRole('button', { name: 'Retry generation' }).waitFor();
@@ -456,7 +458,7 @@ test('generator rejects an edited baseline but ignores selection and measurement
   await page.evaluate(() => {
     const h = (window as any).h;
     h.nodes = h.nodes.map((node: any) => ({ ...node, data: { ...node.data, label: 'Manual edit' } }));
-    h.render();
+    h.commitRender();
   });
   await finish(page, 'topology');
   await page.getByRole('alert').filter({ hasText: 'diagram changed' }).waitFor();
