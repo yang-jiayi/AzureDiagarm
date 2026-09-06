@@ -1,6 +1,6 @@
 # Azure Deployment Plan
 
-> **Status:** Validated
+> **Status:** Deployed
 
 Generated: 2026-09-05
 
@@ -70,10 +70,10 @@ deployments remain intact for rollback. Wire
 and runtime allowlist; migrate previous managed-model selections only after
 the new deployment is configured. Preserve separate BYO settings.
 
-The existing `ACCESS_CONTROL_ENABLED=false` configuration must become `true`
+The former `ACCESS_CONTROL_ENABLED=false` configuration is now `true`
 for the new public-mode safeguards. The configured application administrator
-matches the operator and remains allowed. The application email allowlist is
-currently empty: Entra group assignment alone does not authorize other users
+matches the operator and remains allowed. The application email allowlist was
+empty at preflight: Entra group assignment alone does not authorize other users
 through the application's allowlist. Treat this access-policy transition
 explicitly rather than claiming all prior users retain access.
 The unchanged administrator value is now stored in the like-named Actions
@@ -110,8 +110,10 @@ visual cases, the workspace harness, all 85 AI/UI cases, all 16 inspector/review
 cases, and modal focus. App, MCP, full-container readiness, and all three CodeQL
 checks also pass on `1c84d16535dd374be526a89275a8588638cb5ce7`. The official
 Azure checks and structured infrastructure preview were rerun successfully.
-The validation-record commit must also satisfy the unchanged protected-branch
-checks before the permitted PR merge triggers production deployment.
+The validation-record commit `fc67220` also passed all six unchanged required
+checks. PR #63 merged as `1521996ba15ca4cbf94e5d186db586090be74e5d`, and its
+existing main-push production workflow completed successfully. The live release
+and actual Astra proxy are verified; deployment evidence is recorded below.
 
 - [x] Identify repository, existing workflow, and application boundaries.
 - [x] Preserve the unrelated historical deployment plan below.
@@ -196,10 +198,11 @@ clear those findings; they require a separately planned network migration.
 No subscription-wide compliance claim is made.
 
 Integrated-source, genuine Astra, browser, complete-container, required GitHub,
-and official Azure validation are complete. Evidence covers the application at
-`1c84d16535dd374be526a89275a8588638cb5ce7`; the subsequent documentation-only
-validation record must finish the same required checks before merge. Historical
-evidence below does not authorize this release. The operator's direct AI
+and official Azure validation are complete. Both application head
+`1c84d16535dd374be526a89275a8588638cb5ce7` and validation record `fc67220`
+passed all six required checks before merge. The resulting main commit has the
+identical validated tree. Historical evidence below does not authorize this
+release. The operator's direct AI
 data-plane call lacks the required inference permission; model checks instead
 used the existing authorized runtime identity, without granting new roles or
 changing network controls.
@@ -211,6 +214,34 @@ origin restrictions to make deployment succeed. Determine the effect of feedback
 retention on existing records before enabling any irreversible deletion.
 The preflight found no existing feedback records to delete. New feedback remains
 subject to the explicitly documented retention policy.
+
+## 9. Deployment Verification - 2026-09-06
+
+This post-deployment record is published on the release branch. Production and
+`main` remain at the exact deployed application commit; publishing this record
+does not initiate a second deployment or an upstream synchronization.
+
+| Check | Result |
+| --- | --- |
+| GitHub publication | [PR #63](https://github.com/yang-jiayi/AzureDiagarm/pull/63) merged as `1521996ba15ca4cbf94e5d186db586090be74e5d`; the merged tree matches the validated release exactly |
+| Final protected-branch gates | CI 34002209746 and CodeQL 34002207798 pass all six required checks on `fc67220`. Main CI 34002727770 also succeeds |
+| Production workflow | [Run 34002727786](https://github.com/yang-jiayi/AzureDiagarm/actions/runs/34002727786) succeeds, including image publication, revision readiness, Front Door cache purge, production boundary checks, and notification. No rollback or manual upstream synchronization occurred |
+| Production URL | https://azurediagarm.mssql.biz |
+| Live source and traffic | `CUSTOMIZATION_COMMIT=1521996ba15ca4cbf94e5d186db586090be74e5d`; `azurediagarm-app--g34002727786-1` is Provisioned, Healthy, Running, and receives 100% of traffic |
+| Published image | `sqlserverevoacr.azurecr.io/azurediagarm/app:u71ef7e82e354-c1521996ba15c-20260906011621` |
+| Immutable image digest | `sha256:42f3c20252d6ad9cc7cbf5d8eb574ce0fee486b3fddd82d93192ef4a034b0877` |
+| Public boundaries | No-follow GETs return 200 for health and 401 for root, runtime configuration, access identity, AI budget, and MCP. The direct origin returns 403 both without and with a valid Front Door identifier header |
+| Private API readiness and access | Replica-pinned verification confirms exact `ready` output, anonymous Node API rejection independently of nginx, and the unchanged administrator's authorized access. No administrator address or credential is logged |
+| Genuine Astra and shared budget | Actual `/api/openai` Responses v1 inference returns `model=gpt-6-astra` and the requested JSON. Azure managed identity is used without a static OpenAI key. The Table-backed budget settles 27 actual tokens and releases its reservation and concurrency lease |
+| Shipped frontend | `index-CQbUIexu.js` contains the actual compiled `"gpt-6-astra":"gpt-6-astra"` deployment mapping; frontend requests use `/api/openai`. Vite folds endpoint-presence Boolean checks, so a literal backend URL is not an appropriate client-configuration assertion |
+| Preserved MCP setting | Old and new production revisions both have `MCP_ENABLED=false` with no internal token. The private probe now explicitly preserves this opt-out; no MCP service was enabled to satisfy an incorrect diagnostic assumption |
+| Live role verification | `az role assignment list --assignee <existing-runtime-principal> --all --include-inherited` confirms unconditional `AcrPull` on the existing registry, `Storage Table Data Contributor` on the existing storage account, and `Cognitive Services OpenAI User` on the existing OpenAI account. The deployed runtime client identity is unchanged |
+| Rollback and cleanup | Previous revision `azurediagarm-app--g32490277791-1` remains available with the recorded rollback image. Replica-pinned diagnostic payloads are uniquely owned, hash-checked, and removed before execution; failed attempts also completed ownership-checked cleanup |
+
+The final replica-pinned probe reports `RELEASE_RUNTIME_SMOKE_COMPLETE`.
+Non-administrator users still require explicit application allowlist entries.
+Save any work in an older open tab and reload to load the new UI and the
+availability-aware managed-model migration.
 
 ---
 
