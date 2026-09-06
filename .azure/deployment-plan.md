@@ -1,6 +1,6 @@
 # Azure Deployment Plan
 
-> **Status:** Approved
+> **Status:** Validated
 
 Generated: 2026-09-06
 
@@ -64,23 +64,26 @@ Secrets and operator identity values must not be copied into this plan.
 
 ## 5. Preparation and Validation Steps
 
-The user-approved release scope is prepared, but current release validation is
-not complete. The historical Validated record below does not authorize this
-candidate.
+The user-approved application release is validated against source commit
+`95968aff1777e501756888f54797d497929e6acf`. Complete Linux application, browser,
+standalone/combined-runtime and required CodeQL checks now pass, together with
+the recorded native Office and Azure preflight evidence. The subsequent
+documentation-only validation record must satisfy the same protected-branch
+checks before merge. Historical records below do not authorize this candidate.
 
 - [x] Preserve existing production and local work; publish only completed owned checkpoints.
 - [x] Complete scoped security, maintenance, graph, design and performance assessments.
 - [x] Publish server, release/packaging, graph/IaC and compact-UI checkpoints in draft PR #66.
-- [ ] All validation checks pass.
+- [x] All validation checks pass.
   - [x] Core AZCLI validation: authenticated CLI, compile the unchanged scoped template, ARM validation and structured what-if.
-  - [ ] Docker build/context: current-source standalone MCP and complete application images, generated inputs and runtime readiness.
+  - [x] Docker build/context: current-source standalone MCP and complete application images, generated inputs and runtime readiness.
   - [x] Azure policy validation: unchanged SKU/identity/network scope remains compatible with applicable constraints.
   - [x] Static role verification: existing account-scoped roles still match application operations; no widening is needed.
-  - [ ] Complete the populated JA/768x720 toolbar correction without raising the existing 220px bound.
+  - [x] Complete the populated JA/768x720 toolbar correction without raising the existing 220px bound.
   - [x] Complete real production Worker/CSP/parity/cancellation proof and controlled performance measurements.
   - [x] Complete AI client signal compatibility and final retry/cancellation/partial-output browser coverage.
   - [x] Generate current Office fixtures and exercise real PowerPoint opening, text bounds and connector movement.
-  - [ ] Pass the final integrated source, browser, runtime and all six required GitHub checks.
+  - [x] Pass the final integrated source, browser, runtime and all six required GitHub checks.
 
 ## 6. Deployment Steps
 
@@ -96,16 +99,20 @@ Save in-progress user work before requesting a browser reload.
 
 ## 7. Validation Proof
 
+Evidence timestamps on 2026-09-06 (UTC): Azure preflight log finalized at
+08:17:16, native PowerPoint log at 08:37:56, and the successful final source CI
+run completed at 09:07:37.
+
 | Check | Current result | Evidence |
 | --- | --- | --- |
 | Server diagnostics/cooldown checkpoint | Passed scoped proxy, budget and rate-limit regressions; no accounting/auth changes | `586e550` |
 | Maintenance checkpoint | Passed Linux core, standalone/complete runtime image builds and browser safeguards | `131ccc3`, CI `34012863530` |
 | Graph/IaC checkpoint | Passed integrated Linux source, Office/core, browser, MCP and runtime gates | `fd2f765`, CI `34015994681` |
-| Compact UI checkpoint | Main critical/visual cases and Vite/MCP/runtime pass; one populated workspace-header case still fails (238px vs unchanged 220px) | `ff4f138`, CI `34016824587` |
-| Populated UI correction | Dated pricing metadata shares the existing 44px row, recovering 47.219px of Japanese width. All 36 unchanged local combinations and 15 focused cases pass; the original Linux-only 238px failure still needs CI confirmation | Local checkpoint `cd1af5c`; no App JSX, control-size, snapshot or 220px-threshold changes |
+| Initial compact UI checkpoint | Main critical/visual cases and Vite/MCP/runtime passed, but one populated header failed at 238px vs 220px; corrected and confirmed in the next row | `ff4f138`, CI `34016824587` |
+| Populated UI correction | Dated pricing metadata shares the existing 44px row, recovering 47.219px of Japanese width. All 36 unchanged Linux combinations now pass, with maximum header 194.375px instead of the failing 238px. No App JSX, control-size, snapshot or 220px-threshold changes | `cd1af5c`; integrated candidate `c466b11`, CI `34022669317`, browser job `101457987210` |
 | AI client handoff | Signal compatibility and synthetic correlation fixtures are integrated; all 133 targeted units and the complete 93-case browser suite pass. All three Both cancellation cases run without AbortSignal.any, proving active request cancellation and no late output/fan-out | `npx tsx --test` over the six affected AI unit files; `npm run test:ai-ui`; scoped ESLint |
 | AI fixture integration | Full browser coverage exposed two obsolete assumptions: completed manifest scopes need not stay linked to cancellation, and a reasoning-capable Astra report includes its effort suffix. Fixtures now assert exact active-output cancellation, no extra dispatches, and the real reasoning-qualified report key | Seven focused regressions and then all 93 browser cases pass; production comparison/report behavior is unchanged |
-| Performance handoff | Production/CSP and cold-development browser cases each pass 6/6; strict ten-fixture Node/browser parity and all 18 warm output hashes match; source types/lint and 34 focused cases pass | Local checkpoint `c5d1194`; all 12 source hashes match the completed private performance report |
+| Performance handoff | Production/CSP and cold-development browser cases each pass 6/6; strict ten-fixture Node/browser parity and all 18 warm output hashes match; source types/lint and 34 focused cases pass | Published checkpoint `c5d1194`; all 12 source hashes match the original controlled private performance report |
 | Performance measurements | Paired synthetic desktop drag frame-gap p95 improves 70.9 to 50.7 ms at 80 nodes and 203.2 to 135.8 ms at 250 nodes. Warm Worker samples have no main-thread tasks of at least 50 ms. Some layout wall times increase; no small-diagram, 60fps or field-INP claim | Both run orders, four valid 24-transform runs per size/mode; same UI and unchanged layout output |
 | Core Azure consistency | Official helper passes installed/authenticated CLI, Bicep compilation, group ARM validation and what-if. A structured preview has 15 Ignore and one Modify, only omitted service-reported `properties.currentCapacity`; zero resource creates/deletes and no template apply | `validate-deployment.ps1 -Scope group -ResourceGroup AzureDiagarm_rg`, using a hash-matched private copy of `infra/gpt6-astra.bicep`, current subscription and account/capacity parameter file; separate `az deployment group what-if --no-pretty-print` |
 | Actual Astra and runtime preflight | Genuine `gpt-6-astra` v2026-09-03 remains Succeeded at GlobalStandard 50. Current application revision is Running/Succeeded at 1-2 replicas with public/Easy Auth/access control/Table budget enabled and MCP/Azure import disabled | Read-only `az account show`, `az cognitiveservices account deployment show` and an allowlisted `az containerapp show` projection |
@@ -114,7 +121,11 @@ Save in-progress user work before requesting a browser reload.
 | Fresh browser/native Office | Seven fixture files plus three actual UI exports generated from current source. PowerPoint opens/renders all six presentations (16 slides), fits 372 native text blocks, and retains the three role-like-ID groups and connector movement | `npm run test:exports:browser` with an isolated artifact directory, then `npm run test:exports:desktop`; representative rendered slides visually reviewed |
 | Current source build/types | Fresh integrated Vite/application build, script/test type check and final scoped lint pass | `npm run build`, `npm run typecheck:scripts`, scoped `npx eslint` |
 | Final security follow-up | No reportable vulnerabilities in reviewed Worker/Vite/App performance and small AI signal-compatibility changes | Existing read-only security specialist; no complete-security guarantee |
-| Final required GitHub/runtime checks | Pending for the completed integrated candidate | No full current-release completion claim |
+| Integrated Linux browser checks | All 100 critical/visual/Worker cases, 36 populated workspace combinations, 93 AI/UI cases, 16 inspector/review cases and modal safeguards pass | Candidate `c466b11`, CI `34022669317`; all three CodeQL analyses and standalone MCP image also pass |
+| Provenance fixture integration | The first run stopped at 930/932 units because its transport mock omitted the new budget-classifier export. The fixture now re-exports the real classifier rather than replacing retry semantics; all 67 affected cases, scoped lint and the complete Linux rerun pass | Follow-up `95968af`; CI `34023258712` succeeds |
+| Final integrated Linux/runtime checks | All application/core/Office/workspace/server gates, standalone MCP image, complete runtime image and runtime readiness pass. All 100 critical/visual/Worker and supplemental browser safeguards pass | CI `34023258712`, exact source `95968aff1777e501756888f54797d497929e6acf`; Vite job `101459614086`, MCP job `101459614107`, browser job `101459614133` |
+| Final required GitHub checks | All six protected-main contexts are successful and completed on that same source head: Vite, MCP, critical browser flows and actions/JavaScript-TypeScript/Python CodeQL | Fresh `gh pr view 66` and `gh run view 34023258712` results; existing named-user PR-only bypass confirmed without changing rules |
+| Existing-app pre-deployment RBAC | The live Container App and registry use the same existing user-assigned identity; its registry-scoped AcrPull assignment is present. Reuse the existing environment and image-deployment workflow, not an AZD/placeholder provisioning flow | Read-only `az containerapp show` and `az role assignment list`; no identity, role or environment changes |
 
 Native Visio is not installed on this machine. Browser VSDX/package/relationship
 coverage is not represented as native Visio execution.
