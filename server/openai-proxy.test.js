@@ -494,6 +494,32 @@ test('OpenAI proxy classifies throttling and service failures', async (t) => {
   }
 });
 
+test('OpenAI proxy preserves provider cooldowns supplied in milliseconds', async (t) => {
+  const cases = [
+    { headers: { 'retry-after-ms': '1500' }, expected: '2' },
+    { headers: { 'x-ms-retry-after-ms': '250' }, expected: '1' },
+    { headers: { 'Retry-After': '17', 'retry-after-ms': '1500' }, expected: '17' },
+    { headers: { 'retry-after-ms': 'not-a-duration' }, expected: null },
+    { headers: { 'retry-after-ms': '-1' }, expected: null },
+  ];
+  let index = 0;
+  const server = await startServer({
+    endpoint: 'https://example.openai.azure.com/', apiKey: 'test-key',
+    allowedDeployments: new Set(['gpt-5.6-sol']), logger: silentLogger,
+    fetchImpl: async () => jsonResponse(429, { error: { code: 'RateLimitReached' } }, cases[index++].headers),
+  });
+  t.after(server.close);
+  for (const entry of cases) {
+    const response = await fetch(`${server.baseUrl}/api/openai`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(requestBody()),
+    });
+    assert.equal(response.status, 429);
+    assert.equal(response.headers.get('retry-after'), entry.expected);
+    assert.equal((await response.json()).error.code, 'azure_openai_rate_limited');
+  }
+});
+
 test('OpenAI proxy rejects malformed bodies and misleading non-JSON success responses', async (t) => {
   const server = await startServer({
     endpoint: 'https://example.openai.azure.com/',
@@ -791,9 +817,11 @@ test('OpenAI proxy enforces Azure OpenAI rate limit per client key', async (t) =
 test('shared rate limits reject before token reservation or upstream dispatch', async (t) => {
   let reservations = 0;
   let calls = 0;
+  const events = [];
   const server = await startServer({
     endpoint: 'https://example.openai.azure.com/', apiKey: 'test',
-    allowedDeployments: new Set(['gpt-5.6-sol']), logger: silentLogger,
+    allowedDeployments: new Set(['gpt-5.6-sol']),
+    logger: { warn(message) { events.push(message); } },
     consumeRateLimit: async () => 5,
     budget: { async reserve() { reservations++; } },
     fetchImpl: async () => { calls++; return jsonResponse(200, {}); },
@@ -804,8 +832,57 @@ test('shared rate limits reject before token reservation or upstream dispatch', 
   });
   assert.equal(response.status, 429);
   assert.equal(response.headers.get('Retry-After'), '5');
+  const payload = await response.json();
+  assert.equal(payload.error.code, 'proxy_rate_limit_exceeded');
+  const event = JSON.parse(events[0]?.replace('[openai-proxy] ', '') || '{}');
+  assert.equal(event.event, 'proxy_rate_limit_exceeded');
+  assert.equal(event.requestId, payload.error.requestId);
+  assert.equal(event.status, 429);
+  assert.equal(event.retryAfterSeconds, 5);
+  assert.doesNotMatch(events.join('\n'), /test prompt|test-key|client-supplied-model/);
   assert.equal(reservations, 0);
   assert.equal(calls, 0);
+});
+
+test('provider failures followed by exhausted budget remain distinguishable and privately traceable', async (t) => {
+  const events = [];
+  let calls = 0;
+  const budget = createBudgetManager({ store: new MemoryBudgetStore(), dailyTokens: 50_000 });
+  const server = await startServer({
+    endpoint: 'https://example.openai.azure.com/', apiKey: 'private-test-key',
+    allowedDeployments: new Set(['gpt-5.6-sol']), budget,
+    logger: {
+      error(message) { events.push(message); },
+      warn(message) { events.push(message); },
+    },
+    fetchImpl: async () => {
+      calls++;
+      return jsonResponse(500, { error: { code: 'server_error', message: 'Private provider detail' } });
+    },
+  });
+  t.after(server.close);
+  const request = () => fetch(`${server.baseUrl}/api/openai`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(requestBody()),
+  });
+  const first = await request();
+  assert.equal(first.status, 500);
+  assert.equal((await first.json()).error.code, 'azure_openai_unavailable');
+  const second = await request();
+  assert.equal(second.status, 429);
+  const payload = await second.json();
+  assert.equal(payload.error.source, 'budget');
+  assert.equal(payload.error.code, 'ai_daily_budget_exceeded');
+  assert.equal(calls, 1, 'budget exhaustion must not dispatch another model request');
+  const event = events.map(message => JSON.parse(message.replace('[openai-proxy] ', '')))
+    .find(entry => entry.requestId === payload.error.requestId);
+  assert.equal(event?.event, 'ai_daily_budget_exceeded');
+  assert.equal(event?.status, 429);
+  assert.equal(event?.retryAfterSeconds, Number(second.headers.get('retry-after')));
+  assert.doesNotMatch(events.join('\n'), /test prompt|private-test-key|Private provider detail|local-development/);
+  const balance = await budget.status('local-development');
+  assert.ok(balance.usedTokens > 32_000, 'unknown upstream usage must not be silently refunded');
+  assert.equal(balance.concurrentRequests, 0);
 });
 
 test('unavailable shared token storage fails closed instead of showing a full or empty budget', async (t) => {
