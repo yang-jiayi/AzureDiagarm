@@ -43,6 +43,7 @@ function loadValidator() {
   validatorPromise ??= (async () => {
     const boundaries: Record<string, string> = {
       apiHelper: `
+        export { isAIBudgetError } from './src/services/apiHelper.ts';
         let content = '';
         export const setProviderContent = value => { content = value; };
         export const buildRequestBody = () => ({});
@@ -76,7 +77,7 @@ function loadValidator() {
             path: args.path.split('/').at(-1)!, namespace: 'boundary',
           }));
           builder.onLoad({ filter: /.*/, namespace: 'boundary' }, args => ({
-            contents: boundaries[args.path], loader: 'js',
+            contents: boundaries[args.path], loader: 'js', resolveDir: process.cwd(),
           }));
         },
       }],
