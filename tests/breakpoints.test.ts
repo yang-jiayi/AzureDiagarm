@@ -26,6 +26,7 @@ test('semantic media queries use the canonical responsive boundaries', () => {
     shortHeight: 600,
   });
   assert.equal(MEDIA_QUERIES.compact, '(max-width: 640px)');
+  assert.equal(MEDIA_QUERIES.coarsePointer, '(any-pointer: coarse)');
   assert.equal(
     MEDIA_QUERIES.compactOrShortWorkspace,
     '(max-width: 640px), (max-width: 1180px) and (max-height: 600px)',

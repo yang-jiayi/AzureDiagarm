@@ -17,6 +17,7 @@ const maxWidth = (value: number) => `(max-width: ${value}px)`;
 const maxHeight = (value: number) => `(max-height: ${value}px)`;
 
 export const MEDIA_QUERIES = {
+  coarsePointer: '(any-pointer: coarse)',
   micro: maxWidth(BREAKPOINTS.micro),
   compact: maxWidth(BREAKPOINTS.compact),
   narrow: maxWidth(BREAKPOINTS.narrow),

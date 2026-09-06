@@ -79,6 +79,7 @@ export default function WorkflowStepper({
     icon: LucideIcon;
     label: string;
     detail: string;
+    value?: string;
     action: () => void;
     disabled: boolean;
   }> = [
@@ -86,6 +87,9 @@ export default function WorkflowStepper({
       id: 'generate',
       icon: Sparkles,
       label: localize(language, { en: 'Generate', ja: '生成' }),
+      value: serviceCount > 0
+        ? localize(language, { en: `${serviceCount} services`, ja: `${serviceCount} サービス` })
+        : undefined,
       detail: serviceCount > 0
         ? localize(language, {
             en: `${serviceCount} services on canvas`,
@@ -99,6 +103,7 @@ export default function WorkflowStepper({
       id: 'validate',
       icon: ShieldCheck,
       label: localize(language, { en: 'Validate', ja: '検証' }),
+      value: validationScore !== null ? `WAF ${validationScore}` : undefined,
       detail: validationScore !== null
         ? localize(language, {
             en: `WAF score ${validationScore}`,
@@ -112,6 +117,7 @@ export default function WorkflowStepper({
       id: 'cost',
       icon: CircleDollarSign,
       label: localize(language, { en: 'Cost', ja: 'コスト' }),
+      value: hasCostData ? monthlyCostLabel : undefined,
       detail: hasCostData
         ? monthlyCostLabel
         : localize(language, { en: 'Waiting for pricing data', ja: '料金データを待機中' }),
@@ -179,9 +185,10 @@ export default function WorkflowStepper({
           className="workflow-stepper-collapse"
           onClick={onToggleCollapsed}
           aria-expanded="true"
+          aria-label={localize(language, { en: 'Collapse workflow', ja: 'ワークフローを縮小' })}
+          title={localize(language, { en: 'Collapse workflow', ja: 'ワークフローを縮小' })}
         >
           <ChevronUp size={16} aria-hidden="true" />
-          {localize(language, { en: 'Collapse workflow', ja: 'ワークフローを縮小' })}
         </button>
       )}
       <ol>
@@ -197,6 +204,7 @@ export default function WorkflowStepper({
                 disabled={step.disabled}
                 aria-current={status === 'current' || status === 'busy' ? 'step' : undefined}
                 aria-describedby={statusId}
+                title={`${step.label}: ${step.detail}`}
               >
                 <span className="workflow-stepper-index" aria-hidden="true">
                   {status === 'complete'
@@ -208,9 +216,9 @@ export default function WorkflowStepper({
                 <Icon className="workflow-stepper-icon" size={18} aria-hidden="true" />
                 <span className="workflow-stepper-copy">
                   <strong>{step.label}</strong>
-                  <small>{step.detail}</small>
+                  {step.value && <span className="workflow-stepper-value" aria-hidden="true">{step.value}</span>}
                 </span>
-                <span id={statusId} className="sr-only">{statusLabel(status)}</span>
+                <span id={statusId} className="sr-only">{statusLabel(status)}. {step.detail}</span>
               </button>
             </li>
           );

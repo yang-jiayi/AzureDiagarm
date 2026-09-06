@@ -388,6 +388,290 @@ test('primary application shell meets WCAG A and AA checks', async ({ page }) =>
   await expectNoWcagViolations(page);
 });
 
+test('More options restores Escape focus without stealing outside focus', async ({ page }) => {
+  await initializePage(page);
+  await page.route('**/api/**', async route => {
+    const access = new URL(route.request().url()).pathname === '/api/access/me';
+    await fulfillJson(route, access
+      ? { enabled: false, authenticated: false, allowed: true, isAdmin: false }
+      : { error: 'Not found' }, access ? 200 : 404);
+  });
+  await page.goto('/');
+
+  const trigger = page.getByRole('button', { name: 'More', exact: true });
+  const popover = page.getByRole('dialog', { name: 'More application options' });
+  await trigger.click();
+  await popover.getByRole('button', { name: 'Resume recent work' }).focus();
+  await page.keyboard.press('Escape');
+  await expect(popover).toBeHidden();
+  await expect(trigger).toBeFocused();
+  await expect(trigger).toHaveAttribute('aria-expanded', 'false');
+
+  await trigger.click();
+  const outside = page.locator('.search-box input');
+  await outside.focus();
+  await page.keyboard.press('Escape');
+  await expect(popover).toBeHidden();
+  await expect(outside).toBeFocused();
+});
+
+for (const touch of [false, true]) {
+  test.describe(`palette targets ${touch ? 'touch' : 'desktop'}`, () => {
+    test.use({
+      hasTouch: touch,
+      viewport: touch ? { width: 390, height: 844 } : { width: 1600, height: 900 },
+    });
+
+    test('separate insertion from organization with synchronized virtual rows', async ({ page }) => {
+      await initializePage(page);
+      await page.route('**/api/**', async route => {
+        const access = new URL(route.request().url()).pathname === '/api/access/me';
+        await fulfillJson(route, access
+          ? { enabled: false, authenticated: false, allowed: true, isAdmin: false }
+          : { error: 'Not found' }, access ? 200 : 404);
+      });
+      await page.goto('/');
+      if (touch) {
+        await page.getByRole('navigation', { name: 'Mobile command bar' })
+          .getByRole('button', { name: 'Services' }).click();
+      }
+      await expect(page.locator('.icon-image').first()).toBeVisible();
+
+      for (const layout of ['Grid view', 'List view']) {
+        await page.getByRole('button', { name: layout, exact: true }).click();
+        const viewport = page.locator('.virtualized-icons-viewport').first();
+        const card = viewport.locator('.icon-item').first();
+        const main = card.locator('.icon-item-main');
+        const actions = card.locator('.icon-workspace-action');
+        const mainBounds = await main.boundingBox();
+        expect(mainBounds).not.toBeNull();
+
+        for (const action of await actions.all()) {
+          const bounds = await action.boundingBox();
+          expect(bounds).not.toBeNull();
+          expect(bounds!.width).toBeGreaterThanOrEqual(touch ? 44 : 24);
+          expect(bounds!.height).toBeGreaterThanOrEqual(touch ? 44 : 24);
+          const overlapWidth = Math.min(bounds!.x + bounds!.width, mainBounds!.x + mainBounds!.width)
+            - Math.max(bounds!.x, mainBounds!.x);
+          const overlapHeight = Math.min(bounds!.y + bounds!.height, mainBounds!.y + mainBounds!.height)
+            - Math.max(bounds!.y, mainBounds!.y);
+          expect(overlapWidth <= 0 || overlapHeight <= 0).toBe(true);
+          expect(await action.evaluate(element => {
+            const rect = element.getBoundingClientRect();
+            return element.contains(document.elementFromPoint(
+              rect.x + rect.width / 2, rect.y + rect.height / 2,
+            ));
+          })).toBe(true);
+        }
+
+        const metrics = await viewport.evaluate(element => {
+          const window = element.querySelector<HTMLElement>('.virtualized-icons-window')!;
+          const cards = [...window.querySelectorAll<HTMLElement>('.icon-item')];
+          const columns = getComputedStyle(window).gridTemplateColumns.split(' ').length;
+          return {
+            rowHeight: Number.parseFloat(getComputedStyle(element).getPropertyValue('--palette-row-height')),
+            gap: Number.parseFloat(getComputedStyle(window).rowGap),
+            cardHeight: cards[0].getBoundingClientRect().height,
+            rowSpacing: cards[columns].offsetTop - cards[0].offsetTop,
+          };
+        });
+        expect(metrics.cardHeight + metrics.gap).toBe(metrics.rowHeight);
+        expect(metrics.rowSpacing).toBe(metrics.rowHeight);
+
+        const favorite = actions.first();
+        const wasFavorite = await favorite.getAttribute('aria-pressed') === 'true';
+        const favoriteBounds = (await favorite.boundingBox())!;
+        if (touch) {
+          await page.touchscreen.tap(
+            favoriteBounds.x + favoriteBounds.width / 2, favoriteBounds.y + favoriteBounds.height / 2,
+          );
+        } else {
+          await page.mouse.click(
+            favoriteBounds.x + favoriteBounds.width / 2, favoriteBounds.y + favoriteBounds.height / 2,
+          );
+        }
+        await expect(favorite).toHaveAttribute('aria-pressed', String(!wasFavorite));
+        await expect(page.locator('.react-flow__node')).toHaveCount(0);
+
+        const collectionBounds = (await actions.last().boundingBox())!;
+        if (touch) {
+          await page.touchscreen.tap(
+            collectionBounds.x + collectionBounds.width / 2, collectionBounds.y + collectionBounds.height / 2,
+          );
+        } else {
+          await page.mouse.click(
+            collectionBounds.x + collectionBounds.width / 2, collectionBounds.y + collectionBounds.height / 2,
+          );
+        }
+        const collection = page.locator('.collection-assignment-panel');
+        await expect(collection).toBeVisible();
+        await expect(page.locator('.react-flow__node')).toHaveCount(0);
+        await collection.getByRole('button', { name: 'Close', exact: true }).click();
+
+        const results = await new AxeBuilder({ page })
+          .include('.virtualized-icons-viewport')
+          .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'])
+          .analyze();
+        expect(results.violations).toEqual([]);
+      }
+
+      const addService = page.locator('.icon-item-main').first();
+      const addBounds = (await addService.boundingBox())!;
+      if (touch) {
+        await page.touchscreen.tap(addBounds.x + addBounds.width / 2, addBounds.y + addBounds.height / 2);
+      } else {
+        await page.mouse.click(addBounds.x + addBounds.width / 2, addBounds.y + addBounds.height / 2);
+      }
+      await expect(page.locator('.react-flow__node')).toHaveCount(1);
+    });
+  });
+}
+
+test('cloud empty and recovery guidance keeps readable theme contrast', async ({ page }) => {
+  await initializePage(page);
+  let failList = false;
+  await page.route('**/api/**', async route => {
+    const path = new URL(route.request().url()).pathname;
+    if (path === '/api/access/me') {
+      await fulfillJson(route, {
+        enabled: false, authenticated: true, allowed: true, isAdmin: false,
+        email: 'owner@example.com',
+      });
+      return;
+    }
+    if (path === '/api/diagrams' && route.request().method() === 'GET') {
+      await fulfillJson(route, failList
+        ? { error: 'Cloud diagrams are temporarily unavailable.' }
+        : { documents: [] }, failList ? 503 : 200);
+      return;
+    }
+    await fulfillJson(route, { error: 'Not found' }, 404);
+  });
+  await page.goto('/');
+  await page.locator('.document-status').click();
+  const modal = page.getByRole('dialog', { name: 'Cloud workspace' });
+  const refresh = modal.getByRole('button', { name: 'Refresh cloud diagrams' });
+
+  for (const dark of [false, true]) {
+    await page.evaluate(enabled => document.body.classList.toggle('dark-mode', enabled), dark);
+    failList = false;
+    await refresh.click();
+    const guidance = modal.locator('.cloud-empty-state p');
+    await expect(guidance).toHaveCount(2);
+    for (const paragraph of await guidance.all()) await expectReadableContrast(paragraph);
+    await expectNoWcagViolations(page, '.cloud-workspace-modal');
+
+    failList = true;
+    await refresh.click();
+    const error = modal.getByRole('alert');
+    await expect(error).toContainText('Cloud diagrams are temporarily unavailable.');
+    await expectReadableContrast(error);
+    await expectNoWcagViolations(page, '.cloud-workspace-modal');
+  }
+});
+
+test('compact workspace chrome preserves canvas space and visible mobile commands', async ({ page }) => {
+  await initializePage(page);
+  await page.route('**/api/**', async route => {
+    const access = new URL(route.request().url()).pathname === '/api/access/me';
+    await fulfillJson(route, access
+      ? { enabled: false, authenticated: false, isAdmin: false, allowed: true }
+      : { error: 'Not found' }, access ? 200 : 404);
+  });
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.goto('/');
+  await page.getByRole('tab', { name: 'Home', exact: true }).click();
+
+  for (const viewport of [
+    { width: 1600, height: 900, maximumChrome: 190 },
+    { width: 1366, height: 768, maximumChrome: 190 },
+    { width: 768, height: 1024, maximumChrome: 235 },
+    { width: 390, height: 844, maximumChrome: 210 },
+  ]) {
+    await page.setViewportSize({ width: viewport.width, height: viewport.height });
+    await expect.poll(async () => (
+      (await page.locator('.canvas-container').boundingBox())?.y ?? Infinity
+    )).toBeLessThan(viewport.maximumChrome);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth))
+      .toBeLessThanOrEqual(viewport.width);
+    const targets = await page.locator('.ribbon-tab, .ribbon-command-strip .btn, .mobile-command-bar button, .workflow-stepper button')
+      .evaluateAll(elements => elements
+        .filter(element => element.getBoundingClientRect().width > 0)
+        .map(element => element.getBoundingClientRect().height));
+    expect(targets.length).toBeGreaterThan(0);
+    expect(Math.min(...targets)).toBeGreaterThanOrEqual(44);
+  }
+
+  const mobileCommands = page.locator('.mobile-command-bar button').first();
+  await mobileCommands.click();
+  const sheet = page.getByRole('dialog', { name: 'Ribbon commands' });
+  await expect(sheet).toBeVisible();
+  // Inspect before locator.click can scroll clipped commands into view.
+  const initialTabs = await sheet.getByRole('tab').evaluateAll(elements => elements.map(element => {
+    const bounds = element.getBoundingClientRect();
+    const hit = document.elementFromPoint(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
+    return bounds.top >= 0 && bounds.bottom <= innerHeight
+      && (hit === element || element.contains(hit));
+  }));
+  expect(initialTabs).toEqual([true, true, true, true]);
+  await sheet.getByRole('tab', { name: 'Create', exact: true }).click();
+  await expect(sheet.getByRole('button', { name: 'Add Group', exact: true })).toBeVisible();
+  await expectNoWcagViolations(page, '.mobile-ribbon-drawer');
+  await page.keyboard.press('Escape');
+  await expect(mobileCommands).toBeFocused();
+
+  await page.locator('.header-utility-button').click();
+  await page.getByRole('button', { name: '日本語', exact: true }).click();
+  await page.keyboard.press('Escape');
+  await page.setViewportSize({ width: 768, height: 1024 });
+  await page.getByRole('tab', { name: 'ホーム', exact: true }).click();
+  await expect.poll(async () => (
+    (await page.locator('.canvas-container').boundingBox())?.y ?? Infinity
+  )).toBeLessThan(235);
+});
+
+test('workflow sidebar follows workspace bounds and defaults closed on narrow screens', async ({ page }) => {
+  const base = interactionCloudDocument();
+  const cloudWithWorkflow = {
+    ...base,
+    payload: {
+      ...base.payload,
+      workflow: [{ step: 1, description: 'Application handles the request.', services: ['node-a'] }],
+    },
+  };
+  await openInteractionDiagram(page, undefined, false, cloudWithWorkflow);
+  const panel = page.locator('.workflow-panel');
+  await expect(panel).toHaveClass(/expanded/);
+  const toggle = panel.getByRole('button', { name: 'Collapse workflow', exact: true });
+  await expect.poll(() => toggle.evaluate(element => {
+    const bounds = element.getBoundingClientRect();
+    const workspace = document.querySelector('.workspace')!.getBoundingClientRect();
+    const hit = document.elementFromPoint(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
+    return bounds.top >= workspace.top && (hit === element || element.contains(hit));
+  })).toBe(true);
+  const canvas = await page.locator('.canvas-container').boundingBox();
+  const sidebar = await panel.boundingBox();
+  expect(canvas!.x + canvas!.width).toBeLessThanOrEqual(sidebar!.x + 1);
+
+  const step = panel.locator('.workflow-step').first();
+  await step.press('Enter');
+  await expect(step).toHaveAttribute('aria-pressed', 'true');
+  await step.hover();
+  await page.locator('.canvas-container').hover();
+  await expect(step).toHaveAttribute('aria-pressed', 'true');
+  await toggle.click();
+  await expect(panel).toHaveClass(/collapsed/);
+  await panel.getByRole('button', { name: 'Expand workflow', exact: true }).click();
+  await expect(step).toHaveAttribute('aria-pressed', 'true');
+
+  await page.setViewportSize({ width: 768, height: 1024 });
+  await expect(panel).toHaveClass(/collapsed/);
+  await expect.poll(async () => (
+    (await page.locator('.canvas-container').boundingBox())?.width ?? 0
+  )).toBeGreaterThanOrEqual(400);
+  await expect(panel.getByRole('button', { name: 'Expand workflow', exact: true })).toBeVisible();
+});
+
 test('workflow stepper has stable light, dark, mobile, and forced-colors visuals', async ({ page }) => {
   await initializePage(page);
   await page.route('**/api/**', async (route) => {

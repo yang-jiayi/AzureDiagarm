@@ -49,14 +49,14 @@
   justify-content: space-between;
   gap: 8px;
   min-width: 0;
-  padding: 4px 14px;
+  padding: 0 12px;
   color: var(--azd-color-text, #334155);
   background: var(--azd-color-surface, #fff);
   border-bottom: 1px solid var(--azd-color-border, #d8e1ea);
 }
 .workspace-status-bar .draft-status { min-width: 0; }
 .workspace-status-bar .draft-status [role="status"] { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.workspace-status-bar .ai-budget-status { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.workspace-status-bar .ai-budget-status { min-width: 0; min-height: 26px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .workspace-notice {
   display: flex;
   flex: 0 0 auto;

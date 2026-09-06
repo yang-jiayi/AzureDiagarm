@@ -21,6 +21,7 @@ export default function HeaderUtilityMenu({
   const { language } = useLanguage();
   const [isOpen, setIsOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
   const text = (en: string, ja: string) => localize(language, { en, ja });
 
   useEffect(() => {
@@ -29,7 +30,13 @@ export default function HeaderUtilityMenu({
       if (!rootRef.current?.contains(event.target as Node)) setIsOpen(false);
     };
     const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setIsOpen(false);
+      if (event.key !== 'Escape' || event.defaultPrevented) return;
+      const shouldRestoreFocus = rootRef.current?.contains(document.activeElement);
+      setIsOpen(false);
+      if (shouldRestoreFocus) {
+        event.preventDefault();
+        triggerRef.current?.focus();
+      }
     };
     document.addEventListener('pointerdown', closeOnOutsideClick);
     document.addEventListener('keydown', closeOnEscape);
@@ -42,6 +49,7 @@ export default function HeaderUtilityMenu({
   return (
     <div className="header-utility-menu" ref={rootRef}>
       <button
+        ref={triggerRef}
         type="button"
         className="header-utility-button"
         onClick={() => setIsOpen(current => !current)}

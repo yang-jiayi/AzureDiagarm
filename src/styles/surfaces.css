@@ -43,15 +43,11 @@
 :is(body, body.dark-mode) .workspace-navigation-actions > button:hover:not(:disabled) { background: var(--azd-color-surface-hover); transform: none; }
 
 :is(body, body.dark-mode) .toolbar-group.toolbar-group--labeled {
-  align-self: flex-start;
-  padding: 0.9rem 0.4rem 0.25rem;
-  gap: 0.35rem;
   border-color: var(--azd-color-border);
   background: var(--azd-color-surface-muted);
 }
 
 :is(body, body.dark-mode) .toolbar-group.toolbar-group--labeled + .toolbar-group.toolbar-group--labeled {
-  padding-left: 0.4rem;
   border-color: var(--azd-color-border);
 }
 
@@ -62,8 +58,6 @@
 }
 
 :is(body, body.dark-mode) .app-header .toolbar-group--labeled :is(.btn, .btn-secondary, label.btn) {
-  min-height: 32px;
-  padding: 0.35rem 0.6rem;
   color: var(--azd-color-text);
   background: var(--azd-color-surface);
   border: 1px solid var(--azd-color-border);
@@ -341,8 +335,6 @@
 
 @media (max-width: 640px) {
   :is(body, body.dark-mode) .app-header:not(.header-collapsed) .header-actions-wrapper {
-    position: absolute;
-    top: calc(100% + 6px);
     background: var(--azd-color-surface);
     color: var(--azd-color-text);
     border-color: var(--azd-color-border);
