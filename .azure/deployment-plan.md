@@ -99,8 +99,10 @@ cases and the patched runtime/container checks now pass on Linux. All four
 reviewed visual baselines also pass. The supplemental workspace harness now
 exercises genuine AI regeneration rather than file import; this exposed and
 fixed canonical service-alias identity handling. All local supplemental browser
-safeguards and 810 unit tests pass. Fresh complete CI for that final correction
-remains pending; this status does not authorize deployment.
+safeguards and 810 unit tests pass. Linux additionally exposed a two-pixel
+tablet export-header overflow; tablet-only row spacing now reserves additional
+font-metric headroom without changing controls or clipping content. Fresh
+complete CI remains pending; this status does not authorize deployment.
 
 - [x] Identify repository, existing workflow, and application boundaries.
 - [x] Preserve the unrelated historical deployment plan below.
@@ -164,11 +166,13 @@ expected frontend assets.
 | Complete critical/visual browser gate | Run 33996721727 passes all 86 critical and visual cases. Its subsequent workspace harness failed because it used a new-document import as an in-place regeneration proxy; the harness now invokes explicitly mocked genuine Astra generation and proves a real snapshot transaction abort before retry | 2026-09-05 |
 | Regeneration service identities | Two focused tests reproduced lost manual instance IDs and falsely unique aliases. Proposal reconciliation now resolves catalog service aliases before uniqueness checks, preserves custom labels/pricing/connections, and leaves group names and explicit import identities unchanged. All focused and full unit cases pass | 2026-09-05 |
 | Supplemental browser safeguards | Current `test:workspace:browser`, all 85 AI/UI cases, all 16 inspector/review cases, and modal-focus safeguards pass. Regeneration proves retained node/workflow IDs, exactly three genuine Astra requests, snapshot-failure retry without duplicate generation, undo, pricing, and review persistence | 2026-09-05 |
+| Tablet header headroom | Linux reported 221.96875px against the existing 220px bound for JA/EN populated export headers at 768px. A tablet-only row-gap adjustment preserves all 42 control dimensions, passes all 36 local responsive-header cases and both WCAG audits, and passes 17 canonical/contrast cases. Desktop/mobile styles and every threshold remain unchanged; Linux confirmation is pending | 2026-09-05 |
 | Runtime dependency patches | Patched MCP `fast-uri` to 3.1.7 and `qs` to 6.16.0. API Express 4/body-parser restrict `qs` to the vulnerable 6.15 line, so a compatible `qs` override selects 6.16.0 without upgrading Express's major version. Both production audits now report zero vulnerabilities; patched MCP 65 and API 120 tests pass, with generated MCP assets unchanged | 2026-09-05 |
 | Deployment log privacy | Created the `ACCESS_ADMIN_EMAIL` Actions secret from the exact existing administrator value through stdin, without a trailing newline or command-line disclosure. Workflow references use the secret and a quoted environment variable; the administrator and runtime value remain unchanged | 2026-09-05 |
 | Final source review | Read-only review reports no significant findings in normalized cloud baselines, canonical serialization, and their save/copy/conflict interactions. Final lint and script type checks pass; nine deployment workflow security contracts pass | 2026-09-05 |
 | Remote source currency | Refreshed `origin/main` remains `c885477c799a35a044a73ac05b230aeab7160f95`; no unresolved index entries or whitespace errors | 2026-09-05 |
 | Refreshed live preflight | Existing healthy revision and rollback image remain unchanged. Astra is Succeeded at the verified model/version and capacity. Without following authentication redirects, public health returns 200, protected root/API/MCP return 401, and the direct origin returns 403. Browser-style requests redirect to Microsoft sign-in, not anonymous API JSON | 2026-09-05 |
+| Final official Azure revalidation | The official PowerShell helper again passes CLI/authentication, Bicep compilation, ARM validation, and what-if for the actual Astra template. Structured preview confirms 15 Ignore and one Modify, with only service-reported `properties.currentCapacity` omitted; zero resource creates/deletes. Generated compilation output was removed | 2026-09-05 |
 
 Policy Insights reports no evaluated rows for the existing Container App; an
 empty result is not proof of estate-wide compliance. The existing OpenAI account

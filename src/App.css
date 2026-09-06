@@ -2589,6 +2589,11 @@ body.dark-mode .ribbon-command-strip .pricing-mode-btn.active {
 }
 
 @media (min-width: 641px) and (max-width: 1180px) {
+  /* Reserve room for font-dependent command wrapping without shrinking controls. */
+  .app-header:not(.header-collapsed) .header-content {
+    row-gap: calc(var(--azd-space-1) / 2);
+  }
+
   .ribbon-command-strip {
     flex-wrap: wrap;
   }
