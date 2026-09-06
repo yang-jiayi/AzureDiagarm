@@ -9,7 +9,8 @@
  * are drop-in replacements for each other.
  */
 
-import ELK, { ElkNode, ElkExtendedEdge } from 'elkjs/lib/elk.bundled.js';
+import type { ElkNode, ElkExtendedEdge } from 'elkjs/lib/elk-api.js';
+import { layoutWithElk } from './elkLayoutRuntime';
 import {
   buildNestedHierarchyLayout,
   layoutNodeDimensions,
@@ -145,9 +146,6 @@ function resolveGroupOverlaps(
   return { groups: resolved, services };
 }
 
-// Singleton ELK instance (re-used across calls)
-const elk = new ELK();
-
 export const ELK_QUALITY_LAYOUT_OPTIONS = {
   'elk.edgeRouting': 'ORTHOGONAL',
   'elk.layered.nodePlacement.strategy': 'NETWORK_SIMPLEX',
@@ -263,7 +261,7 @@ export async function layoutArchitecture(
   };
 
   console.log('  ⚡ Running ELK layout algorithm...');
-  const layoutResult = await elk.layout(root);
+  const layoutResult = await layoutWithElk(root);
 
   // ── Extract positions ────────────────────────────────────────────
   const positionedServices: PositionedService[] = [];

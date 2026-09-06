@@ -2025,7 +2025,10 @@ function App() {
   const snapshotMetadata = useMemo(() => ({
     settings: diagramHistoryState.settings, reviewHistory, validationSourceFingerprint,
   }), [diagramHistoryState.settings, reviewHistory, validationSourceFingerprint]);
-  const currentDiagramFingerprint = editorFingerprint(diagramHistoryState);
+  const currentDiagramFingerprint = useMemo(
+    () => editorFingerprint(diagramHistoryState),
+    [diagramHistoryState],
+  );
   const validationIsStale = validationNeedsRefresh
     || ((validationResult !== null || persistedValidationScore !== undefined)
       && validationSourceFingerprint !== currentDiagramFingerprint);
@@ -2475,6 +2478,7 @@ function App() {
   const applyLayout = useCallback(async () => {
     const sourceNodes = latestNodesRef.current;
     const sourceEdges = latestEdgesRef.current;
+    const isSourceCurrent = captureEditorSource();
     const generation = layoutGenerationRef.current.advance();
     const selectedAzureNodeId = sourceNodes.find(
       (node) => node.type === 'azureNode' && node.selected,
@@ -2491,17 +2495,18 @@ function App() {
         selectedNodeId: selectedAzureNodeId,
         layoutEngine,
       });
-      if (!layoutGenerationRef.current.isCurrent(generation)) return;
+      if (!layoutGenerationRef.current.isCurrent(generation) || !isSourceCurrent()) return;
 
       const arrangedEdges = applyAutomaticEdgeLabelOffsets(result.nodes, result.edges);
       setNodes(currentNodes => mergeLayoutNodes(currentNodes, sourceNodes, result.nodes));
       setEdges(currentEdges => mergeLayoutEdges(currentEdges, sourceEdges, arrangedEdges));
 
       requestAnimationFrame(() => {
+        if (!layoutGenerationRef.current.isCurrent(generation) || !isSourceCurrent()) return;
         reactFlowInstance?.fitView?.({ padding: 0.2, duration: 250, maxZoom: 1.2 });
       });
     } catch (error) {
-      if (!layoutGenerationRef.current.isCurrent(generation)) return;
+      if (!layoutGenerationRef.current.isCurrent(generation) || !isSourceCurrent()) return;
       console.error('Failed to apply diagram layout:', error);
       alert(localize(language, {
         en: 'Failed to arrange the diagram. Please try again.',
@@ -2509,6 +2514,7 @@ function App() {
       }));
     }
   }, [
+    captureEditorSource,
     layoutPreset,
     layoutSpacing,
     layoutEdgeStyle,
@@ -4741,21 +4747,17 @@ function App() {
     startFreshDiagram,
   ]);
 
-  const iacComparison = useMemo(
-    () => compareDiagramToBaseline(nodes, iacBaseline),
-    [nodes, iacBaseline],
-  );
-  const bicepStarterTemplate = useMemo(
-    () => buildStarterTemplate(nodes, 'bicep', edges),
-    [nodes, edges],
-  );
-  const terraformStarterTemplate = useMemo(
-    () => buildStarterTemplate(nodes, 'terraform', edges),
-    [nodes, edges],
-  );
+  const iacPreview = useMemo(() => {
+    if (!isIaCRoundTripModalOpen) return null;
+    return {
+      comparison: compareDiagramToBaseline(nodes, iacBaseline),
+      bicep: buildStarterTemplate(nodes, 'bicep', edges),
+      terraform: buildStarterTemplate(nodes, 'terraform', edges),
+    };
+  }, [isIaCRoundTripModalOpen, nodes, edges, iacBaseline]);
 
   const downloadStarterTemplate = useCallback((format: StarterTemplateFormat) => {
-    const template = format === 'bicep' ? bicepStarterTemplate : terraformStarterTemplate;
+    const template = buildStarterTemplate(latestNodesRef.current, format, latestEdgesRef.current);
     const blob = new Blob([template.content], { type: 'text/plain;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
@@ -4763,7 +4765,7 @@ function App() {
     link.download = template.fileName;
     link.click();
     URL.revokeObjectURL(url);
-  }, [bicepStarterTemplate, terraformStarterTemplate]);
+  }, []);
 
   const importDriftPlan = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = event.target.files;
@@ -8764,19 +8766,21 @@ Return the IMPROVED architecture in the same JSON format as before with proper g
         onClose={() => setIsDeploymentGuideModalOpen(false)}
         isLoading={isGeneratingGuide}
       />
-      <IaCRoundTripModal
-        isOpen={isIaCRoundTripModalOpen}
-        onClose={() => setIsIaCRoundTripModalOpen(false)}
-        baseline={iacBaseline}
-        comparison={iacComparison}
-        driftPlan={driftPlanSummary}
-        onImportDriftPlan={importDriftPlan}
-        onClearDriftPlan={() => setDriftPlanSummary(null)}
-        onDownloadStarter={downloadStarterTemplate}
-        bicepStarter={bicepStarterTemplate}
-        terraformStarter={terraformStarterTemplate}
-        diagramServiceCount={nodes.filter(n => n.type === 'azureNode').length}
-      />
+      {iacPreview && (
+        <IaCRoundTripModal
+          isOpen={isIaCRoundTripModalOpen}
+          onClose={() => setIsIaCRoundTripModalOpen(false)}
+          baseline={iacBaseline}
+          comparison={iacPreview.comparison}
+          driftPlan={driftPlanSummary}
+          onImportDriftPlan={importDriftPlan}
+          onClearDriftPlan={() => setDriftPlanSummary(null)}
+          onDownloadStarter={downloadStarterTemplate}
+          bicepStarter={iacPreview.bicep}
+          terraformStarter={iacPreview.terraform}
+          diagramServiceCount={nodes.filter(n => n.type === 'azureNode').length}
+        />
+      )}
       <VersionHistoryModal
         isOpen={isVersionHistoryModalOpen}
         onClose={() => setIsVersionHistoryModalOpen(false)}
