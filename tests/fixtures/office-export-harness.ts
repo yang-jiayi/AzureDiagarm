@@ -97,11 +97,12 @@ export async function runOfficeExportFixtures() {
       name: 'simple-light', dark: false,
       nodes: [
         { id: 'zone', type: 'groupNode', position: { x: -30, y: -65 }, style: { width: 1120, height: 315 }, data: { label: 'Application platform' } },
-        service('a', 'Azure Front Door', 35, 105, 2, 'zone'),
-        service('b', 'App Service', 450, 105, 0, 'zone'),
-        service('c', 'SQL Database', 855, 105, 1, 'zone'),
+        // Role-like IDs must retain independent labels, native groups and glue.
+        service('api', 'Azure Front Door', 35, 105, 2, 'zone'),
+        service('meta-api', 'App Service', 450, 105, 0, 'zone'),
+        service('label-api', 'SQL Database', 855, 105, 1, 'zone'),
       ],
-      edges: [flow('e1', 'a', 'b', 'HTTPS / TLS 1.2'), flow('e2', 'b', 'c', 'Private connection')],
+      edges: [flow('e1', 'api', 'meta-api', 'HTTPS / TLS 1.2'), flow('e2', 'meta-api', 'label-api', 'Private connection')],
     },
     {
       name: 'nested-japanese', dark: false,

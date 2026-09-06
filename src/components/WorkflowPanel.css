@@ -1,8 +1,8 @@
 .workflow-panel {
-  position: fixed;
-  top: 120px;
-  right: 0;
-  bottom: 0;
+  position: relative;
+  flex: 0 0 400px;
+  min-height: 0;
+  height: 100%;
   width: 400px;
   background: var(--azd-color-surface-elevated);
   color: var(--azd-color-text);
@@ -15,7 +15,10 @@
 }
 
 .workflow-panel.collapsed {
-  right: -400px;
+  flex-basis: 0;
+  width: 0;
+  border-left: 0;
+  box-shadow: none;
 }
 
 .workflow-panel.collapsed .workflow-header {
@@ -116,7 +119,10 @@
   color: var(--azd-color-on-brand);
   cursor: pointer;
   display: flex;
+  min-width: 44px;
+  min-height: 44px;
   align-items: center;
+  justify-content: center;
   padding: 0.25rem;
   transition: transform 0.2s;
 }
@@ -485,12 +491,13 @@ body:not(.dark-mode) .workflow-avatar-caption-word.active {
 
 @media (max-width: 640px) {
   .workflow-panel {
-    top: 88px;
+    flex-basis: 100vw;
     width: 100vw;
   }
 
   .workflow-panel.collapsed {
-    right: -100vw;
+    flex-basis: 0;
+    width: 0;
   }
 
   .workflow-header {

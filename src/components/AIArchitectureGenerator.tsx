@@ -36,6 +36,10 @@ import type { GenerationMode } from '../utils/generationResult';
 import { planBothRun, type PendingRetry } from '../utils/bothModeRetry';
 import { readBooleanPreference, readLocalStorage, writeLocalStorage } from '../utils/safeStorage';
 import ModalScaffold from './ModalScaffold';
+import { isAIRateLimitError, isRetryableAIFailure, type AIRetryWait } from '../services/aiRetry';
+import { AIBudgetQueueError, isAIConcurrencyLimitError, runAIBudgetQueue } from '../services/aiBudgetQueue';
+import { getAIBudget } from '../services/aiBudgetService';
+import { isAIBudgetError, isAIInternalServerError, OpenAIProxyError } from '../services/apiHelper';
 
 // After a successful generation the modal stays open this long so the user can
 // review metrics or type a follow-up modification, then auto-closes. Typing a
@@ -56,6 +60,13 @@ const modeRequiresOpenAI = (m: GenerationMode): boolean =>
   m === 'blueprint' || m === 'both';
 
 type GeneratorStep = 'brief' | 'output' | 'review';
+type GenerationStage = 'manifest' | 'topology' | 'blueprint' | 'reference';
+const GENERATION_STAGE_LABELS: Record<GenerationStage, LocalizedText> = {
+  manifest: { en: 'Component plan', ja: '構成要素の計画' },
+  topology: { en: 'Topology', ja: 'トポロジー' },
+  blueprint: { en: 'Blueprint', ja: 'Blueprint' },
+  reference: { en: 'Reference', ja: 'リファレンス' },
+};
 
 interface GeneratorPendingRetry extends PendingRetry {
   baseRevision?: number;
@@ -245,6 +256,13 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
   // gets its own state instead of going through `setError`.
   const [wasCancelled, setWasCancelled] = useState(false);
   const [partialWarning, setPartialWarning] = useState('');
+  const [retryWaits, setRetryWaits] = useState<Partial<Record<GenerationStage, AIRetryWait | null>>>({});
+  const [retryClock, setRetryClock] = useState(Date.now);
+  useEffect(() => {
+    if (!Object.values(retryWaits).some(Boolean)) return;
+    const timer = window.setInterval(() => setRetryClock(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [retryWaits]);
   /**
    * Set when exactly one of the two `both`-mode deliverables failed. It carries
    * everything the retry needs so pressing "Retry missing output" regenerates
@@ -351,14 +369,22 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
     imageRequestRef.current = null;
     setIsGenerating(false);
     setIsAnalyzingImage(false);
+    setRetryWaits({});
     if (request) {
       setCanRetry(true);
       setWasCancelled(true);
       setActiveStep('output');
       setError('');
       clearGenerationResult();
+      if (pendingRetry) {
+        setCanvasGenerationCompleted(pendingRetry.canvasApplied);
+        setPartialWarning(localize(language, {
+          en: 'The completed output is preserved. Use "Retry missing output" when ready; it will not regenerate the completed output.',
+          ja: '完了済みの出力は保持されています。準備ができたら「不足分を再生成」を押してください。完了済みの出力は再生成しません。',
+        }));
+      }
     }
-  }, [clearGenerationResult]);
+  }, [clearGenerationResult, pendingRetry, language]);
   const handleModeChange = useCallback((nextMode: GenerationMode) => {
     cancelScheduledClose();
     clearGenerationResult();
@@ -458,6 +484,25 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
     prompts: group.prompts.map(prompt => localize(language, prompt)),
   }));
 
+  const describeGenerationFailure = (cause: unknown): string => {
+    const detail = translate(cause instanceof Error ? cause.message : String(cause));
+    if (isAIInternalServerError(cause)) {
+      return detail + ' ' + localize(language, {
+        en: 'An internal server error occurred. This failure was not automatically retried. You can retry manually with the same settings; unknown-usage failures may still count toward the application budget.',
+        ja: '内部サーバー エラーが発生しました。このエラーでは自動再試行していません。同じ設定で手動再試行できますが、使用量が不明な失敗もアプリケーションの予算に計上される場合があります。',
+      });
+    }
+    if (!isAIRateLimitError(cause)) return detail;
+    const delay = (cause as { retryAfterMs?: number }).retryAfterMs;
+    const seconds = typeof delay === 'number' && Number.isSafeInteger(delay) && delay >= 0
+      ? Math.max(1, Math.ceil(delay / 1000))
+      : null;
+    return detail + ' ' + localize(language, {
+      en: `${seconds ? `Wait at least ${seconds}s before retrying.` : 'Wait before retrying.'} Automatic retries are limited. Rate-limit retries never lower the model, reasoning, or output limit. If limits continue, ask the administrator to review deployment capacity.`,
+      ja: `${seconds ? `再試行まで少なくとも${seconds}秒お待ちください。` : 'しばらく待ってから再試行してください。'}自動再試行の回数には上限があります。レート制限の再試行ではモデル、推論強度、出力上限を下げません。制限が続く場合は、管理者にデプロイ容量の確認を依頼してください。`,
+    });
+  };
+
   const handleGenerate = async () => {
     if (!openRef.current || requestRef.current || isAnalyzingImage) return;
     if (!description.trim()) {
@@ -495,19 +540,30 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
         }));
       }
     };
+    const reportRetryWait = (stage: GenerationStage) => (wait: AIRetryWait | null) => {
+      if (!active()) return;
+      setRetryWaits(previous => ({ ...previous, [stage]: wait }));
+      setRetryClock(Date.now());
+    };
+    const admitOne = async <T,>(task: (signal: AbortSignal) => Promise<T>): Promise<T> => {
+      const [result] = await runAIBudgetQueue([task], { getBudget: getAIBudget, signal: controller.signal });
+      if (result.status === 'rejected') throw result.reason;
+      return result.value;
+    };
     setIsGenerating(true);
     setCanRetry(false);
     setError('');
     setWasCancelled(false);
     setPartialWarning('');
-    // Snapshot and clear together: the warning and the retry it belongs to must
-    // never diverge. If this run throws, the user is left with no warning and
-    // no armed retry, so the next press is a clean full run. A partial failure
-    // re-arms both at the end.
-    setPendingRetry(null);
+    setRetryWaits({});
+    // A failed/cancelled retry must not forget already accepted output.
+    setPendingRetry(retrySnapshot);
     clearGenerationResult();
     
-    const currentModelSettings: ModelOverride = { ...getModelSettingsForFeature('architectureGeneration'), signal: controller.signal };
+    const currentModelSettings: ModelOverride = {
+      ...getModelSettingsForFeature('architectureGeneration'), signal: controller.signal,
+      onRetryWait: reportRetryWait(mode === 'reference' ? 'reference' : 'topology'),
+    };
     console.log(`🎯 Generate clicked: default model=${modelSettings.model}, effective model=${currentModelSettings.model}, reasoning=${currentModelSettings.reasoningEffort}, overrides=${JSON.stringify(modelSettings.featureOverrides)}`);
 
     // Use the same effective feature setting shown in the modal. If a stale
@@ -532,7 +588,7 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
         };
       }
       return currentModelSettings;
-    })(), signal: controller.signal };
+    })(), signal: controller.signal, onRetryWait: reportRetryWait('blueprint') };
     console.log(`📐 Blueprint model: ${blueprintModelSettings.model} (reasoning=${blueprintModelSettings.reasoningEffort})`);
 
     try {
@@ -633,10 +689,18 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
           bothContextPrompt = `MODIFY EXISTING ARCHITECTURE: "${currentArchitecture.architectureName}"\nServices: ${servicesList}\n${groups.length > 0 ? `Groups: ${groups.map((g) => g.name).join(', ')}` : ''}\n${connections.length > 0 ? `Connections: ${connections.join('; ')}` : ''}\n\nCHANGE REQUESTED: ${description}\n\nIMPORTANT: Return the COMPLETE architecture JSON (all services, groups, connections, workflow). Keep everything unchanged EXCEPT what the user requested. Only add, modify, or remove what was asked.`;
         }
 
-        const topoCall = (m?: ComponentManifest) =>
-          generateArchitectureWithAI(bothContextPrompt, currentModelSettings, m, language, controller.signal);
-        const bpCall = (m?: ComponentManifest) =>
-          generateBlueprintArchitectureWithAI(bothContextPrompt, blueprintModelSettings, m, language);
+        const topoCall = (signal: AbortSignal) => {
+          ensureUnchanged();
+          return generateArchitectureWithAI(
+            bothContextPrompt, { ...currentModelSettings, signal }, manifest, language,
+          );
+        };
+        const bpCall = (signal: AbortSignal) => {
+          ensureUnchanged();
+          return generateBlueprintArchitectureWithAI(
+            bothContextPrompt, { ...blueprintModelSettings, signal }, manifest, language,
+          );
+        };
 
         const t0 = performance.now();
         // Pre-pass: extract a canonical component manifest so topology and
@@ -645,13 +709,19 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
         let manifest: ComponentManifest | undefined = retry?.manifest;
         if (!reuseManifest) {
           try {
-            manifest = await generateComponentManifest(bothContextPrompt, currentModelSettings, language);
+            manifest = await admitOne(signal => generateComponentManifest(bothContextPrompt, {
+              ...currentModelSettings, signal, onRetryWait: reportRetryWait('manifest'),
+            }, language));
             console.log(
               `📋 Manifest: ${manifest.components.length} components across ${manifest.zones.length} zones (${manifest.metrics?.totalTokens ?? '?'} tokens, ${Math.round((manifest.metrics?.elapsedTimeMs ?? 0) / 100) / 10}s)`,
             );
           } catch (err) {
             ensureActive();
             if (err instanceof Error && err.name === 'AbortError') throw err;
+            // More requests cannot repair an exhausted quota or admission failure.
+            if (err instanceof OpenAIProxyError || isAIBudgetError(err) || isRetryableAIFailure(err)
+              || isAIRateLimitError(err) || isAIConcurrencyLimitError(err) || err instanceof AIBudgetQueueError
+              || (err as { status?: unknown } | null)?.status === 429) throw err;
             console.warn('Component manifest pre-pass failed; falling back to independent generation:', err);
             manifest = undefined;
           }
@@ -665,18 +735,30 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
         // On a retry only the missing deliverable runs, so the output that
         // already succeeded is neither overwritten nor billed again.
         if (bothInParallel && runTopology && runBlueprint) {
-          const [topologyOutcome, blueprintOutcome] = await Promise.allSettled([
-            topoCall(manifest),
-            bpCall(manifest),
-          ]);
-          if (topologyOutcome.status === 'fulfilled') topoResult = topologyOutcome.value;
-          else topoFailure = topologyOutcome.reason;
-          if (blueprintOutcome.status === 'fulfilled') bpResult = blueprintOutcome.value;
-          else bpFailure = blueprintOutcome.reason;
+          try {
+            await runAIBudgetQueue<any>([topoCall, bpCall], {
+              getBudget: getAIBudget, signal: controller.signal,
+              onStateChange: (index, state) => {
+                if (state.status === 'success') {
+                  if (index === 0) topoResult = state.value;
+                  else bpResult = state.value;
+                } else if (state.status === 'error') {
+                  if (index === 0) topoFailure = state.error;
+                  else bpFailure = state.error;
+                }
+              },
+            });
+          } catch (error) {
+            ensureActive();
+            if (!(error instanceof AIBudgetQueueError)) throw error;
+            // Admission may fail after one output completed (notably at cap 1).
+            if (!topoResult) topoFailure ??= error;
+            if (!bpResult) bpFailure ??= error;
+          }
         } else {
           if (runTopology) {
             try {
-              topoResult = await topoCall(manifest);
+              topoResult = await admitOne(topoCall);
             } catch (error) {
               ensureActive();
               if (error instanceof Error && error.name === 'AbortError') throw error;
@@ -686,7 +768,7 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
           ensureActive();
           if (runBlueprint) {
             try {
-              bpResult = await bpCall(manifest);
+              bpResult = await admitOne(bpCall);
             } catch (error) {
               ensureActive();
               if (error instanceof Error && error.name === 'AbortError') throw error;
@@ -707,7 +789,7 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
         // for parallel; manifest + topo + bp for sequential).
         const tm = topoResult?.metrics;
         const bm = bpResult?.metrics;
-        const mm = manifest?.metrics;
+        const mm = reuseManifest ? undefined : manifest?.metrics;
         const combinedMetrics = tm || bm || mm
           ? {
             elapsedTimeMs: Math.round(wallElapsed),
@@ -775,7 +857,20 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
           // usable, and remember exactly what to re-run.
           const missing: 'topology' | 'blueprint' = topoFailure ? 'topology' : 'blueprint';
           const cause = topoFailure || bpFailure;
-          const detail = cause instanceof Error ? cause.message : String(cause);
+          const detail = describeGenerationFailure(cause);
+          const retryGuidance = (cause as { code?: unknown } | null)?.code === 'ai_daily_budget_exceeded'
+            ? localize(language, {
+              en: 'The completed output is preserved. After the daily budget resets, use "Retry missing output" to generate only the missing output.',
+              ja: '完了済みの出力は保持されています。日次予算のリセット後、「不足分を再生成」を押すと不足分のみ生成します。',
+            })
+            : isAIBudgetError(cause) || isAIRateLimitError(cause) || cause instanceof AIBudgetQueueError
+              || isAIInternalServerError(cause) ? localize(language, {
+            en: 'Wait before pressing "Retry missing output". The completed output, model, and reasoning settings are preserved. If problems continue, ask the administrator to review AI capacity and configuration.',
+            ja: 'しばらく待ってから「不足分を再生成」を押してください。完了済みの出力、モデル、推論設定は保持されます。問題が続く場合は、管理者に AI の容量と設定の確認を依頼してください。',
+          }) : localize(language, {
+            en: 'Press "Retry missing output" to re-run only what is missing with the current settings. The completed output will not be regenerated.',
+            ja: '「不足分を再生成」を押すと、現在の設定で不足分のみ再試行できます。完了済みの出力は再生成しません。',
+          });
           setPendingRetry({
             missing,
             brief: description,
@@ -789,14 +884,15 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
           });
           setPartialWarning(localize(language, {
             en: `${missing === 'topology' ? 'Topology' : 'Blueprint'} generation did not complete, but the other output was created successfully. `
-              + `Reason: ${translate(detail)} `
-              + 'Press "Retry missing output" to re-run only what is missing — lowering reasoning effort or picking a faster model makes long requests finish inside the time limit.',
+              + `Reason: ${detail} `
+              + retryGuidance,
             ja: `${missing === 'topology' ? 'トポロジー' : 'Blueprint'} の生成は完了しませんでしたが、もう一方の出力は正常に作成されました。`
-              + `理由: ${translate(detail)} `
-              + '「不足分を再生成」を押すと不足分のみ再試行できます。推論の強度を下げるか、より高速なモデルを選ぶと制限時間内に完了しやすくなります。',
+              + `理由: ${detail} `
+              + retryGuidance,
           }));
-        } else if (blueprintExportError) {
-          throw blueprintExportError;
+        } else {
+          setPendingRetry(null);
+          if (blueprintExportError) throw blueprintExportError;
         }
 
         if (topoFailure || bpFailure) {
@@ -805,8 +901,6 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
           setActiveStep('output');
           return;
         }
-        // `pendingRetry` was already cleared when this run started, and the
-        // partial-failure branch above returns before reaching here.
         setActiveStep('review');
         setDescription('');
         scheduleClose();
@@ -853,13 +947,14 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
         setWasCancelled(true);
         setActiveStep('output');
       } else {
-        setError(err.message ? translate(err.message) : translate('Failed to generate architecture. Please try again.'));
+        setError(err.message ? describeGenerationFailure(err) : translate('Failed to generate architecture. Please try again.'));
         setActiveStep('output');
       }
     } finally {
       if (requestRef.current === controller) {
         requestRef.current = null;
         setIsGenerating(false);
+        setRetryWaits({});
       }
     }
   };
@@ -1133,6 +1228,14 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
                       {partialWarning}
                     </div>
                   )}
+                  {isGenerating && Object.entries(retryWaits).map(([stage, wait]) => wait && (
+                    <div key={stage} className="generator-retry-wait azd-callout azd-callout--info" role="status">
+                      {localize(language, {
+                        en: `${localize(language, GENERATION_STAGE_LABELS[stage as GenerationStage])}: a request rate limit was reached. Retrying in ${Math.max(0, Math.ceil((wait.retryAt - retryClock) / 1000))}s (attempt ${wait.attempt}/${wait.maxAttempts}) with the same model, reasoning, and output limit. You can cancel while waiting.`,
+                        ja: `${localize(language, GENERATION_STAGE_LABELS[stage as GenerationStage])}: リクエストのレート制限により待機しています。${Math.max(0, Math.ceil((wait.retryAt - retryClock) / 1000))}秒後に、同じモデル、推論強度、出力上限で再試行します（${wait.attempt}/${wait.maxAttempts}回目）。待機中もキャンセルできます。`,
+                      })}
+                    </div>
+                  ))}
                 </div>
               )}
 
@@ -1317,7 +1420,10 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
                     <span>{t("Run topology and blueprint in parallel")}</span>
                   </label>
                   <p className="checkbox-hint">
-                    {' '}{t("Parallel ≈ half the wall-time (recommended on high-quota deployments). Uncheck to run sequentially if your model deployment has tight rate limits.")}{' '}</p>
+                    {' '}{localize(language, {
+                      en: 'Parallel can reduce total time when capacity is available. Requests queue or wait when the application or provider is busy. Uncheck to request sequential generation.',
+                      ja: '容量に余裕がある場合、並列実行で所要時間を短縮できます。アプリケーションやプロバイダーが混雑している間は待機します。順次生成する場合はチェックを外してください。',
+                    })}{' '}</p>
                 </div>
               )}
               {(mode === 'blueprint' || mode === 'both') && (
@@ -1401,7 +1507,7 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
                   ) : (
                     <>
                       <Sparkles size={18} />
-                      {' '}{partialWarning
+                      {' '}{pendingRetry?.brief === description
                         ? localize(language, { en: 'Retry missing output', ja: '不足分を再生成' })
                         : canRetry || error
                           ? localize(language, { en: 'Retry generation', ja: '生成を再試行' })

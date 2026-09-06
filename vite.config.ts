@@ -4,8 +4,16 @@ import react from '@vitejs/plugin-react'
 // https://vitejs.dev/config/
 export default defineConfig({
   plugins: [react()],
+  // Keep the lazy adapter from triggering a dev-server reload on first layout.
+  optimizeDeps: {
+    include: ['elkjs/lib/elk-api.js'],
+  },
   server: {
     port: 3000,
+    // Generated diagnostics and browser artifacts can contain locked Windows files.
+    watch: {
+      ignored: /(?:^|[\\/])(?:\.azure|DONOTTRACK)(?:[\\/]|$)/,
+    },
     // Delegated Azure import uses a same-window MSAL redirect, so retain strict
     // opener isolation in local development as well as production.
     headers: {
@@ -21,8 +29,8 @@ export default defineConfig({
   },
   build: {
     outDir: 'dist',
-    // Deliberately above the ELK layout engine's lazy chunk (~1.4 MB) so the
-    // known, code-split heavy modules do not spam warnings, while still
+    // Above ELK's Node-compatible fallback chunk (~1.4 MB) so the known,
+    // code-split heavy modules do not spam warnings, while still
     // flagging any unexpected growth in the eagerly-loaded chunks.
     chunkSizeWarningLimit: 1500,
     rollupOptions: {

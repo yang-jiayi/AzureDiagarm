@@ -460,6 +460,11 @@ function createOpenAIProxyRouter(options) {
     const retryAfter = await consumeRateLimit(req);
     if (retryAfter > 0) {
       res.set('Retry-After', String(retryAfter));
+      logEvent(logger, 'warn', {
+        event: 'proxy_rate_limit_exceeded', requestId, deployment: loggedDeployment,
+        apiFormat, provider, status: 429, retryAfterSeconds: retryAfter,
+        durationMs: Date.now() - startedAt,
+      });
       return sendError(res, 429, requestId, {
         source: 'proxy',
         code: 'proxy_rate_limit_exceeded',
@@ -609,9 +614,16 @@ function createOpenAIProxyRouter(options) {
           identity = budgetIdentity(req, mode);
           lease = await budget.reserve(identity, reservationTokens(upstreamBody, apiFormat));
         } catch (error) {
-          res.set('Retry-After', String(error.retryAfter || 5));
-          return sendError(res, error.status || 503, requestId, {
-            source: 'budget', code: error.code || 'ai_budget_unavailable',
+          const status = error.status || 503;
+          const code = error.code || 'ai_budget_unavailable';
+          const retryAfterSeconds = error.retryAfter || 5;
+          res.set('Retry-After', String(retryAfterSeconds));
+          logEvent(logger, status >= 500 ? 'error' : 'warn', {
+            event: code, requestId, deployment: loggedDeployment, apiFormat, provider,
+            status, retryAfterSeconds, durationMs: Date.now() - startedAt,
+          });
+          return sendError(res, status, requestId, {
+            source: 'budget', code,
             message: error.status ? error.message : 'AI budget is unavailable. Try again shortly.',
           });
         }
@@ -682,7 +694,17 @@ function createOpenAIProxyRouter(options) {
     if (upstreamRequestId) {
       res.set('X-Upstream-Request-Id', upstreamRequestId);
     }
-    const retryAfterHeader = upstream.headers.get('retry-after');
+    let retryAfterHeader = upstream.headers.get('retry-after');
+    if (!retryAfterHeader) {
+      for (const name of ['retry-after-ms', 'x-ms-retry-after-ms']) {
+        const value = upstream.headers.get(name)?.trim();
+        if (!value || !/^\d+(?:\.\d+)?$/.test(value)) continue;
+        const milliseconds = Number(value);
+        if (!Number.isFinite(milliseconds) || milliseconds > Number.MAX_SAFE_INTEGER) continue;
+        retryAfterHeader = String(Math.ceil(milliseconds / 1000));
+        break;
+      }
+    }
     if (retryAfterHeader) {
       res.set('Retry-After', retryAfterHeader);
     }

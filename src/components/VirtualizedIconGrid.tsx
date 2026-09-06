@@ -2,6 +2,8 @@
 // Licensed under the MIT License.
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { useMediaQuery } from '../hooks/useMediaQuery';
+import { MEDIA_QUERIES } from '../styles/breakpoints';
 import type { AzureIcon } from '../utils/iconLoader';
 
 interface VirtualizedIconGridProps {
@@ -13,8 +15,11 @@ interface VirtualizedIconGridProps {
   layout?: 'grid' | 'list';
 }
 
-const GRID_ROW_HEIGHT = 112;
+const GRID_ROW_HEIGHT = 144;
+const TOUCH_GRID_ROW_HEIGHT = 164;
 const LIST_ROW_HEIGHT = 72;
+const ROW_GAP = 8;
+const GRID_PADDING = 4;
 const OVERSCAN_ROWS = 2;
 
 const VirtualizedIconGrid: React.FC<VirtualizedIconGridProps> = ({
@@ -26,6 +31,7 @@ const VirtualizedIconGrid: React.FC<VirtualizedIconGridProps> = ({
   layout = 'grid',
 }) => {
   const viewportRef = useRef<HTMLDivElement>(null);
+  const hasCoarsePointer = useMediaQuery(MEDIA_QUERIES.coarsePointer);
   const [width, setWidth] = useState(260);
   const [scrollTop, setScrollTop] = useState(0);
 
@@ -43,10 +49,17 @@ const VirtualizedIconGrid: React.FC<VirtualizedIconGridProps> = ({
   useEffect(() => {
     setScrollTop(0);
     if (viewportRef.current) viewportRef.current.scrollTop = 0;
-  }, [icons, layout]);
+  }, [icons, layout, hasCoarsePointer]);
 
-  const rowHeight = layout === 'list' ? LIST_ROW_HEIGHT : GRID_ROW_HEIGHT;
-  const columns = layout === 'list' ? 1 : width >= 230 ? 3 : 2;
+  const rowHeight = layout === 'list'
+    ? LIST_ROW_HEIGHT
+    : hasCoarsePointer ? TOUCH_GRID_ROW_HEIGHT : GRID_ROW_HEIGHT;
+  const minimumColumnWidth = hasCoarsePointer ? 104 : 72;
+  const columns = layout === 'list'
+    ? 1
+    : Math.max(1, Math.min(3, Math.floor(
+        (width - GRID_PADDING * 2 + ROW_GAP) / (minimumColumnWidth + ROW_GAP),
+      )));
   const rowCount = Math.ceil(icons.length / columns);
   const totalHeight = rowCount * rowHeight;
   const viewportHeight = Math.min(Math.max(rowHeight, totalHeight), maxHeight);
@@ -68,7 +81,13 @@ const VirtualizedIconGrid: React.FC<VirtualizedIconGridProps> = ({
     <div
       ref={viewportRef}
       className={`virtualized-icons-viewport virtualized-icons-viewport--${layout}`}
-      style={{ height: viewportHeight }}
+      style={{
+        height: viewportHeight,
+        '--palette-row-height': `${rowHeight}px`,
+        '--palette-row-gap': `${ROW_GAP}px`,
+        '--palette-grid-padding': `${GRID_PADDING}px`,
+        '--palette-action-size': hasCoarsePointer ? '44px' : '24px',
+      } as React.CSSProperties}
       onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}
       role="region"
       aria-label={ariaLabel}

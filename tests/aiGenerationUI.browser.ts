@@ -10,21 +10,21 @@ before(async () => {
   const mocks: Record<string, string> = {
     modelSettingsStore: `
       const settings = {model:'test-model', reasoningEffort:'none'};
-      export const useModelSettings = () => [settings];
+      export const useModelSettings = () => [window.h.settings ?? settings];
       export const getModelSettings = () => settings;
-      export const getModelSettingsForFeature = () => settings;
+      export const getModelSettingsForFeature = () => window.h.settings ?? settings;
       export const getAvailableModels = () => window.h.availableModels ??
         (['validation','models'].includes(window.h.surface) ? ['test-model','second-model'] : ['test-model']);
       export const MODEL_CONFIG = {
         'test-model': {displayName:'Test', apiFormat:'responses', isReasoning:false},
         'second-model': {displayName:'Second', apiFormat:'responses', isReasoning:false},
-        'gpt-6-astra': {displayName:'GPT-6 Astra', apiFormat:'responses', isReasoning:false},
+        'gpt-6-astra': {displayName:'GPT-6 Astra', apiFormat:'responses', isReasoning:true, maxCompletionTokens:32000},
         'gpt-5.6-sol': {displayName:'GPT-5.6 Sol', apiFormat:'responses', isReasoning:false}
       };
       export const FEATURE_CONFIG = {architectureGeneration:{displayName:'Topology',recommendedModel:'test-model'},blueprint:{displayName:'Blueprint',recommendedModel:'test-model'}};
       export const isModelAvailable = () => true;
       export const updateFeatureOverride = () => {};
-      export const getSupportedReasoningEfforts = () => ['none'];
+      export const getSupportedReasoningEfforts = () => ['none','max'];
       export const getReasoningEffortLabel = x => x;
       export const getCommonSupportedReasoningEfforts = () => ['none'];
       export const normalizeReasoningEffort = (_, value) => value;
@@ -34,7 +34,7 @@ before(async () => {
       export const getBYOAIProviderLabel = provider => provider;
     `,
     runtimeConfig: `export const useRuntimeConfig = () => ({status:'ready',bringYourOwnAI:false});`,
-    LanguageContext: `export const useLanguage = () => ({language:'en',t:x=>x,translate:x=>x});`,
+    LanguageContext: `export const useLanguage = () => ({language:window.h.language ?? 'en',t:x=>x,translate:x=>x});`,
     safeStorage: `
       export const readLocalStorage = key => key==='aiGenerator.mode' ? window.h.mode : null;
       export const readBooleanPreference = (key, fallback) => key==='aiGenerator.bothInParallel' ? window.h.parallel : fallback;
@@ -68,8 +68,8 @@ before(async () => {
       export const analyzeArchitectureDiagramImage = () => Promise.resolve({description:'image'});
     `,
     referenceArchitectureAI: `export const generateReferenceArchitectureWithAI = (prompt, settings) => window.h.generate('reference', settings.signal, prompt);`,
-    blueprintArchitectureAI: `export const generateBlueprintArchitectureWithAI = (prompt, settings) => window.h.generate('blueprint', settings.signal, prompt);`,
-    componentManifestAI: `export const generateComponentManifest = (prompt, settings) => window.h.generate('manifest', settings.signal, prompt);`,
+    blueprintArchitectureAI: `export const generateBlueprintArchitectureWithAI = (prompt, settings) => window.h.generate('blueprint', settings.signal, prompt, settings);`,
+    componentManifestAI: `export const generateComponentManifest = (prompt, settings) => window.h.generate('manifest', settings.signal, prompt, settings);`,
     architectureValidator: `export const validateArchitecture = (...args) =>
       window.h.generate('validation', args[4]?.signal, args[3], args[4]);`,
     avatarPresenter: `export class AvatarPresenter { disconnect(){} }`,
@@ -88,11 +88,13 @@ before(async () => {
         import CompareValidation from './src/components/CompareValidationModal';
         import CompareModels from './src/components/CompareModelsModal';
         import {buildDiagramChanges} from './src/services/diagramChanges';
+        import {runWithRateLimitRetry} from './src/services/aiRetry';
+        import {createOpenAIProxyError} from './src/services/apiHelper';
         const h = window.h;
         const root = createRoot(document.getElementById('root'));
-        h.generate = (kind, signal, prompt, override) => {
+        h.dispatch = (kind, signal, prompt, override) => {
           h.calls.push({kind,signal,prompt,override});
-          const comparison = ['models','validation'].includes(h.surface);
+          const comparison = ['models','validation'].includes(h.surface) || (h.surface==='generator' && h.mode==='both');
           if(comparison && (h.inFlight+h.budgetExternal >= h.budgetLimit || h.contentionRemaining > 0)) {
             if(h.inFlight+h.budgetExternal >= h.budgetLimit) h.dispatchViolations++;
             if(h.contentionRemaining > 0) {
@@ -110,7 +112,13 @@ before(async () => {
             : kind==='critique' ? {content:'## Recommendation\\n**Test** is recommended.',metrics}
             : {services:[],connections:[],groups:[],components:[],zones:[],metrics};
           let request;
-          if(kind==='validation' || h.deferKinds.includes(kind)) request = new Promise((resolve,reject) => {
+          if(h.rateLimits[kind] > 0) {
+            h.rateLimits[kind]--;
+            request=Promise.reject(Object.assign(new Error('The AI provider is rate-limiting requests.'), {
+              code:'azure_openai_rate_limited',status:429,retryAfterMs:h.retryAfterMs,
+            }));
+          }
+          else if(kind==='validation' || h.deferKinds.includes(kind)) request = new Promise((resolve,reject) => {
             const cleanup = () => {
               h.pending=h.pending.filter(item=>item!==entry);
               h.validationPending=h.validationPending.filter(finish=>finish!==entry.resolve);
@@ -120,10 +128,19 @@ before(async () => {
             h.pending.push(entry);
             if(kind==='validation') h.validationPending.push(entry.resolve);
           });
-          else if(h.failKinds.includes(kind)) request=Promise.reject(new Error(kind+' generation failed'));
+          else if(h.failKinds.includes(kind)) request=Promise.reject(h.failureCodes[kind] ? createOpenAIProxyError({
+            ok:false,status:h.failureStatuses[kind] ?? 429,data:null,
+            error:{
+              source:h.failureSources[kind] ?? 'azure_openai',code:h.failureCodes[kind],
+              requestId:'test-'+kind+'-failure',retryAfterMs:h.retryAfterMs,
+            },
+          }) : new Error(kind+' generation failed'));
           else request=Promise.resolve(value);
           return request.finally(()=>{release();signal?.removeEventListener('abort',release);});
         };
+        h.generate = (kind, signal, prompt, override) => h.useRatePolicy
+          ? runWithRateLimitRetry(()=>h.dispatch(kind,signal,prompt,override),{signal,onRetryWait:override?.onRetryWait})
+          : h.dispatch(kind,signal,prompt,override);
         const apply = (...args) => {
           h.applies.push(args);
           if(h.deferReview) return new Promise(resolve => {
@@ -248,6 +265,9 @@ async function setup(t: { after: (fn: () => Promise<void>) => void }, config: Re
     ? '<html><body><div class="app"><header class="app-header"><button id="outside">Outside</button></header><main class="workspace" tabindex="0" data-modal-focus-fallback>Canvas</main><div id="root"></div></div></body></html>'
     : '<html><body><button id="outside">Outside</button><div id="root"></div></body></html>');
   await page.evaluate(config => {
+    if (config.abortSignalAnyUnavailable) {
+      Object.defineProperty(AbortSignal, 'any', { value: undefined, configurable: true });
+    }
     (window as any).h = {
       surface: 'generator', mode: 'topology', parallel: true, revision: 7, accepted: false,
       open: true, diagramKey: 'diagram-a', diagramFingerprint: 'fingerprint-a',
@@ -255,7 +275,9 @@ async function setup(t: { after: (fn: () => Promise<void>) => void }, config: Re
       followups: 0, followupInputs: [], blueprints: 0, references: 0, exports: 0, reviewed: [], cancelled: 0,
       reviewAttempts: 0, reviewError: '', snapshotError: false,
       budgetLimit: 2, budgetExternal: 0, budgetReads: [], budgetFailure: null, deferBudget: false, budgetPending: [],
-      inFlight: 0, peakRequests: 0, dispatchViolations: 0, contentionRemaining: 0, telemetry: [], ...config,
+      inFlight: 0, peakRequests: 0, dispatchViolations: 0, contentionRemaining: 0, telemetry: [],
+      rateLimits: {}, failureCodes: {}, failureSources: {}, failureStatuses: {},
+      useRatePolicy: false, retryAfterMs: 60_000, ...config,
     };
   }, config);
   await page.addScriptTag({ content: script });
@@ -366,29 +388,210 @@ test('cancel during parent review aborts the callback signal and retains prompt 
   assert.equal(await page.locator('.generator-success-panel').count(), 0);
 });
 
-test('Both-mode cancellation in manifest pre-pass does not start fallback providers', async t => {
-  const page = await setup(t, { mode: 'both', deferKinds: ['manifest'] });
+test('Both-mode manifest cancellation without AbortSignal.any does not start fallback providers', async t => {
+  const page = await setup(t, { mode: 'both', deferKinds: ['manifest'], abortSignalAnyUnavailable: true });
   await generate(page);
   await page.getByRole('button', { name: 'Cancel request' }).click();
   await finish(page, 'manifest');
   await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 30)));
   assert.deepEqual(await page.evaluate(() => (window as any).h.calls.map((call: any) => call.kind)), ['manifest']);
+  assert.equal(await page.evaluate(() => (window as any).h.calls[0].signal.aborted), true);
   assert.equal(await page.evaluate(() => (window as any).h.applies.length), 0);
 });
 
 for (const parallel of [true, false]) {
   test(`Both-mode ${parallel ? 'parallel' : 'sequential'} cancellation suppresses both late outputs`, async t => {
-    const page = await setup(t, { mode: 'both', parallel, deferKinds: ['topology', 'blueprint'] });
+    const page = await setup(t, {
+      mode: 'both', parallel, deferKinds: ['topology', 'blueprint'], abortSignalAnyUnavailable: true,
+    });
+    const outputKinds = parallel ? ['topology', 'blueprint'] : ['topology'];
     await generate(page);
-    await page.waitForFunction(() => (window as any).h.calls.some((call: any) => call.kind === 'topology'));
+    await page.waitForFunction(count => (window as any).h.pending.length === count, outputKinds.length);
     await page.getByRole('button', { name: 'Cancel request' }).click();
     await finish(page, 'topology');
     if (parallel) await finish(page, 'blueprint');
     await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 30)));
     assert.equal(await page.evaluate(() => (window as any).h.applies.length + (window as any).h.blueprints + (window as any).h.exports), 0);
-    assert.equal(await page.evaluate(() => (window as any).h.calls.every((call: any) => call.signal.aborted)), true);
+    const calls = await page.evaluate(() => (window as any).h.calls.map(
+      (call: { kind: string; signal: AbortSignal }) => ({ kind: call.kind, aborted: call.signal.aborted }),
+    ));
+    assert.equal(calls[0].kind, 'manifest');
+    // The completed manifest has left its admission scope; all pending outputs must abort.
+    assert.deepEqual(calls.slice(1), outputKinds.map(kind => ({ kind, aborted: true })));
   });
 }
+
+const astraMaxBoth = {
+  mode: 'both', parallel: true, accepted: true, useRatePolicy: true,
+  settings: { model: 'gpt-6-astra', reasoningEffort: 'max' },
+  availableModels: ['gpt-6-astra'],
+};
+
+test('Both/parallel/Astra MAX waits for provider capacity without replaying a completed topology', async t => {
+  const page = await setup(t, { ...astraMaxBoth, rateLimits: { blueprint: 1 }, deferKinds: ['topology'] });
+  await page.clock.install();
+  await generate(page);
+  await page.locator('.generator-retry-wait').waitFor();
+  assert.match(await page.locator('.generator-retry-wait').innerText(), /attempt 2\/3.*same model, reasoning, and output limit/);
+  await finish(page, 'topology');
+  assert.deepEqual(await page.evaluate(() => (window as any).h.calls.map((call: any) => call.kind)), [
+    'manifest', 'topology', 'blueprint',
+  ]);
+  assert.equal(await page.evaluate(() => (window as any).h.applies.length), 0);
+  await page.clock.fastForward(61_000);
+  await page.waitForFunction(() => (window as any).h.blueprints === 1);
+  const state = await page.evaluate(() => {
+    const h = (window as any).h;
+    return {
+      calls: h.calls.map((call: any) => call.kind),
+      settings: h.calls.map((call: any) => [call.override.model, call.override.reasoningEffort]),
+      applies: h.applies.length, blueprints: h.blueprints, violations: h.dispatchViolations,
+    };
+  });
+  assert.deepEqual(state, {
+    calls: ['manifest', 'topology', 'blueprint', 'blueprint'],
+    settings: Array.from({ length: 4 }, () => ['gpt-6-astra', 'max']),
+    applies: 1, blueprints: 1, violations: 0,
+  });
+});
+
+test('Both manifest rate-limit exhaustion stays bounded and never fans out into fallback requests', async t => {
+  const page = await setup(t, { ...astraMaxBoth, rateLimits: { manifest: 3 } });
+  await page.clock.install();
+  await generate(page);
+  await page.locator('.generator-retry-wait').filter({ hasText: 'attempt 2/3' }).waitFor();
+  await page.clock.fastForward(61_000);
+  await page.locator('.generator-retry-wait').filter({ hasText: 'attempt 3/3' }).waitFor();
+  await page.clock.fastForward(61_000);
+  await page.getByRole('alert').waitFor();
+  assert.match(await page.getByRole('alert').innerText(), /Wait at least 60s.*never lower the model, reasoning, or output limit.*deployment capacity/);
+  assert.deepEqual(await page.evaluate(() => {
+    const h = (window as any).h;
+    return { calls: h.calls.map((call: any) => call.kind), applies: h.applies.length, blueprints: h.blueprints };
+  }), { calls: ['manifest', 'manifest', 'manifest'], applies: 0, blueprints: 0 });
+});
+
+for (const [code, status, source, message] of [
+  ['ai_daily_budget_exceeded', 429, 'budget', /daily AI budget.*midnight UTC/],
+  ['azure_openai_unavailable', 500, 'azure_openai', /internal server error.*not automatically retried/],
+] as const) {
+  test(`Both manifest ${code} is terminal without fallback or misleading provider-throttle guidance`, async t => {
+    const page = await setup(t, {
+      ...astraMaxBoth, failKinds: ['manifest'], failureCodes: { manifest: code },
+      failureSources: { manifest: source }, failureStatuses: { manifest: status }, retryAfterMs: 1000,
+    });
+    await page.clock.install();
+    await generate(page);
+    await page.getByRole('alert').waitFor();
+    assert.match(await page.getByRole('alert').innerText(), message);
+    assert.match(await page.getByRole('alert').innerText(), /test-manifest-failure/);
+    assert.doesNotMatch(await page.getByRole('alert').innerText(), /provider.*rate.limit|deployment capacity/);
+    await page.clock.fastForward(121_000);
+    assert.deepEqual(await page.evaluate(() => {
+      const h = (window as any).h;
+      return { calls: h.calls.map((call: any) => call.kind), applies: h.applies.length, blueprints: h.blueprints };
+    }), { calls: ['manifest'], applies: 0, blueprints: 0 });
+  });
+}
+
+test('Both partial daily-budget exhaustion preserves the completed output and waits for an explicit missing-output retry', async t => {
+  const page = await setup(t, {
+    ...astraMaxBoth, failKinds: ['blueprint'], failureCodes: { blueprint: 'ai_daily_budget_exceeded' },
+    failureSources: { blueprint: 'budget' }, retryAfterMs: 1000,
+  });
+  await page.clock.install();
+  await generate(page);
+  await page.getByRole('button', { name: 'Retry missing output' }).waitFor();
+  const warning = page.locator('.generator-output-summary .azd-callout--warning');
+  assert.match(await warning.innerText(), /daily AI budget.*midnight UTC.*After the daily budget resets/);
+  assert.doesNotMatch(await warning.innerText(), /lowering reasoning|faster model|deployment capacity/);
+  await page.clock.fastForward(121_000);
+  assert.deepEqual(await page.evaluate(() => {
+    const h = (window as any).h;
+    return { calls: h.calls.map((call: any) => call.kind), applies: h.applies.length, blueprints: h.blueprints };
+  }), { calls: ['manifest', 'topology', 'blueprint'], applies: 1, blueprints: 0 });
+  await page.evaluate(() => { (window as any).h.failKinds = []; });
+  await page.getByRole('button', { name: 'Retry missing output' }).click();
+  await page.waitForFunction(() => (window as any).h.blueprints === 1);
+  assert.deepEqual(await page.evaluate(() => (window as any).h.calls.map((call: any) => call.kind)), [
+    'manifest', 'topology', 'blueprint', 'blueprint',
+  ]);
+  assert.equal(await page.evaluate(() => (window as any).h.applies.length), 1);
+});
+
+test('Japanese Both mode explains an excessive provider cooldown without silent downgrade or fan-out', async t => {
+  const page = await setup(t, { ...astraMaxBoth, language: 'ja', rateLimits: { manifest: 1 }, retryAfterMs: 180_000 });
+  await page.getByRole('button', { name: 'Generate Diagram', exact: true }).click();
+  await page.locator('#architecture-description').fill('もっともセキュアの構成で、FabricのE2EのArchitecture図を作成してください。');
+  await page.getByRole('button', { name: '出力設定へ進む', exact: true }).click();
+  await page.getByRole('button', { name: 'Generate Architecture', exact: true }).click();
+  await page.getByRole('alert').waitFor();
+  assert.match(await page.getByRole('alert').innerText(), /180秒.*モデル、推論強度、出力上限を下げません/);
+  assert.deepEqual(await page.evaluate(() => (window as any).h.calls.map((call: any) => call.kind)), ['manifest']);
+});
+
+test('cancelling a rate-limited missing-output retry keeps accepted work and retries only the missing blueprint', async t => {
+  const page = await setup(t, {
+    ...astraMaxBoth, failKinds: ['blueprint'], failureCodes: { blueprint: 'azure_openai_rate_limited' },
+    retryAfterMs: 180_000,
+    acceptedNodes: [{ id: 'accepted', type: 'azureNode', position: { x: 0, y: 0 }, data: { label: 'Accepted topology' } }],
+  });
+  await page.clock.install();
+  await generate(page);
+  await page.getByRole('button', { name: 'Retry missing output' }).waitFor();
+  assert.doesNotMatch(await page.locator('.generator-output-summary .azd-callout--warning').innerText(), /lowering reasoning|faster model/);
+  await page.evaluate(() => {
+    const h = (window as any).h;
+    h.failKinds = [];
+    h.rateLimits.blueprint = 1;
+    h.retryAfterMs = 60_000;
+  });
+  await page.getByRole('button', { name: 'Retry missing output' }).click();
+  await page.locator('.generator-retry-wait').waitFor();
+  await page.getByRole('button', { name: 'Cancel request' }).click();
+  await page.getByRole('button', { name: 'Retry missing output' }).waitFor();
+  await page.clock.fastForward(121_000);
+  assert.deepEqual(await page.evaluate(() => {
+    const h = (window as any).h;
+    return { calls: h.calls.map((call: any) => call.kind), applies: h.applies.length, blueprints: h.blueprints };
+  }), { calls: ['manifest', 'topology', 'blueprint', 'blueprint'], applies: 1, blueprints: 0 });
+  assert.equal(await page.locator('.generator-retry-wait').count(), 0);
+  await page.getByRole('button', { name: 'Retry missing output' }).click();
+  await page.waitForFunction(() => (window as any).h.blueprints === 1);
+  assert.deepEqual(await page.evaluate(() => {
+    const h = (window as any).h;
+    return {
+      calls: h.calls.map((call: any) => call.kind), applies: h.applies.length, blueprints: h.blueprints,
+      samePrompt: h.calls.filter((call: any) => call.kind === 'blueprint').every((call: any) => call.prompt === h.calls[0].prompt),
+      sameSettings: h.calls.every((call: any) => call.override.model === 'gpt-6-astra' && call.override.reasoningEffort === 'max'),
+    };
+  }), {
+    calls: ['manifest', 'topology', 'blueprint', 'blueprint', 'blueprint'],
+    applies: 1, blueprints: 1, samePrompt: true, sameSettings: true,
+  });
+});
+
+test('Both/parallel respects server cap one while retaining output completed before a budget outage', async t => {
+  const page = await setup(t, { ...astraMaxBoth, budgetLimit: 1, deferKinds: ['topology'] });
+  await generate(page);
+  await page.waitForFunction(() => (window as any).h.pending.some((item: any) => item.kind === 'topology'));
+  assert.deepEqual(await page.evaluate(() => (window as any).h.calls.map((call: any) => call.kind)), ['manifest', 'topology']);
+  await page.evaluate(() => { (window as any).h.budgetFailure = 'Budget unavailable'; });
+  await finish(page, 'topology');
+  await page.getByRole('button', { name: 'Retry missing output' }).waitFor();
+  assert.match(await page.locator('.generator-output-summary .azd-callout--warning').innerText(), /budget could not be checked/);
+  assert.equal(await page.evaluate(() => (window as any).h.applies.length), 1);
+  await page.evaluate(() => { (window as any).h.budgetFailure = null; });
+  await page.getByRole('button', { name: 'Retry missing output' }).click();
+  await page.waitForFunction(() => (window as any).h.blueprints === 1);
+  assert.deepEqual(await page.evaluate(() => {
+    const h = (window as any).h;
+    return {
+      calls: h.calls.map((call: any) => call.kind), applies: h.applies.length,
+      peak: h.peakRequests, violations: h.dispatchViolations,
+    };
+  }), { calls: ['manifest', 'topology', 'blueprint'], applies: 1, peak: 1, violations: 0 });
+});
 
 test('blueprint-only cancellation suppresses export and reference updates', async t => {
   const page = await setup(t, { mode: 'blueprint', deferKinds: ['blueprint'] });
@@ -870,10 +1073,12 @@ for (const surface of ['models', 'validation']) {
       await page.getByRole('button', { name: 'Save JSON', exact: true }).click();
       const results = await page.evaluate(() => (window as any).h.savedReport.results);
       if (astraAvailable) {
-        assert.equal(results.gpt6astra.model, 'gpt-6-astra');
-        assert.equal(results.gpt6astra.displayName, 'GPT-6 Astra');
+        assert.equal(results['gpt6astra-none'].model, 'gpt-6-astra');
+        assert.equal(results['gpt6astra-none'].displayName, 'GPT-6 Astra');
+        assert.equal(results.gpt6astra, undefined);
       } else {
         assert.equal(results.gpt6astra, undefined);
+        assert.equal(results['gpt6astra-none'], undefined);
         assert.equal(results.gpt56sol.model, 'gpt-5.6-sol');
       }
     });

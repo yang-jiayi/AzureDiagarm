@@ -67,6 +67,54 @@ interface ShapeXml {
   name: string;
   xfrm: Xfrm | null;
   prst: string | null;
+  identity: ShapeIdentity | null;
+}
+
+type ShapeRole = 'service' | 'service-label' | 'service-meta' | 'zone' | 'zone-label'
+  | 'connector' | 'connector-label' | 'connector-step' | 'icon' | 'accent' | 'tag' | 'tagtext';
+
+interface ShapeIdentity {
+  role: ShapeRole;
+  owner: string;
+}
+
+function ownedKey(role: ShapeRole, owner: string): string {
+  return JSON.stringify([role, owner]);
+}
+
+function shapeKey(id: number, name: string): string {
+  return JSON.stringify([id, name]);
+}
+
+function readIdentity(shape: Pick<ShapeXml, 'kind' | 'name' | 'xml' | 'prst'>): ShapeIdentity | null {
+  // Names are intentionally unchanged. A tile named service-meta-api and
+  // api's metadata textbox can share a name, but never their DrawingML role.
+  const textBox = /<p:cNvSpPr\b[^>]*\btxBox="1"/.test(shape.xml)
+    || (shape.prst === 'rect' && /<p:txBody>/.test(shape.xml));
+  // pptxgenjs pre-escapes textbox names before its common XML writer. Undo
+  // precisely that extra layer for ownership, not in the serialized name.
+  const name = textBox ? decodeXml(shape.name) : shape.name;
+  const owned = (role: ShapeRole): ShapeIdentity => ({ role, owner: name.slice(role.length + 1) });
+  if (shape.kind === 'pic') return name.startsWith('icon-') ? owned('icon') : null;
+  if (name.startsWith('connector-') && (shape.prst === 'line' || /<a:custGeom>/.test(shape.xml))) {
+    return owned('connector');
+  }
+  if (textBox) {
+    for (const role of ['service-label', 'service-meta', 'zone-label', 'connector-label', 'connector-step'] as const) {
+      if (name.startsWith(`${role}-`)) return owned(role);
+    }
+  } else {
+    for (const role of ['service', 'zone', 'accent'] as const) {
+      if (name.startsWith(`${role}-`)) return owned(role);
+    }
+  }
+  const chip = /^(tag|tagtext)-(.*)-\d+$/.exec(name);
+  return chip ? { role: chip[1] as 'tag' | 'tagtext', owner: chip[2] } : null;
+}
+
+function ownedShapes(shapes: ShapeXml[]): Map<string, ShapeXml> {
+  return new Map(shapes.filter(shape => shape.identity).map(shape =>
+    [ownedKey(shape.identity!.role, shape.identity!.owner), shape]));
 }
 
 function readXfrm(xml: string): Xfrm | null {
@@ -93,7 +141,7 @@ function parseShapes(slideXml: string): ShapeXml[] {
     const xml = match[0];
     const cNvPr = /<p:cNvPr id="(\d+)" name="([^"]*)"/.exec(xml);
     if (!cNvPr) continue;
-    shapes.push({
+    const shape = {
       xml,
       kind: match[1] as 'sp' | 'pic',
       start: match.index,
@@ -102,7 +150,8 @@ function parseShapes(slideXml: string): ShapeXml[] {
       name: cNvPr[2],
       xfrm: readXfrm(xml),
       prst: /<a:prstGeom prst="([^"]+)"/.exec(xml)?.[1] ?? null,
-    });
+    };
+    shapes.push({ ...shape, identity: readIdentity(shape) });
   }
   return shapes;
 }
@@ -146,20 +195,6 @@ function glueFor(
   return best ? { id: best.id, idx: best.idx } : null;
 }
 
-function isTile(name: string): boolean {
-  return (
-    name.startsWith('service-') &&
-    !name.startsWith('service-label-') &&
-    !name.startsWith('service-meta-')
-  );
-}
-
-/** The container shape each floating caption belongs to, by object-name prefix. */
-const CAPTIONS: { label: string; owner: (id: string) => string }[] = [
-  { label: 'service-label-', owner: (id) => `service-${id}` },
-  { label: 'zone-label-', owner: (id) => `zone-${id}` },
-];
-
 /** EMU insets that place `inner` exactly where it is today, inside `outer`. */
 function insets(outer: Xfrm, inner: Xfrm): { l: number; t: number; r: number; b: number } {
   return {
@@ -176,15 +211,17 @@ function insets(outer: Xfrm, inner: Xfrm): { l: number; t: number; r: number; b:
  * float in becomes the container's text insets.
  */
 function foldLabels(shapes: ShapeXml[]): Map<number, string> {
-  const byName = new Map<string, ShapeXml>();
-  for (const s of shapes) if (s.xfrm) byName.set(s.name, s);
+  const owners = ownedShapes(shapes);
 
   const folded = new Map<number, string>();
   for (const label of shapes) {
-    const kind = CAPTIONS.find((c) => label.name.startsWith(c.label));
-    if (!kind || !label.xfrm) continue;
-    const owner = byName.get(kind.owner(label.name.slice(kind.label.length)));
-    if (!owner?.xfrm || /<p:txBody>/.test(owner.xml)) continue;
+    const role = label.identity?.role;
+    const ownerRole = role === 'service-label' ? 'service' : role === 'zone-label' ? 'zone' : null;
+    if (!ownerRole || !label.identity || !label.xfrm) continue;
+    const owner = owners.get(ownedKey(ownerRole, label.identity.owner));
+    if (!owner?.xfrm) continue;
+    const base = folded.get(owner.id) ?? owner.xml;
+    if (/<p:txBody>/.test(base)) continue;
     const body = /<p:txBody>[\s\S]*<\/p:txBody>/.exec(label.xml)?.[0];
     if (!body) continue;
     // The caption must already lie inside its container, or folding it in
@@ -199,17 +236,13 @@ function foldLabels(shapes: ShapeXml[]): Map<number, string> {
     }
     const pad = insets(owner.xfrm, label.xfrm);
     const anchored = body.replace(
-      /<a:bodyPr([^>]*)>/,
-      (_all, attrs: string) =>
+      /<a:bodyPr([^>]*?)(\/?)>/,
+      (_all, attrs: string, close: string) =>
         `<a:bodyPr${attrs
           .replace(/\s(lIns|tIns|rIns|bIns)="[^"]*"/g, '')
-        } lIns="${pad.l}" tIns="${pad.t}" rIns="${pad.r}" bIns="${pad.b}">`,
+        } lIns="${pad.l}" tIns="${pad.t}" rIns="${pad.r}" bIns="${pad.b}"${close}>`,
     );
     folded.set(label.id, '');
-    // Build on any caption already folded into this owner, not on the original
-    // shape: a tile that owns two captions would otherwise keep only the last,
-    // having already deleted the first.
-    const base = folded.get(owner.id) || owner.xml;
     folded.set(owner.id, base.replace(/<\/p:sp>$/, `${anchored}</p:sp>`));
   }
   return folded;
@@ -223,7 +256,7 @@ function foldLabels(shapes: ShapeXml[]): Map<number, string> {
  * endpoints is dragged. A bent hop is deliberately left alone -- see below.
  */
 function connectorXml(shape: ShapeXml, tiles: ShapeXml[]): string | null {
-  if (!shape.name.startsWith('connector-') || !shape.xfrm) return null;
+  if (shape.identity?.role !== 'connector' || !shape.xfrm) return null;
   const bent = /<a:custGeom>/.test(shape.xml);
   if (shape.prst !== 'line' && !bent) return null;
   // A connector shape may not carry custom geometry. PowerPoint does not merely
@@ -260,11 +293,6 @@ function connectorXml(shape: ShapeXml, tiles: ShapeXml[]): string | null {
     `<p:cNvCxnSpPr>${glue}</p:cNvCxnSpPr><p:nvPr/></p:nvCxnSpPr>` +
     `${geom}${style}</p:cxnSp>`
   );
-}
-
-/** A node id can contain any character a user can type, including regex ones. */
-function escapeRegExp(text: string): string {
-  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 function decodeXml(text: string): string {
@@ -318,67 +346,61 @@ function clip(text: string): string {
  * carries a bounding box whose corners can land on an unrelated tile, and
  * naming that tile would be an invented fact, which is worse than silence.
  */
-function altTextByName(shapes: ShapeXml[], tiles: ShapeXml[]): Map<string, string> {
-  const byName = new Map<string, ShapeXml>();
-  for (const shape of shapes) byName.set(shape.name, shape);
+function altTextByShape(shapes: ShapeXml[], tiles: ShapeXml[]): Map<string, string> {
+  const byOwner = ownedShapes(shapes);
   const tileName = new Map<number, string>();
   const alt = new Map<string, string>();
 
   for (const tile of tiles) {
-    const key = tile.name.slice('service-'.length);
-    const chip = new RegExp(`^tagtext-${escapeRegExp(key)}-\\d+$`);
-    const name = textOf(byName.get(`service-label-${key}`)?.xml ?? '') || textOf(tile.xml);
-    const meta = textOf(byName.get(`service-meta-${key}`)?.xml ?? '');
-    const tags = shapes.filter((s) => chip.test(s.name)).map((s) => textOf(s.xml)).filter(Boolean);
+    const key = tile.identity!.owner;
+    const name = textOf(byOwner.get(ownedKey('service-label', key))?.xml ?? '') || textOf(tile.xml);
+    const meta = textOf(byOwner.get(ownedKey('service-meta', key))?.xml ?? '');
+    const tags = shapes.filter(s => s.identity?.role === 'tagtext' && s.identity.owner === key)
+      .map(s => textOf(s.xml)).filter(Boolean);
     tileName.set(tile.id, name);
     if (!name) continue;
     const text = clip([`Service: ${name}`, meta, tags.length > 0 ? `Tags: ${tags.join(', ')}` : '']
       .filter(Boolean)
       .join('. '));
-    alt.set(tile.name, text);
-    // The group is what a screen reader reaches first once the tile, its icon
-    // and its chips have been folded into one object.
-    alt.set(`node-${key}`, text);
+    alt.set(shapeKey(tile.id, tile.name), text);
   }
 
   for (const zone of shapes) {
-    if (!zone.name.startsWith('zone-') || zone.name.startsWith('zone-label-')) continue;
-    const key = zone.name.slice('zone-'.length);
-    const label = textOf(byName.get(`zone-label-${key}`)?.xml ?? '') || textOf(zone.xml);
-    if (label) alt.set(zone.name, clip(`Zone: ${label}`));
+    if (zone.identity?.role !== 'zone') continue;
+    const label = textOf(byOwner.get(ownedKey('zone-label', zone.identity.owner))?.xml ?? '') || textOf(zone.xml);
+    if (label) alt.set(shapeKey(zone.id, zone.name), clip(`Zone: ${label}`));
   }
 
   for (const line of shapes) {
-    if (!line.name.startsWith('connector-')) continue;
-    if (line.name.startsWith('connector-label-') || line.name.startsWith('connector-step-')) continue;
-    const key = line.name.slice('connector-'.length);
+    if (line.identity?.role !== 'connector') continue;
+    const key = line.identity.owner;
     const straight = !!line.xfrm && line.prst === 'line' && !/<a:custGeom>/.test(line.xml);
     const ends = straight && line.xfrm ? endpoints(line.xfrm) : null;
     const from = ends ? glueFor({ x: ends.x1, y: ends.y1 }, tiles) : null;
     const to = ends ? glueFor({ x: ends.x2, y: ends.y2 }, tiles) : null;
     const a = from ? tileName.get(from.id) : undefined;
     const b = to ? tileName.get(to.id) : undefined;
-    const step = textOf(byName.get(`connector-step-${key}`)?.xml ?? '');
-    const label = textOf(byName.get(`connector-label-${key}`)?.xml ?? '');
+    const step = textOf(byOwner.get(ownedKey('connector-step', key))?.xml ?? '');
+    const label = textOf(byOwner.get(ownedKey('connector-label', key))?.xml ?? '');
     const text = [
       step ? `Step ${step}.` : '',
       a && b && a !== b ? `Connection from ${a} to ${b}` : 'Connection',
       label ? `: ${label}` : '',
     ].filter(Boolean).join(' ').replace(' :', ':');
-    alt.set(line.name, clip(text));
+    alt.set(shapeKey(line.id, line.name), clip(text));
   }
 
   return alt;
 }
 
-/** Write `descr` on the shapes named in `alt`, leaving any existing one alone. */
+/** Shape IDs disambiguate equal object names; existing descriptions survive. */
 function applyAltText(slideXml: string, alt: Map<string, string>): string {
   if (alt.size === 0) return slideXml;
   return slideXml.replace(
     /<p:cNvPr id="(\d+)" name="([^"]*)"([^>]*?)(\/?)>/g,
     (all, id: string, name: string, rest: string, close: string) => {
       if (/\bdescr="/.test(rest)) return all;
-      const text = alt.get(name);
+      const text = alt.get(shapeKey(+id, name));
       return text ? `<p:cNvPr id="${id}" name="${name}" descr="${encodeAttr(text)}"${rest}${close}>` : all;
     },
   );
@@ -391,7 +413,8 @@ function applyAltText(slideXml: string, alt: Map<string, string>): string {
 export function nativizeSlideXml(slideXml: string): string {
   const shapes = parseShapes(slideXml);
   if (shapes.length === 0) return slideXml;
-  const tiles = shapes.filter((s) => s.kind === 'sp' && isTile(s.name) && s.xfrm);
+  const tiles = shapes.filter(s => s.identity?.role === 'service' && s.xfrm);
+  const alt = altTextByShape(shapes, tiles);
 
   const replacements = new Map<number, string>(foldLabels(shapes.filter((s) => s.kind === 'sp')));
   for (const shape of shapes) {
@@ -407,21 +430,15 @@ export function nativizeSlideXml(slideXml: string): string {
   // rounded rect has no per-side border), so it has to be folded in too or
   // moving a tile leaves a bare coloured bar sitting on the slide.
   //
-  // Anything drawn ON a tile has to be listed here or it strays, which is why
-  // the tag chips are matched too — and matched by an anchored pattern rather
-  // than a prefix, because there is no separator that cannot occur inside an
-  // id: a bare `startsWith('tag-a-')` also swallows the chips of a node called
-  // `a-1`, silently folding one service's tags into a different service's tile.
+  // Roles and complete owner IDs keep another service from being mistaken for
+  // this one's metadata, even when their object names happen to be identical.
   let nextId = Math.max(0, ...shapes.map((s) => s.id)) + 1;
   for (const tile of tiles) {
-    const key = tile.name.slice('service-'.length);
-    const chip = new RegExp(`^tag(?:text)?-${escapeRegExp(key)}-\\d+$`);
+    const key = tile.identity!.owner;
     const parts = shapes.filter(
       (s) =>
-        (s.name === `icon-${key}` ||
-          s.name === `service-meta-${key}` ||
-          s.name === `accent-${key}` ||
-          chip.test(s.name)) &&
+        s.identity?.owner === key &&
+        ['icon', 'service-meta', 'accent', 'tag', 'tagtext'].includes(s.identity.role) &&
         s.xfrm,
     );
     if (parts.length === 0 || !tile.xfrm) continue;
@@ -434,12 +451,13 @@ export function nativizeSlideXml(slideXml: string): string {
       tile.id,
       `<p:grpSp><p:nvGrpSpPr><p:cNvPr id="${nextId}" name="node-${key}"/>` +
         `<p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr>${frame}</p:grpSpPr>` +
-        `${body}${parts.map((p) => p.xml).join('')}</p:grpSp>`,
+        `${body}${parts.map(p => replacements.get(p.id) ?? p.xml).join('')}</p:grpSp>`,
     );
+    const description = alt.get(shapeKey(tile.id, tile.name));
+    if (description) alt.set(shapeKey(nextId, `node-${key}`), description);
     for (const part of parts) replacements.set(part.id, '');
     nextId += 1;
   }
-  const alt = altTextByName(shapes, tiles);
   if (replacements.size === 0) return applyAltText(slideXml, alt);
 
   let out = '';

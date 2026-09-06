@@ -4,17 +4,86 @@
 /**
  * Shared retry classification for AI generation calls.
  *
- * Long editorial prompts (blueprint / reference architecture) occasionally hit
- * the proxy's 210s upstream budget or the client's 225s abort, which surfaces
- * as "The AI provider is taking too long to respond." Those failures are
- * transient and are usually cleared by a second, cheaper attempt, so callers
- * classify the error here instead of re-implementing the matching each time.
+ * Classified throttles use bounded, cancellable waits with identical requests.
+ * Timeouts and invalid outputs remain explicit failures; automatic retries
+ * must never silently lower the user's model, reasoning, or output quality.
  */
 
 import type { ReasoningEffort } from '../stores/modelSettingsStore';
 import { getModelSettingsForFeature, type FeatureType } from '../stores/modelSettingsStore';
 import type { RuntimeModelOverride } from './aiModelRuntime';
-import { isAIConcurrencyLimitError } from './aiBudgetQueue';
+import { waitForAIRetry } from './aiBudgetQueue';
+import { isAIBudgetError } from './apiHelper';
+
+const RATE_LIMIT_CODES = new Set([
+  'azure_openai_rate_limited', 'byo_rate_limited', 'proxy_rate_limit_exceeded',
+]);
+
+/** Admission, authentication and daily budgets must not become provider retries. */
+export function isAIRateLimitError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const value = error as { code?: unknown; userCancelled?: unknown };
+  if (value.userCancelled === true || isAIBudgetError(error)) return false;
+  if (typeof value.code === 'string' && RATE_LIMIT_CODES.has(value.code)) return true;
+  // An unclassified 429 can be budget exhaustion; do not infer an automatic retry.
+  return false;
+}
+
+export interface AIRetryWait {
+  /** The upcoming attempt, counting the initial request as attempt one. */
+  attempt: number;
+  maxAttempts: number;
+  delayMs: number;
+  retryAt: number;
+}
+
+export interface AIRateLimitRetryOptions {
+  signal?: AbortSignal;
+  onRetryWait?: (wait: AIRetryWait | null) => void;
+}
+
+/**
+ * Repeat only rejected rate-limited transport requests, with the identical body.
+ * At most two retries / 120 seconds of cooldown; a longer provider delay is
+ * surfaced rather than shortened. Missing/invalid headers use 30s, then 60s.
+ * Network timeouts remain the responsibility of each individual attempt.
+ */
+export async function runWithRateLimitRetry<T>(
+  attempt: () => Promise<T>,
+  options: AIRateLimitRetryOptions = {},
+): Promise<T> {
+  const signal = options.signal ?? new AbortController().signal;
+  const assertActive = () => {
+    if (signal.aborted) {
+      throw Object.assign(new DOMException('Generation cancelled.', 'AbortError'), { userCancelled: true });
+    }
+  };
+  let waitedMs = 0;
+  for (let index = 0; ; index += 1) {
+    assertActive();
+    try {
+      const result = await attempt();
+      assertActive();
+      return result;
+    } catch (error) {
+      assertActive();
+      if (!isAIRateLimitError(error) || index >= 2) throw error;
+      const suppliedDelay = (error as { retryAfterMs?: number }).retryAfterMs;
+      const delayMs = typeof suppliedDelay === 'number' && Number.isSafeInteger(suppliedDelay) && suppliedDelay >= 0
+        ? Math.max(1000, suppliedDelay)
+        : 30_000 * (2 ** index);
+      if (waitedMs + delayMs > 120_000) throw error;
+      waitedMs += delayMs;
+      options.onRetryWait?.({ attempt: index + 2, maxAttempts: 3, delayMs, retryAt: Date.now() + delayMs });
+      try {
+        await waitForAIRetry(delayMs, signal);
+      } finally {
+        // Cancellation owns UI cleanup; never publish a late "resuming" state.
+        if (!signal.aborted) options.onRetryWait?.(null);
+      }
+    }
+  }
+}
 
 /** Proxy error codes that represent a transient upstream/edge condition. */
 const RETRYABLE_PROXY_CODES = new Set([
@@ -98,7 +167,8 @@ export const MODEL_JSON_ERROR_MESSAGES: Readonly<Record<ModelJsonErrorKind, stri
 };
 
 /**
- * True when the failure is worth one more (cheaper) attempt. Authentication,
+ * True when the failure is transient. Rate limits require their own wait policy,
+ * not a compact fallback. Authentication,
  * authorization, configuration, and content-policy failures are deliberately
  * excluded — retrying those only wastes the user's time.
  */
@@ -111,7 +181,7 @@ export function isRetryableAIFailure(error: unknown): boolean {
   if ((error as { userCancelled?: unknown }).userCancelled === true) return false;
 
   // Capacity contention needs admission/backoff, not a cheaper generation.
-  if (isAIConcurrencyLimitError(error)) return false;
+  if (isAIBudgetError(error)) return false;
 
   // A truncated or empty JSON payload is exactly what a compact retry fixes;
   // a refusal or otherwise malformed payload is not worth a second charge.
@@ -133,7 +203,8 @@ export function isRetryableAIFailure(error: unknown): boolean {
 }
 
 /**
- * Reasoning effort used for a retry. Anything above "low" is expensive in wall
+ * Legacy explicit-compaction utility; automatic generation never calls this.
+ * Anything above "low" is expensive in wall
  * clock time, which is exactly what caused the timeout, so the retry always
  * runs at "low" (kept, not dropped to "none", because some model families —
  * e.g. Claude — do not accept "none").
@@ -198,53 +269,19 @@ export interface CompactRetryOptions<T> {
    */
   attempt: (compact: boolean, override?: RuntimeModelOverride) => Promise<T>;
   /**
-   * Extra classification for payload-level failures the transport cannot see
-   * (truncated or non-JSON responses), which a compact retry usually fixes.
+   * Legacy compatibility field. A classifier no longer authorizes an automatic
+   * compact retry; changing requested quality requires an explicit user action.
    */
   isRetryable?: (error: unknown) => boolean;
 }
 
 /**
- * Run a generation with exactly one automatic fallback attempt.
- *
- * The dominant failure for the long editorial prompts is exceeding the proxy's
- * upstream budget, which reaches the user as "The AI provider is taking too
- * long to respond." Retrying once with a compact prompt at low reasoning effort
- * finishes well inside the budget. Non-transient failures (auth, quota,
- * content policy, configuration) are rethrown untouched so the user is not
- * charged for a second pointless call.
+ * Legacy entry point retained for caller compatibility. Never compact or lower
+ * reasoning automatically: timeouts and invalid outputs require a user retry.
+ * Classified throttles are retried by the transport with the identical body.
  */
 export async function runWithCompactRetry<T>(options: CompactRetryOptions<T>): Promise<T> {
-  const { transportFeature, override, label, attempt, isRetryable } = options;
-  try {
-    return await attempt(false, override);
-  } catch (error) {
-    if (isAIConcurrencyLimitError(error)) throw error;
-    if (!isRetryableAIFailure(error) && !isRetryable?.(error)) throw error;
-    console.warn(
-      `⏱️ ${label} failed with a transient error — retrying once with a compact prompt at low reasoning effort:`,
-      error,
-    );
-    try {
-      return await attempt(true, buildRetryOverride(transportFeature, override));
-    } catch (retryError) {
-      // Preserve the ORIGINAL typed error so downstream UI can still classify
-      // and localise it (e.g. an OpenAIProxyError keeps its `.code`, a
-      // ModelJsonError keeps its `.kind`). Flattening it to a generic Error
-      // here would strip that classification and leak the raw detail into the
-      // user-facing string. We only annotate `retried` so the UI can avoid
-      // inviting the user to press the same button again.
-      console.error(`${label} failed after an automatic retry:`, retryError);
-      if (retryError && typeof retryError === 'object') {
-        try {
-          (retryError as { retried?: boolean }).retried = true;
-        } catch {
-          /* frozen error object — the annotation is best-effort */
-        }
-      }
-      throw retryError;
-    }
-  }
+  return options.attempt(false, options.override);
 }
 
 // ── Fence-tolerant, refusal-aware model JSON parsing ────────────────────────

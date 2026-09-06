@@ -75,6 +75,54 @@ test('capacity contention cannot trigger a compact retry, including a custom pay
   assert.equal('retried' in error, false);
 });
 
+for (const code of ['azure_openai_rate_limited', 'byo_rate_limited', 'proxy_rate_limit_exceeded', 'http_429']) {
+  test(`${code} never triggers a compact quality downgrade`, async () => {
+    const error = Object.assign(new Error('Rate limit reached.'), { code, status: 429, retryAfterMs: 60_000 });
+    const attempts: Array<{ compact: boolean; override?: RuntimeModelOverride }> = [];
+    const requested: RuntimeModelOverride = { model: 'gpt-6-astra', reasoningEffort: 'max' };
+    await assert.rejects(runWithCompactRetry({
+      transportFeature: 'architectureGeneration',
+      override: requested,
+      label: 'Astra MAX generation',
+      isRetryable: () => true,
+      attempt: async (compact, override) => { attempts.push({ compact, override }); throw error; },
+    }), (actual: unknown) => actual === error);
+    assert.deepEqual(attempts, [{ compact: false, override: requested }]);
+  });
+}
+
+for (const [code, status] of [
+  ['ai_daily_budget_exceeded', 429], ['ai_budget_busy', 503],
+  ['ai_budget_unavailable', 503], ['ai_budget_timeout', 504],
+] as const) {
+  test(`${code} never becomes a compact retry even with a permissive payload classifier`, async () => {
+    const error = Object.assign(new Error('Application budget rejected the request.'), { source: 'budget', code, status });
+    let attempts = 0;
+    assert.equal(isRetryableAIFailure(error), false);
+    await assert.rejects(runWithCompactRetry({
+      transportFeature: 'architectureGeneration', label: 'Budget rejection',
+      isRetryable: () => true,
+      attempt: async () => { attempts++; throw error; },
+    }), actual => actual === error);
+    assert.equal(attempts, 1);
+  });
+}
+
+for (const status of [500, 502]) {
+  test(`a provider 500 carried by HTTP ${status} is not automatically replayed as a lower-quality compact request`, async () => {
+    const error = Object.assign(new Error('Provider internal error.'), {
+      source: 'azure_openai', code: 'azure_openai_unavailable', status, upstreamStatus: 500, upstreamCode: 'server_error',
+    });
+    const attempts: Array<{ compact: boolean; override?: RuntimeModelOverride }> = [];
+    const requested: RuntimeModelOverride = { model: 'gpt-6-astra', reasoningEffort: 'max' };
+    await assert.rejects(runWithCompactRetry({
+      transportFeature: 'architectureGeneration', override: requested, label: 'Unknown-usage 500',
+      attempt: async (compact, override) => { attempts.push({ compact, override }); throw error; },
+    }), actual => actual === error);
+    assert.deepEqual(attempts, [{ compact: false, override: requested }]);
+  });
+}
+
 test('the user-visible timeout message is recognised', () => {
   assert.equal(
     isRetryableAIFailure(new Error('The AI provider is taking too long to respond.')),
@@ -119,26 +167,23 @@ test('a retry override is produced even when the caller passed none', () => {
   assert.ok(implicit.model);
 });
 
-test('the compact retry runs the second attempt exactly once, cheaply', async () => {
+test('a timeout preserves requested quality and requires an explicit user retry', async () => {
   const calls: Array<{ compact: boolean; override?: RuntimeModelOverride }> = [];
-  const result = await runWithCompactRetry({
+  const failure = Object.assign(new Error('slow'), { code: 'azure_openai_timeout' });
+  await assert.rejects(runWithCompactRetry({
     transportFeature: 'architectureGeneration',
     override: OVERRIDE,
     label: 'Blueprint generation',
     attempt: async (compact, override) => {
       calls.push({ compact, override });
-      if (!compact) throw Object.assign(new Error('slow'), { code: 'azure_openai_timeout' });
+      if (!compact) throw failure;
       return 'compact-result';
     },
-  });
+  }), actual => actual === failure);
 
-  assert.equal(result, 'compact-result');
-  assert.equal(calls.length, 2, 'exactly one retry');
+  assert.equal(calls.length, 1, 'no hidden lower-quality replay');
   assert.equal(calls[0].compact, false);
   assert.equal(calls[0].override, OVERRIDE, 'the first attempt uses the caller override verbatim');
-  assert.equal(calls[1].compact, true, 'the retry drops the few-shot exemplars');
-  assert.equal(calls[1].override?.reasoningEffort, 'low');
-  assert.equal(calls[1].override?.model, 'gpt-5.6-sol', 'the user keeps their model');
 });
 
 test('non-retryable failures are rethrown untouched and never retried', async () => {
@@ -160,27 +205,27 @@ test('non-retryable failures are rethrown untouched and never retried', async ()
   assert.equal(attempts, 1, 'the user must not be charged for a pointless second call');
 });
 
-test('payload-level failures opt in through isRetryable', async () => {
+test('payload classifiers cannot authorize a silent quality downgrade', async () => {
   class ResponseError extends Error {}
   let attempts = 0;
+  const failure = new ResponseError('truncated JSON');
 
-  const result = await runWithCompactRetry({
+  await assert.rejects(runWithCompactRetry({
     transportFeature: 'architectureGeneration',
     override: OVERRIDE,
     label: 'Blueprint generation',
     isRetryable: (error) => error instanceof ResponseError,
     attempt: async (compact) => {
       attempts += 1;
-      if (!compact) throw new ResponseError('truncated JSON');
+      if (!compact) throw failure;
       return 'ok';
     },
-  });
+  }), actual => actual === failure);
 
-  assert.equal(result, 'ok');
-  assert.equal(attempts, 2);
+  assert.equal(attempts, 1);
 });
 
-test('a failing retry preserves the original typed error and flags the retry', async () => {
+test('terminal failures preserve the typed error without claiming an automatic replay', async () => {
   let attempts = 0;
   const original = Object.assign(new Error('still too slow'), { code: 'azure_openai_timeout' });
   await assert.rejects(
@@ -199,11 +244,11 @@ test('a failing retry preserves the original typed error and flags the retry', a
       assert.equal(error, original, 'the original typed error instance is rethrown');
       assert.equal((error as { code?: string }).code, 'azure_openai_timeout', 'the code survives');
       assert.equal(error instanceof Error && error.message, 'still too slow', 'the message is not mangled');
-      assert.equal((error as { retried?: boolean }).retried, true, 'the retry is annotated');
+      assert.equal((error as { retried?: boolean }).retried, undefined, 'no retry is claimed');
       return true;
     },
   );
-  assert.equal(attempts, 2, 'retries are bounded to one — no infinite loop');
+  assert.equal(attempts, 1, 'no additional generation is dispatched automatically');
 });
 
 // ── safeParseModelJson (HIGH 4) ─────────────────────────────────────────────

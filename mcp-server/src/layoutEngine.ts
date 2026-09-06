@@ -11,6 +11,7 @@
 
 import dagre from 'dagre';
 import { resolveServiceName, SERVICE_CATALOG } from './serviceCatalog.js';
+import { encloseConnectionRoutes, preserveConnectionRoutes, selfLoopPoints } from './connectionRouting.js';
 
 // ── Types ──────────────────────────────────────────────────────────────
 
@@ -56,11 +57,15 @@ export interface PositionedNode {
 }
 
 export interface PositionedEdge {
+  /** Stable per-occurrence identity, including identical parallel connections. */
+  key?: string;
   from: string;
   to: string;
   label: string;
   type: string;
   points: Array<{ x: number; y: number }>;
+  /** These full polylines must survive endpoint-only renderer routing. */
+  routeKind?: 'self-loop' | 'parallel';
 }
 
 export interface PositionedGroup {
@@ -174,7 +179,7 @@ function computeFlatLayout(
   groups: DiagramGroup[],
   direction: 'TB' | 'LR' = 'TB',
 ): LayoutResult {
-  const g = new dagre.graphlib.Graph({ compound: true });
+  const g = new dagre.graphlib.Graph({ compound: true, multigraph: true });
 
   // Adaptive spacing: scale up for larger graphs and longer edge labels so
   // label backgrounds don't collide and edges have room to route cleanly.
@@ -234,12 +239,12 @@ function computeFlatLayout(
 
   // Add edges
   const serviceNames = new Set(services.map(s => s.name));
-  for (const conn of connections) {
+  for (const [index, conn] of connections.entries()) {
     if (serviceNames.has(conn.from) && serviceNames.has(conn.to)) {
       g.setEdge(conn.from, conn.to, {
         label: conn.label ?? '',
         minlen: 1,
-      });
+      }, `connection-${index}`);
     }
   }
 
@@ -269,10 +274,12 @@ function computeFlatLayout(
 
   // Extract positioned edges
   const positionedEdges: PositionedEdge[] = connections
+    .map((connection, index) => ({ ...connection, key: `connection-${index}` }))
     .filter(c => serviceNames.has(c.from) && serviceNames.has(c.to))
     .map(conn => {
-      const edge = g.edge(conn.from, conn.to);
+      const edge = g.edge(conn.from, conn.to, conn.key);
       return {
+        key: conn.key,
         from: conn.from,
         to: conn.to,
         label: conn.label ?? '',
@@ -316,7 +323,7 @@ function computeFlatLayout(
 // ── Grouped (two-level) layout ─────────────────────────────────────────
 // Lays out each group's members independently, then places the groups as
 // non-overlapping meta-nodes. Combined with the renderer's orthogonal router
-// (which only needs edge endpoints), this produces clean lane-based diagrams
+// (with preserved routes for loops and parallel hops), this produces lane-based diagrams
 // without the interleaved/overlapping group boxes the compound layout caused.
 
 const GROUP_INNER_PAD = 16;
@@ -343,12 +350,15 @@ function subLayoutGroup(
   direction: 'TB' | 'LR',
 ): { pos: Map<string, { x: number; y: number }>; width: number; height: number } {
   const memberSet = new Set(members.map(m => m.name));
-  const g = new dagre.graphlib.Graph();
+  const g = new dagre.graphlib.Graph({ multigraph: true });
   g.setGraph({ rankdir: direction, nodesep: 45, ranksep: 65, marginx: 0, marginy: 0, ranker: 'network-simplex' });
   g.setDefaultEdgeLabel(() => ({}));
   for (const m of members) g.setNode(m.name, { width: NODE_WIDTH, height: NODE_HEIGHT });
-  for (const c of connections) {
-    if (memberSet.has(c.from) && memberSet.has(c.to) && c.from !== c.to) g.setEdge(c.from, c.to, {});
+  const loops = new Map<string, number>();
+  for (const [index, c] of connections.entries()) {
+    if (!memberSet.has(c.from) || !memberSet.has(c.to)) continue;
+    g.setEdge(c.from, c.to, {}, `connection-${index}`);
+    if (c.from === c.to) loops.set(c.from, (loops.get(c.from) ?? 0) + 1);
   }
   dagre.layout(g);
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
@@ -359,6 +369,11 @@ function subLayoutGroup(
     raw.set(m.name, { x, y });
     minX = Math.min(minX, x); minY = Math.min(minY, y);
     maxX = Math.max(maxX, x + NODE_WIDTH); maxY = Math.max(maxY, y + NODE_HEIGHT);
+    const loopCount = loops.get(m.name) ?? 0;
+    if (loopCount > 0) {
+      const route = selfLoopPoints({ x, y, width: NODE_WIDTH, height: NODE_HEIGHT }, loopCount - 1);
+      maxX = Math.max(maxX, ...route.map(point => point.x));
+    }
   }
   const pos = new Map<string, { x: number; y: number }>();
   for (const [name, p] of raw) pos.set(name, { x: p.x - minX, y: p.y - minY });
@@ -469,9 +484,9 @@ function computeGroupedLayout(
   // group all edges that use the same node side and spread them evenly along
   // that side, ordered by the opposite endpoint's position to reduce crossings.
   const serviceNames = new Set(services.map(s => s.name));
-  const validConns = connections.filter(
-    c => serviceNames.has(c.from) && serviceNames.has(c.to) && c.from !== c.to,
-  );
+  const validConns = connections
+    .map((connection, index) => ({ ...connection, key: `connection-${index}` }))
+    .filter(c => serviceNames.has(c.from) && serviceNames.has(c.to));
 
   type Side = 'L' | 'R' | 'T' | 'B';
   // Pass 1: which side of each endpoint the edge uses (center-to-center).
@@ -495,6 +510,7 @@ function computeGroupedLayout(
     const arr = buckets.get(key); if (arr) arr.push(ref); else buckets.set(key, [ref]);
   };
   validConns.forEach((c, i) => {
+    if (c.from === c.to) return;
     const a = rectOf.get(c.from)!, b = rectOf.get(c.to)!;
     push(c.from, sides[i].s, { edgeIdx: i, role: 's', sortKey: perp(sides[i].s, b) });
     push(c.to, sides[i].t, { edgeIdx: i, role: 't', sortKey: perp(sides[i].t, a) });
@@ -523,10 +539,11 @@ function computeGroupedLayout(
   }
 
   const positionedEdges: PositionedEdge[] = validConns.map((c, i) => {
+    if (c.from === c.to) return { key: c.key, from: c.from, to: c.to, label: c.label ?? '', type: c.type ?? 'sync', points: [] };
     const fallback = borderAnchor(rectOf.get(c.from)!, rectOf.get(c.to)!, direction);
     const s = anchors[i].s ?? fallback.s;
     const t = anchors[i].t ?? fallback.t;
-    return { from: c.from, to: c.to, label: c.label ?? '', type: c.type ?? 'sync', points: [s, t] };
+    return { key: c.key, from: c.from, to: c.to, label: c.label ?? '', type: c.type ?? 'sync', points: [s, t] };
   });
 
   // Canvas bounds.
@@ -550,6 +567,9 @@ export function computeLayout(
   groups: DiagramGroup[],
   direction: 'TB' | 'LR' = 'TB',
 ): LayoutResult {
+  const routed = (layout: LayoutResult) => encloseConnectionRoutes({
+    ...layout, edges: preserveConnectionRoutes(layout.nodes, layout.edges),
+  });
   if (services.length > MAX_LAYOUT_SERVICES) {
     throw new RangeError(`Layout supports at most ${MAX_LAYOUT_SERVICES} services.`);
   }
@@ -562,12 +582,12 @@ export function computeLayout(
   if (groups && groups.length > 0) {
     try {
       const grouped = computeGroupedLayout(services, connections, groups, direction);
-      if (grouped) return grouped;
+      if (grouped) return routed(grouped);
     } catch {
       // Fall back to the flat compound layout on any grouping error.
     }
   }
-  return computeFlatLayout(services, connections, groups, direction);
+  return routed(computeFlatLayout(services, connections, groups, direction));
 }
 
 function presentationGroupRank(label: string): number {
@@ -756,14 +776,14 @@ function reflowMultiRegionPresentation(layout: LayoutResult): LayoutResult | nul
 
   const width = regionsOuterX + regionsOuterWidth + PADDING;
   const height = regionsOuterY + Math.max(groupOuterHeight(primary), groupOuterHeight(secondary)) + PADDING;
-  return {
+  return encloseConnectionRoutes({
     nodes,
     groups: [positionedGlobalGroup, primary, secondary],
     edges: reanchorPresentationEdges(nodes, layout.edges.map(edge => ({ ...edge, points: [...edge.points] }))),
     width,
     height,
     direction: 'LR',
-  };
+  });
 }
 
 type PortSide = 'L' | 'R' | 'T' | 'B';
@@ -805,6 +825,7 @@ function reanchorPresentationEdges(nodes: PositionedNode[], edges: PositionedEdg
     side === 'L' || side === 'R' ? rect.y + rect.height / 2 : rect.x + rect.width / 2;
 
   edges.forEach((edge, edgeIndex) => {
+    if (edge.from === edge.to) return;
     const source = rects.get(edge.from);
     const target = rects.get(edge.to);
     if (!source || !target) return;
@@ -846,12 +867,12 @@ function reanchorPresentationEdges(nodes: PositionedNode[], edges: PositionedEdg
     });
   }
 
-  return edges.map((edge, index) => ({
+  return preserveConnectionRoutes(nodes, edges.map((edge, index) => ({
     ...edge,
     points: anchors[index].source && anchors[index].target
       ? [anchors[index].source!, anchors[index].target!]
       : edge.points,
-  }));
+  })), true);
 }
 
 /**
@@ -920,14 +941,14 @@ export function reflowLayoutForPresentation(layout: LayoutResult): LayoutResult 
 
   const width = Math.max(...groups.map(group => group.x + group.width + 12)) + PADDING;
   const height = Math.max(...groups.map(group => group.y + group.height + 12)) + PADDING;
-  return {
+  return encloseConnectionRoutes({
     nodes,
     groups,
     edges: reanchorPresentationEdges(nodes, layout.edges.map(edge => ({ ...edge, points: [...edge.points] }))),
     width,
     height,
     direction: layout.direction,
-  };
+  });
 }
 
 // ── Category resolver ──────────────────────────────────────────────────

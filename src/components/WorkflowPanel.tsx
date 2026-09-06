@@ -5,6 +5,8 @@ import React, { useState, useRef, useEffect } from 'react';
 import { ChevronLeft, ChevronRight, ListOrdered, MonitorPlay, StopCircle, Loader2 } from 'lucide-react';
 import { AvatarPresenter, AvatarStatus } from '../services/avatarPresenter';
 import { useDraggableResizable } from '../hooks/useDraggableResizable';
+import { useMediaQuery } from '../hooks/useMediaQuery';
+import { MEDIA_QUERIES } from '../styles/breakpoints';
 import './WorkflowPanel.css';
 import { useLanguage } from '../i18n/LanguageContext';
 import { localize } from '../i18n/localization';
@@ -29,7 +31,8 @@ const WorkflowPanel: React.FC<WorkflowPanelProps> = ({
   forceCollapsed 
 }) => {
   const { t, language } = useLanguage();
-  const [isExpanded, setIsExpanded] = useState(true);
+  const isNarrowWorkspace = useMediaQuery(MEDIA_QUERIES.workspace);
+  const [isExpanded, setIsExpanded] = useState(() => !isNarrowWorkspace);
   // Click-to-pin: a clicked step keeps its services highlighted until clicked
   // again. Hover still previews; pinned highlight is re-asserted on mouse-leave.
   const [pinnedStep, setPinnedStep] = useState<number | null>(null);
@@ -58,6 +61,10 @@ const WorkflowPanel: React.FC<WorkflowPanelProps> = ({
   React.useEffect(() => {
     if (forceCollapsed) setIsExpanded(false);
   }, [forceCollapsed]);
+
+  useEffect(() => {
+    if (isNarrowWorkspace) setIsExpanded(false);
+  }, [isNarrowWorkspace]);
 
   // Disconnect avatar on unmount
   useEffect(() => {

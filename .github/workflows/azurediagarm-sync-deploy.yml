@@ -437,6 +437,13 @@ jobs:
           ref: ${{ needs.merge_validate.outputs.fork_commit }}
           persist-credentials: false
 
+      - name: Verify current main before Azure changes
+        id: deployment_source
+        env:
+          EXPECTED_COMMIT: ${{ needs.merge_validate.outputs.fork_commit }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/verify-deployment-source.mjs
+
       - name: Restore update details
         run: |
           printf '%s' "${{ needs.merge_validate.outputs.update_details_b64 }}" \
@@ -1350,6 +1357,8 @@ jobs:
         if: steps.deployment.outputs.should_deploy == 'true'
         env:
           ACCESS_ADMIN_EMAIL: ${{ secrets.ACCESS_ADMIN_EMAIL }}
+          EXPECTED_COMMIT: ${{ needs.merge_validate.outputs.fork_commit }}
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -Eeuo pipefail
           deployed_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -1473,6 +1482,7 @@ jobs:
           if (( ${#remove_env_vars[@]} > 0 )); then
             update_args+=(--remove-env-vars "${remove_env_vars[@]}")
           fi
+          node scripts/verify-deployment-source.mjs
           touch /tmp/azurediagarm-deployment-started
           az containerapp update "${update_args[@]}"
 
@@ -1892,7 +1902,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Send failure email
-        if: failure()
+        if: ${{ failure() && steps.deployment_source.outcome == 'success' }}
         continue-on-error: true
         env:
           AZURE_COMMUNICATION_ENDPOINT: ${{ vars.FEEDBACK_EMAIL_ENDPOINT }}

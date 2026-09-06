@@ -92,10 +92,16 @@ Generate a hand-drawn, **whiteboard-style blueprint** of your architecture — n
 - **Blueprint** *(BETA)* — a polished whiteboard-style PNG (the PNG is the deliverable; re-download any time via **Export > Export Blueprint PNG**)
 - **Both** *(BETA)* — a deployable topology **and** a Blueprint PNG from the same prompt, optionally generated in parallel
 
-> Blueprint and Both modes require a general-purpose OpenAI model (GPT-5.x). The app auto-switches if a third-party model is selected. A configurable legend position keeps the output presentation-ready.
+> Blueprint and Both modes require a compatible general-purpose OpenAI model, such as GPT-6 Astra or GPT-5.x. The app auto-switches if a third-party model is selected. A configurable legend position keeps the output presentation-ready.
+
+Explicitly identified provider/proxy rate limits can retry automatically with the same prompt, model, reasoning and output limit, up to three HTTP attempts and two minutes of total cooldown. Budget exhaustion, unclassified 429 responses, request timeouts and incomplete output are surfaced instead of silently lowering generation quality. Countdown waits and active requests remain cancellable.
+
+Both mode admits work against the server's concurrency budget. Retrying an incomplete run with the same brief regenerates only the missing deliverable, preserving accepted output and reusing its existing component manifest. Editing the brief starts a new run.
 
 ### 📋 IaC Import, Export & Drift Review
 Import ARM JSON, Bicep, Terraform HCL, or Terraform state and turn the declared resources into an editable diagram. The round-trip workspace preserves the source baseline, compares it with the current canvas, exports Bicep or Terraform starter templates, and summarizes Azure what-if or Terraform plan JSON without ever running an apply operation.
+
+Bicep baseline inspection recognizes conditional and nested declarations without executing expressions. Unexpanded modules, unresolved loop instance counts, and parsing limits are explicitly marked as incomplete. The workspace labels their counts and comparison results as provisional instead of implying that the full source has no differences.
 
 ### 🎯 Well-Architected Framework Validation
 Validate your architecture against all five WAF pillars:
@@ -527,9 +533,16 @@ environment.
 
 Production updates run only through
 [`AzureDiagarm sync and deploy`](.github/workflows/azurediagarm-sync-deploy.yml).
-That workflow validates the application and servers, builds in ACR, creates a
+Merge a reviewed pull request into `main`; its push starts the release
+automatically. **Do not use manual workflow dispatch for ordinary releases.**
+Dispatch on `main` is reserved for guarded upstream synchronization.
+The workflow validates the application and servers, builds and pushes an image to ACR, creates a
 Container Apps revision with health probes, preserves authentication and origin
 controls, purges Front Door, and verifies the deployed security boundary.
+It verifies the validated checkout against current `main` before Azure changes
+and again immediately before the revision update. See the
+[production runbook](deployment/azurediagarm/README.md#safe-retries-and-rollbacks)
+before retrying a failed run: older workflow versions do **not** inherit this guard.
 
 Configure `ACCESS_ADMIN_EMAIL` as a GitHub Actions **secret**, not a repository
 variable, so the administrator address is masked in public workflow logs.
@@ -720,89 +733,65 @@ Microsoft Edge with **Strict** Tracking Prevention may log warnings such as `Tra
 5. **Open your browser**
 Navigate to `http://localhost:3000`
 
-### Docker Deployment (Local)
+### Docker Deployment (Local Only)
+
+The image defaults to authenticated **public** mode. A workstation run must
+explicitly select local mode and bind the published port to loopback. Never
+expose this local configuration to other users or copy it into a public deployment.
 
 ```bash
-# Build the image. Vite vars are build args (deployment NAMES and the endpoint
-# are non-secret). The Azure OpenAI API key is intentionally NOT a build arg —
-# it is supplied at RUNTIME to the token server (AZURE_OPENAI_ENDPOINT and,
-# optionally, AZURE_OPENAI_API_KEY) and proxied via /api/openai. Prefer managed
-# identity (Cognitive Services OpenAI User role) and leave the key unset.
+# Use your real Azure OpenAI endpoint and genuine GPT-6 Astra deployment name.
+# These two values are public configuration, not API credentials.
+OPENAI_ENDPOINT="https://your-resource.openai.azure.com/"
+ASTRA_DEPLOYMENT="gpt-6-astra"
+
+# Build-time VITE_* values select the model; credentials stay server-side.
 docker build -t azure-diagram-builder \
-  --build-arg VITE_AZURE_OPENAI_ENDPOINT="..." \
-  --build-arg VITE_AZURE_OPENAI_DEPLOYMENT_GPT51="..." \
-  --build-arg VITE_AZURE_OPENAI_DEPLOYMENT_GPT52="..." \
-  --build-arg VITE_AZURE_OPENAI_DEPLOYMENT_GPT54="..." \
-  --build-arg VITE_AZURE_OPENAI_DEPLOYMENT_GPT54MINI="..." \
-  --build-arg VITE_AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA="..." \
-  --build-arg VITE_AZURE_OPENAI_DEPLOYMENT_GPT56SOL="..." \
-  --build-arg VITE_AZURE_OPENAI_DEPLOYMENT_GPT56TERRA="..." \
-  --build-arg VITE_AZURE_OPENAI_DEPLOYMENT_GPT56LUNA="..." \
-  --build-arg VITE_AZURE_FOUNDRY_ENDPOINT="https://your-resource.services.ai.azure.com/" \
-  --build-arg VITE_AZURE_FOUNDRY_DEPLOYMENT_CLAUDE_OPUS5="..." \
-  --build-arg VITE_AZURE_OPENAI_DEPLOYMENT_DEEPSEEK="..." \
-  --build-arg VITE_AZURE_OPENAI_DEPLOYMENT_DEEPSEEK_V4_PRO="..." \
-  --build-arg VITE_AZURE_OPENAI_DEPLOYMENT_GROK4FAST="..." \
-  --build-arg VITE_AZURE_OPENAI_DEPLOYMENT_GROK43="..." \
-  --build-arg VITE_AZURE_OPENAI_DEPLOYMENT_MISTRALLARGE3="..." \
-  --build-arg VITE_AZURE_OPENAI_DEPLOYMENT_KIMIK25="..." \
-  --build-arg VITE_AZURE_OPENAI_DEPLOYMENT_KIMIK27CODE="..." \
-  --build-arg VITE_SPEECH_REGION="westus2" .
+  --build-arg VITE_AZURE_OPENAI_ENDPOINT="$OPENAI_ENDPOINT" \
+  --build-arg VITE_AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA="$ASTRA_DEPLOYMENT" .
 
-# Optional: include App Insights telemetry
-#   --build-arg VITE_APPINSIGHTS_CONNECTION_STRING="..." \
-
-# Run locally
-#   Supply Azure OpenAI to the token server at runtime (managed identity
-#   preferred; key optional). The /api/openai and /api/docs-search routes are
-#   served by the co-located token server behind nginx.
-docker run -p 80:80 \
-  -e AZURE_OPENAI_ENDPOINT="https://your-resource.openai.azure.com/" \
-  -e AZURE_FOUNDRY_ENDPOINT="https://your-resource.services.ai.azure.com/" \
-  -e AZURE_FOUNDRY_ALLOWED_DEPLOYMENTS="your-claude-opus-5-deployment" \
+# Forward an optional API key from your shell without putting its value in
+# the command. Obtain it through your approved local secret-management process.
+docker run --rm -p 127.0.0.1:8080:80 \
+  -e APP_DEPLOYMENT_MODE=local \
+  -e ACCESS_CONTROL_ENABLED=false \
+  -e AI_BUDGET_STORE=memory \
+  -e AZURE_OPENAI_ENDPOINT="$OPENAI_ENDPOINT" \
+  -e AZURE_OPENAI_ALLOWED_DEPLOYMENTS="$ASTRA_DEPLOYMENT" \
+  -e AZURE_OPENAI_API_KEY \
   azure-diagram-builder
 ```
 
+Open `http://127.0.0.1:8080`. The editor can start without a model credential;
+real AI calls require a server-side credential authorized for the configured
+deployment. A host-side `az login` is not automatically available inside Docker.
+In Azure, production uses the configured managed identity instead of an API key.
+Never pass a provider API key as a `VITE_*` value or Docker build argument.
+
+Additional model deployments need matching public build arguments and
+server-side provider allowlists; see [runtime controls](server/SECURITY.md).
+
 ### Azure Container Apps Deployment
 
-```bash
-# 1. Copy and fill in your .env
-cp .env.example .env
+For the existing AzureDiagarm production app, follow the
+[production runbook](deployment/azurediagarm/README.md): reviewed changes merged
+into `main` release automatically. Manual workflow dispatch is only for upstream
+synchronization, not an alternative release button or a historical rollback.
+Do not use `azd` or the generic `scripts/deploy_aca.sh` compatibility helper for
+ordinary AzureDiagarm releases; they are not substitutes for this release workflow.
 
-# 2. Deploy (reads all config from .env)
-./scripts/deploy_aca.sh
-```
+### Public Deployment Authentication (Required)
 
-See `.env.example` for all required variables including `ACR_NAME`, `ACA_APP_NAME`, `RESOURCE_GROUP`, and model deployments.
+Entra Easy Auth, the application access list, protected Front Door ingress, and
+durable shared budgets are mandatory in public mode. Setting runtime flags alone
+does not provision or prove these controls. Keep the existing tenant, app
+registration, managed identity, secrets, and access assignments; a UI release
+does not require replacing them.
 
-### Securing with Entra ID (Optional)
-
-To restrict access to specific users:
-
-```bash
-# 1. Create App Registration
-az ad app create --display-name "My Diagram Builder Auth" \
-  --sign-in-audience AzureADMyOrg \
-  --web-redirect-uris "https://<your-aca-fqdn>/.auth/login/aad/callback" \
-  --enable-id-token-issuance true
-
-# 2. Create client secret
-az ad app credential reset --id <APP_ID> --years 1
-
-# 3. Enable ACA auth
-az containerapp auth microsoft update -g <RG> -n <APP> \
-  --client-id <APP_ID> --client-secret <SECRET> \
-  --issuer "https://login.microsoftonline.com/<TENANT_ID>/v2.0" --yes
-
-# 4. Require login
-az containerapp auth update -g <RG> -n <APP> \
-  --unauthenticated-client-action RedirectToLoginPage
-
-# 5. Restrict to specific users
-az ad sp create --id <APP_ID>
-az ad sp update --id <SP_OBJECT_ID> --set appRoleAssignmentRequired=true
-# Then assign users via Azure Portal > Enterprise Applications > Users and groups
-```
+See [access and authentication](DOCS/APP-ACCESS-AND-AUTH.md) and the
+[public runtime requirements](server/SECURITY.md#local-versus-public).
+Anonymous app/API requests must remain protected. Crawler blocking and missing
+anonymous social previews are intentional for this private application.
 
 ---
 

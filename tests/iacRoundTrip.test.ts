@@ -52,6 +52,171 @@ resource kv 'Microsoft.KeyVault/vaults@2023-07-01' = {
   assert.deepEqual(restoreIaCBaseline(baseline), baseline);
 });
 
+test('conditional Bicep declarations are represented without evaluating their conditions', () => {
+  const baseline = buildIaCBaseline({
+    format: 'bicep',
+    files: [{ name: 'conditional.bicep', text: `
+param enabled bool = true
+resource storage 'Microsoft.Storage/storageAccounts@2023-05-01' = if (enabled && !empty({ value: '})' })) {
+  name: 'assessmentstorage'
+  location: resourceGroup().location
+  sku: { name: 'Standard_LRS' }
+  kind: 'StorageV2'
+}
+` }],
+  });
+  assert.equal(baseline.resourceCount, 1);
+  assert.equal(baseline.resources[0].providerType, 'microsoft.storage/storageaccounts');
+  assert.equal(baseline.resources[0].resourceName, 'assessmentstorage');
+  assert.equal(baseline.resources[0].approximation, 'expression');
+  assert.match(baseline.resources[0].notes ?? '', /condition.*not evaluated/i);
+  assert.equal(baseline.incomplete, false);
+});
+
+test('nested Bicep resources inherit provider types and have distinct qualified identities', () => {
+  const text = ['east', 'west'].map(region => `
+resource ${region} 'Microsoft.Sql/servers@2022-05-01-preview' = {
+  name: '${region}-sql'
+  resource db 'databases' = {
+    name: '${region}-orders'
+    location: resourceGroup().location
+  }
+}
+`).join('\n');
+  const baseline = buildIaCBaseline({ format: 'bicep', files: [{ name: 'nested.bicep', text }] });
+  assert.equal(baseline.resourceCount, 4);
+  const databases = baseline.resources.filter(resource => resource.providerType === 'microsoft.sql/servers/databases');
+  assert.deepEqual(databases.map(resource => resource.logicalName), ['east::db', 'west::db']);
+  assert.deepEqual(databases.map(resource => resource.resourceName), ['east-orders', 'west-orders']);
+  assert.equal(new Set(baseline.resources.map(resource => resource.id)).size, 4);
+  assert.equal(baseline.incomplete, false);
+});
+
+test('common Bicep loop envelopes retain declarations and disclose unevaluated multiplicity', () => {
+  const baseline = buildIaCBaseline({
+    format: 'bicep',
+    files: [{ name: 'loop.bicep', text: `
+param names array
+param enabled bool
+param options object = {}
+resource accounts 'Microsoft.Storage/storageAccounts@2023-05-01' = [
+  for (name, index) in names: if (enabled) {
+    name: '\${name}\${index}'
+    kind: 'StorageV2'
+  }
+]
+resource vaults 'Microsoft.KeyVault/vaults@2023-07-01' = [for name in (enabled ? names : []): {
+  name: name
+}]
+resource optionalVaults 'Microsoft.KeyVault/vaults@2023-07-01' = [for name in options.?names ?? names ?? []: {
+  name: name
+}]
+resource logs 'Microsoft.OperationalInsights/workspaces@2022-10-01' = {
+  name: 'logs'
+}
+` }],
+  });
+  assert.equal(baseline.resourceCount, 4);
+  assert.ok(baseline.resources.some(resource => resource.logicalName === 'accounts' && resource.resourceName === null));
+  assert.ok(baseline.resources.some(resource => resource.logicalName === 'vaults' && resource.resourceName === null));
+  assert.match(baseline.resources.find(resource => resource.logicalName === 'optionalVaults')!.notes ?? '', /loop declaration/);
+  assert.doesNotMatch(baseline.warnings.join('\n'), /unsupported|unterminated/i);
+  assert.equal(baseline.incomplete, true);
+  assert.match(baseline.warnings.join('\n'), /loop.*(instances|multiplicity|cardinality).*not evaluated/i);
+  const report = compareDiagramToBaseline([azureNode('extra', 'SQL Server')], baseline)!;
+  assert.equal(report.incomplete, true);
+  assert.deepEqual(report.warnings, baseline.warnings);
+  assert.deepEqual(restoreIaCBaseline(baseline), baseline);
+});
+
+test('Bicep lexical traversal ignores comments, multiline strings and resource-like property values', () => {
+  const baseline = buildIaCBaseline({
+    format: 'bicep',
+    files: [{ name: 'lexical.bicep', text: `
+/*
+resource fake 'Microsoft.Sql/servers@2022-05-01-preview' = { name: 'not-real' }
+*/
+var prose = '''
+resource fakeAgain 'Microsoft.Storage/storageAccounts@2023-05-01' = { name: 'not-real' }
+'''
+// resource alsoFake 'Microsoft.Sql/servers@2022-05-01-preview' = {}
+var options = { resource: 'not a declaration' }
+resource /* comment between declaration tokens */ real 'Microsoft.Storage/storageAccounts@2023-05-01' existing = {
+  'name': 'a\\'quoted-name'
+  properties: {
+    note: 'literal } [ resource notAResource'
+  }
+}
+` }],
+  });
+  assert.equal(baseline.resourceCount, 1);
+  assert.equal(baseline.resources[0].logicalName, 'real');
+  assert.equal(baseline.resources[0].resourceName, "a'quoted-name");
+  assert.equal(baseline.incomplete, false);
+});
+
+test('unsupported and malformed Bicep is visibly incomplete but keeps known declarations', () => {
+  for (const suffix of [
+    "module child './child.bicep' = { name: 'child' }",
+    "resource other 'Microsoft.KeyVault/vaults@2023-07-01' = unknownFactory()",
+    "resource broken 'Microsoft.Sql/servers@2022-05-01-preview' = {",
+    "/* unterminated comment",
+    `var nested = ${'['.repeat(80)}0${']'.repeat(80)}`,
+  ]) {
+    const baseline = buildIaCBaseline({
+      format: 'bicep',
+      files: [{ name: 'partial.bicep', text: `
+resource known 'Microsoft.Storage/storageAccounts@2023-05-01' = {
+  name: 'knownstorage'
+}
+${suffix}
+` }],
+    });
+    assert.ok(baseline.resources.some(resource => resource.logicalName === 'known'));
+    assert.equal(baseline.incomplete, true, suffix);
+    assert.ok(baseline.warnings.length > 0, suffix);
+    assert.equal(compareDiagramToBaseline([], baseline)!.incomplete, true);
+    assert.deepEqual(restoreIaCBaseline(baseline), baseline);
+  }
+});
+
+test('interpolated expressions containing their own strings cannot hide following Bicep declarations', () => {
+  const baseline = buildIaCBaseline({
+    format: 'bicep',
+    files: [{ name: 'expressions.bicep', text: `
+resource sql 'Microsoft.Sql/servers@2022-05-01-preview' = if (true) {
+  name: '\${format('{0}-{1}', 'sql', uniqueString(resourceGroup().id))}'
+  resource db 'databases' = {
+    name: 'orders'
+  }
+}
+resource storage 'Microsoft.Storage/storageAccounts@2023-05-01' = {
+  name: 'prefix' + uniqueString(resourceGroup().id)
+}
+` }],
+  });
+  assert.equal(baseline.resourceCount, 3);
+  assert.equal(baseline.resources.find(resource => resource.logicalName === 'sql')!.resourceName, null);
+  assert.equal(baseline.resources.find(resource => resource.logicalName === 'storage')!.resourceName, null);
+  const database = baseline.resources.find(resource => resource.logicalName === 'sql::db')!;
+  assert.equal(database.providerType, 'microsoft.sql/servers/databases');
+  assert.equal(database.approximation, 'expression', 'a nested declaration inherits its parent condition');
+  assert.equal(baseline.incomplete, false);
+});
+
+test('legacy baseline warnings propagate into partial comparisons and cannot be suppressed by a false flag', () => {
+  const baseline = buildIaCBaseline({ format: 'bicep', files: [] });
+  const legacy = { ...baseline, warnings: ['One source file could not be parsed.'] };
+  delete legacy.incomplete;
+  for (const input of [legacy, { ...legacy, incomplete: false }]) {
+    const restored = restoreIaCBaseline(input)!;
+    assert.equal(restored.incomplete, true);
+    assert.equal(compareDiagramToBaseline([], restored)!.incomplete, true);
+  }
+  assert.equal(restoreIaCBaseline({ ...baseline, incomplete: 'no' }), null);
+  assert.equal(compareDiagramToBaseline([], baseline)!.incomplete, false);
+});
+
 test('compareDiagramToBaseline normalizes Terraform aliases and identifies new nodes', () => {
   const baseline = buildIaCBaseline({
     format: 'terraform-hcl',

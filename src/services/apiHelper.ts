@@ -272,6 +272,8 @@ export interface OpenAIProxyErrorDetails {
   contentType?: string;
   responseUrl?: string;
   redirected?: boolean;
+  /** Validated provider delay, including Retry-After HTTP dates. */
+  retryAfterMs?: number;
 }
 
 export class OpenAIProxyError extends Error {
@@ -280,6 +282,9 @@ export class OpenAIProxyError extends Error {
   readonly source: string;
   readonly requestId?: string;
   readonly upstreamRequestId?: string;
+  readonly retryAfterMs?: number;
+  readonly upstreamStatus?: number;
+  readonly upstreamCode?: string;
 
   constructor(message: string, result: OpenAIProxyResult) {
     super(message);
@@ -289,7 +294,26 @@ export class OpenAIProxyError extends Error {
     this.source = result.error?.source || 'unknown';
     this.requestId = result.error?.requestId;
     this.upstreamRequestId = result.error?.upstreamRequestId;
+    this.retryAfterMs = result.error?.retryAfterMs;
+    this.upstreamStatus = result.error?.upstreamStatus;
+    this.upstreamCode = result.error?.upstreamCode;
   }
+}
+
+export function isAIBudgetError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const value = error as { source?: unknown; code?: unknown };
+  return value.source === 'budget' || (typeof value.code === 'string' && (
+    value.code === 'ai_daily_budget_exceeded'
+    || value.code === 'ai_concurrency_limit'
+    || value.code.startsWith('ai_budget_')
+  ));
+}
+
+export function isAIInternalServerError(error: unknown): boolean {
+  if (!error || typeof error !== 'object' || isAIBudgetError(error)) return false;
+  const value = error as { status?: unknown; upstreamStatus?: unknown };
+  return value.status === 500 || value.upstreamStatus === 500;
 }
 
 function parseJson(text: string): any | null {
@@ -306,6 +330,28 @@ function getStructuredError(payload: any): Partial<OpenAIProxyErrorDetails> | nu
   const candidate = payload.error;
   if (!candidate || typeof candidate !== 'object') return null;
   return candidate;
+}
+
+function readRetryAfterMs(headers: Headers): number | undefined {
+  const delays: number[] = [];
+  const add = (value: number) => {
+    const rounded = Math.ceil(value);
+    if (Number.isSafeInteger(rounded) && rounded >= 0) delays.push(rounded);
+  };
+  const retryAfter = headers.get('retry-after')?.trim();
+  if (retryAfter && /^\d+(?:\.\d+)?$/.test(retryAfter)) {
+    add(Number(retryAfter) * 1000);
+  } else if (retryAfter && /GMT$/i.test(retryAfter)) {
+    const deadline = Date.parse(retryAfter);
+    const serverDate = Date.parse(headers.get('date') || '');
+    // The response Date avoids retrying early when the client's clock is ahead.
+    add(Math.max(0, deadline - (Number.isFinite(serverDate) ? serverDate : Date.now())));
+  }
+  for (const name of ['retry-after-ms', 'x-ms-retry-after-ms']) {
+    const value = headers.get(name)?.trim();
+    if (value && /^\d+(?:\.\d+)?$/.test(value)) add(Number(value));
+  }
+  return delays.length ? Math.max(...delays) : undefined;
 }
 
 function isAuthenticationUrl(url: string): boolean {
@@ -392,6 +438,7 @@ export function isJsonMediaType(contentType: string): boolean {
  */
 export const PROXY_ERROR_MESSAGE_CODES = [
   'application_authentication_required',
+  'authentication_required',
   'application_access_denied',
   'application_request_rejected',
   'edge_request_blocked',
@@ -413,6 +460,12 @@ export const PROXY_ERROR_MESSAGE_CODES = [
   'deployment_not_found',
   'proxy_rate_limit_exceeded',
   'azure_openai_rate_limited',
+  'http_429',
+  'ai_daily_budget_exceeded',
+  'ai_concurrency_limit',
+  'ai_budget_busy',
+  'ai_budget_unavailable',
+  'ai_budget_timeout',
   'azure_openai_timeout',
   'edge_origin_unavailable',
   'azure_openai_unavailable',
@@ -439,6 +492,7 @@ export function proxyErrorMessageForCode(
 ): string {
   switch (code) {
     case 'application_authentication_required':
+    case 'authentication_required':
       return 'Your application session is no longer valid. Refresh the page and sign in again.';
     case 'application_access_denied':
       return 'Your account is not allowed to use this application.';
@@ -477,6 +531,18 @@ export function proxyErrorMessageForCode(
       return 'The application request limit was reached. Wait a moment and try again.';
     case 'azure_openai_rate_limited':
       return 'The AI provider is rate-limiting requests. Wait a moment and try again.';
+    case 'http_429':
+      return 'The AI request was rate-limited, but the response did not identify which limit was reached. Wait before retrying or contact the administrator with the request ID.';
+    case 'ai_daily_budget_exceeded':
+      return 'The application daily AI budget cannot cover this request. Wait until midnight UTC for the budget to reset, or contact the administrator. Failed requests with unknown usage may still count toward this budget.';
+    case 'ai_concurrency_limit':
+      return 'The application concurrent AI request limit was reached. Wait for an active request to finish, then try again.';
+    case 'ai_budget_busy':
+      return 'The application AI budget is busy. Wait a few seconds and try again.';
+    case 'ai_budget_unavailable':
+      return 'The application AI budget could not be checked. Please try again later or contact the administrator.';
+    case 'ai_budget_timeout':
+      return 'The application timed out while reserving the AI budget. Wait a moment and try again.';
     case 'azure_openai_timeout':
     case 'edge_origin_unavailable':
       return 'The AI provider is taking too long to respond. Please try again.';
@@ -499,6 +565,7 @@ export function proxyErrorMessageForCode(
         ? 'The selected model may not support image analysis. Try using GPT-6 Astra.'
         : 'The AI provider rejected the request format. Please try again or simplify the request.';
     default:
+      if (options.status === 429) return proxyErrorMessageForCode('http_429');
       return `AI provider request failed (${options.status || 'network error'}). Please try again.`;
   }
 }
@@ -575,12 +642,14 @@ export async function callAzureOpenAIProxy(params: {
   const upstreamRequestId = response.headers.get('x-upstream-request-id')
     || structured?.upstreamRequestId
     || undefined;
+  const retryAfterMs = readRetryAfterMs(response.headers);
 
   if (!response.ok || response.redirected || isAuthenticationUrl(response.url)) {
     const inferred = inferUnstructuredError(response, responseText, contentType);
-    const error: OpenAIProxyErrorDetails = structured?.source && structured?.code
+    const source = structured?.source || (isAIBudgetError(structured) ? 'budget' : undefined);
+    const error: OpenAIProxyErrorDetails = structured?.code
       ? {
-          source: String(structured.source),
+          source: String(source || inferred.source),
           code: String(structured.code),
           message: typeof structured.message === 'string' ? structured.message : undefined,
           requestId,
@@ -589,19 +658,23 @@ export async function callAzureOpenAIProxy(params: {
             : undefined,
           upstreamCode: typeof structured.upstreamCode === 'string'
             ? structured.upstreamCode
-            : undefined,
+            : !source ? String(structured.code) : undefined,
           upstreamRequestId,
           contentType,
           responseUrl: response.url,
           redirected: response.redirected,
         }
-      : inferred;
+      : {
+          ...inferred,
+          ...(source ? { source: String(source) } : {}),
+          upstreamCode: typeof structured?.code === 'string' ? structured.code : undefined,
+        };
     return {
       ok: false,
       status: response.ok ? 401 : response.status,
       data: parsed,
       errorText: responseText.slice(0, 2_000),
-      error,
+      error: { ...error, requestId, upstreamRequestId, retryAfterMs },
     };
   }
 

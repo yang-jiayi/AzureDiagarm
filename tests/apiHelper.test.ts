@@ -163,3 +163,111 @@ test('BYO authentication errors produce custom-endpoint guidance', () => {
     'The custom AI endpoint rejected the API key. Check the key and try again.',
   );
 });
+
+for (const [retryAfter, date, expectedMs] of [
+  ['60', undefined, 60_000],
+  ['0', undefined, 0],
+  ['Sun, 06 Sep 2026 04:01:00 GMT', 'Sun, 06 Sep 2026 04:00:00 GMT', 60_000],
+  ['-1', undefined, undefined],
+  ['not-a-date', undefined, undefined],
+] as const) {
+  test(`proxy preserves validated Retry-After ${retryAfter} and request provenance`, async () => {
+    globalThis.fetch = async () => new Response(JSON.stringify({
+      error: { source: 'azure_openai', code: 'azure_openai_rate_limited', upstreamCode: '429' },
+    }), {
+      status: 429,
+      headers: {
+        'Content-Type': 'application/json',
+        'Retry-After': retryAfter,
+        'x-azurediagarm-request-id': 'rate-limit-request',
+        'x-upstream-request-id': 'azure-request',
+        ...(date ? { Date: date } : {}),
+      },
+    });
+    const result = await callAzureOpenAIProxy({
+      apiFormat: 'responses', deployment: 'gpt-6-astra', body: { model: 'gpt-6-astra' },
+    });
+    const error = createOpenAIProxyError(result);
+    assert.equal(error.retryAfterMs, expectedMs);
+    assert.equal(error.status, 429);
+    assert.equal(error.code, 'azure_openai_rate_limited');
+    assert.equal(error.requestId, 'rate-limit-request');
+    assert.equal(error.upstreamRequestId, 'azure-request');
+  });
+}
+
+test('an unstructured 429 retains wait guidance and diagnostics rather than a generic request failure', async () => {
+  globalThis.fetch = async () => new Response(JSON.stringify({
+    error: { code: '429', message: 'Requests exceed the current token rate limit.' },
+  }), {
+    status: 429,
+    headers: {
+      'Content-Type': 'application/json',
+      'Retry-After': '60',
+      'x-azurediagarm-request-id': '00000000-0000-4000-8000-000000000001',
+    },
+  });
+  const error = createOpenAIProxyError(await callAzureOpenAIProxy({
+    apiFormat: 'responses', deployment: 'gpt-6-astra', body: { model: 'gpt-6-astra' },
+  }));
+  assert.equal(error.code, '429');
+  assert.equal(error.source, 'unknown');
+  assert.equal(error.upstreamCode, '429');
+  assert.equal(error.retryAfterMs, 60_000);
+  assert.match(error.message, /rate.limit/i);
+  assert.doesNotMatch(error.message, /request failed \(429\)/);
+  assert.match(error.message, /00000000-0000-4000-8000-000000000001/);
+});
+
+test('millisecond retry headers retain the longest valid provider cooldown', async () => {
+  globalThis.fetch = async () => new Response('{}', {
+    status: 429,
+    headers: {
+      'Content-Type': 'application/json', 'Retry-After': '1',
+      'retry-after-ms': '1250', 'x-ms-retry-after-ms': '1500',
+    },
+  });
+  const result = await callAzureOpenAIProxy({
+    apiFormat: 'responses', deployment: 'gpt-6-astra', body: {},
+  });
+  assert.equal(result.error?.retryAfterMs, 1500);
+  assert.equal(createOpenAIProxyError(result).retryAfterMs, 1500);
+});
+
+for (const includeSource of [true, false]) {
+  test(`daily-budget exhaustion retains its identity and UTC-reset guidance (source present: ${includeSource})`, async () => {
+    globalThis.fetch = async () => new Response(JSON.stringify({
+      error: {
+        ...(includeSource ? { source: 'budget' } : {}),
+        code: 'ai_daily_budget_exceeded', requestId: 'daily-budget-request',
+      },
+    }), { status: 429, headers: { 'Content-Type': 'application/json', 'Retry-After': '5' } });
+    const error = createOpenAIProxyError(await callAzureOpenAIProxy({
+      apiFormat: 'responses', deployment: 'gpt-6-astra', body: {},
+    }));
+    assert.equal(error.source, 'budget');
+    assert.equal(error.code, 'ai_daily_budget_exceeded');
+    assert.equal(error.requestId, 'daily-budget-request');
+    assert.equal(error.retryAfterMs, 5000);
+    assert.match(error.message, /daily AI budget.*midnight UTC/);
+    assert.doesNotMatch(error.message, /provider.*rate.limit|deployment capacity|Wait a moment/);
+  });
+}
+
+test('provider 500 diagnostics retain both normalized and original upstream codes', () => {
+  const error = createOpenAIProxyError({
+    ok: false, status: 500, data: null,
+    error: {
+      source: 'azure_openai', code: 'azure_openai_unavailable',
+      requestId: 'proxy-500', upstreamRequestId: 'provider-500',
+      upstreamStatus: 500, upstreamCode: 'server_error',
+    },
+  });
+  assert.equal(error.status, 500);
+  assert.equal(error.source, 'azure_openai');
+  assert.equal(error.code, 'azure_openai_unavailable');
+  assert.equal(error.upstreamStatus, 500);
+  assert.equal(error.upstreamCode, 'server_error');
+  assert.equal(error.requestId, 'proxy-500');
+  assert.equal(error.upstreamRequestId, 'provider-500');
+});

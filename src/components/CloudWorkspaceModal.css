@@ -132,8 +132,9 @@
   cursor: pointer;
 }
 
-.cloud-workspace-error {
+.cloud-workspace-modal .cloud-workspace-error {
   margin: 0 20px 12px;
+  color: var(--azd-color-danger-strong);
 }
 
 .cloud-workspace-body {
@@ -820,7 +821,7 @@
   justify-content: center;
   flex-direction: column;
   gap: 10px;
-  color: #94a3b8;
+  color: var(--azd-color-text-muted);
   text-align: center;
 }
 
