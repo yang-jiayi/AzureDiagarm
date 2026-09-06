@@ -238,6 +238,14 @@
   background: #fffbeb;
 }
 
+.iac-provisional-notice {
+  margin-bottom: 14px;
+}
+
+.iac-provisional-notice p {
+  margin: 8px 0 0;
+}
+
 .iac-empty-state {
   color: #475569;
   font-size: 0.92rem;

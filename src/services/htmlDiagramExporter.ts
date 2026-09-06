@@ -98,20 +98,17 @@ const PADDING = 40;
  * Are the node positions genuinely present, or is everything stacked at the
  * origin (in which case we fall back to an automatic dagre layout)?
  */
-function positionsPresent(nodes: Node[]): boolean {
+function positionsPresent(nodes: Node[], boxes: Map<string, ExportBox>): boolean {
   const services = nodes.filter((node) => node.type !== 'groupNode');
   if (services.length === 0) return false;
-  const seen = new Set<string>();
-  let anyNonZero = false;
-  for (const node of services) {
-    const x = node.position?.x ?? 0;
-    const y = node.position?.y ?? 0;
-    if (x !== 0 || y !== 0) anyNonZero = true;
-    seen.add(`${x},${y}`);
-  }
-  // Real layouts have distinct, non-zero coordinates; a fresh AI import often
-  // has none, so only then do we synthesise positions.
-  return anyNonZero && seen.size > 1;
+  if (!nodes.every(node => Number.isFinite(node.position?.x) && Number.isFinite(node.position?.y))) return false;
+  // One placed service is a layout, even at the origin. Equal local offsets
+  // in different parents are not a stack: compare the resolved canvas boxes.
+  if (services.length === 1) return true;
+  return new Set(services.map(node => {
+    const box = boxes.get(node.id)!;
+    return `${box.x},${box.y}`;
+  })).size > 1;
 }
 
 /** Run dagre only when the user has no real layout, writing positions back. */
@@ -127,9 +124,20 @@ function assignDagrePositions(
 
   const groupIds = new Set(groups.map((group) => group.id));
   for (const group of groups) {
-    g.setNode(`group:${group.id}`, { label: group.label, clusterLabelPos: 'top' });
+    g.setNode(`group:${group.id}`, { label: group.label, clusterLabelPos: 'top', width: group.w, height: group.h });
   }
   const parentOf = new Map(nodes.map((node) => [node.id, node.parentNode]));
+  for (const group of groups) {
+    const parent = parentOf.get(group.id);
+    if (!parent || !groupIds.has(parent)) continue;
+    const ancestors = new Set([group.id]);
+    let ancestor: string | undefined = parent;
+    while (ancestor && !ancestors.has(ancestor)) {
+      ancestors.add(ancestor);
+      ancestor = parentOf.get(ancestor);
+    }
+    if (!ancestor) g.setParent(`group:${group.id}`, `group:${parent}`);
+  }
   for (const service of services) {
     g.setNode(`svc:${service.id}`, { width: service.w, height: service.h, label: service.label });
     const parent = parentOf.get(service.id);
@@ -172,8 +180,9 @@ function buildLayout(nodes: Node[], edges: Edge[], icons: Map<string, string>): 
   const { groups, services } = partitionBoxes(boxes);
   const dataById = new Map(nodes.map((node) => [node.id, (node.data ?? {}) as Record<string, unknown>]));
 
-  if (!positionsPresent(nodes)) {
+  if (!positionsPresent(nodes, boxes)) {
     assignDagrePositions(nodes, services, groups, edges);
+    groups.sort((a, b) => b.w * b.h - a.w * a.h);
   }
 
   const routes = buildExportRoutes(edges, boxes);

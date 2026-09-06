@@ -162,6 +162,7 @@ test('a tile is grouped with everything drawn on it', () => {
   assert.equal((out.match(/name="accent-a"/g) ?? []).length, 1, 'the stripe is moved, not copied');
   assert.ok(out.includes('<a:t>Azure Front Door</a:t>'), 'the name survives');
   assert.equal((out.match(/name="service-label-a"/g) ?? []).length, 0, 'and no longer floats');
+  assert.doesNotMatch(out, /<a:bodyPr[^>]*\/\s+[a-zA-Z]/, 'folding keeps a self-closing bodyPr well formed');
 
   // Nothing belonging to the tile may be left outside the group, or it stays
   // behind when the tile is dragged.

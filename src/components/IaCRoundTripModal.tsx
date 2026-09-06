@@ -71,6 +71,10 @@ const IaCRoundTripModal: React.FC<IaCRoundTripModalProps> = ({
 
   if (!isOpen) return null;
 
+  const provisional = Boolean(
+    comparison?.incomplete || baseline?.incomplete || comparison?.warnings.length || baseline?.warnings.length,
+  );
+
   const confidenceLabel = (confidence: MatchConfidence) => {
     switch (confidence) {
       case 'exact':
@@ -157,9 +161,22 @@ const IaCRoundTripModal: React.FC<IaCRoundTripModalProps> = ({
         </div>
 
         <div className="modal-body">
+          {provisional && (
+            <div className="iac-callout iac-callout-warning iac-provisional-notice" role="note">
+              <strong>{l('Provisional comparison: partially parsed source', '暫定比較：ソースの一部のみ解析')}</strong>
+              <p>
+                {l(
+                  'Some source declarations or instance counts are unresolved. These counts and matches cover only detected resources and cannot confirm that the complete source matches the diagram.',
+                  '一部のリソース宣言またはインスタンス数を読み取れていません。以下の件数と照合結果は、検出できたリソースのみを対象とした暫定値であり、ソース全体と図の一致を保証するものではありません。',
+                )}
+              </p>
+            </div>
+          )}
           <div className="iac-roundtrip-summary">
             <div className="iac-summary-card">
-              <div className="iac-summary-label">{l('Baseline', 'ベースライン')}</div>
+              <div className="iac-summary-label">
+                {provisional ? l('Detected baseline', '検出済みベースライン') : l('Baseline', 'ベースライン')}
+              </div>
               <div className="iac-summary-value">{baseline ? baseline.resourceCount : 0}</div>
               <div className="iac-summary-note">
                 {baseline
@@ -184,7 +201,9 @@ const IaCRoundTripModal: React.FC<IaCRoundTripModalProps> = ({
               </div>
             </div>
             <div className="iac-summary-card">
-              <div className="iac-summary-label">{l('New in design', '設計で追加')}</div>
+              <div className="iac-summary-label">
+                {provisional ? l('Unmatched in detected source', '検出済みソースと未一致') : l('New in design', '設計で追加')}
+              </div>
               <div className="iac-summary-value">{comparison?.diagramOnly.length || 0}</div>
               <div className="iac-summary-note">
                 {`${diagramServiceCount} ${l('diagram service node(s)', '図のサービス ノード')}`}
@@ -263,7 +282,11 @@ const IaCRoundTripModal: React.FC<IaCRoundTripModalProps> = ({
                 <div className="iac-column">
                   <h4>{l('Source-only', 'ソースのみ')}</h4>
                   {comparison.sourceOnly.length === 0 ? (
-                    <div className="iac-empty-state">{l('Every baseline resource has a current match.', 'すべてのベースライン リソースに現在の一致があります。')}</div>
+                    <div className="iac-empty-state">
+                      {provisional
+                        ? l('No unmatched source resources were found in the detected portion.', '検出できたソースの範囲では、未一致のリソースはありません。')
+                        : l('Every baseline resource has a current match.', 'すべてのベースライン リソースに現在の一致があります。')}
+                    </div>
                   ) : (
                     <ul className="iac-resource-list">
                       {comparison.sourceOnly.map((resource) => (
@@ -282,7 +305,11 @@ const IaCRoundTripModal: React.FC<IaCRoundTripModalProps> = ({
                 <div className="iac-column">
                   <h4>{l('Diagram-only', '図のみ')}</h4>
                   {comparison.diagramOnly.length === 0 ? (
-                    <div className="iac-empty-state">{l('No new service nodes beyond the baseline.', 'ベースラインを超える新しいサービス ノードはありません。')}</div>
+                    <div className="iac-empty-state">
+                      {provisional
+                        ? l('No unmatched diagram nodes were found against the detected baseline.', '検出済みベースラインとの照合では、未一致の図ノードはありません。')
+                        : l('No new service nodes beyond the baseline.', 'ベースラインを超える新しいサービス ノードはありません。')}
+                    </div>
                   ) : (
                     <ul className="iac-resource-list">
                       {comparison.diagramOnly.map((resource) => (
@@ -291,7 +318,11 @@ const IaCRoundTripModal: React.FC<IaCRoundTripModalProps> = ({
                           <div className="iac-resource-meta">
                             <span>{resource.mappedService || resource.serviceName}</span>
                             <span>•</span>
-                            <span>{l('New or unmatched in the current design.', '現在の設計で新規または未一致です。')}</span>
+                            <span>
+                              {provisional
+                                ? l('No match in the detected source; the full baseline is incomplete.', '検出済みソースには一致がありません。ベースライン全体の解析は不完全です。')
+                                : l('New or unmatched in the current design.', '現在の設計で新規または未一致です。')}
+                            </span>
                           </div>
                         </li>
                       ))}

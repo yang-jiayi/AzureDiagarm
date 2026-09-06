@@ -168,6 +168,59 @@ test('single and customer Blob exports retain SVG originals, PNG fallback chains
   }
 });
 
+test('role-like graph IDs keep independent text, icons, ownership and glue in both delivered Blob APIs', async () => {
+  const path = '/role-identity.svg';
+  const icons: ExportIcons = new Map([[path, icon]]);
+  for (const [firstId, secondId] of [
+    ['api', 'meta-api'], ['api', 'label-api'], ['api&1', 'meta-api&1'], ['api&amp;1', 'meta-api&amp;1'],
+  ]) {
+    const input = [
+      service(firstId, 0, 0, { label: 'Application API', iconPath: path, tags: ['application'], pricing: { skuName: 'First SKU' } }),
+      service(secondId, 500, 0, { label: 'Metadata API', iconPath: path, tags: ['metadata'], pricing: { skuName: 'Second SKU' } }),
+    ];
+    const diagram = { nodes: input, edges: [{ id: 'label-lookup', source: firstId, target: secondId, label: 'Metadata lookup' }] };
+    for (const blob of [
+      await buildDiagramPptxBlob(diagram, options, icons),
+      await buildArchitectureDeckBlob(diagram, { ...options, services: [] }, icons),
+    ]) {
+      const { slides } = await packageFrom(blob);
+      const xml = slides.find(slide => objects(slide, 'grpSp').some(group => unescapeXml(group.name) === `node-${firstId}`))!;
+      assert.ok(xml);
+      const groups = objects(xml, 'grpSp').filter(group => group.name.startsWith('node-'));
+      assert.equal(groups.length, 2, 'each service remains an independent native group');
+      const tileIds: string[] = [];
+      for (const [index, node] of input.entries()) {
+        const group = groups.find(value => unescapeXml(value.name) === `node-${node.id}`);
+        assert.ok(group, `${node.id} retains its own group`);
+        const shapes = objects(group.xml);
+        const tiles = shapes.filter(shape => /<a:prstGeom prst="roundRect"/.test(shape.xml)
+          && unescapeXml(shape.name) === `service-${node.id}`);
+        assert.equal(tiles.length, 1);
+        tileIds.push(tiles[0].id);
+        assert.ok(allText(group.xml).includes(node.data.label),
+          `${node.id}: expected folded name ${node.data.label}; got ${JSON.stringify(allText(group.xml))}`);
+        assert.ok(!allText(group.xml).includes(input[1 - index].data.label), 'another service is not consumed as a caption');
+        assert.ok(allText(group.xml).includes(index === 0 ? 'First SKU' : 'Second SKU'));
+        assert.ok(allText(group.xml).includes(node.data.tags[0]));
+        const description = attributes(group.xml.match(/<p:cNvPr\b[^>]*>/)![0]).descr;
+        assert.ok(unescapeXml(description).startsWith(`Service: ${node.data.label}`), 'alt text uses role and owner, not an ambiguous name');
+        const pictures = objects(group.xml, 'pic');
+        assert.equal(pictures.length, 1);
+        assert.equal(unescapeXml(pictures[0].name), `icon-${node.id}`);
+        assert.match(pictures[0].xml, /<asvg:svgBlip/);
+      }
+      const connector = objects(xml, 'cxnSp').find(shape => shape.name === 'connector-label-lookup');
+      assert.ok(connector);
+      assert.equal(connector.xml.match(/<a:stCxn id="(\d+)"/)?.[1], tileIds[0]);
+      assert.equal(connector.xml.match(/<a:endCxn id="(\d+)"/)?.[1], tileIds[1]);
+      assert.match(unescapeXml(attributes(connector.xml.match(/<p:cNvPr\b[^>]*>/)![0]).descr),
+        /Connection from Application API to Metadata API/);
+      assert.doesNotMatch(connector.xml, /<a:custGeom>/);
+      assert.match(connector.xml, /prst="straightConnector1"/);
+    }
+  }
+});
+
 test('connector chips emit the same vertical padding and absolute leading their fitter reserves', async () => {
   const input = [service('a', 0, 0), service('b', 500, 0)];
   for (const label of ['HTTPS / TLS 1.2', '日本語の接続ラベル']) {

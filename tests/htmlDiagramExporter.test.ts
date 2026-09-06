@@ -23,7 +23,10 @@ function service(id: string, label: string, extra: Record<string, unknown> = {})
 }
 
 interface HtmlLayout {
-  nodes: Array<{ id: string; name: string; category: string; color: string; icon: string; meta: string }>;
+  nodes: Array<{
+    id: string; name: string; category: string; color: string; icon: string; meta: string;
+    x: number; y: number; width: number; height: number;
+  }>;
   edges: Array<{ id: string; label: string; color: string; dashed: boolean; points: Array<{ x: number; y: number }> }>;
   groups: Array<{
     id: string; label: string; color: string; bg: string; textColor: string;
@@ -43,6 +46,69 @@ function extractLayout(html: string): HtmlLayout {
     .replace(/\\u2029/g, '\u2029');
   return JSON.parse(json) as HtmlLayout;
 }
+
+function zone(id: string, x: number, y: number, parentNode?: string): Node {
+  return {
+    id, type: 'groupNode', position: { x, y }, parentNode,
+    style: { width: 400, height: 300 }, data: { label: id },
+  };
+}
+
+test('a positioned single-service nested graph preserves authored group dimensions and relative coordinates', async () => {
+  const nodes = [
+    { ...zone('outer', 100, 100), style: { width: 800, height: 600 } },
+    zone('inner', 100, 100, 'outer'),
+    { ...service('api', 'API'), parentNode: 'inner', position: { x: 75, y: 90 } },
+  ];
+  const before = structuredClone(nodes);
+  const layout = extractLayout((await buildInteractiveDiagramHtml(nodes, [], 'Nested'))!);
+  const outer = layout.groups.find(group => group.id === 'outer')!;
+  const inner = layout.groups.find(group => group.id === 'inner')!;
+  const api = layout.nodes[0];
+  assert.deepEqual([inner.x - outer.x, inner.y - outer.y, inner.width, inner.height], [100, 100, 400, 300]);
+  assert.deepEqual([api.x - inner.x, api.y - inner.y], [75, 90]);
+  assert.deepEqual([outer.width, outer.height], [800, 600]);
+  assert.deepEqual(nodes, before);
+});
+
+test('equal local service positions in distinct positioned groups are an authored layout', async () => {
+  const nodes = [
+    zone('east', 100, 100), zone('west', 800, 100),
+    { ...service('a', 'API'), parentNode: 'east', position: { x: 50, y: 80 } },
+    { ...service('b', 'API'), parentNode: 'west', position: { x: 50, y: 80 } },
+  ];
+  const layout = extractLayout((await buildInteractiveDiagramHtml(nodes, [], 'Regions'))!);
+  for (const [index, groupId] of ['east', 'west'].entries()) {
+    const group = layout.groups.find(group => group.id === groupId)!;
+    assert.deepEqual([group.width, group.height], [400, 300]);
+    assert.deepEqual([layout.nodes[index].x - group.x, layout.nodes[index].y - group.y], [50, 80]);
+  }
+  assert.equal(layout.nodes[1].x - layout.nodes[0].x, 700);
+});
+
+test('an unpositioned nested fallback contains every descendant and preserves empty-group dimensions', async () => {
+  const nodes = [
+    zone('inner', 0, 0, 'outer'), zone('empty', 0, 0, 'outer'), zone('outer', 0, 0),
+    { ...service('a', 'API'), parentNode: 'inner' },
+    { ...service('b', 'Database'), parentNode: 'inner' },
+  ];
+  const layout = extractLayout((await buildInteractiveDiagramHtml(nodes, [
+    { id: 'flow', source: 'a', target: 'b' },
+  ], 'Fallback'))!);
+  const boxes = new Map([...layout.nodes, ...layout.groups].map(box => [box.id, box]));
+  for (const node of nodes) {
+    const box = boxes.get(node.id)!;
+    assert.ok([box.x, box.y, box.width, box.height].every(Number.isFinite));
+    if (!node.parentNode) continue;
+    const parent = boxes.get(node.parentNode)!;
+    assert.ok(box.x >= parent.x && box.y >= parent.y
+      && box.x + box.width <= parent.x + parent.width
+      && box.y + box.height <= parent.y + parent.height, `${node.id} is contained in ${node.parentNode}`);
+  }
+  assert.deepEqual([boxes.get('empty')!.width, boxes.get('empty')!.height], [400, 300]);
+  assert.equal(layout.groups[0].id, 'outer', 'the resized fallback parent paints behind its descendants');
+  assert.notDeepEqual([boxes.get('a')!.x, boxes.get('a')!.y], [boxes.get('b')!.x, boxes.get('b')!.y]);
+});
 
 test('interactive HTML keeps services with duplicate labels distinct', async () => {
   const edge: Edge = {

@@ -5,6 +5,7 @@ import type { Edge, Node } from 'reactflow';
 import { resolveServiceIconMapping } from '../data/serviceIconMapping';
 import { lookupServiceMeta } from './armExtractor';
 import type { IaCFormat } from './azureOpenAI';
+import { scanBicepDeclarations } from './bicepDeclarations';
 
 export type StarterTemplateFormat = 'bicep' | 'terraform';
 export type DriftAction = 'create' | 'update' | 'delete' | 'replace' | 'no-op' | 'other';
@@ -39,6 +40,8 @@ export interface IaCBaseline {
   resourceCount: number;
   unmappedCount: number;
   warnings: string[];
+  /** Source enumeration or instance multiplicity is known to be incomplete. */
+  incomplete?: boolean;
 }
 
 export interface DiagramResourceDescriptor {
@@ -63,6 +66,9 @@ export interface IaCComparisonReport {
   sourceOnly: IaCBaselineResource[];
   diagramOnly: DiagramResourceDescriptor[];
   approximateMatches: number;
+  /** Matches and unmatched counts are provisional when source enumeration is partial. */
+  incomplete: boolean;
+  warnings: string[];
 }
 
 export interface DriftChangeSummary {
@@ -606,43 +612,28 @@ function parseArmResources(files: BaselineBuildInput['files'], warnings: string[
 
 function parseBicepResources(files: BaselineBuildInput['files'], warnings: string[]): IaCBaselineResource[] {
   const output: IaCBaselineResource[] = [];
-  const seen = { value: 0 };
-  const pattern = /^\s*resource\s+([A-Za-z_][\w]*)\s+'([^']+)'(?:\s+existing)?\s*=\s*\{/gm;
   for (const file of files) {
-    let match: RegExpExecArray | null;
-    while ((match = pattern.exec(file.text)) !== null) {
-      const openingBrace = file.text.indexOf('{', match.index);
-      if (openingBrace < 0) continue;
-      const closingBrace = findMatchingBrace(file.text, openingBrace);
-      const body = closingBrace > openingBrace
-        ? file.text.slice(openingBrace + 1, closingBrace)
-        : '';
-      if (closingBrace < 0) {
-        warnings.push(`Skipped an unterminated Bicep resource block in ${file.name}.`);
-      }
-      const declaredType = match[2].split('@')[0].trim();
-      const service = resolveFromProviderOrService(declaredType);
-      const nameValue = literalStringValue(topLevelPropertyValue(body, ['name'], ':'));
+    const scanned = scanBicepDeclarations(file.text, file.name);
+    warnings.push(...scanned.warnings);
+    for (const declaration of scanned.declarations) {
+      const service = resolveFromProviderOrService(declaration.providerType, declaration.kind ?? undefined);
+      const notes = [...declaration.notes];
+      if (!declaration.resourceName) notes.push('The Bicep resource name uses an expression or could not be inferred deterministically.');
+      if (!service.mappedService) notes.push('Unmapped Bicep resource type.');
       output.push({
-        id: makeStableId('bicep', match[1], file.name, seen.value),
-        logicalName: match[1],
-        resourceName: nameValue,
-        providerType: declaredType.toLowerCase(),
+        id: makeStableId('bicep', declaration.logicalName, file.name, output.length),
+        logicalName: declaration.logicalName,
+        resourceName: declaration.resourceName,
+        providerType: declaration.providerType.toLowerCase(),
         mappedService: service.mappedService,
         category: service.category,
         sourceFile: file.name,
         origin: 'bicep',
-        approximation: nameValue
-          ? (service.mappedService ? 'exact' : 'unmapped')
-          : (service.mappedService ? 'type-only' : 'unmapped'),
-        notes: nameValue
-          ? undefined
-          : 'The Bicep resource name uses an expression or could not be inferred deterministically.',
+        approximation: !service.mappedService ? 'unmapped'
+          : declaration.conditional || declaration.loop ? 'expression'
+            : declaration.resourceName ? 'exact' : 'type-only',
+        notes: notes.length ? notes.join(' ') : undefined,
       });
-      seen.value += 1;
-      if (closingBrace >= 0) {
-        pattern.lastIndex = closingBrace + 1;
-      }
     }
   }
   return output;
@@ -796,6 +787,7 @@ export function buildIaCBaseline(input: BaselineBuildInput): IaCBaseline {
     resourceCount: resources.length,
     unmappedCount: resources.filter((resource) => !resource.mappedService).length,
     warnings,
+    incomplete: warnings.length > 0,
   };
 }
 
@@ -807,6 +799,7 @@ export function restoreIaCBaseline(value: unknown): IaCBaseline | null {
     || !Array.isArray(value.sourceFiles)
     || !Array.isArray(value.resources)
     || !Array.isArray(value.warnings)
+    || (value.incomplete !== undefined && typeof value.incomplete !== 'boolean')
   ) {
     return null;
   }
@@ -897,6 +890,7 @@ export function restoreIaCBaseline(value: unknown): IaCBaseline | null {
       ? value.unmappedCount
       : resources.filter((resource) => !resource.mappedService).length,
     warnings: value.warnings.filter((warning): warning is string => typeof warning === 'string'),
+    incomplete: value.incomplete === true || value.warnings.some(warning => typeof warning === 'string'),
   };
 }
 
@@ -977,6 +971,8 @@ export function compareDiagramToBaseline(nodes: Node[], baseline: IaCBaseline | 
     sourceOnly: baseline.resources.filter((resource) => !matchedBaseline.has(resource.id)),
     diagramOnly: diagramResources.filter((resource) => !matchedDiagram.has(resource.id)),
     approximateMatches: matched.filter((resource) => resource.confidence !== 'exact' && resource.confidence !== 'normalized').length,
+    incomplete: baseline.incomplete === true || baseline.warnings.length > 0,
+    warnings: [...baseline.warnings],
   };
 }
 

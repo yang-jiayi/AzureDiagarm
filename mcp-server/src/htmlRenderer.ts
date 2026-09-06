@@ -14,6 +14,7 @@
 
 import type { LayoutResult } from './layoutEngine.js';
 import { resolveRenderEdgeSemantics, type RenderProfile } from './svgRenderer.js';
+import { encloseConnectionRoutes } from './connectionRouting.js';
 
 // ── Public API ─────────────────────────────────────────────────────────
 
@@ -50,6 +51,7 @@ function serializeInlineScriptJson(value: object): string {
 }
 
 export function renderHtml(layout: LayoutResult, title?: string, options: RenderHtmlOptions = {}): string {
+  layout = encloseConnectionRoutes(layout);
   const diagramTitle = title ?? 'Azure Architecture Diagram';
   const themeClass = options.theme === 'dark' ? 'dark' : 'light';
   const profile = options.profile ?? 'technical';
@@ -308,6 +310,7 @@ function laneCandidates(a, b, secMin, secMax) {
   return uniq;
 }
 function orthogonalRoute(edge, direction, obstacles, canvas) {
+  if (edge.routeKind || edge.from === edge.to) return edge.points;
   obstacles = obstacles || [];
   canvas = canvas || { w: Infinity, h: Infinity };
   const s = edge.points[0], t = edge.points[edge.points.length - 1];
@@ -460,7 +463,7 @@ function render() {
     if (e.points.length < 2) return;
     const eType = e.type || 'sync';
     const color = EDGE_COLORS[eType] || EDGE_COLORS.sync;
-    const edgeKey = e.from + '\u0000' + e.to;
+    const edgeKey = e.key != null ? e.key : e.from + '\u0000' + e.to;
     const isPrimary = primaryEdgeKeys.has(edgeKey);
     const isPolicyAssociation = policyAssociationKeys.has(edgeKey);
     const route = orthogonalRoute(e, edgeDir, routeObstacles, routeCanvas);

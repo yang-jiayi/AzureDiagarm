@@ -21,6 +21,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, resolve as resolvePath } from 'node:path';
 
 import type { LayoutResult, PositionedNode, PositionedEdge, PositionedGroup } from './layoutEngine.js';
+import { connectionKey, encloseConnectionRoutes } from './connectionRouting.js';
 
 // ── Real Azure icon glyphs ─────────────────────────────────────────────
 // iconMap: service name/aliases → { iconFile, category }
@@ -489,6 +490,7 @@ function routeClear(pts: Pt[], obstacles: RouteObstacle[], ignore: (o: RouteObst
 }
 
 function orthogonalRoute(edge: PositionedEdge, direction: 'TB' | 'LR', obstacles: RouteObstacle[] = [], canvas: { w: number; h: number } = { w: Infinity, h: Infinity }): Pt[] {
+  if (edge.routeKind || edge.from === edge.to) return edge.points;
   const s = edge.points[0];
   const t = edge.points[edge.points.length - 1];
   const deltaX = Math.abs(t.x - s.x);
@@ -672,7 +674,7 @@ function policyAssociationEdges(layout: LayoutResult): Set<string> {
     const fromRole = architectureRole(nodes.get(edge.from)!);
     const toRole = architectureRole(nodes.get(edge.to)!);
     if ((fromRole === 'policy' && toRole === 'edge') || (fromRole === 'edge' && toRole === 'policy')) {
-      associations.add(`${edge.from}\u0000${edge.to}`);
+      associations.add(connectionKey(edge));
     }
   }
   return associations;
@@ -697,7 +699,7 @@ function primaryPresentationEdges(layout: LayoutResult): Set<string> {
       (fromRole === 'edge' && toRole === 'ingress' && inPrimaryGroup(toNode)) ||
       (fromRole === 'ingress' && toRole === 'compute' && inPrimaryGroup(fromNode) && fromNode.groupId === toNode.groupId) ||
       (fromRole === 'compute' && toRole === 'data' && inPrimaryGroup(fromNode) && fromNode.groupId === toNode.groupId);
-    if (isRequestTransition) primary.add(`${edge.from}\u0000${edge.to}`);
+    if (isRequestTransition) primary.add(connectionKey(edge));
   }
   return primary;
 }
@@ -706,7 +708,7 @@ function presentationLabelEdges(layout: LayoutResult, primary: Set<string>, poli
   if (layout.edges.length <= 12) return new Set(layout.edges);
   const nodeGroups = new Map(layout.nodes.map(node => [node.name, node.groupId ?? node.name]));
   const score = (edge: PositionedEdge): number => {
-    const key = `${edge.from}\u0000${edge.to}`;
+    const key = connectionKey(edge);
     const label = edge.label.toLowerCase();
     if (primary.has(key)) return 0;
     if (policyAssociations.has(key)) return 1;
@@ -745,7 +747,7 @@ export function resolveRenderEdgeSemantics(
     focusProfile,
     primary,
     policyAssociations,
-    labeled: new Set([...labeledEdges].map(edge => `${edge.from}\u0000${edge.to}`)),
+    labeled: new Set([...labeledEdges].map(connectionKey)),
   };
 }
 
@@ -870,6 +872,7 @@ export interface RenderSvgOptions {
 }
 
 export function renderSvg(layout: LayoutResult, title?: string, options: RenderSvgOptions = {}): string {
+  layout = encloseConnectionRoutes(layout);
   const theme = resolveTheme(options.theme);
   const metrics = resolveMetrics(options.profile ?? 'technical');
   const semantics = resolveRenderEdgeSemantics(layout, metrics.profile);
@@ -878,7 +881,7 @@ export function renderSvg(layout: LayoutResult, title?: string, options: RenderS
     ? layout
     : {
         ...layout,
-        edges: layout.edges.map(edge => associationKeys.has(`${edge.from}\u0000${edge.to}`)
+        edges: layout.edges.map(edge => associationKeys.has(connectionKey(edge))
           ? { ...edge, label: 'WAF policy association' }
           : edge),
       };
@@ -889,7 +892,7 @@ export function renderSvg(layout: LayoutResult, title?: string, options: RenderS
   const routeCanvas = { w: renderLayout.width, h: renderLayout.height };
   const primaryEdges = semantics.primary;
   const labeledEdges = new Set(
-    renderLayout.edges.filter(edge => semantics.labeled.has(`${edge.from}\u0000${edge.to}`)),
+    renderLayout.edges.filter(edge => semantics.labeled.has(connectionKey(edge))),
   );
 
   // Header metadata and title share the top band on normal canvases. Narrow
@@ -1018,7 +1021,7 @@ export function renderSvg(layout: LayoutResult, title?: string, options: RenderS
 
     <!-- Edge paths (drawn first so nothing paints over labels) -->
     ${renderLayout.edges.map(edge => {
-      const key = `${edge.from}\u0000${edge.to}`;
+      const key = connectionKey(edge);
       const isPrimary = primaryEdges.has(key);
       const isPolicy = associationKeys.has(key);
       return renderEdgePath(edge, edgeDir, routeObstacles, routeCanvas, {

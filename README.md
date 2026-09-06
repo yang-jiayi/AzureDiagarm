@@ -97,6 +97,8 @@ Generate a hand-drawn, **whiteboard-style blueprint** of your architecture — n
 ### 📋 IaC Import, Export & Drift Review
 Import ARM JSON, Bicep, Terraform HCL, or Terraform state and turn the declared resources into an editable diagram. The round-trip workspace preserves the source baseline, compares it with the current canvas, exports Bicep or Terraform starter templates, and summarizes Azure what-if or Terraform plan JSON without ever running an apply operation.
 
+Bicep baseline inspection recognizes conditional and nested declarations without executing expressions. Unexpanded modules, unresolved loop instance counts, and parsing limits are explicitly marked as incomplete. The workspace labels their counts and comparison results as provisional instead of implying that the full source has no differences.
+
 ### 🎯 Well-Architected Framework Validation
 Validate your architecture against all five WAF pillars:
 - **Security** — Identity, encryption, network isolation
