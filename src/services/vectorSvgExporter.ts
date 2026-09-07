@@ -540,7 +540,7 @@ function edgeMarkup(
   // native marker id cannot carry a `#`, so it is stated explicitly instead.
   const path =
     `<path class="react-flow__edge-path" d="${d}" fill="none" stroke="${route.color}" ` +
-    `stroke-width="2" stroke-opacity="${f(route.opacity)}" stroke-linecap="round" ` +
+    `stroke-width="2" opacity="${f(route.opacity)}" stroke-linecap="round" ` +
     `stroke-linejoin="round"${dash} data-flow-color="${route.color}"${start} ` +
     `marker-end="url(#${markerId(route.color)})"/>`;
 

@@ -4,12 +4,11 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Sparkles, X, Send, Loader2, AlertCircle, MessageSquare, ChevronDown, ChevronUp, Shield, Activity, DollarSign, Wrench, Zap, Lightbulb, type LucideIcon } from 'lucide-react';
 import { generateArchitectureWithAI, generateFollowUpSuggestions, isAzureOpenAIConfigured, throwIfGenerationAborted } from '../services/azureOpenAI';
-import { useModelSettings, MODEL_CONFIG } from '../stores/modelSettingsStore';
-import {
-  getBYOAIProviderLabel,
-  useBYOAISettings,
-} from '../stores/byoAISettingsStore';
+import { useModelSettings } from '../stores/modelSettingsStore';
+import { captureRuntimeModelOverride, getEffectiveAIModelInfo, type RuntimeModelOverride } from '../services/aiModelRuntime';
+import { useBYOAISettings } from '../stores/byoAISettingsStore';
 import { useRuntimeConfig } from '../services/runtimeConfig';
+import AIConnectionSelector from './AIConnectionSelector';
 import {
   buildModificationPrompt,
   architectureFingerprint,
@@ -30,11 +29,13 @@ interface ChatMessage {
   role: 'user' | 'assistant' | 'error';
   text: string;
   ts: number;
+  submittedModel?: string;
 }
 
 interface ArchitectureChatPanelProps {
   isOpen: boolean;
   onClose: () => void;
+  onConfigureConnections?: () => void;
   currentArchitecture: CurrentArchitecture;
   diagramKey: string;
   /** Applies a generated architecture to the canvas (App's handleAIGenerate). */
@@ -201,6 +202,7 @@ function pillarFor(text: string): Pillar {
 const ArchitectureChatPanel: React.FC<ArchitectureChatPanelProps> = ({
   isOpen,
   onClose,
+  onConfigureConnections,
   currentArchitecture,
   diagramKey,
   onApply,
@@ -266,9 +268,10 @@ const ArchitectureChatPanel: React.FC<ArchitectureChatPanelProps> = ({
   const [followUpsLoading, setFollowUpsLoading] = useState(false);
   const [askingBest, setAskingBest] = useState(false);
   const [canRetry, setCanRetry] = useState(false);
-  const [modelSettings] = useModelSettings();
-  const byoSnapshot = useBYOAISettings();
-  const runtimeConfig = useRuntimeConfig();
+  useModelSettings();
+  const { storageError } = useBYOAISettings();
+  useRuntimeConfig();
+  const [submittedModel, setSubmittedModel] = useState('');
 
   const threadRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -313,15 +316,10 @@ const ArchitectureChatPanel: React.FC<ArchitectureChatPanelProps> = ({
 
   diagramKeyRef.current = diagramKey;
 
-  const byoReady = byoSnapshot.settings.enabled
-    && byoSnapshot.verified
-    && runtimeConfig.status === 'ready'
-    && runtimeConfig.bringYourOwnAI;
-  const configured = isAzureOpenAIConfigured() || byoReady;
+  const configured = isAzureOpenAIConfigured();
   const hasDiagram = currentArchitecture.nodes.some((n) => n.type === 'azureNode');
-  const modelName = byoReady
-    ? `${getBYOAIProviderLabel(byoSnapshot.settings.provider)} · ${byoSnapshot.settings.model}`
-    : (MODEL_CONFIG[modelSettings.model]?.displayName || modelSettings.model);
+  const connectionInfo = getEffectiveAIModelInfo('architectureGeneration');
+  const modelName = connectionInfo.displayName;
 
   const markUsed = (s: string) =>
     setUsedSuggestions((prev) => (prev.has(s) ? prev : new Set(prev).add(s)));
@@ -377,7 +375,7 @@ const ArchitectureChatPanel: React.FC<ArchitectureChatPanelProps> = ({
   }, [isOpen]);
 
   const send = useCallback(
-    async (raw: string, context = currentArchitecture, continuation?: AbortController) => {
+    async (raw: string, context = currentArchitecture, continuation?: AbortController, capturedModel?: RuntimeModelOverride) => {
       const text = raw.trim();
       if (!openRef.current || !text || (requestRef.current && requestRef.current !== continuation)) return;
       const controller = continuation ?? new AbortController();
@@ -416,8 +414,12 @@ const ArchitectureChatPanel: React.FC<ArchitectureChatPanelProps> = ({
         .map((m) => m.text);
 
       try {
+        const modelOverride = capturedModel ?? captureRuntimeModelOverride('architectureGeneration');
+        const submittedName = modelOverride.connection?.displayName
+          ?? getEffectiveAIModelInfo('architectureGeneration').displayName;
+        setSubmittedModel(submittedName);
         const prompt = buildModificationPrompt(before, text, recentRequests.slice(0, -1), language);
-        const result = await generateArchitectureWithAI(prompt, undefined, undefined, language, { signal: controller.signal });
+        const result = await generateArchitectureWithAI(prompt, modelOverride, undefined, language, { signal: controller.signal });
         if (!active()) return;
         if (architectureFingerprint(architectureRef.current) !== baselineFingerprint) {
           throw new Error(localize(language, {
@@ -446,7 +448,7 @@ const ArchitectureChatPanel: React.FC<ArchitectureChatPanelProps> = ({
         const asstId = uid();
         setMessages((prev) => [
           ...prev,
-          { id: asstId, role: 'assistant', text: summary, ts: Date.now() },
+          { id: asstId, role: 'assistant', text: summary, ts: Date.now(), submittedModel: submittedName },
         ]);
 
         // Tier 3: fetch change-specific follow-ups in the background (non-blocking).
@@ -458,7 +460,7 @@ const ArchitectureChatPanel: React.FC<ArchitectureChatPanelProps> = ({
         latestFollowUpRequestRef.current = asstId;
         const followUpController = new AbortController();
         followUpControllerRef.current = followUpController;
-        void generateFollowUpSuggestions({ services: nextServices, lastChange: summary, recentRequests, language, signal: followUpController.signal })
+        void generateFollowUpSuggestions({ services: nextServices, lastChange: summary, recentRequests, language, signal: followUpController.signal, modelOverride })
           .then((items) => {
             if (
               openRef.current && !followUpController.signal.aborted
@@ -521,6 +523,9 @@ const ArchitectureChatPanel: React.FC<ArchitectureChatPanelProps> = ({
     const requestDiagramKey = diagramKey;
     setAskingBest(true);
     try {
+      const modelOverride = captureRuntimeModelOverride('architectureGeneration');
+      setSubmittedModel(modelOverride.connection?.displayName
+        ?? getEffectiveAIModelInfo('architectureGeneration').displayName);
       const services = currentArchitecture.nodes
         .filter((n) => n.type === 'azureNode')
         .map((n) => String(n.data?.label || '').trim())
@@ -533,6 +538,7 @@ const ArchitectureChatPanel: React.FC<ArchitectureChatPanelProps> = ({
         count: 1,
         language,
         signal: controller.signal,
+        modelOverride,
       });
       throwIfGenerationAborted(controller.signal);
       if (requestRef.current !== controller) return;
@@ -545,7 +551,7 @@ const ArchitectureChatPanel: React.FC<ArchitectureChatPanelProps> = ({
       }
       if (best[0]) {
         markUsed(best[0]);
-        await send(best[0], before, controller);
+        await send(best[0], before, controller, modelOverride);
       }
     } catch {
       if (!controller.signal.aborted && requestRef.current === controller) {
@@ -628,6 +634,9 @@ const ArchitectureChatPanel: React.FC<ArchitectureChatPanelProps> = ({
         </span>
       </div>
 
+      <AIConnectionSelector compact disabled={isSending || askingBest}
+        onConfigureConnections={onConfigureConnections} />
+
       <div className="arch-chat-thread" ref={threadRef}>
         {messages.length === 0 && (
           <div className="arch-chat-empty">
@@ -690,14 +699,20 @@ const ArchitectureChatPanel: React.FC<ArchitectureChatPanelProps> = ({
           <div key={m.id} className={`arch-chat-msg arch-chat-msg-${m.role}`}>
             {m.role === 'error' && <AlertCircle size={15} className="arch-chat-msg-icon" />}
             {m.role === 'assistant' && <Sparkles size={15} className="arch-chat-msg-icon" />}
-            <div className="arch-chat-bubble">{m.text}</div>
+            <div className="arch-chat-bubble">{m.text}
+              {m.submittedModel && <small className="arch-chat-provenance">
+                {localize(language, { en: 'Submitted with', ja: '送信時のモデル' })}: {m.submittedModel}
+              </small>}
+            </div>
           </div>
         ))}
 
         {isSending && (
           <div className="arch-chat-msg arch-chat-msg-assistant">
             <Loader2 size={15} className="arch-chat-msg-icon spin" />
-            <div className="arch-chat-bubble arch-chat-bubble-pending">{t("Updating the diagram…")}</div>
+            <div className="arch-chat-bubble arch-chat-bubble-pending">{t("Updating the diagram…")}
+              {submittedModel && <small className="arch-chat-provenance">{submittedModel}</small>}
+            </div>
           </div>
         )}
 
@@ -767,12 +782,15 @@ const ArchitectureChatPanel: React.FC<ArchitectureChatPanelProps> = ({
           disabled={!configured} onClick={() => void send(input.trim() || lastPromptRef.current)}>
           {localize(language, { en: 'Retry request', ja: 'リクエストを再試行' })}
         </button>}
-        {!configured && (
+        {!configured && !storageError && (
           <div className="arch-chat-warning">
             <AlertCircle size={14} /> {' '}
-            {localize(language, {
-              en: 'No AI model is configured.',
-              ja: 'AI モデルが設定されていません。',
+            {connectionInfo.source === 'bring-your-own' ? localize(language, {
+              en: 'The selected BYO connection is unavailable. Enter its key, verify it in AI connections, or explicitly choose managed Astra. Requests will not switch providers automatically.',
+              ja: '選択中の BYO 接続は利用できません。AI 接続の設定でキーを入力して確認するか、管理対象の Astra を明示的に選択してください。プロバイダーは自動で切り替わりません。',
+            }) : localize(language, {
+              en: 'GPT-6 Astra is not configured. Contact the application administrator to configure the managed Astra deployment.',
+              ja: 'GPT-6 Astraが設定されていません。管理対象のAstraデプロイを設定するようアプリケーション管理者に連絡してください。',
             })}{' '}
           </div>
         )}

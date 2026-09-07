@@ -5,6 +5,8 @@ import { Frame, Hand, Maximize2, X, ZoomIn } from 'lucide-react';
 import { MiniMap } from 'reactflow';
 import { useLanguage } from '../i18n/LanguageContext';
 import { localize } from '../i18n/localization';
+import { useMediaQuery } from '../hooks/useMediaQuery';
+import { MEDIA_QUERIES } from '../styles/breakpoints';
 import FeedbackFab from './FeedbackFab';
 import { StartChooser } from './GuidedJourney';
 import Legend from './Legend';
@@ -65,6 +67,12 @@ export default function CanvasChrome({
   onExitFocus,
 }: CanvasChromeProps) {
   const { t, language } = useLanguage();
+  const isCompact = useMediaQuery(MEDIA_QUERIES.compact);
+  const isLowHeight = useMediaQuery(MEDIA_QUERIES.lowHeight);
+  // React Flow also needs numeric sizes for the SVG viewBox and pan coordinates.
+  const miniMapSize = isLowHeight
+    ? { width: 112, height: 72 }
+    : isCompact ? { width: 140, height: 100 } : { width: 200, height: 150 };
 
   return (
     <>
@@ -89,6 +97,7 @@ export default function CanvasChrome({
             zoomable
             position="bottom-right"
             className="nav-minimap"
+            style={miniMapSize}
             ariaLabel={t('canvas.miniMap')}
             nodeColor="#60a5fa"
             nodeStrokeColor="#3b82f6"

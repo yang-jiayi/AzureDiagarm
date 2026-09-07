@@ -5,6 +5,7 @@ import React, { useState, useEffect } from 'react';
 import { Zap, DollarSign, ChevronDown, ChevronUp } from 'lucide-react';
 import './Legend.css';
 import { useLanguage } from '../i18n/LanguageContext';
+import { localize } from '../i18n/localization';
 import { readLocalStorage, writeLocalStorage } from '../utils/safeStorage';
 import { MEDIA_QUERIES } from '../styles/breakpoints';
 
@@ -15,7 +16,7 @@ interface LegendProps {
 }
 
 const Legend: React.FC<LegendProps> = ({ forceCollapsed }) => {
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
   const [isCollapsed, setIsCollapsed] = useState(() => {
     const stored = readLocalStorage(LEGEND_COLLAPSED_STORAGE_KEY);
     return stored === null ? true : stored === '1';
@@ -61,7 +62,9 @@ const Legend: React.FC<LegendProps> = ({ forceCollapsed }) => {
       {!isCollapsed && (
         <div className="legend-content" id="diagram-legend-content">
           <div className="legend-section">
-            <div className="legend-section-title">{t("Connection Types")}</div>
+            <div className="legend-section-title">
+              {localize(language, { en: 'Default connection styles', ja: '既定の接続スタイル' })}
+            </div>
             
             <div className="legend-item">
               <svg width="40" height="16" className="legend-line">

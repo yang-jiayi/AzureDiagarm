@@ -2,15 +2,23 @@
 // Licensed under the MIT License.
 
 import type { ReasoningEffort } from '../stores/modelSettingsStore';
+import { AIModelConfigurationError, getDeploymentName, isModelAvailable, isReasoningEffort } from '../stores/modelSettingsStore';
+import { getBYOAISettings, normalizeBYOAIEndpoint, validateBYOAIProfile } from '../stores/byoAISettingsStore';
+import { isValidBYOAIApiKey, readBYOAIConnectionSecret } from './byoAIConnectionSession';
+import { assertCapturedAIConnectionCurrent, type CapturedAIConnection } from './aiModelRuntime';
+import { awaitWithAISignal, isBYOAIEnabledOnServer, runtimeConfigCancellationError } from './runtimeConfig';
 
 /**
- * API Format Helper
- * Abstracts the difference between Azure OpenAI Responses API and Chat Completions API.
- * OpenAI models (including GPT-6 Astra) use the Responses API, partner models use Chat
- * Completions, and Anthropic models use the Messages API in Microsoft Foundry.
+ * Managed Astra Responses and explicitly selected BYO OpenAI request boundary.
  */
 
-export type ApiFormat = 'responses' | 'chat-completions' | 'anthropic-messages';
+export type ApiFormat = 'responses' | 'chat-completions';
+
+function assertApiFormat(apiFormat: unknown): asserts apiFormat is ApiFormat {
+  if (apiFormat !== 'responses' && apiFormat !== 'chat-completions') {
+    throw new AIModelConfigurationError('unsupported_api_format', 'Use the Responses or Chat Completions API.');
+  }
+}
 
 export interface BYOAIProxyConfig {
   provider: 'azure-openai' | 'openai';
@@ -18,128 +26,33 @@ export interface BYOAIProxyConfig {
   apiKey: string;
 }
 
-export function isAiBackendConfigured(apiFormat: ApiFormat): boolean {
-  return apiFormat === 'anthropic-messages'
-    ? Boolean(import.meta.env.VITE_AZURE_FOUNDRY_ENDPOINT)
-    : Boolean(import.meta.env.VITE_AZURE_OPENAI_ENDPOINT);
-}
-
 export function getApiFormatLabel(apiFormat: ApiFormat): string {
-  if (apiFormat === 'anthropic-messages') return 'Anthropic Messages';
-  if (apiFormat === 'chat-completions') return 'Chat Completions';
-  return 'Responses';
+  assertApiFormat(apiFormat);
+  return apiFormat === 'responses' ? 'Responses' : 'Chat Completions';
+}
+
+function chatMessages(messages: any[]): any[] {
+  return structuredClone(messages).map(message => ({
+    ...message,
+    ...(Array.isArray(message.content) ? {
+      content: message.content.map((part: any) => {
+        if (part?.type === 'input_text') return { ...part, type: 'text' };
+        if (part?.type !== 'input_image') return part;
+        const { type: _type, image_url, detail, ...rest } = part;
+        return {
+          ...rest, type: 'image_url',
+          image_url: {
+            ...(typeof image_url === 'string' ? { url: image_url } : image_url),
+            ...(detail !== undefined ? { detail } : {}),
+          },
+        };
+      }),
+    } : {}),
+  }));
 }
 
 /**
- * Build the correct API URL for the given format.
- * - Responses API:       {endpoint}openai/v1/responses
- * - Chat Completions:    {endpoint}openai/v1/chat/completions
- * - Anthropic Messages:   {endpoint}anthropic/v1/messages
- */
-export function buildApiUrl(endpoint: string, _deployment: string, apiFormat: ApiFormat): string {
-  const base = endpoint.endsWith('/') ? endpoint : `${endpoint}/`;
-  if (apiFormat === 'anthropic-messages') {
-    return `${base}anthropic/v1/messages`;
-  }
-  if (apiFormat === 'chat-completions') {
-    return `${base}openai/v1/chat/completions`;
-  }
-  return `${base}openai/v1/responses`;
-}
-
-function convertAnthropicContent(content: unknown): Array<Record<string, unknown>> {
-  if (typeof content === 'string') {
-    return [{ type: 'text', text: content }];
-  }
-  if (!Array.isArray(content)) {
-    throw new TypeError('Anthropic message content must be text or an array of content blocks.');
-  }
-
-  return content.map((part) => {
-    if (!part || typeof part !== 'object') {
-      throw new TypeError('Anthropic content blocks must be objects.');
-    }
-    const value = part as Record<string, unknown>;
-    if (value.type === 'input_text' || value.type === 'text') {
-      if (typeof value.text !== 'string') {
-        throw new TypeError('Anthropic text blocks require a text value.');
-      }
-      return { type: 'text', text: value.text };
-    }
-    if (value.type === 'input_image' || value.type === 'image_url') {
-      const imageUrl = typeof value.image_url === 'string'
-        ? value.image_url
-        : value.image_url && typeof value.image_url === 'object'
-          ? (value.image_url as Record<string, unknown>).url
-          : undefined;
-      if (typeof imageUrl !== 'string') {
-        throw new TypeError('Anthropic image blocks require an image URL.');
-      }
-      const match = /^data:([^;,]+);base64,([A-Za-z0-9+/=\r\n]+)$/.exec(imageUrl);
-      if (!match) {
-        throw new TypeError('Anthropic image input must be a base64 data URL.');
-      }
-      return {
-        type: 'image',
-        source: {
-          type: 'base64',
-          media_type: match[1],
-          data: match[2].replace(/\s+/g, ''),
-        },
-      };
-    }
-    throw new TypeError(`Unsupported Anthropic content block type: ${String(value.type)}`);
-  });
-}
-
-function buildAnthropicRequestBody(params: {
-  deployment: string;
-  messages: any[];
-  maxTokens: number;
-  reasoningEffort: ReasoningEffort;
-}): Record<string, unknown> {
-  const systemBlocks: Array<Record<string, unknown>> = [];
-  const conversation: Array<Record<string, unknown>> = [];
-
-  for (const message of params.messages) {
-    if (!message || typeof message !== 'object') {
-      throw new TypeError('Anthropic messages must be objects.');
-    }
-    const role = message.role;
-    const blocks = convertAnthropicContent(message.content);
-    if (role === 'system') {
-      if (blocks.some(block => block.type !== 'text')) {
-        throw new TypeError('Anthropic system messages only support text content.');
-      }
-      systemBlocks.push(...blocks);
-      continue;
-    }
-    if (role !== 'user' && role !== 'assistant') {
-      throw new TypeError(`Unsupported Anthropic message role: ${String(role)}`);
-    }
-    conversation.push({ role, content: blocks });
-  }
-
-  if (conversation.length === 0) {
-    throw new TypeError('Anthropic requests require at least one user or assistant message.');
-  }
-
-  const effort = ['low', 'medium', 'high', 'max'].includes(params.reasoningEffort)
-    ? params.reasoningEffort
-    : 'low';
-  return {
-    model: params.deployment,
-    max_tokens: params.maxTokens,
-    ...(systemBlocks.length > 0 ? { system: systemBlocks } : {}),
-    messages: conversation,
-    thinking: { type: 'adaptive' },
-    output_config: { effort },
-  };
-}
-
-/**
- * Build the request body for the given API format.
- * Handles reasoning config only for Responses API models that support it.
+ * Build either OpenAI format without changing the caller's prompt or quality.
  */
 export function buildRequestBody(params: {
   deployment: string;
@@ -152,35 +65,27 @@ export function buildRequestBody(params: {
 }): any {
   const { deployment, messages, maxTokens, apiFormat, isReasoning, reasoningEffort, jsonOutput = true } = params;
 
-  if (apiFormat === 'anthropic-messages') {
-    return buildAnthropicRequestBody({
-      deployment,
-      messages,
-      maxTokens,
-      reasoningEffort,
-    });
+  assertApiFormat(apiFormat);
+  if (!Number.isSafeInteger(maxTokens) || maxTokens < 1 || maxTokens > 32768) {
+    throw new AIModelConfigurationError('invalid_output_limit', 'The AI output limit must be a whole number from 1 to 32768.');
   }
-
+  if (!isReasoningEffort(reasoningEffort)) {
+    throw new AIModelConfigurationError('unsupported_reasoning_effort', 'The requested reasoning effort is not supported.');
+  }
   if (apiFormat === 'chat-completions') {
     return {
-      messages,
+      model: deployment,
+      messages: chatMessages(messages),
       ...(isReasoning
-        ? {
-            max_completion_tokens: maxTokens,
-            reasoning_effort: reasoningEffort,
-          }
-        : {
-            max_tokens: maxTokens,
-            temperature: 0.7,
-          }),
+        ? { max_completion_tokens: maxTokens, reasoning_effort: reasoningEffort }
+        : { max_tokens: maxTokens }),
       ...(jsonOutput ? { response_format: { type: 'json_object' } } : {}),
+      store: false,
     };
   }
-
-  // Responses API
   const body: any = {
     model: deployment,
-    input: messages,
+    input: structuredClone(messages),
     max_output_tokens: maxTokens,
     ...(jsonOutput ? { text: { format: { type: 'json_object' } } } : {}),
     store: false,
@@ -194,46 +99,29 @@ export function buildRequestBody(params: {
 }
 
 /**
- * Parse the API response into a uniform shape regardless of API format.
+ * Extract text and usage without trusting malformed text/token fields.
  */
 export function parseApiResponse(
   data: any,
   apiFormat: ApiFormat,
 ): { content: string; promptTokens: number; completionTokens: number; totalTokens: number } {
-  if (apiFormat === 'anthropic-messages') {
-    const usage = data.usage || {};
-    const promptTokens = usage.input_tokens || 0;
-    const completionTokens = usage.output_tokens || 0;
-    return {
-      content: Array.isArray(data.content)
-        ? data.content
-          .filter((part: any) => part?.type === 'text' && typeof part.text === 'string')
-          .map((part: any) => part.text)
-          .join('')
-        : '',
-      promptTokens,
-      completionTokens,
-      totalTokens: usage.total_tokens || promptTokens + completionTokens,
-    };
-  }
-
+  assertApiFormat(apiFormat);
+  const tokens = (value: unknown) => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : 0;
+  const usage = data?.usage || {};
   if (apiFormat === 'chat-completions') {
-    const usage = data.usage || {};
     return {
-      content: data.choices?.[0]?.message?.content || '',
-      promptTokens: usage.prompt_tokens || 0,
-      completionTokens: usage.completion_tokens || 0,
-      totalTokens: usage.total_tokens || 0,
+      content: typeof data?.choices?.[0]?.message?.content === 'string' ? data.choices[0].message.content : '',
+      promptTokens: tokens(usage.prompt_tokens),
+      completionTokens: tokens(usage.completion_tokens),
+      totalTokens: tokens(usage.total_tokens),
     };
   }
-
-  // Responses API
-  let content = data.output_text || '';
-  if (!content && data.output) {
+  let content = typeof data?.output_text === 'string' ? data.output_text : '';
+  if (!content && Array.isArray(data?.output)) {
     for (const item of data.output) {
-      if (item.type === 'message' && item.content) {
+      if (item?.type === 'message' && Array.isArray(item.content)) {
         for (const part of item.content) {
-          if (part.type === 'output_text') {
+          if (part?.type === 'output_text' && typeof part.text === 'string') {
             content += part.text;
           }
         }
@@ -241,12 +129,11 @@ export function parseApiResponse(
     }
   }
 
-  const usage = data.usage || {};
   return {
     content,
-    promptTokens: usage.input_tokens || 0,
-    completionTokens: usage.output_tokens || 0,
-    totalTokens: usage.total_tokens || 0,
+    promptTokens: tokens(usage.input_tokens),
+    completionTokens: tokens(usage.output_tokens),
+    totalTokens: tokens(usage.total_tokens),
   };
 }
 
@@ -332,6 +219,11 @@ function getStructuredError(payload: any): Partial<OpenAIProxyErrorDetails> | nu
   return candidate;
 }
 
+function diagnosticToken(value: unknown, secret?: string): string | undefined {
+  return typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/.test(value)
+    && !/^sk-/i.test(value) && !(secret && value.includes(secret)) ? value : undefined;
+}
+
 function readRetryAfterMs(headers: Headers): number | undefined {
   const delays: number[] = [];
   const add = (value: number) => {
@@ -369,7 +261,6 @@ function inferUnstructuredError(
     requestId,
     upstreamRequestId,
     contentType,
-    responseUrl: response.url,
     redirected: response.redirected,
   };
 
@@ -443,18 +334,20 @@ export const PROXY_ERROR_MESSAGE_CODES = [
   'application_request_rejected',
   'edge_request_blocked',
   'deployment_not_allowed',
+  'astra_not_configured',
+  'proxy_not_configured',
+  'invalid_api_format',
   'byo_not_enabled',
-  'invalid_byo_endpoint',
-  'invalid_byo_configuration',
-  'invalid_byo_provider',
-  'invalid_byo_api_key',
-  'invalid_byo_api_format',
   'byo_authentication_failed',
   'byo_rate_limited',
   'byo_timeout',
   'byo_unavailable',
   'byo_connection_failed',
-  'byo_request_failed',
+  'invalid_byo_configuration',
+  'invalid_byo_provider',
+  'invalid_byo_endpoint',
+  'invalid_byo_api_key',
+  'invalid_deployment_name',
   'credential_acquisition_failed',
   'azure_openai_authentication_failed',
   'deployment_not_found',
@@ -481,14 +374,11 @@ export const PROXY_ERROR_MESSAGE_CODES = [
 
 /**
  * Resolve the user-facing message for a proxy error code. Pure and exported so
- * the i18n coverage test can enumerate every producible message. When a code
- * carries a server-provided message (the BYO configuration codes), pass it as
- * `byoMessage`; the static fallback returned otherwise is what the coverage
- * test asserts a translation for.
+ * the i18n coverage test can enumerate every producible message.
  */
 export function proxyErrorMessageForCode(
   code: string,
-  options: { vision?: boolean; status?: number; byoMessage?: string } = {},
+  options: { vision?: boolean; status?: number } = {},
 ): string {
   switch (code) {
     case 'application_authentication_required':
@@ -501,35 +391,33 @@ export function proxyErrorMessageForCode(
     case 'edge_request_blocked':
       return 'The request was blocked before it reached the AI provider. Reduce the request size or contact the administrator.';
     case 'deployment_not_allowed':
-      return 'The selected model deployment is not allowed by the server configuration.';
+      return 'Only the configured GPT-6 Astra deployment can run.';
+    case 'astra_not_configured':
+      return 'GPT-6 Astra is not configured. Contact the application administrator to configure the managed Astra deployment.';
+    case 'proxy_not_configured':
+      return 'The managed Azure OpenAI endpoint is not configured correctly.';
+    case 'invalid_api_format':
+      return 'GPT-6 Astra requests must use the Responses API.';
     case 'byo_not_enabled':
-      return 'Bring-your-own AI endpoints are not enabled on this server.';
-    case 'invalid_byo_endpoint':
+      return 'Bring-your-own AI is disabled by the application administrator.';
+    case 'byo_authentication_failed':
+    case 'invalid_byo_api_key':
+      return 'The AI provider rejected this profile’s API key. Re-enter the key and test the connection again.';
     case 'invalid_byo_configuration':
     case 'invalid_byo_provider':
-    case 'invalid_byo_api_key':
-    case 'invalid_byo_api_format':
-      return options.byoMessage || 'The custom AI configuration is invalid.';
-    case 'byo_authentication_failed':
-      return 'The custom AI endpoint rejected the API key. Check the key and try again.';
-    case 'byo_rate_limited':
-      return 'The custom AI endpoint is rate-limiting requests. Wait a moment and try again.';
-    case 'byo_timeout':
-      return 'The custom AI endpoint is taking too long to respond. Please try again.';
-    case 'byo_unavailable':
-    case 'byo_connection_failed':
-      return 'The custom AI endpoint is unavailable or could not be reached.';
-    case 'byo_request_failed':
-      return 'The custom AI endpoint rejected the request.';
+    case 'invalid_byo_endpoint':
+      return 'The AI connection settings are invalid. Check the provider, endpoint, and model, then test again.';
     case 'credential_acquisition_failed':
       return 'The server could not acquire an Azure OpenAI credential. Contact the administrator.';
     case 'azure_openai_authentication_failed':
       return 'Azure OpenAI rejected the server credential. Check the managed identity role assignment.';
     case 'deployment_not_found':
+    case 'invalid_deployment_name':
       return 'Model or deployment not found. Check the configured name.';
     case 'proxy_rate_limit_exceeded':
       return 'The application request limit was reached. Wait a moment and try again.';
     case 'azure_openai_rate_limited':
+    case 'byo_rate_limited':
       return 'The AI provider is rate-limiting requests. Wait a moment and try again.';
     case 'http_429':
       return 'The AI request was rate-limited, but the response did not identify which limit was reached. Wait before retrying or contact the administrator with the request ID.';
@@ -544,15 +432,18 @@ export function proxyErrorMessageForCode(
     case 'ai_budget_timeout':
       return 'The application timed out while reserving the AI budget. Wait a moment and try again.';
     case 'azure_openai_timeout':
+    case 'byo_timeout':
     case 'edge_origin_unavailable':
       return 'The AI provider is taking too long to respond. Please try again.';
     case 'azure_openai_unavailable':
     case 'azure_openai_connection_failed':
+    case 'byo_unavailable':
+    case 'byo_connection_failed':
       return 'The AI provider is temporarily unavailable. Please try again.';
     case 'request_too_large':
       return 'The request is too large. Reduce the diagram or image size and try again.';
     case 'image_not_supported':
-      return 'The selected model may not support image analysis. Try using GPT-6 Astra.';
+      return 'The configured GPT-6 Astra deployment rejected the image analysis request. Check the image and contact the application administrator if the problem persists.';
     case 'content_filtered':
       return 'The AI provider content policy rejected the request. Revise the prompt and try again.';
     case 'invalid_upstream_response':
@@ -562,7 +453,7 @@ export function proxyErrorMessageForCode(
       return 'The application could not reach the Azure OpenAI proxy. Check your connection and try again.';
     case 'invalid_upstream_request':
       return options.vision
-        ? 'The selected model may not support image analysis. Try using GPT-6 Astra.'
+        ? proxyErrorMessageForCode('image_not_supported')
         : 'The AI provider rejected the request format. Please try again or simplify the request.';
     default:
       if (options.status === 429) return proxyErrorMessageForCode('http_429');
@@ -578,47 +469,127 @@ export function createOpenAIProxyError(
   let message = proxyErrorMessageForCode(code, {
     vision: options.vision,
     status: result.status,
-    byoMessage: typeof result.error?.message === 'string' ? result.error.message : undefined,
   });
 
-  if (result.error?.requestId) {
-    message = `${message} Request ID: ${result.error.requestId}`;
+  const requestId = diagnosticToken(result.error?.requestId);
+  if (requestId) {
+    message = `${message} Request ID: ${requestId}`;
   }
 
   return new OpenAIProxyError(message, result);
 }
 
 /**
- * Call Azure OpenAI through the server-side proxy (/api/openai).
+ * Call the protected server-side proxy (/api/openai). Never call a provider directly.
  *
- * The proxy holds the Azure OpenAI credentials (managed identity, with optional
- * key fallback) so they are never shipped to the browser. The client sends the
- * already-built request body plus the deployment name and API format; the server
- * constructs the upstream URL from its trusted endpoint and attaches auth.
+ * Managed credentials stay on the server. BYO keys stay in tab memory and are
+ * sent only to this proxy, which enforces opt-in, endpoint policy, authentication
+ * and budgets before constructing the upstream URL.
  */
 export async function callAzureOpenAIProxy(params: {
   apiFormat: ApiFormat;
   deployment: string;
   body: any;
-  byo?: BYOAIProxyConfig;
   signal?: AbortSignal;
+  byo?: BYOAIProxyConfig;
+  connection?: CapturedAIConnection;
+  purpose?: 'connection-test';
 }): Promise<OpenAIProxyResult> {
+  if (params.signal?.aborted) throw runtimeConfigCancellationError();
+  assertApiFormat(params.apiFormat);
+  if (Object.keys(params).some(key => !['apiFormat', 'deployment', 'body', 'signal', 'byo', 'connection', 'purpose'].includes(key))) {
+    throw new AIModelConfigurationError('unsupported_ai_provider', 'Use a configured AI connection without additional routing fields.');
+  }
+  let byo: BYOAIProxyConfig | undefined;
+  if (params.connection !== undefined) {
+    assertCapturedAIConnectionCurrent(params.connection);
+    if ('byo' in params || params.deployment !== params.connection.deployment || params.apiFormat !== params.connection.apiFormat) {
+      throw new AIModelConfigurationError('stale_ai_configuration', 'The selected AI connection changed before this request was sent. Review the connection and submit again.');
+    }
+    if (params.connection.source === 'bring-your-own') {
+      const profile = getBYOAISettings().profiles.find(item => item.id === params.connection!.profileId);
+      const apiKey = profile && readBYOAIConnectionSecret(profile.id, params.connection.revision);
+      if (!profile || !apiKey || !validateBYOAIProfile(profile).valid) {
+        throw new AIModelConfigurationError('byo_invalid_profile', 'The selected AI connection is not ready. Edit the profile and test again.');
+      }
+      byo = { provider: profile.provider, endpoint: profile.endpoint, apiKey };
+    }
+  } else if ('byo' in params) {
+    const value = params.byo;
+    if (!value || typeof value !== 'object' || Array.isArray(value)
+      || Object.keys(value).some(key => !['provider', 'endpoint', 'apiKey'].includes(key))
+      || !isValidBYOAIApiKey(value.apiKey)) {
+      throw new AIModelConfigurationError('invalid_byo_configuration', 'Enter valid AI connection settings and an API key.');
+    }
+    const endpoint = normalizeBYOAIEndpoint(value.provider, value.endpoint);
+    if (!endpoint) throw new AIModelConfigurationError('invalid_byo_configuration', 'Use a trusted AI provider HTTPS origin.');
+    byo = { provider: value.provider, endpoint, apiKey: value.apiKey };
+  }
+  if (byo) {
+    if (!isBYOAIEnabledOnServer()) throw new AIModelConfigurationError('byo_not_enabled', 'Bring-your-own AI availability must be confirmed by the application server.');
+  } else {
+    if (params.apiFormat !== 'responses') {
+      throw new AIModelConfigurationError('unsupported_api_format', 'GPT-6 Astra requests must use the Responses API.');
+    }
+    const deployment = getDeploymentName('gpt-6-astra');
+    if (!isModelAvailable('gpt-6-astra')) {
+      throw new AIModelConfigurationError('astra_not_configured', 'Azure OpenAI is not configured. Please check your environment.');
+    }
+    if (params.deployment !== deployment) {
+      throw new AIModelConfigurationError('unsupported_ai_model', 'Only the configured GPT-6 Astra deployment can run.');
+    }
+  }
+  const forbiddenBodyFields = ['byo', 'provider', 'deployment', 'endpoint', 'apiKey', 'api_key', 'headers', 'url', 'baseURL', 'base_url', 'forceManaged'];
+  if (!params.body || typeof params.body !== 'object' || Array.isArray(params.body)
+    || typeof params.deployment !== 'string' || !/^(?=.{1,128}$)(?=.*[A-Za-z0-9])[A-Za-z0-9._:-]+$/.test(params.deployment)
+    || params.body.model !== params.deployment || forbiddenBodyFields.some(field => field in params.body)) {
+    throw new AIModelConfigurationError('unsupported_ai_model', 'The request must use the selected connection’s exact model or deployment.');
+  }
+  for (const field of ['max_output_tokens', 'max_completion_tokens', 'max_tokens']) {
+    const value = params.body[field];
+    if (value !== undefined && (!Number.isSafeInteger(value) || value < 1 || value > 32768)) {
+      throw new AIModelConfigurationError('invalid_output_limit', 'The AI output limit must be a whole number from 1 to 32768.');
+    }
+  }
+  if (params.connection) {
+    const connection = params.connection;
+    const outputLimit = params.apiFormat === 'responses' ? params.body.max_output_tokens
+      : connection.isReasoning ? params.body.max_completion_tokens : params.body.max_tokens;
+    const effort = params.apiFormat === 'responses' ? params.body.reasoning?.effort : params.body.reasoning_effort;
+    if (outputLimit !== connection.maxCompletionTokens
+      || (connection.isReasoning ? effort !== connection.reasoningEffort : effort !== undefined)) {
+      throw new AIModelConfigurationError('stale_ai_configuration', 'The request must preserve the selected connection’s reasoning and output settings.');
+    }
+    const messages = params.body.input ?? params.body.messages;
+    if (!connection.supportsVision && Array.isArray(messages) && messages.some(message =>
+      Array.isArray(message?.content) && message.content.some((part: any) =>
+        part?.type === 'input_image' || part?.type === 'image_url'))) {
+      throw new AIModelConfigurationError('byo_vision_not_supported', 'The selected AI connection does not support images. Select a vision-capable connection.');
+    }
+  }
   let response: Response;
   try {
-    response = await fetch('/api/openai', {
+    const request = fetch('/api/openai', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        ...(params.purpose === 'connection-test' ? { 'X-AzureDiagarm-Operation': 'byo-connection-test' } : {}),
+      },
       body: JSON.stringify({
         apiFormat: params.apiFormat,
         deployment: params.deployment,
         body: params.body,
-        ...(params.byo ? { byo: params.byo } : {}),
+        ...(byo ? { byo } : {}),
       }),
       signal: params.signal,
+      credentials: 'same-origin',
+      redirect: 'error',
+      cache: 'no-store',
     });
+    response = params.signal ? await awaitWithAISignal(request, params.signal) : await request;
   } catch (error) {
     if (error instanceof Error && error.name === 'AbortError') throw error;
-    const message = error instanceof Error ? error.message : 'Network request failed';
+    const message = proxyErrorMessageForCode('network_error');
     return {
       ok: false,
       status: 0,
@@ -633,48 +604,48 @@ export async function callAzureOpenAIProxy(params: {
   }
 
   const contentType = response.headers.get('content-type') || '';
-  const responseText = await response.text().catch(() => '');
+  let responseText = '';
+  try {
+    const text = response.text();
+    responseText = params.signal ? await awaitWithAISignal(text, params.signal) : await text;
+  } catch (error) {
+    if (params.signal?.aborted) throw runtimeConfigCancellationError();
+    if (error instanceof Error && error.name === 'AbortError') throw error;
+  }
   const parsed = parseJson(responseText);
   const structured = getStructuredError(parsed);
-  const requestId = response.headers.get('x-azurediagarm-request-id')
-    || structured?.requestId
-    || undefined;
-  const upstreamRequestId = response.headers.get('x-upstream-request-id')
-    || structured?.upstreamRequestId
-    || undefined;
+  const safe = (value: unknown) => diagnosticToken(value, byo?.apiKey);
+  const requestId = safe(response.headers.get('x-azurediagarm-request-id')) || safe(structured?.requestId);
+  const upstreamRequestId = safe(response.headers.get('x-upstream-request-id')) || safe(structured?.upstreamRequestId);
   const retryAfterMs = readRetryAfterMs(response.headers);
 
   if (!response.ok || response.redirected || isAuthenticationUrl(response.url)) {
     const inferred = inferUnstructuredError(response, responseText, contentType);
-    const source = structured?.source || (isAIBudgetError(structured) ? 'budget' : undefined);
-    const error: OpenAIProxyErrorDetails = structured?.code
+    const source = safe(structured?.source) || (isAIBudgetError(structured) ? 'budget' : undefined);
+    const error: OpenAIProxyErrorDetails = safe(structured?.code)
       ? {
           source: String(source || inferred.source),
-          code: String(structured.code),
-          message: typeof structured.message === 'string' ? structured.message : undefined,
+          code: safe(structured?.code)!,
+          message: proxyErrorMessageForCode(safe(structured?.code)!, { status: response.status }),
           requestId,
-          upstreamStatus: typeof structured.upstreamStatus === 'number'
-            ? structured.upstreamStatus
+          upstreamStatus: typeof structured?.upstreamStatus === 'number' && Number.isInteger(structured.upstreamStatus)
+            && structured.upstreamStatus >= 100 && structured.upstreamStatus <= 599 ? structured.upstreamStatus
             : undefined,
-          upstreamCode: typeof structured.upstreamCode === 'string'
-            ? structured.upstreamCode
-            : !source ? String(structured.code) : undefined,
+          upstreamCode: safe(structured?.upstreamCode) || (!source ? safe(structured?.code) : undefined),
           upstreamRequestId,
-          contentType,
-          responseUrl: response.url,
           redirected: response.redirected,
         }
       : {
           ...inferred,
           ...(source ? { source: String(source) } : {}),
-          upstreamCode: typeof structured?.code === 'string' ? structured.code : undefined,
+          upstreamCode: safe(structured?.code),
         };
     return {
       ok: false,
       status: response.ok ? 401 : response.status,
-      data: parsed,
-      errorText: responseText.slice(0, 2_000),
-      error: { ...error, requestId, upstreamRequestId, retryAfterMs },
+      data: null,
+      errorText: proxyErrorMessageForCode(error.code, { status: response.status }),
+      error: { ...error, contentType: undefined, requestId, upstreamRequestId, retryAfterMs },
     };
   }
 
@@ -685,15 +656,13 @@ export async function callAzureOpenAIProxy(params: {
       message: 'The proxy returned an unexpected response format.',
       requestId,
       upstreamRequestId,
-      contentType,
-      responseUrl: response.url,
       redirected: response.redirected,
     };
     return {
       ok: false,
       status: 502,
       data: null,
-      errorText: responseText.slice(0, 2_000),
+      errorText: proxyErrorMessageForCode(error.code),
       error,
     };
   }

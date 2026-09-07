@@ -3,7 +3,7 @@
 
 /**
  * Architecture Validator Agent
- * Uses GPT-5-2 to validate architecture against Azure Well-Architected Framework
+ * Uses the selected AI connection to validate architecture against Azure Well-Architected Framework
  * Provides recommendations for reliability, security, performance, cost optimization, and operational excellence
  */
 
@@ -23,10 +23,12 @@ import type { Language } from '../i18n/LanguageContext';
 import { getPromptLanguageInstruction } from '../i18n/localization';
 import { normalizeValidationFindingSource } from './validationFindingSource';
 import {
+  captureRuntimeModelOverride,
   resolveAIModelRuntime,
   type RuntimeModelOverride,
 } from './aiModelRuntime';
 import { safeParseModelJson } from './aiRetry';
+import { generateModelFilename } from '../utils/modelNaming';
 
 export interface ValidationModelOverride extends RuntimeModelOverride {
   model: ModelType;
@@ -47,6 +49,10 @@ export interface AIMetrics {
   totalTokens: number;
   elapsedTimeMs: number;
   model?: string;
+  reasoningEffort?: string;
+  source?: 'managed' | 'bring-your-own';
+  profileId?: string;
+  deployment?: string;
 }
 
 interface CallResult {
@@ -54,7 +60,7 @@ interface CallResult {
   metrics: AIMetrics;
 }
 
-async function callAzureOpenAI(messages: any[], maxTokens: number = 8000, modelOverride?: ValidationModelOverride): Promise<CallResult> {
+async function callAzureOpenAI(messages: any[], modelOverride?: ValidationModelOverride): Promise<CallResult> {
   const signal = modelOverride?.signal;
   throwIfValidationAborted(signal);
   const runtime = resolveAIModelRuntime('validation', modelOverride);
@@ -64,7 +70,7 @@ async function callAzureOpenAI(messages: any[], maxTokens: number = 8000, modelO
   const startTime = performance.now();
 
   // Build request body using the appropriate API format
-  const effectiveMaxTokens = Math.min(maxTokens, runtime.maxCompletionTokens);
+  const effectiveMaxTokens = runtime.maxCompletionTokens;
   const requestBody = buildRequestBody({
     deployment: runtime.deployment,
     messages,
@@ -90,8 +96,8 @@ async function callAzureOpenAI(messages: any[], maxTokens: number = 8000, modelO
       apiFormat: runtime.apiFormat,
       deployment: runtime.deployment,
       body: requestBody,
-      byo: runtime.byo,
       signal: controller.signal,
+      connection: runtime.connection,
     });
     throwIfValidationAborted(signal);
     if (timedOut) throw new Error('The AI provider is taking too long to respond. Please try again.');
@@ -128,6 +134,10 @@ async function callAzureOpenAI(messages: any[], maxTokens: number = 8000, modelO
     totalTokens: parsed.totalTokens,
     elapsedTimeMs,
     model: runtime.displayName,
+    reasoningEffort: runtime.isReasoning ? runtime.reasoningEffort : 'none',
+    source: runtime.source,
+    ...(runtime.profileId ? { profileId: runtime.profileId } : {}),
+    deployment: runtime.deployment,
   };
   
   const content = parsed.content;
@@ -310,6 +320,7 @@ export async function validateArchitecture(
   language: Language = 'en',
 ): Promise<ArchitectureValidation> {
   throwIfValidationAborted(modelOverride?.signal);
+  modelOverride = captureRuntimeModelOverride('validation', modelOverride);
   const runtime = resolveAIModelRuntime('validation', modelOverride);
 
   console.log(`🔍 Starting hybrid WAF validation with ${runtime.displayName}...`);
@@ -445,7 +456,7 @@ Provide a comprehensive Well-Architected Framework assessment with actionable re
     const { content, metrics } = await callAzureOpenAI([
       { role: 'system', content: systemPrompt },
       { role: 'user', content: userPrompt }
-    ], 8000, modelOverride);
+    ], modelOverride);
     throwIfValidationAborted(modelOverride?.signal);
 
     console.log('✅ Hybrid validation response received:', content.length, 'characters');
@@ -537,7 +548,9 @@ export function formatValidationReport(validation: ArchitectureValidation): stri
   
   // Add architecture diagram image reference if available
   if (validation.diagramImageDataUrl) {
-    const imageFilename = `architecture-validation-${new Date(validation.timestamp).getTime()}-diagram.png`;
+    const imageFilename = generateModelFilename(
+      'architecture-validation-diagram', 'png', new Date(validation.timestamp).getTime(), validation.metrics,
+    );
     report += `## 🖼️ Architecture Diagram\n\n`;
     report += `![Architecture Diagram](./${imageFilename})\n\n`;
   }

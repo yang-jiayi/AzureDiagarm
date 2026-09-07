@@ -1,47 +1,40 @@
 # AI Instructions Documentation
 
-**Last Updated**: July 2026  
-**Models Supported**: 12 via Azure OpenAI / Azure AI Foundry (GPT-5.1, GPT-5.2, GPT-5.2 Codex, GPT-5.3 Codex, GPT-5.4, GPT-5.4 Mini, DeepSeek V3.2 Speciale, DeepSeek V4 Pro, Grok 4.1 Fast, Grok 4.3, Mistral Large 3, Kimi K2.5)
+**Last Updated**: September 2026\
+**Managed Model**: GPT-6 Astra via Azure OpenAI; optional explicitly selected BYO connections
 
-This document details the AI instructions (system prompts) for all three agents in the Microsoft Product Architecture Diagram Builder application. Each agent supports multi-model selection.
+This document details the AI instructions (system prompts) for the generation, validation, and deployment-guidance agents in the Microsoft Product Architecture Diagram Builder application. Each agent honors the selected managed Astra or administrator-enabled BYO connection.
 
 ---
 
 ## Overview
 
-The three agents support **multiple AI models** selected at runtime via `ModelSelector` dropdown, with per-feature overrides stored in localStorage.
+The managed catalog contains **GPT-6 Astra only**, with global and per-feature
+reasoning preferences stored in localStorage. Legacy managed preferences migrate
+to Astra. BYO profiles are separate and use their own explicitly configured
+capabilities; see the [connection guide](BYO-AI-CONNECTIONS.md). Historical result
+metadata is retained without making an old model an executable managed choice.
 
 ### Environment Variables
 - `VITE_AZURE_OPENAI_ENDPOINT` - Azure OpenAI endpoint URL (non-secret build-time flag)
 - `AZURE_OPENAI_ENDPOINT` / `AZURE_OPENAI_API_KEY` - server-side runtime config for the `/api/openai` proxy (the key is never bundled; managed identity preferred)
-- `VITE_AZURE_OPENAI_DEPLOYMENT` - Default deployment name
-- `VITE_AZURE_OPENAI_DEPLOYMENT_GPT51` / `_GPT52` / `_GPT52CODEX` / `_GPT53CODEX` / `_GPT54` / `_GPT54MINI` - GPT-5.x family deployments
-- `VITE_AZURE_OPENAI_DEPLOYMENT_DEEPSEEK` / `_DEEPSEEK_V4_PRO` / `_GROK4FAST` / `_GROK43` / `_MISTRALLARGE3` / `_KIMIK25` - partner-model deployments
-- `VITE_REASONING_EFFORT` - Reasoning effort for GPT-5.x reasoning models (none/low/medium/high)
+- `VITE_AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA` - Genuine Astra deployment name
+- `AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA` / `AZURE_OPENAI_ALLOWED_DEPLOYMENTS` - The same deployment name, with no alternate deployments
+- `ALLOW_BYO_AI_ENDPOINTS` - Explicit server opt-in for trusted Azure OpenAI / official OpenAI connections; disabled by default
+- Reasoning is configured in the AI settings popover, not an environment variable
 
-### Model Configuration (from `modelSettingsStore.ts`)
+### Managed Model Configuration (from `modelSettingsStore.ts`)
 | Model | Max Completion Tokens | Reasoning | API Format |
 |-------|-----------------------|-----------|------------|
-| GPT-5.1 | 32,000 | Yes (default effort `none`) | Responses |
-| GPT-5.2 | 32,000 | Yes (configurable effort) | Responses |
-| GPT-5.2 Codex | 32,000 | Yes | Responses |
-| GPT-5.3 Codex | 32,000 | Yes | Responses |
-| GPT-5.4 | 32,000 | Yes | Responses |
-| GPT-5.4 Mini | 32,000 | Yes | Responses |
-| DeepSeek V3.2 Speciale | 16,000 | No | Chat Completions |
-| DeepSeek V4 Pro | 16,000 | No | Chat Completions |
-| Grok 4.1 Fast | 16,000 | No | Chat Completions |
-| Grok 4.3 | 16,000 | No | Chat Completions |
-| Mistral Large 3 | 16,000 | No | Chat Completions |
-| Kimi K2.5 | 16,000 | No | Chat Completions |
+| GPT-6 Astra | 32,000 | Configurable; default `low` | Responses |
 
 ---
 
-## 1. Main Diagram Generator (Multi-Model)
+## 1. Main Diagram Generator (GPT-6 Astra)
 
 **File**: `src/services/azureOpenAI.ts` (558 lines)  
 **Function**: `generateArchitectureWithAI(description: string, modelOverride?: ModelOverride)`  
-**Max Tokens**: Per-model (GPT-5.x: 32,000 | partner models: 16,000)  
+**Max Tokens**: 32,000\
 **Response Format**: JSON Object
 
 ### Purpose
@@ -152,11 +145,11 @@ Generate Azure architecture diagrams with logical service groupings based on nat
 
 ---
 
-## 2. Architecture Validator Agent (Multi-Model)
+## 2. Architecture Validator Agent (GPT-6 Astra)
 
 **File**: `src/services/architectureValidator.ts` (334 lines)  
 **Function**: `validateArchitecture(..., modelOverride?: ModelOverride)`  
-**Max Tokens**: Per-model (GPT-5.x: 32,000 | partner models: 16,000)  
+**Max Tokens**: 32,000\
 **Temperature**: 0.3  
 **Response Format**: JSON Object
 
@@ -270,11 +263,11 @@ Validate Azure architectures against the **Azure Well-Architected Framework** (5
 
 ---
 
-## 3. Deployment Guide Generator (Multi-Model)
+## 3. Deployment Guide Generator (GPT-6 Astra)
 
 **File**: `src/services/deploymentGuideGenerator.ts` (396 lines)  
 **Function**: `generateDeploymentGuide(..., modelOverride?: ModelOverride)`  
-**Max Tokens**: Per-model (GPT-5.x: 32,000 | partner models: 16,000)  
+**Max Tokens**: 32,000\
 **Temperature**: 0.3  
 **Response Format**: JSON Object
 
@@ -430,13 +423,12 @@ az webapp create \
 
 ## Token Allocation Strategy
 
-### Multi-Model Token Budgets
-All three agents use the same `maxCompletionTokens` value from `MODEL_CONFIG` in `modelSettingsStore.ts`. GPT-5.x reasoning models use reasoning tokens internally (not visible in output); partner models (DeepSeek, Grok, Mistral, Kimi) do not use reasoning tokens.
+### Astra Token Budget
+All three agents use the `maxCompletionTokens` value from `MODEL_CONFIG` in `modelSettingsStore.ts`. The output budget includes internal reasoning tokens as well as visible response tokens.
 
 | Model family | Max Completion Tokens | Reasoning | Notes |
 |--------------|-----------------------|-----------|-------|
-| **GPT-5.x** (5.1 → 5.4 Mini) | 32,000 | Yes (configurable effort) | Highest quality; Responses API |
-| **Partner models** (DeepSeek V3.2/V4 Pro, Grok 4.1 Fast/4.3, Mistral Large 3, Kimi K2.5) | 16,000 | No | Provider diversity; Chat Completions API |
+| **GPT-6 Astra** | 32,000 | Configurable effort | Responses API only; no model fallback |
 
 ### Per-Agent Behavior
 - **Diagram Generator**: Uses full model token budget
@@ -447,18 +439,24 @@ All three agents use the same `maxCompletionTokens` value from `MODEL_CONFIG` in
 
 ## API Configuration
 
-### Request Parameters
+### Managed Astra Request Parameters
 ```typescript
 {
-  messages: [...],
-  max_completion_tokens: 6000-10000,  // Agent-specific
-  temperature: 0.3,                    // Consistent, focused responses
-  response_format: { type: 'json_object' }  // Enforces valid JSON
+  input: [...],
+  max_output_tokens: 32000,
+  reasoning: { effort: 'low' },
+  text: { format: { type: 'json_object' } }
 }
 ```
 
-### API Version
-`2025-04-01-preview` - Supports the GPT-5.x reasoning family (Responses API) and partner models (DeepSeek, Grok, Mistral, Kimi via Chat Completions)
+### API Route
+For managed requests, the server calls Azure OpenAI's `/openai/v1/responses` and
+supplies the approved Astra deployment as `model`. Other managed deployments and
+formats are rejected. Explicit BYO requests use the profile's Responses or Chat
+Completions format, trusted destination, model identifier, and user's key, with
+the same application access and budget controls. Eligible retries preserve the
+captured connection, prompt, reasoning, and output limit; an error never triggers
+model substitution.
 
 ### Error Handling
 - 401: Invalid API key
@@ -496,7 +494,7 @@ Generated by `formatDeploymentGuide(guide)`:
 
 ### Main Diagram Generator
 ```typescript
-const modelOverride = { model: 'gpt-5.2', reasoningEffort: 'medium' };
+const modelOverride = { model: 'gpt-6-astra', reasoningEffort: 'medium' } as const;
 const result = await generateArchitectureWithAI(
   "Build a serverless e-commerce platform with AI recommendations",
   modelOverride
@@ -506,7 +504,7 @@ const result = await generateArchitectureWithAI(
 
 ### Architecture Validator
 ```typescript
-const modelOverride = { model: 'gpt-5.4-mini', reasoningEffort: 'medium' };
+const modelOverride = { model: 'gpt-6-astra', reasoningEffort: 'medium' } as const;
 const validation = await validateArchitecture(
   services,      // Array of service objects
   connections,   // Array of connection objects
@@ -519,7 +517,7 @@ const validation = await validateArchitecture(
 
 ### Deployment Guide Generator
 ```typescript
-const modelOverride = { model: 'gpt-5.2', reasoningEffort: 'high' };
+const modelOverride = { model: 'gpt-6-astra', reasoningEffort: 'high' } as const;
 const guide = await generateDeploymentGuide(
   services,
   connections,
@@ -536,7 +534,7 @@ const guide = await generateDeploymentGuide(
 ## Future Enhancements
 
 ### Potential Improvements
-1. **Agent Comparison**: A/B testing different models (already supported via ModelSelector)
+1. **Prompt Evaluation**: Compare prompt revisions while retaining the single-model policy
 2. **Cost Tracking**: Monitor token usage per agent
 3. **Caching**: Cache common validation patterns
 4. **Streaming**: Real-time response streaming for better UX
@@ -564,6 +562,6 @@ const guide = await generateDeploymentGuide(
 
 ---
 
-**Document Version**: 3.0  
-**Models**: 12 via Azure OpenAI / Azure AI Foundry (GPT-5.1 → GPT-5.4 Mini, DeepSeek V3.2/V4 Pro, Grok 4.1 Fast/4.3, Mistral Large 3, Kimi K2.5)  
-**Last Tested**: July 2026
+**Document Version**: 4.0\
+**Managed Model**: GPT-6 Astra only\
+**Availability**: Requires an operational selected connection; BYO additionally requires administrator opt-in, a key, and verification

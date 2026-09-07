@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-import { getDeploymentName, getModelSettingsForFeature, ModelType } from '../stores/modelSettingsStore';
+import { AIModelConfigurationError } from '../stores/modelSettingsStore';
 import { resolveServiceIconMapping, SERVICE_ICON_MAP } from '../data/serviceIconMapping';
 import { trackAIModelUsage } from './telemetryService';
 import {
@@ -9,7 +9,6 @@ import {
   parseApiResponse,
   callAzureOpenAIProxy,
   createOpenAIProxyError,
-  proxyErrorMessageForCode,
   getApiFormatLabel,
   OpenAIProxyError,
 } from './apiHelper';
@@ -19,6 +18,7 @@ import { normalizeWorkflowSteps } from '../utils/workflowStepMapping';
 import {
   isAnyAIModelConfigured,
   isManagedAIModelConfigured,
+  captureRuntimeModelOverride,
   resolveAIModelRuntime,
   type RuntimeModelOverride,
 } from './aiModelRuntime';
@@ -29,6 +29,7 @@ import {
   runWithRateLimitRetry,
   type AIRateLimitRetryOptions,
 } from './aiRetry';
+import { AIResponseValidationError, assertUniqueResponseIds } from './aiResponseValidation';
 
 // Token usage metrics returned from Azure OpenAI API
 export interface AIMetrics {
@@ -38,6 +39,9 @@ export interface AIMetrics {
   elapsedTimeMs: number;
   model?: string;
   reasoningEffort?: string;
+  source?: 'managed' | 'bring-your-own';
+  profileId?: string;
+  deployment?: string;
 }
 
 interface CallResult {
@@ -50,7 +54,7 @@ export interface ModelOverride extends RuntimeModelOverride, AIRateLimitRetryOpt
   signal?: AbortSignal;
 }
 
-export type AIGenerationOptions = AIRateLimitRetryOptions;
+export type AIGenerationOptions = AIRateLimitRetryOptions & { modelOverride?: RuntimeModelOverride };
 
 export class AIRequestTimeoutError extends Error {
   readonly source = 'client';
@@ -96,10 +100,10 @@ function requestLifetime(signal: AbortSignal | undefined, timeoutMs: number) {
 export async function callAzureOpenAI(messages: any[], modelOverride?: ModelOverride, jsonOutput = true, operation = 'architecture_generation', options: AIGenerationOptions | AbortSignal = {}): Promise<CallResult> {
   const signal = generationSignal(options, modelOverride);
   throwIfGenerationAborted(signal);
+  modelOverride ??= 'aborted' in options ? undefined : options.modelOverride;
   const runtime = resolveAIModelRuntime('architectureGeneration', modelOverride);
   const {
     apiFormat,
-    byo,
     deployment,
     displayName,
     isReasoning,
@@ -135,7 +139,7 @@ export async function callAzureOpenAI(messages: any[], modelOverride?: ModelOver
     const lifetime = requestLifetime(signal, 225000);
     try {
       const result = await callAzureOpenAIProxy({
-        apiFormat, deployment, body: requestBody, byo, signal: lifetime.signal,
+        apiFormat, deployment, body: requestBody, signal: lifetime.signal, connection: runtime.connection,
       });
       throwIfGenerationAborted(signal);
       throwIfGenerationAborted(lifetime.signal);
@@ -171,6 +175,9 @@ export async function callAzureOpenAI(messages: any[], modelOverride?: ModelOver
     elapsedTimeMs,
     model: displayName,
     reasoningEffort: isReasoning ? reasoningEffort : 'none',
+    source: runtime.source,
+    ...(runtime.profileId ? { profileId: runtime.profileId } : {}),
+    deployment: runtime.deployment,
   };
 
   if (!content || content.trim().length === 0) {
@@ -197,21 +204,7 @@ export async function callAzureOpenAI(messages: any[], modelOverride?: ModelOver
 // "next step" refinements based on the current services and the last change.
 // Failures return [] so the caller falls back to the static (rule-based) chips.
 function pickFollowUpModel(): ModelOverride | undefined {
-  const configured = getModelSettingsForFeature('architectureGeneration');
-  // The Astra default applies to follow-ups too; retain its configured
-  // reasoning policy rather than silently substituting the legacy fast model.
-  if (configured.model === 'gpt-6-astra') return configured;
-  // Keep the legacy fast fallback for installations not using Astra.
-  const candidates: ModelType[] = ['grok-4.1-fast'];
-  for (const m of candidates) {
-    try {
-      getDeploymentName(m);
-      return { model: m, reasoningEffort: 'none' };
-    } catch {
-      /* deployment not configured — try next */
-    }
-  }
-  return undefined;
+  return captureRuntimeModelOverride('architectureGeneration');
 }
 
 export async function generateFollowUpSuggestions(input: {
@@ -221,6 +214,7 @@ export async function generateFollowUpSuggestions(input: {
   count?: number;
   language?: Language;
   signal?: AbortSignal;
+  modelOverride?: RuntimeModelOverride;
 }): Promise<string[]> {
   const count = Math.min(Math.max(input.count ?? 3, 1), 5);
   const language = input.language ?? 'en';
@@ -246,7 +240,7 @@ Return ONLY JSON: {"suggestions":["..."]}`;
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userPrompt },
       ],
-      pickFollowUpModel(),
+      input.modelOverride ?? pickFollowUpModel(),
       true,
       'chat_followups',
       { signal: input.signal },
@@ -280,16 +274,6 @@ class EmptyArchitectureError extends Error {
   }
 }
 
-/**
- * Recognise the configuration failures thrown by `aiModelRuntime` (Azure OpenAI
- * / Foundry not configured, no deployment, BYO not ready). These are surfaced
- * to the user as a single stable, actionable message rather than the raw text.
- */
-function isAIConfigurationError(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : typeof error === 'string' ? error : '';
-  return /not configured\. Please check your environment|No deployment configured for|Bring-your-own AI (is disabled|is not ready|availability has not been confirmed)/i.test(message);
-}
-
 export async function generateArchitectureWithAI(
   description: string,
   modelOverride?: ModelOverride,
@@ -299,6 +283,8 @@ export async function generateArchitectureWithAI(
 ) {
   const signal = generationSignal(options, modelOverride);
   throwIfGenerationAborted(signal);
+  modelOverride = captureRuntimeModelOverride('architectureGeneration',
+    modelOverride ?? ('aborted' in options ? undefined : options.modelOverride));
   // Build a compact list of known service display names for the prompt
   const knownServices = Object.entries(SERVICE_ICON_MAP)
     .map(([serviceName, mapping]) => (
@@ -404,11 +390,13 @@ LAYOUT READABILITY — CRITICAL:
     });
     throwIfGenerationAborted(signal);
 
+    architecture.groups = normalizeArchitectureGroups(architecture.groups, architecture.services);
+
     // Post-process: normalize service names and categories against SERVICE_ICON_MAP
     if (architecture.services && Array.isArray(architecture.services)) {
       architecture.services = architecture.services.map((service: any) => {
-        const resolved = resolveServiceIconMapping(service.type)
-          || resolveServiceIconMapping(service.name);
+        const resolved = (typeof service.type === 'string' && resolveServiceIconMapping(service.type))
+          || (typeof service.name === 'string' && resolveServiceIconMapping(service.name));
         if (resolved) {
           const { serviceName, mapping } = resolved;
           console.log(`  🔧 Normalized "${service.name}" → "${mapping.displayName}" [${serviceName}] (${mapping.category})`);
@@ -433,51 +421,6 @@ LAYOUT READABILITY — CRITICAL:
     if (!architecture.connections || !Array.isArray(architecture.connections)) {
       architecture.connections = [];
     }
-
-    if (!architecture.groups || !Array.isArray(architecture.groups)) {
-      architecture.groups = [];
-    }
-
-    // Normalize groups: some models return plain strings instead of objects
-    // e.g. ["dmz-primary", "app-tier"] → [{id: "dmz-primary", label: "DMZ Primary"}, ...]
-    architecture.groups = architecture.groups.map((g: any) => {
-      if (typeof g === 'string') {
-        return {
-          id: g,
-          label: g.split('-').map((w: string) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')
-        };
-      }
-      // Strip groupId from group objects to prevent circular parent refs
-      const { groupId, ...cleanGroup } = g;
-      return cleanGroup;
-    });
-
-    // Build valid group ID set and resolve conflicts
-    const groupIds = new Set(architecture.groups.map((g: any) => g.id));
-    const serviceIds = new Set(architecture.services.map((s: any) => s.id));
-
-    // Prevent ID collisions between groups and services (causes ReactFlow circular refs)
-    for (const gid of groupIds) {
-      if (serviceIds.has(gid)) {
-        console.warn(`⚠️ Group ID "${gid}" collides with a service ID — prefixing group`);
-        const group = architecture.groups.find((g: any) => g.id === gid);
-        const newId = `group-${gid}`;
-        group.id = newId;
-        // Update service references
-        architecture.services.forEach((s: any) => {
-          if (s.groupId === gid) s.groupId = newId;
-        });
-      }
-    }
-
-    // Clear invalid groupId references on services to prevent "parent not found" crashes
-    const validGroupIds = new Set(architecture.groups.map((g: any) => g.id));
-    architecture.services.forEach((s: any) => {
-      if (s.groupId && !validGroupIds.has(s.groupId)) {
-        console.warn(`⚠️ Service "${s.id}" references unknown group "${s.groupId}" — clearing`);
-        s.groupId = null;
-      }
-    });
 
     // ── Connection integrity ────────────────────────────────────────────────
     // An edge whose endpoint doesn't match a service id is dropped by the
@@ -581,10 +524,8 @@ LAYOUT READABILITY — CRITICAL:
     if (error instanceof AIRequestTimeoutError) throw error;
     if (error instanceof ModelJsonError) throw error;
     if (error instanceof EmptyArchitectureError) throw error;
-
-    if (isAIConfigurationError(error)) {
-      throw new Error('No AI model is configured. Check the environment configuration or connect a custom AI endpoint.');
-    }
+    if (error instanceof AIResponseValidationError) throw error;
+    if (error instanceof AIModelConfigurationError) throw error;
 
     throw new Error('Failed to generate architecture. Please try again.');
   }
@@ -712,10 +653,9 @@ export async function analyzeArchitectureDiagramImage(
   options: AIGenerationOptions = {},
 ): Promise<{ description: string; metrics: AIMetrics }> {
   throwIfGenerationAborted(options.signal);
-  const runtime = resolveAIModelRuntime('architectureGeneration');
-  
+  const runtime = resolveAIModelRuntime('architectureGeneration', options.modelOverride);
   if (!runtime.supportsVision) {
-    throw new Error('The selected model does not support image analysis. Choose a vision-capable model in AI settings.');
+    throw new AIModelConfigurationError('byo_vision_not_supported', 'The selected AI connection does not support images. Select a vision-capable connection.');
   }
 
   const systemPrompt = `You are an expert Azure cloud architect specializing in analyzing architecture diagrams.
@@ -782,7 +722,7 @@ If the image is not an architecture diagram or is unclear, describe what you can
         ],
       },
     ],
-    maxTokens: 4000,
+    maxTokens: runtime.maxCompletionTokens,
     apiFormat: runtime.apiFormat,
     isReasoning: runtime.isReasoning,
     reasoningEffort: runtime.reasoningEffort,
@@ -797,8 +737,8 @@ If the image is not an architecture diagram or is unclear, describe what you can
       apiFormat: runtime.apiFormat,
       deployment: runtime.deployment,
       body: requestBody,
-      byo: runtime.byo,
       signal: lifetime.signal,
+      connection: runtime.connection,
     });
 
     throwIfGenerationAborted(options.signal);
@@ -813,14 +753,7 @@ If the image is not an architecture diagram or is unclear, describe what you can
         requestId: proxyResult.error?.requestId,
         upstreamRequestId: proxyResult.error?.upstreamRequestId,
       });
-      const error = createOpenAIProxyError(proxyResult, { vision: true });
-      if (error.code === 'image_not_supported' || error.code === 'invalid_upstream_request') {
-        error.message = error.message.replace(
-          proxyErrorMessageForCode(error.code, { vision: true, status: error.status }),
-          'The selected model may not support image analysis. Choose a vision-capable model in AI settings.',
-        );
-      }
-      throw error;
+      throw createOpenAIProxyError(proxyResult, { vision: true });
     }
     
     const parsed = parseApiResponse(proxyResult.data, runtime.apiFormat);
@@ -831,6 +764,10 @@ If the image is not an architecture diagram or is unclear, describe what you can
       totalTokens: parsed.totalTokens,
       elapsedTimeMs,
       model: runtime.displayName,
+      reasoningEffort: runtime.isReasoning ? runtime.reasoningEffort : 'none',
+      source: runtime.source,
+      ...(runtime.profileId ? { profileId: runtime.profileId } : {}),
+      deployment: runtime.deployment,
     };
     
     if (!content || content.trim().length === 0) {
@@ -1152,60 +1089,65 @@ Full State:
 ${JSON.stringify(stateJson, null, 2)}`;
 }
 
+function normalizeArchitectureGroups(groups: unknown, services: unknown) {
+  assertUniqueResponseIds(services, 'Services');
+  if (groups !== undefined && groups !== null && !Array.isArray(groups)) {
+    throw new AIResponseValidationError('Groups must be an array.');
+  }
+  const normalized = (groups ?? []).map((group: unknown) => {
+    if (typeof group === 'string') {
+      return {
+        id: group,
+        label: group.split('-').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' '),
+      };
+    }
+    return group;
+  });
+  assertUniqueResponseIds(normalized, 'Groups');
+
+  const serviceIds = new Set(services.map(service => service.id));
+  const occupied = new Set([...serviceIds, ...normalized.map(group => group.id)]);
+  const replacements = new Map<string, string>();
+  const result = normalized.map(({ groupId, ...group }) => {
+    const originalId = group.id;
+    if (serviceIds.has(originalId)) {
+      console.warn(`⚠️ Group ID "${originalId}" collides with a service ID — prefixing group`);
+      const base = `group-${originalId}`;
+      let candidate = base;
+      for (let suffix = 2; occupied.has(candidate); suffix += 1) {
+        candidate = `${base}-${suffix}`;
+      }
+      occupied.add(candidate);
+      group.id = candidate;
+    }
+    replacements.set(originalId, group.id);
+    return group;
+  });
+
+  // Resolve from the original namespace once: newly allocated IDs must not
+  // capture previously dangling references or cascade another group's rename.
+  for (const service of services) {
+    if (!service.groupId) continue;
+    const parent = typeof service.groupId === 'string' ? replacements.get(service.groupId) : undefined;
+    if (parent !== undefined) {
+      service.groupId = parent;
+    } else {
+      console.warn(`⚠️ Service "${service.id}" references unknown group "${service.groupId}" — clearing`);
+      service.groupId = null;
+    }
+  }
+  return result;
+}
+
 /** Post-process the architecture response to normalize groups and resolve conflicts */
 function normalizeArchitectureResponse(architecture: any): any {
-  // Validate response structure. A model returning {"services": []} must not
-  // silently render a blank canvas — surface a clear, localised error instead.
-  if (!architecture.services || !Array.isArray(architecture.services) || architecture.services.length === 0) {
+  if (!Array.isArray(architecture.services) || architecture.services.length === 0) {
     throw new EmptyArchitectureError(EMPTY_ARCHITECTURE_MESSAGE);
   }
-
   if (!architecture.connections) {
     architecture.connections = [];
   }
-
-  if (!architecture.groups) {
-    architecture.groups = [];
-  }
-
-  // Normalize groups: some models return plain strings instead of objects
-  architecture.groups = architecture.groups.map((g: any) => {
-    if (typeof g === 'string') {
-      return {
-        id: g,
-        label: g.split('-').map((w: string) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')
-      };
-    }
-    // Strip groupId from group objects to prevent circular parent refs
-    const { groupId, ...cleanGroup } = g;
-    return cleanGroup;
-  });
-
-  // Build valid group ID set and resolve conflicts
-  const groupIds = new Set(architecture.groups.map((g: any) => g.id));
-  const serviceIds = new Set(architecture.services.map((s: any) => s.id));
-
-  // Prevent ID collisions between groups and services (causes ReactFlow circular refs)
-  for (const gid of groupIds) {
-    if (serviceIds.has(gid)) {
-      console.warn(`⚠️ Group ID "${gid}" collides with a service ID — prefixing group`);
-      const group = architecture.groups.find((g: any) => g.id === gid);
-      const newId = `group-${gid}`;
-      group.id = newId;
-      architecture.services.forEach((s: any) => {
-        if (s.groupId === gid) s.groupId = newId;
-      });
-    }
-  }
-
-  // Clear invalid groupId references on services to prevent "parent not found" crashes
-  const validGroupIds = new Set(architecture.groups.map((g: any) => g.id));
-  architecture.services.forEach((s: any) => {
-    if (s.groupId && !validGroupIds.has(s.groupId)) {
-      console.warn(`⚠️ Service "${s.id}" references unknown group "${s.groupId}" — clearing`);
-      s.groupId = null;
-    }
-  });
+  architecture.groups = normalizeArchitectureGroups(architecture.groups, architecture.services);
 
   return architecture;
 }
@@ -1221,7 +1163,9 @@ const FORMAT_LABELS: Record<IaCFormat, string> = {
  * Unified IaC template import: generates an architecture diagram from
  * Bicep, Terraform HCL, Terraform state, or ARM template files.
  */
-export async function generateArchitectureFromIaC(input: IaCImportInput, language: Language = 'en') {
+export async function generateArchitectureFromIaC(input: IaCImportInput, language: Language = 'en', options: AIGenerationOptions | ModelOverride = {}) {
+  throwIfGenerationAborted(options.signal);
+  const modelOverride = captureRuntimeModelOverride('architectureGeneration', 'model' in options ? options : options.modelOverride);
   const label = FORMAT_LABELS[input.format];
   console.log(`📄 Parsing ${label} template (${input.filenames.length} file(s))...`);
 
@@ -1259,7 +1203,8 @@ export async function generateArchitectureFromIaC(input: IaCImportInput, languag
       { role: 'user', content: userMessage }
     ];
 
-    const { content, metrics } = await callAzureOpenAI(messages);
+    const { content, metrics } = await callAzureOpenAI(messages, modelOverride, true, 'iac_import', options);
+    throwIfGenerationAborted(options.signal);
 
     // safeParseModelJson tolerates ```json fences / prose and raises a typed,
     // localised error (never the raw parser message) for empty, refusal, and
@@ -1269,6 +1214,7 @@ export async function generateArchitectureFromIaC(input: IaCImportInput, languag
 
     return normalizeArchitectureResponse(architecture);
   } catch (error: any) {
+    throwIfGenerationAborted(options.signal);
     console.error(`${label} parsing error:`, error);
     // Preserve already-typed, already-localised failures instead of wrapping
     // them in an unlocalised "Failed to parse … : <raw>" string.
@@ -1277,11 +1223,10 @@ export async function generateArchitectureFromIaC(input: IaCImportInput, languag
       || error instanceof AIRequestTimeoutError
       || error instanceof ModelJsonError
       || error instanceof EmptyArchitectureError
+      || error instanceof AIResponseValidationError
+      || error instanceof AIModelConfigurationError
     ) {
       throw error;
-    }
-    if (isAIConfigurationError(error)) {
-      throw new Error('No AI model is configured. Check the environment configuration or connect a custom AI endpoint.');
     }
     // Static (localisable) message — the specific format is already in the
     // console log above, so it need not (and must not, for i18n) be interpolated
@@ -1294,10 +1239,10 @@ export async function generateArchitectureFromIaC(input: IaCImportInput, languag
  * Legacy wrapper — kept for backward compatibility.
  * Delegates to the unified generateArchitectureFromIaC().
  */
-export async function generateArchitectureFromARM(armTemplate: any, language: Language = 'en') {
+export async function generateArchitectureFromARM(armTemplate: any, language: Language = 'en', options: AIGenerationOptions | ModelOverride = {}) {
   return generateArchitectureFromIaC({
     format: 'arm',
     content: armTemplate,
     filenames: ['template.json'],
-  }, language);
+  }, language, options);
 }

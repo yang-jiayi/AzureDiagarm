@@ -1,5 +1,6 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
+const { astraConfiguration, byoEndpointsEnabled } = require('./astra-policy');
 function positiveInteger(value, fallback, name) {
   const number = value === undefined || value === '' ? fallback : Number(value);
   if (!Number.isSafeInteger(number) || number < 1) throw new Error(`${name} must be a positive integer.`);
@@ -7,6 +8,8 @@ function positiveInteger(value, fallback, name) {
 }
 
 function deploymentConfig(env = process.env) {
+  const astra = astraConfiguration(env);
+  const allowByoAIEndpoints = byoEndpointsEnabled(env);
   const mode = env.APP_DEPLOYMENT_MODE || (env.NODE_ENV === 'production' ? '' : 'local');
   if (!['local', 'public'].includes(mode)) {
     throw new Error('Set APP_DEPLOYMENT_MODE to public or local. Production has no implicit local fallback.');
@@ -31,9 +34,8 @@ function deploymentConfig(env = process.env) {
     if (!env.AZURE_ACCESS_KEY_VAULT_RESOURCE_ID && !env.AZURE_TABLES_ACCESS_ENDPOINT) missing.push('access-list store');
     if (!origin) missing.push('PUBLIC_URL (HTTPS origin without credentials, query or fragment)');
     if (!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(env.FRONT_DOOR_ID || '')) missing.push('FRONT_DOOR_ID');
-    if (![env.AZURE_OPENAI_ALLOWED_DEPLOYMENTS, env.AZURE_FOUNDRY_ALLOWED_DEPLOYMENTS]
-      .some(list => (list || '').split(',').some(value => value.trim()))) {
-      missing.push('AZURE_OPENAI_ALLOWED_DEPLOYMENTS or AZURE_FOUNDRY_ALLOWED_DEPLOYMENTS');
+    if (!astra.configured && !allowByoAIEndpoints) {
+      missing.push('configured GPT-6 Astra endpoint and singleton deployment, or explicit ALLOW_BYO_AI_ENDPOINTS=true');
     }
     if (String(env.AZURE_IMPORT_ENABLED || '').toLowerCase() === 'true') missing.push('AZURE_IMPORT_ENABLED must be false on public deployments');
     if (missing.length) throw new Error(`Public deployment is not safe to start: ${missing.join(', ')}.`);
@@ -43,7 +45,7 @@ function deploymentConfig(env = process.env) {
     throw new Error('Table AI budgets require AZURE_TABLES_BUDGET_ENDPOINT or AZURE_TABLES_ENDPOINT.');
   }
   return {
-    mode, store, origin,
+    mode, store, origin, astra, allowByoAIEndpoints,
     dailyTokens: positiveInteger(env.AI_DAILY_TOKEN_BUDGET, 250_000, 'AI_DAILY_TOKEN_BUDGET'),
     concurrency: positiveInteger(env.AI_MAX_CONCURRENT_REQUESTS, 2, 'AI_MAX_CONCURRENT_REQUESTS'),
     retentionDays: positiveInteger(env.FEEDBACK_RETENTION_DAYS, 30, 'FEEDBACK_RETENTION_DAYS'),

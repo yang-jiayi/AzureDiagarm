@@ -13,21 +13,12 @@ param environmentName string
 @description('Primary Azure region for all resources.')
 param location string
 
-// ── Azure OpenAI (bring-your-own) ─────────────────────────────────────────────
+// ── Managed GPT-6 Astra account ───────────────────────────────────────────────
 @description('Your Azure OpenAI endpoint URL.')
 param azureOpenAiEndpoint string = ''
 
 @description('Full resource ID of the Azure OpenAI account for managed-identity RBAC.')
 param azureOpenAiResourceId string = ''
-
-@description('Allow users to route requests to approved user-owned Azure OpenAI, Microsoft Foundry, or OpenAI endpoints.')
-param allowByoAIEndpoints bool = false
-
-@description('Microsoft Foundry AIServices endpoint URL for Anthropic models.')
-param azureFoundryEndpoint string = ''
-
-@description('Full resource ID of the Microsoft Foundry AIServices account for managed-identity RBAC.')
-param azureFoundryResourceId string = ''
 
 @description('Azure Communication Services endpoint used to deliver feedback email.')
 param feedbackEmailEndpoint string = ''
@@ -71,44 +62,11 @@ param feedbackRetentionDays int = 30
 @description('Explicitly approve retention cleanup of existing pre-expiry feedback after reviewing its impact.')
 param feedbackLegacyRetentionEnabled bool = false
 
-@description('GPT-5.1 deployment name.')
-param openAiDeploymentGpt51 string = ''
-
-@description('GPT-5.2 deployment name.')
-param openAiDeploymentGpt52 string = ''
-
-@description('GPT-5.2 Codex deployment name.')
-param openAiDeploymentGpt52Codex string = ''
-
-@description('GPT-5.3 Codex deployment name.')
-param openAiDeploymentGpt53Codex string = ''
-
-@description('GPT-5.4 deployment name.')
-param openAiDeploymentGpt54 string = ''
-
-@description('GPT-5.4 Mini deployment name.')
-param openAiDeploymentGpt54Mini string = ''
-
 @description('Actual GPT-6 Astra deployment name. Configure only after provisioning the genuine gpt-6-astra model.')
 param openAiDeploymentGpt6Astra string = ''
 
-@description('GPT-5.6 Sol deployment name.')
-param openAiDeploymentGpt56Sol string = ''
-
-@description('GPT-5.6 Terra deployment name.')
-param openAiDeploymentGpt56Terra string = ''
-
-@description('GPT-5.6 Luna deployment name.')
-param openAiDeploymentGpt56Luna string = ''
-
-@description('Claude Opus 5 deployment name in Microsoft Foundry.')
-param foundryDeploymentClaudeOpus5 string = ''
-
-@description('DeepSeek deployment name.')
-param openAiDeploymentDeepSeek string = ''
-
-@description('Grok Fast deployment name.')
-param openAiDeploymentGrokFast string = ''
+@description('Explicit administrator opt-in for user-key Azure OpenAI or official OpenAI connections. Does not authorize additional managed models.')
+param allowByoAIEndpoints bool = false
 
 // ── Avatar presenter (Speech) ──────────────────────────────────────────────────
 @description('Provision an Azure Speech resource for the avatar presenter feature.')
@@ -136,21 +94,6 @@ param mcpAuthToken string = ''
 var abbrs = loadJsonContent('./abbreviations.json')
 var resourceToken = toLower(uniqueString(subscription().id, environmentName, location))
 var tags = { 'azd-env-name': environmentName }
-var openAiAllowedDeployments = join([
-  openAiDeploymentGpt51
-  openAiDeploymentGpt52
-  openAiDeploymentGpt52Codex
-  openAiDeploymentGpt53Codex
-  openAiDeploymentGpt54
-  openAiDeploymentGpt54Mini
-  openAiDeploymentGpt6Astra
-  openAiDeploymentGpt56Sol
-  openAiDeploymentGpt56Terra
-  openAiDeploymentGpt56Luna
-  openAiDeploymentDeepSeek
-  openAiDeploymentGrokFast
-], ',')
-var foundryAllowedDeployments = foundryDeploymentClaudeOpus5
 
 // ── Resource group ─────────────────────────────────────────────────────────────
 resource rg 'Microsoft.Resources/resourceGroups@2022-09-01' = {
@@ -175,10 +118,8 @@ module resources './resources.bicep' = {
     diagramStorageLocation: diagramStorageLocation
     mcpAuthToken: mcpAuthToken
     azureOpenAiEndpoint: azureOpenAiEndpoint
-    azureOpenAiAllowedDeployments: openAiAllowedDeployments
+    azureOpenAiDeploymentGpt6Astra: openAiDeploymentGpt6Astra
     allowByoAIEndpoints: allowByoAIEndpoints
-    azureFoundryEndpoint: azureFoundryEndpoint
-    azureFoundryAllowedDeployments: foundryAllowedDeployments
     feedbackEmailEndpoint: feedbackEmailEndpoint
     feedbackEmailSender: feedbackEmailSender
     feedbackEmailRecipient: feedbackEmailRecipient
@@ -211,16 +152,6 @@ module openAiRole './openai-role.bicep' = if (!empty(azureOpenAiResourceId)) {
   }
 }
 
-var foundryResourceParts = split(azureFoundryResourceId, '/')
-module foundryRole './foundry-role.bicep' = if (!empty(azureFoundryResourceId)) {
-  name: 'foundry-role'
-  scope: resourceGroup(foundryResourceParts[2], foundryResourceParts[4])
-  params: {
-    accountName: foundryResourceParts[8]
-    principalId: resources.outputs.appIdentityPrincipalId
-  }
-}
-
 // ── Outputs captured by azd ────────────────────────────────────────────────────
 output AZURE_LOCATION string = location
 output AZURE_TENANT_ID string = tenant().tenantId
@@ -245,21 +176,10 @@ output MCP_ENDPOINT string = 'https://${resources.outputs.mcpAppFqdn}/mcp'
 
 // Azure OpenAI — non-secret values available for explicitly configured builds.
 output AZURE_OPENAI_ENDPOINT string = azureOpenAiEndpoint
-output AZURE_OPENAI_DEPLOYMENT_NAME string = openAiDeploymentGpt51
-output AZURE_OPENAI_DEPLOYMENT_GPT52 string = openAiDeploymentGpt52
-output AZURE_OPENAI_DEPLOYMENT_GPT52CODEX string = openAiDeploymentGpt52Codex
-output AZURE_OPENAI_DEPLOYMENT_GPT53CODEX string = openAiDeploymentGpt53Codex
-output AZURE_OPENAI_DEPLOYMENT_GPT54 string = openAiDeploymentGpt54
-output AZURE_OPENAI_DEPLOYMENT_GPT54MINI string = openAiDeploymentGpt54Mini
 output AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA string = openAiDeploymentGpt6Astra
-output AZURE_OPENAI_DEPLOYMENT_GPT56SOL string = openAiDeploymentGpt56Sol
-output AZURE_OPENAI_DEPLOYMENT_GPT56TERRA string = openAiDeploymentGpt56Terra
-output AZURE_OPENAI_DEPLOYMENT_GPT56LUNA string = openAiDeploymentGpt56Luna
-output AZURE_FOUNDRY_ENDPOINT string = azureFoundryEndpoint
-output AZURE_FOUNDRY_RESOURCE_ID string = azureFoundryResourceId
-output AZURE_FOUNDRY_DEPLOYMENT_CLAUDE_OPUS5 string = foundryDeploymentClaudeOpus5
-output AZURE_OPENAI_DEPLOYMENT_DEEPSEEK string = openAiDeploymentDeepSeek
-output AZURE_OPENAI_DEPLOYMENT_GROK4FAST string = openAiDeploymentGrokFast
+output AZURE_OPENAI_RESOURCE_ID string = azureOpenAiResourceId
+output AZURE_OPENAI_ALLOWED_DEPLOYMENTS string = openAiDeploymentGpt6Astra
+output ALLOW_BYO_AI_ENDPOINTS string = string(allowByoAIEndpoints)
 
 // Speech
 output AZURE_SPEECH_REGION string = resources.outputs.speechRegionOut

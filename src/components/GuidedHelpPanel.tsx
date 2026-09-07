@@ -4,13 +4,14 @@
 import React, { useEffect, useState } from 'react';
 import {
   BookOpen, Check, CheckCircle2, CircleDollarSign, ClipboardCheck, Download,
-  Copy, FileCode2, GitCompare, History, Image as ImageIcon, LayoutDashboard,
+  Copy, FileCode2, History, Image as ImageIcon, LayoutDashboard,
   Lightbulb, Map, MessageSquare, MousePointer2, Presentation,
   Rocket, Route, ShieldCheck, Sparkles, UploadCloud, Wrench, X,
 } from 'lucide-react';
 import { trackHelpOpened } from '../services/telemetryService';
 import './GuidedHelpPanel.css';
 import { useLanguage } from '../i18n/LanguageContext';
+import { localize } from '../i18n/localization';
 import { helpJapanese } from '../i18n/helpJapanese';
 import { useModalFocus } from '../hooks/useModalFocus';
 
@@ -71,14 +72,12 @@ const CREATE_FEATURES = [
   { icon: <MessageSquare size={18} />, title: 'Guided Chat', body: 'Best for conversational creation and ongoing refinement. Build from empty or change the current canvas in one thread; existing manual positions are retained during modifications.' },
   { icon: <Sparkles size={18} />, title: 'Generate Diagram', body: 'Best when you have detailed requirements, an existing sketch, or need explicit output controls. Choose Topology, Blueprint, or Both, then hand off to Guided Chat or canvas review.' },
   { icon: <UploadCloud size={18} />, title: 'Import', body: 'Reconstruct a diagram image, parse Bicep/Terraform/ARM, or sign in to reverse-engineer a live Azure resource group.' },
-  { icon: <GitCompare size={18} />, title: 'Compare Models', body: 'Run one prompt across several models, inspect latency/tokens/topology differences, and apply the result you prefer.' },
   { icon: <MousePointer2 size={18} />, title: 'Edit on canvas', body: 'Drag services, resize groups, edit labels, reconnect edges, align selections, and choose a layout preset or edge style.' },
   { icon: <History size={18} />, title: 'Version History', body: 'A snapshot is saved before AI regeneration. Save named checkpoints and restore prior versions when an experiment does not work.' },
 ];
 
 const ASSESS_FEATURES = [
   { icon: <ShieldCheck size={18} />, title: 'Well-Architected validation', body: 'Review Cost Optimization, Operational Excellence, Performance Efficiency, Reliability, and Security. Apply selected recommendations, review the resulting iteration, and revalidate after material changes.' },
-  { icon: <GitCompare size={18} />, title: 'Compare Validation', body: 'Ask multiple models to review the same architecture, compare findings, and use consensus to separate recurring gaps from model-specific opinions.' },
   { icon: <CircleDollarSign size={18} />, title: 'Cost and region', body: 'Inspect per-service monthly estimates across eight regions and switch between PAYG and 1-year savings. Usage-based values remain indicative.' },
   { icon: <ClipboardCheck size={18} />, title: 'Validation timing', body: 'Review and refine the generated concept first, then use the Validate & Improve journey stage before sharing or building. Revalidate after material changes.' },
 ];
@@ -275,8 +274,14 @@ const GuidedHelpPanel: React.FC<GuidedHelpPanelProps> = ({ isOpen, onClose }) =>
               <section className="guided-help-section">
                 <p className="guided-help-eyebrow">{translate('FAQ and responsible use')}</p><h2>{translate('Know what the tool does—and what still needs review')}</h2>
                 <div className="guided-help-faq">
-                  <Faq q={translate('Which model should I use?')} a={translate('Use the selected default for most work. Compare models when the architecture is consequential or outputs vary. Higher reasoning can improve complex designs but usually takes longer.')} />
-                  <Faq q={translate('What is the difference between Guided Chat and Generate Diagram?')} a={translate('Guided Chat is best for conversational creation and repeated refinement. Generate Diagram is best for detailed prompts, uploaded sketches, model selection, and choosing Topology or Blueprint output. Both create an editable result and can continue in Guided Chat.')} />
+                  <Faq q={translate('Which model should I use?')} a={localize(language, {
+                    en: 'Managed GPT-6 Astra is the default for all AI features. In More → AI connections, you can also save named Azure OpenAI or official OpenAI profiles. Re-enter your key after reload, test the connection, then explicitly activate it. The selected connection is used for every AI feature; unavailable BYO connections never silently fall back to Astra. Managed default and per-feature reasoning apply only to Astra; each BYO profile controls its own capabilities, reasoning, and output limit.',
+                    ja: 'すべての AI 機能の既定は管理対象の GPT-6 Astra です。「その他」→「AI 接続」で、Azure OpenAI または公式 OpenAI の接続プロファイルを保存することもできます。再読み込み後はキーを再入力し、接続テスト後に明示的に有効化してください。選択した接続はすべての AI 機能に適用され、利用できない BYO 接続から Astra に自動で切り替わることはありません。既定・機能別の推論強度は Astra 専用であり、BYO の機能・推論強度・出力上限は各プロファイルで指定します。',
+                  })} />
+                  <Faq q={translate('What is the difference between Guided Chat and Generate Diagram?')} a={localize(language, {
+                    en: 'Guided Chat is best for conversational creation and repeated refinement. Generate Diagram is best for detailed prompts, uploaded sketches, reasoning settings, and choosing Topology or Blueprint output. Topology creates an editable canvas; Blueprint produces a sketch image.',
+                    ja: 'ガイド付きチャットは会話形式での作成と繰り返しの改善に適しています。図を生成では、詳細なプロンプトやアップロードしたスケッチを使用し、推論強度とトポロジーまたはブループリント出力を選択できます。トポロジーは編集可能なキャンバス、ブループリントはスケッチ画像を作成します。',
+                  })} />
                   <Faq q={translate('How do I remove the dots from an export?')} a={translate('Open Export and set Export background to Plain (recommended). You can also choose Dots or Grid. This affects visual exports only; the editing canvas remains dotted.')} />
                   <Faq q={translate('How do I correct an AI result?')} a={translate('Use Chat for a targeted change, then edit directly on canvas. Existing positions are preserved during refinements. Version History lets you restore an earlier state.')} />
                   <Faq q={translate('Can I import existing infrastructure?')} a={translate('Yes. Import Bicep, Terraform, ARM, an architecture image, or a live Azure resource group. Review inferred connections and unsupported resources.')} />

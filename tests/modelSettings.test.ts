@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { build } from 'esbuild';
-import type { FeatureType, ModelType } from '../src/stores/modelSettingsStore';
+import type { FeatureType } from '../src/stores/modelSettingsStore';
 
 const STORAGE_KEY = 'azure-diagrams-model-settings';
 const legacyEnv = {
@@ -9,195 +9,192 @@ const legacyEnv = {
   VITE_AZURE_OPENAI_DEPLOYMENT_GPT56SOL: 'legacy-sol',
   VITE_AZURE_OPENAI_DEPLOYMENT_GPT56TERRA: 'legacy-terra',
   VITE_AZURE_OPENAI_DEPLOYMENT_GPT56LUNA: 'legacy-luna',
+  VITE_AZURE_FOUNDRY_ENDPOINT: 'https://test.services.ai.azure.com/',
+  VITE_AZURE_FOUNDRY_DEPLOYMENT_CLAUDE_OPUS5: 'legacy-claude',
 };
-const astraEnv = {
-  ...legacyEnv,
-  VITE_AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA: 'actual-astra-deployment',
-};
+const astraEnv = { ...legacyEnv, VITE_AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA: 'actual-astra-deployment' };
 const features: FeatureType[] = ['architectureGeneration', 'validation', 'deploymentGuide', 'blueprint'];
+const legacyModels = [
+  'gpt-5.1', 'gpt-5.2', 'gpt-5.4', 'gpt-5.4-mini',
+  'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'claude-opus-5',
+  'deepseek-v3.2-speciale', 'deepseek-v4-pro', 'grok-4.1-fast', 'grok-4.3',
+  'mistral-large-3', 'kimi-k2-5', 'kimi-k2-7-code', 'custom-deployment',
+];
+const bundles = new Map<string, Promise<string>>();
 
 async function loadStore(env: Record<string, string>, stored?: object, entries = new Map<string, string>()) {
   if (stored) entries.set(STORAGE_KEY, JSON.stringify(stored));
-  const result = await build({
+  const key = JSON.stringify(env);
+  if (!bundles.has(key)) bundles.set(key, build({
     stdin: {
       contents: `
         export * from './src/stores/modelSettingsStore';
-        export { resolveAIModelRuntime } from './src/services/aiModelRuntime';
-        export { buildRequestBody } from './src/services/apiHelper';
+        export * from './src/services/aiModelRuntime';
+        export { buildRequestBody, callAzureOpenAIProxy } from './src/services/apiHelper';
       `,
       resolveDir: process.cwd(), loader: 'ts',
     },
     bundle: true, write: false, platform: 'node', format: 'cjs', logLevel: 'silent',
     define: { 'import.meta.env': JSON.stringify(env) },
-  });
+  }).then(result => result.outputFiles[0].text));
+  const bundled = await bundles.get(key)!;
   const storage = {
     getItem: (key: string) => entries.get(key) ?? null,
     setItem: (key: string, value: string) => { entries.set(key, value); },
   };
   const module = { exports: {} };
-  new Function('module', 'exports', 'localStorage', result.outputFiles[0].text)(
+  new Function('module', 'exports', 'localStorage', bundled)(
     module, module.exports, storage,
   );
   return {
     store: module.exports as typeof import('../src/stores/modelSettingsStore')
-      & Pick<typeof import('../src/services/aiModelRuntime'), 'resolveAIModelRuntime'>
-      & Pick<typeof import('../src/services/apiHelper'), 'buildRequestBody'>,
+      & typeof import('../src/services/aiModelRuntime')
+      & Pick<typeof import('../src/services/apiHelper'), 'buildRequestBody' | 'callAzureOpenAIProxy'>,
     entries,
   };
 }
 
-test('Astra is the default and recommendation for every feature, mapped to its own deployment', async () => {
-  const { store } = await loadStore(astraEnv);
-  assert.equal(store.getModelSettings().model, 'gpt-6-astra');
-  assert.equal(store.getAvailableModels()[0], 'gpt-6-astra');
-  assert.equal(store.getDeploymentName('gpt-6-astra'), 'actual-astra-deployment');
-  assert.equal(store.MODEL_CONFIG['gpt-6-astra'].displayName, 'GPT-6 Astra');
-  assert.equal(store.MODEL_CONFIG['gpt-6-astra'].apiFormat, 'responses');
-  assert.deepEqual(store.getRecommendedModelSettings(), {
-    model: 'gpt-6-astra', reasoningEffort: 'low', featureOverrides: {},
+test('singleton Astra registry and actual deployment-alias dispatch preserve MAX/32K', async t => {
+  const envelopes: unknown[] = [];
+  t.mock.method(globalThis, 'fetch', async (url: unknown, options: RequestInit) => {
+    assert.equal(url, '/api/openai');
+    envelopes.push(JSON.parse(String(options.body)));
+    return new Response(JSON.stringify({ output_text: '{"services":[]}' }),
+      { headers: { 'Content-Type': 'application/json' } });
   });
+  const { store } = await loadStore(astraEnv);
+  assert.deepEqual(Object.keys(store.MODEL_CONFIG), ['gpt-6-astra']);
+  assert.deepEqual(store.getAvailableModels(), ['gpt-6-astra']);
+  assert.deepEqual(store.getDeploymentNames(), { 'gpt-6-astra': 'actual-astra-deployment' });
+  store.updateModelSettings({ model: 'gpt-6-astra', reasoningEffort: 'max' });
   for (const feature of features) {
     assert.equal(store.FEATURE_CONFIG[feature].recommendedModel, 'gpt-6-astra');
-    assert.deepEqual(store.getModelSettingsForFeature(feature), {
-      model: 'gpt-6-astra', reasoningEffort: 'low',
-    });
     const runtime = store.resolveAIModelRuntime(feature);
     assert.equal(runtime.source, 'managed');
     assert.equal(runtime.deployment, 'actual-astra-deployment');
+    assert.equal(runtime.apiFormat, 'responses');
+    assert.equal(runtime.reasoningEffort, 'max');
+    assert.equal(runtime.maxCompletionTokens, 32000);
+    assert.equal('byo' in runtime, false);
     const request = store.buildRequestBody({
-      ...runtime,
-      messages: [{ role: 'user', content: 'Return a synthetic JSON architecture.' }],
-      maxTokens: runtime.maxCompletionTokens,
+      ...runtime, messages: [{ role: 'user', content: 'Offline request' }], maxTokens: runtime.maxCompletionTokens,
     });
     assert.equal(request.model, 'actual-astra-deployment');
-    assert.deepEqual(request.reasoning, { effort: 'low' });
-    assert.deepEqual(request.text, { format: { type: 'json_object' } });
+    assert.equal(request.max_output_tokens, 32000);
+    assert.deepEqual(request.reasoning, { effort: 'max' });
     assert.equal(request.store, false);
+    const result = await store.callAzureOpenAIProxy({
+      apiFormat: runtime.apiFormat, deployment: runtime.deployment, body: request,
+    });
+    assert.equal(result.ok, true);
+    assert.deepEqual(envelopes.at(-1), {
+      apiFormat: 'responses', deployment: 'actual-astra-deployment', body: request,
+    });
   }
+  assert.equal(envelopes.length, features.length);
 });
 
-for (const version of [1, 2]) {
-  for (const model of ['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna'] as const) {
-    test(`version ${version} ${model} selections and feature overrides migrate persistently`, async () => {
+for (const [name, env] of [
+  ['only legacy configuration', legacyEnv],
+  ['only endpoint', { VITE_AZURE_OPENAI_ENDPOINT: 'https://test.openai.azure.com/' }],
+  ['only Astra deployment', { VITE_AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA: 'astra' }],
+  ['blank Astra deployment', { ...astraEnv, VITE_AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA: ' ' }],
+] as const) {
+  test(`missing-Astra fails closed: ${name}`, async t => {
+    const fetch = t.mock.method(globalThis, 'fetch', async () => { throw new Error('Unexpected HTTP'); });
+    const { store } = await loadStore(env);
+    assert.deepEqual(store.getAvailableModels(), []);
+    assert.equal(store.isAnyAIModelConfigured(), false);
+    assert.equal(store.isManagedAIModelConfigured(), false);
+    assert.equal(store.getModelSettings().model, 'gpt-6-astra');
+    for (const feature of features) assert.throws(() => store.resolveAIModelRuntime(feature));
+    await assert.rejects(store.callAzureOpenAIProxy({
+      apiFormat: 'responses', deployment: 'gpt-6-astra', body: { model: 'gpt-6-astra' },
+    }), { name: 'AIModelConfigurationError', code: 'astra_not_configured' });
+    assert.equal(fetch.mock.callCount(), 0);
+  });
+}
+
+for (const version of [1, 2, 3, 4]) {
+  test(`all legacy version ${version} selections migrate even after previous Astra migration`, async () => {
+    // Bundle once; each execution creates a fresh store with this persisted fixture.
+    for (const model of legacyModels) {
       const { store, entries } = await loadStore(astraEnv, {
-        version, model, reasoningEffort: 'high',
+        version, astraMigrationVersion: 1, model, reasoningEffort: 'max',
         featureOverrides: {
-          architectureGeneration: { model: 'gpt-5.6-sol', reasoningEffort: 'low' },
-          validation: { model: 'gpt-5.6-terra', reasoningEffort: 'high' },
-          deploymentGuide: { model: 'gpt-5.6-terra' },
-          blueprint: { model: 'gpt-5.6-luna', reasoningEffort: 'medium' },
+          architectureGeneration: { model, reasoningEffort: 'xhigh' },
+          validation: { model, reasoningEffort: 'high' },
+          deploymentGuide: { model },
+          blueprint: { model, reasoningEffort: 'none' },
         },
       });
       assert.equal(store.getModelSettings().model, 'gpt-6-astra');
-      for (const feature of features) {
-        assert.equal(store.getModelSettingsForFeature(feature).model, 'gpt-6-astra');
-        assert.equal(store.resolveAIModelRuntime(feature).deployment, 'actual-astra-deployment');
-      }
+      assert.equal(store.getModelSettings().reasoningEffort, 'max');
+      for (const feature of features) assert.equal(store.getModelSettingsForFeature(feature).model, 'gpt-6-astra');
+      assert.equal(store.getModelSettingsForFeature('architectureGeneration').reasoningEffort, 'xhigh');
       assert.equal(store.getModelSettingsForFeature('validation').reasoningEffort, 'high');
-      assert.equal(store.getModelSettingsForFeature('deploymentGuide').reasoningEffort, 'high');
-      assert.equal(store.getModelSettingsForFeature('blueprint').reasoningEffort, 'medium');
+      assert.equal(store.getModelSettingsForFeature('deploymentGuide').reasoningEffort, 'max');
+      assert.equal(store.getModelSettingsForFeature('blueprint').reasoningEffort, 'none');
       const saved = JSON.parse(entries.get(STORAGE_KEY)!);
-      assert.equal(saved.version, 3);
-      assert.equal(saved.astraMigrationVersion, 1);
+      assert.equal(saved.version, 4);
+      assert.equal(saved.astraOnlyVersion, 1);
       assert.equal(saved.model, 'gpt-6-astra');
-      const reloaded = await loadStore(astraEnv, undefined, entries);
-      assert.deepEqual(reloaded.store.getModelSettings(), store.getModelSettings());
-    });
-  }
+      assert.ok(Object.values(saved.featureOverrides).every((value) => (
+        typeof value === 'object' && value !== null && 'model' in value && value.model === 'gpt-6-astra'
+      )));
+    }
+  });
 }
 
-test('migration retains feature effort even when the old deployment is no longer configured', async () => {
-  const { store } = await loadStore({
-    VITE_AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA: 'actual-astra-deployment',
-  }, {
-    version: 2, model: 'gpt-5.6-sol', reasoningEffort: 'high',
-    featureOverrides: { validation: { model: 'gpt-5.6-terra', reasoningEffort: 'medium' } },
-  });
-  assert.deepEqual(store.getModelSettingsForFeature('validation'), {
-    model: 'gpt-6-astra', reasoningEffort: 'medium',
-  });
+test('migration does not depend on Astra availability and never touches historical records', async () => {
+  const history = JSON.stringify({ model: 'gpt-5.6-terra', reasoningEffort: 'max', diagram: { services: [] } });
+  const entries = new Map([['azure-diagrams-history', history], ['review-history', history]]);
+  const { store } = await loadStore(legacyEnv, {
+    version: 3, astraMigrationVersion: 1, model: 'gpt-5.6-terra', reasoningEffort: 'max',
+  }, entries);
+  assert.equal(store.getModelSettings().model, 'gpt-6-astra');
+  assert.equal(store.getModelSettings().reasoningEffort, 'max');
+  assert.equal(JSON.parse(entries.get(STORAGE_KEY)!).model, 'gpt-6-astra');
+  assert.equal(entries.get('azure-diagrams-history'), history);
+  assert.equal(entries.get('review-history'), history);
+});
+
+test('current Astra preferences and feature effort survive reload and detached settings snapshots', async () => {
+  const initial = await loadStore(astraEnv);
+  initial.store.updateModelSettings({ model: 'gpt-6-astra', reasoningEffort: 'max' });
+  initial.store.updateFeatureOverride('blueprint', { model: 'gpt-6-astra', reasoningEffort: 'high' });
+  const snapshot = initial.store.getModelSettings();
+  snapshot.featureOverrides!.blueprint!.reasoningEffort = 'none';
+  assert.equal(initial.store.getModelSettingsForFeature('blueprint').reasoningEffort, 'high');
+  const reloaded = await loadStore(astraEnv, undefined, initial.entries);
+  assert.deepEqual(reloaded.store.getModelSettings(), initial.store.getModelSettings());
+});
+
+test('explicit legacy and forged overrides are rejected, not migrated at runtime', async () => {
+  const { store } = await loadStore(astraEnv);
+  for (const model of [...legacyModels, 'constructor', '__proto__', '', undefined]) {
+    for (const feature of features) {
+      assert.throws(() => Reflect.apply(store.resolveAIModelRuntime, undefined, [
+        feature, { model, reasoningEffort: 'max', forceManaged: true },
+      ]), { name: 'AIModelConfigurationError', code: 'unsupported_ai_model' });
+    }
+    assert.throws(() => Reflect.apply(store.getDeploymentName, undefined, [model]));
+    assert.throws(() => Reflect.apply(store.updateModelSettings, undefined, [{ model }]));
+  }
+  assert.throws(() => Reflect.apply(store.updateFeatureOverride, undefined, [
+    'validation', { model: 'gpt-5.6-terra', reasoningEffort: 'max' },
+  ]));
   assert.equal(store.getModelSettings().model, 'gpt-6-astra');
 });
 
-test('Astra is never aliased to an old model on an installation without Astra', async () => {
-  const settings = {
-    version: 2, model: 'gpt-5.6-sol', reasoningEffort: 'low',
-    featureOverrides: { validation: { model: 'gpt-5.6-terra', reasoningEffort: 'medium' } },
-  };
-  const { store, entries } = await loadStore(legacyEnv, settings);
-  assert.equal(store.getModelSettings().model, 'gpt-5.6-sol');
-  assert.equal(store.getModelSettingsForFeature('validation').model, 'gpt-5.6-terra');
-  assert.equal(store.isModelAvailable('gpt-6-astra'), false);
-  assert.throws(() => store.getDeploymentName('gpt-6-astra'), /VITE_AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA/);
-  assert.equal(entries.get(STORAGE_KEY), JSON.stringify(settings));
-  assert.deepEqual(store.getRecommendedModelSettings().featureOverrides, {
-    validation: { model: 'gpt-5.6-terra', reasoningEffort: 'low' },
-    deploymentGuide: { model: 'gpt-5.6-terra', reasoningEffort: 'low' },
-    blueprint: { model: 'gpt-5.6-luna', reasoningEffort: 'low' },
-  });
-});
-
-test('a later Astra deployment still migrates settings saved before Astra was configured', async () => {
-  const old = await loadStore(legacyEnv);
-  old.store.updateModelSettings({ model: 'gpt-5.6-luna', reasoningEffort: 'medium' });
-  assert.equal(JSON.parse(old.entries.get(STORAGE_KEY)!).astraMigrationVersion, undefined);
-  const current = await loadStore(astraEnv, undefined, old.entries);
-  assert.equal(current.store.getModelSettings().model, 'gpt-6-astra');
-  assert.equal(current.store.getModelSettings().reasoningEffort, 'medium');
-  assert.equal(JSON.parse(current.entries.get(STORAGE_KEY)!).astraMigrationVersion, 1);
-});
-
-test('explicit alternative choices made after migration are not silently overwritten on reload', async () => {
-  const initial = await loadStore(astraEnv, { version: 2, model: 'gpt-5.6-sol', reasoningEffort: 'low' });
-  initial.store.updateModelSettings({ model: 'gpt-5.6-terra', reasoningEffort: 'high' });
-  initial.store.updateFeatureOverride('blueprint', { model: 'gpt-5.6-luna', reasoningEffort: 'medium' });
-  const reloaded = await loadStore(astraEnv, undefined, initial.entries);
-  assert.equal(reloaded.store.getModelSettings().model, 'gpt-5.6-terra');
-  assert.equal(reloaded.store.getModelSettingsForFeature('blueprint').model, 'gpt-5.6-luna');
-});
-
-test('older application code does not rewrite a newer persisted migration version', async () => {
-  const settings = {
-    version: 4, astraMigrationVersion: 2,
-    model: 'gpt-5.6-sol', reasoningEffort: 'high', featureOverrides: {},
-  };
-  const { store, entries } = await loadStore(astraEnv, settings);
-  assert.equal(store.getModelSettings().model, 'gpt-5.6-sol');
-  assert.equal(entries.get(STORAGE_KEY), JSON.stringify(settings));
-});
-
-test('unrelated explicit models and separate BYO configuration are preserved', async () => {
-  const byo = JSON.stringify({ enabled: true, model: 'personal-deployment', provider: 'azure-openai' });
-  const entries = new Map([['azure-diagrams-byo-ai-settings', byo]]);
-  const { store } = await loadStore({
-    ...astraEnv,
-    VITE_AZURE_OPENAI_DEPLOYMENT_GPT54MINI: 'mini',
-    VITE_AZURE_OPENAI_DEPLOYMENT_DEEPSEEK: 'deepseek',
-  }, {
-    version: 2, model: 'gpt-5.4-mini', reasoningEffort: 'medium',
-    featureOverrides: {
-      validation: { model: 'gpt-5.6-terra', reasoningEffort: 'high' },
-      blueprint: { model: 'deepseek-v3.2-speciale' },
-    },
-  }, entries);
-  assert.equal(store.getModelSettings().model, 'gpt-5.4-mini');
-  assert.equal(store.getModelSettingsForFeature('validation').model, 'gpt-6-astra');
-  assert.equal(store.getModelSettingsForFeature('blueprint').model, 'deepseek-v3.2-speciale');
-  assert.equal(entries.get('azure-diagrams-byo-ai-settings'), byo);
-});
-
-test('invalid persisted model and feature keys cannot become model overrides', async () => {
+test('unsupported runtime effort fails explicitly; invalid saved effort uses Astra default', async () => {
   const { store } = await loadStore(astraEnv, {
-    version: 2, model: 'gpt-5.6-sol',
-    featureOverrides: {
-      unknownFeature: { model: 'gpt-5.6-sol' },
-      validation: { model: 'constructor' },
-      blueprint: { model: 'gpt-6-astra', reasoningEffort: 'unsupported' },
-    },
+    version: 3, model: 'gpt-5.6-sol', reasoningEffort: 'minimal',
+    featureOverrides: { blueprint: { model: 'gpt-5.6-luna', reasoningEffort: 'invalid' }, unknown: { model: 'gpt-6-astra' } },
   });
-  assert.deepEqual(store.getModelSettings().featureOverrides, {
-    blueprint: { model: 'gpt-6-astra' satisfies ModelType, reasoningEffort: 'low' },
-  });
-  const invalid = await loadStore(astraEnv, { model: 'constructor' });
-  assert.equal(invalid.store.getModelSettings().model, 'gpt-6-astra');
+  assert.equal(store.getModelSettings().reasoningEffort, 'low');
+  assert.deepEqual(store.getModelSettings().featureOverrides, { blueprint: { model: 'gpt-6-astra', reasoningEffort: 'low' } });
+  assert.throws(() => Reflect.apply(store.resolveAIModelRuntime, undefined, [
+    'architectureGeneration', { model: 'gpt-6-astra', reasoningEffort: 'minimal' },
+  ]), { name: 'AIModelConfigurationError', code: 'unsupported_reasoning_effort' });
 });

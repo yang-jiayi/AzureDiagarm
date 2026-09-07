@@ -86,26 +86,10 @@ function resetCellIdCounter(): void {
   cellIdCounter = 2;
 }
 
-// Connection type → draw.io dash + colour, derived once in the shared layer so
-// Draw.io agrees with PPTX/VSDX/HTML and the PNG legend (fixes 4 & 11).
+// fixDash keeps shared SVG dash lengths independent of draw.io's stroke width.
 function drawioEdgeStyle(route: ExportRoute): string {
-  let dash = 'dashed=0;';
-  if (route.dashed) {
-    switch (route.connectionType) {
-      case 'async':
-        dash = 'dashed=1;dashPattern=8 8;';
-        break;
-      case 'optional':
-      case 'security':
-        dash = 'dashed=1;dashPattern=1 4;';
-        break;
-      case 'telemetry':
-        dash = 'dashed=1;dashPattern=8 4 2 4;';
-        break;
-      default:
-        dash = 'dashed=1;dashPattern=6 6;';
-    }
-  }
+  const pattern = (route.dashPattern ?? '6,4').split(/[\s,]+/).join(' ');
+  const dash = route.dashed ? `dashed=1;dashPattern=${pattern};fixDash=1;` : 'dashed=0;';
   const opacity = route.opacity < 1 ? `opacity=${Math.round(route.opacity * 100)};` : '';
   return `${dash}strokeColor=${route.color};${opacity}`;
 }

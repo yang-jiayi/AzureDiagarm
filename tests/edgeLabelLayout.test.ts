@@ -111,3 +111,49 @@ test('automatic edge label offsets adapt after connected nodes move', () => {
     0,
   );
 });
+
+test('unchanged automatic label placement reuses the edge array without mutating its input', () => {
+  const nodes = [service('source', 0, 0), service('target', 500, 0)];
+  const edges = [connection('edge', 'source', 'target', 'Read data')];
+  const before = structuredClone(edges);
+  const placed = applyAutomaticEdgeLabelOffsets(nodes, edges);
+  assert.notStrictEqual(placed, edges);
+  assert.deepEqual(edges, before);
+  assert.strictEqual(applyAutomaticEdgeLabelOffsets(nodes, placed), placed);
+});
+
+test('empty, unlabelled, manual and unresolved label arrays retain identity', () => {
+  const nodes = [service('source', 0, 0), service('target', 500, 0)];
+  const cases: Edge[][] = [
+    [],
+    [connection('blank', 'source', 'target', '')],
+    [{ ...connection('manual', 'source', 'target', 'Manual'), data: { labelOffsetAuto: false, labelOffsetX: 90, labelOffsetY: 40 } }],
+    [connection('missing', 'source', 'absent', 'Unresolved')],
+  ];
+  for (const edges of cases) {
+    assert.strictEqual(applyAutomaticEdgeLabelOffsets(nodes, edges), edges);
+  }
+});
+
+test('changed labels replace only affected edges and preserve candidate geometry and order', () => {
+  const nodes = [service('source', 0, 0), service('target', 500, 0)];
+  const [placed] = applyAutomaticEdgeLabelOffsets(nodes, [connection('stable', 'source', 'target', 'Read')]);
+  const edges = [
+    placed,
+    { ...connection('manual', 'source', 'target', 'Manual'), data: { labelOffsetAuto: false, labelOffsetX: 90, labelOffsetY: 40 } },
+    connection('changed', 'source', 'target', 'Write'),
+    connection('missing', 'source', 'absent', 'Unresolved'),
+  ];
+  const before = structuredClone(edges);
+  const offsets = calculateAutomaticEdgeLabelOffsets(nodes, edges);
+  const next = applyAutomaticEdgeLabelOffsets(nodes, edges);
+  assert.notStrictEqual(next, edges);
+  assert.strictEqual(next[0], edges[0]);
+  assert.strictEqual(next[1], edges[1]);
+  assert.notStrictEqual(next[2], edges[2]);
+  assert.strictEqual(next[3], edges[3]);
+  assert.deepEqual(next.map(edge => edge.id), edges.map(edge => edge.id));
+  assert.deepEqual({ x: next[2].data.labelOffsetX, y: next[2].data.labelOffsetY }, offsets.get('changed'));
+  assert.deepEqual(edges, before);
+  assert.strictEqual(applyAutomaticEdgeLabelOffsets(nodes, next), next);
+});

@@ -32,7 +32,7 @@
   background: var(--azd-color-surface);
   color: var(--azd-color-text);
   padding: 0.5rem 1.5rem;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  box-shadow: none;
   z-index: var(--azd-z-header);
   flex-shrink: 0;
   border-bottom: 1px solid var(--azd-color-border);
@@ -128,7 +128,7 @@
   min-height: 44px;
   padding: 7px 12px;
   border: 1px solid rgba(255, 255, 255, 0.35);
-  border-radius: 9px;
+  border-radius: 4px;
   background: rgba(255, 255, 255, 0.14);
   color: #ffffff;
   font-size: 0.85rem;
@@ -246,7 +246,7 @@
   gap: 6px;
   padding: 6px 10px;
   border: 1px solid var(--azd-color-control-border);
-  border-radius: 9px;
+  border-radius: 4px;
   background: var(--azd-color-control-background);
   color: var(--azd-color-text);
   font: inherit;
@@ -932,30 +932,6 @@ body.dark-mode .toolbar-dropdown-separator {
   line-height: 1;
 }
 
-/* Compare Models button - standout styling */
-.btn-compare-models {
-  background: linear-gradient(135deg, #d97706 0%, #f59e0b 100%);
-  color: white;
-  border: 1px solid rgba(245, 158, 11, 0.5);
-  animation: compare-pulse 2.5s ease-in-out infinite;
-}
-
-.btn-compare-models:hover {
-  background: linear-gradient(135deg, #b45309 0%, #d97706 100%);
-  border-color: rgba(217, 119, 6, 0.7);
-  transform: translateY(-1px);
-  animation: none;
-}
-
-@keyframes compare-pulse {
-  0%, 100% {
-    box-shadow: 0 0 0 0 rgba(217, 119, 6, 0);
-  }
-  50% {
-    box-shadow: 0 0 12px 3px rgba(245, 158, 11, 0.35);
-  }
-}
-
 /* Conversational refinement (Chat) toolbar button */
 .btn-ai-chat {
   background: linear-gradient(135deg, #8B5CF6 0%, #6366F1 100%);
@@ -1149,7 +1125,7 @@ body.dark-mode .toolbar-dropdown-separator {
   background: rgba(15, 23, 42, 0.92);
   color: #f1f5f9;
   border: 1px solid rgba(96, 165, 250, 0.5);
-  border-radius: 999px;
+  border-radius: 4px;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
   font-size: 0.8rem;
   line-height: 1;
@@ -1608,10 +1584,6 @@ body.dark-mode .react-flow__background {
   background: var(--azd-color-surface-canvas) !important;
 }
 
-body.dark-mode .react-flow__edge-path {
-  stroke: var(--azd-color-action) !important;
-}
-
 body.dark-mode .react-flow__edge-text {
   fill: var(--azd-color-text);
 }
@@ -1649,17 +1621,6 @@ body.dark-mode .btn-premium {
 
 body.dark-mode .btn-premium:hover {
   background: var(--azd-color-accent-ai-strong);
-}
-
-body.dark-mode .btn-compare-models {
-  background: linear-gradient(135deg, #d97706 0%, #f59e0b 100%);
-  color: white;
-  border: 1px solid rgba(245, 158, 11, 0.6);
-}
-
-body.dark-mode .btn-compare-models:hover {
-  background: linear-gradient(135deg, #b45309 0%, #d97706 100%);
-  border-color: rgba(217, 119, 6, 0.8);
 }
 
 /* Cost indicator in dark mode */
@@ -1921,10 +1882,8 @@ body.dark-mode .react-flow__handle.valid {
 
 /* Keep supporting toolbar actions neutral so the two creation paths remain
   distinct without competing animations or oversized typography. */
-.btn-compare-models,
 .btn-help,
 .btn-premium,
-body.dark-mode .btn-compare-models,
 body.dark-mode .btn-help,
 body.dark-mode .btn-premium {
   background: var(--azd-color-inverse-control);
@@ -1934,10 +1893,8 @@ body.dark-mode .btn-premium {
   animation: none;
 }
 
-.btn-compare-models:hover,
 .btn-help:hover,
 .btn-premium:hover,
-body.dark-mode .btn-compare-models:hover,
 body.dark-mode .btn-premium:hover {
   background: var(--azd-color-inverse-control-hover);
   border-color: color-mix(in srgb, var(--azd-color-on-brand) 45%, transparent);
@@ -2120,10 +2077,8 @@ body.dark-mode .app-header .toolbar-group--labeled .btn[aria-expanded='true'] {
 /* Tabs and grouped commands share a compact row when space permits. */
 .app-header:not(.header-collapsed) {
   padding: 0.25rem 1rem 0;
-  background:
-    radial-gradient(circle at 78% -80%, rgba(85, 190, 255, 0.38), transparent 48%),
-    linear-gradient(110deg, #0f6cbd 0%, #075b9f 58%, #064b83 100%);
-  box-shadow: 0 3px 14px rgba(15, 23, 42, 0.24);
+  background: var(--azd-color-surface);
+  box-shadow: none;
 }
 
 .app-header:not(.header-collapsed) .header-content {
@@ -2161,7 +2116,7 @@ body.dark-mode .app-header .toolbar-group--labeled .btn[aria-expanded='true'] {
   padding: 0 1rem;
   overflow-x: auto;
   scrollbar-width: thin;
-  background: var(--azd-color-surface-subtle);
+  background: var(--azd-color-surface-panel);
   border-top: 1px solid var(--azd-color-border-subtle);
 }
 
@@ -2172,7 +2127,7 @@ body.dark-mode .app-header .toolbar-group--labeled .btn[aria-expanded='true'] {
   padding: 0 17px;
   border: 1px solid transparent;
   border-bottom: 0;
-  border-radius: 9px 9px 0 0;
+  border-radius: 4px 4px 0 0;
   background: transparent;
   color: var(--azd-color-text-secondary);
   font: inherit;
@@ -2190,10 +2145,10 @@ body.dark-mode .app-header .toolbar-group--labeled .btn[aria-expanded='true'] {
 }
 
 .ribbon-tab.active {
-  background: var(--azd-color-surface-panel);
+  background: var(--azd-color-surface-elevated);
   color: var(--azd-color-brand-text);
   border-color: var(--azd-color-border);
-  box-shadow: var(--azd-shadow-control);
+  box-shadow: none;
 }
 
 .ribbon-tab.active::after {
@@ -2232,12 +2187,11 @@ body.dark-mode .app-header .toolbar-group--labeled .btn[aria-expanded='true'] {
   align-items: stretch;
   gap: 0;
   padding: 2px 4px;
-  background: linear-gradient(180deg, #fbfdff 0%, #f3f7fb 100%);
-  border-bottom: 1px solid #c5d1df;
-  color: #172033;
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.95),
-    0 2px 8px rgba(15, 23, 42, 0.08);
+  background: var(--azd-color-surface-panel);
+  border-top: 1px solid var(--azd-color-border-subtle);
+  border-bottom: 0;
+  color: var(--azd-color-text);
+  box-shadow: none;
 }
 
 .ribbon-command-strip > .header-actions {
@@ -2337,7 +2291,7 @@ body.dark-mode .app-header .toolbar-group--labeled .btn[aria-expanded='true'] {
   padding: 7px 10px !important;
   gap: 6px !important;
   border: 1px solid var(--ribbon-control-border) !important;
-  border-radius: 8px !important;
+  border-radius: 4px !important;
   background: transparent !important;
   color: var(--ribbon-control-text) !important;
   box-shadow: none !important;
@@ -2361,7 +2315,7 @@ body.dark-mode .app-header .toolbar-group--labeled .btn[aria-expanded='true'] {
   border-color: #b9c9da !important;
   background: var(--ribbon-control-hover-surface) !important;
   color: var(--ribbon-control-hover-text) !important;
-  box-shadow: 0 2px 6px rgba(15, 108, 189, 0.1) !important;
+  box-shadow: none !important;
   transform: none;
 }
 
@@ -2374,7 +2328,7 @@ body.dark-mode .app-header .toolbar-group--labeled .btn[aria-expanded='true'] {
   border-color: var(--ribbon-control-active-border) !important;
   background: var(--ribbon-control-active-surface) !important;
   color: var(--ribbon-control-active-text) !important;
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.16) !important;
+  box-shadow: none !important;
 }
 
 .ribbon-command-strip .toolbar-group--labeled .btn:focus-visible,
@@ -2476,7 +2430,7 @@ body.dark-mode .ribbon-command-strip {
   --ribbon-control-disabled-text: #aebdd0;
   --ribbon-control-disabled-border: #344256;
   --ribbon-focus-ring: #7dd3fc;
-  background: linear-gradient(180deg, #182333 0%, #131d2b 100%);
+  background: var(--azd-color-surface-panel);
   border-bottom-color: #334155;
   color: #e5edf7;
 }
@@ -2526,7 +2480,7 @@ body.dark-mode .ribbon-command-strip .toolbar-group--labeled .cost-visibility-to
   border-color: var(--ribbon-control-active-border) !important;
   background: var(--ribbon-control-active-surface) !important;
   color: var(--ribbon-control-active-text) !important;
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.16) !important;
+  box-shadow: none !important;
 }
 
 body.dark-mode .ribbon-command-strip .toolbar-group--labeled .btn:disabled {

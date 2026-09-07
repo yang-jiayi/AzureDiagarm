@@ -20,7 +20,8 @@ const {
   getPrincipal,
 } = require('./access-control');
 const { ArmKeyVaultAccessStore } = require('./arm-key-vault-access-store');
-const { createOpenAIProxyRouter, logFoundryConfiguration } = require('./openai-proxy');
+const { createOpenAIProxyRouter } = require('./openai-proxy');
+const { runtimeAstraConfiguration } = require('./astra-policy');
 const { createFixedWindowRateLimiter, createTableRateLimiter } = require('./rate-limiter');
 const { createDiagramsRouter, createAzureBlobBackend } = require('./diagram-api');
 const { asyncHandler, createErrorHandler } = require('./async-handler');
@@ -136,24 +137,10 @@ app.use('/api/diagrams', createDiagramsRouter({
 // Keeps Azure OpenAI credentials server-side so they are never shipped to the
 // browser. Prefers keyless auth via DefaultAzureCredential (managed identity in
 // ACA, `az login` in dev); falls back to AZURE_OPENAI_API_KEY when set.
-const OPENAI_ENDPOINT = process.env.AZURE_OPENAI_ENDPOINT;
+const OPENAI_ENDPOINT = deployment.astra.endpoint;
 const OPENAI_API_KEY = process.env.AZURE_OPENAI_API_KEY; // optional fallback
-const OPENAI_API_VERSION = process.env.AZURE_OPENAI_API_VERSION || '2024-05-01-preview';
-const ALLOW_BYO_AI_ENDPOINTS = process.env.ALLOW_BYO_AI_ENDPOINTS === 'true';
-const FOUNDRY_ENDPOINT = process.env.AZURE_FOUNDRY_ENDPOINT;
-const FOUNDRY_API_KEY = process.env.AZURE_FOUNDRY_API_KEY; // optional fallback
-const OPENAI_ALLOWED_DEPLOYMENTS = new Set(
-  (process.env.AZURE_OPENAI_ALLOWED_DEPLOYMENTS || '')
-    .split(',')
-    .map((value) => value.trim())
-    .filter(Boolean),
-);
-const FOUNDRY_ALLOWED_DEPLOYMENTS = new Set(
-  (process.env.AZURE_FOUNDRY_ALLOWED_DEPLOYMENTS || '')
-    .split(',')
-    .map((value) => value.trim())
-    .filter(Boolean),
-);
+const ASTRA_DEPLOYMENT = deployment.astra.deployment;
+const OPENAI_ALLOWED_DEPLOYMENTS = new Set(ASTRA_DEPLOYMENT ? [ASTRA_DEPLOYMENT] : []);
 
 // ── Per-client rate limiting ───────────────────────────────────────────────
 // The table-backed limiter shares counters across all Container Apps replicas
@@ -239,18 +226,10 @@ if (_RATE_LIMIT_TABLES_ENDPOINT) {
 const consumeUtilityApiRateLimit = createFixedWindowRateLimiter(60 * 60 * 1000, 120);
 const consumeAdminApiRateLimit = createFixedWindowRateLimiter(60 * 60 * 1000, 30);
 
-if (!OPENAI_ENDPOINT) {
-  console.warn('[openai-proxy] AZURE_OPENAI_ENDPOINT is not set. /api/openai will return 503.');
-}
 if (OPENAI_ALLOWED_DEPLOYMENTS.size === 0) {
-  console.warn('[openai-proxy] AZURE_OPENAI_ALLOWED_DEPLOYMENTS is empty. All Azure OpenAI requests will be rejected (503) until the allowlist is configured.');
+  console.warn('[openai-proxy] GPT-6 Astra is unconfigured. Managed AI requests return 503.');
 }
-console.info(
-  `[openai-proxy] Bring-your-own Azure OpenAI / OpenAI endpoints are ${
-    ALLOW_BYO_AI_ENDPOINTS ? 'enabled' : 'disabled'
-  }.`,
-);
-logFoundryConfiguration(FOUNDRY_ENDPOINT, FOUNDRY_ALLOWED_DEPLOYMENTS, console);
+console.info(`[openai-proxy] Managed AI: GPT-6 Astra Responses only. BYO connections: ${deployment.allowByoAIEndpoints ? 'enabled' : 'disabled'}.`);
 
 // ── Durable feedback storage ───────────────────────────────────────────────
 // Direct email delivery is preferred for low-cost deployments. Azure Table
@@ -422,23 +401,16 @@ app.get('/api/speech-token', asyncHandler(async (req, res) => {
 
 app.get('/api/runtime-config', (req, res) => {
   res.set('Cache-Control', 'no-store');
-  res.json({
-    features: {
-      bringYourOwnAI: ALLOW_BYO_AI_ENDPOINTS,
-    },
-  });
+  res.json(runtimeAstraConfiguration(deployment.astra, deployment.allowByoAIEndpoints));
 });
 
 app.use('/api/openai', createOpenAIProxyRouter({
   endpoint: OPENAI_ENDPOINT,
-  foundryEndpoint: FOUNDRY_ENDPOINT,
+  astraDeployment: ASTRA_DEPLOYMENT,
   credential,
   apiKey: OPENAI_API_KEY,
-  foundryApiKey: FOUNDRY_API_KEY,
-  apiVersion: OPENAI_API_VERSION,
   allowedDeployments: OPENAI_ALLOWED_DEPLOYMENTS,
-  allowedFoundryDeployments: FOUNDRY_ALLOWED_DEPLOYMENTS,
-  allowByoAIEndpoints: ALLOW_BYO_AI_ENDPOINTS,
+  allowByoAIEndpoints: deployment.allowByoAIEndpoints,
   consumeRateLimit: consumeOpenAiRateLimit,
   budget: aiBudget,
   mode: deployment.mode,

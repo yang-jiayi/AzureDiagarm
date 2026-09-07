@@ -8,7 +8,7 @@
   background: var(--azd-color-surface);
   color: var(--azd-color-text);
   border-bottom-color: var(--azd-color-border);
-  box-shadow: 0 1px 4px rgb(15 23 42 / 6%);
+  box-shadow: none;
 }
 
 :is(body, body.dark-mode) .app-header :is(.header-collapse-toggle, .access-admin-button, .language-switch, .document-status) {
@@ -132,8 +132,37 @@
   background: var(--azd-color-surface);
   color: var(--azd-color-text);
   border-color: var(--azd-color-border);
-  box-shadow: var(--azd-shadow-panel);
+  box-shadow: var(--azd-shadow-control);
   backdrop-filter: none;
+}
+
+.canvas-container :is(.title-block, .legend, .react-flow__minimap.nav-minimap) {
+  border-color: var(--azd-color-border-strong);
+  border-radius: 4px;
+  box-shadow: none;
+}
+
+.canvas-container :is(.title-block-header, .legend-header) {
+  background: var(--azd-color-surface-panel);
+  color: var(--azd-color-text-secondary);
+  border-color: var(--azd-color-border);
+  border-radius: 3px 3px 0 0;
+  letter-spacing: 0.025em;
+}
+
+.canvas-container .legend-header:hover {
+  background: var(--azd-color-surface-hover);
+}
+
+.canvas-container .title-block-toggle {
+  border-color: var(--azd-color-control-border);
+  background: var(--azd-color-surface-elevated);
+  color: var(--azd-color-text-secondary);
+  border-radius: 3px;
+}
+
+.canvas-container .title-block-toggle:hover {
+  background: var(--azd-color-surface-hover);
 }
 
 .canvas-empty-cta-title { color: var(--azd-color-text); }
@@ -164,10 +193,12 @@
 :is(body, body.dark-mode) :is(.palette-header h2, .icon-palette h2) { color: var(--azd-color-text); border-color: var(--azd-color-border); }
 :is(body, body.dark-mode) :is(.palette-help, .icon-label) { color: var(--azd-color-text-muted); }
 :is(body, body.dark-mode) .search-box input { background: transparent; color: var(--azd-color-text); }
+:is(body, body.dark-mode) .search-box { border-color: var(--azd-color-control-border); }
 :is(body, body.dark-mode) .icon-item:hover { background: var(--azd-color-surface-hover); border-color: var(--azd-color-accent); }
 :is(body, body.dark-mode) .category-header { background: var(--azd-color-surface-muted); color: var(--azd-color-text) !important; border-color: var(--azd-color-border); }
-:is(body, body.dark-mode) .palette-open-toggle { background: var(--azd-color-accent); color: var(--azd-color-on-accent); border-color: var(--azd-color-accent); box-shadow: var(--azd-shadow-panel); }
-:is(body, body.dark-mode) .palette-close-toggle { background: var(--azd-color-accent-soft); color: var(--azd-color-accent); border-color: var(--azd-color-border); }
+:is(body, body.dark-mode) .palette-open-toggle { background: var(--azd-color-surface); color: var(--azd-color-text-secondary); border-color: var(--azd-color-control-border); box-shadow: none; }
+:is(body, body.dark-mode) .palette-open-toggle:hover { background: var(--azd-color-surface-hover); }
+:is(body, body.dark-mode) .palette-close-toggle { background: var(--azd-color-surface); color: var(--azd-color-text-secondary); border-color: var(--azd-color-control-border); }
 
 :is(body, body.dark-mode) :is(.legend, .architecture-diagram-info, .react-flow__controls, .react-flow__controls-button, .edge-context-menu, .context-menu-item) {
   background: var(--azd-color-surface);
@@ -185,7 +216,7 @@
   background: var(--azd-color-overlay);
   backdrop-filter: none;
 }
-:is(body, body.dark-mode) :is(.modal-content, .compare-modal, .azp-modal, .access-modal, .guided-help-modal) {
+:is(body, body.dark-mode) :is(.modal-content, .azp-modal, .access-modal, .guided-help-modal) {
   background: var(--azd-color-surface);
   color: var(--azd-color-text);
   border: 1px solid var(--azd-color-border);
@@ -205,25 +236,25 @@
   background: var(--azd-color-surface-muted);
   border-color: var(--azd-color-border);
 }
-:is(body, body.dark-mode) :is(.modal-content, .compare-modal, .azp-modal, .access-modal) :is(input:not([type='checkbox'], [type='radio']), textarea, select) {
+:is(body, body.dark-mode) :is(.modal-content, .azp-modal, .access-modal) :is(input:not([type='checkbox'], [type='radio']), textarea, select) {
   background: var(--azd-color-surface);
   color: var(--azd-color-text);
   border-color: var(--azd-color-border-strong);
 }
-:is(body, body.dark-mode) :is(.modal-content, .compare-modal, .azp-modal, .access-modal) :is(input, textarea)::placeholder { color: var(--azd-color-text-muted); }
-:is(body, body.dark-mode) :is(.modal-content, .compare-modal, .azp-modal) :is(.form-group label, .checkbox-label) { color: var(--azd-color-text); }
-:is(body, body.dark-mode) :is(.modal-content, .compare-modal, .azp-modal) .btn-secondary {
+:is(body, body.dark-mode) :is(.modal-content, .azp-modal, .access-modal) :is(input, textarea)::placeholder { color: var(--azd-color-text-muted); }
+:is(body, body.dark-mode) :is(.modal-content, .azp-modal) :is(.form-group label, .checkbox-label) { color: var(--azd-color-text); }
+:is(body, body.dark-mode) :is(.modal-content, .azp-modal) .btn-secondary {
   background: var(--azd-color-surface);
   color: var(--azd-color-text);
   border: 1px solid var(--azd-color-border);
 }
-:is(body, body.dark-mode) :is(.modal-content, .compare-modal, .azp-modal) .btn-secondary:hover:not(:disabled) { background: var(--azd-color-surface-hover); transform: none; }
-:is(body, body.dark-mode) :is(.modal-content, .compare-modal, .azp-modal) .btn-primary {
+:is(body, body.dark-mode) :is(.modal-content, .azp-modal) .btn-secondary:hover:not(:disabled) { background: var(--azd-color-surface-hover); transform: none; }
+:is(body, body.dark-mode) :is(.modal-content, .azp-modal) .btn-primary {
   background: var(--azd-color-accent);
   color: var(--azd-color-on-accent);
   border: 1px solid var(--azd-color-accent);
 }
-:is(body, body.dark-mode) :is(.modal-content, .compare-modal, .azp-modal) .btn-primary:hover:not(:disabled) { background: var(--azd-color-accent-hover); transform: none; }
+:is(body, body.dark-mode) :is(.modal-content, .azp-modal) .btn-primary:hover:not(:disabled) { background: var(--azd-color-accent-hover); transform: none; }
 
 /* The generator and help guide share the workspace palette, not a second theme. */
 :is(body, body.dark-mode) .ai-architecture-modal :is(.modal-title, .modal-col-left .modal-description strong, .modal-col-left .form-group label, .modal-col-left .image-uploader-header) { color: var(--azd-color-text); }
@@ -287,15 +318,14 @@
 :is(body, body.dark-mode) :is(.region-arrow, .region-location) { color: var(--azd-color-text-muted); }
 :is(body, body.dark-mode) .region-option:hover { background: var(--azd-color-surface-hover); }
 :is(body, body.dark-mode) .region-option.selected { background: var(--azd-color-accent-soft); border-left-color: var(--azd-color-accent); }
-:is(body, body.dark-mode) :is(.msp-model-btn, .msp-reasoning-btn, .msp-feature-select, .msp-reasoning-select, .msp-portfolio, .msp-close-btn) {
+:is(body, body.dark-mode) :is(.msp-reasoning-btn, .msp-feature-select, .msp-portfolio, .msp-close-btn) {
   color: var(--azd-color-text);
   background: var(--azd-color-surface-muted);
   border-color: var(--azd-color-border);
 }
-:is(body, body.dark-mode) :is(.msp-model-btn, .msp-reasoning-btn):hover { background: var(--azd-color-surface-hover); border-color: var(--azd-color-border-strong); }
-:is(body, body.dark-mode) :is(.msp-model-btn.active, .msp-reasoning-btn.active) { background: var(--azd-color-brand); color: var(--azd-color-on-brand); border-color: var(--azd-color-brand); }
-:is(body, body.dark-mode) :is(.msp-feature-name, .msp-portfolio-copy strong) { color: var(--azd-color-text); }
-:is(body, body.dark-mode) :is(.msp-feature-effective, .msp-portfolio-copy span) { color: var(--azd-color-text-muted); }
+:is(body, body.dark-mode) .msp-reasoning-btn:hover { background: var(--azd-color-surface-hover); border-color: var(--azd-color-border-strong); }
+:is(body, body.dark-mode) .msp-reasoning-btn.active { background: var(--azd-color-brand); color: var(--azd-color-on-brand); border-color: var(--azd-color-brand); }
+:is(body, body.dark-mode) .msp-feature-name { color: var(--azd-color-text); }
 :is(body, body.dark-mode) .msp-portfolio-btn { background: var(--azd-color-accent); color: var(--azd-color-on-accent); border-color: var(--azd-color-accent); }
 
 .azp-modal :is(.azp-stat, .azp-cli-preview, .azp-modal-description code, .azp-form-hint code) { background: var(--azd-color-surface-muted); border-color: var(--azd-color-border); color: var(--azd-color-text); }
@@ -323,16 +353,6 @@
 :is(body, body.dark-mode) :is(.snapshot-info-details, .character-count, .label-hint, .version-empty, .version-meta, .version-count) { color: var(--azd-color-text-muted); }
 :is(body, body.dark-mode) :is(.version-item:hover, .version-item.selected) { background: var(--azd-color-accent-soft); border-color: var(--azd-color-accent); box-shadow: none; }
 :is(body, body.dark-mode) .snapshot-hint { background: var(--azd-color-warning-soft); color: var(--azd-color-warning); border-color: var(--azd-color-border); }
-:is(body, body.dark-mode) :is(.compare-model-chip, .compare-reasoning-btn, .compare-sample-chip, .compare-result-card, .compare-result-header, .compare-critique-output) {
-  background: var(--azd-color-surface-muted);
-  color: var(--azd-color-text);
-  border-color: var(--azd-color-border);
-}
-:is(body, body.dark-mode) :is(.compare-section-title, .compare-result-model, .compare-critique-text) { color: var(--azd-color-text); }
-:is(body, body.dark-mode) :is(.compare-reasoning-row, .compare-progress, .compare-result-tokens, .compare-stat-label, .compare-critique-label) { color: var(--azd-color-text-muted); }
-:is(body, body.dark-mode) :is(.compare-model-chip.selected, .compare-reasoning-btn.active) { background: var(--azd-color-accent-soft); color: var(--azd-color-accent); border-color: var(--azd-color-accent); }
-:is(body, body.dark-mode) :is(.compare-model-chip, .compare-reasoning-btn, .compare-sample-chip):hover:not(:disabled) { background: var(--azd-color-surface-hover); border-color: var(--azd-color-accent); }
-
 @media (max-width: 640px) {
   :is(body, body.dark-mode) .app-header:not(.header-collapsed) .header-actions-wrapper {
     background: var(--azd-color-surface);

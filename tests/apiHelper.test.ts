@@ -1,12 +1,26 @@
 import test, { afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import {
-  buildApiUrl,
+import { build } from 'esbuild';
+
+const bundled = await build({
+  stdin: {
+    contents: `export * from './src/services/apiHelper';`,
+    resolveDir: process.cwd(), loader: 'ts',
+  },
+  bundle: true, write: false, platform: 'node', format: 'cjs', logLevel: 'silent',
+  define: { 'import.meta.env': JSON.stringify({
+    VITE_AZURE_OPENAI_ENDPOINT: 'https://offline.openai.azure.com/',
+    VITE_AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA: 'gpt-6-astra',
+  }) },
+});
+const module = { exports: {} };
+new Function('module', 'exports', bundled.outputFiles[0].text)(module, module.exports);
+const {
   buildRequestBody,
   callAzureOpenAIProxy,
   createOpenAIProxyError,
   parseApiResponse,
-} from '../src/services/apiHelper.ts';
+} = module.exports as typeof import('../src/services/apiHelper');
 
 const originalFetch = globalThis.fetch;
 
@@ -14,54 +28,14 @@ afterEach(() => {
   globalThis.fetch = originalFetch;
 });
 
-test('buildRequestBody converts text and image input to Anthropic Messages format', () => {
-  const body = buildRequestBody({
-    deployment: 'claude-opus-5',
-    messages: [
-      { role: 'system', content: 'Return JSON only.' },
-      {
-        role: 'user',
-        content: [
-          { type: 'input_text', text: 'Analyze this diagram.' },
-          { type: 'input_image', image_url: 'data:image/png;base64,QUJD' },
-        ],
-      },
-    ],
-    maxTokens: 12000,
-    apiFormat: 'anthropic-messages',
-    isReasoning: true,
-    reasoningEffort: 'high',
-  });
-
-  assert.equal(
-    buildApiUrl('https://example.services.ai.azure.com', 'claude-opus-5', 'anthropic-messages'),
-    'https://example.services.ai.azure.com/anthropic/v1/messages',
-  );
-  assert.equal(body.model, 'claude-opus-5');
-  assert.equal(body.max_tokens, 12000);
-  assert.deepEqual(body.thinking, { type: 'adaptive' });
-  assert.deepEqual(body.output_config, { effort: 'high' });
-  assert.deepEqual(body.system, [{ type: 'text', text: 'Return JSON only.' }]);
-  assert.deepEqual(body.messages[0], {
-    role: 'user',
-    content: [
-      { type: 'text', text: 'Analyze this diagram.' },
-      {
-        type: 'image',
-        source: { type: 'base64', media_type: 'image/png', data: 'QUJD' },
-      },
-    ],
-  });
-});
-
-test('parseApiResponse extracts Anthropic text and token usage', () => {
+test('parseApiResponse extracts Responses output text and token usage', () => {
   const parsed = parseApiResponse({
-    content: [
-      { type: 'thinking', thinking: 'internal' },
-      { type: 'text', text: '{"services":[]}' },
+    output: [
+      { type: 'reasoning', summary: [] },
+      { type: 'message', content: [{ type: 'output_text', text: '{"services":[]}' }] },
     ],
-    usage: { input_tokens: 120, output_tokens: 30 },
-  }, 'anthropic-messages');
+    usage: { input_tokens: 120, output_tokens: 30, total_tokens: 150 },
+  }, 'responses');
 
   assert.deepEqual(parsed, {
     content: '{"services":[]}',
@@ -71,32 +45,42 @@ test('parseApiResponse extracts Anthropic text and token usage', () => {
   });
 });
 
-test('reasoning Chat Completions uses modern token and reasoning parameters', () => {
-  const body = buildRequestBody({
-    deployment: 'gpt-5',
-    messages: [{ role: 'user', content: 'Return JSON.' }],
-    maxTokens: 2048,
-    apiFormat: 'chat-completions',
-    isReasoning: true,
-    reasoningEffort: 'high',
-  });
-
-  assert.equal(body.max_completion_tokens, 2048);
-  assert.equal(body.reasoning_effort, 'high');
-  assert.equal(body.max_tokens, undefined);
-  assert.equal(body.temperature, undefined);
-  assert.deepEqual(body.response_format, { type: 'json_object' });
-  assert.equal(
-    buildApiUrl(
-      'https://example.services.ai.azure.com',
-      'gpt-5-deployment',
-      'chat-completions',
-    ),
-    'https://example.services.ai.azure.com/openai/v1/chat/completions',
-  );
+test('format builders and parsers reject unsupported non-OpenAI formats', () => {
+  for (const apiFormat of ['anthropic-messages', 'legacy-responses', '']) {
+    assert.throws(() => Reflect.apply(buildRequestBody, undefined, [{
+      deployment: 'gpt-6-astra', messages: [{ role: 'user', content: 'Offline request' }],
+      maxTokens: 32000, apiFormat, isReasoning: true, reasoningEffort: 'max',
+    }]), { name: 'AIModelConfigurationError', code: 'unsupported_api_format' });
+    assert.throws(() => Reflect.apply(parseApiResponse, undefined, [{}, apiFormat]),
+      { name: 'AIModelConfigurationError', code: 'unsupported_api_format' });
+  }
 });
 
-test('callAzureOpenAIProxy sends BYO credentials only in the server request body', async () => {
+test('Responses-only vision preserves image data, detail, MAX reasoning and 32K without mutation', () => {
+  const imageUrl = 'data:image/png;base64,QUJD';
+  const messages = [
+    { role: 'system', content: 'Describe every label.' },
+    { role: 'user', content: [
+      { type: 'input_text', text: 'Read this image exactly.' },
+      { type: 'input_image', image_url: imageUrl, detail: 'high' },
+    ] },
+  ];
+  const original = structuredClone(messages);
+  const params = {
+    deployment: 'gpt-6-astra', messages, maxTokens: 32000,
+    isReasoning: true, reasoningEffort: 'max' as const, jsonOutput: false,
+  };
+  const responses = buildRequestBody({ ...params, apiFormat: 'responses' });
+  assert.deepEqual(responses.input, original);
+  assert.equal(responses.model, 'gpt-6-astra');
+  assert.equal(responses.max_output_tokens, 32000);
+  assert.deepEqual(responses.reasoning, { effort: 'max' });
+  assert.equal(responses.store, false);
+  assert.equal(responses.text, undefined);
+  assert.deepEqual(messages, original);
+});
+
+test('callAzureOpenAIProxy sends only the managed Astra request envelope', async () => {
   let requestUrl = '';
   // Collected, not assigned: TypeScript's flow analysis cannot see the write
   // inside the fetch stub, so a `let` initialised to null narrows to `never`
@@ -113,22 +97,35 @@ test('callAzureOpenAIProxy sends BYO credentials only in the server request body
 
   const result = await callAzureOpenAIProxy({
     apiFormat: 'responses',
-    deployment: 'gpt-5',
-    body: { model: 'gpt-5', input: [{ role: 'user', content: 'Hello' }] },
-    byo: {
-      provider: 'openai',
-      endpoint: 'https://api.openai.com',
-      apiKey: 'sk-test-secret-value',
-    },
+    deployment: 'gpt-6-astra',
+    body: { model: 'gpt-6-astra', input: [{ role: 'user', content: 'Hello' }] },
   });
 
   assert.equal(result.ok, true);
   assert.equal(requestUrl, '/api/openai');
-  assert.deepEqual(sent[0]?.byo, {
-    provider: 'openai',
-    endpoint: 'https://api.openai.com',
-    apiKey: 'sk-test-secret-value',
+  assert.deepEqual(sent[0], {
+    apiFormat: 'responses', deployment: 'gpt-6-astra',
+    body: { model: 'gpt-6-astra', input: [{ role: 'user', content: 'Hello' }] },
   });
+});
+
+test('proxy boundary rejects alternate providers, formats and deployments without HTTP', async () => {
+  let calls = 0;
+  globalThis.fetch = async () => { calls++; throw new Error('Unexpected HTTP'); };
+  const valid = { apiFormat: 'responses' as const, deployment: 'gpt-6-astra', body: { model: 'gpt-6-astra' } };
+  for (const invalid of [
+    { ...valid, apiFormat: 'chat-completions' },
+    { ...valid, apiFormat: 'anthropic-messages' },
+    { ...valid, deployment: 'gpt-5.6-terra' },
+    { ...valid, body: { model: 'gpt-5.6-sol' } },
+    { ...valid, body: {} },
+    { ...valid, byo: { provider: 'openai', endpoint: 'https://api.openai.com', apiKey: 'synthetic-key' } },
+    { ...valid, byo: null },
+    { ...valid, byo: undefined },
+  ]) {
+    await assert.rejects(Reflect.apply(callAzureOpenAIProxy, undefined, [invalid]), { name: 'AIModelConfigurationError' });
+  }
+  assert.equal(calls, 0);
 });
 
 test('callAzureOpenAIProxy rejects misleading non-JSON response media types', async () => {
@@ -139,15 +136,54 @@ test('callAzureOpenAIProxy rejects misleading non-JSON response media types', as
 
   const result = await callAzureOpenAIProxy({
     apiFormat: 'responses',
-    deployment: 'gpt-5',
-    body: { model: 'gpt-5', input: [{ role: 'user', content: 'Hello' }] },
+    deployment: 'gpt-6-astra',
+    body: { model: 'gpt-6-astra', input: [{ role: 'user', content: 'Hello' }] },
   });
 
   assert.equal(result.ok, false);
   assert.equal(result.error?.code, 'invalid_upstream_response');
 });
 
-test('BYO authentication errors produce custom-endpoint guidance', () => {
+test('proxy policy codes produce stable Astra guidance without echoing arbitrary raw messages', async () => {
+  for (const [status, code, message] of [
+    [400, 'invalid_api_format', 'GPT-6 Astra requests must use the Responses API.'],
+    [403, 'byo_not_enabled', 'Bring-your-own AI is disabled by the application administrator.'],
+    [503, 'astra_not_configured', 'GPT-6 Astra is not configured. Contact the application administrator to configure the managed Astra deployment.'],
+    [403, 'deployment_not_allowed', 'Only the configured GPT-6 Astra deployment can run.'],
+    [503, 'proxy_not_configured', 'The managed Azure OpenAI endpoint is not configured correctly.'],
+  ] as const) {
+    globalThis.fetch = async () => new Response(JSON.stringify({
+      error: { source: 'proxy', code, message: 'Arbitrary raw diagnostic text', requestId: 'policy-request' },
+    }), { status, headers: { 'Content-Type': 'application/json' } });
+    const result = await callAzureOpenAIProxy({
+      apiFormat: 'responses', deployment: 'gpt-6-astra', body: { model: 'gpt-6-astra' },
+    });
+    const error = createOpenAIProxyError(result);
+    assert.equal(error.message, `${message} Request ID: policy-request`, code);
+    assert.equal(error.source, 'proxy');
+    assert.equal(error.code, code);
+    assert.equal(error.status, status);
+    assert.equal(error.requestId, 'policy-request');
+    assert.equal(result.error?.message, message);
+    assert.doesNotMatch(JSON.stringify(result), /Arbitrary raw diagnostic text/);
+  }
+});
+
+test('unconfigured server Astra returns administrator guidance with configuration provenance', async () => {
+  globalThis.fetch = async () => new Response(JSON.stringify({
+    error: { source: 'configuration', code: 'astra_not_configured', requestId: 'astra-setup' },
+  }), { status: 503, headers: { 'Content-Type': 'application/json' } });
+  const result = await callAzureOpenAIProxy({
+    apiFormat: 'responses', deployment: 'gpt-6-astra', body: { model: 'gpt-6-astra' },
+  });
+  const error = createOpenAIProxyError(result);
+  assert.equal(error.message, 'GPT-6 Astra is not configured. Contact the application administrator to configure the managed Astra deployment. Request ID: astra-setup');
+  assert.equal(error.code, 'astra_not_configured');
+  assert.equal(error.source, 'configuration');
+  assert.equal(error.status, 503);
+});
+
+test('BYO provider errors retain diagnostics and actionable key-retest guidance', () => {
   const error = createOpenAIProxyError({
     ok: false,
     status: 401,
@@ -160,8 +196,35 @@ test('BYO authentication errors produce custom-endpoint guidance', () => {
 
   assert.equal(
     error.message,
-    'The custom AI endpoint rejected the API key. Check the key and try again.',
+    'The AI provider rejected this profile’s API key. Re-enter the key and test the connection again.',
   );
+  assert.equal(error.code, 'byo_authentication_failed');
+  assert.equal(error.source, 'byo_ai');
+});
+
+test('frozen backend BYO validation codes retain safe guidance and exact error provenance', async () => {
+  for (const [code, status, expected] of [
+    ['invalid_byo_configuration', 400, 'The AI connection settings are invalid. Check the provider, endpoint, and model, then test again.'],
+    ['invalid_byo_provider', 400, 'The AI connection settings are invalid. Check the provider, endpoint, and model, then test again.'],
+    ['invalid_byo_endpoint', 400, 'The AI connection settings are invalid. Check the provider, endpoint, and model, then test again.'],
+    ['invalid_byo_api_key', 400, 'The AI provider rejected this profile’s API key. Re-enter the key and test the connection again.'],
+    ['invalid_deployment_name', 400, 'Model or deployment not found. Check the configured name.'],
+    ['byo_request_failed', 422, 'AI provider request failed (422). Please try again.'],
+  ] as const) {
+    globalThis.fetch = async () => new Response(JSON.stringify({
+      error: { source: 'byo_ai', code, requestId: 'byo-policy-request', message: 'raw-private-provider-detail' },
+    }), { status, headers: { 'Content-Type': 'application/json' } });
+    const result = await callAzureOpenAIProxy({
+      apiFormat: 'responses', deployment: 'gpt-6-astra', body: { model: 'gpt-6-astra' },
+    });
+    const error = createOpenAIProxyError(result);
+    assert.equal(error.code, code);
+    assert.equal(error.source, 'byo_ai');
+    assert.equal(error.status, status);
+    assert.equal(error.requestId, 'byo-policy-request');
+    assert.equal(error.message, `${expected} Request ID: byo-policy-request`);
+    assert.doesNotMatch(JSON.stringify(result), /raw-private-provider-detail/);
+  }
 });
 
 for (const [retryAfter, date, expectedMs] of [
@@ -228,7 +291,7 @@ test('millisecond retry headers retain the longest valid provider cooldown', asy
     },
   });
   const result = await callAzureOpenAIProxy({
-    apiFormat: 'responses', deployment: 'gpt-6-astra', body: {},
+    apiFormat: 'responses', deployment: 'gpt-6-astra', body: { model: 'gpt-6-astra' },
   });
   assert.equal(result.error?.retryAfterMs, 1500);
   assert.equal(createOpenAIProxyError(result).retryAfterMs, 1500);
@@ -243,7 +306,7 @@ for (const includeSource of [true, false]) {
       },
     }), { status: 429, headers: { 'Content-Type': 'application/json', 'Retry-After': '5' } });
     const error = createOpenAIProxyError(await callAzureOpenAIProxy({
-      apiFormat: 'responses', deployment: 'gpt-6-astra', body: {},
+      apiFormat: 'responses', deployment: 'gpt-6-astra', body: { model: 'gpt-6-astra' },
     }));
     assert.equal(error.source, 'budget');
     assert.equal(error.code, 'ai_daily_budget_exceeded');

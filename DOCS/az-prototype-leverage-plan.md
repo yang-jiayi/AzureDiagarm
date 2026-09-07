@@ -2,6 +2,9 @@
 
 ## Assessment: Leveraging `az prototype` in the Azure Diagram Builder
 
+> Historical integration proposal, not implemented-feature or model-availability
+> documentation. See the current [managed Astra and BYO policy](../README.md#ai-model-policy).
+
 **Short answer: Yes, absolutely.** These two tools are highly complementary and there are several concrete integration opportunities. Here's my analysis, ordered by impact:
 
 ---

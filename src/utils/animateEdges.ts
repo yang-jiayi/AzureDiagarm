@@ -57,17 +57,19 @@ export function animateEdgeFlow(svgText: string, options: AnimateEdgeFlowOptions
     // because an SVG marker id cannot contain a `#`. One regex covers both.
     const m = /color=["']?#([0-9a-fA-F]{6})/.exec(open);
     const color = m ? `#${m[1]}` : palette[i % palette.length];
+    const authoredOpacity = Number(/\sopacity=["']([^"']+)["']/.exec(open)?.[1] ?? 1);
+    const opacity = Number.isFinite(authoredOpacity) ? Math.max(0, Math.min(1, authoredOpacity)) : 1;
     const dur = (baseDuration + (i % 4) * 0.35).toFixed(2);
     const begin = (-(i * 0.3)).toFixed(2); // stagger so flows don't pulse in sync
     const tailBegin = (parseFloat(begin) - parseFloat(dur) / 2).toFixed(2);
     i++;
 
     const head =
-      `<circle r="${headRadius}" fill="${color}" opacity="0.95">` +
+      `<circle r="${headRadius}" fill="${color}" opacity="${0.95 * opacity}">` +
       `<animateMotion dur="${dur}s" begin="${begin}s" repeatCount="indefinite" rotate="0">` +
       `<mpath xlink:href="#${id}" href="#${id}"/></animateMotion></circle>`;
     const tail =
-      `<circle r="${tailRadius}" fill="${color}" opacity="0.45">` +
+      `<circle r="${tailRadius}" fill="${color}" opacity="${0.45 * opacity}">` +
       `<animateMotion dur="${dur}s" begin="${tailBegin}s" repeatCount="indefinite" rotate="0">` +
       `<mpath xlink:href="#${id}" href="#${id}"/></animateMotion></circle>`;
 

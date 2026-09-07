@@ -4,9 +4,9 @@
 
 ## Overview
 
-The Microsoft Product Architecture Diagram Builder is a web-based tool that uses AI to generate Azure architecture diagrams with real-time pricing estimates. Built with React, TypeScript, and Vite, it leverages **12 AI models** via Azure OpenAI (GPT-5.1, GPT-5.2, GPT-5.2 Codex, GPT-5.3 Codex, GPT-5.4, GPT-5.4 Mini, DeepSeek V3.2 Speciale, DeepSeek V4 Pro, Grok 4.1 Fast, Grok 4.3, Mistral Large 3, Kimi K2.5) for diagram generation, validation, and Infrastructure as Code. The Azure Retail Prices API provides cost estimation across **8 regions** (PAYG and 1-year Reserved), including Microsoft Fabric capacity and OneLake.
+The Microsoft Product Architecture Diagram Builder is a web-based tool that uses AI to generate Azure architecture diagrams with real-time pricing estimates. Built with React, TypeScript, and Vite, it provides managed **GPT-6 Astra** via Azure OpenAI and separately selected, administrator-enabled BYO connections for diagram generation, validation, and Infrastructure as Code. The Azure Retail Prices API provides cost estimation across **8 regions** (PAYG and 1-year Reserved), including Microsoft Fabric capacity and OneLake.
 
-A lightweight Express.js **token server** (`127.0.0.1:3001`, co-located with nginx in the container) is the security boundary: it proxies all Azure OpenAI traffic (`/api/openai`) so the key never reaches the browser, grounds deployment guides in Microsoft Learn (`/api/docs-search`), delivers feedback by email with optional Table Storage or Cosmos DB archives (`/api/feedback`), and issues keyless Speech tokens (`/api/speech-token`) via `DefaultAzureCredential` (Managed Identity).
+A lightweight Express.js **token server** (`127.0.0.1:3001`, co-located with nginx in the container) is the security boundary: it proxies AI traffic (`/api/openai`) without exposing managed credentials to the browser, grounds deployment guides in Microsoft Learn (`/api/docs-search`), delivers feedback by email with optional Table Storage or Cosmos DB archives (`/api/feedback`), and issues keyless Speech tokens (`/api/speech-token`). BYO requests carry the user's own tab-memory key through the proxy to the approved destination; they never borrow managed credentials.
 
 The project also ships a standalone **MCP server** (`mcp-server/`) exposing 8 tools over stdio + Streamable-HTTP, consumable by **Microsoft Scout** and other MCP clients. The app is deployed on Azure Container Apps and instrumented with Application Insights.
 
@@ -47,7 +47,7 @@ graph TB
     end
 
     subgraph "External APIs"
-        OpenAI[Azure OpenAI API<br/>12 Models via Azure AI Foundry]
+        OpenAI[Azure OpenAI Responses API<br/>GPT-6 Astra]
         LearnMCP[Microsoft Learn MCP]
         AzureAPI[Azure Retail Prices API]
         Cosmos[(Azure Cosmos DB)]
@@ -382,25 +382,17 @@ azure-diagrams/
 - **MCP server** - `@modelcontextprotocol/sdk`, stdio + Streamable-HTTP transports, Bearer-token auth (consumable by Microsoft Scout)
 - **Node.js** - Runtime for server, MCP server, and scripts
 
-### AI Models (via Azure AI Foundry)
-- **GPT-5.1** - Reasoning model with configurable effort (none/low/medium/high)
-- **GPT-5.2** - Reasoning model with configurable effort (none/low/medium/high)
-- **GPT-5.2 Codex** - Code-optimized reasoning model
-- **GPT-5.3 Codex** - Latest code-optimized reasoning model
-- **GPT-5.4** - Most capable frontier model for professional work, coding, and tool use
-- **GPT-5.4 Mini** - Lightweight frontier model
-- **DeepSeek V3.2 Speciale** - Third-party model via Azure AI Foundry
-- **DeepSeek V4 Pro** - Third-party model via Azure AI Foundry
-- **Grok 4.1 Fast** - Third-party model via Azure AI Foundry
-- **Grok 4.3** - Third-party model via Azure AI Foundry
-- **Mistral Large 3** - Third-party model via Azure AI Foundry
-- **Kimi K2.5** - Third-party model via Azure AI Foundry
-- All Azure OpenAI traffic is **proxied server-side** (`/api/openai`); the key is never bundled into the browser
-- Selectable per-generation via **ModelSelector** dropdown
-- Per-feature overrides (generation, validation, deployment) stored in localStorage
+### AI Connections
+- **GPT-6 Astra** is the sole managed model, with configurable reasoning effort
+- All managed and BYO traffic is **proxied server-side** (`/api/openai`); no managed key is bundled into the browser
+- Global and per-feature reasoning preferences are stored in localStorage
+- Legacy model preferences migrate to Astra; historical result identities are preserved
+- BYO profiles contain public Azure OpenAI / official OpenAI configuration; keys and verification remain per-tab memory only
+- Selected BYO profiles require explicit administrator opt-in, valid credentials, and verification; missing or changed settings block instead of falling back
+- Missing managed Astra configuration and alternate managed-model requests still fail explicitly
 
 ### Services & APIs
-- **Azure OpenAI API** (`2025-04-01-preview`) - AI-powered diagram generation, validation, deployment guides (via the `/api/openai` server proxy)
+- **Azure OpenAI Responses API** (`/openai/v1/responses`) - AI-powered diagram generation, validation, deployment guides (via the `/api/openai` server proxy)
 - **Microsoft Learn MCP** - documentation grounding for deployment guides (via the `/api/docs-search` server proxy)
 - **Azure Retail Prices API** - real-time pricing data (PAYG + Reserved), pre-fetched per region
 - **Azure Blob Storage** - authenticated diagram persistence (keyless / managed identity)
@@ -427,7 +419,7 @@ azure-diagrams/
 
 ### 1. AI-Powered Diagram Generation
 - **Input**: Natural language architecture description, or uploaded image, or IaC template (ARM/Bicep/Terraform)
-- **Model Selection**: Choose from 12 models (GPT-5.1, GPT-5.2, GPT-5.2 Codex, GPT-5.3 Codex, GPT-5.4, GPT-5.4 Mini, DeepSeek V3.2 Speciale, DeepSeek V4 Pro, Grok 4.1 Fast, Grok 4.3, Mistral Large 3, Kimi K2.5) with optional reasoning effort
+- **Connection**: Managed GPT-6 Astra or an explicitly selected BYO profile, with no automatic connection fallback
 - **Processing**: Azure OpenAI analyzes requirements and generates structured JSON
 - **Post-processing**: Service names normalized against `serviceIconMapping`, categories corrected, icons resolved
 - **Output**: Services, connections (sync/async/optional/bidirectional), groups, and workflow steps
@@ -496,13 +488,13 @@ azure-diagrams/
 - **Comparison**: Side-by-side version diff
 - **Restore**: Roll back to any previous version
 
-### 9. Model Selection & Comparison
-- **12 models**: GPT-5.1, GPT-5.2, GPT-5.2 Codex, GPT-5.3 Codex, GPT-5.4, GPT-5.4 Mini, DeepSeek V3.2 Speciale, DeepSeek V4 Pro, Grok 4.1 Fast, Grok 4.3, Mistral Large 3, Kimi K2.5
-- **Reasoning effort**: Configurable (none/low/medium/high) for reasoning-capable models
-- **Per-feature overrides**: Different models for generation vs. validation vs. deployment guides
-- **Architecture comparison**: Run the same prompt through multiple models in parallel; compare service counts, tokens, latency; apply the best result
-- **Validation comparison**: Run WAF validation across models in parallel; compare scores, pillar breakdowns, severity distributions. An inline WAF info box describes the five pillars being assessed before the run starts
-- **Export**: Save all diagrams as individual JSON files or a combined comparison report
+### 9. AI Connection and Reasoning Settings
+- **Managed model**: GPT-6 Astra only
+- **Reasoning effort**: Configurable (`none`, `low`, `medium`, `high`, `xhigh`, `max`)
+- **Per-feature overrides**: Independent reasoning for generation, validation, deployment guides, and blueprints
+- **Migration**: Saved legacy model choices become Astra preferences without relabelling historical results
+- **BYO**: Multiple named, independently verified connection profiles with explicit selection and per-profile capabilities
+- **UI**: Managed/BYO selection and connection management; no retired managed-model roster or multi-model comparison launchers
 
 ### 10. IaC Template Import
 - **Supported formats**: ARM templates (`.json`), Bicep (`.bicep`), Terraform (`.tf`), Terraform state (`.tfstate`)
@@ -609,27 +601,21 @@ scripts/fetch-multi-region-pricing.sh
 > (`/api/openai`). The API key is never embedded in the client bundle. The
 > `VITE_AZURE_OPENAI_ENDPOINT` build-time value is a non-secret flag that tells
 > the UI that AI is configured; the real endpoint and credentials are read at
-> runtime by the token server. Optional user-owned credentials remain in
-> browser-tab memory only and are accepted only when the server enables BYO AI.
+> runtime by the token server. Only the approved managed Astra deployment is
+> callable; user-owned endpoints and other providers are not supported.
 
 ```env
 # Build-time variables (embedded by Vite via import.meta.env) — NON-SECRET.
 # Deployment NAMES and the endpoint are safe to embed. The API key is NOT.
 VITE_AZURE_OPENAI_ENDPOINT=<Azure OpenAI endpoint URL — non-secret flag>
-VITE_AZURE_OPENAI_DEPLOYMENT=<Default deployment name>
-VITE_AZURE_OPENAI_DEPLOYMENT_GPT51=<GPT-5.1 deployment>
-VITE_AZURE_OPENAI_DEPLOYMENT_GPT52=<GPT-5.2 deployment>
-VITE_AZURE_OPENAI_DEPLOYMENT_GPT52CODEX=<GPT-5.2 Codex deployment>
-VITE_AZURE_OPENAI_DEPLOYMENT_GPT53CODEX=<GPT-5.3 Codex deployment>
-VITE_AZURE_OPENAI_DEPLOYMENT_DEEPSEEK=<DeepSeek V3.2 Speciale deployment>
-VITE_AZURE_OPENAI_DEPLOYMENT_GROK4FAST=<Grok 4.1 Fast deployment>
+VITE_AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA=<Genuine Astra deployment name>
 VITE_APPINSIGHTS_CONNECTION_STRING=<Application Insights connection string (optional)>
-VITE_REASONING_EFFORT=<medium|low|high|none>
 
 # Runtime variables (for server/container) — read by token-server.js
 AZURE_OPENAI_ENDPOINT=<Azure OpenAI endpoint URL — REQUIRED for /api/openai>
+AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA=<Same Astra deployment name as the frontend>
+AZURE_OPENAI_ALLOWED_DEPLOYMENTS=<Only that Astra deployment name>
 AZURE_OPENAI_API_KEY=<Azure OpenAI key — OPTIONAL fallback; prefer managed identity>
-ALLOW_BYO_AI_ENDPOINTS=<true|false — allow trusted Azure OpenAI and official OpenAI user endpoints>
 LEARN_MCP_URL=<override for the Microsoft Learn MCP endpoint (optional)>
 AZURE_COSMOS_ENDPOINT=<Cosmos DB endpoint>
 COSMOS_DATABASE_ID=<Cosmos DB database ID>
@@ -642,21 +628,23 @@ COSMOS_CONTAINER_ID=<Cosmos DB container ID>
 |----------|---------|
 | `/api/speech-token` | Keyless AAD token for the Speech SDK (avatar) |
 | `/api/ice-token` | WebRTC ICE relay credentials for avatar video |
-| `/api/openai` | Proxies managed AI calls and, when enabled, validated user-owned Azure OpenAI or official OpenAI calls |
+| `/api/openai` | Proxies only approved managed Astra Responses requests |
 | `/api/docs-search` | Microsoft Learn docs grounding for deployment guides |
 | `/api/feedback` | Delivers feedback email and optionally archives it in Table Storage or Cosmos DB |
 
-### Bring-your-own AI security boundary
+### Managed and BYO Security Boundaries
 
-- The browser persists only non-secret provider, endpoint, model, format, API
-  version, and capability preferences.
-- API keys remain in module memory for the current browser tab and are excluded
-  from diagrams, local storage, telemetry, URLs, and logs.
-- The server accepts only trusted Azure OpenAI DNS suffixes or the fixed
-  `api.openai.com` host, requires HTTPS, rejects credentials, ports, query
-  strings, fragments, and prebuilt API paths, and disables redirects.
-- Arbitrary OpenAI-compatible hosts are unsupported because they would turn the
-  application into an SSRF-capable open proxy.
+- The server binds managed requests to `AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA`, independent
+  of browser preferences or client-supplied model names.
+- Alternate managed deployments and non-Responses managed formats are rejected
+  before upstream inference.
+- BYO requires explicit server opt-in and a trusted Azure or official OpenAI
+  origin. Only the supplied user's key is forwarded, never the server's identity
+  or key; redirects and arbitrary destinations are rejected.
+- Managed credentials remain server-side. BYO keys are not persisted or logged.
+  Authentication, origin controls, shared budgets, and cancellation apply to both paths.
+- Configuring an alias is not proof of model identity: the Azure deployment must
+  actually host `gpt-6-astra`, and release preflight must reject a mismatch.
 
 ## Known Limitations
 
@@ -665,7 +653,7 @@ COSMOS_CONTAINER_ID=<Cosmos DB container ID>
 3. **Usage-Based Services**: Fixed fallback estimates (e.g., Storage, Monitor)
 4. **Region Coverage**: 8 regions (can expand to 60+ Azure regions)
 5. **ARM Export**: Partial implementation, not production-ready
-6. **Model Variability**: Third-party models (DeepSeek, Grok) may occasionally produce less precise service naming than GPT models
+6. **AI Output and Availability**: Astra output still requires review; an upstream outage is reported rather than hidden through a model substitution
 
 ## Future Enhancements
 
@@ -764,4 +752,4 @@ Key architectural decisions:
 - **azd template** (`azure.yaml` + `infra/`) for one-command provision and deploy, qualifying for Azure-Samples gallery
 - **Azure Container Apps deployment** with ACR builds and auto-scaling (1–3 replicas)
 
-The system successfully handles the complexity of 714 icons (plus the Microsoft Fabric set), per-region pricing across 8 regions, 12 AI models, and variable service naming conventions to deliver a seamless user experience.
+The system combines 714 icons (plus the Microsoft Fabric set), per-region pricing across 8 regions, GPT-6 Astra, and service-name normalization in one architecture workspace.

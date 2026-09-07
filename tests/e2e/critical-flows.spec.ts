@@ -423,6 +423,188 @@ for (const touch of [false, true]) {
       viewport: touch ? { width: 390, height: 844 } : { width: 1600, height: 900 },
     });
 
+    test('folds controls upward while retaining usable icons and view preferences', async ({ page }, testInfo) => {
+      await initializePage(page);
+      await page.route('**/api/**', async route => {
+        const access = new URL(route.request().url()).pathname === '/api/access/me';
+        await fulfillJson(route, access
+          ? { enabled: false, authenticated: false, allowed: true, isAdmin: false }
+          : { error: 'Not found' }, access ? 200 : 404);
+      });
+      await page.goto('/');
+      const openPalette = async () => {
+        if (touch) {
+          await page.getByRole('navigation', { name: 'Mobile command bar' })
+            .getByRole('button', { name: 'Services' }).click();
+        } else {
+          await page.getByRole('button', { name: 'Open services panel' }).click();
+        }
+      };
+      if (touch) await openPalette();
+      const palette = page.locator('.icon-palette');
+      const toggle = palette.locator('.palette-controls-toggle');
+      const search = palette.locator('.search-box input');
+      await expect(palette.locator('.icon-image').first()).toBeVisible();
+      await expect(toggle).toHaveAccessibleName('Microsoft Services: Collapse icon controls');
+      await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+      const toggleBounds = await toggle.boundingBox();
+      expect(toggleBounds?.height).toBeGreaterThanOrEqual(44);
+
+      const measureIconSpace = () => palette.evaluate(element => {
+        const content = element.querySelector('.palette-content');
+        const viewport = element.querySelector('.virtualized-icons-viewport');
+        if (!content || !viewport) throw new Error('Expected the populated icon list');
+        const contentBounds = content.getBoundingClientRect();
+        const viewportBounds = viewport.getBoundingClientRect();
+        const top = Math.max(contentBounds.top, viewportBounds.top, 0);
+        const bottom = Math.min(contentBounds.bottom, viewportBounds.bottom, window.innerHeight);
+        const fullIcons = [...viewport.querySelectorAll('.icon-item')].filter(icon => {
+          const bounds = icon.getBoundingClientRect();
+          return bounds.top >= top && bounds.bottom <= bottom;
+        }).length;
+        return { height: contentBounds.height, visibleHeight: bottom - top, fullIcons };
+      });
+      const expanded = await measureIconSpace();
+      await testInfo.attach('expanded-palette', {
+        body: await palette.screenshot(), contentType: 'image/png',
+      });
+      await toggle.focus();
+      await page.keyboard.press('Enter');
+      await expect(toggle).toBeFocused();
+      await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+      await expect(search).toBeHidden();
+      await expect(palette.getByRole('tablist')).toHaveCount(0);
+      await expect(palette.locator('.palette-recommended-intro')).toHaveCount(0);
+      await expect(palette.locator('#palette-view-panel')).toHaveAttribute(
+        'aria-labelledby', 'palette-collapsed-summary',
+      );
+      const focusClearance = await toggle.evaluate(element => {
+        const summary = document.getElementById('palette-collapsed-summary');
+        if (!summary) throw new Error('Expected the visible palette summary');
+        const style = getComputedStyle(element);
+        return summary.getBoundingClientRect().top - element.getBoundingClientRect().bottom
+          - Number.parseFloat(style.outlineWidth) - Number.parseFloat(style.outlineOffset);
+      });
+      expect(focusClearance, 'the keyboard focus ring must not cover the view summary').toBeGreaterThanOrEqual(0);
+      await expect.poll(async () => (await measureIconSpace()).fullIcons)
+        .toBeGreaterThan(expanded.fullIcons);
+      const folded = await measureIconSpace();
+      expect(folded.height - expanded.height).toBeGreaterThan(160);
+      expect(folded.visibleHeight - expanded.visibleHeight).toBeGreaterThan(100);
+      expect(folded.fullIcons).toBeGreaterThan(expanded.fullIcons);
+      await testInfo.attach('palette-space', {
+        body: JSON.stringify({ expanded, folded }), contentType: 'application/json',
+      });
+      await testInfo.attach('folded-palette', {
+        body: await palette.screenshot(), contentType: 'image/png',
+      });
+      await page.keyboard.press('Tab');
+      await expect(palette.getByRole('button', { name: 'Close services panel' })).toBeFocused();
+      await page.keyboard.press('Tab');
+      await expect(palette.locator('.virtualized-icons-viewport')).toBeFocused();
+      for (const dark of [false, true]) {
+        await page.evaluate(enabled => document.body.classList.toggle('dark-mode', enabled), dark);
+        await expectNoWcagViolations(page, '.icon-palette');
+      }
+
+      if (!touch) {
+        await page.setViewportSize({ width: 1600, height: 1400 });
+        await expect.poll(async () => (await measureIconSpace()).visibleHeight).toBeGreaterThan(750);
+        const tallFolded = await measureIconSpace();
+        await toggle.press('Space');
+        await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+        const tallExpanded = await measureIconSpace();
+        expect(tallFolded.visibleHeight - tallExpanded.visibleHeight).toBeGreaterThan(100);
+        expect(tallFolded.fullIcons).toBeGreaterThan(tallExpanded.fullIcons);
+        await testInfo.attach('tall-palette-space', {
+          body: JSON.stringify({ expanded: tallExpanded, folded: tallFolded }),
+          contentType: 'application/json',
+        });
+        await page.setViewportSize({ width: 1600, height: 900 });
+      } else {
+        await toggle.press('Space');
+      }
+      await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+      await palette.getByRole('tab', { name: /^All/ }).click();
+      await search.fill('App Services');
+      await palette.getByRole('button', { name: 'List view', exact: true }).click();
+      await expect(palette.getByRole('button', { name: 'Add App Services to the canvas' })).toHaveCount(1);
+      await toggle.click();
+      await expect(palette.locator('.palette-collapsed-summary')).toContainText('All');
+      await expect(palette.locator('.palette-collapsed-summary')).toContainText('App Services');
+      await palette.getByRole('button', { name: 'Close services panel' }).click();
+      await openPalette();
+      await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+      await expect(search).toHaveValue('App Services');
+      await toggle.click();
+      await expect(palette.getByRole('tab', { name: /^All/ })).toHaveAttribute('aria-selected', 'true');
+      await expect(palette.getByRole('button', { name: 'List view', exact: true }))
+        .toHaveAttribute('aria-pressed', 'true');
+      await expect(search).toHaveValue('App Services');
+      await toggle.click();
+      await expect.poll(() => page.evaluate(() => (
+        localStorage.getItem('azure-diagram-builder.paletteControlsCollapsed.v1')
+      ))).toBe('true');
+
+      await page.reload();
+      if (touch) await openPalette();
+      await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+      await expect(palette).toHaveClass(/palette-layout-list/);
+      await expect(palette.locator('.icon-image').first()).toBeVisible();
+      await toggle.click();
+      await expect(search).toBeVisible();
+      await expect.poll(() => page.evaluate(() => (
+        localStorage.getItem('azure-diagram-builder.paletteControlsCollapsed.v1')
+      ))).toBe('false');
+      await palette.locator('.icon-item-main').first().click();
+      await expect(page.locator('.react-flow__node')).toHaveCount(1);
+    });
+
+    test('keeps the selected collection and Japanese disclosure usable at narrow widths', async ({ page }, testInfo) => {
+      await initializePage(page);
+      await page.setViewportSize({ width: 1280, height: 800 });
+      await page.route('**/api/**', async route => {
+        const access = new URL(route.request().url()).pathname === '/api/access/me';
+        await fulfillJson(route, access
+          ? { enabled: false, authenticated: false, allowed: true, isAdmin: false }
+          : { error: 'Not found' }, access ? 200 : 404);
+      });
+      await page.goto('/');
+      await page.getByRole('button', { name: 'More', exact: true }).click();
+      await page.getByRole('button', { name: '日本語', exact: true }).click();
+      await page.keyboard.press('Escape');
+      if (touch) {
+        await page.setViewportSize({ width: 320, height: 640 });
+        await page.locator('.mobile-command-bar').getByRole('button', { name: 'サービス' }).click();
+      }
+      const palette = page.locator('.icon-palette');
+      const toggle = palette.locator('.palette-controls-toggle');
+      await expect(toggle).toHaveAccessibleName(/アイコンの操作エリアを折りたたむ$/);
+      await palette.getByRole('tab', { name: /^コレクション/ }).click();
+      for (const name of ['Backend', 'Data']) {
+        page.once('dialog', dialog => dialog.accept(name));
+        await palette.getByRole('button', { name: '新規', exact: true }).click();
+      }
+      const collection = palette.getByRole('combobox', { name: '選択中のコレクション' });
+      await collection.selectOption({ label: 'Backend (0)' });
+      const selected = await collection.inputValue();
+      await toggle.click();
+      await expect(toggle).toHaveAccessibleName(/アイコンの操作エリアを展開$/);
+      await expect(collection).toHaveValue(selected);
+      await expect(palette.locator('.palette-collapsed-summary')).toContainText('コレクション');
+      expect(await palette.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
+      expect(await toggle.locator('span').evaluate(element => element.scrollWidth <= element.clientWidth))
+        .toBe(true);
+      await expectNoWcagViolations(page, '.icon-palette');
+      await testInfo.attach('folded-palette-japanese', {
+        body: await palette.screenshot(), contentType: 'image/png',
+      });
+      await toggle.click();
+      await expect(palette.getByRole('tab', { name: /^コレクション/ }))
+        .toHaveAttribute('aria-selected', 'true');
+      await expect(collection).toHaveValue(selected);
+    });
+
     test('separate insertion from organization with synchronized virtual rows', async ({ page }) => {
       await initializePage(page);
       await page.route('**/api/**', async route => {
@@ -1213,134 +1395,285 @@ test('cloud share links wait for privacy preflight confirmation', async ({ page 
     .toHaveValue('https://example.test/#share-privacy-approved-share');
 });
 
-test('custom AI settings keep credentials out of persistent browser storage', async ({ page }) => {
+for (const [width, allowBYO] of [[1600, true], [1600, false], [390, true], [390, false]] as const) {
+  test(`managed Astra workspace preserves BYO access and retires comparisons at ${width}px with BYO policy ${allowBYO}`, async ({ page }, testInfo) => {
+    await initializePage(page);
+    await page.addInitScript(() => {
+      localStorage.setItem('azure-diagrams-model-settings', JSON.stringify({
+        version: 3, model: 'gpt-5.6-sol', reasoningEffort: 'high',
+        featureOverrides: { blueprint: { model: 'gpt-5.6-luna', reasoningEffort: 'medium' } },
+      }));
+      localStorage.setItem('azure-diagrams-byo-ai-settings', JSON.stringify({
+        version: 1, enabled: true, provider: 'openai', model: 'customer-owned-model',
+        baseUrl: 'https://api.openai.com/v1', apiFormat: 'responses',
+      }));
+    });
+    const requests: Record<string, unknown>[] = [];
+    await page.route('**/api/**', async route => {
+      const path = new URL(route.request().url()).pathname;
+      if (path === '/api/access/me') {
+        await fulfillJson(route, { enabled: false, authenticated: false, allowed: true, isAdmin: false });
+      } else if (path === '/api/runtime-config') {
+        await fulfillJson(route, { features: { bringYourOwnAI: allowBYO } });
+      } else if (path === '/api/openai') {
+        requests.push(route.request().postDataJSON() as Record<string, unknown>);
+        await fulfillJson(route, { error: { message: 'Mocked request completed without a generated graph.' } }, 400);
+      } else {
+        await fulfillJson(route, { error: 'Not found' }, 404);
+      }
+    });
+    await page.setViewportSize({ width, height: 900 });
+    await page.goto('/');
+    const retired = /Compare Models|Compare Validation/;
+    const mobileCommands = page.getByRole('navigation', { name: 'Mobile command bar' });
+    const ribbonSheet = page.getByRole('dialog', { name: 'Ribbon commands' });
+    const moreTrigger = page.getByRole('button', {
+      name: width < 640 ? 'More application options' : 'More',
+      exact: true,
+    });
+    const moreOptions = page.getByRole('dialog', { name: 'More application options' });
+    await moreTrigger.click();
+    await expect(moreOptions).toBeVisible();
+    await expect(moreOptions.getByRole('button', { name: retired })).toHaveCount(0);
+    await expect(moreOptions.getByRole('button', { name: 'AI connections', exact: true })).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(moreOptions).toBeHidden();
+    await expect(moreTrigger).toBeFocused();
+    await page.getByRole('region', { name: 'Architecture canvas' }).focus();
+    await page.keyboard.press('Control+K');
+    const commands = page.getByTestId('command-palette');
+    for (const query of ['compare models', 'compare validation']) {
+      await commands.getByRole('combobox', { name: 'Search commands and services' }).fill(query);
+      await expect(commands.getByRole('option', { name: retired })).toHaveCount(0);
+    }
+    await commands.getByRole('combobox', { name: 'Search commands and services' }).fill('custom AI');
+    const connectionCommand = commands.getByRole('option', { name: /AI connections/ });
+    await expect(connectionCommand).toBeVisible();
+    await connectionCommand.click();
+    const connectionDialog = page.getByRole('dialog', { name: 'AI connections', exact: true });
+    await expect(connectionDialog).toBeVisible();
+    await expect(connectionDialog).toContainText('customer-owned-model');
+    await expect(connectionDialog.getByLabel('API key (tab memory only)', { exact: true })).toHaveValue('');
+    await expect(connectionDialog.getByRole('button', { name: 'Test connection', exact: true })).toBeDisabled();
+    await expect(connectionDialog.getByRole('button', { name: 'Save profile', exact: true })).toBeEnabled();
+    if (!allowBYO) await expect(connectionDialog).toContainText('disabled by the application administrator');
+    await expectNoWcagViolations(page, '.byo-ai-dialog');
+    await connectionDialog.getByRole('button', { name: 'Use managed Astra', exact: true }).click();
+    await connectionDialog.getByRole('button', { name: 'Done', exact: true }).click();
+    await expect(connectionDialog).toBeHidden();
+    if (width < 640) {
+      await mobileCommands.getByRole('button', { name: 'Review', exact: true }).click();
+      await expect(ribbonSheet).toBeVisible();
+    }
+    await page.getByRole('tab', { name: 'Create', exact: true }).click();
+    await expect(page.getByRole('button', { name: retired })).toHaveCount(0);
+    const trigger = page.locator('.model-popover-trigger');
+    await expect(trigger).toContainText('GPT-6 Astra');
+    await expect(trigger).not.toContainText('Custom');
+    await trigger.click();
+    const settings = page.getByRole('dialog', { name: 'AI model settings', exact: true });
+    await expect(settings).not.toContainText(/GPT-5|Alternative model/i);
+    await expect(settings.getByRole('combobox', { name: 'AI connection', exact: true })).toHaveValue('');
+    await expect(settings.locator('.msp-model-btn, .msp-byo-card')).toHaveCount(0);
+    await settings.locator('.msp-advanced-settings summary').click();
+    await expect(settings.locator('.astra-reasoning-settings').getByRole('combobox')).toHaveCount(4);
+    await expect(settings.getByRole('combobox', { name: 'Blueprint Diagrams - Reasoning effort' })).toHaveValue('medium');
+    await expect(settings.getByRole('button', { name: 'High', exact: true })).toHaveAttribute('aria-pressed', 'true');
+    await expectNoWcagViolations(page, '.toolbar-dropdown-menu--model-settings');
+    await settings.getByRole('button', { name: 'Close', exact: true }).click();
+    await expect(settings).toBeHidden();
+    if (width < 640) {
+      await expect(ribbonSheet).toBeHidden();
+      const reopenCommands = mobileCommands.getByRole('button', { name: 'Create', exact: true });
+      await expect(reopenCommands).toBeFocused();
+      await reopenCommands.click();
+      await expect(ribbonSheet).toBeVisible();
+    }
+    await page.getByRole('tab', { name: 'Review', exact: true }).click();
+    await expect(page.getByRole('button', { name: retired })).toHaveCount(0);
+    if (width < 640) {
+      await page.keyboard.press('Escape');
+      await expect(ribbonSheet).toBeHidden();
+      await expect(mobileCommands.getByRole('button', { name: 'Review', exact: true })).toBeFocused();
+    }
+    if (width === 1600) {
+      const generator = await openAiGenerator(page);
+      await generator.getByLabel('Architecture Description or Modification').fill('Create a small web application');
+      await generator.getByRole('button', { name: 'Continue to output' }).click();
+      await expect(generator.getByRole('combobox', { name: /Select AI model/ })).toHaveCount(0);
+      await generator.getByRole('button', { name: 'Generate Architecture' }).click();
+      if (testInfo.project.metadata.managedAstraConfigured === false) {
+        await expect(generator.getByRole('alert')).toHaveText(
+          'GPT-6 Astra is not configured. Contact the application administrator to configure the managed Astra deployment.',
+        );
+        await expect(generator.getByRole('button', { name: 'Retry generation' })).toBeEnabled();
+        expect(requests).toHaveLength(0);
+      } else {
+        await expect.poll(() => requests.length).toBe(1);
+        expect(requests[0]).toMatchObject({
+          apiFormat: 'responses',
+          deployment: 'playwright-gpt-6-astra',
+          body: { model: 'playwright-gpt-6-astra' },
+        });
+        expect(requests[0]).not.toHaveProperty('byo');
+      }
+    }
+  });
+}
+
+test('BYO connection manager follows the canonical compact breakpoint without overflow', async ({ page }) => {
   await initializePage(page);
-  const apiKey = 'sk-playwright-secret-value';
-  const proxyRequests: Record<string, unknown>[] = [];
-  await page.route('**/api/**', async (route) => {
+  await page.addInitScript(() => {
+    localStorage.setItem('azure-diagrams-byo-ai-settings', JSON.stringify({
+      version: 1, enabled: true, provider: 'openai', model: 'customer-owned-model',
+      baseUrl: 'https://api.openai.com/v1', apiFormat: 'responses',
+    }));
+  });
+  await page.route('**/api/**', async route => {
     const path = new URL(route.request().url()).pathname;
     if (path === '/api/access/me') {
-      await fulfillJson(route, {
-        enabled: false,
-        authenticated: true,
-        email: 'owner@example.com',
-        isAdmin: false,
-        allowed: true,
-      });
-      return;
+      await fulfillJson(route, { enabled: false, authenticated: false, allowed: true, isAdmin: false });
+    } else if (path === '/api/runtime-config') {
+      await fulfillJson(route, { features: { bringYourOwnAI: true } });
+    } else {
+      await fulfillJson(route, { error: 'Not found' }, 404);
     }
-    if (path === '/api/runtime-config') {
-      await fulfillJson(route, {
-        features: { bringYourOwnAI: true },
-      });
-      return;
-    }
-    if (path === '/api/openai') {
-      proxyRequests.push(route.request().postDataJSON() as Record<string, unknown>);
-      await fulfillJson(route, { output_text: '{"status":"ok"}' });
-      return;
-    }
-    await fulfillJson(route, { error: 'Not found' }, 404);
   });
-
+  await page.setViewportSize({ width: 640, height: 900 });
   await page.goto('/');
   await page.getByRole('region', { name: 'Architecture canvas' }).focus();
   await page.keyboard.press('Control+K');
-  const palette = page.getByTestId('command-palette');
-  await palette.getByRole('combobox', { name: 'Search commands and services' })
-    .fill('custom AI');
-  await palette.getByRole('option', { name: /^Configure custom AI/ }).click();
-
-  const dialog = page.getByRole('dialog', { name: 'Bring your own AI endpoint' });
-  await expect(dialog).toBeFocused();
-  await expectNoWcagViolations(page, '.byo-ai-dialog');
-  await dialog.getByLabel('Provider').selectOption('openai');
-  await dialog.getByRole('textbox', { name: 'Model', exact: true }).fill('gpt-5');
-  await dialog.getByLabel('API key').fill(apiKey);
-  await dialog.getByRole('button', { name: 'Test connection' }).click();
-  await expect(dialog.getByText('Connection verified. You can now save and use it.')).toBeVisible();
-
-  expect(proxyRequests).toHaveLength(1);
-  expect((proxyRequests[0]?.byo as Record<string, unknown>)?.apiKey).toBe(apiKey);
-  const persistedValues = await page.evaluate(() => (
-    Object.values(localStorage).join('\n')
-  ));
-  expect(persistedValues).not.toContain(apiKey);
-
-  await dialog.getByRole('button', { name: 'Save verified connection' }).click();
-  await expect(dialog).toBeHidden();
-  await page.getByRole('tab', { name: 'Create' }).click();
-  await expect(page.locator('.model-popover-trigger')).toContainText('Custom: gpt-5');
-
-  await page.reload();
-  await page.getByRole('tab', { name: 'Create' }).click();
-  const modelTrigger = page.locator('.model-popover-trigger');
-  await expect(modelTrigger).toContainText('Custom: gpt-5');
-  await expect(modelTrigger).toContainText('Key required');
-  await modelTrigger.click();
-  await page.getByRole('button', { name: 'Enter key' }).click();
-
-  const reentryDialog = page.getByRole('dialog', { name: 'Bring your own AI endpoint' });
-  await expect(reentryDialog.getByText(/API key required: the saved connection remains selected/))
-    .toBeVisible();
-  await expect(reentryDialog.getByLabel('API key')).toHaveValue('');
-  await reentryDialog.getByLabel('API key').fill(apiKey);
-  await reentryDialog.getByRole('button', { name: 'Test connection' }).click();
-  await expect(reentryDialog.getByText('Connection verified. You can now save and use it.'))
-    .toBeVisible();
-  await reentryDialog.getByRole('button', { name: 'Save verified connection' }).click();
-  await expect(reentryDialog).toBeHidden();
-
-  const generator = await openAiGenerator(page);
-  await generator.getByLabel('Architecture Description or Modification')
-    .fill('Create a small web application');
-  await generator.getByRole('button', { name: 'Continue to output' }).click();
-  await generator.getByRole('button', { name: 'Generate Architecture' }).click();
-  await expect.poll(() => proxyRequests.length).toBe(3);
-  expect((proxyRequests[2]?.byo as Record<string, unknown>)?.apiKey).toBe(apiKey);
-  expect((proxyRequests[2]?.byo as Record<string, unknown>)?.provider).toBe('openai');
-  expect(proxyRequests[2]?.deployment).toBe('gpt-5');
+  const commands = page.getByTestId('command-palette');
+  await commands.getByRole('combobox', { name: 'Search commands and services' }).fill('custom AI');
+  await commands.getByRole('option', { name: /AI connections/ }).click();
+  const dialog = page.getByRole('dialog', { name: 'AI connections', exact: true });
+  const form = dialog.locator('.byo-ai-form-grid');
+  await expect(dialog).toBeVisible();
+  await expect(form).toHaveCount(2);
+  for (const [width, columns] of [[640, 1], [641, 2]] as const) {
+    await page.setViewportSize({ width, height: 900 });
+    await expect.poll(() => form.evaluateAll(elements => elements.map(
+      element => getComputedStyle(element).gridTemplateColumns.split(/\s+/).length,
+    ))).toEqual([columns, columns]);
+    expect(await dialog.evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
+    await expectNoWcagViolations(page, '.byo-ai-dialog');
+  }
 });
 
-test('custom AI settings fail closed when the server kill switch is disabled', async ({ page }) => {
-  await initializePage(page);
-  await page.route('**/api/**', async (route) => {
-    const path = new URL(route.request().url()).pathname;
-    if (path === '/api/access/me') {
-      await fulfillJson(route, {
-        enabled: false,
-        authenticated: true,
-        email: 'owner@example.com',
-        isAdmin: false,
-        allowed: true,
-      });
-      return;
+for (const [provider, apiFormat] of [
+  ['openai', 'responses'],
+  ['azure-openai', 'chat-completions'],
+] as const) {
+  test(`BYO full application tests, selects, and generates with ${provider} ${apiFormat}`, async ({ page }) => {
+    await initializePage(page);
+    const endpoint = provider === 'openai' ? 'https://api.openai.com' : 'https://byo-e2e.openai.azure.com';
+    const model = `customer-${apiFormat}-deployment`;
+    const key = 'sk-byo-e2e-local-fixture-key';
+    const requests: Record<string, unknown>[] = [];
+    await page.route('**/*', async route => {
+      const hostname = new URL(route.request().url()).hostname;
+      if (hostname === '127.0.0.1' || hostname === 'localhost') await route.continue();
+      else await route.abort('blockedbyclient');
+    });
+    await page.route('**/api/**', async route => {
+      const path = new URL(route.request().url()).pathname;
+      if (path === '/api/access/me') {
+        await fulfillJson(route, { enabled: false, authenticated: false, allowed: true, isAdmin: false });
+      } else if (path === '/api/runtime-config') {
+        await fulfillJson(route, { features: { bringYourOwnAI: true } });
+      } else if (path === '/api/openai') {
+        const payload = route.request().postDataJSON() as Record<string, unknown>;
+        requests.push(payload);
+        const text = JSON.stringify(requests.length === 1 ? { status: 'ok' } : {
+          architectureName: 'BYO captured connection',
+          groups: [],
+          services: [{
+            id: 'byo-web',
+            name: 'App Service',
+            type: 'App Service',
+            category: 'compute',
+            description: 'Generated using the explicitly selected user connection',
+          }],
+          connections: [],
+          workflow: [],
+        });
+        await fulfillJson(route, payload.apiFormat === 'responses' ? {
+          status: 'completed',
+          model,
+          output_text: text,
+          usage: { input_tokens: 30, output_tokens: 20, total_tokens: 50 },
+        } : {
+          model,
+          choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: text } }],
+          usage: { prompt_tokens: 30, completion_tokens: 20, total_tokens: 50 },
+        });
+      } else {
+        await fulfillJson(route, { error: 'Not found' }, 404);
+      }
+    });
+    await page.goto('/');
+    await page.getByRole('button', { name: 'More', exact: true }).click();
+    await page.getByRole('dialog', { name: 'More application options' })
+      .getByRole('button', { name: 'AI connections', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: 'AI connections', exact: true });
+    await dialog.getByLabel('Profile name', { exact: true }).fill('Full application BYO');
+    await dialog.getByLabel('Provider', { exact: true }).selectOption(provider);
+    if (provider === 'azure-openai') {
+      await dialog.getByLabel('Endpoint origin', { exact: true }).fill(endpoint);
     }
-    if (path === '/api/runtime-config') {
-      await fulfillJson(route, {
-        features: { bringYourOwnAI: false },
-      });
-      return;
+    await dialog.getByLabel('Model / deployment', { exact: true }).fill(model);
+    await dialog.getByLabel('API format', { exact: true }).selectOption(apiFormat);
+    await dialog.getByLabel('Supports reasoning', { exact: true }).check();
+    await dialog.getByLabel('Profile reasoning effort', { exact: true }).selectOption('max');
+    await dialog.getByLabel('Maximum output tokens', { exact: true }).fill('32000');
+    await dialog.getByRole('button', { name: 'Save profile', exact: true }).click();
+    await dialog.getByLabel('API key (tab memory only)', { exact: true }).fill(key);
+    await dialog.getByRole('button', { name: 'Test connection', exact: true }).click();
+    await expect(dialog.locator('.byo-ai-status--verified')).toBeVisible();
+    await expect.poll(() => requests.length).toBe(1);
+    expect(requests[0]).toMatchObject({ apiFormat, deployment: model, byo: { provider, endpoint, apiKey: key } });
+    expect(await page.evaluate(() => JSON.parse(localStorage.getItem('azure-diagrams-byo-ai-settings') || '{}').activeProfileId))
+      .toBeNull();
+    await dialog.getByRole('button', { name: 'Use this profile', exact: true }).click();
+    await dialog.getByRole('button', { name: 'Done', exact: true }).click();
+    const generator = await openAiGenerator(page);
+    await generator.getByLabel('Architecture Description or Modification').fill('Create one Azure App Service using this connection.');
+    await generator.getByRole('button', { name: 'Continue to output' }).click();
+    await generator.getByRole('button', { name: 'Generate Architecture', exact: true }).click();
+    const review = page.getByRole('dialog', { name: 'Review AI changes', exact: true });
+    await expect(review).toBeVisible();
+    await expect(page.getByTestId('rf__node-byo-web')).toHaveCount(0);
+    await review.getByRole('button', { name: 'Apply selected changes', exact: true }).click();
+    await expect(review).toBeHidden();
+    await expect(page.getByTestId('rf__node-byo-web')).toBeVisible();
+    await expect(page.locator('.model-generation-badge-text strong')).toContainText(model);
+    expect(requests.length).toBeGreaterThanOrEqual(2);
+    expect(requests[1]).toMatchObject({
+      apiFormat, deployment: model, byo: { provider, endpoint, apiKey: key },
+      body: apiFormat === 'responses'
+        ? { model, max_output_tokens: 32000, reasoning: { effort: 'max' } }
+        : { model, max_completion_tokens: 32000, reasoning_effort: 'max' },
+    });
+    expect(await page.evaluate(() => JSON.stringify({
+      local: { ...localStorage }, session: { ...sessionStorage },
+    }))).not.toContain(key);
+    const requestsBeforeReload = requests.length;
+    await page.reload();
+    await page.getByRole('button', { name: 'More', exact: true }).click();
+    await page.getByRole('dialog', { name: 'More application options' })
+      .getByRole('button', { name: 'AI connections', exact: true }).click();
+    await expect(dialog.locator('.byo-ai-status--key-required')).toBeVisible();
+    await expect(dialog.getByLabel('API key (tab memory only)', { exact: true })).toHaveValue('');
+    await expect(dialog.getByRole('button', { name: 'Test connection', exact: true })).toBeDisabled();
+    await expect(dialog.getByRole('button', { name: 'Profile selected', exact: true })).toBeDisabled();
+    expect(await page.evaluate(() => JSON.parse(localStorage.getItem('azure-diagrams-byo-ai-settings') || '{}').activeProfileId))
+      .not.toBeNull();
+    expect(requests).toHaveLength(requestsBeforeReload);
+    for (const request of requests) {
+      expect(request).toMatchObject({ apiFormat, deployment: model, byo: { provider, endpoint, apiKey: key } });
     }
-    await fulfillJson(route, { error: 'Not found' }, 404);
   });
-
-  await page.goto('/');
-  await page.getByRole('region', { name: 'Architecture canvas' }).focus();
-  await page.keyboard.press('Control+K');
-  const palette = page.getByTestId('command-palette');
-  await palette.getByRole('combobox', { name: 'Search commands and services' })
-    .fill('custom AI');
-  await palette.getByRole('option', { name: /^Configure custom AI/ }).click();
-
-  const dialog = page.getByRole('dialog', { name: 'Bring your own AI endpoint' });
-  await expect(dialog.getByText(
-    'Custom AI connections are disabled by the application administrator.',
-  )).toBeVisible();
-  await expect(dialog.getByRole('button', { name: 'Test connection' })).toBeDisabled();
-  await expect(dialog.getByRole('button', { name: 'Save verified connection' })).toBeDisabled();
-  await expectNoWcagViolations(page, '.byo-ai-dialog');
-});
+}
 
 test('PNG export contains rendered diagram content instead of a blank canvas', async ({ page }, testInfo) => {
   await openInteractionDiagram(page);
@@ -1385,6 +1718,113 @@ test('PNG export contains rendered diagram content instead of a blank canvas', a
   expect(metrics.height).toBeGreaterThan(400);
   expect(metrics.sampledColors).toBeGreaterThan(40);
 });
+
+for (const varied of [false, true]) {
+  test(`PNG export legend preserves ${varied ? 'mixed-style disclosure' : 'authored paint'} and collapsed metadata`, async ({ page }, testInfo) => {
+    const base = interactionCloudDocument();
+    const document = {
+      ...base,
+      payload: {
+        ...base.payload,
+        titleBlockData: {
+          architectureName: 'Authored connection styles',
+          author: 'Export reviewer',
+          date: '2026-09-07',
+          version: '1.2',
+        },
+        edges: [
+          {
+            ...base.payload.edges[0],
+            data: { connectionType: 'security' },
+            style: { stroke: '#006d77', strokeDasharray: '10 2 3 2', opacity: 0.45 },
+          },
+          ...(varied ? [{
+            ...base.payload.edges[0],
+            id: 'default-security',
+            data: { connectionType: 'security' },
+          }] : []),
+        ],
+      },
+    };
+    await openInteractionDiagram(page, undefined, false, document);
+    await expect(page.locator('.title-block')).toHaveClass(/collapsed/);
+    await page.evaluate(() => {
+      const observer = new MutationObserver(() => {
+        const legend = window.document.querySelector<HTMLElement>('[data-export-legend]');
+        const host = legend?.parentElement;
+        const swatch = legend?.querySelector('svg');
+        if (!legend || !host || !swatch) return;
+        const line = swatch.querySelector('path');
+        const box = host.getBoundingClientRect();
+        const sample = swatch.getBoundingClientRect();
+        window.document.body.dataset.capturedPngLegend = JSON.stringify({
+          label: legend.querySelector('strong')?.textContent,
+          color: line?.getAttribute('stroke') ?? null,
+          dash: line?.getAttribute('stroke-dasharray') ?? null,
+          opacity: line?.getAttribute('opacity') ?? null,
+          text: host.textContent,
+          width: box.width,
+          height: box.height,
+          sampleX: sample.left - box.left + 4,
+          gapX: sample.left - box.left + 11,
+          sampleY: sample.top - box.top + 6,
+        });
+        observer.disconnect();
+      });
+      observer.observe(window.document.body, { childList: true, subtree: true });
+    });
+
+    await page.getByRole('region', { name: 'Architecture canvas' }).focus();
+    await page.keyboard.press('Control+K');
+    const palette = page.getByTestId('command-palette');
+    await palette.getByRole('combobox', { name: 'Search commands and services' }).fill('export png');
+    const downloadPromise = page.waitForEvent('download');
+    await palette.getByRole('option', { name: /^Export PNG/ }).click();
+    const download = await downloadPromise;
+    const outputPath = testInfo.outputPath('authored-legend.png');
+    await download.saveAs(outputPath);
+    const png = await readFile(outputPath);
+    expect(png.subarray(0, 8).toString('hex')).toBe('89504e470d0a1a0a');
+
+    const captured = await page.evaluate(() => JSON.parse(window.document.body.dataset.capturedPngLegend || 'null'));
+    expect(captured).not.toBeNull();
+    expect(captured.label).toBe(varied ? 'Security (varied)' : 'Security');
+    expect(captured.color).toBe(varied ? null : 'rgb(0, 109, 119)');
+    expect(captured.dash?.replaceAll('px', '').split(/[,\s]+/).map(Number) ?? null)
+      .toEqual(varied ? null : [10, 2, 3, 2]);
+    expect(captured.opacity).toBe(varied ? null : '0.45');
+    expect(captured.text).toContain('Export reviewer');
+    expect(captured.text).toContain('2026-09-07');
+    expect(captured.text).toContain('v1.2');
+
+    const pixels = await page.evaluate(async ({ dataUrl, capture }) => {
+      const image = new Image();
+      image.src = dataUrl;
+      await image.decode();
+      const canvas = window.document.createElement('canvas');
+      canvas.width = image.naturalWidth;
+      canvas.height = image.naturalHeight;
+      const context = canvas.getContext('2d', { willReadFrequently: true });
+      if (!context) throw new Error('Canvas context unavailable');
+      context.drawImage(image, 0, 0);
+      const sample = (x: number) => Array.from(context.getImageData(
+        Math.floor(x / capture.width * canvas.width),
+        Math.floor(capture.sampleY / capture.height * canvas.height),
+        1, 1,
+      ).data);
+      return { line: sample(capture.sampleX), gap: sample(capture.gapX) };
+    }, { dataUrl: `data:image/png;base64,${png.toString('base64')}`, capture: captured });
+    if (varied) {
+      expect(pixels.line.slice(0, 3).every(channel => channel >= 235)).toBe(true);
+    } else {
+      expect(pixels.line[0]).toBeGreaterThan(100);
+      expect(pixels.line[0]).toBeLessThan(170);
+      expect(pixels.line[1] - pixels.line[0]).toBeGreaterThan(35);
+      expect(pixels.line[2] - pixels.line[0]).toBeGreaterThan(35);
+      expect(pixels.gap.slice(0, 3).every(channel => channel >= 235)).toBe(true);
+    }
+  });
+}
 
 test('PNG export expands to include a manually offset edge label', async ({ page }, testInfo) => {
   const document = interactionCloudDocument();
@@ -2615,6 +3055,290 @@ test('canvas uses neutral defaults and brand emphasis only for selection and flo
   await expect(edgePath).toHaveCSS('stroke', 'rgb(15, 108, 189)');
 });
 
+test('flat diagram styling preserves authored colors, paths and stationary connection anchors', async ({ page }) => {
+  const base = interactionCloudDocument();
+  const customColor = { bg: 'rgba(139, 0, 0, 0.1)', border: '#8b0000', header: '#8b0000' };
+  await openInteractionDiagram(page, undefined, false, {
+    ...base,
+    payload: {
+      ...base.payload,
+      nodes: base.payload.nodes.map(node => node.type === 'groupNode'
+        ? { ...node, data: { ...node.data, customColor } }
+        : node),
+      edges: base.payload.edges.map(edge => ({
+        ...edge,
+        label: 'Authored connection',
+        style: { stroke: '#b45309', strokeWidth: 3, strokeDasharray: '9, 4', opacity: 0.8 },
+        data: { connectionType: 'security', pathStyle: 'straight', direction: 'reverse' },
+      })),
+    },
+  });
+
+  const node = page.getByTestId('rf__node-node-a').locator('.azure-node');
+  const path = page.getByTestId('rf__edge-edge-ab').locator('.react-flow__edge-path');
+  const group = page.getByTestId('rf__node-group-a').locator('.group-node');
+  const route = await path.getAttribute('d');
+  const bounds = await node.boundingBox();
+
+  await expect(node).toHaveCSS('border-radius', '6px');
+  await expect(node).toHaveCSS('box-shadow', 'none');
+  await node.hover();
+  await expect(node).toHaveCSS('transform', 'none');
+  expect(await node.boundingBox()).toEqual(bounds);
+  await expect(path).toHaveAttribute('d', route!);
+  await expect(path).toHaveCSS('stroke', 'rgb(180, 83, 9)');
+  await expect(path).toHaveCSS('stroke-width', '3px');
+  await expect(path).toHaveCSS('stroke-dasharray', '9px, 4px');
+  await expect(path).toHaveCSS('opacity', '0.8');
+  await expect(group).toHaveCSS('background-color', customColor.bg);
+  await expect(group).toHaveCSS('border-color', 'rgb(139, 0, 0)');
+  await expect(group.locator('.group-label')).toHaveCSS('color', 'rgb(139, 0, 0)');
+
+  await page.getByRole('tab', { name: 'Home', exact: true }).click();
+  await page.getByRole('button', { name: 'Switch to Dark Mode' }).click();
+  await expect(path).toHaveCSS('stroke', 'rgb(180, 83, 9)');
+  await expect(path).toHaveCSS('stroke-dasharray', '9px, 4px');
+  await expect(path).toHaveCSS('opacity', '0.8');
+  await expect(path).toHaveAttribute('d', route!);
+  await expect(group).toHaveCSS('background-color', customColor.bg);
+  await expect(group).toHaveCSS('border-color', 'rgb(139, 0, 0)');
+  await expect(group.locator('.group-label')).toHaveCSS('color', 'rgb(139, 0, 0)');
+});
+
+test('restored connection styles use per-field defaults without losing solid overrides or authored markers', async ({ page }) => {
+  const base = interactionCloudDocument();
+  const edges = [
+    {
+      ...base.payload.edges[0],
+      id: 'edge-solid-zero',
+      label: 'Authored solid connection',
+      style: { stroke: '#b45309', strokeDasharray: 'none', opacity: 0 },
+      markerStart: { type: 'arrowclosed', color: '#2563eb' },
+      markerEnd: { type: 'arrowclosed', color: '#be185d' },
+      data: {
+        connectionType: 'optional', pathStyle: 'orthogonal', direction: 'bidirectional',
+        labelOffsetX: 38, labelOffsetY: -18, labelOffsetAuto: false,
+      },
+    },
+    {
+      ...base.payload.edges[0],
+      id: 'edge-partial',
+      style: { stroke: '#15803d', strokeWidth: 3 },
+      markerEnd: { type: 'arrowclosed' },
+      data: { connectionType: 'optional', pathStyle: 'smooth', direction: 'forward' },
+    },
+    {
+      ...base.payload.edges[0],
+      id: 'edge-semantic',
+      markerStart: { type: 'arrowclosed' },
+      data: { connectionType: 'security', pathStyle: 'straight', direction: 'reverse' },
+    },
+  ];
+  let savedEdges: Record<string, unknown>[] = [];
+  await openInteractionDiagram(page, payload => {
+    savedEdges = Array.isArray(payload.edges) ? payload.edges as Record<string, unknown>[] : [];
+  }, false, { ...base, connectionCount: edges.length, payload: { ...base.payload, edges } });
+
+  const paths = edges.map(edge => page.getByTestId(`rf__edge-${edge.id}`).locator('.react-flow__edge-path'));
+  for (const path of paths) await expect(path).toHaveAttribute('d', /^M/);
+  const routes = await Promise.all(paths.map(path => path.getAttribute('d')));
+  const markerFill = (path: Locator, attribute: 'marker-start' | 'marker-end') =>
+    path.evaluate((element, name) => {
+      const id = element.getAttribute(name)?.match(/^url\(["']?#(.*?)["']?\)$/)?.[1];
+      const shape = id ? document.getElementById(id)?.querySelector('polyline, path') : null;
+      return shape ? getComputedStyle(shape).fill : null;
+    }, attribute);
+
+  for (const dark of [false, true]) {
+    await page.evaluate(enabled => document.body.classList.toggle('dark-mode', enabled), dark);
+    await expect(paths[0]).toHaveCSS('stroke', 'rgb(180, 83, 9)');
+    await expect(paths[0]).toHaveCSS('stroke-dasharray', 'none');
+    await expect(paths[0]).toHaveCSS('opacity', '0');
+    expect(await markerFill(paths[0], 'marker-start')).toBe('rgb(37, 99, 235)');
+    expect(await markerFill(paths[0], 'marker-end')).toBe('rgb(190, 24, 93)');
+    await expect(paths[1]).toHaveCSS('stroke', 'rgb(21, 128, 61)');
+    await expect(paths[1]).toHaveCSS('stroke-width', '3px');
+    await expect(paths[1]).toHaveCSS('stroke-dasharray', '2px, 4px');
+    await expect(paths[1]).toHaveCSS('opacity', '0.68');
+    expect(await markerFill(paths[1], 'marker-end')).toBe('rgb(21, 128, 61)');
+    await expect(paths[2]).toHaveCSS('stroke', 'rgb(220, 38, 38)');
+    await expect(paths[2]).toHaveCSS('stroke-dasharray', '2px, 3px');
+    await expect(paths[2]).toHaveCSS('opacity', '1');
+    expect(await markerFill(paths[2], 'marker-start')).toBe('rgb(220, 38, 38)');
+    expect(await Promise.all(paths.map(path => path.getAttribute('d')))).toEqual(routes);
+  }
+
+  await page.locator('[data-edge-label-id="edge-solid-zero"]').press('Enter');
+  const input = page.locator('.editable-edge-label-input');
+  await input.fill('Restored explicit style');
+  await input.press('Enter');
+  await expect.poll(
+    () => savedEdges.find(edge => edge.id === 'edge-solid-zero')?.label,
+    { timeout: 5_000 },
+  ).toBe('Restored explicit style');
+  expect(savedEdges.find(edge => edge.id === 'edge-solid-zero')).toMatchObject({
+    ...edges[0],
+    label: 'Restored explicit style',
+  });
+  expect(savedEdges.find(edge => edge.id === 'edge-partial')).toMatchObject({
+    ...edges[1],
+    style: { ...edges[1].style, strokeDasharray: '2, 4', opacity: 0.68 },
+    markerEnd: { type: 'arrowclosed', color: '#15803d' },
+  });
+  expect(savedEdges.find(edge => edge.id === 'edge-semantic')).toMatchObject({
+    ...edges[2],
+    style: { stroke: '#dc2626', strokeDasharray: '2, 3' },
+    markerStart: { type: 'arrowclosed', color: '#dc2626' },
+  });
+  expect(await Promise.all(paths.map(path => path.getAttribute('d')))).toEqual(routes);
+});
+
+test('automatic group headings stay neutral and readable without changing the zone tint', async ({ page }) => {
+  const base = interactionCloudDocument();
+  await openInteractionDiagram(page, undefined, false, {
+    ...base,
+    payload: {
+      ...base.payload,
+      nodes: base.payload.nodes.map(node => node.type === 'groupNode'
+        ? { ...node, data: { ...node.data, label: 'Data layer' } }
+        : node),
+    },
+  });
+  const group = page.getByTestId('rf__node-group-a').locator('.group-node');
+  for (const dark of [false, true]) {
+    await page.evaluate(enabled => document.body.classList.toggle('dark-mode', enabled), dark);
+    await expect(group).toHaveCSS('background-color', 'rgba(16, 185, 129, 0.1)');
+    await expectReadableContrast(group.locator('.group-label'));
+    await expectReadableContrast(group.locator('.fit-to-content-button'), 3);
+    await expectReadableContrast(group.locator('.color-picker-button'), 3);
+  }
+});
+
+test('Japanese service labels avoid orphan characters without changing diagram geometry', async ({ page }) => {
+  const base = interactionCloudDocument();
+  await openInteractionDiagram(page, undefined, false, {
+    ...base,
+    payload: {
+      ...base.payload,
+      nodes: base.payload.nodes.map(node => node.id === 'node-a'
+        ? { ...node, data: { ...node.data, label: '顧客向け Web アプリ' } }
+        : node),
+    },
+  });
+  const node = page.getByTestId('rf__node-node-a');
+  const label = node.locator('.node-label');
+  const path = page.getByTestId('rf__edge-edge-ab').locator('.react-flow__edge-path');
+  const lines = () => label.evaluate(element => {
+    const text = element.firstChild;
+    if (!(text instanceof Text)) throw new Error('Expected the authored service label');
+    const rows = new Map<string, string>();
+    let offset = 0;
+    for (const character of text.data) {
+      const range = document.createRange();
+      range.setStart(text, offset);
+      range.setEnd(text, offset + character.length);
+      offset += character.length;
+      const top = range.getBoundingClientRect().top.toFixed(2);
+      rows.set(top, (rows.get(top) ?? '') + character);
+    }
+    return [...rows.values()].map(row => row.trim()).filter(Boolean);
+  });
+
+  const greedyStyle = await page.addStyleTag({ content: '.node-label { text-wrap: wrap; }' });
+  await expect(label).toHaveCSS('text-wrap', 'wrap');
+  expect(await lines()).toEqual(['顧客向け Web アプ', 'リ']);
+  const beforeNode = await node.boundingBox();
+  const beforeLabel = await label.boundingBox();
+  const beforeRoute = await path.getAttribute('d');
+  const beforeTypography = await label.evaluate(element => {
+    const style = getComputedStyle(element);
+    return [style.fontFamily, style.fontSize, style.lineHeight, style.padding, style.maxWidth];
+  });
+
+  await greedyStyle.evaluate(element => element.remove());
+  await expect(label).toHaveCSS('text-wrap', 'balance');
+  expect(await lines()).toEqual(['顧客向け', 'Web アプリ']);
+  expect(await node.boundingBox()).toEqual(beforeNode);
+  expect(await label.boundingBox()).toEqual(beforeLabel);
+  await expect(path).toHaveAttribute('d', beforeRoute!);
+  expect(await label.evaluate(element => {
+    const style = getComputedStyle(element);
+    return [style.fontFamily, style.fontSize, style.lineHeight, style.padding, style.maxWidth];
+  })).toEqual(beforeTypography);
+});
+
+test('mobile minimap drawing and hit area stay inside its frame with accessible canvas controls', async ({ page }) => {
+  await openInteractionDiagram(page);
+  await page.setViewportSize({ width: 390, height: 844 });
+  const miniMap = page.locator('.nav-minimap');
+  const svg = miniMap.locator('svg').first();
+  await expect(svg).toHaveAttribute('width', '140');
+  await expect(svg).toHaveAttribute('height', '100');
+  const [frame, drawing] = await Promise.all([miniMap.boundingBox(), svg.boundingBox()]);
+  expect(frame).not.toBeNull();
+  expect(drawing).not.toBeNull();
+  expect(drawing!.x).toBeGreaterThanOrEqual(frame!.x);
+  expect(drawing!.y).toBeGreaterThanOrEqual(frame!.y);
+  expect(drawing!.x + drawing!.width).toBeLessThanOrEqual(frame!.x + frame!.width);
+  expect(drawing!.y + drawing!.height).toBeLessThanOrEqual(frame!.y + frame!.height);
+  for (const button of await page.locator('.react-flow__controls-button, .title-block-toggle').all()) {
+    const box = await button.boundingBox();
+    expect(box!.width).toBeGreaterThanOrEqual(44);
+    expect(box!.height).toBeGreaterThanOrEqual(44);
+  }
+  await page.getByRole('navigation', { name: 'Mobile command bar' })
+    .getByRole('button', { name: 'Services', exact: true }).click();
+  for (const button of await page.locator('.palette-close-toggle, .palette-layout-switch button').all()) {
+    const box = await button.boundingBox();
+    expect(box!.width).toBeGreaterThanOrEqual(44);
+    expect(box!.height).toBeGreaterThanOrEqual(44);
+  }
+});
+
+test('mobile fit shows a wide authored diagram without changing its route', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const base = interactionCloudDocument();
+  await openInteractionDiagram(page, undefined, false, {
+    ...base,
+    payload: {
+      ...base.payload,
+      nodes: base.payload.nodes.map(node => node.id === 'node-b'
+        ? { ...node, position: { x: 1500, y: 220 } }
+        : node),
+    },
+  });
+  const path = page.getByTestId('rf__edge-edge-ab').locator('.react-flow__edge-path');
+  const route = await path.getAttribute('d');
+  await page.locator('.react-flow__controls-fitview').click();
+  await expect.poll(() => page.locator('.canvas-container').evaluate(canvas => {
+    const bounds = canvas.getBoundingClientRect();
+    return [...canvas.querySelectorAll('.react-flow__node')].every(node => {
+      const box = node.getBoundingClientRect();
+      return box.left >= bounds.left && box.right <= bounds.right
+        && box.top >= bounds.top && box.bottom <= bounds.bottom;
+    });
+  })).toBe(true);
+  await expect(path).toHaveAttribute('d', route!);
+});
+
+test('diagram metadata starts compact and keeps keyboard editing available', async ({ page }) => {
+  await openInteractionDiagram(page);
+  const metadata = page.locator('.title-block');
+  const toggle = metadata.locator('.title-block-toggle');
+  await expect(metadata).toHaveClass(/collapsed/);
+  await expect(metadata.locator('.title-block-label')).toHaveText('Interaction diagram');
+  await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+  await toggle.press('Enter');
+  await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+  await metadata.locator('.title-block-display').press('Enter');
+  await metadata.getByLabel('Author:', { exact: true }).fill('Diagram author');
+  await metadata.getByRole('button', { name: 'Save', exact: true }).click();
+  await expect(metadata.locator('.title-block-display')).toContainText('Diagram author');
+  await toggle.press('Enter');
+  await expect(metadata).toHaveClass(/collapsed/);
+  await expect(metadata.locator('.title-block-label')).toHaveText('Interaction diagram');
+});
+
 test('canvas chrome keeps navigation, metadata, controls, and feedback in separate zones', async ({ page }) => {
   await openInteractionDiagram(page, undefined, true);
 
@@ -2675,13 +3399,10 @@ test('menu states keep readable contrast in light and dark themes', async ({ pag
     await expectSelectedMenuState(modelButton);
     const modelMenu = page.locator('.toolbar-dropdown-menu--model-settings');
     await expectReadableContrast(modelMenu.locator('.toolbar-dropdown-heading').first());
-    for (const selectedControl of [
-      modelMenu.locator('.msp-model-btn.active'),
-      modelMenu.locator('.msp-reasoning-btn.active'),
-    ]) {
-      await expect(selectedControl).toHaveCSS('color', 'rgb(255, 255, 255)');
-      await expectReadableContrast(selectedControl);
-    }
+    await expectReadableContrast(modelMenu.locator('.msp-managed-note strong'));
+    const selectedReasoning = modelMenu.locator('.msp-reasoning-btn.active');
+    await expect(selectedReasoning).toHaveCSS('color', 'rgb(255, 255, 255)');
+    await expectReadableContrast(selectedReasoning);
     await modelMenu.locator('.msp-close-btn').click();
 
     await page.getByRole('tab', { name: 'Design' }).click();
@@ -3049,14 +3770,14 @@ test('image analysis is single-flight and the reference viewer is keyboard safe'
         imageAnalysisCalls += 1;
         await wait(500);
         await fulfillJson(route, {
-          model: 'playwright-gpt-5-6-sol',
+          model: 'playwright-gpt-6-astra',
           output_text: 'An App Service hosts the web application.',
           usage: { input_tokens: 20, output_tokens: 10, total_tokens: 30 },
         });
         return;
       }
       await fulfillJson(route, {
-        model: 'playwright-gpt-5-6-sol',
+        model: 'playwright-gpt-6-astra',
         output_text: JSON.stringify({
           architectureName: 'Uploaded diagram',
           groups: [],
@@ -6844,7 +7565,7 @@ test('deployment guide accordions are keyboard accessible and stale results are 
       guideRequests += 1;
       if (guideRequests === 2) await wait(700);
       await fulfillJson(route, {
-        model: 'playwright-gpt-5-6-sol',
+        model: 'playwright-gpt-6-astra',
         output_text: JSON.stringify(guide),
         usage: { input_tokens: 30, output_tokens: 20, total_tokens: 50 },
       });

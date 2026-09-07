@@ -17,6 +17,7 @@ import {
   workflowListFromEdges,
   type ExportBox,
   metaSubline,
+  usedConnectionLegend,
 } from '../src/services/diagramExportGeometry.ts';
 import { nodesForExport } from '../src/utils/nodesForExport.ts';
 
@@ -226,6 +227,95 @@ test('the node category drives export colours, with the icon folder as fallback'
   assert.equal(boxes.get('icon-only')?.category, 'networking');
   assert.equal(boxes.get('explicit-wins')?.category, 'compute');
   assert.equal(boxes.get('bare')?.category, 'other');
+});
+
+test('authored connection paint overrides semantic defaults without changing route geometry or direction', () => {
+  const boxes = new Map([['a', box('a', 0, 0)], ['b', box('b', 600, 300)]]);
+  const original: Edge = {
+    id: 'authored', source: 'a', target: 'b',
+    data: { connectionType: 'security', direction: 'reverse' },
+  };
+  const edge: Edge = {
+    ...original, style: { stroke: '#006D77', strokeDasharray: '10 2 3 2', opacity: 0.45 },
+  };
+  const before = structuredClone(edge);
+  const [canonical] = buildExportRoutes([original], boxes);
+  const [actual] = buildExportRoutes([edge], boxes);
+  assert.equal(actual.color, '#006d77');
+  assert.equal(actual.dashPattern, '10, 2, 3, 2');
+  assert.equal(actual.opacity, 0.45);
+  assert.equal(actual.sourceId, 'b');
+  assert.equal(actual.targetId, 'a');
+  assert.deepEqual(actual.points, canonical.points);
+  assert.deepEqual(actual.labelAnchor, canonical.labelAnchor);
+  assert.deepEqual(edge, before);
+});
+
+for (const strokeDasharray of ['', 'none', '0', 0, '0, 0']) {
+  test(`authored solid dash ${JSON.stringify(strokeDasharray)} overrides semantic and legacy animated dashes`, () => {
+    const boxes = new Map([['a', box('a', 0, 0)], ['b', box('b', 600, 0)]]);
+    const [route] = buildExportRoutes([{
+      id: 'solid', source: 'a', target: 'b', animated: true,
+      data: { connectionType: 'async' },
+      style: { strokeDasharray, opacity: 0 },
+    }], boxes);
+    assert.equal(route.dashed, false);
+    assert.equal(route.dashPattern, undefined);
+    assert.equal(route.opacity, 0, 'zero is an authored opacity, not a missing preference');
+  });
+}
+
+test('authored RGB strokes and finite opacity bounds export consistently', () => {
+  const boxes = new Map([['a', box('a', 0, 0)], ['b', box('b', 600, 0)]]);
+  for (const [stroke, opacity, color, expectedOpacity] of [
+    ['rgb(0, 109, 119)', 2, '#006d77', 1],
+    ['#ABC', -1, '#aabbcc', 0],
+    ['rgba(0, 109, 119, 0.5)', 0.4, '#006d77', 0.2],
+    ['rgba(0, 109, 119, 50%)', '75%', '#006d77', 0.375],
+    ['#006d7780', 1, '#006d77', 128 / 255],
+    ['#abc8', 1, '#aabbcc', 136 / 255],
+    ['none', 1, '#000000', 0],
+    ['transparent', 1, '#000000', 0],
+  ] as const) {
+    const [route] = buildExportRoutes([{
+      id: 'paint', source: 'a', target: 'b', style: { stroke, opacity },
+    }], boxes);
+    assert.equal(route.color, color);
+    assert.equal(route.opacity, expectedOpacity);
+  }
+});
+
+test('invalid authored paint falls back to the semantic style without emitting unsafe paint strings', () => {
+  const boxes = new Map([['a', box('a', 0, 0)], ['b', box('b', 600, 0)]]);
+  const base: Edge = { id: 'fallback', source: 'a', target: 'b', data: { connectionType: 'telemetry' } };
+  const [expected] = buildExportRoutes([base], boxes);
+  const [actual] = buildExportRoutes([{
+    ...base, style: { stroke: 'url(https://example.invalid/paint)', strokeDasharray: '4;fill:red', opacity: NaN },
+  }], boxes);
+  assert.equal(actual.color, expected.color);
+  assert.equal(actual.dashPattern, expected.dashPattern);
+  assert.equal(actual.opacity, expected.opacity);
+});
+
+test('the connection legend uses the actual authored paint instead of an unrelated semantic swatch', () => {
+  const [legend] = usedConnectionLegend([{
+    id: 'authored', source: 'a', target: 'b', data: { connectionType: 'security' },
+    style: { stroke: '#006d77', strokeDasharray: 'none', opacity: 0.45 },
+  }]);
+  assert.equal(legend.color, '#006d77');
+  assert.equal(legend.dashed, false);
+  assert.equal(legend.opacity, 0.45);
+});
+
+test('a mixed-style semantic type is disclosed without multiplying the bounded legend rows', () => {
+  const edges: Edge[] = Array.from({ length: 20 }, (_, index) => ({
+    id: `edge-${index}`, source: 'a', target: 'b', data: { connectionType: 'security' },
+    style: { stroke: index % 2 ? '#006d77' : '#dc2626', opacity: (index + 1) / 20 },
+  }));
+  const legend = usedConnectionLegend(edges);
+  assert.equal(legend.length, 1);
+  assert.equal(legend[0].hasMixedStyles, true);
+  assert.match(legend[0].label, /Security.*varied/i);
 });
 
 test('the canonical service name is carried into exports separately from the label', () => {

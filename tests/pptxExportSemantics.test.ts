@@ -84,6 +84,41 @@ test('PPTX keeps a telemetry connector purple and dash-dotted (fix 4)', async ()
   assert.ok(xml.includes('dashdot') || xml.includes('dash'), 'telemetry connector is dashed');
 });
 
+test('PPTX keeps an authored connector color, solid stroke, and transparency', async () => {
+  const xml = (await slideXml([
+    service('a', 'Source', 0, 0), service('b', 'Target', 600, 0),
+  ], [{
+    id: 'authored', source: 'a', target: 'b', data: { connectionType: 'security' },
+    style: { stroke: '#006D77', strokeDasharray: 'none', opacity: 0.45 },
+  }])).toLowerCase();
+  const connector = [...xml.matchAll(/<p:(?:sp|cxnsp)>[\s\S]*?<\/p:(?:sp|cxnsp)>/g)]
+    .find(match => match[0].includes('name="connector-authored"'))?.[0];
+  assert.ok(connector, 'the authored connector is emitted');
+  assert.match(connector, /<a:srgbclr val="006d77"/);
+  assert.match(connector, /<a:alpha val="45000"/);
+  assert.match(connector, /<a:prstdash val="solid"/);
+  const swatch = [...xml.matchAll(/<p:sp>[\s\S]*?<\/p:sp>/g)]
+    .find(match => match[0].includes('name="connection-legend-swatch-security"'))?.[0];
+  assert.ok(swatch, 'the legend contains an actual-paint swatch');
+  assert.match(swatch, /<a:srgbclr val="006d77"/);
+  assert.match(swatch, /<a:alpha val="45000"/);
+  assert.match(swatch, /<a:prstdash val="solid"/);
+});
+
+test('PPTX discloses varied styles without drawing a misleading canonical swatch', async () => {
+  const xml = (await slideXml([
+    service('a', 'Source', 0, 0), service('b', 'Target', 600, 0),
+  ], [
+    { id: 'red', source: 'a', target: 'b', data: { connectionType: 'security' } },
+    {
+      id: 'teal', source: 'a', target: 'b', data: { connectionType: 'security' },
+      style: { stroke: '#006d77', strokeDasharray: 'none' },
+    },
+  ])).toLowerCase();
+  assert.match(xml, /security \(varied\)/);
+  assert.ok(!xml.includes('name="connection-legend-swatch-security"'));
+});
+
 /**
  * The canvas draws up to two tag chips on a tile, then a `+N` counter for the
  * rest. The deck used to draw none of them, which silently dropped the only

@@ -142,7 +142,8 @@ export function shouldRecalculateAutomaticEdgeLabels(changes: NodeChange[]): boo
 
 export function applyAutomaticEdgeLabelOffsets(nodes: Node[], edges: Edge[]): Edge[] {
   const offsets = calculateAutomaticEdgeLabelOffsets(nodes, edges);
-  return edges.map((edge) => {
+  let changed = false;
+  const next = edges.map((edge) => {
     const data = (edge.data ?? {}) as Record<string, unknown>;
     if (data.labelOffsetAuto === false) return edge;
     const offset = offsets.get(edge.id);
@@ -154,6 +155,7 @@ export function applyAutomaticEdgeLabelOffsets(nodes: Node[], edges: Edge[]): Ed
     ) {
       return edge;
     }
+    changed = true;
     return {
       ...edge,
       data: {
@@ -164,4 +166,5 @@ export function applyAutomaticEdgeLabelOffsets(nodes: Node[], edges: Edge[]): Ed
       },
     };
   });
+  return changed ? next : edges;
 }

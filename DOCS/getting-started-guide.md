@@ -88,7 +88,7 @@ The "Generate with AI" modal includes a mode toggle that controls what the AI pr
 | **Both** *(BETA)* | A deployable topology **and** a whiteboard-style Blueprint from the same prompt | Topology on the canvas, Blueprint as a PNG |
 
 > [!NOTE]
-> Blueprint and Both modes require a general-purpose OpenAI model (the GPT-5.x family). If you have a third-party model selected, the app automatically switches to a compatible one for these modes.
+> Topology, Blueprint, and Both modes honor the selected managed Astra or BYO connection. The app does not substitute another connection when the selected one is unavailable.
 
 Blueprint diagrams are intentionally **not** rendered on the canvas — the transformed topology would be low-fidelity. The polished PNG is the deliverable, and you can re-download it any time from **Export > Export Blueprint PNG**. When you choose **Both**, an optional checkbox lets the two generations run in parallel for speed. You can also set the Blueprint legend position (auto, or a fixed corner) in the modal.
 
@@ -236,54 +236,27 @@ Use **Export > Export Costs** to download a CSV file with per-service pricing de
 
 ---
 
-## Step 8: Compare AI Models Side by Side
+## Step 8: Review AI Results
 
-Two comparison modes let you evaluate which model produces the best results for your scenario.
+GPT-6 Astra is the sole managed model; BYO connection selection is available
+when administrator-enabled. Multi-model comparison controls are not offered.
+Review generated changes before applying them and use the validation
+panel to inspect WAF findings. The existing version history lets you compare
+and restore diagram revisions without dispatching another model.
 
-### Architecture Comparison
-
-1. Click **"Compare Models"** in the toolbar.
-2. Select two or more models from the fourteen available options.
-3. Enter your architecture prompt and click **Compare**.
-4. All selected models run in parallel. Results appear side by side showing:
-   - Service count, connection count, group count, workflow steps
-   - Token usage and elapsed time
-5. Click **Apply** on the result you prefer to load that architecture onto the canvas.
-6. Use **Save All Diagrams** to download each result as an individual JSON file.
-7. Use **Save Comparison Report** to download a combined analysis.
-
-### Present Critique with Avatar
-
-After the comparison completes, a **"Present"** button appears in the results panel (visible when the app is configured with an Azure Speech resource):
-
-1. Click **"Present"** in the comparison results panel.
-2. A photorealistic talking avatar appears in a floating panel.
-3. The avatar narrates the model ranking and critique aloud in a natural voice.
-4. **Live closed captions** — each word highlights in the caption bar in real time as it is spoken, synchronized with the audio.
-5. **Drag** the panel header to reposition it anywhere on screen. **Drag the bottom-right corner** to resize the panel.
-6. Close the avatar panel at any time using the ✕ button.
-
-> **Avatar appears blank?** The talking avatar streams over WebRTC. Some networks (corporate firewalls, VPNs, residential ISPs) block UDP traffic to `relay.communication.microsoft.com:3478`, which leaves the video panel empty. The app automatically falls back to TCP on port 443 (`turn:relay.communication.microsoft.com:443?transport=tcp`) and forces ICE relay-only. If you still see `[avatar] ICE state: failed` in the browser console, your network is also blocking outbound 443 to that host — try a different network or escalate to your network team. To test plain UDP, run `window.__AVATAR_FORCE_TCP__ = false` in DevTools before clicking Narrate.
-
-### Validation Comparison
-
-1. Click **"Compare Validation"** in the toolbar (requires an existing diagram on the canvas).
-2. An info box explains that each model validates against the **Azure Well-Architected Framework** and lists the five pillars being assessed.
-3. Select models and run WAF validation across all of them in parallel.
-4. Compare overall scores, pillar breakdowns, severity distributions, and quick wins.
-5. Apply any result to view its full details.
+Previously saved diagrams and review records retain their original model
+metadata. An old model name in a historical record does not make it available
+for new generation.
 
 ---
 
 ## Step 9: Configure AI Model Settings
 
-Click the **AI Model** dropdown in the toolbar to open the settings popover.
+Open the AI settings popover in the toolbar. With managed **GPT-6 Astra**
+selected:
 
-- Choose a global model from fourteen options:
-  - **OpenAI (GPT-5.x):** GPT-5.1, GPT-5.2, GPT-5.4, GPT-5.4 Mini, GPT-5.6 Sol, GPT-5.6 Terra, GPT-5.6 Luna
-  - **Partner models:** DeepSeek V3.2 Speciale, DeepSeek V4 Pro, Grok 4.1 Fast, Grok 4.3, Mistral Large 3, Kimi K2.5, Kimi K2.7 Code
-- Set reasoning effort (none, low, medium, high) for models that support it (the GPT-5.x family).
-- Override the model independently for four features:
+- Set the global reasoning effort: none, low, medium, high, xhigh, or max.
+- Override the reasoning effort independently for four features:
   - Architecture Generation
   - Architecture Validation
   - Deployment Guide & Bicep
@@ -291,9 +264,20 @@ Click the **AI Model** dropdown in the toolbar to open the settings popover.
 - Reset all overrides with a single button.
 
 > [!NOTE]
-> Blueprint and Both modes (Step 2) require an OpenAI GPT-5.x model. The partner models are great for topology generation, validation, and cost-effective comparisons.
+> All four features honor the selected connection. BYO uses its profile's own
+> capability, reasoning, and output-limit settings. Missing keys, unverified
+> profiles, or an unavailable provider are reported explicitly, not hidden by
+> switching to another connection.
 
-Settings persist across browser sessions.
+Managed settings persist across browser sessions. Legacy managed choices migrate to
+Astra while supported reasoning preferences are kept. See the
+[Astra reasoning guide](GPT6-ASTRA-REASONING-LEVELS.md).
+
+For your own Azure OpenAI or official OpenAI connection, create a named profile,
+enter the key, test the connection, then select it. Public profiles persist;
+keys and verification last only for the current tab. Reloading requires key
+re-entry and another test. The [BYO connection guide](BYO-AI-CONNECTIONS.md)
+explains supported endpoints, capabilities, and administrator policy.
 
 ---
 
@@ -354,6 +338,12 @@ Click the **Export** dropdown to choose a format:
 
 The Export menu also shows your most recent exports with timestamps for quick re-downloads. The Editorial PNG and Blueprint PNG items are enabled only after you generate the corresponding diagram, and the cost exports are enabled once your diagram has at least one priced service.
 
+Saved connector colors (hex or numeric RGB/RGBA), solid/dashed styling, and opacity are retained in vector and Office exports. Office formats use their built-in dash presets. Diagram PNG, Office, and interactive HTML legends show the saved connector paint; when one connection type uses different styles, its legend says **(varied)** rather than showing a misleading swatch. The on-canvas legend explains the default styles. Collapsing the title block does not remove author, date, or version information from composed PNG exports.
+
+Native formats retain their own card/header decoration. Arbitrary CSS color syntax and independently colored arrowheads are not guaranteed to match the canvas.
+
+**PowerPoint editing limit:** Native service shapes are editable, but bent connector paths and separate connection labels may need manual repositioning after you move a service.
+
 ---
 
 ## Step 13: Customize the Layout
@@ -400,11 +390,9 @@ Both the title block and legend are included in PNG and SVG exports.
 
 ### Talking Avatar for Demos
 
-Use the **Present Critique** feature (available in the Compare Models results panel) to narrate a model ranking to an audience using a photorealistic talking avatar — no screen-sharing awkwardness, no reading from notes. Closed captions display word by word for accessibility.
-
 Use the **Narrate** button in the Workflow Panel header to have the avatar walk through every architecture step aloud — useful for live demos or for users who find the diagram hard to read visually.
 
-Both avatar panels are **draggable** (grab the header) and **resizable** (drag the bottom-right corner), so you can position them wherever they work best on your screen.
+The avatar panel is **draggable** (grab the header) and **resizable** (drag the bottom-right corner), so you can position it wherever it works best on your screen. Closed captions display word by word for accessibility.
 
 ---
 
@@ -438,7 +426,7 @@ blocking before completing.
 Describe → Generate → Review costs → Validate (WAF) → Apply recommendations →
 Generate deployment guide → Export diagram + Bicep templates → Deploy to Azure
 
-Optionally: Compare Models → Present Critique with talking avatar
+Optionally: Workflow Panel → Narrate with talking avatar
 ```
 
 Every step in this chain is available from a single browser tab with no additional tooling. Go from an idea to a deployable, validated, costed Azure architecture in minutes.

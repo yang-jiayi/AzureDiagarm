@@ -31,11 +31,25 @@ type ExtraTranslationKey =
   | 'canvas.miniMap'
   | 'canvas.miniMapCaption'
   | 'canvas.touchNavigation'
+  | 'ai.astraOnlyDescription'
+  | 'ai.astraNotConfigured'
+  | 'ai.defaultReasoning'
+  | 'ai.perFeatureReasoning'
+  | 'ai.reasoningEffort'
+  | 'ai.customized'
+  | 'ai.usingDefaults'
+  | 'ai.recommendedReasoning'
+  | 'ai.defaultReasoningChoice'
+  | 'ai.resetFeatureReasoning'
   | 'error.deploymentGuide';
 
 export type TranslationKey = StaticTranslationKey | ExtraTranslationKey;
 
 const STORAGE_KEY = 'azure-diagram-builder.language.v1';
+const astraSetupError = {
+  en: 'GPT-6 Astra is not configured. Contact the application administrator to configure the managed Astra deployment.',
+  ja: 'GPT-6 Astraが設定されていません。管理対象のAstraデプロイを設定するようアプリケーション管理者に連絡してください。',
+};
 
 const extraEnglish: Record<ExtraTranslationKey, string> = {
   'language.label': 'Language',
@@ -63,6 +77,16 @@ const extraEnglish: Record<ExtraTranslationKey, string> = {
   'canvas.miniMap': 'Mini-map — drag or scroll to navigate the canvas',
   'canvas.miniMapCaption': 'Drag or scroll to navigate',
   'canvas.touchNavigation': 'Drag to pan and pinch to zoom',
+  'ai.astraOnlyDescription': 'The managed default. These settings apply only to managed GPT-6 Astra.',
+  'ai.astraNotConfigured': astraSetupError.en,
+  'ai.defaultReasoning': 'Default reasoning',
+  'ai.perFeatureReasoning': 'Per-feature reasoning',
+  'ai.reasoningEffort': 'Reasoning effort',
+  'ai.customized': 'Customized',
+  'ai.usingDefaults': 'Using defaults',
+  'ai.recommendedReasoning': 'Use recommended reasoning',
+  'ai.defaultReasoningChoice': 'Default ({effort})',
+  'ai.resetFeatureReasoning': 'Use default reasoning for all features',
   'error.deploymentGuide': 'Failed to generate deployment guide: {message}',
 };
 
@@ -92,12 +116,68 @@ const extraJapanese: Record<ExtraTranslationKey, string> = {
   'canvas.miniMap': 'Mini-map — ドラッグまたはスクロールしてキャンバスを移動',
   'canvas.miniMapCaption': 'ドラッグまたはスクロールして移動',
   'canvas.touchNavigation': 'ドラッグで移動・ピンチで拡大縮小',
+  'ai.astraOnlyDescription': '管理対象の既定モデルです。この設定は管理対象の GPT-6 Astra にのみ適用されます。',
+  'ai.astraNotConfigured': astraSetupError.ja,
+  'ai.defaultReasoning': '既定の推論強度',
+  'ai.perFeatureReasoning': '機能別の推論強度',
+  'ai.reasoningEffort': '推論強度',
+  'ai.customized': 'カスタム済み',
+  'ai.usingDefaults': '既定値を使用',
+  'ai.recommendedReasoning': '推奨の推論強度を使用',
+  'ai.defaultReasoningChoice': '既定値 ({effort})',
+  'ai.resetFeatureReasoning': 'すべての機能で既定の推論強度を使用',
   'error.deploymentGuide': 'Deployment Guide の生成に失敗しました: {message}',
 };
 
 export const exactJapanese: Readonly<Record<string, string>> = {
   // Spread first so any key declared explicitly below still wins.
   ...helpJapanese,
+  'The AI connection is unavailable.': 'AI 接続を利用できません。',
+  'AI connection settings could not be saved. Allow site storage or free browser storage, then try again.': 'AI 接続設定を保存できませんでした。このサイトのストレージを許可するか、ブラウザーのストレージに空きを確保してから再試行してください。',
+  'AI connection settings could not be loaded safely. Allow site storage, then reload or explicitly save a connection.': 'AI 接続設定を安全に読み込めませんでした。このサイトのストレージを許可して再読み込みするか、接続設定を明示的に保存してください。',
+  'The AI connection is not ready.': 'AI 接続の準備が完了していません。',
+  'Use a valid connection profile ID.': '有効な接続プロファイル ID を使用してください。',
+  'Enter a connection name of 1–80 characters.': '接続名を 1～80 文字で入力してください。',
+  'Select Azure OpenAI or OpenAI.': 'Azure OpenAI または OpenAI を選択してください。',
+  'Select Responses or Chat Completions.': 'Responses または Chat Completions を選択してください。',
+  'Enter a deployment or model identifier containing 1–128 letters, numbers, dots, hyphens, underscores, or colons.': 'デプロイ名またはモデル ID を、英数字、ドット、ハイフン、アンダースコア、コロンを使用して 1～128 文字で入力してください。',
+  'Select a supported reasoning effort.': '対応する推論強度を選択してください。',
+  'Specify whether the model supports reasoning.': 'モデルが推論に対応しているか指定してください。',
+  'Specify whether the model supports images.': 'モデルが画像入力に対応しているか指定してください。',
+  'Enter a whole-number output limit from 1 to 32768 tokens.': '出力上限を 1～32768 トークンの整数で入力してください。',
+  'Use an Azure resource HTTPS origin or https://api.openai.com, without credentials, paths, ports, query, or fragment.': 'Azure リソースの HTTPS オリジン、または https://api.openai.com を指定してください。資格情報、パス、ポート、クエリ、フラグメントは含めないでください。',
+  'Complete the connection profile.': '接続プロファイルの設定を入力してください。',
+  'You can save up to 10 AI connection profiles.': 'AI 接続プロファイルは最大 10 件保存できます。',
+  'The selected AI connection is missing. Select another profile or managed GPT-6 Astra.': '選択中の AI 接続が見つかりません。別のプロファイル、または管理対象の GPT-6 Astra を明示的に選択してください。',
+  'Enter a valid API key. Keys stay only in this browser tab memory.': '有効な API キーを入力してください。キーはこのブラウザー タブのメモリ内にのみ保持されます。',
+  'Bring-your-own AI availability must be confirmed by the application server.': '独自の AI 接続（BYO）の利用可否をアプリケーション サーバーで確認する必要があります。',
+  'Enter this profile’s API key and successfully test the connection before using it.': 'このプロファイルを使用する前に、API キーを入力して接続テストを成功させてください。',
+  'Enter this profile’s API key and test the connection in this browser tab.': 'このタブで、このプロファイルの API キーを入力して接続をテストしてください。',
+  'Test this AI connection successfully before using it.': 'この AI 接続を使用する前に接続テストを成功させてください。',
+  'This AI connection failed its test. Check its settings and key, then test again.': 'この AI 接続のテストに失敗しました。設定とキーを確認して再テストしてください。',
+  'Bring-your-own AI is disabled by the application administrator.': '管理者が独自の AI 接続（BYO）を無効にしています。',
+  'Bring-your-own AI availability has not been confirmed by the application server.': 'アプリケーション サーバーで独自の AI 接続（BYO）の利用可否を確認できていません。',
+  'The selected AI connection has invalid settings. Edit the profile and test again.': '選択中の AI 接続の設定が無効です。プロファイルを編集して再テストしてください。',
+  'The selected AI connection changed before this request was sent. Review the connection and submit again.': '送信前に選択中の AI 接続が変更されました。接続を確認して再送信してください。',
+  'The requested reasoning effort is not supported.': '指定された推論強度には対応していません。',
+  'Select an AI connection through the connection settings.': '接続設定から AI 接続を選択してください。',
+  'The AI connection profile is missing. Select or create a profile.': 'AI 接続プロファイルが見つかりません。プロファイルを選択または作成してください。',
+  'The AI connection settings are invalid. Edit the profile and test again.': 'AI 接続の設定が無効です。プロファイルを編集して再テストしてください。',
+  'The AI connection changed during its test. Test the updated profile again.': 'テスト中に AI 接続が変更されました。更新後のプロファイルを再テストしてください。',
+  'Enter this profile’s API key before testing the connection.': '接続をテストする前に、このプロファイルの API キーを入力してください。',
+  'The application server could not confirm bring-your-own AI availability.': 'アプリケーション サーバーで独自の AI 接続（BYO）の利用可否を確認できませんでした。',
+  'The connection test did not return a complete expected response. Check the model, API format, and output settings, then test again.': '接続テストで期待した完全な応答が返されませんでした。モデル、API 形式、出力設定を確認して再テストしてください。',
+  'The connection test timed out. Check the endpoint and model, then test again.': '接続テストがタイムアウトしました。エンドポイントとモデルを確認して再テストしてください。',
+  'The connection test failed. Check the connection settings and try again.': '接続テストに失敗しました。接続設定を確認してもう一度お試しください。',
+  'The AI provider rejected this profile’s API key. Re-enter the key and test the connection again.': 'AI プロバイダーがこのプロファイルの API キーを拒否しました。キーを再入力して接続を再テストしてください。',
+  'The AI connection settings are invalid. Check the provider, endpoint, and model, then test again.': 'AI 接続の設定が無効です。プロバイダー、エンドポイント、モデルを確認して再テストしてください。',
+  'The selected AI connection does not support images. Select a vision-capable connection.': '選択中の AI 接続は画像に対応していません。画像対応の接続を明示的に選択してください。',
+  'Use a configured AI connection without additional routing fields.': '追加のルーティング項目を指定せずに、設定済みの AI 接続を使用してください。',
+  'The selected AI connection is not ready. Edit the profile and test again.': '選択中の AI 接続の準備ができていません。プロファイルを編集して再テストしてください。',
+  'Enter valid AI connection settings and an API key.': '有効な AI 接続の設定と API キーを入力してください。',
+  'Use a trusted AI provider HTTPS origin.': '許可された AI プロバイダーの HTTPS オリジンを使用してください。',
+  'The request must use the selected connection’s exact model or deployment.': 'リクエストには、選択中の接続で指定したモデル名またはデプロイ名を正確に使用してください。',
+  'Use the Responses or Chat Completions API.': 'Responses または Chat Completions API を使用してください。',
   'Microsoft Product Architecture Diagram Builder': 'Microsoft Product Architecture Diagram Builder',
   'AI Architecture Generator': 'AI Architecture Generator',
   '$XX': '$XX',
@@ -262,6 +342,23 @@ export const exactJapanese: Readonly<Record<string, string>> = {
   'The application authentication layer rejected the request. Refresh the page and try again.': 'アプリケーションの認証レイヤーによってリクエストが拒否されました。ページを更新して、もう一度お試しください。',
   'The request was blocked before it reached the AI provider. Reduce the request size or contact the administrator.': 'リクエストは AI プロバイダーに到達する前にブロックされました。リクエストのサイズを小さくするか、管理者に連絡してください。',
   'The selected model deployment is not allowed by the server configuration.': '選択したモデル デプロイはサーバー構成で許可されていません。',
+  'Only the managed GPT-6 Astra model can run in this application.': 'このアプリケーションでは、管理対象のGPT-6 Astraモデルのみ実行できます。',
+  'Only the configured GPT-6 Astra deployment can run.': '設定済みのGPT-6 Astraデプロイのみ実行できます。',
+  'The requested reasoning effort is not supported by GPT-6 Astra.': '指定された推論強度はGPT-6 Astraでサポートされていません。',
+  'The configured GPT-6 Astra deployment rejected the image analysis request. Check the image and contact the application administrator if the problem persists.': '設定済みのGPT-6 Astraデプロイが画像分析リクエストを拒否しました。画像を確認し、問題が解決しない場合はアプリケーション管理者に連絡してください。',
+  'GPT-6 Astra requests must use the Responses API.': 'GPT-6 AstraへのリクエストにはResponses APIを使用する必要があります。',
+  'Only GPT-6 Astra Responses requests are supported.': 'GPT-6 AstraのResponsesリクエストのみサポートされています。',
+  'Custom AI endpoints are not supported.': 'カスタムAIエンドポイントはサポートされていません。',
+  'Configure the explicit GPT-6 Astra deployment and its identical singleton allowlist.': 'GPT-6 Astraのデプロイを明示的に指定し、同じデプロイだけを含む許可リストを設定してください。',
+  'Only the configured GPT-6 Astra deployment is allowed.': '設定済みのGPT-6 Astraデプロイのみ許可されています。',
+  'deployment and body.model must explicitly match the configured GPT-6 Astra alias without endpoint overrides.': 'エンドポイントを上書きせず、deploymentとbody.modelの両方に設定済みのGPT-6 Astraエイリアスと完全に一致する値を明示的に指定する必要があります。',
+  'Use a Responses request body for the configured GPT-6 Astra deployment.': '設定済みのGPT-6 AstraデプロイにはResponses形式のリクエスト本文を使用してください。',
+  'The managed Azure OpenAI endpoint is not configured correctly.': '管理対象のAzure OpenAIエンドポイントが正しく設定されていません。',
+  'Bring-your-own AI is disabled. Only managed GPT-6 Astra can run.': '独自のAIエンドポイントは無効です。管理対象のGPT-6 Astraのみ実行できます。',
+  'No deployment configured for GPT-6 Astra. Set VITE_AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA.': 'GPT-6 Astraのデプロイが設定されていません。管理者がVITE_AZURE_OPENAI_DEPLOYMENT_GPT6ASTRAを設定する必要があります。',
+  'Azure OpenAI is not configured. Please check your environment.': 'Azure OpenAIが設定されていません。GPT-6 Astraの管理対象デプロイと環境設定を確認するよう管理者に連絡してください。',
+  [astraSetupError.en]: astraSetupError.ja,
+  'AI model settings': 'AIモデル設定',
   'The server could not acquire an Azure OpenAI credential. Contact the administrator.': 'サーバーが Azure OpenAI の資格情報を取得できませんでした。管理者に連絡してください。',
   'Azure OpenAI rejected the server credential. Check the managed identity role assignment.': 'Azure OpenAI がサーバーの資格情報を拒否しました。Managed Identity のロール割り当てを確認してください。',
   'Model or deployment not found. Check the configured name.': 'モデルまたはデプロイが見つかりません。設定されている名前を確認してください。',
@@ -300,6 +397,7 @@ export const exactJapanese: Readonly<Record<string, string>> = {
   'The AI model returned a response that was not valid JSON. Please try again.': 'AI モデルから有効な JSON ではない応答が返されました。もう一度お試しください。',
   // Empty-architecture and configuration guardrails.
   'The AI model returned an empty architecture (no services). Please try again or rephrase your request.': 'AI モデルが空のアーキテクチャ（サービスなし）を返しました。もう一度お試しいただくか、リクエストを言い換えてください。',
+  'The AI model returned an invalid architecture. Try again or revise the request.': 'AI モデルから無効な構造のアーキテクチャが返されました。もう一度実行するか、要件を見直してください。',
   'No AI model is configured. Check the environment configuration or connect a custom AI endpoint.': 'AI モデルが設定されていません。環境設定を確認するか、カスタム AI エンドポイントへ接続してください。',
   'Failed to generate architecture. Please try again.': 'アーキテクチャの生成に失敗しました。もう一度お試しください。',
   'Failed to parse the template. Please try again.': 'テンプレートの解析に失敗しました。もう一度お試しください。',
@@ -605,7 +703,7 @@ export const exactJapanese: Readonly<Record<string, string>> = {
   'Quick Start': 'クイック スタート',
   'AI Architecture Generation': 'AI Architecture Generation',
   'Image Import': '画像インポート',
-  'Blueprint Diagrams': 'Blueprint Diagrams',
+  'Blueprint Diagrams': 'ブループリント図',
   'Well‑Architected Validation': 'Well‑Architected Validation',
   'Multi‑Model Comparison': '複数モデルの比較',
   'Cost Estimation': 'コスト見積もり',
@@ -690,11 +788,11 @@ export const exactJapanese: Readonly<Record<string, string>> = {
   'Fit diagram to view': '図全体を表示',
   'Toggle interactivity': '操作モードを切り替え',
   'More guided content is on the way — see the Help & Learn plan in the repo docs.': 'ガイド付きコンテンツは今後も追加されます。リポジトリのドキュメントにある「ヘルプと学習」の計画を参照してください。',
-  'Architecture Generation': 'Architecture Generation',
+  'Architecture Generation': 'アーキテクチャの生成',
   'Creating Azure architecture diagrams': 'Azureアーキテクチャ図を生成',
-  'Architecture Validation': 'Architecture Validation',
+  'Architecture Validation': 'アーキテクチャの検証',
   'WAF validation and security analysis': 'WAF検証とセキュリティ分析',
-  'Deployment Guide & Bicep': 'Deployment Guide & Bicep',
+  'Deployment Guide & Bicep': 'デプロイガイドとBicep',
   'Generating deployment guides and IaC templates': 'Deployment GuideとIaCテンプレートを生成',
   'Whiteboard-style blueprint sketches (fast, cost-efficient)': 'ホワイトボード形式のBlueprintスケッチ（高速、低コスト）',
   'Versatile model - fast by default, optional reasoning when needed': '汎用モデル - 既定では高速、必要に応じて推論を利用可能',
@@ -1142,6 +1240,12 @@ function replacePhraseAtBoundaries(input: string, english: string, japanese: str
 function translateJapanese(key: StaticTranslationKey): string {
   const exact = exactJapanese[key];
   if (exact !== undefined) return exact;
+  const providerFailure = String(key).match(/^AI provider request failed \((\d{3}|network error)\)\. Please try again\.(?: Request ID: ([A-Za-z0-9._:-]{1,128}))?$/);
+  if (providerFailure) {
+    const status = providerFailure[1] === 'network error' ? 'ネットワーク エラー' : providerFailure[1];
+    return `AI プロバイダーへのリクエストに失敗しました（${status}）。もう一度お試しください。`
+      + (providerFailure[2] ? ` リクエスト ID: ${providerFailure[2]}` : '');
+  }
   const requestIdMatch = String(key).match(/^(.*) Request ID: (.+)$/s);
   if (requestIdMatch) {
     const translatedMessage = exactJapanese[requestIdMatch[1] as StaticTranslationKey];

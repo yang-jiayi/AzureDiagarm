@@ -5,11 +5,7 @@
 ![Azure](https://img.shields.io/badge/Azure-0078D4?style=for-the-badge&logo=microsoft-azure&logoColor=white)
 ![React](https://img.shields.io/badge/React-61DAFB?style=for-the-badge&logo=react&logoColor=black)
 ![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?style=for-the-badge&logo=typescript&logoColor=white)
-![GPT-5.x](https://img.shields.io/badge/GPT--5.x-412991?style=for-the-badge&logo=openai&logoColor=white)
-![DeepSeek](https://img.shields.io/badge/DeepSeek-4D6BFF?style=for-the-badge&logoColor=white)
-![Grok](https://img.shields.io/badge/Grok-000000?style=for-the-badge&logoColor=white)
-![Mistral](https://img.shields.io/badge/Mistral-FF7000?style=for-the-badge&logoColor=white)
-![Kimi](https://img.shields.io/badge/Kimi-1A1A1A?style=for-the-badge&logoColor=white)
+![GPT-6 Astra](https://img.shields.io/badge/GPT--6_Astra-412991?style=for-the-badge&logo=openai&logoColor=white)
 
 **A professional AI-powered tool for designing, validating, and deploying Microsoft cloud architectures across Azure, Microsoft Fabric, Power Platform, and Dynamics 365**
 
@@ -35,7 +31,7 @@ The latest customization and production hardening were created by **Swarm Data S
 
 ## 📖 Overview
 
-Microsoft Product Architecture Diagram Builder is an enterprise-grade web application that empowers cloud architects to design, visualize, validate, and deploy Azure solutions. Supporting **16 AI models** across multiple providers — **GPT-6 Astra, GPT-5.1, GPT-5.2, GPT-5.4, GPT-5.4 Mini, GPT-5.6 Sol, GPT-5.6 Terra, GPT-5.6 Luna, Claude Opus 5, DeepSeek V3.2 Speciale, DeepSeek V4 Pro, Grok 4.1 Fast, Grok 4.3, Mistral Large 3, Kimi K2.5, and Kimi K2.7 Code** (via configured Azure OpenAI and Microsoft Foundry model deployments) — it transforms natural language descriptions into professional architecture diagrams while providing real-time cost estimates, Well-Architected Framework validation, multi-model comparison, and Infrastructure as Code generation.
+Microsoft Product Architecture Diagram Builder is an enterprise-grade web application that empowers cloud architects to design, visualize, validate, and deploy Azure solutions. Its managed AI model is **GPT-6 Astra**, through a genuine Azure OpenAI deployment. Users can also explicitly select a verified **bring-your-own AI (BYO)** connection when enabled by the administrator. The app transforms natural language descriptions into architecture diagrams while providing cost estimates, Well-Architected Framework validation, and Infrastructure as Code generation.
 
 Beyond editable **topology** diagrams, the app can also produce polished, whiteboard-style **Blueprint** diagrams (BETA) as shareable PNGs — ideal for presentations and design reviews.
 
@@ -62,7 +58,7 @@ architect.
 ## ✨ Key Features
 
 ### 🤖 AI-Powered Architecture Generation
-Describe your architecture in plain language to create a complete diagram with logical service groupings. **GPT-6 Astra** is the default for generation, validation, deployment guidance, and blueprints when its deployment is configured. Other configured models remain available for explicit selection and comparison.
+Describe your architecture in plain language to create a complete diagram with logical service groupings. **GPT-6 Astra** remains the sole managed model. Generation, validation, deployment guidance, and blueprints honor the explicitly selected managed or BYO connection. Managed Astra supports global and per-feature reasoning settings; BYO uses its profile's capabilities and reasoning settings. An unavailable connection produces an actionable error instead of silently switching models or providers.
 
 **13 curated example prompts** included — from simple web apps to complex enterprise scenarios:
 - Zero Trust enterprise networks with security segmentation
@@ -92,7 +88,7 @@ Generate a hand-drawn, **whiteboard-style blueprint** of your architecture — n
 - **Blueprint** *(BETA)* — a polished whiteboard-style PNG (the PNG is the deliverable; re-download any time via **Export > Export Blueprint PNG**)
 - **Both** *(BETA)* — a deployable topology **and** a Blueprint PNG from the same prompt, optionally generated in parallel
 
-> Blueprint and Both modes require a compatible general-purpose OpenAI model, such as GPT-6 Astra or GPT-5.x. The app auto-switches if a third-party model is selected. A configurable legend position keeps the output presentation-ready.
+> Topology, Blueprint, and Both modes honor the selected connection. BYO models must support the requested input and structured architecture output; unsupported capabilities are reported, not worked around by switching to Astra. A configurable legend position keeps blueprint output presentation-ready.
 
 Explicitly identified provider/proxy rate limits can retry automatically with the same prompt, model, reasoning and output limit, up to three HTTP attempts and two minutes of total cooldown. Budget exhaustion, unclassified 429 responses, request timeouts and incomplete output are surfaced instead of silently lowering generation quality. Countdown waits and active requests remain cancellable.
 
@@ -113,18 +109,26 @@ Validate your architecture against all five WAF pillars:
 
 Select specific recommendations to generate an improved proposal, then review the changes before applying them. Reviews show available finding sources, link findings to diagram resources, and retain a bounded review history. Edited diagrams and older comparison results are marked as stale; a finding not detected in a later review is not treated as proof of remediation. During analysis, a dismiss hint lets you close the panel and return later via the **Validation Score** button in the toolbar.
 
-### 🔀 Multi-Model Comparison
-Compare AI output side-by-side across all 15 models:
+### AI Model Policy
+The managed model catalog contains only GPT-6 Astra. Saved legacy managed-model preferences migrate to Astra while retaining supported reasoning settings. BYO is a separate, explicit connection choice using the user's own Azure OpenAI or official OpenAI credentials and model identifier; it does not reinstate the retired managed model roster or multi-model comparison UI.
 
-- **Architecture Comparison** — Run the same prompt through multiple models and compare service counts, connection counts, groups, workflow steps, token usage, and latency
-- **Validation Comparison** — Run WAF validation across models and compare overall scores, pillar-level scores, severity breakdowns, finding counts, and quick wins. An inline WAF info box explains the five pillars being assessed
-- **Save All Diagrams** — Download each model's architecture as a separate JSON file
-- **Save Comparison Report** — Download a combined JSON report for offline analysis
-- **Present Critique** — Click "Present" to have a talking avatar narrate the AI ranking with live word-by-word closed captions (requires `VITE_SPEECH_REGION`)
-- **Apply Winner** — Pick a result and review its proposed changes before applying them to the canvas
+Historical diagrams, review records, and exported reports retain their original model provenance. Changing the selected connection does not relabel an already submitted result.
+
+### Bring Your Own AI Connections
+
+Manage up to ten named connection profiles, test a connection, and explicitly
+choose it for AI work. Public connection settings persist; API keys and
+verification remain only in the current browser tab. Editing a key or
+request-affecting setting requires another connection test, and a late test
+response cannot verify a changed profile.
+
+Administrators enable BYO with `ALLOW_BYO_AI_ENDPOINTS=true`. Requests retain
+application authentication, origin restrictions, rate limits, shared budgets,
+and cancellation. Arbitrary proxy hosts and local endpoints are not supported.
+See the [BYO connection guide](DOCS/BYO-AI-CONNECTIONS.md).
 
 ### 🎙️ Avatar Presenter
-After completing a model comparison, use **Present Critique** to have a photorealistic talking avatar narrate the AI ranking results aloud — or click **Narrate** in the Workflow Panel to have the avatar walk through every architecture step:
+Click **Narrate** in the Workflow Panel to have a photorealistic talking avatar walk through every architecture step:
 - A 3D avatar appears in a **draggable, resizable** floating panel — grab the header to reposition anywhere on screen, drag the bottom-right corner to resize
 
 ### 🖼️ Draggable Reference Image Viewer
@@ -135,7 +139,7 @@ When a sketch or image is uploaded for AI generation, the reference image stays 
 - **Collapse** to a small pill to stay out of the way
 - Live **word-by-word closed captions** highlight each spoken word in real time, synchronized via the Speech SDK `wordBoundary` event
 - **Keyless authentication** — no API keys stored; a lightweight Express.js token server runs co-located with nginx inside the container, acquiring an AAD token via `DefaultAzureCredential` (Azure Managed Identity) and returning it as `aad#{resourceId}#{aadToken}` on each request
-- The "Present" / "Narrate" buttons are only visible when `VITE_SPEECH_REGION` is configured at image build time; no UI impact when not set
+- The "Narrate" button is only visible when `VITE_SPEECH_REGION` is configured at image build time; no UI impact when not set
 
 ### 🗂️ Collapse All Groups
 Toggle button to collapse or expand all groups at once for a bird's-eye view of the architecture. Restores original group sizes on expand.
@@ -170,6 +174,7 @@ Features include:
 - **“Prices as of” stamp** — every cost export records the pricing-data refresh date and the selected billing term.
 - **Development vs production scenarios** — compare editable capacity, usage, commitment, negotiated-discount, support, currency, and planning-FX assumptions without changing the diagram.
 - **True per-region meters** — pricing is pre-fetched per region from the Azure Retail Prices API (refresh anytime with `npm run pricing:refresh`), including per-region **Microsoft Fabric** capacity (CU) and OneLake storage rates.
+- **Safe pricing refresh** — downloads are staged, validated, and compacted before replacing the snapshot and freshness date. A leftover `.pricing-refresh` workspace blocks another refresh so recovery data is not overwritten.
 - Color-coded legend (green/yellow/red based on cost thresholds)
 - SKU and tier information for each service
 - **Export Costs (CSV)** — per-service cost breakdown spreadsheet for the active region
@@ -221,7 +226,7 @@ A built-in feedback widget captures a rating, category, and optional free-text c
 - **Undo / Redo** covers diagram edits, including service and group labels, colors, connections, and layout changes. Use the toolbar or `Ctrl/Cmd+Z` and `Ctrl/Cmd+Shift+Z`.
 - **Local autosave** keeps the active draft in IndexedDB and reports when a transaction has committed. A recovery prompt lets you restore or download the draft after reopening the page.
 - Local drafts are **browser-local, not cloud backups**; authenticated cloud autosave is a separate feature. Clearing browser data removes local drafts, so use cloud storage or a JSON download for a portable copy. A concurrent tab cannot silently overwrite a newer draft revision.
-- **AI change review** presents additions, removals, and modifications before they reach the canvas. Review selected changes, cancel a proposal, or retry generation without replacing current edits.
+- **AI change review** presents additions, removals, and modifications before they reach the canvas. Expand a change to inspect before/after values for supported properties, endpoints, parent groups, and pricing; internal metadata is omitted. Review selected changes, cancel a proposal, or retry generation without replacing current edits.
 - **Create / Review / Export** tabs keep task-specific controls together. Service settings edit pricing inputs; WAF findings can locate their affected shapes on the canvas.
 
 Workspace regression commands:
@@ -244,7 +249,8 @@ Public deployments fail closed without explicit authentication, ingress, access-
 - **Purpose-based icon catalog** — 23 bilingual categories organize services by meaning while preserving every official source folder for compatibility
 - **Semantic icon search** — search names, acronyms, aliases, categories, purposes, and Japanese keywords
 - **Personal icon workspace** — favorites, recently used services, and custom collections persist locally
-- **Virtualized catalog rendering** — only visible rows are mounted, keeping the complete 830-icon catalog responsive
+- **Foldable icon controls** — click the chevron in the services heading to fold search, tabs, and display options upward without hiding the icons; click again to restore the controls. The fold preference persists locally.
+- **Virtualized catalog rendering** — a window of rows, including a small overscan, keeps the full catalog usable without rendering every icon at once
 - **185+ AI-mapped services** — with pricing, categories, and icon resolution (including Microsoft Fabric items, Power Platform, and Dynamics 365 applications)
 - **Smart Grouping** — Logical organization (Frontend, Backend, Data, Security)
 - **Editable Connections** — Labels, direction, per-edge animation, and custom styling
@@ -431,7 +437,7 @@ graph TB
     end
 
     subgraph External["External APIs"]
-        OpenAI[Azure OpenAI + Microsoft Foundry<br/>15 models]
+        OpenAI[Azure OpenAI<br/>GPT-6 Astra]
         LearnMCP[Microsoft Learn MCP]
         PricingAPI[Azure Retail Prices API]
         Cosmos[(Azure Cosmos DB)]
@@ -536,6 +542,9 @@ Production updates run only through
 Merge a reviewed pull request into `main`; its push starts the release
 automatically. **Do not use manual workflow dispatch for ordinary releases.**
 Dispatch on `main` is reserved for guarded upstream synchronization.
+Ordinary releases read the approved upstream commit from the committed
+`.github/upstream-baseline.json`, verify its local ancestry, and do not depend on
+live upstream availability. Only guarded synchronization advances that record.
 The workflow validates the application and servers, builds and pushes an image to ACR, creates a
 Container Apps revision with health probes, preserves authentication and origin
 controls, purges Front Door, and verifies the deployed security boundary.
@@ -571,8 +580,7 @@ closes them during graceful shutdown.
 
 - **Node.js 22**
 - **npm** or **yarn**
-- **Azure OpenAI** resource with a model deployment for managed models, or a
-  user-owned Azure OpenAI / official OpenAI endpoint when BYO AI is enabled
+- **Azure OpenAI** resource with a genuine **GPT-6 Astra** deployment for AI features
 
 ### Installation
 
@@ -599,43 +607,18 @@ Create a `.env` file in the project root:
 # NEVER shipped to the browser. Keyless auth (managed identity / `az login`) is
 # preferred; a key is only used as a fallback when AZURE_OPENAI_API_KEY is set.
 #
-# VITE_AZURE_OPENAI_ENDPOINT is a non-secret build-time flag that signals the
-# UI that AI is configured. In dev, scripts/start-token-server.sh bridges the
-# VITE_ values to the server-side names (AZURE_OPENAI_ENDPOINT / _API_KEY).
+# VITE_* values are public build-time configuration. The server binds requests
+# to the single approved Astra deployment; all three deployment names must match.
 VITE_AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com/
-AZURE_OPENAI_API_KEY=your-api-key-here   # optional server-side fallback; prefer managed identity
-VITE_AZURE_OPENAI_DEPLOYMENT=your-default-deployment
-
-# Optional user-owned endpoints. Disabled by default for self-hosted installs.
-ALLOW_BYO_AI_ENDPOINTS=false
-
-# Multi-model deployments (16 supported models; configure only real deployments)
-# GPT-6 Astra is the preferred application model
 VITE_AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA=your-gpt6-astra-deployment
-# Optional OpenAI GPT-5.x deployments
-VITE_AZURE_OPENAI_DEPLOYMENT_GPT51=your-gpt51-deployment
-VITE_AZURE_OPENAI_DEPLOYMENT_GPT52=your-gpt52-deployment
-VITE_AZURE_OPENAI_DEPLOYMENT_GPT54=your-gpt54-deployment
-VITE_AZURE_OPENAI_DEPLOYMENT_GPT54MINI=your-gpt54-mini-deployment
-VITE_AZURE_OPENAI_DEPLOYMENT_GPT56SOL=your-gpt56-sol-deployment
-VITE_AZURE_OPENAI_DEPLOYMENT_GPT56TERRA=your-gpt56-terra-deployment
-VITE_AZURE_OPENAI_DEPLOYMENT_GPT56LUNA=your-gpt56-luna-deployment
-# Anthropic Messages API in Microsoft Foundry
-VITE_AZURE_FOUNDRY_ENDPOINT=https://your-resource.services.ai.azure.com/
-VITE_AZURE_FOUNDRY_DEPLOYMENT_CLAUDE_OPUS5=your-claude-opus-5-deployment
-AZURE_FOUNDRY_ENDPOINT=https://your-resource.services.ai.azure.com/
-AZURE_FOUNDRY_ALLOWED_DEPLOYMENTS=your-claude-opus-5-deployment
-# Partner models (Chat Completions API)
-VITE_AZURE_OPENAI_DEPLOYMENT_DEEPSEEK=your-deepseek-v32-speciale-deployment
-VITE_AZURE_OPENAI_DEPLOYMENT_DEEPSEEK_V4_PRO=your-deepseek-v4-pro-deployment
-VITE_AZURE_OPENAI_DEPLOYMENT_GROK4FAST=your-grok-41-fast-deployment
-VITE_AZURE_OPENAI_DEPLOYMENT_GROK43=your-grok-43-deployment
-VITE_AZURE_OPENAI_DEPLOYMENT_MISTRALLARGE3=your-mistral-large-3-deployment
-VITE_AZURE_OPENAI_DEPLOYMENT_KIMIK25=your-kimi-k2-5-deployment
-VITE_AZURE_OPENAI_DEPLOYMENT_KIMIK27CODE=your-kimi-k2-7-code-deployment
+AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com/
+AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA=your-gpt6-astra-deployment
+AZURE_OPENAI_ALLOWED_DEPLOYMENTS=your-gpt6-astra-deployment
+AZURE_OPENAI_API_KEY=your-api-key-here   # optional server-side fallback; prefer managed identity
 
-# Reasoning model configuration
-VITE_REASONING_EFFORT=medium  # none | low | medium | high
+# Optional: explicitly permit users' own Azure OpenAI / official OpenAI keys.
+# Keys are entered in the connection dialog, never in VITE_* settings.
+ALLOW_BYO_AI_ENDPOINTS=false
 
 # Optional: Cloud storage for sharing
 AZURE_COSMOS_ENDPOINT=https://your-cosmos.documents.azure.com:443/
@@ -646,25 +629,33 @@ COSMOS_CONTAINER_ID=diagrams
 # Create an App Insights resource in Azure Portal and paste the connection string
 VITE_APPINSIGHTS_CONNECTION_STRING=InstrumentationKey=...;IngestionEndpoint=...
 
-# Optional: Avatar Presenter (enables "Present Critique" button in Compare Models)
+# Optional: Avatar Presenter (enables "Narrate" in the Workflow Panel)
 # Requires an Azure Speech resource with Custom Subdomain enabled and
 # the ACA managed identity assigned the "Cognitive Services Speech User" RBAC role
-VITE_SPEECH_REGION=westus2                 # Build-time: controls visibility of the "Present" button
+VITE_SPEECH_REGION=westus2                 # Build-time: controls visibility of the "Narrate" button
 AZURE_SPEECH_REGION=westus2               # Runtime: read by the co-located token server
 AZURE_SPEECH_RESOURCE_ID=/subscriptions/<subscription-id>/resourceGroups/<resource-group>/providers/Microsoft.CognitiveServices/accounts/<speech-account-name>
 ```
 
 `VITE_AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA` must name a real GPT-6 Astra deployment,
-not a renamed GPT-5.6 deployment. Include the same name in the API's managed-model
-allowlist. The deployment-only template `infra/gpt6-astra.bicep` codifies the
+not another model renamed to look like Astra. Use that same name as the server's
+`AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA` and sole allowed deployment. The
+deployment-only template `infra/gpt6-astra.bicep` codifies the
 verified model/version and usage-based SKU under an existing OpenAI account;
 it does not recreate the account or modify networking, roles, or legacy models.
 Confirm model availability and quota before applying it in another environment.
-On first use with Astra configured, saved GPT-5.6 selections and
-feature overrides migrate to Astra, preserving supported reasoning levels.
-The migration is persisted and does not repeatedly overwrite later explicit
-model choices. Separate bring-your-own endpoint settings are not migrated.
-Installations without Astra retain their existing configured-model portfolio.
+Releases also require `AZURE_OPENAI_RESOURCE_ID`, the full resource ID of that
+OpenAI account. Preflight reads the account and deployment through ARM and
+rejects endpoint-ownership or actual-model mismatches; it does not grant access
+or provision a replacement model.
+Saved legacy managed-model selections and per-feature overrides migrate to Astra,
+including records that passed an earlier migration, while preserving supported
+reasoning levels. Existing BYO settings migrate separately into a connection
+profile and require key re-entry and a fresh test before use. Configure managed
+reasoning in the AI settings popover and BYO capabilities in its connection
+profile, not environment variables. Missing or unverified selected connections
+fail explicitly; no alternate model is substituted. Historical result metadata
+remains unchanged.
 
 4. **Start the development server**
 ```bash
@@ -757,6 +748,7 @@ docker run --rm -p 127.0.0.1:8080:80 \
   -e ACCESS_CONTROL_ENABLED=false \
   -e AI_BUDGET_STORE=memory \
   -e AZURE_OPENAI_ENDPOINT="$OPENAI_ENDPOINT" \
+  -e AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA="$ASTRA_DEPLOYMENT" \
   -e AZURE_OPENAI_ALLOWED_DEPLOYMENTS="$ASTRA_DEPLOYMENT" \
   -e AZURE_OPENAI_API_KEY \
   azure-diagram-builder
@@ -768,8 +760,10 @@ deployment. A host-side `az login` is not automatically available inside Docker.
 In Azure, production uses the configured managed identity instead of an API key.
 Never pass a provider API key as a `VITE_*` value or Docker build argument.
 
-Additional model deployments need matching public build arguments and
-server-side provider allowlists; see [runtime controls](server/SECURITY.md).
+Managed requests accept only the configured Astra deployment and Responses API.
+Separately opted-in BYO requests use the user's own key on trusted Azure OpenAI
+or official OpenAI endpoints with the selected Responses or Chat Completions
+format; see [runtime controls](server/SECURITY.md).
 
 ### Azure Container Apps Deployment
 
@@ -803,7 +797,7 @@ anonymous social previews are intentional for this private application.
 1. Click **"Generate with AI"** in the toolbar
 2. Describe your architecture in natural language, or pick from **13 curated example prompts**
 3. Choose a **diagram mode** — Topology, Blueprint (BETA), or Both (BETA)
-4. Select your AI model (any of the 12 options) and reasoning level
+4. Adjust the GPT-6 Astra reasoning level if needed
 5. Click **Generate** — the architecture is created with auto-layout and workflow animation
 
 #### Method 2: Image Import
@@ -831,22 +825,13 @@ anonymous social previews are intentional for this private application.
 4. Check the improvements you want to implement
 5. Click **"Regenerate with Selected"** to apply
 
-### Comparing Models
+### Configuring Reasoning
 
-#### Architecture Comparison
-1. Click **"Compare Models"** in the toolbar
-2. Select which models to include and set reasoning effort
-3. Enter a prompt (or pick from sample prompts)
-4. Click **Compare** — all models run in parallel
-5. Review side-by-side results (service count, tokens, latency)
-6. Click **"Use This Architecture"** on the best result
-
-#### Validation Comparison
-1. Generate an architecture first
-2. Click **"Compare Validation"** in the toolbar
-3. Select models and click **Compare**
-4. Compare WAF scores, pillar breakdowns, severity counts
-5. Click **"Use This Validation"** on the preferred result
+With managed Astra selected, open the AI settings popover to adjust the global
+reasoning effort or set an independent effort for generation, validation,
+deployment guidance, and blueprints. A selected BYO profile uses its own
+capability and reasoning configuration instead. See the
+[Astra reasoning guide](DOCS/GPT6-ASTRA-REASONING-LEVELS.md).
 
 ### Generating Deployment Guide
 
@@ -873,7 +858,7 @@ anonymous social previews are intentional for this private application.
 | Category | Technologies |
 |----------|-------------|
 | **Frontend** | React 18, TypeScript, React Flow, Vite |
-| **AI** | Azure OpenAI + Microsoft Foundry: GPT-5.x, Claude Opus 5, and partner models; Responses, Chat Completions, and Anthropic Messages APIs |
+| **AI** | Managed GPT-6 Astra plus explicitly selected Azure OpenAI / OpenAI BYO profiles, through the protected server proxy |
 | **Styling** | CSS3, html-to-image |
 | **Serving** | nginx:alpine (Docker), Vite dev server (local) |
 | **APIs** | Azure Retail Prices API |
@@ -896,16 +881,14 @@ azure-diagrams/
 │   │   ├── ImageUploader.tsx  # Diagram image import
 │   │   ├── WorkflowPanel.tsx  # Workflow animation
 │   │   ├── ValidationModal.tsx  # WAF validation
-│   │   ├── CompareModelsModal.tsx  # Multi-model architecture comparison
-│   │   ├── CompareValidationModal.tsx  # Multi-model validation comparison
 │   │   ├── DeploymentGuideModal.tsx  # Deployment guides
-│   │   ├── ModelSettingsPopover.tsx  # Model selector
+│   │   ├── ModelSettingsPopover.tsx  # Astra reasoning settings
 │   │   ├── IconPalette.tsx
 │   │   ├── AzureNode.tsx / GroupNode.tsx
 │   │   ├── Legend.tsx / TitleBlock.tsx
 │   │   └── ...
 │   ├── services/             # Business logic
-│   │   ├── azureOpenAI.ts    # AI integration (Responses + Chat Completions API), via /api/openai proxy
+│   │   ├── azureOpenAI.ts    # Astra integration via the /api/openai Responses proxy
 │   │   ├── architectureValidator.ts  # WAF validation with ModelOverride support
 │   │   ├── deploymentGuideGenerator.ts  # Guides & Bicep generation
 │   │   ├── docsGroundingService.ts  # Microsoft Learn grounding for deployment guides
@@ -915,13 +898,13 @@ azure-diagrams/
 │   │   ├── drawioExporter.ts  # Draw.io export
 │   │   ├── pptxExporter.ts   # PowerPoint slide export (PptxGenJS, dark/light theme)
 │   │   ├── regionalPricingService.ts  # Multi-region pricing
-│   │   ├── apiHelper.ts      # Dual API format builder (Responses/Chat Completions)
+│   │   ├── apiHelper.ts      # Responses requests, retry and error handling
 │   │   ├── versionStorageService.ts  # Version history
 │   │   ├── wafPatternDetector.ts  # Rule-based WAF pattern checks
 │   │   ├── avatarPresenter.ts   # Talking avatar: Speech SDK, ICE relay, word-boundary captions
 │   │   └── telemetryService.ts  # Application Insights telemetry
 │   ├── stores/               # State management
-│   │   └── modelSettingsStore.ts  # Multi-model settings (15 models)
+│   │   └── modelSettingsStore.ts  # Astra settings and legacy-preference migration
 │   ├── hooks/                # Shared React hooks
 │   │   └── useDraggableResizable.ts  # Pointer-capture drag-to-move + drag-to-resize hook
 │   ├── data/                 # Static data
@@ -964,6 +947,18 @@ azure-diagrams/
 ---
 
 ## 🌟 What's New
+
+### Current fork — Managed GPT-6 Astra and BYO profiles
+
+The managed catalog accepts only its configured GPT-6 Astra deployment.
+Administrator-enabled BYO profiles provide an explicit alternative with the
+user's own credentials; there is no automatic fallback. Retired managed-model
+choices and multi-model comparison launchers remain removed. Reasoning
+settings, diagram generation, validation, and workflow narration remain available.
+
+> Earlier model lineups and optional-provider instructions below are historical
+> release notes, not supported setup instructions for this fork. Use the current
+> configuration above; old benchmark and result metadata is retained as history.
 
 ### July 2026 — New Frontier Models & Expanded MCP Toolset
 

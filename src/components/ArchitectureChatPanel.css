@@ -367,3 +367,10 @@
     display: none;
   }
 }
+.arch-chat-provenance {
+  display: block;
+  margin-top: 6px;
+  font-size: 0.72rem;
+  color: var(--azd-color-text-secondary);
+  overflow-wrap: anywhere;
+}

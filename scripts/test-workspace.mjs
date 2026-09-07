@@ -24,8 +24,6 @@ try {
     define: {
       'import.meta.env.VITE_AZURE_OPENAI_ENDPOINT': JSON.stringify('https://workspace-test.openai.azure.com'),
       'import.meta.env.VITE_AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA': JSON.stringify('workspace-test-astra'),
-      'import.meta.env.VITE_AZURE_OPENAI_DEPLOYMENT_GPT56SOL': JSON.stringify('workspace-test-model'),
-      'import.meta.env.VITE_AZURE_OPENAI_DEPLOYMENT_GPT52': JSON.stringify('workspace-test-model'),
     },
     build: {
       outDir: output, emptyOutDir: true,

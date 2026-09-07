@@ -75,3 +75,36 @@ test('VSDX honours a zone custom colour (fix 6)', async () => {
   // The zone's own colour (not a palette-by-index guess) tints the band.
   assert.ok(xml.toLowerCase().includes('dc2626'), 'the custom zone colour is applied');
 });
+
+test('VSDX keeps an authored connector color, solid stroke, and transparency', async () => {
+  const xml = await pageXml([
+    service('a', 'Source', 0, 0), service('b', 'Target', 600, 0),
+  ], [{
+    id: 'authored', source: 'a', target: 'b', data: { connectionType: 'security' },
+    style: { stroke: '#006D77', strokeDasharray: 'none', opacity: 0.45 },
+  }]);
+  const connector = /<Shape\b[^>]*Name="edge-authored"[^>]*>[\s\S]*?<\/Shape>/.exec(xml)?.[0];
+  assert.ok(connector, 'the authored connector is emitted');
+  assert.match(connector, /<Cell N="LineColor" V="#006d77"/);
+  assert.match(connector, /<Cell N="LineColorTrans" V="0.55"/);
+  assert.match(connector, /<Cell N="LinePattern" V="1"/);
+  const swatch = /<Shape\b[^>]*NameU="LegendLine\.\d+"[^>]*>[\s\S]*?<\/Shape>/.exec(xml)?.[0];
+  assert.ok(swatch, 'the legend contains an actual-paint swatch');
+  assert.match(swatch, /<Cell N="LineColor" V="#006d77"/);
+  assert.match(swatch, /<Cell N="LineColorTrans" V="0.55"/);
+  assert.match(swatch, /<Cell N="LinePattern" V="1"/);
+});
+
+test('VSDX discloses varied styles without drawing a misleading canonical swatch', async () => {
+  const xml = await pageXml([
+    service('a', 'Source', 0, 0), service('b', 'Target', 600, 0),
+  ], [
+    { id: 'red', source: 'a', target: 'b', data: { connectionType: 'security' } },
+    {
+      id: 'teal', source: 'a', target: 'b', data: { connectionType: 'security' },
+      style: { stroke: '#006d77', strokeDasharray: 'none' },
+    },
+  ]);
+  assert.match(xml, /Security \(varied\)/);
+  assert.ok(!xml.includes('NameU="LegendLine.'));
+});

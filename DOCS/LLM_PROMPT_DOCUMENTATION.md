@@ -2,7 +2,7 @@
 
 ## Overview
 
-This document explains the AI/LLM instructions used to generate Azure architecture diagrams from natural language descriptions. The system uses Azure OpenAI / Azure AI Foundry with **12 selectable models** (GPT-5.1, GPT-5.2, GPT-5.2 Codex, GPT-5.3 Codex, GPT-5.4, GPT-5.4 Mini, DeepSeek V3.2 Speciale, DeepSeek V4 Pro, Grok 4.1 Fast, Grok 4.3, Mistral Large 3, Kimi K2.5) and structured prompts to convert user requirements into visual architecture diagrams. All model traffic is proxied server-side via `/api/openai` (the key is never bundled into the browser).
+This document explains the AI/LLM instructions used to generate Azure architecture diagrams from natural language descriptions. The managed model is **GPT-6 Astra** on Azure OpenAI; users can explicitly select an administrator-enabled BYO connection. Structured prompts and response validation convert requirements into architecture diagrams. All model traffic uses the protected `/api/openai` proxy. Managed keys are never bundled; BYO keys are entered by the user and retained only in tab memory.
 
 ## Architecture
 
@@ -273,21 +273,24 @@ message queue, and Redis cache
 # Build-time (non-secret): endpoint flag + deployment names. The API key is
 # NOT bundled — Azure OpenAI is proxied server-side via /api/openai.
 VITE_AZURE_OPENAI_ENDPOINT=https://your-openai.openai.azure.com/
-VITE_AZURE_OPENAI_DEPLOYMENT=your-default-deployment
-VITE_AZURE_OPENAI_DEPLOYMENT_GPT51=your-gpt51-deployment
-VITE_AZURE_OPENAI_DEPLOYMENT_GPT52=your-gpt52-deployment
-VITE_AZURE_OPENAI_DEPLOYMENT_GPT54=your-gpt54-deployment
-VITE_AZURE_OPENAI_DEPLOYMENT_DEEPSEEK=your-deepseek-deployment
-VITE_AZURE_OPENAI_DEPLOYMENT_GROK4FAST=your-grok-deployment
-# ...one VITE_AZURE_OPENAI_DEPLOYMENT_* per model in the lineup
-VITE_REASONING_EFFORT=medium
+VITE_AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA=your-gpt6-astra-deployment
+# Matching server-side runtime configuration:
+AZURE_OPENAI_ENDPOINT=https://your-openai.openai.azure.com/
+AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA=your-gpt6-astra-deployment
+AZURE_OPENAI_ALLOWED_DEPLOYMENTS=your-gpt6-astra-deployment
+# Optional server policy; users enter their own keys in the connection dialog.
+ALLOW_BYO_AI_ENDPOINTS=false
 ```
 
-### API Configuration
-- **Max tokens**: Per-model (GPT-5.x reasoning models allocate a larger `max_output_tokens` budget; lighter models use less)
-- **Response format**: `json_object` (ensures valid JSON)
-- **API version**: `2025-04-01-preview` (Responses API for GPT-5.x; Chat Completions for partner models)
-- **Model selection**: Runtime via `ModelSelector` dropdown with per-feature `ModelOverride`
+### Managed Astra API Configuration
+- **Max tokens**: Astra's configured architecture budget is 32,000 output tokens
+- **Response format**: `json_object`; application-level validation still rejects malformed or incompatible architecture output
+- **API route**: Azure OpenAI `/openai/v1/responses`
+- **Model policy**: Astra is the sole managed model, with global and per-feature reasoning preferences; no automatic fallback
+
+BYO uses the selected profile's model, Responses/Chat Completions format, and
+capability settings without replacing these architecture prompts or response
+validation. See the [BYO connection guide](BYO-AI-CONNECTIONS.md).
 
 ## Best Practices
 
@@ -308,7 +311,7 @@ VITE_REASONING_EFFORT=medium
 1. **Token limit**: Very large architectures may exceed model-specific limits
 2. **Icon availability**: Limited to 714 icons across 29 categories
 3. **Connection complexity**: Cannot represent all possible Azure connection types
-4. **Model variance**: Partner/third-party models (DeepSeek, Grok, Mistral, Kimi) may occasionally misidentify services vs. the GPT-5.x family
+4. **AI accuracy**: Astra can still misidentify services or omit requirements; validate generated output before applying it
 
 ## Future Enhancements
 
@@ -328,5 +331,5 @@ Potential improvements to the prompt:
 ---
 
 **Version**: 3.0  
-**Last Updated**: July 2026  
-**Models**: 12 via Azure OpenAI / Azure AI Foundry (GPT-5.1 → GPT-5.4 Mini, DeepSeek V3.2/V4 Pro, Grok 4.1 Fast/4.3, Mistral Large 3, Kimi K2.5)
+**Last Updated**: September 2026\
+**Managed Model**: GPT-6 Astra only; optional explicitly selected BYO connection

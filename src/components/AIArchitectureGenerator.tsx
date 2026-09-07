@@ -12,21 +12,13 @@ import {
   useModelSettings,
   MODEL_CONFIG,
   FeatureType,
-  getAvailableModels,
   getModelSettingsForFeature,
-  ModelType,
   ReasoningEffort,
   FEATURE_CONFIG,
   getReasoningEffortLabel,
   getSupportedReasoningEfforts,
-  isModelAvailable,
   updateFeatureOverride,
 } from '../stores/modelSettingsStore';
-import {
-  getBYOAIProviderLabel,
-  useBYOAISettings,
-} from '../stores/byoAISettingsStore';
-import { useRuntimeConfig } from '../services/runtimeConfig';
 import { trackImageImport } from '../services/telemetryService';
 import { architectureFingerprint, buildModificationPrompt } from '../services/modificationPrompt';
 import './AIArchitectureGenerator.css';
@@ -40,24 +32,15 @@ import { isAIRateLimitError, isRetryableAIFailure, type AIRetryWait } from '../s
 import { AIBudgetQueueError, isAIConcurrencyLimitError, runAIBudgetQueue } from '../services/aiBudgetQueue';
 import { getAIBudget } from '../services/aiBudgetService';
 import { isAIBudgetError, isAIInternalServerError, OpenAIProxyError } from '../services/apiHelper';
+import { captureRuntimeModelOverride, getEffectiveAIModelInfo } from '../services/aiModelRuntime';
+import { useBYOAISettings } from '../stores/byoAISettingsStore';
+import { useRuntimeConfig } from '../services/runtimeConfig';
+import AIConnectionSelector from './AIConnectionSelector';
 
 // After a successful generation the modal stays open this long so the user can
 // review metrics or type a follow-up modification, then auto-closes. Typing a
 // modification or regenerating cancels the pending close (see scheduleClose).
 const AUTO_CLOSE_MS = 45000;
-
-// Blueprint diagrams require general-purpose OpenAI models.
-// - Non-OpenAI partner deployments (DeepSeek, Grok, Mistral, Kimi, etc. —
-//   identified by apiFormat: 'chat-completions') run under stricter Azure AI
-//   Content Safety configurations that block the blueprint system prompt as
-//   adversarial.
-// - Codex-tuned variants (e.g. gpt-5.2-codex, gpt-5.3-codex) are optimized for
-//   coding tasks and tend to refuse non-code architecture-diagram prompts with
-//   "I'm sorry, ..." responses.
-const isBlueprintCapableModel = (m: ModelType): boolean =>
-  MODEL_CONFIG[m].apiFormat !== 'chat-completions' && !m.includes('codex');
-const modeRequiresOpenAI = (m: GenerationMode): boolean =>
-  m === 'blueprint' || m === 'both';
 
 type GeneratorStep = 'brief' | 'output' | 'review';
 type GenerationStage = 'manifest' | 'topology' | 'blueprint' | 'reference';
@@ -212,6 +195,7 @@ interface AIArchitectureGeneratorProps {
   onContinueInChat?: () => void;
   onReview?: () => void;
   onValidate?: () => void;
+  onConfigureConnections?: () => void;
   /**
    * Called when a Reference Architecture has been generated. Reference mode
    * intentionally does NOT push a topology onto the canvas (the transformed
@@ -241,6 +225,7 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
   onContinueInChat,
   onReview,
   onValidate,
+  onConfigureConnections,
   onReferenceArchitecture,
   onBlueprintArchitecture,
   currentArchitecture,
@@ -295,31 +280,11 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
 
   // Opt-in: also download an editorial PNG when generating in reference mode.
   // Model settings from reactive hook (stays in sync with dropdown)
-  const [modelSettings] = useModelSettings();
-  const byoSnapshot = useBYOAISettings();
-  const runtimeConfig = useRuntimeConfig();
-  const byoActive = byoSnapshot.settings.enabled
-    && byoSnapshot.verified
-    && runtimeConfig.status === 'ready'
-    && runtimeConfig.bringYourOwnAI;
-
-  // Blueprint generation requires a general-purpose OpenAI deployment.
-  // Keep the architecture model untouched and correct only the blueprint override.
-  useEffect(() => {
-    if (byoActive) return;
-    if (!modeRequiresOpenAI(mode)) return;
-    const blueprintSettings = getModelSettingsForFeature('blueprint');
-    if (isBlueprintCapableModel(blueprintSettings.model)) return;
-    const fallback = getAvailableModels().find(isBlueprintCapableModel);
-    if (!fallback) return;
-    const cfg = MODEL_CONFIG[fallback];
-    updateFeatureOverride('blueprint', {
-      model: fallback,
-      reasoningEffort: cfg.isReasoning
-        ? (cfg.defaultReasoningEffort ?? blueprintSettings.reasoningEffort)
-        : undefined,
-    });
-  }, [byoActive, mode, modelSettings.featureOverrides, modelSettings.model, modelSettings.reasoningEffort]);
+  useModelSettings();
+  useBYOAISettings();
+  useRuntimeConfig();
+  const selectedConnection = getEffectiveAIModelInfo('architectureGeneration');
+  const [submittedModel, setSubmittedModel] = useState('');
   
   // Auto-snapshot preference (stored in localStorage)
   const [autoSnapshot, setAutoSnapshot] = useState<boolean>(() => {
@@ -473,7 +438,11 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
     imageRequestRef.current?.abort();
     const controller = new AbortController();
     imageRequestRef.current = controller;
-    const result = await analyzeArchitectureDiagramImage(base64, mimeType, language, { signal: controller.signal });
+    const modelOverride = captureRuntimeModelOverride('architectureGeneration');
+    setSubmittedModel(modelOverride.connection?.displayName ?? getEffectiveAIModelInfo('architectureGeneration').displayName);
+    const result = await analyzeArchitectureDiagramImage(base64, mimeType, language, {
+      signal: controller.signal, modelOverride,
+    });
     throwIfGenerationAborted(controller.signal);
     return { description: result.description };
   };
@@ -509,11 +478,11 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
       setError(translate('Please describe your architecture'));
       return;
     }
-
-    if (!isAzureOpenAIConfigured()) {
+    const connectionAtClick = getEffectiveAIModelInfo('architectureGeneration');
+    if (connectionAtClick.source === 'managed' && connectionAtClick.code === 'astra_not_configured') {
       setError(localize(language, {
-        en: 'No AI model is configured. Connect a custom endpoint or contact the application administrator.',
-        ja: 'AI モデルが設定されていません。カスタム エンドポイントへ接続するか、アプリケーション管理者へ連絡してください。',
+        en: 'GPT-6 Astra is not configured. Contact the application administrator to configure the managed Astra deployment.',
+        ja: 'GPT-6 Astraが設定されていません。管理対象のAstraデプロイを設定するようアプリケーション管理者に連絡してください。',
       }));
       return;
     }
@@ -560,38 +529,17 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
     setPendingRetry(retrySnapshot);
     clearGenerationResult();
     
-    const currentModelSettings: ModelOverride = {
-      ...getModelSettingsForFeature('architectureGeneration'), signal: controller.signal,
-      onRetryWait: reportRetryWait(mode === 'reference' ? 'reference' : 'topology'),
-    };
-    console.log(`🎯 Generate clicked: default model=${modelSettings.model}, effective model=${currentModelSettings.model}, reasoning=${currentModelSettings.reasoningEffort}, overrides=${JSON.stringify(modelSettings.featureOverrides)}`);
-
-    // Use the same effective feature setting shown in the modal. If a stale
-    // setting points to an incompatible model, fall back to the deployed
-    // recommendation so blueprint generation still succeeds.
-    const blueprintModelSettings: ModelOverride = { ...(() => {
-      const configured = getModelSettingsForFeature('blueprint');
-      if (isBlueprintCapableModel(configured.model)) {
-        return {
-          model: configured.model,
-          reasoningEffort: configured.reasoningEffort,
-        };
-      }
-      const rec = FEATURE_CONFIG.blueprint.recommendedModel;
-      if (isModelAvailable(rec) && isBlueprintCapableModel(rec)) {
-        const cfg = MODEL_CONFIG[rec];
-        return {
-          model: rec,
-          reasoningEffort: cfg.isReasoning
-            ? (FEATURE_CONFIG.blueprint.recommendedReasoning || modelSettings.reasoningEffort)
-            : modelSettings.reasoningEffort,
-        };
-      }
-      return currentModelSettings;
-    })(), signal: controller.signal, onRetryWait: reportRetryWait('blueprint') };
-    console.log(`📐 Blueprint model: ${blueprintModelSettings.model} (reasoning=${blueprintModelSettings.reasoningEffort})`);
-
     try {
+      const currentModelSettings: ModelOverride = {
+        ...captureRuntimeModelOverride('architectureGeneration'), signal: controller.signal,
+        onRetryWait: reportRetryWait(mode === 'reference' ? 'reference' : 'topology'),
+      };
+      const blueprintModelSettings: ModelOverride = {
+        ...captureRuntimeModelOverride('blueprint'),
+        signal: controller.signal, onRetryWait: reportRetryWait('blueprint'),
+      };
+      setSubmittedModel((mode === 'blueprint' ? blueprintModelSettings : currentModelSettings).connection?.displayName
+        ?? getEffectiveAIModelInfo(mode === 'blueprint' ? 'blueprint' : 'architectureGeneration').displayName);
       ensureUnchanged();
       // ── Reference (Editorial) mode — PNG is the sole deliverable.
       // We deliberately do NOT push a topology onto the canvas: the
@@ -964,28 +912,20 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
     setError('');
   };
 
-  const renderFeatureModelControls = (feature: FeatureType, openAiOnly: boolean) => {
-    if (byoActive) {
+  const renderFeatureModelControls = (feature: FeatureType) => {
+    const connection = getEffectiveAIModelInfo(feature);
+    if (connection.source === 'bring-your-own') {
       return (
         <div className="ai-modal-model-group" key={feature}>
-          <span className="ai-modal-model-label">
-            {mode === 'both'
-              ? translate(FEATURE_CONFIG[feature].displayName)
-              : t("Model:")}
-          </span>
-          <span className="ai-modal-active-model">
-            {getBYOAIProviderLabel(byoSnapshot.settings.provider)} · {byoSnapshot.settings.model}
-            <span className="model-change-hint">
-              {localize(language, {
-                en: 'Custom endpoint active',
-                ja: 'カスタム エンドポイントを使用中',
-              })}
-            </span>
+          <span className="ai-modal-model-label">{translate(FEATURE_CONFIG[feature].displayName)}</span>
+          <strong>{connection.displayName}</strong>
+          <span>{t('Reasoning:')} {t(getReasoningEffortLabel(connection.isReasoning ? connection.reasoningEffort : 'none'))}
+            {' · '}{connection.apiFormat === 'responses' ? 'Responses' : 'Chat Completions'}
+            {' · '}{localize(language, { en: 'Output limit', ja: '出力上限' })}: {connection.maxCompletionTokens.toLocaleString()}
           </span>
         </div>
       );
     }
-
     const featureSettings = getModelSettingsForFeature(feature);
     const config = MODEL_CONFIG[featureSettings.model];
     const label = mode === 'both'
@@ -995,30 +935,7 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
     return (
       <div className="ai-modal-model-group" key={feature}>
         <span className="ai-modal-model-label">{label}</span>
-        <select
-          className="ai-modal-model-select"
-          value={featureSettings.model}
-          onChange={(e) => {
-            const next = e.target.value as ModelType;
-            const nextConfig = MODEL_CONFIG[next];
-            updateFeatureOverride(feature, {
-              model: next,
-              reasoningEffort: nextConfig.isReasoning
-                ? (nextConfig.defaultReasoningEffort ?? featureSettings.reasoningEffort)
-                : undefined,
-            });
-          }}
-          disabled={isGenerating}
-          aria-label={`${translate(FEATURE_CONFIG[feature].displayName)} - ${t("Select AI model")}`}
-        >
-          {getAvailableModels()
-            .filter((model) => !openAiOnly || isBlueprintCapableModel(model))
-            .map((model) => (
-              <option key={model} value={model}>
-                {MODEL_CONFIG[model].displayName}
-              </option>
-            ))}
-        </select>
+        <strong>{localize(language, { en: 'Managed GPT-6 Astra', ja: '管理対象の GPT-6 Astra' })}</strong>
         {config.isReasoning && (
           <>
             <span className="ai-modal-model-label">{t("Reasoning:")}</span>
@@ -1031,7 +948,7 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
                   reasoningEffort: e.target.value as ReasoningEffort,
                 })
               }
-              disabled={isGenerating}
+              disabled={isGenerating || !isAzureOpenAIConfigured()}
               aria-label={`${translate(FEATURE_CONFIG[feature].displayName)} - ${t("Select reasoning effort")}`}
             >
               {getSupportedReasoningEfforts(featureSettings.model).map(level => (
@@ -1121,6 +1038,12 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
             </nav>
 
             <div className="modal-body">
+              <AIConnectionSelector disabled={isBusy} onConfigureConnections={onConfigureConnections} />
+              {(isBusy || activeStep === 'review') && submittedModel && (
+                <p className="ai-submitted-model" role="status">
+                  {localize(language, { en: 'Submitted with', ja: '送信時のモデル' })}: <strong>{submittedModel}</strong>
+                </p>
+              )}
              <div className={`modal-body-grid generator-step-${activeStep}`}>
               <div className="modal-col modal-col-left">
               {activeStep === 'brief' && (
@@ -1377,20 +1300,19 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
                 <div className="ai-modal-model-controls">
                   {mode === 'both' ? (
                     <>
-                      {renderFeatureModelControls('architectureGeneration', false)}
-                      {renderFeatureModelControls('blueprint', true)}
+                      {renderFeatureModelControls('architectureGeneration')}
+                      {renderFeatureModelControls('blueprint')}
                     </>
                   ) : renderFeatureModelControls(
                     mode === 'blueprint' ? 'blueprint' : 'architectureGeneration',
-                    mode === 'blueprint',
                   )}
                 </div>
                 <span className="model-change-hint">
-                  {mode === 'both'
-                    ? t("Each output uses its feature-specific model.")
-                    : mode === 'blueprint'
-                      ? t("Blueprint mode supports general-purpose OpenAI models only (partner and Codex models are filtered out).")
-                      : t("Also configurable in toolbar → AI Model")}
+                  {selectedConnection.source === 'bring-your-own'
+                    ? localize(language, { en: 'All outputs use the selected profile’s capabilities and limits. Managed Astra reasoning settings do not apply.', ja: 'すべての出力で選択中のプロファイルの機能と上限を使用します。管理対象の Astra の推論設定は適用されません。' })
+                    : mode === 'both'
+                    ? localize(language, { en: 'Both outputs use GPT-6 Astra with their own reasoning settings.', ja: '両方の出力でGPT-6 Astraを使用し、推論強度を個別に設定できます。' })
+                    : localize(language, { en: 'Reasoning is also configurable in AI model settings.', ja: '推論強度はAIモデル設定でも変更できます。' })}
                 </span>
               </div>
               {currentArchitecture && currentArchitecture.nodes.length > 0 && (

@@ -128,7 +128,7 @@ import {
   advanceWidthIn,
   emittableFontPt,
   trailingWhitespaceIn,
-  connectionLegendForTypes,
+  connectionLegendForRoutes,
   usedConnectionLegend,
   type ConnectionLegendEntry,
   workflowListFromEdges,
@@ -2214,7 +2214,7 @@ function toInches(point: Point, transform: FitTransform): Point {
 }
 
 /** PowerPoint dash preset for each canonical connection type. */
-function pptxDashType(route: ExportRoute): 'solid' | 'dash' | 'sysDot' | 'dashDot' {
+function pptxDashType(route: Pick<ExportRoute, 'connectionType' | 'dashed'>): 'solid' | 'dash' | 'sysDot' | 'dashDot' {
   if (!route.dashed) return 'solid';
   switch (route.connectionType) {
     case 'optional':
@@ -4664,16 +4664,22 @@ function addConnectionLegend(
   });
   entries.forEach((entry, i) => {
     const cx = seat.x + i * cellW + 0.08;
-    slide.addShape(pptx.ShapeType.line, {
-      x: cx, y: seat.y + seat.h / 2, w: swatchW, h: 0,
-      line: {
-        color: stripHash(entry.color),
-        width: 1.5,
-        dashType: entry.dashed ? (entry.type === 'telemetry' ? 'dashDot' : entry.type === 'async' ? 'dash' : 'sysDot') : 'solid',
-      },
-    });
+    if (!entry.hasMixedStyles) {
+      slide.addShape(pptx.ShapeType.line, {
+        x: cx, y: seat.y + seat.h / 2, w: swatchW, h: 0,
+        objectName: `connection-legend-swatch-${entry.type}`,
+        line: {
+          color: stripHash(entry.color),
+          width: 1.5,
+          dashType: pptxDashType({ connectionType: entry.type, dashed: entry.dashed }),
+          transparency: entry.opacity < 1 ? Math.round((1 - entry.opacity) * 100) : undefined,
+        },
+      });
+    }
+    const labelOffset = entry.hasMixedStyles ? 0 : swatchW + 0.06;
     slide.addText(entry.label, {
-      x: cx + swatchW + 0.06, y: seat.y, w: Math.max(cellW - swatchW - 0.2, 0.3), h: seat.h,
+      x: cx + labelOffset, y: seat.y, w: Math.max(cellW - labelOffset - 0.14, 0.3), h: seat.h,
+      objectName: `connection-legend-label-${entry.type}`,
       fontSize: 8,
       color: '475569',
       fontFace: GEOMETRY_LATIN_FONT,
@@ -5097,7 +5103,7 @@ async function addEditableDiagram(
   // Built from the routes this slide actually draws, not from the diagram, so
   // the reservation and the key can never disagree -- a slice with no hop on it
   // reserves nothing and shows nothing.
-  const slideLegend = connectionLegendForTypes(shownRoutes.map((route) => route.connectionType));
+  const slideLegend = connectionLegendForRoutes(shownRoutes);
   const legendRect = connectionLegendRect(slideLegend, frame);
   if (legendRect) chipObstacles.push({ ...legendRect, weight: 4 });
   const chips = new Map<string, ReturnType<typeof connectorLabelBox>>();

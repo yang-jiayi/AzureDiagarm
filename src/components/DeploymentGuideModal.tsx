@@ -14,9 +14,10 @@ interface DeploymentGuideModalProps {
   isOpen: boolean;
   onClose: () => void;
   isLoading?: boolean;
+  submittedModel?: string;
 }
 
-const DeploymentGuideModal: React.FC<DeploymentGuideModalProps> = ({ guide, isOpen, onClose, isLoading }) => {
+const DeploymentGuideModal: React.FC<DeploymentGuideModalProps> = ({ guide, isOpen, onClose, isLoading, submittedModel }) => {
   const { t, language } = useLanguage();
   const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
   const [expandedSections, setExpandedSections] = useState<Set<number>>(new Set([0]));
@@ -87,6 +88,7 @@ const DeploymentGuideModal: React.FC<DeploymentGuideModalProps> = ({ guide, isOp
           <div className="modal-loading">
             <div className="spinner"></div>
             <p>{t("Generating comprehensive deployment guide...")}</p>
+            {submittedModel && <p>{localize(language, { en: 'Submitted with', ja: '送信時のモデル' })}: <strong>{submittedModel}</strong></p>}
           </div>
         ) : guide ? (
           <>
@@ -96,6 +98,9 @@ const DeploymentGuideModal: React.FC<DeploymentGuideModalProps> = ({ guide, isOp
               <h3>{guide.title}</h3>
               <p className="guide-overview">{guide.overview}</p>
               <div className="guide-meta">
+                {guide.metrics?.model && <span className="meta-item">
+                  {localize(language, { en: 'Submitted with', ja: '送信時のモデル' })}: <strong>{guide.metrics.model}</strong>
+                </span>}
                 <span className="meta-item">
                   {' '}{t("⏱️ Estimated Time:")}{' '}<strong>{guide.estimatedTime}</strong>
                 </span>

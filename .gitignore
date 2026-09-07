@@ -29,6 +29,9 @@ demo-output/
 test-results/
 playwright-report/
 
+# Transactional pricing refresh and recovery workspace
+/.pricing-refresh/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

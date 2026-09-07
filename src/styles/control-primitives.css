@@ -193,6 +193,10 @@ textarea.azd-control {
 .azd-callout--danger {
   border-color: color-mix(in srgb, var(--azd-color-danger) 42%, transparent);
   background: var(--azd-color-danger-soft);
+  color: var(--azd-color-danger-strong);
+}
+
+body.dark-mode .azd-callout--danger {
   color: var(--azd-color-danger);
 }
 

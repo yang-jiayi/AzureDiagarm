@@ -141,11 +141,25 @@ test('public identity is required; reservations include input/output and vision;
     'binary image transport bytes are covered by the vision reservation, not counted as text',
   );
   assert.equal(actualUsage({ usage: { input_tokens: 10, output_tokens: 20 } }), 30);
+  assert.equal(actualUsage({ usage: { prompt_tokens: 10, completion_tokens: 20 } }), 30);
+  assert.equal(actualUsage({ usage: { prompt_tokens: 10 } }), undefined);
+  assert.equal(actualUsage({ usage: { completion_tokens: 20 } }), undefined);
+  assert.equal(actualUsage({ usage: { prompt_tokens: '10', completion_tokens: 20 } }), undefined);
   assert.equal(actualUsage({ usage: { total_tokens: -1 } }), undefined);
   assert.equal(actualUsage({ usage: {} }), undefined);
   assert.equal(hasUnmeteredInput({ input: [{ type: 'input_image', image_url: 'https://remote.example/image' }] }), true);
   assert.equal(hasUnmeteredInput({ input: [{ type: 'item_reference', id: 'stored' }] }), true);
   assert.equal(hasUnmeteredInput({ input: [{ type: 'input_image', image_url: 'data:image/png;base64,AA==' }] }), false);
+});
+
+test('Chat Completions inline vision budgets exclude base64 bytes and include the selected output cap', () => {
+  const chat = data => ({
+    messages: [{ role: 'user', content: [{ type: 'image_url', image_url: { url: `data:image/png;base64,${data}`, detail: 'high' } }] }],
+    max_tokens: 32000,
+  });
+  assert.equal(reservationTokens(chat('AA=='), 'chat-completions'), reservationTokens(chat('A'.repeat(100_000)), 'chat-completions'));
+  assert.ok(reservationTokens(chat('AA=='), 'chat-completions') > 163000);
+  assert.equal(hasUnmeteredInput(chat('AA==')), false);
 });
 
 test('reasoning chat and Anthropic vision/cache usage remain bounded and metered', () => {

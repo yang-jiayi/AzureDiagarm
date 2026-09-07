@@ -6,13 +6,14 @@ export default defineConfig({
   plugins: [react()],
   // Keep the lazy adapter from triggering a dev-server reload on first layout.
   optimizeDeps: {
+    entries: ['index.html', 'blueprint-preview.html'],
     include: ['elkjs/lib/elk-api.js'],
   },
   server: {
     port: 3000,
-    // Generated diagnostics and browser artifacts can contain locked Windows files.
+    // Generated diagnostics and pricing workspaces can contain locked Windows files.
     watch: {
-      ignored: /(?:^|[\\/])(?:\.azure|DONOTTRACK)(?:[\\/]|$)/,
+      ignored: /(?:^|[\\/])(?:\.azure|DONOTTRACK|\.pricing-refresh)(?:[\\/]|$)/,
     },
     // Delegated Azure import uses a same-window MSAL redirect, so retain strict
     // opener isolation in local development as well as production.

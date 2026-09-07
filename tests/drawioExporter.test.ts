@@ -93,3 +93,21 @@ test('draw.io export renders self-loops and parallel edges distinctly (fix 7)', 
   assert.ok(countOccurrences(xml, '<Array as="points">') >= 2, 'de-collision waypoints are emitted');
   assertWellFormed(xml, 'loops.drawio');
 });
+
+test('draw.io preserves authored paint and absolute SVG dash lengths', async () => {
+  const nodes: Node[] = [
+    { id: 'a', type: 'azureNode', position: { x: 0, y: 0 }, data: { label: 'Source' } },
+    { id: 'b', type: 'azureNode', position: { x: 400, y: 0 }, data: { label: 'Target' } },
+  ];
+  const xml = await exportToDrawio(nodes, [{
+    id: 'authored', source: 'a', target: 'b', data: { connectionType: 'security' },
+    style: { stroke: '#006D77', strokeDasharray: '10 2 3 2', opacity: 0.45 },
+  }], 'Authored paint');
+  const edge = /<mxCell\b[^>]*edge="1"[^>]*>/.exec(xml)?.[0];
+  assert.ok(edge);
+  assert.match(edge, /strokeColor=#006d77;/);
+  assert.match(edge, /opacity=45;/);
+  assert.match(edge, /dashPattern=10 2 3 2;/);
+  assert.match(edge, /fixDash=1;/, 'dash lengths must not be multiplied by strokeWidth');
+  assertWellFormed(xml, 'authored.drawio');
+});

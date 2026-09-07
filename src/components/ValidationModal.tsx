@@ -17,10 +17,11 @@ import type { ReviewFinding, ValidationReviewRecord } from '../services/validati
  * Props for ValidationModal component
  */
 export interface ValidationModalProps {
-  validation: ArchitectureValidation | null; // Validation results from GPT-5.2 agent
+  validation: ArchitectureValidation | null;
   isOpen: boolean; // Controls modal visibility
   onClose: () => void; // Handler for closing modal
   isLoading?: boolean; // Shows loading state during validation
+  submittedModel?: string;
   isStale?: boolean; // Previous result no longer matches the modified architecture
   onApplyRecommendations?: (selectedFindings: ValidationFinding[]) => void; // Handler for applying selected recommendations
   onRevalidate?: () => void; // Optional handler to rerun validation
@@ -35,7 +36,7 @@ export interface ValidationModalProps {
  */
 const ValidationModal: React.FC<ValidationModalProps> = ({
   validation, isOpen, onClose, isLoading, onApplyRecommendations, onRevalidate,
-  onFocusResources, isStale = false, reviewHistory = [],
+  onFocusResources, isStale = false, reviewHistory = [], submittedModel,
 }) => {
   const { t, translate, language } = useLanguage();
   // Track selected findings for applying recommendations
@@ -218,7 +219,7 @@ const ValidationModal: React.FC<ValidationModalProps> = ({
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = generateModelFilename('architecture-validation', 'md', ts);
+    link.download = generateModelFilename('architecture-validation', 'md', ts, validation.metrics);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -228,7 +229,7 @@ const ValidationModal: React.FC<ValidationModalProps> = ({
     if (validation.diagramImageDataUrl) {
       const imgLink = document.createElement('a');
       imgLink.href = validation.diagramImageDataUrl;
-      imgLink.download = generateModelFilename('architecture-validation-diagram', 'png', ts);
+      imgLink.download = generateModelFilename('architecture-validation-diagram', 'png', ts, validation.metrics);
       document.body.appendChild(imgLink);
       imgLink.click();
       document.body.removeChild(imgLink);
@@ -270,6 +271,7 @@ const ValidationModal: React.FC<ValidationModalProps> = ({
             <div className="spinner"></div>
             <div className="loading-content">
               <h3>{t("Analyzing architecture against Azure Well-Architected Framework...")}</h3>
+              {submittedModel && <p>{localize(language, { en: 'Submitted with', ja: '送信時のモデル' })}: <strong>{submittedModel}</strong></p>}
               <p className="loading-description">
                 {' '}{t("Running hybrid analysis: instant rule-based checks against")}{' '}{'>'}{t("65 curated WAF rules, followed by AI-powered contextual refinement for architecture-specific insights.")}{' '}</p>
               <div className="pillars-info">
@@ -294,6 +296,9 @@ const ValidationModal: React.FC<ValidationModalProps> = ({
         ) : validation ? (
           <>
             <div className="modal-body">
+            {validation.metrics?.model && <p className="validation-model-provenance">
+              {localize(language, { en: 'Submitted with', ja: '送信時のモデル' })}: <strong>{validation.metrics.model}</strong>
+            </p>}
             {isStale && (
               <div className="validation-stale-warning validation-stale-notice" role="status">
                 <AlertTriangle size={18} />

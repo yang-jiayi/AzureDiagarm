@@ -2,10 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import type { RuntimeModelOverride } from '../src/services/aiModelRuntime.ts';
 import {
-  buildRetryOverride,
-  degradeOverrideForRetry,
-  downshiftReasoningEffort,
   isRetryableAIFailure,
+  isAIRateLimitError,
   runWithCompactRetry,
   safeParseModelJson,
   ModelJsonError,
@@ -17,14 +15,31 @@ import {
 const silentLogger = { error() {}, warn() {} };
 
 test('proxy timeout codes are retryable', () => {
-  for (const code of ['azure_openai_timeout', 'byo_timeout', 'edge_origin_unavailable']) {
+  for (const code of ['azure_openai_timeout', 'edge_origin_unavailable']) {
     assert.equal(isRetryableAIFailure(Object.assign(new Error('boom'), { code })), true, code);
   }
 });
 
+test('BYO throttles and transient failures share managed retry classification without fallback', () => {
+  for (const code of ['byo_timeout', 'byo_unavailable', 'byo_connection_failed', 'byo_rate_limited']) {
+    const error = Object.assign(new Error('Retired provider'), { code });
+    assert.equal(isAIRateLimitError(error), code === 'byo_rate_limited', code);
+    assert.equal(isRetryableAIFailure(error), true, code);
+  }
+});
+
+test('proxy configuration failures are not transient provider failures despite HTTP 503', () => {
+  for (const code of ['astra_not_configured', 'proxy_not_configured']) {
+    const error = Object.assign(new Error('The proxy is not configured.'), {
+      code, source: 'proxy', status: 503,
+    });
+    assert.equal(isAIRateLimitError(error), false, code);
+    assert.equal(isRetryableAIFailure(error), false, code);
+  }
+});
+
 test('abort and timeout errors are retryable, but a user cancellation is not', () => {
-  // An internal (timeout-driven) abort surfaces as an AbortError and SHOULD be
-  // retried — a compact retry often finishes inside the budget.
+  // Internal timeouts can be retried explicitly, but never at lower quality.
   const abort = new Error('The operation was aborted');
   abort.name = 'AbortError';
   assert.equal(isRetryableAIFailure(abort), true);
@@ -133,39 +148,7 @@ test('the user-visible timeout message is recognised', () => {
   assert.equal(isRetryableAIFailure('a string'), false);
 });
 
-test('reasoning effort is downshifted only when it is above low', () => {
-  assert.equal(downshiftReasoningEffort('xhigh'), 'low');
-  assert.equal(downshiftReasoningEffort('high'), 'low');
-  assert.equal(downshiftReasoningEffort('medium'), 'low');
-  assert.equal(downshiftReasoningEffort('low'), 'low');
-  assert.equal(downshiftReasoningEffort('minimal'), 'minimal');
-  assert.equal(downshiftReasoningEffort('none'), 'none');
-});
-
-test('retry overrides keep the caller model but lower the effort', () => {
-  const override = degradeOverrideForRetry({ model: 'gpt-5.6-sol', reasoningEffort: 'high' });
-  assert.equal(override?.model, 'gpt-5.6-sol');
-  assert.equal(override?.reasoningEffort, 'low');
-
-  // An already-cheap override is returned untouched, and "no override" stays
-  // undefined so the feature defaults keep applying.
-  const cheap = { model: 'gpt-5.6-sol', reasoningEffort: 'minimal' } as const;
-  assert.equal(degradeOverrideForRetry(cheap), cheap);
-  assert.equal(degradeOverrideForRetry(undefined), undefined);
-});
-
-const OVERRIDE: RuntimeModelOverride = { model: 'gpt-5.6-sol', reasoningEffort: 'high' };
-
-test('a retry override is produced even when the caller passed none', () => {
-  const explicit = buildRetryOverride('blueprint', OVERRIDE);
-  assert.deepEqual(explicit, { model: 'gpt-5.6-sol', reasoningEffort: 'low' });
-
-  // Falling back to the feature settings must still lower the effort, otherwise
-  // the retry repeats exactly the request that timed out.
-  const implicit = buildRetryOverride('blueprint', undefined);
-  assert.ok(['none', 'minimal', 'low'].includes(implicit.reasoningEffort));
-  assert.ok(implicit.model);
-});
+const OVERRIDE: RuntimeModelOverride = { model: 'gpt-6-astra', reasoningEffort: 'high' };
 
 test('a timeout preserves requested quality and requires an explicit user retry', async () => {
   const calls: Array<{ compact: boolean; override?: RuntimeModelOverride }> = [];

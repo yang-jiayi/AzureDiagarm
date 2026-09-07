@@ -12,10 +12,11 @@ interface VirtualizedIconGridProps {
   onVisibleIconsChange?: (icons: AzureIcon[]) => void;
   ariaLabel: string;
   maxHeight?: number;
+  fillAvailableHeight?: boolean;
   layout?: 'grid' | 'list';
 }
 
-const GRID_ROW_HEIGHT = 144;
+const GRID_ROW_HEIGHT = 128;
 const TOUCH_GRID_ROW_HEIGHT = 164;
 const LIST_ROW_HEIGHT = 72;
 const ROW_GAP = 8;
@@ -28,23 +29,35 @@ const VirtualizedIconGrid: React.FC<VirtualizedIconGridProps> = ({
   onVisibleIconsChange,
   ariaLabel,
   maxHeight = 420,
+  fillAvailableHeight = false,
   layout = 'grid',
 }) => {
   const viewportRef = useRef<HTMLDivElement>(null);
   const hasCoarsePointer = useMediaQuery(MEDIA_QUERIES.coarsePointer);
   const [width, setWidth] = useState(260);
+  const [availableHeight, setAvailableHeight] = useState(maxHeight);
   const [scrollTop, setScrollTop] = useState(0);
 
   useEffect(() => {
     const element = viewportRef.current;
     if (!element) return;
-    const updateWidth = () => setWidth(element.clientWidth || 260);
-    updateWidth();
+    const parent = element.parentElement;
+    const updateSize = () => {
+      setWidth(element.clientWidth || 260);
+      if (fillAvailableHeight && parent) {
+        const top = element.getBoundingClientRect().top
+          - parent.getBoundingClientRect().top + parent.scrollTop;
+        const bottomPadding = Number.parseFloat(getComputedStyle(parent).paddingBottom) || 0;
+        setAvailableHeight(Math.max(0, parent.clientHeight - top - bottomPadding));
+      }
+    };
+    updateSize();
     if (typeof ResizeObserver === 'undefined') return;
-    const observer = new ResizeObserver(updateWidth);
+    const observer = new ResizeObserver(updateSize);
     observer.observe(element);
+    if (fillAvailableHeight && parent) observer.observe(parent);
     return () => observer.disconnect();
-  }, []);
+  }, [fillAvailableHeight]);
 
   useEffect(() => {
     setScrollTop(0);
@@ -62,7 +75,8 @@ const VirtualizedIconGrid: React.FC<VirtualizedIconGridProps> = ({
       )));
   const rowCount = Math.ceil(icons.length / columns);
   const totalHeight = rowCount * rowHeight;
-  const viewportHeight = Math.min(Math.max(rowHeight, totalHeight), maxHeight);
+  const heightLimit = fillAvailableHeight ? Math.max(rowHeight, availableHeight) : maxHeight;
+  const viewportHeight = Math.min(Math.max(rowHeight, totalHeight), heightLimit);
   const startRow = Math.max(0, Math.floor(scrollTop / rowHeight) - OVERSCAN_ROWS);
   const visibleRows = Math.ceil(viewportHeight / rowHeight) + (OVERSCAN_ROWS * 2);
   const endRow = Math.min(rowCount, startRow + visibleRows);
