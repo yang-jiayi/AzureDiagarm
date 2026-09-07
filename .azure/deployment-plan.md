@@ -91,8 +91,9 @@ may be weakened to complete this release.
 Current-release validation is complete for application source
 `36623c21250f12aefc353978ccdf5196a5620a1f`. All six required checks pass,
 including the complete Linux browser-safeguard chain and both runtime images.
-The subsequent documentation-only validation record must satisfy the same
-protected-main checks before merge. Historical release records below do not
+Subsequent validation-record and browser-fixture corrections must satisfy the
+same protected-main checks before merge. They do not change the validated
+application or infrastructure code. Historical release records below do not
 authorize this candidate.
 
 Evidence timestamps on 2026-09-07 (UTC): final source CI completed at
@@ -121,6 +122,7 @@ complete current-source and protected-main release gates.
 | Corrected Linux source and containers | Head `412fba8` passes the complete Vite/core/Office/workspace/server job, both container builds, runtime readiness, standalone MCP and CodeQL. All 132 critical browser cases pass. The subsequent workspace script still tried to open the intentionally removed multi-model comparison UI | CI `34129212118`, CodeQL `34129209058`; application and container job succeeds, browser-safeguards job stops at the obsolete control |
 | Current-workflow browser coverage | Replaced that obsolete comparison sequence with the supported managed-Astra validation flow, retaining malformed-review recovery before/after edits, stale-review history protection and exact dispatch assertions. All four existing local browser-safeguard commands now pass; the workspace run retains all 36 responsive header cases and its 220px limit | `npm run test:workspace:browser`, `npm run test:ai-ui`, `npm run test:inspector-ui`, `npm run test:modal-focus`; the same complete chain also passes in the final Linux run |
 | Final exact-source protected checks | All six required checks pass for `36623c21250f12aefc353978ccdf5196a5620a1f`: Vite application, standalone MCP, complete critical-browser and workspace/AI/inspector/modal safeguards, and actions/JavaScript-TypeScript/Python CodeQL. Core/Office/server tests, generated-input checks, both images and runtime readiness complete successfully | PR #70; CI `34131505914`, CodeQL `34131501864`; `gh pr checks 70 --required --watch` exits 0 |
+| Post-record fixture timing correction | The documentation-only head `12f2fb4` passes core/container/CodeQL and critical-browser/workspace tests, but its AI UI run exposes a queued React fixture render racing the deferred reply. Reproduced that ordering, then used the existing `h.commitRender()` helper before settling the reply in the same browser task. All 70 AI UI cases, scoped lint and script typecheck pass locally; application code and rejection assertions are unchanged | CI `34132936809`; deterministic failing control followed by passing `npm run test:ai-ui`, scoped ESLint and `npm run typecheck:scripts`; the corrected final PR head must pass all protected checks before deployment |
 
 ## 8. Rollback and Limitations
 

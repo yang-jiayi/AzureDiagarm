@@ -850,12 +850,14 @@ test('chat preserves manual edits made while generation runs', async t => {
   const page = await setup(t, { surface: 'chat', deferKinds: ['topology'] });
   await page.locator('textarea').fill('Add SQL');
   await page.getByRole('button', { name: 'Send', exact: true }).click();
+  await page.waitForFunction(() => (window as any).h.pending.some((request: { kind: string }) => request.kind === 'topology'));
   await page.evaluate(() => {
     const h = (window as any).h;
     h.nodes = [{ id: 'manual', type: 'azureNode', position: { x: 0, y: 0 }, data: { label: 'Manual edit' } }];
-    h.render();
+    // Commit the simulated edit before the reply settles in this same browser task.
+    h.commitRender();
+    h.pending.find((request: { kind: string }) => request.kind === 'topology').resolve();
   });
-  await finish(page, 'topology');
   await page.locator('.arch-chat-msg-error').filter({ hasText: 'diagram changed' }).waitFor();
   assert.equal(await page.evaluate(() => (window as any).h.applies.length), 0);
   assert.equal(await page.evaluate(() => (window as any).h.followups), 0);
