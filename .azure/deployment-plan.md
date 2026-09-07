@@ -1,6 +1,6 @@
 # Azure Deployment Plan
 
-> **Status:** Approved
+> **Status:** Validated
 
 Generated: 2026-09-07
 
@@ -67,14 +67,14 @@ Retain the workflow's rollback receipt and guarded rollback behavior.
 - [x] Confirm explicit publication authorization and preserve existing work.
 - [x] Confirm the same current main, target application, subscription and region.
 - [x] Preserve BYO policy, managed Astra, authentication and budget boundaries.
-- [ ] All validation checks pass.
+- [x] All validation checks pass.
   - [x] Core AZCLI validation: CLI/auth, Bicep compile, ARM validate and what-if.
   - [x] Docker build/context and current-source standalone/combined runtime gates.
   - [x] Applicable Azure policy validation; no policy changes or exemptions.
   - [x] Static role review; no additional grants are needed by this release.
   - [x] Complete local source/server/MCP validation and release-guard review.
-  - [ ] Required protected-main Linux build/browser/CodeQL checks.
-- [ ] Record final evidence and validated source before merging for deployment.
+  - [x] Required protected-main Linux build/browser/CodeQL checks.
+- [x] Record final evidence and validated source before merging for deployment.
 
 ## 6. Deployment Steps
 
@@ -88,9 +88,15 @@ may be weakened to complete this release.
 
 ## 7. Validation Proof
 
-Current-release validation is in progress. The earlier records below are
-historical and do not authorize this candidate. Final command results, exact
-source and GitHub run references will be recorded here by azure-validate.
+Current-release validation is complete for application source
+`36623c21250f12aefc353978ccdf5196a5620a1f`. All six required checks pass,
+including the complete Linux browser-safeguard chain and both runtime images.
+The subsequent documentation-only validation record must satisfy the same
+protected-main checks before merge. Historical release records below do not
+authorize this candidate.
+
+Evidence timestamps on 2026-09-07 (UTC): final source CI completed at
+14:22:13, and final source CodeQL completed at 14:13:14.
 
 The completed local UI/export integration already includes the normal build,
 125 targeted units, 27 normal-build browser cases, four separately configured
@@ -111,9 +117,10 @@ complete current-source and protected-main release gates.
 | BYO responsive correction | Full units exposed one noncanonical 520px media query. It now uses the existing 640px compact breakpoint. Both form grids switch correctly at 640/641px, without horizontal overflow or WCAG violations; the four existing managed/BYO policy cases also pass | `tests/breakpoints.test.ts` and the actual browser boundary regression; no assertion or timeout weakening |
 | Release model-version correction | Independent release review identified a missing version comparison. The guard now rejects missing, different, empty, null or numeric versions and requires `2026-09-03`, with a regression tying that constant to the model template. The corrected helper also passes against live ARM account/deployment metadata | Ten deployment-security cases and 82 source/workflow/rollback cases pass; scoped lint passes; no model or Azure resource modification |
 | Explicit account reference | Added the missing non-secret `AZURE_OPENAI_RESOURCE_ID` GitHub variable for the already verified production account. Existing endpoint, deployment alias and BYO policy are unchanged | Exact read-back matches the verified account; no credentials, role grants or alternative target introduced |
-| Initial clean Linux candidate | PR #70 head `fd23bce` passes build/lint, complete application core and Office/workspace tests, standalone MCP image and all three CodeQL analyses. CI exposed two fixture portability defects: an unawaited Node 22 subtest and a Windows-specific greedy Japanese line split. The subtest is now explicitly awaited; the text regression checks the broken-word baseline while retaining its exact balanced result and geometry checks | CI `34127439136`, CodeQL `34127436142`; the required gates must be rerun on the correction commit before release |
+| Initial clean Linux candidate | PR #70 head `fd23bce` passes build/lint, complete application core and Office/workspace tests, standalone MCP image and all three CodeQL analyses. CI exposed two fixture portability defects: an unawaited Node 22 subtest and a Windows-specific greedy Japanese line split. The subtest is now explicitly awaited; the text regression checks the broken-word baseline while retaining its exact balanced result and geometry checks | CI `34127439136`, CodeQL `34127436142`; this historical blocked candidate is superseded by the final passing source below |
 | Corrected Linux source and containers | Head `412fba8` passes the complete Vite/core/Office/workspace/server job, both container builds, runtime readiness, standalone MCP and CodeQL. All 132 critical browser cases pass. The subsequent workspace script still tried to open the intentionally removed multi-model comparison UI | CI `34129212118`, CodeQL `34129209058`; application and container job succeeds, browser-safeguards job stops at the obsolete control |
-| Current-workflow browser coverage | Replaced that obsolete comparison sequence with the supported managed-Astra validation flow, retaining malformed-review recovery before/after edits, stale-review history protection and exact dispatch assertions. All four existing local browser-safeguard commands now pass; the workspace run retains all 36 responsive header cases and its 220px limit | `npm run test:workspace:browser`, `npm run test:ai-ui`, `npm run test:inspector-ui`, `npm run test:modal-focus`; clean Linux rerun remains required |
+| Current-workflow browser coverage | Replaced that obsolete comparison sequence with the supported managed-Astra validation flow, retaining malformed-review recovery before/after edits, stale-review history protection and exact dispatch assertions. All four existing local browser-safeguard commands now pass; the workspace run retains all 36 responsive header cases and its 220px limit | `npm run test:workspace:browser`, `npm run test:ai-ui`, `npm run test:inspector-ui`, `npm run test:modal-focus`; the same complete chain also passes in the final Linux run |
+| Final exact-source protected checks | All six required checks pass for `36623c21250f12aefc353978ccdf5196a5620a1f`: Vite application, standalone MCP, complete critical-browser and workspace/AI/inspector/modal safeguards, and actions/JavaScript-TypeScript/Python CodeQL. Core/Office/server tests, generated-input checks, both images and runtime readiness complete successfully | PR #70; CI `34131505914`, CodeQL `34131501864`; `gh pr checks 70 --required --watch` exits 0 |
 
 ## 8. Rollback and Limitations
 
