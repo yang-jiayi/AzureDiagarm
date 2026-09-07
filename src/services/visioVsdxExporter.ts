@@ -398,7 +398,7 @@ function paletteForZone(box: ExportBox): Palette {
  * Visio built-in line pattern for a canonical connection type. Solid=1,
  * dashed=2, dotted=3, dash-dot=4 — mirroring the PNG legend's dash coding.
  */
-function visioLinePattern(route: ExportRoute): number {
+function visioLinePattern(route: Pick<ExportRoute, 'connectionType' | 'dashed'>): number {
   if (!route.dashed) return 1;
   switch (route.connectionType) {
     case 'optional':
@@ -1355,9 +1355,7 @@ function connectXml(connectorId: number, sourceId: number, targetId: number): st
 
 /** A short coloured swatch line for one legend row. */
 function legendSwatchXml(id: number, x: number, y: number, entry: ConnectionLegendEntry): string {
-  const pattern = entry.dashed
-    ? entry.type === 'telemetry' ? 4 : entry.type === 'async' ? 2 : 3
-    : 1;
+  const pattern = visioLinePattern({ connectionType: entry.type, dashed: entry.dashed });
   return `    <Shape ID="${id}" NameU="LegendLine.${id}" Type="Shape" LineStyle="0" FillStyle="0" TextStyle="0">
       <Cell N="PinX" V="${f(x + 0.16)}"/>
       <Cell N="PinY" V="${f(y)}"/>
@@ -1366,7 +1364,7 @@ function legendSwatchXml(id: number, x: number, y: number, entry: ConnectionLege
       <Cell N="LocPinX" V="0.16"/>
       <Cell N="LocPinY" V="0"/>
       <Cell N="Angle" V="0"/>
-      <Cell N="LineColor" V="${entry.color}"/>
+      <Cell N="LineColor" V="${entry.color}"/>${entry.opacity < 1 ? `\n      <Cell N="LineColorTrans" V="${f(1 - entry.opacity)}"/>` : ''}
       <Cell N="LineWeight" V="0.02"/>
       <Cell N="LinePattern" V="${pattern}"/>
       <Cell N="EndArrow" V="4"/>
@@ -1440,7 +1438,7 @@ ${roundedRectGeometry()}
   shapes.push(legendTextXml(id++, originX + 0.12, originY + boxH - 0.18, boxW - 0.24, 'Connections'));
   entries.forEach((entry, index) => {
     const rowY = originY + 0.14 + index * rowH;
-    shapes.push(legendSwatchXml(id++, originX + 0.14, rowY, entry));
+    if (!entry.hasMixedStyles) shapes.push(legendSwatchXml(id++, originX + 0.14, rowY, entry));
     shapes.push(legendTextXml(id++, originX + 0.62, rowY, boxW - 0.72, entry.label));
   });
   return { shapes, nextId: id };

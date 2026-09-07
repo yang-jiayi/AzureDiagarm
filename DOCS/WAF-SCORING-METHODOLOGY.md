@@ -179,7 +179,7 @@ avoid the score being misread as a verdict on a real environment.
 
 The band/short-form/color mapping is centralized in
 [src/services/wafMaturity.ts](src/services/wafMaturity.ts) and reused across the
-validation modal, comparison modal, toolbar badge, and report.
+validation modal, toolbar badge, and report.
 
 ### Optional numeric score (off by default)
 
@@ -188,9 +188,7 @@ The raw 0–100 number is **hidden by default** in the live UI and revealed by a
 persisted to `localStorage` via
 [src/stores/validationDisplayStore.ts](src/stores/validationDisplayStore.ts).
 When enabled, the number returns to the score circle, the overall headline, and
-each pillar row. The **multi-model comparison** view always keeps the number,
-because it needs a numeric basis to rank models against each other. The
-**downloaded markdown report** also always includes the numeric signal for
+each pillar row. The **downloaded markdown report** always includes the numeric signal for
 archival completeness, regardless of the toggle.
 
 The underlying score model is unchanged — bands are derived, not stored — so
@@ -239,7 +237,7 @@ so users always have the path to a more authoritative review.
 
 For any validation run, the app captures:
 
-- The exact AI model used (e.g., `GPT-5.2 (medium)`), shown in the report footer.
+- The exact AI model used (e.g., `GPT-6 Astra (medium)`), shown in the report footer.
 - Token counts (prompt / completion / total) and elapsed time.
 - `hybridMetadata` attached to the validation result:
   - `localFindings` — number of Phase 1 findings.
@@ -248,7 +246,11 @@ For any validation run, the app captures:
   - `preliminaryScore` — the deterministic score before LLM refinement.
   - `kbRulesUsed` — size of the rule knowledge base.
 
-Reviewers can also use **Multi-Model Comparison** to run the same architecture through all 7 configured models side-by-side and observe scoring variance directly — this is the most honest way to communicate the inherent fuzziness of any LLM-assisted score.
+The managed model is GPT-6 Astra; an administrator-enabled BYO profile can be
+selected explicitly. Reviewers can retain reports from repeated reviews of the
+same diagram, connection, model, and reasoning setting to inspect variance.
+Historical records keep their original model identities; a changed score alone
+does not prove that a finding has been remediated.
 
 ---
 

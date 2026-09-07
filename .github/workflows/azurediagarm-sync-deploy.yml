@@ -67,42 +67,50 @@ jobs:
           set -Eeuo pipefail
           details_file="$RUNNER_TEMP/update-details.txt"
 
-          git config user.name "azurediagarm-updater"
-          git config user.email "azurediagarm-updater@users.noreply.github.com"
-          git remote remove upstream 2>/dev/null || true
-          git remote add upstream "$UPSTREAM_REPOSITORY"
-
           fork_before="$(git rev-parse HEAD)"
-          git fetch upstream main
-          upstream_commit="$(git rev-parse upstream/main)"
-          merge_base="$(git merge-base HEAD upstream/main)"
+          approved_upstream="$(node scripts/upstream-baseline.mjs)"
 
-          # A customization push must be deployable even when a separate,
-          # unreviewed upstream change touches protected files. Manual runs
-          # continue through the guarded upstream-sync path below.
+          # Ordinary releases use reviewed, committed provenance, not a live
+          # upstream lookup. Only an explicit synchronization can advance it.
           if [[ "$GITHUB_EVENT_NAME" == "push" ]]; then
             fork_commit="$fork_before"
             {
               echo "source_changed=false"
               echo "base_commit=$fork_before"
-              echo "upstream_commit=$merge_base"
+              echo "upstream_commit=$approved_upstream"
               echo "fork_commit=$fork_commit"
-              echo "upstream_short=${merge_base:0:12}"
+              echo "upstream_short=${approved_upstream:0:12}"
               echo "fork_short=${fork_commit:0:12}"
             } >> "$GITHUB_OUTPUT"
             {
               echo "- Deploying customization commit ${fork_commit:0:12}."
-              echo "- Deployed upstream baseline: ${merge_base:0:12}."
-              echo "- Latest upstream commit awaiting manual review: ${upstream_commit:0:12}."
+              echo "- Approved upstream baseline: $approved_upstream."
+              echo "- Live upstream discovery was intentionally skipped for this release."
               echo "- Upstream synchronization requires a manual workflow dispatch."
             } > "$details_file"
             echo "update_details_b64=$(base64 -w 0 "$details_file")" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
+          [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]] || {
+            echo "::error::Unsupported source-selection event."
+            exit 1
+          }
+          git config user.name "azurediagarm-updater"
+          git config user.email "azurediagarm-updater@users.noreply.github.com"
+          git remote remove upstream 2>/dev/null || true
+          git remote add upstream "$UPSTREAM_REPOSITORY"
+          git fetch upstream main
+          upstream_commit="$(git rev-parse --verify upstream/main^{commit})"
+          git merge-base --is-ancestor "$approved_upstream" "$upstream_commit" || {
+            echo "::error::Upstream no longer contains the approved baseline; manual provenance review is required."
+            exit 1
+          }
+          merge_base="$approved_upstream"
+
           # Never auto-merge upstream changes that can alter GitHub credentials,
           # Azure deployment behavior, origin protection, or server-side controls.
-          mapfile -t protected_changes < <(
+          protected_changes_output="$(
             git diff --name-only "$merge_base..upstream/main" -- \
               .github \
               .dockerignore \
@@ -123,7 +131,11 @@ jobs:
               tsconfig.node.json \
               eslint.config.js \
               blueprint-preview.html
-          )
+          )"
+          protected_changes=()
+          if [[ -n "$protected_changes_output" ]]; then
+            mapfile -t protected_changes <<< "$protected_changes_output"
+          fi
           if (( ${#protected_changes[@]} > 0 )); then
             {
               echo "Upstream changed protected deployment or security files."
@@ -154,7 +166,12 @@ jobs:
             exit 1
           fi
 
-          if git rev-parse --quiet --verify MERGE_HEAD > /dev/null; then
+          # Record only the fetched source that passed protected-file review
+          # and merged successfully. Publication still requires all validation.
+          node scripts/upstream-baseline.mjs --record "$upstream_commit"
+          git add -- .github/upstream-baseline.json
+          if git rev-parse --quiet --verify MERGE_HEAD > /dev/null \
+            || ! git diff --cached --quiet -- .github/upstream-baseline.json; then
             fork_epoch="$(git show --no-patch --format=%ct HEAD)"
             upstream_epoch="$(git show --no-patch --format=%ct upstream/main)"
             merge_epoch=$(( (fork_epoch > upstream_epoch ? fork_epoch : upstream_epoch) + 1 ))
@@ -651,8 +668,10 @@ jobs:
           AZURE_ACCESS_KEY_VAULT_RESOURCE_ID: ${{ vars.AZURE_ACCESS_KEY_VAULT_RESOURCE_ID }}
           AZURE_TABLES_ACCESS_ENDPOINT: ${{ vars.AZURE_TABLES_ACCESS_ENDPOINT }}
           PUBLIC_URL: ${{ vars.AZURE_APP_URL }}
-          AZURE_OPENAI_ALLOWED_DEPLOYMENTS: ${{ vars.AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA }},${{ vars.AZURE_OPENAI_DEPLOYMENT_GPT56SOL }},${{ vars.AZURE_OPENAI_DEPLOYMENT_GPT56TERRA }},${{ vars.AZURE_OPENAI_DEPLOYMENT_GPT56LUNA }}
-          AZURE_FOUNDRY_ALLOWED_DEPLOYMENTS: ${{ vars.AZURE_FOUNDRY_DEPLOYMENT_CLAUDE_OPUS5 }}
+          AZURE_OPENAI_ENDPOINT: ${{ vars.AZURE_OPENAI_ENDPOINT }}
+          AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA: ${{ vars.AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA }}
+          AZURE_OPENAI_ALLOWED_DEPLOYMENTS: ${{ vars.AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA }}
+          ALLOW_BYO_AI_ENDPOINTS: ${{ vars.ALLOW_BYO_AI_ENDPOINTS || 'false' }}
           AI_BUDGET_STORE: ${{ vars.AI_BUDGET_STORE || 'table' }}
           AZURE_COSMOS_ENDPOINT: ${{ vars.AZURE_COSMOS_ENDPOINT }}
           AZURE_TABLES_ENDPOINT: ${{ vars.AZURE_TABLES_ENDPOINT }}
@@ -995,7 +1014,7 @@ jobs:
       - name: Compute desired deployment configuration
         id: desired_config
         env:
-          CONFIG_SCHEMA: '6'
+          CONFIG_SCHEMA: '8-astra-and-byo'
           FRONT_DOOR_ID: ${{ steps.frontdoor.outputs.id }}
           APP_DEPLOYMENT_MODE: public
           EASY_AUTH_ENABLED: 'true'
@@ -1018,13 +1037,9 @@ jobs:
           AZURE_IMPORT_ENABLED: 'false'
           AZURE_RUNTIME_CLIENT_ID: ${{ vars.AZURE_RUNTIME_CLIENT_ID }}
           AZURE_OPENAI_ENDPOINT: ${{ vars.AZURE_OPENAI_ENDPOINT }}
-          ALLOW_BYO_AI_ENDPOINTS: ${{ vars.ALLOW_BYO_AI_ENDPOINTS || 'false' }}
           AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA: ${{ vars.AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA }}
-          AZURE_OPENAI_DEPLOYMENT_GPT56SOL: ${{ vars.AZURE_OPENAI_DEPLOYMENT_GPT56SOL }}
-          AZURE_OPENAI_DEPLOYMENT_GPT56TERRA: ${{ vars.AZURE_OPENAI_DEPLOYMENT_GPT56TERRA }}
-          AZURE_OPENAI_DEPLOYMENT_GPT56LUNA: ${{ vars.AZURE_OPENAI_DEPLOYMENT_GPT56LUNA }}
-          AZURE_FOUNDRY_ENDPOINT: ${{ vars.AZURE_FOUNDRY_ENDPOINT }}
-          AZURE_FOUNDRY_DEPLOYMENT_CLAUDE_OPUS5: ${{ vars.AZURE_FOUNDRY_DEPLOYMENT_CLAUDE_OPUS5 }}
+          AZURE_OPENAI_RESOURCE_ID: ${{ vars.AZURE_OPENAI_RESOURCE_ID }}
+          ALLOW_BYO_AI_ENDPOINTS: ${{ vars.ALLOW_BYO_AI_ENDPOINTS || 'false' }}
           AZURE_SPEECH_REGION: ${{ vars.AZURE_SPEECH_REGION }}
           AZURE_SPEECH_RESOURCE_ID: ${{ vars.AZURE_SPEECH_RESOURCE_ID }}
           AZURE_AD_CLIENT_ID: ${{ vars.AZURE_AD_CLIENT_ID }}
@@ -1065,10 +1080,8 @@ jobs:
             AI_BUDGET_STORE AI_DAILY_TOKEN_BUDGET AI_MAX_CONCURRENT_REQUESTS
             AZURE_TABLES_BUDGET_ENDPOINT AZURE_TABLES_BUDGET_TABLE COSMOS_BUDGET_CONTAINER_ID
             FEEDBACK_RETENTION_DAYS FEEDBACK_LEGACY_RETENTION_ENABLED
-            AZURE_OPENAI_ENDPOINT ALLOW_BYO_AI_ENDPOINTS AZURE_OPENAI_DEPLOYMENT_GPT56SOL
-            AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA
-            AZURE_OPENAI_DEPLOYMENT_GPT56TERRA AZURE_OPENAI_DEPLOYMENT_GPT56LUNA
-            AZURE_FOUNDRY_ENDPOINT AZURE_FOUNDRY_DEPLOYMENT_CLAUDE_OPUS5
+            AZURE_OPENAI_ENDPOINT AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA AZURE_OPENAI_RESOURCE_ID
+            ALLOW_BYO_AI_ENDPOINTS
             AZURE_SPEECH_REGION AZURE_SPEECH_RESOURCE_ID AZURE_AD_CLIENT_ID
             AZURE_AD_AUTHORITY ARM_SCOPE FEEDBACK_EMAIL_ENDPOINT FEEDBACK_EMAIL_SENDER
             FEEDBACK_EMAIL_RECIPIENT FEEDBACK_CONTACT_ENABLED
@@ -1080,6 +1093,8 @@ jobs:
             MCP_SESSION_TTL_SECONDS MCP_SESSION_GC_SECONDS MIN_REPLICAS MAX_REPLICAS
             HTTP_SCALE_CONCURRENCY PROBE_PROFILE
           )
+          node -e "require('./server/astra-policy').byoEndpointsEnabled()"
+          echo "allow_byo_ai_endpoints=$ALLOW_BYO_AI_ENDPOINTS" >> "$GITHUB_OUTPUT"
           desired_hash="$(
             for key in "${keys[@]}"; do
               printf '%s=%s\0' "$key" "${!key-}"
@@ -1107,10 +1122,9 @@ jobs:
             "AZURE_IMPORT_ENABLED=$AZURE_IMPORT_ENABLED"
             "AZURE_CLIENT_ID=$AZURE_RUNTIME_CLIENT_ID"
             "AZURE_OPENAI_ENDPOINT=$AZURE_OPENAI_ENDPOINT"
-            "AZURE_OPENAI_ALLOWED_DEPLOYMENTS=$AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA,$AZURE_OPENAI_DEPLOYMENT_GPT56SOL,$AZURE_OPENAI_DEPLOYMENT_GPT56TERRA,$AZURE_OPENAI_DEPLOYMENT_GPT56LUNA"
+            "AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA=$AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA"
+            "AZURE_OPENAI_ALLOWED_DEPLOYMENTS=$AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA"
             "ALLOW_BYO_AI_ENDPOINTS=$ALLOW_BYO_AI_ENDPOINTS"
-            "AZURE_FOUNDRY_ENDPOINT=$AZURE_FOUNDRY_ENDPOINT"
-            "AZURE_FOUNDRY_ALLOWED_DEPLOYMENTS=$AZURE_FOUNDRY_DEPLOYMENT_CLAUDE_OPUS5"
             "OPENAI_RATE_LIMIT_PER_HOUR=$OPENAI_RATE_LIMIT_PER_HOUR"
             "AZURE_SPEECH_REGION=$AZURE_SPEECH_REGION"
             "AZURE_SPEECH_RESOURCE_ID=$AZURE_SPEECH_RESOURCE_ID"
@@ -1126,7 +1140,9 @@ jobs:
             "FEEDBACK_EMAIL_RECIPIENT=$FEEDBACK_EMAIL_RECIPIENT"
             "FEEDBACK_CONTACT_ENABLED=$FEEDBACK_CONTACT_ENABLED"
           )
-          absent_env=(AZURE_OPENAI_API_KEY AZURE_FOUNDRY_API_KEY)
+          retired_ai_names="$(node scripts/retired-ai-environment.mjs)"
+          [[ -n "$retired_ai_names" ]]
+          mapfile -t absent_env <<< "$retired_ai_names"
           if [[ -n "$AZURE_TABLES_ENDPOINT" ]]; then
             runtime_env+=(
               "AZURE_TABLES_ENDPOINT=$AZURE_TABLES_ENDPOINT"
@@ -1301,6 +1317,14 @@ jobs:
         if: steps.deployment.outputs.should_deploy == 'true'
         run: az acr login --name "${{ vars.AZURE_CONTAINER_REGISTRY }}"
 
+      - name: Verify actual GPT-6 Astra deployment identity
+        if: steps.deployment.outputs.should_deploy == 'true'
+        env:
+          AZURE_OPENAI_RESOURCE_ID: ${{ vars.AZURE_OPENAI_RESOURCE_ID }}
+          AZURE_OPENAI_ENDPOINT: ${{ vars.AZURE_OPENAI_ENDPOINT }}
+          AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA: ${{ vars.AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA }}
+        run: node scripts/verify-astra-deployment.mjs
+
       - name: Set up Docker Buildx
         if: steps.deployment.outputs.should_deploy == 'true'
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
@@ -1326,11 +1350,6 @@ jobs:
             FRONT_DOOR_ID=${{ steps.frontdoor.outputs.id }}
             VITE_AZURE_OPENAI_ENDPOINT=${{ vars.AZURE_OPENAI_ENDPOINT }}
             VITE_AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA=${{ vars.AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA }}
-            VITE_AZURE_OPENAI_DEPLOYMENT_GPT56SOL=${{ vars.AZURE_OPENAI_DEPLOYMENT_GPT56SOL }}
-            VITE_AZURE_OPENAI_DEPLOYMENT_GPT56TERRA=${{ vars.AZURE_OPENAI_DEPLOYMENT_GPT56TERRA }}
-            VITE_AZURE_OPENAI_DEPLOYMENT_GPT56LUNA=${{ vars.AZURE_OPENAI_DEPLOYMENT_GPT56LUNA }}
-            VITE_AZURE_FOUNDRY_ENDPOINT=${{ vars.AZURE_FOUNDRY_ENDPOINT }}
-            VITE_AZURE_FOUNDRY_DEPLOYMENT_CLAUDE_OPUS5=${{ vars.AZURE_FOUNDRY_DEPLOYMENT_CLAUDE_OPUS5 }}
             VITE_SPEECH_REGION=${{ vars.AZURE_SPEECH_REGION }}
             VITE_AZURE_AD_CLIENT_ID=${{ vars.AZURE_AD_CLIENT_ID }}
             VITE_AZURE_AD_AUTHORITY=${{ vars.AZURE_AD_AUTHORITY }}
@@ -1357,6 +1376,10 @@ jobs:
         if: steps.deployment.outputs.should_deploy == 'true'
         env:
           ACCESS_ADMIN_EMAIL: ${{ secrets.ACCESS_ADMIN_EMAIL }}
+          AZURE_OPENAI_RESOURCE_ID: ${{ vars.AZURE_OPENAI_RESOURCE_ID }}
+          AZURE_OPENAI_ENDPOINT: ${{ vars.AZURE_OPENAI_ENDPOINT }}
+          AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA: ${{ vars.AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA }}
+          ALLOW_BYO_AI_ENDPOINTS: ${{ steps.desired_config.outputs.allow_byo_ai_endpoints }}
           EXPECTED_COMMIT: ${{ needs.merge_validate.outputs.fork_commit }}
           GITHUB_TOKEN: ${{ github.token }}
         run: |
@@ -1383,10 +1406,9 @@ jobs:
             "AZURE_IMPORT_ENABLED=false"
             "AZURE_CLIENT_ID=${{ vars.AZURE_RUNTIME_CLIENT_ID }}"
             "AZURE_OPENAI_ENDPOINT=${{ vars.AZURE_OPENAI_ENDPOINT }}"
-            "AZURE_OPENAI_ALLOWED_DEPLOYMENTS=${{ vars.AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA }},${{ vars.AZURE_OPENAI_DEPLOYMENT_GPT56SOL }},${{ vars.AZURE_OPENAI_DEPLOYMENT_GPT56TERRA }},${{ vars.AZURE_OPENAI_DEPLOYMENT_GPT56LUNA }}"
-            "ALLOW_BYO_AI_ENDPOINTS=${{ vars.ALLOW_BYO_AI_ENDPOINTS || 'false' }}"
-            "AZURE_FOUNDRY_ENDPOINT=${{ vars.AZURE_FOUNDRY_ENDPOINT }}"
-            "AZURE_FOUNDRY_ALLOWED_DEPLOYMENTS=${{ vars.AZURE_FOUNDRY_DEPLOYMENT_CLAUDE_OPUS5 }}"
+            "AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA=${{ vars.AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA }}"
+            "AZURE_OPENAI_ALLOWED_DEPLOYMENTS=${{ vars.AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA }}"
+            "ALLOW_BYO_AI_ENDPOINTS=$ALLOW_BYO_AI_ENDPOINTS"
             "OPENAI_RATE_LIMIT_PER_HOUR=120"
             "AZURE_SPEECH_REGION=${{ vars.AZURE_SPEECH_REGION }}"
             "AZURE_SPEECH_RESOURCE_ID=${{ vars.AZURE_SPEECH_RESOURCE_ID }}"
@@ -1437,7 +1459,10 @@ jobs:
               --output tsv
           )"
           remove_env_vars=()
-          for name in AZURE_OPENAI_API_KEY AZURE_FOUNDRY_API_KEY; do
+          retired_ai_names="$(node scripts/retired-ai-environment.mjs)"
+          [[ -n "$retired_ai_names" ]]
+          mapfile -t retired_ai_env <<< "$retired_ai_names"
+          for name in "${retired_ai_env[@]}"; do
             grep -qx "$name" <<< "$current_env_names" && remove_env_vars+=("$name")
           done
           if [[ -z "${{ vars.AZURE_TABLES_ENDPOINT }}" ]]; then
@@ -1482,8 +1507,13 @@ jobs:
           if (( ${#remove_env_vars[@]} > 0 )); then
             update_args+=(--remove-env-vars "${remove_env_vars[@]}")
           fi
+          [[ "$ALLOW_BYO_AI_ENDPOINTS" == "true" || "$ALLOW_BYO_AI_ENDPOINTS" == "false" ]]
+          node scripts/verify-astra-deployment.mjs
           node scripts/verify-deployment-source.mjs
-          touch /tmp/azurediagarm-deployment-started
+          # Freeze the verified, nonsecret Astra tuple and approved BYO policy for emergency rollback.
+          printf '%s\0' "$AZURE_OPENAI_ENDPOINT" "$AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA" "$AZURE_OPENAI_RESOURCE_ID" "$ALLOW_BYO_AI_ENDPOINTS" \
+            > azurediagarm-verified-astra.env
+          touch azurediagarm-deployment-started
           az containerapp update "${update_args[@]}"
 
           expected_revision="${{ vars.AZURE_CONTAINER_APP }}--${revision_suffix}"
@@ -1586,6 +1616,14 @@ jobs:
               .name != "AZURE_OPENAI_API_KEY" and .name != "AZURE_FOUNDRY_API_KEY"
             )
           ' /tmp/azurediagarm-deployed-app.json > /dev/null
+          for name in "${retired_ai_env[@]}"; do
+            jq -e --arg name "$name" '
+              all(.properties.template.containers[0].env[]?; .name != $name)
+            ' /tmp/azurediagarm-deployed-app.json > /dev/null || {
+              echo "::error::Retired AI runtime setting remains after deployment: $name"
+              exit 1
+            }
+          done
           az containerapp secret list \
             --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
             --name "${{ vars.AZURE_CONTAINER_APP }}" \
@@ -1641,6 +1679,9 @@ jobs:
 
       - name: Verify the production endpoint
         if: steps.deployment.outputs.should_deploy == 'true'
+        # Limit verification itself, not the job: a failed check must leave the
+        # following rollback step time to restore and verify the prior revision.
+        timeout-minutes: 20
         env:
           ACCESS_CONTROL_ENABLED: ${{ vars.ACCESS_CONTROL_ENABLED || 'true' }}
         run: |
@@ -1721,6 +1762,8 @@ jobs:
               invalid_deployment_status="$(
                 curl \
                   --silent \
+                  --connect-timeout 15 \
+                  --max-time 45 \
                   --output /tmp/azurediagarm-openai-check.json \
                   --write-out '%{http_code}' \
                   --request POST \
@@ -1771,6 +1814,8 @@ jobs:
               mcp_status="$(
                 curl \
                   --silent \
+                  --connect-timeout 15 \
+                  --max-time 45 \
                   --output /tmp/azurediagarm-mcp-check.json \
                   --write-out '%{http_code}' \
                   --request POST \
@@ -1800,7 +1845,7 @@ jobs:
         if: ${{ failure() && steps.deployment.outputs.should_deploy == 'true' }}
         run: |
           set -Eeuo pipefail
-          if [[ ! -f /tmp/azurediagarm-deployment-started ]]; then
+          if [[ ! -f azurediagarm-deployment-started ]]; then
             echo "Deployment did not start; no production rollback is required."
             exit 0
           fi
@@ -1810,6 +1855,23 @@ jobs:
             exit 1
           fi
 
+          # Do not re-read mutable configuration or require a new ARM lookup.
+          mapfile -d '' -t rollback_ai_tuple < azurediagarm-verified-astra.env
+          if [[ "${#rollback_ai_tuple[@]}" -ne 4 || -z "${rollback_ai_tuple[0]}" || -z "${rollback_ai_tuple[1]}" || -z "${rollback_ai_tuple[2]}" \
+            || ( "${rollback_ai_tuple[3]}" != "true" && "${rollback_ai_tuple[3]}" != "false" ) ]]; then
+            echo "::error::The pre-update verified Astra tuple and BYO policy are unavailable; refusing an unrestricted rollback."
+            exit 1
+          fi
+          rollback_ai_env=(
+            "AZURE_OPENAI_ENDPOINT=${rollback_ai_tuple[0]}"
+            "AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA=${rollback_ai_tuple[1]}"
+            "AZURE_OPENAI_ALLOWED_DEPLOYMENTS=${rollback_ai_tuple[1]}"
+            "ALLOW_BYO_AI_ENDPOINTS=${rollback_ai_tuple[3]}"
+          )
+          retired_ai_names="$(node scripts/retired-ai-environment.mjs --rollback)"
+          [[ -n "$retired_ai_names" ]]
+          mapfile -t rollback_remove_ai_env <<< "$retired_ai_names"
+
           rollback_suffix="rb${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           rollback_revision="${{ vars.AZURE_CONTAINER_APP }}--${rollback_suffix}"
           echo "Rolling back to $previous_revision via $rollback_revision."
@@ -1818,6 +1880,8 @@ jobs:
             --name "${{ vars.AZURE_CONTAINER_APP }}" \
             --from-revision "$previous_revision" \
             --revision-suffix "$rollback_suffix" \
+            --set-env-vars "${rollback_ai_env[@]}" \
+            --remove-env-vars "${rollback_remove_ai_env[@]}" \
             --output none
 
           for attempt in $(seq 1 60); do

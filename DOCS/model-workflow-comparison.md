@@ -15,6 +15,10 @@ estimated_reading_time: 8
 
 ## Overview
 
+> Historical benchmark. The model names and measurements below describe the
+> recorded experiment, not the current application. The app now uses
+> the [managed Astra and BYO policy](../README.md#ai-model-policy).
+
 This document compares the architecture workflow narrative quality produced by
 all seven AI models available in the Microsoft Product Architecture Diagram Builder. Two
 reference architectures were used as prompts, and each model generated a

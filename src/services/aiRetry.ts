@@ -9,14 +9,13 @@
  * must never silently lower the user's model, reasoning, or output quality.
  */
 
-import type { ReasoningEffort } from '../stores/modelSettingsStore';
-import { getModelSettingsForFeature, type FeatureType } from '../stores/modelSettingsStore';
+import type { FeatureType } from '../stores/modelSettingsStore';
 import type { RuntimeModelOverride } from './aiModelRuntime';
 import { waitForAIRetry } from './aiBudgetQueue';
 import { isAIBudgetError } from './apiHelper';
 
 const RATE_LIMIT_CODES = new Set([
-  'azure_openai_rate_limited', 'byo_rate_limited', 'proxy_rate_limit_exceeded',
+  'azure_openai_rate_limited', 'proxy_rate_limit_exceeded', 'byo_rate_limited',
 ]);
 
 /** Admission, authentication and daily budgets must not become provider retries. */
@@ -90,13 +89,13 @@ const RETRYABLE_PROXY_CODES = new Set([
   'azure_openai_timeout',
   'azure_openai_unavailable',
   'azure_openai_connection_failed',
-  'byo_timeout',
-  'byo_unavailable',
-  'byo_connection_failed',
   'edge_origin_unavailable',
   'proxy_rate_limit_exceeded',
   'azure_openai_rate_limited',
   'byo_rate_limited',
+  'byo_timeout',
+  'byo_unavailable',
+  'byo_connection_failed',
 ]);
 
 /** Message fragments emitted by the client-side abort / empty-response paths. */
@@ -111,8 +110,7 @@ const RETRYABLE_MESSAGE_PATTERNS = [
 
 /**
  * Classification for a model response that could not be turned into JSON.
- * Callers use this to decide whether a compact retry is worthwhile and how to
- * phrase the failure to the user.
+ * Callers use this to phrase the failure and offer an explicit retry.
  */
 export enum ModelJsonErrorKind {
   /** The model returned nothing usable (empty / whitespace only). */
@@ -133,7 +131,7 @@ export enum ModelJsonErrorKind {
  */
 export class ModelJsonError extends Error {
   readonly kind: ModelJsonErrorKind;
-  /** Whether a compact retry could plausibly fix this (truncated/empty yes). */
+  /** Whether a new user-requested attempt could plausibly recover this output. */
   readonly retryable: boolean;
   /** Raw model text / parser detail. Console-only — never shown to the user. */
   readonly detail?: string;
@@ -183,11 +181,15 @@ export function isRetryableAIFailure(error: unknown): boolean {
   // Capacity contention needs admission/backoff, not a cheaper generation.
   if (isAIBudgetError(error)) return false;
 
-  // A truncated or empty JSON payload is exactly what a compact retry fixes;
-  // a refusal or otherwise malformed payload is not worth a second charge.
+  // The classification informs explicit retries, never automatic compaction.
   if (error instanceof ModelJsonError) return error.retryable;
 
   const code = (error as { code?: unknown }).code;
+  if (code === 'astra_not_configured' || code === 'proxy_not_configured'
+    || code === 'stale_ai_configuration' || code === 'byo_not_enabled'
+    || code === 'byo_availability_unknown' || code === 'byo_unverified'
+    || code === 'byo_key_required' || code === 'byo_profile_missing'
+    || code === 'byo_invalid_profile' || code === 'invalid_byo_configuration') return false;
   if (typeof code === 'string' && RETRYABLE_PROXY_CODES.has(code)) return true;
 
   const name = (error as { name?: unknown }).name;
@@ -200,54 +202,6 @@ export function isRetryableAIFailure(error: unknown): boolean {
 
   const message = error instanceof Error ? error.message : typeof error === 'string' ? error : '';
   return RETRYABLE_MESSAGE_PATTERNS.some((pattern) => pattern.test(message));
-}
-
-/**
- * Legacy explicit-compaction utility; automatic generation never calls this.
- * Anything above "low" is expensive in wall
- * clock time, which is exactly what caused the timeout, so the retry always
- * runs at "low" (kept, not dropped to "none", because some model families —
- * e.g. Claude — do not accept "none").
- */
-export function downshiftReasoningEffort(effort: ReasoningEffort): ReasoningEffort {
-  switch (effort) {
-    case 'none':
-    case 'minimal':
-    case 'low':
-      return effort;
-    default:
-      return 'low';
-  }
-}
-
-/**
- * Build the model override for a retry attempt: same model, cheaper reasoning.
- * Returns undefined when the caller did not pass an override so the feature's
- * configured defaults keep applying.
- */
-export function degradeOverrideForRetry<T extends RuntimeModelOverride>(
-  override: T | undefined,
-): T | undefined {
-  if (!override) return undefined;
-  const reasoningEffort = downshiftReasoningEffort(override.reasoningEffort);
-  if (reasoningEffort === override.reasoningEffort) return override;
-  return { ...override, reasoningEffort };
-}
-
-/**
- * Override to use for a retry, even when the caller passed none.
- *
- * `degradeOverrideForRetry` cannot help when the caller relies on the feature
- * defaults, because those defaults are exactly what timed out. Resolving the
- * feature's configured model here lets the retry keep the user's model while
- * dropping the reasoning effort that blew the time budget.
- */
-export function buildRetryOverride(
-  feature: FeatureType,
-  override: RuntimeModelOverride | undefined,
-): RuntimeModelOverride {
-  const base = override ?? getModelSettingsForFeature(feature);
-  return { ...base, reasoningEffort: downshiftReasoningEffort(base.reasoningEffort) };
 }
 
 export interface CompactRetryOptions<T> {
@@ -286,8 +240,7 @@ export async function runWithCompactRetry<T>(options: CompactRetryOptions<T>): P
 
 // ── Fence-tolerant, refusal-aware model JSON parsing ────────────────────────
 //
-// Models — especially user-supplied BYO endpoints that ignore json_object mode
-// — routinely wrap JSON in ```json fences, prepend a sentence of prose, or
+// Models can wrap JSON in ```json fences, prepend a sentence of prose, or
 // return a plain-text refusal. A raw `JSON.parse` on any of those throws a
 // parser message that is unlocalised, leaks internals, and gives the user no
 // idea what to do. `safeParseModelJson` normalises all of that into a small set

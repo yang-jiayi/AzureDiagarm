@@ -191,9 +191,9 @@ const AzureNode: React.FC<NodeProps> = memo(({ data, selected, id }) => {
   ).trim().charAt(0).toUpperCase() || '?';
   const borderStyle = {
     borderLeft: `4px solid ${categoryColor}`,
-    borderTop: '1px solid #d8e1ea',
-    borderRight: '1px solid #d8e1ea',
-    borderBottom: '1px solid #d8e1ea',
+    borderTop: '1px solid var(--azd-color-control-border)',
+    borderRight: '1px solid var(--azd-color-control-border)',
+    borderBottom: '1px solid var(--azd-color-control-border)',
   };
 
   return (

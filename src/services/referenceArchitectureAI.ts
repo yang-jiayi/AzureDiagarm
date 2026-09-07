@@ -16,9 +16,13 @@
 
 import { callAzureOpenAI, ModelOverride, AIMetrics } from './azureOpenAI';
 import { runWithCompactRetry } from './aiRetry';
+import { captureRuntimeModelOverride } from './aiModelRuntime';
 import { getServiceIconMapping } from '../data/serviceIconMapping';
 import type { Language } from '../i18n/LanguageContext';
 import { getPromptLanguageInstruction } from '../i18n/localization';
+import {
+  AIResponseValidationError, assertUniqueResponseIds, isResponseObject, isResponseText,
+} from './aiResponseValidation';
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Schema
@@ -291,12 +295,31 @@ EXAMPLE 3 — Event-driven IoT analytics (hot + cool paths):
 // Generation
 // ──────────────────────────────────────────────────────────────────────────────
 
-/** Thrown when the model responded but the payload was unusable (truncated / non-JSON). */
-class ReferenceResponseError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'ReferenceResponseError';
+function validateReferenceStages(ref: ReferenceArchitecture): void {
+  if (!isResponseObject(ref)) {
+    throw new AIResponseValidationError('The reference response must be an object.');
   }
+  assertUniqueResponseIds(ref.stages, 'Reference stages');
+  if (ref.stages.length === 0) {
+    throw new AIResponseValidationError('The reference must contain at least one stage with services.');
+  }
+  const services: RefService[] = [];
+  for (const stage of ref.stages) {
+    if (!isResponseText(stage.label)) {
+      throw new AIResponseValidationError('Reference stages must have non-empty labels.');
+    }
+    assertUniqueResponseIds(stage.services, 'Reference services');
+    if (stage.services.length === 0) {
+      throw new AIResponseValidationError('Every reference stage must contain at least one service.');
+    }
+    for (const service of stage.services) {
+      if (!isResponseText(service.name) || !isResponseText(service.category)) {
+        throw new AIResponseValidationError('Reference services must have non-empty names and categories.');
+      }
+      services.push(service);
+    }
+  }
+  assertUniqueResponseIds(services, 'Reference services across stages');
 }
 
 function buildReferenceSystemPrompt(language: Language, compact: boolean): string {
@@ -361,6 +384,7 @@ export async function generateReferenceArchitectureWithAI(
   modelOverride?: ModelOverride,
   language: Language = 'en',
 ): Promise<ReferenceArchitecture> {
+  modelOverride = captureRuntimeModelOverride('architectureGeneration', modelOverride);
   const attempt = async (
     compact: boolean,
     override?: ModelOverride,
@@ -378,24 +402,18 @@ export async function generateReferenceArchitectureWithAI(
     let ref: ReferenceArchitecture;
     try {
       ref = JSON.parse(content);
-    } catch (e: any) {
+    } catch {
       console.error('Failed to parse reference architecture JSON:', content);
-      throw new ReferenceResponseError(
-        `Invalid JSON in reference architecture response: ${e.message}`,
-      );
+      throw new AIResponseValidationError('The reference response must contain valid JSON.');
     }
 
-    // Validate minimum shape
-    if (!ref.stages || !Array.isArray(ref.stages) || ref.stages.length === 0) {
-      throw new ReferenceResponseError('Reference architecture missing required "stages" array.');
-    }
+    validateReferenceStages(ref);
     if (!ref.connections || !Array.isArray(ref.connections)) {
       ref.connections = [];
     }
 
     // Normalize service names against the canonical icon map
     for (const stage of ref.stages) {
-      if (!Array.isArray(stage.services)) continue;
       stage.services = stage.services.map((s) => {
         const m = getServiceIconMapping(s.name);
         if (m) {
@@ -415,7 +433,6 @@ export async function generateReferenceArchitectureWithAI(
     transportFeature: 'architectureGeneration',
     override: modelOverride,
     label: 'Reference architecture generation',
-    isRetryable: (error) => error instanceof ReferenceResponseError,
     attempt,
   });
 }
@@ -448,6 +465,7 @@ export function referenceToTopology(ref: ReferenceArchitecture): {
   metrics?: AIMetrics;
   __referenceArchitecture: ReferenceArchitecture;  // preserved for Weeks 2–3
 } {
+  validateReferenceStages(ref);
   const groups: Array<{ id: string; label: string }> = [];
   const services: Array<{
     id: string;

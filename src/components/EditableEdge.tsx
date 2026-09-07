@@ -201,8 +201,8 @@ const EditableEdge: React.FC<EdgeProps> = ({
   const flowAnimated = Boolean(data?.flowAnimated);
   const shouldDirectionalFlow = flowAnimated && flowMode === 'directional' && (direction === 'forward' || direction === 'reverse');
   const shouldPulseFlow = flowAnimated && flowMode === 'pulse' && direction === 'bidirectional';
-  const edgeStroke = selected ? '#0f6cbd' : ((style as any)?.stroke ?? '#64748b');
-  const edgeStrokeWidth = Number((style as any)?.strokeWidth) || 1.75;
+  const edgeStroke = selected ? 'var(--azd-color-focus)' : (style?.stroke ?? '#64748b');
+  const edgeStrokeWidth = Number(style?.strokeWidth) || 1.75;
   // Azure Architecture Center reference diagrams number each arrow and repeat
   // the number in the workflow prose. Show the same badge the exports draw so
   // the canvas and the exported file can never disagree.

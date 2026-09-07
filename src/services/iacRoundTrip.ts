@@ -6,6 +6,7 @@ import { resolveServiceIconMapping } from '../data/serviceIconMapping';
 import { lookupServiceMeta } from './armExtractor';
 import type { IaCFormat } from './azureOpenAI';
 import { scanBicepDeclarations } from './bicepDeclarations';
+import { scanTerraformDeclarations } from './terraformDeclarations';
 
 export type StarterTemplateFormat = 'bicep' | 'terraform';
 export type DriftAction = 'create' | 'update' | 'delete' | 'replace' | 'no-op' | 'other';
@@ -406,128 +407,6 @@ function compareText(left: string, right: string): number {
   return left.localeCompare(right, 'en', { sensitivity: 'base' });
 }
 
-function topLevelPropertyValue(block: string, propertyNames: string[], separator: ':' | '='): string | null {
-  const lines = block.split(/\r?\n/);
-  let depth = 0;
-  for (const rawLine of lines) {
-    const line = rawLine.trim();
-    if (!line) {
-      depth += braceDelta(rawLine);
-      continue;
-    }
-    if (depth === 0) {
-      for (const propertyName of propertyNames) {
-        const matcher = separator === ':'
-          ? new RegExp(`^${propertyName}\\s*:\\s*(.+)$`)
-          : new RegExp(`^${propertyName}\\s*=\\s*(.+)$`);
-        const match = line.match(matcher);
-        if (match) {
-          return match[1].trim().replace(/,$/, '').trim();
-        }
-      }
-    }
-    depth += braceDelta(rawLine);
-  }
-  return null;
-}
-
-function braceDelta(value: string): number {
-  let delta = 0;
-  let inSingle = false;
-  let inDouble = false;
-  for (let index = 0; index < value.length; index += 1) {
-    const ch = value[index];
-    const next = value[index + 1];
-    if (!inDouble && ch === '\'' && value[index - 1] !== '\\') {
-      inSingle = !inSingle;
-      continue;
-    }
-    if (!inSingle && ch === '"' && value[index - 1] !== '\\') {
-      inDouble = !inDouble;
-      continue;
-    }
-    if (inSingle || inDouble) continue;
-    if (ch === '/' && next === '/') break;
-    if (ch === '#') break;
-    if (ch === '{') delta += 1;
-    if (ch === '}') delta -= 1;
-  }
-  return delta;
-}
-
-function findMatchingBrace(text: string, openingBraceIndex: number): number {
-  let depth = 0;
-  let inSingle = false;
-  let inDouble = false;
-  let inLineComment = false;
-  let inBlockComment = false;
-
-  for (let index = openingBraceIndex; index < text.length; index += 1) {
-    const ch = text[index];
-    const next = text[index + 1];
-
-    if (inLineComment) {
-      if (ch === '\n') inLineComment = false;
-      continue;
-    }
-    if (inBlockComment) {
-      if (ch === '*' && next === '/') {
-        inBlockComment = false;
-        index += 1;
-      }
-      continue;
-    }
-    if (!inDouble && ch === '\'' && text[index - 1] !== '\\') {
-      inSingle = !inSingle;
-      continue;
-    }
-    if (!inSingle && ch === '"' && text[index - 1] !== '\\') {
-      inDouble = !inDouble;
-      continue;
-    }
-    if (inSingle || inDouble) continue;
-    if (ch === '/' && next === '/') {
-      inLineComment = true;
-      index += 1;
-      continue;
-    }
-    if (ch === '/' && next === '*') {
-      inBlockComment = true;
-      index += 1;
-      continue;
-    }
-    if (ch === '#') {
-      inLineComment = true;
-      continue;
-    }
-    if (ch === '{') {
-      depth += 1;
-      continue;
-    }
-    if (ch === '}') {
-      depth -= 1;
-      if (depth === 0) return index;
-    }
-  }
-  return -1;
-}
-
-function literalStringValue(rawValue: string | null): string | null {
-  if (!rawValue) return null;
-  const value = rawValue.trim();
-  if (value.startsWith("'")) {
-    const match = value.match(/^'([^']*)'$/);
-    if (!match || match[1].includes('${')) return null;
-    return match[1].trim() || null;
-  }
-  if (value.startsWith('"')) {
-    const match = value.match(/^"([^"]*)"$/);
-    if (!match || match[1].includes('${')) return null;
-    return match[1].trim() || null;
-  }
-  return null;
-}
-
 function buildArmParameterMap(template: unknown): Record<string, string> {
   const output: Record<string, string> = {};
   if (!isRecord(template) || !isRecord(template.parameters)) return output;
@@ -563,22 +442,47 @@ function cleanArmName(rawName: string, paramMap: Record<string, string>): { logi
 }
 
 function flattenArmResources(
-  resources: unknown[],
+  resources: unknown,
   sourceFile: string,
   paramMap: Record<string, string>,
   output: IaCBaselineResource[],
   seen: { value: number },
+  warnings: string[],
+  path = 'resources',
+  parentSymbol = '',
+  depth = 0,
 ): void {
-  for (const resource of resources) {
-    if (!isRecord(resource) || typeof resource.type !== 'string') continue;
+  const warn = (detail: string) => warnings.push(`${sourceFile}: ${detail}; baseline is incomplete.`);
+  if (depth > 64) {
+    warn(`ARM resource nesting limit reached at ${path}`);
+    return;
+  }
+  if (!Array.isArray(resources) && !isRecord(resources)) {
+    warn(`Unsupported ARM resource collection at ${path}`);
+    return;
+  }
+  const entries = Object.entries(resources);
+  for (const [key, resource] of entries) {
+    const resourcePath = `${path}.${key}`;
+    if (seen.value >= 5_000) {
+      warn(`ARM resource declaration limit reached at ${resourcePath}`);
+      return;
+    }
+    if (!isRecord(resource) || typeof resource.type !== 'string' || !resource.type.trim()) {
+      warn(`Unsupported ARM resource entry at ${resourcePath}`);
+      continue;
+    }
     const providerType = resource.type.toLowerCase();
     if (ARM_CHILD_TYPES_TO_FOLD.has(providerType)) continue;
     const kind = typeof resource.kind === 'string' ? resource.kind : '';
     const service = resolveFromProviderOrService(resource.type, kind);
-    const nameInfo = cleanArmName(typeof resource.name === 'string' ? resource.name : 'resource', paramMap);
+    const nameInfo = cleanArmName(typeof resource.name === 'string' ? resource.name : '', paramMap);
+    const symbolicName = Array.isArray(resources) ? '' : (parentSymbol ? `${parentSymbol}::${key}` : key);
+    const logicalName = symbolicName || nameInfo.logicalName;
+    if (typeof resource.name !== 'string') warn(`Unsupported ARM resource name at ${resourcePath}`);
     output.push({
-      id: makeStableId('arm', nameInfo.logicalName, sourceFile, seen.value),
-      logicalName: nameInfo.logicalName,
+      id: makeStableId('arm', logicalName, sourceFile, seen.value),
+      logicalName,
       resourceName: nameInfo.resourceName,
       providerType,
       mappedService: service.mappedService,
@@ -589,8 +493,10 @@ function flattenArmResources(
       notes: service.mappedService ? undefined : 'Unmapped ARM resource type.',
     });
     seen.value += 1;
-    if (Array.isArray(resource.resources)) {
-      flattenArmResources(resource.resources, sourceFile, paramMap, output, seen);
+    if ('resources' in resource) {
+      const descendantSymbol = symbolicName || (parentSymbol ? `${parentSymbol}::${logicalName}` : logicalName);
+      flattenArmResources(resource.resources, sourceFile, paramMap, output, seen, warnings,
+        `${resourcePath}.resources`, descendantSymbol, depth + 1);
     }
   }
 }
@@ -601,8 +507,11 @@ function parseArmResources(files: BaselineBuildInput['files'], warnings: string[
   for (const file of files) {
     try {
       const parsed = JSON.parse(file.text);
-      if (!Array.isArray(parsed.resources)) continue;
-      flattenArmResources(parsed.resources, file.name, buildArmParameterMap(parsed), output, seen);
+      if (!isRecord(parsed)) {
+        warnings.push(`${file.name}: Unsupported ARM template structure; baseline is incomplete.`);
+        continue;
+      }
+      flattenArmResources(parsed.resources, file.name, buildArmParameterMap(parsed), output, seen, warnings);
     } catch (error) {
       warnings.push(`Could not parse ARM JSON from ${file.name}: ${error instanceof Error ? error.message : 'unknown error'}`);
     }
@@ -641,42 +550,28 @@ function parseBicepResources(files: BaselineBuildInput['files'], warnings: strin
 
 function parseTerraformHclResources(files: BaselineBuildInput['files'], warnings: string[]): IaCBaselineResource[] {
   const output: IaCBaselineResource[] = [];
-  const seen = { value: 0 };
-  const pattern = /^\s*resource\s+"([^"]+)"\s+"([^"]+)"\s*\{/gm;
   for (const file of files) {
-    let match: RegExpExecArray | null;
-    while ((match = pattern.exec(file.text)) !== null) {
-      const openingBrace = file.text.indexOf('{', match.index);
-      if (openingBrace < 0) continue;
-      const closingBrace = findMatchingBrace(file.text, openingBrace);
-      const body = closingBrace > openingBrace
-        ? file.text.slice(openingBrace + 1, closingBrace)
-        : '';
-      if (closingBrace < 0) {
-        warnings.push(`Skipped an unterminated Terraform block in ${file.name}.`);
-      }
-      const service = mapTerraformType(match[1]);
-      const nameValue = literalStringValue(topLevelPropertyValue(body, ['name'], '='));
+    const scanned = scanTerraformDeclarations(file.text, file.name);
+    warnings.push(...scanned.warnings);
+    for (const declaration of scanned.declarations) {
+      const service = mapTerraformType(declaration.providerType);
+      const nameValue = declaration.resourceName;
+      const notes = [...declaration.notes];
+      if (!nameValue) notes.push('The Terraform resource name uses an expression or could not be inferred deterministically.');
       output.push({
-        id: makeStableId('tf', `${match[1]}.${match[2]}`, file.name, seen.value),
-        logicalName: `${match[1]}.${match[2]}`,
+        id: makeStableId('tf', declaration.logicalName, file.name, output.length),
+        logicalName: declaration.logicalName,
         resourceName: nameValue,
-        providerType: match[1].toLowerCase(),
+        providerType: declaration.providerType.toLowerCase(),
         mappedService: service.mappedService,
         category: service.category,
         sourceFile: file.name,
         origin: 'terraform-hcl',
-        approximation: nameValue
-          ? (service.mappedService ? 'exact' : 'unmapped')
-          : (service.mappedService ? 'type-only' : 'unmapped'),
-        notes: nameValue
-          ? undefined
-          : 'The Terraform resource name uses an expression or could not be inferred deterministically.',
+        approximation: !service.mappedService ? 'unmapped'
+          : declaration.multiple ? 'expression'
+            : nameValue ? 'exact' : 'type-only',
+        notes: notes.length ? notes.join(' ') : undefined,
       });
-      seen.value += 1;
-      if (closingBrace >= 0) {
-        pattern.lastIndex = closingBrace + 1;
-      }
     }
   }
   return output;

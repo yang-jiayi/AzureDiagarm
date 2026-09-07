@@ -28,10 +28,10 @@ fi
 # used when AZURE_OPENAI_API_KEY is empty.
 export AZURE_OPENAI_ENDPOINT="${AZURE_OPENAI_ENDPOINT:-${VITE_AZURE_OPENAI_ENDPOINT:-}}"
 export AZURE_OPENAI_API_KEY="${AZURE_OPENAI_API_KEY:-${VITE_AZURE_OPENAI_API_KEY:-}}"
-export AZURE_FOUNDRY_ENDPOINT="${AZURE_FOUNDRY_ENDPOINT:-${VITE_AZURE_FOUNDRY_ENDPOINT:-}}"
-export AZURE_FOUNDRY_API_KEY="${AZURE_FOUNDRY_API_KEY:-${VITE_AZURE_FOUNDRY_API_KEY:-}}"
+export AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA="${AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA:-${VITE_AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA:-}}"
+export AZURE_OPENAI_ALLOWED_DEPLOYMENTS="${AZURE_OPENAI_ALLOWED_DEPLOYMENTS:-$AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA}"
+export ALLOW_BYO_AI_ENDPOINTS="${ALLOW_BYO_AI_ENDPOINTS:-false}"
 
 echo "[token-server] Starting on 127.0.0.1:3001 (region=$AZURE_SPEECH_REGION)"
-echo "[token-server] OpenAI proxy endpoint: ${AZURE_OPENAI_ENDPOINT:-<unset>} (key auth: $([ -n "${AZURE_OPENAI_API_KEY:-}" ] && echo yes || echo 'no — using managed identity')))"
-echo "[token-server] Foundry Anthropic endpoint: ${AZURE_FOUNDRY_ENDPOINT:-<unset>} (key auth: $([ -n "${AZURE_FOUNDRY_API_KEY:-}" ] && echo yes || echo 'no — using managed identity')))"
+echo "[token-server] Managed AI: GPT-6 Astra; BYO connections: $ALLOW_BYO_AI_ENDPOINTS"
 exec node "$ROOT/server/token-server.js"

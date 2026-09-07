@@ -116,11 +116,11 @@ const GroupNode: React.FC<NodeProps> = memo(({ id, data, selected }) => {
     borderColor: colors.border,
   };
   const headerStyle = {
-    backgroundColor: `${colors.header}15`,
+    backgroundColor: customColor ? `${colors.header}15` : 'var(--azd-color-surface-panel)',
     borderBottomColor: colors.border,
   };
   const labelStyle = {
-    color: colors.header,
+    color: customColor ? colors.header : 'var(--azd-color-text-secondary)',
   };
 
   return (
@@ -167,7 +167,7 @@ const GroupNode: React.FC<NodeProps> = memo(({ id, data, selected }) => {
             className="fit-to-content-button"
             onClick={handleFitToContent}
             title={t("Fit to content")}
-            style={{ color: colors.header }}
+            style={labelStyle}
           >
             <Minimize2 size={16} />
           </button>
@@ -175,7 +175,7 @@ const GroupNode: React.FC<NodeProps> = memo(({ id, data, selected }) => {
             className="color-picker-button"
             onClick={() => setShowColorPicker(!showColorPicker)}
             title={t("Change color")}
-            style={{ color: colors.header }}
+            style={labelStyle}
           >
             <Palette size={18} />
           </button>

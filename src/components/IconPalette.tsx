@@ -5,6 +5,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ChevronDown,
   ChevronRight,
+  ChevronUp,
   Folder,
   FolderPlus,
   Grid3X3,
@@ -40,7 +41,7 @@ import {
   normalizeIconDiscoveryText,
   splitIconSearchHighlight,
 } from '../utils/iconDiscovery';
-import { readLocalStorage, writeLocalStorage } from '../utils/safeStorage';
+import { readBooleanPreference, readLocalStorage, writeLocalStorage } from '../utils/safeStorage';
 import { useMediaQuery } from '../hooks/useMediaQuery';
 import { MEDIA_QUERIES } from '../styles/breakpoints';
 import VirtualizedIconGrid from './VirtualizedIconGrid';
@@ -66,6 +67,7 @@ const PALETTE_VIEW_ORDER: PaletteView[] = [
   'collections',
 ];
 const PALETTE_LAYOUT_STORAGE_KEY = 'azure-diagram-builder.paletteLayout.v1';
+const PALETTE_CONTROLS_STORAGE_KEY = 'azure-diagram-builder.paletteControlsCollapsed.v1';
 const RECOMMENDED_SERVICE_NAMES = [
   ['App Services'],
   ['Function Apps'],
@@ -100,6 +102,9 @@ const IconPalette: React.FC<IconPaletteProps> = ({ forceCollapsed, openSignal, o
   );
   const [searchTerm, setSearchTerm] = useState('');
   const [activeView, setActiveView] = useState<PaletteView>('recommended');
+  const [controlsCollapsed, setControlsCollapsed] = useState(
+    () => readBooleanPreference(PALETTE_CONTROLS_STORAGE_KEY, false),
+  );
   const [layout, setLayout] = useState<PaletteLayout>(() => (
     readLocalStorage(PALETTE_LAYOUT_STORAGE_KEY) === 'list' ? 'list' : 'grid'
   ));
@@ -145,6 +150,10 @@ const IconPalette: React.FC<IconPaletteProps> = ({ forceCollapsed, openSignal, o
   useEffect(() => {
     writeLocalStorage(PALETTE_LAYOUT_STORAGE_KEY, layout);
   }, [layout]);
+
+  useEffect(() => {
+    writeLocalStorage(PALETTE_CONTROLS_STORAGE_KEY, String(controlsCollapsed));
+  }, [controlsCollapsed]);
 
   useEffect(() => {
     if (forceCollapsed) setIsCollapsed(true);
@@ -459,10 +468,33 @@ const IconPalette: React.FC<IconPaletteProps> = ({ forceCollapsed, openSignal, o
           ? recommendedIcons.length
           : collectionIcons.length;
   const collectionTarget = collectionTargetId ? iconsById.get(collectionTargetId) : undefined;
+  const viewLabels: Record<PaletteView, string> = {
+    catalog: localize(language, { en: 'All', ja: 'すべて' }),
+    favorites: localize(language, { en: 'Favorites', ja: 'お気に入り' }),
+    recent: localize(language, { en: 'Recent', ja: '最近' }),
+    recommended: localize(language, { en: 'Recommended', ja: '推奨' }),
+    collections: localize(language, { en: 'Collections', ja: 'コレクション' }),
+  };
+  const searchSummary = searchTerm.trim()
+    ? localize(language, {
+        en: `${activeViewIcons.length} matching icons`,
+        ja: `${activeViewIcons.length} 件のアイコン`,
+      })
+    : localize(language, {
+        en: `${viewCount} icons in this view`,
+        ja: `この表示に ${viewCount} 件`,
+      });
+  const controlsToggleLabel = controlsCollapsed
+    ? localize(language, { en: 'Expand icon controls', ja: 'アイコンの操作エリアを展開' })
+    : localize(language, { en: 'Collapse icon controls', ja: 'アイコンの操作エリアを折りたたむ' });
+  const collapsedSummary = `${viewLabels[activeView]} · ${searchSummary}${
+    searchTerm.trim() ? ` · ${searchTerm.trim()}` : ''
+  }`;
 
+  // React Flow's keyboard boundary preserves native Space activation in this panel.
   const palettePanel = (
       <div
-        className={`icon-palette palette-layout-${layout} ${isCollapsed ? 'collapsed' : ''}`}
+        className={`icon-palette nokey palette-layout-${layout} ${isCollapsed ? 'collapsed' : ''}`}
         role="region"
         aria-label={t('Microsoft Services')}
       >
@@ -481,11 +513,24 @@ const IconPalette: React.FC<IconPaletteProps> = ({ forceCollapsed, openSignal, o
         </button>
       ) : (
         <>
-          <div className="palette-header">
+          <div className={`palette-header${controlsCollapsed ? ' palette-header--controls-collapsed' : ''}`}>
             <div className="palette-title-row">
-              <div>
-                <h2>{t('Microsoft Services')}</h2>
-              </div>
+              <h2>
+                <button
+                  type="button"
+                  className="palette-controls-toggle"
+                  onClick={() => setControlsCollapsed(previous => !previous)}
+                  title={controlsToggleLabel}
+                  aria-label={`${t('Microsoft Services')}: ${controlsToggleLabel}`}
+                  aria-controls="palette-header-controls"
+                  aria-expanded={!controlsCollapsed}
+                >
+                  <span>{t('Microsoft Services')}</span>
+                  {controlsCollapsed
+                    ? <ChevronDown size={18} aria-hidden="true" />
+                    : <ChevronUp size={18} aria-hidden="true" />}
+                </button>
+              </h2>
               <button
                 type="button"
                 className="palette-close-toggle"
@@ -499,119 +544,126 @@ const IconPalette: React.FC<IconPaletteProps> = ({ forceCollapsed, openSignal, o
                 <span>{t('Close services panel')}</span>
               </button>
             </div>
-            <div className="search-box">
-              <Search size={16} aria-hidden="true" />
-              <input
-                type="search"
-                placeholder={localize(language, {
-                  en: 'Search Azure, Fabric, Microsoft 365, Copilot...',
-                  ja: 'Azure、Fabric、Microsoft 365、Copilotを検索...',
-                })}
-                aria-label={t('palette.searchLabel')}
-                value={searchTerm}
-                onChange={(event) => setSearchTerm(event.target.value)}
-              />
-              {searchTerm && (
-                <button
-                  type="button"
-                  className="search-clear"
-                  onClick={() => setSearchTerm('')}
-                  aria-label={localize(language, { en: 'Clear icon search', ja: 'アイコン検索をクリア' })}
-                  title={localize(language, { en: 'Clear search', ja: '検索をクリア' })}
-                >
-                  <X size={14} />
-                </button>
-              )}
-            </div>
-            <div className="palette-view-tabs" role="tablist" aria-label={localize(language, {
-              en: 'Icon library views',
-              ja: 'アイコン ライブラリ表示',
-            })}>
-              {([
-                ['catalog', Grid3X3, localize(language, { en: 'All', ja: 'すべて' }), allIcons.length],
-                ['favorites', Star, localize(language, { en: 'Favorites', ja: 'お気に入り' }), favoriteIcons.length],
-                ['recent', History, localize(language, { en: 'Recent', ja: '最近' }), recentIcons.length],
-                ['recommended', Sparkles, localize(language, { en: 'Recommended', ja: '推奨' }), recommendedIcons.length],
-                ['collections', Folder, localize(language, { en: 'Collections', ja: 'コレクション' }), workspace.collections.length],
-              ] as const).map(([id, Icon, label, count]) => (
-                <button
-                  type="button"
-                  key={id}
-                  id={`palette-view-tab-${id}`}
-                  role="tab"
-                  className={activeView === id ? 'active' : ''}
-                  aria-selected={activeView === id}
-                  aria-controls="palette-view-panel"
-                  tabIndex={activeView === id ? 0 : -1}
-                  ref={(element) => {
-                    viewTabRefs.current[id] = element || undefined;
-                  }}
-                  onClick={() => setActiveView(id)}
-                  onKeyDown={(event) => handleViewTabKeyDown(event, id)}
-                  title={`${label} (${count})`}
-                >
-                  <Icon
-                    size={14}
-                    fill={id === 'favorites' && activeView === id ? 'currentColor' : 'none'}
-                    aria-hidden="true"
-                  />
-                  <span>{label}</span>
-                  <b>{count}</b>
-                </button>
-              ))}
-            </div>
-            <div className="palette-view-meta">
-              <div className="palette-search-summary" role="status" aria-live="polite">
-                {searchTerm.trim()
-                  ? localize(language, {
-                      en: `${activeViewIcons.length} matching icons`,
-                      ja: `${activeViewIcons.length} 件のアイコン`,
-                    })
-                  : localize(language, {
-                      en: `${viewCount} icons in this view`,
-                      ja: `この表示に ${viewCount} 件`,
-                    })}
-              </div>
+            {controlsCollapsed && (
               <div
-                className="palette-layout-switch"
-                role="group"
-                aria-label={localize(language, {
-                  en: 'Service display layout',
-                  ja: 'サービス表示レイアウト',
-                })}
+                className="palette-collapsed-summary"
+                id="palette-collapsed-summary"
+                role="status"
+                aria-live="polite"
+                title={collapsedSummary}
               >
-                <button
-                  type="button"
-                  className={layout === 'grid' ? 'active' : ''}
-                  aria-pressed={layout === 'grid'}
-                  onClick={() => setLayout('grid')}
-                  title={localize(language, { en: 'Grid view', ja: 'グリッド表示' })}
-                  aria-label={localize(language, { en: 'Grid view', ja: 'グリッド表示' })}
-                >
-                  <Grid3X3 size={14} />
-                </button>
-                <button
-                  type="button"
-                  className={layout === 'list' ? 'active' : ''}
-                  aria-pressed={layout === 'list'}
-                  onClick={() => setLayout('list')}
-                  title={localize(language, { en: 'List view', ja: 'リスト表示' })}
-                  aria-label={localize(language, { en: 'List view', ja: 'リスト表示' })}
-                >
-                  <List size={15} />
-                </button>
+                {collapsedSummary}
               </div>
+            )}
+            <div id="palette-header-controls" hidden={controlsCollapsed}>
+              <div className="search-box">
+                <Search size={16} aria-hidden="true" />
+                <input
+                  type="search"
+                  placeholder={localize(language, {
+                    en: 'Search Azure, Fabric, Microsoft 365, Copilot...',
+                    ja: 'Azure、Fabric、Microsoft 365、Copilotを検索...',
+                  })}
+                  aria-label={t('palette.searchLabel')}
+                  value={searchTerm}
+                  onChange={(event) => setSearchTerm(event.target.value)}
+                />
+                {searchTerm && (
+                  <button
+                    type="button"
+                    className="search-clear"
+                    onClick={() => setSearchTerm('')}
+                    aria-label={localize(language, { en: 'Clear icon search', ja: 'アイコン検索をクリア' })}
+                    title={localize(language, { en: 'Clear search', ja: '検索をクリア' })}
+                  >
+                    <X size={14} />
+                  </button>
+                )}
+              </div>
+              <div className="palette-view-tabs" role="tablist" aria-label={localize(language, {
+                en: 'Icon library views',
+                ja: 'アイコン ライブラリ表示',
+              })}>
+                {([
+                  ['catalog', Grid3X3, viewLabels.catalog, allIcons.length],
+                  ['favorites', Star, viewLabels.favorites, favoriteIcons.length],
+                  ['recent', History, viewLabels.recent, recentIcons.length],
+                  ['recommended', Sparkles, viewLabels.recommended, recommendedIcons.length],
+                  ['collections', Folder, viewLabels.collections, workspace.collections.length],
+                ] as const).map(([id, Icon, label, count]) => (
+                  <button
+                    type="button"
+                    key={id}
+                    id={`palette-view-tab-${id}`}
+                    role="tab"
+                    className={activeView === id ? 'active' : ''}
+                    aria-selected={activeView === id}
+                    aria-controls="palette-view-panel"
+                    tabIndex={activeView === id ? 0 : -1}
+                    ref={(element) => {
+                      viewTabRefs.current[id] = element || undefined;
+                    }}
+                    onClick={() => setActiveView(id)}
+                    onKeyDown={(event) => handleViewTabKeyDown(event, id)}
+                    title={`${label} (${count})`}
+                  >
+                    <Icon
+                      size={14}
+                      fill={id === 'favorites' && activeView === id ? 'currentColor' : 'none'}
+                      aria-hidden="true"
+                    />
+                    <span>{label}</span>
+                    <b>{count}</b>
+                  </button>
+                ))}
+              </div>
+              <div className="palette-view-meta">
+                <div className="palette-search-summary" role="status" aria-live="polite">
+                  {searchSummary}
+                </div>
+                <div
+                  className="palette-layout-switch"
+                  role="group"
+                  aria-label={localize(language, {
+                    en: 'Service display layout',
+                    ja: 'サービス表示レイアウト',
+                  })}
+                >
+                  <button
+                    type="button"
+                    className={layout === 'grid' ? 'active' : ''}
+                    aria-pressed={layout === 'grid'}
+                    onClick={() => setLayout('grid')}
+                    title={localize(language, { en: 'Grid view', ja: 'グリッド表示' })}
+                    aria-label={localize(language, { en: 'Grid view', ja: 'グリッド表示' })}
+                  >
+                    <Grid3X3 size={14} />
+                  </button>
+                  <button
+                    type="button"
+                    className={layout === 'list' ? 'active' : ''}
+                    aria-pressed={layout === 'list'}
+                    onClick={() => setLayout('list')}
+                    title={localize(language, { en: 'List view', ja: 'リスト表示' })}
+                    aria-label={localize(language, { en: 'List view', ja: 'リスト表示' })}
+                  >
+                    <List size={15} />
+                  </button>
+                </div>
+              </div>
+              <p className="palette-help">{t('palette.interactionHint')}</p>
             </div>
-            <p className="palette-help">{t('palette.interactionHint')}</p>
           </div>
 
           <div
             className="palette-content"
             id="palette-view-panel"
             role="tabpanel"
-            aria-labelledby={`palette-view-tab-${activeView}`}
+            aria-labelledby={controlsCollapsed
+              ? 'palette-collapsed-summary'
+              : `palette-view-tab-${activeView}`}
           >
-            {activeView === 'recommended' && searchTerm.trim() === '' && (
+            {!controlsCollapsed && activeView === 'recommended' && searchTerm.trim() === '' && (
               <div className="palette-recommended-intro">
                 <Sparkles size={16} aria-hidden="true" />
                 <span>{localize(language, {
@@ -662,6 +714,7 @@ const IconPalette: React.FC<IconPaletteProps> = ({ forceCollapsed, openSignal, o
                 onVisibleIconsChange={loadIconUrls}
                 ariaLabel={localize(language, { en: 'Icon search results', ja: 'アイコン検索結果' })}
                 maxHeight={640}
+                fillAvailableHeight={controlsCollapsed}
                 layout={layout}
               />
             )}
@@ -680,6 +733,7 @@ const IconPalette: React.FC<IconPaletteProps> = ({ forceCollapsed, openSignal, o
                     ? localize(language, { en: 'Recently used icons', ja: '最近使用したアイコン' })
                     : localize(language, { en: 'Recommended services', ja: '推奨サービス' })}
                 maxHeight={640}
+                fillAvailableHeight={controlsCollapsed}
                 layout={layout}
               />
             )}
@@ -726,6 +780,7 @@ const IconPalette: React.FC<IconPaletteProps> = ({ forceCollapsed, openSignal, o
                       ja: 'アイコン コレクション',
                     })}
                     maxHeight={580}
+                    fillAvailableHeight={controlsCollapsed}
                     layout={layout}
                   />
                 )}

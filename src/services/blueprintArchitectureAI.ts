@@ -18,11 +18,15 @@
 
 import { callAzureOpenAI, ModelOverride, AIMetrics } from './azureOpenAI';
 import { runWithCompactRetry } from './aiRetry';
+import { captureRuntimeModelOverride } from './aiModelRuntime';
 import { getServiceIconMapping } from '../data/serviceIconMapping';
 import type { ComponentManifest } from './componentManifestAI';
 import { renderManifestForPrompt } from './componentManifestAI';
 import type { Language } from '../i18n/LanguageContext';
 import { getPromptLanguageInstruction } from '../i18n/localization';
+import {
+  AIResponseValidationError, assertUniqueResponseIds, isResponseObject, isResponseText,
+} from './aiResponseValidation';
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Schema
@@ -248,12 +252,83 @@ ${compact
 Now generate a blueprint architecture for the user's request. Return JSON only.`;
 }
 
-/** Thrown when the model responded but the payload was unusable (truncated / non-JSON). */
-class BlueprintResponseError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'BlueprintResponseError';
+function validateBlueprintResponse(bp: BlueprintArchitecture): Map<string, number> {
+  if (!isResponseObject(bp)) {
+    throw new AIResponseValidationError('The blueprint response must be an object.');
   }
+  assertUniqueResponseIds(bp.nodes, 'Blueprint nodes');
+  if (bp.nodes.length === 0) {
+    throw new AIResponseValidationError('The blueprint must contain at least one node.');
+  }
+  bp.zones ??= [];
+  bp.edges ??= [];
+  assertUniqueResponseIds(bp.zones, 'Blueprint zones');
+  assertUniqueResponseIds(bp.edges, 'Blueprint edges');
+  bp.canvas ??= { width: 1600, height: 1000 };
+  if (!isResponseObject(bp.canvas) || !Number.isFinite(bp.canvas.width) || bp.canvas.width <= 0
+    || !Number.isFinite(bp.canvas.height) || bp.canvas.height <= 0) {
+    throw new AIResponseValidationError('Blueprint canvas dimensions must be positive finite numbers.');
+  }
+
+  const zonesById = new Map(bp.zones.map(zone => [zone.id, zone]));
+  for (const zone of bp.zones) {
+    if (![zone.x, zone.y, zone.width, zone.height].every(Number.isFinite)
+      || zone.width <= 0 || zone.height <= 0) {
+      throw new AIResponseValidationError('Blueprint zones must have finite positions and positive dimensions.');
+    }
+    if (zone.parent != null && (!isResponseText(zone.parent) || !zonesById.has(zone.parent))) {
+      throw new AIResponseValidationError('A blueprint zone references a missing or invalid parent.');
+    }
+  }
+  for (const node of bp.nodes) {
+    if (!isResponseText(node.name) || !Number.isFinite(node.x) || !Number.isFinite(node.y)) {
+      throw new AIResponseValidationError('Blueprint nodes must have names and finite positions.');
+    }
+    if (node.zone != null && (!isResponseText(node.zone) || !zonesById.has(node.zone))) {
+      throw new AIResponseValidationError('A blueprint node references a missing or invalid zone.');
+    }
+  }
+  const nodeIds = new Set(bp.nodes.map(node => node.id));
+  for (const edge of bp.edges) {
+    if (!nodeIds.has(edge.from) || !nodeIds.has(edge.to)) {
+      throw new AIResponseValidationError('A blueprint edge references a missing node.');
+    }
+    if (edge.label != null && typeof edge.label !== 'string') {
+      throw new AIResponseValidationError('Blueprint edge labels must be text.');
+    }
+  }
+  if (bp.workflow != null && (!Array.isArray(bp.workflow) || bp.workflow.some(step => (
+    !isResponseObject(step) || typeof step.description !== 'string'
+  )))) {
+    throw new AIResponseValidationError('Blueprint workflow steps must be objects with text descriptions.');
+  }
+
+  // Resolve depth iteratively before layout, so even a valid deep hierarchy
+  // cannot overflow the stack. IDs and parent existence were checked above.
+  const depths = new Map<string, number>();
+  for (const zone of bp.zones) {
+    const path: BpZone[] = [];
+    const visiting = new Set<string>();
+    let current: BpZone | undefined = zone;
+    let depth = -1;
+    while (current) {
+      const knownDepth = depths.get(current.id);
+      if (knownDepth !== undefined) {
+        depth = knownDepth;
+        break;
+      }
+      if (visiting.has(current.id)) {
+        throw new AIResponseValidationError('Blueprint zones contain a parent cycle.');
+      }
+      visiting.add(current.id);
+      path.push(current);
+      current = current.parent ? zonesById.get(current.parent) : undefined;
+    }
+    for (let index = path.length - 1; index >= 0; index -= 1) {
+      depths.set(path[index].id, ++depth);
+    }
+  }
+  return depths;
 }
 
 export async function generateBlueprintArchitectureWithAI(
@@ -262,12 +337,13 @@ export async function generateBlueprintArchitectureWithAI(
   manifest?: ComponentManifest,
   language: Language = 'en',
 ): Promise<BlueprintArchitecture> {
+  modelOverride = captureRuntimeModelOverride('blueprint', modelOverride);
   const manifestBlock = manifest ? '\n\n' + renderManifestForPrompt(manifest) : '';
 
   const attempt = async (
     compact: boolean,
     override?: ModelOverride,
-  ): Promise<{ bp: BlueprintArchitecture; metrics: AIMetrics }> => {
+  ): Promise<{ bp: BlueprintArchitecture; metrics: AIMetrics; zoneDepths: Map<string, number> }> => {
     const messages = [
       { role: 'system', content: buildBlueprintSystemPrompt(manifestBlock, language, compact) },
       { role: 'user', content: description },
@@ -281,38 +357,22 @@ export async function generateBlueprintArchitectureWithAI(
     let parsed: BlueprintArchitecture;
     try {
       parsed = JSON.parse(content);
-    } catch (e: any) {
+    } catch {
       console.error('Failed to parse blueprint architecture JSON:', content);
-      throw new BlueprintResponseError(
-        `Invalid JSON in blueprint architecture response: ${e.message}`,
-      );
+      throw new AIResponseValidationError('The blueprint response must contain valid JSON.');
     }
-    if (!Array.isArray(parsed?.nodes) || parsed.nodes.length === 0) {
-      throw new BlueprintResponseError('Blueprint architecture missing required "nodes" array.');
-    }
-    return { bp: parsed, metrics };
+    const zoneDepths = validateBlueprintResponse(parsed);
+    return { bp: parsed, metrics, zoneDepths };
   };
 
   // Preserve requested quality. The legacy wrapper no longer retries with a
   // smaller prompt or lower reasoning; classified throttles retry in transport.
-  const { bp, metrics } = await runWithCompactRetry({
-    // `callAzureOpenAI` resolves the `architectureGeneration` model, so the
-    // retry must fall back to that same feature rather than the blueprint one.
-    transportFeature: 'architectureGeneration',
+  const { bp, metrics, zoneDepths } = await runWithCompactRetry({
+    transportFeature: 'blueprint',
     override: modelOverride,
     label: 'Blueprint generation',
-    isRetryable: (error) => error instanceof BlueprintResponseError,
     attempt,
   });
-
-  if (!bp.canvas || typeof bp.canvas.width !== 'number') {
-    bp.canvas = { width: 1600, height: 1000 };
-  }
-  if (!Array.isArray(bp.zones)) bp.zones = [];
-  if (!Array.isArray(bp.nodes) || bp.nodes.length === 0) {
-    throw new Error('Blueprint architecture missing required "nodes" array.');
-  }
-  if (!Array.isArray(bp.edges)) bp.edges = [];
 
   // Normalize service names against the canonical icon map (skip personas/clouds).
   bp.nodes = bp.nodes.map((n) => {
@@ -326,7 +386,7 @@ export async function generateBlueprintArchitectureWithAI(
     return n;
   });
 
-  enforceSpacing(bp);
+  enforceSpacing(bp, zoneDepths);
   // Deterministic left→right column ordering. enforceSpacing only pushes
   // overlapping tiles apart; it imposes no order, so the same brief can render a
   // materially different, crossing-heavy layout each call. orderBlueprintColumns
@@ -334,7 +394,7 @@ export async function generateBlueprintArchitectureWithAI(
   // entry node), then we re-run enforceSpacing to resolve any tiles that the
   // reordering pushed together.
   orderBlueprintColumns(bp);
-  enforceSpacing(bp);
+  enforceSpacing(bp, zoneDepths);
   validateStepNumbering(bp);
   fixObservabilityEdgeDirection(bp);
 
@@ -465,7 +525,7 @@ const MIN_V_GAP = 130; // empty space between vertically adjacent tiles
 const ZONE_PAD = 48;
 const MIN_ZONE_GAP = 80; // empty space between sibling zones
 
-function enforceSpacing(bp: BlueprintArchitecture): void {
+function enforceSpacing(bp: BlueprintArchitecture, zoneDepths: ReadonlyMap<string, number>): void {
   if (!bp.nodes?.length) return;
   const nodes = bp.nodes;
 
@@ -513,10 +573,9 @@ function enforceSpacing(bp: BlueprintArchitecture): void {
   // Re-fit zones to contain their children + padding. Process leaves first so
   // parent zones expand around their freshly-resized children.
   const zones = bp.zones || [];
-  const depth = (z: BpZone): number => (z.parent ? 1 + depth(zones.find(p => p.id === z.parent)!) : 0);
 
   const fitAll = () => {
-    const ordered = [...zones].sort((a, b) => depth(b) - depth(a));
+    const ordered = [...zones].sort((a, b) => zoneDepths.get(b.id)! - zoneDepths.get(a.id)!);
     for (const z of ordered) {
       const childNodes = nodes.filter(n => n.zone === z.id);
       const childZones = zones.filter(c => c.parent === z.id);
@@ -545,10 +604,15 @@ function enforceSpacing(bp: BlueprintArchitecture): void {
   // Collect a zone and all its descendant zones.
   const descendants = (root: BpZone): Set<string> => {
     const out = new Set<string>([root.id]);
-    const walk = (pid: string) => {
-      for (const z of zones) if (z.parent === pid) { out.add(z.id); walk(z.id); }
-    };
-    walk(root.id);
+    const pending = [root.id];
+    for (let index = 0; index < pending.length; index += 1) {
+      for (const zone of zones) {
+        if (zone.parent === pending[index] && !out.has(zone.id)) {
+          out.add(zone.id);
+          pending.push(zone.id);
+        }
+      }
+    }
     return out;
   };
   // Shift a zone + everything inside it (descendant zones + nodes).

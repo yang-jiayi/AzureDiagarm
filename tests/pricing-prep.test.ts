@@ -3,7 +3,9 @@
 
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { readFileSync, readdirSync } from 'node:fs';
+import { readFileSync, readdirSync, mkdirSync, writeFileSync, rmSync, existsSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { compactPricingData } from '../scripts/prep-pricing-data.mjs';
@@ -16,6 +18,128 @@ import type { AzureRetailPrice } from '../src/types/pricing';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const REGIONS_DIR = join(here, '..', 'public', 'pricing', 'regions');
+
+for (const failure of [
+  'download', 'malformed-json', 'invalid-shape', 'global-download', 'compactor',
+  'freshness', 'publication', 'publication-after-edit', 'cleanup', '',
+]) {
+  test(`pricing refresh publishes only a complete validated snapshot: ${failure || 'success'}`, () => {
+    const fixture = join(here, '..', `.test-pricing-${randomUUID()}`);
+    const scripts = join(fixture, 'scripts');
+    const regions = join(fixture, 'public', 'pricing', 'regions');
+    const pricingSource = join(fixture, 'src', 'data', 'azurePricing.ts');
+    const oldSnapshot = '{"BillingCurrency":"USD","Items":[]}';
+    const oldDate = failure === 'freshness'
+      ? '// Missing freshness declaration\n'
+      : "export const PRICING_DATA_AS_OF = '2000-01-01';\n";
+    const regionFile = join(regions, 'eastus2', 'virtual_machines.json');
+    const globalFile = join(regions, 'eastus2', 'cdn.json');
+    const untouchedFile = join(regions, 'westeurope', 'other.json');
+    try {
+      for (const directory of [scripts, dirname(regionFile), dirname(untouchedFile), dirname(pricingSource)]) {
+        mkdirSync(directory, { recursive: true });
+      }
+      for (const file of [regionFile, globalFile, untouchedFile]) writeFileSync(file, oldSnapshot);
+      writeFileSync(pricingSource, oldDate);
+      // Shrink only the service inventory; all download, validation, compaction,
+      // publication and recovery logic runs unchanged against this project fixture.
+      const refresh = readFileSync(join(here, '..', 'scripts', 'fetch-multi-region-pricing.sh'), 'utf8')
+        .replace(/^SERVICES=\([\s\S]*?^\)/m, 'SERVICES=("Virtual Machines")')
+        .replace(/^GLOBAL_SERVICES=\([\s\S]*?^\)/m, 'GLOBAL_SERVICES=("CDN")');
+      writeFileSync(join(scripts, 'fetch-multi-region-pricing.sh'), refresh);
+      writeFileSync(join(scripts, 'prep-pricing-data.mjs'),
+        readFileSync(join(here, '..', 'scripts', 'prep-pricing-data.mjs')));
+      writeFileSync(join(fixture, 'response.json'), JSON.stringify({
+        BillingCurrency: 'USD',
+        Items: [{
+          serviceName: 'Virtual Machines', type: 'Consumption', unitOfMeasure: '1 Hour',
+          skuName: 'D2 v5', retailPrice: 0.1, effectiveStartDate: '2026-07-01T00:00:00Z',
+        }],
+      }));
+      const script = `
+export FIXTURE="$PWD"
+sleep() { :; }
+date() { echo 2026-09-06; }
+curl() {
+  local output= filter= strict=false
+  while (( $# )); do
+    case "$1" in
+      --fail) strict=true;;
+      -o) output="$2"; shift;;
+      --data-urlencode) [[ "$2" != *"filter="* ]] || filter="$2"; shift;;
+    esac
+    shift
+  done
+  [[ "$strict" == true ]] || return 98
+  if [[ "${failure}" == download || ( "${failure}" == global-download && "$filter" != *armRegionName* ) ]]; then
+    echo 'HTTP failure body' > "$output"; return 22
+  elif [[ "${failure}" == malformed-json ]]; then
+    echo 'not JSON' > "$output"
+  elif [[ "${failure}" == invalid-shape ]]; then
+    echo '{"BillingCurrency":"USD","Items":{}}' > "$output"
+  else
+    cp "$FIXTURE/response.json" "$output"
+  fi
+}
+node() {
+  if [[ "${failure}" == publication-after-edit && "$1" == *prep-pricing-data.mjs ]]; then
+    printf '// Late source edit\\n' >> "$FIXTURE/src/data/azurePricing.ts"
+  fi
+  if [[ "${failure}" == compactor && "$1" == *prep-pricing-data.mjs ]]; then
+    echo 'partially compacted' > "$3/eastus2/virtual_machines.json"
+    return 1
+  fi
+  command node "$@"
+}
+mv() {
+  if [[ "${failure}" == publication* && "$1" == "$FIXTURE/.pricing-refresh/azurePricing.ts" ]]; then return 1; fi
+  command mv "$@"
+}
+rm() {
+  if [[ "${failure}" == cleanup && "$*" == "-rf $FIXTURE/.pricing-refresh" ]]; then return 1; fi
+  command rm "$@"
+}
+source "$FIXTURE/scripts/fetch-multi-region-pricing.sh" eastus2
+`;
+      const bash = process.platform === 'win32'
+        ? join(process.env.ProgramFiles || 'C:\\Program Files', 'Git', 'bin', 'bash.exe')
+        : 'bash';
+      const result = spawnSync(bash, ['--noprofile', '--norc', '-s'], {
+        cwd: fixture, input: script, encoding: 'utf8', timeout: 30_000,
+      });
+      assert.equal(result.error, undefined);
+      if (failure && failure !== 'cleanup') {
+        assert.notEqual(result.status, 0, result.stdout);
+        assert.equal(readFileSync(regionFile, 'utf8'), oldSnapshot);
+        assert.equal(readFileSync(globalFile, 'utf8'), oldSnapshot);
+        assert.equal(
+          readFileSync(pricingSource, 'utf8'),
+          oldDate + (failure === 'publication-after-edit' ? '// Late source edit\n' : ''),
+        );
+        assert.doesNotMatch(result.stdout, /snapshot published/);
+      } else {
+        if (failure === 'cleanup') {
+          assert.notEqual(result.status, 0);
+          assert.match(result.stderr, /cleanup failed/);
+        } else {
+          assert.equal(result.status, 0, result.stderr);
+        }
+        for (const file of [regionFile, globalFile]) {
+          const compacted = JSON.parse(readFileSync(file, 'utf8'));
+          assert.equal(compacted.PricesAsOf, '2026-07-01');
+          assert.equal(compacted.Items[0].effectiveStartDate, undefined);
+          assert.equal(compacted.Items[0].retailPrice, 0.1);
+        }
+        assert.equal(readFileSync(pricingSource, 'utf8'), "export const PRICING_DATA_AS_OF = '2026-09-06';\n");
+        assert.match(result.stdout, /snapshot published/);
+      }
+      assert.equal(readFileSync(untouchedFile, 'utf8'), oldSnapshot);
+      assert.equal(existsSync(join(fixture, '.pricing-refresh')), failure === 'cleanup');
+    } finally {
+      rmSync(fixture, { recursive: true, force: true });
+    }
+  });
+}
 
 // Build a full raw Retail-Prices meter with every field the API emits, so the
 // compaction has real fields to drop and the round-trip is realistic.

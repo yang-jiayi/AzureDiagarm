@@ -1,7 +1,7 @@
 .group-node {
   background: rgba(255, 255, 255, 0.05);
   border: 1.5px dashed;
-  border-radius: 10px;
+  border-radius: 6px;
   min-width: 200px;
   min-height: 150px;
   width: 100%;
@@ -9,14 +9,13 @@
   padding: 0;
   display: flex;
   flex-direction: column;
-  transition: border-color 0.16s ease, box-shadow 0.16s ease;
+  transition: outline-color 0.16s ease;
   pointer-events: none;
 }
 
 .group-node.selected {
-  border-color: #0f6cbd !important;
-  border-width: 2px;
-  box-shadow: 0 0 0 3px rgba(15, 108, 189, 0.16);
+  outline: 2px solid var(--azd-color-focus);
+  outline-offset: 2px;
 }
 
 .group-node .react-flow__resize-control {
@@ -26,8 +25,8 @@
 .group-node-header {
   background: rgba(0, 0, 0, 0.03);
   padding: 7px 10px;
-  border-bottom: 1px dashed;
-  border-radius: 6px 6px 0 0;
+  border-bottom: 1px solid;
+  border-radius: 5px 5px 0 0;
   position: relative;
   pointer-events: all;
 }
@@ -138,7 +137,7 @@
 
 .group-label {
   font-size: 1.05rem;
-  font-weight: 750;
+  font-weight: 650;
   cursor: text;
   padding: 2px 4px;
   border-radius: 3px;
@@ -152,7 +151,7 @@
 
 .group-label-input {
   font-size: 1.05rem;
-  font-weight: 750;
+  font-weight: 650;
   color: var(--azd-color-text-strong);
   border: 1px solid var(--azd-color-action);
   border-radius: 6px;

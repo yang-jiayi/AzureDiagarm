@@ -110,6 +110,33 @@ test('animateEdgeFlow injects a dot that takes the edge colour', async () => {
   );
 });
 
+test('SVG and animated SVG retain authored connection paint', async () => {
+  const { nodes, edges } = diagram();
+  edges[0] = {
+    ...edges[0], data: { connectionType: 'security' },
+    style: { stroke: '#006D77', strokeDasharray: '10 2 3 2', opacity: 0.45 },
+  };
+  const svg = await exportToSvg(nodes, edges);
+  for (const output of [svg, animateEdgeFlow(svg)]) {
+    const path = /<path class="react-flow__edge-path"[^>]*>/.exec(output)?.[0];
+    assert.ok(path, 'the actual connection path is present');
+    assert.match(path, /stroke="#006d77"/);
+    assert.match(path, /stroke-dasharray="10, 2, 3, 2"/);
+    assert.match(path, /\sopacity="0.45"/, 'opacity applies to the arrowhead as well as its stroke');
+  }
+  assert.match(animateEdgeFlow(svg), /<circle r="7" fill="#006d77" opacity="0.4275"/);
+  assert.match(animateEdgeFlow(svg), /<circle r="4.5" fill="#006d77" opacity="0.2025"/);
+});
+
+test('an invisible SVG connector is not revived by its flow dots', async () => {
+  const { nodes, edges } = diagram();
+  edges[0] = { ...edges[0], style: { stroke: '#006d77', opacity: 0 } };
+  const animated = animateEdgeFlow(await exportToSvg(nodes, edges));
+  assert.match(animated, /<path class="react-flow__edge-path"[^>]*\sopacity="0"/);
+  assert.match(animated, /<circle r="7" fill="#006d77" opacity="0"/);
+  assert.match(animated, /<circle r="4.5" fill="#006d77" opacity="0"/);
+});
+
 test('an icon is inlined as vector artwork, not linked or rasterised', async () => {
   const svg = __testing.inlineIcon(ICON, 's0', 10, 20, 32);
   assert.match(svg, /<svg x="10" y="20" width="32" height="32" viewBox="0 0 18 18"/);

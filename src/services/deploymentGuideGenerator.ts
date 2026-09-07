@@ -3,7 +3,7 @@
 
 /**
  * Deployment Guide Generator Agent
- * Uses GPT-5-2 to generate comprehensive deployment documentation
+ * Uses the selected AI connection to generate comprehensive deployment documentation
  * Includes prerequisites, step-by-step instructions, configuration, and troubleshooting
  */
 
@@ -20,8 +20,10 @@ import {
 import type { Language } from '../i18n/LanguageContext';
 import { getPromptLanguageInstruction } from '../i18n/localization';
 import { searchMicrosoftDocs, renderGroundingBlock, DocSource } from './docsGroundingService';
-import { resolveAIModelRuntime } from './aiModelRuntime';
+import { captureRuntimeModelOverride, resolveAIModelRuntime, type RuntimeModelOverride } from './aiModelRuntime';
 import { safeParseModelJson } from './aiRetry';
+import { awaitWithAISignal } from './runtimeConfig';
+import { throwIfGenerationAborted, type AIGenerationOptions } from './azureOpenAI';
 
 // Token usage metrics returned from Azure OpenAI API
 export interface AIMetrics {
@@ -30,6 +32,10 @@ export interface AIMetrics {
   totalTokens: number;
   elapsedTimeMs: number;
   model?: string;
+  reasoningEffort?: string;
+  source?: 'managed' | 'bring-your-own';
+  profileId?: string;
+  deployment?: string;
 }
 
 interface CallResult {
@@ -37,15 +43,16 @@ interface CallResult {
   metrics: AIMetrics;
 }
 
-async function callAzureOpenAI(messages: any[], maxTokens: number = 10000): Promise<CallResult> {
-  const runtime = resolveAIModelRuntime('deploymentGuide');
+async function callAzureOpenAI(messages: any[], modelOverride: RuntimeModelOverride, signal?: AbortSignal): Promise<CallResult> {
+  throwIfGenerationAborted(signal);
+  const runtime = resolveAIModelRuntime('deploymentGuide', modelOverride);
   console.log(`🌐 Calling AI model service with ${runtime.displayName} | API: ${getApiFormatLabel(runtime.apiFormat)}`);
   
   // Start timing
   const startTime = performance.now();
 
   // Build request body using the appropriate API format
-  const effectiveMaxTokens = Math.min(maxTokens, runtime.maxCompletionTokens);
+  const effectiveMaxTokens = runtime.maxCompletionTokens;
   const requestBody = buildRequestBody({
     deployment: runtime.deployment,
     messages,
@@ -61,6 +68,8 @@ async function callAzureOpenAI(messages: any[], maxTokens: number = 10000): Prom
   // proxy 210s > Front Door 240s. Without it this path could hang until the
   // platform kills it with an opaque error.
   const controller = new AbortController();
+  const cancel = () => controller.abort();
+  signal?.addEventListener('abort', cancel, { once: true });
   const timeoutId = setTimeout(() => controller.abort(), 225000);
   let proxyResult;
   try {
@@ -68,16 +77,20 @@ async function callAzureOpenAI(messages: any[], maxTokens: number = 10000): Prom
       apiFormat: runtime.apiFormat,
       deployment: runtime.deployment,
       body: requestBody,
-      byo: runtime.byo,
       signal: controller.signal,
+      connection: runtime.connection,
     });
+    throwIfGenerationAborted(signal);
+    if (controller.signal.aborted) throw new DOMException('Request timed out.', 'AbortError');
   } catch (error: any) {
+    throwIfGenerationAborted(signal);
     if (error?.name === 'AbortError') {
       throw new Error('The AI provider is taking too long to respond. Please try again.');
     }
     throw error;
   } finally {
     clearTimeout(timeoutId);
+    signal?.removeEventListener('abort', cancel);
   }
   
   // Calculate elapsed time
@@ -103,6 +116,10 @@ async function callAzureOpenAI(messages: any[], maxTokens: number = 10000): Prom
     totalTokens: parsed.totalTokens,
     elapsedTimeMs,
     model: runtime.displayName,
+    reasoningEffort: runtime.isReasoning ? runtime.reasoningEffort : 'none',
+    source: runtime.source,
+    ...(runtime.profileId ? { profileId: runtime.profileId } : {}),
+    deployment: runtime.deployment,
   };
   
   console.log('📦 API Response:', content.length, 'chars |',
@@ -169,8 +186,11 @@ export async function generateDeploymentGuide(
   architectureDescription?: string,
   estimatedCost?: number,
   language: Language = 'en',
+  options: AIGenerationOptions = {},
 ): Promise<DeploymentGuide> {
-  const runtime = resolveAIModelRuntime('deploymentGuide');
+  throwIfGenerationAborted(options.signal);
+  const modelOverride = captureRuntimeModelOverride('deploymentGuide', options.modelOverride);
+  const runtime = resolveAIModelRuntime('deploymentGuide', modelOverride);
 
   console.log(`📋 Generating deployment guide with ${runtime.displayName}...`);
 
@@ -181,9 +201,11 @@ export async function generateDeploymentGuide(
   const groundingQuery = `Deploy ${topServiceNames} to Azure using Bicep and Azure CLI`;
   let groundingSources: DocSource[] = [];
   try {
-    groundingSources = await searchMicrosoftDocs(groundingQuery, 6);
+    const search = searchMicrosoftDocs(groundingQuery, 6, options.signal);
+    groundingSources = options.signal ? await awaitWithAISignal(search, options.signal) : await search;
     console.log(`📚 Grounding: ${groundingSources.length} Microsoft Learn source(s)`);
   } catch (e) {
+    throwIfGenerationAborted(options.signal);
     console.warn('⚠️ Docs grounding unavailable, proceeding ungrounded:', e);
   }
   const groundingBlock = renderGroundingBlock(groundingSources);
@@ -254,7 +276,8 @@ ${groundingBlock ? `${groundingBlock}
     const { content, metrics } = await callAzureOpenAI([
       { role: 'system', content: systemPrompt },
       { role: 'user', content: userPrompt }
-    ], 32000);
+    ], modelOverride, options.signal);
+    throwIfGenerationAborted(options.signal);
 
     // Handle empty response
     if (!content || content.length === 0) {
@@ -388,7 +411,7 @@ export function downloadDeploymentGuide(guide: DeploymentGuide) {
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;
-  link.download = generateModelFilename('deployment-guide', 'md');
+  link.download = generateModelFilename('deployment-guide', 'md', undefined, guide.metrics);
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
@@ -419,6 +442,7 @@ export async function downloadAllBicepTemplates(guide: DeploymentGuide) {
     return;
   }
 
+  const filename = generateModelFilename('bicep-templates', 'zip', undefined, guide.metrics);
   const zip = new JSZip();
   
   // Add README with instructions
@@ -450,7 +474,7 @@ ${guide.bicepTemplates.map(t => `- ${t.filename}: ${t.description}`).join('\n')}
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;
-  link.download = generateModelFilename('bicep-templates', 'zip');
+  link.download = filename;
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);

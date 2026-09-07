@@ -19,12 +19,13 @@ export interface DocSource {
  * @param query Natural-language search query.
  * @param top   Max number of sources to return (1–10).
  */
-export async function searchMicrosoftDocs(query: string, top = 6): Promise<DocSource[]> {
+export async function searchMicrosoftDocs(query: string, top = 6, signal?: AbortSignal): Promise<DocSource[]> {
   try {
     const response = await fetch('/api/docs-search', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ query, top }),
+      signal,
     });
     if (!response.ok) return [];
     const data = await response.json();

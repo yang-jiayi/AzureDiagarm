@@ -78,6 +78,7 @@ jobs:
             --env AI_BUDGET_STORE=memory \
             --env MCP_ENABLED=true \
             --env AZURE_OPENAI_ENDPOINT=https://container-test.openai.azure.com/ \
+            --env AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA=gpt-6-astra \
             --env AZURE_OPENAI_ALLOWED_DEPLOYMENTS=gpt-6-astra \
             azurediagarm-validation:"${GITHUB_SHA}")"
           cleanup() {

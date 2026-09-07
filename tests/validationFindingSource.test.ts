@@ -53,9 +53,13 @@ function loadValidator() {
         export const getApiFormatLabel = () => 'test';
       `,
       aiModelRuntime: `
+        export const captureRuntimeModelOverride = (_feature, override) => override ?? ({
+          model: 'gpt-6-astra', reasoningEffort: 'low',
+        });
+        export const assertCapturedAIConnectionCurrent = () => {};
         export const resolveAIModelRuntime = () => ({
-          displayName: 'Test provider', telemetryModel: 'test', deployment: 'test',
-          apiFormat: 'chat-completions', maxCompletionTokens: 8000, isReasoning: false,
+          displayName: 'GPT-6 Astra', telemetryModel: 'GPT-6 Astra', deployment: 'offline-astra',
+          apiFormat: 'responses', maxCompletionTokens: 32000, isReasoning: true, reasoningEffort: 'low',
         });
       `,
       telemetryService: `export const trackAIModelUsage = () => {};`,
@@ -114,7 +118,7 @@ test('the provider path retains remote findings, model metadata and canonical pr
     assert.equal(report.overallScore, 0);
     assert.equal(report.pillars[0].score, 100);
     assert.deepEqual(report.quickWins, []);
-    assert.equal(report.modelUsed, 'Test provider');
+    assert.equal(report.modelUsed, 'GPT-6 Astra (low)');
     assert.equal(report.metrics?.totalTokens, 3);
     const history = updateValidationReview([], report);
     assert.deepEqual(history[0].finding.applyAction, normalized.applyAction);

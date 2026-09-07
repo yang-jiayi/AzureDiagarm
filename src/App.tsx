@@ -16,7 +16,6 @@ import ReactFlow, {
   getNodesBounds,
   type NodeChange,
   type ReactFlowInstance,
-  applyNodeChanges,
 } from 'reactflow';
 import 'reactflow/dist/style.css';
 import type { CaptureOptions } from './utils/captureCanvas';
@@ -33,7 +32,6 @@ import AzureNode from './components/AzureNode';
 import GroupNode from './components/GroupNode';
 import AIArchitectureGenerator from './components/AIArchitectureGenerator';
 import ArchitectureChatPanel from './components/ArchitectureChatPanel';
-import BYOAISettingsDialog from './components/BYOAISettingsDialog';
 import CanvasActivityOverlay from './components/CanvasActivityOverlay';
 import CanvasChrome from './components/CanvasChrome';
 import CommandPalette, { type CommandPaletteAction } from './components/CommandPalette';
@@ -70,7 +68,8 @@ import { costReportToHtml } from './utils/costReportHtml';
 import { validateArchitecture, ArchitectureValidation } from './services/architectureValidator';
 import { bandLabel } from './services/wafMaturity';
 import type { DeploymentGuide } from './services/deploymentGuideGenerator';
-import { generateArchitectureWithAI } from './services/azureOpenAI';
+import { generateArchitectureWithAI, type AIMetrics } from './services/azureOpenAI';
+import { captureRuntimeModelOverride, type RuntimeModelOverride } from './services/aiModelRuntime';
 import { MODEL_CONFIG, getDeploymentNames, type ModelType } from './stores/modelSettingsStore';
 import { usePricingDisplayPrefs } from './stores/pricingDisplayStore';
 import { nodesForExport } from './utils/nodesForExport';
@@ -140,7 +139,7 @@ import {
   type LayoutEdgeStyle,
   type LayoutEngineType,
 } from './utils/layoutPresets';
-import { generateModelFilename, setSourceModel, clearSourceModel } from './utils/modelNaming';
+import { generateModelFilename } from './utils/modelNaming';
 import {
   collectNodeAndDescendantIds,
   deleteNodesPreservingGroupChildren,
@@ -164,7 +163,7 @@ import {
   getCurrentValidationScore,
   resolveValidationFreshness,
 } from './utils/validationFreshness';
-import { trackArchitectureGeneration, trackValidation, trackValidationHandoff, trackDeploymentGuide, trackExport, trackTemplateImport, trackModelComparison, trackRecommendationsApplied, trackVersionOperation, trackStartFresh, trackValidationFindings, trackGuidedJourney } from './services/telemetryService';
+import { trackArchitectureGeneration, trackValidation, trackValidationHandoff, trackDeploymentGuide, trackExport, trackTemplateImport, trackRecommendationsApplied, trackVersionOperation, trackStartFresh, trackValidationFindings, trackGuidedJourney } from './services/telemetryService';
 import { classifyValidationTopics } from './services/validationConsensus';
 import type { IaCFormat } from './services/azureOpenAI';
 import FeedbackToast from './components/FeedbackToast';
@@ -300,21 +299,6 @@ function lazyWhenOpen<T extends React.ComponentType<any>>(
   };
 }
 
-function lazyOnceOpened<T extends React.ComponentType<any>>(
-  loader: () => Promise<{ default: T }>,
-) {
-  const LazyComponent = lazy(loader);
-  return (props: React.ComponentProps<T>) => {
-    const isOpen = Boolean((props as { isOpen?: boolean }).isOpen);
-    const [wasOpened, setWasOpened] = useState(isOpen);
-    useEffect(() => {
-      if (isOpen) setWasOpened(true);
-    }, [isOpen]);
-    if (!wasOpened && !isOpen) return null;
-    return renderLazyFeature(LazyComponent, props);
-  };
-}
-
 const ValidationModal = lazyWhenOpen(() => import('./components/ValidationModal'));
 const DeploymentGuideModal = lazyWhenOpen(() => import('./components/DeploymentGuideModal'));
 const IaCRoundTripModal = lazyWhenOpen(() => import('./components/IaCRoundTripModal'));
@@ -325,10 +309,9 @@ const RecentWorkModal = lazyWhenOpen(() => import('./components/RecentWorkModal'
 const DiagramQualityDialog = lazyWhenOpen(() => import('./components/DiagramQualityDialog'));
 const PricingScenarioModal = lazyWhenOpen(() => import('./components/PricingScenarioModal'));
 const AzureImportModal = lazyWhenOpen(() => import('./components/AzureImportModal'));
-const CompareModelsModal = lazyOnceOpened(() => import('./components/CompareModelsModal'));
-const CompareValidationModal = lazyOnceOpened(() => import('./components/CompareValidationModal'));
 const FeedbackModal = lazyWhenOpen(() => import('./components/FeedbackModal'));
 const AccessManagementModal = lazyWhenOpen(() => import('./components/AccessManagementModal'));
+const BYOAISettingsDialog = lazyWhenOpen(() => import('./components/BYOAISettingsDialog'));
 
 async function captureDiagramAsPng(
   element: HTMLElement,
@@ -1037,7 +1020,13 @@ function App() {
   const [deploymentGuide, setDeploymentGuide] = useState<DeploymentGuide | null>(null);
   const [isDeploymentGuideModalOpen, setIsDeploymentGuideModalOpen] = useState(false);
   const [isGeneratingGuide, setIsGeneratingGuide] = useState(false);
-  const [generatedWithModel, setGeneratedWithModel] = useState<{ name: string; timeMs?: number } | null>(null);
+  const [submittedGuideModel, setSubmittedGuideModel] = useState('');
+  const [submittedValidationModel, setSubmittedValidationModel] = useState('');
+  const [generatedWithModel, setGeneratedWithModel] = useState<{
+    name: string;
+    timeMs?: number;
+    metrics?: Pick<AIMetrics, 'model' | 'source' | 'deployment' | 'reasoningEffort'>;
+  } | null>(null);
   const [iacBaseline, setIaCBaseline] = useState<IaCBaseline | null>(null);
   const [isIaCRoundTripModalOpen, setIsIaCRoundTripModalOpen] = useState(false);
   const [driftPlanSummary, setDriftPlanSummary] = useState<DriftPlanSummary | null>(null);
@@ -1054,14 +1043,12 @@ function App() {
     () => readBooleanPreference(THREAT_OVERLAY_STORAGE_KEY, false),
   );
   const [isPricingScenarioModalOpen, setIsPricingScenarioModalOpen] = useState(false);
-  const [isCompareModelsOpen, setIsCompareModelsOpen] = useState(false);
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [isDeliverChooserOpen, setIsDeliverChooserOpen] = useState(false);
   const [generatorOpenSignal, setGeneratorOpenSignal] = useState(0);
   const generatorOpenSourceRef = useRef<'first-start' | 'journey-strip' | 'toolbar'>('toolbar');
   const [isHelpOpen, setIsHelpOpen] = useState(false);
   const [isAboutOpen, setIsAboutOpen] = useState(false);
-  const [isBYOAISettingsOpen, setIsBYOAISettingsOpen] = useState(false);
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
   const [isMobileRibbonOpen, setIsMobileRibbonOpen] = useState(false);
   const [paletteOpenSignal, setPaletteOpenSignal] = useState(0);
@@ -1100,7 +1087,6 @@ function App() {
       return new Set();
     }
   });
-  const [isCompareValidationOpen, setIsCompareValidationOpen] = useState(false);
   const [isFeedbackModalOpen, setIsFeedbackModalOpen] = useState(false);
   const [isFeedbackToastOpen, setIsFeedbackToastOpen] = useState(false);
   const [validationHandoff, setValidationHandoff] = useState<{
@@ -1118,16 +1104,6 @@ function App() {
   const [draftForkId] = useState(() => skipDraftRecovery ? crypto.randomUUID() : null);
   const detachCloudForRecoveryRef = useRef<(() => void) | null>(null);
   const saveCloudSnapshotRef = useRef<((notes: string) => Promise<unknown>) | null>(null);
-  const [batchPreview, setBatchPreview] = useState<DiagramGraph | null>(null);
-  const batchPreviewRef = useRef<(DiagramGraph & { title?: string }) | null>(null);
-  const onPreviewNodesChange = useCallback((changes: NodeChange[]) => {
-    const preview = batchPreviewRef.current;
-    if (!preview) return;
-    const updated = { ...preview, nodes: applyNodeChanges(changes, preview.nodes) };
-    batchPreviewRef.current = updated;
-    setBatchPreview(updated);
-  }, []);
-  const [isCapturingBatch, setIsCapturingBatch] = useState(false);
   const highlightTimerRef = useRef<ReturnType<typeof setTimeout>>();
   const [pendingAIReview, setPendingAIReview] = useState<{
     changeSet: DiagramChangeSet;
@@ -1157,7 +1133,6 @@ function App() {
       preserveValidationForRecheck?: boolean,
       baseRevision?: number,
       signal?: AbortSignal,
-      previewOnly?: boolean,
       proposalOptions?: DiagramProposalOptions,
     ) => Promise<boolean>
   ) | null>(null);
@@ -1412,6 +1387,27 @@ function App() {
   const stylePresetMenuRef = useRef<HTMLDivElement | null>(null);
 
   const [isModelSettingsOpen, setIsModelSettingsOpen] = useState(false);
+  const [isBYOAISettingsOpen, setIsBYOAISettingsOpen] = useState(false);
+  const aiSettingsReturnFocusRef = useRef<HTMLElement | null>(null);
+  const openAIConnections = useCallback(() => {
+    const opener = document.activeElement instanceof HTMLElement
+      ? document.activeElement : null;
+    aiSettingsReturnFocusRef.current = opener?.closest('.mobile-ribbon-drawer')
+      ? document.querySelector<HTMLElement>('.mobile-command-bar button')
+      : opener?.closest('.toolbar-dropdown-menu--model-settings')
+        ? document.querySelector<HTMLElement>('.model-popover-trigger') : opener;
+    setIsMobileRibbonOpen(false);
+    setIsModelSettingsOpen(false);
+    setIsBYOAISettingsOpen(true);
+  }, []);
+  const captureAIConnection = useCallback((feature: Parameters<typeof captureRuntimeModelOverride>[0]) => {
+    try {
+      return captureRuntimeModelOverride(feature);
+    } catch (cause) {
+      setWorkspaceNotice(translate(cause instanceof Error ? cause.message : 'The AI connection is unavailable.'));
+      return null;
+    }
+  }, [translate]);
   const modelSettingsRef = useRef<HTMLDivElement | null>(null);
   const [stylePreset, setStylePreset] = useState<'detailed' | 'presentation'>('detailed');
 
@@ -1855,24 +1851,16 @@ function App() {
       const presentation = getConnectionPresentation(next.data?.connectionType);
       const semanticStyle = {
         ...next.style,
-        stroke: presentation.stroke,
+        stroke: next.style?.stroke ?? presentation.stroke,
+        strokeDasharray: next.style?.strokeDasharray ?? presentation.strokeDasharray,
+        opacity: next.style?.opacity ?? presentation.opacity,
       };
-      if (presentation.strokeDasharray) {
-        semanticStyle.strokeDasharray = presentation.strokeDasharray;
-      } else {
-        delete semanticStyle.strokeDasharray;
-      }
-      if (presentation.opacity !== undefined) {
-        semanticStyle.opacity = presentation.opacity;
-      } else {
-        delete semanticStyle.opacity;
-      }
       next.style = semanticStyle;
       if (next.markerEnd && typeof next.markerEnd === 'object') {
-        next.markerEnd = { ...next.markerEnd, color: presentation.stroke };
+        next.markerEnd = { ...next.markerEnd, color: next.markerEnd.color ?? semanticStyle.stroke };
       }
       if (next.markerStart && typeof next.markerStart === 'object') {
-        next.markerStart = { ...next.markerStart, color: presentation.stroke };
+        next.markerStart = { ...next.markerStart, color: next.markerStart.color ?? semanticStyle.stroke };
       }
       const baseFlowAnimated = edgeAnimationIntent(
         next.data as { baseFlowAnimated?: unknown; flowAnimated?: unknown } | undefined,
@@ -2110,7 +2098,6 @@ function App() {
     setLastReferenceArchitecture(null);
     setLastBlueprintArchitecture(null);
     setGeneratedWithModel(null);
-    clearSourceModel();
     setAllGroupsCollapsed(false);
     preCollapseGroupLayout.current = new Map();
     restoreViewport(snapshot.viewport);
@@ -2132,7 +2119,7 @@ function App() {
   });
   const { flush: flushDraft } = draft;
   const editorHistory = useEditorHistory(
-    diagramHistoryState, restoreDiagramHistory, draft.ready || draftScopeError !== null, isCapturingBatch,
+    diagramHistoryState, restoreDiagramHistory, draft.ready || draftScopeError !== null,
   );
 
   const {
@@ -3138,8 +3125,7 @@ function App() {
   );
 
   const createDiagramCaptureOptions = useCallback((excludePanels = true): CaptureOptions => {
-    const preview = batchPreviewRef.current;
-    const visibleNodes = (preview?.nodes ?? latestNodesRef.current).filter(node => !node.hidden);
+    const visibleNodes = latestNodesRef.current.filter(node => !node.hidden);
     const bounds = expandDiagramContentBounds(
       getNodesBounds(visibleNodes),
       getRenderedEdgeLabelBounds(reactFlowWrapper.current, reactFlowInstance),
@@ -3152,7 +3138,7 @@ function App() {
     const security = getConnectionPresentation('security');
     const telemetry = getConnectionPresentation('telemetry');
     const usedConnectionTypes = new Set<DiagramConnectionType>(
-      (preview?.edges ?? latestEdgesRef.current)
+      latestEdgesRef.current
         .filter(edge => !edge.hidden)
         .map(edge => normalizeConnectionType(edge.data?.connectionType)),
     );
@@ -3194,7 +3180,7 @@ function App() {
       },
     ]
       .filter(item => usedConnectionTypes.has(item.type))
-      .map(({ type: _type, ...item }) => item);
+      .map(({ type, ...item }) => ({ ...item, connectionType: type }));
 
     return {
       backgroundColor: exportCanvasBackground,
@@ -3202,7 +3188,7 @@ function App() {
       exportBackground,
       composition: {
         bounds,
-        title: preview?.title || latestTitle.architectureName || 'Azure Architecture',
+        title: latestTitle.architectureName || 'Azure Architecture',
         subtitle: [
           latestTitle.author,
           latestTitle.date,
@@ -3213,6 +3199,12 @@ function App() {
           ja: '接続凡例',
         }),
         legendItems,
+        connectionEdges: latestEdgesRef.current.filter(edge => !edge.hidden),
+        legendVariedLabel: localize(language, { en: 'varied', ja: 'スタイル混在' }),
+        legendVariedDescription: localize(language, {
+          en: 'This connection type uses multiple saved styles.',
+          ja: 'この接続種別には複数の表示スタイルがあります。',
+        }),
       },
     };
   }, [
@@ -3240,7 +3232,7 @@ function App() {
       if (!blob) throw new Error('the captured PNG could not be decoded');
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
-      const fileName = generateModelFilename('azure-diagram', 'png');
+      const fileName = generateModelFilename('azure-diagram', 'png', undefined, generatedWithModel?.metrics);
       link.download = fileName;
       link.href = url;
       link.click();
@@ -3254,6 +3246,7 @@ function App() {
   }, [
     createDiagramCaptureOptions,
     exportBackground,
+    generatedWithModel,
     nodes,
     reactFlowInstance,
     recordExport,
@@ -3276,7 +3269,7 @@ function App() {
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
-      const fileName = generateModelFilename('azure-diagram', 'svg');
+      const fileName = generateModelFilename('azure-diagram', 'svg', undefined, generatedWithModel?.metrics);
       link.download = fileName;
       link.click();
       URL.revokeObjectURL(url);
@@ -3290,6 +3283,7 @@ function App() {
     edges,
     exportBackground,
     exportNodes,
+    generatedWithModel,
     isDarkMode,
     nodes,
     reactFlowInstance,
@@ -3327,7 +3321,7 @@ function App() {
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
-      const fileName = generateModelFilename('azure-diagram-workflow', 'md');
+      const fileName = generateModelFilename('azure-diagram-workflow', 'md', undefined, generatedWithModel?.metrics);
       link.download = fileName;
       link.click();
       URL.revokeObjectURL(url);
@@ -3360,7 +3354,7 @@ function App() {
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
-      const fileName = generateModelFilename('azure-diagram-animated', 'svg');
+      const fileName = generateModelFilename('azure-diagram-animated', 'svg', undefined, generatedWithModel?.metrics);
       link.download = fileName;
       link.click();
       URL.revokeObjectURL(url);
@@ -3374,6 +3368,7 @@ function App() {
     edges,
     exportBackground,
     exportNodes,
+    generatedWithModel,
     isDarkMode,
     nodes,
     reactFlowInstance,
@@ -3407,7 +3402,7 @@ function App() {
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
-      const fileName = generateModelFilename('azure-diagram-workflow', 'svg');
+      const fileName = generateModelFilename('azure-diagram-workflow', 'svg', undefined, generatedWithModel?.metrics);
       link.download = fileName;
       link.click();
       URL.revokeObjectURL(url);
@@ -3421,6 +3416,7 @@ function App() {
     edges,
     exportBackground,
     exportNodes,
+    generatedWithModel,
     isDarkMode,
     nodes,
     reactFlowInstance,
@@ -3455,7 +3451,7 @@ function App() {
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
-      const fileName = generateModelFilename('azure-diagram', 'vsdx');
+      const fileName = generateModelFilename('azure-diagram', 'vsdx', undefined, generatedWithModel?.metrics);
       link.download = fileName;
       link.click();
       URL.revokeObjectURL(url);
@@ -3465,7 +3461,7 @@ function App() {
       console.error('Error exporting Visio VSDX:', err);
       alert(t("Failed to export Visio file. Please try again."));
     }
-  }, [nodes, exportNodes, edges, titleBlockData.architectureName, recordExport, t]);
+  }, [nodes, exportNodes, edges, titleBlockData.architectureName, generatedWithModel, recordExport, t]);
 
   const exportAsHtml = useCallback(async () => {
     try {
@@ -3718,12 +3714,12 @@ function App() {
     
     const link = document.createElement('a');
     link.setAttribute('href', dataUri);
-    const fileName = generateModelFilename('azure-diagram', 'json');
+    const fileName = generateModelFilename('azure-diagram', 'json', undefined, generatedWithModel?.metrics);
     link.setAttribute('download', fileName);
     link.click();
     recordExport('json', fileName);
     trackExport('json', nodes.filter(n => n.type === 'azureNode').length);
-  }, [reactFlowInstance, recordExport, titleBlockData, workflow, pricingScenarios, architecturePrompt, originalPrompt, nodes, edges, iacBaseline, currentValidationScore, diagramHistoryState.settings, reviewHistory, validationSourceFingerprint]);
+  }, [reactFlowInstance, recordExport, titleBlockData, workflow, pricingScenarios, architecturePrompt, originalPrompt, nodes, edges, iacBaseline, currentValidationScore, diagramHistoryState.settings, reviewHistory, validationSourceFingerprint, generatedWithModel]);
 
   const exportCostBreakdown = useCallback(() => {
     // Calculate the cost breakdown
@@ -4917,7 +4913,6 @@ function App() {
             false,
             baseRevision,
             undefined,
-            false,
             { reconcile: false },
           );
         } else {
@@ -5300,7 +5295,6 @@ function App() {
     preserveValidationForRecheck: boolean = false,
     baseRevision?: number,
     signal?: AbortSignal,
-    previewOnly: boolean = false,
     proposalOptions?: DiagramProposalOptions,
   ): Promise<boolean> => {
     if (signal?.aborted) return false;
@@ -5719,7 +5713,7 @@ function App() {
 
     assertSourceCurrent();
     const normalized = buildDiagramChanges(
-      previewOnly ? { nodes: [], edges: [] } : baseline, { nodes: finalNodes, edges: newEdges },
+      baseline, { nodes: finalNodes, edges: newEdges },
       proposalOptions,
     ).proposed;
     const proposalNodeIds = new Map(finalNodes.map((node, index) => [node.id, normalized.nodes[index].id]));
@@ -5730,12 +5724,6 @@ function App() {
       return pricing ? { ...node, data: { ...node.data, pricing } } : node;
     }));
     assertSourceCurrent();
-    if (previewOnly) {
-      const preview = { nodes: pricedNodes, edges: normalized.edges, title: incomingName };
-      batchPreviewRef.current = preview;
-      setBatchPreview(preview);
-      return true;
-    }
     const reviewed = await requestDiagramReview(
       baseline, { nodes: pricedNodes, edges: normalized.edges }, autoSnapshot, assertSourceCurrent, signal,
       proposalOptions,
@@ -5791,7 +5779,16 @@ function App() {
       const displayName = modelKey
         ? MODEL_CONFIG[modelKey as keyof typeof MODEL_CONFIG].displayName
         : architecture.metrics.model || 'AI';
-      setGeneratedWithModel({ name: displayName, timeMs: architecture.metrics.elapsedTimeMs });
+      setGeneratedWithModel({
+        name: displayName,
+        timeMs: architecture.metrics.elapsedTimeMs,
+        metrics: {
+          model: architecture.metrics.model,
+          source: architecture.metrics.source,
+          deployment: architecture.metrics.deployment,
+          reasoningEffort: architecture.metrics.reasoningEffort,
+        },
+      });
     } else {
       setGeneratedWithModel(null);
     }
@@ -5975,6 +5972,10 @@ function App() {
     setIsImportingTemplate(true);
 
     try {
+      let modelOverride: RuntimeModelOverride | undefined;
+      let connectionError: unknown;
+      try { modelOverride = captureRuntimeModelOverride('architectureGeneration'); }
+      catch (cause) { connectionError = cause; }
       // Read all selected files
       const fileContents: { name: string; text: string }[] = [];
       for (const file of selectedFiles) {
@@ -6016,7 +6017,6 @@ function App() {
           trackTemplateImport('arm', filenames[0], filenames.length);
           const applied = await handleAIGenerate(architecture, promptLabel, true, false, undefined, true, false, baseRevision);
           if (!applied) return;
-          clearSourceModel();
           setIaCBaseline(baseline);
           setDriftPlanSummary(null);
           return;
@@ -6037,11 +6037,12 @@ function App() {
       }
 
       const { generateArchitectureFromIaC } = await import('./services/azureOpenAI');
+      if (connectionError) throw connectionError;
       const result = await generateArchitectureFromIaC({
         format: detection.format,
         content,
         filenames,
-      }, language);
+      }, language, { modelOverride });
 
       // Build descriptive prompt label
       const promptLabel = localize(language, {
@@ -6052,21 +6053,19 @@ function App() {
       trackTemplateImport(detection.format, filenames[0], filenames.length);
       const applied = await handleAIGenerate(result, promptLabel, true, false, undefined, true, false, baseRevision);
       if (!applied) return;
-      clearSourceModel();
       setIaCBaseline(baseline);
       setDriftPlanSummary(null);
     } catch (error: any) {
-      console.error('Template import error:', error);
       alert(localize(language, {
-        en: `Failed to import template: ${error.message}`,
-        ja: `テンプレートのインポートに失敗しました: ${error.message}`,
+        en: `Failed to import template: ${translate(error.message)}`,
+        ja: `テンプレートのインポートに失敗しました: ${translate(error.message)}`,
       }));
     } finally {
       setIsImportingTemplate(false);
       setImportFormatLabel('Template');
       event.target.value = '';
     }
-  }, [handleAIGenerate, detectIaCFormat, language]);
+  }, [handleAIGenerate, detectIaCFormat, language, translate]);
 
   // Reverse-engineer a live Azure resource group into a diagram via Azure
   // Resource Graph (Reader-sufficient, returns only real top-level resources).
@@ -6089,7 +6088,6 @@ function App() {
     trackTemplateImport('arm', `rg:${resourceGroup}`, 1);
     const applied = await handleAIGenerate(architecture, promptLabel, true, false, undefined, true, false, baseRevision);
     if (!applied) return;
-    clearSourceModel();
     setIaCBaseline(null);
     setDriftPlanSummary(null);
   }, [handleAIGenerate, language]);
@@ -6232,6 +6230,9 @@ function App() {
       return;
     }
 
+    const modelOverride = captureAIConnection('validation');
+    if (!modelOverride) return;
+    setSubmittedValidationModel(modelOverride.connection?.displayName ?? '');
     const requestGeneration = validationGenerationRef.current.advance();
     const assessedFingerprint = editorFingerprint(liveDocumentRef.current);
     const isSourceCurrent = captureEditorSource();
@@ -6294,7 +6295,7 @@ function App() {
         connections,
         groups,
         architecturePrompt || titleBlockData.architectureName,
-        undefined,
+        modelOverride,
         language,
       );
       if (!isCurrentValidation()) return;
@@ -6337,10 +6338,9 @@ function App() {
       }
     } catch (error: any) {
       if (!isCurrentValidation()) return;
-      console.error('Validation error:', error);
       alert(localize(language, {
-        en: `Failed to validate architecture: ${error.message}`,
-        ja: `アーキテクチャの検証に失敗しました: ${error.message}`,
+        en: `Failed to validate architecture: ${translate(error.message)}`,
+        ja: `アーキテクチャの検証に失敗しました: ${translate(error.message)}`,
       }));
       setIsValidationModalOpen(false);
     } finally {
@@ -6349,7 +6349,7 @@ function App() {
         if (!isCurrentValidation()) setIsValidationModalOpen(false);
       }
     }
-  }, [nodes, edges, architecturePrompt, titleBlockData.architectureName, captureEditorSource, createDiagramCaptureOptions, isFeedbackModalOpen, t, language]);
+  }, [nodes, edges, architecturePrompt, titleBlockData.architectureName, captureEditorSource, createDiagramCaptureOptions, isFeedbackModalOpen, captureAIConnection, translate, t, language]);
 
   const handleValidationHandoffStart = useCallback(() => {
     if (!validationHandoff) return;
@@ -6376,6 +6376,9 @@ function App() {
       return;
     }
 
+    const modelOverride = captureAIConnection('deploymentGuide');
+    if (!modelOverride) return;
+    setSubmittedGuideModel(modelOverride.connection?.displayName ?? '');
     const requestGeneration = deploymentGuideGenerationRef.current.advance();
     const diagramGeneration = diagramRevisionGenerationRef.current.current();
     const isSourceCurrent = captureEditorSource();
@@ -6423,6 +6426,7 @@ function App() {
         architecturePrompt || titleBlockData.architectureName,
         totalMonthlyCost,
         language,
+        { modelOverride },
       );
       if (!isCurrentGuide()) return;
 
@@ -6435,8 +6439,7 @@ function App() {
       });
     } catch (error: any) {
       if (!isCurrentGuide()) return;
-      console.error('Guide generation error:', error);
-      alert(t('error.deploymentGuide', { message: error.message }));
+      alert(t('error.deploymentGuide', { message: translate(error.message) }));
       setIsDeploymentGuideModalOpen(false);
     } finally {
       if (deploymentGuideGenerationRef.current.isCurrent(requestGeneration)) {
@@ -6444,7 +6447,7 @@ function App() {
         if (!isCurrentGuide()) setIsDeploymentGuideModalOpen(false);
       }
     }
-  }, [nodes, edges, architecturePrompt, titleBlockData.architectureName, captureEditorSource, totalMonthlyCost, t, language]);
+  }, [nodes, edges, architecturePrompt, titleBlockData.architectureName, captureEditorSource, totalMonthlyCost, captureAIConnection, translate, t, language]);
 
   const toggleToolbarSection = useCallback((sectionId: ToolbarSectionId) => {
     if (sectionId === 'create') setIsModelSettingsOpen(false);
@@ -6615,6 +6618,18 @@ function App() {
   })();
   const commandPaletteCommands: CommandPaletteAction[] = [
     {
+      id: 'configure-byo-ai',
+      label: localize(language, { en: 'AI connections', ja: 'AI 接続' }),
+      description: localize(language, {
+        en: 'Choose managed GPT-6 Astra or configure your own Azure OpenAI / OpenAI profiles',
+        ja: '管理対象の GPT-6 Astra を選択、または独自の Azure OpenAI / OpenAI 接続を設定',
+      }),
+      keywords: ['ai', 'byo', 'custom AI', 'provider', 'endpoint', 'model', 'settings', '接続', '設定'],
+      group: localize(language, { en: 'Settings', ja: '設定' }),
+      icon: <Sparkles size={17} aria-hidden="true" />,
+      run: openAIConnections,
+    },
+    {
       id: 'open-services',
       label: localize(language, { en: 'Open Microsoft services', ja: 'Microsoft サービスを開く' }),
       description: localize(language, {
@@ -6637,21 +6652,6 @@ function App() {
       group: localize(language, { en: 'Create', ja: '作成' }),
       icon: <MessagesSquare size={17} aria-hidden="true" />,
       run: toggleChatPanel,
-    },
-    {
-      id: 'configure-byo-ai',
-      label: localize(language, {
-        en: 'Configure custom AI endpoint',
-        ja: 'カスタム AI エンドポイントを設定',
-      }),
-      description: localize(language, {
-        en: 'Use your Azure OpenAI or official OpenAI endpoint and model',
-        ja: '独自の Azure OpenAI または公式 OpenAI のエンドポイントとモデルを使用します',
-      }),
-      keywords: ['ai', 'byo', 'custom', 'endpoint', 'model', 'openai', 'azure'],
-      group: localize(language, { en: 'Create', ja: '作成' }),
-      icon: <Info size={17} aria-hidden="true" />,
-      run: () => setIsBYOAISettingsOpen(true),
     },
     {
       id: 'save-diagram',
@@ -6872,6 +6872,7 @@ function App() {
 
   const aiGeneratorHost = (
     <AIArchitectureGenerator
+      onConfigureConnections={openAIConnections}
       showTrigger={false}
       openSignal={generatorOpenSignal}
       onOpen={() => {
@@ -6888,7 +6889,6 @@ function App() {
       onGenerate={async (arch, prompt, autoSnap, refImageUrl, baseRevision, signal) => {
         const applied = await handleAIGenerate(arch, prompt, autoSnap, nodes.length > 0, undefined, true, false, baseRevision, signal);
         if (!applied) return false;
-        clearSourceModel();
         setReferenceImageUrl(lastAppliedProposalCompleteRef.current ? refImageUrl ?? null : null);
         setLastBlueprintArchitecture(null);
         return true;
@@ -7148,7 +7148,7 @@ function App() {
                   ref={modelSettingsRef}
                   isOpen={isModelSettingsOpen}
                   onToggle={() => setIsModelSettingsOpen(v => !v)}
-                  onOpenBYOSettings={() => setIsBYOAISettingsOpen(true)}
+                  onConfigureConnections={openAIConnections}
                 />
                 <button
                   className={`btn btn-secondary${isChatOpen ? ' btn-active' : ''}`}
@@ -7171,13 +7171,6 @@ function App() {
                 >
                   <MessagesSquare size={18} />
                   {' '}{t("Chat")}{' '}</button>
-                <button
-                  className="btn btn-secondary"
-                  onClick={() => setIsCompareModelsOpen(true)}
-                  title={t("Compare architecture output across multiple AI models")}
-                >
-                  <GitCompare size={18} />
-                  {' '}{t("Compare Models")}{' '}</button>
               </div>
 
               <div
@@ -7915,14 +7908,6 @@ function App() {
                   <Shield size={18} />
                   {' '}{t("Validate Architecture")}{' '}</button>
                 <button
-                  className="btn btn-secondary"
-                  onClick={() => setIsCompareValidationOpen(true)}
-                  title={t("Compare WAF validation results across multiple AI models")}
-                  disabled={nodes.length === 0}
-                >
-                  <GitCompare size={18} />
-                  {' '}{t("Compare Validation")}{' '}</button>
-                <button
                   type="button"
                   className="btn btn-secondary"
                   onClick={() => requestPrivacyAction('review', () => undefined)}
@@ -8028,6 +8013,7 @@ function App() {
               </button>
             )}
             <HeaderUtilityMenu
+              onOpenAIConnections={openAIConnections}
               onOpenRecentWork={openRecentWork}
               onOpenQualityDoctor={openQualityDoctor}
               onOpenAbout={() => setIsAboutOpen(true)}
@@ -8124,10 +8110,10 @@ function App() {
           onContextMenuCapture={handleCanvasContextMenuCapture}
         >
           <ReactFlow
-            nodes={batchPreview?.nodes ?? nodes}
-            edges={batchPreview?.edges ?? edges}
-            onNodesChange={batchPreview ? onPreviewNodesChange : onNodesChange}
-            onEdgesChange={batchPreview ? undefined : onEdgesChange}
+            nodes={nodes}
+            edges={edges}
+            onNodesChange={onNodesChange}
+            onEdgesChange={onEdgesChange}
             onNodesDelete={onNodesDelete}
             onConnect={onConnect}
             onReconnect={onReconnect}
@@ -8144,6 +8130,7 @@ function App() {
             deleteKeyCode={null}
             fitView={!hasRestoredViewport}
             fitViewOptions={{ padding: 0.2, maxZoom: 1.2 }}
+            minZoom={0.1}
             snapToGrid={true}
             snapGrid={[20, 20]}
             selectionOnDrag={true}
@@ -8158,7 +8145,7 @@ function App() {
             <Background 
               variant={BackgroundVariant.Dots} 
               gap={20} 
-              size={1.5}
+              size={1}
               color={isDarkMode ? '#334155' : '#cbd5e1'}
               style={{ backgroundColor: isDarkMode ? '#0f172a' : '#f8fafc' }}
             />
@@ -8591,12 +8578,15 @@ function App() {
         isOpen={isValidationModalOpen}
         onClose={() => setIsValidationModalOpen(false)}
         isLoading={isValidating}
+        submittedModel={submittedValidationModel}
         isStale={validationIsStale}
         reviewHistory={reviewHistory}
         onFocusResources={focusValidationResources}
         onRevalidate={handleValidateArchitecture}
         onApplyRecommendations={async (selectedFindings) => {
           if (validationIsStale) return;
+          const modelOverride = captureAIConnection('architectureGeneration');
+          if (!modelOverride) return;
           const baseRevision = historyRevisionRef.current;
           const isSourceCurrent = captureEditorSource();
           console.log('📝 User selected recommendations to apply:', selectedFindings);
@@ -8693,13 +8683,12 @@ LAYOUT RULES:
 Return the IMPROVED architecture in the same JSON format as before with proper group assignments.`;
 
           console.log('🔄 Regenerating architecture with recommendations...');
-          console.log('📋 Prompt:', regenerationPrompt);
           
           // Call Azure OpenAI to regenerate
           try {
             const improvedArchitecture = await generateArchitectureWithAI(
               regenerationPrompt,
-              undefined,
+              modelOverride,
               undefined,
               language,
             );
@@ -8752,9 +8741,8 @@ Return the IMPROVED architecture in the same JSON format as before with proper g
               }));
             }
           } catch (error) {
-            console.error('❌ Failed to regenerate architecture:', error);
             setIsApplyingRecommendations(false);
-            alert(t("Failed to regenerate architecture. Please try again."));
+            alert(error instanceof Error ? translate(error.message) : t("Failed to regenerate architecture. Please try again."));
           } finally {
             setIsApplyingRecommendations(false);
           }
@@ -8765,6 +8753,7 @@ Return the IMPROVED architecture in the same JSON format as before with proper g
         isOpen={isDeploymentGuideModalOpen}
         onClose={() => setIsDeploymentGuideModalOpen(false)}
         isLoading={isGeneratingGuide}
+        submittedModel={submittedGuideModel}
       />
       {iacPreview && (
         <IaCRoundTripModal
@@ -8862,92 +8851,6 @@ Return the IMPROVED architecture in the same JSON format as before with proper g
         onClose={() => setIsAzureImportOpen(false)}
         onImport={importFromAzure}
       />
-      <CompareModelsModal
-        isOpen={isCompareModelsOpen}
-        onClose={() => setIsCompareModelsOpen(false)}
-        onApply={async (architecture, prompt, sourceModel, sourceReasoningEffort) => {
-          const applied = await handleAIGenerate(architecture, prompt, true, false);
-          if (!applied) throw new DOMException('The proposal review was cancelled.', 'AbortError');
-          trackModelComparison({ selectedModel: sourceModel });
-          if (sourceModel && sourceReasoningEffort) {
-            setSourceModel(sourceModel, sourceReasoningEffort);
-          }
-        }}
-        onCaptureBatch={async (items) => {
-          if (isCapturingBatch || pendingAIReviewRef.current) return;
-          const viewport = reactFlowInstance?.getViewport();
-          setIsCapturingBatch(true);
-          try {
-            // Preview-only nodes never enter document state, either autosave
-            // writer, the undo history, or the current document's lineage.
-            for (const item of items) {
-              await handleAIGenerate(item.architecture, item.prompt, false, false, undefined, false, false, undefined, undefined, true);
-              await new Promise(resolve => setTimeout(resolve, 1500));
-              await reactFlowInstance?.fitView({ padding: 0.2, maxZoom: 1.2 });
-              if (!reactFlowWrapper.current) throw new Error('The canvas is unavailable for capture.');
-              const dataUrl = await captureDiagramAsPng(reactFlowWrapper.current, createDiagramCaptureOptions());
-              const link = document.createElement('a');
-              link.href = dataUrl;
-              link.download = item.filename;
-              link.click();
-              await new Promise(resolve => setTimeout(resolve, 350));
-            }
-          } finally {
-            batchPreviewRef.current = null;
-            setBatchPreview(null);
-            setIsCapturingBatch(false);
-            window.requestAnimationFrame(() => { if (viewport) reactFlowInstance?.setViewport(viewport); });
-          }
-        }}
-      />
-      <CompareValidationModal
-        isOpen={isCompareValidationOpen}
-        onClose={() => setIsCompareValidationOpen(false)}
-        diagramFingerprint={currentDiagramFingerprint}
-        onApply={(validation, sourceFingerprint) => {
-          try {
-            const isCurrentReview = sourceFingerprint !== undefined
-              && sourceFingerprint === editorFingerprint(liveDocumentRef.current);
-            const nextReview = updateValidationReview(
-              isCurrentReview ? parseValidationReview(liveDocumentRef.current.reviewHistory) : [], validation,
-            );
-            setValidationResult(validation);
-            setPersistedValidationScore(validation.overallScore);
-            setValidationSourceFingerprint(sourceFingerprint ?? null);
-            setValidationNeedsRefresh(!isCurrentReview);
-            if (isCurrentReview) setReviewHistory(nextReview);
-            setIsValidationModalOpen(true);
-            setPanelsCollapsedSignal(prev => prev + 1);
-            return true;
-          } catch (error) {
-            console.error('Invalid comparison report was not applied:', error);
-            alert(localize(language, { en: 'The validation report is invalid and was not applied.', ja: '検証レポートが無効なため、適用しませんでした。' }));
-            return false;
-          }
-        }}
-        services={nodes
-          .filter(n => n.type === 'azureNode')
-          .map(n => ({
-            name: n.data.label || n.data.serviceName || 'Unknown Service',
-            type: n.data.serviceName || n.data.label || 'Unknown',
-            category: n.data.category || 'General',
-          }))}
-        connections={edges.map(e => ({
-          from: nodes.find(n => n.id === e.source)?.data?.label || e.source,
-          to: nodes.find(n => n.id === e.target)?.data?.label || e.target,
-          label: String(e.label || ''),
-        }))}
-        groups={nodes
-          .filter(n => n.type === 'groupNode')
-          .map(n => ({
-            name: n.data.label || 'Group',
-            services: nodes
-              .filter(child => child.parentNode === n.id)
-              .map(child => child.data.label || child.data.serviceName || 'Unknown'),
-          }))}
-        architectureDescription={architecturePrompt || titleBlockData.architectureName}
-      />
-
       <ValidationHandoffToast
         isOpen={validationHandoff !== null && !focusMode}
         isModification={validationHandoff?.source === 'modification'}
@@ -8966,6 +8869,7 @@ Return the IMPROVED architecture in the same JSON format as before with proper g
       <ArchitectureChatPanel
         isOpen={isChatOpen}
         onClose={() => setIsChatOpen(false)}
+        onConfigureConnections={openAIConnections}
         diagramKey={activeDiagramLineageId}
         currentArchitecture={{
           nodes,
@@ -8977,6 +8881,11 @@ Return the IMPROVED architecture in the same JSON format as before with proper g
           handleAIGenerate(architecture, prompt, autoSnapshot, nodes.length > 0, undefined, true, false, baseRevision, signal)
         )}
       />
+      <BYOAISettingsDialog
+        isOpen={isBYOAISettingsOpen}
+        onClose={() => setIsBYOAISettingsOpen(false)}
+        returnFocusTarget={aiSettingsReturnFocusRef.current}
+      />
       <HelpLearnPanel
         isOpen={isHelpOpen}
         onClose={() => setIsHelpOpen(false)}
@@ -8984,10 +8893,6 @@ Return the IMPROVED architecture in the same JSON format as before with proper g
       <AboutDialog
         isOpen={isAboutOpen}
         onClose={() => setIsAboutOpen(false)}
-      />
-      <BYOAISettingsDialog
-        isOpen={isBYOAISettingsOpen}
-        onClose={() => setIsBYOAISettingsOpen(false)}
       />
       {draft.recovery && (
         <DraftRecoveryDialog draft={draft.recovery} error={draft.error}

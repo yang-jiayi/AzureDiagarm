@@ -67,6 +67,14 @@ const NODE_WIDTH = 180;
 const NODE_HEIGHT = 100;
 const GROUP_GAP = 40;
 
+function indexFirstById<T extends { id: string }>(items: T[]): Map<string, T> {
+  const index = new Map<string, T>();
+  for (const item of items) {
+    if (!index.has(item.id)) index.set(item.id, item);
+  }
+  return index;
+}
+
 /** Map our direction codes to ELK's direction enum */
 function elkDirection(dir: string): string {
   switch (dir) {
@@ -169,14 +177,30 @@ export async function layoutArchitecture(
 
   // Build a lookup: groupId → services[]
   const groupMembers = new Map<string, LayoutService[]>();
+  const groupsByServiceId = new Map<string, Set<string>>();
+  const servicesById = indexFirstById(services);
   const ungrouped: LayoutService[] = [];
 
   for (const s of services) {
     if (s.groupId) {
       if (!groupMembers.has(s.groupId)) groupMembers.set(s.groupId, []);
       groupMembers.get(s.groupId)!.push(s);
+      if (!groupsByServiceId.has(s.id)) groupsByServiceId.set(s.id, new Set());
+      groupsByServiceId.get(s.id)!.add(s.groupId);
     } else {
       ungrouped.push(s);
+    }
+  }
+
+  const connectionsByGroup = new Map<string, LayoutConnection[]>();
+  for (const connection of connections) {
+    const sourceGroups = groupsByServiceId.get(connection.from);
+    const targetGroups = groupsByServiceId.get(connection.to);
+    if (!sourceGroups || !targetGroups) continue;
+    for (const groupId of sourceGroups) {
+      if (!targetGroups.has(groupId)) continue;
+      if (!connectionsByGroup.has(groupId)) connectionsByGroup.set(groupId, []);
+      connectionsByGroup.get(groupId)!.push(connection);
     }
   }
 
@@ -207,12 +231,7 @@ export async function layoutArchitecture(
         width: m.width ?? NODE_WIDTH,
         height: m.height ?? NODE_HEIGHT,
       })),
-      edges: connections
-        .filter(c => {
-          const fromIn = members.some(m => m.id === c.from);
-          const toIn = members.some(m => m.id === c.to);
-          return fromIn && toIn;
-        })
+      edges: (connectionsByGroup.get(group.id) ?? [])
         .map(c => ({
           id: `e-${c.from}-${c.to}`,
           sources: [c.from],
@@ -231,8 +250,8 @@ export async function layoutArchitecture(
   const topEdges: ElkExtendedEdge[] = connections
     .filter(c => {
       // Keep if at least one endpoint is top-level (ungrouped) OR endpoints are in different groups
-      const fromGroup = services.find(s => s.id === c.from)?.groupId;
-      const toGroup = services.find(s => s.id === c.to)?.groupId;
+      const fromGroup = servicesById.get(c.from)?.groupId;
+      const toGroup = servicesById.get(c.to)?.groupId;
       if (!fromGroup || !toGroup) return true; // one is ungrouped
       return fromGroup !== toGroup; // cross-group
     })
@@ -267,19 +286,19 @@ export async function layoutArchitecture(
   const positionedServices: PositionedService[] = [];
   const positionedGroups: PositionedGroup[] = [];
 
-  // Helper to find a node recursively in the ELK result tree
-  function findElkNode(parent: ElkNode, id: string): ElkNode | undefined {
-    if (parent.id === id) return parent;
+  // Preserve the previous depth-first, first-match lookup semantics.
+  const elkNodesById = new Map<string, ElkNode>();
+  function indexElkNode(parent: ElkNode): void {
+    if (!elkNodesById.has(parent.id)) elkNodesById.set(parent.id, parent);
     for (const child of parent.children || []) {
-      const found = findElkNode(child, id);
-      if (found) return found;
+      indexElkNode(child);
     }
-    return undefined;
   }
+  indexElkNode(layoutResult);
 
   // Groups
   for (const group of groups) {
-    const elkNode = findElkNode(layoutResult, groupIdMap.get(group.id) ?? group.id);
+    const elkNode = elkNodesById.get(groupIdMap.get(group.id) ?? group.id);
     if (!elkNode) {
       console.warn(`  ⚠️ [ELK] Group ${group.id} not found in layout result`);
       continue;
@@ -302,7 +321,7 @@ export async function layoutArchitecture(
 
   // Services — absolute positions first
   for (const service of services) {
-    const elkNode = findElkNode(layoutResult, service.id);
+    const elkNode = elkNodesById.get(service.id);
     if (!elkNode) {
       console.warn(`  ⚠️ [ELK] Service ${service.id} not found in layout result`);
       positionedServices.push({ ...service, position: { x: 0, y: 0 } });
@@ -411,10 +430,12 @@ export async function relayoutDiagram(
     options
   );
 
+  const positionedById = indexFirstById(positioned);
+  const positionedGroupsById = indexFirstById(positionedGroups);
   const updatedNodes = nodes.map(node => {
-    const hierarchyUnit = units.find(unit => unit.rootId === node.id);
-    if (hierarchyUnit) {
-      const pos = positioned.find(service => service.id === hierarchyUnit.surrogateId);
+    const hierarchyUnit = unitByNodeId.get(node.id);
+    if (hierarchyUnit && hierarchyUnit.rootId === node.id) {
+      const pos = positionedById.get(hierarchyUnit.surrogateId);
       return pos
         ? {
             ...node,
@@ -427,12 +448,12 @@ export async function relayoutDiagram(
     }
     if (protectedNodeIds.has(node.id)) return node;
     if (node.type === 'azureNode') {
-      const pos = positioned.find(s => s.id === node.id);
+      const pos = positionedById.get(node.id);
       if (pos) {
         return { ...node, position: pos.position };
       }
     } else if (node.type === 'groupNode') {
-      const pos = positionedGroups.find(g => g.id === node.id);
+      const pos = positionedGroupsById.get(node.id);
       if (pos) {
         return {
           ...node,

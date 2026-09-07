@@ -17,7 +17,8 @@ LLMs are non-deterministic by design. Two factors limit variance:
 1. The Phase 1 rule engine is fully deterministic — the same diagram always produces the same baseline findings.
 2. The system prompt anchors the model to a realistic 60–80 band for "well-connected architectures" and reserves sub-50 scores for critical gaps.
 
-If you need to demonstrate variance honestly, use **Multi-Model Comparison** to run the same prompt through all 7 models side-by-side.
+To inspect variance, retain reports from repeated Astra reviews of the same
+diagram and reasoning setting. The app no longer offers multi-model comparison.
 
 ---
 
@@ -36,7 +37,7 @@ This is a deliberate tradeoff. Two design choices push scores up:
 
 Users who want a stricter assessment can:
 
-- Switch to a more capable reasoning model (e.g., GPT-5.2 medium/high) under model settings.
+- Adjust GPT-6 Astra's reasoning effort in AI settings while keeping the same model.
 - Review the per-pillar findings list, which surfaces gaps even when the headline score is healthy.
 
 ---
@@ -77,7 +78,7 @@ Source files: [src/data/wafRules.ts](src/data/wafRules.ts) and [src/services/waf
 
 ### Q8. Which AI model produced the score?
 
-It's printed in the validation report footer (e.g., `*Powered by GPT-5.2 (medium) and Azure Well-Architected Framework*`) and recorded in the result's `modelUsed` field. Token counts and latency are captured too, so any score can be traced to a specific model invocation.
+It's printed in the validation report footer (e.g., `*Powered by GPT-6 Astra (medium) and Azure Well-Architected Framework*`) and recorded in the result's `modelUsed` field. Token counts and latency are captured too, so any score can be traced to a specific model invocation. Historical records retain the model that actually produced them, not the current model setting.
 
 ---
 

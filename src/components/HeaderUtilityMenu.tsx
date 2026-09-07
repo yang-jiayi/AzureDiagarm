@@ -2,7 +2,7 @@
 // Licensed under the MIT License.
 
 import { useEffect, useRef, useState } from 'react';
-import { History, Info, Languages, MoreHorizontal, ScanSearch } from 'lucide-react';
+import { History, Info, Languages, MoreHorizontal, PlugZap, ScanSearch } from 'lucide-react';
 import { useLanguage } from '../i18n/LanguageContext';
 import { localize } from '../i18n/localization';
 import LanguageSwitch from './LanguageSwitch';
@@ -11,12 +11,14 @@ interface HeaderUtilityMenuProps {
   onOpenAbout: () => void;
   onOpenRecentWork: () => void;
   onOpenQualityDoctor: () => void;
+  onOpenAIConnections: () => void;
 }
 
 export default function HeaderUtilityMenu({
   onOpenAbout,
   onOpenRecentWork,
   onOpenQualityDoctor,
+  onOpenAIConnections,
 }: HeaderUtilityMenuProps) {
   const { language } = useLanguage();
   const [isOpen, setIsOpen] = useState(false);
@@ -66,6 +68,18 @@ export default function HeaderUtilityMenu({
           role="dialog"
           aria-label={text('More application options', 'その他のアプリケーション オプション')}
         >
+          <button
+            type="button"
+            className="header-utility-menu-item"
+            onClick={() => {
+              setIsOpen(false);
+              triggerRef.current?.focus();
+              onOpenAIConnections();
+            }}
+          >
+            <PlugZap size={17} aria-hidden="true" />
+            <span>{text('AI connections', 'AI 接続')}</span>
+          </button>
           <button
             type="button"
             className="header-utility-menu-item"

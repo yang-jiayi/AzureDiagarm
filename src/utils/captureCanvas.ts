@@ -22,6 +22,9 @@
  */
 
 import { toPng } from 'html-to-image';
+import type { Edge } from 'reactflow';
+import type { DiagramConnectionType } from './edgePresentation';
+import { usedConnectionLegend } from '../services/diagramExportGeometry';
 import {
   calculateContentCapturePlan,
   type DiagramContentBounds,
@@ -114,6 +117,17 @@ const PANEL_CLASSES = [
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
+export interface CaptureLegendItem {
+  label: string;
+  description: string;
+  color: string;
+  lineStyle?: 'solid' | 'dashed' | 'dotted';
+  connectionType?: DiagramConnectionType;
+  dashPattern?: string;
+  opacity?: number;
+  hasMixedStyles?: boolean;
+}
+
 export interface CaptureOptions {
   /** CSS color string for the background (any valid CSS value). */
   backgroundColor: string;
@@ -144,13 +158,36 @@ export interface CaptureOptions {
     title?: string;
     subtitle?: string;
     legendTitle?: string;
-    legendItems?: Array<{
-      label: string;
-      description: string;
-      color: string;
-      lineStyle?: 'solid' | 'dashed' | 'dotted';
-    }>;
+    legendItems?: CaptureLegendItem[];
+    connectionEdges?: Edge[];
+    legendVariedLabel?: string;
+    legendVariedDescription?: string;
   };
+}
+
+export function resolveCaptureLegendItems(
+  composition: NonNullable<CaptureOptions['composition']>,
+): CaptureLegendItem[] {
+  const items = composition.legendItems ?? [];
+  if (!composition.connectionEdges) return items;
+  const styles = new Map(usedConnectionLegend(composition.connectionEdges).map(entry => [entry.type, entry]));
+  return items.flatMap<CaptureLegendItem>(item => {
+    if (!item.connectionType) return [item];
+    const style = styles.get(item.connectionType);
+    if (!style) return [];
+    return [{
+      ...item,
+      color: style.color,
+      lineStyle: style.dashed ? 'dashed' : 'solid',
+      dashPattern: style.dashPattern,
+      opacity: style.opacity,
+      hasMixedStyles: style.hasMixedStyles,
+      ...(style.hasMixedStyles ? {
+        label: `${item.label} (${composition.legendVariedLabel ?? 'varied'})`,
+        description: composition.legendVariedDescription ?? 'This connection type uses multiple saved styles.',
+      } : {}),
+    }];
+  });
 }
 
 // ─── Internal helpers ─────────────────────────────────────────────────────────
@@ -264,6 +301,7 @@ function captureClasses(options: CaptureOptions): string[] {
     items: NonNullable<NonNullable<CaptureOptions['composition']>['legendItems']>,
   ): void {
     const legend = document.createElement('section');
+    legend.dataset.exportLegend = 'true';
     Object.assign(legend.style, {
       position: 'absolute',
       top: `${top}px`,
@@ -305,14 +343,24 @@ function captureClasses(options: CaptureOptions): string[] {
         gap: '9px',
       });
 
-      const sample = document.createElement('span');
-      Object.assign(sample.style, {
-        display: 'block',
-        width: '44px',
-        borderTopWidth: '3px',
-        borderTopStyle: item.lineStyle ?? 'solid',
-        borderTopColor: item.color,
-      });
+      const sample = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      sample.setAttribute('width', '44');
+      sample.setAttribute('height', '12');
+      sample.setAttribute('viewBox', '0 0 44 12');
+      sample.setAttribute('aria-hidden', 'true');
+      sample.style.display = 'block';
+      if (!item.hasMixedStyles) {
+        const line = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        line.setAttribute('d', 'M0 6H44');
+        line.setAttribute('fill', 'none');
+        line.setAttribute('stroke', item.color);
+        line.setAttribute('stroke-width', '3');
+        line.setAttribute('opacity', String(item.opacity ?? 1));
+        const dash = item.dashPattern
+          ?? (item.lineStyle === 'dotted' ? '2, 4' : item.lineStyle === 'dashed' ? '9, 6' : undefined);
+        if (dash) line.setAttribute('stroke-dasharray', dash);
+        sample.appendChild(line);
+      }
       row.appendChild(sample);
 
       const copy = document.createElement('span');
@@ -358,7 +406,7 @@ function captureClasses(options: CaptureOptions): string[] {
       throw new Error('React Flow viewport was not found for content-aware export.');
     }
 
-    const legendItems = composition.legendItems ?? [];
+    const legendItems = resolveCaptureLegendItems(composition);
     const threatOverlay = element.querySelector<HTMLElement>('.threat-model-overlay');
     const threatItemCount = threatOverlay?.querySelectorAll('li').length ?? 0;
     const measuredThreatHeight = threatOverlay

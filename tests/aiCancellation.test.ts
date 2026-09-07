@@ -1,4 +1,4 @@
-import test, { afterEach, beforeEach, mock } from 'node:test';
+import test, { afterEach, beforeEach, mock, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { build } from 'esbuild';
 import { exactJapanese } from '../src/i18n/LanguageContext';
@@ -9,64 +9,57 @@ const bundled = await build({
   stdin: {
     contents: `
       export * from './src/services/azureOpenAI';
-      export { generateReferenceArchitectureWithAI } from './src/services/referenceArchitectureAI';
+      export { generateReferenceArchitectureWithAI, referenceToTopology } from './src/services/referenceArchitectureAI';
       export { generateBlueprintArchitectureWithAI } from './src/services/blueprintArchitectureAI';
       export { generateComponentManifest } from './src/services/componentManifestAI';
       export { validateArchitecture } from './src/services/architectureValidator';
       export { runAIBudgetQueue } from './src/services/aiBudgetQueue';
       export { getAIBudget } from './src/services/aiBudgetService';
       export { getTestModelUsage, resetTestModelUsage } from './src/services/telemetryService';
-      export { setTestModelSettings } from './src/stores/modelSettingsStore';
+      export { updateModelSettings as setTestModelSettings } from './src/stores/modelSettingsStore';
     `,
     resolveDir: process.cwd(), loader: 'ts',
   },
   bundle: true, write: false, platform: 'node', format: 'esm', logLevel: 'silent',
-  define: { 'import.meta.env': JSON.stringify({ VITE_AZURE_OPENAI_ENDPOINT: 'configured' }) },
+  define: { 'import.meta.env': JSON.stringify({
+    VITE_AZURE_OPENAI_ENDPOINT: 'configured',
+    VITE_AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA: 'gpt-6-astra',
+  }) },
   plugins: [{
     name: 'isolated-provider-config',
     setup(build) {
-      build.onResolve({ filter: /modelSettingsStore$/ }, () => ({ path: 'settings', namespace: 'test-config' }));
       build.onResolve({ filter: /telemetryService$/ }, () => ({ path: 'telemetry', namespace: 'test-config' }));
-      build.onLoad({ filter: /.*/, namespace: 'test-config' }, args => ({
-        contents: args.path === 'telemetry' ? `
+      build.onLoad({ filter: /.*/, namespace: 'test-config' }, () => ({
+        contents: `
           const events = [];
           export const trackAIModelUsage = event => events.push(event);
           export const getTestModelUsage = () => events;
           export const resetTestModelUsage = () => { events.length = 0; };
-        ` : `
-          let settings = { model: 'test-model', reasoningEffort: 'none' };
-          export const setTestModelSettings = value => { settings = value; };
-          export const getModelSettings = () => settings;
-          export const getModelSettingsForFeature = () => settings;
-          export const getAvailableModels = () => ['test-model'];
-          export const getDeploymentName = model => model === 'gpt-6-astra' ? 'gpt-6-astra' : 'test-deployment';
-          export const MODEL_CONFIG = {
-            'test-model': {displayName:'Test', apiFormat:'responses', isReasoning:false, maxCompletionTokens:1000},
-            'gpt-6-astra': {displayName:'GPT-6 Astra', apiFormat:'responses', isReasoning:true, maxCompletionTokens:32000},
-            'grok-4.1-fast': {displayName:'Fast', apiFormat:'chat-completions', isReasoning:false, maxCompletionTokens:1000}
-          };
         `, loader: 'js',
       }));
     },
   }],
 });
-const provider = await import(`data:text/javascript;base64,${Buffer.from(`${bundled.outputFiles[0].text}\n//# sourceURL=ai-provider-test.mjs`).toString('base64')}`);
+const providerUrl = `data:text/javascript;base64,${Buffer.from(`${bundled.outputFiles[0].text}\n//# sourceURL=ai-provider-test.mjs`).toString('base64')}`;
+const provider = await import(providerUrl);
+let warningMessages: string[] = [];
 beforeEach(() => {
-  provider.setTestModelSettings({ model: 'test-model', reasoningEffort: 'none' });
+  provider.setTestModelSettings({ model: 'gpt-6-astra', reasoningEffort: 'none' });
   provider.resetTestModelUsage();
   mock.method(console, 'log', () => {});
   mock.method(console, 'error', () => {});
-  mock.method(console, 'warn', () => {});
+  warningMessages = [];
+  mock.method(console, 'warn', (...args: unknown[]) => { warningMessages.push(args.map(String).join(' ')); });
 });
 afterEach(() => mock.reset());
-const override = { model: 'test-model', reasoningEffort: 'none' };
+const override = { model: 'gpt-6-astra', reasoningEffort: 'none' };
 const abortError = (error: unknown) => error instanceof Error && error.name === 'AbortError';
 const response = (content = '{"services":[{"id":"app","name":"Web App","type":"App Service"}],"connections":[],"groups":[]}') =>
   new Response(JSON.stringify({ output_text: content, usage: {} }), { status: 200, headers: { 'content-type': 'application/json' } });
 const validationServices = [{ name: 'Web App', type: 'App Service', category: 'app services' }];
 const validationContent = '{"overallScore":80,"summary":"A test review.","pillars":[],"quickWins":[]}';
 const validate = (signal?: AbortSignal) => provider.validateArchitecture(
-  validationServices, [], undefined, undefined, { ...override, forceManaged: true, signal }, 'en',
+  validationServices, [], undefined, undefined, { ...override, signal }, 'en',
 );
 
 test('Astra MAX honors a real 429 Retry-After without changing its prompt, model, or 32K output cap', async t => {
@@ -228,7 +221,7 @@ test('abort during response-body reading is not converted into a malformed-respo
   } as Response));
   const controller = new AbortController();
   const request = provider.generateArchitectureWithAI('test', override, undefined, 'en', { signal: controller.signal });
-  await Promise.resolve();
+  await new Promise<void>(resolve => setImmediate(resolve));
   controller.abort();
   finishBody(JSON.stringify({ output_text: '{"services":[]}' }));
   await assert.rejects(request, abortError);
@@ -318,7 +311,7 @@ test('validation cancellation during body reading is not reported as malformed J
   } as Response));
   const controller = new AbortController();
   const request = validate(controller.signal);
-  await Promise.resolve();
+  await new Promise<void>(resolve => setImmediate(resolve));
   controller.abort();
   finishBody(JSON.stringify({ output_text: validationContent, usage: {} }));
   await assert.rejects(request, abortError);
@@ -353,7 +346,7 @@ test('validation releases caller listeners and preserves the legacy six-argument
   assert.equal(add.mock.calls[0].arguments[1], remove.mock.calls[0].arguments[1]);
   const legacy = await provider.validateArchitecture(validationServices, [], undefined, undefined, override, 'en');
   assert.equal(legacy.overallScore, 80);
-  assert.equal(legacy.modelUsed, 'Test');
+  assert.equal(legacy.modelUsed, 'GPT-6 Astra (none)');
   assert.equal(provider.getTestModelUsage().length, 2);
 });
 
@@ -371,7 +364,7 @@ for (const feature of ['generation', 'validation']) {
   });
 
   for (const limit of [1, 2]) {
-    test(`${feature} queue checks the actual budget client and dispatches three providers within cap ${limit}`, async t => {
+    test(`${feature} queue checks the actual budget client and dispatches three Astra requests within cap ${limit}`, async t => {
       let inFlight = 0;
       let peak = 0;
       let dispatches = 0;
@@ -402,11 +395,11 @@ for (const feature of ['generation', 'validation']) {
         }), { status: 200, headers: { 'content-type': 'application/json' } });
       });
       const results = await provider.runAIBudgetQueue(
-        ['test-model', 'gpt-6-astra', 'grok-4.1-fast'].map(model => async (signal: AbortSignal) => {
-          const managed = { model, reasoningEffort: 'none', forceManaged: true, signal };
+        ['first', 'second', 'third'].map(brief => async (signal: AbortSignal) => {
+          const managed = { model: 'gpt-6-astra', reasoningEffort: 'none', signal };
           return feature === 'validation'
             ? provider.validateArchitecture(validationServices, [], undefined, undefined, managed, 'en')
-            : provider.generateArchitectureWithAI('A web application', managed, undefined, 'en');
+            : provider.generateArchitectureWithAI(`A web application: ${brief}`, managed, undefined, 'en');
         }),
         { getBudget: provider.getAIBudget },
       );
@@ -504,11 +497,11 @@ test('Astra follow-up cancellation remains terminal and does not fall back to an
 });
 
 for (const code of ['image_not_supported', 'invalid_upstream_request']) {
-  test(`${code} vision guidance does not recommend an unconfigured model or lose diagnostics`, async t => {
+  test(`${code} vision guidance addresses the Astra deployment without model switching or lost diagnostics`, async t => {
     const fetch = t.mock.method(globalThis, 'fetch', async () => new Response(JSON.stringify({
       error: { code, source: 'azure_openai', requestId: 'vision-request', upstreamRequestId: 'upstream-vision' },
     }), { status: 400, headers: { 'content-type': 'application/json' } }));
-    const message = 'The selected model may not support image analysis. Choose a vision-capable model in AI settings.';
+    const message = 'The configured GPT-6 Astra deployment rejected the image analysis request. Check the image and contact the application administrator if the problem persists.';
     await assert.rejects(provider.analyzeArchitectureDiagramImage('image', 'image/png', 'en'), (error: any) => {
       assert.equal(error.name, 'OpenAIProxyError');
       assert.equal(error.code, code);
@@ -521,7 +514,8 @@ for (const code of ['image_not_supported', 'invalid_upstream_request']) {
     });
     assert.equal(fetch.mock.callCount(), 1);
     assert.match(exactJapanese[message], /画像分析/);
-    assert.doesNotMatch(exactJapanese[message], /GPT-/);
+    assert.match(exactJapanese[message], /GPT-6 Astra/);
+    assert.doesNotMatch(exactJapanese[message], /別のモデル|モデルを選択/);
   });
 }
 
@@ -543,3 +537,236 @@ for (const [name, call] of [
     assert.equal(fetch.mock.callCount(), 1);
   });
 }
+
+const astraOverride = { model: 'gpt-6-astra', reasoningEffort: 'max' };
+function mockModelResponse(t: TestContext, payload: unknown) {
+  provider.setTestModelSettings(astraOverride);
+  return t.mock.method(globalThis, 'fetch', async (_url: unknown, options: RequestInit) => {
+    const request = JSON.parse(String(options.body));
+    assert.equal(request.deployment, 'gpt-6-astra');
+    assert.equal(request.body.model, 'gpt-6-astra');
+    assert.equal(request.body.reasoning.effort, 'max');
+    assert.equal(request.body.max_output_tokens, 32000);
+    return response(JSON.stringify(payload));
+  });
+}
+
+const localResponseFailure = (error: unknown) => {
+  assert.ok(error instanceof Error);
+  assert.equal(error.name, 'AIResponseValidationError');
+  assert.equal(Reflect.get(error, 'code'), 'invalid_model_response');
+  assert.equal(Reflect.get(error, 'source'), 'client');
+  assert.equal(Reflect.get(error, 'retryable'), false);
+  assert.equal(typeof Reflect.get(error, 'detail'), 'string');
+  assert.match(error.message, /AI model returned.*invalid/i);
+  return true;
+};
+
+for (const [name, generate] of [
+  ['architecture', () => provider.generateArchitectureWithAI('offline fixture', astraOverride)],
+  ['IaC import', () => provider.generateArchitectureFromIaC({
+    format: 'arm', content: { resources: [] }, filenames: ['offline.json'],
+  })],
+] as const) {
+  test(`response contracts: ${name} allocates against occupied IDs without rebinding unknown parents`, async t => {
+    const payload = {
+      groups: [
+        { id: 'api', label: 'App' },
+        { id: 'group-api-2', label: 'Data' },
+        { id: 'group-api-4', label: 'Other' },
+      ],
+      services: [
+        { id: 'api', name: 'Web App', type: 'App Service', groupId: 'api' },
+        { id: 'group-api', name: 'Storage', type: 'Storage Account', groupId: 'api' },
+        { id: 'group-api-3', name: 'Worker', groupId: 'group-api-2' },
+        { id: 'leaf', name: 'Other', groupId: 'group-api-4' },
+        { id: 'orphan', name: 'Orphan', groupId: 'group-api-5' },
+      ],
+      connections: [{ from: 'api', to: 'group-api', label: 'Store' }],
+      workflow: [],
+    };
+    const fetch = mockModelResponse(t, payload);
+    const result = await generate();
+    const ids = [...result.groups, ...result.services].map((item: { id: string }) => item.id);
+    assert.equal(new Set(ids).size, ids.length);
+    assert.equal(result.groups[0].id, 'group-api-5');
+    assert.deepEqual(result.services.map((item: { groupId: string | null }) => item.groupId),
+      ['group-api-5', 'group-api-5', 'group-api-2', 'group-api-4', null]);
+    assert.deepEqual(result.services.map((item: { id: string }) => item.id), payload.services.map(item => item.id));
+    assert.deepEqual(result.connections, payload.connections);
+    assert.equal(fetch.mock.callCount(), 1);
+    const warnings = warningMessages.join('\n');
+    assert.match(warnings, /collides with a service ID/);
+    assert.match(warnings, /references unknown group.*clearing/);
+  });
+
+  test(`response contracts: ${name} remaps simultaneous collisions from original IDs only`, async t => {
+    const fetch = mockModelResponse(t, {
+      groups: ['api', 'group-api'],
+      services: [
+        { id: 'api', name: 'One', groupId: 'api' },
+        { id: 'group-api', name: 'Two', groupId: 'group-api' },
+      ],
+      connections: [],
+    });
+    const result = await generate();
+    assert.deepEqual(result.groups.map((group: { id: string }) => group.id), ['group-api-2', 'group-group-api']);
+    assert.deepEqual(result.services.map((service: { groupId: string }) => service.groupId), ['group-api-2', 'group-group-api']);
+    assert.equal(fetch.mock.callCount(), 1);
+  });
+
+  for (const [label, groups, services] of [
+    ['duplicate groups', ['app', 'app'], [{ id: 'n', name: 'Node', groupId: 'app' }]],
+    ['duplicate services', ['app'], [{ id: 'n', name: 'One' }, { id: 'n', name: 'Two' }]],
+    ['missing service ID', [], [{ name: 'Node' }]],
+    ['null service', [], [null]],
+    ['null group', [null], [{ id: 'n', name: 'Node' }]],
+  ] as const) {
+    test(`response contracts: ${name} rejects ${label} locally without replay`, async t => {
+      const fetch = mockModelResponse(t, { groups, services, connections: [] });
+      await assert.rejects(generate(), localResponseFailure);
+      assert.equal(fetch.mock.callCount(), 1);
+    });
+  }
+}
+
+const blueprintFixture = () => ({
+  title: 'Offline blueprint',
+  canvas: { width: 1600, height: 1000 },
+  nodes: [{ id: 'app', name: 'Web App', category: 'app services', x: 100, y: 100, zone: 'a' }],
+  zones: [
+    { id: 'a', label: 'A', x: 0, y: 0, width: 500, height: 500 },
+    { id: 'b', label: 'B', x: 600, y: 0, width: 500, height: 500 },
+  ],
+  edges: [],
+});
+
+for (const [label, zones] of [
+  ['self-cycle', [{ ...blueprintFixture().zones[0], parent: 'a' }]],
+  ['parent cycle', blueprintFixture().zones.map((zone, index) => ({ ...zone, parent: index ? 'a' : 'b' }))],
+  ['missing parent', [{ ...blueprintFixture().zones[0], parent: 'missing' }]],
+  ['duplicate zones', [blueprintFixture().zones[0], blueprintFixture().zones[0]]],
+  ['null zone', [null]],
+] as const) {
+  test(`response contracts: blueprint rejects ${label} before hierarchy traversal`, async t => {
+    const fetch = mockModelResponse(t, { ...blueprintFixture(), zones });
+    await assert.rejects(provider.generateBlueprintArchitectureWithAI('offline fixture', astraOverride), localResponseFailure);
+    assert.equal(fetch.mock.callCount(), 1);
+  });
+}
+
+test('response contracts: valid nested blueprint preserves workflow warning and partial output', async t => {
+  const fixture = blueprintFixture();
+  const fetch = mockModelResponse(t, {
+    ...fixture, zones: [fixture.zones[0], { ...fixture.zones[1], parent: 'a' }],
+    workflow: [{ step: 1, description: 'A later connection is not available yet.' }],
+  });
+  const result = await provider.generateBlueprintArchitectureWithAI('offline fixture', astraOverride);
+  assert.equal(result.nodes.length, 1);
+  assert.equal(result.edges.length, 0);
+  assert.equal(result.zones[1].parent, 'a');
+  assert.equal(result.metrics.model, 'GPT-6 Astra');
+  assert.equal(fetch.mock.callCount(), 1);
+  assert.ok(Number.isFinite(result.canvas.width) && Number.isFinite(result.canvas.height));
+  assert.ok(warningMessages.some(message => /edges are missing step numbers/.test(message)));
+});
+
+const referenceStage = () => ({
+  id: 'app', label: 'Application',
+  services: [{ id: 'web', name: 'Web App', category: 'app services' }],
+});
+for (const [label, stages] of [
+  ['no stages', []],
+  ['empty services', [{ ...referenceStage(), services: [] }]],
+  ['missing services', [{ id: 'app', label: 'Application' }]],
+  ['non-array services', [{ ...referenceStage(), services: {} }]],
+  ['null stage', [null]],
+  ['null service', [{ ...referenceStage(), services: [null] }]],
+  ['missing service name', [{ ...referenceStage(), services: [{ id: 'web', category: 'app services' }] }]],
+  ['missing service category', [{ ...referenceStage(), services: [{ id: 'web', name: 'Web App' }] }]],
+  ['empty stage label', [{ ...referenceStage(), label: ' ' }]],
+  ['duplicate stages', [referenceStage(), { ...referenceStage(), services: [{ id: 'other', name: 'Other', category: 'general' }] }]],
+  ['duplicate services across stages', [referenceStage(), { ...referenceStage(), id: 'other' }]],
+  ['empty stage beside valid stage', [referenceStage(), { id: 'empty', label: 'Empty', services: [] }]],
+] as const) {
+  test(`response contracts: reference rejects ${label} rather than publishing unusable success`, async t => {
+    const fixture = { title: 'Offline', stages, connections: [] };
+    const fetch = mockModelResponse(t, fixture);
+    await assert.rejects(provider.generateReferenceArchitectureWithAI('offline fixture', astraOverride), localResponseFailure);
+    assert.throws(() => provider.referenceToTopology(fixture), localResponseFailure);
+    assert.equal(fetch.mock.callCount(), 1);
+  });
+}
+
+for (const [name, generate] of [
+  ['blueprint', () => provider.generateBlueprintArchitectureWithAI('offline fixture', astraOverride)],
+  ['reference', () => provider.generateReferenceArchitectureWithAI('offline fixture', astraOverride)],
+] as const) {
+  test(`response contracts: ${name} rejects a null root with a typed local error`, async t => {
+    const fetch = mockModelResponse(t, null);
+    await assert.rejects(generate(), localResponseFailure);
+    assert.equal(fetch.mock.callCount(), 1);
+  });
+}
+
+test('response contracts: a valid one-stage reference without optional output remains successful', async t => {
+  const fetch = mockModelResponse(t, { title: 'Offline', stages: [referenceStage()] });
+  const result = await provider.generateReferenceArchitectureWithAI('offline fixture', astraOverride);
+  const topology = provider.referenceToTopology(result);
+  assert.equal(topology.services.length, 1);
+  assert.deepEqual(topology.connections, []);
+  assert.equal(result.metrics.model, 'GPT-6 Astra');
+  assert.equal(fetch.mock.callCount(), 1);
+});
+
+test('response contracts: migrated selected BYO cannot silently fall back to managed Astra vision', async t => {
+  const requests: Array<{ apiFormat: string; deployment: string; byo?: unknown; body: { input: Array<{ content: unknown }> } }> = [];
+  t.mock.method(globalThis, 'fetch', async (url: unknown, options: RequestInit) => {
+    assert.equal(url, '/api/openai');
+    requests.push(JSON.parse(String(options.body)));
+    return new Response(JSON.stringify({ output_text: 'Offline description' }),
+      { headers: { 'content-type': 'application/json' } });
+  });
+  const legacyRecord = JSON.stringify({
+    version: 2, enabled: true, provider: 'openai', endpoint: 'https://retired.example.com',
+    model: 'gpt-4o', apiFormat: 'chat-completions', reasoningEffort: 'max',
+  });
+  const entries = new Map([['azure-diagrams-byo-ai-settings', legacyRecord]]);
+  const storageDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
+  Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: {
+    getItem: (key: string) => entries.get(key) ?? null,
+    setItem: (key: string, value: string) => { entries.set(key, value); },
+  } });
+  t.after(() => {
+    if (storageDescriptor) Object.defineProperty(globalThis, 'localStorage', storageDescriptor);
+    else Reflect.deleteProperty(globalThis, 'localStorage');
+  });
+  // Initialize real services with stale storage already present, not after hydration.
+  const staleProvider = await import(`${providerUrl}#stale-byo`);
+  await assert.rejects(staleProvider.analyzeArchitectureDiagramImage('QUJD', 'image/png'),
+    { name: 'AIModelConfigurationError', code: 'byo_availability_unknown' });
+  assert.equal(requests.length, 0);
+  const migrated = JSON.parse(entries.get('azure-diagrams-byo-ai-settings')!);
+  assert.equal(migrated.version, 3);
+  assert.equal(migrated.activeProfileId, migrated.profiles[0].id);
+  assert.equal(migrated.profiles[0].model, 'gpt-4o');
+});
+
+test('Astra-only public providers reject legacy/forged overrides before any HTTP or success', async t => {
+  const fetch = t.mock.method(globalThis, 'fetch', async () => { throw new Error('Unexpected HTTP'); });
+  for (const model of ['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'claude-opus-5', 'constructor', undefined]) {
+    const unsupported = { model, reasoningEffort: 'max', forceManaged: true };
+    for (const generate of [
+      () => provider.callAzureOpenAI([], unsupported),
+      () => provider.generateArchitectureWithAI('Offline', unsupported),
+      () => provider.generateBlueprintArchitectureWithAI('Offline', unsupported),
+      () => provider.generateReferenceArchitectureWithAI('Offline', unsupported),
+      () => provider.generateComponentManifest('Offline', unsupported),
+      () => provider.validateArchitecture(validationServices, [], undefined, undefined, unsupported),
+    ]) {
+      await assert.rejects(generate(), { name: 'AIModelConfigurationError', code: 'unsupported_ai_model' });
+    }
+  }
+  assert.equal(fetch.mock.callCount(), 0);
+  assert.equal(provider.getTestModelUsage().length, 0);
+});

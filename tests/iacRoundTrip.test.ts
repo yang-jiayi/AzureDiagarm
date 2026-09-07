@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import type { Edge, Node } from 'reactflow';
 import { lookupServiceMeta } from '../src/services/armExtractor.ts';
+import { scanTerraformDeclarations } from '../src/services/terraformDeclarations.ts';
 import {
   buildIaCBaseline,
   buildStarterTemplate,
@@ -22,6 +23,188 @@ function azureNode(id: string, label: string, serviceName = label): Node {
     },
   } as unknown as Node;
 }
+
+test('ARM symbolic resource dictionaries preserve identities and match equivalent array baselines', () => {
+  const resources = {
+    apiSymbol: { type: 'Microsoft.Web/sites', apiVersion: '2023-12-01', name: 'orders-api', location: 'eastus' },
+    logsSymbol: { type: 'Microsoft.Storage/storageAccounts', apiVersion: '2023-05-01',
+      name: 'assessmentlogs', location: 'eastus', kind: 'StorageV2', sku: { name: 'Standard_LRS' } },
+  };
+  const baselineFor = (collection: unknown) => buildIaCBaseline({
+    format: 'arm',
+    files: [{ name: 'main.json', text: JSON.stringify({ languageVersion: '2.0', resources: collection }) }],
+  });
+  const symbolic = baselineFor(resources);
+  const array = baselineFor(Object.values(resources));
+  assert.equal(symbolic.resourceCount, 2);
+  assert.deepEqual(symbolic.resources.map(resource => resource.logicalName).sort(), ['apiSymbol', 'logsSymbol']);
+  const semanticFields = (baseline: typeof symbolic) => baseline.resources.map(resource => ({
+    resourceName: resource.resourceName, providerType: resource.providerType,
+    mappedService: resource.mappedService, approximation: resource.approximation,
+  }));
+  assert.deepEqual(semanticFields(symbolic), semanticFields(array));
+  const nodes = [azureNode('api', 'orders-api', 'App Service'), azureNode('logs', 'assessmentlogs', 'Storage Account')];
+  for (const baseline of [symbolic, array]) {
+    assert.equal(baseline.incomplete, false);
+    assert.deepEqual(baseline.warnings, []);
+    const report = compareDiagramToBaseline(nodes, baseline)!;
+    assert.equal(report.matched.length, 2);
+    assert.equal(report.sourceOnly.length + report.diagramOnly.length, 0);
+    assert.equal(report.incomplete, false);
+  }
+  const repeated = baselineFor({ east: resources.apiSymbol, west: resources.apiSymbol });
+  assert.deepEqual(repeated.resources.map(resource => resource.logicalName), ['east', 'west']);
+  assert.equal(new Set(repeated.resources.map(resource => resource.id)).size, 2);
+});
+
+test('ARM unsupported collections and entries disclose incomplete comparisons while retaining known resources', () => {
+  const known = { type: 'Microsoft.Storage/storageAccounts', name: 'knownstorage' };
+  for (const resources of [
+    null, 'unsupported', 12,
+    [known, null, { name: 'missing-type' }],
+    { known, missingType: { name: 'unknown' }, invalid: [] },
+    { known: { ...known, resources: 'unsupported-nested' } },
+  ]) {
+    const baseline = buildIaCBaseline({
+      format: 'arm', files: [{ name: 'partial.json', text: JSON.stringify({ resources }) }],
+    });
+    assert.equal(baseline.incomplete, true, JSON.stringify(resources));
+    assert.match(baseline.warnings.join('\n'), /partial\.json.*incomplete/i);
+    if (typeof resources === 'object' && resources !== null) {
+      assert.ok(baseline.resources.some(resource => resource.resourceName === 'knownstorage'));
+    }
+    const report = compareDiagramToBaseline([], baseline)!;
+    assert.equal(report.incomplete, true);
+    assert.deepEqual(report.warnings, baseline.warnings);
+    assert.deepEqual(restoreIaCBaseline(baseline), baseline);
+  }
+  for (const resources of [[], {}]) {
+    const baseline = buildIaCBaseline({ format: 'arm', files: [{ name: 'empty.json', text: JSON.stringify({ resources }) }] });
+    assert.equal(baseline.incomplete, false);
+    assert.equal(baseline.resourceCount, 0);
+  }
+});
+
+test('ARM nested dictionaries qualify symbolic identities through array parents', () => {
+  const branch = {
+    type: 'Microsoft.Web/serverfarms', name: 'plan',
+    resources: [{
+      type: 'Microsoft.Web/sites', name: 'api',
+      resources: { telemetry: { type: 'Microsoft.Insights/components', name: 'logs' } },
+    }],
+  };
+  const baseline = buildIaCBaseline({
+    format: 'arm', files: [{ name: 'nested.json', text: JSON.stringify({
+      languageVersion: '2.0', resources: { east: branch, west: branch },
+    }) }],
+  });
+  assert.equal(baseline.resourceCount, 6);
+  assert.deepEqual(baseline.resources.filter(resource => resource.resourceName === 'logs')
+    .map(resource => resource.logicalName).sort(), ['east::api::telemetry', 'west::api::telemetry']);
+  assert.equal(baseline.incomplete, false);
+});
+
+test('Terraform lexical discovery ignores comments, quoted templates and heredocs while retaining active resources', () => {
+  const text = String.raw`
+/*
+resource "azurerm_storage_account" "deleted" {
+  name = "oldlogs"
+}
+*/
+# resource "azurerm_storage_account" "lineComment" {}
+// resource "azurerm_storage_account" "slashComment" {}
+locals {
+  resource = "not a declaration"
+  quoted = "resource \"azurerm_storage_account\" \"quoted\" { }"
+  template = "${'${'}format("resource \"ghost\" \"nested\" {}", "not code")}"
+  doc = <<DOC
+resource "azurerm_storage_account" "heredoc" {
+  name = "not-real"
+}
+DOC
+  indented = <<-TEXT
+    resource "azurerm_storage_account" "indented" {}
+    TEXT
+}
+resource /* before type */ "azurerm_linux_web_app" /* before name */ "api" {
+  note = <<-NOTE
+    }
+    name = "wrong-name"
+    resource "azurerm_storage_account" "body-ghost" {}
+    NOTE
+  # name = "also-wrong"
+  name = "orders-api" // trailing comment
+}
+resource "azurerm_storage_account" "logs" { name = "assessmentlogs" }
+`;
+  const baseline = buildIaCBaseline({ format: 'terraform-hcl', files: [{ name: 'main.tf', text }] });
+  assert.equal(baseline.resourceCount, 2);
+  assert.deepEqual(baseline.resources.map(resource => resource.logicalName),
+    ['azurerm_linux_web_app.api', 'azurerm_storage_account.logs']);
+  assert.deepEqual(baseline.resources.map(resource => resource.resourceName), ['orders-api', 'assessmentlogs']);
+  assert.deepEqual(baseline.warnings, []);
+  assert.equal(baseline.incomplete, false);
+  const report = compareDiagramToBaseline([
+    azureNode('api', 'orders-api', 'App Service'), azureNode('logs', 'assessmentlogs', 'Storage Account'),
+  ], baseline)!;
+  assert.equal(report.matched.length, 2);
+  assert.equal(report.sourceOnly.length + report.diagramOnly.length, 0);
+});
+
+test('Terraform partial lexical inputs and unexpanded instances retain declarations with honest warnings', () => {
+  const known = 'resource "azurerm_storage_account" "known" { name = "knownstorage" }\n';
+  for (const suffix of [
+    '/* unfinished comment',
+    'locals { note = <<TEXT\nresource "azurerm_storage_account" "ghost" {}\n',
+    'locals { note = "unfinished',
+    'resource "azurerm_linux_web_app" "broken" {',
+    'module "child" { source = "./child" }',
+    'resource "azurerm_linux_web_app" "many" { count = 2\n name = "api" }',
+    'resource "azurerm_linux_web_app" "many" { for_each = var.names\n name = each.value }',
+    `locals { nested = ${'['.repeat(80)}0${']'.repeat(80)} }`,
+    ' '.repeat(2_000_001),
+  ]) {
+    const baseline = buildIaCBaseline({
+      format: 'terraform-hcl', files: [{ name: 'partial.tf', text: known + suffix }],
+    });
+    assert.ok(baseline.resources.some(resource => resource.logicalName === 'azurerm_storage_account.known'));
+    assert.ok(!baseline.resources.some(resource => resource.logicalName.endsWith('.ghost')));
+    assert.equal(baseline.incomplete, true, suffix.slice(0, 80));
+    assert.match(baseline.warnings.join('\n'), /partial\.tf.*incomplete/i);
+    assert.equal(compareDiagramToBaseline([], baseline)!.incomplete, true);
+    assert.deepEqual(restoreIaCBaseline(baseline), baseline);
+  }
+});
+
+test('Terraform templates retain following resources without mistaking expressions for literal names', () => {
+  const text = String.raw`
+resource "azurerm_storage_account" "expression" {
+  name = "${'${'}format(
+    "%s", "nested-quotes"
+  )}"
+}
+resource "azurerm_linux_web_app" "escaped" {
+  name = "quote-\"-\\-\u0041-\U0001F600-$${'${'}literal}"
+}
+`;
+  const scanned = scanTerraformDeclarations(text, 'strings.tf');
+  assert.equal(scanned.declarations.length, 2);
+  assert.equal(scanned.declarations[0].resourceName, null);
+  assert.equal(scanned.declarations[1].resourceName, 'quote-"-\\-A-😀-${literal}');
+  assert.deepEqual(scanned.warnings, []);
+});
+
+test('Terraform token and declaration budgets disclose truncation without losing earlier declarations', () => {
+  const known = 'resource "azurerm_storage_account" "known" { name = "knownstorage" }\n';
+  const tokenLimited = scanTerraformDeclarations(known + 'locals { list = [' + '0,'.repeat(100_001) + '] }', 'tokens.tf');
+  assert.equal(tokenLimited.declarations[0].resourceName, 'knownstorage');
+  assert.match(tokenLimited.warnings.join('\n'), /lexical size.*incomplete/i);
+  const declarationLimited = scanTerraformDeclarations(known + Array.from({ length: 5_000 }, (_, index) =>
+    `resource "azurerm_storage_account" "r${index}" {}\n`).join(''), 'declarations.tf');
+  assert.equal(declarationLimited.declarations.length, 5_000);
+  assert.equal(declarationLimited.declarations[0].resourceName, 'knownstorage');
+  assert.match(declarationLimited.warnings.join('\n'), /declaration limit.*incomplete/i);
+});
 
 test('buildIaCBaseline parses Bicep resources without executing expressions', () => {
   const baseline = buildIaCBaseline({

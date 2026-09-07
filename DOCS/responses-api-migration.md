@@ -1,5 +1,9 @@
 # Responses API Migration
 
+> Historical migration record. For current model and endpoint configuration,
+> use the [Astra-only setup](../README.md#-getting-started), not the old model
+> examples below.
+
 **Branch:** `responses-api-migration`  
 **Commit:** `dfc340d`  
 **Date:** February 13, 2026  

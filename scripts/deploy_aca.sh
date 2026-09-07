@@ -19,10 +19,11 @@
 #   RESOURCE_GROUP    - Resource group containing the ACA app
 #   IMAGE_NAME        - Docker image name (e.g. azure-diagram-builder)
 #
-#   VITE_AZURE_OPENAI_ENDPOINT       - Azure OpenAI endpoint URL (when using GPT/partner models)
-#   VITE_AZURE_FOUNDRY_ENDPOINT      - Microsoft Foundry endpoint URL (when using Claude)
-#   VITE_*_DEPLOYMENT_*              - Model deployment names (at least one)
-#   AZURE_OPENAI_API_KEY             - Optional server-side fallback key
+#   AZURE_OPENAI_ENDPOINT           - Approved Azure OpenAI account endpoint
+#   AZURE_OPENAI_RESOURCE_ID        - Account identity for read-only model verification
+#   AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA - Actual approved Astra deployment alias
+#   ALLOW_BYO_AI_ENDPOINTS          - Optional admin opt-in (default false)
+#   Runtime Azure OpenAI access uses the existing managed identity.
 #
 # Usage:
 #   chmod +x scripts/deploy_aca.sh
@@ -59,41 +60,12 @@ if [[ ${#MISSING[@]} -gt 0 ]]; then
     exit 1
 fi
 
-# Check that at least one model deployment is configured
-MODEL_COUNT=0
-OPENAI_DEPLOYMENTS=()
-for var in VITE_AZURE_OPENAI_DEPLOYMENT_GPT51 VITE_AZURE_OPENAI_DEPLOYMENT_GPT52 \
-           VITE_AZURE_OPENAI_DEPLOYMENT_GPT52CODEX VITE_AZURE_OPENAI_DEPLOYMENT_GPT53CODEX \
-           VITE_AZURE_OPENAI_DEPLOYMENT_GPT54 VITE_AZURE_OPENAI_DEPLOYMENT_GPT54MINI \
-           VITE_AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA \
-           VITE_AZURE_OPENAI_DEPLOYMENT_GPT56SOL VITE_AZURE_OPENAI_DEPLOYMENT_GPT56TERRA \
-           VITE_AZURE_OPENAI_DEPLOYMENT_GPT56LUNA VITE_AZURE_OPENAI_DEPLOYMENT_DEEPSEEK \
-           VITE_AZURE_OPENAI_DEPLOYMENT_DEEPSEEK_V4_PRO VITE_AZURE_OPENAI_DEPLOYMENT_GROK4FAST \
-           VITE_AZURE_OPENAI_DEPLOYMENT_GROK43 VITE_AZURE_OPENAI_DEPLOYMENT_MISTRALLARGE3 \
-           VITE_AZURE_OPENAI_DEPLOYMENT_KIMIK25 VITE_AZURE_OPENAI_DEPLOYMENT_KIMIK27CODE; do
-    if [[ -n "${!var:-}" ]]; then
-        MODEL_COUNT=$((MODEL_COUNT + 1))
-        OPENAI_DEPLOYMENTS+=("${!var}")
-    fi
-done
-FOUNDRY_DEPLOYMENTS=()
-if [[ -n "${VITE_AZURE_FOUNDRY_DEPLOYMENT_CLAUDE_OPUS5:-}" ]]; then
-    MODEL_COUNT=$((MODEL_COUNT + 1))
-    FOUNDRY_DEPLOYMENTS+=("$VITE_AZURE_FOUNDRY_DEPLOYMENT_CLAUDE_OPUS5")
-fi
-
-if [[ $MODEL_COUNT -eq 0 ]]; then
-    echo "❌ No model deployments configured. Set at least one VITE_*_DEPLOYMENT_* in .env"
-    exit 1
-fi
-if [[ ${#OPENAI_DEPLOYMENTS[@]} -gt 0 && -z "${VITE_AZURE_OPENAI_ENDPOINT:-}" ]]; then
-    echo "❌ VITE_AZURE_OPENAI_ENDPOINT is required for configured Azure OpenAI deployments"
-    exit 1
-fi
-if [[ ${#FOUNDRY_DEPLOYMENTS[@]} -gt 0 && -z "${VITE_AZURE_FOUNDRY_ENDPOINT:-}" ]]; then
-    echo "❌ VITE_AZURE_FOUNDRY_ENDPOINT is required for configured Foundry deployments"
-    exit 1
-fi
+: "${AZURE_OPENAI_ENDPOINT:?Set AZURE_OPENAI_ENDPOINT}"
+: "${AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA:?Set the approved Astra deployment alias}"
+export AZURE_OPENAI_ALLOWED_DEPLOYMENTS="${AZURE_OPENAI_ALLOWED_DEPLOYMENTS:-$AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA}"
+export VITE_AZURE_OPENAI_ENDPOINT="$AZURE_OPENAI_ENDPOINT"
+export VITE_AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA="$AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA"
+export ALLOW_BYO_AI_ENDPOINTS="${ALLOW_BYO_AI_ENDPOINTS:-false}"
 
 # Every cloud update is public mode. Validate the same controls used at runtime,
 # rather than building an image that can never safely become ready.
@@ -101,12 +73,8 @@ export APP_DEPLOYMENT_MODE=public
 export EASY_AUTH_ENABLED=true
 export ACCESS_CONTROL_ENABLED="${ACCESS_CONTROL_ENABLED:-true}"
 export AI_BUDGET_STORE="${AI_BUDGET_STORE:-$([[ -n "${AZURE_TABLES_BUDGET_ENDPOINT:-${AZURE_TABLES_ENDPOINT:-}}" ]] && echo table || echo cosmos)}"
-if [[ -z "${AZURE_OPENAI_ALLOWED_DEPLOYMENTS:-}" ]]; then
-    AZURE_OPENAI_ALLOWED_DEPLOYMENTS="$(IFS=,; echo "${OPENAI_DEPLOYMENTS[*]}")"
-fi
-export AZURE_OPENAI_ALLOWED_DEPLOYMENTS
-export AZURE_FOUNDRY_ALLOWED_DEPLOYMENTS="${AZURE_FOUNDRY_ALLOWED_DEPLOYMENTS:-$(IFS=,; echo "${FOUNDRY_DEPLOYMENTS[*]}")}"
 node "$(dirname "$0")/../server/deployment-security.js"
+node "$(dirname "$0")/verify-astra-deployment.mjs"
 az containerapp auth show --name "$ACA_APP_NAME" --resource-group "$RESOURCE_GROUP" --output json \
     | node "$(dirname "$0")/../server/deployment-security.js" --verify-auth
 ORIGIN_FQDN="$(az containerapp show --name "$ACA_APP_NAME" --resource-group "$RESOURCE_GROUP" --query properties.configuration.ingress.fqdn -o tsv)"
@@ -118,7 +86,7 @@ if [[ "$ORIGIN_STATUS" != "403" ]]; then
 fi
 
 # ─── Build arguments ────────────────────────────────────────────────
-# Collect all VITE_ variables as --build-arg flags into a bash array
+# Collect only supported public VITE_ variables as --build-arg flags into a bash array
 # (array avoids eval pitfalls when values contain quotes, $, spaces, etc.)
 #
 # IMPORTANT — App Insights connection string workaround:
@@ -135,9 +103,17 @@ APPINSIGHTS_FILE="$SOURCE_DIR/.env.appinsights"
 : > "$APPINSIGHTS_FILE"
 trap 'rm -f "$APPINSIGHTS_FILE"' EXIT
 
-BUILD_ARGS=(--build-arg "FRONT_DOOR_ID=$FRONT_DOOR_ID")
+BUILD_ARGS=(
+    --build-arg "FRONT_DOOR_ID=$FRONT_DOOR_ID"
+    --build-arg "VITE_AZURE_OPENAI_ENDPOINT=$AZURE_OPENAI_ENDPOINT"
+    --build-arg "VITE_AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA=$AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA"
+)
 while IFS='=' read -r key value; do
     if [[ "$key" == VITE_* && -n "$value" ]]; then
+        case "$key" in
+          VITE_APPINSIGHTS_CONNECTION_STRING|VITE_SPEECH_REGION|VITE_AZURE_AD_CLIENT_ID|VITE_AZURE_AD_AUTHORITY|VITE_ARM_SCOPE|VITE_FEEDBACK_CONTACT_ENABLED) ;;
+          *) continue ;;
+        esac
         # Strip surrounding quotes if present in .env
         value="${value%\"}"
         value="${value#\"}"
@@ -161,7 +137,7 @@ ACR_IMAGE="$ACR_NAME.azurecr.io/$IMAGE_NAME:$IMAGE_TAG"
 
 echo "🔨 Building image in ACR: $ACR_NAME"
 echo "   Image: $IMAGE_NAME:$IMAGE_TAG"
-echo "   Models configured: $MODEL_COUNT"
+echo "   Managed model: GPT-6 Astra only; BYO connections: $ALLOW_BYO_AI_ENDPOINTS"
 echo "   Source: $SOURCE_DIR"
 echo "   Build args: ${#BUILD_ARGS[@]} VITE_* values via --build-arg"
 if [[ -s "$APPINSIGHTS_FILE" ]]; then
@@ -204,7 +180,6 @@ RUNTIME_ENV_VARS=(
     "FEEDBACK_RETENTION_DAYS=${FEEDBACK_RETENTION_DAYS:-30}"
     "FEEDBACK_LEGACY_RETENTION_ENABLED=${FEEDBACK_LEGACY_RETENTION_ENABLED:-false}"
     "AZURE_IMPORT_ENABLED=false"
-    "ALLOW_BYO_AI_ENDPOINTS=${ALLOW_BYO_AI_ENDPOINTS:-false}"
     "MCP_ENABLED=${MCP_ENABLED:-false}"
     "MCP_HTTP_STATELESS=${MCP_HTTP_STATELESS:-true}"
     "MCP_HTTP_MAX_IN_FLIGHT=${MCP_HTTP_MAX_IN_FLIGHT:-20}"
@@ -213,20 +188,15 @@ RUNTIME_ENV_VARS=(
     "MCP_SESSION_TTL_SECONDS=${MCP_SESSION_TTL_SECONDS:-7200}"
     "MCP_SESSION_GC_SECONDS=${MCP_SESSION_GC_SECONDS:-60}"
 )
-REMOVE_ENV_VARS=()
-
-if [[ ${#OPENAI_DEPLOYMENTS[@]} -gt 0 ]]; then
-    RUNTIME_ENV_VARS+=("AZURE_OPENAI_ENDPOINT=${AZURE_OPENAI_ENDPOINT:-$VITE_AZURE_OPENAI_ENDPOINT}")
-    RUNTIME_ENV_VARS+=("AZURE_OPENAI_ALLOWED_DEPLOYMENTS=$AZURE_OPENAI_ALLOWED_DEPLOYMENTS")
-else
-    REMOVE_ENV_VARS+=("AZURE_OPENAI_ENDPOINT" "AZURE_OPENAI_ALLOWED_DEPLOYMENTS")
-fi
-if [[ ${#FOUNDRY_DEPLOYMENTS[@]} -gt 0 ]]; then
-    RUNTIME_ENV_VARS+=("AZURE_FOUNDRY_ENDPOINT=${AZURE_FOUNDRY_ENDPOINT:-$VITE_AZURE_FOUNDRY_ENDPOINT}")
-    RUNTIME_ENV_VARS+=("AZURE_FOUNDRY_ALLOWED_DEPLOYMENTS=$AZURE_FOUNDRY_ALLOWED_DEPLOYMENTS")
-else
-    REMOVE_ENV_VARS+=("AZURE_FOUNDRY_ENDPOINT" "AZURE_FOUNDRY_ALLOWED_DEPLOYMENTS")
-fi
+retired_ai_env="$(node "$SOURCE_DIR/scripts/retired-ai-environment.mjs")"
+[[ -n "$retired_ai_env" ]]
+mapfile -t REMOVE_ENV_VARS <<< "$retired_ai_env"
+RUNTIME_ENV_VARS+=(
+    "AZURE_OPENAI_ENDPOINT=$AZURE_OPENAI_ENDPOINT"
+    "AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA=$AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA"
+    "AZURE_OPENAI_ALLOWED_DEPLOYMENTS=$AZURE_OPENAI_ALLOWED_DEPLOYMENTS"
+    "ALLOW_BYO_AI_ENDPOINTS=$ALLOW_BYO_AI_ENDPOINTS"
+)
 
 for var in ACCESS_ADMIN_EMAIL AZURE_ACCESS_KEY_VAULT_RESOURCE_ID AZURE_TABLES_ACCESS_ENDPOINT \
            AZURE_TABLES_BUDGET_ENDPOINT AZURE_TABLES_BUDGET_TABLE COSMOS_BUDGET_CONTAINER_ID \
@@ -253,30 +223,6 @@ if [[ -n "${AZURE_TABLES_ENDPOINT:-}" && -z "${AZURE_TABLES_RATE_LIMIT_TABLE:-}"
     REMOVE_ENV_VARS=("${FILTERED_REMOVE_ENV_VARS[@]}")
 fi
 
-OPENAI_KEY="${AZURE_OPENAI_API_KEY:-${VITE_AZURE_OPENAI_API_KEY:-}}"
-if [[ -n "$OPENAI_KEY" ]]; then
-    az containerapp secret set \
-        --name "$ACA_APP_NAME" \
-        --resource-group "$RESOURCE_GROUP" \
-        --secrets "azure-openai-api-key=$OPENAI_KEY" \
-        --output none
-    RUNTIME_ENV_VARS+=("AZURE_OPENAI_API_KEY=secretref:azure-openai-api-key")
-else
-    REMOVE_ENV_VARS+=("AZURE_OPENAI_API_KEY")
-fi
-
-FOUNDRY_KEY="${AZURE_FOUNDRY_API_KEY:-${VITE_AZURE_FOUNDRY_API_KEY:-}}"
-if [[ -n "$FOUNDRY_KEY" ]]; then
-    az containerapp secret set \
-        --name "$ACA_APP_NAME" \
-        --resource-group "$RESOURCE_GROUP" \
-        --secrets "azure-foundry-api-key=$FOUNDRY_KEY" \
-        --output none
-    RUNTIME_ENV_VARS+=("AZURE_FOUNDRY_API_KEY=secretref:azure-foundry-api-key")
-else
-    REMOVE_ENV_VARS+=("AZURE_FOUNDRY_API_KEY")
-fi
-
 UPDATE_ARGS=(
     --name "$ACA_APP_NAME" \
     --resource-group "$RESOURCE_GROUP" \
@@ -292,6 +238,7 @@ if [[ ${#REMOVE_ENV_VARS[@]} -gt 0 ]]; then
     UPDATE_ARGS+=(--remove-env-vars "${REMOVE_ENV_VARS[@]}")
 fi
 
+node "$SOURCE_DIR/scripts/verify-astra-deployment.mjs"
 az containerapp update "${UPDATE_ARGS[@]}"
 
 echo ""

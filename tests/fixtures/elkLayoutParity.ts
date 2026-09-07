@@ -109,5 +109,24 @@ export function elkLayoutFixtures(): ElkLayoutFixture[] {
     graph(20, true), graph(80, true), graph(250, true),
     nested, cyclic, manual,
     { ...graph(8, false), name: 'disconnected', edges: [] },
+    {
+      name: 'group-order-empty-and-cross-boundary',
+      nodes: [
+        { id: 'zone-z', type: 'groupNode', position: { x: 0, y: 0 }, data: { label: 'Last zone' } },
+        { id: 'empty', type: 'groupNode', position: { x: 0, y: 0 }, data: { label: 'Empty zone' } },
+        { id: 'zone-a', type: 'groupNode', position: { x: 0, y: 0 }, data: { label: 'First zone' } },
+        service('a', 0, 'zone-a'), service('z', 1, 'zone-z'),
+        service('free', 2), service('a-next', 3, 'zone-a'), service('z-next', 4, 'zone-z'),
+      ],
+      edges: [
+        connection('cross', 'z-next', 'a'),
+        connection('a-internal', 'a', 'a-next'),
+        connection('parallel', 'a', 'a-next'),
+        connection('to-free', 'a-next', 'free'),
+        connection('z-internal', 'z', 'z-next'),
+        connection('from-free', 'free', 'z'),
+      ],
+      options: { ...options },
+    },
   ];
 }

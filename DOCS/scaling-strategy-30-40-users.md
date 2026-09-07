@@ -1,5 +1,9 @@
 # Scaling Strategy: 30-40 Concurrent Users
 
+> Historical assessment of a different deployment and model lineup. Its quotas,
+> capacity estimates, and setup instructions do not describe this secured
+> Astra-only fork. Use the [current production runbook](../deployment/azurediagarm/README.md).
+
 > **Date:** March 4, 2026
 > **Context:** Preparing the Microsoft Product Architecture Diagram Builder for multi-user access (30-40 simultaneous users)
 

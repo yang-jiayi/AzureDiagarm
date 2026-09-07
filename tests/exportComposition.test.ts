@@ -8,6 +8,64 @@ import {
   expandDiagramContentBounds,
   screenRectToDiagramBounds,
 } from '../src/utils/exportComposition';
+import { resolveCaptureLegendItems, type CaptureOptions } from '../src/utils/captureCanvas';
+
+test('PNG composition keeps localized legend text while preserving authored paint', () => {
+  const composition: NonNullable<CaptureOptions['composition']> = {
+    bounds: { x: 0, y: 0, width: 600, height: 300 },
+    legendItems: [{
+      label: 'Security', description: 'Identity and trust', color: '#dc2626',
+      lineStyle: 'dotted', connectionType: 'security',
+    }],
+    connectionEdges: [{
+      id: 'authored', source: 'a', target: 'b', data: { connectionType: 'security' },
+      style: { stroke: '#006d77', strokeDasharray: '10 2 3 2', opacity: 0.45 },
+    }],
+  };
+  const before = structuredClone(composition);
+  const [item] = resolveCaptureLegendItems(composition);
+  assert.equal(item.label, 'Security');
+  assert.equal(item.description, 'Identity and trust');
+  assert.equal(item.color, '#006d77');
+  assert.equal(item.dashPattern, '10, 2, 3, 2');
+  assert.equal(item.opacity, 0.45);
+  assert.deepEqual(composition, before);
+  composition.connectionEdges?.push({
+    id: 'default', source: 'a', target: 'b', data: { connectionType: 'security' },
+  });
+  const [mixed] = resolveCaptureLegendItems(composition);
+  assert.equal(mixed.hasMixedStyles, true);
+  assert.equal(mixed.label, 'Security (varied)');
+  composition.legendVariedLabel = 'styles differ';
+  composition.legendVariedDescription = 'Localized explanation';
+  const [localized] = resolveCaptureLegendItems(composition);
+  assert.equal(localized.label, 'Security (styles differ)');
+  assert.equal(localized.description, 'Localized explanation');
+});
+
+test('PNG composition retains explicit zero opacity and solid intent', () => {
+  const [item] = resolveCaptureLegendItems({
+    bounds: { x: 0, y: 0, width: 600, height: 300 },
+    legendItems: [{ label: 'Optional', description: '', color: '#64748b', connectionType: 'optional' }],
+    connectionEdges: [{
+      id: 'invisible', source: 'a', target: 'b', data: { connectionType: 'optional' },
+      style: { strokeDasharray: 'none', opacity: 0 },
+    }],
+  });
+  assert.equal(item.lineStyle, 'solid');
+  assert.equal(item.dashPattern, undefined);
+  assert.equal(item.opacity, 0);
+});
+
+test('PNG composition leaves generic legends alone and omits absent connection types', () => {
+  const item = { label: 'Custom key', description: '', color: '#123456' };
+  const bounds = { x: 0, y: 0, width: 100, height: 100 };
+  assert.deepEqual(resolveCaptureLegendItems({ bounds, legendItems: [item] }), [item]);
+  assert.deepEqual(resolveCaptureLegendItems({
+    bounds, connectionEdges: [],
+    legendItems: [{ ...item, connectionType: 'security' }],
+  }), []);
+});
 
 test('content capture plan tightly frames a wide diagram with balanced margins', () => {
   const bounds = { x: 120, y: 80, width: 1000, height: 500 };

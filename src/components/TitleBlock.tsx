@@ -25,9 +25,7 @@ const TitleBlock: React.FC<TitleBlockProps> = ({
   const { t, language } = useLanguage();
   const resolvedDate = date ?? new Date().toLocaleDateString(language === 'ja' ? 'ja-JP' : 'en-US');
   const [isEditing, setIsEditing] = useState(false);
-  const [isCollapsed, setIsCollapsed] = useState(
-    () => typeof window !== 'undefined' && window.matchMedia(MEDIA_QUERIES.narrow).matches,
-  );
+  const [isCollapsed, setIsCollapsed] = useState(true);
   const [editData, setEditData] = useState({
     architectureName,
     author,
@@ -137,7 +135,9 @@ const TitleBlock: React.FC<TitleBlockProps> = ({
       style={style}
     >
       <div className="title-block-header" onPointerDown={handlePointerDown}>
-        <span className="title-block-label">{t("ARCHITECTURE DIAGRAM")}</span>
+        <span className="title-block-label" title={architectureName}>
+          {isCollapsed ? architectureName : t("ARCHITECTURE DIAGRAM")}
+        </span>
         <button
           type="button"
           className="title-block-toggle"

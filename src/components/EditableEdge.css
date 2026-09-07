@@ -12,10 +12,10 @@
   overflow: hidden;
   padding: 5px 9px;
   border: 1px solid var(--azd-color-control-border);
-  border-radius: var(--azd-radius-sm);
+  border-radius: 4px;
   background: var(--azd-color-surface-glass);
   color: var(--azd-color-text-secondary);
-  box-shadow: var(--azd-shadow-sm);
+  box-shadow: none;
   cursor: grab;
   line-height: 1.35;
   text-align: center;
@@ -30,7 +30,7 @@
 .editable-edge-label:hover,
 .editable-edge-label-shell.is-selected .editable-edge-label {
   border-color: var(--azd-color-control-border-hover);
-  box-shadow: var(--azd-shadow-md);
+  box-shadow: none;
 }
 
 .editable-edge-label.is-dragging {
@@ -41,6 +41,13 @@
   color: var(--azd-color-text-disabled);
   font-style: italic;
   font-weight: 500;
+  opacity: 0;
+}
+
+.editable-edge-label.is-empty:hover,
+.editable-edge-label.is-empty:focus-visible,
+.editable-edge-label-shell.is-selected .editable-edge-label.is-empty {
+  opacity: 1;
 }
 
 .editable-edge-label:focus-visible {
@@ -69,5 +76,5 @@
 
 .editable-edge-flow-path.is-selected {
   stroke: var(--azd-color-focus);
-  filter: drop-shadow(0 0 3px var(--azd-color-focus-soft));
+  filter: none;
 }

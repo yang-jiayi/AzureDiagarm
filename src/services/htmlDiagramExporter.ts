@@ -14,6 +14,7 @@ import dagre from 'dagre';
 import type { Node, Edge } from 'reactflow';
 import { rasterizeIcons } from '../utils/exportIconRaster';
 import {
+  advanceWidthIn,
   buildExportRoutes,
   categoryStyle,
   collectExportBoxes,
@@ -21,11 +22,12 @@ import {
   computeBounds,
   metaSubline,
   partitionBoxes,
-  usedConnectionLegend,
+  connectionLegendForRoutes,
   zoneStyleFor,
   GEOMETRY_FONT_STACK,
   type ExportBox,
   type ExportRoute,
+  type Point,
   type ConnectionLegendEntry,
 } from './diagramExportGeometry';
 
@@ -54,11 +56,16 @@ interface PositionedEdge {
   color: string;
   dashed: boolean;
   dashPattern: string;
+  opacity: number;
   bidirectional: boolean;
   connectionType: string;
   /** Workflow step this arrow carries, drawn as a numbered callout. */
   stepNumber?: number;
   points: Array<{ x: number; y: number }>;
+  labelAnchor: { x: number; y: number };
+  labelPosition: Point;
+  stepAnchor: Point;
+  labelLeader?: Point[];
 }
 
 interface PositionedGroup {
@@ -79,6 +86,8 @@ interface LegendEntry {
   color: string;
   dashed: boolean;
   dashPattern: string;
+  opacity: number;
+  hasMixedStyles: boolean;
 }
 
 interface LayoutResult {
@@ -93,6 +102,110 @@ interface LayoutResult {
 // ── Layout via the shared geometry layer ───────────────────────────────
 
 const PADDING = 40;
+const EDGE_LABEL_FONT_PX = 10;
+const STEP_HALO_RADIUS_PX = 11;
+
+interface LabelRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+function labelRect(label: string, position: Point): LabelRect {
+  const width = advanceWidthIn(label, EDGE_LABEL_FONT_PX * 72 / 96) * 96 + 6;
+  return { x: position.x - width / 2, y: position.y - EDGE_LABEL_FONT_PX - 3, width,
+    height: EDGE_LABEL_FONT_PX * 1.5 + 6 };
+}
+
+function overlaps(a: LabelRect, b: LabelRect, gap = 4): boolean {
+  return a.x < b.x + b.width + gap && a.x + a.width + gap > b.x
+    && a.y < b.y + b.height + gap && a.y + a.height + gap > b.y;
+}
+
+function positionAnnotations(routes: ExportRoute[], services: ExportBox[], edges: Edge[]) {
+  const dataById = new Map(edges.map(edge => [edge.id, edge.data as Record<string, unknown> | undefined]));
+  const finite = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value);
+  const positioned = routes.map(route => {
+    const data = dataById.get(route.id);
+    const x = data?.labelOffsetX;
+    const y = data?.labelOffsetY;
+    const labelAnchor = { x: route.labelAnchor.x + (finite(x) ? x : 0), y: route.labelAnchor.y + (finite(y) ? y : 0) };
+    return {
+      ...route, labelAnchor,
+      labelPosition: { x: labelAnchor.x, y: labelAnchor.y - (route.stepNumber ? 18 : 4) },
+      stepAnchor: { ...route.labelAnchor },
+      manual: data?.labelOffsetAuto !== true && (finite(x) || finite(y)),
+      labelLeader: undefined as Point[] | undefined,
+    };
+  });
+  const nodeRects = services.map(box => ({ x: box.x, y: box.y, width: box.w, height: box.h }));
+  const badges = positioned.filter(route => route.stepNumber !== undefined && !route.isSelfLoop)
+    .map(route => route.stepAnchor);
+  for (const route of positioned) {
+    if (route.stepNumber === undefined || !route.isSelfLoop) continue;
+    const preferred = route.stepAnchor;
+    const candidates = [preferred];
+    for (let i = 1; i < route.points.length; i++) {
+      const start = route.points[i - 1], end = route.points[i];
+      const samples = Math.max(1, Math.min(32, Math.ceil(Math.hypot(end.x - start.x, end.y - start.y) / 5)));
+      for (let sample = 0; sample <= samples; sample++) {
+        candidates.push({ x: start.x + (end.x - start.x) * sample / samples,
+          y: start.y + (end.y - start.y) * sample / samples });
+      }
+    }
+    candidates.sort((a, b) => Math.hypot(a.x - preferred.x, a.y - preferred.y)
+      - Math.hypot(b.x - preferred.x, b.y - preferred.y));
+    // A badge may slide along its own loop, never into an unrelated label column.
+    route.stepAnchor = candidates.find(point =>
+      badges.every(other => Math.hypot(point.x - other.x, point.y - other.y) >= STEP_HALO_RADIUS_PX * 2 + 2)
+      && nodeRects.every(box => {
+        const x = Math.max(box.x, Math.min(point.x, box.x + box.width));
+        const y = Math.max(box.y, Math.min(point.y, box.y + box.height));
+        return Math.hypot(point.x - x, point.y - y) >= STEP_HALO_RADIUS_PX + 2;
+      })) ?? preferred;
+    badges.push(route.stepAnchor);
+  }
+  const badgeRects = positioned.filter(route => route.stepNumber !== undefined).map(route => ({
+    id: route.id, x: route.stepAnchor.x - STEP_HALO_RADIUS_PX, y: route.stepAnchor.y - STEP_HALO_RADIUS_PX,
+    width: STEP_HALO_RADIUS_PX * 2, height: STEP_HALO_RADIUS_PX * 2,
+  }));
+  const reserved = positioned.filter(route => route.label && (!route.isSelfLoop || route.manual))
+    .map(route => labelRect(route.label, route.labelPosition));
+  const loopRight = new Map<string, number>();
+  for (const route of positioned.filter(route => route.isSelfLoop)) {
+    for (const point of route.points) {
+      loopRight.set(route.sourceId, Math.max(loopRight.get(route.sourceId) ?? -Infinity, point.x));
+    }
+  }
+  for (const route of positioned) {
+    if (!route.label || !route.isSelfLoop || route.manual) continue;
+    const desired = route.labelPosition;
+    const blockers = [...nodeRects, ...reserved, ...badgeRects.filter(badge => badge.id !== route.id)];
+    let rect = labelRect(route.label, desired);
+    if (blockers.some(box => overlaps(rect, box))) {
+      const x = loopRight.get(route.sourceId)! + STEP_HALO_RADIUS_PX + 12 + rect.width / 2;
+      let seat: Point | undefined;
+      for (let row = 0; row < 32; row++) {
+        const candidate = { x, y: desired.y + row * (rect.height + 6) };
+        if (blockers.every(box => !overlaps(labelRect(route.label, candidate), box))) {
+          seat = candidate;
+          break;
+        }
+      }
+      // A tall neighbouring card can occupy the whole local column. The outer
+      // column is guaranteed clear without moving nodes or changing any route.
+      route.labelPosition = seat ?? {
+        x: blockers.reduce((right, box) => Math.max(right, box.x + box.width), x) + 12 + rect.width / 2,
+        y: desired.y,
+      };
+      rect = labelRect(route.label, route.labelPosition);
+      route.labelLeader = [route.stepAnchor, { x: rect.x - 5, y: rect.y + rect.height / 2 }];
+    }
+    reserved.push(rect);
+  }
+  return positioned;
+}
 
 /**
  * Are the node positions genuinely present, or is everything stacked at the
@@ -185,8 +298,34 @@ function buildLayout(nodes: Node[], edges: Edge[], icons: Map<string, string>): 
     groups.sort((a, b) => b.w * b.h - a.w * a.h);
   }
 
-  const routes = buildExportRoutes(edges, boxes);
+  const routes = positionAnnotations(buildExportRoutes(edges, boxes), services, edges);
   const bounds = computeBounds(boxes.values());
+  const include = (x: number, y: number): void => {
+    bounds.minX = Math.min(bounds.minX, x);
+    bounds.minY = Math.min(bounds.minY, y);
+    bounds.maxX = Math.max(bounds.maxX, x);
+    bounds.maxY = Math.max(bounds.maxY, y);
+  };
+  for (const route of routes) {
+    for (const point of route.points) {
+      include(point.x - 6, point.y - 6);
+      include(point.x + 6, point.y + 6);
+    }
+    const at = route.stepAnchor;
+    if (route.stepNumber !== undefined) {
+      include(at.x - STEP_HALO_RADIUS_PX, at.y - STEP_HALO_RADIUS_PX);
+      include(at.x + STEP_HALO_RADIUS_PX, at.y + STEP_HALO_RADIUS_PX);
+    }
+    if (route.label) {
+      const rect = labelRect(route.label, route.labelPosition);
+      include(rect.x, rect.y);
+      include(rect.x + rect.width, rect.y + rect.height);
+    }
+    for (const point of route.labelLeader ?? []) {
+      include(point.x - 1, point.y - 1);
+      include(point.x + 1, point.y + 1);
+    }
+  }
   const dx = PADDING - bounds.minX;
   const dy = PADDING - bounds.minY;
 
@@ -226,24 +365,31 @@ function buildLayout(nodes: Node[], edges: Edge[], icons: Map<string, string>): 
     };
   });
 
-  const positionedEdges: PositionedEdge[] = routes.map((route: ExportRoute) => ({
+  const positionedEdges: PositionedEdge[] = routes.map(route => ({
     id: route.id,
     label: route.label,
     color: route.color,
     dashed: route.dashed,
     dashPattern: route.dashPattern ?? '',
+    opacity: route.opacity,
     bidirectional: route.bidirectional,
     connectionType: route.connectionType,
     ...(route.stepNumber !== undefined ? { stepNumber: route.stepNumber } : {}),
     points: route.points.map((point) => ({ x: point.x + dx, y: point.y + dy })),
+    labelAnchor: { x: route.labelAnchor.x + dx, y: route.labelAnchor.y + dy },
+    labelPosition: { x: route.labelPosition.x + dx, y: route.labelPosition.y + dy },
+    stepAnchor: { x: route.stepAnchor.x + dx, y: route.stepAnchor.y + dy },
+    ...(route.labelLeader ? { labelLeader: route.labelLeader.map(point => ({ x: point.x + dx, y: point.y + dy })) } : {}),
   }));
 
-  const connectionLegend: LegendEntry[] = usedConnectionLegend(edges).map((entry: ConnectionLegendEntry) => ({
+  const connectionLegend: LegendEntry[] = connectionLegendForRoutes(routes).map((entry: ConnectionLegendEntry) => ({
     type: entry.type,
     label: entry.label,
     color: entry.color,
     dashed: entry.dashed,
     dashPattern: entry.dashPattern ?? '',
+    opacity: entry.opacity,
+    hasMixedStyles: entry.hasMixedStyles === true,
   }));
 
   const width = Math.max(1, bounds.maxX - bounds.minX) + PADDING * 2;
@@ -314,7 +460,7 @@ function generateHtml(layout: LayoutResult, title: string): string {
     font-size: 11px; font-weight: 700;
   }
   .edge-label {
-    font-family: ${GEOMETRY_FONT_STACK}; font-size: 10px;
+    font-family: ${GEOMETRY_FONT_STACK}; font-size: ${EDGE_LABEL_FONT_PX}px;
     paint-order: stroke; stroke: white; stroke-width: 3px;
   }
   .group {
@@ -340,7 +486,7 @@ function generateHtml(layout: LayoutResult, title: string): string {
   .legend-item { display: flex; align-items: center; gap: 4px; }
   .legend-dot { width: 10px; height: 10px; border-radius: 50%; }
   .legend-sep { width: 100%; height: 0; border-top: 1px solid #e5e7eb; margin: 2px 0; }
-  .legend-line { width: 22px; height: 0; border-top-width: 2px; border-top-style: solid; }
+  .legend-line { width: 22px; height: 8px; flex-shrink: 0; }
 </style>
 </head>
 <body>
@@ -456,17 +602,36 @@ function render() {
     const path = document.createElementNS(svgNs, 'path');
     path.setAttribute('d', d);
     path.setAttribute('stroke', color);
+    path.setAttribute('opacity', String(e.opacity));
+    path.setAttribute('data-edge-id', e.id);
     path.classList.add('edge-path');
     path.setAttribute('marker-end', 'url(#' + markerByColor[e.color] + ')');
     if (e.bidirectional) path.setAttribute('marker-start', 'url(#' + startMarkerByColor[e.color] + ')');
-    if (e.dashed) path.setAttribute('stroke-dasharray', (e.dashPattern || '6,4').replace(/\\s+/g, ''));
+    if (e.dashed) path.setAttribute('stroke-dasharray', e.dashPattern || '6,4');
     svg.appendChild(path);
+  });
 
+  layout.edges.forEach(e => {
+    if (!e.labelLeader) return;
+    const leader = document.createElementNS(svgNs, 'path');
+    leader.setAttribute('d', e.labelLeader.map((p, i) => (i ? 'L' : 'M') + p.x + ' ' + p.y).join(' '));
+    leader.setAttribute('data-edge-id', e.id);
+    leader.setAttribute('stroke', e.color);
+    leader.setAttribute('stroke-width', '1');
+    leader.setAttribute('stroke-dasharray', '2,3');
+    leader.setAttribute('fill', 'none');
+    leader.classList.add('edge-label-leader');
+    svg.appendChild(leader);
+  });
+
+  layout.edges.forEach(e => {
+    const color = e.color || '#64748b';
     if (e.label) {
-      const mid = e.points[Math.floor(e.points.length / 2)];
+      const position = e.labelPosition;
       const text = document.createElementNS(svgNs, 'text');
-      text.setAttribute('x', mid.x);
-      text.setAttribute('y', mid.y - (e.stepNumber ? 18 : 4));
+      text.setAttribute('x', position.x);
+      text.setAttribute('y', position.y);
+      text.setAttribute('data-edge-id', e.id);
       text.setAttribute('text-anchor', 'middle');
       text.setAttribute('fill', color);
       text.classList.add('edge-label');
@@ -477,11 +642,11 @@ function render() {
     // Numbered callout, matching the workflow list: the Azure Architecture
     // Center convention that ties each arrow to the step describing it.
     if (e.stepNumber) {
-      const mid = e.points[Math.floor(e.points.length / 2)];
+      const mid = e.stepAnchor;
       const halo = document.createElementNS(svgNs, 'circle');
       halo.setAttribute('cx', mid.x);
       halo.setAttribute('cy', mid.y);
-      halo.setAttribute('r', '11');
+      halo.setAttribute('r', '${STEP_HALO_RADIUS_PX}');
       halo.setAttribute('fill', '#ffffff');
       svg.appendChild(halo);
       const disc = document.createElementNS(svgNs, 'circle');
@@ -493,6 +658,7 @@ function render() {
       const num = document.createElementNS(svgNs, 'text');
       num.setAttribute('x', mid.x);
       num.setAttribute('y', mid.y + 4);
+      num.setAttribute('data-edge-id', e.id);
       num.setAttribute('text-anchor', 'middle');
       num.setAttribute('fill', '#ffffff');
       num.classList.add('edge-step');
@@ -542,9 +708,13 @@ function render() {
   ).join('');
   const conn = layout.connectionLegend || [];
   if (conn.length) {
-    legendHtml += '<div class="legend-sep"></div>' + conn.map(c =>
-      '<div class="legend-item"><div class="legend-line" style="border-top-color:' + c.color + ';border-top-style:' + (c.dashed ? 'dashed' : 'solid') + '"></div>' + esc(c.label) + '</div>'
-    ).join('');
+    legendHtml += '<div class="legend-sep"></div>' + conn.map(c => {
+      const swatch = c.hasMixedStyles ? '' :
+        '<svg class="legend-line" viewBox="0 0 22 8" aria-hidden="true"><path d="M0 4H22" fill="none" stroke-width="1.5" stroke="' +
+        esc(c.color) + '" opacity="' + c.opacity + '"' +
+        (c.dashed ? ' stroke-dasharray="' + esc(c.dashPattern || '6,4') + '"' : '') + '/></svg>';
+      return '<div class="legend-item">' + swatch + esc(c.label) + '</div>';
+    }).join('');
   }
   legendEl.innerHTML = legendHtml;
 

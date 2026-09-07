@@ -123,9 +123,9 @@ export interface ExportRoute {
   sourceId: string;
   targetId: string;
   label: string;
-  /** Canonical semantic type; drives colour + dash in every exporter. */
+  /** Canonical semantic type; supplies defaults when no authored paint exists. */
   connectionType: DiagramConnectionType;
-  /** Canonical stroke colour (`#rrggbb`) for this connection type. */
+  /** Authored stroke colour (`#rrggbb`), or the semantic default. */
   color: string;
   dashed: boolean;
   /** SVG-style dash pattern (e.g. `6, 5`) when the type/edge is dashed. */
@@ -481,9 +481,8 @@ export interface ConnectionStyle {
 }
 
 /**
- * Canonical connection-type → colour + dash, taken straight from the shared
- * {@link getConnectionPresentation} the canvas uses, so an exported deck can
- * never contradict the PNG's colour-coded legend.
+ * Semantic connection-type defaults, shared with the canvas and its legend.
+ * buildExportRoutes applies explicit authored paint over these defaults.
  */
 export function connectionStyleFor(type: DiagramConnectionType): ConnectionStyle {
   const presentation = getConnectionPresentation(type);
@@ -503,6 +502,8 @@ export interface ConnectionLegendEntry {
   color: string;
   dashed: boolean;
   dashPattern?: string;
+  opacity: number;
+  hasMixedStyles?: boolean;
 }
 
 /** The five connection types, in canvas order, for a colour key in exports. */
@@ -524,30 +525,44 @@ export const CONNECTION_LEGEND: ConnectionLegendEntry[] = (
     color: style.color,
     dashed: style.dashed,
     dashPattern: style.dashPattern,
+    opacity: style.opacity,
   };
 });
 
 /** Which of the five connection types actually appear on these edges. */
 export function usedConnectionLegend(edges: Edge[]): ConnectionLegendEntry[] {
-  return connectionLegendForTypes(
-    edges.map((edge) => normalizeConnectionType((edge.data as { connectionType?: unknown } | undefined)?.connectionType)),
-  );
+  return connectionLegendForStyles(edges.map(edge => edgeExportStyle(edge, edgeConnectionType(edge))));
 }
 
 /**
- * The colour key for a given set of connection types, in canvas order.
- *
- * Separate from `usedConnectionLegend` because a tiled deck must key the hops
- * on *this slide*, not in the whole diagram. Routes are culled to the slide's
- * window before they are drawn, so feeding the legend every edge put a
- * "Security" swatch on five consecutive slides that painted no connector at
- * all -- a key explaining a line the reader cannot see.
+ * Key only the routes actually drawn on a slide, including their authored paint.
  */
-export function connectionLegendForTypes(
-  types: Iterable<DiagramConnectionType>,
+export function connectionLegendForRoutes(
+  routes: Iterable<ExportRoute>,
 ): ConnectionLegendEntry[] {
-  const used = new Set<DiagramConnectionType>(types);
-  return CONNECTION_LEGEND.filter((entry) => used.has(entry.type));
+  return connectionLegendForStyles(Array.from(routes, route => ({
+    type: route.connectionType, color: route.color, dashed: route.dashed,
+    dashPattern: route.dashPattern, opacity: route.opacity,
+  })));
+}
+
+function connectionLegendForStyles(styles: Iterable<ConnectionStyle>): ConnectionLegendEntry[] {
+  const byType = new Map<DiagramConnectionType, Map<string, ConnectionStyle>>();
+  for (const style of styles) {
+    const variants = byType.get(style.type) ?? new Map<string, ConnectionStyle>();
+    variants.set(JSON.stringify([style.color, style.dashed, style.dashPattern, style.opacity]), style);
+    byType.set(style.type, variants);
+  }
+  return CONNECTION_LEGEND.flatMap<ConnectionLegendEntry>(entry => {
+    const variants = byType.get(entry.type);
+    if (!variants) return [];
+    // Keep the five-row layout bound without inventing one swatch for mixed paint.
+    if (variants.size > 1) {
+      const label = entry.type === 'sync' ? 'Sync' : entry.type === 'async' ? 'Async' : entry.label;
+      return [{ ...entry, label: `${label} (varied)`, hasMixedStyles: true }];
+    }
+    return Array.from(variants.values(), style => ({ ...entry, ...style }));
+  });
 }
 
 /** One numbered row of the Azure Architecture Center style workflow list. */
@@ -3209,10 +3224,61 @@ export function readEdgeLabel(edge: Edge): string {
   return '';
 }
 
-function isDashed(edge: Edge): boolean {
-  if (edge.animated) return true;
-  const dash = (edge.style as { strokeDasharray?: unknown } | undefined)?.strokeDasharray;
-  return typeof dash === 'string' && dash.trim().length > 0 && dash !== 'none' && dash !== '0';
+function paintOpacity(value: unknown): number | undefined {
+  if (typeof value !== 'number' && typeof value !== 'string') return undefined;
+  const text = String(value).trim();
+  if (!/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?%?$/i.test(text)) return undefined;
+  const number = text.endsWith('%') ? Number(text.slice(0, -1)) / 100 : Number(text);
+  return Number.isFinite(number) ? Math.max(0, Math.min(1, number)) : undefined;
+}
+
+function authoredStroke(value: unknown): { color: string; opacity: number } | undefined {
+  if (typeof value !== 'string') return undefined;
+  const text = value.trim();
+  if (/^(?:none|transparent)$/i.test(text)) return { color: '#000000', opacity: 0 };
+  const alphaHex = /^#([a-f\d]{4}|[a-f\d]{8})$/i.exec(text)?.[1];
+  if (alphaHex) {
+    const short = alphaHex.length === 4;
+    const alpha = short ? alphaHex.slice(-1).repeat(2) : alphaHex.slice(-2);
+    const color = normalizeHex(`#${alphaHex.slice(0, short ? 3 : 6)}`);
+    return color ? { color, opacity: parseInt(alpha, 16) / 255 } : undefined;
+  }
+  if (/^#[a-f\d]{3}(?:[a-f\d]{3})?$/i.test(text)) {
+    const color = normalizeHex(text);
+    return color ? { color, opacity: 1 } : undefined;
+  }
+  const rgb = /^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)(?:\s*,\s*([+-]?(?:\d+(?:\.\d*)?|\.\d+)%?))?\s*\)$/i.exec(text);
+  if (!rgb) return undefined;
+  const color = normalizeHex(text);
+  const opacity = rgb[4] === undefined ? 1 : paintOpacity(rgb[4]);
+  return color && opacity !== undefined ? { color, opacity } : undefined;
+}
+
+function authoredDash(value: unknown): Pick<ConnectionStyle, 'dashed' | 'dashPattern'> | undefined {
+  if (typeof value !== 'number' && typeof value !== 'string') return undefined;
+  const text = String(value).trim();
+  if (text === '' || text.toLowerCase() === 'none') return { dashed: false };
+  const parts = text.split(/[\s,]+/);
+  if (parts.some(part => !/^\+?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i.test(part))) return undefined;
+  const lengths = parts.map(Number);
+  if (lengths.some(length => !Number.isFinite(length))) return undefined;
+  return lengths.some(length => length > 0)
+    ? { dashed: true, dashPattern: lengths.join(', ') }
+    : { dashed: false };
+}
+
+function edgeExportStyle(edge: Edge, type: DiagramConnectionType): ConnectionStyle {
+  const fallback = connectionStyleFor(type);
+  const stroke = authoredStroke(edge.style?.stroke);
+  const dash = authoredDash(edge.style?.strokeDasharray);
+  const dashed = dash?.dashed ?? (fallback.dashed || edge.animated === true);
+  return {
+    type,
+    color: stroke?.color ?? fallback.color,
+    dashed,
+    dashPattern: dashed ? (dash?.dashPattern ?? fallback.dashPattern ?? '6, 4') : undefined,
+    opacity: (paintOpacity(edge.style?.opacity) ?? fallback.opacity) * (stroke?.opacity ?? 1),
+  };
 }
 
 function edgeConnectionType(edge: Edge): DiagramConnectionType {
@@ -3364,8 +3430,7 @@ export function buildExportRoutes(
     const target = boxes.get(toId);
     if (!source || !target) continue;
     const type = edgeConnectionType(edge);
-    const style = connectionStyleFor(type);
-    const dashed = style.dashed || isDashed(edge);
+    const style = edgeExportStyle(edge, type);
     const label = readEdgeLabel(edge);
     const key = pairKey(source.id, target.id);
     const ordinal = ordinals.get(key) ?? 0;
@@ -3389,8 +3454,8 @@ export function buildExportRoutes(
       label,
       connectionType: type,
       color: style.color,
-      dashed,
-      dashPattern: dashed ? (style.dashPattern ?? '6, 4') : undefined,
+      dashed: style.dashed,
+      dashPattern: style.dashPattern,
       opacity: style.opacity,
       ordinal,
       sourceW: source.w,

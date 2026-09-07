@@ -7,7 +7,7 @@ The production site is deployed to Azure Container Apps and exposed only through
 - Azure Front Door uses the Standard tier, matching the `SQLServerEvo_rg` reference architecture.
 - The Container App uses the Consumption workload profile with a minimum of 1 and a maximum of 2 replicas; the production workflow does not enable scale-to-zero.
 - Images use the existing `sqlserverevoacr` Basic registry instead of creating another paid registry.
-- AI generation defaults to genuine GPT-6 Astra. Additional model deployments are available only when their frontend configuration and server-side provider allowlists agree; do not substitute GPT-5.4 Mini to recover an Astra incident.
+- Managed AI uses genuine GPT-6 Astra. The frontend deployment, server `AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA`, and singleton managed-deployment allowlist must agree. BYO is separately enabled with `ALLOW_BYO_AI_ENDPOINTS=true` and requires each user's own key and explicit connection selection. Neither path silently falls back to the other.
 - Upstream merging requires manual dispatch on `main`; deployments run automatically for validated changes pushed to `main`.
 - Azure Communication Services sends deployment-result and upstream-validation-failure notifications. A deployment rejected by the initial source guard stops before Azure sign-in and does not send a deployment email.
 
@@ -17,12 +17,23 @@ The production site is deployed to Azure Container Apps and exposed only through
 2. **Upstream synchronization:** manually dispatch the workflow on `main` only when intentionally reviewing synchronization with `Arturo-Quiroga-MSFT/azure-architecture-diagram-builder`. Protected-file checks and validation still apply. A changed, validated merge is published through the guarded publication jobs; its new push to `main` starts deployment. Do not dispatch from a feature or release-record branch.
 3. **Source freshness:** before Azure changes, the deployment job requires `refs/heads/main`, checks that its checkout is the exact validated commit, and reads the current `main` SHA from GitHub. It rejects a mismatch, malformed response, or unavailable API. It reads `main` again immediately before the revision update, before creating the deployment-started marker. `force_deploy` does not bypass either check or the upstream guard.
 
+Ordinary releases use the committed `.github/upstream-baseline.json` rather than fetching upstream. The record must identify the approved repository and a full commit in the checkout's ancestry. Keep the record, `scripts/upstream-baseline.mjs`, and the workflow in the same change; an absent or invalid committed record fails closed. Guarded synchronization requires the fetched upstream history to retain the approved baseline and advances the record only after protected-file review and successful merge selection.
+
+Set `AZURE_OPENAI_RESOURCE_ID` to the full account resource ID for the approved
+endpoint. Before image publication and revision update, model preflight reads
+that account and deployment through ARM, verifies endpoint ownership, and
+requires the actual model to be `OpenAI/gpt-6-astra` with successful provisioning.
+Lookup failures or a differently named model behind the alias block release.
+This does not perform inference, grant roles, or delete old Azure deployments.
+
 ### Safe retries and rollbacks
 
 - Compare the run's commit with current `main` before using GitHub's **Re-run jobs**. Retry only a current-main run whose workflow version already contains both source checks. A transient GitHub lookup failure must be resolved, not bypassed.
 - If `main` has advanced, do not retry the superseded run. Use the release associated with the new current-main push; corrections belong in a reviewed pull request into `main`.
 - **Historical-run limitation:** GitHub reruns use the original immutable workflow version. Adding the guard to today's files does not retrofit pre-fix runs. Never rerun a pre-guard workflow as a recovery shortcut, even if its original checks were green. Do not change branch protections, bypass rights, OIDC federation, or authentication to work around a refusal.
 - The existing automatic rollback remains separate: if a revision update actually started and subsequently fails verification, the workflow copies the previously ready revision and checks its health. A source check rejected before the deployment-started marker must not trigger a revision rollback.
+- Rollback preserves the pre-update verified Astra endpoint, singleton managed deployment, and approved BYO enablement policy. It must not restore an older image's stale model allowlist or reread mutable configuration during recovery. Unrelated baseline settings and secret references stay intact; no new model lookup is required during recovery.
+- The production verification step is bounded to 20 minutes. OpenAI and MCP boundary probes use 15-second connection and 45-second total request limits so stalled responses can fail the check and reach rollback.
 - For an intentional rollback, use the approved recovery procedure or a reviewed revert released through current `main`, not a historical workflow rerun. Manual dispatch remains an upstream-sync operation, not a rollback command.
 
 ## Local image testing
@@ -37,7 +48,7 @@ The standalone MCP image is also built from the repository root (`docker build -
 - WAF runs in Prevention mode with rate limiting and known AI crawler `User-Agent` blocking.
 - The origin validates `X-Azure-FDID`, preventing direct Container Apps access from bypassing WAF.
 - Application responses include anti-indexing headers and `robots.txt`; these controls discourage compliant crawlers while WAF handles known automated clients.
-- Azure OpenAI requests are proxied server-side and authorized with the Container App's user-assigned managed identity; no API key is embedded in the browser bundle.
+- Managed Astra requests are proxied server-side with the app's managed identity; no managed credential is embedded in the browser bundle. BYO requests use only the supplied user's key, never the app identity or its server-side key. BYO keys remain in tab memory and request transit, not saved profiles, diagrams, telemetry, or deployment settings.
 - Diagram blobs and shared rate-limit tables use one keyless storage account with shared-key access, public blobs, and public-network access disabled. A Network Security Perimeter is the intentional ingress control.
 - Defender for Storage is explicitly overridden at the account: sensitive-data discovery remains enabled, while on-upload malware scanning is disabled because its Event Grid integration is incompatible with the perimeter. The deployment workflow enforces this state to prevent recurring authorization failures.
 - The resource-scoped `AzureDiagarm-Storage-NSP` exemption records the NSP as the mitigating control for the six built-in Private Link and VNet-rule audits. It expires on 2027-08-04 so the design must be reviewed; the workflow verifies the exemption and its scope. Do not add a Private Endpoint until Container Apps has a verified VNet and private-DNS path.

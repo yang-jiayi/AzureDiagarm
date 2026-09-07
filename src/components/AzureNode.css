@@ -1,7 +1,7 @@
 .azure-node {
   background: var(--azd-color-surface-elevated);
   color: var(--azd-color-text);
-  border-radius: var(--azd-radius-md);
+  border-radius: 6px;
   padding: 12px;
   min-width: 120px;
   display: flex;
@@ -10,16 +10,15 @@
   gap: 8px;
   transition:
     border-color 0.16s ease,
-    box-shadow 0.16s ease,
-    transform 0.16s ease;
-  box-shadow: var(--azd-shadow-control);
+    outline-color 0.16s ease;
+  box-shadow: none;
   position: relative;
 }
 
 .azure-node.selected {
   outline: 3px solid var(--azd-color-focus);
   outline-offset: 2px;
-  box-shadow: var(--azd-shadow-md);
+  box-shadow: none;
 }
 
 /*
@@ -30,7 +29,7 @@
 .azure-node.connect-source {
   outline: 3px dashed var(--azd-color-action);
   outline-offset: 3px;
-  box-shadow: 0 0 0 2px var(--azd-color-surface), var(--azd-shadow-md);
+  box-shadow: 0 0 0 2px var(--azd-color-surface);
 }
 
 .azure-node.connect-source .node-handle {
@@ -38,8 +37,7 @@
 }
 
 .azure-node:hover {
-  box-shadow: var(--azd-shadow-md);
-  transform: translateY(-1px);
+  box-shadow: none;
 }
 
 .node-content {
@@ -61,21 +59,20 @@
   font-size: 0.65rem;
   font-weight: 700;
   padding: 3px 7px;
-  border-radius: 10px;
-  box-shadow: var(--azd-shadow-sm);
+  border-radius: 4px;
+  box-shadow: none;
   white-space: nowrap;
   z-index: 10;
   border: 1px solid var(--cost-accent, var(--azd-color-success-emphasis));
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: border-color 0.15s ease, background-color 0.15s ease;
   display: flex;
   align-items: center;
   gap: 2px;
 }
 
 .cost-badge:hover {
-  transform: translateY(-1px);
-  box-shadow: var(--azd-shadow-md);
+  border-color: var(--azd-color-control-border-hover);
 }
 
 /* Fabric workload items whose cost is included in the Fabric Capacity */
@@ -133,6 +130,7 @@
   line-height: 1.3;
   max-width: 140px;
   word-wrap: break-word;
+  text-wrap: balance;
   cursor: text;
   padding: 4px;
   border-radius: 3px;
@@ -310,10 +308,11 @@ body.dark-mode .node-badge-input {
   border: 2px solid var(--azd-color-surface-elevated);
   box-shadow: 0 0 0 1px var(--azd-color-text-subtle);
   opacity: 0.38;
-  transition: opacity 0.15s ease, transform 0.15s ease, background-color 0.15s ease;
+  transition: opacity 0.15s ease, background-color 0.15s ease;
 }
 
 .azure-node:hover .node-handle,
+.azure-node:focus-within .node-handle,
 .azure-node.selected .node-handle,
 .node-handle:hover {
   opacity: 1;
@@ -321,7 +320,6 @@ body.dark-mode .node-badge-input {
 
 .node-handle:hover {
   background: var(--azd-color-action);
-  transform: scale(1.2);
 }
 
 /* Connection point positions */
@@ -385,12 +383,12 @@ body.dark-mode .node-badge-input {
 .azure-node.style-presentation {
   padding: 16px 20px;
   min-width: 150px;
-  border-radius: 12px;
+  border-radius: 6px;
   border-left-width: 5px !important;
   border-top: none !important;
   border-right: none !important;
   border-bottom: none !important;
-  box-shadow: var(--azd-shadow-lg);
+  box-shadow: none;
 }
 
 .azure-node.style-presentation .node-icon,
@@ -411,13 +409,12 @@ body.dark-mode .node-badge-input {
 }
 
 .azure-node.style-presentation:hover {
-  transform: translateY(-3px);
-  box-shadow: var(--azd-shadow-overlay);
+  box-shadow: none;
 }
 
 /* Dark mode overrides for presets */
 body.dark-mode .azure-node.style-presentation {
-  box-shadow: var(--azd-shadow-lg);
+  box-shadow: none;
 }
 
 body.dark-mode .azure-node.style-presentation .node-label {

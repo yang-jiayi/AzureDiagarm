@@ -14,6 +14,10 @@ keywords:
 
 ## Overview
 
+> Historical comparison from March 2026. Model lineups and feature descriptions
+> below are not the current fork's support matrix; see the
+> [current Astra-only application](../README.md).
+
 This document compares two approaches to generating Azure architecture diagrams:
 
 1. **Microsoft Product Architecture Diagram Builder** — an AI-powered web application purpose-built for designing, validating, and deploying Azure cloud architectures.

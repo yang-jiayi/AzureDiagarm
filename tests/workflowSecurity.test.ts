@@ -167,27 +167,50 @@ test('follow-up contact stays disabled unless client and server opt in together'
   assert.match(feedbackServer, /createArchivedFeedbackContact\(item\.contact\)/);
 });
 
-test('BYO AI remains server-gated and is wired into every production deployment path', () => {
-  assert.match(feedbackServer, /process\.env\.ALLOW_BYO_AI_ENDPOINTS === 'true'/);
+test('custom AI is an explicit administrator opt-in alongside Astra; retired managed providers stay removed', () => {
+  assert.match(feedbackServer, /allowByoAIEndpoints: deployment\.allowByoAIEndpoints/);
+  assert.match(feedbackServer, /runtimeAstraConfiguration\(deployment\.astra, deployment\.allowByoAIEndpoints\)/);
   assert.match(resourcesBicep, /param allowByoAIEndpoints bool = false/);
-  assert.match(
-    resourcesBicep,
-    /\{ name: 'ALLOW_BYO_AI_ENDPOINTS', value: string\(allowByoAIEndpoints\) \}/,
-  );
-  assert.match(
-    workflow,
-    /ALLOW_BYO_AI_ENDPOINTS: \$\{\{ vars\.ALLOW_BYO_AI_ENDPOINTS \|\| 'false' \}\}/,
-  );
-  assert.match(workflow, /AZURE_OPENAI_ENDPOINT ALLOW_BYO_AI_ENDPOINTS AZURE_OPENAI_DEPLOYMENT_GPT56SOL/);
+  assert.match(resourcesBicep, /name: 'ALLOW_BYO_AI_ENDPOINTS', value: string\(allowByoAIEndpoints\)/);
+  assert.doesNotMatch(resourcesBicep, /azureFoundryEndpoint/);
+  assert.doesNotMatch(workflow, /vars\.AZURE_FOUNDRY/);
+  assert.match(workflow, /ALLOW_BYO_AI_ENDPOINTS: \$\{\{ vars\.ALLOW_BYO_AI_ENDPOINTS \|\| 'false' \}\}/);
+  assert.match(workflow, /ALLOW_BYO_AI_ENDPOINTS: \$\{\{ steps\.desired_config\.outputs\.allow_byo_ai_endpoints \}\}/);
   assert.match(workflow, /"ALLOW_BYO_AI_ENDPOINTS=\$ALLOW_BYO_AI_ENDPOINTS"/);
-  assert.match(
-    workflow,
-    /"ALLOW_BYO_AI_ENDPOINTS=\$\{\{ vars\.ALLOW_BYO_AI_ENDPOINTS \|\| 'false' \}\}"/,
-  );
-  assert.match(
-    deployScript,
-    /"ALLOW_BYO_AI_ENDPOINTS=\$\{ALLOW_BYO_AI_ENDPOINTS:-false\}"/,
-  );
+  assert.match(workflow, /echo "allow_byo_ai_endpoints=\$ALLOW_BYO_AI_ENDPOINTS" >> "\$GITHUB_OUTPUT"/);
+  assert.match(workflow, /node scripts\/retired-ai-environment\.mjs/);
+  assert.match(deployScript, /scripts\/retired-ai-environment\.mjs/);
+  assert.match(workflow, /AZURE_OPENAI_ENDPOINT AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA AZURE_OPENAI_RESOURCE_ID/);
+});
+
+test('container model build arguments and environment contain only the approved Astra alias', () => {
+  const allowed = ['VITE_AZURE_OPENAI_ENDPOINT', 'VITE_AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA'];
+  for (const instruction of ['ARG', 'ENV']) {
+    const declared = Array.from(dockerfile.matchAll(
+      new RegExp(`^${instruction} (VITE_(?:AZURE_OPENAI|AZURE_FOUNDRY)_[A-Z0-9_]+)`, 'gm'),
+    ), match => match[1]);
+    assert.deepEqual(declared, allowed, `${instruction} must not reintroduce another model or credentials`);
+  }
+  assert.match(dockerfile, /COPY server\/astra-policy\.js \.\//);
+});
+
+test('the maintained cloud script checks actual Astra identity before build and immediately before update', () => {
+  const modelChecks = Array.from(deployScript.matchAll(/^node .*verify-astra-deployment\.mjs"$/gm));
+  assert.equal(modelChecks.length, 2);
+  assert.ok(modelChecks[0].index! < deployScript.indexOf('\naz acr build '));
+  assert.match(deployScript, /node "\$SOURCE_DIR\/scripts\/verify-astra-deployment\.mjs"\r?\naz containerapp update/);
+  assert.match(deployScript, /export AZURE_OPENAI_ALLOWED_DEPLOYMENTS="\$\{AZURE_OPENAI_ALLOWED_DEPLOYMENTS:-\$AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA\}"/);
+  assert.match(deployScript, /retired_ai_env="\$\(node [^\n]+\)"\r?\n\[\[ -n "\$retired_ai_env" \]\]\r?\nmapfile -t REMOVE_ENV_VARS/);
+  assert.doesNotMatch(deployScript, /AZURE_OPENAI_DEPLOYMENT_(?:GPT5|DEEPSEEK|GROK|KIMI|MISTRAL)|AZURE_FOUNDRY/);
+  assert.match(deployScript, /export ALLOW_BYO_AI_ENDPOINTS="\$\{ALLOW_BYO_AI_ENDPOINTS:-false\}"/);
+  assert.match(deployScript, /"ALLOW_BYO_AI_ENDPOINTS=\$ALLOW_BYO_AI_ENDPOINTS"/);
+});
+
+test('the retired bundled MCP experiment cannot provision a legacy inference application', () => {
+  const source = readFileSync(new URL('../scripts/deploy-mcp-instance.sh', import.meta.url), 'utf8');
+  assert.match(source, /standalone mcp-server\/Dockerfile/);
+  assert.match(source, /^exit 1\s*$/m);
+  assert.doesNotMatch(source, /\baz\s|docker\s|AZURE_OPENAI_DEPLOYMENT_|AZURE_FOUNDRY|ALLOW_BYO_AI_ENDPOINTS/);
 });
 
 test('the container build installs the image parser safeguard before npm ci', () => {

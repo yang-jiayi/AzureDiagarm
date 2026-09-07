@@ -2,6 +2,144 @@
 
 > **Status:** Validated
 
+Generated: 2026-09-07
+
+## 1. Current Release
+
+The user explicitly resumed GitHub publication and production deployment on
+2026-09-07. Publish the completed local application changes from
+`fix/collapsible-icon-palette-20260906`, based on published main
+`a72e702f4dce07781b3a68a246fa6359fbe58d42`.
+
+Include the compact, Draw.io-inspired editor, preserved authored styling,
+Office/web/PNG paint and legend repairs, managed GPT-6 Astra-only catalog,
+enhanced explicit BYO profiles and routing, and completed graph, reliability,
+pricing-maintenance and release safeguards. The separately reported twelve
+baseline export findings remain unfixed; this release does not claim to
+resolve them.
+
+## 2. Scope and Existing Architecture
+
+Update the existing application image and its approved runtime settings only.
+Reuse the existing Container App, environment, registry, Front Door, managed
+identity, storage and OpenAI account. Preserve public-mode authentication,
+application access control, shared Table budget accounting and origin isolation.
+MCP and Azure Import remain disabled.
+
+The existing GitHub and application `ALLOW_BYO_AI_ENDPOINTS` values are both
+`true`; preserve that approved policy. Managed requests must use the verified
+genuine Astra deployment only, while explicitly selected BYO connections retain
+their own credentials, approved endpoints and model selection. Retired managed
+model environment settings must not revive old models during release or rollback.
+
+No new Azure resources, model/capacity/SKU changes, RBAC grants, network changes,
+data migrations, stored-data deletions or Speech authorization changes are
+included. The required Davis Dragon narration remains blocked separately.
+
+## 3. Release Recipe
+
+`recipe.type: azcli`
+
+Use the existing checked-PR-to-main path and the current push-triggered
+`.github/workflows/azurediagarm-sync-deploy.yml`. Do not dispatch upstream
+synchronization or rerun an old workflow as a deployment shortcut. The exact
+validated source, protected-main checks and current-main guards must agree.
+
+The unchanged group-scoped `infra/gpt6-astra.bicep` is used only for current
+Azure consistency validation and what-if. Do not apply that template or the
+historical subscription bootstrap for this application-only release.
+
+## 4. Production Context
+
+Keep the existing `azurediagarm-app` in `AzureDiagarm_rg`, West US, at
+`https://azurediagarm.mssql.biz`, using the existing GitHub OIDC subscription
+and identity. Read-only preflight confirmed that the CLI subscription matches
+the repository release target.
+
+The current healthy baseline is main `a72e702f4dce07781b3a68a246fa6359fbe58d42`,
+revision `azurediagarm-app--g34024872580-1`, with 100% latest-revision traffic and
+1-2 replicas. Its image is
+`sqlserverevoacr.azurecr.io/azurediagarm/app:u71ef7e82e354-ca72e702f4dce-20260906094914`.
+Retain the workflow's rollback receipt and guarded rollback behavior.
+
+## 5. Preparation and Validation Steps
+
+- [x] Confirm explicit publication authorization and preserve existing work.
+- [x] Confirm the same current main, target application, subscription and region.
+- [x] Preserve BYO policy, managed Astra, authentication and budget boundaries.
+- [x] All validation checks pass.
+  - [x] Core AZCLI validation: CLI/auth, Bicep compile, ARM validate and what-if.
+  - [x] Docker build/context and current-source standalone/combined runtime gates.
+  - [x] Applicable Azure policy validation; no policy changes or exemptions.
+  - [x] Static role review; no additional grants are needed by this release.
+  - [x] Complete local source/server/MCP validation and release-guard review.
+  - [x] Required protected-main Linux build/browser/CodeQL checks.
+- [x] Record final evidence and validated source before merging for deployment.
+
+## 6. Deployment Steps
+
+Commit only the reviewed release inputs, create a checked PR, and merge only
+after current-source gates pass. Monitor the resulting main-triggered workflow,
+then confirm the deployed source/image/revision, readiness, authentication
+boundaries, genuine Astra binding and preserved BYO policy.
+
+No branch protections, required checks, identity boundaries or deployment guards
+may be weakened to complete this release.
+
+## 7. Validation Proof
+
+Current-release validation is complete for application source
+`36623c21250f12aefc353978ccdf5196a5620a1f`. All six required checks pass,
+including the complete Linux browser-safeguard chain and both runtime images.
+Subsequent validation-record and browser-fixture corrections must satisfy the
+same protected-main checks before merge. They do not change the validated
+application or infrastructure code. Historical release records below do not
+authorize this candidate.
+
+Evidence timestamps on 2026-09-07 (UTC): final source CI completed at
+14:22:13, and final source CodeQL completed at 14:13:14.
+
+The completed local UI/export integration already includes the normal build,
+125 targeted units, 27 normal-build browser cases, four separately configured
+managed-Astra browser cases, fourteen offline HTML cases, and native PowerPoint
+paint/legend evidence. Those targeted results are not a substitute for the
+complete current-source and protected-main release gates.
+
+| Check | Current result | Evidence |
+| --- | --- | --- |
+| Existing target and rollback baseline | Current CLI subscription agrees with GitHub release variables. Existing application is Succeeded at the recorded PR #66 image/revision, 100% latest traffic, 1-2 replicas. Health returns 200; unauthenticated root returns the expected protected 401 | Read-only `az account show`, allowlisted `az containerapp show`, selected non-secret GitHub variables and public HTTP probes on 2026-09-07 |
+| Existing AI and application policy | Genuine `gpt-6-astra` v2026-09-03, GlobalStandard 50 is Succeeded. Both configured BYO flags are already true; application access control, public mode and Table budget remain enabled. MCP/Azure Import remain disabled | Read-only deployment and application projections; no setting or role changes |
+| Bootstrap syntax | Updated `infra/main.bicep` and its modules compile. This bootstrap is not applied | `az bicep build --file infra/main.bicep` with output outside the worktree |
+| Core AZCLI consistency | All five official helper checks pass against a hash-matched copy of `infra/gpt6-astra.bicep` with the live account and capacity. Structured what-if has 15 Ignore and one Modify for omitted service-reported `properties.currentCapacity`; no resource creates/deletes. The helper's text counters also count property deltas and are not resource-deletion evidence | `validate-deployment.ps1 -Scope group -ResourceGroup AzureDiagarm_rg`; separate structured `az deployment group what-if --no-pretty-print`; no template apply |
+| Applicable Azure policy | Subscription and inherited management-group assignments retrieved with Azure MCP. Actual deny conditions cover unrelated classic/VM/VMSS/AKS/SQL/HSM/Sentinel resources or ProvisionedManaged OpenAI capacity, not this app-only update or unchanged GlobalStandard model | Azure MCP `policy_assignment_list` and read-only definition/set-definition reads; no exemptions or governance changes |
+| Existing runtime roles | Registry-scoped AcrPull, account-scoped Cognitive Services OpenAI User and storage-scoped Blob/Table data contributors are already assigned to the runtime identity. Existing ancillary roles are unchanged | Read-only role assignment projection; static source review and post-deployment comparison remain required |
+| Static role review | Independent release review confirmed the existing runtime identity, resource-scoped AcrPull, OpenAI User and Blob/Table data roles cover this release. No grants or scope expansion are indicated | `infra/resources.bicep`, `infra/openai-role.bicep`, `infra/main.bicep`; existing live roles match |
+| Complete local source gates | All 1,192 application units, 245 server cases and 71 MCP cases pass; full lint, production audit gates and MCP build pass with unchanged generated inputs. The final application build and script typecheck pass | Existing npm/tsx commands; final full application units used `--test-concurrency=1` after a Windows Node 24 transport failure under concurrent workload |
+| BYO responsive correction | Full units exposed one noncanonical 520px media query. It now uses the existing 640px compact breakpoint. Both form grids switch correctly at 640/641px, without horizontal overflow or WCAG violations; the four existing managed/BYO policy cases also pass | `tests/breakpoints.test.ts` and the actual browser boundary regression; no assertion or timeout weakening |
+| Release model-version correction | Independent release review identified a missing version comparison. The guard now rejects missing, different, empty, null or numeric versions and requires `2026-09-03`, with a regression tying that constant to the model template. The corrected helper also passes against live ARM account/deployment metadata | Ten deployment-security cases and 82 source/workflow/rollback cases pass; scoped lint passes; no model or Azure resource modification |
+| Explicit account reference | Added the missing non-secret `AZURE_OPENAI_RESOURCE_ID` GitHub variable for the already verified production account. Existing endpoint, deployment alias and BYO policy are unchanged | Exact read-back matches the verified account; no credentials, role grants or alternative target introduced |
+| Initial clean Linux candidate | PR #70 head `fd23bce` passes build/lint, complete application core and Office/workspace tests, standalone MCP image and all three CodeQL analyses. CI exposed two fixture portability defects: an unawaited Node 22 subtest and a Windows-specific greedy Japanese line split. The subtest is now explicitly awaited; the text regression checks the broken-word baseline while retaining its exact balanced result and geometry checks | CI `34127439136`, CodeQL `34127436142`; this historical blocked candidate is superseded by the final passing source below |
+| Corrected Linux source and containers | Head `412fba8` passes the complete Vite/core/Office/workspace/server job, both container builds, runtime readiness, standalone MCP and CodeQL. All 132 critical browser cases pass. The subsequent workspace script still tried to open the intentionally removed multi-model comparison UI | CI `34129212118`, CodeQL `34129209058`; application and container job succeeds, browser-safeguards job stops at the obsolete control |
+| Current-workflow browser coverage | Replaced that obsolete comparison sequence with the supported managed-Astra validation flow, retaining malformed-review recovery before/after edits, stale-review history protection and exact dispatch assertions. All four existing local browser-safeguard commands now pass; the workspace run retains all 36 responsive header cases and its 220px limit | `npm run test:workspace:browser`, `npm run test:ai-ui`, `npm run test:inspector-ui`, `npm run test:modal-focus`; the same complete chain also passes in the final Linux run |
+| Final exact-source protected checks | All six required checks pass for `36623c21250f12aefc353978ccdf5196a5620a1f`: Vite application, standalone MCP, complete critical-browser and workspace/AI/inspector/modal safeguards, and actions/JavaScript-TypeScript/Python CodeQL. Core/Office/server tests, generated-input checks, both images and runtime readiness complete successfully | PR #70; CI `34131505914`, CodeQL `34131501864`; `gh pr checks 70 --required --watch` exits 0 |
+| Post-record fixture timing correction | The documentation-only head `12f2fb4` passes core/container/CodeQL and critical-browser/workspace tests, but its AI UI run exposes a queued React fixture render racing the deferred reply. Reproduced that ordering, then used the existing `h.commitRender()` helper before settling the reply in the same browser task. All 70 AI UI cases, scoped lint and script typecheck pass locally; application code and rejection assertions are unchanged | CI `34132936809`; deterministic failing control followed by passing `npm run test:ai-ui`, scoped ESLint and `npm run typecheck:scripts`; the corrected final PR head must pass all protected checks before deployment |
+
+## 8. Rollback and Limitations
+
+Retain the current image/revision and use only this release's guarded rollback
+path if needed. Never restore retired managed deployments or weaken BYO,
+authentication or budget policy as a workaround.
+
+Deployment success does not establish recovery of the earlier upstream Astra
+inference incident. Browser AI fixtures are mocked, native Visio remains
+unavailable, and the twelve export-assessment findings remain explicitly open.
+
+---
+
+# Historical PR #66 Validation Record
+
+> **Status:** Validated
+
 Generated: 2026-09-06
 
 ## 1. Current Release

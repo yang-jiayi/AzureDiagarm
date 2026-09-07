@@ -44,7 +44,17 @@
 .canvas-container .react-flow__controls {
   bottom: var(--canvas-chrome-edge);
   left: var(--canvas-chrome-edge);
-  box-shadow: var(--azd-shadow-sm);
+  margin: 0;
+  border: 1px solid var(--azd-color-control-border);
+  border-radius: 4px;
+  box-shadow: none;
+  overflow: hidden;
+}
+
+.canvas-container .react-flow__controls-button {
+  box-sizing: border-box;
+  width: 32px;
+  height: 32px;
 }
 
 .canvas-container .legend {
@@ -82,11 +92,19 @@
 .react-flow__minimap.nav-minimap {
   right: var(--canvas-chrome-edge) !important;
   bottom: var(--canvas-feedback-clearance) !important;
+  box-sizing: content-box;
+  margin: 0;
   border: 1px solid var(--azd-color-brand-border);
   border-radius: var(--azd-radius-md);
-  box-shadow: var(--azd-shadow-md);
+  box-shadow: none;
   cursor: grab;
-  overflow: visible;
+  overflow: hidden;
+}
+
+.react-flow__minimap.nav-minimap > svg {
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
 }
 
 .react-flow__minimap.nav-minimap:active {
@@ -127,7 +145,7 @@
   background: var(--azd-color-surface-inverse-glass);
   color: var(--azd-color-text-inverse);
   border: 1px solid var(--azd-color-brand-border);
-  border-radius: var(--azd-radius-pill);
+  border-radius: 4px;
   box-shadow: var(--azd-shadow-md);
   font-size: 0.8rem;
   line-height: 1;
@@ -298,6 +316,16 @@
     --canvas-title-top: 120px;
   }
 
+  .canvas-container .react-flow__controls-button,
+  .canvas-container .title-block-toggle {
+    width: 44px;
+    height: 44px;
+  }
+
+  .canvas-container .legend-header {
+    min-height: 44px;
+  }
+
   .canvas-container .legend.collapsed {
     max-width: calc(
       100%
@@ -309,36 +337,42 @@
 
   .canvas-nav-hint {
     right: var(--canvas-chrome-edge);
-    left: 144px;
+    left: var(--canvas-chrome-edge);
     max-width: none;
     padding: 6px 7px 6px 9px;
     gap: 4px;
   }
 
-  .canvas-nav-hint-desktop {
+  .canvas-nav-hint .canvas-nav-hint-desktop {
     display: none;
   }
 
-  .canvas-nav-hint-mobile {
+  .canvas-nav-hint .canvas-nav-hint-mobile {
     display: inline-flex;
   }
 
-  .canvas-nav-hint-tips {
+  .canvas-nav-hint .canvas-nav-hint-tips {
     flex-wrap: nowrap;
     gap: 4px;
     min-width: 0;
   }
 
-  .canvas-nav-hint-tip {
+  .canvas-nav-hint .canvas-nav-hint-tip {
     min-width: 0;
     white-space: normal;
     font-size: 0.7rem;
     line-height: 1.2;
   }
 
-  .canvas-nav-hint-fit {
+  .canvas-nav-hint .canvas-nav-hint-fit {
+    min-height: 44px;
     padding: 4px 7px;
     font-size: 0.7rem;
+  }
+
+  .canvas-nav-hint .canvas-nav-hint-close {
+    width: 44px;
+    height: 44px;
   }
 
   .react-flow__minimap.nav-minimap {

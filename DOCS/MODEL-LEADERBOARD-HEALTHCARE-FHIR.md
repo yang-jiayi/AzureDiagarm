@@ -1,5 +1,9 @@
 # Model Comparison — Multi‑Critic Leaderboard (Healthcare FHIR prompt)
 
+> Historical benchmark, retained with its original model identities. This is not
+> the current model lineup or a recommendation to enable alternatives: the app
+> now uses the [managed Astra and BYO policy](../README.md#ai-model-policy).
+
 **Generated:** 2026-07-14
 **Prompt under test:** *A healthcare data platform with FHIR API, HIPAA‑compliant storage, real‑time patient monitoring, Azure Health Data Services, and Power BI for clinical dashboards*
 **Method:** The same 14 model‑generated architectures were each ranked by **5 different critic models**. Averaging the ranks cancels out per‑critic bias and separates signal from judge‑dependent noise.

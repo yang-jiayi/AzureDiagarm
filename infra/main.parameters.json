@@ -14,15 +14,6 @@
     "azureOpenAiResourceId": {
       "value": "${AZURE_OPENAI_RESOURCE_ID}"
     },
-    "allowByoAIEndpoints": {
-      "value": false
-    },
-    "azureFoundryEndpoint": {
-      "value": "${AZURE_FOUNDRY_ENDPOINT}"
-    },
-    "azureFoundryResourceId": {
-      "value": "${AZURE_FOUNDRY_RESOURCE_ID}"
-    },
     "feedbackEmailEndpoint": {
       "value": "${FEEDBACK_EMAIL_ENDPOINT}"
     },
@@ -48,44 +39,11 @@
     "aiBudgetTable": { "value": "${AZURE_TABLES_BUDGET_TABLE}" },
     "easyAuthVerified": { "value": false },
     "feedbackLegacyRetentionEnabled": { "value": false },
-    "openAiDeploymentGpt51": {
-      "value": "${AZURE_OPENAI_DEPLOYMENT_NAME}"
-    },
-    "openAiDeploymentGpt52": {
-      "value": "${AZURE_OPENAI_DEPLOYMENT_GPT52}"
-    },
-    "openAiDeploymentGpt52Codex": {
-      "value": "${AZURE_OPENAI_DEPLOYMENT_GPT52CODEX}"
-    },
-    "openAiDeploymentGpt53Codex": {
-      "value": "${AZURE_OPENAI_DEPLOYMENT_GPT53CODEX}"
-    },
-    "openAiDeploymentGpt54": {
-      "value": "${AZURE_OPENAI_DEPLOYMENT_GPT54}"
-    },
-    "openAiDeploymentGpt54Mini": {
-      "value": "${AZURE_OPENAI_DEPLOYMENT_GPT54MINI}"
-    },
     "openAiDeploymentGpt6Astra": {
       "value": "${AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA}"
     },
-    "openAiDeploymentGpt56Sol": {
-      "value": "${AZURE_OPENAI_DEPLOYMENT_GPT56SOL}"
-    },
-    "openAiDeploymentGpt56Terra": {
-      "value": "${AZURE_OPENAI_DEPLOYMENT_GPT56TERRA}"
-    },
-    "openAiDeploymentGpt56Luna": {
-      "value": "${AZURE_OPENAI_DEPLOYMENT_GPT56LUNA}"
-    },
-    "foundryDeploymentClaudeOpus5": {
-      "value": "${AZURE_FOUNDRY_DEPLOYMENT_CLAUDE_OPUS5}"
-    },
-    "openAiDeploymentDeepSeek": {
-      "value": "${AZURE_OPENAI_DEPLOYMENT_DEEPSEEK}"
-    },
-    "openAiDeploymentGrokFast": {
-      "value": "${AZURE_OPENAI_DEPLOYMENT_GROK4FAST}"
+    "allowByoAIEndpoints": {
+      "value": false
     },
     "deploySpeech": {
       "value": true
