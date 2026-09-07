@@ -557,58 +557,34 @@ try {
   await expect(validation).toHaveCount(0);
   assert.deepEqual((await readSavedDocument()).reviewHistory, historyBeforeFailure);
   await page.locator('.workspace-notice').getByRole('button', { name: 'Close', exact: true }).click();
-  await page.getByRole('button', { name: 'Compare Validation', exact: true }).click();
-  const comparison = page.getByRole('dialog', { name: 'Compare Validation', exact: true });
-  const modelChips = comparison.locator('.compare-model-chip');
-  await expect(modelChips.first()).toBeVisible();
-  for (let index = 0; index < await modelChips.count(); index += 1) {
-    const chip = modelChips.nth(index);
-    const name = await chip.locator('.compare-model-chip-name').textContent();
-    const wanted = ['GPT-6 Astra', 'GPT-5.2'].includes(name?.trim() ?? '');
-    const selected = (await chip.getAttribute('class')).split(' ').includes('selected');
-    if (wanted !== selected) await chip.click();
-  }
-  await expect(comparison.locator('.compare-model-chip.selected')).toHaveCount(2);
-  await comparison.locator('.compare-run-btn').click();
-  await expect(comparison.getByRole('button', { name: 'Use This Validation', exact: true })).toHaveCount(2, { timeout: 30000 });
-  await comparison.getByRole('button', { name: 'Use This Validation', exact: true }).first().click();
-  await expect(comparison.getByRole('alert')).toContainText('This review could not be applied.');
-  await expect(validation).toHaveCount(0);
-  assert.deepEqual((await readSavedDocument()).reviewHistory, historyBeforeFailure);
-  await comparison.getByRole('button', { name: 'Close', exact: true }).first().click();
+  await expect(page.getByRole('button', { name: /^(Compare Validation|Compare Models)$/ })).toHaveCount(0);
   await page.locator('.node-label').first().dblclick();
   await page.locator('.node-label-input').fill('Customer Portal v3');
   await page.locator('.node-label-input').press('Enter');
-  await page.getByRole('button', { name: 'Compare Validation', exact: true }).click();
-  await comparison.getByRole('button', { name: 'Use This Validation', exact: true }).first().click();
-  await expect(comparison.getByRole('alert')).toContainText('This review could not be applied.');
+  await page.getByRole('button', { name: 'Validate Architecture', exact: true }).click();
+  await expect(page.locator('.workspace-notice')).toContainText('Failed to validate architecture:', { timeout: 30000 });
   await expect(validation).toHaveCount(0);
   assert.deepEqual((await readSavedDocument()).reviewHistory, historyBeforeFailure);
-  await comparison.getByRole('button', { name: 'Close', exact: true }).first().click();
   await page.locator('.workspace-notice').getByRole('button', { name: 'Close', exact: true }).click();
 
   invalidValidation = false;
-  await page.getByRole('button', { name: 'Compare Validation', exact: true }).click();
-  await comparison.getByRole('button', { name: 'New Comparison', exact: true }).click();
-  await comparison.locator('.compare-run-btn').click();
-  await expect(comparison.getByRole('button', { name: 'Use This Validation', exact: true })).toHaveCount(2, { timeout: 30000 });
-  await comparison.getByRole('button', { name: 'Close', exact: true }).first().click();
+  await page.getByRole('button', { name: 'Validate Architecture', exact: true }).click();
+  await expect(historySummary).toBeVisible({ timeout: 60000 });
+  await expect(validation.getByText('This review is out of date.', { exact: true })).toHaveCount(0);
+  await validation.getByRole('button', { name: 'Close', exact: true }).first().click();
   await page.locator('.node-label').first().dblclick();
   await page.locator('.node-label-input').fill('Customer Portal v4');
   await page.locator('.node-label-input').press('Enter');
-  await page.getByRole('button', { name: 'Compare Validation', exact: true }).click();
-  await comparison.getByRole('button', { name: 'Use This Validation', exact: true }).first().click();
+  await expect.poll(async () => (await readSavedDocument()).nodes[0]?.data?.label).toBe('Customer Portal v4');
+  const historyBeforeStale = (await readSavedDocument()).reviewHistory;
+  await page.getByRole('button', { name: 'Revalidate Needed', exact: true }).click();
   await expect(validation.getByText('This review is out of date.', { exact: true })).toBeVisible();
-  assert.deepEqual((await readSavedDocument()).reviewHistory, historyBeforeFailure, 'Stale comparison results must not rewrite review history.');
+  assert.deepEqual((await readSavedDocument()).reviewHistory, historyBeforeStale, 'Opening stale results must not rewrite review history.');
   await validation.getByRole('button', { name: 'Close', exact: true }).first().click();
-  assert.equal(validationRequests, 7);
-  assert.deepEqual(validationDeployments.slice(0, 3), Array.from({ length: 3 }, () => ({
+  assert.equal(validationRequests, 5);
+  assert.deepEqual(validationDeployments, Array.from({ length: 5 }, () => ({
     deployment: 'workspace-test-astra', model: 'workspace-test-astra',
-  })), 'Default validation must route to the configured Astra deployment, not just display its label.');
-  for (const comparisonRequests of [validationDeployments.slice(3, 5), validationDeployments.slice(5, 7)]) {
-    assert.deepEqual(comparisonRequests.map(request => request.deployment).sort(), ['workspace-test-astra', 'workspace-test-model']);
-    assert.ok(comparisonRequests.every(request => request.model === request.deployment));
-  }
+  })), 'Every validation must route to the configured Astra deployment, not just display its label.');
 
   const quickFeedback = page.getByRole('dialog', { name: 'Quick feedback', exact: true });
   await quickFeedback.getByRole('radio', { name: 'Happy', exact: true }).click();
@@ -837,7 +813,7 @@ try {
   assert.deepEqual(proposalDeployments, Array.from({ length: 3 }, () => ({
     deployment: 'workspace-test-astra', model: 'workspace-test-astra',
   })), 'Regeneration and snapshot retries must retain real Astra routing without duplicate generation requests.');
-  console.log(JSON.stringify({ storage, startupHydrations: startupAttempts, headerHeight, responsiveHeaderChecks: responsiveHeaderHeights.length, maximumResponsiveHeaderHeight: Math.max(...responsiveHeaderHeights), protectedReloads, undo: true, groupedEdgeDrag: true, draftRecovery: true, modalFocus: true, keyboardImport: true, aiReview: true, snapshotFailure: true, serviceInspector: true, regionalPricing: true, wafReview: true, staleComparison: true, invalidReviewRecovery: true, feedbackPrivacy: true, aiBudget: true, concurrentTabs: true, cloudBindingHistory: true, completeRegionalRanking: true, partialRegionalRankingSuppressed: true }, null, 2));
+  console.log(JSON.stringify({ storage, startupHydrations: startupAttempts, headerHeight, responsiveHeaderChecks: responsiveHeaderHeights.length, maximumResponsiveHeaderHeight: Math.max(...responsiveHeaderHeights), protectedReloads, undo: true, groupedEdgeDrag: true, draftRecovery: true, modalFocus: true, keyboardImport: true, aiReview: true, snapshotFailure: true, serviceInspector: true, regionalPricing: true, wafReview: true, staleReview: true, invalidReviewRecovery: true, feedbackPrivacy: true, aiBudget: true, concurrentTabs: true, cloudBindingHistory: true, completeRegionalRanking: true, partialRegionalRankingSuppressed: true }, null, 2));
 } catch (error) {
   console.error('Workspace browser diagnostics:', getBrowserDiagnostics());
   if (workspacePage && !workspacePage.isClosed() && artifacts) {
