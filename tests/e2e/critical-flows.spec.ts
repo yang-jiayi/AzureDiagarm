@@ -3246,7 +3246,11 @@ test('Japanese service labels avoid orphan characters without changing diagram g
 
   const greedyStyle = await page.addStyleTag({ content: '.node-label { text-wrap: wrap; }' });
   await expect(label).toHaveCSS('text-wrap', 'wrap');
-  expect(await lines()).toEqual(['顧客向け Web アプ', 'リ']);
+  // System fonts split the greedy word at different characters.
+  const greedyLines = await lines();
+  expect(greedyLines).toHaveLength(2);
+  expect(greedyLines.join('')).toBe('顧客向け Web アプリ');
+  expect(greedyLines.every(line => !line.includes('アプリ'))).toBe(true);
   const beforeNode = await node.boundingBox();
   const beforeLabel = await label.boundingBox();
   const beforeRoute = await path.getAttribute('d');

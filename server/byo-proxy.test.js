@@ -417,7 +417,7 @@ test('BYO transport/redirect rejection and malformed usage keep reservations wit
     fetchImpl: async (_url, init) => { assert.equal(init.redirect, 'error'); return outcomes.shift()(); },
   });
 
-  test('cancelling during a BYO reservation prevents dispatch and releases the unused lease', async t => {
+  await t.test('cancelling during a BYO reservation prevents dispatch and releases the unused lease', async t => {
     let entered;
     const started = new Promise(resolve => { entered = resolve; });
     let release;
