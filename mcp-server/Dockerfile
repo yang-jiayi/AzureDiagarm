@@ -12,7 +12,7 @@
 #   docker build -f mcp-server/Dockerfile -t aadb-mcp .
 
 # ── Build stage ──────────────────────────────────────────────────────────────
-FROM node:22-alpine@sha256:c610fcdfb1d5b4740dd70c284ed3cb16bb857e0f7166196e36a5501df7a3aa32 AS build
+FROM node:26-alpine@sha256:ef24c5053d50fdc3e4e56eb4e7ddb7861874ab0fdc797046ba897581deb8e868 AS build
 WORKDIR /app/mcp-server
 
 # Install deps first for better layer caching.
@@ -35,7 +35,7 @@ COPY Azure_Public_Service_Icons /app/Azure_Public_Service_Icons
 RUN npm run build
 
 # ── Runtime stage ────────────────────────────────────────────────────────────
-FROM node:22-alpine@sha256:c610fcdfb1d5b4740dd70c284ed3cb16bb857e0f7166196e36a5501df7a3aa32 AS runtime
+FROM node:26-alpine@sha256:ef24c5053d50fdc3e4e56eb4e7ddb7861874ab0fdc797046ba897581deb8e868 AS runtime
 WORKDIR /srv/mcp-server
 
 ENV NODE_ENV=production \
