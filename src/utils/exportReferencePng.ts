@@ -24,6 +24,7 @@ import { readTextAsset, svgToDataUrl } from './assetSource';
 import { calculateReferenceCanvasWidth } from './publicationLayout';
 
 export interface ExportReferencePngOptions {
+  signal?: AbortSignal;
   /** Filename (without extension) for the downloaded PNG. */
   fileName?: string;
   /** Optional fixed canvas width. By default the content determines the width. */
@@ -47,7 +48,9 @@ export async function exportReferenceArchitectureAsPng(
     width,
     author,
     pixelRatio = 2,
+    signal,
   } = options;
+  signal?.throwIfAborted();
   const resolvedWidth = calculateReferenceCanvasWidth(data, width);
 
   // 1. Pre-resolve every icon URL up front and inline as a data: URL.
@@ -55,6 +58,7 @@ export async function exportReferenceArchitectureAsPng(
   //    before we capture — no async race with React effects or dynamic imports.
   const iconMap = await preloadIconMap(data);
   const actorIconUrl = await preloadActorIcon();
+  signal?.throwIfAborted();
 
   // 2. Create a detached host positioned far off-screen.
   const host = document.createElement('div');
@@ -103,6 +107,7 @@ export async function exportReferenceArchitectureAsPng(
       backgroundColor: '#ffffff',
       pixelRatio,
     });
+    signal?.throwIfAborted();
 
     // 7. Trigger download.
     triggerDownload(dataUrl, `${fileName}.png`);

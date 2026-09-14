@@ -561,7 +561,7 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
         try {
           const { exportReferenceArchitectureAsPng } = await import('../utils/exportReferencePng');
           ensureActive();
-          await exportReferenceArchitectureAsPng(ref);
+          await exportReferenceArchitectureAsPng(ref, { signal: controller.signal });
         } catch (err) {
           ensureActive();
           console.warn('Reference architecture PNG export failed:', err);
@@ -593,7 +593,7 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
         try {
           const { exportBlueprintArchitectureAsPng } = await import('../utils/exportBlueprintPng');
           ensureActive();
-          await exportBlueprintArchitectureAsPng(bp, { legendPosition });
+          await exportBlueprintArchitectureAsPng(bp, { legendPosition, signal: controller.signal });
         } catch (err) {
           ensureActive();
           console.warn('Blueprint architecture PNG export failed:', err);
@@ -790,7 +790,7 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
           try {
             const { exportBlueprintArchitectureAsPng } = await import('../utils/exportBlueprintPng');
             ensureActive();
-            await exportBlueprintArchitectureAsPng(bpResult, { legendPosition });
+            await exportBlueprintArchitectureAsPng(bpResult, { legendPosition, signal: controller.signal });
           } catch (err) {
             ensureActive();
             console.warn('Blueprint architecture PNG export failed:', err);

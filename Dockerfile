@@ -84,6 +84,7 @@ COPY server/package*.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 COPY server/token-server.js server/openai-proxy.js server/rate-limiter.js server/access-control.js server/arm-key-vault-access-store.js server/async-handler.js server/diagram-api.js server/feedback-configuration.js server/graceful-shutdown.js server/readiness.js server/deployment-security.js server/ai-budget.js server/feedback.js ./
 COPY server/astra-policy.js ./
+COPY server/ai-http.js server/ai-jobs.js ./
 
 # Set up the MCP HTTP server (streamable HTTP transport on port 3030).
 WORKDIR /srv/mcp-server

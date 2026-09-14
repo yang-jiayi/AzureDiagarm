@@ -1,4 +1,4 @@
-import { expect, test, type Download } from '@playwright/test';
+import { expect, test, type Download, type Page } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 
 async function expectPng(download: Download) {
@@ -12,6 +12,21 @@ async function expectPng(download: Download) {
   expect(bytes.readUInt32BE(16)).toBeGreaterThan(600);
   expect(bytes.readUInt32BE(20)).toBeGreaterThan(300);
   expect(bytes.length).toBeGreaterThan(5000);
+}
+
+async function mockSupportAPIs(page: Page) {
+  await page.route('**/api/**', route => {
+    const path = new URL(route.request().url()).pathname;
+    const replies: Record<string, unknown> = {
+      '/api/access/me': { enabled: false, authenticated: false, allowed: true, isAdmin: false },
+      '/api/runtime-config': { features: { bringYourOwnAI: true } },
+      '/api/ai/budget': { available: true, concurrentRequests: 0, concurrentLimit: 2, remainingTokens: 250000, limitTokens: 250000, usedTokens: 0, reservedTokens: 0 },
+    };
+    return route.fulfill({
+      status: Object.hasOwn(replies, path) ? 200 : 404,
+      contentType: 'application/json', body: JSON.stringify(replies[path] ?? { error: 'Not found' }),
+    });
+  });
 }
 
 test('MAX blueprint generation displays async progress and delivers a real PNG from the separately retrieved result', async ({ page }) => {
@@ -104,14 +119,7 @@ test('MAX blueprint generation displays async progress and delivers a real PNG f
 });
 
 test('detached editorial PNG rendering has its own language context and cleans up after download', async ({ page }) => {
-  await page.route('**/api/**', route => {
-    const path = new URL(route.request().url()).pathname;
-    const body = path === '/api/access/me'
-      ? { enabled: false, authenticated: false, allowed: true, isAdmin: false }
-      : path === '/api/runtime-config' ? { features: { bringYourOwnAI: true } }
-        : { available: true, concurrentRequests: 0, concurrentLimit: 2, remainingTokens: 250000, limitTokens: 250000, usedTokens: 0, reservedTokens: 0 };
-    return route.fulfill({ contentType: 'application/json', body: JSON.stringify(body) });
-  });
+  await mockSupportAPIs(page);
   await page.goto('/');
   const downloading = page.waitForEvent('download', { predicate: value => value.suggestedFilename() === 'async-editorial-test.png' });
   await page.evaluate(async () => {
@@ -125,3 +133,53 @@ test('detached editorial PNG rendering has its own language context and cleans u
   await expectPng(await downloading);
   await expect(page.locator('[data-ref-arch-export-host]')).toHaveCount(0);
 });
+
+for (const mode of ['blueprint', 'reference'] as const) {
+  test(`${mode} cancellation during real PNG encoding prevents late downloads and removes the detached root`, async ({ page }) => {
+    await mockSupportAPIs(page);
+    await page.goto('/');
+    const result = await page.evaluate(async mode => {
+      const controller = new AbortController();
+      const originalEncode = HTMLCanvasElement.prototype.toDataURL;
+      const originalClick = HTMLAnchorElement.prototype.click;
+      let downloads = 0;
+      let encoded = false;
+      let errorName = '';
+      HTMLCanvasElement.prototype.toDataURL = function(type, quality) {
+        const output = originalEncode.call(this, type, quality);
+        encoded = true;
+        controller.abort();
+        return output;
+      };
+      HTMLAnchorElement.prototype.click = function() {
+        if (this.download) downloads++;
+        else originalClick.call(this);
+      };
+      try {
+        if (mode === 'blueprint') {
+          const exporter = await import('/src/utils/exportBlueprintPng.ts');
+          await exporter.exportBlueprintArchitectureAsPng({
+            title: 'Cancelled blueprint',
+            canvas: { width: 800, height: 500 }, zones: [],
+            nodes: [{ id: 'functions', name: 'Azure Functions', category: 'compute', x: 200, y: 200 }], edges: [],
+          }, { signal: controller.signal });
+        } else {
+          const exporter = await import('/src/utils/exportReferencePng.ts');
+          await exporter.exportReferenceArchitectureAsPng({
+            title: 'Cancelled reference',
+            stages: [{ id: 'compute', label: 'Compute', services: [{ id: 'functions', name: 'Azure Functions', category: 'compute' }] }],
+            connections: [],
+          }, { signal: controller.signal });
+        }
+      } catch (error) {
+        errorName = error instanceof Error ? error.name : 'unknown';
+      } finally {
+        HTMLCanvasElement.prototype.toDataURL = originalEncode;
+        HTMLAnchorElement.prototype.click = originalClick;
+      }
+      return { encoded, downloads, errorName };
+    }, mode);
+    expect(result).toEqual({ encoded: true, downloads: 0, errorName: 'AbortError' });
+    await expect(page.locator('[data-bp-arch-export-host], [data-ref-arch-export-host]')).toHaveCount(0);
+  });
+}
