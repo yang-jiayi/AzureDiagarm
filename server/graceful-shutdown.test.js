@@ -11,6 +11,7 @@ test('graceful shutdown drains an active request before completing', async () =>
   const started = new Promise((resolve) => {
     requestStarted = resolve;
   });
+
   let releaseRequest;
   const release = new Promise((resolve) => {
     releaseRequest = resolve;
@@ -50,4 +51,24 @@ test('graceful shutdown drains an active request before completing', async () =>
   assert.equal(await response.text(), 'done');
   await exited;
   assert.equal(exitCode, 0);
+});
+
+test('shutdown also awaits background job persistence after HTTP has drained', async () => {
+  let finishJobs;
+  let closeHttp;
+  let exited;
+  const jobs = new Promise(resolve => { finishJobs = resolve; });
+  const exit = new Promise(resolve => { exited = resolve; });
+  const shutdown = createGracefulShutdown({
+    close: callback => { closeHttp = callback; }, closeIdleConnections() {},
+  }, { drain: () => jobs, exit: exited, logger: { info() {}, error() {} } });
+  shutdown('SIGTERM');
+  let completed = false;
+  exit.then(() => { completed = true; });
+  const closing = closeHttp();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(completed, false);
+  finishJobs();
+  await closing;
+  assert.equal(await exit, 0);
 });

@@ -16,7 +16,7 @@ class BudgetError extends Error {
 }
 
 class MemoryBudgetStore {
-  constructor() { this.documents = new Map(); }
+  constructor({ now = Date.now } = {}) { this.documents = new Map(); this.now = now; }
   async read(id) {
     const item = this.documents.get(id);
     return item ? structuredClone(item) : null;
@@ -26,7 +26,7 @@ class MemoryBudgetStore {
     if (current?._etag !== etag) throw Object.assign(new Error('Conflict'), { code: 412 });
     this.documents.set(doc.id, structuredClone({ ...doc, _etag: crypto.randomUUID() }));
     for (const [id, value] of this.documents) {
-      if (value.expiresAt <= Date.now()) this.documents.delete(id);
+      if (value.expiresAt <= this.now()) this.documents.delete(id);
     }
   }
 }
@@ -151,6 +151,12 @@ function createBudgetManager({ store, dailyTokens = 250_000, concurrency = 2, no
       doc.usedTokens += tokens;
       doc.leases[lease.id] = lease;
       return lease;
+    }),
+    renew: (id, lease) => mutate(id, (doc, time) => {
+      if (!doc.leases[lease.id]) {
+        throw new BudgetError('ai_budget_lease_lost', 'The AI reservation expired. This request cannot continue safely.', 0, 503);
+      }
+      doc.leases[lease.id].expiresAt = time + leaseMs;
     }),
     settle: (id, lease, actualTokens) => mutate(id, doc => {
       if (!doc.leases[lease.id]) return;

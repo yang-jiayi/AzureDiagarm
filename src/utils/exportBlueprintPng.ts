@@ -11,6 +11,7 @@
  */
 
 import React from 'react';
+import { LanguageProvider } from '../i18n/LanguageContext';
 import { createRoot, Root } from 'react-dom/client';
 import BlueprintArchitectureCanvas from '../components/BlueprintArchitectureCanvas';
 import type { BlueprintArchitecture } from '../services/blueprintArchitectureAI';
@@ -86,13 +87,13 @@ export async function exportBlueprintArchitectureAsPng(
   try {
     root = createRoot(host);
     root.render(
-      React.createElement(BlueprintArchitectureCanvas, {
+      React.createElement(LanguageProvider, { children: React.createElement(BlueprintArchitectureCanvas, {
         data,
         author,
         iconMap,
         personaIconUrl,
         legendPosition: resolvedLegend,
-      }),
+      }) }),
     );
 
     const canvasEl = await waitForElement(host, '[data-bp-arch-canvas="true"]', 2000);

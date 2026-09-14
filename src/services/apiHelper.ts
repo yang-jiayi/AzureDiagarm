@@ -7,6 +7,7 @@ import { getBYOAISettings, normalizeBYOAIEndpoint, validateBYOAIProfile } from '
 import { isValidBYOAIApiKey, readBYOAIConnectionSecret } from './byoAIConnectionSession';
 import { assertCapturedAIConnectionCurrent, type CapturedAIConnection } from './aiModelRuntime';
 import { awaitWithAISignal, isBYOAIEnabledOnServer, runtimeConfigCancellationError } from './runtimeConfig';
+import { fetchAIJob } from './aiJobTransport';
 
 /**
  * Managed Astra Responses and explicitly selected BYO OpenAI request boundary.
@@ -370,6 +371,17 @@ export const PROXY_ERROR_MESSAGE_CODES = [
   'azure_openai_non_json_error',
   'network_error',
   'invalid_upstream_request',
+  'ai_job_timeout',
+  'ai_job_interrupted',
+  'ai_job_cancelled',
+  'ai_job_expired',
+  'ai_job_not_found',
+  'ai_jobs_unavailable',
+  'ai_job_busy',
+  'ai_job_invalid_response',
+  'ai_job_conflict',
+  'ai_job_invalid_id',
+  'ai_job_invalid_request',
 ] as const;
 
 /**
@@ -431,6 +443,24 @@ export function proxyErrorMessageForCode(
       return 'The application AI budget could not be checked. Please try again later or contact the administrator.';
     case 'ai_budget_timeout':
       return 'The application timed out while reserving the AI budget. Wait a moment and try again.';
+    case 'ai_job_timeout':
+      return 'The AI job exceeded its processing time limit. It was not automatically resubmitted. Failures with unknown usage may still count toward the application budget.';
+    case 'ai_job_interrupted':
+      return 'The AI job was interrupted. It was not automatically resubmitted. Unknown usage may still count toward the application budget.';
+    case 'ai_job_cancelled':
+      return 'The AI job was cancelled. No automatic resubmission was made.';
+    case 'ai_job_expired':
+    case 'ai_job_not_found':
+      return 'The AI job result is unavailable or expired. Review the request before submitting a new job.';
+    case 'ai_jobs_unavailable':
+      return 'AI job storage is temporarily unavailable. Please try again later.';
+    case 'ai_job_busy':
+      return 'AI job admission is busy. Wait a moment and try again.';
+    case 'ai_job_invalid_response':
+    case 'ai_job_conflict':
+    case 'ai_job_invalid_id':
+    case 'ai_job_invalid_request':
+      return 'The AI job could not be confirmed safely. No automatic resubmission was made. Refresh the page before trying again.';
     case 'azure_openai_timeout':
     case 'byo_timeout':
     case 'edge_origin_unavailable':
@@ -494,10 +524,11 @@ export async function callAzureOpenAIProxy(params: {
   byo?: BYOAIProxyConfig;
   connection?: CapturedAIConnection;
   purpose?: 'connection-test';
+  onProgress?: (progress: import('./aiJobTransport').AIJobProgress) => void;
 }): Promise<OpenAIProxyResult> {
   if (params.signal?.aborted) throw runtimeConfigCancellationError();
   assertApiFormat(params.apiFormat);
-  if (Object.keys(params).some(key => !['apiFormat', 'deployment', 'body', 'signal', 'byo', 'connection', 'purpose'].includes(key))) {
+  if (Object.keys(params).some(key => !['apiFormat', 'deployment', 'body', 'signal', 'byo', 'connection', 'purpose', 'onProgress'].includes(key))) {
     throw new AIModelConfigurationError('unsupported_ai_provider', 'Use a configured AI connection without additional routing fields.');
   }
   let byo: BYOAIProxyConfig | undefined;
@@ -569,7 +600,7 @@ export async function callAzureOpenAIProxy(params: {
   }
   let response: Response;
   try {
-    const request = fetch('/api/openai', {
+    const init: RequestInit = {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -585,10 +616,16 @@ export async function callAzureOpenAIProxy(params: {
       credentials: 'same-origin',
       redirect: 'error',
       cache: 'no-store',
-    });
+    };
+    const request = params.purpose === 'connection-test'
+      ? fetch('/api/openai', init)
+      : fetchAIJob(init, {
+        signal: params.signal, onProgress: params.onProgress,
+        beforeSubmit: () => { if (params.connection) assertCapturedAIConnectionCurrent(params.connection); },
+      });
     response = params.signal ? await awaitWithAISignal(request, params.signal) : await request;
   } catch (error) {
-    if (error instanceof Error && error.name === 'AbortError') throw error;
+    if (error instanceof AIModelConfigurationError || (error instanceof Error && error.name === 'AbortError')) throw error;
     const message = proxyErrorMessageForCode('network_error');
     return {
       ok: false,

@@ -82,14 +82,12 @@ async function callAzureOpenAI(messages: any[], modelOverride?: ValidationModelO
   
   console.log(`🤖 Using ${runtime.displayName}${runtime.isReasoning ? ` (reasoning: ${runtime.reasoningEffort})` : ''} | max_tokens: ${effectiveMaxTokens} | API: ${getApiFormatLabel(runtime.apiFormat)}`);
 
-  // Client-side timeout keeps the documented chain intact: client 225s >
-  // proxy 210s > Front Door 240s. Without it this path could hang until the
-  // platform kills it with an opaque error.
+  // Bound the async job lifetime; each HTTP exchange has a separate short deadline.
   const controller = new AbortController();
   const cancel = () => controller.abort();
   signal?.addEventListener('abort', cancel, { once: true });
   let timedOut = false;
-  const timeoutId = setTimeout(() => { timedOut = true; controller.abort(); }, 225000);
+  const timeoutId = setTimeout(() => { timedOut = true; controller.abort(); }, 17 * 60_000);
   let proxyResult;
   try {
     proxyResult = await callAzureOpenAIProxy({

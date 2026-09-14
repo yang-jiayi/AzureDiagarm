@@ -21,6 +21,7 @@ const {
 } = require('./access-control');
 const { ArmKeyVaultAccessStore } = require('./arm-key-vault-access-store');
 const { createOpenAIProxyRouter } = require('./openai-proxy');
+const { createAIJobs, createMemoryJobBackend } = require('./ai-jobs');
 const { runtimeAstraConfiguration } = require('./astra-policy');
 const { createFixedWindowRateLimiter, createTableRateLimiter } = require('./rate-limiter');
 const { createDiagramsRouter, createAzureBlobBackend } = require('./diagram-api');
@@ -404,6 +405,16 @@ app.get('/api/runtime-config', (req, res) => {
   res.json(runtimeAstraConfiguration(deployment.astra, deployment.allowByoAIEndpoints));
 });
 
+const aiJobs = createAIJobs({
+  backend: diagramsBackend || (deployment.mode === 'local' ? createMemoryJobBackend() : null),
+  mode: deployment.mode,
+  consumeControlRateLimit: consumeUtilityApiRateLimit,
+});
+const jobSweepTimer = setInterval(() => {
+  aiJobs.sweep().catch(() => console.error('[ai-jobs] Job retention sweep failed; it will be retried.'));
+}, 5 * 60_000);
+jobSweepTimer.unref();
+
 app.use('/api/openai', createOpenAIProxyRouter({
   endpoint: OPENAI_ENDPOINT,
   astraDeployment: ASTRA_DEPLOYMENT,
@@ -414,6 +425,7 @@ app.use('/api/openai', createOpenAIProxyRouter({
   consumeRateLimit: consumeOpenAiRateLimit,
   budget: aiBudget,
   mode: deployment.mode,
+  jobs: aiJobs,
 }));
 
 // ── Microsoft Learn docs grounding ─────────────────────────────────────────
@@ -664,11 +676,14 @@ async function start() {
   const server = app.listen(PORT, '127.0.0.1', () => {
     console.log(`[server] Listening on 127.0.0.1:${server.address().port}; deployment mode: ${deployment.mode}`);
   });
-  const shutdown = createGracefulShutdown(server, { logger: console, timeoutMs: 25_000 });
+  const shutdown = createGracefulShutdown(server, {
+    logger: console, timeoutMs: 25_000, drain: () => aiJobs.close(),
+  });
   for (const signal of ['SIGTERM', 'SIGINT']) {
     process.once(signal, () => {
       shuttingDown = true;
       clearInterval(retentionTimer);
+      clearInterval(jobSweepTimer);
       shutdown(signal);
     });
   }

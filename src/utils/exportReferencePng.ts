@@ -13,6 +13,7 @@
  */
 
 import React from 'react';
+import { LanguageProvider } from '../i18n/LanguageContext';
 import { createRoot, Root } from 'react-dom/client';
 import ReferenceArchitectureCanvas from '../components/ReferenceArchitectureCanvas';
 import type { ReferenceArchitecture } from '../services/referenceArchitectureAI';
@@ -71,13 +72,13 @@ export async function exportReferenceArchitectureAsPng(
   try {
     root = createRoot(host);
     root.render(
-      React.createElement(ReferenceArchitectureCanvas, {
+      React.createElement(LanguageProvider, { children: React.createElement(ReferenceArchitectureCanvas, {
         data,
         width: resolvedWidth,
         author,
         iconMap,
         actorIconUrl,
-      }),
+      }) }),
     );
 
     // 3. Wait for the root element to actually appear in the DOM.

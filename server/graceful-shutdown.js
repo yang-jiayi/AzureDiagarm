@@ -19,7 +19,15 @@ function createGracefulShutdown(server, options = {}) {
     }, timeoutMs);
     forceTimer.unref?.();
 
-    server.close((error) => {
+    const drained = Promise.resolve().then(() => options.drain?.());
+    // Observe failures immediately, even while HTTP connections are draining.
+    drained.catch(() => {});
+    server.close(async (error) => {
+      try { await drained; }
+      catch (drainError) {
+        logger.error('[server] Background work could not be drained safely.');
+        error ||= drainError;
+      }
       clearTimeout(forceTimer);
       if (error) {
         logger.error('[server] Failed to close cleanly:', error);

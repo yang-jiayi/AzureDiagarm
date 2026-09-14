@@ -6,6 +6,7 @@ const express = require('express');
 const { asyncHandler } = require('./async-handler');
 const { budgetIdentity, reservationTokens, actualUsage, hasUnmeteredInput } = require('./ai-budget');
 const { normalizeAzureOpenAIEndpoint: normalizeManagedEndpoint, normalizeHttpsOrigin, DEPLOYMENT_NAME_RE } = require('./astra-policy');
+const { awaitWithSignal, fetchLongAIResponse, MAX_RESPONSE_BYTES } = require('./ai-http');
 
 const DEFAULT_TIMEOUT_MS = 210_000;
 const BYO_MODEL_NAME_RE = /^(?=.{1,128}$)(?=.*[A-Za-z0-9])[A-Za-z0-9._:-]+$/;
@@ -170,17 +171,17 @@ function getHeader(headers, names, credentials = []) {
   return null;
 }
 
-function sendError(res, status, requestId, error) {
-  return res.status(status).json({
-    error: {
+function sendError(headers, status, requestId, error) {
+  return {
+    status, headers, body: { error: {
       source: error.source,
       code: error.code,
       message: error.message,
       requestId,
       ...(error.upstreamStatus ? { upstreamStatus: error.upstreamStatus } : {}),
       ...(error.upstreamRequestId ? { upstreamRequestId: error.upstreamRequestId } : {}),
-    },
-  });
+    } },
+  };
 }
 
 function logEvent(logger, level, event) {
@@ -190,7 +191,7 @@ function logEvent(logger, level, event) {
   }
 }
 
-function createOpenAIProxyRouter(options) {
+function createOpenAIExecutor(options) {
   const {
     endpoint,
     astraDeployment,
@@ -199,7 +200,7 @@ function createOpenAIProxyRouter(options) {
     allowedDeployments = new Set(),
     allowByoAIEndpoints = false,
     fetchImpl = globalThis.fetch,
-    timeoutMs = DEFAULT_TIMEOUT_MS,
+    timeoutMs: defaultTimeoutMs = DEFAULT_TIMEOUT_MS,
     consumeRateLimit = () => 0,
     budget,
     mode = 'local',
@@ -210,11 +211,12 @@ function createOpenAIProxyRouter(options) {
     throw new TypeError('fetchImpl must be a function');
   }
 
-  const router = express.Router();
-  router.post('/', asyncHandler(async (req, res) => {
-    const requestId = crypto.randomUUID();
+  return async (req, {
+    signal, requestId = crypto.randomUUID(), timeoutMs = defaultTimeoutMs,
+    heartbeat, longRunning = false,
+  } = {}) => {
     const startedAt = Date.now();
-    res.set('X-AzureDiagarm-Request-Id', requestId);
+    const responseHeaders = { 'X-AzureDiagarm-Request-Id': requestId };
 
     const envelope = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {};
     const { apiFormat, deployment, body } = envelope;
@@ -223,11 +225,11 @@ function createOpenAIProxyRouter(options) {
     if (hasByo) {
       try { byoConfig = resolveByoRequestConfig(envelope.byo, allowByoAIEndpoints); }
       catch (error) {
-        return sendError(res, error.status, requestId, { source: 'proxy', code: error.code, message: error.message });
+        return sendError(responseHeaders, error.status, requestId, { source: 'proxy', code: error.code, message: error.message });
       }
     }
     if (apiFormat !== 'responses' && !(byoConfig && apiFormat === 'chat-completions')) {
-      return sendError(res, 400, requestId, {
+      return sendError(responseHeaders, 400, requestId, {
         source: 'proxy',
         code: 'invalid_api_format',
         message: byoConfig ? "apiFormat must be 'responses' or 'chat-completions'." : 'Managed GPT-6 Astra requires the Responses API.',
@@ -236,7 +238,7 @@ function createOpenAIProxyRouter(options) {
 
     if (['endpoint', 'apiKey', 'baseUrl', 'base_url', 'provider']
       .some(key => Object.hasOwn(envelope, key))) {
-      return sendError(res, 403, requestId, {
+      return sendError(responseHeaders, 403, requestId, {
         source: 'proxy', code: 'byo_not_enabled',
         message: 'Custom AI credentials and endpoints require a valid, explicitly enabled BYO configuration.',
       });
@@ -245,24 +247,24 @@ function createOpenAIProxyRouter(options) {
     const managedConfigured = Boolean(endpoint || astraDeployment || allowedDeployments.size || apiKey);
     if ((!byoConfig || managedConfigured) && (!DEPLOYMENT_NAME_RE.test(astraDeployment || '')
       || allowedDeployments.size !== 1 || !allowedDeployments.has(astraDeployment))) {
-      return sendError(res, 503, requestId, {
+      return sendError(responseHeaders, 503, requestId, {
         source: 'proxy', code: 'astra_not_configured',
         message: 'Configure the explicit GPT-6 Astra deployment and its identical singleton allowlist.',
       });
     }
     if (byoConfig && (typeof deployment !== 'string' || !BYO_MODEL_NAME_RE.test(deployment))) {
-      return sendError(res, 400, requestId, {
+      return sendError(responseHeaders, 400, requestId, {
         source: 'proxy', code: 'invalid_deployment_name', message: 'A valid, explicit custom model or deployment ID is required.',
       });
     }
     if (!byoConfig && deployment !== astraDeployment) {
-      return sendError(res, 403, requestId, {
+      return sendError(responseHeaders, 403, requestId, {
         source: 'proxy', code: 'deployment_not_allowed',
         message: 'Only the configured GPT-6 Astra deployment is allowed.',
       });
     }
     if (!body || typeof body !== 'object' || Array.isArray(body)) {
-      return sendError(res, 400, requestId, {
+      return sendError(responseHeaders, 400, requestId, {
         source: 'proxy',
         code: 'missing_request_body',
         message: 'The Azure OpenAI request body is missing.',
@@ -270,14 +272,14 @@ function createOpenAIProxyRouter(options) {
     }
     if (!Object.hasOwn(body, 'model') || body.model !== deployment
       || ['endpoint', 'apiKey', 'base_url', 'baseUrl', 'provider', 'byo'].some(key => Object.hasOwn(body, key))) {
-      return sendError(res, 403, requestId, {
+      return sendError(responseHeaders, 403, requestId, {
         source: 'proxy', code: 'deployment_not_allowed',
         message: 'deployment and body.model must explicitly match, without endpoint or credential overrides.',
       });
     }
     let managedEndpoint;
     try { if (managedConfigured) managedEndpoint = normalizeManagedEndpoint(endpoint); } catch {
-      return sendError(res, 503, requestId, {
+      return sendError(responseHeaders, 503, requestId, {
         source: 'proxy', code: 'proxy_not_configured', message: 'The managed Azure OpenAI endpoint is not configured correctly.',
       });
     }
@@ -290,7 +292,7 @@ function createOpenAIProxyRouter(options) {
       : ['input', 'max_output_tokens', 'reasoning', 'text', 'thinking', 'output_config'];
     if (wrongFormatKeys.some(key => Object.hasOwn(body, key))
       || (apiFormat === 'chat-completions' && Object.hasOwn(body, 'max_tokens') && Object.hasOwn(body, 'max_completion_tokens'))) {
-      return sendError(res, 400, requestId, {
+      return sendError(responseHeaders, 400, requestId, {
         source: 'proxy', code: 'invalid_api_format',
         message: 'The request body must match its explicit API format.',
       });
@@ -304,7 +306,7 @@ function createOpenAIProxyRouter(options) {
       || body.prompt || body.audio
       || (body.modalities !== undefined && (!Array.isArray(body.modalities) || body.modalities.some(value => value !== 'text')))
       || (body.n !== undefined && body.n !== 1) || body.best_of || hasUnmeteredInput(body)) {
-      return sendError(res, 400, requestId, {
+      return sendError(responseHeaders, 400, requestId, {
         source: 'proxy', code: 'unsupported_request_mode',
         message: 'Use a complete, non-streaming request with inline text/images, without stored inputs or remote tools.',
       });
@@ -317,15 +319,15 @@ function createOpenAIProxyRouter(options) {
       Math.max(Number(upstreamBody[outputField]) || 1, 1), 32768,
     ));
 
-    const retryAfter = await consumeRateLimit(req);
+    const retryAfter = await awaitWithSignal(Promise.resolve(consumeRateLimit(req)), signal);
     if (retryAfter > 0) {
-      res.set('Retry-After', String(retryAfter));
+      responseHeaders['Retry-After'] = String(retryAfter);
       logEvent(logger, 'warn', {
         event: 'proxy_rate_limit_exceeded', requestId, deployment: loggedDeployment,
         apiFormat, provider, status: 429, retryAfterSeconds: retryAfter,
         durationMs: Date.now() - startedAt,
       });
-      return sendError(res, 429, requestId, {
+      return sendError(responseHeaders, 429, requestId, {
         source: 'proxy',
         code: 'proxy_rate_limit_exceeded',
         message: 'The application OpenAI request limit was exceeded.',
@@ -340,7 +342,9 @@ function createOpenAIProxyRouter(options) {
       headers['api-key'] = apiKey;
     } else {
       try {
-        const tokenResult = await credential?.getToken('https://cognitiveservices.azure.com/.default');
+        const tokenResult = await awaitWithSignal(
+          Promise.resolve(credential?.getToken('https://cognitiveservices.azure.com/.default', { abortSignal: signal })), signal,
+        );
         if (!tokenResult?.token) throw new Error('Credential returned no token');
         headers.Authorization = `Bearer ${tokenResult.token}`;
       } catch (error) {
@@ -351,7 +355,7 @@ function createOpenAIProxyRouter(options) {
           apiFormat,
           provider,
         });
-        return sendError(res, 502, requestId, {
+        return sendError(responseHeaders, 502, requestId, {
           source: 'credential',
           code: 'credential_acquisition_failed',
           message: 'The server could not acquire an Azure OpenAI credential.',
@@ -364,54 +368,89 @@ function createOpenAIProxyRouter(options) {
     let usage;
     let dispatched = false;
     const controller = new AbortController();
-    const cancel = () => { if (!res.writableEnded) controller.abort(); };
-    req.once('aborted', cancel);
-    res.once('close', cancel);
+    const cancel = () => controller.abort(signal.reason);
+    if (signal?.aborted) cancel();
+    else signal?.addEventListener('abort', cancel, { once: true });
     const deadline = setTimeout(() => controller.abort(new DOMException('Timed out', 'TimeoutError')), timeoutMs);
     deadline.unref?.();
+    let heartbeatTimer;
+    let heartbeatWork;
+    const renew = () => {
+      heartbeatWork = (async () => {
+        if (lease) await awaitWithSignal(budget.renew(identity, lease), AbortSignal.timeout(8000));
+        if (heartbeat) await awaitWithSignal(Promise.resolve(heartbeat()), AbortSignal.timeout(8000));
+      })().catch(() => {
+        logEvent(logger, 'error', { event: 'ai_job_heartbeat_failed', requestId });
+        controller.abort(Object.assign(new Error('AI job ownership or budget could not be renewed.'), { code: 'ai_job_interrupted' }));
+      }).finally(() => {
+        if (!controller.signal.aborted) {
+          heartbeatTimer = setTimeout(renew, 5000);
+          heartbeatTimer.unref?.();
+        }
+      });
+    };
     try {
       if (budget) {
         try {
           identity = budgetIdentity(req, mode);
-          lease = await budget.reserve(identity, reservationTokens(upstreamBody, apiFormat));
+          const reserving = budget.reserve(identity, reservationTokens(upstreamBody, apiFormat)).then(async value => {
+            if (controller.signal.aborted) {
+              await budget.settle(identity, value, 0);
+              throw controller.signal.reason;
+            }
+            return value;
+          });
+          lease = await awaitWithSignal(reserving, controller.signal);
         } catch (error) {
           const status = error.status || 503;
           const code = error.code || 'ai_budget_unavailable';
           const retryAfterSeconds = error.retryAfter || 5;
-          res.set('Retry-After', String(retryAfterSeconds));
+          responseHeaders['Retry-After'] = String(retryAfterSeconds);
           logEvent(logger, status >= 500 ? 'error' : 'warn', {
             event: code, requestId, deployment: loggedDeployment, apiFormat, provider,
             status, retryAfterSeconds, durationMs: Date.now() - startedAt,
           });
-          return sendError(res, status, requestId, {
+          return sendError(responseHeaders, status, requestId, {
             source: 'budget', code,
             message: error.status ? error.message : 'AI budget is unavailable. Try again shortly.',
           });
         }
       } else if (mode === 'public') {
-        return sendError(res, 503, requestId, {
+        return sendError(responseHeaders, 503, requestId, {
           source: 'budget', code: 'ai_budget_unavailable', message: 'AI budget is not configured.',
         });
       }
-      if (res.destroyed) return;
       if (controller.signal.aborted) {
-        return sendError(res, 504, requestId, {
+        return sendError(responseHeaders, 504, requestId, {
           source: 'budget', code: 'ai_budget_timeout',
           message: 'The request timed out while reserving its AI budget. Try again shortly.',
         });
+      }
+      if (longRunning) {
+        if (lease && typeof budget.renew !== 'function') throw new Error('Long-running AI requires renewable budget leases.');
+        await heartbeat?.();
+        heartbeatTimer = setTimeout(renew, 5000);
+        heartbeatTimer.unref?.();
       }
     let upstream;
     try {
       const upstreamUrl = byoConfig ? buildByoAIUrl(byoConfig, apiFormat) : buildOpenAIUrl(managedEndpoint);
       dispatched = true;
-      upstream = await fetchImpl(upstreamUrl, {
+      const transport = longRunning && !options.fetchImpl ? fetchLongAIResponse : fetchImpl;
+      upstream = await awaitWithSignal(transport(upstreamUrl, {
         method: 'POST',
         headers,
         body: JSON.stringify(upstreamBody),
         signal: controller.signal,
         redirect: 'error',
-      });
+      }), controller.signal);
     } catch (error) {
+      if (['ai_job_cancelled', 'ai_job_interrupted', 'ai_job_timeout'].includes(controller.signal.reason?.code)) {
+        return sendError(responseHeaders, controller.signal.reason.code === 'ai_job_timeout' ? 504 : 409, requestId, {
+          source: 'job', code: controller.signal.reason.code,
+          message: 'The AI job was cancelled or interrupted. No automatic resubmission was made.',
+        });
+      }
       const timedOut = error?.name === 'AbortError' || error?.name === 'TimeoutError';
       const status = timedOut ? 504 : 502;
       const code = byoConfig
@@ -425,7 +464,7 @@ function createOpenAIProxyRouter(options) {
         provider,
         durationMs: Date.now() - startedAt,
       });
-      return sendError(res, status, requestId, {
+      return sendError(responseHeaders, status, requestId, {
         source: 'proxy_transport',
         code,
         message: byoConfig
@@ -447,7 +486,7 @@ function createOpenAIProxyRouter(options) {
       'trace-id',
     ], [apiKey, headers.Authorization?.slice('Bearer '.length)]);
     if (upstreamRequestId) {
-      res.set('X-Upstream-Request-Id', upstreamRequestId);
+      responseHeaders['X-Upstream-Request-Id'] = upstreamRequestId;
     }
     let retryAfterHeader = upstream.headers.get('retry-after')?.trim();
     if (retryAfterHeader && /^\d{1,8}$/.test(retryAfterHeader)) {
@@ -467,7 +506,7 @@ function createOpenAIProxyRouter(options) {
       }
     }
     if (retryAfterHeader) {
-      res.set('Retry-After', retryAfterHeader);
+      responseHeaders['Retry-After'] = retryAfterHeader;
     }
 
     // Reading the upstream body can still fail after the response headers
@@ -475,7 +514,10 @@ function createOpenAIProxyRouter(options) {
     // this rejects the request promise and terminates the process.
     let text;
     try {
-      text = await upstream.text();
+      text = await awaitWithSignal(upstream.text(), controller.signal);
+      if (Buffer.byteLength(text) > MAX_RESPONSE_BYTES) {
+        throw new Error('The AI response cannot be retained safely.');
+      }
     } catch (error) {
       logEvent(logger, 'error', {
         event: 'upstream_body_read_failed',
@@ -487,7 +529,7 @@ function createOpenAIProxyRouter(options) {
         upstreamRequestId,
         durationMs: Date.now() - startedAt,
       });
-      return sendError(res, 502, requestId, {
+      return sendError(responseHeaders, 502, requestId, {
         source: 'proxy_transport',
         code: byoConfig ? 'byo_connection_failed' : 'azure_openai_connection_failed',
         message: 'The server could not read the AI response.',
@@ -518,7 +560,7 @@ function createOpenAIProxyRouter(options) {
         jsonContentType: isJsonMediaType(contentType),
         durationMs: Date.now() - startedAt,
       });
-      return sendError(res, upstream.status, requestId, {
+      return sendError(responseHeaders, upstream.status, requestId, {
         source: upstreamSource,
         code: classified.code,
         message: classified.message,
@@ -539,7 +581,7 @@ function createOpenAIProxyRouter(options) {
         jsonContentType: isJsonMediaType(contentType),
         durationMs: Date.now() - startedAt,
       });
-      return sendError(res, 502, requestId, {
+      return sendError(responseHeaders, 502, requestId, {
         source: upstreamSource,
         code: 'invalid_upstream_response',
         message: 'The AI service returned an unexpected response format.',
@@ -548,7 +590,20 @@ function createOpenAIProxyRouter(options) {
       });
     }
 
-    try { usage = actualUsage(JSON.parse(text)); } catch { /* Keep reservation for unknown usage. */ }
+    try {
+      const payload = JSON.parse(text);
+      if (byoConfig && JSON.stringify(payload).includes(JSON.stringify(byoConfig.apiKey).slice(1, -1))) {
+        throw new Error('The AI response echoed a connection credential.');
+      }
+      usage = actualUsage(payload);
+    }
+    catch {
+      logEvent(logger, 'error', { event: 'invalid_upstream_response', requestId });
+      return sendError(responseHeaders, 502, requestId, {
+        source: upstreamSource, code: 'invalid_upstream_response',
+        message: 'The AI service returned invalid JSON.',
+      });
+    }
     logEvent(logger, 'info', {
       event: 'request_succeeded',
       requestId,
@@ -559,15 +614,15 @@ function createOpenAIProxyRouter(options) {
       upstreamRequestId,
       durationMs: Date.now() - startedAt,
     });
-    res.status(upstream.status);
-    res.set('Content-Type', 'application/json');
-    return res.send(text);
+    return { status: upstream.status, headers: responseHeaders, body: text };
     } finally {
+      controller.abort();
       clearTimeout(deadline);
-      req.off('aborted', cancel);
-      res.off('close', cancel);
+      clearTimeout(heartbeatTimer);
+      signal?.removeEventListener('abort', cancel);
+      await heartbeatWork;
       if (lease) {
-        try { await budget.settle(identity, lease, dispatched ? usage : 0); }
+        try { await awaitWithSignal(budget.settle(identity, lease, dispatched ? usage : 0), AbortSignal.timeout(8000)); }
         catch (error) {
           // Do not refund uncertain usage. The expiring shared lease releases
           // concurrency even if storage is unavailable or this replica dies.
@@ -575,8 +630,41 @@ function createOpenAIProxyRouter(options) {
         }
       }
     }
-  }));
+  };
+}
 
+function writeOutcome(res, outcome) {
+  res.set(outcome.headers);
+  return res.status(outcome.status).type('application/json').send(outcome.body);
+}
+
+function createOpenAIProxyRouter(options) {
+  const execute = createOpenAIExecutor(options);
+  const router = express.Router();
+  const jobs = options.jobs;
+  if (jobs) {
+    router.use('/jobs', jobs.router);
+    jobs.setExecutor(execute);
+  }
+  router.post('/', asyncHandler(async (req, res) => {
+    if (req.get('Prefer') === 'respond-async') {
+      if (!jobs) return writeOutcome(res, sendError({}, 503, crypto.randomUUID(), {
+        source: 'job', code: 'ai_jobs_unavailable', message: 'Asynchronous AI generation is unavailable.',
+      }));
+      return jobs.submit(req, res);
+    }
+    const controller = new AbortController();
+    const cancel = () => { if (!res.writableEnded) controller.abort(); };
+    req.once('aborted', cancel);
+    res.once('close', cancel);
+    try {
+      const outcome = await execute(req, { signal: controller.signal });
+      if (!res.destroyed) return writeOutcome(res, outcome);
+    } finally {
+      req.off('aborted', cancel);
+      res.off('close', cancel);
+    }
+  }));
   return router;
 }
 
@@ -586,6 +674,7 @@ module.exports = {
   resolveByoRequestConfig,
   classifyUpstreamError,
   createOpenAIProxyRouter,
+  createOpenAIExecutor,
   isJsonMediaType,
   parseUpstreamError,
 };
