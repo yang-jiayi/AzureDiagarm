@@ -11,6 +11,7 @@
  */
 
 import React from 'react';
+import { LanguageProvider } from '../i18n/LanguageContext';
 import { createRoot, Root } from 'react-dom/client';
 import BlueprintArchitectureCanvas from '../components/BlueprintArchitectureCanvas';
 import type { BlueprintArchitecture } from '../services/blueprintArchitectureAI';
@@ -26,6 +27,7 @@ import {
 } from './publicationLayout';
 
 export interface ExportBlueprintPngOptions {
+  signal?: AbortSignal;
   fileName?: string;
   author?: string;
   pixelRatio?: number;
@@ -51,7 +53,9 @@ export async function exportBlueprintArchitectureAsPng(
     author,
     pixelRatio = 2,
     legendPosition,
+    signal,
   } = options;
+  signal?.throwIfAborted();
 
   const titleSlug = shortSlug(data.title || 'blueprint');
   const stamp = formatStamp(new Date());
@@ -63,6 +67,7 @@ export async function exportBlueprintArchitectureAsPng(
 
   const iconMap = await preloadIconMap(data);
   const personaIconUrl = await preloadPersonaIcon();
+  signal?.throwIfAborted();
 
   const contentFrame = calculateBlueprintContentFrame(data);
   const resolvedLegend = resolveLegendForExport(
@@ -86,13 +91,13 @@ export async function exportBlueprintArchitectureAsPng(
   try {
     root = createRoot(host);
     root.render(
-      React.createElement(BlueprintArchitectureCanvas, {
+      React.createElement(LanguageProvider, { children: React.createElement(BlueprintArchitectureCanvas, {
         data,
         author,
         iconMap,
         personaIconUrl,
         legendPosition: resolvedLegend,
-      }),
+      }) }),
     );
 
     const canvasEl = await waitForElement(host, '[data-bp-arch-canvas="true"]', 2000);
@@ -107,12 +112,14 @@ export async function exportBlueprintArchitectureAsPng(
       backgroundColor: '#ffffff',
       pixelRatio,
     });
+    signal?.throwIfAborted();
     triggerDownload(dataUrl, downloadName);
 
     // Drop a JSON sidecar AFTER the PNG. We delay one tick so the browser
     // treats it as a separate download attempt instead of silently dropping
     // it under multi-download throttling.
     setTimeout(() => {
+      if (signal?.aborted) return;
       try {
         console.log('📄 Blueprint JSON sidecar:', `${baseName}.json`);
         exportBlueprintArchitectureAsJson(data, { fileName: baseName });

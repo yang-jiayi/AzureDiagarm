@@ -52,6 +52,10 @@ Provider failures, timeouts, budget exhaustion, and incomplete responses are
 reported explicitly. Correct configuration and request shape do not by
 themselves demonstrate upstream inference availability.
 
+Generation now uses [asynchronous jobs](ASYNC-AI-JOBS.md), with separate status
+and result requests and a 15-minute processing limit per job. This removes the
+former 210-second synchronous deadline without lowering MAX quality settings.
+
 ## References
 
 - [Application setup](../README.md#-getting-started)

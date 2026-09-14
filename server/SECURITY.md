@@ -153,6 +153,26 @@ same access list, origin checks, rate limits, token budget and concurrency limit
 as generation. It may consume tokens. There is no automatic request, alternate
 model retry, credential fallback or test bypass.
 
+## Asynchronous generation
+
+Generation submits an owner-scoped job through `POST /api/openai` with
+`Prefer: respond-async` and a UUID-v4 idempotency key. Protected
+`/api/openai/jobs/:id` status, result and cancellation routes use the same
+access control; cross-replica ownership is derived from the authenticated
+principal. The browser does not replay an ambiguous submission, including
+during rollback to a legacy server.
+
+Request bodies, images and provider keys are not persisted as job inputs.
+Private results expire from the API after one hour; idempotency records last
+24 hours. Cleanup includes older Blob versions and honors existing soft-delete
+recovery protection. This is not an assurance of immediate physical erasure.
+Public mode requires the existing Blob backend and never falls back to memory.
+
+Workers run for at most 15 minutes and renew budget leases while active.
+Shutdown, worker loss, expired ownership or failed budget renewal interrupts
+work explicitly without replaying uncertain inference or refunding unknown
+usage. See [the job lifecycle and retention contract](../DOCS/ASYNC-AI-JOBS.md).
+
 ## Shared AI budgets
 
 | Variable | Default |

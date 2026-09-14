@@ -132,7 +132,7 @@ function validateOverride(override: RuntimeModelOverride): void {
   if (!isReasoningEffort(override.reasoningEffort)) {
     throw new AIModelConfigurationError('unsupported_reasoning_effort', 'The requested reasoning effort is not supported.');
   }
-  if (Object.keys(override).some(key => !['model', 'reasoningEffort', 'connection', 'signal', 'onRetryWait'].includes(key))) {
+  if (Object.keys(override).some(key => !['model', 'reasoningEffort', 'connection', 'signal', 'onRetryWait', 'onProgress'].includes(key))) {
     throw new AIModelConfigurationError('unsupported_ai_provider', 'Select an AI connection through the connection settings.');
   }
 }

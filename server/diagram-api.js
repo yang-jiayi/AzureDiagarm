@@ -1405,6 +1405,22 @@ function createAzureBlobBackend(options = {}) {
         yield item.name;
       }
     },
+    async *listJobBlobs() {
+      // Include version-only blobs: deleting the current blob otherwise hides
+      // older versions from ordinary listings indefinitely.
+      for await (const item of container.listBlobsFlat({ prefix: 'ai-jobs/', includeVersions: true })) {
+        if (/^ai-jobs\/[a-f0-9]{64}\/[a-f0-9-]{36}\.json$/.test(item.name)) {
+          yield { name: item.name, versionId: item.versionId, isCurrentVersion: item.isCurrentVersion, deleted: item.deleted };
+        }
+      }
+    },
+    async removeJobVersion(name, versionId, options = {}) {
+      if (!/^ai-jobs\/[a-f0-9]{64}\/[a-f0-9-]{36}\.json$/.test(name) || !versionId) {
+        throw new Error('Version cleanup is restricted to AI job records.');
+      }
+      const response = await blob(name).withVersion(versionId).deleteIfExists({ abortSignal: options.abortSignal });
+      return Boolean(response.succeeded);
+    },
     withLock,
   };
 }

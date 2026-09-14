@@ -59,7 +59,7 @@ test('independent Cosmos-backed replicas atomically enforce token and concurrenc
 
 test('daily budget rejects before dispatch; expiry frees concurrency without refunding uncertain usage', async () => {
   let time = Date.parse('2026-09-05T10:00:00Z');
-  const manager = createBudgetManager({ store: new MemoryBudgetStore(), dailyTokens: 100, concurrency: 1, now: () => time, leaseMs: 1000 });
+  const manager = createBudgetManager({ store: new MemoryBudgetStore({ now: () => time }), dailyTokens: 100, concurrency: 1, now: () => time, leaseMs: 1000 });
   const lease = await manager.reserve('one', 80);
   await assert.rejects(manager.reserve('one', 1), { code: 'ai_concurrency_limit', status: 429 });
   time += 1001;
@@ -74,7 +74,7 @@ test('daily budget rejects before dispatch; expiry frees concurrency without ref
 
 test('midnight resets tokens but cannot bypass active concurrency; old usage cannot refund a new day', async () => {
   let time = Date.parse('2026-09-05T23:59:59Z');
-  const manager = createBudgetManager({ store: new MemoryBudgetStore(), dailyTokens: 100, concurrency: 2, now: () => time });
+  const manager = createBudgetManager({ store: new MemoryBudgetStore({ now: () => time }), dailyTokens: 100, concurrency: 2, now: () => time });
   const yesterday = await manager.reserve('user', 80);
   time += 2000;
   const today = await manager.reserve('user', 90);
@@ -96,6 +96,33 @@ test('usage over reservation is debited and unknown usage keeps reservation', as
   await manager.settle('user', b, undefined);
   assert.equal((await manager.status('user')).usedTokens, 220);
   assert.equal((await manager.status('user')).concurrentRequests, 0);
+});
+
+test('renewal extends only an active lease without changing its token charge', async () => {
+  let time = Date.parse('2026-09-14T10:00:00Z');
+  const store = new MemoryBudgetStore({ now: () => time });
+  const manager = createBudgetManager({ store, dailyTokens: 1000, concurrency: 1, now: () => time, leaseMs: 1000 });
+  const otherReplica = createBudgetManager({ store, dailyTokens: 1000, concurrency: 1, now: () => time, leaseMs: 1000 });
+  const lease = await manager.reserve('user', 800);
+  time += 900;
+  await manager.renew('user', lease);
+  time += 900;
+  assert.equal((await otherReplica.status('user')).concurrentRequests, 1);
+  assert.equal((await otherReplica.status('user')).usedTokens, 800);
+  await assert.rejects(otherReplica.reserve('user', 1), { code: 'ai_concurrency_limit' });
+  await otherReplica.settle('user', lease, undefined);
+  await assert.rejects(manager.renew('user', lease), { code: 'ai_budget_lease_lost' });
+  assert.equal((await manager.status('user')).usedTokens, 800);
+});
+
+test('an expired lease cannot be resurrected or grant a late refund through renewal', async () => {
+  let time = 10000;
+  const manager = createBudgetManager({ store: new MemoryBudgetStore({ now: () => time }), now: () => time, leaseMs: 1000 });
+  const lease = await manager.reserve('user', 500);
+  time += 1001;
+  await assert.rejects(manager.renew('user', lease), { code: 'ai_budget_lease_lost' });
+  await manager.settle('user', lease, 0);
+  assert.equal((await manager.status('user')).usedTokens, 500);
 });
 
 test('storage failures do not silently fall back to memory', async () => {

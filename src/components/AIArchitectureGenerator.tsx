@@ -243,6 +243,7 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
   const [partialWarning, setPartialWarning] = useState('');
   const [retryWaits, setRetryWaits] = useState<Partial<Record<GenerationStage, AIRetryWait | null>>>({});
   const [retryClock, setRetryClock] = useState(Date.now);
+  const [jobProgress, setJobProgress] = useState<Partial<Record<GenerationStage, import('../services/aiJobTransport').AIJobProgress>>>({});
   useEffect(() => {
     if (!Object.values(retryWaits).some(Boolean)) return;
     const timer = window.setInterval(() => setRetryClock(Date.now()), 1000);
@@ -514,6 +515,9 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
       setRetryWaits(previous => ({ ...previous, [stage]: wait }));
       setRetryClock(Date.now());
     };
+    const reportProgress = (stage: GenerationStage) => (progress: import('../services/aiJobTransport').AIJobProgress) => {
+      if (active()) setJobProgress(previous => ({ ...previous, [stage]: progress }));
+    };
     const admitOne = async <T,>(task: (signal: AbortSignal) => Promise<T>): Promise<T> => {
       const [result] = await runAIBudgetQueue([task], { getBudget: getAIBudget, signal: controller.signal });
       if (result.status === 'rejected') throw result.reason;
@@ -525,6 +529,7 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
     setWasCancelled(false);
     setPartialWarning('');
     setRetryWaits({});
+    setJobProgress({});
     // A failed/cancelled retry must not forget already accepted output.
     setPendingRetry(retrySnapshot);
     clearGenerationResult();
@@ -533,10 +538,12 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
       const currentModelSettings: ModelOverride = {
         ...captureRuntimeModelOverride('architectureGeneration'), signal: controller.signal,
         onRetryWait: reportRetryWait(mode === 'reference' ? 'reference' : 'topology'),
+        onProgress: reportProgress(mode === 'reference' ? 'reference' : 'topology'),
       };
       const blueprintModelSettings: ModelOverride = {
         ...captureRuntimeModelOverride('blueprint'),
         signal: controller.signal, onRetryWait: reportRetryWait('blueprint'),
+        onProgress: reportProgress('blueprint'),
       };
       setSubmittedModel((mode === 'blueprint' ? blueprintModelSettings : currentModelSettings).connection?.displayName
         ?? getEffectiveAIModelInfo(mode === 'blueprint' ? 'blueprint' : 'architectureGeneration').displayName);
@@ -554,7 +561,7 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
         try {
           const { exportReferenceArchitectureAsPng } = await import('../utils/exportReferencePng');
           ensureActive();
-          await exportReferenceArchitectureAsPng(ref);
+          await exportReferenceArchitectureAsPng(ref, { signal: controller.signal });
         } catch (err) {
           ensureActive();
           console.warn('Reference architecture PNG export failed:', err);
@@ -586,7 +593,7 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
         try {
           const { exportBlueprintArchitectureAsPng } = await import('../utils/exportBlueprintPng');
           ensureActive();
-          await exportBlueprintArchitectureAsPng(bp, { legendPosition });
+          await exportBlueprintArchitectureAsPng(bp, { legendPosition, signal: controller.signal });
         } catch (err) {
           ensureActive();
           console.warn('Blueprint architecture PNG export failed:', err);
@@ -659,6 +666,7 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
           try {
             manifest = await admitOne(signal => generateComponentManifest(bothContextPrompt, {
               ...currentModelSettings, signal, onRetryWait: reportRetryWait('manifest'),
+              onProgress: reportProgress('manifest'),
             }, language));
             console.log(
               `📋 Manifest: ${manifest.components.length} components across ${manifest.zones.length} zones (${manifest.metrics?.totalTokens ?? '?'} tokens, ${Math.round((manifest.metrics?.elapsedTimeMs ?? 0) / 100) / 10}s)`,
@@ -782,7 +790,7 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
           try {
             const { exportBlueprintArchitectureAsPng } = await import('../utils/exportBlueprintPng');
             ensureActive();
-            await exportBlueprintArchitectureAsPng(bpResult, { legendPosition });
+            await exportBlueprintArchitectureAsPng(bpResult, { legendPosition, signal: controller.signal });
           } catch (err) {
             ensureActive();
             console.warn('Blueprint architecture PNG export failed:', err);
@@ -1157,6 +1165,30 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
                         en: `${localize(language, GENERATION_STAGE_LABELS[stage as GenerationStage])}: a request rate limit was reached. Retrying in ${Math.max(0, Math.ceil((wait.retryAt - retryClock) / 1000))}s (attempt ${wait.attempt}/${wait.maxAttempts}) with the same model, reasoning, and output limit. You can cancel while waiting.`,
                         ja: `${localize(language, GENERATION_STAGE_LABELS[stage as GenerationStage])}: リクエストのレート制限により待機しています。${Math.max(0, Math.ceil((wait.retryAt - retryClock) / 1000))}秒後に、同じモデル、推論強度、出力上限で再試行します（${wait.attempt}/${wait.maxAttempts}回目）。待機中もキャンセルできます。`,
                       })}
+                    </div>
+                  ))}
+                  {isGenerating && Object.entries(jobProgress).map(([stage, progress]) => progress && (
+                    <div key={stage} className="azd-callout azd-callout--info" data-ai-job-progress={stage}>
+                      <strong>{localize(language, GENERATION_STAGE_LABELS[stage as GenerationStage])}</strong>
+                      {' · '}
+                      <span role="status">
+                        {localize(language, {
+                          en: progress.status === 'queued' ? 'Accepted' : progress.status === 'running' ? 'Generating in background'
+                            : progress.status === 'succeeded' ? 'AI response ready' : progress.status === 'cancelling' ? 'Cancelling'
+                              : progress.status === 'cancelled' ? 'Cancelled' : 'Stopped',
+                          ja: progress.status === 'queued' ? '受付済み' : progress.status === 'running' ? 'バックグラウンドで生成中'
+                            : progress.status === 'succeeded' ? 'AI 応答の取得完了' : progress.status === 'cancelling' ? '取消中'
+                              : progress.status === 'cancelled' ? '取消済み' : '停止',
+                        })}
+                      </span>
+                      {' · '}
+                      {localize(language, { en: `${Math.floor(progress.elapsedMs / 1000)}s elapsed`, ja: `経過 ${Math.floor(progress.elapsedMs / 1000)} 秒` })}
+                      <small style={{ display: 'block' }}>
+                        {localize(language, {
+                          en: 'Status is checked separately. MAX can take several minutes (15-minute limit per job). Keep this view open, or cancel below.',
+                          ja: '状態を別の通信で確認しています。MAX は数分かかる場合があります（1 ジョブの上限は 15 分）。この画面のまま待機するか、下のボタンで取り消せます。',
+                        })}
+                      </small>
                     </div>
                   ))}
                 </div>

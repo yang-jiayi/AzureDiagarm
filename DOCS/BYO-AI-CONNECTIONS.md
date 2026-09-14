@@ -50,6 +50,10 @@ selected connection. Unsupported capabilities or invalid structured output are
 reported; the application does not switch providers or lower generation settings
 to hide a failure.
 
+Generation uses [asynchronous jobs](ASYNC-AI-JOBS.md), while connection tests
+remain synchronous. The key is sent only with job submission, not subsequent
+status/result/cancel requests, and is not persisted in job storage.
+
 Choose **managed GPT-6 Astra** explicitly to switch back. A missing key, disabled
 server policy, invalid profile, or provider failure never triggers that switch
 automatically.

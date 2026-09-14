@@ -2,6 +2,115 @@
 
 > **Status:** Validated
 
+Generated: 2026-09-14
+
+## 1. Current Release
+
+The user explicitly requested asynchronous AI generation and production
+deployment on 2026-09-14. Replace the browser-held generation request with a
+short authenticated submission and separate status, result and cancellation
+requests. Preserve GPT-6 Astra reasoning/output settings and explicit BYO
+connections. This release addresses the observed 210-second caller timeout;
+it does not promise that an unavailable upstream model will complete.
+
+## 2. Scope and Existing Architecture
+
+Use application-owned background execution rather than provider background
+mode, preserving `store=false`. Use the existing private diagram Blob
+container for owner-scoped job metadata and short-lived results. Do not
+persist input prompts, images, managed credentials or BYO keys in job records.
+BYO credentials remain in the originating process only during execution.
+
+Live storage verification found Blob versioning, 30-day soft deletion and no
+lifecycle policy. Job cleanup must explicitly delete superseded versions,
+including version-only blobs, without touching diagram histories. API result
+access expires after one hour; physical deleted copies remain subject to the
+existing 30-day recovery window. Do not change account-wide backup protection.
+
+Preserve current authentication, origin isolation, shared Table budgets and
+runtime identities. Shared job state, idempotent submissions, cancellation,
+budget lease renewal, explicit interrupted-job failure and retention must
+work across replicas. Never replay ambiguous interrupted inference or refund
+unknown usage automatically.
+
+No new Azure resources, model/SKU/capacity changes, role grants, authentication
+changes or provider-side response storage are authorized by this release.
+
+## 3. Release Recipe
+
+`recipe.type: azcli`
+
+Use checked PR -> current main push ->
+`.github/workflows/azurediagarm-sync-deploy.yml`. Do not dispatch upstream
+synchronization, rerun an historical deployment, or apply bootstrap templates.
+
+## 4. Production Context
+
+Existing `azurediagarm-app` in `AzureDiagarm_rg`, West US:
+https://azurediagarm.mssql.biz
+
+Baseline source: `2be8ef9c940d5ac440d433c1fa12f0b2a6b8c948`.
+Baseline revision: `azurediagarm-app--g34136223411-1`.
+Baseline image:
+`sqlserverevoacr.azurecr.io/azurediagarm/app:u6b38cd6145af-c2be8ef9c940d-20260907151747`.
+Retain the existing guarded rollback receipt and 1-2 replicas.
+
+## 5. Preparation and Validation Steps
+
+- [x] Confirm publication authorization and exact existing source/target.
+- [x] Implement and validate owner-scoped asynchronous generation.
+- [x] Preserve cancellation, connection identity, budgets and result fidelity.
+- [x] Verify actual processing beyond the former 210-second boundary.
+- [x] Complete applicable source, browser, container and protected-main checks.
+- [x] Run current Azure validation and static/live role comparison.
+- [x] Record exact-source validation evidence before deployment.
+
+## 6. Deployment Steps
+
+Merge only the exact checked PR head. Monitor the resulting main-triggered
+workflow. Confirm live source/revision, separate job HTTP requests, preserved
+Astra/BYO/access/budget policies and the genuine model/version.
+
+## 7. Validation Proof
+
+Validation completed on 2026-09-14 after actual local, Azure and protected Linux
+checks. Application/source head `244ac15a7eede1fb698cdf67496170f573ea1faa`
+passes every required check, including both runtime images and actual container
+readiness. The documentation-only proof commit must also pass the unchanged
+protected checks before exact-head merge. The earlier incident correlated
+request `c89d37d9-dfae-4fab-b875-3803fbcdec7f` with 210,546ms and provider 499.
+Historical passing releases below are not proof for this implementation.
+
+| Check | Result | Evidence |
+| --- | --- | --- |
+| Application units | All 1,202 cases pass, including single-submission recovery, rollback without ambiguous inference replay and transitive runtime packaging | Local `npx tsx --test` checks and complete Linux `npm test`, CI `34872825458` |
+| Server units | All 270 cases pass, including owner isolation, cross-replica idempotency/cancel, budget renewal, interruption, storage failure and version-aware cleanup | `node --test --test-reporter=dot server\*.test.js` |
+| UI and real PNG delivery | All 71 AI UI cases and four new end-to-end cases pass; the real browser retrieves a separate MAX result, downloads nonempty blueprint/editorial PNGs and prevents downloads cancelled during encoding. The generation view passes WCAG checks | `npx tsx --test tests\aiGenerationUI.browser.ts`; `npx playwright test async-ai-generation.spec.ts`; complete Linux browser/workspace safeguards |
+| Compilation and lint | Application build, complete lint and script/test typecheck pass | `npm run build -- --logLevel error`; `npm run lint`; `npm run typecheck:scripts` |
+| Long native HTTPS | The final TCP-keepalive/credential-guard run completes after 326,825ms with one upstream call, 58ms acceptance, 164 separate polls, 66ms maximum poll and 64 budget renewals. It crosses 210/225 seconds, the five-minute headers boundary and the original 315-second budget lease | `node scripts\verify-ai-jobs-long.cjs`; session `long-https-release.json`. This is not live-provider availability evidence |
+| Existing Azure target | Current source/revision/image agree with the recorded baseline. Managed model is genuine `gpt-6-astra` v2026-09-03, GlobalStandard 50. BYO, public access control, Table budgets and 1-2 replicas are unchanged | Read-only current CLI account, Container App, authentication and model-deployment projections |
+| Official AZCLI core validation | All five helper steps pass against a hash-matched copy of the unchanged Astra template and live capacity. Structured what-if has 15 Ignore and one Modify for service-generated `properties.currentCapacity`; no resource creates or deletes | Official `validate-deployment.ps1 -Scope group -ResourceGroup AzureDiagarm_rg`; separate structured what-if |
+| Roles and governance | Static resource-scoped Blob/Table/AcrPull/OpenAI roles match the existing runtime assignments. Inherited OpenAI deny applies to ProvisionedManaged, not this unchanged GlobalStandard deployment. MFA policies remain enforced; no governance exemptions or new grants are requested | Existing Bicep role definitions and read-only ARM role/policy queries |
+| Storage recovery boundary | Live Blob versioning and 30-day soft deletion are enabled; no lifecycle policy exists. Added namespace-restricted previous-version cleanup rather than disabling backup protection | Read-only Blob service/management-policy checks; retention and namespace tests |
+| Authorized live verification path | The current user's existing application token authenticates successfully and is allowed. Direct operator Blob probing is denied with 403; no successful storage write is reported. Verify runtime storage and genuine inference through authenticated job routes after deployment, not by granting roles or impersonating the worker | Sanitized session `preflight-access.jsonl`; no credentials saved |
+| Initial Linux candidate | PR #81 head `e1fb3af` passes complete core/server/Office tests, MCP and critical browser gates, plus all CodeQL checks. Container readiness correctly rejects an omitted runtime COPY for the two new server modules. Added the missing explicit copies and a transitive-module packaging regression; no gate is weakened | CI `34869810030`, CodeQL `34869803555`; corrected head must rerun all protected checks |
+| PNG cancellation completion | Cancellation during real PNG encoding now prevents late image/sidecar downloads and cleans both detached roots. All four async/PNG browser cases and 71 AI UI cases pass | `npx playwright test async-ai-generation.spec.ts`; `npx tsx --test tests\aiGenerationUI.browser.ts` |
+| Corrected Linux and protected checks | All six required checks and CodeQL scanning pass for `244ac15a7eede1fb698cdf67496170f573ea1faa`. Complete app/core/Office/server tests, both image builds and runtime readiness pass; the full browser and workspace/AI/inspector/modal chain completes at 17:19:19 UTC | CI `34872825458`, CodeQL `34872820852`; `gh pr checks 81 --required` exits 0 |
+
+## 8. Rollback and Limitations
+
+Keep the previous image and the guarded rollback path. Browser cancellation
+and process interruption must not leave successful-looking jobs or silently
+repeat provider work. The unrelated export findings and blocked narration
+remain separate, except any PNG-generation blocker directly coupled to this
+requested generation flow.
+
+---
+
+# Historical PR #70 Validation Record
+
+> **Status:** Validated
+
 Generated: 2026-09-07
 
 ## 1. Current Release

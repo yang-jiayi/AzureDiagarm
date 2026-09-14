@@ -265,7 +265,7 @@
   border-color: var(--azd-color-border);
   box-shadow: none;
 }
-:is(body, body.dark-mode) .ai-architecture-modal .ai-modal-active-model :is(.model-badge, .model-change-hint, .ai-modal-model-label) { color: var(--azd-color-text-muted); }
+:is(body, body.dark-mode) .ai-architecture-modal .ai-modal-active-model :is(.model-badge, .model-change-hint, .ai-modal-model-label) { color: var(--azd-color-text-muted); opacity: 1; }
 :is(body, body.dark-mode) .ai-architecture-modal .ai-modal-active-model :is(.ai-modal-model-select, .ai-modal-model-select option) {
   color: var(--azd-color-text);
   background: var(--azd-color-surface);

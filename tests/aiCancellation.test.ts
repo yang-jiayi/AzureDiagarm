@@ -62,13 +62,34 @@ const validate = (signal?: AbortSignal) => provider.validateArchitecture(
   validationServices, [], undefined, undefined, { ...override, signal }, 'en',
 );
 
+function mockProviderFetch(t: TestContext, implementation: (url: unknown, options: RequestInit) => Promise<Response>) {
+  const providerRequest = t.mock.fn(implementation);
+  const submittedIds = new Set<string>();
+  t.mock.method(globalThis, 'fetch', (url: unknown, options: RequestInit = {}) => {
+    if (options.method === 'DELETE') {
+      const match = /^\/api\/openai\/jobs\/([a-f0-9-]+)$/.exec(String(url));
+      assert.ok(match && submittedIds.has(match[1]), 'cancellation must address this request’s known job');
+      assert.equal(options.body, undefined, 'cancellation must not retransmit a prompt or BYO key');
+      assert.equal(options.keepalive, true);
+      return Promise.resolve(new Response('{}', { headers: { 'Content-Type': 'application/json' } }));
+    }
+    if (String(url) === '/api/openai') {
+      const headers = new Headers(options.headers);
+      assert.equal(headers.get('Prefer'), 'respond-async');
+      submittedIds.add(headers.get('Idempotency-Key')!);
+    }
+    return providerRequest(url, options);
+  });
+  return providerRequest;
+}
+
 test('Astra MAX honors a real 429 Retry-After without changing its prompt, model, or 32K output cap', async t => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const bodies: any[] = [];
   const waits: unknown[] = [];
   const controller = new AbortController();
   t.after(() => controller.abort());
-  t.mock.method(globalThis, 'fetch', async (_url: unknown, options: RequestInit) => {
+  mockProviderFetch(t, async (_url: unknown, options: RequestInit) => {
     bodies.push(JSON.parse(options.body as string));
     if (bodies.length === 1) return new Response(JSON.stringify({
       error: { source: 'azure_openai', code: 'azure_openai_rate_limited' },
@@ -102,7 +123,7 @@ test('cancelling an actual blueprint transport during Retry-After prevents repla
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const controller = new AbortController();
   const waits: unknown[] = [];
-  const fetch = t.mock.method(globalThis, 'fetch', async () => new Response(JSON.stringify({
+  const fetch = mockProviderFetch(t, async () => new Response(JSON.stringify({
     error: { source: 'azure_openai', code: 'azure_openai_rate_limited' },
   }), { status: 429, headers: { 'Content-Type': 'application/json', 'Retry-After': '60' } }));
   const request = provider.generateBlueprintArchitectureWithAI('Secure Fabric E2E', {
@@ -129,7 +150,7 @@ for (const [stage, generate] of [
 ] as const) {
   test(`${stage} preserves a structured daily-budget rejection without any retry or success`, async t => {
     const waits: unknown[] = [];
-    const fetch = t.mock.method(globalThis, 'fetch', async () => new Response(JSON.stringify({
+    const fetch = mockProviderFetch(t, async () => new Response(JSON.stringify({
       error: { source: 'budget', code: 'ai_daily_budget_exceeded', requestId: 'budget-rejection-id' },
     }), { status: 429, headers: { 'Content-Type': 'application/json', 'Retry-After': '5' } }));
     await assert.rejects(generate('Secure Fabric E2E', {
@@ -150,7 +171,7 @@ for (const [stage, generate] of [
 
   test(`${stage} preserves provider 500 provenance without automatic lower-quality replay`, async t => {
     const bodies: any[] = [];
-    t.mock.method(globalThis, 'fetch', async (_url: unknown, options: RequestInit) => {
+    mockProviderFetch(t, async (_url: unknown, options: RequestInit) => {
       bodies.push(JSON.parse(options.body as string));
       return new Response(JSON.stringify({
         error: {
@@ -179,7 +200,7 @@ for (const [stage, generate] of [
 }
 
 test('already-aborted generation never starts a request', async t => {
-  const fetch = t.mock.method(globalThis, 'fetch', async () => response());
+  const fetch = mockProviderFetch(t, async () => response());
   const controller = new AbortController();
   controller.abort(new Error('Custom cancellation reason'));
   await assert.rejects(provider.generateArchitectureWithAI('test', override, undefined, 'en', { signal: controller.signal }), abortError);
@@ -188,7 +209,7 @@ test('already-aborted generation never starts a request', async t => {
 
 test('AbortSignal reaches actual fetch and cancellation never retries or becomes a timeout', async t => {
   let signal: AbortSignal | undefined;
-  const fetch = t.mock.method(globalThis, 'fetch', async (_url: unknown, options: RequestInit) => {
+  const fetch = mockProviderFetch(t, async (_url: unknown, options: RequestInit) => {
     signal = options.signal as AbortSignal;
     return await new Promise<Response>((_resolve, reject) => signal!.addEventListener('abort',
       () => reject(new DOMException('Aborted', 'AbortError')), { once: true }));
@@ -205,7 +226,7 @@ test('AbortSignal reaches actual fetch and cancellation never retries or becomes
 
 test('late successful provider responses cannot escape a cancelled request', async t => {
   let complete!: (response: Response) => void;
-  t.mock.method(globalThis, 'fetch', () => new Promise<Response>(resolve => { complete = resolve; }));
+  mockProviderFetch(t, () => new Promise<Response>(resolve => { complete = resolve; }));
   const controller = new AbortController();
   const request = provider.generateArchitectureWithAI('test', override, undefined, 'en', { signal: controller.signal });
   controller.abort();
@@ -215,10 +236,9 @@ test('late successful provider responses cannot escape a cancelled request', asy
 
 test('abort during response-body reading is not converted into a malformed-response failure', async t => {
   let finishBody!: (body: string) => void;
-  t.mock.method(globalThis, 'fetch', async () => ({
-    ok: true, status: 200, headers: new Headers({ 'content-type': 'application/json' }), url: '', redirected: false,
-    text: () => new Promise<string>(resolve => { finishBody = resolve; }),
-  } as Response));
+  mockProviderFetch(t, async () => new Response(new ReadableStream({
+    start(controller) { finishBody = body => { controller.enqueue(new TextEncoder().encode(body)); controller.close(); }; },
+  }), { headers: { 'Content-Type': 'application/json' } }));
   const controller = new AbortController();
   const request = provider.generateArchitectureWithAI('test', override, undefined, 'en', { signal: controller.signal });
   await new Promise<void>(resolve => setImmediate(resolve));
@@ -229,18 +249,18 @@ test('abort during response-body reading is not converted into a malformed-respo
 
 test('transport timeouts remain distinguishable from user cancellation and abort the request once', async t => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
-  const fetch = t.mock.method(globalThis, 'fetch', async (_url: unknown, options: RequestInit) =>
+  const fetch = mockProviderFetch(t, async (_url: unknown, options: RequestInit) =>
     await new Promise<Response>((_resolve, reject) => options.signal!.addEventListener('abort',
       () => reject(new DOMException('Aborted', 'AbortError')), { once: true })));
   const request = provider.callAzureOpenAI([], override);
-  t.mock.timers.tick(225001);
-  await assert.rejects(request, /timed out after 225 seconds/);
+  t.mock.timers.tick(17 * 60_000 + 1);
+  await assert.rejects(request, /exceeded its processing time limit/);
   assert.equal(fetch.mock.callCount(), 1);
 });
 
 test('a cancelled request can be retried with a fresh signal; legacy calls still work', async t => {
   let invocation = 0;
-  t.mock.method(globalThis, 'fetch', async (_url: unknown, options: RequestInit) => {
+  mockProviderFetch(t, async (_url: unknown, options: RequestInit) => {
     if (++invocation > 1) return response();
     return await new Promise<Response>((_resolve, reject) => options.signal!.addEventListener('abort',
       () => reject(new DOMException('Aborted', 'AbortError')), { once: true }));
@@ -256,7 +276,7 @@ test('a cancelled request can be retried with a fresh signal; legacy calls still
 });
 
 test('completion removes the external abort listener', async t => {
-  t.mock.method(globalThis, 'fetch', async () => response());
+  mockProviderFetch(t, async () => response());
   const controller = new AbortController();
   const add = t.mock.method(controller.signal, 'addEventListener');
   const remove = t.mock.method(controller.signal, 'removeEventListener');
@@ -267,7 +287,7 @@ test('completion removes the external abort listener', async t => {
 });
 
 test('already-aborted validation never dispatches or records model usage', async t => {
-  const fetch = t.mock.method(globalThis, 'fetch', async () => response(validationContent));
+  const fetch = mockProviderFetch(t, async () => response(validationContent));
   const controller = new AbortController();
   controller.abort();
   await assert.rejects(validate(controller.signal), (error: any) => abortError(error) && error.userCancelled === true);
@@ -277,7 +297,7 @@ test('already-aborted validation never dispatches or records model usage', async
 
 test('validation cancellation reaches fetch and remains distinct from a provider timeout', async t => {
   let signal: AbortSignal | undefined;
-  const fetch = t.mock.method(globalThis, 'fetch', async (_url: unknown, options: RequestInit) => {
+  const fetch = mockProviderFetch(t, async (_url: unknown, options: RequestInit) => {
     signal = options.signal as AbortSignal;
     return await new Promise<Response>((_resolve, reject) => signal!.addEventListener('abort',
       () => reject(new DOMException('Aborted', 'AbortError')), { once: true }));
@@ -294,7 +314,7 @@ test('validation cancellation reaches fetch and remains distinct from a provider
 
 test('late validation responses cannot become successful reviews or usage telemetry after cancellation', async t => {
   let complete!: (response: Response) => void;
-  t.mock.method(globalThis, 'fetch', () => new Promise<Response>(resolve => { complete = resolve; }));
+  mockProviderFetch(t, () => new Promise<Response>(resolve => { complete = resolve; }));
   const controller = new AbortController();
   const request = validate(controller.signal);
   controller.abort();
@@ -305,10 +325,9 @@ test('late validation responses cannot become successful reviews or usage teleme
 
 test('validation cancellation during body reading is not reported as malformed JSON', async t => {
   let finishBody!: (body: string) => void;
-  t.mock.method(globalThis, 'fetch', async () => ({
-    ok: true, status: 200, headers: new Headers({ 'content-type': 'application/json' }), url: '', redirected: false,
-    text: () => new Promise<string>(resolve => { finishBody = resolve; }),
-  } as Response));
+  mockProviderFetch(t, async () => new Response(new ReadableStream({
+    start(controller) { finishBody = body => { controller.enqueue(new TextEncoder().encode(body)); controller.close(); }; },
+  }), { headers: { 'Content-Type': 'application/json' } }));
   const controller = new AbortController();
   const request = validate(controller.signal);
   await new Promise<void>(resolve => setImmediate(resolve));
@@ -318,16 +337,16 @@ test('validation cancellation during body reading is not reported as malformed J
   assert.deepEqual(provider.getTestModelUsage(), []);
 });
 
-test('validation keeps its 225-second timeout and does not count a timed-out call as success', async t => {
+test('validation bounds the async job lifetime and does not count a timed-out call as success', async t => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   let signal: AbortSignal | undefined;
-  const fetch = t.mock.method(globalThis, 'fetch', async (_url: unknown, options: RequestInit) => {
+  const fetch = mockProviderFetch(t, async (_url: unknown, options: RequestInit) => {
     signal = options.signal as AbortSignal;
     return await new Promise<Response>((_resolve, reject) => signal!.addEventListener('abort',
       () => reject(new DOMException('Aborted', 'AbortError')), { once: true }));
   });
   const request = validate();
-  t.mock.timers.tick(225001);
+  t.mock.timers.tick(17 * 60_000 + 1);
   await assert.rejects(request, (error: any) =>
     !abortError(error) && error.userCancelled !== true && /taking too long to respond/.test(error.message));
   assert.equal(signal?.aborted, true);
@@ -336,7 +355,7 @@ test('validation keeps its 225-second timeout and does not count a timed-out cal
 });
 
 test('validation releases caller listeners and preserves the legacy six-argument API', async t => {
-  t.mock.method(globalThis, 'fetch', async () => response(validationContent));
+  mockProviderFetch(t, async () => response(validationContent));
   const controller = new AbortController();
   const add = t.mock.method(controller.signal, 'addEventListener');
   const remove = t.mock.method(controller.signal, 'removeEventListener');
@@ -352,7 +371,7 @@ test('validation releases caller listeners and preserves the legacy six-argument
 
 for (const feature of ['generation', 'validation']) {
   test(`${feature} preserves a concurrency rejection without an immediate compact retry or success telemetry`, async t => {
-    const fetch = t.mock.method(globalThis, 'fetch', async () => new Response(JSON.stringify({
+    const fetch = mockProviderFetch(t, async () => new Response(JSON.stringify({
       error: { code: 'ai_concurrency_limit', source: 'budget', requestId: 'comparison-request' },
     }), { status: 429, headers: { 'content-type': 'application/json' } }));
     const request = feature === 'generation'
@@ -369,7 +388,7 @@ for (const feature of ['generation', 'validation']) {
       let peak = 0;
       let dispatches = 0;
       let reads = 0;
-      t.mock.method(globalThis, 'fetch', async (url: unknown, options: RequestInit) => {
+      mockProviderFetch(t, async (url: unknown, options: RequestInit) => {
         if (url === '/api/ai/budget') {
           reads += 1;
           assert.equal(options.cache, 'no-store');
@@ -413,7 +432,7 @@ for (const feature of ['generation', 'validation']) {
 }
 
 test('legacy direct AbortSignal arguments preserve cancellation and never retry', async t => {
-  const fetch = t.mock.method(globalThis, 'fetch', async (_url: unknown, options: RequestInit) =>
+  const fetch = mockProviderFetch(t, async (_url: unknown, options: RequestInit) =>
     await new Promise<Response>((_resolve, reject) => options.signal!.addEventListener('abort',
       () => reject(new DOMException('Aborted', 'AbortError')), { once: true })));
   const controller = new AbortController();
@@ -426,7 +445,7 @@ test('legacy direct AbortSignal arguments preserve cancellation and never retry'
 test('internal timeouts never replay at lower quality and still release caller listeners', async t => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   let calls = 0;
-  const fetch = t.mock.method(globalThis, 'fetch', async (_url: unknown, options: RequestInit) => {
+  const fetch = mockProviderFetch(t, async (_url: unknown, options: RequestInit) => {
     if (++calls > 1) return response();
     return await new Promise<Response>((_resolve, reject) => options.signal!.addEventListener('abort',
       () => reject(new DOMException('Aborted', 'AbortError')), { once: true }));
@@ -435,11 +454,11 @@ test('internal timeouts never replay at lower quality and still release caller l
   const add = t.mock.method(controller.signal, 'addEventListener');
   const remove = t.mock.method(controller.signal, 'removeEventListener');
   const request = provider.generateArchitectureWithAI('test', override, undefined, 'en', { signal: controller.signal });
-  t.mock.timers.tick(225001);
+  t.mock.timers.tick(17 * 60_000 + 1);
   await assert.rejects(request, (error: any) => {
     assert.equal(error.code, 'ai_client_timeout');
     assert.equal(error.source, 'client');
-    assert.match(error.message, /timed out after 225 seconds/);
+    assert.match(error.message, /exceeded its processing time limit/);
     return true;
   });
   assert.equal(fetch.mock.callCount(), 1);
@@ -449,14 +468,14 @@ test('internal timeouts never replay at lower quality and still release caller l
 });
 
 test('empty architectures fail without clearing the canvas or replaying a compact request', async t => {
-  const fetch = t.mock.method(globalThis, 'fetch', async () => response('{"services":[]}'));
+  const fetch = mockProviderFetch(t, async () => response('{"services":[]}'));
   await assert.rejects(provider.generateArchitectureWithAI('test', override), /empty architecture/);
   assert.equal(fetch.mock.callCount(), 1);
 });
 
 for (const content of ['{"status":"ok"}', '{"services":{}}']) {
   test(`incompatible architecture response ${content} fails without a second billable request`, async t => {
-    const fetch = t.mock.method(globalThis, 'fetch', async () => response(content));
+    const fetch = mockProviderFetch(t, async () => response(content));
     const message = 'Failed to generate architecture. Please try again.';
     await assert.rejects(provider.generateArchitectureWithAI('test', override), { message });
     assert.equal(fetch.mock.callCount(), 1);
@@ -467,7 +486,7 @@ for (const content of ['{"status":"ok"}', '{"services":{}}']) {
 test('Astra follow-ups use the genuine deployment and configured feature reasoning, not the legacy fast model', async t => {
   provider.setTestModelSettings({ model: 'gpt-6-astra', reasoningEffort: 'low' });
   let requestBody: any;
-  const fetch = t.mock.method(globalThis, 'fetch', async (_url: unknown, options: RequestInit) => {
+  const fetch = mockProviderFetch(t, async (_url: unknown, options: RequestInit) => {
     requestBody = JSON.parse(options.body as string);
     return response('{"suggestions":["Add monitoring"]}');
   });
@@ -484,7 +503,7 @@ test('Astra follow-ups use the genuine deployment and configured feature reasoni
 
 test('Astra follow-up cancellation remains terminal and does not fall back to another model', async t => {
   provider.setTestModelSettings({ model: 'gpt-6-astra', reasoningEffort: 'low' });
-  const fetch = t.mock.method(globalThis, 'fetch', async (_url: unknown, options: RequestInit) =>
+  const fetch = mockProviderFetch(t, async (_url: unknown, options: RequestInit) =>
     await new Promise<Response>((_resolve, reject) => options.signal!.addEventListener('abort',
       () => reject(new DOMException('Aborted', 'AbortError')), { once: true })));
   const controller = new AbortController();
@@ -498,7 +517,7 @@ test('Astra follow-up cancellation remains terminal and does not fall back to an
 
 for (const code of ['image_not_supported', 'invalid_upstream_request']) {
   test(`${code} vision guidance addresses the Astra deployment without model switching or lost diagnostics`, async t => {
-    const fetch = t.mock.method(globalThis, 'fetch', async () => new Response(JSON.stringify({
+    const fetch = mockProviderFetch(t, async () => new Response(JSON.stringify({
       error: { code, source: 'azure_openai', requestId: 'vision-request', upstreamRequestId: 'upstream-vision' },
     }), { status: 400, headers: { 'content-type': 'application/json' } }));
     const message = 'The configured GPT-6 Astra deployment rejected the image analysis request. Check the image and contact the application administrator if the problem persists.';
@@ -527,7 +546,7 @@ for (const [name, call] of [
   ['follow-ups', (signal: AbortSignal) => provider.generateFollowUpSuggestions({ services: [], lastChange: '', recentRequests: [], signal })],
 ] as const) {
   test(`${name} provider propagates cancellation instead of fallback output`, async t => {
-    const fetch = t.mock.method(globalThis, 'fetch', async (_url: unknown, options: RequestInit) =>
+    const fetch = mockProviderFetch(t, async (_url: unknown, options: RequestInit) =>
       await new Promise<Response>((_resolve, reject) => options.signal!.addEventListener('abort',
         () => reject(new DOMException('Aborted', 'AbortError')), { once: true })));
     const controller = new AbortController();
@@ -541,7 +560,7 @@ for (const [name, call] of [
 const astraOverride = { model: 'gpt-6-astra', reasoningEffort: 'max' };
 function mockModelResponse(t: TestContext, payload: unknown) {
   provider.setTestModelSettings(astraOverride);
-  return t.mock.method(globalThis, 'fetch', async (_url: unknown, options: RequestInit) => {
+  return mockProviderFetch(t, async (_url: unknown, options: RequestInit) => {
     const request = JSON.parse(String(options.body));
     assert.equal(request.deployment, 'gpt-6-astra');
     assert.equal(request.body.model, 'gpt-6-astra');
@@ -721,7 +740,7 @@ test('response contracts: a valid one-stage reference without optional output re
 
 test('response contracts: migrated selected BYO cannot silently fall back to managed Astra vision', async t => {
   const requests: Array<{ apiFormat: string; deployment: string; byo?: unknown; body: { input: Array<{ content: unknown }> } }> = [];
-  t.mock.method(globalThis, 'fetch', async (url: unknown, options: RequestInit) => {
+  mockProviderFetch(t, async (url: unknown, options: RequestInit) => {
     assert.equal(url, '/api/openai');
     requests.push(JSON.parse(String(options.body)));
     return new Response(JSON.stringify({ output_text: 'Offline description' }),
@@ -753,7 +772,7 @@ test('response contracts: migrated selected BYO cannot silently fall back to man
 });
 
 test('Astra-only public providers reject legacy/forged overrides before any HTTP or success', async t => {
-  const fetch = t.mock.method(globalThis, 'fetch', async () => { throw new Error('Unexpected HTTP'); });
+  const fetch = mockProviderFetch(t, async () => { throw new Error('Unexpected HTTP'); });
   for (const model of ['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'claude-opus-5', 'constructor', undefined]) {
     const unsupported = { model, reasoningEffort: 'max', forceManaged: true };
     for (const generate of [

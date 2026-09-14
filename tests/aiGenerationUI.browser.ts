@@ -406,6 +406,27 @@ async function finish(page: Page, kind: string, error?: string) {
   }, { kind, error });
 }
 
+test('async generation progress shows the real stage and elapsed time; stale callbacks cannot update a retry', async t => {
+  const page = await setup(t, { mode: 'both', deferKinds: ['manifest'] });
+  await generate(page);
+  await page.waitForFunction(() => (window as any).h.calls.some((call: any) => call.kind === 'manifest'));
+  await page.evaluate(() => {
+    const h = (window as any).h;
+    h.oldProgress = h.calls.find((call: any) => call.kind === 'manifest').override.onProgress;
+    h.oldProgress({ id: 'progress-test', status: 'running', elapsedMs: 250000, deadlineAt: Date.now() + 900000, pollAfterMs: 2000 });
+  });
+  const progress = page.locator('[data-ai-job-progress="manifest"]');
+  await progress.getByText('Generating in background', { exact: true }).waitFor();
+  assert.match(await progress.innerText(), /250s elapsed/);
+  assert.doesNotMatch(await progress.innerText(), /\d+%/);
+  await page.getByRole('button', { name: 'Cancel request' }).click();
+  await page.getByRole('button', { name: 'Retry generation' }).click();
+  await page.evaluate(() => (window as any).h.oldProgress({
+    id: 'stale-progress', status: 'succeeded', elapsedMs: 999000, deadlineAt: Date.now(), pollAfterMs: 2000,
+  }));
+  assert.equal(await page.locator('[data-ai-job-progress]').count(), 0);
+});
+
 for (const [mode, parallel] of [['topology', true], ['both', true], ['both', false]] as const) {
   test(`${mode}/${parallel ? 'parallel' : 'sequential'} rejected review keeps prompt and produces no success or blueprint side effects`, async t => {
     const page = await setup(t, { mode, parallel });

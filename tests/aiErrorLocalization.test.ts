@@ -34,7 +34,7 @@ const STANDALONE_AI_ERROR_MESSAGES: readonly string[] = [
   'The AI concurrency budget could not be checked. Please try again.',
   'AI request capacity stayed busy. Try again when capacity is available.',
   'AI capacity was repeatedly claimed by other requests. Try this model again.',
-  'The AI request timed out after 225 seconds. This timeout was not automatically retried. Try again later; failures with unknown usage may still count toward the application budget.',
+  'The AI job exceeded its processing time limit. It was not automatically resubmitted. Failures with unknown usage may still count toward the application budget.',
 ];
 
 const ASTRA_CONFIGURATION_MESSAGES = [

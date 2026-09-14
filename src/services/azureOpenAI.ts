@@ -52,6 +52,7 @@ interface CallResult {
 export interface ModelOverride extends RuntimeModelOverride, AIRateLimitRetryOptions {
   /** Also reaches reference, blueprint and manifest providers using this override. */
   signal?: AbortSignal;
+  onProgress?: (progress: import('./aiJobTransport').AIJobProgress) => void;
 }
 
 export type AIGenerationOptions = AIRateLimitRetryOptions & { modelOverride?: RuntimeModelOverride };
@@ -62,7 +63,7 @@ export class AIRequestTimeoutError extends Error {
   readonly status = 504;
 
   constructor() {
-    super('The AI request timed out after 225 seconds. This timeout was not automatically retried. Try again later; failures with unknown usage may still count toward the application budget.');
+    super('The AI job exceeded its processing time limit. It was not automatically resubmitted. Failures with unknown usage may still count toward the application budget.');
     this.name = 'TimeoutError';
   }
 }
@@ -135,11 +136,12 @@ export async function callAzureOpenAI(messages: any[], modelOverride?: ModelOver
 
   const onRetryWait = ('aborted' in options ? undefined : options.onRetryWait) ?? modelOverride?.onRetryWait;
   const proxyResult = await runWithRateLimitRetry(async () => {
-    // Keep the existing 225s limit per HTTP request, not across local cooldowns.
-    const lifetime = requestLifetime(signal, 225000);
+    // Individual HTTP exchanges are short; the job has its own bounded lifetime.
+    const lifetime = requestLifetime(signal, 17 * 60_000);
     try {
       const result = await callAzureOpenAIProxy({
         apiFormat, deployment, body: requestBody, signal: lifetime.signal, connection: runtime.connection,
+        onProgress: modelOverride?.onProgress,
       });
       throwIfGenerationAborted(signal);
       throwIfGenerationAborted(lifetime.signal);
@@ -731,7 +733,7 @@ If the image is not an architecture diagram or is unclear, describe what you can
 
   console.log(`🖼️ Analyzing architecture diagram with ${runtime.displayName}... | API: ${getApiFormatLabel(runtime.apiFormat)}`);
 
-  const lifetime = requestLifetime(options.signal, 120000);
+  const lifetime = requestLifetime(options.signal, 17 * 60_000);
   try {
     const proxyResult = await callAzureOpenAIProxy({
       apiFormat: runtime.apiFormat,

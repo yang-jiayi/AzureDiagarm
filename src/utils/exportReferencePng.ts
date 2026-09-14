@@ -13,6 +13,7 @@
  */
 
 import React from 'react';
+import { LanguageProvider } from '../i18n/LanguageContext';
 import { createRoot, Root } from 'react-dom/client';
 import ReferenceArchitectureCanvas from '../components/ReferenceArchitectureCanvas';
 import type { ReferenceArchitecture } from '../services/referenceArchitectureAI';
@@ -23,6 +24,7 @@ import { readTextAsset, svgToDataUrl } from './assetSource';
 import { calculateReferenceCanvasWidth } from './publicationLayout';
 
 export interface ExportReferencePngOptions {
+  signal?: AbortSignal;
   /** Filename (without extension) for the downloaded PNG. */
   fileName?: string;
   /** Optional fixed canvas width. By default the content determines the width. */
@@ -46,7 +48,9 @@ export async function exportReferenceArchitectureAsPng(
     width,
     author,
     pixelRatio = 2,
+    signal,
   } = options;
+  signal?.throwIfAborted();
   const resolvedWidth = calculateReferenceCanvasWidth(data, width);
 
   // 1. Pre-resolve every icon URL up front and inline as a data: URL.
@@ -54,6 +58,7 @@ export async function exportReferenceArchitectureAsPng(
   //    before we capture — no async race with React effects or dynamic imports.
   const iconMap = await preloadIconMap(data);
   const actorIconUrl = await preloadActorIcon();
+  signal?.throwIfAborted();
 
   // 2. Create a detached host positioned far off-screen.
   const host = document.createElement('div');
@@ -71,13 +76,13 @@ export async function exportReferenceArchitectureAsPng(
   try {
     root = createRoot(host);
     root.render(
-      React.createElement(ReferenceArchitectureCanvas, {
+      React.createElement(LanguageProvider, { children: React.createElement(ReferenceArchitectureCanvas, {
         data,
         width: resolvedWidth,
         author,
         iconMap,
         actorIconUrl,
-      }),
+      }) }),
     );
 
     // 3. Wait for the root element to actually appear in the DOM.
@@ -102,6 +107,7 @@ export async function exportReferenceArchitectureAsPng(
       backgroundColor: '#ffffff',
       pixelRatio,
     });
+    signal?.throwIfAborted();
 
     // 7. Trigger download.
     triggerDownload(dataUrl, `${fileName}.png`);
