@@ -57,7 +57,9 @@ Retain the guarded rollback path and unchanged 1-2 replicas.
 - [x] Reproduce successful/expired results incorrectly returned as timeout.
 - [x] Fix shared transport recovery, caller cancellation and authentication.
 - [x] Verify actual browser suspension, redirects, PNG delivery and cancellation.
-- [ ] Complete current Azure/runtime policy and protected Linux checks.
+- [x] Complete current Azure core validation, policy and role checks.
+- [x] Build actual Linux runtime images and check all process readiness.
+- [ ] Complete protected browser checks after synchronizing viewport assertions.
 - [ ] Record exact-source validation proof before deployment.
 
 ## 6. Deployment Steps
@@ -79,7 +81,14 @@ Actual local validation on 2026-09-21:
 | Generator safeguards | All 71 cases pass; completed Both-mode output, retries, cancellation and editor lineage remain protected | `npx tsx --test tests\aiGenerationUI.browser.ts` |
 | Source build/lint | Script types, production build and lint pass | `npm run typecheck:scripts`; `npm run build -- --logLevel error`; `npm run lint` |
 | Current Azure health | App/environment Succeeded; OpenAI Available; live source/revision match the baseline | Read-only CLI queries on 2026-09-21; this does not prove every inference succeeds |
-| Protected Linux/runtime checks | Pending for this release; historical runs below are not current-source proof | Required CI and CodeQL before merge |
+| Azure core validation | Official helper passed all five checks against a hash-identical copy of unchanged `infra/gpt6-astra.bicep`, current account `azurediagarmai` and capacity 50 | `validate-deployment.ps1 -Scope group -ResourceGroup AzureDiagarm_rg -Subscription f2c0fe9a-0171-42ed-803d-3e78322545a1 -Template <session>\gpt6-astra.bicep -Parameters <session>\astra-validation.parameters.json`, 2026-09-21 |
+| Resource-level what-if | Zero resource Create/Delete; sole Modify is the service-owned `properties.currentCapacity` field. Bootstrap and model template will not be applied | `az deployment group what-if --no-pretty-print`; separate JSON review avoids the helper's property-line counts |
+| Identity/role validation | Resource-scoped Blob/Table contributors and AcrPull statically verified; current runtime identity retains its existing scoped OpenAI user role and all seven role assignments | `infra/resources.bicep:89-101,313-337`; `az role assignment list --assignee-object-id <runtime-principal> --all` |
+| Policy/model/auth | Current inherited assignments inspected; provisioned-capacity Deny does not prohibit unchanged GlobalStandard 50. Astra version remains `2026-09-03`; application access/budget probe returned 200, allowlist true, zero active jobs. Easy Auth remains enabled | Current read-only ARM policy definitions, `az cognitiveservices account deployment show`, `az containerapp auth show`, and `preflight-access.cjs --application-only` |
+| Linux source/runtime checks | First release head `99fb517` passed 1,210 application, 85 Office, 178 workspace and 270 server cases, lint/build/production audit, actual runtime container build and all-process readiness. MCP image checks passed | CI `35552657904` build jobs, 2026-09-21 |
+| Required CodeQL | All three analyses passed for `99fb517` | CodeQL run `35552656908`, 2026-09-21 |
+| Protected browser checks | 138 cases passed, including all new MAX recovery cases; one existing responsive test measured the previous 1,366px layout 23ms after switching to 768px. Trace and settled screenshot confirm resize timing; five focused local repetitions passed. Poll the unchanged width threshold as the adjacent height assertion already does; require a fresh complete CI run | CI `35552657904` browser trace; `npx playwright test critical-flows.spec.ts --grep 'compact workspace chrome' --repeat-each=5` |
+| Browser synchronization follow-up | All 24 cases pass across three repetitions of MAX recovery/auth/expiry, real PNG output/cancellation and the synchronized responsive-width check; changed-test lint and diff checks pass | `npx playwright test async-ai-generation.spec.ts critical-flows.spec.ts --grep 'MAX blueprint async progress\|detached editorial PNG\|cancellation during real PNG\|compact workspace chrome' --repeat-each=3`; `npx eslint tests\e2e\critical-flows.spec.ts`; `git diff --check` |
 
 ## 8. Rollback and Limitations
 
