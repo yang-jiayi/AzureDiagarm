@@ -1,6 +1,6 @@
 # Azure Deployment Plan
 
-> **Status:** Ready for Validation
+> **Status:** Validated
 
 Generated: 2026-09-21
 
@@ -59,14 +59,16 @@ Retain the guarded rollback path and unchanged 1-2 replicas.
 - [x] Verify actual browser suspension, redirects, PNG delivery and cancellation.
 - [x] Complete current Azure core validation, policy and role checks.
 - [x] Build actual Linux runtime images and check all process readiness.
-- [ ] Complete protected browser checks after synchronizing viewport assertions.
-- [ ] Record exact-source validation proof before deployment.
+- [x] Complete protected browser checks after synchronizing viewport assertions.
+- [x] Record exact-source validation proof before deployment.
 
 ## 6. Deployment Steps
 
 Merge only the exact checked PR head. Monitor its new main-triggered deployment.
 Verify live source/revision, preserved policies and authenticated MAX job
 submission/status/result/usage settlement. Retain the previous image.
+The final validation-record commit must pass the same required checks again;
+this validation does not authorize merging an unchecked documentation head.
 
 ## 7. Validation Proof
 
@@ -89,6 +91,7 @@ Actual local validation on 2026-09-21:
 | Required CodeQL | All three analyses passed for `99fb517` | CodeQL run `35552656908`, 2026-09-21 |
 | Protected browser checks | 138 cases passed, including all new MAX recovery cases; one existing responsive test measured the previous 1,366px layout 23ms after switching to 768px. Trace and settled screenshot confirm resize timing; five focused local repetitions passed. Poll the unchanged width threshold as the adjacent height assertion already does; require a fresh complete CI run | CI `35552657904` browser trace; `npx playwright test critical-flows.spec.ts --grep 'compact workspace chrome' --repeat-each=5` |
 | Browser synchronization follow-up | All 24 cases pass across three repetitions of MAX recovery/auth/expiry, real PNG output/cancellation and the synchronized responsive-width check; changed-test lint and diff checks pass | `npx playwright test async-ai-generation.spec.ts critical-flows.spec.ts --grep 'MAX blueprint async progress\|detached editorial PNG\|cancellation during real PNG\|compact workspace chrome' --repeat-each=3`; `npx eslint tests\e2e\critical-flows.spec.ts`; `git diff --check` |
+| Completed release validation | All six required checks and CodeQL passed for exact head `7a212c44f390b729e124d19c0b14ea4e68f82a97`; full critical browser flows and all workspace/browser safeguards passed, as did both image builds and runtime readiness. No checks or policies were bypassed for validation | CI `35553527003`, completed 2026-09-21 02:26:35 UTC; CodeQL `35553525194`, completed 02:17:10 UTC; `gh pr checks 86 --required --watch`; `gh run view ... --json headSha,conclusion,jobs` |
 
 ## 8. Rollback and Limitations
 
