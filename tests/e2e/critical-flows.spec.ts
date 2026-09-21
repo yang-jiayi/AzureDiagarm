@@ -775,7 +775,8 @@ test('compact workspace chrome preserves canvas space and visible mobile command
     await expect.poll(async () => (
       (await page.locator('.canvas-container').boundingBox())?.y ?? Infinity
     )).toBeLessThan(viewport.maximumChrome);
-    expect(await page.evaluate(() => document.documentElement.scrollWidth))
+    // React Flow's resize observer can settle after the viewport acknowledgment.
+    await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth))
       .toBeLessThanOrEqual(viewport.width);
     const targets = await page.locator('.ribbon-tab, .ribbon-command-strip .btn, .mobile-command-bar button, .workflow-stepper button')
       .evaluateAll(elements => elements

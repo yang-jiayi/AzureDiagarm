@@ -372,6 +372,7 @@ export const PROXY_ERROR_MESSAGE_CODES = [
   'network_error',
   'invalid_upstream_request',
   'ai_job_timeout',
+  'ai_job_status_unavailable',
   'ai_job_interrupted',
   'ai_job_cancelled',
   'ai_job_expired',
@@ -445,6 +446,8 @@ export function proxyErrorMessageForCode(
       return 'The application timed out while reserving the AI budget. Wait a moment and try again.';
     case 'ai_job_timeout':
       return 'The AI job exceeded its processing time limit. It was not automatically resubmitted. Failures with unknown usage may still count toward the application budget.';
+    case 'ai_job_status_unavailable':
+      return 'The application could not confirm the AI job result. The job may have completed; this is not a confirmed model timeout. No new generation was submitted. Keep the request ID for diagnosis.';
     case 'ai_job_interrupted':
       return 'The AI job was interrupted. It was not automatically resubmitted. Unknown usage may still count toward the application budget.';
     case 'ai_job_cancelled':

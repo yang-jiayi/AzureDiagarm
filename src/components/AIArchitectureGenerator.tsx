@@ -454,8 +454,15 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
     prompts: group.prompts.map(prompt => localize(language, prompt)),
   }));
 
-  const describeGenerationFailure = (cause: unknown): string => {
-    const detail = translate(cause instanceof Error ? cause.message : String(cause));
+  const describeGenerationFailure = (cause: unknown, stage?: GenerationStage): string => {
+    const detail = (stage ? `${localize(language, GENERATION_STAGE_LABELS[stage])}: ` : '')
+      + translate(cause instanceof Error ? cause.message : String(cause));
+    if (cause instanceof OpenAIProxyError && cause.code === 'application_authentication_required') {
+      return detail + ' ' + localize(language, {
+        en: 'Sign-in expired while retrieving the job. This does not mean the AI generation failed. No new generation was submitted.',
+        ja: 'ジョブの結果取得中にサインインの有効期限が切れました。AI 生成の失敗を意味するものではありません。新たな生成は送信していません。',
+      });
+    }
     if (isAIInternalServerError(cause)) {
       return detail + ' ' + localize(language, {
         en: 'An internal server error occurred. This failure was not automatically retried. You can retry manually with the same settings; unknown-usage failures may still count toward the application budget.',
@@ -515,8 +522,12 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
       setRetryWaits(previous => ({ ...previous, [stage]: wait }));
       setRetryClock(Date.now());
     };
+    const requestStages = new Map<string, GenerationStage>();
     const reportProgress = (stage: GenerationStage) => (progress: import('../services/aiJobTransport').AIJobProgress) => {
-      if (active()) setJobProgress(previous => ({ ...previous, [stage]: progress }));
+      if (active()) {
+        requestStages.set(progress.id, stage);
+        setJobProgress(previous => ({ ...previous, [stage]: progress }));
+      }
     };
     const admitOne = async <T,>(task: (signal: AbortSignal) => Promise<T>): Promise<T> => {
       const [result] = await runAIBudgetQueue([task], { getBudget: getAIBudget, signal: controller.signal });
@@ -813,7 +824,7 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
           // usable, and remember exactly what to re-run.
           const missing: 'topology' | 'blueprint' = topoFailure ? 'topology' : 'blueprint';
           const cause = topoFailure || bpFailure;
-          const detail = describeGenerationFailure(cause);
+          const detail = describeGenerationFailure(cause, missing);
           const retryGuidance = (cause as { code?: unknown } | null)?.code === 'ai_daily_budget_exceeded'
             ? localize(language, {
               en: 'The completed output is preserved. After the daily budget resets, use "Retry missing output" to generate only the missing output.',
@@ -903,7 +914,9 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
         setWasCancelled(true);
         setActiveStep('output');
       } else {
-        setError(err.message ? describeGenerationFailure(err) : translate('Failed to generate architecture. Please try again.'));
+        setError(err.message ? describeGenerationFailure(err,
+          err instanceof OpenAIProxyError && err.requestId ? requestStages.get(err.requestId) : undefined,
+        ) : translate('Failed to generate architecture. Please try again.'));
         setActiveStep('output');
       }
     } finally {
@@ -1185,8 +1198,8 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
                       {localize(language, { en: `${Math.floor(progress.elapsedMs / 1000)}s elapsed`, ja: `経過 ${Math.floor(progress.elapsedMs / 1000)} 秒` })}
                       <small style={{ display: 'block' }}>
                         {localize(language, {
-                          en: 'Status is checked separately. MAX can take several minutes (15-minute limit per job). Keep this view open, or cancel below.',
-                          ja: '状態を別の通信で確認しています。MAX は数分かかる場合があります（1 ジョブの上限は 15 分）。この画面のまま待機するか、下のボタンで取り消せます。',
+                          en: 'Status is checked separately (15-minute limit per job). Returning to this tab checks saved results, available for one hour. Sign-in must still be valid.',
+                          ja: '状態を別の通信で確認しています（1 ジョブの上限は 15 分）。このタブに戻ると保存済み結果を確認します。結果の保持期間は 1 時間で、有効なサインインが必要です。',
                         })}
                       </small>
                     </div>

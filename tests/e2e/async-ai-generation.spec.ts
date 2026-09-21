@@ -29,7 +29,9 @@ async function mockSupportAPIs(page: Page) {
   });
 }
 
-test('MAX blueprint generation displays async progress and delivers a real PNG from the separately retrieved result', async ({ page }) => {
+for (const scenario of ['normal', 'resume', 'sign-in-expired', 'result-expired'] as const) {
+test(`MAX blueprint async progress and separate result: ${scenario}`, async ({ page }) => {
+  if (scenario !== 'normal') await page.clock.install();
   await page.addInitScript(() => {
     localStorage.setItem('azure-diagram-builder.language.v1', 'en');
     localStorage.setItem('azure-diagram-builder.headerCollapsed.v1', '0');
@@ -45,7 +47,11 @@ test('MAX blueprint generation displays async progress and delivers a real PNG f
   const posts: Array<{ body: { reasoning: unknown; max_output_tokens: unknown } }> = [];
   const paths: string[] = [];
   const pageErrors: string[] = [];
+  const loginRequests: string[] = [];
   page.on('pageerror', error => pageErrors.push(error.message));
+  page.on('request', request => {
+    if (request.url().startsWith('https://login.example.test/')) loginRequests.push(request.url());
+  });
   const job = (status: string) => ({
     job: { id, status, elapsedMs: status === 'queued' ? 0 : 250000, deadlineAt: Date.now() + 900000, pollAfterMs: 1000 },
   });
@@ -68,7 +74,9 @@ test('MAX blueprint generation displays async progress and delivers a real PNG f
       status = 202;
     } else if (path === `/api/openai/jobs/${id}/result`) {
       expect(request.postData()).toBeNull();
-      body = {
+      status = scenario === 'result-expired' ? 410 : 200;
+      body = scenario === 'result-expired'
+        ? { error: { source: 'job', code: 'ai_job_expired', requestId: id } } : {
         status: 'completed',
         output_text: JSON.stringify({
           title: '非同期ジョブの構成図',
@@ -85,7 +93,11 @@ test('MAX blueprint generation displays async progress and delivers a real PNG f
       };
     } else if (path === `/api/openai/jobs/${id}`) {
       expect(request.postData()).toBeNull();
-      body = job(ready ? 'succeeded' : 'running');
+      if (ready && scenario === 'sign-in-expired') {
+        await route.fulfill({ status: 302, headers: { Location: 'https://login.example.test/' } });
+        return;
+      }
+      body = job(ready ? scenario === 'result-expired' ? 'expired' : 'succeeded' : 'running');
     } else {
       body = { error: 'Not found' };
       status = 404;
@@ -109,14 +121,33 @@ test('MAX blueprint generation displays async progress and delivers a real PNG f
   expect(posts).toHaveLength(1);
   expect(posts[0].body.reasoning).toEqual({ effort: 'max' });
   expect(posts[0].body.max_output_tokens).toBe(32000);
+  if (scenario === 'sign-in-expired' || scenario === 'result-expired') {
+    let downloads = 0;
+    page.on('download', () => downloads++);
+    ready = true;
+    await page.clock.fastForward(10 * 60 * 60_000);
+    const error = generator.getByRole('alert');
+    await expect(error).toContainText(scenario === 'sign-in-expired'
+      ? 'Sign-in expired while retrieving the job' : 'result is unavailable or expired');
+    await expect(error).toContainText(id);
+    await expect(error).toContainText('Blueprint');
+    await expect(error).not.toContainText('processing time limit');
+    expect(posts).toHaveLength(1);
+    expect(downloads).toBe(0);
+    expect(loginRequests).toEqual([]);
+    expect(pageErrors).toEqual([]);
+    return;
+  }
   const downloading = page.waitForEvent('download', { predicate: value => value.suggestedFilename().endsWith('.png') });
   ready = true;
+  if (scenario === 'resume') await page.clock.fastForward(18 * 60_000);
   await expectPng(await downloading);
   await expect(page.locator('[data-bp-arch-export-host]')).toHaveCount(0);
   expect(paths).toContain(`/api/openai/jobs/${id}/result`);
   expect(posts).toHaveLength(1);
   expect(pageErrors).toEqual([]);
 });
+}
 
 test('detached editorial PNG rendering has its own language context and cleans up after download', async ({ page }) => {
   await mockSupportAPIs(page);

@@ -12,7 +12,8 @@
  * into both the topology and blueprint system prompts as a "REQUIRED
  * COMPONENTS" block.
  *
- * Wall-time budget: ~5–8s. Both mode now becomes:
+ * The manifest uses the selected reasoning level too; MAX may take minutes.
+ * Both mode runs:
  *   manifest  ──▶  Promise.all([topology, blueprint])
  *   total ≈ manifest + max(topology, blueprint)
  */

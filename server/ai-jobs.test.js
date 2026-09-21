@@ -203,13 +203,22 @@ test('shutdown records interruption and releases concurrency without replay or r
 });
 
 test('job deadline is enforced even if the provider ignores abort', async t => {
-  const api = await replica(t, { timeoutMs: 80, fetchImpl: () => new Promise(() => {}) });
+  const logs = [];
+  const api = await replica(t, {
+    timeoutMs: 80, fetchImpl: () => new Promise(() => {}),
+    logger: { error: message => logs.push(JSON.parse(message.slice(message.indexOf('{')))) },
+  });
   const id = crypto.randomUUID();
   await api.submit(id);
   await until(() => api.status(id), value => value.job.status === 'failed');
   const result = await api.request(`/jobs/${id}/result`);
   assert.equal(result.status, 504);
   assert.equal((await result.json()).error.code, 'ai_job_timeout');
+  const timeouts = logs.filter(entry => entry.event === 'ai_job_timeout');
+  assert.equal(timeouts.length, 1);
+  assert.equal(timeouts[0].requestId, id);
+  assert.equal(timeouts[0].status, 'failed');
+  assert.ok(timeouts[0].durationMs >= 80);
 });
 
 test('BYO input, images, keys, endpoints and raw provider errors never enter stored job diagnostics', async t => {

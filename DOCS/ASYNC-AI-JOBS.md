@@ -16,8 +16,12 @@ The existing diagram and completed partial outputs remain protected.
 
 Each job can execute for up to **15 minutes**. Individual browser exchanges
 have a **20-second** deadline. Polling can recover transient network/storage
-failures within a bounded **16-minute** client lifetime; caller cancellation
-guards allow one additional minute for cleanup. MAX reasoning, the chosen
+failures within a **16-minute** client window. After that window, including
+after a suspended tab resumes, the client makes one final bounded status/result
+lookup before reporting failure. A completed server result is not discarded
+merely because the browser's clock deadline elapsed. All async consumers share
+this policy instead of independent timers racing the result lookup.
+MAX reasoning, the chosen
 provider, prompt and output cap are not reduced to hide slow responses.
 The worker uses a bounded native HTTPS request with TCP keepalive probes,
 rather than fetch's independent five-minute response-headers deadline.
@@ -41,6 +45,12 @@ without job support. Poll failures never submit new inference.
 Cancellation arriving before submission creates a rate-limited tombstone, so a
 delayed POST cannot start cancelled work. Retrying a finished request with the
 same ID does not generate again. A different body with that ID is rejected.
+
+Authentication redirects are not followed: an Easy Auth redirect is reported
+as an expired application session, not a model timeout. This keeps prompts and
+BYO keys away from login destinations. A browser retrieval failure carries its
+original request ID and is distinct from a confirmed server processing timeout.
+Cancellation still wins over any late response; recovery never resubmits AI work.
 
 ## Storage, Accounting and Failure Boundaries
 
@@ -81,6 +91,11 @@ shutdown records interruption; a lost worker is detected after its 60-second
 lease expires. Such work is explicitly failed, never automatically replayed or
 reported as successful. A page reload does not restore the generator session;
 review any known job ID before explicitly submitting new work.
+Returning to the same still-open tab can recover results within the one-hour
+retention window while authentication is valid. It cannot recover results
+after expiry, restore an expired login, or preserve the in-memory session
+across a reload. An overnight interruption can therefore require sign-in and
+a new explicitly requested generation, even if the provider finished earlier.
 
 ## Operational Checks
 
@@ -93,3 +108,8 @@ checks short submission/polls, cross-replica result retrieval, the former
 It makes no real model call and must not be described as proof of upstream
 model availability. Use existing authorized production access separately for
 live-provider verification; do not grant roles or change quotas to create proof.
+
+Terminal job transitions log their request ID, status, duration and sanitized
+error code without prompts or credentials. Correlate these with proxy completion
+and Front Door status/result requests: provider success alone does not prove
+that the browser retrieved or rendered the output.

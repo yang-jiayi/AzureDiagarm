@@ -371,6 +371,7 @@ export const exactJapanese: Readonly<Record<string, string>> = {
   'The application AI budget could not be checked. Please try again later or contact the administrator.': 'アプリケーションの AI 予算を確認できませんでした。後でもう一度試すか、管理者に連絡してください。',
   'The application timed out while reserving the AI budget. Wait a moment and try again.': 'アプリケーションが AI 予算を予約する際にタイムアウトしました。しばらく待ってから再試行してください。',
   'The AI job exceeded its processing time limit. It was not automatically resubmitted. Failures with unknown usage may still count toward the application budget.': 'AI ジョブが処理時間の上限を超えました。自動的な再生成は行っていません。使用量が不明な失敗もアプリケーションの予算に計上される場合があります。',
+  'The application could not confirm the AI job result. The job may have completed; this is not a confirmed model timeout. No new generation was submitted. Keep the request ID for diagnosis.': 'AI ジョブの結果を確認できませんでした。生成自体は完了している可能性があり、モデルのタイムアウトと確定したわけではありません。新たな生成は送信していません。調査のためリクエスト ID を控えてください。',
   'The AI job was interrupted. It was not automatically resubmitted. Unknown usage may still count toward the application budget.': 'AI ジョブが中断されました。自動的な再生成は行っていません。使用量が不明な場合もアプリケーションの予算に計上される場合があります。',
   'The AI job was cancelled. No automatic resubmission was made.': 'AI ジョブを取り消しました。自動的な再生成は行っていません。',
   'The AI job result is unavailable or expired. Review the request before submitting a new job.': 'AI ジョブの結果が見つからないか、有効期限が切れています。内容を確認してから新しいジョブを送信してください。',
