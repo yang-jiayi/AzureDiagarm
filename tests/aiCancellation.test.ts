@@ -83,6 +83,31 @@ function mockProviderFetch(t: TestContext, implementation: (url: unknown, option
   return providerRequest;
 }
 
+async function resumeAfterDeadline<T>(t: TestContext, request: Promise<T>): Promise<T> {
+  let settled = false;
+  void request.finally(() => { settled = true; }).catch(() => {});
+  t.mock.timers.tick(17 * 60_000 + 1);
+  for (let step = 0; step < 5 && !settled; step++) {
+    for (let flush = 0; flush < 4; flush++) await new Promise<void>(resolve => setImmediate(resolve));
+    if (!settled) t.mock.timers.tick(20_001);
+  }
+  assert.equal(settled, true, 'resume recovery must remain bounded when every HTTP request hangs');
+  return request;
+}
+
+function checkCancellationCleanup(t: TestContext, signal: AbortSignal) {
+  const add = t.mock.method(signal, 'addEventListener');
+  const remove = t.mock.method(signal, 'removeEventListener');
+  return () => {
+    assert.ok(add.mock.callCount() > 0);
+    assert.equal(add.mock.callCount(), remove.mock.callCount());
+    for (const call of add.mock.calls) {
+      assert.equal(remove.mock.calls.filter(removed =>
+        removed.arguments[0] === call.arguments[0] && removed.arguments[1] === call.arguments[1]).length, 1);
+    }
+  };
+}
+
 test('Astra MAX honors a real 429 Retry-After without changing its prompt, model, or 32K output cap', async t => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const bodies: any[] = [];
@@ -247,15 +272,15 @@ test('abort during response-body reading is not converted into a malformed-respo
   await assert.rejects(request, abortError);
 });
 
-test('transport timeouts remain distinguishable from user cancellation and abort the request once', async t => {
-  t.mock.timers.enable({ apis: ['setTimeout'] });
+test('unreachable job status remains distinct from cancellation or a confirmed provider timeout', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
   const fetch = mockProviderFetch(t, async (_url: unknown, options: RequestInit) =>
     await new Promise<Response>((_resolve, reject) => options.signal!.addEventListener('abort',
       () => reject(new DOMException('Aborted', 'AbortError')), { once: true })));
   const request = provider.callAzureOpenAI([], override);
-  t.mock.timers.tick(17 * 60_000 + 1);
-  await assert.rejects(request, /exceeded its processing time limit/);
-  assert.equal(fetch.mock.callCount(), 1);
+  await assert.rejects(resumeAfterDeadline(t, request), (error: any) =>
+    error.code === 'ai_job_status_unavailable' && error.source === 'client' && !abortError(error));
+  assert.deepEqual(fetch.mock.calls.map(call => call.arguments[1].method), ['POST', 'GET']);
 });
 
 test('a cancelled request can be retried with a fresh signal; legacy calls still work', async t => {
@@ -278,12 +303,9 @@ test('a cancelled request can be retried with a fresh signal; legacy calls still
 test('completion removes the external abort listener', async t => {
   mockProviderFetch(t, async () => response());
   const controller = new AbortController();
-  const add = t.mock.method(controller.signal, 'addEventListener');
-  const remove = t.mock.method(controller.signal, 'removeEventListener');
+  const checkCleanup = checkCancellationCleanup(t, controller.signal);
   await provider.generateArchitectureWithAI('test', override, undefined, 'en', { signal: controller.signal });
-  assert.equal(add.mock.callCount(), 1);
-  assert.equal(remove.mock.callCount(), 1);
-  assert.equal(add.mock.calls[0].arguments[1], remove.mock.calls[0].arguments[1]);
+  checkCleanup();
 });
 
 test('already-aborted validation never dispatches or records model usage', async t => {
@@ -338,7 +360,7 @@ test('validation cancellation during body reading is not reported as malformed J
 });
 
 test('validation bounds the async job lifetime and does not count a timed-out call as success', async t => {
-  t.mock.timers.enable({ apis: ['setTimeout'] });
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
   let signal: AbortSignal | undefined;
   const fetch = mockProviderFetch(t, async (_url: unknown, options: RequestInit) => {
     signal = options.signal as AbortSignal;
@@ -346,23 +368,19 @@ test('validation bounds the async job lifetime and does not count a timed-out ca
       () => reject(new DOMException('Aborted', 'AbortError')), { once: true }));
   });
   const request = validate();
-  t.mock.timers.tick(17 * 60_000 + 1);
-  await assert.rejects(request, (error: any) =>
-    !abortError(error) && error.userCancelled !== true && /taking too long to respond/.test(error.message));
+  await assert.rejects(resumeAfterDeadline(t, request), (error: any) =>
+    !abortError(error) && error.userCancelled !== true && error.code === 'ai_job_status_unavailable');
   assert.equal(signal?.aborted, true);
-  assert.equal(fetch.mock.callCount(), 1);
+  assert.deepEqual(fetch.mock.calls.map(call => call.arguments[1].method), ['POST', 'GET']);
   assert.deepEqual(provider.getTestModelUsage(), []);
 });
 
 test('validation releases caller listeners and preserves the legacy six-argument API', async t => {
   mockProviderFetch(t, async () => response(validationContent));
   const controller = new AbortController();
-  const add = t.mock.method(controller.signal, 'addEventListener');
-  const remove = t.mock.method(controller.signal, 'removeEventListener');
+  const checkCleanup = checkCancellationCleanup(t, controller.signal);
   assert.equal((await validate(controller.signal)).overallScore, 80);
-  assert.equal(add.mock.callCount(), 1);
-  assert.equal(remove.mock.callCount(), 1);
-  assert.equal(add.mock.calls[0].arguments[1], remove.mock.calls[0].arguments[1]);
+  checkCleanup();
   const legacy = await provider.validateArchitecture(validationServices, [], undefined, undefined, override, 'en');
   assert.equal(legacy.overallScore, 80);
   assert.equal(legacy.modelUsed, 'GPT-6 Astra (none)');
@@ -443,27 +461,23 @@ test('legacy direct AbortSignal arguments preserve cancellation and never retry'
 });
 
 test('internal timeouts never replay at lower quality and still release caller listeners', async t => {
-  t.mock.timers.enable({ apis: ['setTimeout'] });
-  let calls = 0;
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
   const fetch = mockProviderFetch(t, async (_url: unknown, options: RequestInit) => {
-    if (++calls > 1) return response();
     return await new Promise<Response>((_resolve, reject) => options.signal!.addEventListener('abort',
       () => reject(new DOMException('Aborted', 'AbortError')), { once: true }));
   });
   const controller = new AbortController();
-  const add = t.mock.method(controller.signal, 'addEventListener');
-  const remove = t.mock.method(controller.signal, 'removeEventListener');
+  const checkCleanup = checkCancellationCleanup(t, controller.signal);
   const request = provider.generateArchitectureWithAI('test', override, undefined, 'en', { signal: controller.signal });
-  t.mock.timers.tick(17 * 60_000 + 1);
-  await assert.rejects(request, (error: any) => {
-    assert.equal(error.code, 'ai_client_timeout');
+  await assert.rejects(resumeAfterDeadline(t, request), (error: any) => {
+    assert.equal(error.code, 'ai_job_status_unavailable');
     assert.equal(error.source, 'client');
-    assert.match(error.message, /exceeded its processing time limit/);
+    assert.match(error.message, /not a confirmed model timeout/);
+    assert.match(error.requestId, /^[a-f0-9-]{36}$/);
     return true;
   });
-  assert.equal(fetch.mock.callCount(), 1);
-  assert.equal(add.mock.callCount(), 1);
-  assert.equal(remove.mock.callCount(), 1);
+  assert.deepEqual(fetch.mock.calls.map(call => call.arguments[1].method), ['POST', 'GET']);
+  checkCleanup();
   assert.equal(provider.getTestModelUsage().length, 0);
 });
 

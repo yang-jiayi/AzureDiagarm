@@ -64,32 +64,14 @@ async function callAzureOpenAI(messages: any[], modelOverride: RuntimeModelOverr
   
   console.log(`🤖 Using ${runtime.displayName}${runtime.isReasoning ? ` (reasoning: ${runtime.reasoningEffort})` : ''} | max_tokens: ${effectiveMaxTokens} | API: ${getApiFormatLabel(runtime.apiFormat)}`);
 
-  // Bound the async job lifetime; each HTTP exchange has a separate short deadline.
-  const controller = new AbortController();
-  const cancel = () => controller.abort();
-  signal?.addEventListener('abort', cancel, { once: true });
-  const timeoutId = setTimeout(() => controller.abort(), 17 * 60_000);
-  let proxyResult;
-  try {
-    proxyResult = await callAzureOpenAIProxy({
-      apiFormat: runtime.apiFormat,
-      deployment: runtime.deployment,
-      body: requestBody,
-      signal: controller.signal,
-      connection: runtime.connection,
-    });
-    throwIfGenerationAborted(signal);
-    if (controller.signal.aborted) throw new DOMException('Request timed out.', 'AbortError');
-  } catch (error: any) {
-    throwIfGenerationAborted(signal);
-    if (error?.name === 'AbortError') {
-      throw new Error('The AI provider is taking too long to respond. Please try again.');
-    }
-    throw error;
-  } finally {
-    clearTimeout(timeoutId);
-    signal?.removeEventListener('abort', cancel);
-  }
+  const proxyResult = await callAzureOpenAIProxy({
+    apiFormat: runtime.apiFormat,
+    deployment: runtime.deployment,
+    body: requestBody,
+    signal,
+    connection: runtime.connection,
+  });
+  throwIfGenerationAborted(signal);
   
   // Calculate elapsed time
   const elapsedTimeMs = Math.round(performance.now() - startTime);

@@ -1,5 +1,97 @@
 # Azure Deployment Plan
 
+> **Status:** Ready for Validation
+
+Generated: 2026-09-21
+
+## 1. Current Release
+
+Fix the reported production MAX-generation error without changing the selected
+model, reasoning, output cap, budgets, authentication or retention policies.
+The latest correlated requests all completed successfully at the provider.
+Browser polling stopped before completion and resumed nearly ten hours later
+with HTTP 302 authentication redirects. No result retrieval followed.
+Browser suspension versus network/device interruption cannot be proven from
+server logs alone.
+
+## 2. Scope and Existing Architecture
+
+Keep the existing application-owned async workers and owner-scoped storage.
+Remove independent caller timers that abort completed-result recovery.
+After the normal client polling window, perform one bounded status/result
+lookup, never a second inference submission. Detect authentication redirects
+without following them with prompts or BYO credentials. Distinguish client
+retrieval failures, expired sessions/results and actual server timeouts, with
+the original request ID and generation stage. Log safe terminal transitions.
+
+The server processing ceiling remains 15 minutes and results remain accessible
+for one hour. No new resources, roles, identity/authentication changes, quotas,
+model settings, retention extensions or infrastructure changes are needed.
+This does not recover an already expired result or persist generator sessions
+across page reloads.
+
+## 3. Release Recipe
+
+`recipe.type: azcli`
+
+Use the existing checked PR -> current main push ->
+`.github/workflows/azurediagarm-sync-deploy.yml` path. Do not dispatch upstream
+synchronization, rerun an historical deployment or apply bootstrap templates.
+Use the existing production target; this is not the planned tenant migration.
+
+## 4. Production Context
+
+Subscription: `f2c0fe9a-0171-42ed-803d-3e78322545a1`.
+Existing `azurediagarm-app` in `AzureDiagarm_rg`, West US:
+https://azurediagarm.mssql.biz
+
+Baseline source: `c1b454cad21e8d9914bd28fd4cd8a16b9cb73c37`.
+Baseline revision: `azurediagarm-app--g34876215552-1`.
+Baseline image:
+`sqlserverevoacr.azurecr.io/azurediagarm/app:u6b38cd6145af-cc1b454cad21e-20260914175931`.
+Retain the guarded rollback path and unchanged 1-2 replicas.
+
+## 5. Preparation and Validation Steps
+
+- [x] Correlate provider completions with interrupted browser polling.
+- [x] Reproduce successful/expired results incorrectly returned as timeout.
+- [x] Fix shared transport recovery, caller cancellation and authentication.
+- [x] Verify actual browser suspension, redirects, PNG delivery and cancellation.
+- [ ] Complete current Azure/runtime policy and protected Linux checks.
+- [ ] Record exact-source validation proof before deployment.
+
+## 6. Deployment Steps
+
+Merge only the exact checked PR head. Monitor its new main-triggered deployment.
+Verify live source/revision, preserved policies and authenticated MAX job
+submission/status/result/usage settlement. Retain the previous image.
+
+## 7. Validation Proof
+
+Actual local validation on 2026-09-21:
+
+| Check | Result | Evidence |
+| --- | --- | --- |
+| Original failure reproduction | Three new tests failed on old source: completed result became HTTP 504, expiry became HTTP 504, and auth redirect was not classified | Targeted `npx tsx --test` before the fix |
+| Transport/caller/localization | All 103 cases pass, including bounded final reads, no inference replay, ID preservation and listener cleanup | `npx tsx --test --test-timeout=30000 tests\aiJobTransport.test.ts tests\aiCancellation.test.ts tests\aiErrorLocalization.test.ts` |
+| Job diagnostics | All 17 job cases pass, including exactly one real timeout event with duration/ID and no input/credential logging | `node --test server\ai-jobs.test.js` |
+| Browser output/recovery | All seven cases pass, including an 18-minute simulated tab suspension returning a real PNG, ten-hour auth/expiry scenarios, and cancellation during actual PNG encoding | `npx playwright test async-ai-generation.spec.ts` |
+| Generator safeguards | All 71 cases pass; completed Both-mode output, retries, cancellation and editor lineage remain protected | `npx tsx --test tests\aiGenerationUI.browser.ts` |
+| Source build/lint | Script types, production build and lint pass | `npm run typecheck:scripts`; `npm run build -- --logLevel error`; `npm run lint` |
+| Current Azure health | App/environment Succeeded; OpenAI Available; live source/revision match the baseline | Read-only CLI queries on 2026-09-21; this does not prove every inference succeeds |
+| Protected Linux/runtime checks | Pending for this release; historical runs below are not current-source proof | Required CI and CodeQL before merge |
+
+## 8. Rollback and Limitations
+
+Keep the previous image and guarded rollback mechanism. Preserve single-POST
+recovery and owner isolation during rolling release/rollback. Do not lower MAX,
+extend result retention, refund unknown usage or replay uncertain inference
+to disguise a failed result lookup.
+
+---
+
+# Historical PR #81 Validation Record
+
 > **Status:** Validated
 
 Generated: 2026-09-14

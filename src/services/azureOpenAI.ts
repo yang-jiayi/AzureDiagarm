@@ -57,17 +57,6 @@ export interface ModelOverride extends RuntimeModelOverride, AIRateLimitRetryOpt
 
 export type AIGenerationOptions = AIRateLimitRetryOptions & { modelOverride?: RuntimeModelOverride };
 
-export class AIRequestTimeoutError extends Error {
-  readonly source = 'client';
-  readonly code = 'ai_client_timeout';
-  readonly status = 504;
-
-  constructor() {
-    super('The AI job exceeded its processing time limit. It was not automatically resubmitted. Failures with unknown usage may still count toward the application budget.');
-    this.name = 'TimeoutError';
-  }
-}
-
 export function throwIfGenerationAborted(signal?: AbortSignal): void {
   if (signal?.aborted) {
     throw Object.assign(new DOMException('Generation cancelled.', 'AbortError'), { userCancelled: true });
@@ -79,23 +68,6 @@ function generationSignal(
   modelOverride?: ModelOverride,
 ): AbortSignal | undefined {
   return ('aborted' in options ? options : options.signal) ?? modelOverride?.signal;
-}
-
-function requestLifetime(signal: AbortSignal | undefined, timeoutMs: number) {
-  throwIfGenerationAborted(signal);
-  const controller = new AbortController();
-  let timedOut = false;
-  const abort = () => controller.abort();
-  signal?.addEventListener('abort', abort, { once: true });
-  const timer = setTimeout(() => { timedOut = true; controller.abort(); }, timeoutMs);
-  return {
-    signal: controller.signal,
-    get timedOut() { return timedOut; },
-    dispose() {
-      clearTimeout(timer);
-      signal?.removeEventListener('abort', abort);
-    },
-  };
 }
 
 export async function callAzureOpenAI(messages: any[], modelOverride?: ModelOverride, jsonOutput = true, operation = 'architecture_generation', options: AIGenerationOptions | AbortSignal = {}): Promise<CallResult> {
@@ -136,33 +108,22 @@ export async function callAzureOpenAI(messages: any[], modelOverride?: ModelOver
 
   const onRetryWait = ('aborted' in options ? undefined : options.onRetryWait) ?? modelOverride?.onRetryWait;
   const proxyResult = await runWithRateLimitRetry(async () => {
-    // Individual HTTP exchanges are short; the job has its own bounded lifetime.
-    const lifetime = requestLifetime(signal, 17 * 60_000);
-    try {
-      const result = await callAzureOpenAIProxy({
-        apiFormat, deployment, body: requestBody, signal: lifetime.signal, connection: runtime.connection,
-        onProgress: modelOverride?.onProgress,
+    // The job transport owns deadlines and resume recovery. A second timer
+    // would abort an already completed job when a suspended tab wakes.
+    const result = await callAzureOpenAIProxy({
+      apiFormat, deployment, body: requestBody, signal, connection: runtime.connection,
+      onProgress: modelOverride?.onProgress,
+    });
+    throwIfGenerationAborted(signal);
+    if (!result.ok) {
+      console.error('Azure OpenAI API error:', {
+        status: result.status, code: result.error?.code, source: result.error?.source,
+        requestId: result.error?.requestId, upstreamRequestId: result.error?.upstreamRequestId,
+        retryAfterMs: result.error?.retryAfterMs,
       });
-      throwIfGenerationAborted(signal);
-      throwIfGenerationAborted(lifetime.signal);
-      if (!result.ok) {
-        console.error('Azure OpenAI API error:', {
-          status: result.status, code: result.error?.code, source: result.error?.source,
-          requestId: result.error?.requestId, upstreamRequestId: result.error?.upstreamRequestId,
-          retryAfterMs: result.error?.retryAfterMs,
-        });
-        throw createOpenAIProxyError(result);
-      }
-      return result;
-    } catch (error) {
-      throwIfGenerationAborted(signal);
-      if (lifetime.timedOut) {
-        throw new AIRequestTimeoutError();
-      }
-      throw error;
-    } finally {
-      lifetime.dispose();
+      throw createOpenAIProxyError(result);
     }
+    return result;
   }, { signal, onRetryWait });
 
   throwIfGenerationAborted(signal);
@@ -523,7 +484,6 @@ LAYOUT READABILITY — CRITICAL:
     // UI can still classify (OpenAIProxyError.code / ModelJsonError.kind) and
     // localise them.
     if (error instanceof OpenAIProxyError) throw error;
-    if (error instanceof AIRequestTimeoutError) throw error;
     if (error instanceof ModelJsonError) throw error;
     if (error instanceof EmptyArchitectureError) throw error;
     if (error instanceof AIResponseValidationError) throw error;
@@ -733,18 +693,16 @@ If the image is not an architecture diagram or is unclear, describe what you can
 
   console.log(`🖼️ Analyzing architecture diagram with ${runtime.displayName}... | API: ${getApiFormatLabel(runtime.apiFormat)}`);
 
-  const lifetime = requestLifetime(options.signal, 17 * 60_000);
   try {
     const proxyResult = await callAzureOpenAIProxy({
       apiFormat: runtime.apiFormat,
       deployment: runtime.deployment,
       body: requestBody,
-      signal: lifetime.signal,
+      signal: options.signal,
       connection: runtime.connection,
     });
 
     throwIfGenerationAborted(options.signal);
-    throwIfGenerationAborted(lifetime.signal);
     const elapsedTimeMs = Math.round(performance.now() - startTime);
 
     if (!proxyResult.ok) {
@@ -783,13 +741,7 @@ If the image is not an architecture diagram or is unclear, describe what you can
     return { description: content, metrics };
   } catch (error: any) {
     throwIfGenerationAborted(options.signal);
-    if (lifetime.timedOut) {
-      throw new Error('Image analysis timed out. The image may be too large or complex.');
-    }
-    
     throw error;
-  } finally {
-    lifetime.dispose();
   }
 }
 
@@ -1222,7 +1174,6 @@ export async function generateArchitectureFromIaC(input: IaCImportInput, languag
     // them in an unlocalised "Failed to parse … : <raw>" string.
     if (
       error instanceof OpenAIProxyError
-      || error instanceof AIRequestTimeoutError
       || error instanceof ModelJsonError
       || error instanceof EmptyArchitectureError
       || error instanceof AIResponseValidationError

@@ -82,33 +82,14 @@ async function callAzureOpenAI(messages: any[], modelOverride?: ValidationModelO
   
   console.log(`🤖 Using ${runtime.displayName}${runtime.isReasoning ? ` (reasoning: ${runtime.reasoningEffort})` : ''} | max_tokens: ${effectiveMaxTokens} | API: ${getApiFormatLabel(runtime.apiFormat)}`);
 
-  // Bound the async job lifetime; each HTTP exchange has a separate short deadline.
-  const controller = new AbortController();
-  const cancel = () => controller.abort();
-  signal?.addEventListener('abort', cancel, { once: true });
-  let timedOut = false;
-  const timeoutId = setTimeout(() => { timedOut = true; controller.abort(); }, 17 * 60_000);
-  let proxyResult;
-  try {
-    proxyResult = await callAzureOpenAIProxy({
-      apiFormat: runtime.apiFormat,
-      deployment: runtime.deployment,
-      body: requestBody,
-      signal: controller.signal,
-      connection: runtime.connection,
-    });
-    throwIfValidationAborted(signal);
-    if (timedOut) throw new Error('The AI provider is taking too long to respond. Please try again.');
-  } catch (error: any) {
-    throwIfValidationAborted(signal);
-    if (timedOut || error?.name === 'AbortError') {
-      throw new Error('The AI provider is taking too long to respond. Please try again.');
-    }
-    throw error;
-  } finally {
-    clearTimeout(timeoutId);
-    signal?.removeEventListener('abort', cancel);
-  }
+  const proxyResult = await callAzureOpenAIProxy({
+    apiFormat: runtime.apiFormat,
+    deployment: runtime.deployment,
+    body: requestBody,
+    signal,
+    connection: runtime.connection,
+  });
+  throwIfValidationAborted(signal);
   
   // Calculate elapsed time
   const elapsedTimeMs = Math.round(performance.now() - startTime);

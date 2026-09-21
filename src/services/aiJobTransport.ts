@@ -28,8 +28,8 @@ function parseProgress(value: unknown, id: string): AIJobProgress | null {
   };
 }
 
-function failure(id: string, code: string, status = 503): Response {
-  return new Response(JSON.stringify({ error: { source: 'job', code, requestId: id } }), {
+function failure(id: string, code: string, status = 503, source = 'job'): Response {
+  return new Response(JSON.stringify({ error: { source, code, requestId: id } }), {
     status, headers: { 'Content-Type': 'application/json', 'X-AzureDiagarm-Request-Id': id },
   });
 }
@@ -52,7 +52,7 @@ async function shortRequest(url: string, init: RequestInit, signal?: AbortSignal
   else signal?.addEventListener('abort', abort, { once: true });
   try {
     const response = await awaitWithAISignal(fetch(url, {
-      ...init, signal: controller.signal, credentials: 'same-origin', redirect: 'error', cache: 'no-store',
+      ...init, signal: controller.signal, credentials: 'same-origin', redirect: 'manual', cache: 'no-store',
     }), controller.signal);
     // Include the response body in the short HTTP deadline, not just headers.
     await awaitWithAISignal(response.clone().arrayBuffer(), controller.signal);
@@ -78,10 +78,20 @@ export async function fetchAIJob(
   let accepted = false;
   let terminal = false;
   let submitted = false;
+  let recoveryAttempted = false;
   let lastResponse: Response | undefined;
+  const unavailable = () => failure(id, 'ai_job_status_unavailable', 504, 'client');
+  const request = async (path: string, options: RequestInit, signal?: AbortSignal) => {
+    const response = await shortRequest(path, options, signal);
+    // Easy Auth redirects become opaque in a browser. Never follow them with
+    // a prompt/key or hide expired authentication as an inference timeout.
+    return response.type === 'opaqueredirect' || (response.status >= 300 && response.status < 400)
+      ? failure(id, 'application_authentication_required', 401, 'application')
+      : response;
+  };
   const cancel = async () => {
     try {
-      const response = await shortRequest(url, { method: 'DELETE', keepalive: true });
+      const response = await request(url, { method: 'DELETE', keepalive: true });
       if (!response.ok) console.warn('[ai-jobs] Cancellation could not be confirmed.', { requestId: id, status: response.status });
     } catch {
       console.warn('[ai-jobs] Cancellation could not reach the server.', { requestId: id });
@@ -93,7 +103,7 @@ export async function fetchAIJob(
     options.beforeSubmit?.();
     submitted = true;
     try {
-      lastResponse = await shortRequest('/api/openai', { ...init, headers }, signal);
+      lastResponse = await request('/api/openai', { ...init, headers }, signal);
       if (lastResponse.status >= 500) {
         const value: unknown = await lastResponse.clone().json().catch(() => null);
         if (value && typeof value === 'object' && 'error' in value
@@ -113,23 +123,30 @@ export async function fetchAIJob(
       return lastResponse;
     }
     accepted = lastResponse?.status === 202;
-    while (Date.now() < deadline) {
+    while (true) {
+      if (Date.now() >= deadline) {
+        if (recoveryAttempted) return unavailable();
+        recoveryAttempted = true;
+        lastResponse = undefined;
+      }
       let response: Response;
       try {
         response = accepted && lastResponse?.status === 202
-          ? lastResponse : await shortRequest(url, { method: 'GET' }, signal);
+          ? lastResponse : await request(url, { method: 'GET' }, signal);
         lastResponse = undefined;
       } catch {
         if (signal?.aborted) throw runtimeConfigCancellationError();
+        if (recoveryAttempted) return unavailable();
         await pause(2000, signal);
         continue;
       }
       if (response.status >= 500) {
+        if (recoveryAttempted) return unavailable();
         await pause(2000, signal);
         continue;
       }
       if (!response.ok) {
-        terminal = response.status === 410;
+        terminal = terminal || [401, 403, 410].includes(response.status);
         return response;
       }
       let payload: unknown;
@@ -140,9 +157,12 @@ export async function fetchAIJob(
       accepted = true;
       onProgress?.(job);
       if (!['queued', 'running', 'cancelling'].includes(job.status)) {
+        terminal = true;
         try {
-          const result = await shortRequest(`${url}/result`, { method: 'GET' }, signal);
+          const result = await request(`${url}/result`, { method: 'GET' }, signal);
           if (result.status === 202) {
+            terminal = false;
+            if (recoveryAttempted) return unavailable();
             lastResponse = result;
             continue;
           }
@@ -152,20 +172,23 @@ export async function fetchAIJob(
           if (value && typeof value === 'object' && 'error' in value
             && value.error && typeof value.error === 'object' && 'code' in value.error
             && value.error.code === 'ai_jobs_unavailable') {
+            if (recoveryAttempted) return unavailable();
             await pause(2000, signal);
             continue;
           }
-          terminal = true;
           return result;
         } catch {
           if (signal?.aborted) throw runtimeConfigCancellationError();
+          if (recoveryAttempted) return unavailable();
           await pause(2000, signal);
           continue;
         }
       }
+      // A suspended tab can resume after the clock deadline even though the
+      // server finished on time. The final bounded read above is authoritative.
+      if (recoveryAttempted) return unavailable();
       await pause(job.pollAfterMs, signal);
     }
-    return failure(id, 'ai_job_timeout', 504);
   } finally {
     // The precomputed ID also cancels an accepted job whose 202 was lost.
     // The server records a tombstone if cancellation races submission.

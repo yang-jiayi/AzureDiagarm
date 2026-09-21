@@ -76,7 +76,8 @@ function createAIJobs({
         ? (name, version) => io(signal => storage.removeJobVersion(name, version, { abortSignal: signal })) : undefined,
     };
   }
-  const log = (event, id) => logger.error(`[ai-jobs] ${JSON.stringify({ event, requestId: id })}`);
+  const log = (event, id, details = {}, level = 'error') =>
+    (logger[level] || logger.error).call(logger, `[ai-jobs] ${JSON.stringify({ event, requestId: id, ...details })}`);
   const path = (owner, id) => `${PREFIX}${owner}/${id}.json`;
   const identity = req => deriveOwnerKey(budgetIdentity(req, mode));
   const validateId = id => {
@@ -97,6 +98,13 @@ function createAIJobs({
       if (!value) return record.value;
       try {
         await backend.replace(name, value, record.etag);
+        if (ACTIVE.has(record.value.status) && !ACTIVE.has(value.status)) {
+          const code = value.result?.body?.error?.code;
+          const succeeded = value.status === 'succeeded';
+          log(typeof code === 'string' && /^[a-z_]{1,64}$/.test(code) ? code : `ai_job_${value.status}`, value.id, {
+            status: value.status, durationMs: Math.max(0, value.finishedAt - value.createdAt),
+          }, succeeded ? 'info' : 'error');
+        }
         return value;
       } catch (error) {
         if (![409, 412].includes(Number(error.statusCode))) throw error;

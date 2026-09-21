@@ -57,7 +57,7 @@ test('generation uses short owner-scoped polls and a separate result without res
     assert.equal(request.init.body, undefined);
     assert.doesNotMatch(JSON.stringify([...new Headers(request.init.headers)]), /test-only-byo-key/);
     assert.equal(request.init.credentials, 'same-origin');
-    assert.equal(request.init.redirect, 'error');
+    assert.equal(request.init.redirect, 'manual');
     assert.equal(request.init.cache, 'no-store');
   }
   assert.equal(requests.some(value => value.init.method === 'DELETE'), false);
@@ -179,4 +179,129 @@ test('explicit synchronous rejection and rolling-release success are not retried
     assert.equal(result.status, response.status);
     assert.equal(calls, 1);
   }
+});
+
+test('resuming after the client deadline retrieves the completed job instead of inventing a processing timeout', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+  const requests: Array<{ url: string; method: string | undefined }> = [];
+  let id = '';
+  t.mock.method(globalThis, 'fetch', async (url: unknown, options: RequestInit = {}) => {
+    requests.push({ url: String(url), method: options.method });
+    if (options.method === 'POST') {
+      id = new Headers(options.headers).get('Idempotency-Key')!;
+      return json(state(id, 'running'), 202);
+    }
+    if (String(url).endsWith('/result')) return json({ output_text: 'finished while the tab was suspended' });
+    return json(state(id, 'succeeded'));
+  });
+  let suspended = false;
+  const result = await pump(t, fetchAIJob(init(), { onProgress: progress => {
+    if (!suspended && progress.status === 'running') {
+      suspended = true;
+      t.mock.timers.setTime(Date.now() + 18 * 60_000);
+    }
+  } }));
+  assert.equal(result.status, 200);
+  assert.equal((await result.json()).output_text, 'finished while the tab was suspended');
+  assert.deepEqual(requests, [
+    { url: '/api/openai', method: 'POST' },
+    { url: `/api/openai/jobs/${id}`, method: 'GET' },
+    { url: `/api/openai/jobs/${id}/result`, method: 'GET' },
+  ]);
+});
+
+test('an expired result after suspension stays an expiry error, not a model processing timeout', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+  let id = '';
+  let posts = 0;
+  let cancels = 0;
+  t.mock.method(globalThis, 'fetch', async (url: unknown, options: RequestInit = {}) => {
+    if (options.method === 'POST') {
+      posts++;
+      id = new Headers(options.headers).get('Idempotency-Key')!;
+      return json(state(id, 'running'), 202);
+    }
+    if (options.method === 'DELETE') { cancels++; return json({}); }
+    return String(url).endsWith('/result')
+      ? json({ error: { source: 'job', code: 'ai_job_expired', requestId: id } }, 410)
+      : json(state(id, 'expired'));
+  });
+  const result = await pump(t, fetchAIJob(init(), { onProgress: progress => {
+    if (progress.status === 'running') t.mock.timers.setTime(Date.now() + 10 * 60 * 60_000);
+  } }));
+  assert.equal(result.status, 410);
+  assert.equal((await result.json()).error.code, 'ai_job_expired');
+  assert.equal(posts, 1);
+  assert.equal(cancels, 0);
+});
+
+test('an authentication redirect never follows a prompt or BYO key to the login provider', async t => {
+  let id = '';
+  const requests: RequestInit[] = [];
+  t.mock.method(globalThis, 'fetch', async (_url: unknown, options: RequestInit = {}) => {
+    requests.push(options);
+    id = new Headers(options.headers).get('Idempotency-Key')!;
+    return new Response(null, { status: 302, headers: { Location: 'https://login.example.test/' } });
+  });
+  const result = await fetchAIJob(init());
+  assert.equal(result.status, 401);
+  assert.equal((await result.json()).error.code, 'application_authentication_required');
+  assert.equal(result.headers.get('X-AzureDiagarm-Request-Id'), id);
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].redirect, 'manual');
+});
+
+for (const finalState of ['running', 'succeeded', 'storage-unavailable', 'network-unavailable']) {
+  test(`resume recovery is bounded with ${finalState} and never replays generation`, async t => {
+    t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+    let id = '';
+    const methods: Array<string | undefined> = [];
+    t.mock.method(globalThis, 'fetch', async (url: unknown, options: RequestInit = {}) => {
+      methods.push(options.method);
+      if (options.method === 'POST') {
+        id = new Headers(options.headers).get('Idempotency-Key')!;
+        return json(state(id, 'running'), 202);
+      }
+      if (options.method === 'DELETE') return json({});
+      if (String(url).endsWith('/result') || finalState === 'network-unavailable') {
+        return new Promise<Response>(() => {});
+      }
+      return finalState === 'storage-unavailable'
+        ? json({ error: { code: 'ai_jobs_unavailable' } }, 503) : json(state(id, finalState));
+    });
+    let suspended = false;
+    const result = await pump(t, fetchAIJob(init(), { onProgress: progress => {
+      if (!suspended && progress.status === 'running') {
+        suspended = true;
+        t.mock.timers.setTime(Date.now() + 18 * 60_000);
+      }
+    } }), 50);
+    const error = (await result.json()).error;
+    assert.equal(error.code, 'ai_job_status_unavailable');
+    assert.equal(error.source, 'client');
+    assert.equal(error.requestId, id);
+    assert.deepEqual(methods, finalState === 'succeeded' ? ['POST', 'GET', 'GET'] : ['POST', 'GET', 'DELETE']);
+  });
+}
+
+test('a confirmed server processing timeout remains authoritative during resume recovery', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+  let id = '';
+  const methods: Array<string | undefined> = [];
+  t.mock.method(globalThis, 'fetch', async (url: unknown, options: RequestInit = {}) => {
+    methods.push(options.method);
+    if (options.method === 'POST') {
+      id = new Headers(options.headers).get('Idempotency-Key')!;
+      return json(state(id, 'running'), 202);
+    }
+    return String(url).endsWith('/result')
+      ? json({ error: { source: 'job', code: 'ai_job_timeout', requestId: id } }, 504)
+      : json(state(id, 'failed'));
+  });
+  const result = await pump(t, fetchAIJob(init(), { onProgress: progress => {
+    if (progress.status === 'running') t.mock.timers.setTime(Date.now() + 18 * 60_000);
+  } }));
+  assert.equal(result.status, 504);
+  assert.equal((await result.json()).error.code, 'ai_job_timeout');
+  assert.deepEqual(methods, ['POST', 'GET', 'GET']);
 });
