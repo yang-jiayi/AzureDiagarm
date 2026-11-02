@@ -218,6 +218,50 @@ test('workflow guards Azure entry and the revision update before its rollback ma
 const workflow = readFileSync(
   new URL('../.github/workflows/azurediagarm-sync-deploy.yml', import.meta.url), 'utf8',
 );
+
+test('production OIDC jobs use the protected Environment without treating it as configured protection', () => {
+  const notify = workflow.slice(workflow.indexOf('\n  notify_validation_failure:'));
+  const deploy = workflow.slice(workflow.indexOf('\n  deploy:'));
+  for (const job of [notify.split('\n  deploy:')[0], deploy]) {
+    assert.match(job, /environment: production/);
+    assert.match(job, /id-token: write/);
+  }
+});
+
+test('new-tenant preflight selects one access store and preserves production runtime before changes', () => {
+  const deploy = workflow.slice(workflow.indexOf('\n  deploy:'));
+  const runtimeValidation = deploy.indexOf('Validate explicit production runtime settings before Azure sign-in');
+  const login = deploy.indexOf('uses: azure/login@');
+  const preservation = deploy.indexOf('Verify production runtime preservation before Azure changes');
+  const extensions = deploy.indexOf('Install Azure CLI extensions');
+  assert.ok(runtimeValidation >= 0 && runtimeValidation < login);
+  assert.ok(preservation > login && preservation < extensions);
+  assert.match(deploy, /AZURE_TABLES_ACCESS_ENDPOINT: \$\{\{ vars\.AZURE_TABLES_ACCESS_ENDPOINT \}\}/);
+  assert.match(deploy, /node scripts\/verify-deployment-preflight\.mjs runtime-config/);
+  assert.match(deploy, /node scripts\/verify-deployment-preflight\.mjs preserve-runtime/);
+  assert.match(deploy, /node scripts\/verify-deployment-preflight\.mjs no-replica-reduction/);
+  assert.doesNotMatch(deploy, /(?:MCP_ENABLED|ALLOW_BYO_AI_ENDPOINTS|AI_BUDGET_STORE|AI_DAILY_TOKEN_BUDGET|AI_MAX_CONCURRENT_REQUESTS):[^\n]*\|\|/);
+});
+
+test('AFD and storage exemption guards retain all target bindings and fail closed', () => {
+  const preflight = readFileSync(
+    new URL('../scripts/verify-deployment-preflight.mjs', import.meta.url),
+    'utf8',
+  );
+  assert.match(workflow, /node scripts\/verify-deployment-preflight\.mjs afd-domain/);
+  assert.match(workflow, /az policy assignment list \\\s+--scope "\$storage_id" \\\s+--disable-scope-strict-match/);
+  assert.doesNotMatch(workflow, /az policy assignment list[\s\S]{0,100}--include-inherited/);
+  assert.match(workflow, /node scripts\/verify-deployment-preflight\.mjs storage-policy-exemption/);
+  assert.match(preflight, /policyAssignmentScope = '\/providers\/Microsoft\.Management\/managementGroups\/02310481-6752-4d53-8fc4-f597a8e047f4'/);
+  assert.match(preflight, /policyExemptions\/\$\{storageExemptionName\}/);
+  assert.match(workflow, /parameters\.associations\[\]\?\.domains\[\]\?/);
+  assert.match(preflight, /domainValidationState === 'Approved'/);
+  assert.match(preflight, /provisioningState === 'Succeeded'/);
+  assert.match(preflight, /minimumTlsVersion === 'TLS12'/);
+  assert.match(preflight, /'CustomerCertificate', 'ManagedCertificate'/);
+  assert.doesNotMatch(workflow, /storageaccountsshouldrestrictnetworkaccessusingvirtualnetworkrulesexdatabricksmonitoringeffect/);
+});
+
 const repoRoot = fileURLToPath(new URL('../', import.meta.url));
 const bash = process.platform === 'win32'
   ? process.env.GIT_BASH_PATH
