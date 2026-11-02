@@ -639,8 +639,10 @@ AZURE_SPEECH_RESOURCE_ID=/subscriptions/<subscription-id>/resourceGroups/<resour
 
 For the optional Speech role assignment in `infra/main.bicep`, the default
 assignment name is derived from the Speech resource ID, the app managed
-identity's principal ID, and the Speech Contributor role ID. This keeps
-different environments and identities from colliding. To reuse an existing
+identity's resource ID, and the Speech Contributor role ID. The resource IDs
+are available while the inline assignment is named and keep different
+environments and identities from colliding. The principal ID is still used as
+the assignment's runtime principal. To reuse an existing
 assignment, set `AZURE_SPEECH_CONTRIBUTOR_ROLE_ASSIGNMENT_NAME` only after
 verifying that its GUID belongs to the exact Speech resource scope, app
 identity, and role being deployed. Leave it unset otherwise; a previously

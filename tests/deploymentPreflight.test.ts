@@ -332,6 +332,8 @@ test('fails closed for missing or mismatched assignment, initiative, exemption, 
 test('never silently reduces the current maximum replica count', () => {
   assert.doesNotThrow(() => verifyNoReplicaReduction('2', '2'));
   assert.doesNotThrow(() => verifyNoReplicaReduction('2', '3'));
+  assert.doesNotThrow(() => verifyNoReplicaReduction('3', '3'));
+  assert.throws(() => verifyNoReplicaReduction('3', '2'));
   for (const current of ['3', 'unknown', '0', '2.0', '2e0', '']) {
     assert.throws(() => verifyNoReplicaReduction(current, '2'));
   }

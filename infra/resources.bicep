@@ -140,7 +140,7 @@ resource speechContributorRole 'Microsoft.Authorization/roleAssignments@2022-04-
     ? speechContributorRoleAssignmentName
     : guid(
         speech!.id,
-        appIdentity.properties.principalId,
+        appIdentity.id,
         '0e75ca1e-0464-4b4d-8b93-68208a576181'
       )
   scope: speech

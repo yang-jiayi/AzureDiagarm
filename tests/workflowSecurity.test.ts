@@ -87,7 +87,7 @@ test('Speech STS token exchange uses the resource-scoped Speech Contributor role
   assert.match(resourcesBicep, /principalType: 'ServicePrincipal'/);
   assert.match(
     resourcesBicep,
-    /name: !empty\(speechContributorRoleAssignmentName\)\s+\?\s+speechContributorRoleAssignmentName\s+:\s+guid\(\s*speech!\.id,\s*appIdentity\.properties\.principalId,\s*'0e75ca1e-0464-4b4d-8b93-68208a576181'\s*\)/,
+    /name: !empty\(speechContributorRoleAssignmentName\)\s+\?\s+speechContributorRoleAssignmentName\s+:\s+guid\(\s*speech!\.id,\s*appIdentity\.id,\s*'0e75ca1e-0464-4b4d-8b93-68208a576181'\s*\)/,
   );
   assert.doesNotMatch(resourcesBicep, /8813c46e-1a44-5c14-9459-c10475883e01/);
   assert.match(mainBicep, /param speechContributorRoleAssignmentName string = ''/);
@@ -105,15 +105,15 @@ test('Speech STS token exchange uses the resource-scoped Speech Contributor role
 
 test('Speech role assignment default incorporates each environment identity and role', () => {
   const defaultName = resourcesBicep.match(
-    /guid\(\s*(speech!\.id),\s*(appIdentity\.properties\.principalId),\s*'([^']+)'\s*\)/,
+    /guid\(\s*(speech!\.id),\s*(appIdentity\.id),\s*'([^']+)'\s*\)/,
   );
-  assert.ok(defaultName, 'default assignment name must be derived from its Speech scope, principal, and role');
+  assert.ok(defaultName, 'default assignment name must be derived from its Speech scope, identity resource, and role');
   assert.equal(defaultName[1], 'speech!.id');
-  assert.equal(defaultName[2], 'appIdentity.properties.principalId');
+  assert.equal(defaultName[2], 'appIdentity.id');
 
-  const assignmentNameInputs = (speechResourceId: string, principalId: string) => [
+  const assignmentNameInputs = (speechResourceId: string, identityResourceId: string) => [
     speechResourceId,
-    principalId,
+    identityResourceId,
     defaultName[3],
   ];
   assert.notDeepEqual(

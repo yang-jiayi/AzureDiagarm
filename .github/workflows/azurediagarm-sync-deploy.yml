@@ -517,7 +517,7 @@ jobs:
           AI_DAILY_TOKEN_BUDGET: ${{ vars.AI_DAILY_TOKEN_BUDGET }}
           AI_MAX_CONCURRENT_REQUESTS: ${{ vars.AI_MAX_CONCURRENT_REQUESTS }}
           AZURE_TABLES_BUDGET_ENDPOINT: ${{ vars.AZURE_TABLES_BUDGET_ENDPOINT }}
-          MAX_REPLICAS: '2'
+          MAX_REPLICAS: '3'
         run: |
           set -Eeuo pipefail
           az containerapp show \
@@ -536,6 +536,61 @@ jobs:
           )"
           CURRENT_MAX_REPLICAS="$current_max_replicas" \
             node scripts/verify-deployment-preflight.mjs no-replica-reduction
+
+      - name: Verify storage policy exemption before Azure changes
+        env:
+          AZURE_BLOB_ENDPOINT: ${{ vars.AZURE_BLOB_ENDPOINT }}
+          AZURE_TABLES_ENDPOINT: ${{ vars.AZURE_TABLES_ENDPOINT }}
+        run: |
+          set -Eeuo pipefail
+          normalized_endpoint="${AZURE_TABLES_ENDPOINT%/}/"
+          normalized_blob_endpoint="${AZURE_BLOB_ENDPOINT%/}/"
+          az storage account list --output json > /tmp/azurediagarm-policy-storage-accounts.json
+          storage_id="$(
+            jq -er \
+              --arg endpoint "${normalized_endpoint,,}" \
+              '
+                map(select(
+                  ((.primaryEndpoints.table // "") | ascii_downcase) == $endpoint
+                )) |
+                first |
+                .id
+              ' /tmp/azurediagarm-policy-storage-accounts.json
+          )"
+          jq -e \
+            --arg storage "$storage_id" \
+            --arg endpoint "${normalized_blob_endpoint,,}" \
+            '
+              any(
+                .[];
+                (.id | ascii_downcase) == ($storage | ascii_downcase) and
+                ((.primaryEndpoints.blob // "") | ascii_downcase) == $endpoint
+              )
+            ' /tmp/azurediagarm-policy-storage-accounts.json > /dev/null || {
+            echo "::error::Diagram storage endpoints must resolve to one storage account."
+            exit 1
+          }
+
+          az policy exemption show \
+            --name AzureDiagarm-Storage-NSP \
+            --scope "$storage_id" \
+            --output json > /tmp/azurediagarm-storage-policy-exemption.json
+          az policy assignment list \
+            --scope "$storage_id" \
+            --filter 'atScope()' \
+            --output json > /tmp/azurediagarm-storage-policy-assignments.json
+          policy_set_name="$(
+            POLICY_ASSIGNMENTS_FILE=/tmp/azurediagarm-storage-policy-assignments.json \
+              node scripts/verify-deployment-preflight.mjs policy-set-name
+          )"
+          az policy set-definition show \
+            --name "$policy_set_name" \
+            --output json > /tmp/azurediagarm-storage-policy-set.json
+          POLICY_ASSIGNMENTS_FILE=/tmp/azurediagarm-storage-policy-assignments.json \
+            POLICY_SET_FILE=/tmp/azurediagarm-storage-policy-set.json \
+            POLICY_EXEMPTION_FILE=/tmp/azurediagarm-storage-policy-exemption.json \
+            STORAGE_SCOPE="$storage_id" \
+            node scripts/verify-deployment-preflight.mjs storage-policy-exemption
 
       - name: Install Azure CLI extensions
         run: |
@@ -936,30 +991,6 @@ jobs:
             .properties.sensitiveDataDiscovery.isEnabled == true
           ' /tmp/azurediagarm-defender-storage.json > /dev/null
 
-          # Security Center's built-in Private Link and VNet-rule audits do not
-          # recognize Network Security Perimeters. Keep the resource-scoped,
-          # time-bound mitigated exemption explicit and fail when it expires.
-          az policy exemption show \
-            --name AzureDiagarm-Storage-NSP \
-            --scope "$storage_id" \
-            --output json > /tmp/azurediagarm-storage-policy-exemption.json
-          az policy assignment list \
-            --scope "$storage_id" \
-            --disable-scope-strict-match \
-            --output json > /tmp/azurediagarm-storage-policy-assignments.json
-          policy_set_name="$(
-            POLICY_ASSIGNMENTS_FILE=/tmp/azurediagarm-storage-policy-assignments.json \
-              node scripts/verify-deployment-preflight.mjs policy-set-name
-          )"
-          az policy set-definition show \
-            --name "$policy_set_name" \
-            --output json > /tmp/azurediagarm-storage-policy-set.json
-          POLICY_ASSIGNMENTS_FILE=/tmp/azurediagarm-storage-policy-assignments.json \
-            POLICY_SET_FILE=/tmp/azurediagarm-storage-policy-set.json \
-            POLICY_EXEMPTION_FILE=/tmp/azurediagarm-storage-policy-exemption.json \
-            STORAGE_SCOPE="$storage_id" \
-            node scripts/verify-deployment-preflight.mjs storage-policy-exemption
-
           az containerapp show \
             --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
             --name "${{ vars.AZURE_CONTAINER_APP }}" \
@@ -1106,7 +1137,7 @@ jobs:
           MCP_SESSION_TTL_SECONDS: '7200'
           MCP_SESSION_GC_SECONDS: '60'
           MIN_REPLICAS: '1'
-          MAX_REPLICAS: '2'
+          MAX_REPLICAS: '3'
           HTTP_SCALE_CONCURRENCY: '50'
           PROBE_PROFILE: 'startup-readyz,liveness-healthz,readiness-readyz'
         run: |
@@ -1217,7 +1248,7 @@ jobs:
         env:
           FORCE_DEPLOY: ${{ inputs.force_deploy || 'false' }}
           DESIRED_CONFIG_HASH: ${{ steps.desired_config.outputs.hash }}
-          MAX_REPLICAS: '2'
+          MAX_REPLICAS: '3'
         run: |
           set -Eeuo pipefail
           current_upstream="$(
@@ -1598,7 +1629,7 @@ jobs:
             --revision-suffix "$revision_suffix"
             --set-env-vars "${env_vars[@]}"
             --min-replicas 1
-            --max-replicas 2
+            --max-replicas 3
             --scale-rule-name http
             --scale-rule-http-concurrency 50
             --output none
