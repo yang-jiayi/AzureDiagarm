@@ -116,7 +116,14 @@ test('every workflow action is pinned to a full commit SHA', () => {
 
 test('deployment uses and records the image digest produced by the pushed build', () => {
   assert.match(workflow, /deploy:[\s\S]*?permissions:\s+contents: read\s+id-token: write/);
-  assert.doesNotMatch(workflow, /^\s*environment:/m);
+  assert.match(
+    workflow,
+    /\n  deploy:\n[\s\S]*?environment: production\n\s+permissions:[\s\S]*?id-token: write/,
+  );
+  assert.match(
+    workflow,
+    /\n  notify_validation_failure:\n[\s\S]*?environment: production\n\s+permissions:[\s\S]*?id-token: write/,
+  );
   assert.match(
     workflow,
     /- name: Build and push application image[\s\S]*?id: build_image[\s\S]*?push: true[\s\S]*?tags: \$\{\{ steps\.image\.outputs\.image \}\}/,
@@ -265,7 +272,9 @@ test('custom AI is an explicit administrator opt-in alongside Astra; retired man
   assert.match(resourcesBicep, /name: 'ALLOW_BYO_AI_ENDPOINTS', value: string\(allowByoAIEndpoints\)/);
   assert.doesNotMatch(resourcesBicep, /azureFoundryEndpoint/);
   assert.doesNotMatch(workflow, /vars\.AZURE_FOUNDRY/);
-  assert.match(workflow, /ALLOW_BYO_AI_ENDPOINTS: \$\{\{ vars\.ALLOW_BYO_AI_ENDPOINTS \|\| 'false' \}\}/);
+  assert.match(workflow, /ALLOW_BYO_AI_ENDPOINTS: \$\{\{ vars\.ALLOW_BYO_AI_ENDPOINTS \}\}/);
+  assert.doesNotMatch(workflow, /ALLOW_BYO_AI_ENDPOINTS:\s*\$\{\{\s*vars\.ALLOW_BYO_AI_ENDPOINTS\s*\|\|/);
+  assert.match(workflow, /node scripts\/verify-deployment-preflight\.mjs runtime-config/);
   assert.match(workflow, /ALLOW_BYO_AI_ENDPOINTS: \$\{\{ steps\.desired_config\.outputs\.allow_byo_ai_endpoints \}\}/);
   assert.match(workflow, /"ALLOW_BYO_AI_ENDPOINTS=\$ALLOW_BYO_AI_ENDPOINTS"/);
   assert.match(workflow, /echo "allow_byo_ai_endpoints=\$ALLOW_BYO_AI_ENDPOINTS" >> "\$GITHUB_OUTPUT"/);
