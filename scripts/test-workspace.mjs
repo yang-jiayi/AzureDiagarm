@@ -484,9 +484,8 @@ try {
   await expect(inspector).toHaveCount(0);
   await expect(page.locator('.azure-node .cost-badge')).toContainText('$360');
   await expect(page.getByRole('button', { name: /Document status: .*Local copy saved/ })).toBeVisible();
-  const priced = await readSavedDocument();
-  assert.equal(priced.nodes[0].data.pricing.estimatedCost, 120);
-  assert.equal(priced.nodes[0].data.pricing.quantity, 3);
+  await expect.poll(async () => (await readSavedDocument()).nodes[0].data.pricing.estimatedCost).toBe(120);
+  await expect.poll(async () => (await readSavedDocument()).nodes[0].data.pricing.quantity).toBe(3);
   await undo();
   await expect(page.getByRole('button', { name: /Document status: .*Local copy saved/ })).toBeVisible();
   assert.deepEqual((await readSavedDocument()).nodes[0].data.pricing, beforeInspector.nodes[0].data.pricing);
