@@ -100,8 +100,9 @@ test('Zod v4 preserves MCP tool input required, optional, default, and cap contr
   } finally {
     await transport.close().catch(() => {});
     if (child.exitCode === null) {
+      const exited = once(child, 'exit');
       child.kill();
-      await once(child, 'exit');
+      await exited;
     }
   }
 });
