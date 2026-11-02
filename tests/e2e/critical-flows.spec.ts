@@ -112,6 +112,13 @@ async function fulfillJson(
   });
 }
 
+async function proceedWithPrivacyPreflight(page: Page) {
+  const dialog = page.getByRole('dialog', { name: 'Review data handling' });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByRole('region', { name: 'Data handling' })).toBeVisible();
+  await dialog.getByRole('button', { name: 'Proceed as shown' }).click();
+}
+
 async function initializePage(
   page: Page,
   cloudContext?: Record<string, unknown>,
@@ -2049,6 +2056,7 @@ test('PNG export contains rendered diagram content instead of a blank canvas', a
 
   const downloadPromise = page.waitForEvent('download');
   await palette.getByRole('option', { name: /^Export PNG/ }).click();
+  await proceedWithPrivacyPreflight(page);
   const download = await downloadPromise;
   const outputPath = testInfo.outputPath('diagram-export.png');
   await download.saveAs(outputPath);
@@ -2144,6 +2152,7 @@ for (const varied of [false, true]) {
     await palette.getByRole('combobox', { name: 'Search commands and services' }).fill('export png');
     const downloadPromise = page.waitForEvent('download');
     await palette.getByRole('option', { name: /^Export PNG/ }).click();
+    await proceedWithPrivacyPreflight(page);
     const download = await downloadPromise;
     const outputPath = testInfo.outputPath('authored-legend.png');
     await download.saveAs(outputPath);
@@ -2212,6 +2221,7 @@ test('PNG export expands to include a manually offset edge label', async ({ page
 
   const downloadPromise = page.waitForEvent('download');
   await palette.getByRole('option', { name: /^Export PNG/ }).click();
+  await proceedWithPrivacyPreflight(page);
   const download = await downloadPromise;
   const outputPath = testInfo.outputPath('diagram-export-with-offset-label.png');
   await download.saveAs(outputPath);
@@ -3239,7 +3249,7 @@ test('command palette adds services and focus mode persists until Escape', async
   await expect(palette).toBeHidden();
   await expect(page.locator('.react-flow__node-azureNode')).toHaveCount(1);
   // Recovery requires a committed draft, not just a rendered node.
-  await expect(page.getByRole('status').filter({ hasText: 'Saved on this device' })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Document status: .*Local copy saved/ })).toBeVisible();
 
   await canvas.focus();
   await page.keyboard.press('Control+K');
@@ -5556,6 +5566,7 @@ test('share refresh failure blocks saves until the ETag is reconciled', async ({
   await cloudButton.click();
   const modal = page.locator('.cloud-workspace-modal');
   await modal.getByRole('button', { name: 'Create link' }).click();
+  await proceedWithPrivacyPreflight(page);
   await expect(modal.getByText('A newer cloud revision exists')).toBeVisible();
   await expect(cloudButton).toHaveAttribute('aria-label', 'Cloud workspace: Sync conflict');
   await expect(modal.getByRole('button', { name: 'Open', exact: true })).toBeDisabled();
@@ -7794,7 +7805,12 @@ test('diagram imports are atomic and AI imports save pricing to a new cloud docu
       );
     }
   }
-  await expect(sourceNode).toHaveCount(0);
+  await expect(sourceNode).toBeVisible();
+  await expect.poll(async () => (
+    JSON.parse(await page.evaluate(() => (
+      sessionStorage.getItem('azurediagarm.cloud-document.v1') || '{}'
+    ))).documentId
+  )).toBe('IMPORTED');
   await expect.poll(() => importedPayloads.length, { timeout: 5_000 }).toBeGreaterThan(0);
   await expect.poll(
     () => importedPayloads.some(payload => payload.nodes?.some(

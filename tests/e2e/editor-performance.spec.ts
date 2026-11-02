@@ -142,9 +142,18 @@ async function loadDiagram(page: Page, diagram: Diagram) {
   await frames(page);
 }
 
-async function downloadedText(page: Page, click: () => Promise<unknown>): Promise<string> {
+async function downloadedText(
+  page: Page,
+  click: () => Promise<unknown>,
+  options: { requirePrivacyPreflight?: boolean } = {},
+): Promise<string> {
   const download = page.waitForEvent('download');
   await click();
+  if (options.requirePrivacyPreflight) {
+    const preflight = page.getByRole('dialog', { name: 'Review data handling' });
+    await expect(preflight).toBeVisible();
+    await preflight.getByRole('button', { name: 'Proceed as shown' }).click();
+  }
   const stream = await (await download).createReadStream();
   if (!stream) throw new Error('The editor did not produce a readable download.');
   const chunks: Buffer[] = [];
@@ -154,7 +163,11 @@ async function downloadedText(page: Page, click: () => Promise<unknown>): Promis
 
 async function saveDiagram(page: Page): Promise<Diagram> {
   await page.locator('#ribbon-tab-home').click();
-  return JSON.parse(await downloadedText(page, () => page.getByRole('button', { name: 'Save', exact: true }).click()));
+  return JSON.parse(await downloadedText(
+    page,
+    () => page.getByRole('button', { name: 'Save', exact: true }).click(),
+    { requirePrivacyPreflight: true },
+  ));
 }
 
 async function arrange(page: Page, preset: 'flow-lr' | 'flow-tb', emphasize = false) {

@@ -4797,8 +4797,13 @@ function App() {
     const link = document.createElement('a');
     link.href = url;
     link.download = template.fileName;
-    link.click();
-    URL.revokeObjectURL(url);
+    document.body.appendChild(link);
+    try {
+      link.click();
+    } finally {
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
   }, []);
 
   const importDriftPlan = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
