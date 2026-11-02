@@ -9,6 +9,8 @@ param resourceToken string
 // Feature flags
 param deploySpeech bool
 param speechRegion string
+@description('Optional previously verified GUID for an existing Speech Contributor role assignment at this Speech resource and app identity. Leave empty to derive a stable assignment name.')
+param speechContributorRoleAssignmentName string = ''
 param deployCosmos bool
 param deployDiagramStorage bool
 param diagramStorageLocation string
@@ -134,8 +136,13 @@ resource speech 'Microsoft.CognitiveServices/accounts@2023-05-01' = if (deploySp
 
 // Speech STS issueToken requires the Speech Contributor data action.
 resource speechContributorRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (deploySpeech) {
-  // Reuse the contributor assignment recorded for the new Speech resource.
-  name: '8813c46e-1a44-5c14-9459-c10475883e01'
+  name: !empty(speechContributorRoleAssignmentName)
+    ? speechContributorRoleAssignmentName
+    : guid(
+        speech!.id,
+        appIdentity.properties.principalId,
+        '0e75ca1e-0464-4b4d-8b93-68208a576181'
+      )
   scope: speech
   properties: {
     // Cognitive Services Speech Contributor built-in role

@@ -29,6 +29,11 @@ const resourcesBicep = readFileSync(
   new URL('../infra/resources.bicep', import.meta.url),
   'utf8',
 );
+const mainBicep = readFileSync(new URL('../infra/main.bicep', import.meta.url), 'utf8');
+const mainParameters = readFileSync(
+  new URL('../infra/main.parameters.json', import.meta.url),
+  'utf8',
+);
 const deployScript = readFileSync(
   new URL('../scripts/deploy_aca.sh', import.meta.url),
   'utf8',
@@ -76,10 +81,45 @@ test('Speech STS token exchange uses the resource-scoped Speech Contributor role
     resourcesBicep,
     /resource speechContributorRole 'Microsoft\.Authorization\/roleAssignments@2022-04-01' = if \(deploySpeech\)/,
   );
-  assert.match(resourcesBicep, /scope: speech[\s\S]*?0e75ca1e-0464-4b4d-8b93-68208a576181/);
-  assert.match(resourcesBicep, /name: '8813c46e-1a44-5c14-9459-c10475883e01'/);
-  assert.doesNotMatch(resourcesBicep, /guid\(deploySpeech \? speech\.id : resourceToken, appIdentity\.id, 'speechuser'\)/);
+  assert.match(resourcesBicep, /scope: speech/);
+  assert.match(resourcesBicep, /roleDefinitionId: subscriptionResourceId\([\s\S]*?'0e75ca1e-0464-4b4d-8b93-68208a576181'/);
+  assert.match(resourcesBicep, /principalId: appIdentity\.properties\.principalId/);
+  assert.match(resourcesBicep, /principalType: 'ServicePrincipal'/);
+  assert.match(
+    resourcesBicep,
+    /name: !empty\(speechContributorRoleAssignmentName\)\s+\?\s+speechContributorRoleAssignmentName\s+:\s+guid\(\s*speech!\.id,\s*appIdentity\.properties\.principalId,\s*'0e75ca1e-0464-4b4d-8b93-68208a576181'\s*\)/,
+  );
+  assert.doesNotMatch(resourcesBicep, /8813c46e-1a44-5c14-9459-c10475883e01/);
+  assert.match(mainBicep, /param speechContributorRoleAssignmentName string = ''/);
+  assert.match(mainBicep, /speechContributorRoleAssignmentName: speechContributorRoleAssignmentName/);
+  assert.match(
+    mainParameters,
+    /"speechContributorRoleAssignmentName":\s*\{\s*"value":\s*"\$\{AZURE_SPEECH_CONTRIBUTOR_ROLE_ASSIGNMENT_NAME\}"/,
+  );
+  assert.match(mainBicep, /param deploySpeech bool = true/);
+  assert.match(mainBicep, /deploySpeech: deploySpeech/);
+  assert.match(resourcesBicep, /if \(deploySpeech\) \{\s*name: '\$\{abbrs\.cognitiveServicesSpeech\}\$\{resourceToken\}'/);
+  assert.match(resourcesBicep, /resource speechContributorRole[\s\S]*?= if \(deploySpeech\)/);
   assert.doesNotMatch(resourcesBicep, /f2dc8367-1007-4938-bd23-fe263f013447/);
+});
+
+test('Speech role assignment default incorporates each environment identity and role', () => {
+  const defaultName = resourcesBicep.match(
+    /guid\(\s*(speech!\.id),\s*(appIdentity\.properties\.principalId),\s*'([^']+)'\s*\)/,
+  );
+  assert.ok(defaultName, 'default assignment name must be derived from its Speech scope, principal, and role');
+  assert.equal(defaultName[1], 'speech!.id');
+  assert.equal(defaultName[2], 'appIdentity.properties.principalId');
+
+  const assignmentNameInputs = (speechResourceId: string, principalId: string) => [
+    speechResourceId,
+    principalId,
+    defaultName[3],
+  ];
+  assert.notDeepEqual(
+    assignmentNameInputs('/subscriptions/sub-a/accounts/speech-a', 'principal-a'),
+    assignmentNameInputs('/subscriptions/sub-b/accounts/speech-b', 'principal-b'),
+  );
 });
 
 // Third-party actions run with repository credentials, so a moved tag is a

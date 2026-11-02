@@ -75,6 +75,9 @@ param deploySpeech bool = true
 @description('Azure region for the Speech resource (must support Avatar API: westus2, eastus2, etc.).')
 param speechRegion string = 'westus2'
 
+@description('Optional previously verified GUID for an existing Speech Contributor assignment matching this environment. Leave empty to derive a stable assignment name.')
+param speechContributorRoleAssignmentName string = ''
+
 // ── Diagram persistence (Cosmos DB) ───────────────────────────────────────────
 @description('Provision an Azure Cosmos DB account for saving diagrams across sessions.')
 param deployCosmos bool = false
@@ -113,6 +116,7 @@ module resources './resources.bicep' = {
     resourceToken: resourceToken
     deploySpeech: deploySpeech
     speechRegion: speechRegion
+    speechContributorRoleAssignmentName: speechContributorRoleAssignmentName
     deployCosmos: deployCosmos
     deployDiagramStorage: deployDiagramStorage
     diagramStorageLocation: diagramStorageLocation

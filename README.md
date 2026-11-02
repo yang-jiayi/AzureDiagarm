@@ -637,6 +637,15 @@ AZURE_SPEECH_REGION=westus2               # Runtime: read by the co-located toke
 AZURE_SPEECH_RESOURCE_ID=/subscriptions/<subscription-id>/resourceGroups/<resource-group>/providers/Microsoft.CognitiveServices/accounts/<speech-account-name>
 ```
 
+For the optional Speech role assignment in `infra/main.bicep`, the default
+assignment name is derived from the Speech resource ID, the app managed
+identity's principal ID, and the Speech Contributor role ID. This keeps
+different environments and identities from colliding. To reuse an existing
+assignment, set `AZURE_SPEECH_CONTRIBUTOR_ROLE_ASSIGNMENT_NAME` only after
+verifying that its GUID belongs to the exact Speech resource scope, app
+identity, and role being deployed. Leave it unset otherwise; a previously
+recorded assignment GUID is not proof of its current scope or ownership.
+
 `VITE_AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA` must name a real GPT-6 Astra deployment,
 not another model renamed to look like Astra. Use that same name as the server's
 `AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA` and sole allowed deployment. The
