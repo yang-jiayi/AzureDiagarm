@@ -32,6 +32,7 @@ const { createFeedbackService, createFeedbackRouter } = require('./feedback');
 const { createArchivedFeedbackContact } = require('./feedback-configuration');
 const { createGracefulShutdown } = require('./graceful-shutdown');
 const { createReadinessHandler } = require('./readiness');
+const { cancelErrorResponseBody, readBoundedText } = require('./bounded-response');
 
 const deployment = deploymentConfig();
 
@@ -363,8 +364,11 @@ async function issueSpeechStsToken() {
       headers: { Authorization: `Bearer ${aadToken}`, 'Content-Length': '0' },
     });
     if (!response.ok) {
-      const detail = await response.text().catch(() => '');
-      throw new Error(`Speech STS exchange returned ${response.status}: ${detail.slice(0, 200)}`);
+      const status = response.status;
+      await cancelErrorResponseBody(response, 'speech-token');
+      const error = new Error(`Speech STS exchange returned ${status}`);
+      error.statusCode = status;
+      throw error;
     }
     const token = (await response.text()).trim();
     if (!token) throw new Error('Speech STS exchange returned an empty token');
@@ -394,8 +398,11 @@ app.get('/api/speech-token', asyncHandler(async (req, res) => {
     // Never fall back to returning the managed-identity token: failing closed is required.
     const token = await issueSpeechStsToken();
     res.json({ token, region: REGION });
-  } catch (err) {
-    console.error('[speech-token] error:', err.message);
+  } catch (error) {
+    const status = Number.isInteger(error?.statusCode) ? error.statusCode : null;
+    console.error(status
+      ? `[speech-token] token acquisition or exchange failed (upstream_status=${status})`
+      : '[speech-token] token acquisition or exchange failed');
     res.status(502).json({ error: 'Failed to acquire speech token' });
   }
 }));
@@ -434,6 +441,7 @@ app.use('/api/openai', createOpenAIProxyRouter({
 // documentation. Best-effort: failures return empty results so generation can
 // proceed ungrounded.
 const LEARN_MCP_URL = process.env.LEARN_MCP_URL || 'https://learn.microsoft.com/api/mcp';
+const MAX_LEARN_MCP_RESPONSE_BYTES = 2 * 1024 * 1024;
 
 async function searchLearnDocs(query, top) {
   const upstream = await fetch(LEARN_MCP_URL, {
@@ -452,12 +460,16 @@ async function searchLearnDocs(query, top) {
   });
 
   if (!upstream.ok) {
-    throw new Error(`Learn MCP returned ${upstream.status}`);
+    const status = upstream.status;
+    await cancelErrorResponseBody(upstream, 'docs-search');
+    const error = new Error(`Learn MCP returned ${status}`);
+    error.statusCode = status;
+    throw error;
   }
 
   // The endpoint replies with Server-Sent Events; find the data: line that
   // carries the tool result and unwrap result.content[].text (a JSON string).
-  const body = await upstream.text();
+  const body = await readBoundedText(upstream, MAX_LEARN_MCP_RESPONSE_BYTES);
   let payload = null;
   for (const line of body.split('\n')) {
     const trimmed = line.trim();
@@ -502,8 +514,11 @@ app.post('/api/docs-search', asyncHandler(async (req, res) => {
   try {
     const results = await searchLearnDocs(query.trim().slice(0, 400), limit);
     res.json({ results });
-  } catch (err) {
-    console.error('[docs-search] error:', err.message);
+  } catch (error) {
+    const status = Number.isInteger(error?.statusCode) ? error.statusCode : null;
+    console.error(status
+      ? `[docs-search] upstream request failed (upstream_status=${status})`
+      : '[docs-search] upstream request failed');
     // Soft-fail: grounding is best-effort.
     res.json({ results: [], error: 'docs search failed' });
   }
@@ -530,14 +545,14 @@ app.get('/api/ice-token', asyncHandler(async (req, res) => {
       headers: { Authorization: `Bearer ${authToken}` },
     });
     if (!iceRes.ok) {
-      const body = await iceRes.text().catch(() => '');
-      console.error(`[ice-token] error ${iceRes.status}: ${body}`);
+      await cancelErrorResponseBody(iceRes, 'ice-token');
+      console.error(`[ice-token] upstream request failed with status ${iceRes.status}`);
       return res.status(502).json({ error: `ICE relay returned ${iceRes.status}` });
     }
     const data = await iceRes.json();
     res.json(data);
-  } catch (err) {
-    console.error('[ice-token] error:', err.message);
+  } catch {
+    console.error('[ice-token] token acquisition failed');
     res.status(500).json({ error: 'Failed to acquire ICE token' });
   }
 }));
@@ -579,15 +594,15 @@ app.get('/api/azure/subscriptions', requireAzureImport, asyncHandler(async (_req
       headers: { Authorization: `Bearer ${token}` },
     });
     if (!r.ok) {
-      const body = await r.text().catch(() => '');
-      console.error(`[azure-import] subscriptions ${r.status}: ${body.slice(0, 300)}`);
+      await cancelErrorResponseBody(r, 'azure-import-subscriptions');
+      console.error(`[azure-import] subscriptions request failed with status ${r.status}`);
       return res.status(502).json({ error: `Failed to list subscriptions (${r.status})` });
     }
     const data = await r.json();
     const subs = (data.value || []).map((s) => ({ subscriptionId: s.subscriptionId, displayName: s.displayName }));
     res.json({ subscriptions: subs });
-  } catch (err) {
-    console.error('[azure-import] subscriptions error:', err.message);
+  } catch {
+    console.error('[azure-import] subscriptions request failed');
     res.status(500).json({ error: 'Failed to list subscriptions' });
   }
 }));
@@ -603,15 +618,15 @@ app.get('/api/azure/resource-groups', requireAzureImport, asyncHandler(async (re
       headers: { Authorization: `Bearer ${token}` },
     });
     if (!r.ok) {
-      const body = await r.text().catch(() => '');
-      console.error(`[azure-import] resource-groups ${r.status}: ${body.slice(0, 300)}`);
+      await cancelErrorResponseBody(r, 'azure-import-resource-groups');
+      console.error(`[azure-import] resource-groups request failed with status ${r.status}`);
       return res.status(502).json({ error: `Failed to list resource groups (${r.status})` });
     }
     const data = await r.json();
     const groups = (data.value || []).map((g) => ({ name: g.name, location: g.location })).sort((a, b) => a.name.localeCompare(b.name));
     res.json({ resourceGroups: groups });
-  } catch (err) {
-    console.error('[azure-import] resource-groups error:', err.message);
+  } catch {
+    console.error('[azure-import] resource-groups request failed');
     res.status(500).json({ error: 'Failed to list resource groups' });
   }
 }));
@@ -637,14 +652,14 @@ app.post('/api/azure/resource-graph', requireAzureImport, asyncHandler(async (re
       body: JSON.stringify({ subscriptions: [subscriptionId], query, options: { resultFormat: 'objectArray' } }),
     });
     if (!r.ok) {
-      const body = await r.text().catch(() => '');
-      console.error(`[azure-import] resource-graph ${r.status}: ${body.slice(0, 300)}`);
+      await cancelErrorResponseBody(r, 'azure-import-resource-graph');
+      console.error(`[azure-import] resource-graph request failed with status ${r.status}`);
       return res.status(502).json({ error: `Resource Graph query failed (${r.status})` });
     }
     const data = await r.json();
     res.json({ resources: Array.isArray(data.data) ? data.data : [] });
-  } catch (err) {
-    console.error('[azure-import] resource-graph error:', err.message);
+  } catch {
+    console.error('[azure-import] resource-graph request failed');
     res.status(500).json({ error: 'Resource Graph query failed' });
   }
 }));

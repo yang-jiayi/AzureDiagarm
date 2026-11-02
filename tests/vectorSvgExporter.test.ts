@@ -187,11 +187,12 @@ test('user text is XML-escaped', async () => {
     service('x', 0, 0, { label: 'A & B <script>' }),
     service('y', 0, 200, { label: '< SCRIPT >' }),
   ];
-  const svg = await exportToSvg(nodes, [], { title: 'T&<>"' });
+  const svg = await exportToSvg(nodes, [], { title: 'T&<>"\u000bName' });
   assert.ok(!/<\s*\/?\s*script/i.test(svg), 'raw markup from a label reached the file');
   assert.match(svg, /A &amp; B &lt;script&gt;/);
   assert.match(svg, /&lt; SCRIPT &gt;/);
-  assert.match(svg, /<title>T&amp;&lt;&gt;&quot;<\/title>/);
+  assert.match(svg, /<title>T&amp;&lt;&gt;&quot; Name<\/title>/);
+  assert.ok(!svg.includes('\u000b'));
 });
 
 test('the viewport transform brings a far-off drawing inside the viewBox', async () => {

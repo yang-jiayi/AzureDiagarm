@@ -188,6 +188,12 @@
   padding-top: 0.7rem;
   border-top: 1px dashed var(--azd-color-border);
 }
+.arch-chat-followups-hint {
+  margin: 0 0 0.45rem;
+  color: var(--azd-color-text-muted);
+  font-size: 0.75rem;
+  line-height: 1.4;
+}
 .arch-chat-followups-label {
   display: inline-flex;
   align-items: center;

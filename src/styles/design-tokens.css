@@ -113,7 +113,7 @@
   --azd-space-5: 1.5rem;
   --azd-space-6: 2rem;
   --azd-panel-palette-width: clamp(272px, 20vw, 288px);
-  --azd-panel-chat-default-width: 460px;
+  --azd-panel-chat-default-width: 440px;
   --azd-canvas-chrome-edge: 12px;
   --azd-motion-fast: 0.15s ease;
   --azd-motion-panel: 0.18s ease-out;

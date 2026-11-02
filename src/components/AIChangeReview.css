@@ -35,6 +35,15 @@
 .ai-review-header h2 { margin: 0; font-size: 21px; }
 .ai-review-close { border: 0; background: transparent; color: inherit; padding: 6px; cursor: pointer; }
 .ai-review-description { margin: 0; padding: 0 20px; line-height: 1.5; }
+.ai-review-verification-note {
+  margin: 10px 20px 0;
+  padding: 8px 10px;
+  border-left: 3px solid var(--azd-color-warning, #b45309);
+  color: var(--azd-color-text-muted, #53627a);
+  background: var(--azd-color-warning-soft, #fff7ed);
+  font-size: 13px;
+  line-height: 1.45;
+}
 .ai-review-selection-tools { border-bottom: 1px solid var(--azd-color-border, #cbd5e1); }
 .ai-review-selection-tools span { margin-right: auto; }
 .ai-review-selection-tools button { background: none; border: 0; color: var(--azd-color-accent, #006bb3); text-decoration: underline; cursor: pointer; }
@@ -46,7 +55,7 @@
 .ai-review-item input { margin: 4px 0 0; width: 17px; height: 17px; flex-shrink: 0; }
 .ai-review-kind { font-size: 12px; font-weight: 700; padding: 3px 6px; border-radius: 4px; background: var(--azd-color-accent-soft, #e8eefc); color: var(--azd-color-accent, #203f82); }
 .ai-review-item-add .ai-review-kind { color: var(--azd-color-success, #166534); background: var(--azd-color-success-soft, #dcfce7); }
-.ai-review-item-delete .ai-review-kind { color: var(--azd-color-danger, #991b1b); background: var(--azd-color-danger-soft, #fee2e2); }
+.ai-review-item-delete .ai-review-kind { color: var(--azd-color-danger-strong, #b91c1c); background: var(--azd-color-danger-soft, #fee2e2); }
 .ai-review-item-content { display: grid; flex: 1; gap: 4px; min-width: 0; overflow-wrap: anywhere; }
 .ai-review-fields { font-size: 12px; color: var(--azd-color-text-muted, #53627a); }
 .ai-review-details { margin: 8px 0 0 27px; min-width: 0; font-size: 13px; }

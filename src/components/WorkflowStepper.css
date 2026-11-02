@@ -19,7 +19,7 @@
   min-width: 0;
   max-width: 960px;
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: var(--azd-space-2);
   margin: 0 auto;
   padding: 0;
@@ -103,6 +103,16 @@
   min-width: 0;
 }
 
+.workflow-stepper-actions {
+  display: grid;
+  min-width: 0;
+}
+
+.workflow-stepper-actions--review {
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--azd-space-1);
+}
+
 .workflow-stepper-item:not(:last-child)::after {
   content: '';
   position: absolute;
@@ -160,15 +170,37 @@
   box-shadow: none;
 }
 
-.workflow-stepper-item.is-current button,
-.workflow-stepper-item.is-busy button {
+.workflow-stepper-item.is-current .workflow-stepper-primary,
+.workflow-stepper-item.is-busy .workflow-stepper-primary {
   border-color: var(--azd-color-action);
   background: var(--azd-color-brand-subtle);
 }
 
-.workflow-stepper-item.is-complete button {
+.workflow-stepper-item.is-complete .workflow-stepper-primary {
   border-color: var(--azd-color-success-button);
   background: var(--azd-color-success-soft);
+}
+
+.workflow-stepper-cost {
+  width: auto !important;
+  grid-template-columns: 16px auto !important;
+  gap: 4px !important;
+  padding-inline: 8px !important;
+  color: var(--azd-color-text-muted) !important;
+  font-size: 0.76rem !important;
+  font-weight: 700 !important;
+  white-space: nowrap;
+}
+
+.workflow-stepper-cost.is-current,
+.workflow-stepper-cost.is-busy {
+  border-color: var(--azd-color-action) !important;
+  background: var(--azd-color-brand-subtle) !important;
+}
+
+.workflow-stepper-cost.is-complete {
+  border-color: var(--azd-color-success-button) !important;
+  background: var(--azd-color-success-soft) !important;
 }
 
 .workflow-stepper-index {
@@ -250,7 +282,7 @@
 
   .workflow-stepper ol {
     width: 100%;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: var(--azd-space-1);
   }
 
@@ -259,6 +291,10 @@
     grid-template-columns: 22px minmax(0, 1fr);
     gap: var(--azd-space-1);
     padding: 0.35rem 0.45rem;
+  }
+
+  .workflow-stepper-actions--review {
+    grid-template-columns: minmax(0, 1fr) auto;
   }
 
   .workflow-stepper-index {
@@ -305,6 +341,10 @@
     min-height: 44px;
     grid-template-columns: 20px minmax(0, 1fr);
     padding: 0.25rem;
+  }
+
+  .workflow-stepper-cost {
+    padding-inline: 4px !important;
   }
 
   .workflow-stepper-index {

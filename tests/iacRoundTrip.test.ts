@@ -480,6 +480,19 @@ test('buildStarterTemplate keeps unsupported services as TODO comments', () => {
   assert.equal(bicep.todoCount, 1);
 });
 
+test('buildStarterTemplate keeps imported metadata on comment lines', () => {
+  const label = 'Load Balancer\nsynthetic continuation';
+  for (const format of ['bicep', 'terraform'] as const) {
+    const template = buildStarterTemplate([
+      azureNode('lb', label, 'Unmapped service\nsynthetic provider'),
+    ], format);
+
+    assert.match(template.content, /synthetic continuation/);
+    assert.match(template.content, /synthetic provider/);
+    assert.doesNotMatch(template.content, /^(?:synthetic continuation|synthetic provider)$/m);
+  }
+});
+
 test('buildStarterTemplate requires secure database password inputs', () => {
   const nodes = [
     azureNode('sql', 'SQL Server'),

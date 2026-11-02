@@ -8,6 +8,7 @@ const ARM_SCOPE = 'https://management.azure.com/.default';
 const ACCESS_ENTRY_CONTENT_TYPE = 'application/vnd.azurediagarm.access';
 const ACCESS_ENTRY_KIND = 'azurediagarm-access-v1';
 const ACCESS_SECRET_NAME_PATTERN = /^[a-f0-9]{64}$/;
+const { cancelErrorResponseBody } = require('./bounded-response');
 
 class ArmKeyVaultAccessStore {
   constructor(resourceId, credential, fetchImpl = fetch) {
@@ -59,6 +60,7 @@ class ArmKeyVaultAccessStore {
     });
 
     if (!response.ok) {
+      await cancelErrorResponseBody(response, 'arm-key-vault-access');
       const error = new Error(`Azure Resource Manager returned ${response.status}.`);
       error.statusCode = response.status;
       throw error;

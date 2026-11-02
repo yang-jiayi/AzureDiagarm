@@ -132,15 +132,16 @@ resource speech 'Microsoft.CognitiveServices/accounts@2023-05-01' = if (deploySp
   }
 }
 
-// Cognitive Services Speech User role → managed identity
-resource speechUserRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (deploySpeech) {
-  name: guid(deploySpeech ? speech.id : resourceToken, appIdentity.id, 'speechuser')
+// Speech STS issueToken requires the Speech Contributor data action.
+resource speechContributorRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (deploySpeech) {
+  // Reuse the contributor assignment recorded for the new Speech resource.
+  name: '8813c46e-1a44-5c14-9459-c10475883e01'
   scope: speech
   properties: {
-    // Cognitive Services Speech User built-in role
+    // Cognitive Services Speech Contributor built-in role
     roleDefinitionId: subscriptionResourceId(
       'Microsoft.Authorization/roleDefinitions',
-      'f2dc8367-1007-4938-bd23-fe263f013447'
+      '0e75ca1e-0464-4b4d-8b93-68208a576181'
     )
     principalId: appIdentity.properties.principalId
     principalType: 'ServicePrincipal'

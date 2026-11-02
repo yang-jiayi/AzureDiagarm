@@ -631,7 +631,7 @@ VITE_APPINSIGHTS_CONNECTION_STRING=InstrumentationKey=...;IngestionEndpoint=...
 
 # Optional: Avatar Presenter (enables "Narrate" in the Workflow Panel)
 # Requires an Azure Speech resource with Custom Subdomain enabled and
-# the ACA managed identity assigned the "Cognitive Services Speech User" RBAC role
+# the ACA managed identity assigned the "Cognitive Services Speech Contributor" RBAC role
 VITE_SPEECH_REGION=westus2                 # Build-time: controls visibility of the "Narrate" button
 AZURE_SPEECH_REGION=westus2               # Runtime: read by the co-located token server
 AZURE_SPEECH_RESOURCE_ID=/subscriptions/<subscription-id>/resourceGroups/<resource-group>/providers/Microsoft.CognitiveServices/accounts/<speech-account-name>
@@ -1061,7 +1061,7 @@ The same token server also brokers Azure OpenAI and Microsoft Foundry so credent
 - `src/services/avatarPresenter.ts` — Speech SDK avatar session, ICE relay, word-boundary callback
 - `Dockerfile` — extended build stage with `ARG/ENV VITE_SPEECH_REGION`; production stage installs token server deps
 - `scripts/update_aca.sh` — adds `VITE_SPEECH_REGION` build arg and `AZURE_SPEECH_REGION` / `AZURE_SPEECH_RESOURCE_ID` runtime env vars
-- ACA managed identity assigned `Cognitive Services Speech User` role on the Speech resource (no stored credentials)
+- ACA managed identity assigned `Cognitive Services Speech Contributor` on the Speech resource for the STS issueToken exchange (no stored credentials)
 
 For GitHub Actions deployments, set the repository variable
 `ALLOW_BYO_AI_ENDPOINTS=true` only after approving BYO access for that

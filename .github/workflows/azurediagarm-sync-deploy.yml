@@ -419,6 +419,15 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Verify approved new-tenant notification target
+        env:
+          AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+          AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+          AZURE_CONTAINER_APP: ${{ vars.AZURE_CONTAINER_APP }}
+        run: node scripts/verify-deployment-target.mjs
+
       - name: Sign in to Azure with OIDC
         uses: azure/login@532459ea530d8321f2fb9bb10d1e0bcf23869a43 # v3.0.0
         with:
@@ -465,6 +474,15 @@ jobs:
         run: |
           printf '%s' "${{ needs.merge_validate.outputs.update_details_b64 }}" \
             | base64 --decode > update-details.txt
+
+      - name: Verify approved new-tenant deployment target
+        env:
+          AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+          AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+          AZURE_CONTAINER_APP: ${{ vars.AZURE_CONTAINER_APP }}
+        run: node scripts/verify-deployment-target.mjs
 
       - name: Sign in to Azure with OIDC
         uses: azure/login@532459ea530d8321f2fb9bb10d1e0bcf23869a43 # v3.0.0
@@ -1341,6 +1359,7 @@ jobs:
 
       - name: Build and push application image
         if: steps.deployment.outputs.should_deploy == 'true'
+        id: build_image
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
           context: .
@@ -1357,6 +1376,62 @@ jobs:
             VITE_FEEDBACK_CONTACT_ENABLED=${{ vars.FEEDBACK_CONTACT_ENABLED || 'false' }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Record immutable release image
+        if: steps.deployment.outputs.should_deploy == 'true'
+        id: release_image
+        env:
+          TAGGED_IMAGE: ${{ steps.image.outputs.image }}
+          IMAGE_DIGEST: ${{ steps.build_image.outputs.digest }}
+          UPSTREAM_COMMIT: ${{ needs.merge_validate.outputs.upstream_commit }}
+          CUSTOMIZATION_COMMIT: ${{ needs.merge_validate.outputs.fork_commit }}
+          RELEASE_METADATA_PATH: ${{ runner.temp }}/release-image.json
+        run: |
+          set -Eeuo pipefail
+          [[ "$IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          image_repository="${TAGGED_IMAGE%:*}"
+          [[ "$image_repository" != "$TAGGED_IMAGE" ]]
+          immutable_image="$image_repository@$IMAGE_DIGEST"
+          export IMMUTABLE_IMAGE="$immutable_image"
+          echo "digest=$IMAGE_DIGEST" >> "$GITHUB_OUTPUT"
+          echo "immutable_ref=$immutable_image" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Container image"
+            echo
+            echo "- Tag: \`$TAGGED_IMAGE\`"
+            echo "- Digest: \`$IMAGE_DIGEST\`"
+            echo "- Immutable reference: \`$immutable_image\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+          node --input-type=module -e '
+            import { writeFile } from "node:fs/promises";
+            const metadata = {
+              repository: process.env.GITHUB_REPOSITORY,
+              runId: process.env.GITHUB_RUN_ID,
+              source: {
+                upstreamCommit: process.env.UPSTREAM_COMMIT,
+                customizationCommit: process.env.CUSTOMIZATION_COMMIT,
+              },
+              image: {
+                tagged: process.env.TAGGED_IMAGE,
+                digest: process.env.IMAGE_DIGEST,
+                immutable: process.env.IMMUTABLE_IMAGE,
+              },
+            };
+            await writeFile(
+              process.env.RELEASE_METADATA_PATH,
+              `${JSON.stringify(metadata, null, 2)}\n`,
+              { encoding: "utf8", flag: "wx" },
+            );
+          '
+
+      - name: Upload release image metadata
+        if: steps.release_image.outcome == 'success'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-image-${{ github.run_id }}
+          path: ${{ runner.temp }}/release-image.json
+          if-no-files-found: error
+          retention-days: 90
 
       - name: Capture rollback baseline
         if: steps.deployment.outputs.should_deploy == 'true'
@@ -1495,7 +1570,7 @@ jobs:
           update_args=(
             --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}"
             --name "${{ vars.AZURE_CONTAINER_APP }}"
-            --image "${{ steps.image.outputs.image }}"
+            --image "${{ steps.release_image.outputs.immutable_ref }}"
             --revision-suffix "$revision_suffix"
             --set-env-vars "${env_vars[@]}"
             --min-replicas 1
@@ -1641,7 +1716,7 @@ jobs:
             --query properties.template.containers[0].probes \
             --output json > /tmp/azurediagarm-probes.json
 
-          [[ "$actual_image" == "${{ steps.image.outputs.image }}" ]]
+          [[ "$actual_image" == "${{ steps.release_image.outputs.immutable_ref }}" ]]
           [[ "$actual_upstream" == "${{ needs.merge_validate.outputs.upstream_commit }}" ]]
           [[ "$actual_customization" == "${{ needs.merge_validate.outputs.fork_commit }}" ]]
           [[ "$actual_config_hash" == "${{ steps.desired_config.outputs.hash }}" ]]
@@ -1944,7 +2019,7 @@ jobs:
             echo "Microsoft Product Architecture Diagram Builder was updated successfully."
             echo
             echo "URL: ${{ vars.AZURE_APP_URL }}"
-            echo "Image: ${{ steps.image.outputs.image }}"
+            echo "Image: ${{ steps.release_image.outputs.immutable_ref }}"
             echo "Upstream commit: ${{ needs.merge_validate.outputs.upstream_commit }}"
             echo "Customization commit: ${{ needs.merge_validate.outputs.fork_commit }}"
             echo "Workflow: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"

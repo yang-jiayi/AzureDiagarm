@@ -220,7 +220,8 @@ const workflow = readFileSync(
 );
 const repoRoot = fileURLToPath(new URL('../', import.meta.url));
 const bash = process.platform === 'win32'
-  ? join(process.env.ProgramFiles || 'C:\\Program Files', 'Git', 'bin', 'bash.exe')
+  ? process.env.GIT_BASH_PATH
+    || join(process.env.ProgramFiles || 'C:\\Program Files', 'Git', 'bin', 'bash.exe')
   : 'bash';
 const approvedCommit = '6b38cd6145afbe3332f08194a86769c4e169d026';
 const verifiedAstraTuple = [

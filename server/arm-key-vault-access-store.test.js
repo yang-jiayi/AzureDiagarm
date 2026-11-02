@@ -132,6 +132,28 @@ test('ARM Key Vault store rejects continuation links outside the configured vaul
   }, /invalid Key Vault continuation URL/);
 });
 
+test('ARM Key Vault store cancels error bodies and preserves the upstream status', async () => {
+  let cancelCalled = false;
+  const response = new Response(new ReadableStream({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode('response-body-canary'));
+    },
+    cancel() {
+      cancelCalled = true;
+    },
+  }), { status: 403 });
+  const credential = { async getToken() { return { token: 'synthetic-credential' }; } };
+  const store = new ArmKeyVaultAccessStore(RESOURCE_ID, credential, async () => response);
+
+  await assert.rejects(store.request(store.baseUrl), error => {
+    assert.equal(error.statusCode, 403);
+    assert.match(error.message, /returned 403/);
+    return true;
+  });
+  assert.equal(cancelCalled, true);
+  assert.equal(response.status, 403);
+});
+
 test('ARM Key Vault store rejects non-Key-Vault resource IDs', () => {
   assert.throws(
     () => new ArmKeyVaultAccessStore('https://attacker.example', { getToken() {} }),

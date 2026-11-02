@@ -402,8 +402,9 @@ function createOpenAIExecutor(options) {
           });
           lease = await awaitWithSignal(reserving, controller.signal);
         } catch (error) {
-          const status = error.status || 503;
-          const code = error.code || 'ai_budget_unavailable';
+          const timedOut = controller.signal.aborted && controller.signal.reason?.name === 'TimeoutError';
+          const status = timedOut ? 504 : error.status || 503;
+          const code = timedOut ? 'ai_budget_timeout' : error.code || 'ai_budget_unavailable';
           const retryAfterSeconds = error.retryAfter || 5;
           responseHeaders['Retry-After'] = String(retryAfterSeconds);
           logEvent(logger, status >= 500 ? 'error' : 'warn', {
@@ -412,7 +413,9 @@ function createOpenAIExecutor(options) {
           });
           return sendError(responseHeaders, status, requestId, {
             source: 'budget', code,
-            message: error.status ? error.message : 'AI budget is unavailable. Try again shortly.',
+            message: timedOut
+              ? 'The request timed out while reserving its AI budget. Try again shortly.'
+              : error.status ? error.message : 'AI budget is unavailable. Try again shortly.',
           });
         }
       } else if (mode === 'public') {

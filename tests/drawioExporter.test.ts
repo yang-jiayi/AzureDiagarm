@@ -58,6 +58,13 @@ test('draw.io export places nested groups at their resolved absolute position (f
   assert.ok(Number(page![2]) >= 1100, 'page height covers the resolved content');
 });
 
+test('draw.io export removes XML-forbidden characters from diagram names', async () => {
+  const xml = await exportToDrawio([], [], 'Safe\u000bTitle');
+
+  assert.ok(!xml.includes('\u000b'));
+  assert.match(xml, /name="Safe Title"/);
+});
+
 test('draw.io export colours a security edge red and keeps XML balanced (fixes 4 & 11)', async () => {
   const nodes = [
     { id: 'a', type: 'azureNode', position: { x: 0, y: 0 }, data: { label: 'Firewall', category: 'security' } },

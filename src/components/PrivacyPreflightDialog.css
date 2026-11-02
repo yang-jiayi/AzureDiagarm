@@ -46,6 +46,12 @@
 .privacy-finding-severity.medium { background: var(--azd-color-warning); }
 .privacy-finding-severity.low { background: var(--azd-color-info); }
 .privacy-anonymize-note { margin: 0; padding: 0.7rem 0.8rem; color: var(--azd-color-text-secondary); background: var(--azd-color-surface-panel); border: 1px solid var(--azd-color-border-subtle); border-radius: var(--azd-radius-sm); font-size: 0.76rem; line-height: 1.45; }
+.privacy-data-policy { display: grid; gap: 0.65rem; padding: 0.85rem; background: var(--azd-color-surface-panel); border: 1px solid var(--azd-color-border-subtle); border-radius: var(--azd-radius-md); }
+.privacy-data-policy h3 { margin: 0; color: var(--azd-color-text-strong); font-size: 0.9rem; }
+.privacy-data-policy dl { display: grid; gap: 0.7rem; margin: 0; }
+.privacy-data-policy dl > div { display: grid; gap: 0.2rem; }
+.privacy-data-policy dt { color: var(--azd-color-text-strong); font-size: 0.74rem; font-weight: 700; }
+.privacy-data-policy dd { margin: 0; color: var(--azd-color-text-secondary); font-size: 0.73rem; line-height: 1.45; overflow-wrap: anywhere; }
 .privacy-threat-toggle { display: grid; grid-template-columns: auto auto 1fr; align-items: start; gap: 0.55rem; padding: 0.8rem; background: var(--azd-color-accent-ai-soft); border: 1px solid var(--azd-color-accent-ai-border); border-radius: var(--azd-radius-md); cursor: pointer; }
 .privacy-threat-toggle input { margin-top: 0.2rem; }
 .privacy-threat-toggle > svg { color: var(--azd-color-accent-ai); }

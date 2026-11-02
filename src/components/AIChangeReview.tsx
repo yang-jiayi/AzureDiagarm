@@ -15,6 +15,7 @@ import './AIChangeReview.css';
 export interface AIChangeReviewProps {
   changeSet: DiagramChangeSet;
   onApply: (graph: DiagramGraph) => void | Promise<void>;
+  onSelectionChange?: (changes: DiagramChange[]) => void;
   onCancel: () => void;
   isApplying?: boolean;
   error?: string;
@@ -100,13 +101,22 @@ function displayValue(value: unknown): string | number | boolean | string[] | nu
   return undefined;
 }
 
-export default function AIChangeReview({ changeSet, onApply, onCancel, isApplying = false, error }: AIChangeReviewProps) {
+export default function AIChangeReview({
+  changeSet,
+  onApply,
+  onSelectionChange,
+  onCancel,
+  isApplying = false,
+  error,
+}: AIChangeReviewProps) {
   const { language } = useLanguage();
   const titleId = useId();
   const descriptionId = useId();
   const applyingRef = useRef(false);
   const mountedRef = useRef(true);
-  const [selectedIds, setSelectedIds] = useState(() => new Set(changeSet.changes.map(change => change.id)));
+  const [selectedIds, setSelectedIds] = useState(() => new Set(
+    changeSet.changes.filter(change => change.kind !== 'delete').map(change => change.id),
+  ));
   const [submitting, setSubmitting] = useState(false);
   const [applyError, setApplyError] = useState('');
   const busy = isApplying || submitting;
@@ -116,7 +126,9 @@ export default function AIChangeReview({ changeSet, onApply, onCancel, isApplyin
     return () => { mountedRef.current = false; };
   }, []);
   useEffect(() => {
-    setSelectedIds(new Set(changeSet.changes.map(change => change.id)));
+    setSelectedIds(new Set(
+      changeSet.changes.filter(change => change.kind !== 'delete').map(change => change.id),
+    ));
     setApplyError('');
   }, [changeSet]);
 
@@ -127,7 +139,13 @@ export default function AIChangeReview({ changeSet, onApply, onCancel, isApplyin
       return { graph: null, error: cause instanceof Error ? cause.message : String(cause) };
     }
   }, [changeSet, selectedIds]);
-  const selected = changeSet.changes.filter(change => selectedIds.has(change.id));
+  const selected = useMemo(
+    () => changeSet.changes.filter(change => selectedIds.has(change.id)),
+    [changeSet.changes, selectedIds],
+  );
+  useEffect(() => {
+    onSelectionChange?.(selected);
+  }, [onSelectionChange, selected]);
   const priced = selected.filter(change => change.costDelta !== undefined);
   const delta = priced.reduce((sum, change) => sum + change.costDelta!, 0);
   const money = (value: number) => `${value >= 0 ? '+' : '−'}${new Intl.NumberFormat(
@@ -253,6 +271,12 @@ export default function AIChangeReview({ changeSet, onApply, onCancel, isApplyin
           {localize(language, {
             en: 'Nothing has changed yet. Select exactly what to apply. Connected nodes and parent groups must remain valid.',
             ja: '図はまだ変更されていません。適用する変更を選択してください。接続先のノードと親グループが必要です。',
+          })}
+        </p>
+        <p className="ai-review-verification-note">
+          {localize(language, {
+            en: 'Rationale and assumptions are not included. Verify service fit, configuration, cost, and runtime behavior against your requirements; these have not been independently validated.',
+            ja: '理由と前提は提示されていません。サービスの適合性、構成、コスト、実行時の動作を要件と照合してください。これらは独立して検証されていません。',
           })}
         </p>
         <div className="ai-review-selection-tools">

@@ -35,6 +35,7 @@ interface ChatMessage {
 interface ArchitectureChatPanelProps {
   isOpen: boolean;
   onClose: () => void;
+  initialPrompt?: { id: number; prompt: string } | null;
   onConfigureConnections?: () => void;
   currentArchitecture: CurrentArchitecture;
   diagramKey: string;
@@ -43,7 +44,7 @@ interface ArchitectureChatPanelProps {
 }
 
 const CHAT_PANEL_WIDTH_KEY = 'azure-diagram-builder.chatPanelWidth.v1';
-const DEFAULT_CHAT_PANEL_WIDTH = 460;
+const DEFAULT_CHAT_PANEL_WIDTH = 440;
 const MIN_CHAT_PANEL_WIDTH = 360;
 const MAX_CHAT_PANEL_WIDTH = 720;
 function clampChatPanelWidth(width: number): number {
@@ -202,6 +203,7 @@ function pillarFor(text: string): Pillar {
 const ArchitectureChatPanel: React.FC<ArchitectureChatPanelProps> = ({
   isOpen,
   onClose,
+  initialPrompt,
   onConfigureConnections,
   currentArchitecture,
   diagramKey,
@@ -275,6 +277,7 @@ const ArchitectureChatPanel: React.FC<ArchitectureChatPanelProps> = ({
 
   const threadRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const consumedInitialPromptRef = useRef<number | null>(null);
   const latestFollowUpRequestRef = useRef<string | null>(null);
   const diagramKeyRef = useRef(diagramKey);
   const sendGenerationRef = useRef(new OperationGeneration());
@@ -283,6 +286,17 @@ const ArchitectureChatPanel: React.FC<ArchitectureChatPanelProps> = ({
   const followUpControllerRef = useRef<AbortController | null>(null);
   const lastPromptRef = useRef('');
   const architectureRef = useRef(currentArchitecture);
+
+  useEffect(() => {
+    if (
+      !isOpen
+      || !initialPrompt
+      || consumedInitialPromptRef.current === initialPrompt.id
+    ) return;
+    setInput(initialPrompt.prompt);
+    consumedInitialPromptRef.current = initialPrompt.id;
+    inputRef.current?.focus();
+  }, [initialPrompt, isOpen]);
   architectureRef.current = currentArchitecture;
   const focusOpenerRef = useRef<Element | null>(null);
   const openRef = useRef(false);
@@ -323,6 +337,11 @@ const ArchitectureChatPanel: React.FC<ArchitectureChatPanelProps> = ({
 
   const markUsed = (s: string) =>
     setUsedSuggestions((prev) => (prev.has(s) ? prev : new Set(prev).add(s)));
+  const draftSuggestion = (suggestion: string) => {
+    markUsed(suggestion);
+    setInput(suggestion);
+    inputRef.current?.focus();
+  };
 
   // Live, context-aware follow-ups shown under the latest reply during an active
   // chat. Recomputed from the current (post-change) canvas, so they evolve as the
@@ -550,8 +569,7 @@ const ArchitectureChatPanel: React.FC<ArchitectureChatPanelProps> = ({
         throw new Error('The diagram changed while finding a suggestion.');
       }
       if (best[0]) {
-        markUsed(best[0]);
-        await send(best[0], before, controller, modelOverride);
+        draftSuggestion(best[0]);
       }
     } catch {
       if (!controller.signal.aborted && requestRef.current === controller) {
@@ -647,8 +665,14 @@ const ArchitectureChatPanel: React.FC<ArchitectureChatPanelProps> = ({
             </p>
             <p className="arch-chat-empty-sub">
               {hasDiagram
-                ? localize(language, { en: 'Choose which changes to accept. Accepted edits can be undone.', ja: '適用する変更を選択できます。適用した編集は元に戻せます。' })
-                : localize(language, { en: 'Pick a starter below or type your own. Review the generated diagram before applying it.', ja: '下の例を選ぶか、要件を入力してください。生成された図を確認してから適用できます。' })}
+                ? localize(language, {
+                    en: 'Choose a suggestion to place it in the message box, edit it, then select Send. Accepted edits can be undone.',
+                    ja: '候補を選ぶと入力欄に入ります。編集してから送信してください。適用した編集は元に戻せます。',
+                  })
+                : localize(language, {
+                    en: 'Choose a starter to place it in the message box, edit it, then select Send. Review the generated diagram before applying it.',
+                    ja: '例を選ぶと入力欄に入ります。編集してから送信してください。生成された図を確認してから適用できます。',
+                  })}
             </p>
             <div className="arch-chat-suggestions">
               {(hasDiagram
@@ -656,10 +680,11 @@ const ArchitectureChatPanel: React.FC<ArchitectureChatPanelProps> = ({
                 : STARTER_SUGGESTIONS.map(suggestion => localize(language, suggestion))
               ).map((s) => (
                 <button
+                  type="button"
                   key={s}
                   className="arch-chat-chip"
                   disabled={isSending || !configured}
-                  onClick={() => { markUsed(s); send(s); }}
+                  onClick={() => draftSuggestion(s)}
                 >
                   {s}
                 </button>
@@ -669,10 +694,11 @@ const ArchitectureChatPanel: React.FC<ArchitectureChatPanelProps> = ({
                 const s = localize(language, item);
                 return (
                 <button
+                  type="button"
                   key={s}
                   className="arch-chat-chip arch-chat-chip-advanced"
                   disabled={isSending || !configured}
-                  onClick={() => { markUsed(s); send(s); }}
+                  onClick={() => draftSuggestion(s)}
                 >
                   {s}
                 </button>
@@ -718,6 +744,12 @@ const ArchitectureChatPanel: React.FC<ArchitectureChatPanelProps> = ({
 
         {messages.length > 0 && configured && !isSending && !canRetry && (hasDiagram ? followUps.length > 0 : true) && (
           <div className="arch-chat-followups">
+            <p className="arch-chat-followups-hint">
+              {localize(language, {
+                en: 'Choose a suggestion to place it in the message box; select Send when ready.',
+                ja: '候補を選ぶと入力欄に入ります。準備ができたら送信してください。',
+              })}
+            </p>
             <div className="arch-chat-followups-label">
               <Sparkles size={12} />
               {hasDiagram
@@ -739,6 +771,7 @@ const ArchitectureChatPanel: React.FC<ArchitectureChatPanelProps> = ({
                 const Icon = meta?.Icon;
                 return (
                   <button
+                    type="button"
                     key={s}
                     className={`arch-chat-chip arch-chat-chip-followup${meta ? ` ${meta.className}` : ''}`}
                     disabled={isSending || !configured}
@@ -748,7 +781,7 @@ const ArchitectureChatPanel: React.FC<ArchitectureChatPanelProps> = ({
                           ja: `${localize(language, meta.label)}の改善`,
                         })
                       : undefined}
-                    onClick={() => { markUsed(s); send(s); }}
+                    onClick={() => draftSuggestion(s)}
                   >
                     {Icon && <Icon size={12} className="arch-chat-chip-icon" />}
                     {s}
@@ -761,13 +794,16 @@ const ArchitectureChatPanel: React.FC<ArchitectureChatPanelProps> = ({
                   type="button"
                   className="arch-chat-chip arch-chat-chip-ask"
                   disabled={isSending || askingBest || !configured}
-                  title={t("Ask the model for the single highest-impact improvement")}
+                  title={localize(language, {
+                    en: 'Ask AI to draft one idea; it will not be sent automatically.',
+                    ja: 'AIに変更案を1つ提案させます。自動送信はされません。',
+                  })}
                   onClick={handleAskBest}
                 >
                   {askingBest
                     ? <Loader2 size={12} className="spin arch-chat-chip-icon" />
                     : <Lightbulb size={12} className="arch-chat-chip-icon" />}
-                  {' '}{t("What would you add?")}{' '}</button>
+                  {' '}{localize(language, { en: 'Suggest an idea', ja: 'アイデアを提案' })}{' '}</button>
               )}
             </div>
           </div>

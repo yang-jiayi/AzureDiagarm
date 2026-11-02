@@ -97,6 +97,7 @@ interface CloudWorkspaceModalProps {
   onBeforeShare: (
     document: CloudDiagramDocument,
     versions: CloudDiagramVersion[],
+    role: 'viewer' | 'editor',
   ) => Promise<boolean>;
   currentUserEmail?: string;
   onLocateReviewAnchor: (anchor: CloudCommentAnchor) => void;
@@ -830,7 +831,7 @@ const CloudWorkspaceModal: React.FC<CloudWorkspaceModalProps> = ({
       conflictBaseline = latestDocument;
       onDocumentUpdated(latestDocument);
       selectDocument(latestDocument);
-      if (!await onBeforeShare(latestDocument, versionDetails)) {
+      if (!await onBeforeShare(latestDocument, versionDetails, targetRole)) {
         if (operationGenerationRef.current.isCurrent(generation)) setOperation('');
         return;
       }

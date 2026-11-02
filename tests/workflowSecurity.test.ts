@@ -4,9 +4,15 @@
 import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'node:fs';
 import test from 'node:test';
+import { verifyDeploymentTarget } from '../scripts/verify-deployment-target.mjs';
 
 const workflow = readFileSync(
   new URL('../.github/workflows/azurediagarm-sync-deploy.yml', import.meta.url),
+  'utf8',
+);
+const ciWorkflow = readFileSync(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8');
+const codeqlWorkflow = readFileSync(
+  new URL('../.github/workflows/codeql.yml', import.meta.url),
   'utf8',
 );
 const emailHelper = readFileSync(
@@ -64,6 +70,18 @@ test('production administrator configuration is masked and not interpolated into
   assert.doesNotMatch(workflow, /"ACCESS_ADMIN_EMAIL=\$\{\{/);
 });
 
+test('Speech STS token exchange uses the resource-scoped Speech Contributor role', () => {
+  assert.match(feedbackServer, /SPEECH_STS_ENDPOINT\}\/sts\/v1\.0\/issueToken/);
+  assert.match(
+    resourcesBicep,
+    /resource speechContributorRole 'Microsoft\.Authorization\/roleAssignments@2022-04-01' = if \(deploySpeech\)/,
+  );
+  assert.match(resourcesBicep, /scope: speech[\s\S]*?0e75ca1e-0464-4b4d-8b93-68208a576181/);
+  assert.match(resourcesBicep, /name: '8813c46e-1a44-5c14-9459-c10475883e01'/);
+  assert.doesNotMatch(resourcesBicep, /guid\(deploySpeech \? speech\.id : resourceToken, appIdentity\.id, 'speechuser'\)/);
+  assert.doesNotMatch(resourcesBicep, /f2dc8367-1007-4938-bd23-fe263f013447/);
+});
+
 // Third-party actions run with repository credentials, so a moved tag is a
 // supply-chain takeover. Three assertions above happened to spell out SHAs,
 // which meant every Dependabot bump failed CI and left the *other* `uses:`
@@ -94,6 +112,79 @@ test('every workflow action is pinned to a full commit SHA', () => {
   }
 
   assert.ok(references.length > 0, 'expected at least one third-party action');
+});
+
+test('deployment uses and records the image digest produced by the pushed build', () => {
+  assert.match(workflow, /deploy:[\s\S]*?permissions:\s+contents: read\s+id-token: write/);
+  assert.doesNotMatch(workflow, /^\s*environment:/m);
+  assert.match(
+    workflow,
+    /- name: Build and push application image[\s\S]*?id: build_image[\s\S]*?push: true[\s\S]*?tags: \$\{\{ steps\.image\.outputs\.image \}\}/,
+  );
+  assert.match(
+    workflow,
+    /- name: Record immutable release image[\s\S]*?IMAGE_DIGEST: \$\{\{ steps\.build_image\.outputs\.digest \}\}[\s\S]*?\[\[ "\$IMAGE_DIGEST" =~ \^sha256:\[0-9a-f\]\{64\}\$ \]\][\s\S]*?immutable_ref=\$immutable_image/,
+  );
+  assert.match(
+    workflow,
+    /- name: Upload release image metadata[\s\S]*?actions\/upload-artifact@[0-9a-f]{40}[\s\S]*?name: release-image-\$\{\{ github\.run_id \}\}[\s\S]*?retention-days: 90/,
+  );
+  assert.match(workflow, /--image "\$\{\{ steps\.release_image\.outputs\.immutable_ref \}\}"/);
+  assert.match(workflow, /\[\[ "\$actual_image" == "\$\{\{ steps\.release_image\.outputs\.immutable_ref \}\}" \]\]/);
+  assert.match(workflow, /Image: \$\{\{ steps\.release_image\.outputs\.immutable_ref \}\}/);
+});
+
+test('Azure OIDC login follows an exact new-tenant target check', () => {
+  const expected = {
+    AZURE_TENANT_ID: '02310481-6752-4d53-8fc4-f597a8e047f4',
+    AZURE_SUBSCRIPTION_ID: '0df5f427-7359-447e-9b60-fa67c5588b8f',
+    AZURE_RESOURCE_GROUP: 'AzureDiagarm_rg',
+    AZURE_CONTAINER_APP: 'azurediagarm-app',
+    AZURE_CLIENT_ID: 'synthetic-client-id',
+  };
+  assert.doesNotThrow(() => verifyDeploymentTarget(expected));
+  for (const [name, wrongValue] of [
+    ['AZURE_TENANT_ID', 'old-tenant'],
+    ['AZURE_SUBSCRIPTION_ID', 'old-subscription'],
+    ['AZURE_RESOURCE_GROUP', 'old-resource-group'],
+    ['AZURE_CONTAINER_APP', 'old-container-app'],
+  ]) {
+    assert.throws(
+      () => verifyDeploymentTarget({ ...expected, [name]: wrongValue }),
+      new RegExp(name),
+    );
+  }
+  assert.throws(
+    () => verifyDeploymentTarget({ ...expected, AZURE_CLIENT_ID: '' }),
+    /AZURE_CLIENT_ID/,
+  );
+  const notificationJob = workflow.split('  notify_validation_failure:\n')[1]?.split('  deploy:\n')[0];
+  const deploymentJob = workflow.split('  deploy:\n')[1];
+  assert.ok(notificationJob);
+  assert.ok(deploymentJob);
+  const guard = 'run: node scripts/verify-deployment-target.mjs';
+  const login = 'uses: azure/login@';
+  assert.ok(notificationJob!.indexOf(guard) >= 0);
+  assert.ok(notificationJob!.indexOf(login) > notificationJob!.indexOf(guard));
+  assert.ok(deploymentJob!.indexOf(guard) >= 0);
+  assert.ok(deploymentJob!.indexOf(login) > deploymentJob!.indexOf(guard));
+});
+
+test('CI reports full root advisories while retaining the production high-severity gate', () => {
+  assert.match(ciWorkflow, /actions\/dependency-review-action@[0-9a-f]{40}/);
+  assert.match(ciWorkflow, /fail-on-severity: high[\s\S]*?fail-on-scopes: runtime/);
+  assert.match(ciWorkflow, /npm run audit:production/);
+  assert.match(ciWorkflow, /npm --prefix server audit --omit=dev --audit-level=high/);
+  assert.match(ciWorkflow, /- name: Audit all root dependencies[\s\S]*?npm audit --audit-level=critical/);
+});
+
+test('CodeQL produces an artifact without requiring repository code-scanning permissions', () => {
+  assert.match(codeqlWorkflow, /languages: javascript-typescript/);
+  assert.match(codeqlWorkflow, /build-mode: none/);
+  assert.match(codeqlWorkflow, /upload: never/);
+  assert.match(codeqlWorkflow, /actions\/upload-artifact@[0-9a-f]{40}/);
+  assert.match(codeqlWorkflow, /permissions:\s+contents: read/);
+  assert.doesNotMatch(codeqlWorkflow, /security-events:\s*write/);
 });
 
 test('the notification helper acquires a scoped token and waits for delivery', () => {

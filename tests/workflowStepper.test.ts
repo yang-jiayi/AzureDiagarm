@@ -19,7 +19,7 @@ test('the workflow starts at generation and gates later recommendations', () => 
       generate: 'current',
       validate: 'pending',
       cost: 'pending',
-      deploy: 'pending',
+      output: 'pending',
     },
   );
 });
@@ -38,12 +38,12 @@ test('a generated diagram advances the recommended action to validation', () => 
       generate: 'complete',
       validate: 'current',
       cost: 'pending',
-      deploy: 'pending',
+      output: 'pending',
     },
   );
 });
 
-test('validation and pricing completion advance the workflow to deployment', () => {
+test('validation and pricing completion advance the workflow to output', () => {
   assert.deepEqual(
     getWorkflowStepStatuses({
       serviceCount: 4,
@@ -57,12 +57,12 @@ test('validation and pricing completion advance the workflow to deployment', () 
       generate: 'complete',
       validate: 'complete',
       cost: 'complete',
-      deploy: 'current',
+      output: 'current',
     },
   );
 });
 
-test('long-running validation and deployment actions expose busy states', () => {
+test('long-running validation and output actions expose busy states', () => {
   assert.equal(
     getWorkflowStepStatuses({
       serviceCount: 4,
@@ -82,7 +82,7 @@ test('long-running validation and deployment actions expose busy states', () => 
       hasDeploymentGuide: false,
       isValidating: false,
       isGeneratingGuide: true,
-    }).deploy,
+    }).output,
     'busy',
   );
 });

@@ -46,10 +46,11 @@ test('the runtime image includes every transitively required token-server module
   const required = runtimeModules();
   assert.ok(required.has('server/ai-http.js'));
   assert.ok(required.has('server/ai-jobs.js'));
+  assert.ok(required.has('server/bounded-response.js'));
   assert.deepEqual(missingModules(dockerfile), []);
 });
 
 test('the packaging gate detects an omitted new runtime helper even if it exists in the build stage', () => {
-  const incomplete = dockerfile.replace('COPY server/ai-http.js server/ai-jobs.js ./', '');
-  assert.deepEqual(missingModules(incomplete).sort(), ['server/ai-http.js', 'server/ai-jobs.js']);
+  const incomplete = dockerfile.replace(' server/bounded-response.js ./', ' ./');
+  assert.deepEqual(missingModules(incomplete), ['server/bounded-response.js']);
 });

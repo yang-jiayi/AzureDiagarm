@@ -2,7 +2,7 @@
 // Licensed under the MIT License.
 
 export type WorkflowStepStatus = 'complete' | 'current' | 'pending' | 'busy';
-export type WorkflowStepId = 'generate' | 'validate' | 'cost' | 'deploy';
+export type WorkflowStepId = 'generate' | 'validate' | 'cost' | 'output';
 
 export interface WorkflowProgress {
   serviceCount: number;
@@ -35,7 +35,7 @@ export function getWorkflowStepStatuses({
           ? 'current'
           : 'pending',
     cost: costed ? 'complete' : validated ? 'current' : 'pending',
-    deploy: isGeneratingGuide
+    output: isGeneratingGuide
       ? 'busy'
       : hasDeploymentGuide
         ? 'complete'

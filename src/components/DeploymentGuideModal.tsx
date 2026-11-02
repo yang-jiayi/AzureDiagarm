@@ -274,7 +274,7 @@ const DeploymentGuideModal: React.FC<DeploymentGuideModalProps> = ({ guide, isOp
                     {' '}{t("Download All Templates")}{' '}</button>
                 </div>
                 <p className="bicep-description">
-                  {' '}{t("Production-ready Bicep templates for automated infrastructure deployment. Deploy with:")}{' '}<code>{t("az deployment group create --resource-group <rg-name> --template-file main.bicep")}</code>
+                  {' '}{t("Starter Bicep templates for review. This app does not deploy to Azure. When ready, you can deploy with:")}{' '}<code>{t("az deployment group create --resource-group <rg-name> --template-file main.bicep")}</code>
                 </p>
                 <div className="bicep-templates-list">
                   {guide.bicepTemplates.map((template, index) => (
