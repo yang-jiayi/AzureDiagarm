@@ -275,7 +275,7 @@ try {
       await expect(startupPage.locator('.azure-node')).toHaveCount(2);
       await expect(startupPage.locator('.react-flow__viewport')).toHaveCSS('transform', 'matrix(0.75, 0, 0, 0.75, 35, 50)');
       await expect(startupPage.getByRole('button', { name: 'Feedback', exact: true })).toBeVisible();
-      await expect(startupPage.getByText('Saved on this device', { exact: true })).toBeVisible();
+      await expect(startupPage.getByRole('button', { name: /Document status: .*Local copy saved/ })).toBeVisible();
       const savedIds = await startupPage.evaluate(async () => {
         const database = await new Promise((resolve, reject) => {
           const request = indexedDB.open('AzureDiagramDrafts');
@@ -314,7 +314,7 @@ try {
   }
   workspacePage = page;
   await page.goto(baseUrl, { waitUntil: 'networkidle' });
-  await expect(page.getByText('Local autosave ready', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Document status: .*autosave ready/ })).toBeVisible();
   await openRibbon('home');
   await page.locator('.region-selector-button').click();
   await page.locator('.region-option').filter({ hasText: 'East US 2' }).click();
@@ -326,7 +326,7 @@ try {
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
   await page.locator('.icon-item-main').first().click();
   await expect(page.locator('.azure-node')).toHaveCount(1);
-  await expect(page.getByText('Saved on this device', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Document status: .*Local copy saved/ })).toBeVisible();
   const originalLabel = await page.locator('.node-label').first().textContent();
   const originalNodeId = await page.locator('.react-flow__node').first().getAttribute('data-id');
   const originalServiceType = (await readSavedDocument()).nodes[0].data.serviceName || originalLabel;
@@ -345,14 +345,14 @@ try {
   await page.keyboard.press('Control+z');
   await expect(page.locator('.azure-node')).toHaveCount(1);
   await expect(page.locator('.node-label').first()).toHaveText('Customer Portal');
-  await expect(page.getByText('Saved on this device', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Document status: .*Local copy saved/ })).toBeVisible();
   expectedReload = true;
   try { await page.reload({ waitUntil: 'networkidle' }); } finally { expectedReload = false; }
   await expect(page.getByRole('dialog', { name: 'Resume your saved draft' })).toBeVisible();
   await page.getByRole('button', { name: 'Restore draft', exact: true }).click();
   await expect(page.locator('.node-label').first()).toHaveText('Customer Portal');
   await openRibbon('create');
-  await page.getByRole('button', { name: 'Generate Diagram', exact: true }).click();
+  await page.getByRole('button', { name: 'Advanced generation', exact: true }).click();
   const modal = page.getByRole('dialog', { name: 'AI Architecture Generator' });
   await expect(modal).toBeVisible();
   await expect.poll(() => modal.evaluate(element => element.contains(document.activeElement))).toBe(true);
@@ -362,7 +362,7 @@ try {
   assert.equal(await modal.evaluate(element => element.contains(document.activeElement)), true, 'Tab remains in the modal');
   await page.keyboard.press('Escape');
   await expect(modal).toHaveCount(0);
-  await expect(page.getByRole('button', { name: 'Generate Diagram', exact: true })).toBeFocused();
+  await expect(page.getByRole('button', { name: 'Advanced generation', exact: true })).toBeFocused();
   await openRibbon('export');
   const picker = page.waitForEvent('filechooser');
   await page.getByRole('button', { name: 'Load', exact: true }).focus();
@@ -381,7 +381,7 @@ try {
   };
   const generateProposal = async () => {
     await openRibbon('create');
-    await page.getByRole('button', { name: 'Generate Diagram', exact: true }).click();
+    await page.getByRole('button', { name: 'Advanced generation', exact: true }).click();
     await modal.locator('#architecture-description').fill(proposalPrompt);
     await modal.getByRole('button', { name: 'Continue to output', exact: true }).click();
     await modal.getByRole('checkbox', { name: 'Auto-save snapshot before regenerating', exact: true }).check();
@@ -425,7 +425,7 @@ try {
   await expect(review).toHaveCount(0);
   await modal.locator('.modal-close').click();
   await expect(page.locator('.azure-node')).toHaveCount(2);
-  await expect(page.getByText('Saved on this device', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Document status: .*Local copy saved/ })).toBeVisible();
   const acceptedDraft = await readSavedDocument();
   assert.equal(acceptedDraft.workflow.length, 1);
   assert.deepEqual(acceptedDraft.workflow[0].services, acceptedDraft.nodes.map(node => node.id));
@@ -448,7 +448,7 @@ try {
   await undo();
   await expect(page.locator('.azure-node')).toHaveCount(1);
   await expect(page.locator('.node-label').first()).toHaveText('Customer Portal');
-  await expect(page.getByText('Saved on this device', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Document status: .*Local copy saved/ })).toBeVisible();
 
   await generateProposal();
   await expect(review).toBeVisible({ timeout: 60000 });
@@ -461,11 +461,11 @@ try {
   await expect(page.locator('.azure-node')).toHaveCount(2);
   await expect(page.locator(`.react-flow__node[data-id="${originalNodeId}"] .node-label`)).toHaveText('Customer Portal');
   await expect(page.locator('.react-flow__edge')).toHaveCount(0);
-  await expect(page.getByText('Saved on this device', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Document status: .*Local copy saved/ })).toBeVisible();
   assert.deepEqual((await readSavedDocument()).workflow, [], 'A partial proposal must not retain workflow for rejected connections.');
   await undo();
   await expect(page.locator('.azure-node')).toHaveCount(1);
-  await expect(page.getByText('Saved on this device', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Document status: .*Local copy saved/ })).toBeVisible();
 
   await openRibbon('create');
   await page.locator(`.react-flow__node[data-id="${originalNodeId}"]`).click();
@@ -483,12 +483,12 @@ try {
   await inspector.getByRole('button', { name: 'Apply', exact: true }).click();
   await expect(inspector).toHaveCount(0);
   await expect(page.locator('.azure-node .cost-badge')).toContainText('$360');
-  await expect(page.getByText('Saved on this device', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Document status: .*Local copy saved/ })).toBeVisible();
   const priced = await readSavedDocument();
   assert.equal(priced.nodes[0].data.pricing.estimatedCost, 120);
   assert.equal(priced.nodes[0].data.pricing.quantity, 3);
   await undo();
-  await expect(page.getByText('Saved on this device', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Document status: .*Local copy saved/ })).toBeVisible();
   assert.deepEqual((await readSavedDocument()).nodes[0].data.pricing, beforeInspector.nodes[0].data.pricing);
   await redo();
   await expect(page.locator('.azure-node .cost-badge')).toContainText('$360');
@@ -503,7 +503,7 @@ try {
   await page.locator('.region-selector-button').click();
   await page.locator('.region-option').filter({ hasText: 'Japan East' }).click();
   await expect(page.locator('.region-name')).toHaveText('Japan East');
-  await expect(page.getByText('Saved on this device', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Document status: .*Local copy saved/ })).toBeVisible();
   const regional = await readSavedDocument();
   assert.equal(regional.settings.pricingRegion, 'japaneast');
   assert.equal(regional.nodes[0].data.pricing.region, 'japaneast');
@@ -514,15 +514,19 @@ try {
   await expect(page.locator('.azure-node .cost-badge')).toContainText('$360');
   await redo();
   await expect(page.locator('.region-name')).toHaveText('Japan East');
-  await expect(page.getByText('Saved on this device', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Document status: .*Local copy saved/ })).toBeVisible();
 
-  await expect(page.locator('.ai-budget-status')).toContainText('700 tokens left today');
+  const budgetStatus = page.locator('.ai-budget-status');
+  await expect(budgetStatus).toContainText('700 tokens remaining today');
+  await budgetStatus.locator('summary').click();
   budgetUnavailable = true;
-  await page.locator('.ai-budget-status').click();
-  await expect(page.locator('.ai-budget-status')).toContainText('AI budget unavailable');
+  await budgetStatus.getByRole('button', { name: 'Refresh AI usage details' }).click();
+  await expect(budgetStatus).toContainText('AI status unavailable');
+  await expect(budgetStatus).toContainText('Sign in or retry shortly to check AI usage.');
   budgetUnavailable = false;
-  await page.locator('.ai-budget-status').click();
-  await expect(page.locator('.ai-budget-status')).toContainText('700 tokens left today');
+  await budgetStatus.getByRole('button', { name: 'Refresh AI usage details' }).click();
+  await expect(budgetStatus).toContainText('700 tokens remaining today');
+  await budgetStatus.locator('summary').click();
 
   await openRibbon('review');
   await page.getByRole('button', { name: 'Validate Architecture', exact: true }).click();
@@ -665,12 +669,12 @@ try {
   await page.locator('.node-label-input').fill('Saved by the first tab');
   await page.locator('.node-label-input').press('Enter');
   await expect.poll(async () => (await readSavedDocument()).nodes[0].data.label, { timeout: 15000 }).toBe('Saved by the first tab');
-  await expect(page.getByText('Saved on this device', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Document status: .*Local copy saved/ })).toBeVisible();
   await sibling.bringToFront();
   await sibling.locator('.node-label').first().dblclick();
   await sibling.locator('.node-label-input').fill('Conflicting second tab');
   await sibling.locator('.node-label-input').press('Enter');
-  await expect(sibling.getByText('Draft not saved', { exact: true })).toBeVisible();
+  await expect(sibling.getByRole('button', { name: /Document status: .*Local draft not saved/ })).toBeVisible();
   const persistedLabel = (await readSavedDocument()).nodes[0].data.label;
   assert.equal(persistedLabel, 'Saved by the first tab', 'A conflicting tab must not overwrite the committed draft');
   await sibling.close({ runBeforeUnload: false });
@@ -713,7 +717,7 @@ try {
   });
   await cloudPage.goto(baseUrl, { waitUntil: 'networkidle' });
   await cloudPage.bringToFront();
-  await expect(cloudPage.getByText('Local autosave ready', { exact: true })).toBeVisible();
+  await expect(cloudPage.getByRole('button', { name: /Document status: .*autosave ready/ })).toBeVisible();
   await cloudPage.locator('.icon-item-main').first().click();
   await expect.poll(() => cloudCreateSeen).toBe(true);
   const cloudOriginalLabel = await cloudPage.locator('.node-label').first().textContent();
@@ -745,7 +749,7 @@ try {
   });
   await costPage.goto(baseUrl, { waitUntil: 'networkidle' });
   await costPage.bringToFront();
-  await expect(costPage.getByText('Local autosave ready', { exact: true })).toBeVisible();
+  await expect(costPage.getByRole('button', { name: /Document status: .*autosave ready/ })).toBeVisible();
   const regionalPricing = {
     quantity: 1, region: 'japaneast', unit: 'per month', lastUpdated: new Date().toISOString(),
   };
@@ -773,12 +777,14 @@ try {
     await expect(costPage.locator('.azure-node')).toHaveCount(fixtureNodes.length);
     await costPage.locator('#ribbon-tab-home').click();
     await costPage.getByRole('button', { name: 'Export', exact: true }).click();
-    const [download] = await Promise.all([
-      costPage.waitForEvent('download', { timeout: 60000 }),
-      costPage.getByRole('menuitem', { name: 'Export Costs (All Formats)', exact: true }).click(),
-    ]);
+    const download = costPage.waitForEvent('download', { timeout: 60000 });
+    await costPage.getByRole('menuitem', { name: 'Export Costs (All Formats)', exact: true }).click();
+    const preflight = costPage.getByRole('dialog', { name: 'Review data handling' });
+    await expect(preflight).toBeVisible();
+    await preflight.getByRole('button', { name: 'Proceed as shown' }).click();
+    const completedDownload = await download;
     const zipPath = path.join(work, `regional-${name}.zip`);
-    await download.saveAs(zipPath);
+    await completedDownload.saveAs(zipPath);
     const archive = await JSZip.loadAsync(await readFile(zipPath));
     const entry = async suffix => {
       const name = Object.keys(archive.files).find(name => name.endsWith(suffix));
