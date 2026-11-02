@@ -999,7 +999,11 @@ test('workflow stepper has stable light, dark, mobile, and forced-colors visuals
   await expect.poll(() => stepper.evaluate((element) => (
     element.scrollWidth <= element.clientWidth
   ))).toBe(true);
-  await expect.soft(stepper).toHaveScreenshot('workflow-stepper-mobile.png', {
+  // Keep Linux CI's font rasterization baseline separate from local snapshots.
+  const mobileSnapshot = process.platform === 'linux'
+    ? 'workflow-stepper-mobile-linux.png'
+    : 'workflow-stepper-mobile.png';
+  await expect.soft(stepper).toHaveScreenshot(mobileSnapshot, {
     animations: 'disabled',
     caret: 'hide',
     maxDiffPixelRatio: 0.01,
