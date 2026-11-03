@@ -138,6 +138,9 @@ test('the production build exports icons under the shipped CSP', async ({ page }
     const menu = page.getByRole('menu', { name: 'Export options' });
     const pending = page.waitForEvent('download');
     await menu.getByRole('menuitem', { name: command }).click();
+    const preflight = page.getByRole('dialog', { name: 'Review data handling' });
+    await expect(preflight).toBeVisible();
+    await preflight.getByRole('button', { name: 'Proceed as shown' }).click();
     const stream = await (await pending).createReadStream();
     const chunks: Buffer[] = [];
     for await (const chunk of stream) chunks.push(chunk as Buffer);
@@ -246,6 +249,9 @@ test('the SVG export is native vector art carrying real icons', async ({ page })
   const menu = page.getByRole('menu', { name: 'Export options' });
   const pending = page.waitForEvent('download');
   await menu.getByRole('menuitem', { name: /^Export SVG/ }).click();
+  const preflight = page.getByRole('dialog', { name: 'Review data handling' });
+  await expect(preflight).toBeVisible();
+  await preflight.getByRole('button', { name: 'Proceed as shown' }).click();
   const stream = await (await pending).createReadStream();
   const chunks: Buffer[] = [];
   for await (const chunk of stream) chunks.push(chunk as Buffer);

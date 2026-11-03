@@ -20,6 +20,47 @@
   padding-right: 0;
 }
 
+@media (min-width: 1181px) {
+  .app.chat-open .app-header.header-collapsed {
+    padding: 0 12px;
+  }
+
+  .app.chat-open .app-header.header-collapsed .header-content {
+    grid-template-areas: 'brand language collapse';
+    grid-template-rows: auto;
+  }
+
+  .app.chat-open .app-header.header-collapsed .community-brand-symbol {
+    width: 24px;
+    height: 24px;
+  }
+
+  .app.chat-open .app-header.header-collapsed .header-identity-actions button,
+  .app.chat-open .app-header.header-collapsed .header-collapse-toggle {
+    min-height: 32px;
+    padding-block: 3px;
+  }
+
+  .app.chat-open .workspace-status-bar {
+    min-height: 24px;
+    padding-block: 0;
+  }
+
+  .app.chat-open .workspace-status-bar .ai-budget-status {
+    min-height: 22px;
+    padding-block: 2px;
+  }
+
+  .app.chat-open .workflow-stepper {
+    padding-block: 1px;
+  }
+
+  .app.chat-open .workflow-stepper button {
+    min-height: 30px;
+    padding-block: 2px;
+  }
+}
+
 .app.focus-mode .app-header,
 .app.focus-mode .workspace > .icon-palette,
 .app.focus-mode .workspace > .workflow-panel,

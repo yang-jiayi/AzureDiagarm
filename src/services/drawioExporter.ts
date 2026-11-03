@@ -16,6 +16,7 @@
 import { Node, Edge } from 'reactflow';
 import { generateModelFilename } from '../utils/modelNaming';
 import { readTextAsset, svgToDataUrl } from '../utils/assetSource';
+import { stripXmlForbidden } from '../utils/xmlText';
 import {
   buildExportRoutes,
   categoryStyle,
@@ -67,7 +68,7 @@ async function loadIconAsBase64(iconPath: string): Promise<string | null> {
 
 // Draw.io XML escape helper
 function escapeXml(str: string): string {
-  return str
+  return stripXmlForbidden(str)
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')

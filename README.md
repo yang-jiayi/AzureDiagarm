@@ -631,11 +631,22 @@ VITE_APPINSIGHTS_CONNECTION_STRING=InstrumentationKey=...;IngestionEndpoint=...
 
 # Optional: Avatar Presenter (enables "Narrate" in the Workflow Panel)
 # Requires an Azure Speech resource with Custom Subdomain enabled and
-# the ACA managed identity assigned the "Cognitive Services Speech User" RBAC role
+# the ACA managed identity assigned the "Cognitive Services Speech Contributor" RBAC role
 VITE_SPEECH_REGION=westus2                 # Build-time: controls visibility of the "Narrate" button
 AZURE_SPEECH_REGION=westus2               # Runtime: read by the co-located token server
 AZURE_SPEECH_RESOURCE_ID=/subscriptions/<subscription-id>/resourceGroups/<resource-group>/providers/Microsoft.CognitiveServices/accounts/<speech-account-name>
 ```
+
+For the optional Speech role assignment in `infra/main.bicep`, the default
+assignment name is derived from the Speech resource ID, the app managed
+identity's resource ID, and the Speech Contributor role ID. The resource IDs
+are available while the inline assignment is named and keep different
+environments and identities from colliding. The principal ID is still used as
+the assignment's runtime principal. To reuse an existing
+assignment, set `AZURE_SPEECH_CONTRIBUTOR_ROLE_ASSIGNMENT_NAME` only after
+verifying that its GUID belongs to the exact Speech resource scope, app
+identity, and role being deployed. Leave it unset otherwise; a previously
+recorded assignment GUID is not proof of its current scope or ownership.
 
 `VITE_AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA` must name a real GPT-6 Astra deployment,
 not another model renamed to look like Astra. Use that same name as the server's
@@ -1061,7 +1072,7 @@ The same token server also brokers Azure OpenAI and Microsoft Foundry so credent
 - `src/services/avatarPresenter.ts` — Speech SDK avatar session, ICE relay, word-boundary callback
 - `Dockerfile` — extended build stage with `ARG/ENV VITE_SPEECH_REGION`; production stage installs token server deps
 - `scripts/update_aca.sh` — adds `VITE_SPEECH_REGION` build arg and `AZURE_SPEECH_REGION` / `AZURE_SPEECH_RESOURCE_ID` runtime env vars
-- ACA managed identity assigned `Cognitive Services Speech User` role on the Speech resource (no stored credentials)
+- ACA managed identity assigned `Cognitive Services Speech Contributor` on the Speech resource for the STS issueToken exchange (no stored credentials)
 
 For GitHub Actions deployments, set the repository variable
 `ALLOW_BYO_AI_ENDPOINTS=true` only after approving BYO access for that

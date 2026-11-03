@@ -2123,6 +2123,10 @@ export function buildStarterTemplate(
   // can depend on it and it cannot depend on anything.
   const emitted: Array<{ nodeId: string; title: string; block: string }> = [];
   const addressByNodeId = new Map<string, string>();
+  const commentText = (value: string): string => value
+    .replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
 
   resources.forEach((resource, index) => {
     const armType = guessArmType(resource);
@@ -2137,9 +2141,9 @@ export function buildStarterTemplate(
     if (!armType || !block || !address) {
       const commentPrefix = format === 'bicep' ? '//' : '#';
       sections.push([
-        `${commentPrefix} TODO: Model unsupported service "${title}"`,
-        `${commentPrefix}       Diagram node: ${resource.label}`,
-        `${commentPrefix}       Detected provider/service: ${resource.providerType || resource.mappedService || 'unmapped'}`,
+        `${commentPrefix} TODO: Model unsupported service "${commentText(title)}"`,
+        `${commentPrefix}       Diagram node: ${commentText(resource.label)}`,
+        `${commentPrefix}       Detected provider/service: ${commentText(resource.providerType || resource.mappedService || 'unmapped')}`,
       ].join('\n'));
       todoCount += 1;
       return;
@@ -2162,7 +2166,7 @@ export function buildStarterTemplate(
     const addresses = dependencies.get(item.nodeId) ?? [];
     dependencyCount += addresses.length;
     sections.push([
-      format === 'bicep' ? `// ${item.title}` : `# ${item.title}`,
+      format === 'bicep' ? `// ${commentText(item.title)}` : `# ${commentText(item.title)}`,
       withDependencyClause(item.block, addresses, format),
     ].join('\n'));
   }

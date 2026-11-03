@@ -69,7 +69,8 @@ import { validateArchitecture, ArchitectureValidation } from './services/archite
 import { bandLabel } from './services/wafMaturity';
 import type { DeploymentGuide } from './services/deploymentGuideGenerator';
 import { generateArchitectureWithAI, type AIMetrics } from './services/azureOpenAI';
-import { captureRuntimeModelOverride, type RuntimeModelOverride } from './services/aiModelRuntime';
+import { captureRuntimeModelOverride, getEffectiveAIModelInfo, type RuntimeModelOverride } from './services/aiModelRuntime';
+import { getBYOAISettings } from './stores/byoAISettingsStore';
 import { MODEL_CONFIG, getDeploymentNames, type ModelType } from './stores/modelSettingsStore';
 import { usePricingDisplayPrefs } from './stores/pricingDisplayStore';
 import { nodesForExport } from './utils/nodesForExport';
@@ -108,10 +109,10 @@ import {
 import { useEditorHistory } from './hooks/useEditorHistory';
 import { cloneEditorDocument, editorFingerprint, nodeServiceIdentity, type EditorDocument } from './services/editorHistory';
 import { useDraftAutosave } from './hooks/useDraftAutosave';
-import { DraftStatus, DraftRecoveryDialog } from './components/DraftStatus';
+import { DraftRecoveryDialog } from './components/DraftStatus';
 import { validateEditorSettings, validateRestoredNodes, validateRestoredEdges, validateRestoredWorkflow, type DiagramDraft } from './services/draftStorage';
 import AIChangeReview from './components/AIChangeReview';
-import { buildDiagramChanges, isCompleteDiagramChangeSet, type DiagramGraph, type DiagramChangeSet, type DiagramProposalOptions } from './services/diagramChanges';
+import { buildDiagramChanges, isCompleteDiagramChangeSet, type DiagramChange, type DiagramGraph, type DiagramChangeSet, type DiagramProposalOptions } from './services/diagramChanges';
 import ServiceInspector from './components/ServiceInspector';
 import NodePricingEditor from './components/NodePricingEditor';
 import AIBudgetStatus from './components/AIBudgetStatus';
@@ -406,6 +407,9 @@ type PrivacyRequest = {
   purpose: 'export' | 'share' | 'review';
   findings: SensitiveFinding[];
   canAnonymize: boolean;
+  shareRole?: 'viewer' | 'editor';
+  shareDocumentName?: string;
+  shareVersionCount?: number;
   onProceed: () => void;
   onCancel: () => void;
 };
@@ -1044,9 +1048,16 @@ function App() {
   );
   const [isPricingScenarioModalOpen, setIsPricingScenarioModalOpen] = useState(false);
   const [isChatOpen, setIsChatOpen] = useState(false);
+  const [isChatToolbarExpanded, setIsChatToolbarExpanded] = useState(false);
   const [isDeliverChooserOpen, setIsDeliverChooserOpen] = useState(false);
   const [generatorOpenSignal, setGeneratorOpenSignal] = useState(0);
   const generatorOpenSourceRef = useRef<'first-start' | 'journey-strip' | 'toolbar'>('toolbar');
+  const [startBriefRoute, setStartBriefRoute] = useState<{
+    id: number;
+    prompt: string;
+    destination: 'chat' | 'generator';
+  } | null>(null);
+  const startBriefIdRef = useRef(0);
   const [isHelpOpen, setIsHelpOpen] = useState(false);
   const [isAboutOpen, setIsAboutOpen] = useState(false);
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
@@ -1113,6 +1124,7 @@ function App() {
     assertCurrent: () => void;
     finish: (graph: DiagramGraph | null) => void;
   } | null>(null);
+  const [aiReviewHighlights, setAIReviewHighlights] = useState<Array<Pick<DiagramChange, 'entity' | 'entityId'>>>([]);
   const pendingAIReviewRef = useRef<typeof pendingAIReview>(null);
   const [isApplyingAIReview, setIsApplyingAIReview] = useState(false);
   const [aiReviewError, setAIReviewError] = useState<string>();
@@ -1147,12 +1159,16 @@ function App() {
     return () => { window.alert = previous; };
   }, []);
   const isCompactViewport = useMediaQuery(MEDIA_QUERIES.compact);
+  const isToolbarCollapsed = isChatOpen && !isCompactViewport
+    ? !isChatToolbarExpanded
+    : isHeaderCollapsed;
   const isNarrowRibbon = useMediaQuery(`(min-width: ${BREAKPOINTS.compact + 1}px) and ${MEDIA_QUERIES.workspace}`);
   const mobileCanvasFirstActive = isCompactViewport && nodes.length > 0;
   const [isMobileJourneyExpanded, setIsMobileJourneyExpanded] = useState(false);
   const wasMobileCanvasFirstRef = useRef(false);
   useEffect(() => {
     if (isChatOpen) setPanelsCollapsedSignal((previous) => previous + 1);
+    setIsChatToolbarExpanded(false);
   }, [isChatOpen]);
 
   useEffect(() => {
@@ -2151,11 +2167,13 @@ function App() {
         if (pendingAIReviewRef.current?.finish !== finish) return;
         pendingAIReviewRef.current = null;
         setPendingAIReview(null);
+        setAIReviewHighlights([]);
         setAIReviewError(undefined);
         resolve(graph ? { graph, complete: isCompleteDiagramChangeSet(changeSet, graph), nodeIds } : null);
       };
       const review = { changeSet, baseline, fingerprint: editorFingerprint(baseline), autoSnapshot, assertCurrent, finish };
       pendingAIReviewRef.current = review;
+      setAIReviewHighlights([]);
       setPendingAIReview(review);
       setAIReviewError(undefined);
       signal?.addEventListener('abort', abort, { once: true });
@@ -2211,6 +2229,10 @@ function App() {
       setIsApplyingAIReview(false);
     }
   }, [isApplyingAIReview, language]);
+
+  const handleAIReviewSelectionChange = useCallback((changes: DiagramChange[]) => {
+    setAIReviewHighlights(changes.map(({ entity, entityId }) => ({ entity, entityId })));
+  }, []);
 
   const focusValidationResources = useCallback((resources: string[]) => {
     const requested = new Set(resources.map(resource => resource.trim().toLocaleLowerCase()));
@@ -4367,6 +4389,10 @@ function App() {
         return 'synced';
     }
   })();
+  const effectivePrivacyAI = getEffectiveAIModelInfo('architectureGeneration');
+  const privacyBYOProfile = effectivePrivacyAI.profileId
+    ? getBYOAISettings().profiles.find(profile => profile.id === effectivePrivacyAI.profileId)
+    : undefined;
 
   const recentProjectionChainRef = useRef<Promise<unknown>>(Promise.resolve());
   const archiveCommittedDraft = useCallback(async (
@@ -4460,10 +4486,14 @@ function App() {
     options?: {
       findings?: SensitiveFinding[];
       canAnonymize?: boolean;
+      forcePrompt?: boolean;
+      shareRole?: 'viewer' | 'editor';
+      shareDocumentName?: string;
+      shareVersionCount?: number;
     },
   ) => {
     const findings = options?.findings ?? detectSensitiveData(cloudDiagramPayloadRef.current);
-    if (purpose !== 'review' && findings.length === 0) {
+    if (purpose !== 'review' && findings.length === 0 && !options?.forcePrompt) {
       onProceed();
       return;
     }
@@ -4471,6 +4501,9 @@ function App() {
       purpose,
       findings,
       canAnonymize: options?.canAnonymize ?? true,
+      shareRole: options?.shareRole,
+      shareDocumentName: options?.shareDocumentName,
+      shareVersionCount: options?.shareVersionCount,
       onProceed,
       onCancel,
     });
@@ -4479,12 +4512,13 @@ function App() {
   const guardSensitiveExport = useCallback((action: () => void | Promise<void>) => {
     requestPrivacyAction('export', () => {
       void action();
-    });
+    }, undefined, { forcePrompt: true });
   }, [requestPrivacyAction]);
 
   const confirmBeforeShare = useCallback((
     document: CloudDiagramDocument,
     versions: CloudDiagramVersion[],
+    shareRole: 'viewer' | 'editor',
   ) => new Promise<boolean>((resolve) => {
     requestPrivacyAction(
       'share',
@@ -4500,6 +4534,10 @@ function App() {
           versions,
         }, 'share'),
         canAnonymize: document.id === cloudSync.document?.id,
+        forcePrompt: true,
+        shareRole,
+        shareDocumentName: document.diagramName,
+        shareVersionCount: versions.length,
       },
     );
   }), [cloudSync.document?.id, requestPrivacyAction]);
@@ -4759,8 +4797,13 @@ function App() {
     const link = document.createElement('a');
     link.href = url;
     link.download = template.fileName;
-    link.click();
-    URL.revokeObjectURL(url);
+    document.body.appendChild(link);
+    try {
+      link.click();
+    } finally {
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
   }, []);
 
   const importDriftPlan = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -6506,7 +6549,7 @@ function App() {
     setIsPricingScenarioModalOpen(true);
   }, [activateRibbonTab, setPricingPrefs]);
 
-  const openWorkflowDeployment = useCallback(() => {
+  const openWorkflowOutput = useCallback(() => {
     const hasDiagram = nodes.some(node => node.type === 'azureNode');
     trackGuidedJourney({
       action: 'step-selected',
@@ -6517,8 +6560,8 @@ function App() {
     });
     if (!hasDiagram) {
       alert(localize(language, {
-        en: 'Create or import a diagram before sharing or building artifacts.',
-        ja: '共有またはビルドの前に、図を作成またはインポートしてください。',
+        en: 'Create or import a diagram before exporting or creating deployment guidance.',
+        ja: 'エクスポートまたはデプロイ手順の作成前に、図を作成またはインポートしてください。',
       }));
       return;
     }
@@ -6854,12 +6897,24 @@ function App() {
     },
   ];
 
-  const openGeneratorFrom = (source: 'first-start' | 'journey-strip' | 'toolbar') => {
+  const openGeneratorFrom = (
+    source: 'first-start' | 'journey-strip' | 'toolbar',
+    brief?: string,
+  ) => {
+    setStartBriefRoute(brief?.trim()
+      ? { id: ++startBriefIdRef.current, prompt: brief.trim(), destination: 'generator' }
+      : null);
     generatorOpenSourceRef.current = source;
     setGeneratorOpenSignal(value => value + 1);
   };
 
-  const openGuidedChat = (source: 'first-start' | 'journey-strip' | 'toolbar') => {
+  const openGuidedChat = (
+    source: 'first-start' | 'journey-strip' | 'toolbar',
+    brief?: string,
+  ) => {
+    setStartBriefRoute(brief?.trim()
+      ? { id: ++startBriefIdRef.current, prompt: brief.trim(), destination: 'chat' }
+      : null);
     trackGuidedJourney({
       action: source === 'journey-strip' ? 'step-selected' : 'path-selected',
       step: nodes.length > 0 ? 'refine' : 'create',
@@ -6875,6 +6930,7 @@ function App() {
       onConfigureConnections={openAIConnections}
       showTrigger={false}
       openSignal={generatorOpenSignal}
+      initialPrompt={startBriefRoute?.destination === 'generator' ? startBriefRoute : null}
       onOpen={() => {
         const source = generatorOpenSourceRef.current;
         trackGuidedJourney({
@@ -6935,7 +6991,7 @@ function App() {
           ja: '矢印キーでノードを移動、Shift+矢印キーで大きく移動、F2 で名前を変更、C で他のノードへの接続を開始または確定、Escape で取り消します。',
         })}
       </span>
-      <header className={`app-header${isHeaderCollapsed ? ' header-collapsed' : ''}${isMobileRibbonOpen ? ' mobile-ribbon-open' : ''}`}>
+      <header className={`app-header${isToolbarCollapsed ? ' header-collapsed' : ''}${isMobileRibbonOpen ? ' mobile-ribbon-open' : ''}`}>
         <div className="header-content">
           <div className="header-brand">
             <div
@@ -6953,7 +7009,7 @@ function App() {
                 {localize(language, { en: 'Community project', ja: 'コミュニティ版' })}
               </span>
             </div>
-            <h1>{t("Microsoft Product Architecture Diagram Builder")}</h1>
+            <h1>AzureDiagarm</h1>
           </div>
           <ResponsiveRibbonSurface
             isOpen={isMobileRibbonOpen}
@@ -7137,12 +7193,12 @@ function App() {
                   className="btn btn-ai btn-generate-ai"
                   onClick={() => openGeneratorFrom('toolbar')}
                   title={localize(language, {
-                    en: 'Generate a diagram from detailed requirements or an uploaded image',
-                    ja: '詳細な要件またはアップロードした画像から図を生成',
+                    en: 'Open detailed generation with image upload and Topology or Blueprint options',
+                    ja: '画像の追加やTopology・Blueprintを選べる詳細生成を開く',
                   })}
                 >
                   <Sparkles size={18} />
-                  {localize(language, { en: 'Generate Diagram', ja: '図を生成' })}
+                  {localize(language, { en: 'Advanced generation', ja: '詳細設定で生成' })}
                 </button>
                 <ModelSettingsPopover
                   ref={modelSettingsRef}
@@ -7993,10 +8049,18 @@ function App() {
           </ResponsiveRibbonSurface>
           <div className="header-identity-actions">
             <DocumentStatus
+              documentName={titleBlockData.architectureName}
               status={cloudSync.status}
+              localSaveStatus={draftScopeError ? 'error' : draft.status}
+              localSaveError={draftScopeError ?? draft.error}
+              localSavedAt={draft.savedAt}
               lastSavedAt={cloudSync.lastSavedAt}
               hasCloudDocument={Boolean(cloudSync.context)}
+              cloudAccess={cloudSync.context?.access}
+              cloudRole={cloudSync.context?.role}
+              shareCount={cloudSync.document?.shares?.length}
               onOpen={() => setIsCloudWorkspaceOpen(true)}
+              onRetryLocalSave={draft.retry}
             />
             {accessIdentity?.enabled && accessIdentity.isAdmin && (
               <button
@@ -8033,26 +8097,28 @@ function App() {
           <button
             className="header-collapse-toggle"
             onClick={() => {
+              if (isChatOpen && !isCompactViewport) {
+                setIsChatToolbarExpanded((current) => !current);
+                return;
+              }
               setIsHeaderCollapsed(v => {
                 const next = !v;
                 writeLocalStorage(HEADER_COLLAPSED_STORAGE_KEY, next ? '1' : '0');
                 return next;
               });
             }}
-            title={isHeaderCollapsed ? t('header.showToolbar') : t('header.hideToolbarTitle')}
-            aria-label={isHeaderCollapsed ? t('header.showToolbar') : t('header.hideToolbar')}
+            title={isToolbarCollapsed ? t('header.showToolbar') : t('header.hideToolbarTitle')}
+            aria-label={isToolbarCollapsed ? t('header.showToolbar') : t('header.hideToolbar')}
             aria-controls="application-toolbar"
-            aria-expanded={!isHeaderCollapsed}
+            aria-expanded={!isToolbarCollapsed}
           >
-            {isHeaderCollapsed ? <PanelTopOpen size={18} /> : <PanelTopClose size={18} />}
-            <span>{isHeaderCollapsed ? t('header.showToolbar') : t('header.hideToolbar')}</span>
+            {isToolbarCollapsed ? <PanelTopOpen size={18} /> : <PanelTopClose size={18} />}
+            <span>{isToolbarCollapsed ? t('header.showToolbar') : t('header.hideToolbar')}</span>
           </button>
         </div>
       </header>
       {!focusMode && (
         <div className="workspace-status-bar" aria-label={localize(language, { en: 'Workspace status', ja: 'ワークスペースの状態' })}>
-          <DraftStatus status={draftScopeError ? 'error' : draft.status} savedAt={draft.savedAt}
-            error={draft.error ?? draftScopeError} onRetry={draft.retry} />
           <AIBudgetStatus />
         </div>
       )}
@@ -8085,7 +8151,7 @@ function App() {
           onGenerate={openWorkflowGenerator}
           onValidate={openWorkflowValidation}
           onReviewCost={openWorkflowCostReview}
-          onDeploy={openWorkflowDeployment}
+          onOutput={openWorkflowOutput}
         />
       )}
       
@@ -8168,8 +8234,8 @@ function App() {
                 duration: 400,
                 maxZoom: 1.2,
               })}
-              onGuidedChat={() => openGuidedChat('first-start')}
-              onGenerateDiagram={() => openGeneratorFrom('first-start')}
+              onGuidedChat={(brief) => openGuidedChat('first-start', brief)}
+              onGenerateDiagram={(brief) => openGeneratorFrom('first-start', brief)}
               onBrowseTemplates={() => setIsTemplateGalleryOpen(true)}
               onImportTemplate={() => {
                 trackGuidedJourney({ action: 'path-selected', step: 'create', path: 'template-import', source: 'first-start', hasDiagram: false });
@@ -8205,6 +8271,23 @@ function App() {
                   50% { filter: drop-shadow(0 0 12px rgba(0, 120, 212, 1)) drop-shadow(0 0 24px rgba(0, 120, 212, 0.9)); }
                 }`
               ).join('\n')}
+            </style>
+            <style>
+              {aiReviewHighlights.map(({ entity, entityId }) => {
+                const selector = CSS.escape(entityId);
+                return entity === 'node'
+                  ? `.react-flow__node[data-id="${selector}"] {
+                      outline: 3px solid var(--azd-color-focus, #0078d4);
+                      outline-offset: 3px;
+                      filter: drop-shadow(0 0 8px var(--azd-color-focus, #0078d4));
+                      z-index: 1000 !important;
+                    }`
+                  : `.react-flow__edge[data-id="${selector}"] path {
+                      stroke: var(--azd-color-focus, #0078d4) !important;
+                      stroke-width: 4px !important;
+                      filter: drop-shadow(0 0 4px var(--azd-color-focus, #0078d4));
+                    }`;
+              }).join('\n')}
             </style>
             <CanvasActivityOverlay
               isApplyingRecommendations={isApplyingRecommendations}
@@ -8826,6 +8909,16 @@ Return the IMPROVED architecture in the same JSON format as before with proper g
         purpose={privacyRequest?.purpose ?? 'review'}
         findings={privacyRequest?.findings ?? privacyFindings}
         canAnonymize={privacyRequest?.canAnonymize ?? true}
+        cloudStorageState={recentWorkSyncState}
+        aiConnection={{
+          source: effectivePrivacyAI.source,
+          model: effectivePrivacyAI.model || effectivePrivacyAI.displayName,
+          provider: privacyBYOProfile?.provider,
+          endpoint: privacyBYOProfile?.endpoint,
+        }}
+        shareRole={privacyRequest?.shareRole}
+        shareDocumentName={privacyRequest?.shareDocumentName}
+        shareVersionCount={privacyRequest?.shareVersionCount}
         threatOverlayEnabled={threatOverlayEnabled}
         onThreatOverlayChange={updateThreatOverlay}
         onCancel={() => finishPrivacyRequest(false)}
@@ -8868,7 +8961,11 @@ Return the IMPROVED architecture in the same JSON format as before with proper g
 
       <ArchitectureChatPanel
         isOpen={isChatOpen}
-        onClose={() => setIsChatOpen(false)}
+        onClose={() => {
+          setIsChatOpen(false);
+          setStartBriefRoute(null);
+        }}
+        initialPrompt={startBriefRoute?.destination === 'chat' ? startBriefRoute : null}
         onConfigureConnections={openAIConnections}
         diagramKey={activeDiagramLineageId}
         currentArchitecture={{
@@ -8900,7 +8997,8 @@ Return the IMPROVED architecture in the same JSON format as before with proper g
       )}
       {pendingAIReview && (
         <AIChangeReview changeSet={pendingAIReview.changeSet}
-          onApply={acceptDiagramReview} onCancel={() => pendingAIReviewRef.current?.finish(null)}
+          onApply={acceptDiagramReview} onSelectionChange={handleAIReviewSelectionChange}
+          onCancel={() => pendingAIReviewRef.current?.finish(null)}
           isApplying={isApplyingAIReview} error={aiReviewError} />
       )}
       {isFeedbackToastOpen && !isFeedbackModalOpen && <FeedbackToast

@@ -189,6 +189,7 @@ interface AIArchitectureGeneratorProps {
   onGenerate: (architecture: any, prompt: string, autoSnapshot: boolean, referenceImageUrl?: string, baseRevision?: number, signal?: AbortSignal) => boolean | void | Promise<boolean | void>;
   /** Increment to open the modal from another in-product journey control. */
   openSignal?: number;
+  initialPrompt?: { id: number; prompt: string } | null;
   /** Render the toolbar trigger. The dialog host can stay mounted elsewhere. */
   showTrigger?: boolean;
   onOpen?: () => void;
@@ -220,6 +221,7 @@ interface AIArchitectureGeneratorProps {
 const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
   onGenerate,
   openSignal,
+  initialPrompt,
   showTrigger = true,
   onOpen,
   onContinueInChat,
@@ -311,6 +313,7 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
   };
 
   const closeTimerRef = useRef<number | null>(null);
+  const consumedInitialPromptRef = useRef<number | null>(null);
   const requestRef = useRef<AbortController | null>(null);
   const imageRequestRef = useRef<AbortController | null>(null);
   const architectureRef = useRef(currentArchitecture);
@@ -393,6 +396,13 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
     cancelRequest();
     clearGenerationResult();
     setActiveStep('brief');
+    if (
+      initialPrompt
+      && consumedInitialPromptRef.current !== initialPrompt.id
+    ) {
+      setDescription(initialPrompt.prompt);
+      consumedInitialPromptRef.current = initialPrompt.id;
+    }
     setIsOpen(true);
     openRef.current = true;
     setError('');
@@ -402,7 +412,7 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
     setPendingRetry(null);
     setImageAnalyzed(false);
     onOpen?.();
-  }, [onOpen, cancelScheduledClose, cancelRequest, clearGenerationResult]);
+  }, [onOpen, cancelScheduledClose, cancelRequest, clearGenerationResult, initialPrompt]);
 
   useEffect(() => {
     if (openSignal && openSignal > 0) openGenerator();

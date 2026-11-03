@@ -77,8 +77,8 @@ const CREATE_FEATURES = [
 ];
 
 const ASSESS_FEATURES = [
-  { icon: <ShieldCheck size={18} />, title: 'Well-Architected validation', body: 'Review Cost Optimization, Operational Excellence, Performance Efficiency, Reliability, and Security. Apply selected recommendations, review the resulting iteration, and revalidate after material changes.' },
-  { icon: <CircleDollarSign size={18} />, title: 'Cost and region', body: 'Inspect per-service monthly estimates across eight regions and switch between PAYG and 1-year savings. Usage-based values remain indicative.' },
+  { icon: <ShieldCheck size={18} />, title: 'Well-Architected review and cost', body: 'Review Cost Optimization, Operational Excellence, Performance Efficiency, Reliability, and Security alongside indicative cost estimates. Apply selected recommendations, review the resulting iteration, and revalidate after material changes.' },
+  { icon: <CircleDollarSign size={18} />, title: 'Cost scenarios by region', body: 'Inspect per-service monthly estimates across eight regions and switch between PAYG and 1-year savings. Use them as one input to review; usage-based values remain indicative.' },
   { icon: <ClipboardCheck size={18} />, title: 'Validation timing', body: 'Review and refine the generated concept first, then use the Validate & Improve journey stage before sharing or building. Revalidate after material changes.' },
 ];
 
@@ -286,8 +286,8 @@ const GuidedHelpPanel: React.FC<GuidedHelpPanelProps> = ({ isOpen, onClose }) =>
                   <Faq q={translate('How do I correct an AI result?')} a={translate('Use Chat for a targeted change, then edit directly on canvas. Existing positions are preserved during refinements. Version History lets you restore an earlier state.')} />
                   <Faq q={translate('Can I import existing infrastructure?')} a={translate('Yes. Import Bicep, Terraform, ARM, an architecture image, or a live Azure resource group. Review inferred connections and unsupported resources.')} />
                   <Faq q={translate('Are the costs authoritative?')} a={translate('No. They are indicative catalog-based estimates. Confirm SKU, quantity, usage, discounts, networking, support, and regional availability in the Azure Pricing Calculator.')} />
-                  <Faq q={translate('Does a WAF score approve the design?')} a={translate('No. It is a structured review aid based on visible topology and model context. Validate findings with architects, security, operations, and workload owners.')} />
-                  <Faq q={translate('Can I deploy the generated Bicep directly?')} a={translate('Treat it as starter IaC. Review API versions, identities, network controls, naming, policy, sizing, dependencies, and destructive operations before deployment.')} />
+                  <Faq q={translate('Does the Well-Architected review score approve the design?')} a={translate('No. It summarizes an AI-assisted review against the Azure Well-Architected Framework; it is not approval, certification, or a web application firewall score. Validate findings with architects, security, operations, and workload owners.')} />
+                  <Faq q={translate('Does this app deploy to Azure?')} a={translate('No. This app does not provision or modify Azure resources. It creates deployment guidance and starter IaC for you to review; check API versions, identities, network controls, naming, policy, sizing, dependencies, and destructive operations before you choose to run any commands yourself.')} />
                   <Faq q={translate('What information should I avoid entering?')} a={translate('Do not enter passwords, keys, tokens, regulated personal data, confidential customer content, or production data unless your organization has explicitly approved that use.')} />
                 </div>
                 <h3>{translate('Trusted references')}</h3>

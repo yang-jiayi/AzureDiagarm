@@ -51,6 +51,9 @@
     "speechRegion": {
       "value": "${AZURE_SPEECH_REGION}"
     },
+    "speechContributorRoleAssignmentName": {
+      "value": "${AZURE_SPEECH_CONTRIBUTOR_ROLE_ASSIGNMENT_NAME}"
+    },
     "deployCosmos": {
       "value": false
     },

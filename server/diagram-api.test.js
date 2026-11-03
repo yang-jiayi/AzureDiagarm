@@ -414,6 +414,53 @@ test('immutable versions can be created, listed and fetched', async (t) => {
   assert.ok(Array.isArray(one.json.version.payload.nodes));
 });
 
+test('history and share management are restricted to the document owner', async (t) => {
+  const server = await startServer({ backend: new FakeBackend() });
+  t.after(server.close);
+
+  const created = await createDoc(server.baseUrl, USER_A);
+  const id = created.json.document.id;
+  const snapshot = await call(server.baseUrl, 'POST', `/api/diagrams/${id}/versions`, {
+    headers: USER_A, body: { notes: 'owner snapshot' },
+  });
+  const versionId = snapshot.json.version.versionId;
+  const share = await call(server.baseUrl, 'POST', `/api/diagrams/${id}/shares`, {
+    headers: USER_A, body: { role: 'viewer' },
+  });
+  const shareId = share.json.share.shareId;
+  const ownerRoutes = [
+    ['GET', `/api/diagrams/${id}/versions`],
+    ['GET', `/api/diagrams/${id}/versions/${versionId}`],
+    ['POST', `/api/diagrams/${id}/versions`, {}],
+    ['POST', `/api/diagrams/${id}/shares`, { role: 'editor' }],
+    ['GET', `/api/diagrams/${id}/shares`],
+    ['DELETE', `/api/diagrams/${id}/shares/${shareId}`],
+  ];
+
+  for (const [method, path, body] of ownerRoutes) {
+    assert.equal(
+      (await call(server.baseUrl, method, path, { headers: USER_B, body })).status,
+      404,
+      `another user must not access ${method} ${path}`,
+    );
+    assert.equal(
+      (await call(server.baseUrl, method, path, { body })).status,
+      401,
+      `anonymous callers must not access ${method} ${path}`,
+    );
+  }
+
+  assert.equal((await call(server.baseUrl, 'GET', `/api/diagrams/${id}/versions`, {
+    headers: USER_A,
+  })).status, 200);
+  assert.equal((await call(server.baseUrl, 'GET', `/api/diagrams/${id}/shares`, {
+    headers: USER_A,
+  })).json.shares.length, 1);
+  assert.equal((await call(server.baseUrl, 'GET', `/api/diagrams/shared/${share.json.token}`, {
+    headers: USER_B,
+  })).status, 200);
+});
+
 test('version creation waits for lock completion before sending success', async (t) => {
   const backend = new FakeBackend({
     afterLockOperation() {

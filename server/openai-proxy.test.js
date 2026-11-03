@@ -4,7 +4,7 @@ const assert = require('node:assert/strict');
 const { test } = require('node:test');
 const express = require('express');
 const { MemoryBudgetStore, createBudgetManager } = require('./ai-budget');
-const { createOpenAIProxyRouter, isJsonMediaType } = require('./openai-proxy');
+const { createOpenAIProxyRouter, createOpenAIExecutor, isJsonMediaType } = require('./openai-proxy');
 
 const alias = 'architecture-astra-production';
 const endpoint = 'https://example.openai.azure.com/';
@@ -285,6 +285,87 @@ test('timeout and client cancellation abort upstream and release shared concurre
   }
   assert.equal((await budget.status('local-development')).concurrentRequests, 0);
   assert.equal(observedAbort, 2);
+});
+
+test('budget reservation timeout returns a timeout and settles a late lease without dispatch', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  let resolveReservation;
+  const reservation = new Promise(resolve => { resolveReservation = resolve; });
+  const settlements = [];
+  let dispatched = false;
+  const execute = createOpenAIExecutor({
+    mode: 'public',
+    endpoint,
+    astraDeployment: alias,
+    allowedDeployments: new Set([alias]),
+    apiKey: 'test-only-key',
+    budget: {
+      reserve: () => reservation,
+      settle: async (identity, lease, usage) => settlements.push({ identity, lease, usage }),
+    },
+    fetchImpl: () => { dispatched = true; throw new Error('must not dispatch'); },
+  });
+  const work = execute({
+    body: requestBody(),
+    accessPrincipal: { id: 'reservation-timeout-user' },
+  }, { timeoutMs: 50 });
+  await new Promise(resolve => setImmediate(resolve));
+  t.mock.timers.tick(50);
+
+  const result = await work;
+  assert.equal(result.status, 504);
+  assert.equal(result.body.error.code, 'ai_budget_timeout');
+
+  const lease = { id: 'late-reservation' };
+  resolveReservation(lease);
+  for (let attempt = 0; settlements.length === 0 && attempt < 10; attempt += 1) {
+    await new Promise(resolve => setImmediate(resolve));
+  }
+  assert.deepEqual(settlements, [{
+    identity: 'reservation-timeout-user',
+    lease,
+    usage: 0,
+  }]);
+  assert.equal(dispatched, false);
+});
+
+test('client cancellation during budget reservation settles a late lease without dispatch', async () => {
+  let resolveReservation;
+  const reservation = new Promise(resolve => { resolveReservation = resolve; });
+  const settlements = [];
+  let dispatched = false;
+  const execute = createOpenAIExecutor({
+    mode: 'public',
+    endpoint,
+    astraDeployment: alias,
+    allowedDeployments: new Set([alias]),
+    apiKey: 'test-only-key',
+    budget: {
+      reserve: () => reservation,
+      settle: async (identity, lease, usage) => settlements.push({ identity, lease, usage }),
+    },
+    fetchImpl: () => { dispatched = true; throw new Error('must not dispatch'); },
+  });
+  const controller = new AbortController();
+  const work = execute({
+    body: requestBody(),
+    accessPrincipal: { id: 'reservation-cancel-user' },
+  }, { signal: controller.signal });
+  await new Promise(resolve => setImmediate(resolve));
+  controller.abort();
+
+  await work;
+  const lease = { id: 'late-cancel-reservation' };
+  resolveReservation(lease);
+  for (let attempt = 0; settlements.length === 0 && attempt < 10; attempt += 1) {
+    await new Promise(resolve => setImmediate(resolve));
+  }
+  assert.deepEqual(settlements, [{
+    identity: 'reservation-cancel-user',
+    lease,
+    usage: 0,
+  }]);
+  assert.equal(dispatched, false);
 });
 
 for (const body of [

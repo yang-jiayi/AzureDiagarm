@@ -48,8 +48,14 @@ test('AI entrypoints capture safe connection metadata before asynchronous work',
   assert.match(app, /generateArchitectureFromIaC\([\s\S]*?\}, language, \{ modelOverride \}\)/);
   assert.match(generator, /captureRuntimeModelOverride\('blueprint'\)/);
   assert.match(generator, /analyzeArchitectureDiagramImage\([\s\S]*?signal: controller\.signal, modelOverride/);
-  assert.match(chat, /generateArchitectureWithAI\(prompt, modelOverride,/);
-  assert.match(chat, /send\(best\[0\], before, controller, modelOverride\)/);
+  assert.match(
+    chat,
+    /const modelOverride = capturedModel \?\? captureRuntimeModelOverride\('architectureGeneration'\);[\s\S]*?await generateArchitectureWithAI\(prompt, modelOverride,/,
+  );
+  assert.match(
+    chat,
+    /const modelOverride = captureRuntimeModelOverride\('architectureGeneration'\);[\s\S]*?await generateFollowUpSuggestions\([\s\S]*?modelOverride,/,
+  );
   assert.match(chat, /submittedModel: submittedName/);
   assert.doesNotMatch(generator, /JSON\.stringify\(modelSettings|console\.log.*effective model/);
 });

@@ -46,7 +46,7 @@
   display: flex;
   flex: 0 0 auto;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: 8px;
   min-width: 0;
   padding: 0 12px;
@@ -54,9 +54,6 @@
   background: var(--azd-color-surface, #fff);
   border-bottom: 1px solid var(--azd-color-border, #d8e1ea);
 }
-.workspace-status-bar .draft-status { min-width: 0; }
-.workspace-status-bar .draft-status [role="status"] { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.workspace-status-bar .ai-budget-status { min-width: 0; min-height: 26px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .workspace-notice {
   display: flex;
   flex: 0 0 auto;

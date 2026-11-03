@@ -150,7 +150,9 @@ test('Astra is the sole managed model; explicit BYO opt-in participates in runti
   assert.match(main, /param allowByoAIEndpoints bool = false/);
   assert.equal(parameters.allowByoAIEndpoints.value, false);
   assert.match(read('infra', 'resources.bicep'), /name: 'ALLOW_BYO_AI_ENDPOINTS', value: string\(allowByoAIEndpoints\)/);
-  assert.match(workflow, /ALLOW_BYO_AI_ENDPOINTS: \$\{\{ vars\.ALLOW_BYO_AI_ENDPOINTS \|\| 'false' \}\}/);
+  assert.match(workflow, /ALLOW_BYO_AI_ENDPOINTS: \$\{\{ vars\.ALLOW_BYO_AI_ENDPOINTS \}\}/);
+  assert.doesNotMatch(workflow, /ALLOW_BYO_AI_ENDPOINTS:\s*\$\{\{\s*vars\.ALLOW_BYO_AI_ENDPOINTS\s*\|\|/);
+  assert.match(workflow, /node scripts\/verify-deployment-preflight\.mjs runtime-config/);
   assert.match(script, /export ALLOW_BYO_AI_ENDPOINTS="\$\{ALLOW_BYO_AI_ENDPOINTS:-false\}"/);
   assert.match(workflow, /node scripts\/retired-ai-environment\.mjs/);
   assert.match(workflow, /Verify actual GPT-6 Astra deployment identity/);

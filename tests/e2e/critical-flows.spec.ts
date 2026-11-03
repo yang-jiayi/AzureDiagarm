@@ -112,6 +112,13 @@ async function fulfillJson(
   });
 }
 
+async function proceedWithPrivacyPreflight(page: Page) {
+  const dialog = page.getByRole('dialog', { name: 'Review data handling' });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByRole('region', { name: 'Data handling' })).toBeVisible();
+  await dialog.getByRole('button', { name: 'Proceed as shown' }).click();
+}
+
 async function initializePage(
   page: Page,
   cloudContext?: Record<string, unknown>,
@@ -321,7 +328,7 @@ async function openInteractionDiagram(
 
 async function openAiGenerator(page: Page) {
   await page.getByRole('tab', { name: 'Create' }).click();
-  await page.getByRole('button', { name: 'Generate Diagram', exact: true }).click();
+  await page.getByRole('button', { name: 'Advanced generation', exact: true }).click();
   const modal = page.locator('.ai-architecture-modal');
   await expect(modal).toBeFocused();
   return modal;
@@ -770,6 +777,7 @@ test('compact workspace chrome preserves canvas space and visible mobile command
     { width: 1366, height: 768, maximumChrome: 190 },
     { width: 768, height: 1024, maximumChrome: 235 },
     { width: 390, height: 844, maximumChrome: 210 },
+    { width: 320, height: 640, maximumChrome: 210 },
   ]) {
     await page.setViewportSize({ width: viewport.width, height: viewport.height });
     await expect.poll(async () => (
@@ -950,10 +958,20 @@ test('workflow stepper has stable light, dark, mobile, and forced-colors visuals
   await page.goto('/');
   await page.evaluate(() => document.fonts.ready);
 
-  const stepper = page.getByRole('navigation', { name: 'Architecture delivery workflow' });
+  const stepper = page.getByRole('navigation', {
+    name: 'Architecture workflow: create, review, and output',
+  });
   const steps = stepper.getByRole('button');
   await expect(stepper).toBeVisible();
   await expect(steps).toHaveCount(4);
+  await expect(steps.nth(0)).toHaveAccessibleName('Generate');
+  await expect(steps.nth(1)).toHaveAccessibleName('Validate');
+  await expect(steps.nth(2)).toHaveAccessibleName('Cost');
+  await expect(steps.nth(2)).toHaveAccessibleDescription(
+    /Review cost estimates as part of architecture validation/,
+  );
+  await expect(steps.nth(3)).toHaveAccessibleName('Output');
+  await expect(steps.nth(3)).toHaveAttribute('title', /This app does not deploy to Azure/);
   await expect(steps.nth(0)).toHaveAttribute('aria-current', 'step');
   await expect(steps.nth(1)).toBeDisabled();
   await expect.soft(stepper).toHaveScreenshot('workflow-stepper-light.png', {
@@ -981,7 +999,11 @@ test('workflow stepper has stable light, dark, mobile, and forced-colors visuals
   await expect.poll(() => stepper.evaluate((element) => (
     element.scrollWidth <= element.clientWidth
   ))).toBe(true);
-  await expect.soft(stepper).toHaveScreenshot('workflow-stepper-mobile.png', {
+  // Keep Linux CI's font rasterization baseline separate from local snapshots.
+  const mobileSnapshot = process.platform === 'linux'
+    ? 'workflow-stepper-mobile-linux.png'
+    : 'workflow-stepper-mobile.png';
+  await expect.soft(stepper).toHaveScreenshot(mobileSnapshot, {
     animations: 'disabled',
     caret: 'hide',
     maxDiffPixelRatio: 0.01,
@@ -1000,6 +1022,19 @@ test('workflow stepper has stable light, dark, mobile, and forced-colors visuals
     scale: 'css',
     stylePath: visualSnapshotStylePath,
   });
+
+  await page.locator('.header-utility-button').click();
+  await page.getByRole('button', { name: '日本語', exact: true }).click();
+  const japaneseStepper = page.getByRole('navigation', {
+    name: 'アーキテクチャ ワークフロー: 作成、検証、出力',
+  });
+  await expect(japaneseStepper).toBeVisible();
+  await expect(japaneseStepper.getByRole('button', { name: '出力', exact: true })).toHaveAttribute(
+    'title',
+    /このアプリは Azure にデプロイしません/,
+  );
+  await expect(japaneseStepper.getByRole('button', { name: 'コスト', exact: true }))
+    .toHaveAccessibleDescription(/アーキテクチャ検証の一環としてコスト見積を確認/);
 });
 
 test('feedback launcher is styled before the lazy modal chunk is opened', async ({ page }) => {
@@ -1138,10 +1173,110 @@ test('template gallery previews, filters, and applies a starter architecture', a
     .toHaveCount(1);
 });
 
+test('local document state stays distinct and AI usage details are collapsed by default', async ({ page }) => {
+  await initializePage(page);
+  let budgetRequests = 0;
+  await page.route('**/api/**', async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (path === '/api/access/me') {
+      await fulfillJson(route, {
+        enabled: false,
+        authenticated: false,
+        isAdmin: false,
+        allowed: true,
+      });
+      return;
+    }
+    if (path === '/api/ai/budget') {
+      budgetRequests += 1;
+      await fulfillJson(route, {
+        available: true,
+        limitTokens: 20000,
+        usedTokens: 5000,
+        reservedTokens: 1000,
+        remainingTokens: 14000,
+        concurrentRequests: 0,
+        concurrentLimit: 2,
+        resetAt: now,
+        mode: 'public',
+      });
+      return;
+    }
+    await fulfillJson(route, { error: 'Not found' }, 404);
+  });
+
+  await page.goto('/');
+  const documentStatus = page.getByRole('button', { name: /^Document status:/ });
+  await expect(documentStatus).toContainText('Local draft');
+  await expect(documentStatus).toContainText('Not shared');
+
+  const aiDetails = page.locator('details.ai-budget-status');
+  await expect(aiDetails.locator('summary')).toHaveText('AI usage');
+  await expect(aiDetails).not.toHaveAttribute('open', '');
+  const panel = aiDetails.locator('.ai-budget-status-panel');
+  await expect(panel).not.toBeVisible();
+  await aiDetails.locator('summary').click();
+  await expect(panel).toBeVisible();
+  await expect(panel).toContainText('14,000 tokens remaining today');
+  await expect(panel).toContainText('0/2 requests running');
+  await expect(panel).toContainText('This is not a monetary balance.');
+  const requestsBeforeRefresh = budgetRequests;
+  await panel.getByRole('button', { name: 'Refresh AI usage details' }).click();
+  await expect.poll(() => budgetRequests).toBe(requestsBeforeRefresh + 1);
+});
+
+test('document and AI status reflow and return focus at a 200-percent-equivalent viewport', async ({ page }) => {
+  await initializePage(page);
+  await page.setViewportSize({ width: 640, height: 360 });
+  await page.route('**/api/**', async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (path === '/api/access/me') {
+      await fulfillJson(route, { enabled: false, authenticated: false, isAdmin: false, allowed: true });
+    } else if (path === '/api/ai/budget') {
+      await fulfillJson(route, {
+        available: true, limitTokens: 20000, usedTokens: 5000, reservedTokens: 1000,
+        remainingTokens: 14000, concurrentRequests: 0, concurrentLimit: 2, resetAt: now, mode: 'public',
+      });
+    } else {
+      await fulfillJson(route, { error: 'Not found' }, 404);
+    }
+  });
+  await page.goto('/');
+
+  const documentStatus = page.getByRole('button', { name: /^Document status:/ });
+  const aiDetails = page.locator('details.ai-budget-status');
+  await expect(documentStatus).toBeVisible();
+  await expect(aiDetails).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth))
+    .toBeLessThanOrEqual(640);
+  await expectNoWcagViolations(page, '.workspace-status-bar');
+  await page.evaluate(() => document.body.classList.add('dark-mode'));
+  await expectNoWcagViolations(page, '.workspace-status-bar');
+
+  await aiDetails.locator('summary').click();
+  const detailsBounds = await aiDetails.locator('.ai-budget-status-panel').boundingBox();
+  expect(detailsBounds).not.toBeNull();
+  expect(detailsBounds?.x).toBeGreaterThanOrEqual(0);
+  expect((detailsBounds?.x || 0) + (detailsBounds?.width || 0)).toBeLessThanOrEqual(640);
+
+  await documentStatus.focus();
+  await page.keyboard.press('Enter');
+  const workspace = page.getByRole('dialog', { name: 'Cloud workspace' });
+  await expect(workspace).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(workspace).toBeHidden();
+  await expect(documentStatus).toBeFocused();
+});
+
 test('diagram history, document status, privacy review, and threat overlay stay available', async ({ page }) => {
   await openInteractionDiagram(page);
 
-  await expect(page.getByRole('button', { name: /^Document status: Saved/ })).toBeVisible();
+  const documentStatus = page.getByRole('button', { name: /^Document status: Saved/ });
+  await expect(documentStatus).toBeVisible();
+  await expect(documentStatus).toContainText('Interaction diagram');
+  await expect(documentStatus).toContainText('Saved to cloud');
+  await expect(documentStatus).toContainText('Not shared');
+  await expect(documentStatus).toHaveAccessibleName(/Last cloud save/);
 
   await page.getByRole('tab', { name: 'Design' }).click();
   const undo = page.getByRole('button', { name: 'Undo' });
@@ -1157,6 +1292,7 @@ test('diagram history, document status, privacy review, and threat overlay stay 
   await page.mouse.move(initial.x + initial.width / 2 + 160, initial.y + initial.height / 2 + 80, {
     steps: 8,
   });
+
   await page.mouse.up();
   await expect(
     page.getByRole('button', { name: /^Document status: Saving/ }),
@@ -1176,11 +1312,22 @@ test('diagram history, document status, privacy review, and threat overlay stay 
 
   await page.getByRole('tab', { name: 'Review' }).click();
   await page.getByRole('button', { name: 'Privacy' }).click();
-  const privacyDialog = page.getByRole('dialog', { name: 'Ready to share' });
+  const privacyDialog = page.getByRole('dialog', { name: 'Privacy review' });
   await expect(privacyDialog).toBeFocused();
   await expect(privacyDialog.getByText('No known sensitive patterns found')).toBeVisible();
+  await expect(privacyDialog).toContainText('This sensitive-data scan runs in this browser.');
+  await expect(privacyDialog).toContainText('Cloud document is synced through this application’s owner-scoped diagram API.');
+  await expect(privacyDialog).toContainText('Managed gpt-6-astra');
+  await expect(privacyDialog).toContainText('API-retrievable for 1 hour');
   await privacyDialog.getByRole('button', { name: 'Done' }).click();
 
+  await page.getByRole('tab', { name: 'Home' }).click();
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
+  const exportDialog = page.getByRole('dialog', { name: 'Review data handling' });
+  await expect(exportDialog).toContainText('browser’s download location');
+  await exportDialog.getByRole('button', { name: 'Cancel' }).click();
+
+  await page.getByRole('tab', { name: 'Review' }).click();
   const threats = page.getByRole('button', { name: 'Threats' });
   await threats.click();
   await expect(threats).toHaveAttribute('aria-pressed', 'true');
@@ -1219,8 +1366,11 @@ test('diagram history, document status, privacy review, and threat overlay stay 
   await page.keyboard.press('Control+K');
   const palette = page.getByTestId('command-palette');
   await palette.getByRole('combobox', { name: 'Search commands and services' }).fill('export png');
-  const downloadPromise = page.waitForEvent('download');
   await palette.getByRole('option', { name: /^Export PNG/ }).click();
+  const pngPreflight = page.getByRole('dialog', { name: 'Review data handling' });
+  await expect(pngPreflight).toBeVisible();
+  const downloadPromise = page.waitForEvent('download');
+  await pngPreflight.getByRole('button', { name: 'Proceed as shown' }).click();
   await downloadPromise;
   expect(await page.evaluate(() => (
     (window as Window & { __sawThreatOverlayExport?: boolean }).__sawThreatOverlayExport
@@ -1232,6 +1382,135 @@ test('diagram history, document status, privacy review, and threat overlay stay 
 
   await threatOverlay.getByRole('button', { name: 'Hide threat model overlay' }).click();
   await expect(threatOverlay).toBeHidden();
+});
+
+test('document status summarizes cloud sharing links', async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 1280, height: 720 });
+  const document = {
+    ...interactionCloudDocument(),
+    shares: [
+      { shareId: 'share-1', role: 'viewer' as const, createdAt: now },
+      { shareId: 'share-2', role: 'editor' as const, createdAt: now },
+    ],
+  };
+  await openInteractionDiagram(page, undefined, false, document);
+
+  await expect(page.getByRole('button', { name: /^Document status: Saved/ }))
+    .toContainText('Shared · 2 links');
+  await page.screenshot({ path: testInfo.outputPath('document-cloud-save-state.png') });
+});
+
+test('local draft errors expose their cause and clear after retry succeeds', async ({ page }) => {
+  await initializePage(page);
+  await page.addInitScript(() => {
+    const originalOpen = IDBFactory.prototype.open;
+    let draftOpenCount = 0;
+    IDBFactory.prototype.open = function (this: IDBFactory, name: string, version?: number) {
+      if (name === 'AzureDiagramDrafts' && ++draftOpenCount === 2) {
+        throw new DOMException('Synthetic local storage quota limit', 'QuotaExceededError');
+      }
+      return originalOpen.call(this, name, version);
+    };
+  });
+  await page.route('**/api/**', async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    const method = route.request().method();
+    if (path === '/api/access/me') {
+      await fulfillJson(route, {
+        enabled: false,
+        authenticated: false,
+        email: null,
+        isAdmin: false,
+        allowed: false,
+      });
+      return;
+    }
+    if (path === '/api/diagrams' && method === 'POST') {
+      await fulfillJson(route, { error: 'Synthetic cloud save unavailable.' }, 400);
+      return;
+    }
+    await fulfillJson(route, {});
+  });
+  await page.goto('/');
+  const canvas = page.getByRole('region', { name: 'Architecture canvas' });
+  await canvas.focus();
+  await page.keyboard.press('Shift+F10');
+  await page.getByRole('menu', { name: 'Canvas actions' })
+    .getByRole('menuitem', { name: 'Add layer here' })
+    .click();
+
+  const status = page.getByRole('button', { name: /Document status:/ });
+  await expect(status).toContainText('Synthetic local storage quota limit');
+  const retry = page.getByRole('button', { name: /Retry saving the local draft/ });
+  await expect(retry).toHaveAttribute('title', 'Synthetic local storage quota limit');
+  await retry.click();
+  await expect(status).toContainText('Local copy saved');
+  await expect(status).not.toContainText('Synthetic local storage quota limit');
+  await expect(retry).toHaveCount(0);
+});
+
+test('AI review selection highlights matching canvas resources', async ({ page }, testInfo) => {
+  await openInteractionDiagram(page);
+  await page.route('**/api/openai', async (route) => {
+    const text = JSON.stringify({
+      architectureName: 'Interaction diagram',
+      groups: [],
+      services: [{
+        id: 'node-a',
+        name: 'App Service',
+        type: 'App Service',
+        category: 'compute',
+        description: 'Updated service description',
+      }, {
+        id: 'new-vault',
+        name: 'Key Vault',
+        type: 'Key Vault',
+        category: 'security',
+      }],
+      connections: [],
+      workflow: [],
+    });
+    await fulfillJson(route, {
+      status: 'completed',
+      model: 'playwright-gpt-6-astra',
+      output_text: text,
+      usage: { input_tokens: 30, output_tokens: 20, total_tokens: 50 },
+    });
+  });
+
+  const generator = await openAiGenerator(page);
+  await generator.getByLabel('Architecture Description or Modification')
+    .fill('Update the App Service description and add a Key Vault.');
+  await generator.getByRole('button', { name: 'Continue to output' }).click();
+  await generator.getByRole('button', { name: 'Generate Architecture', exact: true }).click();
+
+  const review = page.getByRole('dialog', { name: 'Review AI changes', exact: true });
+  const existingNode = page.locator('.react-flow__node[data-id="node-a"]');
+  await expect(review).toBeVisible();
+  await expect(review).toContainText('not been independently validated');
+  const deletions = review.locator('.ai-review-item-delete');
+  await expect(deletions).toHaveCount(3);
+  for (const deletion of await deletions.all()) {
+    await expect(deletion.getByRole('checkbox')).not.toBeChecked();
+  }
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.screenshot({ path: testInfo.outputPath('ai-review-diff-selection.png') });
+  await page.setViewportSize({ width: 390, height: 844 });
+  const reviewBounds = await review.boundingBox();
+  expect(reviewBounds).not.toBeNull();
+  expect(reviewBounds?.x).toBeGreaterThanOrEqual(0);
+  expect((reviewBounds?.x || 0) + (reviewBounds?.width || 0)).toBeLessThanOrEqual(390);
+  await expectNoWcagViolations(page, '.ai-review-dialog');
+  await page.evaluate(() => document.body.classList.add('dark-mode'));
+  await expectNoWcagViolations(page, '.ai-review-dialog');
+  await expect(existingNode).toHaveCSS('outline-width', '3px');
+  const change = review.locator('.ai-review-list fieldset').first()
+    .locator('.ai-review-choice').filter({ hasText: 'App Service' });
+  await expect(change).toHaveCount(1);
+  await change.getByRole('checkbox').uncheck();
+  await expect(existingNode).toHaveCSS('outline-width', '0px');
+  await change.getByRole('checkbox').check();
+  await expect(existingNode).toHaveCSS('outline-width', '3px');
 });
 
 test('mobile users can edit a selected service without opening a desktop inspector', async ({ page }) => {
@@ -1378,6 +1657,14 @@ test('cloud share links wait for privacy preflight confirmation', async ({ page 
       exact: true,
     }),
   ).toBeVisible();
+  await expect(privacyDialog).toContainText('viewer access to cloud diagram “Interaction diagram”');
+  await expect(privacyDialog).toContainText('1 history version');
+  await expect(privacyDialog).toContainText('The application does not configure link expiry');
+  await expect(privacyDialog).toContainText('does not email it to recipients');
+  await expect(privacyDialog).toContainText(
+    'provider retention and logging policies are separate and are not guaranteed by this app.',
+  );
+  await expect(privacyDialog).not.toContainText('Provider storage is disabled');
   await expect(privacyDialog).not.toContainText('comment~Secret1234');
   await expect(privacyDialog).not.toContainText('history!Secret5678');
   expect(versionDetailRequests).toBe(1);
@@ -1394,6 +1681,93 @@ test('cloud share links wait for privacy preflight confirmation', async ({ page 
   await expect.poll(() => shareRequests).toBe(1);
   await expect(cloudWorkspace.getByLabel('New share URL'))
     .toHaveValue('https://example.test/#share-privacy-approved-share');
+});
+
+test('share preflight identifies the selected cloud document separately from a local editor', async ({ page }) => {
+  await initializePage(page);
+  const targetDocument = {
+    ...interactionCloudDocument(),
+    id: 'B',
+    diagramName: 'Cloud diagram B',
+    revision: 1,
+    etag: '"B-1"',
+    comments: [],
+    shares: [],
+  };
+  let shareTarget: string | null = null;
+  await page.route('**/api/**', async (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    const method = request.method();
+    if (path === '/api/access/me') {
+      await fulfillJson(route, {
+        enabled: true,
+        authenticated: true,
+        email: 'owner@example.com',
+        isAdmin: false,
+        allowed: true,
+      });
+      return;
+    }
+    if (path === '/api/access/users' && method === 'GET') {
+      await fulfillJson(route, { users: [] });
+      return;
+    }
+    if (path === '/api/diagrams' && method === 'GET') {
+      await fulfillJson(route, { documents: [summary('B', targetDocument.diagramName)] });
+      return;
+    }
+    if (path === '/api/diagrams/B' && method === 'GET') {
+      await fulfillJson(route, targetDocument, 200, { etag: '"B-1"' });
+      return;
+    }
+    if (path === '/api/diagrams/B/versions' && method === 'GET') {
+      await fulfillJson(route, { versions: [] });
+      return;
+    }
+    if (path === '/api/diagrams/B/shares' && method === 'GET') {
+      await fulfillJson(route, { shares: [] });
+      return;
+    }
+    if (path === '/api/diagrams/B/shares' && method === 'POST') {
+      shareTarget = path;
+      await fulfillJson(route, {
+        result: {
+          token: 'cloud-b-share',
+          url: 'https://example.test/#share-cloud-b',
+          share: { shareId: 'share-b', role: 'viewer', createdAt: now },
+        },
+      });
+      return;
+    }
+    await route.fallback();
+  });
+
+  await page.goto('/');
+  const editorStatus = page.locator('.document-status');
+  await expect(editorStatus).toContainText('Local draft');
+  await editorStatus.click();
+  const workspace = page.getByRole('dialog', { name: 'Cloud workspace' });
+  await workspace.locator('.cloud-document-list button')
+    .filter({ hasText: 'Cloud diagram B' })
+    .click();
+  await expect(workspace.getByRole('button', { name: 'Create link' })).toBeVisible();
+  await expect(editorStatus).toContainText('Local draft');
+
+  await workspace.getByRole('button', { name: 'Create link' }).click();
+  const privacyDialog = page.getByRole('dialog', { name: 'Review data handling' });
+  await expect(privacyDialog.getByText('Share target', { exact: true })).toBeVisible();
+  await expect(privacyDialog).toContainText(
+    'Cloud share target: Cloud diagram B. The editor’s current local/cloud save state is separate from this share target.',
+  );
+  await expect(privacyDialog).toContainText('cloud diagram “Cloud diagram B”');
+  await expect(privacyDialog).not.toContainText('Local browser draft (IndexedDB); no cloud document is linked.');
+  await expect(privacyDialog).toContainText(
+    'provider retention and logging policies are separate and are not guaranteed by this app.',
+  );
+  await expect(editorStatus).toContainText('Local draft');
+  await privacyDialog.getByRole('button', { name: 'Proceed as shown' }).click();
+  await expect.poll(() => shareTarget).toBe('/api/diagrams/B/shares');
 });
 
 for (const [width, allowBYO] of [[1600, true], [1600, false], [390, true], [390, false]] as const) {
@@ -1686,6 +2060,7 @@ test('PNG export contains rendered diagram content instead of a blank canvas', a
 
   const downloadPromise = page.waitForEvent('download');
   await palette.getByRole('option', { name: /^Export PNG/ }).click();
+  await proceedWithPrivacyPreflight(page);
   const download = await downloadPromise;
   const outputPath = testInfo.outputPath('diagram-export.png');
   await download.saveAs(outputPath);
@@ -1781,6 +2156,7 @@ for (const varied of [false, true]) {
     await palette.getByRole('combobox', { name: 'Search commands and services' }).fill('export png');
     const downloadPromise = page.waitForEvent('download');
     await palette.getByRole('option', { name: /^Export PNG/ }).click();
+    await proceedWithPrivacyPreflight(page);
     const download = await downloadPromise;
     const outputPath = testInfo.outputPath('authored-legend.png');
     await download.saveAs(outputPath);
@@ -1849,6 +2225,7 @@ test('PNG export expands to include a manually offset edge label', async ({ page
 
   const downloadPromise = page.waitForEvent('download');
   await palette.getByRole('option', { name: /^Export PNG/ }).click();
+  await proceedWithPrivacyPreflight(page);
   const download = await downloadPromise;
   const outputPath = testInfo.outputPath('diagram-export-with-offset-label.png');
   await download.saveAs(outputPath);
@@ -2047,8 +2424,9 @@ test('service discovery recommends common services and persists a deduplicated l
   ))).toBe('2');
 });
 
-test('architecture chat docks without covering the canvas and persists keyboard resizing', async ({ page }) => {
+test('architecture chat docks without covering the canvas and persists keyboard resizing', async ({ page }, testInfo) => {
   await initializePage(page);
+  await page.setViewportSize({ width: 1280, height: 720 });
   await page.route('**/api/**', async (route) => {
     const path = new URL(route.request().url()).pathname;
     if (path === '/api/access/me') {
@@ -2073,9 +2451,31 @@ test('architecture chat docks without covering the canvas and persists keyboard 
   const resizer = page.getByRole('separator', { name: 'Resize Architecture Chat' });
   await expect(app).toHaveClass(/chat-open/);
   await expect(chat).toBeVisible();
-  await expect(app).toHaveCSS('padding-right', '460px');
+  await expect(app).toHaveCSS('padding-right', '440px');
   await expect(chat).toHaveCSS('transform', 'none');
   await expect(page.getByRole('button', { name: 'Open services panel' })).toBeVisible();
+  const toolbarToggle = page.getByRole('button', { name: 'Show the toolbar' });
+  await expect(toolbarToggle).toHaveAttribute('aria-expanded', 'false');
+  await expect.poll(() => page.evaluate(() => (
+    localStorage.getItem('azure-diagram-builder.headerCollapsed.v1')
+  ))).toBe('0');
+
+  const canvasBounds = await page.getByRole('region', { name: 'Architecture canvas' }).boundingBox();
+  expect(canvasBounds).not.toBeNull();
+  const canvasViewportShare = (
+    (canvasBounds?.width || 0) * (canvasBounds?.height || 0)
+  ) / (1280 * 720);
+  console.info(`Chat-open canvas area: ${(canvasViewportShare * 100).toFixed(2)}% of viewport`);
+  await page.screenshot({ path: testInfo.outputPath('chat-open-canvas.png') });
+  expect(canvasViewportShare).toBeGreaterThanOrEqual(0.55);
+
+  await toolbarToggle.click();
+  await expect(page.getByRole('button', { name: 'Hide the toolbar' }))
+    .toHaveAttribute('aria-expanded', 'true');
+  await expect(page.getByRole('region', { name: 'Application toolbar' })).toBeVisible();
+  await expect.poll(() => page.evaluate(() => (
+    localStorage.getItem('azure-diagram-builder.headerCollapsed.v1')
+  ))).toBe('0');
 
   const dockedBounds = await Promise.all([workspace, chat].map(locator => locator.boundingBox()));
   expect(dockedBounds[0]).not.toBeNull();
@@ -2085,16 +2485,16 @@ test('architecture chat docks without covering the canvas and persists keyboard 
 
   await resizer.focus();
   await page.keyboard.press('ArrowLeft');
-  await expect(resizer).toHaveAttribute('aria-valuenow', '484');
+  await expect(resizer).toHaveAttribute('aria-valuenow', '464');
   await expect.poll(() => page.evaluate(() => (
     localStorage.getItem('azure-diagram-builder.chatPanelWidth.v1')
-  ))).toBe('484');
+  ))).toBe('464');
 
   await page.reload();
   await expect(page.getByRole('region', { name: 'Architecture canvas' })).toBeVisible();
   await page.getByRole('button', { name: 'Guided Chat' }).click();
   await expect(page.getByRole('separator', { name: 'Resize Architecture Chat' }))
-    .toHaveAttribute('aria-valuenow', '484');
+    .toHaveAttribute('aria-valuenow', '464');
 
   await page.evaluate(() => {
     localStorage.setItem('azure-diagram-builder.chatPanelWidth.v1', '720');
@@ -2853,7 +3253,7 @@ test('command palette adds services and focus mode persists until Escape', async
   await expect(palette).toBeHidden();
   await expect(page.locator('.react-flow__node-azureNode')).toHaveCount(1);
   // Recovery requires a committed draft, not just a rendered node.
-  await expect(page.getByRole('status').filter({ hasText: 'Saved on this device' })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Document status: .*Local copy saved/ })).toBeVisible();
 
   await canvas.focus();
   await page.keyboard.press('Control+K');
@@ -3709,9 +4109,10 @@ test('AI generation cannot be dismissed while work is active', async ({ page }) 
   await expect(modal).toBeHidden();
 });
 
-test('AI generator opens from the mobile start card above application chrome', async ({ page }) => {
+test('one start brief feeds Guided Chat or detailed generation on mobile', async ({ page }, testInfo) => {
   await initializePage(page);
-  await page.setViewportSize({ width: 390, height: 844 });
+  await page.setViewportSize({ width: 1280, height: 720 });
+  let openAiRequests = 0;
   await page.route('**/api/**', async (route) => {
     const path = new URL(route.request().url()).pathname;
     if (path === '/api/access/me') {
@@ -3724,18 +4125,39 @@ test('AI generator opens from the mobile start card above application chrome', a
       });
       return;
     }
+    if (path === '/api/openai') {
+      openAiRequests += 1;
+      await fulfillJson(route, { error: 'Unexpected request' }, 500);
+      return;
+    }
     await fulfillJson(route, { error: 'Not found' }, 404);
   });
 
   await page.goto('/');
   const startChooser = page.locator('.start-chooser');
-  await startChooser.getByRole('button', { name: 'Generate Diagram' }).click();
+  const startBrief = startChooser.getByRole('textbox', { name: 'Architecture brief' });
+  await expect(startChooser.locator('.start-choice')).toHaveCount(1);
+  await expect(startChooser.locator('.start-choice-advanced button'))
+    .toContainText('Image or detailed generation');
+  await startBrief.fill('Create a small web application');
+  await page.screenshot({ path: testInfo.outputPath('onboarding-primary-path.png') });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await startChooser.getByRole('button', { name: /Image or detailed generation/ }).click();
 
   const modal = page.locator('.ai-architecture-modal');
   await expect(modal).toBeFocused();
+  await expect(modal.getByLabel('Architecture Description or Modification'))
+    .toHaveValue('Create a small web application');
+  await expect(modal.locator('input[type="file"]')).toBeAttached();
   await expect(modal.getByRole('button', { name: '1. Brief' }))
     .toHaveAttribute('aria-current', 'step');
   await expectNoWcagViolations(page, '.ai-architecture-modal');
+  await modal.getByRole('button', { name: 'Continue to output' }).click();
+  const generationModes = modal.getByRole('tablist', { name: 'Generation mode' });
+  await expect(generationModes.getByRole('tab', { name: /^Topology/ })).toBeVisible();
+  await expect(generationModes.getByRole('tab', { name: /^Blueprint/ })).toBeVisible();
+  await expect(generationModes.getByRole('tab', { name: /^Both/ })).toBeVisible();
+  await modal.getByRole('button', { name: '1. Brief' }).click();
 
   const closeIsTopmost = await modal.locator('.modal-close').evaluate((button) => {
     const box = button.getBoundingClientRect();
@@ -3747,9 +4169,14 @@ test('AI generator opens from the mobile start card above application chrome', a
   await modal.locator('.modal-close').click();
   await expect(modal).toBeHidden();
 
-  await startChooser.getByRole('button', { name: 'Generate Diagram' }).click();
+  await startChooser.getByRole('button', { name: /Image or detailed generation/ }).click();
   await page.locator('.ai-generator-overlay').click({ position: { x: 4, y: 4 } });
   await expect(modal).toBeHidden();
+
+  await startChooser.getByRole('button', { name: /Continue in Guided Chat/ }).click();
+  const chatInput = page.getByRole('textbox', { name: 'Describe your architecture…' });
+  await expect(chatInput).toHaveValue('Create a small web application');
+  expect(openAiRequests).toBe(0);
 });
 
 test('image analysis is single-flight and the reference viewer is keyboard safe', async ({ page }) => {
@@ -5143,6 +5570,7 @@ test('share refresh failure blocks saves until the ETag is reconciled', async ({
   await cloudButton.click();
   const modal = page.locator('.cloud-workspace-modal');
   await modal.getByRole('button', { name: 'Create link' }).click();
+  await proceedWithPrivacyPreflight(page);
   await expect(modal.getByText('A newer cloud revision exists')).toBeVisible();
   await expect(cloudButton).toHaveAttribute('aria-label', 'Cloud workspace: Sync conflict');
   await expect(modal.getByRole('button', { name: 'Open', exact: true })).toBeDisabled();
@@ -7381,7 +7809,12 @@ test('diagram imports are atomic and AI imports save pricing to a new cloud docu
       );
     }
   }
-  await expect(sourceNode).toHaveCount(0);
+  await expect(sourceNode).toBeVisible();
+  await expect.poll(async () => (
+    JSON.parse(await page.evaluate(() => (
+      sessionStorage.getItem('azurediagarm.cloud-document.v1') || '{}'
+    ))).documentId
+  )).toBe('IMPORTED');
   await expect.poll(() => importedPayloads.length, { timeout: 5_000 }).toBeGreaterThan(0);
   await expect.poll(
     () => importedPayloads.some(payload => payload.nodes?.some(

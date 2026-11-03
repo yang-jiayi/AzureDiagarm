@@ -47,7 +47,7 @@ test('React responsive behavior does not embed private breakpoint literals', () 
 });
 
 test('CSS media queries use only canonical width and height boundaries', () => {
-  const allowedWidths = new Set([480, 481, 640, 641, 900, 1180, 1440]);
+  const allowedWidths = new Set([480, 481, 640, 641, 900, 1180, 1181, 1440]);
   const allowedHeights = new Set([480, 600]);
 
   for (const path of sourceFiles(sourceRoot).filter((file) => file.pathname.endsWith('.css'))) {

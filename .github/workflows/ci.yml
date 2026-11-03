@@ -19,6 +19,19 @@ permissions:
   contents: read
 
 jobs:
+  dependency-review:
+    name: Review introduced runtime dependencies
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Review dependency changes
+        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          fail-on-severity: high
+          fail-on-scopes: runtime
+
   build:
     name: Build (Vite app)
     runs-on: ubuntu-latest
@@ -42,6 +55,11 @@ jobs:
         run: |
           npm run audit:production
           npm --prefix server audit --omit=dev --audit-level=high
+
+      # Keep development/build-tool advisories visible without blocking every
+      # run on the currently unresolved, non-production minimatch range.
+      - name: Audit all root dependencies
+        run: npm audit --audit-level=critical
 
       - name: Build (tsc + vite)
         run: npm run build

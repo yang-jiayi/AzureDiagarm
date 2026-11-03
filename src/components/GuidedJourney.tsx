@@ -137,8 +137,8 @@ export const JourneyStrip: React.FC<JourneyStripProps> = ({
 };
 
 interface StartChooserProps {
-  onGuidedChat: () => void;
-  onGenerate: () => void;
+  onGuidedChat: (brief: string) => void;
+  onGenerate: (brief: string) => void;
   onBrowseTemplates: () => void;
   onImportTemplate: () => void;
   onImportAzure: () => void;
@@ -151,42 +151,83 @@ export const StartChooser: React.FC<StartChooserProps> = ({
   onImportTemplate,
   onImportAzure,
 }) => {
-  const { t, language } = useLanguage();
+  const { language } = useLanguage();
+  const [brief, setBrief] = React.useState('');
+  const example = localize(language, {
+    en: 'A customer-facing web app with a secure API, relational data, and monitoring',
+    ja: '安全なAPI、リレーショナル データ、監視を備えた顧客向けWebアプリ',
+  });
   return (
-    <div className="start-chooser" role="region" aria-label={t('Choose how to start')}>
+    <div
+      className="start-chooser"
+      role="region"
+      aria-label={localize(language, { en: 'Start an architecture', ja: 'アーキテクチャを作成' })}
+    >
       <div className="start-chooser-heading">
-        <h2>{t('How would you like to start?')}</h2>
-        <p>{t('Choose a path now. All paths lead to the same editable canvas and Guided Chat refinement.')}</p>
+        <h2>{localize(language, { en: 'What would you like to build?', ja: '何を作成しますか？' })}</h2>
+        <p>{localize(language, {
+          en: 'Start with a short brief. You can review and edit it before sending.',
+          ja: 'まず要件を簡潔に入力してください。送信前に確認・編集できます。',
+        })}</p>
+      </div>
+      <div className="start-brief">
+        <label htmlFor="start-architecture-brief">
+          {localize(language, { en: 'Architecture brief', ja: 'アーキテクチャの要件' })}
+        </label>
+        <textarea
+          id="start-architecture-brief"
+          value={brief}
+          onChange={(event) => setBrief(event.target.value)}
+          placeholder={localize(language, {
+            en: 'Describe the workload, who uses it, and what it needs to do…',
+            ja: 'ワークロード、利用者、必要な機能を説明してください…',
+          })}
+          rows={3}
+        />
+        <button
+          type="button"
+          className="start-brief-example"
+          onClick={() => setBrief(example)}
+        >
+          {localize(language, { en: 'Use an editable example', ja: '編集できる例を入力' })}
+          <span>{example}</span>
+        </button>
       </div>
       <div className="start-choice-grid">
-        <button type="button" className="start-choice recommended" onClick={onGuidedChat}>
-          <span className="start-choice-icon"><MessageSquare size={24} /></span>
-          <span className="start-choice-badge">{t('Recommended for first-time users')}</span>
-          <strong>{t('Guided Chat')}</strong>
-          <span>{t('Describe the outcome, create the first diagram, and keep refining in one conversation.')}</span>
-        </button>
-        <button type="button" className="start-choice" onClick={onGenerate}>
-          <span className="start-choice-icon"><Sparkles size={24} /></span>
-          <strong>{t('Generate Diagram')}</strong>
-          <span>{t('Use a detailed prompt, upload a sketch, and choose Topology, Blueprint, or both.')}</span>
-        </button>
-        <button type="button" className="start-choice" onClick={onBrowseTemplates}>
-          <span className="start-choice-icon"><LayoutTemplate size={24} /></span>
-          <strong>{localize(language, { en: 'Browse Templates', ja: 'テンプレートを見る' })}</strong>
+        <button type="button" className="start-choice recommended" onClick={() => onGuidedChat(brief.trim())}>
+          <span className="start-choice-icon"><MessageSquare size={21} /></span>
+          <strong>{localize(language, { en: 'Continue in Guided Chat', ja: 'ガイド付きチャットで続ける' })}</strong>
           <span>{localize(language, {
-            en: 'Preview a proven starting architecture, then customize every service and connection.',
-            ja: '実績あるスターター構成をプレビューし、すべてのサービスと接続を編集できます。',
+            en: 'Your brief is placed in the input. Nothing is sent until you choose Send.',
+            ja: '要件が入力欄に設定されます。送信を押すまで送信されません。',
           })}</span>
         </button>
-        <div className="start-choice import-choice">
-          <span className="start-choice-icon"><Import size={24} /></span>
-          <strong>{t('Import Existing')}</strong>
-          <span>{t('Start from infrastructure code or reverse-engineer a live Azure resource group.')}</span>
-          <div className="start-choice-actions">
-            <button type="button" onClick={onImportTemplate}><FileCode2 size={15} /> {t('Template')}</button>
-            <button type="button" onClick={onImportAzure}><Import size={15} /> {t('Azure')}</button>
-          </div>
-        </div>
+      </div>
+      <div className="start-choice-advanced">
+        <span>{localize(language, { en: 'Need image input or more output control?', ja: '画像入力や出力の詳細設定が必要ですか？' })}</span>
+        <button type="button" onClick={() => onGenerate(brief.trim())}>
+          <span className="start-choice-icon"><Sparkles size={21} /></span>
+          <strong>{localize(language, { en: 'Image or detailed generation', ja: '画像・詳細設定で生成' })}</strong>
+          <span>{localize(language, {
+            en: 'Keep this brief while adding an image or choosing Topology, Blueprint, or both.',
+            ja: 'この要件を引き継ぎ、画像やTopology、Blueprint、両方の出力を選べます。',
+          })}</span>
+        </button>
+      </div>
+      <div className="start-chooser-secondary">
+        <span>{localize(language, { en: 'Start from an existing design', ja: '既存の設計から開始' })}</span>
+        <button type="button" onClick={onBrowseTemplates}>
+          <LayoutTemplate size={15} aria-hidden="true" />
+          {localize(language, { en: 'Browse templates', ja: 'テンプレートを見る' })}
+        </button>
+        <button type="button" onClick={onImportTemplate}>
+          <FileCode2 size={15} aria-hidden="true" />
+          {localize(language, { en: 'Import Bicep, Terraform, or ARM', ja: 'Bicep、Terraform、ARMを取り込む' })}
+        </button>
+        <button type="button" onClick={onImportAzure}>
+          <Import size={15} aria-hidden="true" />
+          {localize(language, { en: 'Import Azure resource group', ja: 'Azureリソース グループを取り込む' })}
+        </button>
       </div>
     </div>
   );

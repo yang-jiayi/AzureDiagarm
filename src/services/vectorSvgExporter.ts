@@ -39,6 +39,7 @@ import type { Node, Edge } from 'reactflow';
 import { readTextAsset } from '../utils/assetSource';
 import { categoryAccent, rgba, shade, tint } from '../utils/canvasPalette';
 import type { ExportBackground } from '../utils/captureCanvas';
+import { stripXmlForbidden } from '../utils/xmlText';
 import {
   advanceWidthIn,
   buildExportRoutes,
@@ -144,7 +145,7 @@ const BADGE_R = 9;
 const f = (n: number): number => +n.toFixed(2);
 
 function esc(value: string): string {
-  return String(value)
+  return stripXmlForbidden(String(value))
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')

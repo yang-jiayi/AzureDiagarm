@@ -102,7 +102,8 @@ rm() {
 source "$FIXTURE/scripts/fetch-multi-region-pricing.sh" eastus2
 `;
       const bash = process.platform === 'win32'
-        ? join(process.env.ProgramFiles || 'C:\\Program Files', 'Git', 'bin', 'bash.exe')
+        ? process.env.GIT_BASH_PATH
+          || join(process.env.ProgramFiles || 'C:\\Program Files', 'Git', 'bin', 'bash.exe')
         : 'bash';
       const result = spawnSync(bash, ['--noprofile', '--norc', '-s'], {
         cwd: fixture, input: script, encoding: 'utf8', timeout: 30_000,

@@ -496,7 +496,7 @@ export const translationKeys = [
   "Pricing term",
   "Pricing Types",
   "Problem:",
-  "Production-ready Bicep templates for automated infrastructure deployment. Deploy with:",
+  "Starter Bicep templates for review. This app does not deploy to Azure. When ready, you can deploy with:",
   "Project",
   "Project name",
   "Prompt:",

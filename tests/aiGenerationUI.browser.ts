@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { build } from 'esbuild';
 import { chromium, type Browser, type Page } from 'playwright';
+import { buildDiagramChanges } from '../src/services/diagramChanges';
 
 let browser: Browser;
 let script: string;
@@ -176,7 +177,9 @@ before(async () => {
           else if(h.surface==='review') {
             const n=id=>({id,position:{x:0,y:0},data:{label:id}});
             h.changeSet ||= buildDiagramChanges({nodes:[n('a')],edges:[]},{nodes:[n('a'),n('b')],edges:[{id:'e',source:'a',target:'b'}]});
-            root.render(<Review changeSet={h.changeSet} error={h.reviewError} onApply={graph=>{
+            root.render(<Review changeSet={h.changeSet} error={h.reviewError}
+              onSelectionChange={changes=>{h.selectedChangeIds=changes.map(change=>change.id);}}
+              onApply={graph=>{
               h.reviewAttempts++;
               if(h.snapshotError) {h.reviewError='Snapshot failed; your diagram was not changed.'; h.render(); return;}
               h.reviewError=''; h.reviewed.push(graph); h.render();
@@ -798,6 +801,44 @@ test('chat summaries and follow-ups describe only the accepted graph', async t =
   assert.deepEqual(await page.evaluate(() => (window as any).h.followupInputs[0].services), ['SQL']);
 });
 
+test('starter suggestions draft prompts without sending them', async t => {
+  const page = await setup(t, { surface: 'chat' });
+  const starter = page.locator('.arch-chat-empty .arch-chat-chip').first();
+  const prompt = await starter.innerText();
+  await starter.click();
+  assert.equal(await page.locator('textarea').inputValue(), prompt);
+  assert.equal(await page.evaluate(() => (window as any).h.calls.length), 0);
+  assert.equal(await page.locator('.arch-chat-msg-user').count(), 0);
+  assert.equal(await page.getByRole('button', { name: 'Send' }).isEnabled(), true);
+});
+
+test('follow-up and AI idea suggestions require explicit send', async t => {
+  const page = await setup(t, {
+    surface: 'chat',
+    nodes: [{ id: 'existing', type: 'azureNode', position: { x: 0, y: 0 }, data: { label: 'Existing service' } }],
+    accepted: true,
+    acceptedNodes: [{ id: 'existing', type: 'azureNode', position: { x: 0, y: 0 }, data: { label: 'Existing service' } }],
+  });
+  await page.locator('textarea').fill('Review the architecture');
+  await page.getByRole('button', { name: 'Send' }).click();
+  await page.locator('.arch-chat-msg-assistant').waitFor();
+
+  const followUp = page.locator('.arch-chat-chip-followup').first();
+  await followUp.waitFor();
+  const prompt = await followUp.innerText();
+  await followUp.click();
+  assert.equal(await page.locator('textarea').inputValue(), prompt);
+  assert.equal(await page.evaluate(() => (window as any).h.calls.length), 1);
+  assert.equal(await page.locator('.arch-chat-msg-user').count(), 1);
+
+  await page.getByRole('button', { name: 'Suggest an idea' }).click();
+  await page.locator('textarea').waitFor();
+  await page.waitForFunction(() => (document.querySelector('textarea') as HTMLTextAreaElement).value === 'Add monitoring');
+  assert.equal(await page.locator('textarea').inputValue(), 'Add monitoring');
+  assert.equal(await page.evaluate(() => (window as any).h.calls.length), 1);
+  assert.equal(await page.locator('.arch-chat-msg-user').count(), 1);
+});
+
 test('chat cancellation during pending review and unmount reaches the parent callback', async t => {
   const page = await setup(t, { surface: 'chat', deferReview: true });
   await page.locator('textarea').fill('Add SQL');
@@ -905,6 +946,26 @@ test('review defaults to all, blocks invalid subsets, and applies exactly the ch
     'a void onApply callback must not close the parent-controlled review');
 });
 
+test('review does not select deletions by default and reports selection changes', async t => {
+  const node = (id: string) => ({ id, position: { x: 0, y: 0 }, data: { label: id } });
+  const changeSet = buildDiagramChanges(
+    { nodes: [node('remove-me'), node('keep-me')], edges: [{ id: 'remove-edge', source: 'remove-me', target: 'keep-me' }] },
+    { nodes: [node('keep-me')], edges: [] },
+  );
+  const page = await setup(t, { surface: 'review', changeSet });
+  const dialog = page.getByRole('dialog', { name: 'Review AI changes' });
+  const checkboxes = dialog.getByRole('checkbox');
+  assert.equal(await checkboxes.count(), 2);
+  assert.equal(await checkboxes.nth(0).isChecked(), false);
+  assert.equal(await checkboxes.nth(1).isChecked(), false);
+  await page.waitForFunction(() => Array.isArray((window as any).h.selectedChangeIds));
+  assert.deepEqual(await page.evaluate(() => (window as any).h.selectedChangeIds), []);
+  await checkboxes.nth(0).check();
+  await page.waitForFunction(() => (window as any).h.selectedChangeIds.length === 1);
+  const selectedIds = await page.evaluate(() => (window as any).h.selectedChangeIds);
+  assert.deepEqual(selectedIds, [changeSet.changes[0].id]);
+});
+
 test('review retains selection after parent snapshot failure and can retry the same proposal', async t => {
   const page = await setup(t, { surface: 'review', snapshotError: true });
   const dialog = page.getByRole('dialog', { name: 'Review AI changes' });
@@ -967,6 +1028,9 @@ for (const language of ['en', 'ja']) {
       },
     });
     const dialog = page.getByRole('dialog');
+    assert.match(await dialog.innerText(), language === 'ja'
+      ? /独立して検証されていません/
+      : /not been independently validated/);
     await page.setViewportSize({ width: 390, height: 844 });
     await addComponentStyles(page, 'AIChangeReview');
     await page.evaluate(() => {

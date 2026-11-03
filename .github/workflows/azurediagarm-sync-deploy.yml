@@ -410,6 +410,7 @@ jobs:
       - publish_validated_merge
     if: ${{ always() && (needs.merge_validate.result == 'failure' || needs.stage_validated_merge.result == 'failure' || needs.publish_validated_merge.result == 'failure') }}
     runs-on: ubuntu-latest
+    environment: production
     permissions:
       contents: read
       id-token: write
@@ -418,6 +419,15 @@ jobs:
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
         with:
           persist-credentials: false
+
+      - name: Verify approved new-tenant notification target
+        env:
+          AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+          AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+          AZURE_CONTAINER_APP: ${{ vars.AZURE_CONTAINER_APP }}
+        run: node scripts/verify-deployment-target.mjs
 
       - name: Sign in to Azure with OIDC
         uses: azure/login@532459ea530d8321f2fb9bb10d1e0bcf23869a43 # v3.0.0
@@ -444,6 +454,7 @@ jobs:
     needs: merge_validate
     if: needs.merge_validate.outputs.source_changed != 'true'
     runs-on: ubuntu-latest
+    environment: production
     permissions:
       contents: read
       id-token: write
@@ -466,12 +477,120 @@ jobs:
           printf '%s' "${{ needs.merge_validate.outputs.update_details_b64 }}" \
             | base64 --decode > update-details.txt
 
+      - name: Verify approved new-tenant deployment target
+        env:
+          AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+          AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+          AZURE_CONTAINER_APP: ${{ vars.AZURE_CONTAINER_APP }}
+        run: node scripts/verify-deployment-target.mjs
+
+      - name: Validate explicit production runtime settings before Azure sign-in
+        env:
+          AZURE_ACCESS_KEY_VAULT_RESOURCE_ID: ${{ vars.AZURE_ACCESS_KEY_VAULT_RESOURCE_ID }}
+          AZURE_TABLES_ACCESS_ENDPOINT: ${{ vars.AZURE_TABLES_ACCESS_ENDPOINT }}
+          MCP_ENABLED: ${{ vars.MCP_ENABLED }}
+          ALLOW_BYO_AI_ENDPOINTS: ${{ vars.ALLOW_BYO_AI_ENDPOINTS }}
+          AI_BUDGET_STORE: ${{ vars.AI_BUDGET_STORE }}
+          AI_DAILY_TOKEN_BUDGET: ${{ vars.AI_DAILY_TOKEN_BUDGET }}
+          AI_MAX_CONCURRENT_REQUESTS: ${{ vars.AI_MAX_CONCURRENT_REQUESTS }}
+          AZURE_TABLES_BUDGET_ENDPOINT: ${{ vars.AZURE_TABLES_BUDGET_ENDPOINT }}
+        run: node scripts/verify-deployment-preflight.mjs runtime-config
+
       - name: Sign in to Azure with OIDC
         uses: azure/login@532459ea530d8321f2fb9bb10d1e0bcf23869a43 # v3.0.0
         with:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Verify production runtime preservation before Azure changes
+        env:
+          AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+          AZURE_CONTAINER_APP: ${{ vars.AZURE_CONTAINER_APP }}
+          AZURE_ACCESS_KEY_VAULT_RESOURCE_ID: ${{ vars.AZURE_ACCESS_KEY_VAULT_RESOURCE_ID }}
+          AZURE_TABLES_ACCESS_ENDPOINT: ${{ vars.AZURE_TABLES_ACCESS_ENDPOINT }}
+          MCP_ENABLED: ${{ vars.MCP_ENABLED }}
+          ALLOW_BYO_AI_ENDPOINTS: ${{ vars.ALLOW_BYO_AI_ENDPOINTS }}
+          AI_BUDGET_STORE: ${{ vars.AI_BUDGET_STORE }}
+          AI_DAILY_TOKEN_BUDGET: ${{ vars.AI_DAILY_TOKEN_BUDGET }}
+          AI_MAX_CONCURRENT_REQUESTS: ${{ vars.AI_MAX_CONCURRENT_REQUESTS }}
+          AZURE_TABLES_BUDGET_ENDPOINT: ${{ vars.AZURE_TABLES_BUDGET_ENDPOINT }}
+          MAX_REPLICAS: '3'
+        run: |
+          set -Eeuo pipefail
+          az containerapp show \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --name "$AZURE_CONTAINER_APP" \
+            --query properties.template.containers[0].env \
+            --output json > /tmp/azurediagarm-current-env.json
+          CURRENT_ENV_FILE=/tmp/azurediagarm-current-env.json \
+            node scripts/verify-deployment-preflight.mjs preserve-runtime
+          current_max_replicas="$(
+            az containerapp show \
+              --resource-group "$AZURE_RESOURCE_GROUP" \
+              --name "$AZURE_CONTAINER_APP" \
+              --query properties.template.scale.maxReplicas \
+              --output tsv
+          )"
+          CURRENT_MAX_REPLICAS="$current_max_replicas" \
+            node scripts/verify-deployment-preflight.mjs no-replica-reduction
+
+      - name: Verify storage policy exemption before Azure changes
+        env:
+          AZURE_BLOB_ENDPOINT: ${{ vars.AZURE_BLOB_ENDPOINT }}
+          AZURE_TABLES_ENDPOINT: ${{ vars.AZURE_TABLES_ENDPOINT }}
+        run: |
+          set -Eeuo pipefail
+          normalized_endpoint="${AZURE_TABLES_ENDPOINT%/}/"
+          normalized_blob_endpoint="${AZURE_BLOB_ENDPOINT%/}/"
+          az storage account list --output json > /tmp/azurediagarm-policy-storage-accounts.json
+          storage_id="$(
+            jq -er \
+              --arg endpoint "${normalized_endpoint,,}" \
+              '
+                map(select(
+                  ((.primaryEndpoints.table // "") | ascii_downcase) == $endpoint
+                )) |
+                first |
+                .id
+              ' /tmp/azurediagarm-policy-storage-accounts.json
+          )"
+          jq -e \
+            --arg storage "$storage_id" \
+            --arg endpoint "${normalized_blob_endpoint,,}" \
+            '
+              any(
+                .[];
+                (.id | ascii_downcase) == ($storage | ascii_downcase) and
+                ((.primaryEndpoints.blob // "") | ascii_downcase) == $endpoint
+              )
+            ' /tmp/azurediagarm-policy-storage-accounts.json > /dev/null || {
+            echo "::error::Diagram storage endpoints must resolve to one storage account."
+            exit 1
+          }
+
+          az policy exemption show \
+            --name AzureDiagarm-Storage-NSP \
+            --scope "$storage_id" \
+            --output json > /tmp/azurediagarm-storage-policy-exemption.json
+          az policy assignment list \
+            --scope "$storage_id" \
+            --filter 'atScope()' \
+            --output json > /tmp/azurediagarm-storage-policy-assignments.json
+          policy_set_name="$(
+            POLICY_ASSIGNMENTS_FILE=/tmp/azurediagarm-storage-policy-assignments.json \
+              node scripts/verify-deployment-preflight.mjs policy-set-name
+          )"
+          az policy set-definition show \
+            --name "$policy_set_name" \
+            --output json > /tmp/azurediagarm-storage-policy-set.json
+          POLICY_ASSIGNMENTS_FILE=/tmp/azurediagarm-storage-policy-assignments.json \
+            POLICY_SET_FILE=/tmp/azurediagarm-storage-policy-set.json \
+            POLICY_EXEMPTION_FILE=/tmp/azurediagarm-storage-policy-exemption.json \
+            STORAGE_SCOPE="$storage_id" \
+            node scripts/verify-deployment-preflight.mjs storage-policy-exemption
 
       - name: Install Azure CLI extensions
         run: |
@@ -671,13 +790,13 @@ jobs:
           AZURE_OPENAI_ENDPOINT: ${{ vars.AZURE_OPENAI_ENDPOINT }}
           AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA: ${{ vars.AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA }}
           AZURE_OPENAI_ALLOWED_DEPLOYMENTS: ${{ vars.AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA }}
-          ALLOW_BYO_AI_ENDPOINTS: ${{ vars.ALLOW_BYO_AI_ENDPOINTS || 'false' }}
-          AI_BUDGET_STORE: ${{ vars.AI_BUDGET_STORE || 'table' }}
+          ALLOW_BYO_AI_ENDPOINTS: ${{ vars.ALLOW_BYO_AI_ENDPOINTS }}
+          AI_BUDGET_STORE: ${{ vars.AI_BUDGET_STORE }}
           AZURE_COSMOS_ENDPOINT: ${{ vars.AZURE_COSMOS_ENDPOINT }}
           AZURE_TABLES_ENDPOINT: ${{ vars.AZURE_TABLES_ENDPOINT }}
           AZURE_TABLES_BUDGET_ENDPOINT: ${{ vars.AZURE_TABLES_BUDGET_ENDPOINT }}
-          AI_DAILY_TOKEN_BUDGET: ${{ vars.AI_DAILY_TOKEN_BUDGET || '250000' }}
-          AI_MAX_CONCURRENT_REQUESTS: ${{ vars.AI_MAX_CONCURRENT_REQUESTS || '2' }}
+          AI_DAILY_TOKEN_BUDGET: ${{ vars.AI_DAILY_TOKEN_BUDGET }}
+          AI_MAX_CONCURRENT_REQUESTS: ${{ vars.AI_MAX_CONCURRENT_REQUESTS }}
           FEEDBACK_RETENTION_DAYS: ${{ vars.FEEDBACK_RETENTION_DAYS || '30' }}
           FEEDBACK_LEGACY_RETENTION_ENABLED: ${{ vars.FEEDBACK_LEGACY_RETENTION_ENABLED || 'false' }}
         run: |
@@ -712,19 +831,9 @@ jobs:
             --profile-name "${{ vars.AZURE_FRONT_DOOR_PROFILE }}" \
             --output json > /tmp/azurediagarm-custom-domain.json
           custom_domain_id="$(
-            jq -er \
-              --arg host "$app_host" \
-              '
-                map(select(
-                  .hostName == $host and
-                  .domainValidationState == "Approved" and
-                  .provisioningState == "Succeeded" and
-                  .tlsSettings.minimumTlsVersion == "TLS12" and
-                  .tlsSettings.certificateType == "CustomerCertificate"
-                )) |
-                first |
-                .id
-              ' /tmp/azurediagarm-custom-domain.json
+            APP_HOST="$app_host" \
+              AFD_CUSTOM_DOMAIN_FILE=/tmp/azurediagarm-custom-domain.json \
+              node scripts/verify-deployment-preflight.mjs afd-domain
           )"
 
           az afd security-policy list \
@@ -882,41 +991,6 @@ jobs:
             .properties.sensitiveDataDiscovery.isEnabled == true
           ' /tmp/azurediagarm-defender-storage.json > /dev/null
 
-          # Security Center's built-in Private Link and VNet-rule audits do not
-          # recognize Network Security Perimeters. Keep the resource-scoped,
-          # time-bound mitigated exemption explicit and fail when it expires.
-          az policy exemption show \
-            --name AzureDiagarm-Storage-NSP \
-            --scope "$storage_id" \
-            --output json > /tmp/azurediagarm-storage-policy-exemption.json
-          jq -e '
-            .exemptionCategory == "Mitigated" and
-            (.expiresOn // "") != ""
-          ' /tmp/azurediagarm-storage-policy-exemption.json > /dev/null
-          exemption_expires="$(
-            jq -er '.expiresOn' /tmp/azurediagarm-storage-policy-exemption.json
-          )"
-          if (( $(date -u -d "$exemption_expires" +%s) <= $(date -u +%s) )); then
-            echo "::error::AzureDiagarm-Storage-NSP has expired and requires a security review."
-            exit 1
-          fi
-          required_policy_references=(
-            storageaccountsshouldrestrictnetworkaccessusingvirtualnetworkrulesexdatabricksmonitoringeffect
-            storageaccountsshouldrestrictnetworkaccessusingvirtualnetworkrulesexaromonitoringeffect
-            storageaccountsshouldrestrictnetworkaccessusingvirtualnetworkrulesmonitoringeffect
-            storageaccountshoulduseaprivatelinkconnectionexdatabricksmonitoringeffect
-            storageaccountshoulduseaprivatelinkconnectionmonitoringeffect
-            storageaccountshoulduseaprivatelinkconnectionexaromonitoringeffect
-          )
-          for reference_id in "${required_policy_references[@]}"; do
-            jq -e --arg reference "$reference_id" '
-              (.policyDefinitionReferenceIds // []) | index($reference) != null
-            ' /tmp/azurediagarm-storage-policy-exemption.json > /dev/null || {
-              echo "::error::AzureDiagarm-Storage-NSP is missing policy reference $reference_id."
-              exit 1
-            }
-          done
-
           az containerapp show \
             --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
             --name "${{ vars.AZURE_CONTAINER_APP }}" \
@@ -1006,10 +1080,6 @@ jobs:
             echo "::error::AZURE_APP_URL must be an HTTPS origin when access control is enabled."
             exit 1
           }
-          [[ "$AZURE_ACCESS_KEY_VAULT_RESOURCE_ID" =~ ^/subscriptions/[^/]+/resourceGroups/[^/]+/providers/Microsoft\.KeyVault/vaults/[^/]+$ ]] || {
-            echo "::error::AZURE_ACCESS_KEY_VAULT_RESOURCE_ID must identify the production Key Vault."
-            exit 1
-          }
 
       - name: Compute desired deployment configuration
         id: desired_config
@@ -1026,9 +1096,9 @@ jobs:
           ACCESS_ADMIN_EMAIL: ${{ secrets.ACCESS_ADMIN_EMAIL }}
           AZURE_ACCESS_KEY_VAULT_RESOURCE_ID: ${{ vars.AZURE_ACCESS_KEY_VAULT_RESOURCE_ID }}
           AZURE_TABLES_ACCESS_ENDPOINT: ${{ vars.AZURE_TABLES_ACCESS_ENDPOINT }}
-          AI_BUDGET_STORE: ${{ vars.AI_BUDGET_STORE || 'table' }}
-          AI_DAILY_TOKEN_BUDGET: ${{ vars.AI_DAILY_TOKEN_BUDGET || '250000' }}
-          AI_MAX_CONCURRENT_REQUESTS: ${{ vars.AI_MAX_CONCURRENT_REQUESTS || '2' }}
+          AI_BUDGET_STORE: ${{ vars.AI_BUDGET_STORE }}
+          AI_DAILY_TOKEN_BUDGET: ${{ vars.AI_DAILY_TOKEN_BUDGET }}
+          AI_MAX_CONCURRENT_REQUESTS: ${{ vars.AI_MAX_CONCURRENT_REQUESTS }}
           AZURE_TABLES_BUDGET_ENDPOINT: ${{ vars.AZURE_TABLES_BUDGET_ENDPOINT }}
           AZURE_TABLES_BUDGET_TABLE: ${{ vars.AZURE_TABLES_BUDGET_TABLE || 'aibudgets' }}
           COSMOS_BUDGET_CONTAINER_ID: ${{ vars.COSMOS_BUDGET_CONTAINER_ID || vars.COSMOS_FEEDBACK_CONTAINER_ID || 'feedback' }}
@@ -1039,7 +1109,7 @@ jobs:
           AZURE_OPENAI_ENDPOINT: ${{ vars.AZURE_OPENAI_ENDPOINT }}
           AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA: ${{ vars.AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA }}
           AZURE_OPENAI_RESOURCE_ID: ${{ vars.AZURE_OPENAI_RESOURCE_ID }}
-          ALLOW_BYO_AI_ENDPOINTS: ${{ vars.ALLOW_BYO_AI_ENDPOINTS || 'false' }}
+          ALLOW_BYO_AI_ENDPOINTS: ${{ vars.ALLOW_BYO_AI_ENDPOINTS }}
           AZURE_SPEECH_REGION: ${{ vars.AZURE_SPEECH_REGION }}
           AZURE_SPEECH_RESOURCE_ID: ${{ vars.AZURE_SPEECH_RESOURCE_ID }}
           AZURE_AD_CLIENT_ID: ${{ vars.AZURE_AD_CLIENT_ID }}
@@ -1059,7 +1129,7 @@ jobs:
           AZURE_BLOB_ENDPOINT: ${{ vars.AZURE_BLOB_ENDPOINT }}
           AZURE_BLOB_DIAGRAMS_CONTAINER: ${{ vars.AZURE_BLOB_DIAGRAMS_CONTAINER || 'diagrams' }}
           OPENAI_RATE_LIMIT_PER_HOUR: '120'
-          MCP_ENABLED: ${{ vars.MCP_ENABLED || 'false' }}
+          MCP_ENABLED: ${{ vars.MCP_ENABLED }}
           MCP_HTTP_STATELESS: 'true'
           MCP_HTTP_MAX_IN_FLIGHT: '20'
           MCP_SESSION_MAX: '100'
@@ -1067,7 +1137,7 @@ jobs:
           MCP_SESSION_TTL_SECONDS: '7200'
           MCP_SESSION_GC_SECONDS: '60'
           MIN_REPLICAS: '1'
-          MAX_REPLICAS: '2'
+          MAX_REPLICAS: '3'
           HTTP_SCALE_CONCURRENCY: '50'
           PROBE_PROFILE: 'startup-readyz,liveness-healthz,readiness-readyz'
         run: |
@@ -1178,6 +1248,7 @@ jobs:
         env:
           FORCE_DEPLOY: ${{ inputs.force_deploy || 'false' }}
           DESIRED_CONFIG_HASH: ${{ steps.desired_config.outputs.hash }}
+          MAX_REPLICAS: '3'
         run: |
           set -Eeuo pipefail
           current_upstream="$(
@@ -1251,6 +1322,8 @@ jobs:
               --query properties.template.scale.maxReplicas \
               --output tsv
           )"
+          CURRENT_MAX_REPLICAS="$current_max_replicas" \
+            node scripts/verify-deployment-preflight.mjs no-replica-reduction
           current_http_concurrency="$(
             az containerapp show \
               --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
@@ -1259,7 +1332,7 @@ jobs:
               --output tsv
           )"
           scale_matches=false
-          if [[ "$current_min_replicas" == "1" && "$current_max_replicas" == "2" && "$current_http_concurrency" == "50" ]]; then
+          if [[ "$current_min_replicas" == "1" && "$current_max_replicas" == "$MAX_REPLICAS" && "$current_http_concurrency" == "50" ]]; then
             scale_matches=true
           fi
           az containerapp show \
@@ -1341,6 +1414,7 @@ jobs:
 
       - name: Build and push application image
         if: steps.deployment.outputs.should_deploy == 'true'
+        id: build_image
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
           context: .
@@ -1357,6 +1431,62 @@ jobs:
             VITE_FEEDBACK_CONTACT_ENABLED=${{ vars.FEEDBACK_CONTACT_ENABLED || 'false' }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Record immutable release image
+        if: steps.deployment.outputs.should_deploy == 'true'
+        id: release_image
+        env:
+          TAGGED_IMAGE: ${{ steps.image.outputs.image }}
+          IMAGE_DIGEST: ${{ steps.build_image.outputs.digest }}
+          UPSTREAM_COMMIT: ${{ needs.merge_validate.outputs.upstream_commit }}
+          CUSTOMIZATION_COMMIT: ${{ needs.merge_validate.outputs.fork_commit }}
+          RELEASE_METADATA_PATH: ${{ runner.temp }}/release-image.json
+        run: |
+          set -Eeuo pipefail
+          [[ "$IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          image_repository="${TAGGED_IMAGE%:*}"
+          [[ "$image_repository" != "$TAGGED_IMAGE" ]]
+          immutable_image="$image_repository@$IMAGE_DIGEST"
+          export IMMUTABLE_IMAGE="$immutable_image"
+          echo "digest=$IMAGE_DIGEST" >> "$GITHUB_OUTPUT"
+          echo "immutable_ref=$immutable_image" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Container image"
+            echo
+            echo "- Tag: \`$TAGGED_IMAGE\`"
+            echo "- Digest: \`$IMAGE_DIGEST\`"
+            echo "- Immutable reference: \`$immutable_image\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+          node --input-type=module -e '
+            import { writeFile } from "node:fs/promises";
+            const metadata = {
+              repository: process.env.GITHUB_REPOSITORY,
+              runId: process.env.GITHUB_RUN_ID,
+              source: {
+                upstreamCommit: process.env.UPSTREAM_COMMIT,
+                customizationCommit: process.env.CUSTOMIZATION_COMMIT,
+              },
+              image: {
+                tagged: process.env.TAGGED_IMAGE,
+                digest: process.env.IMAGE_DIGEST,
+                immutable: process.env.IMMUTABLE_IMAGE,
+              },
+            };
+            await writeFile(
+              process.env.RELEASE_METADATA_PATH,
+              `${JSON.stringify(metadata, null, 2)}\n`,
+              { encoding: "utf8", flag: "wx" },
+            );
+          '
+
+      - name: Upload release image metadata
+        if: steps.release_image.outcome == 'success'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-image-${{ github.run_id }}
+          path: ${{ runner.temp }}/release-image.json
+          if-no-files-found: error
+          retention-days: 90
 
       - name: Capture rollback baseline
         if: steps.deployment.outputs.should_deploy == 'true'
@@ -1395,9 +1525,9 @@ jobs:
             "ACCESS_ADMIN_EMAIL=$ACCESS_ADMIN_EMAIL"
             "AZURE_ACCESS_KEY_VAULT_RESOURCE_ID=${{ vars.AZURE_ACCESS_KEY_VAULT_RESOURCE_ID }}"
             "AZURE_TABLES_ACCESS_ENDPOINT=${{ vars.AZURE_TABLES_ACCESS_ENDPOINT }}"
-            "AI_BUDGET_STORE=${{ vars.AI_BUDGET_STORE || 'table' }}"
-            "AI_DAILY_TOKEN_BUDGET=${{ vars.AI_DAILY_TOKEN_BUDGET || '250000' }}"
-            "AI_MAX_CONCURRENT_REQUESTS=${{ vars.AI_MAX_CONCURRENT_REQUESTS || '2' }}"
+            "AI_BUDGET_STORE=${{ vars.AI_BUDGET_STORE }}"
+            "AI_DAILY_TOKEN_BUDGET=${{ vars.AI_DAILY_TOKEN_BUDGET }}"
+            "AI_MAX_CONCURRENT_REQUESTS=${{ vars.AI_MAX_CONCURRENT_REQUESTS }}"
             "AZURE_TABLES_BUDGET_ENDPOINT=${{ vars.AZURE_TABLES_BUDGET_ENDPOINT }}"
             "AZURE_TABLES_BUDGET_TABLE=${{ vars.AZURE_TABLES_BUDGET_TABLE || 'aibudgets' }}"
             "COSMOS_BUDGET_CONTAINER_ID=${{ vars.COSMOS_BUDGET_CONTAINER_ID || vars.COSMOS_FEEDBACK_CONTAINER_ID || 'feedback' }}"
@@ -1412,7 +1542,7 @@ jobs:
             "OPENAI_RATE_LIMIT_PER_HOUR=120"
             "AZURE_SPEECH_REGION=${{ vars.AZURE_SPEECH_REGION }}"
             "AZURE_SPEECH_RESOURCE_ID=${{ vars.AZURE_SPEECH_RESOURCE_ID }}"
-            "MCP_ENABLED=${{ vars.MCP_ENABLED || 'false' }}"
+            "MCP_ENABLED=${{ vars.MCP_ENABLED }}"
             "MCP_HTTP_STATELESS=true"
             "MCP_HTTP_MAX_IN_FLIGHT=20"
             "MCP_SESSION_MAX=100"
@@ -1495,11 +1625,11 @@ jobs:
           update_args=(
             --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}"
             --name "${{ vars.AZURE_CONTAINER_APP }}"
-            --image "${{ steps.image.outputs.image }}"
+            --image "${{ steps.release_image.outputs.immutable_ref }}"
             --revision-suffix "$revision_suffix"
             --set-env-vars "${env_vars[@]}"
             --min-replicas 1
-            --max-replicas 2
+            --max-replicas 3
             --scale-rule-name http
             --scale-rule-http-concurrency 50
             --output none
@@ -1641,7 +1771,7 @@ jobs:
             --query properties.template.containers[0].probes \
             --output json > /tmp/azurediagarm-probes.json
 
-          [[ "$actual_image" == "${{ steps.image.outputs.image }}" ]]
+          [[ "$actual_image" == "${{ steps.release_image.outputs.immutable_ref }}" ]]
           [[ "$actual_upstream" == "${{ needs.merge_validate.outputs.upstream_commit }}" ]]
           [[ "$actual_customization" == "${{ needs.merge_validate.outputs.fork_commit }}" ]]
           [[ "$actual_config_hash" == "${{ steps.desired_config.outputs.hash }}" ]]
@@ -1944,7 +2074,7 @@ jobs:
             echo "Microsoft Product Architecture Diagram Builder was updated successfully."
             echo
             echo "URL: ${{ vars.AZURE_APP_URL }}"
-            echo "Image: ${{ steps.image.outputs.image }}"
+            echo "Image: ${{ steps.release_image.outputs.immutable_ref }}"
             echo "Upstream commit: ${{ needs.merge_validate.outputs.upstream_commit }}"
             echo "Customization commit: ${{ needs.merge_validate.outputs.fork_commit }}"
             echo "Workflow: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"

@@ -33,8 +33,8 @@ interface CanvasChromeProps {
   feedbackPulse?: boolean;
   onDismissNavigationHint: () => void;
   onFitView: () => void;
-  onGuidedChat: () => void;
-  onGenerateDiagram: () => void;
+  onGuidedChat: (brief: string) => void;
+  onGenerateDiagram: (brief: string) => void;
   onBrowseTemplates: () => void;
   onImportTemplate: () => void;
   onImportAzure: () => void;

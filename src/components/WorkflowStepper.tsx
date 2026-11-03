@@ -6,8 +6,8 @@ import {
   ChevronDown,
   ChevronUp,
   CircleDollarSign,
+  Download,
   Loader2,
-  Rocket,
   ShieldCheck,
   Sparkles,
   type LucideIcon,
@@ -29,7 +29,7 @@ interface WorkflowStepperProps extends WorkflowProgress {
   onGenerate: () => void;
   onValidate: () => void;
   onReviewCost: () => void;
-  onDeploy: () => void;
+  onOutput: () => void;
 }
 
 export default function WorkflowStepper({
@@ -45,7 +45,7 @@ export default function WorkflowStepper({
   onGenerate,
   onValidate,
   onReviewCost,
-  onDeploy,
+  onOutput,
 }: WorkflowStepperProps) {
   const { language } = useLanguage();
   const statuses = getWorkflowStepStatuses({
@@ -75,13 +75,19 @@ export default function WorkflowStepper({
   });
 
   const steps: Array<{
-    id: WorkflowStepId;
+    id: Exclude<WorkflowStepId, 'cost'>;
     icon: LucideIcon;
     label: string;
     detail: string;
     value?: string;
     action: () => void;
     disabled: boolean;
+    secondaryAction?: {
+      label: string;
+      detail: string;
+      action: () => void;
+      disabled: boolean;
+    };
   }> = [
     {
       id: 'generate',
@@ -103,50 +109,69 @@ export default function WorkflowStepper({
       id: 'validate',
       icon: ShieldCheck,
       label: localize(language, { en: 'Validate', ja: '検証' }),
-      value: validationScore !== null ? `WAF ${validationScore}` : undefined,
+      value: validationScore !== null
+        ? localize(language, {
+            en: `Well-Architected ${validationScore}`,
+            ja: `Well-Architected ${validationScore}`,
+          })
+        : undefined,
       detail: validationScore !== null
         ? localize(language, {
-            en: `WAF score ${validationScore}`,
-            ja: `WAF スコア ${validationScore}`,
+            en: `Azure Well-Architected design review score: ${validationScore}. Cost is also a review dimension.`,
+            ja: `Azure Well-Architected 設計レビュー スコア: ${validationScore}。コストもレビュー項目です。`,
           })
-        : localize(language, { en: 'Check architecture readiness', ja: '設計の準備状況を確認' }),
+        : localize(language, {
+            en: 'Review architecture quality, risk, and estimated cost',
+            ja: '設計の品質、リスク、概算コストを確認',
+          }),
       action: onValidate,
       disabled: statuses.validate === 'pending' || statuses.validate === 'busy',
+      secondaryAction: {
+        label: localize(language, { en: 'Cost', ja: 'コスト' }),
+        detail: localize(language, {
+          en: 'Review cost estimates as part of architecture validation',
+          ja: 'アーキテクチャ検証の一環としてコスト見積を確認',
+        }),
+        action: onReviewCost,
+        disabled: statuses.cost === 'pending' || !hasCostData,
+      },
     },
     {
-      id: 'cost',
-      icon: CircleDollarSign,
-      label: localize(language, { en: 'Cost', ja: 'コスト' }),
-      value: hasCostData ? monthlyCostLabel : undefined,
-      detail: hasCostData
-        ? monthlyCostLabel
-        : localize(language, { en: 'Waiting for pricing data', ja: '料金データを待機中' }),
-      action: onReviewCost,
-      disabled: statuses.cost === 'pending' || !hasCostData,
-    },
-    {
-      id: 'deploy',
-      icon: Rocket,
-      label: localize(language, { en: 'Deploy', ja: 'デプロイ' }),
+      id: 'output',
+      icon: Download,
+      label: localize(language, { en: 'Output', ja: '出力' }),
       detail: hasDeploymentGuide
-        ? localize(language, { en: 'Deployment guide ready', ja: 'デプロイ ガイド準備完了' })
-        : localize(language, { en: 'Generate implementation guidance', ja: '実装ガイドを生成' }),
-      action: onDeploy,
-      disabled: statuses.deploy === 'pending' || statuses.deploy === 'busy',
+        ? localize(language, {
+            en: 'Guide ready. This app does not deploy to Azure.',
+            ja: 'ガイドの準備ができました。このアプリは Azure にデプロイしません。',
+          })
+        : localize(language, {
+            en: 'Export or create deployment guidance and starter IaC. This app does not deploy to Azure.',
+            ja: 'エクスポート、デプロイ手順、IaC のひな形を作成します。このアプリは Azure にデプロイしません。',
+          }),
+      action: onOutput,
+      disabled: statuses.output === 'pending' || statuses.output === 'busy',
     },
   ];
+  const stepStatus = (step: (typeof steps)[number]): WorkflowStepStatus => (
+    step.id === 'validate'
+      && statuses.validate === 'complete'
+      && statuses.cost !== 'complete'
+      ? statuses.cost
+      : statuses[step.id]
+  );
   const activeStep = steps.find(step => (
-    statuses[step.id] === 'current' || statuses[step.id] === 'busy'
-  )) || steps.find(step => statuses[step.id] !== 'complete') || steps[steps.length - 1];
-  const activeStatus = statuses[activeStep.id];
+    stepStatus(step) === 'current' || stepStatus(step) === 'busy'
+  )) || steps.find(step => stepStatus(step) !== 'complete') || steps[steps.length - 1];
+  const activeStatus = stepStatus(activeStep);
 
   if (collapsed) {
     return (
       <nav
         className="workflow-stepper workflow-stepper--collapsed"
         aria-label={localize(language, {
-          en: 'Architecture delivery workflow',
-          ja: 'アーキテクチャ提供ワークフロー',
+          en: 'Architecture workflow: create, review, and output',
+          ja: 'アーキテクチャ ワークフロー: 作成、検証、出力',
         })}
       >
         <button
@@ -175,8 +200,8 @@ export default function WorkflowStepper({
     <nav
       className="workflow-stepper"
       aria-label={localize(language, {
-        en: 'Architecture delivery workflow',
-        ja: 'アーキテクチャ提供ワークフロー',
+        en: 'Architecture workflow: create, review, and output',
+        ja: 'アーキテクチャ ワークフロー: 作成、検証、出力',
       })}
     >
       {onToggleCollapsed && (
@@ -193,33 +218,56 @@ export default function WorkflowStepper({
       )}
       <ol>
         {steps.map((step, index) => {
-          const status = statuses[step.id];
+          const status = stepStatus(step);
           const Icon = step.icon;
           const statusId = `workflow-step-${step.id}-status`;
+          const costStatusId = 'workflow-step-cost-status';
           return (
             <li key={step.id} className={`workflow-stepper-item is-${status}`}>
-              <button
-                type="button"
-                onClick={step.action}
-                disabled={step.disabled}
-                aria-current={status === 'current' || status === 'busy' ? 'step' : undefined}
-                aria-describedby={statusId}
-                title={`${step.label}: ${step.detail}`}
-              >
-                <span className="workflow-stepper-index" aria-hidden="true">
-                  {status === 'complete'
-                    ? <Check size={15} />
-                    : status === 'busy'
-                      ? <Loader2 size={15} className="workflow-stepper-spinner" />
-                      : index + 1}
-                </span>
-                <Icon className="workflow-stepper-icon" size={18} aria-hidden="true" />
-                <span className="workflow-stepper-copy">
-                  <strong>{step.label}</strong>
-                  {step.value && <span className="workflow-stepper-value" aria-hidden="true">{step.value}</span>}
-                </span>
-                <span id={statusId} className="sr-only">{statusLabel(status)}. {step.detail}</span>
-              </button>
+              <div className={`workflow-stepper-actions${step.secondaryAction ? ' workflow-stepper-actions--review' : ''}`}>
+                <button
+                  type="button"
+                  className="workflow-stepper-primary"
+                  onClick={step.action}
+                  disabled={step.disabled}
+                  aria-label={step.label}
+                  aria-current={status === 'current' || status === 'busy' ? 'step' : undefined}
+                  aria-describedby={statusId}
+                  title={`${step.label}: ${step.detail}`}
+                >
+                  <span className="workflow-stepper-index" aria-hidden="true">
+                    {status === 'complete'
+                      ? <Check size={15} />
+                      : status === 'busy'
+                        ? <Loader2 size={15} className="workflow-stepper-spinner" />
+                        : index + 1}
+                  </span>
+                  <Icon className="workflow-stepper-icon" size={18} aria-hidden="true" />
+                  <span className="workflow-stepper-copy">
+                    <strong>{step.label}</strong>
+                    {step.value && <span className="workflow-stepper-value" aria-hidden="true">{step.value}</span>}
+                  </span>
+                  <span id={statusId} className="sr-only">{statusLabel(status)}. {step.detail}</span>
+                </button>
+                {step.secondaryAction && (
+                  <button
+                    type="button"
+                    className={`workflow-stepper-cost is-${statuses.cost}`}
+                    onClick={step.secondaryAction.action}
+                    disabled={step.secondaryAction.disabled}
+                    aria-label={step.secondaryAction.label}
+                    aria-describedby={costStatusId}
+                    title={step.secondaryAction.detail}
+                  >
+                    <CircleDollarSign size={16} aria-hidden="true" />
+                    <span>{step.secondaryAction.label}</span>
+                    <span id={costStatusId} className="sr-only">
+                      {statusLabel(statuses.cost)}. {step.secondaryAction.detail}
+                      {hasCostData ? `. ${monthlyCostLabel}` : ''}
+                    </span>
+                  </button>
+                )}
+              </div>
             </li>
           );
         })}

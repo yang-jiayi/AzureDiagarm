@@ -106,7 +106,7 @@ test(`MAX blueprint async progress and separate result: ${scenario}`, async ({ p
   });
   await page.goto('/');
   await page.getByRole('tab', { name: 'Create', exact: true }).click();
-  await page.getByRole('button', { name: 'Generate Diagram', exact: true }).click();
+  await page.getByRole('button', { name: 'Advanced generation', exact: true }).click();
   const generator = page.locator('.ai-architecture-modal');
   await generator.getByLabel('Architecture Description or Modification').fill('Create a Functions and Cosmos DB architecture.');
   await generator.getByRole('button', { name: 'Continue to output', exact: true }).click();

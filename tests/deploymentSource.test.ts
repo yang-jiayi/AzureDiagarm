@@ -218,9 +218,74 @@ test('workflow guards Azure entry and the revision update before its rollback ma
 const workflow = readFileSync(
   new URL('../.github/workflows/azurediagarm-sync-deploy.yml', import.meta.url), 'utf8',
 );
+
+test('production OIDC jobs use the protected Environment without treating it as configured protection', () => {
+  const notify = workflow.slice(workflow.indexOf('\n  notify_validation_failure:'));
+  const deploy = workflow.slice(workflow.indexOf('\n  deploy:'));
+  for (const job of [notify.split('\n  deploy:')[0], deploy]) {
+    assert.match(job, /environment: production/);
+    assert.match(job, /id-token: write/);
+  }
+});
+
+test('new-tenant preflight selects one access store and preserves production runtime before changes', () => {
+  const deploy = workflow.slice(workflow.indexOf('\n  deploy:'));
+  const runtimeValidation = deploy.indexOf('Validate explicit production runtime settings before Azure sign-in');
+  const login = deploy.indexOf('uses: azure/login@');
+  const preservation = deploy.indexOf('Verify production runtime preservation before Azure changes');
+  const extensions = deploy.indexOf('Install Azure CLI extensions');
+  assert.ok(runtimeValidation >= 0 && runtimeValidation < login);
+  assert.ok(preservation > login && preservation < extensions);
+  const policyPreflight = deploy.indexOf('Verify storage policy exemption before Azure changes');
+  assert.ok(policyPreflight > preservation && policyPreflight < extensions);
+  assert.match(deploy, /AZURE_TABLES_ACCESS_ENDPOINT: \$\{\{ vars\.AZURE_TABLES_ACCESS_ENDPOINT \}\}/);
+  assert.match(deploy, /node scripts\/verify-deployment-preflight\.mjs runtime-config/);
+  assert.match(deploy, /node scripts\/verify-deployment-preflight\.mjs preserve-runtime/);
+  assert.match(deploy, /node scripts\/verify-deployment-preflight\.mjs no-replica-reduction/);
+  assert.match(deploy, /az policy assignment list \\\s+--scope "\$storage_id" \\\s+--filter 'atScope\(\)'/);
+  assert.doesNotMatch(deploy, /az policy assignment list \\\s+--scope "\$storage_id" \\\s+--disable-scope-strict-match/);
+  assert.doesNotMatch(deploy, /(?:MCP_ENABLED|ALLOW_BYO_AI_ENDPOINTS|AI_BUDGET_STORE|AI_DAILY_TOKEN_BUDGET|AI_MAX_CONCURRENT_REQUESTS):[^\n]*\|\|/);
+});
+
+test('AFD and storage exemption guards retain all target bindings and fail closed', () => {
+  const preflight = readFileSync(
+    new URL('../scripts/verify-deployment-preflight.mjs', import.meta.url),
+    'utf8',
+  );
+  assert.match(workflow, /node scripts\/verify-deployment-preflight\.mjs afd-domain/);
+  assert.match(workflow, /az policy assignment list \\\s+--scope "\$storage_id" \\\s+--filter 'atScope\(\)'/);
+  assert.doesNotMatch(workflow, /az policy assignment list[\s\S]{0,100}--include-inherited/);
+  assert.match(workflow, /node scripts\/verify-deployment-preflight\.mjs storage-policy-exemption/);
+  const deploy = workflow.slice(workflow.indexOf('\n  deploy:'));
+  const policyPreflight = deploy.indexOf('Verify storage policy exemption before Azure changes');
+  const firstWrite = deploy.indexOf('az afd profile update');
+  const defenderPut = deploy.indexOf('az rest \\\n              --method put');
+  const revisionUpdate = deploy.indexOf('az containerapp update "${update_args[@]}"');
+  assert.ok(policyPreflight >= 0 && policyPreflight < firstWrite);
+  assert.ok(policyPreflight < defenderPut && policyPreflight < revisionUpdate);
+  assert.equal((deploy.match(/az policy assignment list/g) ?? []).length, 1);
+  assert.match(preflight, /policyAssignmentScope = '\/providers\/Microsoft\.Management\/managementGroups\/02310481-6752-4d53-8fc4-f597a8e047f4'/);
+  assert.match(preflight, /policyExemptions\/\$\{storageExemptionName\}/);
+  assert.match(workflow, /parameters\.associations\[\]\?\.domains\[\]\?/);
+  assert.match(preflight, /domainValidationState === 'Approved'/);
+  assert.match(preflight, /provisioningState === 'Succeeded'/);
+  assert.match(preflight, /minimumTlsVersion === 'TLS12'/);
+  assert.match(preflight, /'CustomerCertificate', 'ManagedCertificate'/);
+  assert.doesNotMatch(workflow, /storageaccountsshouldrestrictnetworkaccessusingvirtualnetworkrulesexdatabricksmonitoringeffect/);
+});
+
+test('all workflow consumers preserve the observed production replica maximum', () => {
+  const deploy = workflow.slice(workflow.indexOf('\n  deploy:'));
+  assert.equal((deploy.match(/MAX_REPLICAS: '3'/g) ?? []).length, 3);
+  assert.equal((deploy.match(/--max-replicas 3/g) ?? []).length, 1);
+  assert.doesNotMatch(deploy, /MAX_REPLICAS: '2'|--max-replicas 2/);
+  assert.match(deploy, /node scripts\/verify-deployment-preflight\.mjs no-replica-reduction/);
+});
+
 const repoRoot = fileURLToPath(new URL('../', import.meta.url));
 const bash = process.platform === 'win32'
-  ? join(process.env.ProgramFiles || 'C:\\Program Files', 'Git', 'bin', 'bash.exe')
+  ? process.env.GIT_BASH_PATH
+    || join(process.env.ProgramFiles || 'C:\\Program Files', 'Git', 'bin', 'bash.exe')
   : 'bash';
 const approvedCommit = '6b38cd6145afbe3332f08194a86769c4e169d026';
 const verifiedAstraTuple = [
@@ -246,12 +311,102 @@ function shellFixture(run: (directory: string) => void) {
 function localizeWorkflowStep(name: string) {
   return stepSource(name)
     .replaceAll('/tmp/azurediagarm-', '$FIXTURE/azurediagarm-')
+    .replaceAll(
+      'node scripts/verify-deployment-preflight.mjs',
+      'node "$REPO_ROOT/scripts/verify-deployment-preflight.mjs"',
+    )
     .replace('headers="$(mktemp)"', 'headers="$FIXTURE/headers"')
     .replace(/\$\{\{ steps\.rollback_baseline\.outputs\.revision \}\}/g, 'previous')
     .replace(/\$\{\{ vars\.AZURE_CONTAINER_APP \}\}/g, 'app')
     .replace(/\$\{\{ vars\.AZURE_APP_URL \}\}/g, 'https://private.example')
     .replace(/\$\{\{[^}]+\}\}/g, 'test');
 }
+
+test('policy preflight issues an atScope query and validates the exemption before any Azure write', () => {
+  const storageScope = '/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Storage/storageAccounts/diagrams';
+  const assignmentScope = '/providers/Microsoft.Management/managementGroups/02310481-6752-4d53-8fc4-f597a8e047f4';
+  const policySetId = '/providers/Microsoft.Authorization/policySetDefinitions/1f3afdf9-d0c9-4c3d-847f-89da613e70a8';
+  const assignmentId = `${assignmentScope}/providers/Microsoft.Authorization/policyAssignments/Azure_Security_Baseline`;
+  const exemptionId = `${storageScope}/providers/Microsoft.Authorization/policyExemptions/AzureDiagarm-Storage-NSP`;
+  const references = [
+    'storageAccountsShouldRestrictNetworkAccessUsingVirtualNetworkRulesMonitoringEffect',
+    'storageAccountShouldUseAPrivateLinkConnectionMonitoringEffect',
+  ];
+  const outputs = {
+    accounts: [{
+      id: storageScope,
+      primaryEndpoints: {
+        table: 'https://diagrams.table.example.net/',
+        blob: 'https://diagrams.blob.example.net/',
+      },
+    }],
+    exemption: {
+      id: exemptionId,
+      properties: {
+        policyAssignmentId: assignmentId,
+        exemptionCategory: 'Mitigated',
+        expiresOn: '2027-08-04T00:00:00Z',
+        policyDefinitionReferenceIds: references,
+      },
+    },
+    assignments: [{
+      name: 'Azure_Security_Baseline',
+      id: assignmentId,
+      properties: { scope: assignmentScope, policyDefinitionId: policySetId },
+    }],
+    policySet: {
+      id: policySetId,
+      properties: { policyDefinitions: references.map(policyDefinitionReferenceId => ({ policyDefinitionReferenceId })) },
+    },
+  };
+  shellFixture(directory => {
+    const body = localizeWorkflowStep('Verify storage policy exemption before Azure changes');
+    const script = `
+set -Eeuo pipefail
+az() {
+  printf '%s\\n' "$*" >> "$FIXTURE/az.calls"
+  case "$*" in
+    'storage account list --output json') printf '%s' "$STORAGE_ACCOUNTS_JSON";;
+    "policy exemption show --name AzureDiagarm-Storage-NSP --scope $STORAGE_SCOPE --output json")
+      printf '%s' "$POLICY_EXEMPTION_JSON";;
+    "policy assignment list --scope $STORAGE_SCOPE --filter atScope() --output json")
+      printf '%s' "$POLICY_ASSIGNMENTS_JSON";;
+    "policy set-definition show --name 1f3afdf9-d0c9-4c3d-847f-89da613e70a8 --output json")
+      printf '%s' "$POLICY_SET_JSON";;
+    *) echo "Unexpected Azure CLI arguments: $*" >&2; return 90;;
+  esac
+}
+${body}
+`;
+    const result = spawnSync(bash, ['--noprofile', '--norc', '-s'], {
+      cwd: directory,
+      input: script,
+      encoding: 'utf8',
+      timeout: 30_000,
+      env: {
+        ...process.env,
+        FIXTURE: directory,
+        REPO_ROOT: repoRoot,
+        MSYS_NO_PATHCONV: '1',
+        AZURE_TABLES_ENDPOINT: outputs.accounts[0].primaryEndpoints.table,
+        AZURE_BLOB_ENDPOINT: outputs.accounts[0].primaryEndpoints.blob,
+        STORAGE_SCOPE: storageScope,
+        STORAGE_ACCOUNTS_JSON: JSON.stringify(outputs.accounts),
+        POLICY_EXEMPTION_JSON: JSON.stringify(outputs.exemption),
+        POLICY_ASSIGNMENTS_JSON: JSON.stringify(outputs.assignments),
+        POLICY_SET_JSON: JSON.stringify(outputs.policySet),
+      },
+    });
+    assert.equal(result.error, undefined);
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    assert.deepEqual(readFileSync(join(directory, 'az.calls'), 'utf8').trim().split('\n'), [
+      'storage account list --output json',
+      `policy exemption show --name AzureDiagarm-Storage-NSP --scope ${storageScope} --output json`,
+      `policy assignment list --scope ${storageScope} --filter atScope() --output json`,
+      'policy set-definition show --name 1f3afdf9-d0c9-4c3d-847f-89da613e70a8 --output json',
+    ]);
+  });
+});
 
 function writeRollbackTuple(directory: string, byoFlag = 'true') {
   writeFileSync(join(directory, 'azurediagarm-verified-astra.env'), `${[...verifiedAstraTuple, byoFlag].join('\0')}\0`);
