@@ -88,3 +88,11 @@ input::placeholder, textarea::placeholder {
     scroll-behavior: auto !important;
   }
 }
+/* External SVG images cannot inherit currentColor; keep unmodified UI glyphs
+   legible against either theme and in DOM-based exports. */
+.fabric-ui-icon {
+  background: #fff;
+  border-radius: 3px;
+  padding: 3px;
+  box-sizing: border-box;
+}

@@ -599,6 +599,22 @@ body:has([role='dialog'][aria-modal='true']) .icon-palette.collapsed .palette-op
   object-fit: contain;
 }
 
+.icon-drawing-kind {
+  color: var(--azd-color-text-muted);
+  font-size: 0.6rem;
+  line-height: 1.15;
+}
+
+.category-drawing-heading {
+  margin: 0.8rem 0.75rem 0.45rem;
+  color: var(--azd-color-text-secondary);
+  font-size: 0.8rem;
+}
+
+.icon-palette.palette-layout-list .icon-drawing-kind {
+  max-width: 5rem;
+}
+
 .icon-placeholder {
   width: 40px;
   height: 40px;

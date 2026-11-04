@@ -190,7 +190,7 @@ Features include:
 
 ### 🟦 Microsoft Fabric Support
 Design **Microsoft Fabric** data platforms alongside core Azure services:
-- **83 Fabric icons** — all 82 architecture-oriented families from the official `@fabric-msft/svg-icons` 8.2.0 package, plus the app's Fabric Capacity symbol. Includes workloads, items, workspace/navigation symbols, and developer samples.
+- **110 Fabric icons** — 82 current official architecture families (48px where available), 14 clearly labeled historical designs, 13 OneLake security UI symbols, and the existing Capacity symbol. Covers all 101 SVGs in [the 2026 diagramming collection](https://debruyn.dev/2026/all-microsoft-fabric-icons-for-diagramming-2026-edition/); historical/UI symbols are drawing-only, not AI services. [Sources and terms](Azure_Public_Service_Icons/FABRIC-ICONS.md).
 - **Capacity-aware costing** — Fabric Capacity (F-SKU) carries the cost; compute items show an **“incl. capacity”** badge instead of double-counting, and OneLake is billed as usage-based storage. The full F2→F2048 ladder (PAYG + 1-yr reserved) is built in.
 - **Fabric example prompts** — medallion lakehouse, real-time intelligence, and Direct Lake Power BI scenarios
 
@@ -701,9 +701,12 @@ npm run icons:sync:fabric      # Microsoft Fabric icons only
 npm run icons:sync:microsoft   # Power Platform + Dynamics 365 icons only
 npm run icons:check:microsoft  # fail if the pinned packages drifted from the catalog
 npm run test:icons             # verify all manifest files and SHA-256 hashes
+node scripts/test-fabric-icons.mjs # verify Fabric palette, canvas and export rendering
 ```
 
 The sync is additive: it preserves legacy paths used by saved diagrams and service mappings.
+Fabric uses reviewed, hash-locked npm versions (8.2.0 / 6.1.0 / 1.1.37) and pinned
+article-only UI assets; a newer npm latest is reported without changing the pin.
 Official Microsoft icon assets remain subject to Microsoft's own terms, not this repository's
 MIT License:
 
@@ -937,7 +940,7 @@ azure-diagrams/
 │   ├── update_aca.sh         # Author's ACA deployment (hardcoded resources)
 │   ├── deploy-mcp-instance.sh  # Deploy the isolated MCP server ACA instance
 │   └── fetch-multi-region-pricing.sh  # Refresh per-region pricing (npm run pricing:refresh)
-├── Azure_Public_Service_Icons/  # 714 Azure + 83 Fabric + 24 Power Platform/Dynamics 365 icons
+├── Azure_Public_Service_Icons/  # 714 Azure + 110 Fabric + 24 Power Platform/Dynamics 365 icons
 ├── mcp-server/               # MCP server (12 tools + 3 resources + 3 prompts, stdio + HTTP, Bearer auth)
 │   └── src/                  # serviceCatalog, wafDetector, layoutEngine, svgRenderer, htmlRenderer
 ├── SCOUT/                    # Microsoft Scout integration notes & sample session

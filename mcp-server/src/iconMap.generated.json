@@ -2186,12 +2186,17 @@
     "costRange": "$0 (consumes Fabric capacity)"
   },
   "Fabric Links": {
-    "displayName": "Links",
+    "displayName": "Shortcuts",
     "iconFile": "fabric-item-links",
     "category": "fabric",
     "aliases": [
+      "Shortcuts",
       "Links",
-      "Graph Links"
+      "Graph Links",
+      "Fabric Shortcuts",
+      "OneLake Shortcuts",
+      "OneLake Shortcut",
+      "ショートカット"
     ],
     "hasPricingData": false,
     "costRange": "$0 (consumes Fabric capacity)"
@@ -2235,7 +2240,8 @@
     "category": "fabric",
     "aliases": [
       "Graph Model",
-      "Graph Model (Fabric)"
+      "Graph Model (Fabric)",
+      "Graph Model Instance"
     ],
     "hasPricingData": false,
     "costRange": "$0 (consumes Fabric capacity)"
@@ -2246,7 +2252,8 @@
     "category": "fabric",
     "aliases": [
       "Graph Queryset",
-      "Graph Query Set"
+      "Graph Query Set",
+      "Graph Model Instance Queryset"
     ],
     "hasPricingData": false,
     "costRange": "$0 (consumes Fabric capacity)"

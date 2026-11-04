@@ -59,7 +59,6 @@ const FABRIC_SERVICE_ICON_MAP = Object.fromEntries(
 // Fabric icon here. `aliases` references the shared catalog array, so we
 // REASSIGN a fresh array (never push) to avoid mutating FABRIC_ICON_CATALOG.
 const FABRIC_EXEMPLAR_ALIASES: Record<string, string[]> = {
-  OneLake: ['OneLake Shortcuts', 'OneLake Shortcut', 'Shortcuts'],
   'Fabric Copy Job': ['Copy Jobs'],
   'Fabric Notebook': ['Spark Notebook', 'Spark Notebooks'],
   'Fabric Experiments': ['ML Experiment', 'ML Experiments'],

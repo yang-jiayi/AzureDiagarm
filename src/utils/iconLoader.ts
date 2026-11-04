@@ -37,6 +37,8 @@ export interface AzureIcon {
   source: PaletteIconSource;
   /** Reusable concept shape rather than a named product. */
   generic?: boolean;
+  /** Drawing-only Fabric artwork, visually distinguished from current services. */
+  fabricDrawingKind?: 'legacy' | 'ui';
 }
 
 export interface IconLibraryStats {
@@ -277,6 +279,9 @@ function getIconMetadataCache(): IconMetadataCache {
             ? microsoftProductDefinition.family
             : 'supplemental',
       generic: microsoftProductDefinition?.kind === 'symbol',
+      ...(fabricDefinition?.kind === 'legacy' || fabricDefinition?.kind === 'ui'
+        ? { fabricDrawingKind: fabricDefinition.kind }
+        : {}),
     };
 
     all.push(icon);

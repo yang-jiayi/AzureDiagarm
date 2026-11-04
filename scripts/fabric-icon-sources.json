@@ -1,0 +1,735 @@
+{
+  "schemaVersion": 1,
+  "packages": [
+    {
+      "version": "8.2.0",
+      "url": "https://registry.npmjs.org/@fabric-msft/svg-icons/-/svg-icons-8.2.0.tgz",
+      "integrity": "sha512-0mp+BNc2V7kviToEcXzpo+ZGb143hw/FSMlexh2S5P6oP3uuH2nCIiiBsatH54qgw15xgbrzALBYoQKBxv/dug==",
+      "sha256": "78bccf79e68ba3656456b99d4f643cf7e30f1c262f62c8d78f31367d5d00dbb0",
+      "svgDirectory": "svg"
+    },
+    {
+      "version": "6.1.0",
+      "url": "https://registry.npmjs.org/@fabric-msft/svg-icons/-/svg-icons-6.1.0.tgz",
+      "integrity": "sha512-AJD1M/fYHdIk/Q8rjdVgfvYYUBT08/XeObsbYdGuCMzFN4kvx9kCCFZiXyKbfKS7zD6zjGWF4P4NGvm6ecSOrw==",
+      "sha256": "b00e9a80d326b40950f7aa86a2396beb3805edc1672e46b411e3efff46ff2ed4",
+      "svgDirectory": "dist/svg"
+    },
+    {
+      "version": "1.1.37",
+      "url": "https://registry.npmjs.org/@fabric-msft/svg-icons/-/svg-icons-1.1.37.tgz",
+      "integrity": "sha512-Cd4J5BUKnrN+ZbZk1QIoeGExQT5ykD3vQAkdOvhfTXUHRnH+XIaC3IvwjFLRDAU5a3MajcQJxZDgxeI2rB0sFw==",
+      "sha256": "3cb800bc0c6a06a185542164f226be79994abc09d273392e6cf644dc945b0d84",
+      "svgDirectory": "dist/svg"
+    }
+  ],
+  "articleIcons": [
+    {
+      "section": "Experiences",
+      "title": "Copilot",
+      "url": "https://debruyn.dev/2026/all-microsoft-fabric-icons-for-diagramming-2026-edition/copilot.svg",
+      "sha256": "e5a0ff6dc93e0f2c86f7d4d53e0be24de7171667a706e14cb67e7736a01450c4",
+      "fileName": "fabric-workload-copilot"
+    },
+    {
+      "section": "Experiences",
+      "title": "Data Engineering",
+      "url": "https://debruyn.dev/2026/all-microsoft-fabric-icons-for-diagramming-2026-edition/data_engineering.svg",
+      "sha256": "0e5b5731f94d8df7e258fa88829ce52d94cbf2b8ce48379c1646835ad297a45c",
+      "fileName": "fabric-workload-data-engineering"
+    },
+    {
+      "section": "Experiences",
+      "title": "Data Factory",
+      "url": "https://debruyn.dev/2026/all-microsoft-fabric-icons-for-diagramming-2026-edition/data_factory.svg",
+      "sha256": "40d52c473c9d79d5e3e7d3219660b64704661f673cec805cf17d1d2d9cb503d4",
+      "fileName": "fabric-workload-data-factory"
+    },
+    {
+      "section": "Experiences",
+      "title": "Data Science",
+      "url": "https://debruyn.dev/2026/all-microsoft-fabric-icons-for-diagramming-2026-edition/data_science.svg",
+      "sha256": "fadb51035b8d14c58203962e3673c51dd39c1c8d3127c3fe9b1f2614d1126540",
+      "fileName": "fabric-workload-data-science"
+    },
+    {
+      "section": "Experiences",
+      "title": "Data Warehouse",
+      "url": "https://debruyn.dev/2026/all-microsoft-fabric-icons-for-diagramming-2026-edition/data_warehouse.svg",
+      "sha256": "738fe66a28684cc58e9c5e211e04774e037cababaef4704f17af136cb5f1edff",
+      "fileName": "fabric-workload-data-warehouse"
+    },
+    {
+      "section": "Experiences",
+      "title": "Databases",
+      "url": "https://debruyn.dev/2026/all-microsoft-fabric-icons-for-diagramming-2026-edition/databases.svg",
+      "sha256": "4caa8e2fb552309b3559d118f4ce5325dbdf3771cd3dd5b150c34dedd2cb5fd9",
+      "fileName": "fabric-workload-databases"
+    },
+    {
+      "section": "Experiences",
+      "title": "Microsoft Fabric",
+      "url": "https://debruyn.dev/2026/all-microsoft-fabric-icons-for-diagramming-2026-edition/fabric.svg",
+      "sha256": "ef80d2edbfc1b045241d2e9550b7930b648d8018e0274116a3df6d6ccf3adbf9",
+      "fileName": "microsoft-fabric"
+    },
+    {
+      "section": "Experiences",
+      "title": "Graph Intelligence",
+      "url": "https://debruyn.dev/2026/all-microsoft-fabric-icons-for-diagramming-2026-edition/graph_intelligence.svg",
+      "sha256": "e9fbcae88060d8e1e21a49f69738cddd6c9732070bbee1f7e2eb366e7a599116",
+      "fileName": "fabric-workload-graph-intelligence"
+    },
+    {
+      "section": "Experiences",
+      "title": "Industry Solutions",
+      "url": "https://debruyn.dev/2026/all-microsoft-fabric-icons-for-diagramming-2026-edition/industry_solutions.svg",
+      "sha256": "3e1fe0d1d5fe8213d05b8d065f1b3305dddfdf21db86a9ef6102ffa0653754ed",
+      "fileName": "fabric-workload-industry-solutions"
+    },
+    {
+      "section": "Experiences",
+      "title": "OneLake",
+      "url": "https://debruyn.dev/2026/all-microsoft-fabric-icons-for-diagramming-2026-edition/one_lake.svg",
+      "sha256": "23fe33bcc61e703f655ac98753512a780bc2ff71d157d6c25682841ed9b6a825",
+      "fileName": "onelake"
+    },
+    {
+      "section": "Experiences",
+      "title": "Power BI",
+      "url": "https://debruyn.dev/2026/all-microsoft-fabric-icons-for-diagramming-2026-edition/power_bi.svg",
+      "sha256": "264abad01f50acaffb697b3ede22215b7d87f387c1af92f0a0b14117d2c2e4f1",
+      "fileName": "fabric-workload-power-bi"
+    },
+    {
+      "section": "Experiences",
+      "title": "Microsoft Purview",
+      "url": "https://debruyn.dev/2026/all-microsoft-fabric-icons-for-diagramming-2026-edition/purview.svg",
+      "sha256": "770db45103ee13f59e6dbd9152188c090ea6e91639c87efa1cd0c2d8e40d53da",
+      "fileName": "fabric-workload-purview"
+    },
+    {
+      "section": "Experiences",
+      "title": "Real Time Intelligence",
+      "url": "https://debruyn.dev/2026/all-microsoft-fabric-icons-for-diagramming-2026-edition/real_time_intelligence.svg",
+      "sha256": "c6aaaf246fb0a611339e9317789d413183267a412f94f7a6fdc8c09c435334fb",
+      "fileName": "fabric-workload-real-time-intelligence"
+    },
+    {
+      "section": "Item types",
+      "title": "Add Pipeline",
+      "url": "https://debruyn.dev/2026/all-microsoft-fabric-icons-for-diagramming-2026-edition/add_pipeline.svg",
+      "sha256": "c033afb0e5b10fe2eba660ca071ab004630decbc469f3b17fb377a9128f38117",
+      "fileName": "fabric-navigation-add-pipeline"
+    },
+    {
+      "section": "Item types",
+      "title": "Apps",
+      "url": "https://debruyn.dev/2026/all-microsoft-fabric-icons-for-diagramming-2026-edition/apps.svg",
+      "sha256": "7e6a11e7ac82b5f165cda8c62e8828a282eea71f238e1a6a9bb0f0a2a20bcb75",
+      "fileName": "fabric-item-apps"
+    },
+    {
+      "section": "Item types",
+      "title": "Cohort",
+      "url": "https://debruyn.dev/2026/all-microsoft-fabric-icons-for-diagramming-2026-edition/cohort.svg",
+      "sha256": "6014c2791bc486a0e132f6720b646b6b73f8866c32d80ce9136c49ac0ac56352",
+      "fileName": "fabric-item-cohort"
+    },
+    {
+      "section": "Item types",
+      "title": "Copy Job",
+      "url": "https://debruyn.dev/2026/all-microsoft-fabric-icons-for-diagramming-2026-edition/copy_job.svg",
+      "sha256": "4900dd9a47a2a5fe7893d8cd7dfe1b21de8d00e3bb784cd9f520d1744dd113fe",
+      "fileName": "fabric-item-copy-job"
+    },
+    {
+      "section": "Item types",
+      "title": "Custom Streaming Connector",
+      "url": "https://debruyn.dev/2026/all-microsoft-fabric-icons-for-diagramming-2026-edition/custom_streaming_connector.svg",
+      "sha256": "3cc4a7a134c70d1b6c41158ad2c3d38921688b1aadad87872b7516865cf654e7",
+      "fileName": "fabric-item-custom-streaming-connector"
+    },
+    {
+      "section": "Item types",
+      "title": "Dashboard",
+      "url": "https://debruyn.dev/2026/all-microsoft-fabric-icons-for-diagramming-2026-edition/dashboard.svg",
+      "sha256": "b65013c6786ac25ca27628d98ac5414501f7350c2f724b4f8366716624fa8b76",
+      "fileName": "fabric-item-dashboard"
+    },
+    {
+      "section": "Item types",
+      "title": "Data Agent",
+      "url": "https://debruyn.dev/2026/all-microsoft-fabric-icons-for-diagramming-2026-edition/data_agent.svg",
+      "sha256": "cc263e20fdb76f6bcde3a941f926e1cee6a07cee4407ed6374857b3354e60ab6",
+      "fileName": "fabric-data-agent"
+    },
+    {
+      "section": "Item types",
+      "title": "Data Factory (item)",
+      "url": "https://debruyn.dev/2026/all-microsoft-fabric-icons-for-diagramming-2026-edition/data_factory_item.svg",
+      "sha256": "2caa919a620d1d064fcd61a8dc0234448c9d782396705a700066945babeb0c98",
+      "fileName": "fabric-data-factory"
+    },
+    {
+      "section": "Item types",
+      "title": "Data Warehouse (item)",
+      "url": "https://debruyn.dev/2026/all-microsoft-fabric-icons-for-diagramming-2026-edition/data_warehouse_item.svg",
+      "sha256": "f1fb93c5c38b69b74c7086bca91626a1f57954b30abbd109ede412b735e0a691",
+      "fileName": "fabric-warehouse"
+    },
+    {
+      "section": "Item types",
+      "title": "Dataflow",
+      "url": "https://debruyn.dev/2026/all-microsoft-fabric-icons-for-diagramming-2026-edition/dataflow.svg",
+      "sha256": "37cab244cbff809996bd373dd08041045764579744f4d0e9d5b5121b3d3e488f",
+      "fileName": "fabric-item-dataflow"
+    },
+    {
+      "section": "Item types",
+      "title": "Dataflow Gen2",
+      "url": "https://debruyn.dev/2026/all-microsoft-fabric-icons-for-diagramming-2026-edition/dataflow_gen2.svg",
+      "sha256": "5291386e4344dbd5729c19805d75287fc04eed07ed74979d6b15355213a17aaf",
+      "fileName": "fabric-dataflow-gen2"
+    },
+    {
+      "section": "Item types",
+      "title": "Datamart",
+      "url": "https://debruyn.dev/2026/all-microsoft-fabric-icons-for-diagramming-2026-edition/datamart.svg",
+      "sha256": "95b0094f2b28e1bf04936ae51907bbc4022db27b14f6f17fc6c8164b1949562d",
+      "fileName": "fabric-datamart"
+    },
+    {
+      "section": "Item types",
+      "title": "Environment",
+      "url": "https://debruyn.dev/2026/all-microsoft-fabric-icons-for-diagramming-2026-edition/environment.svg",
+      "sha256": "d8f4f65b541bfe22614915ed2a317c39df42fbe9e781e1e31fed0df17dfc3a43",
+      "fileName": "fabric-item-environment"
+    },
+    {
+      "section": "Item types",
+      "title": "Event House",
+      "url": "https://debruyn.dev/2026/all-microsoft-fabric-icons-for-diagramming-2026-edition/event_house.svg",
+      "sha256": "ccf6c4a7770eab8ac39cb9301bb5caec8b29fb5dd12c0bb75e93c810d76823ec",
+      "fileName": "fabric-eventhouse"
+    },
+    {
+      "section": "Item types",
+      "title": "Eventstream",
+      "url": "https://debruyn.dev/2026/all-microsoft-fabric-icons-for-diagramming-2026-edition/eventstream.svg",
+      "sha256": "8c7bbef9bd2f2ecd1d00db305d7705a81855253f64b0c0615e8b74816c0febc0",
+      "fileName": "fabric-eventstream"
+    },
+    {
+      "section": "Item types",
+      "title": "Experiments",
+      "url": "https://debruyn.dev/2026/all-microsoft-fabric-icons-for-diagramming-2026-edition/experiments.svg",
+      "sha256": "ee794562a7e24f0747cc6b6e71885daab56baa1f72efa64a336013ef7c7008e9",
+      "fileName": "fabric-item-experiments"
+    },
+    {
+      "section": "Item types",
+      "title": "Exploration",
+      "url": "https://debruyn.dev/2026/all-microsoft-fabric-icons-for-diagramming-2026-edition/exploration.svg",
+      "sha256": "b360b726f1422d4cf3a5f697655d7f0280587d49588f64eb1322d0b71a47b4a1",
+      "fileName": "fabric-item-exploration"
+    },
+    {
+      "section": "Item types",
+      "title": "External Dataflow",
+      "url": "https://debruyn.dev/2026/all-microsoft-fabric-icons-for-diagramming-2026-edition/external_dataflow.svg",
+      "sha256": "a30f28119c60ecb5e68df06eaf19a3a26e7aaf8c0b2f3d28b2724124f6181c29",
+      "fileName": "fabric-item-external-dataflow"
+    },
+    {
+      "section": "Item types",
+      "title": "External Datamart",
+      "url": "https://debruyn.dev/2026/all-microsoft-fabric-icons-for-diagramming-2026-edition/external_datamart.svg",
+      "sha256": "397e8b8eec470b41094af5a456140a1174b356c0a59d830cd556deca8bfb683e",
+      "fileName": "fabric-item-external-datamart"
+    },
+    {
+      "section": "Item types",
+      "title": "External Semantic Model",
+      "url": "https://debruyn.dev/2026/all-microsoft-fabric-icons-for-diagramming-2026-edition/external_semantic_model.svg",
+      "sha256": "364774a015f70b654750bd568589a39d81fbede7ab1b0763db63d655e90d67dd",
+      "fileName": "fabric-item-external-semantic-model"
+    },
+    {
+      "section": "Item types",
+      "title": "Folder",
+      "url": "https://debruyn.dev/2026/all-microsoft-fabric-icons-for-diagramming-2026-edition/folder.svg",
+      "sha256": "3131a937ba618ba07e4de754834c40982f9d68fb43876ebd9bbca1304ed60427",
+      "fileName": "fabric-navigation-folder"
+    },
+    {
+      "section": "Item types",
+      "title": "Function Set",
+      "url": "https://debruyn.dev/2026/all-microsoft-fabric-icons-for-diagramming-2026-edition/function_set.svg",
+      "sha256": "115f4e6b51b79d1b5013c8b09067cca377757a272aa35cde253ea6ea9d475bb7",
+      "fileName": "fabric-item-function-set"
+    },
+    {
+      "section": "Item types",
+      "title": "Generic Placeholder",
+      "url": "https://debruyn.dev/2026/all-microsoft-fabric-icons-for-diagramming-2026-edition/generic_placeholder.svg",
+      "sha256": "e45594b7f128f4c4ec1879eb9500f7a121df100ab675b9020e6222de45cc5fcc",
+      "fileName": "fabric-item-generic-placeholder"
+    },
+    {
+      "section": "Item types",
+      "title": "Graph Model Instance",
+      "url": "https://debruyn.dev/2026/all-microsoft-fabric-icons-for-diagramming-2026-edition/graph_model_instance.svg",
+      "sha256": "fb14f6a29d034e79cd948da745719b073a091145b80c2bdac1ca8ec801c0275a",
+      "fileName": "fabric-legacy-graph-model-instance"
+    },
+    {
+      "section": "Item types",
+      "title": "Graph Model Instance Queryset",
+      "url": "https://debruyn.dev/2026/all-microsoft-fabric-icons-for-diagramming-2026-edition/graph_model_instance_queryset.svg",
+      "sha256": "2dc7c880a2447d77a8dcceb4d44d8fb0751d15fe5e8ba1b4ef0b28e0220ad0a5",
+      "fileName": "fabric-legacy-graph-model-instance-queryset"
+    },
+    {
+      "section": "Item types",
+      "title": "Group Workspace",
+      "url": "https://debruyn.dev/2026/all-microsoft-fabric-icons-for-diagramming-2026-edition/group_workspace.svg",
+      "sha256": "606c9d646ef0f9cf54029d258054f0b9168e1d715dd2e163448a10a2dec4e797",
+      "fileName": "fabric-navigation-group-workspace"
+    },
+    {
+      "section": "Item types",
+      "title": "Healthcare",
+      "url": "https://debruyn.dev/2026/all-microsoft-fabric-icons-for-diagramming-2026-edition/healthcare.svg",
+      "sha256": "401c8213d4d70746fad71f94dc75986b4d5b6348df561352e516e3bd1b203909",
+      "fileName": "fabric-item-healthcare"
+    },
+    {
+      "section": "Item types",
+      "title": "Import Notebook",
+      "url": "https://debruyn.dev/2026/all-microsoft-fabric-icons-for-diagramming-2026-edition/import_notebook.svg",
+      "sha256": "86f0873051c25242b3d4dd7e41a461cbc9ffa4d17e4cfd4dd11dde33fae155b3",
+      "fileName": "fabric-navigation-import-notebook"
+    },
+    {
+      "section": "Item types",
+      "title": "KQL Database",
+      "url": "https://debruyn.dev/2026/all-microsoft-fabric-icons-for-diagramming-2026-edition/kql_database.svg",
+      "sha256": "5ef2f0b3532c6e2a5aa63cc76f44e78b0570aa474cbe0395610823e9e42cc5ba",
+      "fileName": "fabric-kql-database"
+    },
+    {
+      "section": "Item types",
+      "title": "KQL Queryset",
+      "url": "https://debruyn.dev/2026/all-microsoft-fabric-icons-for-diagramming-2026-edition/kql_queryset.svg",
+      "sha256": "730895f747e50a811a6ce49eee7444a954ede78f712652d5ef803f00b83618e7",
+      "fileName": "fabric-item-kql-queryset"
+    },
+    {
+      "section": "Item types",
+      "title": "KQL Script",
+      "url": "https://debruyn.dev/2026/all-microsoft-fabric-icons-for-diagramming-2026-edition/kql_script.svg",
+      "sha256": "1bc7c2b4180e13dafb4ca8ad65347b8a550a18899e2cace4018ab297560e2dac",
+      "fileName": "fabric-item-kql-script"
+    },
+    {
+      "section": "Item types",
+      "title": "Lakehouse",
+      "url": "https://debruyn.dev/2026/all-microsoft-fabric-icons-for-diagramming-2026-edition/lakehouse.svg",
+      "sha256": "7f4ba4303e8f507d4ec8e47bc055bace80eb9715ccc58df40021b776a3c65f08",
+      "fileName": "fabric-lakehouse"
+    },
+    {
+      "section": "Item types",
+      "title": "Shortcuts",
+      "url": "https://debruyn.dev/2026/all-microsoft-fabric-icons-for-diagramming-2026-edition/links.svg",
+      "sha256": "938bee8a09b9ad6f70e1e525ac34d6d43c1332b9a75847e46b089561f5387746",
+      "fileName": "fabric-item-links"
+    },
+    {
+      "section": "Item types",
+      "title": "Metric Sets",
+      "url": "https://debruyn.dev/2026/all-microsoft-fabric-icons-for-diagramming-2026-edition/metric_sets.svg",
+      "sha256": "b7b9d1014033cad13413e26dbc35a19babd9f9bc8e3168655c452eb60fdc2a32",
+      "fileName": "fabric-item-metric-sets"
+    },
+    {
+      "section": "Item types",
+      "title": "Mirrored Generic Database",
+      "url": "https://debruyn.dev/2026/all-microsoft-fabric-icons-for-diagramming-2026-edition/mirrored_generic_database.svg",
+      "sha256": "a1b2d7cad2063b92b2de71d9a61d0981e44068beaa690351feaeb01a58173597",
+      "fileName": "fabric-mirrored-database"
+    },
+    {
+      "section": "Item types",
+      "title": "Mobile Report",
+      "url": "https://debruyn.dev/2026/all-microsoft-fabric-icons-for-diagramming-2026-edition/mobile_report.svg",
+      "sha256": "148e7145dd549384903fbfbd716d30f10efcd9a9c1f3d0eb762d054b43a66ec0",
+      "fileName": "fabric-item-mobile-report"
+    },
+    {
+      "section": "Item types",
+      "title": "Model",
+      "url": "https://debruyn.dev/2026/all-microsoft-fabric-icons-for-diagramming-2026-edition/model.svg",
+      "sha256": "c648a0da9c88f4c79ea6ee127c146ce0682d917b78b83079e9aedd09dbf2a1ef",
+      "fileName": "fabric-item-model"
+    },
+    {
+      "section": "Item types",
+      "title": "My Workspace",
+      "url": "https://debruyn.dev/2026/all-microsoft-fabric-icons-for-diagramming-2026-edition/my_workspace.svg",
+      "sha256": "71c8323e3a36bcb0848e36e06d6f45c8c9c7a3522dbdc575cf1a4caac348d52d",
+      "fileName": "fabric-navigation-my-workspace"
+    },
+    {
+      "section": "Item types",
+      "title": "No Access Semantic Model",
+      "url": "https://debruyn.dev/2026/all-microsoft-fabric-icons-for-diagramming-2026-edition/no_access_semantic_model.svg",
+      "sha256": "8315b3beb737be0cbe76d8ef2d3fc83c90d5e47b1bdb30b7ba003279bb324a30",
+      "fileName": "fabric-item-no-access-semantic-model"
+    },
+    {
+      "section": "Item types",
+      "title": "Notebook",
+      "url": "https://debruyn.dev/2026/all-microsoft-fabric-icons-for-diagramming-2026-edition/notebook.svg",
+      "sha256": "d1822f787c453b2edf2f5af8ecca2b8b1258e07859dfaf057562b0f166dbc866",
+      "fileName": "fabric-notebook"
+    },
+    {
+      "section": "Item types",
+      "title": "Operations Agent",
+      "url": "https://debruyn.dev/2026/all-microsoft-fabric-icons-for-diagramming-2026-edition/operations_agent.svg",
+      "sha256": "4e57a5002b659fa9e0cbd8796defb21ea849242d3048e55dc04388c13afec84e",
+      "fileName": "fabric-item-operations-agent"
+    },
+    {
+      "section": "Item types",
+      "title": "Paginated Report",
+      "url": "https://debruyn.dev/2026/all-microsoft-fabric-icons-for-diagramming-2026-edition/paginated_report.svg",
+      "sha256": "45667a202d9360df045233e11d3ca3039be1195452bd2b411213fc474fca19d3",
+      "fileName": "fabric-item-paginated-report"
+    },
+    {
+      "section": "Item types",
+      "title": "Pipeline",
+      "url": "https://debruyn.dev/2026/all-microsoft-fabric-icons-for-diagramming-2026-edition/pipeline.svg",
+      "sha256": "a0df60d8e899ff5f8bdb80fe5281cba002735267297f371098f5ff6d55bbe744",
+      "fileName": "fabric-data-pipeline"
+    },
+    {
+      "section": "Item types",
+      "title": "Planning",
+      "url": "https://debruyn.dev/2026/all-microsoft-fabric-icons-for-diagramming-2026-edition/planning.svg",
+      "sha256": "6cce6260d5dcff3f8bc972436a6ca23bc985e9da9c8061667ae5b9b4ae73a590",
+      "fileName": "fabric-item-planning"
+    },
+    {
+      "section": "Item types",
+      "title": "RDL Report",
+      "url": "https://debruyn.dev/2026/all-microsoft-fabric-icons-for-diagramming-2026-edition/rdl_report.svg",
+      "sha256": "790d5d174f6478ff4bcfc4ed3370ffeec054e50fdb03ef8318233e7236b5e248",
+      "fileName": "fabric-item-rdl-report"
+    },
+    {
+      "section": "Item types",
+      "title": "Real Time Dashboard",
+      "url": "https://debruyn.dev/2026/all-microsoft-fabric-icons-for-diagramming-2026-edition/real_time_dashboard.svg",
+      "sha256": "829c839e2e71a54480840aed0c5524112523fab85b3831c4c101581ede911665",
+      "fileName": "fabric-real-time-dashboard"
+    },
+    {
+      "section": "Item types",
+      "title": "Report",
+      "url": "https://debruyn.dev/2026/all-microsoft-fabric-icons-for-diagramming-2026-edition/report.svg",
+      "sha256": "2e8640722aa8a530a0f98fde21482f1957a0589ef701823b319bbfccb26d9e44",
+      "fileName": "fabric-power-bi-report"
+    },
+    {
+      "section": "Item types",
+      "title": "Restricted Report",
+      "url": "https://debruyn.dev/2026/all-microsoft-fabric-icons-for-diagramming-2026-edition/restricted_report.svg",
+      "sha256": "b36ef33a4b4061bb738a2cac6922611ed9355dd559d1f1e3d5d438428e46d626",
+      "fileName": "fabric-item-restricted-report"
+    },
+    {
+      "section": "Item types",
+      "title": "Restricted Scorecard",
+      "url": "https://debruyn.dev/2026/all-microsoft-fabric-icons-for-diagramming-2026-edition/restricted_scorecard.svg",
+      "sha256": "e08a0d16b3356ddd6fb01d3488021cb31a69d47d981e9d0799563cb346288736",
+      "fileName": "fabric-item-restricted-scorecard"
+    },
+    {
+      "section": "Item types",
+      "title": "Retail",
+      "url": "https://debruyn.dev/2026/all-microsoft-fabric-icons-for-diagramming-2026-edition/retail.svg",
+      "sha256": "969ec46828e1cd1bdd44dff6966894707bb8dbb65721972c2e33dc5998cf3b14",
+      "fileName": "fabric-item-retail"
+    },
+    {
+      "section": "Item types",
+      "title": "Runtime Lineage",
+      "url": "https://debruyn.dev/2026/all-microsoft-fabric-icons-for-diagramming-2026-edition/runtime_lineage.svg",
+      "sha256": "3c79f247c2bc67c6323b5417a4d1ae55247453f7367e15cc5b778f0b8a4ab397",
+      "fileName": "fabric-item-runtime-lineage"
+    },
+    {
+      "section": "Item types",
+      "title": "Sample",
+      "url": "https://debruyn.dev/2026/all-microsoft-fabric-icons-for-diagramming-2026-edition/sample.svg",
+      "sha256": "2cadb9cd014e3bceb778c1b757af506518e76062c1225d59d8f0db9b91b3aad9",
+      "fileName": "fabric-sample-item"
+    },
+    {
+      "section": "Item types",
+      "title": "Schema Model",
+      "url": "https://debruyn.dev/2026/all-microsoft-fabric-icons-for-diagramming-2026-edition/schema_model.svg",
+      "sha256": "b5c42fecb17a5a61b53557029a4d06f2c6435bb7fd5c37152c7e88d5b4bcf926",
+      "fileName": "fabric-item-schema-model"
+    },
+    {
+      "section": "Item types",
+      "title": "Scorecard",
+      "url": "https://debruyn.dev/2026/all-microsoft-fabric-icons-for-diagramming-2026-edition/scorecard.svg",
+      "sha256": "2d677e06f1fa8a32a451f1c8d9ad67bc8c1643f27c106bab09fee53619f73f33",
+      "fileName": "fabric-item-scorecard"
+    },
+    {
+      "section": "Item types",
+      "title": "Semantic Model",
+      "url": "https://debruyn.dev/2026/all-microsoft-fabric-icons-for-diagramming-2026-edition/semantic_model.svg",
+      "sha256": "c0317bc92fea437d374b71788b037705f61983cd59573808ce933f3d03e14abb",
+      "fileName": "fabric-semantic-model"
+    },
+    {
+      "section": "Item types",
+      "title": "Shared Semantic Model",
+      "url": "https://debruyn.dev/2026/all-microsoft-fabric-icons-for-diagramming-2026-edition/shared_semantic_model.svg",
+      "sha256": "d5ad72272ccc37be97d2ca86fad773bbaae6d0f5ec96e9ed26855a73576950e8",
+      "fileName": "fabric-item-shared-semantic-model"
+    },
+    {
+      "section": "Item types",
+      "title": "Spark Job Direction",
+      "url": "https://debruyn.dev/2026/all-microsoft-fabric-icons-for-diagramming-2026-edition/spark_job_direction.svg",
+      "sha256": "491d44592265463ed40aa81dce4272539a2d6f78cc7080565f20791ebcf68705",
+      "fileName": "fabric-spark-job"
+    },
+    {
+      "section": "Item types",
+      "title": "SQL Database",
+      "url": "https://debruyn.dev/2026/all-microsoft-fabric-icons-for-diagramming-2026-edition/sql_database.svg",
+      "sha256": "dc11db66e7960fd57725373a25c1f5b59a51722af8443631b47475c507896de6",
+      "fileName": "fabric-sql-database"
+    },
+    {
+      "section": "Item types",
+      "title": "Streaming Dataflow",
+      "url": "https://debruyn.dev/2026/all-microsoft-fabric-icons-for-diagramming-2026-edition/streaming_dataflow.svg",
+      "sha256": "5be5239698a803c9ffdcc4838289f18eba5fd1dbeba3d664d257d2cb3e0414d2",
+      "fileName": "fabric-item-streaming-dataflow"
+    },
+    {
+      "section": "Item types",
+      "title": "Streaming Semantic Model",
+      "url": "https://debruyn.dev/2026/all-microsoft-fabric-icons-for-diagramming-2026-edition/streaming_semantic_model.svg",
+      "sha256": "6d456c39f53e575998ca77ab2b8c620e877bcc32f40061d8c62d9a842ddf94ca",
+      "fileName": "fabric-item-streaming-semantic-model"
+    },
+    {
+      "section": "Item types",
+      "title": "Sustainability",
+      "url": "https://debruyn.dev/2026/all-microsoft-fabric-icons-for-diagramming-2026-edition/sustainability.svg",
+      "sha256": "b6d4a320b1bebc13212b511b04db5dbb3688f634fa8a3878c2d049d4534f7c40",
+      "fileName": "fabric-item-sustainability"
+    },
+    {
+      "section": "Item types",
+      "title": "User Data Function",
+      "url": "https://debruyn.dev/2026/all-microsoft-fabric-icons-for-diagramming-2026-edition/user_data_function.svg",
+      "sha256": "bf3b28e23553fb130fd7ca9b420c5075e6f979e0311453bcd334e738b9ee66c0",
+      "fileName": "fabric-item-user-data-function"
+    },
+    {
+      "section": "Item types",
+      "title": "Variable Library",
+      "url": "https://debruyn.dev/2026/all-microsoft-fabric-icons-for-diagramming-2026-edition/variable_library.svg",
+      "sha256": "1135a0deba56f682b7943add931d81eeff50c2d90b4c0eeb666f50cf937fe63e",
+      "fileName": "fabric-item-variable-library"
+    },
+    {
+      "section": "Monochrome UI icons",
+      "title": "Column Security (filled)",
+      "url": "https://debruyn.dev/2026/all-microsoft-fabric-icons-for-diagramming-2026-edition/column_security_20_filled.svg",
+      "sha256": "2606755f93f551c18aa17ea8922ca1384eefea49c5a24825dc4dcf579f4a2447",
+      "fileName": "fabric-ui-column-security-filled"
+    },
+    {
+      "section": "Monochrome UI icons",
+      "title": "Column Security (regular)",
+      "url": "https://debruyn.dev/2026/all-microsoft-fabric-icons-for-diagramming-2026-edition/column_security_20_regular.svg",
+      "sha256": "cde085e22e36a6b0722e1b0199bf73884facf698ed210f202973d5da1745ef78",
+      "fileName": "fabric-ui-column-security-regular"
+    },
+    {
+      "section": "Monochrome UI icons",
+      "title": "Row Security (filled)",
+      "url": "https://debruyn.dev/2026/all-microsoft-fabric-icons-for-diagramming-2026-edition/row_security_20_filled.svg",
+      "sha256": "e86f7948069cdd67ce8184c99d3025f9d2fab784213fc10e83c70768433604a2",
+      "fileName": "fabric-ui-row-security-filled"
+    },
+    {
+      "section": "Monochrome UI icons",
+      "title": "Row Security (regular)",
+      "url": "https://debruyn.dev/2026/all-microsoft-fabric-icons-for-diagramming-2026-edition/row_security_20_regular.svg",
+      "sha256": "66996d914bce71be3aa8210a2b2b1a881bee193a8eb3fdcdbcf5de222c5cecca",
+      "fileName": "fabric-ui-row-security-regular"
+    },
+    {
+      "section": "Monochrome UI icons",
+      "title": "OneLake (filled)",
+      "url": "https://debruyn.dev/2026/all-microsoft-fabric-icons-for-diagramming-2026-edition/oneLake_20_filled.svg",
+      "sha256": "3efd00254ced65b1821d6559bdba72b5782d2a51256858e52b217281362dab6e",
+      "fileName": "fabric-ui-onelake-filled"
+    },
+    {
+      "section": "Monochrome UI icons",
+      "title": "OneLake (regular)",
+      "url": "https://debruyn.dev/2026/all-microsoft-fabric-icons-for-diagramming-2026-edition/oneLake_20_regular.svg",
+      "sha256": "8005090ebfd821c9e4ab687fb284dc31b8406d187fcfff5c5e8b73d0b9b11f56",
+      "fileName": "fabric-ui-onelake-regular"
+    },
+    {
+      "section": "Monochrome UI icons",
+      "title": "OneLake Database",
+      "url": "https://debruyn.dev/2026/all-microsoft-fabric-icons-for-diagramming-2026-edition/oneLake_database_20_regular.svg",
+      "sha256": "b5e2d0e272274a27b6acadbd49a639e9aa46cdcfd6ba28346777df5ae1d6557e",
+      "fileName": "fabric-ui-onelake-database"
+    },
+    {
+      "section": "Monochrome UI icons",
+      "title": "OneLake Schema (filled)",
+      "url": "https://debruyn.dev/2026/all-microsoft-fabric-icons-for-diagramming-2026-edition/oneLake_schema_20_filled.svg",
+      "sha256": "d99b3fc1736539cde2278ccedaf3310b455178f6e7db79e822e3f0f9294aff70",
+      "fileName": "fabric-ui-onelake-schema-filled"
+    },
+    {
+      "section": "Monochrome UI icons",
+      "title": "OneLake Schema (regular)",
+      "url": "https://debruyn.dev/2026/all-microsoft-fabric-icons-for-diagramming-2026-edition/oneLake_schema_20_regular.svg",
+      "sha256": "6ac9dcb57d6e29cba2a935b45e3728bacb4d5de86bf44cc0fcf2baa826c88be0",
+      "fileName": "fabric-ui-onelake-schema-regular"
+    },
+    {
+      "section": "Monochrome UI icons",
+      "title": "OneLake Table (filled)",
+      "url": "https://debruyn.dev/2026/all-microsoft-fabric-icons-for-diagramming-2026-edition/oneLake_table_20_filled.svg",
+      "sha256": "990e20b2de41b657d156fb8cb1cf00d0c0bdb45507b976822eb5a7c877ee335e",
+      "fileName": "fabric-ui-onelake-table-filled"
+    },
+    {
+      "section": "Monochrome UI icons",
+      "title": "OneLake Table (regular)",
+      "url": "https://debruyn.dev/2026/all-microsoft-fabric-icons-for-diagramming-2026-edition/oneLake_table_20_regular.svg",
+      "sha256": "4f21c775006863cc74439c7a2ac864dc6847a4ec49e772cdb07c7c347d6650bf",
+      "fileName": "fabric-ui-onelake-table-regular"
+    },
+    {
+      "section": "Monochrome UI icons",
+      "title": "OneLake Table Link (filled)",
+      "url": "https://debruyn.dev/2026/all-microsoft-fabric-icons-for-diagramming-2026-edition/oneLake_table_link_20_filled.svg",
+      "sha256": "538dbfec9d823b081c9348171e028884da8e548ad46e8f85ed05e9e26978aa4b",
+      "fileName": "fabric-ui-onelake-table-link-filled"
+    },
+    {
+      "section": "Monochrome UI icons",
+      "title": "OneLake Table Link (regular)",
+      "url": "https://debruyn.dev/2026/all-microsoft-fabric-icons-for-diagramming-2026-edition/oneLake_table_link_20_regular.svg",
+      "sha256": "d9ac1258e21c20df7423e6545e5139550bb1a557d43d1717ba5ad25ee0b44054",
+      "fileName": "fabric-ui-onelake-table-link-regular"
+    },
+    {
+      "section": "Deprecated / historical icons",
+      "title": "AI Skills",
+      "url": "https://debruyn.dev/2026/all-microsoft-fabric-icons-for-diagramming-2026-edition/ai_skills.svg",
+      "sha256": "0416f922a7e167def4cc855d8151d3e1df765be98117309b621706d8c7995eec",
+      "fileName": "fabric-legacy-ai-skills"
+    },
+    {
+      "section": "Deprecated / historical icons",
+      "title": "App Development",
+      "url": "https://debruyn.dev/2026/all-microsoft-fabric-icons-for-diagramming-2026-edition/app_development.svg",
+      "sha256": "4fdb933d0b31c8ec814527e92f64b0af22b3e038664f767f8d69bd666bab79e1",
+      "fileName": "fabric-legacy-app-development"
+    },
+    {
+      "section": "Deprecated / historical icons",
+      "title": "Function",
+      "url": "https://debruyn.dev/2026/all-microsoft-fabric-icons-for-diagramming-2026-edition/function.svg",
+      "sha256": "eaa63566c6ded9b5f68e59585cba93794a68f7a8770c39ff2d3f6ed9710f624a",
+      "fileName": "fabric-legacy-function"
+    },
+    {
+      "section": "Deprecated / historical icons",
+      "title": "OneRiver",
+      "url": "https://debruyn.dev/2026/all-microsoft-fabric-icons-for-diagramming-2026-edition/oneriver.svg",
+      "sha256": "91afb801d1833f1e7dacd98b602b17021f18674a686775ff71a4b4705f752ccf",
+      "fileName": "fabric-legacy-oneriver"
+    },
+    {
+      "section": "Deprecated / historical icons",
+      "title": "Reflex (experience)",
+      "url": "https://debruyn.dev/2026/all-microsoft-fabric-icons-for-diagramming-2026-edition/reflex_exp.svg",
+      "sha256": "156dc29f80eaea6e39d3e5a0225e4955e4cd090fcf08c5f605e84864390eeee6",
+      "fileName": "fabric-legacy-reflex-experience"
+    },
+    {
+      "section": "Deprecated / historical icons",
+      "title": "Reflex",
+      "url": "https://debruyn.dev/2026/all-microsoft-fabric-icons-for-diagramming-2026-edition/reflex.svg",
+      "sha256": "154da2931d73db90c71c4054d18889d7358558abf35ff28b3bc43109c5b187f5",
+      "fileName": "fabric-legacy-reflex"
+    },
+    {
+      "section": "Deprecated / historical icons",
+      "title": "Synapse",
+      "url": "https://debruyn.dev/2026/all-microsoft-fabric-icons-for-diagramming-2026-edition/synapse.svg",
+      "sha256": "5dd5ce5afff22c73ea5b6b4ea159f58d04a8b63a006363ea0fc52c2be24354cc",
+      "fileName": "fabric-legacy-synapse"
+    },
+    {
+      "section": "Deprecated / historical icons",
+      "title": "Synapse Data Engineering",
+      "url": "https://debruyn.dev/2026/all-microsoft-fabric-icons-for-diagramming-2026-edition/synapse_data_engineering.svg",
+      "sha256": "df089e4be8cf5a4f9c46fe181cbf8f3de778cc12c584fa71dc0fdc0a1e1ad3ea",
+      "fileName": "fabric-legacy-synapse-data-engineering"
+    },
+    {
+      "section": "Deprecated / historical icons",
+      "title": "Synapse Data Science",
+      "url": "https://debruyn.dev/2026/all-microsoft-fabric-icons-for-diagramming-2026-edition/synapse_data_science.svg",
+      "sha256": "a64523f658174b533213d6d43e245fe60c8fec55fd13e32e68fa4f27c1ebc22d",
+      "fileName": "fabric-legacy-synapse-data-science"
+    },
+    {
+      "section": "Deprecated / historical icons",
+      "title": "Synapse Data Warehouse",
+      "url": "https://debruyn.dev/2026/all-microsoft-fabric-icons-for-diagramming-2026-edition/synapse_data_warehouse.svg",
+      "sha256": "7d45e456b020a9b722d67660e44448d8cedebcbb1230b35fa9da80ffae66d062",
+      "fileName": "fabric-legacy-synapse-data-warehouse"
+    },
+    {
+      "section": "Deprecated / historical icons",
+      "title": "Synapse Real Time Intelligence",
+      "url": "https://debruyn.dev/2026/all-microsoft-fabric-icons-for-diagramming-2026-edition/synapse_real_time_intelligence.svg",
+      "sha256": "67d520e3f1694f8d7e7b5c5a15418955208f15f33c1ea5e19af8911e012212bf",
+      "fileName": "fabric-legacy-synapse-real-time-intelligence"
+    },
+    {
+      "section": "Deprecated / historical icons",
+      "title": "Variables",
+      "url": "https://debruyn.dev/2026/all-microsoft-fabric-icons-for-diagramming-2026-edition/variables.svg",
+      "sha256": "f62a090f1d4598f297753a11ef06d81cda47645daf76fc8b030777fdc52524e1",
+      "fileName": "fabric-legacy-variables"
+    }
+  ]
+}
