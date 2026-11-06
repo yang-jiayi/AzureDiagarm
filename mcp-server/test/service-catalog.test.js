@@ -133,6 +133,17 @@ test('non-conflicting legacy aliases remain available', () => {
   assert.equal(resolveServiceName('Azure Fabric'), 'Microsoft Fabric');
 });
 
+test('Fabric article names retain current service identities without adding drawing-only symbols', () => {
+  for (const name of ['Fabric Links', 'Links', 'Graph Links', 'Shortcuts', 'OneLake Shortcuts', 'OneLake Shortcut']) {
+    assert.equal(resolveServiceName(name), 'Fabric Links', name);
+  }
+  assert.equal(resolveServiceName('OneLake'), 'OneLake');
+  assert.equal(resolveServiceName('Graph Model Instance'), 'Fabric Graph Model');
+  assert.equal(resolveServiceName('Graph Model Instance Queryset'), 'Fabric Graph Queryset');
+  assert.equal(SERVICE_CATALOG['Fabric Legacy Graph Model Instance'], undefined);
+  assert.equal(SERVICE_CATALOG['Fabric UI Column Security Filled'], undefined);
+});
+
 test('the MCP catalog mirrors every generated service and alias deterministically', () => {
   const canonicalNames = new Set(
     Object.keys(SERVICE_CATALOG).map(key => key.toLowerCase()),

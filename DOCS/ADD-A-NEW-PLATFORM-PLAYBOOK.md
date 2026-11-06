@@ -36,6 +36,10 @@ set, not a developer/UI icon library:
 > Worked example pitfall: the Fabric `@fabric-msft/svg-icons` npm package is a
 > Fluent **UI** icon library. The branded product icons are the `*_item` /
 > `*_color` variants — confirm you are using the architecture icons.
+> Fabric now uses a reviewed, hash-locked source inventory: see
+> [Fabric sources and terms](../Azure_Public_Service_Icons/FABRIC-ICONS.md).
+> Only the 13 explicitly documented OneLake security UI glyphs are included;
+> they and historical artwork are drawing-only, excluded from AI service maps.
 
 ## Step 2 — Curate and place the SVGs
 
@@ -45,7 +49,7 @@ kebab‑case filenames that you will reference as `iconFile`:
 ```bash
 # Example for Fabric (run from repo root)
 mkdir -p "Azure_Public_Service_Icons/Icons/fabric"
-cp "<source>/lakehouse_32_item.svg" "Azure_Public_Service_Icons/Icons/fabric/fabric-lakehouse.svg"
+cp "<source>/lakehouse_48_item.svg" "Azure_Public_Service_Icons/Icons/fabric/fabric-lakehouse.svg"
 # ...repeat per service
 ```
 

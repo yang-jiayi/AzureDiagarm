@@ -26,3 +26,6 @@ Dockerfile text eol=lf
 *.zip binary
 *.tgz binary
 *.pdf binary
+
+# Preserve upstream Fabric SVG bytes for the source-verified SHA-256 inventory.
+Azure_Public_Service_Icons/Icons/fabric/*.svg -text

@@ -10,6 +10,7 @@ import {
   MICROSOFT_PRODUCT_ICON_CATALOG,
   MICROSOFT_PRODUCT_ICON_PACKAGE_VERSION,
   getMicrosoftProductIconByFileName,
+  type MicrosoftProductIconKind,
 } from '../src/data/microsoftProductIconCatalog';
 import { SERVICE_ICON_MAP, resolveServiceIconMapping } from '../src/data/serviceIconMapping';
 import { classifyIconPaletteCategory, iconPaletteCategories } from '../src/data/iconCatalog';
@@ -27,7 +28,14 @@ function readManifest() {
   ) as {
     packageVersion: string;
     iconCount: number;
-    files: Array<{ path: string; serviceName: string; family: string; sha256: string }>;
+    files: Array<{
+      path: string;
+      serviceName: string;
+      family: string;
+      kind: MicrosoftProductIconKind;
+      includeInServiceMap: boolean;
+      sha256: string;
+    }>;
   };
 }
 
@@ -76,14 +84,16 @@ test('Microsoft 365 symbols are searchable by the workload they stand for', () =
   const symbols = MICROSOFT_PRODUCT_ICON_CATALOG.filter(
     entry => entry.family === 'microsoft-365' && entry.kind === 'symbol',
   );
+  assert.equal(symbols.length, 205);
+  assert.equal(symbols.filter(entry => entry.includeInServiceMap).length, 44);
+  assert.ok(symbols.every(entry => !entry.hasPricingData));
 
-  // The official package ships concept symbols, not product logos, so the only
-  // way a user finds "the Teams shape" is through the aliases.
+  // The official package ships concept symbols, not product logos. Some symbols
+  // remain explicit icon targets for existing M365 service names.
   const searchable = new Map<string, string>();
   for (const symbol of symbols) {
     assert.equal(symbol.category, 'microsoft 365');
-    assert.equal(symbol.includeInServiceMap, false);
-    assert.match(symbol.fileName, /^m365-(?!app-)[a-z0-9-]+$/);
+    assert.match(symbol.fileName, /^m365-[a-z0-9-]+$/);
     for (const alias of symbol.aliases) {
       if (!searchable.has(alias.toLocaleLowerCase())) {
         searchable.set(alias.toLocaleLowerCase(), symbol.fileName);
@@ -152,29 +162,31 @@ test('every mapped catalog service and alias resolves to its own icon', () => {
   }
 });
 
-test('Microsoft 365 symbols never take over a real service name', () => {
-  // The symbols carry workload aliases so palette search finds them, but a
-  // symbol is a shape, not a service. If one of them entered the service map it
-  // would replace the real product icon everywhere the AI names that product.
+test('Microsoft 365 product mappings keep symbol semantics without claiming logo artwork', () => {
   for (const definition of MICROSOFT_PRODUCT_ICON_CATALOG) {
     if (definition.kind !== 'symbol') continue;
-    assert.equal(
-      SERVICE_ICON_MAP[definition.serviceName],
-      undefined,
-      `${definition.serviceName} must not be in SERVICE_ICON_MAP`,
-    );
+    const mapping = SERVICE_ICON_MAP[definition.serviceName];
+    if (definition.includeInServiceMap) {
+      assert.equal(mapping?.iconFile, definition.fileName, `${definition.serviceName} target changed`);
+    } else {
+      assert.equal(mapping, undefined, `${definition.serviceName} must remain drawing-only`);
+    }
     for (const alias of definition.aliases) {
       const resolved = resolveServiceIconMapping(alias);
-      if (!resolved) continue;
-      assert.notEqual(
-        resolved.mapping.iconFile,
-        definition.fileName,
-        `"${alias}" resolves to the Microsoft 365 symbol ${definition.fileName}`,
-      );
+      if (!definition.includeInServiceMap && resolved) {
+        assert.notEqual(resolved.mapping.iconFile, definition.fileName);
+      }
     }
   }
 
-  // The anchors those aliases must keep pointing at.
+  // Existing product service names remain available, with their generic art
+  // classified as symbols in the catalog and visibly labeled in the palette.
+  assert.equal(MICROSOFT_PRODUCT_ICON_CATALOG.find(entry => entry.fileName === 'm365-app-teams')?.kind, 'symbol');
+  assert.equal(MICROSOFT_PRODUCT_ICON_CATALOG.find(entry => entry.fileName === 'm365-app-excel')?.kind, 'symbol');
+  assert.equal(resolveServiceIconMapping('Microsoft Teams')?.mapping.iconFile, 'm365-app-teams');
+  assert.equal(resolveServiceIconMapping('Microsoft Excel')?.mapping.iconFile, 'm365-app-excel');
+
+  // Existing cross-family anchors must not be shadowed by M365 search aliases.
   assert.equal(resolveServiceIconMapping('Microsoft Entra ID')?.mapping.category, 'identity');
   assert.equal(
     resolveServiceIconMapping('Microsoft Copilot Studio')?.mapping.iconFile,
@@ -381,6 +393,8 @@ test('the manifest matches the catalog', () => {
     assert.ok(entry, `${definition.fileName}.svg is missing from the manifest`);
     assert.equal(entry.serviceName, definition.serviceName);
     assert.equal(entry.family, definition.family);
+    assert.equal(entry.kind, definition.kind);
+    assert.equal(entry.includeInServiceMap, definition.includeInServiceMap);
     assert.match(entry.sha256, /^[a-f0-9]{64}$/);
   }
 });

@@ -103,15 +103,18 @@ function parseCatalog(catalogText) {
 
   const entries = [];
   const entryPattern =
-    /defineMicrosoftProductIcon\(\s*'([^']+)'\s*,\s*'([^']+)'\s*,\s*'([^']+)'\s*,\s*'([^']+\.svg)'\s*,\s*'([^']+)'\s*,/g;
+    /defineMicrosoftProductIcon\(\s*'([^']+)'\s*,\s*'([^']+)'\s*,\s*'([^']+)'\s*,\s*'([^']+\.svg)'\s*,\s*'([^']+)'\s*,\s*'([^']+)'\s*,\s*'([^']+)'/g;
   let match;
   while ((match = entryPattern.exec(catalogText)) !== null) {
+    const [, serviceName, displayName, fileName, sourceAsset, family, , declaredKind] = match;
     entries.push({
-      serviceName: match[1],
-      displayName: match[2],
-      fileName: match[3],
-      sourceAsset: match[4],
-      family: match[5],
+      serviceName,
+      displayName,
+      fileName,
+      sourceAsset,
+      family,
+      kind: family === 'microsoft-365' ? 'symbol' : declaredKind,
+      includeInServiceMap: declaredKind !== 'symbol',
     });
   }
   if (entries.length === 0) {
@@ -262,6 +265,8 @@ async function main() {
       path: `${category}/${entry.fileName}.svg`,
       serviceName: entry.serviceName,
       family: entry.family,
+      kind: entry.kind,
+      includeInServiceMap: entry.includeInServiceMap,
       sourceAsset: entry.sourceAsset,
       sha256: sha256(content),
     });

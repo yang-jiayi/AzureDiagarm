@@ -252,6 +252,22 @@ const IconPalette: React.FC<IconPaletteProps> = ({ forceCollapsed, openSignal, o
     });
   }, [canonicalIconIds]);
 
+  const categoryIconGroups = useMemo(() => {
+    const groups = new Map<IconPaletteCategoryId, { label: string; icons: AzureIcon[] }[]>();
+    for (const category of paletteCategories) {
+      const icons = categoryIcons.get(category.id) || [];
+      groups.set(category.id, category.id === 'fabric'
+        ? [
+            { label: '', icons: icons.filter(icon => !icon.fabricDrawingKind) },
+            { label: localize(language, { en: 'OneLake Security UI', ja: 'OneLake セキュリティ UI' }), icons: icons.filter(icon => icon.fabricDrawingKind === 'ui') },
+            { label: localize(language, { en: 'Legacy / Deprecated', ja: '旧 / 廃止アイコン' }), icons: icons.filter(icon => icon.fabricDrawingKind === 'legacy') },
+            { label: localize(language, { en: 'Concept / drawing only', ja: '概念図・描画専用' }), icons: icons.filter(icon => icon.fabricDrawingKind === 'concept') },
+          ]
+        : [{ label: '', icons }]);
+    }
+    return groups;
+  }, [categoryIcons, language]);
+
   const allIcons = useMemo(
     () => paletteCategories.flatMap((category) => categoryIcons.get(category.id) || []),
     [categoryIcons],
@@ -403,7 +419,7 @@ const IconPalette: React.FC<IconPaletteProps> = ({ forceCollapsed, openSignal, o
             <img
               src={iconUrl}
               alt=""
-              className="icon-image"
+              className={`icon-image${icon.fabricDrawingKind === 'ui' ? ' fabric-ui-icon' : ''}`}
               loading="lazy"
               decoding="async"
             />
@@ -419,6 +435,23 @@ const IconPalette: React.FC<IconPaletteProps> = ({ forceCollapsed, openSignal, o
                 : <React.Fragment key={`${segment.text}-${index}`}>{segment.text}</React.Fragment>
             ))}
           </span>
+          {icon.microsoftProductKind === 'symbol' && (
+            <span className="icon-drawing-kind">
+              {localize(language, {
+                en: 'Concept symbol, not product logo',
+                ja: '概念シンボル (製品ロゴではありません)',
+              })}
+            </span>
+          )}
+          {icon.fabricDrawingKind && (
+            <span className="icon-drawing-kind">
+              {icon.fabricDrawingKind === 'legacy'
+                ? localize(language, { en: 'Legacy / Deprecated', ja: '旧 / 廃止' })
+                : icon.fabricDrawingKind === 'ui'
+                  ? localize(language, { en: 'OneLake Security UI', ja: 'OneLake セキュリティ UI' })
+                  : localize(language, { en: 'Concept / drawing only', ja: '概念図・描画専用' })}
+            </span>
+          )}
         </button>
         <div className="icon-item-actions">
           <button
@@ -676,6 +709,7 @@ const IconPalette: React.FC<IconPaletteProps> = ({ forceCollapsed, openSignal, o
             {activeView === 'catalog' && searchTerm.trim() === '' && paletteCategories.map((category) => {
               const isExpanded = expandedCategories.has(category.id);
               const icons = categoryIcons.get(category.id) || [];
+              const groups = categoryIconGroups.get(category.id) || [];
               return (
                 <section key={category.id} className="category-section">
                   <button
@@ -694,13 +728,18 @@ const IconPalette: React.FC<IconPaletteProps> = ({ forceCollapsed, openSignal, o
                       <p className="category-description">
                         {localize(language, category.description)}
                       </p>
-                      <VirtualizedIconGrid
-                        icons={icons}
-                        renderIcon={renderIcon}
-                        onVisibleIconsChange={loadIconUrls}
-                        ariaLabel={localize(language, category.label)}
-                        layout={layout}
-                      />
+                      {groups.filter(group => group.icons.length > 0).map(group => (
+                        <React.Fragment key={group.label}>
+                          {group.label && <h3 className="category-drawing-heading">{group.label} ({group.icons.length})</h3>}
+                          <VirtualizedIconGrid
+                            icons={group.icons}
+                            renderIcon={renderIcon}
+                            onVisibleIconsChange={loadIconUrls}
+                            ariaLabel={group.label || localize(language, category.label)}
+                            layout={layout}
+                          />
+                        </React.Fragment>
+                      ))}
                     </>
                   )}
                 </section>

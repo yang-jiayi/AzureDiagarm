@@ -6,6 +6,7 @@ import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { dirname, isAbsolute, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { assertSafeSvg, parseCatalog } from './sync-fabric-icons.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..');
@@ -88,7 +89,8 @@ async function main() {
     const path = resolveManifestIconPath(entry.path);
     try {
       const content = await readFile(path);
-      if (sha256NormalizedSvg(content) !== entry.sha256) changed.push(entry.path);
+      const actualHash = sha256NormalizedSvg(content);
+      if (actualHash !== entry.normalizedSha256) changed.push(entry.path);
     } catch {
       missing.push(entry.path);
     }
@@ -109,9 +111,10 @@ async function main() {
   const fabricManifest = JSON.parse(await readFile(fabricManifestPath, 'utf8'));
   if (
     !Array.isArray(fabricManifest.files)
-    || fabricManifest.files.length !== fabricManifest.officialFamilyCount
+    || fabricManifest.files.length !== fabricManifest.paletteIconCount
     || fabricManifest.paletteIconCount
       !== fabricManifest.officialFamilyCount + fabricManifest.localIconCount
+        + fabricManifest.legacyIconCount + fabricManifest.uiIconCount
   ) {
     throw new Error('Fabric icon manifest count does not match its file inventory');
   }
@@ -122,23 +125,12 @@ async function main() {
   if (catalogVersion !== fabricManifest.packageVersion) {
     throw new Error('Fabric catalog and manifest package versions do not match');
   }
-  const catalogEntries = [];
-  const catalogPattern =
-    /defineFabricIcon\(\s*'([^']+)'\s*,\s*'([^']+)'\s*,\s*'([^']+)'\s*,\s*(?:'([^']+\.svg)'|null)\s*,/g;
-  let catalogMatch;
-  while ((catalogMatch = catalogPattern.exec(fabricCatalog)) !== null) {
-    catalogEntries.push({
-      serviceName: catalogMatch[1],
-      displayName: catalogMatch[2],
-      fileName: catalogMatch[3],
-      sourceAsset: catalogMatch[4] ?? null,
-    });
-  }
+  const { entries: catalogEntries } = parseCatalog(fabricCatalog);
   if (catalogEntries.length !== fabricManifest.paletteIconCount) {
     throw new Error('Fabric catalog count does not match the manifest');
   }
 
-  const catalogBySource = new Map();
+  const catalogByPath = new Map();
   const catalogFileNames = new Set();
   const catalogServiceNames = new Set();
   for (const entry of catalogEntries) {
@@ -152,44 +144,64 @@ async function main() {
     }
     catalogFileNames.add(normalizedFileName);
     catalogServiceNames.add(normalizedServiceName);
-    if (!entry.sourceAsset) continue;
-    const normalizedSource = entry.sourceAsset.toLocaleLowerCase();
-    if (catalogBySource.has(normalizedSource)) {
-      throw new Error(`Fabric catalog contains a duplicate source: ${entry.sourceAsset}`);
-    }
-    catalogBySource.set(normalizedSource, entry);
-  }
-  if (catalogBySource.size !== fabricManifest.officialFamilyCount) {
-    throw new Error('Fabric catalog does not cover every official source family');
+    catalogByPath.set(`fabric/${entry.fileName}.svg`, entry);
   }
 
+  const fabricLock = JSON.parse(await readFile(resolve(here, 'fabric-icon-sources.json'), 'utf8'));
+  if (JSON.stringify(fabricManifest.packages) !== JSON.stringify(fabricLock.packages)) {
+    throw new Error('Fabric package provenance differs from its source lock');
+  }
+  const articleByPath = new Map(fabricLock.articleIcons.map(icon => [`fabric/${icon.fileName}.svg`, icon]));
   const fabricMissing = [];
   const fabricChanged = [];
-  const manifestSources = new Set();
+  const manifestPaths = new Set();
+  let articleCount = 0;
   for (const entry of fabricManifest.files) {
-    const normalizedSource = String(entry.sourceAsset ?? '').toLocaleLowerCase();
-    if (!normalizedSource || manifestSources.has(normalizedSource)) {
-      throw new Error(`Fabric manifest contains a duplicate source: ${entry.sourceAsset}`);
+    if (manifestPaths.has(entry.path)) {
+      throw new Error(`Fabric manifest contains a duplicate path: ${entry.path}`);
     }
-    manifestSources.add(normalizedSource);
-    const catalogEntry = catalogBySource.get(normalizedSource);
-    const expectedPath = catalogEntry
-      ? `fabric/${catalogEntry.fileName}.svg`
-      : undefined;
-    if (!catalogEntry || entry.path !== expectedPath) {
-      throw new Error(`Fabric manifest mapping is invalid: ${entry.sourceAsset}`);
+    manifestPaths.add(entry.path);
+    const catalogEntry = catalogByPath.get(entry.path);
+    const sourceType = catalogEntry?.sourceVersion === 'article-2026' ? 'article'
+      : catalogEntry?.sourceAsset ? 'npm' : 'local';
+    if (
+      !catalogEntry || entry.sourceAsset !== catalogEntry.sourceAsset
+      || entry.sourceVersion !== catalogEntry.sourceVersion
+      || entry.serviceName !== catalogEntry.serviceName
+      || entry.sourceType !== sourceType
+      || (sourceType === 'npm' && !fabricLock.packages.some(pin => pin.version === entry.sourceVersion))
+    ) {
+      throw new Error(`Fabric manifest mapping is invalid: ${entry.path}`);
+    }
+    const article = articleByPath.get(entry.path);
+    if (article) {
+      articleCount++;
+      if (sourceType === 'article' && (
+        entry.sha256 !== article.sha256 || entry.articleUrl !== article.url
+        || entry.articleTitle !== article.title || entry.articleSection !== article.section
+        || entry.sourceUrl !== article.url
+      )) {
+        throw new Error(`Fabric article provenance is invalid: ${entry.path}`);
+      }
     }
     if (!/^[a-f0-9]{64}$/i.test(entry.sha256)) {
       throw new Error(`Fabric manifest contains an invalid SHA-256: ${entry.path}`);
     }
 
     const path = resolveManifestIconPath(entry.path);
+    let content;
     try {
-      const content = await readFile(path);
-      if (sha256(content) !== entry.sha256) fabricChanged.push(entry.path);
-    } catch {
+      content = await readFile(path);
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error;
       fabricMissing.push(entry.path);
+      continue;
     }
+    assertSafeSvg(content, entry.path);
+    if (sha256(content) !== entry.sha256) fabricChanged.push(entry.path);
+  }
+  if (articleCount !== fabricLock.articleIcons.length || articleCount !== fabricManifest.articleIconCount) {
+    throw new Error('Fabric manifest does not cover every article icon');
   }
   if (fabricMissing.length > 0 || fabricChanged.length > 0) {
     const details = [
@@ -201,8 +213,9 @@ async function main() {
 
   console.log(
     `[test:icons] Fabric ${fabricManifest.packageVersion}: all `
-    + `${fabricManifest.officialFamilyCount} official architecture families verified `
-    + `(${fabricManifest.paletteIconCount} palette icons including local capacity)`,
+    + `${fabricManifest.paletteIconCount} palette icons verified `
+    + `(${fabricManifest.officialFamilyCount} current, ${fabricManifest.legacyIconCount} legacy, `
+    + `${fabricManifest.uiIconCount} UI, ${fabricManifest.localIconCount} local; ${articleCount} article SVGs)`,
   );
 
   await verifyMicrosoftProductIcons();

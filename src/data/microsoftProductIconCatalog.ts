@@ -16,11 +16,11 @@
  *
  * Power Platform and Dynamics 365 ship product logos, so each entry there names
  * one product. The Microsoft 365 package ships concept symbols instead — the
- * shapes Microsoft's own Microsoft 365 architecture diagrams are drawn from —
- * so those entries are `kind: 'symbol'` and stay out of the service map: they
- * describe a role in a drawing, not a billable service. Their aliases still
- * carry the workload names so searching "Teams" or "Purview" in the palette
- * surfaces the symbol Microsoft uses for it.
+ * shapes Microsoft's own Microsoft 365 architecture diagrams are drawn from.
+ * All Microsoft 365 assets are therefore `kind: 'symbol'` and visibly labeled
+ * as such, including symbols retained as icon targets for existing M365 service
+ * mappings. A service name or alias describes what the symbol can represent; it
+ * does not claim the SVG is that product's logo.
  */
 
 export type MicrosoftProductIconFamily = 'power-platform' | 'dynamics-365' | 'microsoft-365';
@@ -78,6 +78,7 @@ function defineMicrosoftProductIcon(
   kind: MicrosoftProductIconKind,
   aliases: string[] = [],
 ): MicrosoftProductIconDefinition {
+  const isMicrosoft365Symbol = family === 'microsoft-365';
   return {
     serviceName,
     displayName,
@@ -86,7 +87,7 @@ function defineMicrosoftProductIcon(
     family,
     category: FAMILY_CATEGORY[family],
     group,
-    kind,
+    kind: isMicrosoft365Symbol ? 'symbol' : kind,
     aliases,
     // A concept symbol names a role in a drawing, not a service, so it must not
     // become a service the AI can emit or the pricing engine can look up.

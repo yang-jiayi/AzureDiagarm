@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "sourcePage": "https://learn.microsoft.com/en-us/azure/architecture/icons/",
+  "packageUrl": "https://arch-center.azureedge.net/icons/Azure_Public_Service_Icons_V25.zip",
+  "packageVersion": "V25",
+  "packageSha256": "f293d99252b3638557dd08ccbff9f2529083473d39b373fb2af29a7200351339",
+  "officialIconCount": 721,
+  "comparisonBaselineFile": "azure-icon-v24-baseline.json",
+  "comparisonBaselineSha256": "460b618e034c18fb05b5545b08d48e7be35cca528e6d5572ea08c9cb83bc6df6"
+}

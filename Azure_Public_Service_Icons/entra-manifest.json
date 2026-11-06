@@ -1,0 +1,107 @@
+{
+  "schemaVersion": 1,
+  "sourcePage": "https://learn.microsoft.com/en-us/entra/architecture/architecture-icons",
+  "packageUrl": "https://download.microsoft.com/download/3/1/a/31a56038-856a-4489-88e4-ee5a1c4352be/Microsoft%20Entra%20architecture%20icons%20-%20Oct%202023.zip",
+  "packageVersion": "October 2023",
+  "packageSha256": "4e07536706a2d092e6524e5417e2c861333fdbdb41c36f78d44dfa07ccc5eedc",
+  "terms": "Microsoft permits these icons in architectural diagrams, training materials, or documentation; marketing communications are not permitted. Do not crop, flip, rotate, distort, or change the icon shape.",
+  "svgCount": 14,
+  "addedIconCount": 2,
+  "duplicateIconCount": 9,
+  "variantNotAddedCount": 3,
+  "files": [
+    {
+      "sourcePath": "Microsoft Entra architecture icons - Oct 2023/Microsoft Entra BW icons SVG/Microsoft Entra BW icon (product family).svg",
+      "sha256": "de5ee4464d39aa8a9085b87335eae58e00808e4ee14467da65359f713b5de7a5",
+      "action": "variant-not-added",
+      "counterpart": "Microsoft Entra architecture icons - Oct 2023/Microsoft Entra color icons SVG/Microsoft Entra Product Family.svg"
+    },
+    {
+      "sourcePath": "Microsoft Entra architecture icons - Oct 2023/Microsoft Entra BW icons SVG/Microsoft Entra ID BW icon.svg",
+      "sha256": "3a42d3161e7b5ccdbd3ca996ae3c0126eec77cc062d502ae7b64a176626f84ef",
+      "action": "variant-not-added",
+      "counterpart": "Microsoft Entra architecture icons - Oct 2023/Microsoft Entra color icons SVG/Microsoft Entra ID color icon.svg"
+    },
+    {
+      "sourcePath": "Microsoft Entra architecture icons - Oct 2023/Microsoft Entra BW icons SVG/Microsoft Entra ID filled BW icon.svg",
+      "sha256": "6ff6932b53fa5861fb24d6b3f996a76e8951e97ea159c56f4653eaac117681f4",
+      "action": "variant-not-added",
+      "counterpart": "Microsoft Entra architecture icons - Oct 2023/Microsoft Entra color icons SVG/Microsoft Entra ID color icon.svg"
+    },
+    {
+      "sourcePath": "Microsoft Entra architecture icons - Oct 2023/Microsoft Entra BW icons SVG/Microsoft Entra ID Governance BW icon.svg",
+      "sha256": "3d0f9d0d627b0a5a0be8d90395c52ef05561dc0ec859647cfeb68e07579290ef",
+      "action": "duplicate",
+      "targetPath": "identity/10235-icon-service-Identity-Governance.svg",
+      "targetSha256": "d10d483115ba36c6ddc4bc8f513f6ce10de185f8f94892135d57759dd312b1df"
+    },
+    {
+      "sourcePath": "Microsoft Entra architecture icons - Oct 2023/Microsoft Entra BW icons SVG/Microsoft Entra Internet Access BW icon.svg",
+      "sha256": "3a70c3efdfe927f8b29d89ffd13fd407a9f5d6db747ddf01657c33a4077bfcb9",
+      "action": "duplicate",
+      "targetPath": "identity/03383-icon-service-Entra-Internet-Access.svg",
+      "targetSha256": "307d30e178e31465f1acbf8e6cbca48745cd698edb546a7badefc754a2324b42"
+    },
+    {
+      "sourcePath": "Microsoft Entra architecture icons - Oct 2023/Microsoft Entra BW icons SVG/Microsoft Entra Private Access BW icon.svg",
+      "sha256": "69b149b817e7d9c6a67eebd34a0e00de0f9bbaef6a14330bbe6010056a6f6001",
+      "action": "duplicate",
+      "targetPath": "identity/03382-icon-service-Entra-Private-Access.svg",
+      "targetSha256": "f30b25765b36d0b2ffe0943871e0a2707ea00c2fe0245f10db6f3d95f6f409ea"
+    },
+    {
+      "sourcePath": "Microsoft Entra architecture icons - Oct 2023/Microsoft Entra BW icons SVG/Microsoft Entra Verified ID BW icon.svg",
+      "sha256": "9ec3d05f46a5093a1a2c184c3b4aac8e06a578d7169e2520c80154a335d2e32b",
+      "action": "duplicate",
+      "targetPath": "identity/03143-icon-service-Entra-Verified-ID.svg",
+      "targetSha256": "6630e91bc4f62fcf3bc5c31d9fa17f99204c260f750e15e776fa153492bc14c5"
+    },
+    {
+      "sourcePath": "Microsoft Entra architecture icons - Oct 2023/Microsoft Entra color icons SVG/Microsoft Entra ID color icon.svg",
+      "sha256": "efd9f54562bfb78bf3c77aecdd5fc31b61fce8a1cec78c4370b41fc470e54eda",
+      "action": "duplicate",
+      "targetPath": "identity/microsoft-entra-id.svg",
+      "targetSha256": "efd9f54562bfb78bf3c77aecdd5fc31b61fce8a1cec78c4370b41fc470e54eda"
+    },
+    {
+      "sourcePath": "Microsoft Entra architecture icons - Oct 2023/Microsoft Entra color icons SVG/Microsoft Entra ID Governance color icon.svg",
+      "sha256": "b19ae8a696a9c351444d1ae37602a29b8ac2e29a1779089d436f09feb61249e3",
+      "action": "duplicate",
+      "targetPath": "identity/10235-icon-service-Identity-Governance.svg",
+      "targetSha256": "d10d483115ba36c6ddc4bc8f513f6ce10de185f8f94892135d57759dd312b1df"
+    },
+    {
+      "sourcePath": "Microsoft Entra architecture icons - Oct 2023/Microsoft Entra color icons SVG/Microsoft Entra Internet Access color icon.svg",
+      "sha256": "9fce0b0555ebadb7d86480e0b7f2c37baff9a3c32cb5fee074b314401aec14af",
+      "action": "duplicate",
+      "targetPath": "identity/03383-icon-service-Entra-Internet-Access.svg",
+      "targetSha256": "307d30e178e31465f1acbf8e6cbca48745cd698edb546a7badefc754a2324b42"
+    },
+    {
+      "sourcePath": "Microsoft Entra architecture icons - Oct 2023/Microsoft Entra color icons SVG/Microsoft Entra Private Access color icon.svg",
+      "sha256": "63ff1e74681b1e9d3226c86c6bd278a0b38b6d3d5ea4414d37415ce46d7c960b",
+      "action": "duplicate",
+      "targetPath": "identity/03382-icon-service-Entra-Private-Access.svg",
+      "targetSha256": "f30b25765b36d0b2ffe0943871e0a2707ea00c2fe0245f10db6f3d95f6f409ea"
+    },
+    {
+      "sourcePath": "Microsoft Entra architecture icons - Oct 2023/Microsoft Entra color icons SVG/Microsoft Entra Product Family.svg",
+      "sha256": "6d7f94e6132c025cb0304d0b1ad0a8beb968b1b6ce0e22f33609b86fa64a450f",
+      "action": "add",
+      "targetPath": "identity/microsoft-entra-product-family.svg"
+    },
+    {
+      "sourcePath": "Microsoft Entra architecture icons - Oct 2023/Microsoft Entra color icons SVG/Microsoft Entra Verified ID color icon.svg",
+      "sha256": "ae1f6e9472ca807c1234b100b82a4122d0f7630bd47b4909528f0d88ba7c3423",
+      "action": "duplicate",
+      "targetPath": "identity/03143-icon-service-Entra-Verified-ID.svg",
+      "targetSha256": "6630e91bc4f62fcf3bc5c31d9fa17f99204c260f750e15e776fa153492bc14c5"
+    },
+    {
+      "sourcePath": "Microsoft Entra architecture icons - Oct 2023/Microsoft Entra color icons SVG/Microsoft Entra Workload ID color icon.svg",
+      "sha256": "f060c986a7f0bd0761c210225dc5db6a8bafa18eb1ea411f3417b9a0dadefe51",
+      "action": "add",
+      "targetPath": "identity/microsoft-entra-workload-id.svg"
+    }
+  ]
+}

@@ -8,6 +8,7 @@ import { loadIcon, loadIconsFromCategory } from '../utils/iconLoader';
 import { NodePricingConfig } from '../types/pricing';
 import { formatMonthlyCost, getCostColor } from '../utils/pricingHelpers';
 import { isCapacityConsumed } from '../data/serviceIconMapping';
+import { isFabricUiIconPath } from '../data/fabricIconCatalog';
 import { usePricingDisplayPrefs } from '../stores/pricingDisplayStore';
 import { openNodePricingEditor } from '../stores/nodePricingEditorStore';
 import './AzureNode.css';
@@ -295,7 +296,7 @@ const AzureNode: React.FC<NodeProps> = memo(({ data, selected, id }) => {
           </button>
         )}
         {iconUrl ? (
-          <img src={iconUrl} alt={label} className={`node-icon ${stylePreset === 'presentation' ? 'node-icon--presentation' : ''}`} />
+          <img src={iconUrl} alt={label} className={`node-icon ${stylePreset === 'presentation' ? 'node-icon--presentation' : ''}${isFabricUiIconPath(data.iconPath) ? ' fabric-ui-icon' : ''}`} />
         ) : iconFallbackFailed ? (
           <div
             className="node-icon-placeholder"
