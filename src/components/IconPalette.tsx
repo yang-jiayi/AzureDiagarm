@@ -252,6 +252,22 @@ const IconPalette: React.FC<IconPaletteProps> = ({ forceCollapsed, openSignal, o
     });
   }, [canonicalIconIds]);
 
+  const categoryIconGroups = useMemo(() => {
+    const groups = new Map<IconPaletteCategoryId, { label: string; icons: AzureIcon[] }[]>();
+    for (const category of paletteCategories) {
+      const icons = categoryIcons.get(category.id) || [];
+      groups.set(category.id, category.id === 'fabric'
+        ? [
+            { label: '', icons: icons.filter(icon => !icon.fabricDrawingKind) },
+            { label: localize(language, { en: 'OneLake Security UI', ja: 'OneLake セキュリティ UI' }), icons: icons.filter(icon => icon.fabricDrawingKind === 'ui') },
+            { label: localize(language, { en: 'Legacy / Deprecated', ja: '旧 / 廃止アイコン' }), icons: icons.filter(icon => icon.fabricDrawingKind === 'legacy') },
+            { label: localize(language, { en: 'Concept / drawing only', ja: '概念図・描画専用' }), icons: icons.filter(icon => icon.fabricDrawingKind === 'concept') },
+          ]
+        : [{ label: '', icons }]);
+    }
+    return groups;
+  }, [categoryIcons, language]);
+
   const allIcons = useMemo(
     () => paletteCategories.flatMap((category) => categoryIcons.get(category.id) || []),
     [categoryIcons],
@@ -693,14 +709,7 @@ const IconPalette: React.FC<IconPaletteProps> = ({ forceCollapsed, openSignal, o
             {activeView === 'catalog' && searchTerm.trim() === '' && paletteCategories.map((category) => {
               const isExpanded = expandedCategories.has(category.id);
               const icons = categoryIcons.get(category.id) || [];
-              const groups = category.id === 'fabric'
-                ? [
-                    { label: '', icons: icons.filter(icon => !icon.fabricDrawingKind) },
-                    { label: localize(language, { en: 'OneLake Security UI', ja: 'OneLake セキュリティ UI' }), icons: icons.filter(icon => icon.fabricDrawingKind === 'ui') },
-                    { label: localize(language, { en: 'Legacy / Deprecated', ja: '旧 / 廃止アイコン' }), icons: icons.filter(icon => icon.fabricDrawingKind === 'legacy') },
-                    { label: localize(language, { en: 'Concept / drawing only', ja: '概念図・描画専用' }), icons: icons.filter(icon => icon.fabricDrawingKind === 'concept') },
-                  ]
-                : [{ label: '', icons }];
+              const groups = categoryIconGroups.get(category.id) || [];
               return (
                 <section key={category.id} className="category-section">
                   <button

@@ -113,7 +113,7 @@ npm run mcp:build
 | `npm run test:icons` | 成功。Azure 721、Fabric 117とarticle 101、Microsoft製品229の全SVGを検証。 |
 | `npx tsx --test tests/iconSourceInventory.test.ts tests/fabricIcons.test.ts tests/fabricIconSync.test.ts tests/microsoftProductIcons.test.ts` | 成功。25/25件。全件網羅、旧パス・Function Setの意味、conceptのAI/MCP/capacity/pricing除外、M365のsymbol分類を確認。 |
 | `npm run test:unit` | 成功。1246/1246件。初回の`npm ci --ignore-scripts`で省略されたリポジトリ標準postinstall（image-size parser safeguards）を適用後に実行。 |
-| `node scripts/test-fabric-icons.mjs` | 成功。本番Vite build相当でFabric 117 SVG（data URL 100、native raster UI 13）、保存済みパス、描画分類、16 canvas nodes、PNG exportとM365概念シンボル表示を確認。 |
+| `node scripts/test-fabric-icons.mjs` | 成功。本番Vite build相当でFabric 117 SVG（data URL 100、native raster UI 13）、保存済みパス、lazy-load中のscroll維持、描画分類、16 canvas nodes、PNG exportとM365概念シンボル表示を確認。 |
 | `npm run lint` / `npm run build` / `npm run mcp:build` | すべて成功。MCP buildはicon map 405件、embedded SVG 398件（missing 0）を生成。 |
 | `node scripts/emulate-docker-context.mjs <temp path>` | 成功。Docker context 2227ファイルに4 manifestsと新規SVGが含まれることを確認し、temp出力は削除。 |
 

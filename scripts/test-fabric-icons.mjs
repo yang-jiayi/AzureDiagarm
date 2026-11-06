@@ -61,6 +61,25 @@ try {
     images.every(image => image.complete && image.naturalWidth > 0))).toBe(true);
   assert.ok(await category.locator('.icon-image').count() > 0);
   await category.scrollIntoViewIfNeeded();
+  const fabricGrid = category.locator('.virtualized-icons-viewport').first();
+  const initialGridLabels = await fabricGrid.locator('.icon-label').allTextContents();
+  await fabricGrid.evaluate(element => {
+    element.scrollTop = Math.min(1200, element.scrollHeight - element.clientHeight);
+    element.dispatchEvent(new Event('scroll', { bubbles: true }));
+  });
+  await expect.poll(() => fabricGrid.locator('.icon-label').allTextContents())
+    .not.toEqual(initialGridLabels);
+  await expect.poll(() => fabricGrid.evaluate(element => element.scrollTop)).toBeGreaterThan(0);
+  const expectedScrollTop = await fabricGrid.evaluate(element => element.scrollTop);
+  const visibleCardCount = await fabricGrid.locator('.icon-item').count();
+  await expect.poll(() => fabricGrid.locator('.icon-image').count()).toBe(visibleCardCount);
+  await expect.poll(() => fabricGrid.locator('.icon-image').evaluateAll(images =>
+    images.every(image => image.complete && image.naturalWidth > 0))).toBe(true);
+  await expect.poll(() => fabricGrid.evaluate(element => element.scrollTop)).toBe(expectedScrollTop);
+  await fabricGrid.evaluate(element => {
+    element.scrollTop = 0;
+    element.dispatchEvent(new Event('scroll', { bubbles: true }));
+  });
   if (artifacts) {
     await mkdir(artifacts, { recursive: true });
     await palette.screenshot({ path: resolve(artifacts, snapshotOnly ? 'fabric-palette-before.png' : 'fabric-palette-after.png') });
@@ -151,7 +170,7 @@ try {
     assert.ok(png.length > 10_000, 'Rendered diagram PNG must not be blank');
     if (artifacts) await download.saveAs(resolve(artifacts, 'fabric-diagram-export.png'));
     assert.deepEqual(errors, [], 'Fabric interactions must not throw browser errors');
-    console.log(`[test:fabric:browser] ${result.sourceCount} production SVGs rendered (${result.inlined} data URLs), 13 native-export rasters; saved paths, drawing groups, 16 canvas nodes, light/dark contrast and PNG export verified`);
+    console.log(`[test:fabric:browser] ${result.sourceCount} production SVGs rendered (${result.inlined} data URLs), 13 native-export rasters; saved paths, scroll-preserving lazy loads, drawing groups, 16 canvas nodes, light/dark contrast and PNG export verified`);
   }
   console.log('[test:fabric:browser] Fabric palette rendered successfully');
 } finally {
