@@ -10,6 +10,7 @@ import {
   MICROSOFT_PRODUCT_ICON_CATALOG,
   MICROSOFT_PRODUCT_ICON_PACKAGE_VERSION,
   getMicrosoftProductIconByFileName,
+  type MicrosoftProductIconKind,
 } from '../src/data/microsoftProductIconCatalog';
 import { SERVICE_ICON_MAP, resolveServiceIconMapping } from '../src/data/serviceIconMapping';
 import { classifyIconPaletteCategory, iconPaletteCategories } from '../src/data/iconCatalog';
@@ -27,7 +28,14 @@ function readManifest() {
   ) as {
     packageVersion: string;
     iconCount: number;
-    files: Array<{ path: string; serviceName: string; family: string; sha256: string }>;
+    files: Array<{
+      path: string;
+      serviceName: string;
+      family: string;
+      kind: MicrosoftProductIconKind;
+      includeInServiceMap: boolean;
+      sha256: string;
+    }>;
   };
 }
 
