@@ -89,7 +89,8 @@ async function main() {
     const path = resolveManifestIconPath(entry.path);
     try {
       const content = await readFile(path);
-      if (sha256NormalizedSvg(content) !== entry.sha256) changed.push(entry.path);
+      const actualHash = sha256NormalizedSvg(content);
+      if (actualHash !== entry.normalizedSha256) changed.push(entry.path);
     } catch {
       missing.push(entry.path);
     }
@@ -175,9 +176,11 @@ async function main() {
     const article = articleByPath.get(entry.path);
     if (article) {
       articleCount++;
-      if (entry.sha256 !== article.sha256 || entry.articleUrl !== article.url
+      if (sourceType === 'article' && (
+        entry.sha256 !== article.sha256 || entry.articleUrl !== article.url
         || entry.articleTitle !== article.title || entry.articleSection !== article.section
-        || (sourceType === 'article' && entry.sourceUrl !== article.url)) {
+        || entry.sourceUrl !== article.url
+      )) {
         throw new Error(`Fabric article provenance is invalid: ${entry.path}`);
       }
     }

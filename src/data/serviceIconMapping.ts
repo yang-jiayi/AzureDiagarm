@@ -855,6 +855,26 @@ export const SERVICE_ICON_MAP: Record<string, ServiceIconMapping> = {
     isUsageBased: false,
     costRange: '$0-9/mo per user'
   },
+
+  'Microsoft Entra ID Governance': {
+    displayName: 'Microsoft Entra ID Governance',
+    aliases: ['Entra ID Governance', 'Entra Identity Governance', 'Identity Governance'],
+    iconFile: '10235-icon-service-Identity-Governance',
+    category: 'identity',
+    hasPricingData: false,
+    isUsageBased: false,
+    costRange: 'Included with Microsoft Entra licensing'
+  },
+
+  'Microsoft Entra Workload ID': {
+    displayName: 'Microsoft Entra Workload ID',
+    aliases: ['Entra Workload ID', 'Workload ID', 'Workload Identities'],
+    iconFile: 'microsoft-entra-workload-id',
+    category: 'identity',
+    hasPricingData: false,
+    isUsageBased: false,
+    costRange: 'Included with Microsoft Entra licensing'
+  },
   
   'Backup': {
     displayName: 'Azure Backup',
@@ -1242,6 +1262,20 @@ export const SERVICE_ICON_MAP: Record<string, ServiceIconMapping> = {
   ...MICROSOFT_PRODUCT_SERVICE_ICON_MAP,
 };
 
+// Keep resolving old diagrams and pricing annotations without advertising this
+// retired catalog entry to AI generation or the MCP service inventory.
+const SERVICE_ICON_COMPATIBILITY_MAP = new Map<string, ServiceIconMapping>([
+  ['Fabric Function Set', {
+    displayName: 'Function Set (Legacy)',
+    aliases: ['Function Set', 'Function Set (Fabric)'],
+    iconFile: 'fabric-item-function-set',
+    category: 'fabric',
+    hasPricingData: false,
+    isUsageBased: false,
+    costRange: '$0 (consumes Fabric capacity)',
+  }],
+]);
+
 /**
  * Get icon mapping for a service by name (case-insensitive, checks aliases)
  */
@@ -1255,10 +1289,23 @@ export function resolveServiceIconMapping(serviceName: string): ResolvedServiceI
       mapping: SERVICE_ICON_MAP[normalizedName],
     };
   }
+  const compatibilityMapping = SERVICE_ICON_COMPATIBILITY_MAP.get(normalizedName);
+  if (compatibilityMapping) {
+    return { serviceName: normalizedName, mapping: compatibilityMapping };
+  }
   
   // Search by canonical key, display name, or alias (case-insensitive).
   const lowerName = normalizedName.toLowerCase();
   for (const [canonicalName, mapping] of Object.entries(SERVICE_ICON_MAP)) {
+    if (
+      canonicalName.toLowerCase() === lowerName
+      || mapping.displayName.toLowerCase() === lowerName
+      || mapping.aliases.some(alias => alias.toLowerCase() === lowerName)
+    ) {
+      return { serviceName: canonicalName, mapping };
+    }
+  }
+  for (const [canonicalName, mapping] of SERVICE_ICON_COMPATIBILITY_MAP) {
     if (
       canonicalName.toLowerCase() === lowerName
       || mapping.displayName.toLowerCase() === lowerName

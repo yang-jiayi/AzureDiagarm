@@ -18,6 +18,7 @@ const ARTICLE_PAGE = 'https://debruyn.dev/2026/all-microsoft-fabric-icons-for-di
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..');
 const iconRoot = resolve(repoRoot, 'Azure_Public_Service_Icons', 'Icons', 'fabric');
+const articleArchiveRoot = resolve(repoRoot, 'Azure_Public_Service_Icons', 'Article_Fabric_Icons', '2026');
 const manifestPath = resolve(repoRoot, 'Azure_Public_Service_Icons', 'fabric-manifest.json');
 const lockPath = resolve(here, 'fabric-icon-sources.json');
 const sha256 = value => createHash('sha256').update(value).digest('hex');
@@ -52,11 +53,16 @@ export function parseCatalog(text) {
 
 export function assertSafeSvg(content, name) {
   const text = content.toString('utf8');
+  const hrefAttributeCount = (text.match(/\b(?:xlink:)?href\s*=/gi) ?? []).length;
+  const hrefs = [...text.matchAll(/\b(?:xlink:)?href\s*=\s*(['"])(.*?)\1/gi)];
   if (
     !/<svg[\s>]/i.test(text)
-    || /<\s*(?:script|foreignObject|image|use|style|a)[\s/>]/i.test(text)
+    || /<\s*(?:script|foreignObject|image|style|a)[\s/>]/i.test(text)
     || /\bon[a-z]+\s*=/i.test(text)
-    || /(?:href\s*=|<!DOCTYPE|<!ENTITY|<\?xml-stylesheet|@import)/i.test(text)
+    || hrefs.length !== hrefAttributeCount
+    || hrefs.some(([, , reference]) => !/^#[\w:.-]+$/.test(reference.trim()))
+    || (/<\s*use\b/i.test(text) && hrefs.length < (text.match(/<\s*use\b/gi) ?? []).length)
+    || /(?:<!DOCTYPE|<!ENTITY|<\?xml-stylesheet|@import)/i.test(text)
     || /url\(\s*['"]?(?!#)[^)]/i.test(text)
   ) {
     throw new Error(`Unsafe or invalid Fabric SVG: ${name}`);
@@ -66,9 +72,26 @@ export function assertSafeSvg(content, name) {
 async function download(url) {
   const response = await fetch(url, { signal: AbortSignal.timeout(60_000) });
   if (!response.ok) throw new Error(`Failed to download ${url}: HTTP ${response.status}`);
-  const buffer = Buffer.from(await response.arrayBuffer());
-  if (buffer.length > 50 * 1024 * 1024) throw new Error(`Oversized Fabric download: ${url}`);
-  return buffer;
+  const maxBytes = 50 * 1024 * 1024;
+  const declaredBytes = Number(response.headers.get('content-length'));
+  if (Number.isFinite(declaredBytes) && declaredBytes > maxBytes) {
+    throw new Error(`Oversized Fabric download: ${url}`);
+  }
+  const reader = response.body?.getReader();
+  if (!reader) throw new Error(`Unreadable Fabric download: ${url}`);
+  const chunks = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > maxBytes) {
+      await reader.cancel();
+      throw new Error(`Oversized Fabric download: ${url}`);
+    }
+    chunks.push(Buffer.from(value));
+  }
+  return Buffer.concat(chunks, total);
 }
 
 async function readOptional(path) {
@@ -81,6 +104,7 @@ async function readOptional(path) {
 }
 
 export async function main() {
+  const checkOnly = process.argv.includes('--check');
   const catalog = parseCatalog(await readFile(resolve(repoRoot, 'src', 'data', 'fabricIconCatalog.ts'), 'utf8'));
   const lock = JSON.parse(await readFile(lockPath, 'utf8'));
   const metadata = JSON.parse((await download(REGISTRY_URL)).toString('utf8'));
@@ -95,6 +119,9 @@ export async function main() {
       const dist = metadata.versions?.[pin.version]?.dist;
       if (dist?.tarball !== pin.url || dist?.integrity !== pin.integrity) {
         throw new Error(`Fabric registry metadata differs from the source lock: ${pin.version}`);
+      }
+      if (pin.publishedAt && metadata.time?.[pin.version] !== pin.publishedAt) {
+        throw new Error(`Fabric package publication timestamp differs from the source lock: ${pin.version}`);
       }
       const archive = await download(pin.url);
       if (
@@ -124,8 +151,66 @@ export async function main() {
       || architectureNames.some(name => !catalogNames.includes(name))
     ) throw new Error('Fabric catalog must cover every current 48px architecture family exactly once');
 
+    const packageComparisonPin = lock.packageComparisons?.find(
+      comparison => comparison.toVersion === catalog.version,
+    );
+    const previousPackage = packageComparisonPin
+      ? packages.get(packageComparisonPin.fromVersion)
+      : null;
+    if (!packageComparisonPin || !previousPackage) {
+      throw new Error(`Fabric package comparison is not locked for ${catalog.version}`);
+    }
+    const previousArchitectureNames = previousPackage.names.filter(name =>
+      /_48(?:_color|_item|_non-item)?\.svg$/i.test(name) || name === 'sample_workload_32_color.svg');
+    const previousHashes = new Map();
+    const currentHashes = new Map();
+    for (const name of previousArchitectureNames) {
+      previousHashes.set(name, sha256(await readFile(join(previousPackage.sourceRoot, name))));
+    }
+    for (const name of architectureNames) {
+      currentHashes.set(name, sha256(await readFile(join(current.sourceRoot, name))));
+    }
+    const renamedFrom = new Set();
+    const renamedTo = new Set();
+    const renamed = packageComparisonPin.renamed.map(item => {
+      if (
+        !previousHashes.has(item.from) || !currentHashes.has(item.to)
+        || renamedFrom.has(item.from) || renamedTo.has(item.to)
+      ) throw new Error(`Invalid Fabric package rename mapping: ${item.from} -> ${item.to}`);
+      renamedFrom.add(item.from);
+      renamedTo.add(item.to);
+      return {
+        from: item.from, to: item.to,
+        previousSha256: previousHashes.get(item.from), sha256: currentHashes.get(item.to),
+      };
+    });
+    const packageComparison = {
+      fromVersion: packageComparisonPin.fromVersion,
+      toVersion: catalog.version,
+      previousFamilyCount: previousArchitectureNames.length,
+      currentFamilyCount: architectureNames.length,
+      added: architectureNames
+        .filter(name => !previousHashes.has(name) && !renamedTo.has(name))
+        .map(asset => ({ asset, sha256: currentHashes.get(asset) })),
+      renamed,
+      removed: previousArchitectureNames
+        .filter(name => !currentHashes.has(name) && !renamedFrom.has(name))
+        .map(asset => ({ asset, sha256: previousHashes.get(asset) })),
+      updated: architectureNames
+        .filter(name => previousHashes.has(name) && previousHashes.get(name) !== currentHashes.get(name))
+        .map(asset => ({
+          asset, previousSha256: previousHashes.get(asset), sha256: currentHashes.get(asset),
+        })),
+      unchangedCount: architectureNames.filter(
+        name => previousHashes.get(name) === currentHashes.get(name),
+      ).length,
+    };
+
     const articleByDestination = new Map(lock.articleIcons.map(icon => [icon.fileName, icon]));
     if (articleByDestination.size !== lock.articleIcons.length) throw new Error('Duplicate article mapping');
+    if (lock.articleIcons.length !== 101) {
+      throw new Error(`Expected 101 pinned article icons, found ${lock.articleIcons.length}`);
+    }
     for (const icon of lock.articleIcons) {
       if (!catalog.entries.some(entry => entry.fileName === icon.fileName)) {
         throw new Error(`Article icon is missing from the catalog: ${icon.title}`);
@@ -137,6 +222,7 @@ export async function main() {
 
     // Validate the entire inventory before changing any shipped artwork.
     const prepared = [];
+    const preparedByFileName = new Map();
     for (const entry of catalog.entries) {
       const destination = join(iconRoot, `${entry.fileName}.svg`);
       const article = articleByDestination.get(entry.fileName);
@@ -159,23 +245,64 @@ export async function main() {
         source = { sourceType: 'local', sourceVersion: 'local' };
       }
       assertSafeSvg(content, entry.fileName);
-      if (article && sha256(content) !== article.sha256) throw new Error(`Article SVG hash mismatch: ${article.title}`);
-      prepared.push({
+      const item = {
         content, destination,
         record: {
           serviceName: entry.serviceName, sourceAsset: entry.sourceAsset, ...source,
           path: `fabric/${entry.fileName}.svg`, sha256: sha256(content),
-          ...(article ? { articleTitle: article.title, articleSection: article.section, articleUrl: article.url } : {}),
+        },
+      };
+      prepared.push(item);
+      preparedByFileName.set(entry.fileName, item);
+    }
+
+    const preparedArticleAssets = [];
+    for (const article of lock.articleIcons) {
+      const entry = catalog.entries.find(candidate => candidate.fileName === article.fileName);
+      const activeItem = preparedByFileName.get(article.fileName);
+      let destination = activeItem.destination;
+      let content = activeItem.content;
+      if (sha256(content) !== article.sha256) {
+        content = await download(article.url);
+        assertSafeSvg(content, article.title);
+        if (sha256(content) !== article.sha256) {
+          throw new Error(`Article SVG hash mismatch: ${article.title}`);
+        }
+        destination = join(articleArchiveRoot, `${article.fileName}.svg`);
+      }
+      preparedArticleAssets.push({
+        content,
+        destination,
+        record: {
+          title: article.title, section: article.section, sourceUrl: article.url,
+          path: destination.startsWith(articleArchiveRoot)
+            ? `Article_Fabric_Icons/2026/${article.fileName}.svg`
+            : `Icons/fabric/${article.fileName}.svg`,
+          sha256: article.sha256,
+          activePath: `Icons/fabric/${entry.fileName}.svg`,
         },
       });
+      if (sha256(activeItem.content) === article.sha256) {
+        activeItem.record.articleTitle = article.title;
+        activeItem.record.articleSection = article.section;
+        activeItem.record.articleUrl = article.url;
+      }
     }
     await mkdir(iconRoot, { recursive: true });
+    if (preparedArticleAssets.some(item => item.destination.startsWith(articleArchiveRoot))) {
+      await mkdir(articleArchiveRoot, { recursive: true });
+    }
     let changed = 0;
-    for (const item of prepared) {
+    const drift = [];
+    for (const item of [...prepared, ...preparedArticleAssets.filter(item => item.destination.startsWith(articleArchiveRoot))]) {
       const existing = await readOptional(item.destination);
       if (!existing?.equals(item.content)) {
-        await writeFile(item.destination, item.content);
-        changed++;
+        if (checkOnly) {
+          drift.push(item.record.path);
+        } else {
+          await writeFile(item.destination, item.content);
+          changed++;
+        }
       }
     }
     const manifest = {
@@ -188,10 +315,23 @@ export async function main() {
       uiIconCount: catalog.entries.filter(entry => entry.kind === 'ui').length,
       localIconCount: catalog.entries.filter(entry => !entry.sourceAsset).length,
       articleIconCount: lock.articleIcons.length, paletteIconCount: prepared.length,
+      officialAssets: architectureNames.slice().sort((left, right) => left.localeCompare(right)),
+      packageComparison,
       files: prepared.map(item => item.record),
+      articleAssets: preparedArticleAssets.map(item => item.record),
     };
-    await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
-    console.log(`[icons:sync:fabric] ${manifest.paletteIconCount} icons (${manifest.officialFamilyCount} current, ${manifest.legacyIconCount} legacy, ${manifest.uiIconCount} UI, ${manifest.localIconCount} local); ${changed} SVGs updated`);
+    if (checkOnly) {
+      const currentManifest = JSON.parse(await readFile(manifestPath, 'utf8'));
+      if (drift.length > 0) {
+        throw new Error(`Fabric SVG files are out of date: ${drift.join(', ')}`);
+      }
+      if (JSON.stringify(currentManifest) !== JSON.stringify(manifest)) {
+        throw new Error('Fabric icon manifest differs from the pinned source inventory');
+      }
+    } else {
+      await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+    }
+    console.log(`[icons:sync:fabric] ${manifest.paletteIconCount} icons (${manifest.officialFamilyCount} current, ${manifest.legacyIconCount} legacy, ${manifest.uiIconCount} UI, ${manifest.localIconCount} local); ${checkOnly ? 'check only' : `${changed} SVGs updated`}`);
   } finally {
     await rm(tempRoot, { recursive: true, force: true });
   }

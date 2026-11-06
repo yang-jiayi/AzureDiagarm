@@ -9,7 +9,10 @@ import {
   type IconPaletteCategoryId,
 } from '../data/iconCatalog';
 import { getFabricIconByFileName } from '../data/fabricIconCatalog';
-import { getMicrosoftProductIconByFileName } from '../data/microsoftProductIconCatalog';
+import {
+  getMicrosoftProductIconByFileName,
+  type MicrosoftProductIconKind,
+} from '../data/microsoftProductIconCatalog';
 import { SERVICE_ICON_MAP } from '../data/serviceIconMapping';
 import {
   getCurrentIconDisplayName,
@@ -38,7 +41,9 @@ export interface AzureIcon {
   /** Reusable concept shape rather than a named product. */
   generic?: boolean;
   /** Drawing-only Fabric artwork, visually distinguished from current services. */
-  fabricDrawingKind?: 'legacy' | 'ui';
+  fabricDrawingKind?: 'concept' | 'legacy' | 'ui';
+  /** Microsoft 365 artwork is a concept symbol, not an app-specific product logo. */
+  microsoftProductKind?: MicrosoftProductIconKind;
 }
 
 export interface IconLibraryStats {
@@ -278,8 +283,14 @@ function getIconMetadataCache(): IconMetadataCache {
           : microsoftProductDefinition
             ? microsoftProductDefinition.family
             : 'supplemental',
-      generic: microsoftProductDefinition?.kind === 'symbol',
-      ...(fabricDefinition?.kind === 'legacy' || fabricDefinition?.kind === 'ui'
+      generic: microsoftProductDefinition?.kind === 'symbol'
+        || fabricDefinition?.kind === 'concept',
+      ...(microsoftProductDefinition
+        ? { microsoftProductKind: microsoftProductDefinition.kind }
+        : {}),
+      ...(fabricDefinition?.kind === 'concept'
+        || fabricDefinition?.kind === 'legacy'
+        || fabricDefinition?.kind === 'ui'
         ? { fabricDrawingKind: fabricDefinition.kind }
         : {}),
     };

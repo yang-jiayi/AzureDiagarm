@@ -6,6 +6,7 @@ export async function inspectFabricIcons() {
   const icons = await loadIconsFromCategory('fabric');
   let inlined = 0;
   let rasterizedUi = 0;
+  let conceptCount = 0;
   for (const icon of icons) {
     const url = await loadIcon(icon.path);
     if (!url) throw new Error(`Missing icon URL: ${icon.name}`);
@@ -38,11 +39,12 @@ export async function inspectFabricIcons() {
       }
       rasterizedUi++;
     }
+    if (icon.fabricDrawingKind === 'concept') conceptCount++;
   }
   return {
     sourceCount: icons.length,
     categoryCount: (await loadIconsFromPaletteCategory('fabric')).length,
-    inlined, rasterizedUi,
+    inlined, rasterizedUi, conceptCount,
     uiNames: icons.filter(icon => icon.fabricDrawingKind === 'ui').map(icon => icon.name),
   };
 }

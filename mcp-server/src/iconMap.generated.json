@@ -898,6 +898,32 @@
     "isUsageBased": false,
     "costRange": "$0-9/mo per user"
   },
+  "Microsoft Entra ID Governance": {
+    "displayName": "Microsoft Entra ID Governance",
+    "iconFile": "10235-icon-service-Identity-Governance",
+    "category": "identity",
+    "aliases": [
+      "Entra ID Governance",
+      "Entra Identity Governance",
+      "Identity Governance"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with Microsoft Entra licensing"
+  },
+  "Microsoft Entra Workload ID": {
+    "displayName": "Microsoft Entra Workload ID",
+    "iconFile": "microsoft-entra-workload-id",
+    "category": "identity",
+    "aliases": [
+      "Entra Workload ID",
+      "Workload ID",
+      "Workload Identities"
+    ],
+    "hasPricingData": false,
+    "isUsageBased": false,
+    "costRange": "Included with Microsoft Entra licensing"
+  },
   "Backup": {
     "displayName": "Azure Backup",
     "iconFile": "00017-icon-service-Recovery-Services-Vaults",
@@ -1601,6 +1627,16 @@
     "hasPricingData": false,
     "costRange": "$0 (consumes Fabric capacity)"
   },
+  "Fabric Apps": {
+    "displayName": "Fabric Apps",
+    "iconFile": "fabric-item-fabric-apps",
+    "category": "fabric",
+    "aliases": [
+      "Fabric App"
+    ],
+    "hasPricingData": false,
+    "costRange": "$0 (consumes Fabric capacity)"
+  },
   "Dataflow Gen2": {
     "displayName": "Dataflow Gen2",
     "iconFile": "fabric-dataflow-gen2",
@@ -1811,17 +1847,6 @@
     "hasPricingData": false,
     "costRange": "$0 (consumes Fabric capacity)"
   },
-  "Fabric Function Set": {
-    "displayName": "Function Set",
-    "iconFile": "fabric-item-function-set",
-    "category": "fabric",
-    "aliases": [
-      "Function Set",
-      "Function Set (Fabric)"
-    ],
-    "hasPricingData": false,
-    "costRange": "$0 (consumes Fabric capacity)"
-  },
   "Fabric Streaming Dataflow": {
     "displayName": "Streaming Dataflow",
     "iconFile": "fabric-item-streaming-dataflow",
@@ -1961,6 +1986,7 @@
     "category": "fabric",
     "aliases": [
       "User Data Function",
+      "Fabric User Data Functions",
       "User Data Functions",
       "UDF (Fabric)"
     ],
@@ -2026,8 +2052,7 @@
     "category": "fabric",
     "aliases": [
       "Apps",
-      "Power BI Apps",
-      "Fabric Apps"
+      "Power BI Apps"
     ],
     "hasPricingData": false,
     "costRange": "$0 (consumes Fabric capacity)"

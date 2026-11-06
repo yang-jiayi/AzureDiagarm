@@ -10,7 +10,8 @@ export type FabricIconKind =
   | 'navigation'
   | 'sample'
   | 'legacy'
-  | 'ui';
+  | 'ui'
+  | 'concept';
 
 export interface FabricIconDefinition {
   serviceName: string;
@@ -42,7 +43,7 @@ type FabricIconOptions = Partial<
   >
 >;
 
-export const FABRIC_ICON_PACKAGE_VERSION = '8.2.0';
+export const FABRIC_ICON_PACKAGE_VERSION = '12.0.0';
 
 function defineFabricIcon(
   serviceName: string,
@@ -64,7 +65,8 @@ function defineFabricIcon(
     kind,
     sourceAsset,
     sourceVersion: options.sourceVersion ?? (sourceAsset ? FABRIC_ICON_PACKAGE_VERSION : 'local'),
-    includeInServiceMap: options.includeInServiceMap ?? !['navigation', 'sample', 'legacy', 'ui'].includes(kind),
+    includeInServiceMap: options.includeInServiceMap
+      ?? !['navigation', 'sample', 'legacy', 'ui', 'concept'].includes(kind),
     consumesCapacity: options.consumesCapacity ?? consumesCapacity,
     hasPricingData: options.hasPricingData ?? false,
     pricingServiceName: options.pricingServiceName,
@@ -76,11 +78,12 @@ function defineFabricIcon(
 /**
  * Complete Microsoft Fabric architecture icon inventory.
  *
- * The 82 current architecture families use 8.2.0's 48px assets (Sample Workload
+ * The 88 current architecture families use 12.0.0's 48px assets (Sample Workload
  * only provides 32px). The article's
  * historical designs use 6.1.0 / 1.1.37; its OneLake security UI glyphs are
- * hash-pinned separately. Legacy and UI symbols are drawing-only, never AI
- * services. The local Capacity symbol retains the existing billable F-SKU.
+ * hash-pinned separately. Legacy and UI symbols are drawing-only, apart from
+ * the retired Function Set key retained for existing service-name compatibility.
+ * The local Capacity symbol retains the existing billable F-SKU.
  */
 export const FABRIC_ICON_CATALOG: FabricIconDefinition[] = [
   // Platform and capacity
@@ -95,10 +98,12 @@ export const FABRIC_ICON_CATALOG: FabricIconDefinition[] = [
   defineFabricIcon('Fabric Data Science', 'Data Science', 'fabric-workload-data-science', 'data_science_48_color.svg', 'Workloads', 'workload', ['Microsoft Fabric Data Science', 'Data Science (Fabric)']),
   defineFabricIcon('Fabric Data Warehouse Workload', 'Data Warehouse', 'fabric-workload-data-warehouse', 'data_warehouse_48_color.svg', 'Workloads', 'workload', ['Microsoft Fabric Data Warehouse', 'Data Warehouse Workload']),
   defineFabricIcon('Fabric Databases Workload', 'Databases', 'fabric-workload-databases', 'databases_48_color.svg', 'Workloads', 'workload', ['Microsoft Fabric Databases', 'Databases (Fabric)']),
+  defineFabricIcon('Fabric Database Hub', 'Database Hub', 'fabric-workload-database-hub', 'database_hub_48_color.svg', 'Database Hub', 'concept', ['Microsoft Fabric Database Hub'], { consumesCapacity: false, includeInServiceMap: false }),
   defineFabricIcon('Fabric Graph Intelligence', 'Graph Intelligence', 'fabric-workload-graph-intelligence', 'graph_intelligence_48_color.svg', 'Workloads', 'workload', ['Microsoft Fabric Graph Intelligence', 'Graph Intelligence (Fabric)']),
   defineFabricIcon('Fabric Industry Solutions', 'Industry Solutions', 'fabric-workload-industry-solutions', 'industry_solutions_48_color.svg', 'Workloads', 'workload', ['Microsoft Fabric Industry Solutions']),
   defineFabricIcon('Fabric Power BI Workload', 'Power BI', 'fabric-workload-power-bi', 'power_bi_48_color.svg', 'Workloads', 'workload', ['Power BI (Fabric)', 'Microsoft Fabric Power BI']),
   defineFabricIcon('Fabric Purview Workload', 'Purview', 'fabric-workload-purview', 'purview_48_color.svg', 'Workloads', 'workload', ['Purview (Fabric)', 'Microsoft Purview in Fabric']),
+  defineFabricIcon('Rayfin (unclassified)', 'Rayfin (unclassified)', 'fabric-workload-rayfin', 'rayfin_48_color.svg', 'Unclassified items', 'concept', ['Rayfin', 'Microsoft Fabric Rayfin'], { consumesCapacity: false, includeInServiceMap: false }),
   defineFabricIcon('Fabric Real-Time Intelligence', 'Real-Time Intelligence', 'fabric-workload-real-time-intelligence', 'real_time_intelligence_48_color.svg', 'Workloads', 'workload', ['RTI', 'Real Time Intelligence', 'Microsoft Fabric Real-Time Intelligence']),
   defineFabricIcon('Fabric Sample Workload', 'Sample Workload', 'fabric-sample-workload', 'sample_workload_32_color.svg', 'Development and Samples', 'sample', ['Fabric Workload Sample', 'Sample Fabric Workload', 'サンプル ワークロード'], { consumesCapacity: false, includeInServiceMap: false, costRange: 'Development sample symbol' }),
 
@@ -115,6 +120,8 @@ export const FABRIC_ICON_CATALOG: FabricIconDefinition[] = [
   defineFabricIcon('Fabric Data Agent', 'Fabric Data Agent', 'fabric-data-agent', 'data_agent_48_item.svg', 'AI and Data Science', 'item', ['Data Agent (Fabric)', 'Fabric AI Skill']),
   defineFabricIcon('Fabric Data Factory', 'Fabric Data Factory', 'fabric-data-factory', 'data_factory_48_item.svg', 'Data Factory', 'item', ['Data Factory (Fabric)', 'Fabric Data Factory Item']),
   defineFabricIcon('Fabric Data Pipeline', 'Fabric Data Pipeline', 'fabric-data-pipeline', 'pipeline_48_item.svg', 'Data Factory', 'item', ['Fabric Pipeline', 'Data Pipeline (Fabric)', 'Pipeline']),
+  defineFabricIcon('Fabric Action', 'Fabric Actions Activity', 'fabric-item-action', 'action_48_item.svg', 'Pipeline activities', 'concept', ['Action (Fabric)', 'Fabric Actions'], { consumesCapacity: false, includeInServiceMap: false }),
+  defineFabricIcon('Fabric Apps', 'Fabric Apps', 'fabric-item-fabric-apps', 'fabric_apps_48_item.svg', 'Apps', 'item', ['Fabric App'], { consumesCapacity: true, costRange: '$0 (consumes Fabric capacity)' }),
   defineFabricIcon('Dataflow Gen2', 'Dataflow Gen2', 'fabric-dataflow-gen2', 'dataflow_gen2_48_item.svg', 'Data Factory', 'item', ['Fabric Dataflow Gen2', 'Dataflow Gen 2']),
   defineFabricIcon('Datamart', 'Datamart', 'fabric-datamart', 'datamart_48_item.svg', 'Data Warehouse', 'item', ['Fabric Datamart']),
   defineFabricIcon('Warehouse', 'Warehouse', 'fabric-warehouse', 'data_warehouse_48_item.svg', 'Data Warehouse', 'item', ['Fabric Warehouse', 'Data Warehouse (Fabric)', 'Warehouse (Gold)']),
@@ -129,28 +136,31 @@ export const FABRIC_ICON_CATALOG: FabricIconDefinition[] = [
   defineFabricIcon('Semantic Model', 'Semantic Model', 'fabric-semantic-model', 'semantic_model_48_item.svg', 'Power BI', 'item', ['Power BI Semantic Model', 'Power BI Dataset', 'Direct Lake Semantic Model']),
   defineFabricIcon('Fabric Spark Job', 'Fabric Spark Job', 'fabric-spark-job', 'spark_job_direction_48_item.svg', 'Data Engineering', 'item', ['Fabric Spark', 'Spark Job Definition', 'Spark Job Direction']),
   defineFabricIcon('Fabric SQL Database', 'Fabric SQL Database', 'fabric-sql-database', 'sql_database_48_item.svg', 'Databases', 'item', ['SQL Database (Fabric)', 'Fabric SQL DB']),
+  defineFabricIcon('Fabric PostgreSQL Database', 'PostgreSQL Database (unclassified)', 'fabric-item-postgre-sql-database', 'postgre_sql_database_48_item.svg', 'Unclassified items', 'concept', ['PostgreSQL Database (Fabric)', 'Fabric PostgreSQL'], { consumesCapacity: false, includeInServiceMap: false }),
 
   // Data Factory and integration items
   defineFabricIcon('Fabric Copy Job', 'Copy Job', 'fabric-item-copy-job', 'copy_job_48_item.svg', 'Data Factory', 'item', ['Copy Job (Fabric)']),
   defineFabricIcon('Fabric Custom Streaming Connector', 'Custom Streaming Connector', 'fabric-item-custom-streaming-connector', 'custom_streaming_connector_48_item.svg', 'Data Factory', 'item', ['Streaming Connector (Fabric)']),
   defineFabricIcon('Fabric Dataflow', 'Dataflow', 'fabric-item-dataflow', 'dataflow_48_item.svg', 'Data Factory', 'item', ['Dataflow (Fabric)', 'Power BI Dataflow']),
   defineFabricIcon('Fabric External Dataflow', 'External Dataflow', 'fabric-item-external-dataflow', 'external_dataflow_48_item.svg', 'Data Factory', 'item', ['External Dataflow (Fabric)']),
-  defineFabricIcon('Fabric Function Set', 'Function Set', 'fabric-item-function-set', 'function_set_48_item.svg', 'Data Factory', 'item', ['Function Set (Fabric)']),
+  defineFabricIcon('Fabric Function Set', 'Function Set (Legacy)', 'fabric-item-function-set', 'function_set_48_item.svg', 'Legacy / Deprecated', 'legacy', ['Function Set', 'Function Set (Fabric)'], { sourceVersion: '8.2.0', consumesCapacity: true, includeInServiceMap: false, costRange: '$0 (consumes Fabric capacity)' }),
   defineFabricIcon('Fabric Streaming Dataflow', 'Streaming Dataflow', 'fabric-item-streaming-dataflow', 'streaming_dataflow_48_item.svg', 'Data Factory', 'item', ['Streaming Dataflow (Fabric)']),
 
   // Engineering, science, and data-management items
   defineFabricIcon('Fabric Environment', 'Environment', 'fabric-item-environment', 'environment_48_item.svg', 'Data Engineering', 'item', ['Environment (Fabric)']),
   defineFabricIcon('Fabric Experiments', 'Experiments', 'fabric-item-experiments', 'experiments_48_item.svg', 'Data Science', 'item', ['Machine Learning Experiments', 'Fabric Experiments']),
   defineFabricIcon('Fabric Exploration', 'Exploration', 'fabric-item-exploration', 'exploration_48_item.svg', 'Data Science', 'item', ['Exploration (Fabric)']),
+  defineFabricIcon('Fabric Feature Store', 'Feature Store', 'fabric-item-feature-store', 'feature_store_48_item.svg', 'Unclassified items', 'concept', ['Feature Store (Fabric)'], { consumesCapacity: false, includeInServiceMap: false }),
   defineFabricIcon('Fabric External Datamart', 'External Datamart', 'fabric-item-external-datamart', 'external_datamart_48_item.svg', 'Data Warehouse', 'item', ['External Datamart (Fabric)']),
   defineFabricIcon('Fabric External Semantic Model', 'External Semantic Model', 'fabric-item-external-semantic-model', 'external_semantic_model_48_item.svg', 'Power BI', 'item', ['External Semantic Model (Fabric)']),
   defineFabricIcon('Fabric Generic Placeholder', 'Generic Placeholder', 'fabric-item-generic-placeholder', 'generic_placeholder_48_item.svg', 'Other Items', 'state', ['Fabric Placeholder']),
   defineFabricIcon('Fabric Mirrored Catalog', 'Mirrored Catalog', 'fabric-item-mirrored-catalog', 'mirrored_catalog_48_item.svg', 'Databases', 'item', ['Mirrored Catalog (Fabric)']),
   defineFabricIcon('Fabric Mirrored Generic Storage', 'Mirrored Generic Storage', 'fabric-item-mirrored-generic-storage', 'mirrored_generic_storage_48_item.svg', 'Databases', 'item', ['Mirrored Storage (Fabric)']),
+  defineFabricIcon('Fabric Managed Identity', 'Workspace Identity', 'fabric-item-managed-identity', 'managed_identity_48_item.svg', 'Identity concepts', 'concept', ['Managed Identity (Fabric)', 'Fabric Managed Identity'], { consumesCapacity: false, includeInServiceMap: false }),
   defineFabricIcon('Fabric Model', 'Model', 'fabric-item-model', 'model_48_item.svg', 'Data Science', 'item', ['Machine Learning Model (Fabric)']),
   defineFabricIcon('Fabric Runtime Lineage', 'Runtime Lineage', 'fabric-item-runtime-lineage', 'runtime_lineage_48_item.svg', 'Data Engineering', 'item', ['Runtime Lineage (Fabric)']),
   defineFabricIcon('Fabric Schema Model', 'Schema Model', 'fabric-item-schema-model', 'schema_model_48_item.svg', 'Data Engineering', 'item', ['Schema Model (Fabric)']),
-  defineFabricIcon('Fabric User Data Function', 'User Data Function', 'fabric-item-user-data-function', 'user_data_function_48_item.svg', 'Data Engineering', 'item', ['User Data Functions', 'UDF (Fabric)']),
+  defineFabricIcon('Fabric User Data Function', 'User Data Function', 'fabric-item-user-data-function', 'user_data_functions_48_item.svg', 'Data Engineering', 'item', ['Fabric User Data Functions', 'User Data Functions', 'UDF (Fabric)']),
   defineFabricIcon('Fabric Variable Library', 'Variable Library', 'fabric-item-variable-library', 'variable_library_48_item.svg', 'Data Engineering', 'item', ['Variable Library (Fabric)']),
 
   // Real-Time Intelligence items
@@ -160,7 +170,7 @@ export const FABRIC_ICON_CATALOG: FabricIconDefinition[] = [
   defineFabricIcon('Streaming Semantic Model', 'Streaming Semantic Model', 'fabric-item-streaming-semantic-model', 'streaming_semantic_model_48_item.svg', 'Real-Time Intelligence', 'item', ['Real-Time Semantic Model']),
 
   // Power BI and reporting items
-  defineFabricIcon('Power BI App', 'Apps', 'fabric-item-apps', 'apps_48_item.svg', 'Power BI', 'item', ['Power BI Apps', 'Fabric Apps']),
+  defineFabricIcon('Power BI App', 'Apps', 'fabric-item-apps', 'apps_48_item.svg', 'Power BI', 'item', ['Power BI Apps']),
   defineFabricIcon('Power BI Dashboard', 'Dashboard', 'fabric-item-dashboard', 'dashboard_48_item.svg', 'Power BI', 'item', ['Fabric Dashboard']),
   defineFabricIcon('Power BI Metric Sets', 'Metric Sets', 'fabric-item-metric-sets', 'metric_sets_48_item.svg', 'Power BI', 'item', ['Metric Set', 'Power BI Metrics']),
   defineFabricIcon('Power BI Mobile Report', 'Mobile Report', 'fabric-item-mobile-report', 'mobile_report_48_item.svg', 'Power BI', 'item', ['Mobile Report (Power BI)']),

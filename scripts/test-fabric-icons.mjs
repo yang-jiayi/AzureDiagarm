@@ -69,16 +69,26 @@ try {
     const manifest = JSON.parse(await readFile(resolve(root, 'Azure_Public_Service_Icons', 'fabric-manifest.json'), 'utf8'));
     const result = await page.evaluate(async () => (await import('/fabric-icons-harness.js')).inspectFabricIcons());
     assert.equal(result.sourceCount, manifest.paletteIconCount);
-    assert.equal(result.sourceCount, 110);
+    assert.equal(result.sourceCount, 117);
     assert.equal(result.rasterizedUi, 13);
+    assert.equal(result.conceptCount, 6);
     assert.ok(result.inlined > 0, 'Production must exercise Vite data-URL SVGs');
     await expect(category.locator('.icon-count').first()).toHaveText(String(result.categoryCount));
+    await palette.locator('input[type="search"]').fill('Microsoft 365 People Team');
+    const teamsSymbol = palette.locator('.icon-item').filter({
+      has: page.locator('.icon-label', { hasText: /^People Team$/ }),
+    });
+    await expect(teamsSymbol).toHaveCount(1);
+    await expect(teamsSymbol.getByText('Concept symbol, not product logo', { exact: true })).toHaveCount(1);
+    await palette.locator('input[type="search"]').fill('');
     await expect(category.getByRole('heading', { name: 'OneLake Security UI (13)', exact: true })).toHaveCount(1);
-    await expect(category.getByRole('heading', { name: 'Legacy / Deprecated (14)', exact: true })).toHaveCount(1);
+    await expect(category.getByRole('heading', { name: 'Legacy / Deprecated (15)', exact: true })).toHaveCount(1);
+    await expect(category.getByRole('heading', { name: 'Concept / drawing only (6)', exact: true })).toHaveCount(1);
     if (artifacts) {
       for (const [heading, file] of [
         ['OneLake Security UI (13)', 'fabric-palette-onelake-ui.png'],
-        ['Legacy / Deprecated (14)', 'fabric-palette-legacy.png'],
+        ['Legacy / Deprecated (15)', 'fabric-palette-legacy.png'],
+        ['Concept / drawing only (6)', 'fabric-palette-concepts.png'],
       ]) {
         await category.getByRole('heading', { name: heading, exact: true }).evaluate(element => element.scrollIntoView({ block: 'start' }));
         await expect.poll(() => category.locator('.icon-image').evaluateAll(images =>

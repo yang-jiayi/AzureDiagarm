@@ -2,6 +2,14 @@
   "schemaVersion": 1,
   "packages": [
     {
+      "version": "12.0.0",
+      "publishedAt": "2026-11-05T03:02:36.505Z",
+      "url": "https://registry.npmjs.org/@fabric-msft/svg-icons/-/svg-icons-12.0.0.tgz",
+      "integrity": "sha512-we+ozRmYsIjmg+pNoDEr9PE9LtangeTk5FGvOSF/Y7zAk9xBp0cH6bli0vl+4Zyu9p+51unpLr1iCE6iRzhZiQ==",
+      "sha256": "dd3fb94b4b63f5edda5dad9633562cde3ed9ce6a6f4ea12e68e75603444dcd38",
+      "svgDirectory": "svg"
+    },
+    {
       "version": "8.2.0",
       "url": "https://registry.npmjs.org/@fabric-msft/svg-icons/-/svg-icons-8.2.0.tgz",
       "integrity": "sha512-0mp+BNc2V7kviToEcXzpo+ZGb143hw/FSMlexh2S5P6oP3uuH2nCIiiBsatH54qgw15xgbrzALBYoQKBxv/dug==",
@@ -21,6 +29,18 @@
       "integrity": "sha512-Cd4J5BUKnrN+ZbZk1QIoeGExQT5ykD3vQAkdOvhfTXUHRnH+XIaC3IvwjFLRDAU5a3MajcQJxZDgxeI2rB0sFw==",
       "sha256": "3cb800bc0c6a06a185542164f226be79994abc09d273392e6cf644dc945b0d84",
       "svgDirectory": "dist/svg"
+    }
+  ],
+  "packageComparisons": [
+    {
+      "fromVersion": "8.2.0",
+      "toVersion": "12.0.0",
+      "renamed": [
+        {
+          "from": "user_data_function_48_item.svg",
+          "to": "user_data_functions_48_item.svg"
+        }
+      ]
     }
   ],
   "articleIcons": [

@@ -419,11 +419,21 @@ const IconPalette: React.FC<IconPaletteProps> = ({ forceCollapsed, openSignal, o
                 : <React.Fragment key={`${segment.text}-${index}`}>{segment.text}</React.Fragment>
             ))}
           </span>
+          {icon.microsoftProductKind === 'symbol' && (
+            <span className="icon-drawing-kind">
+              {localize(language, {
+                en: 'Concept symbol, not product logo',
+                ja: '概念シンボル (製品ロゴではありません)',
+              })}
+            </span>
+          )}
           {icon.fabricDrawingKind && (
             <span className="icon-drawing-kind">
               {icon.fabricDrawingKind === 'legacy'
                 ? localize(language, { en: 'Legacy / Deprecated', ja: '旧 / 廃止' })
-                : localize(language, { en: 'OneLake Security UI', ja: 'OneLake セキュリティ UI' })}
+                : icon.fabricDrawingKind === 'ui'
+                  ? localize(language, { en: 'OneLake Security UI', ja: 'OneLake セキュリティ UI' })
+                  : localize(language, { en: 'Concept / drawing only', ja: '概念図・描画専用' })}
             </span>
           )}
         </button>
@@ -688,6 +698,7 @@ const IconPalette: React.FC<IconPaletteProps> = ({ forceCollapsed, openSignal, o
                     { label: '', icons: icons.filter(icon => !icon.fabricDrawingKind) },
                     { label: localize(language, { en: 'OneLake Security UI', ja: 'OneLake セキュリティ UI' }), icons: icons.filter(icon => icon.fabricDrawingKind === 'ui') },
                     { label: localize(language, { en: 'Legacy / Deprecated', ja: '旧 / 廃止アイコン' }), icons: icons.filter(icon => icon.fabricDrawingKind === 'legacy') },
+                    { label: localize(language, { en: 'Concept / drawing only', ja: '概念図・描画専用' }), icons: icons.filter(icon => icon.fabricDrawingKind === 'concept') },
                   ]
                 : [{ label: '', icons }];
               return (
