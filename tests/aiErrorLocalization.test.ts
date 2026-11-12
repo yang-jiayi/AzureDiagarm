@@ -37,26 +37,24 @@ const STANDALONE_AI_ERROR_MESSAGES: readonly string[] = [
   'The AI job exceeded its processing time limit. It was not automatically resubmitted. Failures with unknown usage may still count toward the application budget.',
 ];
 
-const ASTRA_CONFIGURATION_MESSAGES = [
-  'Only the managed GPT-6 Astra model can run in this application.',
-  'Only the configured GPT-6 Astra deployment can run.',
-  'The requested reasoning effort is not supported by GPT-6 Astra.',
-  'GPT-6 Astra requests must use the Responses API.',
-  'Bring-your-own AI is disabled. Only managed GPT-6 Astra can run.',
-  'No deployment configured for GPT-6 Astra. Set VITE_AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA.',
-  'Azure OpenAI is not configured. Please check your environment.',
-  'GPT-6 Astra is not configured. Contact the application administrator to configure the managed Astra deployment.',
-  'The configured GPT-6 Astra deployment rejected the image analysis request. Check the image and contact the application administrator if the problem persists.',
+const MANAGED_CONFIGURATION_MESSAGES = [
+  'Select managed GPT-6.1 Sol or Claude Opus 5.5.',
+  'Only configured GPT-6.1 Sol or Claude Opus 5.5 deployments can run.',
+  'The requested reasoning effort is not supported by this model.',
+  'The request format must match the selected managed model.',
+  'The selected managed model is not configured. Contact the application administrator.',
+  'The selected model rejected the image analysis request. Check the image and contact the application administrator if the problem persists.',
+  'Claude Opus 5.5 requires adaptive thinking with low, medium, high, xhigh or max effort.',
+  'The AI output limit was reached before completion. Reduce the request or reasoning effort.',
+  'Claude did not return a complete answer. No automatic resubmission was made.',
 ];
 
-const ASTRA_SERVER_MESSAGES = [
-  'Only GPT-6 Astra Responses requests are supported.',
+const MANAGED_SERVER_MESSAGES = [
   'Custom AI endpoints are not supported.',
-  'Configure the explicit GPT-6 Astra deployment and its identical singleton allowlist.',
-  'Only the configured GPT-6 Astra deployment is allowed.',
-  'deployment and body.model must explicitly match the configured GPT-6 Astra alias without endpoint overrides.',
-  'Use a Responses request body for the configured GPT-6 Astra deployment.',
-  'The managed Azure OpenAI endpoint is not configured correctly.',
+  'Configure the selected model deployment and its identical singleton allowlist.',
+  'Only the configured model deployment and matching API format are allowed.',
+  'deployment and body.model must explicitly match, without endpoint or credential overrides.',
+  'The managed Azure AI endpoint is not configured correctly.',
 ];
 
 const BYO_CONNECTION_MESSAGES = [
@@ -65,7 +63,7 @@ const BYO_CONNECTION_MESSAGES = [
   'Enter a whole-number output limit from 1 to 32768 tokens.',
   'Enter a valid API key. Keys stay only in this browser tab memory.',
   'You can save up to 10 AI connection profiles.',
-  'The selected AI connection is missing. Select another profile or managed GPT-6 Astra.',
+  'The selected AI connection is missing. Select another profile or managed GPT-6.1 Sol / Claude Opus 5.5.',
   'Enter this profile’s API key and test the connection in this browser tab.',
   'Test this AI connection successfully before using it.',
   'This AI connection failed its test. Check its settings and key, then test again.',
@@ -91,14 +89,14 @@ test('BYO status and validation errors have exact Japanese guidance without auto
   }
 });
 
-test('Astra-only configuration errors have exact Japanese entries without model-switching advice', () => {
-  for (const message of [...ASTRA_CONFIGURATION_MESSAGES, ...ASTRA_SERVER_MESSAGES]) {
+test('managed configuration errors have exact Japanese entries', () => {
+  for (const message of [...MANAGED_CONFIGURATION_MESSAGES, ...MANAGED_SERVER_MESSAGES]) {
     const translated = exactJapanese[message];
     assert.ok(translated, `Missing Japanese configuration error: ${message}`);
     assert.match(translated, /[\u3040-\u30ff\u4e00-\u9faf]/);
-    assert.doesNotMatch(translated, /別のモデル|モデルを選択|カスタム.*接続|GPT-5/);
-    if (message.includes('GPT-6 Astra')) assert.match(translated, /GPT-6 Astra/);
-    if (message.includes('VITE_')) assert.match(translated, /VITE_AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA/);
+    assert.doesNotMatch(translated, /カスタム.*接続|GPT-5/);
+    if (message.includes('GPT-6.1 Sol')) assert.match(translated, /GPT-6.1 Sol/);
+    if (message.includes('VITE_')) assert.match(translated, /VITE_AZURE_OPENAI_DEPLOYMENT_GPT61SOL/);
   }
 });
 
@@ -118,12 +116,12 @@ for (const language of ['en', 'ja'] as const) {
       observed.defaultReasoning = text('ai.defaultReasoning');
       observed.perFeature = text('ai.perFeatureReasoning');
       observed.inherit = text('ai.defaultReasoningChoice', { effort: text('High') });
-      observed.setup = text('ai.astraNotConfigured');
-      observed.unsupported = translate(`${ASTRA_CONFIGURATION_MESSAGES[1]} Request ID: astra-case-123`);
+      observed.setup = text('ai.managedNotConfigured');
+      observed.unsupported = translate(`${MANAGED_CONFIGURATION_MESSAGES[1]} Request ID: astra-case-123`);
       observed.history = translate('GPT-5.6 Sol / retired-deployment-123');
       observed.byoFailure = translate(`${BYO_CONNECTION_MESSAGES[17]} Request ID: byo-key-rejected-123`);
       observed.byoRequestFailure = translate(`${proxyErrorMessageForCode('byo_request_failed', { status: 400 })} Request ID: byo-request-rejected-123`);
-      ASTRA_SERVER_MESSAGES.forEach((message, index) => {
+      MANAGED_SERVER_MESSAGES.forEach((message, index) => {
         observed[message] = translate(message);
         observed[`policy-${index}`] = translate(`${message} Request ID: astra-policy-${index}`);
       });
@@ -135,18 +133,17 @@ for (const language of ['en', 'ja'] as const) {
       ja: ['既定の推論強度', '機能別の推論強度', '既定値 (高)'],
     };
     assert.deepEqual([observed.defaultReasoning, observed.perFeature, observed.inherit], expected[language]);
-    assert.match(observed.setup, /GPT-6 Astra/);
     assert.match(observed.setup, language === 'ja' ? /管理者/ : /administrator/);
     assert.equal(observed.unsupported, language === 'ja'
-      ? `${exactJapanese[ASTRA_CONFIGURATION_MESSAGES[1]]} リクエスト ID: astra-case-123`
-      : `${ASTRA_CONFIGURATION_MESSAGES[1]} Request ID: astra-case-123`);
+      ? `${exactJapanese[MANAGED_CONFIGURATION_MESSAGES[1]]} リクエスト ID: astra-case-123`
+      : `${MANAGED_CONFIGURATION_MESSAGES[1]} Request ID: astra-case-123`);
     assert.equal(observed.history, 'GPT-5.6 Sol / retired-deployment-123');
     assert.equal(observed.byoFailure, language === 'ja'
       ? `${exactJapanese[BYO_CONNECTION_MESSAGES[17]]} リクエスト ID: byo-key-rejected-123`
       : `${BYO_CONNECTION_MESSAGES[17]} Request ID: byo-key-rejected-123`);
     assert.match(observed.byoRequestFailure, /byo-request-rejected-123/);
     assert.match(observed.byoRequestFailure, language === 'ja' ? /リクエスト.*失敗.*リクエスト ID:/ : /request failed.*Request ID:/);
-    ASTRA_SERVER_MESSAGES.forEach((message, index) => {
+    MANAGED_SERVER_MESSAGES.forEach((message, index) => {
       const translated = language === 'ja' ? exactJapanese[message] : message;
       assert.equal(observed[message], translated);
       assert.equal(observed[`policy-${index}`],

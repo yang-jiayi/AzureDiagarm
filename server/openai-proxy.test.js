@@ -23,7 +23,7 @@ async function startServer(t, options = {}) {
   const app = express();
   app.use(express.json({ limit: '12mb' }));
   app.use('/api/openai', createOpenAIProxyRouter({
-    endpoint, astraDeployment: alias, allowedDeployments: new Set([alias]),
+    endpoint, solDeployment: alias, allowedDeployments: new Set([alias]),
     apiKey: 'test-only-key', logger: silentLogger, ...options,
   }));
   const server = await new Promise(resolve => {
@@ -47,9 +47,9 @@ for (const [label, overrides, status, code] of [
   ['null model', { body: { model: null, input: 'test' } }, 403, 'deployment_not_allowed'],
   ['non-string model', { body: { model: 42, input: 'test' } }, 403, 'deployment_not_allowed'],
   ['forged model', { body: { model: 'gpt-5.6-sol', input: 'test' } }, 403, 'deployment_not_allowed'],
-  ['literal model is not deployment alias', { body: { model: 'gpt-6-astra', input: 'test' } }, 403, 'deployment_not_allowed'],
+  ['literal model is not deployment alias', { body: { model: 'gpt-6.1-sol', input: 'test' } }, 403, 'deployment_not_allowed'],
   ['chat completions', { apiFormat: 'chat-completions' }, 400, 'invalid_api_format'],
-  ['Anthropic', { apiFormat: 'anthropic-messages' }, 400, 'invalid_api_format'],
+  ['unconfigured Anthropic', { apiFormat: 'anthropic-messages' }, 503, 'managed_model_not_configured'],
   ['unknown format', { apiFormat: 'other' }, 400, 'invalid_api_format'],
   ['forged Responses envelope around chat', { body: { model: alias, messages: [] } }, 400, 'invalid_api_format'],
   ['forged Responses envelope around Anthropic', { body: { model: alias, thinking: {} } }, 400, 'invalid_api_format'],
@@ -81,11 +81,11 @@ for (const [label, overrides, status, code] of [
 }
 
 for (const options of [
-  { astraDeployment: undefined, allowedDeployments: new Set(['gpt-5.6-sol']) },
+  { solDeployment: undefined, allowedDeployments: new Set(['gpt-5.6-sol']) },
   { allowedDeployments: new Set([alias, 'gpt-5.6-sol']) },
   { allowedDeployments: new Set(['gpt-5.6-sol']) },
   { allowedDeployments: new Set() },
-  { astraDeployment: '../other' },
+  { solDeployment: '../other' },
 ]) {
   test('stale allowlists cannot authorize a legacy deployment or act as implicit Astra configuration', async t => {
     let touched = false;
@@ -95,7 +95,7 @@ for (const options of [
     });
     const response = await post();
     assert.equal(response.status, 503);
-    assert.equal((await response.json()).error.code, 'astra_not_configured');
+    assert.equal((await response.json()).error.code, 'managed_model_not_configured');
     assert.equal(touched, false);
   });
 }
@@ -296,7 +296,7 @@ test('budget reservation timeout returns a timeout and settles a late lease with
   const execute = createOpenAIExecutor({
     mode: 'public',
     endpoint,
-    astraDeployment: alias,
+    solDeployment: alias,
     allowedDeployments: new Set([alias]),
     apiKey: 'test-only-key',
     budget: {
@@ -337,7 +337,7 @@ test('client cancellation during budget reservation settles a late lease without
   const execute = createOpenAIExecutor({
     mode: 'public',
     endpoint,
-    astraDeployment: alias,
+    solDeployment: alias,
     allowedDeployments: new Set([alias]),
     apiKey: 'test-only-key',
     budget: {

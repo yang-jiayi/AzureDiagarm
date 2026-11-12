@@ -39,7 +39,7 @@ test(`MAX blueprint async progress and separate result: ${scenario}`, async ({ p
     localStorage.setItem('azure-diagram-builder.canvasHintDismissed.v1', '1');
     localStorage.setItem('aiGenerator.mode', 'blueprint');
     localStorage.setItem('azure-diagrams-model-settings', JSON.stringify({
-      version: 3, model: 'gpt-6-astra', reasoningEffort: 'max',
+      version: 3, model: 'gpt-6.1-sol', reasoningEffort: 'max',
     }));
   });
   let id = '';

@@ -5,7 +5,7 @@ const crypto = require('crypto');
 const express = require('express');
 const { asyncHandler } = require('./async-handler');
 const { budgetIdentity, reservationTokens, actualUsage, hasUnmeteredInput } = require('./ai-budget');
-const { normalizeAzureOpenAIEndpoint: normalizeManagedEndpoint, normalizeHttpsOrigin, DEPLOYMENT_NAME_RE } = require('./astra-policy');
+const { normalizeAzureOpenAIEndpoint: normalizeManagedEndpoint, normalizeFoundryEndpoint, normalizeHttpsOrigin, DEPLOYMENT_NAME_RE } = require('./astra-policy');
 const { awaitWithSignal, fetchLongAIResponse, MAX_RESPONSE_BYTES } = require('./ai-http');
 
 const DEFAULT_TIMEOUT_MS = 210_000;
@@ -194,7 +194,10 @@ function logEvent(logger, level, event) {
 function createOpenAIExecutor(options) {
   const {
     endpoint,
-    astraDeployment,
+    solDeployment,
+    opusDeployment,
+    foundryEndpoint,
+    allowedFoundryDeployments = new Set(),
     credential,
     apiKey,
     allowedDeployments = new Set(),
@@ -228,11 +231,11 @@ function createOpenAIExecutor(options) {
         return sendError(responseHeaders, error.status, requestId, { source: 'proxy', code: error.code, message: error.message });
       }
     }
-    if (apiFormat !== 'responses' && !(byoConfig && apiFormat === 'chat-completions')) {
+    if (byoConfig ? !['responses', 'chat-completions'].includes(apiFormat) : !['responses', 'anthropic-messages'].includes(apiFormat)) {
       return sendError(responseHeaders, 400, requestId, {
         source: 'proxy',
         code: 'invalid_api_format',
-        message: byoConfig ? "apiFormat must be 'responses' or 'chat-completions'." : 'Managed GPT-6 Astra requires the Responses API.',
+        message: 'The request format must match the selected managed model or BYO connection.',
       });
     }
 
@@ -244,12 +247,16 @@ function createOpenAIExecutor(options) {
       });
     }
 
-    const managedConfigured = Boolean(endpoint || astraDeployment || allowedDeployments.size || apiKey);
-    if ((!byoConfig || managedConfigured) && (!DEPLOYMENT_NAME_RE.test(astraDeployment || '')
-      || allowedDeployments.size !== 1 || !allowedDeployments.has(astraDeployment))) {
+    const claude = !byoConfig && apiFormat === 'anthropic-messages';
+    const selectedDeployment = claude ? opusDeployment : solDeployment;
+    const selectedAllowlist = claude ? allowedFoundryDeployments : allowedDeployments;
+    const managedConfigured = Boolean(endpoint || solDeployment || allowedDeployments.size || apiKey);
+    if ((!byoConfig || managedConfigured) && (!DEPLOYMENT_NAME_RE.test(selectedDeployment || '')
+      || selectedDeployment === 'gpt-6-astra' || (solDeployment && opusDeployment && solDeployment === opusDeployment)
+      || selectedAllowlist.size !== 1 || !selectedAllowlist.has(selectedDeployment))) {
       return sendError(responseHeaders, 503, requestId, {
-        source: 'proxy', code: 'astra_not_configured',
-        message: 'Configure the explicit GPT-6 Astra deployment and its identical singleton allowlist.',
+        source: 'proxy', code: 'managed_model_not_configured',
+        message: 'Configure the selected model deployment and its identical singleton allowlist.',
       });
     }
     if (byoConfig && (typeof deployment !== 'string' || !BYO_MODEL_NAME_RE.test(deployment))) {
@@ -257,10 +264,10 @@ function createOpenAIExecutor(options) {
         source: 'proxy', code: 'invalid_deployment_name', message: 'A valid, explicit custom model or deployment ID is required.',
       });
     }
-    if (!byoConfig && deployment !== astraDeployment) {
+    if (!byoConfig && deployment !== selectedDeployment) {
       return sendError(responseHeaders, 403, requestId, {
         source: 'proxy', code: 'deployment_not_allowed',
-        message: 'Only the configured GPT-6 Astra deployment is allowed.',
+        message: 'Only the configured model deployment and matching API format are allowed.',
       });
     }
     if (!body || typeof body !== 'object' || Array.isArray(body)) {
@@ -278,16 +285,18 @@ function createOpenAIExecutor(options) {
       });
     }
     let managedEndpoint;
-    try { if (managedConfigured) managedEndpoint = normalizeManagedEndpoint(endpoint); } catch {
+    try { if (!byoConfig || managedConfigured) managedEndpoint = claude ? normalizeFoundryEndpoint(foundryEndpoint) : normalizeManagedEndpoint(endpoint); } catch {
       return sendError(responseHeaders, 503, requestId, {
-        source: 'proxy', code: 'proxy_not_configured', message: 'The managed Azure OpenAI endpoint is not configured correctly.',
+        source: 'proxy', code: 'proxy_not_configured', message: 'The managed AI endpoint is not configured correctly.',
       });
     }
 
-    const upstreamSource = byoConfig ? 'byo' : 'azure_openai';
-    const provider = byoConfig ? (byoConfig.provider === 'openai' ? 'byo_openai' : 'byo_azure_openai') : 'azure_openai';
+    const upstreamSource = byoConfig ? 'byo' : claude ? 'azure_foundry' : 'azure_openai';
+    const provider = byoConfig ? (byoConfig.provider === 'openai' ? 'byo_openai' : 'byo_azure_openai') : claude ? 'azure_foundry' : 'azure_openai';
     const loggedDeployment = byoConfig ? 'user-provided' : deployment;
-    const wrongFormatKeys = apiFormat === 'responses'
+    const wrongFormatKeys = claude
+      ? ['input', 'max_output_tokens', 'max_completion_tokens', 'reasoning', 'reasoning_effort', 'response_format', 'text', 'store', 'temperature', 'top_p', 'top_k']
+      : apiFormat === 'responses'
       ? ['messages', 'max_tokens', 'max_completion_tokens', 'thinking', 'output_config', 'reasoning_effort', 'response_format']
       : ['input', 'max_output_tokens', 'reasoning', 'text', 'thinking', 'output_config'];
     if (wrongFormatKeys.some(key => Object.hasOwn(body, key))
@@ -299,6 +308,31 @@ function createOpenAIExecutor(options) {
     }
 
     const upstreamBody = { ...body };
+    if (claude) {
+      const allowedKeys = ['model', 'messages', 'system', 'max_tokens', 'thinking', 'output_config', 'stream'];
+      const inlineParts = parts => Array.isArray(parts) && parts.length > 0 && parts.every(part => (
+        part && (part.type === 'text' && typeof part.text === 'string' && Object.keys(part).every(key => ['type', 'text'].includes(key))
+          || part.type === 'image' && Object.keys(part).every(key => ['type', 'source'].includes(key))
+            && part.source?.type === 'base64' && ['image/png', 'image/jpeg', 'image/gif', 'image/webp'].includes(part.source.media_type)
+            && typeof part.source.data === 'string' && /^[A-Za-z0-9+/]+={0,2}$/.test(part.source.data)
+            && Object.keys(part.source).every(key => ['type', 'media_type', 'data'].includes(key)))
+      ));
+      const textOrParts = value => typeof value === 'string' || inlineParts(value);
+      if (Object.keys(body).some(key => !allowedKeys.includes(key))
+        || !Array.isArray(body.messages) || !body.messages.length || body.messages.at(-1)?.role !== 'user'
+        || body.messages.some(message => !['user', 'assistant'].includes(message?.role)
+          || !textOrParts(message.content) || Object.keys(message).some(key => !['role', 'content'].includes(key)))
+        || (body.system !== undefined && !(typeof body.system === 'string'
+          || inlineParts(body.system) && body.system.every(part => part.type === 'text')))
+        || (body.thinking !== undefined && (body.thinking?.type !== 'adaptive' || Object.keys(body.thinking).length !== 1))
+        || !['low', 'medium', 'high', 'xhigh', 'max'].includes(body.output_config?.effort)
+        || Object.keys(body.output_config).some(key => !['effort', 'format'].includes(key))) {
+        return sendError(responseHeaders, 400, requestId, {
+          source: 'proxy', code: 'invalid_api_format',
+          message: 'Claude requires inline Messages input, adaptive thinking and a supported output effort, without tools, sampling controls or assistant prefill.',
+        });
+      }
+    }
     // Complete responses only: stored inputs, remote tools and multiple
     // generations have unbounded or unobservable usage.
     if (body.background || body.previous_response_id || body.conversation
@@ -311,7 +345,7 @@ function createOpenAIExecutor(options) {
         message: 'Use a complete, non-streaming request with inline text/images, without stored inputs or remote tools.',
       });
     }
-    upstreamBody.store = false;
+    if (!claude) upstreamBody.store = false;
     upstreamBody.stream = false;
     const outputField = apiFormat === 'responses' ? 'max_output_tokens'
       : (Object.hasOwn(body, 'max_completion_tokens') ? 'max_completion_tokens' : 'max_tokens');
@@ -338,12 +372,12 @@ function createOpenAIExecutor(options) {
     if (byoConfig) {
       if (byoConfig.provider === 'openai') headers.Authorization = `Bearer ${byoConfig.apiKey}`;
       else headers['api-key'] = byoConfig.apiKey;
-    } else if (apiKey) {
+    } else if (apiKey && !claude) {
       headers['api-key'] = apiKey;
     } else {
       try {
         const tokenResult = await awaitWithSignal(
-          Promise.resolve(credential?.getToken('https://cognitiveservices.azure.com/.default', { abortSignal: signal })), signal,
+          Promise.resolve(credential?.getToken(claude ? 'https://ai.azure.com/.default' : 'https://cognitiveservices.azure.com/.default', { abortSignal: signal })), signal,
         );
         if (!tokenResult?.token) throw new Error('Credential returned no token');
         headers.Authorization = `Bearer ${tokenResult.token}`;
@@ -358,9 +392,10 @@ function createOpenAIExecutor(options) {
         return sendError(responseHeaders, 502, requestId, {
           source: 'credential',
           code: 'credential_acquisition_failed',
-          message: 'The server could not acquire an Azure OpenAI credential.',
+          message: 'The server could not acquire an Azure AI credential.',
         });
       }
+      if (claude) headers['anthropic-version'] = '2026-10-21';
     }
 
     let identity;
@@ -437,7 +472,8 @@ function createOpenAIExecutor(options) {
       }
     let upstream;
     try {
-      const upstreamUrl = byoConfig ? buildByoAIUrl(byoConfig, apiFormat) : buildOpenAIUrl(managedEndpoint);
+      const upstreamUrl = byoConfig ? buildByoAIUrl(byoConfig, apiFormat)
+        : claude ? `${managedEndpoint}anthropic/v1/messages` : buildOpenAIUrl(managedEndpoint);
       dispatched = true;
       const transport = longRunning && !options.fetchImpl ? fetchLongAIResponse : fetchImpl;
       upstream = await awaitWithSignal(transport(upstreamUrl, {

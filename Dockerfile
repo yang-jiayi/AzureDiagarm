@@ -13,15 +13,12 @@ RUN npm ci
 # Copy source code
 COPY . .
 
-# Build arguments for Azure OpenAI configuration.
-# NOTE: The API key is intentionally NOT a build arg. Azure OpenAI calls are
-# proxied server-side by the token server (server/token-server.js) using managed
-# identity, so the key must never be embedded in the client bundle. Set
-# AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA and the identical
-# singleton AZURE_OPENAI_ALLOWED_DEPLOYMENTS are runtime settings. Cloud
-# deployments use managed identity, not API-key build arguments.
+# Build-time public model routing configuration. Credentials are never build
+# arguments. Managed requests are server-side; Claude uses managed identity only.
 ARG VITE_AZURE_OPENAI_ENDPOINT
-ARG VITE_AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA
+ARG VITE_AZURE_OPENAI_DEPLOYMENT_GPT61SOL
+ARG VITE_AZURE_FOUNDRY_ENDPOINT
+ARG VITE_AZURE_FOUNDRY_DEPLOYMENT_OPUS55
 ARG VITE_SPEECH_REGION
 # Delegated (per-user) Entra sign-in for "Import from Azure". Only CLIENT_ID is
 # required to activate delegated mode; AUTHORITY/ARM_SCOPE match code defaults.
@@ -33,7 +30,9 @@ ARG VITE_ARM_SCOPE
 ARG VITE_FEEDBACK_CONTACT_ENABLED=false
 # Set environment variables for build
 ENV VITE_AZURE_OPENAI_ENDPOINT=$VITE_AZURE_OPENAI_ENDPOINT
-ENV VITE_AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA=$VITE_AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA
+ENV VITE_AZURE_OPENAI_DEPLOYMENT_GPT61SOL=$VITE_AZURE_OPENAI_DEPLOYMENT_GPT61SOL
+ENV VITE_AZURE_FOUNDRY_ENDPOINT=$VITE_AZURE_FOUNDRY_ENDPOINT
+ENV VITE_AZURE_FOUNDRY_DEPLOYMENT_OPUS55=$VITE_AZURE_FOUNDRY_DEPLOYMENT_OPUS55
 ENV VITE_SPEECH_REGION=$VITE_SPEECH_REGION
 ENV VITE_AZURE_AD_CLIENT_ID=$VITE_AZURE_AD_CLIENT_ID
 ENV VITE_AZURE_AD_AUTHORITY=$VITE_AZURE_AD_AUTHORITY

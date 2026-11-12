@@ -5,7 +5,7 @@
 ![Azure](https://img.shields.io/badge/Azure-0078D4?style=for-the-badge&logo=microsoft-azure&logoColor=white)
 ![React](https://img.shields.io/badge/React-61DAFB?style=for-the-badge&logo=react&logoColor=black)
 ![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?style=for-the-badge&logo=typescript&logoColor=white)
-![GPT-6 Astra](https://img.shields.io/badge/GPT--6_Astra-412991?style=for-the-badge&logo=openai&logoColor=white)
+![Managed AI](https://img.shields.io/badge/Managed_AI-GPT--6.1_Sol_%2B_Claude_Opus_5.5-412991?style=for-the-badge)
 
 **A professional AI-powered tool for designing, validating, and deploying Microsoft cloud architectures across Azure, Microsoft Fabric, Power Platform, and Dynamics 365**
 
@@ -31,7 +31,7 @@ The latest customization and production hardening were created by **Swarm Data S
 
 ## 📖 Overview
 
-Microsoft Product Architecture Diagram Builder is an enterprise-grade web application that empowers cloud architects to design, visualize, validate, and deploy Azure solutions. Its managed AI model is **GPT-6 Astra**, through a genuine Azure OpenAI deployment. Users can also explicitly select a verified **bring-your-own AI (BYO)** connection when enabled by the administrator. The app transforms natural language descriptions into architecture diagrams while providing cost estimates, Well-Architected Framework validation, and Infrastructure as Code generation.
+Microsoft Product Architecture Diagram Builder is an enterprise-grade web application that empowers cloud architects to design, visualize, validate, and deploy Azure solutions. Its managed AI catalog offers **GPT-6.1 Sol** on Azure OpenAI and **Claude Opus 5.5** on Azure AI Foundry. Users can also explicitly select a verified **bring-your-own AI (BYO)** connection when enabled by the administrator. The app transforms natural language descriptions into architecture diagrams while providing cost estimates, Well-Architected Framework validation, and Infrastructure as Code generation.
 
 Beyond editable **topology** diagrams, the app can also produce polished, whiteboard-style **Blueprint** diagrams (BETA) as shareable PNGs — ideal for presentations and design reviews.
 
@@ -58,7 +58,7 @@ architect.
 ## ✨ Key Features
 
 ### 🤖 AI-Powered Architecture Generation
-Describe your architecture in plain language to create a complete diagram with logical service groupings. **GPT-6 Astra** remains the sole managed model. Generation, validation, deployment guidance, and blueprints honor the explicitly selected managed or BYO connection. Managed Astra supports global and per-feature reasoning settings; BYO uses its profile's capabilities and reasoning settings. An unavailable connection produces an actionable error instead of silently switching models or providers.
+Describe your architecture in plain language to create a complete diagram with logical service groupings. Select either managed **GPT-6.1 Sol** or **Claude Opus 5.5**, or an explicitly enabled BYO connection. Generation, validation, deployment guidance, and blueprints honor the selected connection. BYO uses its profile's capabilities and reasoning settings. An unavailable connection produces an actionable error instead of silently switching models or providers.
 
 **13 curated example prompts** included — from simple web apps to complex enterprise scenarios:
 - Zero Trust enterprise networks with security segmentation
@@ -88,7 +88,7 @@ Generate a hand-drawn, **whiteboard-style blueprint** of your architecture — n
 - **Blueprint** *(BETA)* — a polished whiteboard-style PNG (the PNG is the deliverable; re-download any time via **Export > Export Blueprint PNG**)
 - **Both** *(BETA)* — a deployable topology **and** a Blueprint PNG from the same prompt, optionally generated in parallel
 
-> Topology, Blueprint, and Both modes honor the selected connection. BYO models must support the requested input and structured architecture output; unsupported capabilities are reported, not worked around by switching to Astra. A configurable legend position keeps blueprint output presentation-ready.
+> Topology, Blueprint, and Both modes honor the selected connection. BYO models must support the requested input and structured architecture output; unsupported capabilities are reported, not worked around by switching models or providers. A configurable legend position keeps blueprint output presentation-ready.
 
 Explicitly identified provider/proxy rate limits can retry automatically with the same prompt, model, reasoning and output limit, up to three HTTP attempts and two minutes of total cooldown. Budget exhaustion, unclassified 429 responses, request timeouts and incomplete output are surfaced instead of silently lowering generation quality. Countdown waits and active requests remain cancellable.
 
@@ -110,7 +110,7 @@ Validate your architecture against all five WAF pillars:
 Select specific recommendations to generate an improved proposal, then review the changes before applying them. Reviews show available finding sources, link findings to diagram resources, and retain a bounded review history. Edited diagrams and older comparison results are marked as stale; a finding not detected in a later review is not treated as proof of remediation. During analysis, a dismiss hint lets you close the panel and return later via the **Validation Score** button in the toolbar.
 
 ### AI Model Policy
-The managed model catalog contains only GPT-6 Astra. Saved legacy managed-model preferences migrate to Astra while retaining supported reasoning settings. BYO is a separate, explicit connection choice using the user's own Azure OpenAI or official OpenAI credentials and model identifier; it does not reinstate the retired managed model roster or multi-model comparison UI.
+The managed model catalog contains GPT-6.1 Sol and Claude Opus 5.5, each bound to its own approved deployment and provider endpoint. Astra is retired from active model execution; existing Azure resources and historical result provenance are not deleted or relabeled. BYO is a separate, explicit connection choice using the user's own Azure OpenAI or official OpenAI credentials and model identifier.
 
 Historical diagrams, review records, and exported reports retain their original model provenance. Changing the selected connection does not relabel an already submitted result.
 
@@ -437,7 +437,8 @@ graph TB
     end
 
     subgraph External["External APIs"]
-        OpenAI[Azure OpenAI<br/>GPT-6 Astra]
+        OpenAI[Azure OpenAI<br/>GPT-6.1 Sol]
+        Foundry[Azure AI Foundry<br/>Claude Opus 5.5]
         LearnMCP[Microsoft Learn MCP]
         PricingAPI[Azure Retail Prices API]
         Cosmos[(Azure Cosmos DB)]
@@ -580,7 +581,7 @@ closes them during graceful shutdown.
 
 - **Node.js 22**
 - **npm** or **yarn**
-- **Azure OpenAI** resource with a genuine **GPT-6 Astra** deployment for AI features
+- **Azure OpenAI** GPT-6.1 Sol and **Azure AI Foundry** Claude Opus 5.5 deployments, independently endpoint-bound and verified through ARM
 
 ### Installation
 
@@ -600,21 +601,22 @@ npm ci
 Create a `.env` file in the project root:
 
 ```bash
-# Azure OpenAI Configuration (Required)
-#
-# SECURITY: Azure OpenAI calls are proxied server-side by the co-located token
-# server (server/token-server.js) via the /api/openai endpoint. The API key is
-# NEVER shipped to the browser. Keyless auth (managed identity / `az login`) is
-# preferred; a key is only used as a fallback when AZURE_OPENAI_API_KEY is set.
-#
-# VITE_* values are public build-time configuration. The server binds requests
-# to the single approved Astra deployment; all three deployment names must match.
+# Managed model configuration (required by the production release)
+# VITE_* values are public routing configuration only; managed credentials are
+# never passed to the browser or image. Both managed deployments use server-side
+# managed identity and are independently verified through ARM before release.
 VITE_AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com/
-VITE_AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA=your-gpt6-astra-deployment
 AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com/
-AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA=your-gpt6-astra-deployment
-AZURE_OPENAI_ALLOWED_DEPLOYMENTS=your-gpt6-astra-deployment
-AZURE_OPENAI_API_KEY=your-api-key-here   # optional server-side fallback; prefer managed identity
+AZURE_OPENAI_RESOURCE_ID=/subscriptions/<subscription>/resourceGroups/<group>/providers/Microsoft.CognitiveServices/accounts/<openai-account>
+VITE_AZURE_OPENAI_DEPLOYMENT_GPT61SOL=gpt-6.1-sol
+AZURE_OPENAI_DEPLOYMENT_GPT61SOL=gpt-6.1-sol
+AZURE_OPENAI_ALLOWED_DEPLOYMENTS=gpt-6.1-sol
+VITE_AZURE_FOUNDRY_ENDPOINT=https://your-resource.services.ai.azure.com/
+AZURE_FOUNDRY_ENDPOINT=https://your-resource.services.ai.azure.com/
+AZURE_FOUNDRY_RESOURCE_ID=/subscriptions/<subscription>/resourceGroups/<group>/providers/Microsoft.CognitiveServices/accounts/<foundry-account>
+VITE_AZURE_FOUNDRY_DEPLOYMENT_OPUS55=claude-opus-5-5
+AZURE_FOUNDRY_DEPLOYMENT_OPUS55=claude-opus-5-5
+AZURE_FOUNDRY_ALLOWED_DEPLOYMENTS=claude-opus-5-5
 
 # Optional: explicitly permit users' own Azure OpenAI / official OpenAI keys.
 # Keys are entered in the connection dialog, never in VITE_* settings.
@@ -648,25 +650,17 @@ verifying that its GUID belongs to the exact Speech resource scope, app
 identity, and role being deployed. Leave it unset otherwise; a previously
 recorded assignment GUID is not proof of its current scope or ownership.
 
-`VITE_AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA` must name a real GPT-6 Astra deployment,
-not another model renamed to look like Astra. Use that same name as the server's
-`AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA` and sole allowed deployment. The
-deployment-only template `infra/gpt6-astra.bicep` codifies the
-verified model/version and usage-based SKU under an existing OpenAI account;
-it does not recreate the account or modify networking, roles, or legacy models.
-Confirm model availability and quota before applying it in another environment.
-Releases also require `AZURE_OPENAI_RESOURCE_ID`, the full resource ID of that
-OpenAI account. Preflight reads the account and deployment through ARM and
-rejects endpoint-ownership or actual-model mismatches; it does not grant access
-or provision a replacement model.
-Saved legacy managed-model selections and per-feature overrides migrate to Astra,
-including records that passed an earlier migration, while preserving supported
-reasoning levels. Existing BYO settings migrate separately into a connection
-profile and require key re-entry and a fresh test before use. Configure managed
-reasoning in the AI settings popover and BYO capabilities in its connection
-profile, not environment variables. Missing or unverified selected connections
-fail explicitly; no alternate model is substituted. Historical result metadata
-remains unchanged.
+The deployment alias and its singleton allowlist must agree for each provider.
+The release verifies endpoint ownership and requires the actual ARM deployment
+identities `OpenAI/gpt-6.1-sol` version `2026-09-29` and
+`Anthropic/claude-opus-5-5` version `2`; changing an alias cannot disguise a
+different model. Both `AZURE_OPENAI_RESOURCE_ID` and `AZURE_FOUNDRY_RESOURCE_ID`
+must identify their respective existing accounts. The opt-in
+`infra/managed-model-deployments.bicep` template describes new model deployments
+only; confirm availability, capacity/quota, price and approvals before applying.
+It does not delete or rename the existing Astra deployment or provision either
+account. No cost approval or provisioning is implied by this repository.
+Historical result metadata remains unchanged.
 
 4. **Start the development server**
 ```bash
@@ -745,39 +739,44 @@ explicitly select local mode and bind the published port to loopback. Never
 expose this local configuration to other users or copy it into a public deployment.
 
 ```bash
-# Use your real Azure OpenAI endpoint and genuine GPT-6 Astra deployment name.
-# These two values are public configuration, not API credentials.
+# Supply both managed endpoints and deployment aliases for local AI use.
+# These values are public routing configuration, not API credentials.
 OPENAI_ENDPOINT="https://your-resource.openai.azure.com/"
-ASTRA_DEPLOYMENT="gpt-6-astra"
+FOUNDRY_ENDPOINT="https://your-resource.services.ai.azure.com/"
+SOL_DEPLOYMENT="gpt-6.1-sol"
+OPUS_DEPLOYMENT="claude-opus-5-5"
 
 # Build-time VITE_* values select the model; credentials stay server-side.
 docker build -t azure-diagram-builder \
   --build-arg VITE_AZURE_OPENAI_ENDPOINT="$OPENAI_ENDPOINT" \
-  --build-arg VITE_AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA="$ASTRA_DEPLOYMENT" .
+  --build-arg VITE_AZURE_OPENAI_DEPLOYMENT_GPT61SOL="$SOL_DEPLOYMENT" \
+  --build-arg VITE_AZURE_FOUNDRY_ENDPOINT="$FOUNDRY_ENDPOINT" \
+  --build-arg VITE_AZURE_FOUNDRY_DEPLOYMENT_OPUS55="$OPUS_DEPLOYMENT" .
 
-# Forward an optional API key from your shell without putting its value in
-# the command. Obtain it through your approved local secret-management process.
 docker run --rm -p 127.0.0.1:8080:80 \
   -e APP_DEPLOYMENT_MODE=local \
   -e ACCESS_CONTROL_ENABLED=false \
   -e AI_BUDGET_STORE=memory \
   -e AZURE_OPENAI_ENDPOINT="$OPENAI_ENDPOINT" \
-  -e AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA="$ASTRA_DEPLOYMENT" \
-  -e AZURE_OPENAI_ALLOWED_DEPLOYMENTS="$ASTRA_DEPLOYMENT" \
-  -e AZURE_OPENAI_API_KEY \
+  -e AZURE_OPENAI_DEPLOYMENT_GPT61SOL="$SOL_DEPLOYMENT" \
+  -e AZURE_OPENAI_ALLOWED_DEPLOYMENTS="$SOL_DEPLOYMENT" \
+  -e AZURE_FOUNDRY_ENDPOINT="$FOUNDRY_ENDPOINT" \
+  -e AZURE_FOUNDRY_DEPLOYMENT_OPUS55="$OPUS_DEPLOYMENT" \
+  -e AZURE_FOUNDRY_ALLOWED_DEPLOYMENTS="$OPUS_DEPLOYMENT" \
   azure-diagram-builder
 ```
 
-Open `http://127.0.0.1:8080`. The editor can start without a model credential;
-real AI calls require a server-side credential authorized for the configured
-deployment. A host-side `az login` is not automatically available inside Docker.
-In Azure, production uses the configured managed identity instead of an API key.
-Never pass a provider API key as a `VITE_*` value or Docker build argument.
+Open `http://127.0.0.1:8080`. The editor can start without cloud access; real
+managed AI calls require a credential available to the container through an
+approved local identity flow. A host-side `az login` is not automatically
+available inside Docker. In Azure, production uses the configured managed
+identity. Never pass a provider API key as a `VITE_*` value or Docker build arg.
 
-Managed requests accept only the configured Astra deployment and Responses API.
-Separately opted-in BYO requests use the user's own key on trusted Azure OpenAI
-or official OpenAI endpoints with the selected Responses or Chat Completions
-format; see [runtime controls](server/SECURITY.md).
+Managed requests accept only the approved GPT-6.1 Sol Responses deployment or
+Claude Opus 5.5 Anthropic Messages deployment at their separate configured
+endpoints. Separately opted-in BYO requests use the user's own key on trusted
+Azure OpenAI or official OpenAI endpoints with the selected Responses or Chat
+Completions format; see [runtime controls](server/SECURITY.md).
 
 ### Azure Container Apps Deployment
 
@@ -811,7 +810,7 @@ anonymous social previews are intentional for this private application.
 1. Click **"Generate with AI"** in the toolbar
 2. Describe your architecture in natural language, or pick from **13 curated example prompts**
 3. Choose a **diagram mode** — Topology, Blueprint (BETA), or Both (BETA)
-4. Adjust the GPT-6 Astra reasoning level if needed
+4. Adjust the selected managed model's available reasoning settings if needed
 5. Click **Generate** — the architecture is created with auto-layout and workflow animation
 
 #### Method 2: Image Import
@@ -841,11 +840,9 @@ anonymous social previews are intentional for this private application.
 
 ### Configuring Reasoning
 
-With managed Astra selected, open the AI settings popover to adjust the global
-reasoning effort or set an independent effort for generation, validation,
-deployment guidance, and blueprints. A selected BYO profile uses its own
-capability and reasoning configuration instead. See the
-[Astra reasoning guide](DOCS/GPT6-ASTRA-REASONING-LEVELS.md).
+With either managed model selected, use its available reasoning controls in the
+AI settings popover. Feature-specific options depend on the selected provider
+and model; BYO capabilities remain configured in the connection profile.
 
 ### Generating Deployment Guide
 
@@ -872,7 +869,7 @@ capability and reasoning configuration instead. See the
 | Category | Technologies |
 |----------|-------------|
 | **Frontend** | React 18, TypeScript, React Flow, Vite |
-| **AI** | Managed GPT-6 Astra plus explicitly selected Azure OpenAI / OpenAI BYO profiles, through the protected server proxy |
+| **AI** | Managed GPT-6.1 Sol and Claude Opus 5.5 plus explicitly selected Azure OpenAI / OpenAI BYO profiles, through the protected server proxy |
 | **Styling** | CSS3, html-to-image |
 | **Serving** | nginx:alpine (Docker), Vite dev server (local) |
 | **APIs** | Azure Retail Prices API |
@@ -896,13 +893,13 @@ azure-diagrams/
 │   │   ├── WorkflowPanel.tsx  # Workflow animation
 │   │   ├── ValidationModal.tsx  # WAF validation
 │   │   ├── DeploymentGuideModal.tsx  # Deployment guides
-│   │   ├── ModelSettingsPopover.tsx  # Astra reasoning settings
+│   │   ├── ModelSettingsPopover.tsx  # Managed-model settings
 │   │   ├── IconPalette.tsx
 │   │   ├── AzureNode.tsx / GroupNode.tsx
 │   │   ├── Legend.tsx / TitleBlock.tsx
 │   │   └── ...
 │   ├── services/             # Business logic
-│   │   ├── azureOpenAI.ts    # Astra integration via the /api/openai Responses proxy
+│   │   ├── azureOpenAI.ts    # Azure OpenAI integration via the /api/openai proxy
 │   │   ├── architectureValidator.ts  # WAF validation with ModelOverride support
 │   │   ├── deploymentGuideGenerator.ts  # Guides & Bicep generation
 │   │   ├── docsGroundingService.ts  # Microsoft Learn grounding for deployment guides
@@ -918,7 +915,7 @@ azure-diagrams/
 │   │   ├── avatarPresenter.ts   # Talking avatar: Speech SDK, ICE relay, word-boundary captions
 │   │   └── telemetryService.ts  # Application Insights telemetry
 │   ├── stores/               # State management
-│   │   └── modelSettingsStore.ts  # Astra settings and legacy-preference migration
+│   │   └── modelSettingsStore.ts  # Managed-model settings and preference migration
 │   ├── hooks/                # Shared React hooks
 │   │   └── useDraggableResizable.ts  # Pointer-capture drag-to-move + drag-to-resize hook
 │   ├── data/                 # Static data
@@ -962,9 +959,10 @@ azure-diagrams/
 
 ## 🌟 What's New
 
-### Current fork — Managed GPT-6 Astra and BYO profiles
+### Current fork — Dual managed models and BYO profiles
 
-The managed catalog accepts only its configured GPT-6 Astra deployment.
+The managed catalog accepts the configured GPT-6.1 Sol and Claude Opus 5.5
+deployments on their separate Azure endpoints.
 Administrator-enabled BYO profiles provide an explicit alternative with the
 user's own credentials; there is no automatic fallback. Retired managed-model
 choices and multi-model comparison launchers remain removed. Reasoning
@@ -1055,7 +1053,7 @@ Compare AI model critiques, then click **"Present"** to have a photorealistic **
 #### 🔒 Server-side AI proxy
 The same token server also brokers Azure OpenAI and Microsoft Foundry so credentials never reach the browser:
 
-- **`/api/openai`** — proxies architecture generation, chat refinement, validation, and deployment-guide calls. Azure OpenAI uses `AZURE_OPENAI_ENDPOINT`; Claude Opus 5 uses the Microsoft Foundry Anthropic Messages endpoint configured by `AZURE_FOUNDRY_ENDPOINT` and the fail-closed `AZURE_FOUNDRY_ALLOWED_DEPLOYMENTS` allowlist. Both prefer managed identity (`DefaultAzureCredential`) with optional server-side API-key fallback. The client only sends the request body, deployment name, and API format — keys are never bundled.
+- **`/api/openai`** — proxies architecture generation, chat refinement, validation, and deployment-guide calls. GPT-6.1 Sol uses the separate `AZURE_OPENAI_ENDPOINT` and singleton `AZURE_OPENAI_ALLOWED_DEPLOYMENTS`; Claude Opus 5.5 uses the Microsoft Foundry Anthropic Messages endpoint and singleton `AZURE_FOUNDRY_ALLOWED_DEPLOYMENTS`. GPT uses managed identity with an optional server-side fallback key; Claude requires managed identity. The client only sends the request body, deployment name, and API format — managed credentials are never bundled.
 - **Bring your own AI endpoint (optional)** — when the explicit server kill
   switch `ALLOW_BYO_AI_ENDPOINTS=true` is enabled, users can connect a deployment
   on a trusted Azure OpenAI or Microsoft Foundry resource host, or a model on the

@@ -23,7 +23,9 @@ try {
     configFile: path.join(root, 'vite.config.ts'), root, publicDir: false, logLevel: 'error',
     define: {
       'import.meta.env.VITE_AZURE_OPENAI_ENDPOINT': JSON.stringify('https://workspace-test.openai.azure.com'),
-      'import.meta.env.VITE_AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA': JSON.stringify('workspace-test-astra'),
+      'import.meta.env.VITE_AZURE_OPENAI_DEPLOYMENT_GPT61SOL': JSON.stringify('workspace-test-sol'),
+      'import.meta.env.VITE_AZURE_FOUNDRY_ENDPOINT': JSON.stringify('https://workspace-test.services.ai.azure.com'),
+      'import.meta.env.VITE_AZURE_FOUNDRY_DEPLOYMENT_OPUS55': JSON.stringify('workspace-test-opus'),
     },
     build: {
       outDir: output, emptyOutDir: true,

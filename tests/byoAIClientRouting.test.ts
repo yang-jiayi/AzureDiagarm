@@ -38,7 +38,7 @@ for (const provider of ['azure-openai', 'openai'] as const) {
       const saved = await verifiedProfile(client, profile(apiFormat, provider), key);
       client.selectBYOAIProfile(saved.id);
       assert.equal(client.isAnyAIModelConfigured(), true);
-      assert.deepEqual(Object.keys(client.MODEL_CONFIG), ['gpt-6-astra']);
+      assert.deepEqual(Object.keys(client.MODEL_CONFIG), ['gpt-6.1-sol', 'claude-opus-5-5']);
       for (const feature of features) {
         const capture = client.captureRuntimeModelOverride(feature);
         assert.equal(Object.isFrozen(capture.connection), true);
@@ -68,7 +68,7 @@ for (const provider of ['azure-openai', 'openai'] as const) {
       assert.equal(envelopes.length, 5);
       client.selectBYOAIProfile(null);
       assert.equal(client.isAnyAIModelConfigured(), false);
-      assert.throws(() => client.resolveAIModelRuntime('validation'), { code: 'astra_not_configured' });
+      assert.throws(() => client.resolveAIModelRuntime('validation'), { code: 'managed_model_not_configured' });
     });
   }
 }
@@ -126,10 +126,10 @@ test('forged executable fields and legacy managed models are rejected even while
   client.selectBYOAIProfile(saved.id);
   for (const override of [
     { model: 'gpt-5.6-sol', reasoningEffort: 'max' },
-    { model: 'gpt-6-astra', reasoningEffort: 'max', forceManaged: true },
-    { model: 'gpt-6-astra', reasoningEffort: 'max', byo: { apiKey: key } },
-    { model: 'gpt-6-astra', reasoningEffort: 'max', deployment: saved.model },
-    { model: 'gpt-6-astra', reasoningEffort: 'max', connection: { source: 'bring-your-own', profileId: saved.id } },
+    { model: 'gpt-6.1-sol', reasoningEffort: 'max', forceManaged: true },
+    { model: 'gpt-6.1-sol', reasoningEffort: 'max', byo: { apiKey: key } },
+    { model: 'gpt-6.1-sol', reasoningEffort: 'max', deployment: saved.model },
+    { model: 'gpt-6.1-sol', reasoningEffort: 'max', connection: { source: 'bring-your-own', profileId: saved.id } },
   ]) assert.throws(() => Reflect.apply(client.resolveAIModelRuntime, undefined, ['validation', override]));
   const capture = client.captureRuntimeModelOverride('validation');
   assert.throws(() => client.resolveAIModelRuntime('validation', {
@@ -624,7 +624,7 @@ test('completed BYO guide and Bicep ZIP filenames retain artifact provenance aft
 
 for (const [label, provenance] of [
   ['BYO MAX', { source: 'bring-your-own', model: 'BYO original profile', deployment: 'actual-review-alias', reasoningEffort: 'max' }],
-  ['managed Astra MAX', { source: 'managed', model: 'GPT-6 Astra', reasoningEffort: 'max' }],
+  ['managed Astra MAX', { source: 'managed', model: 'GPT-6.1 Sol', reasoningEffort: 'max' }],
   ['historical model', { model: 'gpt-5.6-terra', reasoningEffort: 'high' }],
   ['missing provenance', undefined],
 ] as const) {

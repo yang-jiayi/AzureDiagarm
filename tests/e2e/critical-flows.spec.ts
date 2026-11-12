@@ -1317,7 +1317,7 @@ test('diagram history, document status, privacy review, and threat overlay stay 
   await expect(privacyDialog.getByText('No known sensitive patterns found')).toBeVisible();
   await expect(privacyDialog).toContainText('This sensitive-data scan runs in this browser.');
   await expect(privacyDialog).toContainText('Cloud document is synced through this application’s owner-scoped diagram API.');
-  await expect(privacyDialog).toContainText('Managed gpt-6-astra');
+  await expect(privacyDialog).toContainText('Managed gpt-6.1-sol');
   await expect(privacyDialog).toContainText('API-retrievable for 1 hour');
   await privacyDialog.getByRole('button', { name: 'Done' }).click();
 
@@ -1472,7 +1472,7 @@ test('AI review selection highlights matching canvas resources', async ({ page }
     });
     await fulfillJson(route, {
       status: 'completed',
-      model: 'playwright-gpt-6-astra',
+      model: 'playwright-gpt-6.1-sol',
       output_text: text,
       usage: { input_tokens: 30, output_tokens: 20, total_tokens: 50 },
     });
@@ -1771,7 +1771,7 @@ test('share preflight identifies the selected cloud document separately from a l
 });
 
 for (const [width, allowBYO] of [[1600, true], [1600, false], [390, true], [390, false]] as const) {
-  test(`managed Astra workspace preserves BYO access and retires comparisons at ${width}px with BYO policy ${allowBYO}`, async ({ page }, testInfo) => {
+  test(`dual managed workspace preserves BYO access and retires comparisons at ${width}px with BYO policy ${allowBYO}`, async ({ page }, testInfo) => {
     await initializePage(page);
     await page.addInitScript(() => {
       localStorage.setItem('azure-diagrams-model-settings', JSON.stringify({
@@ -1833,7 +1833,7 @@ for (const [width, allowBYO] of [[1600, true], [1600, false], [390, true], [390,
     await expect(connectionDialog.getByRole('button', { name: 'Save profile', exact: true })).toBeEnabled();
     if (!allowBYO) await expect(connectionDialog).toContainText('disabled by the application administrator');
     await expectNoWcagViolations(page, '.byo-ai-dialog');
-    await connectionDialog.getByRole('button', { name: 'Use managed Astra', exact: true }).click();
+    await connectionDialog.getByRole('button', { name: 'Use managed model', exact: true }).click();
     await connectionDialog.getByRole('button', { name: 'Done', exact: true }).click();
     await expect(connectionDialog).toBeHidden();
     if (width < 640) {
@@ -1843,7 +1843,7 @@ for (const [width, allowBYO] of [[1600, true], [1600, false], [390, true], [390,
     await page.getByRole('tab', { name: 'Create', exact: true }).click();
     await expect(page.getByRole('button', { name: retired })).toHaveCount(0);
     const trigger = page.locator('.model-popover-trigger');
-    await expect(trigger).toContainText('GPT-6 Astra');
+    await expect(trigger).toContainText('GPT-6.1 Sol');
     await expect(trigger).not.toContainText('Custom');
     await trigger.click();
     const settings = page.getByRole('dialog', { name: 'AI model settings', exact: true });
@@ -1851,7 +1851,7 @@ for (const [width, allowBYO] of [[1600, true], [1600, false], [390, true], [390,
     await expect(settings.getByRole('combobox', { name: 'AI connection', exact: true })).toHaveValue('');
     await expect(settings.locator('.msp-model-btn, .msp-byo-card')).toHaveCount(0);
     await settings.locator('.msp-advanced-settings summary').click();
-    await expect(settings.locator('.astra-reasoning-settings').getByRole('combobox')).toHaveCount(4);
+    await expect(settings.locator('.managed-model-settings').getByRole('combobox')).toHaveCount(9);
     await expect(settings.getByRole('combobox', { name: 'Blueprint Diagrams - Reasoning effort' })).toHaveValue('medium');
     await expect(settings.getByRole('button', { name: 'High', exact: true })).toHaveAttribute('aria-pressed', 'true');
     await expectNoWcagViolations(page, '.toolbar-dropdown-menu--model-settings');
@@ -1875,11 +1875,11 @@ for (const [width, allowBYO] of [[1600, true], [1600, false], [390, true], [390,
       const generator = await openAiGenerator(page);
       await generator.getByLabel('Architecture Description or Modification').fill('Create a small web application');
       await generator.getByRole('button', { name: 'Continue to output' }).click();
-      await expect(generator.getByRole('combobox', { name: /Select AI model/ })).toHaveCount(0);
+      await expect(generator.locator('.ai-modal-model-group').getByRole('combobox', { name: / - Model$/ })).toHaveCount(1);
       await generator.getByRole('button', { name: 'Generate Architecture' }).click();
-      if (testInfo.project.metadata.managedAstraConfigured === false) {
+      if (testInfo.project.metadata.managedModelsConfigured === false) {
         await expect(generator.getByRole('alert')).toHaveText(
-          'GPT-6 Astra is not configured. Contact the application administrator to configure the managed Astra deployment.',
+          'The selected managed model is not configured. Contact the application administrator.',
         );
         await expect(generator.getByRole('button', { name: 'Retry generation' })).toBeEnabled();
         expect(requests).toHaveLength(0);
@@ -1887,14 +1887,45 @@ for (const [width, allowBYO] of [[1600, true], [1600, false], [390, true], [390,
         await expect.poll(() => requests.length).toBe(1);
         expect(requests[0]).toMatchObject({
           apiFormat: 'responses',
-          deployment: 'playwright-gpt-6-astra',
-          body: { model: 'playwright-gpt-6-astra' },
+          deployment: 'playwright-gpt-6.1-sol',
+          body: { model: 'playwright-gpt-6.1-sol' },
         });
         expect(requests[0]).not.toHaveProperty('byo');
       }
     }
   });
 }
+
+test('full application explicitly routes the selected Opus model without a Sol or Astra fallback', async ({ page }) => {
+  await initializePage(page);
+  const requests: any[] = [];
+  await page.route('**/api/**', async route => {
+    const path = new URL(route.request().url()).pathname;
+    if (path === '/api/access/me') await fulfillJson(route, { enabled: false, allowed: true, isAdmin: false });
+    else if (path === '/api/runtime-config') await fulfillJson(route, { features: { bringYourOwnAI: false } });
+    else if (path === '/api/ai/budget') await fulfillJson(route, { available: true, concurrentLimit: 4, concurrentRequests: 0 });
+    else if (path === '/api/openai') {
+      requests.push(route.request().postDataJSON());
+      await fulfillJson(route, { error: { code: 'invalid_upstream_request', source: 'azure_foundry' } }, 400);
+    } else await fulfillJson(route, { error: 'Not found' }, 404);
+  });
+  await page.goto('/');
+  const generator = await openAiGenerator(page);
+  await generator.getByLabel('Architecture Description or Modification').fill('Create a secure web application');
+  await generator.getByRole('button', { name: 'Continue to output' }).click();
+  await generator.locator('.ai-modal-model-group').getByRole('combobox', { name: / - Model$/ }).selectOption('claude-opus-5-5');
+  await generator.getByRole('button', { name: 'Generate Architecture', exact: true }).click();
+  await expect.poll(() => requests.length).toBe(1);
+  expect(requests[0]).toMatchObject({
+    apiFormat: 'anthropic-messages', deployment: 'playwright-claude-opus-5-5',
+    body: { model: 'playwright-claude-opus-5-5', max_tokens: 32000, thinking: { type: 'adaptive' },
+      output_config: { effort: 'low', format: { type: 'json_schema' } } },
+  });
+  expect(requests[0]).not.toHaveProperty('byo');
+  expect(requests[0].body).not.toHaveProperty('input');
+  expect(requests[0].body).not.toHaveProperty('store');
+  expect(requests[0].body.messages.at(-1).role).toBe('user');
+});
 
 test('BYO connection manager follows the canonical compact breakpoint without overflow', async ({ page }) => {
   await initializePage(page);
@@ -4202,14 +4233,14 @@ test('image analysis is single-flight and the reference viewer is keyboard safe'
         imageAnalysisCalls += 1;
         await wait(500);
         await fulfillJson(route, {
-          model: 'playwright-gpt-6-astra',
+          model: 'playwright-gpt-6.1-sol',
           output_text: 'An App Service hosts the web application.',
           usage: { input_tokens: 20, output_tokens: 10, total_tokens: 30 },
         });
         return;
       }
       await fulfillJson(route, {
-        model: 'playwright-gpt-6-astra',
+        model: 'playwright-gpt-6.1-sol',
         output_text: JSON.stringify({
           architectureName: 'Uploaded diagram',
           groups: [],
@@ -8003,7 +8034,7 @@ test('deployment guide accordions are keyboard accessible and stale results are 
       guideRequests += 1;
       if (guideRequests === 2) await wait(700);
       await fulfillJson(route, {
-        model: 'playwright-gpt-6-astra',
+        model: 'playwright-gpt-6.1-sol',
         output_text: JSON.stringify(guide),
         usage: { input_tokens: 30, output_tokens: 20, total_tokens: 50 },
       });

@@ -6,8 +6,10 @@ import {
   assertSupportedModel,
   getDeploymentName,
   getModelSettingsForFeature,
+  getManagedAISelectionRevision,
   getSupportedReasoningEfforts,
   isModelAvailable,
+  isModelType,
   isReasoningEffort,
   MODEL_CONFIG,
   type FeatureType,
@@ -39,7 +41,7 @@ export interface EffectiveAIModelInfo {
   model: string;
   displayName: string;
   profileId?: string;
-  apiFormat: BYOAIAPIFormat;
+  apiFormat: BYOAIAPIFormat | 'anthropic-messages';
   isReasoning: boolean;
   supportsVision: boolean;
   maxCompletionTokens: number;
@@ -67,14 +69,14 @@ const STALE_MESSAGE = 'The selected AI connection changed before this request wa
 function configurationError(code: string): AIModelConfigurationError {
   if (code === 'byo_settings_save_failed' || code === 'byo_settings_read_failed') return new BYOAIStorageError(code);
   const messages: Record<string, string> = {
-    byo_profile_missing: 'The selected AI connection is missing. Select another profile or managed GPT-6 Astra.',
+    byo_profile_missing: 'The selected AI connection is missing. Select another profile or managed GPT-6.1 Sol / Claude Opus 5.5.',
     byo_key_required: 'Enter this profile’s API key and test the connection in this browser tab.',
     byo_unverified: 'Test this AI connection successfully before using it.',
     byo_test_failed: 'This AI connection failed its test. Check its settings and key, then test again.',
     byo_not_enabled: 'Bring-your-own AI is disabled by the application administrator.',
     byo_availability_unknown: 'Bring-your-own AI availability has not been confirmed by the application server.',
     byo_invalid_profile: 'The selected AI connection has invalid settings. Edit the profile and test again.',
-    astra_not_configured: 'Azure OpenAI is not configured. Please check your environment.',
+    managed_model_not_configured: 'The selected managed model is not configured. Contact the application administrator.',
     stale_ai_configuration: STALE_MESSAGE,
   };
   return new AIModelConfigurationError(code, messages[code] || 'The AI connection is not ready.');
@@ -117,13 +119,13 @@ export function getEffectiveAIModelInfo(feature: FeatureType): EffectiveAIModelI
     return { ...profileInfo(profile), ready: code === undefined, ...(code ? { code } : {}) };
   }
   const model = getModelSettingsForFeature(feature);
-  const config = MODEL_CONFIG['gpt-6-astra'];
-  const ready = !storageError && isModelAvailable('gpt-6-astra');
+  const config = MODEL_CONFIG[model.model];
+  const ready = !storageError && isModelAvailable(model.model);
   return {
-    source: 'managed', model: 'gpt-6-astra', displayName: config.displayName,
-    apiFormat: 'responses', isReasoning: true, supportsVision: true,
+    source: 'managed', model: model.model, displayName: config.displayName,
+    apiFormat: config.apiFormat, isReasoning: true, supportsVision: true,
     maxCompletionTokens: config.maxCompletionTokens, reasoningEffort: model.reasoningEffort,
-    ready, ...(!ready ? { code: storageError?.code ?? 'astra_not_configured' } : {}),
+    ready, ...(!ready ? { code: storageError?.code ?? 'managed_model_not_configured' } : {}),
   };
 }
 
@@ -143,26 +145,37 @@ export function captureRuntimeModelOverride(feature: FeatureType, override?: Run
     validateOverride(override);
     if (override.connection !== undefined) {
       assertCapturedAIConnectionCurrent(override.connection);
-      if (override.reasoningEffort !== override.connection.reasoningEffort) throw configurationError('stale_ai_configuration');
+      if (override.reasoningEffort !== override.connection.reasoningEffort
+        || (override.connection.source === 'managed' && override.model !== override.connection.model)) throw configurationError('stale_ai_configuration');
       return { ...override };
     }
   }
   const info = getEffectiveAIModelInfo(feature);
+  if (info.source === 'managed' && override) {
+    const config = MODEL_CONFIG[override.model];
+    const storageError = getBYOAIStorageError();
+    const ready = !storageError && isModelAvailable(override.model);
+    Object.assign(info, {
+      model: override.model, displayName: config.displayName, apiFormat: config.apiFormat,
+      maxCompletionTokens: config.maxCompletionTokens, ready,
+      code: ready ? undefined : storageError?.code ?? 'managed_model_not_configured',
+    });
+  }
   if (!info.ready) throw configurationError(info.code!);
   const reasoningEffort = info.source === 'managed'
     ? (override?.reasoningEffort ?? info.reasoningEffort) : info.reasoningEffort;
-  if (info.source === 'managed' && !getSupportedReasoningEfforts('gpt-6-astra').includes(reasoningEffort)) {
-    throw new AIModelConfigurationError('unsupported_reasoning_effort', 'The requested reasoning effort is not supported by GPT-6 Astra.');
+  if (info.source === 'managed' && (!isModelType(info.model) || !getSupportedReasoningEfforts(info.model).includes(reasoningEffort))) {
+    throw new AIModelConfigurationError('unsupported_reasoning_effort', 'The requested reasoning effort is not supported by this model.');
   }
   const { ready: _ready, code: _code, ...publicInfo } = info;
   const connection: CapturedAIConnection = Object.freeze({
     ...publicInfo, reasoningEffort, feature,
     selectionRevision: getBYOAISelectionRevision(),
-    revision: info.profileId ? getBYOAIConnectionState(info.profileId).revision : 0,
-    deployment: info.source === 'managed' ? getDeploymentName('gpt-6-astra') : info.model,
+    revision: info.profileId ? getBYOAIConnectionState(info.profileId).revision : getManagedAISelectionRevision(),
+    deployment: info.source === 'managed' && isModelType(info.model) ? getDeploymentName(info.model) : info.model,
   });
   captures.add(connection);
-  return { ...override, model: 'gpt-6-astra', reasoningEffort, connection };
+  return { ...override, model: isModelType(info.model) ? info.model : 'gpt-6.1-sol', reasoningEffort, connection };
 }
 
 /** Rechecked immediately before *each* dispatch, including a throttled retry. */
@@ -183,8 +196,9 @@ export function assertCapturedAIConnectionCurrent(connection: CapturedAIConnecti
     if (!getBYOAIConnectionState(connection.profileId).verified) throw configurationError('byo_unverified');
   } else {
     if (settings.activeProfileId !== null) throw configurationError('stale_ai_configuration');
-    if (!isModelAvailable('gpt-6-astra')) throw configurationError('astra_not_configured');
-    if (connection.deployment !== getDeploymentName('gpt-6-astra')) throw configurationError('stale_ai_configuration');
+    if (!isModelType(connection.model) || !isModelAvailable(connection.model)) throw configurationError('managed_model_not_configured');
+    if (connection.revision !== getManagedAISelectionRevision()
+      || connection.deployment !== getDeploymentName(connection.model)) throw configurationError('stale_ai_configuration');
   }
 }
 
@@ -199,13 +213,13 @@ export function resolveAIModelRuntime(feature: FeatureType, override?: RuntimeMo
     deployment: connection.deployment, apiFormat: connection.apiFormat,
     isReasoning: connection.isReasoning, supportsVision: connection.supportsVision,
     maxCompletionTokens: connection.maxCompletionTokens, reasoningEffort: connection.reasoningEffort,
-    telemetryModel: profile ? `BYO ${getBYOAIProviderLabel(profile.provider)}` : MODEL_CONFIG['gpt-6-astra'].displayName,
+    telemetryModel: profile ? `BYO ${getBYOAIProviderLabel(profile.provider)}` : connection.displayName,
     connection,
   };
 }
 
 export function isManagedAIModelConfigured(): boolean {
-  return isModelAvailable('gpt-6-astra');
+  return isModelAvailable('gpt-6.1-sol') || isModelAvailable('claude-opus-5-5');
 }
 
 export function isAnyAIModelConfigured(): boolean {

@@ -4,7 +4,7 @@
 
 ## Overview
 
-The Microsoft Product Architecture Diagram Builder is a web-based tool that uses AI to generate Azure architecture diagrams with real-time pricing estimates. Built with React, TypeScript, and Vite, it provides managed **GPT-6 Astra** via Azure OpenAI and separately selected, administrator-enabled BYO connections for diagram generation, validation, and Infrastructure as Code. The Azure Retail Prices API provides cost estimation across **8 regions** (PAYG and 1-year Reserved), including Microsoft Fabric capacity and OneLake.
+The Microsoft Product Architecture Diagram Builder is a web-based tool that uses AI to generate Azure architecture diagrams with real-time pricing estimates. Built with React, TypeScript, and Vite, it provides managed **GPT-6.1 Sol** via Azure OpenAI and **Claude Opus 5.5** via Azure AI Foundry, plus separately selected, administrator-enabled BYO connections for diagram generation, validation, and Infrastructure as Code. The Azure Retail Prices API provides cost estimation across **8 regions** (PAYG and 1-year Reserved), including Microsoft Fabric capacity and OneLake.
 
 A lightweight Express.js **token server** (`127.0.0.1:3001`, co-located with nginx in the container) is the security boundary: it proxies AI traffic (`/api/openai`) without exposing managed credentials to the browser, grounds deployment guides in Microsoft Learn (`/api/docs-search`), delivers feedback by email with optional Table Storage or Cosmos DB archives (`/api/feedback`), and issues keyless Speech tokens (`/api/speech-token`). BYO requests carry the user's own tab-memory key through the proxy to the approved destination; they never borrow managed credentials.
 
@@ -47,7 +47,8 @@ graph TB
     end
 
     subgraph "External APIs"
-        OpenAI[Azure OpenAI Responses API<br/>GPT-6 Astra]
+        OpenAI[Azure OpenAI Responses API<br/>GPT-6.1 Sol]
+        Foundry[Azure AI Foundry Anthropic Messages<br/>Claude Opus 5.5]
         LearnMCP[Microsoft Learn MCP]
         AzureAPI[Azure Retail Prices API]
         Cosmos[(Azure Cosmos DB)]
@@ -75,6 +76,7 @@ graph TB
     Icons --> IconData
     Pricing --> Mappings
     TokenServer --> OpenAI
+    TokenServer --> Foundry
     TokenServer --> LearnMCP
     TokenServer --> Cosmos
     TokenServer --> SpeechAPI
@@ -383,16 +385,16 @@ azure-diagrams/
 - **Node.js** - Runtime for server, MCP server, and scripts
 
 ### AI Connections
-- **GPT-6 Astra** is the sole managed model, with configurable reasoning effort
+- **GPT-6.1 Sol** (Azure OpenAI Responses) and **Claude Opus 5.5** (Azure AI Foundry Anthropic Messages) are the two supported managed models, with separate server-side endpoints and exact singleton deployment allowlists
 - All managed and BYO traffic is **proxied server-side** (`/api/openai`); no managed key is bundled into the browser
 - Global and per-feature reasoning preferences are stored in localStorage
-- Legacy model preferences migrate to Astra; historical result identities are preserved
+- The retired Astra alias is rejected by active runtime configuration; existing cloud resources and historical result identities are preserved
 - BYO profiles contain public Azure OpenAI / official OpenAI configuration; keys and verification remain per-tab memory only
 - Selected BYO profiles require explicit administrator opt-in, valid credentials, and verification; missing or changed settings block instead of falling back
-- Missing managed Astra configuration and alternate managed-model requests still fail explicitly
+- Production release preflight requires both managed deployments and validates their ARM account, model identity, version and endpoint ownership
 
 ### Services & APIs
-- **Azure OpenAI Responses API** (`/openai/v1/responses`) - AI-powered diagram generation, validation, deployment guides (via the `/api/openai` server proxy)
+- **Azure OpenAI Responses API** (`/openai/v1/responses`) and **Azure AI Foundry Anthropic Messages API** - managed model traffic for generation, validation and deployment guides (via the `/api/openai` server proxy)
 - **Microsoft Learn MCP** - documentation grounding for deployment guides (via the `/api/docs-search` server proxy)
 - **Azure Retail Prices API** - real-time pricing data (PAYG + Reserved), pre-fetched per region
 - **Azure Blob Storage** - authenticated diagram persistence (keyless / managed identity)
@@ -419,7 +421,7 @@ azure-diagrams/
 
 ### 1. AI-Powered Diagram Generation
 - **Input**: Natural language architecture description, or uploaded image, or IaC template (ARM/Bicep/Terraform)
-- **Connection**: Managed GPT-6 Astra or an explicitly selected BYO profile, with no automatic connection fallback
+- **Connection**: Managed GPT-6.1 Sol, Claude Opus 5.5, or an explicitly selected BYO profile, with no automatic connection fallback
 - **Processing**: Azure OpenAI analyzes requirements and generates structured JSON
 - **Post-processing**: Service names normalized against `serviceIconMapping`, categories corrected, icons resolved
 - **Output**: Services, connections (sync/async/optional/bidirectional), groups, and workflow steps
@@ -489,10 +491,10 @@ azure-diagrams/
 - **Restore**: Roll back to any previous version
 
 ### 9. AI Connection and Reasoning Settings
-- **Managed model**: GPT-6 Astra only
-- **Reasoning effort**: Configurable (`none`, `low`, `medium`, `high`, `xhigh`, `max`)
+- **Managed models**: GPT-6.1 Sol and Claude Opus 5.5, selected explicitly
+- **Reasoning controls**: Provider-specific; Claude adaptive thinking is opt-in and its thinking tokens count toward the shared 32,000-token output ceiling
 - **Per-feature overrides**: Independent reasoning for generation, validation, deployment guides, and blueprints
-- **Migration**: Saved legacy model choices become Astra preferences without relabelling historical results
+- **History**: Retired Astra resources and existing result provenance are preserved; history is not relabeled
 - **BYO**: Multiple named, independently verified connection profiles with explicit selection and per-profile capabilities
 - **UI**: Managed/BYO selection and connection management; no retired managed-model roster or multi-model comparison launchers
 
@@ -597,25 +599,33 @@ scripts/fetch-multi-region-pricing.sh
 
 ## Environment Variables
 
-> **Security note:** Azure OpenAI is proxied server-side via `server/token-server.js`
-> (`/api/openai`). The API key is never embedded in the client bundle. The
-> `VITE_AZURE_OPENAI_ENDPOINT` build-time value is a non-secret flag that tells
-> the UI that AI is configured; the real endpoint and credentials are read at
-> runtime by the token server. Only the approved managed Astra deployment is
-> callable; user-owned endpoints and other providers are not supported.
+> **Security note:** Both managed providers are proxied server-side via
+> `server/token-server.js` (`/api/openai`). Public `VITE_*` values contain only
+> endpoint and deployment routing configuration, never credentials. GPT-6.1 Sol
+> uses Azure OpenAI; Claude Opus 5.5 uses Azure AI Foundry. Their account IDs are
+> deployment-time values used for read-only identity preflight.
 
 ```env
-# Build-time variables (embedded by Vite via import.meta.env) — NON-SECRET.
-# Deployment NAMES and the endpoint are safe to embed. The API key is NOT.
-VITE_AZURE_OPENAI_ENDPOINT=<Azure OpenAI endpoint URL — non-secret flag>
-VITE_AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA=<Genuine Astra deployment name>
+# Build-time VITE values (public endpoint/model routing only).
+VITE_AZURE_OPENAI_ENDPOINT=<Azure OpenAI endpoint>
+VITE_AZURE_OPENAI_DEPLOYMENT_GPT61SOL=<GPT-6.1 Sol deployment alias>
+VITE_AZURE_FOUNDRY_ENDPOINT=<Azure AI Foundry endpoint>
+VITE_AZURE_FOUNDRY_DEPLOYMENT_OPUS55=<Claude Opus 5.5 deployment alias>
 VITE_APPINSIGHTS_CONNECTION_STRING=<Application Insights connection string (optional)>
 
 # Runtime variables (for server/container) — read by token-server.js
-AZURE_OPENAI_ENDPOINT=<Azure OpenAI endpoint URL — REQUIRED for /api/openai>
-AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA=<Same Astra deployment name as the frontend>
-AZURE_OPENAI_ALLOWED_DEPLOYMENTS=<Only that Astra deployment name>
-AZURE_OPENAI_API_KEY=<Azure OpenAI key — OPTIONAL fallback; prefer managed identity>
+AZURE_OPENAI_ENDPOINT=<Azure OpenAI endpoint>
+AZURE_OPENAI_DEPLOYMENT_GPT61SOL=<GPT-6.1 Sol deployment alias>
+AZURE_OPENAI_ALLOWED_DEPLOYMENTS=<Exactly the GPT-6.1 Sol alias>
+AZURE_FOUNDRY_ENDPOINT=<Azure AI Foundry endpoint>
+AZURE_FOUNDRY_DEPLOYMENT_OPUS55=<Claude Opus 5.5 deployment alias>
+AZURE_FOUNDRY_ALLOWED_DEPLOYMENTS=<Exactly the Claude Opus 5.5 alias>
+# Optional server-side Azure OpenAI fallback for local use; Claude has no API-key path.
+AZURE_OPENAI_API_KEY=<Azure OpenAI key — optional fallback; prefer managed identity>
+
+# Release preflight variables; neither resource ID is needed by model requests.
+AZURE_OPENAI_RESOURCE_ID=<GPT-6.1 Sol account resource ID>
+AZURE_FOUNDRY_RESOURCE_ID=<Claude Opus 5.5 account resource ID>
 LEARN_MCP_URL=<override for the Microsoft Learn MCP endpoint (optional)>
 AZURE_COSMOS_ENDPOINT=<Cosmos DB endpoint>
 COSMOS_DATABASE_ID=<Cosmos DB database ID>
@@ -628,23 +638,24 @@ COSMOS_CONTAINER_ID=<Cosmos DB container ID>
 |----------|---------|
 | `/api/speech-token` | Keyless AAD token for the Speech SDK (avatar) |
 | `/api/ice-token` | WebRTC ICE relay credentials for avatar video |
-| `/api/openai` | Proxies only approved managed Astra Responses requests |
+| `/api/openai` | Proxies approved managed GPT-6.1 Sol Responses and Claude Opus 5.5 Anthropic Messages requests |
 | `/api/docs-search` | Microsoft Learn docs grounding for deployment guides |
 | `/api/feedback` | Delivers feedback email and optionally archives it in Table Storage or Cosmos DB |
 
 ### Managed and BYO Security Boundaries
 
-- The server binds managed requests to `AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA`, independent
-  of browser preferences or client-supplied model names.
-- Alternate managed deployments and non-Responses managed formats are rejected
-  before upstream inference.
+- The server binds each managed request to its provider-specific deployment and
+  API format, independent of browser preferences or client-supplied model names.
+- Alternate managed deployments and unsupported formats are rejected before
+  upstream inference.
 - BYO requires explicit server opt-in and a trusted Azure or official OpenAI
   origin. Only the supplied user's key is forwarded, never the server's identity
   or key; redirects and arbitrary destinations are rejected.
 - Managed credentials remain server-side. BYO keys are not persisted or logged.
   Authentication, origin controls, shared budgets, and cancellation apply to both paths.
-- Configuring an alias is not proof of model identity: the Azure deployment must
-  actually host `gpt-6-astra`, and release preflight must reject a mismatch.
+- Configuring an alias is not proof of model identity. Production release
+  preflight verifies actual GPT-6.1 Sol and Claude Opus 5.5 model identities,
+  versions, `AIServices` account kinds, and endpoint ownership through ARM.
 
 ## Known Limitations
 
@@ -653,7 +664,7 @@ COSMOS_CONTAINER_ID=<Cosmos DB container ID>
 3. **Usage-Based Services**: Fixed fallback estimates (e.g., Storage, Monitor)
 4. **Region Coverage**: 8 regions (can expand to 60+ Azure regions)
 5. **ARM Export**: Partial implementation, not production-ready
-6. **AI Output and Availability**: Astra output still requires review; an upstream outage is reported rather than hidden through a model substitution
+6. **AI Output and Availability**: Managed model output still requires review; an upstream outage is reported rather than hidden through a model substitution
 
 ## Future Enhancements
 
@@ -752,4 +763,4 @@ Key architectural decisions:
 - **azd template** (`azure.yaml` + `infra/`) for one-command provision and deploy, qualifying for Azure-Samples gallery
 - **Azure Container Apps deployment** with ACR builds and auto-scaling (1–3 replicas)
 
-The system combines 714 icons (plus the Microsoft Fabric set), per-region pricing across 8 regions, GPT-6 Astra, and service-name normalization in one architecture workspace.
+The system combines 714 icons (plus the Microsoft Fabric set), per-region pricing across 8 regions, GPT-6.1 Sol, Claude Opus 5.5, and service-name normalization in one architecture workspace.

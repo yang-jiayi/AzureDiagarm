@@ -16,6 +16,8 @@ import {
 const accessEndpoint = 'https://access.table.example.net/';
 const budgetEndpoint = 'https://budget.table.example.net/';
 const keyVaultId = '/subscriptions/sub/resourceGroups/rg/providers/Microsoft.KeyVault/vaults/access';
+const openAiResourceId = '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/ai/providers/Microsoft.CognitiveServices/accounts/openai';
+const foundryResourceId = '/subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/ai/providers/Microsoft.CognitiveServices/accounts/foundry';
 const policySetId = '/providers/Microsoft.Authorization/policySetDefinitions/1f3afdf9-d0c9-4c3d-847f-89da613e70a8';
 const assignmentScope = '/providers/Microsoft.Management/managementGroups/02310481-6752-4d53-8fc4-f597a8e047f4';
 const assignmentId = `${assignmentScope}/providers/Microsoft.Authorization/policyAssignments/Azure_Security_Baseline`;
@@ -29,6 +31,14 @@ const tableRuntime = {
   AI_DAILY_TOKEN_BUDGET: '250000',
   AI_MAX_CONCURRENT_REQUESTS: '2',
   AZURE_TABLES_BUDGET_ENDPOINT: budgetEndpoint,
+  AZURE_OPENAI_ENDPOINT: 'https://example.openai.azure.com/',
+  AZURE_OPENAI_RESOURCE_ID: openAiResourceId,
+  AZURE_OPENAI_DEPLOYMENT_GPT61SOL: 'sol-prod',
+  AZURE_OPENAI_ALLOWED_DEPLOYMENTS: 'sol-prod',
+  AZURE_FOUNDRY_ENDPOINT: 'https://example.services.ai.azure.com/',
+  AZURE_FOUNDRY_RESOURCE_ID: foundryResourceId,
+  AZURE_FOUNDRY_DEPLOYMENT_OPUS55: 'opus-prod',
+  AZURE_FOUNDRY_ALLOWED_DEPLOYMENTS: 'opus-prod',
 };
 const assignments = [{
   name: 'Azure_Security_Baseline',
@@ -85,6 +95,23 @@ test('requires explicit production runtime settings and bounded numeric budgets'
   assert.deepEqual(verifyRuntimeConfiguration(tableRuntime), {
     accessStore: { type: 'tables', value: accessEndpoint },
     budgetEndpoint,
+    managedModels: {
+      sol: {
+        model: 'gpt-6.1-sol',
+        apiFormat: 'responses',
+        configured: true,
+        deployment: 'sol-prod',
+        endpoint: 'https://example.openai.azure.com/',
+      },
+      opus: {
+        model: 'claude-opus-5-5',
+        apiFormat: 'anthropic-messages',
+        configured: true,
+        deployment: 'opus-prod',
+        endpoint: 'https://example.services.ai.azure.com/',
+      },
+      configured: true,
+    },
   });
   for (const [name, value, message] of [
     ['AZURE_ACCESS_KEY_VAULT_RESOURCE_ID', keyVaultId, /Exactly one access-list store/],
@@ -100,6 +127,12 @@ test('requires explicit production runtime settings and bounded numeric budgets'
     ['AI_MAX_CONCURRENT_REQUESTS', undefined, /AI_MAX_CONCURRENT_REQUESTS/],
     ['AI_MAX_CONCURRENT_REQUESTS', '9007199254740992', /AI_MAX_CONCURRENT_REQUESTS/],
     ['AZURE_TABLES_BUDGET_ENDPOINT', undefined, /AZURE_TABLES_BUDGET_ENDPOINT/],
+    ['AZURE_OPENAI_DEPLOYMENT_GPT61SOL', undefined, /requires|managed model/i],
+    ['AZURE_OPENAI_ALLOWED_DEPLOYMENTS', 'sol-prod,other', /requires|managed model/i],
+    ['AZURE_FOUNDRY_DEPLOYMENT_OPUS55', undefined, /requires|managed model/i],
+    ['AZURE_FOUNDRY_ALLOWED_DEPLOYMENTS', 'other', /requires|managed model/i],
+    ['AZURE_OPENAI_RESOURCE_ID', 'invalid', /AZURE_OPENAI_RESOURCE_ID/],
+    ['AZURE_FOUNDRY_RESOURCE_ID', 'invalid', /AZURE_FOUNDRY_RESOURCE_ID/],
   ] as const) {
     const invalid = { ...tableRuntime, [name]: value };
     if (value === undefined) delete invalid[name as keyof typeof invalid];

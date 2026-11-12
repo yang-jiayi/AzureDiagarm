@@ -7,6 +7,20 @@ export interface DeploymentRuntimeEnvironment {
   [name: string]: string | undefined;
 }
 
+export interface ManagedModel {
+  model: string;
+  apiFormat: string;
+  configured: boolean;
+  deployment: string | null;
+  endpoint: string | null;
+}
+
+export interface ManagedModelsConfiguration {
+  sol: ManagedModel;
+  opus: ManagedModel;
+  configured: boolean;
+}
+
 export interface PolicyAssignment {
   name?: string;
   id?: string;
@@ -49,6 +63,7 @@ export function verifyAccessStore(env: DeploymentRuntimeEnvironment): AccessStor
 export function verifyRuntimeConfiguration(env: DeploymentRuntimeEnvironment): {
   accessStore: AccessStore;
   budgetEndpoint: string;
+  managedModels: ManagedModelsConfiguration;
 };
 export function verifyPreservedRuntimeConfiguration(
   env: DeploymentRuntimeEnvironment,

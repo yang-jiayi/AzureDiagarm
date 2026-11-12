@@ -490,6 +490,14 @@ jobs:
         env:
           AZURE_ACCESS_KEY_VAULT_RESOURCE_ID: ${{ vars.AZURE_ACCESS_KEY_VAULT_RESOURCE_ID }}
           AZURE_TABLES_ACCESS_ENDPOINT: ${{ vars.AZURE_TABLES_ACCESS_ENDPOINT }}
+          AZURE_OPENAI_ENDPOINT: ${{ vars.AZURE_OPENAI_ENDPOINT }}
+          AZURE_OPENAI_RESOURCE_ID: ${{ vars.AZURE_OPENAI_RESOURCE_ID }}
+          AZURE_OPENAI_DEPLOYMENT_GPT61SOL: ${{ vars.AZURE_OPENAI_DEPLOYMENT_GPT61SOL }}
+          AZURE_OPENAI_ALLOWED_DEPLOYMENTS: ${{ vars.AZURE_OPENAI_DEPLOYMENT_GPT61SOL }}
+          AZURE_FOUNDRY_ENDPOINT: ${{ vars.AZURE_FOUNDRY_ENDPOINT }}
+          AZURE_FOUNDRY_RESOURCE_ID: ${{ vars.AZURE_FOUNDRY_RESOURCE_ID }}
+          AZURE_FOUNDRY_DEPLOYMENT_OPUS55: ${{ vars.AZURE_FOUNDRY_DEPLOYMENT_OPUS55 }}
+          AZURE_FOUNDRY_ALLOWED_DEPLOYMENTS: ${{ vars.AZURE_FOUNDRY_DEPLOYMENT_OPUS55 }}
           MCP_ENABLED: ${{ vars.MCP_ENABLED }}
           ALLOW_BYO_AI_ENDPOINTS: ${{ vars.ALLOW_BYO_AI_ENDPOINTS }}
           AI_BUDGET_STORE: ${{ vars.AI_BUDGET_STORE }}
@@ -511,6 +519,14 @@ jobs:
           AZURE_CONTAINER_APP: ${{ vars.AZURE_CONTAINER_APP }}
           AZURE_ACCESS_KEY_VAULT_RESOURCE_ID: ${{ vars.AZURE_ACCESS_KEY_VAULT_RESOURCE_ID }}
           AZURE_TABLES_ACCESS_ENDPOINT: ${{ vars.AZURE_TABLES_ACCESS_ENDPOINT }}
+          AZURE_OPENAI_ENDPOINT: ${{ vars.AZURE_OPENAI_ENDPOINT }}
+          AZURE_OPENAI_RESOURCE_ID: ${{ vars.AZURE_OPENAI_RESOURCE_ID }}
+          AZURE_OPENAI_DEPLOYMENT_GPT61SOL: ${{ vars.AZURE_OPENAI_DEPLOYMENT_GPT61SOL }}
+          AZURE_OPENAI_ALLOWED_DEPLOYMENTS: ${{ vars.AZURE_OPENAI_DEPLOYMENT_GPT61SOL }}
+          AZURE_FOUNDRY_ENDPOINT: ${{ vars.AZURE_FOUNDRY_ENDPOINT }}
+          AZURE_FOUNDRY_RESOURCE_ID: ${{ vars.AZURE_FOUNDRY_RESOURCE_ID }}
+          AZURE_FOUNDRY_DEPLOYMENT_OPUS55: ${{ vars.AZURE_FOUNDRY_DEPLOYMENT_OPUS55 }}
+          AZURE_FOUNDRY_ALLOWED_DEPLOYMENTS: ${{ vars.AZURE_FOUNDRY_DEPLOYMENT_OPUS55 }}
           MCP_ENABLED: ${{ vars.MCP_ENABLED }}
           ALLOW_BYO_AI_ENDPOINTS: ${{ vars.ALLOW_BYO_AI_ENDPOINTS }}
           AI_BUDGET_STORE: ${{ vars.AI_BUDGET_STORE }}
@@ -788,8 +804,11 @@ jobs:
           AZURE_TABLES_ACCESS_ENDPOINT: ${{ vars.AZURE_TABLES_ACCESS_ENDPOINT }}
           PUBLIC_URL: ${{ vars.AZURE_APP_URL }}
           AZURE_OPENAI_ENDPOINT: ${{ vars.AZURE_OPENAI_ENDPOINT }}
-          AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA: ${{ vars.AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA }}
-          AZURE_OPENAI_ALLOWED_DEPLOYMENTS: ${{ vars.AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA }}
+          AZURE_OPENAI_DEPLOYMENT_GPT61SOL: ${{ vars.AZURE_OPENAI_DEPLOYMENT_GPT61SOL }}
+          AZURE_OPENAI_ALLOWED_DEPLOYMENTS: ${{ vars.AZURE_OPENAI_DEPLOYMENT_GPT61SOL }}
+          AZURE_FOUNDRY_ENDPOINT: ${{ vars.AZURE_FOUNDRY_ENDPOINT }}
+          AZURE_FOUNDRY_DEPLOYMENT_OPUS55: ${{ vars.AZURE_FOUNDRY_DEPLOYMENT_OPUS55 }}
+          AZURE_FOUNDRY_ALLOWED_DEPLOYMENTS: ${{ vars.AZURE_FOUNDRY_DEPLOYMENT_OPUS55 }}
           ALLOW_BYO_AI_ENDPOINTS: ${{ vars.ALLOW_BYO_AI_ENDPOINTS }}
           AI_BUDGET_STORE: ${{ vars.AI_BUDGET_STORE }}
           AZURE_COSMOS_ENDPOINT: ${{ vars.AZURE_COSMOS_ENDPOINT }}
@@ -1084,7 +1103,7 @@ jobs:
       - name: Compute desired deployment configuration
         id: desired_config
         env:
-          CONFIG_SCHEMA: '8-astra-and-byo'
+          CONFIG_SCHEMA: '9-dual-managed-models'
           FRONT_DOOR_ID: ${{ steps.frontdoor.outputs.id }}
           APP_DEPLOYMENT_MODE: public
           EASY_AUTH_ENABLED: 'true'
@@ -1107,8 +1126,11 @@ jobs:
           AZURE_IMPORT_ENABLED: 'false'
           AZURE_RUNTIME_CLIENT_ID: ${{ vars.AZURE_RUNTIME_CLIENT_ID }}
           AZURE_OPENAI_ENDPOINT: ${{ vars.AZURE_OPENAI_ENDPOINT }}
-          AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA: ${{ vars.AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA }}
+          AZURE_OPENAI_DEPLOYMENT_GPT61SOL: ${{ vars.AZURE_OPENAI_DEPLOYMENT_GPT61SOL }}
           AZURE_OPENAI_RESOURCE_ID: ${{ vars.AZURE_OPENAI_RESOURCE_ID }}
+          AZURE_FOUNDRY_ENDPOINT: ${{ vars.AZURE_FOUNDRY_ENDPOINT }}
+          AZURE_FOUNDRY_DEPLOYMENT_OPUS55: ${{ vars.AZURE_FOUNDRY_DEPLOYMENT_OPUS55 }}
+          AZURE_FOUNDRY_RESOURCE_ID: ${{ vars.AZURE_FOUNDRY_RESOURCE_ID }}
           ALLOW_BYO_AI_ENDPOINTS: ${{ vars.ALLOW_BYO_AI_ENDPOINTS }}
           AZURE_SPEECH_REGION: ${{ vars.AZURE_SPEECH_REGION }}
           AZURE_SPEECH_RESOURCE_ID: ${{ vars.AZURE_SPEECH_RESOURCE_ID }}
@@ -1150,7 +1172,8 @@ jobs:
             AI_BUDGET_STORE AI_DAILY_TOKEN_BUDGET AI_MAX_CONCURRENT_REQUESTS
             AZURE_TABLES_BUDGET_ENDPOINT AZURE_TABLES_BUDGET_TABLE COSMOS_BUDGET_CONTAINER_ID
             FEEDBACK_RETENTION_DAYS FEEDBACK_LEGACY_RETENTION_ENABLED
-            AZURE_OPENAI_ENDPOINT AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA AZURE_OPENAI_RESOURCE_ID
+            AZURE_OPENAI_ENDPOINT AZURE_OPENAI_DEPLOYMENT_GPT61SOL AZURE_OPENAI_RESOURCE_ID
+            AZURE_FOUNDRY_ENDPOINT AZURE_FOUNDRY_DEPLOYMENT_OPUS55 AZURE_FOUNDRY_RESOURCE_ID
             ALLOW_BYO_AI_ENDPOINTS
             AZURE_SPEECH_REGION AZURE_SPEECH_RESOURCE_ID AZURE_AD_CLIENT_ID
             AZURE_AD_AUTHORITY ARM_SCOPE FEEDBACK_EMAIL_ENDPOINT FEEDBACK_EMAIL_SENDER
@@ -1192,8 +1215,11 @@ jobs:
             "AZURE_IMPORT_ENABLED=$AZURE_IMPORT_ENABLED"
             "AZURE_CLIENT_ID=$AZURE_RUNTIME_CLIENT_ID"
             "AZURE_OPENAI_ENDPOINT=$AZURE_OPENAI_ENDPOINT"
-            "AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA=$AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA"
-            "AZURE_OPENAI_ALLOWED_DEPLOYMENTS=$AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA"
+            "AZURE_OPENAI_DEPLOYMENT_GPT61SOL=$AZURE_OPENAI_DEPLOYMENT_GPT61SOL"
+            "AZURE_OPENAI_ALLOWED_DEPLOYMENTS=$AZURE_OPENAI_DEPLOYMENT_GPT61SOL"
+            "AZURE_FOUNDRY_ENDPOINT=$AZURE_FOUNDRY_ENDPOINT"
+            "AZURE_FOUNDRY_DEPLOYMENT_OPUS55=$AZURE_FOUNDRY_DEPLOYMENT_OPUS55"
+            "AZURE_FOUNDRY_ALLOWED_DEPLOYMENTS=$AZURE_FOUNDRY_DEPLOYMENT_OPUS55"
             "ALLOW_BYO_AI_ENDPOINTS=$ALLOW_BYO_AI_ENDPOINTS"
             "OPENAI_RATE_LIMIT_PER_HOUR=$OPENAI_RATE_LIMIT_PER_HOUR"
             "AZURE_SPEECH_REGION=$AZURE_SPEECH_REGION"
@@ -1390,13 +1416,18 @@ jobs:
         if: steps.deployment.outputs.should_deploy == 'true'
         run: az acr login --name "${{ vars.AZURE_CONTAINER_REGISTRY }}"
 
-      - name: Verify actual GPT-6 Astra deployment identity
+      - name: Verify both approved managed model identities
         if: steps.deployment.outputs.should_deploy == 'true'
         env:
           AZURE_OPENAI_RESOURCE_ID: ${{ vars.AZURE_OPENAI_RESOURCE_ID }}
           AZURE_OPENAI_ENDPOINT: ${{ vars.AZURE_OPENAI_ENDPOINT }}
-          AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA: ${{ vars.AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA }}
-        run: node scripts/verify-astra-deployment.mjs
+          AZURE_OPENAI_DEPLOYMENT_GPT61SOL: ${{ vars.AZURE_OPENAI_DEPLOYMENT_GPT61SOL }}
+          AZURE_OPENAI_ALLOWED_DEPLOYMENTS: ${{ vars.AZURE_OPENAI_DEPLOYMENT_GPT61SOL }}
+          AZURE_FOUNDRY_RESOURCE_ID: ${{ vars.AZURE_FOUNDRY_RESOURCE_ID }}
+          AZURE_FOUNDRY_ENDPOINT: ${{ vars.AZURE_FOUNDRY_ENDPOINT }}
+          AZURE_FOUNDRY_DEPLOYMENT_OPUS55: ${{ vars.AZURE_FOUNDRY_DEPLOYMENT_OPUS55 }}
+          AZURE_FOUNDRY_ALLOWED_DEPLOYMENTS: ${{ vars.AZURE_FOUNDRY_DEPLOYMENT_OPUS55 }}
+        run: node scripts/verify-managed-models.mjs
 
       - name: Set up Docker Buildx
         if: steps.deployment.outputs.should_deploy == 'true'
@@ -1423,7 +1454,9 @@ jobs:
           build-args: |
             FRONT_DOOR_ID=${{ steps.frontdoor.outputs.id }}
             VITE_AZURE_OPENAI_ENDPOINT=${{ vars.AZURE_OPENAI_ENDPOINT }}
-            VITE_AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA=${{ vars.AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA }}
+            VITE_AZURE_OPENAI_DEPLOYMENT_GPT61SOL=${{ vars.AZURE_OPENAI_DEPLOYMENT_GPT61SOL }}
+            VITE_AZURE_FOUNDRY_ENDPOINT=${{ vars.AZURE_FOUNDRY_ENDPOINT }}
+            VITE_AZURE_FOUNDRY_DEPLOYMENT_OPUS55=${{ vars.AZURE_FOUNDRY_DEPLOYMENT_OPUS55 }}
             VITE_SPEECH_REGION=${{ vars.AZURE_SPEECH_REGION }}
             VITE_AZURE_AD_CLIENT_ID=${{ vars.AZURE_AD_CLIENT_ID }}
             VITE_AZURE_AD_AUTHORITY=${{ vars.AZURE_AD_AUTHORITY }}
@@ -1508,7 +1541,12 @@ jobs:
           ACCESS_ADMIN_EMAIL: ${{ secrets.ACCESS_ADMIN_EMAIL }}
           AZURE_OPENAI_RESOURCE_ID: ${{ vars.AZURE_OPENAI_RESOURCE_ID }}
           AZURE_OPENAI_ENDPOINT: ${{ vars.AZURE_OPENAI_ENDPOINT }}
-          AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA: ${{ vars.AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA }}
+          AZURE_OPENAI_DEPLOYMENT_GPT61SOL: ${{ vars.AZURE_OPENAI_DEPLOYMENT_GPT61SOL }}
+          AZURE_OPENAI_ALLOWED_DEPLOYMENTS: ${{ vars.AZURE_OPENAI_DEPLOYMENT_GPT61SOL }}
+          AZURE_FOUNDRY_RESOURCE_ID: ${{ vars.AZURE_FOUNDRY_RESOURCE_ID }}
+          AZURE_FOUNDRY_ENDPOINT: ${{ vars.AZURE_FOUNDRY_ENDPOINT }}
+          AZURE_FOUNDRY_DEPLOYMENT_OPUS55: ${{ vars.AZURE_FOUNDRY_DEPLOYMENT_OPUS55 }}
+          AZURE_FOUNDRY_ALLOWED_DEPLOYMENTS: ${{ vars.AZURE_FOUNDRY_DEPLOYMENT_OPUS55 }}
           ALLOW_BYO_AI_ENDPOINTS: ${{ steps.desired_config.outputs.allow_byo_ai_endpoints }}
           EXPECTED_COMMIT: ${{ needs.merge_validate.outputs.fork_commit }}
           GITHUB_TOKEN: ${{ github.token }}
@@ -1536,8 +1574,11 @@ jobs:
             "AZURE_IMPORT_ENABLED=false"
             "AZURE_CLIENT_ID=${{ vars.AZURE_RUNTIME_CLIENT_ID }}"
             "AZURE_OPENAI_ENDPOINT=${{ vars.AZURE_OPENAI_ENDPOINT }}"
-            "AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA=${{ vars.AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA }}"
-            "AZURE_OPENAI_ALLOWED_DEPLOYMENTS=${{ vars.AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA }}"
+            "AZURE_OPENAI_DEPLOYMENT_GPT61SOL=${{ vars.AZURE_OPENAI_DEPLOYMENT_GPT61SOL }}"
+            "AZURE_OPENAI_ALLOWED_DEPLOYMENTS=${{ vars.AZURE_OPENAI_DEPLOYMENT_GPT61SOL }}"
+            "AZURE_FOUNDRY_ENDPOINT=${{ vars.AZURE_FOUNDRY_ENDPOINT }}"
+            "AZURE_FOUNDRY_DEPLOYMENT_OPUS55=${{ vars.AZURE_FOUNDRY_DEPLOYMENT_OPUS55 }}"
+            "AZURE_FOUNDRY_ALLOWED_DEPLOYMENTS=${{ vars.AZURE_FOUNDRY_DEPLOYMENT_OPUS55 }}"
             "ALLOW_BYO_AI_ENDPOINTS=$ALLOW_BYO_AI_ENDPOINTS"
             "OPENAI_RATE_LIMIT_PER_HOUR=120"
             "AZURE_SPEECH_REGION=${{ vars.AZURE_SPEECH_REGION }}"
@@ -1638,11 +1679,8 @@ jobs:
             update_args+=(--remove-env-vars "${remove_env_vars[@]}")
           fi
           [[ "$ALLOW_BYO_AI_ENDPOINTS" == "true" || "$ALLOW_BYO_AI_ENDPOINTS" == "false" ]]
-          node scripts/verify-astra-deployment.mjs
+          node scripts/verify-managed-models.mjs
           node scripts/verify-deployment-source.mjs
-          # Freeze the verified, nonsecret Astra tuple and approved BYO policy for emergency rollback.
-          printf '%s\0' "$AZURE_OPENAI_ENDPOINT" "$AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA" "$AZURE_OPENAI_RESOURCE_ID" "$ALLOW_BYO_AI_ENDPOINTS" \
-            > azurediagarm-verified-astra.env
           touch azurediagarm-deployment-started
           az containerapp update "${update_args[@]}"
 
@@ -1985,23 +2023,9 @@ jobs:
             exit 1
           fi
 
-          # Do not re-read mutable configuration or require a new ARM lookup.
-          mapfile -d '' -t rollback_ai_tuple < azurediagarm-verified-astra.env
-          if [[ "${#rollback_ai_tuple[@]}" -ne 4 || -z "${rollback_ai_tuple[0]}" || -z "${rollback_ai_tuple[1]}" || -z "${rollback_ai_tuple[2]}" \
-            || ( "${rollback_ai_tuple[3]}" != "true" && "${rollback_ai_tuple[3]}" != "false" ) ]]; then
-            echo "::error::The pre-update verified Astra tuple and BYO policy are unavailable; refusing an unrestricted rollback."
-            exit 1
-          fi
-          rollback_ai_env=(
-            "AZURE_OPENAI_ENDPOINT=${rollback_ai_tuple[0]}"
-            "AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA=${rollback_ai_tuple[1]}"
-            "AZURE_OPENAI_ALLOWED_DEPLOYMENTS=${rollback_ai_tuple[1]}"
-            "ALLOW_BYO_AI_ENDPOINTS=${rollback_ai_tuple[3]}"
-          )
-          retired_ai_names="$(node scripts/retired-ai-environment.mjs --rollback)"
-          [[ -n "$retired_ai_names" ]]
-          mapfile -t rollback_remove_ai_env <<< "$retired_ai_names"
-
+          # Copy the last healthy revision as a whole. Its image, model routing,
+          # environment, secrets and DESIRED_CONFIG_HASH remain one consistent
+          # rollback unit; do not graft current model settings onto an old image.
           rollback_suffix="rb${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           rollback_revision="${{ vars.AZURE_CONTAINER_APP }}--${rollback_suffix}"
           echo "Rolling back to $previous_revision via $rollback_revision."
@@ -2010,8 +2034,6 @@ jobs:
             --name "${{ vars.AZURE_CONTAINER_APP }}" \
             --from-revision "$previous_revision" \
             --revision-suffix "$rollback_suffix" \
-            --set-env-vars "${rollback_ai_env[@]}" \
-            --remove-env-vars "${rollback_remove_ai_env[@]}" \
             --output none
 
           for attempt in $(seq 1 60); do

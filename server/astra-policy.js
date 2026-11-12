@@ -38,30 +38,43 @@ function byoEndpointsEnabled(env = process.env) {
   return flag === 'true';
 }
 
-function astraConfiguration(env = process.env) {
-  const deployment = env.AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA || '';
-  const allowed = (env.AZURE_OPENAI_ALLOWED_DEPLOYMENTS || '').split(',').map(value => value.trim()).filter(Boolean);
-  if (!deployment && !env.AZURE_OPENAI_ENDPOINT && !env.AZURE_OPENAI_ALLOWED_DEPLOYMENTS
-    && !env.AZURE_OPENAI_API_KEY && !env.AZURE_OPENAI_RESOURCE_ID) {
-    return { configured: false, deployment: null, endpoint: null };
-  }
-  if (!DEPLOYMENT_NAME_RE.test(deployment) || allowed.length !== 1 || allowed[0] !== deployment) {
-    throw new Error('GPT-6 Astra requires AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA and the identical singleton AZURE_OPENAI_ALLOWED_DEPLOYMENTS.');
-  }
-  return { configured: true, deployment, endpoint: normalizeAzureOpenAIEndpoint(env.AZURE_OPENAI_ENDPOINT) };
+function normalizeFoundryEndpoint(value) {
+  return normalizeHttpsOrigin(value, hostname => hostname.endsWith('.services.ai.azure.com')
+    && hostname.length > '.services.ai.azure.com'.length);
 }
 
-function runtimeAstraConfiguration(config, allowByoAIEndpoints = false) {
+function managedModelsConfiguration(env = process.env) {
+  const route = (model, apiFormat, prefix, deploymentKey, normalize) => {
+    const deployment = env[deploymentKey] || '';
+    const endpoint = env[`${prefix}_ENDPOINT`];
+    const allowed = (env[`${prefix}_ALLOWED_DEPLOYMENTS`] || '').split(',').map(value => value.trim()).filter(Boolean);
+    if (!deployment && !endpoint && !allowed.length && !env[`${prefix}_RESOURCE_ID`] && !env[`${prefix}_API_KEY`]) {
+      return { model, apiFormat, configured: false, deployment: null, endpoint: null };
+    }
+    if (!DEPLOYMENT_NAME_RE.test(deployment) || deployment === 'gpt-6-astra' || allowed.length !== 1 || allowed[0] !== deployment) {
+      throw new Error(`${model} requires ${deploymentKey} and its identical singleton ${prefix}_ALLOWED_DEPLOYMENTS.`);
+    }
+    return { model, apiFormat, configured: true, deployment, endpoint: normalize(endpoint) };
+  };
+  if (env.AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA) throw new Error('Remove the retired AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA configuration before starting the new application.');
+  if (env.AZURE_FOUNDRY_API_KEY) throw new Error('Managed Claude requires Microsoft Entra authentication, not AZURE_FOUNDRY_API_KEY.');
+  const sol = route('gpt-6.1-sol', 'responses', 'AZURE_OPENAI', 'AZURE_OPENAI_DEPLOYMENT_GPT61SOL', normalizeAzureOpenAIEndpoint);
+  const opus = route('claude-opus-5-5', 'anthropic-messages', 'AZURE_FOUNDRY', 'AZURE_FOUNDRY_DEPLOYMENT_OPUS55', normalizeFoundryEndpoint);
+  if (sol.configured && opus.configured && sol.deployment === opus.deployment) throw new Error('Managed model deployment aliases must be distinct.');
+  return { sol, opus, configured: sol.configured && opus.configured };
+}
+
+function runtimeManagedModelsConfiguration(config, allowByoAIEndpoints = false) {
   return {
     features: { bringYourOwnAI: allowByoAIEndpoints === true },
     ai: {
-      model: 'gpt-6-astra', apiFormat: 'responses',
-      deployment: config.deployment, configured: config.configured,
+      defaultModel: 'gpt-6.1-sol', configured: config.configured,
+      models: [config.sol, config.opus].map(({ model, apiFormat, deployment, configured }) => ({ model, apiFormat, deployment, configured })),
     },
   };
 }
 
 module.exports = {
-  astraConfiguration, runtimeAstraConfiguration, byoEndpointsEnabled,
-  normalizeAzureOpenAIEndpoint, normalizeHttpsOrigin, DEPLOYMENT_NAME_RE,
+  managedModelsConfiguration, runtimeManagedModelsConfiguration, byoEndpointsEnabled,
+  normalizeAzureOpenAIEndpoint, normalizeFoundryEndpoint, normalizeHttpsOrigin, DEPLOYMENT_NAME_RE,
 };

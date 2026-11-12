@@ -15,7 +15,7 @@ import { getReasoningEffortLabel } from '../stores/modelSettingsStore';
 import { useLanguage } from '../i18n/LanguageContext';
 import { localize } from '../i18n/localization';
 import AIConnectionSelector, { connectionStateLabel } from './AIConnectionSelector';
-import AstraReasoningSettings from './AstraReasoningSettings';
+import ManagedModelSettings from './ManagedModelSettings';
 import ModalScaffold from './ModalScaffold';
 import './BYOAISettingsDialog.css';
 
@@ -178,8 +178,8 @@ export default function BYOAISettingsDialog({
         {!serverAllowed && <div className="byo-ai-policy-note">
           <p role="status">{policy.status === 'ready'
           ? text(
-            'BYO testing and activation are disabled by the application administrator. You can still add, edit, and delete inactive profiles. Managed GPT-6 Astra remains available if configured.',
-            '管理者が BYO のテストと有効化を無効にしています。プロファイルの追加・編集・非アクティブなプロファイルの削除は可能です。設定済みの場合は管理対象の GPT-6 Astra を使用できます。',
+            'BYO testing and activation are disabled by the application administrator. You can still add, edit, and delete inactive profiles. Managed GPT-6.1 Sol / Claude Opus 5.5 remains available if configured.',
+            '管理者が BYO のテストと有効化を無効にしています。プロファイルの追加・編集・非アクティブなプロファイルの削除は可能です。設定済みの場合は管理対象の GPT-6.1 Sol / Claude Opus 5.5 を使用できます。',
           )
           : text(
             'Server policy is not yet available. Profile editing is available, but testing and activation stay blocked until the server confirms permission.',
@@ -249,8 +249,8 @@ export default function BYOAISettingsDialog({
           <fieldset className="byo-ai-capabilities">
             <legend>{text('Profile capabilities and limits', 'プロファイルの機能と上限')}</legend>
             <p>{text(
-              'Set capabilities supported by this exact model/deployment. These settings control every BYO request, independently of managed Astra reasoning. Image analysis is blocked when vision is off.',
-              'このモデル / デプロイが対応する機能を指定してください。管理対象の Astra の推論設定とは独立して、すべての BYO リクエストに適用されます。画像対応をオフにすると画像分析はブロックされます。',
+              'Set capabilities supported by this exact model/deployment. These settings control every BYO request, independently of managed models reasoning. Image analysis is blocked when vision is off.',
+              'このモデル / デプロイが対応する機能を指定してください。管理対象の モデルの推論設定とは独立して、すべての BYO リクエストに適用されます。画像対応をオフにすると画像分析はブロックされます。',
             )}</p>
             <label className="byo-ai-checkbox"><input type="checkbox" checked={draft.isReasoning}
               onChange={event => {
@@ -286,8 +286,8 @@ export default function BYOAISettingsDialog({
             </button>}
           </div>
           {active && <p>{text(
-            'This is the active profile. Explicitly switch to managed Astra or another verified profile before deleting it.',
-            'このプロファイルは選択中です。削除する前に管理対象の Astra または別の確認済みプロファイルに明示的に切り替えてください。',
+            'This is the active profile. Explicitly switch to managed models or another verified profile before deleting it.',
+            'このプロファイルは選択中です。削除する前に管理対象モデルまたは別の確認済みプロファイルに明示的に切り替えてください。',
           )}</p>}
           {confirmDelete && !active && <div className="byo-ai-delete-confirm">
             <p>{text('Delete this inactive profile and its in-memory key?', 'この非アクティブなプロファイルとメモリ内のキーを削除しますか？')}</p>
@@ -359,8 +359,8 @@ export default function BYOAISettingsDialog({
           </div>
         </section>
         <details className="byo-ai-managed-settings">
-          <summary>{text('Managed Astra reasoning settings', '管理対象の Astra の推論設定')}</summary>
-          <AstraReasoningSettings />
+          <summary>{text('Managed model reasoning settings', '管理対象の モデルの推論設定')}</summary>
+          <ManagedModelSettings />
         </details>
       </div>
       <footer className="byo-ai-dialog-footer">

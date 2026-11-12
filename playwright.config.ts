@@ -24,7 +24,9 @@ export default defineConfig({
     env: {
       ...process.env,
       VITE_AZURE_OPENAI_ENDPOINT: 'https://playwright.openai.azure.com/',
-      VITE_AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA: 'playwright-gpt-6-astra',
+      VITE_AZURE_OPENAI_DEPLOYMENT_GPT61SOL: 'playwright-gpt-6.1-sol',
+      VITE_AZURE_FOUNDRY_ENDPOINT: 'https://playwright.services.ai.azure.com/',
+      VITE_AZURE_FOUNDRY_DEPLOYMENT_OPUS55: 'playwright-claude-opus-5-5',
     },
   },
 });

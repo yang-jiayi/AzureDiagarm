@@ -14,6 +14,12 @@
     "azureOpenAiResourceId": {
       "value": "${AZURE_OPENAI_RESOURCE_ID}"
     },
+    "azureFoundryEndpoint": {
+      "value": "${AZURE_FOUNDRY_ENDPOINT}"
+    },
+    "azureFoundryResourceId": {
+      "value": "${AZURE_FOUNDRY_RESOURCE_ID}"
+    },
     "feedbackEmailEndpoint": {
       "value": "${FEEDBACK_EMAIL_ENDPOINT}"
     },
@@ -39,8 +45,11 @@
     "aiBudgetTable": { "value": "${AZURE_TABLES_BUDGET_TABLE}" },
     "easyAuthVerified": { "value": false },
     "feedbackLegacyRetentionEnabled": { "value": false },
-    "openAiDeploymentGpt6Astra": {
-      "value": "${AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA}"
+    "openAiDeploymentGpt61Sol": {
+      "value": "${AZURE_OPENAI_DEPLOYMENT_GPT61SOL}"
+    },
+    "foundryDeploymentClaudeOpus55": {
+      "value": "${AZURE_FOUNDRY_DEPLOYMENT_OPUS55}"
     },
     "allowByoAIEndpoints": {
       "value": false
