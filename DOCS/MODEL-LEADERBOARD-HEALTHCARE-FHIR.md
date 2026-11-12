@@ -1,8 +1,10 @@
 # Model Comparison — Multi‑Critic Leaderboard (Healthcare FHIR prompt)
 
 > Historical benchmark, retained with its original model identities. This is not
-> the current model lineup or a recommendation to enable alternatives: the app
-> now uses the [managed Astra and BYO policy](../README.md#ai-model-policy).
+> the current model lineup or a recommendation to enable alternatives. Current
+> managed models are GPT-6.1 Sol (default) and Claude Opus 5.5, with optional
+> explicitly selected BYO connections; see the
+> [current AI model policy](../README.md#ai-model-policy).
 
 **Generated:** 2026-07-14
 **Prompt under test:** *A healthcare data platform with FHIR API, HIPAA‑compliant storage, real‑time patient monitoring, Azure Health Data Services, and Power BI for clinical dashboards*

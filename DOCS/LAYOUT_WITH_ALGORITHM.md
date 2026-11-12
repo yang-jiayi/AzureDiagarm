@@ -1,8 +1,8 @@
 ## Recommendation #3: Replace Layout with Algorithm
 
 > Historical design proposal, not a description of the current implementation.
-> The app now uses GPT-6 Astra and deterministic layout engines; see the
-> [current architecture](ARCHITECTURE.md).
+> The app now offers GPT-6.1 Sol (default) and Claude Opus 5.5 managed models,
+> plus deterministic layout engines; see the [current architecture](ARCHITECTURE.md).
 
 ### The Current Problem
 

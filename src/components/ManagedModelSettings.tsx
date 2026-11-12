@@ -4,7 +4,7 @@
 import { ChevronDown, RotateCcw, SlidersHorizontal, Sparkles } from 'lucide-react';
 import {
   FEATURE_CONFIG, getAvailableModels, getReasoningEffortLabel, getRecommendedModelSettings,
-  getSupportedReasoningEfforts, updateFeatureOverride, useModelSettings, isModelType, MODEL_CONFIG, type FeatureType,
+  getSupportedReasoningEfforts, updateFeatureOverride, useModelSettings, isModelType, normalizeReasoningEffort, MODEL_CONFIG, type FeatureType,
 } from '../stores/modelSettingsStore';
 import { useLanguage } from '../i18n/LanguageContext';
 import { getBYOAISettings, useBYOAISettings } from '../stores/byoAISettingsStore';
@@ -106,7 +106,7 @@ export default function ManagedModelSettings() {
                         if (level !== undefined) updateFeatureOverride(feature, { model, reasoningEffort: level });
                       }
                     }}>
-                    <option value="default">{t('ai.defaultReasoningChoice', { effort: t(getReasoningEffortLabel(settings.reasoningEffort)) })}</option>
+                    <option value="default">{t('ai.defaultReasoningChoice', { effort: t(getReasoningEffortLabel(normalizeReasoningEffort(model, settings.reasoningEffort))) })}</option>
                     {featureEfforts.map(level => <option key={level} value={level}>{t(getReasoningEffortLabel(level))}</option>)}
                   </select>
                 </div>

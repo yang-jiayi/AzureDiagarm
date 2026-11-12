@@ -1098,6 +1098,17 @@ test('shared managed connection label remains honest when feature selection diff
   assert.equal(await page.evaluate(() => (window as any).h.getEffectiveAIModelInfo('blueprint').model), 'gpt-6.1-sol');
 });
 
+test('Opus feature inherited reasoning displays the effective adaptive effort instead of unsupported None', async t => {
+  const page = await setupModelSettings(t, 'dual', { initialSettings: {
+    model: 'gpt-6.1-sol', reasoningEffort: 'none',
+    featureOverrides: { blueprint: { model: 'claude-opus-5-5' } },
+  } });
+  await openModelGuidance(page);
+  const effort = page.getByRole('combobox', { name: 'Blueprint Diagrams - Reasoning effort', exact: true });
+  assert.equal(await effort.locator('option:checked').innerText(), 'Default (Medium)');
+  assert.equal(await page.evaluate(() => (window as any).h.getEffectiveAIModelInfo('blueprint').reasoningEffort), 'medium');
+});
+
 for (const language of ['en', 'ja'] as const) {
   test(`dual managed selector keeps Opus and per-feature Sol explicit in ${language}`, async t => {
     const page = await setupModelSettings(t, 'dual');

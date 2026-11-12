@@ -3,8 +3,9 @@
 Generation is submitted as an authenticated background job. The browser uses
 separate short HTTP requests for status and result retrieval instead of keeping
 one generation request open beyond the former 210-second server deadline.
-Managed GPT-6 Astra and explicitly selected BYO Responses/Chat Completions
-connections use the same job lifecycle. Connection tests remain synchronous.
+Managed GPT-6.1 Sol, Claude Opus 5.5, and explicitly selected BYO
+Responses/Chat Completions connections use the same job lifecycle. Connection
+tests remain synchronous.
 
 ## User Experience
 
