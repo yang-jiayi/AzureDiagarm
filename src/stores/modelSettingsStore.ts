@@ -15,7 +15,7 @@ export const REASONING_EFFORT_OPTIONS = [
   { value: 'max', label: 'Max' },
 ] as const;
 export type ReasoningEffort = (typeof REASONING_EFFORT_OPTIONS)[number]['value'];
-const SOL_REASONING_EFFORTS = Object.freeze(['none', 'low', 'medium', 'high', 'xhigh', 'max'] as const);
+const SOL_REASONING_EFFORTS = Object.freeze(['low', 'medium', 'high', 'xhigh', 'max'] as const);
 const OPUS_REASONING_EFFORTS = Object.freeze(['low', 'medium', 'high', 'xhigh', 'max'] as const);
 
 export type FeatureType = 'architectureGeneration' | 'validation' | 'deploymentGuide' | 'blueprint';

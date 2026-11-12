@@ -11,11 +11,13 @@ deployment is live.
 
 | Managed model | Default | Supported efforts | API |
 |---|---|---|---|
-| GPT-6.1 Sol | `low` | `none`, `low`, `medium`, `high`, `xhigh`, `max` | Azure OpenAI Responses |
+| GPT-6.1 Sol | `low` | `low`, `medium`, `high`, `xhigh`, `max` | Azure OpenAI Responses |
 | Claude Opus 5.5 | `medium` | `low`, `medium`, `high`, `xhigh`, `max` | Azure AI Foundry Anthropic Messages with adaptive thinking |
 
 Claude's adaptive thinking is always the reasoning mechanism; the selected level
-controls its effort. Claude does not support `none`. When a per-feature override
+controls its effort. Neither managed model supports `none`. Existing Sol `none`
+preferences normalize to `low`; explicit unsupported requests are rejected, not
+silently downgraded during dispatch. When a per-feature override
 selects a different model, the effort is normalized to that model's supported
 choices. BYO profiles instead use their configured capabilities, effort, and
 output limit.

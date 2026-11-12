@@ -292,7 +292,7 @@ ALLOW_BYO_AI_ENDPOINTS=false
 - **Claude API version**: `2026-10-21`
 - **Max tokens**: Both models share a 32,000-token output budget, including reasoning/thinking tokens
 - **Response format**: Sol requests a JSON object; Claude returns a strict object envelope containing an `azureDiagramJson` JSON string, which the client unwraps before the same application-level validation rejects malformed or incompatible architecture output
-- **Reasoning**: Sol supports `none`, `low`, `medium`, `high`, `xhigh`, and `max` (default `low`); Claude uses adaptive thinking at `low`, `medium`, `high`, `xhigh`, or `max` (default `medium`; no `none`)
+- **Reasoning**: Sol supports `low`, `medium`, `high`, `xhigh`, and `max` (default `low`; no `none`); Claude uses adaptive thinking at `low`, `medium`, `high`, `xhigh`, or `max` (default `medium`; no `none`)
 - **Model policy**: Select either managed model globally or per feature; no automatic fallback
 
 BYO uses the selected profile's model, Responses/Chat Completions format, and

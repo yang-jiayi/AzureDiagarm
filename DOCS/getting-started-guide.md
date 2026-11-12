@@ -259,7 +259,7 @@ Open the AI settings popover in the toolbar. Select managed **GPT-6.1 Sol**
 (the default) or **Claude Opus 5.5**. Set a global reasoning effort and
 optionally choose a model and effort independently for each feature:
 
-- GPT-6.1 Sol supports `none`, `low`, `medium`, `high`, `xhigh`, and `max`;
+- GPT-6.1 Sol supports `low`, `medium`, `high`, `xhigh`, and `max` (not `none`);
   its default is `low`.
 - Claude Opus 5.5 uses adaptive thinking and supports `low`, `medium`, `high`,
   `xhigh`, and `max` (not `none`); its default is `medium`.

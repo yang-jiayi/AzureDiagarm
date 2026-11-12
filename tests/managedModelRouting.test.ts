@@ -8,6 +8,24 @@ const env = {
   VITE_AZURE_FOUNDRY_ENDPOINT: 'https://offline.services.ai.azure.com',
   VITE_AZURE_FOUNDRY_DEPLOYMENT_OPUS55: 'opus-production-alias',
 };
+test('managed Sol rejects unsupported direct efforts before dispatch rather than silently lowering them', async t => {
+  let calls = 0;
+  t.mock.method(globalThis, 'fetch', async () => { calls++; return jsonResponse({}); });
+  const { client } = await loadBYOClient(undefined, env);
+  for (const effort of ['none', 'minimal'] as const) {
+    const body = client.buildRequestBody({
+      apiFormat: 'responses', deployment: env.VITE_AZURE_OPENAI_DEPLOYMENT_GPT61SOL,
+      messages: [{ role: 'user', content: 'Offline request' }], maxTokens: 32000,
+      isReasoning: true, reasoningEffort: effort,
+    });
+    await assert.rejects(client.callAzureOpenAIProxy({
+      apiFormat: 'responses', deployment: body.model, body,
+    }), { code: 'unsupported_reasoning_effort' });
+    assert.equal(body.reasoning.effort, effort);
+  }
+  assert.equal(calls, 0);
+});
+
 for (const model of ['gpt-6.1-sol', 'claude-opus-5-5'] as const) {
   test(`${model} preserves JSON, vision, metadata and selected limits through every AI feature`, async t => {
     t.mock.method(console, 'log', () => {});

@@ -221,7 +221,10 @@ multi-image requests may require a larger daily quota. Images must be inline (th
 remote tools, audio/files, background
 requests are not supported by this complete-response proxy. Streaming is forced
 off and storage is disabled before dispatch. GPT-6.1 Sol Responses keeps its 32768-token
-output ceiling, including 32000-token architecture requests. BYO Responses and
+output ceiling, including 32000-token architecture requests. Managed Sol accepts
+only `low`, `medium`, `high`, `xhigh` or `max` when an effort is explicitly
+supplied; unsupported values are rejected before credential acquisition,
+budget reservation or dispatch. BYO Responses and
 Chat Completions also cap and reserve the chosen output field (`max_output_tokens`,
 `max_completion_tokens` or `max_tokens`) without translating formats. Chat's
 `prompt_tokens`/`completion_tokens` usage and inline vision content are metered

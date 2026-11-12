@@ -38,8 +38,8 @@ This is a deliberate tradeoff. Two design choices push scores up:
 Users who want a stricter assessment can:
 
 - Adjust the selected managed model's reasoning effort in AI settings while
-  keeping that model. GPT-6.1 Sol supports `none`, `low`, `medium`, `high`,
-  `xhigh`, and `max`; Claude Opus 5.5 adaptive thinking supports `low`, `medium`,
+  keeping that model. GPT-6.1 Sol supports `low`, `medium`, `high`,
+  `xhigh`, and `max` (not `none`); Claude Opus 5.5 adaptive thinking supports `low`, `medium`,
   `high`, `xhigh`, and `max` (not `none`).
 - Review the per-pillar findings list, which surfaces gaps even when the headline score is healthy.
 

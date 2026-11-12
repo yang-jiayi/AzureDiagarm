@@ -636,8 +636,13 @@ export async function callAzureOpenAIProxy(params: {
     if (!models.length) {
       throw new AIModelConfigurationError('managed_model_not_configured', 'The selected managed model is not configured. Contact the application administrator.');
     }
-    if (!models.some(model => params.deployment === getDeploymentName(model) && params.apiFormat === MODEL_CONFIG[model].apiFormat)) {
+    const model = models.find(model => params.deployment === getDeploymentName(model) && params.apiFormat === MODEL_CONFIG[model].apiFormat);
+    if (!model) {
       throw new AIModelConfigurationError('unsupported_ai_model', 'Use the configured model deployment and its matching API format.');
+    }
+    const effort = params.apiFormat === 'responses' ? params.body?.reasoning?.effort : params.body?.output_config?.effort;
+    if (effort !== undefined && !MODEL_CONFIG[model].supportedReasoningEfforts.some(value => value === effort)) {
+      throw new AIModelConfigurationError('unsupported_reasoning_effort', 'The requested reasoning effort is not supported by this model.');
     }
   }
   const forbiddenBodyFields = ['byo', 'provider', 'deployment', 'endpoint', 'apiKey', 'api_key', 'headers', 'url', 'baseURL', 'base_url', 'forceManaged'];

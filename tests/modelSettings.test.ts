@@ -80,6 +80,23 @@ test('explicit Opus selection and feature overrides survive reload independently
   assert.deepEqual(reloaded.store.getModelSettings(), store.getModelSettings());
   assert.equal(reloaded.store.getModelSettingsForFeature('blueprint').reasoningEffort, 'max');
   assert.equal(reloaded.store.getModelSettingsForFeature('validation').model, 'gpt-6.1-sol');
+  assert.equal(reloaded.store.getModelSettingsForFeature('validation').reasoningEffort, 'low');
+});
+
+test('saved Sol none preferences normalize to low globally and per feature without changing history', async () => {
+  const history = JSON.stringify({ model: 'gpt-6.1-sol', reasoningEffort: 'none' });
+  const entries = new Map([['azure-diagrams-history', history]]);
+  const { store } = await loadStore(env, {
+    version: 5, model: 'gpt-6.1-sol', reasoningEffort: 'none',
+    featureOverrides: { blueprint: { model: 'gpt-6.1-sol', reasoningEffort: 'none' } },
+  }, entries);
+  assert.equal(store.getModelSettings().reasoningEffort, 'low');
+  assert.equal(store.getModelSettingsForFeature('blueprint').reasoningEffort, 'low');
+  assert.equal(store.resolveAIModelRuntime('blueprint').reasoningEffort, 'low');
+  const saved = JSON.parse(entries.get(STORAGE_KEY)!);
+  assert.equal(saved.reasoningEffort, 'low');
+  assert.equal(saved.featureOverrides.blueprint.reasoningEffort, 'low');
+  assert.equal(entries.get('azure-diagrams-history'), history);
 });
 
 test('missing selected model fails closed, never falling back to Sol or retired Astra', async () => {
@@ -106,6 +123,7 @@ test('explicit overrides use the requested model, with model-specific effort val
   const { store } = await loadStore();
   assert.equal(store.resolveAIModelRuntime('blueprint', { model: 'claude-opus-5-5', reasoningEffort: 'high' }).apiFormat, 'anthropic-messages');
   assert.throws(() => store.resolveAIModelRuntime('blueprint', { model: 'claude-opus-5-5', reasoningEffort: 'none' }), { code: 'unsupported_reasoning_effort' });
+  assert.throws(() => store.resolveAIModelRuntime('blueprint', { model: 'gpt-6.1-sol', reasoningEffort: 'none' }), { code: 'unsupported_reasoning_effort' });
   for (const model of ['gpt-6-astra', 'gpt-5.6-sol', '__proto__', 'constructor', undefined]) {
     assert.throws(() => Reflect.apply(store.updateModelSettings, undefined, [{ model }]), { code: 'unsupported_ai_model' });
   }

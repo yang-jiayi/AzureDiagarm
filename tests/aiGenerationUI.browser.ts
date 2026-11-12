@@ -11,7 +11,7 @@ const modelSettingsScripts = new Map<string, string>();
 before(async () => {
   const mocks: Record<string, string> = {
     modelSettingsStore: `
-      const settings = {model:'gpt-6.1-sol', reasoningEffort:'none'};
+      const settings = {model:'gpt-6.1-sol', reasoningEffort:'low'};
       export const useModelSettings = () => [window.h.settings ?? settings];
       export const getModelSettings = () => settings;
       export const getModelSettingsForFeature = feature => ({
@@ -32,7 +32,7 @@ before(async () => {
         return 'test-gpt-6.1-sol';
       };
       export const updateFeatureOverride = () => {};
-      export const getSupportedReasoningEfforts = () => ['none','max'];
+      export const getSupportedReasoningEfforts = () => ['low','max'];
       export const getReasoningEffortLabel = x => x;
       export const isReasoningEffort = value => ['none','minimal','low','medium','high','xhigh','max'].includes(value);
     `,
@@ -56,7 +56,7 @@ before(async () => {
     `,
     aiModelRuntime: `
       export const getEffectiveAIModelInfo = feature => {
-        const settings={model:'gpt-6.1-sol',reasoningEffort:'none',...window.h.settings,
+        const settings={model:'gpt-6.1-sol',reasoningEffort:'low',...window.h.settings,
           ...window.h.settings?.featureOverrides?.[feature]};
         return window.h.connectionInfo ?? {source:'managed',model:'gpt-6.1-sol',displayName:'GPT-6.1 Sol',
           reasoningEffort:settings.reasoningEffort,apiFormat:'responses',isReasoning:true,
@@ -1098,15 +1098,18 @@ test('shared managed connection label remains honest when feature selection diff
   assert.equal(await page.evaluate(() => (window as any).h.getEffectiveAIModelInfo('blueprint').model), 'gpt-6.1-sol');
 });
 
-test('Opus feature inherited reasoning displays the effective adaptive effort instead of unsupported None', async t => {
+test('unsupported saved Sol None normalizes before per-feature reasoning inheritance', async t => {
   const page = await setupModelSettings(t, 'dual', { initialSettings: {
     model: 'gpt-6.1-sol', reasoningEffort: 'none',
     featureOverrides: { blueprint: { model: 'claude-opus-5-5' } },
   } });
   await openModelGuidance(page);
   const effort = page.getByRole('combobox', { name: 'Blueprint Diagrams - Reasoning effort', exact: true });
-  assert.equal(await effort.locator('option:checked').innerText(), 'Default (Medium)');
-  assert.equal(await page.evaluate(() => (window as any).h.getEffectiveAIModelInfo('blueprint').reasoningEffort), 'medium');
+  assert.equal(await effort.locator('option:checked').innerText(), 'Default (Low)');
+  assert.equal(await page.evaluate(() => (window as any).h.getModelSettings().reasoningEffort), 'low');
+  assert.equal(await page.evaluate(() => (window as any).h.getEffectiveAIModelInfo('blueprint').reasoningEffort), 'low');
+  assert.equal(await page.getByRole('group', { name: 'Default reasoning' })
+    .getByRole('button', { name: 'None', exact: true }).count(), 0);
 });
 
 for (const language of ['en', 'ja'] as const) {
@@ -1122,8 +1125,10 @@ for (const language of ['en', 'ja'] as const) {
       .getByRole('button', { name: language === 'ja' ? 'なし' : 'None', exact: true }).count(), 0);
     const featureName = language === 'ja' ? 'ブループリント図' : 'Blueprint Diagrams';
     await page.getByRole('combobox', { name: `${featureName} - ${language === 'ja' ? 'モデル' : 'Model'}`, exact: true }).selectOption('gpt-6.1-sol');
-    await page.getByRole('combobox', { name: `${featureName} - ${language === 'ja' ? '推論強度' : 'Reasoning effort'}`, exact: true }).selectOption('none');
-    assert.deepEqual(await page.evaluate(() => (window as any).h.getModelSettingsForFeature('blueprint')), { model: 'gpt-6.1-sol', reasoningEffort: 'none' });
+    const effort = page.getByRole('combobox', { name: `${featureName} - ${language === 'ja' ? '推論強度' : 'Reasoning effort'}`, exact: true });
+    assert.equal(await effort.locator('option[value="none"]').count(), 0);
+    await effort.selectOption('low');
+    assert.deepEqual(await page.evaluate(() => (window as any).h.getModelSettingsForFeature('blueprint')), { model: 'gpt-6.1-sol', reasoningEffort: 'low' });
     const captured = await page.evaluate(() => {
       const capture = (window as any).h.captureRuntimeModelOverride('validation');
       return { model: capture.model, deployment: capture.connection.deployment, format: capture.connection.apiFormat };
@@ -1148,7 +1153,7 @@ for (const profile of ['astra', 'legacy', 'none']) {
       assert.equal(await page.getByRole('combobox', { name: 'AI connection', exact: true }).count(), 1);
       assert.deepEqual(await page.locator('.managed-model-settings').getByRole('combobox').last().locator('option').evaluateAll(options => (
         options.map(option => (option as HTMLOptionElement).value)
-      )), ['default', 'none', 'low', 'medium', 'high', 'xhigh', 'max']);
+      )), ['default', 'low', 'medium', 'high', 'xhigh', 'max']);
       const migrated = {
         model: 'gpt-6.1-sol', reasoningEffort: 'high',
         featureOverrides: { blueprint: { model: 'gpt-6.1-sol', reasoningEffort: 'medium' } },
@@ -1243,7 +1248,7 @@ test('Both output keeps independent model and reasoning controls', async t => {
   const page = await setup(t, {
     mode: 'both', accepted: true,
     settings: { model: 'gpt-6.1-sol', reasoningEffort: 'max',
-      featureOverrides: { blueprint: { model: 'gpt-6.1-sol', reasoningEffort: 'none' } } },
+      featureOverrides: { blueprint: { model: 'gpt-6.1-sol', reasoningEffort: 'low' } } },
   });
   await page.getByRole('button', { name: 'Generate Diagram', exact: true }).click();
   await page.locator('#architecture-description').fill('Add a secure web application');
@@ -1257,7 +1262,7 @@ test('Both output keeps independent model and reasoning controls', async t => {
   }))), [
     { kind: 'manifest', model: 'gpt-6.1-sol', effort: 'max' },
     { kind: 'topology', model: 'gpt-6.1-sol', effort: 'max' },
-    { kind: 'blueprint', model: 'gpt-6.1-sol', effort: 'none' },
+    { kind: 'blueprint', model: 'gpt-6.1-sol', effort: 'low' },
   ]);
 });
 

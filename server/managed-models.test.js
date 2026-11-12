@@ -45,6 +45,42 @@ test('model policy requires independent exact routes, never adopts Astra or lega
     { AZURE_FOUNDRY_DEPLOYMENT_OPUS55: 'sol-alias', AZURE_FOUNDRY_ALLOWED_DEPLOYMENTS: 'sol-alias' },
   ]) assert.throws(() => managedModelsConfiguration({ ...env, ...change }));
 });
+test('Sol rejects unsupported efforts before credentials, budgets or dispatch, while BYO none remains explicit', async () => {
+  let touched = false;
+  const run = executor({
+    allowByoAIEndpoints: true,
+    credential: { getToken() { touched = true; } },
+    budget: { reserve() { touched = true; } },
+    fetchImpl() { touched = true; },
+  });
+  for (const effort of ['none', 'minimal', 'unexpected']) {
+    const result = await run({ body: {
+      apiFormat: 'responses', deployment: 'sol-alias',
+      body: { model: 'sol-alias', input: 'Offline request', reasoning: { effort }, max_output_tokens: 32 },
+    } });
+    assert.equal(result.status, 400);
+    assert.equal(result.body.error.code, 'invalid_api_format');
+    assert.equal(touched, false);
+  }
+  let sent;
+  const byo = executor({
+    allowByoAIEndpoints: true,
+    fetchImpl: async (_url, init) => {
+      sent = JSON.parse(init.body);
+      return new Response(JSON.stringify({ status: 'completed', output_text: 'OK' }), {
+        headers: { 'Content-Type': 'application/json' },
+      });
+    },
+  });
+  const result = await byo({ body: {
+    apiFormat: 'responses', deployment: 'customer-model',
+    byo: { provider: 'openai', endpoint: 'https://api.openai.com', apiKey: 'offline-only-key' },
+    body: { model: 'customer-model', input: 'Offline request', reasoning: { effort: 'none' }, max_output_tokens: 32 },
+  } });
+  assert.equal(result.status, 200);
+  assert.equal(sent.reasoning.effort, 'none');
+});
+
 test('Claude dispatch is keyless, isolated, bounded and charges cached usage to the common budget', async () => {
   const budget = createBudgetManager({ store: new MemoryBudgetStore(), dailyTokens: 1_000_000 });
   let captured;

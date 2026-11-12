@@ -31,7 +31,7 @@ configured capabilities; see the [connection guide](BYO-AI-CONNECTIONS.md).
 ### Managed Model Configuration (from `modelSettingsStore.ts`)
 | Model | Max Completion Tokens | Reasoning | API Format |
 |-------|-----------------------|-----------|------------|
-| GPT-6.1 Sol | 32,000 | `none`, `low`, `medium`, `high`, `xhigh`, `max`; default `low` | Azure OpenAI Responses |
+| GPT-6.1 Sol | 32,000 | `low`, `medium`, `high`, `xhigh`, `max`; default `low`; no `none` | Azure OpenAI Responses |
 | Claude Opus 5.5 | 32,000 | Adaptive thinking: `low`, `medium`, `high`, `xhigh`, `max`; default `medium`; no `none` | Azure AI Foundry Anthropic Messages |
 
 ---
@@ -434,7 +434,7 @@ All agents use the `maxCompletionTokens` value from `MODEL_CONFIG` in `modelSett
 
 | Model family | Max Completion Tokens | Reasoning | Notes |
 |--------------|-----------------------|-----------|-------|
-| **GPT-6.1 Sol** | 32,000 | `none`, `low`, `medium`, `high`, `xhigh`, `max`; default `low` | Azure OpenAI Responses |
+| **GPT-6.1 Sol** | 32,000 | `low`, `medium`, `high`, `xhigh`, `max`; default `low`; no `none` | Azure OpenAI Responses |
 | **Claude Opus 5.5** | 32,000 | Adaptive thinking: `low`, `medium`, `high`, `xhigh`, `max`; default `medium`; no `none` | Azure AI Foundry Anthropic Messages |
 
 ### Per-Agent Behavior

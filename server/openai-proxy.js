@@ -307,6 +307,13 @@ function createOpenAIExecutor(options) {
       });
     }
 
+    if (!byoConfig && !claude && body.reasoning?.effort !== undefined
+      && !['low', 'medium', 'high', 'xhigh', 'max'].includes(body.reasoning.effort)) {
+      return sendError(responseHeaders, 400, requestId, {
+        source: 'proxy', code: 'invalid_api_format',
+        message: 'GPT-6.1 Sol requires low, medium, high, xhigh or max reasoning effort.',
+      });
+    }
     const upstreamBody = { ...body };
     if (claude) {
       const allowedKeys = ['model', 'messages', 'system', 'max_tokens', 'thinking', 'output_config', 'stream'];
