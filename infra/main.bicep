@@ -165,14 +165,15 @@ module openAiRole './openai-role.bicep' = if (!empty(azureOpenAiResourceId)) {
     accountName: openAiResourceParts[8]
     principalId: resources.outputs.appIdentityPrincipalId
   }
-  var foundryResourceParts = split(azureFoundryResourceId, '/')
-  module foundryRole './foundry-role.bicep' = if (!empty(azureFoundryResourceId)) {
-    name: 'foundry-role'
-    scope: resourceGroup(foundryResourceParts[2], foundryResourceParts[4])
-    params: {
-      accountName: foundryResourceParts[8]
-      principalId: resources.outputs.appIdentityPrincipalId
-    }
+}
+
+var foundryResourceParts = split(azureFoundryResourceId, '/')
+module foundryRole './foundry-role.bicep' = if (!empty(azureFoundryResourceId)) {
+  name: 'foundry-role'
+  scope: resourceGroup(foundryResourceParts[2], foundryResourceParts[4])
+  params: {
+    accountName: foundryResourceParts[8]
+    principalId: resources.outputs.appIdentityPrincipalId
   }
 }
 
