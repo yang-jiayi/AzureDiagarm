@@ -42,7 +42,7 @@ resource gpt61Sol 'Microsoft.CognitiveServices/accounts/deployments@2025-06-01' 
       version: '2026-09-29'
     }
     raiPolicyName: 'Microsoft.DefaultV2'
-    versionUpgradeOption: 'OnceNewDefaultVersionAvailable'
+    versionUpgradeOption: 'NoAutoUpgrade'
   }
 }
 
@@ -60,7 +60,7 @@ resource claudeOpus55 'Microsoft.CognitiveServices/accounts/deployments@2025-06-
       version: '2'
     }
     raiPolicyName: 'Microsoft.DefaultV2'
-    versionUpgradeOption: 'OnceNewDefaultVersionAvailable'
+    versionUpgradeOption: 'NoAutoUpgrade'
   }
 }
 

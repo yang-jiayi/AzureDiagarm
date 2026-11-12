@@ -49,7 +49,11 @@ delete resources, grant roles, or assert model availability, cost, quota, or
 commercial approval. `infra/managed-model-deployments.bicep` is an explicit
 opt-in deployment template; do not apply it until those prerequisites are
 independently confirmed. Its capacity parameters are Azure catalog capacity
-units, not TPM, and do not imply a price or quota approval. The existing Astra
+units, not TPM, and do not imply a price or quota approval. Both new model
+deployments use `NoAutoUpgrade`. Model-version changes require explicit review
+of model identity, hosting, availability and commercial approval, together with
+matching updates to the template and release verifier before deployment.
+The existing Astra
 deployment template/resource is preserved and is not included in the new runtime
 allowlist.
 
