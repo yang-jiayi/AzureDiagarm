@@ -139,12 +139,11 @@ app.use('/api/diagrams', createDiagramsRouter({
 // Keeps Azure OpenAI credentials server-side so they are never shipped to the
 // browser. Prefers keyless auth via DefaultAzureCredential (managed identity in
 // ACA, `az login` in dev); falls back to AZURE_OPENAI_API_KEY when set.
-const OPENAI_ENDPOINT = deployment.managedModels.sol.endpoint;
+const OPENAI_ENDPOINT = deployment.managedModels.sol.endpoint || deployment.managedModels.astra.endpoint;
 const OPENAI_API_KEY = process.env.AZURE_OPENAI_API_KEY; // optional fallback
+const ASTRA_DEPLOYMENT = deployment.managedModels.astra.deployment;
 const SOL_DEPLOYMENT = deployment.managedModels.sol.deployment;
-const OPUS_DEPLOYMENT = deployment.managedModels.opus.deployment;
-const OPENAI_ALLOWED_DEPLOYMENTS = new Set(SOL_DEPLOYMENT ? [SOL_DEPLOYMENT] : []);
-const FOUNDRY_ALLOWED_DEPLOYMENTS = new Set(OPUS_DEPLOYMENT ? [OPUS_DEPLOYMENT] : []);
+const OPENAI_ALLOWED_DEPLOYMENTS = new Set([ASTRA_DEPLOYMENT, SOL_DEPLOYMENT].filter(Boolean));
 
 // ── Per-client rate limiting ───────────────────────────────────────────────
 // The table-backed limiter shares counters across all Container Apps replicas
@@ -230,10 +229,10 @@ if (_RATE_LIMIT_TABLES_ENDPOINT) {
 const consumeUtilityApiRateLimit = createFixedWindowRateLimiter(60 * 60 * 1000, 120);
 const consumeAdminApiRateLimit = createFixedWindowRateLimiter(60 * 60 * 1000, 30);
 
-if (OPENAI_ALLOWED_DEPLOYMENTS.size === 0) {
-  console.warn('[openai-proxy] GPT-6.1 Sol is unconfigured. Its managed requests return 503.');
+if (!deployment.managedModels.configured) {
+  console.warn('[openai-proxy] GPT-6.2 managed deployments are unconfigured. Managed requests return 503.');
 }
-console.info(`[openai-proxy] Managed AI: GPT-6.1 Sol Responses and Claude Opus 5.5 Messages. BYO connections: ${deployment.allowByoAIEndpoints ? 'enabled' : 'disabled'}.`);
+console.info(`[openai-proxy] Managed AI: GPT-6.2 Astra and GPT-6.2 Sol Responses. BYO connections: ${deployment.allowByoAIEndpoints ? 'enabled' : 'disabled'}.`);
 
 // ── Durable feedback storage ───────────────────────────────────────────────
 // Direct email delivery is preferred for low-cost deployments. Azure Table
@@ -426,10 +425,8 @@ jobSweepTimer.unref();
 
 app.use('/api/openai', createOpenAIProxyRouter({
   endpoint: OPENAI_ENDPOINT,
+  astraDeployment: ASTRA_DEPLOYMENT,
   solDeployment: SOL_DEPLOYMENT,
-  opusDeployment: OPUS_DEPLOYMENT,
-  foundryEndpoint: deployment.managedModels.opus.endpoint,
-  allowedFoundryDeployments: FOUNDRY_ALLOWED_DEPLOYMENTS,
   credential,
   apiKey: OPENAI_API_KEY,
   allowedDeployments: OPENAI_ALLOWED_DEPLOYMENTS,

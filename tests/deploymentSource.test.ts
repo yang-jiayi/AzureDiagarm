@@ -239,10 +239,9 @@ test('new-tenant preflight selects one access store and preserves production run
   const policyPreflight = deploy.indexOf('Verify storage policy exemption before Azure changes');
   assert.ok(policyPreflight > preservation && policyPreflight < extensions);
   assert.match(deploy, /AZURE_TABLES_ACCESS_ENDPOINT: \$\{\{ vars\.AZURE_TABLES_ACCESS_ENDPOINT \}\}/);
-  assert.match(deploy, /AZURE_OPENAI_DEPLOYMENT_GPT61SOL: \$\{\{ vars\.AZURE_OPENAI_DEPLOYMENT_GPT61SOL \}\}/);
-  assert.match(deploy, /AZURE_FOUNDRY_DEPLOYMENT_OPUS55: \$\{\{ vars\.AZURE_FOUNDRY_DEPLOYMENT_OPUS55 \}\}/);
+  assert.match(deploy, /AZURE_OPENAI_DEPLOYMENT_GPT62ASTRA: \$\{\{ vars\.AZURE_OPENAI_DEPLOYMENT_GPT62ASTRA \}\}/);
+  assert.match(deploy, /AZURE_OPENAI_DEPLOYMENT_GPT62SOL: \$\{\{ vars\.AZURE_OPENAI_DEPLOYMENT_GPT62SOL \}\}/);
   assert.match(deploy, /AZURE_OPENAI_RESOURCE_ID: \$\{\{ vars\.AZURE_OPENAI_RESOURCE_ID \}\}/);
-  assert.match(deploy, /AZURE_FOUNDRY_RESOURCE_ID: \$\{\{ vars\.AZURE_FOUNDRY_RESOURCE_ID \}\}/);
   assert.match(deploy, /node scripts\/verify-deployment-preflight\.mjs runtime-config/);
   assert.match(deploy, /node scripts\/verify-deployment-preflight\.mjs preserve-runtime/);
   assert.match(deploy, /node scripts\/verify-deployment-preflight\.mjs no-replica-reduction/);
@@ -418,11 +417,9 @@ for (const scenario of ['invalid-byo-policy', 'model-rejected', 'source-rejected
       const script = `
 set -Eeuo pipefail
 export AZURE_OPENAI_ENDPOINT=https://verified.openai.azure.com/
-export AZURE_OPENAI_DEPLOYMENT_GPT61SOL=sol-prod AZURE_OPENAI_ALLOWED_DEPLOYMENTS=sol-prod
+export AZURE_OPENAI_DEPLOYMENT_GPT62ASTRA=astra-prod AZURE_OPENAI_DEPLOYMENT_GPT62SOL=sol-prod
+export AZURE_OPENAI_ALLOWED_DEPLOYMENTS=astra-prod,sol-prod
 export AZURE_OPENAI_RESOURCE_ID=/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/approved/providers/Microsoft.CognitiveServices/accounts/openai
-export AZURE_FOUNDRY_ENDPOINT=https://verified.services.ai.azure.com/
-export AZURE_FOUNDRY_DEPLOYMENT_OPUS55=opus-prod AZURE_FOUNDRY_ALLOWED_DEPLOYMENTS=opus-prod
-export AZURE_FOUNDRY_RESOURCE_ID=/subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/approved/providers/Microsoft.CognitiveServices/accounts/foundry
 export ALLOW_BYO_AI_ENDPOINTS='${byoFlag}'
 update_args=(--image approved-test-image)
 node() {

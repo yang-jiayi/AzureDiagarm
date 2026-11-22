@@ -4,7 +4,7 @@ import { createRequire } from 'node:module';
 export const BYO_STORAGE_KEY = 'azure-diagrams-byo-ai-settings';
 export const MANAGED_TEST_ENV = {
   VITE_AZURE_OPENAI_ENDPOINT: 'https://offline.openai.azure.com/',
-  VITE_AZURE_OPENAI_DEPLOYMENT_GPT61SOL: 'actual-astra-production-alias',
+  VITE_AZURE_OPENAI_DEPLOYMENT_GPT62SOL: 'actual-astra-production-alias',
 };
 
 type Client = typeof import('../../src/stores/byoAISettingsStore')

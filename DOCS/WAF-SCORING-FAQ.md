@@ -38,9 +38,8 @@ This is a deliberate tradeoff. Two design choices push scores up:
 Users who want a stricter assessment can:
 
 - Adjust the selected managed model's reasoning effort in AI settings while
-  keeping that model. GPT-6.1 Sol supports `low`, `medium`, `high`,
-  `xhigh`, and `max` (not `none`); Claude Opus 5.5 adaptive thinking supports `low`, `medium`,
-  `high`, `xhigh`, and `max` (not `none`).
+  keeping that model. GPT-6.2 Astra and GPT-6.2 Sol both support `low`,
+  `medium`, `high`, `xhigh`, and `max` (not `none`).
 - Review the per-pillar findings list, which surfaces gaps even when the headline score is healthy.
 
 ---
@@ -81,7 +80,7 @@ Source files: [src/data/wafRules.ts](src/data/wafRules.ts) and [src/services/waf
 
 ### Q8. Which AI model produced the score?
 
-It's printed in the validation report footer (for example, `*Powered by GPT-6.1 Sol (medium) and Azure Well-Architected Framework*` or `*Powered by Claude Opus 5.5 (medium) and Azure Well-Architected Framework*`) and recorded in the result's `modelUsed` field. Token counts and latency are captured too, so any score can be traced to a specific model invocation. Historical records retain the model that actually produced them, not the current model setting.
+It's printed in the validation report footer (for example, `*Powered by GPT-6.2 Sol (medium) and Azure Well-Architected Framework*` or `*Powered by GPT-6.2 Astra (medium) and Azure Well-Architected Framework*`) and recorded in the result's `modelUsed` field. Token counts and latency are captured too, so any score can be traced to a specific model invocation. Historical records retain the model that actually produced them, not the current model setting.
 
 ---
 

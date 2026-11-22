@@ -10,13 +10,13 @@ import { awaitWithAISignal, isBYOAIEnabledOnServer, runtimeConfigCancellationErr
 import { fetchAIJob } from './aiJobTransport';
 
 /**
- * Managed Sol Responses, Claude Messages and explicitly selected BYO boundary.
+ * Managed GPT-6.2 Responses and explicitly selected BYO boundary.
  */
 
-export type ApiFormat = 'responses' | 'chat-completions' | 'anthropic-messages';
+export type ApiFormat = 'responses' | 'chat-completions';
 
 function assertApiFormat(apiFormat: unknown): asserts apiFormat is ApiFormat {
-  if (apiFormat !== 'responses' && apiFormat !== 'chat-completions' && apiFormat !== 'anthropic-messages') {
+  if (apiFormat !== 'responses' && apiFormat !== 'chat-completions') {
     throw new AIModelConfigurationError('unsupported_api_format', 'Use a supported API format.');
   }
 }
@@ -29,22 +29,7 @@ export interface BYOAIProxyConfig {
 
 export function getApiFormatLabel(apiFormat: ApiFormat): string {
   assertApiFormat(apiFormat);
-  return apiFormat === 'responses' ? 'Responses' : apiFormat === 'anthropic-messages' ? 'Messages' : 'Chat Completions';
-}
-
-function anthropicContent(content: unknown): any[] {
-  if (typeof content === 'string') return [{ type: 'text', text: content }];
-  if (!Array.isArray(content)) throw new AIModelConfigurationError('invalid_upstream_request', 'Messages require text or inline images.');
-  return content.map(part => {
-    if ((part?.type === 'text' || part?.type === 'input_text') && typeof part.text === 'string') {
-      return { type: 'text', text: part.text };
-    }
-    const image = part?.type === 'input_image' ? part.image_url
-      : part?.type === 'image_url' ? part.image_url?.url : undefined;
-    const match = typeof image === 'string' && /^data:(image\/(?:png|jpeg|gif|webp));base64,([A-Za-z0-9+/]+={0,2})$/.exec(image);
-    if (!match) throw new AIModelConfigurationError('invalid_upstream_request', 'Claude requires inline PNG, JPEG, GIF or WebP images.');
-    return { type: 'image', source: { type: 'base64', media_type: match[1], data: match[2] } };
-  });
+  return apiFormat === 'responses' ? 'Responses' : 'Chat Completions';
 }
 
 function chatMessages(messages: any[]): any[] {
@@ -88,39 +73,6 @@ export function buildRequestBody(params: {
   if (!isReasoningEffort(reasoningEffort)) {
     throw new AIModelConfigurationError('unsupported_reasoning_effort', 'The requested reasoning effort is not supported.');
   }
-  if (apiFormat === 'anthropic-messages') {
-    if (!MODEL_CONFIG['claude-opus-5-5'].supportedReasoningEfforts.some(value => value === reasoningEffort)) {
-      throw new AIModelConfigurationError('unsupported_reasoning_effort', 'Claude Opus 5.5 requires adaptive thinking with low, medium, high, xhigh or max effort.');
-    }
-    const system: any[] = [];
-    const turns: any[] = [];
-    for (const message of messages) {
-      if (message.role === 'system' || message.role === 'developer') {
-        const parts = anthropicContent(message.content);
-        if (parts.some(part => part.type !== 'text')) throw new AIModelConfigurationError('invalid_upstream_request', 'System messages require text.');
-        system.push(...parts);
-      } else if (message.role === 'user' || message.role === 'assistant') {
-        turns.push({ role: message.role, content: anthropicContent(message.content) });
-      } else throw new AIModelConfigurationError('invalid_upstream_request', 'Claude supports user and assistant messages.');
-    }
-    if (!turns.length || turns.at(-1).role !== 'user') {
-      throw new AIModelConfigurationError('invalid_upstream_request', 'Claude requires a final user turn, without assistant prefill.');
-    }
-    // Claude requires closed schemas. Preserve callers' variable JSON shapes
-    // inside one closed transport envelope, then unwrap at the response boundary.
-    if (jsonOutput) system.push({ type: 'text', text: 'Return the requested JSON object encoded as a string in the azureDiagramJson field of the required output schema. Preserve the requested object structure inside that string.' });
-    return {
-      model: deployment, messages: turns, ...(system.length ? { system } : {}),
-      max_tokens: maxTokens, thinking: { type: 'adaptive' },
-      output_config: {
-        effort: reasoningEffort,
-        ...(jsonOutput ? { format: { type: 'json_schema', schema: {
-          type: 'object', properties: { azureDiagramJson: { type: 'string' } },
-          required: ['azureDiagramJson'], additionalProperties: false,
-        } } } : {}),
-      },
-    };
-  }
   if (apiFormat === 'chat-completions') {
     return {
       model: deployment,
@@ -157,28 +109,6 @@ export function parseApiResponse(
   assertApiFormat(apiFormat);
   const tokens = (value: unknown) => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : 0;
   const usage = data?.usage || {};
-  if (apiFormat === 'anthropic-messages') {
-    if (data?.stop_reason !== 'end_turn' && data?.stop_reason !== 'stop_sequence') {
-      throw new AIModelConfigurationError('incomplete_ai_response',
-        data?.stop_reason === 'max_tokens' ? 'The AI output limit was reached before completion. Reduce the request or reasoning effort.'
-          : 'Claude did not return a complete answer. No automatic resubmission was made.');
-    }
-    const promptTokens = tokens(usage.input_tokens) + tokens(usage.cache_creation_input_tokens) + tokens(usage.cache_read_input_tokens);
-    const completionTokens = tokens(usage.output_tokens);
-    let content = Array.isArray(data?.content) ? data.content.filter((part: any) => part?.type === 'text' && typeof part.text === 'string').map((part: any) => part.text).join('') : '';
-    const envelope = parseJson(content);
-    if (envelope && Object.keys(envelope).length === 1 && typeof envelope.azureDiagramJson === 'string') {
-      const object = parseJson(envelope.azureDiagramJson);
-      if (!object || typeof object !== 'object' || Array.isArray(object)) {
-        throw new AIModelConfigurationError('invalid_upstream_response', 'Claude returned invalid JSON content.');
-      }
-      content = envelope.azureDiagramJson;
-    }
-    return {
-      content,
-      promptTokens, completionTokens, totalTokens: promptTokens + completionTokens,
-    };
-  }
   if (apiFormat === 'chat-completions') {
     return {
       content: typeof data?.choices?.[0]?.message?.content === 'string' ? data.choices[0].message.content : '',
@@ -474,7 +404,7 @@ export function proxyErrorMessageForCode(
     case 'edge_request_blocked':
       return 'The request was blocked before it reached the AI provider. Reduce the request size or contact the administrator.';
     case 'deployment_not_allowed':
-      return 'Only configured GPT-6.1 Sol or Claude Opus 5.5 deployments can run.';
+      return 'Only configured GPT-6.2 Astra or GPT-6.2 Sol deployments can run.';
     case 'managed_model_not_configured':
       return 'The selected managed model is not configured. Contact the application administrator.';
     case 'proxy_not_configured':
@@ -659,9 +589,9 @@ export async function callAzureOpenAIProxy(params: {
   }
   if (params.connection) {
     const connection = params.connection;
-    const outputLimit = params.apiFormat === 'anthropic-messages' ? params.body.max_tokens : params.apiFormat === 'responses' ? params.body.max_output_tokens
+    const outputLimit = params.apiFormat === 'responses' ? params.body.max_output_tokens
       : connection.isReasoning ? params.body.max_completion_tokens : params.body.max_tokens;
-    const effort = params.apiFormat === 'anthropic-messages' ? params.body.output_config?.effort : params.apiFormat === 'responses' ? params.body.reasoning?.effort : params.body.reasoning_effort;
+    const effort = params.apiFormat === 'responses' ? params.body.reasoning?.effort : params.body.reasoning_effort;
     if (outputLimit !== connection.maxCompletionTokens
       || (connection.isReasoning ? effort !== connection.reasoningEffort : effort !== undefined)) {
       throw new AIModelConfigurationError('stale_ai_configuration', 'The request must preserve the selected connection’s reasoning and output settings.');

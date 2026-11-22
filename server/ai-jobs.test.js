@@ -10,9 +10,11 @@ const { createBudgetManager, MemoryBudgetStore } = require('./ai-budget');
 const { createAzureBlobBackend } = require('./diagram-api');
 
 const silent = { error() {}, info() {}, warn() {} };
+const astraAlias = 'gpt-6.2-astra';
+const solAlias = 'gpt-6.2-sol';
 const envelope = () => ({
-  apiFormat: 'responses', deployment: 'gpt-6.1-sol',
-  body: { model: 'gpt-6.1-sol', input: 'private test prompt', reasoning: { effort: 'max' }, max_output_tokens: 32000 },
+  apiFormat: 'responses', deployment: solAlias,
+  body: { model: solAlias, input: 'private test prompt', reasoning: { effort: 'max' }, max_output_tokens: 32000 },
 });
 const success = () => new Response(JSON.stringify({ output_text: '{"services":[]}', usage: { total_tokens: 42 } }), {
   headers: { 'Content-Type': 'application/json' },
@@ -44,11 +46,9 @@ async function replica(t, { backend = createMemoryJobBackend(), budget, fetchImp
   });
   app.use('/api/openai', createOpenAIProxyRouter({
     jobs, budget, mode: 'public', logger: silent, allowByoAIEndpoints: true,
-    endpoint: 'https://example.openai.azure.com/', solDeployment: 'gpt-6.1-sol',
-    foundryEndpoint: 'https://example.services.ai.azure.com/', opusDeployment: 'opus-alias',
-    allowedFoundryDeployments: new Set(['opus-alias']),
-    credential: { async getToken() { return { token: 'test-only-opus-token' }; } },
-    allowedDeployments: new Set(['gpt-6.1-sol']), apiKey: 'test-only-managed-key', fetchImpl,
+    endpoint: 'https://example.openai.azure.com/', astraDeployment: astraAlias, solDeployment: solAlias,
+    credential: { async getToken() { return { token: 'test-only-managed-token' }; } },
+    allowedDeployments: new Set([astraAlias, solAlias]), apiKey: 'test-only-managed-key', fetchImpl,
   }));
   const server = await new Promise(resolve => {
     const value = app.listen(0, '127.0.0.1', () => resolve(value));
@@ -72,7 +72,7 @@ async function replica(t, { backend = createMemoryJobBackend(), budget, fetchImp
   return { jobs, backend, budget, request, submit, status };
 }
 
-test('Claude async jobs preserve provider selection, ownership and idempotency across replicas', async t => {
+test('Astra async jobs preserve model selection, ownership and idempotency across replicas', async t => {
   const backend = createMemoryJobBackend();
   const pending = deferred();
   const calls = [];
@@ -83,24 +83,22 @@ test('Claude async jobs preserve provider selection, ownership and idempotency a
   const b = await replica(t, { backend, fetchImpl: () => assert.fail('Retrieval must not resubmit inference') });
   const id = crypto.randomUUID();
   const request = {
-    apiFormat: 'anthropic-messages', deployment: 'opus-alias',
-    body: { model: 'opus-alias', messages: [{ role: 'user', content: 'Private architecture' }],
-      max_tokens: 32000, thinking: { type: 'adaptive' }, output_config: { effort: 'max' } },
+    apiFormat: 'responses', deployment: astraAlias,
+    body: { model: astraAlias, input: 'Private architecture', max_output_tokens: 32000, reasoning: { effort: 'max' } },
   };
   assert.equal((await a.submit(id, request)).status, 202);
   await until(() => b.status(id), value => value.job.status === 'running');
   assert.equal((await b.submit(id, request)).status, 202);
   assert.equal((await b.request(`/jobs/${id}/result`, {}, 'different-owner')).status, 404);
   assert.equal(calls.length, 1);
-  assert.equal(calls[0].url, 'https://example.services.ai.azure.com/anthropic/v1/messages');
-  assert.deepEqual(calls[0].body.output_config, { effort: 'max' });
+  assert.equal(calls[0].url, 'https://example.openai.azure.com/openai/v1/responses');
+  assert.deepEqual(calls[0].body.reasoning, { effort: 'max' });
   pending.resolve(new Response(JSON.stringify({
-    type: 'message', stop_reason: 'end_turn', content: [{ type: 'text', text: '{}' }],
-    usage: { input_tokens: 10, output_tokens: 20, cache_read_input_tokens: 5 },
+    status: 'completed', output_text: '{}', usage: { input_tokens: 10, output_tokens: 20 },
   }), { headers: { 'Content-Type': 'application/json' } }));
   await until(() => b.status(id), value => value.job.status === 'succeeded');
-  assert.equal((await (await b.request(`/jobs/${id}/result`)).json()).stop_reason, 'end_turn');
-  assert.equal((await a.budget.status('owner')).usedTokens, 35);
+  assert.equal((await (await b.request(`/jobs/${id}/result`)).json()).output_text, '{}');
+  assert.equal((await a.budget.status('owner')).usedTokens, 30);
   assert.equal(calls.length, 1);
 });
 
@@ -338,7 +336,8 @@ test('a failed budget renewal stops a long request without an unknown-usage refu
   const settlements = [];
   const execute = createOpenAIExecutor({
     mode: 'public', logger: silent, endpoint: 'https://example.openai.azure.com/',
-    solDeployment: 'gpt-6.1-sol', allowedDeployments: new Set(['gpt-6.1-sol']), apiKey: 'test-only-key',
+    astraDeployment: astraAlias, solDeployment: solAlias,
+    allowedDeployments: new Set([astraAlias, solAlias]), apiKey: 'test-only-key',
     budget: {
       reserve: async () => ({ id: 'lease' }),
       renew: async () => { throw new Error('Lease unavailable'); },

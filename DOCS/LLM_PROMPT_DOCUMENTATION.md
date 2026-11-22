@@ -2,7 +2,7 @@
 
 ## Overview
 
-This document explains the AI/LLM instructions used to generate Azure architecture diagrams from natural language descriptions. Users can select managed **GPT-6.1 Sol** (the default) or **Claude Opus 5.5**, or explicitly select an administrator-enabled BYO connection. Structured prompts and response validation convert requirements into architecture diagrams. All model traffic uses the protected `/api/openai` proxy. Managed keys are never bundled; BYO keys are entered by the user and retained only in tab memory. Managed production release remains subject to procurement, provisioning, and release verification.
+This document explains the AI/LLM instructions used to generate Azure architecture diagrams from natural language descriptions. Users can select managed **GPT-6.2 Sol** (the default) or **GPT-6.2 Astra**, or explicitly select an administrator-enabled BYO connection. Structured prompts and response validation convert requirements into architecture diagrams. All model traffic uses the protected `/api/openai` proxy. Managed credentials are never bundled; BYO keys are entered by the user and retained only in tab memory.
 
 ## Architecture
 
@@ -270,29 +270,25 @@ message queue, and Redis cache
 
 ### Environment Variables
 ```bash
-# Build-time (non-secret): endpoint flags + deployment names. Neither model's
-# credentials are bundled; managed requests are proxied server-side.
+# Build-time (non-secret): endpoint and deployment names. Managed requests are
+# proxied server-side and credentials are never bundled.
 VITE_AZURE_OPENAI_ENDPOINT=https://your-openai.openai.azure.com/
-VITE_AZURE_OPENAI_DEPLOYMENT_GPT61SOL=your-gpt61-sol-deployment
-VITE_AZURE_FOUNDRY_ENDPOINT=https://your-foundry.services.ai.azure.com/anthropic
-VITE_AZURE_FOUNDRY_DEPLOYMENT_OPUS55=your-opus55-deployment
-# Matching server-side runtime configuration (separate provider endpoints):
+VITE_AZURE_OPENAI_DEPLOYMENT_GPT62ASTRA=gpt-6.2-astra
+VITE_AZURE_OPENAI_DEPLOYMENT_GPT62SOL=gpt-6.2-sol
+# Matching server-side runtime configuration:
 AZURE_OPENAI_ENDPOINT=https://your-openai.openai.azure.com/
-AZURE_OPENAI_DEPLOYMENT_GPT61SOL=your-gpt61-sol-deployment
-AZURE_OPENAI_ALLOWED_DEPLOYMENTS=your-gpt61-sol-deployment
-AZURE_FOUNDRY_ENDPOINT=https://your-foundry.services.ai.azure.com/anthropic
-AZURE_FOUNDRY_DEPLOYMENT_OPUS55=your-opus55-deployment
-AZURE_FOUNDRY_ALLOWED_DEPLOYMENTS=your-opus55-deployment
+AZURE_OPENAI_DEPLOYMENT_GPT62ASTRA=gpt-6.2-astra
+AZURE_OPENAI_DEPLOYMENT_GPT62SOL=gpt-6.2-sol
+AZURE_OPENAI_ALLOWED_DEPLOYMENTS=gpt-6.2-astra,gpt-6.2-sol
 # Optional server policy; users enter their own keys in the connection dialog.
 ALLOW_BYO_AI_ENDPOINTS=false
 ```
 
 ### Managed Model API Configuration
-- **Models**: GPT-6.1 Sol via Azure OpenAI Responses; Claude Opus 5.5 via Azure AI Foundry Anthropic Messages
-- **Claude API version**: `2026-10-21`
+- **Models**: GPT-6.2 Astra and GPT-6.2 Sol via Azure OpenAI Responses
 - **Max tokens**: Both models share a 32,000-token output budget, including reasoning/thinking tokens
-- **Response format**: Sol requests a JSON object; Claude returns a strict object envelope containing an `azureDiagramJson` JSON string, which the client unwraps before the same application-level validation rejects malformed or incompatible architecture output
-- **Reasoning**: Sol supports `low`, `medium`, `high`, `xhigh`, and `max` (default `low`; no `none`); Claude uses adaptive thinking at `low`, `medium`, `high`, `xhigh`, or `max` (default `medium`; no `none`)
+- **Response format**: Both models use JSON object output and the same application-level validation
+- **Reasoning**: Both support `low`, `medium`, `high`, `xhigh`, and `max` (default `low`; no `none`)
 - **Model policy**: Select either managed model globally or per feature; no automatic fallback
 
 BYO uses the selected profile's model, Responses/Chat Completions format, and
@@ -340,4 +336,4 @@ Potential improvements to the prompt:
 
 **Version**: 3.0  
 **Last Updated**: November 2026\
-**Managed Models**: GPT-6.1 Sol (default) and Claude Opus 5.5; optional explicitly selected BYO connection
+**Managed Models**: GPT-6.2 Sol (default) and GPT-6.2 Astra; optional explicitly selected BYO connection

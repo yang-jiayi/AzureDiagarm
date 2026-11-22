@@ -34,9 +34,9 @@ function deploymentConfig(env = process.env) {
     if (!env.AZURE_ACCESS_KEY_VAULT_RESOURCE_ID && !env.AZURE_TABLES_ACCESS_ENDPOINT) missing.push('access-list store');
     if (!origin) missing.push('PUBLIC_URL (HTTPS origin without credentials, query or fragment)');
     if (!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(env.FRONT_DOOR_ID || '')) missing.push('FRONT_DOOR_ID');
-    const byoOnly = allowByoAIEndpoints && !managedModels.sol.configured && !managedModels.opus.configured;
+    const byoOnly = allowByoAIEndpoints && !managedModels.configured;
     if (!managedModels.configured && !byoOnly) {
-      missing.push('configured GPT-6.1 Sol and Claude Opus 5.5 endpoints and singleton deployments, or explicit BYO-only mode without managed settings');
+      missing.push('configured GPT-6.2 Astra and GPT-6.2 Sol deployments, or explicit BYO-only mode without managed settings');
     }
     if (String(env.AZURE_IMPORT_ENABLED || '').toLowerCase() === 'true') missing.push('AZURE_IMPORT_ENABLED must be false on public deployments');
     if (missing.length) throw new Error(`Public deployment is not safe to start: ${missing.join(', ')}.`);

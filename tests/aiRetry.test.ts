@@ -94,7 +94,7 @@ for (const code of ['azure_openai_rate_limited', 'byo_rate_limited', 'proxy_rate
   test(`${code} never triggers a compact quality downgrade`, async () => {
     const error = Object.assign(new Error('Rate limit reached.'), { code, status: 429, retryAfterMs: 60_000 });
     const attempts: Array<{ compact: boolean; override?: RuntimeModelOverride }> = [];
-    const requested: RuntimeModelOverride = { model: 'gpt-6.1-sol', reasoningEffort: 'max' };
+    const requested: RuntimeModelOverride = { model: 'gpt-6.2-sol', reasoningEffort: 'max' };
     await assert.rejects(runWithCompactRetry({
       transportFeature: 'architectureGeneration',
       override: requested,
@@ -129,7 +129,7 @@ for (const status of [500, 502]) {
       source: 'azure_openai', code: 'azure_openai_unavailable', status, upstreamStatus: 500, upstreamCode: 'server_error',
     });
     const attempts: Array<{ compact: boolean; override?: RuntimeModelOverride }> = [];
-    const requested: RuntimeModelOverride = { model: 'gpt-6.1-sol', reasoningEffort: 'max' };
+    const requested: RuntimeModelOverride = { model: 'gpt-6.2-sol', reasoningEffort: 'max' };
     await assert.rejects(runWithCompactRetry({
       transportFeature: 'architectureGeneration', override: requested, label: 'Unknown-usage 500',
       attempt: async (compact, override) => { attempts.push({ compact, override }); throw error; },
@@ -148,7 +148,7 @@ test('the user-visible timeout message is recognised', () => {
   assert.equal(isRetryableAIFailure('a string'), false);
 });
 
-const OVERRIDE: RuntimeModelOverride = { model: 'gpt-6.1-sol', reasoningEffort: 'high' };
+const OVERRIDE: RuntimeModelOverride = { model: 'gpt-6.2-sol', reasoningEffort: 'high' };
 
 test('a timeout preserves requested quality and requires an explicit user retry', async () => {
   const calls: Array<{ compact: boolean; override?: RuntimeModelOverride }> = [];

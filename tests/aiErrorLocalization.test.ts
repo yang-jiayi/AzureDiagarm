@@ -38,20 +38,18 @@ const STANDALONE_AI_ERROR_MESSAGES: readonly string[] = [
 ];
 
 const MANAGED_CONFIGURATION_MESSAGES = [
-  'Select managed GPT-6.1 Sol or Claude Opus 5.5.',
-  'Only configured GPT-6.1 Sol or Claude Opus 5.5 deployments can run.',
+  'Select managed GPT-6.2 Astra or GPT-6.2 Sol.',
+  'Only configured GPT-6.2 Astra or GPT-6.2 Sol deployments can run.',
   'The requested reasoning effort is not supported by this model.',
   'The request format must match the selected managed model.',
   'The selected managed model is not configured. Contact the application administrator.',
   'The selected model rejected the image analysis request. Check the image and contact the application administrator if the problem persists.',
-  'Claude Opus 5.5 requires adaptive thinking with low, medium, high, xhigh or max effort.',
   'The AI output limit was reached before completion. Reduce the request or reasoning effort.',
-  'Claude did not return a complete answer. No automatic resubmission was made.',
 ];
 
 const MANAGED_SERVER_MESSAGES = [
   'Custom AI endpoints are not supported.',
-  'Configure the selected model deployment and its identical singleton allowlist.',
+  'Configure both managed model deployments and their exact allowlist.',
   'Only the configured model deployment and matching API format are allowed.',
   'deployment and body.model must explicitly match, without endpoint or credential overrides.',
   'The managed Azure AI endpoint is not configured correctly.',
@@ -63,7 +61,7 @@ const BYO_CONNECTION_MESSAGES = [
   'Enter a whole-number output limit from 1 to 32768 tokens.',
   'Enter a valid API key. Keys stay only in this browser tab memory.',
   'You can save up to 10 AI connection profiles.',
-  'The selected AI connection is missing. Select another profile or managed GPT-6.1 Sol / Claude Opus 5.5.',
+  'The selected AI connection is missing. Select another profile or managed GPT-6.2 Astra / GPT-6.2 Sol.',
   'Enter this profile’s API key and test the connection in this browser tab.',
   'Test this AI connection successfully before using it.',
   'This AI connection failed its test. Check its settings and key, then test again.',
@@ -95,8 +93,8 @@ test('managed configuration errors have exact Japanese entries', () => {
     assert.ok(translated, `Missing Japanese configuration error: ${message}`);
     assert.match(translated, /[\u3040-\u30ff\u4e00-\u9faf]/);
     assert.doesNotMatch(translated, /カスタム.*接続|GPT-5/);
-    if (message.includes('GPT-6.1 Sol')) assert.match(translated, /GPT-6.1 Sol/);
-    if (message.includes('VITE_')) assert.match(translated, /VITE_AZURE_OPENAI_DEPLOYMENT_GPT61SOL/);
+    if (message.includes('GPT-6.2')) assert.match(translated, /GPT-6.2/);
+    if (message.includes('VITE_')) assert.match(translated, /VITE_AZURE_OPENAI_DEPLOYMENT_GPT62/);
   }
 });
 

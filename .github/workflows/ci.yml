@@ -83,9 +83,8 @@ jobs:
         run: |
           docker build \
             --build-arg VITE_AZURE_OPENAI_ENDPOINT=https://container-test.openai.azure.com/ \
-            --build-arg VITE_AZURE_OPENAI_DEPLOYMENT_GPT61SOL=gpt-6.1-sol \
-            --build-arg VITE_AZURE_FOUNDRY_ENDPOINT=https://container-test.services.ai.azure.com/ \
-            --build-arg VITE_AZURE_FOUNDRY_DEPLOYMENT_OPUS55=claude-opus-5-5 \
+            --build-arg VITE_AZURE_OPENAI_DEPLOYMENT_GPT62ASTRA=gpt-6.2-astra \
+            --build-arg VITE_AZURE_OPENAI_DEPLOYMENT_GPT62SOL=gpt-6.2-sol \
             --tag azurediagarm-validation:"${GITHUB_SHA}" .
 
       - name: Start all runtime processes and verify readiness
@@ -98,11 +97,9 @@ jobs:
             --env AI_BUDGET_STORE=memory \
             --env MCP_ENABLED=true \
             --env AZURE_OPENAI_ENDPOINT=https://container-test.openai.azure.com/ \
-            --env AZURE_OPENAI_DEPLOYMENT_GPT61SOL=gpt-6.1-sol \
-            --env AZURE_OPENAI_ALLOWED_DEPLOYMENTS=gpt-6.1-sol \
-            --env AZURE_FOUNDRY_ENDPOINT=https://container-test.services.ai.azure.com/ \
-            --env AZURE_FOUNDRY_DEPLOYMENT_OPUS55=claude-opus-5-5 \
-            --env AZURE_FOUNDRY_ALLOWED_DEPLOYMENTS=claude-opus-5-5 \
+            --env AZURE_OPENAI_DEPLOYMENT_GPT62ASTRA=gpt-6.2-astra \
+            --env AZURE_OPENAI_DEPLOYMENT_GPT62SOL=gpt-6.2-sol \
+            --env AZURE_OPENAI_ALLOWED_DEPLOYMENTS=gpt-6.2-astra,gpt-6.2-sol \
             azurediagarm-validation:"${GITHUB_SHA}")"
           cleanup() {
             status=$?

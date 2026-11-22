@@ -10,7 +10,7 @@ const bundled = await build({
   bundle: true, write: false, platform: 'node', format: 'cjs', logLevel: 'silent',
   define: { 'import.meta.env': JSON.stringify({
     VITE_AZURE_OPENAI_ENDPOINT: 'https://offline.openai.azure.com/',
-    VITE_AZURE_OPENAI_DEPLOYMENT_GPT61SOL: 'gpt-6.1-sol',
+    VITE_AZURE_OPENAI_DEPLOYMENT_GPT62SOL: 'gpt-6.2-sol',
   }) },
 });
 const module = { exports: {} };
@@ -48,7 +48,7 @@ test('parseApiResponse extracts Responses output text and token usage', () => {
 test('format builders and parsers reject unsupported formats', () => {
   for (const apiFormat of ['legacy-responses', '']) {
     assert.throws(() => Reflect.apply(buildRequestBody, undefined, [{
-      deployment: 'gpt-6.1-sol', messages: [{ role: 'user', content: 'Offline request' }],
+      deployment: 'gpt-6.2-sol', messages: [{ role: 'user', content: 'Offline request' }],
       maxTokens: 32000, apiFormat, isReasoning: true, reasoningEffort: 'max',
     }]), { name: 'AIModelConfigurationError', code: 'unsupported_api_format' });
     assert.throws(() => Reflect.apply(parseApiResponse, undefined, [{}, apiFormat]),
@@ -67,12 +67,12 @@ test('Responses-only vision preserves image data, detail, MAX reasoning and 32K 
   ];
   const original = structuredClone(messages);
   const params = {
-    deployment: 'gpt-6.1-sol', messages, maxTokens: 32000,
+    deployment: 'gpt-6.2-sol', messages, maxTokens: 32000,
     isReasoning: true, reasoningEffort: 'max' as const, jsonOutput: false,
   };
   const responses = buildRequestBody({ ...params, apiFormat: 'responses' });
   assert.deepEqual(responses.input, original);
-  assert.equal(responses.model, 'gpt-6.1-sol');
+  assert.equal(responses.model, 'gpt-6.2-sol');
   assert.equal(responses.max_output_tokens, 32000);
   assert.deepEqual(responses.reasoning, { effort: 'max' });
   assert.equal(responses.store, false);
@@ -97,22 +97,22 @@ test('callAzureOpenAIProxy sends only the managed Astra request envelope', async
 
   const result = await callAzureOpenAIProxy({
     apiFormat: 'responses',
-    deployment: 'gpt-6.1-sol',
-    body: { model: 'gpt-6.1-sol', input: [{ role: 'user', content: 'Hello' }] },
+    deployment: 'gpt-6.2-sol',
+    body: { model: 'gpt-6.2-sol', input: [{ role: 'user', content: 'Hello' }] },
   });
 
   assert.equal(result.ok, true);
   assert.equal(requestUrl, '/api/openai');
   assert.deepEqual(sent[0], {
-    apiFormat: 'responses', deployment: 'gpt-6.1-sol',
-    body: { model: 'gpt-6.1-sol', input: [{ role: 'user', content: 'Hello' }] },
+    apiFormat: 'responses', deployment: 'gpt-6.2-sol',
+    body: { model: 'gpt-6.2-sol', input: [{ role: 'user', content: 'Hello' }] },
   });
 });
 
 test('proxy boundary rejects alternate providers, formats and deployments without HTTP', async () => {
   let calls = 0;
   globalThis.fetch = async () => { calls++; throw new Error('Unexpected HTTP'); };
-  const valid = { apiFormat: 'responses' as const, deployment: 'gpt-6.1-sol', body: { model: 'gpt-6.1-sol' } };
+  const valid = { apiFormat: 'responses' as const, deployment: 'gpt-6.2-sol', body: { model: 'gpt-6.2-sol' } };
   for (const invalid of [
     { ...valid, apiFormat: 'chat-completions' },
     { ...valid, apiFormat: 'anthropic-messages' },
@@ -136,8 +136,8 @@ test('callAzureOpenAIProxy rejects misleading non-JSON response media types', as
 
   const result = await callAzureOpenAIProxy({
     apiFormat: 'responses',
-    deployment: 'gpt-6.1-sol',
-    body: { model: 'gpt-6.1-sol', input: [{ role: 'user', content: 'Hello' }] },
+    deployment: 'gpt-6.2-sol',
+    body: { model: 'gpt-6.2-sol', input: [{ role: 'user', content: 'Hello' }] },
   });
 
   assert.equal(result.ok, false);
@@ -149,14 +149,14 @@ test('proxy policy codes produce stable Astra guidance without echoing arbitrary
     [400, 'invalid_api_format', 'The request format must match the selected managed model.'],
     [403, 'byo_not_enabled', 'Bring-your-own AI is disabled by the application administrator.'],
     [503, 'managed_model_not_configured', 'The selected managed model is not configured. Contact the application administrator.'],
-    [403, 'deployment_not_allowed', 'Only configured GPT-6.1 Sol or Claude Opus 5.5 deployments can run.'],
+    [403, 'deployment_not_allowed', 'Only configured GPT-6.2 Astra or GPT-6.2 Sol deployments can run.'],
     [503, 'proxy_not_configured', 'The managed Azure AI endpoint is not configured correctly.'],
   ] as const) {
     globalThis.fetch = async () => new Response(JSON.stringify({
       error: { source: 'proxy', code, message: 'Arbitrary raw diagnostic text', requestId: 'policy-request' },
     }), { status, headers: { 'Content-Type': 'application/json' } });
     const result = await callAzureOpenAIProxy({
-      apiFormat: 'responses', deployment: 'gpt-6.1-sol', body: { model: 'gpt-6.1-sol' },
+      apiFormat: 'responses', deployment: 'gpt-6.2-sol', body: { model: 'gpt-6.2-sol' },
     });
     const error = createOpenAIProxyError(result);
     assert.equal(error.message, `${message} Request ID: policy-request`, code);
@@ -174,7 +174,7 @@ test('unconfigured server Astra returns administrator guidance with configuratio
     error: { source: 'configuration', code: 'managed_model_not_configured', requestId: 'astra-setup' },
   }), { status: 503, headers: { 'Content-Type': 'application/json' } });
   const result = await callAzureOpenAIProxy({
-    apiFormat: 'responses', deployment: 'gpt-6.1-sol', body: { model: 'gpt-6.1-sol' },
+    apiFormat: 'responses', deployment: 'gpt-6.2-sol', body: { model: 'gpt-6.2-sol' },
   });
   const error = createOpenAIProxyError(result);
   assert.equal(error.message, 'The selected managed model is not configured. Contact the application administrator. Request ID: astra-setup');
@@ -215,7 +215,7 @@ test('frozen backend BYO validation codes retain safe guidance and exact error p
       error: { source: 'byo_ai', code, requestId: 'byo-policy-request', message: 'raw-private-provider-detail' },
     }), { status, headers: { 'Content-Type': 'application/json' } });
     const result = await callAzureOpenAIProxy({
-      apiFormat: 'responses', deployment: 'gpt-6.1-sol', body: { model: 'gpt-6.1-sol' },
+      apiFormat: 'responses', deployment: 'gpt-6.2-sol', body: { model: 'gpt-6.2-sol' },
     });
     const error = createOpenAIProxyError(result);
     assert.equal(error.code, code);
@@ -248,7 +248,7 @@ for (const [retryAfter, date, expectedMs] of [
       },
     });
     const result = await callAzureOpenAIProxy({
-      apiFormat: 'responses', deployment: 'gpt-6.1-sol', body: { model: 'gpt-6.1-sol' },
+      apiFormat: 'responses', deployment: 'gpt-6.2-sol', body: { model: 'gpt-6.2-sol' },
     });
     const error = createOpenAIProxyError(result);
     assert.equal(error.retryAfterMs, expectedMs);
@@ -271,7 +271,7 @@ test('an unstructured 429 retains wait guidance and diagnostics rather than a ge
     },
   });
   const error = createOpenAIProxyError(await callAzureOpenAIProxy({
-    apiFormat: 'responses', deployment: 'gpt-6.1-sol', body: { model: 'gpt-6.1-sol' },
+    apiFormat: 'responses', deployment: 'gpt-6.2-sol', body: { model: 'gpt-6.2-sol' },
   }));
   assert.equal(error.code, '429');
   assert.equal(error.source, 'unknown');
@@ -291,7 +291,7 @@ test('millisecond retry headers retain the longest valid provider cooldown', asy
     },
   });
   const result = await callAzureOpenAIProxy({
-    apiFormat: 'responses', deployment: 'gpt-6.1-sol', body: { model: 'gpt-6.1-sol' },
+    apiFormat: 'responses', deployment: 'gpt-6.2-sol', body: { model: 'gpt-6.2-sol' },
   });
   assert.equal(result.error?.retryAfterMs, 1500);
   assert.equal(createOpenAIProxyError(result).retryAfterMs, 1500);
@@ -306,7 +306,7 @@ for (const includeSource of [true, false]) {
       },
     }), { status: 429, headers: { 'Content-Type': 'application/json', 'Retry-After': '5' } });
     const error = createOpenAIProxyError(await callAzureOpenAIProxy({
-      apiFormat: 'responses', deployment: 'gpt-6.1-sol', body: { model: 'gpt-6.1-sol' },
+      apiFormat: 'responses', deployment: 'gpt-6.2-sol', body: { model: 'gpt-6.2-sol' },
     }));
     assert.equal(error.source, 'budget');
     assert.equal(error.code, 'ai_daily_budget_exceeded');

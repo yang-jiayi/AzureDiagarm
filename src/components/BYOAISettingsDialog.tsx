@@ -178,8 +178,8 @@ export default function BYOAISettingsDialog({
         {!serverAllowed && <div className="byo-ai-policy-note">
           <p role="status">{policy.status === 'ready'
           ? text(
-            'BYO testing and activation are disabled by the application administrator. You can still add, edit, and delete inactive profiles. Managed GPT-6.1 Sol / Claude Opus 5.5 remains available if configured.',
-            '管理者が BYO のテストと有効化を無効にしています。プロファイルの追加・編集・非アクティブなプロファイルの削除は可能です。設定済みの場合は管理対象の GPT-6.1 Sol / Claude Opus 5.5 を使用できます。',
+            'BYO testing and activation are disabled by the application administrator. You can still add, edit, and delete inactive profiles. Managed GPT-6.2 Astra / GPT-6.2 Sol remains available if configured.',
+            '管理者が BYO のテストと有効化を無効にしています。プロファイルの追加・編集・非アクティブなプロファイルの削除は可能です。設定済みの場合は管理対象の GPT-6.2 Astra / GPT-6.2 Sol を使用できます。',
           )
           : text(
             'Server policy is not yet available. Profile editing is available, but testing and activation stay blocked until the server confirms permission.',

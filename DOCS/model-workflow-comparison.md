@@ -17,7 +17,7 @@ estimated_reading_time: 8
 
 > Historical benchmark. The model names and measurements below describe the
 > recorded experiment, not the current application. Current managed models are
-> GPT-6.1 Sol (default) and Claude Opus 5.5, with optional explicitly selected
+> GPT-6.2 Sol (default) and GPT-6.2 Astra, with optional explicitly selected
 > BYO connections; see the [current AI model policy](../README.md#ai-model-policy).
 
 This document compares the architecture workflow narrative quality produced by

@@ -3,8 +3,8 @@
 ## Assessment: Leveraging `az prototype` in the Azure Diagram Builder
 
 > Historical integration proposal, not implemented-feature or model-availability
-> documentation. Current managed models are GPT-6.1 Sol (default) and Claude
-> Opus 5.5, with optional explicitly selected BYO connections; see the
+> documentation. Current managed models are GPT-6.2 Sol (default) and GPT-6.2
+> Astra, with optional explicitly selected BYO connections; see the
 > [current AI model policy](../README.md#ai-model-policy).
 
 **Short answer: Yes, absolutely.** These two tools are highly complementary and there are several concrete integration opportunities. Here's my analysis, ordered by impact:

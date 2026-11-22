@@ -109,17 +109,11 @@ export function verifyRuntimeConfiguration(env) {
     'AZURE_TABLES_BUDGET_ENDPOINT',
   );
   const managedModels = policy.managedModelsConfiguration(env);
-  if (
-    managedModels.configured !== true
-    || !managedModels.sol?.configured
-    || !managedModels.opus?.configured
-  ) {
-    throw new Error('Both approved managed model endpoint, deployment, and singleton allowlist settings are required.');
+  if (managedModels.configured !== true || !managedModels.astra?.configured || !managedModels.sol?.configured) {
+    throw new Error('Both GPT-6.2 model deployments and their exact allowlist are required.');
   }
-  for (const name of ['AZURE_OPENAI_RESOURCE_ID', 'AZURE_FOUNDRY_RESOURCE_ID']) {
-    if (!accountResourceIdPattern.test(env[name] || '')) {
-      throw new Error(`${name} must identify the approved Cognitive Services account.`);
-    }
+  if (!accountResourceIdPattern.test(env.AZURE_OPENAI_RESOURCE_ID || '')) {
+    throw new Error('AZURE_OPENAI_RESOURCE_ID must identify the approved OpenAI account.');
   }
   return { accessStore, budgetEndpoint, managedModels };
 }

@@ -19,11 +19,10 @@ param diagramStorageLocation string
 @description('Optional bearer token required on the decoupled MCP server /mcp endpoint. Empty keeps external ingress disabled.')
 param mcpAuthToken string = ''
 
-// Managed model accounts (passed through to container app env; not provisioned here)
+// Managed model account (passed through to container app env; not provisioned here)
 param azureOpenAiEndpoint string
-param azureOpenAiDeploymentGpt61Sol string = ''
-param azureFoundryEndpoint string = ''
-param foundryDeploymentClaudeOpus55 string = ''
+param azureOpenAiDeploymentGpt62Astra string = ''
+param azureOpenAiDeploymentGpt62Sol string = ''
 param allowByoAIEndpoints bool = false
 param feedbackEmailEndpoint string = ''
 param feedbackEmailSender string = ''
@@ -479,11 +478,9 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
             // Identity — lets DefaultAzureCredential pick up the managed identity
             { name: 'AZURE_CLIENT_ID', value: appIdentity.properties.clientId }
             { name: 'AZURE_OPENAI_ENDPOINT', value: azureOpenAiEndpoint }
-            { name: 'AZURE_OPENAI_DEPLOYMENT_GPT61SOL', value: azureOpenAiDeploymentGpt61Sol }
-            { name: 'AZURE_OPENAI_ALLOWED_DEPLOYMENTS', value: azureOpenAiDeploymentGpt61Sol }
-            { name: 'AZURE_FOUNDRY_ENDPOINT', value: azureFoundryEndpoint }
-            { name: 'AZURE_FOUNDRY_DEPLOYMENT_OPUS55', value: foundryDeploymentClaudeOpus55 }
-            { name: 'AZURE_FOUNDRY_ALLOWED_DEPLOYMENTS', value: foundryDeploymentClaudeOpus55 }
+            { name: 'AZURE_OPENAI_DEPLOYMENT_GPT62ASTRA', value: azureOpenAiDeploymentGpt62Astra }
+            { name: 'AZURE_OPENAI_DEPLOYMENT_GPT62SOL', value: azureOpenAiDeploymentGpt62Sol }
+            { name: 'AZURE_OPENAI_ALLOWED_DEPLOYMENTS', value: '${azureOpenAiDeploymentGpt62Astra},${azureOpenAiDeploymentGpt62Sol}' }
             { name: 'ALLOW_BYO_AI_ENDPOINTS', value: string(allowByoAIEndpoints) }
             { name: 'OPENAI_RATE_LIMIT_PER_HOUR', value: '120' }
             { name: 'FEEDBACK_EMAIL_ENDPOINT', value: feedbackEmailEndpoint }

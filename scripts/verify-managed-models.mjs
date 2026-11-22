@@ -3,8 +3,7 @@ import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import policy from '../server/astra-policy.js';
 
-export const APPROVED_GPT61_SOL_VERSION = '2026-09-29';
-export const APPROVED_CLAUDE_OPUS55_VERSION = '2';
+export const APPROVED_GPT62_VERSION = '2026-11-17';
 const ARM_API_VERSION = '2025-06-01';
 const ACCOUNT_ID_RE = /^\/subscriptions\/[a-f0-9-]{36}\/resourceGroups\/[A-Za-z0-9._()-]+\/providers\/Microsoft\.CognitiveServices\/accounts\/[A-Za-z0-9-]+$/i;
 
@@ -32,28 +31,28 @@ export function verifyManagedModels(env, read = (url) => JSON.parse(execFileSync
   'rest', '--method', 'get', '--url', url, '--output', 'json', '--only-show-errors',
 ], { encoding: 'utf8', timeout: 30_000, stdio: ['ignore', 'pipe', 'pipe'] }))) {
   const models = policy.managedModelsConfiguration(env);
-  if (models.configured !== true || !models.sol?.configured || !models.opus?.configured) {
-    throw new Error('Both approved managed model configurations are required; no fallback is permitted.');
+  if (models.configured !== true || !models.astra?.configured || !models.sol?.configured) {
+    throw new Error('Both approved GPT-6.2 managed model configurations are required; no fallback is permitted.');
   }
 
   const entries = [
     {
-      label: 'GPT-6.1 Sol',
+      label: 'GPT-6.2 Astra',
       id: resourceIdFor(env, 'AZURE_OPENAI_RESOURCE_ID'),
-      config: models.sol,
+      config: models.astra,
       expectedFormat: 'OpenAI',
-      expectedName: 'gpt-6.1-sol',
-      expectedVersion: APPROVED_GPT61_SOL_VERSION,
+      expectedName: 'gpt-6.2-astra',
+      expectedVersion: APPROVED_GPT62_VERSION,
       expectedKind: 'OpenAI',
     },
     {
-      label: 'Claude Opus 5.5',
-      id: resourceIdFor(env, 'AZURE_FOUNDRY_RESOURCE_ID'),
-      config: models.opus,
-      expectedFormat: 'Anthropic',
-      expectedName: 'claude-opus-5-5',
-      expectedVersion: APPROVED_CLAUDE_OPUS55_VERSION,
-      expectedKind: 'AIServices',
+      label: 'GPT-6.2 Sol',
+      id: resourceIdFor(env, 'AZURE_OPENAI_RESOURCE_ID'),
+      config: models.sol,
+      expectedFormat: 'OpenAI',
+      expectedName: 'gpt-6.2-sol',
+      expectedVersion: APPROVED_GPT62_VERSION,
+      expectedKind: 'OpenAI',
     },
   ];
 
@@ -87,9 +86,9 @@ export function verifyManagedModels(env, read = (url) => JSON.parse(execFileSync
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
     verifyManagedModels(process.env);
-    console.log('Verified both approved managed model identities and versions through ARM.');
+    console.log('Verified GPT-6.2 Astra and Sol identities and versions through ARM.');
   } catch {
-    console.error('Managed model identity verification failed. Check both resource IDs, endpoint ownership, deployment identities/versions and ARM read permissions; no deployment is permitted.');
+    console.error('Managed model identity verification failed. Check the OpenAI resource ID, endpoint ownership, deployment identities/versions and ARM read permissions; no deployment is permitted.');
     process.exitCode = 1;
   }
 }

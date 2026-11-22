@@ -191,7 +191,7 @@
 }
 :is(body, body.dark-mode) .palette-header { background: var(--azd-color-surface-muted); }
 :is(body, body.dark-mode) :is(.palette-header h2, .icon-palette h2) { color: var(--azd-color-text); border-color: var(--azd-color-border); }
-:is(body, body.dark-mode) :is(.palette-help, .icon-label) { color: var(--azd-color-text-muted); }
+:is(body, body.dark-mode) .palette-help { color: var(--azd-color-text-muted); }
 :is(body, body.dark-mode) .search-box input { background: transparent; color: var(--azd-color-text); }
 :is(body, body.dark-mode) .search-box { border-color: var(--azd-color-control-border); }
 :is(body, body.dark-mode) .icon-item:hover { background: var(--azd-color-surface-hover); border-color: var(--azd-color-accent); }

@@ -11,30 +11,31 @@ const modelSettingsScripts = new Map<string, string>();
 before(async () => {
   const mocks: Record<string, string> = {
     modelSettingsStore: `
-      const settings = {model:'gpt-6.1-sol', reasoningEffort:'low'};
+      const settings = {model:'gpt-6.2-sol', reasoningEffort:'low'};
       export const useModelSettings = () => [window.h.settings ?? settings];
       export const getModelSettings = () => settings;
       export const getModelSettingsForFeature = feature => ({
         ...(window.h.settings ?? settings), ...window.h.settings?.featureOverrides?.[feature],
       });
-      export const getAvailableModels = () => window.h.configured === false ? [] : ['gpt-6.1-sol'];
-      export const isModelType = value => value === 'gpt-6.1-sol' || value === 'claude-opus-5-5';
+      export const getAvailableModels = () => window.h.configured === false ? [] : ['gpt-6.2-astra', 'gpt-6.2-sol'];
+      export const isModelType = value => value === 'gpt-6.2-astra' || value === 'gpt-6.2-sol';
       export const MODEL_CONFIG = {
-        'gpt-6.1-sol': {displayName:'GPT-6.1 Sol', apiFormat:'responses', isReasoning:true, maxCompletionTokens:32000}
+        'gpt-6.2-astra': {displayName:'GPT-6.2 Astra', apiFormat:'responses', isReasoning:true, maxCompletionTokens:32000},
+        'gpt-6.2-sol': {displayName:'GPT-6.2 Sol', apiFormat:'responses', isReasoning:true, maxCompletionTokens:32000}
       };
-      export const FEATURE_CONFIG = {architectureGeneration:{displayName:'Topology',recommendedModel:'gpt-6.1-sol'},blueprint:{displayName:'Blueprint',recommendedModel:'gpt-6.1-sol'}};
+      export const FEATURE_CONFIG = {architectureGeneration:{displayName:'Topology',recommendedModel:'gpt-6.2-sol'},blueprint:{displayName:'Blueprint',recommendedModel:'gpt-6.2-sol'}};
       export class AIModelConfigurationError extends Error {
         constructor(code, message) { super(message); this.name='AIModelConfigurationError'; this.code=code; this.source='client'; this.retryable=false; }
       }
       export const isModelAvailable = () => window.h.configured !== false;
       export const getDeploymentName = () => {
-        if(!isModelAvailable()) throw new AIModelConfigurationError('managed_model_not_configured','GPT-6.1 Sol is not configured.');
-        return 'test-gpt-6.1-sol';
+        if(!isModelAvailable()) throw new AIModelConfigurationError('managed_model_not_configured','GPT-6.2 Sol is not configured.');
+        return 'test-gpt-6.2-sol';
       };
       export const updateFeatureOverride = () => {};
-      export const getSupportedReasoningEfforts = () => ['low','max'];
+      export const getSupportedReasoningEfforts = () => ['low','medium','high','xhigh','max'];
       export const getReasoningEffortLabel = x => x;
-      export const isReasoningEffort = value => ['none','minimal','low','medium','high','xhigh','max'].includes(value);
+      export const isReasoningEffort = value => ['low','medium','high','xhigh','max'].includes(value);
     `,
     LanguageContext: `export const useLanguage = () => ({language:window.h.language ?? 'en',t:x=>x,translate:x=>x});`,
     byoAISettingsStore: `
@@ -56,9 +57,9 @@ before(async () => {
     `,
     aiModelRuntime: `
       export const getEffectiveAIModelInfo = feature => {
-        const settings={model:'gpt-6.1-sol',reasoningEffort:'low',...window.h.settings,
+        const settings={model:'gpt-6.2-sol',reasoningEffort:'low',...window.h.settings,
           ...window.h.settings?.featureOverrides?.[feature]};
-        return window.h.connectionInfo ?? {source:'managed',model:'gpt-6.1-sol',displayName:'GPT-6.1 Sol',
+        return window.h.connectionInfo ?? {source:'managed',model:settings.model,displayName:settings.model==='gpt-6.2-astra'?'GPT-6.2 Astra':'GPT-6.2 Sol',
           reasoningEffort:settings.reasoningEffort,apiFormat:'responses',isReasoning:true,
           supportsVision:true,maxCompletionTokens:32000,ready:window.h.configured!==false,
           ...(window.h.configured===false?{code:'managed_model_not_configured'}:{})};
@@ -66,7 +67,7 @@ before(async () => {
       export const captureRuntimeModelOverride = feature => {
         const info=getEffectiveAIModelInfo(feature);
         if(!info.ready) throw new Error('The selected AI connection is not ready.');
-        return {model:'gpt-6.1-sol',reasoningEffort:info.reasoningEffort,
+        return {model:info.model,reasoningEffort:info.reasoningEffort,
           connection:Object.freeze({...info,feature,revision:window.h.connectionRevision??0})};
       };
       export const assertCapturedAIConnectionCurrent = () => {};
@@ -213,9 +214,10 @@ before(async () => {
     VITE_AZURE_OPENAI_DEPLOYMENT_GPT56LUNA: 'gpt-5.6-luna',
   };
   const environments: Record<string, Record<string, string>> = {
-    dual: { VITE_AZURE_OPENAI_ENDPOINT: 'https://example.openai.azure.com', VITE_AZURE_OPENAI_DEPLOYMENT_GPT61SOL: 'sol-alias',
-      VITE_AZURE_FOUNDRY_ENDPOINT: 'https://example.services.ai.azure.com', VITE_AZURE_FOUNDRY_DEPLOYMENT_OPUS55: 'opus-alias' },
-    astra: { ...legacyDeployments, VITE_AZURE_OPENAI_ENDPOINT: 'https://example.openai.azure.com', VITE_AZURE_OPENAI_DEPLOYMENT_GPT61SOL: 'gpt-6.1-sol' },
+    dual: { VITE_AZURE_OPENAI_ENDPOINT: 'https://example.openai.azure.com',
+      VITE_AZURE_OPENAI_DEPLOYMENT_GPT62ASTRA: 'astra-alias', VITE_AZURE_OPENAI_DEPLOYMENT_GPT62SOL: 'sol-alias' },
+    astra: { ...legacyDeployments, VITE_AZURE_OPENAI_ENDPOINT: 'https://example.openai.azure.com',
+      VITE_AZURE_OPENAI_DEPLOYMENT_GPT62ASTRA: 'astra-alias', VITE_AZURE_OPENAI_DEPLOYMENT_GPT62SOL: 'sol-alias' },
     legacy: { ...legacyDeployments, VITE_AZURE_OPENAI_ENDPOINT: 'https://example.openai.azure.com' },
     none: {},
   };
@@ -523,7 +525,7 @@ for (const parallel of [true, false]) {
 
 const astraMaxBoth = {
   mode: 'both', parallel: true, accepted: true, useRatePolicy: true,
-  settings: { model: 'gpt-6.1-sol', reasoningEffort: 'max' },
+  settings: { model: 'gpt-6.2-sol', reasoningEffort: 'max' },
 };
 
 test('Both/parallel/Astra MAX waits for provider capacity without replaying a completed topology', async t => {
@@ -549,7 +551,7 @@ test('Both/parallel/Astra MAX waits for provider capacity without replaying a co
   });
   assert.deepEqual(state, {
     calls: ['manifest', 'topology', 'blueprint', 'blueprint'],
-    settings: Array.from({ length: 4 }, () => ['gpt-6.1-sol', 'max']),
+    settings: Array.from({ length: 4 }, () => ['gpt-6.2-sol', 'max']),
     applies: 1, blueprints: 1, violations: 0,
   });
 });
@@ -662,7 +664,7 @@ test('cancelling a rate-limited missing-output retry keeps accepted work and ret
     return {
       calls: h.calls.map((call: any) => call.kind), applies: h.applies.length, blueprints: h.blueprints,
       samePrompt: h.calls.filter((call: any) => call.kind === 'blueprint').every((call: any) => call.prompt === h.calls[0].prompt),
-      sameSettings: h.calls.every((call: any) => call.override.model === 'gpt-6.1-sol' && call.override.reasoningEffort === 'max'),
+      sameSettings: h.calls.every((call: any) => call.override.model === 'gpt-6.2-sol' && call.override.reasoningEffort === 'max'),
     };
   }), {
     calls: ['manifest', 'topology', 'blueprint', 'blueprint', 'blueprint'],
@@ -1086,22 +1088,22 @@ const savedBYO = {
 
 test('shared managed connection label remains honest when feature selection differs from the default', async t => {
   const page = await setupModelSettings(t, 'dual', { initialSettings: {
-    model: 'gpt-6.1-sol', reasoningEffort: 'low',
-    featureOverrides: { architectureGeneration: { model: 'claude-opus-5-5', reasoningEffort: 'high' },
-      blueprint: { model: 'gpt-6.1-sol', reasoningEffort: 'none' } },
+    model: 'gpt-6.2-sol', reasoningEffort: 'low',
+    featureOverrides: { architectureGeneration: { model: 'gpt-6.2-astra', reasoningEffort: 'high' },
+      blueprint: { model: 'gpt-6.2-sol', reasoningEffort: 'none' } },
   } });
-  assert.match(await page.locator('.model-popover-label').innerText(), /Claude Opus 5.5/);
+  assert.match(await page.locator('.model-popover-label').innerText(), /GPT-6.2 Astra/);
   const choice = page.getByRole('combobox', { name: 'AI connection', exact: true }).locator('option:checked');
   assert.equal(await choice.innerText(), 'Managed models (per-feature settings)');
-  assert.doesNotMatch(await choice.innerText(), /GPT-6.1 Sol|Claude Opus/);
-  assert.equal(await page.evaluate(() => (window as any).h.getEffectiveAIModelInfo('architectureGeneration').model), 'claude-opus-5-5');
-  assert.equal(await page.evaluate(() => (window as any).h.getEffectiveAIModelInfo('blueprint').model), 'gpt-6.1-sol');
+  assert.doesNotMatch(await choice.innerText(), /GPT-6\.2 Astra|GPT-6\.2 Sol/);
+  assert.equal(await page.evaluate(() => (window as any).h.getEffectiveAIModelInfo('architectureGeneration').model), 'gpt-6.2-astra');
+  assert.equal(await page.evaluate(() => (window as any).h.getEffectiveAIModelInfo('blueprint').model), 'gpt-6.2-sol');
 });
 
 test('unsupported saved Sol None normalizes before per-feature reasoning inheritance', async t => {
   const page = await setupModelSettings(t, 'dual', { initialSettings: {
-    model: 'gpt-6.1-sol', reasoningEffort: 'none',
-    featureOverrides: { blueprint: { model: 'claude-opus-5-5' } },
+    model: 'gpt-6.2-sol', reasoningEffort: 'none',
+    featureOverrides: { blueprint: { model: 'gpt-6.2-astra' } },
   } });
   await openModelGuidance(page);
   const effort = page.getByRole('combobox', { name: 'Blueprint Diagrams - Reasoning effort', exact: true });
@@ -1113,27 +1115,27 @@ test('unsupported saved Sol None normalizes before per-feature reasoning inherit
 });
 
 for (const language of ['en', 'ja'] as const) {
-  test(`dual managed selector keeps Opus and per-feature Sol explicit in ${language}`, async t => {
+  test(`dual managed selector keeps Astra and per-feature Sol explicit in ${language}`, async t => {
     const page = await setupModelSettings(t, 'dual');
     await page.evaluate(language => (window as any).h.setLanguage(language), language);
     await openModelGuidance(page);
     const selector = page.getByRole('combobox', { name: language === 'ja' ? '管理対象モデル' : 'Managed model', exact: true });
-    await selector.selectOption('claude-opus-5-5');
-    assert.equal(await page.evaluate(() => (window as any).h.getModelSettings().model), 'claude-opus-5-5');
-    assert.match(await page.locator('.model-popover-label').innerText(), /Claude Opus 5.5/);
+    await selector.selectOption('gpt-6.2-astra');
+    assert.equal(await page.evaluate(() => (window as any).h.getModelSettings().model), 'gpt-6.2-astra');
+    assert.match(await page.locator('.model-popover-label').innerText(), /GPT-6.2 Astra/);
     assert.equal(await page.getByRole('group', { name: language === 'ja' ? '既定の推論強度' : 'Default reasoning' })
       .getByRole('button', { name: language === 'ja' ? 'なし' : 'None', exact: true }).count(), 0);
     const featureName = language === 'ja' ? 'ブループリント図' : 'Blueprint Diagrams';
-    await page.getByRole('combobox', { name: `${featureName} - ${language === 'ja' ? 'モデル' : 'Model'}`, exact: true }).selectOption('gpt-6.1-sol');
+    await page.getByRole('combobox', { name: `${featureName} - ${language === 'ja' ? 'モデル' : 'Model'}`, exact: true }).selectOption('gpt-6.2-sol');
     const effort = page.getByRole('combobox', { name: `${featureName} - ${language === 'ja' ? '推論強度' : 'Reasoning effort'}`, exact: true });
     assert.equal(await effort.locator('option[value="none"]').count(), 0);
     await effort.selectOption('low');
-    assert.deepEqual(await page.evaluate(() => (window as any).h.getModelSettingsForFeature('blueprint')), { model: 'gpt-6.1-sol', reasoningEffort: 'low' });
+    assert.deepEqual(await page.evaluate(() => (window as any).h.getModelSettingsForFeature('blueprint')), { model: 'gpt-6.2-sol', reasoningEffort: 'low' });
     const captured = await page.evaluate(() => {
       const capture = (window as any).h.captureRuntimeModelOverride('validation');
       return { model: capture.model, deployment: capture.connection.deployment, format: capture.connection.apiFormat };
     });
-    assert.deepEqual(captured, { model: 'claude-opus-5-5', deployment: 'opus-alias', format: 'anthropic-messages' });
+    assert.deepEqual(captured, { model: 'gpt-6.2-astra', deployment: 'astra-alias', format: 'responses' });
     assert.equal(await page.evaluate(() => (window as any).h.requests.length), 0);
   });
 }
@@ -1144,7 +1146,7 @@ for (const profile of ['astra', 'legacy', 'none']) {
         savedSettings: savedLegacySettings, savedBYO,
       });
       await openModelGuidance(page);
-      assert.match(await page.locator('#root').innerText(), /GPT-6.1 Sol/);
+      assert.match(await page.locator('#root').innerText(), /GPT-6.2 Sol/);
       assert.doesNotMatch(await page.locator('#root').innerText(), /GPT-5|alternative model|Compare Models|Compare Validation/i);
       assert.match(await page.locator('#root').innerText(), /customer-owned-model/);
       assert.match(await page.locator('.ai-connection-current').innerText(), /Key required/);
@@ -1155,12 +1157,12 @@ for (const profile of ['astra', 'legacy', 'none']) {
         options.map(option => (option as HTMLOptionElement).value)
       )), ['default', 'low', 'medium', 'high', 'xhigh', 'max']);
       const migrated = {
-        model: 'gpt-6.1-sol', reasoningEffort: 'high',
-        featureOverrides: { blueprint: { model: 'gpt-6.1-sol', reasoningEffort: 'medium' } },
+        model: 'gpt-6.2-sol', reasoningEffort: 'high',
+        featureOverrides: { blueprint: { model: 'gpt-6.2-sol', reasoningEffort: 'medium' } },
       };
       assert.deepEqual(await page.evaluate(() => (window as any).h.getModelSettings()), migrated);
       assert.deepEqual(await page.evaluate(() => JSON.parse(localStorage.getItem('azure-diagrams-model-settings')!)), {
-        version: 5, ...migrated,
+        version: 6, ...migrated,
       });
       const recommended = page.getByRole('button', { name: 'Use recommended reasoning', exact: true });
       if (profile !== 'astra') {
@@ -1174,15 +1176,15 @@ for (const profile of ['astra', 'legacy', 'none']) {
       await page.getByRole('group', { name: 'Default reasoning', exact: true })
         .getByRole('button', { name: 'Max', exact: true }).click();
       assert.deepEqual(await page.evaluate(() => (window as any).h.getModelSettingsForFeature('validation')),
-        { model: 'gpt-6.1-sol', reasoningEffort: 'max' });
+        { model: 'gpt-6.2-sol', reasoningEffort: 'max' });
       assert.deepEqual(await page.evaluate(() => (window as any).h.getModelSettingsForFeature('blueprint')),
-        { model: 'gpt-6.1-sol', reasoningEffort: 'medium' });
+        { model: 'gpt-6.2-sol', reasoningEffort: 'medium' });
       await page.getByRole('combobox', { name: 'Blueprint Diagrams - Reasoning effort', exact: true }).selectOption('default');
       assert.deepEqual(await page.evaluate(() => (window as any).h.getModelSettingsForFeature('blueprint')),
-        { model: 'gpt-6.1-sol', reasoningEffort: 'max' });
+        { model: 'gpt-6.2-sol', reasoningEffort: 'max' });
       await recommended.click();
       assert.deepEqual(await page.evaluate(() => (window as any).h.getModelSettings()), {
-        model: 'gpt-6.1-sol', reasoningEffort: 'low', featureOverrides: {},
+        model: 'gpt-6.2-sol', reasoningEffort: 'low', featureOverrides: {},
       });
     });
 }
@@ -1247,8 +1249,8 @@ for (const language of ['en', 'ja']) {
 test('Both output keeps independent model and reasoning controls', async t => {
   const page = await setup(t, {
     mode: 'both', accepted: true,
-    settings: { model: 'gpt-6.1-sol', reasoningEffort: 'max',
-      featureOverrides: { blueprint: { model: 'gpt-6.1-sol', reasoningEffort: 'low' } } },
+    settings: { model: 'gpt-6.2-sol', reasoningEffort: 'max',
+      featureOverrides: { blueprint: { model: 'gpt-6.2-sol', reasoningEffort: 'low' } } },
   });
   await page.getByRole('button', { name: 'Generate Diagram', exact: true }).click();
   await page.locator('#architecture-description').fill('Add a secure web application');
@@ -1260,9 +1262,9 @@ test('Both output keeps independent model and reasoning controls', async t => {
   assert.deepEqual(await page.evaluate(() => (window as any).h.calls.map((call: any) => ({
     kind: call.kind, model: call.override.model, effort: call.override.reasoningEffort,
   }))), [
-    { kind: 'manifest', model: 'gpt-6.1-sol', effort: 'max' },
-    { kind: 'topology', model: 'gpt-6.1-sol', effort: 'max' },
-    { kind: 'blueprint', model: 'gpt-6.1-sol', effort: 'low' },
+    { kind: 'manifest', model: 'gpt-6.2-sol', effort: 'max' },
+    { kind: 'topology', model: 'gpt-6.2-sol', effort: 'max' },
+    { kind: 'blueprint', model: 'gpt-6.2-sol', effort: 'low' },
   ]);
 });
 

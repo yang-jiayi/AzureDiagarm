@@ -41,7 +41,7 @@ export interface EffectiveAIModelInfo {
   model: string;
   displayName: string;
   profileId?: string;
-  apiFormat: BYOAIAPIFormat | 'anthropic-messages';
+  apiFormat: BYOAIAPIFormat | 'responses';
   isReasoning: boolean;
   supportsVision: boolean;
   maxCompletionTokens: number;
@@ -69,7 +69,7 @@ const STALE_MESSAGE = 'The selected AI connection changed before this request wa
 function configurationError(code: string): AIModelConfigurationError {
   if (code === 'byo_settings_save_failed' || code === 'byo_settings_read_failed') return new BYOAIStorageError(code);
   const messages: Record<string, string> = {
-    byo_profile_missing: 'The selected AI connection is missing. Select another profile or managed GPT-6.1 Sol / Claude Opus 5.5.',
+    byo_profile_missing: 'The selected AI connection is missing. Select another profile or managed GPT-6.2 Astra / GPT-6.2 Sol.',
     byo_key_required: 'Enter this profile’s API key and test the connection in this browser tab.',
     byo_unverified: 'Test this AI connection successfully before using it.',
     byo_test_failed: 'This AI connection failed its test. Check its settings and key, then test again.',
@@ -175,7 +175,7 @@ export function captureRuntimeModelOverride(feature: FeatureType, override?: Run
     deployment: info.source === 'managed' && isModelType(info.model) ? getDeploymentName(info.model) : info.model,
   });
   captures.add(connection);
-  return { ...override, model: isModelType(info.model) ? info.model : 'gpt-6.1-sol', reasoningEffort, connection };
+  return { ...override, model: isModelType(info.model) ? info.model : 'gpt-6.2-sol', reasoningEffort, connection };
 }
 
 /** Rechecked immediately before *each* dispatch, including a throttled retry. */
@@ -219,7 +219,7 @@ export function resolveAIModelRuntime(feature: FeatureType, override?: RuntimeMo
 }
 
 export function isManagedAIModelConfigured(): boolean {
-  return isModelAvailable('gpt-6.1-sol') || isModelAvailable('claude-opus-5-5');
+  return isModelAvailable('gpt-6.2-astra') || isModelAvailable('gpt-6.2-sol');
 }
 
 export function isAnyAIModelConfigured(): boolean {

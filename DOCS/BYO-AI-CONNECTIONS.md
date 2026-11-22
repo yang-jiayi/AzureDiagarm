@@ -1,9 +1,9 @@
 # Bring Your Own AI Connections
 
-The default managed selection is GPT-6.1 Sol; Claude Opus 5.5 is also selectable
-when configured. BYO is a separate, explicit choice for a user's own Azure OpenAI
-or official OpenAI model. It does not reenable retired managed deployments or
-multi-model comparison.
+The default managed selection is GPT-6.2 Sol; GPT-6.2 Astra is also selectable.
+BYO is a separate, explicit choice for a user's own Azure OpenAI or official
+OpenAI model. It does not reenable retired managed deployments or multi-model
+comparison.
 
 ## Administrator Policy
 
@@ -13,12 +13,10 @@ policy to the browser; the proxy enforces it independently on every request.
 Public authentication, same-origin checks, rate limits, and shared AI budgets
 still apply, including to connection tests.
 
-For this production fork, release preflight verifies the exact GPT-6.1 Sol and
-Claude Opus 5.5 identities, versions, account kinds, and endpoint ownership.
-Managed production release remains blocked pending procurement and provisioning;
-this guide does not claim either deployment is live. BYO does not grant access
-to another Azure resource, provision a deployment, increase quotas, or borrow
-the application's managed identity.
+For this production fork, release preflight verifies both exact GPT-6.2
+identities and versions, the shared OpenAI account kind, and endpoint ownership.
+BYO does not grant access to another Azure resource, provision a deployment,
+increase quotas, or borrow the application's managed identity.
 
 ## Connection Profiles
 
@@ -58,7 +56,7 @@ Generation uses [asynchronous jobs](ASYNC-AI-JOBS.md), while connection tests
 remain synchronous. The key is sent only with job submission, not subsequent
 status/result/cancel requests, and is not persisted in job storage.
 
-Choose **managed GPT-6.1 Sol** or **Claude Opus 5.5** explicitly to switch back
+Choose **managed GPT-6.2 Sol** or **GPT-6.2 Astra** explicitly to switch back
 from BYO. A missing key, disabled server policy, invalid profile, or provider
 failure never triggers a managed-model switch automatically.
 

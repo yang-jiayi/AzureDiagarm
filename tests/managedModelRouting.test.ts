@@ -4,17 +4,16 @@ import { jsonResponse, loadBYOClient } from './fixtures/byoClientHarness';
 
 const env = {
   VITE_AZURE_OPENAI_ENDPOINT: 'https://offline.openai.azure.com',
-  VITE_AZURE_OPENAI_DEPLOYMENT_GPT61SOL: 'sol-production-alias',
-  VITE_AZURE_FOUNDRY_ENDPOINT: 'https://offline.services.ai.azure.com',
-  VITE_AZURE_FOUNDRY_DEPLOYMENT_OPUS55: 'opus-production-alias',
+  VITE_AZURE_OPENAI_DEPLOYMENT_GPT62ASTRA: 'astra-production-alias',
+  VITE_AZURE_OPENAI_DEPLOYMENT_GPT62SOL: 'sol-production-alias',
 };
-test('managed Sol rejects unsupported direct efforts before dispatch rather than silently lowering them', async t => {
+test('both managed models reject unsupported direct efforts before dispatch rather than silently lowering them', async t => {
   let calls = 0;
   t.mock.method(globalThis, 'fetch', async () => { calls++; return jsonResponse({}); });
   const { client } = await loadBYOClient(undefined, env);
   for (const effort of ['none', 'minimal'] as const) {
     const body = client.buildRequestBody({
-      apiFormat: 'responses', deployment: env.VITE_AZURE_OPENAI_DEPLOYMENT_GPT61SOL,
+      apiFormat: 'responses', deployment: env.VITE_AZURE_OPENAI_DEPLOYMENT_GPT62SOL,
       messages: [{ role: 'user', content: 'Offline request' }], maxTokens: 32000,
       isReasoning: true, reasoningEffort: effort,
     });
@@ -26,7 +25,7 @@ test('managed Sol rejects unsupported direct efforts before dispatch rather than
   assert.equal(calls, 0);
 });
 
-for (const model of ['gpt-6.1-sol', 'claude-opus-5-5'] as const) {
+for (const model of ['gpt-6.2-astra', 'gpt-6.2-sol'] as const) {
   test(`${model} preserves JSON, vision, metadata and selected limits through every AI feature`, async t => {
     t.mock.method(console, 'log', () => {});
     t.mock.method(console, 'warn', () => {});
@@ -38,14 +37,8 @@ for (const model of ['gpt-6.1-sol', 'claude-opus-5-5'] as const) {
       assert.equal(url, '/api/openai');
       const request = JSON.parse(String(options?.body));
       sent.push(request);
-      if (model === 'gpt-6.1-sol') return jsonResponse({
-        status: 'completed', output_text: content, usage: { input_tokens: 10, output_tokens: 20, total_tokens: 30 },
-      });
       return jsonResponse({
-        type: 'message', stop_reason: 'end_turn', content: [
-          { type: 'thinking', thinking: 'not output' },
-          { type: 'text', text: request.body.output_config.format ? JSON.stringify({ azureDiagramJson: content }) : content },
-        ], usage: { input_tokens: 10, output_tokens: 20, cache_read_input_tokens: 5 },
+        status: 'completed', output_text: content, usage: { input_tokens: 10, output_tokens: 20, total_tokens: 30 },
       });
     });
     const { client } = await loadBYOClient(undefined, env);
@@ -73,39 +66,32 @@ for (const model of ['gpt-6.1-sol', 'claude-opus-5-5'] as const) {
     content = 'An exact image description.';
     const vision = await client.analyzeArchitectureDiagramImage('QUJD', 'image/png', 'en', { modelOverride: top });
     const imageRequest = sent.at(-1);
-    assert.equal(imageRequest.body[model === 'gpt-6.1-sol' ? 'input' : 'messages'][model === 'gpt-6.1-sol' ? 1 : 0].content[1].type,
-      model === 'gpt-6.1-sol' ? 'input_image' : 'image');
+    assert.equal(imageRequest.body.input[1].content[1].type, 'input_image');
     content = '{"suggestions":["Enable private endpoints"]}';
     await client.generateFollowUpSuggestions({ services: ['App Service'], lastChange: 'Added app', recentRequests: [], modelOverride: top });
     assert.equal(sent.length, 9);
     for (const request of sent) {
-      assert.equal(request.deployment, model === 'gpt-6.1-sol' ? env.VITE_AZURE_OPENAI_DEPLOYMENT_GPT61SOL : env.VITE_AZURE_FOUNDRY_DEPLOYMENT_OPUS55);
+      assert.equal(request.deployment, model === 'gpt-6.2-astra' ? env.VITE_AZURE_OPENAI_DEPLOYMENT_GPT62ASTRA : env.VITE_AZURE_OPENAI_DEPLOYMENT_GPT62SOL);
       assert.equal(request.body.model, request.deployment);
-      assert.equal(request.apiFormat, model === 'gpt-6.1-sol' ? 'responses' : 'anthropic-messages');
+      assert.equal(request.apiFormat, 'responses');
       assert.equal(request.byo, undefined);
-      assert.equal(model === 'gpt-6.1-sol' ? request.body.max_output_tokens : request.body.max_tokens, 32000);
-      assert.equal(model === 'gpt-6.1-sol' ? request.body.reasoning.effort : request.body.output_config.effort, 'max');
+      assert.equal(request.body.max_output_tokens, 32000);
+      assert.equal(request.body.reasoning.effort, 'max');
     }
     for (const metrics of [topology.metrics, review.metrics, deploymentGuide.metrics, vision.metrics]) {
       assert.equal(metrics?.source, 'managed');
       assert.equal(metrics?.deployment, sent[0].deployment);
       assert.equal(metrics?.reasoningEffort, 'max');
-      assert.equal(metrics?.totalTokens, model === 'gpt-6.1-sol' ? 30 : 35);
+      assert.equal(metrics?.totalTokens, 30);
     }
   });
 }
 
-test('Claude parsing excludes thinking and rejects truncation, refusal and malformed JSON envelopes', async () => {
+test('managed client rejects unsupported provider-specific formats', async () => {
   const { client } = await loadBYOClient(undefined, env);
-  for (const stop_reason of ['max_tokens', 'refusal', 'tool_use', 'pause_turn']) {
-    assert.throws(() => client.parseApiResponse({ stop_reason, content: [{ type: 'text', text: '{}' }] }, 'anthropic-messages'), { code: 'incomplete_ai_response' });
-  }
-  assert.throws(() => client.parseApiResponse({
-    stop_reason: 'end_turn', content: [{ type: 'text', text: '{"azureDiagramJson":"broken"}' }],
-  }, 'anthropic-messages'), { code: 'invalid_upstream_response' });
+  assert.throws(() => client.parseApiResponse({}, 'anthropic-messages' as never), { code: 'unsupported_api_format' });
   assert.throws(() => client.buildRequestBody({
-    apiFormat: 'anthropic-messages', deployment: 'opus', messages: [{ role: 'user', content: [
-      { type: 'input_image', image_url: 'https://remote.example/image.png' },
-    ] }], reasoningEffort: 'high', isReasoning: true, maxTokens: 32000,
-  }), { code: 'invalid_upstream_request' });
+    apiFormat: 'anthropic-messages' as never, deployment: 'opus', messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'high', isReasoning: true, maxTokens: 32000,
+  }), { code: 'unsupported_api_format' });
 });

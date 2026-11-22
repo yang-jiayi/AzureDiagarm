@@ -17,7 +17,6 @@ const accessEndpoint = 'https://access.table.example.net/';
 const budgetEndpoint = 'https://budget.table.example.net/';
 const keyVaultId = '/subscriptions/sub/resourceGroups/rg/providers/Microsoft.KeyVault/vaults/access';
 const openAiResourceId = '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/ai/providers/Microsoft.CognitiveServices/accounts/openai';
-const foundryResourceId = '/subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/ai/providers/Microsoft.CognitiveServices/accounts/foundry';
 const policySetId = '/providers/Microsoft.Authorization/policySetDefinitions/1f3afdf9-d0c9-4c3d-847f-89da613e70a8';
 const assignmentScope = '/providers/Microsoft.Management/managementGroups/02310481-6752-4d53-8fc4-f597a8e047f4';
 const assignmentId = `${assignmentScope}/providers/Microsoft.Authorization/policyAssignments/Azure_Security_Baseline`;
@@ -33,12 +32,9 @@ const tableRuntime = {
   AZURE_TABLES_BUDGET_ENDPOINT: budgetEndpoint,
   AZURE_OPENAI_ENDPOINT: 'https://example.openai.azure.com/',
   AZURE_OPENAI_RESOURCE_ID: openAiResourceId,
-  AZURE_OPENAI_DEPLOYMENT_GPT61SOL: 'sol-prod',
-  AZURE_OPENAI_ALLOWED_DEPLOYMENTS: 'sol-prod',
-  AZURE_FOUNDRY_ENDPOINT: 'https://example.services.ai.azure.com/',
-  AZURE_FOUNDRY_RESOURCE_ID: foundryResourceId,
-  AZURE_FOUNDRY_DEPLOYMENT_OPUS55: 'opus-prod',
-  AZURE_FOUNDRY_ALLOWED_DEPLOYMENTS: 'opus-prod',
+  AZURE_OPENAI_DEPLOYMENT_GPT62ASTRA: 'astra-prod',
+  AZURE_OPENAI_DEPLOYMENT_GPT62SOL: 'sol-prod',
+  AZURE_OPENAI_ALLOWED_DEPLOYMENTS: 'astra-prod,sol-prod',
 };
 const assignments = [{
   name: 'Azure_Security_Baseline',
@@ -96,19 +92,19 @@ test('requires explicit production runtime settings and bounded numeric budgets'
     accessStore: { type: 'tables', value: accessEndpoint },
     budgetEndpoint,
     managedModels: {
+      astra: {
+        model: 'gpt-6.2-astra',
+        apiFormat: 'responses',
+        configured: true,
+        deployment: 'astra-prod',
+        endpoint: 'https://example.openai.azure.com/',
+      },
       sol: {
-        model: 'gpt-6.1-sol',
+        model: 'gpt-6.2-sol',
         apiFormat: 'responses',
         configured: true,
         deployment: 'sol-prod',
         endpoint: 'https://example.openai.azure.com/',
-      },
-      opus: {
-        model: 'claude-opus-5-5',
-        apiFormat: 'anthropic-messages',
-        configured: true,
-        deployment: 'opus-prod',
-        endpoint: 'https://example.services.ai.azure.com/',
       },
       configured: true,
     },
@@ -127,12 +123,10 @@ test('requires explicit production runtime settings and bounded numeric budgets'
     ['AI_MAX_CONCURRENT_REQUESTS', undefined, /AI_MAX_CONCURRENT_REQUESTS/],
     ['AI_MAX_CONCURRENT_REQUESTS', '9007199254740992', /AI_MAX_CONCURRENT_REQUESTS/],
     ['AZURE_TABLES_BUDGET_ENDPOINT', undefined, /AZURE_TABLES_BUDGET_ENDPOINT/],
-    ['AZURE_OPENAI_DEPLOYMENT_GPT61SOL', undefined, /requires|managed model/i],
-    ['AZURE_OPENAI_ALLOWED_DEPLOYMENTS', 'sol-prod,other', /requires|managed model/i],
-    ['AZURE_FOUNDRY_DEPLOYMENT_OPUS55', undefined, /requires|managed model/i],
-    ['AZURE_FOUNDRY_ALLOWED_DEPLOYMENTS', 'other', /requires|managed model/i],
+    ['AZURE_OPENAI_DEPLOYMENT_GPT62ASTRA', undefined, /require|managed model/i],
+    ['AZURE_OPENAI_DEPLOYMENT_GPT62SOL', undefined, /require|managed model/i],
+    ['AZURE_OPENAI_ALLOWED_DEPLOYMENTS', 'astra-prod,other', /require|managed model/i],
     ['AZURE_OPENAI_RESOURCE_ID', 'invalid', /AZURE_OPENAI_RESOURCE_ID/],
-    ['AZURE_FOUNDRY_RESOURCE_ID', 'invalid', /AZURE_FOUNDRY_RESOURCE_ID/],
   ] as const) {
     const invalid = { ...tableRuntime, [name]: value };
     if (value === undefined) delete invalid[name as keyof typeof invalid];

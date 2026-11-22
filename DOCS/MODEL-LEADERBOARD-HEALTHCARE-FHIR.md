@@ -2,7 +2,7 @@
 
 > Historical benchmark, retained with its original model identities. This is not
 > the current model lineup or a recommendation to enable alternatives. Current
-> managed models are GPT-6.1 Sol (default) and Claude Opus 5.5, with optional
+> managed models are GPT-6.2 Sol (default) and GPT-6.2 Astra, with optional
 > explicitly selected BYO connections; see the
 > [current AI model policy](../README.md#ai-model-policy).
 

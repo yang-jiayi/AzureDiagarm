@@ -7,45 +7,76 @@ const { managedModelsConfiguration, runtimeManagedModelsConfiguration } = requir
 const { createBudgetManager, MemoryBudgetStore } = require('./ai-budget');
 
 const env = {
-  AZURE_OPENAI_ENDPOINT: 'https://sol.openai.azure.com',
-  AZURE_OPENAI_DEPLOYMENT_GPT61SOL: 'sol-alias',
-  AZURE_OPENAI_ALLOWED_DEPLOYMENTS: 'sol-alias',
-  AZURE_FOUNDRY_ENDPOINT: 'https://opus.services.ai.azure.com',
-  AZURE_FOUNDRY_DEPLOYMENT_OPUS55: 'opus-alias',
-  AZURE_FOUNDRY_ALLOWED_DEPLOYMENTS: 'opus-alias',
+  AZURE_OPENAI_ENDPOINT: 'https://models.openai.azure.com',
+  AZURE_OPENAI_DEPLOYMENT_GPT62ASTRA: 'astra-alias',
+  AZURE_OPENAI_DEPLOYMENT_GPT62SOL: 'sol-alias',
+  AZURE_OPENAI_ALLOWED_DEPLOYMENTS: 'astra-alias,sol-alias',
 };
-const envelope = () => ({
-  apiFormat: 'anthropic-messages', deployment: 'opus-alias',
+const baseRequest = (deployment, effort = 'low') => ({
+  apiFormat: 'responses',
+  deployment,
   body: {
-    model: 'opus-alias', system: [{ type: 'text', text: 'Design an architecture' }],
-    messages: [{ role: 'user', content: [{ type: 'text', text: 'JSON please' }, {
-      type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'QUJD' },
-    }] }],
-    max_tokens: 32000, thinking: { type: 'adaptive' }, output_config: { effort: 'max' },
+    model: deployment, input: 'Harmless synthetic request',
+    reasoning: { effort }, max_output_tokens: 32, store: false,
   },
 });
 function executor(overrides = {}) {
   return createOpenAIExecutor({
-    endpoint: env.AZURE_OPENAI_ENDPOINT, solDeployment: 'sol-alias', allowedDeployments: new Set(['sol-alias']),
-    foundryEndpoint: env.AZURE_FOUNDRY_ENDPOINT, opusDeployment: 'opus-alias', allowedFoundryDeployments: new Set(['opus-alias']),
+    endpoint: env.AZURE_OPENAI_ENDPOINT,
+    astraDeployment: 'astra-alias',
+    solDeployment: 'sol-alias',
+    allowedDeployments: new Set(['astra-alias', 'sol-alias']),
     logger: { info() {}, warn() {}, error() {} },
     ...overrides,
   });
 }
-test('model policy requires independent exact routes, never adopts Astra or legacy Claude', () => {
-  assert.equal(managedModelsConfiguration(env).configured, true);
-  const runtime = runtimeManagedModelsConfiguration(managedModelsConfiguration(env));
+
+test('model policy exposes exactly GPT-6.2 Astra and Sol with Sol as the default', () => {
+  const config = managedModelsConfiguration(env);
+  assert.equal(config.configured, true);
+  assert.deepEqual([config.astra.model, config.sol.model], ['gpt-6.2-astra', 'gpt-6.2-sol']);
+  const runtime = runtimeManagedModelsConfiguration(config);
   assert.equal(runtime.ai.models.length, 2);
-  assert.equal(runtime.ai.defaultModel, 'gpt-6.1-sol');
+  assert.equal(runtime.ai.defaultModel, 'gpt-6.2-sol');
   for (const change of [
-    { AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA: 'old-astra' },
-    { AZURE_FOUNDRY_API_KEY: 'do-not-use' },
-    { AZURE_FOUNDRY_ENDPOINT: 'https://other.example.com' },
-    { AZURE_FOUNDRY_ALLOWED_DEPLOYMENTS: 'opus-alias,old-opus' },
-    { AZURE_FOUNDRY_DEPLOYMENT_OPUS55: 'sol-alias', AZURE_FOUNDRY_ALLOWED_DEPLOYMENTS: 'sol-alias' },
+    { AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA: 'legacy-astra' },
+    { AZURE_OPENAI_DEPLOYMENT_GPT61SOL: 'legacy-sol' },
+    { AZURE_FOUNDRY_DEPLOYMENT_OPUS55: 'legacy-opus' },
+    { AZURE_OPENAI_ALLOWED_DEPLOYMENTS: 'astra-alias' },
+    { AZURE_OPENAI_DEPLOYMENT_GPT62SOL: 'astra-alias' },
   ]) assert.throws(() => managedModelsConfiguration({ ...env, ...change }));
 });
-test('Sol rejects unsupported efforts before credentials, budgets or dispatch, while BYO none remains explicit', async () => {
+
+for (const deployment of ['astra-alias', 'sol-alias']) {
+  test(`${deployment} uses the isolated managed Responses route and Entra scope`, async () => {
+    const budget = createBudgetManager({ store: new MemoryBudgetStore(), dailyTokens: 1_000_000 });
+    let captured;
+    const scopes = [];
+    const run = executor({
+      budget,
+      credential: { async getToken(scope) { scopes.push(scope); return { token: 'managed-token' }; } },
+      fetchImpl: async (url, init) => {
+        captured = { url, init, body: JSON.parse(init.body) };
+        return new Response(JSON.stringify({
+          status: 'completed', output_text: 'OK', usage: { input_tokens: 10, output_tokens: 2 },
+        }), { headers: { 'Content-Type': 'application/json' } });
+      },
+    });
+    const result = await run({ body: baseRequest(deployment) });
+    assert.equal(result.status, 200);
+    assert.equal(captured.url, `https://models.openai.azure.com/openai/v1/responses`);
+    assert.deepEqual(scopes, ['https://cognitiveservices.azure.com/.default']);
+    assert.equal(captured.init.headers.Authorization, 'Bearer managed-token');
+    assert.equal(captured.init.headers['api-key'], undefined);
+    assert.equal(captured.body.model, deployment);
+    assert.equal(captured.body.store, false);
+    assert.equal(captured.body.reasoning.effort, 'low');
+    assert.equal(captured.body.max_output_tokens, 32);
+    assert.equal((await budget.status('local-development')).usedTokens, 12);
+  });
+}
+
+test('unsupported managed reasoning is rejected before credentials, budgets or dispatch; BYO semantics stay independent', async () => {
   let touched = false;
   const run = executor({
     allowByoAIEndpoints: true,
@@ -53,14 +84,13 @@ test('Sol rejects unsupported efforts before credentials, budgets or dispatch, w
     budget: { reserve() { touched = true; } },
     fetchImpl() { touched = true; },
   });
-  for (const effort of ['none', 'minimal', 'unexpected']) {
-    const result = await run({ body: {
-      apiFormat: 'responses', deployment: 'sol-alias',
-      body: { model: 'sol-alias', input: 'Offline request', reasoning: { effort }, max_output_tokens: 32 },
-    } });
-    assert.equal(result.status, 400);
-    assert.equal(result.body.error.code, 'invalid_api_format');
-    assert.equal(touched, false);
+  for (const deployment of ['astra-alias', 'sol-alias']) {
+    for (const effort of ['none', 'minimal', 'unexpected']) {
+      const result = await run({ body: baseRequest(deployment, effort) });
+      assert.equal(result.status, 400);
+      assert.equal(result.body.error.code, 'invalid_api_format');
+      assert.equal(touched, false);
+    }
   }
   let sent;
   const byo = executor({
@@ -79,81 +109,4 @@ test('Sol rejects unsupported efforts before credentials, budgets or dispatch, w
   } });
   assert.equal(result.status, 200);
   assert.equal(sent.reasoning.effort, 'none');
-});
-
-test('Claude dispatch is keyless, isolated, bounded and charges cached usage to the common budget', async () => {
-  const budget = createBudgetManager({ store: new MemoryBudgetStore(), dailyTokens: 1_000_000 });
-  let captured;
-  const scopes = [];
-  const run = executor({
-    budget, apiKey: 'sol-only-secret',
-    credential: { async getToken(scope) { scopes.push(scope); return { token: 'opus-token' }; } },
-    fetchImpl: async (url, init) => {
-      captured = { url, init, body: JSON.parse(init.body) };
-      return new Response(JSON.stringify({
-        type: 'message', stop_reason: 'end_turn', content: [{ type: 'thinking', thinking: 'not application text' }, { type: 'text', text: '{}' }],
-        usage: { input_tokens: 10, output_tokens: 20, cache_creation_input_tokens: 30, cache_read_input_tokens: 40 },
-      }), { headers: { 'Content-Type': 'application/json' } });
-    },
-  });
-  const request = envelope();
-  request.body.max_tokens = 99999;
-  const result = await run({ body: request });
-  assert.equal(result.status, 200);
-  assert.equal(captured.url, 'https://opus.services.ai.azure.com/anthropic/v1/messages');
-  assert.deepEqual(scopes, ['https://ai.azure.com/.default']);
-  assert.equal(captured.init.headers.Authorization, 'Bearer opus-token');
-  assert.equal(captured.init.headers['anthropic-version'], '2026-10-21');
-  assert.equal(captured.init.headers['api-key'], undefined);
-  assert.equal(captured.body.store, undefined);
-  assert.equal(captured.body.stream, false);
-  assert.equal(captured.body.max_tokens, 32768);
-  assert.deepEqual(captured.body.messages, request.body.messages);
-  assert.equal((await budget.status('local-development')).usedTokens, 100);
-});
-for (const [label, change] of [
-  ['Sol format with Claude alias', value => { value.apiFormat = 'responses'; }],
-  ['Claude format with Sol alias', value => { value.deployment = value.body.model = 'sol-alias'; }],
-  ['retired Astra alias', value => { value.deployment = value.body.model = 'gpt-6-astra'; }],
-  ['remote image', value => { value.body.messages[0].content[1].source = { type: 'url', url: 'https://example.com/image.png' }; }],
-  ['disabled thinking', value => { value.body.thinking = { type: 'disabled' }; }],
-  ['manual thinking', value => { value.body.thinking = { type: 'enabled', budget_tokens: 100 }; }],
-  ['invalid effort', value => { value.body.output_config.effort = 'none'; }],
-  ['sampling controls', value => { value.body.temperature = 1; }],
-  ['assistant prefill', value => { value.body.messages[0].role = 'assistant'; }],
-  ['tools', value => { value.body.tools = [{ name: 'remote' }]; }],
-  ['endpoint injection', value => { value.body.endpoint = 'https://attacker.example'; }],
-]) {
-  test(`Claude rejects ${label} before credentials, budgets or dispatch`, async () => {
-    let touched = false;
-    const request = envelope();
-    change(request);
-    const run = executor({
-      credential: { getToken() { touched = true; } },
-      budget: { reserve() { touched = true; } },
-      fetchImpl() { touched = true; },
-    });
-    const result = await run({ body: request });
-    assert.ok([400, 403].includes(result.status));
-    assert.equal(touched, false);
-  });
-}
-test('Claude cancellation never dispatches again or refunds unknown usage', async () => {
-  let calls = 0;
-  const budget = createBudgetManager({ store: new MemoryBudgetStore(), dailyTokens: 1_000_000 });
-  const controller = new AbortController();
-  const run = executor({
-    budget, credential: { async getToken() { return { token: 'token' }; } },
-    fetchImpl: async (_url, init) => {
-      calls++;
-      controller.abort(Object.assign(new Error('Cancelled'), { code: 'ai_job_cancelled' }));
-      throw init.signal.reason;
-    },
-  });
-  const result = await run({ body: envelope() }, { signal: controller.signal });
-  assert.equal(result.status, 409);
-  assert.equal(calls, 1);
-  const status = await budget.status('local-development');
-  assert.ok(status.usedTokens > 32000);
-  assert.equal(status.concurrentRequests, 0);
 });

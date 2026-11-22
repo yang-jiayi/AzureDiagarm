@@ -13,18 +13,12 @@ param environmentName string
 @description('Primary Azure region for all resources.')
 param location string
 
-// ── Managed GPT-6.1 Sol and Claude Opus 5.5 accounts ─────────────────────────
-@description('Azure OpenAI endpoint hosting the approved GPT-6.1 Sol deployment.')
+// ── Managed GPT-6.2 Astra and Sol account ──────────────────────────────────
+@description('Azure OpenAI endpoint hosting the approved GPT-6.2 deployments.')
 param azureOpenAiEndpoint string = ''
 
-@description('Full resource ID of the Azure OpenAI account hosting GPT-6.1 Sol.')
+@description('Full resource ID of the Azure OpenAI account hosting GPT-6.2 Astra and Sol.')
 param azureOpenAiResourceId string = ''
-
-@description('Azure AI Foundry endpoint hosting the approved Claude Opus 5.5 deployment.')
-param azureFoundryEndpoint string = ''
-
-@description('Full resource ID of the Azure AI Services account hosting Claude Opus 5.5.')
-param azureFoundryResourceId string = ''
 
 @description('Azure Communication Services endpoint used to deliver feedback email.')
 param feedbackEmailEndpoint string = ''
@@ -68,11 +62,11 @@ param feedbackRetentionDays int = 30
 @description('Explicitly approve retention cleanup of existing pre-expiry feedback after reviewing its impact.')
 param feedbackLegacyRetentionEnabled bool = false
 
-@description('Actual GPT-6.1 Sol deployment name. Configure only after provisioning the approved model.')
-param openAiDeploymentGpt61Sol string = ''
+@description('Actual GPT-6.2 Astra deployment name.')
+param openAiDeploymentGpt62Astra string = ''
 
-@description('Actual Claude Opus 5.5 deployment name. Configure only after provisioning the approved model.')
-param foundryDeploymentClaudeOpus55 string = ''
+@description('Actual GPT-6.2 Sol deployment name.')
+param openAiDeploymentGpt62Sol string = ''
 
 @description('Explicit administrator opt-in for user-key Azure OpenAI or official OpenAI connections. Does not authorize additional managed models.')
 param allowByoAIEndpoints bool = false
@@ -131,9 +125,8 @@ module resources './resources.bicep' = {
     diagramStorageLocation: diagramStorageLocation
     mcpAuthToken: mcpAuthToken
     azureOpenAiEndpoint: azureOpenAiEndpoint
-    azureOpenAiDeploymentGpt61Sol: openAiDeploymentGpt61Sol
-    azureFoundryEndpoint: azureFoundryEndpoint
-    foundryDeploymentClaudeOpus55: foundryDeploymentClaudeOpus55
+    azureOpenAiDeploymentGpt62Astra: openAiDeploymentGpt62Astra
+    azureOpenAiDeploymentGpt62Sol: openAiDeploymentGpt62Sol
     allowByoAIEndpoints: allowByoAIEndpoints
     feedbackEmailEndpoint: feedbackEmailEndpoint
     feedbackEmailSender: feedbackEmailSender
@@ -167,16 +160,6 @@ module openAiRole './openai-role.bicep' = if (!empty(azureOpenAiResourceId)) {
   }
 }
 
-var foundryResourceParts = split(azureFoundryResourceId, '/')
-module foundryRole './foundry-role.bicep' = if (!empty(azureFoundryResourceId)) {
-  name: 'foundry-role'
-  scope: resourceGroup(foundryResourceParts[2], foundryResourceParts[4])
-  params: {
-    accountName: foundryResourceParts[8]
-    principalId: resources.outputs.appIdentityPrincipalId
-  }
-}
-
 // ── Outputs captured by azd ────────────────────────────────────────────────────
 output AZURE_LOCATION string = location
 output AZURE_TENANT_ID string = tenant().tenantId
@@ -201,13 +184,10 @@ output MCP_ENDPOINT string = 'https://${resources.outputs.mcpAppFqdn}/mcp'
 
 // Managed models — non-secret values available for explicitly configured builds.
 output AZURE_OPENAI_ENDPOINT string = azureOpenAiEndpoint
-output AZURE_OPENAI_DEPLOYMENT_GPT61SOL string = openAiDeploymentGpt61Sol
+output AZURE_OPENAI_DEPLOYMENT_GPT62ASTRA string = openAiDeploymentGpt62Astra
+output AZURE_OPENAI_DEPLOYMENT_GPT62SOL string = openAiDeploymentGpt62Sol
 output AZURE_OPENAI_RESOURCE_ID string = azureOpenAiResourceId
-output AZURE_OPENAI_ALLOWED_DEPLOYMENTS string = openAiDeploymentGpt61Sol
-output AZURE_FOUNDRY_ENDPOINT string = azureFoundryEndpoint
-output AZURE_FOUNDRY_DEPLOYMENT_OPUS55 string = foundryDeploymentClaudeOpus55
-output AZURE_FOUNDRY_RESOURCE_ID string = azureFoundryResourceId
-output AZURE_FOUNDRY_ALLOWED_DEPLOYMENTS string = foundryDeploymentClaudeOpus55
+output AZURE_OPENAI_ALLOWED_DEPLOYMENTS string = '${openAiDeploymentGpt62Astra},${openAiDeploymentGpt62Sol}'
 output ALLOW_BYO_AI_ENDPOINTS string = string(allowByoAIEndpoints)
 
 // Speech

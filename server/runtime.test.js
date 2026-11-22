@@ -44,15 +44,15 @@ test('real local server starts without cloud calls and serves budget with no cre
   const runtime = await (await fetch(`${base}/api/runtime-config`)).json();
   assert.equal(runtime.features.bringYourOwnAI, true);
   assert.deepEqual(runtime.ai, {
-    defaultModel: 'gpt-6.1-sol', configured: false,
+    defaultModel: 'gpt-6.2-sol', configured: false,
     models: [
-      { model: 'gpt-6.1-sol', apiFormat: 'responses', deployment: null, configured: false },
-      { model: 'claude-opus-5-5', apiFormat: 'anthropic-messages', deployment: null, configured: false },
+      { model: 'gpt-6.2-astra', apiFormat: 'responses', deployment: null, configured: false },
+      { model: 'gpt-6.2-sol', apiFormat: 'responses', deployment: null, configured: false },
     ],
   });
   const unconfigured = await fetch(`${base}/api/openai`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ apiFormat: 'responses', deployment: 'gpt-6.1-sol', body: { model: 'gpt-6.1-sol', input: 'test' } }),
+    body: JSON.stringify({ apiFormat: 'responses', deployment: 'gpt-6.2-sol', body: { model: 'gpt-6.2-sol', input: 'test' } }),
   });
   assert.equal(unconfigured.status, 503);
   assert.equal((await unconfigured.json()).error.code, 'managed_model_not_configured');

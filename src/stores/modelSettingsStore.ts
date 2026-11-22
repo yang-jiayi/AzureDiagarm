@@ -4,7 +4,7 @@
 import { useState, useEffect, useCallback } from 'react';
 
 /** Execution identifiers only. Historical diagram/review model names are strings. */
-export type ModelType = 'gpt-6.1-sol' | 'claude-opus-5-5';
+export type ModelType = 'gpt-6.2-astra' | 'gpt-6.2-sol';
 export const REASONING_EFFORT_OPTIONS = [
   { value: 'none', label: 'None' },
   { value: 'minimal', label: 'Minimal' },
@@ -15,8 +15,7 @@ export const REASONING_EFFORT_OPTIONS = [
   { value: 'max', label: 'Max' },
 ] as const;
 export type ReasoningEffort = (typeof REASONING_EFFORT_OPTIONS)[number]['value'];
-const SOL_REASONING_EFFORTS = Object.freeze(['low', 'medium', 'high', 'xhigh', 'max'] as const);
-const OPUS_REASONING_EFFORTS = Object.freeze(['low', 'medium', 'high', 'xhigh', 'max'] as const);
+const GPT62_REASONING_EFFORTS = Object.freeze(['low', 'medium', 'high', 'xhigh', 'max'] as const);
 
 export type FeatureType = 'architectureGeneration' | 'validation' | 'deploymentGuide' | 'blueprint';
 export interface FeatureModelOverride {
@@ -30,7 +29,7 @@ export interface ModelSettings {
 }
 
 const STORAGE_KEY = 'azure-diagrams-model-settings';
-const STORAGE_VERSION = 5;
+const STORAGE_VERSION = 6;
 
 export class AIModelConfigurationError extends Error {
   readonly source = 'client';
@@ -43,12 +42,18 @@ export class AIModelConfigurationError extends Error {
 }
 
 export function isModelType(value: unknown): value is ModelType {
-  return value === 'gpt-6.1-sol' || value === 'claude-opus-5-5';
+  return value === 'gpt-6.2-astra' || value === 'gpt-6.2-sol';
+}
+
+function migrateModelType(value: unknown): ModelType {
+  if (isModelType(value)) return value;
+  if (value === 'gpt-6-astra') return 'gpt-6.2-astra';
+  return 'gpt-6.2-sol';
 }
 
 export function assertSupportedModel(value: unknown): asserts value is ModelType {
   if (!isModelType(value)) {
-    throw new AIModelConfigurationError('unsupported_ai_model', 'Select managed GPT-6.1 Sol or Claude Opus 5.5.');
+    throw new AIModelConfigurationError('unsupported_ai_model', 'Select managed GPT-6.2 Astra or GPT-6.2 Sol.');
   }
 }
 
@@ -60,45 +65,45 @@ export const FEATURE_CONFIG: Readonly<Record<FeatureType, {
 }>> = {
   architectureGeneration: {
     displayName: 'Architecture Generation', description: 'Creating Azure architecture diagrams',
-    recommendedModel: 'gpt-6.1-sol', recommendedReasoning: 'low',
+    recommendedModel: 'gpt-6.2-sol', recommendedReasoning: 'low',
   },
   validation: {
     displayName: 'Architecture Validation', description: 'WAF validation and security analysis',
-    recommendedModel: 'gpt-6.1-sol', recommendedReasoning: 'low',
+    recommendedModel: 'gpt-6.2-sol', recommendedReasoning: 'low',
   },
   deploymentGuide: {
     displayName: 'Deployment Guide & Bicep', description: 'Generating deployment guides and IaC templates',
-    recommendedModel: 'gpt-6.1-sol', recommendedReasoning: 'low',
+    recommendedModel: 'gpt-6.2-sol', recommendedReasoning: 'low',
   },
   blueprint: {
     displayName: 'Blueprint Diagrams', description: 'Whiteboard-style blueprint sketches',
-    recommendedModel: 'gpt-6.1-sol', recommendedReasoning: 'low',
+    recommendedModel: 'gpt-6.2-sol', recommendedReasoning: 'low',
   },
 };
 
 export const MODEL_CONFIG = Object.freeze({
-  'gpt-6.1-sol': Object.freeze({
-    displayName: 'GPT-6.1 Sol',
-    deploymentEnvVar: 'VITE_AZURE_OPENAI_DEPLOYMENT_GPT61SOL',
+  'gpt-6.2-astra': Object.freeze({
+    displayName: 'GPT-6.2 Astra',
+    deploymentEnvVar: 'VITE_AZURE_OPENAI_DEPLOYMENT_GPT62ASTRA',
+    isReasoning: true,
+    maxCompletionTokens: 32000,
+    description: 'Azure OpenAI model for architecture design, validation, and deployment guidance',
+    recommendedUse: 'Selectable for all AI features',
+    defaultReasoningEffort: 'low',
+    supportedReasoningEfforts: GPT62_REASONING_EFFORTS,
+    apiFormat: 'responses',
+    supportsVision: true,
+  } as const),
+  'gpt-6.2-sol': Object.freeze({
+    displayName: 'GPT-6.2 Sol',
+    deploymentEnvVar: 'VITE_AZURE_OPENAI_DEPLOYMENT_GPT62SOL',
     isReasoning: true,
     maxCompletionTokens: 32000,
     description: 'Azure OpenAI model for architecture design, validation, and deployment guidance',
     recommendedUse: 'Default for all AI features',
     defaultReasoningEffort: 'low',
-    supportedReasoningEfforts: SOL_REASONING_EFFORTS,
+    supportedReasoningEfforts: GPT62_REASONING_EFFORTS,
     apiFormat: 'responses',
-    supportsVision: true,
-  } as const),
-  'claude-opus-5-5': Object.freeze({
-    displayName: 'Claude Opus 5.5',
-    deploymentEnvVar: 'VITE_AZURE_FOUNDRY_DEPLOYMENT_OPUS55',
-    isReasoning: true,
-    maxCompletionTokens: 32000,
-    description: 'Azure-hosted Claude with adaptive thinking for architecture and image analysis',
-    recommendedUse: 'Selectable for all AI features',
-    defaultReasoningEffort: 'medium',
-    supportedReasoningEfforts: OPUS_REASONING_EFFORTS,
-    apiFormat: 'anthropic-messages',
     supportsVision: true,
   } as const),
 });
@@ -133,7 +138,7 @@ function normalizeFeatureOverrides(value: unknown, migrate = false): Partial<Rec
     const raw = value[feature];
     if (!record(raw)) continue;
     if (!migrate) assertSupportedModel(raw.model);
-    const model = isModelType(raw.model) ? raw.model : 'gpt-6.1-sol';
+    const model = migrate ? migrateModelType(raw.model) : raw.model as ModelType;
     normalized[feature] = {
       model,
       ...(raw.reasoningEffort === undefined ? {} : {
@@ -146,15 +151,15 @@ function normalizeFeatureOverrides(value: unknown, migrate = false): Partial<Rec
 
 /** Keep literal env access: computed keys would expose unrelated VITE values. */
 export function getDeploymentNames(): Record<ModelType, string | undefined> {
+  let astra: string | undefined;
   let sol: string | undefined;
-  let opus: string | undefined;
   try {
-    sol = import.meta.env.VITE_AZURE_OPENAI_DEPLOYMENT_GPT61SOL;
-    opus = import.meta.env.VITE_AZURE_FOUNDRY_DEPLOYMENT_OPUS55;
+    astra = import.meta.env.VITE_AZURE_OPENAI_DEPLOYMENT_GPT62ASTRA;
+    sol = import.meta.env.VITE_AZURE_OPENAI_DEPLOYMENT_GPT62SOL;
   } catch {
     // Non-Vite consumers have no import.meta.env; availability stays closed.
   }
-  return { 'gpt-6.1-sol': sol?.trim() || undefined, 'claude-opus-5-5': opus?.trim() || undefined };
+  return { 'gpt-6.2-astra': astra?.trim() || undefined, 'gpt-6.2-sol': sol?.trim() || undefined };
 }
 
 export function getDeploymentName(model: ModelType): string {
@@ -172,9 +177,7 @@ export function getDeploymentName(model: ModelType): string {
 export function isModelAvailable(model: ModelType): boolean {
   if (!isModelType(model)) return false;
   try {
-    const endpoint = model === 'gpt-6.1-sol'
-      ? import.meta.env.VITE_AZURE_OPENAI_ENDPOINT : import.meta.env.VITE_AZURE_FOUNDRY_ENDPOINT;
-    return Boolean(endpoint?.trim()) && Boolean(getDeploymentNames()[model]);
+    return Boolean(import.meta.env.VITE_AZURE_OPENAI_ENDPOINT?.trim()) && Boolean(getDeploymentNames()[model]);
   } catch {
     return false;
   }
@@ -185,7 +188,7 @@ export function getAvailableModels(): ModelType[] {
 }
 
 export function getRecommendedModelSettings(): ModelSettings {
-  return { model: 'gpt-6.1-sol', reasoningEffort: 'low', featureOverrides: {} };
+  return { model: 'gpt-6.2-sol', reasoningEffort: 'low', featureOverrides: {} };
 }
 
 function saveSettings(settings: ModelSettings): void {
@@ -207,7 +210,7 @@ function loadSettings(): ModelSettings {
       if (record(parsed)) {
         // Storage is preference migration, never authority for execution.
         // Retired execution preferences migrate, historical diagrams do not.
-        const model = isModelType(parsed.model) ? parsed.model : 'gpt-6.1-sol';
+        const model = migrateModelType(parsed.model);
         const settings: ModelSettings = {
           model,
           reasoningEffort: normalizeReasoningEffort(model, parsed.reasoningEffort),

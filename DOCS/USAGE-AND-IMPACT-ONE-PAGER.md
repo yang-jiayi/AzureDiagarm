@@ -2,7 +2,7 @@
 
 > Historical usage snapshot. These figures and model names are preserved as
 > recorded evidence, not current usage or enabled-model configuration. Current
-> managed models are GPT-6.1 Sol (default) and Claude Opus 5.5, with optional
+> managed models are GPT-6.2 Sol (default) and GPT-6.2 Astra, with optional
 > explicitly selected BYO connections; see the
 > [current AI model policy](../README.md#ai-model-policy).
 

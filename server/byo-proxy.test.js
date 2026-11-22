@@ -10,6 +10,7 @@ const { createAccessControlRouter } = require('./access-control');
 
 const userKey = 'user-only-test-key';
 const managedAlias = 'approved-astra';
+const solAlias = 'approved-sol';
 const managedEndpoint = 'https://managed.openai.azure.com/';
 const customEndpoint = 'https://custom.openai.azure.com';
 const customModel = 'custom-model:version-1';
@@ -62,7 +63,7 @@ test('explicitly opted-in BYO works with no managed configuration or credential'
   assert.equal(response.status, 200);
   await response.text();
   assert.equal((await budget.status('local-development')).usedTokens, 8);
-  const managed = await post(request({ byo: undefined, deployment: 'gpt-6.1-sol' }));
+  const managed = await post(request({ byo: undefined, deployment: 'gpt-6.2-sol' }));
   assert.equal(managed.status, 503);
   assert.equal((await managed.json()).error.code, 'managed_model_not_configured');
 });
@@ -86,7 +87,8 @@ for (const provider of ['azure-openai', 'openai']) {
       let captured;
       let acquired = 0;
       const post = await startServer(t, {
-        endpoint: managedEndpoint, solDeployment: managedAlias, allowedDeployments: new Set([managedAlias]),
+        endpoint: managedEndpoint, astraDeployment: managedAlias, solDeployment: solAlias,
+        allowedDeployments: new Set([managedAlias, solAlias]),
         apiKey: 'server-only-test-key', credential: { getToken() { acquired++; } }, budget,
         fetchImpl: async (url, init) => {
           captured = { url, init };
@@ -133,7 +135,8 @@ for (const flag of [undefined, false, 'true', 'false', 'TRUE', 1, null]) {
     const touched = [];
     const post = await startServer(t, {
       allowByoAIEndpoints: flag,
-      endpoint: managedEndpoint, solDeployment: managedAlias, allowedDeployments: new Set([managedAlias]),
+      endpoint: managedEndpoint, astraDeployment: managedAlias, solDeployment: solAlias,
+      allowedDeployments: new Set([managedAlias, solAlias]),
       credential: { getToken() { touched.push('credential'); } },
       consumeRateLimit() { touched.push('rate'); },
       budget: { reserve() { touched.push('budget'); } },
@@ -177,7 +180,8 @@ for (const [label, overrides, code] of invalidCases) {
   test(`invalid BYO ${label} fails before rate, credentials, reservation or upstream without managed fallthrough`, async t => {
     const touched = [];
     const post = await startServer(t, {
-      endpoint: managedEndpoint, solDeployment: managedAlias, allowedDeployments: new Set([managedAlias]),
+      endpoint: managedEndpoint, astraDeployment: managedAlias, solDeployment: solAlias,
+      allowedDeployments: new Set([managedAlias, solAlias]),
       apiKey: 'server-only-test-key',
       credential: { getToken() { touched.push('credential'); } },
       consumeRateLimit() { touched.push('rate'); },
@@ -232,7 +236,7 @@ test('providers cannot reinterpret each other’s endpoint', () => {
 for (const options of [
   { endpoint: managedEndpoint }, { solDeployment: managedAlias },
   { allowedDeployments: new Set(['gpt-5.6-sol']) }, { apiKey: 'orphan-server-key' },
-  { endpoint: 'https://api.openai.com', solDeployment: managedAlias, allowedDeployments: new Set([managedAlias]) },
+  { endpoint: 'https://api.openai.com', astraDeployment: managedAlias, solDeployment: solAlias, allowedDeployments: new Set([managedAlias, solAlias]) },
 ]) {
   test('opting into BYO does not hide partial or invalid managed configuration', async t => {
     const post = await startServer(t, options);
@@ -289,7 +293,8 @@ test('managed generation and a BYO connection probe share the same identity conc
   const budget = manager({ concurrency: 1 });
   const lease = await budget.reserve('local-development', 100);
   const post = await startServer(t, {
-    budget, endpoint: managedEndpoint, solDeployment: managedAlias, allowedDeployments: new Set([managedAlias]),
+    budget, endpoint: managedEndpoint, astraDeployment: managedAlias, solDeployment: solAlias,
+    allowedDeployments: new Set([managedAlias, solAlias]),
   });
   const response = await post();
   assert.equal(response.status, 429);

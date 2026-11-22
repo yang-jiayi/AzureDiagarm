@@ -237,8 +237,8 @@ so users always have the path to a more authoritative review.
 
 For any validation run, the app captures:
 
-- The exact AI model used (e.g., `GPT-6.1 Sol (medium)` or
-  `Claude Opus 5.5 (medium)`), shown in the report footer.
+- The exact AI model used (e.g., `GPT-6.2 Sol (medium)` or
+  `GPT-6.2 Astra (medium)`), shown in the report footer.
 - Token counts (prompt / completion / total) and elapsed time.
 - `hybridMetadata` attached to the validation result:
   - `localFindings` — number of Phase 1 findings.
@@ -247,7 +247,7 @@ For any validation run, the app captures:
   - `preliminaryScore` — the deterministic score before LLM refinement.
   - `kbRulesUsed` — size of the rule knowledge base.
 
-Managed GPT-6.1 Sol (the default) and Claude Opus 5.5 can each be selected
+Managed GPT-6.2 Sol (the default) and GPT-6.2 Astra can each be selected
 explicitly; an administrator-enabled BYO profile is also available. Reviewers
 can retain reports from repeated reviews of the same diagram, connection, model,
 and reasoning setting to inspect variance. Historical records keep their

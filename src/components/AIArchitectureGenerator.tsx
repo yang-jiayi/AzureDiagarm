@@ -953,7 +953,7 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
           <span className="ai-modal-model-label">{translate(FEATURE_CONFIG[feature].displayName)}</span>
           <strong>{connection.displayName}</strong>
           <span>{t('Reasoning:')} {t(getReasoningEffortLabel(connection.isReasoning ? connection.reasoningEffort : 'none'))}
-            {' · '}{connection.apiFormat === 'responses' ? 'Responses' : connection.apiFormat === 'anthropic-messages' ? 'Messages' : 'Chat Completions'}
+            {' · '}{connection.apiFormat === 'responses' ? 'Responses' : 'Chat Completions'}
             {' · '}{localize(language, { en: 'Output limit', ja: '出力上限' })}: {connection.maxCompletionTokens.toLocaleString()}
           </span>
         </div>

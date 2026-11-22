@@ -38,6 +38,10 @@ const deployScript = readFileSync(
   new URL('../scripts/deploy_aca.sh', import.meta.url),
   'utf8',
 );
+const retiredAIEnvironment = readFileSync(
+  new URL('../scripts/retired-ai-environment.mjs', import.meta.url),
+  'utf8',
+);
 
 test('deployment notifications use OIDC instead of a Communication Services secret', () => {
   assert.doesNotMatch(workflow, /AZURE_COMMUNICATION_CONNECTION_STRING/);
@@ -310,10 +314,9 @@ test('custom AI is an explicit administrator opt-in alongside both managed model
   assert.match(feedbackServer, /runtimeManagedModelsConfiguration\(deployment\.managedModels, deployment\.allowByoAIEndpoints\)/);
   assert.match(resourcesBicep, /param allowByoAIEndpoints bool = false/);
   assert.match(resourcesBicep, /name: 'ALLOW_BYO_AI_ENDPOINTS', value: string\(allowByoAIEndpoints\)/);
-  assert.match(resourcesBicep, /name: 'AZURE_OPENAI_DEPLOYMENT_GPT61SOL'/);
-  assert.match(resourcesBicep, /name: 'AZURE_FOUNDRY_DEPLOYMENT_OPUS55'/);
-  assert.match(workflow, /vars\.AZURE_FOUNDRY_ENDPOINT/);
-  assert.match(workflow, /vars\.AZURE_FOUNDRY_DEPLOYMENT_OPUS55/);
+  assert.match(resourcesBicep, /name: 'AZURE_OPENAI_DEPLOYMENT_GPT62ASTRA'/);
+  assert.match(resourcesBicep, /name: 'AZURE_OPENAI_DEPLOYMENT_GPT62SOL'/);
+  assert.doesNotMatch(workflow, /vars\.AZURE_FOUNDRY_/);
   assert.match(workflow, /ALLOW_BYO_AI_ENDPOINTS: \$\{\{ vars\.ALLOW_BYO_AI_ENDPOINTS \}\}/);
   assert.doesNotMatch(workflow, /ALLOW_BYO_AI_ENDPOINTS:\s*\$\{\{\s*vars\.ALLOW_BYO_AI_ENDPOINTS\s*\|\|/);
   assert.match(workflow, /node scripts\/verify-deployment-preflight\.mjs runtime-config/);
@@ -322,20 +325,20 @@ test('custom AI is an explicit administrator opt-in alongside both managed model
   assert.match(workflow, /echo "allow_byo_ai_endpoints=\$ALLOW_BYO_AI_ENDPOINTS" >> "\$GITHUB_OUTPUT"/);
   assert.match(workflow, /node scripts\/retired-ai-environment\.mjs/);
   assert.match(deployScript, /scripts\/retired-ai-environment\.mjs/);
-  assert.match(workflow, /AZURE_OPENAI_ENDPOINT AZURE_OPENAI_DEPLOYMENT_GPT61SOL AZURE_OPENAI_RESOURCE_ID/);
-  assert.match(workflow, /AZURE_FOUNDRY_ENDPOINT AZURE_FOUNDRY_DEPLOYMENT_OPUS55 AZURE_FOUNDRY_RESOURCE_ID/);
+  assert.match(workflow, /AZURE_OPENAI_ENDPOINT AZURE_OPENAI_DEPLOYMENT_GPT62ASTRA AZURE_OPENAI_DEPLOYMENT_GPT62SOL AZURE_OPENAI_RESOURCE_ID/);
+  assert.match(retiredAIEnvironment, /AZURE_FOUNDRY_DEPLOYMENT_OPUS55/);
+  assert.match(retiredAIEnvironment, /AZURE_OPENAI_DEPLOYMENT_GPT61SOL/);
 });
 
 test('container model build arguments contain both public routing tuples and no credentials', () => {
   const allowed = [
     'VITE_AZURE_OPENAI_ENDPOINT',
-    'VITE_AZURE_OPENAI_DEPLOYMENT_GPT61SOL',
-    'VITE_AZURE_FOUNDRY_ENDPOINT',
-    'VITE_AZURE_FOUNDRY_DEPLOYMENT_OPUS55',
+    'VITE_AZURE_OPENAI_DEPLOYMENT_GPT62ASTRA',
+    'VITE_AZURE_OPENAI_DEPLOYMENT_GPT62SOL',
   ];
   for (const instruction of ['ARG', 'ENV']) {
     const declared = Array.from(dockerfile.matchAll(
-      new RegExp(`^${instruction} (VITE_(?:AZURE_OPENAI|AZURE_FOUNDRY)_[A-Z0-9_]+)`, 'gm'),
+      new RegExp(`^${instruction} (VITE_AZURE_OPENAI_[A-Z0-9_]+)`, 'gm'),
     ), match => match[1]);
     assert.deepEqual(declared, allowed, `${instruction} must not reintroduce another model or credentials`);
   }
@@ -347,9 +350,9 @@ test('the maintained cloud script checks both model identities before build and 
   assert.equal(modelChecks.length, 2);
   assert.ok(modelChecks[0].index! < deployScript.indexOf('\naz acr build '));
   assert.match(deployScript, /node "\$SOURCE_DIR\/scripts\/verify-managed-models\.mjs"\r?\naz containerapp update/);
-  assert.match(deployScript, /AZURE_OPENAI_ALLOWED_DEPLOYMENTS:\?Set the singleton GPT-6\.1 Sol deployment allowlist/);
+  assert.match(deployScript, /AZURE_OPENAI_ALLOWED_DEPLOYMENTS must list exactly the two GPT-6\.2 deployments/);
   assert.match(deployScript, /retired_ai_env="\$\(node [^\n]+\)"\r?\n\[\[ -n "\$retired_ai_env" \]\]\r?\nmapfile -t REMOVE_ENV_VARS/);
-  assert.match(deployScript, /AZURE_FOUNDRY_ALLOWED_DEPLOYMENTS:\?Set the singleton Claude Opus 5\.5 deployment allowlist/);
+  assert.doesNotMatch(deployScript, /AZURE_FOUNDRY_/);
   assert.doesNotMatch(deployScript, /AZURE_OPENAI_DEPLOYMENT_(?:GPT5|DEEPSEEK|GROK|KIMI|MISTRAL)/);
   assert.match(deployScript, /export ALLOW_BYO_AI_ENDPOINTS="\$\{ALLOW_BYO_AI_ENDPOINTS:-false\}"/);
   assert.match(deployScript, /"ALLOW_BYO_AI_ENDPOINTS=\$ALLOW_BYO_AI_ENDPOINTS"/);

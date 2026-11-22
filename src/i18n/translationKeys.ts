@@ -742,7 +742,7 @@ export const translationKeys = [
   "Previous-generation reasoning model for complex architectures",
   "Alternative model",
   "The selected model may not support image analysis. Choose a vision-capable model in AI settings.",
-  "The selected model may not support image analysis. Try using GPT-6.1 Sol / Claude Opus 5.5.",
+  "The selected model may not support image analysis. Try using GPT-6.2 Astra / GPT-6.2 Sol.",
   "See estimated monthly cost across 9 Azure regions with per‑service breakdowns, and export CSV / multi‑format cost reports.",
   "PNG, JPG, GIF, WebP up to 8MB"
 ] as const;

@@ -1317,7 +1317,7 @@ test('diagram history, document status, privacy review, and threat overlay stay 
   await expect(privacyDialog.getByText('No known sensitive patterns found')).toBeVisible();
   await expect(privacyDialog).toContainText('This sensitive-data scan runs in this browser.');
   await expect(privacyDialog).toContainText('Cloud document is synced through this application’s owner-scoped diagram API.');
-  await expect(privacyDialog).toContainText('Managed gpt-6.1-sol');
+  await expect(privacyDialog).toContainText('Managed gpt-6.2-sol');
   await expect(privacyDialog).toContainText('API-retrievable for 1 hour');
   await privacyDialog.getByRole('button', { name: 'Done' }).click();
 
@@ -1472,7 +1472,7 @@ test('AI review selection highlights matching canvas resources', async ({ page }
     });
     await fulfillJson(route, {
       status: 'completed',
-      model: 'playwright-gpt-6.1-sol',
+      model: 'playwright-gpt-6.2-sol',
       output_text: text,
       usage: { input_tokens: 30, output_tokens: 20, total_tokens: 50 },
     });
@@ -1843,7 +1843,7 @@ for (const [width, allowBYO] of [[1600, true], [1600, false], [390, true], [390,
     await page.getByRole('tab', { name: 'Create', exact: true }).click();
     await expect(page.getByRole('button', { name: retired })).toHaveCount(0);
     const trigger = page.locator('.model-popover-trigger');
-    await expect(trigger).toContainText('GPT-6.1 Sol');
+    await expect(trigger).toContainText('GPT-6.2 Sol');
     await expect(trigger).not.toContainText('Custom');
     await trigger.click();
     const settings = page.getByRole('dialog', { name: 'AI model settings', exact: true });
@@ -1887,8 +1887,8 @@ for (const [width, allowBYO] of [[1600, true], [1600, false], [390, true], [390,
         await expect.poll(() => requests.length).toBe(1);
         expect(requests[0]).toMatchObject({
           apiFormat: 'responses',
-          deployment: 'playwright-gpt-6.1-sol',
-          body: { model: 'playwright-gpt-6.1-sol' },
+          deployment: 'playwright-gpt-6.2-sol',
+          body: { model: 'playwright-gpt-6.2-sol' },
         });
         expect(requests[0]).not.toHaveProperty('byo');
       }
@@ -1896,7 +1896,7 @@ for (const [width, allowBYO] of [[1600, true], [1600, false], [390, true], [390,
   });
 }
 
-test('full application explicitly routes the selected Opus model without a Sol or Astra fallback', async ({ page }) => {
+test('full application explicitly routes selected Astra without a Sol fallback', async ({ page }) => {
   await initializePage(page);
   const requests: any[] = [];
   await page.route('**/api/**', async route => {
@@ -1906,25 +1906,23 @@ test('full application explicitly routes the selected Opus model without a Sol o
     else if (path === '/api/ai/budget') await fulfillJson(route, { available: true, concurrentLimit: 4, concurrentRequests: 0 });
     else if (path === '/api/openai') {
       requests.push(route.request().postDataJSON());
-      await fulfillJson(route, { error: { code: 'invalid_upstream_request', source: 'azure_foundry' } }, 400);
+      await fulfillJson(route, { error: { code: 'invalid_upstream_request', source: 'azure_openai' } }, 400);
     } else await fulfillJson(route, { error: 'Not found' }, 404);
   });
   await page.goto('/');
   const generator = await openAiGenerator(page);
   await generator.getByLabel('Architecture Description or Modification').fill('Create a secure web application');
   await generator.getByRole('button', { name: 'Continue to output' }).click();
-  await generator.locator('.ai-modal-model-group').getByRole('combobox', { name: / - Model$/ }).selectOption('claude-opus-5-5');
+  await generator.locator('.ai-modal-model-group').getByRole('combobox', { name: / - Model$/ }).selectOption('gpt-6.2-astra');
   await generator.getByRole('button', { name: 'Generate Architecture', exact: true }).click();
   await expect.poll(() => requests.length).toBe(1);
   expect(requests[0]).toMatchObject({
-    apiFormat: 'anthropic-messages', deployment: 'playwright-claude-opus-5-5',
-    body: { model: 'playwright-claude-opus-5-5', max_tokens: 32000, thinking: { type: 'adaptive' },
-      output_config: { effort: 'low', format: { type: 'json_schema' } } },
+    apiFormat: 'responses', deployment: 'playwright-gpt-6.2-astra',
+    body: { model: 'playwright-gpt-6.2-astra', max_output_tokens: 32000,
+      reasoning: { effort: 'low' }, text: { format: { type: 'json_object' } }, store: false },
   });
   expect(requests[0]).not.toHaveProperty('byo');
-  expect(requests[0].body).not.toHaveProperty('input');
-  expect(requests[0].body).not.toHaveProperty('store');
-  expect(requests[0].body.messages.at(-1).role).toBe('user');
+  expect(requests[0].body).toHaveProperty('input');
 });
 
 test('BYO connection manager follows the canonical compact breakpoint without overflow', async ({ page }) => {
@@ -3835,7 +3833,7 @@ test('menu states keep readable contrast in light and dark themes', async ({ pag
     await expectSelectedMenuState(modelButton);
     const modelMenu = page.locator('.toolbar-dropdown-menu--model-settings');
     await expectReadableContrast(modelMenu.locator('.toolbar-dropdown-heading').first());
-    await expectReadableContrast(modelMenu.locator('.msp-managed-note strong'));
+    await expectReadableContrast(modelMenu.locator('.msp-managed-note').first());
     const selectedReasoning = modelMenu.locator('.msp-reasoning-btn.active');
     await expect(selectedReasoning).toHaveCSS('color', 'rgb(255, 255, 255)');
     await expectReadableContrast(selectedReasoning);
@@ -4233,14 +4231,14 @@ test('image analysis is single-flight and the reference viewer is keyboard safe'
         imageAnalysisCalls += 1;
         await wait(500);
         await fulfillJson(route, {
-          model: 'playwright-gpt-6.1-sol',
+          model: 'playwright-gpt-6.2-sol',
           output_text: 'An App Service hosts the web application.',
           usage: { input_tokens: 20, output_tokens: 10, total_tokens: 30 },
         });
         return;
       }
       await fulfillJson(route, {
-        model: 'playwright-gpt-6.1-sol',
+        model: 'playwright-gpt-6.2-sol',
         output_text: JSON.stringify({
           architectureName: 'Uploaded diagram',
           groups: [],
@@ -8034,7 +8032,7 @@ test('deployment guide accordions are keyboard accessible and stale results are 
       guideRequests += 1;
       if (guideRequests === 2) await wait(700);
       await fulfillJson(route, {
-        model: 'playwright-gpt-6.1-sol',
+        model: 'playwright-gpt-6.2-sol',
         output_text: JSON.stringify(guide),
         usage: { input_tokens: 30, output_tokens: 20, total_tokens: 50 },
       });

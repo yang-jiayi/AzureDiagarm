@@ -23,12 +23,10 @@ deployment scripts fail closed unless these controls are provided:
 | `AZURE_ACCESS_KEY_VAULT_RESOURCE_ID` or `AZURE_TABLES_ACCESS_ENDPOINT` | Existing access-list store accessible to the managed identity |
 | `PUBLIC_URL` | Exact HTTPS origin; no credentials, path, query, or fragment |
 | `FRONT_DOOR_ID` | Approved Front Door UUID; applied to nginx at runtime |
-| `AZURE_OPENAI_ENDPOINT` | Azure OpenAI HTTPS account origin for GPT-6.1 Sol |
-| `AZURE_OPENAI_DEPLOYMENT_GPT61SOL` | Explicit GPT-6.1 Sol deployment alias |
-| `AZURE_OPENAI_ALLOWED_DEPLOYMENTS` | Exactly the same single GPT-6.1 Sol alias |
-| `AZURE_FOUNDRY_ENDPOINT` | Separate Microsoft Foundry HTTPS account origin for Claude Opus 5.5 |
-| `AZURE_FOUNDRY_DEPLOYMENT_OPUS55` | Explicit Claude Opus 5.5 deployment alias |
-| `AZURE_FOUNDRY_ALLOWED_DEPLOYMENTS` | Exactly the same single Claude Opus 5.5 alias |
+| `AZURE_OPENAI_ENDPOINT` | Azure OpenAI HTTPS account origin for both managed models |
+| `AZURE_OPENAI_DEPLOYMENT_GPT62ASTRA` | Explicit GPT-6.2 Astra deployment alias |
+| `AZURE_OPENAI_DEPLOYMENT_GPT62SOL` | Explicit GPT-6.2 Sol deployment alias |
+| `AZURE_OPENAI_ALLOWED_DEPLOYMENTS` | Exactly both aliases, comma-separated |
 | `ALLOW_BYO_AI_ENDPOINTS` | `false` by default; only explicit `true` authorizes user-key BYO connections |
 | `AZURE_IMPORT_ENABLED` | Must not be `true` in public mode |
 | `AI_BUDGET_STORE` | `cosmos` or `table`; never memory in public mode |
@@ -60,49 +58,41 @@ and graceful shutdown retain the production behavior.
 
 ## Dual managed model deployments
 
-The managed catalog has two isolated routes: GPT-6.1 Sol uses Azure OpenAI
-Responses, and Claude Opus 5.5 uses the Microsoft Foundry Anthropic Messages API
-(Anthropic API version `2026-10-21`). Each provider has its own server-side
-endpoint, deployment alias and exact singleton allowlist. The build receives
-only public routing values as `VITE_*`; no credential is built into the image.
-GPT-6.1 Sol prefers managed identity and can use the existing optional
-server-side Azure OpenAI key fallback; Claude requires managed identity and
-rejects `AZURE_FOUNDRY_API_KEY`. An alias is not proof of model identity.
+The managed catalog has two allowlisted routes: GPT-6.2 Astra and GPT-6.2 Sol
+both use Azure OpenAI Responses on the same server-side endpoint, with distinct
+deployment aliases and one exact two-name allowlist. The build receives only
+public routing values as `VITE_*`; no credential is built into the image.
+Managed identity is preferred and the existing optional server-side Azure
+OpenAI key fallback remains supported. An alias is not proof of model identity.
 
-The production release requires both `AZURE_OPENAI_RESOURCE_ID` and
-`AZURE_FOUNDRY_RESOURCE_ID` as deployment-time variables. Before image
-publication and revision update, read-only ARM checks verify each resource ID,
-expected account kinds (`OpenAI` for GPT-6.1 Sol, `AIServices` for Claude Opus
-5.5) and endpoint ownership, then require successful provisioning of
-`OpenAI/gpt-6.1-sol`, version `2026-09-29`, and
-`Anthropic/claude-opus-5-5`, version `2`. Lookup failures or mismatches block
-deployment. This verification does not create, rename, delete, or grant access
-to Azure model resources.
+The production release requires `AZURE_OPENAI_RESOURCE_ID`. Before image
+publication and revision update, read-only ARM checks verify the account ID,
+`OpenAI` kind and endpoint ownership, then require successful provisioning of
+`OpenAI/gpt-6.2-astra` and `OpenAI/gpt-6.2-sol`, both version `2026-11-17`.
+Lookup failures or mismatches block deployment. This verification does not
+create, rename, delete, or grant access to Azure model resources.
 
 Managed requests must match their selected provider's exact deployment and API
 format. The endpoint and credentials are fixed server-side; enabling BYO does
 not extend either allowlist or authorize endpoint/credential overrides for a
 managed request. Invalid requests fail before credential acquisition, budget
-reservation or dispatch. Release cleanup removes the retired Astra deployment
-alias and other obsolete provider settings from the active app environment, but
+reservation or dispatch. Release cleanup removes retired GPT-6 Astra, GPT-6.1 Sol and Foundry settings
+from the active app environment, but
 does not remove the generic model allowlists, BYO policy, account resources, or
 historical model provenance. Existing Azure Astra resources are retained.
 
-Claude's Anthropic Messages route uses the `2026-10-21` API version. Structured
-diagram output is requested as a strict JSON object envelope containing the
-`azureDiagramJson` string; the client unwraps that field before normal result
-validation. Adaptive thinking is enabled only for requests that explicitly
-select it. Both managed models share the 32,000-token output ceiling, and
-Claude's thinking tokens count toward that ceiling.
+Both managed models use the same Responses request and structured-output
+validation path, support reasoning efforts from `low` through `max`, and reject
+`none`. Each shares the 32,000-token output ceiling.
 
-The desired deployment hash includes both model endpoints, aliases and account
+The desired deployment hash includes the shared model endpoint, both aliases and account
 resource IDs. If a candidate revision fails verification, rollback copies the
 last healthy revision as a complete unit: its image, AI configuration,
 environment/secret references and `DESIRED_CONFIG_HASH` stay together. The
 rollback does not graft new model settings onto an older image, reread mutable
 model settings, or require another ARM lookup. Thus a historical revision may
-retain Astra settings for its own recovery history; the active dual-model
-revision removes Astra execution settings. No model resource is deleted.
+retain retired settings for its own recovery history; the active dual-model
+revision includes only the approved GPT-6.2 aliases. No model resource is deleted.
 
 Unconfigured local mode permits manual diagrams; managed AI returns a clear 503.
 Public/self-host startup can still permit BYO-only mode when explicitly opted in
@@ -117,8 +107,8 @@ requirements. No live configuration change or publication is implied.
 Administrators enable the feature using `ALLOW_BYO_AI_ENDPOINTS=true`; missing
 configuration defaults to false and unrecognized values fail startup closed.
 `GET /api/runtime-config` returns `features.bringYourOwnAI` as a boolean and
-describes the managed catalog with `ai.defaultModel: "gpt-6.1-sol"`,
-`ai.configured`, and public descriptors for GPT-6.1 Sol and Claude Opus 5.5.
+describes the managed catalog with `ai.defaultModel: "gpt-6.2-sol"`,
+`ai.configured`, and public descriptors for GPT-6.2 Astra and GPT-6.2 Sol.
 A stale browser capability cannot authorize a connection on a disabled server.
 
 A BYO request uses the same authenticated `/api/openai` endpoint:
@@ -220,7 +210,7 @@ multi-image requests may require a larger daily quota. Images must be inline (th
 12 MB request limit still applies). Stored input references, remote image URLs,
 remote tools, audio/files, background
 requests are not supported by this complete-response proxy. Streaming is forced
-off and storage is disabled before dispatch. GPT-6.1 Sol Responses keeps its 32768-token
+off and storage is disabled before dispatch. GPT-6.2 Responses keeps its 32768-token
 output ceiling, including 32000-token architecture requests. Managed Sol accepts
 only `low`, `medium`, `high`, `xhigh` or `max` when an effort is explicitly
 supplied; unsupported values are rejected before credential acquisition,
