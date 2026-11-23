@@ -258,6 +258,62 @@ test('access control accepts the aggregate Easy Auth client principal header', a
   assert.equal(response.status, 401);
 });
 
+test('AzureDiagarm.User app-role members are allowed but are not administrators', async (t) => {
+  const server = await startServer({
+    enabled: true,
+    adminEmail: 'admin@example.com',
+    publicAppUrl: APP_ORIGIN,
+    table: new FakeTable(),
+    logger: { info() {}, error() {} },
+  });
+  t.after(server.close);
+
+  const encodedPrincipal = Buffer.from(JSON.stringify({
+    auth_typ: 'aad',
+    claims: [
+      { typ: 'preferred_username', val: 'group-member@example.com' },
+      {
+        typ: 'http://schemas.microsoft.com/identity/claims/objectidentifier',
+        val: '66666666-6666-6666-6666-666666666666',
+      },
+      { typ: 'Roles', val: 'AzureDiagarm.User' },
+    ],
+  })).toString('base64');
+  const headers = { 'X-MS-CLIENT-PRINCIPAL': encodedPrincipal };
+
+  let response = await fetch(`${server.baseUrl}/api/access/check`, { headers });
+  assert.equal(response.status, 204);
+
+  response = await fetch(`${server.baseUrl}/api/access/me`, { headers });
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), {
+    enabled: true,
+    authenticated: true,
+    email: 'group-member@example.com',
+    isAdmin: false,
+    allowed: true,
+  });
+
+  response = await fetch(`${server.baseUrl}/api/access/users`, { headers });
+  assert.equal(response.status, 403);
+
+  const unrelatedRole = Buffer.from(JSON.stringify({
+    auth_typ: 'aad',
+    claims: [
+      { typ: 'preferred_username', val: 'other-user@example.com' },
+      {
+        typ: 'http://schemas.microsoft.com/identity/claims/objectidentifier',
+        val: '77777777-7777-7777-7777-777777777777',
+      },
+      { typ: 'roles', val: 'AzureDiagarm.Other' },
+    ],
+  })).toString('base64');
+  response = await fetch(`${server.baseUrl}/api/access/check`, {
+    headers: { 'X-MS-CLIENT-PRINCIPAL': unrelatedRole },
+  });
+  assert.equal(response.status, 403);
+});
+
 test('access control maps Entra B2B guest UPNs back to their invited email', async (t) => {
   const table = new FakeTable();
   const server = await startServer({

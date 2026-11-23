@@ -157,8 +157,8 @@ const AccessManagementModal: React.FC<AccessManagementModalProps> = ({
             </h2>
             <p>
               {text(
-                'Only the listed email addresses can open the application.',
-                '許可リストに登録されたメールアドレスだけがアプリを開けます。',
+                'Approved email addresses and members of the AzureDiagarmUsers group can open the application.',
+                '許可リストに登録されたメールアドレスとAzureDiagarmUsersグループのメンバーがアプリを開けます。',
               )}
             </p>
           </div>
