@@ -297,6 +297,26 @@ test('AzureDiagarm.User app-role members are allowed but are not administrators'
   response = await fetch(`${server.baseUrl}/api/access/users`, { headers });
   assert.equal(response.status, 403);
 
+  const mappedRoleType = 'http://schemas.microsoft.com/ws/2008/06/identity/claims/role';
+  const mappedPrincipal = Buffer.from(JSON.stringify({
+    auth_typ: 'aad',
+    role_typ: mappedRoleType,
+    claims: [
+      { typ: 'preferred_username', val: 'mapped-member@example.com' },
+      { typ: 'oid', val: '88888888-8888-8888-8888-888888888888' },
+      { typ: mappedRoleType, val: 'AzureDiagarm.Other' },
+      { typ: mappedRoleType, val: 'AzureDiagarm.User' },
+    ],
+  })).toString('base64');
+  const mappedHeaders = { 'X-MS-CLIENT-PRINCIPAL': mappedPrincipal };
+  response = await fetch(`${server.baseUrl}/api/access/check`, { headers: mappedHeaders });
+  assert.equal(response.status, 204);
+  response = await fetch(`${server.baseUrl}/api/access/me`, { headers: mappedHeaders });
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).isAdmin, false);
+  response = await fetch(`${server.baseUrl}/api/access/users`, { headers: mappedHeaders });
+  assert.equal(response.status, 403);
+
   const unrelatedRole = Buffer.from(JSON.stringify({
     auth_typ: 'aad',
     claims: [

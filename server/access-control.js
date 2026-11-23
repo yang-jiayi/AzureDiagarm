@@ -104,11 +104,15 @@ function getPrincipal(req) {
     || ''
   ).trim();
   if (!email || id.length === 0 || id.length > 128) return null;
+  const mappedRoleType = typeof clientPrincipal?.decoded?.role_typ === 'string'
+    ? clientPrincipal.decoded.role_typ.toLowerCase()
+    : '';
   const appRoles = Array.isArray(clientPrincipal?.decoded?.claims)
     ? clientPrincipal.decoded.claims
       .filter((claim) => (
         typeof claim?.typ === 'string'
-        && claim.typ.toLowerCase() === 'roles'
+        && (claim.typ.toLowerCase() === 'roles'
+          || (mappedRoleType && claim.typ.toLowerCase() === mappedRoleType))
         && typeof claim.val === 'string'
       ))
       .map((claim) => claim.val)
