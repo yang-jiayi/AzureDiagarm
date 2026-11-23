@@ -6,6 +6,7 @@ const express = require('express');
 const { asyncHandler } = require('./async-handler');
 
 const ACCESS_PARTITION_KEY = 'allowed';
+const ACCESS_USER_APP_ROLE = 'AzureDiagarm.User';
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 function normalizeEmail(value) {
@@ -103,7 +104,20 @@ function getPrincipal(req) {
     || ''
   ).trim();
   if (!email || id.length === 0 || id.length > 128) return null;
-  return { email, id };
+  const mappedRoleType = typeof clientPrincipal?.decoded?.role_typ === 'string'
+    ? clientPrincipal.decoded.role_typ.toLowerCase()
+    : '';
+  const appRoles = Array.isArray(clientPrincipal?.decoded?.claims)
+    ? clientPrincipal.decoded.claims
+      .filter((claim) => (
+        typeof claim?.typ === 'string'
+        && (claim.typ.toLowerCase() === 'roles'
+          || (mappedRoleType && claim.typ.toLowerCase() === mappedRoleType))
+        && typeof claim.val === 'string'
+      ))
+      .map((claim) => claim.val)
+    : [];
+  return { email, id, appRoles };
 }
 
 function getAccessControlConfiguration(options = {}) {
@@ -194,10 +208,13 @@ function createAccessControlRouter(options = {}) {
     }
   }
 
-  async function accessAllowed(email) {
-    if (email === adminEmail) return true;
+  async function accessAllowed(principal) {
+    if (
+      principal.email === adminEmail
+      || principal.appRoles.includes(ACCESS_USER_APP_ROLE)
+    ) return true;
     const current = await readUsers();
-    return current.emails.has(email);
+    return current.emails.has(principal.email);
   }
 
   function configurationUnavailable(res) {
@@ -231,7 +248,7 @@ function createAccessControlRouter(options = {}) {
     const principal = getPrincipal(req);
     if (!principal) return res.status(401).json({ error: 'Authentication is required.' });
     try {
-      if (!await accessAllowed(principal.email)) return res.status(403).json({ error: 'This account is not on the access list.' });
+      if (!await accessAllowed(principal)) return res.status(403).json({ error: 'This account is not on the access list.' });
       req.accessPrincipal = principal;
       next();
     } catch (error) {
@@ -248,7 +265,7 @@ function createAccessControlRouter(options = {}) {
     if (!principal) return res.status(401).end();
 
     try {
-      if (await accessAllowed(principal.email)) return res.status(204).end();
+      if (await accessAllowed(principal)) return res.status(204).end();
       return res.status(403).end();
     } catch (error) {
       logger.error('[access/check] error:', error.message);
@@ -275,7 +292,7 @@ function createAccessControlRouter(options = {}) {
 
     try {
       const isAdmin = principal.email === adminEmail;
-      const allowed = isAdmin || await accessAllowed(principal.email);
+      const allowed = isAdmin || await accessAllowed(principal);
       if (!allowed) return res.status(403).json({ error: 'This account is not on the access list.' });
       return res.json({
         enabled: true,

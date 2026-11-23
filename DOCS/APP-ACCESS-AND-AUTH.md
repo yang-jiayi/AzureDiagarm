@@ -11,13 +11,16 @@ the approved operational inventory.
 2. Azure Container Apps ingress rejects direct-origin requests.
 3. Container Apps Easy Auth requires Microsoft Entra ID authentication when
    access control is enabled.
-4. Enterprise Application assignment limits access to approved security groups.
-5. Guest accounts receive no Azure RBAC roles, Microsoft Fabric permissions, or
-   unrelated Enterprise Application assignments.
-6. Nginx authorizes page, static asset, API, and MCP requests consistently.
-7. The Node server trusts only Easy Auth principal headers injected by the
+4. The `AzureDiagarm.User` Enterprise Application role grants ordinary app
+   access to members of the `AzureDiagarmUsers` security group.
+5. The app keeps its existing email allowlist as an additive access path;
+   assignment-required remains disabled so existing users are not locked out.
+6. Only the configured `ACCESS_ADMIN_EMAIL` is an in-app administrator.
+   Membership in `AzureDiagarmUsers` never grants administration.
+7. Nginx authorizes page, static asset, API, and MCP requests consistently.
+8. The Node server trusts only Easy Auth principal headers injected by the
    platform and parses the aggregate principal claim as a fallback.
-8. Production workloads use managed identity instead of committed credentials.
+9. Production workloads use managed identity instead of committed credentials.
 
 The public source repository does not grant access to the Azure subscription or
 the deployed application.
@@ -78,16 +81,22 @@ Also retain:
 
 ## Entra group access
 
-Use separate security groups for application users and administrators.
+Add ordinary users to the `AzureDiagarmUsers` security group and assign that
+group the `AzureDiagarm.User` app role on the production Enterprise
+Application. The app authorizes that role in Easy Auth's principal claims while
+preserving access for users already present in the application's email
+allowlist.
 
-1. Invite an external user through Microsoft Entra ID.
-2. Add the user to the application access group.
-3. Assign the access and administrator groups to the Enterprise Application.
-4. Keep **Assignment required** enabled.
-5. Do not assign users directly unless an approved exception requires it.
-6. Remove group membership to revoke access.
-7. Do not grant the application access group Azure RBAC, Fabric workspace,
-   licenses, or unrelated application assignments.
+Keep **Assignment required** disabled while the email allowlist remains an
+active access path; enabling it would block users without an Enterprise
+Application assignment. Removing someone from `AzureDiagarmUsers` revokes the
+group-based path after their sign-in token refreshes, but an existing direct
+email allowlist entry continues to grant access until separately removed by an
+app administrator. Group membership is ordinary app access and never grants
+in-app administrator features; only `ACCESS_ADMIN_EMAIL` controls that role.
+
+Do not grant the application access group Azure RBAC, Fabric workspace access,
+licenses, or unrelated application assignments.
 
 If Conditional Access limits guest access to Azure management or Fabric, exclude
 the administrator group through the approved identity-governance process. Keep
@@ -114,8 +123,9 @@ The runtime identity should receive only the custom metadata permissions needed
 to read and update application-owned secret resources. It must not receive Key
 Vault data-plane access to secret values or broad subscription roles.
 
-Disable the store with `ACCESS_CONTROL_ENABLED=false` when Entra assignment is
-the authoritative access model.
+Keep the access store enabled while existing email allowlist users must retain
+access. Do not disable it or require Enterprise Application assignment without
+reviewing the impact on current users.
 
 ## Operational checks
 
