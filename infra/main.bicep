@@ -13,11 +13,11 @@ param environmentName string
 @description('Primary Azure region for all resources.')
 param location string
 
-// ── Managed GPT-6 Astra account ───────────────────────────────────────────────
-@description('Your Azure OpenAI endpoint URL.')
+// ── Managed GPT-6.2 Astra and Sol account ──────────────────────────────────
+@description('Azure OpenAI endpoint hosting the approved GPT-6.2 deployments.')
 param azureOpenAiEndpoint string = ''
 
-@description('Full resource ID of the Azure OpenAI account for managed-identity RBAC.')
+@description('Full resource ID of the Azure OpenAI account hosting GPT-6.2 Astra and Sol.')
 param azureOpenAiResourceId string = ''
 
 @description('Azure Communication Services endpoint used to deliver feedback email.')
@@ -62,8 +62,11 @@ param feedbackRetentionDays int = 30
 @description('Explicitly approve retention cleanup of existing pre-expiry feedback after reviewing its impact.')
 param feedbackLegacyRetentionEnabled bool = false
 
-@description('Actual GPT-6 Astra deployment name. Configure only after provisioning the genuine gpt-6-astra model.')
-param openAiDeploymentGpt6Astra string = ''
+@description('Actual GPT-6.2 Astra deployment name.')
+param openAiDeploymentGpt62Astra string = ''
+
+@description('Actual GPT-6.2 Sol deployment name.')
+param openAiDeploymentGpt62Sol string = ''
 
 @description('Explicit administrator opt-in for user-key Azure OpenAI or official OpenAI connections. Does not authorize additional managed models.')
 param allowByoAIEndpoints bool = false
@@ -122,7 +125,8 @@ module resources './resources.bicep' = {
     diagramStorageLocation: diagramStorageLocation
     mcpAuthToken: mcpAuthToken
     azureOpenAiEndpoint: azureOpenAiEndpoint
-    azureOpenAiDeploymentGpt6Astra: openAiDeploymentGpt6Astra
+    azureOpenAiDeploymentGpt62Astra: openAiDeploymentGpt62Astra
+    azureOpenAiDeploymentGpt62Sol: openAiDeploymentGpt62Sol
     allowByoAIEndpoints: allowByoAIEndpoints
     feedbackEmailEndpoint: feedbackEmailEndpoint
     feedbackEmailSender: feedbackEmailSender
@@ -178,11 +182,12 @@ output SERVICE_MCP_NAME string = resources.outputs.mcpAppName
 output SERVICE_MCP_URL string = 'https://${resources.outputs.mcpAppFqdn}'
 output MCP_ENDPOINT string = 'https://${resources.outputs.mcpAppFqdn}/mcp'
 
-// Azure OpenAI — non-secret values available for explicitly configured builds.
+// Managed models — non-secret values available for explicitly configured builds.
 output AZURE_OPENAI_ENDPOINT string = azureOpenAiEndpoint
-output AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA string = openAiDeploymentGpt6Astra
+output AZURE_OPENAI_DEPLOYMENT_GPT62ASTRA string = openAiDeploymentGpt62Astra
+output AZURE_OPENAI_DEPLOYMENT_GPT62SOL string = openAiDeploymentGpt62Sol
 output AZURE_OPENAI_RESOURCE_ID string = azureOpenAiResourceId
-output AZURE_OPENAI_ALLOWED_DEPLOYMENTS string = openAiDeploymentGpt6Astra
+output AZURE_OPENAI_ALLOWED_DEPLOYMENTS string = '${openAiDeploymentGpt62Astra},${openAiDeploymentGpt62Sol}'
 output ALLOW_BYO_AI_ENDPOINTS string = string(allowByoAIEndpoints)
 
 // Speech

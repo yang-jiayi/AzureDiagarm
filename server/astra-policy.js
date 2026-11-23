@@ -38,30 +38,57 @@ function byoEndpointsEnabled(env = process.env) {
   return flag === 'true';
 }
 
-function astraConfiguration(env = process.env) {
-  const deployment = env.AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA || '';
+function managedModelsConfiguration(env = process.env) {
+  const definitions = [
+    { key: 'astra', model: 'gpt-6.2-astra', deploymentKey: 'AZURE_OPENAI_DEPLOYMENT_GPT62ASTRA' },
+    { key: 'sol', model: 'gpt-6.2-sol', deploymentKey: 'AZURE_OPENAI_DEPLOYMENT_GPT62SOL' },
+  ];
+  const endpoint = env.AZURE_OPENAI_ENDPOINT || '';
   const allowed = (env.AZURE_OPENAI_ALLOWED_DEPLOYMENTS || '').split(',').map(value => value.trim()).filter(Boolean);
-  if (!deployment && !env.AZURE_OPENAI_ENDPOINT && !env.AZURE_OPENAI_ALLOWED_DEPLOYMENTS
-    && !env.AZURE_OPENAI_API_KEY && !env.AZURE_OPENAI_RESOURCE_ID) {
-    return { configured: false, deployment: null, endpoint: null };
+  const deployments = definitions.map(({ key, model, deploymentKey }) => ({
+    key, model, apiFormat: 'responses', deploymentKey, deployment: env[deploymentKey] || '',
+  }));
+  const noManagedSettings = deployments.every(item => !item.deployment)
+    && !endpoint && !allowed.length && !env.AZURE_OPENAI_RESOURCE_ID && !env.AZURE_OPENAI_API_KEY;
+  for (const name of [
+    'AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA', 'AZURE_OPENAI_DEPLOYMENT_GPT61SOL',
+    'AZURE_FOUNDRY_ENDPOINT', 'AZURE_FOUNDRY_RESOURCE_ID',
+    'AZURE_FOUNDRY_DEPLOYMENT_OPUS55', 'AZURE_FOUNDRY_ALLOWED_DEPLOYMENTS',
+    'AZURE_FOUNDRY_API_KEY',
+  ]) {
+    if (env[name]) throw new Error(`Remove retired managed-model setting ${name} before starting the new application.`);
   }
-  if (!DEPLOYMENT_NAME_RE.test(deployment) || allowed.length !== 1 || allowed[0] !== deployment) {
-    throw new Error('GPT-6 Astra requires AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA and the identical singleton AZURE_OPENAI_ALLOWED_DEPLOYMENTS.');
+  if (noManagedSettings) {
+    return {
+      astra: { model: 'gpt-6.2-astra', apiFormat: 'responses', configured: false, deployment: null, endpoint: null },
+      sol: { model: 'gpt-6.2-sol', apiFormat: 'responses', configured: false, deployment: null, endpoint: null },
+      configured: false,
+    };
   }
-  return { configured: true, deployment, endpoint: normalizeAzureOpenAIEndpoint(env.AZURE_OPENAI_ENDPOINT) };
+  const hasBothDeployments = deployments.every(item => DEPLOYMENT_NAME_RE.test(item.deployment));
+  const exactAllowlist = allowed.length === 2 && new Set(allowed).size === 2
+    && deployments.every(item => allowed.includes(item.deployment));
+  if (!hasBothDeployments || deployments[0].deployment === deployments[1].deployment || !exactAllowlist) {
+    throw new Error('GPT-6.2 Astra and GPT-6.2 Sol require distinct aliases and an exact two-deployment AZURE_OPENAI_ALLOWED_DEPLOYMENTS allowlist.');
+  }
+  const normalizedEndpoint = normalizeAzureOpenAIEndpoint(endpoint);
+  const routes = Object.fromEntries(deployments.map(({ key, model, apiFormat, deployment }) => [
+    key, { model, apiFormat, configured: true, deployment, endpoint: normalizedEndpoint },
+  ]));
+  return { ...routes, configured: true };
 }
 
-function runtimeAstraConfiguration(config, allowByoAIEndpoints = false) {
+function runtimeManagedModelsConfiguration(config, allowByoAIEndpoints = false) {
   return {
     features: { bringYourOwnAI: allowByoAIEndpoints === true },
     ai: {
-      model: 'gpt-6-astra', apiFormat: 'responses',
-      deployment: config.deployment, configured: config.configured,
+      defaultModel: 'gpt-6.2-sol', configured: config.configured,
+      models: [config.astra, config.sol].map(({ model, apiFormat, deployment, configured }) => ({ model, apiFormat, deployment, configured })),
     },
   };
 }
 
 module.exports = {
-  astraConfiguration, runtimeAstraConfiguration, byoEndpointsEnabled,
+  managedModelsConfiguration, runtimeManagedModelsConfiguration, byoEndpointsEnabled,
   normalizeAzureOpenAIEndpoint, normalizeHttpsOrigin, DEPLOYMENT_NAME_RE,
 };

@@ -6664,8 +6664,8 @@ function App() {
       id: 'configure-byo-ai',
       label: localize(language, { en: 'AI connections', ja: 'AI 接続' }),
       description: localize(language, {
-        en: 'Choose managed GPT-6 Astra or configure your own Azure OpenAI / OpenAI profiles',
-        ja: '管理対象の GPT-6 Astra を選択、または独自の Azure OpenAI / OpenAI 接続を設定',
+        en: 'Choose managed GPT-6.2 Astra / GPT-6.2 Sol or configure your own Azure OpenAI / OpenAI profiles',
+        ja: '管理対象の GPT-6.2 Astra / GPT-6.2 Sol を選択、または独自の Azure OpenAI / OpenAI 接続を設定',
       }),
       keywords: ['ai', 'byo', 'custom AI', 'provider', 'endpoint', 'model', 'settings', '接続', '設定'],
       group: localize(language, { en: 'Settings', ja: '設定' }),

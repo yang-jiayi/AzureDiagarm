@@ -23,9 +23,10 @@ deployment scripts fail closed unless these controls are provided:
 | `AZURE_ACCESS_KEY_VAULT_RESOURCE_ID` or `AZURE_TABLES_ACCESS_ENDPOINT` | Existing access-list store accessible to the managed identity |
 | `PUBLIC_URL` | Exact HTTPS origin; no credentials, path, query, or fragment |
 | `FRONT_DOOR_ID` | Approved Front Door UUID; applied to nginx at runtime |
-| `AZURE_OPENAI_ENDPOINT` | Managed Azure OpenAI HTTPS account origin; coherent managed tuple or explicitly opted-in BYO-only mode |
-| `AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA` | Explicit approved deployment alias for genuine GPT-6 Astra |
-| `AZURE_OPENAI_ALLOWED_DEPLOYMENTS` | Exactly the same single alias; no other entries |
+| `AZURE_OPENAI_ENDPOINT` | Azure OpenAI HTTPS account origin for both managed models |
+| `AZURE_OPENAI_DEPLOYMENT_GPT62ASTRA` | Explicit GPT-6.2 Astra deployment alias |
+| `AZURE_OPENAI_DEPLOYMENT_GPT62SOL` | Explicit GPT-6.2 Sol deployment alias |
+| `AZURE_OPENAI_ALLOWED_DEPLOYMENTS` | Exactly both aliases, comma-separated |
 | `ALLOW_BYO_AI_ENDPOINTS` | `false` by default; only explicit `true` authorizes user-key BYO connections |
 | `AZURE_IMPORT_ENABLED` | Must not be `true` in public mode |
 | `AI_BUDGET_STORE` | `cosmos` or `table`; never memory in public mode |
@@ -55,55 +56,60 @@ Utility, feedback and administrator limits remain process-local. Blob-backed
 diagram routes, Speech-only STS tokens, readiness,
 and graceful shutdown retain the production behavior.
 
-## Managed GPT-6 Astra deployment
+## Dual managed model deployments
 
-GPT-6 Astra is the only supported managed model, using the Responses API.
-The server requires `AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA` plus an identical
-singleton `AZURE_OPENAI_ALLOWED_DEPLOYMENTS`; a legacy allowlist alone is
-not configuration. The build receives that alias through
-`VITE_AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA`. Alias spelling is not model identity.
-Before image publication and revision update, the release helper reads the
-configured `AZURE_OPENAI_RESOURCE_ID` account and deployment through ARM,
-checks endpoint ownership, and requires `properties.model.format=OpenAI`,
-`properties.model.name=gpt-6-astra` and successful provisioning.
-Lookup failures and mismatches block deployment; no roles or models are changed.
+The managed catalog has two allowlisted routes: GPT-6.2 Astra and GPT-6.2 Sol
+both use Azure OpenAI Responses on the same server-side endpoint, with distinct
+deployment aliases and one exact two-name allowlist. The build receives only
+public routing values as `VITE_*`; no credential is built into the image.
+Managed identity is preferred and the existing optional server-side Azure
+OpenAI key fallback remains supported. An alias is not proof of model identity.
 
-Managed requests (without `byo`) must use `apiFormat=responses`; both `deployment`
-and `body.model` must explicitly match the approved alias. Neither is defaulted.
-The managed endpoint is fixed server-side. Enabling BYO does not extend the
-managed allowlist or authorize managed Chat Completions, Foundry/Anthropic,
-legacy models, or endpoint/credential overrides. Invalid requests fail before
-credential acquisition, budget reservation or dispatch. Release cleanup removes
-retired managed-model/provider settings, but never the BYO policy flag. No shared
-Azure model resources are deleted.
+The production release requires `AZURE_OPENAI_RESOURCE_ID`. Before image
+publication and revision update, read-only ARM checks verify the account ID,
+`OpenAI` kind and endpoint ownership, then require successful provisioning of
+`OpenAI/gpt-6.2-astra` and `OpenAI/gpt-6.2-sol`, both version `2026-11-17`.
+Lookup failures or mismatches block deployment. This verification does not
+create, rename, delete, or grant access to Azure model resources.
 
-Rollback copies the prior image and its unrelated environment/secret references,
-but overlays the nonsecret Astra endpoint/alias tuple verified immediately before
-the attempted update **and the approved BYO flag captured with it**. The desired
-configuration hash, preflight, deployment environment and rollback all include
-this explicit policy. Rollback restores only that managed singleton allowlist,
-removes retired AI settings and preserves the captured `true` or `false` BYO
-decision, rather than inheriting an old image's flag or rereading mutable settings.
-The captured policy is local to the release job; emergency rollback does not
-perform another ARM model lookup. Historical UI can return with an old image,
-but cannot execute other managed models.
+Managed requests must match their selected provider's exact deployment and API
+format. The endpoint and credentials are fixed server-side; enabling BYO does
+not extend either allowlist or authorize endpoint/credential overrides for a
+managed request. Invalid requests fail before credential acquisition, budget
+reservation or dispatch. Release cleanup removes retired GPT-6 Astra, GPT-6.1 Sol and Foundry settings
+from the active app environment, but
+does not remove the generic model allowlists, BYO policy, account resources, or
+historical model provenance. Existing Azure Astra resources are retained.
+
+Both managed models use the same Responses request and structured-output
+validation path, support reasoning efforts from `low` through `max`, and reject
+`none`. Each shares the 32,000-token output ceiling.
+
+The desired deployment hash includes the shared model endpoint, both aliases and account
+resource IDs. If a candidate revision fails verification, rollback copies the
+last healthy revision as a complete unit: its image, AI configuration,
+environment/secret references and `DESIRED_CONFIG_HASH` stay together. The
+rollback does not graft new model settings onto an older image, reread mutable
+model settings, or require another ARM lookup. Thus a historical revision may
+retain retired settings for its own recovery history; the active dual-model
+revision includes only the approved GPT-6.2 aliases. No model resource is deleted.
 
 Unconfigured local mode permits manual diagrams; managed AI returns a clear 503.
-Public/self-host startup also permits BYO-only mode when explicitly opted in and
-all managed settings (endpoint, Astra alias, allowlist, API key and resource ID)
-are absent. Partial/invalid managed configuration still fails clearly. This does
-not relax authentication, origin isolation, access-list or shared-budget startup
-requirements. The maintained production release target still requires genuine
-Astra identity preflight. No live configuration change or publication is implied.
+Public/self-host startup can still permit BYO-only mode when explicitly opted in
+and managed endpoint, alias and allowlist settings are absent. Partial/invalid
+managed configuration fails clearly. The maintained production release target
+requires both managed routes and their ARM identity preflight. This does not
+relax authentication, origin isolation, access-list or shared-budget startup
+requirements. No live configuration change or publication is implied.
 
 ## Bring-your-own AI connections
 
 Administrators enable the feature using `ALLOW_BYO_AI_ENDPOINTS=true`; missing
 configuration defaults to false and unrecognized values fail startup closed.
-`GET /api/runtime-config` returns `features.bringYourOwnAI` as a boolean and keeps
-the managed `ai` descriptor (`model: "gpt-6-astra"`, `apiFormat: "responses"`,
-`deployment`, `configured`) independent. A stale browser capability cannot
-authorize a connection on a disabled server.
+`GET /api/runtime-config` returns `features.bringYourOwnAI` as a boolean and
+describes the managed catalog with `ai.defaultModel: "gpt-6.2-sol"`,
+`ai.configured`, and public descriptors for GPT-6.2 Astra and GPT-6.2 Sol.
+A stale browser capability cannot authorize a connection on a disabled server.
 
 A BYO request uses the same authenticated `/api/openai` endpoint:
 
@@ -204,8 +210,11 @@ multi-image requests may require a larger daily quota. Images must be inline (th
 12 MB request limit still applies). Stored input references, remote image URLs,
 remote tools, audio/files, background
 requests are not supported by this complete-response proxy. Streaming is forced
-off and storage is disabled before dispatch. Astra Responses keeps its 32768-token
-output ceiling, including 32000-token architecture requests. BYO Responses and
+off and storage is disabled before dispatch. GPT-6.2 Responses keeps its 32768-token
+output ceiling, including 32000-token architecture requests. Managed Sol accepts
+only `low`, `medium`, `high`, `xhigh` or `max` when an effort is explicitly
+supplied; unsupported values are rejected before credential acquisition,
+budget reservation or dispatch. BYO Responses and
 Chat Completions also cap and reserve the chosen output field (`max_output_tokens`,
 `max_completion_tokens` or `max_tokens`) without translating formats. Chat's
 `prompt_tokens`/`completion_tokens` usage and inline vision content are metered

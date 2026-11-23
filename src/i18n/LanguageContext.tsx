@@ -31,8 +31,8 @@ type ExtraTranslationKey =
   | 'canvas.miniMap'
   | 'canvas.miniMapCaption'
   | 'canvas.touchNavigation'
-  | 'ai.astraOnlyDescription'
-  | 'ai.astraNotConfigured'
+  | 'ai.managedDescription'
+  | 'ai.managedNotConfigured'
   | 'ai.defaultReasoning'
   | 'ai.perFeatureReasoning'
   | 'ai.reasoningEffort'
@@ -46,9 +46,9 @@ type ExtraTranslationKey =
 export type TranslationKey = StaticTranslationKey | ExtraTranslationKey;
 
 const STORAGE_KEY = 'azure-diagram-builder.language.v1';
-const astraSetupError = {
-  en: 'GPT-6 Astra is not configured. Contact the application administrator to configure the managed Astra deployment.',
-  ja: 'GPT-6 Astraが設定されていません。管理対象のAstraデプロイを設定するようアプリケーション管理者に連絡してください。',
+const managedSetupError = {
+  en: 'The selected managed model is not configured. Contact the application administrator.',
+  ja: '選択した管理対象モデルが設定されていません。アプリケーション管理者に連絡してください。',
 };
 
 const extraEnglish: Record<ExtraTranslationKey, string> = {
@@ -77,8 +77,8 @@ const extraEnglish: Record<ExtraTranslationKey, string> = {
   'canvas.miniMap': 'Mini-map — drag or scroll to navigate the canvas',
   'canvas.miniMapCaption': 'Drag or scroll to navigate',
   'canvas.touchNavigation': 'Drag to pan and pinch to zoom',
-  'ai.astraOnlyDescription': 'The managed default. These settings apply only to managed GPT-6 Astra.',
-  'ai.astraNotConfigured': astraSetupError.en,
+  'ai.managedDescription': 'Choose GPT-6.2 Astra or GPT-6.2 Sol. These settings apply only to managed models.',
+  'ai.managedNotConfigured': managedSetupError.en,
   'ai.defaultReasoning': 'Default reasoning',
   'ai.perFeatureReasoning': 'Per-feature reasoning',
   'ai.reasoningEffort': 'Reasoning effort',
@@ -116,8 +116,8 @@ const extraJapanese: Record<ExtraTranslationKey, string> = {
   'canvas.miniMap': 'Mini-map — ドラッグまたはスクロールしてキャンバスを移動',
   'canvas.miniMapCaption': 'ドラッグまたはスクロールして移動',
   'canvas.touchNavigation': 'ドラッグで移動・ピンチで拡大縮小',
-  'ai.astraOnlyDescription': '管理対象の既定モデルです。この設定は管理対象の GPT-6 Astra にのみ適用されます。',
-  'ai.astraNotConfigured': astraSetupError.ja,
+  'ai.managedDescription': 'GPT-6.2 Astra または GPT-6.2 Sol を選択できます。この設定は管理対象モデル専用です。',
+  'ai.managedNotConfigured': managedSetupError.ja,
   'ai.defaultReasoning': '既定の推論強度',
   'ai.perFeatureReasoning': '機能別の推論強度',
   'ai.reasoningEffort': '推論強度',
@@ -148,7 +148,7 @@ export const exactJapanese: Readonly<Record<string, string>> = {
   'Use an Azure resource HTTPS origin or https://api.openai.com, without credentials, paths, ports, query, or fragment.': 'Azure リソースの HTTPS オリジン、または https://api.openai.com を指定してください。資格情報、パス、ポート、クエリ、フラグメントは含めないでください。',
   'Complete the connection profile.': '接続プロファイルの設定を入力してください。',
   'You can save up to 10 AI connection profiles.': 'AI 接続プロファイルは最大 10 件保存できます。',
-  'The selected AI connection is missing. Select another profile or managed GPT-6 Astra.': '選択中の AI 接続が見つかりません。別のプロファイル、または管理対象の GPT-6 Astra を明示的に選択してください。',
+  'The selected AI connection is missing. Select another profile or managed GPT-6.2 Astra / GPT-6.2 Sol.': '選択中の AI 接続が見つかりません。別のプロファイル、または管理対象の GPT-6.2 Astra / GPT-6.2 Sol を明示的に選択してください。',
   'Enter a valid API key. Keys stay only in this browser tab memory.': '有効な API キーを入力してください。キーはこのブラウザー タブのメモリ内にのみ保持されます。',
   'Bring-your-own AI availability must be confirmed by the application server.': '独自の AI 接続（BYO）の利用可否をアプリケーション サーバーで確認する必要があります。',
   'Enter this profile’s API key and successfully test the connection before using it.': 'このプロファイルを使用する前に、API キーを入力して接続テストを成功させてください。',
@@ -342,25 +342,25 @@ export const exactJapanese: Readonly<Record<string, string>> = {
   'The application authentication layer rejected the request. Refresh the page and try again.': 'アプリケーションの認証レイヤーによってリクエストが拒否されました。ページを更新して、もう一度お試しください。',
   'The request was blocked before it reached the AI provider. Reduce the request size or contact the administrator.': 'リクエストは AI プロバイダーに到達する前にブロックされました。リクエストのサイズを小さくするか、管理者に連絡してください。',
   'The selected model deployment is not allowed by the server configuration.': '選択したモデル デプロイはサーバー構成で許可されていません。',
-  'Only the managed GPT-6 Astra model can run in this application.': 'このアプリケーションでは、管理対象のGPT-6 Astraモデルのみ実行できます。',
-  'Only the configured GPT-6 Astra deployment can run.': '設定済みのGPT-6 Astraデプロイのみ実行できます。',
-  'The requested reasoning effort is not supported by GPT-6 Astra.': '指定された推論強度はGPT-6 Astraでサポートされていません。',
-  'The configured GPT-6 Astra deployment rejected the image analysis request. Check the image and contact the application administrator if the problem persists.': '設定済みのGPT-6 Astraデプロイが画像分析リクエストを拒否しました。画像を確認し、問題が解決しない場合はアプリケーション管理者に連絡してください。',
-  'GPT-6 Astra requests must use the Responses API.': 'GPT-6 AstraへのリクエストにはResponses APIを使用する必要があります。',
-  'Only GPT-6 Astra Responses requests are supported.': 'GPT-6 AstraのResponsesリクエストのみサポートされています。',
+  'Select managed GPT-6.2 Astra or GPT-6.2 Sol.': '管理対象の GPT-6.2 Astra または GPT-6.2 Sol を選択してください。',
+  'Only configured GPT-6.2 Astra or GPT-6.2 Sol deployments can run.': '設定済みの GPT-6.2 Astra または GPT-6.2 Sol のデプロイのみ実行できます。',
+  'The requested reasoning effort is not supported by this model.': '指定された推論強度はこのモデルでサポートされていません。',
+  'The selected model rejected the image analysis request. Check the image and contact the application administrator if the problem persists.': '選択したモデルが画像分析を拒否しました。画像を確認し、問題が続く場合は管理者に連絡してください。',
+  'The request format must match the selected managed model.': 'リクエスト形式は選択した管理対象モデルに一致する必要があります。',
+  'Use the configured model deployment and its matching API format.': '設定済みのモデルデプロイと対応する API 形式を使用してください。',
+  'The AI output limit was reached before completion. Reduce the request or reasoning effort.': '完了前に AI の出力上限に達しました。リクエストまたは推論強度を減らしてください。',
+  'Claude did not return a complete answer. No automatic resubmission was made.': 'Claude は完全な回答を返しませんでした。自動再送信はしていません。',
+  'Claude returned invalid JSON content.': 'Claude が無効な JSON 内容を返しました。',
   'Custom AI endpoints are not supported.': 'カスタムAIエンドポイントはサポートされていません。',
-  'Configure the explicit GPT-6 Astra deployment and its identical singleton allowlist.': 'GPT-6 Astraのデプロイを明示的に指定し、同じデプロイだけを含む許可リストを設定してください。',
-  'Only the configured GPT-6 Astra deployment is allowed.': '設定済みのGPT-6 Astraデプロイのみ許可されています。',
-  'deployment and body.model must explicitly match the configured GPT-6 Astra alias without endpoint overrides.': 'エンドポイントを上書きせず、deploymentとbody.modelの両方に設定済みのGPT-6 Astraエイリアスと完全に一致する値を明示的に指定する必要があります。',
-  'Use a Responses request body for the configured GPT-6 Astra deployment.': '設定済みのGPT-6 AstraデプロイにはResponses形式のリクエスト本文を使用してください。',
-  'The managed Azure OpenAI endpoint is not configured correctly.': '管理対象のAzure OpenAIエンドポイントが正しく設定されていません。',
-  'Bring-your-own AI is disabled. Only managed GPT-6 Astra can run.': '独自のAIエンドポイントは無効です。管理対象のGPT-6 Astraのみ実行できます。',
-  'No deployment configured for GPT-6 Astra. Set VITE_AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA.': 'GPT-6 Astraのデプロイが設定されていません。管理者がVITE_AZURE_OPENAI_DEPLOYMENT_GPT6ASTRAを設定する必要があります。',
-  'Azure OpenAI is not configured. Please check your environment.': 'Azure OpenAIが設定されていません。GPT-6 Astraの管理対象デプロイと環境設定を確認するよう管理者に連絡してください。',
-  [astraSetupError.en]: astraSetupError.ja,
+  'Configure both managed model deployments and their exact allowlist.': '両方の管理対象モデルのデプロイと、正確な許可リストを設定してください。',
+  'Only the configured model deployment and matching API format are allowed.': '設定済みのモデルデプロイと対応する API 形式だけが許可されています。',
+  'deployment and body.model must explicitly match, without endpoint or credential overrides.': 'エンドポイントや資格情報を上書きせず、deployment と body.model を完全に一致させてください。',
+  'The managed Azure AI endpoint is not configured correctly.': '管理対象のAzure AIエンドポイントが正しく設定されていません。',
+  'Azure OpenAI is not configured. Please check your environment.': 'Azure OpenAIが設定されていません。GPT-6.2 Astra / GPT-6.2 Solの管理対象デプロイと環境設定を確認するよう管理者に連絡してください。',
+  [managedSetupError.en]: managedSetupError.ja,
   'AI model settings': 'AIモデル設定',
-  'The server could not acquire an Azure OpenAI credential. Contact the administrator.': 'サーバーが Azure OpenAI の資格情報を取得できませんでした。管理者に連絡してください。',
-  'Azure OpenAI rejected the server credential. Check the managed identity role assignment.': 'Azure OpenAI がサーバーの資格情報を拒否しました。Managed Identity のロール割り当てを確認してください。',
+  'The server could not acquire an Azure AI credential. Contact the administrator.': 'サーバーが Azure AI の資格情報を取得できませんでした。管理者に連絡してください。',
+  'Azure AI rejected the server credential. Check the managed identity role assignment.': 'Azure AI がサーバーの資格情報を拒否しました。Managed Identity のロール割り当てを確認してください。',
   'Model or deployment not found. Check the configured name.': 'モデルまたはデプロイが見つかりません。設定されている名前を確認してください。',
   'The application request limit was reached. Wait a moment and try again.': 'アプリケーションのリクエスト上限に達しました。しばらく待ってから、もう一度お試しください。',
   'The AI provider is rate-limiting requests. Wait a moment and try again.': 'AI プロバイダーがリクエストを制限しています。しばらく待ってから、もう一度お試しください。',
@@ -410,7 +410,7 @@ export const exactJapanese: Readonly<Record<string, string>> = {
   'Failed to parse the template. Please try again.': 'テンプレートの解析に失敗しました。もう一度お試しください。',
   'The selected model does not support image analysis. Choose a vision-capable model in AI settings.': '選択したモデルは画像分析に対応していません。AI 設定でビジョン対応のモデルを選択してください。',
   'The selected model may not support image analysis. Choose a vision-capable model in AI settings.': '選択したモデルは画像分析に対応していない可能性があります。AI 設定でビジョン対応のモデルを選択してください。',
-  'The selected model may not support image analysis. Try using GPT-6 Astra.': '選択したモデルは画像分析に対応していない可能性があります。GPT-6 Astraを使用してください。',
+  'The selected model may not support image analysis. Try using GPT-6.2 Astra / GPT-6.2 Sol.': '選択したモデルは画像分析に対応していない可能性があります。GPT-6.2 Astra / GPT-6.2 Solを使用してください。',
   'Fit to content': '内容に合わせる',
   'Fit‑to‑view': '全体を表示',
   'Fixed Pricing': '固定料金',

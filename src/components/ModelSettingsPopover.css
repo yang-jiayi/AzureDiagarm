@@ -78,38 +78,38 @@
   line-height: 1.4;
 }
 
-.astra-reasoning-settings {
+.managed-model-settings {
   min-width: 0;
 }
 
-.astra-reasoning-settings .msp-managed-note strong {
+.managed-model-settings .msp-managed-note strong {
   color: var(--azd-color-text);
   font-size: 0.85rem;
 }
 
-.astra-reasoning-settings .msp-feature-name {
+.managed-model-settings .msp-feature-name {
   white-space: normal;
   overflow-wrap: anywhere;
 }
 
-.astra-reasoning-settings .msp-reasoning-row,
-.astra-reasoning-settings .msp-portfolio {
+.managed-model-settings .msp-reasoning-row,
+.managed-model-settings .msp-portfolio {
   flex-wrap: wrap;
 }
 
-.astra-reasoning-settings .msp-portfolio-btn {
+.managed-model-settings .msp-portfolio-btn {
   flex-shrink: 1;
   white-space: normal;
   overflow-wrap: anywhere;
 }
 
-.astra-reasoning-settings :is(button, select) {
+.managed-model-settings :is(button, select) {
   min-height: 32px;
 }
 
 @media (pointer: coarse) {
-  .astra-reasoning-settings :is(button, select),
-  .astra-reasoning-settings summary,
+  .managed-model-settings :is(button, select),
+  .managed-model-settings summary,
   .toolbar-dropdown-menu--model-settings .msp-close-btn {
     min-width: 44px;
     min-height: 44px;

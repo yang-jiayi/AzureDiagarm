@@ -83,7 +83,8 @@ jobs:
         run: |
           docker build \
             --build-arg VITE_AZURE_OPENAI_ENDPOINT=https://container-test.openai.azure.com/ \
-            --build-arg VITE_AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA=gpt-6-astra \
+            --build-arg VITE_AZURE_OPENAI_DEPLOYMENT_GPT62ASTRA=gpt-6.2-astra \
+            --build-arg VITE_AZURE_OPENAI_DEPLOYMENT_GPT62SOL=gpt-6.2-sol \
             --tag azurediagarm-validation:"${GITHUB_SHA}" .
 
       - name: Start all runtime processes and verify readiness
@@ -96,8 +97,9 @@ jobs:
             --env AI_BUDGET_STORE=memory \
             --env MCP_ENABLED=true \
             --env AZURE_OPENAI_ENDPOINT=https://container-test.openai.azure.com/ \
-            --env AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA=gpt-6-astra \
-            --env AZURE_OPENAI_ALLOWED_DEPLOYMENTS=gpt-6-astra \
+            --env AZURE_OPENAI_DEPLOYMENT_GPT62ASTRA=gpt-6.2-astra \
+            --env AZURE_OPENAI_DEPLOYMENT_GPT62SOL=gpt-6.2-sol \
+            --env AZURE_OPENAI_ALLOWED_DEPLOYMENTS=gpt-6.2-astra,gpt-6.2-sol \
             azurediagarm-validation:"${GITHUB_SHA}")"
           cleanup() {
             status=$?
@@ -133,7 +135,7 @@ jobs:
 
   e2e:
     name: Test critical browser flows
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1

@@ -23,7 +23,8 @@ try {
     configFile: path.join(root, 'vite.config.ts'), root, publicDir: false, logLevel: 'error',
     define: {
       'import.meta.env.VITE_AZURE_OPENAI_ENDPOINT': JSON.stringify('https://workspace-test.openai.azure.com'),
-      'import.meta.env.VITE_AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA': JSON.stringify('workspace-test-astra'),
+      'import.meta.env.VITE_AZURE_OPENAI_DEPLOYMENT_GPT62ASTRA': JSON.stringify('workspace-test-astra'),
+      'import.meta.env.VITE_AZURE_OPENAI_DEPLOYMENT_GPT62SOL': JSON.stringify('workspace-test-sol'),
     },
     build: {
       outDir: output, emptyOutDir: true,
@@ -320,7 +321,7 @@ try {
   await page.locator('.region-option').filter({ hasText: 'East US 2' }).click();
   await expect(page.locator('.region-name')).toHaveText('East US 2');
   await openRibbon('create');
-  await expect(page.locator('.model-popover-label')).toHaveText('GPT-6 Astra');
+  await expect(page.locator('.model-popover-label')).toHaveText('GPT-6.2 Sol');
   const headerHeight = await page.locator('.app-header').evaluate(element => element.getBoundingClientRect().height);
   assert.ok(headerHeight <= 220, `Create toolbar must leave room for the canvas at 1280x720, got ${headerHeight}px`);
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
@@ -586,8 +587,8 @@ try {
   await validation.getByRole('button', { name: 'Close', exact: true }).first().click();
   assert.equal(validationRequests, 5);
   assert.deepEqual(validationDeployments, Array.from({ length: 5 }, () => ({
-    deployment: 'workspace-test-astra', model: 'workspace-test-astra',
-  })), 'Every validation must route to the configured Astra deployment, not just display its label.');
+    deployment: 'workspace-test-sol', model: 'workspace-test-sol',
+  })), 'Every validation must route to the configured GPT-6.2 Sol deployment, not just display its label.');
 
   const quickFeedback = page.getByRole('dialog', { name: 'Quick feedback', exact: true });
   await quickFeedback.getByRole('radio', { name: 'Happy', exact: true }).click();
@@ -816,8 +817,8 @@ try {
   assert.equal(feedbackSubmissions.length, 1, 'Opening full feedback cancels any pending quick-rating submission.');
   assert.deepEqual(unexpectedAIRequests, [], 'Browser checks must only invoke explicitly mocked AI requests');
   assert.deepEqual(proposalDeployments, Array.from({ length: 3 }, () => ({
-    deployment: 'workspace-test-astra', model: 'workspace-test-astra',
-  })), 'Regeneration and snapshot retries must retain real Astra routing without duplicate generation requests.');
+    deployment: 'workspace-test-sol', model: 'workspace-test-sol',
+  })), 'Regeneration and snapshot retries must retain GPT-6.2 Sol routing without duplicate generation requests.');
   console.log(JSON.stringify({ storage, startupHydrations: startupAttempts, headerHeight, responsiveHeaderChecks: responsiveHeaderHeights.length, maximumResponsiveHeaderHeight: Math.max(...responsiveHeaderHeights), protectedReloads, undo: true, groupedEdgeDrag: true, draftRecovery: true, modalFocus: true, keyboardImport: true, aiReview: true, snapshotFailure: true, serviceInspector: true, regionalPricing: true, wafReview: true, staleReview: true, invalidReviewRecovery: true, feedbackPrivacy: true, aiBudget: true, concurrentTabs: true, cloudBindingHistory: true, completeRegionalRanking: true, partialRegionalRankingSuppressed: true }, null, 2));
 } catch (error) {
   console.error('Workspace browser diagnostics:', getBrowserDiagnostics());

@@ -65,19 +65,17 @@ else
 fi
 
 # -- OpenAI proxy vars ----------------------------------------------------------
-# The /api/openai proxy needs the server-side AZURE_OPENAI_* names. In local dev
-# the .env usually only defines the client-side VITE_ names, so bridge them here
-# (an explicit server-side value always wins). Keyless auth (az login /
-# DefaultAzureCredential) is used when AZURE_OPENAI_API_KEY is empty.
+# The /api/openai proxy reads server-side managed-model settings. Bridge public
+# VITE_ routing values for local development; credentials are never bridged.
 export AZURE_OPENAI_ENDPOINT="${AZURE_OPENAI_ENDPOINT:-${VITE_AZURE_OPENAI_ENDPOINT:-}}"
-export AZURE_OPENAI_API_KEY="${AZURE_OPENAI_API_KEY:-${VITE_AZURE_OPENAI_API_KEY:-}}"
-export AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA="${AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA:-${VITE_AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA:-}}"
-export AZURE_OPENAI_ALLOWED_DEPLOYMENTS="${AZURE_OPENAI_ALLOWED_DEPLOYMENTS:-$AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA}"
+export AZURE_OPENAI_DEPLOYMENT_GPT62ASTRA="${AZURE_OPENAI_DEPLOYMENT_GPT62ASTRA:-${VITE_AZURE_OPENAI_DEPLOYMENT_GPT62ASTRA:-}}"
+export AZURE_OPENAI_DEPLOYMENT_GPT62SOL="${AZURE_OPENAI_DEPLOYMENT_GPT62SOL:-${VITE_AZURE_OPENAI_DEPLOYMENT_GPT62SOL:-}}"
+export AZURE_OPENAI_ALLOWED_DEPLOYMENTS="${AZURE_OPENAI_ALLOWED_DEPLOYMENTS:-$AZURE_OPENAI_DEPLOYMENT_GPT62ASTRA,$AZURE_OPENAI_DEPLOYMENT_GPT62SOL}"
 export ALLOW_BYO_AI_ENDPOINTS="${ALLOW_BYO_AI_ENDPOINTS:-false}"
-if [ -n "${AZURE_OPENAI_ENDPOINT:-}" ]; then
-  ok "Managed GPT-6 Astra endpoint configured; BYO connections: $ALLOW_BYO_AI_ENDPOINTS"
+if [ -n "${AZURE_OPENAI_ENDPOINT:-}" ] && [ -n "$AZURE_OPENAI_DEPLOYMENT_GPT62ASTRA" ] && [ -n "$AZURE_OPENAI_DEPLOYMENT_GPT62SOL" ]; then
+  ok "Both managed GPT-6.2 deployments configured; BYO connections: $ALLOW_BYO_AI_ENDPOINTS"
 else
-  warn "Managed GPT-6 Astra is unconfigured; BYO connections: $ALLOW_BYO_AI_ENDPOINTS"
+  warn "One or both managed models are unconfigured; BYO connections: $ALLOW_BYO_AI_ENDPOINTS"
 fi
 
 # -- Speech vars (optional) -----------------------------------------------------

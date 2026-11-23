@@ -19,9 +19,8 @@
 #   RESOURCE_GROUP    - Resource group containing the ACA app
 #   IMAGE_NAME        - Docker image name (e.g. azure-diagram-builder)
 #
-#   AZURE_OPENAI_ENDPOINT           - Approved Azure OpenAI account endpoint
-#   AZURE_OPENAI_RESOURCE_ID        - Account identity for read-only model verification
-#   AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA - Actual approved Astra deployment alias
+#   AZURE_OPENAI_ENDPOINT / AZURE_OPENAI_RESOURCE_ID - GPT-6.2 account
+#   AZURE_OPENAI_DEPLOYMENT_GPT62ASTRA / GPT62SOL - approved model aliases
 #   ALLOW_BYO_AI_ENDPOINTS          - Optional admin opt-in (default false)
 #   Runtime Azure OpenAI access uses the existing managed identity.
 #
@@ -61,10 +60,18 @@ if [[ ${#MISSING[@]} -gt 0 ]]; then
 fi
 
 : "${AZURE_OPENAI_ENDPOINT:?Set AZURE_OPENAI_ENDPOINT}"
-: "${AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA:?Set the approved Astra deployment alias}"
-export AZURE_OPENAI_ALLOWED_DEPLOYMENTS="${AZURE_OPENAI_ALLOWED_DEPLOYMENTS:-$AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA}"
+: "${AZURE_OPENAI_RESOURCE_ID:?Set AZURE_OPENAI_RESOURCE_ID}"
+: "${AZURE_OPENAI_DEPLOYMENT_GPT62ASTRA:?Set the approved GPT-6.2 Astra deployment alias}"
+: "${AZURE_OPENAI_DEPLOYMENT_GPT62SOL:?Set the approved GPT-6.2 Sol deployment alias}"
+: "${AZURE_OPENAI_RESOURCE_ID:?Set AZURE_OPENAI_RESOURCE_ID}"
+EXPECTED_OPENAI_ALLOWLIST="$AZURE_OPENAI_DEPLOYMENT_GPT62ASTRA,$AZURE_OPENAI_DEPLOYMENT_GPT62SOL"
+if [[ "${AZURE_OPENAI_ALLOWED_DEPLOYMENTS:-}" != "$EXPECTED_OPENAI_ALLOWLIST" ]]; then
+    echo "❌ AZURE_OPENAI_ALLOWED_DEPLOYMENTS must list exactly the two GPT-6.2 deployments in Astra,Sol order." >&2
+    exit 1
+fi
 export VITE_AZURE_OPENAI_ENDPOINT="$AZURE_OPENAI_ENDPOINT"
-export VITE_AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA="$AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA"
+export VITE_AZURE_OPENAI_DEPLOYMENT_GPT62ASTRA="$AZURE_OPENAI_DEPLOYMENT_GPT62ASTRA"
+export VITE_AZURE_OPENAI_DEPLOYMENT_GPT62SOL="$AZURE_OPENAI_DEPLOYMENT_GPT62SOL"
 export ALLOW_BYO_AI_ENDPOINTS="${ALLOW_BYO_AI_ENDPOINTS:-false}"
 
 # Every cloud update is public mode. Validate the same controls used at runtime,
@@ -74,7 +81,7 @@ export EASY_AUTH_ENABLED=true
 export ACCESS_CONTROL_ENABLED="${ACCESS_CONTROL_ENABLED:-true}"
 export AI_BUDGET_STORE="${AI_BUDGET_STORE:-$([[ -n "${AZURE_TABLES_BUDGET_ENDPOINT:-${AZURE_TABLES_ENDPOINT:-}}" ]] && echo table || echo cosmos)}"
 node "$(dirname "$0")/../server/deployment-security.js"
-node "$(dirname "$0")/verify-astra-deployment.mjs"
+node "$(dirname "$0")/verify-managed-models.mjs"
 az containerapp auth show --name "$ACA_APP_NAME" --resource-group "$RESOURCE_GROUP" --output json \
     | node "$(dirname "$0")/../server/deployment-security.js" --verify-auth
 ORIGIN_FQDN="$(az containerapp show --name "$ACA_APP_NAME" --resource-group "$RESOURCE_GROUP" --query properties.configuration.ingress.fqdn -o tsv)"
@@ -106,7 +113,8 @@ trap 'rm -f "$APPINSIGHTS_FILE"' EXIT
 BUILD_ARGS=(
     --build-arg "FRONT_DOOR_ID=$FRONT_DOOR_ID"
     --build-arg "VITE_AZURE_OPENAI_ENDPOINT=$AZURE_OPENAI_ENDPOINT"
-    --build-arg "VITE_AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA=$AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA"
+    --build-arg "VITE_AZURE_OPENAI_DEPLOYMENT_GPT62ASTRA=$AZURE_OPENAI_DEPLOYMENT_GPT62ASTRA"
+    --build-arg "VITE_AZURE_OPENAI_DEPLOYMENT_GPT62SOL=$AZURE_OPENAI_DEPLOYMENT_GPT62SOL"
 )
 while IFS='=' read -r key value; do
     if [[ "$key" == VITE_* && -n "$value" ]]; then
@@ -137,7 +145,7 @@ ACR_IMAGE="$ACR_NAME.azurecr.io/$IMAGE_NAME:$IMAGE_TAG"
 
 echo "🔨 Building image in ACR: $ACR_NAME"
 echo "   Image: $IMAGE_NAME:$IMAGE_TAG"
-echo "   Managed model: GPT-6 Astra only; BYO connections: $ALLOW_BYO_AI_ENDPOINTS"
+echo "   Managed models: GPT-6.2 Astra + GPT-6.2 Sol; BYO connections: $ALLOW_BYO_AI_ENDPOINTS"
 echo "   Source: $SOURCE_DIR"
 echo "   Build args: ${#BUILD_ARGS[@]} VITE_* values via --build-arg"
 if [[ -s "$APPINSIGHTS_FILE" ]]; then
@@ -193,7 +201,8 @@ retired_ai_env="$(node "$SOURCE_DIR/scripts/retired-ai-environment.mjs")"
 mapfile -t REMOVE_ENV_VARS <<< "$retired_ai_env"
 RUNTIME_ENV_VARS+=(
     "AZURE_OPENAI_ENDPOINT=$AZURE_OPENAI_ENDPOINT"
-    "AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA=$AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA"
+    "AZURE_OPENAI_DEPLOYMENT_GPT62ASTRA=$AZURE_OPENAI_DEPLOYMENT_GPT62ASTRA"
+    "AZURE_OPENAI_DEPLOYMENT_GPT62SOL=$AZURE_OPENAI_DEPLOYMENT_GPT62SOL"
     "AZURE_OPENAI_ALLOWED_DEPLOYMENTS=$AZURE_OPENAI_ALLOWED_DEPLOYMENTS"
     "ALLOW_BYO_AI_ENDPOINTS=$ALLOW_BYO_AI_ENDPOINTS"
 )
@@ -238,7 +247,7 @@ if [[ ${#REMOVE_ENV_VARS[@]} -gt 0 ]]; then
     UPDATE_ARGS+=(--remove-env-vars "${REMOVE_ENV_VARS[@]}")
 fi
 
-node "$SOURCE_DIR/scripts/verify-astra-deployment.mjs"
+node "$SOURCE_DIR/scripts/verify-managed-models.mjs"
 az containerapp update "${UPDATE_ARGS[@]}"
 
 echo ""

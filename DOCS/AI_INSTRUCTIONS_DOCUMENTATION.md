@@ -1,36 +1,40 @@
 # AI Instructions Documentation
 
-**Last Updated**: September 2026\
-**Managed Model**: GPT-6 Astra via Azure OpenAI; optional explicitly selected BYO connections
+**Last Updated**: November 2026\
+**Managed Models**: GPT-6.2 Sol (default) and GPT-6.2 Astra via Azure OpenAI; optional explicitly selected BYO connections
 
-This document details the AI instructions (system prompts) for the generation, validation, and deployment-guidance agents in the Microsoft Product Architecture Diagram Builder application. Each agent honors the selected managed Astra or administrator-enabled BYO connection.
+This document details the AI instructions (system prompts) for the generation, validation, and deployment-guidance agents in the Microsoft Product Architecture Diagram Builder application. Each agent honors the selected managed model or administrator-enabled BYO connection.
 
 ---
 
 ## Overview
 
-The managed catalog contains **GPT-6 Astra only**, with global and per-feature
-reasoning preferences stored in localStorage. Legacy managed preferences migrate
-to Astra. BYO profiles are separate and use their own explicitly configured
-capabilities; see the [connection guide](BYO-AI-CONNECTIONS.md). Historical result
-metadata is retained without making an old model an executable managed choice.
+The managed catalog contains GPT-6.2 Sol and GPT-6.2 Astra, with global and
+per-feature model/reasoning preferences stored in localStorage. GPT-6.2 Sol is
+the default. Retired managed-model preferences migrate to Sol; former GPT-6 Astra
+preferences migrate to Astra; historical result
+metadata keeps its original model identity without making a retired model an
+executable choice. BYO profiles are separate and use their own explicitly
+configured capabilities; see the [connection guide](BYO-AI-CONNECTIONS.md).
 
 ### Environment Variables
 - `VITE_AZURE_OPENAI_ENDPOINT` - Azure OpenAI endpoint URL (non-secret build-time flag)
 - `AZURE_OPENAI_ENDPOINT` / `AZURE_OPENAI_API_KEY` - server-side runtime config for the `/api/openai` proxy (the key is never bundled; managed identity preferred)
-- `VITE_AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA` - Genuine Astra deployment name
-- `AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA` / `AZURE_OPENAI_ALLOWED_DEPLOYMENTS` - The same deployment name, with no alternate deployments
+- `VITE_AZURE_OPENAI_DEPLOYMENT_GPT62ASTRA` / `AZURE_OPENAI_DEPLOYMENT_GPT62ASTRA` - GPT-6.2 Astra deployment alias
+- `VITE_AZURE_OPENAI_DEPLOYMENT_GPT62SOL` / `AZURE_OPENAI_DEPLOYMENT_GPT62SOL` - GPT-6.2 Sol deployment alias
+- `AZURE_OPENAI_ALLOWED_DEPLOYMENTS` - Exactly those two deployment aliases
 - `ALLOW_BYO_AI_ENDPOINTS` - Explicit server opt-in for trusted Azure OpenAI / official OpenAI connections; disabled by default
 - Reasoning is configured in the AI settings popover, not an environment variable
 
 ### Managed Model Configuration (from `modelSettingsStore.ts`)
 | Model | Max Completion Tokens | Reasoning | API Format |
 |-------|-----------------------|-----------|------------|
-| GPT-6 Astra | 32,000 | Configurable; default `low` | Responses |
+| GPT-6.2 Sol | 32,000 | `low`, `medium`, `high`, `xhigh`, `max`; default `low`; no `none` | Azure OpenAI Responses |
+| GPT-6.2 Astra | 32,000 | `low`, `medium`, `high`, `xhigh`, `max`; default `low`; no `none` | Azure OpenAI Responses |
 
 ---
 
-## 1. Main Diagram Generator (GPT-6 Astra)
+## 1. Main Diagram Generator (GPT-6.2 Sol or GPT-6.2 Astra)
 
 **File**: `src/services/azureOpenAI.ts` (558 lines)  
 **Function**: `generateArchitectureWithAI(description: string, modelOverride?: ModelOverride)`  
@@ -145,7 +149,7 @@ Generate Azure architecture diagrams with logical service groupings based on nat
 
 ---
 
-## 2. Architecture Validator Agent (GPT-6 Astra)
+## 2. Architecture Validator Agent (GPT-6.2 Sol or GPT-6.2 Astra)
 
 **File**: `src/services/architectureValidator.ts` (334 lines)  
 **Function**: `validateArchitecture(..., modelOverride?: ModelOverride)`  
@@ -263,7 +267,7 @@ Validate Azure architectures against the **Azure Well-Architected Framework** (5
 
 ---
 
-## 3. Deployment Guide Generator (GPT-6 Astra)
+## 3. Deployment Guide Generator (GPT-6.2 Sol or GPT-6.2 Astra)
 
 **File**: `src/services/deploymentGuideGenerator.ts` (396 lines)  
 **Function**: `generateDeploymentGuide(..., modelOverride?: ModelOverride)`  
@@ -423,12 +427,13 @@ az webapp create \
 
 ## Token Allocation Strategy
 
-### Astra Token Budget
-All three agents use the `maxCompletionTokens` value from `MODEL_CONFIG` in `modelSettingsStore.ts`. The output budget includes internal reasoning tokens as well as visible response tokens.
+### Managed Model Token Budget
+All agents use the `maxCompletionTokens` value from `MODEL_CONFIG` in `modelSettingsStore.ts`. The shared output budget includes internal reasoning/thinking tokens as well as visible response tokens.
 
 | Model family | Max Completion Tokens | Reasoning | Notes |
 |--------------|-----------------------|-----------|-------|
-| **GPT-6 Astra** | 32,000 | Configurable effort | Responses API only; no model fallback |
+| **GPT-6.2 Sol** | 32,000 | `low`, `medium`, `high`, `xhigh`, `max`; default `low`; no `none` | Azure OpenAI Responses |
+| **GPT-6.2 Astra** | 32,000 | `low`, `medium`, `high`, `xhigh`, `max`; default `low`; no `none` | Azure OpenAI Responses |
 
 ### Per-Agent Behavior
 - **Diagram Generator**: Uses full model token budget
@@ -439,7 +444,9 @@ All three agents use the `maxCompletionTokens` value from `MODEL_CONFIG` in `mod
 
 ## API Configuration
 
-### Managed Astra Request Parameters
+### Managed Request Parameters
+Both managed models use the Azure OpenAI Responses API:
+
 ```typescript
 {
   input: [...],
@@ -450,13 +457,13 @@ All three agents use the `maxCompletionTokens` value from `MODEL_CONFIG` in `mod
 ```
 
 ### API Route
-For managed requests, the server calls Azure OpenAI's `/openai/v1/responses` and
-supplies the approved Astra deployment as `model`. Other managed deployments and
-formats are rejected. Explicit BYO requests use the profile's Responses or Chat
-Completions format, trusted destination, model identifier, and user's key, with
-the same application access and budget controls. Eligible retries preserve the
-captured connection, prompt, reasoning, and output limit; an error never triggers
-model substitution.
+GPT-6.2 Astra and Sol requests use the shared Azure OpenAI `/openai/v1/responses`
+route with separate approved deployment aliases. Other managed deployments
+and formats are rejected. Explicit BYO requests use the
+profile's Responses or Chat Completions format, trusted destination, model
+identifier, and user's key, with the same application access and budget controls.
+Eligible retries preserve the captured connection, prompt, reasoning, and output
+limit; an error never triggers model substitution.
 
 ### Error Handling
 - 401: Invalid API key
@@ -494,7 +501,7 @@ Generated by `formatDeploymentGuide(guide)`:
 
 ### Main Diagram Generator
 ```typescript
-const modelOverride = { model: 'gpt-6-astra', reasoningEffort: 'medium' } as const;
+const modelOverride = { model: 'gpt-6.2-sol', reasoningEffort: 'medium' } as const;
 const result = await generateArchitectureWithAI(
   "Build a serverless e-commerce platform with AI recommendations",
   modelOverride
@@ -504,7 +511,7 @@ const result = await generateArchitectureWithAI(
 
 ### Architecture Validator
 ```typescript
-const modelOverride = { model: 'gpt-6-astra', reasoningEffort: 'medium' } as const;
+const modelOverride = { model: 'gpt-6.2-astra', reasoningEffort: 'medium' } as const;
 const validation = await validateArchitecture(
   services,      // Array of service objects
   connections,   // Array of connection objects
@@ -517,7 +524,7 @@ const validation = await validateArchitecture(
 
 ### Deployment Guide Generator
 ```typescript
-const modelOverride = { model: 'gpt-6-astra', reasoningEffort: 'high' } as const;
+const modelOverride = { model: 'gpt-6.2-astra', reasoningEffort: 'high' } as const;
 const guide = await generateDeploymentGuide(
   services,
   connections,
@@ -563,5 +570,5 @@ const guide = await generateDeploymentGuide(
 ---
 
 **Document Version**: 4.0\
-**Managed Model**: GPT-6 Astra only\
+**Managed Models**: GPT-6.2 Sol (default) and GPT-6.2 Astra\
 **Availability**: Requires an operational selected connection; BYO additionally requires administrator opt-in, a key, and verification

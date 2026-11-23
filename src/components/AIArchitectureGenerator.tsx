@@ -17,6 +17,8 @@ import {
   FEATURE_CONFIG,
   getReasoningEffortLabel,
   getSupportedReasoningEfforts,
+  getAvailableModels,
+  isModelType,
   updateFeatureOverride,
 } from '../stores/modelSettingsStore';
 import { trackImageImport } from '../services/telemetryService';
@@ -497,10 +499,10 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
       return;
     }
     const connectionAtClick = getEffectiveAIModelInfo('architectureGeneration');
-    if (connectionAtClick.source === 'managed' && connectionAtClick.code === 'astra_not_configured') {
+    if (connectionAtClick.source === 'managed' && connectionAtClick.code === 'managed_model_not_configured') {
       setError(localize(language, {
-        en: 'GPT-6 Astra is not configured. Contact the application administrator to configure the managed Astra deployment.',
-        ja: 'GPT-6 Astraが設定されていません。管理対象のAstraデプロイを設定するようアプリケーション管理者に連絡してください。',
+        en: 'The selected managed model is not configured. Contact the application administrator.',
+        ja: '選択した管理対象モデルが設定されていません。アプリケーション管理者に連絡してください。',
       }));
       return;
     }
@@ -966,7 +968,17 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
     return (
       <div className="ai-modal-model-group" key={feature}>
         <span className="ai-modal-model-label">{label}</span>
-        <strong>{localize(language, { en: 'Managed GPT-6 Astra', ja: '管理対象の GPT-6 Astra' })}</strong>
+        <select className="ai-modal-model-select"
+          value={featureSettings.model} disabled={isGenerating}
+          aria-label={`${translate(FEATURE_CONFIG[feature].displayName)} - ${localize(language, { en: 'Model', ja: 'モデル' })}`}
+          onChange={event => {
+            if (isModelType(event.target.value)) updateFeatureOverride(feature, {
+              model: event.target.value, reasoningEffort: featureSettings.reasoningEffort,
+            });
+          }}>
+          {Object.keys(MODEL_CONFIG).filter(isModelType).map(model => <option key={model} value={model}
+            disabled={!getAvailableModels().includes(model)}>{MODEL_CONFIG[model].displayName}</option>)}
+        </select>
         {config.isReasoning && (
           <>
             <span className="ai-modal-model-label">{t("Reasoning:")}</span>
@@ -1364,9 +1376,9 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
                 </div>
                 <span className="model-change-hint">
                   {selectedConnection.source === 'bring-your-own'
-                    ? localize(language, { en: 'All outputs use the selected profile’s capabilities and limits. Managed Astra reasoning settings do not apply.', ja: 'すべての出力で選択中のプロファイルの機能と上限を使用します。管理対象の Astra の推論設定は適用されません。' })
+                    ? localize(language, { en: 'All outputs use the selected profile’s capabilities and limits. Managed model reasoning settings do not apply.', ja: 'すべての出力で選択中のプロファイルの機能と上限を使用します。管理対象の モデルの推論設定は適用されません。' })
                     : mode === 'both'
-                    ? localize(language, { en: 'Both outputs use GPT-6 Astra with their own reasoning settings.', ja: '両方の出力でGPT-6 Astraを使用し、推論強度を個別に設定できます。' })
+                    ? localize(language, { en: 'Each output uses its selected managed model and reasoning settings.', ja: '各出力で選択した管理対象モデルと推論強度を使用します。' })
                     : localize(language, { en: 'Reasoning is also configurable in AI model settings.', ja: '推論強度はAIモデル設定でも変更できます。' })}
                 </span>
               </div>

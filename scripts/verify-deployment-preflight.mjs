@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import policy from '../server/astra-policy.js';
 
 const policyAssignmentName = 'Azure_Security_Baseline';
 const policyAssignmentScope = '/providers/Microsoft.Management/managementGroups/02310481-6752-4d53-8fc4-f597a8e047f4';
@@ -15,6 +16,7 @@ const preservedRuntimeNames = [
   'AI_MAX_CONCURRENT_REQUESTS',
   'AZURE_TABLES_BUDGET_ENDPOINT',
 ];
+const accountResourceIdPattern = /^\/subscriptions\/[a-f0-9-]{36}\/resourceGroups\/[A-Za-z0-9._()-]+\/providers\/Microsoft\.CognitiveServices\/accounts\/[A-Za-z0-9-]+$/i;
 
 function requireValue(value, label) {
   if (typeof value !== 'string' || value.trim() === '') {
@@ -106,7 +108,14 @@ export function verifyRuntimeConfiguration(env) {
     requireValue(env.AZURE_TABLES_BUDGET_ENDPOINT, 'AZURE_TABLES_BUDGET_ENDPOINT'),
     'AZURE_TABLES_BUDGET_ENDPOINT',
   );
-  return { accessStore, budgetEndpoint };
+  const managedModels = policy.managedModelsConfiguration(env);
+  if (managedModels.configured !== true || !managedModels.astra?.configured || !managedModels.sol?.configured) {
+    throw new Error('Both GPT-6.2 model deployments and their exact allowlist are required.');
+  }
+  if (!accountResourceIdPattern.test(env.AZURE_OPENAI_RESOURCE_ID || '')) {
+    throw new Error('AZURE_OPENAI_RESOURCE_ID must identify the approved OpenAI account.');
+  }
+  return { accessStore, budgetEndpoint, managedModels };
 }
 
 export function verifyPreservedRuntimeConfiguration(env, currentEnv) {

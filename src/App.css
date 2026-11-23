@@ -1795,7 +1795,7 @@ body.dark-mode .icon-item:hover {
 }
 
 body.dark-mode .icon-label {
-  color: var(--azd-color-text-muted);
+  color: var(--azd-color-text);
 }
 
 /* React Flow controls in dark mode */

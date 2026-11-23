@@ -11,29 +11,31 @@ const modelSettingsScripts = new Map<string, string>();
 before(async () => {
   const mocks: Record<string, string> = {
     modelSettingsStore: `
-      const settings = {model:'gpt-6-astra', reasoningEffort:'none'};
+      const settings = {model:'gpt-6.2-sol', reasoningEffort:'low'};
       export const useModelSettings = () => [window.h.settings ?? settings];
       export const getModelSettings = () => settings;
       export const getModelSettingsForFeature = feature => ({
         ...(window.h.settings ?? settings), ...window.h.settings?.featureOverrides?.[feature],
       });
-      export const getAvailableModels = () => window.h.configured === false ? [] : ['gpt-6-astra'];
+      export const getAvailableModels = () => window.h.configured === false ? [] : ['gpt-6.2-astra', 'gpt-6.2-sol'];
+      export const isModelType = value => value === 'gpt-6.2-astra' || value === 'gpt-6.2-sol';
       export const MODEL_CONFIG = {
-        'gpt-6-astra': {displayName:'GPT-6 Astra', apiFormat:'responses', isReasoning:true, maxCompletionTokens:32000}
+        'gpt-6.2-astra': {displayName:'GPT-6.2 Astra', apiFormat:'responses', isReasoning:true, maxCompletionTokens:32000},
+        'gpt-6.2-sol': {displayName:'GPT-6.2 Sol', apiFormat:'responses', isReasoning:true, maxCompletionTokens:32000}
       };
-      export const FEATURE_CONFIG = {architectureGeneration:{displayName:'Topology',recommendedModel:'gpt-6-astra'},blueprint:{displayName:'Blueprint',recommendedModel:'gpt-6-astra'}};
+      export const FEATURE_CONFIG = {architectureGeneration:{displayName:'Topology',recommendedModel:'gpt-6.2-sol'},blueprint:{displayName:'Blueprint',recommendedModel:'gpt-6.2-sol'}};
       export class AIModelConfigurationError extends Error {
         constructor(code, message) { super(message); this.name='AIModelConfigurationError'; this.code=code; this.source='client'; this.retryable=false; }
       }
       export const isModelAvailable = () => window.h.configured !== false;
       export const getDeploymentName = () => {
-        if(!isModelAvailable()) throw new AIModelConfigurationError('astra_not_configured','GPT-6 Astra is not configured.');
-        return 'test-gpt-6-astra';
+        if(!isModelAvailable()) throw new AIModelConfigurationError('managed_model_not_configured','GPT-6.2 Sol is not configured.');
+        return 'test-gpt-6.2-sol';
       };
       export const updateFeatureOverride = () => {};
-      export const getSupportedReasoningEfforts = () => ['none','max'];
+      export const getSupportedReasoningEfforts = () => ['low','medium','high','xhigh','max'];
       export const getReasoningEffortLabel = x => x;
-      export const isReasoningEffort = value => ['none','minimal','low','medium','high','xhigh','max'].includes(value);
+      export const isReasoningEffort = value => ['low','medium','high','xhigh','max'].includes(value);
     `,
     LanguageContext: `export const useLanguage = () => ({language:window.h.language ?? 'en',t:x=>x,translate:x=>x});`,
     byoAISettingsStore: `
@@ -55,17 +57,17 @@ before(async () => {
     `,
     aiModelRuntime: `
       export const getEffectiveAIModelInfo = feature => {
-        const settings={model:'gpt-6-astra',reasoningEffort:'none',...window.h.settings,
+        const settings={model:'gpt-6.2-sol',reasoningEffort:'low',...window.h.settings,
           ...window.h.settings?.featureOverrides?.[feature]};
-        return window.h.connectionInfo ?? {source:'managed',model:'gpt-6-astra',displayName:'GPT-6 Astra',
+        return window.h.connectionInfo ?? {source:'managed',model:settings.model,displayName:settings.model==='gpt-6.2-astra'?'GPT-6.2 Astra':'GPT-6.2 Sol',
           reasoningEffort:settings.reasoningEffort,apiFormat:'responses',isReasoning:true,
           supportsVision:true,maxCompletionTokens:32000,ready:window.h.configured!==false,
-          ...(window.h.configured===false?{code:'astra_not_configured'}:{})};
+          ...(window.h.configured===false?{code:'managed_model_not_configured'}:{})};
       };
       export const captureRuntimeModelOverride = feature => {
         const info=getEffectiveAIModelInfo(feature);
         if(!info.ready) throw new Error('The selected AI connection is not ready.');
-        return {model:'gpt-6-astra',reasoningEffort:info.reasoningEffort,
+        return {model:info.model,reasoningEffort:info.reasoningEffort,
           connection:Object.freeze({...info,feature,revision:window.h.connectionRevision??0})};
       };
       export const assertCapturedAIConnectionCurrent = () => {};
@@ -212,7 +214,10 @@ before(async () => {
     VITE_AZURE_OPENAI_DEPLOYMENT_GPT56LUNA: 'gpt-5.6-luna',
   };
   const environments: Record<string, Record<string, string>> = {
-    astra: { ...legacyDeployments, VITE_AZURE_OPENAI_ENDPOINT: 'https://example.openai.azure.com', VITE_AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA: 'gpt-6-astra' },
+    dual: { VITE_AZURE_OPENAI_ENDPOINT: 'https://example.openai.azure.com',
+      VITE_AZURE_OPENAI_DEPLOYMENT_GPT62ASTRA: 'astra-alias', VITE_AZURE_OPENAI_DEPLOYMENT_GPT62SOL: 'sol-alias' },
+    astra: { ...legacyDeployments, VITE_AZURE_OPENAI_ENDPOINT: 'https://example.openai.azure.com',
+      VITE_AZURE_OPENAI_DEPLOYMENT_GPT62ASTRA: 'astra-alias', VITE_AZURE_OPENAI_DEPLOYMENT_GPT62SOL: 'sol-alias' },
     legacy: { ...legacyDeployments, VITE_AZURE_OPENAI_ENDPOINT: 'https://example.openai.azure.com' },
     none: {},
   };
@@ -520,7 +525,7 @@ for (const parallel of [true, false]) {
 
 const astraMaxBoth = {
   mode: 'both', parallel: true, accepted: true, useRatePolicy: true,
-  settings: { model: 'gpt-6-astra', reasoningEffort: 'max' },
+  settings: { model: 'gpt-6.2-sol', reasoningEffort: 'max' },
 };
 
 test('Both/parallel/Astra MAX waits for provider capacity without replaying a completed topology', async t => {
@@ -546,7 +551,7 @@ test('Both/parallel/Astra MAX waits for provider capacity without replaying a co
   });
   assert.deepEqual(state, {
     calls: ['manifest', 'topology', 'blueprint', 'blueprint'],
-    settings: Array.from({ length: 4 }, () => ['gpt-6-astra', 'max']),
+    settings: Array.from({ length: 4 }, () => ['gpt-6.2-sol', 'max']),
     applies: 1, blueprints: 1, violations: 0,
   });
 });
@@ -659,7 +664,7 @@ test('cancelling a rate-limited missing-output retry keeps accepted work and ret
     return {
       calls: h.calls.map((call: any) => call.kind), applies: h.applies.length, blueprints: h.blueprints,
       samePrompt: h.calls.filter((call: any) => call.kind === 'blueprint').every((call: any) => call.prompt === h.calls[0].prompt),
-      sameSettings: h.calls.every((call: any) => call.override.model === 'gpt-6-astra' && call.override.reasoningEffort === 'max'),
+      sameSettings: h.calls.every((call: any) => call.override.model === 'gpt-6.2-sol' && call.override.reasoningEffort === 'max'),
     };
   }), {
     calls: ['manifest', 'topology', 'blueprint', 'blueprint', 'blueprint'],
@@ -1081,34 +1086,88 @@ const savedBYO = {
   baseUrl: 'https://api.openai.com/v1', apiFormat: 'responses', reasoningEffort: 'max',
 };
 
+test('shared managed connection label remains honest when feature selection differs from the default', async t => {
+  const page = await setupModelSettings(t, 'dual', { initialSettings: {
+    model: 'gpt-6.2-sol', reasoningEffort: 'low',
+    featureOverrides: { architectureGeneration: { model: 'gpt-6.2-astra', reasoningEffort: 'high' },
+      blueprint: { model: 'gpt-6.2-sol', reasoningEffort: 'none' } },
+  } });
+  assert.match(await page.locator('.model-popover-label').innerText(), /GPT-6.2 Astra/);
+  const choice = page.getByRole('combobox', { name: 'AI connection', exact: true }).locator('option:checked');
+  assert.equal(await choice.innerText(), 'Managed models (per-feature settings)');
+  assert.doesNotMatch(await choice.innerText(), /GPT-6\.2 Astra|GPT-6\.2 Sol/);
+  assert.equal(await page.evaluate(() => (window as any).h.getEffectiveAIModelInfo('architectureGeneration').model), 'gpt-6.2-astra');
+  assert.equal(await page.evaluate(() => (window as any).h.getEffectiveAIModelInfo('blueprint').model), 'gpt-6.2-sol');
+});
+
+test('unsupported saved Sol None normalizes before per-feature reasoning inheritance', async t => {
+  const page = await setupModelSettings(t, 'dual', { initialSettings: {
+    model: 'gpt-6.2-sol', reasoningEffort: 'none',
+    featureOverrides: { blueprint: { model: 'gpt-6.2-astra' } },
+  } });
+  await openModelGuidance(page);
+  const effort = page.getByRole('combobox', { name: 'Blueprint Diagrams - Reasoning effort', exact: true });
+  assert.equal(await effort.locator('option:checked').innerText(), 'Default (Low)');
+  assert.equal(await page.evaluate(() => (window as any).h.getModelSettings().reasoningEffort), 'low');
+  assert.equal(await page.evaluate(() => (window as any).h.getEffectiveAIModelInfo('blueprint').reasoningEffort), 'low');
+  assert.equal(await page.getByRole('group', { name: 'Default reasoning' })
+    .getByRole('button', { name: 'None', exact: true }).count(), 0);
+});
+
+for (const language of ['en', 'ja'] as const) {
+  test(`dual managed selector keeps Astra and per-feature Sol explicit in ${language}`, async t => {
+    const page = await setupModelSettings(t, 'dual');
+    await page.evaluate(language => (window as any).h.setLanguage(language), language);
+    await openModelGuidance(page);
+    const selector = page.getByRole('combobox', { name: language === 'ja' ? '管理対象モデル' : 'Managed model', exact: true });
+    await selector.selectOption('gpt-6.2-astra');
+    assert.equal(await page.evaluate(() => (window as any).h.getModelSettings().model), 'gpt-6.2-astra');
+    assert.match(await page.locator('.model-popover-label').innerText(), /GPT-6.2 Astra/);
+    assert.equal(await page.getByRole('group', { name: language === 'ja' ? '既定の推論強度' : 'Default reasoning' })
+      .getByRole('button', { name: language === 'ja' ? 'なし' : 'None', exact: true }).count(), 0);
+    const featureName = language === 'ja' ? 'ブループリント図' : 'Blueprint Diagrams';
+    await page.getByRole('combobox', { name: `${featureName} - ${language === 'ja' ? 'モデル' : 'Model'}`, exact: true }).selectOption('gpt-6.2-sol');
+    const effort = page.getByRole('combobox', { name: `${featureName} - ${language === 'ja' ? '推論強度' : 'Reasoning effort'}`, exact: true });
+    assert.equal(await effort.locator('option[value="none"]').count(), 0);
+    await effort.selectOption('low');
+    assert.deepEqual(await page.evaluate(() => (window as any).h.getModelSettingsForFeature('blueprint')), { model: 'gpt-6.2-sol', reasoningEffort: 'low' });
+    const captured = await page.evaluate(() => {
+      const capture = (window as any).h.captureRuntimeModelOverride('validation');
+      return { model: capture.model, deployment: capture.connection.deployment, format: capture.connection.apiFormat };
+    });
+    assert.deepEqual(captured, { model: 'gpt-6.2-astra', deployment: 'astra-alias', format: 'responses' });
+    assert.equal(await page.evaluate(() => (window as any).h.requests.length), 0);
+  });
+}
+
 for (const profile of ['astra', 'legacy', 'none']) {
     test(`managed Astra popover ${profile} migrates legacy reasoning and preserves selected BYO profiles`, async t => {
       const page = await setupModelSettings(t, profile, {
         savedSettings: savedLegacySettings, savedBYO,
       });
       await openModelGuidance(page);
-      assert.match(await page.locator('#root').innerText(), /GPT-6 Astra/);
+      assert.match(await page.locator('#root').innerText(), /GPT-6.2 Sol/);
       assert.doesNotMatch(await page.locator('#root').innerText(), /GPT-5|alternative model|Compare Models|Compare Validation/i);
       assert.match(await page.locator('#root').innerText(), /customer-owned-model/);
       assert.match(await page.locator('.ai-connection-current').innerText(), /Key required/);
       assert.equal(await page.locator('.msp-model-btn, .msp-byo-card, .model-select').count(), 0);
-      assert.equal(await page.locator('.astra-reasoning-settings').getByRole('combobox').count(), 4, 'managed per-feature reasoning remains intact');
+      assert.equal(await page.locator('.managed-model-settings').getByRole('combobox').count(), 9, 'managed model and per-feature reasoning remain intact');
       assert.equal(await page.getByRole('combobox', { name: 'AI connection', exact: true }).count(), 1);
-      assert.deepEqual(await page.locator('.astra-reasoning-settings').getByRole('combobox').last().locator('option').evaluateAll(options => (
+      assert.deepEqual(await page.locator('.managed-model-settings').getByRole('combobox').last().locator('option').evaluateAll(options => (
         options.map(option => (option as HTMLOptionElement).value)
-      )), ['default', 'none', 'low', 'medium', 'high', 'xhigh', 'max']);
+      )), ['default', 'low', 'medium', 'high', 'xhigh', 'max']);
       const migrated = {
-        model: 'gpt-6-astra', reasoningEffort: 'high',
-        featureOverrides: { blueprint: { model: 'gpt-6-astra', reasoningEffort: 'medium' } },
+        model: 'gpt-6.2-sol', reasoningEffort: 'high',
+        featureOverrides: { blueprint: { model: 'gpt-6.2-sol', reasoningEffort: 'medium' } },
       };
       assert.deepEqual(await page.evaluate(() => (window as any).h.getModelSettings()), migrated);
       assert.deepEqual(await page.evaluate(() => JSON.parse(localStorage.getItem('azure-diagrams-model-settings')!)), {
-        version: 4, astraOnlyVersion: 1, ...migrated,
+        version: 6, ...migrated,
       });
       const recommended = page.getByRole('button', { name: 'Use recommended reasoning', exact: true });
       if (profile !== 'astra') {
-        assert.match(await page.getByRole('alert').innerText(), /GPT-6 Astra is not configured.*administrator/);
-        for (const control of await page.locator('.astra-reasoning-settings button, .astra-reasoning-settings select').all()) {
+        assert.match(await page.getByRole('alert').innerText(), /selected managed model is not configured.*administrator/);
+        for (const control of await page.locator('.managed-model-settings button, .managed-model-settings select').all()) {
           assert.equal(await control.isDisabled(), true);
         }
         return;
@@ -1117,15 +1176,15 @@ for (const profile of ['astra', 'legacy', 'none']) {
       await page.getByRole('group', { name: 'Default reasoning', exact: true })
         .getByRole('button', { name: 'Max', exact: true }).click();
       assert.deepEqual(await page.evaluate(() => (window as any).h.getModelSettingsForFeature('validation')),
-        { model: 'gpt-6-astra', reasoningEffort: 'max' });
+        { model: 'gpt-6.2-sol', reasoningEffort: 'max' });
       assert.deepEqual(await page.evaluate(() => (window as any).h.getModelSettingsForFeature('blueprint')),
-        { model: 'gpt-6-astra', reasoningEffort: 'medium' });
+        { model: 'gpt-6.2-sol', reasoningEffort: 'medium' });
       await page.getByRole('combobox', { name: 'Blueprint Diagrams - Reasoning effort', exact: true }).selectOption('default');
       assert.deepEqual(await page.evaluate(() => (window as any).h.getModelSettingsForFeature('blueprint')),
-        { model: 'gpt-6-astra', reasoningEffort: 'max' });
+        { model: 'gpt-6.2-sol', reasoningEffort: 'max' });
       await recommended.click();
       assert.deepEqual(await page.evaluate(() => (window as any).h.getModelSettings()), {
-        model: 'gpt-6-astra', reasoningEffort: 'low', featureOverrides: {},
+        model: 'gpt-6.2-sol', reasoningEffort: 'low', featureOverrides: {},
       });
     });
 }
@@ -1141,7 +1200,7 @@ for (const language of ['en', 'ja']) {
     await page.keyboard.press('Enter');
     assert.equal(await page.locator('.msp-advanced-settings').getAttribute('open'), '');
     const names: string[] = [];
-    const rows = page.locator('.msp-feature-row');
+    const rows = page.locator('.msp-features .msp-feature-row');
     assert.equal(await rows.count(), 4);
     assert.deepEqual(await rows.locator('.msp-feature-name').allTextContents(), language === 'ja'
       ? ['アーキテクチャの生成', 'アーキテクチャの検証', 'デプロイガイドとBicep', 'ブループリント図']
@@ -1156,7 +1215,7 @@ for (const language of ['en', 'ja']) {
     }
     for (const width of [320, 390]) {
       await page.setViewportSize({ width, height: 844 });
-      const bounds = await page.locator('.astra-reasoning-settings').evaluate(element => ({
+      const bounds = await page.locator('.managed-model-settings').evaluate(element => ({
         width: element.clientWidth, scrollWidth: element.scrollWidth,
         controlsFit: Array.from(element.querySelectorAll('select, button')).every(control => (
           control.getBoundingClientRect().right <= element.getBoundingClientRect().right + 1
@@ -1176,40 +1235,40 @@ for (const language of ['en', 'ja']) {
     await page.getByRole('button', { name: language === 'ja' ? '出力設定へ進む' : 'Continue to output', exact: true }).click();
     await page.getByRole('button', { name: 'Generate Architecture', exact: true }).click();
     const error = await page.getByRole('alert').innerText();
-    assert.match(error, /GPT-6 Astra/);
+    assert.match(error, language === 'ja' ? /管理対象モデル/ : /managed model/);
     assert.match(error, language === 'ja' ? /管理者/ : /administrator/);
     assert.doesNotMatch(error, /custom|fallback|GPT-5/i);
     assert.equal(await page.evaluate(() => (window as any).h.calls.length), 0);
     const chat = await setup(t, { surface: 'chat', configured: false, language });
-    assert.match(await chat.locator('.arch-chat-warning').innerText(), /GPT-6 Astra/);
+    assert.match(await chat.locator('.arch-chat-warning').innerText(), language === 'ja' ? /管理対象モデル/ : /managed model/);
     assert.equal(await chat.getByRole('button', { name: 'Send', exact: true }).isDisabled(), true);
     assert.equal(await chat.evaluate(() => (window as any).h.calls.length), 0);
   });
 }
 
-test('Astra-only Both output keeps independent reasoning and never offers a model picker', async t => {
+test('Both output keeps independent model and reasoning controls', async t => {
   const page = await setup(t, {
     mode: 'both', accepted: true,
-    settings: { model: 'gpt-6-astra', reasoningEffort: 'max',
-      featureOverrides: { blueprint: { model: 'gpt-6-astra', reasoningEffort: 'none' } } },
+    settings: { model: 'gpt-6.2-sol', reasoningEffort: 'max',
+      featureOverrides: { blueprint: { model: 'gpt-6.2-sol', reasoningEffort: 'low' } } },
   });
   await page.getByRole('button', { name: 'Generate Diagram', exact: true }).click();
   await page.locator('#architecture-description').fill('Add a secure web application');
   await page.getByRole('button', { name: 'Continue to output', exact: true }).click();
-  assert.equal(await page.getByRole('combobox', { name: /Select AI model/ }).count(), 0);
+  assert.equal(await page.locator('.ai-modal-model-group').getByRole('combobox', { name: / - Model$/ }).count(), 2);
   assert.equal(await page.getByRole('combobox', { name: /Select reasoning effort/ }).count(), 2);
   await page.getByRole('button', { name: 'Generate Architecture', exact: true }).click();
   await page.waitForFunction(() => (window as any).h.blueprints === 1);
   assert.deepEqual(await page.evaluate(() => (window as any).h.calls.map((call: any) => ({
     kind: call.kind, model: call.override.model, effort: call.override.reasoningEffort,
   }))), [
-    { kind: 'manifest', model: 'gpt-6-astra', effort: 'max' },
-    { kind: 'topology', model: 'gpt-6-astra', effort: 'max' },
-    { kind: 'blueprint', model: 'gpt-6-astra', effort: 'none' },
+    { kind: 'manifest', model: 'gpt-6.2-sol', effort: 'max' },
+    { kind: 'topology', model: 'gpt-6.2-sol', effort: 'max' },
+    { kind: 'blueprint', model: 'gpt-6.2-sol', effort: 'low' },
   ]);
 });
 
-for (const modelName of ['GPT-6 Astra (Low)', 'GPT-5.6 Sol (Medium)', 'Legacy customer endpoint / retired-model']) {
+for (const modelName of ['GPT-6.1 Sol (Low)', 'GPT-5.6 Sol (Medium)', 'Legacy customer endpoint / retired-model']) {
   test(`model badges preserve ${modelName} provenance even when Astra is configured`, async t => {
     const page = await setupModelSettings(t, 'astra', { surface: 'badge', modelName });
     assert.equal(await page.locator('.model-generation-badge-text strong').innerText(), modelName);
@@ -1241,8 +1300,8 @@ test('BYO actual dialog saves named profiles without activation and supports exp
     'a successful test must never silently select BYO');
   await dialog.getByRole('button', { name: 'Use this profile', exact: true }).click();
   assert.equal(await dialog.getByRole('button', { name: 'Delete profile', exact: true }).isDisabled(), true);
-  assert.match(await dialog.innerText(), /Explicitly switch to managed Astra/);
-  await dialog.getByRole('button', { name: 'Use managed Astra', exact: true }).click();
+  assert.match(await dialog.innerText(), /Explicitly switch to managed models/);
+  await dialog.getByRole('button', { name: 'Use managed model', exact: true }).click();
   await dialog.getByRole('button', { name: 'Add profile', exact: true }).click();
   await saveConnectionProfile(page, 'Review team');
   assert.equal(await dialog.locator('.byo-ai-profile-list > button').count(), 2);
@@ -1344,11 +1403,11 @@ for (const language of ['en', 'ja']) {
     const selectedId = await page.evaluate(() => (window as any).h.getBYOAISettings().activeProfileId);
     assert.ok(selectedId);
     await page.evaluate(() => { (window as any).h.failProfileStorage = true; });
-    await dialog.getByRole('button', { name: language === 'ja' ? '管理対象の Astra を使用' : 'Use managed Astra', exact: true }).click();
+    await dialog.getByRole('button', { name: language === 'ja' ? '管理対象モデルを使用' : 'Use managed model', exact: true }).click();
     await dialog.locator('.ai-connection-error').waitFor();
     assert.equal(await page.evaluate(() => (window as any).h.getBYOAISettings().activeProfileId), selectedId);
     await page.evaluate(() => { (window as any).h.failProfileStorage = false; });
-    await dialog.getByRole('button', { name: language === 'ja' ? '管理対象の Astra を使用' : 'Use managed Astra', exact: true }).click();
+    await dialog.getByRole('button', { name: language === 'ja' ? '管理対象モデルを使用' : 'Use managed model', exact: true }).click();
     await page.evaluate(() => { (window as any).h.failProfileStorage = true; });
     await dialog.getByRole('button', { name: language === 'ja' ? 'プロファイルを削除' : 'Delete profile', exact: true }).click();
     await dialog.getByRole('button', { name: language === 'ja' ? '削除を確定' : 'Confirm delete', exact: true }).click();

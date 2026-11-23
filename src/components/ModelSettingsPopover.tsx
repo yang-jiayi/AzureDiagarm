@@ -5,7 +5,7 @@ import { forwardRef } from 'react';
 import { ChevronDown, Sparkles, X } from 'lucide-react';
 import { getReasoningEffortLabel, useModelSettings } from '../stores/modelSettingsStore';
 import { useLanguage } from '../i18n/LanguageContext';
-import AstraReasoningSettings from './AstraReasoningSettings';
+import ManagedModelSettings from './ManagedModelSettings';
 import AIConnectionSelector, { connectionStateLabel } from './AIConnectionSelector';
 import { getEffectiveAIModelInfo } from '../services/aiModelRuntime';
 import { getBYOAIConnectionState, useBYOAISettings } from '../stores/byoAISettingsStore';
@@ -56,7 +56,7 @@ const ModelSettingsPopover = forwardRef<HTMLDivElement, ModelSettingsPopoverProp
                 title={t('Close')} aria-label={t('Close')}><X size={13} /></button>
             </div>
             <AIConnectionSelector compact onConfigureConnections={onConfigureConnections} />
-            <AstraReasoningSettings />
+            <ManagedModelSettings />
           </div>
         )}
       </div>

@@ -195,6 +195,7 @@ function createOpenAIExecutor(options) {
   const {
     endpoint,
     astraDeployment,
+    solDeployment,
     credential,
     apiKey,
     allowedDeployments = new Set(),
@@ -228,11 +229,11 @@ function createOpenAIExecutor(options) {
         return sendError(responseHeaders, error.status, requestId, { source: 'proxy', code: error.code, message: error.message });
       }
     }
-    if (apiFormat !== 'responses' && !(byoConfig && apiFormat === 'chat-completions')) {
+    if (byoConfig ? !['responses', 'chat-completions'].includes(apiFormat) : apiFormat !== 'responses') {
       return sendError(responseHeaders, 400, requestId, {
         source: 'proxy',
         code: 'invalid_api_format',
-        message: byoConfig ? "apiFormat must be 'responses' or 'chat-completions'." : 'Managed GPT-6 Astra requires the Responses API.',
+        message: 'The request format must match the selected managed model or BYO connection.',
       });
     }
 
@@ -244,12 +245,18 @@ function createOpenAIExecutor(options) {
       });
     }
 
-    const managedConfigured = Boolean(endpoint || astraDeployment || allowedDeployments.size || apiKey);
-    if ((!byoConfig || managedConfigured) && (!DEPLOYMENT_NAME_RE.test(astraDeployment || '')
-      || allowedDeployments.size !== 1 || !allowedDeployments.has(astraDeployment))) {
+    const managedConfigured = Boolean(endpoint || astraDeployment || solDeployment || allowedDeployments.size || apiKey);
+    if ((!byoConfig || managedConfigured) && (
+      !DEPLOYMENT_NAME_RE.test(astraDeployment || '')
+      || !DEPLOYMENT_NAME_RE.test(solDeployment || '')
+      || astraDeployment === solDeployment
+      || allowedDeployments.size !== 2
+      || !allowedDeployments.has(astraDeployment)
+      || !allowedDeployments.has(solDeployment)
+    )) {
       return sendError(responseHeaders, 503, requestId, {
-        source: 'proxy', code: 'astra_not_configured',
-        message: 'Configure the explicit GPT-6 Astra deployment and its identical singleton allowlist.',
+        source: 'proxy', code: 'managed_model_not_configured',
+        message: 'Configure both managed model deployments and their exact allowlist.',
       });
     }
     if (byoConfig && (typeof deployment !== 'string' || !BYO_MODEL_NAME_RE.test(deployment))) {
@@ -257,10 +264,10 @@ function createOpenAIExecutor(options) {
         source: 'proxy', code: 'invalid_deployment_name', message: 'A valid, explicit custom model or deployment ID is required.',
       });
     }
-    if (!byoConfig && deployment !== astraDeployment) {
+    if (!byoConfig && ![astraDeployment, solDeployment].includes(deployment)) {
       return sendError(responseHeaders, 403, requestId, {
         source: 'proxy', code: 'deployment_not_allowed',
-        message: 'Only the configured GPT-6 Astra deployment is allowed.',
+        message: 'Only the configured model deployment and matching API format are allowed.',
       });
     }
     if (!body || typeof body !== 'object' || Array.isArray(body)) {
@@ -278,9 +285,9 @@ function createOpenAIExecutor(options) {
       });
     }
     let managedEndpoint;
-    try { if (managedConfigured) managedEndpoint = normalizeManagedEndpoint(endpoint); } catch {
+    try { if (!byoConfig || managedConfigured) managedEndpoint = normalizeManagedEndpoint(endpoint); } catch {
       return sendError(responseHeaders, 503, requestId, {
-        source: 'proxy', code: 'proxy_not_configured', message: 'The managed Azure OpenAI endpoint is not configured correctly.',
+        source: 'proxy', code: 'proxy_not_configured', message: 'The managed AI endpoint is not configured correctly.',
       });
     }
 
@@ -298,6 +305,13 @@ function createOpenAIExecutor(options) {
       });
     }
 
+    if (!byoConfig && body.reasoning?.effort !== undefined
+      && !['low', 'medium', 'high', 'xhigh', 'max'].includes(body.reasoning.effort)) {
+      return sendError(responseHeaders, 400, requestId, {
+        source: 'proxy', code: 'invalid_api_format',
+        message: 'GPT-6.2 Astra and GPT-6.2 Sol require low, medium, high, xhigh or max reasoning effort.',
+      });
+    }
     const upstreamBody = { ...body };
     // Complete responses only: stored inputs, remote tools and multiple
     // generations have unbounded or unobservable usage.
@@ -358,7 +372,7 @@ function createOpenAIExecutor(options) {
         return sendError(responseHeaders, 502, requestId, {
           source: 'credential',
           code: 'credential_acquisition_failed',
-          message: 'The server could not acquire an Azure OpenAI credential.',
+          message: 'The server could not acquire an Azure AI credential.',
         });
       }
     }

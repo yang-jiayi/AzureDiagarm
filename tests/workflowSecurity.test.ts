@@ -38,6 +38,10 @@ const deployScript = readFileSync(
   new URL('../scripts/deploy_aca.sh', import.meta.url),
   'utf8',
 );
+const retiredAIEnvironment = readFileSync(
+  new URL('../scripts/retired-ai-environment.mjs', import.meta.url),
+  'utf8',
+);
 
 test('deployment notifications use OIDC instead of a Communication Services secret', () => {
   assert.doesNotMatch(workflow, /AZURE_COMMUNICATION_CONNECTION_STRING/);
@@ -305,13 +309,14 @@ test('follow-up contact stays disabled unless client and server opt in together'
   assert.match(feedbackServer, /createArchivedFeedbackContact\(item\.contact\)/);
 });
 
-test('custom AI is an explicit administrator opt-in alongside Astra; retired managed providers stay removed', () => {
+test('custom AI is an explicit administrator opt-in alongside both managed models', () => {
   assert.match(feedbackServer, /allowByoAIEndpoints: deployment\.allowByoAIEndpoints/);
-  assert.match(feedbackServer, /runtimeAstraConfiguration\(deployment\.astra, deployment\.allowByoAIEndpoints\)/);
+  assert.match(feedbackServer, /runtimeManagedModelsConfiguration\(deployment\.managedModels, deployment\.allowByoAIEndpoints\)/);
   assert.match(resourcesBicep, /param allowByoAIEndpoints bool = false/);
   assert.match(resourcesBicep, /name: 'ALLOW_BYO_AI_ENDPOINTS', value: string\(allowByoAIEndpoints\)/);
-  assert.doesNotMatch(resourcesBicep, /azureFoundryEndpoint/);
-  assert.doesNotMatch(workflow, /vars\.AZURE_FOUNDRY/);
+  assert.match(resourcesBicep, /name: 'AZURE_OPENAI_DEPLOYMENT_GPT62ASTRA'/);
+  assert.match(resourcesBicep, /name: 'AZURE_OPENAI_DEPLOYMENT_GPT62SOL'/);
+  assert.doesNotMatch(workflow, /vars\.AZURE_FOUNDRY_/);
   assert.match(workflow, /ALLOW_BYO_AI_ENDPOINTS: \$\{\{ vars\.ALLOW_BYO_AI_ENDPOINTS \}\}/);
   assert.doesNotMatch(workflow, /ALLOW_BYO_AI_ENDPOINTS:\s*\$\{\{\s*vars\.ALLOW_BYO_AI_ENDPOINTS\s*\|\|/);
   assert.match(workflow, /node scripts\/verify-deployment-preflight\.mjs runtime-config/);
@@ -320,28 +325,35 @@ test('custom AI is an explicit administrator opt-in alongside Astra; retired man
   assert.match(workflow, /echo "allow_byo_ai_endpoints=\$ALLOW_BYO_AI_ENDPOINTS" >> "\$GITHUB_OUTPUT"/);
   assert.match(workflow, /node scripts\/retired-ai-environment\.mjs/);
   assert.match(deployScript, /scripts\/retired-ai-environment\.mjs/);
-  assert.match(workflow, /AZURE_OPENAI_ENDPOINT AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA AZURE_OPENAI_RESOURCE_ID/);
+  assert.match(workflow, /AZURE_OPENAI_ENDPOINT AZURE_OPENAI_DEPLOYMENT_GPT62ASTRA AZURE_OPENAI_DEPLOYMENT_GPT62SOL AZURE_OPENAI_RESOURCE_ID/);
+  assert.match(retiredAIEnvironment, /AZURE_FOUNDRY_DEPLOYMENT_OPUS55/);
+  assert.match(retiredAIEnvironment, /AZURE_OPENAI_DEPLOYMENT_GPT61SOL/);
 });
 
-test('container model build arguments and environment contain only the approved Astra alias', () => {
-  const allowed = ['VITE_AZURE_OPENAI_ENDPOINT', 'VITE_AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA'];
+test('container model build arguments contain both public routing tuples and no credentials', () => {
+  const allowed = [
+    'VITE_AZURE_OPENAI_ENDPOINT',
+    'VITE_AZURE_OPENAI_DEPLOYMENT_GPT62ASTRA',
+    'VITE_AZURE_OPENAI_DEPLOYMENT_GPT62SOL',
+  ];
   for (const instruction of ['ARG', 'ENV']) {
     const declared = Array.from(dockerfile.matchAll(
-      new RegExp(`^${instruction} (VITE_(?:AZURE_OPENAI|AZURE_FOUNDRY)_[A-Z0-9_]+)`, 'gm'),
+      new RegExp(`^${instruction} (VITE_AZURE_OPENAI_[A-Z0-9_]+)`, 'gm'),
     ), match => match[1]);
     assert.deepEqual(declared, allowed, `${instruction} must not reintroduce another model or credentials`);
   }
   assert.match(dockerfile, /COPY server\/astra-policy\.js \.\//);
 });
 
-test('the maintained cloud script checks actual Astra identity before build and immediately before update', () => {
-  const modelChecks = Array.from(deployScript.matchAll(/^node .*verify-astra-deployment\.mjs"$/gm));
+test('the maintained cloud script checks both model identities before build and immediately before update', () => {
+  const modelChecks = Array.from(deployScript.matchAll(/^node .*verify-managed-models\.mjs"$/gm));
   assert.equal(modelChecks.length, 2);
   assert.ok(modelChecks[0].index! < deployScript.indexOf('\naz acr build '));
-  assert.match(deployScript, /node "\$SOURCE_DIR\/scripts\/verify-astra-deployment\.mjs"\r?\naz containerapp update/);
-  assert.match(deployScript, /export AZURE_OPENAI_ALLOWED_DEPLOYMENTS="\$\{AZURE_OPENAI_ALLOWED_DEPLOYMENTS:-\$AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA\}"/);
+  assert.match(deployScript, /node "\$SOURCE_DIR\/scripts\/verify-managed-models\.mjs"\r?\naz containerapp update/);
+  assert.match(deployScript, /AZURE_OPENAI_ALLOWED_DEPLOYMENTS must list exactly the two GPT-6\.2 deployments/);
   assert.match(deployScript, /retired_ai_env="\$\(node [^\n]+\)"\r?\n\[\[ -n "\$retired_ai_env" \]\]\r?\nmapfile -t REMOVE_ENV_VARS/);
-  assert.doesNotMatch(deployScript, /AZURE_OPENAI_DEPLOYMENT_(?:GPT5|DEEPSEEK|GROK|KIMI|MISTRAL)|AZURE_FOUNDRY/);
+  assert.doesNotMatch(deployScript, /AZURE_FOUNDRY_/);
+  assert.doesNotMatch(deployScript, /AZURE_OPENAI_DEPLOYMENT_(?:GPT5|DEEPSEEK|GROK|KIMI|MISTRAL)/);
   assert.match(deployScript, /export ALLOW_BYO_AI_ENDPOINTS="\$\{ALLOW_BYO_AI_ENDPOINTS:-false\}"/);
   assert.match(deployScript, /"ALLOW_BYO_AI_ENDPOINTS=\$ALLOW_BYO_AI_ENDPOINTS"/);
 });

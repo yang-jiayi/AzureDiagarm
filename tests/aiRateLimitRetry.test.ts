@@ -146,7 +146,7 @@ test('daily budgets, admission races, auth, configuration and ordinary errors ne
   for (const [code, status] of [
     ['ai_concurrency_limit', 429], ['ai_daily_budget_exceeded', 429],
     ['application_access_denied', 403], ['byo_authentication_failed', 401],
-    ['deployment_not_found', 404], ['azure_openai_timeout', 504], ['astra_not_configured', 503],
+    ['deployment_not_found', 404], ['azure_openai_timeout', 504], ['managed_model_not_configured', 503],
     ['proxy_not_configured', 503], ['invalid_api_format', 400], ['byo_not_enabled', 403],
     ['deployment_not_allowed', 403],
   ] as const) {

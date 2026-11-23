@@ -2,7 +2,7 @@
 // Licensed under the MIT License.
 
 import type { ReasoningEffort } from '../stores/modelSettingsStore';
-import { AIModelConfigurationError, getDeploymentName, isModelAvailable, isReasoningEffort } from '../stores/modelSettingsStore';
+import { AIModelConfigurationError, getDeploymentName, getAvailableModels, MODEL_CONFIG, isReasoningEffort } from '../stores/modelSettingsStore';
 import { getBYOAISettings, normalizeBYOAIEndpoint, validateBYOAIProfile } from '../stores/byoAISettingsStore';
 import { isValidBYOAIApiKey, readBYOAIConnectionSecret } from './byoAIConnectionSession';
 import { assertCapturedAIConnectionCurrent, type CapturedAIConnection } from './aiModelRuntime';
@@ -10,14 +10,14 @@ import { awaitWithAISignal, isBYOAIEnabledOnServer, runtimeConfigCancellationErr
 import { fetchAIJob } from './aiJobTransport';
 
 /**
- * Managed Astra Responses and explicitly selected BYO OpenAI request boundary.
+ * Managed GPT-6.2 Responses and explicitly selected BYO boundary.
  */
 
 export type ApiFormat = 'responses' | 'chat-completions';
 
 function assertApiFormat(apiFormat: unknown): asserts apiFormat is ApiFormat {
   if (apiFormat !== 'responses' && apiFormat !== 'chat-completions') {
-    throw new AIModelConfigurationError('unsupported_api_format', 'Use the Responses or Chat Completions API.');
+    throw new AIModelConfigurationError('unsupported_api_format', 'Use a supported API format.');
   }
 }
 
@@ -335,7 +335,7 @@ export const PROXY_ERROR_MESSAGE_CODES = [
   'application_request_rejected',
   'edge_request_blocked',
   'deployment_not_allowed',
-  'astra_not_configured',
+  'managed_model_not_configured',
   'proxy_not_configured',
   'invalid_api_format',
   'byo_not_enabled',
@@ -404,13 +404,13 @@ export function proxyErrorMessageForCode(
     case 'edge_request_blocked':
       return 'The request was blocked before it reached the AI provider. Reduce the request size or contact the administrator.';
     case 'deployment_not_allowed':
-      return 'Only the configured GPT-6 Astra deployment can run.';
-    case 'astra_not_configured':
-      return 'GPT-6 Astra is not configured. Contact the application administrator to configure the managed Astra deployment.';
+      return 'Only configured GPT-6.2 Astra or GPT-6.2 Sol deployments can run.';
+    case 'managed_model_not_configured':
+      return 'The selected managed model is not configured. Contact the application administrator.';
     case 'proxy_not_configured':
-      return 'The managed Azure OpenAI endpoint is not configured correctly.';
+      return 'The managed Azure AI endpoint is not configured correctly.';
     case 'invalid_api_format':
-      return 'GPT-6 Astra requests must use the Responses API.';
+      return 'The request format must match the selected managed model.';
     case 'byo_not_enabled':
       return 'Bring-your-own AI is disabled by the application administrator.';
     case 'byo_authentication_failed':
@@ -421,9 +421,9 @@ export function proxyErrorMessageForCode(
     case 'invalid_byo_endpoint':
       return 'The AI connection settings are invalid. Check the provider, endpoint, and model, then test again.';
     case 'credential_acquisition_failed':
-      return 'The server could not acquire an Azure OpenAI credential. Contact the administrator.';
+      return 'The server could not acquire an Azure AI credential. Contact the administrator.';
     case 'azure_openai_authentication_failed':
-      return 'Azure OpenAI rejected the server credential. Check the managed identity role assignment.';
+      return 'Azure AI rejected the server credential. Check the managed identity role assignment.';
     case 'deployment_not_found':
     case 'invalid_deployment_name':
       return 'Model or deployment not found. Check the configured name.';
@@ -476,7 +476,7 @@ export function proxyErrorMessageForCode(
     case 'request_too_large':
       return 'The request is too large. Reduce the diagram or image size and try again.';
     case 'image_not_supported':
-      return 'The configured GPT-6 Astra deployment rejected the image analysis request. Check the image and contact the application administrator if the problem persists.';
+      return 'The selected model rejected the image analysis request. Check the image and contact the application administrator if the problem persists.';
     case 'content_filtered':
       return 'The AI provider content policy rejected the request. Revise the prompt and try again.';
     case 'invalid_upstream_response':
@@ -562,15 +562,17 @@ export async function callAzureOpenAIProxy(params: {
   if (byo) {
     if (!isBYOAIEnabledOnServer()) throw new AIModelConfigurationError('byo_not_enabled', 'Bring-your-own AI availability must be confirmed by the application server.');
   } else {
-    if (params.apiFormat !== 'responses') {
-      throw new AIModelConfigurationError('unsupported_api_format', 'GPT-6 Astra requests must use the Responses API.');
+    const models = getAvailableModels();
+    if (!models.length) {
+      throw new AIModelConfigurationError('managed_model_not_configured', 'The selected managed model is not configured. Contact the application administrator.');
     }
-    const deployment = getDeploymentName('gpt-6-astra');
-    if (!isModelAvailable('gpt-6-astra')) {
-      throw new AIModelConfigurationError('astra_not_configured', 'Azure OpenAI is not configured. Please check your environment.');
+    const model = models.find(model => params.deployment === getDeploymentName(model) && params.apiFormat === MODEL_CONFIG[model].apiFormat);
+    if (!model) {
+      throw new AIModelConfigurationError('unsupported_ai_model', 'Use the configured model deployment and its matching API format.');
     }
-    if (params.deployment !== deployment) {
-      throw new AIModelConfigurationError('unsupported_ai_model', 'Only the configured GPT-6 Astra deployment can run.');
+    const effort = params.apiFormat === 'responses' ? params.body?.reasoning?.effort : params.body?.output_config?.effort;
+    if (effort !== undefined && !MODEL_CONFIG[model].supportedReasoningEfforts.some(value => value === effort)) {
+      throw new AIModelConfigurationError('unsupported_reasoning_effort', 'The requested reasoning effort is not supported by this model.');
     }
   }
   const forbiddenBodyFields = ['byo', 'provider', 'deployment', 'endpoint', 'apiKey', 'api_key', 'headers', 'url', 'baseURL', 'base_url', 'forceManaged'];

@@ -6,7 +6,9 @@ const express = require('express');
 const { MemoryBudgetStore, createBudgetManager } = require('./ai-budget');
 const { createOpenAIProxyRouter, createOpenAIExecutor, isJsonMediaType } = require('./openai-proxy');
 
-const alias = 'architecture-astra-production';
+const astraAlias = 'architecture-astra-production';
+const solAlias = 'architecture-sol-production';
+const alias = astraAlias;
 const endpoint = 'https://example.openai.azure.com/';
 const silentLogger = { info() {}, error() {}, warn() {} };
 const jsonResponse = (status, body, headers = {}) => new Response(JSON.stringify(body), {
@@ -23,7 +25,8 @@ async function startServer(t, options = {}) {
   const app = express();
   app.use(express.json({ limit: '12mb' }));
   app.use('/api/openai', createOpenAIProxyRouter({
-    endpoint, astraDeployment: alias, allowedDeployments: new Set([alias]),
+    endpoint, astraDeployment: astraAlias, solDeployment: solAlias,
+    allowedDeployments: new Set([astraAlias, solAlias]),
     apiKey: 'test-only-key', logger: silentLogger, ...options,
   }));
   const server = await new Promise(resolve => {
@@ -47,9 +50,9 @@ for (const [label, overrides, status, code] of [
   ['null model', { body: { model: null, input: 'test' } }, 403, 'deployment_not_allowed'],
   ['non-string model', { body: { model: 42, input: 'test' } }, 403, 'deployment_not_allowed'],
   ['forged model', { body: { model: 'gpt-5.6-sol', input: 'test' } }, 403, 'deployment_not_allowed'],
-  ['literal model is not deployment alias', { body: { model: 'gpt-6-astra', input: 'test' } }, 403, 'deployment_not_allowed'],
+  ['literal model is not deployment alias', { body: { model: 'gpt-6.2-astra', input: 'test' } }, 403, 'deployment_not_allowed'],
   ['chat completions', { apiFormat: 'chat-completions' }, 400, 'invalid_api_format'],
-  ['Anthropic', { apiFormat: 'anthropic-messages' }, 400, 'invalid_api_format'],
+  ['unsupported Messages format', { apiFormat: 'anthropic-messages' }, 400, 'invalid_api_format'],
   ['unknown format', { apiFormat: 'other' }, 400, 'invalid_api_format'],
   ['forged Responses envelope around chat', { body: { model: alias, messages: [] } }, 400, 'invalid_api_format'],
   ['forged Responses envelope around Anthropic', { body: { model: alias, thinking: {} } }, 400, 'invalid_api_format'],
@@ -64,8 +67,6 @@ for (const [label, overrides, status, code] of [
     const post = await startServer(t, {
       apiKey: undefined,
       allowByoAIEndpoints: true,
-      foundryEndpoint: 'https://old.services.ai.azure.com/',
-      allowedFoundryDeployments: new Set(['claude-opus-5']),
       credential: { getToken() { touched.push('credential'); throw new Error('forbidden'); } },
       consumeRateLimit() { touched.push('rate'); return 0; },
       budget: { reserve() { touched.push('reserve'); throw new Error('forbidden'); } },
@@ -81,11 +82,11 @@ for (const [label, overrides, status, code] of [
 }
 
 for (const options of [
-  { astraDeployment: undefined, allowedDeployments: new Set(['gpt-5.6-sol']) },
-  { allowedDeployments: new Set([alias, 'gpt-5.6-sol']) },
+  { solDeployment: undefined, allowedDeployments: new Set(['gpt-5.6-sol']) },
+  { allowedDeployments: new Set([astraAlias, solAlias, 'gpt-5.6-sol']) },
   { allowedDeployments: new Set(['gpt-5.6-sol']) },
   { allowedDeployments: new Set() },
-  { astraDeployment: '../other' },
+  { solDeployment: '../other' },
 ]) {
   test('stale allowlists cannot authorize a legacy deployment or act as implicit Astra configuration', async t => {
     let touched = false;
@@ -95,7 +96,7 @@ for (const options of [
     });
     const response = await post();
     assert.equal(response.status, 503);
-    assert.equal((await response.json()).error.code, 'astra_not_configured');
+    assert.equal((await response.json()).error.code, 'managed_model_not_configured');
     assert.equal(touched, false);
   });
 }
@@ -296,8 +297,9 @@ test('budget reservation timeout returns a timeout and settles a late lease with
   const execute = createOpenAIExecutor({
     mode: 'public',
     endpoint,
-    astraDeployment: alias,
-    allowedDeployments: new Set([alias]),
+    astraDeployment: astraAlias,
+    solDeployment: solAlias,
+    allowedDeployments: new Set([astraAlias, solAlias]),
     apiKey: 'test-only-key',
     budget: {
       reserve: () => reservation,
@@ -337,8 +339,9 @@ test('client cancellation during budget reservation settles a late lease without
   const execute = createOpenAIExecutor({
     mode: 'public',
     endpoint,
-    astraDeployment: alias,
-    allowedDeployments: new Set([alias]),
+    astraDeployment: astraAlias,
+    solDeployment: solAlias,
+    allowedDeployments: new Set([astraAlias, solAlias]),
     apiKey: 'test-only-key',
     budget: {
       reserve: () => reservation,

@@ -5,7 +5,8 @@
 
 interface ImportMetaEnv {
   readonly VITE_APP_TITLE: string
-  readonly VITE_AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA?: string
+  readonly VITE_AZURE_OPENAI_DEPLOYMENT_GPT62ASTRA?: string
+  readonly VITE_AZURE_OPENAI_DEPLOYMENT_GPT62SOL?: string
   // add more env variables here
 }
 

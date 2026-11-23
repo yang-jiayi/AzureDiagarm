@@ -207,7 +207,7 @@ test('workflow guards Azure entry and the revision update before its rollback ma
   );
   assert.match(
     deploy,
-    /node scripts\/verify-astra-deployment\.mjs\s+node scripts\/verify-deployment-source\.mjs\s+# Freeze[^\n]+\s+printf '%s\\0' "\$AZURE_OPENAI_ENDPOINT" "\$AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA" "\$AZURE_OPENAI_RESOURCE_ID" "\$ALLOW_BYO_AI_ENDPOINTS" \\\s+> azurediagarm-verified-astra\.env\s+touch azurediagarm-deployment-started\s+az containerapp update "\$\{update_args\[@\]\}"/,
+    /node scripts\/verify-managed-models\.mjs\s+node scripts\/verify-deployment-source\.mjs\s+touch azurediagarm-deployment-started\s+az containerapp update "\$\{update_args\[@\]\}"/,
   );
   assert.match(
     deploy,
@@ -239,6 +239,9 @@ test('new-tenant preflight selects one access store and preserves production run
   const policyPreflight = deploy.indexOf('Verify storage policy exemption before Azure changes');
   assert.ok(policyPreflight > preservation && policyPreflight < extensions);
   assert.match(deploy, /AZURE_TABLES_ACCESS_ENDPOINT: \$\{\{ vars\.AZURE_TABLES_ACCESS_ENDPOINT \}\}/);
+  assert.match(deploy, /AZURE_OPENAI_DEPLOYMENT_GPT62ASTRA: \$\{\{ vars\.AZURE_OPENAI_DEPLOYMENT_GPT62ASTRA \}\}/);
+  assert.match(deploy, /AZURE_OPENAI_DEPLOYMENT_GPT62SOL: \$\{\{ vars\.AZURE_OPENAI_DEPLOYMENT_GPT62SOL \}\}/);
+  assert.match(deploy, /AZURE_OPENAI_RESOURCE_ID: \$\{\{ vars\.AZURE_OPENAI_RESOURCE_ID \}\}/);
   assert.match(deploy, /node scripts\/verify-deployment-preflight\.mjs runtime-config/);
   assert.match(deploy, /node scripts\/verify-deployment-preflight\.mjs preserve-runtime/);
   assert.match(deploy, /node scripts\/verify-deployment-preflight\.mjs no-replica-reduction/);
@@ -288,12 +291,6 @@ const bash = process.platform === 'win32'
     || join(process.env.ProgramFiles || 'C:\\Program Files', 'Git', 'bin', 'bash.exe')
   : 'bash';
 const approvedCommit = '6b38cd6145afbe3332f08194a86769c4e169d026';
-const verifiedAstraTuple = [
-  'https://verified.openai.azure.com/',
-  'verified-production-alias',
-  '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/approved/providers/Microsoft.CognitiveServices/accounts/verified',
-];
-
 function stepSource(name: string) {
   const section = workflow.split(`      - name: ${name}\n`)[1]?.split('\n      - name:')[0];
   assert.ok(section, `missing step ${name}`);
@@ -408,18 +405,8 @@ ${body}
   });
 });
 
-function writeRollbackTuple(directory: string, byoFlag = 'true') {
-  writeFileSync(join(directory, 'azurediagarm-verified-astra.env'), `${[...verifiedAstraTuple, byoFlag].join('\0')}\0`);
-}
-
-function writeCleanupHelper(directory: string) {
-  mkdirSync(join(directory, 'scripts'));
-  writeFileSync(join(directory, 'scripts', 'retired-ai-environment.mjs'),
-    readFileSync(new URL('../scripts/retired-ai-environment.mjs', import.meta.url)));
-}
-
-for (const scenario of ['invalid-byo-policy', 'model-rejected', 'source-rejected', 'capture-failed', 'approved-byo-true', 'approved-byo-false']) {
-  test(`the approved BYO policy, final Astra and current-main guards precede revision mutation: ${scenario}`, () => {
+for (const scenario of ['invalid-byo-policy', 'model-rejected', 'source-rejected', 'approved-byo-true', 'approved-byo-false']) {
+  test(`the approved BYO policy, both model checks and current-main guards precede revision mutation: ${scenario}`, () => {
     const approved = scenario.startsWith('approved-');
     const byoFlag = scenario === 'invalid-byo-policy' ? 'TRUE' : scenario === 'approved-byo-false' ? 'false' : 'true';
     const boundary = stepSource('Deploy the new Container Apps revision').match(
@@ -429,15 +416,15 @@ for (const scenario of ['invalid-byo-policy', 'model-rejected', 'source-rejected
     shellFixture(directory => {
       const script = `
 set -Eeuo pipefail
-export AZURE_OPENAI_ENDPOINT='${verifiedAstraTuple[0]}'
-export AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA='${verifiedAstraTuple[1]}'
-export AZURE_OPENAI_RESOURCE_ID='${verifiedAstraTuple[2]}'
+export AZURE_OPENAI_ENDPOINT=https://verified.openai.azure.com/
+export AZURE_OPENAI_DEPLOYMENT_GPT62ASTRA=astra-prod AZURE_OPENAI_DEPLOYMENT_GPT62SOL=sol-prod
+export AZURE_OPENAI_ALLOWED_DEPLOYMENTS=astra-prod,sol-prod
+export AZURE_OPENAI_RESOURCE_ID=/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/approved/providers/Microsoft.CognitiveServices/accounts/openai
 export ALLOW_BYO_AI_ENDPOINTS='${byoFlag}'
-${scenario === 'capture-failed' ? 'printf() { return 74; }' : ''}
 update_args=(--image approved-test-image)
 node() {
   case "$1" in
-    scripts/verify-astra-deployment.mjs)
+    scripts/verify-managed-models.mjs)
       echo model >> calls
       ${scenario === 'model-rejected' ? 'return 1' : 'return 0'};;
     scripts/verify-deployment-source.mjs)
@@ -457,15 +444,12 @@ ${boundary.replaceAll('/tmp/azurediagarm-', '$PWD/azurediagarm-')}
         cwd: directory, input: script, encoding: 'utf8', timeout: 30_000,
       });
       assert.equal(result.error, undefined);
-      assert.equal(result.status, approved ? 0 : scenario === 'capture-failed' ? 74 : 1, result.stderr);
+      assert.equal(result.status, approved ? 0 : 1, result.stderr);
       const calls = existsSync(join(directory, 'calls')) ? readFileSync(join(directory, 'calls'), 'utf8').trim().split('\n') : [];
       assert.deepEqual(calls, scenario === 'invalid-byo-policy' ? [] : scenario === 'model-rejected' ? ['model']
         : approved ? ['model', 'source', 'update'] : ['model', 'source']);
       assert.equal(existsSync(join(directory, 'azurediagarm-deployment-started')), approved);
-      if (approved) {
-        assert.deepEqual(readFileSync(join(directory, 'azurediagarm-verified-astra.env'), 'utf8').split('\0'),
-          [...verifiedAstraTuple, byoFlag, '']);
-      } else {
+      if (!approved) {
         const rollback = spawnSync(bash, ['--noprofile', '--norc', '-s'], {
           cwd: directory, encoding: 'utf8', timeout: 30_000,
           input: `export FIXTURE="$PWD"\naz() { echo unexpected-cloud-call; return 91; }\nnode() { return 92; }\n`
@@ -648,8 +632,6 @@ test('bounded stalled verification fails and enters the unchanged rollback path'
   shellFixture((directory) => {
     writeFileSync(join(directory, 'verify.sh'), localizeWorkflowStep('Verify the production endpoint'));
     writeFileSync(join(directory, 'rollback.sh'), localizeWorkflowStep('Roll back a failed production revision'));
-    writeRollbackTuple(directory);
-    writeCleanupHelper(directory);
     const script = `
 export FIXTURE="$PWD" GITHUB_RUN_ID=1 GITHUB_RUN_ATTEMPT=1 ACCESS_CONTROL_ENABLED=true
 : > "$FIXTURE/azurediagarm-deployment-started"
@@ -705,26 +687,15 @@ if bash verify.sh; then exit 91; else bash rollback.sh; fi
   });
 });
 
-for (const scenario of ['old-image-byo-enabled', 'old-image-byo-disabled', 'missing-tuple', 'invalid-tuple', 'invalid-byo-policy', 'cleanup-failed']) {
-  test(`rollback preserves approved BYO policy, sole managed Astra and unrelated baseline settings: ${scenario}`, () => {
-    const approvedByoFlag = scenario === 'old-image-byo-disabled' ? 'false' : 'true';
-    const rollback = localizeWorkflowStep('Roll back a failed production revision');
-    assert.doesNotMatch(rollback, /verify-astra-deployment|az rest|vars\.(?:AZURE_OPENAI|ALLOW_BYO)|--replace-env-vars|ALLOW_BYO_AI_ENDPOINTS=false/);
-    shellFixture(directory => {
-      writeFileSync(join(directory, 'azurediagarm-deployment-started'), '');
-      writeCleanupHelper(directory);
-      if (scenario !== 'missing-tuple') writeRollbackTuple(directory, approvedByoFlag);
-      if (scenario === 'invalid-tuple') writeFileSync(join(directory, 'azurediagarm-verified-astra.env'), 'incomplete\0');
-      if (scenario === 'invalid-byo-policy') writeRollbackTuple(directory, 'TRUE');
-      const script = `
+test('rollback restores the prior revision as a complete immutable configuration unit', () => {
+  const rollback = localizeWorkflowStep('Roll back a failed production revision');
+  assert.doesNotMatch(rollback, /verify-managed-models|az rest|vars\.(?:AZURE_OPENAI|AZURE_FOUNDRY|ALLOW_BYO)|--set-env-vars|--remove-env-vars/);
+  assert.match(rollback, /--from-revision "\$previous_revision"/);
+  assert.match(rollback, /DESIRED_CONFIG_HASH remain one consistent/);
+  shellFixture(directory => {
+    writeFileSync(join(directory, 'azurediagarm-deployment-started'), '');
+    const script = `
 export FIXTURE="$PWD" GITHUB_RUN_ID=1 GITHUB_RUN_ATTEMPT=1
-export AZURE_OPENAI_ENDPOINT=https://changed.openai.azure.com/
-export AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA=changed-alias AZURE_OPENAI_RESOURCE_ID=changed-resource
-export ALLOW_BYO_AI_ENDPOINTS=${approvedByoFlag === 'true' ? 'false' : 'true'}
-node() {
-  [[ "$*" == "scripts/retired-ai-environment.mjs --rollback" ]] || return 98
-  ${scenario === 'cleanup-failed' ? 'return 1' : 'command node "$@"'}
-}
 seq() { echo 1; }
 sleep() { :; }
 az() {
@@ -738,68 +709,15 @@ az() {
 }
 ${rollback}
 `;
-      const result = spawnSync(bash, ['--noprofile', '--norc', '-s'], {
-        cwd: directory, input: script, encoding: 'utf8', timeout: 30_000,
-      });
-      assert.equal(result.error, undefined);
-      if (!scenario.startsWith('old-image-')) {
-        assert.notEqual(result.status, 0);
-        assert.equal(existsSync(join(directory, 'copy-args')), false);
-        return;
-      }
-      assert.equal(result.status, 0, result.stderr);
-      const args = readFileSync(join(directory, 'copy-args'), 'utf8').split('\0').slice(0, -1);
-      const values = (name: string) => {
-        const start = args.indexOf(name);
-        assert.ok(start >= 0, `missing revision-copy flag ${name}`);
-        const end = args.findIndex((value, index) => index > start && value.startsWith('--'));
-        return args.slice(start + 1, end === -1 ? undefined : end);
-      };
-      assert.deepEqual(values('--from-revision'), ['previous']);
-      assert.equal(args.includes('--image'), false);
-      const set = values('--set-env-vars');
-      const remove = values('--remove-env-vars');
-      assert.deepEqual(set, [
-        `AZURE_OPENAI_ENDPOINT=${verifiedAstraTuple[0]}`,
-        `AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA=${verifiedAstraTuple[1]}`,
-        `AZURE_OPENAI_ALLOWED_DEPLOYMENTS=${verifiedAstraTuple[1]}`,
-        `ALLOW_BYO_AI_ENDPOINTS=${approvedByoFlag}`,
-      ]);
-      assert.ok(!remove.includes('ALLOW_BYO_AI_ENDPOINTS'));
-      assert.ok(remove.every(name => /^(?:VITE_)?AZURE_(?:OPENAI|FOUNDRY)_/.test(name)));
-      const baseline = [
-        { name: 'AZURE_OPENAI_ALLOWED_DEPLOYMENTS', value: 'gpt-5.6-sol,gpt-5.6-terra,gpt-6-astra' },
-        { name: 'AZURE_OPENAI_ENDPOINT', value: 'https://old.openai.azure.com/' },
-        { name: 'AZURE_OPENAI_DEPLOYMENT_GPT56SOL', value: 'gpt-5.6-sol' },
-        { name: 'AZURE_OPENAI_API_KEY', secretRef: 'retired-openai-key' },
-        { name: 'AZURE_FOUNDRY_ENDPOINT', value: 'https://old.services.ai.azure.com/' },
-        { name: 'AZURE_FOUNDRY_API_KEY', secretRef: 'retired-foundry-key' },
-        { name: 'AZURE_FOUNDRY_ALLOWED_DEPLOYMENTS', value: 'claude-opus-5' },
-        { name: 'ALLOW_BYO_AI_ENDPOINTS', value: approvedByoFlag === 'true' ? 'false' : 'true' },
-        { name: 'ACCESS_CONTROL_ENABLED', value: 'true' },
-        { name: 'ACCESS_ADMIN_EMAIL', secretRef: 'unchanged-admin-reference' },
-        { name: 'APP_PRIVATE_SETTING', secretRef: 'unchanged-private-reference' },
-        { name: 'AZURE_CLIENT_ID', value: 'unchanged-managed-identity' },
-        { name: 'AZURE_SPEECH_REGION', value: 'unchanged-speech-region' },
-      ];
-      const inherited = new Map<string, { name: string; value?: string; secretRef?: string }>(
-        baseline.map(setting => [setting.name, { ...setting }]),
-      );
-      for (const name of remove) inherited.delete(name);
-      for (const setting of set) {
-        const separator = setting.indexOf('=');
-        const name = setting.slice(0, separator);
-        inherited.set(name, { name, value: setting.slice(separator + 1) });
-      }
-      for (const original of baseline.filter(setting => !/^(?:AZURE_OPENAI_|AZURE_FOUNDRY_|ALLOW_BYO_)/.test(setting.name))) {
-        assert.deepEqual(inherited.get(original.name), original, 'non-AI baseline env/secretRefs must be preserved');
-      }
-      assert.equal(inherited.get('AZURE_OPENAI_ALLOWED_DEPLOYMENTS')?.value, verifiedAstraTuple[1]);
-      assert.equal(inherited.get('ALLOW_BYO_AI_ENDPOINTS')?.value, approvedByoFlag);
-      for (const name of ['AZURE_FOUNDRY_ENDPOINT', 'AZURE_FOUNDRY_ALLOWED_DEPLOYMENTS',
-        'AZURE_FOUNDRY_API_KEY', 'AZURE_OPENAI_API_KEY', 'AZURE_OPENAI_DEPLOYMENT_GPT56SOL']) {
-        assert.equal(inherited.has(name), false, `${name} must not remain executable on the old image`);
-      }
+    const result = spawnSync(bash, ['--noprofile', '--norc', '-s'], {
+      cwd: directory, input: script, encoding: 'utf8', timeout: 30_000,
     });
+    assert.equal(result.error, undefined);
+    assert.equal(result.status, 0, result.stderr);
+    const args = readFileSync(join(directory, 'copy-args'), 'utf8').split('\0').slice(0, -1);
+    assert.ok(args.includes('--from-revision'));
+    assert.ok(args.includes('previous'));
+    assert.equal(args.includes('--set-env-vars'), false);
+    assert.equal(args.includes('--remove-env-vars'), false);
   });
-}
+});

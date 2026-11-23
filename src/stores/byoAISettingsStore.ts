@@ -70,7 +70,7 @@ export const DEFAULT_BYO_AI_PROFILE: Readonly<Omit<BYOAIProfile, 'id'>> = Object
   name: 'My AI connection',
   provider: 'azure-openai',
   endpoint: '',
-  model: 'gpt-6-astra',
+  model: 'gpt-6.2-sol',
   apiFormat: 'responses',
   reasoningEffort: 'low',
   isReasoning: true,
@@ -305,14 +305,14 @@ export function getBYOAIConnectionState(profileId: string): BYOAIConnectionState
 /** Invalidate request-affecting draft edits without saving the draft or discarding the existing key. */
 export function invalidateBYOAIProfile(profileId: string): void {
   if (!currentSettings.profiles.some(profile => profile.id === profileId)) {
-    throw new AIModelConfigurationError('byo_profile_missing', 'The selected AI connection is missing. Select another profile or managed GPT-6 Astra.');
+    throw new AIModelConfigurationError('byo_profile_missing', 'The selected AI connection is missing. Select another profile or managed GPT-6.2 Astra / GPT-6.2 Sol.');
   }
   invalidateBYOAIConnection(profileId);
 }
 
 export function setBYOAIApiKey(profileId: string, key: string): void {
   if (!currentSettings.profiles.some(profile => profile.id === profileId)) {
-    throw new AIModelConfigurationError('byo_profile_missing', 'The selected AI connection is missing. Select another profile or managed GPT-6 Astra.');
+    throw new AIModelConfigurationError('byo_profile_missing', 'The selected AI connection is missing. Select another profile or managed GPT-6.2 Astra / GPT-6.2 Sol.');
   }
   if (typeof key !== 'string' || (key.trim() && !isValidBYOAIApiKey(key.trim()))) {
     throw new AIModelConfigurationError('byo_invalid_api_key', 'Enter a valid API key. Keys stay only in this browser tab memory.');
@@ -324,7 +324,7 @@ export function selectBYOAIProfile(profileId: string | null): void {
   if (profileId !== null) {
     const state = getBYOAIConnectionState(profileId);
     if (state.status === 'missing-profile') {
-      throw new AIModelConfigurationError('byo_profile_missing', 'The selected AI connection is missing. Select another profile or managed GPT-6 Astra.');
+      throw new AIModelConfigurationError('byo_profile_missing', 'The selected AI connection is missing. Select another profile or managed GPT-6.2 Astra / GPT-6.2 Sol.');
     }
     if (!isBYOAIEnabledOnServer()) {
       throw new AIModelConfigurationError('byo_not_enabled', 'Bring-your-own AI availability must be confirmed by the application server.');

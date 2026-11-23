@@ -21,17 +21,14 @@ fi
 : "${AZURE_SPEECH_REGION:?AZURE_SPEECH_REGION must be set (in .env or environment)}"
 : "${AZURE_SPEECH_RESOURCE_ID:?AZURE_SPEECH_RESOURCE_ID must be set (in .env or environment)}"
 
-# Bridge the client (VITE_) values to the server-side names used by the
-# /api/openai proxy, so AI generation/chat work in local dev. Prefer an
-# explicit server-side value if one is already set; otherwise fall back to the
-# VITE_ value from .env. Keyless auth (az login / DefaultAzureCredential) is
-# used when AZURE_OPENAI_API_KEY is empty.
+# Bridge public VITE_ routing values to the server-side names used by the
+# /api/openai proxy. Credentials are never bridged from the browser config.
 export AZURE_OPENAI_ENDPOINT="${AZURE_OPENAI_ENDPOINT:-${VITE_AZURE_OPENAI_ENDPOINT:-}}"
-export AZURE_OPENAI_API_KEY="${AZURE_OPENAI_API_KEY:-${VITE_AZURE_OPENAI_API_KEY:-}}"
-export AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA="${AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA:-${VITE_AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA:-}}"
-export AZURE_OPENAI_ALLOWED_DEPLOYMENTS="${AZURE_OPENAI_ALLOWED_DEPLOYMENTS:-$AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA}"
+export AZURE_OPENAI_DEPLOYMENT_GPT62ASTRA="${AZURE_OPENAI_DEPLOYMENT_GPT62ASTRA:-${VITE_AZURE_OPENAI_DEPLOYMENT_GPT62ASTRA:-}}"
+export AZURE_OPENAI_DEPLOYMENT_GPT62SOL="${AZURE_OPENAI_DEPLOYMENT_GPT62SOL:-${VITE_AZURE_OPENAI_DEPLOYMENT_GPT62SOL:-}}"
+export AZURE_OPENAI_ALLOWED_DEPLOYMENTS="${AZURE_OPENAI_ALLOWED_DEPLOYMENTS:-$AZURE_OPENAI_DEPLOYMENT_GPT62ASTRA,$AZURE_OPENAI_DEPLOYMENT_GPT62SOL}"
 export ALLOW_BYO_AI_ENDPOINTS="${ALLOW_BYO_AI_ENDPOINTS:-false}"
 
 echo "[token-server] Starting on 127.0.0.1:3001 (region=$AZURE_SPEECH_REGION)"
-echo "[token-server] Managed AI: GPT-6 Astra; BYO connections: $ALLOW_BYO_AI_ENDPOINTS"
+echo "[token-server] Managed AI: GPT-6.2 Astra + GPT-6.2 Sol; BYO connections: $ALLOW_BYO_AI_ENDPOINTS"
 exec node "$ROOT/server/token-server.js"

@@ -88,7 +88,7 @@ The "Generate with AI" modal includes a mode toggle that controls what the AI pr
 | **Both** *(BETA)* | A deployable topology **and** a whiteboard-style Blueprint from the same prompt | Topology on the canvas, Blueprint as a PNG |
 
 > [!NOTE]
-> Topology, Blueprint, and Both modes honor the selected managed Astra or BYO connection. The app does not substitute another connection when the selected one is unavailable.
+> Topology, Blueprint, and Both modes honor the selected managed GPT-6.2 Astra, GPT-6.2 Sol, or BYO connection. The app does not substitute another connection when the selected one is unavailable.
 
 Blueprint diagrams are intentionally **not** rendered on the canvas — the transformed topology would be low-fidelity. The polished PNG is the deliverable, and you can re-download it any time from **Export > Export Blueprint PNG**. When you choose **Both**, an optional checkbox lets the two generations run in parallel for speed. You can also set the Blueprint legend position (auto, or a fixed corner) in the modal.
 
@@ -238,8 +238,9 @@ Use **Export > Export Costs** to download a CSV file with per-service pricing de
 
 ## Step 8: Review AI Results
 
-GPT-6 Astra is the sole managed model; BYO connection selection is available
-when administrator-enabled. Multi-model comparison controls are not offered.
+Choose managed GPT-6.2 Sol or GPT-6.2 Astra, or an administrator-enabled BYO
+connection. The managed selector chooses one model for each feature; it does not
+run a multi-model comparison.
 Review generated changes before applying them and use the validation
 panel to inspect WAF findings. The existing version history lets you compare
 and restore diagram revisions without dispatching another model.
@@ -252,11 +253,13 @@ for new generation.
 
 ## Step 9: Configure AI Model Settings
 
-Open the AI settings popover in the toolbar. With managed **GPT-6 Astra**
-selected:
+Open the AI settings popover in the toolbar. Select managed **GPT-6.2 Sol**
+(the default) or **GPT-6.2 Astra**. Set a global reasoning effort and
+optionally choose a model and effort independently for each feature:
 
-- Set the global reasoning effort: none, low, medium, high, xhigh, or max.
-- Override the reasoning effort independently for four features:
+- GPT-6.2 Sol and GPT-6.2 Astra support `low`, `medium`, `high`, `xhigh`, and `max` (not `none`);
+  its default is `low`.
+- Configure model and effort overrides independently for:
   - Architecture Generation
   - Architecture Validation
   - Deployment Guide & Bicep
@@ -269,9 +272,10 @@ selected:
 > profiles, or an unavailable provider are reported explicitly, not hidden by
 > switching to another connection.
 
-Managed settings persist across browser sessions. Legacy managed choices migrate to
-Astra while supported reasoning preferences are kept. See the
-[Astra reasoning guide](GPT6-ASTRA-REASONING-LEVELS.md).
+Managed settings persist across browser sessions. Retired managed-model choices
+migrate to GPT-6.2 Sol (former GPT-6 Astra choices migrate to GPT-6.2 Astra)
+while preserving compatible reasoning preferences.
+See the [managed-model reasoning guide](MANAGED-MODEL-REASONING.md).
 
 For your own Azure OpenAI or official OpenAI connection, create a named profile,
 enter the key, test the connection, then select it. Public profiles persist;

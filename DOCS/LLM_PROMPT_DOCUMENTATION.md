@@ -2,7 +2,7 @@
 
 ## Overview
 
-This document explains the AI/LLM instructions used to generate Azure architecture diagrams from natural language descriptions. The managed model is **GPT-6 Astra** on Azure OpenAI; users can explicitly select an administrator-enabled BYO connection. Structured prompts and response validation convert requirements into architecture diagrams. All model traffic uses the protected `/api/openai` proxy. Managed keys are never bundled; BYO keys are entered by the user and retained only in tab memory.
+This document explains the AI/LLM instructions used to generate Azure architecture diagrams from natural language descriptions. Users can select managed **GPT-6.2 Sol** (the default) or **GPT-6.2 Astra**, or explicitly select an administrator-enabled BYO connection. Structured prompts and response validation convert requirements into architecture diagrams. All model traffic uses the protected `/api/openai` proxy. Managed credentials are never bundled; BYO keys are entered by the user and retained only in tab memory.
 
 ## Architecture
 
@@ -270,27 +270,31 @@ message queue, and Redis cache
 
 ### Environment Variables
 ```bash
-# Build-time (non-secret): endpoint flag + deployment names. The API key is
-# NOT bundled — Azure OpenAI is proxied server-side via /api/openai.
+# Build-time (non-secret): endpoint and deployment names. Managed requests are
+# proxied server-side and credentials are never bundled.
 VITE_AZURE_OPENAI_ENDPOINT=https://your-openai.openai.azure.com/
-VITE_AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA=your-gpt6-astra-deployment
+VITE_AZURE_OPENAI_DEPLOYMENT_GPT62ASTRA=gpt-6.2-astra
+VITE_AZURE_OPENAI_DEPLOYMENT_GPT62SOL=gpt-6.2-sol
 # Matching server-side runtime configuration:
 AZURE_OPENAI_ENDPOINT=https://your-openai.openai.azure.com/
-AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA=your-gpt6-astra-deployment
-AZURE_OPENAI_ALLOWED_DEPLOYMENTS=your-gpt6-astra-deployment
+AZURE_OPENAI_DEPLOYMENT_GPT62ASTRA=gpt-6.2-astra
+AZURE_OPENAI_DEPLOYMENT_GPT62SOL=gpt-6.2-sol
+AZURE_OPENAI_ALLOWED_DEPLOYMENTS=gpt-6.2-astra,gpt-6.2-sol
 # Optional server policy; users enter their own keys in the connection dialog.
 ALLOW_BYO_AI_ENDPOINTS=false
 ```
 
-### Managed Astra API Configuration
-- **Max tokens**: Astra's configured architecture budget is 32,000 output tokens
-- **Response format**: `json_object`; application-level validation still rejects malformed or incompatible architecture output
-- **API route**: Azure OpenAI `/openai/v1/responses`
-- **Model policy**: Astra is the sole managed model, with global and per-feature reasoning preferences; no automatic fallback
+### Managed Model API Configuration
+- **Models**: GPT-6.2 Astra and GPT-6.2 Sol via Azure OpenAI Responses
+- **Max tokens**: Both models share a 32,000-token output budget, including reasoning/thinking tokens
+- **Response format**: Both models use JSON object output and the same application-level validation
+- **Reasoning**: Both support `low`, `medium`, `high`, `xhigh`, and `max` (default `low`; no `none`)
+- **Model policy**: Select either managed model globally or per feature; no automatic fallback
 
 BYO uses the selected profile's model, Responses/Chat Completions format, and
 capability settings without replacing these architecture prompts or response
-validation. See the [BYO connection guide](BYO-AI-CONNECTIONS.md).
+validation. See the [BYO connection guide](BYO-AI-CONNECTIONS.md) and
+[managed-model reasoning guide](MANAGED-MODEL-REASONING.md).
 
 ## Best Practices
 
@@ -311,7 +315,7 @@ validation. See the [BYO connection guide](BYO-AI-CONNECTIONS.md).
 1. **Token limit**: Very large architectures may exceed model-specific limits
 2. **Icon availability**: Limited to 714 icons across 29 categories
 3. **Connection complexity**: Cannot represent all possible Azure connection types
-4. **AI accuracy**: Astra can still misidentify services or omit requirements; validate generated output before applying it
+4. **AI accuracy**: Either managed model or a BYO model can misidentify services or omit requirements; validate generated output before applying it
 
 ## Future Enhancements
 
@@ -331,5 +335,5 @@ Potential improvements to the prompt:
 ---
 
 **Version**: 3.0  
-**Last Updated**: September 2026\
-**Managed Model**: GPT-6 Astra only; optional explicitly selected BYO connection
+**Last Updated**: November 2026\
+**Managed Models**: GPT-6.2 Sol (default) and GPT-6.2 Astra; optional explicitly selected BYO connection

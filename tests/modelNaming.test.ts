@@ -21,7 +21,7 @@ test('retired comparison naming state and helpers are no longer exported', () =>
 });
 
 test('explicit artifact provenance names Astra exports at their captured reasoning effort', () => {
-  for (const effort of getSupportedReasoningEfforts('gpt-6-astra')) {
+  for (const effort of getSupportedReasoningEfforts('gpt-6.2-sol')) {
     updateModelSettings({ reasoningEffort: effort === 'low' ? 'max' : 'low' });
     const provenance = Object.freeze({ source: 'managed' as const, model: 'GPT-6 Astra', reasoningEffort: effort });
     assert.equal(modelNaming.getModelSuffix(provenance), `gpt6astra-${effort}`);
@@ -36,7 +36,7 @@ test('explicit artifact provenance names Astra exports at their captured reasoni
 
 test('filenames without artifact provenance are neutral regardless of live model preferences', () => {
   updateModelSettings({ reasoningEffort: 'max' });
-  updateFeatureOverride('validation', { model: 'gpt-6-astra', reasoningEffort: 'none' });
+  updateFeatureOverride('validation', { model: 'gpt-6.2-sol', reasoningEffort: 'none' });
   assert.equal(modelNaming.getModelSuffix(), '');
   assert.equal(modelNaming.generateModelFilename('diagram', 'svg', 123), 'diagram-123.svg');
   updateModelSettings({ reasoningEffort: 'none' });
@@ -57,7 +57,7 @@ test('BYO artifact filenames use captured source, actual deployment and reasonin
     source: 'bring-your-own' as const, model: 'BYO Azure OpenAI · Friendly label · production',
     deployment: 'customer-production-alias', reasoningEffort: 'max',
   });
-  updateModelSettings({ model: 'gpt-6-astra', reasoningEffort: 'low' });
+  updateModelSettings({ model: 'gpt-6.2-sol', reasoningEffort: 'low' });
   assert.equal(modelNaming.getModelSuffix(provenance), 'byo-customer-production-alias-max');
   assert.equal(modelNaming.generateModelFilename('guide', 'md', 123, provenance), 'guide-123-byo-customer-production-alias-max.md');
   assert.deepEqual(provenance, {

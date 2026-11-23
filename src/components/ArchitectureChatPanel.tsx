@@ -822,11 +822,11 @@ const ArchitectureChatPanel: React.FC<ArchitectureChatPanelProps> = ({
           <div className="arch-chat-warning">
             <AlertCircle size={14} /> {' '}
             {connectionInfo.source === 'bring-your-own' ? localize(language, {
-              en: 'The selected BYO connection is unavailable. Enter its key, verify it in AI connections, or explicitly choose managed Astra. Requests will not switch providers automatically.',
-              ja: '選択中の BYO 接続は利用できません。AI 接続の設定でキーを入力して確認するか、管理対象の Astra を明示的に選択してください。プロバイダーは自動で切り替わりません。',
+              en: 'The selected BYO connection is unavailable. Enter its key, verify it in AI connections, or explicitly choose managed models. Requests will not switch providers automatically.',
+              ja: '選択中の BYO 接続は利用できません。AI 接続の設定でキーを入力して確認するか、管理対象モデルを明示的に選択してください。プロバイダーは自動で切り替わりません。',
             }) : localize(language, {
-              en: 'GPT-6 Astra is not configured. Contact the application administrator to configure the managed Astra deployment.',
-              ja: 'GPT-6 Astraが設定されていません。管理対象のAstraデプロイを設定するようアプリケーション管理者に連絡してください。',
+              en: 'The selected managed model is not configured. Contact the application administrator.',
+              ja: '選択した管理対象モデルが設定されていません。アプリケーション管理者に連絡してください。',
             })}{' '}
           </div>
         )}

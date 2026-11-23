@@ -4,7 +4,7 @@
 import { useState, useEffect, useCallback } from 'react';
 
 /** Execution identifiers only. Historical diagram/review model names are strings. */
-export type ModelType = 'gpt-6-astra';
+export type ModelType = 'gpt-6.2-astra' | 'gpt-6.2-sol';
 export const REASONING_EFFORT_OPTIONS = [
   { value: 'none', label: 'None' },
   { value: 'minimal', label: 'Minimal' },
@@ -15,7 +15,7 @@ export const REASONING_EFFORT_OPTIONS = [
   { value: 'max', label: 'Max' },
 ] as const;
 export type ReasoningEffort = (typeof REASONING_EFFORT_OPTIONS)[number]['value'];
-const ASTRA_REASONING_EFFORTS = Object.freeze(['none', 'low', 'medium', 'high', 'xhigh', 'max'] as const);
+const GPT62_REASONING_EFFORTS = Object.freeze(['low', 'medium', 'high', 'xhigh', 'max'] as const);
 
 export type FeatureType = 'architectureGeneration' | 'validation' | 'deploymentGuide' | 'blueprint';
 export interface FeatureModelOverride {
@@ -29,8 +29,7 @@ export interface ModelSettings {
 }
 
 const STORAGE_KEY = 'azure-diagrams-model-settings';
-const STORAGE_VERSION = 4;
-const ASTRA_ONLY_VERSION = 1;
+const STORAGE_VERSION = 6;
 
 export class AIModelConfigurationError extends Error {
   readonly source = 'client';
@@ -43,12 +42,18 @@ export class AIModelConfigurationError extends Error {
 }
 
 export function isModelType(value: unknown): value is ModelType {
-  return value === 'gpt-6-astra';
+  return value === 'gpt-6.2-astra' || value === 'gpt-6.2-sol';
+}
+
+function migrateModelType(value: unknown): ModelType {
+  if (isModelType(value)) return value;
+  if (value === 'gpt-6-astra') return 'gpt-6.2-astra';
+  return 'gpt-6.2-sol';
 }
 
 export function assertSupportedModel(value: unknown): asserts value is ModelType {
   if (!isModelType(value)) {
-    throw new AIModelConfigurationError('unsupported_ai_model', 'Only the managed GPT-6 Astra model can run in this application.');
+    throw new AIModelConfigurationError('unsupported_ai_model', 'Select managed GPT-6.2 Astra or GPT-6.2 Sol.');
   }
 }
 
@@ -60,32 +65,44 @@ export const FEATURE_CONFIG: Readonly<Record<FeatureType, {
 }>> = {
   architectureGeneration: {
     displayName: 'Architecture Generation', description: 'Creating Azure architecture diagrams',
-    recommendedModel: 'gpt-6-astra', recommendedReasoning: 'low',
+    recommendedModel: 'gpt-6.2-sol', recommendedReasoning: 'low',
   },
   validation: {
     displayName: 'Architecture Validation', description: 'WAF validation and security analysis',
-    recommendedModel: 'gpt-6-astra', recommendedReasoning: 'low',
+    recommendedModel: 'gpt-6.2-sol', recommendedReasoning: 'low',
   },
   deploymentGuide: {
     displayName: 'Deployment Guide & Bicep', description: 'Generating deployment guides and IaC templates',
-    recommendedModel: 'gpt-6-astra', recommendedReasoning: 'low',
+    recommendedModel: 'gpt-6.2-sol', recommendedReasoning: 'low',
   },
   blueprint: {
     displayName: 'Blueprint Diagrams', description: 'Whiteboard-style blueprint sketches',
-    recommendedModel: 'gpt-6-astra', recommendedReasoning: 'low',
+    recommendedModel: 'gpt-6.2-sol', recommendedReasoning: 'low',
   },
 };
 
 export const MODEL_CONFIG = Object.freeze({
-  'gpt-6-astra': Object.freeze({
-    displayName: 'GPT-6 Astra',
-    deploymentEnvVar: 'VITE_AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA',
+  'gpt-6.2-astra': Object.freeze({
+    displayName: 'GPT-6.2 Astra',
+    deploymentEnvVar: 'VITE_AZURE_OPENAI_DEPLOYMENT_GPT62ASTRA',
     isReasoning: true,
     maxCompletionTokens: 32000,
     description: 'Azure OpenAI model for architecture design, validation, and deployment guidance',
-    recommendedUse: 'Used for all AI features',
+    recommendedUse: 'Selectable for all AI features',
     defaultReasoningEffort: 'low',
-    supportedReasoningEfforts: ASTRA_REASONING_EFFORTS,
+    supportedReasoningEfforts: GPT62_REASONING_EFFORTS,
+    apiFormat: 'responses',
+    supportsVision: true,
+  } as const),
+  'gpt-6.2-sol': Object.freeze({
+    displayName: 'GPT-6.2 Sol',
+    deploymentEnvVar: 'VITE_AZURE_OPENAI_DEPLOYMENT_GPT62SOL',
+    isReasoning: true,
+    maxCompletionTokens: 32000,
+    description: 'Azure OpenAI model for architecture design, validation, and deployment guidance',
+    recommendedUse: 'Default for all AI features',
+    defaultReasoningEffort: 'low',
+    supportedReasoningEfforts: GPT62_REASONING_EFFORTS,
     apiFormat: 'responses',
     supportsVision: true,
   } as const),
@@ -97,7 +114,7 @@ export function isReasoningEffort(value: unknown): value is ReasoningEffort {
 
 export function getSupportedReasoningEfforts(model: ModelType): readonly ReasoningEffort[] {
   assertSupportedModel(model);
-  return ASTRA_REASONING_EFFORTS;
+  return MODEL_CONFIG[model].supportedReasoningEfforts;
 }
 
 export function getReasoningEffortLabel(effort: ReasoningEffort): (typeof REASONING_EFFORT_OPTIONS)[number]['label'] {
@@ -107,7 +124,7 @@ export function getReasoningEffortLabel(effort: ReasoningEffort): (typeof REASON
 export function normalizeReasoningEffort(model: ModelType, effort: unknown): ReasoningEffort {
   const supported = getSupportedReasoningEfforts(model);
   return isReasoningEffort(effort) && supported.includes(effort)
-    ? effort : MODEL_CONFIG['gpt-6-astra'].defaultReasoningEffort;
+    ? effort : MODEL_CONFIG[model].defaultReasoningEffort;
 }
 
 function record(value: unknown): value is Record<string, unknown> {
@@ -121,10 +138,11 @@ function normalizeFeatureOverrides(value: unknown, migrate = false): Partial<Rec
     const raw = value[feature];
     if (!record(raw)) continue;
     if (!migrate) assertSupportedModel(raw.model);
+    const model = migrate ? migrateModelType(raw.model) : raw.model as ModelType;
     normalized[feature] = {
-      model: 'gpt-6-astra',
+      model,
       ...(raw.reasoningEffort === undefined ? {} : {
-        reasoningEffort: normalizeReasoningEffort('gpt-6-astra', raw.reasoningEffort),
+        reasoningEffort: normalizeReasoningEffort(model, raw.reasoningEffort),
       }),
     };
   }
@@ -133,22 +151,24 @@ function normalizeFeatureOverrides(value: unknown, migrate = false): Partial<Rec
 
 /** Keep literal env access: computed keys would expose unrelated VITE values. */
 export function getDeploymentNames(): Record<ModelType, string | undefined> {
-  let deployment: string | undefined;
+  let astra: string | undefined;
+  let sol: string | undefined;
   try {
-    deployment = import.meta.env.VITE_AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA;
+    astra = import.meta.env.VITE_AZURE_OPENAI_DEPLOYMENT_GPT62ASTRA;
+    sol = import.meta.env.VITE_AZURE_OPENAI_DEPLOYMENT_GPT62SOL;
   } catch {
     // Non-Vite consumers have no import.meta.env; availability stays closed.
   }
-  return { 'gpt-6-astra': deployment?.trim() || undefined };
+  return { 'gpt-6.2-astra': astra?.trim() || undefined, 'gpt-6.2-sol': sol?.trim() || undefined };
 }
 
 export function getDeploymentName(model: ModelType): string {
   assertSupportedModel(model);
-  const deployment = getDeploymentNames()['gpt-6-astra'];
+  const deployment = getDeploymentNames()[model];
   if (!deployment) {
     throw new AIModelConfigurationError(
-      'astra_not_configured',
-      'No deployment configured for GPT-6 Astra. Set VITE_AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA.',
+      'managed_model_not_configured',
+      `No deployment configured for ${MODEL_CONFIG[model].displayName}. Set ${MODEL_CONFIG[model].deploymentEnvVar}.`,
     );
   }
   return deployment;
@@ -157,26 +177,25 @@ export function getDeploymentName(model: ModelType): string {
 export function isModelAvailable(model: ModelType): boolean {
   if (!isModelType(model)) return false;
   try {
-    return Boolean(import.meta.env.VITE_AZURE_OPENAI_ENDPOINT?.trim())
-      && Boolean(getDeploymentNames()['gpt-6-astra']);
+    return Boolean(import.meta.env.VITE_AZURE_OPENAI_ENDPOINT?.trim()) && Boolean(getDeploymentNames()[model]);
   } catch {
     return false;
   }
 }
 
 export function getAvailableModels(): ModelType[] {
-  return isModelAvailable('gpt-6-astra') ? ['gpt-6-astra'] : [];
+  return (Object.keys(MODEL_CONFIG) as ModelType[]).filter(isModelAvailable);
 }
 
 export function getRecommendedModelSettings(): ModelSettings {
-  return { model: 'gpt-6-astra', reasoningEffort: 'low', featureOverrides: {} };
+  return { model: 'gpt-6.2-sol', reasoningEffort: 'low', featureOverrides: {} };
 }
 
 function saveSettings(settings: ModelSettings): void {
   if (typeof localStorage === 'undefined') return;
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({
-      version: STORAGE_VERSION, astraOnlyVersion: ASTRA_ONLY_VERSION, ...settings,
+      version: STORAGE_VERSION, ...settings,
     }));
   } catch (error) {
     console.warn('Failed to save model settings:', error);
@@ -190,13 +209,14 @@ function loadSettings(): ModelSettings {
       const parsed: unknown = JSON.parse(stored);
       if (record(parsed)) {
         // Storage is preference migration, never authority for execution.
-        // This deliberately supersedes the older optional-Astra v3 migration.
+        // Retired execution preferences migrate, historical diagrams do not.
+        const model = migrateModelType(parsed.model);
         const settings: ModelSettings = {
-          model: 'gpt-6-astra',
-          reasoningEffort: normalizeReasoningEffort('gpt-6-astra', parsed.reasoningEffort),
+          model,
+          reasoningEffort: normalizeReasoningEffort(model, parsed.reasoningEffort),
           featureOverrides: normalizeFeatureOverrides(parsed.featureOverrides, true),
         };
-        if (parsed.version !== STORAGE_VERSION || parsed.astraOnlyVersion !== ASTRA_ONLY_VERSION
+        if (parsed.version !== STORAGE_VERSION
           || parsed.model !== settings.model || parsed.reasoningEffort !== settings.reasoningEffort
           || JSON.stringify(parsed.featureOverrides) !== JSON.stringify(settings.featureOverrides)) {
           saveSettings(settings);
@@ -211,6 +231,8 @@ function loadSettings(): ModelSettings {
 }
 
 let currentSettings = loadSettings();
+let selectionRevision = 0;
+export function getManagedAISelectionRevision(): number { return selectionRevision; }
 const listeners = new Set<(settings: ModelSettings) => void>();
 
 export function getModelSettings(): ModelSettings {
@@ -224,8 +246,9 @@ export function getModelSettings(): ModelSettings {
 export function getModelSettingsForFeature(feature: FeatureType): { model: ModelType; reasoningEffort: ReasoningEffort } {
   const override = currentSettings.featureOverrides?.[feature];
   return {
-    model: 'gpt-6-astra',
-    reasoningEffort: override?.reasoningEffort ?? currentSettings.reasoningEffort,
+    model: override?.model ?? currentSettings.model,
+    reasoningEffort: normalizeReasoningEffort(override?.model ?? currentSettings.model,
+      override?.reasoningEffort ?? currentSettings.reasoningEffort),
   };
 }
 
@@ -245,11 +268,12 @@ export function updateModelSettings(updates: Partial<ModelSettings>): void {
   if (Object.prototype.hasOwnProperty.call(updates, 'model')) assertSupportedModel(updates.model);
   const next = { ...currentSettings, ...updates };
   const normalized: ModelSettings = {
-    model: 'gpt-6-astra',
-    reasoningEffort: normalizeReasoningEffort('gpt-6-astra', next.reasoningEffort),
+    model: next.model,
+    reasoningEffort: normalizeReasoningEffort(next.model, next.reasoningEffort),
     featureOverrides: normalizeFeatureOverrides(next.featureOverrides),
   };
   currentSettings = normalized;
+  selectionRevision++;
   saveSettings(currentSettings);
   listeners.forEach(listener => listener(getModelSettings()));
 }

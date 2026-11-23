@@ -23,7 +23,7 @@ const bundled = await build({
   bundle: true, write: false, platform: 'node', format: 'esm', logLevel: 'silent',
   define: { 'import.meta.env': JSON.stringify({
     VITE_AZURE_OPENAI_ENDPOINT: 'configured',
-    VITE_AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA: 'gpt-6-astra',
+    VITE_AZURE_OPENAI_DEPLOYMENT_GPT62SOL: 'gpt-6.2-sol',
   }) },
   plugins: [{
     name: 'isolated-provider-config',
@@ -44,7 +44,7 @@ const providerUrl = `data:text/javascript;base64,${Buffer.from(`${bundled.output
 const provider = await import(providerUrl);
 let warningMessages: string[] = [];
 beforeEach(() => {
-  provider.setTestModelSettings({ model: 'gpt-6-astra', reasoningEffort: 'none' });
+  provider.setTestModelSettings({ model: 'gpt-6.2-sol', reasoningEffort: 'low' });
   provider.resetTestModelUsage();
   mock.method(console, 'log', () => {});
   mock.method(console, 'error', () => {});
@@ -52,7 +52,7 @@ beforeEach(() => {
   mock.method(console, 'warn', (...args: unknown[]) => { warningMessages.push(args.map(String).join(' ')); });
 });
 afterEach(() => mock.reset());
-const override = { model: 'gpt-6-astra', reasoningEffort: 'none' };
+const override = { model: 'gpt-6.2-sol', reasoningEffort: 'low' };
 const abortError = (error: unknown) => error instanceof Error && error.name === 'AbortError';
 const response = (content = '{"services":[{"id":"app","name":"Web App","type":"App Service"}],"connections":[],"groups":[]}') =>
   new Response(JSON.stringify({ output_text: content, usage: {} }), { status: 200, headers: { 'content-type': 'application/json' } });
@@ -123,7 +123,7 @@ test('Astra MAX honors a real 429 Retry-After without changing its prompt, model
   });
   const request = provider.generateArchitectureWithAI(
     'もっともセキュアの構成で、FabricのE2EのArchitecture図を作成してください。',
-    { model: 'gpt-6-astra', reasoningEffort: 'max', signal: controller.signal },
+    { model: 'gpt-6.2-sol', reasoningEffort: 'max', signal: controller.signal },
     undefined, 'ja', { onRetryWait: (wait: unknown) => waits.push(wait) },
   );
   void request.catch(() => {});
@@ -137,7 +137,7 @@ test('Astra MAX honors a real 429 Retry-After without changing its prompt, model
   assert.equal((await request).services.length, 1);
   assert.equal(bodies.length, 2);
   assert.deepEqual(bodies[1], bodies[0]);
-  assert.equal(bodies[1].deployment, 'gpt-6-astra');
+  assert.equal(bodies[1].deployment, 'gpt-6.2-sol');
   assert.equal(bodies[1].body.reasoning.effort, 'max');
   assert.equal(bodies[1].body.max_output_tokens, 32_000);
   assert.equal(provider.getTestModelUsage().length, 1);
@@ -152,7 +152,7 @@ test('cancelling an actual blueprint transport during Retry-After prevents repla
     error: { source: 'azure_openai', code: 'azure_openai_rate_limited' },
   }), { status: 429, headers: { 'Content-Type': 'application/json', 'Retry-After': '60' } }));
   const request = provider.generateBlueprintArchitectureWithAI('Secure Fabric E2E', {
-    model: 'gpt-6-astra', reasoningEffort: 'max', signal: controller.signal,
+    model: 'gpt-6.2-sol', reasoningEffort: 'max', signal: controller.signal,
     onRetryWait: (wait: unknown) => waits.push(wait),
   });
   const rejection = assert.rejects(request, { name: 'AbortError', userCancelled: true });
@@ -179,7 +179,7 @@ for (const [stage, generate] of [
       error: { source: 'budget', code: 'ai_daily_budget_exceeded', requestId: 'budget-rejection-id' },
     }), { status: 429, headers: { 'Content-Type': 'application/json', 'Retry-After': '5' } }));
     await assert.rejects(generate('Secure Fabric E2E', {
-      model: 'gpt-6-astra', reasoningEffort: 'max', onRetryWait: (wait: unknown) => waits.push(wait),
+      model: 'gpt-6.2-sol', reasoningEffort: 'max', onRetryWait: (wait: unknown) => waits.push(wait),
     }), (error: any) => {
       assert.equal(error.source, 'budget');
       assert.equal(error.code, 'ai_daily_budget_exceeded');
@@ -206,7 +206,7 @@ for (const [stage, generate] of [
       }), { status: 500, headers: { 'Content-Type': 'application/json' } });
     });
     await assert.rejects(generate('Secure Fabric E2E', {
-      model: 'gpt-6-astra', reasoningEffort: 'max',
+      model: 'gpt-6.2-sol', reasoningEffort: 'max',
     }), (error: any) => {
       assert.equal(error.source, 'azure_openai');
       assert.equal(error.code, 'azure_openai_unavailable');
@@ -383,7 +383,7 @@ test('validation releases caller listeners and preserves the legacy six-argument
   checkCleanup();
   const legacy = await provider.validateArchitecture(validationServices, [], undefined, undefined, override, 'en');
   assert.equal(legacy.overallScore, 80);
-  assert.equal(legacy.modelUsed, 'GPT-6 Astra (none)');
+  assert.equal(legacy.modelUsed, 'GPT-6.2 Sol (low)');
   assert.equal(provider.getTestModelUsage().length, 2);
 });
 
@@ -433,7 +433,7 @@ for (const feature of ['generation', 'validation']) {
       });
       const results = await provider.runAIBudgetQueue(
         ['first', 'second', 'third'].map(brief => async (signal: AbortSignal) => {
-          const managed = { model: 'gpt-6-astra', reasoningEffort: 'none', signal };
+          const managed = { model: 'gpt-6.2-sol', reasoningEffort: 'low', signal };
           return feature === 'validation'
             ? provider.validateArchitecture(validationServices, [], undefined, undefined, managed, 'en')
             : provider.generateArchitectureWithAI(`A web application: ${brief}`, managed, undefined, 'en');
@@ -498,7 +498,7 @@ for (const content of ['{"status":"ok"}', '{"services":{}}']) {
 }
 
 test('Astra follow-ups use the genuine deployment and configured feature reasoning, not the legacy fast model', async t => {
-  provider.setTestModelSettings({ model: 'gpt-6-astra', reasoningEffort: 'low' });
+  provider.setTestModelSettings({ model: 'gpt-6.2-sol', reasoningEffort: 'low' });
   let requestBody: any;
   const fetch = mockProviderFetch(t, async (_url: unknown, options: RequestInit) => {
     requestBody = JSON.parse(options.body as string);
@@ -509,14 +509,14 @@ test('Astra follow-ups use the genuine deployment and configured feature reasoni
   });
   assert.deepEqual(suggestions, ['Add monitoring']);
   assert.equal(fetch.mock.callCount(), 1);
-  assert.equal(requestBody.deployment, 'gpt-6-astra');
+  assert.equal(requestBody.deployment, 'gpt-6.2-sol');
   assert.equal(requestBody.apiFormat, 'responses');
-  assert.equal(requestBody.body.model, 'gpt-6-astra');
+  assert.equal(requestBody.body.model, 'gpt-6.2-sol');
   assert.equal(requestBody.body.reasoning.effort, 'low');
 });
 
 test('Astra follow-up cancellation remains terminal and does not fall back to another model', async t => {
-  provider.setTestModelSettings({ model: 'gpt-6-astra', reasoningEffort: 'low' });
+  provider.setTestModelSettings({ model: 'gpt-6.2-sol', reasoningEffort: 'low' });
   const fetch = mockProviderFetch(t, async (_url: unknown, options: RequestInit) =>
     await new Promise<Response>((_resolve, reject) => options.signal!.addEventListener('abort',
       () => reject(new DOMException('Aborted', 'AbortError')), { once: true })));
@@ -534,7 +534,7 @@ for (const code of ['image_not_supported', 'invalid_upstream_request']) {
     const fetch = mockProviderFetch(t, async () => new Response(JSON.stringify({
       error: { code, source: 'azure_openai', requestId: 'vision-request', upstreamRequestId: 'upstream-vision' },
     }), { status: 400, headers: { 'content-type': 'application/json' } }));
-    const message = 'The configured GPT-6 Astra deployment rejected the image analysis request. Check the image and contact the application administrator if the problem persists.';
+    const message = 'The selected model rejected the image analysis request. Check the image and contact the application administrator if the problem persists.';
     await assert.rejects(provider.analyzeArchitectureDiagramImage('image', 'image/png', 'en'), (error: any) => {
       assert.equal(error.name, 'OpenAIProxyError');
       assert.equal(error.code, code);
@@ -547,7 +547,7 @@ for (const code of ['image_not_supported', 'invalid_upstream_request']) {
     });
     assert.equal(fetch.mock.callCount(), 1);
     assert.match(exactJapanese[message], /画像分析/);
-    assert.match(exactJapanese[message], /GPT-6 Astra/);
+    assert.match(exactJapanese[message], /選択したモデル/);
     assert.doesNotMatch(exactJapanese[message], /別のモデル|モデルを選択/);
   });
 }
@@ -571,13 +571,13 @@ for (const [name, call] of [
   });
 }
 
-const astraOverride = { model: 'gpt-6-astra', reasoningEffort: 'max' };
+const astraOverride = { model: 'gpt-6.2-sol', reasoningEffort: 'max' };
 function mockModelResponse(t: TestContext, payload: unknown) {
   provider.setTestModelSettings(astraOverride);
   return mockProviderFetch(t, async (_url: unknown, options: RequestInit) => {
     const request = JSON.parse(String(options.body));
-    assert.equal(request.deployment, 'gpt-6-astra');
-    assert.equal(request.body.model, 'gpt-6-astra');
+    assert.equal(request.deployment, 'gpt-6.2-sol');
+    assert.equal(request.body.model, 'gpt-6.2-sol');
     assert.equal(request.body.reasoning.effort, 'max');
     assert.equal(request.body.max_output_tokens, 32000);
     return response(JSON.stringify(payload));
@@ -698,7 +698,7 @@ test('response contracts: valid nested blueprint preserves workflow warning and 
   assert.equal(result.nodes.length, 1);
   assert.equal(result.edges.length, 0);
   assert.equal(result.zones[1].parent, 'a');
-  assert.equal(result.metrics.model, 'GPT-6 Astra');
+  assert.equal(result.metrics.model, 'GPT-6.2 Sol');
   assert.equal(fetch.mock.callCount(), 1);
   assert.ok(Number.isFinite(result.canvas.width) && Number.isFinite(result.canvas.height));
   assert.ok(warningMessages.some(message => /edges are missing step numbers/.test(message)));
@@ -748,7 +748,7 @@ test('response contracts: a valid one-stage reference without optional output re
   const topology = provider.referenceToTopology(result);
   assert.equal(topology.services.length, 1);
   assert.deepEqual(topology.connections, []);
-  assert.equal(result.metrics.model, 'GPT-6 Astra');
+  assert.equal(result.metrics.model, 'GPT-6.2 Sol');
   assert.equal(fetch.mock.callCount(), 1);
 });
 

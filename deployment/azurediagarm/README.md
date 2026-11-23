@@ -7,7 +7,7 @@ The production site is deployed to Azure Container Apps and exposed only through
 - Azure Front Door uses the Standard tier, matching the `SQLServerEvo_rg` reference architecture.
 - The candidate workflow preserves the observed Consumption workload profile maximum of 3 replicas (minimum 1). The no-reduction guard remains enabled and rejects any deployment that would lower the current maximum.
 - Images use the existing `sqlserverevoacr` Basic registry instead of creating another paid registry.
-- Managed AI uses genuine GPT-6 Astra. The frontend deployment, server `AZURE_OPENAI_DEPLOYMENT_GPT6ASTRA`, and singleton managed-deployment allowlist must agree. The observed production setting is `ALLOW_BYO_AI_ENDPOINTS=false`; the candidate requires the explicit setting and compares it with the running app instead of defaulting or silently enabling BYO.
+- Managed AI uses GPT-6.2 Astra and GPT-6.2 Sol (Azure OpenAI) deployments in the existing account. Both deployment aliases and the exact two-name allowlist must agree. The production release verifies endpoint ownership and actual model/version identity through ARM. Existing GPT-6 Astra, GPT-6.1 Sol, and GPT-5.6 deployments are retained but are not part of active managed execution.
 - Upstream merging requires manual dispatch on `main`; deployments run automatically for validated changes pushed to `main`.
 - Azure Communication Services sends deployment-result and upstream-validation-failure notifications. A deployment rejected by the initial source guard stops before Azure sign-in and does not send a deployment email.
 
@@ -37,12 +37,18 @@ These are not pre-approved merely because they are documented. The candidate kee
 
 Ordinary releases use the committed `.github/upstream-baseline.json` rather than fetching upstream. The record must identify the approved repository and a full commit in the checkout's ancestry. Keep the record, `scripts/upstream-baseline.mjs`, and the workflow in the same change; an absent or invalid committed record fails closed. Guarded synchronization requires the fetched upstream history to retain the approved baseline and advances the record only after protected-file review and successful merge selection.
 
-Set `AZURE_OPENAI_RESOURCE_ID` to the full account resource ID for the approved
-endpoint. Before image publication and revision update, model preflight reads
-that account and deployment through ARM, verifies endpoint ownership, and
-requires the actual model to be `OpenAI/gpt-6-astra` with successful provisioning.
-Lookup failures or a differently named model behind the alias block release.
-This does not perform inference, grant roles, or delete old Azure deployments.
+Set `AZURE_OPENAI_RESOURCE_ID` to the full resource ID for the configured
+endpoint. Before image publication and revision update, model preflight uses ARM
+reads to verify endpoint ownership, the `OpenAI` account kind, and successfully
+provisioned identities `OpenAI/gpt-6.2-astra` and `OpenAI/gpt-6.2-sol`, both
+version `2026-11-17`. Lookup failures or aliases resolving to other models block
+release. This check does not perform inference, provision or delete resources,
+or grant roles. `infra/managed-model-deployments.bicep` describes only these
+two deployments, uses GlobalStandard capacity units and `NoAutoUpgrade`, and
+does not modify the existing account or legacy deployments. Model-version
+changes require explicit review of model identity, hosting, availability and
+commercial approval, together with matching updates to the template and
+release verifier before deployment.
 
 ### Safe retries and rollbacks
 
@@ -50,7 +56,7 @@ This does not perform inference, grant roles, or delete old Azure deployments.
 - If `main` has advanced, do not retry the superseded run. Use the release associated with the new current-main push; corrections belong in a reviewed pull request into `main`.
 - **Historical-run limitation:** GitHub reruns use the original immutable workflow version. Adding the guard to today's files does not retrofit pre-fix runs. Never rerun a pre-guard workflow as a recovery shortcut, even if its original checks were green. Do not change branch protections, bypass rights, OIDC federation, or authentication to work around a refusal.
 - The existing automatic rollback remains separate: if a revision update actually started and subsequently fails verification, the workflow copies the previously ready revision and checks its health. A source check rejected before the deployment-started marker must not trigger a revision rollback.
-- Rollback preserves the pre-update verified Astra endpoint, singleton managed deployment, and approved BYO enablement policy. It must not restore an older image's stale model allowlist or reread mutable configuration during recovery. Unrelated baseline settings and secret references stay intact; no new model lookup is required during recovery.
+- Rollback copies the prior healthy revision as a complete unit—image, model configuration, environment, secret references and `DESIRED_CONFIG_HASH`. It does not overlay new model settings onto an older image or reread mutable configuration during recovery. No new model lookup is required during rollback. Retired model settings may remain only in an older rollback revision; active deployment configuration removes them. No Azure model resource is deleted.
 - The production verification step is bounded to 20 minutes. OpenAI and MCP boundary probes use 15-second connection and 45-second total request limits so stalled responses can fail the check and reach rollback.
 - For an intentional rollback, use the approved recovery procedure or a reviewed revert released through current `main`, not a historical workflow rerun. Manual dispatch remains an upstream-sync operation, not a rollback command.
 
@@ -66,7 +72,7 @@ The standalone MCP image is also built from the repository root (`docker build -
 - WAF runs in Prevention mode with rate limiting and known AI crawler `User-Agent` blocking.
 - The origin validates `X-Azure-FDID`, preventing direct Container Apps access from bypassing WAF.
 - Application responses include anti-indexing headers and `robots.txt`; these controls discourage compliant crawlers while WAF handles known automated clients.
-- Managed Astra requests are proxied server-side with the app's managed identity; no managed credential is embedded in the browser bundle. BYO requests use only the supplied user's key, never the app identity or its server-side key. BYO keys remain in tab memory and request transit, not saved profiles, diagrams, telemetry, or deployment settings.
+- Managed GPT-6.2 Astra and Sol requests use their allowlisted Azure OpenAI deployment aliases and are proxied server-side with the app's managed identity; no managed credential is embedded in the browser bundle. BYO requests use only the supplied user's key, never the app identity or a managed server-side key. BYO keys remain in tab memory and request transit, not saved profiles, diagrams, telemetry, or deployment settings.
 - Diagram blobs and shared rate-limit tables use one keyless storage account with shared-key access, public blobs, and public-network access disabled. A Network Security Perimeter is the intentional ingress control.
 - Defender for Storage is explicitly overridden at the account: sensitive-data discovery remains enabled, while on-upload malware scanning is disabled because its Event Grid integration is incompatible with the perimeter. The deployment workflow enforces this state to prevent recurring authorization failures.
 - The resource-scoped `AzureDiagarm-Storage-NSP` exemption records the NSP as the mitigating control for applicable Private Link and VNet-rule audits in the policy initiative actually assigned to the target. Before any Azure resource changes, the workflow queries applicable assignments with `--filter 'atScope()'`, then accepts only `Azure_Security_Baseline` at the tenant management-group scope with the expected initiative ID; child-scope assignments are not substitutes. It validates the exemption's ARM resource ID for the exact storage-account scope, its assignment binding, `Mitigated` category, future expiry, and every applicable reference present in that initiative. It does not skip a missing exemption or require references absent from the initiative. The read-only preflight found two of the six previously assumed reference candidates in the current initiative. The exemption currently expires on 2027-08-04, so the design must be reviewed. Do not add a Private Endpoint until Container Apps has a verified VNet and private-DNS path.

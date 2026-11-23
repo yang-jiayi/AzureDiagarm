@@ -185,7 +185,7 @@ export function isRetryableAIFailure(error: unknown): boolean {
   if (error instanceof ModelJsonError) return error.retryable;
 
   const code = (error as { code?: unknown }).code;
-  if (code === 'astra_not_configured' || code === 'proxy_not_configured'
+  if (code === 'managed_model_not_configured' || code === 'proxy_not_configured'
     || code === 'stale_ai_configuration' || code === 'byo_not_enabled'
     || code === 'byo_availability_unknown' || code === 'byo_unverified'
     || code === 'byo_key_required' || code === 'byo_profile_missing'

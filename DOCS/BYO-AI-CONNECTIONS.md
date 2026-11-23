@@ -1,8 +1,9 @@
 # Bring Your Own AI Connections
 
-The default managed connection uses GPT-6 Astra. BYO is a separate, explicit
-choice for a user's own Azure OpenAI or official OpenAI model. It does not
-reenable retired managed model deployments or multi-model comparison.
+The default managed selection is GPT-6.2 Sol; GPT-6.2 Astra is also selectable.
+BYO is a separate, explicit choice for a user's own Azure OpenAI or official
+OpenAI model. It does not reenable retired managed deployments or multi-model
+comparison.
 
 ## Administrator Policy
 
@@ -12,9 +13,10 @@ policy to the browser; the proxy enforces it independently on every request.
 Public authentication, same-origin checks, rate limits, and shared AI budgets
 still apply, including to connection tests.
 
-For this production fork, managed Astra identity verification remains part of
-release preflight. BYO does not grant access to another Azure resource, provision
-a deployment, increase quotas, or borrow the application's managed identity.
+For this production fork, release preflight verifies both exact GPT-6.2
+identities and versions, the shared OpenAI account kind, and endpoint ownership.
+BYO does not grant access to another Azure resource, provision a deployment,
+increase quotas, or borrow the application's managed identity.
 
 ## Connection Profiles
 
@@ -54,9 +56,9 @@ Generation uses [asynchronous jobs](ASYNC-AI-JOBS.md), while connection tests
 remain synchronous. The key is sent only with job submission, not subsequent
 status/result/cancel requests, and is not persisted in job storage.
 
-Choose **managed GPT-6 Astra** explicitly to switch back. A missing key, disabled
-server policy, invalid profile, or provider failure never triggers that switch
-automatically.
+Choose **managed GPT-6.2 Sol** or **GPT-6.2 Astra** explicitly to switch back
+from BYO. A missing key, disabled server policy, invalid profile, or provider
+failure never triggers a managed-model switch automatically.
 
 ## Key and Verification Safety
 

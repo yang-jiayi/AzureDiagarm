@@ -237,7 +237,8 @@ so users always have the path to a more authoritative review.
 
 For any validation run, the app captures:
 
-- The exact AI model used (e.g., `GPT-6 Astra (medium)`), shown in the report footer.
+- The exact AI model used (e.g., `GPT-6.2 Sol (medium)` or
+  `GPT-6.2 Astra (medium)`), shown in the report footer.
 - Token counts (prompt / completion / total) and elapsed time.
 - `hybridMetadata` attached to the validation result:
   - `localFindings` — number of Phase 1 findings.
@@ -246,11 +247,12 @@ For any validation run, the app captures:
   - `preliminaryScore` — the deterministic score before LLM refinement.
   - `kbRulesUsed` — size of the rule knowledge base.
 
-The managed model is GPT-6 Astra; an administrator-enabled BYO profile can be
-selected explicitly. Reviewers can retain reports from repeated reviews of the
-same diagram, connection, model, and reasoning setting to inspect variance.
-Historical records keep their original model identities; a changed score alone
-does not prove that a finding has been remediated.
+Managed GPT-6.2 Sol (the default) and GPT-6.2 Astra can each be selected
+explicitly; an administrator-enabled BYO profile is also available. Reviewers
+can retain reports from repeated reviews of the same diagram, connection, model,
+and reasoning setting to inspect variance. Historical records keep their
+original model identities; a changed score alone does not prove that a finding
+has been remediated.
 
 ---
 

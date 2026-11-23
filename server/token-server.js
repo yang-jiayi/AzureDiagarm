@@ -22,7 +22,7 @@ const {
 const { ArmKeyVaultAccessStore } = require('./arm-key-vault-access-store');
 const { createOpenAIProxyRouter } = require('./openai-proxy');
 const { createAIJobs, createMemoryJobBackend } = require('./ai-jobs');
-const { runtimeAstraConfiguration } = require('./astra-policy');
+const { runtimeManagedModelsConfiguration } = require('./astra-policy');
 const { createFixedWindowRateLimiter, createTableRateLimiter } = require('./rate-limiter');
 const { createDiagramsRouter, createAzureBlobBackend } = require('./diagram-api');
 const { asyncHandler, createErrorHandler } = require('./async-handler');
@@ -139,10 +139,11 @@ app.use('/api/diagrams', createDiagramsRouter({
 // Keeps Azure OpenAI credentials server-side so they are never shipped to the
 // browser. Prefers keyless auth via DefaultAzureCredential (managed identity in
 // ACA, `az login` in dev); falls back to AZURE_OPENAI_API_KEY when set.
-const OPENAI_ENDPOINT = deployment.astra.endpoint;
+const OPENAI_ENDPOINT = deployment.managedModels.sol.endpoint || deployment.managedModels.astra.endpoint;
 const OPENAI_API_KEY = process.env.AZURE_OPENAI_API_KEY; // optional fallback
-const ASTRA_DEPLOYMENT = deployment.astra.deployment;
-const OPENAI_ALLOWED_DEPLOYMENTS = new Set(ASTRA_DEPLOYMENT ? [ASTRA_DEPLOYMENT] : []);
+const ASTRA_DEPLOYMENT = deployment.managedModels.astra.deployment;
+const SOL_DEPLOYMENT = deployment.managedModels.sol.deployment;
+const OPENAI_ALLOWED_DEPLOYMENTS = new Set([ASTRA_DEPLOYMENT, SOL_DEPLOYMENT].filter(Boolean));
 
 // ── Per-client rate limiting ───────────────────────────────────────────────
 // The table-backed limiter shares counters across all Container Apps replicas
@@ -228,10 +229,10 @@ if (_RATE_LIMIT_TABLES_ENDPOINT) {
 const consumeUtilityApiRateLimit = createFixedWindowRateLimiter(60 * 60 * 1000, 120);
 const consumeAdminApiRateLimit = createFixedWindowRateLimiter(60 * 60 * 1000, 30);
 
-if (OPENAI_ALLOWED_DEPLOYMENTS.size === 0) {
-  console.warn('[openai-proxy] GPT-6 Astra is unconfigured. Managed AI requests return 503.');
+if (!deployment.managedModels.configured) {
+  console.warn('[openai-proxy] GPT-6.2 managed deployments are unconfigured. Managed requests return 503.');
 }
-console.info(`[openai-proxy] Managed AI: GPT-6 Astra Responses only. BYO connections: ${deployment.allowByoAIEndpoints ? 'enabled' : 'disabled'}.`);
+console.info(`[openai-proxy] Managed AI: GPT-6.2 Astra and GPT-6.2 Sol Responses. BYO connections: ${deployment.allowByoAIEndpoints ? 'enabled' : 'disabled'}.`);
 
 // ── Durable feedback storage ───────────────────────────────────────────────
 // Direct email delivery is preferred for low-cost deployments. Azure Table
@@ -409,7 +410,7 @@ app.get('/api/speech-token', asyncHandler(async (req, res) => {
 
 app.get('/api/runtime-config', (req, res) => {
   res.set('Cache-Control', 'no-store');
-  res.json(runtimeAstraConfiguration(deployment.astra, deployment.allowByoAIEndpoints));
+  res.json(runtimeManagedModelsConfiguration(deployment.managedModels, deployment.allowByoAIEndpoints));
 });
 
 const aiJobs = createAIJobs({
@@ -425,6 +426,7 @@ jobSweepTimer.unref();
 app.use('/api/openai', createOpenAIProxyRouter({
   endpoint: OPENAI_ENDPOINT,
   astraDeployment: ASTRA_DEPLOYMENT,
+  solDeployment: SOL_DEPLOYMENT,
   credential,
   apiKey: OPENAI_API_KEY,
   allowedDeployments: OPENAI_ALLOWED_DEPLOYMENTS,

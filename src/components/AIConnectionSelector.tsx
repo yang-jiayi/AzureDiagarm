@@ -64,7 +64,7 @@ export default function AIConnectionSelector({
       <div className="ai-connection-selector-controls">
         <select id={id} value={settings.activeProfileId ?? ''} disabled={disabled}
           onChange={event => choose(event.target.value || null)}>
-          <option value="">{text('Managed GPT-6 Astra', '管理対象の GPT-6 Astra')}</option>
+          <option value="">{text('Managed models (per-feature settings)', '管理対象モデル（機能別設定）')}</option>
           {settings.activeProfileId && !active && (
             <option value={settings.activeProfileId} disabled>{text('Missing BYO connection', 'BYO 接続が見つかりません')}</option>
           )}
@@ -91,19 +91,19 @@ export default function AIConnectionSelector({
             {' · '}{connectionStateLabel(displayState(activeState?.status ?? 'missing-profile'), language)}</span>
           {(!activeState?.verified || !serverAllowed || storageError) && (
             <p role="status">{text(
-              'This selected connection cannot run. Re-enter its key and test it, or explicitly choose managed Astra. No automatic fallback.',
-              '選択中の接続は実行できません。キーを再入力してテストするか、管理対象の Astra を明示的に選択してください。自動切り替えは行いません。',
+              'This selected connection cannot run. Re-enter its key and test it, or explicitly choose a managed model. No automatic fallback.',
+              '選択中の接続は実行できません。キーを再入力してテストするか、管理対象モデルを明示的に選択してください。自動切り替えは行いません。',
             )}</p>
           )}
           <button type="button" onClick={() => choose(null)} disabled={disabled}>
-            {text('Use managed Astra', '管理対象の Astra を使用')}
+            {text('Use managed model', '管理対象モデルを使用')}
           </button>
         </div>
       )}
       {storageError && <div className="ai-connection-error">
         <p role="alert">{translate(storageError.message)}</p>
         {settings.activeProfileId === null && <button type="button" onClick={() => choose(null)} disabled={disabled}>
-          {text('Use managed Astra', '管理対象の Astra を使用')}
+          {text('Use managed model', '管理対象モデルを使用')}
         </button>}
       </div>}
       {error && <p className="ai-connection-error" role="alert">{error}</p>}
