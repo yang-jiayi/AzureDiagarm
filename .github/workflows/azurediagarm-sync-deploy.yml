@@ -32,7 +32,7 @@ env:
 jobs:
   merge_validate:
     name: Merge and validate upstream
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
     outputs:
@@ -279,7 +279,7 @@ jobs:
     name: Stage validated upstream merge
     needs: merge_validate
     if: needs.merge_validate.outputs.source_changed == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
     outputs:
@@ -352,7 +352,7 @@ jobs:
     needs:
       - merge_validate
       - stage_validated_merge
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
     steps:
@@ -409,7 +409,7 @@ jobs:
       - stage_validated_merge
       - publish_validated_merge
     if: ${{ always() && (needs.merge_validate.result == 'failure' || needs.stage_validated_merge.result == 'failure' || needs.publish_validated_merge.result == 'failure') }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     environment: production
     permissions:
       contents: read
@@ -453,7 +453,7 @@ jobs:
     name: Deploy validated revision
     needs: merge_validate
     if: needs.merge_validate.outputs.source_changed != 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     environment: production
     permissions:
       contents: read
