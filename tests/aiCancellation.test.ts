@@ -62,6 +62,19 @@ const validate = (signal?: AbortSignal) => provider.validateArchitecture(
   validationServices, [], undefined, undefined, { ...override, signal }, 'en',
 );
 
+test('provider token exhaustion never applies partial architecture, records success or replays inference', async t => {
+  const fetch = mockProviderFetch(t, async () => new Response(JSON.stringify({
+    status: 'incomplete', incomplete_details: { reason: 'max_output_tokens' },
+    output_text: '{"services":[{"id":"app","name":"Web App","type":"App Service"}],"connections":[],"groups":[]}',
+    usage: { output_tokens: 32000, output_tokens_details: { reasoning_tokens: 30744 } },
+  }), { headers: { 'Content-Type': 'application/json' } }));
+  await assert.rejects(provider.generateArchitectureWithAI('Secure Fabric E2E', {
+    model: 'gpt-6.2-sol', reasoningEffort: 'max',
+  }), { code: 'ai_output_limit_exceeded' });
+  assert.equal(fetch.mock.callCount(), 1);
+  assert.equal(provider.getTestModelUsage().length, 0);
+});
+
 function mockProviderFetch(t: TestContext, implementation: (url: unknown, options: RequestInit) => Promise<Response>) {
   const providerRequest = t.mock.fn(implementation);
   const submittedIds = new Set<string>();
@@ -108,7 +121,7 @@ function checkCancellationCleanup(t: TestContext, signal: AbortSignal) {
   };
 }
 
-test('Astra MAX honors a real 429 Retry-After without changing its prompt, model, or 32K output cap', async t => {
+test('Astra MAX honors a real 429 Retry-After without changing its prompt, model, or output cap', async t => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const bodies: any[] = [];
   const waits: unknown[] = [];
@@ -139,7 +152,7 @@ test('Astra MAX honors a real 429 Retry-After without changing its prompt, model
   assert.deepEqual(bodies[1], bodies[0]);
   assert.equal(bodies[1].deployment, 'gpt-6.2-sol');
   assert.equal(bodies[1].body.reasoning.effort, 'max');
-  assert.equal(bodies[1].body.max_output_tokens, 32_000);
+  assert.equal(bodies[1].body.max_output_tokens, 64_000);
   assert.equal(provider.getTestModelUsage().length, 1);
   assert.equal(waits.at(-1), null);
 });
@@ -219,7 +232,7 @@ for (const [stage, generate] of [
     });
     assert.equal(bodies.length, 1);
     assert.equal(bodies[0].body.reasoning.effort, 'max');
-    assert.equal(bodies[0].body.max_output_tokens, 32000);
+    assert.equal(bodies[0].body.max_output_tokens, 64000);
     assert.equal(provider.getTestModelUsage().length, 0);
   });
 }
@@ -579,7 +592,7 @@ function mockModelResponse(t: TestContext, payload: unknown) {
     assert.equal(request.deployment, 'gpt-6.2-sol');
     assert.equal(request.body.model, 'gpt-6.2-sol');
     assert.equal(request.body.reasoning.effort, 'max');
-    assert.equal(request.body.max_output_tokens, 32000);
+    assert.equal(request.body.max_output_tokens, 64000);
     return response(JSON.stringify(payload));
   });
 }

@@ -45,6 +45,30 @@ test('parseApiResponse extracts Responses output text and token usage', () => {
   });
 });
 
+test('Responses rejects provider-declared incomplete output even when partial text is valid JSON', () => {
+  for (const [reason, code] of [
+    ['max_output_tokens', 'ai_output_limit_exceeded'],
+    ['content_filter', 'content_filtered'],
+    ['unknown-private-reason', 'ai_response_incomplete'],
+  ]) {
+    assert.throws(() => parseApiResponse({
+      status: 'incomplete', incomplete_details: { reason }, output_text: '{"services":[]}',
+    }, 'responses'), { code });
+  }
+});
+
+test('Responses accepts the managed max budget without expanding Chat Completions limits', () => {
+  const params = {
+    deployment: 'gpt-6.2-astra', messages: [{ role: 'user', content: 'Offline request' }],
+    maxTokens: 64000, isReasoning: true, reasoningEffort: 'max' as const,
+  };
+  assert.equal(buildRequestBody({ ...params, apiFormat: 'responses' }).max_output_tokens, 64000);
+  assert.throws(() => buildRequestBody({ ...params, maxTokens: 64001, apiFormat: 'responses' }),
+    { code: 'invalid_output_limit' });
+  assert.throws(() => buildRequestBody({ ...params, apiFormat: 'chat-completions' }),
+    { code: 'invalid_output_limit' });
+});
+
 test('format builders and parsers reject unsupported formats', () => {
   for (const apiFormat of ['legacy-responses', '']) {
     assert.throws(() => Reflect.apply(buildRequestBody, undefined, [{

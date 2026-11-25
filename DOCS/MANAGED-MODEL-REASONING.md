@@ -29,7 +29,8 @@ settings store, not `VITE_REASONING_EFFORT`.
 
 Higher efforts can affect latency and token consumption, but the application
 does not guarantee timing, cost, or output quality for any level. Both managed
-models share a 32,000-token output ceiling. Review generated architecture and
+models use a 64,000-token output ceiling at `max`, and 32,000 at other efforts.
+This includes internal reasoning, not just visible text. Review generated architecture and
 deployment guidance before use.
 
 ## Request Fidelity

@@ -44,7 +44,7 @@ test('both managed models resolve exact aliases and Responses format for every f
       assert.equal(runtime.model, model);
       assert.equal(runtime.deployment, model === 'gpt-6.2-astra' ? 'actual-astra-alias' : 'actual-sol-alias');
       assert.equal(runtime.apiFormat, 'responses');
-      assert.equal(runtime.maxCompletionTokens, 32000);
+      assert.equal(runtime.maxCompletionTokens, 64000);
       assert.equal(runtime.reasoningEffort, 'max');
       assert.equal(runtime.supportsVision, true);
     }

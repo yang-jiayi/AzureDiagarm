@@ -87,6 +87,7 @@ export const MODEL_CONFIG = Object.freeze({
     deploymentEnvVar: 'VITE_AZURE_OPENAI_DEPLOYMENT_GPT62ASTRA',
     isReasoning: true,
     maxCompletionTokens: 32000,
+    maxEffortCompletionTokens: 64000,
     description: 'Azure OpenAI model for architecture design, validation, and deployment guidance',
     recommendedUse: 'Selectable for all AI features',
     defaultReasoningEffort: 'low',
@@ -99,6 +100,7 @@ export const MODEL_CONFIG = Object.freeze({
     deploymentEnvVar: 'VITE_AZURE_OPENAI_DEPLOYMENT_GPT62SOL',
     isReasoning: true,
     maxCompletionTokens: 32000,
+    maxEffortCompletionTokens: 64000,
     description: 'Azure OpenAI model for architecture design, validation, and deployment guidance',
     recommendedUse: 'Default for all AI features',
     defaultReasoningEffort: 'low',
@@ -107,6 +109,11 @@ export const MODEL_CONFIG = Object.freeze({
     supportsVision: true,
   } as const),
 });
+
+export function getManagedOutputTokenLimit(model: ModelType, effort: ReasoningEffort): number {
+  const config = MODEL_CONFIG[model];
+  return effort === 'max' ? config.maxEffortCompletionTokens : config.maxCompletionTokens;
+}
 
 export function isReasoningEffort(value: unknown): value is ReasoningEffort {
   return REASONING_EFFORT_OPTIONS.some(option => option.value === value);
