@@ -29,8 +29,8 @@ configured capabilities; see the [connection guide](BYO-AI-CONNECTIONS.md).
 ### Managed Model Configuration (from `modelSettingsStore.ts`)
 | Model | Max Completion Tokens | Reasoning | API Format |
 |-------|-----------------------|-----------|------------|
-| GPT-6.2 Sol | 32,000 | `low`, `medium`, `high`, `xhigh`, `max`; default `low`; no `none` | Azure OpenAI Responses |
-| GPT-6.2 Astra | 32,000 | `low`, `medium`, `high`, `xhigh`, `max`; default `low`; no `none` | Azure OpenAI Responses |
+| GPT-6.2 Sol | 128,000 at `max`; otherwise 32,000 | `low`, `medium`, `high`, `xhigh`, `max`; default `low`; no `none` | Azure OpenAI Responses |
+| GPT-6.2 Astra | 128,000 at `max`; otherwise 32,000 | `low`, `medium`, `high`, `xhigh`, `max`; default `low`; no `none` | Azure OpenAI Responses |
 
 ---
 
@@ -38,7 +38,7 @@ configured capabilities; see the [connection guide](BYO-AI-CONNECTIONS.md).
 
 **File**: `src/services/azureOpenAI.ts` (558 lines)  
 **Function**: `generateArchitectureWithAI(description: string, modelOverride?: ModelOverride)`  
-**Max Tokens**: 32,000\
+**Max Tokens**: 128,000 at `max` effort; otherwise 32,000\
 **Response Format**: JSON Object
 
 ### Purpose
@@ -153,7 +153,7 @@ Generate Azure architecture diagrams with logical service groupings based on nat
 
 **File**: `src/services/architectureValidator.ts` (334 lines)  
 **Function**: `validateArchitecture(..., modelOverride?: ModelOverride)`  
-**Max Tokens**: 32,000\
+**Max Tokens**: 128,000 at `max` effort; otherwise 32,000\
 **Temperature**: 0.3  
 **Response Format**: JSON Object
 
@@ -271,7 +271,7 @@ Validate Azure architectures against the **Azure Well-Architected Framework** (5
 
 **File**: `src/services/deploymentGuideGenerator.ts` (396 lines)  
 **Function**: `generateDeploymentGuide(..., modelOverride?: ModelOverride)`  
-**Max Tokens**: 32,000\
+**Max Tokens**: 128,000 at `max` effort; otherwise 32,000\
 **Temperature**: 0.3  
 **Response Format**: JSON Object
 
@@ -428,12 +428,12 @@ az webapp create \
 ## Token Allocation Strategy
 
 ### Managed Model Token Budget
-All agents use the `maxCompletionTokens` value from `MODEL_CONFIG` in `modelSettingsStore.ts`. The shared output budget includes internal reasoning/thinking tokens as well as visible response tokens.
+All agents capture the effort-specific budget from `getManagedOutputTokenLimit` in `modelSettingsStore.ts`. The shared output budget includes internal reasoning/thinking tokens as well as visible response tokens.
 
 | Model family | Max Completion Tokens | Reasoning | Notes |
 |--------------|-----------------------|-----------|-------|
-| **GPT-6.2 Sol** | 32,000 | `low`, `medium`, `high`, `xhigh`, `max`; default `low`; no `none` | Azure OpenAI Responses |
-| **GPT-6.2 Astra** | 32,000 | `low`, `medium`, `high`, `xhigh`, `max`; default `low`; no `none` | Azure OpenAI Responses |
+| **GPT-6.2 Sol** | 128,000 at `max`; otherwise 32,000 | `low`, `medium`, `high`, `xhigh`, `max`; default `low`; no `none` | Azure OpenAI Responses |
+| **GPT-6.2 Astra** | 128,000 at `max`; otherwise 32,000 | `low`, `medium`, `high`, `xhigh`, `max`; default `low`; no `none` | Azure OpenAI Responses |
 
 ### Per-Agent Behavior
 - **Diagram Generator**: Uses full model token budget

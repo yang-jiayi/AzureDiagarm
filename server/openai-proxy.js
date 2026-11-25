@@ -330,7 +330,7 @@ function createOpenAIExecutor(options) {
     const outputField = apiFormat === 'responses' ? 'max_output_tokens'
       : (Object.hasOwn(body, 'max_completion_tokens') ? 'max_completion_tokens' : 'max_tokens');
     upstreamBody[outputField] = Math.floor(Math.min(
-      Math.max(Number(upstreamBody[outputField]) || 1, 1), 32768,
+      Math.max(Number(upstreamBody[outputField]) || 1, 1), byoConfig ? 32768 : 128000,
     ));
 
     const retryAfter = await awaitWithSignal(Promise.resolve(consumeRateLimit(req)), signal);
@@ -613,6 +613,29 @@ function createOpenAIExecutor(options) {
         throw new Error('The AI response echoed a connection credential.');
       }
       usage = actualUsage(payload);
+      if (apiFormat === 'responses'
+        && ((payload.status !== undefined && payload.status !== 'completed') || payload.incomplete_details)) {
+        const reason = payload.incomplete_details?.reason;
+        const code = reason === 'max_output_tokens' ? 'ai_output_limit_exceeded'
+          : reason === 'content_filter' ? 'content_filtered' : 'ai_response_incomplete';
+        const safeTokens = value => Number.isSafeInteger(value) && value >= 0 ? value : undefined;
+        logEvent(logger, 'warn', {
+          event: code, requestId, deployment: loggedDeployment, apiFormat, provider,
+          upstreamStatus: upstream.status, upstreamRequestId, durationMs: Date.now() - startedAt,
+          responseStatus: ['incomplete', 'failed', 'cancelled', 'queued', 'in_progress'].includes(payload.status)
+            ? payload.status : 'unknown',
+          incompleteReason: ['max_output_tokens', 'content_filter'].includes(reason) ? reason : 'unknown',
+          outputTokens: safeTokens(payload.usage?.output_tokens),
+          reasoningTokens: safeTokens(payload.usage?.output_tokens_details?.reasoning_tokens),
+        });
+        return sendError(responseHeaders, 502, requestId, {
+          source: upstreamSource, code, upstreamStatus: upstream.status, upstreamRequestId,
+          message: code === 'ai_output_limit_exceeded'
+            ? 'The AI model exhausted its output budget, including reasoning, before finishing. Use a smaller scope or a lower reasoning level.'
+            : code === 'content_filtered' ? 'The AI provider content policy rejected the request. Revise the prompt and try again.'
+              : 'The AI provider did not complete the response. No partial result was applied. Please try again.',
+        });
+      }
     }
     catch {
       logEvent(logger, 'error', { event: 'invalid_upstream_response', requestId });

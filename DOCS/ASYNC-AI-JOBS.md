@@ -27,6 +27,20 @@ provider, prompt and output cap are not reduced to hide slow responses.
 The worker uses a bounded native HTTPS request with TCP keepalive probes,
 rather than fetch's independent five-minute response-headers deadline.
 
+Managed GPT-6.2 Astra and Sol use a **128,000-token output budget at max
+reasoning**, including hidden reasoning tokens; other efforts retain 32,000.
+The captured request preserves this effort-specific budget across asynchronous
+preparation. BYO output limits remain capped at 32,768. A larger budget is a
+ceiling, not a target or a completion guarantee; actual validated usage is
+charged against the existing daily limit. Max can cost more and still has the
+same 15-minute deadline.
+
+An HTTP 200 Responses result with `status=incomplete` is not generation success.
+Token exhaustion is reported explicitly without applying or automatically
+resubmitting partial output. Diagnostic logs record only a bounded status/reason
+and output/reasoning token counts, never generated text. This distinguishes
+provider token exhaustion from network or job timeouts.
+
 ## Protocol
 
 All paths remain behind the existing application access control and origin

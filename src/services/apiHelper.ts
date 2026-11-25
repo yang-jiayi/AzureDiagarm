@@ -67,8 +67,9 @@ export function buildRequestBody(params: {
   const { deployment, messages, maxTokens, apiFormat, isReasoning, reasoningEffort, jsonOutput = true } = params;
 
   assertApiFormat(apiFormat);
-  if (!Number.isSafeInteger(maxTokens) || maxTokens < 1 || maxTokens > 32768) {
-    throw new AIModelConfigurationError('invalid_output_limit', 'The AI output limit must be a whole number from 1 to 32768.');
+  const outputLimit = apiFormat === 'responses' ? 128000 : 32768;
+  if (!Number.isSafeInteger(maxTokens) || maxTokens < 1 || maxTokens > outputLimit) {
+    throw new AIModelConfigurationError('invalid_output_limit', `The AI output limit must be a whole number from 1 to ${outputLimit}.`);
   }
   if (!isReasoningEffort(reasoningEffort)) {
     throw new AIModelConfigurationError('unsupported_reasoning_effort', 'The requested reasoning effort is not supported.');
@@ -116,6 +117,16 @@ export function parseApiResponse(
       completionTokens: tokens(usage.completion_tokens),
       totalTokens: tokens(usage.total_tokens),
     };
+  }
+  if ((data?.status !== undefined && data.status !== 'completed') || data?.incomplete_details) {
+    throw createOpenAIProxyError({
+      ok: false, status: 502, data: null,
+      error: {
+        source: 'azure_openai',
+        code: data?.incomplete_details?.reason === 'max_output_tokens' ? 'ai_output_limit_exceeded'
+          : data?.incomplete_details?.reason === 'content_filter' ? 'content_filtered' : 'ai_response_incomplete',
+      },
+    });
   }
   let content = typeof data?.output_text === 'string' ? data.output_text : '';
   if (!content && Array.isArray(data?.output)) {
@@ -367,6 +378,8 @@ export const PROXY_ERROR_MESSAGE_CODES = [
   'request_too_large',
   'image_not_supported',
   'content_filtered',
+  'ai_output_limit_exceeded',
+  'ai_response_incomplete',
   'invalid_upstream_response',
   'azure_openai_non_json_error',
   'network_error',
@@ -479,6 +492,10 @@ export function proxyErrorMessageForCode(
       return 'The selected model rejected the image analysis request. Check the image and contact the application administrator if the problem persists.';
     case 'content_filtered':
       return 'The AI provider content policy rejected the request. Revise the prompt and try again.';
+    case 'ai_output_limit_exceeded':
+      return 'The AI model exhausted its output budget, including reasoning, before finishing. Use a smaller scope or a lower reasoning level.';
+    case 'ai_response_incomplete':
+      return 'The AI provider did not complete the response. No partial result was applied. Please try again.';
     case 'invalid_upstream_response':
     case 'azure_openai_non_json_error':
       return 'The AI provider returned an unexpected response. Please try again.';
@@ -581,10 +598,11 @@ export async function callAzureOpenAIProxy(params: {
     || params.body.model !== params.deployment || forbiddenBodyFields.some(field => field in params.body)) {
     throw new AIModelConfigurationError('unsupported_ai_model', 'The request must use the selected connection’s exact model or deployment.');
   }
+  const outputLimit = byo ? 32768 : 128000;
   for (const field of ['max_output_tokens', 'max_completion_tokens', 'max_tokens']) {
     const value = params.body[field];
-    if (value !== undefined && (!Number.isSafeInteger(value) || value < 1 || value > 32768)) {
-      throw new AIModelConfigurationError('invalid_output_limit', 'The AI output limit must be a whole number from 1 to 32768.');
+    if (value !== undefined && (!Number.isSafeInteger(value) || value < 1 || value > outputLimit)) {
+      throw new AIModelConfigurationError('invalid_output_limit', `The AI output limit must be a whole number from 1 to ${outputLimit}.`);
     }
   }
   if (params.connection) {

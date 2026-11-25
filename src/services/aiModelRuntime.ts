@@ -8,6 +8,7 @@ import {
   getModelSettingsForFeature,
   getManagedAISelectionRevision,
   getSupportedReasoningEfforts,
+  getManagedOutputTokenLimit,
   isModelAvailable,
   isModelType,
   isReasoningEffort,
@@ -124,7 +125,7 @@ export function getEffectiveAIModelInfo(feature: FeatureType): EffectiveAIModelI
   return {
     source: 'managed', model: model.model, displayName: config.displayName,
     apiFormat: config.apiFormat, isReasoning: true, supportsVision: true,
-    maxCompletionTokens: config.maxCompletionTokens, reasoningEffort: model.reasoningEffort,
+    maxCompletionTokens: getManagedOutputTokenLimit(model.model, model.reasoningEffort), reasoningEffort: model.reasoningEffort,
     ready, ...(!ready ? { code: storageError?.code ?? 'managed_model_not_configured' } : {}),
   };
 }
@@ -170,6 +171,8 @@ export function captureRuntimeModelOverride(feature: FeatureType, override?: Run
   const { ready: _ready, code: _code, ...publicInfo } = info;
   const connection: CapturedAIConnection = Object.freeze({
     ...publicInfo, reasoningEffort, feature,
+    ...(info.source === 'managed' && isModelType(info.model)
+      ? { maxCompletionTokens: getManagedOutputTokenLimit(info.model, reasoningEffort) } : {}),
     selectionRevision: getBYOAISelectionRevision(),
     revision: info.profileId ? getBYOAIConnectionState(info.profileId).revision : getManagedAISelectionRevision(),
     deployment: info.source === 'managed' && isModelType(info.model) ? getDeploymentName(info.model) : info.model,

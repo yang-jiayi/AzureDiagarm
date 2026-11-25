@@ -120,7 +120,7 @@ test(`MAX blueprint async progress and separate result: ${scenario}`, async ({ p
   expect(accessibility.violations).toEqual([]);
   expect(posts).toHaveLength(1);
   expect(posts[0].body.reasoning).toEqual({ effort: 'max' });
-  expect(posts[0].body.max_output_tokens).toBe(32000);
+  expect(posts[0].body.max_output_tokens).toBe(128000);
   if (scenario === 'sign-in-expired' || scenario === 'result-expired') {
     let downloads = 0;
     page.on('download', () => downloads++);

@@ -1896,34 +1896,38 @@ for (const [width, allowBYO] of [[1600, true], [1600, false], [390, true], [390,
   });
 }
 
-test('full application explicitly routes selected Astra without a Sol fallback', async ({ page }) => {
-  await initializePage(page);
-  const requests: any[] = [];
-  await page.route('**/api/**', async route => {
-    const path = new URL(route.request().url()).pathname;
-    if (path === '/api/access/me') await fulfillJson(route, { enabled: false, allowed: true, isAdmin: false });
-    else if (path === '/api/runtime-config') await fulfillJson(route, { features: { bringYourOwnAI: false } });
-    else if (path === '/api/ai/budget') await fulfillJson(route, { available: true, concurrentLimit: 4, concurrentRequests: 0 });
-    else if (path === '/api/openai') {
-      requests.push(route.request().postDataJSON());
-      await fulfillJson(route, { error: { code: 'invalid_upstream_request', source: 'azure_openai' } }, 400);
-    } else await fulfillJson(route, { error: 'Not found' }, 404);
+for (const effort of ['low', 'max'] as const) {
+  test(`full application explicitly routes selected Astra ${effort} without a Sol fallback`, async ({ page }) => {
+    await initializePage(page);
+    const requests: any[] = [];
+    await page.route('**/api/**', async route => {
+      const path = new URL(route.request().url()).pathname;
+      if (path === '/api/access/me') await fulfillJson(route, { enabled: false, allowed: true, isAdmin: false });
+      else if (path === '/api/runtime-config') await fulfillJson(route, { features: { bringYourOwnAI: false } });
+      else if (path === '/api/ai/budget') await fulfillJson(route, { available: true, concurrentLimit: 4, concurrentRequests: 0 });
+      else if (path === '/api/openai') {
+        requests.push(route.request().postDataJSON());
+        await fulfillJson(route, { error: { code: 'invalid_upstream_request', source: 'azure_openai' } }, 400);
+      } else await fulfillJson(route, { error: 'Not found' }, 404);
+    });
+    await page.goto('/');
+    const generator = await openAiGenerator(page);
+    await generator.getByLabel('Architecture Description or Modification').fill('最もセキュアな構成のFabric E2Eアーキテクチャ図を作成してください。');
+    await generator.getByRole('button', { name: 'Continue to output' }).click();
+    await generator.getByRole('tab', { name: /^Topology/ }).click();
+    await generator.locator('.ai-modal-model-group').getByRole('combobox', { name: / - Model$/ }).selectOption('gpt-6.2-astra');
+    await generator.locator('.ai-modal-model-group').getByRole('combobox', { name: / - Select reasoning effort$/ }).selectOption(effort);
+    await generator.getByRole('button', { name: 'Generate Architecture', exact: true }).click();
+    await expect.poll(() => requests.length).toBe(1);
+    expect(requests[0]).toMatchObject({
+      apiFormat: 'responses', deployment: 'playwright-gpt-6.2-astra',
+      body: { model: 'playwright-gpt-6.2-astra', max_output_tokens: effort === 'max' ? 128000 : 32000,
+        reasoning: { effort }, text: { format: { type: 'json_object' } }, store: false },
+    });
+    expect(requests[0]).not.toHaveProperty('byo');
+    expect(requests[0].body).toHaveProperty('input');
   });
-  await page.goto('/');
-  const generator = await openAiGenerator(page);
-  await generator.getByLabel('Architecture Description or Modification').fill('Create a secure web application');
-  await generator.getByRole('button', { name: 'Continue to output' }).click();
-  await generator.locator('.ai-modal-model-group').getByRole('combobox', { name: / - Model$/ }).selectOption('gpt-6.2-astra');
-  await generator.getByRole('button', { name: 'Generate Architecture', exact: true }).click();
-  await expect.poll(() => requests.length).toBe(1);
-  expect(requests[0]).toMatchObject({
-    apiFormat: 'responses', deployment: 'playwright-gpt-6.2-astra',
-    body: { model: 'playwright-gpt-6.2-astra', max_output_tokens: 32000,
-      reasoning: { effort: 'low' }, text: { format: { type: 'json_object' } }, store: false },
-  });
-  expect(requests[0]).not.toHaveProperty('byo');
-  expect(requests[0].body).toHaveProperty('input');
-});
+}
 
 test('BYO connection manager follows the canonical compact breakpoint without overflow', async ({ page }) => {
   await initializePage(page);

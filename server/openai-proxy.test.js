@@ -122,11 +122,52 @@ test('managed identity dispatch uses the configured alias and fixed Responses ro
   assert.equal(captured.init.redirect, 'error');
   const body = JSON.parse(captured.init.body);
   assert.equal(body.model, alias);
-  assert.equal(body.max_output_tokens, 32768);
+  assert.equal(body.max_output_tokens, 99999);
   assert.equal(body.store, false);
   assert.equal(body.stream, false);
   assert.equal((await budget.status('local-development')).usedTokens, 12);
   assert.equal((await budget.status('local-development')).concurrentRequests, 0);
+});
+
+test('managed max output budget reaches the provider and is fully reserved before dispatch', async t => {
+  const budget = manager();
+  let dispatched;
+  const post = await startServer(t, {
+    budget,
+    fetchImpl: async (_url, init) => {
+      dispatched = JSON.parse(init.body);
+      assert.ok((await budget.status('local-development')).usedTokens >= 128000);
+      return jsonResponse(200, { status: 'completed', output_text: '{}', usage: { total_tokens: 50000 } });
+    },
+  });
+  const response = await post(requestBody({
+    body: { model: alias, input: 'offline', max_output_tokens: 128001, reasoning: { effort: 'max' } },
+  }));
+  assert.equal(response.status, 200);
+  assert.equal(dispatched.max_output_tokens, 128000);
+  assert.equal((await budget.status('local-development')).usedTokens, 50000);
+});
+
+test('incomplete HTTP 200 is a metered failure without partial output or private diagnostic logs', async t => {
+  const budget = manager();
+  const logs = [];
+  const post = await startServer(t, {
+    budget, logger: { ...silentLogger, warn: value => logs.push(value), info: value => logs.push(value) },
+    fetchImpl: async () => jsonResponse(200, {
+      status: 'incomplete', incomplete_details: { reason: 'max_output_tokens' },
+      output_text: 'private-generated-text',
+      usage: { total_tokens: 37593, output_tokens: 32000, output_tokens_details: { reasoning_tokens: 30744 } },
+    }),
+  });
+  const response = await post();
+  assert.equal(response.status, 502);
+  const result = await response.json();
+  assert.equal(result.error.code, 'ai_output_limit_exceeded');
+  assert.equal(result.error.upstreamStatus, 200);
+  assert.equal((await budget.status('local-development')).usedTokens, 37593);
+  assert.equal((await budget.status('local-development')).concurrentRequests, 0);
+  assert.match(logs.join(''), /"reasoningTokens":30744/);
+  assert.doesNotMatch(JSON.stringify({ result, logs }), /private-generated-text|test prompt|test-only-key|request_succeeded/);
 });
 
 test('managed credential acquisition failures remain distinguishable and do not reserve tokens', async t => {
