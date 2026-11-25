@@ -49,7 +49,10 @@ async function createClient(sourceGeneration: number): Promise<ElkLayoutClient> 
 export async function prepareElkLayout(): Promise<void> {
   const pending = clientPromise ??= createClient(generation);
   try {
-    await pending;
+    const client = await pending;
+    if (client.failed) {
+      throw new Error('The ELK layout worker failed. Retry to prepare a new worker.');
+    }
   } catch (error) {
     if (clientPromise === pending) {
       clientPromise = undefined;
