@@ -286,7 +286,7 @@ ALLOW_BYO_AI_ENDPOINTS=false
 
 ### Managed Model API Configuration
 - **Models**: GPT-6.2 Astra and GPT-6.2 Sol via Azure OpenAI Responses
-- **Max tokens**: Both models use 128,000 at `max` effort and 32,000 at other efforts, including reasoning/thinking tokens
+- **Max tokens**: Both models use 64,000 at `max` effort and 32,000 at other efforts, including reasoning/thinking tokens
 - **Response format**: Both models use JSON object output and the same application-level validation
 - **Reasoning**: Both support `low`, `medium`, `high`, `xhigh`, and `max` (default `low`; no `none`)
 - **Model policy**: Select either managed model globally or per feature; no automatic fallback

@@ -152,7 +152,7 @@ test('Astra MAX honors a real 429 Retry-After without changing its prompt, model
   assert.deepEqual(bodies[1], bodies[0]);
   assert.equal(bodies[1].deployment, 'gpt-6.2-sol');
   assert.equal(bodies[1].body.reasoning.effort, 'max');
-  assert.equal(bodies[1].body.max_output_tokens, 128_000);
+  assert.equal(bodies[1].body.max_output_tokens, 64_000);
   assert.equal(provider.getTestModelUsage().length, 1);
   assert.equal(waits.at(-1), null);
 });
@@ -232,7 +232,7 @@ for (const [stage, generate] of [
     });
     assert.equal(bodies.length, 1);
     assert.equal(bodies[0].body.reasoning.effort, 'max');
-    assert.equal(bodies[0].body.max_output_tokens, 128000);
+    assert.equal(bodies[0].body.max_output_tokens, 64000);
     assert.equal(provider.getTestModelUsage().length, 0);
   });
 }
@@ -592,7 +592,7 @@ function mockModelResponse(t: TestContext, payload: unknown) {
     assert.equal(request.deployment, 'gpt-6.2-sol');
     assert.equal(request.body.model, 'gpt-6.2-sol');
     assert.equal(request.body.reasoning.effort, 'max');
-    assert.equal(request.body.max_output_tokens, 128000);
+    assert.equal(request.body.max_output_tokens, 64000);
     return response(JSON.stringify(payload));
   });
 }

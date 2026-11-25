@@ -67,7 +67,7 @@ export function buildRequestBody(params: {
   const { deployment, messages, maxTokens, apiFormat, isReasoning, reasoningEffort, jsonOutput = true } = params;
 
   assertApiFormat(apiFormat);
-  const outputLimit = apiFormat === 'responses' ? 128000 : 32768;
+  const outputLimit = apiFormat === 'responses' ? 64000 : 32768;
   if (!Number.isSafeInteger(maxTokens) || maxTokens < 1 || maxTokens > outputLimit) {
     throw new AIModelConfigurationError('invalid_output_limit', `The AI output limit must be a whole number from 1 to ${outputLimit}.`);
   }
@@ -598,7 +598,7 @@ export async function callAzureOpenAIProxy(params: {
     || params.body.model !== params.deployment || forbiddenBodyFields.some(field => field in params.body)) {
     throw new AIModelConfigurationError('unsupported_ai_model', 'The request must use the selected connection’s exact model or deployment.');
   }
-  const outputLimit = byo ? 32768 : 128000;
+  const outputLimit = byo ? 32768 : 64000;
   for (const field of ['max_output_tokens', 'max_completion_tokens', 'max_tokens']) {
     const value = params.body[field];
     if (value !== undefined && (!Number.isSafeInteger(value) || value < 1 || value > outputLimit)) {

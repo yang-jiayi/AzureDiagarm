@@ -330,7 +330,7 @@ function createOpenAIExecutor(options) {
     const outputField = apiFormat === 'responses' ? 'max_output_tokens'
       : (Object.hasOwn(body, 'max_completion_tokens') ? 'max_completion_tokens' : 'max_tokens');
     upstreamBody[outputField] = Math.floor(Math.min(
-      Math.max(Number(upstreamBody[outputField]) || 1, 1), byoConfig ? 32768 : 128000,
+      Math.max(Number(upstreamBody[outputField]) || 1, 1), byoConfig ? 32768 : 64000,
     ));
 
     const retryAfter = await awaitWithSignal(Promise.resolve(consumeRateLimit(req)), signal);

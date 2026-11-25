@@ -1921,7 +1921,7 @@ for (const effort of ['low', 'max'] as const) {
     await expect.poll(() => requests.length).toBe(1);
     expect(requests[0]).toMatchObject({
       apiFormat: 'responses', deployment: 'playwright-gpt-6.2-astra',
-      body: { model: 'playwright-gpt-6.2-astra', max_output_tokens: effort === 'max' ? 128000 : 32000,
+      body: { model: 'playwright-gpt-6.2-astra', max_output_tokens: effort === 'max' ? 64000 : 32000,
         reasoning: { effort }, text: { format: { type: 'json_object' } }, store: false },
     });
     expect(requests[0]).not.toHaveProperty('byo');

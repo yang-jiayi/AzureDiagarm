@@ -60,10 +60,10 @@ test('Responses rejects provider-declared incomplete output even when partial te
 test('Responses accepts the managed max budget without expanding Chat Completions limits', () => {
   const params = {
     deployment: 'gpt-6.2-astra', messages: [{ role: 'user', content: 'Offline request' }],
-    maxTokens: 128000, isReasoning: true, reasoningEffort: 'max' as const,
+    maxTokens: 64000, isReasoning: true, reasoningEffort: 'max' as const,
   };
-  assert.equal(buildRequestBody({ ...params, apiFormat: 'responses' }).max_output_tokens, 128000);
-  assert.throws(() => buildRequestBody({ ...params, maxTokens: 128001, apiFormat: 'responses' }),
+  assert.equal(buildRequestBody({ ...params, apiFormat: 'responses' }).max_output_tokens, 64000);
+  assert.throws(() => buildRequestBody({ ...params, maxTokens: 64001, apiFormat: 'responses' }),
     { code: 'invalid_output_limit' });
   assert.throws(() => buildRequestBody({ ...params, apiFormat: 'chat-completions' }),
     { code: 'invalid_output_limit' });

@@ -75,7 +75,7 @@ for (const model of ['gpt-6.2-astra', 'gpt-6.2-sol'] as const) {
       assert.equal(request.body.model, request.deployment);
       assert.equal(request.apiFormat, 'responses');
       assert.equal(request.byo, undefined);
-      assert.equal(request.body.max_output_tokens, 128000);
+      assert.equal(request.body.max_output_tokens, 64000);
       assert.equal(request.body.reasoning.effort, 'max');
     }
     for (const metrics of [topology.metrics, review.metrics, deploymentGuide.metrics, vision.metrics]) {
@@ -93,7 +93,7 @@ test('managed max budget follows the captured effort, including explicit per-req
   const max = client.captureRuntimeModelOverride('architectureGeneration', {
     model: 'gpt-6.2-astra', reasoningEffort: 'max',
   });
-  assert.equal(max.connection?.maxCompletionTokens, 128000);
+  assert.equal(max.connection?.maxCompletionTokens, 64000);
   assert.equal(max.connection?.reasoningEffort, 'max');
   assert.equal(client.resolveAIModelRuntime('architectureGeneration', max).connection, max.connection);
   const low = client.captureRuntimeModelOverride('architectureGeneration', {
@@ -102,7 +102,7 @@ test('managed max budget follows the captured effort, including explicit per-req
   assert.equal(low.connection?.maxCompletionTokens, 32000);
   assert.equal(client.getEffectiveAIModelInfo('architectureGeneration').maxCompletionTokens, 32000);
   client.updateModelSettings({ reasoningEffort: 'max' });
-  assert.equal(client.getEffectiveAIModelInfo('architectureGeneration').maxCompletionTokens, 128000);
+  assert.equal(client.getEffectiveAIModelInfo('architectureGeneration').maxCompletionTokens, 64000);
 });
 
 test('managed client rejects unsupported provider-specific formats', async () => {

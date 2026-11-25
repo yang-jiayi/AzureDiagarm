@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const { test } = require('node:test');
 const express = require('express');
 const { MemoryBudgetStore, createBudgetManager } = require('./ai-budget');
+const { deploymentConfig } = require('./deployment-security');
 const { createOpenAIProxyRouter, createOpenAIExecutor, isJsonMediaType } = require('./openai-proxy');
 
 const astraAlias = 'architecture-astra-production';
@@ -122,7 +123,7 @@ test('managed identity dispatch uses the configured alias and fixed Responses ro
   assert.equal(captured.init.redirect, 'error');
   const body = JSON.parse(captured.init.body);
   assert.equal(body.model, alias);
-  assert.equal(body.max_output_tokens, 99999);
+  assert.equal(body.max_output_tokens, 64000);
   assert.equal(body.store, false);
   assert.equal(body.stream, false);
   assert.equal((await budget.status('local-development')).usedTokens, 12);
@@ -136,16 +137,44 @@ test('managed max output budget reaches the provider and is fully reserved befor
     budget,
     fetchImpl: async (_url, init) => {
       dispatched = JSON.parse(init.body);
-      assert.ok((await budget.status('local-development')).usedTokens >= 128000);
+      assert.ok((await budget.status('local-development')).usedTokens >= 64000);
       return jsonResponse(200, { status: 'completed', output_text: '{}', usage: { total_tokens: 50000 } });
     },
   });
   const response = await post(requestBody({
-    body: { model: alias, input: 'offline', max_output_tokens: 128001, reasoning: { effort: 'max' } },
+    body: { model: alias, input: 'offline', max_output_tokens: 64001, reasoning: { effort: 'max' } },
   }));
   assert.equal(response.status, 200);
-  assert.equal(dispatched.max_output_tokens, 128000);
+  assert.equal(dispatched.max_output_tokens, 64000);
   assert.equal((await budget.status('local-development')).usedTokens, 50000);
+});
+
+test('one max-effort managed image analysis fits the unchanged default daily reservation', async t => {
+  const config = deploymentConfig({});
+  const budget = createBudgetManager({ store: new MemoryBudgetStore(), dailyTokens: config.dailyTokens });
+  let dispatched = false;
+  const post = await startServer(t, {
+    budget,
+    fetchImpl: async () => {
+      dispatched = true;
+      const reserved = (await budget.status('local-development')).usedTokens;
+      assert.ok(reserved > 64000 + 131072, 'reserve the complete output and conservative image allowances');
+      assert.ok(reserved < config.dailyTokens);
+      return jsonResponse(200, { status: 'completed', output_text: '{}', usage: { total_tokens: 100 } });
+    },
+  });
+  const response = await post(requestBody({
+    body: {
+      model: alias, max_output_tokens: 64000, reasoning: { effort: 'max' },
+      input: [{ role: 'user', content: [
+        { type: 'input_text', text: 'Describe this architecture. '.repeat(400) },
+        { type: 'input_image', image_url: 'data:image/png;base64,QUJD' },
+      ] }],
+    },
+  }));
+  assert.equal(response.status, 200);
+  assert.equal(dispatched, true);
+  assert.equal((await budget.status('local-development')).usedTokens, 100);
 });
 
 test('incomplete HTTP 200 is a metered failure without partial output or private diagnostic logs', async t => {
