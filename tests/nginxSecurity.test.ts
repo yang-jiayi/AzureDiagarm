@@ -48,3 +48,13 @@ test('the production CSP permits only required application integrations', () => 
   assert.match(policy, /wss:\/\/\*\.speech\.microsoft\.com/);
   assert.match(policy, /worker-src 'self' blob:/);
 });
+
+test('missing versioned assets return an uncached error instead of an immutable SPA response', () => {
+  assert.match(nginx, /map \$status \$static_asset_cache_control\s*\{[^}]*default "no-store";[^}]*200 "private, max-age=31536000, immutable";[^}]*304 "private, max-age=31536000, immutable";/);
+  const staticAssets = nginx.match(/location ~\* \\\.\(js\|css[^}]+\}/)?.[0];
+  assert.ok(staticAssets);
+  assert.match(staticAssets, /auth_request \/_access_check;/);
+  assert.match(staticAssets, /try_files \$uri =404;/);
+  assert.match(staticAssets, /add_header Cache-Control \$static_asset_cache_control always;/);
+  assert.doesNotMatch(staticAssets, /\/index\.html|expires 1y/);
+});

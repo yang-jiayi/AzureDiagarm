@@ -46,6 +46,19 @@ async function createClient(sourceGeneration: number): Promise<ElkLayoutClient> 
   return client;
 }
 
+export async function prepareElkLayout(): Promise<void> {
+  const pending = clientPromise ??= createClient(generation);
+  try {
+    await pending;
+  } catch (error) {
+    if (clientPromise === pending) {
+      clientPromise = undefined;
+      activeClient = undefined;
+    }
+    throw error;
+  }
+}
+
 export async function layoutWithElk(graph: ElkNode): Promise<ElkNode> {
   const pending = clientPromise ??= createClient(generation);
   let client: ElkLayoutClient | undefined;

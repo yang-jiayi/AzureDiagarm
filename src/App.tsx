@@ -31,6 +31,7 @@ import IconPalette from './components/IconPalette';
 import AzureNode from './components/AzureNode';
 import GroupNode from './components/GroupNode';
 import AIArchitectureGenerator from './components/AIArchitectureGenerator';
+import { prepareArchitectureLayout } from './utils/architectureLayoutLoader';
 import ArchitectureChatPanel from './components/ArchitectureChatPanel';
 import CanvasActivityOverlay from './components/CanvasActivityOverlay';
 import CanvasChrome from './components/CanvasChrome';
@@ -5566,7 +5567,7 @@ function App() {
     let positionedGroups: any[];
 
     if (layoutEngine === 'elk') {
-      const { layoutArchitecture: elkLayoutArchitecture } = await import('./utils/elkLayoutEngine');
+      const { layoutArchitecture: elkLayoutArchitecture } = await prepareArchitectureLayout('elk');
       const result = await elkLayoutArchitecture(
         services,
         connections,
@@ -5577,8 +5578,8 @@ function App() {
       positionedServices = result.services;
       positionedGroups = result.groups;
     } else {
-      const { layoutArchitecture } = await import('./utils/layoutEngine');
-      const result = layoutArchitecture(
+      const { layoutArchitecture } = await prepareArchitectureLayout('dagre');
+      const result = await layoutArchitecture(
         services,
         connections,
         groups || [],
@@ -6927,6 +6928,7 @@ function App() {
 
   const aiGeneratorHost = (
     <AIArchitectureGenerator
+      onPrepareTopology={() => prepareArchitectureLayout(layoutEngine).then(() => undefined)}
       onConfigureConnections={openAIConnections}
       showTrigger={false}
       openSignal={generatorOpenSignal}

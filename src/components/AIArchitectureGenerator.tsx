@@ -2,7 +2,7 @@
 // Licensed under the MIT License.
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Sparkles, X, Loader2, Clock, Zap, Brain, Network, PenTool, Layers } from 'lucide-react';
+import { Sparkles, X, Loader2, Clock, Zap, Brain, Network, PenTool, Layers, Download } from 'lucide-react';
 import { generateArchitectureWithAI, isAzureOpenAIConfigured, AIMetrics, analyzeArchitectureDiagramImage, ModelOverride, throwIfGenerationAborted } from '../services/azureOpenAI';
 import { generateReferenceArchitectureWithAI } from '../services/referenceArchitectureAI';
 import { generateBlueprintArchitectureWithAI } from '../services/blueprintArchitectureAI';
@@ -36,7 +36,7 @@ import { getAIBudget } from '../services/aiBudgetService';
 import { isAIBudgetError, isAIInternalServerError, OpenAIProxyError } from '../services/apiHelper';
 import { captureRuntimeModelOverride, getEffectiveAIModelInfo } from '../services/aiModelRuntime';
 import { useBYOAISettings } from '../stores/byoAISettingsStore';
-import { useRuntimeConfig } from '../services/runtimeConfig';
+import { awaitWithAISignal, useRuntimeConfig } from '../services/runtimeConfig';
 import AIConnectionSelector from './AIConnectionSelector';
 
 // After a successful generation the modal stays open this long so the user can
@@ -56,6 +56,15 @@ const GENERATION_STAGE_LABELS: Record<GenerationStage, LocalizedText> = {
 interface GeneratorPendingRetry extends PendingRetry {
   baseRevision?: number;
   diagramFingerprint: string;
+}
+
+interface PendingTopologyPreview {
+  architecture: Awaited<ReturnType<typeof generateArchitectureWithAI>>;
+  brief: string;
+  baseRevision?: number;
+  diagramFingerprint: string;
+  autoSnapshot: boolean;
+  referenceImageUrl?: string;
 }
 
 interface PromptCategory {
@@ -189,6 +198,7 @@ const CATEGORIZED_PROMPTS: PromptCategory[] = [
 
 interface AIArchitectureGeneratorProps {
   onGenerate: (architecture: any, prompt: string, autoSnapshot: boolean, referenceImageUrl?: string, baseRevision?: number, signal?: AbortSignal) => boolean | void | Promise<boolean | void>;
+  onPrepareTopology?: () => Promise<void>;
   /** Increment to open the modal from another in-product journey control. */
   openSignal?: number;
   initialPrompt?: { id: number; prompt: string } | null;
@@ -222,6 +232,7 @@ interface AIArchitectureGeneratorProps {
 
 const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
   onGenerate,
+  onPrepareTopology,
   openSignal,
   initialPrompt,
   showTrigger = true,
@@ -261,6 +272,7 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
    * applied) and re-running the succeeded half would overwrite it.
    */
   const [pendingRetry, setPendingRetry] = useState<GeneratorPendingRetry | null>(null);
+  const [pendingTopology, setPendingTopology] = useState<PendingTopologyPreview | null>(null);
   const [aiMetrics, setAiMetrics] = useState<AIMetrics | null>(null);
   const [canvasGenerationCompleted, setCanvasGenerationCompleted] = useState(false);
   const [isAnalyzingImage, setIsAnalyzingImage] = useState(false);
@@ -361,6 +373,7 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
     clearGenerationResult();
     // A retry only makes sense for the `both` run that produced it.
     setPendingRetry(null);
+    setPendingTopology(null);
     setPartialWarning('');
     setCanRetry(false);
     setWasCancelled(false);
@@ -412,6 +425,7 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
     setWasCancelled(false);
     setCanRetry(false);
     setPendingRetry(null);
+    setPendingTopology(null);
     setImageAnalyzed(false);
     onOpen?.();
   }, [onOpen, cancelScheduledClose, cancelRequest, clearGenerationResult, initialPrompt]);
@@ -492,14 +506,36 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
     });
   };
 
+  const downloadGeneratedTopology = () => {
+    if (!pendingTopology) return;
+    try {
+      const url = URL.createObjectURL(new Blob([JSON.stringify({
+        ...pendingTopology.architecture,
+        format: 'azurediagarm-ai-architecture',
+        metadata: { prompt: pendingTopology.brief },
+      }, null, 2)], { type: 'application/json' }));
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = 'generated-topology.json';
+      link.click();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch {
+      setError(localize(language, {
+        en: 'The generated topology could not be downloaded. It is still retained in this dialog.',
+        ja: '生成済みトポロジーをダウンロードできませんでした。このダイアログには引き続き保持されています。',
+      }));
+    }
+  };
+
   const handleGenerate = async () => {
     if (!openRef.current || requestRef.current || isAnalyzingImage) return;
     if (!description.trim()) {
       setError(translate('Please describe your architecture'));
       return;
     }
+    const retainedTopology = mode === 'topology' && pendingTopology?.brief === description ? pendingTopology : null;
     const connectionAtClick = getEffectiveAIModelInfo('architectureGeneration');
-    if (connectionAtClick.source === 'managed' && connectionAtClick.code === 'managed_model_not_configured') {
+    if (!retainedTopology && connectionAtClick.source === 'managed' && connectionAtClick.code === 'managed_model_not_configured') {
       setError(localize(language, {
         en: 'The selected managed model is not configured. Contact the application administrator.',
         ja: '選択した管理対象モデルが設定されていません。アプリケーション管理者に連絡してください。',
@@ -513,8 +549,8 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
     const controller = new AbortController();
     requestRef.current = controller;
     const retrySnapshot = pendingRetry?.brief === description ? pendingRetry : null;
-    const baseRevision = retrySnapshot?.baseRevision ?? currentArchitecture?.revision;
-    const baselineFingerprint = retrySnapshot?.diagramFingerprint ?? architectureFingerprint(currentArchitecture);
+    const baseRevision = retainedTopology?.baseRevision ?? retrySnapshot?.baseRevision ?? currentArchitecture?.revision;
+    const baselineFingerprint = retainedTopology?.diagramFingerprint ?? retrySnapshot?.diagramFingerprint ?? architectureFingerprint(currentArchitecture);
     const active = () => openRef.current && requestRef.current === controller && !controller.signal.aborted;
     const ensureActive = () => {
       throwIfGenerationAborted(controller.signal);
@@ -556,8 +592,42 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
     // A failed/cancelled retry must not forget already accepted output.
     setPendingRetry(retrySnapshot);
     clearGenerationResult();
+
+    const previewTopology = async (proposal: PendingTopologyPreview) => {
+      ensureUnchanged();
+      setPendingTopology(proposal);
+      const applied = await onGenerate(
+        proposal.architecture, proposal.brief, proposal.autoSnapshot,
+        proposal.referenceImageUrl, proposal.baseRevision, controller.signal,
+      );
+      ensureActive();
+      setPendingTopology(null);
+      if (applied === false) {
+        setCanRetry(true);
+        setActiveStep('output');
+        return;
+      }
+      if (proposal.architecture.metrics) setAiMetrics(proposal.architecture.metrics);
+      setCanvasGenerationCompleted(true);
+      setActiveStep('review');
+      setDescription('');
+      scheduleClose();
+    };
+    const prepareTopology = async () => {
+      if ((mode === 'topology' || mode === 'both') && onPrepareTopology) {
+        await awaitWithAISignal(onPrepareTopology(), controller.signal);
+        ensureUnchanged();
+      }
+    };
     
     try {
+      ensureUnchanged();
+      if (retainedTopology) {
+        await prepareTopology();
+        await previewTopology(retainedTopology);
+        return;
+      }
+      setPendingTopology(null);
       const currentModelSettings: ModelOverride = {
         ...captureRuntimeModelOverride('architectureGeneration'), signal: controller.signal,
         onRetryWait: reportRetryWait(mode === 'reference' ? 'reference' : 'topology'),
@@ -571,6 +641,7 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
       setSubmittedModel((mode === 'blueprint' ? blueprintModelSettings : currentModelSettings).connection?.displayName
         ?? getEffectiveAIModelInfo(mode === 'blueprint' ? 'blueprint' : 'architectureGeneration').displayName);
       ensureUnchanged();
+      await prepareTopology();
       // ── Reference (Editorial) mode — PNG is the sole deliverable.
       // We deliberately do NOT push a topology onto the canvas: the
       // transformed network-flow view is low fidelity for editorial inputs
@@ -902,20 +973,10 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
         { signal: controller.signal },
       );
       ensureUnchanged();
-      const applied = await onGenerate(result, description, autoSnapshot, uploadedImageUrl || undefined, baseRevision, controller.signal);
-      ensureActive();
-      if (applied === false) {
-        setCanRetry(true);
-        setActiveStep('output');
-        return;
-      }
-      if (result.metrics) setAiMetrics(result.metrics);
-      setCanvasGenerationCompleted(true);
-      setActiveStep('review');
-      setDescription('');
-      
-      // Close modal shortly after successful generation
-      scheduleClose(); // Give user 45 seconds to review results or type a modification
+      await previewTopology({
+        architecture: result, brief: description, autoSnapshot, baseRevision,
+        diagramFingerprint: baselineFingerprint, referenceImageUrl: uploadedImageUrl || undefined,
+      });
     } catch (err: any) {
       if (!active()) return;
       setCanRetry(true);
@@ -1163,7 +1224,18 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
               )}
               </>
               )}
-
+              {pendingTopology && !isBusy && (
+                <div className="azd-callout azd-callout--info" role="status">
+                  <p>{localize(language, {
+                    en: 'The generated topology is preserved while this dialog is open. With the original brief, retry its preview without another AI request; editing the brief starts new AI generation. If layout files are unavailable after a release, download this result, save your current diagram, reload, and use Open JSON to review the downloaded topology without regenerating it.',
+                    ja: '生成済みトポロジーは、このダイアログを開いている間は保持されます。元の要件のままなら、追加のAIリクエストなしでプレビューを再試行できます。要件を編集すると、新しいAI生成を実行します。リリース後にレイアウトファイルを読み込めない場合は、この結果をダウンロードし、現在の図を保存して再読み込みした後、JSONを開く操作で再生成せずに確認してください。',
+                  })}</p>
+                  <button type="button" className="azd-button azd-button--secondary" onClick={downloadGeneratedTopology}>
+                    <Download size={18} />
+                    {localize(language, { en: 'Download generated topology', ja: '生成済みトポロジーをダウンロード' })}
+                  </button>
+                </div>
+              )}
               {activeStep === 'output' && (
                 <div className="generator-output-summary">
                   <span>{localize(language, { en: 'Architecture brief', ja: 'アーキテクチャ要件' })}</span>
@@ -1496,7 +1568,9 @@ const AIArchitectureGenerator: React.FC<AIArchitectureGeneratorProps> = ({
                   ) : (
                     <>
                       <Sparkles size={18} />
-                      {' '}{pendingRetry?.brief === description
+                      {' '}{mode === 'topology' && pendingTopology?.brief === description
+                        ? localize(language, { en: 'Retry preview (no AI request)', ja: 'プレビューを再試行（AIリクエストなし）' })
+                        : pendingRetry?.brief === description
                         ? localize(language, { en: 'Retry missing output', ja: '不足分を再生成' })
                         : canRetry || error
                           ? localize(language, { en: 'Retry generation', ja: '生成を再試行' })
