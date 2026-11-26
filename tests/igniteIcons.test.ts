@@ -23,7 +23,12 @@ test('Ignite IQ fallback symbols are separate, locally authored, and hash-pinned
 
   for (const file of igniteManifest.files) {
     assert.equal(file.kind, 'unofficial-concept-substitute');
-    assert.equal(file.path, sourceLock.icons.find(entry => entry.serviceName === file.serviceName)?.path);
+    assert.equal(
+      file.path,
+      sourceLock.icons.find(
+        (entry: { serviceName: string; path: string }) => entry.serviceName === file.serviceName,
+      )?.path,
+    );
     assert.equal(
       sha256(readFileSync(path.join(iconRoot, file.path))),
       file.sha256,

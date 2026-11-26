@@ -2,8 +2,12 @@
 // Licensed under the MIT License.
 
 import assert from 'node:assert/strict';
-import { readdirSync, readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
 import { verifyDeploymentTarget } from '../scripts/verify-deployment-target.mjs';
 
 const workflow = readFileSync(
@@ -402,5 +406,26 @@ test('root scripts imported by the MCP build are re-included in the Docker conte
       allowlist.has(`!${path}`),
       `${path} is imported by an mcp-server build script but excluded from the Docker context`,
     );
+  }
+});
+
+test('the runtime Docker context includes the Ignite icon source manifest', () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), 'azd-docker-context-'));
+  const contextRoot = join(tempRoot, 'context');
+  const emulator = fileURLToPath(
+    new URL('../scripts/emulate-docker-context.mjs', import.meta.url),
+  );
+  try {
+    execFileSync(process.execPath, [emulator, contextRoot], { stdio: 'pipe' });
+    assert.ok(
+      existsSync(join(contextRoot, 'scripts', 'ignite-icon-sources.json')),
+      'src/utils/iconLoader.ts imports a manifest that must be present in the Docker build context',
+    );
+    assert.ok(
+      existsSync(join(contextRoot, 'Azure_Public_Service_Icons', 'ignite-manifest.json')),
+      'the runtime image must include the generated Ignite icon manifest served by nginx',
+    );
+  } finally {
+    rmSync(tempRoot, { recursive: true, force: true });
   }
 });
