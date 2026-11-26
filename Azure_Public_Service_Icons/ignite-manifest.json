@@ -1,0 +1,54 @@
+{
+  "schemaVersion": 1,
+  "sourcePage": "https://azure.microsoft.com/en-us/blog/microsoft-ignite-2026-whats-new-in-azure-the-platform-purpose-built-for-ai/",
+  "releaseDate": "2026-11-17",
+  "assetPolicy": "The announcement names these products but does not publish an architecture-icon package or grant reuse terms for its marketing images. Local IQ fallbacks are locally authored generic diagram symbols, not official Microsoft artwork or product logos. Foundry IQ reuses its separate official Azure V25 icon.",
+  "files": [
+    {
+      "serviceName": "Microsoft IQ",
+      "displayName": "Microsoft IQ",
+      "aliases": [
+        "Microsoft IQ Platform",
+        "Enterprise Context Management Platform"
+      ],
+      "paletteCategory": "ai",
+      "path": "other/microsoft-iq-context-symbol.svg",
+      "kind": "unofficial-concept-substitute",
+      "sha256": "9c1ad8df152682235c4ff17629a04f21b4792b0b3cb570c185056a8f44a9fa01"
+    },
+    {
+      "serviceName": "Work IQ",
+      "displayName": "Work IQ",
+      "aliases": [
+        "Microsoft Work IQ"
+      ],
+      "paletteCategory": "microsoft-365",
+      "path": "other/work-iq-context-symbol.svg",
+      "kind": "unofficial-concept-substitute",
+      "sha256": "4f3a25d40c776c3316be235a23cc6fce7dce014bd3f3e8fd7b53ebb0753afedd"
+    },
+    {
+      "serviceName": "Fabric IQ",
+      "displayName": "Fabric IQ",
+      "aliases": [
+        "Microsoft Fabric IQ"
+      ],
+      "paletteCategory": "fabric",
+      "path": "other/fabric-iq-context-symbol.svg",
+      "kind": "unofficial-concept-substitute",
+      "sha256": "6ca71e490817c75b7c8dd7d02c1c79b4bfc75086df27e65ac32b056dcaed2ab0"
+    },
+    {
+      "serviceName": "Web IQ",
+      "displayName": "Web IQ",
+      "aliases": [
+        "Microsoft Web IQ",
+        "WebIQ"
+      ],
+      "paletteCategory": "app-web",
+      "path": "other/web-iq-context-symbol.svg",
+      "kind": "unofficial-concept-substitute",
+      "sha256": "99a5864ea60503b88a4185c88940be8de29e3846918818117ad3e25835411fdc"
+    }
+  ]
+}

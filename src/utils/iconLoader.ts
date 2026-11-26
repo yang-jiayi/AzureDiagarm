@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 import azureIconManifest from '../../Azure_Public_Service_Icons/manifest.json';
+import igniteIconSources from '../../scripts/ignite-icon-sources.json';
 import {
   classifyIconPaletteCategory,
   getIconPaletteCategory,
@@ -44,6 +45,7 @@ export interface AzureIcon {
   fabricDrawingKind?: 'concept' | 'legacy' | 'ui';
   /** Microsoft 365 artwork is a concept symbol, not an app-specific product logo. */
   microsoftProductKind?: MicrosoftProductIconKind;
+  unofficialConceptSymbol?: boolean;
 }
 
 export interface IconLibraryStats {
@@ -66,6 +68,23 @@ const iconModules = import.meta.glob('/Azure_Public_Service_Icons/Icons/**/*.svg
 const officialRelativePaths = new Set(azureIconManifest.files.map(file => file.path));
 const officialFileNames = new Set(
   azureIconManifest.files.map(file => file.path.slice(file.path.lastIndexOf('/') + 1)),
+);
+interface IgniteIconDefinition {
+  serviceName: string;
+  displayName: string;
+  aliases: string[];
+  paletteCategory: IconPaletteCategoryId;
+  path: string;
+}
+
+const igniteIconByPath = new Map<string, IgniteIconDefinition>(
+  igniteIconSources.icons.map(icon => {
+    const paletteCategory = iconPaletteCategories.find(category => category.id === icon.paletteCategory)?.id;
+    if (!paletteCategory) {
+      throw new Error(`Unknown Ignite icon palette category: ${icon.paletteCategory}`);
+    }
+    return [icon.path, { ...icon, paletteCategory }] as const;
+  }),
 );
 
 // These friendly filenames predate the official numbered package names. Keep
@@ -116,6 +135,9 @@ const HIDDEN_LEGACY_PALETTE_PATHS = new Set([
 ]);
 
 const aliasesByIcon = new Map<string, Set<string>>();
+const displayNameOverridesByIcon = new Map([
+  ['ai + machine learning/038470497-icon-service-Azure-AI-Foundry-IQ', 'Foundry IQ'],
+]);
 for (const [serviceName, mapping] of Object.entries(SERVICE_ICON_MAP)) {
   const key = `${mapping.category}/${mapping.iconFile}`;
   const aliases = aliasesByIcon.get(key) ?? new Set<string>();
@@ -218,6 +240,7 @@ function getIconMetadataCache(): IconMetadataCache {
     if (isHiddenFromPalette(relativePath, fileName)) continue;
 
     const fileNameWithoutExtension = fileName.replace(/\.svg$/i, '');
+    const igniteDefinition = igniteIconByPath.get(relativePath);
     const fabricDefinition = sourceCategory === 'fabric'
       ? getFabricIconByFileName(fileNameWithoutExtension)
       : undefined;
@@ -226,18 +249,21 @@ function getIconMetadataCache(): IconMetadataCache {
       || sourceCategory === 'microsoft 365'
       ? getMicrosoftProductIconByFileName(fileNameWithoutExtension)
       : undefined;
-    const name = getCurrentIconDisplayName(
-      fileNameWithoutExtension,
-      fabricDefinition?.displayName
-        ?? microsoftProductDefinition?.displayName
-        ?? formatIconName(fileNameWithoutExtension),
-    );
+    const name = igniteDefinition?.displayName
+      ?? displayNameOverridesByIcon.get(`${sourceCategory}/${fileNameWithoutExtension}`)
+      ?? getCurrentIconDisplayName(
+        fileNameWithoutExtension,
+        fabricDefinition?.displayName
+          ?? microsoftProductDefinition?.displayName
+          ?? formatIconName(fileNameWithoutExtension),
+      );
     const paletteCategory = classifyIconPaletteCategory(
       sourceCategory,
       name,
       fileNameWithoutExtension,
     );
-    const categoryDefinition = getIconPaletteCategory(paletteCategory);
+    const resolvedPaletteCategory = igniteDefinition?.paletteCategory ?? paletteCategory;
+    const categoryDefinition = getIconPaletteCategory(resolvedPaletteCategory);
     const mappedAliases = aliasesByIcon.get(`${sourceCategory}/${fileNameWithoutExtension}`);
     const searchTerms = [
       sourceCategory,
@@ -264,27 +290,33 @@ function getIconMetadataCache(): IconMetadataCache {
             ...microsoftProductDefinition.aliases,
           ]
         : []),
+      ...(igniteDefinition ? [igniteDefinition.serviceName, ...igniteDefinition.aliases] : []),
     ];
 
     const icon: AzureIcon = {
       id: `${sourceCategory}/${fileNameWithoutExtension}`,
       name,
-      serviceName: fabricDefinition?.serviceName
+      serviceName: igniteDefinition?.serviceName
+        ?? fabricDefinition?.serviceName
         ?? microsoftProductDefinition?.serviceName
         ?? name,
       category: sourceCategory,
-      paletteCategory,
+      paletteCategory: resolvedPaletteCategory,
       path,
       searchTerms,
-      source: officialRelativePaths.has(relativePath)
+      source: igniteDefinition
+        ? 'supplemental'
+        : officialRelativePaths.has(relativePath)
         ? 'official-azure'
         : sourceCategory === 'fabric'
           ? 'fabric'
           : microsoftProductDefinition
             ? microsoftProductDefinition.family
             : 'supplemental',
-      generic: microsoftProductDefinition?.kind === 'symbol'
+      generic: Boolean(igniteDefinition)
+        || microsoftProductDefinition?.kind === 'symbol'
         || fabricDefinition?.kind === 'concept',
+      ...(igniteDefinition ? { unofficialConceptSymbol: true } : {}),
       ...(microsoftProductDefinition
         ? { microsoftProductKind: microsoftProductDefinition.kind }
         : {}),

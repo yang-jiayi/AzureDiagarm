@@ -17,6 +17,8 @@
 # Imported by mcp-server/scripts/sync-pricing-data.mjs, which runs during the
 # MCP build stage. Without it that stage fails with ERR_MODULE_NOT_FOUND.
 !scripts/prep-pricing-data.mjs
+# Imported by src/utils/iconLoader.ts and bundled by the Vite app build.
+!scripts/ignite-icon-sources.json
 
 # --- App source ---
 !src/**

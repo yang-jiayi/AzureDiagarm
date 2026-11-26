@@ -1,0 +1,35 @@
+{
+  "sourcePage": "https://azure.microsoft.com/en-us/blog/microsoft-ignite-2026-whats-new-in-azure-the-platform-purpose-built-for-ai/",
+  "releaseDate": "2026-11-17",
+  "assetPolicy": "The announcement names these products but does not publish an architecture-icon package or grant reuse terms for its marketing images. Local IQ fallbacks are locally authored generic diagram symbols, not official Microsoft artwork or product logos. Foundry IQ reuses its separate official Azure V25 icon.",
+  "icons": [
+    {
+      "serviceName": "Microsoft IQ",
+      "displayName": "Microsoft IQ",
+      "aliases": ["Microsoft IQ Platform", "Enterprise Context Management Platform"],
+      "paletteCategory": "ai",
+      "path": "other/microsoft-iq-context-symbol.svg"
+    },
+    {
+      "serviceName": "Work IQ",
+      "displayName": "Work IQ",
+      "aliases": ["Microsoft Work IQ"],
+      "paletteCategory": "microsoft-365",
+      "path": "other/work-iq-context-symbol.svg"
+    },
+    {
+      "serviceName": "Fabric IQ",
+      "displayName": "Fabric IQ",
+      "aliases": ["Microsoft Fabric IQ"],
+      "paletteCategory": "fabric",
+      "path": "other/fabric-iq-context-symbol.svg"
+    },
+    {
+      "serviceName": "Web IQ",
+      "displayName": "Web IQ",
+      "aliases": ["Microsoft Web IQ", "WebIQ"],
+      "paletteCategory": "app-web",
+      "path": "other/web-iq-context-symbol.svg"
+    }
+  ]
+}

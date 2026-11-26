@@ -41,6 +41,16 @@ The compilation is attributed to the author; the Microsoft artwork remains
 subject to Microsoft's icon terms. The two older designs that differ from the
 current npm package are retained separately in `Article_Fabric_Icons/2026/`.
 
+The Ignite 2026 announcement is a source for the announced product names, not
+an icon package. Images shown on the Microsoft IQ product page are not reused:
+no diagram-icon redistribution permission was confirmed. The IQ entries in the
+palette for **Microsoft IQ, Work IQ, Fabric IQ, and Web IQ only** use locally
+authored, generic diagram symbols, visibly marked as unofficial and not product
+logos. Foundry IQ instead reuses the official Azure V25 `Azure AI Foundry IQ`
+icon for that same product. The four local symbols' source-page provenance and
+hashes are in `ignite-manifest.json`; `../scripts/ignite-icon-sources.json` is
+the input inventory and `npm run icons:check:ignite` verifies it.
+
 All downloaded packages are pinned by SHA-256 (and npm SHA-512 integrity where
 available). Azure per-file manifests keep both the exact package-byte SHA-256
 and a canonical LF-normalized SVG SHA-256 so integrity checks remain stable

@@ -1418,6 +1418,74 @@
     "isUsageBased": true,
     "costRange": "Agent run and token based"
   },
+  "Azure HorizonDB": {
+    "displayName": "Azure HorizonDB",
+    "iconFile": "038749693-icon-service-Azure-HorizonDB",
+    "category": "new icons",
+    "aliases": [
+      "Microsoft Azure HorizonDB",
+      "HorizonDB (Azure)"
+    ],
+    "hasPricingData": false
+  },
+  "Fabric HorizonDB": {
+    "displayName": "Fabric HorizonDB",
+    "iconFile": "fabric-item-postgre-sql-database",
+    "category": "fabric",
+    "aliases": [
+      "Microsoft Fabric HorizonDB",
+      "Fabric Horizon DB"
+    ],
+    "hasPricingData": false
+  },
+  "Microsoft IQ": {
+    "displayName": "Microsoft IQ",
+    "iconFile": "microsoft-iq-context-symbol",
+    "category": "other",
+    "aliases": [
+      "Microsoft IQ Platform",
+      "Enterprise Context Management Platform"
+    ],
+    "hasPricingData": false
+  },
+  "Work IQ": {
+    "displayName": "Work IQ",
+    "iconFile": "work-iq-context-symbol",
+    "category": "other",
+    "aliases": [
+      "Microsoft Work IQ"
+    ],
+    "hasPricingData": false
+  },
+  "Fabric IQ": {
+    "displayName": "Fabric IQ",
+    "iconFile": "fabric-iq-context-symbol",
+    "category": "other",
+    "aliases": [
+      "Microsoft Fabric IQ"
+    ],
+    "hasPricingData": false
+  },
+  "Foundry IQ": {
+    "displayName": "Foundry IQ",
+    "iconFile": "038470497-icon-service-Azure-AI-Foundry-IQ",
+    "category": "ai + machine learning",
+    "aliases": [
+      "Microsoft Foundry IQ",
+      "Azure AI Foundry IQ"
+    ],
+    "hasPricingData": false
+  },
+  "Web IQ": {
+    "displayName": "Web IQ",
+    "iconFile": "web-iq-context-symbol",
+    "category": "other",
+    "aliases": [
+      "Microsoft Web IQ",
+      "WebIQ"
+    ],
+    "hasPricingData": false
+  },
   "Microsoft Fabric": {
     "displayName": "Microsoft Fabric",
     "iconFile": "microsoft-fabric",

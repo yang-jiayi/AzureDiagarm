@@ -62,6 +62,9 @@ test('legacy and UI symbols cannot become AI services or capacity charges', () =
   assert.equal(resolveServiceIconMapping('Fabric Apps')?.mapping.iconFile, 'fabric-item-fabric-apps');
   assert.equal(resolveServiceIconMapping('Power BI Apps')?.mapping.iconFile, 'fabric-item-apps');
   assert.equal(isCapacityConsumed('Fabric Apps'), true);
+  assert.equal(getFabricIconByFileName('fabric-item-fabric-apps')?.sourceAsset, 'fabric_apps_48_item.svg');
+  assert.equal(resolveServiceIconMapping('App Development'), null);
+  assert.equal(resolveServiceIconMapping('Org App'), null);
   for (const name of [
     'Fabric Database Hub',
     'Rayfin (unclassified)',
@@ -120,6 +123,21 @@ test('all existing stable Fabric paths remain mapped, with the single native-siz
   assert.equal(isCapacityConsumed('Fabric Links'), true);
   assert.equal(isCapacityConsumed('Microsoft Fabric Capacity'), false);
   assert.equal(SERVICE_ICON_MAP['Microsoft Fabric Capacity'].pricingServiceName, 'Microsoft Fabric');
+});
+
+test('Azure and Fabric HorizonDB remain distinct services and use their correctly scoped icons', () => {
+  const azure = resolveServiceIconMapping('Azure HorizonDB');
+  const fabric = resolveServiceIconMapping('Fabric HorizonDB');
+  assert.equal(azure?.mapping.iconFile, '038749693-icon-service-Azure-HorizonDB');
+  assert.equal(azure?.mapping.category, 'new icons');
+  assert.equal(fabric?.mapping.iconFile, 'fabric-item-postgre-sql-database');
+  assert.equal(fabric?.mapping.category, 'fabric');
+  assert.equal(fabric?.mapping.hasPricingData, false);
+  assert.equal(isCapacityConsumed('Fabric HorizonDB'), false);
+  assert.equal(
+    FABRIC_ICON_CATALOG.find(icon => icon.fileName === fabric?.mapping.iconFile)?.displayName,
+    'PostgreSQL Database (generic symbol)',
+  );
 });
 
 test('Fabric 12.0.0 catalog covers every current architecture family and keeps stable destinations', () => {
