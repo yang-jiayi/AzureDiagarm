@@ -397,6 +397,15 @@ const IconPalette: React.FC<IconPaletteProps> = ({ forceCollapsed, openSignal, o
 
   const renderIcon = useCallback((icon: AzureIcon) => {
     const iconUrl = iconUrls.get(icon.path);
+    const unofficialConceptDescription = icon.unofficialConceptSymbol
+      ? localize(language, {
+        en: 'Unofficial concept symbol, not a product logo.',
+        ja: '非公式の概念記号です。製品ロゴではありません。',
+      })
+      : undefined;
+    const unofficialConceptDescriptionId = icon.unofficialConceptSymbol
+      ? `palette-icon-description-${icon.id.replace(/[^A-Za-z0-9_-]/g, '-')}`
+      : undefined;
     const isFavorite = workspace.favoriteIds.includes(icon.id);
     const isCollected = workspace.collections.some(
       (collection) => collection.iconIds.includes(icon.id),
@@ -405,11 +414,12 @@ const IconPalette: React.FC<IconPaletteProps> = ({ forceCollapsed, openSignal, o
       <div className="icon-item" key={icon.id}>
         <button
           type="button"
-          className="icon-item-main"
+          className={`icon-item-main${icon.unofficialConceptSymbol ? ' icon-item-main--unofficial' : ''}`}
           draggable
           onDragStart={(event) => onDragStart(event, icon)}
           onClick={() => addIconToCanvas(icon)}
           aria-label={t('palette.addService', { service: icon.name })}
+          aria-describedby={unofficialConceptDescriptionId}
           title={t('palette.addServiceHint', { service: icon.name })}
         >
           <span className="icon-add-indicator" aria-hidden="true">
@@ -442,6 +452,20 @@ const IconPalette: React.FC<IconPaletteProps> = ({ forceCollapsed, openSignal, o
                 ja: '概念シンボル (製品ロゴではありません)',
               })}
             </span>
+          )}
+          {unofficialConceptDescription && unofficialConceptDescriptionId && (
+            <>
+              <span
+                className="icon-drawing-kind icon-drawing-kind--unofficial"
+                title={unofficialConceptDescription}
+                aria-hidden="true"
+              >
+                {localize(language, { en: 'Unofficial', ja: '非公式' })}
+              </span>
+              <span id={unofficialConceptDescriptionId} className="sr-only">
+                {unofficialConceptDescription}
+              </span>
+            </>
           )}
           {icon.fabricDrawingKind && (
             <span className="icon-drawing-kind">

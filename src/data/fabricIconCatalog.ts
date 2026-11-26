@@ -136,7 +136,7 @@ export const FABRIC_ICON_CATALOG: FabricIconDefinition[] = [
   defineFabricIcon('Semantic Model', 'Semantic Model', 'fabric-semantic-model', 'semantic_model_48_item.svg', 'Power BI', 'item', ['Power BI Semantic Model', 'Power BI Dataset', 'Direct Lake Semantic Model']),
   defineFabricIcon('Fabric Spark Job', 'Fabric Spark Job', 'fabric-spark-job', 'spark_job_direction_48_item.svg', 'Data Engineering', 'item', ['Fabric Spark', 'Spark Job Definition', 'Spark Job Direction']),
   defineFabricIcon('Fabric SQL Database', 'Fabric SQL Database', 'fabric-sql-database', 'sql_database_48_item.svg', 'Databases', 'item', ['SQL Database (Fabric)', 'Fabric SQL DB']),
-  defineFabricIcon('Fabric PostgreSQL Database', 'PostgreSQL Database (unclassified)', 'fabric-item-postgre-sql-database', 'postgre_sql_database_48_item.svg', 'Unclassified items', 'concept', ['PostgreSQL Database (Fabric)', 'Fabric PostgreSQL'], { consumesCapacity: false, includeInServiceMap: false }),
+  defineFabricIcon('Fabric PostgreSQL Database', 'PostgreSQL Database (generic symbol)', 'fabric-item-postgre-sql-database', 'postgre_sql_database_48_item.svg', 'Unclassified items', 'concept', ['PostgreSQL Database (Fabric)', 'Fabric PostgreSQL', 'Fabric HorizonDB', 'Microsoft Fabric HorizonDB'], { consumesCapacity: false, includeInServiceMap: false }),
 
   // Data Factory and integration items
   defineFabricIcon('Fabric Copy Job', 'Copy Job', 'fabric-item-copy-job', 'copy_job_48_item.svg', 'Data Factory', 'item', ['Copy Job (Fabric)']),

@@ -18,7 +18,7 @@ export interface ServiceIconMapping {
   /** Icon filename (without path or extension) */
   iconFile: string;
   /** Category/folder in icon library */
-  category: 'ai + machine learning' | 'app services' | 'compute' | 'databases' | 'storage' | 'networking' | 'web' | 'analytics' | 'containers' | 'devops' | 'integration' | 'identity' | 'management + governance' | 'iot' | 'monitor' | 'security' | 'fabric' | 'power platform' | 'dynamics 365' | 'microsoft 365' | 'other';
+  category: 'ai + machine learning' | 'app services' | 'compute' | 'databases' | 'storage' | 'networking' | 'web' | 'analytics' | 'containers' | 'devops' | 'integration' | 'identity' | 'management + governance' | 'iot' | 'monitor' | 'security' | 'fabric' | 'power platform' | 'dynamics 365' | 'microsoft 365' | 'new icons' | 'other';
   /** Whether we have real pricing data for this service */
   hasPricingData: boolean;
   /** Service name used in pricing files (if hasPricingData is true) */
@@ -1256,6 +1256,55 @@ export const SERVICE_ICON_MAP: Record<string, ServiceIconMapping> = {
   // Microsoft Fabric service components. Navigation and sample-only symbols
   // remain available in the icon palette but are not advertised to AI/MCP as services.
   ...FABRIC_SERVICE_ICON_MAP,
+  'Azure HorizonDB': {
+    displayName: 'Azure HorizonDB',
+    aliases: ['Microsoft Azure HorizonDB', 'HorizonDB (Azure)'],
+    iconFile: '038749693-icon-service-Azure-HorizonDB',
+    category: 'new icons',
+    hasPricingData: false,
+  },
+  'Fabric HorizonDB': {
+    displayName: 'Fabric HorizonDB',
+    aliases: ['Microsoft Fabric HorizonDB', 'Fabric Horizon DB'],
+    iconFile: 'fabric-item-postgre-sql-database',
+    category: 'fabric',
+    hasPricingData: false,
+  },
+  'Microsoft IQ': {
+    displayName: 'Microsoft IQ',
+    aliases: ['Microsoft IQ Platform', 'Enterprise Context Management Platform'],
+    iconFile: 'microsoft-iq-context-symbol',
+    category: 'other',
+    hasPricingData: false,
+  },
+  'Work IQ': {
+    displayName: 'Work IQ',
+    aliases: ['Microsoft Work IQ'],
+    iconFile: 'work-iq-context-symbol',
+    category: 'other',
+    hasPricingData: false,
+  },
+  'Fabric IQ': {
+    displayName: 'Fabric IQ',
+    aliases: ['Microsoft Fabric IQ'],
+    iconFile: 'fabric-iq-context-symbol',
+    category: 'other',
+    hasPricingData: false,
+  },
+  'Foundry IQ': {
+    displayName: 'Foundry IQ',
+    aliases: ['Microsoft Foundry IQ', 'Azure AI Foundry IQ'],
+    iconFile: '038470497-icon-service-Azure-AI-Foundry-IQ',
+    category: 'ai + machine learning',
+    hasPricingData: false,
+  },
+  'Web IQ': {
+    displayName: 'Web IQ',
+    aliases: ['Microsoft Web IQ', 'WebIQ'],
+    iconFile: 'web-iq-context-symbol',
+    category: 'other',
+    hasPricingData: false,
+  },
 
   // Microsoft Power Platform (including Copilot Studio and Agent 365) and
   // Dynamics 365 business applications.
