@@ -46,6 +46,22 @@ async function createClient(sourceGeneration: number): Promise<ElkLayoutClient> 
   return client;
 }
 
+export async function prepareElkLayout(): Promise<void> {
+  const pending = clientPromise ??= createClient(generation);
+  try {
+    const client = await pending;
+    if (client.failed) {
+      throw new Error('The ELK layout worker failed. Retry to prepare a new worker.');
+    }
+  } catch (error) {
+    if (clientPromise === pending) {
+      clientPromise = undefined;
+      activeClient = undefined;
+    }
+    throw error;
+  }
+}
+
 export async function layoutWithElk(graph: ElkNode): Promise<ElkNode> {
   const pending = clientPromise ??= createClient(generation);
   let client: ElkLayoutClient | undefined;

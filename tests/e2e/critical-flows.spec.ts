@@ -1896,6 +1896,59 @@ for (const [width, allowBYO] of [[1600, true], [1600, false], [390, true], [390,
   });
 }
 
+test('topology layout import failure avoids inference and downloaded topology recovers after reload', async ({ page }) => {
+  await initializePage(page);
+  let posts = 0;
+  let failedLayoutLoads = 0;
+  await page.route('**/api/**', async route => {
+    const path = new URL(route.request().url()).pathname;
+    if (path === '/api/access/me') await fulfillJson(route, { enabled: false, allowed: true, isAdmin: false });
+    else if (path === '/api/runtime-config') await fulfillJson(route, { features: { bringYourOwnAI: false } });
+    else if (path === '/api/ai/budget') await fulfillJson(route, { available: true, concurrentLimit: 4, concurrentRequests: 0 });
+    else {
+      if (path === '/api/openai') posts++;
+      await fulfillJson(route, { error: 'Not found' }, 404);
+    }
+  });
+  const layoutModule = /\/(?:src\/utils\/elkLayoutEngine\.ts|assets\/elkLayoutEngine-[^/]+\.js)(?:\?.*)?$/;
+  await page.route(layoutModule, route => {
+    failedLayoutLoads++;
+    return route.fulfill({ status: 404, contentType: 'text/html', body: 'Previous revision asset is missing' });
+  });
+  await page.goto('/');
+  const generator = await openAiGenerator(page);
+  await generator.getByLabel('Architecture Description or Modification').fill('Create a secure Fabric topology.');
+  await generator.getByRole('button', { name: 'Continue to output' }).click();
+  await generator.getByRole('tab', { name: /^Topology/ }).click();
+  await generator.getByRole('button', { name: 'Generate Architecture', exact: true }).click();
+  await expect(generator.getByRole('alert')).toContainText('Layout files could not be prepared');
+  expect(failedLayoutLoads).toBeGreaterThan(0);
+  expect(posts).toBe(0);
+  await expect(page.locator('.ai-review-overlay')).toHaveCount(0);
+  await page.unroute(layoutModule);
+  await page.reload();
+  await page.locator('input[accept=".json"]').setInputFiles({
+    name: 'generated-topology.json',
+    mimeType: 'application/json',
+    buffer: Buffer.from(JSON.stringify({
+      format: 'azurediagarm-ai-architecture',
+      metadata: { prompt: 'Create a secure Fabric topology.' },
+      services: [
+        { id: 'compute', name: 'Azure Functions', type: 'Azure Functions', category: 'compute' },
+        { id: 'storage', name: 'Azure Storage', type: 'Azure Storage', category: 'storage' },
+      ],
+      connections: [{ from: 'compute', to: 'storage', label: 'Private data' }],
+      groups: [],
+    })),
+  });
+  const review = page.locator('.ai-review-dialog');
+  await expect(review).toBeVisible();
+  await expect(review).toContainText('Azure Functions');
+  expect(posts).toBe(0);
+  await review.getByRole('button', { name: 'Keep current diagram', exact: true }).click();
+  await expect(page.locator('.react-flow__node')).toHaveCount(0);
+});
+
 for (const effort of ['low', 'max'] as const) {
   test(`full application explicitly routes selected Astra ${effort} without a Sol fallback`, async ({ page }) => {
     await initializePage(page);

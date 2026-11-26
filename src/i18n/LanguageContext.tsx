@@ -403,6 +403,7 @@ export const exactJapanese: Readonly<Record<string, string>> = {
   'The AI response was cut off before it finished. Please try again.': 'AI の応答が完了する前に途切れました。もう一度お試しください。',
   'The AI model exhausted its output budget, including reasoning, before finishing. Use a smaller scope or a lower reasoning level.': 'AI が推論を含む出力上限に達したため、応答を完了できませんでした。対象範囲を絞るか、推論レベルを下げてください。',
   'The AI provider did not complete the response. No partial result was applied. Please try again.': 'AI プロバイダーが応答を完了できませんでした。未完了の結果は適用されていません。もう一度お試しください。',
+  'Layout files could not be prepared. Save your work and reload the application before trying again.': 'レイアウトファイルを準備できませんでした。作業内容を保存し、アプリケーションを再読み込みしてから、もう一度お試しください。',
   'The AI model returned a response that was not valid JSON. Please try again.': 'AI モデルから有効な JSON ではない応答が返されました。もう一度お試しください。',
   // Empty-architecture and configuration guardrails.
   'The AI model returned an empty architecture (no services). Please try again or rephrase your request.': 'AI モデルが空のアーキテクチャ（サービスなし）を返しました。もう一度お試しいただくか、リクエストを言い換えてください。',

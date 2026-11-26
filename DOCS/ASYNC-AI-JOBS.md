@@ -48,6 +48,31 @@ resubmitting partial output. Diagnostic logs record only a bounded status/reason
 and output/reasoning token counts, never generated text. This distinguishes
 provider token exhaustion from network or job timeouts.
 
+## Layout Readiness and Recovery
+
+Topology (and the topology part of Both mode) loads the selected layout adapter
+before any AI submission. ELK also initializes its same-origin worker first.
+This catches missing lazy chunks in a tab left open across a release before
+incurring another model charge. Successful hashed assets remain private and
+immutable; missing assets return an uncached 404, never the SPA HTML as a
+successful JavaScript response. No automatic page reload discards editor work.
+
+In Topology mode, if AI generation completes but preparing its preview fails, the dialog
+retains that result. **Retry preview (no AI request)** reuses the same result,
+original prompt and baseline revision; it cannot overwrite edits made since
+generation. An edited brief starts a new explicitly requested generation.
+Keeping the current diagram in change review discards the proposal.
+
+For an unavailable old chunk, **Download generated topology** saves a local
+`generated-topology.json` in the existing `azurediagarm-ai-architecture` format.
+Save the current diagram before reloading, then use Open JSON to load this file
+and review it without another inference. The download can contain private
+architecture details; it is user-initiated, not automatically uploaded or saved
+to browser storage. Closing/reopening the generation dialog or reloading loses
+its in-memory result unless downloaded first. Old clients from before this
+recovery feature cannot retroactively retain a result they already discarded;
+do not press their Retry generation button expecting a free preview retry.
+
 ## Protocol
 
 All paths remain behind the existing application access control and origin

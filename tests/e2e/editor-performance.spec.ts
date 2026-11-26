@@ -19,6 +19,7 @@ declare global {
     __elkWorkerProbe: {
       records: WorkerRecord[];
       holdNext: number;
+      failIdle(): void;
       release(): void;
     };
   }
@@ -40,6 +41,7 @@ async function prepare(page: Page) {
     localStorage.setItem('azure-diagram-builder.canvasHintDismissed.v1', '1');
     const probe: Window['__elkWorkerProbe'] = {
       records: [], holdNext: 0,
+      failIdle() { throw new Error('No ELK worker has been created.'); },
       release() {
         for (const record of this.records) {
           for (const send of record.held.splice(0)) send();
@@ -55,6 +57,7 @@ async function prepare(page: Page) {
         super(url, options);
         this.record = { url: String(url), requests: [], replies: [], held: [], terminations: 0 };
         probe.records.push(this.record);
+        probe.failIdle = () => this.dispatchEvent(new Event('error'));
         this.addEventListener('message', event => {
           const id: unknown = event.data?.id;
           if (typeof id === 'number' && this.record.requests.includes(id)) {
@@ -259,6 +262,26 @@ test('worker asset failures reject, terminate, and retry only on another explici
   }, { fixture, moduleUrl: layoutModule });
   expect(result.nodes).toHaveLength(fixture.nodes.length);
   expect(await page.evaluate(() => window.__elkWorkerProbe.records.length)).toBe(2);
+});
+
+test('topology preparation rejects an ELK worker that failed while idle before retrying explicitly', async ({ page }) => {
+  await prepare(page);
+  await page.evaluate(async moduleUrl => (await import(moduleUrl)).prepareElkLayout(), runtimeModule);
+  expect(await page.evaluate(() => window.__elkWorkerProbe.records.length)).toBe(1);
+  await page.evaluate(() => window.__elkWorkerProbe.failIdle());
+  await expect(page.evaluate(async moduleUrl => (await import(moduleUrl)).prepareElkLayout(), runtimeModule))
+    .rejects.toThrow(/ELK layout worker failed/);
+  expect(await page.evaluate(() => window.__elkWorkerProbe.records.length)).toBe(1);
+  expect(await page.evaluate(() => window.__elkWorkerProbe.records[0].terminations)).toBe(1);
+  await page.evaluate(async moduleUrl => (await import(moduleUrl)).prepareElkLayout(), runtimeModule);
+  expect(await page.evaluate(() => window.__elkWorkerProbe.records.length)).toBe(2);
+  const fixture = elkLayoutFixtures()[0];
+  const result = await page.evaluate(async ({ fixture, moduleUrl }) => {
+    const module = await import(moduleUrl);
+    return module.applyLayoutPreset(fixture.nodes, fixture.edges, fixture.options);
+  }, { fixture, moduleUrl: layoutModule });
+  expect(result.nodes).toHaveLength(fixture.nodes.length);
+  await page.evaluate(async moduleUrl => (await import(moduleUrl)).disposeElkLayout(), runtimeModule);
 });
 
 test('an older worker result cannot change a newer Arrange result', async ({ page }) => {

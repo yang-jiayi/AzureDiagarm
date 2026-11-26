@@ -4,6 +4,13 @@
 
 The Microsoft Product Architecture Diagram Builder supports two graph layout engines that can be switched at any time via the **Layout → Engine** dropdown in the toolbar. Both engines solve the same problem — automatically positioning Azure service nodes and groups into readable, professional diagrams — but they use different algorithms and produce different results.
 
+Topology generation prepares the selected lazy adapter (and ELK worker) before
+submitting AI work. If a release removes a chunk referenced by an older open
+tab, save existing work and reload rather than retrying a paid generation.
+Generated results retained by the current dialog can be retried as previews or
+downloaded and reopened without inference; see
+[layout recovery](ASYNC-AI-JOBS.md#layout-readiness-and-recovery).
+
 | Feature | Dagre | ELK |
 |---------|-------|-----|
 | **Library** | [dagre](https://github.com/dagrejs/dagre) | [elkjs](https://github.com/kieler/elkjs) |

@@ -134,7 +134,7 @@ before(async () => {
           const release = () => { if(budgetedBoth && !released) {released=true;h.inFlight--;} };
           signal?.addEventListener('abort',release,{once:true});
           const metrics={totalTokens:1,completionTokens:1,promptTokens:0,elapsedTimeMs:1};
-          const value = {services:[],connections:[],groups:[],components:[],zones:[],metrics};
+          const value = {services:[],connections:[],groups:[],components:[],zones:[],metrics,...h.generatedArchitecture};
           let request;
           if(h.rateLimits[kind] > 0) {
             h.rateLimits[kind]--;
@@ -165,6 +165,10 @@ before(async () => {
           : h.dispatch(kind,signal,prompt,override);
         const apply = (...args) => {
           h.applies.push(args);
+          if(h.applyFailures>0) {
+            h.applyFailures--;
+            return Promise.reject(new Error('Failed to fetch dynamically imported module: /assets/old-layout.js'));
+          }
           if(h.deferReview) return new Promise(resolve => {
             h.finishReview=resolve;
             args.at(-1)?.addEventListener('abort',()=>resolve(false),{once:true});
@@ -187,6 +191,10 @@ before(async () => {
               h.reviewError=''; h.reviewed.push(graph); h.render();
             }} onCancel={()=>h.cancelled++}/>);
           } else root.render(<Generator onGenerate={apply} currentArchitecture={currentArchitecture}
+            onPrepareTopology={async()=>{
+              h.preparations++;
+              if(h.preparationFailure) throw new Error(h.preparationFailure);
+            }}
             onReferenceArchitecture={()=>h.references++} onBlueprintArchitecture={()=>h.blueprints++}/>);
         };
         h.commitRender = () => flushSync(h.render);
@@ -349,7 +357,8 @@ async function setup(t: { after: (fn: () => Promise<void>) => void }, config: Re
       budgetLimit: 2, budgetExternal: 0, budgetReads: [], budgetFailure: null, deferBudget: false, budgetPending: [],
       inFlight: 0, peakRequests: 0, dispatchViolations: 0, contentionRemaining: 0,
       rateLimits: {}, failureCodes: {}, failureSources: {}, failureStatuses: {},
-      useRatePolicy: false, retryAfterMs: 60_000, ...config,
+      useRatePolicy: false, retryAfterMs: 60_000,
+      preparations: 0, preparationFailure: null, applyFailures: 0, ...config,
     };
   }, config);
   await page.addScriptTag({ content: script });
@@ -413,6 +422,69 @@ async function finish(page: Page, kind: string, error?: string) {
     else pending.resolve();
   }, { kind, error });
 }
+
+for (const mode of ['topology', 'both']) {
+  test(`${mode} checks layout readiness before any paid AI request`, async t => {
+    const page = await setup(t, { mode, preparationFailure: 'Layout files are unavailable. Reload before generating.' });
+    await generate(page);
+    await page.getByRole('alert').waitFor();
+    assert.match(await page.getByRole('alert').innerText(), /Layout files are unavailable/);
+    assert.deepEqual(await page.evaluate(() => ({
+      calls: (window as any).h.calls.length, preparations: (window as any).h.preparations,
+    })), { calls: 0, preparations: 1 });
+  });
+}
+
+test('a completed topology survives layout failure, can be downloaded, and retries only the preview', async t => {
+  const page = await setup(t, { applyFailures: 1, accepted: true, generatedArchitecture: {
+    services: [{ id: 'compute', name: 'Azure Functions', type: 'Azure Functions', category: 'compute' }],
+    connections: [], groups: [],
+  } });
+  await generate(page);
+  const retry = page.getByRole('button', { name: 'Retry preview (no AI request)', exact: true });
+  await retry.waitFor();
+  const downloading = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Download generated topology', exact: true }).click();
+  const download = await downloading;
+  assert.equal(download.suggestedFilename(), 'generated-topology.json');
+  const stream = await download.createReadStream();
+  assert.ok(stream);
+  const chunks: Buffer[] = [];
+  for await (const chunk of stream) chunks.push(Buffer.from(chunk));
+  const saved = JSON.parse(Buffer.concat(chunks).toString());
+  assert.equal(saved.format, 'azurediagarm-ai-architecture');
+  assert.equal(saved.metadata.prompt, 'Add a secure web application');
+  assert.equal(saved.services[0].id, 'compute');
+  assert.equal(saved.metrics.totalTokens, 1);
+  assert.equal(saved.connection, undefined);
+  await retry.click();
+  await page.waitForFunction(() => (window as any).h.applies.length === 2);
+  assert.deepEqual(await page.evaluate(() => ({
+    calls: (window as any).h.calls.length,
+    sameResult: (window as any).h.applies[0][0] === (window as any).h.applies[1][0],
+    revisions: (window as any).h.applies.map((args: any[]) => args[4]),
+  })), { calls: 1, sameResult: true, revisions: [7, 7] });
+  assert.equal(await page.getByRole('button', { name: 'Download generated topology', exact: true }).count(), 0);
+});
+
+test('retained topology recovery never overwrites a diagram edited after the failed preview', async t => {
+  const page = await setup(t, { applyFailures: 1 });
+  await generate(page);
+  const retry = page.getByRole('button', { name: 'Retry preview (no AI request)', exact: true });
+  await retry.waitFor();
+  await page.evaluate(() => {
+    const h = (window as any).h;
+    h.nodes = [{ id: 'external-edit', position: { x: 0, y: 0 }, data: { label: 'Preserve me' } }];
+    h.revision = 8;
+    h.commitRender();
+  });
+  await retry.click();
+  await page.waitForFunction(() => document.querySelector('[role="alert"]')?.textContent?.includes('diagram changed'));
+  assert.deepEqual(await page.evaluate(() => ({
+    calls: (window as any).h.calls.length, applies: (window as any).h.applies.length,
+    nodes: (window as any).h.nodes.map((node: any) => node.id),
+  })), { calls: 1, applies: 1, nodes: ['external-edit'] });
+});
 
 test('async generation progress shows the real stage and elapsed time; stale callbacks cannot update a retry', async t => {
   const page = await setup(t, { mode: 'both', deferKinds: ['manifest'] });
